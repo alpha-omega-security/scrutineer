@@ -40,8 +40,10 @@ func run(log *slog.Logger) error {
 	var (
 		addr    = flag.String("addr", "127.0.0.1:8080", "listen address")
 		dataDir = flag.String("data", "./data", "data directory (db + workspaces)")
-		effort  = flag.String("effort", "high", "claude effort")
-		spec    = flag.String("spec", "", "path to audit spec (default: built-in)")
+		effort      = flag.String("effort", "high", "claude effort")
+		spec        = flag.String("spec", "", "path to audit spec (default: built-in)")
+		noDocker    = flag.Bool("no-docker", false, "disable containerised runner even if docker is available")
+		runnerImage = flag.String("runner-image", "scrutineer-runner", "docker image for per-job containers")
 	)
 	flag.Parse()
 
@@ -79,12 +81,21 @@ func run(log *slog.Logger) error {
 
 	broker := web.NewBroker()
 
+	var runner worker.ClaudeRunner
+	if !*noDocker && worker.DockerAvailable() {
+		log.Info("docker detected, using containerised runner", "image", *runnerImage)
+		runner = worker.DockerRunner{Image: *runnerImage, Effort: *effort}
+	} else {
+		log.Info("docker not available or disabled, using local runner (no isolation)")
+		runner = worker.LocalClaude{Effort: *effort}
+	}
+
 	w := &worker.Worker{
 		DB:      gdb,
 		Log:     log,
 		DataDir: filepath.Join(*dataDir, "work"),
 		Spec:    specText,
-		Runner:  worker.LocalClaude{Effort: *effort},
+		Runner:  runner,
 		OnEvent: func(scanID, repoID uint, name, data string) {
 			broker.Publish(web.Event{Name: name, Data: data, ScanID: scanID, RepoID: repoID})
 		},
