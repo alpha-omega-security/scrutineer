@@ -1,0 +1,50 @@
+{{template "head"}}
+
+<div class="flex items-center justify-between gap-4 mb-6">
+  <h2 class="text-2xl font-semibold flex items-center gap-2">
+    <i data-lucide="users"></i> Maintainers
+  </h2>
+  <div class="flex items-center gap-2">
+    <div class="dropdown-menu">
+      <button type="button" class="btn-outline" aria-haspopup="menu" aria-expanded="false">
+        <i data-lucide="filter"></i>
+        {{if .Status}}{{.Status}}{{else}}Status{{end}}
+        <i data-lucide="chevron-down"></i>
+      </button>
+      <div data-popover aria-hidden="true" data-align="end">
+        <div role="menu">
+          <a role="menuitem" href="/maintainers">All</a>
+          {{range (list "active" "inactive" "unknown")}}
+            <a role="menuitem" href="/maintainers?status={{.}}"
+               {{if eq . $.Status}}aria-current="true"{{end}}>{{.}}</a>
+          {{end}}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{{if .Maintainers}}
+  <table class="table w-full">
+    <thead><tr>
+      <th>Login</th><th>Name</th><th>Email</th><th>Company</th><th>Repos</th><th>Status</th>
+    </tr></thead>
+    <tbody>
+    {{range .Maintainers}}
+      <tr class="cursor-pointer" hx-get="/maintainers/{{.ID}}" hx-target="body" hx-push-url="true">
+        <td class="font-medium">{{.Login}}</td>
+        <td>{{.Name}}</td>
+        <td class="text-muted-foreground">{{.Email}}</td>
+        <td class="text-muted-foreground">{{.Company}}</td>
+        <td class="text-muted-foreground">{{len .Repositories}}</td>
+        <td>{{template "status-badge" (printf "%s" .Status)}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{template "pagination" .Page}}
+{{else}}
+  {{template "empty" (dict "Icon" "users" "Title" "No maintainers" "Body" "Maintainers are populated from the commits job when repositories are scanned.")}}
+{{end}}
+
+{{template "foot"}}

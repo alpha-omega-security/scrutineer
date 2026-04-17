@@ -1,0 +1,112 @@
+{{template "head"}}
+
+{{template "crumbs" (crumbs
+  "Repositories" "/"
+  .Repository.Name (printf "/repositories/%d" .Repository.ID)
+  (printf "scan #%d" .ID) "")}}
+
+<div class="flex items-start justify-between gap-4 mb-6">
+  <h2 class="text-2xl font-semibold flex items-center gap-3">
+    {{.Kind}} scan #{{.ID}}
+    {{template "status-badge" (status .Status)}}
+  </h2>
+  <button class="btn-outline" hx-post="/scans/{{.ID}}/retry">
+    <i data-lucide="refresh-cw"></i> Retry
+  </button>
+</div>
+
+<dl class="grid grid-cols-2 sm:grid-cols-5 gap-4 mb-6 text-sm">
+  <div>
+    <dt class="text-muted-foreground">Model</dt>
+    <dd>{{if .Model}}{{.Model}}{{else}}-{{end}}</dd>
+  </div>
+  <div>
+    <dt class="text-muted-foreground">Commit</dt>
+    <dd><code>{{if .Commit}}{{short .Commit}}{{else}}-{{end}}</code></dd>
+  </div>
+  <div>
+    <dt class="text-muted-foreground">Started</dt>
+    <dd>{{if .StartedAt}}{{since .StartedAt}}{{else}}-{{end}}</dd>
+  </div>
+  <div>
+    <dt class="text-muted-foreground">Duration</dt>
+    <dd>{{if .FinishedAt}}{{dur .Duration}}{{else}}-{{end}}</dd>
+  </div>
+  <div>
+    <dt class="text-muted-foreground">Turns</dt>
+    <dd>{{if .Turns}}{{.Turns}}{{else}}-{{end}}</dd>
+  </div>
+</dl>
+
+{{if .Error}}
+  <div class="alert-destructive mb-6">
+    <i data-lucide="triangle-alert"></i>
+    <section>{{.Error}}</section>
+  </div>
+{{end}}
+
+{{$live := not .Status.Terminal}}
+{{$default := 1}}{{if $live}}{{$default = 2}}{{end}}
+<div class="tabs w-full" id="scan-tabs">
+  <nav role="tablist" aria-orientation="horizontal">
+    <button type="button" role="tab" id="t1" aria-controls="p1"
+            aria-selected="{{if eq $default 1}}true{{else}}false{{end}}">Result</button>
+    <button type="button" role="tab" id="t2" aria-controls="p2"
+            aria-selected="{{if eq $default 2}}true{{else}}false{{end}}">Log</button>
+    {{if .Prompt}}<button type="button" role="tab" id="t3" aria-controls="p3" aria-selected="false">Prompt</button>{{end}}
+  </nav>
+
+  <div role="tabpanel" id="p1" aria-labelledby="t1" {{if ne $default 1}}hidden{{end}}>
+    {{if .Findings}}
+      <table class="table table-fixed w-full mb-4">
+        <thead><tr>
+          <th class="w-24">Severity</th><th>Title</th>
+          <th class="w-28">CWE</th><th class="w-64">Location</th>
+        </tr></thead>
+        <tbody>
+        {{range .Findings}}
+          <tr class="cursor-pointer" hx-get="/findings/{{.ID}}" hx-target="body" hx-push-url="true">
+            <td>{{template "severity-badge" .Severity}}</td>
+            <td class="min-w-0 whitespace-normal">
+              <div class="font-medium">{{.Title}}</div>
+              <div class="text-xs text-muted-foreground line-clamp-2">{{.Summary}}</div>
+            </td>
+            <td class="text-muted-foreground">
+              {{if .CWE}}<span data-tooltip="{{cwename .CWE}}">{{.CWE}}</span>{{end}}
+            </td>
+            <td class="whitespace-normal">{{template "loc-link" (dict "HTMLURL" $.Repository.HTMLURL "Commit" $.Commit "Location" .Location)}}</td>
+          </tr>
+        {{end}}
+        </tbody>
+      </table>
+      <details>
+        <summary class="cursor-pointer text-sm text-muted-foreground">raw report.json</summary>
+        <pre class="log mt-2">{{.Report}}</pre>
+      </details>
+    {{else if .Report}}
+      <pre class="log">{{.Report}}</pre>
+    {{else}}
+      <p class="text-muted-foreground text-sm p-4">No result yet.</p>
+    {{end}}
+  </div>
+
+  <div role="tabpanel" id="p2" aria-labelledby="t2" {{if ne $default 2}}hidden{{end}}>
+    {{if $live}}
+      <div hx-ext="sse" sse-connect="/events?scan={{.ID}}"
+           sse-swap="scan-status" hx-swap="none"
+           hx-on::sse-message="if(event.detail.type==='scan-status') location.reload()">
+        <pre class="log" sse-swap="scan-log" hx-swap="beforeend scroll:bottom">{{template "scan_log.html" .}}</pre>
+      </div>
+    {{else}}
+      <pre class="log">{{template "scan_log.html" .}}</pre>
+    {{end}}
+  </div>
+
+  {{if .Prompt}}
+  <div role="tabpanel" id="p3" aria-labelledby="t3" hidden>
+    <pre class="log">{{.Prompt}}</pre>
+  </div>
+  {{end}}
+</div>
+
+{{template "foot"}}

@@ -1,0 +1,136 @@
+{{define "threat_model"}}
+{{$tm := index . "TM"}}
+{{$htmlurl := index . "HTMLURL"}}
+{{$commit := index . "Commit"}}
+<section class="accordion">
+
+  {{if index $tm "boundaries"}}
+  <details open class="group border-b">
+    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
+        Trust boundaries
+        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
+      </h3>
+    </summary>
+    <section class="pb-4">
+      <table class="table w-full mb-4">
+        <thead><tr><th>Actor</th><th>Trusted</th><th>Controls</th><th>Source</th></tr></thead>
+        <tbody>
+        {{range index $tm "boundaries"}}
+          <tr>
+            <td class="font-medium whitespace-normal">{{index . "actor"}}</td>
+            <td>{{$t := index . "trusted"}}{{if eq $t "no"}}<span class="badge-destructive">no</span>{{else if eq $t "conditional"}}<span class="badge-primary">conditional</span>{{else}}<span class="badge-secondary">yes</span>{{end}}</td>
+            <td class="whitespace-normal text-sm">{{index . "controls"}}</td>
+            <td class="whitespace-normal text-muted-foreground text-xs">{{index . "source"}}</td>
+          </tr>
+        {{end}}
+        </tbody>
+      </table>
+      {{if index $tm "boundaries_narrative"}}
+        <pre class="log">{{index $tm "boundaries_narrative"}}</pre>
+      {{end}}
+    </section>
+  </details>
+  {{end}}
+
+  {{if index $tm "sink_primitives"}}
+  <details class="group border-b">
+    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
+        Sink primitives
+        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
+      </h3>
+    </summary>
+    <section class="pb-4">
+      <dl class="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-2 text-sm">
+        {{range $class, $prims := index $tm "sink_primitives"}}
+          <dt class="text-muted-foreground">{{$class}}</dt>
+          <dd>{{range $i, $p := $prims}}{{if $i}}, {{end}}<code>{{$p}}</code>{{end}}</dd>
+        {{end}}
+      </dl>
+    </section>
+  </details>
+  {{end}}
+
+  {{if index $tm "inventory"}}
+  <details open class="group border-b">
+    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
+        Sink inventory
+        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
+      </h3>
+    </summary>
+    <section class="pb-4">
+      <table class="table w-full">
+        <thead><tr><th class="w-16">ID</th><th>Location</th><th>Class</th><th>Primitive</th><th>Consumes</th></tr></thead>
+        <tbody>
+        {{range index $tm "inventory"}}
+          <tr>
+            <td><code>{{index . "id"}}</code></td>
+            {{$loc := index . "location"}}
+            <td class="whitespace-normal">{{template "loc-link" (dict "HTMLURL" $htmlurl "Commit" $commit "Location" $loc)}}</td>
+            <td class="whitespace-normal"><span class="badge-outline">{{index . "class"}}</span></td>
+            <td class="whitespace-normal text-sm">{{index . "primitive"}}</td>
+            <td class="whitespace-normal text-muted-foreground text-sm">{{index . "consumes"}}</td>
+          </tr>
+        {{end}}
+        </tbody>
+      </table>
+      {{if index $tm "inventory_notes"}}
+        <pre class="log mt-4">{{index $tm "inventory_notes"}}</pre>
+      {{end}}
+    </section>
+  </details>
+  {{end}}
+
+  {{if index $tm "ruled_out"}}
+  <details class="group border-b">
+    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
+        Ruled out
+        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
+      </h3>
+    </summary>
+    <section class="pb-4">
+      <table class="table w-full">
+        <thead><tr><th class="w-24">Sinks</th><th class="w-16">Step</th><th>Summary</th></tr></thead>
+        <tbody>
+        {{range index $tm "ruled_out"}}
+          <tr>
+            <td><code>{{range $i, $s := index . "sinks"}}{{if $i}}, {{end}}{{$s}}{{end}}</code></td>
+            <td class="text-muted-foreground">{{index . "step"}}</td>
+            <td class="whitespace-normal text-sm">{{if index . "summary"}}{{index . "summary"}}{{else}}{{index . "reason"}}{{end}}</td>
+          </tr>
+        {{end}}
+        </tbody>
+      </table>
+    </section>
+  </details>
+  {{end}}
+
+  {{if index $tm "prior_art"}}
+  <details class="group border-b">
+    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
+        Prior art
+        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
+      </h3>
+    </summary>
+    <section class="pb-4"><pre class="log">{{index $tm "prior_art"}}</pre></section>
+  </details>
+  {{end}}
+
+  {{if index $tm "reach"}}
+  <details class="group border-b last:border-b-0">
+    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
+        Reach
+        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
+      </h3>
+    </summary>
+    <section class="pb-4"><pre class="log">{{index $tm "reach"}}</pre></section>
+  </details>
+  {{end}}
+
+</section>
+{{end}}

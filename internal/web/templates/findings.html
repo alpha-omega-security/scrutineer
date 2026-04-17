@@ -1,0 +1,73 @@
+{{template "head"}}
+
+<div class="flex items-center justify-between gap-4 mb-6">
+  <h2 class="text-2xl font-semibold flex items-center gap-2">
+    <i data-lucide="bug"></i> Findings
+  </h2>
+  <div class="flex items-center gap-2">
+    <div class="dropdown-menu">
+      <button type="button" class="btn-outline" aria-haspopup="menu" aria-expanded="false">
+        <i data-lucide="filter"></i>
+        {{if .Severity}}{{.Severity}}{{else}}Severity{{end}}
+        <i data-lucide="chevron-down"></i>
+      </button>
+      <div data-popover aria-hidden="true" data-align="end">
+        <div role="menu">
+          <a role="menuitem" href="/findings?sort={{.Sort}}">All severities</a>
+          {{range (list "Critical" "High" "Medium" "Low")}}
+            <a role="menuitem" href="/findings?severity={{.}}&sort={{$.Sort}}"
+               {{if eq . $.Severity}}aria-current="true"{{end}}>{{.}}</a>
+          {{end}}
+        </div>
+      </div>
+    </div>
+    <div class="dropdown-menu">
+      <button type="button" class="btn-outline" aria-hashpopup="menu" aria-expanded="false">
+        <i data-lucide="arrow-down-wide-narrow"></i>
+        {{if eq .Sort "severity"}}Severity{{else if eq .Sort "repository"}}Repository{{else}}Newest{{end}}
+        <i data-lucide="chevron-down"></i>
+      </button>
+      <div data-popover aria-hidden="true" data-align="end">
+        <div role="menu">
+          {{range (list "newest" "severity" "repository")}}
+            <a role="menuitem" href="/findings?severity={{$.Severity}}&sort={{.}}"
+               {{if eq . $.Sort}}aria-current="true"{{end}}>{{.}}</a>
+          {{end}}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{{if .Findings}}
+  <table class="table table-fixed w-full">
+    <thead><tr>
+      <th class="w-24">Severity</th><th>Title</th><th class="w-24">Status</th>
+      <th class="w-32">Repository</th><th class="w-24">CWE</th>
+      <th class="w-56">Location</th><th class="w-16">Scan</th>
+    </tr></thead>
+    <tbody>
+    {{range .Findings}}
+      <tr class="cursor-pointer" hx-get="/findings/{{.ID}}" hx-target="body" hx-push-url="true">
+        <td>{{template "severity-badge" .Severity}}</td>
+        <td class="min-w-0 whitespace-normal">
+          <div class="font-medium">{{.Title}}</div>
+          <div class="text-xs text-muted-foreground line-clamp-2">{{.Summary}}</div>
+        </td>
+        <td>{{template "finding-status" (fstatus .Status)}}</td>
+        <td class="truncate">{{.Scan.Repository.Name}}</td>
+        <td class="text-muted-foreground">
+          {{if .CWE}}<span data-tooltip="{{cwename .CWE}}">{{.CWE}}</span>{{end}}
+        </td>
+        <td class="whitespace-normal">{{template "loc-link" (dict "HTMLURL" .Scan.Repository.HTMLURL "Commit" .Scan.Commit "Location" .Location)}}</td>
+        <td class="text-muted-foreground">#{{.ScanID}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{template "pagination" .Page}}
+{{else}}
+  {{template "empty" (dict "Icon" "bug" "Title" "No findings" "Body" "Findings appear here once a scan reports vulnerabilities.")}}
+{{end}}
+
+{{template "foot"}}

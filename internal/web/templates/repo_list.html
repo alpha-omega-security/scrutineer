@@ -1,0 +1,61 @@
+<div id="repos" hx-get="/repositories?page={{.Page.N}}&language={{.Language}}&sort={{.Sort}}" hx-trigger="every 5s" hx-swap="outerHTML">
+<div class="flex items-center justify-end gap-2 mb-4">
+  <div class="dropdown-menu">
+    <button type="button" class="btn-outline" aria-haspopup="menu" aria-expanded="false">
+      <i data-lucide="filter"></i>
+      {{if .Language}}{{.Language}}{{else}}Language{{end}}
+      <i data-lucide="chevron-down"></i>
+    </button>
+    <div data-popover aria-hidden="true" data-align="end">
+      <div role="menu">
+        <a role="menuitem" href="/?sort={{.Sort}}">All languages</a>
+        {{range .Languages}}
+          <a role="menuitem" href="/?language={{.}}&sort={{$.Sort}}"
+             {{if eq . $.Language}}aria-current="true"{{end}}>{{.}}</a>
+        {{end}}
+      </div>
+    </div>
+  </div>
+  <div class="dropdown-menu">
+    <button type="button" class="btn-outline" aria-haspopup="menu" aria-expanded="false">
+      <i data-lucide="arrow-down-wide-narrow"></i>
+      {{if eq .Sort "name"}}Name{{else if eq .Sort "stars"}}Stars{{else if eq .Sort "language"}}Language{{else}}Newest{{end}}
+      <i data-lucide="chevron-down"></i>
+    </button>
+    <div data-popover aria-hidden="true" data-align="end">
+      <div role="menu">
+        {{range (list "newest" "name" "stars" "language")}}
+          <a role="menuitem" href="/?language={{$.Language}}&sort={{.}}"
+             {{if eq . $.Sort}}aria-current="true"{{end}}>{{.}}</a>
+        {{end}}
+      </div>
+    </div>
+  </div>
+</div>
+{{if .Rows}}
+  <table class="table">
+    <thead>
+      <tr><th>Repository</th><th>Language</th><th>Last scan</th><th>Status</th><th>Findings</th><th></th></tr>
+    </thead>
+    <tbody>
+    {{range .Rows}}
+      <tr class="cursor-pointer" hx-get="/repositories/{{.ID}}" hx-target="body" hx-push-url="true">
+        <td>{{trimscheme .URL}}</td>
+        <td class="text-muted-foreground">{{if .Languages}}{{.Languages}}{{else}}-{{end}}</td>
+        <td>{{if .LastScan}}{{.LastScan.CreatedAt.Format "15:04:05"}}{{else}}never{{end}}</td>
+        <td>{{if .LastScan}}{{template "status-badge" (status .LastScan.Status)}}{{end}}</td>
+        <td>{{if and .LastScan (.LastScan.Status.Terminal)}}{{template "findings-badge" .LastScan.FindingsCount}}{{end}}</td>
+        <td>
+          <button class="btn-sm-outline"
+                  hx-post="/repositories/{{.ID}}/scan"
+                  hx-on:click="event.stopPropagation()"><i data-lucide="refresh-cw"></i> Rescan</button>
+        </td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{template "pagination" .Page}}
+{{else}}
+  {{template "empty" (dict "Icon" "folder-git-2" "Title" "No repositories yet" "Body" "Add a git URL above to queue the first scan.")}}
+{{end}}
+</div>

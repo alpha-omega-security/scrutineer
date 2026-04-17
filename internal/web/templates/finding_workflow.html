@@ -1,0 +1,97 @@
+{{define "finding_workflow"}}
+{{$id := .ID}}
+{{$s := printf "%s" .Status}}
+
+<div class="card mb-6">
+  <section class="flex items-start gap-4">
+    <div class="flex-1">
+      {{if eq $s "new"}}
+        <p class="text-sm mb-1 font-medium">Awaiting verification</p>
+        <p class="text-sm text-muted-foreground">This finding was identified by the claude audit. Verify it independently before triaging.</p>
+      {{else if eq $s "enriched"}}
+        <p class="text-sm mb-1 font-medium">Verification complete</p>
+        <p class="text-sm text-muted-foreground">The confirm job ran and validated this finding. Review the evidence and triage.</p>
+      {{else if eq $s "triaged"}}
+        <p class="text-sm mb-1 font-medium">Triaged, ready to prepare disclosure</p>
+        <p class="text-sm text-muted-foreground">You've confirmed this is a real finding. Next: prepare the disclosure draft with CVSS, references, and text.</p>
+      {{else if eq $s "ready"}}
+        <p class="text-sm mb-1 font-medium">Disclosure draft ready</p>
+        <p class="text-sm text-muted-foreground">The draft is prepared. Review it in the notes, edit if needed, then send to the maintainer.</p>
+      {{else if eq $s "reported"}}
+        <p class="text-sm mb-1 font-medium">Reported to maintainer</p>
+        <p class="text-sm text-muted-foreground">Waiting for a response. Update the status when they acknowledge.</p>
+      {{else if eq $s "acknowledged"}}
+        <p class="text-sm mb-1 font-medium">Maintainer acknowledged</p>
+        <p class="text-sm text-muted-foreground">The maintainer is working on a fix. Update when the fix ships.</p>
+      {{else if eq $s "fixed"}}
+        <p class="text-sm mb-1 font-medium">Fix available</p>
+        <p class="text-sm text-muted-foreground">A fix has been released. Publish the advisory when ready.</p>
+      {{else if eq $s "published"}}
+        <p class="text-sm mb-1 font-medium">Published</p>
+        <p class="text-sm text-muted-foreground">Advisory is public. This finding is complete.</p>
+      {{else if eq $s "rejected"}}
+        <p class="text-sm mb-1 font-medium">Rejected</p>
+        <p class="text-sm text-muted-foreground">This finding was determined to be invalid. Reopen if new evidence appears.</p>
+      {{else if eq $s "duplicate"}}
+        <p class="text-sm mb-1 font-medium">Duplicate</p>
+        <p class="text-sm text-muted-foreground">This finding duplicates an existing advisory or report.</p>
+      {{end}}
+    </div>
+
+    <div class="flex items-center gap-2 shrink-0">
+      {{if eq $s "new"}}
+        <button class="btn" hx-post="/findings/{{$id}}/verify" hx-swap="none">
+          <i data-lucide="shield-check"></i> Verify
+        </button>
+        <button class="btn-outline" hx-post="/findings/{{$id}}/status" hx-vals='{"status":"triaged"}' hx-swap="none">
+          Skip to triage
+        </button>
+        <button class="btn-ghost" hx-post="/findings/{{$id}}/status" hx-vals='{"status":"rejected"}' hx-swap="none">
+          Reject
+        </button>
+
+      {{else if eq $s "enriched"}}
+        <button class="btn" hx-post="/findings/{{$id}}/status" hx-vals='{"status":"triaged"}' hx-swap="none">
+          <i data-lucide="check"></i> Triage
+        </button>
+        <button class="btn-ghost" hx-post="/findings/{{$id}}/status" hx-vals='{"status":"rejected"}' hx-swap="none">
+          Reject
+        </button>
+
+      {{else if eq $s "triaged"}}
+        <button class="btn" hx-post="/findings/{{$id}}/status" hx-vals='{"status":"ready"}' hx-swap="none">
+          <i data-lucide="file-pen"></i> Prepare disclosure
+        </button>
+        <button class="btn-ghost" hx-post="/findings/{{$id}}/status" hx-vals='{"status":"rejected"}' hx-swap="none">
+          Reject
+        </button>
+
+      {{else if eq $s "ready"}}
+        <button class="btn" hx-post="/findings/{{$id}}/status" hx-vals='{"status":"reported"}' hx-swap="none">
+          <i data-lucide="send"></i> Mark as reported
+        </button>
+
+      {{else if eq $s "reported"}}
+        <button class="btn" hx-post="/findings/{{$id}}/status" hx-vals='{"status":"acknowledged"}' hx-swap="none">
+          <i data-lucide="message-circle"></i> Acknowledged
+        </button>
+
+      {{else if eq $s "acknowledged"}}
+        <button class="btn" hx-post="/findings/{{$id}}/status" hx-vals='{"status":"fixed"}' hx-swap="none">
+          <i data-lucide="wrench"></i> Mark fixed
+        </button>
+
+      {{else if eq $s "fixed"}}
+        <button class="btn" hx-post="/findings/{{$id}}/status" hx-vals='{"status":"published"}' hx-swap="none">
+          <i data-lucide="globe"></i> Publish
+        </button>
+
+      {{else if or (eq $s "rejected") (eq $s "duplicate")}}
+        <button class="btn-outline" hx-post="/findings/{{$id}}/status" hx-vals='{"status":"new"}' hx-swap="none">
+          <i data-lucide="rotate-ccw"></i> Reopen
+        </button>
+      {{end}}
+    </div>
+  </section>
+</div>
+{{end}}

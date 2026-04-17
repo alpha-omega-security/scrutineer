@@ -1,0 +1,315 @@
+{{template "head"}}
+
+<div class="flex items-start justify-between gap-4 mb-6">
+  <div>
+    {{template "crumbs" (crumbs "Repositories" "/" .Repo.Name "")}}
+    <h2 class="text-2xl font-semibold mt-1 flex items-center gap-2">
+      <i data-lucide="folder-git-2"></i> {{.Repo.Name}}
+    </h2>
+    <a href="{{.Repo.URL}}" target="_blank" rel="noopener"
+       class="text-sm text-muted-foreground hover:underline inline-flex items-center gap-1">
+      {{.Repo.URL}}<i data-lucide="external-link" class="size-3"></i>
+    </a>
+  </div>
+  <form hx-post="/repositories/{{.Repo.ID}}/scan">
+    <div role="group" class="button-group">
+      <button class="btn" type="submit"><i data-lucide="play"></i> New scan</button>
+      <div class="dropdown-menu">
+        <button type="button" class="btn-icon" aria-haspopup="menu" aria-expanded="false"
+                aria-controls="scan-model-menu">
+          <i data-lucide="chevron-down"></i>
+        </button>
+        <div data-popover aria-hidden="true" data-align="end">
+          <div role="menu" id="scan-model-menu">
+            {{range models}}
+              <button type="submit" role="menuitem" name="model" value="{{.ID}}">
+                {{.Name}}<span class="text-muted-foreground ml-auto text-xs">{{.ID}}</span>
+              </button>
+            {{end}}
+          </div>
+        </div>
+      </div>
+    </div>
+  </form>
+</div>
+
+<div class="tabs w-full" id="repo-tabs">
+  {{$findings := and .Latest .Latest.Findings}}
+  <nav role="tablist" aria-orientation="horizontal">
+    <button type="button" role="tab" id="rt1" aria-controls="rp1" aria-selected="true">Summary</button>
+    {{if $findings}}
+      <button type="button" role="tab" id="rt4" aria-controls="rp4" aria-selected="false">
+        Findings <span class="badge-destructive ml-1">{{len .Latest.Findings}}</span>
+      </button>
+    {{end}}
+    {{if .Pkgs}}
+    <button type="button" role="tab" id="rt6" aria-controls="rp6" aria-selected="false">
+      Packages
+    </button>
+    {{end}}
+    <button type="button" role="tab" id="rt5" aria-controls="rp5" aria-selected="false">
+      Dependencies
+    </button>
+    {{if .ThreatModel}}
+    <button type="button" role="tab" id="rt10" aria-controls="rp10" aria-selected="false">
+      Threat Model
+    </button>
+    {{end}}
+    {{if .Advisories}}
+    <button type="button" role="tab" id="rt8" aria-controls="rp8" aria-selected="false">
+      Advisories
+    </button>
+    {{end}}
+    {{if .Dependents}}
+    <button type="button" role="tab" id="rt7" aria-controls="rp7" aria-selected="false">
+      Dependents
+    </button>
+    {{end}}
+    <button type="button" role="tab" id="rt9" aria-controls="rp9" aria-selected="false">
+      Maintainers
+    </button>
+    <button type="button" role="tab" id="rt2" aria-controls="rp2" aria-selected="false">Data</button>
+    <button type="button" role="tab" id="rt3" aria-controls="rp3" aria-selected="false">Scans</button>
+  </nav>
+
+  <div role="tabpanel" id="rp1" aria-labelledby="rt1">
+    {{if .Repo.FetchedAt}}
+      {{if .Repo.Description}}<p class="mb-4 max-w-3xl">{{.Repo.Description}}</p>{{end}}
+      <div class="flex flex-wrap gap-2 mb-6">
+        {{if .Repo.Languages}}<span class="badge-outline"><i data-lucide="code"></i>{{.Repo.Languages}}</span>{{end}}
+        {{if .Repo.DefaultBranch}}<span class="badge-outline"><i data-lucide="git-branch"></i>{{.Repo.DefaultBranch}}</span>{{end}}
+        {{if .Repo.Stars}}<span class="badge-outline"><i data-lucide="star"></i>{{bignum .Repo.Stars}}</span>{{end}}
+        {{if .Repo.License}}<span class="badge-outline"><i data-lucide="scale"></i>{{.Repo.License}}</span>{{end}}
+        {{if .Repo.PushedAt}}<span class="badge-outline"><i data-lucide="clock"></i>pushed {{since .Repo.PushedAt}}</span>{{end}}
+        {{if .Repo.Archived}}<span class="badge-destructive"><i data-lucide="archive"></i>archived</span>{{end}}
+      </div>
+    {{else}}
+      <p class="text-muted-foreground text-sm mb-6">Metadata not fetched yet.</p>
+    {{end}}
+
+    {{if .Latest}}
+      <h3 class="font-medium mb-2">Latest scan</h3>
+      <a href="/scans/{{.Latest.ID}}" class="text-sm text-muted-foreground mb-2 inline-flex items-center gap-1 hover:underline">
+        #{{.Latest.ID}} &middot; {{.Latest.Model}} &middot; {{since .Latest.StartedAt}}
+        &middot; {{template "status-badge" (status .Latest.Status)}}
+      </a>
+      {{if .Latest.Findings}}
+        <table class="table table-fixed w-full">
+          <thead><tr>
+            <th class="w-24">Severity</th><th>Title</th><th class="w-64">Location</th>
+          </tr></thead>
+          <tbody>
+          {{range .Latest.Findings}}
+            <tr class="cursor-pointer" hx-get="/findings/{{.ID}}" hx-target="body" hx-push-url="true">
+              <td>{{template "severity-badge" .Severity}}</td>
+              <td class="min-w-0 whitespace-normal">{{.Title}}</td>
+              <td class="whitespace-normal"><code class="text-xs break-all">{{.Location}}</code></td>
+            </tr>
+          {{end}}
+          </tbody>
+        </table>
+      {{else if eq (status .Latest.Status) "done"}}
+        <p class="text-sm">No findings.</p>
+      {{end}}
+    {{end}}
+  </div>
+
+  {{if $findings}}
+  <div role="tabpanel" id="rp4" aria-labelledby="rt4" hidden>
+    <p class="text-sm text-muted-foreground mb-4">
+      From scan <a class="underline" href="/scans/{{.Latest.ID}}">#{{.Latest.ID}}</a>
+      ({{.Latest.Model}}, {{since .Latest.StartedAt}}).
+    </p>
+    <div class="grid gap-4">
+      {{range .Latest.Findings}}
+        <div class="card cursor-pointer" hx-get="/findings/{{.ID}}" hx-target="body" hx-push-url="true">
+          <header>
+            <div class="flex items-center gap-2">
+              {{template "severity-badge" .Severity}}
+              <h3>{{.Title}}</h3>
+              {{if .CWE}}<span class="badge-outline ml-auto" data-tooltip="{{cwename .CWE}}">{{.CWE}}</span>{{end}}
+            </div>
+            <p><code class="text-xs">{{.Location}}</code></p>
+          </header>
+          <section class="text-sm">
+            <p class="line-clamp-3">{{.Summary}}</p>
+          </section>
+        </div>
+      {{end}}
+    </div>
+  </div>
+  {{end}}
+
+  {{if .Pkgs}}
+  <div role="tabpanel" id="rp6" aria-labelledby="rt6" hidden>
+    <table class="table w-full">
+      <thead><tr>
+        <th>Name</th><th>Ecosystem</th><th>Registry</th>
+        <th>Latest</th><th>Downloads</th>
+        <th>Dependents</th>
+      </tr></thead>
+      <tbody>
+      {{range .Pkgs}}
+        <tr class="cursor-pointer" hx-get="/packages/{{.ID}}" hx-target="body" hx-push-url="true">
+          <td class="whitespace-normal font-medium">{{.Name}}</td>
+          <td><span class="badge-outline">{{.Ecosystem}}</span></td>
+          <td class="text-muted-foreground">{{if .RegistryURL}}{{domain .RegistryURL}}{{end}}</td>
+          <td class="text-muted-foreground">{{.LatestVersion}}</td>
+          <td class="text-muted-foreground">{{bignum .Downloads}}</td>
+          <td class="text-muted-foreground">{{bignum .DependentPackages}} pkgs / {{bignum .DependentRepos}} repos</td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{end}}
+
+  <div role="tabpanel" id="rp5" aria-labelledby="rt5" hidden>
+    {{if .Deps}}
+      <table class="table w-full">
+        <thead><tr>
+          <th>Name</th><th>Ecosystem</th>
+          <th>Version</th><th>Type</th><th>Manifests</th><th class="w-16"></th>
+        </tr></thead>
+        <tbody>
+        {{range .Deps}}
+          <tr>
+            <td class="whitespace-normal font-medium"><code class="text-sm break-all">{{.Name}}</code></td>
+            <td><span class="badge-outline">{{.Ecosystem}}</span></td>
+            <td class="text-muted-foreground whitespace-normal break-all">{{if .Requirement}}{{.Requirement}}{{else}}-{{end}}</td>
+            <td class="text-muted-foreground">{{.DependencyType}}</td>
+            <td class="whitespace-normal text-muted-foreground text-xs">{{range $i, $m := .Manifests}}{{if $i}}, {{end}}{{$m}}{{end}}</td>
+            <td>{{if .PURL}}{{$rid := lookup $.KnownPURLs .PURL}}{{if $rid}}<a href="/repositories/{{$rid}}" class="btn-sm-ghost" data-tooltip="View repository"><i data-lucide="external-link"></i></a>{{else}}<button class="btn-sm-ghost" hx-post="/dependencies/{{.ID}}/scan" hx-swap="none"
+                data-tooltip="Import repository"><i data-lucide="import"></i></button>{{end}}{{end}}</td>
+          </tr>
+        {{end}}
+        </tbody>
+      </table>
+    {{else}}
+      <p class="text-muted-foreground text-sm p-4">No dependencies indexed yet. The git-pkgs job populates this.</p>
+    {{end}}
+  </div>
+
+  {{if .ThreatModel}}
+  <div role="tabpanel" id="rp10" aria-labelledby="rt10" hidden>
+    {{template "threat_model" (dict "TM" .ThreatModel "HTMLURL" .Repo.HTMLURL "Commit" $.TMCommit)}}
+  </div>
+  {{end}}
+
+  {{if .Advisories}}
+  <div role="tabpanel" id="rp8" aria-labelledby="rt8" hidden>
+    <table class="table w-full">
+      <thead><tr>
+        <th>Severity</th><th>CVSS</th><th>Title</th><th>Packages</th><th>Published</th><th class="w-16"></th>
+      </tr></thead>
+      <tbody>
+      {{range .Advisories}}
+        <tr>
+          <td>{{template "severity-badge" .Severity}}</td>
+          <td class="text-muted-foreground">{{if .CVSSScore}}{{printf "%.1f" .CVSSScore}}{{end}}</td>
+          <td class="whitespace-normal">
+            <div class="font-medium">{{.Title}}</div>
+            {{if .WithdrawnAt}}<span class="badge-outline text-xs">withdrawn</span>{{end}}
+          </td>
+          <td class="whitespace-normal text-muted-foreground text-xs">{{.Packages}}</td>
+          <td class="text-muted-foreground">{{if .PublishedAt}}{{since .PublishedAt}}{{end}}</td>
+          <td>{{if .URL}}<a href="{{.URL}}" target="_blank" rel="noopener" class="btn-sm-ghost"
+              data-tooltip="View advisory"><i data-lucide="external-link"></i></a>{{end}}</td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{end}}
+
+  {{if .Dependents}}
+  <div role="tabpanel" id="rp7" aria-labelledby="rt7" hidden>
+    <table class="table w-full">
+      <thead><tr>
+        <th>Name</th><th>Ecosystem</th><th>Latest</th>
+        <th>Downloads</th><th>Dependents</th><th class="w-16"></th>
+      </tr></thead>
+      <tbody>
+      {{range .Dependents}}
+        <tr>
+          <td class="whitespace-normal font-medium">{{.Name}}</td>
+          <td><span class="badge-outline">{{.Ecosystem}}</span></td>
+          <td class="text-muted-foreground">{{.LatestVersion}}</td>
+          <td class="text-muted-foreground">{{bignum .Downloads}}</td>
+          <td class="text-muted-foreground">{{bignum .DependentRepos}} repos</td>
+          <td>{{if .RepositoryURL}}{{$rid := lookup $.KnownURLs .RepositoryURL}}{{if $rid}}<a href="/repositories/{{$rid}}" class="btn-sm-ghost" data-tooltip="View repository"><i data-lucide="external-link"></i></a>{{else}}<button class="btn-sm-ghost" hx-post="/dependents/{{.ID}}/scan" hx-swap="none"
+              data-tooltip="Import repository"><i data-lucide="import"></i></button>{{end}}{{end}}</td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{end}}
+
+  <div role="tabpanel" id="rp9" aria-labelledby="rt9" hidden>
+    {{if .Maintainers}}
+    <table class="table w-full">
+      <thead><tr><th>Login</th><th>Name</th><th>Email</th><th>Status</th></tr></thead>
+      <tbody>
+      {{range .Maintainers}}
+        <tr class="cursor-pointer" hx-get="/maintainers/{{.ID}}" hx-target="body" hx-push-url="true">
+          <td class="font-medium">{{.Login}}</td>
+          <td>{{.Name}}</td>
+          <td class="text-muted-foreground">{{.Email}}</td>
+          <td>{{template "status-badge" (printf "%s" .Status)}}</td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+    {{else}}
+      <p class="text-muted-foreground text-sm">No maintainers identified yet. Click the button above to run the analysis.</p>
+    {{end}}
+  </div>
+
+  <div role="tabpanel" id="rp2" aria-labelledby="rt2" hidden>
+    {{if .Repo.Metadata}}
+      {{jsontree .Repo.Metadata}}
+      <details class="mt-4">
+        <summary class="cursor-pointer text-sm text-muted-foreground">raw json</summary>
+        <pre class="log mt-2">{{.Repo.Metadata}}</pre>
+      </details>
+    {{else}}
+      <p class="text-muted-foreground text-sm p-4">No metadata stored.</p>
+    {{end}}
+  </div>
+
+  <div role="tabpanel" id="rp3" aria-labelledby="rt3" hidden>
+    <table class="table">
+      <thead>
+        <tr><th>#</th><th>Kind</th><th>Status</th><th>Findings</th><th>Model</th><th>Commit</th><th>Started</th><th>Duration</th></tr>
+      </thead>
+      {{template "scan_rows" .}}
+    </table>
+  </div>
+
+  {{if .Active}}
+    <div hx-ext="sse" sse-connect="/events?repo={{.Repo.ID}}"
+         sse-swap="scan-status" hx-swap="none"
+         hx-on::sse-message="if(event.detail.type==='scan-status') location.reload()"
+         hidden></div>
+  {{end}}
+</div>
+
+{{template "foot"}}
+
+{{define "scan_rows"}}
+<tbody id="scan-rows">
+{{range .Scans}}
+  <tr class="cursor-pointer" hx-get="/scans/{{.ID}}" hx-target="body" hx-push-url="true">
+    <td>{{.ID}}</td>
+    <td>{{.Kind}}</td>
+    <td>{{template "status-badge" (status .Status)}}</td>
+    <td>{{if eq .Kind "claude"}}{{template "findings-badge" .FindingsCount}}{{end}}</td>
+    <td class="text-muted-foreground">{{if .Model}}{{.Model}}{{else}}-{{end}}</td>
+    <td><code>{{short .Commit}}</code></td>
+    <td>{{if .StartedAt}}{{since .StartedAt}}{{end}}</td>
+    <td>{{if .FinishedAt}}{{dur .Duration}}{{end}}</td>
+  </tr>
+{{end}}
+</tbody>
+{{end}}

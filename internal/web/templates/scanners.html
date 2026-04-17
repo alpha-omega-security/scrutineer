@@ -1,0 +1,39 @@
+{{template "head"}}
+
+<h2 class="text-2xl font-semibold mb-6 flex items-center gap-2">
+  <i data-lucide="scan-search"></i> Scans
+</h2>
+
+<div class="grid gap-6">
+{{range .}}
+  <div class="card">
+    <header>
+      <div class="flex items-center gap-2">
+        <h3>{{.Name}}</h3>
+        <span class="badge-outline">{{.ID}}</span>
+        <span class="badge-secondary">priority {{.Priority}}</span>
+        <a href="/jobs?kind={{.ID}}" class="btn-sm-ghost ml-auto">
+          <i data-lucide="list-checks"></i> Jobs
+        </a>
+      </div>
+      <p>{{.Description}}</p>
+    </header>
+    {{if .Prompt}}
+      <section>
+        <details>
+          <summary class="cursor-pointer text-sm font-medium">Prompt</summary>
+          <pre class="log mt-2">{{.Prompt}}</pre>
+        </details>
+        {{if .Schema}}
+          <details class="mt-2">
+            <summary class="cursor-pointer text-sm font-medium">Output schema</summary>
+            <pre class="log mt-2">{{.Schema}}</pre>
+          </details>
+        {{end}}
+      </section>
+    {{end}}
+  </div>
+{{end}}
+</div>
+
+{{template "foot"}}

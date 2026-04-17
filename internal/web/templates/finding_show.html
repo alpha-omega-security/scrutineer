@@ -1,0 +1,185 @@
+{{template "head"}}
+{{$f := .F}}
+
+{{template "crumbs" (crumbs
+  "Findings" "/findings"
+  $f.Scan.Repository.Name (printf "/repositories/%d" $f.Scan.Repository.ID)
+  (printf "scan #%d" $f.ScanID) (printf "/scans/%d" $f.ScanID)
+  (printf "finding #%d" $f.ID) "")}}
+
+<h2 class="text-2xl font-semibold mt-1 mb-4 flex items-center gap-3">
+  {{$f.Title}}
+  {{template "finding-status" (fstatus $f.Status)}}
+</h2>
+
+{{template "finding_workflow" $f}}
+
+<dl class="grid grid-cols-2 sm:grid-cols-6 gap-4 mb-6 text-sm">
+  <div>
+    <dt class="text-muted-foreground">Severity</dt>
+    <dd>{{$f.Severity}}</dd>
+  </div>
+  <div>
+    <dt class="text-muted-foreground">CWE</dt>
+    <dd>{{if $f.CWE}}{{$f.CWE}}{{else}}-{{end}}</dd>
+  </div>
+  <div>
+    <dt class="text-muted-foreground">Location</dt>
+    <dd>
+      {{$u := locurl $f.Scan.Repository.HTMLURL $f.Scan.Commit $f.Location}}
+      {{if $u}}<a href="{{$u}}" target="_blank" rel="noopener" class="underline underline-offset-2">
+        <code>{{$f.Location}}</code></a>
+      {{else}}<code>{{$f.Location}}</code>{{end}}
+    </dd>
+  </div>
+  <div>
+    <dt class="text-muted-foreground">Affected</dt>
+    <dd>{{if $f.Affected}}{{$f.Affected}}{{else}}-{{end}}</dd>
+  </div>
+  <div>
+    <dt class="text-muted-foreground">Sinks</dt>
+    <dd>{{if $f.Sinks}}<a href="/repositories/{{$f.Scan.Repository.ID}}#rt10"
+        class="underline underline-offset-2"><code>{{$f.Sinks}}</code></a>{{else}}-{{end}}</dd>
+  </div>
+  <div>
+    <dt class="text-muted-foreground">Model</dt>
+    <dd>{{$f.Scan.Model}}</dd>
+  </div>
+</dl>
+
+<section class="accordion">
+  {{if $f.Trace}}
+  <details open class="group border-b">
+    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
+        Step 1: Trace
+        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
+      </h3>
+    </summary>
+    <section class="pb-4"><pre class="log">{{$f.Trace}}</pre></section>
+  </details>
+  {{end}}
+
+  {{if $f.Boundary}}
+  <details class="group border-b">
+    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
+        Step 2: Trust boundary
+        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
+      </h3>
+    </summary>
+    <section class="pb-4"><pre class="log">{{$f.Boundary}}</pre></section>
+  </details>
+  {{end}}
+
+  {{if $f.Validation}}
+  <details open class="group border-b">
+    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
+        Step 3: Validation
+        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
+      </h3>
+    </summary>
+    <section class="pb-4"><pre class="log">{{$f.Validation}}</pre></section>
+  </details>
+  {{end}}
+
+  {{if $f.PriorArt}}
+  <details class="group border-b">
+    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
+        Step 4: Prior art
+        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
+      </h3>
+    </summary>
+    <section class="pb-4"><pre class="log">{{$f.PriorArt}}</pre></section>
+  </details>
+  {{end}}
+
+  {{if $f.Reach}}
+  <details class="group border-b">
+    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
+        Step 5: Reach
+        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
+      </h3>
+    </summary>
+    <section class="pb-4"><pre class="log">{{$f.Reach}}</pre></section>
+  </details>
+  {{end}}
+
+  {{if $f.Rating}}
+  <details class="group border-b">
+    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
+        Step 6: Rating
+        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
+      </h3>
+    </summary>
+    <section class="pb-4"><pre class="log">{{$f.Rating}}</pre></section>
+  </details>
+  {{end}}
+
+  {{/* Legacy fields for old-schema reports */}}
+  {{if and (not $f.Trace) $f.Summary}}
+  <details open class="group border-b">
+    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
+        Summary
+        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
+      </h3>
+    </summary>
+    <section class="pb-4 text-sm whitespace-pre-wrap">{{$f.Summary}}</section>
+  </details>
+  {{end}}
+
+  {{if $f.Details}}
+  <details class="group border-b">
+    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
+        Details
+        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
+      </h3>
+    </summary>
+    <section class="pb-4"><pre class="log">{{$f.Details}}</pre></section>
+  </details>
+  {{end}}
+
+  <details open class="group border-b">
+    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
+        Notes
+        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
+      </h3>
+    </summary>
+    <section class="pb-4">
+      <form hx-post="/findings/{{$f.ID}}/notes" hx-swap="none" class="form grid gap-2">
+        <textarea class="input" name="notes" rows="4" placeholder="Triage notes, communication log, context...">{{$f.Notes}}</textarea>
+        <div class="flex justify-end">
+          <button type="submit" class="btn-sm">Save notes</button>
+        </div>
+      </form>
+    </section>
+  </details>
+
+  {{if .CWE}}
+  <details class="group border-b last:border-b-0">
+    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
+        {{.CWE.ID}}: {{.CWE.Name}}
+        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
+      </h3>
+    </summary>
+    <section class="pb-4 text-sm">
+      <p class="mb-2">{{.CWE.Description}}</p>
+      <a href="https://cwe.mitre.org/data/definitions/{{slice .CWE.ID 4}}.html"
+         target="_blank" rel="noopener"
+         class="text-muted-foreground hover:underline inline-flex items-center gap-1">
+        cwe.mitre.org<i data-lucide="external-link" class="size-3"></i>
+      </a>
+    </section>
+  </details>
+  {{end}}
+</section>
+
+{{template "foot"}}

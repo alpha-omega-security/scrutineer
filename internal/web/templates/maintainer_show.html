@@ -1,0 +1,75 @@
+{{template "head"}}
+{{$m := .M}}
+
+{{template "crumbs" (crumbs "Maintainers" "/maintainers" $m.Login "")}}
+
+<div class="flex items-start gap-4 mb-6">
+  {{if $m.AvatarURL}}
+    <img src="{{$m.AvatarURL}}" class="size-16 rounded-full" alt="{{$m.Login}}">
+  {{end}}
+  <div>
+    <h2 class="text-2xl font-semibold">{{if $m.Name}}{{$m.Name}}{{else}}{{$m.Login}}{{end}}</h2>
+    <p class="text-muted-foreground">
+      {{$m.Login}}{{if $m.Company}} &middot; {{$m.Company}}{{end}}
+    </p>
+    {{if $m.Email}}<p class="text-sm text-muted-foreground">{{$m.Email}}</p>{{end}}
+  </div>
+  <span class="ml-auto">{{template "status-badge" (printf "%s" $m.Status)}}</span>
+</div>
+
+<div class="tabs w-full" id="maintainer-tabs">
+  <nav role="tablist" aria-orientation="horizontal">
+    <button type="button" role="tab" id="mt1" aria-controls="mp1" aria-selected="true">Repositories</button>
+    {{if .Findings}}
+    <button type="button" role="tab" id="mt2" aria-controls="mp2" aria-selected="false">
+      Findings <span class="badge-destructive ml-1">{{len .Findings}}</span>
+    </button>
+    {{end}}
+  </nav>
+
+  <div role="tabpanel" id="mp1" aria-labelledby="mt1">
+    {{if $m.Repositories}}
+      <table class="table w-full">
+        <thead><tr><th>Repository</th><th>Language</th><th>Stars</th></tr></thead>
+        <tbody>
+        {{range $m.Repositories}}
+          <tr class="cursor-pointer" hx-get="/repositories/{{.ID}}" hx-target="body" hx-push-url="true">
+            <td class="font-medium">{{trimscheme .URL}}</td>
+            <td class="text-muted-foreground">{{.Languages}}</td>
+            <td class="text-muted-foreground">{{if .Stars}}{{bignum .Stars}}{{end}}</td>
+          </tr>
+        {{end}}
+        </tbody>
+      </table>
+    {{else}}
+      <p class="text-muted-foreground text-sm p-4">No repositories linked.</p>
+    {{end}}
+  </div>
+
+  {{if .Findings}}
+  <div role="tabpanel" id="mp2" aria-labelledby="mt2" hidden>
+    <table class="table table-fixed w-full">
+      <thead><tr>
+        <th class="w-24">Severity</th><th>Title</th><th class="w-32">Repository</th><th class="w-24">CWE</th>
+      </tr></thead>
+      <tbody>
+      {{range .Findings}}
+        <tr class="cursor-pointer" hx-get="/findings/{{.ID}}" hx-target="body" hx-push-url="true">
+          <td>{{template "severity-badge" .Severity}}</td>
+          <td class="min-w-0 whitespace-normal">
+            <div class="font-medium">{{.Title}}</div>
+            <div class="text-xs text-muted-foreground line-clamp-1">{{.Summary}}</div>
+          </td>
+          <td class="truncate">{{.Scan.Repository.Name}}</td>
+          <td class="text-muted-foreground">
+            {{if .CWE}}<span data-tooltip="{{cwename .CWE}}">{{.CWE}}</span>{{end}}
+          </td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{end}}
+</div>
+
+{{template "foot"}}

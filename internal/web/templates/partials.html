@@ -1,0 +1,52 @@
+{{define "crumbs"}}
+<ol class="text-muted-foreground flex flex-wrap items-center gap-1.5 text-sm sm:gap-2.5 mb-2">
+  {{range $i, $c := .}}
+    {{if $i}}<li><i data-lucide="chevron-right" class="size-3.5"></i></li>{{end}}
+    <li class="inline-flex items-center gap-1.5">
+      {{if $c.URL}}<a href="{{$c.URL}}" class="hover:text-foreground">{{$c.Label}}</a>
+      {{else}}<span class="text-foreground">{{$c.Label}}</span>{{end}}
+    </li>
+  {{end}}
+</ol>
+{{end}}
+
+{{define "pagination"}}
+{{if gt .Pages 1}}
+<nav aria-label="pagination" class="mx-auto flex w-full justify-center mt-6" hx-boost="false">
+  <ul class="flex flex-row items-center gap-1">
+    <li>
+      {{if gt .N 1}}<a href="{{.PrevURL}}" class="btn-ghost"><i data-lucide="chevron-left"></i> Previous</a>
+      {{else}}<span class="btn-ghost opacity-50 pointer-events-none"><i data-lucide="chevron-left"></i> Previous</span>{{end}}
+    </li>
+    <li><span class="btn-icon-outline">{{.N}}</span></li>
+    <li class="text-muted-foreground text-sm px-2">of {{.Pages}}</li>
+    <li>
+      {{if lt .N .Pages}}<a href="{{.NextURL}}" class="btn-ghost">Next <i data-lucide="chevron-right"></i></a>
+      {{else}}<span class="btn-ghost opacity-50 pointer-events-none">Next <i data-lucide="chevron-right"></i></span>{{end}}
+    </li>
+  </ul>
+</nav>
+{{end}}
+{{end}}
+
+{{define "loc-link"}}
+  {{$u := locurl .HTMLURL .Commit .Location}}
+  {{if $u}}
+    <a href="{{$u}}" target="_blank" rel="noopener" hx-on:click="event.stopPropagation()"
+       class="hover:underline"><code class="text-xs break-all">{{.Location}}</code></a>
+  {{else}}
+    <code class="text-xs break-all">{{.Location}}</code>
+  {{end}}
+{{end}}
+
+{{define "empty"}}
+<div class="flex flex-col items-center justify-center gap-4 rounded-lg border border-dashed p-12 text-center">
+  <div class="bg-muted text-foreground flex size-12 items-center justify-center rounded-lg">
+    <i data-lucide="{{.Icon}}"></i>
+  </div>
+  <header class="flex max-w-sm flex-col items-center gap-1">
+    <h3 class="text-lg font-medium tracking-tight">{{.Title}}</h3>
+    <p class="text-muted-foreground text-sm">{{.Body}}</p>
+  </header>
+</div>
+{{end}}

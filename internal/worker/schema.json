@@ -1,0 +1,253 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/andrew/security-research/spec-json.schema.json",
+  "title": "spec-deep report (machine-readable)",
+  "description": "JSON form of a spec-deep audit report. Structured fields mirror the frontmatter; body sections are carried as markdown strings so the original report can be reconstructed or sliced.",
+  "type": "object",
+  "required": [
+    "repository",
+    "commit",
+    "spec_version",
+    "model",
+    "date",
+    "languages",
+    "boundaries",
+    "inventory",
+    "findings",
+    "ruled_out"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "repository": {
+      "type": "string",
+      "format": "uri",
+      "description": "Source repository URL."
+    },
+    "commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{7,40}$",
+      "description": "Commit hash the audit was run against."
+    },
+    "artefact": {
+      "type": "string",
+      "description": "Registry artefact verified against the commit, e.g. 'npm lilconfig@3.1.3'. Free text; may include a parenthetical diff note."
+    },
+    "spec_version": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "spec-deep version this report was produced under."
+    },
+    "model": {
+      "type": "string",
+      "description": "Model name and version that produced the report."
+    },
+    "date": {
+      "type": "string",
+      "format": "date"
+    },
+    "files_reviewed": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "languages": {
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1
+    },
+
+    "boundaries": {
+      "type": "array",
+      "description": "Trust boundaries named at the start of Phase 1.",
+      "items": { "$ref": "#/$defs/boundary" },
+      "minItems": 1
+    },
+    "boundaries_narrative": {
+      "$ref": "#/$defs/markdown",
+      "description": "The prose 'Trust boundaries' section from the report body. Expands on the structured list with rationale."
+    },
+
+    "sink_primitives": {
+      "type": "object",
+      "description": "Per-language mapping from spec sink class to the concrete primitives grepped for. Corresponds to the 'X primitives mapped to spec sink classes' table.",
+      "propertyNames": { "$ref": "#/$defs/sink_class" },
+      "additionalProperties": {
+        "type": "array",
+        "items": { "type": "string" }
+      }
+    },
+    "inventory": {
+      "type": "array",
+      "description": "Phase 1 sink inventory. Every sink in the codebase, before judgement.",
+      "items": { "$ref": "#/$defs/sink" }
+    },
+    "inventory_notes": {
+      "$ref": "#/$defs/markdown",
+      "description": "Prose accompanying the inventory: grep targets that returned nothing, artefact packaging notes, anything that is about the inventory as a whole rather than one sink."
+    },
+
+    "findings": {
+      "type": "array",
+      "description": "Sinks that survived all six steps. Empty array for a clean report.",
+      "items": { "$ref": "#/$defs/finding" }
+    },
+
+    "ruled_out": {
+      "type": "array",
+      "description": "Sinks that did not become findings, with the step that stopped each and why. Every inventory sink id should appear either here or in a finding's `sinks` list.",
+      "items": { "$ref": "#/$defs/ruled_out_entry" }
+    },
+
+    "prior_art": {
+      "$ref": "#/$defs/markdown",
+      "description": "Report-level prior-art search: git log greps, advisory database lookups, issue tracker review. Per-finding prior art lives on the finding."
+    },
+    "reach": {
+      "$ref": "#/$defs/markdown",
+      "description": "Report-level reach: dependent counts, download numbers, top consumers and how they call the library. Per-finding reach lives on the finding."
+    }
+  },
+
+  "$defs": {
+    "markdown":   { "$ref": "defs.schema.json#/$defs/markdown" },
+    "sink_id":    { "$ref": "defs.schema.json#/$defs/sink_id" },
+    "finding_id": { "$ref": "defs.schema.json#/$defs/finding_id" },
+    "severity":   { "$ref": "defs.schema.json#/$defs/severity" },
+    "step":       { "$ref": "defs.schema.json#/$defs/step" },
+    "sink_class": { "$ref": "defs.schema.json#/$defs/sink_class" },
+
+    "boundary": {
+      "type": "object",
+      "required": ["actor", "trusted", "controls", "source"],
+      "additionalProperties": false,
+      "properties": {
+        "actor": { "type": "string" },
+        "trusted": { "$ref": "defs.schema.json#/$defs/trusted" },
+        "controls": {
+          "type": "string",
+          "description": "What this actor supplies to the library."
+        },
+        "source": {
+          "type": "string",
+          "description": "Where the trust judgement is documented, or 'derived' if inferred."
+        }
+      }
+    },
+
+    "sink": {
+      "type": "object",
+      "required": ["id", "location", "class", "consumes"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/sink_id" },
+        "location": {
+          "type": "string",
+          "description": "file:line or file:line-range."
+        },
+        "class": { "$ref": "#/$defs/sink_class" },
+        "primitive": {
+          "type": "string",
+          "description": "The concrete language construct or sub-kind: 'require', 'JSON.parse', 'TOCTOU access-then-read', 'SQL', 'FFI', 'regex backtracking'. Free text. Optional when the class alone is specific enough."
+        },
+        "consumes": {
+          "type": "string",
+          "description": "What value reaches the sink."
+        }
+      }
+    },
+
+    "ruled_out_entry": {
+      "type": "object",
+      "required": ["sinks", "step", "reason"],
+      "additionalProperties": false,
+      "properties": {
+        "sinks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/sink_id" },
+          "minItems": 1,
+          "description": "One or more inventory sinks this ruling covers (entries are often grouped, e.g. S1/S2/S3 share a ruling)."
+        },
+        "step": { "$ref": "#/$defs/step" },
+        "reason": {
+          "$ref": "#/$defs/markdown",
+          "description": "The body of the ruled-out entry: trace, what stopped it, any reproduction snippet. The full per-step prose, not a one-liner."
+        },
+        "summary": {
+          "type": "string",
+          "description": "One-line gist of why it was ruled out, for tabulation. Optional; derived from `reason` if absent."
+        }
+      }
+    },
+
+    "finding": {
+      "type": "object",
+      "required": [
+        "id",
+        "sinks",
+        "title",
+        "severity",
+        "cwe",
+        "location",
+        "trace",
+        "boundary",
+        "validation",
+        "rating"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "$ref": "#/$defs/finding_id" },
+        "sinks": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/sink_id" },
+          "minItems": 1,
+          "description": "Inventory sinks this finding covers."
+        },
+        "title": { "type": "string" },
+        "severity": { "$ref": "#/$defs/severity" },
+        "cwe": { "$ref": "defs.schema.json#/$defs/cwe" },
+        "location": {
+          "type": "string",
+          "description": "file:line of the vulnerable code."
+        },
+        "affected": {
+          "type": "string",
+          "description": "Version range, e.g. '>=2.1.4, <=3.0.3'."
+        },
+        "reach_checked": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of dependents examined."
+        },
+        "reach_exposed": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of examined dependents found exposed."
+        },
+
+        "trace": {
+          "$ref": "#/$defs/markdown",
+          "description": "Step 1: backwards trace from sink to library boundary."
+        },
+        "boundary": {
+          "$ref": "#/$defs/markdown",
+          "description": "Step 2: which trust boundary the input crosses and who controls it."
+        },
+        "validation": {
+          "$ref": "#/$defs/markdown",
+          "description": "Step 3: reproduction script and its output."
+        },
+        "prior_art": {
+          "$ref": "#/$defs/markdown",
+          "description": "Step 4: issue/PR/commit search specific to this finding."
+        },
+        "reach": {
+          "$ref": "#/$defs/markdown",
+          "description": "Step 5: dependent exposure specific to this finding."
+        },
+        "rating": {
+          "$ref": "#/$defs/markdown",
+          "description": "Step 6: severity justification and confidence statement."
+        }
+      }
+    }
+  }
+}
