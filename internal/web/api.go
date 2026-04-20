@@ -83,8 +83,15 @@ func (s *Server) apiHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /repositories/{id}", s.apiGetRepository)
 	mux.HandleFunc("GET /repositories/{id}/scans", s.apiListScans)
+	mux.HandleFunc("GET /repositories/{id}/maintainers", s.apiListMaintainers)
+	mux.HandleFunc("GET /repositories/{id}/packages", s.apiListPackages)
+	mux.HandleFunc("GET /repositories/{id}/advisories", s.apiListAdvisories)
+	mux.HandleFunc("GET /repositories/{id}/dependents", s.apiListDependents)
+	mux.HandleFunc("GET /repositories/{id}/dependencies", s.apiListDependencies)
+	mux.HandleFunc("GET /repositories/{id}/findings", s.apiListFindings)
 	mux.HandleFunc("POST /repositories/{id}/skills/{name}/run", s.apiRunSkill)
 	mux.HandleFunc("GET /scans/{id}", s.apiGetScan)
+	mux.HandleFunc("GET /findings/{id}", s.apiGetFinding)
 	mux.HandleFunc("GET /skills", s.apiListSkills)
 	return http.StripPrefix(apiPrefix, s.apiAuth(mux))
 }
@@ -124,6 +131,9 @@ func (s *Server) apiListScans(w http.ResponseWriter, r *http.Request) {
 	q := s.DB.Where("repository_id = ?", id).Order("id desc")
 	if status := r.URL.Query().Get("status"); status != "" {
 		q = q.Where("status = ?", status)
+	}
+	if skill := r.URL.Query().Get("skill"); skill != "" {
+		q = q.Where("skill_name = ?", skill)
 	}
 	var rows []db.Scan
 	q.Find(&rows)

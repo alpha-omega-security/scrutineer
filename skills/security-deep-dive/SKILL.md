@@ -15,9 +15,18 @@ The audit has two phases. Phase 1 produces an inventory of every sink in the cod
 
 Workspace layout:
 - `./src` — the cloned repository
-- `./context.json` — repo identity (url, default branch, etc)
+- `./context.json` — repo identity plus a `scrutineer` block with `api_base`, `token`, `repository_id`. If prior scans of this repo have run (metadata, packages, advisories, dependents, maintainers), their results are available at the API documented below; use them instead of re-fetching from upstream.
 - `./report.json` — write your final report here
 - `./schema.json` — the JSON schema your report must conform to
+
+Scrutineer API (call with `Authorization: Bearer {token}`):
+- `GET {api_base}/repositories/{repository_id}` — canonical metadata
+- `GET {api_base}/repositories/{repository_id}/packages` — published packages with dependent counts
+- `GET {api_base}/repositories/{repository_id}/advisories` — existing CVE/GHSA records (prior art)
+- `GET {api_base}/repositories/{repository_id}/dependents` — top dependents with download counts (reach)
+- `GET {api_base}/repositories/{repository_id}/scans?skill=repo-overview&status=done` — then `GET /scans/{id}` for the brief summary
+
+If any of those return an empty list, the upstream scans were not run yet; fall back to your own reasoning over `./src`.
 
 ## Phase 1: Inventory
 
@@ -92,7 +101,9 @@ If the reproduction fails — the sink is gated by a check you missed, the input
 
 ### Step 4: Prior art
 
-Search the repo's issues and PRs, open and closed. `git log --all --grep` and `git log -S` for the function name and key strings. Read maintainer comments. A maintainer who has already considered this and declined is a different conversation than one who has never seen it; quote the comment.
+Check scrutineer's advisory cache first: `GET {api_base}/repositories/{repository_id}/advisories`. Every advisory already published against this repository's packages shows up here, with CVSS, classification, packages affected, and the original URL. Anything that overlaps with your finding is prior art — cite the advisory uuid and url.
+
+Then search the repo's issues and PRs, open and closed. `git log --all --grep` and `git log -S` for the function name and key strings. Read maintainer comments. A maintainer who has already considered this and declined is a different conversation than one who has never seen it; quote the comment.
 
 Check this package's history, not the weakness class's. A CVE in another project for the same pattern is context. A related fix in this project that left a sibling unfixed, an issue closed as wontfix, a comment thread where the design was debated — that is what you want.
 
@@ -102,7 +113,11 @@ Note what you searched and what you found, even if nothing.
 
 ### Step 5: Reach
 
-For libraries published to a registry: get the dependents from packages.ecosyste.ms, ranked. Unpack the published version of each — not git HEAD; the released artefact. Read how it calls this sink. Some will not be exposed (safe variant, mitigating flag, migrated off); note these as counterexamples with line numbers. The first significant exposed dependent is the headline; if it is itself widely depended on, follow it one level.
+For libraries published to a registry: start with scrutineer's dependents cache: `GET {api_base}/repositories/{repository_id}/dependents`. It returns the top dependents already ranked by `dependent_repos` and `downloads`, with registry and repository URLs. Use this list; do not re-hit packages.ecosyste.ms.
+
+Unpack the published version of each — not git HEAD; the released artefact. Read how it calls this sink. Some will not be exposed (safe variant, mitigating flag, migrated off); note these as counterexamples with line numbers. The first significant exposed dependent is the headline; if it is itself widely depended on, follow it one level.
+
+If the dependents list is empty the dependents skill has not run yet — fall back to packages.ecosyste.ms directly.
 
 For targets that are not library-shaped — package managers, servers, build tools — trace the input paths through the trust tiers from Phase 1 instead. Who can supply this input under each documented deployment.
 

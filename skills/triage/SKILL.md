@@ -19,7 +19,9 @@ Kick off the standard set of scans against a freshly-added repository.
 
 ## The scan set
 
-Enqueue each of these skills against the repository in `scrutineer.repository_id` via `POST {api_base}/repositories/{id}/skills/{name}/run` with an `Authorization: Bearer {token}` header. Empty JSON body. Order does not matter; the scrutineer worker runs them as they come in.
+Before enqueueing anything, check what already ran so a re-trigger is idempotent: `GET {api_base}/repositories/{repository_id}/scans` returns every scan on this repository with `skill_name` and `status`. Build a set of skill names with `status="done"` or `status="running"` and skip those.
+
+For every remaining skill in the list below, enqueue it: `POST {api_base}/repositories/{id}/skills/{name}/run` with an `Authorization: Bearer {token}` header. Empty JSON body. Order does not matter; the scrutineer worker runs them as they come in.
 
 - `metadata`
 - `packages`
@@ -43,9 +45,12 @@ Write `./report.json` as:
 {
   "triggered": ["metadata", "packages", ...],
   "skipped":   ["semgrep"],
+  "already_done": ["metadata"],
   "errors":    []
 }
 ```
+
+`already_done` holds skills that were skipped because a done/running scan was already present. `skipped` is for skills that came back `404 skill not found or inactive`.
 
 Do not wait for any of the scans to finish. The API returns a scan id immediately; your job is to fire them off and exit.
 

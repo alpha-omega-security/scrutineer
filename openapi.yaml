@@ -1,19 +1,21 @@
 openapi: 3.1.0
 info:
   title: Scrutineer Skill API
-  version: 0.1.0
+  version: 0.2.0
   description: |
     A narrow HTTP surface that claude-code skills use while they run. The
     goal is enough to let a skill orchestrate other skills and read prior
-    scan results without pushing that logic into scrutineer's Go code.
+    scan outputs without pushing that logic into scrutineer's Go code.
 
     Every scrutineer skill scan is issued a bearer token that is staged into
-    the workspace context.json. Skills authenticate with that token. A
-    token is only valid while its originating scan is running.
+    the workspace context.json. Skills authenticate with that token. A token
+    is only valid while its originating scan is running, and only grants
+    access to the repository the scan was issued against.
 
 servers:
   - url: http://127.0.0.1:8080/api
     description: Local scrutineer server
+
 security:
   - bearerAuth: []
 
@@ -30,6 +32,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Repository' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
   /repositories/{id}/scans:
@@ -43,6 +46,10 @@ paths:
           schema:
             type: string
             enum: [queued, running, done, failed]
+        - name: skill
+          in: query
+          schema: { type: string }
+          description: Filter by skill name (matches Scan.skill_name).
       responses:
         '200':
           description: OK
@@ -51,6 +58,111 @@ paths:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/Scan' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /repositories/{id}/maintainers:
+    get:
+      summary: List maintainers linked to this repository
+      operationId: listRepositoryMaintainers
+      parameters:
+        - $ref: '#/components/parameters/RepositoryID'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Maintainer' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /repositories/{id}/packages:
+    get:
+      summary: List published packages produced by this repository
+      operationId: listRepositoryPackages
+      parameters:
+        - $ref: '#/components/parameters/RepositoryID'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Package' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /repositories/{id}/advisories:
+    get:
+      summary: List published advisories affecting this repository's packages
+      operationId: listRepositoryAdvisories
+      parameters:
+        - $ref: '#/components/parameters/RepositoryID'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Advisory' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /repositories/{id}/dependents:
+    get:
+      summary: List downstream dependents of this repository's packages
+      operationId: listRepositoryDependents
+      parameters:
+        - $ref: '#/components/parameters/RepositoryID'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Dependent' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /repositories/{id}/dependencies:
+    get:
+      summary: List dependencies declared by this repository's manifests
+      operationId: listRepositoryDependencies
+      parameters:
+        - $ref: '#/components/parameters/RepositoryID'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Dependency' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /repositories/{id}/findings:
+    get:
+      summary: List findings across every scan on this repository
+      operationId: listRepositoryFindings
+      parameters:
+        - $ref: '#/components/parameters/RepositoryID'
+        - name: severity
+          in: query
+          schema: { type: string, enum: [Critical, High, Medium, Low] }
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [new, enriched, triaged, ready, reported, acknowledged, fixed, published, rejected, duplicate]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/FindingSummary' }
+        '403': { $ref: '#/components/responses/Forbidden' }
 
   /repositories/{id}/skills/{name}/run:
     post:
@@ -62,7 +174,7 @@ paths:
           in: path
           required: true
           schema: { type: string }
-          description: Skill name (matches the SKILL.md `name` field)
+          description: Skill name (matches the SKILL.md `name` field).
       requestBody:
         required: false
         content:
@@ -80,6 +192,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Scan' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '404':
           description: Skill or repository not found
           content:
@@ -101,6 +214,25 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ScanDetail' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /findings/{id}:
+    get:
+      summary: Fetch one finding with its six-step prose
+      operationId: getFinding
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FindingDetail' }
+        '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
   /skills:
@@ -139,6 +271,11 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: Token does not grant access to this resource
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
 
   schemas:
     Error:
@@ -160,7 +297,7 @@ components:
         stars:          { type: integer }
         forks:          { type: integer }
         archived:       { type: boolean }
-        languages:      { type: string }
+        languages:      { type: string, description: Comma-joined language names. }
         license:        { type: string }
 
     Scan:
@@ -186,6 +323,104 @@ components:
           properties:
             report: { type: string, description: Raw output report (may be JSON text). }
             log:    { type: string }
+
+    Maintainer:
+      type: object
+      required: [id, login]
+      properties:
+        id:     { type: integer, format: int64 }
+        login:  { type: string }
+        name:   { type: string }
+        email:  { type: string }
+        status: { type: string, enum: [active, inactive, unknown] }
+        notes:  { type: string }
+
+    Package:
+      type: object
+      required: [id, name, ecosystem]
+      properties:
+        id:                 { type: integer, format: int64 }
+        name:               { type: string }
+        ecosystem:          { type: string }
+        purl:               { type: string }
+        latest_version:     { type: string }
+        downloads:          { type: integer, format: int64 }
+        dependent_packages: { type: integer }
+        dependent_repos:    { type: integer }
+        registry_url:       { type: string }
+        latest_release_at:  { type: string, format: date-time, nullable: true }
+
+    Advisory:
+      type: object
+      required: [id]
+      properties:
+        id:             { type: integer, format: int64 }
+        uuid:           { type: string }
+        url:            { type: string }
+        title:          { type: string }
+        severity:       { type: string }
+        cvss_score:     { type: number }
+        classification: { type: string }
+        packages:       { type: string, description: Comma-joined affected package names. }
+        published_at:   { type: string, format: date-time, nullable: true }
+        withdrawn_at:   { type: string, format: date-time, nullable: true }
+
+    Dependent:
+      type: object
+      required: [id, name, ecosystem]
+      properties:
+        id:              { type: integer, format: int64 }
+        name:            { type: string }
+        ecosystem:       { type: string }
+        purl:            { type: string }
+        repository_url:  { type: string }
+        downloads:       { type: integer, format: int64 }
+        dependent_repos: { type: integer }
+        registry_url:    { type: string }
+        latest_version:  { type: string }
+
+    Dependency:
+      type: object
+      required: [id, name, ecosystem]
+      properties:
+        id:              { type: integer, format: int64 }
+        name:            { type: string }
+        ecosystem:       { type: string }
+        purl:            { type: string }
+        requirement:     { type: string }
+        dependency_type: { type: string }
+        manifest_path:   { type: string }
+        manifest_kind:   { type: string }
+
+    FindingSummary:
+      type: object
+      required: [id, scan_id, repository_id, severity, location]
+      properties:
+        id:            { type: integer, format: int64 }
+        scan_id:       { type: integer, format: int64 }
+        repository_id: { type: integer, format: int64 }
+        finding_id:    { type: string, description: Short id within the scan report (F1, F2, ...). }
+        sinks:         { type: string, description: Comma-joined sink ids. }
+        title:         { type: string }
+        severity:      { type: string, enum: [Critical, High, Medium, Low] }
+        status:        { type: string }
+        cwe:           { type: string }
+        location:      { type: string }
+        affected:      { type: string }
+
+    FindingDetail:
+      allOf:
+        - $ref: '#/components/schemas/FindingSummary'
+        - type: object
+          description: Adds the six-step narrative fields and notes.
+          properties:
+            trace:      { type: string }
+            boundary:   { type: string }
+            validation: { type: string }
+            prior_art:  { type: string }
+            reach:      { type: string }
+            rating:     { type: string }
+            notes:      { type: string }
 
     SkillSummary:
       type: object
