@@ -1,0 +1,75 @@
+{{template "head"}}
+{{$p := .Pkg}}
+
+{{template "crumbs" (crumbs
+  "Packages" "/packages"
+  $p.Name "")}}
+
+<h2 class="text-2xl font-semibold mt-1 mb-6 flex items-center gap-3">
+  <i data-lucide="package"></i> {{$p.Name}}
+  <span class="badge-outline">{{$p.Ecosystem}}</span>
+</h2>
+
+<dl class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6 text-sm">
+  <div>
+    <dt class="text-muted-foreground">Latest version</dt>
+    <dd>{{if $p.LatestVersion}}{{$p.LatestVersion}}{{else}}-{{end}}</dd>
+  </div>
+  <div>
+    <dt class="text-muted-foreground">Versions</dt>
+    <dd>{{$p.VersionsCount}}</dd>
+  </div>
+  <div>
+    <dt class="text-muted-foreground">License</dt>
+    <dd>{{if $p.Licenses}}{{$p.Licenses}}{{else}}-{{end}}</dd>
+  </div>
+  <div>
+    <dt class="text-muted-foreground">Last release</dt>
+    <dd>{{if $p.LatestReleaseAt}}{{since $p.LatestReleaseAt}}{{else}}-{{end}}</dd>
+  </div>
+</dl>
+
+<dl class="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6 text-sm">
+  <div>
+    <dt class="text-muted-foreground">Downloads</dt>
+    <dd>{{bignum $p.Downloads}}</dd>
+  </div>
+  <div>
+    <dt class="text-muted-foreground">Dependent packages</dt>
+    <dd>{{bignum $p.DependentPackages}}</dd>
+  </div>
+  <div>
+    <dt class="text-muted-foreground">Dependent repos</dt>
+    <dd>{{bignum $p.DependentRepos}}</dd>
+  </div>
+  <div>
+    <dt class="text-muted-foreground">Repository</dt>
+    <dd><a href="/repositories/{{$p.Repository.ID}}" class="hover:underline">{{$p.Repository.Name}}</a></dd>
+  </div>
+</dl>
+
+<div class="flex flex-wrap gap-2 mb-6">
+  {{if $p.PURL}}<span class="badge-outline"><code>{{$p.PURL}}</code></span>{{end}}
+  {{if $p.RegistryURL}}
+    <a href="{{$p.RegistryURL}}" target="_blank" rel="noopener"
+       class="badge-outline hover:underline inline-flex items-center gap-1">
+      {{trimscheme $p.RegistryURL}}<i data-lucide="external-link" class="size-3"></i>
+    </a>
+  {{end}}
+</div>
+
+{{if .Meta}}
+<section class="accordion">
+  <details class="group border-b">
+    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
+        Full metadata
+        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
+      </h3>
+    </summary>
+    <section class="pb-4">{{jsontree .Meta}}</section>
+  </details>
+</section>
+{{end}}
+
+{{template "foot"}}

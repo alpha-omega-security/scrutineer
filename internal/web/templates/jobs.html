@@ -1,0 +1,87 @@
+{{template "head"}}
+
+<div class="flex items-center justify-between gap-4 mb-6">
+  <h2 class="text-2xl font-semibold flex items-center gap-2">
+    <i data-lucide="list-checks"></i> Scans
+  </h2>
+  <div class="flex items-center gap-2">
+    <div class="dropdown-menu">
+      <button type="button" class="btn-outline" aria-haspopup="menu" aria-expanded="false">
+        <i data-lucide="filter"></i>
+        {{if .Skill}}{{.Skill}}{{else}}Skill{{end}}
+        <i data-lucide="chevron-down"></i>
+      </button>
+      <div data-popover aria-hidden="true" data-align="end">
+        <div role="menu">
+          <a role="menuitem" href="/scans?status={{.Status}}&sort={{.Sort}}">All skills</a>
+          {{range .Skills}}
+            <a role="menuitem" href="/scans?skill={{.}}&status={{$.Status}}&sort={{$.Sort}}"
+               {{if eq . $.Skill}}aria-current="true"{{end}}>{{.}}</a>
+          {{end}}
+        </div>
+      </div>
+    </div>
+    <div class="dropdown-menu">
+      <button type="button" class="btn-outline" aria-haspopup="menu" aria-expanded="false">
+        <i data-lucide="filter"></i>
+        {{if .Status}}{{.Status}}{{else}}Status{{end}}
+        <i data-lucide="chevron-down"></i>
+      </button>
+      <div data-popover aria-hidden="true" data-align="end">
+        <div role="menu">
+          <a role="menuitem" href="/scans?skill={{.Skill}}&sort={{.Sort}}">All statuses</a>
+          {{range (list "queued" "running" "done" "failed")}}
+            <a role="menuitem" href="/scans?skill={{$.Skill}}&status={{.}}&sort={{$.Sort}}"
+               {{if eq . $.Status}}aria-current="true"{{end}}>{{.}}</a>
+          {{end}}
+        </div>
+      </div>
+    </div>
+    <div class="dropdown-menu">
+      <button type="button" class="btn-outline" aria-haspopup="menu" aria-expanded="false">
+        <i data-lucide="arrow-down-wide-narrow"></i>
+        {{if eq .Sort "skill"}}Skill{{else if eq .Sort "status"}}Status{{else if eq .Sort "repository"}}Repository{{else}}Newest{{end}}
+        <i data-lucide="chevron-down"></i>
+      </button>
+      <div data-popover aria-hidden="true" data-align="end">
+        <div role="menu">
+          {{range (list "newest" "skill" "status" "repository")}}
+            <a role="menuitem" href="/scans?skill={{$.Skill}}&status={{$.Status}}&sort={{.}}"
+               {{if eq . $.Sort}}aria-current="true"{{end}}>{{.}}</a>
+          {{end}}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{{if .Scans}}
+  <table class="table">
+    <thead>
+      <tr><th>#</th><th>Repository</th><th>Skill</th><th>Status</th><th>Findings</th><th>Model</th><th>Started</th><th>Duration</th><th class="w-12"></th></tr>
+    </thead>
+    <tbody>
+    {{range .Scans}}
+      <tr class="cursor-pointer" hx-get="/scans/{{.ID}}" hx-target="body" hx-push-url="true">
+        <td>{{.ID}}</td>
+        <td>{{.Repository.Name}}</td>
+        <td>{{if .SkillName}}{{.SkillName}}{{else}}{{.Kind}}{{end}}</td>
+        <td>{{template "status-badge" (status .Status)}}</td>
+        <td>{{if gt .FindingsCount 0}}{{template "findings-badge" .FindingsCount}}{{end}}</td>
+        <td class="text-muted-foreground">{{if .Model}}{{.Model}}{{else}}-{{end}}</td>
+        <td>{{if .StartedAt}}{{since .StartedAt}}{{end}}</td>
+        <td>{{if .FinishedAt}}{{dur .Duration}}{{end}}</td>
+        <td>{{if eq (status .Status) "failed"}}<button class="btn-sm-ghost"
+            hx-post="/scans/{{.ID}}/retry" hx-swap="none"
+            hx-on:click="event.stopPropagation()"
+            data-tooltip="Retry"><i data-lucide="refresh-cw"></i></button>{{end}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{template "pagination" .Page}}
+{{else}}
+  {{template "empty" (dict "Icon" "list-checks" "Title" "No jobs yet" "Body" "Jobs appear here once a repository has been queued.")}}
+{{end}}
+
+{{template "foot"}}

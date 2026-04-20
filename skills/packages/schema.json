@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "packages report",
+  "type": "object",
+  "required": ["packages"],
+  "additionalProperties": false,
+  "properties": {
+    "packages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "ecosystem"],
+        "additionalProperties": true,
+        "properties": {
+          "name":                   { "type": "string" },
+          "ecosystem":              { "type": "string" },
+          "purl":                   { "type": "string" },
+          "licenses":               { "type": "string" },
+          "latest_version":         { "type": "string" },
+          "versions_count":         { "type": "integer", "minimum": 0 },
+          "downloads":              { "type": "integer", "minimum": 0 },
+          "dependent_packages":     { "type": "integer", "minimum": 0 },
+          "dependent_repos":        { "type": "integer", "minimum": 0 },
+          "registry_url":           { "type": "string" },
+          "latest_release_at":      { "type": "string" },
+          "dependent_packages_url": { "type": "string" },
+          "metadata":               {}
+        }
+      }
+    }
+  }
+}

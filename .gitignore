@@ -1,0 +1,11 @@
+/data/
+/scrutineer
+*.db
+*.db-shm
+*.db-wal
+.env
+.DS_Store
+.idea/
+.vscode/
+.claude/
+scrutineer.yaml

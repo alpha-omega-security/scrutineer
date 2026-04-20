@@ -1,0 +1,172 @@
+{{define "head"}}
+<!doctype html>
+<html lang="en">
+<head>
+  <script>
+    (function () {
+      var mq = matchMedia('(prefers-color-scheme: dark)');
+      var apply = function () { document.documentElement.classList.toggle('dark', mq.matches); };
+      apply(); mq.addEventListener('change', apply);
+    })();
+  </script>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>scrutineer</title>
+  <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/basecoat-css@0.3.11/dist/basecoat.cdn.min.css">
+  <link rel="stylesheet" href="/static/theme.css">
+  <script src="https://cdn.jsdelivr.net/npm/basecoat-css@0.3.11/dist/js/all.min.js" defer></script>
+  <script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.6/dist/htmx.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/htmx-ext-sse@2.2.4/sse.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/lucide@0.545.0/dist/umd/lucide.min.js"></script>
+</head>
+<body hx-on::after-swap="lucide.createIcons()">
+
+<aside class="sidebar" data-side="left" aria-hidden="false">
+  <nav aria-label="Sidebar">
+    <header>
+      <a href="/" class="btn-ghost p-2 h-14 w-full justify-start">
+        <span class="bg-primary text-primary-foreground flex aspect-square size-10 items-center justify-center rounded-lg">
+          <i data-lucide="brick-wall-shield" class="size-6"></i>
+        </span>
+        <span class="grid flex-1 text-left leading-tight">
+          <span class="truncate font-medium">scrutineer</span>
+          <span class="truncate text-xs text-muted-foreground">local</span>
+        </span>
+      </a>
+    </header>
+    <section>
+      <div role="group">
+        <ul>
+          <li><a href="/" data-nav="repos"><i data-lucide="folder-git-2"></i><span>Repositories</span></a></li>
+          <li><a href="/findings" data-nav="findings"><i data-lucide="bug"></i><span>Findings</span></a></li>
+          <li><a href="/packages" data-nav="packages"><i data-lucide="package"></i><span>Packages</span></a></li>
+          <li><a href="/maintainers" data-nav="maintainers"><i data-lucide="users"></i><span>Maintainers</span></a></li>
+          <li><a href="/scans" data-nav="scans"><i data-lucide="list-checks"></i><span>Scans</span></a></li>
+          <li><a href="/skills" data-nav="skills"><i data-lucide="sparkles"></i><span>Skills</span></a></li>
+        </ul>
+      </div>
+    </section>
+    <footer>
+      <button type="button" class="btn w-full"
+              onclick="document.getElementById('add-repo').showModal()">
+        <i data-lucide="plus"></i> Add repository
+      </button>
+    </footer>
+  </nav>
+</aside>
+
+<main id="content" class="min-h-screen">
+  <div class="p-4 md:p-6 xl:p-12">
+{{end}}
+
+{{define "foot"}}
+  </div>
+</main>
+
+<dialog id="add-repo" class="dialog w-full sm:max-w-md"
+        onclick="if (event.target === this) this.close()">
+  <div>
+    <header><h2>Add repository</h2></header>
+    <section>
+      <form hx-post="/repositories"
+            hx-on::after-request="if(event.detail.successful){this.reset();this.closest('dialog').close()}"
+            class="form grid gap-3">
+        <input class="input" type="text" name="url"
+               placeholder="https://github.com/maragudk/goqite.git" required>
+        <footer class="flex justify-end gap-2">
+          <button type="button" class="btn-outline" onclick="this.closest('dialog').close()">Cancel</button>
+          <button type="submit" class="btn"><i data-lucide="play"></i> Scan</button>
+        </footer>
+      </form>
+    </section>
+    <button type="button" aria-label="Close" onclick="this.closest('dialog').close()">
+      <i data-lucide="x"></i>
+    </button>
+  </div>
+</dialog>
+
+<div id="toaster" class="toaster"></div>
+<script>
+  lucide.createIcons();
+  // Persist active tab in URL hash
+  document.addEventListener('click', function (e) {
+    var tab = e.target.closest('[role="tab"]');
+    if (tab && tab.id) history.replaceState(null, '', '#' + tab.id);
+  });
+  // Restore tab after basecoat initialises. Use rAF to yield to deferred scripts.
+  function restoreTab() {
+    var h = location.hash.slice(1);
+    if (!h) return;
+    var tab = document.getElementById(h);
+    if (!tab || tab.getAttribute('role') !== 'tab') return;
+    var tablist = tab.closest('[role="tablist"]');
+    if (!tablist) return;
+    tablist.querySelectorAll('[role="tab"]').forEach(function (t) {
+      var selected = t.id === h;
+      t.setAttribute('aria-selected', selected);
+      var panel = document.getElementById(t.getAttribute('aria-controls'));
+      if (panel) panel.hidden = !selected;
+    });
+  }
+  if (document.readyState === 'complete') restoreTab();
+  else window.addEventListener('load', restoreTab);
+  (function () {
+    var p = location.pathname;
+    var key = p.indexOf('/skills') === 0 ? 'skills'
+            : p.indexOf('/maintainers') === 0 ? 'maintainers'
+            : p.indexOf('/packages') === 0 ? 'packages'
+            : p.indexOf('/findings') === 0 ? 'findings'
+            : p.indexOf('/scans') === 0 ? 'scans'
+            : 'repos';
+    var a = document.querySelector('.sidebar a[data-nav="' + key + '"]');
+    if (a) a.setAttribute('aria-current', 'page');
+  })();
+  document.body.addEventListener('scanStatus', function (e) {
+    var d = e.detail || {};
+    var ok = d.status === 'done';
+    document.dispatchEvent(new CustomEvent('basecoat:toast', { detail: { config: {
+      category: ok ? 'success' : 'error',
+      title: d.name + ' scan ' + (ok ? 'complete' : d.status),
+      description: 'scan #' + d.id,
+      action: { href: '/scans/' + d.id, label: 'View' }
+    }}}));
+  });
+</script>
+</body>
+</html>
+{{end}}
+
+{{define "findings-badge"}}
+  {{if gt . 0}}<span class="badge-destructive">{{.}}</span>
+  {{else}}<span class="badge-secondary">0</span>{{end}}
+{{end}}
+
+{{define "severity-badge"}}
+  {{if eq . "Critical"}}<span class="badge-destructive">Critical</span>
+  {{else if eq . "High"}}<span class="badge-destructive">High</span>
+  {{else if eq . "Medium"}}<span class="badge-primary">Medium</span>
+  {{else}}<span class="badge-secondary">{{.}}</span>{{end}}
+{{end}}
+
+{{define "finding-status"}}
+  {{if eq . "new"}}<span class="badge-outline">new</span>
+  {{else if eq . "enriched"}}<span class="badge-outline">enriched</span>
+  {{else if eq . "triaged"}}<span class="badge-primary">triaged</span>
+  {{else if eq . "ready"}}<span class="badge-primary">ready</span>
+  {{else if eq . "reported"}}<span class="badge-primary">reported</span>
+  {{else if eq . "acknowledged"}}<span class="badge-primary">acknowledged</span>
+  {{else if eq . "fixed"}}<span class="badge-secondary">fixed</span>
+  {{else if eq . "published"}}<span class="badge-secondary">published</span>
+  {{else if eq . "rejected"}}<span class="badge-outline">rejected</span>
+  {{else if eq . "duplicate"}}<span class="badge-outline">duplicate</span>
+  {{else}}<span class="badge-outline">{{.}}</span>{{end}}
+{{end}}
+
+{{define "status-badge"}}
+  {{if eq . "done"}}<span class="badge-secondary"><i data-lucide="check"></i> complete</span>
+  {{else if eq . "failed"}}<span class="badge-destructive"><i data-lucide="x"></i> failed</span>
+  {{else if eq . "running"}}<span class="badge-primary"><i data-lucide="loader-circle" class="animate-spin"></i> running</span>
+  {{else}}<span class="badge-outline"><i data-lucide="clock"></i> {{.}}</span>{{end}}
+{{end}}

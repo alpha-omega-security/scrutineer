@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "advisories report",
+  "type": "object",
+  "required": ["advisories"],
+  "additionalProperties": false,
+  "properties": {
+    "advisories": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "uuid":           { "type": "string" },
+          "url":            { "type": "string" },
+          "title":          { "type": "string" },
+          "description":    { "type": "string" },
+          "severity":       { "type": "string" },
+          "cvss_score":     { "type": "number", "minimum": 0, "maximum": 10 },
+          "classification": { "type": "string" },
+          "packages":       { "type": "string" },
+          "published_at":   { "type": "string" },
+          "withdrawn_at":   { "type": "string" }
+        }
+      }
+    }
+  }
+}

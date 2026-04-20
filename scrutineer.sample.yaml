@@ -1,0 +1,40 @@
+# Sample scrutineer config. Copy to scrutineer.yaml (in the working
+# directory) or point at it with -config to activate.
+#
+# Every key is optional. Command-line flags always win; only values the
+# user did NOT pass on the command line are taken from here.
+
+# Listen address for the web UI + skill API.
+# addr: 127.0.0.1:8080
+
+# Where scan workspaces and the sqlite DB live.
+# data: ./data
+
+# Claude effort level for model-backed skills.
+# effort: high
+
+# Local directories to load SKILL.md files from. Repeatable via -skills
+# on the command line; here you can list them directly.
+# skills:
+#   - ./skills
+
+# Clone a skills repo on startup and load it.
+# skills_repo: https://github.com/alpha-omega-security/scrutineer-skills
+
+# Disable the docker runner even if docker is available on the host.
+# no_docker: false
+
+# Docker image used for per-scan containers.
+# runner_image: scrutineer-runner
+
+# The model picker in the UI. Replacing this list replaces the built-in
+# set (Sonnet, Opus). Leave it out to keep the built-in list.
+# models:
+#   - name: Sonnet
+#     id:   claude-sonnet-4-6
+#   - name: Opus
+#     id:   claude-opus-4-6
+
+# Pin the default model id. When set, this wins over the "first entry
+# in models wins" rule.
+# default_model: claude-sonnet-4-6
