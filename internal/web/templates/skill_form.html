@@ -1,0 +1,72 @@
+{{template "head"}}
+
+{{with .S}}
+<div class="mb-6">
+  <div class="text-sm text-muted-foreground mb-1">
+    <a href="/skills" class="hover:underline">Skills</a>
+    {{if .ID}} / <a href="/skills/{{.ID}}" class="hover:underline">{{.Name}}</a> / Edit{{else}} / New{{end}}
+  </div>
+  <h2 class="text-2xl font-semibold flex items-center gap-2">
+    <i data-lucide="sparkles"></i> {{if .ID}}Edit {{.Name}}{{else}}New skill{{end}}
+  </h2>
+</div>
+
+<form method="post" action="{{$.Action}}" class="form grid gap-4 max-w-4xl">
+  <div class="grid gap-2">
+    <label for="name">Name</label>
+    <input id="name" class="input" type="text" name="name" value="{{.Name}}" required
+           pattern="[a-z0-9]+(-[a-z0-9]+)*" maxlength="64"
+           placeholder="lowercase-with-hyphens">
+    <p class="text-xs text-muted-foreground">Lowercase letters, digits, hyphens. Must match the SKILL.md name field.</p>
+  </div>
+
+  <div class="grid gap-2">
+    <label for="description">Description</label>
+    <textarea id="description" class="input" name="description" rows="2" required
+              maxlength="1024">{{.Description}}</textarea>
+  </div>
+
+  <div class="grid grid-cols-2 gap-4">
+    <div class="grid gap-2">
+      <label for="output_file">Output file</label>
+      <input id="output_file" class="input" type="text" name="output_file"
+             value="{{.OutputFile}}" placeholder="report.json">
+      <p class="text-xs text-muted-foreground">Relative path the skill writes to. Leave blank for freeform output.</p>
+    </div>
+    <div class="grid gap-2">
+      <label for="output_kind">Output kind</label>
+      <input id="output_kind" class="input" type="text" name="output_kind"
+             value="{{.OutputKind}}" placeholder="findings / freeform">
+      <p class="text-xs text-muted-foreground">Parser key. Currently: findings, freeform.</p>
+    </div>
+  </div>
+
+  <div class="grid gap-2">
+    <label for="body">SKILL.md body</label>
+    <textarea id="body" class="input font-mono text-sm" name="body" rows="20"
+              placeholder="# Instructions
+
+Describe what the model should do here.">{{.Body}}</textarea>
+  </div>
+
+  <div class="grid gap-2">
+    <label for="schema_json">schema.json (optional)</label>
+    <textarea id="schema_json" class="input font-mono text-sm" name="schema_json" rows="8"
+              placeholder='{"type":"object","properties":{}}'>{{.SchemaJSON}}</textarea>
+  </div>
+
+  {{if .ID}}
+  <label class="flex items-center gap-2">
+    <input type="checkbox" name="active" {{if .Active}}checked{{end}}>
+    <span>Active</span>
+  </label>
+  {{end}}
+
+  <div class="flex justify-end gap-2">
+    <a href="/skills" class="btn-outline">Cancel</a>
+    <button class="btn" type="submit">{{$.Verb}}</button>
+  </div>
+</form>
+{{end}}
+
+{{template "foot"}}

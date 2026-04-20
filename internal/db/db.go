@@ -68,6 +68,14 @@ type Scan struct {
 	Status ScanStatus `gorm:"index;not null"`
 	Model  string
 
+	// SkillID/SkillVersion are set when Kind is "skill": they pin which
+	// skill row and which version of it produced this scan. SkillName is
+	// the skill name at time of run so old scans remain readable even if
+	// the skill is deleted.
+	SkillID      *uint `gorm:"index"`
+	SkillVersion int
+	SkillName    string
+
 	Commit     string
 	StartedAt  *time.Time
 	FinishedAt *time.Time
@@ -237,6 +245,41 @@ type Finding struct {
 	CreatedAt time.Time
 }
 
+// Skill is one scan recipe expressed as a claude-code skill. It maps 1:1 to
+// the agentskills.io SKILL.md format: Body is the markdown that sits after
+// the frontmatter, the other fields are frontmatter. Metadata holds the raw
+// YAML map serialised as JSON so we do not lose scrutineer-specific keys
+// (scrutineer.output_file, scrutineer.output_schema, scrutineer.output_kind).
+//
+// Skills loaded from a local directory or git repo have Source set; skills
+// created in the UI have Source="ui". Version bumps on every save so old
+// scans can point at the exact version they used.
+type Skill struct {
+	ID uint `gorm:"primarykey"`
+
+	Name        string `gorm:"uniqueIndex;not null"`
+	Description string
+	License     string
+	Compatibility string
+	AllowedTools  string
+	Metadata      string `gorm:"type:text"` // raw frontmatter metadata map as JSON
+
+	Body       string `gorm:"type:text"` // markdown body after frontmatter
+	SchemaJSON string `gorm:"type:text"` // optional schema.json contents
+	OutputFile string                   // from metadata["scrutineer.output_file"]
+	OutputKind string `gorm:"index"`     // from metadata["scrutineer.output_kind"]
+
+	Version int  `gorm:"not null;default:1"`
+	Active  bool `gorm:"not null;default:true"`
+
+	Source     string // "local" | "remote" | "ui"
+	SourcePath string // directory on disk (local/remote) or empty (ui)
+	SourceHash string // sha256 of SKILL.md + schema.json contents
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
 func (s Scan) Duration() time.Duration {
 	if s.StartedAt == nil || s.FinishedAt == nil {
 		return 0
@@ -260,7 +303,7 @@ func Open(dsn string) (*gorm.DB, error) {
 	if err := gdb.Exec("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;").Error; err != nil {
 		return nil, fmt.Errorf("pragma: %w", err)
 	}
-	if err := gdb.AutoMigrate(&Repository{}, &Scan{}, &Finding{}, &Dependency{}, &Package{}, &Dependent{}, &Advisory{}, &Maintainer{}); err != nil {
+	if err := gdb.AutoMigrate(&Repository{}, &Scan{}, &Finding{}, &Dependency{}, &Package{}, &Dependent{}, &Advisory{}, &Maintainer{}, &Skill{}); err != nil {
 		return nil, fmt.Errorf("automigrate: %w", err)
 	}
 	return gdb, nil

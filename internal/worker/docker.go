@@ -139,3 +139,82 @@ func DockerAvailable() bool {
 	out, err := exec.Command("docker", "info", "--format", "{{.ServerVersion}}").Output()
 	return err == nil && len(out) > 0
 }
+
+// RunSkill runs a skill inside an ephemeral container. The whole workspace
+// (clone + staged .claude/skills) is mounted at /work read-write so claude
+// can read the skill and write its output file. Network stays off and the
+// tmpfs/cap-drop/read-only rules mirror Run(); only the mount shape changes
+// because skills and scan output share one volume.
+func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)) (SkillResult, error) {
+	src, err := ensureClone(ctx, sj.Repo, sj.DataDir, emit)
+	if err != nil {
+		return SkillResult{}, err
+	}
+	commit := gitHead(src)
+	work := filepath.Dir(src)
+	absWork, _ := filepath.Abs(work)
+
+	var outPath string
+	if sj.OutputFile != "" {
+		outPath = filepath.Join(work, sj.OutputFile)
+		_ = os.Remove(outPath)
+	}
+
+	claudeArgs := []string{
+		"claude", "-p",
+		"--output-format", "stream-json",
+		"--verbose",
+		"--permission-mode", "bypassPermissions",
+		"--model", sj.Model,
+	}
+	if d.Effort != "" {
+		claudeArgs = append(claudeArgs, "--effort", d.Effort)
+	}
+	claudeArgs = append(claudeArgs, buildSkillPrompt(sj.Name, sj.OutputFile))
+
+	dockerArgs := []string{
+		"run", "--rm",
+		"--network", "none",
+		"--cap-drop", "ALL",
+		"--tmpfs", "/tmp:rw,noexec,nosuid,size=256m",
+		"-v", absWork + ":/work",
+		"-w", "/work",
+	}
+	if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
+		dockerArgs = append(dockerArgs, "-e", "ANTHROPIC_API_KEY")
+		_ = key
+	}
+	dockerArgs = append(dockerArgs, d.image())
+	dockerArgs = append(dockerArgs, claudeArgs...)
+
+	cmd := exec.CommandContext(ctx, "docker", dockerArgs...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Env = os.Environ()
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return SkillResult{}, err
+	}
+	cmd.Stderr = cmd.Stdout
+
+	emit(Event{Kind: KindText, Text: "$ docker run --rm --network none " + d.image() + " <skill:" + sj.Name + ">"})
+	if err := cmd.Start(); err != nil {
+		return SkillResult{}, fmt.Errorf("start docker: %w", err)
+	}
+
+	ParseStream(stdout, emit)
+	waitErr := cmd.Wait()
+	if cmd.Process != nil {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+	}
+
+	res := SkillResult{Commit: commit}
+	if outPath != "" {
+		b, _ := os.ReadFile(outPath)
+		res.Report = string(b)
+	}
+	if waitErr != nil {
+		return res, fmt.Errorf("docker exited: %w", waitErr)
+	}
+	return res, nil
+}

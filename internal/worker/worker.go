@@ -18,6 +18,7 @@ import (
 
 const (
 	JobClaude   = "claude"
+	JobSkill    = "skill"
 	JobMetadata = "metadata"
 	JobPackages = "packages"
 	JobBrief    = "brief"
@@ -53,6 +54,7 @@ func (w *Worker) publish(scanID, repoID uint, name, data string) {
 
 func (w *Worker) Register(q *queue.Queue) {
 	q.Register(JobClaude, w.wrap(w.doClaude))
+	q.Register(JobSkill, w.wrap(w.doSkill))
 	q.Register(JobMetadata, w.wrap(w.doMetadata))
 	q.Register(JobPackages, w.wrap(w.doPackages))
 	q.Register(JobBrief, w.wrap(w.doBrief))

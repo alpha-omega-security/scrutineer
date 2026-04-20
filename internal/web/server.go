@@ -138,6 +138,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /scans/{id}", s.scanShow)
 	mux.HandleFunc("POST /scans/{id}/retry", s.scanRetry)
 	mux.HandleFunc("GET /scans/{id}/log", s.scanLog)
+	mux.HandleFunc("GET /skills", s.skillsList)
+	mux.HandleFunc("GET /skills/new", s.skillNew)
+	mux.HandleFunc("POST /skills", s.skillCreate)
+	mux.HandleFunc("GET /skills/{id}", s.skillShow)
+	mux.HandleFunc("GET /skills/{id}/edit", s.skillEdit)
+	mux.HandleFunc("POST /skills/{id}", s.skillUpdate)
+	mux.HandleFunc("POST /repositories/{id}/skill-scan", s.skillRun)
 	return logRequests(s.Log, securityHeaders(mux))
 }
 
@@ -665,11 +672,15 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 		tmCommit = latest.Commit
 	}
 
+	var activeSkills []db.Skill
+	s.DB.Where("active = ?", true).Order("name").Find(&activeSkills)
+
 	data := map[string]any{
 		"Repo": repo, "Scans": scans, "Active": active, "Latest": latest,
 		"TMCommit": tmCommit,
 		"Deps": deps, "Pkgs": pkgs, "Dependents": dependents, "Advisories": advisories, "Maintainers": maintainers, "ThreatModel": threatModel,
 		"KnownURLs": knownURLs, "KnownPURLs": knownPURLs,
+		"Skills": activeSkills,
 	}
 	if r.Header.Get("HX-Target") == "scan-rows" {
 		s.maybeToast(w, r, repo.Name, scans)
@@ -760,6 +771,27 @@ func (s *Server) enqueueAndGetID(ctx context.Context, repoID uint, kind, model s
 		return 0, err
 	}
 	if err := s.Queue.Enqueue(ctx, kind, scan.ID, prio); err != nil {
+		return 0, err
+	}
+	s.DB.Model(&db.Repository{}).Where("id = ?", repoID).Update("updated_at", time.Now())
+	return scan.ID, nil
+}
+
+func (s *Server) enqueueSkill(ctx context.Context, repoID, skillID uint, model string) (uint, error) {
+	if !ValidModel(model) {
+		model = DefaultModel()
+	}
+	scan := db.Scan{
+		RepositoryID: repoID,
+		Kind:         worker.JobSkill,
+		Status:       db.ScanQueued,
+		Model:        model,
+		SkillID:      &skillID,
+	}
+	if err := s.DB.Create(&scan).Error; err != nil {
+		return 0, err
+	}
+	if err := s.Queue.Enqueue(ctx, worker.JobSkill, scan.ID, worker.PrioScan); err != nil {
 		return 0, err
 	}
 	s.DB.Model(&db.Repository{}).Where("id = ?", repoID).Update("updated_at", time.Now())

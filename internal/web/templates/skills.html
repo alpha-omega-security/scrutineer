@@ -1,0 +1,32 @@
+{{template "head"}}
+
+<div class="flex items-center justify-between gap-4 mb-6">
+  <h2 class="text-2xl font-semibold flex items-center gap-2">
+    <i data-lucide="sparkles"></i> Skills
+  </h2>
+  <a href="/skills/new" class="btn"><i data-lucide="plus"></i> New skill</a>
+</div>
+
+{{if .Skills}}
+  <table class="table w-full">
+    <thead><tr>
+      <th>Name</th><th>Description</th><th>Output kind</th><th>Source</th><th>Version</th><th>Status</th>
+    </tr></thead>
+    <tbody>
+    {{range .Skills}}
+      <tr class="cursor-pointer" hx-get="/skills/{{.ID}}" hx-target="body" hx-push-url="true">
+        <td class="font-medium">{{.Name}}</td>
+        <td class="text-muted-foreground whitespace-normal">{{.Description}}</td>
+        <td>{{if .OutputKind}}<span class="badge-outline">{{.OutputKind}}</span>{{end}}</td>
+        <td class="text-muted-foreground">{{.Source}}</td>
+        <td class="text-muted-foreground">v{{.Version}}</td>
+        <td>{{if .Active}}<span class="badge-secondary">active</span>{{else}}<span class="badge-outline">disabled</span>{{end}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+{{else}}
+  {{template "empty" (dict "Icon" "sparkles" "Title" "No skills" "Body" "Seed skills from a directory with -skills ./path, from a git repo with -skills-repo https://github.com/org/skills, or create one in the UI.")}}
+{{end}}
+
+{{template "foot"}}

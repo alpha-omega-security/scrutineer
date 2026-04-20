@@ -12,8 +12,10 @@ import (
 )
 
 type fakeRunner struct {
-	res Result
-	err error
+	res      Result
+	err      error
+	skillRes SkillResult
+	skillErr error
 }
 
 func (f fakeRunner) Prompt(repo db.Repository, spec string) string { return "p:" + spec }
@@ -22,6 +24,11 @@ func (f fakeRunner) Run(ctx context.Context, job Job, emit func(Event)) (Result,
 	emit(Event{Kind: "text", Text: "cloning"})
 	emit(Event{Kind: "result", CostUSD: 1.23, Turns: 5})
 	return f.res, f.err
+}
+
+func (f fakeRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)) (SkillResult, error) {
+	emit(Event{Kind: "text", Text: "running skill " + sj.Name})
+	return f.skillRes, f.skillErr
 }
 
 func TestRunClaudeRecordsResult(t *testing.T) {

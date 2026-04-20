@@ -11,18 +11,29 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
+	"gorm.io/gorm"
+
 	"scrutineer/internal/db"
 	"scrutineer/internal/queue"
+	"scrutineer/internal/skills"
 	"scrutineer/internal/web"
 	"scrutineer/internal/worker"
 )
 
+// skillDirs collects repeated -skills flags.
+type skillDirs []string
+
+func (s *skillDirs) String() string     { return strings.Join(*s, ",") }
+func (s *skillDirs) Set(v string) error { *s = append(*s, v); return nil }
+
 const (
-	dataPermSecure  = 0o700
-	shutdownTimeout = 5 * time.Second
+	dataPermSecure     = 0o700
+	shutdownTimeout    = 5 * time.Second
+	skillsCloneTimeout = 2 * time.Minute
 )
 
 //go:embed default_spec.md
@@ -44,7 +55,10 @@ func run(log *slog.Logger) error {
 		spec        = flag.String("spec", "", "path to audit spec (default: built-in)")
 		noDocker    = flag.Bool("no-docker", false, "disable containerised runner even if docker is available")
 		runnerImage = flag.String("runner-image", "scrutineer-runner", "docker image for per-job containers")
+		skillsRepo  = flag.String("skills-repo", "", "clone skills from this git https URL on startup")
 	)
+	var skillLocal skillDirs
+	flag.Var(&skillLocal, "skills", "directory to load SKILL.md files from (repeatable)")
 	flag.Parse()
 
 	if err := os.MkdirAll(*dataDir, dataPermSecure); err != nil {
@@ -77,6 +91,10 @@ func run(log *slog.Logger) error {
 			return fmt.Errorf("read spec: %w", err)
 		}
 		specText = string(b)
+	}
+
+	if err := loadSkills(log, gdb, *dataDir, skillLocal, *skillsRepo); err != nil {
+		return err
 	}
 
 	broker := web.NewBroker()
@@ -125,4 +143,33 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	return nil
+}
+
+func loadSkills(log *slog.Logger, gdb *gorm.DB, dataDir string, dirs skillDirs, repo string) error {
+	for _, d := range dirs {
+		n, err := skills.LoadDirectory(gdb, log, d, "local")
+		if err != nil {
+			return fmt.Errorf("load skills from %s: %w", d, err)
+		}
+		log.Info("loaded skills", "source", d, "count", n)
+	}
+	if repo != "" {
+		dst := filepath.Join(dataDir, "skills-cache", hashPath(repo))
+		ctx, cancel := context.WithTimeout(context.Background(), skillsCloneTimeout)
+		defer cancel()
+		if err := skills.CloneOrPull(ctx, repo, dst); err != nil {
+			return fmt.Errorf("clone skills repo: %w", err)
+		}
+		n, err := skills.LoadDirectory(gdb, log, dst, "remote")
+		if err != nil {
+			return fmt.Errorf("load skills from %s: %w", repo, err)
+		}
+		log.Info("loaded skills", "source", repo, "count", n)
+	}
+	return nil
+}
+
+func hashPath(s string) string {
+	r := strings.NewReplacer("/", "_", ":", "_", "?", "_", "&", "_", "=", "_")
+	return r.Replace(s)
 }
