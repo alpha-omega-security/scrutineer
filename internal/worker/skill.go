@@ -96,6 +96,26 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 		if err := w.parseMaintainersOutput(scan, res.Report, emit); err != nil {
 			return res.Report, err
 		}
+	case "repo_metadata":
+		if err := w.parseRepoMetadataOutput(scan, res.Report, emit); err != nil {
+			return res.Report, err
+		}
+	case "packages":
+		if err := w.parsePackagesOutput(scan, res.Report, emit); err != nil {
+			return res.Report, err
+		}
+	case "advisories":
+		if err := w.parseAdvisoriesOutput(scan, res.Report, emit); err != nil {
+			return res.Report, err
+		}
+	case "dependents":
+		if err := w.parseDependentsOutput(scan, res.Report, emit); err != nil {
+			return res.Report, err
+		}
+	case "dependencies":
+		if err := w.parseDependenciesOutput(scan, res.Report, emit); err != nil {
+			return res.Report, err
+		}
 	}
 	return res.Report, nil
 }

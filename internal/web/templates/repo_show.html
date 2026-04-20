@@ -14,22 +14,20 @@
   <div class="flex items-center gap-2">
     {{if .Skills}}
     <form method="post" action="/repositories/{{.Repo.ID}}/skill-scan">
-      <div role="group" class="button-group">
+      <div class="dropdown-menu">
         <button class="btn-outline" type="button" aria-haspopup="menu" aria-expanded="false"
                 aria-controls="skill-menu">
           <i data-lucide="sparkles"></i> Run skill <i data-lucide="chevron-down"></i>
         </button>
-        <div class="dropdown-menu">
-          <div data-popover aria-hidden="true" data-align="end">
-            <div role="menu" id="skill-menu">
-              {{range .Skills}}
-                <button type="submit" role="menuitem" name="skill_id" value="{{.ID}}"
-                        data-tooltip="{{.Description}}">
-                  {{.Name}}
-                  {{if .OutputKind}}<span class="text-muted-foreground ml-auto text-xs">{{.OutputKind}}</span>{{end}}
-                </button>
-              {{end}}
-            </div>
+        <div data-popover aria-hidden="true" data-align="end">
+          <div role="menu" id="skill-menu">
+            {{range .Skills}}
+              <button type="submit" role="menuitem" name="skill_id" value="{{.ID}}"
+                      data-tooltip="{{.Description}}">
+                {{.Name}}
+                {{if .OutputKind}}<span class="text-muted-foreground ml-auto text-xs">{{.OutputKind}}</span>{{end}}
+              </button>
+            {{end}}
           </div>
         </div>
       </div>

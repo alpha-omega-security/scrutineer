@@ -10,9 +10,13 @@
     {{.Kind}} scan #{{.ID}}
     {{template "status-badge" (status .Status)}}
   </h2>
-  <button class="btn-outline" hx-post="/scans/{{.ID}}/retry">
-    <i data-lucide="refresh-cw"></i> Retry
-  </button>
+  {{if and (eq .Kind "skill") (not .SkillID)}}
+    <span class="text-xs text-muted-foreground">retry unavailable, skill reference missing</span>
+  {{else}}
+    <button class="btn-outline" hx-post="/scans/{{.ID}}/retry">
+      <i data-lucide="refresh-cw"></i> Retry
+    </button>
+  {{end}}
 </div>
 
 <dl class="grid grid-cols-2 sm:grid-cols-5 gap-4 mb-6 text-sm">

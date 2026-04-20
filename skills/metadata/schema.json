@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "repo metadata",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "full_name":      { "type": "string" },
+    "owner":          { "type": "string" },
+    "description":    { "type": "string" },
+    "default_branch": { "type": "string" },
+    "languages":      { "type": "array", "items": { "type": "string" } },
+    "license":        { "type": "string" },
+    "stars":          { "type": "integer", "minimum": 0 },
+    "forks":          { "type": "integer", "minimum": 0 },
+    "archived":       { "type": "boolean" },
+    "pushed_at":      { "type": "string" },
+    "html_url":       { "type": "string", "format": "uri" },
+    "icon_url":       { "type": "string" }
+  }
+}

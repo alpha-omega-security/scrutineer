@@ -1,9 +1,10 @@
 package web
 
 import (
-	"fmt"
+	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -98,8 +99,24 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		case <-ctx.Done():
 			return
 		case e := <-c.ch:
-			_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", e.Name, e.Data)
+			writeSSEEvent(w, e.Name, e.Data)
 			flusher.Flush()
 		}
 	}
+}
+
+// writeSSEEvent emits one SSE event per the spec. Embedded newlines in data
+// are expressed as multiple `data:` lines so the browser's EventSource parser
+// reconstructs the original text; a single `data: %s` pattern silently drops
+// every line after the first newline.
+func writeSSEEvent(w io.Writer, name, data string) {
+	_, _ = io.WriteString(w, "event: ")
+	_, _ = io.WriteString(w, name)
+	_, _ = io.WriteString(w, "\n")
+	for line := range strings.SplitSeq(data, "\n") {
+		_, _ = io.WriteString(w, "data: ")
+		_, _ = io.WriteString(w, line)
+		_, _ = io.WriteString(w, "\n")
+	}
+	_, _ = io.WriteString(w, "\n")
 }

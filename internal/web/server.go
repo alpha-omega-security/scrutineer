@@ -735,7 +735,19 @@ func (s *Server) scanRetry(w http.ResponseWriter, r *http.Request) {
 	case worker.JobSemgrep, worker.JobZizmor:
 		prio = worker.PrioTool
 	}
-	newID, err := s.enqueueAndGetID(r.Context(), scan.RepositoryID, scan.Kind, scan.Model, prio)
+	var (
+		newID uint
+		err   error
+	)
+	if scan.Kind == worker.JobSkill {
+		if scan.SkillID == nil {
+			http.Error(w, "skill scan is missing skill id", http.StatusBadRequest)
+			return
+		}
+		newID, err = s.enqueueSkill(r.Context(), scan.RepositoryID, *scan.SkillID, scan.Model)
+	} else {
+		newID, err = s.enqueueAndGetID(r.Context(), scan.RepositoryID, scan.Kind, scan.Model, prio)
+	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
