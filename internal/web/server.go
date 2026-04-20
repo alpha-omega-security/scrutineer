@@ -120,7 +120,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /repositories", s.repoCreate)
 	mux.HandleFunc("GET /repositories/{id}", s.repoShow)
 	mux.HandleFunc("POST /repositories/{id}/scan", s.repoScan)
-	mux.HandleFunc("GET /jobs", s.jobs)
+	mux.HandleFunc("GET /scans", s.jobs)
 	mux.HandleFunc("GET /maintainers", s.maintainersList)
 	mux.HandleFunc("GET /maintainers/{id}", s.maintainerShow)
 	mux.HandleFunc("GET /findings", s.findings)

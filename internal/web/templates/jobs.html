@@ -13,9 +13,9 @@
       </button>
       <div data-popover aria-hidden="true" data-align="end">
         <div role="menu">
-          <a role="menuitem" href="/jobs?status={{.Status}}&sort={{.Sort}}">All skills</a>
+          <a role="menuitem" href="/scans?status={{.Status}}&sort={{.Sort}}">All skills</a>
           {{range .Skills}}
-            <a role="menuitem" href="/jobs?skill={{.}}&status={{$.Status}}&sort={{$.Sort}}"
+            <a role="menuitem" href="/scans?skill={{.}}&status={{$.Status}}&sort={{$.Sort}}"
                {{if eq . $.Skill}}aria-current="true"{{end}}>{{.}}</a>
           {{end}}
         </div>
@@ -29,9 +29,9 @@
       </button>
       <div data-popover aria-hidden="true" data-align="end">
         <div role="menu">
-          <a role="menuitem" href="/jobs?skill={{.Skill}}&sort={{.Sort}}">All statuses</a>
+          <a role="menuitem" href="/scans?skill={{.Skill}}&sort={{.Sort}}">All statuses</a>
           {{range (list "queued" "running" "done" "failed")}}
-            <a role="menuitem" href="/jobs?skill={{$.Skill}}&status={{.}}&sort={{$.Sort}}"
+            <a role="menuitem" href="/scans?skill={{$.Skill}}&status={{.}}&sort={{$.Sort}}"
                {{if eq . $.Status}}aria-current="true"{{end}}>{{.}}</a>
           {{end}}
         </div>
@@ -46,7 +46,7 @@
       <div data-popover aria-hidden="true" data-align="end">
         <div role="menu">
           {{range (list "newest" "skill" "status" "repository")}}
-            <a role="menuitem" href="/jobs?skill={{$.Skill}}&status={{$.Status}}&sort={{.}}"
+            <a role="menuitem" href="/scans?skill={{$.Skill}}&status={{$.Status}}&sort={{.}}"
                {{if eq . $.Sort}}aria-current="true"{{end}}>{{.}}</a>
           {{end}}
         </div>
