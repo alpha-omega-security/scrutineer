@@ -20,7 +20,7 @@
       server.go              routes, handlers, template funcs
       sse.go                 SSE broker for live updates
       cwe.go + cwe.json      embedded MITRE CWE catalogue (944 entries)
-      models.go              model pick list (Mythos, Opus, Sonnet)
+      models.go              model pick list
       kinds.go               scan type catalogue for the /scanners page
       location.go            forge URL builder for source links
       jsontree.go            JSON-to-HTML renderer for the Data tab
@@ -66,19 +66,6 @@ The CWE catalogue is distilled from MITRE's CSV download:
 
     curl -sS https://cwe.mitre.org/data/csv/1000.csv.zip | funzip > /tmp/cwe.csv
     python3 -c 'import csv,json; print(json.dumps({"CWE-"+r["CWE-ID"]:{"name":r["Name"],"description":r["Description"].strip()} for r in csv.DictReader(open("/tmp/cwe.csv"))}, separators=(",",":"), sort_keys=True))' > internal/web/cwe.json
-
-## Updating schemas from mythos
-
-The audit output schema and shared vocabulary live in the mythos repo and are copied here:
-
-    cp ~/code/mythos/defs.schema.json internal/worker/defs.schema.json
-    cp ~/code/mythos/spec-json.schema.json internal/worker/schema.json
-
-The default audit spec (Phase 1 inventory + Phase 2 six-step checklist) is also from mythos:
-
-    head -109 ~/code/mythos/spec-deep.md > cmd/scrutineer/default_spec.md
-
-After copying, run `go build ./...` to verify the embeds resolve.
 
 ## SSE architecture
 

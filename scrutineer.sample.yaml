@@ -28,7 +28,7 @@
 # runner_image: scrutineer-runner
 
 # The model picker in the UI. Replacing this list replaces the built-in
-# set (Mythos, Opus, Sonnet). Leave it out to keep the built-in list.
+# set (Sonnet, Opus). Leave it out to keep the built-in list.
 # models:
 #   - name: Sonnet
 #     id:   claude-sonnet-4-6

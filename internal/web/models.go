@@ -9,8 +9,8 @@ type Model struct {
 // Models is the pick list. The first entry is the default unless
 // defaultModelOverride is set by the config loader.
 var Models = []Model{
-	{"Mythos", "claude-mythos-preview"},
-	{"Opus", "claude-opus-4-6"},
+	{"Opus 4.6", "claude-opus-4-6"},
+	{"Opus 4.7", "claude-opus-4-7"},
 	{"Sonnet", "claude-sonnet-4-6"},
 }
 
