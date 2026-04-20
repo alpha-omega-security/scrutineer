@@ -1,50 +1,68 @@
 # scrutineer
 
-A local tool for scanning open source repositories for security vulnerabilities and managing the disclosure process. You add a repo by URL, scrutineer runs a pipeline of scans against it (metadata, dependencies, semgrep, zizmor, claude-powered audit), and presents the results in a web UI where you can triage findings, identify maintainers, and track disclosures.
+A local tool for scanning open source repositories for security vulnerabilities and managing the disclosure process. You add a repo by URL, scrutineer runs a pipeline of [claude-code skills](https://agentskills.io) against it, and presents the results in a web UI where you can triage findings, identify maintainers, and track disclosures.
 
 ## Features
 
-- **Automated scan pipeline** -- twelve jobs run against each repo: metadata lookups, dependency indexing, SBOM generation, static analysis, workflow auditing, maintainer identification, and a claude security audit
+- **Skill-based scan pipeline** -- every scan is a claude-code skill on disk (SKILL.md + schema + optional scripts). The default pipeline for a new repo is itself a skill (`triage`) that enqueues the others; edit its SKILL.md to change what runs
 - **Structured findings** -- vulnerability reports parsed into a database with severity, CWE, location (linked to source), affected versions, and a six-step analysis trace
 - **Finding workflow** -- guided triage flow from new through verification, disclosure, and publication with human gates at each step
 - **Threat model view** -- trust boundaries, sink inventory, ruled-out entries, and the full audit reasoning rendered from the scan report
 - **Dependency exploration** -- dependency and dependent tables with one-click import to scan any package's source repository
 - **Package registry data** -- downloads, dependents, versions, and registry links for every published package
 - **Known advisories** -- existing CVEs and security advisories pulled automatically
-- **Maintainer identification** -- model-backed analysis combining commit history, issue/PR activity, and registry ownership to identify who to contact for disclosure
+- **Maintainer identification** -- model-backed skill combining commit history, issue/PR activity, and registry ownership to identify who to contact for disclosure
 - **CWE catalogue** -- embedded MITRE CWE data with tooltips on finding tables and full descriptions on finding pages
-- **Live updates** -- SSE streaming of job logs and status changes, no polling
+- **Live updates** -- SSE streaming of scan logs and status changes, no polling
 - **Dark mode** -- follows system preference
-- **Containerised runner** -- optional per-job Docker isolation with read-only source mounts, no network, dropped capabilities
+- **Containerised runner** -- optional per-scan Docker isolation with read-only source mounts, dropped capabilities
+- **Skill HTTP API** -- running skills can call back into scrutineer to list prior scans and enqueue further skills; surface documented in `openapi.yaml`
 
 ## Getting started
 
-You need Go 1.26+ and an Anthropic API key. The analysis tools (semgrep, zizmor, git-pkgs, brief) are optional -- jobs that need a missing tool will fail gracefully while the rest complete.
+You need Go 1.26+ and an Anthropic API key. Analysis tools (semgrep, zizmor, git-pkgs, brief) are optional -- skills that need a missing tool report the failure in their scan output while the rest complete.
 
     export ANTHROPIC_API_KEY=sk-...
-    go run ./cmd/scrutineer
+    go run ./cmd/scrutineer -skills ./skills
     open http://127.0.0.1:8080
 
-Click "Add repository" in the sidebar, paste a git URL, and scrutineer queues twelve jobs against it. The fast ones (metadata lookups, dependency indexing) finish in seconds. The claude audit takes a few minutes depending on the codebase.
+Click "Add repository" in the sidebar, paste a git URL, and scrutineer enqueues the `triage` skill against it. Triage then enqueues the rest of the default set in parallel. The fast ones (metadata, packages) finish in seconds; the deep audit takes a few minutes depending on the codebase.
 
-## What runs when you add a repo
+## The default pipeline
 
-Jobs run four at a time, highest priority first:
+When a repo is added, the `triage` skill is enqueued. Its SKILL.md lists the skills to trigger. The bundled skills live in `skills/`:
 
-| Job | What it does |
-|-----|--------------|
-| metadata | Looks up the repo on repos.ecosyste.ms for description, language, stars, license |
-| packages | Fetches package registry entries from packages.ecosyste.ms |
-| advisories | Fetches known security advisories from advisories.ecosyste.ms |
-| commits | Fetches commit stats and committer lists from commits.ecosyste.ms |
-| dependents | Fetches the top runtime dependents of each published package |
-| brief | Runs `brief --json` for a structured project summary |
-| git-pkgs | Indexes all dependency manifests and lockfiles |
-| sbom | Generates a CycloneDX SBOM via `git-pkgs sbom` |
-| semgrep | Static analysis with `p/security-audit` and `p/secrets` rulesets |
-| zizmor | Audits GitHub Actions workflows for security issues |
-| maintainers | Gathers data from all three ecosyste.ms endpoints and asks claude to identify the real maintainers, their roles, and the best disclosure channel |
-| claude | The main security audit. Clones the repo, runs the spec-deep methodology, produces structured findings with a six-step trace per vulnerability |
+| Skill | What it does |
+|-------|--------------|
+| `triage` | Orchestrates the default scan set via the scrutineer API |
+| `metadata` | Fetches repo metadata from repos.ecosyste.ms |
+| `packages` | Looks up published packages from packages.ecosyste.ms |
+| `advisories` | Fetches known security advisories |
+| `dependents` | Top runtime dependents per package |
+| `dependencies` | Runs `git-pkgs list` to index every manifest |
+| `sbom` | Runs `git-pkgs sbom` for a CycloneDX SBOM |
+| `maintainers` | Model-backed analysis identifying real maintainers and contact routes |
+| `repo-overview` | Runs `brief --json` for a structured project summary |
+| `semgrep` | Static analysis mapped into findings shape |
+| `zizmor` | GitHub Actions workflow audit mapped into findings shape |
+| `security-deep-dive` | The model-backed audit producing structured findings |
+
+Edit `skills/triage/SKILL.md` to change what gets run by default. Drop new skill directories in `skills/` to add scan types; no code changes needed.
+
+## Adding or editing skills
+
+A skill is a directory with a `SKILL.md` (YAML frontmatter + markdown body), optionally plus a `schema.json`, a `scripts/` folder, and any other files the body references. The format is the [agentskills.io specification](https://agentskills.io/specification). Scrutineer-specific metadata under the frontmatter's `metadata` key:
+
+    scrutineer.output_file: report.json
+    scrutineer.output_kind: findings
+
+The output kind picks the parser. Supported: `findings`, `maintainers`, `packages`, `advisories`, `dependents`, `dependencies`, `repo_metadata`, `freeform`. Skills without these metadata keys run and their output is captured verbatim.
+
+Skills are loaded from `-skills ./path` (repeatable) or `-skills-repo https://github.com/org/skills` on startup. The `/skills` UI page lets you inspect them, or create/edit them in the browser.
+
+## Skill HTTP API
+
+While a skill runs, its workspace contains `./context.json` with `scrutineer.api_base` and a per-scan bearer `token`. The skill can call back into scrutineer to read scans and trigger more skills. See `openapi.yaml` at the repo root for the surface; the `triage` skill is the reference example.
 
 ## Navigating the UI
 
@@ -54,12 +72,12 @@ The sidebar has six sections:
 - **Findings** -- all vulnerability findings across repos. Filter by severity, sort by severity/newest/repo. Click into a finding for the six-step analysis (trace, boundary, validation, prior art, reach, rating)
 - **Packages** -- registry entries across all repos with downloads, dependents, ecosystem filter
 - **Maintainers** -- people identified as maintainers across repos, with their linked repos and findings
-- **Scans** -- every job that has run, filterable by kind and status. Failed jobs have a retry button
-- **Scans catalogue** -- documentation of each job type, including the full prompt and schema for model-backed jobs
+- **Scans** -- every scan that has run, filterable by skill and status. Failed scans have a retry button
+- **Skills** -- installed skills from disk and from the UI; view, edit, or run any of them
 
 ## Finding workflow
 
-Each finding from the claude audit starts at **new** and moves through a guided workflow:
+Each finding from the `security-deep-dive` skill starts at **new** and moves through a guided workflow:
 
 1. **new** -- just identified. Click "Verify" to trigger independent confirmation, or "Skip to triage" if you trust the audit, or "Reject"
 2. **enriched** -- verification ran. Review and click "Triage"
@@ -74,7 +92,7 @@ Each finding page has a notes section for recording triage reasoning and communi
 
 ## Exploring dependencies
 
-The Dependencies tab on a repo groups packages by name and shows all manifest files where each appears. The import button (arrow icon) next to a dependency resolves it to a repository URL via packages.ecosyste.ms and queues the full scan pipeline for it. Dependencies you've already imported show a link icon instead.
+The Dependencies tab on a repo groups packages by name and shows all manifest files where each appears. The import button (arrow icon) next to a dependency resolves it to a repository URL via packages.ecosyste.ms and queues the full pipeline for it. Dependencies you've already imported show a link icon instead.
 
 The same applies to the Dependents tab -- you can import any dependent's repository with one click.
 
@@ -85,12 +103,14 @@ The same applies to the Dependents tab -- you can import any dependent's reposit
 
 Always bind to `127.0.0.1`. The UI has no authentication; binding to `0.0.0.0` exposes your findings database to anyone on the network.
 
-If docker is available on the host, scrutineer can run each analysis job in an ephemeral container for isolation. Build the runner image and scrutineer will detect docker at startup:
+If docker is available on the host, scrutineer can run each scan in an ephemeral container for isolation. Build the runner image and scrutineer will detect docker at startup:
 
     docker build -t scrutineer-runner -f Dockerfile.runner .
-    go run ./cmd/scrutineer
+    go run ./cmd/scrutineer -skills ./skills
 
 Use `--no-docker` to disable containerised execution, or `--runner-image` to specify a different image.
+
+Note: the containerised runner currently uses `--network none`, which blocks skills from calling scrutineer's HTTP API or fetching from ecosyste.ms. Hardening the egress policy so those skills still work under isolation is tracked in the sandbox issue.
 
 ## Flags
 
@@ -99,17 +119,19 @@ Use `--no-docker` to disable containerised execution, or `--runner-image` to spe
 | `-addr` | `127.0.0.1:8080` | Listen address |
 | `-data` | `./data` | Data directory for the database and workspaces |
 | `-effort` | `high` | Claude effort level |
-| `-spec` | built-in | Path to an audit spec file to override the default |
+| `-skills` | - | Local directory to load SKILL.md files from (repeatable) |
+| `-skills-repo` | - | Git HTTPS URL to clone skills from on startup |
 | `--no-docker` | false | Disable containerised runner |
-| `--runner-image` | `scrutineer-runner` | Docker image for per-job containers |
+| `--runner-image` | `scrutineer-runner` | Docker image for per-scan containers |
 
 ## Security
 
-See [threatmodel.md](threatmodel.md) for the full threat model. The short version: scanning a repository is equivalent to running code from it. The containerised runner (when available) isolates each job, but the default bare-metal mode runs everything as your user. Only scan repositories you'd be willing to clone and build locally.
+See [threatmodel.md](threatmodel.md) for the full threat model. The short version: scanning a repository is equivalent to running code from it. The containerised runner (when available) isolates each scan, but the default bare-metal mode runs everything as your user. Only scan repositories you'd be willing to clone and build locally.
 
 ## Further documentation
 
+- [openapi.yaml](openapi.yaml) -- the skill-facing HTTP API
 - [docs/database.md](docs/database.md) -- full database schema reference
-- [docs/development.md](docs/development.md) -- project layout, adding jobs, regenerating embedded data, running tests
+- [docs/development.md](docs/development.md) -- project layout, adding skills, regenerating embedded data, running tests
 - [context.md](context.md) -- long-term architecture direction
 - [todo.md](todo.md) -- backlog
