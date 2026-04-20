@@ -252,8 +252,11 @@ type Finding struct {
 	// RepositoryID and Commit are denormalized from Scan so list queries
 	// don't have to join through Scan (GORM's Preload/Joins on
 	// Finding.Scan doesn't round-trip cleanly on sqlite). Set at
-	// finding-create time and never changed.
-	RepositoryID uint   `gorm:"index;not null"`
+	// finding-create time and never changed. RepositoryID is not
+	// marked not-null so AutoMigrate can widen the column on existing
+	// databases without a default; BackfillFindingRepository fills
+	// existing rows on startup.
+	RepositoryID uint `gorm:"index"`
 	Commit       string
 
 	FindingID string // e.g. F1, F2 within the report
@@ -444,6 +447,26 @@ func Open(dsn string) (*gorm.DB, error) {
 		return nil, fmt.Errorf("automigrate: %w", err)
 	}
 	return gdb, nil
+}
+
+// BackfillFindingRepository copies Scan.RepositoryID onto Finding rows
+// whose RepositoryID column is still zero. Used on first boot after
+// adding the denormalized column so existing findings pick up their repo.
+func BackfillFindingRepository(gdb *gorm.DB) {
+	gdb.Exec(`
+		UPDATE findings
+		SET repository_id = (
+			SELECT repository_id FROM scans WHERE scans.id = findings.scan_id
+		)
+		WHERE (repository_id IS NULL OR repository_id = 0)
+	`)
+	gdb.Exec(`
+		UPDATE findings
+		SET commit = (
+			SELECT commit FROM scans WHERE scans.id = findings.scan_id
+		)
+		WHERE ` + "`commit`" + ` IS NULL OR ` + "`commit`" + ` = ''
+	`)
 }
 
 // BackfillFindings re-parses stored report JSON to fill columns that were
