@@ -1,7 +1,8 @@
 ---
 name: repo-overview
-description: Produce a short plain-language overview of what a repository does, who it is for, and how security-relevant it looks on first inspection. Use when you want a quick orientation before deeper analysis.
+description: Produce a structured plain-language overview of what a repository does, who maintains it, its activity level, and the shape of its codebase. Use when you want a quick orientation before deeper analysis.
 license: MIT
+compatibility: Requires the `brief` CLI (https://github.com/ecosyste-ms/brief) on PATH.
 metadata:
   scrutineer.output_file: report.json
   scrutineer.output_kind: freeform
@@ -9,29 +10,24 @@ metadata:
 
 # repo-overview
 
-The repository is cloned at `./src`. Your job is to read enough of it to answer three questions in a compact JSON document, then write that document to `./report.json`.
+Produce an overview of the repository cloned at `./src` by invoking the `brief` tool and writing its output verbatim as the report. `brief` already does the reading, summarising, and structured-output work; this skill is the thin harness around it.
 
-## Output contract
+## Workspace
 
-Write `./report.json` with exactly this shape:
+- `./src` — the cloned repository
+- `./context.json` — repository url and metadata (not needed for this skill)
+- `./report.json` — write the final report here
 
-```json
-{
-  "purpose": "one sentence saying what the project does",
-  "audience": "who uses this (end users, library consumers, operators, etc.)",
-  "security_surface": "a short paragraph naming the main components that handle untrusted input or hold sensitive state",
-  "notes": "anything else a security reviewer should know before going deeper"
-}
+## What to run
+
+```bash
+brief --json ./src > ./report.json
 ```
 
-Keep each field to two sentences at most. Do not write any other files.
+That is the whole workflow. If `brief` exits non-zero, read its stderr and write a short `{"error": "..."}` JSON document to `./report.json` so the caller can see what went wrong rather than getting an empty file.
 
-## How to read the repo
+## Notes
 
-1. Read `README.md` if present. Quote from it if it is clear about purpose and audience.
-2. Skim the top-level directory layout. Identify the language and the main entrypoint (e.g. `cmd/`, `bin/`, `app/`, `src/`).
-3. Look for files that obviously handle external input: HTTP handlers, queue consumers, deserialisers, template renderers, auth middleware.
-4. Look for files that obviously hold sensitive state: database setup, credential loading, session storage, key material.
-5. If there is no README, infer purpose from package manifests (`package.json`, `go.mod`, `Cargo.toml`, `Gemfile`) and file layout.
-
-Do not attempt to audit for specific vulnerabilities in this pass. That is a separate skill.
+- `brief` is pinned by the deployment (container image or host install). Do not try to install it here.
+- Do not post-process the output. The consumer of this report expects brief's native schema.
+- If the tool is missing, say so clearly in the error JSON rather than inventing content.
