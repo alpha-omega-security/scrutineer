@@ -430,16 +430,27 @@ func (s *Server) findingStatus(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// verifySkillName is the skill the Verify button on the finding page runs.
+const verifySkillName = "verify"
+
 func (s *Server) findingVerify(w http.ResponseWriter, r *http.Request) {
 	var f db.Finding
 	if err := s.DB.Preload("Scan").First(&f, r.PathValue("id")).Error; err != nil {
 		http.NotFound(w, r)
 		return
 	}
-	// TODO: enqueue confirm job against this finding
-	// For now, move to enriched as a placeholder
-	s.DB.Model(&f).Update("status", db.FindingEnriched)
-	w.Header().Set("HX-Redirect", fmt.Sprintf("/findings/%d", f.ID))
+	var skill db.Skill
+	if err := s.DB.Where("name = ? AND active = ?", verifySkillName, true).First(&skill).Error; err != nil {
+		http.Error(w, verifySkillName+" skill is not installed", http.StatusPreconditionFailed)
+		return
+	}
+	fid := f.ID
+	scanID, err := s.enqueueSkillScoped(r.Context(), f.Scan.RepositoryID, skill.ID, &fid, r.FormValue("model"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("HX-Redirect", fmt.Sprintf("/scans/%d", scanID))
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -740,6 +751,13 @@ func (s *Server) scanLog(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) enqueueSkill(ctx context.Context, repoID, skillID uint, model string) (uint, error) {
+	return s.enqueueSkillScoped(ctx, repoID, skillID, nil, model)
+}
+
+// enqueueSkillScoped creates a skill scan and optionally scopes it to a
+// finding. Finding-scoped scans carry the id through to context.json so
+// verify/patch/disclose skills know which finding to act on.
+func (s *Server) enqueueSkillScoped(ctx context.Context, repoID, skillID uint, findingID *uint, model string) (uint, error) {
 	if !ValidModel(model) {
 		model = DefaultModel()
 	}
@@ -749,6 +767,7 @@ func (s *Server) enqueueSkill(ctx context.Context, repoID, skillID uint, model s
 		Status:       db.ScanQueued,
 		Model:        model,
 		SkillID:      &skillID,
+		FindingID:    findingID,
 		APIToken:     NewAPIToken(),
 	}
 	if err := s.DB.Create(&scan).Error; err != nil {

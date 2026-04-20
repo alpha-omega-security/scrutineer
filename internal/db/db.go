@@ -77,7 +77,11 @@ type Scan struct {
 	SkillID      *uint `gorm:"index"`
 	SkillVersion int
 	SkillName    string
-	APIToken     string `gorm:"index"`
+	// FindingID is set when a scan is finding-scoped (verify, patch,
+	// disclose). Skills read it from context.json to know which finding
+	// they are acting on.
+	FindingID *uint  `gorm:"index"`
+	APIToken  string `gorm:"index"`
 
 	Commit     string
 	StartedAt  *time.Time

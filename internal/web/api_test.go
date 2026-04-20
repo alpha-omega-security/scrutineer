@@ -161,6 +161,39 @@ func TestAPIFindingReadsAndFilters(t *testing.T) {
 	}
 }
 
+func TestAPIRunFindingSkill_scopesFindingID(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo, scan := seedRunningScan(t, s)
+
+	prior := db.Scan{RepositoryID: repo.ID, Kind: worker.JobSkill, Status: db.ScanDone, SkillName: "security-deep-dive"}
+	s.DB.Create(&prior)
+	finding := db.Finding{ScanID: prior.ID, FindingID: "F1", Title: "x", Severity: "High", Status: db.FindingNew}
+	s.DB.Create(&finding)
+	verify := db.Skill{Name: "verify", Description: "v", Body: "b", OutputFile: "report.json", OutputKind: "verify", Version: 1, Active: true, Source: "ui"}
+	s.DB.Create(&verify)
+
+	path := "/api/findings/" + strconv.FormatUint(uint64(finding.ID), 10) + "/skills/verify/run"
+	r := httptest.NewRequest("POST", path, strings.NewReader("{}"))
+	r.Host = testHost
+	r.Header.Set("Authorization", "Bearer "+scan.APIToken)
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != 201 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+
+	var row db.Scan
+	s.DB.Where("skill_id = ?", verify.ID).First(&row)
+	if row.FindingID == nil || *row.FindingID != finding.ID {
+		t.Errorf("enqueued scan has wrong finding_id: got=%v want=%d", row.FindingID, finding.ID)
+	}
+	if row.APIToken == "" {
+		t.Error("enqueued scan missing api token")
+	}
+}
+
 func TestAPIScansFilterBySkill(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

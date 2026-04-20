@@ -27,11 +27,12 @@ type skillContext struct {
 }
 
 type skillContextScrutineer struct {
-	APIBase  string `json:"api_base"`           // e.g. http://127.0.0.1:8080/api
-	ScanID   uint   `json:"scan_id"`            // the scan that owns this run
-	Token    string `json:"token"`              // bearer for api_base
-	RepoID   uint   `json:"repository_id"`      // convenience for URL building
-	SkillID  uint   `json:"skill_id,omitempty"` // the running skill
+	APIBase   string `json:"api_base"`             // e.g. http://127.0.0.1:8080/api
+	ScanID    uint   `json:"scan_id"`              // the scan that owns this run
+	Token     string `json:"token"`                // bearer for api_base
+	RepoID    uint   `json:"repository_id"`        // convenience for URL building
+	SkillID   uint   `json:"skill_id,omitempty"`   // the running skill
+	FindingID uint   `json:"finding_id,omitempty"` // set for finding-scoped scans
 }
 
 type skillContextRepo struct {
@@ -125,6 +126,10 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 		}
 	case "dependencies":
 		if err := w.parseDependenciesOutput(scan, res.Report, emit); err != nil {
+			return res.Report, err
+		}
+	case "verify":
+		if err := w.parseVerifyOutput(scan, res.Report, emit); err != nil {
 			return res.Report, err
 		}
 	}
@@ -289,6 +294,9 @@ func stageContext(workRoot, apiBase string, scan *db.Scan, repo *db.Repository) 
 	}
 	if scan.SkillID != nil {
 		ctx.Scrutineer.SkillID = *scan.SkillID
+	}
+	if scan.FindingID != nil {
+		ctx.Scrutineer.FindingID = *scan.FindingID
 	}
 	b, err := json.MarshalIndent(ctx, "", "  ")
 	if err != nil {

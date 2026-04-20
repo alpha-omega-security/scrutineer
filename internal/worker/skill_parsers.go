@@ -279,6 +279,66 @@ func (w *Worker) parseDependenciesOutput(scan *db.Scan, report string, emit func
 	return nil
 }
 
+// parseVerifyOutput records the outcome of a finding-scoped verification
+// run. The skill reports one of:
+//   - confirmed: the finding reproduces against the current code, move the
+//     finding from new to enriched so an analyst can triage with fresh evidence
+//   - fixed: the original reproduction no longer triggers, mark the finding
+//     fixed so it falls out of the triage queue
+//   - inconclusive: the reproduction couldn't be run (tooling missing,
+//     code moved, etc), leave the status but append the evidence to notes
+// Evidence and notes are appended to Finding.Notes with a timestamp header.
+func (w *Worker) parseVerifyOutput(scan *db.Scan, report string, emit func(Event)) error {
+	if scan.FindingID == nil {
+		return fmt.Errorf("verify scan has no finding_id")
+	}
+	var result struct {
+		Status   string `json:"status"`
+		Evidence string `json:"evidence"`
+		Notes    string `json:"notes"`
+	}
+	if err := json.Unmarshal([]byte(report), &result); err != nil {
+		return fmt.Errorf("parse verify report: %w", err)
+	}
+	var f db.Finding
+	if err := w.DB.First(&f, *scan.FindingID).Error; err != nil {
+		return fmt.Errorf("load finding %d: %w", *scan.FindingID, err)
+	}
+
+	switch result.Status {
+	case "confirmed":
+		if f.Status == db.FindingNew {
+			f.Status = db.FindingEnriched
+		}
+	case "fixed":
+		f.Status = db.FindingFixed
+	case "inconclusive":
+		// Leave status alone.
+	default:
+		return fmt.Errorf("verify status %q is not one of confirmed|fixed|inconclusive", result.Status)
+	}
+
+	var b strings.Builder
+	if f.Notes != "" {
+		b.WriteString(f.Notes)
+		b.WriteString("\n\n")
+	}
+	fmt.Fprintf(&b, "## verify %s — %s\n", result.Status, time.Now().UTC().Format(time.RFC3339))
+	if result.Evidence != "" {
+		fmt.Fprintf(&b, "\n%s\n", strings.TrimSpace(result.Evidence))
+	}
+	if result.Notes != "" {
+		fmt.Fprintf(&b, "\n%s\n", strings.TrimSpace(result.Notes))
+	}
+	f.Notes = b.String()
+
+	if err := w.DB.Save(&f).Error; err != nil {
+		return fmt.Errorf("save finding: %w", err)
+	}
+	emit(Event{Kind: KindText, Text: "finding " + fmt.Sprint(f.ID) + " -> " + result.Status})
+	return nil
+}
+
 // parseTime accepts RFC3339 or date-only strings. Empty input is not an
 // error; the caller decides whether to omit the field.
 func parseTime(s string) (time.Time, bool) {

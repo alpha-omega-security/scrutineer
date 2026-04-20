@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"gorm.io/gorm"
@@ -126,6 +127,76 @@ func TestParseDependents_replacesDependentRows(t *testing.T) {
 	gdb.Where("repository_id = ?", repo.ID).Find(&rows)
 	if len(rows) != 1 || rows[0].Name != "rails-x" || rows[0].DependentRepos != 200 {
 		t.Fatalf("rows: %+v", rows)
+	}
+}
+
+func runSkillWithFinding(t *testing.T, outputKind, report string, startStatus db.FindingLifecycle) db.Finding {
+	t.Helper()
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "v.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
+	gdb.Create(&repo)
+	priorScan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanDone, SkillName: "security-deep-dive"}
+	gdb.Create(&priorScan)
+	finding := db.Finding{ScanID: priorScan.ID, FindingID: "F1", Title: "x", Severity: "High", Status: startStatus}
+	gdb.Create(&finding)
+	skill := db.Skill{Name: "verify", Description: "d", Body: "b", OutputFile: "report.json", OutputKind: outputKind, Version: 1, Active: true, Source: "ui"}
+	gdb.Create(&skill)
+	fid := finding.ID
+	scan := db.Scan{
+		RepositoryID: repo.ID,
+		Kind:         JobSkill,
+		Status:       db.ScanQueued,
+		Model:        "fake",
+		SkillID:      &skill.ID,
+		FindingID:    &fid,
+	}
+	gdb.Create(&scan)
+
+	w := &Worker{
+		DB:      gdb,
+		Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+		DataDir: t.TempDir(),
+		Runner:  fakeRunner{skillRes: SkillResult{Commit: "abc", Report: report}},
+	}
+	body, _ := json.Marshal(queue.Payload{ScanID: scan.ID})
+	if err := w.wrap(w.doSkill)(context.Background(), body); err != nil {
+		t.Fatal(err)
+	}
+	var refreshed db.Finding
+	gdb.First(&refreshed, finding.ID)
+	return refreshed
+}
+
+func TestParseVerify_confirmedMovesNewToEnriched(t *testing.T) {
+	report := `{"status":"confirmed","evidence":"ran repro.rb, got the same error","notes":"no code change"}`
+	f := runSkillWithFinding(t, "verify", report, db.FindingNew)
+	if f.Status != db.FindingEnriched {
+		t.Errorf("status = %s, want enriched", f.Status)
+	}
+	if !strings.Contains(f.Notes, "verify confirmed") {
+		t.Errorf("notes missing verify header: %q", f.Notes)
+	}
+}
+
+func TestParseVerify_fixedJumpsToFixed(t *testing.T) {
+	report := `{"status":"fixed","evidence":"repro no longer reproduces","notes":"commit abc added guard"}`
+	f := runSkillWithFinding(t, "verify", report, db.FindingTriaged)
+	if f.Status != db.FindingFixed {
+		t.Errorf("status = %s, want fixed", f.Status)
+	}
+}
+
+func TestParseVerify_inconclusiveLeavesStatus(t *testing.T) {
+	report := `{"status":"inconclusive","notes":"tooling missing"}`
+	f := runSkillWithFinding(t, "verify", report, db.FindingNew)
+	if f.Status != db.FindingNew {
+		t.Errorf("status = %s, want new (unchanged)", f.Status)
+	}
+	if !strings.Contains(f.Notes, "inconclusive") {
+		t.Errorf("notes missing status header: %q", f.Notes)
 	}
 }
 
