@@ -14,6 +14,11 @@ import (
 	"scrutineer/internal/queue"
 )
 
+const maintainersReport = `{"maintainers":[
+  {"login":"alice","name":"Alice","email":"alice@example.com","role":"lead","status":"active","evidence":"80% of past-year commits"},
+  {"login":"bob","role":"contributor","status":"inactive","evidence":"last commit 2022"}
+],"disclosure_channel":"SECURITY.md","notes":""}`
+
 func TestDoSkill_findingsKind(t *testing.T) {
 	gdb, err := db.Open(filepath.Join(t.TempDir(), "s.db"))
 	if err != nil {
@@ -73,6 +78,93 @@ func TestDoSkill_findingsKind(t *testing.T) {
 	}
 	if !strings.Contains(got.Prompt, "spec-deep") || !strings.Contains(got.Prompt, "report.json") {
 		t.Errorf("prompt missing skill name or output file: %q", got.Prompt)
+	}
+}
+
+func TestDoSkill_maintainersKind(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "m.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
+	gdb.Create(&repo)
+	skill := db.Skill{
+		Name:        "maintainers",
+		Description: "Identify maintainers",
+		Body:        "Fetch ecosyste.ms and classify.",
+		OutputFile:  "report.json",
+		OutputKind:  "maintainers",
+		Version:     1,
+		Active:      true,
+		Source:      "ui",
+	}
+	gdb.Create(&skill)
+
+	scan := db.Scan{
+		RepositoryID: repo.ID,
+		Kind:         JobSkill,
+		Status:       db.ScanQueued,
+		Model:        "fake",
+		SkillID:      &skill.ID,
+	}
+	gdb.Create(&scan)
+
+	w := &Worker{
+		DB:      gdb,
+		Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+		DataDir: t.TempDir(),
+		Runner:  fakeRunner{skillRes: SkillResult{Commit: "abc", Report: maintainersReport}},
+	}
+
+	body, _ := json.Marshal(queue.Payload{ScanID: scan.ID})
+	if err := w.wrap(w.doSkill)(context.Background(), body); err != nil {
+		t.Fatal(err)
+	}
+
+	var alice db.Maintainer
+	if err := gdb.Where("login = ?", "alice").First(&alice).Error; err != nil {
+		t.Fatalf("alice not upserted: %v", err)
+	}
+	if alice.Status != db.MaintainerActive || alice.Email != "alice@example.com" {
+		t.Errorf("alice row: %+v", alice)
+	}
+	var bob db.Maintainer
+	if err := gdb.Where("login = ?", "bob").First(&bob).Error; err != nil {
+		t.Fatalf("bob not upserted: %v", err)
+	}
+	if bob.Status != db.MaintainerInactive {
+		t.Errorf("bob status: %s", bob.Status)
+	}
+
+	var fresh db.Repository
+	gdb.Preload("Maintainers").First(&fresh, repo.ID)
+	if len(fresh.Maintainers) != 2 {
+		t.Errorf("repo linked to %d maintainers, want 2", len(fresh.Maintainers))
+	}
+}
+
+func TestStageContext_writesRepoFacts(t *testing.T) {
+	dir := t.TempDir()
+	repo := &db.Repository{
+		URL:           "https://example.com/x",
+		HTMLURL:       "https://example.com/x",
+		Name:          "x",
+		FullName:      "example/x",
+		DefaultBranch: "main",
+	}
+	if err := stageContext(dir, repo); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "context.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got skillContext
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Repository.URL != repo.URL || got.Repository.DefaultBranch != "main" {
+		t.Errorf("context: %+v", got)
 	}
 }
 

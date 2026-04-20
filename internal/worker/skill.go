@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,30 @@ import (
 )
 
 const filePerm = 0o644
+
+// skillContext is the JSON document scrutineer writes to ./context.json in
+// every skill workspace before invoking claude. Skills that need to know who
+// they are scanning read this file; skills that only need the source code
+// ignore it. Keeping it narrow: only facts the host already has, no secrets.
+type skillContext struct {
+	Repository skillContextRepo `json:"repository"`
+	Commit     string           `json:"commit,omitempty"`
+	Packages   []skillContextPkg `json:"packages,omitempty"`
+}
+
+type skillContextRepo struct {
+	URL           string `json:"url"`
+	HTMLURL       string `json:"html_url,omitempty"`
+	Name          string `json:"name,omitempty"`
+	FullName      string `json:"full_name,omitempty"`
+	DefaultBranch string `json:"default_branch,omitempty"`
+}
+
+type skillContextPkg struct {
+	Name      string `json:"name"`
+	Ecosystem string `json:"ecosystem,omitempty"`
+	PURL      string `json:"purl,omitempty"`
+}
 
 // doSkill stages the referenced skill under the scan's workspace and invokes
 // claude-code, which discovers project-level skills at ./.claude/skills and
@@ -37,6 +62,9 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 	if err := stageSkill(&skill, skillDir); err != nil {
 		return "", fmt.Errorf("stage skill: %w", err)
 	}
+	if err := stageContext(workRoot, &scan.Repository); err != nil {
+		return "", fmt.Errorf("stage context: %w", err)
+	}
 
 	prompt := buildSkillPrompt(skill.Name, skill.OutputFile)
 	scan.Prompt = prompt
@@ -56,23 +84,91 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 		return res.Report, err
 	}
 
-	// Findings-shaped output feeds the existing parser so skill-driven audits
-	// surface in the Findings tab alongside the legacy claude job.
-	if skill.OutputKind == "findings" && res.Report != "" {
-		rep, perr := parseReport([]byte(res.Report))
-		if perr != nil {
-			return res.Report, perr
+	if res.Report == "" {
+		return res.Report, nil
+	}
+	switch skill.OutputKind {
+	case "findings":
+		if err := w.parseFindingsOutput(scan, res.Report, emit); err != nil {
+			return res.Report, err
 		}
-		findings := rep.toFindings(scan.ID)
-		scan.FindingsCount = len(findings)
-		if len(findings) > 0 {
-			if err := w.DB.Create(&findings).Error; err != nil {
-				return res.Report, fmt.Errorf("save findings: %w", err)
-			}
+	case "maintainers":
+		if err := w.parseMaintainersOutput(scan, res.Report, emit); err != nil {
+			return res.Report, err
 		}
-		emit(Event{Kind: KindText, Text: fmt.Sprintf("parsed %d finding(s)", len(findings))})
 	}
 	return res.Report, nil
+}
+
+// parseFindingsOutput feeds the existing spec-deep parser so skill-driven
+// audits surface in the Findings tab alongside the legacy claude job.
+func (w *Worker) parseFindingsOutput(scan *db.Scan, report string, emit func(Event)) error {
+	rep, err := parseReport([]byte(report))
+	if err != nil {
+		return err
+	}
+	findings := rep.toFindings(scan.ID)
+	scan.FindingsCount = len(findings)
+	if len(findings) > 0 {
+		if err := w.DB.Create(&findings).Error; err != nil {
+			return fmt.Errorf("save findings: %w", err)
+		}
+	}
+	emit(Event{Kind: KindText, Text: fmt.Sprintf("parsed %d finding(s)", len(findings))})
+	return nil
+}
+
+// parseMaintainersOutput upserts Maintainer rows and links them to the
+// scanned repo. Mirrors the legacy doMaintainerAnalysis logic so the
+// maintainers skill and the old Go handler stay interchangeable.
+func (w *Worker) parseMaintainersOutput(scan *db.Scan, report string, emit func(Event)) error {
+	var result struct {
+		Maintainers []struct {
+			Login    string `json:"login"`
+			Name     string `json:"name"`
+			Email    string `json:"email"`
+			Role     string `json:"role"`
+			Status   string `json:"status"`
+			Evidence string `json:"evidence"`
+		} `json:"maintainers"`
+	}
+	if err := json.Unmarshal([]byte(report), &result); err != nil {
+		return fmt.Errorf("parse maintainers report: %w", err)
+	}
+	var repo db.Repository
+	if err := w.DB.First(&repo, scan.RepositoryID).Error; err != nil {
+		return err
+	}
+	var linked []db.Maintainer
+	for _, rm := range result.Maintainers {
+		if rm.Login == "" {
+			continue
+		}
+		var m db.Maintainer
+		w.DB.Where(db.Maintainer{Login: rm.Login}).FirstOrCreate(&m)
+		if rm.Name != "" {
+			m.Name = rm.Name
+		}
+		if validEmail(rm.Email) {
+			m.Email = rm.Email
+		}
+		switch rm.Status {
+		case "active":
+			m.Status = db.MaintainerActive
+		case "inactive":
+			m.Status = db.MaintainerInactive
+		}
+		if rm.Evidence != "" {
+			m.Notes = rm.Role + ": " + rm.Evidence
+		}
+		w.DB.Save(&m)
+		linked = append(linked, m)
+	}
+	if len(linked) > 0 {
+		_ = w.DB.Model(&repo).Association("Maintainers").Replace(linked)
+	}
+	emit(Event{Kind: KindText, Text: fmt.Sprintf("identified %d maintainer(s)", len(result.Maintainers))})
+	return nil
 }
 
 // stageSkill writes the skill's files into dst so claude-code discovers them
@@ -135,6 +231,29 @@ func oneLine(s string) string {
 	s = strings.ReplaceAll(s, "\r\n", " ")
 	s = strings.ReplaceAll(s, "\n", " ")
 	return strings.TrimSpace(s)
+}
+
+// stageContext writes the workspace-level context.json that every skill can
+// rely on. Kept small and boring on purpose: skills that need more detail
+// can read it from the clone.
+func stageContext(workRoot string, repo *db.Repository) error {
+	if err := os.MkdirAll(workRoot, dirPerm); err != nil {
+		return err
+	}
+	ctx := skillContext{
+		Repository: skillContextRepo{
+			URL:           repo.URL,
+			HTMLURL:       repo.HTMLURL,
+			Name:          repo.Name,
+			FullName:      repo.FullName,
+			DefaultBranch: repo.DefaultBranch,
+		},
+	}
+	b, err := json.MarshalIndent(ctx, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(workRoot, "context.json"), b, filePerm)
 }
 
 // copyAux walks src looking for any files other than SKILL.md and schema.json
