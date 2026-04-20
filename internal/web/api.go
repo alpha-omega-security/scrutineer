@@ -93,6 +93,15 @@ func (s *Server) apiHandler() http.Handler {
 	mux.HandleFunc("POST /findings/{id}/skills/{name}/run", s.apiRunFindingSkill)
 	mux.HandleFunc("GET /scans/{id}", s.apiGetScan)
 	mux.HandleFunc("GET /findings/{id}", s.apiGetFinding)
+	mux.HandleFunc("PATCH /findings/{id}", s.apiPatchFinding)
+	mux.HandleFunc("GET /findings/{id}/notes", s.apiListFindingNotes)
+	mux.HandleFunc("POST /findings/{id}/notes", s.apiAddFindingNote)
+	mux.HandleFunc("GET /findings/{id}/communications", s.apiListFindingCommunications)
+	mux.HandleFunc("POST /findings/{id}/communications", s.apiAddFindingCommunication)
+	mux.HandleFunc("GET /findings/{id}/references", s.apiListFindingReferences)
+	mux.HandleFunc("POST /findings/{id}/references", s.apiAddFindingReference)
+	mux.HandleFunc("PUT /findings/{id}/labels", s.apiSetFindingLabels)
+	mux.HandleFunc("GET /findings/{id}/history", s.apiListFindingHistory)
 	mux.HandleFunc("GET /skills", s.apiListSkills)
 	return http.StripPrefix(apiPrefix, s.apiAuth(mux))
 }
@@ -223,18 +232,12 @@ func (s *Server) apiRunFindingSkill(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, scanSummary(sc))
 }
 
-// findingRepoID resolves a finding to the repository that owns it by
-// reading the scan the finding belongs to. Direct query so it does not
-// depend on GORM's Preload of the Finding.Scan relation (which is unreliable
-// in sqlite; the column aliasing doesn't round-trip).
+// findingRepoID reads the denormalized Finding.RepositoryID column. Used
+// by the skill-facing handlers to enforce "scan can only touch findings
+// on its own repository" without re-reading the entire Finding row.
 func (s *Server) findingRepoID(findingID uint) (uint, bool) {
-	var scanID uint
-	row := s.DB.Model(&db.Finding{}).Select("scan_id").Where("id = ?", findingID).Row()
-	if err := row.Scan(&scanID); err != nil || scanID == 0 {
-		return 0, false
-	}
 	var repoID uint
-	row = s.DB.Model(&db.Scan{}).Select("repository_id").Where("id = ?", scanID).Row()
+	row := s.DB.Model(&db.Finding{}).Select("repository_id").Where("id = ?", findingID).Row()
 	if err := row.Scan(&repoID); err != nil || repoID == 0 {
 		return 0, false
 	}

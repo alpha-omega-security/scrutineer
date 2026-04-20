@@ -47,7 +47,9 @@
       <th class="w-56">Location</th><th class="w-16">Scan</th>
     </tr></thead>
     <tbody>
+    {{$repos := .Repos}}
     {{range .Findings}}
+      {{$repo := index $repos .RepositoryID}}
       <tr class="cursor-pointer" hx-get="/findings/{{.ID}}" hx-target="body" hx-push-url="true">
         <td>{{template "severity-badge" .Severity}}</td>
         <td class="min-w-0 whitespace-normal">
@@ -55,11 +57,11 @@
           <div class="text-xs text-muted-foreground line-clamp-2">{{.Summary}}</div>
         </td>
         <td>{{template "finding-status" (fstatus .Status)}}</td>
-        <td class="truncate">{{.Scan.Repository.Name}}</td>
+        <td class="truncate">{{$repo.Name}}</td>
         <td class="text-muted-foreground">
           {{if .CWE}}<span data-tooltip="{{cwename .CWE}}">{{.CWE}}</span>{{end}}
         </td>
-        <td class="whitespace-normal">{{template "loc-link" (dict "HTMLURL" .Scan.Repository.HTMLURL "Commit" .Scan.Commit "Location" .Location)}}</td>
+        <td class="whitespace-normal">{{template "loc-link" (dict "HTMLURL" $repo.HTMLURL "Commit" .Commit "Location" .Location)}}</td>
         <td class="text-muted-foreground">#{{.ScanID}}</td>
       </tr>
     {{end}}

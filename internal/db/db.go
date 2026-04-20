@@ -218,36 +218,160 @@ type Dependency struct {
 	CreatedAt      time.Time
 }
 
-// Finding is one vulnerability reported by a claude scan. Rows are created
-// by parsing report.json against the schema in worker/schema.json; the
-// columns mirror that schema so the two stay easy to diff.
+// FindingResolution says how a finding got resolved. Set by the analyst
+// once disclosure runs its course.
+type FindingResolution string
+
+const (
+	ResolutionFix        FindingResolution = "fix"
+	ResolutionMigrate    FindingResolution = "migrate"
+	ResolutionWorkaround FindingResolution = "workaround"
+	ResolutionAdopt      FindingResolution = "adopt"
+	ResolutionWontfix    FindingResolution = "wontfix"
+)
+
+// FindingSource is the provenance of a field value: produced by a
+// deterministic tool, suggested by a model-backed skill, or set by the
+// analyst. Analyst wins over model wins over tool.
+type FindingSource string
+
+const (
+	SourceTool     FindingSource = "tool"
+	SourceModel    FindingSource = "model_suggested"
+	SourceAnalyst  FindingSource = "analyst"
+)
+
+// Finding is one vulnerability reported by a scan. The Finding row holds
+// the current value of every mutable field; FindingHistory records who
+// changed each one and from which source. Labels, notes, communications,
+// and references are normalised into sibling tables.
 type Finding struct {
-	ID     uint `gorm:"primarykey"`
-	ScanID uint `gorm:"index;not null"`
-	Scan   Scan
+	ID           uint `gorm:"primarykey"`
+	ScanID       uint `gorm:"index;not null"`
+	Scan         Scan
+	// RepositoryID and Commit are denormalized from Scan so list queries
+	// don't have to join through Scan (GORM's Preload/Joins on
+	// Finding.Scan doesn't round-trip cleanly on sqlite). Set at
+	// finding-create time and never changed.
+	RepositoryID uint   `gorm:"index;not null"`
+	Commit       string
 
 	FindingID string // e.g. F1, F2 within the report
-	Sinks     string // comma-joined sink IDs, e.g. "S9, S25, S26"
+	Sinks     string // comma-joined sink IDs
 	Title     string
-	Severity  string      `gorm:"index"`
+	Severity  string           `gorm:"index"`
 	Status    FindingLifecycle `gorm:"index;default:new"`
 	CWE       string
 	Location  string
 	Affected  string // version range
-	Notes     string `gorm:"type:text"`
 
-	// Per-step prose from the six-step checklist
+	// Disclosure / triage fields. Any of these may be set by a tool, a
+	// model-backed skill, or the analyst; see FindingHistory for the trail.
+	CVEID           string
+	CVSSVector      string
+	CVSSScore       float64
+	FixVersion      string
+	FixCommit       string
+	Resolution      FindingResolution `gorm:"index"`
+	DisclosureDraft string            `gorm:"type:text"`
+	Assignee        string            `gorm:"index"`
+
+	// Per-step prose from the six-step audit checklist.
 	Trace      string `gorm:"type:text"`
-	Boundary   string `gorm:"type:text"` // step 2 analysis
-	Validation string `gorm:"type:text"` // step 3 reproduction
+	Boundary   string `gorm:"type:text"`
+	Validation string `gorm:"type:text"`
 	PriorArt   string `gorm:"type:text"`
 	Reach      string `gorm:"type:text"`
-	Rating     string `gorm:"type:text"` // step 6 severity justification
+	Rating     string `gorm:"type:text"`
 
-	// Legacy fields for backward compat with old schema reports
-	Confidence string
-	Summary    string
-	Details    string
+	Labels         []FindingLabel         `gorm:"many2many:finding_labels_join"`
+	Notes          []FindingNote          `gorm:"constraint:OnDelete:CASCADE"`
+	Communications []FindingCommunication `gorm:"constraint:OnDelete:CASCADE"`
+	References     []FindingReference     `gorm:"constraint:OnDelete:CASCADE"`
+	History        []FindingHistory       `gorm:"constraint:OnDelete:CASCADE"`
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// Summary gives a one-paragraph digest of the finding: first paragraph of
+// Trace when present, else the Title. Kept as a method so templates can
+// treat it like any other field without callers recomputing it.
+func (f Finding) Summary() string {
+	if f.Trace == "" {
+		return f.Title
+	}
+	if i := strings.Index(f.Trace, "\n\n"); i > 0 {
+		return f.Trace[:i]
+	}
+	return f.Trace
+}
+
+// FindingLabel is a tag independent of the lifecycle status. A finding can
+// carry multiple labels (wontfix, needs-info, regression, etc.).
+type FindingLabel struct {
+	ID    uint   `gorm:"primarykey"`
+	Name  string `gorm:"uniqueIndex;not null"`
+	Color string // CSS hex color for the badge
+
+	CreatedAt time.Time
+}
+
+// FindingNote is one timestamped internal analyst note about a finding.
+// Replaces the old single Notes column so the comment trail is preserved.
+type FindingNote struct {
+	ID        uint `gorm:"primarykey"`
+	FindingID uint `gorm:"index;not null"`
+	Body      string `gorm:"type:text"`
+	By        string // free-text author; scrutineer is single-user so usually empty
+
+	CreatedAt time.Time
+}
+
+// FindingCommunication is one external interaction about a finding: an
+// email to the maintainer, an inbound reply, a GHSA submission, etc.
+// Kept distinct from FindingNote since the semantics (channel, direction,
+// external actor) don't fit a generic note.
+type FindingCommunication struct {
+	ID        uint `gorm:"primarykey"`
+	FindingID uint `gorm:"index;not null"`
+	Channel   string // email | ghsa | issue | pr | direct | registry
+	Direction string // outbound | inbound
+	Actor     string // name/handle of the other party
+	Body      string `gorm:"type:text"`
+	// OfferedHelp (optional): pr | funding | adoption | none.
+	// Lets disclosure tracking distinguish "reported a bug" from
+	// "reported a bug and offered a PR/funding".
+	OfferedHelp string
+	At          time.Time
+
+	CreatedAt time.Time
+}
+
+// FindingReference is an external URL related to a finding: the upstream
+// issue/PR, a CVE or GHSA record, a fix commit, a blog post.
+type FindingReference struct {
+	ID        uint `gorm:"primarykey"`
+	FindingID uint `gorm:"index;not null"`
+	URL       string
+	// Tags is comma-joined: issue, pr, cve, ghsa, patch, advisory, discussion, article.
+	Tags    string
+	Summary string
+
+	CreatedAt time.Time
+}
+
+// FindingHistory records every change to a mutable field on a Finding.
+// Together with the Finding row's current columns it gives you "what is
+// the current value, who set it, from what source, and when".
+type FindingHistory struct {
+	ID        uint          `gorm:"primarykey"`
+	FindingID uint          `gorm:"index;not null"`
+	Field     string        `gorm:"index"` // e.g. severity, cvss_vector, status
+	OldValue  string        `gorm:"type:text"`
+	NewValue  string        `gorm:"type:text"`
+	Source    FindingSource `gorm:"index"`
+	By        string        // free text, or the skill name for model_suggested writes
 
 	CreatedAt time.Time
 }
@@ -310,7 +434,13 @@ func Open(dsn string) (*gorm.DB, error) {
 	if err := gdb.Exec("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;").Error; err != nil {
 		return nil, fmt.Errorf("pragma: %w", err)
 	}
-	if err := gdb.AutoMigrate(&Repository{}, &Scan{}, &Finding{}, &Dependency{}, &Package{}, &Dependent{}, &Advisory{}, &Maintainer{}, &Skill{}); err != nil {
+	if err := gdb.AutoMigrate(
+		&Repository{}, &Scan{},
+		&Finding{}, &FindingLabel{}, &FindingNote{},
+		&FindingCommunication{}, &FindingReference{}, &FindingHistory{},
+		&Dependency{}, &Package{}, &Dependent{}, &Advisory{},
+		&Maintainer{}, &Skill{},
+	); err != nil {
 		return nil, fmt.Errorf("automigrate: %w", err)
 	}
 	return gdb, nil

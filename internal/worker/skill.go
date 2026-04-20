@@ -143,7 +143,7 @@ func (w *Worker) parseFindingsOutput(scan *db.Scan, report string, emit func(Eve
 	if err != nil {
 		return err
 	}
-	findings := rep.toFindings(scan.ID)
+	findings := rep.toFindings(scan.ID, scan.RepositoryID, scan.Commit)
 	scan.FindingsCount = len(findings)
 	if len(findings) > 0 {
 		if err := w.DB.Create(&findings).Error; err != nil {

@@ -128,6 +128,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /findings/{id}/status", s.findingStatus)
 	mux.HandleFunc("POST /findings/{id}/verify", s.findingVerify)
 	mux.HandleFunc("POST /findings/{id}/notes", s.findingNotes)
+	mux.HandleFunc("POST /findings/{id}/fields", s.findingFields)
+	mux.HandleFunc("POST /findings/{id}/communications", s.findingCommunications)
+	mux.HandleFunc("POST /findings/{id}/references", s.findingReferences)
+	mux.HandleFunc("POST /findings/{id}/labels", s.findingLabels)
 	mux.HandleFunc("POST /dependencies/{id}/scan", s.depScan)
 	mux.HandleFunc("POST /dependents/{id}/scan", s.dependentScan)
 	mux.HandleFunc("GET /packages", s.packages)
@@ -283,10 +287,36 @@ func (s *Server) maintainerShow(w http.ResponseWriter, r *http.Request) {
 	}
 	var findings []db.Finding
 	if len(repoIDs) > 0 {
-		s.DB.Joins("Scan").Where("\"Scan\".repository_id IN ?", repoIDs).
-			Preload("Scan.Repository").Order("id desc").Find(&findings)
+		s.DB.Where("repository_id IN ?", repoIDs).Order("id desc").Find(&findings)
 	}
-	s.render(w, "maintainer_show.html", map[string]any{"M": m, "Findings": findings})
+	reposByID := loadRepoMap(s.DB, findings)
+	s.render(w, "maintainer_show.html", map[string]any{
+		"M": m, "Findings": findings, "Repos": reposByID,
+	})
+}
+
+// loadRepoMap batch-loads the repositories referenced by a slice of
+// findings and returns a map keyed by repository ID. Templates render
+// per-finding repo info by looking up the map.
+func loadRepoMap(gdb *gorm.DB, findings []db.Finding) map[uint]db.Repository {
+	seen := make(map[uint]bool)
+	ids := make([]uint, 0)
+	for _, f := range findings {
+		if !seen[f.RepositoryID] {
+			seen[f.RepositoryID] = true
+			ids = append(ids, f.RepositoryID)
+		}
+	}
+	result := make(map[uint]db.Repository, len(ids))
+	if len(ids) == 0 {
+		return result
+	}
+	var rows []db.Repository
+	gdb.Where("id IN ?", ids).Find(&rows)
+	for _, r := range rows {
+		result[r.ID] = r
+	}
+	return result
 }
 
 var severityOrder = `CASE severity
@@ -294,21 +324,22 @@ var severityOrder = `CASE severity
 	WHEN 'Medium' THEN 2 WHEN 'Low' THEN 3 ELSE 4 END`
 
 func (s *Server) findings(w http.ResponseWriter, r *http.Request) {
-	q := s.DB.Model(&db.Finding{}).Joins("Scan").Joins("Scan.Repository")
+	q := s.DB.Model(&db.Finding{})
 	sev := r.URL.Query().Get("severity")
 	if sev != "" {
-		q = q.Where("findings.severity = ?", sev)
+		q = q.Where("severity = ?", sev)
 	}
 
 	sort := r.URL.Query().Get("sort")
 	switch sort {
 	case "severity":
-		q = q.Order(severityOrder).Order("findings.id desc")
+		q = q.Order(severityOrder).Order("id desc")
 	case "repository":
-		q = q.Order("`Scan__Repository`.name").Order("findings.id desc")
+		q = q.Joins("JOIN repositories r ON r.id = findings.repository_id").
+			Order("r.name").Order("findings.id desc")
 	default:
 		sort = defaultSort
-		q = q.Order("findings.id desc")
+		q = q.Order("id desc")
 	}
 
 	var total int64
@@ -316,11 +347,12 @@ func (s *Server) findings(w http.ResponseWriter, r *http.Request) {
 	page := paginate(r, total)
 
 	var rows []db.Finding
-	q.Preload("Scan.Repository").
-		Limit(perPage).Offset((page.N - 1) * perPage).Find(&rows)
+	q.Limit(perPage).Offset((page.N - 1) * perPage).Find(&rows)
 
+	reposByID := loadRepoMap(s.DB, rows)
 	s.render(w, "findings.html", map[string]any{
 		"Findings": rows, "Page": page, "Severity": sev, "Sort": sort,
+		"Repos": reposByID,
 	})
 }
 
@@ -421,7 +453,10 @@ func (s *Server) findingStatus(w http.ResponseWriter, r *http.Request) {
 	case db.FindingNew, db.FindingEnriched, db.FindingTriaged, db.FindingReady,
 		db.FindingReported, db.FindingAcknowledged, db.FindingFixed, db.FindingPublished,
 		db.FindingRejected, db.FindingDuplicate:
-		s.DB.Model(&f).Update("status", status)
+		if err := db.WriteFindingField(s.DB, f.ID, "status", string(status), db.SourceAnalyst, ""); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 	default:
 		http.Error(w, "invalid status", http.StatusUnprocessableEntity)
 		return
@@ -435,8 +470,13 @@ const verifySkillName = "verify"
 
 func (s *Server) findingVerify(w http.ResponseWriter, r *http.Request) {
 	var f db.Finding
-	if err := s.DB.Preload("Scan").First(&f, r.PathValue("id")).Error; err != nil {
+	if err := s.DB.First(&f, r.PathValue("id")).Error; err != nil {
 		http.NotFound(w, r)
+		return
+	}
+	var scan db.Scan
+	if err := s.DB.First(&scan, f.ScanID).Error; err != nil {
+		http.Error(w, "scan for finding not found", http.StatusInternalServerError)
 		return
 	}
 	var skill db.Skill
@@ -445,7 +485,7 @@ func (s *Server) findingVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	fid := f.ID
-	scanID, err := s.enqueueSkillScoped(r.Context(), f.Scan.RepositoryID, skill.ID, &fid, r.FormValue("model"))
+	scanID, err := s.enqueueSkillScoped(r.Context(), scan.RepositoryID, skill.ID, &fid, r.FormValue("model"))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -460,7 +500,10 @@ func (s *Server) findingNotes(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	s.DB.Model(&f).Update("notes", r.FormValue("notes"))
+	if _, err := db.AddFindingNote(s.DB, f.ID, r.FormValue("body"), ""); err != nil {
+		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
 	w.Header().Set("HX-Redirect", fmt.Sprintf("/findings/%d", f.ID))
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -517,11 +560,40 @@ func (s *Server) packageShow(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) findingShow(w http.ResponseWriter, r *http.Request) {
 	var f db.Finding
-	if err := s.DB.Preload("Scan.Repository").First(&f, r.PathValue("id")).Error; err != nil {
+	if err := s.DB.Preload("Labels").First(&f, r.PathValue("id")).Error; err != nil {
 		http.NotFound(w, r)
 		return
 	}
-	data := map[string]any{"F": f}
+	var scan db.Scan
+	s.DB.First(&scan, f.ScanID)
+	var repo db.Repository
+	s.DB.First(&repo, scan.RepositoryID)
+	var notes []db.FindingNote
+	s.DB.Where("finding_id = ?", f.ID).Order("created_at desc").Find(&notes)
+	var comms []db.FindingCommunication
+	s.DB.Where("finding_id = ?", f.ID).Order("at desc").Find(&comms)
+	var refs []db.FindingReference
+	s.DB.Where("finding_id = ?", f.ID).Order("id desc").Find(&refs)
+	var history []db.FindingHistory
+	s.DB.Where("finding_id = ?", f.ID).Order("created_at desc").Find(&history)
+	var labels []db.FindingLabel
+	s.DB.Order("name").Find(&labels)
+	selected := make(map[string]bool, len(f.Labels))
+	for _, l := range f.Labels {
+		selected[l.Name] = true
+	}
+
+	data := map[string]any{
+		"F":              f,
+		"Scan":           scan,
+		"Repo":           repo,
+		"Notes":          notes,
+		"Communications": comms,
+		"References":     refs,
+		"History":        history,
+		"AllLabels":      labels,
+		"Selected":       selected,
+	}
 	if id, c, ok := LookupCWE(f.CWE); ok {
 		data["CWE"] = map[string]any{"ID": id, "Name": c.Name, "Description": c.Description}
 	}

@@ -130,7 +130,7 @@ func TestParseDependents_replacesDependentRows(t *testing.T) {
 	}
 }
 
-func runSkillWithFinding(t *testing.T, outputKind, report string, startStatus db.FindingLifecycle) db.Finding {
+func runSkillWithFinding(t *testing.T, outputKind, report string, startStatus db.FindingLifecycle) (db.Finding, *gorm.DB) {
 	t.Helper()
 	gdb, err := db.Open(filepath.Join(t.TempDir(), "v.db"))
 	if err != nil {
@@ -140,7 +140,7 @@ func runSkillWithFinding(t *testing.T, outputKind, report string, startStatus db
 	gdb.Create(&repo)
 	priorScan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanDone, SkillName: "security-deep-dive"}
 	gdb.Create(&priorScan)
-	finding := db.Finding{ScanID: priorScan.ID, FindingID: "F1", Title: "x", Severity: "High", Status: startStatus}
+	finding := db.Finding{ScanID: priorScan.ID, RepositoryID: repo.ID, FindingID: "F1", Title: "x", Severity: "High", Status: startStatus}
 	gdb.Create(&finding)
 	skill := db.Skill{Name: "verify", Description: "d", Body: "b", OutputFile: "report.json", OutputKind: outputKind, Version: 1, Active: true, Source: "ui"}
 	gdb.Create(&skill)
@@ -167,23 +167,33 @@ func runSkillWithFinding(t *testing.T, outputKind, report string, startStatus db
 	}
 	var refreshed db.Finding
 	gdb.First(&refreshed, finding.ID)
-	return refreshed
+	return refreshed, gdb
+}
+
+// findingNotes fetches the notes rows for a finding. Used by the verify
+// tests to assert the evidence trail lands in FindingNote now that the
+// old Finding.Notes column is gone.
+func findingNotes(gdb *gorm.DB, findingID uint) []db.FindingNote {
+	var rows []db.FindingNote
+	gdb.Where("finding_id = ?", findingID).Order("created_at desc").Find(&rows)
+	return rows
 }
 
 func TestParseVerify_confirmedMovesNewToEnriched(t *testing.T) {
 	report := `{"status":"confirmed","evidence":"ran repro.rb, got the same error","notes":"no code change"}`
-	f := runSkillWithFinding(t, "verify", report, db.FindingNew)
+	f, gdb := runSkillWithFinding(t, "verify", report, db.FindingNew)
 	if f.Status != db.FindingEnriched {
 		t.Errorf("status = %s, want enriched", f.Status)
 	}
-	if !strings.Contains(f.Notes, "verify confirmed") {
-		t.Errorf("notes missing verify header: %q", f.Notes)
+	notes := findingNotes(gdb, f.ID)
+	if len(notes) == 0 || !strings.Contains(notes[0].Body, "confirmed") {
+		t.Errorf("notes missing verify record: %+v", notes)
 	}
 }
 
 func TestParseVerify_fixedJumpsToFixed(t *testing.T) {
 	report := `{"status":"fixed","evidence":"repro no longer reproduces","notes":"commit abc added guard"}`
-	f := runSkillWithFinding(t, "verify", report, db.FindingTriaged)
+	f, _ := runSkillWithFinding(t, "verify", report, db.FindingTriaged)
 	if f.Status != db.FindingFixed {
 		t.Errorf("status = %s, want fixed", f.Status)
 	}
@@ -191,12 +201,13 @@ func TestParseVerify_fixedJumpsToFixed(t *testing.T) {
 
 func TestParseVerify_inconclusiveLeavesStatus(t *testing.T) {
 	report := `{"status":"inconclusive","notes":"tooling missing"}`
-	f := runSkillWithFinding(t, "verify", report, db.FindingNew)
+	f, gdb := runSkillWithFinding(t, "verify", report, db.FindingNew)
 	if f.Status != db.FindingNew {
 		t.Errorf("status = %s, want new (unchanged)", f.Status)
 	}
-	if !strings.Contains(f.Notes, "inconclusive") {
-		t.Errorf("notes missing status header: %q", f.Notes)
+	notes := findingNotes(gdb, f.ID)
+	if len(notes) == 0 || !strings.Contains(notes[0].Body, "inconclusive") {
+		t.Errorf("notes missing status header: %+v", notes)
 	}
 }
 

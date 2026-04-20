@@ -114,8 +114,8 @@ func TestAPIFindingReadsAndFilters(t *testing.T) {
 	// Simulate a prior deep-dive scan with a couple of findings attached.
 	prior := db.Scan{RepositoryID: repo.ID, Kind: worker.JobSkill, Status: db.ScanDone, SkillName: "security-deep-dive"}
 	s.DB.Create(&prior)
-	s.DB.Create(&db.Finding{ScanID: prior.ID, FindingID: "F1", Title: "a", Severity: "High", Location: "a.go:1", Trace: "trace a"})
-	s.DB.Create(&db.Finding{ScanID: prior.ID, FindingID: "F2", Title: "b", Severity: "Low", Location: "b.go:1", Trace: "trace b"})
+	s.DB.Create(&db.Finding{ScanID: prior.ID, RepositoryID: repo.ID, FindingID: "F1", Title: "a", Severity: "High", Location: "a.go:1", Trace: "trace a"})
+	s.DB.Create(&db.Finding{ScanID: prior.ID, RepositoryID: repo.ID, FindingID: "F2", Title: "b", Severity: "Low", Location: "b.go:1", Trace: "trace b"})
 
 	// Unfiltered list
 	r := httptest.NewRequest("GET", "/api/repositories/"+strconv.FormatUint(uint64(repo.ID), 10)+"/findings", nil)
@@ -168,7 +168,7 @@ func TestAPIRunFindingSkill_scopesFindingID(t *testing.T) {
 
 	prior := db.Scan{RepositoryID: repo.ID, Kind: worker.JobSkill, Status: db.ScanDone, SkillName: "security-deep-dive"}
 	s.DB.Create(&prior)
-	finding := db.Finding{ScanID: prior.ID, FindingID: "F1", Title: "x", Severity: "High", Status: db.FindingNew}
+	finding := db.Finding{ScanID: prior.ID, RepositoryID: repo.ID, FindingID: "F1", Title: "x", Severity: "High", Status: db.FindingNew}
 	s.DB.Create(&finding)
 	verify := db.Skill{Name: "verify", Description: "v", Body: "b", OutputFile: "report.json", OutputKind: "verify", Version: 1, Active: true, Source: "ui"}
 	s.DB.Create(&verify)

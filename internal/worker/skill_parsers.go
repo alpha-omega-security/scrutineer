@@ -280,14 +280,9 @@ func (w *Worker) parseDependenciesOutput(scan *db.Scan, report string, emit func
 }
 
 // parseVerifyOutput records the outcome of a finding-scoped verification
-// run. The skill reports one of:
-//   - confirmed: the finding reproduces against the current code, move the
-//     finding from new to enriched so an analyst can triage with fresh evidence
-//   - fixed: the original reproduction no longer triggers, mark the finding
-//     fixed so it falls out of the triage queue
-//   - inconclusive: the reproduction couldn't be run (tooling missing,
-//     code moved, etc), leave the status but append the evidence to notes
-// Evidence and notes are appended to Finding.Notes with a timestamp header.
+// run. Evidence and notes become a FindingNote; the status transition is
+// written via WriteFindingField with source=model_suggested so the audit
+// trail on the finding page shows the skill as the author.
 func (w *Worker) parseVerifyOutput(scan *db.Scan, report string, emit func(Event)) error {
 	if scan.FindingID == nil {
 		return fmt.Errorf("verify scan has no finding_id")
@@ -305,36 +300,37 @@ func (w *Worker) parseVerifyOutput(scan *db.Scan, report string, emit func(Event
 		return fmt.Errorf("load finding %d: %w", *scan.FindingID, err)
 	}
 
+	var nextStatus db.FindingLifecycle
 	switch result.Status {
 	case "confirmed":
 		if f.Status == db.FindingNew {
-			f.Status = db.FindingEnriched
+			nextStatus = db.FindingEnriched
 		}
 	case "fixed":
-		f.Status = db.FindingFixed
+		nextStatus = db.FindingFixed
 	case "inconclusive":
 		// Leave status alone.
 	default:
 		return fmt.Errorf("verify status %q is not one of confirmed|fixed|inconclusive", result.Status)
 	}
+	if nextStatus != "" {
+		if err := db.WriteFindingField(w.DB, f.ID, "status", string(nextStatus), db.SourceModel, "verify"); err != nil {
+			return fmt.Errorf("update status: %w", err)
+		}
+	}
 
 	var b strings.Builder
-	if f.Notes != "" {
-		b.WriteString(f.Notes)
-		b.WriteString("\n\n")
-	}
-	fmt.Fprintf(&b, "## verify %s — %s\n", result.Status, time.Now().UTC().Format(time.RFC3339))
+	fmt.Fprintf(&b, "verify: %s\n", result.Status)
 	if result.Evidence != "" {
 		fmt.Fprintf(&b, "\n%s\n", strings.TrimSpace(result.Evidence))
 	}
 	if result.Notes != "" {
 		fmt.Fprintf(&b, "\n%s\n", strings.TrimSpace(result.Notes))
 	}
-	f.Notes = b.String()
-
-	if err := w.DB.Save(&f).Error; err != nil {
-		return fmt.Errorf("save finding: %w", err)
+	if _, err := db.AddFindingNote(w.DB, f.ID, b.String(), "verify"); err != nil {
+		return fmt.Errorf("record verify note: %w", err)
 	}
+
 	emit(Event{Kind: KindText, Text: "finding " + fmt.Sprint(f.ID) + " -> " + result.Status})
 	return nil
 }

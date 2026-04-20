@@ -1,9 +1,11 @@
 {{template "head"}}
 {{$f := .F}}
+{{$scan := .Scan}}
+{{$repo := .Repo}}
 
 {{template "crumbs" (crumbs
   "Findings" "/findings"
-  $f.Scan.Repository.Name (printf "/repositories/%d" $f.Scan.Repository.ID)
+  $repo.Name (printf "/repositories/%d" $repo.ID)
   (printf "scan #%d" $f.ScanID) (printf "/scans/%d" $f.ScanID)
   (printf "finding #%d" $f.ID) "")}}
 
@@ -11,6 +13,14 @@
   {{$f.Title}}
   {{template "finding-status" (fstatus $f.Status)}}
 </h2>
+
+{{if $f.Labels}}
+<div class="flex flex-wrap gap-1 mb-4">
+  {{range $f.Labels}}
+    <span class="badge-outline" style="border-color: {{.Color}}; color: {{.Color}}">{{.Name}}</span>
+  {{end}}
+</div>
+{{end}}
 
 {{template "finding_workflow" $f}}
 
@@ -26,7 +36,7 @@
   <div>
     <dt class="text-muted-foreground">Location</dt>
     <dd>
-      {{$u := locurl $f.Scan.Repository.HTMLURL $f.Scan.Commit $f.Location}}
+      {{$u := locurl $repo.HTMLURL $scan.Commit $f.Location}}
       {{if $u}}<a href="{{$u}}" target="_blank" rel="noopener" class="underline underline-offset-2">
         <code>{{$f.Location}}</code></a>
       {{else}}<code>{{$f.Location}}</code>{{end}}
@@ -38,13 +48,49 @@
   </div>
   <div>
     <dt class="text-muted-foreground">Sinks</dt>
-    <dd>{{if $f.Sinks}}<a href="/repositories/{{$f.Scan.Repository.ID}}#rt10"
+    <dd>{{if $f.Sinks}}<a href="/repositories/{{$repo.ID}}#rt10"
         class="underline underline-offset-2"><code>{{$f.Sinks}}</code></a>{{else}}-{{end}}</dd>
   </div>
   <div>
     <dt class="text-muted-foreground">Model</dt>
-    <dd>{{$f.Scan.Model}}</dd>
+    <dd>{{$scan.Model}}</dd>
   </div>
+  {{if $f.CVEID}}
+  <div>
+    <dt class="text-muted-foreground">CVE</dt>
+    <dd><code>{{$f.CVEID}}</code></dd>
+  </div>
+  {{end}}
+  {{if $f.CVSSVector}}
+  <div class="col-span-2">
+    <dt class="text-muted-foreground">CVSS</dt>
+    <dd><code>{{$f.CVSSVector}}</code>{{if $f.CVSSScore}} ({{$f.CVSSScore}}){{end}}</dd>
+  </div>
+  {{end}}
+  {{if $f.FixCommit}}
+  <div>
+    <dt class="text-muted-foreground">Fix commit</dt>
+    <dd><code>{{short $f.FixCommit}}</code></dd>
+  </div>
+  {{end}}
+  {{if $f.FixVersion}}
+  <div>
+    <dt class="text-muted-foreground">Fix version</dt>
+    <dd>{{$f.FixVersion}}</dd>
+  </div>
+  {{end}}
+  {{if $f.Resolution}}
+  <div>
+    <dt class="text-muted-foreground">Resolution</dt>
+    <dd><span class="badge-outline">{{$f.Resolution}}</span></dd>
+  </div>
+  {{end}}
+  {{if $f.Assignee}}
+  <div>
+    <dt class="text-muted-foreground">Assignee</dt>
+    <dd>{{$f.Assignee}}</dd>
+  </div>
+  {{end}}
 </dl>
 
 <section class="accordion">
@@ -120,45 +166,222 @@
   </details>
   {{end}}
 
-  {{/* Legacy fields for old-schema reports */}}
-  {{if and (not $f.Trace) $f.Summary}}
-  <details open class="group border-b">
-    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
-      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
-        Summary
-        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
-      </h3>
-    </summary>
-    <section class="pb-4 text-sm whitespace-pre-wrap">{{$f.Summary}}</section>
-  </details>
-  {{end}}
-
-  {{if $f.Details}}
   <details class="group border-b">
     <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
       <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
-        Details
-        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
-      </h3>
-    </summary>
-    <section class="pb-4"><pre class="log">{{$f.Details}}</pre></section>
-  </details>
-  {{end}}
-
-  <details open class="group border-b">
-    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
-      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
-        Notes
+        Disclosure fields
         <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
       </h3>
     </summary>
     <section class="pb-4">
-      <form hx-post="/findings/{{$f.ID}}/notes" hx-swap="none" class="form grid gap-2">
-        <textarea class="input" name="notes" rows="4" placeholder="Triage notes, communication log, context...">{{$f.Notes}}</textarea>
-        <div class="flex justify-end">
-          <button type="submit" class="btn-sm">Save notes</button>
+      <form method="post" action="/findings/{{$f.ID}}/fields" class="form grid grid-cols-2 gap-3">
+        <div class="grid gap-1">
+          <label class="text-xs text-muted-foreground">Severity</label>
+          <input class="input" name="severity" value="{{$f.Severity}}" list="severity-options">
+          <datalist id="severity-options">
+            <option value="Critical"><option value="High"><option value="Medium"><option value="Low">
+          </datalist>
+        </div>
+        <div class="grid gap-1">
+          <label class="text-xs text-muted-foreground">CWE</label>
+          <input class="input" name="cwe" value="{{$f.CWE}}" placeholder="CWE-79">
+        </div>
+        <div class="grid gap-1">
+          <label class="text-xs text-muted-foreground">CVE ID</label>
+          <input class="input" name="cve_id" value="{{$f.CVEID}}" placeholder="CVE-2026-12345">
+        </div>
+        <div class="grid gap-1 col-span-2">
+          <label class="text-xs text-muted-foreground">CVSS vector</label>
+          <input class="input font-mono text-xs" name="cvss_vector" value="{{$f.CVSSVector}}"
+                 placeholder="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H">
+        </div>
+        <div class="grid gap-1">
+          <label class="text-xs text-muted-foreground">Affected versions</label>
+          <input class="input" name="affected" value="{{$f.Affected}}" placeholder=">=1.0, <2.3">
+        </div>
+        <div class="grid gap-1">
+          <label class="text-xs text-muted-foreground">Fix version</label>
+          <input class="input" name="fix_version" value="{{$f.FixVersion}}">
+        </div>
+        <div class="grid gap-1 col-span-2">
+          <label class="text-xs text-muted-foreground">Fix commit</label>
+          <input class="input font-mono text-xs" name="fix_commit" value="{{$f.FixCommit}}">
+        </div>
+        <div class="grid gap-1">
+          <label class="text-xs text-muted-foreground">Resolution</label>
+          <select class="input" name="resolution">
+            <option value=""{{if not $f.Resolution}} selected{{end}}>-</option>
+            {{range (list "fix" "migrate" "workaround" "adopt" "wontfix")}}
+              <option value="{{.}}"{{if eq (printf "%s" $f.Resolution) .}} selected{{end}}>{{.}}</option>
+            {{end}}
+          </select>
+        </div>
+        <div class="grid gap-1">
+          <label class="text-xs text-muted-foreground">Assignee</label>
+          <input class="input" name="assignee" value="{{$f.Assignee}}">
+        </div>
+        <div class="grid gap-1 col-span-2">
+          <label class="text-xs text-muted-foreground">Disclosure draft</label>
+          <textarea class="input font-mono text-xs" name="disclosure_draft" rows="6">{{$f.DisclosureDraft}}</textarea>
+        </div>
+        <div class="col-span-2 flex justify-end">
+          <button type="submit" class="btn-sm">Save</button>
         </div>
       </form>
+    </section>
+  </details>
+
+  <details open class="group border-b">
+    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
+        Notes <span class="text-muted-foreground ml-auto mr-2 text-xs">{{len .Notes}}</span>
+        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
+      </h3>
+    </summary>
+    <section class="pb-4 grid gap-3">
+      <form method="post" action="/findings/{{$f.ID}}/notes" class="form grid gap-2">
+        <textarea class="input" name="body" rows="3" placeholder="Add a note..." required></textarea>
+        <div class="flex justify-end">
+          <button type="submit" class="btn-sm">Add note</button>
+        </div>
+      </form>
+      <ul class="grid gap-2">
+      {{range .Notes}}
+        <li class="border rounded p-3 text-sm">
+          <div class="text-xs text-muted-foreground mb-1">{{if .By}}{{.By}} · {{end}}{{.CreatedAt.Format "2006-01-02 15:04"}}</div>
+          <pre class="whitespace-pre-wrap font-sans">{{.Body}}</pre>
+        </li>
+      {{else}}
+        <li class="text-sm text-muted-foreground">No notes yet.</li>
+      {{end}}
+      </ul>
+    </section>
+  </details>
+
+  <details class="group border-b">
+    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
+        Communications <span class="text-muted-foreground ml-auto mr-2 text-xs">{{len .Communications}}</span>
+        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
+      </h3>
+    </summary>
+    <section class="pb-4 grid gap-3">
+      <form method="post" action="/findings/{{$f.ID}}/communications" class="form grid grid-cols-4 gap-2">
+        <select class="input" name="channel">
+          {{range (list "email" "ghsa" "issue" "pr" "direct" "registry")}}<option value="{{.}}">{{.}}</option>{{end}}
+        </select>
+        <select class="input" name="direction">
+          <option value="outbound">outbound</option>
+          <option value="inbound">inbound</option>
+        </select>
+        <input class="input" name="actor" placeholder="who / from whom" required>
+        <input class="input" type="date" name="at">
+        <select class="input col-span-1" name="offered_help">
+          <option value="">no offer</option>
+          <option value="pr">offered PR</option>
+          <option value="funding">offered funding</option>
+          <option value="adoption">offered adoption</option>
+        </select>
+        <textarea class="input col-span-3" name="body" rows="2" placeholder="message body..."></textarea>
+        <div class="col-span-4 flex justify-end">
+          <button type="submit" class="btn-sm">Log communication</button>
+        </div>
+      </form>
+      <ul class="grid gap-2">
+      {{range .Communications}}
+        <li class="border rounded p-3 text-sm">
+          <div class="text-xs text-muted-foreground mb-1">
+            <span class="badge-outline">{{.Channel}}</span>
+            <span class="badge-outline">{{.Direction}}</span>
+            {{.Actor}} · {{.At.Format "2006-01-02"}}
+            {{if .OfferedHelp}}<span class="badge-primary ml-2">offered {{.OfferedHelp}}</span>{{end}}
+          </div>
+          <pre class="whitespace-pre-wrap font-sans">{{.Body}}</pre>
+        </li>
+      {{else}}
+        <li class="text-sm text-muted-foreground">No communications yet.</li>
+      {{end}}
+      </ul>
+    </section>
+  </details>
+
+  <details class="group border-b">
+    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
+        References <span class="text-muted-foreground ml-auto mr-2 text-xs">{{len .References}}</span>
+        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
+      </h3>
+    </summary>
+    <section class="pb-4 grid gap-3">
+      <form method="post" action="/findings/{{$f.ID}}/references" class="form grid grid-cols-3 gap-2">
+        <input class="input col-span-2" name="url" placeholder="https://..." required>
+        <input class="input" name="tags" placeholder="tags: issue, pr, cve, ghsa, patch">
+        <input class="input col-span-3" name="summary" placeholder="optional summary">
+        <div class="col-span-3 flex justify-end">
+          <button type="submit" class="btn-sm">Add reference</button>
+        </div>
+      </form>
+      <ul class="grid gap-2">
+      {{range .References}}
+        <li class="border rounded p-3 text-sm">
+          <div class="flex items-center gap-2">
+            <a href="{{.URL}}" target="_blank" rel="noopener" class="underline underline-offset-2 break-all">{{.URL}}</a>
+            {{if .Tags}}<span class="text-xs text-muted-foreground ml-auto">{{.Tags}}</span>{{end}}
+          </div>
+          {{if .Summary}}<div class="text-xs text-muted-foreground mt-1">{{.Summary}}</div>{{end}}
+        </li>
+      {{else}}
+        <li class="text-sm text-muted-foreground">No references yet.</li>
+      {{end}}
+      </ul>
+    </section>
+  </details>
+
+  <details class="group border-b">
+    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
+        Labels
+        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
+      </h3>
+    </summary>
+    <section class="pb-4">
+      <form method="post" action="/findings/{{$f.ID}}/labels" class="form grid gap-2">
+        <div class="flex flex-wrap gap-3">
+          {{$sel := .Selected}}
+          {{range .AllLabels}}
+            <label class="flex items-center gap-1 text-sm">
+              <input type="checkbox" name="labels" value="{{.Name}}"
+                {{if index $sel .Name}}checked{{end}}>
+              <span style="color: {{.Color}}">{{.Name}}</span>
+            </label>
+          {{end}}
+        </div>
+        <div class="flex justify-end">
+          <button type="submit" class="btn-sm">Save labels</button>
+        </div>
+      </form>
+    </section>
+  </details>
+
+  <details class="group border-b">
+    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
+        History <span class="text-muted-foreground ml-auto mr-2 text-xs">{{len .History}}</span>
+        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
+      </h3>
+    </summary>
+    <section class="pb-4">
+      <ul class="grid gap-1 text-xs text-muted-foreground">
+      {{range .History}}
+        <li class="font-mono">
+          [{{.CreatedAt.Format "2006-01-02 15:04"}}] {{.Source}}{{if .By}} ({{.By}}){{end}}:
+          <code>{{.Field}}</code> = <code>{{.NewValue}}</code>
+          {{if .OldValue}}<span class="opacity-50">was <code>{{.OldValue}}</code></span>{{end}}
+        </li>
+      {{else}}
+        <li>No recorded changes.</li>
+      {{end}}
+      </ul>
     </section>
   </details>
 

@@ -161,7 +161,7 @@ func (s *Server) apiListFindings(w http.ResponseWriter, r *http.Request) {
 	q.Find(&rows)
 	out := make([]map[string]any, 0, len(rows))
 	for _, f := range rows {
-		out = append(out, findingSummary(f, uint(id)))
+		out = append(out, findingSummary(f))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -175,31 +175,26 @@ func (s *Server) apiGetFinding(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusNotFound, "finding not found")
 		return
 	}
-	repoID, ok := s.findingRepoID(f.ID)
-	if !ok {
-		writeAPIError(w, http.StatusNotFound, "finding not found")
-		return
-	}
-	if !s.scanOwnsRepo(r, repoID) {
+	if !s.scanOwnsRepo(r, f.RepositoryID) {
 		writeAPIError(w, http.StatusForbidden, "scan may only read findings on its own repository")
 		return
 	}
-	summary := findingSummary(f, repoID)
+	summary := findingSummary(f)
 	summary["trace"] = f.Trace
 	summary["boundary"] = f.Boundary
 	summary["validation"] = f.Validation
 	summary["prior_art"] = f.PriorArt
 	summary["reach"] = f.Reach
 	summary["rating"] = f.Rating
-	summary["notes"] = f.Notes
+	summary["disclosure_draft"] = f.DisclosureDraft
 	writeJSON(w, http.StatusOK, summary)
 }
 
-func findingSummary(f db.Finding, repoID uint) map[string]any {
+func findingSummary(f db.Finding) map[string]any {
 	return map[string]any{
 		"id":            f.ID,
 		"scan_id":       f.ScanID,
-		"repository_id": repoID,
+		"repository_id": f.RepositoryID,
 		"finding_id":    f.FindingID,
 		"sinks":         f.Sinks,
 		"title":         f.Title,
@@ -208,5 +203,12 @@ func findingSummary(f db.Finding, repoID uint) map[string]any {
 		"cwe":           f.CWE,
 		"location":      f.Location,
 		"affected":      f.Affected,
+		"cve_id":        f.CVEID,
+		"cvss_vector":   f.CVSSVector,
+		"cvss_score":    f.CVSSScore,
+		"fix_version":   f.FixVersion,
+		"fix_commit":    f.FixCommit,
+		"resolution":    string(f.Resolution),
+		"assignee":      f.Assignee,
 	}
 }

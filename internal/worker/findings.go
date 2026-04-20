@@ -62,21 +62,13 @@ func parseReport(raw []byte) (scanReport, error) {
 	return r, nil
 }
 
-func (f scanFinding) summaryText() string {
-	if f.Trace != "" {
-		if i := strings.Index(f.Trace, "\n\n"); i > 0 {
-			return f.Trace[:i]
-		}
-		return f.Trace
-	}
-	return f.Summary
-}
-
-func (r scanReport) toFindings(scanID uint) []db.Finding {
+func (r scanReport) toFindings(scanID, repoID uint, commit string) []db.Finding {
 	out := make([]db.Finding, 0, len(r.Findings))
 	for _, f := range r.Findings {
 		out = append(out, db.Finding{
-			ScanID:     scanID,
+			ScanID:       scanID,
+			RepositoryID: repoID,
+			Commit:       commit,
 			FindingID:  f.ID,
 			Sinks:      strings.Join(f.Sinks, ", "),
 			Title:      f.Title,
@@ -90,9 +82,6 @@ func (r scanReport) toFindings(scanID uint) []db.Finding {
 			PriorArt:   f.PriorArt,
 			Reach:      f.Reach,
 			Rating:     f.Rating,
-			Confidence: f.Confidence,
-			Summary:    f.summaryText(),
-			Details:    f.Details,
 		})
 	}
 	return out
