@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	_ "embed"
 	"errors"
 	"flag"
 	"fmt"
@@ -36,9 +35,6 @@ const (
 	skillsCloneTimeout = 2 * time.Minute
 )
 
-//go:embed default_spec.md
-var defaultSpec string
-
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	if err := run(log); err != nil {
@@ -52,7 +48,6 @@ func run(log *slog.Logger) error {
 		addr    = flag.String("addr", "127.0.0.1:8080", "listen address")
 		dataDir = flag.String("data", "./data", "data directory (db + workspaces)")
 		effort      = flag.String("effort", "high", "claude effort")
-		spec        = flag.String("spec", "", "path to audit spec (default: built-in)")
 		noDocker    = flag.Bool("no-docker", false, "disable containerised runner even if docker is available")
 		runnerImage = flag.String("runner-image", "scrutineer-runner", "docker image for per-job containers")
 		skillsRepo  = flag.String("skills-repo", "", "clone skills from this git https URL on startup")
@@ -84,22 +79,13 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("queue: %w", err)
 	}
 
-	specText := defaultSpec
-	if *spec != "" {
-		b, err := os.ReadFile(*spec)
-		if err != nil {
-			return fmt.Errorf("read spec: %w", err)
-		}
-		specText = string(b)
-	}
-
 	if err := loadSkills(log, gdb, *dataDir, skillLocal, *skillsRepo); err != nil {
 		return err
 	}
 
 	broker := web.NewBroker()
 
-	var runner worker.ClaudeRunner
+	var runner worker.SkillRunner
 	if !*noDocker && worker.DockerAvailable() {
 		log.Info("docker detected, using containerised runner", "image", *runnerImage)
 		runner = worker.DockerRunner{Image: *runnerImage, Effort: *effort}
@@ -112,7 +98,7 @@ func run(log *slog.Logger) error {
 		DB:      gdb,
 		Log:     log,
 		DataDir: filepath.Join(*dataDir, "work"),
-		Spec:    specText,
+		APIBase: "http://" + *addr + "/api",
 		Runner:  runner,
 		OnEvent: func(scanID, repoID uint, name, data string) {
 			broker.Publish(web.Event{Name: name, Data: data, ScanID: scanID, RepoID: repoID})
@@ -120,7 +106,7 @@ func run(log *slog.Logger) error {
 	}
 	w.Register(q)
 
-	srv, err := web.New(gdb, q, log, specText, broker)
+	srv, err := web.New(gdb, q, log, broker)
 	if err != nil {
 		return err
 	}

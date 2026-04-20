@@ -44,7 +44,6 @@
           <li><a href="/packages" data-nav="packages"><i data-lucide="package"></i><span>Packages</span></a></li>
           <li><a href="/maintainers" data-nav="maintainers"><i data-lucide="users"></i><span>Maintainers</span></a></li>
           <li><a href="/jobs" data-nav="jobs"><i data-lucide="list-checks"></i><span>Scans</span></a></li>
-          <li><a href="/scanners" data-nav="scanners"><i data-lucide="scan-search"></i><span>Scans</span></a></li>
           <li><a href="/skills" data-nav="skills"><i data-lucide="sparkles"></i><span>Skills</span></a></li>
         </ul>
       </div>
@@ -115,8 +114,7 @@
   else window.addEventListener('load', restoreTab);
   (function () {
     var p = location.pathname;
-    var key = p === '/scanners' ? 'scanners'
-            : p.indexOf('/skills') === 0 ? 'skills'
+    var key = p.indexOf('/skills') === 0 ? 'skills'
             : p.indexOf('/maintainers') === 0 ? 'maintainers'
             : p.indexOf('/packages') === 0 ? 'packages'
             : p.indexOf('/findings') === 0 ? 'findings'

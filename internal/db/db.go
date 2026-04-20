@@ -71,10 +71,13 @@ type Scan struct {
 	// SkillID/SkillVersion are set when Kind is "skill": they pin which
 	// skill row and which version of it produced this scan. SkillName is
 	// the skill name at time of run so old scans remain readable even if
-	// the skill is deleted.
+	// the skill is deleted. APIToken is a random bearer generated per-run
+	// so skills can call back into scrutineer's HTTP API from inside the
+	// workspace; it is cleared when the scan reaches a terminal state.
 	SkillID      *uint `gorm:"index"`
 	SkillVersion int
 	SkillName    string
+	APIToken     string `gorm:"index"`
 
 	Commit     string
 	StartedAt  *time.Time

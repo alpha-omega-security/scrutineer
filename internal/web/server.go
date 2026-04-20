@@ -31,12 +31,11 @@ type Server struct {
 	DB     *gorm.DB
 	Queue  *queue.Queue
 	Log    *slog.Logger
-	Spec   string
 	Broker *Broker
 	tmpl   *template.Template
 }
 
-func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, spec string, broker *Broker) (*Server, error) {
+func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker) (*Server, error) {
 	funcs := template.FuncMap{
 		"since": func(t *time.Time) string {
 			if t == nil {
@@ -109,7 +108,7 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, spec string, broker *Br
 	if err != nil {
 		return nil, err
 	}
-	return &Server{DB: gdb, Queue: q, Log: log, Spec: spec, Broker: broker, tmpl: t}, nil
+	return &Server{DB: gdb, Queue: q, Log: log, Broker: broker, tmpl: t}, nil
 }
 
 func (s *Server) Handler() http.Handler {
@@ -122,10 +121,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /repositories/{id}", s.repoShow)
 	mux.HandleFunc("POST /repositories/{id}/scan", s.repoScan)
 	mux.HandleFunc("GET /jobs", s.jobs)
-	mux.HandleFunc("POST /repositories/{id}/maintainer-analysis", s.repoMaintainerAnalysis)
 	mux.HandleFunc("GET /maintainers", s.maintainersList)
 	mux.HandleFunc("GET /maintainers/{id}", s.maintainerShow)
-	mux.HandleFunc("GET /scanners", s.scanners)
 	mux.HandleFunc("GET /findings", s.findings)
 	mux.HandleFunc("GET /findings/{id}", s.findingShow)
 	mux.HandleFunc("POST /findings/{id}/status", s.findingStatus)
@@ -145,7 +142,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /skills/{id}/edit", s.skillEdit)
 	mux.HandleFunc("POST /skills/{id}", s.skillUpdate)
 	mux.HandleFunc("POST /repositories/{id}/skill-scan", s.skillRun)
-	return logRequests(s.Log, securityHeaders(mux))
+
+	// API routes get bearer-auth middleware and skip the browser CSRF checks;
+	// skills call these from inside a scan workspace, not from a browser.
+	root := http.NewServeMux()
+	root.Handle("/api/", s.apiHandler())
+	root.Handle("/", securityHeaders(mux))
+	return logRequests(s.Log, root)
 }
 
 func (s *Server) render(w http.ResponseWriter, name string, data any) {
@@ -229,7 +232,7 @@ func (s *Server) repoList(w http.ResponseWriter, r *http.Request) {
 	for _, repo := range repos {
 		row := repoRow{Repository: repo}
 		var last db.Scan
-		if err := s.DB.Where("repository_id = ? AND kind = ?", repo.ID, worker.JobClaude).
+		if err := s.DB.Where("repository_id = ?", repo.ID).
 			Order("id desc").First(&last).Error; err == nil {
 			row.LastScan = &last
 		}
@@ -246,25 +249,6 @@ func (s *Server) repoList(w http.ResponseWriter, r *http.Request) {
 	} else {
 		s.render(w, "index.html", data)
 	}
-}
-
-func (s *Server) repoMaintainerAnalysis(w http.ResponseWriter, r *http.Request) {
-	var repo db.Repository
-	if err := s.DB.First(&repo, r.PathValue("id")).Error; err != nil {
-		http.NotFound(w, r)
-		return
-	}
-	model := r.FormValue("model")
-	if !ValidModel(model) {
-		model = DefaultModel()
-	}
-	newID, err := s.enqueueAndGetID(r.Context(), repo.ID, worker.JobMaintainers, model, worker.PrioScan)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	w.Header().Set("HX-Redirect", fmt.Sprintf("/scans/%d", newID))
-	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) maintainersList(w http.ResponseWriter, r *http.Request) {
@@ -303,10 +287,6 @@ func (s *Server) maintainerShow(w http.ResponseWriter, r *http.Request) {
 			Preload("Scan.Repository").Order("id desc").Find(&findings)
 	}
 	s.render(w, "maintainer_show.html", map[string]any{"M": m, "Findings": findings})
-}
-
-func (s *Server) scanners(w http.ResponseWriter, r *http.Request) {
-	s.render(w, "scanners.html", s.kinds())
 }
 
 var severityOrder = `CASE severity
@@ -399,28 +379,15 @@ func (s *Server) dependentScan(w http.ResponseWriter, r *http.Request) {
 	s.addRepoAndScan(w, r, dep.RepositoryURL)
 }
 
-type jobSpec struct {
-	kind  string
-	model string
-	prio  int
-}
-
-func defaultJobs(model string) []jobSpec {
-	return []jobSpec{
-		{worker.JobMetadata, "", worker.PrioMetadata},
-		{worker.JobPackages, "", worker.PrioMetadata},
-		{worker.JobAdvisories, "", worker.PrioMetadata},
-		{worker.JobCommits, "", worker.PrioMetadata},
-		{worker.JobBrief, "", worker.PrioFastTool},
-		{worker.JobGitPkgs, "", worker.PrioFastTool},
-		{worker.JobSBOM, "", worker.PrioFastTool},
-		{worker.JobDependents, "", worker.PrioFastTool},
-		{worker.JobSemgrep, "", worker.PrioTool},
-		{worker.JobZizmor, "", worker.PrioTool},
-		{worker.JobMaintainers, model, worker.PrioScan},
-		{worker.JobClaude, model, worker.PrioScan},
-	}
-}
+const (
+	// defaultSkillName is the skill scrutineer enqueues when a repository is
+	// first added. It owns the decision about which other skills to run;
+	// editing that skill changes the default pipeline with no Go changes.
+	defaultSkillName = "triage"
+	// deepDiveSkillName is the skill whose reports feed the Summary, Findings
+	// and Threat Model tabs on the repository page.
+	deepDiveSkillName = "security-deep-dive"
+)
 
 func (s *Server) addRepoAndScan(w http.ResponseWriter, r *http.Request, repoURL string) {
 	repo := db.Repository{URL: repoURL, Name: db.NameFromURL(repoURL)}
@@ -431,8 +398,12 @@ func (s *Server) addRepoAndScan(w http.ResponseWriter, r *http.Request, repoURL 
 	var scanCount int64
 	s.DB.Model(&db.Scan{}).Where("repository_id = ?", repo.ID).Count(&scanCount)
 	if scanCount == 0 {
-		for _, j := range defaultJobs("") {
-			_ = s.enqueue(r.Context(), repo.ID, j.kind, j.model, j.prio)
+		var skill db.Skill
+		if err := s.DB.Where("name = ? AND active = ?", defaultSkillName, true).
+			First(&skill).Error; err == nil {
+			_, _ = s.enqueueSkill(r.Context(), repo.ID, skill.ID, "")
+		} else {
+			s.Log.Warn("default skill not found, repo added with no scans", "skill", defaultSkillName)
 		}
 	}
 	w.Header().Set("HX-Redirect", fmt.Sprintf("/repositories/%d", repo.ID))
@@ -598,11 +569,14 @@ func (s *Server) repoCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	for _, j := range defaultJobs(r.FormValue("model")) {
-		if err := s.enqueue(r.Context(), repo.ID, j.kind, j.model, j.prio); err != nil {
+	var skill db.Skill
+	if err := s.DB.Where("name = ? AND active = ?", defaultSkillName, true).First(&skill).Error; err == nil {
+		if _, err := s.enqueueSkill(r.Context(), repo.ID, skill.ID, r.FormValue("model")); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+	} else {
+		s.Log.Warn("default skill not found, repo added with no scans", "skill", defaultSkillName)
 	}
 	w.Header().Set("HX-Redirect", fmt.Sprintf("/repositories/%d", repo.ID))
 	w.WriteHeader(http.StatusNoContent)
@@ -625,24 +599,26 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// The security-deep-dive skill owns the structured audit report; everything
+	// the Summary/Threat Model/Findings tabs render comes from its scans.
 	var latest *db.Scan
 	var threatModel map[string]any
 	for i := range scans {
-		if scans[i].Kind == worker.JobClaude {
-			if latest == nil {
-				latest = &scans[i]
-				s.DB.Where("scan_id = ?", latest.ID).Find(&latest.Findings)
+		if scans[i].SkillName != deepDiveSkillName {
+			continue
+		}
+		if latest == nil {
+			latest = &scans[i]
+			s.DB.Where("scan_id = ?", latest.ID).Find(&latest.Findings)
+		}
+		if scans[i].Status == db.ScanDone && scans[i].Report != "" && threatModel == nil {
+			var report map[string]any
+			if json.Unmarshal([]byte(scans[i].Report), &report) == nil {
+				threatModel = report
 			}
-			// Parse report for threat model data (from the most recent completed claude scan)
-			if scans[i].Status == db.ScanDone && scans[i].Report != "" && threatModel == nil {
-				var report map[string]any
-				if json.Unmarshal([]byte(scans[i].Report), &report) == nil {
-					threatModel = report
-				}
-			}
-			if latest != nil && threatModel != nil {
-				break
-			}
+		}
+		if latest != nil && threatModel != nil {
+			break
 		}
 	}
 
@@ -701,7 +677,14 @@ func (s *Server) repoScan(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if err := s.enqueue(r.Context(), repo.ID, worker.JobClaude, r.FormValue("model"), worker.PrioScan); err != nil {
+	// The "New scan" button enqueues the deep-dive skill; everything else is
+	// triggered either by the triage skill or by the explicit Run skill menu.
+	var skill db.Skill
+	if err := s.DB.Where("name = ? AND active = ?", deepDiveSkillName, true).First(&skill).Error; err != nil {
+		http.Error(w, deepDiveSkillName+" skill is not installed", http.StatusPreconditionFailed)
+		return
+	}
+	if _, err := s.enqueueSkill(r.Context(), repo.ID, skill.ID, r.FormValue("model")); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -724,30 +707,11 @@ func (s *Server) scanRetry(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	prio := worker.PrioScan
-	switch scan.Kind {
-	case worker.JobMetadata, worker.JobPackages:
-		prio = worker.PrioMetadata
-	case worker.JobBrief, worker.JobGitPkgs:
-		prio = worker.PrioFastTool
-	case worker.JobSBOM, worker.JobDependents, worker.JobAdvisories, worker.JobMaintainers, worker.JobCommits:
-		prio = worker.PrioFastTool
-	case worker.JobSemgrep, worker.JobZizmor:
-		prio = worker.PrioTool
+	if scan.Kind != worker.JobSkill || scan.SkillID == nil {
+		http.Error(w, "scan cannot be retried: no skill reference", http.StatusBadRequest)
+		return
 	}
-	var (
-		newID uint
-		err   error
-	)
-	if scan.Kind == worker.JobSkill {
-		if scan.SkillID == nil {
-			http.Error(w, "skill scan is missing skill id", http.StatusBadRequest)
-			return
-		}
-		newID, err = s.enqueueSkill(r.Context(), scan.RepositoryID, *scan.SkillID, scan.Model)
-	} else {
-		newID, err = s.enqueueAndGetID(r.Context(), scan.RepositoryID, scan.Kind, scan.Model, prio)
-	}
+	newID, err := s.enqueueSkill(r.Context(), scan.RepositoryID, *scan.SkillID, scan.Model)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -774,21 +738,6 @@ func (s *Server) scanLog(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) enqueueAndGetID(ctx context.Context, repoID uint, kind, model string, prio int) (uint, error) {
-	if kind == worker.JobClaude && !ValidModel(model) {
-		model = DefaultModel()
-	}
-	scan := db.Scan{RepositoryID: repoID, Kind: kind, Status: db.ScanQueued, Model: model}
-	if err := s.DB.Create(&scan).Error; err != nil {
-		return 0, err
-	}
-	if err := s.Queue.Enqueue(ctx, kind, scan.ID, prio); err != nil {
-		return 0, err
-	}
-	s.DB.Model(&db.Repository{}).Where("id = ?", repoID).Update("updated_at", time.Now())
-	return scan.ID, nil
-}
-
 func (s *Server) enqueueSkill(ctx context.Context, repoID, skillID uint, model string) (uint, error) {
 	if !ValidModel(model) {
 		model = DefaultModel()
@@ -799,6 +748,7 @@ func (s *Server) enqueueSkill(ctx context.Context, repoID, skillID uint, model s
 		Status:       db.ScanQueued,
 		Model:        model,
 		SkillID:      &skillID,
+		APIToken:     NewAPIToken(),
 	}
 	if err := s.DB.Create(&scan).Error; err != nil {
 		return 0, err
@@ -808,21 +758,6 @@ func (s *Server) enqueueSkill(ctx context.Context, repoID, skillID uint, model s
 	}
 	s.DB.Model(&db.Repository{}).Where("id = ?", repoID).Update("updated_at", time.Now())
 	return scan.ID, nil
-}
-
-func (s *Server) enqueue(ctx context.Context, repoID uint, kind, model string, prio int) error {
-	if !ValidModel(model) {
-		model = DefaultModel()
-	}
-	scan := db.Scan{RepositoryID: repoID, Kind: kind, Status: db.ScanQueued, Model: model}
-	if err := s.DB.Create(&scan).Error; err != nil {
-		return err
-	}
-	if err := s.Queue.Enqueue(ctx, kind, scan.ID, prio); err != nil {
-		return err
-	}
-	s.DB.Model(&db.Repository{}).Where("id = ?", repoID).Update("updated_at", time.Now())
-	return nil
 }
 
 // maybeToast compares scan statuses against the "seen" cookie and emits an

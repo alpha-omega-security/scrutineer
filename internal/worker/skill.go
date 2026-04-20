@@ -15,12 +15,23 @@ const filePerm = 0o644
 
 // skillContext is the JSON document scrutineer writes to ./context.json in
 // every skill workspace before invoking claude. Skills that need to know who
-// they are scanning read this file; skills that only need the source code
-// ignore it. Keeping it narrow: only facts the host already has, no secrets.
+// they are scanning (or need to call back into scrutineer) read this file.
 type skillContext struct {
-	Repository skillContextRepo `json:"repository"`
-	Commit     string           `json:"commit,omitempty"`
+	Repository skillContextRepo  `json:"repository"`
+	Commit     string            `json:"commit,omitempty"`
 	Packages   []skillContextPkg `json:"packages,omitempty"`
+	// Scrutineer lets a skill call back into the host app: list prior scans,
+	// enqueue further skills, read reports. The schema is openapi.yaml at
+	// the repo root.
+	Scrutineer skillContextScrutineer `json:"scrutineer"`
+}
+
+type skillContextScrutineer struct {
+	APIBase  string `json:"api_base"`           // e.g. http://127.0.0.1:8080/api
+	ScanID   uint   `json:"scan_id"`            // the scan that owns this run
+	Token    string `json:"token"`              // bearer for api_base
+	RepoID   uint   `json:"repository_id"`      // convenience for URL building
+	SkillID  uint   `json:"skill_id,omitempty"` // the running skill
 }
 
 type skillContextRepo struct {
@@ -62,7 +73,7 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 	if err := stageSkill(&skill, skillDir); err != nil {
 		return "", fmt.Errorf("stage skill: %w", err)
 	}
-	if err := stageContext(workRoot, &scan.Repository); err != nil {
+	if err := stageContext(workRoot, w.APIBase, scan, &scan.Repository); err != nil {
 		return "", fmt.Errorf("stage context: %w", err)
 	}
 
@@ -255,8 +266,9 @@ func oneLine(s string) string {
 
 // stageContext writes the workspace-level context.json that every skill can
 // rely on. Kept small and boring on purpose: skills that need more detail
-// can read it from the clone.
-func stageContext(workRoot string, repo *db.Repository) error {
+// can read it from the clone. The scrutineer block gives skills enough to
+// call back into the host API (list scans, trigger more skills).
+func stageContext(workRoot, apiBase string, scan *db.Scan, repo *db.Repository) error {
 	if err := os.MkdirAll(workRoot, dirPerm); err != nil {
 		return err
 	}
@@ -268,6 +280,15 @@ func stageContext(workRoot string, repo *db.Repository) error {
 			FullName:      repo.FullName,
 			DefaultBranch: repo.DefaultBranch,
 		},
+		Scrutineer: skillContextScrutineer{
+			APIBase: apiBase,
+			ScanID:  scan.ID,
+			Token:   scan.APIToken,
+			RepoID:  scan.RepositoryID,
+		},
+	}
+	if scan.SkillID != nil {
+		ctx.Scrutineer.SkillID = *scan.SkillID
 	}
 	b, err := json.MarshalIndent(ctx, "", "  ")
 	if err != nil {

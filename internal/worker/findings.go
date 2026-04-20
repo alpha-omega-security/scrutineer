@@ -1,7 +1,6 @@
 package worker
 
 import (
-	_ "embed"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -9,28 +8,22 @@ import (
 	"scrutineer/internal/db"
 )
 
-//go:embed defs.schema.json
-var DefsSchema string
-
-//go:embed schema.json
-var FindingsSchema string
-
-// scanReport mirrors the spec-json schema. Report-level fields like
-// boundaries, inventory and ruled_out stay in the raw JSON (Scan.Report);
-// findings are extracted into db.Finding rows.
+// scanReport mirrors the security-deep-dive skill's report schema. Report-
+// level fields like boundaries, inventory and ruled_out stay in the raw
+// JSON (Scan.Report); findings are extracted into db.Finding rows.
 type scanReport struct {
-	Repository    string           `json:"repository"`
-	Commit        string           `json:"commit"`
-	Artefact      string           `json:"artefact"`
-	SpecVersion   int              `json:"spec_version"`
-	Model         string           `json:"model"`
-	Date          string           `json:"date"`
-	FilesReviewed int              `json:"files_reviewed"`
-	Languages     []string         `json:"languages"`
-	Findings      []scanFinding    `json:"findings"`
-	RuledOut      json.RawMessage  `json:"ruled_out"`
-	Inventory     json.RawMessage  `json:"inventory"`
-	Boundaries    json.RawMessage  `json:"boundaries"`
+	Repository    string          `json:"repository"`
+	Commit        string          `json:"commit"`
+	Artefact      string          `json:"artefact"`
+	SpecVersion   int             `json:"spec_version"`
+	Model         string          `json:"model"`
+	Date          string          `json:"date"`
+	FilesReviewed int             `json:"files_reviewed"`
+	Languages     []string        `json:"languages"`
+	Findings      []scanFinding   `json:"findings"`
+	RuledOut      json.RawMessage `json:"ruled_out"`
+	Inventory     json.RawMessage `json:"inventory"`
+	Boundaries    json.RawMessage `json:"boundaries"`
 
 	// Legacy fields from the old minimal schema (for backward compat)
 	Notes string `json:"notes"`
@@ -47,7 +40,7 @@ type scanFinding struct {
 	ReachChecked int      `json:"reach_checked"`
 	ReachExposed int      `json:"reach_exposed"`
 
-	// Per-step markdown (spec-json schema)
+	// Per-step markdown (security-deep-dive schema)
 	Trace      string `json:"trace"`
 	Boundary   string `json:"boundary"`
 	Validation string `json:"validation"`
@@ -70,9 +63,7 @@ func parseReport(raw []byte) (scanReport, error) {
 }
 
 func (f scanFinding) summaryText() string {
-	// Prefer trace (spec-json) over summary (legacy)
 	if f.Trace != "" {
-		// First paragraph of trace as summary
 		if i := strings.Index(f.Trace, "\n\n"); i > 0 {
 			return f.Trace[:i]
 		}
@@ -105,4 +96,16 @@ func (r scanReport) toFindings(scanID uint) []db.Finding {
 		})
 	}
 	return out
+}
+
+// validEmail is a pragmatic filter. Anything without an @ or containing
+// "noreply" gets dropped.
+func validEmail(s string) bool {
+	if !strings.Contains(s, "@") {
+		return false
+	}
+	if strings.Contains(s, "noreply") {
+		return false
+	}
+	return true
 }

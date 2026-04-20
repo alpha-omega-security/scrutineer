@@ -1,6 +1,5 @@
-// Package worker holds the job handlers that the queue dispatches to.
-// Each job receives a Scan ID, looks up the row, does its work, and writes
-// status/log/report back to the same row as it goes so the web UI can poll.
+// Package worker holds the queue handler that runs skill scans. Jobs are
+// dispatched by name through goqite; every scan is a skill-driven scan.
 package worker
 
 import (
@@ -17,19 +16,7 @@ import (
 )
 
 const (
-	JobClaude   = "claude"
-	JobSkill    = "skill"
-	JobMetadata = "metadata"
-	JobPackages = "packages"
-	JobBrief    = "brief"
-	JobGitPkgs  = "git-pkgs"
-	JobSemgrep  = "semgrep"
-	JobZizmor   = "zizmor"
-	JobSBOM       = "sbom"
-	JobDependents  = "dependents"
-	JobAdvisories  = "advisories"
-	JobMaintainers = "maintainers"
-	JobCommits     = "commits"
+	JobSkill = "skill"
 
 	PrioScan     = 0
 	PrioTool     = 5
@@ -41,8 +28,8 @@ type Worker struct {
 	DB      *gorm.DB
 	Log     *slog.Logger
 	DataDir string // workspace root for clones
-	Spec    string // audit spec text passed to claude
-	Runner  ClaudeRunner
+	APIBase string // base URL for the scrutineer skill API (http://host:port/api)
+	Runner  SkillRunner
 	OnEvent func(scanID, repoID uint, name, data string) // optional SSE bridge
 }
 
@@ -53,19 +40,7 @@ func (w *Worker) publish(scanID, repoID uint, name, data string) {
 }
 
 func (w *Worker) Register(q *queue.Queue) {
-	q.Register(JobClaude, w.wrap(w.doClaude))
 	q.Register(JobSkill, w.wrap(w.doSkill))
-	q.Register(JobMetadata, w.wrap(w.doMetadata))
-	q.Register(JobPackages, w.wrap(w.doPackages))
-	q.Register(JobBrief, w.wrap(w.doBrief))
-	q.Register(JobGitPkgs, w.wrap(w.doGitPkgs))
-	q.Register(JobSemgrep, w.wrap(w.doSemgrep))
-	q.Register(JobZizmor, w.wrap(w.doZizmor))
-	q.Register(JobSBOM, w.wrap(w.doSBOM))
-	q.Register(JobDependents, w.wrap(w.doDependents))
-	q.Register(JobAdvisories, w.wrap(w.doAdvisories))
-	q.Register(JobMaintainers, w.wrap(w.doMaintainerAnalysis))
-	q.Register(JobCommits, w.wrap(w.doCommits))
 }
 
 // handler does the actual work for one job kind. It receives the loaded scan
@@ -131,44 +106,4 @@ func (w *Worker) wrap(h handler) func(context.Context, []byte) error {
 		w.Log.Info("job finished", "scan", scan.ID, "kind", scan.Kind, "status", scan.Status)
 		return nil
 	}
-}
-
-func (w *Worker) doClaude(ctx context.Context, scan *db.Scan, emit func(Event)) (string, error) {
-	scan.Prompt = w.Runner.Prompt(scan.Repository, w.Spec)
-	w.DB.Model(scan).Update("prompt", scan.Prompt)
-
-	job := Job{Repo: scan.Repository, DataDir: w.DataDir, Model: scan.Model, Prompt: scan.Prompt}
-	res, err := w.Runner.Run(ctx, job, emit)
-	scan.Commit = res.Commit
-	if err != nil {
-		return res.Report, err
-	}
-
-	rep, perr := parseReport([]byte(res.Report))
-	if perr != nil {
-		// Keep the raw output so the operator can see what came back, but
-		// flag the scan failed: a non-conforming report is a bug to chase.
-		return res.Report, perr
-	}
-	findings := rep.toFindings(scan.ID)
-	scan.FindingsCount = len(findings)
-	if len(findings) > 0 {
-		if err := w.DB.Create(&findings).Error; err != nil {
-			return res.Report, fmt.Errorf("save findings: %w", err)
-		}
-	}
-	emit(Event{Kind: KindText, Text: fmt.Sprintf("parsed %d finding(s)", len(findings))})
-	return res.Report, nil
-}
-
-func (w *Worker) doMetadata(ctx context.Context, scan *db.Scan, emit func(Event)) (string, error) {
-	er, raw, err := fetchEcosystems(ctx, scan.Repository.URL, emit)
-	if err != nil {
-		return string(raw), err
-	}
-	w.applyMetadata(&scan.Repository, er, raw)
-	var pretty map[string]any
-	_ = json.Unmarshal(raw, &pretty)
-	out, _ := json.MarshalIndent(pretty, "", "  ")
-	return string(out), nil
 }

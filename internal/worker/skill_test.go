@@ -152,7 +152,8 @@ func TestStageContext_writesRepoFacts(t *testing.T) {
 		FullName:      "example/x",
 		DefaultBranch: "main",
 	}
-	if err := stageContext(dir, repo); err != nil {
+	scan := &db.Scan{ID: 7, RepositoryID: 3, APIToken: "tok"}
+	if err := stageContext(dir, "http://127.0.0.1:8080/api", scan, repo); err != nil {
 		t.Fatal(err)
 	}
 	b, err := os.ReadFile(filepath.Join(dir, "context.json"))
@@ -165,6 +166,9 @@ func TestStageContext_writesRepoFacts(t *testing.T) {
 	}
 	if got.Repository.URL != repo.URL || got.Repository.DefaultBranch != "main" {
 		t.Errorf("context: %+v", got)
+	}
+	if got.Scrutineer.Token != "tok" || got.Scrutineer.APIBase == "" {
+		t.Errorf("scrutineer block: %+v", got.Scrutineer)
 	}
 }
 
