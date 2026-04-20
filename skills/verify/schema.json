@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "verify report",
+  "type": "object",
+  "required": ["status"],
+  "additionalProperties": false,
+  "properties": {
+    "status": {
+      "type": "string",
+      "enum": ["confirmed", "fixed", "inconclusive"],
+      "description": "confirmed = the finding still reproduces. fixed = the original reproduction no longer triggers (upstream fix applied between original scan and this run). inconclusive = could not run the reproduction; explain why in notes."
+    },
+    "evidence": {
+      "type": "string",
+      "description": "Raw reproduction evidence: script output, diff of behaviour, failing assertion, etc."
+    },
+    "notes": {
+      "type": "string",
+      "description": "Short prose explaining what changed since the original scan, or why the reproduction was inconclusive."
+    }
+  }
+}

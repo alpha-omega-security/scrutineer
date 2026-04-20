@@ -199,6 +199,48 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
 
+  /findings/{id}/skills/{name}/run:
+    post:
+      summary: Enqueue a finding-scoped skill (verify, patch, disclose)
+      operationId: runFindingSkill
+      description: |
+        The authenticated scan's repository must own the finding. The scan
+        that gets enqueued has FindingID set so its skill body can read
+        `scrutineer.finding_id` from context.json and act on one finding
+        specifically.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+          description: Finding id.
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+          description: Skill name.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                model: { type: string }
+      responses:
+        '201':
+          description: Scan enqueued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Scan' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404':
+          description: Finding or skill not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
   /scans/{id}:
     get:
       summary: Fetch a scan with its report (if complete)

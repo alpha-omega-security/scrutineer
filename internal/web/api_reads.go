@@ -147,19 +147,21 @@ func (s *Server) apiListFindings(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusForbidden, "scan may only read its own repository")
 		return
 	}
-	q := s.DB.Joins("Scan").Where("\"Scan\".repository_id = ?", id).
-		Order("findings.id desc")
+	// Direct subquery; GORM's Joins("Scan") aliasing doesn't round-trip on
+	// sqlite when the joined struct has its own relations.
+	q := s.DB.Where("scan_id IN (?)", s.DB.Model(&db.Scan{}).Select("id").Where("repository_id = ?", id)).
+		Order("id desc")
 	if sev := r.URL.Query().Get("severity"); sev != "" {
-		q = q.Where("findings.severity = ?", sev)
+		q = q.Where("severity = ?", sev)
 	}
 	if status := r.URL.Query().Get("status"); status != "" {
-		q = q.Where("findings.status = ?", status)
+		q = q.Where("status = ?", status)
 	}
 	var rows []db.Finding
 	q.Find(&rows)
 	out := make([]map[string]any, 0, len(rows))
 	for _, f := range rows {
-		out = append(out, findingSummary(f))
+		out = append(out, findingSummary(f, uint(id)))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -169,15 +171,20 @@ func (s *Server) apiListFindings(w http.ResponseWriter, r *http.Request) {
 func (s *Server) apiGetFinding(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(r.PathValue("id"))
 	var f db.Finding
-	if err := s.DB.Preload("Scan").First(&f, id).Error; err != nil {
+	if err := s.DB.First(&f, id).Error; err != nil {
 		writeAPIError(w, http.StatusNotFound, "finding not found")
 		return
 	}
-	if !s.scanOwnsRepo(r, f.Scan.RepositoryID) {
+	repoID, ok := s.findingRepoID(f.ID)
+	if !ok {
+		writeAPIError(w, http.StatusNotFound, "finding not found")
+		return
+	}
+	if !s.scanOwnsRepo(r, repoID) {
 		writeAPIError(w, http.StatusForbidden, "scan may only read findings on its own repository")
 		return
 	}
-	summary := findingSummary(f)
+	summary := findingSummary(f, repoID)
 	summary["trace"] = f.Trace
 	summary["boundary"] = f.Boundary
 	summary["validation"] = f.Validation
@@ -188,11 +195,11 @@ func (s *Server) apiGetFinding(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, summary)
 }
 
-func findingSummary(f db.Finding) map[string]any {
+func findingSummary(f db.Finding, repoID uint) map[string]any {
 	return map[string]any{
 		"id":            f.ID,
 		"scan_id":       f.ScanID,
-		"repository_id": f.Scan.RepositoryID,
+		"repository_id": repoID,
 		"finding_id":    f.FindingID,
 		"sinks":         f.Sinks,
 		"title":         f.Title,

@@ -90,6 +90,7 @@ func (s *Server) apiHandler() http.Handler {
 	mux.HandleFunc("GET /repositories/{id}/dependencies", s.apiListDependencies)
 	mux.HandleFunc("GET /repositories/{id}/findings", s.apiListFindings)
 	mux.HandleFunc("POST /repositories/{id}/skills/{name}/run", s.apiRunSkill)
+	mux.HandleFunc("POST /findings/{id}/skills/{name}/run", s.apiRunFindingSkill)
 	mux.HandleFunc("GET /scans/{id}", s.apiGetScan)
 	mux.HandleFunc("GET /findings/{id}", s.apiGetFinding)
 	mux.HandleFunc("GET /skills", s.apiListSkills)
@@ -185,6 +186,59 @@ func (s *Server) apiRunSkill(w http.ResponseWriter, r *http.Request) {
 	var sc db.Scan
 	s.DB.First(&sc, scanID)
 	writeJSON(w, http.StatusCreated, scanSummary(sc))
+}
+
+// apiRunFindingSkill enqueues a finding-scoped skill (verify, patch,
+// disclose). The authenticated scan must be on the same repository that
+// owns the finding.
+func (s *Server) apiRunFindingSkill(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.Atoi(r.PathValue("id"))
+	name := r.PathValue("name")
+	repoID, ok := s.findingRepoID(uint(id))
+	if !ok {
+		writeAPIError(w, http.StatusNotFound, "finding not found")
+		return
+	}
+	if !s.scanOwnsRepo(r, repoID) {
+		writeAPIError(w, http.StatusForbidden, "scan may only trigger skills on its own repository")
+		return
+	}
+	var skill db.Skill
+	if err := s.DB.Where("name = ? AND active = ?", name, true).First(&skill).Error; err != nil {
+		writeAPIError(w, http.StatusNotFound, "skill not found or inactive")
+		return
+	}
+	var body struct {
+		Model string `json:"model"`
+	}
+	_ = json.NewDecoder(r.Body).Decode(&body)
+	fid := uint(id)
+	scanID, err := s.enqueueSkillScoped(r.Context(), repoID, skill.ID, &fid, body.Model)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	var sc db.Scan
+	s.DB.First(&sc, scanID)
+	writeJSON(w, http.StatusCreated, scanSummary(sc))
+}
+
+// findingRepoID resolves a finding to the repository that owns it by
+// reading the scan the finding belongs to. Direct query so it does not
+// depend on GORM's Preload of the Finding.Scan relation (which is unreliable
+// in sqlite; the column aliasing doesn't round-trip).
+func (s *Server) findingRepoID(findingID uint) (uint, bool) {
+	var scanID uint
+	row := s.DB.Model(&db.Finding{}).Select("scan_id").Where("id = ?", findingID).Row()
+	if err := row.Scan(&scanID); err != nil || scanID == 0 {
+		return 0, false
+	}
+	var repoID uint
+	row = s.DB.Model(&db.Scan{}).Select("repository_id").Where("id = ?", scanID).Row()
+	if err := row.Scan(&repoID); err != nil || repoID == 0 {
+		return 0, false
+	}
+	return repoID, true
 }
 
 func (s *Server) apiListSkills(w http.ResponseWriter, r *http.Request) {
