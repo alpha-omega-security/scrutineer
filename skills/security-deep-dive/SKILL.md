@@ -1,8 +1,23 @@
-<!-- spec_version: 10 -->
+---
+name: security-deep-dive
+description: Audit first-party source for security vulnerabilities using an inventory-first, six-step per-sink methodology. Use when you want a thorough scan that distinguishes real findings from pattern matches and records both in a machine-readable report. The target is this codebase's own code, not its dependencies.
+license: MIT
+metadata:
+  scrutineer.output_file: report.json
+  scrutineer.output_kind: findings
+---
+
+# security-deep-dive
 
 Audit the first-party source for security vulnerabilities. The target is this codebase's own code; do not report that a dependency has a CVE. A finding is valid only if the vulnerable logic lives here. If the same vulnerable code exists in a fork, a sibling project, or a vendored copy, note it; the finding follows the code.
 
 The audit has two phases. Phase 1 produces an inventory of every sink in the codebase. Phase 2 works through the inventory and decides on each entry. The inventory is part of the report, not scratch work — two runs against the same commit should produce the same inventory regardless of which sinks catch attention first.
+
+Workspace layout:
+- `./src` — the cloned repository
+- `./context.json` — repo identity (url, default branch, etc)
+- `./report.json` — write your final report here
+- `./schema.json` — the JSON schema your report must conform to
 
 ## Phase 1: Inventory
 
@@ -107,3 +122,6 @@ Low: unrealistic preconditions, narrow impact, or the deployment environment mos
 
 Confidence, separately: what you are certain of (the sink does X, per reproduction) versus what depends on context (an attacker reaches it if Y). Name the conditions.
 
+## Output
+
+Write your report to `./report.json`. It must validate against `./schema.json`. Every inventory sink must appear either in `findings[].sinks` or in `ruled_out[].sinks`. Use `findings: []` for a clean report. Read `./context.json` for the repository url, default branch, and other host-provided facts if you need them for the `repository`, `commit`, and `artefact` fields. Set `spec_version` to `10`. Use today's date for the `date` field.

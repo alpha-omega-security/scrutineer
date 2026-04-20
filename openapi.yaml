@@ -1,0 +1,200 @@
+openapi: 3.1.0
+info:
+  title: Scrutineer Skill API
+  version: 0.1.0
+  description: |
+    A narrow HTTP surface that claude-code skills use while they run. The
+    goal is enough to let a skill orchestrate other skills and read prior
+    scan results without pushing that logic into scrutineer's Go code.
+
+    Every scrutineer skill scan is issued a bearer token that is staged into
+    the workspace context.json. Skills authenticate with that token. A
+    token is only valid while its originating scan is running.
+
+servers:
+  - url: http://127.0.0.1:8080/api
+    description: Local scrutineer server
+security:
+  - bearerAuth: []
+
+paths:
+  /repositories/{id}:
+    get:
+      summary: Fetch a repository summary
+      operationId: getRepository
+      parameters:
+        - $ref: '#/components/parameters/RepositoryID'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Repository' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /repositories/{id}/scans:
+    get:
+      summary: List scans for a repository
+      operationId: listRepositoryScans
+      parameters:
+        - $ref: '#/components/parameters/RepositoryID'
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [queued, running, done, failed]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Scan' }
+
+  /repositories/{id}/skills/{name}/run:
+    post:
+      summary: Enqueue a skill scan against this repository
+      operationId: runSkill
+      parameters:
+        - $ref: '#/components/parameters/RepositoryID'
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+          description: Skill name (matches the SKILL.md `name` field)
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                model:
+                  type: string
+                  description: Override model; defaults to the system default.
+      responses:
+        '201':
+          description: Scan enqueued
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Scan' }
+        '404':
+          description: Skill or repository not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /scans/{id}:
+    get:
+      summary: Fetch a scan with its report (if complete)
+      operationId: getScan
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScanDetail' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /skills:
+    get:
+      summary: List installed skills
+      operationId: listSkills
+      parameters:
+        - name: active
+          in: query
+          schema: { type: boolean }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/SkillSummary' }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+
+  parameters:
+    RepositoryID:
+      name: id
+      in: path
+      required: true
+      schema: { type: integer, format: int64 }
+
+  responses:
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { type: string }
+
+    Repository:
+      type: object
+      required: [id, url, name]
+      properties:
+        id:             { type: integer, format: int64 }
+        url:            { type: string, format: uri }
+        name:           { type: string }
+        full_name:      { type: string }
+        default_branch: { type: string }
+        html_url:       { type: string }
+        stars:          { type: integer }
+        forks:          { type: integer }
+        archived:       { type: boolean }
+        languages:      { type: string }
+        license:        { type: string }
+
+    Scan:
+      type: object
+      required: [id, kind, status, repository_id]
+      properties:
+        id:            { type: integer, format: int64 }
+        repository_id: { type: integer, format: int64 }
+        kind:          { type: string }
+        status:        { type: string, enum: [queued, running, done, failed] }
+        model:         { type: string }
+        commit:        { type: string }
+        skill_name:    { type: string }
+        skill_version: { type: integer }
+        started_at:    { type: string, format: date-time, nullable: true }
+        finished_at:   { type: string, format: date-time, nullable: true }
+        error:         { type: string }
+
+    ScanDetail:
+      allOf:
+        - $ref: '#/components/schemas/Scan'
+        - type: object
+          properties:
+            report: { type: string, description: Raw output report (may be JSON text). }
+            log:    { type: string }
+
+    SkillSummary:
+      type: object
+      required: [id, name, description]
+      properties:
+        id:          { type: integer, format: int64 }
+        name:        { type: string }
+        description: { type: string }
+        output_kind: { type: string }
+        output_file: { type: string }
+        version:     { type: integer }
+        active:      { type: boolean }

@@ -1,0 +1,40 @@
+{{template "head"}}
+
+{{with .S}}
+<div class="flex items-center justify-between gap-4 mb-6">
+  <div>
+    <div class="text-sm text-muted-foreground mb-1">
+      <a href="/skills" class="hover:underline">Skills</a> / {{.Name}}
+    </div>
+    <h2 class="text-2xl font-semibold flex items-center gap-2">
+      <i data-lucide="sparkles"></i> {{.Name}}
+      {{if .Active}}<span class="badge-secondary">active</span>{{else}}<span class="badge-outline">disabled</span>{{end}}
+      <span class="badge-outline">v{{.Version}}</span>
+    </h2>
+    <p class="text-muted-foreground mt-2">{{.Description}}</p>
+  </div>
+  <a href="/skills/{{.ID}}/edit" class="btn-outline"><i data-lucide="pencil"></i> Edit</a>
+</div>
+
+<dl class="grid grid-cols-2 gap-4 mb-6 text-sm">
+  <div><dt class="text-muted-foreground">Source</dt><dd>{{.Source}}{{if .SourcePath}} ({{.SourcePath}}){{end}}</dd></div>
+  <div><dt class="text-muted-foreground">Output kind</dt><dd>{{if .OutputKind}}{{.OutputKind}}{{else}}<span class="text-muted-foreground">none</span>{{end}}</dd></div>
+  <div><dt class="text-muted-foreground">Output file</dt><dd>{{if .OutputFile}}{{.OutputFile}}{{else}}<span class="text-muted-foreground">none</span>{{end}}</dd></div>
+  {{if .License}}<div><dt class="text-muted-foreground">License</dt><dd>{{.License}}</dd></div>{{end}}
+  {{if .Compatibility}}<div class="col-span-2"><dt class="text-muted-foreground">Compatibility</dt><dd>{{.Compatibility}}</dd></div>{{end}}
+</dl>
+
+<section class="card p-4 mb-6">
+  <h3 class="font-medium mb-3">SKILL.md body</h3>
+  <pre class="text-xs whitespace-pre-wrap font-mono bg-muted p-3 rounded">{{.Body}}</pre>
+</section>
+
+{{if .SchemaJSON}}
+<section class="card p-4 mb-6">
+  <h3 class="font-medium mb-3">schema.json</h3>
+  <pre class="text-xs whitespace-pre-wrap font-mono bg-muted p-3 rounded">{{.SchemaJSON}}</pre>
+</section>
+{{end}}
+{{end}}
+
+{{template "foot"}}

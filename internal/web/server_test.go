@@ -26,7 +26,7 @@ func newTestServer(t *testing.T) (*Server, func()) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := New(gdb, q, log, "test spec", NewBroker())
+	s, err := New(gdb, q, log, NewBroker())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,14 +52,25 @@ func TestIndexRenders(t *testing.T) {
 	}
 }
 
-func TestCreateAndList(t *testing.T) {
+func TestCreateRepoEnqueuesTriageSkill(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
 	h := s.Handler()
 
+	// Seed a triage skill; without it adding a repo is a no-op.
+	triage := db.Skill{
+		Name:        "triage",
+		Description: "orchestrator",
+		Body:        "body",
+		Active:      true,
+		Source:      "ui",
+		Version:     1,
+	}
+	s.DB.Create(&triage)
+
 	form := url.Values{"url": {"https://github.com/foo/bar.git"}}
 	req := httptest.NewRequest("POST", "/repositories", strings.NewReader(form.Encode()))
-	req.Host = "127.0.0.1:8080"
+	req.Host = testHost
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
@@ -74,15 +85,13 @@ func TestCreateAndList(t *testing.T) {
 	if err := s.DB.First(&repo).Error; err != nil {
 		t.Fatal(err)
 	}
-	var n int64
-	s.DB.Model(&db.Scan{}).Where("repository_id = ?", repo.ID).Count(&n)
-	if n != 12 {
-		t.Fatalf("expected 12 default jobs, got %d", n)
+	var scans []db.Scan
+	s.DB.Where("repository_id = ?", repo.ID).Find(&scans)
+	if len(scans) != 1 {
+		t.Fatalf("expected one scan (triage), got %d", len(scans))
 	}
-	var claude db.Scan
-	s.DB.Where("repository_id = ? AND kind = ?", repo.ID, "claude").First(&claude)
-	if claude.Status != db.ScanQueued || claude.Model == "" {
-		t.Errorf("claude scan: %+v", claude)
+	if scans[0].SkillID == nil || *scans[0].SkillID != triage.ID {
+		t.Errorf("scan SkillID = %v, want %d", scans[0].SkillID, triage.ID)
 	}
 }
 

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "zizmor findings report",
+  "type": "object",
+  "required": ["findings"],
+  "additionalProperties": true,
+  "properties": {
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "severity", "location"],
+        "additionalProperties": true,
+        "properties": {
+          "id":       { "type": "string" },
+          "title":    { "type": "string" },
+          "severity": { "type": "string", "enum": ["Critical", "High", "Medium", "Low"] },
+          "cwe":      { "type": "string" },
+          "location": { "type": "string" },
+          "trace":    { "type": "string" },
+          "rating":   { "type": "string" }
+        }
+      }
+    }
+  }
+}

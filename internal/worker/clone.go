@@ -82,23 +82,3 @@ func gitWithEnv(ctx context.Context, dir string, env []string, args ...string) (
 	return string(out), err
 }
 
-// runTool runs a command in dir, logs it, and returns combined output. Used
-// for tools where we want to see stderr in the log (git-pkgs, brief, etc).
-func runTool(ctx context.Context, dir string, emit func(Event), name string, args ...string) (string, error) {
-	emit(Event{Kind: KindText, Text: "$ " + name + " " + strings.Join(args, " ")})
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
-	return string(out), err
-}
-
-// runToolStdout runs a command and returns only stdout, discarding stderr.
-// Use for tools that produce structured output (SARIF, JSON) where stray
-// stderr (Python warnings, progress) would corrupt the parse.
-func runToolStdout(ctx context.Context, dir string, emit func(Event), name string, args ...string) (string, error) {
-	emit(Event{Kind: KindText, Text: "$ " + name + " " + strings.Join(args, " ")})
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Dir = dir
-	out, err := cmd.Output()
-	return string(out), err
-}

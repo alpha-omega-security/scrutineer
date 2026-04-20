@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "dependencies report",
+  "type": "object",
+  "required": ["dependencies"],
+  "additionalProperties": false,
+  "properties": {
+    "dependencies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "ecosystem"],
+        "additionalProperties": false,
+        "properties": {
+          "name":            { "type": "string" },
+          "ecosystem":       { "type": "string" },
+          "purl":            { "type": "string" },
+          "requirement":     { "type": "string" },
+          "dependency_type": { "type": "string" },
+          "manifest_path":   { "type": "string" },
+          "manifest_kind":   { "type": "string" }
+        }
+      }
+    }
+  }
+}

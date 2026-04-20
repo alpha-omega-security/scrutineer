@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "maintainers report",
+  "type": "object",
+  "required": ["maintainers"],
+  "additionalProperties": false,
+  "properties": {
+    "maintainers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["login", "role", "status"],
+        "additionalProperties": false,
+        "properties": {
+          "login":      { "type": "string", "description": "GitHub username or equivalent" },
+          "name":       { "type": "string" },
+          "email":      { "type": "string" },
+          "role":       { "type": "string", "enum": ["lead", "maintainer", "contributor", "bot"] },
+          "status":     { "type": "string", "enum": ["active", "inactive"] },
+          "confidence": { "type": "string", "enum": ["high", "medium", "low"] },
+          "evidence":   { "type": "string" }
+        }
+      }
+    },
+    "disclosure_channel": {
+      "type": "string",
+      "description": "Best channel for reporting a vulnerability. Empty if no clear channel found."
+    },
+    "notes": {
+      "type": "string",
+      "description": "Anything notable: bus factor, recent turnover, corporate backing."
+    }
+  }
+}

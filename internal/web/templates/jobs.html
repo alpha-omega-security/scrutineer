@@ -8,15 +8,15 @@
     <div class="dropdown-menu">
       <button type="button" class="btn-outline" aria-haspopup="menu" aria-expanded="false">
         <i data-lucide="filter"></i>
-        {{if .Kind}}{{.Kind}}{{else}}Kind{{end}}
+        {{if .Skill}}{{.Skill}}{{else}}Skill{{end}}
         <i data-lucide="chevron-down"></i>
       </button>
       <div data-popover aria-hidden="true" data-align="end">
         <div role="menu">
-          <a role="menuitem" href="/jobs?status={{.Status}}&sort={{.Sort}}">All kinds</a>
-          {{range .Kinds}}
-            <a role="menuitem" href="/jobs?kind={{.}}&status={{$.Status}}&sort={{$.Sort}}"
-               {{if eq . $.Kind}}aria-current="true"{{end}}>{{.}}</a>
+          <a role="menuitem" href="/scans?status={{.Status}}&sort={{.Sort}}">All skills</a>
+          {{range .Skills}}
+            <a role="menuitem" href="/scans?skill={{.}}&status={{$.Status}}&sort={{$.Sort}}"
+               {{if eq . $.Skill}}aria-current="true"{{end}}>{{.}}</a>
           {{end}}
         </div>
       </div>
@@ -29,9 +29,9 @@
       </button>
       <div data-popover aria-hidden="true" data-align="end">
         <div role="menu">
-          <a role="menuitem" href="/jobs?kind={{.Kind}}&sort={{.Sort}}">All statuses</a>
+          <a role="menuitem" href="/scans?skill={{.Skill}}&sort={{.Sort}}">All statuses</a>
           {{range (list "queued" "running" "done" "failed")}}
-            <a role="menuitem" href="/jobs?kind={{$.Kind}}&status={{.}}&sort={{$.Sort}}"
+            <a role="menuitem" href="/scans?skill={{$.Skill}}&status={{.}}&sort={{$.Sort}}"
                {{if eq . $.Status}}aria-current="true"{{end}}>{{.}}</a>
           {{end}}
         </div>
@@ -40,13 +40,13 @@
     <div class="dropdown-menu">
       <button type="button" class="btn-outline" aria-haspopup="menu" aria-expanded="false">
         <i data-lucide="arrow-down-wide-narrow"></i>
-        {{if eq .Sort "kind"}}Kind{{else if eq .Sort "status"}}Status{{else if eq .Sort "repository"}}Repository{{else}}Newest{{end}}
+        {{if eq .Sort "skill"}}Skill{{else if eq .Sort "status"}}Status{{else if eq .Sort "repository"}}Repository{{else}}Newest{{end}}
         <i data-lucide="chevron-down"></i>
       </button>
       <div data-popover aria-hidden="true" data-align="end">
         <div role="menu">
-          {{range (list "newest" "kind" "status" "repository")}}
-            <a role="menuitem" href="/jobs?kind={{$.Kind}}&status={{$.Status}}&sort={{.}}"
+          {{range (list "newest" "skill" "status" "repository")}}
+            <a role="menuitem" href="/scans?skill={{$.Skill}}&status={{$.Status}}&sort={{.}}"
                {{if eq . $.Sort}}aria-current="true"{{end}}>{{.}}</a>
           {{end}}
         </div>
@@ -58,16 +58,16 @@
 {{if .Scans}}
   <table class="table">
     <thead>
-      <tr><th>#</th><th>Repository</th><th>Kind</th><th>Status</th><th>Findings</th><th>Model</th><th>Started</th><th>Duration</th><th class="w-12"></th></tr>
+      <tr><th>#</th><th>Repository</th><th>Skill</th><th>Status</th><th>Findings</th><th>Model</th><th>Started</th><th>Duration</th><th class="w-12"></th></tr>
     </thead>
     <tbody>
     {{range .Scans}}
       <tr class="cursor-pointer" hx-get="/scans/{{.ID}}" hx-target="body" hx-push-url="true">
         <td>{{.ID}}</td>
         <td>{{.Repository.Name}}</td>
-        <td>{{.Kind}}</td>
+        <td>{{if .SkillName}}{{.SkillName}}{{else}}{{.Kind}}{{end}}</td>
         <td>{{template "status-badge" (status .Status)}}</td>
-        <td>{{if eq .Kind "claude"}}{{template "findings-badge" .FindingsCount}}{{end}}</td>
+        <td>{{if gt .FindingsCount 0}}{{template "findings-badge" .FindingsCount}}{{end}}</td>
         <td class="text-muted-foreground">{{if .Model}}{{.Model}}{{else}}-{{end}}</td>
         <td>{{if .StartedAt}}{{since .StartedAt}}{{end}}</td>
         <td>{{if .FinishedAt}}{{dur .Duration}}{{end}}</td>

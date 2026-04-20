@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "dependents report",
+  "type": "object",
+  "required": ["dependents"],
+  "additionalProperties": false,
+  "properties": {
+    "dependents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "ecosystem"],
+        "additionalProperties": false,
+        "properties": {
+          "name":            { "type": "string" },
+          "ecosystem":       { "type": "string" },
+          "purl":            { "type": "string" },
+          "repository_url":  { "type": "string" },
+          "downloads":       { "type": "integer", "minimum": 0 },
+          "dependent_repos": { "type": "integer", "minimum": 0 },
+          "registry_url":    { "type": "string" },
+          "latest_version":  { "type": "string" }
+        }
+      }
+    }
+  }
+}

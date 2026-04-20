@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	_ "embed"
 	"errors"
 	"flag"
 	"fmt"
@@ -11,22 +10,30 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
+	"gorm.io/gorm"
+
 	"scrutineer/internal/db"
 	"scrutineer/internal/queue"
+	"scrutineer/internal/skills"
 	"scrutineer/internal/web"
 	"scrutineer/internal/worker"
 )
 
-const (
-	dataPermSecure  = 0o700
-	shutdownTimeout = 5 * time.Second
-)
+// skillDirs collects repeated -skills flags.
+type skillDirs []string
 
-//go:embed default_spec.md
-var defaultSpec string
+func (s *skillDirs) String() string     { return strings.Join(*s, ",") }
+func (s *skillDirs) Set(v string) error { *s = append(*s, v); return nil }
+
+const (
+	dataPermSecure     = 0o700
+	shutdownTimeout    = 5 * time.Second
+	skillsCloneTimeout = 2 * time.Minute
+)
 
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
@@ -41,10 +48,12 @@ func run(log *slog.Logger) error {
 		addr    = flag.String("addr", "127.0.0.1:8080", "listen address")
 		dataDir = flag.String("data", "./data", "data directory (db + workspaces)")
 		effort      = flag.String("effort", "high", "claude effort")
-		spec        = flag.String("spec", "", "path to audit spec (default: built-in)")
 		noDocker    = flag.Bool("no-docker", false, "disable containerised runner even if docker is available")
 		runnerImage = flag.String("runner-image", "scrutineer-runner", "docker image for per-job containers")
+		skillsRepo  = flag.String("skills-repo", "", "clone skills from this git https URL on startup")
 	)
+	var skillLocal skillDirs
+	flag.Var(&skillLocal, "skills", "directory to load SKILL.md files from (repeatable)")
 	flag.Parse()
 
 	if err := os.MkdirAll(*dataDir, dataPermSecure); err != nil {
@@ -70,18 +79,13 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("queue: %w", err)
 	}
 
-	specText := defaultSpec
-	if *spec != "" {
-		b, err := os.ReadFile(*spec)
-		if err != nil {
-			return fmt.Errorf("read spec: %w", err)
-		}
-		specText = string(b)
+	if err := loadSkills(log, gdb, *dataDir, skillLocal, *skillsRepo); err != nil {
+		return err
 	}
 
 	broker := web.NewBroker()
 
-	var runner worker.ClaudeRunner
+	var runner worker.SkillRunner
 	if !*noDocker && worker.DockerAvailable() {
 		log.Info("docker detected, using containerised runner", "image", *runnerImage)
 		runner = worker.DockerRunner{Image: *runnerImage, Effort: *effort}
@@ -94,7 +98,7 @@ func run(log *slog.Logger) error {
 		DB:      gdb,
 		Log:     log,
 		DataDir: filepath.Join(*dataDir, "work"),
-		Spec:    specText,
+		APIBase: "http://" + *addr + "/api",
 		Runner:  runner,
 		OnEvent: func(scanID, repoID uint, name, data string) {
 			broker.Publish(web.Event{Name: name, Data: data, ScanID: scanID, RepoID: repoID})
@@ -102,7 +106,7 @@ func run(log *slog.Logger) error {
 	}
 	w.Register(q)
 
-	srv, err := web.New(gdb, q, log, specText, broker)
+	srv, err := web.New(gdb, q, log, broker)
 	if err != nil {
 		return err
 	}
@@ -125,4 +129,33 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	return nil
+}
+
+func loadSkills(log *slog.Logger, gdb *gorm.DB, dataDir string, dirs skillDirs, repo string) error {
+	for _, d := range dirs {
+		n, err := skills.LoadDirectory(gdb, log, d, "local")
+		if err != nil {
+			return fmt.Errorf("load skills from %s: %w", d, err)
+		}
+		log.Info("loaded skills", "source", d, "count", n)
+	}
+	if repo != "" {
+		dst := filepath.Join(dataDir, "skills-cache", hashPath(repo))
+		ctx, cancel := context.WithTimeout(context.Background(), skillsCloneTimeout)
+		defer cancel()
+		if err := skills.CloneOrPull(ctx, repo, dst); err != nil {
+			return fmt.Errorf("clone skills repo: %w", err)
+		}
+		n, err := skills.LoadDirectory(gdb, log, dst, "remote")
+		if err != nil {
+			return fmt.Errorf("load skills from %s: %w", repo, err)
+		}
+		log.Info("loaded skills", "source", repo, "count", n)
+	}
+	return nil
+}
+
+func hashPath(s string) string {
+	r := strings.NewReplacer("/", "_", ":", "_", "?", "_", "&", "_", "=", "_")
+	return r.Replace(s)
 }
