@@ -304,7 +304,7 @@
   <div role="tabpanel" id="rp3" aria-labelledby="rt3" hidden>
     <table class="table">
       <thead>
-        <tr><th>#</th><th>Kind</th><th>Status</th><th>Findings</th><th>Model</th><th>Commit</th><th>Started</th><th>Duration</th></tr>
+        <tr><th>#</th><th>Skill</th><th>Status</th><th>Findings</th><th>Model</th><th>Commit</th><th>Started</th><th>Duration</th></tr>
       </thead>
       {{template "scan_rows" .}}
     </table>
@@ -325,9 +325,9 @@
 {{range .Scans}}
   <tr class="cursor-pointer" hx-get="/scans/{{.ID}}" hx-target="body" hx-push-url="true">
     <td>{{.ID}}</td>
-    <td>{{.Kind}}</td>
+    <td>{{if .SkillName}}{{.SkillName}}{{else}}{{.Kind}}{{end}}</td>
     <td>{{template "status-badge" (status .Status)}}</td>
-    <td>{{if eq .Kind "claude"}}{{template "findings-badge" .FindingsCount}}{{end}}</td>
+    <td>{{if gt .FindingsCount 0}}{{template "findings-badge" .FindingsCount}}{{end}}</td>
     <td class="text-muted-foreground">{{if .Model}}{{.Model}}{{else}}-{{end}}</td>
     <td><code>{{short .Commit}}</code></td>
     <td>{{if .StartedAt}}{{since .StartedAt}}{{end}}</td>

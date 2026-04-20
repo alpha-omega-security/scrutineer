@@ -519,9 +519,9 @@ func (s *Server) findingShow(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 	q := s.DB.Model(&db.Scan{})
-	kind := r.URL.Query().Get("kind")
-	if kind != "" {
-		q = q.Where("kind = ?", kind)
+	skillName := r.URL.Query().Get("skill")
+	if skillName != "" {
+		q = q.Where("skill_name = ?", skillName)
 	}
 	status := r.URL.Query().Get("status")
 	if status != "" {
@@ -530,8 +530,8 @@ func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 
 	sort := r.URL.Query().Get("sort")
 	switch sort {
-	case "kind":
-		q = q.Order("kind, id desc")
+	case "skill":
+		q = q.Order("skill_name, id desc")
 	case "status":
 		q = q.Order("status, id desc")
 	case "repository":
@@ -549,12 +549,13 @@ func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 	q.Preload("Repository").
 		Limit(perPage).Offset((page.N - 1) * perPage).Find(&scans)
 
-	var kinds []string
-	s.DB.Model(&db.Scan{}).Distinct("kind").Order("kind").Pluck("kind", &kinds)
+	var skillNames []string
+	s.DB.Model(&db.Scan{}).Where("skill_name != ''").Distinct("skill_name").
+		Order("skill_name").Pluck("skill_name", &skillNames)
 
 	s.render(w, "jobs.html", map[string]any{
 		"Scans": scans, "Page": page,
-		"Kind": kind, "Status": status, "Sort": sort, "Kinds": kinds,
+		"Skill": skillName, "Status": status, "Sort": sort, "Skills": skillNames,
 	})
 }
 

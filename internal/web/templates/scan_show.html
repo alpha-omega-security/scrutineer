@@ -7,7 +7,7 @@
 
 <div class="flex items-start justify-between gap-4 mb-6">
   <h2 class="text-2xl font-semibold flex items-center gap-3">
-    {{.Kind}} scan #{{.ID}}
+    {{if .SkillName}}{{.SkillName}}{{else}}{{.Kind}}{{end}} scan #{{.ID}}
     {{template "status-badge" (status .Status)}}
   </h2>
   {{if and (eq .Kind "skill") (not .SkillID)}}
