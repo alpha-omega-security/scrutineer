@@ -147,3 +147,7 @@ See [threatmodel.md](threatmodel.md) for the full threat model. The short versio
 - [openapi.yaml](openapi.yaml) -- the skill-facing HTTP API
 - [docs/database.md](docs/database.md) -- full database schema reference
 - [docs/development.md](docs/development.md) -- project layout, adding skills, regenerating embedded data, running tests
+
+## License
+
+MIT. See [LICENSE](LICENSE). Copyright (c) 2026 Alpha-Omega.
