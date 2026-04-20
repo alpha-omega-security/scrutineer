@@ -53,7 +53,6 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker) (*Serve
 			}
 			return m
 		},
-		"models": func() []Model { return Models },
 		"list": func(xs ...string) []string { return xs },
 		"cwename": func(id string) string {
 			if _, c, ok := LookupCWE(id); ok {

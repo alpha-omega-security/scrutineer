@@ -16,6 +16,7 @@ import (
 
 	"gorm.io/gorm"
 
+	"scrutineer/internal/config"
 	"scrutineer/internal/db"
 	"scrutineer/internal/queue"
 	"scrutineer/internal/skills"
@@ -45,8 +46,9 @@ func main() {
 
 func run(log *slog.Logger) error {
 	var (
-		addr    = flag.String("addr", "127.0.0.1:8080", "listen address")
-		dataDir = flag.String("data", "./data", "data directory (db + workspaces)")
+		configPath  = flag.String("config", "", "path to YAML config file (default: ./scrutineer.yaml if present)")
+		addr        = flag.String("addr", "127.0.0.1:8080", "listen address")
+		dataDir     = flag.String("data", "./data", "data directory (db + workspaces)")
 		effort      = flag.String("effort", "high", "claude effort")
 		noDocker    = flag.Bool("no-docker", false, "disable containerised runner even if docker is available")
 		runnerImage = flag.String("runner-image", "scrutineer-runner", "docker image for per-job containers")
@@ -55,6 +57,15 @@ func run(log *slog.Logger) error {
 	var skillLocal skillDirs
 	flag.Var(&skillLocal, "skills", "directory to load SKILL.md files from (repeatable)")
 	flag.Parse()
+
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		return err
+	}
+	if cfg != nil {
+		applyConfig(cfg, addr, dataDir, effort, noDocker, runnerImage, skillsRepo, &skillLocal)
+		log.Info("loaded config", "path", cfgPath(*configPath))
+	}
 
 	if err := os.MkdirAll(*dataDir, dataPermSecure); err != nil {
 		return err
@@ -158,4 +169,58 @@ func loadSkills(log *slog.Logger, gdb *gorm.DB, dataDir string, dirs skillDirs, 
 func hashPath(s string) string {
 	r := strings.NewReplacer("/", "_", ":", "_", "?", "_", "&", "_", "=", "_")
 	return r.Replace(s)
+}
+
+// applyConfig copies config values onto the corresponding flags, but
+// only for flags the user did not set explicitly. A CLI flag always
+// wins. Also pushes model overrides into the web package.
+func applyConfig(cfg *config.Config,
+	addr, dataDir, effort *string,
+	noDocker *bool,
+	runnerImage, skillsRepo *string,
+	skillLocal *skillDirs,
+) {
+	set := make(map[string]bool)
+	flag.Visit(func(f *flag.Flag) { set[f.Name] = true })
+
+	if cfg.Addr != "" && !set["addr"] {
+		*addr = cfg.Addr
+	}
+	if cfg.Data != "" && !set["data"] {
+		*dataDir = cfg.Data
+	}
+	if cfg.Effort != "" && !set["effort"] {
+		*effort = cfg.Effort
+	}
+	if cfg.NoDocker != nil && !set["no-docker"] {
+		*noDocker = *cfg.NoDocker
+	}
+	if cfg.RunnerImage != "" && !set["runner-image"] {
+		*runnerImage = cfg.RunnerImage
+	}
+	if cfg.SkillsRepo != "" && !set["skills-repo"] {
+		*skillsRepo = cfg.SkillsRepo
+	}
+	if len(cfg.Skills) > 0 && !set["skills"] {
+		*skillLocal = append(*skillLocal, cfg.Skills...)
+	}
+
+	if len(cfg.Models) > 0 {
+		models := make([]web.Model, 0, len(cfg.Models))
+		for _, m := range cfg.Models {
+			models = append(models, web.Model{Name: m.Name, ID: m.ID})
+		}
+		web.SetModels(models)
+	}
+	if cfg.DefaultModel != "" {
+		web.SetDefaultModel(cfg.DefaultModel)
+	}
+}
+
+// cfgPath returns the path the loader actually used for logging.
+func cfgPath(flagValue string) string {
+	if flagValue != "" {
+		return flagValue
+	}
+	return config.DefaultPath
 }

@@ -6,14 +6,40 @@ type Model struct {
 	ID   string
 }
 
-// Models is the pick list. The first entry is the default.
+// Models is the pick list. The first entry is the default unless
+// defaultModelOverride is set by the config loader.
 var Models = []Model{
 	{"Mythos", "claude-mythos-preview"},
 	{"Opus", "claude-opus-4-6"},
 	{"Sonnet", "claude-sonnet-4-6"},
 }
 
-func DefaultModel() string { return Models[0].ID }
+// defaultModelOverride, when non-empty, replaces the first-entry-wins
+// rule. Set at startup from config; empty leaves Models[0] as default.
+var defaultModelOverride string
+
+// SetModels replaces the pick list. Called at startup from config; no-op
+// for an empty list so a config with only default_model set keeps the
+// built-in list.
+func SetModels(models []Model) {
+	if len(models) == 0 {
+		return
+	}
+	Models = models
+}
+
+// SetDefaultModel pins the default model id, overriding "first entry".
+// Called at startup from config.
+func SetDefaultModel(id string) {
+	defaultModelOverride = id
+}
+
+func DefaultModel() string {
+	if defaultModelOverride != "" {
+		return defaultModelOverride
+	}
+	return Models[0].ID
+}
 
 func ValidModel(id string) bool {
 	for _, m := range Models {

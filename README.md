@@ -116,6 +116,7 @@ Note: the containerised runner currently uses `--network none`, which blocks ski
 
 | Flag | Default | Description |
 |------|---------|-------------|
+| `-config` | `./scrutineer.yaml` if present | Path to YAML config file |
 | `-addr` | `127.0.0.1:8080` | Listen address |
 | `-data` | `./data` | Data directory for the database and workspaces |
 | `-effort` | `high` | Claude effort level |
@@ -123,6 +124,19 @@ Note: the containerised runner currently uses `--network none`, which blocks ski
 | `-skills-repo` | - | Git HTTPS URL to clone skills from on startup |
 | `--no-docker` | false | Disable containerised runner |
 | `--runner-image` | `scrutineer-runner` | Docker image for per-scan containers |
+
+## Config file
+
+Every flag above can be set in a YAML config file instead. The loader checks `./scrutineer.yaml` by default; override with `-config path/to/file`. Command-line flags always win. See [scrutineer.sample.yaml](scrutineer.sample.yaml) for the full shape.
+
+The config file can also replace the model pick list and pin the default model:
+
+    default_model: claude-sonnet-4-6
+    models:
+      - name: Sonnet
+        id:   claude-sonnet-4-6
+      - name: Opus
+        id:   claude-opus-4-6
 
 ## Security
 
