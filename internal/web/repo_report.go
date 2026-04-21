@@ -387,10 +387,10 @@ func writeReportMaintainers(b *strings.Builder, gdb *gorm.DB, repoID uint) {
 	if len(rows) == 0 {
 		return
 	}
-	fmt.Fprintf(b, "## Maintainers\n\n| Login | Name | Email | Status | Notes |\n|---|---|---|---|---|\n")
+	fmt.Fprintf(b, "## Maintainers\n\n| Name | Login | Email | Status | Notes |\n|---|---|---|---|---|\n")
 	for _, m := range rows {
 		fmt.Fprintf(b, "| %s | %s | %s | %s | %s |\n",
-			m.Login, m.Name, m.Email, m.Status, escapeMD(m.Notes))
+			m.Name, m.Login, m.Email, m.Status, escapeMD(m.Notes))
 	}
 	b.WriteString("\n")
 }

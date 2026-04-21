@@ -146,7 +146,7 @@ func TestRepoReport_includesEverySection(t *testing.T) {
 		"## Dependencies",
 		"**npm**: 1",
 		"## Maintainers",
-		"| alice | Alice | alice@example.com | active | lead |",
+		"| Alice | alice | alice@example.com | active | lead |",
 	}
 	for _, want := range wants {
 		if !strings.Contains(body, want) {
