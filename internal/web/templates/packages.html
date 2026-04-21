@@ -44,7 +44,7 @@
     <thead><tr>
       <th>Name</th><th>Ecosystem</th><th>Registry</th>
       <th>Latest</th><th>Downloads</th>
-      <th>Dependents</th><th>Registry</th>
+      <th>Dependents</th>
     </tr></thead>
     <tbody>
     {{range .Pkgs}}
@@ -55,12 +55,6 @@
         <td class="text-muted-foreground">{{.LatestVersion}}</td>
         <td class="text-muted-foreground">{{bignum .Downloads}}</td>
         <td class="text-muted-foreground">{{bignum .DependentPackages}} pkgs / {{bignum .DependentRepos}} repos</td>
-        <td class="whitespace-normal">
-          {{if .RegistryURL}}<a href="{{.RegistryURL}}" target="_blank" rel="noopener"
-            class="text-sm hover:underline inline-flex items-center gap-1">
-            {{trimscheme .RegistryURL}}<i data-lucide="external-link" class="size-3"></i>
-          </a>{{end}}
-        </td>
       </tr>
     {{end}}
     </tbody>
