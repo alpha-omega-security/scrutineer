@@ -71,7 +71,7 @@
         <td class="text-muted-foreground">{{if .Model}}{{.Model}}{{else}}-{{end}}</td>
         <td>{{if .StartedAt}}{{since .StartedAt}}{{end}}</td>
         <td>{{if .FinishedAt}}{{dur .Duration}}{{end}}</td>
-        <td>{{if eq (status .Status) "failed"}}<button class="btn-sm-ghost"
+        <td>{{if and (eq (status .Status) "failed") .SkillID}}<button class="btn-sm-ghost"
             hx-post="/scans/{{.ID}}/retry" hx-swap="none"
             hx-on:click="event.stopPropagation()"
             data-tooltip="Retry"><i data-lucide="refresh-cw"></i></button>{{end}}</td>
