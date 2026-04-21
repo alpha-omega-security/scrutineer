@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires `zizmor` (https://github.com/woodruffw/zizmor) and `python3` on PATH.
 metadata:
   scrutineer.output_file: report.json
-  scrutineer.output_kind: findings
+  scrutineer.output_kind: freeform
 ---
 
 # zizmor
