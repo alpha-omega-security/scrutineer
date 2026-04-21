@@ -926,7 +926,19 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var scans []db.Scan
-	s.DB.Where("repository_id = ?", repo.ID).Order("id desc").Find(&scans)
+	// Per (skill_name, sub_path) we want just the latest scan — the repo
+	// page should read like "this is the state of each job on this repo",
+	// not a scroll of every historical attempt. Older runs are still
+	// reachable via /scans/{id} and the global /scans index.
+	s.DB.Raw(`
+		SELECT s.* FROM scans s
+		JOIN (
+			SELECT COALESCE(skill_name, '') AS sn, COALESCE(sub_path, '') AS sp, MAX(id) AS max_id
+			FROM scans WHERE repository_id = ?
+			GROUP BY sn, sp
+		) latest ON latest.max_id = s.id
+		ORDER BY s.id DESC
+	`, repo.ID).Scan(&scans)
 
 	active := false
 	for _, sc := range scans {
