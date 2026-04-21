@@ -321,6 +321,52 @@ func (w *Worker) parseSubprojectsOutput(scan *db.Scan, report string, emit func(
 	return nil
 }
 
+// parseRepoOverviewOutput reads `brief`'s structured output and backfills
+// fields on the Repository row that the metadata skill left empty. Only
+// empty fields are touched — a value coming from ecosyste.ms (via the
+// metadata skill) is considered authoritative and won't be overwritten
+// by brief's heuristic detection.
+func (w *Worker) parseRepoOverviewOutput(scan *db.Scan, report string, emit func(Event)) error {
+	var result struct {
+		Languages []struct {
+			Name     string `json:"name"`
+			Category string `json:"category"`
+		} `json:"languages"`
+	}
+	if err := json.Unmarshal([]byte(report), &result); err != nil {
+		// brief output may be wrapped or errored; don't fail the scan
+		// over a backfill pass.
+		emit(Event{Kind: KindText, Text: "repo-overview: skipping backfill, unparseable JSON"})
+		return nil
+	}
+	var names []string
+	for _, l := range result.Languages {
+		if l.Category != "" && l.Category != "language" {
+			continue
+		}
+		if l.Name != "" {
+			names = append(names, l.Name)
+		}
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	var repo db.Repository
+	if err := w.DB.First(&repo, scan.RepositoryID).Error; err != nil {
+		return fmt.Errorf("load repo: %w", err)
+	}
+	if strings.TrimSpace(repo.Languages) != "" {
+		return nil
+	}
+	joined := strings.Join(names, ", ")
+	if err := w.DB.Model(&db.Repository{}).Where("id = ?", repo.ID).
+		Update("languages", joined).Error; err != nil {
+		return fmt.Errorf("update languages: %w", err)
+	}
+	emit(Event{Kind: KindText, Text: "repo-overview: backfilled languages = " + joined})
+	return nil
+}
+
 // parseVerifyOutput records the outcome of a finding-scoped verification
 // run. Evidence and notes become a FindingNote; the status transition is
 // written via WriteFindingField with source=model_suggested so the audit

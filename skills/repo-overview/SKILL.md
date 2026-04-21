@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires the `brief` CLI (https://github.com/ecosyste-ms/brief) on PATH.
 metadata:
   scrutineer.output_file: report.json
-  scrutineer.output_kind: freeform
+  scrutineer.output_kind: repo_overview
 ---
 
 # repo-overview
