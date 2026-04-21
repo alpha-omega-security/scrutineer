@@ -57,6 +57,7 @@ skills:
 skills_repo: https://github.com/org/skills
 no_docker: true
 runner_image: custom-runner
+concurrency: 8
 `)
 	c, err := Load(path)
 	if err != nil {
@@ -73,6 +74,9 @@ runner_image: custom-runner
 	}
 	if c.NoDocker == nil || !*c.NoDocker {
 		t.Errorf("no_docker: %v", c.NoDocker)
+	}
+	if c.Concurrency != 8 {
+		t.Errorf("concurrency: %d", c.Concurrency)
 	}
 }
 

@@ -27,6 +27,10 @@
 # Docker image used for per-scan containers.
 # runner_image: scrutineer-runner
 
+# How many scans run in parallel. Default is 4; raise on bigger hosts,
+# lower if you want model calls serialised.
+# concurrency: 4
+
 # The model picker in the UI. Replacing this list replaces the built-in
 # set (Sonnet, Opus). Leave it out to keep the built-in list.
 # models:

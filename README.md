@@ -124,6 +124,7 @@ Note: the containerised runner currently uses `--network none`, which blocks ski
 | `-skills-repo` | - | Git HTTPS URL to clone skills from on startup |
 | `--no-docker` | false | Disable containerised runner |
 | `--runner-image` | `scrutineer-runner` | Docker image for per-scan containers |
+| `-concurrency` | `4` | Number of scans to run in parallel |
 
 ## Config file
 

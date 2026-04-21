@@ -22,7 +22,7 @@ func newTestServer(t *testing.T) (*Server, func()) {
 	}
 	sqldb, _ := gdb.DB()
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	q, err := queue.New(sqldb, log)
+	q, err := queue.New(sqldb, log, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

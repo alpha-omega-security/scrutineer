@@ -29,6 +29,9 @@ type Config struct {
 	SkillsRepo   string   `yaml:"skills_repo"`
 	NoDocker     *bool    `yaml:"no_docker"`
 	RunnerImage  string   `yaml:"runner_image"`
+	// Concurrency controls how many scans the worker runs in parallel.
+	// 0 or negative leaves the built-in default (see queue.DefaultWorkerConcurrency).
+	Concurrency int `yaml:"concurrency"`
 }
 
 // Model is a display-name plus the claude model id it resolves to. The
