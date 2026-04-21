@@ -1,5 +1,11 @@
-<div id="repos" hx-get="/repositories?page={{.Page.N}}&language={{.Language}}&sort={{.Sort}}" hx-trigger="every 5s" hx-swap="outerHTML">
+<div id="repos" hx-get="/repositories?q={{.Q}}&page={{.Page.N}}&language={{.Language}}&sort={{.Sort}}" hx-trigger="every 5s" hx-swap="outerHTML">
 <div class="flex items-center justify-end gap-2 mb-4">
+  <form method="get" action="/" class="inline-flex">
+    <input class="input" type="search" name="q" value="{{.Q}}" placeholder="Search repositories"
+           autocomplete="off" spellcheck="false">
+    <input type="hidden" name="language" value="{{.Language}}">
+    <input type="hidden" name="sort" value="{{.Sort}}">
+  </form>
   <div class="dropdown-menu">
     <button type="button" class="btn-outline" aria-haspopup="menu" aria-expanded="false">
       <i data-lucide="filter"></i>
@@ -8,9 +14,9 @@
     </button>
     <div data-popover aria-hidden="true" data-align="end">
       <div role="menu">
-        <a role="menuitem" href="/?sort={{.Sort}}">All languages</a>
+        <a role="menuitem" href="/?q={{.Q}}&sort={{.Sort}}">All languages</a>
         {{range .Languages}}
-          <a role="menuitem" href="/?language={{.}}&sort={{$.Sort}}"
+          <a role="menuitem" href="/?q={{$.Q}}&language={{.}}&sort={{$.Sort}}"
              {{if eq . $.Language}}aria-current="true"{{end}}>{{.}}</a>
         {{end}}
       </div>
@@ -25,7 +31,7 @@
     <div data-popover aria-hidden="true" data-align="end">
       <div role="menu">
         {{range (list "newest" "name" "stars" "language")}}
-          <a role="menuitem" href="/?language={{$.Language}}&sort={{.}}"
+          <a role="menuitem" href="/?q={{$.Q}}&language={{$.Language}}&sort={{.}}"
              {{if eq . $.Sort}}aria-current="true"{{end}}>{{.}}</a>
         {{end}}
       </div>
@@ -55,6 +61,8 @@
     </tbody>
   </table>
   {{template "pagination" .Page}}
+{{else if .Q}}
+  {{template "empty" (dict "Icon" "search-x" "Title" "No matches" "Body" "No repositories matched the search.")}}
 {{else}}
   {{template "empty" (dict "Icon" "folder-git-2" "Title" "No repositories yet" "Body" "Add a git URL above to queue the first scan.")}}
 {{end}}

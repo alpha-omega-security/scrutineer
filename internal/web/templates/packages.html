@@ -5,6 +5,12 @@
     <i data-lucide="package"></i> Packages
   </h2>
   <div class="flex items-center gap-2">
+    <form method="get" action="/packages" class="inline-flex">
+      <input class="input" type="search" name="q" value="{{.Q}}" placeholder="Search packages"
+             autocomplete="off" spellcheck="false">
+      <input type="hidden" name="ecosystem" value="{{.Ecosystem}}">
+      <input type="hidden" name="sort" value="{{.Sort}}">
+    </form>
     <div class="dropdown-menu">
       <button type="button" class="btn-outline" aria-haspopup="menu" aria-expanded="false">
         <i data-lucide="filter"></i>
@@ -13,9 +19,9 @@
       </button>
       <div data-popover aria-hidden="true" data-align="end">
         <div role="menu">
-          <a role="menuitem" href="/packages?sort={{.Sort}}">All ecosystems</a>
+          <a role="menuitem" href="/packages?q={{.Q}}&sort={{.Sort}}">All ecosystems</a>
           {{range .Ecosystems}}
-            <a role="menuitem" href="/packages?ecosystem={{.}}&sort={{$.Sort}}"
+            <a role="menuitem" href="/packages?q={{$.Q}}&ecosystem={{.}}&sort={{$.Sort}}"
                {{if eq . $.Ecosystem}}aria-current="true"{{end}}>{{.}}</a>
           {{end}}
         </div>
@@ -30,7 +36,7 @@
       <div data-popover aria-hidden="true" data-align="end">
         <div role="menu">
           {{range (list "name" "downloads" "dependents" "ecosystem")}}
-            <a role="menuitem" href="/packages?ecosystem={{$.Ecosystem}}&sort={{.}}"
+            <a role="menuitem" href="/packages?q={{$.Q}}&ecosystem={{$.Ecosystem}}&sort={{.}}"
                {{if eq . $.Sort}}aria-current="true"{{end}}>{{.}}</a>
           {{end}}
         </div>
@@ -60,6 +66,8 @@
     </tbody>
   </table>
   {{template "pagination" .Page}}
+{{else if .Q}}
+  {{template "empty" (dict "Icon" "search-x" "Title" "No matches" "Body" "No packages matched the search.")}}
 {{else}}
   {{template "empty" (dict "Icon" "package" "Title" "No packages" "Body" "Package data appears here once the packages job runs for a repository.")}}
 {{end}}
