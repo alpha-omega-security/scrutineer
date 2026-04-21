@@ -50,12 +50,25 @@ func renderOrgSummary(gdb *gorm.DB, repos []db.Repository) string {
 		repoIDs = append(repoIDs, r.ID)
 	}
 	var findings []db.Finding
-	gdb.Where("repository_id IN ?", repoIDs).
-		Order("repository_id, severity, id").Find(&findings)
+	gdb.Where("repository_id IN ?", repoIDs).Find(&findings)
 
+	// SQL ORDER BY severity is alphabetical (Critical, High, Low,
+	// Medium) which misreads "Medium > Low". Sort in Go using the
+	// shared severity rank instead.
 	byRepo := map[uint][]db.Finding{}
 	for _, f := range findings {
 		byRepo[f.RepositoryID] = append(byRepo[f.RepositoryID], f)
+	}
+	for id := range byRepo {
+		rows := byRepo[id]
+		sort.Slice(rows, func(i, j int) bool {
+			wi, wj := severityRank(rows[i].Severity), severityRank(rows[j].Severity)
+			if wi != wj {
+				return wi > wj
+			}
+			return rows[i].ID < rows[j].ID
+		})
+		byRepo[id] = rows
 	}
 	reposByID := make(map[uint]db.Repository, len(repos))
 	for _, r := range repos {
@@ -108,26 +121,37 @@ func severityLine(findings []db.Finding) string {
 	return "Findings: " + strings.Join(parts, ", ") + " severity"
 }
 
+// severityRank maps a severity label to a sortable weight. Shared
+// between cross-repo ordering (which uses the worst rank in the set)
+// and within-repo finding ordering (which uses the rank directly).
+const (
+	rankCritical = 4
+	rankHigh     = 3
+	rankMedium   = 2
+	rankLow      = 1
+)
+
+func severityRank(severity string) int {
+	switch severity {
+	case "Critical":
+		return rankCritical
+	case "High":
+		return rankHigh
+	case "Medium":
+		return rankMedium
+	case "Low":
+		return rankLow
+	}
+	return 0
+}
+
 // severityWeight ranks a repo by the worst severity it carries, so the
-// summary lists the most urgent repos first. Critical>High>Medium>Low;
-// ties broken on total count.
+// summary lists the most urgent repos first. Ties broken on total count.
 func severityWeight(findings []db.Finding) int {
-	worst := 0
-	total := 0
+	worst, total := 0, 0
 	for _, f := range findings {
 		total++
-		w := 0
-		switch f.Severity {
-		case "Critical":
-			w = 4
-		case "High":
-			w = 3
-		case "Medium":
-			w = 2
-		case "Low":
-			w = 1
-		}
-		if w > worst {
+		if w := severityRank(f.Severity); w > worst {
 			worst = w
 		}
 	}
@@ -143,7 +167,6 @@ func writeOrgSummaryRepo(b *strings.Builder, repo db.Repository, findings []db.F
 	}
 	fmt.Fprintf(b, "## %s\n\n", heading)
 	fmt.Fprintf(b, "%s\n\n", severityLine(findings))
-	fmt.Fprintf(b, "Full report and validation code: [/repositories/%d/report.md](/repositories/%d/report.md)\n\n", repo.ID, repo.ID)
 
 	for _, f := range findings {
 		writeOrgSummaryFinding(b, f)

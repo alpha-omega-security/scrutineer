@@ -414,7 +414,6 @@ func TestOrgSummary_rendersSynopsisShape(t *testing.T) {
 		"## acme/api",
 		"Findings: 1 high, 0 medium, 0 low severity", // web
 		"Findings: 0 high, 1 medium, 1 low severity", // api
-		"Full report and validation code: [/repositories/",
 		"### Finding #1 - Rating: High",
 		"Open redirect in /api/sso",
 		"Location: `src/route.ts:46`",
@@ -427,12 +426,15 @@ func TestOrgSummary_rendersSynopsisShape(t *testing.T) {
 		}
 	}
 
-	// Archive content must NOT leak into the synopsis.
+	// Archive content must NOT leak into the synopsis, and we
+	// deliberately don't include any per-repo link line.
 	for _, unwanted := range []string{
 		"should not appear in summary",
 		"| Field | Value |",
 		"#### Trace",
 		"### Severity breakdown",
+		"Full report and validation code",
+		"/repositories/",
 	} {
 		if strings.Contains(body, unwanted) {
 			t.Errorf("summary contains archive-only content %q", unwanted)
@@ -444,10 +446,15 @@ func TestOrgSummary_rendersSynopsisShape(t *testing.T) {
 		t.Errorf("repos without findings should not appear in summary")
 	}
 
-	// Ordering: the repo with a High should come before the repo whose
-	// worst severity is Medium.
+	// Cross-repo order: acme/web (worst: High) before acme/api (worst: Medium).
 	if strings.Index(body, "## acme/web") > strings.Index(body, "## acme/api") {
 		t.Errorf("expected acme/web (High) before acme/api (Medium)")
+	}
+	// Within-repo order: Medium must render before Low in acme/api.
+	mediumIdx := strings.Index(body, "### Finding #2 - Rating: Medium")
+	lowIdx := strings.Index(body, "### Finding #3 - Rating: Low")
+	if mediumIdx < 0 || lowIdx < 0 || mediumIdx > lowIdx {
+		t.Errorf("expected Medium before Low within acme/api (medium=%d low=%d)", mediumIdx, lowIdx)
 	}
 }
 
