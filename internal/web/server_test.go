@@ -39,6 +39,66 @@ func localReq(method, path string) *http.Request {
 	return r
 }
 
+func TestRepoSearchFilters(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	s.DB.Create(&db.Repository{URL: "https://github.com/rails/rails", Name: "rails", FullName: "rails/rails", Description: "Ruby on Rails"})
+	s.DB.Create(&db.Repository{URL: "https://github.com/rubygems/rubygems", Name: "rubygems", FullName: "rubygems/rubygems", Description: "gem package manager"})
+	s.DB.Create(&db.Repository{URL: "https://github.com/rails-api/jbuilder", Name: "jbuilder", FullName: "rails-api/jbuilder", Description: "JSON builder"})
+
+	cases := []struct {
+		query string
+		match []string
+		drop  []string
+	}{
+		{query: "rails", match: []string{"rails/rails", "rails-api/jbuilder"}, drop: []string{"rubygems/rubygems"}},
+		{query: "package", match: []string{"rubygems/rubygems"}, drop: []string{"rails/rails", "rails-api/jbuilder"}},
+		{query: "jbuilder", match: []string{"rails-api/jbuilder"}, drop: []string{"rails/rails", "rubygems/rubygems"}},
+		{query: "NOPE_NOPE_NOPE", match: nil, drop: []string{"rails/rails", "rubygems/rubygems", "rails-api/jbuilder"}},
+	}
+
+	for _, tc := range cases {
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, localReq("GET", "/?q="+url.QueryEscape(tc.query)))
+		if w.Code != 200 {
+			t.Fatalf("q=%q status %d: %s", tc.query, w.Code, w.Body)
+		}
+		body := w.Body.String()
+		for _, want := range tc.match {
+			if !strings.Contains(body, want) {
+				t.Errorf("q=%q: body missing %q", tc.query, want)
+			}
+		}
+		for _, drop := range tc.drop {
+			if strings.Contains(body, drop) {
+				t.Errorf("q=%q: body should not contain %q", tc.query, drop)
+			}
+		}
+		if len(tc.match) == 0 && !strings.Contains(body, "No matches") {
+			t.Errorf("q=%q: empty-match body missing 'No matches' state", tc.query)
+		}
+	}
+}
+
+func TestRepoSearchPreservesOtherFilters(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	s.DB.Create(&db.Repository{URL: "https://github.com/rails/rails", Name: "rails", Languages: "Ruby"})
+	s.DB.Create(&db.Repository{URL: "https://github.com/go-rails/something", Name: "go-rails", Languages: "Go"})
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/?q=rails&language=Ruby"))
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "rails/rails") || strings.Contains(body, "go-rails/something") {
+		t.Errorf("q=rails language=Ruby did not combine correctly. body=%s", body)
+	}
+}
+
 func TestIndexRenders(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

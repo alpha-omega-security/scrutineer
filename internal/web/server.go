@@ -209,6 +209,12 @@ func (s *Server) repoList(w http.ResponseWriter, r *http.Request) {
 	if lang != "" {
 		q = q.Where("languages = ?", lang)
 	}
+	search := strings.TrimSpace(r.URL.Query().Get("q"))
+	if search != "" {
+		like := "%" + search + "%"
+		q = q.Where("name LIKE ? OR url LIKE ? OR full_name LIKE ? OR description LIKE ?",
+			like, like, like, like)
+	}
 
 	sort := r.URL.Query().Get("sort")
 	const nameSort = "name"
@@ -246,6 +252,7 @@ func (s *Server) repoList(w http.ResponseWriter, r *http.Request) {
 
 	data := map[string]any{
 		"Rows": rows, "Page": page, "Language": lang, "Sort": sort, "Languages": languages,
+		"Q": search,
 	}
 	if r.Header.Get("HX-Request") != "" {
 		s.render(w, "repo_list.html", data)
