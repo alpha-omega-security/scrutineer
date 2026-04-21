@@ -279,6 +279,48 @@ func (w *Worker) parseDependenciesOutput(scan *db.Scan, report string, emit func
 	return nil
 }
 
+// parseSubprojectsOutput replaces Subproject rows for the scan's
+// repository. Subprojects are a projection of the repo layout produced
+// by the subprojects skill; a fresh run reflects the current clone and
+// replaces any prior set.
+func (w *Worker) parseSubprojectsOutput(scan *db.Scan, report string, emit func(Event)) error {
+	var result struct {
+		Subprojects []struct {
+			Path        string `json:"path"`
+			Name        string `json:"name"`
+			Kind        string `json:"kind"`
+			Description string `json:"description"`
+		} `json:"subprojects"`
+	}
+	if err := json.Unmarshal([]byte(report), &result); err != nil {
+		return fmt.Errorf("parse subprojects: %w", err)
+	}
+	if err := w.DB.Where("repository_id = ?", scan.RepositoryID).Delete(&db.Subproject{}).Error; err != nil {
+		return fmt.Errorf("delete old subprojects: %w", err)
+	}
+	rows := make([]db.Subproject, 0, len(result.Subprojects))
+	for _, sp := range result.Subprojects {
+		path := strings.Trim(sp.Path, "/ \t\n")
+		if path == "" {
+			continue
+		}
+		rows = append(rows, db.Subproject{
+			RepositoryID: scan.RepositoryID,
+			Path:         path,
+			Name:         sp.Name,
+			Kind:         sp.Kind,
+			Description:  sp.Description,
+		})
+	}
+	if len(rows) > 0 {
+		if err := w.DB.Create(&rows).Error; err != nil {
+			return fmt.Errorf("save subprojects: %w", err)
+		}
+	}
+	emit(Event{Kind: KindText, Text: fmt.Sprintf("saved %d subproject(s)", len(rows))})
+	return nil
+}
+
 // parseVerifyOutput records the outcome of a finding-scoped verification
 // run. Evidence and notes become a FindingNote; the status transition is
 // written via WriteFindingField with source=model_suggested so the audit

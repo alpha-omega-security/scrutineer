@@ -96,6 +96,38 @@
       <p class="text-muted-foreground text-sm mb-6">Metadata not fetched yet.</p>
     {{end}}
 
+    {{if .Subprojects}}
+      <h3 class="font-medium mb-2">Subprojects <span class="text-muted-foreground text-xs">({{len .Subprojects}})</span></h3>
+      <p class="text-sm text-muted-foreground mb-2">Detected scannable units inside this repository. Each can be scanned independently with its own findings stream.</p>
+      <table class="table w-full mb-6">
+        <thead><tr>
+          <th class="w-48">Path</th>
+          <th class="w-40">Kind</th>
+          <th>Description</th>
+          <th class="w-16 text-right">Scans</th>
+          <th class="w-32"></th>
+        </tr></thead>
+        <tbody>
+        {{$repoID := .Repo.ID}}
+        {{$counts := .SubScanCount}}
+        {{range .Subprojects}}
+          <tr>
+            <td><code class="text-xs">{{.Path}}</code>{{if and .Name (ne .Name .Path)}}<div class="text-xs text-muted-foreground">{{.Name}}</div>{{end}}</td>
+            <td>{{if .Kind}}<span class="badge-outline text-xs">{{.Kind}}</span>{{end}}</td>
+            <td class="whitespace-normal text-sm text-muted-foreground">{{.Description}}</td>
+            <td class="text-right text-sm text-muted-foreground">{{index $counts .Path}}</td>
+            <td>
+              <form method="post" action="/repositories/{{$repoID}}/scan" hx-post="/repositories/{{$repoID}}/scan" hx-swap="none">
+                <input type="hidden" name="sub_path" value="{{.Path}}">
+                <button type="submit" class="btn-outline-sm"><i data-lucide="play"></i> Scan</button>
+              </form>
+            </td>
+          </tr>
+        {{end}}
+        </tbody>
+      </table>
+    {{end}}
+
     {{if .Latest}}
       <h3 class="font-medium mb-2">Latest scan</h3>
       <a href="/scans/{{.Latest.ID}}" class="text-sm text-muted-foreground mb-2 inline-flex items-center gap-1 hover:underline">

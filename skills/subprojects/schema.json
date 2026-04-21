@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "subprojects report",
+  "description": "Scannable sub-folders within a repository. Empty list means the repo is a single unit at the root.",
+  "type": "object",
+  "required": ["subprojects"],
+  "additionalProperties": false,
+  "properties": {
+    "subprojects": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {
+        "type": "object",
+        "required": ["path"],
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string",
+            "pattern": "^[^/].*",
+            "description": "Sub-folder relative to repo root. No leading slash. This value is stored on Scan.sub_path when the analyst scopes a scan to this subproject."
+          },
+          "name": {
+            "type": "string",
+            "description": "Short human label. Prefer the manifest's own package name over the directory name."
+          },
+          "kind": {
+            "type": "string",
+            "description": "Detected flavour: go-module, npm-package, python-package, rust-crate, composer-package, maven-module, gradle-module, ruby-gem, swift-package, service, monorepo-root."
+          },
+          "description": {
+            "type": "string",
+            "description": "One or two sentences on what this subproject is. Read the local README or infer from the manifest."
+          }
+        }
+      }
+    },
+    "notes": {
+      "type": "string",
+      "description": "Optional: anything the analyst should know. Truncation (more than 50 subprojects), unfamiliar monorepo layout, heuristics that fired ambiguously."
+    }
+  }
+}

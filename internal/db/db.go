@@ -83,6 +83,13 @@ type Scan struct {
 	FindingID *uint  `gorm:"index"`
 	APIToken  string `gorm:"index"`
 
+	// SubPath scopes the scan's code analysis to a sub-folder within the
+	// clone (e.g. airflow-core inside apache/airflow). Empty means the
+	// repo root. Skills that walk files honour this through
+	// scrutineer.scan_subpath in context.json; skills that consult
+	// external APIs (packages/advisories/dependents) ignore it.
+	SubPath string `gorm:"index"`
+
 	Commit     string
 	StartedAt  *time.Time
 	FinishedAt *time.Time
@@ -249,8 +256,8 @@ type Finding struct {
 	ID           uint `gorm:"primarykey"`
 	ScanID       uint `gorm:"index;not null"`
 	Scan         Scan
-	// RepositoryID and Commit are denormalized from Scan so list queries
-	// don't have to join through Scan (GORM's Preload/Joins on
+	// RepositoryID, Commit, and SubPath are denormalized from Scan so list
+	// queries don't have to join through Scan (GORM's Preload/Joins on
 	// Finding.Scan doesn't round-trip cleanly on sqlite). Set at
 	// finding-create time and never changed. RepositoryID is not
 	// marked not-null so AutoMigrate can widen the column on existing
@@ -258,6 +265,7 @@ type Finding struct {
 	// existing rows on startup.
 	RepositoryID uint `gorm:"index"`
 	Commit       string
+	SubPath      string `gorm:"index"`
 
 	FindingID string // e.g. F1, F2 within the report
 	Sinks     string // comma-joined sink IDs
@@ -442,11 +450,36 @@ func Open(dsn string) (*gorm.DB, error) {
 		&Finding{}, &FindingLabel{}, &FindingNote{},
 		&FindingCommunication{}, &FindingReference{}, &FindingHistory{},
 		&Dependency{}, &Package{}, &Dependent{}, &Advisory{},
-		&Maintainer{}, &Skill{},
+		&Maintainer{}, &Skill{}, &Subproject{},
 	); err != nil {
 		return nil, fmt.Errorf("automigrate: %w", err)
 	}
 	return gdb, nil
+}
+
+// Subproject is a scannable unit the subprojects skill discovered inside
+// a repository. One Repository has many Subprojects; each Scan may refer
+// to one of them through Scan.SubPath. Rows are rewritten in full when
+// the subprojects skill re-runs, mirroring Package/Advisory semantics.
+type Subproject struct {
+	ID           uint `gorm:"primarykey"`
+	RepositoryID uint `gorm:"index;not null"`
+
+	// Path is the sub-folder within the clone, relative to root. Empty
+	// is not allowed — the root case is represented by absence of any
+	// Subproject row, not by a Subproject with Path "".
+	Path string `gorm:"not null"`
+	// Name is a short human label ("airflow-core", "cli", ...). Falls
+	// back to the last segment of Path when the skill cannot infer one.
+	Name string
+	// Kind is the detected flavour: go-module, npm-workspace,
+	// python-package, rust-crate, composer-package, monorepo-root, etc.
+	// Free-form — the UI just renders it as a badge.
+	Kind        string `gorm:"index"`
+	Description string `gorm:"type:text"`
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // BackfillFindingRepository copies Scan.RepositoryID onto Finding rows

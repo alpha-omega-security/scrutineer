@@ -62,13 +62,14 @@ func parseReport(raw []byte) (scanReport, error) {
 	return r, nil
 }
 
-func (r scanReport) toFindings(scanID, repoID uint, commit string) []db.Finding {
+func (r scanReport) toFindings(scanID, repoID uint, commit, subPath string) []db.Finding {
 	out := make([]db.Finding, 0, len(r.Findings))
 	for _, f := range r.Findings {
 		out = append(out, db.Finding{
 			ScanID:       scanID,
 			RepositoryID: repoID,
 			Commit:       commit,
+			SubPath:      subPath,
 			FindingID:  f.ID,
 			Sinks:      strings.Join(f.Sinks, ", "),
 			Title:      f.Title,
