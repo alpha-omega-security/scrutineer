@@ -166,6 +166,56 @@
   </details>
   {{end}}
 
+  {{if .Patch}}{{$p := .Patch}}{{$ps := .PatchScan}}
+  <details open class="group border-b">
+    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
+        Proposed patch
+        <span class="text-muted-foreground ml-auto mr-2 text-xs">scan #{{$ps.ID}}</span>
+        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
+      </h3>
+    </summary>
+    <section class="pb-4 grid gap-3">
+      {{if $p.Rationale}}
+        <p class="text-sm">{{$p.Rationale}}</p>
+      {{end}}
+      {{if $p.FilesChanged}}
+        <div class="text-xs text-muted-foreground">
+          Files changed:
+          {{range $i, $f := $p.FilesChanged}}{{if $i}}, {{end}}<code>{{$f}}</code>{{end}}
+        </div>
+      {{end}}
+      <div class="flex flex-wrap gap-2 items-center">
+        <a class="btn-sm" href="/findings/{{$f.ID}}/patch.diff">
+          <i data-lucide="download"></i> Download .patch
+        </a>
+        <a class="btn-outline-sm" href="/scans/{{$ps.ID}}">
+          <i data-lucide="arrow-up-right"></i> View scan
+        </a>
+        {{if $p.BaseCommit}}
+          <span class="text-xs text-muted-foreground">base <code>{{short $p.BaseCommit}}</code></span>
+        {{end}}
+        {{if $p.TestsAdded}}
+          <span class="badge-secondary">includes test</span>
+        {{end}}
+      </div>
+      <details class="group">
+        <summary class="text-xs text-muted-foreground cursor-pointer hover:underline">
+          How to apply
+        </summary>
+        <pre class="log mt-2">cd path/to/{{$repo.Name}}
+{{if $p.BaseCommit}}git checkout {{short $p.BaseCommit}}
+{{end}}git checkout -b fix/finding-{{$f.ID}}
+git apply --index ~/Downloads/finding-{{$f.ID}}.patch
+git commit -m "fix: {{$f.Title}}"</pre>
+      </details>
+      {{if $p.Notes}}
+        <div class="text-xs text-muted-foreground border-l-2 pl-3 mt-1">{{$p.Notes}}</div>
+      {{end}}
+    </section>
+  </details>
+  {{end}}
+
   <details class="group border-b">
     <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
       <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">

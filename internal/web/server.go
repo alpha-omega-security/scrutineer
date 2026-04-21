@@ -128,6 +128,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /findings/{id}/status", s.findingStatus)
 	mux.HandleFunc("POST /findings/{id}/verify", s.findingVerify)
 	mux.HandleFunc("POST /findings/{id}/disclose", s.findingDisclose)
+	mux.HandleFunc("POST /findings/{id}/patch", s.findingPatchRun)
+	mux.HandleFunc("GET /findings/{id}/patch.diff", s.findingPatchDownload)
 	mux.HandleFunc("POST /findings/{id}/notes", s.findingNotes)
 	mux.HandleFunc("POST /findings/{id}/fields", s.findingFields)
 	mux.HandleFunc("POST /findings/{id}/communications", s.findingCommunications)
@@ -507,12 +509,19 @@ const verifySkillName = "verify"
 // discloseSkillName is the skill the Draft disclosure button runs.
 const discloseSkillName = "disclose"
 
+// patchSkillName is the skill the Propose patch button runs.
+const patchSkillName = "patch"
+
 func (s *Server) findingVerify(w http.ResponseWriter, r *http.Request) {
 	s.runFindingSkill(w, r, verifySkillName)
 }
 
 func (s *Server) findingDisclose(w http.ResponseWriter, r *http.Request) {
 	s.runFindingSkill(w, r, discloseSkillName)
+}
+
+func (s *Server) findingPatchRun(w http.ResponseWriter, r *http.Request) {
+	s.runFindingSkill(w, r, patchSkillName)
 }
 
 func (s *Server) runFindingSkill(w http.ResponseWriter, r *http.Request, name string) {
@@ -650,6 +659,10 @@ func (s *Server) findingShow(w http.ResponseWriter, r *http.Request) {
 	}
 	if id, c, ok := LookupCWE(f.CWE); ok {
 		data["CWE"] = map[string]any{"ID": id, "Name": c.Name, "Description": c.Description}
+	}
+	if patchScan, patchRep, _ := s.latestPatchScan(f.ID); patchRep != nil {
+		data["PatchScan"] = patchScan
+		data["Patch"] = patchRep
 	}
 	s.render(w, "finding_show.html", data)
 }
