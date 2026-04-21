@@ -367,6 +367,100 @@ func TestOrgReport_rendersFindingsAcrossRepos(t *testing.T) {
 	}
 }
 
+func TestOrgSummary_rendersSynopsisShape(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	r1 := db.Repository{URL: "https://github.com/acme/web.git", Name: "web", Owner: "acme", FullName: "acme/web"}
+	s.DB.Create(&r1)
+	r2 := db.Repository{URL: "https://github.com/acme/api.git", Name: "api", Owner: "acme", FullName: "acme/api"}
+	s.DB.Create(&r2)
+	empty := db.Repository{URL: "https://github.com/acme/quiet.git", Name: "quiet", Owner: "acme", FullName: "acme/quiet"}
+	s.DB.Create(&empty)
+
+	scan1 := db.Scan{RepositoryID: r1.ID, Kind: "skill", Status: db.ScanDone, SkillName: "x"}
+	s.DB.Create(&scan1)
+	s.DB.Create(&db.Finding{ScanID: scan1.ID, RepositoryID: r1.ID,
+		Title: "Open redirect in /api/sso", Severity: "High",
+		Location: "src/route.ts:46", Rating: "**High.** Auth-adjacent; token leakage.",
+		Trace: "should not appear in summary"})
+
+	scan2 := db.Scan{RepositoryID: r2.ID, Kind: "skill", Status: db.ScanDone, SkillName: "x"}
+	s.DB.Create(&scan2)
+	s.DB.Create(&db.Finding{ScanID: scan2.ID, RepositoryID: r2.ID,
+		Title: "CSV injection", Severity: "Medium",
+		Location: "api/reports.cs:20", Rating: "**Medium.** Requires admin-held role."})
+	s.DB.Create(&db.Finding{ScanID: scan2.ID, RepositoryID: r2.ID,
+		Title: "Cookie not httpOnly", Severity: "Low",
+		Location: "auth/set-cookie.ts:27", Rating: "**Low.** Defense in depth."})
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/orgs/acme/summary.md"))
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/markdown") {
+		t.Errorf("Content-Type = %q", ct)
+	}
+	if cd := w.Header().Get("Content-Disposition"); !strings.Contains(cd, "acme-summary") {
+		t.Errorf("Content-Disposition = %q", cd)
+	}
+
+	body := w.Body.String()
+	for _, want := range []string{
+		"# Summary of findings",
+		"Findings: 1 high, 1 medium, 1 low severity",
+		"## acme/web",
+		"## acme/api",
+		"Findings: 1 high, 0 medium, 0 low severity", // web
+		"Findings: 0 high, 1 medium, 1 low severity", // api
+		"Full report and validation code: [/repositories/",
+		"### Finding #1 - Rating: High",
+		"Open redirect in /api/sso",
+		"Location: `src/route.ts:46`",
+		"**High.** Auth-adjacent; token leakage.",
+		"### Finding #2 - Rating: Medium",
+		"### Finding #3 - Rating: Low",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("summary missing %q", want)
+		}
+	}
+
+	// Archive content must NOT leak into the synopsis.
+	for _, unwanted := range []string{
+		"should not appear in summary",
+		"| Field | Value |",
+		"#### Trace",
+		"### Severity breakdown",
+	} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("summary contains archive-only content %q", unwanted)
+		}
+	}
+
+	// acme/quiet has no findings so it should be omitted entirely.
+	if strings.Contains(body, "acme/quiet") {
+		t.Errorf("repos without findings should not appear in summary")
+	}
+
+	// Ordering: the repo with a High should come before the repo whose
+	// worst severity is Medium.
+	if strings.Index(body, "## acme/web") > strings.Index(body, "## acme/api") {
+		t.Errorf("expected acme/web (High) before acme/api (Medium)")
+	}
+}
+
+func TestOrgSummary_unknownIs404(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/orgs/nope/summary.md"))
+	if w.Code != http.StatusNotFound {
+		t.Errorf("want 404, got %d", w.Code)
+	}
+}
+
 func TestOrgReport_unknownIs404(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

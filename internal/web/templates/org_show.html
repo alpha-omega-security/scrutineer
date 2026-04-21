@@ -8,9 +8,16 @@
     <i data-lucide="building"></i> {{$owner}}
     <span class="text-muted-foreground text-sm font-normal">{{len .Repos}} repos</span>
   </h2>
-  <a href="/orgs/{{$owner}}/findings.md" class="btn-outline" download>
-    <i data-lucide="download"></i> Findings report
-  </a>
+  <div class="flex items-center gap-2">
+    <a href="/orgs/{{$owner}}/summary.md" class="btn" download
+       data-tooltip="Stakeholder-facing synopsis: title, location, and rating prose per finding">
+      <i data-lucide="file-text"></i> Summary
+    </a>
+    <a href="/orgs/{{$owner}}/findings.md" class="btn-outline" download
+       data-tooltip="Full archive dump: every prose step, notes, communications, references">
+      <i data-lucide="download"></i> Full report
+    </a>
+  </div>
 </div>
 
 <div class="tabs w-full" id="org-tabs">
