@@ -602,14 +602,17 @@ func TestBulkImport_dialogRendered(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, localReq("GET", "/"))
 	body := w.Body.String()
-	if !strings.Contains(body, "Bulk import") {
-		t.Error("sidebar missing Bulk import button")
-	}
 	if !strings.Contains(body, `id="bulk-add-repo"`) {
 		t.Error("layout missing bulk dialog")
 	}
 	if !strings.Contains(body, `name="urls"`) {
 		t.Error("bulk dialog missing urls textarea")
+	}
+	if !strings.Contains(body, "Add multiple") {
+		t.Error("add-repo dialog missing 'Add multiple' link to bulk dialog")
+	}
+	if !strings.Contains(body, "getElementById('bulk-add-repo').showModal()") {
+		t.Error("'Add multiple' button does not open bulk dialog")
 	}
 }
 

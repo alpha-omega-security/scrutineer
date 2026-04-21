@@ -48,14 +48,10 @@
         </ul>
       </div>
     </section>
-    <footer class="grid gap-1">
+    <footer>
       <button type="button" class="btn w-full"
               onclick="document.getElementById('add-repo').showModal()">
         <i data-lucide="plus"></i> Add repository
-      </button>
-      <button type="button" class="btn-outline w-full"
-              onclick="document.getElementById('bulk-add-repo').showModal()">
-        <i data-lucide="list-plus"></i> Bulk import
       </button>
     </footer>
   </nav>
@@ -79,9 +75,15 @@
             class="form grid gap-3">
         <input class="input" type="text" name="url"
                placeholder="https://github.com/maragudk/goqite.git" required>
-        <footer class="flex justify-end gap-2">
-          <button type="button" class="btn-outline" onclick="this.closest('dialog').close()">Cancel</button>
-          <button type="submit" class="btn"><i data-lucide="play"></i> Scan</button>
+        <footer class="flex justify-between items-center gap-2">
+          <button type="button" class="btn-ghost-sm"
+                  onclick="this.closest('dialog').close(); document.getElementById('bulk-add-repo').showModal()">
+            <i data-lucide="list-plus"></i> Add multiple
+          </button>
+          <div class="flex gap-2">
+            <button type="button" class="btn-outline" onclick="this.closest('dialog').close()">Cancel</button>
+            <button type="submit" class="btn"><i data-lucide="play"></i> Scan</button>
+          </div>
         </footer>
       </form>
     </section>
