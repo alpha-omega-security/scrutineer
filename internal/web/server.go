@@ -118,6 +118,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /repositories", s.repoList)
 	mux.HandleFunc("POST /repositories", s.repoCreate)
 	mux.HandleFunc("GET /repositories/{id}", s.repoShow)
+	mux.HandleFunc("GET /repositories/{id}/report.md", s.repoReport)
 	mux.HandleFunc("POST /repositories/{id}/scan", s.repoScan)
 	mux.HandleFunc("GET /scans", s.jobs)
 	mux.HandleFunc("GET /maintainers", s.maintainersList)

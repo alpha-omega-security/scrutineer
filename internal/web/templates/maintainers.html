@@ -32,13 +32,13 @@
 {{if .Maintainers}}
   <table class="table w-full">
     <thead><tr>
-      <th>Login</th><th>Name</th><th>Email</th><th>Company</th><th>Repos</th><th>Status</th>
+      <th>Name</th><th>Login</th><th>Email</th><th>Company</th><th>Repos</th><th>Status</th>
     </tr></thead>
     <tbody>
     {{range .Maintainers}}
       <tr class="cursor-pointer" hx-get="/maintainers/{{.ID}}" hx-target="body" hx-push-url="true">
-        <td class="font-medium">{{.Login}}</td>
-        <td>{{.Name}}</td>
+        <td class="font-medium">{{.Name}}</td>
+        <td class="text-muted-foreground">{{.Login}}</td>
         <td class="text-muted-foreground">{{.Email}}</td>
         <td class="text-muted-foreground">{{.Company}}</td>
         <td class="text-muted-foreground">{{len .Repositories}}</td>

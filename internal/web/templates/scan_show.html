@@ -10,9 +10,7 @@
     {{if .SkillName}}{{.SkillName}}{{else}}{{.Kind}}{{end}} scan #{{.ID}}
     {{template "status-badge" (status .Status)}}
   </h2>
-  {{if and (eq .Kind "skill") (not .SkillID)}}
-    <span class="text-xs text-muted-foreground">retry unavailable, skill reference missing</span>
-  {{else}}
+  {{if and (eq .Kind "skill") .SkillID}}
     <button class="btn-outline" hx-post="/scans/{{.ID}}/retry">
       <i data-lucide="refresh-cw"></i> Retry
     </button>

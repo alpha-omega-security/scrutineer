@@ -33,6 +33,9 @@
       </div>
     </form>
     {{end}}
+    <a href="/repositories/{{.Repo.ID}}/report.md" class="btn-outline" download>
+      <i data-lucide="download"></i> Export report
+    </a>
     <form hx-post="/repositories/{{.Repo.ID}}/scan">
       <button class="btn" type="submit"><i data-lucide="play"></i> New scan</button>
     </form>
