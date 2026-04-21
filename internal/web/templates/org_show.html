@@ -1,0 +1,132 @@
+{{template "head"}}
+{{$owner := .Owner}}
+
+{{template "crumbs" (crumbs "Organizations" "/orgs" $owner "")}}
+
+<h2 class="text-2xl font-semibold mt-1 mb-6 flex items-center gap-3">
+  <i data-lucide="building"></i> {{$owner}}
+  <span class="text-muted-foreground text-sm font-normal">{{len .Repos}} repos</span>
+</h2>
+
+<div class="tabs w-full" id="org-tabs">
+  <nav role="tablist" aria-orientation="horizontal">
+    <button type="button" role="tab" id="ot1" aria-controls="op1" aria-selected="true">
+      Repositories <span class="badge-secondary ml-1">{{len .Repos}}</span>
+    </button>
+    {{if .Findings}}
+    <button type="button" role="tab" id="ot2" aria-controls="op2" aria-selected="false">
+      Findings <span class="badge-destructive ml-1">{{len .Findings}}</span>
+    </button>
+    {{end}}
+    {{if .Advisories}}
+    <button type="button" role="tab" id="ot3" aria-controls="op3" aria-selected="false">
+      Advisories <span class="badge-secondary ml-1">{{len .Advisories}}</span>
+    </button>
+    {{end}}
+    {{if .Maintainers}}
+    <button type="button" role="tab" id="ot4" aria-controls="op4" aria-selected="false">
+      Maintainers <span class="badge-secondary ml-1">{{len .Maintainers}}</span>
+    </button>
+    {{end}}
+  </nav>
+
+  <div role="tabpanel" id="op1" aria-labelledby="ot1">
+    <table class="table w-full">
+      <thead><tr>
+        <th>Repository</th><th class="w-32">Language</th><th class="w-20 text-right">Stars</th>
+        <th class="w-24 text-right">Findings</th><th class="w-32">Pushed</th>
+      </tr></thead>
+      <tbody>
+      {{$counts := .FindingCounts}}
+      {{range .Repos}}
+        <tr class="cursor-pointer" hx-get="/repositories/{{.ID}}" hx-target="body" hx-push-url="true">
+          <td class="font-medium">{{.Name}}</td>
+          <td class="text-muted-foreground">{{.Languages}}</td>
+          <td class="text-right text-muted-foreground">{{if .Stars}}{{bignum .Stars}}{{end}}</td>
+          <td class="text-right">{{template "findings-badge" (index $counts .ID)}}</td>
+          <td class="text-muted-foreground">{{if .PushedAt}}{{since .PushedAt}}{{end}}</td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+
+  {{if .Findings}}
+  <div role="tabpanel" id="op2" aria-labelledby="ot2" hidden>
+    <p class="text-sm text-muted-foreground mb-3">
+      Showing up to 200 most recent findings.
+      <a class="underline" href="/findings?owner={{$owner}}">Open in Findings index &rarr;</a>
+    </p>
+    <table class="table table-fixed w-full">
+      <thead><tr>
+        <th class="w-24">Severity</th><th>Title</th><th class="w-32">Repository</th>
+        <th class="w-24">Status</th><th class="w-20">CWE</th>
+      </tr></thead>
+      <tbody>
+      {{$repos := .FindingRepos}}
+      {{range .Findings}}
+        {{$repo := index $repos .RepositoryID}}
+        <tr class="cursor-pointer" hx-get="/findings/{{.ID}}" hx-target="body" hx-push-url="true">
+          <td>{{template "severity-badge" .Severity}}</td>
+          <td class="min-w-0 whitespace-normal font-medium">{{.Title}}</td>
+          <td class="truncate">{{$repo.Name}}</td>
+          <td>{{template "finding-status" (fstatus .Status)}}</td>
+          <td class="text-muted-foreground">{{.CWE}}</td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{end}}
+
+  {{if .Advisories}}
+  <div role="tabpanel" id="op3" aria-labelledby="ot3" hidden>
+    <table class="table w-full">
+      <thead><tr>
+        <th class="w-24">Severity</th><th class="w-16">CVSS</th><th>Title</th>
+        <th class="w-32">Repository</th><th class="w-32">Published</th>
+      </tr></thead>
+      <tbody>
+      {{$repos := .AdvisoryRepos}}
+      {{range .Advisories}}
+        {{$repo := index $repos .RepositoryID}}
+        <tr class="cursor-pointer" onclick="window.open('{{.URL}}', '_blank', 'noopener')">
+          <td>
+            {{if eq .Severity "CRITICAL"}}<span class="badge-destructive">Critical</span>
+            {{else if eq .Severity "HIGH"}}<span class="badge-destructive">High</span>
+            {{else if eq .Severity "MODERATE"}}<span class="badge-primary">Moderate</span>
+            {{else}}<span class="badge-secondary">{{.Severity}}</span>{{end}}
+          </td>
+          <td class="text-muted-foreground">{{if .CVSSScore}}{{printf "%.1f" .CVSSScore}}{{end}}</td>
+          <td class="min-w-0 whitespace-normal font-medium">{{.Title}}</td>
+          <td class="truncate">{{$repo.Name}}</td>
+          <td class="text-muted-foreground">{{if .PublishedAt}}{{.PublishedAt.Format "2006-01-02"}}{{end}}</td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{end}}
+
+  {{if .Maintainers}}
+  <div role="tabpanel" id="op4" aria-labelledby="ot4" hidden>
+    <table class="table w-full">
+      <thead><tr>
+        <th>Name</th><th>Login</th><th>Email</th><th class="w-24">Status</th>
+      </tr></thead>
+      <tbody>
+      {{range .Maintainers}}
+        <tr class="cursor-pointer" hx-get="/maintainers/{{.ID}}" hx-target="body" hx-push-url="true">
+          <td class="font-medium">{{.Name}}</td>
+          <td class="text-muted-foreground">{{.Login}}</td>
+          <td class="text-muted-foreground">{{.Email}}</td>
+          <td>{{template "status-badge" (printf "%s" .Status)}}</td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{end}}
+</div>
+
+{{template "foot"}}

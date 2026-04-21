@@ -207,6 +207,103 @@ func TestPackagesSearchFilters(t *testing.T) {
 	}
 }
 
+func TestOrgsList_aggregatesByOwner(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	mk := func(owner, name string) db.Repository {
+		r := db.Repository{URL: "https://example.com/" + owner + "/" + name, Name: name, Owner: owner}
+		s.DB.Create(&r)
+		return r
+	}
+	a1 := mk("acme", "one")
+	mk("acme", "two")
+	b1 := mk("globex", "service")
+
+	scan := db.Scan{RepositoryID: a1.ID, Kind: "skill", Status: db.ScanDone, SkillName: "security-deep-dive"}
+	s.DB.Create(&scan)
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: a1.ID, Title: "A", Severity: "High"})
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: a1.ID, Title: "B", Severity: "Medium"})
+
+	bscan := db.Scan{RepositoryID: b1.ID, Kind: "skill", Status: db.ScanDone, SkillName: "security-deep-dive"}
+	s.DB.Create(&bscan)
+	s.DB.Create(&db.Finding{ScanID: bscan.ID, RepositoryID: b1.ID, Title: "C", Severity: "Low"})
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/orgs"))
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	body := w.Body.String()
+
+	for _, want := range []string{"acme", "globex",
+		`<span class="badge-destructive">2</span>`,
+		`<span class="badge-destructive">1</span>`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q", want)
+		}
+	}
+}
+
+func TestOrgShow_rendersRepos(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	r1 := db.Repository{URL: "https://example.com/acme/one", Name: "one", Owner: "acme", Languages: "Go"}
+	s.DB.Create(&r1)
+	r2 := db.Repository{URL: "https://example.com/acme/two", Name: "two", Owner: "acme", Languages: "Ruby"}
+	s.DB.Create(&r2)
+	scan := db.Scan{RepositoryID: r1.ID, Kind: "skill", Status: db.ScanDone, SkillName: "security-deep-dive"}
+	s.DB.Create(&scan)
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: r1.ID, Title: "SSRF in fetch", Severity: "High"})
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/orgs/acme"))
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	body := w.Body.String()
+	for _, want := range []string{"one", "two", "Go", "Ruby", "SSRF in fetch", `href="/orgs"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q", want)
+		}
+	}
+}
+
+func TestOrgShow_unknownIs404(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/orgs/nope"))
+	if w.Code != http.StatusNotFound {
+		t.Errorf("want 404, got %d", w.Code)
+	}
+}
+
+func TestFindings_ownerFilter(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	a := db.Repository{URL: "https://example.com/acme/one", Name: "one", Owner: "acme"}
+	s.DB.Create(&a)
+	g := db.Repository{URL: "https://example.com/globex/svc", Name: "svc", Owner: "globex"}
+	s.DB.Create(&g)
+	sa := db.Scan{RepositoryID: a.ID, Kind: "skill", Status: db.ScanDone, SkillName: "x"}
+	s.DB.Create(&sa)
+	sg := db.Scan{RepositoryID: g.ID, Kind: "skill", Status: db.ScanDone, SkillName: "x"}
+	s.DB.Create(&sg)
+	s.DB.Create(&db.Finding{ScanID: sa.ID, RepositoryID: a.ID, Title: "acme-only finding", Severity: "High"})
+	s.DB.Create(&db.Finding{ScanID: sg.ID, RepositoryID: g.ID, Title: "globex-only finding", Severity: "High"})
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/findings?owner=acme"))
+	body := w.Body.String()
+	if !strings.Contains(body, "acme-only finding") || strings.Contains(body, "globex-only finding") {
+		t.Errorf("owner filter failed: %s", body)
+	}
+}
+
 func TestAdvisoriesIndex(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
