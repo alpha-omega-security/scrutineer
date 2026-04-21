@@ -1,0 +1,56 @@
+{{template "head"}}
+
+<div class="flex items-center justify-between gap-4 mb-6">
+  <h2 class="text-2xl font-semibold flex items-center gap-2">
+    <i data-lucide="building"></i> Organizations
+  </h2>
+  <div class="flex items-center gap-2">
+    <form method="get" action="/orgs" class="inline-flex">
+      <input class="input" type="search" name="q" value="{{.Q}}" placeholder="Search owners"
+             autocomplete="off" spellcheck="false">
+      <input type="hidden" name="sort" value="{{.Sort}}">
+    </form>
+    <div class="dropdown-menu">
+      <button type="button" class="btn-outline" aria-haspopup="menu" aria-expanded="false">
+        <i data-lucide="arrow-down-wide-narrow"></i>
+        {{if eq .Sort "findings"}}Findings{{else if eq .Sort "repos"}}Repos{{else if eq .Sort "newest"}}Newest{{else}}Name{{end}}
+        <i data-lucide="chevron-down"></i>
+      </button>
+      <div data-popover aria-hidden="true" data-align="end">
+        <div role="menu">
+          {{range (list "name" "findings" "repos" "newest")}}
+            <a role="menuitem" href="/orgs?q={{$.Q}}&sort={{.}}"
+               {{if eq . $.Sort}}aria-current="true"{{end}}>{{.}}</a>
+          {{end}}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{{if .Orgs}}
+  <table class="table w-full">
+    <thead><tr>
+      <th>Owner</th>
+      <th class="w-24 text-right">Repos</th>
+      <th class="w-24 text-right">Findings</th>
+      <th class="w-40">Last activity</th>
+    </tr></thead>
+    <tbody>
+    {{range .Orgs}}
+      <tr class="cursor-pointer" hx-get="/orgs/{{.Owner}}" hx-target="body" hx-push-url="true">
+        <td class="font-medium">{{.Owner}}</td>
+        <td class="text-right text-muted-foreground">{{.Repos}}</td>
+        <td class="text-right">{{template "findings-badge" .FindingsTotal}}</td>
+        <td class="text-muted-foreground">{{if .LastActivity}}{{since .LastActivity}}{{end}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+{{else if .Q}}
+  {{template "empty" (dict "Icon" "search-x" "Title" "No matches" "Body" "No organizations matched the search.")}}
+{{else}}
+  {{template "empty" (dict "Icon" "building" "Title" "No organizations yet" "Body" "The metadata skill populates the Owner field on each repository; organizations appear here once at least one repo has been enriched.")}}
+{{end}}
+
+{{template "foot"}}

@@ -40,6 +40,7 @@
       <div role="group">
         <ul>
           <li><a href="/" data-nav="repos"><i data-lucide="folder-git-2"></i><span>Repositories</span></a></li>
+          <li><a href="/orgs" data-nav="orgs"><i data-lucide="building"></i><span>Organizations</span></a></li>
           <li><a href="/findings" data-nav="findings"><i data-lucide="bug"></i><span>Findings</span></a></li>
           <li><a href="/packages" data-nav="packages"><i data-lucide="package"></i><span>Packages</span></a></li>
           <li><a href="/advisories" data-nav="advisories"><i data-lucide="shield-alert"></i><span>Advisories</span></a></li>
@@ -151,6 +152,7 @@
     var p = location.pathname;
     var key = p.indexOf('/skills') === 0 ? 'skills'
             : p.indexOf('/maintainers') === 0 ? 'maintainers'
+            : p.indexOf('/orgs') === 0 ? 'orgs'
             : p.indexOf('/packages') === 0 ? 'packages'
             : p.indexOf('/advisories') === 0 ? 'advisories'
             : p.indexOf('/findings') === 0 ? 'findings'

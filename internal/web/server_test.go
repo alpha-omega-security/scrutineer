@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -204,6 +205,387 @@ func TestPackagesSearchFilters(t *testing.T) {
 	s.Handler().ServeHTTP(w, localReq("GET", "/packages?q=NOPE_NOPE_NOPE"))
 	if !strings.Contains(w.Body.String(), "No matches") {
 		t.Error("empty-match packages: no empty state")
+	}
+}
+
+func TestOrgsList_aggregatesByOwner(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	mk := func(owner, name string) db.Repository {
+		r := db.Repository{URL: "https://example.com/" + owner + "/" + name, Name: name, Owner: owner}
+		s.DB.Create(&r)
+		return r
+	}
+	a1 := mk("acme", "one")
+	mk("acme", "two")
+	b1 := mk("globex", "service")
+
+	scan := db.Scan{RepositoryID: a1.ID, Kind: "skill", Status: db.ScanDone, SkillName: "security-deep-dive"}
+	s.DB.Create(&scan)
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: a1.ID, Title: "A", Severity: "High"})
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: a1.ID, Title: "B", Severity: "Medium"})
+
+	bscan := db.Scan{RepositoryID: b1.ID, Kind: "skill", Status: db.ScanDone, SkillName: "security-deep-dive"}
+	s.DB.Create(&bscan)
+	s.DB.Create(&db.Finding{ScanID: bscan.ID, RepositoryID: b1.ID, Title: "C", Severity: "Low"})
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/orgs"))
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	body := w.Body.String()
+
+	for _, want := range []string{"acme", "globex",
+		`<span class="badge-destructive">2</span>`,
+		`<span class="badge-destructive">1</span>`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q", want)
+		}
+	}
+}
+
+func TestOrgsList_sortOptions(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	mk := func(owner, name string, findings int) {
+		r := db.Repository{URL: "https://example.com/" + owner + "/" + name, Name: name, Owner: owner}
+		s.DB.Create(&r)
+		if findings > 0 {
+			scan := db.Scan{RepositoryID: r.ID, Kind: "skill", Status: db.ScanDone, SkillName: "x"}
+			s.DB.Create(&scan)
+			for i := 0; i < findings; i++ {
+				s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: r.ID,
+					Title: fmt.Sprintf("F-%d", i), Severity: "High"})
+			}
+		}
+	}
+	// acme: 1 repo, 5 findings. globex: 3 repos, 1 finding. umbrella: 2 repos, 0 findings.
+	mk("acme", "one", 5)
+	mk("globex", "a", 0)
+	mk("globex", "b", 1)
+	mk("globex", "c", 0)
+	mk("umbrella", "x", 0)
+	mk("umbrella", "y", 0)
+
+	orderFromBody := func(body string, owners ...string) []string {
+		type pos struct {
+			owner string
+			idx   int
+		}
+		positions := make([]pos, 0, len(owners))
+		for _, o := range owners {
+			if i := strings.Index(body, `>`+o+`<`); i >= 0 {
+				positions = append(positions, pos{o, i})
+			}
+		}
+		sort.Slice(positions, func(i, j int) bool { return positions[i].idx < positions[j].idx })
+		out := make([]string, len(positions))
+		for i, p := range positions {
+			out[i] = p.owner
+		}
+		return out
+	}
+
+	for _, tc := range []struct {
+		sort string
+		want []string
+	}{
+		{"name", []string{"acme", "globex", "umbrella"}},
+		{"findings", []string{"acme", "globex", "umbrella"}},    // 5 > 1 > 0
+		{"repos", []string{"globex", "umbrella", "acme"}},        // 3 > 2 > 1
+	} {
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, localReq("GET", "/orgs?sort="+tc.sort))
+		if w.Code != 200 {
+			t.Fatalf("sort=%s status %d", tc.sort, w.Code)
+		}
+		got := orderFromBody(w.Body.String(), "acme", "globex", "umbrella")
+		if !stringsEqual(got, tc.want) {
+			t.Errorf("sort=%s: got %v, want %v", tc.sort, got, tc.want)
+		}
+	}
+}
+
+func stringsEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func TestOrgShow_rendersRepos(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	r1 := db.Repository{URL: "https://example.com/acme/one", Name: "one", Owner: "acme", Languages: "Go"}
+	s.DB.Create(&r1)
+	r2 := db.Repository{URL: "https://example.com/acme/two", Name: "two", Owner: "acme", Languages: "Ruby"}
+	s.DB.Create(&r2)
+	scan := db.Scan{RepositoryID: r1.ID, Kind: "skill", Status: db.ScanDone, SkillName: "security-deep-dive"}
+	s.DB.Create(&scan)
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: r1.ID, Title: "SSRF in fetch", Severity: "High"})
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/orgs/acme"))
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	body := w.Body.String()
+	for _, want := range []string{"one", "two", "Go", "Ruby", "SSRF in fetch", `href="/orgs"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q", want)
+		}
+	}
+}
+
+func TestOrgShow_findingsTabSortsBySeverity(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	r := db.Repository{URL: "https://example.com/acme/web", Name: "web", Owner: "acme"}
+	s.DB.Create(&r)
+	scan := db.Scan{RepositoryID: r.ID, Kind: "skill", Status: db.ScanDone, SkillName: "x"}
+	s.DB.Create(&scan)
+	// Create in the wrong order on purpose, so id-desc would place Low
+	// above Medium and Medium above High.
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: r.ID, Title: "LOW-ROW", Severity: "Low"})
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: r.ID, Title: "MED-ROW", Severity: "Medium"})
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: r.ID, Title: "HIGH-ROW", Severity: "High"})
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: r.ID, Title: "CRIT-ROW", Severity: "Critical"})
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/orgs/acme"))
+	if w.Code != 200 {
+		t.Fatalf("status %d", w.Code)
+	}
+	body := w.Body.String()
+	order := []string{"CRIT-ROW", "HIGH-ROW", "MED-ROW", "LOW-ROW"}
+	lastIdx := -1
+	for _, title := range order {
+		idx := strings.Index(body, title)
+		if idx < 0 {
+			t.Fatalf("missing %q in body", title)
+		}
+		if idx < lastIdx {
+			t.Errorf("findings out of severity order: %v rendered in wrong position", order)
+		}
+		lastIdx = idx
+	}
+}
+
+func TestOrgShow_unknownIs404(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/orgs/nope"))
+	if w.Code != http.StatusNotFound {
+		t.Errorf("want 404, got %d", w.Code)
+	}
+}
+
+func TestFindings_ownerFilter(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	a := db.Repository{URL: "https://example.com/acme/one", Name: "one", Owner: "acme"}
+	s.DB.Create(&a)
+	g := db.Repository{URL: "https://example.com/globex/svc", Name: "svc", Owner: "globex"}
+	s.DB.Create(&g)
+	sa := db.Scan{RepositoryID: a.ID, Kind: "skill", Status: db.ScanDone, SkillName: "x"}
+	s.DB.Create(&sa)
+	sg := db.Scan{RepositoryID: g.ID, Kind: "skill", Status: db.ScanDone, SkillName: "x"}
+	s.DB.Create(&sg)
+	s.DB.Create(&db.Finding{ScanID: sa.ID, RepositoryID: a.ID, Title: "acme-only finding", Severity: "High"})
+	s.DB.Create(&db.Finding{ScanID: sg.ID, RepositoryID: g.ID, Title: "globex-only finding", Severity: "High"})
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/findings?owner=acme"))
+	body := w.Body.String()
+	if !strings.Contains(body, "acme-only finding") || strings.Contains(body, "globex-only finding") {
+		t.Errorf("owner filter failed: %s", body)
+	}
+}
+
+func TestOrgReport_rendersFindingsAcrossRepos(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	r1 := db.Repository{URL: "https://example.com/acme/one", Name: "one", Owner: "acme", Description: "first repo"}
+	s.DB.Create(&r1)
+	r2 := db.Repository{URL: "https://example.com/acme/two", Name: "two", Owner: "acme"}
+	s.DB.Create(&r2)
+	_ = db.Repository{URL: "https://example.com/globex/svc", Name: "svc", Owner: "globex"}
+
+	scan1 := db.Scan{RepositoryID: r1.ID, Kind: "skill", Status: db.ScanDone, SkillName: "x"}
+	s.DB.Create(&scan1)
+	s.DB.Create(&db.Finding{ScanID: scan1.ID, RepositoryID: r1.ID,
+		Title: "SSRF in image fetch", Severity: "High", Location: "fetch.go:42",
+		CWE: "CWE-918", Trace: "Attacker controls URL...", Status: db.FindingTriaged})
+	s.DB.Create(&db.Finding{ScanID: scan1.ID, RepositoryID: r1.ID,
+		Title: "Path traversal", Severity: "Medium", Location: "io.go:10"})
+
+	scan2 := db.Scan{RepositoryID: r2.ID, Kind: "skill", Status: db.ScanDone, SkillName: "x"}
+	s.DB.Create(&scan2)
+	s.DB.Create(&db.Finding{ScanID: scan2.ID, RepositoryID: r2.ID,
+		Title: "XSS in admin panel", Severity: "High", Location: "views/admin.go:77"})
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/orgs/acme/findings.md"))
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/markdown") {
+		t.Errorf("Content-Type = %q", ct)
+	}
+	if cd := w.Header().Get("Content-Disposition"); !strings.Contains(cd, "acme-findings") {
+		t.Errorf("Content-Disposition = %q", cd)
+	}
+
+	body := w.Body.String()
+	for _, want := range []string{
+		"# scrutineer findings report: acme",
+		"Repositories: 2",
+		"Total findings: 3",
+		"### Severity breakdown",
+		"| High | 2 |",
+		"| Medium | 1 |",
+		"### Coverage",
+		"| one | 2 |",
+		"| two | 1 |",
+		"## one",
+		"## two",
+		"SSRF in image fetch",
+		"Path traversal",
+		"XSS in admin panel",
+		"Attacker controls URL",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("report missing %q", want)
+		}
+	}
+	// Should not contain globex's findings under the acme report.
+	if strings.Contains(body, "globex") {
+		t.Errorf("acme report contains globex content")
+	}
+}
+
+func TestOrgSummary_rendersSynopsisShape(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	r1 := db.Repository{URL: "https://github.com/acme/web.git", Name: "web", Owner: "acme", FullName: "acme/web"}
+	s.DB.Create(&r1)
+	r2 := db.Repository{URL: "https://github.com/acme/api.git", Name: "api", Owner: "acme", FullName: "acme/api"}
+	s.DB.Create(&r2)
+	empty := db.Repository{URL: "https://github.com/acme/quiet.git", Name: "quiet", Owner: "acme", FullName: "acme/quiet"}
+	s.DB.Create(&empty)
+
+	scan1 := db.Scan{RepositoryID: r1.ID, Kind: "skill", Status: db.ScanDone, SkillName: "x"}
+	s.DB.Create(&scan1)
+	s.DB.Create(&db.Finding{ScanID: scan1.ID, RepositoryID: r1.ID,
+		Title: "Open redirect in /api/sso", Severity: "High",
+		Location: "src/route.ts:46", Rating: "**High.** Auth-adjacent; token leakage.",
+		Trace: "should not appear in summary"})
+
+	scan2 := db.Scan{RepositoryID: r2.ID, Kind: "skill", Status: db.ScanDone, SkillName: "x"}
+	s.DB.Create(&scan2)
+	s.DB.Create(&db.Finding{ScanID: scan2.ID, RepositoryID: r2.ID,
+		Title: "CSV injection", Severity: "Medium",
+		Location: "api/reports.cs:20", Rating: "**Medium.** Requires admin-held role."})
+	s.DB.Create(&db.Finding{ScanID: scan2.ID, RepositoryID: r2.ID,
+		Title: "Cookie not httpOnly", Severity: "Low",
+		Location: "auth/set-cookie.ts:27", Rating: "**Low.** Defense in depth."})
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/orgs/acme/summary.md"))
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/markdown") {
+		t.Errorf("Content-Type = %q", ct)
+	}
+	if cd := w.Header().Get("Content-Disposition"); !strings.Contains(cd, "acme-summary") {
+		t.Errorf("Content-Disposition = %q", cd)
+	}
+
+	body := w.Body.String()
+	for _, want := range []string{
+		"# Summary of findings",
+		"Findings: 1 high, 1 medium, 1 low severity",
+		"## acme/web",
+		"## acme/api",
+		"Findings: 1 high, 0 medium, 0 low severity", // web
+		"Findings: 0 high, 1 medium, 1 low severity", // api
+		"### Finding #1 - Rating: High",
+		"Open redirect in /api/sso",
+		"Location: `src/route.ts:46`",
+		"**High.** Auth-adjacent; token leakage.",
+		"### Finding #2 - Rating: Medium",
+		"### Finding #3 - Rating: Low",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("summary missing %q", want)
+		}
+	}
+
+	// Archive content must NOT leak into the synopsis, and we
+	// deliberately don't include any per-repo link line.
+	for _, unwanted := range []string{
+		"should not appear in summary",
+		"| Field | Value |",
+		"#### Trace",
+		"### Severity breakdown",
+		"Full report and validation code",
+		"/repositories/",
+	} {
+		if strings.Contains(body, unwanted) {
+			t.Errorf("summary contains archive-only content %q", unwanted)
+		}
+	}
+
+	// acme/quiet has no findings so it should be omitted entirely.
+	if strings.Contains(body, "acme/quiet") {
+		t.Errorf("repos without findings should not appear in summary")
+	}
+
+	// Cross-repo order: acme/web (worst: High) before acme/api (worst: Medium).
+	if strings.Index(body, "## acme/web") > strings.Index(body, "## acme/api") {
+		t.Errorf("expected acme/web (High) before acme/api (Medium)")
+	}
+	// Within-repo order: Medium must render before Low in acme/api.
+	mediumIdx := strings.Index(body, "### Finding #2 - Rating: Medium")
+	lowIdx := strings.Index(body, "### Finding #3 - Rating: Low")
+	if mediumIdx < 0 || lowIdx < 0 || mediumIdx > lowIdx {
+		t.Errorf("expected Medium before Low within acme/api (medium=%d low=%d)", mediumIdx, lowIdx)
+	}
+}
+
+func TestOrgSummary_unknownIs404(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/orgs/nope/summary.md"))
+	if w.Code != http.StatusNotFound {
+		t.Errorf("want 404, got %d", w.Code)
+	}
+}
+
+func TestOrgReport_unknownIs404(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/orgs/nope/findings.md"))
+	if w.Code != http.StatusNotFound {
+		t.Errorf("want 404, got %d", w.Code)
 	}
 }
 

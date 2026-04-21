@@ -10,6 +10,7 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -122,6 +123,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /repositories/{id}/report.md", s.repoReport)
 	mux.HandleFunc("POST /repositories/{id}/scan", s.repoScan)
 	mux.HandleFunc("GET /scans", s.jobs)
+	mux.HandleFunc("GET /orgs", s.orgsList)
+	mux.HandleFunc("GET /orgs/{login}", s.orgShow)
+	mux.HandleFunc("GET /orgs/{login}/findings.md", s.orgReport)
+	mux.HandleFunc("GET /orgs/{login}/summary.md", s.orgSummary)
 	mux.HandleFunc("GET /maintainers", s.maintainersList)
 	mux.HandleFunc("GET /maintainers/{id}", s.maintainerShow)
 	mux.HandleFunc("GET /findings", s.findings)
@@ -278,6 +283,191 @@ func (s *Server) repoList(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// parseAnyTime tries the handful of timestamp shapes SQLite gives us
+// back when a column is read via a raw SELECT (no type hint). Returns
+// (zero, false) for unparseable input so callers can decide what to do.
+func parseAnyTime(s string) (time.Time, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return time.Time{}, false
+	}
+	layouts := []string{
+		time.RFC3339Nano,
+		time.RFC3339,
+		"2006-01-02 15:04:05.999999999-07:00",
+		"2006-01-02 15:04:05.999999999Z07:00",
+		"2006-01-02 15:04:05-07:00",
+		"2006-01-02 15:04:05",
+	}
+	for _, layout := range layouts {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t, true
+		}
+	}
+	return time.Time{}, false
+}
+
+// orgRow is one row on the orgs index — an aggregate over all repos
+// sharing the same Owner value.
+type orgRow struct {
+	Owner         string
+	Repos         int
+	FindingsTotal int
+	LastActivity  *time.Time
+}
+
+func (s *Server) orgsList(w http.ResponseWriter, r *http.Request) {
+	search := strings.TrimSpace(r.URL.Query().Get("q"))
+
+	// SQLite returns MAX() over a datetime column as a string; scan into
+	// a string and parse to *time.Time ourselves rather than fight GORM.
+	type aggRow struct {
+		Owner        string
+		Repos        int
+		LastActivity string
+	}
+	var aggs []aggRow
+	q := s.DB.Model(&db.Repository{}).
+		Select("owner, COUNT(*) AS repos, MAX(updated_at) AS last_activity").
+		Where("owner != ''").
+		Group("owner")
+	if search != "" {
+		q = q.Where("owner LIKE ?", "%"+search+"%")
+	}
+	q.Scan(&aggs)
+
+	// One grouped query gets finding totals per owner.
+	findingCounts := map[string]int{}
+	if len(aggs) > 0 {
+		type c struct {
+			Owner string
+			N     int
+		}
+		var counts []c
+		s.DB.Raw(`
+			SELECT r.owner, COUNT(f.id) AS n
+			FROM repositories r
+			LEFT JOIN findings f ON f.repository_id = r.id
+			WHERE r.owner != ''
+			GROUP BY r.owner
+		`).Scan(&counts)
+		for _, x := range counts {
+			findingCounts[x.Owner] = x.N
+		}
+	}
+
+	rows := make([]orgRow, 0, len(aggs))
+	for _, a := range aggs {
+		row := orgRow{
+			Owner:         a.Owner,
+			Repos:         a.Repos,
+			FindingsTotal: findingCounts[a.Owner],
+		}
+		if t, ok := parseAnyTime(a.LastActivity); ok {
+			row.LastActivity = &t
+		}
+		rows = append(rows, row)
+	}
+
+	const nameSort = "name"
+	sort := r.URL.Query().Get("sort")
+	switch sort {
+	case "findings":
+		sortSlice(rows, func(a, b orgRow) bool { return a.FindingsTotal > b.FindingsTotal })
+	case "repos":
+		sortSlice(rows, func(a, b orgRow) bool { return a.Repos > b.Repos })
+	case defaultSort:
+		sortSlice(rows, func(a, b orgRow) bool {
+			if a.LastActivity == nil {
+				return false
+			}
+			if b.LastActivity == nil {
+				return true
+			}
+			return a.LastActivity.After(*b.LastActivity)
+		})
+	default:
+		sort = nameSort
+		sortSlice(rows, func(a, b orgRow) bool { return a.Owner < b.Owner })
+	}
+
+	s.render(w, "orgs.html", map[string]any{
+		"Orgs": rows, "Q": search, "Sort": sort,
+	})
+}
+
+// sortSlice is a tiny wrapper so the handler reads like `sortSlice(rows,
+// less)` without pulling sort.Slice's (i, j int) idiom into each case.
+func sortSlice[T any](s []T, less func(a, b T) bool) {
+	sort.Slice(s, func(i, j int) bool { return less(s[i], s[j]) })
+}
+
+func (s *Server) orgShow(w http.ResponseWriter, r *http.Request) {
+	owner := r.PathValue("login")
+	if owner == "" {
+		http.NotFound(w, r)
+		return
+	}
+
+	var repos []db.Repository
+	s.DB.Where("owner = ?", owner).Order("name").Find(&repos)
+	if len(repos) == 0 {
+		http.NotFound(w, r)
+		return
+	}
+	repoIDs := make([]uint, 0, len(repos))
+	for _, r := range repos {
+		repoIDs = append(repoIDs, r.ID)
+	}
+
+	// Per-repo finding count for the repos table, plus the full finding
+	// list for the Findings tab.
+	findingCounts := map[uint]int{}
+	type rowCount struct {
+		RepositoryID uint
+		N            int
+	}
+	var counts []rowCount
+	s.DB.Model(&db.Finding{}).
+		Select("repository_id, COUNT(*) AS n").
+		Where("repository_id IN ?", repoIDs).
+		Group("repository_id").Scan(&counts)
+	for _, c := range counts {
+		findingCounts[c.RepositoryID] = c.N
+	}
+
+	const orgTabLimit = 200
+	// Sort by severity (Critical→High→Medium→Low), then newest first
+	// within a severity. Purely alphabetical severity would put Low
+	// before Medium, which misreads for a stakeholder scanning the tab.
+	var findings []db.Finding
+	s.DB.Where("repository_id IN ?", repoIDs).
+		Order(severityOrder).Order("id desc").
+		Limit(orgTabLimit).Find(&findings)
+	reposByID := loadRepoMap(s.DB, findings)
+
+	var advisories []db.Advisory
+	s.DB.Where("repository_id IN ?", repoIDs).Order("cvss_score desc").
+		Limit(orgTabLimit).Find(&advisories)
+	advisoryRepos := loadAdvisoryRepoMap(s.DB, advisories)
+
+	var maintainers []db.Maintainer
+	s.DB.Joins("JOIN repository_maintainers rm ON rm.maintainer_id = maintainers.id").
+		Where("rm.repository_id IN ?", repoIDs).
+		Distinct().Order("maintainers.name").Find(&maintainers)
+
+	s.render(w, "org_show.html", map[string]any{
+		"Owner":         owner,
+		"Repos":         repos,
+		"FindingCounts": findingCounts,
+		"Findings":      findings,
+		"FindingRepos":  reposByID,
+		"Advisories":    advisories,
+		"AdvisoryRepos": advisoryRepos,
+		"Maintainers":   maintainers,
+	})
+}
+
 func (s *Server) maintainersList(w http.ResponseWriter, r *http.Request) {
 	q := s.DB.Model(&db.Maintainer{})
 	status := r.URL.Query().Get("status")
@@ -374,6 +564,11 @@ func (s *Server) findings(w http.ResponseWriter, r *http.Request) {
 	if sev != "" {
 		q = q.Where("severity = ?", sev)
 	}
+	owner := r.URL.Query().Get("owner")
+	if owner != "" {
+		q = q.Where("repository_id IN (?)",
+			s.DB.Model(&db.Repository{}).Select("id").Where("owner = ?", owner))
+	}
 	search := strings.TrimSpace(r.URL.Query().Get("q"))
 	if search != "" {
 		like := "%" + search + "%"
@@ -411,6 +606,7 @@ func (s *Server) findings(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "findings.html", map[string]any{
 		"Findings": rows, "Page": page, "Severity": sev, "Sort": sort,
 		"Repos": reposByID, "Q": search, "AnySubPath": anySubPath,
+		"Owner": owner,
 	})
 }
 
