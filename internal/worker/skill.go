@@ -183,6 +183,7 @@ func (w *Worker) parseMaintainersOutput(scan *db.Scan, report string, emit func(
 			Status   string `json:"status"`
 			Evidence string `json:"evidence"`
 		} `json:"maintainers"`
+		DisclosureChannel string `json:"disclosure_channel"`
 	}
 	if err := json.Unmarshal([]byte(report), &result); err != nil {
 		return fmt.Errorf("parse maintainers report: %w", err)
@@ -190,6 +191,12 @@ func (w *Worker) parseMaintainersOutput(scan *db.Scan, report string, emit func(
 	var repo db.Repository
 	if err := w.DB.First(&repo, scan.RepositoryID).Error; err != nil {
 		return err
+	}
+	if strings.TrimSpace(result.DisclosureChannel) != "" {
+		if err := w.DB.Model(&db.Repository{}).Where("id = ?", repo.ID).
+			Update("disclosure_channel", result.DisclosureChannel).Error; err != nil {
+			return fmt.Errorf("update disclosure channel: %w", err)
+		}
 	}
 	var linked []db.Maintainer
 	for _, rm := range result.Maintainers {

@@ -118,6 +118,55 @@ func TestParseAdvisories_replacesAdvisoryRows(t *testing.T) {
 	}
 }
 
+func TestParseMaintainers_persistsDisclosureChannel(t *testing.T) {
+	report := `{
+		"maintainers": [
+			{"login": "alice", "name": "Alice", "email": "a@example.org", "role": "lead", "status": "active", "evidence": "14 PRs merged"}
+		],
+		"disclosure_channel": "security@example.org"
+	}`
+	repo, gdb := runSkillWithReport(t, "maintainers", report)
+
+	var got db.Repository
+	gdb.First(&got, repo.ID)
+	if got.DisclosureChannel != "security@example.org" {
+		t.Errorf("DisclosureChannel = %q, want security@example.org", got.DisclosureChannel)
+	}
+	var m db.Maintainer
+	gdb.Where("login = ?", "alice").First(&m)
+	if m.Login != "alice" {
+		t.Error("maintainer not upserted")
+	}
+}
+
+func TestParseMaintainers_emptyChannelLeavesRepoAlone(t *testing.T) {
+	// If the skill reports no channel, we must not clobber a previous
+	// value or an analyst-edited value.
+	report := `{"maintainers": [{"login":"a","role":"lead","status":"active"}]}`
+	repo, gdb := runSkillWithReport(t, "maintainers", report)
+	gdb.Model(&db.Repository{}).Where("id = ?", repo.ID).Update("disclosure_channel", "kept-by-analyst@example.org")
+
+	// Re-run the parser via another skill scan with still no channel.
+	report2 := `{"maintainers": []}`
+	// Spin up a second scan to invoke the parser again with the same DB.
+	skill := db.Skill{Name: "k2", Description: "d", Body: "b", OutputFile: "report.json", OutputKind: "maintainers", Version: 1, Active: true, Source: "ui"}
+	gdb.Create(&skill)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanQueued, Model: "fake", SkillID: &skill.ID}
+	gdb.Create(&scan)
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DataDir: t.TempDir(),
+		Runner: fakeRunner{skillRes: SkillResult{Commit: "abc", Report: report2}}}
+	body, _ := json.Marshal(queue.Payload{ScanID: scan.ID})
+	if err := w.wrap(w.doSkill)(context.Background(), body); err != nil {
+		t.Fatal(err)
+	}
+
+	var got db.Repository
+	gdb.First(&got, repo.ID)
+	if got.DisclosureChannel != "kept-by-analyst@example.org" {
+		t.Errorf("prior value clobbered: got %q", got.DisclosureChannel)
+	}
+}
+
 func TestParseDependents_replacesDependentRows(t *testing.T) {
 	report := `{"dependents":[
 		{"name":"rails-x","ecosystem":"rubygems","purl":"pkg:gem/rails-x","downloads":5000,"dependent_repos":200,"latest_version":"7.0.0"}

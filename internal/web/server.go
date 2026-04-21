@@ -124,6 +124,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /repositories/{id}", s.repoShow)
 	mux.HandleFunc("GET /repositories/{id}/report.md", s.repoReport)
 	mux.HandleFunc("POST /repositories/{id}/scan", s.repoScan)
+	mux.HandleFunc("POST /repositories/{id}/disclosure-channel", s.repoDisclosureChannel)
 	mux.HandleFunc("GET /scans", s.jobs)
 	mux.HandleFunc("GET /orgs", s.orgsList)
 	mux.HandleFunc("GET /orgs/{login}", s.orgShow)
@@ -131,6 +132,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /orgs/{login}/summary.md", s.orgSummary)
 	mux.HandleFunc("GET /maintainers", s.maintainersList)
 	mux.HandleFunc("GET /maintainers/{id}", s.maintainerShow)
+	mux.HandleFunc("POST /maintainers/{id}/do-not-contact", s.maintainerDoNotContact)
 	mux.HandleFunc("GET /findings", s.findings)
 	mux.HandleFunc("GET /findings/{id}", s.findingShow)
 	mux.HandleFunc("POST /findings/{id}/status", s.findingStatus)
@@ -537,9 +539,58 @@ func (s *Server) maintainersList(w http.ResponseWriter, r *http.Request) {
 	q.Preload("Repositories").
 		Limit(perPage).Offset((page.N - 1) * perPage).Find(&rows)
 
+	// Batch-count findings across each maintainer's linked repositories
+	// in a single grouped query rather than one query per maintainer.
+	findingCounts := map[uint]int{}
+	if len(rows) > 0 {
+		ids := make([]uint, 0, len(rows))
+		for _, m := range rows {
+			ids = append(ids, m.ID)
+		}
+		type row struct {
+			MaintainerID uint
+			N            int
+		}
+		var counts []row
+		s.DB.Raw(`
+			SELECT rm.maintainer_id, COUNT(f.id) AS n
+			FROM repository_maintainers rm
+			LEFT JOIN findings f ON f.repository_id = rm.repository_id
+			WHERE rm.maintainer_id IN ?
+			GROUP BY rm.maintainer_id
+		`, ids).Scan(&counts)
+		for _, c := range counts {
+			findingCounts[c.MaintainerID] = c.N
+		}
+	}
+
 	s.render(w, "maintainers.html", map[string]any{
-		"Maintainers": rows, "Page": page, "Status": status, "Q": search, "Sort": sort,
+		"Maintainers":   rows,
+		"Page":          page,
+		"Status":        status,
+		"Q":             search,
+		"Sort":          sort,
+		"FindingCounts": findingCounts,
 	})
+}
+
+// maintainerDoNotContact flips the DoNotContact flag on a maintainer.
+// Toggle semantics — form posts an explicit `value` of "true" or "false".
+func (s *Server) maintainerDoNotContact(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.Atoi(r.PathValue("id"))
+	var m db.Maintainer
+	if err := s.DB.First(&m, id).Error; err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	value := r.FormValue("value") == "true"
+	if err := s.DB.Model(&db.Maintainer{}).Where("id = ?", m.ID).
+		Update("do_not_contact", value).Error; err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("HX-Redirect", fmt.Sprintf("/maintainers/%d", m.ID))
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (s *Server) maintainerShow(w http.ResponseWriter, r *http.Request) {
@@ -1292,6 +1343,26 @@ func (s *Server) repoScan(w http.ResponseWriter, r *http.Request) {
 		Model:   r.FormValue("model"),
 		SubPath: strings.TrimSpace(r.FormValue("sub_path")),
 	}); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("HX-Redirect", fmt.Sprintf("/repositories/%d", repo.ID))
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// repoDisclosureChannel lets the analyst overwrite (or clear) the
+// disclosure channel that the maintainers skill wrote onto the repo.
+// Empty submission clears the field.
+func (s *Server) repoDisclosureChannel(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.Atoi(r.PathValue("id"))
+	var repo db.Repository
+	if err := s.DB.First(&repo, id).Error; err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	value := strings.TrimSpace(r.FormValue("disclosure_channel"))
+	if err := s.DB.Model(&db.Repository{}).Where("id = ?", repo.ID).
+		Update("disclosure_channel", value).Error; err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
