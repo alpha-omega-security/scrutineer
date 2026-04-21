@@ -53,6 +53,7 @@ func run(log *slog.Logger) error {
 		noDocker    = flag.Bool("no-docker", false, "disable containerised runner even if docker is available")
 		runnerImage = flag.String("runner-image", "scrutineer-runner", "docker image for per-job containers")
 		skillsRepo  = flag.String("skills-repo", "", "clone skills from this git https URL on startup")
+		concurrency = flag.Int("concurrency", queue.DefaultWorkerConcurrency, "number of scans to run in parallel")
 	)
 	var skillLocal skillDirs
 	flag.Var(&skillLocal, "skills", "directory to load SKILL.md files from (repeatable)")
@@ -63,7 +64,7 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	if cfg != nil {
-		applyConfig(cfg, addr, dataDir, effort, noDocker, runnerImage, skillsRepo, &skillLocal)
+		applyConfig(cfg, addr, dataDir, effort, noDocker, runnerImage, skillsRepo, concurrency, &skillLocal)
 		log.Info("loaded config", "path", cfgPath(*configPath))
 	}
 
@@ -89,7 +90,7 @@ func run(log *slog.Logger) error {
 		return err
 	}
 
-	q, err := queue.New(sqldb, log)
+	q, err := queue.New(sqldb, log, *concurrency)
 	if err != nil {
 		return fmt.Errorf("queue: %w", err)
 	}
@@ -182,6 +183,7 @@ func applyConfig(cfg *config.Config,
 	addr, dataDir, effort *string,
 	noDocker *bool,
 	runnerImage, skillsRepo *string,
+	concurrency *int,
 	skillLocal *skillDirs,
 ) {
 	set := make(map[string]bool)
@@ -207,6 +209,9 @@ func applyConfig(cfg *config.Config,
 	}
 	if len(cfg.Skills) > 0 && !set["skills"] {
 		*skillLocal = append(*skillLocal, cfg.Skills...)
+	}
+	if cfg.Concurrency > 0 && !set["concurrency"] {
+		*concurrency = cfg.Concurrency
 	}
 
 	if len(cfg.Models) > 0 {

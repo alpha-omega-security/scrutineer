@@ -31,11 +31,16 @@ type Queue struct {
 }
 
 const (
-	visibilityTimeout  = 30 * time.Second
-	workerConcurrency  = 4
+	visibilityTimeout       = 30 * time.Second
+	DefaultWorkerConcurrency = 4
 )
 
-func New(sqldb *sql.DB, log *slog.Logger) (*Queue, error) {
+// New builds a queue wired to goqite. concurrency controls how many jobs
+// the runner processes in parallel; pass 0 to use DefaultWorkerConcurrency.
+func New(sqldb *sql.DB, log *slog.Logger, concurrency int) (*Queue, error) {
+	if concurrency <= 0 {
+		concurrency = DefaultWorkerConcurrency
+	}
 	if _, err := sqldb.Exec(schema); err != nil {
 		return nil, fmt.Errorf("goqite schema: %w", err)
 	}
@@ -47,7 +52,7 @@ func New(sqldb *sql.DB, log *slog.Logger) (*Queue, error) {
 	r := jobs.NewRunner(jobs.NewRunnerOpts{
 		Queue:        q,
 		Log:          slogAdapter{log},
-		Limit:        workerConcurrency,
+		Limit:        concurrency,
 		PollInterval: time.Second,
 		Extend:       visibilityTimeout,
 	})
