@@ -10,6 +10,7 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -333,7 +334,7 @@ func (s *Server) orgsList(w http.ResponseWriter, r *http.Request) {
 	if search != "" {
 		q = q.Where("owner LIKE ?", "%"+search+"%")
 	}
-	q.Order("owner").Scan(&aggs)
+	q.Scan(&aggs)
 
 	// One grouped query gets finding totals per owner.
 	findingCounts := map[string]int{}
@@ -368,9 +369,37 @@ func (s *Server) orgsList(w http.ResponseWriter, r *http.Request) {
 		rows = append(rows, row)
 	}
 
+	const nameSort = "name"
+	sort := r.URL.Query().Get("sort")
+	switch sort {
+	case "findings":
+		sortSlice(rows, func(a, b orgRow) bool { return a.FindingsTotal > b.FindingsTotal })
+	case "repos":
+		sortSlice(rows, func(a, b orgRow) bool { return a.Repos > b.Repos })
+	case defaultSort:
+		sortSlice(rows, func(a, b orgRow) bool {
+			if a.LastActivity == nil {
+				return false
+			}
+			if b.LastActivity == nil {
+				return true
+			}
+			return a.LastActivity.After(*b.LastActivity)
+		})
+	default:
+		sort = nameSort
+		sortSlice(rows, func(a, b orgRow) bool { return a.Owner < b.Owner })
+	}
+
 	s.render(w, "orgs.html", map[string]any{
-		"Orgs": rows, "Q": search,
+		"Orgs": rows, "Q": search, "Sort": sort,
 	})
+}
+
+// sortSlice is a tiny wrapper so the handler reads like `sortSlice(rows,
+// less)` without pulling sort.Slice's (i, j int) idiom into each case.
+func sortSlice[T any](s []T, less func(a, b T) bool) {
+	sort.Slice(s, func(i, j int) bool { return less(s[i], s[j]) })
 }
 
 func (s *Server) orgShow(w http.ResponseWriter, r *http.Request) {

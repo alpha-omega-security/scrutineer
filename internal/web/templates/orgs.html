@@ -4,10 +4,28 @@
   <h2 class="text-2xl font-semibold flex items-center gap-2">
     <i data-lucide="building"></i> Organizations
   </h2>
-  <form method="get" action="/orgs" class="inline-flex">
-    <input class="input" type="search" name="q" value="{{.Q}}" placeholder="Search owners"
-           autocomplete="off" spellcheck="false">
-  </form>
+  <div class="flex items-center gap-2">
+    <form method="get" action="/orgs" class="inline-flex">
+      <input class="input" type="search" name="q" value="{{.Q}}" placeholder="Search owners"
+             autocomplete="off" spellcheck="false">
+      <input type="hidden" name="sort" value="{{.Sort}}">
+    </form>
+    <div class="dropdown-menu">
+      <button type="button" class="btn-outline" aria-haspopup="menu" aria-expanded="false">
+        <i data-lucide="arrow-down-wide-narrow"></i>
+        {{if eq .Sort "findings"}}Findings{{else if eq .Sort "repos"}}Repos{{else if eq .Sort "newest"}}Newest{{else}}Name{{end}}
+        <i data-lucide="chevron-down"></i>
+      </button>
+      <div data-popover aria-hidden="true" data-align="end">
+        <div role="menu">
+          {{range (list "name" "findings" "repos" "newest")}}
+            <a role="menuitem" href="/orgs?q={{$.Q}}&sort={{.}}"
+               {{if eq . $.Sort}}aria-current="true"{{end}}>{{.}}</a>
+          {{end}}
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
 
 {{if .Orgs}}

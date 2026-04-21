@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -244,6 +245,81 @@ func TestOrgsList_aggregatesByOwner(t *testing.T) {
 			t.Errorf("body missing %q", want)
 		}
 	}
+}
+
+func TestOrgsList_sortOptions(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	mk := func(owner, name string, findings int) {
+		r := db.Repository{URL: "https://example.com/" + owner + "/" + name, Name: name, Owner: owner}
+		s.DB.Create(&r)
+		if findings > 0 {
+			scan := db.Scan{RepositoryID: r.ID, Kind: "skill", Status: db.ScanDone, SkillName: "x"}
+			s.DB.Create(&scan)
+			for i := 0; i < findings; i++ {
+				s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: r.ID,
+					Title: fmt.Sprintf("F-%d", i), Severity: "High"})
+			}
+		}
+	}
+	// acme: 1 repo, 5 findings. globex: 3 repos, 1 finding. umbrella: 2 repos, 0 findings.
+	mk("acme", "one", 5)
+	mk("globex", "a", 0)
+	mk("globex", "b", 1)
+	mk("globex", "c", 0)
+	mk("umbrella", "x", 0)
+	mk("umbrella", "y", 0)
+
+	orderFromBody := func(body string, owners ...string) []string {
+		type pos struct {
+			owner string
+			idx   int
+		}
+		positions := make([]pos, 0, len(owners))
+		for _, o := range owners {
+			if i := strings.Index(body, `>`+o+`<`); i >= 0 {
+				positions = append(positions, pos{o, i})
+			}
+		}
+		sort.Slice(positions, func(i, j int) bool { return positions[i].idx < positions[j].idx })
+		out := make([]string, len(positions))
+		for i, p := range positions {
+			out[i] = p.owner
+		}
+		return out
+	}
+
+	for _, tc := range []struct {
+		sort string
+		want []string
+	}{
+		{"name", []string{"acme", "globex", "umbrella"}},
+		{"findings", []string{"acme", "globex", "umbrella"}},    // 5 > 1 > 0
+		{"repos", []string{"globex", "umbrella", "acme"}},        // 3 > 2 > 1
+	} {
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, localReq("GET", "/orgs?sort="+tc.sort))
+		if w.Code != 200 {
+			t.Fatalf("sort=%s status %d", tc.sort, w.Code)
+		}
+		got := orderFromBody(w.Body.String(), "acme", "globex", "umbrella")
+		if !stringsEqual(got, tc.want) {
+			t.Errorf("sort=%s: got %v, want %v", tc.sort, got, tc.want)
+		}
+	}
+}
+
+func stringsEqual(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func TestOrgShow_rendersRepos(t *testing.T) {
