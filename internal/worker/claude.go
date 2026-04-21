@@ -22,9 +22,14 @@ type SkillRunner interface {
 // the clone, and invokes `claude -p` with a short activation prompt that
 // tells the agent which skill to load. OutputFile (when set) is the path
 // the skill writes to; the runner reads it back as the report.
+//
+// WorkRoot is the per-scan host directory scrutineer created for this
+// run. Keeping it per-scan (scan-{id}) instead of per-repo means two
+// parallel skills on the same repository do not share src or
+// report.json, so neither clobbers the other's output.
 type SkillJob struct {
 	Repo       db.Repository
-	DataDir    string
+	WorkRoot   string
 	Model      string
 	Name       string
 	SkillDir   string // host absolute path to the staged skill directory
@@ -47,12 +52,12 @@ type LocalClaude struct {
 //	{DataDir}/repo-{id}/.claude/skills/NAME staged skill (read by claude-code)
 //	{DataDir}/repo-{id}/OutputFile          where the skill writes, if any
 func (l LocalClaude) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)) (SkillResult, error) {
-	src, err := ensureClone(ctx, sj.Repo, sj.DataDir, emit)
+	src, err := ensureClone(ctx, sj.Repo, sj.WorkRoot, emit)
 	if err != nil {
 		return SkillResult{}, err
 	}
 	commit := gitHead(src)
-	work := filepath.Dir(src)
+	work := sj.WorkRoot
 
 	var outPath string
 	if sj.OutputFile != "" {

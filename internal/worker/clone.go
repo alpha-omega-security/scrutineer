@@ -16,8 +16,12 @@ const dirPerm = 0o755
 // ensureClone returns the path to an up-to-date shallow clone of repo.URL
 // under dataDir. Clones on first call; fetches + resets on subsequent ones.
 // The workspace layout is dataDir/repo-{id}/src/.
-func ensureClone(ctx context.Context, repo db.Repository, dataDir string, emit func(Event)) (string, error) {
-	work := filepath.Join(dataDir, fmt.Sprintf("repo-%d", repo.ID))
+// ensureClone creates a fresh clone under the given work root. Each scan
+// supplies its own work root (scan-{id}) so concurrent scans do not share
+// src or the report.json path — removing a whole class of races where
+// skill A's output gets clobbered by skill B removing report.json before
+// A finishes reading it.
+func ensureClone(ctx context.Context, repo db.Repository, work string, emit func(Event)) (string, error) {
 	src := filepath.Join(work, "src")
 	if err := os.MkdirAll(work, dirPerm); err != nil {
 		return "", err

@@ -73,7 +73,11 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 		"skill_version": skill.Version,
 	})
 
-	workRoot := filepath.Join(w.DataDir, fmt.Sprintf("repo-%d", scan.RepositoryID))
+	// Per-scan workspace keeps concurrent skills on the same repo from
+	// clobbering each other's src/ and report.json. Cleaned at scan
+	// completion so we don't accumulate disk; failed-scan dirs are left
+	// behind so the operator can inspect them.
+	workRoot := filepath.Join(w.DataDir, fmt.Sprintf("scan-%d", scan.ID))
 	skillDir := filepath.Join(workRoot, ".claude", "skills", skill.Name)
 	if err := stageSkill(&skill, skillDir); err != nil {
 		return "", fmt.Errorf("stage skill: %w", err)
@@ -88,7 +92,7 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 
 	sj := SkillJob{
 		Repo:       scan.Repository,
-		DataDir:    w.DataDir,
+		WorkRoot:   workRoot,
 		Model:      scan.Model,
 		Name:       skill.Name,
 		SkillDir:   skillDir,

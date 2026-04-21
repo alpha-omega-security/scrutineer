@@ -35,12 +35,12 @@ func (d DockerRunner) image() string {
 // /work read-write so claude can read the skill files and write its output.
 // Network stays off; tmpfs/cap-drop rules mirror the local runner's intent.
 func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)) (SkillResult, error) {
-	src, err := ensureClone(ctx, sj.Repo, sj.DataDir, emit)
+	src, err := ensureClone(ctx, sj.Repo, sj.WorkRoot, emit)
 	if err != nil {
 		return SkillResult{}, err
 	}
 	commit := gitHead(src)
-	work := filepath.Dir(src)
+	work := sj.WorkRoot
 	absWork, _ := filepath.Abs(work)
 
 	var outPath string
