@@ -76,9 +76,43 @@
             class="form grid gap-3">
         <input class="input" type="text" name="url"
                placeholder="https://github.com/maragudk/goqite.git" required>
+        <footer class="flex justify-between items-center gap-2">
+          <button type="button" class="btn-ghost-sm"
+                  onclick="this.closest('dialog').close(); document.getElementById('bulk-add-repo').showModal()">
+            <i data-lucide="list-plus"></i> Add multiple
+          </button>
+          <div class="flex gap-2">
+            <button type="button" class="btn-outline" onclick="this.closest('dialog').close()">Cancel</button>
+            <button type="submit" class="btn"><i data-lucide="play"></i> Scan</button>
+          </div>
+        </footer>
+      </form>
+    </section>
+    <button type="button" aria-label="Close" onclick="this.closest('dialog').close()">
+      <i data-lucide="x"></i>
+    </button>
+  </div>
+</dialog>
+
+<dialog id="bulk-add-repo" class="dialog w-full sm:max-w-lg"
+        onclick="if (event.target === this) this.close()">
+  <div>
+    <header>
+      <h2>Bulk import repositories</h2>
+      <p class="text-sm text-muted-foreground">
+        One URL per line. Only <code>https://</code> URLs are accepted.
+        Duplicates are skipped; each new repo is queued with the default scan set.
+      </p>
+    </header>
+    <section>
+      <form hx-post="/repositories/bulk"
+            hx-on::after-request="if(event.detail.successful){this.reset();this.closest('dialog').close()}"
+            class="form grid gap-3">
+        <textarea class="input font-mono text-xs" name="urls" rows="10" required
+                  placeholder="https://github.com/maragudk/goqite.git&#10;https://github.com/spf13/cobra.git&#10;https://github.com/stretchr/testify.git"></textarea>
         <footer class="flex justify-end gap-2">
           <button type="button" class="btn-outline" onclick="this.closest('dialog').close()">Cancel</button>
-          <button type="submit" class="btn"><i data-lucide="play"></i> Scan</button>
+          <button type="submit" class="btn"><i data-lucide="play"></i> Import</button>
         </footer>
       </form>
     </section>

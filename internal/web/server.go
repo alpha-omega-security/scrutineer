@@ -117,6 +117,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /{$}", s.index)
 	mux.HandleFunc("GET /repositories", s.repoList)
 	mux.HandleFunc("POST /repositories", s.repoCreate)
+	mux.HandleFunc("POST /repositories/bulk", s.repoBulkCreate)
 	mux.HandleFunc("GET /repositories/{id}", s.repoShow)
 	mux.HandleFunc("GET /repositories/{id}/report.md", s.repoReport)
 	mux.HandleFunc("POST /repositories/{id}/scan", s.repoScan)
@@ -787,22 +788,116 @@ func (s *Server) repoCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "url required", http.StatusUnprocessableEntity)
 		return
 	}
-	repo := db.Repository{URL: url, Name: db.NameFromURL(url)}
-	if err := s.DB.Where(db.Repository{URL: url}).FirstOrCreate(&repo).Error; err != nil {
+	repo, _, err := s.createOrTriageRepo(r.Context(), url, r.FormValue("model"))
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	var skill db.Skill
-	if err := s.DB.Where("name = ? AND active = ?", defaultSkillName, true).First(&skill).Error; err == nil {
-		if _, err := s.enqueueSkill(r.Context(), repo.ID, skill.ID, r.FormValue("model")); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-	} else {
-		s.Log.Warn("default skill not found, repo added with no scans", "skill", defaultSkillName)
-	}
 	w.Header().Set("HX-Redirect", fmt.Sprintf("/repositories/%d", repo.ID))
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// repoBulkCreate accepts a newline-separated list of repository URLs,
+// creates each one that is not already in the database, and enqueues the
+// default skill for every new row. Duplicates and unparseable lines are
+// reported back via an HX-Trigger toast rather than failing the whole
+// submission — partial success is the expected case for a pasted list.
+func (s *Server) repoBulkCreate(w http.ResponseWriter, r *http.Request) {
+	raw := r.FormValue("urls")
+	lines := strings.Split(raw, "\n")
+	var created, skipped int
+	var invalid []string
+	for _, line := range lines {
+		url := strings.TrimSpace(line)
+		if url == "" {
+			continue
+		}
+		if !strings.HasPrefix(url, "https://") {
+			invalid = append(invalid, url)
+			continue
+		}
+		_, isNew, err := s.createOrTriageRepo(r.Context(), url, r.FormValue("model"))
+		if err != nil {
+			invalid = append(invalid, url)
+			continue
+		}
+		if isNew {
+			created++
+		} else {
+			skipped++
+		}
+	}
+	if created == 0 && skipped == 0 && len(invalid) == 0 {
+		http.Error(w, "no URLs supplied", http.StatusUnprocessableEntity)
+		return
+	}
+	toast := map[string]any{
+		"category":    bulkToastCategory(created, invalid),
+		"title":       bulkToastTitle(created, skipped, len(invalid)),
+		"description": bulkToastDescription(invalid),
+	}
+	payload, _ := json.Marshal(map[string]any{"basecoat:toast": map[string]any{"config": toast}})
+	w.Header().Set("HX-Trigger", string(payload))
+	w.Header().Set("HX-Redirect", "/")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// createOrTriageRepo is the shared path for both single-add and bulk-add.
+// It FirstOrCreates the Repository row and, when the row is new, enqueues
+// the default skill. isNew reports whether the repo was actually created
+// (so callers can distinguish "queued" from "already present").
+func (s *Server) createOrTriageRepo(ctx context.Context, url, model string) (db.Repository, bool, error) {
+	existing := int64(0)
+	s.DB.Model(&db.Repository{}).Where("url = ?", url).Count(&existing)
+	repo := db.Repository{URL: url, Name: db.NameFromURL(url)}
+	if err := s.DB.Where(db.Repository{URL: url}).FirstOrCreate(&repo).Error; err != nil {
+		return repo, false, err
+	}
+	isNew := existing == 0
+	if !isNew {
+		return repo, false, nil
+	}
+	var skill db.Skill
+	if err := s.DB.Where("name = ? AND active = ?", defaultSkillName, true).First(&skill).Error; err != nil {
+		s.Log.Warn("default skill not found, repo added with no scans", "skill", defaultSkillName)
+		return repo, true, nil
+	}
+	if _, err := s.enqueueSkill(ctx, repo.ID, skill.ID, model); err != nil {
+		return repo, true, err
+	}
+	return repo, true, nil
+}
+
+func bulkToastCategory(created int, invalid []string) string {
+	if created > 0 && len(invalid) == 0 {
+		return "success"
+	}
+	if created == 0 && len(invalid) > 0 {
+		return "error"
+	}
+	return "warning"
+}
+
+func bulkToastTitle(created, skipped, invalid int) string {
+	parts := []string{fmt.Sprintf("%d added", created)}
+	if skipped > 0 {
+		parts = append(parts, fmt.Sprintf("%d already present", skipped))
+	}
+	if invalid > 0 {
+		parts = append(parts, fmt.Sprintf("%d invalid", invalid))
+	}
+	return strings.Join(parts, ", ")
+}
+
+func bulkToastDescription(invalid []string) string {
+	if len(invalid) == 0 {
+		return ""
+	}
+	const maxShow = 3
+	if len(invalid) <= maxShow {
+		return "Rejected: " + strings.Join(invalid, ", ")
+	}
+	return fmt.Sprintf("Rejected: %s, and %d more", strings.Join(invalid[:maxShow], ", "), len(invalid)-maxShow)
 }
 
 func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {

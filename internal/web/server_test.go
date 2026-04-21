@@ -544,6 +544,139 @@ func TestFindingDisclose404WhenSkillMissing(t *testing.T) {
 	}
 }
 
+func TestBulkImport_createsAndEnqueues(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	triage := db.Skill{Name: "triage", Description: "o", Body: "b", Active: true, Source: "ui", Version: 1}
+	s.DB.Create(&triage)
+
+	urls := "https://github.com/foo/one.git\nhttps://github.com/foo/two.git\n"
+	form := url.Values{"urls": {urls}}
+	req := httptest.NewRequest("POST", "/repositories/bulk", strings.NewReader(form.Encode()))
+	req.Host = testHost
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	if w.Header().Get("HX-Redirect") != "/" {
+		t.Errorf("HX-Redirect = %q", w.Header().Get("HX-Redirect"))
+	}
+	trigger := w.Header().Get("HX-Trigger")
+	if !strings.Contains(trigger, "2 added") {
+		t.Errorf("HX-Trigger toast missing '2 added': %s", trigger)
+	}
+
+	var repos []db.Repository
+	s.DB.Order("url").Find(&repos)
+	if len(repos) != 2 {
+		t.Fatalf("want 2 repos, got %d", len(repos))
+	}
+	var scans []db.Scan
+	s.DB.Where("skill_id = ?", triage.ID).Find(&scans)
+	if len(scans) != 2 {
+		t.Fatalf("want 2 triage scans, got %d", len(scans))
+	}
+}
+
+func TestBulkImport_skipsDuplicates(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	triage := db.Skill{Name: "triage", Description: "o", Body: "b", Active: true, Source: "ui", Version: 1}
+	s.DB.Create(&triage)
+	s.DB.Create(&db.Repository{URL: "https://github.com/foo/one.git", Name: "one"})
+
+	form := url.Values{"urls": {"https://github.com/foo/one.git\nhttps://github.com/foo/two.git"}}
+	req := httptest.NewRequest("POST", "/repositories/bulk", strings.NewReader(form.Encode()))
+	req.Host = testHost
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	trigger := w.Header().Get("HX-Trigger")
+	if !strings.Contains(trigger, "1 added") || !strings.Contains(trigger, "1 already present") {
+		t.Errorf("toast missing expected counts: %s", trigger)
+	}
+
+	var scans []db.Scan
+	s.DB.Where("skill_id = ?", triage.ID).Find(&scans)
+	if len(scans) != 1 {
+		t.Errorf("want 1 new scan (only the new repo), got %d", len(scans))
+	}
+}
+
+func TestBulkImport_rejectsNonHTTPS(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	triage := db.Skill{Name: "triage", Description: "o", Body: "b", Active: true, Source: "ui", Version: 1}
+	s.DB.Create(&triage)
+
+	lines := "https://github.com/foo/ok.git\n" +
+		"git@github.com:foo/bar.git\n" +
+		"file:///etc/passwd\n" +
+		"ext::nope\n"
+	form := url.Values{"urls": {lines}}
+	req := httptest.NewRequest("POST", "/repositories/bulk", strings.NewReader(form.Encode()))
+	req.Host = testHost
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+
+	var repos []db.Repository
+	s.DB.Find(&repos)
+	if len(repos) != 1 {
+		t.Errorf("want 1 repo (only the https one), got %d", len(repos))
+	}
+	trigger := w.Header().Get("HX-Trigger")
+	if !strings.Contains(trigger, "1 added") || !strings.Contains(trigger, "3 invalid") {
+		t.Errorf("toast missing counts: %s", trigger)
+	}
+}
+
+func TestBulkImport_emptyIs422(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	form := url.Values{"urls": {"  \n\n\t\n"}}
+	req := httptest.NewRequest("POST", "/repositories/bulk", strings.NewReader(form.Encode()))
+	req.Host = testHost
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Errorf("want 422 for empty submission, got %d", w.Code)
+	}
+}
+
+func TestBulkImport_dialogRendered(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	s.DB.Create(&db.Skill{Name: "triage", Description: "o", Body: "b", Active: true, Source: "ui", Version: 1})
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/"))
+	body := w.Body.String()
+	if !strings.Contains(body, `id="bulk-add-repo"`) {
+		t.Error("layout missing bulk dialog")
+	}
+	if !strings.Contains(body, `name="urls"`) {
+		t.Error("bulk dialog missing urls textarea")
+	}
+	if !strings.Contains(body, "Add multiple") {
+		t.Error("add-repo dialog missing 'Add multiple' link to bulk dialog")
+	}
+	if !strings.Contains(body, "getElementById('bulk-add-repo').showModal()") {
+		t.Error("'Add multiple' button does not open bulk dialog")
+	}
+}
+
 func TestScanShowRenders(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
