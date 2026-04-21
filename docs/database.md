@@ -13,156 +13,262 @@ The central entity. One row per git URL.
 | name | text | Short display name derived from the URL. |
 | full_name | text | Owner/repo from ecosyste.ms (e.g. `splitrb/split`). |
 | owner | text | Repository owner from ecosyste.ms. |
-| description | text | From ecosyste.ms metadata job. |
+| description | text | From the metadata skill. |
 | default_branch | text | e.g. `main`. |
-| languages | text | Primary language from ecosyste.ms. |
+| languages | text | Primary language. |
 | license | text | SPDX identifier, e.g. `mit`. |
 | stars | integer | Stargazers count. |
 | forks | integer | Fork count. |
 | archived | boolean | Whether the repo is archived on the forge. |
-| pushed_at | datetime | Last push timestamp from ecosyste.ms. |
-| html_url | text | Browser URL, validated to http/https scheme. Used for source links. |
-| icon_url | text | Avatar/icon URL, validated to http/https. |
+| pushed_at | datetime | Last push timestamp. |
+| html_url | text | Browser URL. Used for source links. |
+| icon_url | text | Avatar/icon URL. |
 | metadata | text | Full ecosyste.ms JSON response. Queryable with `json_extract`. |
-| fetched_at | datetime | When the metadata job last ran. |
+| fetched_at | datetime | When the metadata skill last ran. |
 | created_at | datetime | |
 | updated_at | datetime | |
 
 ## scans
 
-One row per job execution. The `kind` field names the job type; the `status` field tracks the queue lifecycle.
+One row per skill execution. Every scan is a skill; `kind` is always `skill`. `skill_name` / `skill_version` pin which skill ran.
 
 | Column | Type | Notes |
 |--------|------|-------|
 | id | integer PK | |
 | repository_id | integer FK | References `repositories.id`. Cascade delete. |
-| kind | text | Job type: `metadata`, `packages`, `advisories`, `commits`, `dependents`, `brief`, `git-pkgs`, `sbom`, `semgrep`, `zizmor`, `maintainers`, `claude`. |
+| kind | text | Always `skill`. Retained so legacy rows from before the skill framework still render. |
 | status | text | `queued`, `running`, `done`, `failed`. Stale `running` rows are swept to `failed` on startup. |
-| model | text | Claude model ID for model-backed jobs. Validated against `internal/web/models.go`. |
+| model | text | Claude model ID. |
+| skill_id | integer FK | References `skills.id`. Null for legacy non-skill rows. |
+| skill_version | integer | Version of the skill at run time; the skill row's `version` bumps on every edit so older scans stay readable. |
+| skill_name | text | Denormalised skill name for UI display. |
+| finding_id | integer FK | Set when the scan is finding-scoped (verify/patch/disclose). References `findings.id`. |
+| api_token | text | Per-scan bearer token that the skill presents when calling `/api`. Only valid while the scan is running. |
 | commit | text | Git HEAD at scan time. |
 | started_at | datetime | |
 | finished_at | datetime | |
 | cost_usd | real | From claude's `total_cost_usd` in stream-json result. |
 | turns | integer | Number of claude turns. |
-| prompt | text | The full prompt sent to claude. Only populated for model-backed jobs. |
-| report | text | The job's primary output. JSON for most jobs, SARIF for semgrep/zizmor. |
-| log | text | Line-by-line transcript of the job. Streamed to the UI via SSE. |
-| error | text | Error message if the job failed. |
+| prompt | text | Activation prompt sent to claude. The skill body lives in the Skill row, not here. |
+| report | text | The skill's primary output. JSON for parsed kinds, freeform for everything else. |
+| log | text | Line-by-line transcript of the scan. Streamed to the UI via SSE. |
+| error | text | Error message if the scan failed. |
 | findings_count | integer | Denormalised count of findings parsed from the report. |
+| created_at | datetime | |
+| updated_at | datetime | |
+
+## skills
+
+One row per installed skill. Loaded from `skills/` directories on disk or the UI. Editing a skill creates no new row but bumps `version`.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | integer PK | |
+| name | text, unique | Matches SKILL.md `name` frontmatter. |
+| description | text | |
+| license | text | |
+| compatibility | text | |
+| allowed_tools | text | From SKILL.md `allowed-tools`. |
+| metadata | text | Raw frontmatter metadata map as JSON. Scrutineer reads `scrutineer.output_file` and `scrutineer.output_kind` from here. |
+| body | text | Markdown body after the frontmatter. The prompt. |
+| schema_json | text | Optional schema.json contents. |
+| output_file | text | Relative path the skill writes to. Promoted from metadata. |
+| output_kind | text | Parser key: `findings`, `maintainers`, `packages`, `advisories`, `dependents`, `dependencies`, `repo_metadata`, `verify`, `freeform`. Promoted from metadata. |
+| version | integer | Bumps on every save. |
+| active | boolean | |
+| source | text | `local`, `remote`, or `ui`. |
+| source_path | text | Directory on disk (for local/remote). Empty for UI-created. |
+| source_hash | text | sha256 of SKILL.md + schema.json. Used by the loader to detect changes. |
 | created_at | datetime | |
 | updated_at | datetime | |
 
 ## findings
 
-One row per vulnerability identified by a claude audit scan. Parsed from the spec-json report schema. Has a lifecycle workflow with human gates.
+One row per vulnerability. Lifecycle columns are mutated through `db.WriteFindingField`, which logs every change to `finding_history`.
 
 | Column | Type | Notes |
 |--------|------|-------|
 | id | integer PK | |
-| scan_id | integer FK | References `scans.id`. Cascade delete. |
-| finding_id | text | ID within the report, e.g. `F1`, `F2`. |
-| sinks | text | Comma-joined sink IDs from the inventory, e.g. `S9, S25, S26`. Links to the threat model tab. |
-| title | text | Short descriptive title. |
+| scan_id | integer FK | The scan that first produced this finding. Cascade delete. |
+| repository_id | integer FK | Denormalised from scan so list queries skip the join. |
+| commit | text | Denormalised from scan. |
+| finding_id | text | ID within the originating report, e.g. `F1`. |
+| sinks | text | Comma-joined sink IDs. Links to the threat model tab. |
+| title | text | |
 | severity | text | `Critical`, `High`, `Medium`, `Low`. |
-| status | text | Lifecycle state: `new`, `enriched`, `triaged`, `ready`, `reported`, `acknowledged`, `fixed`, `published`, `rejected`, `duplicate`. Default `new`. |
-| cwe | text | CWE identifier, e.g. `CWE-352`. Linked to embedded MITRE catalogue for tooltips. |
-| location | text | `file:line` or `file:start-end`, relative to repo root. Linked to forge source view. |
+| status | text | Lifecycle state: `new`, `enriched`, `triaged`, `ready`, `reported`, `acknowledged`, `fixed`, `published`, `rejected`, `duplicate`. |
+| cwe | text | e.g. `CWE-352`. Tooltips come from the embedded MITRE catalogue. |
+| location | text | `file:line` or `file:start-end`. |
 | affected | text | Version range, e.g. `>=0.2.0, <=4.0.5`. |
-| notes | text | Free-text field for human triage notes, communication log. |
-| trace | text | Step 1: backwards trace from sink to library boundary. Markdown. |
-| boundary | text | Step 2: which trust boundary the input crosses. Markdown. |
-| validation | text | Step 3: reproduction script and output. Markdown. |
-| prior_art | text | Step 4: issue/PR/commit search for this finding. Markdown. |
-| reach | text | Step 5: dependent exposure analysis. Markdown. |
-| rating | text | Step 6: severity justification and confidence. Markdown. |
-| confidence | text | Legacy field from old schema. |
-| summary | text | One-paragraph summary. Derived from trace for spec-json reports. |
-| details | text | Legacy field from old schema. |
+| cve_id | text | e.g. `CVE-2026-12345`. |
+| cvss_vector | text | e.g. `CVSS:3.1/AV:N/AC:L/...`. |
+| cvss_score | real | |
+| fix_version | text | |
+| fix_commit | text | |
+| resolution | text | `fix`, `migrate`, `workaround`, `adopt`, `wontfix`. |
+| disclosure_draft | text | Draft advisory text. |
+| assignee | text | Free-text. |
+| trace | text | Step 1 prose. Markdown. |
+| boundary | text | Step 2. |
+| validation | text | Step 3: reproduction. |
+| prior_art | text | Step 4. |
+| reach | text | Step 5: dependent exposure. |
+| rating | text | Step 6: severity justification. |
+| created_at | datetime | |
+| updated_at | datetime | |
+
+Notes, communications, references, labels, and history live in separate tables (see below).
+
+## finding_labels + finding_labels_join
+
+Tags independent of the status lifecycle. `finding_labels_join` is the many-to-many.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| finding_labels.id | integer PK | |
+| finding_labels.name | text, unique | e.g. `wontfix`, `needs-info`. Defaults seeded at startup. |
+| finding_labels.color | text | CSS hex for the badge. |
+| finding_labels.created_at | datetime | |
+
+## finding_notes
+
+Timestamped internal notes on a finding. Replaced the old `findings.notes` column.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | integer PK | |
+| finding_id | integer FK | Cascade delete. |
+| body | text | |
+| by | text | Free-text author. |
+| created_at | datetime | |
+
+## finding_communications
+
+External interactions about a finding: emails, GHSA submissions, issue replies, etc.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | integer PK | |
+| finding_id | integer FK | Cascade delete. |
+| channel | text | `email`, `ghsa`, `issue`, `pr`, `direct`, `registry`. |
+| direction | text | `outbound` or `inbound`. |
+| actor | text | Other party's name/handle. |
+| body | text | |
+| offered_help | text | `pr`, `funding`, `adoption`, or empty. |
+| at | datetime | When the interaction happened. |
+| created_at | datetime | When the row was inserted. |
+
+## finding_references
+
+External URLs related to a finding.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | integer PK | |
+| finding_id | integer FK | Cascade delete. |
+| url | text | |
+| tags | text | Comma-joined: `issue`, `pr`, `cve`, `ghsa`, `patch`, `advisory`, `discussion`, `article`. |
+| summary | text | |
+| created_at | datetime | |
+
+## finding_history
+
+Every mutable-field change on a finding, with source attribution.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | integer PK | |
+| finding_id | integer FK | Cascade delete. |
+| field | text | `severity`, `status`, `cve_id`, etc. |
+| old_value | text | |
+| new_value | text | |
+| source | text | `tool`, `model_suggested`, or `analyst`. |
+| by | text | Author for analyst edits, skill name for model_suggested. |
 | created_at | datetime | |
 
 ## dependencies
 
-Package dependencies discovered by the `git-pkgs` job. Replaced wholesale each time the job runs for a repository.
+Package dependencies discovered by the `dependencies` skill. Replaced wholesale each run.
 
 | Column | Type | Notes |
 |--------|------|-------|
 | id | integer PK | |
 | repository_id | integer FK | |
-| name | text | Package name. |
+| name | text | |
 | ecosystem | text | e.g. `gem`, `npm`, `go`. Indexed. |
-| p_url | text | Package URL (PURL). Used to match against the packages table for import buttons. |
+| p_url | text | Package URL. |
 | requirement | text | Version constraint from the manifest. |
 | dependency_type | text | `runtime` or `development`. |
 | manifest_path | text | Which file declared this dependency. |
 | manifest_kind | text | `manifest` or `lockfile`. |
 | created_at | datetime | |
 
-Note: the UI groups dependencies by name+ecosystem and shows all manifest paths. Lockfile versions are preferred over manifest ranges.
+The UI groups dependencies by name+ecosystem. Lockfile versions are preferred over manifest ranges.
 
 ## packages
 
-Registry entries from packages.ecosyste.ms. One row per published package linked to this repository. Replaced each time the packages job runs.
+Registry entries from the `packages` skill. Replaced each run.
 
 | Column | Type | Notes |
 |--------|------|-------|
 | id | integer PK | |
 | repository_id | integer FK | |
-| name | text | Package name on the registry. |
-| ecosystem | text | e.g. `rubygems`, `npm`. |
-| p_url | text | Package URL. |
-| licenses | text | License string from the registry. |
-| latest_version | text | Latest release number. |
-| versions_count | integer | Total published versions. |
-| downloads | integer | Download count (period varies by registry). |
-| dependent_packages | integer | How many other packages depend on this one. |
-| dependent_repos | integer | How many repositories use this package. |
-| registry_url | text | HTML page on the registry. |
+| name | text | |
+| ecosystem | text | |
+| p_url | text | |
+| licenses | text | |
+| latest_version | text | |
+| versions_count | integer | |
+| downloads | integer | |
+| dependent_packages | integer | |
+| dependent_repos | integer | |
+| registry_url | text | |
 | latest_release_at | datetime | |
-| dependent_packages_url | text | ecosyste.ms API URL for fetching dependents. Used by the dependents job. |
-| metadata | text | Full ecosyste.ms JSON response for this package. |
+| dependent_packages_url | text | ecosyste.ms API URL for fetching dependents. |
+| metadata | text | Full upstream JSON for this package. |
 | created_at | datetime | |
 
 ## dependents
 
-Top runtime dependents of this repository's packages. Fetched from packages.ecosyste.ms by the dependents job. Sorted by dependent_repos descending, capped at 25 per package.
+Top runtime dependents of this repository's packages. Populated by the `dependents` skill.
 
 | Column | Type | Notes |
 |--------|------|-------|
 | id | integer PK | |
 | repository_id | integer FK | |
-| name | text | Dependent package name. |
+| name | text | |
 | ecosystem | text | |
 | p_url | text | |
 | repository_url | text | Git URL of the dependent. Used by the import button. |
 | downloads | integer | |
-| dependent_repos | integer | How widely the dependent itself is used. |
+| dependent_repos | integer | |
 | registry_url | text | |
 | latest_version | text | |
 | created_at | datetime | |
 
 ## advisories
 
-Known security advisories from advisories.ecosyste.ms. Replaced each time the advisories job runs.
+Known security advisories from the `advisories` skill. Replaced each run.
 
 | Column | Type | Notes |
 |--------|------|-------|
 | id | integer PK | |
 | repository_id | integer FK | |
-| uuid | text | ecosyste.ms advisory identifier. |
-| url | text | Link to the advisory page. |
+| uuid | text | advisories.ecosyste.ms identifier. |
+| url | text | |
 | title | text | |
 | description | text | |
 | severity | text | `CRITICAL`, `HIGH`, `MODERATE`, `LOW`. Note: uppercase, unlike finding severity. |
 | cvss_score | real | 0-10. |
-| classification | text | e.g. `GENERAL`. |
-| packages | text | Comma-joined affected package names. One advisory can affect multiple packages. |
+| classification | text | |
+| packages | text | Comma-joined affected package names. |
 | published_at | datetime | |
-| withdrawn_at | datetime | Non-null if the advisory was withdrawn. Shown with a badge in the UI. |
+| withdrawn_at | datetime | Non-null if the advisory was withdrawn. |
 | created_at | datetime | |
 
 ## maintainers
 
-People who maintain repositories. Populated by the model-backed maintainers job (which fetches from commits, issues, and packages ecosyste.ms endpoints and hands the data to claude for analysis). Many-to-many with repositories via `repository_maintainers`.
+People who maintain repositories. Populated by the `maintainers` skill. Many-to-many with repositories via `repository_maintainers`.
 
 | Column | Type | Notes |
 |--------|------|-------|
@@ -172,8 +278,8 @@ People who maintain repositories. Populated by the model-backed maintainers job 
 | email | text | Validated: must contain `@`, no noreply addresses. |
 | company | text | |
 | avatar_url | text | |
-| status | text | `active`, `inactive`, `unknown`. Set by the maintainer analysis job. |
-| notes | text | Role and evidence from the analysis, e.g. `lead: 292 commits, publishes to rubygems`. |
+| status | text | `active`, `inactive`, `unknown`. |
+| notes | text | Role and evidence from the analysis. |
 | created_at | datetime | |
 | updated_at | datetime | |
 
@@ -199,4 +305,4 @@ Job queue managed by the goqite library. Not accessed directly by application co
 | body | blob | Gob-encoded `{Name, Message}` where Message is JSON `{"scan_id": N}`. |
 | timeout | text | Visibility timeout. Extended while a job runs. |
 | received | integer | Delivery count. Max 3 before dead-lettering. |
-| priority | integer | Higher = delivered first. 10 for HTTP lookups, 8 for fast tools, 5 for slow tools, 0 for claude. |
+| priority | integer | Higher = delivered first. Skill scans use `PrioScan=0`; `PrioFastTool=8` and `PrioMetadata=10` remain defined but are not used by the default pipeline. |

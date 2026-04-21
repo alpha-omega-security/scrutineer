@@ -17,6 +17,8 @@ A local tool for scanning open source repositories for security vulnerabilities 
 - **Dark mode** -- follows system preference
 - **Containerised runner** -- optional per-scan Docker isolation with read-only source mounts, dropped capabilities
 - **Skill HTTP API** -- running skills can call back into scrutineer to list prior scans and enqueue further skills; surface documented in `openapi.yaml`
+- **Search** -- LIKE-based search box on repositories, findings, packages, and maintainers indexes, combining with the existing filters and sort
+- **Markdown report export** -- download a single consolidated `report.md` per repository covering threat model, findings (with six-step prose), packages, advisories, dependents, maintainers
 
 ## Getting started
 
@@ -68,12 +70,12 @@ While a skill runs, its workspace contains `./context.json` with `scrutineer.api
 
 The sidebar has six sections:
 
-- **Repositories** -- your scanned repos with language, last scan status, and finding counts. Click into one for tabs: Summary, Findings, Threat Model, Packages, Dependencies, Dependents, Advisories, Maintainers, Data, Scans
-- **Findings** -- all vulnerability findings across repos. Filter by severity, sort by severity/newest/repo. Click into a finding for the six-step analysis (trace, boundary, validation, prior art, reach, rating)
-- **Packages** -- registry entries across all repos with downloads, dependents, ecosystem filter
-- **Maintainers** -- people identified as maintainers across repos, with their linked repos and findings
-- **Scans** -- every scan that has run, filterable by skill and status. Failed scans have a retry button
-- **Skills** -- installed skills from disk and from the UI; view, edit, or run any of them
+- **Repositories** -- your scanned repos with language, last scan status, and finding counts. Search by name/url/description; filter by language; sort by newest/name/stars/language. Click into one for tabs: Summary, Findings, Threat Model, Packages, Dependencies, Dependents, Advisories, Maintainers, Data, Scans. An "Export report" button downloads a markdown summary of everything on the page.
+- **Findings** -- all vulnerability findings across repos. Search by title/location/CWE/CVE/affected range. Filter by severity, sort by severity/newest/repo. Click into a finding for the six-step analysis (trace, boundary, validation, prior art, reach, rating), scoring fields (CVE, CVSS, fix version/commit, resolution), timestamped notes, communications log, references, labels, and a full change history.
+- **Packages** -- registry entries across all repos. Search by name/purl/license, ecosystem filter, sort by name/downloads/dependents/ecosystem.
+- **Maintainers** -- people identified as maintainers across repos, with their linked repos and findings. Search by login/name/email/company/notes, status filter, sort by name/login/status/newest.
+- **Scans** -- every scan that has run, filterable by skill and status. Failed scans have a retry button.
+- **Skills** -- installed skills from disk and from the UI; view, edit, or run any of them.
 
 ## Finding workflow
 
