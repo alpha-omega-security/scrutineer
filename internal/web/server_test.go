@@ -40,6 +40,46 @@ func localReq(method, path string) *http.Request {
 	return r
 }
 
+func TestRepoList_batchedFindingsCountAcrossRepos(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	mk := func(name string, findings int) {
+		repo := db.Repository{URL: "https://example.com/" + name, Name: name}
+		s.DB.Create(&repo)
+		if findings > 0 {
+			scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: "security-deep-dive"}
+			s.DB.Create(&scan)
+			for i := 0; i < findings; i++ {
+				s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repo.ID,
+					Title: fmt.Sprintf("F%d", i), Severity: "High"})
+			}
+		}
+	}
+	mk("alpha", 3)
+	mk("bravo", 0)
+	mk("charlie", 7)
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/"))
+	body := w.Body.String()
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+
+	// Every repo's count must be rendered correctly in the rendered
+	// table, even though they all come out of a single grouped query.
+	for _, want := range []struct{ repo, count string }{
+		{"alpha", `badge-destructive">3</span>`},
+		{"bravo", `badge-secondary">0</span>`},
+		{"charlie", `badge-destructive">7</span>`},
+	} {
+		if !strings.Contains(body, want.count) {
+			t.Errorf("missing %s count %q in body", want.repo, want.count)
+		}
+	}
+}
+
 func TestRepoList_findingsCountIsRepoWideNotLastScan(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
