@@ -274,16 +274,32 @@ func (s *Server) maintainersList(w http.ResponseWriter, r *http.Request) {
 		q = q.Where("login LIKE ? OR name LIKE ? OR email LIKE ? OR company LIKE ? OR notes LIKE ?",
 			like, like, like, like, like)
 	}
+
+	const nameSort = "name"
+	sort := r.URL.Query().Get("sort")
+	switch sort {
+	case "login":
+		q = q.Order("login")
+	case "status":
+		q = q.Order("status, name")
+	case "newest":
+		q = q.Order("id desc")
+	default:
+		sort = nameSort
+		// Push empty names to the end instead of the front.
+		q = q.Order("CASE WHEN name = '' THEN 1 ELSE 0 END, name, login")
+	}
+
 	var total int64
 	q.Count(&total)
 	page := paginate(r, total)
 
 	var rows []db.Maintainer
-	q.Preload("Repositories").Order("login").
+	q.Preload("Repositories").
 		Limit(perPage).Offset((page.N - 1) * perPage).Find(&rows)
 
 	s.render(w, "maintainers.html", map[string]any{
-		"Maintainers": rows, "Page": page, "Status": status, "Q": search,
+		"Maintainers": rows, "Page": page, "Status": status, "Q": search, "Sort": sort,
 	})
 }
 

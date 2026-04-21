@@ -171,6 +171,65 @@ func TestPackagesSearchFilters(t *testing.T) {
 	}
 }
 
+func TestMaintainersSortOptions(t *testing.T) {
+	const (
+		zeta    = "zeta"
+		alpha   = "alpha"
+		charlie = "charlie"
+	)
+	s, done := newTestServer(t)
+	defer done()
+
+	s.DB.Create(&db.Maintainer{Login: zeta, Name: "Alice", Status: db.MaintainerActive})
+	s.DB.Create(&db.Maintainer{Login: alpha, Name: "Zed", Status: db.MaintainerInactive})
+	s.DB.Create(&db.Maintainer{Login: charlie, Name: "", Status: db.MaintainerUnknown})
+
+	// logins returns the order the three seeded logins appear in a rendered body.
+	logins := func(body string) []string {
+		idx := map[string]int{}
+		for _, want := range []string{alpha, charlie, zeta} {
+			if i := strings.Index(body, want); i >= 0 {
+				idx[want] = i
+			}
+		}
+		out := []string{alpha, charlie, zeta}
+		for i := 0; i < len(out); i++ {
+			for j := i + 1; j < len(out); j++ {
+				if idx[out[j]] < idx[out[i]] {
+					out[i], out[j] = out[j], out[i]
+				}
+			}
+		}
+		return out
+	}
+	orderBy := func(path string) []string {
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, localReq("GET", path))
+		if w.Code != 200 {
+			t.Fatalf("%s status %d", path, w.Code)
+		}
+		return logins(w.Body.String())
+	}
+
+	// sort=name (default): Alice(zeta) then Zed(alpha) then empty-name(charlie).
+	nameOrder := orderBy("/maintainers?sort=name")
+	if nameOrder[0] != zeta || nameOrder[1] != alpha || nameOrder[2] != charlie {
+		t.Errorf("sort=name order: %v", nameOrder)
+	}
+
+	// sort=login: alpha, charlie, zeta
+	loginOrder := orderBy("/maintainers?sort=login")
+	if loginOrder[0] != alpha || loginOrder[1] != charlie || loginOrder[2] != zeta {
+		t.Errorf("sort=login order: %v", loginOrder)
+	}
+
+	// sort=newest: most recently created first (charlie was inserted last).
+	newestOrder := orderBy("/maintainers?sort=newest")
+	if newestOrder[0] != charlie {
+		t.Errorf("sort=newest expected charlie first, got %v", newestOrder)
+	}
+}
+
 func TestMaintainersSearchFilters(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

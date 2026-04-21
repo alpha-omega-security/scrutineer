@@ -9,6 +9,7 @@
       <input class="input" type="search" name="q" value="{{.Q}}" placeholder="Search maintainers"
              autocomplete="off" spellcheck="false">
       <input type="hidden" name="status" value="{{.Status}}">
+      <input type="hidden" name="sort" value="{{.Sort}}">
     </form>
     <div class="dropdown-menu">
       <button type="button" class="btn-outline" aria-haspopup="menu" aria-expanded="false">
@@ -18,10 +19,25 @@
       </button>
       <div data-popover aria-hidden="true" data-align="end">
         <div role="menu">
-          <a role="menuitem" href="/maintainers?q={{.Q}}">All</a>
+          <a role="menuitem" href="/maintainers?q={{.Q}}&sort={{.Sort}}">All</a>
           {{range (list "active" "inactive" "unknown")}}
-            <a role="menuitem" href="/maintainers?q={{$.Q}}&status={{.}}"
+            <a role="menuitem" href="/maintainers?q={{$.Q}}&status={{.}}&sort={{$.Sort}}"
                {{if eq . $.Status}}aria-current="true"{{end}}>{{.}}</a>
+          {{end}}
+        </div>
+      </div>
+    </div>
+    <div class="dropdown-menu">
+      <button type="button" class="btn-outline" aria-haspopup="menu" aria-expanded="false">
+        <i data-lucide="arrow-down-wide-narrow"></i>
+        {{if eq .Sort "login"}}Login{{else if eq .Sort "status"}}Status{{else if eq .Sort "newest"}}Newest{{else}}Name{{end}}
+        <i data-lucide="chevron-down"></i>
+      </button>
+      <div data-popover aria-hidden="true" data-align="end">
+        <div role="menu">
+          {{range (list "name" "login" "status" "newest")}}
+            <a role="menuitem" href="/maintainers?q={{$.Q}}&status={{$.Status}}&sort={{.}}"
+               {{if eq . $.Sort}}aria-current="true"{{end}}>{{.}}</a>
           {{end}}
         </div>
       </div>
