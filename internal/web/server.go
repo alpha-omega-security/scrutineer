@@ -124,6 +124,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /scans", s.jobs)
 	mux.HandleFunc("GET /orgs", s.orgsList)
 	mux.HandleFunc("GET /orgs/{login}", s.orgShow)
+	mux.HandleFunc("GET /orgs/{login}/findings.md", s.orgReport)
 	mux.HandleFunc("GET /maintainers", s.maintainersList)
 	mux.HandleFunc("GET /maintainers/{id}", s.maintainerShow)
 	mux.HandleFunc("GET /findings", s.findings)

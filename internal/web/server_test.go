@@ -304,6 +304,79 @@ func TestFindings_ownerFilter(t *testing.T) {
 	}
 }
 
+func TestOrgReport_rendersFindingsAcrossRepos(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	r1 := db.Repository{URL: "https://example.com/acme/one", Name: "one", Owner: "acme", Description: "first repo"}
+	s.DB.Create(&r1)
+	r2 := db.Repository{URL: "https://example.com/acme/two", Name: "two", Owner: "acme"}
+	s.DB.Create(&r2)
+	_ = db.Repository{URL: "https://example.com/globex/svc", Name: "svc", Owner: "globex"}
+
+	scan1 := db.Scan{RepositoryID: r1.ID, Kind: "skill", Status: db.ScanDone, SkillName: "x"}
+	s.DB.Create(&scan1)
+	s.DB.Create(&db.Finding{ScanID: scan1.ID, RepositoryID: r1.ID,
+		Title: "SSRF in image fetch", Severity: "High", Location: "fetch.go:42",
+		CWE: "CWE-918", Trace: "Attacker controls URL...", Status: db.FindingTriaged})
+	s.DB.Create(&db.Finding{ScanID: scan1.ID, RepositoryID: r1.ID,
+		Title: "Path traversal", Severity: "Medium", Location: "io.go:10"})
+
+	scan2 := db.Scan{RepositoryID: r2.ID, Kind: "skill", Status: db.ScanDone, SkillName: "x"}
+	s.DB.Create(&scan2)
+	s.DB.Create(&db.Finding{ScanID: scan2.ID, RepositoryID: r2.ID,
+		Title: "XSS in admin panel", Severity: "High", Location: "views/admin.go:77"})
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/orgs/acme/findings.md"))
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/markdown") {
+		t.Errorf("Content-Type = %q", ct)
+	}
+	if cd := w.Header().Get("Content-Disposition"); !strings.Contains(cd, "acme-findings") {
+		t.Errorf("Content-Disposition = %q", cd)
+	}
+
+	body := w.Body.String()
+	for _, want := range []string{
+		"# scrutineer findings report: acme",
+		"Repositories: 2",
+		"Total findings: 3",
+		"### Severity breakdown",
+		"| High | 2 |",
+		"| Medium | 1 |",
+		"### Coverage",
+		"| one | 2 |",
+		"| two | 1 |",
+		"## one",
+		"## two",
+		"SSRF in image fetch",
+		"Path traversal",
+		"XSS in admin panel",
+		"Attacker controls URL",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("report missing %q", want)
+		}
+	}
+	// Should not contain globex's findings under the acme report.
+	if strings.Contains(body, "globex") {
+		t.Errorf("acme report contains globex content")
+	}
+}
+
+func TestOrgReport_unknownIs404(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/orgs/nope/findings.md"))
+	if w.Code != http.StatusNotFound {
+		t.Errorf("want 404, got %d", w.Code)
+	}
+}
+
 func TestAdvisoriesIndex(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

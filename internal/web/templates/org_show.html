@@ -3,10 +3,15 @@
 
 {{template "crumbs" (crumbs "Organizations" "/orgs" $owner "")}}
 
-<h2 class="text-2xl font-semibold mt-1 mb-6 flex items-center gap-3">
-  <i data-lucide="building"></i> {{$owner}}
-  <span class="text-muted-foreground text-sm font-normal">{{len .Repos}} repos</span>
-</h2>
+<div class="flex items-start justify-between gap-4 mb-6">
+  <h2 class="text-2xl font-semibold mt-1 flex items-center gap-3">
+    <i data-lucide="building"></i> {{$owner}}
+    <span class="text-muted-foreground text-sm font-normal">{{len .Repos}} repos</span>
+  </h2>
+  <a href="/orgs/{{$owner}}/findings.md" class="btn-outline" download>
+    <i data-lucide="download"></i> Findings report
+  </a>
+</div>
 
 <div class="tabs w-full" id="org-tabs">
   <nav role="tablist" aria-orientation="horizontal">
