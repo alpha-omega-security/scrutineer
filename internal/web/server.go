@@ -209,7 +209,8 @@ func paginate(r *http.Request, total int64) Page {
 
 type repoRow struct {
 	db.Repository
-	LastScan *db.Scan
+	LastScan      *db.Scan
+	FindingsTotal int
 }
 
 func (s *Server) repoList(w http.ResponseWriter, r *http.Request) {
@@ -254,6 +255,13 @@ func (s *Server) repoList(w http.ResponseWriter, r *http.Request) {
 			Order("id desc").First(&last).Error; err == nil {
 			row.LastScan = &last
 		}
+		// Count findings across all scans of this repo. The previous
+		// implementation read LastScan.FindingsCount, which is zero for
+		// repo-overview / metadata / packages scans — those do not
+		// produce Finding rows even when findings exist on the repo.
+		var total int64
+		s.DB.Model(&db.Finding{}).Where("repository_id = ?", repo.ID).Count(&total)
+		row.FindingsTotal = int(total)
 		rows = append(rows, row)
 	}
 	var languages []string
