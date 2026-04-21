@@ -15,7 +15,7 @@ The audit has two phases. Phase 1 produces an inventory of every sink in the cod
 
 Workspace layout:
 - `./src` — the cloned repository
-- `./context.json` — repo identity plus a `scrutineer` block with `api_base`, `token`, `repository_id`. If prior scans of this repo have run (metadata, packages, advisories, dependents, maintainers), their results are available at the API documented below; use them instead of re-fetching from upstream.
+- `./context.json` — repo identity plus a `scrutineer` block with `api_base`, `token`, `repository_id`. If `scrutineer.scan_subpath` is set, scope every inventory, trace, and validation step to `./src/{scan_subpath}` only — do not reach outside that sub-folder for code analysis, and treat the sub-folder as the project root for all relative locations in the report. Other repositories' concerns (packages, advisories, maintainers) remain repo-wide. If prior scans of this repo have run (metadata, packages, advisories, dependents, maintainers), their results are available at the API documented below; use them instead of re-fetching from upstream.
 - `./report.json` — write your final report here
 - `./schema.json` — the JSON schema your report must conform to
 

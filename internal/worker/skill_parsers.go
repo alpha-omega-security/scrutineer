@@ -279,6 +279,104 @@ func (w *Worker) parseDependenciesOutput(scan *db.Scan, report string, emit func
 	return nil
 }
 
+// parseSubprojectsOutput replaces Subproject rows for the scan's
+// repository. Subprojects are a projection of the repo layout produced
+// by the subprojects skill; a fresh run reflects the current clone and
+// replaces any prior set.
+func (w *Worker) parseSubprojectsOutput(scan *db.Scan, report string, emit func(Event)) error {
+	var result struct {
+		Subprojects []struct {
+			Path        string `json:"path"`
+			Name        string `json:"name"`
+			Kind        string `json:"kind"`
+			Description string `json:"description"`
+		} `json:"subprojects"`
+	}
+	if err := json.Unmarshal([]byte(report), &result); err != nil {
+		return fmt.Errorf("parse subprojects: %w", err)
+	}
+	if err := w.DB.Where("repository_id = ?", scan.RepositoryID).Delete(&db.Subproject{}).Error; err != nil {
+		return fmt.Errorf("delete old subprojects: %w", err)
+	}
+	rows := make([]db.Subproject, 0, len(result.Subprojects))
+	for _, sp := range result.Subprojects {
+		path := strings.Trim(sp.Path, "/ \t\n")
+		if path == "" {
+			continue
+		}
+		rows = append(rows, db.Subproject{
+			RepositoryID: scan.RepositoryID,
+			Path:         path,
+			Name:         sp.Name,
+			Kind:         sp.Kind,
+			Description:  sp.Description,
+		})
+	}
+	if len(rows) > 0 {
+		if err := w.DB.Create(&rows).Error; err != nil {
+			return fmt.Errorf("save subprojects: %w", err)
+		}
+	}
+	emit(Event{Kind: KindText, Text: fmt.Sprintf("saved %d subproject(s)", len(rows))})
+	return nil
+}
+
+// parseRepoOverviewOutput reads `brief`'s structured output and writes
+// the detected fields onto the Repository row. Brief wins over
+// ecosyste.ms for the fields it produces (languages, default branch,
+// license) — the detection is typically more accurate than the upstream
+// API for self-hosted or sparsely-populated repos. Fields brief leaves
+// empty are left alone, so ecosyste.ms still fills gaps.
+func (w *Worker) parseRepoOverviewOutput(scan *db.Scan, report string, emit func(Event)) error {
+	var result struct {
+		Git struct {
+			DefaultBranch string `json:"default_branch"`
+		} `json:"git"`
+		Languages []struct {
+			Name     string `json:"name"`
+			Category string `json:"category"`
+		} `json:"languages"`
+		Resources struct {
+			LicenseType string `json:"license_type"`
+		} `json:"resources"`
+	}
+	if err := json.Unmarshal([]byte(report), &result); err != nil {
+		emit(Event{Kind: KindText, Text: "repo-overview: skipping backfill, unparseable JSON"})
+		return nil
+	}
+	updates := map[string]any{}
+	var names []string
+	for _, l := range result.Languages {
+		if l.Category != "" && l.Category != "language" {
+			continue
+		}
+		if l.Name != "" {
+			names = append(names, l.Name)
+		}
+	}
+	if len(names) > 0 {
+		updates["languages"] = strings.Join(names, ", ")
+	}
+	if result.Git.DefaultBranch != "" {
+		updates["default_branch"] = result.Git.DefaultBranch
+	}
+	if result.Resources.LicenseType != "" {
+		updates["license"] = result.Resources.LicenseType
+	}
+	if len(updates) == 0 {
+		return nil
+	}
+	if err := w.DB.Model(&db.Repository{}).Where("id = ?", scan.RepositoryID).Updates(updates).Error; err != nil {
+		return fmt.Errorf("update repo: %w", err)
+	}
+	keys := make([]string, 0, len(updates))
+	for k := range updates {
+		keys = append(keys, k)
+	}
+	emit(Event{Kind: KindText, Text: "repo-overview: wrote " + strings.Join(keys, ", ")})
+	return nil
+}
+
 // parseVerifyOutput records the outcome of a finding-scoped verification
 // run. Evidence and notes become a FindingNote; the status transition is
 // written via WriteFindingField with source=model_suggested so the audit

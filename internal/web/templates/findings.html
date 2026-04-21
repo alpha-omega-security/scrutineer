@@ -49,11 +49,14 @@
   <table class="table table-fixed w-full">
     <thead><tr>
       <th class="w-24">Severity</th><th>Title</th><th class="w-24">Status</th>
-      <th class="w-32">Repository</th><th class="w-24">CWE</th>
+      <th class="w-32">Repository</th>
+      {{if .AnySubPath}}<th class="w-32">Sub-path</th>{{end}}
+      <th class="w-24">CWE</th>
       <th class="w-56">Location</th><th class="w-16">Scan</th>
     </tr></thead>
     <tbody>
     {{$repos := .Repos}}
+    {{$showSub := .AnySubPath}}
     {{range .Findings}}
       {{$repo := index $repos .RepositoryID}}
       <tr class="cursor-pointer" hx-get="/findings/{{.ID}}" hx-target="body" hx-push-url="true">
@@ -64,6 +67,9 @@
         </td>
         <td>{{template "finding-status" (fstatus .Status)}}</td>
         <td class="truncate">{{$repo.Name}}</td>
+        {{if $showSub}}
+          <td class="text-muted-foreground text-xs">{{if .SubPath}}<code>{{.SubPath}}</code>{{else}}<span class="text-muted-foreground">root</span>{{end}}</td>
+        {{end}}
         <td class="text-muted-foreground">
           {{if .CWE}}<span data-tooltip="{{cwename .CWE}}">{{.CWE}}</span>{{end}}
         </td>

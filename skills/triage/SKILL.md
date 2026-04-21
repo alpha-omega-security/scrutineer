@@ -30,6 +30,7 @@ For every remaining skill in the list below, enqueue it: `POST {api_base}/reposi
 - `dependencies`
 - `sbom`
 - `maintainers`
+- `subprojects`
 - `repo-overview`
 - `semgrep`
 - `zizmor`

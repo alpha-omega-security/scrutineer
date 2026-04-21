@@ -1,6 +1,7 @@
 package web
 
 import (
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -37,6 +38,41 @@ func localReq(method, path string) *http.Request {
 	r := httptest.NewRequest(method, path, nil)
 	r.Host = "127.0.0.1:8080"
 	return r
+}
+
+func TestRepoList_findingsCountIsRepoWideNotLastScan(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://github.com/foo/bar.git", Name: "bar"}
+	s.DB.Create(&repo)
+
+	// Older scan produces two findings.
+	deep := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: "security-deep-dive"}
+	s.DB.Create(&deep)
+	s.DB.Create(&db.Finding{ScanID: deep.ID, RepositoryID: repo.ID, Title: "SSRF", Severity: "High"})
+	s.DB.Create(&db.Finding{ScanID: deep.ID, RepositoryID: repo.ID, Title: "XSS", Severity: "Medium"})
+
+	// Newer scan is repo-overview — no findings, and it is now the
+	// LastScan on the repo.
+	s.DB.Create(&db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: "repo-overview"})
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/"))
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	body := w.Body.String()
+
+	// The row for this repo should show "2" in a findings badge — the
+	// repo-wide total — not "0" that a naive LastScan.FindingsCount
+	// read would have produced.
+	if !strings.Contains(body, `<span class="badge-destructive">2</span>`) {
+		t.Errorf("expected findings badge showing 2, body=%s", body)
+	}
+	if strings.Contains(body, `<span class="badge-secondary">0</span>`) {
+		t.Errorf("repo with two findings should not render a 0 badge")
+	}
 }
 
 func TestRepoSearchFilters(t *testing.T) {
@@ -674,6 +710,93 @@ func TestBulkImport_dialogRendered(t *testing.T) {
 	}
 	if !strings.Contains(body, "getElementById('bulk-add-repo').showModal()") {
 		t.Error("'Add multiple' button does not open bulk dialog")
+	}
+}
+
+func TestCreateRepo_parsesGitHubTreeURL(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	triage := db.Skill{Name: "triage", Description: "o", Body: "b", Active: true, Source: "ui", Version: 1}
+	s.DB.Create(&triage)
+
+	form := url.Values{"url": {"https://github.com/apache/airflow/tree/main/airflow-core"}}
+	req := httptest.NewRequest("POST", "/repositories", strings.NewReader(form.Encode()))
+	req.Host = testHost
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+
+	var repo db.Repository
+	if err := s.DB.First(&repo).Error; err != nil {
+		t.Fatal(err)
+	}
+	if repo.URL != "https://github.com/apache/airflow.git" {
+		t.Errorf("repo.URL = %q, want clone URL without /tree/", repo.URL)
+	}
+	var scan db.Scan
+	s.DB.First(&scan)
+	if scan.SubPath != "airflow-core" {
+		t.Errorf("scan.SubPath = %q, want airflow-core", scan.SubPath)
+	}
+}
+
+func TestRetry_preservesSubPath(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://github.com/apache/airflow.git", Name: "airflow"}
+	s.DB.Create(&repo)
+	skill := db.Skill{Name: "security-deep-dive", Description: "x", Body: "b", Active: true, Source: "ui", Version: 1}
+	s.DB.Create(&skill)
+	finished := time.Now()
+	orig := db.Scan{
+		RepositoryID: repo.ID, Kind: "skill", Status: db.ScanFailed,
+		SkillID: &skill.ID, SkillName: "security-deep-dive",
+		SubPath: "airflow-core", FinishedAt: &finished,
+	}
+	s.DB.Create(&orig)
+
+	req := httptest.NewRequest("POST", fmt.Sprintf("/scans/%d/retry", orig.ID), nil)
+	req.Host = testHost
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("retry status %d: %s", w.Code, w.Body)
+	}
+
+	var fresh db.Scan
+	s.DB.Where("id != ?", orig.ID).First(&fresh)
+	if fresh.SubPath != "airflow-core" {
+		t.Errorf("retry lost sub-path: got %q, want airflow-core", fresh.SubPath)
+	}
+}
+
+func TestSubprojectsRenderedOnRepoPage(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	now := time.Now()
+	repo := db.Repository{URL: "https://github.com/apache/airflow.git", Name: "airflow", FetchedAt: &now}
+	s.DB.Create(&repo)
+	s.DB.Create(&db.Subproject{RepositoryID: repo.ID, Path: "airflow-core", Name: "airflow-core", Kind: "python-package", Description: "Core runtime"})
+	s.DB.Create(&db.Subproject{RepositoryID: repo.ID, Path: "providers/amazon", Kind: "python-package", Description: "AWS provider"})
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/repositories/%d", repo.ID), nil)
+	req.Host = testHost
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	body := w.Body.String()
+	if w.Code != 200 {
+		t.Fatalf("repo show status %d", w.Code)
+	}
+	for _, want := range []string{"Subprojects", "airflow-core", "providers/amazon", "python-package", "Core runtime", "AWS provider", `name="sub_path"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("repo page missing %q", want)
+		}
 	}
 }
 

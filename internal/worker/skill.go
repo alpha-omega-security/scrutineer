@@ -27,12 +27,16 @@ type skillContext struct {
 }
 
 type skillContextScrutineer struct {
-	APIBase   string `json:"api_base"`             // e.g. http://127.0.0.1:8080/api
-	ScanID    uint   `json:"scan_id"`              // the scan that owns this run
-	Token     string `json:"token"`                // bearer for api_base
-	RepoID    uint   `json:"repository_id"`        // convenience for URL building
-	SkillID   uint   `json:"skill_id,omitempty"`   // the running skill
-	FindingID uint   `json:"finding_id,omitempty"` // set for finding-scoped scans
+	APIBase   string `json:"api_base"`              // e.g. http://127.0.0.1:8080/api
+	ScanID    uint   `json:"scan_id"`               // the scan that owns this run
+	Token     string `json:"token"`                 // bearer for api_base
+	RepoID    uint   `json:"repository_id"`         // convenience for URL building
+	SkillID   uint   `json:"skill_id,omitempty"`    // the running skill
+	FindingID uint   `json:"finding_id,omitempty"`  // set for finding-scoped scans
+	// ScanSubPath scopes code analysis to a sub-folder of ./src (monorepo
+	// support). Empty means the repo root. Skills that walk files honour
+	// this; skills that query external APIs ignore it.
+	ScanSubPath string `json:"scan_subpath,omitempty"`
 }
 
 type skillContextRepo struct {
@@ -69,7 +73,11 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 		"skill_version": skill.Version,
 	})
 
-	workRoot := filepath.Join(w.DataDir, fmt.Sprintf("repo-%d", scan.RepositoryID))
+	// Per-scan workspace keeps concurrent skills on the same repo from
+	// clobbering each other's src/ and report.json. Cleaned at scan
+	// completion so we don't accumulate disk; failed-scan dirs are left
+	// behind so the operator can inspect them.
+	workRoot := filepath.Join(w.DataDir, fmt.Sprintf("scan-%d", scan.ID))
 	skillDir := filepath.Join(workRoot, ".claude", "skills", skill.Name)
 	if err := stageSkill(&skill, skillDir); err != nil {
 		return "", fmt.Errorf("stage skill: %w", err)
@@ -84,7 +92,7 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 
 	sj := SkillJob{
 		Repo:       scan.Repository,
-		DataDir:    w.DataDir,
+		WorkRoot:   workRoot,
 		Model:      scan.Model,
 		Name:       skill.Name,
 		SkillDir:   skillDir,
@@ -132,6 +140,14 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 		if err := w.parseVerifyOutput(scan, res.Report, emit); err != nil {
 			return res.Report, err
 		}
+	case "subprojects":
+		if err := w.parseSubprojectsOutput(scan, res.Report, emit); err != nil {
+			return res.Report, err
+		}
+	case "repo_overview":
+		if err := w.parseRepoOverviewOutput(scan, res.Report, emit); err != nil {
+			return res.Report, err
+		}
 	}
 	return res.Report, nil
 }
@@ -143,7 +159,7 @@ func (w *Worker) parseFindingsOutput(scan *db.Scan, report string, emit func(Eve
 	if err != nil {
 		return err
 	}
-	findings := rep.toFindings(scan.ID, scan.RepositoryID, scan.Commit)
+	findings := rep.toFindings(scan.ID, scan.RepositoryID, scan.Commit, scan.SubPath)
 	scan.FindingsCount = len(findings)
 	if len(findings) > 0 {
 		if err := w.DB.Create(&findings).Error; err != nil {
@@ -297,6 +313,9 @@ func stageContext(workRoot, apiBase string, scan *db.Scan, repo *db.Repository) 
 	}
 	if scan.FindingID != nil {
 		ctx.Scrutineer.FindingID = *scan.FindingID
+	}
+	if scan.SubPath != "" {
+		ctx.Scrutineer.ScanSubPath = scan.SubPath
 	}
 	b, err := json.MarshalIndent(ctx, "", "  ")
 	if err != nil {

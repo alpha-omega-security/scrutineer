@@ -1,0 +1,92 @@
+package web
+
+import (
+	"fmt"
+	"net/url"
+	"strings"
+)
+
+// RepoInput is the parsed form of a user-supplied repository reference.
+// CloneURL is what scrutineer passes to `git clone`; SubPath is the
+// sub-folder within the checkout that scans should scope to (empty means
+// the repo root). Branch is extracted from /tree/<branch>/<path> URLs so
+// the operator knows it was present, but is not honoured for clone (see
+// #19 discussion) — scrutineer still clones the default branch.
+type RepoInput struct {
+	CloneURL string
+	SubPath  string
+	Branch   string
+}
+
+// ParseRepoInput accepts the three user-facing shapes:
+//
+//	https://github.com/owner/repo[.git]
+//	https://github.com/owner/repo/tree/<branch>/<path...>
+//	https://forge/owner/repo#<path>
+//
+// The fragment form is the forge-agnostic way to scope to a sub-path for
+// non-GitHub hosts. /tree/ parsing is GitHub-specific but matches the URL
+// users paste from the web UI.
+func ParseRepoInput(raw string) (RepoInput, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return RepoInput{}, fmt.Errorf("url required")
+	}
+	if !strings.HasPrefix(raw, "https://") {
+		return RepoInput{}, fmt.Errorf("only https:// URLs are allowed, got %q", raw)
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return RepoInput{}, fmt.Errorf("parse url: %w", err)
+	}
+
+	// Fragment form: url#sub/path. Always wins if present, since the user
+	// typed it explicitly.
+	if u.Fragment != "" {
+		clean := *u
+		clean.Fragment = ""
+		return RepoInput{
+			CloneURL: ensureGitSuffix(clean.String()),
+			SubPath:  strings.Trim(u.Fragment, "/"),
+		}, nil
+	}
+
+	// /tree/<branch>/<path> shape (GitHub, Gitea, Forgejo).
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	treeIdx := -1
+	for i, p := range parts {
+		if p == "tree" {
+			treeIdx = i
+			break
+		}
+	}
+	if treeIdx >= 2 && treeIdx+1 < len(parts) {
+		// owner/repo[/...]/tree/<branch>/<path...>
+		repoPath := "/" + strings.Join(parts[:treeIdx], "/")
+		branch := parts[treeIdx+1]
+		subPath := ""
+		if treeIdx+2 < len(parts) {
+			subPath = strings.Join(parts[treeIdx+2:], "/")
+		}
+		clean := *u
+		clean.Path = repoPath
+		return RepoInput{
+			CloneURL: ensureGitSuffix(clean.String()),
+			SubPath:  subPath,
+			Branch:   branch,
+		}, nil
+	}
+
+	// Plain clone URL.
+	return RepoInput{
+		CloneURL: ensureGitSuffix(raw),
+	}, nil
+}
+
+// ensureGitSuffix returns u with a single trailing ".git". Idempotent.
+func ensureGitSuffix(u string) string {
+	if strings.HasSuffix(u, ".git") {
+		return u
+	}
+	return u + ".git"
+}

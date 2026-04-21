@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires the `brief` CLI (https://github.com/ecosyste-ms/brief) on PATH.
 metadata:
   scrutineer.output_file: report.json
-  scrutineer.output_kind: freeform
+  scrutineer.output_kind: repo_overview
 ---
 
 # repo-overview
@@ -19,6 +19,14 @@ Produce an overview of the repository cloned at `./src` by invoking the `brief` 
 - `./report.json` — write the final report here
 
 ## What to run
+
+If `./context.json` has `scrutineer.scan_subpath` set, run `brief` against that sub-folder instead of the repo root:
+
+```bash
+brief --json ./src/$(jq -r '.scrutineer.scan_subpath // ""' ./context.json | sed 's:^/*::') > ./report.json
+```
+
+For a root scan (no `scan_subpath`), that reduces to the original:
 
 ```bash
 brief --json ./src > ./report.json

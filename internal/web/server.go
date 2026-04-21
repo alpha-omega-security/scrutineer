@@ -209,7 +209,8 @@ func paginate(r *http.Request, total int64) Page {
 
 type repoRow struct {
 	db.Repository
-	LastScan *db.Scan
+	LastScan      *db.Scan
+	FindingsTotal int
 }
 
 func (s *Server) repoList(w http.ResponseWriter, r *http.Request) {
@@ -254,6 +255,13 @@ func (s *Server) repoList(w http.ResponseWriter, r *http.Request) {
 			Order("id desc").First(&last).Error; err == nil {
 			row.LastScan = &last
 		}
+		// Count findings across all scans of this repo. The previous
+		// implementation read LastScan.FindingsCount, which is zero for
+		// repo-overview / metadata / packages scans — those do not
+		// produce Finding rows even when findings exist on the repo.
+		var total int64
+		s.DB.Model(&db.Finding{}).Where("repository_id = ?", repo.ID).Count(&total)
+		row.FindingsTotal = int(total)
 		rows = append(rows, row)
 	}
 	var languages []string
@@ -393,9 +401,16 @@ func (s *Server) findings(w http.ResponseWriter, r *http.Request) {
 	q.Limit(perPage).Offset((page.N - 1) * perPage).Find(&rows)
 
 	reposByID := loadRepoMap(s.DB, rows)
+	anySubPath := false
+	for _, r := range rows {
+		if r.SubPath != "" {
+			anySubPath = true
+			break
+		}
+	}
 	s.render(w, "findings.html", map[string]any{
 		"Findings": rows, "Page": page, "Severity": sev, "Sort": sort,
-		"Repos": reposByID, "Q": search,
+		"Repos": reposByID, "Q": search, "AnySubPath": anySubPath,
 	})
 }
 
@@ -776,19 +791,27 @@ func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 	s.DB.Model(&db.Scan{}).Where("skill_name != ''").Distinct("skill_name").
 		Order("skill_name").Pluck("skill_name", &skillNames)
 
+	anySubPath := false
+	for _, sc := range scans {
+		if sc.SubPath != "" {
+			anySubPath = true
+			break
+		}
+	}
 	s.render(w, "jobs.html", map[string]any{
 		"Scans": scans, "Page": page,
 		"Skill": skillName, "Status": status, "Sort": sort, "Skills": skillNames,
+		"AnySubPath": anySubPath,
 	})
 }
 
 func (s *Server) repoCreate(w http.ResponseWriter, r *http.Request) {
-	url := strings.TrimSpace(r.FormValue("url"))
-	if url == "" {
-		http.Error(w, "url required", http.StatusUnprocessableEntity)
+	input, err := ParseRepoInput(r.FormValue("url"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
-	repo, _, err := s.createOrTriageRepo(r.Context(), url, r.FormValue("model"))
+	repo, _, err := s.createOrTriageRepo(r.Context(), input, r.FormValue("model"))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -808,17 +831,18 @@ func (s *Server) repoBulkCreate(w http.ResponseWriter, r *http.Request) {
 	var created, skipped int
 	var invalid []string
 	for _, line := range lines {
-		url := strings.TrimSpace(line)
-		if url == "" {
+		line = strings.TrimSpace(line)
+		if line == "" {
 			continue
 		}
-		if !strings.HasPrefix(url, "https://") {
-			invalid = append(invalid, url)
-			continue
-		}
-		_, isNew, err := s.createOrTriageRepo(r.Context(), url, r.FormValue("model"))
+		input, err := ParseRepoInput(line)
 		if err != nil {
-			invalid = append(invalid, url)
+			invalid = append(invalid, line)
+			continue
+		}
+		_, isNew, err := s.createOrTriageRepo(r.Context(), input, r.FormValue("model"))
+		if err != nil {
+			invalid = append(invalid, line)
 			continue
 		}
 		if isNew {
@@ -846,11 +870,11 @@ func (s *Server) repoBulkCreate(w http.ResponseWriter, r *http.Request) {
 // It FirstOrCreates the Repository row and, when the row is new, enqueues
 // the default skill. isNew reports whether the repo was actually created
 // (so callers can distinguish "queued" from "already present").
-func (s *Server) createOrTriageRepo(ctx context.Context, url, model string) (db.Repository, bool, error) {
+func (s *Server) createOrTriageRepo(ctx context.Context, input RepoInput, model string) (db.Repository, bool, error) {
 	existing := int64(0)
-	s.DB.Model(&db.Repository{}).Where("url = ?", url).Count(&existing)
-	repo := db.Repository{URL: url, Name: db.NameFromURL(url)}
-	if err := s.DB.Where(db.Repository{URL: url}).FirstOrCreate(&repo).Error; err != nil {
+	s.DB.Model(&db.Repository{}).Where("url = ?", input.CloneURL).Count(&existing)
+	repo := db.Repository{URL: input.CloneURL, Name: db.NameFromURL(input.CloneURL)}
+	if err := s.DB.Where(db.Repository{URL: input.CloneURL}).FirstOrCreate(&repo).Error; err != nil {
 		return repo, false, err
 	}
 	isNew := existing == 0
@@ -862,7 +886,10 @@ func (s *Server) createOrTriageRepo(ctx context.Context, url, model string) (db.
 		s.Log.Warn("default skill not found, repo added with no scans", "skill", defaultSkillName)
 		return repo, true, nil
 	}
-	if _, err := s.enqueueSkill(ctx, repo.ID, skill.ID, model); err != nil {
+	if _, err := s.enqueueSkillWith(ctx, repo.ID, skill.ID, ScanOpts{
+		Model:   model,
+		SubPath: input.SubPath,
+	}); err != nil {
 		return repo, true, err
 	}
 	return repo, true, nil
@@ -907,7 +934,19 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var scans []db.Scan
-	s.DB.Where("repository_id = ?", repo.ID).Order("id desc").Find(&scans)
+	// Per (skill_name, sub_path) we want just the latest scan — the repo
+	// page should read like "this is the state of each job on this repo",
+	// not a scroll of every historical attempt. Older runs are still
+	// reachable via /scans/{id} and the global /scans index.
+	s.DB.Raw(`
+		SELECT s.* FROM scans s
+		JOIN (
+			SELECT COALESCE(skill_name, '') AS sn, COALESCE(sub_path, '') AS sp, MAX(id) AS max_id
+			FROM scans WHERE repository_id = ?
+			GROUP BY sn, sp
+		) latest ON latest.max_id = s.id
+		ORDER BY s.id DESC
+	`, repo.ID).Scan(&scans)
 
 	active := false
 	for _, sc := range scans {
@@ -969,12 +1008,30 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 	var activeSkills []db.Skill
 	s.DB.Where("active = ?", true).Order("name").Find(&activeSkills)
 
+	var subprojects []db.Subproject
+	s.DB.Where("repository_id = ?", repo.ID).Order("path").Find(&subprojects)
+	subScanCount := map[string]int{}
+	if len(subprojects) > 0 {
+		rows := make([]struct {
+			SubPath string
+			N       int
+		}, 0)
+		s.DB.Raw(`SELECT sub_path, COUNT(*) AS n FROM scans
+			WHERE repository_id = ? AND sub_path != '' GROUP BY sub_path`,
+			repo.ID).Scan(&rows)
+		for _, r := range rows {
+			subScanCount[r.SubPath] = r.N
+		}
+	}
+
 	data := map[string]any{
 		"Repo": repo, "Scans": scans, "Active": active, "Latest": latest,
 		"TMCommit": tmCommit,
 		"Deps": deps, "Pkgs": pkgs, "Dependents": dependents, "Advisories": advisories, "Maintainers": maintainers, "ThreatModel": threatModel,
 		"KnownURLs": knownURLs, "KnownPURLs": knownPURLs,
-		"Skills": activeSkills,
+		"Skills":       activeSkills,
+		"Subprojects":  subprojects,
+		"SubScanCount": subScanCount,
 	}
 	if r.Header.Get("HX-Target") == "scan-rows" {
 		s.maybeToast(w, r, repo.Name, scans)
@@ -1002,7 +1059,10 @@ func (s *Server) repoScan(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, deepDiveSkillName+" skill is not installed", http.StatusPreconditionFailed)
 		return
 	}
-	if _, err := s.enqueueSkill(r.Context(), repo.ID, skill.ID, r.FormValue("model")); err != nil {
+	if _, err := s.enqueueSkillWith(r.Context(), repo.ID, skill.ID, ScanOpts{
+		Model:   r.FormValue("model"),
+		SubPath: strings.TrimSpace(r.FormValue("sub_path")),
+	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -1029,7 +1089,11 @@ func (s *Server) scanRetry(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "scan cannot be retried: no skill reference", http.StatusBadRequest)
 		return
 	}
-	newID, err := s.enqueueSkill(r.Context(), scan.RepositoryID, *scan.SkillID, scan.Model)
+	newID, err := s.enqueueSkillWith(r.Context(), scan.RepositoryID, *scan.SkillID, ScanOpts{
+		Model:     scan.Model,
+		FindingID: scan.FindingID,
+		SubPath:   scan.SubPath,
+	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -1056,24 +1120,40 @@ func (s *Server) scanLog(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (s *Server) enqueueSkill(ctx context.Context, repoID, skillID uint, model string) (uint, error) {
-	return s.enqueueSkillScoped(ctx, repoID, skillID, nil, model)
+// ScanOpts carries the optional inputs to an enqueue call. Keeps the
+// enqueue signature from drifting into an unreadable positional list as
+// new options (SubPath, FindingID, Model) accumulate.
+type ScanOpts struct {
+	Model     string
+	FindingID *uint
+	SubPath   string
 }
 
-// enqueueSkillScoped creates a skill scan and optionally scopes it to a
-// finding. Finding-scoped scans carry the id through to context.json so
-// verify/patch/disclose skills know which finding to act on.
+func (s *Server) enqueueSkill(ctx context.Context, repoID, skillID uint, model string) (uint, error) {
+	return s.enqueueSkillWith(ctx, repoID, skillID, ScanOpts{Model: model})
+}
+
+// enqueueSkillScoped is a thin shim preserved for call sites that already
+// pass a finding id. New code should prefer enqueueSkillWith + ScanOpts.
 func (s *Server) enqueueSkillScoped(ctx context.Context, repoID, skillID uint, findingID *uint, model string) (uint, error) {
-	if !ValidModel(model) {
-		model = DefaultModel()
+	return s.enqueueSkillWith(ctx, repoID, skillID, ScanOpts{Model: model, FindingID: findingID})
+}
+
+// enqueueSkillWith creates a skill scan using the given ScanOpts. Empty
+// fields default cleanly: unset FindingID means not-finding-scoped, empty
+// SubPath means root-scoped, empty Model means the configured default.
+func (s *Server) enqueueSkillWith(ctx context.Context, repoID, skillID uint, opts ScanOpts) (uint, error) {
+	if !ValidModel(opts.Model) {
+		opts.Model = DefaultModel()
 	}
 	scan := db.Scan{
 		RepositoryID: repoID,
 		Kind:         worker.JobSkill,
 		Status:       db.ScanQueued,
-		Model:        model,
+		Model:        opts.Model,
 		SkillID:      &skillID,
-		FindingID:    findingID,
+		FindingID:    opts.FindingID,
+		SubPath:      opts.SubPath,
 		APIToken:     NewAPIToken(),
 	}
 	if err := s.DB.Create(&scan).Error; err != nil {
