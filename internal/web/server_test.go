@@ -40,6 +40,41 @@ func localReq(method, path string) *http.Request {
 	return r
 }
 
+func TestRepoList_findingsCountIsRepoWideNotLastScan(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://github.com/foo/bar.git", Name: "bar"}
+	s.DB.Create(&repo)
+
+	// Older scan produces two findings.
+	deep := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: "security-deep-dive"}
+	s.DB.Create(&deep)
+	s.DB.Create(&db.Finding{ScanID: deep.ID, RepositoryID: repo.ID, Title: "SSRF", Severity: "High"})
+	s.DB.Create(&db.Finding{ScanID: deep.ID, RepositoryID: repo.ID, Title: "XSS", Severity: "Medium"})
+
+	// Newer scan is repo-overview — no findings, and it is now the
+	// LastScan on the repo.
+	s.DB.Create(&db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: "repo-overview"})
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/"))
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	body := w.Body.String()
+
+	// The row for this repo should show "2" in a findings badge — the
+	// repo-wide total — not "0" that a naive LastScan.FindingsCount
+	// read would have produced.
+	if !strings.Contains(body, `<span class="badge-destructive">2</span>`) {
+		t.Errorf("expected findings badge showing 2, body=%s", body)
+	}
+	if strings.Contains(body, `<span class="badge-secondary">0</span>`) {
+		t.Errorf("repo with two findings should not render a 0 badge")
+	}
+}
+
 func TestRepoSearchFilters(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
