@@ -408,8 +408,12 @@ func (s *Server) orgShow(w http.ResponseWriter, r *http.Request) {
 	}
 
 	const orgTabLimit = 200
+	// Sort by severity (Critical→High→Medium→Low), then newest first
+	// within a severity. Purely alphabetical severity would put Low
+	// before Medium, which misreads for a stakeholder scanning the tab.
 	var findings []db.Finding
-	s.DB.Where("repository_id IN ?", repoIDs).Order("id desc").
+	s.DB.Where("repository_id IN ?", repoIDs).
+		Order(severityOrder).Order("id desc").
 		Limit(orgTabLimit).Find(&findings)
 	reposByID := loadRepoMap(s.DB, findings)
 

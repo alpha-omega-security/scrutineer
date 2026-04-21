@@ -271,6 +271,41 @@ func TestOrgShow_rendersRepos(t *testing.T) {
 	}
 }
 
+func TestOrgShow_findingsTabSortsBySeverity(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	r := db.Repository{URL: "https://example.com/acme/web", Name: "web", Owner: "acme"}
+	s.DB.Create(&r)
+	scan := db.Scan{RepositoryID: r.ID, Kind: "skill", Status: db.ScanDone, SkillName: "x"}
+	s.DB.Create(&scan)
+	// Create in the wrong order on purpose, so id-desc would place Low
+	// above Medium and Medium above High.
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: r.ID, Title: "LOW-ROW", Severity: "Low"})
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: r.ID, Title: "MED-ROW", Severity: "Medium"})
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: r.ID, Title: "HIGH-ROW", Severity: "High"})
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: r.ID, Title: "CRIT-ROW", Severity: "Critical"})
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/orgs/acme"))
+	if w.Code != 200 {
+		t.Fatalf("status %d", w.Code)
+	}
+	body := w.Body.String()
+	order := []string{"CRIT-ROW", "HIGH-ROW", "MED-ROW", "LOW-ROW"}
+	lastIdx := -1
+	for _, title := range order {
+		idx := strings.Index(body, title)
+		if idx < 0 {
+			t.Fatalf("missing %q in body", title)
+		}
+		if idx < lastIdx {
+			t.Errorf("findings out of severity order: %v rendered in wrong position", order)
+		}
+		lastIdx = idx
+	}
+}
+
 func TestOrgShow_unknownIs404(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
