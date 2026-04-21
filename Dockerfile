@@ -1,10 +1,9 @@
 FROM golang:1.26.2-alpine AS build
-RUN apk add --no-cache gcc musl-dev
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=1 go build -o /scrutineer ./cmd/scrutineer
+RUN CGO_ENABLED=0 go build -o /scrutineer ./cmd/scrutineer
 
 FROM node:22-alpine AS claude
 RUN npm install -g @anthropic-ai/claude-code@1.0.17
