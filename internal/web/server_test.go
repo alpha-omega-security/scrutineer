@@ -99,6 +99,111 @@ func TestRepoSearchPreservesOtherFilters(t *testing.T) {
 	}
 }
 
+func TestFindingsSearchFilters(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: "security-deep-dive"}
+	s.DB.Create(&scan)
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "SSRF in image fetcher",
+		Severity: "High", Location: "fetch.go:42", CWE: "CWE-918"})
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "OS command injection",
+		Severity: "Critical", Location: "shell.go:10", CWE: "CWE-78", CVEID: "CVE-2026-1"})
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "Stored XSS",
+		Severity: "Medium", Location: "view.go:5", CWE: "CWE-79"})
+
+	cases := map[string][]string{
+		"SSRF":           {"SSRF in image fetcher"},
+		"command":        {"OS command injection"},
+		"shell.go":       {"OS command injection"},
+		"CWE-79":         {"Stored XSS"},
+		"CVE-2026-1":     {"OS command injection"},
+		"NOPE_NOPE_NOPE": nil,
+	}
+	for q, want := range cases {
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, localReq("GET", "/findings?q="+url.QueryEscape(q)))
+		if w.Code != 200 {
+			t.Errorf("q=%q status %d", q, w.Code)
+			continue
+		}
+		body := w.Body.String()
+		for _, title := range want {
+			if !strings.Contains(body, title) {
+				t.Errorf("q=%q missing %q", q, title)
+			}
+		}
+		if len(want) == 0 && !strings.Contains(body, "No matches") {
+			t.Errorf("q=%q empty state missing", q)
+		}
+	}
+}
+
+func TestPackagesSearchFilters(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
+	s.DB.Create(&repo)
+	s.DB.Create(&db.Package{RepositoryID: repo.ID, Name: "lodash", Ecosystem: "npm", PURL: "pkg:npm/lodash"})
+	s.DB.Create(&db.Package{RepositoryID: repo.ID, Name: "express", Ecosystem: "npm", PURL: "pkg:npm/express", Licenses: "MIT"})
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/packages?q=lodash"))
+	body := w.Body.String()
+	if !strings.Contains(body, "lodash") || strings.Contains(body, "express") {
+		t.Errorf("name search: %s", body)
+	}
+
+	w = httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/packages?q=MIT"))
+	body = w.Body.String()
+	if !strings.Contains(body, "express") {
+		t.Errorf("license search did not find express: %s", body)
+	}
+
+	w = httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/packages?q=NOPE_NOPE_NOPE"))
+	if !strings.Contains(w.Body.String(), "No matches") {
+		t.Error("empty-match packages: no empty state")
+	}
+}
+
+func TestMaintainersSearchFilters(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	s.DB.Create(&db.Maintainer{Login: "alice", Name: "Alice Example", Email: "alice@example.com", Company: "Acme"})
+	s.DB.Create(&db.Maintainer{Login: "bob", Name: "Bob", Email: "bob@other.net", Notes: "has bus factor risk"})
+
+	cases := map[string][]string{
+		"alice":          {"alice"},
+		"@example.com":   {"alice"},
+		"Acme":           {"alice"},
+		"bus factor":     {"bob"},
+		"NOPE_NOPE_NOPE": nil,
+	}
+	for q, want := range cases {
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, localReq("GET", "/maintainers?q="+url.QueryEscape(q)))
+		if w.Code != 200 {
+			t.Errorf("q=%q status %d", q, w.Code)
+			continue
+		}
+		body := w.Body.String()
+		for _, login := range want {
+			if !strings.Contains(body, login) {
+				t.Errorf("q=%q missing %q", q, login)
+			}
+		}
+		if len(want) == 0 && !strings.Contains(body, "No matches") {
+			t.Errorf("q=%q empty state missing", q)
+		}
+	}
+}
+
 func TestIndexRenders(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

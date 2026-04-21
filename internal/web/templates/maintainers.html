@@ -5,6 +5,11 @@
     <i data-lucide="users"></i> Maintainers
   </h2>
   <div class="flex items-center gap-2">
+    <form method="get" action="/maintainers" class="inline-flex">
+      <input class="input" type="search" name="q" value="{{.Q}}" placeholder="Search maintainers"
+             autocomplete="off" spellcheck="false">
+      <input type="hidden" name="status" value="{{.Status}}">
+    </form>
     <div class="dropdown-menu">
       <button type="button" class="btn-outline" aria-haspopup="menu" aria-expanded="false">
         <i data-lucide="filter"></i>
@@ -13,9 +18,9 @@
       </button>
       <div data-popover aria-hidden="true" data-align="end">
         <div role="menu">
-          <a role="menuitem" href="/maintainers">All</a>
+          <a role="menuitem" href="/maintainers?q={{.Q}}">All</a>
           {{range (list "active" "inactive" "unknown")}}
-            <a role="menuitem" href="/maintainers?status={{.}}"
+            <a role="menuitem" href="/maintainers?q={{$.Q}}&status={{.}}"
                {{if eq . $.Status}}aria-current="true"{{end}}>{{.}}</a>
           {{end}}
         </div>
@@ -43,6 +48,8 @@
     </tbody>
   </table>
   {{template "pagination" .Page}}
+{{else if .Q}}
+  {{template "empty" (dict "Icon" "search-x" "Title" "No matches" "Body" "No maintainers matched the search.")}}
 {{else}}
   {{template "empty" (dict "Icon" "users" "Title" "No maintainers" "Body" "Maintainers are populated from the commits job when repositories are scanned.")}}
 {{end}}

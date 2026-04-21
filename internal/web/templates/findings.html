@@ -5,6 +5,12 @@
     <i data-lucide="bug"></i> Findings
   </h2>
   <div class="flex items-center gap-2">
+    <form method="get" action="/findings" class="inline-flex">
+      <input class="input" type="search" name="q" value="{{.Q}}" placeholder="Search findings"
+             autocomplete="off" spellcheck="false">
+      <input type="hidden" name="severity" value="{{.Severity}}">
+      <input type="hidden" name="sort" value="{{.Sort}}">
+    </form>
     <div class="dropdown-menu">
       <button type="button" class="btn-outline" aria-haspopup="menu" aria-expanded="false">
         <i data-lucide="filter"></i>
@@ -13,9 +19,9 @@
       </button>
       <div data-popover aria-hidden="true" data-align="end">
         <div role="menu">
-          <a role="menuitem" href="/findings?sort={{.Sort}}">All severities</a>
+          <a role="menuitem" href="/findings?q={{.Q}}&sort={{.Sort}}">All severities</a>
           {{range (list "Critical" "High" "Medium" "Low")}}
-            <a role="menuitem" href="/findings?severity={{.}}&sort={{$.Sort}}"
+            <a role="menuitem" href="/findings?q={{$.Q}}&severity={{.}}&sort={{$.Sort}}"
                {{if eq . $.Severity}}aria-current="true"{{end}}>{{.}}</a>
           {{end}}
         </div>
@@ -30,7 +36,7 @@
       <div data-popover aria-hidden="true" data-align="end">
         <div role="menu">
           {{range (list "newest" "severity" "repository")}}
-            <a role="menuitem" href="/findings?severity={{$.Severity}}&sort={{.}}"
+            <a role="menuitem" href="/findings?q={{$.Q}}&severity={{$.Severity}}&sort={{.}}"
                {{if eq . $.Sort}}aria-current="true"{{end}}>{{.}}</a>
           {{end}}
         </div>
@@ -68,6 +74,8 @@
     </tbody>
   </table>
   {{template "pagination" .Page}}
+{{else if .Q}}
+  {{template "empty" (dict "Icon" "search-x" "Title" "No matches" "Body" "No findings matched the search.")}}
 {{else}}
   {{template "empty" (dict "Icon" "bug" "Title" "No findings" "Body" "Findings appear here once a scan reports vulnerabilities.")}}
 {{end}}

@@ -267,6 +267,12 @@ func (s *Server) maintainersList(w http.ResponseWriter, r *http.Request) {
 	if status != "" {
 		q = q.Where("status = ?", status)
 	}
+	search := strings.TrimSpace(r.URL.Query().Get("q"))
+	if search != "" {
+		like := "%" + search + "%"
+		q = q.Where("login LIKE ? OR name LIKE ? OR email LIKE ? OR company LIKE ? OR notes LIKE ?",
+			like, like, like, like, like)
+	}
 	var total int64
 	q.Count(&total)
 	page := paginate(r, total)
@@ -276,7 +282,7 @@ func (s *Server) maintainersList(w http.ResponseWriter, r *http.Request) {
 		Limit(perPage).Offset((page.N - 1) * perPage).Find(&rows)
 
 	s.render(w, "maintainers.html", map[string]any{
-		"Maintainers": rows, "Page": page, "Status": status,
+		"Maintainers": rows, "Page": page, "Status": status, "Q": search,
 	})
 }
 
@@ -335,6 +341,12 @@ func (s *Server) findings(w http.ResponseWriter, r *http.Request) {
 	if sev != "" {
 		q = q.Where("severity = ?", sev)
 	}
+	search := strings.TrimSpace(r.URL.Query().Get("q"))
+	if search != "" {
+		like := "%" + search + "%"
+		q = q.Where("title LIKE ? OR location LIKE ? OR cwe LIKE ? OR cve_id LIKE ? OR affected LIKE ?",
+			like, like, like, like, like)
+	}
 
 	sort := r.URL.Query().Get("sort")
 	switch sort {
@@ -358,7 +370,7 @@ func (s *Server) findings(w http.ResponseWriter, r *http.Request) {
 	reposByID := loadRepoMap(s.DB, rows)
 	s.render(w, "findings.html", map[string]any{
 		"Findings": rows, "Page": page, "Severity": sev, "Sort": sort,
-		"Repos": reposByID,
+		"Repos": reposByID, "Q": search,
 	})
 }
 
@@ -520,6 +532,12 @@ func (s *Server) packages(w http.ResponseWriter, r *http.Request) {
 	if eco != "" {
 		q = q.Where("ecosystem = ?", eco)
 	}
+	search := strings.TrimSpace(r.URL.Query().Get("q"))
+	if search != "" {
+		like := "%" + search + "%"
+		// GORM maps the PURL struct field to the `p_url` column.
+		q = q.Where("name LIKE ? OR p_url LIKE ? OR licenses LIKE ?", like, like, like)
+	}
 
 	sort := r.URL.Query().Get("sort")
 	switch sort {
@@ -548,6 +566,7 @@ func (s *Server) packages(w http.ResponseWriter, r *http.Request) {
 
 	s.render(w, "packages.html", map[string]any{
 		"Pkgs": rows, "Page": page, "Ecosystem": eco, "Sort": sort, "Ecosystems": ecosystems,
+		"Q": search,
 	})
 }
 
