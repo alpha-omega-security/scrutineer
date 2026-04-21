@@ -139,6 +139,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /dependents/{id}/scan", s.dependentScan)
 	mux.HandleFunc("GET /packages", s.packages)
 	mux.HandleFunc("GET /packages/{id}", s.packageShow)
+	mux.HandleFunc("GET /advisories", s.advisoriesList)
 	mux.HandleFunc("GET /scans/{id}", s.scanShow)
 	mux.HandleFunc("POST /scans/{id}/retry", s.scanRetry)
 	mux.HandleFunc("GET /scans/{id}/log", s.scanLog)
@@ -171,8 +172,11 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 }
 
 const (
-	perPage       = 20
-	defaultSort   = "newest"
+	perPage     = 20
+	defaultSort = "newest"
+	// sortRepository is the shared sort-by-repository option used by the
+	// findings, scans, and advisories indexes.
+	sortRepository = "repository"
 )
 
 type Page struct {
@@ -372,7 +376,7 @@ func (s *Server) findings(w http.ResponseWriter, r *http.Request) {
 	switch sort {
 	case "severity":
 		q = q.Order(severityOrder).Order("id desc")
-	case "repository":
+	case sortRepository:
 		q = q.Joins("JOIN repositories r ON r.id = findings.repository_id").
 			Order("r.name").Order("findings.id desc")
 	default:
@@ -621,6 +625,74 @@ func (s *Server) packageShow(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "package_show.html", data)
 }
 
+func (s *Server) advisoriesList(w http.ResponseWriter, r *http.Request) {
+	q := s.DB.Model(&db.Advisory{})
+	sev := r.URL.Query().Get("severity")
+	if sev != "" {
+		q = q.Where("severity = ?", sev)
+	}
+	search := strings.TrimSpace(r.URL.Query().Get("q"))
+	if search != "" {
+		like := "%" + search + "%"
+		q = q.Where("title LIKE ? OR packages LIKE ? OR classification LIKE ? OR uuid LIKE ?",
+			like, like, like, like)
+	}
+
+	sort := r.URL.Query().Get("sort")
+	switch sort {
+	case "newest":
+		q = q.Order("published_at desc, id desc")
+	case sortRepository:
+		q = q.Joins("JOIN repositories r ON r.id = advisories.repository_id").
+			Order("r.name").Order("advisories.cvss_score desc")
+	default:
+		sort = "severity"
+		q = q.Order("cvss_score desc, id desc")
+	}
+
+	var total int64
+	q.Count(&total)
+	page := paginate(r, total)
+
+	var rows []db.Advisory
+	q.Limit(perPage).Offset((page.N - 1) * perPage).Find(&rows)
+
+	reposByID := loadAdvisoryRepoMap(s.DB, rows)
+	var severities []string
+	s.DB.Model(&db.Advisory{}).Where("severity != ''").Distinct("severity").
+		Order("severity").Pluck("severity", &severities)
+
+	s.render(w, "advisories.html", map[string]any{
+		"Advisories": rows, "Page": page, "Severity": sev, "Sort": sort,
+		"Severities": severities, "Repos": reposByID, "Q": search,
+	})
+}
+
+// loadAdvisoryRepoMap batch-loads the repositories referenced by a slice
+// of advisories (Advisory.RepositoryID). Same pattern as loadRepoMap for
+// findings, duplicated rather than generified because the source field
+// is a different type.
+func loadAdvisoryRepoMap(gdb *gorm.DB, rows []db.Advisory) map[uint]db.Repository {
+	seen := make(map[uint]bool)
+	ids := make([]uint, 0)
+	for _, a := range rows {
+		if !seen[a.RepositoryID] {
+			seen[a.RepositoryID] = true
+			ids = append(ids, a.RepositoryID)
+		}
+	}
+	result := make(map[uint]db.Repository, len(ids))
+	if len(ids) == 0 {
+		return result
+	}
+	var repos []db.Repository
+	gdb.Where("id IN ?", ids).Find(&repos)
+	for _, r := range repos {
+		result[r.ID] = r
+	}
+	return result
+}
+
 func (s *Server) findingShow(w http.ResponseWriter, r *http.Request) {
 	var f db.Finding
 	if err := s.DB.Preload("Labels").First(&f, r.PathValue("id")).Error; err != nil {
@@ -684,7 +756,7 @@ func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 		q = q.Order("skill_name, id desc")
 	case "status":
 		q = q.Order("status, id desc")
-	case "repository":
+	case sortRepository:
 		q = q.Joins("Repository").Order("`Repository`.name, scans.id desc")
 	default:
 		sort = defaultSort

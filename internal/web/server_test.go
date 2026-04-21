@@ -171,6 +171,67 @@ func TestPackagesSearchFilters(t *testing.T) {
 	}
 }
 
+func TestAdvisoriesIndex(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	railsRepo := db.Repository{URL: "https://github.com/rails/rails", Name: "rails"}
+	s.DB.Create(&railsRepo)
+	djangoRepo := db.Repository{URL: "https://github.com/django/django", Name: "django"}
+	s.DB.Create(&djangoRepo)
+
+	now := time.Now()
+	s.DB.Create(&db.Advisory{RepositoryID: railsRepo.ID, UUID: "u1",
+		URL: "https://example.com/a1", Title: "SQL injection in activerecord",
+		Severity: "CRITICAL", CVSSScore: 9.8, Packages: "rails,activerecord",
+		Classification: "CWE-89", PublishedAt: &now})
+	s.DB.Create(&db.Advisory{RepositoryID: djangoRepo.ID, UUID: "u2",
+		URL: "https://example.com/a2", Title: "XSS in admin",
+		Severity: "MODERATE", CVSSScore: 5.4, Packages: "django",
+		Classification: "CWE-79", PublishedAt: &now})
+
+	// All advisories render.
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/advisories"))
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	body := w.Body.String()
+	for _, want := range []string{
+		"SQL injection in activerecord",
+		"XSS in admin",
+		"rails", "django",
+		"9.8", "5.4",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("body missing %q", want)
+		}
+	}
+
+	// Severity filter: only CRITICAL rows.
+	w = httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/advisories?severity=CRITICAL"))
+	body = w.Body.String()
+	if !strings.Contains(body, "SQL injection") || strings.Contains(body, "XSS in admin") {
+		t.Errorf("severity filter: %s", body)
+	}
+
+	// Search: classification match.
+	w = httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/advisories?q=CWE-79"))
+	body = w.Body.String()
+	if !strings.Contains(body, "XSS in admin") || strings.Contains(body, "SQL injection") {
+		t.Errorf("search: %s", body)
+	}
+
+	// Empty-match state.
+	w = httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/advisories?q=NOPE_NOPE_NOPE"))
+	if !strings.Contains(w.Body.String(), "No matches") {
+		t.Error("empty-match advisories: no empty state")
+	}
+}
+
 func TestMaintainersSortOptions(t *testing.T) {
 	const (
 		zeta    = "zeta"

@@ -1,0 +1,91 @@
+{{template "head"}}
+
+<div class="flex items-center justify-between gap-4 mb-6">
+  <h2 class="text-2xl font-semibold flex items-center gap-2">
+    <i data-lucide="shield-alert"></i> Advisories
+  </h2>
+  <div class="flex items-center gap-2">
+    <form method="get" action="/advisories" class="inline-flex">
+      <input class="input" type="search" name="q" value="{{.Q}}" placeholder="Search advisories"
+             autocomplete="off" spellcheck="false">
+      <input type="hidden" name="severity" value="{{.Severity}}">
+      <input type="hidden" name="sort" value="{{.Sort}}">
+    </form>
+    <div class="dropdown-menu">
+      <button type="button" class="btn-outline" aria-haspopup="menu" aria-expanded="false">
+        <i data-lucide="filter"></i>
+        {{if .Severity}}{{.Severity}}{{else}}Severity{{end}}
+        <i data-lucide="chevron-down"></i>
+      </button>
+      <div data-popover aria-hidden="true" data-align="end">
+        <div role="menu">
+          <a role="menuitem" href="/advisories?q={{.Q}}&sort={{.Sort}}">All</a>
+          {{range .Severities}}
+            <a role="menuitem" href="/advisories?q={{$.Q}}&severity={{.}}&sort={{$.Sort}}"
+               {{if eq . $.Severity}}aria-current="true"{{end}}>{{.}}</a>
+          {{end}}
+        </div>
+      </div>
+    </div>
+    <div class="dropdown-menu">
+      <button type="button" class="btn-outline" aria-haspopup="menu" aria-expanded="false">
+        <i data-lucide="arrow-down-wide-narrow"></i>
+        {{if eq .Sort "newest"}}Newest{{else if eq .Sort "repository"}}Repository{{else}}Severity{{end}}
+        <i data-lucide="chevron-down"></i>
+      </button>
+      <div data-popover aria-hidden="true" data-align="end">
+        <div role="menu">
+          {{range (list "severity" "newest" "repository")}}
+            <a role="menuitem" href="/advisories?q={{$.Q}}&severity={{$.Severity}}&sort={{.}}"
+               {{if eq . $.Sort}}aria-current="true"{{end}}>{{.}}</a>
+          {{end}}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{{if .Advisories}}
+  <table class="table w-full">
+    <thead><tr>
+      <th class="w-24">Severity</th>
+      <th class="w-16">CVSS</th>
+      <th>Title</th>
+      <th class="w-40">Repository</th>
+      <th class="w-56">Packages</th>
+      <th class="w-32">Published</th>
+    </tr></thead>
+    <tbody>
+    {{$repos := .Repos}}
+    {{range .Advisories}}
+      {{$repo := index $repos .RepositoryID}}
+      <tr class="cursor-pointer" onclick="window.open('{{.URL}}', '_blank', 'noopener')">
+        <td>
+          {{if eq .Severity "CRITICAL"}}<span class="badge-destructive">Critical</span>
+          {{else if eq .Severity "HIGH"}}<span class="badge-destructive">High</span>
+          {{else if eq .Severity "MODERATE"}}<span class="badge-primary">Moderate</span>
+          {{else}}<span class="badge-secondary">{{.Severity}}</span>{{end}}
+        </td>
+        <td class="text-muted-foreground">{{if .CVSSScore}}{{printf "%.1f" .CVSSScore}}{{end}}</td>
+        <td class="min-w-0 whitespace-normal">
+          <div class="font-medium">{{.Title}}</div>
+          {{if .Classification}}<div class="text-xs text-muted-foreground">{{.Classification}}</div>{{end}}
+        </td>
+        <td class="truncate">
+          <a href="/repositories/{{$repo.ID}}" class="hover:underline"
+             onclick="event.stopPropagation()">{{$repo.Name}}</a>
+        </td>
+        <td class="text-muted-foreground whitespace-normal text-xs">{{.Packages}}</td>
+        <td class="text-muted-foreground">{{if .PublishedAt}}{{.PublishedAt.Format "2006-01-02"}}{{end}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{template "pagination" .Page}}
+{{else if .Q}}
+  {{template "empty" (dict "Icon" "search-x" "Title" "No matches" "Body" "No advisories matched the search.")}}
+{{else}}
+  {{template "empty" (dict "Icon" "shield-alert" "Title" "No advisories" "Body" "Advisories appear here after the advisories skill runs on a repository.")}}
+{{end}}
+
+{{template "foot"}}
