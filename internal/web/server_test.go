@@ -319,6 +319,62 @@ func TestCreateRepoEnqueuesTriageSkill(t *testing.T) {
 	}
 }
 
+func TestFindingDiscloseEnqueuesDiscloseSkill(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://github.com/foo/bar", Name: "bar"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: "security-deep-dive"}
+	s.DB.Create(&scan)
+	finding := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, FindingID: "F1", Title: "x", Severity: "High", Status: db.FindingTriaged}
+	s.DB.Create(&finding)
+	disclose := db.Skill{Name: "disclose", Description: "d", Body: "b", OutputFile: "report.json", OutputKind: "freeform", Version: 1, Active: true, Source: "ui"}
+	s.DB.Create(&disclose)
+
+	req := httptest.NewRequest("POST", "/findings/1/disclose", nil)
+	req.Host = testHost
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	if !strings.HasPrefix(w.Header().Get("HX-Redirect"), "/scans/") {
+		t.Errorf("expected HX-Redirect to scan, got %q", w.Header().Get("HX-Redirect"))
+	}
+
+	var row db.Scan
+	s.DB.Where("skill_id = ?", disclose.ID).First(&row)
+	if row.FindingID == nil || *row.FindingID != finding.ID {
+		t.Errorf("scan FindingID = %v, want %d", row.FindingID, finding.ID)
+	}
+	if row.APIToken == "" {
+		t.Error("scan missing api token")
+	}
+}
+
+func TestFindingDisclose404WhenSkillMissing(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://github.com/foo/bar", Name: "bar"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: "x"}
+	s.DB.Create(&scan)
+	finding := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, FindingID: "F1", Title: "x", Severity: "High", Status: db.FindingTriaged}
+	s.DB.Create(&finding)
+
+	req := httptest.NewRequest("POST", "/findings/1/disclose", nil)
+	req.Host = testHost
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusPreconditionFailed {
+		t.Fatalf("expected 412 when disclose skill not installed, got %d: %s", w.Code, w.Body)
+	}
+}
+
 func TestScanShowRenders(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

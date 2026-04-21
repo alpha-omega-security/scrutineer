@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "disclose report",
+  "description": "Drop-in GHSA body plus a write-back audit trail.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "ghsa": {
+      "type": "object",
+      "description": "Body for POST /repos/{owner}/{repo}/security-advisories. Keys match GitHub's repository-advisories REST schema so the block can be submitted as-is.",
+      "additionalProperties": false,
+      "properties": {
+        "summary": {
+          "type": "string",
+          "description": "Advisory title. Under 80 characters. Maps to GHSA `summary`."
+        },
+        "description": {
+          "type": "string",
+          "description": "Markdown body. Maps to GHSA `description`."
+        },
+        "vulnerabilities": {
+          "type": "array",
+          "description": "Affected products. One entry per published package. Omit entirely for source-only advisories.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["package"],
+            "properties": {
+              "package": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["ecosystem"],
+                "properties": {
+                  "ecosystem": {
+                    "type": "string",
+                    "enum": ["rubygems", "npm", "pip", "maven", "nuget", "composer", "go", "rust", "erlang", "actions", "pub", "other"],
+                    "description": "GHSA ecosystem enum. Lowercase. `pip` not `pypi`, `rubygems` not `RubyGems`."
+                  },
+                  "name": { "type": "string" }
+                }
+              },
+              "vulnerable_version_range": {
+                "type": "string",
+                "description": "e.g. `>= 1.0.0, < 2.3.1`."
+              },
+              "patched_versions": {
+                "type": "string",
+                "description": "First patched version, e.g. `2.3.1`."
+              },
+              "vulnerable_functions": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Exported symbols that contain the sink. Optional; fill only when the Trace names them."
+              }
+            }
+          }
+        },
+        "cwe_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^CWE-[0-9]+$"
+          },
+          "description": "CWE identifiers. GHSA accepts multiple."
+        },
+        "cvss_vector_string": {
+          "type": "string",
+          "description": "CVSS 3.1 vector. Mutually exclusive with `severity`."
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["critical", "high", "medium", "low"],
+          "description": "Qualitative severity. Use only when a CVSS vector cannot be derived."
+        },
+        "cve_id": {
+          "type": ["string", "null"],
+          "description": "CVE identifier. Pass through whatever the finding carries; null when unset."
+        },
+        "credits": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["login", "type"],
+            "properties": {
+              "login": { "type": "string" },
+              "type": {
+                "type": "string",
+                "enum": ["analyst", "finder", "reporter", "coordinator", "remediation_developer", "remediation_reviewer", "remediation_verifier", "tool", "sponsor", "other"]
+              }
+            }
+          }
+        }
+      }
+    },
+    "patched": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Field names sent in the PATCH /findings/{id} body. Subset of: title, cvss_vector, affected, fix_version, disclosure_draft."
+    },
+    "preserved": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Fields left untouched because the finding already carried an analyst-set value."
+    },
+    "references_added": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of references POSTed to /findings/{id}/references."
+    },
+    "references_skipped": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of references skipped because the URL was already on the finding."
+    },
+    "notes": {
+      "type": "string",
+      "description": "Free-form prose: gaps in the source prose, ambiguity in the version range, source-only (no packages), anything the analyst should know."
+    },
+    "error": {
+      "type": "string",
+      "description": "Set only when the skill refused to draft (missing finding_id, insufficient prose)."
+    }
+  }
+}

@@ -127,6 +127,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /findings/{id}", s.findingShow)
 	mux.HandleFunc("POST /findings/{id}/status", s.findingStatus)
 	mux.HandleFunc("POST /findings/{id}/verify", s.findingVerify)
+	mux.HandleFunc("POST /findings/{id}/disclose", s.findingDisclose)
 	mux.HandleFunc("POST /findings/{id}/notes", s.findingNotes)
 	mux.HandleFunc("POST /findings/{id}/fields", s.findingFields)
 	mux.HandleFunc("POST /findings/{id}/communications", s.findingCommunications)
@@ -503,7 +504,18 @@ func (s *Server) findingStatus(w http.ResponseWriter, r *http.Request) {
 // verifySkillName is the skill the Verify button on the finding page runs.
 const verifySkillName = "verify"
 
+// discloseSkillName is the skill the Draft disclosure button runs.
+const discloseSkillName = "disclose"
+
 func (s *Server) findingVerify(w http.ResponseWriter, r *http.Request) {
+	s.runFindingSkill(w, r, verifySkillName)
+}
+
+func (s *Server) findingDisclose(w http.ResponseWriter, r *http.Request) {
+	s.runFindingSkill(w, r, discloseSkillName)
+}
+
+func (s *Server) runFindingSkill(w http.ResponseWriter, r *http.Request, name string) {
 	var f db.Finding
 	if err := s.DB.First(&f, r.PathValue("id")).Error; err != nil {
 		http.NotFound(w, r)
@@ -515,8 +527,8 @@ func (s *Server) findingVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var skill db.Skill
-	if err := s.DB.Where("name = ? AND active = ?", verifySkillName, true).First(&skill).Error; err != nil {
-		http.Error(w, verifySkillName+" skill is not installed", http.StatusPreconditionFailed)
+	if err := s.DB.Where("name = ? AND active = ?", name, true).First(&skill).Error; err != nil {
+		http.Error(w, name+" skill is not installed", http.StatusPreconditionFailed)
 		return
 	}
 	fid := f.ID

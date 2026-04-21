@@ -13,7 +13,7 @@
         <p class="text-sm text-muted-foreground">The confirm job ran and validated this finding. Review the evidence and triage.</p>
       {{else if eq $s "triaged"}}
         <p class="text-sm mb-1 font-medium">Triaged, ready to prepare disclosure</p>
-        <p class="text-sm text-muted-foreground">You've confirmed this is a real finding. Next: prepare the disclosure draft with CVSS, references, and text.</p>
+        <p class="text-sm text-muted-foreground">You've confirmed this is a real finding. Run the disclose skill to get a GHSA-shaped draft, review and edit, then mark ready.</p>
       {{else if eq $s "ready"}}
         <p class="text-sm mb-1 font-medium">Disclosure draft ready</p>
         <p class="text-sm text-muted-foreground">The draft is prepared. Review it in the notes, edit if needed, then send to the maintainer.</p>
@@ -59,8 +59,11 @@
         </button>
 
       {{else if eq $s "triaged"}}
-        <button class="btn" hx-post="/findings/{{$id}}/status" hx-vals='{"status":"ready"}' hx-swap="none">
-          <i data-lucide="file-pen"></i> Prepare disclosure
+        <button class="btn" hx-post="/findings/{{$id}}/disclose" hx-swap="none">
+          <i data-lucide="file-pen"></i> Draft disclosure
+        </button>
+        <button class="btn-outline" hx-post="/findings/{{$id}}/status" hx-vals='{"status":"ready"}' hx-swap="none">
+          Mark ready
         </button>
         <button class="btn-ghost" hx-post="/findings/{{$id}}/status" hx-vals='{"status":"rejected"}' hx-swap="none">
           Reject
