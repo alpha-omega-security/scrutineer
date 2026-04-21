@@ -62,6 +62,9 @@
         <button class="btn" hx-post="/findings/{{$id}}/disclose" hx-swap="none">
           <i data-lucide="file-pen"></i> Draft disclosure
         </button>
+        <button class="btn-outline" hx-post="/findings/{{$id}}/patch" hx-swap="none">
+          <i data-lucide="wrench"></i> Propose patch
+        </button>
         <button class="btn-outline" hx-post="/findings/{{$id}}/status" hx-vals='{"status":"ready"}' hx-swap="none">
           Mark ready
         </button>

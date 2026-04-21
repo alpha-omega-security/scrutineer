@@ -1,0 +1,38 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "patch report",
+  "description": "Proposed fix for a finding. The patch field is a unified diff the analyst can apply with git apply against base_commit.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "patch": {
+      "type": "string",
+      "description": "Unified diff against HEAD (git diff HEAD output). The text that would be piped into `git apply` or `git am`."
+    },
+    "rationale": {
+      "type": "string",
+      "description": "Two or three sentences explaining what the guard is, why it blocks the trace, and what legitimate input still passes."
+    },
+    "files_changed": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Paths relative to the repo root that the patch touches."
+    },
+    "base_commit": {
+      "type": "string",
+      "description": "HEAD sha the patch applies cleanly against. Lets the analyst detect if they have rebased past the base and need to regenerate."
+    },
+    "tests_added": {
+      "type": "boolean",
+      "description": "True if the patch includes a regression test for the sink."
+    },
+    "notes": {
+      "type": "string",
+      "description": "Optional prose: a second sink you noticed, a style choice you were unsure of, a test you could not write."
+    },
+    "error": {
+      "type": "string",
+      "description": "Set only when the skill refused to produce a patch (missing finding_id, thin prose, architectural fix, already-fixed upstream, empty diff)."
+    }
+  }
+}

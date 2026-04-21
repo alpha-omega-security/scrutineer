@@ -354,6 +354,114 @@ func TestFindingDiscloseEnqueuesDiscloseSkill(t *testing.T) {
 	}
 }
 
+func TestFindingPatchRunEnqueuesPatchSkill(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://github.com/foo/bar", Name: "bar"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: "security-deep-dive"}
+	s.DB.Create(&scan)
+	finding := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, FindingID: "F1", Title: "x", Severity: "High", Status: db.FindingTriaged}
+	s.DB.Create(&finding)
+	patch := db.Skill{Name: "patch", Description: "p", Body: "b", OutputFile: "report.json", OutputKind: "freeform", Version: 1, Active: true, Source: "ui"}
+	s.DB.Create(&patch)
+
+	req := httptest.NewRequest("POST", "/findings/1/patch", nil)
+	req.Host = testHost
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+
+	var row db.Scan
+	s.DB.Where("skill_id = ?", patch.ID).First(&row)
+	if row.FindingID == nil || *row.FindingID != finding.ID {
+		t.Errorf("scan FindingID = %v, want %d", row.FindingID, finding.ID)
+	}
+}
+
+func TestFindingPatchDownload(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://github.com/foo/bar", Name: "bar"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: "security-deep-dive"}
+	s.DB.Create(&scan)
+	finding := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, FindingID: "F1", Title: "x", Severity: "High", Status: db.FindingTriaged}
+	s.DB.Create(&finding)
+
+	fid := finding.ID
+	finished := time.Now()
+	report := `{"patch":"diff --git a/foo.go b/foo.go\n@@ -1 +1 @@\n-old\n+new\n","rationale":"adds guard","files_changed":["foo.go"],"base_commit":"abc123","tests_added":false}`
+	patchScan := db.Scan{
+		RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone,
+		SkillName:  "patch",
+		FindingID:  &fid,
+		FinishedAt: &finished,
+		Report:     report,
+	}
+	s.DB.Create(&patchScan)
+
+	req := httptest.NewRequest("GET", "/findings/1/patch.diff", nil)
+	req.Host = testHost
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("download status %d: %s", w.Code, w.Body)
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/x-diff") {
+		t.Errorf("Content-Type = %q", ct)
+	}
+	if cd := w.Header().Get("Content-Disposition"); !strings.Contains(cd, "finding-1.patch") {
+		t.Errorf("Content-Disposition = %q", cd)
+	}
+	if body := w.Body.String(); !strings.HasPrefix(body, "diff --git") {
+		t.Errorf("body does not start with diff header: %q", body)
+	}
+
+	req = httptest.NewRequest("GET", "/findings/1", nil)
+	req.Host = testHost
+	w = httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	body := w.Body.String()
+	if !strings.Contains(body, "Proposed patch") {
+		t.Error("finding show page missing 'Proposed patch' section")
+	}
+	if !strings.Contains(body, "adds guard") {
+		t.Error("finding show page missing rationale")
+	}
+	if !strings.Contains(body, "/findings/1/patch.diff") {
+		t.Error("finding show page missing download link")
+	}
+	if !strings.Contains(body, "git apply") {
+		t.Error("finding show page missing apply instructions")
+	}
+}
+
+func TestFindingPatchDownload_404WhenNoPatch(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://github.com/foo/bar", Name: "bar"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: "x"}
+	s.DB.Create(&scan)
+	finding := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, FindingID: "F1", Title: "x", Severity: "High", Status: db.FindingTriaged}
+	s.DB.Create(&finding)
+
+	req := httptest.NewRequest("GET", "/findings/1/patch.diff", nil)
+	req.Host = testHost
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("want 404, got %d: %s", w.Code, w.Body)
+	}
+}
+
 func TestFindingDisclose404WhenSkillMissing(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
