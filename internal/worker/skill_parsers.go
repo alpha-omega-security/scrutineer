@@ -321,24 +321,30 @@ func (w *Worker) parseSubprojectsOutput(scan *db.Scan, report string, emit func(
 	return nil
 }
 
-// parseRepoOverviewOutput reads `brief`'s structured output and backfills
-// fields on the Repository row that the metadata skill left empty. Only
-// empty fields are touched — a value coming from ecosyste.ms (via the
-// metadata skill) is considered authoritative and won't be overwritten
-// by brief's heuristic detection.
+// parseRepoOverviewOutput reads `brief`'s structured output and writes
+// the detected fields onto the Repository row. Brief wins over
+// ecosyste.ms for the fields it produces (languages, default branch,
+// license) — the detection is typically more accurate than the upstream
+// API for self-hosted or sparsely-populated repos. Fields brief leaves
+// empty are left alone, so ecosyste.ms still fills gaps.
 func (w *Worker) parseRepoOverviewOutput(scan *db.Scan, report string, emit func(Event)) error {
 	var result struct {
+		Git struct {
+			DefaultBranch string `json:"default_branch"`
+		} `json:"git"`
 		Languages []struct {
 			Name     string `json:"name"`
 			Category string `json:"category"`
 		} `json:"languages"`
+		Resources struct {
+			LicenseType string `json:"license_type"`
+		} `json:"resources"`
 	}
 	if err := json.Unmarshal([]byte(report), &result); err != nil {
-		// brief output may be wrapped or errored; don't fail the scan
-		// over a backfill pass.
 		emit(Event{Kind: KindText, Text: "repo-overview: skipping backfill, unparseable JSON"})
 		return nil
 	}
+	updates := map[string]any{}
 	var names []string
 	for _, l := range result.Languages {
 		if l.Category != "" && l.Category != "language" {
@@ -348,22 +354,26 @@ func (w *Worker) parseRepoOverviewOutput(scan *db.Scan, report string, emit func
 			names = append(names, l.Name)
 		}
 	}
-	if len(names) == 0 {
+	if len(names) > 0 {
+		updates["languages"] = strings.Join(names, ", ")
+	}
+	if result.Git.DefaultBranch != "" {
+		updates["default_branch"] = result.Git.DefaultBranch
+	}
+	if result.Resources.LicenseType != "" {
+		updates["license"] = result.Resources.LicenseType
+	}
+	if len(updates) == 0 {
 		return nil
 	}
-	var repo db.Repository
-	if err := w.DB.First(&repo, scan.RepositoryID).Error; err != nil {
-		return fmt.Errorf("load repo: %w", err)
+	if err := w.DB.Model(&db.Repository{}).Where("id = ?", scan.RepositoryID).Updates(updates).Error; err != nil {
+		return fmt.Errorf("update repo: %w", err)
 	}
-	if strings.TrimSpace(repo.Languages) != "" {
-		return nil
+	keys := make([]string, 0, len(updates))
+	for k := range updates {
+		keys = append(keys, k)
 	}
-	joined := strings.Join(names, ", ")
-	if err := w.DB.Model(&db.Repository{}).Where("id = ?", repo.ID).
-		Update("languages", joined).Error; err != nil {
-		return fmt.Errorf("update languages: %w", err)
-	}
-	emit(Event{Kind: KindText, Text: "repo-overview: backfilled languages = " + joined})
+	emit(Event{Kind: KindText, Text: "repo-overview: wrote " + strings.Join(keys, ", ")})
 	return nil
 }
 
