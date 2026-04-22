@@ -2,6 +2,35 @@ package db
 
 import "testing"
 
+func TestBackfillFindingRepositoryFillsCommit(t *testing.T) {
+	gdb, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := Repository{URL: "https://example.com/x", Name: "x"}
+	if err := gdb.Create(&r).Error; err != nil {
+		t.Fatal(err)
+	}
+	s := Scan{RepositoryID: r.ID, Kind: "claude", Status: ScanDone, Commit: "deadbeef"}
+	if err := gdb.Create(&s).Error; err != nil {
+		t.Fatal(err)
+	}
+	f := Finding{ScanID: s.ID, RepositoryID: r.ID, Title: "t", Severity: "Low"}
+	if err := gdb.Create(&f).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	BackfillFindingRepository(gdb)
+
+	var got Finding
+	if err := gdb.First(&got, f.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.Commit != "deadbeef" {
+		t.Errorf("Finding.Commit = %q, want %q", got.Commit, "deadbeef")
+	}
+}
+
 func TestNameFromURL(t *testing.T) {
 	cases := map[string]string{
 		"https://github.com/foo/bar":      "bar",
