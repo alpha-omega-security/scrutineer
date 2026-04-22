@@ -495,10 +495,10 @@ func BackfillFindingRepository(gdb *gorm.DB) {
 	`)
 	gdb.Exec(`
 		UPDATE findings
-		SET commit = (
-			SELECT commit FROM scans WHERE scans.id = findings.scan_id
+		SET "commit" = (
+			SELECT "commit" FROM scans WHERE scans.id = findings.scan_id
 		)
-		WHERE ` + "`commit`" + ` IS NULL OR ` + "`commit`" + ` = ''
+		WHERE "commit" IS NULL OR "commit" = ''
 	`)
 }
 
