@@ -49,10 +49,11 @@ type Repository struct {
 type ScanStatus string
 
 const (
-	ScanQueued  ScanStatus = "queued"
-	ScanRunning ScanStatus = "running"
-	ScanDone    ScanStatus = "done"
-	ScanFailed  ScanStatus = "failed"
+	ScanQueued    ScanStatus = "queued"
+	ScanRunning   ScanStatus = "running"
+	ScanDone      ScanStatus = "done"
+	ScanFailed    ScanStatus = "failed"
+	ScanCancelled ScanStatus = "cancelled"
 )
 
 // Scan is one execution of a job against a repository. Kind names the job
@@ -430,7 +431,7 @@ func (s Scan) Duration() time.Duration {
 }
 
 func (s ScanStatus) Terminal() bool {
-	return s == ScanDone || s == ScanFailed
+	return s == ScanDone || s == ScanFailed || s == ScanCancelled
 }
 
 func Open(dsn string) (*gorm.DB, error) {

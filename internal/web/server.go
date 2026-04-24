@@ -33,10 +33,11 @@ type Server struct {
 	Queue  *queue.Queue
 	Log    *slog.Logger
 	Broker *Broker
+	Worker *worker.Worker
 	tmpl   *template.Template
 }
 
-func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker) (*Server, error) {
+func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *worker.Worker) (*Server, error) {
 	funcs := template.FuncMap{
 		"since": func(t *time.Time) string {
 			if t == nil {
@@ -108,7 +109,7 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker) (*Serve
 	if err != nil {
 		return nil, err
 	}
-	return &Server{DB: gdb, Queue: q, Log: log, Broker: broker, tmpl: t}, nil
+	return &Server{DB: gdb, Queue: q, Log: log, Broker: broker, Worker: w, tmpl: t}, nil
 }
 
 func (s *Server) Handler() http.Handler {
@@ -148,6 +149,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /advisories", s.advisoriesList)
 	mux.HandleFunc("GET /scans/{id}", s.scanShow)
 	mux.HandleFunc("POST /scans/{id}/retry", s.scanRetry)
+	mux.HandleFunc("POST /scans/{id}/cancel", s.scanCancel)
 	mux.HandleFunc("GET /scans/{id}/log", s.scanLog)
 	mux.HandleFunc("GET /skills", s.skillsList)
 	mux.HandleFunc("GET /skills/new", s.skillNew)
@@ -1295,6 +1297,29 @@ func (s *Server) scanRetry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("HX-Redirect", fmt.Sprintf("/scans/%d", newID))
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) scanCancel(w http.ResponseWriter, r *http.Request) {
+	var scan db.Scan
+	if err := s.DB.First(&scan, r.PathValue("id")).Error; err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if scan.Status.Terminal() {
+		http.Error(w, "scan already finished", http.StatusBadRequest)
+		return
+	}
+	if !s.Worker.Cancel(scan.ID) {
+		// Not in flight: mark the row so the queue handler drops it on pickup.
+		now := time.Now()
+		s.DB.Model(&scan).Updates(map[string]any{
+			"status":      db.ScanCancelled,
+			"error":       "cancelled by user",
+			"finished_at": &now,
+		})
+	}
+	w.Header().Set("HX-Refresh", "true")
 	w.WriteHeader(http.StatusNoContent)
 }
 
