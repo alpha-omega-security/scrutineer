@@ -322,7 +322,7 @@
   <div role="tabpanel" id="rp3" aria-labelledby="rt3" hidden>
     <table class="table">
       <thead>
-        <tr><th>#</th><th>Skill</th><th>Status</th><th>Findings</th><th>Model</th><th>Commit</th><th>Started</th><th>Duration</th></tr>
+        <tr><th>#</th><th>Skill</th><th>Status</th><th>Findings</th><th>Model</th><th>Commit</th><th>Started</th><th>Duration</th><th class="w-12"></th></tr>
       </thead>
       {{template "scan_rows" .}}
     </table>
@@ -350,6 +350,7 @@
     <td><code>{{short .Commit}}</code></td>
     <td>{{if .StartedAt}}{{since .StartedAt}}{{end}}</td>
     <td>{{if .FinishedAt}}{{dur .Duration}}{{end}}</td>
+    <td>{{template "scan-actions" .}}</td>
   </tr>
 {{end}}
 </tbody>
