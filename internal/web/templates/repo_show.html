@@ -312,7 +312,7 @@
       {{jsontree .Repo.Metadata}}
       <details class="mt-4">
         <summary class="cursor-pointer text-sm text-muted-foreground">raw json</summary>
-        <pre class="log mt-2">{{.Repo.Metadata}}</pre>
+        <pre class="log mt-2">{{prettyjson .Repo.Metadata}}</pre>
       </details>
     {{else}}
       <p class="text-muted-foreground text-sm p-4">No metadata stored.</p>

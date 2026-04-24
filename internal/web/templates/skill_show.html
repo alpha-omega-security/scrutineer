@@ -32,7 +32,7 @@
 {{if .SchemaJSON}}
 <section class="card p-4 mb-6">
   <h3 class="font-medium mb-3">schema.json</h3>
-  <pre class="text-xs whitespace-pre-wrap font-mono bg-muted p-3 rounded">{{.SchemaJSON}}</pre>
+  <pre class="text-xs whitespace-pre-wrap font-mono bg-muted p-3 rounded">{{prettyjson .SchemaJSON}}</pre>
 </section>
 {{end}}
 {{end}}

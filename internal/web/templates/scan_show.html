@@ -83,10 +83,10 @@
       </table>
       <details>
         <summary class="cursor-pointer text-sm text-muted-foreground">raw report.json</summary>
-        <pre class="log mt-2">{{.Report}}</pre>
+        <pre class="log mt-2">{{prettyjson .Report}}</pre>
       </details>
     {{else if .Report}}
-      <pre class="log">{{.Report}}</pre>
+      <pre class="log">{{prettyjson .Report}}</pre>
     {{else}}
       <p class="text-muted-foreground text-sm p-4">No result yet.</p>
     {{end}}

@@ -25,3 +25,14 @@ func TestJSONTreeBadInput(t *testing.T) {
 		t.Errorf("should fall back to pre: %s", out)
 	}
 }
+
+func TestPrettyJSON(t *testing.T) {
+	got := prettyJSON(`{"a":1,"b":[2,3]}`)
+	want := "{\n  \"a\": 1,\n  \"b\": [\n    2,\n    3\n  ]\n}"
+	if got != want {
+		t.Errorf("indent:\ngot  %q\nwant %q", got, want)
+	}
+	if prettyJSON("# heading\nnot json") != "# heading\nnot json" {
+		t.Error("non-JSON input should pass through unchanged")
+	}
+}
