@@ -96,6 +96,20 @@
       <p class="text-muted-foreground text-sm mb-6">Metadata not fetched yet.</p>
     {{end}}
 
+    <details class="mb-4 max-w-3xl">
+      <summary class="text-sm text-muted-foreground cursor-pointer hover:underline">
+        <i data-lucide="send"></i>
+        Disclosure channel{{if .Repo.DisclosureChannel}}: <code class="text-xs">{{.Repo.DisclosureChannel}}</code>{{else}}<span class="italic"> not set</span>{{end}}
+      </summary>
+      <form method="post" action="/repositories/{{.Repo.ID}}/disclosure-channel" class="form grid grid-cols-[1fr_auto] gap-2 mt-2">
+        <input class="input font-mono text-xs" type="text" name="disclosure_channel"
+               value="{{.Repo.DisclosureChannel}}"
+               placeholder="security@example.org, https://…/security/advisories, …">
+        <button class="btn-sm" type="submit">Save</button>
+      </form>
+      <p class="text-xs text-muted-foreground mt-1">Auto-filled by the maintainers skill from <code>SECURITY.md</code>, registry owner data, or CODEOWNERS. Edit freely.</p>
+    </details>
+
     {{if .Subprojects}}
       <h3 class="font-medium mb-2">Subprojects <span class="text-muted-foreground text-xs">({{len .Subprojects}})</span></h3>
       <p class="text-sm text-muted-foreground mb-2">Detected scannable units inside this repository. Each can be scanned independently with its own findings stream.</p>

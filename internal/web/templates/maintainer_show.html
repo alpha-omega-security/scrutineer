@@ -14,7 +14,22 @@
     </p>
     {{if $m.Email}}<p class="text-sm text-muted-foreground">{{$m.Email}}</p>{{end}}
   </div>
-  <span class="ml-auto">{{template "status-badge" (printf "%s" $m.Status)}}</span>
+  <span class="ml-auto flex items-center gap-2">
+    {{if $m.DoNotContact}}
+      <span class="badge-destructive" data-tooltip="Maintainer has asked not to be contacted, or routing is known to leak">Do not contact</span>
+      <button class="btn-outline-sm" hx-post="/maintainers/{{$m.ID}}/do-not-contact"
+              hx-vals='{"value":"false"}' hx-swap="none">
+        Clear flag
+      </button>
+    {{else}}
+      <button class="btn-outline-sm" hx-post="/maintainers/{{$m.ID}}/do-not-contact"
+              hx-vals='{"value":"true"}' hx-swap="none"
+              data-tooltip="Suppress from disclosure routing">
+        <i data-lucide="ban"></i> Do not contact
+      </button>
+    {{end}}
+    {{template "status-badge" (printf "%s" $m.Status)}}
+  </span>
 </div>
 
 <div class="tabs w-full" id="maintainer-tabs">

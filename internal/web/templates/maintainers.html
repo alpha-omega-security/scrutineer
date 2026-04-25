@@ -48,16 +48,21 @@
 {{if .Maintainers}}
   <table class="table w-full">
     <thead><tr>
-      <th>Name</th><th>Login</th><th>Email</th><th>Company</th><th>Repos</th><th>Status</th>
+      <th>Name</th><th>Login</th><th>Email</th><th>Company</th><th>Repos</th><th>Findings</th><th>Status</th>
     </tr></thead>
     <tbody>
+    {{$counts := .FindingCounts}}
     {{range .Maintainers}}
       <tr class="cursor-pointer" hx-get="/maintainers/{{.ID}}" hx-target="body" hx-push-url="true">
-        <td class="font-medium">{{.Name}}</td>
+        <td class="font-medium">
+          {{.Name}}
+          {{if .DoNotContact}}<span class="badge-destructive ml-1" data-tooltip="Do not contact">DNC</span>{{end}}
+        </td>
         <td class="text-muted-foreground">{{.Login}}</td>
         <td class="text-muted-foreground">{{.Email}}</td>
         <td class="text-muted-foreground">{{.Company}}</td>
         <td class="text-muted-foreground">{{len .Repositories}}</td>
+        <td>{{template "findings-badge" (index $counts .ID)}}</td>
         <td>{{template "status-badge" (printf "%s" .Status)}}</td>
       </tr>
     {{end}}

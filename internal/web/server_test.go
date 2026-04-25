@@ -82,6 +82,105 @@ func TestRepoList_batchedFindingsCountAcrossRepos(t *testing.T) {
 	}
 }
 
+func TestMaintainersIndex_rendersFindingsCountAndDNCBadge(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://github.com/foo/bar.git", Name: "bar"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: "security-deep-dive"}
+	s.DB.Create(&scan)
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "A", Severity: "High"})
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "B", Severity: "Medium"})
+
+	alice := db.Maintainer{Login: "alice", Name: "Alice", Status: db.MaintainerActive, DoNotContact: true}
+	s.DB.Create(&alice)
+	bob := db.Maintainer{Login: "bob", Name: "Bob", Status: db.MaintainerActive}
+	s.DB.Create(&bob)
+	if err := s.DB.Model(&repo).Association("Maintainers").Append([]db.Maintainer{alice, bob}); err != nil {
+		t.Fatal(err)
+	}
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/maintainers"))
+	if w.Code != 200 {
+		t.Fatalf("status %d", w.Code)
+	}
+	body := w.Body.String()
+
+	// Both maintainers share the one repo and its two findings, so both
+	// rows should render the "2" findings badge.
+	if strings.Count(body, `<span class="badge-destructive">2</span>`) < 2 {
+		t.Errorf("expected two maintainer rows with findings=2 badge")
+	}
+	// Alice carries the DNC badge; Bob should not.
+	if !strings.Contains(body, `data-tooltip="Do not contact">DNC`) {
+		t.Errorf("missing DNC badge for alice")
+	}
+}
+
+func TestMaintainerDoNotContactToggle(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	m := db.Maintainer{Login: "alice", Name: "Alice", Status: db.MaintainerActive}
+	s.DB.Create(&m)
+
+	post := func(value string) {
+		form := url.Values{"value": {value}}
+		r := httptest.NewRequest("POST", fmt.Sprintf("/maintainers/%d/do-not-contact", m.ID), strings.NewReader(form.Encode()))
+		r.Host = testHost
+		r.Header.Set("Sec-Fetch-Site", "same-origin")
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, r)
+		if w.Code != http.StatusNoContent {
+			t.Fatalf("value=%s status %d: %s", value, w.Code, w.Body)
+		}
+	}
+	post("true")
+	var got db.Maintainer
+	s.DB.First(&got, m.ID)
+	if !got.DoNotContact {
+		t.Error("expected DoNotContact=true after toggle")
+	}
+	post("false")
+	s.DB.First(&got, m.ID)
+	if got.DoNotContact {
+		t.Error("expected DoNotContact=false after clear")
+	}
+}
+
+func TestRepoDisclosureChannel_setAndClear(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://github.com/foo/bar.git", Name: "bar"}
+	s.DB.Create(&repo)
+
+	post := func(v string) {
+		form := url.Values{"disclosure_channel": {v}}
+		r := httptest.NewRequest("POST", fmt.Sprintf("/repositories/%d/disclosure-channel", repo.ID), strings.NewReader(form.Encode()))
+		r.Host = testHost
+		r.Header.Set("Sec-Fetch-Site", "same-origin")
+		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, r)
+		if w.Code != http.StatusNoContent {
+			t.Fatalf("status %d: %s", w.Code, w.Body)
+		}
+	}
+	post("security@example.org")
+	var got db.Repository
+	s.DB.First(&got, repo.ID)
+	if got.DisclosureChannel != "security@example.org" {
+		t.Errorf("got %q", got.DisclosureChannel)
+	}
+	post("")
+	s.DB.First(&got, repo.ID)
+	if got.DisclosureChannel != "" {
+		t.Errorf("empty submission should clear; got %q", got.DisclosureChannel)
+	}
+}
+
 func TestRepoList_findingsCountIsRepoWideNotLastScan(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
@@ -336,8 +435,8 @@ func TestOrgsList_sortOptions(t *testing.T) {
 		want []string
 	}{
 		{"name", []string{"acme", "globex", "umbrella"}},
-		{"findings", []string{"acme", "globex", "umbrella"}},    // 5 > 1 > 0
-		{"repos", []string{"globex", "umbrella", "acme"}},        // 3 > 2 > 1
+		{"findings", []string{"acme", "globex", "umbrella"}}, // 5 > 1 > 0
+		{"repos", []string{"globex", "umbrella", "acme"}},    // 3 > 2 > 1
 	} {
 		w := httptest.NewRecorder()
 		s.Handler().ServeHTTP(w, localReq("GET", "/orgs?sort="+tc.sort))

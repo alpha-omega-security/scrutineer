@@ -39,6 +39,13 @@ type Repository struct {
 	Metadata      string `gorm:"type:text"`
 	FetchedAt     *time.Time
 
+	// DisclosureChannel is the preferred vector for reporting a
+	// vulnerability in this repo — an email, GHSA URL, registry owner
+	// handle, or SECURITY.md URL. Written by the maintainers skill from
+	// SECURITY.md / CODEOWNERS / registry data; the analyst can overwrite
+	// it from the repo page.
+	DisclosureChannel string
+
 	CreatedAt time.Time
 	UpdatedAt time.Time
 
@@ -152,6 +159,13 @@ type Maintainer struct {
 	AvatarURL string
 	Status MaintainerStatus `gorm:"index;default:unknown"`
 	Notes  string
+
+	// DoNotContact suppresses this maintainer from disclosure routing.
+	// Toggled per-maintainer from the UI. The analyst sets it when the
+	// maintainer has asked not to be contacted, or when evidence says
+	// routing through them is known to leak. Reports and disclosure
+	// drafts omit them when true.
+	DoNotContact bool `gorm:"index"`
 
 	Repositories []Repository `gorm:"many2many:repository_maintainers"`
 
