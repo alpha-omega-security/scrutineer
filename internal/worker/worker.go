@@ -5,8 +5,10 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"gorm.io/gorm"
@@ -31,6 +33,22 @@ type Worker struct {
 	APIBase string // base URL for the scrutineer skill API (http://host:port/api)
 	Runner  SkillRunner
 	OnEvent func(scanID, repoID uint, name, data string) // optional SSE bridge
+
+	mu      sync.Mutex
+	running map[uint]context.CancelFunc
+}
+
+// Cancel aborts an in-flight scan. Returns true if a running job was found and
+// signalled; false means the scan is queued (or already finished) and the
+// caller should flip the DB row itself so the queue handler drops it.
+func (w *Worker) Cancel(scanID uint) bool {
+	w.mu.Lock()
+	cancel, ok := w.running[scanID]
+	w.mu.Unlock()
+	if ok {
+		cancel()
+	}
+	return ok
 }
 
 func (w *Worker) publish(scanID, repoID uint, name, data string) {
@@ -67,6 +85,20 @@ func (w *Worker) wrap(h handler) func(context.Context, []byte) error {
 			return nil
 		}
 
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		w.mu.Lock()
+		if w.running == nil {
+			w.running = make(map[uint]context.CancelFunc)
+		}
+		w.running[scan.ID] = cancel
+		w.mu.Unlock()
+		defer func() {
+			w.mu.Lock()
+			delete(w.running, scan.ID)
+			w.mu.Unlock()
+		}()
+
 		now := time.Now()
 		scan.Status = db.ScanRunning
 		scan.StartedAt = &now
@@ -91,11 +123,16 @@ func (w *Worker) wrap(h handler) func(context.Context, []byte) error {
 
 		fin := time.Now()
 		scan.FinishedAt = &fin
-		if err != nil {
+		switch {
+		case errors.Is(ctx.Err(), context.Canceled):
+			scan.Status = db.ScanCancelled
+			scan.Error = "cancelled by user"
+			emit(Event{Kind: KindError, Text: "cancelled by user"})
+		case err != nil:
 			scan.Status = db.ScanFailed
 			scan.Error = err.Error()
 			emit(Event{Kind: KindError, Text: err.Error()})
-		} else {
+		default:
 			scan.Status = db.ScanDone
 			scan.Report = report
 		}

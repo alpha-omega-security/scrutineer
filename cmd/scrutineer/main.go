@@ -122,7 +122,7 @@ func run(log *slog.Logger) error {
 	}
 	w.Register(q)
 
-	srv, err := web.New(gdb, q, log, broker)
+	srv, err := web.New(gdb, q, log, broker, w)
 	if err != nil {
 		return err
 	}

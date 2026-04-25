@@ -14,6 +14,7 @@ import (
 
 	"scrutineer/internal/db"
 	"scrutineer/internal/queue"
+	"scrutineer/internal/worker"
 )
 
 func newTestServer(t *testing.T) (*Server, func()) {
@@ -28,7 +29,7 @@ func newTestServer(t *testing.T) (*Server, func()) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := New(gdb, q, log, NewBroker())
+	s, err := New(gdb, q, log, NewBroker(), &worker.Worker{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1194,6 +1195,57 @@ func TestRetry_preservesSubPath(t *testing.T) {
 	s.DB.Where("id != ?", orig.ID).First(&fresh)
 	if fresh.SubPath != "airflow-core" {
 		t.Errorf("retry lost sub-path: got %q, want airflow-core", fresh.SubPath)
+	}
+}
+
+func TestScanCancel_queued(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/x.git", Name: "x"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanQueued}
+	s.DB.Create(&scan)
+
+	req := httptest.NewRequest("POST", fmt.Sprintf("/scans/%d/cancel", scan.ID), nil)
+	req.Host = testHost
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("cancel status %d: %s", w.Code, w.Body)
+	}
+
+	var got db.Scan
+	s.DB.First(&got, scan.ID)
+	if got.Status != db.ScanCancelled {
+		t.Errorf("status = %s, want cancelled", got.Status)
+	}
+	if got.FinishedAt == nil {
+		t.Error("FinishedAt not set")
+	}
+	if got.Error != "cancelled by user" {
+		t.Errorf("error = %q", got.Error)
+	}
+}
+
+func TestScanCancel_terminalRejected(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/x.git", Name: "x"}
+	s.DB.Create(&repo)
+	fin := time.Now()
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, FinishedAt: &fin}
+	s.DB.Create(&scan)
+
+	req := httptest.NewRequest("POST", fmt.Sprintf("/scans/%d/cancel", scan.ID), nil)
+	req.Host = testHost
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("got %d, want 400", w.Code)
 	}
 }
 
