@@ -13,13 +13,13 @@ import (
 	"syscall"
 )
 
-const defaultRunnerImage = "scrutineer-runner"
+const DefaultRunnerImage = "ghcr.io/alpha-omega-security/scrutineer-runner:latest"
 
 // DockerRunner launches claude inside an ephemeral container with the scan
 // workspace (clone + staged skill + output file) mounted at /work. It
 // implements SkillRunner.
 type DockerRunner struct {
-	Image  string // container image (default: scrutineer-runner)
+	Image  string
 	Effort string
 }
 
@@ -27,7 +27,7 @@ func (d DockerRunner) image() string {
 	if d.Image != "" {
 		return d.Image
 	}
-	return defaultRunnerImage
+	return DefaultRunnerImage
 }
 
 // RunSkill runs a skill inside an ephemeral container. The whole workspace

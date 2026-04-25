@@ -25,7 +25,7 @@
 # no_docker: false
 
 # Docker image used for per-scan containers.
-# runner_image: scrutineer-runner
+# runner_image: ghcr.io/alpha-omega-security/scrutineer-runner:latest
 
 # How many scans run in parallel. Default is 4; raise on bigger hosts,
 # lower if you want model calls serialised.

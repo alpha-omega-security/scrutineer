@@ -118,9 +118,9 @@ No rate limiting on `POST /repositories`, no cap on clone size, no timeout on th
 
 ### T11: Image supply chain (partially mitigated)
 
-Tool versions are pinned: `claude-code@1.0.17`, `semgrep==1.116.0`, `git-pkgs@v0.14.0`, `brief@v0.5.2`, `zizmor@1.24.1`. The container runs as non-root user `scrutineer`. `curl`, `npm`, and `pip` are stripped from the final stage.
+Tool versions are pinned: `claude-code@2.1.119`, `semgrep==1.116.0`, `git-pkgs@v0.15.3`, `brief@v0.6.0`, `zizmor@1.24.1`. Base images are pinned by sha256 digest. The container runs as non-root user `scrutineer`. `curl`, `npm`, and `pip` are stripped from the final stage. The runner image is built in CI, smoke-tested, and published to GHCR; users pull a known-good artifact rather than rebuilding against live registries.
 
-Residual: versions are pinned by tag, not by digest. A compromised release at the pinned version (e.g. a yanked-and-republished npm package) would still land. Base images (`golang:1.26.2-alpine`, `node:22-alpine`, `python:3.13-alpine`, `alpine:3.21`) are also not digest-pinned.
+Residual: tool installs are pinned by version tag, not by content hash. A compromised release republished at the same version (e.g. a yanked-and-republished npm package) would still land. Hash-pinned lockfiles for pip/npm are tracked in #56.
 
 ### T12: Docker socket exposure in per-job runner (design risk, critical if adopted)
 

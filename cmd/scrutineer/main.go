@@ -51,7 +51,7 @@ func run(log *slog.Logger) error {
 		dataDir     = flag.String("data", "./data", "data directory (db + workspaces)")
 		effort      = flag.String("effort", "high", "claude effort")
 		noDocker    = flag.Bool("no-docker", false, "disable containerised runner even if docker is available")
-		runnerImage = flag.String("runner-image", "scrutineer-runner", "docker image for per-job containers")
+		runnerImage = flag.String("runner-image", worker.DefaultRunnerImage, "docker image for per-job containers")
 		skillsRepo  = flag.String("skills-repo", "", "clone skills from this git https URL on startup")
 		concurrency = flag.Int("concurrency", queue.DefaultWorkerConcurrency, "number of scans to run in parallel")
 	)
