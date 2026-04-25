@@ -118,7 +118,7 @@ No rate limiting on `POST /repositories`, no cap on clone size, no timeout on th
 
 ### T11: Image supply chain (partially mitigated)
 
-Tool versions are pinned: `claude-code@1.0.17`, `semgrep==1.115.0`, `git-pkgs@v0.14.0`, `brief@v0.10.0`, `zizmor@1.6.0`. The container runs as non-root user `scrutineer`. `curl`, `npm`, and `pip` are stripped from the final stage.
+Tool versions are pinned: `claude-code@1.0.17`, `semgrep==1.116.0`, `git-pkgs@v0.14.0`, `brief@v0.5.2`, `zizmor@1.24.1`. The container runs as non-root user `scrutineer`. `curl`, `npm`, and `pip` are stripped from the final stage.
 
 Residual: versions are pinned by tag, not by digest. A compromised release at the pinned version (e.g. a yanked-and-republished npm package) would still land. Base images (`golang:1.26.2-alpine`, `node:22-alpine`, `python:3.13-alpine`, `alpine:3.21`) are also not digest-pinned.
 

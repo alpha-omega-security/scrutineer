@@ -9,7 +9,11 @@ FROM node:22-alpine AS claude
 RUN npm install -g @anthropic-ai/claude-code@1.0.17
 
 FROM python:3.13-alpine AS python-tools
-RUN pip install --no-cache-dir semgrep==1.115.0
+RUN pip install --no-cache-dir semgrep==1.116.0
+
+FROM rust:1.88-alpine AS zizmor-build
+RUN apk add --no-cache build-base linux-headers
+RUN cargo install --locked --root /out zizmor@1.24.1
 
 FROM alpine:3.21
 RUN apk add --no-cache git ca-certificates python3 bash nodejs
@@ -29,15 +33,11 @@ COPY --from=python-tools /usr/local/bin/semgrep* /usr/local/bin/
 COPY --from=build /usr/local/go /usr/local/go
 ENV PATH="/usr/local/go/bin:${PATH}"
 RUN GOBIN=/usr/local/bin go install github.com/git-pkgs/git-pkgs@v0.14.0 && \
-    GOBIN=/usr/local/bin go install github.com/git-pkgs/brief@v0.10.0 && \
+    GOBIN=/usr/local/bin go install github.com/git-pkgs/brief/cmd/brief@v0.5.2 && \
     rm -rf /root/go /usr/local/go
 
 # zizmor
-RUN apk add --no-cache --virtual .build-deps cargo && \
-    cargo install zizmor@1.6.0 && \
-    cp /root/.cargo/bin/zizmor /usr/local/bin/ && \
-    rm -rf /root/.cargo && \
-    apk del .build-deps
+COPY --from=zizmor-build /out/bin/zizmor /usr/local/bin/zizmor
 
 # Non-root user (T1/T11: reduce blast radius)
 RUN adduser -D -h /home/scrutineer scrutineer && \
