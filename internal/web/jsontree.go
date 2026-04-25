@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"html"
@@ -8,6 +9,16 @@ import (
 	"sort"
 	"strings"
 )
+
+// prettyJSON re-indents raw if it parses as JSON, otherwise returns it
+// unchanged so non-JSON reports (markdown, plain text) pass through.
+func prettyJSON(raw string) string {
+	var buf bytes.Buffer
+	if err := json.Indent(&buf, []byte(strings.TrimSpace(raw)), "", "  "); err != nil {
+		return raw
+	}
+	return buf.String()
+}
 
 // jsonTree turns a JSON document into a nested <dl> for the Data tab.
 // Objects become dl/dt/dd, arrays become ul, scalars are escaped text.

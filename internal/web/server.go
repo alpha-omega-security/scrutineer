@@ -61,7 +61,8 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker) (*Serve
 			}
 			return ""
 		},
-		"jsontree": jsonTree,
+		"jsontree":   jsonTree,
+		"prettyjson": prettyJSON,
 		"bignum": bignum,
 		"lookup": func(m any, key string) uint {
 			if mm, ok := m.(map[string]uint); ok {
