@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -101,13 +102,44 @@ func (l LocalClaude) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)
 
 	res := SkillResult{Commit: commit}
 	if outPath != "" {
-		b, _ := os.ReadFile(outPath)
-		res.Report = string(b)
+		res.Report = readCappedReport(outPath, emit)
 	}
 	if waitErr != nil {
 		return res, fmt.Errorf("claude exited: %w", waitErr)
 	}
 	return res, nil
+}
+
+// maxReportBytes caps how much of a skill's report.json scrutineer will
+// read back into memory. The report lands in Scan.Report (sqlite TEXT
+// column) and is rendered unescaped in the UI, so an unbounded skill
+// output is a trivial DoS vector for the local worker. 50 MB is well
+// above any reasonable skill output — the largest legitimate report
+// we've seen in practice is ~500 KB.
+const maxReportBytes = 50 << 20
+
+// readCappedReport returns the first maxReportBytes bytes of the file
+// at path, or an empty string if the file doesn't exist. Oversize files
+// are truncated and a log line is emitted to the scan so the operator
+// knows the report was clipped.
+func readCappedReport(path string, emit func(Event)) string {
+	f, err := os.Open(path)
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	if err != nil {
+		return ""
+	}
+	if info.Size() > maxReportBytes {
+		emit(Event{Kind: KindText, Text: fmt.Sprintf("report.json is %d bytes, truncating to %d", info.Size(), maxReportBytes)})
+	}
+	b, err := io.ReadAll(io.LimitReader(f, maxReportBytes))
+	if err != nil {
+		return ""
+	}
+	return string(b)
 }
 
 // buildSkillPrompt is the activation prompt handed to claude. It's a thin

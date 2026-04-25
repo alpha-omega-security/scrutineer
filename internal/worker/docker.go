@@ -98,8 +98,7 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 
 	res := SkillResult{Commit: commit}
 	if outPath != "" {
-		b, _ := os.ReadFile(outPath)
-		res.Report = string(b)
+		res.Report = readCappedReport(outPath, emit)
 	}
 	if waitErr != nil {
 		return res, fmt.Errorf("docker exited: %w", waitErr)

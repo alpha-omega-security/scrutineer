@@ -30,7 +30,7 @@ type Repository struct {
 	DefaultBranch string
 	Languages     string
 	License       string
-	Stars         int
+	Stars         int `gorm:"index"`
 	Forks         int
 	Archived      bool
 	PushedAt      *time.Time
@@ -120,9 +120,9 @@ type Package struct {
 	Licenses              string
 	LatestVersion         string
 	VersionsCount         int
-	Downloads             int64
+	Downloads             int64 `gorm:"index"`
 	DependentPackages     int
-	DependentRepos        int
+	DependentRepos        int   `gorm:"index"`
 	RegistryURL           string
 	LatestReleaseAt       *time.Time
 	DependentPackagesURL string
@@ -186,7 +186,7 @@ type Advisory struct {
 	CVSSScore      float64
 	Classification string
 	Packages       string // comma-joined affected package names
-	PublishedAt    *time.Time
+	PublishedAt    *time.Time `gorm:"index"`
 	WithdrawnAt    *time.Time
 
 	CreatedAt time.Time
@@ -202,8 +202,8 @@ type Dependent struct {
 	Ecosystem      string
 	PURL           string
 	RepositoryURL  string
-	Downloads      int64
-	DependentRepos int
+	Downloads      int64 `gorm:"index"`
+	DependentRepos int   `gorm:"index"`
 	RegistryURL    string
 	LatestVersion  string
 

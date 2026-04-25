@@ -253,22 +253,52 @@ func (s *Server) repoList(w http.ResponseWriter, r *http.Request) {
 	var repos []db.Repository
 	q.Limit(perPage).Offset((page.N - 1) * perPage).Find(&repos)
 
+	// Batch-load findings count and last scan per page (N rows) rather
+	// than per-repo (N rows × 2 queries). For 20 rows per page this
+	// collapses 40 queries into 2.
+	repoIDs := make([]uint, 0, len(repos))
+	for _, r := range repos {
+		repoIDs = append(repoIDs, r.ID)
+	}
+	findingCounts := map[uint]int{}
+	if len(repoIDs) > 0 {
+		type rowCount struct {
+			RepositoryID uint
+			N            int
+		}
+		var counts []rowCount
+		s.DB.Model(&db.Finding{}).
+			Select("repository_id, COUNT(*) AS n").
+			Where("repository_id IN ?", repoIDs).
+			Group("repository_id").
+			Scan(&counts)
+		for _, c := range counts {
+			findingCounts[c.RepositoryID] = c.N
+		}
+	}
+	lastScans := map[uint]*db.Scan{}
+	if len(repoIDs) > 0 {
+		// For each repo, the latest scan. A single query using a grouped
+		// subquery avoids one-query-per-row.
+		var scans []db.Scan
+		s.DB.Raw(`
+			SELECT s.* FROM scans s
+			JOIN (SELECT repository_id, MAX(id) AS max_id FROM scans
+				WHERE repository_id IN ? GROUP BY repository_id) latest
+			ON latest.max_id = s.id
+		`, repoIDs).Scan(&scans)
+		for i := range scans {
+			lastScans[scans[i].RepositoryID] = &scans[i]
+		}
+	}
+
 	rows := make([]repoRow, 0, len(repos))
 	for _, repo := range repos {
-		row := repoRow{Repository: repo}
-		var last db.Scan
-		if err := s.DB.Where("repository_id = ?", repo.ID).
-			Order("id desc").First(&last).Error; err == nil {
-			row.LastScan = &last
-		}
-		// Count findings across all scans of this repo. The previous
-		// implementation read LastScan.FindingsCount, which is zero for
-		// repo-overview / metadata / packages scans — those do not
-		// produce Finding rows even when findings exist on the repo.
-		var total int64
-		s.DB.Model(&db.Finding{}).Where("repository_id = ?", repo.ID).Count(&total)
-		row.FindingsTotal = int(total)
-		rows = append(rows, row)
+		rows = append(rows, repoRow{
+			Repository:    repo,
+			LastScan:      lastScans[repo.ID],
+			FindingsTotal: findingCounts[repo.ID],
+		})
 	}
 	var languages []string
 	s.DB.Model(&db.Repository{}).Where("languages != ''").Distinct("languages").Order("languages").Pluck("languages", &languages)
