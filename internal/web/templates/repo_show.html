@@ -43,12 +43,11 @@
 </div>
 
 <div class="tabs w-full" id="repo-tabs">
-  {{$findings := and .Latest .Latest.Findings}}
   <nav role="tablist" aria-orientation="horizontal">
     <button type="button" role="tab" id="rt1" aria-controls="rp1" aria-selected="true">Summary</button>
-    {{if $findings}}
+    {{if .Findings}}
       <button type="button" role="tab" id="rt4" aria-controls="rp4" aria-selected="false">
-        Findings <span class="badge-destructive ml-1">{{len .Latest.Findings}}</span>
+        Findings <span class="badge-destructive ml-1">{{len .Findings}}</span>
       </button>
     {{end}}
     {{if .Pkgs}}
@@ -169,14 +168,14 @@
     {{end}}
   </div>
 
-  {{if $findings}}
+  {{if .Findings}}
   <div role="tabpanel" id="rp4" aria-labelledby="rt4" hidden>
     <p class="text-sm text-muted-foreground mb-4">
-      From scan <a class="underline" href="/scans/{{.Latest.ID}}">#{{.Latest.ID}}</a>
-      ({{.Latest.Model}}, {{since .Latest.StartedAt}}).
+      All open findings for this repository across {{len .Scans}} scan{{if ne (len .Scans) 1}}s{{end}}.
+      Rejected and duplicate findings are hidden.
     </p>
     <div class="grid gap-4">
-      {{range .Latest.Findings}}
+      {{range .Findings}}
         <div class="card cursor-pointer" hx-get="/findings/{{.ID}}" hx-target="body" hx-push-url="true">
           <header>
             <div class="flex items-center gap-2">
@@ -184,7 +183,10 @@
               <h3>{{.Title}}</h3>
               {{if .CWE}}<span class="badge-outline ml-auto" data-tooltip="{{cwename .CWE}}">{{.CWE}}</span>{{end}}
             </div>
-            <p><code class="text-xs">{{.Location}}</code></p>
+            <p>
+              <code class="text-xs">{{.Location}}</code>
+              <span class="text-xs text-muted-foreground">&middot; scan <a class="hover:underline" href="/scans/{{.ScanID}}">#{{.ScanID}}</a></span>
+            </p>
           </header>
           <section class="text-sm">
             <p class="line-clamp-3">{{.Summary}}</p>

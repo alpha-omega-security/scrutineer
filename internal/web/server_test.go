@@ -1102,6 +1102,51 @@ func TestFindingDisclose404WhenSkillMissing(t *testing.T) {
 	}
 }
 
+func TestRepoShow_findingsTabAggregatesAcrossScans(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/agg", Name: "agg"}
+	s.DB.Create(&repo)
+
+	// Older deep-dive scan with two findings, one of which is rejected.
+	older := db.Scan{RepositoryID: repo.ID, Kind: "skill", SkillName: deepDiveSkillName, Status: db.ScanDone}
+	s.DB.Create(&older)
+	s.DB.Create(&db.Finding{ScanID: older.ID, RepositoryID: repo.ID, Title: "old-high", Severity: "High", Status: db.FindingNew})
+	s.DB.Create(&db.Finding{ScanID: older.ID, RepositoryID: repo.ID, Title: "old-noise", Severity: "Low", Status: db.FindingRejected})
+
+	// A non-deep-dive skill also produced a finding.
+	other := db.Scan{RepositoryID: repo.ID, Kind: "skill", SkillName: "secrets", Status: db.ScanDone}
+	s.DB.Create(&other)
+	s.DB.Create(&db.Finding{ScanID: other.ID, RepositoryID: repo.ID, Title: "leaked-key", Severity: "Critical", Status: db.FindingTriaged})
+
+	// Latest deep-dive scan completed with zero findings. Previously this
+	// hid the Findings tab entirely (#72).
+	latest := db.Scan{RepositoryID: repo.ID, Kind: "skill", SkillName: deepDiveSkillName, Status: db.ScanDone}
+	s.DB.Create(&latest)
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", fmt.Sprintf("/repositories/%d", repo.ID)))
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	body := w.Body.String()
+
+	if !strings.Contains(body, "old-high") {
+		t.Errorf("finding from older scan not shown")
+	}
+	if !strings.Contains(body, "leaked-key") {
+		t.Errorf("finding from non-deep-dive skill not shown")
+	}
+	if strings.Contains(body, "old-noise") {
+		t.Errorf("rejected finding should be hidden from the tab")
+	}
+	// Severity ordering: Critical card before High card.
+	if strings.Index(body, "leaked-key") > strings.Index(body, "old-high") {
+		t.Errorf("expected Critical finding to sort before High")
+	}
+}
+
 func TestBulkImport_createsAndEnqueues(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

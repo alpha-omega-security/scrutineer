@@ -45,7 +45,7 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *work
 			}
 			return humanDuration(time.Since(*t)) + " ago"
 		},
-		"dur":    humanDuration,
+		"dur":     humanDuration,
 		"status":  func(s db.ScanStatus) string { return string(s) },
 		"fstatus": func(s db.FindingLifecycle) string { return string(s) },
 		"dict": func(kv ...any) map[string]any {
@@ -64,7 +64,7 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *work
 		},
 		"jsontree":   jsonTree,
 		"prettyjson": prettyJSON,
-		"bignum": bignum,
+		"bignum":     bignum,
 		"lookup": func(m any, key string) uint {
 			if mm, ok := m.(map[string]uint); ok {
 				return mm[key]
@@ -1259,6 +1259,15 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// All findings across every scan of this repo, not just the latest
+	// deep-dive run. rejected/duplicate are analyst-dispositioned noise and
+	// stay off the tab; everything else is shown so an empty or failed
+	// latest scan does not hide earlier results (#72).
+	var findings []db.Finding
+	s.DB.Where("repository_id = ? AND status NOT IN ?", repo.ID,
+		[]db.FindingLifecycle{db.FindingRejected, db.FindingDuplicate}).
+		Order(severityOrder).Order("id desc").Find(&findings)
+
 	var maintainers []db.Maintainer
 	s.DB.Joins("JOIN repository_maintainers ON repository_maintainers.maintainer_id = maintainers.id").
 		Where("repository_maintainers.repository_id = ?", repo.ID).Find(&maintainers)
@@ -1306,8 +1315,9 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 
 	data := map[string]any{
 		"Repo": repo, "Scans": scans, "Active": active, "Latest": latest,
+		"Findings": findings,
 		"TMCommit": tmCommit,
-		"Deps": deps, "Pkgs": pkgs, "Dependents": dependents, "Advisories": advisories, "Maintainers": maintainers, "ThreatModel": threatModel,
+		"Deps":     deps, "Pkgs": pkgs, "Dependents": dependents, "Advisories": advisories, "Maintainers": maintainers, "ThreatModel": threatModel,
 		"KnownURLs": knownURLs, "KnownPURLs": knownPURLs,
 		"Skills":       activeSkills,
 		"Subprojects":  subprojects,
