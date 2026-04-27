@@ -43,12 +43,12 @@
 </div>
 
 <div class="tabs w-full" id="repo-tabs">
-  {{$findings := and .Latest .Latest.Findings}}
+  {{$findings := .AllFindings}}
   <nav role="tablist" aria-orientation="horizontal">
     <button type="button" role="tab" id="rt1" aria-controls="rp1" aria-selected="true">Summary</button>
     {{if $findings}}
       <button type="button" role="tab" id="rt4" aria-controls="rp4" aria-selected="false">
-        Findings <span class="badge-destructive ml-1">{{len .Latest.Findings}}</span>
+        Findings <span class="badge-destructive ml-1">{{len .AllFindings}}</span>
       </button>
     {{end}}
     {{if .Pkgs}}
@@ -171,12 +171,8 @@
 
   {{if $findings}}
   <div role="tabpanel" id="rp4" aria-labelledby="rt4" hidden>
-    <p class="text-sm text-muted-foreground mb-4">
-      From scan <a class="underline" href="/scans/{{.Latest.ID}}">#{{.Latest.ID}}</a>
-      ({{.Latest.Model}}, {{since .Latest.StartedAt}}).
-    </p>
     <div class="grid gap-4">
-      {{range .Latest.Findings}}
+      {{range .AllFindings}}
         <div class="card cursor-pointer" hx-get="/findings/{{.ID}}" hx-target="body" hx-push-url="true">
           <header>
             <div class="flex items-center gap-2">

@@ -1276,6 +1276,9 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 	var advisories []db.Advisory
 	s.DB.Where("repository_id = ?", repo.ID).Order("cvss_score desc").Find(&advisories)
 
+	var allFindings []db.Finding
+	s.DB.Where("repository_id = ?", repo.ID).Order("severity, id").Find(&allFindings)
+
 	knownURLs := buildKnownURLs(s.DB)
 	knownPURLs := buildKnownPURLs(s.DB)
 
@@ -1312,6 +1315,7 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 		"Skills":       activeSkills,
 		"Subprojects":  subprojects,
 		"SubScanCount": subScanCount,
+		"AllFindings":  allFindings,
 	}
 	if r.Header.Get("HX-Target") == "scan-rows" {
 		s.maybeToast(w, r, repo.Name, scans)

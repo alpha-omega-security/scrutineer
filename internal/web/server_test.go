@@ -1373,6 +1373,43 @@ func TestSubprojectsRenderedOnRepoPage(t *testing.T) {
 	}
 }
 
+func TestRepoShow_findingsTabShownForOlderScans(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://github.com/foo/bar.git", Name: "bar"}
+	s.DB.Create(&repo)
+
+	// Older deep-dive scan produces two findings.
+	deep := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: "security-deep-dive"}
+	s.DB.Create(&deep)
+	s.DB.Create(&db.Finding{ScanID: deep.ID, RepositoryID: repo.ID, Title: "SSRF", Severity: "high"})
+	s.DB.Create(&db.Finding{ScanID: deep.ID, RepositoryID: repo.ID, Title: "XSS", Severity: "medium"})
+
+	// Newer scan (different skill, no findings) becomes the latest scan.
+	s.DB.Create(&db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: "repo-overview"})
+
+	req := httptest.NewRequest("GET", fmt.Sprintf("/repositories/%d", repo.ID), nil)
+	req.Host = testHost
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	body := w.Body.String()
+
+	// Findings tab should be present with the aggregate count (2).
+	if !strings.Contains(body, `<span class="badge-destructive ml-1">2</span>`) {
+		t.Errorf("expected Findings tab badge showing 2, got body=%s", body)
+	}
+	// Both finding titles should appear in the findings panel.
+	for _, title := range []string{"SSRF", "XSS"} {
+		if !strings.Contains(body, title) {
+			t.Errorf("expected finding %q in body", title)
+		}
+	}
+}
+
 func TestScanShowRenders(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
