@@ -1190,6 +1190,39 @@ func TestRepoShow_findingsTabAggregatesAcrossScans(t *testing.T) {
 	}
 }
 
+func TestBulkImport_dedupesNormalisedURLs(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	s.DB.Create(&db.Skill{Name: "triage", Description: "o", Body: "b", Active: true, Source: "ui", Version: 1})
+
+	// Same repo four ways: canonical, mixed case, trailing slash, query string.
+	urls := strings.Join([]string{
+		"https://github.com/rails/rails",
+		"https://github.com/Rails/Rails",
+		"https://github.com/rails/rails/",
+		"https://GitHub.com/rails/rails?tab=readme",
+	}, "\n")
+	form := url.Values{"urls": {urls}}
+	req := httptest.NewRequest("POST", "/repositories/bulk", strings.NewReader(form.Encode()))
+	req.Host = testHost
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	trigger := w.Header().Get("HX-Trigger")
+	if !strings.Contains(trigger, "1 added") || !strings.Contains(trigger, "3 already present") {
+		t.Errorf("toast = %s, want 1 added / 3 already present", trigger)
+	}
+
+	var repos []db.Repository
+	s.DB.Find(&repos)
+	if len(repos) != 1 || repos[0].URL != "https://github.com/rails/rails.git" {
+		t.Fatalf("want one normalised row, got %+v", repos)
+	}
+}
+
 func TestBulkImport_createsAndEnqueues(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
