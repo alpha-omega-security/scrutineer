@@ -151,13 +151,14 @@
       {{if .Latest.Findings}}
         <table class="table table-fixed w-full">
           <thead><tr>
-            <th class="w-24">Severity</th><th>Title</th><th class="w-64">Location</th>
+            <th class="w-24">Severity</th><th>Title</th><th class="w-24">Status</th><th class="w-64">Location</th>
           </tr></thead>
           <tbody>
           {{range .Latest.Findings}}
             <tr class="cursor-pointer" hx-get="/findings/{{.ID}}" hx-target="body" hx-push-url="true">
               <td>{{template "severity-badge" .Severity}}</td>
               <td class="min-w-0 whitespace-normal">{{.Title}}</td>
+              <td>{{template "finding-status" (fstatus .Status)}}</td>
               <td class="whitespace-normal"><code class="text-xs break-all">{{.Location}}</code></td>
             </tr>
           {{end}}
@@ -181,6 +182,7 @@
           <header>
             <div class="flex items-center gap-2">
               {{template "severity-badge" .Severity}}
+              {{template "finding-status" (fstatus .Status)}}
               <h3>{{.Title}}</h3>
               {{if .CWE}}<span class="badge-outline ml-auto" data-tooltip="{{cwename .CWE}}">{{.CWE}}</span>{{end}}
             </div>
