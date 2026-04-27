@@ -245,6 +245,11 @@ func (s *Server) repoList(w http.ResponseWriter, r *http.Request) {
 		q = q.Order("stars desc")
 	case "language":
 		q = q.Order("languages, name")
+	case "findings":
+		// Correlated subquery keeps the existing Count/Find chain intact
+		// (a JOIN+GROUP BY would change what Count(&total) returns). Low-
+		// thousands of repos so the per-row subselect is fine on sqlite.
+		q = q.Order("(SELECT COUNT(*) FROM findings WHERE findings.repository_id = repositories.id) desc, updated_at desc")
 	default:
 		sort = defaultSort
 		q = q.Order("updated_at desc")

@@ -216,6 +216,49 @@ func TestRepoList_findingsCountIsRepoWideNotLastScan(t *testing.T) {
 	}
 }
 
+func TestRepoList_sortByFindings(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	mk := func(slug string, n int) {
+		repo := db.Repository{URL: "https://x/" + slug, Name: slug}
+		s.DB.Create(&repo)
+		if n == 0 {
+			return
+		}
+		scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: "security-deep-dive"}
+		s.DB.Create(&scan)
+		for i := 0; i < n; i++ {
+			s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repo.ID,
+				Title: fmt.Sprintf("F%d", i), Severity: "High"})
+		}
+	}
+	mk("two-findings", 2)
+	mk("zero-findings", 0)
+	mk("five-findings", 5)
+	mk("one-finding", 1)
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/?sort=findings"))
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	body := w.Body.String()
+
+	order := []string{"x/five-findings", "x/two-findings", "x/one-finding", "x/zero-findings"}
+	last := -1
+	for _, slug := range order {
+		i := strings.Index(body, slug)
+		if i < 0 {
+			t.Fatalf("missing %q in body", slug)
+		}
+		if i < last {
+			t.Errorf("%q out of order (want descending by finding count)", slug)
+		}
+		last = i
+	}
+}
+
 func TestRepoSearchFilters(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
