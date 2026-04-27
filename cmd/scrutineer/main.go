@@ -72,6 +72,9 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	_ = os.Chmod(*dataDir, dataPermSecure)
+	// Module-boundary sentinel so go tooling on the parent repo never
+	// walks into cloned scan workspaces under data/work/.
+	_ = os.WriteFile(filepath.Join(*dataDir, "go.mod"), []byte("module scrutineer/data\n"), dataPermSecure)
 
 	gdb, err := db.Open(filepath.Join(*dataDir, "scrutineer.db"))
 	if err != nil {

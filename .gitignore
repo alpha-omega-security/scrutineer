@@ -1,5 +1,6 @@
 /data/
 /scrutineer
+/scrutineer-desktop
 *.db
 *.db-shm
 *.db-wal

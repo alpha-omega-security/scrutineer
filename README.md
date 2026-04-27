@@ -98,6 +98,17 @@ The Dependencies tab on a repo groups packages by name and shows all manifest fi
 
 The same applies to the Dependents tab -- you can import any dependent's repository with one click.
 
+## Desktop app
+
+`cmd/scrutineer-desktop` builds a self-contained binary that starts the server on a random localhost port and opens it in the OS-native webview, so it runs like a standalone app rather than a browser tab. Closing the window shuts the server down.
+
+    go build ./cmd/scrutineer-desktop
+    ./scrutineer-desktop
+
+On macOS this links the system WebKit framework so there are no extra dependencies. On Linux you need the WebKitGTK development headers (`apt install libwebkit2gtk-4.1-dev` on Debian/Ubuntu, `dnf install webkit2gtk4.1-devel` on Fedora). On Windows it uses WebView2, which ships with Windows 11 and recent Windows 10.
+
+The desktop build always uses the local runner and reads `./data` and `./skills` relative to where you launch it. For flags, the config file, or the docker runner, use `cmd/scrutineer`.
+
 ## Docker
 
     docker build -t scrutineer .

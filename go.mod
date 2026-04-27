@@ -6,6 +6,7 @@ toolchain go1.26.2
 
 require (
 	github.com/glebarez/sqlite v1.11.0
+	github.com/webview/webview_go v0.0.0-20240831120633-6173450d4dd6
 	gopkg.in/yaml.v3 v3.0.1
 	gorm.io/gorm v1.31.1
 	maragu.dev/goqite v0.4.0
