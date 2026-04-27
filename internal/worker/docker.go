@@ -72,6 +72,11 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 	if os.Getenv("ANTHROPIC_API_KEY") != "" {
 		dockerArgs = append(dockerArgs, "-e", "ANTHROPIC_API_KEY")
 	}
+
+	if os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") != "" {
+		dockerArgs = append(dockerArgs, "-e", "CLAUDE_CODE_OAUTH_TOKEN")
+	}
+
 	dockerArgs = append(dockerArgs, d.image())
 	dockerArgs = append(dockerArgs, claudeArgs...)
 
