@@ -55,6 +55,21 @@
     <dt class="text-muted-foreground">Model</dt>
     <dd>{{$scan.Model}}</dd>
   </div>
+  <div>
+    <dt class="text-muted-foreground">First seen</dt>
+    <dd><a href="/scans/{{$f.ScanID}}" class="hover:underline">scan #{{$f.ScanID}}</a>
+      {{if $f.Commit}}<code class="text-xs text-muted-foreground">@{{short $f.Commit}}</code>{{end}}</dd>
+  </div>
+  <div>
+    <dt class="text-muted-foreground">Last seen</dt>
+    <dd>
+      {{if $f.LastSeenScanID}}
+        <a href="/scans/{{$f.LastSeenScanID}}" class="hover:underline">scan #{{$f.LastSeenScanID}}</a>
+        {{if $f.LastSeenCommit}}<code class="text-xs text-muted-foreground">@{{short $f.LastSeenCommit}}</code>{{end}}
+        {{if gt $f.SeenCount 1}}<span class="text-xs text-muted-foreground">({{$f.SeenCount}}x)</span>{{end}}
+      {{else}}-{{end}}
+    </dd>
+  </div>
   {{if $f.CVEID}}
   <div>
     <dt class="text-muted-foreground">CVE</dt>

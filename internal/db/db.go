@@ -118,21 +118,21 @@ type Scan struct {
 
 // Package is one registry entry from packages.ecosyste.ms linked to this repo.
 type Package struct {
-	ID           uint       `gorm:"primarykey"`
-	RepositoryID uint       `gorm:"index;not null"`
+	ID           uint `gorm:"primarykey"`
+	RepositoryID uint `gorm:"index;not null"`
 	Repository   Repository
 
-	Name                  string
-	Ecosystem             string `gorm:"index"`
-	PURL                  string
-	Licenses              string
-	LatestVersion         string
-	VersionsCount         int
-	Downloads             int64 `gorm:"index"`
-	DependentPackages     int
-	DependentRepos        int   `gorm:"index"`
-	RegistryURL           string
-	LatestReleaseAt       *time.Time
+	Name                 string
+	Ecosystem            string `gorm:"index"`
+	PURL                 string
+	Licenses             string
+	LatestVersion        string
+	VersionsCount        int
+	Downloads            int64 `gorm:"index"`
+	DependentPackages    int
+	DependentRepos       int `gorm:"index"`
+	RegistryURL          string
+	LatestReleaseAt      *time.Time
 	DependentPackagesURL string
 	Metadata             string `gorm:"type:text"`
 
@@ -142,7 +142,7 @@ type Package struct {
 type MaintainerStatus string
 
 const (
-	MaintainerActive  MaintainerStatus = "active"
+	MaintainerActive   MaintainerStatus = "active"
 	MaintainerInactive MaintainerStatus = "inactive"
 	MaintainerUnknown  MaintainerStatus = "unknown"
 )
@@ -151,14 +151,14 @@ const (
 // of the disclosure CRM: findings batch into conversations per maintainer,
 // not per repo.
 type Maintainer struct {
-	ID     uint   `gorm:"primarykey"`
-	Login  string `gorm:"uniqueIndex;not null"` // github username or equivalent
-	Name   string
-	Email  string
-	Company string
+	ID        uint   `gorm:"primarykey"`
+	Login     string `gorm:"uniqueIndex;not null"` // github username or equivalent
+	Name      string
+	Email     string
+	Company   string
 	AvatarURL string
-	Status MaintainerStatus `gorm:"index;default:unknown"`
-	Notes  string
+	Status    MaintainerStatus `gorm:"index;default:unknown"`
+	Notes     string
 
 	// DoNotContact suppresses this maintainer from disclosure routing.
 	// Toggled per-maintainer from the UI. The analyst sets it when the
@@ -200,7 +200,7 @@ type Advisory struct {
 	Severity       string `gorm:"index"`
 	CVSSScore      float64
 	Classification string
-	Packages       string // comma-joined affected package names
+	Packages       string     // comma-joined affected package names
 	PublishedAt    *time.Time `gorm:"index"`
 	WithdrawnAt    *time.Time
 
@@ -258,9 +258,9 @@ const (
 type FindingSource string
 
 const (
-	SourceTool     FindingSource = "tool"
-	SourceModel    FindingSource = "model_suggested"
-	SourceAnalyst  FindingSource = "analyst"
+	SourceTool    FindingSource = "tool"
+	SourceModel   FindingSource = "model_suggested"
+	SourceAnalyst FindingSource = "analyst"
 )
 
 // Finding is one vulnerability reported by a scan. The Finding row holds
@@ -268,9 +268,9 @@ const (
 // changed each one and from which source. Labels, notes, communications,
 // and references are normalised into sibling tables.
 type Finding struct {
-	ID           uint `gorm:"primarykey"`
-	ScanID       uint `gorm:"index;not null"`
-	Scan         Scan
+	ID     uint `gorm:"primarykey"`
+	ScanID uint `gorm:"index;not null"`
+	Scan   Scan
 	// RepositoryID, Commit, and SubPath are denormalized from Scan so list
 	// queries don't have to join through Scan (GORM's Preload/Joins on
 	// Finding.Scan doesn't round-trip cleanly on sqlite). Set at
@@ -278,9 +278,19 @@ type Finding struct {
 	// marked not-null so AutoMigrate can widen the column on existing
 	// databases without a default; BackfillFindingRepository fills
 	// existing rows on startup.
-	RepositoryID uint `gorm:"index"`
+	RepositoryID uint `gorm:"index;index:idx_findings_repo_fp,priority:1"`
 	Commit       string
 	SubPath      string `gorm:"index"`
+
+	// Fingerprint dedupes the same vulnerability reported by repeated
+	// scans; see FingerprintFinding. ScanID/Commit are first-seen;
+	// LastSeenScanID/LastSeenCommit/SeenCount track re-observation. The
+	// composite index makes the (repo, fingerprint) lookup at ingest
+	// cheap without requiring uniqueness (legacy rows may collide).
+	Fingerprint    string `gorm:"index:idx_findings_repo_fp,priority:2"`
+	LastSeenScanID uint
+	LastSeenCommit string
+	SeenCount      int
 
 	FindingID string // e.g. F1, F2 within the report
 	Sinks     string // comma-joined sink IDs
@@ -346,8 +356,8 @@ type FindingLabel struct {
 // FindingNote is one timestamped internal analyst note about a finding.
 // Replaces the old single Notes column so the comment trail is preserved.
 type FindingNote struct {
-	ID        uint `gorm:"primarykey"`
-	FindingID uint `gorm:"index;not null"`
+	ID        uint   `gorm:"primarykey"`
+	FindingID uint   `gorm:"index;not null"`
 	Body      string `gorm:"type:text"`
 	By        string // free-text author; scrutineer is single-user so usually empty
 
@@ -359,8 +369,8 @@ type FindingNote struct {
 // Kept distinct from FindingNote since the semantics (channel, direction,
 // external actor) don't fit a generic note.
 type FindingCommunication struct {
-	ID        uint `gorm:"primarykey"`
-	FindingID uint `gorm:"index;not null"`
+	ID        uint   `gorm:"primarykey"`
+	FindingID uint   `gorm:"index;not null"`
 	Channel   string // email | ghsa | issue | pr | direct | registry
 	Direction string // outbound | inbound
 	Actor     string // name/handle of the other party
@@ -414,17 +424,17 @@ type FindingHistory struct {
 type Skill struct {
 	ID uint `gorm:"primarykey"`
 
-	Name        string `gorm:"uniqueIndex;not null"`
-	Description string
-	License     string
+	Name          string `gorm:"uniqueIndex;not null"`
+	Description   string
+	License       string
 	Compatibility string
 	AllowedTools  string
 	Metadata      string `gorm:"type:text"` // raw frontmatter metadata map as JSON
 
 	Body       string `gorm:"type:text"` // markdown body after frontmatter
 	SchemaJSON string `gorm:"type:text"` // optional schema.json contents
-	OutputFile string                   // from metadata["scrutineer.output_file"]
-	OutputKind string `gorm:"index"`     // from metadata["scrutineer.output_kind"]
+	OutputFile string // from metadata["scrutineer.output_file"]
+	OutputKind string `gorm:"index"` // from metadata["scrutineer.output_kind"]
 
 	Version int  `gorm:"not null;default:1"`
 	Active  bool `gorm:"not null;default:true"`
