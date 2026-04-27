@@ -89,6 +89,7 @@
         {{if .Repo.Stars}}<span class="badge-outline"><i data-lucide="star"></i>{{bignum .Repo.Stars}}</span>{{end}}
         {{if .Repo.License}}<span class="badge-outline"><i data-lucide="scale"></i>{{.Repo.License}}</span>{{end}}
         {{if .Repo.PushedAt}}<span class="badge-outline"><i data-lucide="clock"></i>pushed {{since .Repo.PushedAt}}</span>{{end}}
+        {{if gt .TotalCost 0.0}}<span class="badge-outline" data-tooltip="Total scan spend on this repository"><i data-lucide="coins"></i>{{usd .TotalCost}}</span>{{end}}
         {{if .Repo.Archived}}<span class="badge-destructive"><i data-lucide="archive"></i>archived</span>{{end}}
       </div>
     {{else}}
@@ -338,7 +339,7 @@
   <div role="tabpanel" id="rp3" aria-labelledby="rt3" hidden>
     <table class="table">
       <thead>
-        <tr><th>#</th><th>Skill</th><th>Status</th><th>Findings</th><th>Model</th><th>Commit</th><th>Started</th><th>Duration</th><th class="w-12"></th></tr>
+        <tr><th>#</th><th>Skill</th><th>Status</th><th>Findings</th><th>Model</th><th>Cost</th><th>Commit</th><th>Started</th><th>Duration</th><th class="w-12"></th></tr>
       </thead>
       {{template "scan_rows" .}}
     </table>
@@ -363,6 +364,7 @@
     <td>{{template "status-badge" (status .Status)}}</td>
     <td>{{if gt .FindingsCount 0}}{{template "findings-badge" .FindingsCount}}{{end}}</td>
     <td class="text-muted-foreground">{{if .Model}}{{.Model}}{{else}}-{{end}}</td>
+    <td class="text-muted-foreground">{{if gt .CostUSD 0.0}}{{usd .CostUSD}}{{else}}-{{end}}</td>
     <td><code>{{short .Commit}}</code></td>
     <td>{{if .StartedAt}}{{since .StartedAt}}{{end}}</td>
     <td>{{if .FinishedAt}}{{dur .Duration}}{{end}}</td>

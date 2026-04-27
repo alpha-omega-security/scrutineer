@@ -61,7 +61,7 @@
       <tr>
         <th>#</th><th>Repository</th>
         {{if .AnySubPath}}<th>Sub-path</th>{{end}}
-        <th>Skill</th><th>Status</th><th>Findings</th><th>Model</th><th>Started</th><th>Duration</th><th class="w-12"></th>
+        <th>Skill</th><th>Status</th><th>Findings</th><th>Model</th><th>Cost</th><th>Started</th><th>Duration</th><th class="w-12"></th>
       </tr>
     </thead>
     <tbody>
@@ -77,6 +77,7 @@
         <td>{{template "status-badge" (status .Status)}}</td>
         <td>{{if gt .FindingsCount 0}}{{template "findings-badge" .FindingsCount}}{{end}}</td>
         <td class="text-muted-foreground">{{if .Model}}{{.Model}}{{else}}-{{end}}</td>
+        <td class="text-muted-foreground">{{if gt .CostUSD 0.0}}{{usd .CostUSD}}{{else}}-{{end}}</td>
         <td>{{if .StartedAt}}{{since .StartedAt}}{{end}}</td>
         <td>{{if .FinishedAt}}{{dur .Duration}}{{end}}</td>
         <td>{{template "scan-actions" .}}</td>

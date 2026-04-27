@@ -46,6 +46,8 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *work
 			return humanDuration(time.Since(*t)) + " ago"
 		},
 		"dur":     humanDuration,
+		"usd":     formatUSD,
+		"pct":     formatPct,
 		"status":  func(s db.ScanStatus) string { return string(s) },
 		"fstatus": func(s db.FindingLifecycle) string { return string(s) },
 		"dict": func(kv ...any) map[string]any {
@@ -154,6 +156,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /scans/{id}/retry", s.scanRetry)
 	mux.HandleFunc("POST /scans/{id}/cancel", s.scanCancel)
 	mux.HandleFunc("GET /scans/{id}/log", s.scanLog)
+	mux.HandleFunc("GET /usage", s.usage)
 	mux.HandleFunc("GET /skills", s.skillsList)
 	mux.HandleFunc("GET /skills/new", s.skillNew)
 	mux.HandleFunc("POST /skills", s.skillCreate)
@@ -1264,6 +1267,10 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	var totalCost float64
+	s.DB.Model(&db.Scan{}).Where("repository_id = ?", repo.ID).
+		Select("COALESCE(SUM(cost_usd), 0)").Scan(&totalCost)
+
 	// All findings across every scan of this repo, not just the latest
 	// deep-dive run. rejected/duplicate are analyst-dispositioned noise and
 	// stay off the tab; everything else is shown so an empty or failed
@@ -1320,9 +1327,10 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 
 	data := map[string]any{
 		"Repo": repo, "Scans": scans, "Active": active, "Latest": latest,
-		"Findings": findings,
-		"TMCommit": tmCommit,
-		"Deps":     deps, "Pkgs": pkgs, "Dependents": dependents, "Advisories": advisories, "Maintainers": maintainers, "ThreatModel": threatModel,
+		"Findings":  findings,
+		"TotalCost": totalCost,
+		"TMCommit":  tmCommit,
+		"Deps":      deps, "Pkgs": pkgs, "Dependents": dependents, "Advisories": advisories, "Maintainers": maintainers, "ThreatModel": threatModel,
 		"KnownURLs": knownURLs, "KnownPURLs": knownPURLs,
 		"Skills":       activeSkills,
 		"Subprojects":  subprojects,
@@ -1638,6 +1646,21 @@ func humanDuration(d time.Duration) string {
 	default:
 		return fmt.Sprintf("%dd", int(d.Hours())/hourPerDay)
 	}
+}
+
+const pctScale = 100
+
+func formatPct(v float64) string { return fmt.Sprintf("%.0f%%", v*pctScale) }
+
+// formatUSD renders a dollar amount with enough precision that the cheap
+// metadata-style scans (fractions of a cent) don't all read as $0.00,
+// while keeping deep-dive runs at the two decimal places people expect.
+func formatUSD(v float64) string {
+	const smallDollar = 0.10
+	if v > 0 && v < smallDollar {
+		return fmt.Sprintf("$%.4f", v)
+	}
+	return fmt.Sprintf("$%.2f", v)
 }
 
 // securityHeaders enforces T3 mitigations: host header check to prevent DNS

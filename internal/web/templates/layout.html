@@ -47,6 +47,7 @@
           <li><a href="/maintainers" data-nav="maintainers"><i data-lucide="users"></i><span>Maintainers</span></a></li>
           <li><a href="/scans" data-nav="scans"><i data-lucide="list-checks"></i><span>Scans</span></a></li>
           <li><a href="/skills" data-nav="skills"><i data-lucide="sparkles"></i><span>Skills</span></a></li>
+          <li><a href="/usage" data-nav="usage"><i data-lucide="coins"></i><span>Usage</span></a></li>
         </ul>
       </div>
     </section>
@@ -150,7 +151,8 @@
   else window.addEventListener('load', restoreTab);
   (function () {
     var p = location.pathname;
-    var key = p.indexOf('/skills') === 0 ? 'skills'
+    var key = p.indexOf('/usage') === 0 ? 'usage'
+            : p.indexOf('/skills') === 0 ? 'skills'
             : p.indexOf('/maintainers') === 0 ? 'maintainers'
             : p.indexOf('/orgs') === 0 ? 'orgs'
             : p.indexOf('/packages') === 0 ? 'packages'

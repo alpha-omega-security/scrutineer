@@ -1,0 +1,54 @@
+{{template "head"}}
+
+<div class="flex items-center justify-between gap-4 mb-2">
+  <h2 class="text-2xl font-semibold flex items-center gap-2">
+    <i data-lucide="coins"></i> Usage
+  </h2>
+  <div class="flex items-center gap-2">
+    <span class="badge-outline">{{.TotalRuns}} runs</span>
+    <span class="badge-outline">{{usd .TotalCost}} total</span>
+  </div>
+</div>
+<p class="text-sm text-muted-foreground mb-6">
+  Cost and turn-count distribution per skill across every completed or failed scan.
+  Queued, running and cancelled scans are excluded.
+</p>
+
+{{if .Rows}}
+  <table class="table w-full">
+    <thead><tr>
+      <th>Skill</th>
+      <th class="text-right">Runs</th>
+      <th class="text-right">Min</th>
+      <th class="text-right">Median</th>
+      <th class="text-right">p90</th>
+      <th class="text-right">Max</th>
+      <th class="text-right">Total</th>
+      <th class="text-right">Tokens in</th>
+      <th class="text-right">Tokens out</th>
+      <th class="text-right">Median turns</th>
+      <th class="text-right">p90 turns</th>
+    </tr></thead>
+    <tbody>
+    {{range .Rows}}
+      <tr>
+        <td class="font-medium">{{.Skill}}</td>
+        <td class="text-right text-muted-foreground">{{.Runs}}</td>
+        <td class="text-right">{{usd .Cost.Min}}</td>
+        <td class="text-right">{{usd .Cost.Median}}</td>
+        <td class="text-right">{{usd .Cost.P90}}</td>
+        <td class="text-right">{{usd .Cost.Max}}</td>
+        <td class="text-right font-medium">{{usd .Cost.Sum}}</td>
+        <td class="text-right text-muted-foreground">{{bignum .TokensIn}}</td>
+        <td class="text-right text-muted-foreground">{{bignum .TokensOut}}</td>
+        <td class="text-right text-muted-foreground">{{printf "%.0f" .Turns.Median}}</td>
+        <td class="text-right text-muted-foreground">{{printf "%.0f" .Turns.P90}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+{{else}}
+  {{template "empty" (dict "Icon" "coins" "Title" "No usage yet" "Body" "Cost data appears here once scans have completed.")}}
+{{end}}
+
+{{template "foot"}}

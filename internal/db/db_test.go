@@ -1,6 +1,23 @@
 package db
 
-import "testing"
+import (
+	"math"
+	"testing"
+)
+
+func TestScanTokenHelpers(t *testing.T) {
+	s := Scan{InputTokens: 100, CacheReadTokens: 800, CacheWriteTokens: 100, OutputTokens: 50}
+	if s.TotalInputTokens() != 1000 {
+		t.Errorf("TotalInputTokens = %d", s.TotalInputTokens())
+	}
+	if math.Abs(s.CacheHitRatio()-0.8) > 1e-9 {
+		t.Errorf("CacheHitRatio = %v", s.CacheHitRatio())
+	}
+	var z Scan
+	if z.CacheHitRatio() != 0 {
+		t.Errorf("zero scan CacheHitRatio = %v", z.CacheHitRatio())
+	}
+}
 
 func TestBackfillFindingRepositoryFillsCommit(t *testing.T) {
 	gdb, err := Open(":memory:")
@@ -33,13 +50,13 @@ func TestBackfillFindingRepositoryFillsCommit(t *testing.T) {
 
 func TestNameFromURL(t *testing.T) {
 	cases := map[string]string{
-		"https://github.com/foo/bar":      "bar",
-		"https://github.com/foo/bar.git":  "bar",
-		"https://github.com/foo/bar/":     "bar",
-		"git@github.com:foo/bar.git":      "bar",
-		"ssh://git@host.xz/path/to/repo":  "repo",
-		"https://gitlab.com/g/sub/proj":   "proj",
-		"":                                "repo",
+		"https://github.com/foo/bar":     "bar",
+		"https://github.com/foo/bar.git": "bar",
+		"https://github.com/foo/bar/":    "bar",
+		"git@github.com:foo/bar.git":     "bar",
+		"ssh://git@host.xz/path/to/repo": "repo",
+		"https://gitlab.com/g/sub/proj":  "proj",
+		"":                               "repo",
 	}
 	for in, want := range cases {
 		if got := NameFromURL(in); got != want {
