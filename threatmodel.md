@@ -136,7 +136,13 @@ Keep scrutineer containerised but talk to a separate spawner daemon over a unix 
 
 Use a rootless runtime (rootless podman, sysbox, gVisor) for the child containers so socket access is not host-root-equivalent.
 
-Whichever shape lands, the runner spec should be fixed in code: image digest, `--network none` (or an egress-filtered network), `--read-only`, `--cap-drop ALL`, no access to `/data/scrutineer.db` or other repo workspaces, `ANTHROPIC_API_KEY` passed per-invocation or via a localhost proxy rather than ambient. The worker should never forward caller-supplied strings into mount paths or image names.
+Whichever shape lands, the runner spec should be fixed in code: image digest, an egress-filtered network, `--read-only`, `--cap-drop ALL`, no access to `/data/scrutineer.db` or other repo workspaces, `ANTHROPIC_API_KEY` passed per-invocation or via a localhost proxy rather than ambient. The worker should never forward caller-supplied strings into mount paths or image names.
+
+### T13: Runner egress (cooperative, partially mitigated)
+
+The docker runner no longer uses `--network none`; the container is on the default bridge so claude can reach `api.anthropic.com`. Egress is constrained by an allowlisting CONNECT/forward proxy that scrutineer runs on the host: `HTTPS_PROXY`/`HTTP_PROXY` in the container point at it, and the proxy 403s anything off the list (Anthropic, ecosyste.ms, forges, registries, advisory sources, the local skill API). The proxy listens on all interfaces so the docker bridge can reach it on Linux; a per-process random token in `Proxy-Authorization` stops it being an open relay, and the `host.docker.internal` → `127.0.0.1` rewrite is gated behind the same token so the loopback-bound web UI is not exposed to the LAN.
+
+Residual: this is policy by cooperation, not enforcement. A process inside the container that ignores the proxy environment can dial anything directly. Everything in the runner image is pinned and audited (T11), so the practical exposure is a hostile cloned repository convincing the model to run a raw-socket exfil, which the model's tool permissions already make awkward but do not prevent. Hard enforcement (an `--internal` docker network whose only route out is the proxy) is the next step under #3.
 
 ## Minor observations
 
