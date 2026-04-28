@@ -43,7 +43,8 @@ type SkillResult struct {
 }
 
 type LocalClaude struct {
-	Effort string
+	Effort    string
+	FullClone bool
 }
 
 // RunSkill runs claude against a staged skill in a local workspace. The
@@ -53,7 +54,7 @@ type LocalClaude struct {
 //	{DataDir}/repo-{id}/.claude/skills/NAME staged skill (read by claude-code)
 //	{DataDir}/repo-{id}/OutputFile          where the skill writes, if any
 func (l LocalClaude) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)) (SkillResult, error) {
-	src, err := ensureClone(ctx, sj.Repo, sj.WorkRoot, emit)
+	src, err := ensureClone(ctx, sj.Repo, sj.WorkRoot, l.FullClone, emit)
 	if err != nil {
 		return SkillResult{}, err
 	}
@@ -152,4 +153,3 @@ func buildSkillPrompt(name, outputFile string) string {
 	}
 	return p
 }
-

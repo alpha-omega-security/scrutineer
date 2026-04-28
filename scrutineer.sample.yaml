@@ -13,6 +13,12 @@
 # Claude effort level for model-backed skills.
 # effort: high
 
+# Clone strategy. "shallow" (default) clones with --depth 1; "full"
+# clones the entire history. Switching from shallow to full unshallows
+# existing clones on next scan. Full clones use significantly more disk
+# and are slower for large repos — only flip if a skill needs history.
+# clone: shallow
+
 # Local directories to load SKILL.md files from. Repeatable via -skills
 # on the command line; here you can list them directly.
 # skills:

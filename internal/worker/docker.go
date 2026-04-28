@@ -19,9 +19,10 @@ const DefaultRunnerImage = "ghcr.io/alpha-omega-security/scrutineer-runner:lates
 // workspace (clone + staged skill + output file) mounted at /work. It
 // implements SkillRunner.
 type DockerRunner struct {
-	Image    string
-	Effort   string
-	ProxyURL string // http://user:token@host.docker.internal:port; "" disables egress
+	Image     string
+	Effort    string
+	ProxyURL  string // http://user:token@host.docker.internal:port; "" disables egress
+	FullClone bool
 }
 
 func (d DockerRunner) image() string {
@@ -37,7 +38,7 @@ func (d DockerRunner) image() string {
 // Egress is routed through scrutineer's allowlisting proxy on the host;
 // see EgressProxy. tmpfs/cap-drop rules mirror the local runner's intent.
 func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)) (SkillResult, error) {
-	src, err := ensureClone(ctx, sj.Repo, sj.WorkRoot, emit)
+	src, err := ensureClone(ctx, sj.Repo, sj.WorkRoot, d.FullClone, emit)
 	if err != nil {
 		return SkillResult{}, err
 	}

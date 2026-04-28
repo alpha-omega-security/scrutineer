@@ -36,6 +36,20 @@ type Config struct {
 	// Concurrency controls how many scans the worker runs in parallel.
 	// 0 or negative leaves the built-in default (see queue.DefaultWorkerConcurrency).
 	Concurrency int `yaml:"concurrency"`
+	// Clone selects the clone-depth strategy: "shallow" (default, --depth 1)
+	// or "full" (no depth limit). Empty means use the built-in default.
+	Clone string `yaml:"clone"`
+}
+
+// ValidateClone returns an error when s is neither empty, "shallow", nor
+// "full". Exposed so the CLI flag can use the same rule as the YAML field.
+func ValidateClone(s string) error {
+	switch s {
+	case "", "shallow", "full":
+		return nil
+	default:
+		return fmt.Errorf("clone: must be \"shallow\" or \"full\", got %q", s)
+	}
 }
 
 // Model is a display-name plus the claude model id it resolves to. The
@@ -63,6 +77,9 @@ func Load(path string) (*Config, error) {
 	}
 	var c Config
 	if err := yaml.Unmarshal(b, &c); err != nil {
+		return nil, fmt.Errorf("parse config %s: %w", path, err)
+	}
+	if err := ValidateClone(c.Clone); err != nil {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
 	}
 	return &c, nil
