@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"syscall"
 
 	"scrutineer/internal/db"
@@ -45,6 +46,7 @@ type SkillResult struct {
 type LocalClaude struct {
 	Effort    string
 	FullClone bool
+	MaxTurns  int
 }
 
 // RunSkill runs claude against a staged skill in a local workspace. The
@@ -77,6 +79,9 @@ func (l LocalClaude) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)
 	}
 	if l.Effort != "" {
 		args = append(args, "--effort", l.Effort)
+	}
+	if l.MaxTurns > 0 {
+		args = append(args, "--max-turns", strconv.Itoa(l.MaxTurns))
 	}
 	args = append(args, prompt)
 

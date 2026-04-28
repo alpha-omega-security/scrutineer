@@ -45,6 +45,15 @@
 # lower if you want model calls serialised.
 # concurrency: 4
 
+# Wall-clock limit for one scan. Scans that exceed this are killed and
+# marked failed. Go duration syntax ("30m", "1h30m", "2h").
+# scan_timeout: 1h
+
+# Pass --max-turns to claude-code so a scan that loops gets cut off.
+# 0 (default) means no limit. The longest observed completed deep-dive
+# is ~140 turns, so 200 is a safe ceiling if you want one.
+# max_turns: 0
+
 # The model picker in the UI. Replacing this list replaces the built-in
 # set (Sonnet, Opus). Leave it out to keep the built-in list.
 # models:

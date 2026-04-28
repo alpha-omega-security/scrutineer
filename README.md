@@ -145,6 +145,9 @@ When the docker runner is active, scrutineer starts an authenticated egress prox
 | `--no-docker` | false | Disable containerised runner |
 | `--runner-image` | `ghcr.io/alpha-omega-security/scrutineer-runner:latest` | Docker image for per-scan containers |
 | `-concurrency` | `4` | Number of scans to run in parallel |
+| `-clone` | `shallow` | Clone depth: `shallow` (`--depth 1`) or `full` |
+| `-scan-timeout` | `1h` | Wall-clock limit per scan; exceeded scans fail |
+| `-max-turns` | `0` | Passed as `--max-turns` to claude-code (0 = unlimited) |
 
 ## Config file
 

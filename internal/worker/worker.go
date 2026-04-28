@@ -26,13 +26,19 @@ const (
 	PrioMetadata = 10
 )
 
+// DefaultScanTimeout is the wall-clock limit applied to each scan when no
+// override is configured. Model-backed audits on large repos rarely need
+// more than this; a scan that does is almost always wedged.
+const DefaultScanTimeout = time.Hour
+
 type Worker struct {
-	DB      *gorm.DB
-	Log     *slog.Logger
-	DataDir string // workspace root for clones
-	APIBase string // base URL for the scrutineer skill API (http://host:port/api)
-	Runner  SkillRunner
-	OnEvent func(scanID, repoID uint, name, data string) // optional SSE bridge
+	DB          *gorm.DB
+	Log         *slog.Logger
+	DataDir     string // workspace root for clones
+	APIBase     string // base URL for the scrutineer skill API (http://host:port/api)
+	Runner      SkillRunner
+	OnEvent     func(scanID, repoID uint, name, data string) // optional SSE bridge
+	ScanTimeout time.Duration
 
 	mu      sync.Mutex
 	running map[uint]context.CancelFunc
@@ -85,7 +91,11 @@ func (w *Worker) wrap(h handler) func(context.Context, []byte) error {
 			return nil
 		}
 
-		ctx, cancel := context.WithCancel(ctx)
+		timeout := w.ScanTimeout
+		if timeout <= 0 {
+			timeout = DefaultScanTimeout
+		}
+		ctx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
 		w.mu.Lock()
 		if w.running == nil {
@@ -128,6 +138,10 @@ func (w *Worker) wrap(h handler) func(context.Context, []byte) error {
 		fin := time.Now()
 		scan.FinishedAt = &fin
 		switch {
+		case errors.Is(ctx.Err(), context.DeadlineExceeded):
+			scan.Status = db.ScanFailed
+			scan.Error = fmt.Sprintf("scan timed out after %s", timeout)
+			emit(Event{Kind: KindError, Text: scan.Error})
 		case errors.Is(ctx.Err(), context.Canceled):
 			scan.Status = db.ScanCancelled
 			scan.Error = "cancelled by user"

@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"syscall"
 )
 
@@ -23,6 +24,7 @@ type DockerRunner struct {
 	Effort    string
 	ProxyURL  string // http://user:token@host.docker.internal:port; "" disables egress
 	FullClone bool
+	MaxTurns  int
 }
 
 func (d DockerRunner) image() string {
@@ -61,6 +63,9 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 	}
 	if d.Effort != "" {
 		claudeArgs = append(claudeArgs, "--effort", d.Effort)
+	}
+	if d.MaxTurns > 0 {
+		claudeArgs = append(claudeArgs, "--max-turns", strconv.Itoa(d.MaxTurns))
 	}
 	claudeArgs = append(claudeArgs, buildSkillPrompt(sj.Name, sj.OutputFile))
 
