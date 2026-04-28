@@ -31,6 +31,11 @@
       Findings <span class="badge-destructive ml-1">{{len .Findings}}</span>
     </button>
     {{end}}
+    {{if .Advisories}}
+    <button type="button" role="tab" id="st3" aria-controls="sp3" aria-selected="false">
+      Advisories <span class="badge-secondary ml-1">{{len .Advisories}}</span>
+    </button>
+    {{end}}
   </nav>
 
   <div role="tabpanel" id="sp1" aria-labelledby="st1">
@@ -106,6 +111,35 @@
           <td class="truncate">{{$repo.Name}}</td>
           <td>{{template "finding-status" (fstatus .Status)}}</td>
           <td class="text-muted-foreground">{{.CWE}}</td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{end}}
+
+  {{if .Advisories}}
+  <div role="tabpanel" id="sp3" aria-labelledby="st3" hidden>
+    <p class="text-sm text-muted-foreground mb-3">
+      Published CVEs for the {{.WithRepo}} resolved repositories. Withdrawn advisories are hidden.
+    </p>
+    <table class="table table-fixed w-full">
+      <thead><tr>
+        <th class="w-24">Severity</th><th class="w-16">CVSS</th><th>Title</th>
+        <th class="w-32">Repository</th><th class="w-32">Published</th><th class="w-12"></th>
+      </tr></thead>
+      <tbody>
+      {{$repos := .Repos}}
+      {{range .Advisories}}
+        {{$repo := index $repos .RepositoryID}}
+        <tr>
+          <td>{{template "severity-badge" .Severity}}</td>
+          <td class="text-muted-foreground">{{if .CVSSScore}}{{printf "%.1f" .CVSSScore}}{{end}}</td>
+          <td class="min-w-0 whitespace-normal font-medium">{{.Title}}</td>
+          <td class="truncate"><a href="/repositories/{{$repo.ID}}" class="hover:underline">{{$repo.Name}}</a></td>
+          <td class="text-muted-foreground">{{if .PublishedAt}}{{.PublishedAt.Format "2006-01-02"}}{{end}}</td>
+          <td>{{if .URL}}<a href="{{.URL}}" target="_blank" rel="noopener" class="btn-sm-ghost"
+              data-tooltip="View advisory"><i data-lucide="external-link"></i></a>{{end}}</td>
         </tr>
       {{end}}
       </tbody>

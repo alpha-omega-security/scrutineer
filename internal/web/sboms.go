@@ -88,14 +88,19 @@ func (s *Server) sbomShow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	repoIDs := make([]uint, 0, len(up.Packages))
+	reposByID := make(map[uint]db.Repository)
 	for _, p := range up.Packages {
-		if p.RepositoryID != nil {
-			repoIDs = append(repoIDs, *p.RepositoryID)
+		if p.Repository != nil {
+			reposByID[p.Repository.ID] = *p.Repository
 		}
+	}
+	repoIDs := make([]uint, 0, len(reposByID))
+	for id := range reposByID {
+		repoIDs = append(repoIDs, id)
 	}
 
 	var findings []db.Finding
+	var advisories []db.Advisory
 	if len(repoIDs) > 0 {
 		q := s.DB.Where("repository_id IN ? AND status NOT IN ?", repoIDs,
 			[]db.FindingLifecycle{db.FindingRejected, db.FindingDuplicate})
@@ -103,8 +108,10 @@ func (s *Server) sbomShow(w http.ResponseWriter, r *http.Request) {
 			q = q.Where("severity = ?", sev)
 		}
 		q.Order(severityOrder).Order("id desc").Find(&findings)
+
+		s.DB.Where("repository_id IN ? AND withdrawn_at IS NULL", repoIDs).
+			Order("cvss_score desc, published_at desc").Find(&advisories)
 	}
-	reposByID := loadRepoMap(s.DB, findings)
 
 	resolved, withRepo := 0, 0
 	for _, p := range up.Packages {
@@ -117,7 +124,7 @@ func (s *Server) sbomShow(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.render(w, "sbom_show.html", map[string]any{
-		"SBOM": up, "Findings": findings, "Repos": reposByID,
+		"SBOM": up, "Findings": findings, "Advisories": advisories, "Repos": reposByID,
 		"Resolved": resolved, "WithRepo": withRepo,
 		"Severity": r.URL.Query().Get("severity"),
 	})

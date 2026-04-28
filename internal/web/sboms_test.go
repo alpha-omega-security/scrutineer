@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"scrutineer/internal/db"
 )
@@ -181,6 +182,36 @@ func TestSBOMShow_aggregatesFindings(t *testing.T) {
 	}
 	if !strings.Contains(body, "triaged") {
 		t.Errorf("finding status badge not rendered")
+	}
+}
+
+func TestSBOMShow_listsAdvisories(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/adv", Name: "adv"}
+	s.DB.Create(&repo)
+	s.DB.Create(&db.Advisory{RepositoryID: repo.ID, Title: "CVE-2026-9999 prototype pollution",
+		Severity: "High", CVSSScore: 7.5, URL: "https://osv.dev/CVE-2026-9999"})
+	withdrawn := time.Now()
+	s.DB.Create(&db.Advisory{RepositoryID: repo.ID, Title: "withdrawn-one", WithdrawnAt: &withdrawn})
+
+	up := db.SBOMUpload{Name: "demo", PackageCount: 1, Packages: []db.SBOMPackage{
+		{Name: "adv-pkg", PURL: "pkg:npm/adv", RepositoryID: &repo.ID},
+	}}
+	s.DB.Create(&up)
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", fmt.Sprintf("/sboms/%d", up.ID)))
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "CVE-2026-9999 prototype pollution") {
+		t.Errorf("advisory not listed")
+	}
+	if strings.Contains(body, "withdrawn-one") {
+		t.Errorf("withdrawn advisory should be hidden")
 	}
 }
 
