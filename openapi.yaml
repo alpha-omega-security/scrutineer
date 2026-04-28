@@ -12,6 +12,10 @@ info:
     is only valid while its originating scan is running, and only grants
     access to the repository the scan was issued against.
 
+    The `/v1/*` paths are an unauthenticated, localhost-only export surface
+    intended for external scripts (jq, cron, CI dumps). They emit JSONL and
+    rely on the same host-header check as the browser UI; see threatmodel.md.
+
 servers:
   - url: http://127.0.0.1:8080/api
     description: Local scrutineer server
@@ -475,6 +479,105 @@ paths:
                 type: array
                 items: { $ref: '#/components/schemas/SkillSummary' }
 
+  /v1/repositories/{id}/findings:
+    get:
+      summary: Export findings for a repository as JSONL
+      description: |
+        Returns one JSON object per line (`application/x-ndjson`). No bearer
+        token; localhost-only. Each line is a `FindingExport` carrying the
+        full set of `db.Finding` columns.
+      operationId: exportRepositoryFindings
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/RepositoryID'
+        - name: format
+          in: query
+          description: Only `jsonl` is supported; other values get a 400.
+          schema: { type: string, enum: [jsonl] }
+        - name: severity
+          in: query
+          schema: { type: string, enum: [Critical, High, Medium, Low] }
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [new, enriched, triaged, ready, reported, acknowledged, fixed, published, rejected, duplicate]
+      responses:
+        '200':
+          description: JSONL stream of FindingExport objects, one per line.
+          content:
+            application/x-ndjson:
+              schema: { $ref: '#/components/schemas/FindingExport' }
+        '400':
+          description: Unsupported format query value
+        '403':
+          description: Host header is not localhost
+        '404':
+          description: Repository not found
+
+  /v1/findings:
+    get:
+      summary: Export findings across all repositories as JSONL
+      description: |
+        Returns one JSON object per line (`application/x-ndjson`). No bearer
+        token; localhost-only. Each line is a `FindingExport` carrying the
+        full set of `db.Finding` columns.
+      operationId: exportFindings
+      security: []
+      parameters:
+        - name: format
+          in: query
+          schema: { type: string, enum: [jsonl] }
+        - name: severity
+          in: query
+          schema: { type: string, enum: [Critical, High, Medium, Low] }
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [new, enriched, triaged, ready, reported, acknowledged, fixed, published, rejected, duplicate]
+      responses:
+        '200':
+          description: JSONL stream of FindingExport objects, one per line.
+          content:
+            application/x-ndjson:
+              schema: { $ref: '#/components/schemas/FindingExport' }
+        '400':
+          description: Unsupported format query value
+        '403':
+          description: Host header is not localhost
+
+  /v1/scans:
+    get:
+      summary: Export scans across all repositories as JSONL
+      description: |
+        Returns one JSON object per line (`application/x-ndjson`). No bearer
+        token; localhost-only. Each line is a `ScanExport` carrying the full
+        set of `db.Scan` columns minus `api_token` (the per-scan bearer must
+        not leak through an unauthenticated channel).
+      operationId: exportScans
+      security: []
+      parameters:
+        - name: format
+          in: query
+          schema: { type: string, enum: [jsonl] }
+        - name: status
+          in: query
+          schema: { type: string, enum: [queued, running, done, failed] }
+        - name: skill
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: JSONL stream of ScanExport objects, one per line.
+          content:
+            application/x-ndjson:
+              schema: { $ref: '#/components/schemas/ScanExport' }
+        '400':
+          description: Unsupported format query value
+        '403':
+          description: Host header is not localhost
+
 components:
   securitySchemes:
     bearerAuth:
@@ -651,6 +754,46 @@ components:
             reach:            { type: string }
             rating:           { type: string }
             disclosure_draft: { type: string }
+
+    FindingExport:
+      description: |
+        Full db.Finding row used by the unauthenticated JSONL export. Adds
+        the dedup, denormalised, and timestamp columns that the bearer-only
+        FindingDetail leaves out.
+      allOf:
+        - $ref: '#/components/schemas/FindingDetail'
+        - type: object
+          properties:
+            commit:            { type: string }
+            sub_path:          { type: string }
+            fingerprint:       { type: string }
+            last_seen_scan_id: { type: integer, format: int64 }
+            last_seen_commit:  { type: string }
+            seen_count:        { type: integer }
+            created_at:        { type: string, format: date-time }
+            updated_at:        { type: string, format: date-time }
+
+    ScanExport:
+      description: |
+        Full db.Scan row used by the unauthenticated JSONL export, minus
+        api_token.
+      allOf:
+        - $ref: '#/components/schemas/ScanDetail'
+        - type: object
+          properties:
+            skill_id:           { type: integer, format: int64, nullable: true }
+            finding_id:         { type: integer, format: int64, nullable: true }
+            sub_path:           { type: string }
+            cost_usd:           { type: number }
+            turns:              { type: integer }
+            input_tokens:       { type: integer }
+            output_tokens:      { type: integer }
+            cache_read_tokens:  { type: integer }
+            cache_write_tokens: { type: integer }
+            prompt:             { type: string }
+            findings_count:     { type: integer }
+            created_at:         { type: string, format: date-time }
+            updated_at:         { type: string, format: date-time }
 
     FindingNote:
       type: object
