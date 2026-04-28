@@ -5,6 +5,7 @@ go 1.26
 toolchain go1.26.2
 
 require (
+	github.com/git-pkgs/sbom v0.1.0
 	github.com/glebarez/sqlite v1.11.0
 	gopkg.in/yaml.v3 v3.0.1
 	gorm.io/gorm v1.31.1

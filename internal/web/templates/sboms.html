@@ -1,0 +1,50 @@
+{{template "head"}}
+
+<div class="flex items-center justify-between gap-4 mb-6">
+  <h2 class="text-2xl font-semibold flex items-center gap-2">
+    <i data-lucide="file-box"></i> SBOMs
+  </h2>
+  <button type="button" class="btn" onclick="document.getElementById('sbom-upload').showModal()">
+    <i data-lucide="upload"></i> Upload SBOM
+  </button>
+</div>
+
+<dialog id="sbom-upload" class="dialog">
+  <article>
+    <header>
+      <h2>Upload SBOM</h2>
+      <p class="text-sm text-muted-foreground">CycloneDX or SPDX, JSON only.</p>
+    </header>
+    <form method="post" action="/sboms" enctype="multipart/form-data"
+          hx-post="/sboms" hx-encoding="multipart/form-data" class="form grid gap-4">
+      <input class="input" type="file" name="file" accept=".json,application/json" required>
+      <footer class="flex justify-end gap-2">
+        <button type="button" class="btn-outline" onclick="this.closest('dialog').close()">Cancel</button>
+        <button type="submit" class="btn">Upload</button>
+      </footer>
+    </form>
+  </article>
+</dialog>
+
+{{if .SBOMs}}
+  <table class="table w-full">
+    <thead><tr>
+      <th>Name</th><th class="w-28">Format</th><th class="w-24 text-right">Packages</th>
+      <th class="w-40">Uploaded</th>
+    </tr></thead>
+    <tbody>
+    {{range .SBOMs}}
+      <tr class="cursor-pointer" hx-get="/sboms/{{.ID}}" hx-target="body" hx-push-url="true">
+        <td class="font-medium">{{.Name}}<div class="text-xs text-muted-foreground">{{.Filename}}</div></td>
+        <td><span class="badge-outline">{{.Format}} {{.SpecVersion}}</span></td>
+        <td class="text-right text-muted-foreground">{{.PackageCount}}</td>
+        <td class="text-muted-foreground">{{since .CreatedAt}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+{{else}}
+  {{template "empty" (dict "Icon" "file-box" "Title" "No SBOMs yet" "Body" "Upload a CycloneDX or SPDX JSON document to scan every package it lists.")}}
+{{end}}
+
+{{template "foot"}}
