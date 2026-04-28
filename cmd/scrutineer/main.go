@@ -55,6 +55,7 @@ func run(log *slog.Logger) error {
 		runnerImage = flag.String("runner-image", worker.DefaultRunnerImage, "docker image for per-job containers")
 		skillsRepo  = flag.String("skills-repo", "", "clone skills from this git https URL on startup")
 		concurrency = flag.Int("concurrency", queue.DefaultWorkerConcurrency, "number of scans to run in parallel")
+		cloneMode   = flag.String("clone", "shallow", "clone depth: shallow (--depth 1) or full")
 	)
 	var skillLocal skillDirs
 	flag.Var(&skillLocal, "skills", "directory to load SKILL.md files from (repeatable)")
@@ -65,9 +66,13 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	if cfg != nil {
-		applyConfig(cfg, addr, dataDir, effort, noDocker, runnerImage, skillsRepo, concurrency, &skillLocal)
+		applyConfig(cfg, addr, dataDir, effort, noDocker, runnerImage, skillsRepo, concurrency, cloneMode, &skillLocal)
 		log.Info("loaded config", "path", cfgPath(*configPath))
 	}
+	if err := config.ValidateClone(*cloneMode); err != nil {
+		return err
+	}
+	fullClone := *cloneMode == "full"
 
 	if err := os.MkdirAll(*dataDir, dataPermSecure); err != nil {
 		return err
@@ -97,7 +102,7 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("queue: %w", err)
 	}
 
-	if err := loadSkills(log, gdb, *dataDir, skillLocal, *skillsRepo); err != nil {
+	if err := loadSkills(log, gdb, *dataDir, skillLocal, *skillsRepo, fullClone); err != nil {
 		return err
 	}
 
@@ -120,16 +125,17 @@ func run(log *slog.Logger) error {
 		log.Info("docker detected, using containerised runner",
 			"image", *runnerImage, "egress_proxy_port", port, "egress_allow", len(allow))
 		runner = worker.DockerRunner{
-			Image:    *runnerImage,
-			Effort:   *effort,
-			ProxyURL: worker.ProxyURL(token, port),
+			Image:     *runnerImage,
+			Effort:    *effort,
+			ProxyURL:  worker.ProxyURL(token, port),
+			FullClone: fullClone,
 		}
 		// Skills inside the container reach the host via host.docker.internal,
 		// which the egress proxy rewrites to 127.0.0.1 when dialing.
 		apiBase = "http://" + net.JoinHostPort(worker.HostGatewayAlias, addrPort(*addr)) + "/api"
 	} else {
 		log.Info("docker not available or disabled, using local runner (no isolation)")
-		runner = worker.LocalClaude{Effort: *effort}
+		runner = worker.LocalClaude{Effort: *effort, FullClone: fullClone}
 	}
 
 	w := &worker.Worker{
@@ -169,7 +175,7 @@ func run(log *slog.Logger) error {
 	return nil
 }
 
-func loadSkills(log *slog.Logger, gdb *gorm.DB, dataDir string, dirs skillDirs, repo string) error {
+func loadSkills(log *slog.Logger, gdb *gorm.DB, dataDir string, dirs skillDirs, repo string, fullClone bool) error {
 	for _, d := range dirs {
 		n, err := skills.LoadDirectory(gdb, log, d, "local")
 		if err != nil {
@@ -181,7 +187,7 @@ func loadSkills(log *slog.Logger, gdb *gorm.DB, dataDir string, dirs skillDirs, 
 		dst := filepath.Join(dataDir, "skills-cache", hashPath(repo))
 		ctx, cancel := context.WithTimeout(context.Background(), skillsCloneTimeout)
 		defer cancel()
-		if err := skills.CloneOrPull(ctx, repo, dst); err != nil {
+		if err := skills.CloneOrPull(ctx, repo, dst, fullClone); err != nil {
 			return fmt.Errorf("clone skills repo: %w", err)
 		}
 		n, err := skills.LoadDirectory(gdb, log, dst, "remote")
@@ -213,6 +219,7 @@ func applyConfig(cfg *config.Config,
 	noDocker *bool,
 	runnerImage, skillsRepo *string,
 	concurrency *int,
+	cloneMode *string,
 	skillLocal *skillDirs,
 ) {
 	set := make(map[string]bool)
@@ -241,6 +248,9 @@ func applyConfig(cfg *config.Config,
 	}
 	if cfg.Concurrency > 0 && !set["concurrency"] {
 		*concurrency = cfg.Concurrency
+	}
+	if cfg.Clone != "" && !set["clone"] {
+		*cloneMode = cfg.Clone
 	}
 
 	if len(cfg.Models) > 0 {
