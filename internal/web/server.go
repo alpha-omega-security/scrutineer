@@ -208,9 +208,10 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 const (
 	perPage     = 20
 	defaultSort = "newest"
-	// sortRepository is the shared sort-by-repository option used by the
-	// findings, scans, and advisories indexes.
+	// sortRepository and sortSeverity are the shared sort options used by
+	// the findings, scans, advisories, and SBOM indexes.
 	sortRepository = "repository"
+	sortSeverity   = "severity"
 )
 
 type Page struct {
@@ -715,7 +716,7 @@ func (s *Server) findings(w http.ResponseWriter, r *http.Request) {
 
 	sort := r.URL.Query().Get("sort")
 	switch sort {
-	case "severity":
+	case sortSeverity:
 		q = q.Order(severityOrder).Order("id desc")
 	case sortRepository:
 		q = q.Joins("JOIN repositories r ON r.id = findings.repository_id").

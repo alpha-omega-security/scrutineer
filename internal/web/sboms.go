@@ -125,6 +125,7 @@ func (s *Server) sbomShow(w http.ResponseWriter, r *http.Request) {
 		repoIDs = append(repoIDs, id)
 	}
 
+	sort := r.URL.Query().Get("sort")
 	var findings []db.Finding
 	var advisories []db.Advisory
 	if len(repoIDs) > 0 {
@@ -133,7 +134,17 @@ func (s *Server) sbomShow(w http.ResponseWriter, r *http.Request) {
 		if sev := r.URL.Query().Get("severity"); sev != "" {
 			q = q.Where("severity = ?", sev)
 		}
-		q.Order(severityOrder).Order("id desc").Find(&findings)
+		switch sort {
+		case sortSeverity:
+			q = q.Order(severityOrder).Order("id desc")
+		case sortRepository:
+			q = q.Joins("JOIN repositories r ON r.id = findings.repository_id").
+				Order("r.name").Order("findings.id desc")
+		default:
+			sort = defaultSort
+			q = q.Order("id desc")
+		}
+		q.Find(&findings)
 
 		s.DB.Where("repository_id IN ? AND withdrawn_at IS NULL", repoIDs).
 			Order("cvss_score desc, published_at desc").Find(&advisories)
@@ -153,8 +164,8 @@ func (s *Server) sbomShow(w http.ResponseWriter, r *http.Request) {
 		"SBOM": up, "Packages": pkgs,
 		"Findings": findings, "Advisories": advisories, "Repos": reposByID,
 		"Resolved": resolved, "WithRepo": withRepo,
-		"Severity": r.URL.Query().Get("severity"),
-		"Scope":    scope, "HasScope": hasScope,
+		"Severity": r.URL.Query().Get("severity"), "Sort": sort,
+		"Scope": scope, "HasScope": hasScope,
 	})
 }
 

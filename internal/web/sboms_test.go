@@ -187,6 +187,44 @@ func TestSBOMShow_aggregatesFindings(t *testing.T) {
 	}
 }
 
+func TestSBOMShow_findingsSort(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/sort", Name: "sort"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone}
+	s.DB.Create(&scan)
+	// Created in id order: critical first (older), low second (newer).
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "old-critical", Severity: "Critical"})
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "new-low", Severity: "Low"})
+
+	up := db.SBOMUpload{Name: "demo", PackageCount: 1, Packages: []db.SBOMPackage{
+		{Name: "p", RepositoryID: &repo.ID},
+	}}
+	s.DB.Create(&up)
+
+	get := func(q string) string {
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, localReq("GET", fmt.Sprintf("/sboms/%d%s", up.ID, q)))
+		if w.Code != 200 {
+			t.Fatalf("status %d: %s", w.Code, w.Body)
+		}
+		return w.Body.String()
+	}
+
+	// Default (newest): newer Low before older Critical.
+	body := get("")
+	if strings.Index(body, "new-low") > strings.Index(body, "old-critical") {
+		t.Errorf("default sort should be newest-first")
+	}
+	// sort=severity: Critical before Low.
+	body = get("?sort=severity")
+	if strings.Index(body, "old-critical") > strings.Index(body, "new-low") {
+		t.Errorf("severity sort should put Critical before Low")
+	}
+}
+
 func TestSBOMShow_listsAdvisories(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

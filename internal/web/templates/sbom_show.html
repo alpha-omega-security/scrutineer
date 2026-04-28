@@ -107,19 +107,36 @@
       <p class="text-sm text-muted-foreground">
         Aggregated across {{.WithRepo}} resolved repositories{{if .Scope}} ({{.Scope}} only){{end}}. Rejected and duplicate findings are hidden.
       </p>
-      <div class="dropdown-menu">
-        <button type="button" class="btn-outline" aria-haspopup="menu" aria-expanded="false">
-          <i data-lucide="filter"></i>
-          {{if .Severity}}{{.Severity}}{{else}}Severity{{end}}
-          <i data-lucide="chevron-down"></i>
-        </button>
-        <div data-popover aria-hidden="true" data-align="end">
-          <div role="menu">
-            <a role="menuitem" href="/sboms/{{.SBOM.ID}}?scope={{.Scope}}">All severities</a>
-            {{range (list "Critical" "High" "Medium" "Low")}}
-              <a role="menuitem" href="/sboms/{{$.SBOM.ID}}?scope={{$.Scope}}&severity={{.}}"
-                 {{if eq . $.Severity}}aria-current="true"{{end}}>{{.}}</a>
-            {{end}}
+      <div class="flex items-center gap-2">
+        <div class="dropdown-menu">
+          <button type="button" class="btn-outline" aria-haspopup="menu" aria-expanded="false">
+            <i data-lucide="filter"></i>
+            {{if .Severity}}{{.Severity}}{{else}}Severity{{end}}
+            <i data-lucide="chevron-down"></i>
+          </button>
+          <div data-popover aria-hidden="true" data-align="end">
+            <div role="menu">
+              <a role="menuitem" href="/sboms/{{.SBOM.ID}}?scope={{.Scope}}&sort={{.Sort}}">All severities</a>
+              {{range (list "Critical" "High" "Medium" "Low")}}
+                <a role="menuitem" href="/sboms/{{$.SBOM.ID}}?scope={{$.Scope}}&sort={{$.Sort}}&severity={{.}}"
+                   {{if eq . $.Severity}}aria-current="true"{{end}}>{{.}}</a>
+              {{end}}
+            </div>
+          </div>
+        </div>
+        <div class="dropdown-menu">
+          <button type="button" class="btn-outline" aria-haspopup="menu" aria-expanded="false">
+            <i data-lucide="arrow-down-wide-narrow"></i>
+            {{if eq .Sort "severity"}}Severity{{else if eq .Sort "repository"}}Repository{{else}}Newest{{end}}
+            <i data-lucide="chevron-down"></i>
+          </button>
+          <div data-popover aria-hidden="true" data-align="end">
+            <div role="menu">
+              {{range (list "newest" "severity" "repository")}}
+                <a role="menuitem" href="/sboms/{{$.SBOM.ID}}?scope={{$.Scope}}&severity={{$.Severity}}&sort={{.}}"
+                   {{if eq . $.Sort}}aria-current="true"{{end}}>{{.}}</a>
+              {{end}}
+            </div>
           </div>
         </div>
       </div>
