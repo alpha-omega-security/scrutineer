@@ -27,6 +27,12 @@ type RepoInput struct {
 // The fragment form is the forge-agnostic way to scope to a sub-path for
 // non-GitHub hosts. /tree/ parsing is GitHub-specific but matches the URL
 // users paste from the web UI.
+//
+// CloneURL is normalised so the same repository pasted in different forms
+// dedupes to one row: the host is lowercased, the query string is dropped,
+// trailing slashes are stripped, `.git` is appended once, and for forges
+// known to treat owner/repo case-insensitively the path is lowercased.
+// Branch names and sub-paths keep their case.
 func ParseRepoInput(raw string) (RepoInput, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -39,15 +45,17 @@ func ParseRepoInput(raw string) (RepoInput, error) {
 	if err != nil {
 		return RepoInput{}, fmt.Errorf("parse url: %w", err)
 	}
+	u.Host = strings.ToLower(u.Host)
+	u.RawQuery = ""
 
 	// Fragment form: url#sub/path. Always wins if present, since the user
 	// typed it explicitly.
 	if u.Fragment != "" {
-		clean := *u
-		clean.Fragment = ""
+		sub := strings.Trim(u.Fragment, "/")
+		u.Fragment = ""
 		return RepoInput{
-			CloneURL: ensureGitSuffix(clean.String()),
-			SubPath:  strings.Trim(u.Fragment, "/"),
+			CloneURL: cloneURL(u, u.Path),
+			SubPath:  sub,
 		}, nil
 	}
 
@@ -68,23 +76,39 @@ func ParseRepoInput(raw string) (RepoInput, error) {
 		if treeIdx+2 < len(parts) {
 			subPath = strings.Join(parts[treeIdx+2:], "/")
 		}
-		clean := *u
-		clean.Path = repoPath
 		return RepoInput{
-			CloneURL: ensureGitSuffix(clean.String()),
+			CloneURL: cloneURL(u, repoPath),
 			SubPath:  subPath,
 			Branch:   branch,
 		}, nil
 	}
 
 	// Plain clone URL.
-	return RepoInput{
-		CloneURL: ensureGitSuffix(raw),
-	}, nil
+	return RepoInput{CloneURL: cloneURL(u, u.Path)}, nil
+}
+
+// caseInsensitiveForges treat owner/repo path segments as
+// case-insensitive, so lowercasing them is safe and lets bulk import
+// dedupe `Foo/Bar` against `foo/bar`. Unknown hosts keep their path case.
+var caseInsensitiveForges = map[string]bool{
+	"github.com":    true,
+	"gitlab.com":    true,
+	"bitbucket.org": true,
+	"codeberg.org":  true,
+}
+
+func cloneURL(u *url.URL, path string) string {
+	c := *u
+	c.Path = path
+	if caseInsensitiveForges[c.Host] {
+		c.Path = strings.ToLower(c.Path)
+	}
+	return ensureGitSuffix(c.String())
 }
 
 // ensureGitSuffix returns u with a single trailing ".git". Idempotent.
 func ensureGitSuffix(u string) string {
+	u = strings.TrimRight(u, "/")
 	if strings.HasSuffix(u, ".git") {
 		return u
 	}

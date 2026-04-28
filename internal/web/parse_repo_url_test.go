@@ -4,10 +4,10 @@ import "testing"
 
 func TestParseRepoInput(t *testing.T) {
 	cases := []struct {
-		name     string
-		input    string
-		want     RepoInput
-		wantErr  bool
+		name    string
+		input   string
+		want    RepoInput
+		wantErr bool
 	}{
 		{
 			name:  "plain github url without .git",
@@ -70,6 +70,53 @@ func TestParseRepoInput(t *testing.T) {
 				CloneURL: "https://github.com/rails/rails.git",
 				SubPath:  "railties",
 			},
+		},
+		{
+			name:  "trailing slash stripped",
+			input: "https://github.com/rails/rails/",
+			want:  RepoInput{CloneURL: "https://github.com/rails/rails.git"},
+		},
+		{
+			name:  "query string dropped",
+			input: "https://github.com/rails/rails?tab=readme-ov-file",
+			want:  RepoInput{CloneURL: "https://github.com/rails/rails.git"},
+		},
+		{
+			name:  "host lowercased",
+			input: "https://GitHub.com/rails/rails",
+			want:  RepoInput{CloneURL: "https://github.com/rails/rails.git"},
+		},
+		{
+			name:  "owner/repo lowercased on known forge",
+			input: "https://github.com/Rails/Rails",
+			want:  RepoInput{CloneURL: "https://github.com/rails/rails.git"},
+		},
+		{
+			name:  "tree url owner/repo lowercased but branch and sub-path keep case",
+			input: "https://github.com/Apache/Airflow/tree/Main/Airflow-Core",
+			want: RepoInput{
+				CloneURL: "https://github.com/apache/airflow.git",
+				SubPath:  "Airflow-Core",
+				Branch:   "Main",
+			},
+		},
+		{
+			name:  "fragment sub-path keeps case",
+			input: "https://github.com/Rails/Rails#ActionPack",
+			want: RepoInput{
+				CloneURL: "https://github.com/rails/rails.git",
+				SubPath:  "ActionPack",
+			},
+		},
+		{
+			name:  "unknown host keeps path case",
+			input: "https://git.internal/Team/Project",
+			want:  RepoInput{CloneURL: "https://git.internal/Team/Project.git"},
+		},
+		{
+			name:  "all of the above at once",
+			input: "https://GitHub.com/Rails/Rails/?tab=readme",
+			want:  RepoInput{CloneURL: "https://github.com/rails/rails.git"},
 		},
 		{
 			name:    "non-https rejected",
