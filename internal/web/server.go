@@ -675,6 +675,11 @@ var severityOrder = `CASE severity
 	WHEN 'Critical' THEN 0 WHEN 'High' THEN 1
 	WHEN 'Medium' THEN 2 WHEN 'Low' THEN 3 ELSE 4 END`
 
+// scanStatusOrder floats active work to the top of the scans index so the
+// operator sees what is in flight before the backlog of completed runs.
+var scanStatusOrder = `CASE scans.status
+	WHEN 'running' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END`
+
 func (s *Server) findings(w http.ResponseWriter, r *http.Request) {
 	q := s.DB.Model(&db.Finding{})
 	sev := r.URL.Query().Get("severity")
@@ -1089,7 +1094,7 @@ func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 		q = q.Joins("Repository").Order("`Repository`.name, scans.id desc")
 	default:
 		sort = defaultSort
-		q = q.Order("scans.id desc")
+		q = q.Order(scanStatusOrder).Order("scans.id desc")
 	}
 
 	var total int64
