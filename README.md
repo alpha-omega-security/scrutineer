@@ -15,9 +15,11 @@ A local tool for scanning open source repositories for security vulnerabilities 
 - **CWE catalogue** -- embedded MITRE CWE data with tooltips on finding tables and full descriptions on finding pages
 - **Live updates** -- SSE streaming of scan logs and status changes, no polling
 - **Dark mode** -- follows system preference
-- **Containerised runner** -- optional per-scan Docker isolation with read-only source mounts, dropped capabilities
+- **Containerised runner** -- optional per-scan Docker isolation with read-only source mounts, dropped capabilities, and an authenticated egress allowlist proxy
 - **Skill HTTP API** -- running skills can call back into scrutineer to list prior scans and enqueue further skills; surface documented in `openapi.yaml`
-- **Search** -- LIKE-based search box on repositories, findings, packages, and maintainers indexes, combining with the existing filters and sort
+- **Organisation rollup** -- repos, findings, and maintainers grouped by owning org, with per-org markdown exports
+- **Usage tracking** -- per-scan token and cost figures plus a `/usage` page totalling spend per skill
+- **Rescan dedup** -- findings carry a content fingerprint so re-running a scan updates existing rows instead of creating duplicates
 - **Markdown report export** -- download a single consolidated `report.md` per repository covering threat model, findings (with six-step prose), packages, advisories, dependents, maintainers
 
 ## Getting started
@@ -28,7 +30,7 @@ You need Go 1.26+ and an Anthropic API key. Analysis tools (semgrep, zizmor, git
     go run ./cmd/scrutineer -skills ./skills
     open http://127.0.0.1:8080
 
-Click "Add repository" in the sidebar, paste a git URL, and scrutineer enqueues the `triage` skill against it. Triage then enqueues the rest of the default set in parallel. The fast ones (metadata, packages) finish in seconds; the deep audit takes a few minutes depending on the codebase.
+Click "Add repository" in the sidebar, paste a git URL (or a newline-separated list for bulk import), and scrutineer enqueues the `triage` skill against each one. Triage then enqueues the rest of the default set in parallel. The fast ones (metadata, packages) finish in seconds; the deep audit takes a few minutes depending on the codebase.
 
 ## The default pipeline
 
@@ -45,9 +47,13 @@ When a repo is added, the `triage` skill is enqueued. Its SKILL.md lists the ski
 | `sbom` | Runs `git-pkgs sbom` for a CycloneDX SBOM |
 | `maintainers` | Model-backed analysis identifying real maintainers and contact routes |
 | `repo-overview` | Runs `brief --json` for a structured project summary |
+| `subprojects` | Enumerates monorepo packages/workspaces so deep-dives can be scoped to a sub-path |
 | `semgrep` | Static analysis mapped into findings shape |
 | `zizmor` | GitHub Actions workflow audit mapped into findings shape |
 | `security-deep-dive` | The model-backed audit producing structured findings |
+| `verify` | Re-checks one finding against current HEAD; records reproduces / fixed / can't-reproduce |
+| `disclose` | Drafts a GHSA-shaped advisory (title, description, CVSS, CWEs, references) for one finding |
+| `patch` | Proposes a unified diff fixing one finding, written back as a note for analyst review |
 
 Edit `skills/triage/SKILL.md` to change what gets run by default. Drop new skill directories in `skills/` to add scan types; no code changes needed.
 
@@ -68,14 +74,17 @@ While a skill runs, its workspace contains `./context.json` with `scrutineer.api
 
 ## Navigating the UI
 
-The sidebar has six sections:
+Every index page has a search box plus filter and sort dropdowns; the specifics vary by page. The sidebar sections:
 
-- **Repositories** -- your scanned repos with language, last scan status, and finding counts. Search by name/url/description; filter by language; sort by newest/name/stars/language. Click into one for tabs: Summary, Findings, Threat Model, Packages, Dependencies, Dependents, Advisories, Maintainers, Data, Scans. An "Export report" button downloads a markdown summary of everything on the page.
-- **Findings** -- all vulnerability findings across repos. Search by title/location/CWE/CVE/affected range. Filter by severity, sort by severity/newest/repo. Click into a finding for the six-step analysis (trace, boundary, validation, prior art, reach, rating), scoring fields (CVE, CVSS, fix version/commit, resolution), timestamped notes, communications log, references, labels, and a full change history.
-- **Packages** -- registry entries across all repos. Search by name/purl/license, ecosystem filter, sort by name/downloads/dependents/ecosystem.
-- **Maintainers** -- people identified as maintainers across repos, with their linked repos and findings. Search by login/name/email/company/notes, status filter, sort by name/login/status/newest.
-- **Scans** -- every scan that has run, filterable by skill and status. Failed scans have a retry button.
+- **Repositories** -- your scanned repos with language, last-scan status, and finding counts. Click into one for tabs covering Summary, Findings, Threat Model, Packages, Dependencies, Dependents, Advisories, Maintainers, Data, and Scans, plus an "Export report" button for a markdown rollup.
+- **Organizations** -- repos, findings, and maintainers grouped by owning org, with per-org markdown exports.
+- **Findings** -- every vulnerability across all repos. A finding page shows the six-step analysis (trace, boundary, validation, prior art, reach, rating), scoring fields, notes, communications log, references, labels, and a change history.
+- **Packages** -- registry entries discovered across all repos.
+- **Advisories** -- known CVEs and security advisories pulled for any scanned package.
+- **Maintainers** -- people identified as maintainers, with their linked repos and findings.
+- **Scans** -- every scan that has run. Running or queued scans can be cancelled; failed ones retried.
 - **Skills** -- installed skills from disk and from the UI; view, edit, or run any of them.
+- **Usage** -- token and cost totals across all scans, broken down by skill.
 
 ## Finding workflow
 
@@ -141,7 +150,7 @@ The config file can also replace the model pick list and pin the default model:
       - name: Sonnet
         id:   claude-sonnet-4-6
       - name: Opus
-        id:   claude-opus-4-6
+        id:   claude-opus-4-7
 
 ## Security
 

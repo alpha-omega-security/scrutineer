@@ -45,7 +45,7 @@
 #   - name: Sonnet
 #     id:   claude-sonnet-4-6
 #   - name: Opus
-#     id:   claude-opus-4-6
+#     id:   claude-opus-4-7
 
 # Pin the default model id. When set, this wins over the "first entry
 # in models wins" rule.
