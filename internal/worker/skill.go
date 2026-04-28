@@ -27,12 +27,12 @@ type skillContext struct {
 }
 
 type skillContextScrutineer struct {
-	APIBase   string `json:"api_base"`              // e.g. http://127.0.0.1:8080/api
-	ScanID    uint   `json:"scan_id"`               // the scan that owns this run
-	Token     string `json:"token"`                 // bearer for api_base
-	RepoID    uint   `json:"repository_id"`         // convenience for URL building
-	SkillID   uint   `json:"skill_id,omitempty"`    // the running skill
-	FindingID uint   `json:"finding_id,omitempty"`  // set for finding-scoped scans
+	APIBase   string `json:"api_base"`             // e.g. http://127.0.0.1:8080/api
+	ScanID    uint   `json:"scan_id"`              // the scan that owns this run
+	Token     string `json:"token"`                // bearer for api_base
+	RepoID    uint   `json:"repository_id"`        // convenience for URL building
+	SkillID   uint   `json:"skill_id,omitempty"`   // the running skill
+	FindingID uint   `json:"finding_id,omitempty"` // set for finding-scoped scans
 	// ScanSubPath scopes code analysis to a sub-folder of ./src (monorepo
 	// support). Empty means the repo root. Skills that walk files honour
 	// this; skills that query external APIs ignore it.
@@ -154,6 +154,9 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 
 // parseFindingsOutput feeds the existing spec-deep parser so skill-driven
 // audits surface in the Findings tab alongside the legacy claude job.
+// Findings are deduped against prior scans of the same repository by
+// fingerprint: a match bumps last-seen on the existing row instead of
+// creating a duplicate, so analyst triage state survives a rescan (#75).
 func (w *Worker) parseFindingsOutput(scan *db.Scan, report string, emit func(Event)) error {
 	rep, err := parseReport([]byte(report))
 	if err != nil {
@@ -161,12 +164,49 @@ func (w *Worker) parseFindingsOutput(scan *db.Scan, report string, emit func(Eve
 	}
 	findings := rep.toFindings(scan.ID, scan.RepositoryID, scan.Commit, scan.SubPath)
 	scan.FindingsCount = len(findings)
-	if len(findings) > 0 {
-		if err := w.DB.Create(&findings).Error; err != nil {
-			return fmt.Errorf("save findings: %w", err)
+
+	created, observed := 0, 0
+	seenThisScan := map[string]bool{}
+	for i := range findings {
+		f := &findings[i]
+		f.Fingerprint = db.FingerprintFinding(scan.SkillName, f.SubPath, f.CWE, f.Location, f.Title)
+		f.LastSeenScanID = scan.ID
+		f.LastSeenCommit = scan.Commit
+		f.SeenCount = 1
+
+		if seenThisScan[f.Fingerprint] {
+			continue
 		}
+		seenThisScan[f.Fingerprint] = true
+
+		var existing db.Finding
+		err := w.DB.Where("repository_id = ? AND fingerprint = ?", scan.RepositoryID, f.Fingerprint).
+			Order("id").First(&existing).Error
+		if err == nil {
+			if uerr := w.DB.Model(&db.Finding{}).Where("id = ?", existing.ID).Updates(map[string]any{
+				"last_seen_scan_id": scan.ID,
+				"last_seen_commit":  scan.Commit,
+				"seen_count":        existing.SeenCount + 1,
+			}).Error; uerr != nil {
+				return fmt.Errorf("update finding %d: %w", existing.ID, uerr)
+			}
+			_ = w.DB.Create(&db.FindingHistory{
+				FindingID: existing.ID,
+				Field:     "observed",
+				NewValue:  fmt.Sprintf("scan %d @ %s", scan.ID, scan.Commit),
+				Source:    db.SourceTool,
+				By:        scan.SkillName,
+			}).Error
+			observed++
+			continue
+		}
+		if cerr := w.DB.Create(f).Error; cerr != nil {
+			return fmt.Errorf("save finding: %w", cerr)
+		}
+		created++
 	}
-	emit(Event{Kind: KindText, Text: fmt.Sprintf("parsed %d finding(s)", len(findings))})
+	emit(Event{Kind: KindText, Text: fmt.Sprintf("parsed %d finding(s): %d new, %d re-observed",
+		len(findings), created, observed)})
 	return nil
 }
 

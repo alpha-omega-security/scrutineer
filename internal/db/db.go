@@ -286,9 +286,19 @@ type Finding struct {
 	// marked not-null so AutoMigrate can widen the column on existing
 	// databases without a default; BackfillFindingRepository fills
 	// existing rows on startup.
-	RepositoryID uint `gorm:"index"`
+	RepositoryID uint `gorm:"index;index:idx_findings_repo_fp,priority:1"`
 	Commit       string
 	SubPath      string `gorm:"index"`
+
+	// Fingerprint dedupes the same vulnerability reported by repeated
+	// scans; see FingerprintFinding. ScanID/Commit are first-seen;
+	// LastSeenScanID/LastSeenCommit/SeenCount track re-observation. The
+	// composite index makes the (repo, fingerprint) lookup at ingest
+	// cheap without requiring uniqueness (legacy rows may collide).
+	Fingerprint    string `gorm:"index:idx_findings_repo_fp,priority:2"`
+	LastSeenScanID uint
+	LastSeenCommit string
+	SeenCount      int
 
 	FindingID string // e.g. F1, F2 within the report
 	Sinks     string // comma-joined sink IDs

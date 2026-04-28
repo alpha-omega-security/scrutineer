@@ -80,6 +80,7 @@ func run(log *slog.Logger) error {
 	}
 	db.BackfillFindings(gdb)
 	db.BackfillFindingRepository(gdb)
+	db.BackfillFindingFingerprints(gdb)
 	if err := db.SeedDefaultLabels(gdb); err != nil {
 		return fmt.Errorf("seed labels: %w", err)
 	}
