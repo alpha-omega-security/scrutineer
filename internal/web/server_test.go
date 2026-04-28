@@ -1496,6 +1496,39 @@ func TestRetry_preservesSubPath(t *testing.T) {
 	}
 }
 
+func TestJobs_defaultSortFloatsActiveFirst(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/order", Name: "order"}
+	s.DB.Create(&repo)
+	// Created in id order: done, running, queued. Default sort should
+	// surface running, then queued, then done regardless of id.
+	mk := func(st db.ScanStatus) uint {
+		sc := db.Scan{RepositoryID: repo.ID, Kind: "skill", SkillName: "x", Status: st}
+		s.DB.Create(&sc)
+		return sc.ID
+	}
+	doneID := mk(db.ScanDone)
+	runID := mk(db.ScanRunning)
+	queueID := mk(db.ScanQueued)
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/scans"))
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	body := w.Body.String()
+	pos := func(id uint) int { return strings.Index(body, fmt.Sprintf(`hx-get="/scans/%d"`, id)) }
+	r, q, d := pos(runID), pos(queueID), pos(doneID)
+	if r < 0 || q < 0 || d < 0 {
+		t.Fatalf("scan rows not rendered: running=%d queued=%d done=%d", r, q, d)
+	}
+	if r >= q || q >= d {
+		t.Errorf("expected running < queued < done, got running=%d queued=%d done=%d", r, q, d)
+	}
+}
+
 func TestScanCancel_queued(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
