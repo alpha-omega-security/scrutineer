@@ -500,7 +500,7 @@ func Open(dsn string) (*gorm.DB, error) {
 		&FindingCommunication{}, &FindingReference{}, &FindingHistory{},
 		&Dependency{}, &Package{}, &Dependent{}, &Advisory{},
 		&Maintainer{}, &Skill{}, &Subproject{},
-		&SBOMUpload{}, &SBOMPackage{},
+		&SBOMUpload{}, &SBOMPackage{}, &CNA{},
 	); err != nil {
 		return nil, fmt.Errorf("automigrate: %w", err)
 	}
@@ -549,6 +549,32 @@ type SBOMPackage struct {
 	ResolveError string
 
 	CreatedAt time.Time
+}
+
+// CNA is a CVE Numbering Authority from the public cve.org partner list.
+// Stored so the disclosure workflow can route a finding to the CNA whose
+// scope covers the project rather than (or in addition to) the maintainer.
+// Scope is the free-text coverage description as published; matching a
+// repo to a CNA is left to a skill since scopes are prose, not patterns.
+type CNA struct {
+	ID uint `gorm:"primarykey"`
+
+	ShortName    string `gorm:"uniqueIndex;not null"`
+	CNAID        string `gorm:"uniqueIndex"`
+	Organization string
+	Scope        string `gorm:"type:text"`
+	Email        string
+	ContactURL   string
+	PolicyURL    string
+	AdvisoryURL  string
+	Root         string
+	Types        string
+	Country      string
+	Metadata     string `gorm:"type:text"`
+
+	FetchedAt *time.Time
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // Subproject is a scannable unit the subprojects skill discovered inside
