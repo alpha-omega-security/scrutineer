@@ -81,7 +81,7 @@
     {{if .Findings}}
       <table class="table table-fixed w-full mb-4">
         <thead><tr>
-          <th class="w-24">Severity</th><th>Title</th>
+          <th class="w-24">Severity</th><th>Title</th><th class="w-24">Status</th>
           <th class="w-28">CWE</th><th class="w-64">Location</th>
         </tr></thead>
         <tbody>
@@ -92,6 +92,7 @@
               <div class="font-medium">{{.Title}}</div>
               <div class="text-xs text-muted-foreground line-clamp-2">{{.Summary}}</div>
             </td>
+            <td>{{template "finding-status" (fstatus .Status)}}</td>
             <td class="text-muted-foreground">
               {{if .CWE}}<span data-tooltip="{{cwename .CWE}}">{{.CWE}}</span>{{end}}
             </td>

@@ -65,7 +65,8 @@
   <div role="tabpanel" id="mp2" aria-labelledby="mt2" hidden>
     <table class="table table-fixed w-full">
       <thead><tr>
-        <th class="w-24">Severity</th><th>Title</th><th class="w-32">Repository</th><th class="w-24">CWE</th>
+        <th class="w-24">Severity</th><th>Title</th><th class="w-32">Repository</th>
+        <th class="w-24">Status</th><th class="w-24">CWE</th>
       </tr></thead>
       <tbody>
       {{$repos := .Repos}}
@@ -78,6 +79,7 @@
             <div class="text-xs text-muted-foreground line-clamp-1">{{.Summary}}</div>
           </td>
           <td class="truncate">{{$repo.Name}}</td>
+          <td>{{template "finding-status" (fstatus .Status)}}</td>
           <td class="text-muted-foreground">
             {{if .CWE}}<span data-tooltip="{{cwename .CWE}}">{{.CWE}}</span>{{end}}
           </td>

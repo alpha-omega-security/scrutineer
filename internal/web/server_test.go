@@ -1239,6 +1239,32 @@ func TestRepoShow_findingsTabAggregatesAcrossScans(t *testing.T) {
 	}
 }
 
+func TestRepoShow_displaysFindingStatus(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/fstatus", Name: "fstatus"}
+	s.DB.Create(&repo)
+
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", SkillName: deepDiveSkillName, Status: db.ScanDone}
+	s.DB.Create(&scan)
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "rce", Severity: "High", Status: db.FindingTriaged})
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", fmt.Sprintf("/repositories/%d", repo.ID)))
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	body := w.Body.String()
+
+	// The finding renders once in the Summary tab's latest-scan table and
+	// once as a card in the Findings tab; both must show the lifecycle
+	// status (#82).
+	if n := strings.Count(body, "triaged"); n < 2 {
+		t.Errorf("expected finding status to render in both Summary and Findings tabs, saw %d occurrences", n)
+	}
+}
+
 func TestBulkImport_dedupesNormalisedURLs(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
@@ -1555,6 +1581,7 @@ func TestScanShowRenders(t *testing.T) {
 		StartedAt: &now, FinishedAt: &now, Report: "# hi", Log: "line1\n",
 	}
 	s.DB.Create(&scan)
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "rce", Severity: "High", Status: db.FindingTriaged})
 
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, localReq("GET", "/scans/1"))
@@ -1564,5 +1591,30 @@ func TestScanShowRenders(t *testing.T) {
 	body := w.Body.String()
 	if !strings.Contains(body, "# hi") || !strings.Contains(body, "line1") {
 		t.Errorf("missing report/log: %s", body)
+	}
+	if !strings.Contains(body, "triaged") {
+		t.Errorf("finding status not rendered in scan results table")
+	}
+}
+
+func TestMaintainerShow_displaysFindingStatus(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/m", Name: "m"}
+	s.DB.Create(&repo)
+	m := db.Maintainer{Login: "alice", Repositories: []db.Repository{repo}}
+	s.DB.Create(&m)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone}
+	s.DB.Create(&scan)
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "rce", Severity: "High", Status: db.FindingReported})
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", fmt.Sprintf("/maintainers/%d", m.ID)))
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	if !strings.Contains(w.Body.String(), "reported") {
+		t.Errorf("finding status not rendered in maintainer findings tab")
 	}
 }
