@@ -2,6 +2,7 @@ package main
 
 import (
 	"testing"
+	"time"
 
 	"scrutineer/internal/config"
 )
@@ -18,6 +19,8 @@ func TestFlagsMerge(t *testing.T) {
 		Skills:      []string{"/etc/skills"},
 		Concurrency: 8,
 		Clone:       "full",
+		ScanTimeout: "30m",
+		MaxTurns:    200,
 	}
 
 	t.Run("config fills unset flags", func(t *testing.T) {
@@ -40,6 +43,12 @@ func TestFlagsMerge(t *testing.T) {
 		}
 		if len(f.skillLocal) != 1 || f.skillLocal[0] != "/etc/skills" {
 			t.Errorf("skillLocal = %v", f.skillLocal)
+		}
+		if f.scanTimeout != 30*time.Minute {
+			t.Errorf("scanTimeout = %v", f.scanTimeout)
+		}
+		if f.maxTurns != 200 {
+			t.Errorf("maxTurns = %d", f.maxTurns)
 		}
 	})
 
@@ -65,13 +74,16 @@ func TestFlagsMerge(t *testing.T) {
 	})
 
 	t.Run("zero-value config fields leave defaults alone", func(t *testing.T) {
-		f := &flags{addr: "127.0.0.1:8080", concurrency: 4, set: map[string]bool{}}
+		f := &flags{addr: "127.0.0.1:8080", concurrency: 4, scanTimeout: time.Hour, set: map[string]bool{}}
 		f.merge(&config.Config{})
 		if f.addr != "127.0.0.1:8080" {
 			t.Errorf("empty config clobbered addr: %q", f.addr)
 		}
 		if f.concurrency != 4 {
 			t.Errorf("zero concurrency clobbered default: %d", f.concurrency)
+		}
+		if f.scanTimeout != time.Hour {
+			t.Errorf("empty scan_timeout clobbered default: %v", f.scanTimeout)
 		}
 	})
 }

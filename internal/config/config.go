@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -39,6 +40,28 @@ type Config struct {
 	// Clone selects the clone-depth strategy: "shallow" (default, --depth 1)
 	// or "full" (no depth limit). Empty means use the built-in default.
 	Clone string `yaml:"clone"`
+	// ScanTimeout is the wall-clock limit for a single scan, as a Go
+	// duration string ("30m", "1h"). Empty leaves the built-in default.
+	ScanTimeout string `yaml:"scan_timeout"`
+	// MaxTurns is passed as --max-turns to claude-code. 0 means no limit.
+	MaxTurns int `yaml:"max_turns"`
+}
+
+// ParseScanTimeout validates and parses a scan_timeout string. Empty
+// returns 0 (caller keeps its default); anything else must be a positive
+// time.Duration.
+func ParseScanTimeout(s string) (time.Duration, error) {
+	if s == "" {
+		return 0, nil
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return 0, fmt.Errorf("scan_timeout: %w", err)
+	}
+	if d <= 0 {
+		return 0, fmt.Errorf("scan_timeout: must be positive, got %q", s)
+	}
+	return d, nil
 }
 
 // ValidateClone returns an error when s is neither empty, "shallow", nor
@@ -80,6 +103,9 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
 	}
 	if err := ValidateClone(c.Clone); err != nil {
+		return nil, fmt.Errorf("parse config %s: %w", path, err)
+	}
+	if _, err := ParseScanTimeout(c.ScanTimeout); err != nil {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
 	}
 	return &c, nil

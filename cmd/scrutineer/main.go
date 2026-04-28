@@ -58,6 +58,8 @@ type flags struct {
 	skillsRepo  string
 	concurrency int
 	cloneMode   string
+	scanTimeout time.Duration
+	maxTurns    int
 	skillLocal  skillDirs
 
 	// set records which flags were passed on the command line so merge
@@ -76,6 +78,8 @@ func parseFlags() *flags {
 	flag.StringVar(&f.skillsRepo, "skills-repo", "", "clone skills from this git https URL on startup")
 	flag.IntVar(&f.concurrency, "concurrency", queue.DefaultWorkerConcurrency, "number of scans to run in parallel")
 	flag.StringVar(&f.cloneMode, "clone", "shallow", "clone depth: shallow (--depth 1) or full")
+	flag.DurationVar(&f.scanTimeout, "scan-timeout", worker.DefaultScanTimeout, "wall-clock limit per scan")
+	flag.IntVar(&f.maxTurns, "max-turns", 0, "claude --max-turns limit (0 = unlimited)")
 	flag.Var(&f.skillLocal, "skills", "directory to load SKILL.md files from (repeatable)")
 	flag.Parse()
 
@@ -114,6 +118,12 @@ func (f *flags) merge(cfg *config.Config) {
 	}
 	if cfg.Clone != "" && !f.set["clone"] {
 		f.cloneMode = cfg.Clone
+	}
+	if d, _ := config.ParseScanTimeout(cfg.ScanTimeout); d > 0 && !f.set["scan-timeout"] {
+		f.scanTimeout = d
+	}
+	if cfg.MaxTurns > 0 && !f.set["max-turns"] {
+		f.maxTurns = cfg.MaxTurns
 	}
 
 	if len(cfg.Models) > 0 {
@@ -203,21 +213,23 @@ func run(log *slog.Logger) error {
 			Effort:    f.effort,
 			ProxyURL:  worker.ProxyURL(token, port),
 			FullClone: f.fullClone(),
+			MaxTurns:  f.maxTurns,
 		}
 		// Skills inside the container reach the host via host.docker.internal,
 		// which the egress proxy rewrites to 127.0.0.1 when dialing.
 		apiBase = "http://" + net.JoinHostPort(worker.HostGatewayAlias, addrPort(f.addr)) + "/api"
 	} else {
 		log.Info("docker not available or disabled, using local runner (no isolation)")
-		runner = worker.LocalClaude{Effort: f.effort, FullClone: f.fullClone()}
+		runner = worker.LocalClaude{Effort: f.effort, FullClone: f.fullClone(), MaxTurns: f.maxTurns}
 	}
 
 	w := &worker.Worker{
-		DB:      gdb,
-		Log:     log,
-		DataDir: filepath.Join(f.dataDir, "work"),
-		APIBase: apiBase,
-		Runner:  runner,
+		DB:          gdb,
+		Log:         log,
+		DataDir:     filepath.Join(f.dataDir, "work"),
+		APIBase:     apiBase,
+		Runner:      runner,
+		ScanTimeout: f.scanTimeout,
 		OnEvent: func(scanID, repoID uint, name, data string) {
 			broker.Publish(web.Event{Name: name, Data: data, ScanID: scanID, RepoID: repoID})
 		},

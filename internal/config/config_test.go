@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 func write(t *testing.T, content string) string {
@@ -62,6 +63,8 @@ egress_allow:
   - "*.mycorp.net"
 concurrency: 8
 clone: full
+scan_timeout: 30m
+max_turns: 200
 `)
 	c, err := Load(path)
 	if err != nil {
@@ -87,6 +90,41 @@ clone: full
 	}
 	if c.Clone != "full" {
 		t.Errorf("clone: %q, want full", c.Clone)
+	}
+	if c.ScanTimeout != "30m" || c.MaxTurns != 200 {
+		t.Errorf("scan_timeout=%q max_turns=%d", c.ScanTimeout, c.MaxTurns)
+	}
+}
+
+func TestParseScanTimeout(t *testing.T) {
+	tests := []struct {
+		in      string
+		want    time.Duration
+		wantErr bool
+	}{
+		{"", 0, false},
+		{"1h", time.Hour, false},
+		{"30m", 30 * time.Minute, false},
+		{"1h30m", 90 * time.Minute, false},
+		{"0", 0, true},
+		{"-5m", 0, true},
+		{"banana", 0, true},
+	}
+	for _, tt := range tests {
+		got, err := ParseScanTimeout(tt.in)
+		if (err != nil) != tt.wantErr {
+			t.Errorf("ParseScanTimeout(%q) err = %v", tt.in, err)
+		}
+		if got != tt.want {
+			t.Errorf("ParseScanTimeout(%q) = %v, want %v", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestLoad_rejectsInvalidScanTimeout(t *testing.T) {
+	path := write(t, "scan_timeout: nope\n")
+	if _, err := Load(path); err == nil {
+		t.Error("expected error for invalid scan_timeout value")
 	}
 }
 
