@@ -259,6 +259,55 @@ func TestRepoList_sortByFindings(t *testing.T) {
 	}
 }
 
+func TestDistinctLanguages_splitsJoinedColumn(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	s.DB.Create(&db.Repository{URL: "https://x/1", Name: "a", Languages: "Kotlin, Java, Prolog"})
+	s.DB.Create(&db.Repository{URL: "https://x/2", Name: "b", Languages: "Kotlin, Prolog, Java"})
+	s.DB.Create(&db.Repository{URL: "https://x/3", Name: "c", Languages: "Go"})
+	s.DB.Create(&db.Repository{URL: "https://x/4", Name: "d", Languages: "Go, Python"})
+	s.DB.Create(&db.Repository{URL: "https://x/5", Name: "e", Languages: ""})
+
+	got := distinctLanguages(s.DB)
+	want := []string{"Go", "Java", "Kotlin", "Prolog", "Python"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("got %v, want %v", got, want)
+	}
+}
+
+func TestRepoList_languageFilterMatchesWithinList(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	s.DB.Create(&db.Repository{URL: "https://x/only-java", Name: "a", Languages: "Java"})
+	s.DB.Create(&db.Repository{URL: "https://x/first-java", Name: "b", Languages: "Java, Python"})
+	s.DB.Create(&db.Repository{URL: "https://x/mid-java", Name: "c", Languages: "Kotlin, Java, Prolog"})
+	s.DB.Create(&db.Repository{URL: "https://x/last-java", Name: "d", Languages: "Python, Java"})
+	s.DB.Create(&db.Repository{URL: "https://x/jsrepo", Name: "e", Languages: "JavaScript"})
+	s.DB.Create(&db.Repository{URL: "https://x/gorepo", Name: "f", Languages: "Go"})
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/?language=Java"))
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	body := w.Body.String()
+
+	for _, want := range []string{"x/only-java", "x/first-java", "x/mid-java", "x/last-java"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("language=Java should include %q", want)
+		}
+	}
+	// "Java" must not substring-match "JavaScript".
+	if strings.Contains(body, "x/jsrepo") {
+		t.Errorf("language=Java wrongly matched JavaScript repo")
+	}
+	if strings.Contains(body, "x/gorepo") {
+		t.Errorf("language=Java wrongly matched Go repo")
+	}
+}
+
 func TestRepoSearchFilters(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

@@ -226,11 +226,37 @@ type repoRow struct {
 	FindingsTotal int
 }
 
+// distinctLanguages returns the sorted set of individual language names
+// across every repository. Repository.Languages is a ", "-joined string
+// written by the metadata/repo-overview parsers, so the dropdown has to
+// split it rather than DISTINCT the column, otherwise every combination
+// (and ordering) of languages becomes its own filter option.
+func distinctLanguages(gdb *gorm.DB) []string {
+	var raw []string
+	gdb.Model(&db.Repository{}).Where("languages != ''").Distinct("languages").Pluck("languages", &raw)
+	seen := map[string]struct{}{}
+	for _, joined := range raw {
+		for l := range strings.SplitSeq(joined, ",") {
+			if l = strings.TrimSpace(l); l != "" {
+				seen[l] = struct{}{}
+			}
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for l := range seen {
+		out = append(out, l)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func (s *Server) repoList(w http.ResponseWriter, r *http.Request) {
 	q := s.DB.Model(&db.Repository{})
 	lang := r.URL.Query().Get("language")
 	if lang != "" {
-		q = q.Where("languages = ?", lang)
+		// languages is a ", "-joined list; wrapping both sides lets one
+		// LIKE match start/middle/end/only without four OR clauses.
+		q = q.Where("(', ' || languages || ', ') LIKE ?", "%, "+lang+", %")
 	}
 	search := strings.TrimSpace(r.URL.Query().Get("q"))
 	if search != "" {
@@ -312,8 +338,7 @@ func (s *Server) repoList(w http.ResponseWriter, r *http.Request) {
 			FindingsTotal: findingCounts[repo.ID],
 		})
 	}
-	var languages []string
-	s.DB.Model(&db.Repository{}).Where("languages != ''").Distinct("languages").Order("languages").Pluck("languages", &languages)
+	languages := distinctLanguages(s.DB)
 
 	data := map[string]any{
 		"Rows": rows, "Page": page, "Language": lang, "Sort": sort, "Languages": languages,
