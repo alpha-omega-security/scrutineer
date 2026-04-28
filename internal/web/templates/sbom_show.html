@@ -39,23 +39,51 @@
   </nav>
 
   <div role="tabpanel" id="sp1" aria-labelledby="st1">
-    <p class="text-sm text-muted-foreground mb-3">
-      {{.Resolved}} of {{.SBOM.PackageCount}} resolved &middot; {{.WithRepo}} linked to a repository.
-      {{if lt .Resolved .SBOM.PackageCount}}Resolution runs in the background; refresh to see progress.{{end}}
-    </p>
+    <div class="flex items-center justify-between mb-3">
+      <p class="text-sm text-muted-foreground">
+        {{.Resolved}} of {{len .Packages}} resolved &middot; {{.WithRepo}} linked to a repository.
+        {{if lt .Resolved (len .Packages)}}Resolution runs in the background; refresh to see progress.{{end}}
+      </p>
+      {{if .HasScope}}
+      <div class="dropdown-menu">
+        <button type="button" class="btn-outline" aria-haspopup="menu" aria-expanded="false">
+          <i data-lucide="filter"></i>
+          {{if eq .Scope "direct"}}Direct{{else if eq .Scope "transitive"}}Transitive{{else}}All deps{{end}}
+          <i data-lucide="chevron-down"></i>
+        </button>
+        <div data-popover aria-hidden="true" data-align="end">
+          <div role="menu">
+            <a role="menuitem" href="/sboms/{{.SBOM.ID}}">All deps</a>
+            <a role="menuitem" href="/sboms/{{.SBOM.ID}}?scope=direct"
+               {{if eq .Scope "direct"}}aria-current="true"{{end}}>Direct</a>
+            <a role="menuitem" href="/sboms/{{.SBOM.ID}}?scope=transitive"
+               {{if eq .Scope "transitive"}}aria-current="true"{{end}}>Transitive</a>
+          </div>
+        </div>
+      </div>
+      {{end}}
+    </div>
     <table class="table table-fixed w-full">
       <thead><tr>
-        <th>Package</th><th class="w-28">Ecosystem</th><th class="w-32">Version</th>
-        <th class="w-28">License</th><th>Repository</th>
+        <th>Package</th><th class="w-28">Ecosystem</th>
+        {{if .HasScope}}<th class="w-24">Scope</th>{{end}}
+        <th class="w-32">Version</th><th class="w-28">License</th><th>Repository</th>
       </tr></thead>
       <tbody>
-      {{range .SBOM.Packages}}
+      {{$hasScope := .HasScope}}
+      {{range .Packages}}
         <tr>
           <td class="whitespace-normal">
             <div class="font-medium">{{.Name}}</div>
             {{if .PURL}}<code class="text-xs text-muted-foreground break-all">{{.PURL}}</code>{{end}}
           </td>
           <td>{{if .Ecosystem}}<span class="badge-outline">{{.Ecosystem}}</span>{{end}}</td>
+          {{if $hasScope}}
+          <td>
+            {{if eq .Scope "direct"}}<span class="badge-primary">direct</span>
+            {{else if eq .Scope "transitive"}}<span class="badge-outline">transitive</span>{{end}}
+          </td>
+          {{end}}
           <td class="text-muted-foreground text-xs">{{.Version}}</td>
           <td class="text-muted-foreground text-xs">{{.License}}</td>
           <td class="whitespace-normal">
@@ -77,7 +105,7 @@
   <div role="tabpanel" id="sp2" aria-labelledby="st2" hidden>
     <div class="flex items-center justify-between mb-3">
       <p class="text-sm text-muted-foreground">
-        Aggregated across {{.WithRepo}} resolved repositories. Rejected and duplicate findings are hidden.
+        Aggregated across {{.WithRepo}} resolved repositories{{if .Scope}} ({{.Scope}} only){{end}}. Rejected and duplicate findings are hidden.
       </p>
       <div class="dropdown-menu">
         <button type="button" class="btn-outline" aria-haspopup="menu" aria-expanded="false">
@@ -87,9 +115,9 @@
         </button>
         <div data-popover aria-hidden="true" data-align="end">
           <div role="menu">
-            <a role="menuitem" href="/sboms/{{.SBOM.ID}}">All severities</a>
+            <a role="menuitem" href="/sboms/{{.SBOM.ID}}?scope={{.Scope}}">All severities</a>
             {{range (list "Critical" "High" "Medium" "Low")}}
-              <a role="menuitem" href="/sboms/{{$.SBOM.ID}}?severity={{.}}"
+              <a role="menuitem" href="/sboms/{{$.SBOM.ID}}?scope={{$.Scope}}&severity={{.}}"
                  {{if eq . $.Severity}}aria-current="true"{{end}}>{{.}}</a>
             {{end}}
           </div>

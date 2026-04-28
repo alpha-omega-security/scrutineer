@@ -538,6 +538,11 @@ type SBOMPackage struct {
 	PURL      string `gorm:"index"`
 	Ecosystem string
 	License   string
+	// Scope is "direct" when the SBOM's dependency graph lists this
+	// package as a dependency of the root component, "transitive" when it
+	// only appears via another package, and "" when the document had no
+	// dependency graph to derive it from.
+	Scope string `gorm:"index"`
 
 	RepositoryID *uint `gorm:"index"`
 	Repository   *Repository

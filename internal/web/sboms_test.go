@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/git-pkgs/sbom"
+
 	"scrutineer/internal/db"
 )
 
@@ -228,6 +230,88 @@ func TestSBOMList_renders(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "first.cdx") {
 		t.Errorf("upload not listed")
+	}
+}
+
+func TestClassifyScope(t *testing.T) {
+	t.Run("cyclonedx graph", func(t *testing.T) {
+		// root → a, b; a → c. Root is identified by having no inbound edge.
+		doc := &sbom.SBOM{Relationships: []sbom.Relationship{
+			{SourceID: "root", TargetID: "a", Type: "DEPENDS_ON"},
+			{SourceID: "root", TargetID: "b", Type: "DEPENDS_ON"},
+			{SourceID: "a", TargetID: "c", Type: "DEPENDS_ON"},
+		}}
+		got := classifyScope(doc)
+		want := map[string]string{"a": scopeDirect, "b": scopeDirect, "c": scopeTransitive}
+		for id, s := range want {
+			if got[id] != s {
+				t.Errorf("%s = %q, want %q", id, got[id], s)
+			}
+		}
+	})
+	t.Run("spdx with DESCRIBES", func(t *testing.T) {
+		// DOCUMENT --DESCRIBES--> root; root --DEPENDS_ON--> a; a --DEPENDS_ON--> b.
+		doc := &sbom.SBOM{Relationships: []sbom.Relationship{
+			{SourceID: "SPDXRef-DOCUMENT", TargetID: "root", Type: "DESCRIBES"},
+			{SourceID: "root", TargetID: "a", Type: "DEPENDS_ON"},
+			{SourceID: "a", TargetID: "b", Type: "DEPENDS_ON"},
+		}}
+		got := classifyScope(doc)
+		if got["a"] != scopeDirect || got["b"] != scopeTransitive {
+			t.Errorf("got %v", got)
+		}
+	})
+	t.Run("direct wins over transitive", func(t *testing.T) {
+		// root → a, a → b, root → b. b should still be direct.
+		doc := &sbom.SBOM{Relationships: []sbom.Relationship{
+			{SourceID: "root", TargetID: "a", Type: "DEPENDS_ON"},
+			{SourceID: "a", TargetID: "b", Type: "DEPENDS_ON"},
+			{SourceID: "root", TargetID: "b", Type: "DEPENDS_ON"},
+		}}
+		if got := classifyScope(doc); got["b"] != scopeDirect {
+			t.Errorf("b = %q, want direct", got["b"])
+		}
+	})
+	t.Run("no graph", func(t *testing.T) {
+		if got := classifyScope(&sbom.SBOM{}); got != nil {
+			t.Errorf("expected nil for empty relationships, got %v", got)
+		}
+	})
+}
+
+func TestSBOMShow_scopeFilter(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repoA := db.Repository{URL: "https://example.com/direct-repo", Name: "direct-repo"}
+	s.DB.Create(&repoA)
+	repoB := db.Repository{URL: "https://example.com/trans-repo", Name: "trans-repo"}
+	s.DB.Create(&repoB)
+	scan := db.Scan{RepositoryID: repoA.ID, Kind: "skill", Status: db.ScanDone}
+	s.DB.Create(&scan)
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repoA.ID, Title: "direct-dep-finding", Severity: "High"})
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repoB.ID, Title: "trans-dep-finding", Severity: "High"})
+
+	up := db.SBOMUpload{Name: "demo", PackageCount: 2, Packages: []db.SBOMPackage{
+		{Name: "pkg-direct", Scope: scopeDirect, RepositoryID: &repoA.ID},
+		{Name: "pkg-trans", Scope: scopeTransitive, RepositoryID: &repoB.ID},
+	}}
+	s.DB.Create(&up)
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", fmt.Sprintf("/sboms/%d?scope=direct", up.ID)))
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "pkg-direct") || strings.Contains(body, "pkg-trans") {
+		t.Errorf("scope filter not applied to packages table")
+	}
+	if !strings.Contains(body, "direct-dep-finding") {
+		t.Errorf("findings from direct-dep repo missing")
+	}
+	if strings.Contains(body, "trans-dep-finding") {
+		t.Errorf("scope filter should also scope findings")
 	}
 }
 

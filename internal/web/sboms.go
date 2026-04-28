@@ -61,6 +61,7 @@ func (s *Server) sbomUpload(w http.ResponseWriter, r *http.Request) {
 		Raw:          data,
 		PackageCount: len(doc.Packages),
 	}
+	scope := classifyScope(doc)
 	for _, p := range doc.Packages {
 		up.Packages = append(up.Packages, db.SBOMPackage{
 			Name:      p.Name,
@@ -68,6 +69,7 @@ func (s *Server) sbomUpload(w http.ResponseWriter, r *http.Request) {
 			PURL:      p.PURL(),
 			Ecosystem: purlType(p.PURL()),
 			License:   firstNonEmpty(p.LicenseDeclared, p.LicenseConcluded),
+			Scope:     scope[p.ID],
 		})
 	}
 	if err := s.DB.Create(&up).Error; err != nil {
@@ -88,8 +90,32 @@ func (s *Server) sbomShow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	reposByID := make(map[uint]db.Repository)
+	// The scope filter only makes sense when at least one package has a
+	// known direct/transitive value; flat-list SBOMs leave them all blank.
+	hasScope := false
 	for _, p := range up.Packages {
+		if p.Scope != "" {
+			hasScope = true
+			break
+		}
+	}
+
+	scope := r.URL.Query().Get("scope")
+	pkgs := up.Packages
+	if hasScope && (scope == scopeDirect || scope == scopeTransitive) {
+		filtered := make([]db.SBOMPackage, 0, len(up.Packages))
+		for _, p := range up.Packages {
+			if p.Scope == scope {
+				filtered = append(filtered, p)
+			}
+		}
+		pkgs = filtered
+	} else {
+		scope = ""
+	}
+
+	reposByID := make(map[uint]db.Repository)
+	for _, p := range pkgs {
 		if p.Repository != nil {
 			reposByID[p.Repository.ID] = *p.Repository
 		}
@@ -114,7 +140,7 @@ func (s *Server) sbomShow(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resolved, withRepo := 0, 0
-	for _, p := range up.Packages {
+	for _, p := range pkgs {
 		if p.RepositoryID != nil || p.ResolveError != "" {
 			resolved++
 		}
@@ -124,9 +150,11 @@ func (s *Server) sbomShow(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.render(w, "sbom_show.html", map[string]any{
-		"SBOM": up, "Findings": findings, "Advisories": advisories, "Repos": reposByID,
+		"SBOM": up, "Packages": pkgs,
+		"Findings": findings, "Advisories": advisories, "Repos": reposByID,
 		"Resolved": resolved, "WithRepo": withRepo,
 		"Severity": r.URL.Query().Get("severity"),
+		"Scope":    scope, "HasScope": hasScope,
 	})
 }
 
@@ -195,6 +223,53 @@ func (s *Server) resolveSBOMPackages(uploadID uint) {
 		}
 		s.DB.Model(p).Updates(map[string]any{"repository_id": repo.ID, "resolve_error": ""})
 	}
+}
+
+const (
+	scopeDirect     = "direct"
+	scopeTransitive = "transitive"
+)
+
+// classifyScope derives direct-vs-transitive from the SBOM's relationship
+// graph. Roots are nodes that originate DEPENDS_ON edges but are never
+// themselves a DEPENDS_ON target, plus anything pointed at by a DESCRIBES
+// edge (SPDX's document → root-package link). A package is "direct" if a
+// root depends on it, "transitive" if only another package does, and
+// absent from the map (empty Scope) if the graph doesn't mention it.
+func classifyScope(doc *sbom.SBOM) map[string]string {
+	const dependsOn, describes = "DEPENDS_ON", "DESCRIBES"
+	targets := map[string]bool{}
+	sources := map[string]bool{}
+	roots := map[string]bool{}
+	for _, r := range doc.Relationships {
+		switch r.Type {
+		case dependsOn:
+			sources[r.SourceID] = true
+			targets[r.TargetID] = true
+		case describes:
+			roots[r.TargetID] = true
+		}
+	}
+	for id := range sources {
+		if !targets[id] {
+			roots[id] = true
+		}
+	}
+	if len(roots) == 0 {
+		return nil
+	}
+	out := map[string]string{}
+	for _, r := range doc.Relationships {
+		if r.Type != dependsOn {
+			continue
+		}
+		if roots[r.SourceID] {
+			out[r.TargetID] = scopeDirect
+		} else if out[r.TargetID] == "" {
+			out[r.TargetID] = scopeTransitive
+		}
+	}
+	return out
 }
 
 // purlType returns the ecosystem segment of a Package URL (the bit between
