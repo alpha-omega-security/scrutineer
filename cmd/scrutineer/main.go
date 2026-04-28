@@ -45,44 +45,115 @@ func main() {
 	}
 }
 
-func run(log *slog.Logger) error {
-	var (
-		configPath  = flag.String("config", "", "path to YAML config file (default: ./scrutineer.yaml if present)")
-		addr        = flag.String("addr", "127.0.0.1:8080", "listen address")
-		dataDir     = flag.String("data", "./data", "data directory (db + workspaces)")
-		effort      = flag.String("effort", "high", "claude effort")
-		noDocker    = flag.Bool("no-docker", false, "disable containerised runner even if docker is available")
-		runnerImage = flag.String("runner-image", worker.DefaultRunnerImage, "docker image for per-job containers")
-		skillsRepo  = flag.String("skills-repo", "", "clone skills from this git https URL on startup")
-		concurrency = flag.Int("concurrency", queue.DefaultWorkerConcurrency, "number of scans to run in parallel")
-		cloneMode   = flag.String("clone", "shallow", "clone depth: shallow (--depth 1) or full")
-	)
-	var skillLocal skillDirs
-	flag.Var(&skillLocal, "skills", "directory to load SKILL.md files from (repeatable)")
+// flags holds the merged result of CLI flags and the YAML config file.
+// parseFlags fills defaults and CLI overrides; merge layers the config
+// file underneath any flag the user set explicitly.
+type flags struct {
+	configPath  string
+	addr        string
+	dataDir     string
+	effort      string
+	noDocker    bool
+	runnerImage string
+	skillsRepo  string
+	concurrency int
+	cloneMode   string
+	skillLocal  skillDirs
+
+	// set records which flags were passed on the command line so merge
+	// knows not to let the config file override them.
+	set map[string]bool
+}
+
+func parseFlags() *flags {
+	f := &flags{}
+	flag.StringVar(&f.configPath, "config", "", "path to YAML config file (default: ./scrutineer.yaml if present)")
+	flag.StringVar(&f.addr, "addr", "127.0.0.1:8080", "listen address")
+	flag.StringVar(&f.dataDir, "data", "./data", "data directory (db + workspaces)")
+	flag.StringVar(&f.effort, "effort", "high", "claude effort")
+	flag.BoolVar(&f.noDocker, "no-docker", false, "disable containerised runner even if docker is available")
+	flag.StringVar(&f.runnerImage, "runner-image", worker.DefaultRunnerImage, "docker image for per-job containers")
+	flag.StringVar(&f.skillsRepo, "skills-repo", "", "clone skills from this git https URL on startup")
+	flag.IntVar(&f.concurrency, "concurrency", queue.DefaultWorkerConcurrency, "number of scans to run in parallel")
+	flag.StringVar(&f.cloneMode, "clone", "shallow", "clone depth: shallow (--depth 1) or full")
+	flag.Var(&f.skillLocal, "skills", "directory to load SKILL.md files from (repeatable)")
 	flag.Parse()
 
-	cfg, err := config.Load(*configPath)
+	f.set = make(map[string]bool)
+	flag.Visit(func(fl *flag.Flag) { f.set[fl.Name] = true })
+	return f
+}
+
+// merge layers cfg underneath f: a config value applies only when the
+// matching CLI flag was not set explicitly. Also pushes model overrides
+// into the web package.
+func (f *flags) merge(cfg *config.Config) {
+	if cfg.Addr != "" && !f.set["addr"] {
+		f.addr = cfg.Addr
+	}
+	if cfg.Data != "" && !f.set["data"] {
+		f.dataDir = cfg.Data
+	}
+	if cfg.Effort != "" && !f.set["effort"] {
+		f.effort = cfg.Effort
+	}
+	if cfg.NoDocker != nil && !f.set["no-docker"] {
+		f.noDocker = *cfg.NoDocker
+	}
+	if cfg.RunnerImage != "" && !f.set["runner-image"] {
+		f.runnerImage = cfg.RunnerImage
+	}
+	if cfg.SkillsRepo != "" && !f.set["skills-repo"] {
+		f.skillsRepo = cfg.SkillsRepo
+	}
+	if len(cfg.Skills) > 0 && !f.set["skills"] {
+		f.skillLocal = append(f.skillLocal, cfg.Skills...)
+	}
+	if cfg.Concurrency > 0 && !f.set["concurrency"] {
+		f.concurrency = cfg.Concurrency
+	}
+	if cfg.Clone != "" && !f.set["clone"] {
+		f.cloneMode = cfg.Clone
+	}
+
+	if len(cfg.Models) > 0 {
+		models := make([]web.Model, 0, len(cfg.Models))
+		for _, m := range cfg.Models {
+			models = append(models, web.Model{Name: m.Name, ID: m.ID})
+		}
+		web.SetModels(models)
+	}
+	if cfg.DefaultModel != "" {
+		web.SetDefaultModel(cfg.DefaultModel)
+	}
+}
+
+func (f *flags) fullClone() bool { return f.cloneMode == "full" }
+
+func run(log *slog.Logger) error {
+	f := parseFlags()
+
+	cfg, err := config.Load(f.configPath)
 	if err != nil {
 		return err
 	}
 	if cfg != nil {
-		applyConfig(cfg, addr, dataDir, effort, noDocker, runnerImage, skillsRepo, concurrency, cloneMode, &skillLocal)
-		log.Info("loaded config", "path", cfgPath(*configPath))
+		f.merge(cfg)
+		log.Info("loaded config", "path", cfgPath(f.configPath))
 	}
-	if err := config.ValidateClone(*cloneMode); err != nil {
+	if err := config.ValidateClone(f.cloneMode); err != nil {
 		return err
 	}
-	fullClone := *cloneMode == "full"
 
-	if err := os.MkdirAll(*dataDir, dataPermSecure); err != nil {
+	if err := os.MkdirAll(f.dataDir, dataPermSecure); err != nil {
 		return err
 	}
-	_ = os.Chmod(*dataDir, dataPermSecure)
+	_ = os.Chmod(f.dataDir, dataPermSecure)
 	// Module-boundary sentinel so go tooling on the parent repo never
 	// walks into cloned scan workspaces under data/work/.
-	_ = os.WriteFile(filepath.Join(*dataDir, "go.mod"), []byte("module scrutineer/data\n"), dataPermSecure)
+	_ = os.WriteFile(filepath.Join(f.dataDir, "go.mod"), []byte("module scrutineer/data\n"), dataPermSecure)
 
-	gdb, err := db.Open(filepath.Join(*dataDir, "scrutineer.db"))
+	gdb, err := db.Open(filepath.Join(f.dataDir, "scrutineer.db"))
 	if err != nil {
 		return fmt.Errorf("open db: %w", err)
 	}
@@ -100,12 +171,12 @@ func run(log *slog.Logger) error {
 		return err
 	}
 
-	q, err := queue.New(sqldb, log, *concurrency)
+	q, err := queue.New(sqldb, log, f.concurrency)
 	if err != nil {
 		return fmt.Errorf("queue: %w", err)
 	}
 
-	if err := loadSkills(log, gdb, *dataDir, skillLocal, *skillsRepo, fullClone); err != nil {
+	if err := loadSkills(log, gdb, f.dataDir, f.skillLocal, f.skillsRepo, f.fullClone()); err != nil {
 		return err
 	}
 
@@ -117,8 +188,8 @@ func run(log *slog.Logger) error {
 	}
 
 	var runner worker.SkillRunner
-	apiBase := "http://" + *addr + "/api"
-	if !*noDocker && worker.DockerAvailable() {
+	apiBase := "http://" + f.addr + "/api"
+	if !f.noDocker && worker.DockerAvailable() {
 		allow := append(append([]string{}, worker.DefaultEgressAllow...), egressExtra...)
 		token := worker.NewProxyToken()
 		port, err := worker.StartEgressProxy(&worker.EgressProxy{Allow: allow, Token: token, Log: log})
@@ -126,25 +197,25 @@ func run(log *slog.Logger) error {
 			return fmt.Errorf("start egress proxy: %w", err)
 		}
 		log.Info("docker detected, using containerised runner",
-			"image", *runnerImage, "egress_proxy_port", port, "egress_allow", len(allow))
+			"image", f.runnerImage, "egress_proxy_port", port, "egress_allow", len(allow))
 		runner = worker.DockerRunner{
-			Image:     *runnerImage,
-			Effort:    *effort,
+			Image:     f.runnerImage,
+			Effort:    f.effort,
 			ProxyURL:  worker.ProxyURL(token, port),
-			FullClone: fullClone,
+			FullClone: f.fullClone(),
 		}
 		// Skills inside the container reach the host via host.docker.internal,
 		// which the egress proxy rewrites to 127.0.0.1 when dialing.
-		apiBase = "http://" + net.JoinHostPort(worker.HostGatewayAlias, addrPort(*addr)) + "/api"
+		apiBase = "http://" + net.JoinHostPort(worker.HostGatewayAlias, addrPort(f.addr)) + "/api"
 	} else {
 		log.Info("docker not available or disabled, using local runner (no isolation)")
-		runner = worker.LocalClaude{Effort: *effort, FullClone: fullClone}
+		runner = worker.LocalClaude{Effort: f.effort, FullClone: f.fullClone()}
 	}
 
 	w := &worker.Worker{
 		DB:      gdb,
 		Log:     log,
-		DataDir: filepath.Join(*dataDir, "work"),
+		DataDir: filepath.Join(f.dataDir, "work"),
 		APIBase: apiBase,
 		Runner:  runner,
 		OnEvent: func(scanID, repoID uint, name, data string) {
@@ -163,7 +234,7 @@ func run(log *slog.Logger) error {
 
 	go q.Start(ctx)
 
-	httpSrv := &http.Server{Addr: *addr, Handler: srv.Handler(), ReadHeaderTimeout: shutdownTimeout}
+	httpSrv := &http.Server{Addr: f.addr, Handler: srv.Handler(), ReadHeaderTimeout: shutdownTimeout}
 	go func() {
 		<-ctx.Done()
 		sctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
@@ -171,7 +242,7 @@ func run(log *slog.Logger) error {
 		_ = httpSrv.Shutdown(sctx)
 	}()
 
-	log.Info("listening", "addr", "http://"+*addr)
+	log.Info("listening", "addr", "http://"+f.addr)
 	if err := httpSrv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
@@ -212,60 +283,6 @@ func addrPort(addr string) string {
 func hashPath(s string) string {
 	r := strings.NewReplacer("/", "_", ":", "_", "?", "_", "&", "_", "=", "_")
 	return r.Replace(s)
-}
-
-// applyConfig copies config values onto the corresponding flags, but
-// only for flags the user did not set explicitly. A CLI flag always
-// wins. Also pushes model overrides into the web package.
-func applyConfig(cfg *config.Config,
-	addr, dataDir, effort *string,
-	noDocker *bool,
-	runnerImage, skillsRepo *string,
-	concurrency *int,
-	cloneMode *string,
-	skillLocal *skillDirs,
-) {
-	set := make(map[string]bool)
-	flag.Visit(func(f *flag.Flag) { set[f.Name] = true })
-
-	if cfg.Addr != "" && !set["addr"] {
-		*addr = cfg.Addr
-	}
-	if cfg.Data != "" && !set["data"] {
-		*dataDir = cfg.Data
-	}
-	if cfg.Effort != "" && !set["effort"] {
-		*effort = cfg.Effort
-	}
-	if cfg.NoDocker != nil && !set["no-docker"] {
-		*noDocker = *cfg.NoDocker
-	}
-	if cfg.RunnerImage != "" && !set["runner-image"] {
-		*runnerImage = cfg.RunnerImage
-	}
-	if cfg.SkillsRepo != "" && !set["skills-repo"] {
-		*skillsRepo = cfg.SkillsRepo
-	}
-	if len(cfg.Skills) > 0 && !set["skills"] {
-		*skillLocal = append(*skillLocal, cfg.Skills...)
-	}
-	if cfg.Concurrency > 0 && !set["concurrency"] {
-		*concurrency = cfg.Concurrency
-	}
-	if cfg.Clone != "" && !set["clone"] {
-		*cloneMode = cfg.Clone
-	}
-
-	if len(cfg.Models) > 0 {
-		models := make([]web.Model, 0, len(cfg.Models))
-		for _, m := range cfg.Models {
-			models = append(models, web.Model{Name: m.Name, ID: m.ID})
-		}
-		web.SetModels(models)
-	}
-	if cfg.DefaultModel != "" {
-		web.SetDefaultModel(cfg.DefaultModel)
-	}
 }
 
 // cfgPath returns the path the loader actually used for logging.
