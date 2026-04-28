@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -51,7 +52,7 @@ func run(log *slog.Logger) error {
 		dataDir     = flag.String("data", "./data", "data directory (db + workspaces)")
 		effort      = flag.String("effort", "high", "claude effort")
 		noDocker    = flag.Bool("no-docker", false, "disable containerised runner even if docker is available")
-		runnerImage = flag.String("runner-image", "scrutineer-runner", "docker image for per-job containers")
+		runnerImage = flag.String("runner-image", worker.DefaultRunnerImage, "docker image for per-job containers")
 		skillsRepo  = flag.String("skills-repo", "", "clone skills from this git https URL on startup")
 		concurrency = flag.Int("concurrency", queue.DefaultWorkerConcurrency, "number of scans to run in parallel")
 	)
@@ -101,10 +102,30 @@ func run(log *slog.Logger) error {
 
 	broker := web.NewBroker()
 
+	var egressExtra []string
+	if cfg != nil {
+		egressExtra = cfg.EgressAllow
+	}
+
 	var runner worker.SkillRunner
+	apiBase := "http://" + *addr + "/api"
 	if !*noDocker && worker.DockerAvailable() {
-		log.Info("docker detected, using containerised runner", "image", *runnerImage)
-		runner = worker.DockerRunner{Image: *runnerImage, Effort: *effort}
+		allow := append(append([]string{}, worker.DefaultEgressAllow...), egressExtra...)
+		token := worker.NewProxyToken()
+		port, err := worker.StartEgressProxy(&worker.EgressProxy{Allow: allow, Token: token, Log: log})
+		if err != nil {
+			return fmt.Errorf("start egress proxy: %w", err)
+		}
+		log.Info("docker detected, using containerised runner",
+			"image", *runnerImage, "egress_proxy_port", port, "egress_allow", len(allow))
+		runner = worker.DockerRunner{
+			Image:    *runnerImage,
+			Effort:   *effort,
+			ProxyURL: worker.ProxyURL(token, port),
+		}
+		// Skills inside the container reach the host via host.docker.internal,
+		// which the egress proxy rewrites to 127.0.0.1 when dialing.
+		apiBase = "http://" + net.JoinHostPort(worker.HostGatewayAlias, addrPort(*addr)) + "/api"
 	} else {
 		log.Info("docker not available or disabled, using local runner (no isolation)")
 		runner = worker.LocalClaude{Effort: *effort}
@@ -114,7 +135,7 @@ func run(log *slog.Logger) error {
 		DB:      gdb,
 		Log:     log,
 		DataDir: filepath.Join(*dataDir, "work"),
-		APIBase: "http://" + *addr + "/api",
+		APIBase: apiBase,
 		Runner:  runner,
 		OnEvent: func(scanID, repoID uint, name, data string) {
 			broker.Publish(web.Event{Name: name, Data: data, ScanID: scanID, RepoID: repoID})
@@ -169,6 +190,13 @@ func loadSkills(log *slog.Logger, gdb *gorm.DB, dataDir string, dirs skillDirs, 
 		log.Info("loaded skills", "source", repo, "count", n)
 	}
 	return nil
+}
+
+func addrPort(addr string) string {
+	if _, p, err := net.SplitHostPort(addr); err == nil {
+		return p
+	}
+	return addr
 }
 
 func hashPath(s string) string {

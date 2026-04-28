@@ -13,27 +13,29 @@ import (
 	"syscall"
 )
 
-const defaultRunnerImage = "scrutineer-runner"
+const DefaultRunnerImage = "ghcr.io/alpha-omega-security/scrutineer-runner:latest"
 
 // DockerRunner launches claude inside an ephemeral container with the scan
 // workspace (clone + staged skill + output file) mounted at /work. It
 // implements SkillRunner.
 type DockerRunner struct {
-	Image  string // container image (default: scrutineer-runner)
-	Effort string
+	Image    string
+	Effort   string
+	ProxyURL string // http://user:token@host.docker.internal:port; "" disables egress
 }
 
 func (d DockerRunner) image() string {
 	if d.Image != "" {
 		return d.Image
 	}
-	return defaultRunnerImage
+	return DefaultRunnerImage
 }
 
 // RunSkill runs a skill inside an ephemeral container. The whole workspace
 // (clone + staged .claude/skills + context.json + output) is mounted at
 // /work read-write so claude can read the skill files and write its output.
-// Network stays off; tmpfs/cap-drop rules mirror the local runner's intent.
+// Egress is routed through scrutineer's allowlisting proxy on the host;
+// see EgressProxy. tmpfs/cap-drop rules mirror the local runner's intent.
 func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)) (SkillResult, error) {
 	src, err := ensureClone(ctx, sj.Repo, sj.WorkRoot, emit)
 	if err != nil {
@@ -63,14 +65,27 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 
 	dockerArgs := []string{
 		"run", "--rm",
-		"--network", "none",
 		"--cap-drop", "ALL",
 		"--tmpfs", "/tmp:rw,noexec,nosuid,size=256m",
 		"-v", absWork + ":/work",
 		"-w", "/work",
+		"--add-host", HostGatewayAlias + ":host-gateway",
+	}
+	if d.ProxyURL != "" {
+		dockerArgs = append(dockerArgs,
+			"-e", "HTTPS_PROXY="+d.ProxyURL,
+			"-e", "HTTP_PROXY="+d.ProxyURL,
+			"-e", "ALL_PROXY="+d.ProxyURL,
+			"-e", "NO_PROXY=",
+		)
+	} else {
+		dockerArgs = append(dockerArgs, "--network", "none")
 	}
 	if os.Getenv("ANTHROPIC_API_KEY") != "" {
 		dockerArgs = append(dockerArgs, "-e", "ANTHROPIC_API_KEY")
+	}
+	if os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") != "" {
+		dockerArgs = append(dockerArgs, "-e", "CLAUDE_CODE_OAUTH_TOKEN")
 	}
 	dockerArgs = append(dockerArgs, d.image())
 	dockerArgs = append(dockerArgs, claudeArgs...)
@@ -85,7 +100,7 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 	}
 	cmd.Stderr = cmd.Stdout
 
-	emit(Event{Kind: KindText, Text: "$ docker run --rm --network none " + d.image() + " <skill:" + sj.Name + ">"})
+	emit(Event{Kind: KindText, Text: "$ docker run --rm " + d.image() + " <skill:" + sj.Name + ">"})
 	if err := cmd.Start(); err != nil {
 		return SkillResult{}, fmt.Errorf("start docker: %w", err)
 	}

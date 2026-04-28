@@ -105,14 +105,16 @@ The same applies to the Dependents tab -- you can import any dependent's reposit
 
 Always bind to `127.0.0.1`. The UI has no authentication; binding to `0.0.0.0` exposes your findings database to anyone on the network.
 
-If docker is available on the host, scrutineer can run each scan in an ephemeral container for isolation. Build the runner image and scrutineer will detect docker at startup:
+If docker is available on the host, scrutineer runs each scan in an ephemeral container for isolation. The runner image is published to GHCR and pulled automatically on first use:
 
-    docker build -t scrutineer-runner -f Dockerfile.runner .
     go run ./cmd/scrutineer -skills ./skills
 
-Use `--no-docker` to disable containerised execution, or `--runner-image` to specify a different image.
+Use `--no-docker` to disable containerised execution, or `--runner-image` to specify a different image. To build the runner locally instead of pulling from GHCR:
 
-Note: the containerised runner currently uses `--network none`, which blocks skills from calling scrutineer's HTTP API or fetching from ecosyste.ms. Hardening the egress policy so those skills still work under isolation is tracked in the sandbox issue.
+    docker build -t scrutineer-runner -f Dockerfile.runner .
+    go run ./cmd/scrutineer -skills ./skills --runner-image scrutineer-runner
+
+When the docker runner is active, scrutineer starts an authenticated egress proxy on the host and points `HTTPS_PROXY`/`HTTP_PROXY` inside the container at it. The proxy only tunnels to an allowlist of hosts: the Anthropic API, `*.ecosyste.ms`, the major forges (GitHub, GitLab, Codeberg, Bitbucket), common package registries (npm, PyPI, RubyGems, crates.io, Go module proxy, Packagist, Hex, NuGet), advisory sources (semgrep.dev, OSV, NVD, cwe.mitre.org), and `host.docker.internal` for the local skill API. Requests to anything else get a 403 and are logged. Extend the list with `egress_allow` in the config file. The proxy uses a per-process random token so it isn't an open relay; tools that ignore the proxy env are not blocked at the network layer (see `threatmodel.md`).
 
 ## Flags
 
@@ -125,7 +127,7 @@ Note: the containerised runner currently uses `--network none`, which blocks ski
 | `-skills` | - | Local directory to load SKILL.md files from (repeatable) |
 | `-skills-repo` | - | Git HTTPS URL to clone skills from on startup |
 | `--no-docker` | false | Disable containerised runner |
-| `--runner-image` | `scrutineer-runner` | Docker image for per-scan containers |
+| `--runner-image` | `ghcr.io/alpha-omega-security/scrutineer-runner:latest` | Docker image for per-scan containers |
 | `-concurrency` | `4` | Number of scans to run in parallel |
 
 ## Config file

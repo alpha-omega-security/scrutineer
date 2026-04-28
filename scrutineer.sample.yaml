@@ -25,7 +25,15 @@
 # no_docker: false
 
 # Docker image used for per-scan containers.
-# runner_image: scrutineer-runner
+# runner_image: ghcr.io/alpha-omega-security/scrutineer-runner:latest
+
+# Extra hosts the docker runner's egress proxy will tunnel to, on top of
+# the built-in allowlist (Anthropic API, *.ecosyste.ms, major forges,
+# package registries, advisory sources, host.docker.internal). Use
+# "*.example.com" to allow every subdomain.
+# egress_allow:
+#   - artifactory.internal
+#   - "*.mycorp.net"
 
 # How many scans run in parallel. Default is 4; raise on bigger hosts,
 # lower if you want model calls serialised.

@@ -57,6 +57,9 @@ skills:
 skills_repo: https://github.com/org/skills
 no_docker: true
 runner_image: custom-runner
+egress_allow:
+  - artifactory.internal
+  - "*.mycorp.net"
 concurrency: 8
 `)
 	c, err := Load(path)
@@ -77,6 +80,9 @@ concurrency: 8
 	}
 	if c.Concurrency != 8 {
 		t.Errorf("concurrency: %d", c.Concurrency)
+	}
+	if len(c.EgressAllow) != 2 || c.EgressAllow[0] != "artifactory.internal" || c.EgressAllow[1] != "*.mycorp.net" {
+		t.Errorf("egress_allow: %+v", c.EgressAllow)
 	}
 }
 
