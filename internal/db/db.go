@@ -560,7 +560,7 @@ type CNA struct {
 	ID uint `gorm:"primarykey"`
 
 	ShortName    string `gorm:"uniqueIndex;not null"`
-	CNAID        string `gorm:"uniqueIndex"`
+	CNAID        string `gorm:"index"`
 	Organization string
 	Scope        string `gorm:"type:text"`
 	Email        string

@@ -103,6 +103,7 @@ func (s *Server) apiHandler() http.Handler {
 	mux.HandleFunc("PUT /findings/{id}/labels", s.apiSetFindingLabels)
 	mux.HandleFunc("GET /findings/{id}/history", s.apiListFindingHistory)
 	mux.HandleFunc("GET /skills", s.apiListSkills)
+	mux.HandleFunc("GET /cnas", s.apiListCNAs)
 	return http.StripPrefix(apiPrefix, s.apiAuth(mux))
 }
 
@@ -242,6 +243,37 @@ func (s *Server) findingRepoID(findingID uint) (uint, bool) {
 		return 0, false
 	}
 	return repoID, true
+}
+
+// apiListCNAs returns the cached CVE Numbering Authority list. Global
+// (not repo-scoped) since CNA scope is matched against repo metadata by
+// the caller, not by scrutineer. Supports ?q= for a substring match
+// across short_name, organization, and scope so a skill can narrow before
+// reading prose.
+func (s *Server) apiListCNAs(w http.ResponseWriter, r *http.Request) {
+	q := s.DB.Order("short_name")
+	if term := r.URL.Query().Get("q"); term != "" {
+		like := "%" + term + "%"
+		q = q.Where("short_name LIKE ? OR organization LIKE ? OR scope LIKE ?", like, like, like)
+	}
+	var rows []db.CNA
+	q.Find(&rows)
+	out := make([]map[string]any, 0, len(rows))
+	for _, c := range rows {
+		out = append(out, map[string]any{
+			"short_name":   c.ShortName,
+			"cna_id":       c.CNAID,
+			"organization": c.Organization,
+			"scope":        c.Scope,
+			"email":        c.Email,
+			"contact_url":  c.ContactURL,
+			"policy_url":   c.PolicyURL,
+			"advisory_url": c.AdvisoryURL,
+			"root":         c.Root,
+			"types":        c.Types,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 func (s *Server) apiListSkills(w http.ResponseWriter, r *http.Request) {

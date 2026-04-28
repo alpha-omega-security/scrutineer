@@ -1,0 +1,34 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "cna-match report",
+  "type": "object",
+  "required": ["maintainers", "cna"],
+  "additionalProperties": false,
+  "properties": {
+    "maintainers": {
+      "type": "array",
+      "maxItems": 0,
+      "description": "Always empty. Present so output_kind=maintainers parses cleanly."
+    },
+    "disclosure_channel": {
+      "type": "string",
+      "description": "CNA contact (email or URL) with organization name in parentheses. Empty when no CNA matched."
+    },
+    "cna": {
+      "type": ["object", "null"],
+      "description": "The matched CNA, or null when none covers this repository.",
+      "additionalProperties": false,
+      "properties": {
+        "short_name":   { "type": "string" },
+        "organization": { "type": "string" },
+        "email":        { "type": "string" },
+        "contact_url":  { "type": "string" },
+        "policy_url":   { "type": "string" },
+        "scope":        { "type": "string", "description": "The CNA's published scope text, verbatim." },
+        "match_rule":   { "type": "string", "enum": ["security_md", "owner", "package", "github_fallback"] },
+        "match_reason": { "type": "string", "description": "One sentence: which signal matched which part of the scope." }
+      },
+      "required": ["short_name", "organization", "scope", "match_rule", "match_reason"]
+    }
+  }
+}

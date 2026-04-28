@@ -479,6 +479,38 @@ paths:
                 type: array
                 items: { $ref: '#/components/schemas/SkillSummary' }
 
+  /cnas:
+    get:
+      summary: List CVE Numbering Authorities
+      description: >
+        Cached copy of the cve.org partner list. Global, not repo-scoped.
+        Use q to substring-match across short_name, organization, and scope.
+      operationId: listCNAs
+      parameters:
+        - name: q
+          in: query
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    short_name:   { type: string }
+                    cna_id:       { type: string }
+                    organization: { type: string }
+                    scope:        { type: string }
+                    email:        { type: string }
+                    contact_url:  { type: string }
+                    policy_url:   { type: string }
+                    advisory_url: { type: string }
+                    root:         { type: string }
+                    types:        { type: string }
+
   /v1/repositories/{id}/findings:
     get:
       summary: Export findings for a repository as JSONL

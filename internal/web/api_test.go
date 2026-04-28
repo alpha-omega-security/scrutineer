@@ -31,6 +31,43 @@ func seedRunningScan(t *testing.T, s *Server) (db.Repository, db.Scan) {
 	return repo, scan
 }
 
+func TestAPIListCNAs(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	_, scan := seedRunningScan(t, s)
+
+	s.DB.Create(&db.CNA{ShortName: "apache", Organization: "Apache Software Foundation",
+		Scope: "All Apache Software Foundation projects", Email: "security@apache.org"})
+	s.DB.Create(&db.CNA{ShortName: "curl", Organization: "curl", Scope: "curl and libcurl"})
+
+	get := func(q string) []map[string]any {
+		r := httptest.NewRequest("GET", "/api/cnas"+q, nil)
+		r.Host = testHost
+		r.Header.Set("Authorization", "Bearer "+scan.APIToken)
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, r)
+		if w.Code != 200 {
+			t.Fatalf("status %d: %s", w.Code, w.Body)
+		}
+		var rows []map[string]any
+		_ = json.NewDecoder(w.Body).Decode(&rows)
+		return rows
+	}
+
+	all := get("")
+	if len(all) != 2 {
+		t.Fatalf("len = %d, want 2", len(all))
+	}
+	if all[0]["short_name"] != "apache" || all[0]["email"] != "security@apache.org" {
+		t.Errorf("first row = %+v", all[0])
+	}
+
+	filtered := get("?q=libcurl")
+	if len(filtered) != 1 || filtered[0]["short_name"] != "curl" {
+		t.Errorf("scope filter: %+v", filtered)
+	}
+}
+
 func TestAPIRejectsMissingBearer(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
