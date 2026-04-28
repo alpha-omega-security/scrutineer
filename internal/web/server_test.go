@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -33,6 +34,8 @@ func newTestServer(t *testing.T) (*Server, func()) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	s.resolvePURL = func(context.Context, string) string { return "" }
+	s.resolveSync = true
 	return s, func() { _ = sqldb.Close() }
 }
 

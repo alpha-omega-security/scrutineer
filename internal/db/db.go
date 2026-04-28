@@ -500,10 +500,50 @@ func Open(dsn string) (*gorm.DB, error) {
 		&FindingCommunication{}, &FindingReference{}, &FindingHistory{},
 		&Dependency{}, &Package{}, &Dependent{}, &Advisory{},
 		&Maintainer{}, &Skill{}, &Subproject{},
+		&SBOMUpload{}, &SBOMPackage{},
 	); err != nil {
 		return nil, fmt.Errorf("automigrate: %w", err)
 	}
 	return gdb, nil
+}
+
+// SBOMUpload is one CycloneDX or SPDX document a user uploaded. Packages
+// are replaced wholesale on re-upload (cascade delete) but the resolved
+// Repository rows survive so prior scan results stay attached.
+type SBOMUpload struct {
+	ID uint `gorm:"primarykey"`
+
+	Name        string
+	Filename    string
+	Format      string
+	SpecVersion string
+	Raw         []byte
+
+	PackageCount int
+	Packages     []SBOMPackage `gorm:"constraint:OnDelete:CASCADE"`
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
+// SBOMPackage is one component listed in an upload. RepositoryID is set
+// asynchronously once the PURL has been resolved to a source repo and the
+// triage scan enqueued; until then it is nil.
+type SBOMPackage struct {
+	ID           uint `gorm:"primarykey"`
+	SBOMUploadID uint `gorm:"index;not null"`
+
+	Name      string
+	Version   string
+	PURL      string `gorm:"index"`
+	Ecosystem string
+	License   string
+
+	RepositoryID *uint `gorm:"index"`
+	Repository   *Repository
+	ResolveError string
+
+	CreatedAt time.Time
 }
 
 // Subproject is a scannable unit the subprojects skill discovered inside

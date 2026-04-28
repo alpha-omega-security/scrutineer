@@ -35,15 +35,33 @@ type Server struct {
 	Broker *Broker
 	Worker *worker.Worker
 	tmpl   *template.Template
+
+	// resolvePURL maps a Package URL to its source repository URL via
+	// packages.ecosyste.ms. Field rather than direct call so tests can
+	// stub the network lookup.
+	resolvePURL func(ctx context.Context, purl string) string
+	resolveSync bool
 }
 
 func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *worker.Worker) (*Server, error) {
 	funcs := template.FuncMap{
-		"since": func(t *time.Time) string {
-			if t == nil {
+		"since": func(v any) string {
+			var t time.Time
+			switch x := v.(type) {
+			case time.Time:
+				t = x
+			case *time.Time:
+				if x == nil {
+					return ""
+				}
+				t = *x
+			default:
 				return ""
 			}
-			return humanDuration(time.Since(*t)) + " ago"
+			if t.IsZero() {
+				return ""
+			}
+			return humanDuration(time.Since(t)) + " ago"
 		},
 		"dur":     humanDuration,
 		"usd":     formatUSD,
@@ -112,7 +130,8 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *work
 	if err != nil {
 		return nil, err
 	}
-	return &Server{DB: gdb, Queue: q, Log: log, Broker: broker, Worker: w, tmpl: t}, nil
+	return &Server{DB: gdb, Queue: q, Log: log, Broker: broker, Worker: w, tmpl: t,
+		resolvePURL: resolvePURLRepo}, nil
 }
 
 func (s *Server) Handler() http.Handler {
@@ -157,6 +176,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /scans/{id}/cancel", s.scanCancel)
 	mux.HandleFunc("GET /scans/{id}/log", s.scanLog)
 	mux.HandleFunc("GET /usage", s.usage)
+	s.registerSBOMRoutes(mux)
 	mux.HandleFunc("GET /skills", s.skillsList)
 	mux.HandleFunc("GET /skills/new", s.skillNew)
 	mux.HandleFunc("POST /skills", s.skillCreate)
@@ -752,11 +772,16 @@ func (s *Server) depScan(w http.ResponseWriter, r *http.Request) {
 }
 
 func resolveDepRepoURL(ctx context.Context, dep db.Dependency) string {
-	if dep.PURL == "" {
+	return resolvePURLRepo(ctx, dep.PURL)
+}
+
+// resolvePURLRepo asks packages.ecosyste.ms for the repository_url behind a
+// PURL. Returns empty string if the lookup fails or no repo is recorded.
+func resolvePURLRepo(ctx context.Context, purl string) string {
+	if purl == "" {
 		return ""
 	}
-	// packages.ecosyste.ms lookup by PURL
-	_, raw, err := worker.FetchPackagesByPURL(ctx, dep.PURL)
+	_, raw, err := worker.FetchPackagesByPURL(ctx, purl)
 	if err != nil {
 		return ""
 	}

@@ -1,0 +1,117 @@
+{{template "head"}}
+
+{{template "crumbs" (crumbs "SBOMs" "/sboms" .SBOM.Name "")}}
+
+<div class="flex items-start justify-between gap-4 mb-6">
+  <div>
+    <h2 class="text-2xl font-semibold mt-1 flex items-center gap-2">
+      <i data-lucide="file-box"></i> {{.SBOM.Name}}
+    </h2>
+    <p class="text-sm text-muted-foreground">
+      {{.SBOM.Format}} {{.SBOM.SpecVersion}} &middot; {{.SBOM.Filename}} &middot; uploaded {{since .SBOM.CreatedAt}}
+    </p>
+  </div>
+  <div class="flex items-center gap-2">
+    <form hx-post="/sboms/{{.SBOM.ID}}/resolve">
+      <button class="btn-outline" type="submit"><i data-lucide="refresh-cw"></i> Re-resolve</button>
+    </form>
+    <form hx-post="/sboms/{{.SBOM.ID}}/delete" hx-confirm="Delete this SBOM and its package list?">
+      <button class="btn-outline" type="submit"><i data-lucide="trash"></i> Delete</button>
+    </form>
+  </div>
+</div>
+
+<div class="tabs w-full" id="sbom-tabs">
+  <nav role="tablist" aria-orientation="horizontal">
+    <button type="button" role="tab" id="st1" aria-controls="sp1" aria-selected="true">
+      Packages <span class="badge-secondary ml-1">{{.SBOM.PackageCount}}</span>
+    </button>
+    {{if .Findings}}
+    <button type="button" role="tab" id="st2" aria-controls="sp2" aria-selected="false">
+      Findings <span class="badge-destructive ml-1">{{len .Findings}}</span>
+    </button>
+    {{end}}
+  </nav>
+
+  <div role="tabpanel" id="sp1" aria-labelledby="st1">
+    <p class="text-sm text-muted-foreground mb-3">
+      {{.Resolved}} of {{.SBOM.PackageCount}} resolved &middot; {{.WithRepo}} linked to a repository.
+      {{if lt .Resolved .SBOM.PackageCount}}Resolution runs in the background; refresh to see progress.{{end}}
+    </p>
+    <table class="table table-fixed w-full">
+      <thead><tr>
+        <th>Package</th><th class="w-28">Ecosystem</th><th class="w-32">Version</th>
+        <th class="w-28">License</th><th>Repository</th>
+      </tr></thead>
+      <tbody>
+      {{range .SBOM.Packages}}
+        <tr>
+          <td class="whitespace-normal">
+            <div class="font-medium">{{.Name}}</div>
+            {{if .PURL}}<code class="text-xs text-muted-foreground break-all">{{.PURL}}</code>{{end}}
+          </td>
+          <td>{{if .Ecosystem}}<span class="badge-outline">{{.Ecosystem}}</span>{{end}}</td>
+          <td class="text-muted-foreground text-xs">{{.Version}}</td>
+          <td class="text-muted-foreground text-xs">{{.License}}</td>
+          <td class="whitespace-normal">
+            {{if .Repository}}
+              <a href="/repositories/{{.Repository.ID}}" class="hover:underline">{{.Repository.Name}}</a>
+            {{else if .ResolveError}}
+              <span class="text-xs text-muted-foreground">{{.ResolveError}}</span>
+            {{else}}
+              <span class="text-xs text-muted-foreground">resolving&hellip;</span>
+            {{end}}
+          </td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+
+  {{if .Findings}}
+  <div role="tabpanel" id="sp2" aria-labelledby="st2" hidden>
+    <div class="flex items-center justify-between mb-3">
+      <p class="text-sm text-muted-foreground">
+        Aggregated across {{.WithRepo}} resolved repositories. Rejected and duplicate findings are hidden.
+      </p>
+      <div class="dropdown-menu">
+        <button type="button" class="btn-outline" aria-haspopup="menu" aria-expanded="false">
+          <i data-lucide="filter"></i>
+          {{if .Severity}}{{.Severity}}{{else}}Severity{{end}}
+          <i data-lucide="chevron-down"></i>
+        </button>
+        <div data-popover aria-hidden="true" data-align="end">
+          <div role="menu">
+            <a role="menuitem" href="/sboms/{{.SBOM.ID}}">All severities</a>
+            {{range (list "Critical" "High" "Medium" "Low")}}
+              <a role="menuitem" href="/sboms/{{$.SBOM.ID}}?severity={{.}}"
+                 {{if eq . $.Severity}}aria-current="true"{{end}}>{{.}}</a>
+            {{end}}
+          </div>
+        </div>
+      </div>
+    </div>
+    <table class="table table-fixed w-full">
+      <thead><tr>
+        <th class="w-24">Severity</th><th>Title</th><th class="w-32">Repository</th>
+        <th class="w-24">Status</th><th class="w-20">CWE</th>
+      </tr></thead>
+      <tbody>
+      {{$repos := .Repos}}
+      {{range .Findings}}
+        {{$repo := index $repos .RepositoryID}}
+        <tr class="cursor-pointer" hx-get="/findings/{{.ID}}" hx-target="body" hx-push-url="true">
+          <td>{{template "severity-badge" .Severity}}</td>
+          <td class="min-w-0 whitespace-normal font-medium">{{.Title}}</td>
+          <td class="truncate">{{$repo.Name}}</td>
+          <td>{{template "finding-status" (fstatus .Status)}}</td>
+          <td class="text-muted-foreground">{{.CWE}}</td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+  </div>
+  {{end}}
+</div>
+
+{{template "foot"}}
