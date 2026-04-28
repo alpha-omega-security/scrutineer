@@ -11,7 +11,7 @@ func TestParseStream(t *testing.T) {
 {"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"ls -la"}}]}}
 {"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}}
 not json at all
-{"type":"result","result":"ok","total_cost_usd":0.42,"num_turns":7,"duration_ms":1000}
+{"type":"result","result":"ok","total_cost_usd":0.42,"num_turns":7,"duration_ms":1000,"usage":{"input_tokens":10,"output_tokens":66,"cache_read_input_tokens":1200,"cache_creation_input_tokens":34000}}
 
 `
 	var got []Event
@@ -34,6 +34,10 @@ not json at all
 	}
 	if got[4].Kind != KindResult || got[4].CostUSD != 0.42 || got[4].Turns != 7 {
 		t.Errorf("ev4: %+v", got[4])
+	}
+	wantU := Usage{InputTokens: 10, OutputTokens: 66, CacheReadTokens: 1200, CacheWriteTokens: 34000}
+	if got[4].Usage != wantU {
+		t.Errorf("ev4 usage: %+v", got[4].Usage)
 	}
 }
 

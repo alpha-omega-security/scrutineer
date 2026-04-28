@@ -22,10 +22,19 @@ const (
 // into something a human can read in a log view.
 type Event struct {
 	Kind    string
-	Tool    string  // for KindTool
+	Tool    string // for KindTool
 	Text    string
 	CostUSD float64 // for KindResult
 	Turns   int     // for KindResult
+	Usage   Usage   // for KindResult
+}
+
+// Usage is the token breakdown from a result event.
+type Usage struct {
+	InputTokens      int `json:"input_tokens"`
+	OutputTokens     int `json:"output_tokens"`
+	CacheReadTokens  int `json:"cache_read_input_tokens"`
+	CacheWriteTokens int `json:"cache_creation_input_tokens"`
 }
 
 type streamMessage struct {
@@ -36,6 +45,7 @@ type streamMessage struct {
 	CostUSD  *float64        `json:"total_cost_usd"`
 	Duration *int64          `json:"duration_ms"`
 	NumTurns *int            `json:"num_turns"`
+	Usage    *Usage          `json:"usage"`
 	Error    json.RawMessage `json:"error"`
 }
 
@@ -122,6 +132,9 @@ func resultEvent(msg streamMessage) Event {
 	}
 	if msg.NumTurns != nil {
 		ev.Turns = *msg.NumTurns
+	}
+	if msg.Usage != nil {
+		ev.Usage = *msg.Usage
 	}
 	return ev
 }

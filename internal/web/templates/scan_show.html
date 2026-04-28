@@ -38,7 +38,26 @@
     <dt class="text-muted-foreground">Turns</dt>
     <dd>{{if .Turns}}{{.Turns}}{{else}}-{{end}}</dd>
   </div>
+  <div>
+    <dt class="text-muted-foreground">Cost</dt>
+    <dd>{{if gt .CostUSD 0.0}}{{usd .CostUSD}}{{else}}-{{end}}</dd>
+  </div>
 </dl>
+
+{{if gt .TotalInputTokens 0}}
+<table class="table w-full max-w-2xl mb-6">
+  <thead><tr>
+    <th>Input</th><th>Cache read</th><th>Cache write</th><th>Output</th><th>Cache hit</th>
+  </tr></thead>
+  <tbody><tr>
+    <td>{{bignum .InputTokens}}</td>
+    <td>{{bignum .CacheReadTokens}}</td>
+    <td>{{bignum .CacheWriteTokens}}</td>
+    <td>{{bignum .OutputTokens}}</td>
+    <td>{{pct .CacheHitRatio}}</td>
+  </tr></tbody>
+</table>
+{{end}}
 
 {{if .Error}}
   <div class="alert-destructive mb-6">
