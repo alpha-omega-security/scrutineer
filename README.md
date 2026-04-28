@@ -2,6 +2,23 @@
 
 A local tool for scanning open source repositories for security vulnerabilities and managing the disclosure process. You add a repo by URL, scrutineer runs a pipeline of [claude-code skills](https://agentskills.io) against it, and presents the results in a web UI where you can triage findings, identify maintainers, and track disclosures.
 
+## Quick start
+
+You need [Go 1.26+](https://go.dev/dl/), [Docker](https://docs.docker.com/get-docker/) running, and an Anthropic API key from [console.anthropic.com](https://console.anthropic.com).
+
+    git clone https://github.com/alpha-omega-security/scrutineer
+    cd scrutineer
+    export ANTHROPIC_API_KEY=sk-ant-...
+    go run ./cmd/scrutineer -skills ./skills
+
+Then open http://127.0.0.1:8080.
+
+Scrutineer detects Docker and starts using it automatically: each scan runs in an ephemeral container with a read-only source mount and an egress allowlist proxy. The runner image (`ghcr.io/alpha-omega-security/scrutineer-runner`) is pulled on first use, so the first scan is slower while it downloads. If Docker isn't available scans run directly on the host with no isolation; see the Security section before doing that.
+
+Click **Add repository** in the sidebar, paste a git HTTPS URL, and scrutineer enqueues the `triage` skill. Triage then enqueues the rest of the pipeline in parallel. Metadata and package lookups finish in seconds; the security deep-dive takes a few minutes depending on repo size. Open the repo page and switch to the Scans tab to watch progress, or wait for the Findings tab to fill in.
+
+The optional analysis tools (semgrep, zizmor, git-pkgs, brief) are bundled in the runner image, so you don't need them installed locally when Docker is in use.
+
 ## Features
 
 - **Skill-based scan pipeline** -- every scan is a claude-code skill on disk (SKILL.md + schema + optional scripts). The default pipeline for a new repo is itself a skill (`triage`) that enqueues the others; edit its SKILL.md to change what runs
@@ -21,16 +38,6 @@ A local tool for scanning open source repositories for security vulnerabilities 
 - **Usage tracking** -- per-scan token and cost figures plus a `/usage` page totalling spend per skill
 - **Rescan dedup** -- findings carry a content fingerprint so re-running a scan updates existing rows instead of creating duplicates
 - **Markdown report export** -- download a single consolidated `report.md` per repository covering threat model, findings (with six-step prose), packages, advisories, dependents, maintainers
-
-## Getting started
-
-You need Go 1.26+ and an Anthropic API key. Analysis tools (semgrep, zizmor, git-pkgs, brief) are optional -- skills that need a missing tool report the failure in their scan output while the rest complete.
-
-    export ANTHROPIC_API_KEY=sk-...
-    go run ./cmd/scrutineer -skills ./skills
-    open http://127.0.0.1:8080
-
-Click "Add repository" in the sidebar, paste a git URL (or a newline-separated list for bulk import), and scrutineer enqueues the `triage` skill against each one. Triage then enqueues the rest of the default set in parallel. The fast ones (metadata, packages) finish in seconds; the deep audit takes a few minutes depending on the codebase.
 
 ## The default pipeline
 
