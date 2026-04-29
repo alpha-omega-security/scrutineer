@@ -57,7 +57,7 @@
 # Custom Anthropic API base URL. When set, the hostname is automatically
 # added to the egress allowlist. Falls back to the ANTHROPIC_BASE_URL
 # environment variable when empty.
-# anthropic_api_url: https://my-proxy.corp.com/v1
+# anthropic_base_url: https://my-proxy.corp.com/v1
 
 # The model picker in the UI. Replacing this list replaces the built-in
 # set (Sonnet, Opus). Leave it out to keep the built-in list.

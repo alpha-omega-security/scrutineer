@@ -21,7 +21,7 @@ func fullConfig() *config.Config {
 		Clone:           "full",
 		ScanTimeout:     "30m",
 		MaxTurns:        200,
-		AnthropicAPIURL: "https://proxy.corp.com/v1",
+		AnthropicBaseURL: "https://proxy.corp.com/v1",
 	}
 }
 
@@ -53,8 +53,8 @@ func TestFlagsMerge_configFillsUnset(t *testing.T) {
 	if f.maxTurns != 200 {
 		t.Errorf("maxTurns = %d", f.maxTurns)
 	}
-	if f.anthropicAPIURL != cfg.AnthropicAPIURL {
-		t.Errorf("anthropicAPIURL = %q, want %q", f.anthropicAPIURL, cfg.AnthropicAPIURL)
+	if f.anthropicBaseURL != cfg.AnthropicBaseURL {
+		t.Errorf("anthropicBaseURL = %q, want %q", f.anthropicBaseURL, cfg.AnthropicBaseURL)
 	}
 }
 
@@ -62,8 +62,8 @@ func TestFlagsMerge_cliFlagWins(t *testing.T) {
 	cfg := fullConfig()
 	f := &flags{
 		addr: "127.0.0.1:8080", cloneMode: "shallow", concurrency: 2,
-		anthropicAPIURL: "https://my-flag.example.com/v1",
-		set:             map[string]bool{"addr": true, "clone": true, "concurrency": true, "anthropic-api-url": true},
+		anthropicBaseURL: "https://my-flag.example.com/v1",
+		set:             map[string]bool{"addr": true, "clone": true, "concurrency": true, "anthropic-base-url": true},
 	}
 	f.merge(cfg)
 	if f.addr != "127.0.0.1:8080" {
@@ -79,8 +79,8 @@ func TestFlagsMerge_cliFlagWins(t *testing.T) {
 	if f.effort != cfg.Effort {
 		t.Errorf("effort = %q, want %q", f.effort, cfg.Effort)
 	}
-	if f.anthropicAPIURL != "https://my-flag.example.com/v1" {
-		t.Errorf("anthropicAPIURL overridden despite explicit flag: %q", f.anthropicAPIURL)
+	if f.anthropicBaseURL != "https://my-flag.example.com/v1" {
+		t.Errorf("anthropicBaseURL overridden despite explicit flag: %q", f.anthropicBaseURL)
 	}
 }
 
@@ -96,12 +96,12 @@ func TestFlagsMerge_zeroConfigLeavesDefaults(t *testing.T) {
 	if f.scanTimeout != time.Hour {
 		t.Errorf("empty scan_timeout clobbered default: %v", f.scanTimeout)
 	}
-	if f.anthropicAPIURL != "" {
-		t.Errorf("empty config set anthropicAPIURL: %q", f.anthropicAPIURL)
+	if f.anthropicBaseURL != "" {
+		t.Errorf("empty config set anthropicBaseURL: %q", f.anthropicBaseURL)
 	}
 }
 
-func TestAPIURLHost(t *testing.T) {
+func TestBaseURLHost(t *testing.T) {
 	cases := []struct {
 		in, want string
 	}{
@@ -113,8 +113,8 @@ func TestAPIURLHost(t *testing.T) {
 		{"://broken", ""},
 	}
 	for _, tc := range cases {
-		if got := apiURLHost(tc.in); got != tc.want {
-			t.Errorf("apiURLHost(%q) = %q, want %q", tc.in, got, tc.want)
+		if got := baseURLHost(tc.in); got != tc.want {
+			t.Errorf("baseURLHost(%q) = %q, want %q", tc.in, got, tc.want)
 		}
 	}
 }
