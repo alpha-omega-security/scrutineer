@@ -38,9 +38,9 @@ var nameRE = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 // Parsed is a SKILL.md-plus-neighbours as extracted from disk. It mirrors the
 // Skill model shape so the caller can persist it without further work.
 type Parsed struct {
-	Name        string
-	Description string
-	License     string
+	Name          string
+	Description   string
+	License       string
 	Compatibility string
 	AllowedTools  string
 	Metadata      map[string]any
