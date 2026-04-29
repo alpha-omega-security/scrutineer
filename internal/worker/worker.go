@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -61,6 +63,11 @@ func (w *Worker) publish(scanID, repoID uint, name, data string) {
 	if w.OnEvent != nil {
 		w.OnEvent(scanID, repoID, name, data)
 	}
+}
+
+// workRoot returns the per-scan workspace directory under DataDir.
+func (w *Worker) workRoot(scanID uint) string {
+	return filepath.Join(w.DataDir, fmt.Sprintf("scan-%d", scanID))
 }
 
 func (w *Worker) Register(q *queue.Queue) {
@@ -156,6 +163,11 @@ func (w *Worker) wrap(h handler) func(context.Context, []byte) error {
 		}
 		if saveErr := w.DB.Save(&scan).Error; saveErr != nil {
 			return saveErr
+		}
+		if scan.Status == db.ScanDone {
+			if rmErr := os.RemoveAll(w.workRoot(scan.ID)); rmErr != nil {
+				w.Log.Warn("workspace cleanup failed", "scan", scan.ID, "err", rmErr)
+			}
 		}
 		w.publish(scan.ID, scan.RepositoryID, "scan-status", string(scan.Status))
 		w.Log.Info("job finished", "scan", scan.ID, "kind", scan.Kind, "status", scan.Status)
