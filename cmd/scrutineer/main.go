@@ -82,7 +82,7 @@ func parseFlags() *flags {
 	flag.StringVar(&f.cloneMode, "clone", "shallow", "clone depth: shallow (--depth 1) or full")
 	flag.DurationVar(&f.scanTimeout, "scan-timeout", worker.DefaultScanTimeout, "wall-clock limit per scan")
 	flag.IntVar(&f.maxTurns, "max-turns", 0, "claude --max-turns limit (0 = unlimited)")
-	flag.StringVar(&f.anthropicAPIURL, "anthropic-api-url", "", "custom Anthropic API base URL (env: ANTHROPIC_API_URL)")
+	flag.StringVar(&f.anthropicAPIURL, "anthropic-api-url", "", "custom Anthropic API base URL (env: ANTHROPIC_BASE_URL)")
 	flag.Var(&f.skillLocal, "skills", "directory to load SKILL.md files from (repeatable)")
 	flag.Parse()
 
@@ -161,10 +161,10 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	if f.anthropicAPIURL == "" {
-		f.anthropicAPIURL = os.Getenv("ANTHROPIC_API_URL")
+		f.anthropicAPIURL = os.Getenv("ANTHROPIC_BASE_URL")
 	}
-	if f.anthropicAPIURL != "" && os.Getenv("ANTHROPIC_API_URL") != f.anthropicAPIURL {
-		os.Setenv("ANTHROPIC_API_URL", f.anthropicAPIURL)
+	if f.anthropicAPIURL != "" && os.Getenv("ANTHROPIC_BASE_URL") != f.anthropicAPIURL {
+		os.Setenv("ANTHROPIC_BASE_URL", f.anthropicAPIURL)
 	}
 
 	if err := os.MkdirAll(f.dataDir, dataPermSecure); err != nil {

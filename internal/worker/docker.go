@@ -25,7 +25,7 @@ type DockerRunner struct {
 	ProxyURL        string // http://user:token@host.docker.internal:port; "" disables egress
 	FullClone       bool
 	MaxTurns        int
-	AnthropicAPIURL string // passed as ANTHROPIC_API_URL env var to the container
+	AnthropicAPIURL string // passed as ANTHROPIC_BASE_URL env var to the container
 }
 
 func (d DockerRunner) image() string {
@@ -95,7 +95,7 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 		dockerArgs = append(dockerArgs, "-e", "CLAUDE_CODE_OAUTH_TOKEN")
 	}
 	if d.AnthropicAPIURL != "" {
-		dockerArgs = append(dockerArgs, "-e", "ANTHROPIC_API_URL="+d.AnthropicAPIURL)
+		dockerArgs = append(dockerArgs, "-e", "ANTHROPIC_BASE_URL="+d.AnthropicAPIURL)
 	}
 	dockerArgs = append(dockerArgs, d.image())
 	dockerArgs = append(dockerArgs, claudeArgs...)
@@ -110,7 +110,11 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 	}
 	cmd.Stderr = cmd.Stdout
 
-	emit(Event{Kind: KindText, Text: "$ docker run --rm " + d.image() + " <skill:" + sj.Name + ">"})
+	logLine := "$ docker run --rm " + d.image() + " <skill:" + sj.Name + ">"
+	if d.AnthropicAPIURL != "" {
+		logLine += " [ANTHROPIC_BASE_URL=" + d.AnthropicAPIURL + "]"
+	}
+	emit(Event{Kind: KindText, Text: logLine})
 	if err := cmd.Start(); err != nil {
 		return SkillResult{}, fmt.Errorf("start docker: %w", err)
 	}

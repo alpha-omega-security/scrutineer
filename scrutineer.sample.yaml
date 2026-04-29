@@ -55,7 +55,7 @@
 # max_turns: 0
 
 # Custom Anthropic API base URL. When set, the hostname is automatically
-# added to the egress allowlist. Falls back to the ANTHROPIC_API_URL
+# added to the egress allowlist. Falls back to the ANTHROPIC_BASE_URL
 # environment variable when empty.
 # anthropic_api_url: https://my-proxy.corp.com/v1
 

@@ -47,8 +47,8 @@ type Config struct {
 	MaxTurns int `yaml:"max_turns"`
 	// AnthropicAPIURL overrides the default Anthropic API endpoint. When
 	// set, the hostname is automatically added to the egress allowlist and
-	// the value is passed as ANTHROPIC_API_URL to the claude-code process.
-	// Falls back to the ANTHROPIC_API_URL environment variable if empty.
+	// the value is passed as ANTHROPIC_BASE_URL to the claude-code process.
+	// Falls back to the ANTHROPIC_BASE_URL environment variable if empty.
 	AnthropicAPIURL string `yaml:"anthropic_api_url"`
 }
 
