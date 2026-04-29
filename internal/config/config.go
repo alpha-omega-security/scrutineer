@@ -45,6 +45,11 @@ type Config struct {
 	ScanTimeout string `yaml:"scan_timeout"`
 	// MaxTurns is passed as --max-turns to claude-code. 0 means no limit.
 	MaxTurns int `yaml:"max_turns"`
+	// AnthropicAPIURL overrides the default Anthropic API endpoint. When
+	// set, the hostname is automatically added to the egress allowlist and
+	// the value is passed as ANTHROPIC_API_URL to the claude-code process.
+	// Falls back to the ANTHROPIC_API_URL environment variable if empty.
+	AnthropicAPIURL string `yaml:"anthropic_api_url"`
 }
 
 // ParseScanTimeout validates and parses a scan_timeout string. Empty

@@ -10,17 +10,18 @@ import (
 func fullConfig() *config.Config {
 	yes := true
 	return &config.Config{
-		Addr:        "0.0.0.0:9090",
-		Data:        "/var/lib/scrutineer",
-		Effort:      "medium",
-		NoDocker:    &yes,
-		RunnerImage: "custom:v1",
-		SkillsRepo:  "https://example.com/skills.git",
-		Skills:      []string{"/etc/skills"},
-		Concurrency: 8,
-		Clone:       "full",
-		ScanTimeout: "30m",
-		MaxTurns:    200,
+		Addr:            "0.0.0.0:9090",
+		Data:            "/var/lib/scrutineer",
+		Effort:          "medium",
+		NoDocker:        &yes,
+		RunnerImage:     "custom:v1",
+		SkillsRepo:      "https://example.com/skills.git",
+		Skills:          []string{"/etc/skills"},
+		Concurrency:     8,
+		Clone:           "full",
+		ScanTimeout:     "30m",
+		MaxTurns:        200,
+		AnthropicAPIURL: "https://proxy.corp.com/v1",
 	}
 }
 
@@ -52,13 +53,17 @@ func TestFlagsMerge_configFillsUnset(t *testing.T) {
 	if f.maxTurns != 200 {
 		t.Errorf("maxTurns = %d", f.maxTurns)
 	}
+	if f.anthropicAPIURL != cfg.AnthropicAPIURL {
+		t.Errorf("anthropicAPIURL = %q, want %q", f.anthropicAPIURL, cfg.AnthropicAPIURL)
+	}
 }
 
 func TestFlagsMerge_cliFlagWins(t *testing.T) {
 	cfg := fullConfig()
 	f := &flags{
 		addr: "127.0.0.1:8080", cloneMode: "shallow", concurrency: 2,
-		set: map[string]bool{"addr": true, "clone": true, "concurrency": true},
+		anthropicAPIURL: "https://my-flag.example.com/v1",
+		set:             map[string]bool{"addr": true, "clone": true, "concurrency": true, "anthropic-api-url": true},
 	}
 	f.merge(cfg)
 	if f.addr != "127.0.0.1:8080" {
@@ -74,6 +79,9 @@ func TestFlagsMerge_cliFlagWins(t *testing.T) {
 	if f.effort != cfg.Effort {
 		t.Errorf("effort = %q, want %q", f.effort, cfg.Effort)
 	}
+	if f.anthropicAPIURL != "https://my-flag.example.com/v1" {
+		t.Errorf("anthropicAPIURL overridden despite explicit flag: %q", f.anthropicAPIURL)
+	}
 }
 
 func TestFlagsMerge_zeroConfigLeavesDefaults(t *testing.T) {
@@ -87,5 +95,26 @@ func TestFlagsMerge_zeroConfigLeavesDefaults(t *testing.T) {
 	}
 	if f.scanTimeout != time.Hour {
 		t.Errorf("empty scan_timeout clobbered default: %v", f.scanTimeout)
+	}
+	if f.anthropicAPIURL != "" {
+		t.Errorf("empty config set anthropicAPIURL: %q", f.anthropicAPIURL)
+	}
+}
+
+func TestAPIURLHost(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"", ""},
+		{"https://api.anthropic.com", "api.anthropic.com"},
+		{"https://my-proxy.corp.com/v1", "my-proxy.corp.com"},
+		{"https://my-proxy.corp.com:8443/v1", "my-proxy.corp.com"},
+		{"http://localhost:4000", "localhost"},
+		{"://broken", ""},
+	}
+	for _, tc := range cases {
+		if got := apiURLHost(tc.in); got != tc.want {
+			t.Errorf("apiURLHost(%q) = %q, want %q", tc.in, got, tc.want)
+		}
 	}
 }

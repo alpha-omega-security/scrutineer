@@ -9,6 +9,7 @@ You need [Go 1.26+](https://go.dev/dl/), [Docker](https://docs.docker.com/get-do
     git clone https://github.com/alpha-omega-security/scrutineer
     cd scrutineer
     export ANTHROPIC_API_KEY=sk-ant-...
+    export ANTHROPIC_API_URL=https://...  # optional: custom API endpoint
     go run ./cmd/scrutineer -skills ./skills
 
 Then open http://127.0.0.1:8080.
@@ -117,7 +118,7 @@ The same applies to the Dependents tab -- you can import any dependent's reposit
 ## Docker
 
     docker build -t scrutineer .
-    docker run -p 127.0.0.1:8080:8080 -v scrutineer-data:/data -e ANTHROPIC_API_KEY=sk-... scrutineer
+    docker run -p 127.0.0.1:8080:8080 -v scrutineer-data:/data -e ANTHROPIC_API_KEY=sk-... -e ANTHROPIC_API_URL=https://... scrutineer
 
 Always bind to `127.0.0.1`. The UI has no authentication; binding to `0.0.0.0` exposes your findings database to anyone on the network.
 
@@ -130,7 +131,7 @@ Use `--no-docker` to disable containerised execution, or `--runner-image` to spe
     docker build -t scrutineer-runner -f Dockerfile.runner .
     go run ./cmd/scrutineer -skills ./skills --runner-image scrutineer-runner
 
-When the docker runner is active, scrutineer starts an authenticated egress proxy on the host and points `HTTPS_PROXY`/`HTTP_PROXY` inside the container at it. The proxy only tunnels to an allowlist of hosts: the Anthropic API, `*.ecosyste.ms`, the major forges (GitHub, GitLab, Codeberg, Bitbucket), common package registries (npm, PyPI, RubyGems, crates.io, Go module proxy, Packagist, Hex, NuGet), advisory sources (semgrep.dev, OSV, NVD, cwe.mitre.org), and `host.docker.internal` for the local skill API. Requests to anything else get a 403 and are logged. Extend the list with `egress_allow` in the config file. The proxy uses a per-process random token so it isn't an open relay; tools that ignore the proxy env are not blocked at the network layer (see `threatmodel.md`).
+When the docker runner is active, scrutineer starts an authenticated egress proxy on the host and points `HTTPS_PROXY`/`HTTP_PROXY` inside the container at it. The proxy only tunnels to an allowlist of hosts: the Anthropic API, `*.ecosyste.ms`, the major forges (GitHub, GitLab, Codeberg, Bitbucket), common package registries (npm, PyPI, RubyGems, crates.io, Go module proxy, Packagist, Hex, NuGet), advisory sources (semgrep.dev, OSV, NVD, cwe.mitre.org), and `host.docker.internal` for the local skill API. Requests to anything else get a 403 and are logged. Extend the list with `egress_allow` in the config file. When `-anthropic-api-url` is set (or falls back to the `ANTHROPIC_API_URL` env var), its hostname is automatically added to the allowlist. The proxy uses a per-process random token so it isn't an open relay; tools that ignore the proxy env are not blocked at the network layer (see `threatmodel.md`).
 
 ## Flags
 
@@ -148,6 +149,7 @@ When the docker runner is active, scrutineer starts an authenticated egress prox
 | `-clone` | `shallow` | Clone depth: `shallow` (`--depth 1`) or `full` |
 | `-scan-timeout` | `1h` | Wall-clock limit per scan; exceeded scans fail |
 | `-max-turns` | `0` | Passed as `--max-turns` to claude-code (0 = unlimited) |
+| `-anthropic-api-url` | - | Custom Anthropic API base URL (env: `ANTHROPIC_API_URL`) |
 
 ## Config file
 

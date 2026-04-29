@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -49,18 +50,19 @@ func main() {
 // parseFlags fills defaults and CLI overrides; merge layers the config
 // file underneath any flag the user set explicitly.
 type flags struct {
-	configPath  string
-	addr        string
-	dataDir     string
-	effort      string
-	noDocker    bool
-	runnerImage string
-	skillsRepo  string
-	concurrency int
-	cloneMode   string
-	scanTimeout time.Duration
-	maxTurns    int
-	skillLocal  skillDirs
+	configPath      string
+	addr            string
+	dataDir         string
+	effort          string
+	noDocker        bool
+	runnerImage     string
+	skillsRepo      string
+	concurrency     int
+	cloneMode       string
+	scanTimeout     time.Duration
+	maxTurns        int
+	anthropicAPIURL string
+	skillLocal      skillDirs
 
 	// set records which flags were passed on the command line so merge
 	// knows not to let the config file override them.
@@ -80,6 +82,7 @@ func parseFlags() *flags {
 	flag.StringVar(&f.cloneMode, "clone", "shallow", "clone depth: shallow (--depth 1) or full")
 	flag.DurationVar(&f.scanTimeout, "scan-timeout", worker.DefaultScanTimeout, "wall-clock limit per scan")
 	flag.IntVar(&f.maxTurns, "max-turns", 0, "claude --max-turns limit (0 = unlimited)")
+	flag.StringVar(&f.anthropicAPIURL, "anthropic-api-url", "", "custom Anthropic API base URL (env: ANTHROPIC_API_URL)")
 	flag.Var(&f.skillLocal, "skills", "directory to load SKILL.md files from (repeatable)")
 	flag.Parse()
 
@@ -125,6 +128,9 @@ func (f *flags) merge(cfg *config.Config) {
 	if cfg.MaxTurns > 0 && !f.set["max-turns"] {
 		f.maxTurns = cfg.MaxTurns
 	}
+	if cfg.AnthropicAPIURL != "" && !f.set["anthropic-api-url"] {
+		f.anthropicAPIURL = cfg.AnthropicAPIURL
+	}
 
 	if len(cfg.Models) > 0 {
 		models := make([]web.Model, 0, len(cfg.Models))
@@ -153,6 +159,12 @@ func run(log *slog.Logger) error {
 	}
 	if err := config.ValidateClone(f.cloneMode); err != nil {
 		return err
+	}
+	if f.anthropicAPIURL == "" {
+		f.anthropicAPIURL = os.Getenv("ANTHROPIC_API_URL")
+	}
+	if f.anthropicAPIURL != "" && os.Getenv("ANTHROPIC_API_URL") != f.anthropicAPIURL {
+		os.Setenv("ANTHROPIC_API_URL", f.anthropicAPIURL)
 	}
 
 	if err := os.MkdirAll(f.dataDir, dataPermSecure); err != nil {
@@ -196,6 +208,10 @@ func run(log *slog.Logger) error {
 	if cfg != nil {
 		egressExtra = cfg.EgressAllow
 	}
+	if h := apiURLHost(f.anthropicAPIURL); h != "" {
+		egressExtra = append(egressExtra, h)
+		log.Info("added anthropic API URL host to egress allowlist", "host", h)
+	}
 
 	var runner worker.SkillRunner
 	apiBase := "http://" + f.addr + "/api"
@@ -209,11 +225,12 @@ func run(log *slog.Logger) error {
 		log.Info("docker detected, using containerised runner",
 			"image", f.runnerImage, "egress_proxy_port", port, "egress_allow", len(allow))
 		runner = worker.DockerRunner{
-			Image:     f.runnerImage,
-			Effort:    f.effort,
-			ProxyURL:  worker.ProxyURL(token, port),
-			FullClone: f.fullClone(),
-			MaxTurns:  f.maxTurns,
+			Image:           f.runnerImage,
+			Effort:          f.effort,
+			ProxyURL:        worker.ProxyURL(token, port),
+			FullClone:       f.fullClone(),
+			MaxTurns:        f.maxTurns,
+			AnthropicAPIURL: f.anthropicAPIURL,
 		}
 		// Skills inside the container reach the host via host.docker.internal,
 		// which the egress proxy rewrites to 127.0.0.1 when dialing.
@@ -295,6 +312,17 @@ func addrPort(addr string) string {
 func hashPath(s string) string {
 	r := strings.NewReplacer("/", "_", ":", "_", "?", "_", "&", "_", "=", "_")
 	return r.Replace(s)
+}
+
+func apiURLHost(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
 }
 
 // cfgPath returns the path the loader actually used for logging.

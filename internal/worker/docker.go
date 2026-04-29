@@ -20,11 +20,12 @@ const DefaultRunnerImage = "ghcr.io/alpha-omega-security/scrutineer-runner:lates
 // workspace (clone + staged skill + output file) mounted at /work. It
 // implements SkillRunner.
 type DockerRunner struct {
-	Image     string
-	Effort    string
-	ProxyURL  string // http://user:token@host.docker.internal:port; "" disables egress
-	FullClone bool
-	MaxTurns  int
+	Image           string
+	Effort          string
+	ProxyURL        string // http://user:token@host.docker.internal:port; "" disables egress
+	FullClone       bool
+	MaxTurns        int
+	AnthropicAPIURL string // passed as ANTHROPIC_API_URL env var to the container
 }
 
 func (d DockerRunner) image() string {
@@ -92,6 +93,9 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 	}
 	if os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") != "" {
 		dockerArgs = append(dockerArgs, "-e", "CLAUDE_CODE_OAUTH_TOKEN")
+	}
+	if d.AnthropicAPIURL != "" {
+		dockerArgs = append(dockerArgs, "-e", "ANTHROPIC_API_URL="+d.AnthropicAPIURL)
 	}
 	dockerArgs = append(dockerArgs, d.image())
 	dockerArgs = append(dockerArgs, claudeArgs...)
