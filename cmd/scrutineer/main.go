@@ -205,6 +205,14 @@ func run(log *slog.Logger) error {
 		return err
 	}
 
+	go func() {
+		if n, err := worker.SyncCNAs(context.Background(), gdb, ""); err != nil {
+			log.Warn("CNA sync failed", "err", err)
+		} else {
+			log.Info("synced CNA list", "count", n)
+		}
+	}()
+
 	broker := web.NewBroker()
 
 	var egressExtra []string

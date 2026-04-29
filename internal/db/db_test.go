@@ -85,4 +85,13 @@ func TestOpenAndMigrate(t *testing.T) {
 	if got.Repository.URL != r.URL {
 		t.Errorf("preload failed: %+v", got.Repository)
 	}
+
+	cna := CNA{ShortName: "apache", CNAID: "CNA-2016-0004", Organization: "Apache Software Foundation",
+		Scope: "All Apache Software Foundation projects", Email: "security@apache.org"}
+	if err := gdb.Create(&cna).Error; err != nil {
+		t.Fatalf("create CNA: %v", err)
+	}
+	if err := gdb.Create(&CNA{ShortName: "apache"}).Error; err == nil {
+		t.Errorf("expected unique-index violation on duplicate ShortName")
+	}
 }
