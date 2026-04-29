@@ -74,7 +74,7 @@ type cnaEntry struct {
 		Email   []struct{ EmailAddr string } `json:"email"`
 		Contact []struct{ URL string }       `json:"contact"`
 	} `json:"contact"`
-	DisclosurePolicy []struct{ URL string } `json:"disclosurePolicy"`
+	DisclosurePolicy   []struct{ URL string } `json:"disclosurePolicy"`
 	SecurityAdvisories struct {
 		Advisories []struct{ URL string } `json:"advisories"`
 	} `json:"securityAdvisories"`
