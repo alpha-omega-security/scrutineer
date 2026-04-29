@@ -50,19 +50,19 @@ func main() {
 // parseFlags fills defaults and CLI overrides; merge layers the config
 // file underneath any flag the user set explicitly.
 type flags struct {
-	configPath      string
-	addr            string
-	dataDir         string
-	effort          string
-	noDocker        bool
-	runnerImage     string
-	skillsRepo      string
-	concurrency     int
-	cloneMode       string
-	scanTimeout     time.Duration
-	maxTurns        int
+	configPath       string
+	addr             string
+	dataDir          string
+	effort           string
+	noDocker         bool
+	runnerImage      string
+	skillsRepo       string
+	concurrency      int
+	cloneMode        string
+	scanTimeout      time.Duration
+	maxTurns         int
 	anthropicBaseURL string
-	skillLocal      skillDirs
+	skillLocal       skillDirs
 
 	// set records which flags were passed on the command line so merge
 	// knows not to let the config file override them.
@@ -163,8 +163,11 @@ func run(log *slog.Logger) error {
 	if f.anthropicBaseURL == "" {
 		f.anthropicBaseURL = os.Getenv("ANTHROPIC_BASE_URL")
 	}
-	if f.anthropicBaseURL != "" && os.Getenv("ANTHROPIC_BASE_URL") != f.anthropicBaseURL {
-		os.Setenv("ANTHROPIC_BASE_URL", f.anthropicBaseURL)
+	// LocalClaude inherits the host env, so writing the resolved value
+	// back here is what makes flag/config precedence apply on the local
+	// runner path. DockerRunner gets it explicitly via its struct field.
+	if f.anthropicBaseURL != "" {
+		_ = os.Setenv("ANTHROPIC_BASE_URL", f.anthropicBaseURL)
 	}
 
 	if err := os.MkdirAll(f.dataDir, dataPermSecure); err != nil {
@@ -225,11 +228,11 @@ func run(log *slog.Logger) error {
 		log.Info("docker detected, using containerised runner",
 			"image", f.runnerImage, "egress_proxy_port", port, "egress_allow", len(allow))
 		runner = worker.DockerRunner{
-			Image:           f.runnerImage,
-			Effort:          f.effort,
-			ProxyURL:        worker.ProxyURL(token, port),
-			FullClone:       f.fullClone(),
-			MaxTurns:        f.maxTurns,
+			Image:            f.runnerImage,
+			Effort:           f.effort,
+			ProxyURL:         worker.ProxyURL(token, port),
+			FullClone:        f.fullClone(),
+			MaxTurns:         f.maxTurns,
 			AnthropicBaseURL: f.anthropicBaseURL,
 		}
 		// Skills inside the container reach the host via host.docker.internal,

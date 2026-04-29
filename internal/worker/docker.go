@@ -20,11 +20,11 @@ const DefaultRunnerImage = "ghcr.io/alpha-omega-security/scrutineer-runner:lates
 // workspace (clone + staged skill + output file) mounted at /work. It
 // implements SkillRunner.
 type DockerRunner struct {
-	Image           string
-	Effort          string
-	ProxyURL        string // http://user:token@host.docker.internal:port; "" disables egress
-	FullClone       bool
-	MaxTurns        int
+	Image            string
+	Effort           string
+	ProxyURL         string // http://user:token@host.docker.internal:port; "" disables egress
+	FullClone        bool
+	MaxTurns         int
 	AnthropicBaseURL string // passed as ANTHROPIC_BASE_URL env var to the container
 }
 

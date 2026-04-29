@@ -10,17 +10,17 @@ import (
 func fullConfig() *config.Config {
 	yes := true
 	return &config.Config{
-		Addr:            "0.0.0.0:9090",
-		Data:            "/var/lib/scrutineer",
-		Effort:          "medium",
-		NoDocker:        &yes,
-		RunnerImage:     "custom:v1",
-		SkillsRepo:      "https://example.com/skills.git",
-		Skills:          []string{"/etc/skills"},
-		Concurrency:     8,
-		Clone:           "full",
-		ScanTimeout:     "30m",
-		MaxTurns:        200,
+		Addr:             "0.0.0.0:9090",
+		Data:             "/var/lib/scrutineer",
+		Effort:           "medium",
+		NoDocker:         &yes,
+		RunnerImage:      "custom:v1",
+		SkillsRepo:       "https://example.com/skills.git",
+		Skills:           []string{"/etc/skills"},
+		Concurrency:      8,
+		Clone:            "full",
+		ScanTimeout:      "30m",
+		MaxTurns:         200,
 		AnthropicBaseURL: "https://proxy.corp.com/v1",
 	}
 }
@@ -63,7 +63,7 @@ func TestFlagsMerge_cliFlagWins(t *testing.T) {
 	f := &flags{
 		addr: "127.0.0.1:8080", cloneMode: "shallow", concurrency: 2,
 		anthropicBaseURL: "https://my-flag.example.com/v1",
-		set:             map[string]bool{"addr": true, "clone": true, "concurrency": true, "anthropic-base-url": true},
+		set:              map[string]bool{"addr": true, "clone": true, "concurrency": true, "anthropic-base-url": true},
 	}
 	f.merge(cfg)
 	if f.addr != "127.0.0.1:8080" {
