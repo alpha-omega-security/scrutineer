@@ -187,7 +187,10 @@ func (s *Server) Handler() http.Handler {
 
 	// API routes get bearer-auth middleware and skip the browser CSRF checks;
 	// skills call these from inside a scan workspace, not from a browser.
+	// /api/v1/* are unauthenticated JSONL export endpoints sharing the
+	// browser's host-only boundary; see threatmodel.md.
 	root := http.NewServeMux()
+	root.Handle("/api/v1/", securityHeaders(http.StripPrefix(exportPrefix, s.exportHandler())))
 	root.Handle("/api/", s.apiHandler())
 	root.Handle("/", securityHeaders(mux))
 	return logRequests(s.Log, root)
