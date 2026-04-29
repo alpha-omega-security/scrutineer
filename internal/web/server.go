@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/santhosh-tekuri/jsonschema/v6"
 	"gorm.io/gorm"
 
 	"scrutineer/internal/db"
@@ -41,6 +42,8 @@ type Server struct {
 	// stub the network lookup.
 	resolvePURL func(ctx context.Context, purl string) string
 	resolveSync bool
+
+	csafSchema *jsonschema.Schema
 }
 
 func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *worker.Worker) (*Server, error) {
@@ -130,8 +133,12 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *work
 	if err != nil {
 		return nil, err
 	}
+	csafSchema, err := getCSAFSchema()
+	if err != nil {
+		return nil, fmt.Errorf("load csaf schema: %w", err)
+	}
 	return &Server{DB: gdb, Queue: q, Log: log, Broker: broker, Worker: w, tmpl: t,
-		resolvePURL: resolvePURLRepo}, nil
+		resolvePURL: resolvePURLRepo, csafSchema: csafSchema}, nil
 }
 
 func (s *Server) Handler() http.Handler {
@@ -156,6 +163,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /maintainers/{id}/do-not-contact", s.maintainerDoNotContact)
 	mux.HandleFunc("GET /findings", s.findings)
 	mux.HandleFunc("GET /findings/{id}", s.findingShow)
+	mux.HandleFunc("GET /findings/{id}/csaf.json", s.findingCSAF)
 	mux.HandleFunc("POST /findings/{id}/status", s.findingStatus)
 	mux.HandleFunc("POST /findings/{id}/verify", s.findingVerify)
 	mux.HandleFunc("POST /findings/{id}/disclose", s.findingDisclose)
