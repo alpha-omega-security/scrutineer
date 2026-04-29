@@ -20,11 +20,12 @@ const DefaultRunnerImage = "ghcr.io/alpha-omega-security/scrutineer-runner:lates
 // workspace (clone + staged skill + output file) mounted at /work. It
 // implements SkillRunner.
 type DockerRunner struct {
-	Image     string
-	Effort    string
-	ProxyURL  string // http://user:token@host.docker.internal:port; "" disables egress
-	FullClone bool
-	MaxTurns  int
+	Image            string
+	Effort           string
+	ProxyURL         string // http://user:token@host.docker.internal:port; "" disables egress
+	FullClone        bool
+	MaxTurns         int
+	AnthropicBaseURL string // passed as ANTHROPIC_BASE_URL env var to the container
 }
 
 func (d DockerRunner) image() string {
@@ -93,6 +94,9 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 	if os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") != "" {
 		dockerArgs = append(dockerArgs, "-e", "CLAUDE_CODE_OAUTH_TOKEN")
 	}
+	if d.AnthropicBaseURL != "" {
+		dockerArgs = append(dockerArgs, "-e", "ANTHROPIC_BASE_URL="+d.AnthropicBaseURL)
+	}
 	dockerArgs = append(dockerArgs, d.image())
 	dockerArgs = append(dockerArgs, claudeArgs...)
 
@@ -106,7 +110,11 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 	}
 	cmd.Stderr = cmd.Stdout
 
-	emit(Event{Kind: KindText, Text: "$ docker run --rm " + d.image() + " <skill:" + sj.Name + ">"})
+	logLine := "$ docker run --rm " + d.image() + " <skill:" + sj.Name + ">"
+	if d.AnthropicBaseURL != "" {
+		logLine += " [ANTHROPIC_BASE_URL=" + d.AnthropicBaseURL + "]"
+	}
+	emit(Event{Kind: KindText, Text: logLine})
 	if err := cmd.Start(); err != nil {
 		return SkillResult{}, fmt.Errorf("start docker: %w", err)
 	}
