@@ -296,4 +296,3 @@ func purlType(purl string) string {
 	}
 	return rest
 }
-

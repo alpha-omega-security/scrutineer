@@ -80,19 +80,19 @@ func (w *Worker) parseRepoMetadataOutput(scan *db.Scan, report string, emit func
 func (w *Worker) parsePackagesOutput(scan *db.Scan, report string, emit func(Event)) error {
 	var result struct {
 		Packages []struct {
-			Name                 string  `json:"name"`
-			Ecosystem            string  `json:"ecosystem"`
-			PURL                 string  `json:"purl"`
-			Licenses             string  `json:"licenses"`
-			LatestVersion        string  `json:"latest_version"`
-			VersionsCount        int     `json:"versions_count"`
-			Downloads            int64   `json:"downloads"`
-			DependentPackages    int     `json:"dependent_packages"`
-			DependentRepos       int     `json:"dependent_repos"`
-			RegistryURL          string  `json:"registry_url"`
-			LatestReleaseAt      string  `json:"latest_release_at"`
-			DependentPackagesURL string  `json:"dependent_packages_url"`
-			Metadata             any     `json:"metadata"`
+			Name                 string `json:"name"`
+			Ecosystem            string `json:"ecosystem"`
+			PURL                 string `json:"purl"`
+			Licenses             string `json:"licenses"`
+			LatestVersion        string `json:"latest_version"`
+			VersionsCount        int    `json:"versions_count"`
+			Downloads            int64  `json:"downloads"`
+			DependentPackages    int    `json:"dependent_packages"`
+			DependentRepos       int    `json:"dependent_repos"`
+			RegistryURL          string `json:"registry_url"`
+			LatestReleaseAt      string `json:"latest_release_at"`
+			DependentPackagesURL string `json:"dependent_packages_url"`
+			Metadata             any    `json:"metadata"`
 		} `json:"packages"`
 	}
 	if err := json.Unmarshal([]byte(report), &result); err != nil {

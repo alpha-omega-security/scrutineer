@@ -31,7 +31,7 @@ type Queue struct {
 }
 
 const (
-	visibilityTimeout       = 30 * time.Second
+	visibilityTimeout        = 30 * time.Second
 	DefaultWorkerConcurrency = 4
 )
 
