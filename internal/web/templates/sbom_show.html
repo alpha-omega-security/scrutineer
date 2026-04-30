@@ -1,4 +1,4 @@
-{{template "head"}}
+{{template "head" .}}
 
 {{template "crumbs" (crumbs "SBOMs" "/sboms" .SBOM.Name "")}}
 
@@ -12,10 +12,13 @@
     </p>
   </div>
   <div class="flex items-center gap-2">
-    <form hx-post="/sboms/{{.SBOM.ID}}/resolve">
+    <form method="post" action="/sboms/{{.SBOM.ID}}/resolve"
+          hx-post="/sboms/{{.SBOM.ID}}/resolve" hx-swap="none">
       <button class="btn-outline" type="submit"><i data-lucide="refresh-cw"></i> Re-resolve</button>
     </form>
-    <form hx-post="/sboms/{{.SBOM.ID}}/delete" hx-confirm="Delete this SBOM and its package list?">
+    <form method="post" action="/sboms/{{.SBOM.ID}}/delete"
+          hx-post="/sboms/{{.SBOM.ID}}/delete" hx-swap="none"
+          hx-confirm="Delete this SBOM and its package list?">
       <button class="btn-outline" type="submit"><i data-lucide="trash"></i> Delete</button>
     </form>
   </div>
@@ -150,9 +153,9 @@
       {{$repos := .Repos}}
       {{range .Findings}}
         {{$repo := index $repos .RepositoryID}}
-        <tr class="cursor-pointer" hx-get="/findings/{{.ID}}" hx-target="body" hx-push-url="true">
+        <tr id="finding-{{.ID}}" class="cursor-pointer" hx-get="/findings/{{.ID}}" hx-push-url="true">
           <td>{{template "severity-badge" .Severity}}</td>
-          <td class="min-w-0 whitespace-normal font-medium">{{.Title}}</td>
+          <td class="min-w-0 whitespace-normal"><a href="/findings/{{.ID}}" class="font-medium" hx-on:click="event.stopPropagation()">{{.Title}}</a></td>
           <td class="truncate">{{$repo.Name}}</td>
           <td>{{template "finding-status" (fstatus .Status)}}</td>
           <td class="text-muted-foreground">{{.CWE}}</td>
@@ -193,4 +196,4 @@
   {{end}}
 </div>
 
-{{template "foot"}}
+{{template "foot" .}}

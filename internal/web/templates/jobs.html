@@ -1,4 +1,4 @@
-{{template "head"}}
+{{template "head" .}}
 
 <div class="flex items-center justify-between gap-4 mb-6">
   <h2 class="text-2xl font-semibold flex items-center gap-2">
@@ -67,8 +67,8 @@
     <tbody>
     {{$showSub := .AnySubPath}}
     {{range .Scans}}
-      <tr class="cursor-pointer" hx-get="/scans/{{.ID}}" hx-target="body" hx-push-url="true">
-        <td>{{.ID}}</td>
+      <tr id="scan-{{.ID}}" class="cursor-pointer" hx-get="/scans/{{.ID}}" hx-push-url="true">
+        <td><a href="/scans/{{.ID}}" hx-on:click="event.stopPropagation()">{{.ID}}</a></td>
         <td>{{.Repository.Name}}</td>
         {{if $showSub}}
           <td class="text-xs text-muted-foreground">{{if .SubPath}}<code>{{.SubPath}}</code>{{else}}<span>root</span>{{end}}</td>
@@ -90,4 +90,4 @@
   {{template "empty" (dict "Icon" "list-checks" "Title" "No jobs yet" "Body" "Jobs appear here once a repository has been queued.")}}
 {{end}}
 
-{{template "foot"}}
+{{template "foot" .}}

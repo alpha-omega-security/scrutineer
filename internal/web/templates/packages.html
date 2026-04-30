@@ -1,4 +1,4 @@
-{{template "head"}}
+{{template "head" .}}
 
 <div class="flex items-center justify-between gap-4 mb-6">
   <h2 class="text-2xl font-semibold flex items-center gap-2">
@@ -54,8 +54,8 @@
     </tr></thead>
     <tbody>
     {{range .Pkgs}}
-      <tr class="cursor-pointer" hx-get="/packages/{{.ID}}" hx-target="body" hx-push-url="true">
-        <td class="whitespace-normal font-medium">{{.Name}}</td>
+      <tr id="package-{{.ID}}" class="cursor-pointer" hx-get="/packages/{{.ID}}" hx-push-url="true">
+        <td class="whitespace-normal"><a href="/packages/{{.ID}}" class="font-medium" hx-on:click="event.stopPropagation()">{{.Name}}</a></td>
         <td><span class="badge-outline">{{.Ecosystem}}</span></td>
         <td class="text-muted-foreground">{{if .RegistryURL}}{{domain .RegistryURL}}{{end}}</td>
         <td class="text-muted-foreground">{{.LatestVersion}}</td>
@@ -72,4 +72,4 @@
   {{template "empty" (dict "Icon" "package" "Title" "No packages" "Body" "Package data appears here once the packages job runs for a repository.")}}
 {{end}}
 
-{{template "foot"}}
+{{template "foot" .}}

@@ -1,4 +1,4 @@
-{{template "head"}}
+{{template "head" .}}
 
 <div class="flex items-center justify-between gap-4 mb-6">
   <h2 class="text-2xl font-semibold flex items-center gap-2">
@@ -59,10 +59,10 @@
     {{$showSub := .AnySubPath}}
     {{range .Findings}}
       {{$repo := index $repos .RepositoryID}}
-      <tr class="cursor-pointer" hx-get="/findings/{{.ID}}" hx-target="body" hx-push-url="true">
+      <tr id="finding-{{.ID}}" class="cursor-pointer" hx-get="/findings/{{.ID}}" hx-push-url="true">
         <td>{{template "severity-badge" .Severity}}</td>
         <td class="min-w-0 whitespace-normal">
-          <div class="font-medium">{{.Title}}</div>
+          <a href="/findings/{{.ID}}" class="font-medium" hx-on:click="event.stopPropagation()">{{.Title}}</a>
           <div class="text-xs text-muted-foreground line-clamp-2">{{.Summary}}</div>
         </td>
         <td>{{template "finding-status" (fstatus .Status)}}</td>
@@ -86,4 +86,4 @@
   {{template "empty" (dict "Icon" "bug" "Title" "No findings" "Body" "Findings appear here once a scan reports vulnerabilities.")}}
 {{end}}
 
-{{template "foot"}}
+{{template "foot" .}}

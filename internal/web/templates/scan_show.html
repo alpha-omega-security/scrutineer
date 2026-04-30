@@ -1,5 +1,5 @@
-{{template "head"}}
-
+{{template "head" .}}
+{{with .Scan}}
 {{template "crumbs" (crumbs
   "Repositories" "/"
   .Repository.Name (printf "/repositories/%d" .Repository.ID)
@@ -11,9 +11,10 @@
     {{template "status-badge" (status .Status)}}
   </h2>
   {{if and (eq .Kind "skill") .SkillID}}
-    <button class="btn-outline" hx-post="/scans/{{.ID}}/retry">
-      <i data-lucide="refresh-cw"></i> Retry
-    </button>
+    <form method="post" action="/scans/{{.ID}}/retry"
+          hx-post="/scans/{{.ID}}/retry" hx-swap="none">
+      <button type="submit" class="btn-outline"><i data-lucide="refresh-cw"></i> Retry</button>
+    </form>
   {{end}}
 </div>
 
@@ -86,17 +87,17 @@
         </tr></thead>
         <tbody>
         {{range .Findings}}
-          <tr class="cursor-pointer" hx-get="/findings/{{.ID}}" hx-target="body" hx-push-url="true">
+          <tr id="finding-{{.ID}}" class="cursor-pointer" hx-get="/findings/{{.ID}}" hx-push-url="true">
             <td>{{template "severity-badge" .Severity}}</td>
             <td class="min-w-0 whitespace-normal">
-              <div class="font-medium">{{.Title}}</div>
+              <a href="/findings/{{.ID}}" class="font-medium" hx-on:click="event.stopPropagation()">{{.Title}}</a>
               <div class="text-xs text-muted-foreground line-clamp-2">{{.Summary}}</div>
             </td>
             <td>{{template "finding-status" (fstatus .Status)}}</td>
             <td class="text-muted-foreground">
               {{if .CWE}}<span data-tooltip="{{cwename .CWE}}">{{.CWE}}</span>{{end}}
             </td>
-            <td class="whitespace-normal">{{template "loc-link" (dict "HTMLURL" $.Repository.HTMLURL "Commit" $.Commit "Location" .Location)}}</td>
+            <td class="whitespace-normal">{{template "loc-link" (dict "HTMLURL" $.Scan.Repository.HTMLURL "Commit" $.Scan.Commit "Location" .Location)}}</td>
           </tr>
         {{end}}
         </tbody>
@@ -130,5 +131,5 @@
   </div>
   {{end}}
 </div>
-
-{{template "foot"}}
+{{end}}
+{{template "foot" .}}

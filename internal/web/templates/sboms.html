@@ -1,12 +1,12 @@
-{{template "head"}}
+{{template "head" .}}
 
 <div class="flex items-center justify-between gap-4 mb-6">
   <h2 class="text-2xl font-semibold flex items-center gap-2">
     <i data-lucide="file-box"></i> SBOMs
   </h2>
-  <button type="button" class="btn" onclick="document.getElementById('sbom-upload').showModal()">
+  <a href="/sboms/new" data-dialog="sbom-upload" class="btn">
     <i data-lucide="upload"></i> Upload SBOM
-  </button>
+  </a>
 </div>
 
 <dialog id="sbom-upload" class="dialog">
@@ -15,12 +15,12 @@
       <h2>Upload SBOM</h2>
       <p class="text-sm text-muted-foreground">CycloneDX or SPDX, JSON only.</p>
     </header>
-    <form method="post" action="/sboms" enctype="multipart/form-data"
-          hx-post="/sboms" hx-encoding="multipart/form-data" class="form grid gap-4">
+    <form method="post" action="/sboms" enctype="multipart/form-data" class="form grid gap-4">
       <input class="input" type="file" name="file" accept=".json,application/json" required>
       <footer class="flex justify-end gap-2">
-        <button type="button" class="btn-outline" onclick="this.closest('dialog').close()">Cancel</button>
-        <button type="submit" class="btn">Upload</button>
+        <button type="submit" class="btn-outline" formmethod="dialog" formnovalidate>Cancel</button>
+        <button type="submit" class="btn"
+                hx-post="/sboms" hx-encoding="multipart/form-data" hx-swap="none">Upload</button>
       </footer>
     </form>
   </article>
@@ -34,8 +34,8 @@
     </tr></thead>
     <tbody>
     {{range .SBOMs}}
-      <tr class="cursor-pointer" hx-get="/sboms/{{.ID}}" hx-target="body" hx-push-url="true">
-        <td class="font-medium">{{.Name}}<div class="text-xs text-muted-foreground">{{.Filename}}</div></td>
+      <tr id="sbom-{{.ID}}" class="cursor-pointer" hx-get="/sboms/{{.ID}}" hx-push-url="true">
+        <td><a href="/sboms/{{.ID}}" class="font-medium" hx-on:click="event.stopPropagation()">{{.Name}}</a><div class="text-xs text-muted-foreground">{{.Filename}}</div></td>
         <td><span class="badge-outline">{{.Format}} {{.SpecVersion}}</span></td>
         <td class="text-right text-muted-foreground">{{.PackageCount}}</td>
         <td class="text-muted-foreground">{{since .CreatedAt}}</td>
@@ -47,4 +47,4 @@
   {{template "empty" (dict "Icon" "file-box" "Title" "No SBOMs yet" "Body" "Upload a CycloneDX or SPDX JSON document to scan every package it lists.")}}
 {{end}}
 
-{{template "foot"}}
+{{template "foot" .}}

@@ -20,6 +20,7 @@ const (
 
 func (s *Server) registerSBOMRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /sboms", s.sbomList)
+	mux.HandleFunc("GET /sboms/new", s.sbomNew)
 	mux.HandleFunc("POST /sboms", s.sbomUpload)
 	mux.HandleFunc("GET /sboms/{id}", s.sbomShow)
 	mux.HandleFunc("POST /sboms/{id}/resolve", s.sbomResolve)
@@ -29,7 +30,11 @@ func (s *Server) registerSBOMRoutes(mux *http.ServeMux) {
 func (s *Server) sbomList(w http.ResponseWriter, r *http.Request) {
 	var rows []db.SBOMUpload
 	s.DB.Order("id desc").Find(&rows)
-	s.render(w, "sboms.html", map[string]any{"SBOMs": rows})
+	s.render(w, r, "sboms.html", map[string]any{"SBOMs": rows})
+}
+
+func (s *Server) sbomNew(w http.ResponseWriter, r *http.Request) {
+	s.render(w, r, "sbom_new.html", nil)
 }
 
 func (s *Server) sbomUpload(w http.ResponseWriter, r *http.Request) {
@@ -79,8 +84,7 @@ func (s *Server) sbomUpload(w http.ResponseWriter, r *http.Request) {
 
 	s.goResolve(up.ID)
 
-	w.Header().Set("HX-Redirect", fmt.Sprintf("/sboms/%d", up.ID))
-	w.WriteHeader(http.StatusNoContent)
+	s.redirect(w, r, fmt.Sprintf("/sboms/%d", up.ID))
 }
 
 func (s *Server) sbomShow(w http.ResponseWriter, r *http.Request) {
@@ -160,7 +164,7 @@ func (s *Server) sbomShow(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.render(w, "sbom_show.html", map[string]any{
+	s.render(w, r, "sbom_show.html", map[string]any{
 		"SBOM": up, "Packages": pkgs,
 		"Findings": findings, "Advisories": advisories, "Repos": reposByID,
 		"Resolved": resolved, "WithRepo": withRepo,
@@ -176,8 +180,7 @@ func (s *Server) sbomResolve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.goResolve(up.ID)
-	w.Header().Set("HX-Redirect", fmt.Sprintf("/sboms/%d", up.ID))
-	w.WriteHeader(http.StatusNoContent)
+	s.redirect(w, r, fmt.Sprintf("/sboms/%d", up.ID))
 }
 
 // goResolve launches resolveSBOMPackages. Indirected so tests can run it
@@ -195,8 +198,7 @@ func (s *Server) sbomDelete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("HX-Redirect", "/sboms")
-	w.WriteHeader(http.StatusNoContent)
+	s.redirect(w, r, "/sboms")
 }
 
 // resolveSBOMPackages walks every unresolved package in the upload, looks up

@@ -2,6 +2,8 @@ package web
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -122,6 +124,161 @@ func TestMaintainersIndex_rendersFindingsCountAndDNCBadge(t *testing.T) {
 	}
 }
 
+func flashFrom(t *testing.T, w *httptest.ResponseRecorder) Flash {
+	t.Helper()
+	r := &http.Request{Header: http.Header{"Cookie": w.Header().Values("Set-Cookie")}}
+	c, err := r.Cookie("flash")
+	if err != nil {
+		t.Fatalf("no flash cookie set: %v", err)
+	}
+	raw, _ := base64.RawURLEncoding.DecodeString(c.Value)
+	var f Flash
+	if err := json.Unmarshal(raw, &f); err != nil {
+		t.Fatalf("decode flash: %v", err)
+	}
+	return f
+}
+
+func TestRenderScanStatus_OOBRowAndToast(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://github.com/foo/bar.git", Name: "bar"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", SkillName: "audit", Status: db.ScanDone}
+	s.DB.Create(&scan)
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, FindingID: "F1", Title: "x", Severity: "High"})
+
+	out := s.renderScanStatus(scan.ID)
+
+	if !strings.Contains(out, fmt.Sprintf(`id="scan-%d"`, scan.ID)) {
+		t.Errorf("missing row id: %s", out)
+	}
+	if !strings.Contains(out, `hx-swap-oob="true"`) {
+		t.Error("row not marked for OOB swap")
+	}
+	if !strings.Contains(out, `hx-swap-oob="afterbegin:#toaster"`) {
+		t.Error("toast not targeted at #toaster")
+	}
+	if !strings.Contains(out, "audit done") {
+		t.Errorf("toast title missing skill+status: %s", out)
+	}
+	if !strings.Contains(out, "bar") {
+		t.Error("toast missing repo name")
+	}
+}
+
+func TestRepoNew_fallbackPages(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	h := s.Handler()
+
+	for _, tc := range []struct{ path, want string }{
+		{"/repositories/new", "Add repository"},
+		{"/repositories/new?bulk=1", "Bulk import"},
+		{"/sboms/new", "Upload SBOM"},
+	} {
+		req := httptest.NewRequest("GET", tc.path, nil)
+		req.Host = testHost
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Errorf("%s: status %d", tc.path, w.Code)
+		}
+		if !strings.Contains(w.Body.String(), tc.want) {
+			t.Errorf("%s: body missing %q", tc.path, tc.want)
+		}
+	}
+}
+
+func TestFlash_roundtrip(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	rec := httptest.NewRecorder()
+	setFlash(rec, Flash{Category: "success", Title: "Imported", Description: "3 added"})
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Host = testHost
+	req.Header.Set("Cookie", rec.Header().Get("Set-Cookie"))
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+
+	body := w.Body.String()
+	if !strings.Contains(body, "Imported") || !strings.Contains(body, "3 added") {
+		t.Error("flash not rendered into page body")
+	}
+	var cleared bool
+	for _, sc := range w.Header().Values("Set-Cookie") {
+		if strings.HasPrefix(sc, "flash=") && strings.Contains(sc, "Max-Age=0") {
+			cleared = true
+		}
+	}
+	if !cleared {
+		t.Error("flash cookie not cleared after render")
+	}
+}
+
+func TestNavKey(t *testing.T) {
+	cases := map[string]string{
+		"/":               "repos",
+		"/repositories/7": "repos",
+		"/findings":       "findings",
+		"/findings/42":    "findings",
+		"/scans/1":        "scans",
+		"/sboms":          "sboms",
+		"/usage":          "usage",
+	}
+	for path, want := range cases {
+		if got := navKey(path); got != want {
+			t.Errorf("navKey(%q) = %q, want %q", path, got, want)
+		}
+	}
+}
+
+func TestSidebar_rendersAriaCurrent(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	req := httptest.NewRequest("GET", "/findings", nil)
+	req.Host = testHost
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `href="/findings" aria-current="page"`) {
+		t.Error("findings link missing aria-current")
+	}
+	if strings.Contains(body, `href="/" aria-current="page"`) {
+		t.Error("repos link should not be current on /findings")
+	}
+}
+
+func TestRedirect_branchesOnHXRequest(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	plain := httptest.NewRequest("POST", "/x", nil)
+	w := httptest.NewRecorder()
+	s.redirect(w, plain, "/target")
+	if w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/target" {
+		t.Errorf("plain: code=%d Location=%q", w.Code, w.Header().Get("Location"))
+	}
+
+	hx := httptest.NewRequest("POST", "/x", nil)
+	hx.Header.Set("HX-Request", "true")
+	w = httptest.NewRecorder()
+	s.redirect(w, hx, "/target")
+	if w.Code != http.StatusNoContent || w.Header().Get("HX-Redirect") != "/target" {
+		t.Errorf("hx: code=%d HX-Redirect=%q", w.Code, w.Header().Get("HX-Redirect"))
+	}
+	if w.Header().Get("Location") != "" {
+		t.Errorf("hx: unexpected Location %q", w.Header().Get("Location"))
+	}
+}
+
 func TestMaintainerDoNotContactToggle(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
@@ -136,7 +293,7 @@ func TestMaintainerDoNotContactToggle(t *testing.T) {
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		w := httptest.NewRecorder()
 		s.Handler().ServeHTTP(w, r)
-		if w.Code != http.StatusNoContent {
+		if w.Code != http.StatusSeeOther {
 			t.Fatalf("value=%s status %d: %s", value, w.Code, w.Body)
 		}
 	}
@@ -167,7 +324,7 @@ func TestRepoDisclosureChannel_setAndClear(t *testing.T) {
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		w := httptest.NewRecorder()
 		s.Handler().ServeHTTP(w, r)
-		if w.Code != http.StatusNoContent {
+		if w.Code != http.StatusSeeOther {
 			t.Fatalf("status %d: %s", w.Code, w.Body)
 		}
 	}
@@ -1012,11 +1169,11 @@ func TestCreateRepoEnqueuesTriageSkill(t *testing.T) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
-	if w.Code != 204 {
+	if w.Code != http.StatusSeeOther {
 		t.Fatalf("create status %d: %s", w.Code, w.Body)
 	}
-	if w.Header().Get("HX-Redirect") == "" {
-		t.Error("expected HX-Redirect")
+	if w.Header().Get("Location") == "" {
+		t.Error("expected Location redirect")
 	}
 
 	var repo db.Repository
@@ -1051,11 +1208,11 @@ func TestFindingDiscloseEnqueuesDiscloseSkill(t *testing.T) {
 	req.Header.Set("Sec-Fetch-Site", "same-origin")
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, req)
-	if w.Code != http.StatusNoContent {
+	if w.Code != http.StatusSeeOther {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
-	if !strings.HasPrefix(w.Header().Get("HX-Redirect"), "/scans/") {
-		t.Errorf("expected HX-Redirect to scan, got %q", w.Header().Get("HX-Redirect"))
+	if !strings.HasPrefix(w.Header().Get("Location"), "/scans/") {
+		t.Errorf("expected redirect to scan, got %q", w.Header().Get("Location"))
 	}
 
 	var row db.Scan
@@ -1086,7 +1243,7 @@ func TestFindingPatchRunEnqueuesPatchSkill(t *testing.T) {
 	req.Header.Set("Sec-Fetch-Site", "same-origin")
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, req)
-	if w.Code != http.StatusNoContent {
+	if w.Code != http.StatusSeeOther {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
 
@@ -1286,12 +1443,12 @@ func TestBulkImport_dedupesNormalisedURLs(t *testing.T) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, req)
-	if w.Code != http.StatusNoContent {
+	if w.Code != http.StatusSeeOther {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
-	trigger := w.Header().Get("HX-Trigger")
-	if !strings.Contains(trigger, "1 added") || !strings.Contains(trigger, "3 already present") {
-		t.Errorf("toast = %s, want 1 added / 3 already present", trigger)
+	f := flashFrom(t, w)
+	if !strings.Contains(f.Title, "1 added") || !strings.Contains(f.Title, "3 already present") {
+		t.Errorf("flash title = %q, want 1 added / 3 already present", f.Title)
 	}
 
 	var repos []db.Repository
@@ -1315,15 +1472,15 @@ func TestBulkImport_createsAndEnqueues(t *testing.T) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, req)
-	if w.Code != http.StatusNoContent {
+	if w.Code != http.StatusSeeOther {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
-	if w.Header().Get("HX-Redirect") != "/" {
-		t.Errorf("HX-Redirect = %q", w.Header().Get("HX-Redirect"))
+	if w.Header().Get("Location") != "/" {
+		t.Errorf("Location = %q", w.Header().Get("Location"))
 	}
-	trigger := w.Header().Get("HX-Trigger")
-	if !strings.Contains(trigger, "2 added") {
-		t.Errorf("HX-Trigger toast missing '2 added': %s", trigger)
+	f := flashFrom(t, w)
+	if !strings.Contains(f.Title, "2 added") {
+		t.Errorf("flash missing '2 added': %+v", f)
 	}
 
 	var repos []db.Repository
@@ -1352,12 +1509,12 @@ func TestBulkImport_skipsDuplicates(t *testing.T) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, req)
-	if w.Code != http.StatusNoContent {
+	if w.Code != http.StatusSeeOther {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
-	trigger := w.Header().Get("HX-Trigger")
-	if !strings.Contains(trigger, "1 added") || !strings.Contains(trigger, "1 already present") {
-		t.Errorf("toast missing expected counts: %s", trigger)
+	f := flashFrom(t, w)
+	if !strings.Contains(f.Title, "1 added") || !strings.Contains(f.Title, "1 already present") {
+		t.Errorf("flash missing expected counts: %+v", f)
 	}
 
 	var scans []db.Scan
@@ -1383,7 +1540,7 @@ func TestBulkImport_rejectsNonHTTPS(t *testing.T) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, req)
-	if w.Code != http.StatusNoContent {
+	if w.Code != http.StatusSeeOther {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
 
@@ -1392,9 +1549,9 @@ func TestBulkImport_rejectsNonHTTPS(t *testing.T) {
 	if len(repos) != 1 {
 		t.Errorf("want 1 repo (only the https one), got %d", len(repos))
 	}
-	trigger := w.Header().Get("HX-Trigger")
-	if !strings.Contains(trigger, "1 added") || !strings.Contains(trigger, "3 invalid") {
-		t.Errorf("toast missing counts: %s", trigger)
+	f := flashFrom(t, w)
+	if !strings.Contains(f.Title, "1 added") || !strings.Contains(f.Title, "3 invalid") {
+		t.Errorf("flash missing counts: %+v", f)
 	}
 }
 
@@ -1429,8 +1586,8 @@ func TestBulkImport_dialogRendered(t *testing.T) {
 	if !strings.Contains(body, "Add multiple") {
 		t.Error("add-repo dialog missing 'Add multiple' link to bulk dialog")
 	}
-	if !strings.Contains(body, "getElementById('bulk-add-repo').showModal()") {
-		t.Error("'Add multiple' button does not open bulk dialog")
+	if !strings.Contains(body, `data-dialog="bulk-add-repo"`) {
+		t.Error("'Add multiple' link not wired to bulk dialog")
 	}
 }
 
@@ -1446,7 +1603,7 @@ func TestCreateRepo_parsesGitHubTreeURL(t *testing.T) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, req)
-	if w.Code != http.StatusNoContent {
+	if w.Code != http.StatusSeeOther {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
 
@@ -1485,7 +1642,7 @@ func TestRetry_preservesSubPath(t *testing.T) {
 	req.Header.Set("Sec-Fetch-Site", "same-origin")
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, req)
-	if w.Code != http.StatusNoContent {
+	if w.Code != http.StatusSeeOther {
 		t.Fatalf("retry status %d: %s", w.Code, w.Body)
 	}
 
@@ -1543,7 +1700,7 @@ func TestScanCancel_queued(t *testing.T) {
 	req.Header.Set("Sec-Fetch-Site", "same-origin")
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, req)
-	if w.Code != http.StatusNoContent {
+	if w.Code != http.StatusSeeOther {
 		t.Fatalf("cancel status %d: %s", w.Code, w.Body)
 	}
 

@@ -1,4 +1,4 @@
-{{template "head"}}
+{{template "head" .}}
 {{$f := .F}}
 {{$scan := .Scan}}
 {{$repo := .Repo}}
@@ -470,4 +470,4 @@ git commit -m "fix: {{$f.Title}}"</pre>
   {{end}}
 </section>
 
-{{template "foot"}}
+{{template "foot" .}}

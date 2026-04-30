@@ -45,16 +45,18 @@
     </thead>
     <tbody>
     {{range .Rows}}
-      <tr class="cursor-pointer" hx-get="/repositories/{{.ID}}" hx-target="body" hx-push-url="true">
-        <td>{{trimscheme .URL}}</td>
+      <tr id="repo-{{.ID}}" class="cursor-pointer" hx-get="/repositories/{{.ID}}" hx-push-url="true">
+        <td><a href="/repositories/{{.ID}}" hx-on:click="event.stopPropagation()">{{trimscheme .URL}}</a></td>
         <td class="text-muted-foreground">{{if .Languages}}{{.Languages}}{{else}}-{{end}}</td>
         <td>{{if .LastScan}}{{.LastScan.CreatedAt.Format "15:04:05"}}{{else}}never{{end}}</td>
         <td>{{if .LastScan}}{{template "status-badge" (status .LastScan.Status)}}{{end}}</td>
         <td>{{template "findings-badge" .FindingsTotal}}</td>
         <td>
-          <button class="btn-sm-outline"
-                  hx-post="/repositories/{{.ID}}/scan"
-                  hx-on:click="event.stopPropagation()"><i data-lucide="refresh-cw"></i> Rescan</button>
+          <form method="post" action="/repositories/{{.ID}}/scan"
+                hx-post="/repositories/{{.ID}}/scan" hx-swap="none"
+                hx-on:click="event.stopPropagation()">
+            <button type="submit" class="btn-sm-outline"><i data-lucide="refresh-cw"></i> Rescan</button>
+          </form>
         </td>
       </tr>
     {{end}}

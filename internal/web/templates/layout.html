@@ -20,8 +20,9 @@
   <script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.6/dist/htmx.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/htmx-ext-sse@2.2.4/sse.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/lucide@0.545.0/dist/umd/lucide.min.js"></script>
+  <script src="/static/app.js" defer></script>
 </head>
-<body hx-on::after-swap="lucide.createIcons()">
+<body>
 
 <aside class="sidebar" data-side="left" aria-hidden="false">
   <nav aria-label="Sidebar">
@@ -38,30 +39,32 @@
     </header>
     <section>
       <div role="group">
-        <ul>
-          <li><a href="/" data-nav="repos"><i data-lucide="folder-git-2"></i><span>Repositories</span></a></li>
-          <li><a href="/orgs" data-nav="orgs"><i data-lucide="building"></i><span>Organizations</span></a></li>
-          <li><a href="/findings" data-nav="findings"><i data-lucide="bug"></i><span>Findings</span></a></li>
-          <li><a href="/packages" data-nav="packages"><i data-lucide="package"></i><span>Packages</span></a></li>
-          <li><a href="/sboms" data-nav="sboms"><i data-lucide="file-box"></i><span>SBOMs</span></a></li>
-          <li><a href="/advisories" data-nav="advisories"><i data-lucide="shield-alert"></i><span>Advisories</span></a></li>
-          <li><a href="/maintainers" data-nav="maintainers"><i data-lucide="users"></i><span>Maintainers</span></a></li>
-          <li><a href="/scans" data-nav="scans"><i data-lucide="list-checks"></i><span>Scans</span></a></li>
-          <li><a href="/skills" data-nav="skills"><i data-lucide="sparkles"></i><span>Skills</span></a></li>
-          <li><a href="/usage" data-nav="usage"><i data-lucide="coins"></i><span>Usage</span></a></li>
+        <ul id="nav">
+          {{$nav := .Nav}}
+          <li><a href="/"{{if eq $nav "repos"}} aria-current="page"{{end}}><i data-lucide="folder-git-2"></i><span>Repositories</span></a></li>
+          <li><a href="/orgs"{{if eq $nav "orgs"}} aria-current="page"{{end}}><i data-lucide="building"></i><span>Organizations</span></a></li>
+          <li><a href="/findings"{{if eq $nav "findings"}} aria-current="page"{{end}}><i data-lucide="bug"></i><span>Findings</span></a></li>
+          <li><a href="/packages"{{if eq $nav "packages"}} aria-current="page"{{end}}><i data-lucide="package"></i><span>Packages</span></a></li>
+          <li><a href="/sboms"{{if eq $nav "sboms"}} aria-current="page"{{end}}><i data-lucide="file-box"></i><span>SBOMs</span></a></li>
+          <li><a href="/advisories"{{if eq $nav "advisories"}} aria-current="page"{{end}}><i data-lucide="shield-alert"></i><span>Advisories</span></a></li>
+          <li><a href="/maintainers"{{if eq $nav "maintainers"}} aria-current="page"{{end}}><i data-lucide="users"></i><span>Maintainers</span></a></li>
+          <li><a href="/scans"{{if eq $nav "scans"}} aria-current="page"{{end}}><i data-lucide="list-checks"></i><span>Scans</span></a></li>
+          <li><a href="/skills"{{if eq $nav "skills"}} aria-current="page"{{end}}><i data-lucide="sparkles"></i><span>Skills</span></a></li>
+          <li><a href="/usage"{{if eq $nav "usage"}} aria-current="page"{{end}}><i data-lucide="coins"></i><span>Usage</span></a></li>
         </ul>
       </div>
     </section>
     <footer>
-      <button type="button" class="btn w-full"
-              onclick="document.getElementById('add-repo').showModal()">
+      <a href="/repositories/new" data-dialog="add-repo" class="btn w-full">
         <i data-lucide="plus"></i> Add repository
-      </button>
+      </a>
     </footer>
   </nav>
 </aside>
 
-<main id="content" class="min-h-screen">
+<main id="content" class="min-h-screen"
+      hx-history-elt
+      hx-target="#content" hx-select="#content" hx-select-oob="#nav" hx-swap="outerHTML">
   <div class="p-4 md:p-6 xl:p-12">
 {{end}}
 
@@ -69,36 +72,31 @@
   </div>
 </main>
 
-<dialog id="add-repo" class="dialog w-full sm:max-w-md"
-        onclick="if (event.target === this) this.close()">
+<dialog id="add-repo" class="dialog w-full sm:max-w-md">
   <div>
     <header><h2>Add repository</h2></header>
     <section>
-      <form hx-post="/repositories"
-            hx-on::after-request="if(event.detail.successful){this.reset();this.closest('dialog').close()}"
-            class="form grid gap-3">
+      <form method="post" action="/repositories" class="form grid gap-3">
         <input class="input" type="text" name="url"
                placeholder="https://github.com/maragudk/goqite.git" required>
         <footer class="flex justify-between items-center gap-2">
-          <button type="button" class="btn-ghost-sm"
-                  onclick="this.closest('dialog').close(); document.getElementById('bulk-add-repo').showModal()">
+          <a href="/repositories/new?bulk=1" data-dialog="bulk-add-repo" class="btn-ghost-sm">
             <i data-lucide="list-plus"></i> Add multiple
-          </button>
+          </a>
           <div class="flex gap-2">
-            <button type="button" class="btn-outline" onclick="this.closest('dialog').close()">Cancel</button>
-            <button type="submit" class="btn"><i data-lucide="play"></i> Scan</button>
+            <button type="submit" class="btn-outline" formmethod="dialog" formnovalidate>Cancel</button>
+            <button type="submit" class="btn" hx-post="/repositories" hx-swap="none">
+              <i data-lucide="play"></i> Scan
+            </button>
           </div>
         </footer>
       </form>
     </section>
-    <button type="button" aria-label="Close" onclick="this.closest('dialog').close()">
-      <i data-lucide="x"></i>
-    </button>
+    <form method="dialog"><button aria-label="Close"><i data-lucide="x"></i></button></form>
   </div>
 </dialog>
 
-<dialog id="bulk-add-repo" class="dialog w-full sm:max-w-lg"
-        onclick="if (event.target === this) this.close()">
+<dialog id="bulk-add-repo" class="dialog w-full sm:max-w-lg">
   <div>
     <header>
       <h2>Bulk import repositories</h2>
@@ -108,73 +106,24 @@
       </p>
     </header>
     <section>
-      <form hx-post="/repositories/bulk"
-            hx-on::after-request="if(event.detail.successful){this.reset();this.closest('dialog').close()}"
-            class="form grid gap-3">
+      <form method="post" action="/repositories/bulk" class="form grid gap-3">
         <textarea class="input font-mono text-xs" name="urls" rows="10" required
                   placeholder="https://github.com/maragudk/goqite.git&#10;https://github.com/spf13/cobra.git&#10;https://github.com/stretchr/testify.git"></textarea>
         <footer class="flex justify-end gap-2">
-          <button type="button" class="btn-outline" onclick="this.closest('dialog').close()">Cancel</button>
-          <button type="submit" class="btn"><i data-lucide="play"></i> Import</button>
+          <button type="submit" class="btn-outline" formmethod="dialog" formnovalidate>Cancel</button>
+          <button type="submit" class="btn" hx-post="/repositories/bulk" hx-swap="none">
+            <i data-lucide="play"></i> Import
+          </button>
         </footer>
       </form>
     </section>
-    <button type="button" aria-label="Close" onclick="this.closest('dialog').close()">
-      <i data-lucide="x"></i>
-    </button>
+    <form method="dialog"><button aria-label="Close"><i data-lucide="x"></i></button></form>
   </div>
 </dialog>
 
-<div id="toaster" class="toaster"></div>
-<script>
-  lucide.createIcons();
-  // Persist active tab in URL hash
-  document.addEventListener('click', function (e) {
-    var tab = e.target.closest('[role="tab"]');
-    if (tab && tab.id) history.replaceState(null, '', '#' + tab.id);
-  });
-  // Restore tab after basecoat initialises. Use rAF to yield to deferred scripts.
-  function restoreTab() {
-    var h = location.hash.slice(1);
-    if (!h) return;
-    var tab = document.getElementById(h);
-    if (!tab || tab.getAttribute('role') !== 'tab') return;
-    var tablist = tab.closest('[role="tablist"]');
-    if (!tablist) return;
-    tablist.querySelectorAll('[role="tab"]').forEach(function (t) {
-      var selected = t.id === h;
-      t.setAttribute('aria-selected', selected);
-      var panel = document.getElementById(t.getAttribute('aria-controls'));
-      if (panel) panel.hidden = !selected;
-    });
-  }
-  if (document.readyState === 'complete') restoreTab();
-  else window.addEventListener('load', restoreTab);
-  (function () {
-    var p = location.pathname;
-    var key = p.indexOf('/usage') === 0 ? 'usage'
-            : p.indexOf('/skills') === 0 ? 'skills'
-            : p.indexOf('/maintainers') === 0 ? 'maintainers'
-            : p.indexOf('/orgs') === 0 ? 'orgs'
-            : p.indexOf('/packages') === 0 ? 'packages'
-            : p.indexOf('/advisories') === 0 ? 'advisories'
-            : p.indexOf('/findings') === 0 ? 'findings'
-            : p.indexOf('/scans') === 0 ? 'scans'
-            : 'repos';
-    var a = document.querySelector('.sidebar a[data-nav="' + key + '"]');
-    if (a) a.setAttribute('aria-current', 'page');
-  })();
-  document.body.addEventListener('scanStatus', function (e) {
-    var d = e.detail || {};
-    var ok = d.status === 'done';
-    document.dispatchEvent(new CustomEvent('basecoat:toast', { detail: { config: {
-      category: ok ? 'success' : 'error',
-      title: d.name + ' scan ' + (ok ? 'complete' : d.status),
-      description: 'scan #' + d.id,
-      action: { href: '/scans/' + d.id, label: 'View' }
-    }}}));
-  });
-</script>
+<div id="toaster" class="toaster">
+  {{with .Flash}}{{template "toast" .}}{{end}}
+</div>
 </body>
 </html>
 {{end}}
@@ -206,14 +155,30 @@
 {{end}}
 
 {{define "scan-actions"}}
-  {{if or (eq (status .Status) "queued") (eq (status .Status) "running")}}<button class="btn-sm-ghost"
-    hx-post="/scans/{{.ID}}/cancel" hx-swap="none"
-    hx-on:click="event.stopPropagation()"
-    data-tooltip="Cancel"><i data-lucide="x"></i></button>
-  {{else if and (or (eq (status .Status) "failed") (eq (status .Status) "cancelled")) .SkillID}}<button class="btn-sm-ghost"
-    hx-post="/scans/{{.ID}}/retry" hx-swap="none"
-    hx-on:click="event.stopPropagation()"
-    data-tooltip="Retry"><i data-lucide="refresh-cw"></i></button>{{end}}
+  {{if or (eq (status .Status) "queued") (eq (status .Status) "running")}}
+    <form method="post" action="/scans/{{.ID}}/cancel" hx-post="/scans/{{.ID}}/cancel"
+          hx-swap="none" hx-on:click="event.stopPropagation()">
+      <button type="submit" class="btn-sm-ghost" data-tooltip="Cancel"><i data-lucide="x"></i></button>
+    </form>
+  {{else if and (or (eq (status .Status) "failed") (eq (status .Status) "cancelled")) .SkillID}}
+    <form method="post" action="/scans/{{.ID}}/retry" hx-post="/scans/{{.ID}}/retry"
+          hx-swap="none" hx-on:click="event.stopPropagation()">
+      <button type="submit" class="btn-sm-ghost" data-tooltip="Retry"><i data-lucide="refresh-cw"></i></button>
+    </form>
+  {{end}}
+{{end}}
+
+{{define "toast"}}
+<div class="toast" role="status" aria-atomic="true" aria-hidden="false"
+     data-category="{{.Category}}" data-duration="6000">
+  <div class="toast-content">
+    <section>
+      <h2>{{.Title}}</h2>
+      {{if .Description}}<p>{{.Description}}</p>{{end}}
+    </section>
+    {{if .Href}}<footer><a href="{{.Href}}" class="btn-sm">{{.Label}}</a></footer>{{end}}
+  </div>
+</div>
 {{end}}
 
 {{define "status-badge"}}

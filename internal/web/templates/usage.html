@@ -1,4 +1,4 @@
-{{template "head"}}
+{{template "head" .}}
 
 <div class="flex items-center justify-between gap-4 mb-2">
   <h2 class="text-2xl font-semibold flex items-center gap-2">
@@ -51,4 +51,4 @@
   {{template "empty" (dict "Icon" "coins" "Title" "No usage yet" "Body" "Cost data appears here once scans have completed.")}}
 {{end}}
 
-{{template "foot"}}
+{{template "foot" .}}

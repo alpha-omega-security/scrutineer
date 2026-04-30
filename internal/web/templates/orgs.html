@@ -1,4 +1,4 @@
-{{template "head"}}
+{{template "head" .}}
 
 <div class="flex items-center justify-between gap-4 mb-6">
   <h2 class="text-2xl font-semibold flex items-center gap-2">
@@ -38,8 +38,8 @@
     </tr></thead>
     <tbody>
     {{range .Orgs}}
-      <tr class="cursor-pointer" hx-get="/orgs/{{.Owner}}" hx-target="body" hx-push-url="true">
-        <td class="font-medium">{{.Owner}}</td>
+      <tr id="org-{{.Owner}}" class="cursor-pointer" hx-get="/orgs/{{.Owner}}" hx-push-url="true">
+        <td><a href="/orgs/{{.Owner}}" class="font-medium" hx-on:click="event.stopPropagation()">{{.Owner}}</a></td>
         <td class="text-right text-muted-foreground">{{.Repos}}</td>
         <td class="text-right">{{template "findings-badge" .FindingsTotal}}</td>
         <td class="text-muted-foreground">{{if .LastActivity}}{{since .LastActivity}}{{end}}</td>
@@ -53,4 +53,4 @@
   {{template "empty" (dict "Icon" "building" "Title" "No organizations yet" "Body" "The metadata skill populates the Owner field on each repository; organizations appear here once at least one repo has been enriched.")}}
 {{end}}
 
-{{template "foot"}}
+{{template "foot" .}}
