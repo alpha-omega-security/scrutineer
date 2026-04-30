@@ -168,6 +168,33 @@ paths:
                 items: { $ref: '#/components/schemas/FindingSummary' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  /repositories/{id}/dependency-findings:
+    get:
+      summary: List findings on libraries this repository depends on
+      description: >
+        Joins this repository's Dependency rows against every Package row
+        scrutineer knows about and returns the live findings on the matched
+        library repositories. git-pkgs ecosystem names (gem, golang,
+        composer) are normalised to packages.ecosyste.ms names (rubygems,
+        go, packagist) before matching. Findings already marked fixed,
+        rejected or duplicate are excluded. Consumed by the reachability
+        skill.
+      operationId: listRepositoryDependencyFindings
+      parameters:
+        - $ref: '#/components/parameters/RepositoryID'
+        - name: severity
+          in: query
+          schema: { type: string, enum: [Critical, High, Medium, Low] }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/DependencyFinding' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
   /repositories/{id}/skills/{name}/run:
     post:
       summary: Enqueue a skill scan against this repository
@@ -717,6 +744,27 @@ components:
         dependency_type: { type: string }
         manifest_path:   { type: string }
         manifest_kind:   { type: string }
+
+    DependencyFinding:
+      type: object
+      required: [package, ecosystem, finding_id, library_repository_id, severity]
+      properties:
+        package:               { type: string }
+        ecosystem:             { type: string }
+        requirement:           { type: string }
+        manifest_path:         { type: string }
+        dependency_type:       { type: string }
+        finding_id:            { type: integer, format: int64 }
+        library_repository_id: { type: integer, format: int64 }
+        library_repository_url: { type: string, format: uri }
+        title:                 { type: string }
+        severity:              { type: string, enum: [Critical, High, Medium, Low] }
+        cwe:                   { type: string }
+        location:              { type: string, description: file:line inside the library }
+        sinks:                 { type: string }
+        status:                { type: string }
+        trace:                 { type: string }
+        boundary:              { type: string }
 
     FindingSummary:
       type: object

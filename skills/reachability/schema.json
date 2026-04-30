@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "security-deep-dive report",
+  "description": "Machine-readable form of a deep security audit. Mirrors the prose report: structured inventory and findings, per-step narrative for each finding, and a ruled-out list covering every inventory sink that did not become a finding.",
+  "type": "object",
+  "required": [
+    "repository",
+    "commit",
+    "spec_version",
+    "model",
+    "date",
+    "languages",
+    "boundaries",
+    "inventory",
+    "findings",
+    "ruled_out"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "repository":   { "type": "string", "format": "uri" },
+    "commit":       { "type": "string", "pattern": "^[0-9a-f]{7,40}$" },
+    "artefact":     { "type": "string" },
+    "spec_version": { "type": "integer", "minimum": 1 },
+    "model":        { "type": "string" },
+    "date":         { "type": "string", "format": "date" },
+    "files_reviewed": { "type": "integer", "minimum": 0 },
+    "languages":    { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+
+    "boundaries":           { "type": "array", "items": { "$ref": "#/$defs/boundary" }, "minItems": 1 },
+    "boundaries_narrative": { "$ref": "#/$defs/markdown" },
+
+    "sink_primitives": {
+      "type": "object",
+      "propertyNames": { "$ref": "#/$defs/sink_class" },
+      "additionalProperties": { "type": "array", "items": { "type": "string" } }
+    },
+    "inventory":        { "type": "array", "items": { "$ref": "#/$defs/sink" } },
+    "inventory_notes":  { "$ref": "#/$defs/markdown" },
+
+    "findings":  { "type": "array", "items": { "$ref": "#/$defs/finding" } },
+    "ruled_out": { "type": "array", "items": { "$ref": "#/$defs/ruled_out_entry" } },
+
+    "prior_art": { "$ref": "#/$defs/markdown" },
+    "reach":     { "$ref": "#/$defs/markdown" }
+  },
+
+  "$defs": {
+    "markdown": {
+      "type": "string",
+      "contentMediaType": "text/markdown"
+    },
+    "severity": {
+      "type": "string",
+      "enum": ["Critical", "High", "Medium", "Low"]
+    },
+    "sink_class": {
+      "type": "string",
+      "enum": [
+        "Code execution",
+        "Command execution",
+        "File operations",
+        "Path handling",
+        "Archive extraction",
+        "Deserialisation",
+        "Template",
+        "Network",
+        "Validation",
+        "Cryptography",
+        "Memory safety",
+        "Shared mutable state",
+        "Concurrency",
+        "Resource consumption",
+        "Reflection",
+        "Round-trip integrity"
+      ]
+    },
+    "sink_id":    { "type": "string", "pattern": "^S[0-9]+$" },
+    "finding_id": { "type": "string", "pattern": "^F[0-9]+$" },
+    "step":       { "type": "integer", "minimum": 1, "maximum": 6 },
+    "cwe":        { "type": "string", "pattern": "^CWE-[0-9]+$" },
+    "trusted":    { "type": "string", "enum": ["yes", "no", "conditional"] },
+
+    "boundary": {
+      "type": "object",
+      "required": ["actor", "trusted", "controls", "source"],
+      "additionalProperties": false,
+      "properties": {
+        "actor":    { "type": "string" },
+        "trusted":  { "$ref": "#/$defs/trusted" },
+        "controls": { "type": "string" },
+        "source":   { "type": "string" }
+      }
+    },
+
+    "sink": {
+      "type": "object",
+      "required": ["id", "location", "class", "consumes"],
+      "additionalProperties": false,
+      "properties": {
+        "id":        { "$ref": "#/$defs/sink_id" },
+        "location":  { "type": "string" },
+        "class":     { "$ref": "#/$defs/sink_class" },
+        "primitive": { "type": "string" },
+        "consumes":  { "type": "string" }
+      }
+    },
+
+    "ruled_out_entry": {
+      "type": "object",
+      "required": ["sinks", "step", "reason"],
+      "additionalProperties": false,
+      "properties": {
+        "sinks":   { "type": "array", "items": { "$ref": "#/$defs/sink_id" }, "minItems": 1 },
+        "step":    { "$ref": "#/$defs/step" },
+        "reason":  { "$ref": "#/$defs/markdown" },
+        "summary": { "type": "string" }
+      }
+    },
+
+    "finding": {
+      "type": "object",
+      "required": [
+        "id", "sinks", "title", "severity", "cwe", "location",
+        "trace", "boundary", "validation", "rating"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id":            { "$ref": "#/$defs/finding_id" },
+        "sinks":         { "type": "array", "items": { "$ref": "#/$defs/sink_id" }, "minItems": 1 },
+        "title":         { "type": "string" },
+        "severity":      { "$ref": "#/$defs/severity" },
+        "cwe":           { "$ref": "#/$defs/cwe" },
+        "location":      { "type": "string" },
+        "affected":      { "type": "string" },
+        "reach_checked": { "type": "integer", "minimum": 0 },
+        "reach_exposed": { "type": "integer", "minimum": 0 },
+        "trace":      { "$ref": "#/$defs/markdown" },
+        "boundary":   { "$ref": "#/$defs/markdown" },
+        "validation": { "$ref": "#/$defs/markdown" },
+        "prior_art":  { "$ref": "#/$defs/markdown" },
+        "reach":      { "$ref": "#/$defs/markdown" },
+        "rating":     { "$ref": "#/$defs/markdown" }
+      }
+    }
+  }
+}
