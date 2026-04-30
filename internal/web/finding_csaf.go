@@ -25,11 +25,6 @@ const (
 	csafStatusKnownNotAffected   = "known_not_affected"
 	csafStatusUnderInvestigation = "under_investigation"
 
-	csafJustificationComponentNotPresent    = "component_not_present"
-	csafJustificationControlledByAdversary  = "vulnerable_code_cannot_be_controlled_by_adversary"
-	csafJustificationInlineMitigationsExist = "inline_mitigations_already_exist"
-	csafJustificationNotInExecutePath       = "vulnerable_code_not_in_execute_path"
-
 	csafSeverityCritical = "CRITICAL"
 	csafSeverityHigh     = "HIGH"
 	csafSeverityMedium   = "MEDIUM"
@@ -91,6 +86,16 @@ func (s *Server) findingCSAF(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	if f.Status == db.FindingDuplicate {
+		http.Error(w, "finding is a duplicate; export not available", http.StatusGone)
+		return
+	}
+	schema, err := getCSAFSchema()
+	if err != nil {
+		s.Log.Error("csaf schema", "err", err)
+		http.Error(w, "failed to load CSAF schema", http.StatusInternalServerError)
+		return
+	}
 	var repo db.Repository
 	s.DB.First(&repo, f.RepositoryID)
 	var refs []db.FindingReference
@@ -108,7 +113,7 @@ func (s *Server) findingCSAF(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to generate CSAF document", http.StatusInternalServerError)
 		return
 	}
-	if err := s.csafSchema.Validate(inst); err != nil {
+	if err := schema.Validate(inst); err != nil {
 		s.Log.Error("csaf invalid", "finding", f.ID, "err", err)
 		http.Error(w, "failed to generate valid CSAF document", http.StatusInternalServerError)
 		return
@@ -204,7 +209,6 @@ type csafVulnerability struct {
 	Notes         []csafNote         `json:"notes,omitempty"`
 	ProductStatus *csafProductStatus `json:"product_status,omitempty"`
 	Scores        []csafScore        `json:"scores,omitempty"`
-	Flags         []csafFlag         `json:"flags,omitempty"`
 	Remediations  []csafRemediation  `json:"remediations,omitempty"`
 	References    []csafReference    `json:"references,omitempty"`
 }
@@ -247,11 +251,6 @@ type csafCVSSv3 struct {
 	AvailabilityImpact    string  `json:"availabilityImpact,omitempty"`
 }
 
-type csafFlag struct {
-	Label      string   `json:"label"`
-	ProductIDs []string `json:"product_ids"`
-}
-
 type csafRemediation struct {
 	Category   string   `json:"category"`
 	Details    string   `json:"details"`
@@ -261,7 +260,7 @@ type csafRemediation struct {
 
 type csafReference struct {
 	Category string `json:"category"`
-	Summary  string `json:"summary,omitempty"`
+	Summary  string `json:"summary"`
 	URL      string `json:"url"`
 }
 
@@ -269,13 +268,13 @@ func buildCSAF(f db.Finding, repo db.Repository, refs []db.FindingReference) csa
 	productID := fmt.Sprintf("PKG-%d-%s", f.RepositoryID, csafProductSuffix(f))
 
 	now := time.Now().UTC().Format(time.RFC3339)
-	initial := f.CreatedAt.UTC().Format(time.RFC3339)
-	current := f.UpdatedAt.UTC().Format(time.RFC3339)
-	if initial == "" {
-		initial = now
+	initial := now
+	if !f.CreatedAt.IsZero() {
+		initial = f.CreatedAt.UTC().Format(time.RFC3339)
 	}
-	if current == "" {
-		current = initial
+	current := initial
+	if !f.UpdatedAt.IsZero() {
+		current = f.UpdatedAt.UTC().Format(time.RFC3339)
 	}
 
 	docStatus := "draft"
@@ -342,9 +341,6 @@ func buildCSAF(f db.Finding, repo db.Repository, refs []db.FindingReference) csa
 	if score := buildScore(f, productID); score != nil {
 		v.Scores = []csafScore{*score}
 	}
-	if flag := buildFlag(f, productID); flag != nil {
-		v.Flags = []csafFlag{*flag}
-	}
 	if rem := buildRemediations(f, repo, productID); len(rem) > 0 {
 		v.Remediations = rem
 	}
@@ -360,15 +356,21 @@ func csafProductSuffix(f db.Finding) string {
 	return strconv.Itoa(int(f.ID))
 }
 
+// mapProductStatus picks the CSAF product_status bucket. FindingPublished
+// means the advisory went out, not that the bug is fixed; only emit "fixed"
+// when a fix is actually pinned via FixVersion/FixCommit.
 func mapProductStatus(f db.Finding) string {
-	switch f.Status {
-	case db.FindingFixed, db.FindingPublished:
+	if f.FixVersion != "" || f.FixCommit != "" {
 		return csafStatusFixed
-	case db.FindingRejected, db.FindingDuplicate:
+	}
+	switch f.Status {
+	case db.FindingFixed:
+		return csafStatusFixed
+	case db.FindingRejected:
 		return csafStatusKnownNotAffected
 	case db.FindingNew, db.FindingEnriched:
 		return csafStatusUnderInvestigation
-	case db.FindingTriaged, db.FindingReady, db.FindingReported, db.FindingAcknowledged:
+	case db.FindingTriaged, db.FindingReady, db.FindingReported, db.FindingAcknowledged, db.FindingPublished:
 		if f.Resolution == db.ResolutionWontfix {
 			return csafStatusKnownNotAffected
 		}
@@ -393,26 +395,6 @@ func buildProductStatus(f db.Finding, productID string) *csafProductStatus {
 		ps.UnderInvestigation = []string{productID}
 	}
 	return ps
-}
-
-func pickJustification(f db.Finding) string {
-	switch {
-	case f.Boundary != "":
-		return csafJustificationControlledByAdversary
-	case f.Validation != "":
-		return csafJustificationInlineMitigationsExist
-	case f.Reach != "":
-		return csafJustificationNotInExecutePath
-	default:
-		return csafJustificationComponentNotPresent
-	}
-}
-
-func buildFlag(f db.Finding, productID string) *csafFlag {
-	if mapProductStatus(f) != csafStatusKnownNotAffected {
-		return nil
-	}
-	return &csafFlag{Label: pickJustification(f), ProductIDs: []string{productID}}
 }
 
 func buildCWE(id string) *csafCWE {
@@ -450,10 +432,7 @@ func buildReferences(refs []db.FindingReference) []csafReference {
 	}
 	out := make([]csafReference, 0, len(refs))
 	for _, r := range refs {
-		summary := r.Summary
-		if summary == "" {
-			summary = r.Tags
-		}
+		summary := firstNonEmpty(r.Summary, r.Tags, r.URL)
 		out = append(out, csafReference{Category: "external", Summary: summary, URL: r.URL})
 	}
 	return out
@@ -480,13 +459,9 @@ func buildRemediations(f db.Finding, repo db.Repository, productID string) []csa
 		})
 	}
 	if f.Resolution == db.ResolutionWorkaround {
-		details := f.Trace
-		if details == "" {
-			details = "Workaround available; see finding details."
-		}
 		out = append(out, csafRemediation{
 			Category:   "workaround",
-			Details:    details,
+			Details:    "Workaround available; see finding details.",
 			ProductIDs: []string{productID},
 		})
 	}
@@ -502,7 +477,7 @@ func buildScore(f db.Finding, productID string) *csafScore {
 		return nil
 	}
 	cvss.BaseScore = f.CVSSScore
-	cvss.BaseSeverity = severityLabel(f.Severity, f.CVSSScore)
+	cvss.BaseSeverity = severityLabel(f.CVSSScore)
 	cvss.VectorString = f.CVSSVector
 	return &csafScore{Products: []string{productID}, CVSSv3: cvss}
 }
@@ -518,7 +493,7 @@ func parseCVSSv3Vector(vec string) *csafCVSSv3 {
 	}
 	version := strings.TrimPrefix(parts[0], "CVSS:")
 	if version != cvssVersion30 && version != cvssVersion31 {
-		version = cvssVersion31
+		return nil
 	}
 	out := &csafCVSSv3{Version: version}
 	got := 0
@@ -579,13 +554,11 @@ func cvssValue(k, v string) (string, bool) {
 	return val, ok
 }
 
-func severityLabel(severity string, score float64) string {
-	if s := strings.ToUpper(strings.TrimSpace(severity)); s != "" {
-		switch s {
-		case csafSeverityCritical, csafSeverityHigh, csafSeverityMedium, csafSeverityLow, csafSeverityNone:
-			return s
-		}
-	}
+// severityLabel derives the CVSS base severity from the numeric score per
+// the FIRST spec. The textual Finding.Severity is intentionally ignored:
+// analyst free-form values can drift from the score (e.g. score 9.8 marked
+// "High" instead of "Critical"), and CSAF tooling expects strict bands.
+func severityLabel(score float64) string {
 	switch {
 	case score >= cvssCriticalScore:
 		return csafSeverityCritical

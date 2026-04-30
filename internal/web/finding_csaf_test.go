@@ -95,7 +95,7 @@ func TestFindingCSAF_validatesAgainstOfficialSchema(t *testing.T) {
 	}
 	scores := v["scores"].([]any)
 	cvss := scores[0].(map[string]any)["cvss_v3"].(map[string]any)
-	if cvss["attackVector"] != wantAttackVectorNetwork || cvss["baseSeverity"] != "HIGH" {
+	if cvss["attackVector"] != wantAttackVectorNetwork || cvss["baseSeverity"] != "CRITICAL" {
 		t.Errorf("cvss = %+v", cvss)
 	}
 	ps := v["product_status"].(map[string]any)
@@ -134,7 +134,6 @@ func TestFindingCSAF_rejectedMapsToNotAffected(t *testing.T) {
 
 	f := seedCSAFFinding(t, s, func(f *db.Finding) {
 		f.Status = db.FindingRejected
-		f.Boundary = "Sink unreachable from any network surface."
 	})
 	w := getCSAF(t, s, f.ID)
 	if w.Code != 200 {
@@ -142,13 +141,11 @@ func TestFindingCSAF_rejectedMapsToNotAffected(t *testing.T) {
 	}
 	doc := decodeCSAF(t, w.Body.Bytes())
 	v := doc["vulnerabilities"].([]any)[0].(map[string]any)
-	ps := v["product_status"].(map[string]any)
-	if _, ok := ps["known_not_affected"]; !ok {
-		t.Fatalf("known_not_affected expected: %+v", ps)
+	if _, ok := v["product_status"].(map[string]any)["known_not_affected"]; !ok {
+		t.Fatalf("known_not_affected expected: %+v", v["product_status"])
 	}
-	flags := v["flags"].([]any)
-	if flags[0].(map[string]any)["label"] != csafJustificationControlledByAdversary {
-		t.Errorf("flag = %+v", flags[0])
+	if _, ok := v["flags"]; ok {
+		t.Errorf("flags must not be emitted in this first pass: %+v", v["flags"])
 	}
 }
 
@@ -266,7 +263,7 @@ func TestFindingCSAF_workaroundResolutionAddsRemediation(t *testing.T) {
 	if workaround == nil {
 		t.Fatalf("workaround remediation missing: %+v", rem)
 	}
-	if !strings.Contains(workaround["details"].(string), "Disable feature X") {
+	if !strings.Contains(workaround["details"].(string), "Workaround") {
 		t.Errorf("workaround details = %v", workaround["details"])
 	}
 }
@@ -302,6 +299,101 @@ func TestFindingCSAF_referencesMappedFromFindingRefs(t *testing.T) {
 	}
 	if urls["https://github.com/example/lib/pull/42"] != "pr" {
 		t.Errorf("PR summary should fall back to Tags: %+v", urls)
+	}
+}
+
+func TestFindingCSAF_duplicateReturns410(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	f := seedCSAFFinding(t, s, func(f *db.Finding) {
+		f.Status = db.FindingDuplicate
+	})
+	w := getCSAF(t, s, f.ID)
+	if w.Code != http.StatusGone {
+		t.Fatalf("status %d, want 410", w.Code)
+	}
+}
+
+func TestFindingCSAF_publishedWithoutFixStaysAffected(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	f := seedCSAFFinding(t, s, func(f *db.Finding) {
+		f.Status = db.FindingPublished
+		f.FixVersion = ""
+		f.FixCommit = ""
+	})
+	w := getCSAF(t, s, f.ID)
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	doc := decodeCSAF(t, w.Body.Bytes())
+	v := doc["vulnerabilities"].([]any)[0].(map[string]any)
+	ps := v["product_status"].(map[string]any)
+	if _, ok := ps["known_affected"]; !ok {
+		t.Errorf("Published without fix should be known_affected: %+v", ps)
+	}
+}
+
+func TestFindingCSAF_publishedWithFixIsFixed(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	f := seedCSAFFinding(t, s, func(f *db.Finding) {
+		f.Status = db.FindingPublished
+		f.FixVersion = "1.0.1"
+	})
+	w := getCSAF(t, s, f.ID)
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	doc := decodeCSAF(t, w.Body.Bytes())
+	v := doc["vulnerabilities"].([]any)[0].(map[string]any)
+	if _, ok := v["product_status"].(map[string]any)["fixed"]; !ok {
+		t.Errorf("Published+fix should be fixed: %+v", v["product_status"])
+	}
+}
+
+func TestFindingCSAF_referenceSummaryFallsBackToURL(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	f := seedCSAFFinding(t, s, nil)
+	s.DB.Create(&db.FindingReference{FindingID: f.ID, URL: "https://example.com/x"})
+
+	w := getCSAF(t, s, f.ID)
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	doc := decodeCSAF(t, w.Body.Bytes())
+	v := doc["vulnerabilities"].([]any)[0].(map[string]any)
+	ref := v["references"].([]any)[0].(map[string]any)
+	if ref["summary"] != "https://example.com/x" {
+		t.Errorf("summary fallback to URL expected, got %v", ref["summary"])
+	}
+}
+
+func TestSeverityLabel_derivesFromScoreOnly(t *testing.T) {
+	cases := []struct {
+		score float64
+		want  string
+	}{
+		{0.0, "NONE"},
+		{0.1, "LOW"},
+		{3.9, "LOW"},
+		{4.0, "MEDIUM"},
+		{6.9, "MEDIUM"},
+		{7.0, "HIGH"},
+		{8.9, "HIGH"},
+		{9.0, "CRITICAL"},
+		{9.8, "CRITICAL"},
+		{10.0, "CRITICAL"},
+	}
+	for _, tc := range cases {
+		if got := severityLabel(tc.score); got != tc.want {
+			t.Errorf("severityLabel(%v) = %q, want %q", tc.score, got, tc.want)
+		}
 	}
 }
 
@@ -381,6 +473,11 @@ func TestParseCVSSv3Vector(t *testing.T) {
 		{
 			name:  "no key/value pairs",
 			in:    "CVSS:3.1",
+			isNil: true,
+		},
+		{
+			name:  "v4.0 not supported, returns nil",
+			in:    "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N",
 			isNil: true,
 		},
 	}
