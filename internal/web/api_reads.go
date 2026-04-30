@@ -139,6 +139,33 @@ func (s *Server) apiListDependencies(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// apiListDependencyFindings returns findings on any library repository whose
+// published package appears in this repository's dependency list. The skill
+// token still only authorises the caller's own repo; the cross-repo read is
+// derived from that repo's dependencies, not chosen by the caller.
+func (s *Server) apiListDependencyFindings(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.Atoi(r.PathValue("id"))
+	if !s.scanOwnsRepo(r, uint(id)) {
+		writeAPIError(w, http.StatusForbidden, "scan may only read its own repository")
+		return
+	}
+	rows, err := db.DependencyFindings(s.DB, uint(id))
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if sev := r.URL.Query().Get("severity"); sev != "" {
+		filtered := rows[:0]
+		for _, row := range rows {
+			if row.Severity == sev {
+				filtered = append(filtered, row)
+			}
+		}
+		rows = filtered
+	}
+	writeJSON(w, http.StatusOK, rows)
+}
+
 // apiListFindings returns the findings for a repository across every scan.
 // Scoped to the authenticated scan's repository; severity filter optional.
 func (s *Server) apiListFindings(w http.ResponseWriter, r *http.Request) {
