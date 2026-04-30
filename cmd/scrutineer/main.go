@@ -229,8 +229,10 @@ func run(log *slog.Logger) error {
 		if err != nil {
 			return fmt.Errorf("start egress proxy: %w", err)
 		}
+		gwIP := worker.ResolveHostGatewayIPv4(f.runnerImage)
 		log.Info("docker detected, using containerised runner",
-			"image", f.runnerImage, "egress_proxy_port", port, "egress_allow", len(allow))
+			"image", f.runnerImage, "egress_proxy_port", port, "egress_allow", len(allow),
+			"host_gateway_ipv4", gwIP)
 		runner = worker.DockerRunner{
 			Image:            f.runnerImage,
 			Effort:           f.effort,
@@ -238,6 +240,7 @@ func run(log *slog.Logger) error {
 			FullClone:        f.fullClone(),
 			MaxTurns:         f.maxTurns,
 			AnthropicBaseURL: f.anthropicBaseURL,
+			HostGatewayIP:    gwIP,
 		}
 		// Skills inside the container reach the host via host.docker.internal,
 		// which the egress proxy rewrites to 127.0.0.1 when dialing.

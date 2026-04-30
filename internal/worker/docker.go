@@ -7,10 +7,12 @@ package worker
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 )
 
@@ -26,6 +28,7 @@ type DockerRunner struct {
 	FullClone        bool
 	MaxTurns         int
 	AnthropicBaseURL string // passed as ANTHROPIC_BASE_URL env var to the container
+	HostGatewayIP    string // IPv4 address for --add-host; falls back to "host-gateway"
 }
 
 func (d DockerRunner) image() string {
@@ -70,6 +73,10 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 	}
 	claudeArgs = append(claudeArgs, buildSkillPrompt(sj.Name, sj.OutputFile))
 
+	gwTarget := "host-gateway"
+	if d.HostGatewayIP != "" {
+		gwTarget = d.HostGatewayIP
+	}
 	dockerArgs := []string{
 		"run", "--rm",
 		"--cap-drop", "ALL",
@@ -77,7 +84,7 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 		"--tmpfs", "/tmp:rw,noexec,nosuid,size=256m",
 		"-v", absWork + ":/work",
 		"-w", "/work",
-		"--add-host", HostGatewayAlias + ":host-gateway",
+		"--add-host", HostGatewayAlias + ":" + gwTarget,
 	}
 	if d.ProxyURL != "" {
 		dockerArgs = append(dockerArgs,
@@ -140,4 +147,30 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 func DockerAvailable() bool {
 	out, err := exec.Command("docker", "info", "--format", "{{.ServerVersion}}").Output()
 	return err == nil && len(out) > 0
+}
+
+// ResolveHostGatewayIPv4 returns the IPv4 address that Docker's
+// host-gateway maps to. Docker adds both IPv4 and IPv6 /etc/hosts
+// entries for host-gateway; tools that prefer IPv6 (like Node's fetch)
+// fail when the server only listens on 127.0.0.1. Using the explicit
+// IPv4 address avoids the dual-stack ambiguity.
+func ResolveHostGatewayIPv4(image string) string {
+	out, err := exec.Command("docker", "run", "--rm",
+		"--add-host", "hgw:host-gateway",
+		"--entrypoint", "grep",
+		image, "hgw", "/etc/hosts").Output()
+	if err != nil {
+		return ""
+	}
+	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 1 {
+			continue
+		}
+		ip := net.ParseIP(fields[0])
+		if ip != nil && ip.To4() != nil {
+			return fields[0]
+		}
+	}
+	return ""
 }
