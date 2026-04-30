@@ -499,12 +499,14 @@ func TestOrgsList_sortOptions(t *testing.T) {
 		}
 	}
 	// acme: 1 repo, 5 findings. globex: 3 repos, 1 finding. umbrella: 2 repos, 0 findings.
+	// Zebra has a leading capital so a byte-wise sort would float it above acme.
 	mk("acme", "one", 5)
 	mk("globex", "a", 0)
 	mk("globex", "b", 1)
 	mk("globex", "c", 0)
 	mk("umbrella", "x", 0)
 	mk("umbrella", "y", 0)
+	mk("Zebra", "z", 0)
 
 	orderFromBody := func(body string, owners ...string) []string {
 		type pos struct {
@@ -525,20 +527,22 @@ func TestOrgsList_sortOptions(t *testing.T) {
 		return out
 	}
 
+	owners := []string{"acme", "globex", "umbrella", "Zebra"}
 	for _, tc := range []struct {
 		sort string
 		want []string
 	}{
-		{"name", []string{"acme", "globex", "umbrella"}},
-		{"findings", []string{"acme", "globex", "umbrella"}}, // 5 > 1 > 0
-		{"repos", []string{"globex", "umbrella", "acme"}},    // 3 > 2 > 1
+		{"name", []string{"acme", "globex", "umbrella", "Zebra"}},
+		{"findings", []string{"acme", "globex"}}, // 5 > 1; zero-finding orgs are unordered among themselves
+		{"repos", []string{"globex", "umbrella"}},
 	} {
 		w := httptest.NewRecorder()
 		s.Handler().ServeHTTP(w, localReq("GET", "/orgs?sort="+tc.sort))
 		if w.Code != 200 {
 			t.Fatalf("sort=%s status %d", tc.sort, w.Code)
 		}
-		got := orderFromBody(w.Body.String(), "acme", "globex", "umbrella")
+		got := orderFromBody(w.Body.String(), owners...)
+		got = got[:len(tc.want)]
 		if !stringsEqual(got, tc.want) {
 			t.Errorf("sort=%s: got %v, want %v", tc.sort, got, tc.want)
 		}

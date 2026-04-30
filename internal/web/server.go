@@ -480,7 +480,9 @@ func (s *Server) orgsList(w http.ResponseWriter, r *http.Request) {
 		})
 	default:
 		sort = nameSort
-		sortSlice(rows, func(a, b orgRow) bool { return a.Owner < b.Owner })
+		sortSlice(rows, func(a, b orgRow) bool {
+			return strings.ToLower(a.Owner) < strings.ToLower(b.Owner)
+		})
 	}
 
 	s.render(w, "orgs.html", map[string]any{
