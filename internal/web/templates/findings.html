@@ -1,4 +1,4 @@
-{{template "head"}}
+{{template "head" .}}
 
 <div class="flex items-center justify-between gap-4 mb-6">
   <h2 class="text-2xl font-semibold flex items-center gap-2">
@@ -86,4 +86,4 @@
   {{template "empty" (dict "Icon" "bug" "Title" "No findings" "Body" "Findings appear here once a scan reports vulnerabilities.")}}
 {{end}}
 
-{{template "foot"}}
+{{template "foot" .}}

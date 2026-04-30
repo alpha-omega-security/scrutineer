@@ -1,4 +1,4 @@
-{{template "head"}}
+{{template "head" .}}
 
 <div class="flex items-center justify-between gap-4 mb-6">
   <h2 class="text-2xl font-semibold flex items-center gap-2">
@@ -87,4 +87,4 @@
   {{template "empty" (dict "Icon" "shield-alert" "Title" "No advisories" "Body" "Advisories appear here after the advisories skill runs on a repository.")}}
 {{end}}
 
-{{template "foot"}}
+{{template "foot" .}}

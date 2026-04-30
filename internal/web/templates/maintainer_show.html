@@ -1,4 +1,4 @@
-{{template "head"}}
+{{template "head" .}}
 {{$m := .M}}
 
 {{template "crumbs" (crumbs "Maintainers" "/maintainers" $m.Login "")}}
@@ -93,4 +93,4 @@
   {{end}}
 </div>
 
-{{template "foot"}}
+{{template "foot" .}}

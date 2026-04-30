@@ -1,4 +1,4 @@
-{{template "head"}}
+{{template "head" .}}
 
 <div class="flex items-center justify-between gap-4 mb-6">
   <h2 class="text-2xl font-semibold flex items-center gap-2">
@@ -47,4 +47,4 @@
   {{template "empty" (dict "Icon" "file-box" "Title" "No SBOMs yet" "Body" "Upload a CycloneDX or SPDX JSON document to scan every package it lists.")}}
 {{end}}
 
-{{template "foot"}}
+{{template "foot" .}}

@@ -68,7 +68,7 @@ func (s *Server) usage(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Cost.Sum > rows[j].Cost.Sum })
 
-	s.render(w, "usage.html", map[string]any{
+	s.render(w, r, "usage.html", map[string]any{
 		"Rows":      rows,
 		"TotalCost": totalCost,
 		"TotalRuns": totalRuns,

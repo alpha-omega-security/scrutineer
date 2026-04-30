@@ -38,17 +38,18 @@
     </header>
     <section>
       <div role="group">
-        <ul>
-          <li><a href="/" data-nav="repos"><i data-lucide="folder-git-2"></i><span>Repositories</span></a></li>
-          <li><a href="/orgs" data-nav="orgs"><i data-lucide="building"></i><span>Organizations</span></a></li>
-          <li><a href="/findings" data-nav="findings"><i data-lucide="bug"></i><span>Findings</span></a></li>
-          <li><a href="/packages" data-nav="packages"><i data-lucide="package"></i><span>Packages</span></a></li>
-          <li><a href="/sboms" data-nav="sboms"><i data-lucide="file-box"></i><span>SBOMs</span></a></li>
-          <li><a href="/advisories" data-nav="advisories"><i data-lucide="shield-alert"></i><span>Advisories</span></a></li>
-          <li><a href="/maintainers" data-nav="maintainers"><i data-lucide="users"></i><span>Maintainers</span></a></li>
-          <li><a href="/scans" data-nav="scans"><i data-lucide="list-checks"></i><span>Scans</span></a></li>
-          <li><a href="/skills" data-nav="skills"><i data-lucide="sparkles"></i><span>Skills</span></a></li>
-          <li><a href="/usage" data-nav="usage"><i data-lucide="coins"></i><span>Usage</span></a></li>
+        <ul id="nav">
+          {{$nav := .Nav}}
+          <li><a href="/"{{if eq $nav "repos"}} aria-current="page"{{end}}><i data-lucide="folder-git-2"></i><span>Repositories</span></a></li>
+          <li><a href="/orgs"{{if eq $nav "orgs"}} aria-current="page"{{end}}><i data-lucide="building"></i><span>Organizations</span></a></li>
+          <li><a href="/findings"{{if eq $nav "findings"}} aria-current="page"{{end}}><i data-lucide="bug"></i><span>Findings</span></a></li>
+          <li><a href="/packages"{{if eq $nav "packages"}} aria-current="page"{{end}}><i data-lucide="package"></i><span>Packages</span></a></li>
+          <li><a href="/sboms"{{if eq $nav "sboms"}} aria-current="page"{{end}}><i data-lucide="file-box"></i><span>SBOMs</span></a></li>
+          <li><a href="/advisories"{{if eq $nav "advisories"}} aria-current="page"{{end}}><i data-lucide="shield-alert"></i><span>Advisories</span></a></li>
+          <li><a href="/maintainers"{{if eq $nav "maintainers"}} aria-current="page"{{end}}><i data-lucide="users"></i><span>Maintainers</span></a></li>
+          <li><a href="/scans"{{if eq $nav "scans"}} aria-current="page"{{end}}><i data-lucide="list-checks"></i><span>Scans</span></a></li>
+          <li><a href="/skills"{{if eq $nav "skills"}} aria-current="page"{{end}}><i data-lucide="sparkles"></i><span>Skills</span></a></li>
+          <li><a href="/usage"{{if eq $nav "usage"}} aria-current="page"{{end}}><i data-lucide="coins"></i><span>Usage</span></a></li>
         </ul>
       </div>
     </section>
@@ -63,7 +64,7 @@
 
 <main id="content" class="min-h-screen"
       hx-history-elt
-      hx-target="#content" hx-select="#content" hx-swap="outerHTML">
+      hx-target="#content" hx-select="#content" hx-select-oob="#nav" hx-swap="outerHTML">
   <div class="p-4 md:p-6 xl:p-12">
 {{end}}
 
@@ -123,7 +124,9 @@
   </div>
 </dialog>
 
-<div id="toaster" class="toaster"></div>
+<div id="toaster" class="toaster">
+  {{with .Flash}}{{template "toast" .}}{{end}}
+</div>
 <script>
   lucide.createIcons();
   // Persist active tab in URL hash
@@ -148,30 +151,6 @@
   }
   if (document.readyState === 'complete') restoreTab();
   else window.addEventListener('load', restoreTab);
-  (function () {
-    var p = location.pathname;
-    var key = p.indexOf('/usage') === 0 ? 'usage'
-            : p.indexOf('/skills') === 0 ? 'skills'
-            : p.indexOf('/maintainers') === 0 ? 'maintainers'
-            : p.indexOf('/orgs') === 0 ? 'orgs'
-            : p.indexOf('/packages') === 0 ? 'packages'
-            : p.indexOf('/advisories') === 0 ? 'advisories'
-            : p.indexOf('/findings') === 0 ? 'findings'
-            : p.indexOf('/scans') === 0 ? 'scans'
-            : 'repos';
-    var a = document.querySelector('.sidebar a[data-nav="' + key + '"]');
-    if (a) a.setAttribute('aria-current', 'page');
-  })();
-  document.body.addEventListener('scanStatus', function (e) {
-    var d = e.detail || {};
-    var ok = d.status === 'done';
-    document.dispatchEvent(new CustomEvent('basecoat:toast', { detail: { config: {
-      category: ok ? 'success' : 'error',
-      title: d.name + ' scan ' + (ok ? 'complete' : d.status),
-      description: 'scan #' + d.id,
-      action: { href: '/scans/' + d.id, label: 'View' }
-    }}}));
-  });
 </script>
 </body>
 </html>
@@ -215,6 +194,19 @@
       <button type="submit" class="btn-sm-ghost" data-tooltip="Retry"><i data-lucide="refresh-cw"></i></button>
     </form>
   {{end}}
+{{end}}
+
+{{define "toast"}}
+<div class="toast" role="status" aria-atomic="true" aria-hidden="false"
+     data-category="{{.Category}}" data-duration="6000">
+  <div class="toast-content">
+    <section>
+      <h2>{{.Title}}</h2>
+      {{if .Description}}<p>{{.Description}}</p>{{end}}
+    </section>
+    {{if .Href}}<footer><a href="{{.Href}}" class="btn-sm">{{.Label}}</a></footer>{{end}}
+  </div>
+</div>
 {{end}}
 
 {{define "status-badge"}}

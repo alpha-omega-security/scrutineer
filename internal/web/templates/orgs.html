@@ -1,4 +1,4 @@
-{{template "head"}}
+{{template "head" .}}
 
 <div class="flex items-center justify-between gap-4 mb-6">
   <h2 class="text-2xl font-semibold flex items-center gap-2">
@@ -53,4 +53,4 @@
   {{template "empty" (dict "Icon" "building" "Title" "No organizations yet" "Body" "The metadata skill populates the Owner field on each repository; organizations appear here once at least one repo has been enriched.")}}
 {{end}}
 
-{{template "foot"}}
+{{template "foot" .}}

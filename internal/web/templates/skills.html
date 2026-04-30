@@ -1,4 +1,4 @@
-{{template "head"}}
+{{template "head" .}}
 
 <div class="flex items-center justify-between gap-4 mb-6">
   <h2 class="text-2xl font-semibold flex items-center gap-2">
@@ -29,4 +29,4 @@
   {{template "empty" (dict "Icon" "sparkles" "Title" "No skills" "Body" "Seed skills from a directory with -skills ./path, from a git repo with -skills-repo https://github.com/org/skills, or create one in the UI.")}}
 {{end}}
 
-{{template "foot"}}
+{{template "foot" .}}

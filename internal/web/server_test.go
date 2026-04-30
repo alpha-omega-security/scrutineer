@@ -2,6 +2,8 @@ package web
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -119,6 +121,86 @@ func TestMaintainersIndex_rendersFindingsCountAndDNCBadge(t *testing.T) {
 	// Alice carries the DNC badge; Bob should not.
 	if !strings.Contains(body, `data-tooltip="Do not contact">DNC`) {
 		t.Errorf("missing DNC badge for alice")
+	}
+}
+
+func flashFrom(t *testing.T, w *httptest.ResponseRecorder) Flash {
+	t.Helper()
+	r := &http.Request{Header: http.Header{"Cookie": w.Header().Values("Set-Cookie")}}
+	c, err := r.Cookie("flash")
+	if err != nil {
+		t.Fatalf("no flash cookie set: %v", err)
+	}
+	raw, _ := base64.RawURLEncoding.DecodeString(c.Value)
+	var f Flash
+	if err := json.Unmarshal(raw, &f); err != nil {
+		t.Fatalf("decode flash: %v", err)
+	}
+	return f
+}
+
+func TestFlash_roundtrip(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	rec := httptest.NewRecorder()
+	setFlash(rec, Flash{Category: "success", Title: "Imported", Description: "3 added"})
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.Host = testHost
+	req.Header.Set("Cookie", rec.Header().Get("Set-Cookie"))
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+
+	body := w.Body.String()
+	if !strings.Contains(body, "Imported") || !strings.Contains(body, "3 added") {
+		t.Error("flash not rendered into page body")
+	}
+	var cleared bool
+	for _, sc := range w.Header().Values("Set-Cookie") {
+		if strings.HasPrefix(sc, "flash=") && strings.Contains(sc, "Max-Age=0") {
+			cleared = true
+		}
+	}
+	if !cleared {
+		t.Error("flash cookie not cleared after render")
+	}
+}
+
+func TestNavKey(t *testing.T) {
+	cases := map[string]string{
+		"/":               "repos",
+		"/repositories/7": "repos",
+		"/findings":       "findings",
+		"/findings/42":    "findings",
+		"/scans/1":        "scans",
+		"/sboms":          "sboms",
+		"/usage":          "usage",
+	}
+	for path, want := range cases {
+		if got := navKey(path); got != want {
+			t.Errorf("navKey(%q) = %q, want %q", path, got, want)
+		}
+	}
+}
+
+func TestSidebar_rendersAriaCurrent(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	req := httptest.NewRequest("GET", "/findings", nil)
+	req.Host = testHost
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `href="/findings" aria-current="page"`) {
+		t.Error("findings link missing aria-current")
+	}
+	if strings.Contains(body, `href="/" aria-current="page"`) {
+		t.Error("repos link should not be current on /findings")
 	}
 }
 
@@ -1312,9 +1394,9 @@ func TestBulkImport_dedupesNormalisedURLs(t *testing.T) {
 	if w.Code != http.StatusSeeOther {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
-	trigger := w.Header().Get("HX-Trigger")
-	if !strings.Contains(trigger, "1 added") || !strings.Contains(trigger, "3 already present") {
-		t.Errorf("toast = %s, want 1 added / 3 already present", trigger)
+	f := flashFrom(t, w)
+	if !strings.Contains(f.Title, "1 added") || !strings.Contains(f.Title, "3 already present") {
+		t.Errorf("flash title = %q, want 1 added / 3 already present", f.Title)
 	}
 
 	var repos []db.Repository
@@ -1344,9 +1426,9 @@ func TestBulkImport_createsAndEnqueues(t *testing.T) {
 	if w.Header().Get("Location") != "/" {
 		t.Errorf("Location = %q", w.Header().Get("Location"))
 	}
-	trigger := w.Header().Get("HX-Trigger")
-	if !strings.Contains(trigger, "2 added") {
-		t.Errorf("HX-Trigger toast missing '2 added': %s", trigger)
+	f := flashFrom(t, w)
+	if !strings.Contains(f.Title, "2 added") {
+		t.Errorf("flash missing '2 added': %+v", f)
 	}
 
 	var repos []db.Repository
@@ -1378,9 +1460,9 @@ func TestBulkImport_skipsDuplicates(t *testing.T) {
 	if w.Code != http.StatusSeeOther {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
-	trigger := w.Header().Get("HX-Trigger")
-	if !strings.Contains(trigger, "1 added") || !strings.Contains(trigger, "1 already present") {
-		t.Errorf("toast missing expected counts: %s", trigger)
+	f := flashFrom(t, w)
+	if !strings.Contains(f.Title, "1 added") || !strings.Contains(f.Title, "1 already present") {
+		t.Errorf("flash missing expected counts: %+v", f)
 	}
 
 	var scans []db.Scan
@@ -1415,9 +1497,9 @@ func TestBulkImport_rejectsNonHTTPS(t *testing.T) {
 	if len(repos) != 1 {
 		t.Errorf("want 1 repo (only the https one), got %d", len(repos))
 	}
-	trigger := w.Header().Get("HX-Trigger")
-	if !strings.Contains(trigger, "1 added") || !strings.Contains(trigger, "3 invalid") {
-		t.Errorf("toast missing counts: %s", trigger)
+	f := flashFrom(t, w)
+	if !strings.Contains(f.Title, "1 added") || !strings.Contains(f.Title, "3 invalid") {
+		t.Errorf("flash missing counts: %+v", f)
 	}
 }
 

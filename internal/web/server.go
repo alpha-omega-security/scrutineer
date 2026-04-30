@@ -3,6 +3,7 @@ package web
 import (
 	"context"
 	"embed"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -196,12 +197,71 @@ func (s *Server) Handler() http.Handler {
 	return logRequests(s.Log, root)
 }
 
-func (s *Server) render(w http.ResponseWriter, name string, data any) {
+func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, data map[string]any) {
+	if data == nil {
+		data = map[string]any{}
+	}
+	data["Nav"] = navKey(r.URL.Path)
+	data["Flash"] = popFlash(w, r)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.tmpl.ExecuteTemplate(w, name, data); err != nil {
 		s.Log.Error("render", "tmpl", name, "err", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 	}
+}
+
+// Flash is a one-shot message carried across a redirect via the "flash"
+// cookie and rendered server-side into #toaster on the next page load.
+type Flash struct {
+	Category    string `json:"c"`
+	Title       string `json:"t"`
+	Description string `json:"d,omitempty"`
+	Href        string `json:"h,omitempty"`
+	Label       string `json:"l,omitempty"`
+}
+
+func setFlash(w http.ResponseWriter, f Flash) {
+	b, _ := json.Marshal(f)
+	http.SetCookie(w, &http.Cookie{
+		Name:     "flash",
+		Value:    base64.RawURLEncoding.EncodeToString(b),
+		Path:     "/",
+		HttpOnly: true,
+		SameSite: http.SameSiteStrictMode,
+	})
+}
+
+func popFlash(w http.ResponseWriter, r *http.Request) *Flash {
+	c, err := r.Cookie("flash")
+	if err != nil || c.Value == "" {
+		return nil
+	}
+	http.SetCookie(w, &http.Cookie{Name: "flash", Path: "/", MaxAge: -1})
+	raw, err := base64.RawURLEncoding.DecodeString(c.Value)
+	if err != nil {
+		return nil
+	}
+	var f Flash
+	if json.Unmarshal(raw, &f) != nil {
+		return nil
+	}
+	return &f
+}
+
+// navKey maps a request path to the sidebar item that should be marked
+// aria-current. Paths not in the table fall through to the repositories
+// index, which is also the home page.
+func navKey(path string) string {
+	for _, p := range []struct{ prefix, key string }{
+		{"/usage", "usage"}, {"/skills", "skills"}, {"/maintainers", "maintainers"},
+		{"/orgs", "orgs"}, {"/packages", "packages"}, {"/advisories", "advisories"},
+		{"/findings", "findings"}, {"/scans", "scans"}, {"/sboms", "sboms"},
+	} {
+		if strings.HasPrefix(path, p.prefix) {
+			return p.key
+		}
+	}
+	return "repos"
 }
 
 func isHX(r *http.Request) bool { return r.Header.Get("HX-Request") != "" }
@@ -382,9 +442,9 @@ func (s *Server) repoList(w http.ResponseWriter, r *http.Request) {
 		"Q": search,
 	}
 	if isHX(r) {
-		s.render(w, "repo_list.html", data)
+		s.render(w, r, "repo_list.html", data)
 	} else {
-		s.render(w, "index.html", data)
+		s.render(w, r, "index.html", data)
 	}
 }
 
@@ -496,7 +556,7 @@ func (s *Server) orgsList(w http.ResponseWriter, r *http.Request) {
 		sortSlice(rows, func(a, b orgRow) bool { return a.Owner < b.Owner })
 	}
 
-	s.render(w, "orgs.html", map[string]any{
+	s.render(w, r, "orgs.html", map[string]any{
 		"Orgs": rows, "Q": search, "Sort": sort,
 	})
 }
@@ -561,7 +621,7 @@ func (s *Server) orgShow(w http.ResponseWriter, r *http.Request) {
 		Where("rm.repository_id IN ?", repoIDs).
 		Distinct().Order("maintainers.name").Find(&maintainers)
 
-	s.render(w, "org_show.html", map[string]any{
+	s.render(w, r, "org_show.html", map[string]any{
 		"Owner":         owner,
 		"Repos":         repos,
 		"FindingCounts": findingCounts,
@@ -634,7 +694,7 @@ func (s *Server) maintainersList(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.render(w, "maintainers.html", map[string]any{
+	s.render(w, r, "maintainers.html", map[string]any{
 		"Maintainers":   rows,
 		"Page":          page,
 		"Status":        status,
@@ -678,7 +738,7 @@ func (s *Server) maintainerShow(w http.ResponseWriter, r *http.Request) {
 		s.DB.Where("repository_id IN ?", repoIDs).Order("id desc").Find(&findings)
 	}
 	reposByID := loadRepoMap(s.DB, findings)
-	s.render(w, "maintainer_show.html", map[string]any{
+	s.render(w, r, "maintainer_show.html", map[string]any{
 		"M": m, "Findings": findings, "Repos": reposByID,
 	})
 }
@@ -761,7 +821,7 @@ func (s *Server) findings(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-	s.render(w, "findings.html", map[string]any{
+	s.render(w, r, "findings.html", map[string]any{
 		"Findings": rows, "Page": page, "Severity": sev, "Sort": sort,
 		"Repos": reposByID, "Q": search, "AnySubPath": anySubPath,
 		"Owner": owner,
@@ -977,7 +1037,7 @@ func (s *Server) packages(w http.ResponseWriter, r *http.Request) {
 	var ecosystems []string
 	s.DB.Model(&db.Package{}).Distinct("ecosystem").Order("ecosystem").Pluck("ecosystem", &ecosystems)
 
-	s.render(w, "packages.html", map[string]any{
+	s.render(w, r, "packages.html", map[string]any{
 		"Pkgs": rows, "Page": page, "Ecosystem": eco, "Sort": sort, "Ecosystems": ecosystems,
 		"Q": search,
 	})
@@ -993,7 +1053,7 @@ func (s *Server) packageShow(w http.ResponseWriter, r *http.Request) {
 	if p.Metadata != "" {
 		data["Meta"] = p.Metadata
 	}
-	s.render(w, "package_show.html", data)
+	s.render(w, r, "package_show.html", data)
 }
 
 func (s *Server) advisoriesList(w http.ResponseWriter, r *http.Request) {
@@ -1033,7 +1093,7 @@ func (s *Server) advisoriesList(w http.ResponseWriter, r *http.Request) {
 	s.DB.Model(&db.Advisory{}).Where("severity != ''").Distinct("severity").
 		Order("severity").Pluck("severity", &severities)
 
-	s.render(w, "advisories.html", map[string]any{
+	s.render(w, r, "advisories.html", map[string]any{
 		"Advisories": rows, "Page": page, "Severity": sev, "Sort": sort,
 		"Severities": severities, "Repos": reposByID, "Q": search,
 	})
@@ -1107,7 +1167,7 @@ func (s *Server) findingShow(w http.ResponseWriter, r *http.Request) {
 		data["PatchScan"] = patchScan
 		data["Patch"] = patchRep
 	}
-	s.render(w, "finding_show.html", data)
+	s.render(w, r, "finding_show.html", data)
 }
 
 func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
@@ -1153,7 +1213,7 @@ func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-	s.render(w, "jobs.html", map[string]any{
+	s.render(w, r, "jobs.html", map[string]any{
 		"Scans": scans, "Page": page,
 		"Skill": skillName, "Status": status, "Sort": sort, "Skills": skillNames,
 		"AnySubPath": anySubPath,
@@ -1177,8 +1237,8 @@ func (s *Server) repoCreate(w http.ResponseWriter, r *http.Request) {
 // repoBulkCreate accepts a newline-separated list of repository URLs,
 // creates each one that is not already in the database, and enqueues the
 // default skill for every new row. Duplicates and unparseable lines are
-// reported back via an HX-Trigger toast rather than failing the whole
-// submission — partial success is the expected case for a pasted list.
+// reported back via a flash toast rather than failing the whole submission;
+// partial success is the expected case for a pasted list.
 func (s *Server) repoBulkCreate(w http.ResponseWriter, r *http.Request) {
 	raw := r.FormValue("urls")
 	lines := strings.Split(raw, "\n")
@@ -1209,13 +1269,11 @@ func (s *Server) repoBulkCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "no URLs supplied", http.StatusUnprocessableEntity)
 		return
 	}
-	toast := map[string]any{
-		"category":    bulkToastCategory(created, invalid),
-		"title":       bulkToastTitle(created, skipped, len(invalid)),
-		"description": bulkToastDescription(invalid),
-	}
-	payload, _ := json.Marshal(map[string]any{"basecoat:toast": map[string]any{"config": toast}})
-	w.Header().Set("HX-Trigger", string(payload))
+	setFlash(w, Flash{
+		Category:    bulkToastCategory(created, invalid),
+		Title:       bulkToastTitle(created, skipped, len(invalid)),
+		Description: bulkToastDescription(invalid),
+	})
 	s.redirect(w, r, "/")
 }
 
@@ -1402,16 +1460,15 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 		"SubScanCount": subScanCount,
 	}
 	if r.Header.Get("HX-Target") == "scan-rows" {
-		s.maybeToast(w, r, repo.Name, scans)
 		if !active {
 			// All jobs settled since the page loaded; full refresh so the
 			// Summary, Findings and metadata sections pick up results.
 			w.Header().Set("HX-Refresh", "true")
 		}
-		s.render(w, "scan_rows", data)
+		s.render(w, r, "scan_rows", data)
 		return
 	}
-	s.render(w, "repo_show.html", data)
+	s.render(w, r, "repo_show.html", data)
 }
 
 func (s *Server) repoScan(w http.ResponseWriter, r *http.Request) {
@@ -1462,7 +1519,7 @@ func (s *Server) scanShow(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	s.render(w, "scan_show.html", scan)
+	s.render(w, r, "scan_show.html", map[string]any{"Scan": scan})
 }
 
 func (s *Server) scanRetry(w http.ResponseWriter, r *http.Request) {
@@ -1571,33 +1628,6 @@ func (s *Server) enqueueSkillWith(ctx context.Context, repoID, skillID uint, opt
 	}
 	s.DB.Model(&db.Repository{}).Where("id = ?", repoID).Update("updated_at", time.Now())
 	return scan.ID, nil
-}
-
-// maybeToast compares scan statuses against the "seen" cookie and emits an
-// HX-Trigger header for the first scan that has moved to a terminal state
-// since the client last polled. The cookie stores id:status pairs so a page
-// reload does not re-toast.
-func (s *Server) maybeToast(w http.ResponseWriter, r *http.Request, name string, scans []db.Scan) {
-	prev := map[string]string{}
-	if c, err := r.Cookie("scanstate"); err == nil {
-		for pair := range strings.SplitSeq(c.Value, ",") {
-			if k, v, ok := strings.Cut(pair, ":"); ok {
-				prev[k] = v
-			}
-		}
-	}
-	var cur []string
-	for _, sc := range scans {
-		id := strconv.Itoa(int(sc.ID))
-		cur = append(cur, id+":"+string(sc.Status))
-		if sc.Status.Terminal() && prev[id] != "" && prev[id] != string(sc.Status) {
-			payload, _ := json.Marshal(map[string]any{"scanStatus": map[string]any{
-				"id": sc.ID, "status": sc.Status, "name": name,
-			}})
-			w.Header().Set("HX-Trigger", string(payload))
-		}
-	}
-	http.SetCookie(w, &http.Cookie{Name: "scanstate", Value: strings.Join(cur, ","), Path: "/", SameSite: http.SameSiteStrictMode})
 }
 
 const (

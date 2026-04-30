@@ -1,5 +1,5 @@
-{{template "head"}}
-
+{{template "head" .}}
+{{with .Scan}}
 {{template "crumbs" (crumbs
   "Repositories" "/"
   .Repository.Name (printf "/repositories/%d" .Repository.ID)
@@ -97,7 +97,7 @@
             <td class="text-muted-foreground">
               {{if .CWE}}<span data-tooltip="{{cwename .CWE}}">{{.CWE}}</span>{{end}}
             </td>
-            <td class="whitespace-normal">{{template "loc-link" (dict "HTMLURL" $.Repository.HTMLURL "Commit" $.Commit "Location" .Location)}}</td>
+            <td class="whitespace-normal">{{template "loc-link" (dict "HTMLURL" $.Scan.Repository.HTMLURL "Commit" $.Scan.Commit "Location" .Location)}}</td>
           </tr>
         {{end}}
         </tbody>
@@ -131,5 +131,5 @@
   </div>
   {{end}}
 </div>
-
-{{template "foot"}}
+{{end}}
+{{template "foot" .}}

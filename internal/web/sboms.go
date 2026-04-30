@@ -29,7 +29,7 @@ func (s *Server) registerSBOMRoutes(mux *http.ServeMux) {
 func (s *Server) sbomList(w http.ResponseWriter, r *http.Request) {
 	var rows []db.SBOMUpload
 	s.DB.Order("id desc").Find(&rows)
-	s.render(w, "sboms.html", map[string]any{"SBOMs": rows})
+	s.render(w, r, "sboms.html", map[string]any{"SBOMs": rows})
 }
 
 func (s *Server) sbomUpload(w http.ResponseWriter, r *http.Request) {
@@ -159,7 +159,7 @@ func (s *Server) sbomShow(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	s.render(w, "sbom_show.html", map[string]any{
+	s.render(w, r, "sbom_show.html", map[string]any{
 		"SBOM": up, "Packages": pkgs,
 		"Findings": findings, "Advisories": advisories, "Repos": reposByID,
 		"Resolved": resolved, "WithRepo": withRepo,

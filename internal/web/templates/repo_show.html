@@ -1,4 +1,4 @@
-{{template "head"}}
+{{template "head" .}}
 
 <div class="flex items-start justify-between gap-4 mb-6">
   <div>
@@ -354,7 +354,7 @@
   {{end}}
 </div>
 
-{{template "foot"}}
+{{template "foot" .}}
 
 {{define "scan_rows"}}
 <tbody id="scan-rows">
