@@ -7,6 +7,7 @@ toolchain go1.26.2
 require (
 	github.com/git-pkgs/sbom v0.1.0
 	github.com/glebarez/sqlite v1.11.0
+	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	gopkg.in/yaml.v3 v3.0.1
 	gorm.io/gorm v1.31.1
 	maragu.dev/goqite v0.4.0

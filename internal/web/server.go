@@ -130,6 +130,9 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *work
 	if err != nil {
 		return nil, err
 	}
+	if _, err := getCSAFSchema(); err != nil {
+		return nil, fmt.Errorf("load csaf schema: %w", err)
+	}
 	return &Server{DB: gdb, Queue: q, Log: log, Broker: broker, Worker: w, tmpl: t,
 		resolvePURL: resolvePURLRepo}, nil
 }
@@ -156,6 +159,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /maintainers/{id}/do-not-contact", s.maintainerDoNotContact)
 	mux.HandleFunc("GET /findings", s.findings)
 	mux.HandleFunc("GET /findings/{id}", s.findingShow)
+	mux.HandleFunc("GET /findings/{id}/csaf.json", s.findingCSAF)
 	mux.HandleFunc("POST /findings/{id}/status", s.findingStatus)
 	mux.HandleFunc("POST /findings/{id}/verify", s.findingVerify)
 	mux.HandleFunc("POST /findings/{id}/disclose", s.findingDisclose)
