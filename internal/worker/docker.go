@@ -73,6 +73,7 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 	dockerArgs := []string{
 		"run", "--rm",
 		"--cap-drop", "ALL",
+		"--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()),
 		"--tmpfs", "/tmp:rw,noexec,nosuid,size=256m",
 		"-v", absWork + ":/work",
 		"-w", "/work",
