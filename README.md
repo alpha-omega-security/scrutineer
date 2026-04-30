@@ -4,11 +4,24 @@ A local tool for scanning open source repositories for security vulnerabilities 
 
 ## Quick start
 
-You need [Go 1.26+](https://go.dev/dl/), [Docker](https://docs.docker.com/get-docker/) running, and an Anthropic API key from [console.anthropic.com](https://console.anthropic.com).
+You need [Go 1.26+](https://go.dev/dl/) and [Docker](https://docs.docker.com/get-docker/) running.
 
     git clone https://github.com/alpha-omega-security/scrutineer
     cd scrutineer
-    export ANTHROPIC_API_KEY=sk-ant-...
+
+Authenticate Claude with one of two options:
+
+**Option A: Claude Code subscription** (Max, Pro, Team, or Enterprise) -- generate a long-lived OAuth token with the [Claude CLI](https://docs.anthropic.com/en/docs/claude-code):
+
+    claude setup-token
+    export CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-...
+
+**Option B: Anthropic API key** from [console.anthropic.com](https://console.anthropic.com):
+
+    export ANTHROPIC_API_KEY=sk-ant-api03-...
+
+Then start scrutineer:
+
     export ANTHROPIC_BASE_URL=https://...  # optional: custom API endpoint
     go run ./cmd/scrutineer -skills ./skills
 
@@ -118,7 +131,16 @@ The same applies to the Dependents tab -- you can import any dependent's reposit
 ## Docker
 
     docker build -t scrutineer .
-    docker run -p 127.0.0.1:8080:8080 -v scrutineer-data:/data -e ANTHROPIC_API_KEY=sk-... -e ANTHROPIC_BASE_URL=https://... scrutineer
+    docker run -p 127.0.0.1:8080:8080 -v scrutineer-data:/data \
+      -e ANTHROPIC_API_KEY=sk-ant-api03-... \
+      -e ANTHROPIC_BASE_URL=https://... \
+      scrutineer
+
+Or with a Claude Code OAuth token instead of an API key:
+
+    docker run -p 127.0.0.1:8080:8080 -v scrutineer-data:/data \
+      -e CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-... \
+      scrutineer
 
 Always bind to `127.0.0.1`. The UI has no authentication; binding to `0.0.0.0` exposes your findings database to anyone on the network.
 

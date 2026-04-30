@@ -160,6 +160,10 @@ func run(log *slog.Logger) error {
 	if err := config.ValidateClone(f.cloneMode); err != nil {
 		return err
 	}
+	if key := os.Getenv("ANTHROPIC_API_KEY"); strings.HasPrefix(key, "sk-ant-oat") {
+		log.Warn("ANTHROPIC_API_KEY looks like an OAuth token from `claude setup-token`; set it as CLAUDE_CODE_OAUTH_TOKEN instead")
+	}
+
 	if f.anthropicBaseURL == "" {
 		f.anthropicBaseURL = os.Getenv("ANTHROPIC_BASE_URL")
 	}
