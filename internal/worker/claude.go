@@ -52,9 +52,9 @@ type LocalClaude struct {
 // RunSkill runs claude against a staged skill in a local workspace. The
 // workspace layout is:
 //
-//	{DataDir}/repo-{id}/src/                clone (read-only in docker)
-//	{DataDir}/repo-{id}/.claude/skills/NAME staged skill (read by claude-code)
-//	{DataDir}/repo-{id}/OutputFile          where the skill writes, if any
+//	{DataDir}/scan-{id}/src/                clone (read-only in docker)
+//	{DataDir}/scan-{id}/.claude/skills/NAME staged skill (read by claude-code)
+//	{DataDir}/scan-{id}/OutputFile          where the skill writes, if any
 func (l LocalClaude) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)) (SkillResult, error) {
 	src, err := ensureClone(ctx, sj.Repo, sj.WorkRoot, l.FullClone, emit)
 	if err != nil {
