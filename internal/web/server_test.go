@@ -139,6 +139,29 @@ func flashFrom(t *testing.T, w *httptest.ResponseRecorder) Flash {
 	return f
 }
 
+func TestRepoNew_fallbackPages(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	h := s.Handler()
+
+	for _, tc := range []struct{ path, want string }{
+		{"/repositories/new", "Add repository"},
+		{"/repositories/new?bulk=1", "Bulk import"},
+		{"/sboms/new", "Upload SBOM"},
+	} {
+		req := httptest.NewRequest("GET", tc.path, nil)
+		req.Host = testHost
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Errorf("%s: status %d", tc.path, w.Code)
+		}
+		if !strings.Contains(w.Body.String(), tc.want) {
+			t.Errorf("%s: body missing %q", tc.path, tc.want)
+		}
+	}
+}
+
 func TestFlash_roundtrip(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
@@ -1534,8 +1557,8 @@ func TestBulkImport_dialogRendered(t *testing.T) {
 	if !strings.Contains(body, "Add multiple") {
 		t.Error("add-repo dialog missing 'Add multiple' link to bulk dialog")
 	}
-	if !strings.Contains(body, "getElementById('bulk-add-repo').showModal()") {
-		t.Error("'Add multiple' button does not open bulk dialog")
+	if !strings.Contains(body, `data-dialog="bulk-add-repo"`) {
+		t.Error("'Add multiple' link not wired to bulk dialog")
 	}
 }
 

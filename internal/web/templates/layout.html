@@ -20,8 +20,9 @@
   <script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.6/dist/htmx.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/htmx-ext-sse@2.2.4/sse.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/lucide@0.545.0/dist/umd/lucide.min.js"></script>
+  <script src="/static/app.js" defer></script>
 </head>
-<body hx-on::after-swap="lucide.createIcons()" hx-on::history-restore="lucide.createIcons()">
+<body>
 
 <aside class="sidebar" data-side="left" aria-hidden="false">
   <nav aria-label="Sidebar">
@@ -54,10 +55,9 @@
       </div>
     </section>
     <footer>
-      <button type="button" class="btn w-full"
-              onclick="document.getElementById('add-repo').showModal()">
+      <a href="/repositories/new" data-dialog="add-repo" class="btn w-full">
         <i data-lucide="plus"></i> Add repository
-      </button>
+      </a>
     </footer>
   </nav>
 </aside>
@@ -72,8 +72,7 @@
   </div>
 </main>
 
-<dialog id="add-repo" class="dialog w-full sm:max-w-md"
-        onclick="if (event.target === this) this.close()">
+<dialog id="add-repo" class="dialog w-full sm:max-w-md">
   <div>
     <header><h2>Add repository</h2></header>
     <section>
@@ -81,10 +80,9 @@
         <input class="input" type="text" name="url"
                placeholder="https://github.com/maragudk/goqite.git" required>
         <footer class="flex justify-between items-center gap-2">
-          <button type="button" class="btn-ghost-sm"
-                  onclick="this.closest('dialog').close(); document.getElementById('bulk-add-repo').showModal()">
+          <a href="/repositories/new?bulk=1" data-dialog="bulk-add-repo" class="btn-ghost-sm">
             <i data-lucide="list-plus"></i> Add multiple
-          </button>
+          </a>
           <div class="flex gap-2">
             <button type="submit" class="btn-outline" formmethod="dialog" formnovalidate>Cancel</button>
             <button type="submit" class="btn" hx-post="/repositories" hx-swap="none">
@@ -98,8 +96,7 @@
   </div>
 </dialog>
 
-<dialog id="bulk-add-repo" class="dialog w-full sm:max-w-lg"
-        onclick="if (event.target === this) this.close()">
+<dialog id="bulk-add-repo" class="dialog w-full sm:max-w-lg">
   <div>
     <header>
       <h2>Bulk import repositories</h2>
@@ -127,31 +124,6 @@
 <div id="toaster" class="toaster">
   {{with .Flash}}{{template "toast" .}}{{end}}
 </div>
-<script>
-  lucide.createIcons();
-  // Persist active tab in URL hash
-  document.addEventListener('click', function (e) {
-    var tab = e.target.closest('[role="tab"]');
-    if (tab && tab.id) history.replaceState(null, '', '#' + tab.id);
-  });
-  // Restore tab after basecoat initialises. Use rAF to yield to deferred scripts.
-  function restoreTab() {
-    var h = location.hash.slice(1);
-    if (!h) return;
-    var tab = document.getElementById(h);
-    if (!tab || tab.getAttribute('role') !== 'tab') return;
-    var tablist = tab.closest('[role="tablist"]');
-    if (!tablist) return;
-    tablist.querySelectorAll('[role="tab"]').forEach(function (t) {
-      var selected = t.id === h;
-      t.setAttribute('aria-selected', selected);
-      var panel = document.getElementById(t.getAttribute('aria-controls'));
-      if (panel) panel.hidden = !selected;
-    });
-  }
-  if (document.readyState === 'complete') restoreTab();
-  else window.addEventListener('load', restoreTab);
-</script>
 </body>
 </html>
 {{end}}

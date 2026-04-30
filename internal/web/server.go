@@ -141,6 +141,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /events", s.events)
 	mux.HandleFunc("GET /{$}", s.index)
 	mux.HandleFunc("GET /repositories", s.repoList)
+	mux.HandleFunc("GET /repositories/new", s.repoNew)
 	mux.HandleFunc("POST /repositories", s.repoCreate)
 	mux.HandleFunc("POST /repositories/bulk", s.repoBulkCreate)
 	mux.HandleFunc("GET /repositories/{id}", s.repoShow)
@@ -1232,6 +1233,11 @@ func (s *Server) repoCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.redirect(w, r, fmt.Sprintf("/repositories/%d", repo.ID))
+}
+
+// repoNew is the no-javascript fallback for the Add Repository dialog.
+func (s *Server) repoNew(w http.ResponseWriter, r *http.Request) {
+	s.render(w, r, "repo_new.html", map[string]any{"Bulk": r.FormValue("bulk") != ""})
 }
 
 // repoBulkCreate accepts a newline-separated list of repository URLs,
