@@ -2,11 +2,22 @@
 # tools, not the web server or database. Built separately:
 #   docker build -t scrutineer-runner -f Dockerfile.runner .
 
-FROM node:22-alpine@sha256:8ea2348b068a9544dae7317b4f3aafcdc032df1647bb7d768a05a5cad1a7683f AS claude
-RUN npm install -g @anthropic-ai/claude-code@2.1.119
+ARG SEMGREP_IMAGE=semgrep/semgrep:1.116.0@sha256:1844697a3d8b80166e2eaadb93f189a9372e6c8dc025cb14d9400f06e7475261
 
-FROM python:3.13-alpine@sha256:420cd0bf0f3998275875e02ecd5808168cf0843cbb4d3c536432f729247b2acc AS python-tools
-RUN pip install --no-cache-dir semgrep==1.116.0 "setuptools<81"
+FROM ${SEMGREP_IMAGE} AS claude
+ARG TARGETARCH
+ARG CLAUDE_VERSION=2.1.123
+# Checksums from https://github.com/anthropics/claude-code/releases/download/v${CLAUDE_VERSION}/SHASUMS256.txt
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+      amd64) arch=x64;   sha=95256aab4b2677433a799498604c8f77eae434e8c2c6f05f5040ae1d10586a3e ;; \
+      arm64) arch=arm64; sha=e8ac56565de3eb482c6eaff90ea0ac248270b33e7705e0614be0c47c2387e615 ;; \
+      *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /tmp/claude.tgz \
+      "https://github.com/anthropics/claude-code/releases/download/v${CLAUDE_VERSION}/claude-linux-${arch}-musl.tar.gz"; \
+    echo "${sha}  /tmp/claude.tgz" | sha256sum -c -; \
+    mkdir -p /out && tar -xzf /tmp/claude.tgz -C /out && chmod +x /out/claude
 
 FROM golang:1.26.2-alpine@sha256:f85330846cde1e57ca9ec309382da3b8e6ae3ab943d2739500e08c86393a21b1 AS go-tools
 RUN apk add --no-cache git
@@ -17,23 +28,13 @@ FROM rust:1.88-alpine@sha256:9dfaae478ecd298b6b5a039e1f2cc4fc040fc818a2de9aa78fa
 RUN apk add --no-cache build-base linux-headers
 RUN cargo install --locked --root /out zizmor@1.24.1
 
-FROM python:3.13-alpine@sha256:420cd0bf0f3998275875e02ecd5808168cf0843cbb4d3c536432f729247b2acc
-RUN apk add --no-cache git ca-certificates bash nodejs coreutils && \
-    rm -f /usr/local/bin/pip* /usr/local/bin/idle* /usr/local/bin/pydoc*
+# semgrep's image is alpine + apk python3 + git/bash/curl/ca-certificates,
+# so it doubles as the final base and we inherit semgrep without a pip step.
+FROM ${SEMGREP_IMAGE}
+RUN apk add --no-cache coreutils
 
-# claude cli
-COPY --from=claude /usr/local/lib/node_modules /usr/local/lib/node_modules
-COPY --from=claude /usr/local/bin/claude /usr/local/bin/claude
-
-# semgrep
-COPY --from=python-tools /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
-COPY --from=python-tools /usr/local/bin/semgrep* /usr/local/bin/
-COPY --from=python-tools /usr/local/bin/pysemgrep /usr/local/bin/
-
-# go tools
+COPY --from=claude /out/claude /usr/local/bin/claude
 COPY --from=go-tools /out/* /usr/local/bin/
-
-# zizmor
 COPY --from=zizmor-build /out/bin/zizmor /usr/local/bin/zizmor
 
 # Non-root
