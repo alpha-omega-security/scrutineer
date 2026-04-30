@@ -128,7 +128,7 @@ func (w *Worker) parsePackagesOutput(scan *db.Scan, report string, emit func(Eve
 		rows = append(rows, row)
 	}
 	if len(rows) > 0 {
-		if err := w.DB.Create(&rows).Error; err != nil {
+		if err := w.DB.CreateInBatches(&rows, 50).Error; err != nil {
 			return fmt.Errorf("save packages: %w", err)
 		}
 	}
@@ -180,7 +180,7 @@ func (w *Worker) parseAdvisoriesOutput(scan *db.Scan, report string, emit func(E
 		rows = append(rows, row)
 	}
 	if len(rows) > 0 {
-		if err := w.DB.Create(&rows).Error; err != nil {
+		if err := w.DB.CreateInBatches(&rows, 50).Error; err != nil {
 			return fmt.Errorf("save advisories: %w", err)
 		}
 	}
@@ -223,7 +223,7 @@ func (w *Worker) parseDependentsOutput(scan *db.Scan, report string, emit func(E
 		})
 	}
 	if len(rows) > 0 {
-		if err := w.DB.Create(&rows).Error; err != nil {
+		if err := w.DB.CreateInBatches(&rows, 50).Error; err != nil {
 			return fmt.Errorf("save dependents: %w", err)
 		}
 	}
@@ -271,7 +271,7 @@ func (w *Worker) parseDependenciesOutput(scan *db.Scan, report string, emit func
 		})
 	}
 	if len(rows) > 0 {
-		if err := w.DB.Create(&rows).Error; err != nil {
+		if err := w.DB.CreateInBatches(&rows, 50).Error; err != nil {
 			return fmt.Errorf("save dependencies: %w", err)
 		}
 	}
@@ -313,7 +313,7 @@ func (w *Worker) parseSubprojectsOutput(scan *db.Scan, report string, emit func(
 		})
 	}
 	if len(rows) > 0 {
-		if err := w.DB.Create(&rows).Error; err != nil {
+		if err := w.DB.CreateInBatches(&rows, 50).Error; err != nil {
 			return fmt.Errorf("save subprojects: %w", err)
 		}
 	}
