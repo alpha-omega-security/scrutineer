@@ -21,7 +21,7 @@
   <script src="https://cdn.jsdelivr.net/npm/htmx-ext-sse@2.2.4/sse.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/lucide@0.545.0/dist/umd/lucide.min.js"></script>
 </head>
-<body hx-on::after-swap="lucide.createIcons()">
+<body hx-on::after-swap="lucide.createIcons()" hx-on::history-restore="lucide.createIcons()">
 
 <aside class="sidebar" data-side="left" aria-hidden="false">
   <nav aria-label="Sidebar">
@@ -61,7 +61,9 @@
   </nav>
 </aside>
 
-<main id="content" class="min-h-screen">
+<main id="content" class="min-h-screen"
+      hx-history-elt
+      hx-target="#content" hx-select="#content" hx-swap="outerHTML">
   <div class="p-4 md:p-6 xl:p-12">
 {{end}}
 

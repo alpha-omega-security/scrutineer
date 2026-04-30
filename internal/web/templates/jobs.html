@@ -67,8 +67,8 @@
     <tbody>
     {{$showSub := .AnySubPath}}
     {{range .Scans}}
-      <tr class="cursor-pointer" hx-get="/scans/{{.ID}}" hx-target="body" hx-push-url="true">
-        <td>{{.ID}}</td>
+      <tr id="scan-{{.ID}}" class="cursor-pointer" hx-get="/scans/{{.ID}}" hx-push-url="true">
+        <td><a href="/scans/{{.ID}}" hx-on:click="event.stopPropagation()">{{.ID}}</a></td>
         <td>{{.Repository.Name}}</td>
         {{if $showSub}}
           <td class="text-xs text-muted-foreground">{{if .SubPath}}<code>{{.SubPath}}</code>{{else}}<span>root</span>{{end}}</td>

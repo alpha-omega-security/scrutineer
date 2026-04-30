@@ -204,6 +204,19 @@ func (s *Server) render(w http.ResponseWriter, name string, data any) {
 	}
 }
 
+func isHX(r *http.Request) bool { return r.Header.Get("HX-Request") != "" }
+
+// redirect sends a 303 for plain form posts and HX-Redirect for htmx
+// requests, so every POST handler works with or without javascript.
+func (s *Server) redirect(w http.ResponseWriter, r *http.Request, path string) {
+	if isHX(r) {
+		w.Header().Set("HX-Redirect", path)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	http.Redirect(w, r, path, http.StatusSeeOther)
+}
+
 func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 	s.repoList(w, r)
 }
@@ -368,7 +381,7 @@ func (s *Server) repoList(w http.ResponseWriter, r *http.Request) {
 		"Rows": rows, "Page": page, "Language": lang, "Sort": sort, "Languages": languages,
 		"Q": search,
 	}
-	if r.Header.Get("HX-Request") != "" {
+	if isHX(r) {
 		s.render(w, "repo_list.html", data)
 	} else {
 		s.render(w, "index.html", data)
@@ -646,8 +659,7 @@ func (s *Server) maintainerDoNotContact(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("HX-Redirect", fmt.Sprintf("/maintainers/%d", m.ID))
-	w.WriteHeader(http.StatusNoContent)
+	s.redirect(w, r, fmt.Sprintf("/maintainers/%d", m.ID))
 }
 
 func (s *Server) maintainerShow(w http.ResponseWriter, r *http.Request) {
@@ -843,8 +855,7 @@ func (s *Server) addRepoAndScan(w http.ResponseWriter, r *http.Request, repoURL 
 			s.Log.Warn("default skill not found, repo added with no scans", "skill", defaultSkillName)
 		}
 	}
-	w.Header().Set("HX-Redirect", fmt.Sprintf("/repositories/%d", repo.ID))
-	w.WriteHeader(http.StatusNoContent)
+	s.redirect(w, r, fmt.Sprintf("/repositories/%d", repo.ID))
 }
 
 func (s *Server) findingStatus(w http.ResponseWriter, r *http.Request) {
@@ -866,8 +877,7 @@ func (s *Server) findingStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "invalid status", http.StatusUnprocessableEntity)
 		return
 	}
-	w.Header().Set("HX-Redirect", fmt.Sprintf("/findings/%d", f.ID))
-	w.WriteHeader(http.StatusNoContent)
+	s.redirect(w, r, fmt.Sprintf("/findings/%d", f.ID))
 }
 
 // verifySkillName is the skill the Verify button on the finding page runs.
@@ -913,8 +923,7 @@ func (s *Server) runFindingSkill(w http.ResponseWriter, r *http.Request, name st
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("HX-Redirect", fmt.Sprintf("/scans/%d", scanID))
-	w.WriteHeader(http.StatusNoContent)
+	s.redirect(w, r, fmt.Sprintf("/scans/%d", scanID))
 }
 
 func (s *Server) findingNotes(w http.ResponseWriter, r *http.Request) {
@@ -927,8 +936,7 @@ func (s *Server) findingNotes(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
-	w.Header().Set("HX-Redirect", fmt.Sprintf("/findings/%d", f.ID))
-	w.WriteHeader(http.StatusNoContent)
+	s.redirect(w, r, fmt.Sprintf("/findings/%d", f.ID))
 }
 
 func (s *Server) packages(w http.ResponseWriter, r *http.Request) {
@@ -1163,8 +1171,7 @@ func (s *Server) repoCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("HX-Redirect", fmt.Sprintf("/repositories/%d", repo.ID))
-	w.WriteHeader(http.StatusNoContent)
+	s.redirect(w, r, fmt.Sprintf("/repositories/%d", repo.ID))
 }
 
 // repoBulkCreate accepts a newline-separated list of repository URLs,
@@ -1209,8 +1216,7 @@ func (s *Server) repoBulkCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	payload, _ := json.Marshal(map[string]any{"basecoat:toast": map[string]any{"config": toast}})
 	w.Header().Set("HX-Trigger", string(payload))
-	w.Header().Set("HX-Redirect", "/")
-	w.WriteHeader(http.StatusNoContent)
+	s.redirect(w, r, "/")
 }
 
 // createOrTriageRepo is the shared path for both single-add and bulk-add.
@@ -1428,8 +1434,7 @@ func (s *Server) repoScan(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("HX-Redirect", fmt.Sprintf("/repositories/%d", repo.ID))
-	w.WriteHeader(http.StatusNoContent)
+	s.redirect(w, r, fmt.Sprintf("/repositories/%d", repo.ID))
 }
 
 // repoDisclosureChannel lets the analyst overwrite (or clear) the
@@ -1448,8 +1453,7 @@ func (s *Server) repoDisclosureChannel(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("HX-Redirect", fmt.Sprintf("/repositories/%d", repo.ID))
-	w.WriteHeader(http.StatusNoContent)
+	s.redirect(w, r, fmt.Sprintf("/repositories/%d", repo.ID))
 }
 
 func (s *Server) scanShow(w http.ResponseWriter, r *http.Request) {
@@ -1480,8 +1484,7 @@ func (s *Server) scanRetry(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("HX-Redirect", fmt.Sprintf("/scans/%d", newID))
-	w.WriteHeader(http.StatusNoContent)
+	s.redirect(w, r, fmt.Sprintf("/scans/%d", newID))
 }
 
 func (s *Server) scanCancel(w http.ResponseWriter, r *http.Request) {
@@ -1503,8 +1506,7 @@ func (s *Server) scanCancel(w http.ResponseWriter, r *http.Request) {
 			"finished_at": &now,
 		})
 	}
-	w.Header().Set("HX-Refresh", "true")
-	w.WriteHeader(http.StatusNoContent)
+	s.redirect(w, r, fmt.Sprintf("/scans/%d", scan.ID))
 }
 
 // scanLog returns just the <pre> log block. The scan page polls this with

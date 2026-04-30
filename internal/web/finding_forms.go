@@ -42,8 +42,7 @@ func (s *Server) findingFields(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	w.Header().Set("HX-Redirect", fmt.Sprintf("/findings/%d", f.ID))
-	w.WriteHeader(http.StatusNoContent)
+	s.redirect(w, r, fmt.Sprintf("/findings/%d", f.ID))
 }
 
 func (s *Server) findingCommunications(w http.ResponseWriter, r *http.Request) {
@@ -68,8 +67,7 @@ func (s *Server) findingCommunications(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
-	w.Header().Set("HX-Redirect", fmt.Sprintf("/findings/%d", f.ID))
-	w.WriteHeader(http.StatusNoContent)
+	s.redirect(w, r, fmt.Sprintf("/findings/%d", f.ID))
 }
 
 func (s *Server) findingReferences(w http.ResponseWriter, r *http.Request) {
@@ -87,8 +85,7 @@ func (s *Server) findingReferences(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
-	w.Header().Set("HX-Redirect", fmt.Sprintf("/findings/%d", f.ID))
-	w.WriteHeader(http.StatusNoContent)
+	s.redirect(w, r, fmt.Sprintf("/findings/%d", f.ID))
 }
 
 func (s *Server) findingLabels(w http.ResponseWriter, r *http.Request) {
@@ -118,6 +115,5 @@ func (s *Server) findingLabels(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("HX-Redirect", fmt.Sprintf("/findings/%d", f.ID))
-	w.WriteHeader(http.StatusNoContent)
+	s.redirect(w, r, fmt.Sprintf("/findings/%d", f.ID))
 }

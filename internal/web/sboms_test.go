@@ -51,11 +51,11 @@ func TestSBOMUpload_parsesAndStores(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, multipartReq(t, "/sboms", "file", "demo.cdx.json", cdxFixture))
-	if w.Code != http.StatusNoContent {
+	if w.Code != http.StatusSeeOther {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
-	if !strings.HasPrefix(w.Header().Get("HX-Redirect"), "/sboms/") {
-		t.Errorf("missing HX-Redirect, got %q", w.Header().Get("HX-Redirect"))
+	if !strings.HasPrefix(w.Header().Get("Location"), "/sboms/") {
+		t.Errorf("missing redirect, got %q", w.Header().Get("Location"))
 	}
 
 	var up db.SBOMUpload

@@ -34,8 +34,8 @@
     </tr></thead>
     <tbody>
     {{range .SBOMs}}
-      <tr class="cursor-pointer" hx-get="/sboms/{{.ID}}" hx-target="body" hx-push-url="true">
-        <td class="font-medium">{{.Name}}<div class="text-xs text-muted-foreground">{{.Filename}}</div></td>
+      <tr id="sbom-{{.ID}}" class="cursor-pointer" hx-get="/sboms/{{.ID}}" hx-push-url="true">
+        <td><a href="/sboms/{{.ID}}" class="font-medium" hx-on:click="event.stopPropagation()">{{.Name}}</a><div class="text-xs text-muted-foreground">{{.Filename}}</div></td>
         <td><span class="badge-outline">{{.Format}} {{.SpecVersion}}</span></td>
         <td class="text-right text-muted-foreground">{{.PackageCount}}</td>
         <td class="text-muted-foreground">{{since .CreatedAt}}</td>

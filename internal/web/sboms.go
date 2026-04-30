@@ -79,8 +79,7 @@ func (s *Server) sbomUpload(w http.ResponseWriter, r *http.Request) {
 
 	s.goResolve(up.ID)
 
-	w.Header().Set("HX-Redirect", fmt.Sprintf("/sboms/%d", up.ID))
-	w.WriteHeader(http.StatusNoContent)
+	s.redirect(w, r, fmt.Sprintf("/sboms/%d", up.ID))
 }
 
 func (s *Server) sbomShow(w http.ResponseWriter, r *http.Request) {
@@ -176,8 +175,7 @@ func (s *Server) sbomResolve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.goResolve(up.ID)
-	w.Header().Set("HX-Redirect", fmt.Sprintf("/sboms/%d", up.ID))
-	w.WriteHeader(http.StatusNoContent)
+	s.redirect(w, r, fmt.Sprintf("/sboms/%d", up.ID))
 }
 
 // goResolve launches resolveSBOMPackages. Indirected so tests can run it
@@ -195,8 +193,7 @@ func (s *Server) sbomDelete(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("HX-Redirect", "/sboms")
-	w.WriteHeader(http.StatusNoContent)
+	s.redirect(w, r, "/sboms")
 }
 
 // resolveSBOMPackages walks every unresolved package in the upload, looks up

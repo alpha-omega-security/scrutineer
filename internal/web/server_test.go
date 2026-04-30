@@ -122,6 +122,29 @@ func TestMaintainersIndex_rendersFindingsCountAndDNCBadge(t *testing.T) {
 	}
 }
 
+func TestRedirect_branchesOnHXRequest(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	plain := httptest.NewRequest("POST", "/x", nil)
+	w := httptest.NewRecorder()
+	s.redirect(w, plain, "/target")
+	if w.Code != http.StatusSeeOther || w.Header().Get("Location") != "/target" {
+		t.Errorf("plain: code=%d Location=%q", w.Code, w.Header().Get("Location"))
+	}
+
+	hx := httptest.NewRequest("POST", "/x", nil)
+	hx.Header.Set("HX-Request", "true")
+	w = httptest.NewRecorder()
+	s.redirect(w, hx, "/target")
+	if w.Code != http.StatusNoContent || w.Header().Get("HX-Redirect") != "/target" {
+		t.Errorf("hx: code=%d HX-Redirect=%q", w.Code, w.Header().Get("HX-Redirect"))
+	}
+	if w.Header().Get("Location") != "" {
+		t.Errorf("hx: unexpected Location %q", w.Header().Get("Location"))
+	}
+}
+
 func TestMaintainerDoNotContactToggle(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
@@ -136,7 +159,7 @@ func TestMaintainerDoNotContactToggle(t *testing.T) {
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		w := httptest.NewRecorder()
 		s.Handler().ServeHTTP(w, r)
-		if w.Code != http.StatusNoContent {
+		if w.Code != http.StatusSeeOther {
 			t.Fatalf("value=%s status %d: %s", value, w.Code, w.Body)
 		}
 	}
@@ -167,7 +190,7 @@ func TestRepoDisclosureChannel_setAndClear(t *testing.T) {
 		r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		w := httptest.NewRecorder()
 		s.Handler().ServeHTTP(w, r)
-		if w.Code != http.StatusNoContent {
+		if w.Code != http.StatusSeeOther {
 			t.Fatalf("status %d: %s", w.Code, w.Body)
 		}
 	}
@@ -1012,11 +1035,11 @@ func TestCreateRepoEnqueuesTriageSkill(t *testing.T) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
-	if w.Code != 204 {
+	if w.Code != http.StatusSeeOther {
 		t.Fatalf("create status %d: %s", w.Code, w.Body)
 	}
-	if w.Header().Get("HX-Redirect") == "" {
-		t.Error("expected HX-Redirect")
+	if w.Header().Get("Location") == "" {
+		t.Error("expected Location redirect")
 	}
 
 	var repo db.Repository
@@ -1051,11 +1074,11 @@ func TestFindingDiscloseEnqueuesDiscloseSkill(t *testing.T) {
 	req.Header.Set("Sec-Fetch-Site", "same-origin")
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, req)
-	if w.Code != http.StatusNoContent {
+	if w.Code != http.StatusSeeOther {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
-	if !strings.HasPrefix(w.Header().Get("HX-Redirect"), "/scans/") {
-		t.Errorf("expected HX-Redirect to scan, got %q", w.Header().Get("HX-Redirect"))
+	if !strings.HasPrefix(w.Header().Get("Location"), "/scans/") {
+		t.Errorf("expected redirect to scan, got %q", w.Header().Get("Location"))
 	}
 
 	var row db.Scan
@@ -1086,7 +1109,7 @@ func TestFindingPatchRunEnqueuesPatchSkill(t *testing.T) {
 	req.Header.Set("Sec-Fetch-Site", "same-origin")
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, req)
-	if w.Code != http.StatusNoContent {
+	if w.Code != http.StatusSeeOther {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
 
@@ -1286,7 +1309,7 @@ func TestBulkImport_dedupesNormalisedURLs(t *testing.T) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, req)
-	if w.Code != http.StatusNoContent {
+	if w.Code != http.StatusSeeOther {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
 	trigger := w.Header().Get("HX-Trigger")
@@ -1315,11 +1338,11 @@ func TestBulkImport_createsAndEnqueues(t *testing.T) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, req)
-	if w.Code != http.StatusNoContent {
+	if w.Code != http.StatusSeeOther {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
-	if w.Header().Get("HX-Redirect") != "/" {
-		t.Errorf("HX-Redirect = %q", w.Header().Get("HX-Redirect"))
+	if w.Header().Get("Location") != "/" {
+		t.Errorf("Location = %q", w.Header().Get("Location"))
 	}
 	trigger := w.Header().Get("HX-Trigger")
 	if !strings.Contains(trigger, "2 added") {
@@ -1352,7 +1375,7 @@ func TestBulkImport_skipsDuplicates(t *testing.T) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, req)
-	if w.Code != http.StatusNoContent {
+	if w.Code != http.StatusSeeOther {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
 	trigger := w.Header().Get("HX-Trigger")
@@ -1383,7 +1406,7 @@ func TestBulkImport_rejectsNonHTTPS(t *testing.T) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, req)
-	if w.Code != http.StatusNoContent {
+	if w.Code != http.StatusSeeOther {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
 
@@ -1446,7 +1469,7 @@ func TestCreateRepo_parsesGitHubTreeURL(t *testing.T) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, req)
-	if w.Code != http.StatusNoContent {
+	if w.Code != http.StatusSeeOther {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
 
@@ -1485,7 +1508,7 @@ func TestRetry_preservesSubPath(t *testing.T) {
 	req.Header.Set("Sec-Fetch-Site", "same-origin")
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, req)
-	if w.Code != http.StatusNoContent {
+	if w.Code != http.StatusSeeOther {
 		t.Fatalf("retry status %d: %s", w.Code, w.Body)
 	}
 
@@ -1543,7 +1566,7 @@ func TestScanCancel_queued(t *testing.T) {
 	req.Header.Set("Sec-Fetch-Site", "same-origin")
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, req)
-	if w.Code != http.StatusNoContent {
+	if w.Code != http.StatusSeeOther {
 		t.Fatalf("cancel status %d: %s", w.Code, w.Body)
 	}
 

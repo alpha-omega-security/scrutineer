@@ -155,9 +155,9 @@
           </tr></thead>
           <tbody>
           {{range .Latest.Findings}}
-            <tr class="cursor-pointer" hx-get="/findings/{{.ID}}" hx-target="body" hx-push-url="true">
+            <tr id="finding-{{.ID}}" class="cursor-pointer" hx-get="/findings/{{.ID}}" hx-push-url="true">
               <td>{{template "severity-badge" .Severity}}</td>
-              <td class="min-w-0 whitespace-normal">{{.Title}}</td>
+              <td class="min-w-0 whitespace-normal"><a href="/findings/{{.ID}}" hx-on:click="event.stopPropagation()">{{.Title}}</a></td>
               <td>{{template "finding-status" (fstatus .Status)}}</td>
               <td class="whitespace-normal"><code class="text-xs break-all">{{.Location}}</code></td>
             </tr>
@@ -178,12 +178,12 @@
     </p>
     <div class="grid gap-4">
       {{range .Findings}}
-        <div class="card cursor-pointer" hx-get="/findings/{{.ID}}" hx-target="body" hx-push-url="true">
+        <div id="finding-card-{{.ID}}" class="card cursor-pointer" hx-get="/findings/{{.ID}}" hx-push-url="true">
           <header>
             <div class="flex items-center gap-2">
               {{template "severity-badge" .Severity}}
               {{template "finding-status" (fstatus .Status)}}
-              <h3>{{.Title}}</h3>
+              <h3><a href="/findings/{{.ID}}" hx-on:click="event.stopPropagation()">{{.Title}}</a></h3>
               {{if .CWE}}<span class="badge-outline ml-auto" data-tooltip="{{cwename .CWE}}">{{.CWE}}</span>{{end}}
             </div>
             <p>
@@ -210,8 +210,8 @@
       </tr></thead>
       <tbody>
       {{range .Pkgs}}
-        <tr class="cursor-pointer" hx-get="/packages/{{.ID}}" hx-target="body" hx-push-url="true">
-          <td class="whitespace-normal font-medium">{{.Name}}</td>
+        <tr id="package-{{.ID}}" class="cursor-pointer" hx-get="/packages/{{.ID}}" hx-push-url="true">
+          <td class="whitespace-normal"><a href="/packages/{{.ID}}" class="font-medium" hx-on:click="event.stopPropagation()">{{.Name}}</a></td>
           <td><span class="badge-outline">{{.Ecosystem}}</span></td>
           <td class="text-muted-foreground">{{if .RegistryURL}}{{domain .RegistryURL}}{{end}}</td>
           <td class="text-muted-foreground">{{.LatestVersion}}</td>
@@ -312,8 +312,8 @@
       <thead><tr><th>Login</th><th>Name</th><th>Email</th><th>Status</th></tr></thead>
       <tbody>
       {{range .Maintainers}}
-        <tr class="cursor-pointer" hx-get="/maintainers/{{.ID}}" hx-target="body" hx-push-url="true">
-          <td class="font-medium">{{.Login}}</td>
+        <tr id="maintainer-{{.ID}}" class="cursor-pointer" hx-get="/maintainers/{{.ID}}" hx-push-url="true">
+          <td><a href="/maintainers/{{.ID}}" class="font-medium" hx-on:click="event.stopPropagation()">{{.Login}}</a></td>
           <td>{{.Name}}</td>
           <td class="text-muted-foreground">{{.Email}}</td>
           <td>{{template "status-badge" (printf "%s" .Status)}}</td>
@@ -360,8 +360,8 @@
 {{define "scan_rows"}}
 <tbody id="scan-rows">
 {{range .Scans}}
-  <tr class="cursor-pointer" hx-get="/scans/{{.ID}}" hx-target="body" hx-push-url="true">
-    <td>{{.ID}}</td>
+  <tr id="scan-{{.ID}}" class="cursor-pointer" hx-get="/scans/{{.ID}}" hx-push-url="true">
+    <td><a href="/scans/{{.ID}}" hx-on:click="event.stopPropagation()">{{.ID}}</a></td>
     <td>{{if .SkillName}}{{.SkillName}}{{else}}{{.Kind}}{{end}}</td>
     <td>{{template "status-badge" (status .Status)}}</td>
     <td>{{if gt .FindingsCount 0}}{{template "findings-badge" .FindingsCount}}{{end}}</td>

@@ -14,8 +14,8 @@
     </tr></thead>
     <tbody>
     {{range .Skills}}
-      <tr class="cursor-pointer" hx-get="/skills/{{.ID}}" hx-target="body" hx-push-url="true">
-        <td class="font-medium">{{.Name}}</td>
+      <tr id="skill-{{.ID}}" class="cursor-pointer" hx-get="/skills/{{.ID}}" hx-push-url="true">
+        <td><a href="/skills/{{.ID}}" class="font-medium" hx-on:click="event.stopPropagation()">{{.Name}}</a></td>
         <td class="text-muted-foreground whitespace-normal">{{.Description}}</td>
         <td>{{if .OutputKind}}<span class="badge-outline">{{.OutputKind}}</span>{{end}}</td>
         <td class="text-muted-foreground">{{.Source}}</td>

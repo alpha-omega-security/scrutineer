@@ -1,6 +1,7 @@
 package web
 
 import (
+	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strconv"
@@ -111,7 +112,7 @@ func TestSkillRetry_preservesSkillID(t *testing.T) {
 	req.Header.Set("Sec-Fetch-Site", "same-origin")
 	w = httptest.NewRecorder()
 	h.ServeHTTP(w, req)
-	if w.Code != 204 {
+	if w.Code != http.StatusSeeOther {
 		t.Fatalf("retry status %d: %s", w.Code, w.Body)
 	}
 
