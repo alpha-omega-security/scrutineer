@@ -346,20 +346,20 @@
     </table>
   </div>
 
-  {{if .Active}}
-    <div hx-ext="sse" sse-connect="/events?repo={{.Repo.ID}}"
-         sse-swap="scan-status" hx-swap="none"
-         hx-on::sse-message="if(event.detail.type==='scan-status') location.reload()"
-         hidden></div>
-  {{end}}
+  <div hx-ext="sse" sse-connect="/events?repo={{.Repo.ID}}"
+       sse-swap="scan-status" hx-swap="none" hidden></div>
 </div>
 
 {{template "foot" .}}
 
 {{define "scan_rows"}}
 <tbody id="scan-rows">
-{{range .Scans}}
-  <tr id="scan-{{.ID}}" class="cursor-pointer" hx-get="/scans/{{.ID}}" hx-push-url="true">
+{{range .Scans}}{{template "scan-row" (dict "S" .)}}{{end}}
+</tbody>
+{{end}}
+
+{{define "scan-row"}}{{with .S}}
+  <tr id="scan-{{.ID}}" class="cursor-pointer" hx-get="/scans/{{.ID}}" hx-push-url="true"{{if $.OOB}} hx-swap-oob="true"{{end}}>
     <td><a href="/scans/{{.ID}}" hx-on:click="event.stopPropagation()">{{.ID}}</a></td>
     <td>{{if .SkillName}}{{.SkillName}}{{else}}{{.Kind}}{{end}}</td>
     <td>{{template "status-badge" (status .Status)}}</td>
@@ -371,6 +371,9 @@
     <td>{{if .FinishedAt}}{{dur .Duration}}{{end}}</td>
     <td>{{template "scan-actions" .}}</td>
   </tr>
-{{end}}
-</tbody>
+{{end}}{{end}}
+
+{{define "scan-status-sse"}}
+{{template "scan-row" (dict "S" .Scan "OOB" true)}}
+<div hx-swap-oob="afterbegin:#toaster">{{template "toast" .Flash}}</div>
 {{end}}

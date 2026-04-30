@@ -1365,14 +1365,6 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 		ORDER BY s.id DESC
 	`, repo.ID).Scan(&scans)
 
-	active := false
-	for _, sc := range scans {
-		if !sc.Status.Terminal() {
-			active = true
-			break
-		}
-	}
-
 	// The security-deep-dive skill owns the structured audit report; everything
 	// the Summary/Threat Model/Findings tabs render comes from its scans.
 	var latest *db.Scan
@@ -1455,7 +1447,7 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := map[string]any{
-		"Repo": repo, "Scans": scans, "Active": active, "Latest": latest,
+		"Repo": repo, "Scans": scans, "Latest": latest,
 		"Findings":  findings,
 		"TotalCost": totalCost,
 		"TMCommit":  tmCommit,
@@ -1464,15 +1456,6 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 		"Skills":       activeSkills,
 		"Subprojects":  subprojects,
 		"SubScanCount": subScanCount,
-	}
-	if r.Header.Get("HX-Target") == "scan-rows" {
-		if !active {
-			// All jobs settled since the page loaded; full refresh so the
-			// Summary, Findings and metadata sections pick up results.
-			w.Header().Set("HX-Refresh", "true")
-		}
-		s.render(w, r, "scan_rows", data)
-		return
 	}
 	s.render(w, r, "repo_show.html", data)
 }

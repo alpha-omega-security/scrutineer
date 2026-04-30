@@ -139,6 +139,35 @@ func flashFrom(t *testing.T, w *httptest.ResponseRecorder) Flash {
 	return f
 }
 
+func TestRenderScanStatus_OOBRowAndToast(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://github.com/foo/bar.git", Name: "bar"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", SkillName: "audit", Status: db.ScanDone}
+	s.DB.Create(&scan)
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, FindingID: "F1", Title: "x", Severity: "High"})
+
+	out := s.renderScanStatus(scan.ID)
+
+	if !strings.Contains(out, fmt.Sprintf(`id="scan-%d"`, scan.ID)) {
+		t.Errorf("missing row id: %s", out)
+	}
+	if !strings.Contains(out, `hx-swap-oob="true"`) {
+		t.Error("row not marked for OOB swap")
+	}
+	if !strings.Contains(out, `hx-swap-oob="afterbegin:#toaster"`) {
+		t.Error("toast not targeted at #toaster")
+	}
+	if !strings.Contains(out, "audit done") {
+		t.Errorf("toast title missing skill+status: %s", out)
+	}
+	if !strings.Contains(out, "bar") {
+		t.Error("toast missing repo name")
+	}
+}
+
 func TestRepoNew_fallbackPages(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

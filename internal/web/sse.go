@@ -1,11 +1,14 @@
 package web
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync"
+
+	"scrutineer/internal/db"
 )
 
 // Event is one SSE message. Name maps to the htmx sse-swap attribute;
@@ -99,10 +102,46 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		case <-ctx.Done():
 			return
 		case e := <-c.ch:
-			writeSSEEvent(w, e.Name, e.Data)
+			data := e.Data
+			if e.Name == "scan-status" {
+				data = s.renderScanStatus(e.ScanID)
+			}
+			writeSSEEvent(w, e.Name, data)
 			flusher.Flush()
 		}
 	}
+}
+
+// renderScanStatus loads a scan and renders the OOB row + toast fragment
+// pushed to repo_show via the scan-status SSE event.
+func (s *Server) renderScanStatus(scanID uint) string {
+	var scan db.Scan
+	if err := s.DB.Preload("Repository").First(&scan, scanID).Error; err != nil {
+		return ""
+	}
+	var n int64
+	s.DB.Model(&db.Finding{}).Where("scan_id = ?", scan.ID).Count(&n)
+	scan.FindingsCount = int(n)
+
+	cat := "success"
+	if scan.Status != db.ScanDone {
+		cat = "error"
+	}
+	flash := Flash{
+		Category:    cat,
+		Title:       fmt.Sprintf("%s %s", scan.SkillName, scan.Status),
+		Description: scan.Repository.Name,
+		Href:        fmt.Sprintf("/scans/%d", scan.ID),
+		Label:       "View",
+	}
+	var buf strings.Builder
+	if err := s.tmpl.ExecuteTemplate(&buf, "scan-status-sse", map[string]any{
+		"Scan": scan, "Flash": flash,
+	}); err != nil {
+		s.Log.Error("render scan-status-sse", "scan", scanID, "err", err)
+		return ""
+	}
+	return buf.String()
 }
 
 // writeSSEEvent emits one SSE event per the spec. Embedded newlines in data
