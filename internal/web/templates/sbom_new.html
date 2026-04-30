@@ -1,0 +1,15 @@
+{{template "head" .}}
+
+<div class="max-w-md">
+  <h2 class="text-2xl font-semibold mb-2">Upload SBOM</h2>
+  <p class="text-sm text-muted-foreground mb-4">CycloneDX or SPDX, JSON only.</p>
+  <form method="post" action="/sboms" enctype="multipart/form-data" class="form grid gap-4">
+    <input class="input" type="file" name="file" accept=".json,application/json" required>
+    <footer class="flex justify-end gap-2">
+      <a href="/sboms" class="btn-outline">Cancel</a>
+      <button type="submit" class="btn">Upload</button>
+    </footer>
+  </form>
+</div>
+
+{{template "foot" .}}

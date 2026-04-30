@@ -1,0 +1,36 @@
+{{template "head" .}}
+
+<div class="max-w-lg">
+{{if .Bulk}}
+  <h2 class="text-2xl font-semibold mb-2">Bulk import repositories</h2>
+  <p class="text-sm text-muted-foreground mb-4">
+    One URL per line. Only <code>https://</code> URLs are accepted.
+    Duplicates are skipped; each new repo is queued with the default scan set.
+  </p>
+  <form method="post" action="/repositories/bulk" class="form grid gap-3">
+    <textarea class="input font-mono text-xs" name="urls" rows="10" required
+              placeholder="https://github.com/maragudk/goqite.git&#10;https://github.com/spf13/cobra.git"></textarea>
+    <footer class="flex justify-end gap-2">
+      <a href="/" class="btn-outline">Cancel</a>
+      <button type="submit" class="btn"><i data-lucide="play"></i> Import</button>
+    </footer>
+  </form>
+{{else}}
+  <h2 class="text-2xl font-semibold mb-4">Add repository</h2>
+  <form method="post" action="/repositories" class="form grid gap-3">
+    <input class="input" type="text" name="url"
+           placeholder="https://github.com/maragudk/goqite.git" required>
+    <footer class="flex justify-between items-center gap-2">
+      <a href="/repositories/new?bulk=1" class="btn-ghost-sm">
+        <i data-lucide="list-plus"></i> Add multiple
+      </a>
+      <div class="flex gap-2">
+        <a href="/" class="btn-outline">Cancel</a>
+        <button type="submit" class="btn"><i data-lucide="play"></i> Scan</button>
+      </div>
+    </footer>
+  </form>
+{{end}}
+</div>
+
+{{template "foot" .}}

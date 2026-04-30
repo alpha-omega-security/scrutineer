@@ -20,6 +20,7 @@ const (
 
 func (s *Server) registerSBOMRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /sboms", s.sbomList)
+	mux.HandleFunc("GET /sboms/new", s.sbomNew)
 	mux.HandleFunc("POST /sboms", s.sbomUpload)
 	mux.HandleFunc("GET /sboms/{id}", s.sbomShow)
 	mux.HandleFunc("POST /sboms/{id}/resolve", s.sbomResolve)
@@ -30,6 +31,10 @@ func (s *Server) sbomList(w http.ResponseWriter, r *http.Request) {
 	var rows []db.SBOMUpload
 	s.DB.Order("id desc").Find(&rows)
 	s.render(w, r, "sboms.html", map[string]any{"SBOMs": rows})
+}
+
+func (s *Server) sbomNew(w http.ResponseWriter, r *http.Request) {
+	s.render(w, r, "sbom_new.html", nil)
 }
 
 func (s *Server) sbomUpload(w http.ResponseWriter, r *http.Request) {
