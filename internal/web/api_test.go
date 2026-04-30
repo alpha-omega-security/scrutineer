@@ -161,6 +161,68 @@ func TestAPIFindingReadsAndFilters(t *testing.T) {
 	}
 }
 
+func TestAPIListDependencyFindings(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	app, scan := seedRunningScan(t, s)
+
+	// App declares roo via Gemfile (ecosystem "gem", git-pkgs naming).
+	s.DB.Create(&db.Dependency{RepositoryID: app.ID, Name: "roo", Ecosystem: "gem", Requirement: "~> 2.10", ManifestPath: "Gemfile", ManifestKind: "manifest", DependencyType: "runtime"})
+	s.DB.Create(&db.Dependency{RepositoryID: app.ID, Name: "roo", Ecosystem: "gem", Requirement: "2.10.1", ManifestPath: "Gemfile.lock", ManifestKind: "lockfile", DependencyType: "runtime"})
+	s.DB.Create(&db.Dependency{RepositoryID: app.ID, Name: "leftpad", Ecosystem: "npm", ManifestPath: "package.json"})
+
+	// Library repo publishes roo to rubygems (ecosyste.ms naming) and has findings.
+	lib := db.Repository{URL: "https://example.com/roo", Name: "roo"}
+	s.DB.Create(&lib)
+	s.DB.Create(&db.Package{RepositoryID: lib.ID, Name: "roo", Ecosystem: "rubygems"})
+	libScan := db.Scan{RepositoryID: lib.ID, Kind: worker.JobSkill, Status: db.ScanDone}
+	s.DB.Create(&libScan)
+	s.DB.Create(&db.Finding{ScanID: libScan.ID, RepositoryID: lib.ID, Title: "xlsx bomb", Severity: sevHigh, CWE: "CWE-770", Location: "lib/roo/excelx.rb:42", Status: db.FindingNew, Trace: "t", Boundary: "b"})
+	s.DB.Create(&db.Finding{ScanID: libScan.ID, RepositoryID: lib.ID, Title: "ods bomb", Severity: "Medium", CWE: "CWE-770", Status: db.FindingNew})
+	s.DB.Create(&db.Finding{ScanID: libScan.ID, RepositoryID: lib.ID, Title: "old", Severity: sevHigh, Status: db.FindingFixed})
+
+	// Self-published package on the app repo must not match its own findings.
+	s.DB.Create(&db.Package{RepositoryID: app.ID, Name: "leftpad", Ecosystem: "npm"})
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: app.ID, Title: "self", Severity: sevHigh, Status: db.FindingNew})
+
+	r := httptest.NewRequest("GET", "/api/repositories/"+strconv.FormatUint(uint64(app.ID), 10)+"/dependency-findings", nil)
+	r.Host = testHost
+	r.Header.Set("Authorization", "Bearer "+scan.APIToken)
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	var rows []db.DependencyFinding
+	if err := json.NewDecoder(w.Body).Decode(&rows); err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("rows=%d want=2 (live roo findings only): %+v", len(rows), rows)
+	}
+	if rows[0].Severity != sevHigh || rows[0].Package != "roo" {
+		t.Errorf("first row should be the High roo finding, got %+v", rows[0])
+	}
+	if rows[0].Requirement != "2.10.1" {
+		t.Errorf("lockfile requirement should win, got %q", rows[0].Requirement)
+	}
+	if rows[0].LibRepoURL != "https://example.com/roo" {
+		t.Errorf("library_repository_url=%q", rows[0].LibRepoURL)
+	}
+
+	// Severity filter
+	r = httptest.NewRequest("GET", "/api/repositories/"+strconv.FormatUint(uint64(app.ID), 10)+"/dependency-findings?severity=High", nil)
+	r.Host = testHost
+	r.Header.Set("Authorization", "Bearer "+scan.APIToken)
+	w = httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	rows = nil
+	_ = json.NewDecoder(w.Body).Decode(&rows)
+	if len(rows) != 1 || rows[0].Title != "xlsx bomb" {
+		t.Errorf("severity filter: %+v", rows)
+	}
+}
+
 func TestAPIRunFindingSkill_scopesFindingID(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
