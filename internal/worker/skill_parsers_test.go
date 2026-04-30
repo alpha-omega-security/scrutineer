@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -274,5 +275,25 @@ func TestParseDependencies_acceptsTypeOrDependencyType(t *testing.T) {
 	gotTypes := map[string]string{rows[0].Name: rows[0].DependencyType, rows[1].Name: rows[1].DependencyType}
 	if gotTypes["a"] != "runtime" || gotTypes["b"] != "development" {
 		t.Errorf("types: %+v", gotTypes)
+	}
+}
+
+func TestParseDependencies_largeBatchExceedsSQLiteVariableLimit(t *testing.T) {
+	const n = 200
+	deps := make([]map[string]string, n)
+	for i := range n {
+		deps[i] = map[string]string{
+			"name":          "dep-" + strconv.Itoa(i),
+			"ecosystem":     "npm",
+			"type":          "runtime",
+			"manifest_path": "package.json",
+		}
+	}
+	b, _ := json.Marshal(map[string]any{"dependencies": deps})
+	repo, gdb := runSkillWithReport(t, "dependencies", string(b))
+	var count int64
+	gdb.Model(&db.Dependency{}).Where("repository_id = ?", repo.ID).Count(&count)
+	if count != n {
+		t.Fatalf("count = %d, want %d", count, n)
 	}
 }
