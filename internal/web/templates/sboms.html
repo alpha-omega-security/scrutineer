@@ -15,12 +15,12 @@
       <h2>Upload SBOM</h2>
       <p class="text-sm text-muted-foreground">CycloneDX or SPDX, JSON only.</p>
     </header>
-    <form method="post" action="/sboms" enctype="multipart/form-data"
-          hx-post="/sboms" hx-encoding="multipart/form-data" class="form grid gap-4">
+    <form method="post" action="/sboms" enctype="multipart/form-data" class="form grid gap-4">
       <input class="input" type="file" name="file" accept=".json,application/json" required>
       <footer class="flex justify-end gap-2">
-        <button type="button" class="btn-outline" onclick="this.closest('dialog').close()">Cancel</button>
-        <button type="submit" class="btn">Upload</button>
+        <button type="submit" class="btn-outline" formmethod="dialog" formnovalidate>Cancel</button>
+        <button type="submit" class="btn"
+                hx-post="/sboms" hx-encoding="multipart/form-data" hx-swap="none">Upload</button>
       </footer>
     </form>
   </article>

@@ -52,9 +52,11 @@
         <td>{{if .LastScan}}{{template "status-badge" (status .LastScan.Status)}}{{end}}</td>
         <td>{{template "findings-badge" .FindingsTotal}}</td>
         <td>
-          <button class="btn-sm-outline"
-                  hx-post="/repositories/{{.ID}}/scan"
-                  hx-on:click="event.stopPropagation()"><i data-lucide="refresh-cw"></i> Rescan</button>
+          <form method="post" action="/repositories/{{.ID}}/scan"
+                hx-post="/repositories/{{.ID}}/scan" hx-swap="none"
+                hx-on:click="event.stopPropagation()">
+            <button type="submit" class="btn-sm-outline"><i data-lucide="refresh-cw"></i> Rescan</button>
+          </form>
         </td>
       </tr>
     {{end}}

@@ -59,7 +59,7 @@
     {{$repos := .Repos}}
     {{range .Advisories}}
       {{$repo := index $repos .RepositoryID}}
-      <tr class="cursor-pointer" onclick="window.open('{{.URL}}', '_blank', 'noopener')">
+      <tr>
         <td>
           {{if eq .Severity "CRITICAL"}}<span class="badge-destructive">Critical</span>
           {{else if eq .Severity "HIGH"}}<span class="badge-destructive">High</span>
@@ -68,12 +68,11 @@
         </td>
         <td class="text-muted-foreground">{{if .CVSSScore}}{{printf "%.1f" .CVSSScore}}{{end}}</td>
         <td class="min-w-0 whitespace-normal">
-          <div class="font-medium">{{.Title}}</div>
+          <a href="{{.URL}}" target="_blank" rel="noopener" class="font-medium hover:underline">{{.Title}}</a>
           {{if .Classification}}<div class="text-xs text-muted-foreground">{{.Classification}}</div>{{end}}
         </td>
         <td class="truncate">
-          <a href="/repositories/{{$repo.ID}}" class="hover:underline"
-             onclick="event.stopPropagation()">{{$repo.Name}}</a>
+          <a href="/repositories/{{$repo.ID}}" class="hover:underline">{{$repo.Name}}</a>
         </td>
         <td class="text-muted-foreground whitespace-normal text-xs">{{.Packages}}</td>
         <td class="text-muted-foreground">{{if .PublishedAt}}{{.PublishedAt.Format "2006-01-02"}}{{end}}</td>

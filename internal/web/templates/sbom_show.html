@@ -12,10 +12,13 @@
     </p>
   </div>
   <div class="flex items-center gap-2">
-    <form hx-post="/sboms/{{.SBOM.ID}}/resolve">
+    <form method="post" action="/sboms/{{.SBOM.ID}}/resolve"
+          hx-post="/sboms/{{.SBOM.ID}}/resolve" hx-swap="none">
       <button class="btn-outline" type="submit"><i data-lucide="refresh-cw"></i> Re-resolve</button>
     </form>
-    <form hx-post="/sboms/{{.SBOM.ID}}/delete" hx-confirm="Delete this SBOM and its package list?">
+    <form method="post" action="/sboms/{{.SBOM.ID}}/delete"
+          hx-post="/sboms/{{.SBOM.ID}}/delete" hx-swap="none"
+          hx-confirm="Delete this SBOM and its package list?">
       <button class="btn-outline" type="submit"><i data-lucide="trash"></i> Delete</button>
     </form>
   </div>

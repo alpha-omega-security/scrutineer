@@ -38,66 +38,81 @@
       {{end}}
     </div>
 
-    <div class="flex items-center gap-2 shrink-0">
+    <form method="post" action="/findings/{{$id}}/status" hx-swap="none"
+          class="flex items-center gap-2 shrink-0">
       {{if eq $s "new"}}
-        <button class="btn" hx-post="/findings/{{$id}}/verify" hx-swap="none">
+        <button type="submit" class="btn" formaction="/findings/{{$id}}/verify"
+                hx-post="/findings/{{$id}}/verify">
           <i data-lucide="shield-check"></i> Verify
         </button>
-        <button class="btn-outline" hx-post="/findings/{{$id}}/status" hx-vals='{"status":"triaged"}' hx-swap="none">
+        <button type="submit" name="status" value="triaged" class="btn-outline"
+                hx-post="/findings/{{$id}}/status">
           Skip to triage
         </button>
-        <button class="btn-ghost" hx-post="/findings/{{$id}}/status" hx-vals='{"status":"rejected"}' hx-swap="none">
+        <button type="submit" name="status" value="rejected" class="btn-ghost"
+                hx-post="/findings/{{$id}}/status">
           Reject
         </button>
 
       {{else if eq $s "enriched"}}
-        <button class="btn" hx-post="/findings/{{$id}}/status" hx-vals='{"status":"triaged"}' hx-swap="none">
+        <button type="submit" name="status" value="triaged" class="btn"
+                hx-post="/findings/{{$id}}/status">
           <i data-lucide="check"></i> Triage
         </button>
-        <button class="btn-ghost" hx-post="/findings/{{$id}}/status" hx-vals='{"status":"rejected"}' hx-swap="none">
+        <button type="submit" name="status" value="rejected" class="btn-ghost"
+                hx-post="/findings/{{$id}}/status">
           Reject
         </button>
 
       {{else if eq $s "triaged"}}
-        <button class="btn" hx-post="/findings/{{$id}}/disclose" hx-swap="none">
+        <button type="submit" class="btn" formaction="/findings/{{$id}}/disclose"
+                hx-post="/findings/{{$id}}/disclose">
           <i data-lucide="file-pen"></i> Draft disclosure
         </button>
-        <button class="btn-outline" hx-post="/findings/{{$id}}/patch" hx-swap="none">
+        <button type="submit" class="btn-outline" formaction="/findings/{{$id}}/patch"
+                hx-post="/findings/{{$id}}/patch">
           <i data-lucide="wrench"></i> Propose patch
         </button>
-        <button class="btn-outline" hx-post="/findings/{{$id}}/status" hx-vals='{"status":"ready"}' hx-swap="none">
+        <button type="submit" name="status" value="ready" class="btn-outline"
+                hx-post="/findings/{{$id}}/status">
           Mark ready
         </button>
-        <button class="btn-ghost" hx-post="/findings/{{$id}}/status" hx-vals='{"status":"rejected"}' hx-swap="none">
+        <button type="submit" name="status" value="rejected" class="btn-ghost"
+                hx-post="/findings/{{$id}}/status">
           Reject
         </button>
 
       {{else if eq $s "ready"}}
-        <button class="btn" hx-post="/findings/{{$id}}/status" hx-vals='{"status":"reported"}' hx-swap="none">
+        <button type="submit" name="status" value="reported" class="btn"
+                hx-post="/findings/{{$id}}/status">
           <i data-lucide="send"></i> Mark as reported
         </button>
 
       {{else if eq $s "reported"}}
-        <button class="btn" hx-post="/findings/{{$id}}/status" hx-vals='{"status":"acknowledged"}' hx-swap="none">
+        <button type="submit" name="status" value="acknowledged" class="btn"
+                hx-post="/findings/{{$id}}/status">
           <i data-lucide="message-circle"></i> Acknowledged
         </button>
 
       {{else if eq $s "acknowledged"}}
-        <button class="btn" hx-post="/findings/{{$id}}/status" hx-vals='{"status":"fixed"}' hx-swap="none">
+        <button type="submit" name="status" value="fixed" class="btn"
+                hx-post="/findings/{{$id}}/status">
           <i data-lucide="wrench"></i> Mark fixed
         </button>
 
       {{else if eq $s "fixed"}}
-        <button class="btn" hx-post="/findings/{{$id}}/status" hx-vals='{"status":"published"}' hx-swap="none">
+        <button type="submit" name="status" value="published" class="btn"
+                hx-post="/findings/{{$id}}/status">
           <i data-lucide="globe"></i> Publish
         </button>
 
       {{else if or (eq $s "rejected") (eq $s "duplicate")}}
-        <button class="btn-outline" hx-post="/findings/{{$id}}/status" hx-vals='{"status":"new"}' hx-swap="none">
+        <button type="submit" name="status" value="new" class="btn-outline"
+                hx-post="/findings/{{$id}}/status">
           <i data-lucide="rotate-ccw"></i> Reopen
         </button>
       {{end}}
-    </div>
+    </form>
   </section>
 </div>
 {{end}}

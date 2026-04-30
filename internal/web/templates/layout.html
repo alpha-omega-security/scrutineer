@@ -76,9 +76,7 @@
   <div>
     <header><h2>Add repository</h2></header>
     <section>
-      <form hx-post="/repositories"
-            hx-on::after-request="if(event.detail.successful){this.reset();this.closest('dialog').close()}"
-            class="form grid gap-3">
+      <form method="post" action="/repositories" class="form grid gap-3">
         <input class="input" type="text" name="url"
                placeholder="https://github.com/maragudk/goqite.git" required>
         <footer class="flex justify-between items-center gap-2">
@@ -87,15 +85,15 @@
             <i data-lucide="list-plus"></i> Add multiple
           </button>
           <div class="flex gap-2">
-            <button type="button" class="btn-outline" onclick="this.closest('dialog').close()">Cancel</button>
-            <button type="submit" class="btn"><i data-lucide="play"></i> Scan</button>
+            <button type="submit" class="btn-outline" formmethod="dialog" formnovalidate>Cancel</button>
+            <button type="submit" class="btn" hx-post="/repositories" hx-swap="none">
+              <i data-lucide="play"></i> Scan
+            </button>
           </div>
         </footer>
       </form>
     </section>
-    <button type="button" aria-label="Close" onclick="this.closest('dialog').close()">
-      <i data-lucide="x"></i>
-    </button>
+    <form method="dialog"><button aria-label="Close"><i data-lucide="x"></i></button></form>
   </div>
 </dialog>
 
@@ -110,20 +108,18 @@
       </p>
     </header>
     <section>
-      <form hx-post="/repositories/bulk"
-            hx-on::after-request="if(event.detail.successful){this.reset();this.closest('dialog').close()}"
-            class="form grid gap-3">
+      <form method="post" action="/repositories/bulk" class="form grid gap-3">
         <textarea class="input font-mono text-xs" name="urls" rows="10" required
                   placeholder="https://github.com/maragudk/goqite.git&#10;https://github.com/spf13/cobra.git&#10;https://github.com/stretchr/testify.git"></textarea>
         <footer class="flex justify-end gap-2">
-          <button type="button" class="btn-outline" onclick="this.closest('dialog').close()">Cancel</button>
-          <button type="submit" class="btn"><i data-lucide="play"></i> Import</button>
+          <button type="submit" class="btn-outline" formmethod="dialog" formnovalidate>Cancel</button>
+          <button type="submit" class="btn" hx-post="/repositories/bulk" hx-swap="none">
+            <i data-lucide="play"></i> Import
+          </button>
         </footer>
       </form>
     </section>
-    <button type="button" aria-label="Close" onclick="this.closest('dialog').close()">
-      <i data-lucide="x"></i>
-    </button>
+    <form method="dialog"><button aria-label="Close"><i data-lucide="x"></i></button></form>
   </div>
 </dialog>
 
@@ -208,14 +204,17 @@
 {{end}}
 
 {{define "scan-actions"}}
-  {{if or (eq (status .Status) "queued") (eq (status .Status) "running")}}<button class="btn-sm-ghost"
-    hx-post="/scans/{{.ID}}/cancel" hx-swap="none"
-    hx-on:click="event.stopPropagation()"
-    data-tooltip="Cancel"><i data-lucide="x"></i></button>
-  {{else if and (or (eq (status .Status) "failed") (eq (status .Status) "cancelled")) .SkillID}}<button class="btn-sm-ghost"
-    hx-post="/scans/{{.ID}}/retry" hx-swap="none"
-    hx-on:click="event.stopPropagation()"
-    data-tooltip="Retry"><i data-lucide="refresh-cw"></i></button>{{end}}
+  {{if or (eq (status .Status) "queued") (eq (status .Status) "running")}}
+    <form method="post" action="/scans/{{.ID}}/cancel" hx-post="/scans/{{.ID}}/cancel"
+          hx-swap="none" hx-on:click="event.stopPropagation()">
+      <button type="submit" class="btn-sm-ghost" data-tooltip="Cancel"><i data-lucide="x"></i></button>
+    </form>
+  {{else if and (or (eq (status .Status) "failed") (eq (status .Status) "cancelled")) .SkillID}}
+    <form method="post" action="/scans/{{.ID}}/retry" hx-post="/scans/{{.ID}}/retry"
+          hx-swap="none" hx-on:click="event.stopPropagation()">
+      <button type="submit" class="btn-sm-ghost" data-tooltip="Retry"><i data-lucide="refresh-cw"></i></button>
+    </form>
+  {{end}}
 {{end}}
 
 {{define "status-badge"}}

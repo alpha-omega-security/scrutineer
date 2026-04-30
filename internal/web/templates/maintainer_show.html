@@ -15,19 +15,21 @@
     {{if $m.Email}}<p class="text-sm text-muted-foreground">{{$m.Email}}</p>{{end}}
   </div>
   <span class="ml-auto flex items-center gap-2">
+    <form method="post" action="/maintainers/{{$m.ID}}/do-not-contact"
+          hx-post="/maintainers/{{$m.ID}}/do-not-contact" hx-swap="none"
+          class="contents">
     {{if $m.DoNotContact}}
       <span class="badge-destructive" data-tooltip="Maintainer has asked not to be contacted, or routing is known to leak">Do not contact</span>
-      <button class="btn-outline-sm" hx-post="/maintainers/{{$m.ID}}/do-not-contact"
-              hx-vals='{"value":"false"}' hx-swap="none">
+      <button type="submit" name="value" value="false" class="btn-outline-sm">
         Clear flag
       </button>
     {{else}}
-      <button class="btn-outline-sm" hx-post="/maintainers/{{$m.ID}}/do-not-contact"
-              hx-vals='{"value":"true"}' hx-swap="none"
+      <button type="submit" name="value" value="true" class="btn-outline-sm"
               data-tooltip="Suppress from disclosure routing">
         <i data-lucide="ban"></i> Do not contact
       </button>
     {{end}}
+    </form>
     {{template "status-badge" (printf "%s" $m.Status)}}
   </span>
 </div>

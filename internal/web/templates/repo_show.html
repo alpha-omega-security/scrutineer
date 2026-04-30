@@ -36,7 +36,8 @@
     <a href="/repositories/{{.Repo.ID}}/report.md" class="btn-outline" download>
       <i data-lucide="download"></i> Export report
     </a>
-    <form hx-post="/repositories/{{.Repo.ID}}/scan">
+    <form method="post" action="/repositories/{{.Repo.ID}}/scan"
+          hx-post="/repositories/{{.Repo.ID}}/scan" hx-swap="none">
       <button class="btn" type="submit"><i data-lucide="play"></i> New scan</button>
     </form>
   </div>
@@ -239,8 +240,7 @@
             <td class="text-muted-foreground whitespace-normal break-all">{{if .Requirement}}{{.Requirement}}{{else}}-{{end}}</td>
             <td class="text-muted-foreground">{{.DependencyType}}</td>
             <td class="whitespace-normal text-muted-foreground text-xs">{{range $i, $m := .Manifests}}{{if $i}}, {{end}}{{$m}}{{end}}</td>
-            <td>{{if .PURL}}{{$rid := lookup $.KnownPURLs .PURL}}{{if $rid}}<a href="/repositories/{{$rid}}" class="btn-sm-ghost" data-tooltip="View repository"><i data-lucide="external-link"></i></a>{{else}}<button class="btn-sm-ghost" hx-post="/dependencies/{{.ID}}/scan" hx-swap="none"
-                data-tooltip="Import repository"><i data-lucide="import"></i></button>{{end}}{{end}}</td>
+            <td>{{if .PURL}}{{$rid := lookup $.KnownPURLs .PURL}}{{if $rid}}<a href="/repositories/{{$rid}}" class="btn-sm-ghost" data-tooltip="View repository"><i data-lucide="external-link"></i></a>{{else}}<form method="post" action="/dependencies/{{.ID}}/scan" hx-post="/dependencies/{{.ID}}/scan" hx-swap="none"><button type="submit" class="btn-sm-ghost" data-tooltip="Import repository"><i data-lucide="import"></i></button></form>{{end}}{{end}}</td>
           </tr>
         {{end}}
         </tbody>
@@ -297,8 +297,7 @@
           <td class="text-muted-foreground">{{.LatestVersion}}</td>
           <td class="text-muted-foreground">{{bignum .Downloads}}</td>
           <td class="text-muted-foreground">{{bignum .DependentRepos}} repos</td>
-          <td>{{if .RepositoryURL}}{{$rid := lookup $.KnownURLs .RepositoryURL}}{{if $rid}}<a href="/repositories/{{$rid}}" class="btn-sm-ghost" data-tooltip="View repository"><i data-lucide="external-link"></i></a>{{else}}<button class="btn-sm-ghost" hx-post="/dependents/{{.ID}}/scan" hx-swap="none"
-              data-tooltip="Import repository"><i data-lucide="import"></i></button>{{end}}{{end}}</td>
+          <td>{{if .RepositoryURL}}{{$rid := lookup $.KnownURLs .RepositoryURL}}{{if $rid}}<a href="/repositories/{{$rid}}" class="btn-sm-ghost" data-tooltip="View repository"><i data-lucide="external-link"></i></a>{{else}}<form method="post" action="/dependents/{{.ID}}/scan" hx-post="/dependents/{{.ID}}/scan" hx-swap="none"><button type="submit" class="btn-sm-ghost" data-tooltip="Import repository"><i data-lucide="import"></i></button></form>{{end}}{{end}}</td>
         </tr>
       {{end}}
       </tbody>

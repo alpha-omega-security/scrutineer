@@ -11,9 +11,10 @@
     {{template "status-badge" (status .Status)}}
   </h2>
   {{if and (eq .Kind "skill") .SkillID}}
-    <button class="btn-outline" hx-post="/scans/{{.ID}}/retry">
-      <i data-lucide="refresh-cw"></i> Retry
-    </button>
+    <form method="post" action="/scans/{{.ID}}/retry"
+          hx-post="/scans/{{.ID}}/retry" hx-swap="none">
+      <button type="submit" class="btn-outline"><i data-lucide="refresh-cw"></i> Retry</button>
+    </form>
   {{end}}
 </div>
 
