@@ -34,20 +34,28 @@ func statsFromContext(ctx context.Context) *queryStats {
 
 var startTimeKey = "web:start"
 
-func registerQueryStatsCallback(gdb *gorm.DB) {
+func registerQueryStatsCallback(gdb *gorm.DB) error {
 	cb := gdb.Callback()
-	cb.Query().Before("gorm:query").Register("web:before_query", stampStart)
-	cb.Query().After("gorm:query").Register("web:after_query", recordElapsed)
-	cb.Create().Before("gorm:create").Register("web:before_create", stampStart)
-	cb.Create().After("gorm:create").Register("web:after_create", recordElapsed)
-	cb.Update().Before("gorm:update").Register("web:before_update", stampStart)
-	cb.Update().After("gorm:update").Register("web:after_update", recordElapsed)
-	cb.Delete().Before("gorm:delete").Register("web:before_delete", stampStart)
-	cb.Delete().After("gorm:delete").Register("web:after_delete", recordElapsed)
-	cb.Raw().Before("gorm:raw").Register("web:before_raw", stampStart)
-	cb.Raw().After("gorm:raw").Register("web:after_raw", recordElapsed)
-	cb.Row().Before("gorm:row").Register("web:before_row", stampStart)
-	cb.Row().After("gorm:row").Register("web:after_row", recordElapsed)
+	regs := []error{
+		cb.Query().Before("gorm:query").Register("web:before_query", stampStart),
+		cb.Query().After("gorm:query").Register("web:after_query", recordElapsed),
+		cb.Create().Before("gorm:create").Register("web:before_create", stampStart),
+		cb.Create().After("gorm:create").Register("web:after_create", recordElapsed),
+		cb.Update().Before("gorm:update").Register("web:before_update", stampStart),
+		cb.Update().After("gorm:update").Register("web:after_update", recordElapsed),
+		cb.Delete().Before("gorm:delete").Register("web:before_delete", stampStart),
+		cb.Delete().After("gorm:delete").Register("web:after_delete", recordElapsed),
+		cb.Raw().Before("gorm:raw").Register("web:before_raw", stampStart),
+		cb.Raw().After("gorm:raw").Register("web:after_raw", recordElapsed),
+		cb.Row().Before("gorm:row").Register("web:before_row", stampStart),
+		cb.Row().After("gorm:row").Register("web:after_row", recordElapsed),
+	}
+	for _, err := range regs {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func stampStart(gdb *gorm.DB) {

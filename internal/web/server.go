@@ -143,7 +143,9 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *work
 	if err != nil {
 		return nil, err
 	}
-	registerQueryStatsCallback(gdb)
+	if err := registerQueryStatsCallback(gdb); err != nil {
+		return nil, err
+	}
 	return &Server{DB: gdb, Queue: q, Log: log, Broker: broker, Worker: w, tmpl: t,
 		resolvePURL: resolvePURLRepo}, nil
 }
