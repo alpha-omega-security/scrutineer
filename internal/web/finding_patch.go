@@ -51,7 +51,7 @@ func (s *Server) latestPatchScan(findingID uint) (*db.Scan, *patchReport, error)
 // file.
 func (s *Server) findingPatchDownload(w http.ResponseWriter, r *http.Request) {
 	var f db.Finding
-	if err := s.DB.First(&f, r.PathValue("id")).Error; err != nil {
+	if err := s.db(r).First(&f, r.PathValue("id")).Error; err != nil {
 		http.NotFound(w, r)
 		return
 	}

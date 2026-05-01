@@ -19,7 +19,7 @@ func (s *Server) apiListMaintainers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var rows []db.Maintainer
-	s.DB.Joins("JOIN repository_maintainers rm ON rm.maintainer_id = maintainers.id").
+	s.db(r).Joins("JOIN repository_maintainers rm ON rm.maintainer_id = maintainers.id").
 		Where("rm.repository_id = ?", id).
 		Order("maintainers.login").Find(&rows)
 	out := make([]map[string]any, 0, len(rows))
@@ -44,7 +44,7 @@ func (s *Server) apiListPackages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var rows []db.Package
-	s.DB.Where("repository_id = ?", id).Order("dependent_repos desc, downloads desc").Find(&rows)
+	s.db(r).Where("repository_id = ?", id).Order("dependent_repos desc, downloads desc").Find(&rows)
 	out := make([]map[string]any, 0, len(rows))
 	for _, p := range rows {
 		out = append(out, map[string]any{
@@ -71,7 +71,7 @@ func (s *Server) apiListAdvisories(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var rows []db.Advisory
-	s.DB.Where("repository_id = ?", id).Order("cvss_score desc").Find(&rows)
+	s.db(r).Where("repository_id = ?", id).Order("cvss_score desc").Find(&rows)
 	out := make([]map[string]any, 0, len(rows))
 	for _, a := range rows {
 		out = append(out, map[string]any{
@@ -97,7 +97,7 @@ func (s *Server) apiListDependents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var rows []db.Dependent
-	s.DB.Where("repository_id = ?", id).Order("dependent_repos desc").Find(&rows)
+	s.db(r).Where("repository_id = ?", id).Order("dependent_repos desc").Find(&rows)
 	out := make([]map[string]any, 0, len(rows))
 	for _, d := range rows {
 		out = append(out, map[string]any{
@@ -122,7 +122,7 @@ func (s *Server) apiListDependencies(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var rows []db.Dependency
-	s.DB.Where("repository_id = ?", id).Order("ecosystem, name").Find(&rows)
+	s.db(r).Where("repository_id = ?", id).Order("ecosystem, name").Find(&rows)
 	out := make([]map[string]any, 0, len(rows))
 	for _, d := range rows {
 		out = append(out, map[string]any{
@@ -176,7 +176,7 @@ func (s *Server) apiListFindings(w http.ResponseWriter, r *http.Request) {
 	}
 	// Direct subquery; GORM's Joins("Scan") aliasing doesn't round-trip on
 	// sqlite when the joined struct has its own relations.
-	q := s.DB.Where("scan_id IN (?)", s.DB.Model(&db.Scan{}).Select("id").Where("repository_id = ?", id)).
+	q := s.db(r).Where("scan_id IN (?)", s.db(r).Model(&db.Scan{}).Select("id").Where("repository_id = ?", id)).
 		Order("id desc")
 	if sev := r.URL.Query().Get("severity"); sev != "" {
 		q = q.Where("severity = ?", sev)
@@ -198,7 +198,7 @@ func (s *Server) apiListFindings(w http.ResponseWriter, r *http.Request) {
 func (s *Server) apiGetFinding(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(r.PathValue("id"))
 	var f db.Finding
-	if err := s.DB.First(&f, id).Error; err != nil {
+	if err := s.db(r).First(&f, id).Error; err != nil {
 		writeAPIError(w, http.StatusNotFound, "finding not found")
 		return
 	}

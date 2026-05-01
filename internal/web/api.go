@@ -42,7 +42,7 @@ func (s *Server) apiAuth(next http.Handler) http.Handler {
 			return
 		}
 		var scan db.Scan
-		if err := s.DB.Where("api_token = ? AND status = ?", token, db.ScanRunning).
+		if err := s.db(r).Where("api_token = ? AND status = ?", token, db.ScanRunning).
 			First(&scan).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				writeAPIError(w, http.StatusUnauthorized, "token invalid or scan not running")
@@ -114,7 +114,7 @@ func (s *Server) apiGetRepository(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var repo db.Repository
-	if err := s.DB.First(&repo, id).Error; err != nil {
+	if err := s.db(r).First(&repo, id).Error; err != nil {
 		writeAPIError(w, http.StatusNotFound, "repository not found")
 		return
 	}
@@ -139,7 +139,7 @@ func (s *Server) apiListScans(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusForbidden, "scan may only list scans on its own repository")
 		return
 	}
-	q := s.DB.Where("repository_id = ?", id).Order("id desc")
+	q := s.db(r).Where("repository_id = ?", id).Order("id desc")
 	if status := r.URL.Query().Get("status"); status != "" {
 		q = q.Where("status = ?", status)
 	}
@@ -158,7 +158,7 @@ func (s *Server) apiListScans(w http.ResponseWriter, r *http.Request) {
 func (s *Server) apiGetScan(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(r.PathValue("id"))
 	var sc db.Scan
-	if err := s.DB.First(&sc, id).Error; err != nil {
+	if err := s.db(r).First(&sc, id).Error; err != nil {
 		writeAPIError(w, http.StatusNotFound, "scan not found")
 		return
 	}
@@ -180,7 +180,7 @@ func (s *Server) apiRunSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var skill db.Skill
-	if err := s.DB.Where("name = ? AND active = ?", name, true).First(&skill).Error; err != nil {
+	if err := s.db(r).Where("name = ? AND active = ?", name, true).First(&skill).Error; err != nil {
 		writeAPIError(w, http.StatusNotFound, "skill not found or inactive")
 		return
 	}
@@ -194,7 +194,7 @@ func (s *Server) apiRunSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var sc db.Scan
-	s.DB.First(&sc, scanID)
+	s.db(r).First(&sc, scanID)
 	writeJSON(w, http.StatusCreated, scanSummary(sc))
 }
 
@@ -214,7 +214,7 @@ func (s *Server) apiRunFindingSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var skill db.Skill
-	if err := s.DB.Where("name = ? AND active = ?", name, true).First(&skill).Error; err != nil {
+	if err := s.db(r).Where("name = ? AND active = ?", name, true).First(&skill).Error; err != nil {
 		writeAPIError(w, http.StatusNotFound, "skill not found or inactive")
 		return
 	}
@@ -229,7 +229,7 @@ func (s *Server) apiRunFindingSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var sc db.Scan
-	s.DB.First(&sc, scanID)
+	s.db(r).First(&sc, scanID)
 	writeJSON(w, http.StatusCreated, scanSummary(sc))
 }
 
@@ -246,7 +246,7 @@ func (s *Server) findingRepoID(findingID uint) (uint, bool) {
 }
 
 func (s *Server) apiListSkills(w http.ResponseWriter, r *http.Request) {
-	q := s.DB.Order("name")
+	q := s.db(r).Order("name")
 	if v := r.URL.Query().Get("active"); v != "" {
 		active, _ := strconv.ParseBool(v)
 		q = q.Where("active = ?", active)

@@ -29,7 +29,7 @@ func (s *Server) registerSBOMRoutes(mux *http.ServeMux) {
 
 func (s *Server) sbomList(w http.ResponseWriter, r *http.Request) {
 	var rows []db.SBOMUpload
-	s.DB.Order("id desc").Find(&rows)
+	s.db(r).Order("id desc").Find(&rows)
 	s.render(w, r, "sboms.html", map[string]any{"SBOMs": rows})
 }
 
@@ -77,7 +77,7 @@ func (s *Server) sbomUpload(w http.ResponseWriter, r *http.Request) {
 			Scope:     scope[p.ID],
 		})
 	}
-	if err := s.DB.Create(&up).Error; err != nil {
+	if err := s.db(r).Create(&up).Error; err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -89,7 +89,7 @@ func (s *Server) sbomUpload(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) sbomShow(w http.ResponseWriter, r *http.Request) {
 	var up db.SBOMUpload
-	if err := s.DB.Preload("Packages.Repository").First(&up, r.PathValue("id")).Error; err != nil {
+	if err := s.db(r).Preload("Packages.Repository").First(&up, r.PathValue("id")).Error; err != nil {
 		http.NotFound(w, r)
 		return
 	}
@@ -133,7 +133,7 @@ func (s *Server) sbomShow(w http.ResponseWriter, r *http.Request) {
 	var findings []db.Finding
 	var advisories []db.Advisory
 	if len(repoIDs) > 0 {
-		q := s.DB.Where("repository_id IN ? AND status NOT IN ?", repoIDs,
+		q := s.db(r).Where("repository_id IN ? AND status NOT IN ?", repoIDs,
 			[]db.FindingLifecycle{db.FindingRejected, db.FindingDuplicate})
 		if sev := r.URL.Query().Get("severity"); sev != "" {
 			q = q.Where("severity = ?", sev)
@@ -150,7 +150,7 @@ func (s *Server) sbomShow(w http.ResponseWriter, r *http.Request) {
 		}
 		q.Find(&findings)
 
-		s.DB.Where("repository_id IN ? AND withdrawn_at IS NULL", repoIDs).
+		s.db(r).Where("repository_id IN ? AND withdrawn_at IS NULL", repoIDs).
 			Order("cvss_score desc, published_at desc").Find(&advisories)
 	}
 
@@ -175,7 +175,7 @@ func (s *Server) sbomShow(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) sbomResolve(w http.ResponseWriter, r *http.Request) {
 	var up db.SBOMUpload
-	if err := s.DB.First(&up, r.PathValue("id")).Error; err != nil {
+	if err := s.db(r).First(&up, r.PathValue("id")).Error; err != nil {
 		http.NotFound(w, r)
 		return
 	}
@@ -194,7 +194,7 @@ func (s *Server) goResolve(uploadID uint) {
 }
 
 func (s *Server) sbomDelete(w http.ResponseWriter, r *http.Request) {
-	if err := s.DB.Delete(&db.SBOMUpload{}, r.PathValue("id")).Error; err != nil {
+	if err := s.db(r).Delete(&db.SBOMUpload{}, r.PathValue("id")).Error; err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

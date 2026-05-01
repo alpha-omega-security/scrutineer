@@ -10,14 +10,14 @@ import (
 
 func (s *Server) skillsList(w http.ResponseWriter, r *http.Request) {
 	var skills []db.Skill
-	s.DB.Order("active desc, name asc").Find(&skills)
+	s.db(r).Order("active desc, name asc").Find(&skills)
 	s.render(w, r, "skills.html", map[string]any{"Skills": skills})
 }
 
 func (s *Server) skillShow(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(r.PathValue("id"))
 	var skill db.Skill
-	if err := s.DB.First(&skill, id).Error; err != nil {
+	if err := s.db(r).First(&skill, id).Error; err != nil {
 		http.NotFound(w, r)
 		return
 	}
@@ -35,7 +35,7 @@ func (s *Server) skillNew(w http.ResponseWriter, r *http.Request) {
 func (s *Server) skillEdit(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(r.PathValue("id"))
 	var skill db.Skill
-	if err := s.DB.First(&skill, id).Error; err != nil {
+	if err := s.db(r).First(&skill, id).Error; err != nil {
 		http.NotFound(w, r)
 		return
 	}
@@ -66,7 +66,7 @@ func (s *Server) skillCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "name and description are required", http.StatusBadRequest)
 		return
 	}
-	if err := s.DB.Create(&skill).Error; err != nil {
+	if err := s.db(r).Create(&skill).Error; err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -76,7 +76,7 @@ func (s *Server) skillCreate(w http.ResponseWriter, r *http.Request) {
 func (s *Server) skillUpdate(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(r.PathValue("id"))
 	var skill db.Skill
-	if err := s.DB.First(&skill, id).Error; err != nil {
+	if err := s.db(r).First(&skill, id).Error; err != nil {
 		http.NotFound(w, r)
 		return
 	}
@@ -92,7 +92,7 @@ func (s *Server) skillUpdate(w http.ResponseWriter, r *http.Request) {
 	skill.SchemaJSON = r.FormValue("schema_json")
 	skill.Active = r.FormValue("active") == "on"
 	skill.Version++
-	if err := s.DB.Save(&skill).Error; err != nil {
+	if err := s.db(r).Save(&skill).Error; err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -109,7 +109,7 @@ func (s *Server) skillRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var skill db.Skill
-	if err := s.DB.First(&skill, skillID).Error; err != nil || !skill.Active {
+	if err := s.db(r).First(&skill, skillID).Error; err != nil || !skill.Active {
 		http.Error(w, "skill not found or inactive", http.StatusNotFound)
 		return
 	}

@@ -19,7 +19,7 @@ import (
 // a filename hint so clicking the download button saves a file.
 func (s *Server) repoReport(w http.ResponseWriter, r *http.Request) {
 	var repo db.Repository
-	if err := s.DB.First(&repo, r.PathValue("id")).Error; err != nil {
+	if err := s.db(r).First(&repo, r.PathValue("id")).Error; err != nil {
 		http.NotFound(w, r)
 		return
 	}

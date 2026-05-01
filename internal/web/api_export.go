@@ -26,13 +26,13 @@ func (s *Server) apiExportRepoFindings(w http.ResponseWriter, r *http.Request) {
 	}
 	id, _ := strconv.Atoi(r.PathValue("id"))
 	var repo db.Repository
-	if err := s.DB.First(&repo, id).Error; err != nil {
+	if err := s.db(r).First(&repo, id).Error; err != nil {
 		writeAPIError(w, http.StatusNotFound, "repository not found")
 		return
 	}
 
-	q := s.DB.Model(&db.Finding{}).
-		Where("scan_id IN (?)", s.DB.Model(&db.Scan{}).Select("id").Where("repository_id = ?", id)).
+	q := s.db(r).Model(&db.Finding{}).
+		Where("scan_id IN (?)", s.db(r).Model(&db.Scan{}).Select("id").Where("repository_id = ?", id)).
 		Order("id desc")
 	q = applyFindingFilters(q, r)
 	streamJSONL(w, q, findingExport)
@@ -42,7 +42,7 @@ func (s *Server) apiExportFindings(w http.ResponseWriter, r *http.Request) {
 	if !validateExportFormat(w, r) {
 		return
 	}
-	q := applyFindingFilters(s.DB.Model(&db.Finding{}).Order("id desc"), r)
+	q := applyFindingFilters(s.db(r).Model(&db.Finding{}).Order("id desc"), r)
 	streamJSONL(w, q, findingExport)
 }
 
@@ -50,7 +50,7 @@ func (s *Server) apiExportScans(w http.ResponseWriter, r *http.Request) {
 	if !validateExportFormat(w, r) {
 		return
 	}
-	q := s.DB.Model(&db.Scan{}).Order("id desc")
+	q := s.db(r).Model(&db.Scan{}).Order("id desc")
 	if v := r.URL.Query().Get("status"); v != "" {
 		q = q.Where("status = ?", v)
 	}

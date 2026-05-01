@@ -33,7 +33,7 @@ func (s *Server) usage(w http.ResponseWriter, r *http.Request) {
 	// rows have zero cost and would drag the floor down, and failed runs
 	// did still spend tokens so they stay in.
 	var scans []db.Scan
-	s.DB.Select("skill_name", "cost_usd", "turns",
+	s.db(r).Select("skill_name", "cost_usd", "turns",
 		"input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens").
 		Where("status IN ?", []db.ScanStatus{db.ScanDone, db.ScanFailed}).
 		Where("skill_name != ''").

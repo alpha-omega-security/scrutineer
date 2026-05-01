@@ -24,7 +24,7 @@ func (s *Server) orgReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var repos []db.Repository
-	s.DB.Where("owner = ?", owner).Order("name").Find(&repos)
+	s.db(r).Where("owner = ?", owner).Order("name").Find(&repos)
 	if len(repos) == 0 {
 		http.NotFound(w, r)
 		return

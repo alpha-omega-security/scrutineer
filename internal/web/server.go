@@ -143,8 +143,13 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *work
 	if err != nil {
 		return nil, err
 	}
+	registerQueryStatsCallback(gdb)
 	return &Server{DB: gdb, Queue: q, Log: log, Broker: broker, Worker: w, tmpl: t,
 		resolvePURL: resolvePURLRepo}, nil
+}
+
+func (s *Server) db(r *http.Request) *gorm.DB {
+	return s.DB.WithContext(r.Context())
 }
 
 func (s *Server) Handler() http.Handler {
@@ -367,7 +372,7 @@ func distinctLanguages(gdb *gorm.DB) []string {
 }
 
 func (s *Server) repoList(w http.ResponseWriter, r *http.Request) {
-	q := s.DB.Model(&db.Repository{})
+	q := s.db(r).Model(&db.Repository{})
 	lang := r.URL.Query().Get("language")
 	if lang != "" {
 		// languages is a ", "-joined list; wrapping both sides lets one
@@ -421,7 +426,7 @@ func (s *Server) repoList(w http.ResponseWriter, r *http.Request) {
 			N            int
 		}
 		var counts []rowCount
-		s.DB.Model(&db.Finding{}).
+		s.db(r).Model(&db.Finding{}).
 			Select("repository_id, COUNT(*) AS n").
 			Where("repository_id IN ?", repoIDs).
 			Group("repository_id").
@@ -435,7 +440,7 @@ func (s *Server) repoList(w http.ResponseWriter, r *http.Request) {
 		// For each repo, the latest scan. A single query using a grouped
 		// subquery avoids one-query-per-row.
 		var scans []db.Scan
-		s.DB.Raw(`
+		s.db(r).Raw(`
 			SELECT s.* FROM scans s
 			JOIN (SELECT repository_id, MAX(id) AS max_id FROM scans
 				WHERE repository_id IN ? GROUP BY repository_id) latest
@@ -511,7 +516,7 @@ func (s *Server) orgsList(w http.ResponseWriter, r *http.Request) {
 		LastActivity string
 	}
 	var aggs []aggRow
-	q := s.DB.Model(&db.Repository{}).
+	q := s.db(r).Model(&db.Repository{}).
 		Select("owner, COUNT(*) AS repos, MAX(updated_at) AS last_activity").
 		Where("owner != ''").
 		Group("owner")
@@ -528,7 +533,7 @@ func (s *Server) orgsList(w http.ResponseWriter, r *http.Request) {
 			N     int
 		}
 		var counts []c
-		s.DB.Raw(`
+		s.db(r).Raw(`
 			SELECT r.owner, COUNT(f.id) AS n
 			FROM repositories r
 			LEFT JOIN findings f ON f.repository_id = r.id
@@ -596,7 +601,7 @@ func (s *Server) orgShow(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var repos []db.Repository
-	s.DB.Where("owner = ?", owner).Order("name").Find(&repos)
+	s.db(r).Where("owner = ?", owner).Order("name").Find(&repos)
 	if len(repos) == 0 {
 		http.NotFound(w, r)
 		return
@@ -614,7 +619,7 @@ func (s *Server) orgShow(w http.ResponseWriter, r *http.Request) {
 		N            int
 	}
 	var counts []rowCount
-	s.DB.Model(&db.Finding{}).
+	s.db(r).Model(&db.Finding{}).
 		Select("repository_id, COUNT(*) AS n").
 		Where("repository_id IN ?", repoIDs).
 		Group("repository_id").Scan(&counts)
@@ -627,18 +632,18 @@ func (s *Server) orgShow(w http.ResponseWriter, r *http.Request) {
 	// within a severity. Purely alphabetical severity would put Low
 	// before Medium, which misreads for a stakeholder scanning the tab.
 	var findings []db.Finding
-	s.DB.Where("repository_id IN ?", repoIDs).
+	s.db(r).Where("repository_id IN ?", repoIDs).
 		Order(severityOrder).Order("id desc").
 		Limit(orgTabLimit).Find(&findings)
 	reposByID := loadRepoMap(s.DB, findings)
 
 	var advisories []db.Advisory
-	s.DB.Where("repository_id IN ?", repoIDs).Order("cvss_score desc").
+	s.db(r).Where("repository_id IN ?", repoIDs).Order("cvss_score desc").
 		Limit(orgTabLimit).Find(&advisories)
 	advisoryRepos := loadAdvisoryRepoMap(s.DB, advisories)
 
 	var maintainers []db.Maintainer
-	s.DB.Joins("JOIN repository_maintainers rm ON rm.maintainer_id = maintainers.id").
+	s.db(r).Joins("JOIN repository_maintainers rm ON rm.maintainer_id = maintainers.id").
 		Where("rm.repository_id IN ?", repoIDs).
 		Distinct().Order("maintainers.name").Find(&maintainers)
 
@@ -655,7 +660,7 @@ func (s *Server) orgShow(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) maintainersList(w http.ResponseWriter, r *http.Request) {
-	q := s.DB.Model(&db.Maintainer{})
+	q := s.db(r).Model(&db.Maintainer{})
 	status := r.URL.Query().Get("status")
 	if status != "" {
 		q = q.Where("status = ?", status)
@@ -703,7 +708,7 @@ func (s *Server) maintainersList(w http.ResponseWriter, r *http.Request) {
 			N            int
 		}
 		var counts []row
-		s.DB.Raw(`
+		s.db(r).Raw(`
 			SELECT rm.maintainer_id, COUNT(f.id) AS n
 			FROM repository_maintainers rm
 			LEFT JOIN findings f ON f.repository_id = rm.repository_id
@@ -730,12 +735,12 @@ func (s *Server) maintainersList(w http.ResponseWriter, r *http.Request) {
 func (s *Server) maintainerDoNotContact(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(r.PathValue("id"))
 	var m db.Maintainer
-	if err := s.DB.First(&m, id).Error; err != nil {
+	if err := s.db(r).First(&m, id).Error; err != nil {
 		http.NotFound(w, r)
 		return
 	}
 	value := r.FormValue("value") == "true"
-	if err := s.DB.Model(&db.Maintainer{}).Where("id = ?", m.ID).
+	if err := s.db(r).Model(&db.Maintainer{}).Where("id = ?", m.ID).
 		Update("do_not_contact", value).Error; err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -745,7 +750,7 @@ func (s *Server) maintainerDoNotContact(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) maintainerShow(w http.ResponseWriter, r *http.Request) {
 	var m db.Maintainer
-	if err := s.DB.Preload("Repositories").First(&m, r.PathValue("id")).Error; err != nil {
+	if err := s.db(r).Preload("Repositories").First(&m, r.PathValue("id")).Error; err != nil {
 		http.NotFound(w, r)
 		return
 	}
@@ -756,7 +761,7 @@ func (s *Server) maintainerShow(w http.ResponseWriter, r *http.Request) {
 	}
 	var findings []db.Finding
 	if len(repoIDs) > 0 {
-		s.DB.Where("repository_id IN ?", repoIDs).Order("id desc").Find(&findings)
+		s.db(r).Where("repository_id IN ?", repoIDs).Order("id desc").Find(&findings)
 	}
 	reposByID := loadRepoMap(s.DB, findings)
 	s.render(w, r, "maintainer_show.html", map[string]any{
@@ -798,7 +803,7 @@ var scanStatusOrder = `CASE scans.status
 	WHEN 'running' THEN 0 WHEN 'queued' THEN 1 ELSE 2 END`
 
 func (s *Server) findings(w http.ResponseWriter, r *http.Request) {
-	q := s.DB.Model(&db.Finding{})
+	q := s.db(r).Model(&db.Finding{})
 	sev := r.URL.Query().Get("severity")
 	if sev != "" {
 		q = q.Where("severity = ?", sev)
@@ -806,7 +811,7 @@ func (s *Server) findings(w http.ResponseWriter, r *http.Request) {
 	owner := r.URL.Query().Get("owner")
 	if owner != "" {
 		q = q.Where("repository_id IN (?)",
-			s.DB.Model(&db.Repository{}).Select("id").Where("owner = ?", owner))
+			s.db(r).Model(&db.Repository{}).Select("id").Where("owner = ?", owner))
 	}
 	search := strings.TrimSpace(r.URL.Query().Get("q"))
 	if search != "" {
@@ -851,7 +856,7 @@ func (s *Server) findings(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) depScan(w http.ResponseWriter, r *http.Request) {
 	var dep db.Dependency
-	if err := s.DB.First(&dep, r.PathValue("id")).Error; err != nil {
+	if err := s.db(r).First(&dep, r.PathValue("id")).Error; err != nil {
 		http.NotFound(w, r)
 		return
 	}
@@ -865,7 +870,7 @@ func (s *Server) depScan(w http.ResponseWriter, r *http.Request) {
 
 	// Find or create
 	repo := db.Repository{URL: repoURL, Name: db.NameFromURL(repoURL)}
-	if err := s.DB.Where(db.Repository{URL: repoURL}).FirstOrCreate(&repo).Error; err != nil {
+	if err := s.db(r).Where(db.Repository{URL: repoURL}).FirstOrCreate(&repo).Error; err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -898,7 +903,7 @@ func resolvePURLRepo(ctx context.Context, purl string) string {
 
 func (s *Server) dependentScan(w http.ResponseWriter, r *http.Request) {
 	var dep db.Dependent
-	if err := s.DB.First(&dep, r.PathValue("id")).Error; err != nil {
+	if err := s.db(r).First(&dep, r.PathValue("id")).Error; err != nil {
 		http.NotFound(w, r)
 		return
 	}
@@ -921,15 +926,15 @@ const (
 
 func (s *Server) addRepoAndScan(w http.ResponseWriter, r *http.Request, repoURL string) {
 	repo := db.Repository{URL: repoURL, Name: db.NameFromURL(repoURL)}
-	if err := s.DB.Where(db.Repository{URL: repoURL}).FirstOrCreate(&repo).Error; err != nil {
+	if err := s.db(r).Where(db.Repository{URL: repoURL}).FirstOrCreate(&repo).Error; err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	var scanCount int64
-	s.DB.Model(&db.Scan{}).Where("repository_id = ?", repo.ID).Count(&scanCount)
+	s.db(r).Model(&db.Scan{}).Where("repository_id = ?", repo.ID).Count(&scanCount)
 	if scanCount == 0 {
 		var skill db.Skill
-		if err := s.DB.Where("name = ? AND active = ?", defaultSkillName, true).
+		if err := s.db(r).Where("name = ? AND active = ?", defaultSkillName, true).
 			First(&skill).Error; err == nil {
 			_, _ = s.enqueueSkill(r.Context(), repo.ID, skill.ID, "")
 		} else {
@@ -941,7 +946,7 @@ func (s *Server) addRepoAndScan(w http.ResponseWriter, r *http.Request, repoURL 
 
 func (s *Server) findingStatus(w http.ResponseWriter, r *http.Request) {
 	var f db.Finding
-	if err := s.DB.First(&f, r.PathValue("id")).Error; err != nil {
+	if err := s.db(r).First(&f, r.PathValue("id")).Error; err != nil {
 		http.NotFound(w, r)
 		return
 	}
@@ -984,17 +989,17 @@ func (s *Server) findingPatchRun(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) runFindingSkill(w http.ResponseWriter, r *http.Request, name string) {
 	var f db.Finding
-	if err := s.DB.First(&f, r.PathValue("id")).Error; err != nil {
+	if err := s.db(r).First(&f, r.PathValue("id")).Error; err != nil {
 		http.NotFound(w, r)
 		return
 	}
 	var scan db.Scan
-	if err := s.DB.First(&scan, f.ScanID).Error; err != nil {
+	if err := s.db(r).First(&scan, f.ScanID).Error; err != nil {
 		http.Error(w, "scan for finding not found", http.StatusInternalServerError)
 		return
 	}
 	var skill db.Skill
-	if err := s.DB.Where("name = ? AND active = ?", name, true).First(&skill).Error; err != nil {
+	if err := s.db(r).Where("name = ? AND active = ?", name, true).First(&skill).Error; err != nil {
 		http.Error(w, name+" skill is not installed", http.StatusPreconditionFailed)
 		return
 	}
@@ -1009,7 +1014,7 @@ func (s *Server) runFindingSkill(w http.ResponseWriter, r *http.Request, name st
 
 func (s *Server) findingNotes(w http.ResponseWriter, r *http.Request) {
 	var f db.Finding
-	if err := s.DB.First(&f, r.PathValue("id")).Error; err != nil {
+	if err := s.db(r).First(&f, r.PathValue("id")).Error; err != nil {
 		http.NotFound(w, r)
 		return
 	}
@@ -1021,7 +1026,7 @@ func (s *Server) findingNotes(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) packages(w http.ResponseWriter, r *http.Request) {
-	q := s.DB.Model(&db.Package{})
+	q := s.db(r).Model(&db.Package{})
 	eco := r.URL.Query().Get("ecosystem")
 	if eco != "" {
 		q = q.Where("ecosystem = ?", eco)
@@ -1056,7 +1061,7 @@ func (s *Server) packages(w http.ResponseWriter, r *http.Request) {
 	q.Limit(perPage).Offset((page.N - 1) * perPage).Find(&rows)
 
 	var ecosystems []string
-	s.DB.Model(&db.Package{}).Distinct("ecosystem").Order("ecosystem").Pluck("ecosystem", &ecosystems)
+	s.db(r).Model(&db.Package{}).Distinct("ecosystem").Order("ecosystem").Pluck("ecosystem", &ecosystems)
 
 	s.render(w, r, "packages.html", map[string]any{
 		"Pkgs": rows, "Page": page, "Ecosystem": eco, "Sort": sort, "Ecosystems": ecosystems,
@@ -1066,7 +1071,7 @@ func (s *Server) packages(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) packageShow(w http.ResponseWriter, r *http.Request) {
 	var p db.Package
-	if err := s.DB.Preload("Repository").First(&p, r.PathValue("id")).Error; err != nil {
+	if err := s.db(r).Preload("Repository").First(&p, r.PathValue("id")).Error; err != nil {
 		http.NotFound(w, r)
 		return
 	}
@@ -1078,7 +1083,7 @@ func (s *Server) packageShow(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) advisoriesList(w http.ResponseWriter, r *http.Request) {
-	q := s.DB.Model(&db.Advisory{})
+	q := s.db(r).Model(&db.Advisory{})
 	sev := r.URL.Query().Get("severity")
 	if sev != "" {
 		q = q.Where("severity = ?", sev)
@@ -1111,7 +1116,7 @@ func (s *Server) advisoriesList(w http.ResponseWriter, r *http.Request) {
 
 	reposByID := loadAdvisoryRepoMap(s.DB, rows)
 	var severities []string
-	s.DB.Model(&db.Advisory{}).Where("severity != ''").Distinct("severity").
+	s.db(r).Model(&db.Advisory{}).Where("severity != ''").Distinct("severity").
 		Order("severity").Pluck("severity", &severities)
 
 	s.render(w, r, "advisories.html", map[string]any{
@@ -1147,24 +1152,24 @@ func loadAdvisoryRepoMap(gdb *gorm.DB, rows []db.Advisory) map[uint]db.Repositor
 
 func (s *Server) findingShow(w http.ResponseWriter, r *http.Request) {
 	var f db.Finding
-	if err := s.DB.Preload("Labels").First(&f, r.PathValue("id")).Error; err != nil {
+	if err := s.db(r).Preload("Labels").First(&f, r.PathValue("id")).Error; err != nil {
 		http.NotFound(w, r)
 		return
 	}
 	var scan db.Scan
-	s.DB.First(&scan, f.ScanID)
+	s.db(r).First(&scan, f.ScanID)
 	var repo db.Repository
-	s.DB.First(&repo, scan.RepositoryID)
+	s.db(r).First(&repo, scan.RepositoryID)
 	var notes []db.FindingNote
-	s.DB.Where("finding_id = ?", f.ID).Order("created_at desc").Find(&notes)
+	s.db(r).Where("finding_id = ?", f.ID).Order("created_at desc").Find(&notes)
 	var comms []db.FindingCommunication
-	s.DB.Where("finding_id = ?", f.ID).Order("at desc").Find(&comms)
+	s.db(r).Where("finding_id = ?", f.ID).Order("at desc").Find(&comms)
 	var refs []db.FindingReference
-	s.DB.Where("finding_id = ?", f.ID).Order("id desc").Find(&refs)
+	s.db(r).Where("finding_id = ?", f.ID).Order("id desc").Find(&refs)
 	var history []db.FindingHistory
-	s.DB.Where("finding_id = ?", f.ID).Order("created_at desc").Find(&history)
+	s.db(r).Where("finding_id = ?", f.ID).Order("created_at desc").Find(&history)
 	var labels []db.FindingLabel
-	s.DB.Order("name").Find(&labels)
+	s.db(r).Order("name").Find(&labels)
 	selected := make(map[string]bool, len(f.Labels))
 	for _, l := range f.Labels {
 		selected[l.Name] = true
@@ -1192,7 +1197,7 @@ func (s *Server) findingShow(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
-	q := s.DB.Model(&db.Scan{})
+	q := s.db(r).Model(&db.Scan{})
 	skillName := r.URL.Query().Get("skill")
 	if skillName != "" {
 		q = q.Where("skill_name = ?", skillName)
@@ -1224,7 +1229,7 @@ func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 		Limit(perPage).Offset((page.N - 1) * perPage).Find(&scans)
 
 	var skillNames []string
-	s.DB.Model(&db.Scan{}).Where("skill_name != ''").Distinct("skill_name").
+	s.db(r).Model(&db.Scan{}).Where("skill_name != ''").Distinct("skill_name").
 		Order("skill_name").Pluck("skill_name", &skillNames)
 
 	anySubPath := false
@@ -1366,7 +1371,7 @@ func bulkToastDescription(invalid []string) string {
 
 func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 	var repo db.Repository
-	if err := s.DB.First(&repo, r.PathValue("id")).Error; err != nil {
+	if err := s.db(r).First(&repo, r.PathValue("id")).Error; err != nil {
 		http.NotFound(w, r)
 		return
 	}
@@ -1375,7 +1380,7 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 	// page should read like "this is the state of each job on this repo",
 	// not a scroll of every historical attempt. Older runs are still
 	// reachable via /scans/{id} and the global /scans index.
-	s.DB.Raw(`
+	s.db(r).Raw(`
 		SELECT s.* FROM scans s
 		JOIN (
 			SELECT COALESCE(skill_name, '') AS sn, COALESCE(sub_path, '') AS sp, MAX(id) AS max_id
@@ -1395,7 +1400,7 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 		}
 		if latest == nil {
 			latest = &scans[i]
-			s.DB.Where("scan_id = ?", latest.ID).Find(&latest.Findings)
+			s.db(r).Where("scan_id = ?", latest.ID).Find(&latest.Findings)
 		}
 		if scans[i].Status == db.ScanDone && scans[i].Report != "" && threatModel == nil {
 			var report map[string]any
@@ -1409,7 +1414,7 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var totalCost float64
-	s.DB.Model(&db.Scan{}).Where("repository_id = ?", repo.ID).
+	s.db(r).Model(&db.Scan{}).Where("repository_id = ?", repo.ID).
 		Select("COALESCE(SUM(cost_usd), 0)").Scan(&totalCost)
 
 	// All findings across every scan of this repo, not just the latest
@@ -1417,26 +1422,26 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 	// stay off the tab; everything else is shown so an empty or failed
 	// latest scan does not hide earlier results (#72).
 	var findings []db.Finding
-	s.DB.Where("repository_id = ? AND status NOT IN ?", repo.ID,
+	s.db(r).Where("repository_id = ? AND status NOT IN ?", repo.ID,
 		[]db.FindingLifecycle{db.FindingRejected, db.FindingDuplicate}).
 		Order(severityOrder).Order("id desc").Find(&findings)
 
 	var maintainers []db.Maintainer
-	s.DB.Joins("JOIN repository_maintainers ON repository_maintainers.maintainer_id = maintainers.id").
+	s.db(r).Joins("JOIN repository_maintainers ON repository_maintainers.maintainer_id = maintainers.id").
 		Where("repository_maintainers.repository_id = ?", repo.ID).Find(&maintainers)
 
 	var rawDeps []db.Dependency
-	s.DB.Where("repository_id = ?", repo.ID).Order("ecosystem, name, manifest_kind desc").Find(&rawDeps)
+	s.db(r).Where("repository_id = ?", repo.ID).Order("ecosystem, name, manifest_kind desc").Find(&rawDeps)
 	deps := groupDeps(rawDeps)
 
 	var pkgs []db.Package
-	s.DB.Where("repository_id = ?", repo.ID).Order("dependent_repos desc, downloads desc").Find(&pkgs)
+	s.db(r).Where("repository_id = ?", repo.ID).Order("dependent_repos desc, downloads desc").Find(&pkgs)
 
 	var dependents []db.Dependent
-	s.DB.Where("repository_id = ?", repo.ID).Order("dependent_repos desc").Find(&dependents)
+	s.db(r).Where("repository_id = ?", repo.ID).Order("dependent_repos desc").Find(&dependents)
 
 	var advisories []db.Advisory
-	s.DB.Where("repository_id = ?", repo.ID).Order("cvss_score desc").Find(&advisories)
+	s.db(r).Where("repository_id = ?", repo.ID).Order("cvss_score desc").Find(&advisories)
 
 	knownURLs := buildKnownURLs(s.DB)
 	knownPURLs := buildKnownPURLs(s.DB)
@@ -1448,17 +1453,17 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var activeSkills []db.Skill
-	s.DB.Where("active = ?", true).Order("name").Find(&activeSkills)
+	s.db(r).Where("active = ?", true).Order("name").Find(&activeSkills)
 
 	var subprojects []db.Subproject
-	s.DB.Where("repository_id = ?", repo.ID).Order("path").Find(&subprojects)
+	s.db(r).Where("repository_id = ?", repo.ID).Order("path").Find(&subprojects)
 	subScanCount := map[string]int{}
 	if len(subprojects) > 0 {
 		rows := make([]struct {
 			SubPath string
 			N       int
 		}, 0)
-		s.DB.Raw(`SELECT sub_path, COUNT(*) AS n FROM scans
+		s.db(r).Raw(`SELECT sub_path, COUNT(*) AS n FROM scans
 			WHERE repository_id = ? AND sub_path != '' GROUP BY sub_path`,
 			repo.ID).Scan(&rows)
 		for _, r := range rows {
@@ -1482,14 +1487,14 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) repoScan(w http.ResponseWriter, r *http.Request) {
 	var repo db.Repository
-	if err := s.DB.First(&repo, r.PathValue("id")).Error; err != nil {
+	if err := s.db(r).First(&repo, r.PathValue("id")).Error; err != nil {
 		http.NotFound(w, r)
 		return
 	}
 	// The "New scan" button enqueues the deep-dive skill; everything else is
 	// triggered either by the triage skill or by the explicit Run skill menu.
 	var skill db.Skill
-	if err := s.DB.Where("name = ? AND active = ?", deepDiveSkillName, true).First(&skill).Error; err != nil {
+	if err := s.db(r).Where("name = ? AND active = ?", deepDiveSkillName, true).First(&skill).Error; err != nil {
 		http.Error(w, deepDiveSkillName+" skill is not installed", http.StatusPreconditionFailed)
 		return
 	}
@@ -1509,12 +1514,12 @@ func (s *Server) repoScan(w http.ResponseWriter, r *http.Request) {
 func (s *Server) repoDisclosureChannel(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(r.PathValue("id"))
 	var repo db.Repository
-	if err := s.DB.First(&repo, id).Error; err != nil {
+	if err := s.db(r).First(&repo, id).Error; err != nil {
 		http.NotFound(w, r)
 		return
 	}
 	value := strings.TrimSpace(r.FormValue("disclosure_channel"))
-	if err := s.DB.Model(&db.Repository{}).Where("id = ?", repo.ID).
+	if err := s.db(r).Model(&db.Repository{}).Where("id = ?", repo.ID).
 		Update("disclosure_channel", value).Error; err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -1524,7 +1529,7 @@ func (s *Server) repoDisclosureChannel(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) scanShow(w http.ResponseWriter, r *http.Request) {
 	var scan db.Scan
-	if err := s.DB.Preload("Repository").Preload("Findings").First(&scan, r.PathValue("id")).Error; err != nil {
+	if err := s.db(r).Preload("Repository").Preload("Findings").First(&scan, r.PathValue("id")).Error; err != nil {
 		http.NotFound(w, r)
 		return
 	}
@@ -1533,7 +1538,7 @@ func (s *Server) scanShow(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) scanRetry(w http.ResponseWriter, r *http.Request) {
 	var scan db.Scan
-	if err := s.DB.First(&scan, r.PathValue("id")).Error; err != nil {
+	if err := s.db(r).First(&scan, r.PathValue("id")).Error; err != nil {
 		http.NotFound(w, r)
 		return
 	}
@@ -1555,7 +1560,7 @@ func (s *Server) scanRetry(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) scanCancel(w http.ResponseWriter, r *http.Request) {
 	var scan db.Scan
-	if err := s.DB.First(&scan, r.PathValue("id")).Error; err != nil {
+	if err := s.db(r).First(&scan, r.PathValue("id")).Error; err != nil {
 		http.NotFound(w, r)
 		return
 	}
@@ -1566,7 +1571,7 @@ func (s *Server) scanCancel(w http.ResponseWriter, r *http.Request) {
 	if !s.Worker.Cancel(scan.ID) {
 		// Not in flight: mark the row so the queue handler drops it on pickup.
 		now := time.Now()
-		s.DB.Model(&scan).Updates(map[string]any{
+		s.db(r).Model(&scan).Updates(map[string]any{
 			"status":      db.ScanCancelled,
 			"error":       "cancelled by user",
 			"finished_at": &now,
@@ -1579,7 +1584,7 @@ func (s *Server) scanCancel(w http.ResponseWriter, r *http.Request) {
 // hx-trigger while the scan is running so the operator can watch claude work.
 func (s *Server) scanLog(w http.ResponseWriter, r *http.Request) {
 	var scan db.Scan
-	if err := s.DB.First(&scan, r.PathValue("id")).Error; err != nil {
+	if err := s.db(r).First(&scan, r.PathValue("id")).Error; err != nil {
 		http.NotFound(w, r)
 		return
 	}
@@ -1791,8 +1796,15 @@ func securityHeaders(h http.Handler) http.Handler {
 
 func logRequests(log *slog.Logger, h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := contextWithStats(r.Context())
+		r = r.WithContext(ctx)
 		start := time.Now()
 		h.ServeHTTP(w, r)
-		log.Info("http", "method", r.Method, "path", r.URL.Path, "dur", time.Since(start).Round(time.Millisecond))
+		dur := time.Since(start).Round(time.Millisecond)
+		attrs := []any{"method", r.Method, "path", r.URL.Path, "dur", dur}
+		if qs := statsFromContext(ctx); qs != nil && qs.Count() > 0 {
+			attrs = append(attrs, "queries", qs.Count(), "query_time", qs.Duration().Round(time.Millisecond))
+		}
+		log.Info("http", attrs...)
 	})
 }

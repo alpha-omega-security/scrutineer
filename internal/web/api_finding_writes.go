@@ -70,7 +70,7 @@ func (s *Server) apiListFindingNotes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var rows []db.FindingNote
-	s.DB.Where("finding_id = ?", id).Order("created_at desc").Find(&rows)
+	s.db(r).Where("finding_id = ?", id).Order("created_at desc").Find(&rows)
 	writeJSON(w, http.StatusOK, rows)
 }
 
@@ -105,7 +105,7 @@ func (s *Server) apiListFindingCommunications(w http.ResponseWriter, r *http.Req
 		return
 	}
 	var rows []db.FindingCommunication
-	s.DB.Where("finding_id = ?", id).Order("at desc").Find(&rows)
+	s.db(r).Where("finding_id = ?", id).Order("at desc").Find(&rows)
 	writeJSON(w, http.StatusOK, rows)
 }
 
@@ -137,7 +137,7 @@ func (s *Server) apiListFindingReferences(w http.ResponseWriter, r *http.Request
 		return
 	}
 	var rows []db.FindingReference
-	s.DB.Where("finding_id = ?", id).Order("id desc").Find(&rows)
+	s.db(r).Where("finding_id = ?", id).Order("id desc").Find(&rows)
 	writeJSON(w, http.StatusOK, rows)
 }
 
@@ -166,7 +166,7 @@ func (s *Server) apiListFindingHistory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var rows []db.FindingHistory
-	s.DB.Where("finding_id = ?", id).Order("created_at desc").Find(&rows)
+	s.db(r).Where("finding_id = ?", id).Order("created_at desc").Find(&rows)
 	writeJSON(w, http.StatusOK, rows)
 }
 

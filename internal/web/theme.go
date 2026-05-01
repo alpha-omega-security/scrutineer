@@ -50,19 +50,19 @@ func (s *Server) settingsShow(w http.ResponseWriter, r *http.Request) {
 		Maintainers int64
 		Skills      int64
 	}
-	s.DB.Table("repositories").Count(&stats.Repos)
-	s.DB.Table("scans").Count(&stats.Scans)
-	s.DB.Table("findings").Count(&stats.Findings)
-	s.DB.Table("packages").Count(&stats.Packages)
-	s.DB.Table("advisories").Count(&stats.Advisories)
-	s.DB.Table("maintainers").Count(&stats.Maintainers)
-	s.DB.Table("skills").Count(&stats.Skills)
+	s.db(r).Table("repositories").Count(&stats.Repos)
+	s.db(r).Table("scans").Count(&stats.Scans)
+	s.db(r).Table("findings").Count(&stats.Findings)
+	s.db(r).Table("packages").Count(&stats.Packages)
+	s.db(r).Table("advisories").Count(&stats.Advisories)
+	s.db(r).Table("maintainers").Count(&stats.Maintainers)
+	s.db(r).Table("skills").Count(&stats.Skills)
 
 	var dbSizeBytes int64
-	s.DB.Raw("SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()").Scan(&dbSizeBytes)
+	s.db(r).Raw("SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()").Scan(&dbSizeBytes)
 
 	var dbPath string
-	s.DB.Raw("SELECT file FROM pragma_database_list WHERE name = 'main'").Scan(&dbPath)
+	s.db(r).Raw("SELECT file FROM pragma_database_list WHERE name = 'main'").Scan(&dbPath)
 
 	s.render(w, r, "settings.html", map[string]any{
 		"Themes":       config.Themes,
