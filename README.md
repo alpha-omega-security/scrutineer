@@ -33,6 +33,27 @@ Click **Add repository** in the sidebar, paste a git HTTPS URL, and scrutineer e
 
 The optional analysis tools (semgrep, zizmor, git-pkgs, brief) are bundled in the runner image, so you don't need them installed locally when Docker is in use.
 
+## Git authentication
+
+Scrutineer shells out to `git clone` with no explicit token passing, so it uses whatever credentials are already configured on the host: SSH keys, credential helpers, `gh auth login`, a `.netrc` file, or the macOS keychain.
+
+To scan private repos, make sure `git clone https://github.com/org/repo` works in your terminal before adding the URL to scrutineer. If it does, scrutineer can clone it too.
+
+Common setups:
+
+    # GitHub CLI (easiest)
+    gh auth login
+
+    # Git credential helper
+    git config --global credential.helper store   # or osxkeychain / manager-core
+
+    # SSH-based clone URLs are not supported -- scrutineer only accepts https:// URLs.
+    # Use a credential helper to authenticate HTTPS clones instead.
+
+When running inside Docker (`docker run ...`), the container has no access to host credentials. Mount a credential store or set `GIT_ASKPASS` to provide access to private repos from inside the container.
+
+When the containerised runner is active (the default when Docker is available), each scan runs in a separate container but the clone happens on the host before the source is mounted in. Host credentials are used for the clone; the container never sees them.
+
 ## Features
 
 - **Skill-based scan pipeline** -- every scan is a claude-code skill on disk (SKILL.md + schema + optional scripts). The default pipeline for a new repo is itself a skill (`triage`) that enqueues the others; edit its SKILL.md to change what runs
