@@ -5,6 +5,14 @@
     if (window.lucide) lucide.createIcons();
   }
 
+  function highlight() {
+    if (window.hljs) {
+      document.querySelectorAll('pre code:not(.hljs)').forEach(function (el) {
+        hljs.highlightElement(el);
+      });
+    }
+  }
+
   function restoreTab() {
     var h = location.hash.slice(1);
     if (!h) return;
@@ -22,19 +30,20 @@
 
   function init() {
     icons();
+    highlight();
     restoreTab();
   }
 
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', icons);
+    document.addEventListener('DOMContentLoaded', init);
     window.addEventListener('load', restoreTab);
   } else {
     init();
   }
 
-  document.addEventListener('htmx:afterSwap', icons);
+  document.addEventListener('htmx:afterSwap', function () { icons(); highlight(); });
   document.addEventListener('htmx:historyRestore', init);
-  document.addEventListener('htmx:oobAfterSwap', icons);
+  document.addEventListener('htmx:oobAfterSwap', function () { icons(); highlight(); });
 
   document.addEventListener('click', function (e) {
     var tab = e.target.closest('[role="tab"]');

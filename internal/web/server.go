@@ -83,6 +83,7 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *work
 			}
 			return ""
 		},
+		"md":         renderMarkdown,
 		"jsontree":   jsonTree,
 		"prettyjson": prettyJSON,
 		"bignum":     bignum,

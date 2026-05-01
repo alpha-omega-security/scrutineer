@@ -372,3 +372,28 @@ body { background: var(--background); color: var(--foreground);
 pre.log { background: var(--muted); padding: 1rem; border-radius: var(--radius);
           max-height: 60vh; overflow: auto; font-size: 0.8rem; white-space: pre-wrap; }
 .lucide:not([class*="size-"]) { width: 1em; height: 1em; vertical-align: -0.15em; }
+
+/* ── prose (rendered markdown in finding fields) ── */
+.prose { font-size: 0.875rem; line-height: 1.625; max-width: 80ch; }
+.prose p { margin: 0.75em 0; }
+.prose p:first-child { margin-top: 0; }
+.prose ul, .prose ol { margin: 0.75em 0; padding-left: 1.5em; }
+.prose ul { list-style: disc; }
+.prose ol { list-style: decimal; }
+.prose li { margin: 0.25em 0; }
+.prose h1, .prose h2, .prose h3, .prose h4 { font-weight: 600; margin: 1em 0 0.5em; }
+.prose h1 { font-size: 1.25rem; }
+.prose h2 { font-size: 1.125rem; }
+.prose h3 { font-size: 1rem; }
+.prose code { font-size: 0.8125rem; background: var(--muted); padding: 0.15em 0.35em;
+              border-radius: 0.25rem; }
+.prose pre { background: var(--muted); padding: 1rem; border-radius: var(--radius);
+             max-height: 60vh; overflow: auto; margin: 0.75em 0; }
+.prose pre code { background: none; padding: 0; font-size: 0.8rem; }
+.prose blockquote { border-left: 3px solid var(--border); padding-left: 1em;
+                    color: var(--muted-foreground); margin: 0.75em 0; }
+.prose a { color: var(--primary); text-decoration: underline; text-underline-offset: 2px; }
+.prose table { border-collapse: collapse; margin: 0.75em 0; font-size: 0.8125rem; }
+.prose th, .prose td { border: 1px solid var(--border); padding: 0.35em 0.75em; }
+.prose th { background: var(--muted); font-weight: 600; }
+.prose hr { border: none; border-top: 1px solid var(--border); margin: 1.5em 0; }

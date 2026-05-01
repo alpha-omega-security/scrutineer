@@ -9,6 +9,10 @@
       var apply = function () {
         var dark = scheme === 'dark' || (scheme === 'system' && mq.matches);
         document.documentElement.classList.toggle('dark', dark);
+        var hl = document.getElementById('hljs-light');
+        var hd = document.getElementById('hljs-dark');
+        if (hl) hl.disabled = dark;
+        if (hd) hd.disabled = !dark;
       };
       apply(); mq.addEventListener('change', apply);
     })();
@@ -25,6 +29,9 @@
   <script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.6/dist/htmx.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/htmx-ext-sse@2.2.4/sse.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/lucide@0.545.0/dist/umd/lucide.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/styles/github.min.css" id="hljs-light">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/styles/github-dark.min.css" id="hljs-dark" disabled>
+  <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.11.1/build/highlight.min.js"></script>
   <script src="/static/app.js" defer></script>
 </head>
 <body>
