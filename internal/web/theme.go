@@ -7,6 +7,8 @@ import (
 	"scrutineer/internal/config"
 )
 
+const cookieMaxAge = 365 * 24 * 60 * 60 //nolint:mnd
+
 var defaultTheme = "claude"
 
 func SetTheme(name string) {
@@ -85,7 +87,7 @@ func (s *Server) settingsUpdateTheme(w http.ResponseWriter, r *http.Request) {
 		Name:     "theme",
 		Value:    theme,
 		Path:     "/",
-		MaxAge:   365 * 24 * 60 * 60,
+		MaxAge:   cookieMaxAge,
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,
 	})
@@ -114,7 +116,7 @@ func (s *Server) settingsUpdateColorScheme(w http.ResponseWriter, r *http.Reques
 		Name:     "color_scheme",
 		Value:    scheme,
 		Path:     "/",
-		MaxAge:   365 * 24 * 60 * 60,
+		MaxAge:   cookieMaxAge,
 		SameSite: http.SameSiteStrictMode,
 	})
 	setFlash(w, Flash{Category: "success", Title: "Color scheme updated"})
