@@ -1429,16 +1429,49 @@ func TestRepoShow_displaysFindingStatus(t *testing.T) {
 	}
 }
 
+func TestDependentScan_dedupesAgainstNormalisedRepo(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	s.DB.Create(&db.Skill{Name: "triage", Description: "o", Body: "b", Active: true, Source: "ui", Version: 1})
+
+	// Repo added through the form (normalised, no .git).
+	existing := db.Repository{URL: "https://github.com/rack/rack", Name: "rack"}
+	s.DB.Create(&existing)
+
+	// Dependent whose RepositoryURL came from ecosyste.ms with .git.
+	dep := db.Dependent{RepositoryID: existing.ID, Name: "rack",
+		RepositoryURL: "https://github.com/rack/rack.git"}
+	s.DB.Create(&dep)
+
+	req := httptest.NewRequest("POST", fmt.Sprintf("/dependents/%d/scan", dep.ID), nil)
+	req.Host = testHost
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+
+	var repos []db.Repository
+	s.DB.Find(&repos)
+	if len(repos) != 1 {
+		t.Fatalf("want 1 repo row, got %d: %+v", len(repos), repos)
+	}
+	if got, want := w.Header().Get("Location"), fmt.Sprintf("/repositories/%d", existing.ID); got != want {
+		t.Errorf("redirect = %q, want %q", got, want)
+	}
+}
+
 func TestBulkImport_dedupesNormalisedURLs(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
 	s.DB.Create(&db.Skill{Name: "triage", Description: "o", Body: "b", Active: true, Source: "ui", Version: 1})
 
-	// Same repo four ways: canonical, mixed case, trailing slash, query string.
+	// Same repo five ways: canonical, mixed case, trailing slash, .git, query string.
 	urls := strings.Join([]string{
 		"https://github.com/rails/rails",
 		"https://github.com/Rails/Rails",
 		"https://github.com/rails/rails/",
+		"https://github.com/rails/rails.git",
 		"https://GitHub.com/rails/rails?tab=readme",
 	}, "\n")
 	form := url.Values{"urls": {urls}}
@@ -1451,13 +1484,13 @@ func TestBulkImport_dedupesNormalisedURLs(t *testing.T) {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
 	f := flashFrom(t, w)
-	if !strings.Contains(f.Title, "1 added") || !strings.Contains(f.Title, "3 already present") {
-		t.Errorf("flash title = %q, want 1 added / 3 already present", f.Title)
+	if !strings.Contains(f.Title, "1 added") || !strings.Contains(f.Title, "4 already present") {
+		t.Errorf("flash title = %q, want 1 added / 4 already present", f.Title)
 	}
 
 	var repos []db.Repository
 	s.DB.Find(&repos)
-	if len(repos) != 1 || repos[0].URL != "https://github.com/rails/rails.git" {
+	if len(repos) != 1 || repos[0].URL != "https://github.com/rails/rails" {
 		t.Fatalf("want one normalised row, got %+v", repos)
 	}
 }
@@ -1505,7 +1538,7 @@ func TestBulkImport_skipsDuplicates(t *testing.T) {
 
 	triage := db.Skill{Name: "triage", Description: "o", Body: "b", Active: true, Source: "ui", Version: 1}
 	s.DB.Create(&triage)
-	s.DB.Create(&db.Repository{URL: "https://github.com/foo/one.git", Name: "one"})
+	s.DB.Create(&db.Repository{URL: "https://github.com/foo/one", Name: "one"})
 
 	form := url.Values{"urls": {"https://github.com/foo/one.git\nhttps://github.com/foo/two.git"}}
 	req := httptest.NewRequest("POST", "/repositories/bulk", strings.NewReader(form.Encode()))
@@ -1615,7 +1648,7 @@ func TestCreateRepo_parsesGitHubTreeURL(t *testing.T) {
 	if err := s.DB.First(&repo).Error; err != nil {
 		t.Fatal(err)
 	}
-	if repo.URL != "https://github.com/apache/airflow.git" {
+	if repo.URL != "https://github.com/apache/airflow" {
 		t.Errorf("repo.URL = %q, want clone URL without /tree/", repo.URL)
 	}
 	var scan db.Scan
@@ -1927,7 +1960,7 @@ func TestRepoCreate_existingRepoWithBranchEnqueuesScan(t *testing.T) {
 	defer done()
 
 	s.DB.Create(&db.Skill{Name: "triage", Active: true, Source: "test", Body: "test", OutputFile: "report.json", OutputKind: "freeform", Version: 1})
-	s.DB.Create(&db.Repository{URL: "https://github.com/apache/httpd.git", Name: "httpd"})
+	s.DB.Create(&db.Repository{URL: "https://github.com/apache/httpd", Name: "httpd"})
 
 	form := url.Values{"url": {"https://github.com/apache/httpd/tree/2.4.x"}}
 	req := httptest.NewRequest("POST", "/repositories", strings.NewReader(form.Encode()))
@@ -1954,7 +1987,7 @@ func TestRepoCreate_existingRepoWithoutBranchDoesNotEnqueue(t *testing.T) {
 	defer done()
 
 	s.DB.Create(&db.Skill{Name: "triage", Active: true, Source: "test", Body: "test", OutputFile: "report.json", OutputKind: "freeform", Version: 1})
-	s.DB.Create(&db.Repository{URL: "https://github.com/apache/httpd.git", Name: "httpd"})
+	s.DB.Create(&db.Repository{URL: "https://github.com/apache/httpd", Name: "httpd"})
 
 	form := url.Values{"url": {"https://github.com/apache/httpd"}}
 	req := httptest.NewRequest("POST", "/repositories", strings.NewReader(form.Encode()))

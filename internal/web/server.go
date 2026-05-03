@@ -857,20 +857,11 @@ func (s *Server) depScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Try to find existing repo by PURL lookup
 	repoURL := resolveDepRepoURL(r.Context(), dep)
 	if repoURL == "" {
 		http.Error(w, "could not resolve repository URL for "+dep.Name, http.StatusUnprocessableEntity)
 		return
 	}
-
-	// Find or create
-	repo := db.Repository{URL: repoURL, Name: db.NameFromURL(repoURL)}
-	if err := s.DB.Where(db.Repository{URL: repoURL}).FirstOrCreate(&repo).Error; err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
 	s.addRepoAndScan(w, r, repoURL)
 }
 
@@ -921,21 +912,15 @@ const (
 )
 
 func (s *Server) addRepoAndScan(w http.ResponseWriter, r *http.Request, repoURL string) {
-	repo := db.Repository{URL: repoURL, Name: db.NameFromURL(repoURL)}
-	if err := s.DB.Where(db.Repository{URL: repoURL}).FirstOrCreate(&repo).Error; err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	input, err := ParseRepoInput(repoURL)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
-	var scanCount int64
-	s.DB.Model(&db.Scan{}).Where("repository_id = ?", repo.ID).Count(&scanCount)
-	if scanCount == 0 {
-		var skill db.Skill
-		if err := s.DB.Where("name = ? AND active = ?", defaultSkillName, true).
-			First(&skill).Error; err == nil {
-			_, _ = s.enqueueSkill(r.Context(), repo.ID, skill.ID, "")
-		} else {
-			s.Log.Warn("default skill not found, repo added with no scans", "skill", defaultSkillName)
-		}
+	repo, _, err := s.createOrTriageRepo(r.Context(), input, "")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 	s.redirect(w, r, fmt.Sprintf("/repositories/%d", repo.ID))
 }

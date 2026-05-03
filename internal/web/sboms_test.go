@@ -130,7 +130,7 @@ func TestSBOMResolve_linksRepoAndEnqueuesTriage(t *testing.T) {
 	}
 	var repo db.Repository
 	s.DB.First(&repo, *pkgs[0].RepositoryID)
-	if repo.URL != "https://github.com/lodash/lodash.git" {
+	if repo.URL != "https://github.com/lodash/lodash" {
 		t.Errorf("repo url = %q", repo.URL)
 	}
 	var scans int64

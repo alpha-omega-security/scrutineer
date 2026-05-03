@@ -30,9 +30,9 @@ type RepoInput struct {
 //
 // CloneURL is normalised so the same repository pasted in different forms
 // dedupes to one row: the host is lowercased, the query string is dropped,
-// trailing slashes are stripped, `.git` is appended once, and for forges
-// known to treat owner/repo case-insensitively the path is lowercased.
-// Branch names and sub-paths keep their case.
+// trailing slashes and a `.git` suffix are stripped, and for forges known
+// to treat owner/repo case-insensitively the path is lowercased. Branch
+// names and sub-paths keep their case.
 func ParseRepoInput(raw string) (RepoInput, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -103,14 +103,13 @@ func cloneURL(u *url.URL, path string) string {
 	if caseInsensitiveForges[c.Host] {
 		c.Path = strings.ToLower(c.Path)
 	}
-	return ensureGitSuffix(c.String())
+	return stripGitSuffix(c.String())
 }
 
-// ensureGitSuffix returns u with a single trailing ".git". Idempotent.
-func ensureGitSuffix(u string) string {
+// stripGitSuffix returns u with any trailing slash and ".git" removed.
+// All major forges clone fine without it and ecosyste.ms / web UIs emit
+// the bare form, so stripping is the canonical shape. Idempotent.
+func stripGitSuffix(u string) string {
 	u = strings.TrimRight(u, "/")
-	if strings.HasSuffix(u, ".git") {
-		return u
-	}
-	return u + ".git"
+	return strings.TrimSuffix(u, ".git")
 }
