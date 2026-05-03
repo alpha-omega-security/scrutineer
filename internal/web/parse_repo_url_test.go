@@ -12,18 +12,18 @@ func TestParseRepoInput(t *testing.T) {
 		{
 			name:  "plain github url without .git",
 			input: "https://github.com/rails/rails",
-			want:  RepoInput{CloneURL: "https://github.com/rails/rails.git"},
+			want:  RepoInput{CloneURL: "https://github.com/rails/rails"},
 		},
 		{
 			name:  "plain github url with .git",
 			input: "https://github.com/rails/rails.git",
-			want:  RepoInput{CloneURL: "https://github.com/rails/rails.git"},
+			want:  RepoInput{CloneURL: "https://github.com/rails/rails"},
 		},
 		{
 			name:  "github tree url with sub-path",
 			input: "https://github.com/apache/airflow/tree/main/airflow-core",
 			want: RepoInput{
-				CloneURL: "https://github.com/apache/airflow.git",
+				CloneURL: "https://github.com/apache/airflow",
 				SubPath:  "airflow-core",
 				Branch:   "main",
 			},
@@ -32,7 +32,7 @@ func TestParseRepoInput(t *testing.T) {
 			name:  "github tree url with nested sub-path",
 			input: "https://github.com/kubernetes/kubernetes/tree/master/staging/src/k8s.io/api",
 			want: RepoInput{
-				CloneURL: "https://github.com/kubernetes/kubernetes.git",
+				CloneURL: "https://github.com/kubernetes/kubernetes",
 				SubPath:  "staging/src/k8s.io/api",
 				Branch:   "master",
 			},
@@ -41,7 +41,7 @@ func TestParseRepoInput(t *testing.T) {
 			name:  "github tree url with release branch",
 			input: "https://github.com/apache/airflow/tree/v2.9.0/airflow-core",
 			want: RepoInput{
-				CloneURL: "https://github.com/apache/airflow.git",
+				CloneURL: "https://github.com/apache/airflow",
 				SubPath:  "airflow-core",
 				Branch:   "v2.9.0",
 			},
@@ -50,7 +50,7 @@ func TestParseRepoInput(t *testing.T) {
 			name:  "github tree url pointing at root of branch",
 			input: "https://github.com/apache/airflow/tree/main",
 			want: RepoInput{
-				CloneURL: "https://github.com/apache/airflow.git",
+				CloneURL: "https://github.com/apache/airflow",
 				SubPath:  "",
 				Branch:   "main",
 			},
@@ -59,7 +59,7 @@ func TestParseRepoInput(t *testing.T) {
 			name:  "fragment form explicit sub-path",
 			input: "https://gitlab.com/group/project#services/api",
 			want: RepoInput{
-				CloneURL: "https://gitlab.com/group/project.git",
+				CloneURL: "https://gitlab.com/group/project",
 				SubPath:  "services/api",
 			},
 		},
@@ -67,35 +67,40 @@ func TestParseRepoInput(t *testing.T) {
 			name:  "fragment form with leading slash",
 			input: "https://github.com/rails/rails#/railties",
 			want: RepoInput{
-				CloneURL: "https://github.com/rails/rails.git",
+				CloneURL: "https://github.com/rails/rails",
 				SubPath:  "railties",
 			},
 		},
 		{
 			name:  "trailing slash stripped",
 			input: "https://github.com/rails/rails/",
-			want:  RepoInput{CloneURL: "https://github.com/rails/rails.git"},
+			want:  RepoInput{CloneURL: "https://github.com/rails/rails"},
+		},
+		{
+			name:  ".git/ trailing slash stripped",
+			input: "https://github.com/rails/rails.git/",
+			want:  RepoInput{CloneURL: "https://github.com/rails/rails"},
 		},
 		{
 			name:  "query string dropped",
 			input: "https://github.com/rails/rails?tab=readme-ov-file",
-			want:  RepoInput{CloneURL: "https://github.com/rails/rails.git"},
+			want:  RepoInput{CloneURL: "https://github.com/rails/rails"},
 		},
 		{
 			name:  "host lowercased",
 			input: "https://GitHub.com/rails/rails",
-			want:  RepoInput{CloneURL: "https://github.com/rails/rails.git"},
+			want:  RepoInput{CloneURL: "https://github.com/rails/rails"},
 		},
 		{
 			name:  "owner/repo lowercased on known forge",
 			input: "https://github.com/Rails/Rails",
-			want:  RepoInput{CloneURL: "https://github.com/rails/rails.git"},
+			want:  RepoInput{CloneURL: "https://github.com/rails/rails"},
 		},
 		{
 			name:  "tree url owner/repo lowercased but branch and sub-path keep case",
 			input: "https://github.com/Apache/Airflow/tree/Main/Airflow-Core",
 			want: RepoInput{
-				CloneURL: "https://github.com/apache/airflow.git",
+				CloneURL: "https://github.com/apache/airflow",
 				SubPath:  "Airflow-Core",
 				Branch:   "Main",
 			},
@@ -104,19 +109,19 @@ func TestParseRepoInput(t *testing.T) {
 			name:  "fragment sub-path keeps case",
 			input: "https://github.com/Rails/Rails#ActionPack",
 			want: RepoInput{
-				CloneURL: "https://github.com/rails/rails.git",
+				CloneURL: "https://github.com/rails/rails",
 				SubPath:  "ActionPack",
 			},
 		},
 		{
 			name:  "unknown host keeps path case",
 			input: "https://git.internal/Team/Project",
-			want:  RepoInput{CloneURL: "https://git.internal/Team/Project.git"},
+			want:  RepoInput{CloneURL: "https://git.internal/Team/Project"},
 		},
 		{
 			name:  "all of the above at once",
-			input: "https://GitHub.com/Rails/Rails/?tab=readme",
-			want:  RepoInput{CloneURL: "https://github.com/rails/rails.git"},
+			input: "https://GitHub.com/Rails/Rails.git/?tab=readme",
+			want:  RepoInput{CloneURL: "https://github.com/rails/rails"},
 		},
 		{
 			name:    "non-https rejected",
