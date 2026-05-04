@@ -66,13 +66,13 @@ Authorization: Bearer {token}
 
 ## 2. Enable private vulnerability reporting on the fork
 
+Use the dedicated endpoint; the `security_and_analysis` block on `PATCH /repos/...` accepts the field but does not actually flip it.
+
 ```
-gh api -X PATCH repos/{fork_org}/{fork_name} --input - <<'JSON'
-{"security_and_analysis": {"private_vulnerability_reporting": {"status": "enabled"}}}
-JSON
+gh api -X PUT repos/{fork_org}/{fork_name}/private-vulnerability-reporting
 ```
 
-A 200 means it is on. A 422 usually means the org has it forced on or off at the org level; record that in `notes` and carry on.
+A 204 means it is on. Confirm with `gh api repos/{fork_org}/{fork_name}/private-vulnerability-reporting` which returns `{"enabled": true|false}`. A 422 usually means the org has it forced on or off at the org level; record that in `notes` and carry on.
 
 ## 3. Record the scan on the fork
 
@@ -101,13 +101,13 @@ gh api repos/{fork_org}/{fork_name}/security-advisories --paginate --jq '.[].sum
 
 Skip a finding whose title already appears as an advisory summary; record it under `"skipped_advisories"`.
 
-For each remaining finding, build the request body and file it as a private vulnerability report on the fork:
+For each remaining finding, build the request body and create a draft repository security advisory on the fork. Use the admin create endpoint, not `/reports` — `/reports` is for external reporters and is rejected when the caller is a repo admin, which we are.
 
 ```
-gh api -X POST repos/{fork_org}/{fork_name}/security-advisories/reports --input ./advisory-{finding_id}.json
+gh api -X POST repos/{fork_org}/{fork_name}/security-advisories --input ./advisory-{finding_id}.json
 ```
 
-The body shape is the GHSA report schema:
+The body shape is the GHSA create schema:
 
 ```json
 {
@@ -123,6 +123,8 @@ The body shape is the GHSA report schema:
 ```
 
 Build `vulnerabilities` from `GET {api_base}/repositories/{repository_id}/packages` using the same ecosystem mapping the disclose skill uses (rubygems, npm, pip, maven, nuget, composer, go, rust, erlang, actions, pub, other). If the repository has no packages, send `"vulnerabilities": [{"package": {"ecosystem": "other", "name": "{owner}/{repo}"}}]` — the endpoint requires at least one entry.
+
+`vulnerable_version_range` must be a bare constraint string. `finding.affected` is analyst prose and often carries annotations like `<= 0.9.1 (all published versions)` or `1.x through 2.3`; reduce it to comma-separated `OP VERSION` clauses where OP is one of `<`, `<=`, `>`, `>=`, `=` and VERSION is dotted-numeric (a leading `v` is fine). Drop anything in parentheses, drop the package name if it was repeated, and turn `all versions` / `every release` into `>= 0`. If you cannot confidently reduce it to that shape, omit `vulnerable_version_range` from the entry and keep the original prose in the description's Affected versions section instead.
 
 If `disclosure_draft` is empty the disclose skill has not run on this finding yet. Assemble the description yourself from the finding's six-step prose (the full `GET {api_base}/findings/{id}` response includes `trace`, `boundary`, `validation`, `prior_art`, `reach`, `rating` even for `new` findings). Use this template, dropping any section whose source field is empty:
 
