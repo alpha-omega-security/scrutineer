@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "posture report",
+  "type": "object",
+  "required": ["tier", "summary", "checks"],
+  "additionalProperties": false,
+  "properties": {
+    "tier": {
+      "type": "string",
+      "enum": ["ready", "partial", "unprepared"]
+    },
+    "summary": {
+      "type": "string",
+      "description": "One or two sentences for the repo list."
+    },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "present"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "enum": [
+              "security_policy",
+              "private_vulnerability_reporting",
+              "security_txt",
+              "manifest_security_contact",
+              "bounty_or_lifter",
+              "prior_advisories",
+              "scorecard",
+              "dependency_updates",
+              "code_scanning",
+              "signed_releases",
+              "codeowners",
+              "funding",
+              "security_issue_template",
+              "archived"
+            ]
+          },
+          "present":  { "type": ["boolean", "string"], "enum": [true, false, "unknown"] },
+          "evidence": { "type": "string" },
+          "url":      { "type": "string", "format": "uri" }
+        }
+      }
+    },
+    "security_policy_detail": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "contact":            { "type": "string" },
+        "supported_versions": { "type": "string" },
+        "response_sla":       { "type": "string" }
+      }
+    },
+    "notes": { "type": "string" }
+  }
+}

@@ -46,6 +46,13 @@ type Repository struct {
 	// it from the repo page.
 	DisclosureChannel string
 
+	// Posture is the disclosure-readiness tier assigned by the posture
+	// skill: "ready", "partial", or "unprepared". PostureSummary is the
+	// one-line explanation that goes with it. Both are advisory only and
+	// are overwritten on each posture run.
+	Posture        string `gorm:"index"`
+	PostureSummary string
+
 	// CloneError is set when the last clone/fetch attempt failed (repo
 	// deleted, made private, wrong URL). Non-empty means the repo is
 	// currently unreachable. Cleared on next successful clone.

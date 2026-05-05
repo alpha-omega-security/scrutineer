@@ -168,6 +168,51 @@ func TestParseMaintainers_emptyChannelLeavesRepoAlone(t *testing.T) {
 	}
 }
 
+func TestParsePosture_writesTierAndSummary(t *testing.T) {
+	report := `{
+		"tier": "partial",
+		"summary": "SECURITY.md present but PVR disabled",
+		"checks": [{"id":"security_policy","present":true}]
+	}`
+	repo, gdb := runSkillWithReport(t, "posture", report)
+	var got db.Repository
+	gdb.First(&got, repo.ID)
+	if got.Posture != "partial" {
+		t.Errorf("Posture = %q, want partial", got.Posture)
+	}
+	if got.PostureSummary != "SECURITY.md present but PVR disabled" {
+		t.Errorf("PostureSummary = %q", got.PostureSummary)
+	}
+}
+
+func TestParsePosture_rejectsUnknownTier(t *testing.T) {
+	gdb, _ := db.Open(filepath.Join(t.TempDir(), "p.db"))
+	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
+	gdb.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID}
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	err := w.parsePostureOutput(&scan, `{"tier":"medium"}`, func(Event) {})
+	if err == nil || !strings.Contains(err.Error(), "medium") {
+		t.Fatalf("expected tier validation error, got %v", err)
+	}
+}
+
+func TestParsePosture_emptyTierLeavesRepoAlone(t *testing.T) {
+	repo, gdb := runSkillWithReport(t, "posture", `{"summary":"x"}`)
+	gdb.Model(&db.Repository{}).Where("id = ?", repo.ID).Update("posture", "ready")
+
+	scan := db.Scan{RepositoryID: repo.ID}
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if err := w.parsePostureOutput(&scan, `{"checks":[]}`, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	var got db.Repository
+	gdb.First(&got, repo.ID)
+	if got.Posture != "ready" {
+		t.Errorf("prior tier clobbered: %q", got.Posture)
+	}
+}
+
 func TestParseDependents_replacesDependentRows(t *testing.T) {
 	report := `{"dependents":[
 		{"name":"rails-x","ecosystem":"rubygems","purl":"pkg:gem/rails-x","downloads":5000,"dependent_repos":200,"latest_version":"7.0.0"}

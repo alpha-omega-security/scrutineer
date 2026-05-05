@@ -379,6 +379,38 @@ func (w *Worker) parseRepoOverviewOutput(scan *db.Scan, report string, emit func
 	return nil
 }
 
+// parsePostureOutput writes the disclosure-readiness tier and summary onto
+// the Repository row. The full check list stays in scan.Report; only the
+// tier and one-line summary are promoted to columns so the repo list can
+// sort and filter on them.
+func (w *Worker) parsePostureOutput(scan *db.Scan, report string, emit func(Event)) error {
+	var result struct {
+		Tier    string `json:"tier"`
+		Summary string `json:"summary"`
+	}
+	if err := json.Unmarshal([]byte(report), &result); err != nil {
+		return fmt.Errorf("parse posture: %w", err)
+	}
+	tier := strings.TrimSpace(result.Tier)
+	switch tier {
+	case "ready", "partial", "unprepared":
+	case "":
+		emit(Event{Kind: KindText, Text: "posture: no tier in report, leaving repository unchanged"})
+		return nil
+	default:
+		return fmt.Errorf("posture tier %q is not one of ready|partial|unprepared", tier)
+	}
+	updates := map[string]any{
+		"posture":         tier,
+		"posture_summary": strings.TrimSpace(result.Summary),
+	}
+	if err := w.DB.Model(&db.Repository{}).Where("id = ?", scan.RepositoryID).Updates(updates).Error; err != nil {
+		return fmt.Errorf("update posture: %w", err)
+	}
+	emit(Event{Kind: KindText, Text: "posture: " + tier})
+	return nil
+}
+
 // parseVerifyOutput records the outcome of a finding-scoped verification
 // run. Evidence and notes become a FindingNote; the status transition is
 // written via WriteFindingField with source=model_suggested so the audit

@@ -116,52 +116,40 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 	}
 	w.clearCloneError(scan)
 
-	if res.Report == "" {
-		return res.Report, nil
-	}
-	switch skill.OutputKind {
-	case "findings":
-		if err := w.parseFindingsOutput(scan, res.Report, emit); err != nil {
-			return res.Report, err
-		}
-	case "maintainers":
-		if err := w.parseMaintainersOutput(scan, res.Report, emit); err != nil {
-			return res.Report, err
-		}
-	case "repo_metadata":
-		if err := w.parseRepoMetadataOutput(scan, res.Report, emit); err != nil {
-			return res.Report, err
-		}
-	case "packages":
-		if err := w.parsePackagesOutput(scan, res.Report, emit); err != nil {
-			return res.Report, err
-		}
-	case "advisories":
-		if err := w.parseAdvisoriesOutput(scan, res.Report, emit); err != nil {
-			return res.Report, err
-		}
-	case "dependents":
-		if err := w.parseDependentsOutput(scan, res.Report, emit); err != nil {
-			return res.Report, err
-		}
-	case "dependencies":
-		if err := w.parseDependenciesOutput(scan, res.Report, emit); err != nil {
-			return res.Report, err
-		}
-	case "verify":
-		if err := w.parseVerifyOutput(scan, res.Report, emit); err != nil {
-			return res.Report, err
-		}
-	case "subprojects":
-		if err := w.parseSubprojectsOutput(scan, res.Report, emit); err != nil {
-			return res.Report, err
-		}
-	case "repo_overview":
-		if err := w.parseRepoOverviewOutput(scan, res.Report, emit); err != nil {
+	if res.Report != "" {
+		if err := w.parseSkillOutput(&skill, scan, res.Report, emit); err != nil {
 			return res.Report, err
 		}
 	}
 	return res.Report, nil
+}
+
+func (w *Worker) parseSkillOutput(skill *db.Skill, scan *db.Scan, report string, emit func(Event)) error {
+	switch skill.OutputKind {
+	case "findings":
+		return w.parseFindingsOutput(scan, report, emit)
+	case "maintainers":
+		return w.parseMaintainersOutput(scan, report, emit)
+	case "repo_metadata":
+		return w.parseRepoMetadataOutput(scan, report, emit)
+	case "packages":
+		return w.parsePackagesOutput(scan, report, emit)
+	case "advisories":
+		return w.parseAdvisoriesOutput(scan, report, emit)
+	case "dependents":
+		return w.parseDependentsOutput(scan, report, emit)
+	case "dependencies":
+		return w.parseDependenciesOutput(scan, report, emit)
+	case "verify":
+		return w.parseVerifyOutput(scan, report, emit)
+	case "subprojects":
+		return w.parseSubprojectsOutput(scan, report, emit)
+	case "repo_overview":
+		return w.parseRepoOverviewOutput(scan, report, emit)
+	case "posture":
+		return w.parsePostureOutput(scan, report, emit)
+	}
+	return nil
 }
 
 func (w *Worker) handleCloneError(scan *db.Scan, err error, emit func(Event)) (string, bool) {
