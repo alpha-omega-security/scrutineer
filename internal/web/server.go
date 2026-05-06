@@ -47,8 +47,6 @@ type Server struct {
 	skillNamesMu    sync.Mutex
 	skillNamesCache []string
 	skillNamesTTL   time.Time
-
-	csafSchema *jsonschema.Schema
 }
 
 func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *worker.Worker) (*Server, error) {

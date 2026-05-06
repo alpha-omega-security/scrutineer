@@ -144,8 +144,13 @@ func TestFindingCSAF_rejectedMapsToNotAffected(t *testing.T) {
 	if _, ok := v["product_status"].(map[string]any)["known_not_affected"]; !ok {
 		t.Fatalf("known_not_affected expected: %+v", v["product_status"])
 	}
-	if _, ok := v["flags"]; ok {
-		t.Errorf("flags must not be emitted in this first pass: %+v", v["flags"])
+	flags, ok := v["flags"].([]any)
+	if !ok || len(flags) != 1 {
+		t.Fatalf("expected one flag, got %+v", v["flags"])
+	}
+	flag := flags[0].(map[string]any)
+	if flag["label"] != "vulnerable_code_not_present" {
+		t.Errorf("flag label = %v, want vulnerable_code_not_present", flag["label"])
 	}
 }
 
@@ -412,6 +417,99 @@ func TestCSAFProductSuffix(t *testing.T) {
 				t.Errorf("got %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestFindingCSAF_purlFromPackages(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	f := seedCSAFFinding(t, s, nil)
+	s.DB.Create(&db.Package{RepositoryID: f.RepositoryID, Name: "lib", Ecosystem: "npm", PURL: "pkg:npm/lib@1.0.0"})
+	s.DB.Create(&db.Package{RepositoryID: f.RepositoryID, Name: "lib-go", Ecosystem: "go", PURL: "pkg:golang/example/lib@1.0.0"})
+
+	w := getCSAF(t, s, f.ID)
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	doc := decodeCSAF(t, w.Body.Bytes())
+	tree := doc["product_tree"].(map[string]any)
+	branches := tree["branches"].([]any)[0].(map[string]any)["branches"].([]any)
+	if len(branches) != 3 {
+		t.Fatalf("expected 3 product branches (base + 2 packages), got %d", len(branches))
+	}
+	var purls []string
+	for _, b := range branches {
+		p := b.(map[string]any)["product"].(map[string]any)
+		if helper, ok := p["product_identification_helper"].(map[string]any); ok {
+			purls = append(purls, helper["purl"].(string))
+		}
+	}
+	if len(purls) != 2 {
+		t.Fatalf("expected 2 PURLs, got %d: %v", len(purls), purls)
+	}
+}
+
+func TestFindingCSAF_noPurlWhenNoPackages(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	f := seedCSAFFinding(t, s, nil)
+	w := getCSAF(t, s, f.ID)
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	doc := decodeCSAF(t, w.Body.Bytes())
+	tree := doc["product_tree"].(map[string]any)
+	branches := tree["branches"].([]any)[0].(map[string]any)["branches"].([]any)
+	if len(branches) != 1 {
+		t.Fatalf("expected 1 product branch (base only), got %d", len(branches))
+	}
+	p := branches[0].(map[string]any)["product"].(map[string]any)
+	if _, ok := p["product_identification_helper"]; ok {
+		t.Errorf("product_identification_helper should be absent without packages")
+	}
+}
+
+func TestFindingCSAF_wontfixEmitsFlag(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	f := seedCSAFFinding(t, s, func(f *db.Finding) {
+		f.Status = db.FindingTriaged
+		f.Resolution = db.ResolutionWontfix
+	})
+	w := getCSAF(t, s, f.ID)
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	doc := decodeCSAF(t, w.Body.Bytes())
+	v := doc["vulnerabilities"].([]any)[0].(map[string]any)
+	if _, ok := v["product_status"].(map[string]any)["known_not_affected"]; !ok {
+		t.Fatalf("wontfix should be known_not_affected: %+v", v["product_status"])
+	}
+	flags := v["flags"].([]any)
+	if len(flags) != 1 {
+		t.Fatalf("expected 1 flag, got %d", len(flags))
+	}
+	if flags[0].(map[string]any)["label"] != "vulnerable_code_not_present" {
+		t.Errorf("flag label = %v", flags[0].(map[string]any)["label"])
+	}
+}
+
+func TestFindingCSAF_noFlagWhenNotKnownNotAffected(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	f := seedCSAFFinding(t, s, nil)
+	w := getCSAF(t, s, f.ID)
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	doc := decodeCSAF(t, w.Body.Bytes())
+	v := doc["vulnerabilities"].([]any)[0].(map[string]any)
+	if _, ok := v["flags"]; ok {
+		t.Errorf("flags should not be emitted for known_affected: %+v", v["flags"])
 	}
 }
 

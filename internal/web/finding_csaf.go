@@ -100,8 +100,10 @@ func (s *Server) findingCSAF(w http.ResponseWriter, r *http.Request) {
 	s.DB.First(&repo, f.RepositoryID)
 	var refs []db.FindingReference
 	s.DB.Where("finding_id = ?", f.ID).Order("id desc").Find(&refs)
+	var pkgs []db.Package
+	s.DB.Where("repository_id = ?", f.RepositoryID).Find(&pkgs)
 
-	raw, err := json.MarshalIndent(buildCSAF(f, repo, refs), "", "  ")
+	raw, err := json.MarshalIndent(buildCSAF(f, repo, refs, pkgs), "", "  ")
 	if err != nil {
 		s.Log.Error("csaf marshal", "finding", f.ID, "err", err)
 		http.Error(w, "failed to generate CSAF document", http.StatusInternalServerError)
@@ -208,9 +210,15 @@ type csafVulnerability struct {
 	Title         string             `json:"title,omitempty"`
 	Notes         []csafNote         `json:"notes,omitempty"`
 	ProductStatus *csafProductStatus `json:"product_status,omitempty"`
+	Flags         []csafFlag         `json:"flags,omitempty"`
 	Scores        []csafScore        `json:"scores,omitempty"`
 	Remediations  []csafRemediation  `json:"remediations,omitempty"`
 	References    []csafReference    `json:"references,omitempty"`
+}
+
+type csafFlag struct {
+	Label      string   `json:"label"`
+	ProductIDs []string `json:"product_ids,omitempty"`
 }
 
 type csafCWE struct {
@@ -264,7 +272,7 @@ type csafReference struct {
 	URL      string `json:"url"`
 }
 
-func buildCSAF(f db.Finding, repo db.Repository, refs []db.FindingReference) csafDocument {
+func buildCSAF(f db.Finding, repo db.Repository, refs []db.FindingReference, pkgs []db.Package) csafDocument {
 	productID := fmt.Sprintf("PKG-%d-%s", f.RepositoryID, csafProductSuffix(f))
 
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -313,40 +321,140 @@ func buildCSAF(f db.Finding, repo db.Repository, refs []db.FindingReference) csa
 
 	productName := firstNonEmpty(repo.FullName, repo.Name, "package")
 	productVersion := firstNonEmpty(f.Affected, "unknown")
-	doc.ProductTree = &csafProductTree{
-		Branches: []csafBranch{{
-			Category: "product_name",
-			Name:     productName,
-			Branches: []csafBranch{{
-				Category: "product_version",
-				Name:     productVersion,
-				Product: &csafProduct{
-					Name:      fmt.Sprintf("%s %s", productName, productVersion),
-					ProductID: productID,
-				},
-			}},
-		}},
+	doc.ProductTree = buildProductTree(productName, productVersion, productID, pkgs)
+
+	productIDs := []string{productID}
+	for _, pkg := range pkgs {
+		if pkg.PURL != "" {
+			productIDs = append(productIDs, pkgProductID(pkg))
+		}
 	}
 
 	v := csafVulnerability{
 		CVE:           f.CVEID,
 		Title:         f.Title,
-		ProductStatus: buildProductStatus(f, productID),
+		ProductStatus: buildProductStatusMulti(f, productIDs),
 		References:    buildReferences(refs),
 		Notes:         buildAuditNotes(f),
+		Flags:         buildFlags(f, productIDs),
 	}
 	if cwe := buildCWE(f.CWE); cwe != nil {
 		v.CWE = cwe
 	}
-	if score := buildScore(f, productID); score != nil {
+	if score := buildScoreMulti(f, productIDs); score != nil {
 		v.Scores = []csafScore{*score}
 	}
-	if rem := buildRemediations(f, repo, productID); len(rem) > 0 {
+	if rem := buildRemediationsMulti(f, repo, productIDs); len(rem) > 0 {
 		v.Remediations = rem
 	}
 	doc.Vulnerabilities = []csafVulnerability{v}
 
 	return doc
+}
+
+func pkgProductID(pkg db.Package) string {
+	return fmt.Sprintf("PKG-%d-%s-%s", pkg.RepositoryID, pkg.Ecosystem, pkg.Name)
+}
+
+func buildProductTree(productName, productVersion, baseProductID string, pkgs []db.Package) *csafProductTree {
+	baseProduct := csafBranch{
+		Category: "product_version",
+		Name:     productVersion,
+		Product: &csafProduct{
+			Name:      fmt.Sprintf("%s %s", productName, productVersion),
+			ProductID: baseProductID,
+		},
+	}
+	versionBranches := []csafBranch{baseProduct}
+	for _, pkg := range pkgs {
+		if pkg.PURL == "" {
+			continue
+		}
+		versionBranches = append(versionBranches, csafBranch{
+			Category: "product_version",
+			Name:     productVersion,
+			Product: &csafProduct{
+				Name:      fmt.Sprintf("%s %s", pkg.Name, productVersion),
+				ProductID: pkgProductID(pkg),
+				IdentHelper: &csafProductIdentifier{
+					PURL: pkg.PURL,
+				},
+			},
+		})
+	}
+	return &csafProductTree{
+		Branches: []csafBranch{{
+			Category: "product_name",
+			Name:     productName,
+			Branches: versionBranches,
+		}},
+	}
+}
+
+func buildFlags(f db.Finding, productIDs []string) []csafFlag {
+	if mapProductStatus(f) != csafStatusKnownNotAffected {
+		return nil
+	}
+	return []csafFlag{{
+		Label:      "vulnerable_code_not_present",
+		ProductIDs: productIDs,
+	}}
+}
+
+func buildProductStatusMulti(f db.Finding, productIDs []string) *csafProductStatus {
+	ps := &csafProductStatus{}
+	switch mapProductStatus(f) {
+	case csafStatusFixed:
+		ps.Fixed = productIDs
+	case csafStatusKnownNotAffected:
+		ps.KnownNotAffected = productIDs
+	case csafStatusKnownAffected:
+		ps.KnownAffected = productIDs
+	default:
+		ps.UnderInvestigation = productIDs
+	}
+	return ps
+}
+
+func buildScoreMulti(f db.Finding, productIDs []string) *csafScore {
+	cvss := parseCVSSv3Vector(f.CVSSVector)
+	if cvss == nil {
+		return nil
+	}
+	cvss.BaseScore = f.CVSSScore
+	cvss.BaseSeverity = severityLabel(f.CVSSScore)
+	cvss.VectorString = f.CVSSVector
+	return &csafScore{Products: productIDs, CVSSv3: cvss}
+}
+
+func buildRemediationsMulti(f db.Finding, repo db.Repository, productIDs []string) []csafRemediation {
+	var out []csafRemediation
+	if f.FixVersion != "" || f.FixCommit != "" {
+		details := "Fix available"
+		if f.FixVersion != "" {
+			details = "Fixed in " + f.FixVersion
+		} else if f.FixCommit != "" {
+			details = "Fixed in commit " + f.FixCommit
+		}
+		url := ""
+		if repo.HTMLURL != "" && f.FixCommit != "" {
+			url = strings.TrimSuffix(repo.HTMLURL, "/") + "/commit/" + f.FixCommit
+		}
+		out = append(out, csafRemediation{
+			Category:   "vendor_fix",
+			Details:    details,
+			ProductIDs: productIDs,
+			URL:        url,
+		})
+	}
+	if f.Resolution == db.ResolutionWorkaround {
+		out = append(out, csafRemediation{
+			Category:   "workaround",
+			Details:    "Workaround available; see finding details.",
+			ProductIDs: productIDs,
+		})
+	}
+	return out
 }
 
 func csafProductSuffix(f db.Finding) string {
@@ -380,21 +488,6 @@ func mapProductStatus(f db.Finding) string {
 		return csafStatusKnownNotAffected
 	}
 	return csafStatusUnderInvestigation
-}
-
-func buildProductStatus(f db.Finding, productID string) *csafProductStatus {
-	ps := &csafProductStatus{}
-	switch mapProductStatus(f) {
-	case csafStatusFixed:
-		ps.Fixed = []string{productID}
-	case csafStatusKnownNotAffected:
-		ps.KnownNotAffected = []string{productID}
-	case csafStatusKnownAffected:
-		ps.KnownAffected = []string{productID}
-	default:
-		ps.UnderInvestigation = []string{productID}
-	}
-	return ps
 }
 
 func buildCWE(id string) *csafCWE {
@@ -436,50 +529,6 @@ func buildReferences(refs []db.FindingReference) []csafReference {
 		out = append(out, csafReference{Category: "external", Summary: summary, URL: r.URL})
 	}
 	return out
-}
-
-func buildRemediations(f db.Finding, repo db.Repository, productID string) []csafRemediation {
-	var out []csafRemediation
-	if f.FixVersion != "" || f.FixCommit != "" {
-		details := "Fix available"
-		if f.FixVersion != "" {
-			details = "Fixed in " + f.FixVersion
-		} else if f.FixCommit != "" {
-			details = "Fixed in commit " + f.FixCommit
-		}
-		url := ""
-		if repo.HTMLURL != "" && f.FixCommit != "" {
-			url = strings.TrimSuffix(repo.HTMLURL, "/") + "/commit/" + f.FixCommit
-		}
-		out = append(out, csafRemediation{
-			Category:   "vendor_fix",
-			Details:    details,
-			ProductIDs: []string{productID},
-			URL:        url,
-		})
-	}
-	if f.Resolution == db.ResolutionWorkaround {
-		out = append(out, csafRemediation{
-			Category:   "workaround",
-			Details:    "Workaround available; see finding details.",
-			ProductIDs: []string{productID},
-		})
-	}
-	return out
-}
-
-// buildScore emits nothing when the CVSS vector is missing or malformed:
-// CSAF requires every score's vectorString to match a strict regex, and
-// faking one from a bare numeric score would produce an invalid document.
-func buildScore(f db.Finding, productID string) *csafScore {
-	cvss := parseCVSSv3Vector(f.CVSSVector)
-	if cvss == nil {
-		return nil
-	}
-	cvss.BaseScore = f.CVSSScore
-	cvss.BaseSeverity = severityLabel(f.CVSSScore)
-	cvss.VectorString = f.CVSSVector
-	return &csafScore{Products: []string{productID}, CVSSv3: cvss}
 }
 
 func parseCVSSv3Vector(vec string) *csafCVSSv3 {
