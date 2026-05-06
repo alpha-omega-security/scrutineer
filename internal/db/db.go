@@ -476,6 +476,7 @@ type Skill struct {
 	SchemaJSON string `gorm:"type:text"` // optional schema.json contents
 	OutputFile string // from metadata["scrutineer.output_file"]
 	OutputKind string `gorm:"index"` // from metadata["scrutineer.output_kind"]
+	MaxTurns   int    // from metadata["scrutineer.max_turns"]
 
 	Version int  `gorm:"not null;default:1"`
 	Active  bool `gorm:"not null;default:true"`

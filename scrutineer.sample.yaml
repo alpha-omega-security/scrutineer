@@ -49,9 +49,9 @@
 # marked failed. Go duration syntax ("30m", "1h30m", "2h").
 # scan_timeout: 1h
 
-# Pass --max-turns to claude-code so a scan that loops gets cut off.
-# 0 (default) means no limit. The longest observed completed deep-dive
-# is ~140 turns, so 200 is a safe ceiling if you want one.
+# Global --max-turns passed to claude-code. 0 (default) defers to the
+# per-skill value (scrutineer.max_turns in SKILL.md metadata, default 30).
+# When set, acts as a fallback for skills that don't declare their own cap.
 # max_turns: 0
 
 # Custom Anthropic API base URL. When set, the hostname is automatically

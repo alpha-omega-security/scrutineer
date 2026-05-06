@@ -41,6 +41,15 @@
     </div>
   </div>
 
+  <div class="grid grid-cols-2 gap-4">
+    <div class="grid gap-2">
+      <label for="max_turns">Max turns</label>
+      <input id="max_turns" class="input" type="number" name="max_turns"
+             value="{{.MaxTurns}}" min="0" placeholder="0">
+      <p class="text-xs text-muted-foreground">Per-skill turn cap for claude-code. 0 = use default (30).</p>
+    </div>
+  </div>
+
   <div class="grid gap-2">
     <label for="body">SKILL.md body</label>
     <textarea id="body" class="input font-mono text-sm" name="body" rows="20"

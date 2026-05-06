@@ -108,12 +108,16 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 		SkillDir:   skillDir,
 		OutputFile: skill.OutputFile,
 		Ref:        scan.Ref,
+		MaxTurns:   skill.MaxTurns,
 	}
 	res, err := w.Runner.RunSkill(ctx, sj, emit)
 	scan.Commit = res.Commit
 	if err != nil {
 		if report, ok := w.handleCloneError(scan, err, emit); ok {
 			return report, nil
+		}
+		if _, ok := errors.AsType[*MaxTurnsReachedError](err); ok && res.Report != "" {
+			_ = w.parseSkillOutput(&skill, scan, res.Report, emit)
 		}
 		return res.Report, err
 	}

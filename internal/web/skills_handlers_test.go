@@ -134,6 +134,27 @@ func TestSkillCreate_acceptsValidNames(t *testing.T) {
 	}
 }
 
+func TestParseMaxTurns(t *testing.T) {
+	tests := []struct {
+		input string
+		want  int
+	}{
+		{"50", 50},
+		{"0", 0},
+		{"-1", 0},
+		{"-999", 0},
+		{"", 0},
+		{"abc", 0},
+		{" 42 ", 42},
+	}
+	for _, tc := range tests {
+		got := parseMaxTurns(tc.input)
+		if got != tc.want {
+			t.Errorf("parseMaxTurns(%q) = %d, want %d", tc.input, got, tc.want)
+		}
+	}
+}
+
 func TestSkillRetry_preservesSkillID(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

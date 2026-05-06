@@ -31,6 +31,7 @@ const (
 	maxCompatLen   = 500
 	metaOutputFile = "scrutineer.output_file"
 	metaOutputKind = "scrutineer.output_kind"
+	metaMaxTurns   = "scrutineer.max_turns"
 )
 
 var nameRE = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
@@ -49,6 +50,7 @@ type Parsed struct {
 	SchemaJSON string
 	OutputFile string
 	OutputKind string
+	MaxTurns   int
 
 	SourcePath string // absolute path to the skill directory
 	SourceHash string // sha256 of SKILL.md + schema.json contents
@@ -141,6 +143,9 @@ func (p *Parsed) extractMetadataKeys() {
 	if v, ok := p.Metadata[metaOutputKind].(string); ok {
 		p.OutputKind = strings.TrimSpace(v)
 	}
+	if v, ok := p.Metadata[metaMaxTurns].(int); ok && v > 0 {
+		p.MaxTurns = v
+	}
 }
 
 func (p *Parsed) loadSchema() {
@@ -182,6 +187,7 @@ func (p *Parsed) ToModel(source string) (*db.Skill, error) {
 		SchemaJSON:    p.SchemaJSON,
 		OutputFile:    p.OutputFile,
 		OutputKind:    p.OutputKind,
+		MaxTurns:      p.MaxTurns,
 		Active:        true,
 		Source:        source,
 		SourcePath:    p.SourcePath,

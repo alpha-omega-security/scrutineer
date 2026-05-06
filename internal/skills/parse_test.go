@@ -81,6 +81,53 @@ body
 	}
 }
 
+func TestParseFile_maxTurns(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSkill(t, dir, "bounded", `---
+name: bounded
+description: Skill with a turn cap.
+metadata:
+  scrutineer.output_file: report.json
+  scrutineer.max_turns: 50
+---
+
+body
+`)
+	p, err := ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.MaxTurns != 50 {
+		t.Errorf("max_turns = %d, want 50", p.MaxTurns)
+	}
+
+	m, err := p.ToModel("local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.MaxTurns != 50 {
+		t.Errorf("model max_turns = %d, want 50", m.MaxTurns)
+	}
+}
+
+func TestParseFile_maxTurnsUnset(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSkill(t, dir, "unbounded", `---
+name: unbounded
+description: Skill without a turn cap.
+---
+
+body
+`)
+	p, err := ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.MaxTurns != 0 {
+		t.Errorf("max_turns = %d, want 0 (unset)", p.MaxTurns)
+	}
+}
+
 func TestParseFile_schemaLoaded(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSkill(t, dir, "s", `---
