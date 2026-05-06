@@ -3,9 +3,11 @@
 // with YAML frontmatter plus optional supporting files; see the spec at
 // https://agentskills.io/specification.
 //
-// Lenient parsing: we warn on spec violations but load the skill anyway, in
-// line with the client-implementation guide. Only an unparseable SKILL.md or
-// a missing description causes a skip.
+// agentskills.io spec violations (name format, field lengths) are lenient:
+// they log a warning and the skill loads anyway, per the client guide. The
+// scrutineer.* metadata keys are scrutineer's own and are checked strictly:
+// an unknown key, a bad output_kind, or an unsupported scrutineer.version is
+// a hard parse error and stops server startup.
 package skills
 
 import (
@@ -33,7 +35,46 @@ const (
 	metaOutputKind = "scrutineer.output_kind"
 	metaMaxTurns   = "scrutineer.max_turns"
 	metaModel      = "scrutineer.model"
+	metaVersion    = "scrutineer.version"
+
+	// SchemaVersion is the only scrutineer.version this build accepts.
+	// Skills omitting the key are treated as version 1. Bump when the
+	// scrutineer.* metadata keys change shape so old skill repos fail
+	// loudly instead of silently misbehaving.
+	SchemaVersion = 1
 )
+
+// scrutineerKeys is the closed set of scrutineer.* metadata keys this
+// build understands. Anything else under that prefix is rejected at
+// parse time so a typo like scrutineer.outputkind surfaces immediately
+// rather than after a worker falls through to freeform.
+var scrutineerKeys = map[string]bool{
+	metaOutputFile: true,
+	metaOutputKind: true,
+	metaMaxTurns:   true,
+	metaModel:      true,
+	metaVersion:    true,
+}
+
+// OutputKinds is the set of values scrutineer.output_kind may take.
+// "freeform" and the empty string both mean "store the report verbatim
+// without parsing"; everything else maps to a parser in
+// internal/worker/skill.go.
+var OutputKinds = map[string]bool{
+	"":              true,
+	"freeform":      true,
+	"findings":      true,
+	"maintainers":   true,
+	"repo_metadata": true,
+	"packages":      true,
+	"advisories":    true,
+	"dependents":    true,
+	"dependencies":  true,
+	"verify":        true,
+	"subprojects":   true,
+	"repo_overview": true,
+	"posture":       true,
+}
 
 var nameRE = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
@@ -105,6 +146,9 @@ func ParseFile(path string) (*Parsed, error) {
 		SourcePath:    filepath.Dir(path),
 	}
 	p.validate()
+	if err := p.validateMetadata(); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
 	p.extractMetadataKeys()
 	p.loadSchema()
 	p.hash(raw)
@@ -142,6 +186,41 @@ func (p *Parsed) validate() {
 	if len(p.Compatibility) > maxCompatLen {
 		p.Warnings = append(p.Warnings, fmt.Sprintf("compatibility exceeds %d characters", maxCompatLen))
 	}
+}
+
+// validateMetadata checks the scrutineer.* keys strictly. agentskills.io
+// spec violations stay as warnings (see validate); scrutineer-specific
+// keys are a closed set under our control so typos are hard errors.
+func (p *Parsed) validateMetadata() error {
+	for k := range p.Metadata {
+		if strings.HasPrefix(k, "scrutineer.") && !scrutineerKeys[k] {
+			return fmt.Errorf("unknown metadata key %q", k)
+		}
+	}
+	if v, ok := p.Metadata[metaVersion]; ok {
+		got, ok := v.(int)
+		if !ok {
+			return fmt.Errorf("%s must be an integer, got %T", metaVersion, v)
+		}
+		if got != SchemaVersion {
+			return fmt.Errorf("%s %d not supported (this build accepts %d)", metaVersion, got, SchemaVersion)
+		}
+	}
+	if v, ok := p.Metadata[metaOutputKind]; ok {
+		s, ok := v.(string)
+		if !ok {
+			return fmt.Errorf("%s must be a string, got %T", metaOutputKind, v)
+		}
+		if !OutputKinds[strings.TrimSpace(s)] {
+			return fmt.Errorf("%s %q is not a recognised parser", metaOutputKind, s)
+		}
+	}
+	if v, ok := p.Metadata[metaMaxTurns]; ok {
+		if _, ok := v.(int); !ok {
+			return fmt.Errorf("%s must be an integer, got %T", metaMaxTurns, v)
+		}
+	}
+	return nil
 }
 
 func (p *Parsed) extractMetadataKeys() {

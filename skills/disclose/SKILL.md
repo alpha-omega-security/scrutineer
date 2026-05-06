@@ -4,6 +4,7 @@ description: Draft the disclosure content for a finding in GitHub Security Advis
 license: MIT
 compatibility: Needs network access to the scrutineer API (http://host:port/api). Finding-scoped; runs on one finding at a time.
 metadata:
+  scrutineer.version: 1
   scrutineer.output_file: report.json
   scrutineer.output_kind: freeform
 ---

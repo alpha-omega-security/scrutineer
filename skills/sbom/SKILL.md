@@ -4,6 +4,7 @@ description: Generate a CycloneDX Software Bill of Materials for the repository.
 license: MIT
 compatibility: Requires the `git-pkgs` CLI on PATH.
 metadata:
+  scrutineer.version: 1
   scrutineer.output_file: report.json
   scrutineer.output_kind: freeform
 ---

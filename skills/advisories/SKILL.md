@@ -5,6 +5,7 @@ license: MIT
 compatibility: Needs network access to advisories.ecosyste.ms.
 allowed-tools: Read,Write,WebFetch,Grep,Glob,LS
 metadata:
+  scrutineer.version: 1
   scrutineer.output_file: report.json
   scrutineer.output_kind: advisories
 ---

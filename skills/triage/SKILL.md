@@ -4,6 +4,7 @@ description: Default pipeline scrutineer runs when a repository is added. Trigge
 license: MIT
 compatibility: Needs network access to the scrutineer API (http://host:port/api). Uses `brief` (github.com/git-pkgs/brief) to classify the repository before deciding which scans to enqueue; falls back to enqueueing everything if brief is unavailable.
 metadata:
+  scrutineer.version: 1
   scrutineer.output_file: report.json
   scrutineer.output_kind: freeform
 ---

@@ -4,6 +4,7 @@ description: Assess a repository's security posture and its readiness to receive
 license: MIT
 compatibility: Needs network access to api.github.com and api.securityscorecards.dev. Works best on GitHub-hosted repositories; degrades to file-only checks elsewhere.
 metadata:
+  scrutineer.version: 1
   scrutineer.output_file: report.json
   scrutineer.output_kind: posture
 ---

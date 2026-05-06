@@ -4,6 +4,7 @@ description: Independently verify a specific finding by re-running its reproduct
 license: MIT
 compatibility: Needs network access to the scrutineer API (http://host:port/api). Expects the finding's reproduction instructions to be runnable against ./src with commonly available tooling.
 metadata:
+  scrutineer.version: 1
   scrutineer.output_file: report.json
   scrutineer.output_kind: verify
 ---

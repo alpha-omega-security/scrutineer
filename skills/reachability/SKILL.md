@@ -3,6 +3,7 @@ name: reachability
 description: Check whether known sinks in this application's dependencies are reachable from its own trust boundaries. Scrutineer already holds findings against the libraries this app uses; this skill traces each one from the app's entry points to the library call and reports the ones an attacker can reach. Use on applications (Gemfile.lock / package-lock.json present), not on libraries.
 license: MIT
 metadata:
+  scrutineer.version: 1
   scrutineer.output_file: report.json
   scrutineer.output_kind: findings
 ---

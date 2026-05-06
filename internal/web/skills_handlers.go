@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/skills"
 )
 
 var skillNameRE = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
@@ -93,6 +94,10 @@ func (s *Server) skillCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "output_file must be a plain filename with no path separators", http.StatusBadRequest)
 		return
 	}
+	if !skills.OutputKinds[skill.OutputKind] {
+		http.Error(w, "output_kind is not a recognised parser", http.StatusBadRequest)
+		return
+	}
 	if err := s.DB.Create(&skill).Error; err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -126,6 +131,10 @@ func (s *Server) skillUpdate(w http.ResponseWriter, r *http.Request) {
 	}
 	if !validateOutputFile(skill.OutputFile) {
 		http.Error(w, "output_file must be a plain filename with no path separators", http.StatusBadRequest)
+		return
+	}
+	if !skills.OutputKinds[skill.OutputKind] {
+		http.Error(w, "output_kind is not a recognised parser", http.StatusBadRequest)
 		return
 	}
 	skill.Version++

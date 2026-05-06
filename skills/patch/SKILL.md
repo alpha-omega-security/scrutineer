@@ -4,6 +4,7 @@ description: Propose a code patch for a finding. Produces a unified diff against
 license: MIT
 compatibility: Needs network access to the scrutineer API (http://host:port/api). Finding-scoped; runs against ./src at HEAD.
 metadata:
+  scrutineer.version: 1
   scrutineer.output_file: report.json
   scrutineer.output_kind: freeform
 ---

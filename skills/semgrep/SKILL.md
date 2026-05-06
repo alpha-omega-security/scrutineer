@@ -4,6 +4,7 @@ description: Run semgrep static analysis with the security-audit and secrets rul
 license: MIT
 compatibility: Requires `semgrep` (https://semgrep.dev) and `python3` on PATH.
 metadata:
+  scrutineer.version: 1
   scrutineer.output_file: report.json
   scrutineer.output_kind: freeform
 ---

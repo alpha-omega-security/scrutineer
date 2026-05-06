@@ -44,8 +44,7 @@ func LoadDirectory(gdb *gorm.DB, log *slog.Logger, root, source string) (int, er
 		}
 		p, perr := ParseFile(path)
 		if perr != nil {
-			log.Warn("skill parse failed", "path", path, "err", perr)
-			return nil
+			return perr
 		}
 		for _, w := range p.Warnings {
 			log.Warn("skill warning", "name", p.Name, "path", path, "warn", w)

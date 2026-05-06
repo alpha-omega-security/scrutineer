@@ -4,6 +4,7 @@ description: Index every dependency declared in the repository's manifest and lo
 license: MIT
 compatibility: Requires the `git-pkgs` CLI (https://github.com/ecosyste-ms/git-pkgs) on PATH.
 metadata:
+  scrutineer.version: 1
   scrutineer.output_file: report.json
   scrutineer.output_kind: dependencies
 ---

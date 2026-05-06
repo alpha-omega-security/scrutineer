@@ -255,6 +255,136 @@ body`)
 	}
 }
 
+func TestParseFile_rejectsUnknownScrutineerKey(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSkill(t, dir, "typo", `---
+name: typo
+description: d
+metadata:
+  scrutineer.outputkind: findings
+---
+body`)
+	_, err := ParseFile(path)
+	if err == nil || !strings.Contains(err.Error(), "scrutineer.outputkind") {
+		t.Errorf("expected unknown-key error, got %v", err)
+	}
+}
+
+func TestParseFile_rejectsUnknownOutputKind(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSkill(t, dir, "badkind", `---
+name: badkind
+description: d
+metadata:
+  scrutineer.output_kind: finddings
+---
+body`)
+	_, err := ParseFile(path)
+	if err == nil || !strings.Contains(err.Error(), "not a recognised parser") {
+		t.Errorf("expected output_kind error, got %v", err)
+	}
+}
+
+func TestParseFile_rejectsUnsupportedVersion(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSkill(t, dir, "future", `---
+name: future
+description: d
+metadata:
+  scrutineer.version: 2
+---
+body`)
+	_, err := ParseFile(path)
+	if err == nil || !strings.Contains(err.Error(), "not supported") {
+		t.Errorf("expected version error, got %v", err)
+	}
+}
+
+func TestParseFile_acceptsVersion1(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSkill(t, dir, "v1", `---
+name: v1
+description: d
+metadata:
+  scrutineer.version: 1
+  scrutineer.output_kind: findings
+---
+body`)
+	if _, err := ParseFile(path); err != nil {
+		t.Errorf("version 1 should parse: %v", err)
+	}
+}
+
+func TestParseFile_allowsNonScrutineerMetadata(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSkill(t, dir, "extra", `---
+name: extra
+description: d
+metadata:
+  author: someone
+  unrelated.key: value
+---
+body`)
+	if _, err := ParseFile(path); err != nil {
+		t.Errorf("non-scrutineer keys should pass through: %v", err)
+	}
+}
+
+func TestParseFile_rejectsNonIntegerMaxTurns(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSkill(t, dir, "badturns", `---
+name: badturns
+description: d
+metadata:
+  scrutineer.max_turns: fifty
+---
+body`)
+	_, err := ParseFile(path)
+	if err == nil || !strings.Contains(err.Error(), "must be an integer") {
+		t.Errorf("expected max_turns type error, got %v", err)
+	}
+}
+
+func TestLoadDirectory_bundledSkillsAreValid(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	n, err := LoadDirectory(gdb, log, "../../skills", "local")
+	if err != nil {
+		t.Fatalf("bundled skills failed validation: %v", err)
+	}
+	if n == 0 {
+		t.Fatal("no skills loaded from ../../skills")
+	}
+}
+
+func TestLoadDirectory_failsOnInvalidSkill(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	writeSkill(t, root, "good", `---
+name: good
+description: d
+---
+body`)
+	writeSkill(t, root, "bad", `---
+name: bad
+description: d
+metadata:
+  scrutineer.output_kind: nope
+---
+body`)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	_, err = LoadDirectory(gdb, log, root, "local")
+	if err == nil {
+		t.Error("expected LoadDirectory to fail on invalid skill")
+	}
+}
+
 func TestParseFile_namedoesntmatch(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSkill(t, dir, "dirname", `---

@@ -4,6 +4,7 @@ description: Enumerate scannable sub-folders inside a repository. Identifies mon
 license: MIT
 compatibility: Needs network access to the scrutineer API only for logging; the enumeration itself is filesystem-only against ./src.
 metadata:
+  scrutineer.version: 1
   scrutineer.output_file: report.json
   scrutineer.output_kind: subprojects
 ---

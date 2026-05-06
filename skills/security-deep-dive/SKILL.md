@@ -3,6 +3,7 @@ name: security-deep-dive
 description: Audit first-party source for security vulnerabilities using an inventory-first, six-step per-sink methodology. Use when you want a thorough scan that distinguishes real findings from pattern matches and records both in a machine-readable report. The target is this codebase's own code, not its dependencies.
 license: MIT
 metadata:
+  scrutineer.version: 1
   scrutineer.output_file: report.json
   scrutineer.output_kind: findings
 ---

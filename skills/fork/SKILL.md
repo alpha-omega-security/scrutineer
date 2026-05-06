@@ -4,6 +4,7 @@ description: Fork the scanned repository into the configured GitHub organisation
 license: MIT
 compatibility: Needs the gh CLI authenticated with a token that can create forks in the fork_org and manage repository settings and security advisories there. Needs network access to api.github.com and the scrutineer API. github.com upstreams only for now.
 metadata:
+  scrutineer.version: 1
   scrutineer.output_file: report.json
   scrutineer.output_kind: freeform
 ---
