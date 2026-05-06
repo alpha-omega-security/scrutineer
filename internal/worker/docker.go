@@ -68,9 +68,7 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 	if d.Effort != "" {
 		claudeArgs = append(claudeArgs, "--effort", d.Effort)
 	}
-	if d.MaxTurns > 0 {
-		claudeArgs = append(claudeArgs, "--max-turns", strconv.Itoa(d.MaxTurns))
-	}
+	claudeArgs = append(claudeArgs, "--max-turns", strconv.Itoa(effectiveMaxTurns(sj.MaxTurns, d.MaxTurns)))
 	claudeArgs = append(claudeArgs, buildSkillPrompt(sj.Name, sj.OutputFile))
 
 	gwTarget := "host-gateway"
@@ -128,7 +126,14 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 		return SkillResult{}, fmt.Errorf("start docker: %w", err)
 	}
 
-	ParseStream(stdout, emit)
+	hitMaxTurns := false
+	wrappedEmit := func(e Event) {
+		if e.Kind == KindError && e.Text == "hit max turns" {
+			hitMaxTurns = true
+		}
+		emit(e)
+	}
+	ParseStream(stdout, wrappedEmit)
 	waitErr := cmd.Wait()
 	if cmd.Process != nil {
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
@@ -139,6 +144,9 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 		res.Report = readCappedReport(outPath, emit)
 	}
 	if waitErr != nil {
+		if hitMaxTurns {
+			return res, &MaxTurnsReachedError{}
+		}
 		return res, fmt.Errorf("docker exited: %w", waitErr)
 	}
 	return res, nil

@@ -85,6 +85,56 @@ func TestWorker_CancelStopsRunningScan(t *testing.T) {
 	}
 }
 
+func TestEffectiveMaxTurns(t *testing.T) {
+	tests := []struct {
+		perSkill, global, want int
+	}{
+		{50, 200, 50},
+		{0, 200, 200},
+		{0, 0, DefaultSkillMaxTurns},
+		{10, 0, 10},
+	}
+	for _, tc := range tests {
+		got := effectiveMaxTurns(tc.perSkill, tc.global)
+		if got != tc.want {
+			t.Errorf("effectiveMaxTurns(%d, %d) = %d, want %d", tc.perSkill, tc.global, got, tc.want)
+		}
+	}
+}
+
+func TestWorker_maxTurnsReachedCompletesNotFails(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "mt.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
+	gdb.Create(&repo)
+	skill := db.Skill{Name: "capped", Description: "x", Body: "b", Active: true, Source: "ui", Version: 1, MaxTurns: 5}
+	gdb.Create(&skill)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanQueued, SkillID: &skill.ID}
+	gdb.Create(&scan)
+
+	w := &Worker{
+		DB:      gdb,
+		Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+		DataDir: t.TempDir(),
+		Runner:  fakeRunner{skillRes: SkillResult{Report: `{"partial":true}`}, skillErr: &MaxTurnsReachedError{}},
+	}
+	body, _ := json.Marshal(queue.Payload{ScanID: scan.ID})
+	if err := w.wrap(w.doSkill)(context.Background(), body); err != nil {
+		t.Fatalf("wrap: %v", err)
+	}
+
+	var got db.Scan
+	gdb.First(&got, scan.ID)
+	if got.Status != db.ScanDone {
+		t.Errorf("status = %s, want done", got.Status)
+	}
+	if got.Report != `{"partial":true}` {
+		t.Errorf("report = %q, want partial report preserved", got.Report)
+	}
+}
+
 func TestWorker_workspaceCleanup(t *testing.T) {
 	gdb, err := db.Open(filepath.Join(t.TempDir(), "wc.db"))
 	if err != nil {

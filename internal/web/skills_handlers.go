@@ -72,6 +72,7 @@ func (s *Server) skillCreate(w http.ResponseWriter, r *http.Request) {
 		Body:        r.FormValue("body"),
 		OutputFile:  strings.TrimSpace(r.FormValue("output_file")),
 		OutputKind:  strings.TrimSpace(r.FormValue("output_kind")),
+		MaxTurns:    parseMaxTurns(r.FormValue("max_turns")),
 		SchemaJSON:  r.FormValue("schema_json"),
 		Source:      "ui",
 		Active:      true,
@@ -112,6 +113,7 @@ func (s *Server) skillUpdate(w http.ResponseWriter, r *http.Request) {
 	skill.Body = r.FormValue("body")
 	skill.OutputFile = strings.TrimSpace(r.FormValue("output_file"))
 	skill.OutputKind = strings.TrimSpace(r.FormValue("output_kind"))
+	skill.MaxTurns = parseMaxTurns(r.FormValue("max_turns"))
 	skill.SchemaJSON = r.FormValue("schema_json")
 	skill.Active = r.FormValue("active") == "on"
 	if !validateSkillName(skill.Name) {
@@ -128,6 +130,14 @@ func (s *Server) skillUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.Redirect(w, r, "/skills/"+strconv.Itoa(int(skill.ID)), http.StatusSeeOther)
+}
+
+func parseMaxTurns(s string) int {
+	n, _ := strconv.Atoi(strings.TrimSpace(s))
+	if n < 0 {
+		return 0
+	}
+	return n
 }
 
 // skillRun enqueues a skill-backed scan for a repo. Accepts skill_id and

@@ -13,6 +13,16 @@ import (
 	"scrutineer/internal/db"
 )
 
+// DefaultSkillMaxTurns is the turn cap applied when neither the skill's
+// metadata nor the global config set a value.
+const DefaultSkillMaxTurns = 30
+
+// MaxTurnsReachedError is returned when claude-code exits after hitting the
+// --max-turns cap. The caller should treat this as a soft completion.
+type MaxTurnsReachedError struct{}
+
+func (MaxTurnsReachedError) Error() string { return "hit max turns cap" }
+
 // SkillRunner executes one skill scan. Tests and the docker-backed runner
 // substitute the process launch without touching the queue plumbing.
 type SkillRunner interface {
@@ -37,6 +47,7 @@ type SkillJob struct {
 	SkillDir   string // host absolute path to the staged skill directory
 	OutputFile string // relative to the scan workspace, e.g. "report.json"
 	Ref        string // git ref to checkout; empty = default branch
+	MaxTurns   int    // per-skill cap; 0 = use runner default
 }
 
 type SkillResult struct {
@@ -81,9 +92,7 @@ func (l LocalClaude) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)
 	if l.Effort != "" {
 		args = append(args, "--effort", l.Effort)
 	}
-	if l.MaxTurns > 0 {
-		args = append(args, "--max-turns", strconv.Itoa(l.MaxTurns))
-	}
+	args = append(args, "--max-turns", strconv.Itoa(effectiveMaxTurns(sj.MaxTurns, l.MaxTurns)))
 	args = append(args, prompt)
 
 	cmd := exec.CommandContext(ctx, "claude", args...)
@@ -101,7 +110,14 @@ func (l LocalClaude) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)
 		return SkillResult{}, fmt.Errorf("start claude: %w", err)
 	}
 
-	ParseStream(stdout, emit)
+	hitMaxTurns := false
+	wrappedEmit := func(e Event) {
+		if e.Kind == KindError && e.Text == "hit max turns" {
+			hitMaxTurns = true
+		}
+		emit(e)
+	}
+	ParseStream(stdout, wrappedEmit)
 	waitErr := cmd.Wait()
 	if cmd.Process != nil {
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
@@ -112,6 +128,9 @@ func (l LocalClaude) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)
 		res.Report = readCappedReport(outPath, emit)
 	}
 	if waitErr != nil {
+		if hitMaxTurns {
+			return res, &MaxTurnsReachedError{}
+		}
 		return res, fmt.Errorf("claude exited: %w", waitErr)
 	}
 	return res, nil
@@ -147,6 +166,18 @@ func readCappedReport(path string, emit func(Event)) string {
 		return ""
 	}
 	return string(b)
+}
+
+// effectiveMaxTurns resolves the turn cap: per-skill wins, then global, then
+// the built-in default of 30.
+func effectiveMaxTurns(perSkill, global int) int {
+	if perSkill > 0 {
+		return perSkill
+	}
+	if global > 0 {
+		return global
+	}
+	return DefaultSkillMaxTurns
 }
 
 // buildSkillPrompt is the activation prompt handed to claude. It's a thin

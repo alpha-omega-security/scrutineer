@@ -157,9 +157,15 @@ func (w *Worker) wrap(h handler) func(context.Context, []byte) error {
 			scan.Error = "cancelled by user"
 			emit(Event{Kind: KindError, Text: "cancelled by user"})
 		case err != nil:
-			scan.Status = db.ScanFailed
-			scan.Error = err.Error()
-			emit(Event{Kind: KindError, Text: err.Error()})
+			if _, ok := errors.AsType[*MaxTurnsReachedError](err); ok {
+				scan.Status = db.ScanDone
+				scan.Report = report
+				emit(Event{Kind: KindText, Text: "scan completed (hit max turns cap)"})
+			} else {
+				scan.Status = db.ScanFailed
+				scan.Error = err.Error()
+				emit(Event{Kind: KindError, Text: err.Error()})
+			}
 		default:
 			scan.Status = db.ScanDone
 			scan.Report = report
