@@ -3,6 +3,7 @@ name: metadata
 description: Fetch high-level repository metadata (description, default branch, languages, license, stars, forks, archived status, icon) and save it against the scan's repository row. Use as the first scan on a new repository or to refresh after upstream changes.
 license: MIT
 compatibility: Needs network access to repos.ecosyste.ms.
+allowed-tools: Read,Write,WebFetch,Grep,Glob,LS
 metadata:
   scrutineer.output_file: report.json
   scrutineer.output_kind: repo_metadata

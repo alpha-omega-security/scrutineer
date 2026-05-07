@@ -11,7 +11,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 )
@@ -58,18 +57,7 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 		_ = os.Remove(outPath)
 	}
 
-	claudeArgs := []string{
-		"claude", "-p",
-		"--output-format", "stream-json",
-		"--verbose",
-		"--permission-mode", "bypassPermissions",
-		"--model", sj.Model,
-	}
-	if d.Effort != "" {
-		claudeArgs = append(claudeArgs, "--effort", d.Effort)
-	}
-	claudeArgs = append(claudeArgs, "--max-turns", strconv.Itoa(effectiveMaxTurns(sj.MaxTurns, d.MaxTurns)))
-	claudeArgs = append(claudeArgs, buildSkillPrompt(sj.Name, sj.OutputFile))
+	claudeArgs := append([]string{"claude"}, buildClaudeArgs(sj, d.Effort, d.MaxTurns)...)
 
 	gwTarget := "host-gateway"
 	if d.HostGatewayIP != "" {

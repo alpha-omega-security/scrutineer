@@ -40,14 +40,15 @@ type SkillRunner interface {
 // parallel skills on the same repository do not share src or
 // report.json, so neither clobbers the other's output.
 type SkillJob struct {
-	Repo       db.Repository
-	WorkRoot   string
-	Model      string
-	Name       string
-	SkillDir   string // host absolute path to the staged skill directory
-	OutputFile string // relative to the scan workspace, e.g. "report.json"
-	Ref        string // git ref to checkout; empty = default branch
-	MaxTurns   int    // per-skill cap; 0 = use runner default
+	Repo         db.Repository
+	WorkRoot     string
+	Model        string
+	Name         string
+	SkillDir     string // host absolute path to the staged skill directory
+	OutputFile   string // relative to the scan workspace, e.g. "report.json"
+	Ref          string // git ref to checkout; empty = default branch
+	MaxTurns     int    // per-skill cap; 0 = use runner default
+	AllowedTools string // comma-separated; "" = full tool set under bypassPermissions
 }
 
 type SkillResult struct {
@@ -81,20 +82,7 @@ func (l LocalClaude) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)
 		_ = os.Remove(outPath)
 	}
 
-	prompt := buildSkillPrompt(sj.Name, sj.OutputFile)
-	args := []string{
-		"-p",
-		"--output-format", "stream-json",
-		"--verbose",
-		"--permission-mode", "bypassPermissions",
-		"--model", sj.Model,
-	}
-	if l.Effort != "" {
-		args = append(args, "--effort", l.Effort)
-	}
-	args = append(args, "--max-turns", strconv.Itoa(effectiveMaxTurns(sj.MaxTurns, l.MaxTurns)))
-	args = append(args, prompt)
-
+	args := buildClaudeArgs(sj, l.Effort, l.MaxTurns)
 	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Dir = work
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -166,6 +154,34 @@ func readCappedReport(path string, emit func(Event)) string {
 		return ""
 	}
 	return string(b)
+}
+
+// buildClaudeArgs assembles the `claude -p` argv shared by the local and
+// docker runners. When the skill declares an allowed-tools list the agent
+// is held to it under acceptEdits (writes to report.json still go through
+// unprompted, arbitrary Bash does not); otherwise it falls back to the
+// historical bypassPermissions behaviour.
+func buildClaudeArgs(sj SkillJob, effort string, globalMaxTurns int) []string {
+	args := []string{
+		"-p",
+		"--output-format", "stream-json",
+		"--verbose",
+		"--model", sj.Model,
+	}
+	if sj.AllowedTools != "" {
+		args = append(args,
+			"--permission-mode", "acceptEdits",
+			"--allowedTools", sj.AllowedTools,
+		)
+	} else {
+		args = append(args, "--permission-mode", "bypassPermissions")
+	}
+	if effort != "" {
+		args = append(args, "--effort", effort)
+	}
+	args = append(args, "--max-turns", strconv.Itoa(effectiveMaxTurns(sj.MaxTurns, globalMaxTurns)))
+	args = append(args, buildSkillPrompt(sj.Name, sj.OutputFile))
+	return args
 }
 
 // effectiveMaxTurns resolves the turn cap: per-skill wins, then global, then

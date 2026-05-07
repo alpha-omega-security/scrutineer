@@ -3,6 +3,7 @@ name: maintainers
 description: Identify the real maintainers of a repository and the best way to contact them about a security issue. Distinguishes active leads from occasional contributors and bots, using commit history, issue activity, and registry ownership. Use when preparing a disclosure and needing to know who to reach.
 license: MIT
 compatibility: Needs network access to commits.ecosyste.ms, issues.ecosyste.ms, and packages.ecosyste.ms.
+allowed-tools: Read,Write,WebFetch,Grep,Glob,LS
 metadata:
   scrutineer.output_file: report.json
   scrutineer.output_kind: maintainers

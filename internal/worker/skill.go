@@ -101,14 +101,15 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 	w.DB.Model(scan).Update("prompt", prompt)
 
 	sj := SkillJob{
-		Repo:       scan.Repository,
-		WorkRoot:   workRoot,
-		Model:      scan.Model,
-		Name:       skill.Name,
-		SkillDir:   skillDir,
-		OutputFile: skill.OutputFile,
-		Ref:        scan.Ref,
-		MaxTurns:   skill.MaxTurns,
+		Repo:         scan.Repository,
+		WorkRoot:     workRoot,
+		Model:        scan.Model,
+		Name:         skill.Name,
+		SkillDir:     skillDir,
+		OutputFile:   skill.OutputFile,
+		Ref:          scan.Ref,
+		MaxTurns:     skill.MaxTurns,
+		AllowedTools: skill.AllowedTools,
 	}
 	res, err := w.Runner.RunSkill(ctx, sj, emit)
 	scan.Commit = res.Commit

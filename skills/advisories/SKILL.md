@@ -3,6 +3,7 @@ name: advisories
 description: Fetch the published security advisories that affect any package produced by this repository. Use to populate the Advisories tab with existing GHSA and CVE records so analysts can see what is already public before triaging new findings.
 license: MIT
 compatibility: Needs network access to advisories.ecosyste.ms.
+allowed-tools: Read,Write,WebFetch,Grep,Glob,LS
 metadata:
   scrutineer.output_file: report.json
   scrutineer.output_kind: advisories
