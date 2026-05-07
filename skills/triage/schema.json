@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "triage report",
+  "description": "Record of which downstream skills triage enqueued, skipped, gated, or found already done. The error key is for the bail case (missing context.json scrutineer block); when set the other fields may be absent.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "has_code":     { "type": "boolean" },
+    "has_packages": { "type": "boolean" },
+    "brief": {
+      "type": "object",
+      "description": "Subset of brief --json the gates were derived from.",
+      "additionalProperties": true,
+      "properties": {
+        "languages":        { "type": "array", "items": { "type": "string" } },
+        "package_managers": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "triggered":    { "$ref": "#/$defs/skill_list" },
+    "skipped":      { "$ref": "#/$defs/skill_list" },
+    "gated":        { "$ref": "#/$defs/skill_list" },
+    "already_done": { "$ref": "#/$defs/skill_list" },
+    "verify": {
+      "type": "array",
+      "items": { "type": "integer", "minimum": 1 },
+      "description": "Finding ids that had a verify run enqueued."
+    },
+    "errors": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Per-skill enqueue failures that did not stop the run."
+    },
+    "error": {
+      "type": "string",
+      "description": "Set when triage refused to run (missing scrutineer block in context.json). Other fields may be absent."
+    }
+  },
+  "$defs": {
+    "skill_list": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" }
+    }
+  }
+}

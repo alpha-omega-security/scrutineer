@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "repo-overview report",
+  "description": "Output of `brief --json` against ./src (or ./src/{scan_subpath}). Only the fields scrutineer's parser reads are typed strictly; everything else passes through so brief can grow without breaking validation. The error key is for the scan_subpath-not-found bail case.",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "languages": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "name":     { "type": "string" },
+          "category": { "type": "string" }
+        }
+      }
+    },
+    "package_managers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "properties": {
+          "name": { "type": "string" }
+        }
+      }
+    },
+    "git": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "default_branch": { "type": "string" }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "license_type": { "type": "string" }
+      }
+    },
+    "tools":        { "type": "object" },
+    "style":        { "type": "object" },
+    "layout":       { "type": "object" },
+    "lines":        { "type": "object" },
+    "dependencies": { "type": "array" },
+    "stats":        { "type": "object" },
+    "version":      { "type": "string" },
+    "path":         { "type": "string" },
+    "error":        { "type": "string" }
+  }
+}

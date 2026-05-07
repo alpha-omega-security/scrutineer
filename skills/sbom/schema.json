@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "sbom report",
+  "description": "CycloneDX JSON SBOM as produced by `git-pkgs sbom --format json`, or {\"error\": \"...\"} when the script failed. This is a thin sanity check (bomFormat, specVersion, components shape), not the full CycloneDX schema; the document is stored verbatim and consumed by downstream CycloneDX-aware tooling, not by scrutineer's own parsers.",
+  "type": "object",
+  "oneOf": [
+    { "required": ["bomFormat", "specVersion"] },
+    { "required": ["error"] }
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "bomFormat":   { "type": "string", "const": "CycloneDX" },
+    "specVersion": { "type": "string", "pattern": "^1\\.[0-9]+$" },
+    "serialNumber": { "type": "string" },
+    "version":     { "type": "integer", "minimum": 1 },
+    "metadata":    { "type": "object" },
+    "components": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": true,
+        "required": ["type", "name"],
+        "properties": {
+          "type":    { "type": "string" },
+          "name":    { "type": "string" },
+          "version": { "type": "string" },
+          "purl":    { "type": "string" },
+          "bom-ref": { "type": "string" }
+        }
+      }
+    },
+    "dependencies": { "type": "array" },
+    "error":        { "type": "string" }
+  }
+}
