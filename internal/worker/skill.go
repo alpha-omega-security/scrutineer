@@ -156,6 +156,8 @@ func (w *Worker) parseSkillOutput(skill *db.Skill, scan *db.Scan, report string,
 		return w.parseRepoOverviewOutput(scan, report, emit)
 	case "posture":
 		return w.parsePostureOutput(scan, report, emit)
+	case "patch":
+		return w.parsePatchOutput(scan, report, emit)
 	}
 	return nil
 }

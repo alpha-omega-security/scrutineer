@@ -1420,7 +1420,9 @@ func TestFindingPatchDownload(t *testing.T) {
 	s.DB.Create(&repo)
 	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: "security-deep-dive"}
 	s.DB.Create(&scan)
-	finding := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, FindingID: "F1", Title: "x", Severity: "High", Status: db.FindingTriaged}
+	gatedDiff := "diff --git a/foo.go b/foo.go\n@@ -1 +1 @@\n-old\n+new\n"
+	finding := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, FindingID: "F1", Title: "x", Severity: "High",
+		Status: db.FindingTriaged, SuggestedFix: gatedDiff, SuggestedFixCommit: "abc123"}
 	s.DB.Create(&finding)
 
 	fid := finding.ID

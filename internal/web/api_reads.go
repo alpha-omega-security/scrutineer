@@ -214,6 +214,8 @@ func (s *Server) apiGetFinding(w http.ResponseWriter, r *http.Request) {
 	summary["reach"] = f.Reach
 	summary["rating"] = f.Rating
 	summary["disclosure_draft"] = f.DisclosureDraft
+	summary["suggested_fix"] = f.SuggestedFix
+	summary["suggested_fix_commit"] = f.SuggestedFixCommit
 	writeJSON(w, http.StatusOK, summary)
 }
 

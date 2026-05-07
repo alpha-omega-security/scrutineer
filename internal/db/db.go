@@ -364,6 +364,12 @@ type Finding struct {
 	Resolution      FindingResolution `gorm:"index"`
 	DisclosureDraft string            `gorm:"type:text"`
 	Assignee        string            `gorm:"index"`
+	// SuggestedFix is a unified diff from the patch skill that has passed
+	// the applicability gate (parses, targets real files, overlaps
+	// Location, git apply --check clean). Empty when no patch has run or
+	// the gate rejected it. SuggestedFixCommit is the sha it applies to.
+	SuggestedFix       string `gorm:"type:text"`
+	SuggestedFixCommit string
 
 	// Per-step prose from the six-step audit checklist.
 	Trace      string `gorm:"type:text"`

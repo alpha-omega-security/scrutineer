@@ -108,6 +108,8 @@ One row per vulnerability. Lifecycle columns are mutated through `db.WriteFindin
 | resolution | text | `fix`, `migrate`, `workaround`, `adopt`, `wontfix`. |
 | disclosure_draft | text | Draft advisory text. |
 | assignee | text | Free-text. |
+| suggested_fix | text | Unified diff from the `patch` skill that passed the applicability gate. Empty when no patch run or the gate rejected it. |
+| suggested_fix_commit | text | Sha the suggested_fix applies cleanly against. |
 | trace | text | Step 1 prose. Markdown. |
 | boundary | text | Step 2. |
 | validation | text | Step 3: reproduction. |

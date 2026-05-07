@@ -45,27 +45,22 @@ func (s *Server) latestPatchScan(findingID uint) (*db.Scan, *patchReport, error)
 	return &scan, &rep, nil
 }
 
-// findingPatchDownload serves the latest patch scan's diff as a .patch file.
-// No .patch scan done -> 404; done but empty diff (the skill refused) -> 404
-// with a small message so the download link never yields a confusing empty
-// file.
+// findingPatchDownload serves Finding.SuggestedFix as a .patch file. The
+// column is only ever populated by parsePatchOutput after the applicability
+// gate passes, so a download is always a diff that parsed, targeted real
+// files, overlapped Location, and survived git apply --check.
 func (s *Server) findingPatchDownload(w http.ResponseWriter, r *http.Request) {
 	var f db.Finding
 	if err := s.DB.First(&f, r.PathValue("id")).Error; err != nil {
 		http.NotFound(w, r)
 		return
 	}
-	_, rep, err := s.latestPatchScan(f.ID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if rep == nil || strings.TrimSpace(rep.Patch) == "" {
-		http.Error(w, "no patch available for this finding", http.StatusNotFound)
+	if strings.TrimSpace(f.SuggestedFix) == "" {
+		http.Error(w, "no gated patch stored for this finding", http.StatusNotFound)
 		return
 	}
 	w.Header().Set("Content-Type", "text/x-diff; charset=utf-8")
 	w.Header().Set("Content-Disposition",
 		fmt.Sprintf(`attachment; filename="finding-%d.patch"`, f.ID))
-	_, _ = w.Write([]byte(rep.Patch))
+	_, _ = w.Write([]byte(f.SuggestedFix))
 }
