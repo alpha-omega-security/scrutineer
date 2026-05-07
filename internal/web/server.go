@@ -197,6 +197,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /advisories", s.advisoriesList)
 	mux.HandleFunc("GET /scans/{id}", s.scanShow)
 	mux.HandleFunc("POST /scans/{id}/retry", s.scanRetry)
+	mux.HandleFunc("POST /scans/retry-failed", s.scansRetryFailed)
 	mux.HandleFunc("POST /scans/{id}/cancel", s.scanCancel)
 	mux.HandleFunc("GET /scans/{id}/log", s.scanLog)
 	mux.HandleFunc("GET /usage", s.usage)
@@ -1564,6 +1565,82 @@ func (s *Server) scanRetry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.redirect(w, r, fmt.Sprintf("/scans/%d", newID))
+}
+
+func (s *Server) scansRetryFailed(w http.ResponseWriter, r *http.Request) {
+	skillName := r.URL.Query().Get("skill")
+	q := s.DB.Model(&db.Scan{}).
+		Where("status = ? AND kind = ? AND skill_id IS NOT NULL", db.ScanFailed, worker.JobSkill)
+	if skillName != "" {
+		q = q.Where("skill_name = ?", skillName)
+	}
+
+	var totalFailed int64
+	q.Count(&totalFailed)
+
+	// Skip any failed scan that has a later scan with the same
+	// (repository, skill, sub_path, ref, finding_id) tuple already in
+	// queued/running/done.
+	var scans []db.Scan
+	err := q.Select("id, repository_id, skill_id, model, finding_id, sub_path, ref").
+		Where(`NOT EXISTS (
+			SELECT 1 FROM scans n
+			WHERE n.id > scans.id
+			  AND n.repository_id = scans.repository_id
+			  AND COALESCE(n.skill_id, 0) = COALESCE(scans.skill_id, 0)
+			  AND COALESCE(n.sub_path, '') = COALESCE(scans.sub_path, '')
+			  AND COALESCE(n.ref, '') = COALESCE(scans.ref, '')
+			  AND COALESCE(n.finding_id, 0) = COALESCE(scans.finding_id, 0)
+			  AND n.status IN ?
+		)`, []db.ScanStatus{db.ScanQueued, db.ScanRunning, db.ScanDone}).
+		Find(&scans).Error
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	var retried, errored int
+	for _, sc := range scans {
+		if _, err := s.enqueueSkillWith(r.Context(), sc.RepositoryID, *sc.SkillID, ScanOpts{
+			Model:     sc.Model,
+			FindingID: sc.FindingID,
+			SubPath:   sc.SubPath,
+			Ref:       sc.Ref,
+		}); err != nil {
+			errored++
+			continue
+		}
+		retried++
+	}
+	skipped := int(totalFailed) - retried - errored
+
+	setFlash(w, retryFailedToast(retried, skipped, errored))
+	target := "/scans?status=failed"
+	if skillName != "" {
+		target += "&skill=" + url.QueryEscape(skillName)
+	}
+	s.redirect(w, r, target)
+}
+
+func retryFailedToast(retried, skipped, errored int) Flash {
+	if retried == 0 && skipped == 0 && errored == 0 {
+		return Flash{Category: "success", Title: "No failed scans to retry"}
+	}
+	parts := []string{fmt.Sprintf("%d retried", retried)}
+	if skipped > 0 {
+		parts = append(parts, fmt.Sprintf("%d skipped", skipped))
+	}
+	if errored > 0 {
+		parts = append(parts, fmt.Sprintf("%d errored", errored))
+	}
+	cat := "success"
+	switch {
+	case errored > 0:
+		cat = "error"
+	case retried == 0:
+		cat = "warning"
+	}
+	return Flash{Category: cat, Title: strings.Join(parts, ", ")}
 }
 
 func (s *Server) scanCancel(w http.ResponseWriter, r *http.Request) {

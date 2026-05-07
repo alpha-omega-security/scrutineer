@@ -1844,6 +1844,255 @@ func TestRetry_preservesSubPath(t *testing.T) {
 	}
 }
 
+func TestScansRetryFailed(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/x.git", Name: "x"}
+	s.DB.Create(&repo)
+	skill := db.Skill{Name: "deep-dive", Description: "x", Body: "b", Active: true, Source: "ui", Version: 1}
+	s.DB.Create(&skill)
+	other := db.Skill{Name: "triage", Description: "x", Body: "b", Active: true, Source: "ui", Version: 1}
+	s.DB.Create(&other)
+
+	mk := func(status db.ScanStatus, kind, skillName string, skillID *uint, subPath string) uint {
+		sc := db.Scan{
+			RepositoryID: repo.ID, Kind: kind, Status: status,
+			StatusPriority: db.StatusPriorityFor(status),
+			SkillID:        skillID, SkillName: skillName, SubPath: subPath,
+		}
+		s.DB.Create(&sc)
+		return sc.ID
+	}
+	failedDeep := mk(db.ScanFailed, "skill", "deep-dive", &skill.ID, "core")
+	failedTriage := mk(db.ScanFailed, "skill", "triage", &other.ID, "core")
+	failedNoSkill := mk(db.ScanFailed, "skill", "", nil, "core")
+	failedMeta := mk(db.ScanFailed, "metadata", "", nil, "core")
+	cancelledDeep := mk(db.ScanCancelled, "skill", "deep-dive", &skill.ID, "core")
+	// Different sub-path so this done scan does NOT dedupe failedDeep.
+	doneDeep := mk(db.ScanDone, "skill", "deep-dive", &skill.ID, "other")
+
+	req := httptest.NewRequest("POST", "/scans/retry-failed", nil)
+	req.Host = testHost
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	if loc := w.Header().Get("Location"); loc != "/scans?status=failed" {
+		t.Errorf("redirect = %q, want /scans?status=failed", loc)
+	}
+
+	originals := []uint{failedDeep, failedTriage, failedNoSkill, failedMeta, cancelledDeep, doneDeep}
+	var fresh []db.Scan
+	if err := s.DB.Where("id NOT IN ?", originals).Order("id").Find(&fresh).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(fresh) != 2 {
+		t.Fatalf("expected 2 new queued scans, got %d", len(fresh))
+	}
+	for _, sc := range fresh {
+		if sc.Status != db.ScanQueued {
+			t.Errorf("new scan %d status = %s, want queued", sc.ID, sc.Status)
+		}
+		if sc.SubPath != "core" {
+			t.Errorf("new scan %d sub_path = %q, want core", sc.ID, sc.SubPath)
+		}
+	}
+
+	for _, id := range originals {
+		var sc db.Scan
+		s.DB.First(&sc, id)
+		if sc.ID != id {
+			t.Errorf("original scan %d went missing", id)
+		}
+	}
+}
+
+func TestScansRetryFailed_skipsAlreadyRetried(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/x.git", Name: "x"}
+	s.DB.Create(&repo)
+	skill := db.Skill{Name: "deep-dive", Description: "x", Body: "b", Active: true, Source: "ui", Version: 1}
+	s.DB.Create(&skill)
+
+	// A real Finding so the FK on Scan.FindingID resolves.
+	seedScan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillID: &skill.ID, SkillName: "deep-dive"}
+	s.DB.Create(&seedScan)
+	seedFinding := db.Finding{ScanID: seedScan.ID, RepositoryID: repo.ID, FindingID: "F1", Title: "t", Severity: "High", Status: db.FindingNew}
+	s.DB.Create(&seedFinding)
+
+	mk := func(status db.ScanStatus, subPath string, findingID *uint) {
+		sc := db.Scan{
+			RepositoryID: repo.ID, Kind: "skill", Status: status,
+			StatusPriority: db.StatusPriorityFor(status),
+			SkillID:        &skill.ID, SkillName: "deep-dive",
+			SubPath:   subPath,
+			FindingID: findingID,
+		}
+		s.DB.Create(&sc)
+	}
+
+	// Failed then a later queued retry with the SAME tuple → skip.
+	mk(db.ScanFailed, "core", nil)
+	mk(db.ScanQueued, "core", nil)
+
+	// Failed then a later done scan with the SAME tuple → skip.
+	mk(db.ScanFailed, "api", nil)
+	mk(db.ScanDone, "api", nil)
+
+	// Failed then a later running scan with the SAME tuple → skip.
+	mk(db.ScanFailed, "", &seedFinding.ID)
+	mk(db.ScanRunning, "", &seedFinding.ID)
+
+	// Failed with no later live scan with the same tuple → retry.
+	mk(db.ScanFailed, "lonely", nil)
+
+	// Failed with a later done scan but DIFFERENT sub-path → retry.
+	mk(db.ScanFailed, "left", nil)
+	mk(db.ScanDone, "right", nil)
+
+	// Failed with a later cancelled scan with same tuple → still retry
+	// (cancelled does not count as "already running/done").
+	mk(db.ScanFailed, "cancelled-tuple", nil)
+	mk(db.ScanCancelled, "cancelled-tuple", nil)
+
+	var maxID uint
+	if err := s.DB.Model(&db.Scan{}).Select("MAX(id)").Row().Scan(&maxID); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest("POST", "/scans/retry-failed", nil)
+	req.Host = testHost
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+
+	var newScans []db.Scan
+	if err := s.DB.Where("id > ?", maxID).Order("id").Find(&newScans).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(newScans) != 3 {
+		t.Fatalf("expected 3 fresh retries (freshA/B/C), got %d", len(newScans))
+	}
+	gotPaths := map[string]bool{}
+	for _, sc := range newScans {
+		if sc.Status != db.ScanQueued {
+			t.Errorf("new scan %d status = %s, want queued", sc.ID, sc.Status)
+		}
+		gotPaths[sc.SubPath] = true
+	}
+	for _, want := range []string{"lonely", "left", "cancelled-tuple"} {
+		if !gotPaths[want] {
+			t.Errorf("missing fresh retry for sub_path=%q", want)
+		}
+	}
+}
+
+func TestScansRetryFailed_filtersBySkill(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/x.git", Name: "x"}
+	s.DB.Create(&repo)
+	a := db.Skill{Name: "alpha", Description: "x", Body: "b", Active: true, Source: "ui", Version: 1}
+	b := db.Skill{Name: "bravo", Description: "x", Body: "b", Active: true, Source: "ui", Version: 1}
+	s.DB.Create(&a)
+	s.DB.Create(&b)
+
+	mk := func(name string, sk uint) {
+		sc := db.Scan{
+			RepositoryID: repo.ID, Kind: "skill", Status: db.ScanFailed,
+			StatusPriority: db.StatusPriorityFor(db.ScanFailed),
+			SkillID:        &sk, SkillName: name,
+		}
+		s.DB.Create(&sc)
+	}
+	mk("alpha", a.ID)
+	mk("alpha", a.ID)
+	mk("bravo", b.ID)
+
+	req := httptest.NewRequest("POST", "/scans/retry-failed?skill=alpha", nil)
+	req.Host = testHost
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	if loc := w.Header().Get("Location"); loc != "/scans?status=failed&skill=alpha" {
+		t.Errorf("redirect = %q", loc)
+	}
+
+	var queued int64
+	s.DB.Model(&db.Scan{}).Where("status = ? AND skill_id = ?", db.ScanQueued, a.ID).Count(&queued)
+	if queued != 2 {
+		t.Errorf("queued alpha scans = %d, want 2", queued)
+	}
+	var queuedBravo int64
+	s.DB.Model(&db.Scan{}).Where("status = ? AND skill_id = ?", db.ScanQueued, b.ID).Count(&queuedBravo)
+	if queuedBravo != 0 {
+		t.Errorf("bravo should not have been retried, got %d new queued", queuedBravo)
+	}
+}
+
+func TestScansRetryFailed_emptyAndButtonHidden(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	req := httptest.NewRequest("POST", "/scans/retry-failed", nil)
+	req.Host = testHost
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status %d", w.Code)
+	}
+
+	w = httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/scans"))
+	if strings.Contains(w.Body.String(), "Retry all failed") {
+		t.Error("button should not appear without status=failed filter")
+	}
+
+	w = httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/scans?status=failed"))
+	if strings.Contains(w.Body.String(), "Retry all failed") {
+		t.Error("button should not appear when no failed scans exist")
+	}
+}
+
+func TestScansRetryFailed_buttonVisibleWhenFiltered(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/x.git", Name: "x"}
+	s.DB.Create(&repo)
+	skill := db.Skill{Name: "deep-dive", Description: "x", Body: "b", Active: true, Source: "ui", Version: 1}
+	s.DB.Create(&skill)
+	sc := db.Scan{
+		RepositoryID: repo.ID, Kind: "skill", Status: db.ScanFailed,
+		StatusPriority: db.StatusPriorityFor(db.ScanFailed),
+		SkillID:        &skill.ID, SkillName: "deep-dive",
+	}
+	s.DB.Create(&sc)
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/scans?status=failed"))
+	if !strings.Contains(w.Body.String(), "Retry all failed") {
+		t.Error("button missing on failed-filtered view with failed scans")
+	}
+	if !strings.Contains(w.Body.String(), `action="/scans/retry-failed`) {
+		t.Error("button form action missing")
+	}
+}
+
 func TestJobs_defaultSortFloatsActiveFirst(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

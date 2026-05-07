@@ -5,6 +5,13 @@
     <i data-lucide="list-checks"></i> Scans
   </h2>
   <div class="flex items-center gap-2">
+    {{if and (eq .Status "failed") .Page.Total}}
+      <form method="post" action="/scans/retry-failed?skill={{.Skill}}"
+            hx-post="/scans/retry-failed?skill={{.Skill}}" hx-swap="none"
+            hx-confirm="Re-enqueue every failed{{if .Skill}} {{.Skill}}{{end}} scan?">
+        <button type="submit" class="btn-outline"><i data-lucide="refresh-cw"></i> Retry all failed</button>
+      </form>
+    {{end}}
     <div class="dropdown-menu">
       <button type="button" class="btn-outline" aria-haspopup="menu" aria-expanded="false">
         <i data-lucide="filter"></i>
