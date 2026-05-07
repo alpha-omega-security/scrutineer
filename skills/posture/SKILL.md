@@ -15,7 +15,7 @@ You are scoring how prepared a project is to receive and act on a security repor
 ## Workspace
 
 - `./src` — the cloned repository
-- `./context.json` — has `repository.url` and `repository.host` (e.g. `github.com`)
+- `./context.json` — has `repository.url` and `repository.full_name` (e.g. `owner/repo`). Derive the host from `repository.url`; the GitHub-only checks below run when that host is `github.com`. Use `full_name` as `{owner}/{repo}` in API URLs.
 - `./report.json` — write the result here
 - `./schema.json` — shape of `report.json`
 
@@ -45,7 +45,7 @@ Run every check below. For each one, record `present` (true/false/unknown), a on
 
 **code_scanning** — Look in `.github/workflows/*.y*ml` for `github/codeql-action`, `securego/gosec`, `aquasecurity/trivy-action`, `snyk/actions`, or similar. Present if any scanning workflow exists.
 
-**signed_releases** — Look in `.github/workflows/` for `sigstore/cosign`, `slsa-framework/slsa-github-generator`, `goreleaser` with `signs:`, or GPG signing steps. Also check `git tag -l | head` in `./src` and `git tag -v` one recent tag for a signature.
+**signed_releases** — Look in `.github/workflows/` for `sigstore/cosign`, `slsa-framework/slsa-github-generator`, `goreleaser` with `signs:`, or GPG signing steps. Also check `git tag -l | head` in `./src` and `git tag -v` one recent tag. Treat `gpg: Can't check signature: No public key` as `present: true` with that message in `evidence`; the signature exists even if you cannot verify it. Only `no signature found` is `present: false`.
 
 **codeowners** — Look for `CODEOWNERS`, `.github/CODEOWNERS`, or `docs/CODEOWNERS`.
 
@@ -53,14 +53,14 @@ Run every check below. For each one, record `present` (true/false/unknown), a on
 
 **security_issue_template** — Look in `.github/ISSUE_TEMPLATE/` for a template that redirects security reports away from public issues (mentions `SECURITY.md`, "do not report vulnerabilities here", or similar). Also check `.github/ISSUE_TEMPLATE/config.yml` for a `contact_links` entry pointing at a security channel.
 
-**archived** — From `context.json` `repository.archived` if set, otherwise the GitHub API repo response. An archived repo is an automatic `unprepared` regardless of other checks.
+**archived** — From the GitHub API repo response (`GET https://api.github.com/repos/{owner}/{repo}`, field `archived`). On a non-GitHub host or a non-200 response, record `unknown`. An archived repo is an automatic `unprepared` regardless of other checks.
 
 ## Tier
 
 Assign exactly one of:
 
-- `ready` — has a security policy with a contact AND (PVR enabled OR a working security email/form), and is not archived.
-- `partial` — has at least one intake signal (policy, PVR, security.txt, manifest contact) but it is incomplete or untested, and is not archived.
+- `ready` — has a security policy with a contact AND (PVR `true`, OR PVR `unknown` with a security email/form documented in the policy), and is not archived. You are checking that a contact is documented, not that it works.
+- `partial` — has at least one intake signal (policy, PVR, security.txt, manifest contact) but no documented contact in the policy, and is not archived.
 - `unprepared` — no intake signal at all, or the repository is archived.
 
 Hygiene checks inform the `summary` prose but do not on their own move the tier; a project with CodeQL and Dependabot but no way to receive a report is still `unprepared`.
