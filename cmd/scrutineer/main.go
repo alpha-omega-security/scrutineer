@@ -63,6 +63,7 @@ type flags struct {
 	maxTurns         int
 	anthropicBaseURL string
 	forkOrg          string
+	schemaStrict     bool
 	skillLocal       skillDirs
 
 	// set records which flags were passed on the command line so merge
@@ -85,6 +86,7 @@ func parseFlags() *flags {
 	flag.IntVar(&f.maxTurns, "max-turns", 0, "claude --max-turns limit (0 = unlimited)")
 	flag.StringVar(&f.anthropicBaseURL, "anthropic-base-url", "", "custom Anthropic API base URL (env: ANTHROPIC_BASE_URL)")
 	flag.StringVar(&f.forkOrg, "fork-org", "", "GitHub org the fork skill forks into and files draft advisories against")
+	flag.BoolVar(&f.schemaStrict, "schema-strict", false, "fail scans whose report.json does not validate against the skill's schema (default: warn and continue)")
 	flag.Var(&f.skillLocal, "skills", "directory to load SKILL.md files from (repeatable)")
 	flag.Parse()
 
@@ -137,6 +139,9 @@ func (f *flags) merge(cfg *config.Config) {
 	}
 	if cfg.ForkOrg != "" && !f.set["fork-org"] {
 		f.forkOrg = cfg.ForkOrg
+	}
+	if cfg.SchemaStrict != nil && !f.set["schema-strict"] {
+		f.schemaStrict = *cfg.SchemaStrict
 	}
 
 	if len(cfg.Models) > 0 {
@@ -271,13 +276,14 @@ func run(log *slog.Logger) error {
 	}
 
 	w := &worker.Worker{
-		DB:          gdb,
-		Log:         log,
-		DataDir:     filepath.Join(f.dataDir, "work"),
-		APIBase:     apiBase,
-		ForkOrg:     f.forkOrg,
-		Runner:      runner,
-		ScanTimeout: f.scanTimeout,
+		DB:           gdb,
+		Log:          log,
+		DataDir:      filepath.Join(f.dataDir, "work"),
+		APIBase:      apiBase,
+		ForkOrg:      f.forkOrg,
+		Runner:       runner,
+		ScanTimeout:  f.scanTimeout,
+		SchemaStrict: f.schemaStrict,
 		OnEvent: func(scanID, repoID uint, name, data string) {
 			broker.Publish(web.Event{Name: name, Data: data, ScanID: scanID, RepoID: repoID})
 		},

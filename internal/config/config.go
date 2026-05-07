@@ -58,6 +58,11 @@ type Config struct {
 	// repositories into and files draft advisories against. Empty disables
 	// the fork skill (it will refuse to run without a target org).
 	ForkOrg string `yaml:"fork_org"`
+	// SchemaStrict makes a skill report that fails JSON-schema validation
+	// fail the scan. When false (the default) the validator output is
+	// emitted to the scan log and the kind-specific parser still runs.
+	// Intended as a development aid while iterating on a skill.
+	SchemaStrict *bool `yaml:"schema_strict"`
 }
 
 // ParseScanTimeout validates and parses a scan_timeout string. Empty

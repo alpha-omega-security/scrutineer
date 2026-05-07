@@ -84,11 +84,11 @@ Scans are claude-code skills on disk. Adding one is a directory drop, no Go chan
 
 2. Write the body: instructions for claude. Reference the skill-facing API when the skill needs context scrutineer already holds (prior scans, maintainers, packages, etc.). See `openapi.yaml` at the repo root.
 
-3. Optional: `scripts/` for bundled helpers, `schema.json` for output validation.
+3. Optional: `scripts/` for bundled helpers, `schema.json` for output validation. The schema is staged into the workspace so the model can read it, and after the run scrutineer validates `report.json` against it. By default a mismatch is logged to the scan transcript and the kind-specific parser still runs; start scrutineer with `-schema-strict` (or `schema_strict: true` in `scrutineer.yaml`) while iterating on a skill to turn that into a scan failure with the validator output in `Scan.Error`.
 
 4. Restart scrutineer; the skill loader picks it up on startup. No code change.
 
-When a scan runs, the worker stages the skill into `work/{scanID}/.claude/skills/{name}/`, writes a `context.json` with the repo identity plus `scrutineer.api_base` and `scrutineer.token`, and invokes `claude -p "Use the {name} skill..."`. The skill's output goes to `./report.json` (or whatever `output_file` names) and scrutineer's parser for the declared `output_kind` handles it.
+When a scan runs, the worker stages the skill into `work/{scanID}/.claude/skills/{name}/`, writes a `context.json` with the repo identity plus `scrutineer.api_base` and `scrutineer.token`, and invokes `claude -p "Use the {name} skill..."`. The skill's output goes to `./report.json` (or whatever `output_file` names), is validated against `schema.json` if one is present, and scrutineer's parser for the declared `output_kind` handles it.
 
 ### When you do need Go changes
 

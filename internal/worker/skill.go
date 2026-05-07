@@ -133,6 +133,14 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 }
 
 func (w *Worker) parseSkillOutput(skill *db.Skill, scan *db.Scan, report string, emit func(Event)) error {
+	if skill.SchemaJSON != "" {
+		if detail := validateReportSchema(skill.SchemaJSON, report); detail != "" {
+			emit(Event{Kind: KindError, Text: "schema: report.json does not validate against schema.json:\n" + detail})
+			if w.SchemaStrict {
+				return &SchemaValidationError{Skill: skill.Name, Detail: detail}
+			}
+		}
+	}
 	switch skill.OutputKind {
 	case "findings":
 		return w.parseFindingsOutput(skill, scan, report, emit)

@@ -43,6 +43,10 @@ type Worker struct {
 	Runner      SkillRunner
 	OnEvent     func(scanID, repoID uint, name, data string) // optional SSE bridge
 	ScanTimeout time.Duration
+	// SchemaStrict makes a report.json that fails validation against the
+	// skill's schema.json fail the scan. When false the validator output
+	// is emitted to the log and the kind-specific parser still runs.
+	SchemaStrict bool
 
 	mu      sync.Mutex
 	running map[uint]context.CancelFunc
@@ -166,6 +170,10 @@ func (w *Worker) wrap(h handler) func(context.Context, []byte) error {
 				scan.Report = report
 				scan.Error = err.Error()
 				emit(Event{Kind: KindError, Text: err.Error()})
+			} else if _, ok := errors.AsType[*SchemaValidationError](err); ok {
+				scan.Status = db.ScanFailed
+				scan.Report = report
+				scan.Error = err.Error()
 			} else {
 				scan.Status = db.ScanFailed
 				scan.Error = err.Error()

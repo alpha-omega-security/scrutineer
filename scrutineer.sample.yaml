@@ -54,6 +54,12 @@
 # When set, acts as a fallback for skills that don't declare their own cap.
 # max_turns: 0
 
+# Fail a scan when its report.json does not validate against the skill's
+# schema.json. Default (false) emits the validator output to the scan log
+# and the parser still runs. Turn on while iterating on a skill so shape
+# mistakes surface as a scan failure rather than a buried log line.
+# schema_strict: false
+
 # Custom Anthropic API base URL. When set, the hostname is automatically
 # added to the egress allowlist. Falls back to the ANTHROPIC_BASE_URL
 # environment variable when empty.
