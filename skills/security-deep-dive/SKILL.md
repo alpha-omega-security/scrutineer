@@ -95,6 +95,8 @@ For agentic sinks, the boundary is crossed when user-controlled content reaches 
 
 If the boundary check rules the sink out — input is internal, or comes from a trusted documented source — write the reason and move to the next sink.
 
+Even where the input is attacker-controlled, check whether the project has already mitigated the danger. The mitigation may live in a centralised handler, a framework default that escapes or binds, a build flag, a sanitiser library, a type-system rule, or a project-wide lint. Grep for it — the directive, the helper, the import, the config line. If the control is in place, rule the sink out at this step and cite the file and line of the existing control in the reason. Do not recommend adding a control the project already has; if the existing one is stricter than what you would have suggested, an analyst applying the advice literally weakens the project. As an example: a template `var-in-href` warning resolves here in a project whose request lifecycle sets `Content-Security-Policy: script-src 'self'`, with the rule-out reason citing that handler.
+
 Even where the input is attacker-controlled, check the precondition does not subsume the conclusion. If reaching the sink requires the attacker to already hold a capability equal to or stronger than what the sink grants — write access to a directory documented as holding executable hooks, MITM position on a connection the finding claims to let them influence — the finding is circular. The attack path's first step already arrives at its last. Write "precondition subsumes conclusion" and move to the next sink.
 
 ### Step 3: Validate
