@@ -3,11 +3,18 @@
 
 Requires semgrep on PATH. Writes structured JSON to stdout. Stderr carries
 progress and errors.
+
+Results are grouped by (check_id, message): the rule's message template
+interpolates whatever metavars the rule author considered significant, so
+identical messages are the rule author's signal that the matches are
+equivalent. Each group becomes one finding with the full set of file:line
+positions in `locations` (#191).
 """
 import json
 import shutil
 import subprocess
 import sys
+from collections import defaultdict
 
 SEVERITY_MAP = {
     "ERROR": "High",
@@ -48,9 +55,16 @@ def main():
         print(json.dumps({"findings": [], "error": f"semgrep json: {exc}"}))
         sys.exit(0)
 
-    findings = []
-    for i, r in enumerate(data.get("results", []), start=1):
+    groups = defaultdict(list)
+    for r in data.get("results", []):
         extra = r.get("extra") or {}
+        key = (r.get("check_id", "semgrep match"), extra.get("message", "").strip())
+        groups[key].append(r)
+
+    findings = []
+    for i, ((check_id, message), results) in enumerate(groups.items(), start=1):
+        first = results[0]
+        extra = first.get("extra") or {}
         meta = extra.get("metadata") or {}
         cwe = ""
         raw_cwe = meta.get("cwe") or meta.get("cwe_id")
@@ -59,20 +73,28 @@ def main():
         if isinstance(raw_cwe, str) and raw_cwe.startswith("CWE-"):
             cwe = raw_cwe.split()[0]
         severity = SEVERITY_MAP.get(str(extra.get("severity", "")).upper(), "Medium")
-        start = r.get("start") or {}
-        path = r.get("path", "")
-        location = f"{path}:{start.get('line', 0)}" if path else "unknown"
+
+        locations = sorted({result_location(r) for r in results})
+        n = len(locations)
+        suffix = f" ({n} locations)" if n > 1 else ""
         findings.append({
             "id": f"F{i}",
-            "title": r.get("check_id", "semgrep match"),
+            "title": check_id,
             "severity": severity,
             "cwe": cwe,
-            "location": location,
-            "trace": extra.get("message", "").strip(),
-            "rating": f"{severity} from semgrep rule {r.get('check_id', '')}",
+            "location": locations[0],
+            "locations": locations,
+            "trace": message,
+            "rating": f"{severity} from semgrep rule {check_id}{suffix}",
         })
 
     print(json.dumps({"findings": findings}))
+
+
+def result_location(r):
+    path = r.get("path", "")
+    start = r.get("start") or {}
+    return f"{path}:{start.get('line', 0)}" if path else "unknown"
 
 
 if __name__ == "__main__":

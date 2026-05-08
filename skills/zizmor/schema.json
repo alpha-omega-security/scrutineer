@@ -17,6 +17,7 @@
           "severity": { "type": "string", "enum": ["Critical", "High", "Medium", "Low"] },
           "cwe":      { "type": "string" },
           "location": { "type": "string" },
+          "locations": { "type": "array", "items": { "type": "string" } },
           "trace":    { "type": "string" },
           "rating":   { "type": "string" }
         }

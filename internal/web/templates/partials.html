@@ -37,6 +37,9 @@
   {{else}}
     <code class="text-xs break-all">{{.Location}}</code>
   {{end}}
+  {{with .Extra}}
+    <span class="ml-1 rounded bg-muted px-1 text-xs text-muted-foreground" title="grouped match positions">+{{.}}</span>
+  {{end}}
 {{end}}
 
 {{define "empty"}}

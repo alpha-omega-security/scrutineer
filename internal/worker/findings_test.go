@@ -1,6 +1,10 @@
 package worker
 
-import "testing"
+import (
+	"testing"
+
+	"scrutineer/internal/db"
+)
 
 func TestToFindings_carriesReachabilityAndQualityTier(t *testing.T) {
 	raw := []byte(`{
@@ -51,6 +55,61 @@ func TestParseReport_toleratesNonStringTopLevelFields(t *testing.T) {
 	}
 	if r.Findings[0].ID != "F1" || r.Findings[0].Title != "t" {
 		t.Errorf("finding not extracted: %+v", r.Findings[0])
+	}
+}
+
+func TestMergeLocations(t *testing.T) {
+	cases := []struct {
+		base string
+		more []string
+		want string
+	}{
+		{"", []string{"a:1"}, "a:1"},
+		{"a:1", []string{"a:1"}, "a:1"},
+		{"a:1\nb:2", []string{"b:2", "c:3"}, "a:1\nb:2\nc:3"},
+		{"a:1", []string{"", "  ", "a:1\n\nb:2"}, "a:1\nb:2"},
+		{"", []string{"", ""}, ""},
+	}
+	for _, tc := range cases {
+		if got := mergeLocations(tc.base, tc.more...); got != tc.want {
+			t.Errorf("mergeLocations(%q, %v) = %q, want %q", tc.base, tc.more, got, tc.want)
+		}
+	}
+}
+
+func TestGroupByFingerprint(t *testing.T) {
+	in := []db.Finding{
+		{CWE: "CWE-79", Location: "a.html:5", Title: "x"},
+		{CWE: "CWE-79", Location: "a.html:12", Title: "x"},
+		{CWE: "CWE-79", Location: "b.html:3", Title: "x"},
+		{CWE: "CWE-79", Location: "b.html:3", Title: "x"},
+		{CWE: "CWE-89", Location: "a.html:5", Title: "y"},
+	}
+	out := groupByFingerprint(in, "semgrep")
+	if len(out) != 3 {
+		t.Fatalf("got %d groups, want 3 (a.html cwe-79, b.html cwe-79, a.html cwe-89)", len(out))
+	}
+	if out[0].Location != "a.html:5" || out[0].Locations != "a.html:5\na.html:12" {
+		t.Errorf("group 0: loc=%q locs=%q", out[0].Location, out[0].Locations)
+	}
+	if out[1].Location != "b.html:3" || out[1].Locations != "b.html:3" {
+		t.Errorf("group 1: exact duplicate should dedupe to one location, got %q", out[1].Locations)
+	}
+	if out[2].CWE != "CWE-89" {
+		t.Errorf("group 2: different CWE should not merge with group 0")
+	}
+	if out[0].Fingerprint == "" || out[0].Fingerprint == out[1].Fingerprint {
+		t.Error("fingerprints should be set and distinct per group")
+	}
+}
+
+func TestGroupByFingerprint_preservesPreGroupedLocations(t *testing.T) {
+	in := []db.Finding{
+		{CWE: "CWE-79", Location: "a.html:5", Locations: "a.html:5\na.html:12\nb.html:3", Title: "x"},
+	}
+	out := groupByFingerprint(in, "semgrep")
+	if len(out) != 1 || out[0].Locations != "a.html:5\na.html:12\nb.html:3" {
+		t.Errorf("pre-grouped locations should pass through: %q", out[0].Locations)
 	}
 }
 

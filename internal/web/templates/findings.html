@@ -94,7 +94,7 @@
         <td class="text-muted-foreground">
           {{if .CWE}}<span data-tooltip="{{cwename .CWE}}">{{.CWE}}</span>{{end}}
         </td>
-        <td class="whitespace-normal">{{template "loc-link" (dict "HTMLURL" $repo.HTMLURL "Commit" .Commit "Location" .Location)}}</td>
+        <td class="whitespace-normal">{{template "loc-link" (dict "HTMLURL" $repo.HTMLURL "Commit" .Commit "Location" .Location "Extra" .ExtraLocationCount)}}</td>
         <td class="text-muted-foreground">#{{.ScanID}}</td>
       </tr>
     {{end}}

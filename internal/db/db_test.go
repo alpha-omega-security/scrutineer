@@ -5,6 +5,30 @@ import (
 	"testing"
 )
 
+func TestFindingLocationList(t *testing.T) {
+	var empty Finding
+	if empty.LocationList() != nil || empty.ExtraLocationCount() != 0 {
+		t.Errorf("empty Locations: list=%v extra=%d", empty.LocationList(), empty.ExtraLocationCount())
+	}
+
+	one := Finding{Locations: "a.go:1"}
+	if got := one.LocationList(); len(got) != 1 || got[0] != "a.go:1" {
+		t.Errorf("single: %v", got)
+	}
+	if one.ExtraLocationCount() != 0 {
+		t.Errorf("single ExtraLocationCount = %d, want 0", one.ExtraLocationCount())
+	}
+
+	many := Finding{Locations: "a.go:1\n b.go:2 \nc.go:3"}
+	got := many.LocationList()
+	if len(got) != 3 || got[1] != "b.go:2" {
+		t.Errorf("many: %v (whitespace should be trimmed)", got)
+	}
+	if many.ExtraLocationCount() != 2 {
+		t.Errorf("many ExtraLocationCount = %d, want 2", many.ExtraLocationCount())
+	}
+}
+
 func TestScanTokenHelpers(t *testing.T) {
 	s := Scan{InputTokens: 100, CacheReadTokens: 800, CacheWriteTokens: 100, OutputTokens: 50}
 	if s.TotalInputTokens() != 1000 {

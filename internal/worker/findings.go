@@ -25,6 +25,7 @@ type scanFinding struct {
 	Confidence   string   `json:"confidence"`
 	CWE          string   `json:"cwe"`
 	Location     string   `json:"location"`
+	Locations    []string `json:"locations"`
 	Affected     string   `json:"affected"`
 	Reachability string   `json:"reachability"`
 	QualityTier  string   `json:"quality_tier"`
@@ -67,6 +68,7 @@ func (r scanReport) toFindings(scanID, repoID uint, commit, subPath string) []db
 			Confidence:   strings.ToLower(f.Confidence),
 			CWE:          f.CWE,
 			Location:     f.Location,
+			Locations:    strings.Join(f.Locations, "\n"),
 			Affected:     f.Affected,
 			Reachability: f.Reachability,
 			QualityTier:  f.QualityTier,

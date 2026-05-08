@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 """Run zizmor against ./src/.github/workflows and emit findings in
 scrutineer's shape. Requires zizmor on PATH. Writes JSON to stdout.
+
+Results are grouped by (ident, desc) so the same audit firing on every
+job in a workflow becomes one finding with the full set of file:line
+positions in `locations` (#191).
 """
 import json
 import os
 import shutil
 import subprocess
 import sys
+from collections import defaultdict
 
 SEVERITY_MAP = {
     "unknown": "Low",
@@ -47,27 +52,42 @@ def main():
     if isinstance(data, dict):
         data = data.get("findings", [])
 
+    groups = defaultdict(list)
+    for r in data:
+        key = (r.get("ident") or "zizmor finding", (r.get("desc") or "").strip())
+        groups[key].append(r)
+
     findings = []
-    for i, r in enumerate(data, start=1):
-        severity = SEVERITY_MAP.get(str(r.get("determinations", {}).get("severity", "")).lower(), "Medium")
-        locations = r.get("locations") or []
-        loc = "unknown"
-        if locations:
-            sym = locations[0].get("symbolic") or {}
-            key = sym.get("key") or {}
-            path = key.get("local", {}).get("given_path") or key.get("Local", {}).get("given_path") or "workflow"
-            row = locations[0].get("concrete", {}).get("location", {}).get("start_point", {}).get("row")
-            loc = f"{path}:{row + 1}" if row is not None else path
+    for i, ((ident, desc), results) in enumerate(groups.items(), start=1):
+        first = results[0]
+        severity = SEVERITY_MAP.get(
+            str(first.get("determinations", {}).get("severity", "")).lower(), "Medium"
+        )
+        locations = sorted({result_location(r) for r in results})
+        n = len(locations)
+        suffix = f" ({n} locations)" if n > 1 else ""
         findings.append({
             "id": f"F{i}",
-            "title": r.get("ident") or r.get("desc") or "zizmor finding",
+            "title": ident,
             "severity": severity,
-            "location": loc,
-            "trace": r.get("desc", "").strip(),
-            "rating": f"{severity} from zizmor rule {r.get('ident', '')}",
+            "location": locations[0],
+            "locations": locations,
+            "trace": desc,
+            "rating": f"{severity} from zizmor rule {ident}{suffix}",
         })
 
     print(json.dumps({"findings": findings}))
+
+
+def result_location(r):
+    locations = r.get("locations") or []
+    if not locations:
+        return "unknown"
+    sym = locations[0].get("symbolic") or {}
+    key = sym.get("key") or {}
+    path = key.get("local", {}).get("given_path") or key.get("Local", {}).get("given_path") or "workflow"
+    row = locations[0].get("concrete", {}).get("location", {}).get("start_point", {}).get("row")
+    return f"{path}:{row + 1}" if row is not None else path
 
 
 if __name__ == "__main__":

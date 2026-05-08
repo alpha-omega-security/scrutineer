@@ -231,7 +231,7 @@ func TestParseFindingsOutput_preservesAnalystStatusOnReobservation(t *testing.T)
 	}
 }
 
-func TestParseFindingsOutput_intraScanCollisionCreatesOneRow(t *testing.T) {
+func TestParseFindingsOutput_intraScanCollisionMergesLocations(t *testing.T) {
 	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -251,13 +251,99 @@ func TestParseFindingsOutput_intraScanCollisionCreatesOneRow(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	var n int64
-	gdb.Model(&db.Finding{}).Count(&n)
-	if n != 1 {
-		t.Errorf("intra-scan fingerprint collision should yield one row, got %d", n)
+	var rows []db.Finding
+	gdb.Find(&rows)
+	if len(rows) != 1 {
+		t.Fatalf("intra-scan fingerprint collision should yield one row, got %d", len(rows))
 	}
-	if s.FindingsCount != 2 {
-		t.Errorf("scan.FindingsCount should report what the scan found (2), got %d", s.FindingsCount)
+	if s.FindingsCount != 1 {
+		t.Errorf("scan.FindingsCount should report grouped findings (1), got %d", s.FindingsCount)
+	}
+	f := rows[0]
+	if f.Location != "q.go:10" {
+		t.Errorf("primary Location = %q, want first match q.go:10", f.Location)
+	}
+	if f.Locations != "q.go:10\nq.go:20" {
+		t.Errorf("Locations = %q, want both match positions joined", f.Locations)
+	}
+	if f.ExtraLocationCount() != 1 {
+		t.Errorf("ExtraLocationCount = %d, want 1", f.ExtraLocationCount())
+	}
+}
+
+func TestParseFindingsOutput_locationsArrayFromReport(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://x/r", Name: "r"}
+	gdb.Create(&repo)
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	report := `{"findings":[{
+		"id":"F1","title":"var-in-href","severity":"Medium","cwe":"CWE-79",
+		"location":"a.html:5",
+		"locations":["a.html:5","a.html:12","b.html:3"]
+	}]}`
+	s := &db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "semgrep", Status: db.ScanDone, Commit: "abc"}
+	gdb.Create(s)
+	if err := w.parseFindingsOutput(&db.Skill{}, s, report, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+
+	var f db.Finding
+	gdb.First(&f)
+	if f.Locations != "a.html:5\na.html:12\nb.html:3" {
+		t.Errorf("Locations = %q, want array joined and primary deduped", f.Locations)
+	}
+	if got := f.LocationList(); len(got) != 3 || got[2] != "b.html:3" {
+		t.Errorf("LocationList = %v, want 3 entries", got)
+	}
+	if f.ExtraLocationCount() != 2 {
+		t.Errorf("ExtraLocationCount = %d, want 2", f.ExtraLocationCount())
+	}
+}
+
+func TestParseFindingsOutput_rescanRefreshesLocations(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://x/r", Name: "r"}
+	gdb.Create(&repo)
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	emit := func(Event) {}
+
+	mkScan := func(commit string) *db.Scan {
+		s := &db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "semgrep",
+			Status: db.ScanDone, Commit: commit}
+		gdb.Create(s)
+		return s
+	}
+
+	report1 := `{"findings":[{"id":"F1","title":"x","severity":"Low","cwe":"CWE-79",
+		"location":"a.html:5","locations":["a.html:5","a.html:12","a.html:30"]}]}`
+	if err := w.parseFindingsOutput(&db.Skill{}, mkScan("abc"), report1, emit); err != nil {
+		t.Fatal(err)
+	}
+
+	// Upstream fixes one occurrence and shifts another; rescan reports two.
+	report2 := `{"findings":[{"id":"F1","title":"x","severity":"Low","cwe":"CWE-79",
+		"location":"a.html:7","locations":["a.html:7","a.html:30"]}]}`
+	if err := w.parseFindingsOutput(&db.Skill{}, mkScan("def"), report2, emit); err != nil {
+		t.Fatal(err)
+	}
+
+	var f db.Finding
+	gdb.First(&f)
+	if f.Location != "a.html:7" {
+		t.Errorf("rescan should refresh primary location: %q", f.Location)
+	}
+	if f.Locations != "a.html:7\na.html:30" {
+		t.Errorf("rescan should replace location set, not accumulate: %q", f.Locations)
+	}
+	if f.SeenCount != 2 {
+		t.Errorf("SeenCount = %d, want 2", f.SeenCount)
 	}
 }
 

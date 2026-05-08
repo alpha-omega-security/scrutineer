@@ -161,7 +161,10 @@
               <td>{{template "severity-badge" .Severity}}</td>
               <td class="min-w-0 whitespace-normal"><a href="/findings/{{.ID}}">{{.Title}}</a></td>
               <td>{{template "finding-status" (fstatus .Status)}}</td>
-              <td class="whitespace-normal"><code class="text-xs break-all">{{.Location}}</code></td>
+              <td class="whitespace-normal">
+                <code class="text-xs break-all">{{.Location}}</code>
+                {{with .ExtraLocationCount}}<span class="ml-1 rounded bg-muted px-1 text-xs text-muted-foreground">+{{.}}</span>{{end}}
+              </td>
             </tr>
           {{end}}
           </tbody>
@@ -190,6 +193,7 @@
             </div>
             <p>
               <code class="text-xs">{{.Location}}</code>
+              {{with .ExtraLocationCount}}<span class="ml-1 rounded bg-muted px-1 text-xs text-muted-foreground">+{{.}}</span>{{end}}
               <span class="text-xs text-muted-foreground">&middot; scan <a class="hover:underline" href="/scans/{{.ScanID}}">#{{.ScanID}}</a></span>
             </p>
           </header>

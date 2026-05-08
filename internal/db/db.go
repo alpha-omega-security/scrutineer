@@ -341,7 +341,15 @@ type Finding struct {
 	Status     FindingLifecycle `gorm:"index;default:new"`
 	CWE        string
 	Location   string
-	Affected   string // version range
+	// Locations is the newline-joined set of file:line positions for
+	// findings that represent one rule firing many times (#191). The
+	// first entry is duplicated in Location for the fingerprint and the
+	// table-view link; this column carries the full set so the finding
+	// page can list every hit. groupByFingerprint always seeds it with
+	// the primary, so it is non-empty for any finding written through
+	// the parser; rows that predate the column have it empty.
+	Locations string `gorm:"type:text"`
+	Affected  string // version range
 	// Reachability records whether a public entry point in the shipped
 	// artefact reaches the sink with attacker-controlled input
 	// (reachable), only a test driver does (harness_only), or the audit
@@ -400,6 +408,31 @@ func (f Finding) Summary() string {
 		return f.Trace[:i]
 	}
 	return f.Trace
+}
+
+// LocationList splits the Locations column into its file:line entries.
+// Returns nil for single-location findings (Locations empty), so
+// templates can range without an explicit emptiness check.
+func (f Finding) LocationList() []string {
+	if f.Locations == "" {
+		return nil
+	}
+	out := strings.Split(f.Locations, "\n")
+	for i := range out {
+		out[i] = strings.TrimSpace(out[i])
+	}
+	return out
+}
+
+// ExtraLocationCount is the number of grouped match positions beyond the
+// primary one shown in Location. Used by table views to render a "+N"
+// badge without unpacking the full list.
+func (f Finding) ExtraLocationCount() int {
+	n := len(f.LocationList())
+	if n <= 1 {
+		return 0
+	}
+	return n - 1
 }
 
 // FindingLabel is a tag independent of the lifecycle status. A finding can
