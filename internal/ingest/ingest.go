@@ -2,11 +2,12 @@
 // neutral form the web layer turns into Repository/Scan/Finding rows.
 //
 // Supported input formats are SARIF 2.1.0 (the interchange format most
-// scanners emit: CodeQL, Semgrep, Snyk, Checkmarx) and a minimal JSON
-// shape for hand-written reports. CSAF and OSV are intentionally left
-// for follow-up work; CSAF in particular is lossy against the Finding
-// schema so the round-trip needs more thought than a mechanical inverse
-// of the existing emitter.
+// scanners emit: CodeQL, Semgrep, Snyk, Checkmarx), a minimal JSON shape
+// for hand-written reports, and the CSV and markdown finding exports
+// some hosted scanners produce. CSAF and OSV are intentionally left for
+// follow-up work; CSAF in particular is lossy against the Finding schema
+// so the round-trip needs more thought than a mechanical inverse of the
+// existing emitter.
 //
 // The parser is deliberately permissive: an external report is a lead,
 // not a verified finding, and the operator will run verify/reachability
@@ -56,11 +57,13 @@ type Finding struct {
 type Format string
 
 const (
-	FormatSARIF   Format = "sarif"
-	FormatMinimal Format = "minimal"
+	FormatSARIF    Format = "sarif"
+	FormatMinimal  Format = "minimal"
+	FormatCSV      Format = "csv"
+	FormatMarkdown Format = "markdown"
 )
 
-var ErrUnrecognised = errors.New("ingest: input matches no supported format (want SARIF 2.1.0 or minimal JSON)")
+var ErrUnrecognised = errors.New("ingest: input matches no supported format (want SARIF 2.1.0, minimal JSON, findings CSV, or findings markdown)")
 
 // Parse sniffs data, picks a parser, and returns one Result per
 // repository-scoped batch.
@@ -72,26 +75,40 @@ func Parse(data []byte) ([]Result, Format, error) {
 	case FormatMinimal:
 		rs, err := parseMinimal(data)
 		return rs, FormatMinimal, err
+	case FormatCSV:
+		rs, err := parseCSV(data)
+		return rs, FormatCSV, err
+	case FormatMarkdown:
+		rs, err := parseMarkdown(data)
+		return rs, FormatMarkdown, err
 	}
 	return nil, "", ErrUnrecognised
 }
 
-// detect decodes just enough top-level keys to tell SARIF from minimal
-// without committing to either schema.
+// detect decodes just enough structure to tell the supported formats
+// apart. JSON inputs are probed for top-level keys; non-JSON inputs are
+// matched on shape (CSV header row, markdown H1 plus metadata block).
 func detect(data []byte) Format {
+	data = bytes.TrimSpace(bytes.TrimPrefix(data, []byte{0xef, 0xbb, 0xbf}))
 	var probe struct {
 		Schema   string          `json:"$schema"`
 		Runs     json.RawMessage `json:"runs"`
 		Findings json.RawMessage `json:"findings"`
 	}
-	if err := json.Unmarshal(bytes.TrimSpace(data), &probe); err != nil {
+	if err := json.Unmarshal(data, &probe); err == nil {
+		if len(probe.Runs) > 0 {
+			return FormatSARIF
+		}
+		if len(probe.Findings) > 0 {
+			return FormatMinimal
+		}
 		return ""
 	}
-	if len(probe.Runs) > 0 {
-		return FormatSARIF
+	if isFindingsCSV(data) {
+		return FormatCSV
 	}
-	if len(probe.Findings) > 0 {
-		return FormatMinimal
+	if isFindingsMarkdown(data) {
+		return FormatMarkdown
 	}
 	return ""
 }

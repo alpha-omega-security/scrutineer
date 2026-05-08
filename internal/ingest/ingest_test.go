@@ -2,6 +2,7 @@ package ingest
 
 import (
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -103,6 +104,117 @@ func TestParseMinimalDefaultsTool(t *testing.T) {
 	}
 	if results[0].Tool != "manual" {
 		t.Errorf("Tool = %q, want manual", results[0].Tool)
+	}
+}
+
+func TestParseCSV(t *testing.T) {
+	results, format, err := Parse(read(t, "testdata/findings.csv"))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if format != FormatCSV {
+		t.Fatalf("format = %q, want csv", format)
+	}
+	if len(results) != 2 {
+		t.Fatalf("got %d results, want 2 (grouped by repository)", len(results))
+	}
+
+	widget := results[0]
+	if widget.RepoURL != "example/widget" {
+		t.Errorf("RepoURL = %q, want example/widget", widget.RepoURL)
+	}
+	if widget.Tool != "scanner.example" {
+		t.Errorf("Tool = %q, want scanner.example (from Finding URL host)", widget.Tool)
+	}
+	if len(widget.Findings) != 2 {
+		t.Fatalf("got %d findings, want 2 (dismissed row skipped)", len(widget.Findings))
+	}
+
+	pt := widget.Findings[0]
+	if pt.Title != "Path traversal in download URL" {
+		t.Errorf("Title = %q", pt.Title)
+	}
+	if pt.Severity != "medium" || pt.Confidence != "medium" {
+		t.Errorf("Severity/Confidence = %q/%q, want medium/medium", pt.Severity, pt.Confidence)
+	}
+	if pt.CWE != "CWE-22" {
+		t.Errorf("CWE = %q, want CWE-22", pt.CWE)
+	}
+	if pt.Location != "download_url.rb:97" {
+		t.Errorf("Location = %q", pt.Location)
+	}
+	if pt.RuleID != "https://scanner.example/finding/abc" {
+		t.Errorf("RuleID = %q, want finding URL", pt.RuleID)
+	}
+	if !strings.Contains(pt.Description, "Multi-line cell with \"embedded\" quotes.") {
+		t.Error("Description should preserve multi-line cells and unescape doubled quotes")
+	}
+
+	ssrf := widget.Findings[1]
+	if ssrf.Severity != "low" || ssrf.CWE != "" {
+		t.Errorf("ssrf Severity/CWE = %q/%q, want low/empty", ssrf.Severity, ssrf.CWE)
+	}
+
+	other := results[1]
+	if other.RepoURL != "example/other" {
+		t.Errorf("second RepoURL = %q", other.RepoURL)
+	}
+	if other.Findings[0].Severity != "critical" || other.Findings[0].CWE != "CWE-89" {
+		t.Errorf("other finding = %+v", other.Findings[0])
+	}
+}
+
+func TestParseMarkdown(t *testing.T) {
+	results, format, err := Parse(read(t, "testdata/findings.md"))
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if format != FormatMarkdown {
+		t.Fatalf("format = %q, want markdown", format)
+	}
+	if len(results) != 1 {
+		t.Fatalf("got %d results, want 1", len(results))
+	}
+	r := results[0]
+	if r.RepoURL != "https://github.com/example/widget" {
+		t.Errorf("RepoURL = %q, want full URL from location link", r.RepoURL)
+	}
+	if len(r.Findings) != 2 {
+		t.Fatalf("got %d findings, want 2", len(r.Findings))
+	}
+
+	pt := r.Findings[0]
+	if pt.Title != "Path traversal in download URL" {
+		t.Errorf("Title = %q", pt.Title)
+	}
+	if pt.Severity != "medium" {
+		t.Errorf("Severity = %q, want medium", pt.Severity)
+	}
+	if pt.Location != "download_url.rb:97" {
+		t.Errorf("Location = %q", pt.Location)
+	}
+	if !strings.Contains(pt.SuggestedFix, "re-encoded when interpolated") {
+		t.Errorf("SuggestedFix = %q, want recommended-fix section", pt.SuggestedFix)
+	}
+	if !strings.Contains(pt.Description, "without re-encoding") {
+		t.Error("Description should contain Details section")
+	}
+	if !strings.Contains(pt.Description, "## Impact") || !strings.Contains(pt.Description, "Allowlist check") {
+		t.Error("Description should append Impact section")
+	}
+	if !strings.Contains(pt.Description, "## Reproduction steps") {
+		t.Error("Description should append Reproduction steps section")
+	}
+	if strings.Contains(pt.Description, "Recommended fix") {
+		t.Error("Description should not include Recommended fix (goes to SuggestedFix)")
+	}
+
+	ssrf := r.Findings[1]
+	if ssrf.Severity != "low" || ssrf.Location != "lookup.rb:179" {
+		t.Errorf("ssrf = %+v", ssrf)
+	}
+	if strings.Contains(ssrf.Description, "## Impact") {
+		t.Error("ssrf has no Impact section, should not append empty heading")
 	}
 }
 
