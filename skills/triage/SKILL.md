@@ -62,6 +62,7 @@ Only when `has_packages`:
 Only when `has_code`:
 
 - `subprojects`
+- `threat-model`
 - `semgrep`
 - `security-deep-dive`
 

@@ -25,12 +25,15 @@ Scrutineer API (call with `Authorization: Bearer {token}`):
 - `GET {api_base}/repositories/{repository_id}/packages` — published packages with dependent counts
 - `GET {api_base}/repositories/{repository_id}/advisories` — existing CVE/GHSA records (prior art)
 - `GET {api_base}/repositories/{repository_id}/dependents` — top dependents with download counts (reach)
+- `GET {api_base}/repositories/{repository_id}/scans?skill=threat-model&status=done` — then `GET /scans/{id}` and read `report` for the structured threat model, if one ran (Phase 1 boundaries)
 - `GET {api_base}/repositories/{repository_id}/findings?skill=semgrep` — static-analysis hits from a prior semgrep scan, if one ran (Phase 1 seeds)
 - `GET {api_base}/repositories/{repository_id}/scans?skill=repo-overview&status=done` — then `GET /scans/{id}` for the brief summary
 
 If any of those return an empty list or a non-200 status, the upstream scans were not run yet or the API is unreachable; fall back to your own reasoning over `./src`.
 
 ## Phase 1: Inventory
+
+Fetch the threat-model scan first: `GET {api_base}/repositories/{repository_id}/scans?skill=threat-model&status=done`, take the most recent id, then `GET {api_base}/scans/{id}` and parse the `report` field as JSON. If you get one, it already holds the trust map: `components` and `out_of_scope` say which code is in the model, `adversaries` names the actors, `trust_boundaries` describes the line per component, and `entry_points` is the per-parameter table Step 2 looks up. Fill this report's `boundaries[]` from those fields instead of deriving from scratch — one row per actor (callers and adversaries), with `trusted` set from whether the actor appears in `adversaries.in_scope` and `source` set from the threat model's `provenance`/`source` — then skip to listing sinks. Treat threat-model entries with `provenance: "inferred"` as working hypotheses you may overturn during Phase 2; `"documented"` entries cite a file:line you can re-read. An empty list or a non-200 means the threat-model skill has not run on this repository yet, in which case derive the boundaries yourself as below.
 
 Before listing sinks, name the trust boundaries this codebase has. For a small library this is one or two lines: who calls it, what they pass, where external data enters. For something larger — a package manager, a server, a build tool — it is a table: each actor, what they control, whether they are trusted, and where you found that documented. Write it down once. The per-sink boundary checks in Phase 2 reference what you wrote here; they do not re-derive it per sink.
 
@@ -76,7 +79,7 @@ If the trace dead-ends inside the library — the value is a constant, a hardcod
 
 ### Step 2: Trust boundary
 
-Where the input enters the library, who controls it. Check it against the boundaries you named at the start of Phase 1. The sink's input crosses one of them; name which one.
+Where the input enters the library, who controls it. Check it against the boundaries you named at the start of Phase 1. The sink's input crosses one of them; name which one. When a threat-model report was loaded, look the sink's entry function and parameter up in its `entry_points` table and cite the row by index (`entry_points[i]`): `attacker_controllable: "no"` rules the sink out as `out_of_model_trusted_input`; `"conditional"` means the row's `condition` is the precondition you carry into Step 6.
 
 The attacker is not the developer calling the library. If the value at the boundary is a parameter the developer chose, a config the operator wrote, a path the user set in their own environment — that is not attacker-controlled in this library's threat model. The library is doing what it was told.
 
@@ -150,4 +153,4 @@ Record `quality_tier` per sink class. For memory safety: heap overflow, use-afte
 
 ## Output
 
-Write your report to `./report.json`. It must validate against `./schema.json`. Every inventory sink must appear either in `findings[].sinks` or in `ruled_out[].sinks`. Use `findings: []` for a clean report. Set `repository` to the URL string from `context.json`'s `repository.url` (a string, not the object), `commit` to the HEAD sha of `./src`, and `artefact` to the package coordinate string (purl or `name@version`) you verified against in step 4. Set `spec_version` to `12`. Use today's date for the `date` field.
+Write your report to `./report.json`. It must validate against `./schema.json`. Every inventory sink must appear either in `findings[].sinks` or in `ruled_out[].sinks`. When a threat-model report was loaded, each `ruled_out[].reason` opens with one of its disposition labels (`out_of_model_trusted_input`, `out_of_model_adversary`, `out_of_model_unsupported_component`, `out_of_model_non_default_build`, `by_design_disclaimed`, `known_non_finding`, `model_gap`) followed by the citation into the model that backs it; without a loaded model, free-text reasons are fine. Use `findings: []` for a clean report. Set `repository` to the URL string from `context.json`'s `repository.url` (a string, not the object), `commit` to the HEAD sha of `./src`, and `artefact` to the package coordinate string (purl or `name@version`) you verified against in step 4. Set `spec_version` to `12`. Use today's date for the `date` field.

@@ -1,0 +1,271 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "threat-model report",
+  "description": "A project's security contract derived from source and docs: components, trust boundaries, an entry-point trust table, claimed and disclaimed properties, and the disposition labels downstream skills use to route findings against the model. Every claim carries a documented or inferred provenance tag.",
+  "type": "object",
+  "required": [
+    "spec_version",
+    "repository",
+    "commit",
+    "date",
+    "description",
+    "components",
+    "out_of_scope",
+    "trust_boundaries",
+    "entry_points",
+    "environment",
+    "adversaries",
+    "properties_provided",
+    "properties_not_provided",
+    "downstream_responsibilities",
+    "known_misuse",
+    "known_non_findings",
+    "dispositions",
+    "open_questions"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "spec_version":  { "type": "integer", "const": 1 },
+    "repository":    { "type": "string", "format": "uri" },
+    "commit":        { "type": "string", "pattern": "^[0-9a-f]{7,40}$" },
+    "date":          { "type": "string", "format": "date" },
+    "scope_subpath": { "type": ["string", "null"] },
+    "description":   { "$ref": "#/$defs/markdown" },
+    "confidence": {
+      "type": "object",
+      "required": ["documented", "inferred"],
+      "additionalProperties": false,
+      "properties": {
+        "documented": { "type": "integer", "minimum": 0 },
+        "inferred":   { "type": "integer", "minimum": 0 }
+      }
+    },
+
+    "components":       { "type": "array", "items": { "$ref": "#/$defs/component" }, "minItems": 1 },
+    "out_of_scope":     { "$ref": "#/$defs/scoped_or_na" },
+    "trust_boundaries": { "type": "array", "items": { "$ref": "#/$defs/trust_boundary" }, "minItems": 1 },
+    "entry_points":     { "type": "array", "items": { "$ref": "#/$defs/entry_point" } },
+    "environment":      { "$ref": "#/$defs/environment" },
+    "build_variants":   { "oneOf": [ { "type": "array", "items": { "$ref": "#/$defs/build_variant" } }, { "$ref": "#/$defs/not_applicable" } ] },
+    "adversaries":      { "$ref": "#/$defs/adversaries" },
+
+    "properties_provided":     { "type": "array", "items": { "$ref": "#/$defs/property_provided" } },
+    "properties_not_provided": { "type": "array", "items": { "$ref": "#/$defs/property_not_provided" } },
+    "attack_classes":          { "oneOf": [ { "type": "array", "items": { "type": "string" } }, { "$ref": "#/$defs/not_applicable" } ] },
+
+    "downstream_responsibilities": { "type": "array", "items": { "type": "string" } },
+    "known_misuse":      { "$ref": "#/$defs/misuse_or_na" },
+    "known_non_findings": { "type": "array", "items": { "$ref": "#/$defs/non_finding" } },
+
+    "dispositions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/disposition" },
+      "uniqueItems": true,
+      "minItems": 9, "maxItems": 9
+    },
+    "open_questions": { "type": "array", "items": { "$ref": "#/$defs/open_question" } }
+  },
+
+  "$defs": {
+    "markdown":   { "type": "string", "contentMediaType": "text/markdown" },
+    "provenance": { "type": "string", "enum": ["documented", "inferred"] },
+    "source":     { "type": "string", "description": "file:line or URL backing a documented claim" },
+    "controllable": { "type": "string", "enum": ["yes", "no", "conditional"] },
+    "severity_tier": { "type": "string", "enum": ["security", "correctness"] },
+    "touches": {
+      "type": "string",
+      "enum": ["filesystem", "network", "env", "child_processes", "signals", "global_state"]
+    },
+    "disposition": {
+      "type": "string",
+      "enum": [
+        "valid",
+        "valid_hardening",
+        "out_of_model_trusted_input",
+        "out_of_model_adversary",
+        "out_of_model_unsupported_component",
+        "out_of_model_non_default_build",
+        "by_design_disclaimed",
+        "known_non_finding",
+        "model_gap"
+      ]
+    },
+    "not_applicable": {
+      "type": "object",
+      "required": ["not_applicable", "reason"],
+      "additionalProperties": false,
+      "properties": {
+        "not_applicable": { "const": true },
+        "reason":         { "type": "string" }
+      }
+    },
+
+    "component": {
+      "type": "object",
+      "required": ["name", "entry_points", "touches", "in_scope", "provenance"],
+      "additionalProperties": false,
+      "properties": {
+        "name":         { "type": "string" },
+        "entry_points": { "type": "array", "items": { "type": "string" } },
+        "touches":      { "type": "array", "items": { "$ref": "#/$defs/touches" } },
+        "in_scope":     { "type": "boolean" },
+        "reason":       { "type": "string" },
+        "provenance":   { "$ref": "#/$defs/provenance" },
+        "source":       { "$ref": "#/$defs/source" }
+      }
+    },
+
+    "scoped_or_na": {
+      "oneOf": [
+        { "type": "array", "items": { "$ref": "#/$defs/scoped" } },
+        { "$ref": "#/$defs/not_applicable" }
+      ]
+    },
+    "scoped": {
+      "type": "object",
+      "required": ["item", "reason", "provenance"],
+      "additionalProperties": false,
+      "properties": {
+        "item":       { "type": "string" },
+        "reason":     { "type": "string" },
+        "provenance": { "$ref": "#/$defs/provenance" },
+        "source":     { "$ref": "#/$defs/source" }
+      }
+    },
+
+    "trust_boundary": {
+      "type": "object",
+      "required": ["component", "boundary", "provenance"],
+      "additionalProperties": false,
+      "properties": {
+        "component":                 { "type": "string" },
+        "boundary":                  { "type": "string" },
+        "reachability_precondition": { "type": "string" },
+        "provenance":                { "$ref": "#/$defs/provenance" },
+        "source":                    { "$ref": "#/$defs/source" }
+      }
+    },
+
+    "entry_point": {
+      "type": "object",
+      "required": ["entry_point", "parameter", "attacker_controllable", "provenance"],
+      "additionalProperties": false,
+      "properties": {
+        "entry_point":           { "type": "string" },
+        "parameter":             { "type": "string" },
+        "attacker_controllable": { "$ref": "#/$defs/controllable" },
+        "condition":             { "type": "string", "description": "required when attacker_controllable is conditional" },
+        "caller_must_enforce":   { "type": "string" },
+        "component":             { "type": "string" },
+        "provenance":            { "$ref": "#/$defs/provenance" },
+        "source":                { "$ref": "#/$defs/source" }
+      }
+    },
+
+    "environment": {
+      "type": "object",
+      "required": ["assumes", "does_not", "provenance"],
+      "additionalProperties": false,
+      "properties": {
+        "assumes":    { "type": "array", "items": { "type": "string" } },
+        "does_not":   { "type": "array", "items": { "type": "string" } },
+        "provenance": { "$ref": "#/$defs/provenance" },
+        "source":     { "$ref": "#/$defs/source" }
+      }
+    },
+
+    "build_variant": {
+      "type": "object",
+      "required": ["name", "default", "effect", "discouraged", "provenance"],
+      "additionalProperties": false,
+      "properties": {
+        "name":        { "type": "string" },
+        "default":     { "type": "string" },
+        "effect":      { "type": "string" },
+        "discouraged": { "type": "boolean" },
+        "provenance":  { "$ref": "#/$defs/provenance" },
+        "source":      { "$ref": "#/$defs/source" }
+      }
+    },
+
+    "adversaries": {
+      "type": "object",
+      "required": ["in_scope", "out_of_scope", "provenance"],
+      "additionalProperties": false,
+      "properties": {
+        "in_scope":     { "type": "array", "items": { "type": "string" } },
+        "out_of_scope": { "type": "array", "items": { "type": "string" } },
+        "threshold":    { "type": "string", "description": "honest-fraction or quorum assumption for replicated systems" },
+        "provenance":   { "$ref": "#/$defs/provenance" },
+        "source":       { "$ref": "#/$defs/source" }
+      }
+    },
+
+    "property_provided": {
+      "type": "object",
+      "required": ["property", "violation_symptom", "severity_tier", "provenance"],
+      "additionalProperties": false,
+      "properties": {
+        "property":          { "type": "string" },
+        "conditions":        { "type": "string" },
+        "violation_symptom": { "type": "string" },
+        "severity_tier":     { "$ref": "#/$defs/severity_tier" },
+        "provenance":        { "$ref": "#/$defs/provenance" },
+        "source":            { "$ref": "#/$defs/source" }
+      }
+    },
+
+    "property_not_provided": {
+      "type": "object",
+      "required": ["property", "reason", "false_friend", "provenance"],
+      "additionalProperties": false,
+      "properties": {
+        "property":     { "type": "string" },
+        "reason":       { "type": "string" },
+        "false_friend": { "type": "boolean" },
+        "provenance":   { "$ref": "#/$defs/provenance" },
+        "source":       { "$ref": "#/$defs/source" }
+      }
+    },
+
+    "misuse_or_na": {
+      "oneOf": [
+        { "type": "array", "items": { "$ref": "#/$defs/misuse" } },
+        { "$ref": "#/$defs/not_applicable" }
+      ]
+    },
+    "misuse": {
+      "type": "object",
+      "required": ["pattern", "why_unsafe"],
+      "additionalProperties": false,
+      "properties": {
+        "pattern":    { "type": "string" },
+        "why_unsafe": { "type": "string" },
+        "instead":    { "type": "string" }
+      }
+    },
+
+    "non_finding": {
+      "type": "object",
+      "required": ["reported_as", "why_safe"],
+      "additionalProperties": false,
+      "properties": {
+        "reported_as": { "type": "string" },
+        "why_safe":    { "type": "string" },
+        "cites":       { "type": "string", "description": "JSON pointer-ish reference into this report, e.g. out_of_scope[0]" },
+        "suppression": { "type": "string" }
+      }
+    },
+
+    "open_question": {
+      "type": "object",
+      "required": ["claim", "field"],
+      "additionalProperties": false,
+      "properties": {
+        "claim":    { "type": "string" },
+        "field":    { "type": "string" },
+        "proposed": { "type": "string" }
+      }
+    }
+  }
+}

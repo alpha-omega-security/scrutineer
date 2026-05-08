@@ -19,8 +19,7 @@ You are running headless with no maintainer to consult. Every claim you write is
 
 - `./src` is the cloned repository.
 - `./context.json` has `repository.url`, `repository.full_name`, and a `scrutineer` block with `api_base`, `token`, `repository_id`. If `scrutineer.scan_subpath` is set, scope the model to that subtree and say so in the header.
-- `./report.json` is the structured contract; write it to match `./schema.json`.
-- `./threat-model.md` is the prose rendering of the same content for a human reviewer. Write both.
+- `./report.json` is the structured contract; write it to match `./schema.json`. This is the only file the worker keeps.
 
 Scrutineer API (optional, `Authorization: Bearer {token}`):
 
@@ -127,7 +126,7 @@ Write `./report.json` matching `./schema.json`. Shape:
 {
   "spec_version": 1,
   "repository": "https://github.com/owner/repo",
-  "commit": "abc123",
+  "commit": "abc1234",
   "date": "2026-05-08",
   "scope_subpath": null,
   "description": "one paragraph, what this project is, for someone who has never seen it",
@@ -189,8 +188,6 @@ Write `./report.json` matching `./schema.json`. Shape:
 }
 ```
 
-Then write `./threat-model.md` as a prose rendering of the same content, three to eight pages, readable in one sitting. Section per top-level report key, in the order above. Every claim carries its `(documented: path:line)` or `(inferred)` tag inline. This file is for a human reviewer who may eventually send it upstream; `report.json` is what other skills load.
-
 Set `repository` to `context.json`'s `repository.url` and `commit` to `git -C ./src rev-parse HEAD`. Use today's date.
 
 ## What to leave out
@@ -199,4 +196,4 @@ CVE lists. Code-review findings ("function X does not check return of Y"). Build
 
 ## Self-check
 
-Before writing the files: every field is substantive or marked not applicable with a reason. Every claim has a provenance tag. Every `inferred` claim has a matching `open_questions` entry. `properties_not_provided` and `downstream_responsibilities` are at least as long as `properties_provided`; if not, you have under-specified. The entry-point table has rows, not prose. Components with different trust profiles are separated, not averaged. A reader who has never seen the project can answer "which threats has this taken on, which are mine."
+Before writing the report: every field is substantive or marked not applicable with a reason. Every claim has a provenance tag. Every `inferred` claim has a matching `open_questions` entry. `properties_not_provided` and `downstream_responsibilities` are at least as long as `properties_provided`; if not, you have under-specified. The entry-point table has rows, not prose. Components with different trust profiles are separated, not averaged. A reader who has never seen the project can answer "which threats has this taken on, which are mine."
