@@ -2,7 +2,7 @@ module scrutineer
 
 go 1.26
 
-toolchain go1.26.2
+toolchain go1.26.3
 
 require (
 	github.com/git-pkgs/sbom v0.1.0
