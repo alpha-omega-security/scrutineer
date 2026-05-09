@@ -41,6 +41,21 @@
 #   - artifactory.internal
 #   - "*.mycorp.net"
 
+# Hosts the proxy refuses to tunnel to even when egress_allow would match
+# them. Appended to a built-in list of cloud metadata endpoints
+# (169.254.169.254, metadata.google.internal, ...) which cannot be removed.
+# Same matching rules as egress_allow.
+# egress_deny:
+#   - vault.mycorp.net
+
+# Name of the --internal docker bridge network scan containers attach to
+# (Linux hosts only; Docker Desktop falls back to the default bridge).
+# Scrutineer creates it on startup if it doesn't exist; override only if
+# the default name collides or you want a pre-created network with
+# specific IPAM. The network must be --internal or scrutineer refuses to
+# start.
+# egress_network: scrutineer-egress
+
 # How many scans run in parallel. Default is 4; raise on bigger hosts,
 # lower if you want model calls serialised.
 # concurrency: 4

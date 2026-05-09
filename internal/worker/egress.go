@@ -80,6 +80,7 @@ var DefaultEgressAllow = []string{
 // and the token stops it being an open relay on the LAN.
 type EgressProxy struct {
 	Allow   []string
+	Deny    []string // operator-supplied hard-denies, checked before Allow
 	Token   string
 	APIPort string // only this port is allowed for HostGatewayAlias
 	Log     *slog.Logger
@@ -133,6 +134,11 @@ func (p *EgressProxy) checkAuth(r *http.Request) bool {
 
 func (p *EgressProxy) serveConnect(w http.ResponseWriter, r *http.Request) {
 	host, port := splitTarget(r.Host)
+	if denied, why := p.hardDenied(host); denied {
+		p.Log.Warn("egress hard-denied", "method", "CONNECT", "host", host, "reason", why)
+		http.Error(w, "egress to "+host+" is hard-denied: "+why, http.StatusForbidden)
+		return
+	}
 	if !HostAllowed(p.Allow, host) {
 		p.Log.Warn("egress denied", "method", "CONNECT", "host", host)
 		http.Error(w, "egress to "+host+" is not on the allowlist", http.StatusForbidden)
@@ -170,6 +176,11 @@ func (p *EgressProxy) serveForward(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	host, port := splitTarget(r.URL.Host)
+	if denied, why := p.hardDenied(host); denied {
+		p.Log.Warn("egress hard-denied", "method", r.Method, "host", host, "reason", why)
+		http.Error(w, "egress to "+host+" is hard-denied: "+why, http.StatusForbidden)
+		return
+	}
 	if !HostAllowed(p.Allow, host) {
 		p.Log.Warn("egress denied", "method", r.Method, "host", host)
 		http.Error(w, "egress to "+host+" is not on the allowlist", http.StatusForbidden)
@@ -194,6 +205,57 @@ func (p *EgressProxy) serveForward(w http.ResponseWriter, r *http.Request) {
 	maps.Copy(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
 	_, _ = io.Copy(w, resp.Body)
+}
+
+// metadataHosts are cloud instance-metadata endpoints. They are denied
+// regardless of the allowlist so a permissive config (or a wildcard that
+// accidentally covers them) cannot be turned into IMDS credential theft.
+var metadataHosts = map[string]bool{
+	"metadata.google.internal":             true,
+	"metadata.goog":                        true,
+	"metadata":                             true,
+	"169.254.169.254":                      true,
+	"fd00:ec2::254":                        true,
+	"100.100.100.200":                      true, // Alibaba
+	"metadata.azure.com":                   true,
+	"metadata.packet.net":                  true,
+	"metadata.platformequinix.com":         true,
+	"api.service.softlayer.com":            true, // IBM Cloud classic
+	"instance-data.ec2.internal":           true,
+	"instance-data":                        true,
+	"169.254.170.2":                        true, // ECS task metadata
+	"169.254.169.253":                      true, // AWS DNS
+	"169.254.169.123":                      true, // AWS NTP
+	"kubernetes.default":                   true,
+	"kubernetes.default.svc":               true,
+	"kubernetes.default.svc.cluster.local": true,
+}
+
+// hardDenied reports whether host is on the unconditional deny list. This
+// runs before the allowlist check. It blocks the operator's egress_deny
+// entries, well-known cloud metadata hostnames, and any literal IP in a
+// link-local range, so a permissive allowlist cannot be turned into IMDS
+// credential theft. The built-in metadata list cannot be overridden.
+func (p *EgressProxy) hardDenied(host string) (bool, string) {
+	h := strings.ToLower(strings.Trim(host, "[]"))
+	if HostAllowed(p.Deny, h) {
+		return true, "on egress_deny list"
+	}
+	if metadataHosts[h] {
+		return true, "cloud metadata endpoint"
+	}
+	if ip := net.ParseIP(h); ip != nil {
+		if v4 := ip.To4(); v4 != nil {
+			ip = v4
+		}
+		if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+			return true, "link-local address"
+		}
+		if metadataHosts[ip.String()] {
+			return true, "cloud metadata endpoint"
+		}
+	}
+	return false, ""
 }
 
 // HostAllowed reports whether host matches any entry in allow. Matching is

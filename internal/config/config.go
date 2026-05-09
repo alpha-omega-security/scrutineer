@@ -35,6 +35,18 @@ type Config struct {
 	// extra hostnames. Entries are appended to worker.DefaultEgressAllow,
 	// not replacing it. "*.example.com" matches subdomains.
 	EgressAllow []string `yaml:"egress_allow"`
+	// EgressDeny adds hosts to the proxy's hard-deny list. Entries are
+	// checked before the allowlist and before the built-in cloud metadata
+	// list (which cannot be removed). Useful for blocking an internal
+	// service that would otherwise be reachable through an egress_allow
+	// wildcard. Same matching rules as egress_allow.
+	EgressDeny []string `yaml:"egress_deny"`
+	// EgressNetwork is the name of the --internal docker bridge network
+	// scan containers attach to. Scrutineer creates it on startup if it
+	// does not exist. Override this if the default name collides with an
+	// existing network or if you want containers on a pre-created internal
+	// network with specific IPAM. Defaults to worker.EgressNetworkName.
+	EgressNetwork string `yaml:"egress_network"`
 	// Concurrency controls how many scans the worker runs in parallel.
 	// 0 or negative leaves the built-in default (see queue.DefaultWorkerConcurrency).
 	Concurrency int `yaml:"concurrency"`

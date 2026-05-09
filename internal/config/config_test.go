@@ -61,6 +61,9 @@ runner_image: custom-runner
 egress_allow:
   - artifactory.internal
   - "*.mycorp.net"
+egress_deny:
+  - vault.mycorp.net
+egress_network: scrut-net
 concurrency: 8
 clone: full
 scan_timeout: 30m
@@ -88,6 +91,12 @@ fork_org: fork-central
 	}
 	if len(c.EgressAllow) != 2 || c.EgressAllow[0] != "artifactory.internal" || c.EgressAllow[1] != "*.mycorp.net" {
 		t.Errorf("egress_allow: %+v", c.EgressAllow)
+	}
+	if len(c.EgressDeny) != 1 || c.EgressDeny[0] != "vault.mycorp.net" {
+		t.Errorf("egress_deny: %+v", c.EgressDeny)
+	}
+	if c.EgressNetwork != "scrut-net" {
+		t.Errorf("egress_network: %q", c.EgressNetwork)
 	}
 	if c.Clone != "full" {
 		t.Errorf("clone: %q, want full", c.Clone)

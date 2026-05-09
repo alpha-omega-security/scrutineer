@@ -47,6 +47,74 @@ func TestHostAllowed(t *testing.T) {
 	}
 }
 
+func TestEgressProxy_HardDenied(t *testing.T) {
+	p := &EgressProxy{Deny: []string{"*.blocked.test", "exact.test"}}
+	cases := []struct {
+		host string
+		want bool
+	}{
+		{"169.254.169.254", true},
+		{"[::ffff:169.254.169.254]", true},
+		{"::ffff:100.100.100.200", true},
+		{"[fd00:ec2::254]", true},
+		{"fe80::1", true},
+		{"169.254.170.2", true},
+		{"metadata.google.internal", true},
+		{"Metadata.Google.Internal", true},
+		{"metadata", true},
+		{"kubernetes.default.svc", true},
+		{"100.100.100.200", true},
+		{"sub.blocked.test", true},
+		{"exact.test", true},
+		{"api.anthropic.com", false},
+		{"github.com", false},
+		{"10.0.0.1", false},
+		{"example.org", false},
+	}
+	for _, tc := range cases {
+		got, _ := p.hardDenied(tc.host)
+		if got != tc.want {
+			t.Errorf("hardDenied(%q) = %v, want %v", tc.host, got, tc.want)
+		}
+	}
+}
+
+func TestEgressProxy_HardDenyBeatsAllowlist(t *testing.T) {
+	// Even with the metadata IP explicitly allowlisted, the proxy must
+	// refuse to tunnel to it.
+	p := &EgressProxy{Allow: []string{"169.254.169.254", "*"}, Log: quietLog()}
+	r := httptest.NewRequest(http.MethodConnect, "169.254.169.254:80", nil)
+	w := httptest.NewRecorder()
+	p.ServeHTTP(w, r)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("CONNECT to IMDS: got %d, want 403", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "hard-denied") {
+		t.Errorf("expected hard-denied reason in body, got %q", w.Body.String())
+	}
+
+	r = httptest.NewRequest("GET", "http://metadata.google.internal/computeMetadata/v1/", nil)
+	w = httptest.NewRecorder()
+	p.ServeHTTP(w, r)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("forward to GCE metadata: got %d, want 403", w.Code)
+	}
+}
+
+func TestEgressProxy_ConfiguredDenyBeatsAllowlist(t *testing.T) {
+	p := &EgressProxy{
+		Allow: []string{"*.mycorp.net"},
+		Deny:  []string{"vault.mycorp.net"},
+		Log:   quietLog(),
+	}
+	r := httptest.NewRequest(http.MethodConnect, "vault.mycorp.net:443", nil)
+	w := httptest.NewRecorder()
+	p.ServeHTTP(w, r)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("got %d, want 403", w.Code)
+	}
+}
+
 func TestSplitTargetDefaultsPort(t *testing.T) {
 	h, p := splitTarget("example.com")
 	if h != "example.com" || p != "443" {

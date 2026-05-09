@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -245,37 +246,14 @@ func run(log *slog.Logger) error {
 
 	broker := web.NewBroker()
 
-	var egressExtra []string
-	if cfg != nil {
-		egressExtra = cfg.EgressAllow
-	}
-	if h := baseURLHost(f.anthropicBaseURL); h != "" {
-		egressExtra = append(egressExtra, h)
-		log.Info("added anthropic base URL host to egress allowlist", "host", h)
-	}
-
 	var runner worker.SkillRunner
 	apiBase := "http://" + f.addr + "/api"
 	if !f.noDocker && worker.DockerAvailable() {
-		allow := append(append([]string{}, worker.DefaultEgressAllow...), egressExtra...)
-		token := worker.NewProxyToken()
-		port, err := worker.StartEgressProxy(&worker.EgressProxy{Allow: allow, Token: token, APIPort: addrPort(f.addr), Log: log})
+		dr, err := buildDockerRunner(f, cfg, log)
 		if err != nil {
-			return fmt.Errorf("start egress proxy: %w", err)
+			return err
 		}
-		gwIP := worker.ResolveHostGatewayIPv4(f.runnerImage)
-		log.Info("docker detected, using containerised runner",
-			"image", f.runnerImage, "egress_proxy_port", port, "egress_allow", len(allow),
-			"host_gateway_ipv4", gwIP)
-		runner = worker.DockerRunner{
-			Image:            f.runnerImage,
-			Effort:           f.effort,
-			ProxyURL:         worker.ProxyURL(token, port),
-			FullClone:        f.fullClone(),
-			MaxTurns:         f.maxTurns,
-			AnthropicBaseURL: f.anthropicBaseURL,
-			HostGatewayIP:    gwIP,
-		}
+		runner = dr
 		// Skills inside the container reach the host via host.docker.internal,
 		// which the egress proxy rewrites to 127.0.0.1 when dialing.
 		apiBase = "http://" + net.JoinHostPort(worker.HostGatewayAlias, addrPort(f.addr)) + "/api"
@@ -322,6 +300,65 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	return nil
+}
+
+// buildDockerRunner starts the egress proxy, sets up the network, and
+// returns the configured DockerRunner. On Linux the runner attaches scan
+// containers to an --internal bridge so the proxy is the only route out;
+// on Docker Desktop the host process isn't reachable from an internal
+// network, so containers stay on the default bridge and a warning is
+// logged.
+func buildDockerRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.DockerRunner, error) {
+	var allowExtra, deny []string
+	network := worker.EgressNetworkName
+	if cfg != nil {
+		allowExtra = cfg.EgressAllow
+		deny = cfg.EgressDeny
+		if cfg.EgressNetwork != "" {
+			network = cfg.EgressNetwork
+		}
+	}
+	if h := baseURLHost(f.anthropicBaseURL); h != "" {
+		allowExtra = append(allowExtra, h)
+		log.Info("added anthropic base URL host to egress allowlist", "host", h)
+	}
+	allow := append(append([]string{}, worker.DefaultEgressAllow...), allowExtra...)
+	token := worker.NewProxyToken()
+	port, err := worker.StartEgressProxy(&worker.EgressProxy{
+		Allow:   allow,
+		Deny:    deny,
+		Token:   token,
+		APIPort: addrPort(f.addr),
+		Log:     log,
+	})
+	if err != nil {
+		return worker.DockerRunner{}, fmt.Errorf("start egress proxy: %w", err)
+	}
+	dr := worker.DockerRunner{
+		Image:            f.runnerImage,
+		Effort:           f.effort,
+		ProxyURL:         worker.ProxyURL(token, port),
+		FullClone:        f.fullClone(),
+		MaxTurns:         f.maxTurns,
+		AnthropicBaseURL: f.anthropicBaseURL,
+	}
+	if runtime.GOOS != "linux" {
+		dr.HostGatewayIP = worker.ResolveHostGatewayIPv4(f.runnerImage)
+		log.Warn("docker detected but host is not linux: scan containers stay on the default bridge and egress filtering is cooperative only (a hijacked agent that ignores HTTPS_PROXY can dial out)",
+			"goos", runtime.GOOS, "image", f.runnerImage, "egress_proxy_port", port,
+			"egress_allow", len(allow), "host_gateway_ipv4", dr.HostGatewayIP)
+		return dr, nil
+	}
+	dr.HostGatewayIP, err = worker.EnsureEgressNetwork(network)
+	if err != nil {
+		return worker.DockerRunner{}, fmt.Errorf("ensure egress network: %w", err)
+	}
+	dr.Network = network
+	log.Info("docker detected, using containerised runner",
+		"image", f.runnerImage, "egress_proxy_port", port,
+		"egress_allow", len(allow), "egress_deny", len(deny),
+		"network", network, "host_gateway_ipv4", dr.HostGatewayIP)
+	return dr, nil
 }
 
 func loadSkills(log *slog.Logger, gdb *gorm.DB, dataDir string, dirs skillDirs, repo string, fullClone bool) error {
