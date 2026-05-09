@@ -79,6 +79,11 @@ func (s *Server) scanOwnsRepo(r *http.Request, repoID uint) bool {
 	return sc != nil && sc.RepositoryID == repoID
 }
 
+// APIHandler returns the bearer-auth'd skill API mux on its own. main.go
+// serves it on a second 0.0.0.0 listener so the egress proxy container can
+// reach it from the docker bridge while the web UI stays on loopback.
+func (s *Server) APIHandler() http.Handler { return s.apiHandler() }
+
 func (s *Server) apiHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /repositories/{id}", s.apiGetRepository)

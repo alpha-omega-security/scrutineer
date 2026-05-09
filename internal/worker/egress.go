@@ -3,7 +3,6 @@ package worker
 import (
 	"crypto/rand"
 	"encoding/hex"
-	"fmt"
 	"io"
 	"log/slog"
 	"maps"
@@ -15,9 +14,27 @@ import (
 )
 
 // HostGatewayAlias is the hostname containers use to reach the host. The
-// proxy rewrites it to 127.0.0.1 when dialing so skills can call the
-// scrutineer API even though the web server only listens on loopback.
+// proxy rewrites it to GatewayDial (default 127.0.0.1) when dialing so
+// skills can call the scrutineer API even though the web server only
+// listens on loopback.
 const HostGatewayAlias = "host.docker.internal"
+
+// ProxyContainerPort is the fixed port scrutineer-proxy listens on
+// inside its container. Scan containers point HTTPS_PROXY at
+// <proxy-container-name>:ProxyContainerPort.
+const ProxyContainerPort = 3128
+
+// ProxyContainerConfig is the JSON document scrutineer writes and mounts
+// into the egress-proxy container at startup. cmd/scrutineer-proxy reads
+// it and constructs an EgressProxy from it.
+type ProxyContainerConfig struct {
+	Allow       []string `json:"allow"`
+	Deny        []string `json:"deny,omitempty"`
+	Token       string   `json:"token"`
+	APIPort     string   `json:"api_port"`
+	GatewayDial string   `json:"gateway_dial"`
+	Listen      string   `json:"listen"`
+}
 
 // DefaultEgressAllow is the built-in host allowlist for the docker
 // runner's egress proxy. It covers what the bundled skills actually
@@ -83,7 +100,12 @@ type EgressProxy struct {
 	Deny    []string // operator-supplied hard-denies, checked before Allow
 	Token   string
 	APIPort string // only this port is allowed for HostGatewayAlias
-	Log     *slog.Logger
+	// GatewayDial is what HostGatewayAlias is rewritten to when dialing.
+	// Empty means 127.0.0.1, which is correct when the proxy runs in the
+	// scrutineer process. When the proxy runs in its own container it is
+	// set to the host gateway as seen from inside that container.
+	GatewayDial string
+	Log         *slog.Logger
 
 	transport *http.Transport
 	once      sync.Once
@@ -149,7 +171,7 @@ func (p *EgressProxy) serveConnect(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "egress to "+host+" is only allowed on port "+p.APIPort, http.StatusForbidden)
 		return
 	}
-	upstream, err := net.DialTimeout("tcp", dialTarget(host, port), egressDialTimeout)
+	upstream, err := net.DialTimeout("tcp", p.dialTarget(host, port), egressDialTimeout)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
@@ -193,7 +215,7 @@ func (p *EgressProxy) serveForward(w http.ResponseWriter, r *http.Request) {
 	}
 	out := r.Clone(r.Context())
 	out.RequestURI = ""
-	out.URL.Host = dialTarget(host, port)
+	out.URL.Host = p.dialTarget(host, port)
 	out.Header.Del("Proxy-Authorization")
 	out.Header.Del("Proxy-Connection")
 	resp, err := p.transport.RoundTrip(out)
@@ -279,29 +301,11 @@ func HostAllowed(allow []string, host string) bool {
 	return false
 }
 
-// StartEgressProxy listens on all interfaces on an ephemeral port and
-// serves p in a goroutine. It returns the chosen port. The caller embeds
-// the port and p.Token into the proxy URL handed to containers.
-func StartEgressProxy(p *EgressProxy) (int, error) {
-	ln, err := net.Listen("tcp", ":0")
-	if err != nil {
-		return 0, err
-	}
-	srv := &http.Server{Handler: p, ReadHeaderTimeout: egressDialTimeout}
-	go func() { _ = srv.Serve(ln) }()
-	return ln.Addr().(*net.TCPAddr).Port, nil
-}
-
 // NewProxyToken returns 32 hex chars of crypto/rand for Proxy-Authorization.
 func NewProxyToken() string {
 	var b [16]byte
 	_, _ = rand.Read(b[:])
 	return hex.EncodeToString(b[:])
-}
-
-// ProxyURL builds the http_proxy-style URL for containers.
-func ProxyURL(token string, port int) string {
-	return fmt.Sprintf("http://scrutineer:%s@%s:%d", token, HostGatewayAlias, port)
 }
 
 func splitTarget(hostport string) (host, port string) {
@@ -311,9 +315,12 @@ func splitTarget(hostport string) (host, port string) {
 	return hostport, "443"
 }
 
-func dialTarget(host, port string) string {
+func (p *EgressProxy) dialTarget(host, port string) string {
 	if strings.EqualFold(host, HostGatewayAlias) {
-		host = "127.0.0.1"
+		host = p.GatewayDial
+		if host == "" {
+			host = "127.0.0.1"
+		}
 	}
 	return net.JoinHostPort(host, port)
 }

@@ -127,14 +127,19 @@ func TestSplitTargetDefaultsPort(t *testing.T) {
 }
 
 func TestDialTargetRewritesGatewayAlias(t *testing.T) {
-	if got := dialTarget(HostGatewayAlias, "8080"); got != "127.0.0.1:8080" {
-		t.Errorf("got %q", got)
+	p := &EgressProxy{}
+	if got := p.dialTarget(HostGatewayAlias, "8080"); got != "127.0.0.1:8080" {
+		t.Errorf("default GatewayDial: got %q", got)
 	}
-	if got := dialTarget("Host.Docker.Internal", "9090"); got != "127.0.0.1:9090" {
+	if got := p.dialTarget("Host.Docker.Internal", "9090"); got != "127.0.0.1:9090" {
 		t.Errorf("case-insensitive rewrite failed: %q", got)
 	}
-	if got := dialTarget("api.anthropic.com", "443"); got != "api.anthropic.com:443" {
+	if got := p.dialTarget("api.anthropic.com", "443"); got != "api.anthropic.com:443" {
 		t.Errorf("got %q", got)
+	}
+	p.GatewayDial = "192.168.65.254"
+	if got := p.dialTarget(HostGatewayAlias, "8080"); got != "192.168.65.254:8080" {
+		t.Errorf("configured GatewayDial: got %q", got)
 	}
 }
 
@@ -288,9 +293,10 @@ func TestEgressProxy_NoPortRestrictionForOtherHosts(t *testing.T) {
 	}
 }
 
-func TestProxyURLShape(t *testing.T) {
-	got := ProxyURL("abc", 1234)
-	want := "http://scrutineer:abc@host.docker.internal:1234"
+func TestProxyContainerURLShape(t *testing.T) {
+	pc := &ProxyContainer{Name: "scrutineer-egress-proxy", Token: "abc"}
+	got := pc.URL()
+	want := "http://scrutineer:abc@scrutineer-egress-proxy:3128"
 	if got != want {
 		t.Errorf("got %q want %q", got, want)
 	}

@@ -12,7 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -247,16 +247,25 @@ func run(log *slog.Logger) error {
 	broker := web.NewBroker()
 
 	var runner worker.SkillRunner
+	var proxyContainer *worker.ProxyContainer
+	var apiLn net.Listener
 	apiBase := "http://" + f.addr + "/api"
 	if !f.noDocker && worker.DockerAvailable() {
-		dr, err := buildDockerRunner(f, cfg, log)
+		// Claim the bridge-facing API listener now so its port can go into
+		// the proxy config and context.json. Served after web.New below.
+		apiLn, err = net.Listen("tcp", ":0")
 		if err != nil {
+			return fmt.Errorf("listen for skill API: %w", err)
+		}
+		apiPort := strconv.Itoa(apiLn.Addr().(*net.TCPAddr).Port)
+		dr, pc, err := buildDockerRunner(f, cfg, apiPort, log)
+		if err != nil {
+			_ = apiLn.Close()
 			return err
 		}
 		runner = dr
-		// Skills inside the container reach the host via host.docker.internal,
-		// which the egress proxy rewrites to 127.0.0.1 when dialing.
-		apiBase = "http://" + net.JoinHostPort(worker.HostGatewayAlias, addrPort(f.addr)) + "/api"
+		proxyContainer = pc
+		apiBase = "http://" + net.JoinHostPort(worker.HostGatewayAlias, apiPort) + "/api"
 	} else {
 		log.Info("docker not available or disabled, using local runner (no isolation)")
 		runner = worker.LocalClaude{Effort: f.effort, FullClone: f.fullClone(), MaxTurns: f.maxTurns}
@@ -288,11 +297,23 @@ func run(log *slog.Logger) error {
 	go q.Start(ctx)
 
 	httpSrv := &http.Server{Addr: f.addr, Handler: srv.Handler(), ReadHeaderTimeout: shutdownTimeout}
+	var apiSrv *http.Server
+	if apiLn != nil {
+		apiSrv = &http.Server{Handler: srv.APIHandler(), ReadHeaderTimeout: shutdownTimeout}
+		go func() { _ = apiSrv.Serve(apiLn) }()
+		log.Info("skill API listening for proxy container", "addr", apiLn.Addr().String())
+	}
 	go func() {
 		<-ctx.Done()
 		sctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
 		_ = httpSrv.Shutdown(sctx)
+		if apiSrv != nil {
+			_ = apiSrv.Shutdown(sctx)
+		}
+		if proxyContainer != nil {
+			proxyContainer.Stop()
+		}
 	}()
 
 	log.Info("listening", "addr", "http://"+f.addr)
@@ -302,13 +323,12 @@ func run(log *slog.Logger) error {
 	return nil
 }
 
-// buildDockerRunner starts the egress proxy, sets up the network, and
-// returns the configured DockerRunner. On Linux the runner attaches scan
-// containers to an --internal bridge so the proxy is the only route out;
-// on Docker Desktop the host process isn't reachable from an internal
-// network, so containers stay on the default bridge and a warning is
-// logged.
-func buildDockerRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.DockerRunner, error) {
+// buildDockerRunner sets up the --internal scan network, starts the egress
+// proxy container on it, and returns the configured DockerRunner plus the
+// container handle so the caller can stop it on shutdown. apiPort is the
+// host's bridge-facing API listener; the proxy container rewrites
+// host.docker.internal to the host gateway and that port.
+func buildDockerRunner(f *flags, cfg *config.Config, apiPort string, log *slog.Logger) (worker.DockerRunner, *worker.ProxyContainer, error) {
 	var allowExtra, deny []string
 	network := worker.EgressNetworkName
 	if cfg != nil {
@@ -323,42 +343,33 @@ func buildDockerRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.D
 		log.Info("added anthropic base URL host to egress allowlist", "host", h)
 	}
 	allow := append(append([]string{}, worker.DefaultEgressAllow...), allowExtra...)
-	token := worker.NewProxyToken()
-	port, err := worker.StartEgressProxy(&worker.EgressProxy{
-		Allow:   allow,
-		Deny:    deny,
-		Token:   token,
-		APIPort: addrPort(f.addr),
-		Log:     log,
-	})
-	if err != nil {
-		return worker.DockerRunner{}, fmt.Errorf("start egress proxy: %w", err)
+
+	if err := worker.EnsureEgressNetwork(network); err != nil {
+		return worker.DockerRunner{}, nil, fmt.Errorf("ensure egress network: %w", err)
 	}
-	dr := worker.DockerRunner{
+	pc, err := worker.StartProxyContainer(f.runnerImage, network, f.dataDir, worker.ProxyContainerConfig{
+		Allow:       allow,
+		Deny:        deny,
+		Token:       worker.NewProxyToken(),
+		APIPort:     apiPort,
+		GatewayDial: worker.HostGatewayAlias,
+	}, log)
+	if err != nil {
+		return worker.DockerRunner{}, nil, fmt.Errorf("start egress proxy container: %w", err)
+	}
+	log.Info("docker detected, using containerised runner",
+		"image", f.runnerImage, "network", network,
+		"egress_allow", len(allow), "egress_deny", len(deny),
+		"proxy_container", pc.Name)
+	return worker.DockerRunner{
 		Image:            f.runnerImage,
 		Effort:           f.effort,
-		ProxyURL:         worker.ProxyURL(token, port),
+		ProxyURL:         pc.URL(),
+		Network:          network,
 		FullClone:        f.fullClone(),
 		MaxTurns:         f.maxTurns,
 		AnthropicBaseURL: f.anthropicBaseURL,
-	}
-	if runtime.GOOS != "linux" {
-		dr.HostGatewayIP = worker.ResolveHostGatewayIPv4(f.runnerImage)
-		log.Warn("docker detected but host is not linux: scan containers stay on the default bridge and egress filtering is cooperative only (a hijacked agent that ignores HTTPS_PROXY can dial out)",
-			"goos", runtime.GOOS, "image", f.runnerImage, "egress_proxy_port", port,
-			"egress_allow", len(allow), "host_gateway_ipv4", dr.HostGatewayIP)
-		return dr, nil
-	}
-	dr.HostGatewayIP, err = worker.EnsureEgressNetwork(network)
-	if err != nil {
-		return worker.DockerRunner{}, fmt.Errorf("ensure egress network: %w", err)
-	}
-	dr.Network = network
-	log.Info("docker detected, using containerised runner",
-		"image", f.runnerImage, "egress_proxy_port", port,
-		"egress_allow", len(allow), "egress_deny", len(deny),
-		"network", network, "host_gateway_ipv4", dr.HostGatewayIP)
-	return dr, nil
+	}, pc, nil
 }
 
 func loadSkills(log *slog.Logger, gdb *gorm.DB, dataDir string, dirs skillDirs, repo string, fullClone bool) error {
@@ -383,13 +394,6 @@ func loadSkills(log *slog.Logger, gdb *gorm.DB, dataDir string, dirs skillDirs, 
 		log.Info("loaded skills", "source", repo, "count", n)
 	}
 	return nil
-}
-
-func addrPort(addr string) string {
-	if _, p, err := net.SplitHostPort(addr); err == nil {
-		return p
-	}
-	return addr
 }
 
 func hashPath(s string) string {

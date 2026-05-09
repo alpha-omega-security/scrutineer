@@ -7,7 +7,6 @@ package worker
 import (
 	"context"
 	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,12 +28,11 @@ const EgressNetworkName = "scrutineer-egress"
 type DockerRunner struct {
 	Image            string
 	Effort           string
-	ProxyURL         string // http://user:token@host.docker.internal:port; "" disables egress
+	ProxyURL         string // http://user:token@<proxy-container>:port; "" disables egress
 	Network          string // docker network to attach to; should be an --internal bridge
 	FullClone        bool
 	MaxTurns         int
 	AnthropicBaseURL string // passed as ANTHROPIC_BASE_URL env var to the container
-	HostGatewayIP    string // IPv4 address for --add-host; falls back to "host-gateway"
 }
 
 func (d DockerRunner) image() string {
@@ -116,10 +114,6 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 // out of RunSkill so the network/proxy wiring can be unit-tested without a
 // daemon.
 func (d DockerRunner) dockerArgs(absWork string, claudeArgs []string) []string {
-	gwTarget := "host-gateway"
-	if d.HostGatewayIP != "" {
-		gwTarget = d.HostGatewayIP
-	}
 	args := []string{
 		"run", "--rm",
 		"--cap-drop", "ALL",
@@ -130,7 +124,6 @@ func (d DockerRunner) dockerArgs(absWork string, claudeArgs []string) []string {
 		"--tmpfs", "/tmp:rw,noexec,nosuid,size=256m",
 		"-v", absWork + ":/work",
 		"-w", "/work",
-		"--add-host", HostGatewayAlias + ":" + gwTarget,
 	}
 	if d.ProxyURL != "" {
 		if d.Network != "" {
@@ -165,86 +158,37 @@ func DockerAvailable() bool {
 }
 
 // EnsureEgressNetwork creates the --internal bridge network that scan
-// containers attach to, if it doesn't already exist, and returns the host's
-// gateway IPv4 on that bridge. Containers on this network have no route to
-// the outside world; the gateway IP is the only reachable address, and the
-// EgressProxy listening on 0.0.0.0 answers there. Inter-container traffic
-// is also disabled so concurrent scans cannot probe each other.
+// containers and the proxy container attach to, if it doesn't already
+// exist. Containers on this network have no route to the outside world;
+// scan containers reach upstreams via the proxy container, which is also
+// connected to the default bridge.
 //
 // If a network with this name already exists but is not --internal (e.g. an
 // operator created it manually), EnsureEgressNetwork fails rather than
 // silently attaching containers to a routable bridge.
-func EnsureEgressNetwork(name string) (string, error) {
-	gw, internal, exists := inspectNetwork(name)
+func EnsureEgressNetwork(name string) error {
+	internal, exists := inspectNetwork(name)
 	if exists {
 		if !internal {
-			return "", fmt.Errorf("docker network %q exists but is not --internal; remove it and let scrutineer recreate it", name)
+			return fmt.Errorf("docker network %q exists but is not --internal; remove it and let scrutineer recreate it", name)
 		}
-		if gw == "" {
-			return "", fmt.Errorf("docker network %q has no IPv4 gateway", name)
-		}
-		return gw, nil
+		return nil
 	}
 	out, err := exec.Command("docker", "network", "create",
 		"--driver", "bridge",
 		"--internal",
-		"-o", "com.docker.network.bridge.enable_icc=false",
 		name).CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("docker network create %s: %w: %s", name, err, strings.TrimSpace(string(out)))
+		return fmt.Errorf("docker network create %s: %w: %s", name, err, strings.TrimSpace(string(out)))
 	}
-	gw, _, _ = inspectNetwork(name)
-	if gw == "" {
-		return "", fmt.Errorf("network %s created but no IPv4 gateway reported", name)
-	}
-	return gw, nil
+	return nil
 }
 
-// ResolveHostGatewayIPv4 returns the IPv4 address that Docker's
-// host-gateway maps to. Docker adds both IPv4 and IPv6 /etc/hosts
-// entries for host-gateway; tools that prefer IPv6 (like Node's fetch)
-// fail when the server only listens on 127.0.0.1. Using the explicit
-// IPv4 address avoids the dual-stack ambiguity.
-//
-// This is only used on Docker Desktop (darwin/windows), where the
-// --internal egress network cannot reach the host and the runner falls
-// back to the cooperative proxy on the default bridge.
-func ResolveHostGatewayIPv4(image string) string {
-	out, err := exec.Command("docker", "run", "--rm",
-		"--add-host", "hgw:host-gateway",
-		"--entrypoint", "grep",
-		image, "hgw", "/etc/hosts").Output()
-	if err != nil {
-		return ""
-	}
-	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) < 1 {
-			continue
-		}
-		ip := net.ParseIP(fields[0])
-		if ip != nil && ip.To4() != nil {
-			return fields[0]
-		}
-	}
-	return ""
-}
-
-func inspectNetwork(name string) (gw string, internal, exists bool) {
+func inspectNetwork(name string) (internal, exists bool) {
 	out, err := exec.Command("docker", "network", "inspect", name,
-		"--format", "{{.Internal}} {{range .IPAM.Config}}{{.Gateway}} {{end}}").Output()
+		"--format", "{{.Internal}}").Output()
 	if err != nil {
-		return "", false, false
+		return false, false
 	}
-	fields := strings.Fields(string(out))
-	if len(fields) == 0 {
-		return "", false, true
-	}
-	internal = fields[0] == "true"
-	for _, f := range fields[1:] {
-		if ip := net.ParseIP(f); ip != nil && ip.To4() != nil {
-			return f, internal, true
-		}
-	}
-	return "", internal, true
+	return strings.TrimSpace(string(out)) == "true", true
 }

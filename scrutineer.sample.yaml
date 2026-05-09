@@ -48,12 +48,12 @@
 # egress_deny:
 #   - vault.mycorp.net
 
-# Name of the --internal docker bridge network scan containers attach to
-# (Linux hosts only; Docker Desktop falls back to the default bridge).
-# Scrutineer creates it on startup if it doesn't exist; override only if
-# the default name collides or you want a pre-created network with
-# specific IPAM. The network must be --internal or scrutineer refuses to
-# start.
+# Name of the --internal docker bridge network scan containers and the
+# egress proxy container attach to. Scrutineer creates it on startup if it
+# doesn't exist; override only if the default name collides or you want a
+# pre-created network with specific IPAM. The network must be --internal
+# or scrutineer refuses to start. The proxy container is named
+# "<egress_network>-proxy".
 # egress_network: scrutineer-egress
 
 # How many scans run in parallel. Default is 4; raise on bigger hosts,
