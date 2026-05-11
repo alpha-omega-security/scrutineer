@@ -12,8 +12,16 @@ import (
 // the repo root). Branch is extracted from /tree/<branch>/<path> URLs so
 // the operator knows it was present, but is not honoured for clone (see
 // #19 discussion) — scrutineer still clones the default branch.
+//
+// Owner and Name are derived from the URL path (last two segments) and
+// seed the Repository row at import time so listings and the orgs view
+// work before the metadata job has run; the metadata job overwrites them
+// with the canonical forge values when it lands. Owner is empty when the
+// URL has fewer than two path segments (cgit-style host/<repo>).
 type RepoInput struct {
 	CloneURL string
+	Owner    string
+	Name     string
 	SubPath  string
 	Branch   string
 }
@@ -53,10 +61,7 @@ func ParseRepoInput(raw string) (RepoInput, error) {
 	if u.Fragment != "" {
 		sub := strings.Trim(u.Fragment, "/")
 		u.Fragment = ""
-		return RepoInput{
-			CloneURL: cloneURL(u, u.Path),
-			SubPath:  sub,
-		}, nil
+		return newRepoInput(cloneURL(u, u.Path), sub, ""), nil
 	}
 
 	// /tree/<branch>/<path> shape (GitHub, Gitea, Forgejo).
@@ -76,15 +81,30 @@ func ParseRepoInput(raw string) (RepoInput, error) {
 		if treeIdx+2 < len(parts) {
 			subPath = strings.Join(parts[treeIdx+2:], "/")
 		}
-		return RepoInput{
-			CloneURL: cloneURL(u, repoPath),
-			SubPath:  subPath,
-			Branch:   branch,
-		}, nil
+		return newRepoInput(cloneURL(u, repoPath), subPath, branch), nil
 	}
 
 	// Plain clone URL.
-	return RepoInput{CloneURL: cloneURL(u, u.Path)}, nil
+	return newRepoInput(cloneURL(u, u.Path), "", ""), nil
+}
+
+// newRepoInput builds a RepoInput and derives Owner/Name from the
+// already-normalised clone URL so every parse path agrees on what those
+// values are.
+func newRepoInput(clone, sub, branch string) RepoInput {
+	r := RepoInput{CloneURL: clone, SubPath: sub, Branch: branch, Name: "repo"}
+	u, err := url.Parse(clone)
+	if err != nil {
+		return r
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if last := len(parts) - 1; last >= 0 && parts[last] != "" {
+		r.Name = parts[last]
+		if last >= 1 {
+			r.Owner = parts[last-1]
+		}
+	}
+	return r
 }
 
 // caseInsensitiveForges treat owner/repo path segments as

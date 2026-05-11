@@ -1416,7 +1416,13 @@ func (s *Server) repoBulkCreate(w http.ResponseWriter, r *http.Request) {
 func (s *Server) createOrTriageRepo(ctx context.Context, input RepoInput, model string) (db.Repository, bool, error) {
 	existing := int64(0)
 	s.DB.Model(&db.Repository{}).Where("url = ?", input.CloneURL).Count(&existing)
-	repo := db.Repository{URL: input.CloneURL, Name: db.NameFromURL(input.CloneURL)}
+	// Owner and FullName seed from ParseRepoInput so the orgs view groups
+	// newly added repos before the metadata job has run; the metadata job
+	// later overwrites them with the canonical forge values.
+	repo := db.Repository{URL: input.CloneURL, Name: input.Name, Owner: input.Owner}
+	if input.Owner != "" {
+		repo.FullName = input.Owner + "/" + input.Name
+	}
 	if err := s.DB.Where(db.Repository{URL: input.CloneURL}).FirstOrCreate(&repo).Error; err != nil {
 		return repo, false, err
 	}

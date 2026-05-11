@@ -72,23 +72,6 @@ func TestBackfillFindingRepositoryFillsCommit(t *testing.T) {
 	}
 }
 
-func TestNameFromURL(t *testing.T) {
-	cases := map[string]string{
-		"https://github.com/foo/bar":     "bar",
-		"https://github.com/foo/bar.git": "bar",
-		"https://github.com/foo/bar/":    "bar",
-		"git@github.com:foo/bar.git":     "bar",
-		"ssh://git@host.xz/path/to/repo": "repo",
-		"https://gitlab.com/g/sub/proj":  "proj",
-		"":                               "repo",
-	}
-	for in, want := range cases {
-		if got := NameFromURL(in); got != want {
-			t.Errorf("NameFromURL(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
 func TestOpenAndMigrate(t *testing.T) {
 	gdb, err := Open(":memory:")
 	if err != nil {

@@ -773,18 +773,3 @@ func SweepRunning(gdb *gorm.DB) error {
 			"finished_at": new(time.Now()),
 		}).Error
 }
-
-// NameFromURL derives a short display name from a git URL. It is the last
-// non-empty path segment with a trailing .git stripped.
-func NameFromURL(u string) string {
-	u = strings.TrimSpace(u)
-	u = strings.TrimSuffix(u, "/")
-	u = strings.TrimSuffix(u, ".git")
-	if i := strings.LastIndexAny(u, "/:"); i >= 0 {
-		u = u[i+1:]
-	}
-	if u == "" {
-		return "repo"
-	}
-	return u
-}

@@ -2565,6 +2565,38 @@ func TestMaintainerShow_displaysFindingStatus(t *testing.T) {
 	}
 }
 
+func TestRepoCreate_seedsOwnerAndFullNameFromURL(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	s.DB.Create(&db.Skill{Name: "triage", Active: true, Source: "test", Body: "test", OutputFile: "report.json", OutputKind: "freeform", Version: 1})
+
+	form := url.Values{"url": {"https://github.com/simonw/datasette"}}
+	req := httptest.NewRequest("POST", "/repositories", strings.NewReader(form.Encode()))
+	req.Host = testHost
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+
+	var repo db.Repository
+	if err := s.DB.Where("url = ?", "https://github.com/simonw/datasette").First(&repo).Error; err != nil {
+		t.Fatalf("repo not created: %v", err)
+	}
+	if repo.Owner != "simonw" {
+		t.Errorf("Owner = %q, want simonw (so orgs view groups before metadata fetch)", repo.Owner)
+	}
+	if repo.Name != "datasette" {
+		t.Errorf("Name = %q, want datasette", repo.Name)
+	}
+	if repo.FullName != "simonw/datasette" {
+		t.Errorf("FullName = %q, want simonw/datasette", repo.FullName)
+	}
+}
+
 func TestRepoCreate_branchURLTriggersTriageWithRef(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
