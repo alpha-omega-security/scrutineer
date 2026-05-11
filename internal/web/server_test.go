@@ -2189,6 +2189,88 @@ func TestScansRetryFailed_buttonVisibleWhenFiltered(t *testing.T) {
 	}
 }
 
+func TestRepoShow_retryFailedButton(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/rep", Name: "rep"}
+	s.DB.Create(&repo)
+	skill := db.Skill{Name: "deep-dive", Description: "x", Body: "b", Active: true, Source: "ui", Version: 1}
+	s.DB.Create(&skill)
+
+	// No failed scans yet: button should not render.
+	body := getRepoPage(t, s, repo.ID)
+	if strings.Contains(body, "Retry failed") {
+		t.Error("button should not appear when no failed scans")
+	}
+
+	// One failed scan: button renders with count and the repo-scoped form
+	// action so the handler comes back to this Scans tab on completion.
+	s.DB.Create(&db.Scan{
+		RepositoryID: repo.ID, Kind: "skill", Status: db.ScanFailed,
+		StatusPriority: db.StatusPriorityFor(db.ScanFailed),
+		SkillID:        &skill.ID, SkillName: "deep-dive",
+	})
+	body = getRepoPage(t, s, repo.ID)
+	if !strings.Contains(body, "Retry failed (1)") {
+		t.Errorf("expected 'Retry failed (1)' button; body=%s", body)
+	}
+	if !strings.Contains(body, fmt.Sprintf(`/scans/retry-failed?repository=%d`, repo.ID)) {
+		t.Error("button form action should scope retry to this repository")
+	}
+}
+
+func TestScansRetryFailed_repositoryScopeRedirects(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	rA := db.Repository{URL: "https://example.com/a", Name: "a"}
+	s.DB.Create(&rA)
+	rB := db.Repository{URL: "https://example.com/b", Name: "b"}
+	s.DB.Create(&rB)
+	skill := db.Skill{Name: "deep-dive", Description: "x", Body: "b", Active: true, Source: "ui", Version: 1}
+	s.DB.Create(&skill)
+	mk := func(repoID uint) {
+		s.DB.Create(&db.Scan{
+			RepositoryID: repoID, Kind: "skill", Status: db.ScanFailed,
+			StatusPriority: db.StatusPriorityFor(db.ScanFailed),
+			SkillID:        &skill.ID, SkillName: "deep-dive",
+		})
+	}
+	mk(rA.ID)
+	mk(rA.ID)
+	mk(rB.ID)
+
+	req := httptest.NewRequest("POST",
+		fmt.Sprintf("/scans/retry-failed?repository=%d", rA.ID), nil)
+	req.Host = testHost
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status %d", w.Code)
+	}
+	if got := w.Header().Get("Location"); got != fmt.Sprintf("/repositories/%d#rt3", rA.ID) {
+		t.Errorf("redirect = %q, want repo Scans tab", got)
+	}
+
+	// Other repo's failed scan must remain untouched: only rA's two failed
+	// scans should have been requeued.
+	var queued int64
+	s.DB.Model(&db.Scan{}).
+		Where("status = ? AND repository_id = ?", db.ScanQueued, rA.ID).
+		Count(&queued)
+	if queued != 2 {
+		t.Errorf("rA queued count = %d, want 2", queued)
+	}
+	s.DB.Model(&db.Scan{}).
+		Where("status = ? AND repository_id = ?", db.ScanQueued, rB.ID).
+		Count(&queued)
+	if queued != 0 {
+		t.Errorf("rB queued count = %d, want 0 (repo scope leaked)", queued)
+	}
+}
+
 func TestJobs_defaultSortFloatsActiveFirst(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

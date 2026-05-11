@@ -381,6 +381,17 @@
   </div>
 
   <div role="tabpanel" id="rp3" aria-labelledby="rt3" hidden>
+    {{if gt .FailedScans 0}}
+      <div class="flex justify-end mb-2">
+        <form method="post" action="/scans/retry-failed?repository={{.Repo.ID}}"
+              hx-post="/scans/retry-failed?repository={{.Repo.ID}}" hx-swap="none"
+              hx-confirm="Re-enqueue every failed scan on this repository?">
+          <button type="submit" class="btn-outline">
+            <i data-lucide="refresh-cw"></i> Retry failed ({{.FailedScans}})
+          </button>
+        </form>
+      </div>
+    {{end}}
     <table class="table">
       <thead>
         <tr><th>#</th><th>Skill</th><th>Status</th><th>Findings</th><th>Model</th><th>Cost</th><th>Commit</th><th>Started</th><th>Duration</th><th class="w-12"></th></tr>

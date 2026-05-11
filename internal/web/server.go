@@ -1577,11 +1577,22 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Count failed scans in the latest-per-skill set: same scope as the
+	// retry-failed handler would act on for this repo. Drives the
+	// "Retry failed" button on the Scans tab.
+	var failedScans int
+	for _, sc := range scans {
+		if sc.Status == db.ScanFailed {
+			failedScans++
+		}
+	}
+
 	data := map[string]any{
 		"Repo": repo, "Scans": scans, "Latest": latest,
 		"Findings":        findings,
 		"ScannerFindings": scannerFindings,
 		"ScanSkill":       scanSkill,
+		"FailedScans":     failedScans,
 		"TotalCost":       totalCost,
 		"TMCommit":        tmCommit,
 		"Deps":            deps, "Pkgs": pkgs, "Dependents": dependents, "Advisories": advisories, "Maintainers": maintainers, "ThreatModel": threatModel,
@@ -1669,10 +1680,14 @@ func (s *Server) scanRetry(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) scansRetryFailed(w http.ResponseWriter, r *http.Request) {
 	skillName := r.URL.Query().Get("skill")
+	repoID, _ := strconv.Atoi(r.URL.Query().Get("repository"))
 	q := s.DB.Model(&db.Scan{}).
 		Where("status = ? AND kind = ? AND skill_id IS NOT NULL", db.ScanFailed, worker.JobSkill)
 	if skillName != "" {
 		q = q.Where("skill_name = ?", skillName)
+	}
+	if repoID > 0 {
+		q = q.Where("repository_id = ?", repoID)
 	}
 
 	var totalFailed int64
@@ -1715,8 +1730,13 @@ func (s *Server) scansRetryFailed(w http.ResponseWriter, r *http.Request) {
 	skipped := int(totalFailed) - retried - errored
 
 	setFlash(w, retryFailedToast(retried, skipped, errored))
+	// Repo-scoped retries return to that repo's Scans tab so the operator
+	// stays in context; otherwise we send them to the global jobs list
+	// filtered to failed.
 	target := "/scans?status=failed"
-	if skillName != "" {
+	if repoID > 0 {
+		target = fmt.Sprintf("/repositories/%d#rt3", repoID)
+	} else if skillName != "" {
 		target += "&skill=" + url.QueryEscape(skillName)
 	}
 	s.redirect(w, r, target)
