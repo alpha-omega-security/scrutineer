@@ -164,7 +164,8 @@ func (o OpenAIRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 	maxTurns := effectiveMaxTurns(sj.MaxTurns, o.MaxTurns)
 	var totalInput, totalOutput int
 
-	for turn := 0; turn < maxTurns; turn++ {
+	var turn int
+	for turn = 0; turn < maxTurns; turn++ {
 		resp, err := o.callAPI(ctx, model, messages)
 		if err != nil {
 			return SkillResult{Commit: commit}, fmt.Errorf("openai api: %w", err)
@@ -215,7 +216,7 @@ func (o OpenAIRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 	emit(Event{
 		Kind:  KindResult,
 		Text:  "done",
-		Turns: maxTurns,
+		Turns: turn,
 		Usage: Usage{InputTokens: totalInput, OutputTokens: totalOutput},
 	})
 
@@ -254,7 +255,7 @@ func (o OpenAIRunner) callAPI(ctx context.Context, model string, messages []oaiM
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxReportBytes))
 	if err != nil {
 		return nil, err
 	}
@@ -291,7 +292,7 @@ func (o OpenAIRunner) executeTool(ctx context.Context, workRoot, name, argsJSON 
 
 func (o OpenAIRunner) toolReadFile(workRoot, path string) string {
 	full := filepath.Join(workRoot, filepath.Clean(path))
-	if !strings.HasPrefix(full, workRoot) {
+	if full != workRoot && !strings.HasPrefix(full, workRoot+string(os.PathSeparator)) {
 		return "error: path escapes workspace"
 	}
 	b, err := os.ReadFile(full)
@@ -306,7 +307,7 @@ func (o OpenAIRunner) toolReadFile(workRoot, path string) string {
 
 func (o OpenAIRunner) toolWriteFile(workRoot, path, content string) string {
 	full := filepath.Join(workRoot, filepath.Clean(path))
-	if !strings.HasPrefix(full, workRoot) {
+	if full != workRoot && !strings.HasPrefix(full, workRoot+string(os.PathSeparator)) {
 		return "error: path escapes workspace"
 	}
 	if err := os.MkdirAll(filepath.Dir(full), dirPerm); err != nil {
@@ -320,7 +321,7 @@ func (o OpenAIRunner) toolWriteFile(workRoot, path, content string) string {
 
 func (o OpenAIRunner) toolListDir(workRoot, path string) string {
 	full := filepath.Join(workRoot, filepath.Clean(path))
-	if !strings.HasPrefix(full, workRoot) {
+	if full != workRoot && !strings.HasPrefix(full, workRoot+string(os.PathSeparator)) {
 		return "error: path escapes workspace"
 	}
 	entries, err := os.ReadDir(full)

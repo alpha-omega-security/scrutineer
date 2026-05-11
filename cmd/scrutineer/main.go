@@ -317,7 +317,7 @@ func selectRunner(log *slog.Logger, f *flags, egressExtra []string) (worker.Skil
 		}
 		openaiKey := os.Getenv("OPENAI_API_KEY")
 		if openaiKey == "" {
-			return nil, "", fmt.Errorf("OPENAI_API_KEY must be set when backend=openai")
+			log.Warn("OPENAI_API_KEY is not set; requests will have no Authorization header (OK for local servers like Ollama)")
 		}
 		log.Info("using openai-compatible backend", "base_url", openaiBase)
 		return worker.OpenAIRunner{

@@ -122,10 +122,10 @@ func ValidateTheme(s string) error {
 // Empty is valid (caller keeps the default "claude-code").
 func ValidateBackend(s string) error {
 	switch s {
-	case "", "claude-code", "openai":
+	case "", "claude-code", "anthropic", "openai":
 		return nil
 	default:
-		return fmt.Errorf("backend: must be \"claude-code\" or \"openai\", got %q", s)
+		return fmt.Errorf("backend: must be \"claude-code\", \"anthropic\", or \"openai\", got %q", s)
 	}
 }
 
