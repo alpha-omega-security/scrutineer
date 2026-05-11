@@ -48,7 +48,8 @@ One row per skill execution. Every scan is a skill; `kind` is always `skill`. `s
 | skill_id | integer FK | References `skills.id`. Null for legacy non-skill rows. |
 | skill_version | integer | Version of the skill at run time; the skill row's `version` bumps on every edit so older scans stay readable. |
 | skill_name | text | Denormalised skill name for UI display. |
-| finding_id | integer FK | Set when the scan is finding-scoped (verify/patch/disclose). References `findings.id`. |
+| finding_id | integer FK | Set when the scan is finding-scoped (verify/patch/disclose/exposure). References `findings.id`. |
+| dependent_id | integer FK | Set on `exposure` scans only. References `dependents.id`; identifies which downstream consumer the skill is auditing for reachability of the upstream finding. |
 | api_token | text | Per-scan bearer token that the skill presents when calling `/api`. Only valid while the scan is running. |
 | ref | text | Git ref to checkout after cloning. Empty means the default branch. |
 | sub_path | text | Scopes code analysis to a sub-folder of the clone (monorepo packages). Empty means repo root. |
@@ -85,7 +86,7 @@ One row per installed skill. Loaded from `skills/` directories on disk or the UI
 | body | text | Markdown body after the frontmatter. The prompt. |
 | schema_json | text | Optional schema.json contents. |
 | output_file | text | Relative path the skill writes to. Promoted from metadata. |
-| output_kind | text | Parser key: `findings`, `maintainers`, `packages`, `advisories`, `dependents`, `dependencies`, `repo_metadata`, `repo_overview`, `subprojects`, `posture`, `verify`, `patch`, `threat_model`, `freeform`. Promoted from metadata. |
+| output_kind | text | Parser key: `findings`, `maintainers`, `packages`, `advisories`, `dependents`, `dependencies`, `repo_metadata`, `repo_overview`, `subprojects`, `posture`, `verify`, `patch`, `threat_model`, `exposure`, `freeform`. Promoted from metadata. |
 | version | integer | Bumps on every save. |
 | active | boolean | |
 | source | text | `local`, `remote`, or `ui`. |
@@ -270,6 +271,23 @@ Top runtime dependents of this repository's packages. Populated by the `dependen
 | registry_url | text | |
 | latest_version | text | |
 | created_at | datetime | |
+
+## finding_dependents
+
+One row per (finding, dependent) pair the `exposure` skill has audited. Status mirrors the CSAF 2.0 product_status buckets so the VEX export streams the value through unchanged. Upserted on each rerun; the unique index on `(finding_id, dependent_id)` prevents duplicates.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | integer PK | |
+| finding_id | integer FK | References `findings.id`. Part of the unique index. |
+| dependent_id | integer FK | References `dependents.id`. Part of the unique index. |
+| status | text | `known_affected`, `known_not_affected`, `under_investigation`, or `fixed`. |
+| justification | text | CSAF VEX flag label. Only valid when status is `known_not_affected`; cleared by the parser otherwise. |
+| rationale | text | One-paragraph explanation written by the skill, rendered in the finding page's per-dependent table. |
+| scan_id | integer FK | Exposure scan that wrote this row. |
+| scan_commit | text | HEAD of the dependent's clone when the verdict was made; lets the operator tell whether a later rescan would still apply. |
+| created_at | datetime | |
+| updated_at | datetime | |
 
 ## advisories
 

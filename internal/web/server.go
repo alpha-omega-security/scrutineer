@@ -184,6 +184,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /findings/{id}/verify", s.findingVerify)
 	mux.HandleFunc("POST /findings/{id}/disclose", s.findingDisclose)
 	mux.HandleFunc("POST /findings/{id}/patch", s.findingPatchRun)
+	mux.HandleFunc("POST /findings/{id}/exposure", s.findingExposureRun)
 	mux.HandleFunc("GET /findings/{id}/patch.diff", s.findingPatchDownload)
 	mux.HandleFunc("POST /findings/{id}/notes", s.findingNotes)
 	mux.HandleFunc("POST /findings/{id}/fields", s.findingFields)
@@ -1262,6 +1263,38 @@ func (s *Server) findingShow(w http.ResponseWriter, r *http.Request) {
 		selected[l.Name] = true
 	}
 
+	type exposureRow struct {
+		Dep    db.Dependent
+		Status string
+		Justif string
+		Why    string
+		At     time.Time
+	}
+	var fdRows []db.FindingDependent
+	s.DB.Where("finding_id = ?", f.ID).Find(&fdRows)
+	exposures := make([]exposureRow, 0, len(fdRows))
+	if len(fdRows) > 0 {
+		depIDs := make([]uint, len(fdRows))
+		for i, r := range fdRows {
+			depIDs[i] = r.DependentID
+		}
+		var depRows []db.Dependent
+		s.DB.Where("id IN ?", depIDs).Find(&depRows)
+		byID := make(map[uint]db.Dependent, len(depRows))
+		for _, d := range depRows {
+			byID[d.ID] = d
+		}
+		for _, r := range fdRows {
+			exposures = append(exposures, exposureRow{
+				Dep:    byID[r.DependentID],
+				Status: r.Status,
+				Justif: r.Justification,
+				Why:    r.Rationale,
+				At:     r.UpdatedAt,
+			})
+		}
+	}
+
 	data := map[string]any{
 		"F":              f,
 		"Scan":           scan,
@@ -1272,6 +1305,7 @@ func (s *Server) findingShow(w http.ResponseWriter, r *http.Request) {
 		"History":        history,
 		"AllLabels":      labels,
 		"Selected":       selected,
+		"Exposures":      exposures,
 	}
 	if id, c, ok := LookupCWE(f.CWE); ok {
 		data["CWE"] = map[string]any{"ID": id, "Name": c.Name, "Description": c.Description}
@@ -1806,10 +1840,11 @@ func (s *Server) scanLog(w http.ResponseWriter, r *http.Request) {
 // enqueue signature from drifting into an unreadable positional list as
 // new options (SubPath, FindingID, Model) accumulate.
 type ScanOpts struct {
-	Model     string
-	FindingID *uint
-	SubPath   string
-	Ref       string
+	Model       string
+	FindingID   *uint
+	DependentID *uint
+	SubPath     string
+	Ref         string
 }
 
 func (s *Server) enqueueSkill(ctx context.Context, repoID, skillID uint, model string) (uint, error) {
@@ -1835,14 +1870,19 @@ func (s *Server) enqueueSkillWith(ctx context.Context, repoID, skillID uint, opt
 			opts.Model = DefaultModel()
 		}
 	}
+	kind := worker.JobSkill
+	if opts.DependentID != nil {
+		kind = worker.JobExposure
+	}
 	scan := db.Scan{
 		RepositoryID:   repoID,
-		Kind:           worker.JobSkill,
+		Kind:           kind,
 		Status:         db.ScanQueued,
 		StatusPriority: db.StatusPriorityFor(db.ScanQueued),
 		Model:          opts.Model,
 		SkillID:        &skillID,
 		FindingID:      opts.FindingID,
+		DependentID:    opts.DependentID,
 		SubPath:        opts.SubPath,
 		Ref:            opts.Ref,
 		APIToken:       NewAPIToken(),
@@ -1854,7 +1894,7 @@ func (s *Server) enqueueSkillWith(ctx context.Context, repoID, skillID uint, opt
 	if opts.FindingID != nil {
 		prio = worker.PrioFinding
 	}
-	if err := s.Queue.Enqueue(ctx, worker.JobSkill, scan.ID, prio); err != nil {
+	if err := s.Queue.Enqueue(ctx, kind, scan.ID, prio); err != nil {
 		return 0, err
 	}
 	s.DB.Model(&db.Repository{}).Where("id = ?", repoID).Update("updated_at", time.Now())

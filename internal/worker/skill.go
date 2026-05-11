@@ -28,12 +28,13 @@ type skillContext struct {
 }
 
 type skillContextScrutineer struct {
-	APIBase   string `json:"api_base"`             // e.g. http://127.0.0.1:8080/api
-	ScanID    uint   `json:"scan_id"`              // the scan that owns this run
-	Token     string `json:"token"`                // bearer for api_base
-	RepoID    uint   `json:"repository_id"`        // convenience for URL building
-	SkillID   uint   `json:"skill_id,omitempty"`   // the running skill
-	FindingID uint   `json:"finding_id,omitempty"` // set for finding-scoped scans
+	APIBase     string `json:"api_base"`               // e.g. http://127.0.0.1:8080/api
+	ScanID      uint   `json:"scan_id"`                // the scan that owns this run
+	Token       string `json:"token"`                  // bearer for api_base
+	RepoID      uint   `json:"repository_id"`          // convenience for URL building
+	SkillID     uint   `json:"skill_id,omitempty"`     // the running skill
+	FindingID   uint   `json:"finding_id,omitempty"`   // set for finding-scoped scans
+	DependentID uint   `json:"dependent_id,omitempty"` // set on exposure scans
 	// ScanRef is the git ref (branch/tag) the clone was checked out to.
 	// Empty means the repository's default branch.
 	ScanRef string `json:"scan_ref,omitempty"`
@@ -532,6 +533,9 @@ func stageContext(workRoot, apiBase, forkOrg string, scan *db.Scan, repo *db.Rep
 	}
 	if scan.FindingID != nil {
 		ctx.Scrutineer.FindingID = *scan.FindingID
+	}
+	if scan.DependentID != nil {
+		ctx.Scrutineer.DependentID = *scan.DependentID
 	}
 	if scan.Ref != "" {
 		ctx.Scrutineer.ScanRef = scan.Ref

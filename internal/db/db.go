@@ -105,8 +105,13 @@ type Scan struct {
 	// FindingID is set when a scan is finding-scoped (verify, patch,
 	// disclose). Skills read it from context.json to know which finding
 	// they are acting on.
-	FindingID *uint  `gorm:"index"`
-	APIToken  string `gorm:"index"`
+	FindingID *uint `gorm:"index"`
+	// DependentID is set on exposure scans: the Dependent the skill is
+	// auditing for reachability of the upstream finding. The scan's
+	// Repository remains the library; ./src is staged from the
+	// dependent's repo URL via the dependent-clone cache.
+	DependentID *uint  `gorm:"index"`
+	APIToken    string `gorm:"index"`
 
 	// StatusPriority is a denormalised sort key so the scans index can use
 	// an index instead of evaluating a CASE on every row. 0 = running,
@@ -489,6 +494,73 @@ type FindingReference struct {
 	CreatedAt time.Time
 }
 
+// CSAF 2.0 product_status buckets, reused as the FindingDependent.Status
+// enum so the VEX export can pass them through without translation.
+const (
+	ExposureKnownAffected      = "known_affected"
+	ExposureKnownNotAffected   = "known_not_affected"
+	ExposureUnderInvestigation = "under_investigation"
+	ExposureFixed              = "fixed"
+)
+
+// CSAF 2.0 VEX flag labels. Only valid when Status is known_not_affected.
+const (
+	JustifComponentNotPresent        = "component_not_present"
+	JustifVulnerableCodeNotPresent   = "vulnerable_code_not_present"
+	JustifVulnerableCodeNotInPath    = "vulnerable_code_not_in_execute_path"
+	JustifVulnerableCodeNotReachable = "vulnerable_code_cannot_be_controlled_by_adversary"
+	JustifInlineMitigationsExist     = "inline_mitigations_already_exist"
+)
+
+// ValidExposureStatus reports whether s is one of the CSAF product_status
+// buckets FindingDependent stores. Empty is treated as under_investigation
+// by the caller; this returns false on empty.
+func ValidExposureStatus(s string) bool {
+	switch s {
+	case ExposureKnownAffected, ExposureKnownNotAffected, ExposureUnderInvestigation, ExposureFixed:
+		return true
+	}
+	return false
+}
+
+// ValidExposureJustification reports whether j is one of the CSAF VEX
+// flag labels. Empty is valid (no flag attached).
+func ValidExposureJustification(j string) bool {
+	if j == "" {
+		return true
+	}
+	switch j {
+	case JustifComponentNotPresent, JustifVulnerableCodeNotPresent,
+		JustifVulnerableCodeNotInPath, JustifVulnerableCodeNotReachable,
+		JustifInlineMitigationsExist:
+		return true
+	}
+	return false
+}
+
+// FindingDependent records, per (finding, dependent), whether that
+// downstream consumer of the vulnerable library reaches the sink. Status
+// mirrors the CSAF 2.0 product_status bucket so the VEX export can stream
+// it through unchanged; Justification holds a CSAF VEX flag label and is
+// only set when Status is known_not_affected. ScanCommit is the dependent
+// repo HEAD when the call was made so a later rescan can tell whether
+// the answer is still valid.
+type FindingDependent struct {
+	ID          uint `gorm:"primarykey"`
+	FindingID   uint `gorm:"index;not null;uniqueIndex:idx_finding_dependent"`
+	DependentID uint `gorm:"index;not null;uniqueIndex:idx_finding_dependent"`
+
+	Status        string `gorm:"index"` // known_affected | known_not_affected | under_investigation | fixed
+	Justification string // CSAF VEX flag label, only for known_not_affected
+	Rationale     string `gorm:"type:text"`
+
+	ScanID     *uint
+	ScanCommit string
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
 // FindingHistory records every change to a mutable field on a Finding.
 // Together with the Finding row's current columns it gives you "what is
 // the current value, who set it, from what source, and when".
@@ -603,7 +675,7 @@ func Open(dsn string) (*gorm.DB, error) {
 		&Repository{}, &Scan{},
 		&Finding{}, &FindingLabel{}, &FindingNote{},
 		&FindingCommunication{}, &FindingReference{}, &FindingHistory{},
-		&Dependency{}, &Package{}, &Dependent{}, &Advisory{},
+		&Dependency{}, &Package{}, &Dependent{}, &FindingDependent{}, &Advisory{},
 		&Maintainer{}, &Skill{}, &Subproject{},
 		&SBOMUpload{}, &SBOMPackage{}, &CNA{},
 	); err != nil {

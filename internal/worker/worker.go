@@ -20,7 +20,8 @@ import (
 )
 
 const (
-	JobSkill = "skill"
+	JobSkill    = "skill"
+	JobExposure = "exposure"
 
 	PrioScan     = 0
 	PrioFinding  = 2
@@ -50,6 +51,12 @@ type Worker struct {
 
 	mu      sync.Mutex
 	running map[uint]context.CancelFunc
+
+	// cacheMu serialises clone/fetch on the dependent-clone cache per
+	// URL. A Mutex per URL keeps two exposure scans from racing inside
+	// the same physical dir while leaving scans of different
+	// dependents free to run in parallel.
+	cacheMu sync.Map
 }
 
 // Cancel aborts an in-flight scan. Returns true if a running job was found and
@@ -78,6 +85,7 @@ func (w *Worker) workRoot(scanID uint) string {
 
 func (w *Worker) Register(q *queue.Queue) {
 	q.Register(JobSkill, w.wrap(w.doSkill))
+	q.Register(JobExposure, w.wrap(w.doExposure))
 }
 
 // handler does the actual work for one job kind. It receives the loaded scan

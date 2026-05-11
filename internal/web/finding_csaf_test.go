@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -126,6 +127,66 @@ func TestFindingCSAF_omitsCVEWhenAbsent(t *testing.T) {
 	if tracking["id"] != "scrutineer-finding-"+strconv.FormatUint(uint64(f.ID), 10) {
 		t.Errorf("tracking id = %v", tracking["id"])
 	}
+}
+
+func TestFindingCSAF_perDependentVEX(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	f := seedCSAFFinding(t, s, nil)
+	depAffected := db.Dependent{RepositoryID: f.RepositoryID, Name: "downstream-affected", PURL: "pkg:npm/downstream-affected@1.0.0", LatestVersion: "1.0.0"}
+	depSafe := db.Dependent{RepositoryID: f.RepositoryID, Name: "downstream-safe", PURL: "pkg:npm/downstream-safe@2.0.0", LatestVersion: "2.0.0"}
+	s.DB.Create(&depAffected)
+	s.DB.Create(&depSafe)
+	s.DB.Create(&db.FindingDependent{FindingID: f.ID, DependentID: depAffected.ID, Status: db.ExposureKnownAffected})
+	s.DB.Create(&db.FindingDependent{FindingID: f.ID, DependentID: depSafe.ID,
+		Status: db.ExposureKnownNotAffected, Justification: db.JustifVulnerableCodeNotInPath})
+
+	w := getCSAF(t, s, f.ID)
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	doc := decodeCSAF(t, w.Body.Bytes())
+	v := doc["vulnerabilities"].([]any)[0].(map[string]any)
+	ps := v["product_status"].(map[string]any)
+
+	affected := toStringSlice(ps["known_affected"])
+	if !slices.Contains(affected, "DEP-"+strconv.FormatUint(uint64(depAffected.ID), 10)) {
+		t.Errorf("known_affected missing DEP-%d: %+v", depAffected.ID, affected)
+	}
+	notAffected := toStringSlice(ps["known_not_affected"])
+	if !slices.Contains(notAffected, "DEP-"+strconv.FormatUint(uint64(depSafe.ID), 10)) {
+		t.Errorf("known_not_affected missing DEP-%d: %+v", depSafe.ID, notAffected)
+	}
+
+	flags := v["flags"].([]any)
+	var sawJustif bool
+	for _, raw := range flags {
+		flag := raw.(map[string]any)
+		if flag["label"] == db.JustifVulnerableCodeNotInPath {
+			sawJustif = true
+			if !slices.Contains(toStringSlice(flag["product_ids"]), "DEP-"+strconv.FormatUint(uint64(depSafe.ID), 10)) {
+				t.Errorf("justification flag missing dependent id: %+v", flag)
+			}
+		}
+	}
+	if !sawJustif {
+		t.Errorf("expected a %s flag, got %+v", db.JustifVulnerableCodeNotInPath, flags)
+	}
+}
+
+func toStringSlice(v any) []string {
+	xs, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(xs))
+	for _, x := range xs {
+		if s, ok := x.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 func TestFindingCSAF_rejectedMapsToNotAffected(t *testing.T) {

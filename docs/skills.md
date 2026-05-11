@@ -27,6 +27,7 @@ These ship in `skills/` and are loaded with `-skills ./skills`. The `triage` ski
 | `threat-model` | Derives the project's security contract from source and docs: components, entry-point trust table, claimed and disclaimed properties, and disposition labels. Loaded by `security-deep-dive` so it does not re-derive boundaries per run. |
 | `security-deep-dive` | The model-driven audit. Inventories trust boundaries and sinks, then runs a six-step trace/boundary/validate/prior-art/reach/rate analysis on each. |
 | `reachability` | Traces sinks already found in this app's dependencies through the app's own code to see which are reachable from its trust boundaries. |
+| `exposure` | For one (finding, dependent) pair, decides whether the dependent's published code actually reaches the upstream library finding. Emits one CSAF 2.0 product_status verdict so scrutineer can record affected vs not_affected and stamp the right VEX justification. |
 | `verify` | Re-checks one finding against current HEAD and records reproduces / fixed / cannot-reproduce. |
 | `disclose` | Drafts a GHSA-shaped advisory (title, description, CVSS, CWEs, references) for one finding. |
 | `patch` | Proposes a unified diff fixing one finding, written back as a note for analyst review. |
@@ -105,6 +106,7 @@ metadata:
 | `verify` | Verification result and miss-count update on one Finding. |
 | `patch` | Suggested-fix diff and base commit on one Finding. |
 | `threat_model` | Raw on the scan row; rendered on the repository's Threat Model tab. |
+| `exposure` | One CSAF product_status verdict upserted into a `finding_dependents` row keyed by `(finding_id, dependent_id)`. |
 
 If you need an output shape that is not in this list, see "When you need Go changes" in [development.md](development.md). For most custom skills `freeform` (store the JSON as-is, render it on the scan's Data tab) or `findings` (surface as triaged vulnerabilities) is enough.
 
@@ -142,6 +144,7 @@ then runs `claude -p "Use the {name} skill in this workspace"` with the working 
     "repository_id": 7,
     "skill_id": 3,
     "finding_id": 19,
+    "dependent_id": 11,
     "scan_ref": "release/2.x",
     "scan_subpath": "packages/core",
     "fork_org": "your-security-forks"
@@ -149,7 +152,7 @@ then runs `claude -p "Use the {name} skill in this workspace"` with the working 
 }
 ```
 
-`finding_id` is only present for finding-scoped skills (`verify`, `disclose`, `patch`). `scan_ref` is empty when the scan is on the default branch. `scan_subpath` is set when the operator scoped the scan to a monorepo sub-folder; skills that walk source honour it, skills that query external APIs by repository URL ignore it. `fork_org` is absent unless `-fork-org` is configured. `packages` is a convenience copy of the package rows when the `packages` skill has already run; otherwise it is omitted.
+`finding_id` is only present for finding-scoped skills (`verify`, `disclose`, `patch`, `exposure`). `dependent_id` is only set on `exposure` runs and points to the dependent whose code is under audit; `./src` is then a copy of that dependent's clone, not of the finding's repository. `scan_ref` is empty when the scan is on the default branch. `scan_subpath` is set when the operator scoped the scan to a monorepo sub-folder; skills that walk source honour it, skills that query external APIs by repository URL ignore it. `fork_org` is absent unless `-fork-org` is configured. `packages` is a convenience copy of the package rows when the `packages` skill has already run; otherwise it is omitted.
 
 ## schema.json
 

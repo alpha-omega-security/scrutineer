@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -102,8 +103,11 @@ func (s *Server) findingCSAF(w http.ResponseWriter, r *http.Request) {
 	s.DB.Where("finding_id = ?", f.ID).Order("id desc").Find(&refs)
 	var pkgs []db.Package
 	s.DB.Where("repository_id = ?", f.RepositoryID).Find(&pkgs)
+	var fdRows []db.FindingDependent
+	s.DB.Where("finding_id = ?", f.ID).Find(&fdRows)
+	deps := loadFindingDependents(s, fdRows)
 
-	raw, err := json.MarshalIndent(buildCSAF(f, repo, refs, pkgs), "", "  ")
+	raw, err := json.MarshalIndent(buildCSAF(f, repo, refs, pkgs, fdRows, deps), "", "  ")
 	if err != nil {
 		s.Log.Error("csaf marshal", "finding", f.ID, "err", err)
 		http.Error(w, "failed to generate CSAF document", http.StatusInternalServerError)
@@ -272,7 +276,30 @@ type csafReference struct {
 	URL      string `json:"url"`
 }
 
-func buildCSAF(f db.Finding, repo db.Repository, refs []db.FindingReference, pkgs []db.Package) csafDocument {
+// loadFindingDependents fetches the Dependent rows referenced by the
+// given exposure rows, keyed by ID for cheap lookup in buildCSAF.
+func loadFindingDependents(s *Server, rows []db.FindingDependent) map[uint]db.Dependent {
+	if len(rows) == 0 {
+		return nil
+	}
+	ids := make([]uint, len(rows))
+	for i, r := range rows {
+		ids[i] = r.DependentID
+	}
+	var deps []db.Dependent
+	s.DB.Where("id IN ?", ids).Find(&deps)
+	out := make(map[uint]db.Dependent, len(deps))
+	for _, d := range deps {
+		out[d.ID] = d
+	}
+	return out
+}
+
+func dependentProductID(d db.Dependent) string {
+	return fmt.Sprintf("DEP-%d", d.ID)
+}
+
+func buildCSAF(f db.Finding, repo db.Repository, refs []db.FindingReference, pkgs []db.Package, fdRows []db.FindingDependent, deps map[uint]db.Dependent) csafDocument {
 	productID := fmt.Sprintf("PKG-%d-%s", f.RepositoryID, csafProductSuffix(f))
 
 	now := time.Now().UTC().Format(time.RFC3339)
@@ -321,7 +348,7 @@ func buildCSAF(f db.Finding, repo db.Repository, refs []db.FindingReference, pkg
 
 	productName := firstNonEmpty(repo.FullName, repo.Name, "package")
 	productVersion := firstNonEmpty(f.Affected, "unknown")
-	doc.ProductTree = buildProductTree(productName, productVersion, productID, pkgs)
+	doc.ProductTree = buildProductTree(productName, productVersion, productID, pkgs, fdRows, deps)
 
 	productIDs := []string{productID}
 	for _, pkg := range pkgs {
@@ -333,10 +360,10 @@ func buildCSAF(f db.Finding, repo db.Repository, refs []db.FindingReference, pkg
 	v := csafVulnerability{
 		CVE:           f.CVEID,
 		Title:         f.Title,
-		ProductStatus: buildProductStatusMulti(f, productIDs),
+		ProductStatus: buildProductStatusMulti(f, productIDs, fdRows, deps),
 		References:    buildReferences(refs),
 		Notes:         buildAuditNotes(f),
-		Flags:         buildFlags(f, productIDs),
+		Flags:         buildFlags(f, productIDs, fdRows, deps),
 	}
 	if cwe := buildCWE(f.CWE); cwe != nil {
 		v.CWE = cwe
@@ -356,7 +383,7 @@ func pkgProductID(pkg db.Package) string {
 	return fmt.Sprintf("PKG-%d-%s-%s", pkg.RepositoryID, pkg.Ecosystem, pkg.Name)
 }
 
-func buildProductTree(productName, productVersion, baseProductID string, pkgs []db.Package) *csafProductTree {
+func buildProductTree(productName, productVersion, baseProductID string, pkgs []db.Package, fdRows []db.FindingDependent, deps map[uint]db.Dependent) *csafProductTree {
 	baseProduct := csafBranch{
 		Category: "product_version",
 		Name:     productVersion,
@@ -382,26 +409,70 @@ func buildProductTree(productName, productVersion, baseProductID string, pkgs []
 			},
 		})
 	}
-	return &csafProductTree{
-		Branches: []csafBranch{{
-			Category: "product_name",
-			Name:     productName,
-			Branches: versionBranches,
-		}},
-	}
-}
-
-func buildFlags(f db.Finding, productIDs []string) []csafFlag {
-	if mapProductStatus(f) != csafStatusKnownNotAffected {
-		return nil
-	}
-	return []csafFlag{{
-		Label:      "vulnerable_code_not_present",
-		ProductIDs: productIDs,
+	branches := []csafBranch{{
+		Category: "product_name",
+		Name:     productName,
+		Branches: versionBranches,
 	}}
+	for _, r := range fdRows {
+		dep, ok := deps[r.DependentID]
+		if !ok {
+			continue
+		}
+		name := firstNonEmpty(dep.Name, fmt.Sprintf("dependent-%d", dep.ID))
+		ver := firstNonEmpty(dep.LatestVersion, "unknown")
+		var ident *csafProductIdentifier
+		if dep.PURL != "" {
+			ident = &csafProductIdentifier{PURL: dep.PURL}
+		}
+		branches = append(branches, csafBranch{
+			Category: "product_name",
+			Name:     name,
+			Branches: []csafBranch{{
+				Category: "product_version",
+				Name:     ver,
+				Product: &csafProduct{
+					Name:        fmt.Sprintf("%s %s", name, ver),
+					ProductID:   dependentProductID(dep),
+					IdentHelper: ident,
+				},
+			}},
+		})
+	}
+	return &csafProductTree{Branches: branches}
 }
 
-func buildProductStatusMulti(f db.Finding, productIDs []string) *csafProductStatus {
+func buildFlags(f db.Finding, productIDs []string, fdRows []db.FindingDependent, deps map[uint]db.Dependent) []csafFlag {
+	var flags []csafFlag
+	if mapProductStatus(f) == csafStatusKnownNotAffected {
+		flags = append(flags, csafFlag{
+			Label:      "vulnerable_code_not_present",
+			ProductIDs: productIDs,
+		})
+	}
+	byLabel := make(map[string][]string)
+	for _, r := range fdRows {
+		if r.Status != db.ExposureKnownNotAffected || r.Justification == "" {
+			continue
+		}
+		dep, ok := deps[r.DependentID]
+		if !ok {
+			continue
+		}
+		byLabel[r.Justification] = append(byLabel[r.Justification], dependentProductID(dep))
+	}
+	labels := make([]string, 0, len(byLabel))
+	for label := range byLabel {
+		labels = append(labels, label)
+	}
+	sort.Strings(labels)
+	for _, label := range labels {
+		flags = append(flags, csafFlag{Label: label, ProductIDs: byLabel[label]})
+	}
+	return flags
+}
+
+func buildProductStatusMulti(f db.Finding, productIDs []string, fdRows []db.FindingDependent, deps map[uint]db.Dependent) *csafProductStatus {
 	ps := &csafProductStatus{}
 	switch mapProductStatus(f) {
 	case csafStatusFixed:
@@ -412,6 +483,23 @@ func buildProductStatusMulti(f db.Finding, productIDs []string) *csafProductStat
 		ps.KnownAffected = productIDs
 	default:
 		ps.UnderInvestigation = productIDs
+	}
+	for _, r := range fdRows {
+		dep, ok := deps[r.DependentID]
+		if !ok {
+			continue
+		}
+		pid := dependentProductID(dep)
+		switch r.Status {
+		case db.ExposureKnownAffected:
+			ps.KnownAffected = append(ps.KnownAffected, pid)
+		case db.ExposureKnownNotAffected:
+			ps.KnownNotAffected = append(ps.KnownNotAffected, pid)
+		case db.ExposureFixed:
+			ps.Fixed = append(ps.Fixed, pid)
+		default:
+			ps.UnderInvestigation = append(ps.UnderInvestigation, pid)
+		}
 	}
 	return ps
 }

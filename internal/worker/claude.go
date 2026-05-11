@@ -49,6 +49,11 @@ type SkillJob struct {
 	Ref          string // git ref to checkout; empty = default branch
 	MaxTurns     int    // per-skill cap; 0 = use runner default
 	AllowedTools string // comma-separated; "" = full tool set under bypassPermissions
+	// SrcReady declares that WorkRoot/src is already populated by the
+	// caller (e.g. by the exposure handler copying from a dependent
+	// cache). When true the runner skips its own clone and reads HEAD
+	// from the existing tree.
+	SrcReady bool
 }
 
 type SkillResult struct {
@@ -69,9 +74,15 @@ type LocalClaude struct {
 //	{DataDir}/scan-{id}/.claude/skills/NAME staged skill (read by claude-code)
 //	{DataDir}/scan-{id}/OutputFile          where the skill writes, if any
 func (l LocalClaude) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)) (SkillResult, error) {
-	src, err := ensureClone(ctx, sj.Repo, sj.WorkRoot, l.FullClone, sj.Ref, emit)
-	if err != nil {
-		return SkillResult{}, err
+	var src string
+	if sj.SrcReady {
+		src = filepath.Join(sj.WorkRoot, "src")
+	} else {
+		var err error
+		src, err = ensureClone(ctx, sj.Repo, sj.WorkRoot, l.FullClone, sj.Ref, emit)
+		if err != nil {
+			return SkillResult{}, err
+		}
 	}
 	commit := gitHead(src)
 	work := sj.WorkRoot
