@@ -3,6 +3,7 @@ package ingest
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // minimalReport is the hand-written ingest shape for findings that came
@@ -43,8 +44,8 @@ func parseMinimal(data []byte) ([]Result, error) {
 		res.Findings = append(res.Findings, Finding{
 			Title:        f.Title,
 			Description:  f.Description,
-			Severity:     f.Severity,
-			Confidence:   f.Confidence,
+			Severity:     strings.ToLower(strings.TrimSpace(f.Severity)),
+			Confidence:   strings.ToLower(strings.TrimSpace(f.Confidence)),
 			CWE:          f.CWE,
 			Location:     f.Location,
 			SuggestedFix: f.Patch,

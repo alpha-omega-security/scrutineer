@@ -28,8 +28,14 @@ const importMaxBody = 16 << 20
 // Response is JSON regardless of Accept so curl callers get structured
 // output; a browser upload form can be layered on later.
 func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
-	body, err := io.ReadAll(io.LimitReader(r.Body, importMaxBody))
+	r.Body = http.MaxBytesReader(w, r.Body, importMaxBody)
+	body, err := io.ReadAll(r.Body)
 	if err != nil {
+		if _, ok := errors.AsType[*http.MaxBytesError](err); ok {
+			writeAPIError(w, http.StatusRequestEntityTooLarge,
+				fmt.Sprintf("body exceeds %d bytes", importMaxBody))
+			return
+		}
 		writeAPIError(w, http.StatusBadRequest, fmt.Sprintf("read body: %v", err))
 		return
 	}

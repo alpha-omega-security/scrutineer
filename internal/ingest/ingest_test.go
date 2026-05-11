@@ -107,6 +107,40 @@ func TestParseMinimalDefaultsTool(t *testing.T) {
 	}
 }
 
+func TestParseMinimal_lowercasesSeverityAndConfidence(t *testing.T) {
+	body := []byte(`{"repository":"https://x/y","findings":[{"title":"t","severity":"CRITICAL","confidence":"High"}]}`)
+	results, _, err := Parse(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := results[0].Findings[0]
+	if f.Severity != "critical" {
+		t.Errorf("Severity = %q, want critical", f.Severity)
+	}
+	if f.Confidence != "high" {
+		t.Errorf("Confidence = %q, want high", f.Confidence)
+	}
+}
+
+func TestParseCSV_skipsEmptyRepositoryRows(t *testing.T) {
+	body := []byte("\"Severity\",\"Repository\",\"Name\",\"Description\"\n" +
+		"\"MEDIUM\",\"\",\"orphan\",\"row with no repo\"\n" +
+		"\"HIGH\",\"example/widget\",\"real\",\"row with repo\"\n")
+	results, _, err := Parse(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != 1 {
+		t.Fatalf("got %d results, want 1 (orphan row skipped)", len(results))
+	}
+	if results[0].RepoURL != "https://github.com/example/widget" {
+		t.Errorf("RepoURL = %q", results[0].RepoURL)
+	}
+	if len(results[0].Findings) != 1 || results[0].Findings[0].Title != "real" {
+		t.Errorf("findings = %+v", results[0].Findings)
+	}
+}
+
 func TestParseCSV(t *testing.T) {
 	results, format, err := Parse(read(t, "testdata/findings.csv"))
 	if err != nil {

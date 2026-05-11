@@ -172,3 +172,14 @@ func TestHandleImportRejectsUnknownFormat(t *testing.T) {
 		t.Fatalf("status = %d, want 422", w.Code)
 	}
 }
+
+func TestHandleImportRejectsOversizedBody(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	body := strings.Repeat("a", 17<<20)
+	w := postImport(t, s, "/api/v1/import", body)
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413", w.Code)
+	}
+}

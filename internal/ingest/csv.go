@@ -64,6 +64,9 @@ func parseCSV(data []byte) ([]Result, error) {
 			continue
 		}
 		repo := col(row, "Repository")
+		if repo == "" {
+			continue
+		}
 		res, ok := byRepo[repo]
 		if !ok {
 			res = &Result{
