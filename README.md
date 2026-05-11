@@ -189,6 +189,7 @@ When the docker runner is active, scrutineer starts an authenticated egress prox
 | `-scan-timeout` | `1h` | Wall-clock limit per scan; exceeded scans fail |
 | `-max-turns` | `0` | Passed as `--max-turns` to claude-code (0 = unlimited) |
 | `-schema-strict` | `false` | Fail a scan when its `report.json` does not validate against the skill's `schema.json` (default: warn in the scan log and parse anyway) |
+| `-backend` | `anthropic` | Backend to use: `anthropic` or `openai` |
 | `-anthropic-base-url` | - | Custom Anthropic API base URL (env: `ANTHROPIC_BASE_URL`) |
 
 ## Config file
@@ -203,6 +204,25 @@ The config file can also replace the model pick list and pin the default model:
         id:   claude-sonnet-4-6
       - name: Opus
         id:   claude-opus-4-7
+
+## OpenAI-compatible backend (Ollama, etc.)
+
+Scrutineer can use any OpenAI-compatible API instead of Anthropic. This is useful for running against local models via [Ollama](https://ollama.com). You need a model that supports tool calling (e.g. `functiongemma`):
+
+    ollama pull functiongemma:270m
+    export OPENAI_API_KEY=unused
+    export OPENAI_BASE_URL=http://localhost:11434/v1
+    go run ./cmd/scrutineer -skills ./skills -backend openai
+
+Or configure it in `scrutineer.yaml`:
+
+    backend: openai
+    default_model: functiongemma:270m
+    models:
+      - name: Function Gemma 3
+        id: functiongemma:270m
+
+The `OPENAI_API_KEY` env var is required by the client library but can be set to any value when talking to a local server that doesn't check it.
 
 ## Security
 

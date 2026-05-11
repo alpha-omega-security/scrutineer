@@ -31,6 +31,11 @@ type Config struct {
 	SkillsRepo   string   `yaml:"skills_repo"`
 	NoDocker     *bool    `yaml:"no_docker"`
 	RunnerImage  string   `yaml:"runner_image"`
+	// Backend selects the LLM execution backend: "claude-code" (default,
+	// shells out to the claude CLI) or "openai" (calls an OpenAI-compatible
+	// chat completions API directly). The openai backend requires
+	// OPENAI_API_KEY and optionally OPENAI_BASE_URL.
+	Backend string `yaml:"backend"`
 	// EgressAllow extends the docker runner's egress proxy allowlist with
 	// extra hostnames. Entries are appended to worker.DefaultEgressAllow,
 	// not replacing it. "*.example.com" matches subdomains.
@@ -113,6 +118,17 @@ func ValidateTheme(s string) error {
 	return fmt.Errorf("theme: unknown %q", s)
 }
 
+// ValidateBackend returns an error when s is not a known backend name.
+// Empty is valid (caller keeps the default "claude-code").
+func ValidateBackend(s string) error {
+	switch s {
+	case "", "claude-code", "openai":
+		return nil
+	default:
+		return fmt.Errorf("backend: must be \"claude-code\" or \"openai\", got %q", s)
+	}
+}
+
 // Load reads a YAML config from path. Returns (nil, nil) when the file
 // does not exist and the caller passed "" or DefaultPath — making config
 // fully opt-in. Explicit paths that don't exist are an error.
@@ -139,6 +155,9 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
 	}
 	if err := ValidateTheme(c.Theme); err != nil {
+		return nil, fmt.Errorf("parse config %s: %w", path, err)
+	}
+	if err := ValidateBackend(c.Backend); err != nil {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
 	}
 	return &c, nil

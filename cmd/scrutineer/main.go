@@ -54,6 +54,7 @@ type flags struct {
 	addr             string
 	dataDir          string
 	effort           string
+	backend          string
 	noDocker         bool
 	runnerImage      string
 	skillsRepo       string
@@ -77,6 +78,7 @@ func parseFlags() *flags {
 	flag.StringVar(&f.addr, "addr", "127.0.0.1:8080", "listen address")
 	flag.StringVar(&f.dataDir, "data", "./data", "data directory (db + workspaces)")
 	flag.StringVar(&f.effort, "effort", "high", "claude effort")
+	flag.StringVar(&f.backend, "backend", "", "LLM backend: claude-code (default) or openai")
 	flag.BoolVar(&f.noDocker, "no-docker", false, "disable containerised runner even if docker is available")
 	flag.StringVar(&f.runnerImage, "runner-image", worker.DefaultRunnerImage, "docker image for per-job containers")
 	flag.StringVar(&f.skillsRepo, "skills-repo", "", "clone skills from this git https URL on startup")
@@ -109,6 +111,9 @@ func (f *flags) merge(cfg *config.Config) {
 	}
 	if cfg.Effort != "" && !f.set["effort"] {
 		f.effort = cfg.Effort
+	}
+	if cfg.Backend != "" && !f.set["backend"] {
+		f.backend = cfg.Backend
 	}
 	if cfg.NoDocker != nil && !f.set["no-docker"] {
 		f.noDocker = *cfg.NoDocker
@@ -173,6 +178,9 @@ func run(log *slog.Logger) error {
 		log.Info("loaded config", "path", cfgPath(f.configPath))
 	}
 	if err := config.ValidateClone(f.cloneMode); err != nil {
+		return err
+	}
+	if err := config.ValidateBackend(f.backend); err != nil {
 		return err
 	}
 	if key := os.Getenv("ANTHROPIC_API_KEY"); strings.HasPrefix(key, "sk-ant-oat") {
@@ -254,34 +262,9 @@ func run(log *slog.Logger) error {
 		log.Info("added anthropic base URL host to egress allowlist", "host", h)
 	}
 
-	var runner worker.SkillRunner
-	apiBase := "http://" + f.addr + "/api"
-	if !f.noDocker && worker.DockerAvailable() {
-		allow := append(append([]string{}, worker.DefaultEgressAllow...), egressExtra...)
-		token := worker.NewProxyToken()
-		port, err := worker.StartEgressProxy(&worker.EgressProxy{Allow: allow, Token: token, APIPort: addrPort(f.addr), Log: log})
-		if err != nil {
-			return fmt.Errorf("start egress proxy: %w", err)
-		}
-		gwIP := worker.ResolveHostGatewayIPv4(f.runnerImage)
-		log.Info("docker detected, using containerised runner",
-			"image", f.runnerImage, "egress_proxy_port", port, "egress_allow", len(allow),
-			"host_gateway_ipv4", gwIP)
-		runner = worker.DockerRunner{
-			Image:            f.runnerImage,
-			Effort:           f.effort,
-			ProxyURL:         worker.ProxyURL(token, port),
-			FullClone:        f.fullClone(),
-			MaxTurns:         f.maxTurns,
-			AnthropicBaseURL: f.anthropicBaseURL,
-			HostGatewayIP:    gwIP,
-		}
-		// Skills inside the container reach the host via host.docker.internal,
-		// which the egress proxy rewrites to 127.0.0.1 when dialing.
-		apiBase = "http://" + net.JoinHostPort(worker.HostGatewayAlias, addrPort(f.addr)) + "/api"
-	} else {
-		log.Info("docker not available or disabled, using local runner (no isolation)")
-		runner = worker.LocalClaude{Effort: f.effort, FullClone: f.fullClone(), MaxTurns: f.maxTurns}
+	runner, apiBase, err := selectRunner(log, f, egressExtra)
+	if err != nil {
+		return err
 	}
 
 	w := &worker.Worker{
@@ -322,6 +305,55 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	return nil
+}
+
+func selectRunner(log *slog.Logger, f *flags, egressExtra []string) (worker.SkillRunner, string, error) { //nolint:ireturn // factory function
+	apiBase := "http://" + f.addr + "/api"
+	switch {
+	case f.backend == "openai":
+		openaiBase := os.Getenv("OPENAI_BASE_URL")
+		if openaiBase == "" {
+			openaiBase = "https://api.openai.com/v1"
+		}
+		openaiKey := os.Getenv("OPENAI_API_KEY")
+		if openaiKey == "" {
+			return nil, "", fmt.Errorf("OPENAI_API_KEY must be set when backend=openai")
+		}
+		log.Info("using openai-compatible backend", "base_url", openaiBase)
+		return worker.OpenAIRunner{
+			BaseURL:   openaiBase,
+			APIKey:    openaiKey,
+			FullClone: f.fullClone(),
+			MaxTurns:  f.maxTurns,
+		}, apiBase, nil
+	case !f.noDocker && worker.DockerAvailable():
+		allow := append(append([]string{}, worker.DefaultEgressAllow...), egressExtra...)
+		token := worker.NewProxyToken()
+		port, err := worker.StartEgressProxy(&worker.EgressProxy{Allow: allow, Token: token, APIPort: addrPort(f.addr), Log: log})
+		if err != nil {
+			return nil, "", fmt.Errorf("start egress proxy: %w", err)
+		}
+		gwIP := worker.ResolveHostGatewayIPv4(f.runnerImage)
+		log.Info("docker detected, using containerised runner",
+			"image", f.runnerImage, "egress_proxy_port", port, "egress_allow", len(allow),
+			"host_gateway_ipv4", gwIP)
+		r := worker.DockerRunner{
+			Image:            f.runnerImage,
+			Effort:           f.effort,
+			ProxyURL:         worker.ProxyURL(token, port),
+			FullClone:        f.fullClone(),
+			MaxTurns:         f.maxTurns,
+			AnthropicBaseURL: f.anthropicBaseURL,
+			HostGatewayIP:    gwIP,
+		}
+		// Skills inside the container reach the host via host.docker.internal,
+		// which the egress proxy rewrites to 127.0.0.1 when dialing.
+		apiBase = "http://" + net.JoinHostPort(worker.HostGatewayAlias, addrPort(f.addr)) + "/api"
+		return r, apiBase, nil
+	default:
+		log.Info("docker not available or disabled, using local runner (no isolation)")
+		return worker.LocalClaude{Effort: f.effort, FullClone: f.fullClone(), MaxTurns: f.maxTurns}, apiBase, nil
+	}
 }
 
 func loadSkills(log *slog.Logger, gdb *gorm.DB, dataDir string, dirs skillDirs, repo string, fullClone bool) error {
