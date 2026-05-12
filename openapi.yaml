@@ -641,6 +641,59 @@ paths:
         '403':
           description: Host header is not localhost
 
+  /v1/import:
+    post:
+      summary: Import externally-produced findings
+      description: |
+        Ingests a SARIF 2.1.0 document, a minimal JSON report, a findings
+        CSV export, or a findings markdown export and creates Finding rows
+        under a synthetic `Kind: import` scan. The format is sniffed from
+        the body. The repository is taken from the body's own provenance
+        (SARIF `versionControlProvenance`, the minimal-JSON `repository`
+        field, the CSV `Repository` column, the markdown location link);
+        when absent the caller must pass `?repo=`. Re-importing the same
+        report dedupes by fingerprint and bumps `seen_count` rather than
+        inserting duplicates. No bearer token; localhost-only. See
+        docs/import.md for the per-format field mapping.
+      operationId: importFindings
+      security: []
+      parameters:
+        - name: repo
+          in: query
+          description: Repository URL to attribute findings to. Overrides any provenance in the body.
+          schema: { type: string, format: uri }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - $ref: '#/components/schemas/ImportMinimal'
+                - description: SARIF 2.1.0 document (see sarif-2.1.0 schema).
+                  type: object
+          text/csv:
+            schema:
+              type: string
+              description: Header row must contain Severity, Repository, Name, Description.
+          text/markdown:
+            schema:
+              type: string
+              description: One H1 per finding with H2 sections and a `**Key:** value` metadata block.
+      responses:
+        '201':
+          description: Findings created and/or re-observed.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ImportResponse' }
+        '400':
+          description: Body unreadable or empty
+        '403':
+          description: Host header is not localhost
+        '413':
+          description: Body exceeds 16 MiB
+        '422':
+          description: Body matches no supported format, or repository unknown
+
 components:
   securitySchemes:
     bearerAuth:
@@ -861,6 +914,48 @@ components:
             seen_count:        { type: integer }
             created_at:        { type: string, format: date-time }
             updated_at:        { type: string, format: date-time }
+
+    ImportMinimal:
+      description: |
+        Minimal hand-written ingest shape for findings that came from a
+        pentest writeup or a tool with no SARIF emitter.
+      type: object
+      required: [findings]
+      properties:
+        repository: { type: string, format: uri }
+        commit:     { type: string }
+        tool:       { type: string, description: "Producer name; defaults to 'manual'." }
+        findings:
+          type: array
+          items:
+            type: object
+            properties:
+              title:       { type: string }
+              description: { type: string }
+              severity:    { type: string, enum: [critical, high, medium, low] }
+              confidence:  { type: string, enum: [high, medium, low] }
+              cwe:         { type: string }
+              location:    { type: string, description: "path[:line[:col]]" }
+              patch:       { type: string, description: "unified diff" }
+
+    ImportResponse:
+      type: object
+      properties:
+        format: { type: string, enum: [sarif, minimal, csv, markdown] }
+        results:
+          type: array
+          items:
+            type: object
+            properties:
+              repository_id: { type: integer, format: int64 }
+              repository:    { type: string, format: uri }
+              scan_id:       { type: integer, format: int64 }
+              tool:          { type: string }
+              created:       { type: integer }
+              observed:      { type: integer }
+              finding_ids:
+                type: array
+                items: { type: integer, format: int64 }
 
     ScanExport:
       description: |

@@ -1,0 +1,7 @@
+"Severity","Status","Discovery","Date created","Category","Repository","Branch","Name","Description","File path","Line","Confidence","CWE","Finding URL","Dismissal reason","Dismissal note"
+"MEDIUM","Open","Previously Known","2026-04-09","Path traversal","example/widget","main","Path traversal in download URL","Download URL generation interpolates parsed components into URL paths without re-encoding, while the parser decodes percent-encoded delimiters into those same components.
+
+Multi-line cell with ""embedded"" quotes.","download_url.rb","97","Medium","CWE-022","https://scanner.example/finding/abc","",""
+"LOW","Open","New","2026-04-09","Ssrf","example/widget","main","Second-order SSRF via hypermedia link","The fetch_version_info method constructs a URI from a JSON body field with no host validation.","lookup.rb","179","Low","","https://scanner.example/finding/def","",""
+"HIGH","Dismissed","New","2026-04-09","Injection","example/widget","main","Dismissed finding should be skipped","x","x.rb","1","High","","https://scanner.example/finding/ghi","not exploitable","wontfix"
+"CRITICAL","Open","New","2026-04-10","Injection","example/other","main","SQL injection in search","Query built by concatenation.","search.rb","12","High","CWE-89","https://scanner.example/finding/jkl","",""

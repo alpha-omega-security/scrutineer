@@ -17,6 +17,7 @@ func (s *Server) exportHandler() http.Handler {
 	mux.HandleFunc("GET /repositories/{id}/findings", s.apiExportRepoFindings)
 	mux.HandleFunc("GET /findings", s.apiExportFindings)
 	mux.HandleFunc("GET /scans", s.apiExportScans)
+	mux.HandleFunc("POST /import", s.handleImport)
 	return mux
 }
 

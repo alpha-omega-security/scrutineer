@@ -72,6 +72,7 @@ When the containerised runner is active (the default when Docker is available), 
 - **Organisation rollup** -- repos, findings, and maintainers grouped by owning org, with per-org markdown exports
 - **Usage tracking** -- per-scan token and cost figures plus a `/usage` page totalling spend per skill
 - **SBOM import** -- upload a CycloneDX or SPDX document, resolve each component to a source repository, and queue scans automatically
+- **Finding import** -- POST SARIF, CSV, markdown, or minimal-JSON findings from external scanners and pentest reports into the same workflow as native scans, with fingerprint dedup against re-imports
 - **CNA matching** -- identify the CVE Numbering Authority whose scope covers a repo so disclosures go to the right contact
 - **Upstream reporting** -- file a finding on the upstream repository through GitHub's private vulnerability reporting with the proposed patch attached, and push the fix to the temporary private fork when GitHub grants access. A PVR report is hard to unsend; before pointing this at an external repository, run it once end-to-end against a repository you control with PVR enabled to confirm the body shape and patch attachment land the way you expect.
 - **Reachability analysis** -- trace sinks found in dependencies through application code to see which are actually reachable
@@ -109,6 +110,14 @@ When a repo is added, the `triage` skill is enqueued. Its SKILL.md lists the ski
 | `posture` | Records the repo's security posture (reporting policy, response history, hardening) on the Repository row |
 
 Edit `skills/triage/SKILL.md` to change what gets run by default. Drop new skill directories in `skills/` to add scan types; no code changes needed. See [docs/skills.md](docs/skills.md) for the frontmatter reference, the `scrutineer.*` metadata keys, the `context.json` shape, output kinds, schema validation, and the skill-facing HTTP API.
+
+## Importing findings from other tools
+
+Scrutineer can ingest findings produced elsewhere so they enter the same triage and disclosure workflow:
+
+    curl --data-binary @report.sarif http://127.0.0.1:8080/api/v1/import
+
+SARIF 2.1.0, CSV, markdown, and a minimal JSON shape are all accepted; the format is sniffed from the body. See [docs/import.md](docs/import.md) for the full request and response shape, the per-format field mapping, and how to add support for a new format.
 
 ## Navigating the UI
 
@@ -221,6 +230,7 @@ See [SECURITY.md](SECURITY.md) for the reporting policy and [threatmodel.md](thr
 ## Further documentation
 
 - [docs/skills.md](docs/skills.md) -- bundled skills, writing your own, frontmatter and output-kind reference
+- [docs/import.md](docs/import.md) -- importing findings from other tools (SARIF, CSV, markdown, minimal JSON) and adding new formats
 - [openapi.yaml](openapi.yaml) -- the skill-facing HTTP API
 - [docs/database.md](docs/database.md) -- full database schema reference
 - [docs/development.md](docs/development.md) -- project layout, regenerating embedded data, running tests

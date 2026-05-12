@@ -35,13 +35,13 @@ The central entity. One row per git URL.
 
 ## scans
 
-One row per skill execution. Every scan is a skill; `kind` is always `skill`. `skill_name` / `skill_version` pin which skill ran.
+One row per skill execution or external import. `skill_name` / `skill_version` pin which skill ran; for imports `skill_name` records the originating tool.
 
 | Column | Type | Notes |
 |--------|------|-------|
 | id | integer PK | |
 | repository_id | integer FK | References `repositories.id`. Cascade delete. |
-| kind | text | Always `skill`. Retained so legacy rows from before the skill framework still render. |
+| kind | text | `skill` for native scans, `import` for findings ingested via `POST /api/v1/import`. |
 | status | text | `queued`, `running`, `done`, `failed`, `cancelled`. Stale `running` rows are swept to `failed` on startup. |
 | status_priority | integer | Denormalised sort key for the scans index: 0 running, 1 queued, 2 terminal. |
 | model | text | Claude model ID. |
@@ -123,6 +123,7 @@ One row per vulnerability. Lifecycle columns are mutated through `db.WriteFindin
 | locations | text | Newline-joined set of every `file:line` that hit the same fingerprint in this scan. `location` is the first; the rest render as a `+N` badge and an expandable list on the finding page. Empty on rows that predate the column until the next rescan. |
 | reachability | text | `reachable`, `harness_only`, `unclear`. `harness_only` is a real bug but not disclosable as a vulnerability on its own. |
 | quality_tier | text | `high` (heap overflow, UAF, type confusion, controllable write, shell/eval injection) or `low` (stack exhaustion, assertion failure, fixed-offset null deref, log injection). |
+| imported_from | text | Originating tool name when the finding came in via `POST /api/v1/import`; empty for native scans. |
 | affected | text | Version range, e.g. `>=0.2.0, <=4.0.5`. |
 | cve_id | text | e.g. `CVE-2026-12345`. |
 | cvss_vector | text | e.g. `CVSS:3.1/AV:N/AC:L/...`. |

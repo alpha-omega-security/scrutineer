@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json.schemastore.org/sarif-2.1.0.json",
+  "version": "2.1.0",
+  "runs": [
+    {
+      "tool": {
+        "driver": {
+          "name": "CodeQL",
+          "rules": [
+            {
+              "id": "js/xss",
+              "name": "ReflectedXSS",
+              "shortDescription": { "text": "Reflected cross-site scripting" },
+              "fullDescription": { "text": "Writing user input directly to an HTTP response allows for a cross-site scripting attack." },
+              "properties": {
+                "tags": ["security", "external/cwe/cwe-079"],
+                "security-severity": "7.5",
+                "precision": "high"
+              }
+            },
+            {
+              "id": "js/sql-injection",
+              "shortDescription": { "text": "SQL query built from user-controlled sources" },
+              "properties": {
+                "tags": ["security", "CWE-89"],
+                "precision": "medium"
+              }
+            }
+          ]
+        }
+      },
+      "versionControlProvenance": [
+        { "repositoryUri": "https://github.com/example/widget.git", "revisionId": "abc123" }
+      ],
+      "results": [
+        {
+          "ruleId": "js/xss",
+          "ruleIndex": 0,
+          "level": "error",
+          "message": { "text": "User-provided value flows to res.send without sanitisation." },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": { "uri": "src/handlers/echo.js" },
+                "region": { "startLine": 42, "startColumn": 7 }
+              }
+            }
+          ]
+        },
+        {
+          "ruleId": "js/sql-injection",
+          "level": "warning",
+          "message": { "text": "Query string concatenated from req.params.id." },
+          "locations": [
+            {
+              "physicalLocation": {
+                "artifactLocation": { "uri": "src/db/users.js" },
+                "region": { "startLine": 17 }
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

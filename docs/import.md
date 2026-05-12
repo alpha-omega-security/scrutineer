@@ -1,0 +1,167 @@
+# Importing findings from other tools
+
+Scrutineer can ingest vulnerability reports produced by external scanners or written by hand and turn them into the same `Repository`, `Scan`, and `Finding` rows a native scan produces. Imported findings carry through the rest of the workflow unchanged: `verify`, `reachability`, `patch`, `disclose`, and the dedup-on-rescan machinery all treat them as first-class.
+
+The endpoint is `POST /api/v1/import` on the localhost-only `/api/v1` surface, so no bearer token is required and the host-header check applies. The body is sniffed; the format is not in the URL.
+
+## Using it
+
+    curl --data-binary @report.sarif http://127.0.0.1:8080/api/v1/import
+
+The request body is the report itself, up to 16 MiB. The response is JSON:
+
+    {
+      "format": "sarif",
+      "results": [
+        {
+          "repository_id": 42,
+          "repository":    "https://github.com/example/widget",
+          "scan_id":       1024,
+          "tool":          "CodeQL",
+          "created":       5,
+          "observed":      2,
+          "finding_ids":   [301, 302, 303, 304, 305]
+        }
+      ]
+    }
+
+`created` counts findings inserted on this call; `observed` counts findings that already existed with the same fingerprint and had their `seen_count` bumped. A SARIF file with several runs, or a CSV grouping rows under several `Repository` slugs, returns one result per repository.
+
+When the report carries no repository (most pentest writeups, the minimal-JSON shape with `repository: ""`), pass `?repo=<https-url>`:
+
+    curl --data-binary @pentest.md "http://127.0.0.1:8080/api/v1/import?repo=https://github.com/example/widget"
+
+`?repo=` always wins over any provenance in the body, so it doubles as an override when a CodeQL run reports the wrong URL.
+
+Each import becomes one `Scan` row per repository with `kind = import` and `skill_name` set to the producing tool's name, so imported findings show up in the scans list alongside native runs and link back to a parent the UI can render. The scan row's `started_at` and `finished_at` are both set to upload time; `status` is `done` immediately.
+
+Re-importing the same report against the same repository upserts: findings with a matching fingerprint update `last_seen_scan_id`, bump `seen_count`, and clear the missed-count counter. Nothing is duplicated and nothing is deleted. Findings that were imported once and not present in a later import simply do not get observed; the existing miss-count machinery is the right tool for "the upstream scanner no longer flags this" and it is left to the operator to run `verify` if they want to confirm.
+
+## Supported formats
+
+The detector reads the first few bytes of the body and dispatches:
+
+| Format | Detection rule |
+|---|---|
+| SARIF 2.1.0 | Valid JSON with a top-level `runs` array. |
+| Minimal JSON | Valid JSON with a top-level `findings` array. |
+| Findings CSV | First row contains the columns `Severity`, `Repository`, `Name`, `Description`. |
+| Findings markdown | Body starts with `# `, contains at least one `## ` section, and at least one `**Key:** value` metadata line. |
+
+### SARIF 2.1.0
+
+The format most scanners emit: CodeQL, Semgrep, Snyk, Checkmarx, anything that follows GitHub's code-scanning conventions. Each `runs[]` entry becomes one `Result`. The repository URL is taken from `versionControlProvenance[0].repositoryUri`; the tool name from `tool.driver.name`.
+
+Per-result mapping:
+
+| Scrutineer field | SARIF source |
+|---|---|
+| `title` | `rule.shortDescription.text`, falling back to `rule.name`, then `result.message.text`, then `ruleId`. |
+| `description` | `result.message.text`, falling back to `rule.fullDescription.text`. |
+| `severity` | `rule.properties.security-severity` interpreted as a CVSS v3 base score (>=9 critical, >=7 high, >=4 medium, >0 low), falling back to `result.level` (`error` -> high, `warning` -> medium, `note`/`none` -> low). |
+| `confidence` | `rule.properties.precision` (`very-high`/`high` -> high, `medium` -> medium, `low` -> low). Empty when absent. |
+| `cwe` | First matching `cwe` tag in `rule.properties.tags`. Matches `CWE-79`, `cwe-79`, and `external/cwe/cwe-079`. |
+| `location` | `result.locations[0].physicalLocation`: `artifactLocation.uri` plus `region.startLine` (and `startColumn` when present). |
+| `suggested_fix` | `result.fixes[0].description.text` when present. |
+
+Severity defaulting in SARIF is deliberately conservative: when the producer left both fields empty, scrutineer stores an empty severity and the UI shows it as such rather than guessing.
+
+### Minimal JSON
+
+A small shape for hand-written pentest reports and tools with no SARIF emitter.
+
+    {
+      "repository": "https://github.com/example/widget",
+      "commit": "deadbeef",
+      "tool": "pentest-2026q2",
+      "findings": [
+        {
+          "title": "Path traversal in download endpoint",
+          "cwe": "CWE-22",
+          "severity": "critical",
+          "confidence": "high",
+          "location": "src/handlers/download.js:88",
+          "description": "filename parameter is joined to the static root without normalisation.",
+          "patch": "--- a/src/handlers/download.js\n+++ b/src/handlers/download.js\n@@\n- const p = path.join(root, req.query.filename)\n+ const p = path.join(root, path.basename(req.query.filename))\n"
+        }
+      ]
+    }
+
+`tool` defaults to `manual` if absent. `patch` becomes the finding's `suggested_fix`, and the scan's commit is recorded as the patch's base commit so a later `patch` run can rebase it cleanly.
+
+### Findings CSV
+
+The export shape GitHub's code-scanning UI produces, plus close variants. The required columns are `Severity`, `Repository`, `Name`, `Description`; the parser also reads `Status`, `Category`, `File path`, `Line`, `Confidence`, `CWE`, and `Finding URL` when present, and any extra columns are ignored.
+
+Rows whose `Status` column is anything other than `Open` (case-insensitive) are skipped: dismissed and resolved entries are not pulled in. Rows are grouped by `Repository`, so a single CSV with findings against three repos yields three results.
+
+`Repository` is read as either a full URL or a `owner/repo` slug; bare slugs are expanded to `https://github.com/<slug>` since the producer of this export shape is GitHub-only. The tool name is the host of the `Finding URL` column; an export that omits it falls back to the literal string `csv`.
+
+### Findings markdown
+
+The export shape some hosted scanners produce, with one finding per H1 heading followed by an H2 section per fact:
+
+    # Path traversal in download URL
+
+    ## Details
+    The download URL generation interpolates parsed components into URL paths...
+
+    ## Location
+    [download_url.rb:97](https://github.com/example/widget/blob/main/download_url.rb#L97)
+
+    ## Impact
+    ...
+
+    ## Reproduction steps
+    1. ...
+
+    ## Recommended fix
+    Components that were percent-decoded during parsing must be re-encoded...
+
+    ---
+    **Severity:** MEDIUM
+    **Status:** Open
+    **Category:** Path traversal
+    **Repository:** example/widget
+    **Branch:** main
+
+`Location` is parsed twice: the link text becomes the `file:line` location, and the link target (when it is a forge blob URL like `https://github.com/owner/repo/blob/...`) yields the repository URL. The `**Repository:**` metadata line is the fallback. `Details`, `Impact`, and `Reproduction steps` are concatenated into `description`; `Recommended fix` becomes `suggested_fix`.
+
+The tool name for markdown imports is the literal string `markdown` since the export format carries no producer field.
+
+## What happens after the upload
+
+The flow is the same regardless of format:
+
+1. **Detect and parse.** `ingest.Parse` sniffs the body, picks a parser, and returns `[]Result`. Each `Result` is one batch of findings against one repository.
+2. **Resolve the repository.** `?repo=` if present, otherwise `Result.RepoURL`. The URL is normalised through `ParseRepoInput` (the same path the UI uses) and a `Repository` row is created on first sight.
+3. **Create the scan row.** One per `Result`, with `kind = import`, `status = done`, `skill_name = <tool>`, `findings_count = len(findings)`. The scan's `commit` is `Result.Commit` when the format carried one (SARIF `versionControlProvenance`, minimal-JSON `commit`).
+4. **Upsert findings.** Each parsed finding is fingerprinted with the tool name in the skill-name slot (`db.FingerprintFinding(tool, "", cwe, location, title)`), then matched against existing rows by `(repository_id, fingerprint)`. Match found: `last_seen_scan_id`, `last_seen_commit`, `seen_count` are updated and a `FindingHistory` row is written. No match: a new `Finding` row is created with `imported_from = <tool>`.
+
+The full column set is in [database.md](database.md); the `Finding.ImportedFrom` field is what distinguishes imported findings from native ones, and the scans index filters on `kind = import` to show only imports.
+
+## Adding support for a new format
+
+The parser contract is small. Each format implements one function:
+
+    func parseFoo(data []byte) ([]Result, error)
+
+returning one `Result` per repository. The `Result` and `Finding` shapes are in `internal/ingest/ingest.go`; populate what the format gives you and leave the rest empty. The web layer is responsible for normalising severity defaults, choosing a repository when provenance is missing, and creating scan and finding rows; the parser only translates.
+
+Wire the format in two places:
+
+1. **`internal/ingest/ingest.go`**. Add a `Format` constant, a `case` in `detect`, and a `case` in `Parse`. `detect` should match on cheap cues (a top-level JSON key, a magic byte, a header row); it sees the full body but should not parse it twice. Return the new `Format` only on a positive identification, never as a fallback, because the dispatch in `Parse` treats an empty `Format` as `ErrUnrecognised` and a wrong identification produces a misleading error.
+2. **`internal/ingest/foo.go`**. Implement `parseFoo`. If detection needs more than a top-level key (a CSV header check, an XML root element), put the helper alongside.
+
+Conventions worth following:
+
+- **Severity vocabulary.** Lowercased: `critical`, `high`, `medium`, `low`, or empty. The CSV parser shows the pattern.
+- **CWE format.** `CWE-79`, not `cwe-79` or `CWE-079`. Use `normaliseCWE` in `csv.go`.
+- **Location format.** `file:line` or `file:line:column`, relative to the repository root. SARIF's `URI` field is already in this shape.
+- **Tool name.** Take it from the report itself wherever possible; the response payload exposes it as `tool` and it becomes `Finding.ImportedFrom`. Falling back to the format name (`csv`, `markdown`) is acceptable when the producer is anonymous.
+- **Skipping.** Drop dismissed or withdrawn entries inside the parser; the upsert layer has no way to know they should not exist.
+- **Provenance.** When the format carries `commit` set `Result.Commit`; it becomes the scan's commit and the suggested-fix base.
+
+Add a fixture under `internal/ingest/testdata/` and a test in `internal/ingest/ingest_test.go` that calls `Parse` against the fixture and asserts on field-level mapping; the existing SARIF, CSV, and markdown tests are the templates.
+
+CSAF and OSV are intentionally deferred. CSAF round-trips against scrutineer's own export but the inverse is not a straight inversion: `product_status` buckets, VEX flags, and the per-product justifications do not map cleanly onto a single `Finding` row. OSV is closer to a fit but its `affected[]` shape is package-oriented rather than code-oriented, so a sensible Finding `location` field needs a heuristic. Both are worth doing; neither is a mechanical write.

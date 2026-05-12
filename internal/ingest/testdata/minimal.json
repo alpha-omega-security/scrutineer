@@ -1,0 +1,16 @@
+{
+  "repository": "https://github.com/example/widget",
+  "commit": "deadbeef",
+  "tool": "pentest-2026q2",
+  "findings": [
+    {
+      "title": "Path traversal in download endpoint",
+      "cwe": "CWE-22",
+      "severity": "critical",
+      "confidence": "high",
+      "location": "src/handlers/download.js:88",
+      "description": "filename parameter is joined to the static root without normalisation.",
+      "patch": "--- a/src/handlers/download.js\n+++ b/src/handlers/download.js\n@@\n- const p = path.join(root, req.query.filename)\n+ const p = path.join(root, path.basename(req.query.filename))\n"
+    }
+  ]
+}

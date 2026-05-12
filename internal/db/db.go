@@ -366,6 +366,11 @@ type Finding struct {
 	// (stack exhaustion, assertion failure, fixed-offset null deref, log
 	// injection). Low-tier hits are signposts to keep looking nearby.
 	QualityTier string `gorm:"index"`
+	// ImportedFrom names the external producer when the finding arrived
+	// via /import (e.g. "CodeQL", "Snyk", "manual"). Empty for findings
+	// scrutineer produced itself. Used as the skill-name input to the
+	// fingerprint so re-importing the same external report dedupes.
+	ImportedFrom string `gorm:"index"`
 
 	// Disclosure / triage fields. Any of these may be set by a tool, a
 	// model-backed skill, or the analyst; see FindingHistory for the trail.
