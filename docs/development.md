@@ -21,7 +21,10 @@
 | `internal/worker/findings.go` | structured report parser used by `output_kind=findings` |
 | `internal/worker/metadata.go` | FetchPackagesByPURL helper used by the web import button |
 | `internal/web/` | HTTP handlers, templates, static assets, SSE broker |
-| `internal/web/server.go` | browser routes + handlers + template funcs |
+| `internal/web/server.go` | Server struct, routing, middleware, template funcs, shared helpers; repo + finding + package + advisory handlers |
+| `internal/web/orgs.go` | organisation index and show handlers |
+| `internal/web/maintainers.go` | maintainer index, show, and do-not-contact toggle |
+| `internal/web/scans.go` | scan index (jobs), show, retry, retry-failed, cancel, and log poll |
 | `internal/web/api.go` | skill-facing `/api` router + bearer-auth middleware |
 | `internal/web/api_reads.go` | typed read endpoints (maintainers, packages, advisories, dependents, dependencies, findings) |
 | `internal/web/api_finding_writes.go` | PATCH/POST/PUT for finding notes, communications, references, labels, field updates, history |
