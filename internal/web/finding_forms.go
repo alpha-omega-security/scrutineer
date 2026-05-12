@@ -23,9 +23,8 @@ var analystFields = []string{
 }
 
 func (s *Server) findingFields(w http.ResponseWriter, r *http.Request) {
-	var f db.Finding
-	if err := s.DB.First(&f, r.PathValue("id")).Error; err != nil {
-		http.NotFound(w, r)
+	f, ok := loadByID[db.Finding](s, w, r)
+	if !ok {
 		return
 	}
 	if err := r.ParseForm(); err != nil {
@@ -46,9 +45,8 @@ func (s *Server) findingFields(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) findingCommunications(w http.ResponseWriter, r *http.Request) {
-	var f db.Finding
-	if err := s.DB.First(&f, r.PathValue("id")).Error; err != nil {
-		http.NotFound(w, r)
+	f, ok := loadByID[db.Finding](s, w, r)
+	if !ok {
 		return
 	}
 	if err := r.ParseForm(); err != nil {
@@ -71,9 +69,8 @@ func (s *Server) findingCommunications(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) findingReferences(w http.ResponseWriter, r *http.Request) {
-	var f db.Finding
-	if err := s.DB.First(&f, r.PathValue("id")).Error; err != nil {
-		http.NotFound(w, r)
+	f, ok := loadByID[db.Finding](s, w, r)
+	if !ok {
 		return
 	}
 	if err := r.ParseForm(); err != nil {
@@ -89,9 +86,8 @@ func (s *Server) findingReferences(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) findingLabels(w http.ResponseWriter, r *http.Request) {
-	var f db.Finding
-	if err := s.DB.First(&f, r.PathValue("id")).Error; err != nil {
-		http.NotFound(w, r)
+	f, ok := loadByID[db.Finding](s, w, r)
+	if !ok {
 		return
 	}
 	if err := r.ParseForm(); err != nil {

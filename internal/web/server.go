@@ -657,12 +657,12 @@ func (s *Server) orgShow(w http.ResponseWriter, r *http.Request) {
 		Where("scan_id IN (?)", deepDiveScanIDs(s.DB)).
 		Order(severityOrder).Order("id desc").
 		Limit(orgTabLimit).Find(&findings)
-	reposByID := loadRepoMap(s.DB, findings)
+	reposByID := loadRepoMap(s.DB, findings, findingRepoID)
 
 	var advisories []db.Advisory
 	s.DB.Where("repository_id IN ?", repoIDs).Order("cvss_score desc").
 		Limit(orgTabLimit).Find(&advisories)
-	advisoryRepos := loadAdvisoryRepoMap(s.DB, advisories)
+	advisoryRepos := loadRepoMap(s.DB, advisories, advisoryRepoID)
 
 	var maintainers []db.Maintainer
 	s.DB.Joins("JOIN repository_maintainers rm ON rm.maintainer_id = maintainers.id").
@@ -795,39 +795,78 @@ func (s *Server) maintainerShow(w http.ResponseWriter, r *http.Request) {
 			Where("scan_id IN (?)", deepDiveScanIDs(s.DB)).
 			Order("id desc").Find(&findings)
 	}
-	reposByID := loadRepoMap(s.DB, findings)
+	reposByID := loadRepoMap(s.DB, findings, findingRepoID)
 	s.render(w, r, "maintainer_show.html", map[string]any{
 		"M": m, "Findings": findings, "Repos": reposByID,
 	})
 }
 
 // loadRepoMap batch-loads the repositories referenced by a slice of
-// findings and returns a map keyed by repository ID. Templates render
-// per-finding repo info by looking up the map.
-func loadRepoMap(gdb *gorm.DB, findings []db.Finding) map[uint]db.Repository {
+// rows and returns a map keyed by repository ID. The repoID accessor
+// abstracts over Finding.RepositoryID, Advisory.RepositoryID and any
+// other row shape that links back to a repository. Templates render
+// per-row repo info by looking up the map.
+func loadRepoMap[T any](gdb *gorm.DB, rows []T, repoID func(T) uint) map[uint]db.Repository {
 	seen := make(map[uint]bool)
 	ids := make([]uint, 0)
-	for _, f := range findings {
-		if !seen[f.RepositoryID] {
-			seen[f.RepositoryID] = true
-			ids = append(ids, f.RepositoryID)
+	for _, row := range rows {
+		id := repoID(row)
+		if !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
 		}
 	}
 	result := make(map[uint]db.Repository, len(ids))
 	if len(ids) == 0 {
 		return result
 	}
-	var rows []db.Repository
-	gdb.Where("id IN ?", ids).Find(&rows)
-	for _, r := range rows {
+	var repos []db.Repository
+	gdb.Where("id IN ?", ids).Find(&repos)
+	for _, r := range repos {
 		result[r.ID] = r
 	}
 	return result
 }
 
-var severityOrder = `CASE severity
-	WHEN 'Critical' THEN 0 WHEN 'High' THEN 1
-	WHEN 'Medium' THEN 2 WHEN 'Low' THEN 3 ELSE 4 END`
+func findingRepoID(f db.Finding) uint   { return f.RepositoryID }
+func advisoryRepoID(a db.Advisory) uint { return a.RepositoryID }
+
+// severityOrder is a SQL CASE expression that ranks db.SeverityLevels
+// highest-first with unknown values last, derived from the same slice
+// SeverityAtLeast uses so the two never disagree.
+var severityOrder = func() string {
+	var b strings.Builder
+	b.WriteString("CASE severity")
+	for i, s := range db.SeverityLevels {
+		fmt.Fprintf(&b, " WHEN '%s' THEN %d", s, len(db.SeverityLevels)-1-i)
+	}
+	fmt.Fprintf(&b, " ELSE %d END", len(db.SeverityLevels))
+	return b.String()
+}()
+
+// loadByID loads the row whose primary key matches the request's {id}
+// path parameter, writing a 404 and returning ok=false when it does
+// not exist. It collapses the four-line First-then-NotFound prelude
+// that opened most show/edit handlers.
+//
+//nolint:ireturn // T is a concrete struct at every call site, not an interface
+func loadByID[T any](s *Server, w http.ResponseWriter, r *http.Request) (T, bool) {
+	var v T
+	if err := s.DB.First(&v, r.PathValue("id")).Error; err != nil {
+		http.NotFound(w, r)
+		return v, false
+	}
+	return v, true
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
 
 // loadRepoFindings returns the open findings for a repo split into two
 // slices: deep-dive output and tool-scanner output (zizmor, semgrep, …).
@@ -912,7 +951,7 @@ func (s *Server) findings(w http.ResponseWriter, r *http.Request) {
 	var rows []db.Finding
 	q.Limit(perPage).Offset((page.N - 1) * perPage).Find(&rows)
 
-	reposByID := loadRepoMap(s.DB, rows)
+	reposByID := loadRepoMap(s.DB, rows, findingRepoID)
 	anySubPath := false
 	for _, r := range rows {
 		if r.SubPath != "" {
@@ -937,9 +976,8 @@ func (s *Server) findings(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) depScan(w http.ResponseWriter, r *http.Request) {
-	var dep db.Dependency
-	if err := s.DB.First(&dep, r.PathValue("id")).Error; err != nil {
-		http.NotFound(w, r)
+	dep, ok := loadByID[db.Dependency](s, w, r)
+	if !ok {
 		return
 	}
 
@@ -975,9 +1013,8 @@ func resolvePURLRepo(ctx context.Context, purl string) string {
 }
 
 func (s *Server) dependentScan(w http.ResponseWriter, r *http.Request) {
-	var dep db.Dependent
-	if err := s.DB.First(&dep, r.PathValue("id")).Error; err != nil {
-		http.NotFound(w, r)
+	dep, ok := loadByID[db.Dependent](s, w, r)
+	if !ok {
 		return
 	}
 	if dep.RepositoryURL == "" {
@@ -1034,9 +1071,8 @@ func (s *Server) addRepoAndScan(w http.ResponseWriter, r *http.Request, repoURL 
 }
 
 func (s *Server) findingStatus(w http.ResponseWriter, r *http.Request) {
-	var f db.Finding
-	if err := s.DB.First(&f, r.PathValue("id")).Error; err != nil {
-		http.NotFound(w, r)
+	f, ok := loadByID[db.Finding](s, w, r)
+	if !ok {
 		return
 	}
 	status := db.FindingLifecycle(r.FormValue("status"))
@@ -1077,9 +1113,8 @@ func (s *Server) findingPatchRun(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) runFindingSkill(w http.ResponseWriter, r *http.Request, name string) {
-	var f db.Finding
-	if err := s.DB.First(&f, r.PathValue("id")).Error; err != nil {
-		http.NotFound(w, r)
+	f, ok := loadByID[db.Finding](s, w, r)
+	if !ok {
 		return
 	}
 	var scan db.Scan
@@ -1101,9 +1136,8 @@ func (s *Server) runFindingSkill(w http.ResponseWriter, r *http.Request, name st
 }
 
 func (s *Server) findingNotes(w http.ResponseWriter, r *http.Request) {
-	var f db.Finding
-	if err := s.DB.First(&f, r.PathValue("id")).Error; err != nil {
-		http.NotFound(w, r)
+	f, ok := loadByID[db.Finding](s, w, r)
+	if !ok {
 		return
 	}
 	if _, err := db.AddFindingNote(s.DB, f.ID, r.FormValue("body"), ""); err != nil {
@@ -1202,7 +1236,7 @@ func (s *Server) advisoriesList(w http.ResponseWriter, r *http.Request) {
 	var rows []db.Advisory
 	q.Limit(perPage).Offset((page.N - 1) * perPage).Find(&rows)
 
-	reposByID := loadAdvisoryRepoMap(s.DB, rows)
+	reposByID := loadRepoMap(s.DB, rows, advisoryRepoID)
 	var severities []string
 	s.DB.Model(&db.Advisory{}).Where("severity != ''").Distinct("severity").
 		Order("severity").Pluck("severity", &severities)
@@ -1211,31 +1245,6 @@ func (s *Server) advisoriesList(w http.ResponseWriter, r *http.Request) {
 		"Advisories": rows, "Page": page, "Severity": sev, "Sort": sort,
 		"Severities": severities, "Repos": reposByID, "Q": search,
 	})
-}
-
-// loadAdvisoryRepoMap batch-loads the repositories referenced by a slice
-// of advisories (Advisory.RepositoryID). Same pattern as loadRepoMap for
-// findings, duplicated rather than generified because the source field
-// is a different type.
-func loadAdvisoryRepoMap(gdb *gorm.DB, rows []db.Advisory) map[uint]db.Repository {
-	seen := make(map[uint]bool)
-	ids := make([]uint, 0)
-	for _, a := range rows {
-		if !seen[a.RepositoryID] {
-			seen[a.RepositoryID] = true
-			ids = append(ids, a.RepositoryID)
-		}
-	}
-	result := make(map[uint]db.Repository, len(ids))
-	if len(ids) == 0 {
-		return result
-	}
-	var repos []db.Repository
-	gdb.Where("id IN ?", ids).Find(&repos)
-	for _, r := range repos {
-		result[r.ID] = r
-	}
-	return result
 }
 
 func (s *Server) findingShow(w http.ResponseWriter, r *http.Request) {
@@ -1512,9 +1521,8 @@ func bulkToastDescription(invalid []string) string {
 }
 
 func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
-	var repo db.Repository
-	if err := s.DB.First(&repo, r.PathValue("id")).Error; err != nil {
-		http.NotFound(w, r)
+	repo, ok := loadByID[db.Repository](s, w, r)
+	if !ok {
 		return
 	}
 	var scans []db.Scan
@@ -1645,9 +1653,8 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) repoScan(w http.ResponseWriter, r *http.Request) {
-	var repo db.Repository
-	if err := s.DB.First(&repo, r.PathValue("id")).Error; err != nil {
-		http.NotFound(w, r)
+	repo, ok := loadByID[db.Repository](s, w, r)
+	if !ok {
 		return
 	}
 	// The "New scan" button enqueues the deep-dive skill; everything else is
@@ -1696,9 +1703,8 @@ func (s *Server) scanShow(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) scanRetry(w http.ResponseWriter, r *http.Request) {
-	var scan db.Scan
-	if err := s.DB.First(&scan, r.PathValue("id")).Error; err != nil {
-		http.NotFound(w, r)
+	scan, ok := loadByID[db.Scan](s, w, r)
+	if !ok {
 		return
 	}
 	if scan.Kind != worker.JobSkill || scan.SkillID == nil {
@@ -1804,9 +1810,8 @@ func retryFailedToast(retried, skipped, errored int) Flash {
 }
 
 func (s *Server) scanCancel(w http.ResponseWriter, r *http.Request) {
-	var scan db.Scan
-	if err := s.DB.First(&scan, r.PathValue("id")).Error; err != nil {
-		http.NotFound(w, r)
+	scan, ok := loadByID[db.Scan](s, w, r)
+	if !ok {
 		return
 	}
 	if scan.Status.Terminal() {
@@ -1827,9 +1832,8 @@ func (s *Server) scanCancel(w http.ResponseWriter, r *http.Request) {
 // scanLog returns just the <pre> log block. The scan page polls this with
 // hx-trigger while the scan is running so the operator can watch claude work.
 func (s *Server) scanLog(w http.ResponseWriter, r *http.Request) {
-	var scan db.Scan
-	if err := s.DB.First(&scan, r.PathValue("id")).Error; err != nil {
-		http.NotFound(w, r)
+	scan, ok := loadByID[db.Scan](s, w, r)
+	if !ok {
 		return
 	}
 	if scan.Status != db.ScanQueued && scan.Status != db.ScanRunning {

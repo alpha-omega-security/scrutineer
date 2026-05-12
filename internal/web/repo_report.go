@@ -18,9 +18,8 @@ import (
 // dependents, dependencies, and maintainers. Served as text/markdown with
 // a filename hint so clicking the download button saves a file.
 func (s *Server) repoReport(w http.ResponseWriter, r *http.Request) {
-	var repo db.Repository
-	if err := s.DB.First(&repo, r.PathValue("id")).Error; err != nil {
-		http.NotFound(w, r)
+	repo, ok := loadByID[db.Repository](s, w, r)
+	if !ok {
 		return
 	}
 
@@ -466,15 +465,6 @@ func formatScanDate(s *db.Scan) string {
 		return s.FinishedAt.UTC().Format("2006-01-02")
 	}
 	return s.CreatedAt.UTC().Format("2006-01-02")
-}
-
-func firstNonEmpty(vals ...string) string {
-	for _, v := range vals {
-		if v != "" {
-			return v
-		}
-	}
-	return ""
 }
 
 func sanitiseFilename(s string) string {

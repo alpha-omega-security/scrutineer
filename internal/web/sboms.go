@@ -178,9 +178,8 @@ func (s *Server) sbomShow(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) sbomResolve(w http.ResponseWriter, r *http.Request) {
-	var up db.SBOMUpload
-	if err := s.DB.First(&up, r.PathValue("id")).Error; err != nil {
-		http.NotFound(w, r)
+	up, ok := loadByID[db.SBOMUpload](s, w, r)
+	if !ok {
 		return
 	}
 	s.goResolve(up.ID)

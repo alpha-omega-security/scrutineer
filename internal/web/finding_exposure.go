@@ -20,9 +20,8 @@ const exposureTopN = 10
 // URL are recorded as under_investigation immediately so the per-
 // dependent table is complete; the rest queue at PrioFinding.
 func (s *Server) findingExposureRun(w http.ResponseWriter, r *http.Request) {
-	var f db.Finding
-	if err := s.DB.First(&f, r.PathValue("id")).Error; err != nil {
-		http.NotFound(w, r)
+	f, ok := loadByID[db.Finding](s, w, r)
+	if !ok {
 		return
 	}
 	var scan db.Scan

@@ -71,11 +71,13 @@ func syncCVSSScore(gdb *gorm.DB, f *Finding, vector string, source FindingSource
 	}).Error
 }
 
-// confidenceLevels and severityLevels are ordered low to high; the
+// confidenceLevels and SeverityLevels are ordered low to high; the
 // index is the rank used for threshold comparisons. An empty or
-// unknown value ranks below everything.
+// unknown value ranks below everything. SeverityLevels is exported so
+// the web layer can derive its ORDER BY CASE clause from the same
+// list rather than hard-coding the four labels twice.
 var confidenceLevels = []string{"low", "medium", "high"}
-var severityLevels = []string{"Low", "Medium", "High", "Critical"}
+var SeverityLevels = []string{"Low", "Medium", "High", "Critical"}
 
 func rank(levels []string, v string) int {
 	for i, l := range levels {
@@ -104,7 +106,7 @@ func SeverityAtLeast(got, threshold string) bool {
 	if threshold == "" {
 		return false
 	}
-	return rank(severityLevels, got) >= rank(severityLevels, threshold)
+	return rank(SeverityLevels, got) >= rank(SeverityLevels, threshold)
 }
 
 // findingFieldAccessor maps the API-facing field name to the current

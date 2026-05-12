@@ -47,6 +47,55 @@ func localReq(method, path string) *http.Request {
 	return r
 }
 
+func TestSeverityOrder(t *testing.T) {
+	want := "CASE severity WHEN 'Low' THEN 3 WHEN 'Medium' THEN 2 WHEN 'High' THEN 1 WHEN 'Critical' THEN 0 ELSE 4 END"
+	if severityOrder != want {
+		t.Errorf("severityOrder = %q, want %q", severityOrder, want)
+	}
+}
+
+func TestLoadRepoMap(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	r1 := db.Repository{URL: "https://example.com/a", Name: "a"}
+	r2 := db.Repository{URL: "https://example.com/b", Name: "b"}
+	s.DB.Create(&r1)
+	s.DB.Create(&r2)
+
+	findings := []db.Finding{{RepositoryID: r1.ID}, {RepositoryID: r2.ID}, {RepositoryID: r1.ID}}
+	m := loadRepoMap(s.DB, findings, findingRepoID)
+	if len(m) != 2 || m[r1.ID].Name != "a" || m[r2.ID].Name != "b" {
+		t.Errorf("findings map = %+v", m)
+	}
+
+	advisories := []db.Advisory{{RepositoryID: r2.ID}}
+	m = loadRepoMap(s.DB, advisories, advisoryRepoID)
+	if len(m) != 1 || m[r2.ID].Name != "b" {
+		t.Errorf("advisories map = %+v", m)
+	}
+}
+
+func TestLoadByID(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
+	s.DB.Create(&repo)
+
+	r := localReq("GET", "/")
+	r.SetPathValue("id", fmt.Sprint(repo.ID))
+	w := httptest.NewRecorder()
+	got, ok := loadByID[db.Repository](s, w, r)
+	if !ok || got.ID != repo.ID || got.Name != "x" {
+		t.Fatalf("got %+v ok=%v", got, ok)
+	}
+
+	r.SetPathValue("id", "999999")
+	w = httptest.NewRecorder()
+	if _, ok := loadByID[db.Repository](s, w, r); ok || w.Code != http.StatusNotFound {
+		t.Errorf("missing id: ok=%v code=%d, want false/404", ok, w.Code)
+	}
+}
+
 func TestRepoList_batchedFindingsCountAcrossRepos(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

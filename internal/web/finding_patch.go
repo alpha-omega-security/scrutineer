@@ -50,9 +50,8 @@ func (s *Server) latestPatchScan(findingID uint) (*db.Scan, *patchReport, error)
 // gate passes, so a download is always a diff that parsed, targeted real
 // files, overlapped Location, and survived git apply --check.
 func (s *Server) findingPatchDownload(w http.ResponseWriter, r *http.Request) {
-	var f db.Finding
-	if err := s.DB.First(&f, r.PathValue("id")).Error; err != nil {
-		http.NotFound(w, r)
+	f, ok := loadByID[db.Finding](s, w, r)
+	if !ok {
 		return
 	}
 	if strings.TrimSpace(f.SuggestedFix) == "" {
