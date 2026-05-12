@@ -32,6 +32,7 @@ These ship in `skills/` and are loaded with `-skills ./skills`. The `triage` ski
 | `disclose` | Drafts a GHSA-shaped advisory (title, description, CVSS, CWEs, references) for one finding. |
 | `patch` | Proposes a unified diff fixing one finding, written back as a note for analyst review. |
 | `fork` | Forks the repository into the configured org, enables private vulnerability reporting on the fork, and files each finding as a draft advisory there. Only useful when `-fork-org` is set. |
+| `report-upstream` | Files one finding on the upstream repository through GitHub's private vulnerability reporting, requests the temporary private fork, and pushes the proposed patch to it when available. github.com only. |
 
 The descriptions above are the first sentence of each skill's frontmatter `description`; the `/skills` page shows the full text.
 
