@@ -242,3 +242,28 @@ func TestRepoReport_notFoundFor404Repo(t *testing.T) {
 		t.Errorf("status = %d, want 404", w.Code)
 	}
 }
+
+func TestLocationLess(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want bool
+	}{
+		// Same file, numeric ordering across magnitudes
+		{"x.html:5", "x.html:33", true},
+		{"x.html:33", "x.html:5", false},
+		{"x.html:110", "x.html:5", false},
+		{"x.html:5", "x.html:110", true},
+		// Different files: path comparison wins
+		{"a.html:99", "b.html:1", true},
+		{"b.html:1", "a.html:99", false},
+		// Equal paths and lines
+		{"x.html:5", "x.html:5", false},
+		// Missing line number degrades gracefully (treated as 0)
+		{"x.html", "x.html:1", true},
+	}
+	for _, tc := range cases {
+		if got := locationLess(tc.a, tc.b); got != tc.want {
+			t.Errorf("locationLess(%q, %q) = %v, want %v", tc.a, tc.b, got, tc.want)
+		}
+	}
+}

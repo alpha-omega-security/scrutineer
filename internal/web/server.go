@@ -206,6 +206,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /packages/{id}", s.packageShow)
 	mux.HandleFunc("GET /advisories", s.advisoriesList)
 	mux.HandleFunc("GET /scans/{id}", s.scanShow)
+	mux.HandleFunc("GET /scans/{id}/report.md", s.scanReport)
 	mux.HandleFunc("POST /scans/{id}/retry", s.scanRetry)
 	mux.HandleFunc("POST /scans/retry-failed", s.scansRetryFailed)
 	mux.HandleFunc("POST /scans/{id}/cancel", s.scanCancel)

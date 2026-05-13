@@ -11,10 +11,21 @@
     {{template "status-badge" (status .Status)}}
   </h2>
   {{if and (eq .Kind "skill") .SkillID}}
-    <form method="post" action="/scans/{{.ID}}/retry"
-          hx-post="/scans/{{.ID}}/retry" hx-swap="none">
-      <button type="submit" class="btn-outline"><i data-lucide="refresh-cw"></i> Retry</button>
-    </form>
+    <div class="flex items-center gap-2">
+      {{if .HasExportableReport}}
+      <a href="/scans/{{.ID}}/report.md" class="btn-outline" download>
+        <i data-lucide="download"></i> Export as markdown
+      </a>
+      {{end}}
+      <form method="post" action="/scans/{{.ID}}/retry"
+            hx-post="/scans/{{.ID}}/retry" hx-swap="none">
+        <button type="submit" class="btn-outline"><i data-lucide="refresh-cw"></i> Retry</button>
+      </form>
+    </div>
+  {{else if .HasExportableReport}}
+    <a href="/scans/{{.ID}}/report.md" class="btn-outline" download>
+      <i data-lucide="download"></i> Export as markdown
+    </a>
   {{end}}
 </div>
 

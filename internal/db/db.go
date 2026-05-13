@@ -656,6 +656,63 @@ func (s Scan) CacheHitRatio() float64 {
 	return float64(s.CacheReadTokens) / float64(total)
 }
 
+// HasExportableReport tells the UI whether to offer a "download as
+// markdown" button for this scan. A scan that has produced findings is
+// always worth exporting. Otherwise we parse the report and look for any
+// substantive content: at least one top-level value that isn't an empty
+// string, empty array, empty object, or null. That lets through real
+// reports of any size — a single-package result is just as worth
+// exporting as a 10K-line SBOM — while filtering out structurally
+// empty scans like {"subprojects": []} or {"packages": [], "advisories":
+// []}. For non-JSON-object reports (bare array, plain text, malformed
+// JSON) we accept anything past a small trimmed length so freeform skills
+// emitting non-object output aren't accidentally hidden. The
+// /scans/{id}/report.md route is unaffected and remains reachable by
+// URL regardless of this signal.
+func (s Scan) HasExportableReport() bool {
+	// nonObjectReportMinLen is the trimmed-length floor below which a
+	// non-JSON-object report (bare array, plain text, malformed JSON) is
+	// treated as too thin to bother exporting. JSON-object reports get
+	// the structural check instead and ignore this.
+	const nonObjectReportMinLen = 20
+	if s.FindingsCount > 0 {
+		return true
+	}
+	raw := strings.TrimSpace(s.Report)
+	if raw == "" {
+		return false
+	}
+	var top map[string]any
+	if err := json.Unmarshal([]byte(raw), &top); err == nil {
+		for _, v := range top {
+			if !isEmptyJSONValue(v) {
+				return true
+			}
+		}
+		return false
+	}
+	return len(raw) > nonObjectReportMinLen
+}
+
+// isEmptyJSONValue returns true for the JSON values that carry no
+// information — "", [], {}, null. Numbers and booleans are always
+// counted as content, on the theory that a skill bothering to emit
+// "version": 1 had a reason to.
+func isEmptyJSONValue(v any) bool {
+	switch x := v.(type) {
+	case nil:
+		return true
+	case string:
+		return x == ""
+	case []any:
+		return len(x) == 0
+	case map[string]any:
+		return len(x) == 0
+	default:
+		return false
+	}
+}
+
 func (s ScanStatus) Terminal() bool {
 	return s == ScanDone || s == ScanFailed || s == ScanCancelled
 }

@@ -43,6 +43,31 @@ func TestScanTokenHelpers(t *testing.T) {
 	}
 }
 
+func TestScanHasExportableReport(t *testing.T) {
+	cases := []struct {
+		name string
+		s    Scan
+		want bool
+	}{
+		{"empty scan", Scan{}, false},
+		{"no findings, empty subprojects-style report", Scan{Report: `{"subprojects": []}`}, false},
+		{"no findings, two empty arrays", Scan{Report: `{"packages": [], "advisories": []}`}, false},
+		{"no findings, whitespace-padded empty report", Scan{Report: "  \n  {\"x\": []}  \n  "}, false},
+		{"no findings, empty string and null values", Scan{Report: `{"x": "", "y": null, "z": {}}`}, false},
+		{"findings present overrides shape check", Scan{FindingsCount: 1, Report: "{}"}, true},
+		{"single small entry counts as content", Scan{Report: `{"components":[{"name":"foo","version":"1.0"}]}`}, true},
+		{"top-level scalars count as content", Scan{Report: `{"version":1,"bomFormat":"CycloneDX"}`}, true},
+		{"non-trivial freeform report", Scan{Report: `{"components":[{"name":"foo","version":"1.0","license":"MIT","purl":"pkg:npm/foo"}]}`}, true},
+		{"non-object top level falls back to length", Scan{Report: `["a","b","c","d","e","f","g","h"]`}, true},
+		{"non-object short report stays hidden", Scan{Report: `[]`}, false},
+	}
+	for _, tc := range cases {
+		if got := tc.s.HasExportableReport(); got != tc.want {
+			t.Errorf("%s: HasExportableReport() = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
 func TestBackfillFindingRepositoryFillsCommit(t *testing.T) {
 	gdb, err := Open(":memory:")
 	if err != nil {
