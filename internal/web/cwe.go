@@ -108,6 +108,11 @@ func CategoryLabel(name string) string {
 	return name
 }
 
+// CWECategoryID returns the View-1400 category CWE-ID for a given weakness
+// CWE-ID (e.g. "CWE-352" -> "CWE-1411"). Returns "" when the weakness is
+// unknown or not mapped to a View-1400 bucket.
+func CWECategoryID(cwe string) string { return categoryCWEID[cweIndex[cwe].Category] }
+
 // CWEsInCategory returns the CWE-IDs that belong to a View-1400 category,
 // or nil for an unknown category. The UncategorizedCWE bucket is handled
 // by applyCWECategoryFilter, not here.

@@ -96,6 +96,7 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *work
 			return ""
 		},
 		"catlabel":   CategoryLabel,
+		"cwecatid":   CWECategoryID,
 		"md":         renderMarkdown,
 		"jsontree":   jsonTree,
 		"prettyjson": prettyJSON,

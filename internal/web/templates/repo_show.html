@@ -218,7 +218,7 @@
               {{template "severity-badge" .Severity}}
               {{template "finding-status" (fstatus .Status)}}
               <h3><a href="/findings/{{.ID}}">{{.Title}}</a></h3>
-              {{if .CWE}}<span class="badge-outline ml-auto" data-tooltip="{{cwename .CWE}}">{{.CWE}}</span>{{end}}
+              {{if .CWE}}<span class="badge-outline ml-auto" data-tooltip="{{cwename .CWE}}">{{with cwecatid .CWE}}<span class="text-muted-foreground">{{.}} ›</span> {{end}}{{.CWE}}</span>{{end}}
             </div>
             <p>
               <code class="text-xs">{{.Location}}</code>
@@ -251,7 +251,7 @@
               {{template "finding-status" (fstatus .Status)}}
               <h3><a href="/findings/{{.ID}}">{{.Title}}</a></h3>
               <span class="badge-outline ml-auto">{{index $skills .ScanID}}</span>
-              {{if .CWE}}<span class="badge-outline" data-tooltip="{{cwename .CWE}}">{{.CWE}}</span>{{end}}
+              {{if .CWE}}<span class="badge-outline" data-tooltip="{{cwename .CWE}}">{{with cwecatid .CWE}}<span class="text-muted-foreground">{{.}} ›</span> {{end}}{{.CWE}}</span>{{end}}
             </div>
             <p>
               <code class="text-xs">{{.Location}}</code>

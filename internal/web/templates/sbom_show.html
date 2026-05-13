@@ -165,7 +165,7 @@
     <table class="table table-fixed w-full">
       <thead><tr>
         <th class="w-24">Severity</th><th>Title</th><th class="w-32">Repository</th>
-        <th class="w-24">Status</th><th class="w-20">CWE</th>
+        <th class="w-24">Status</th><th class="w-44">CWE</th>
       </tr></thead>
       <tbody>
       {{$repos := .Repos}}
@@ -176,7 +176,7 @@
           <td class="min-w-0 whitespace-normal"><a href="/findings/{{.ID}}" class="font-medium">{{.Title}}</a></td>
           <td class="truncate">{{$repo.Name}}</td>
           <td>{{template "finding-status" (fstatus .Status)}}</td>
-          <td class="text-muted-foreground">{{.CWE}}</td>
+          <td class="text-muted-foreground">{{if .CWE}}{{with cwecatid .CWE}}{{.}} › {{end}}{{.CWE}}{{end}}</td>
         </tr>
       {{end}}
       </tbody>
