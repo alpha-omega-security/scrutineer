@@ -326,7 +326,7 @@
 
   {{if .ThreatModel}}
   <div role="tabpanel" id="rp10" aria-labelledby="rt10" hidden>
-    {{template "threat_model" (dict "TM" .ThreatModel "HTMLURL" .Repo.HTMLURL "Commit" $.TMCommit)}}
+    {{template "threat_model" (dict "TM" .ThreatModel "RepoID" .Repo.ID "Commit" $.TMCommit)}}
   </div>
   {{end}}
 

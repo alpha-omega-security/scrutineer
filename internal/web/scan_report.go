@@ -13,14 +13,10 @@ import (
 	"scrutineer/internal/db"
 )
 
-// scanReport renders a single scan's results as a downloadable markdown
-// document. For findings-kind scans the format mirrors the per-finding
-// sections produced by repo_report.go so a scan-scoped report and a
-// repo-scoped one read the same way. For other output kinds (maintainers,
-// packages, freeform SBOMs, etc.) the JSON is walked and rendered as
-// markdown tables when the shape allows, falling back to a fenced JSON
-// block only for shapes we can't tabulate (non-object top level, no
-// scalar fields, no arrays of objects).
+// scanReport serves the scan's results as a downloadable markdown file.
+// Findings-kind scans reuse the per-finding renderer from repo_report.go;
+// other kinds are walked into markdown tables, falling back to a fenced
+// JSON block for shapes we can't tabulate.
 func (s *Server) scanReport(w http.ResponseWriter, r *http.Request) {
 	var scan db.Scan
 	if err := s.DB.Preload("Repository").First(&scan, r.PathValue("id")).Error; err != nil {
@@ -28,10 +24,9 @@ func (s *Server) scanReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Skill is looked up separately rather than via Preload because Scan.SkillID
-	// is nullable and Preload on a nullable FK is fiddly across GORM versions;
-	// a missing skill row (e.g. skill deleted after the scan ran) is non-fatal
-	// here, we just lose the OutputKind dispatch and fall back to raw.
+	// Skill is fetched separately: Scan.SkillID is nullable and Preload on
+	// a nullable FK is fiddly across GORM versions. A missing skill row is
+	// non-fatal; we lose OutputKind dispatch and fall back to raw.
 	var skill *db.Skill
 	if scan.SkillID != nil {
 		var sk db.Skill
@@ -136,17 +131,11 @@ func writeScanReportMetadata(b *strings.Builder, scan *db.Scan, skill *db.Skill)
 }
 
 func writeScanReportFindings(b *strings.Builder, gdb *gorm.DB, scan *db.Scan) {
-	// Findings whose last_seen_scan_id matches this scan are what the
-	// scan reported on its most recent run; ScanID matches when the
-	// scan first introduced the finding. We OR them so a scan that
-	// re-observed an existing finding (the common case after the first
-	// run on a repo) still surfaces it here. Edge case: a finding first
-	// seen in this scan but re-observed in a later scan will appear here
-	// because scan_id matches, even though its location/locations now
-	// reflect HEAD at the later scan — the DB doesn't snapshot per-scan
-	// state, so report data for older scans is inherently a today-view.
-	// scan_show.html's Preload("Findings") uses only the implicit ScanID
-	// FK and undercounts the same way; worth a separate issue.
+	// OR last_seen_scan_id and scan_id so re-observed findings still
+	// surface here; older scans whose findings have since moved to a
+	// later scan inherit that scan's location data (the DB doesn't
+	// snapshot per-scan state). scan_show.html's Preload("Findings")
+	// undercounts the same way; worth a separate issue.
 	var findings []db.Finding
 	gdb.Where("last_seen_scan_id = ? OR scan_id = ?", scan.ID, scan.ID).
 		Order("severity, id").Find(&findings)
@@ -164,21 +153,15 @@ func writeScanReportFindings(b *strings.Builder, gdb *gorm.DB, scan *db.Scan) {
 	}
 	b.WriteString("\n")
 
-	// Reuse the per-finding prose renderer from repo_report.go so a scan
-	// report and a repo report describe the same finding the same way.
 	for _, f := range findings {
 		writeReportFinding(b, gdb, f, scan)
 	}
 }
 
-// writeScanReportFreeform renders a scan's report.json as the best
-// markdown the shape allows: top-level scalar keys become a metadata
-// table, top-level arrays of objects each become their own section with
-// a table whose columns are the most common scalar keys. CycloneDX SBOMs
-// are recognised by their bomFormat marker and given a tuned heading.
-// Anything we can't make sense of (non-object top level, or no
-// tabulatable arrays and no scalars) falls back to a fenced JSON block —
-// accuracy never sacrificed for prettiness.
+// writeScanReportFreeform turns report.json into markdown: top-level
+// scalars become a metadata table, arrays-of-objects each get their own
+// section. CycloneDX SBOMs get a tuned heading. Anything we can't
+// tabulate falls back to a fenced JSON block.
 func writeScanReportFreeform(b *strings.Builder, scan *db.Scan, kind string) {
 	raw := strings.TrimSpace(scan.Report)
 	if raw == "" {
@@ -188,8 +171,7 @@ func writeScanReportFreeform(b *strings.Builder, scan *db.Scan, kind string) {
 
 	var top map[string]any
 	if err := json.Unmarshal([]byte(raw), &top); err != nil {
-		// Top isn't a JSON object — could be a bare array, plain text, or
-		// malformed JSON. We don't try to guess; we ship it as-is.
+		// Not a JSON object (bare array, plain text, malformed JSON): ship as-is.
 		writeScanReportJSONBlock(b, raw, kind)
 		return
 	}
@@ -204,9 +186,6 @@ func writeScanReportFreeform(b *strings.Builder, scan *db.Scan, kind string) {
 		wroteAnything = true
 	}
 
-	// If we ended up writing nothing of substance (e.g. the top-level
-	// object is all nested objects we couldn't summarise), fall back so
-	// the user still gets the data.
 	if !wroteAnything {
 		writeScanReportJSONBlock(b, raw, kind)
 	}
@@ -218,9 +197,6 @@ func writeScanReportJSONBlock(b *strings.Builder, raw, kind string) {
 		label = fmt.Sprintf("Raw report (%s)", kind)
 	}
 	fmt.Fprintf(b, "## %s\n\n", label)
-	// prettyJSON (from jsontree.go) re-indents valid JSON and passes
-	// non-JSON through unchanged, so this stays readable whether the
-	// skill emitted pretty output, compact output, or something else.
 	fmt.Fprintf(b, "```json\n%s\n```\n\n", prettyJSON(raw))
 }
 
@@ -238,10 +214,9 @@ func freeformHeading(top map[string]any, kind string) string {
 	return "Report"
 }
 
-// classifyTopLevel sorts an object's keys into scalar-shaped (single-row
-// metadata) and array-of-objects (their own section). Arrays of scalars
-// and nested objects ride along in the scalar bucket since they fit a
-// single cell when stringified.
+// classifyTopLevel splits keys into scalar-shaped (single-row metadata)
+// and array-of-objects (their own section). Arrays of scalars and nested
+// objects fall in the scalar bucket since they fit a single cell.
 func classifyTopLevel(top map[string]any) (scalars, arrays []string) {
 	keys := make([]string, 0, len(top))
 	for k := range top {
@@ -288,8 +263,7 @@ func writeArraySection(b *strings.Builder, key string, items []any) {
 	}
 	cols := pickFreeformColumns(items)
 	if len(cols) == 0 {
-		// Nothing tabulatable — emit the array as a JSON block so the
-		// data isn't lost.
+		// Nothing tabulatable: emit a JSON block so data isn't lost.
 		buf, _ := json.MarshalIndent(items, "", "  ")
 		fmt.Fprintf(b, "```json\n%s\n```\n\n", string(buf))
 		return
@@ -317,11 +291,9 @@ func writeArraySection(b *strings.Builder, key string, items []any) {
 	b.WriteString("\n")
 }
 
-// pickFreeformColumns walks up to 50 items, counts which scalar-shaped
-// keys are commonly present, and returns up to 6 of them. Preferred
-// names (name, version, license, ...) come first when present so SBOMs,
-// package lists, and advisory lists all render with the columns a reader
-// would expect.
+// pickFreeformColumns samples up to 50 items and returns up to 6
+// commonly-present scalar keys. Preferred names (name, version, ...)
+// come first when present so SBOMs and package lists render predictably.
 func pickFreeformColumns(items []any) []string {
 	const sampleSize = 50
 	const maxCols = 6
@@ -391,10 +363,8 @@ func pickFreeformColumns(items []any) []string {
 	return out
 }
 
-// isFreeformCellValue tells writeArraySection whether a value fits in a
-// single markdown table cell. Strings, numbers, booleans, and short
-// lists of those (including CycloneDX-style [{id: "MIT"}]) qualify;
-// arbitrary nested objects do not.
+// isFreeformCellValue reports whether v fits in a single markdown cell:
+// scalars and short lists of scalars or {id,name}-style objects.
 func isFreeformCellValue(v any) bool {
 	const maxInlineArrayLen = 5
 	switch x := v.(type) {
@@ -426,14 +396,10 @@ func isFreeformCellValue(v any) bool {
 	}
 }
 
-// freeformCellString collapses a JSON value into a single-line string
-// suitable for a markdown table cell. For leaf scalars it delegates to
-// scalarString (defined in jsontree.go) so number/bool/null formatting
-// stays consistent with the HTML Data tab. The cases here cover what's
-// specific to markdown cells: collapsing license arrays
-// (CycloneDX [{id: "MIT"}] → "MIT"), and skipping deep nested objects
-// (so writeScalarTable drops their row entirely) rather than rendering
-// them as a bracketed placeholder.
+// freeformCellString collapses a JSON value to a single-line cell.
+// Leaf scalars delegate to scalarString (jsontree.go) for parity with
+// the HTML Data tab; license arrays like [{id: "MIT"}] collapse to "MIT";
+// deep nested objects return "" so writeScalarTable drops their row.
 func freeformCellString(v any) string {
 	switch x := v.(type) {
 	case nil:
@@ -463,9 +429,6 @@ func freeformCellString(v any) string {
 		}
 		return strings.Join(parts, ", ")
 	case map[string]any:
-		// Nested objects don't fit a single table cell. Surface only if
-		// there's an obvious one-line representation; otherwise return
-		// empty so writeScalarTable drops the row entirely.
 		if name, ok := x["name"].(string); ok {
 			return name
 		}

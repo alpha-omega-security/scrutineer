@@ -30,9 +30,9 @@
 {{end}}
 
 {{define "loc-link"}}
-  {{$u := locurl .HTMLURL .Commit .Location}}
+  {{$u := locurl .RepoID .Commit .Location}}
   {{if $u}}
-    <a href="{{$u}}" target="_blank" rel="noopener"
+    <a href="{{$u}}"
        class="hover:underline"><code class="text-xs break-all">{{.Location}}</code></a>
   {{else}}
     <code class="text-xs break-all">{{.Location}}</code>

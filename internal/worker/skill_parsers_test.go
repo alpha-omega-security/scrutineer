@@ -48,10 +48,11 @@ func runSkillWithReport(t *testing.T, outputKind, report string) (db.Repository,
 	gdb.Create(&scan)
 
 	w := &Worker{
-		DB:      gdb,
-		Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
-		DataDir: t.TempDir(),
-		Runner:  fakeRunner{skillRes: SkillResult{Commit: "abc", Report: report}},
+		DB:             gdb,
+		Log:            slog.New(slog.NewTextHandler(io.Discard, nil)),
+		DataDir:        t.TempDir(),
+		Runner:         fakeRunner{skillRes: SkillResult{Commit: "abc", Report: report}},
+		PrepareRepoSrc: stubPrepareRepoSrc,
 	}
 	body, _ := json.Marshal(queue.Payload{ScanID: scan.ID})
 	if err := w.wrap(w.doSkill)(context.Background(), body); err != nil {
@@ -155,7 +156,7 @@ func TestParseMaintainers_emptyChannelLeavesRepoAlone(t *testing.T) {
 	scan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanQueued, Model: "fake", SkillID: &skill.ID}
 	gdb.Create(&scan)
 	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DataDir: t.TempDir(),
-		Runner: fakeRunner{skillRes: SkillResult{Commit: "abc", Report: report2}}}
+		Runner: fakeRunner{skillRes: SkillResult{Commit: "abc", Report: report2}}, PrepareRepoSrc: stubPrepareRepoSrc}
 	body, _ := json.Marshal(queue.Payload{ScanID: scan.ID})
 	if err := w.wrap(w.doSkill)(context.Background(), body); err != nil {
 		t.Fatal(err)
@@ -250,10 +251,11 @@ func runSkillWithFinding(t *testing.T, outputKind, report string, startStatus db
 	gdb.Create(&scan)
 
 	w := &Worker{
-		DB:      gdb,
-		Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
-		DataDir: t.TempDir(),
-		Runner:  fakeRunner{skillRes: SkillResult{Commit: "abc", Report: report}},
+		DB:             gdb,
+		Log:            slog.New(slog.NewTextHandler(io.Discard, nil)),
+		DataDir:        t.TempDir(),
+		Runner:         fakeRunner{skillRes: SkillResult{Commit: "abc", Report: report}},
+		PrepareRepoSrc: stubPrepareRepoSrc,
 	}
 	body, _ := json.Marshal(queue.Payload{ScanID: scan.ID})
 	if err := w.wrap(w.doSkill)(context.Background(), body); err != nil {

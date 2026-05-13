@@ -107,11 +107,19 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *work
 			}
 			return 0
 		},
-		"locurl": func(htmlURL, commit, loc any) string {
-			h, _ := htmlURL.(string)
+		"locurl": func(repoID, commit, loc any) string {
+			var id uint
+			switch v := repoID.(type) {
+			case uint:
+				id = v
+			case int:
+				id = uint(v)
+			case uint64:
+				id = uint(v)
+			}
 			c, _ := commit.(string)
 			l, _ := loc.(string)
-			return locationURL(h, c, l)
+			return locationURL(id, c, l)
 		},
 		"domain": func(u string) string {
 			u = strings.TrimPrefix(u, "https://")
@@ -175,6 +183,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /repositories", s.repoCreate)
 	mux.HandleFunc("POST /repositories/bulk", s.repoBulkCreate)
 	mux.HandleFunc("GET /repositories/{id}", s.repoShow)
+	mux.HandleFunc("GET /repositories/{id}/blob/{commit}/{path...}", s.repoBlob)
 	mux.HandleFunc("GET /repositories/{id}/report.md", s.repoReport)
 	mux.HandleFunc("POST /repositories/{id}/scan", s.repoScan)
 	mux.HandleFunc("POST /repositories/{id}/disclosure-channel", s.repoDisclosureChannel)

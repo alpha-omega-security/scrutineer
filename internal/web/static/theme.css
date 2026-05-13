@@ -398,3 +398,14 @@ pre.log { background: var(--muted); padding: 1rem; border-radius: var(--radius);
 .prose th, .prose td { border: 1px solid var(--border); padding: 0.35em 0.75em; }
 .prose th { background: var(--muted); font-weight: 600; }
 .prose hr { border: none; border-top: 1px solid var(--border); margin: 1.5em 0; }
+
+/* ── code browser ── */
+#blob { display: block; padding: 0.5rem 0; tab-size: 4; }
+.hl-line { display: block; padding-left: 3.5rem; position: relative;
+           min-height: 1.25rem; }
+.hl-num { position: absolute; left: 0; width: 3rem; text-align: right;
+          padding-right: 0.75rem; color: var(--muted-foreground);
+          user-select: none; font-size: 0.7rem; }
+.hl-on { background: color-mix(in oklch, var(--primary) 14%, transparent); }
+.hl-line:target { background: color-mix(in oklch, var(--primary) 14%, transparent); }
+

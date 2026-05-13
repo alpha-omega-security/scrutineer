@@ -84,11 +84,29 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 	// Per-scan workspace keeps concurrent skills on the same repo from
 	// clobbering each other's src/ and report.json. wrap() removes it on
 	// successful completion; failed/cancelled dirs are left so the
-	// operator can inspect what the skill saw.
+	// operator can inspect what the skill saw. The clone itself lives in
+	// the persistent repo-cache and is copied in by prepareRepoSrc.
 	workRoot := w.workRoot(scan.ID)
 	if err := validateSkillPaths(skill.Name, skill.OutputFile); err != nil {
 		return "", err
 	}
+	if err := os.MkdirAll(workRoot, dirPerm); err != nil {
+		return "", fmt.Errorf("mkdir work: %w", err)
+	}
+	prepare := w.PrepareRepoSrc
+	if prepare == nil {
+		prepare = w.prepareRepoSrc
+	}
+	cacheCommit, err := prepare(ctx, scan.Repository.URL, scan.Ref, workRoot, emit)
+	if err != nil {
+		if report, ok := w.handleCloneError(scan, err, emit); ok {
+			return report, nil
+		}
+		return "", err
+	}
+	scan.Commit = cacheCommit
+	w.clearCloneError(scan)
+
 	skillDir := filepath.Join(workRoot, ".claude", "skills", skill.Name)
 	if err := stageContext(workRoot, w.APIBase, w.ForkOrg, scan, &scan.Repository); err != nil {
 		return "", fmt.Errorf("stage context: %w", err)
@@ -111,19 +129,18 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 		Ref:          scan.Ref,
 		MaxTurns:     skill.MaxTurns,
 		AllowedTools: skill.AllowedTools,
+		SrcReady:     true,
 	}
 	res, err := w.Runner.RunSkill(ctx, sj, emit)
-	scan.Commit = res.Commit
+	if res.Commit != "" {
+		scan.Commit = res.Commit
+	}
 	if err != nil {
-		if report, ok := w.handleCloneError(scan, err, emit); ok {
-			return report, nil
-		}
 		if _, ok := errors.AsType[*MaxTurnsReachedError](err); ok && res.Report != "" {
 			_ = w.parseSkillOutput(&skill, scan, res.Report, emit)
 		}
 		return res.Report, err
 	}
-	w.clearCloneError(scan)
 
 	if res.Report != "" {
 		if err := w.parseSkillOutput(&skill, scan, res.Report, emit); err != nil {

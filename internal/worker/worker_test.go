@@ -15,6 +15,13 @@ import (
 	"scrutineer/internal/queue"
 )
 
+// stubPrepareRepoSrc pretends a clone happened so doSkill's repo-cache
+// step never hits the network. Tests exercising the unreachable path
+// replace this with a function returning *RepoUnreachableError.
+func stubPrepareRepoSrc(_ context.Context, _, _, workRoot string, _ func(Event)) (string, error) {
+	return "abc", os.MkdirAll(filepath.Join(workRoot, "src"), 0o755)
+}
+
 // fakeRunner stubs the SkillRunner for unit tests: emits a log line so the
 // wrap() path is exercised and returns a pre-set result. Shared by the
 // skill and parser test files in this package.
@@ -52,10 +59,11 @@ func TestWorker_CancelStopsRunningScan(t *testing.T) {
 
 	runner := blockingRunner{started: make(chan struct{})}
 	w := &Worker{
-		DB:      gdb,
-		Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
-		DataDir: t.TempDir(),
-		Runner:  runner,
+		DB:             gdb,
+		Log:            slog.New(slog.NewTextHandler(io.Discard, nil)),
+		DataDir:        t.TempDir(),
+		Runner:         runner,
+		PrepareRepoSrc: stubPrepareRepoSrc,
 	}
 
 	body, _ := json.Marshal(queue.Payload{ScanID: scan.ID})
@@ -115,10 +123,11 @@ func TestWorker_maxTurnsReachedCompletesNotFails(t *testing.T) {
 	gdb.Create(&scan)
 
 	w := &Worker{
-		DB:      gdb,
-		Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
-		DataDir: t.TempDir(),
-		Runner:  fakeRunner{skillRes: SkillResult{Report: `{"partial":true}`}, skillErr: &MaxTurnsReachedError{}},
+		DB:             gdb,
+		Log:            slog.New(slog.NewTextHandler(io.Discard, nil)),
+		DataDir:        t.TempDir(),
+		Runner:         fakeRunner{skillRes: SkillResult{Report: `{"partial":true}`}, skillErr: &MaxTurnsReachedError{}},
+		PrepareRepoSrc: stubPrepareRepoSrc,
 	}
 	body, _ := json.Marshal(queue.Payload{ScanID: scan.ID})
 	if err := w.wrap(w.doSkill)(context.Background(), body); err != nil {
@@ -150,10 +159,11 @@ func TestWorker_workspaceCleanup(t *testing.T) {
 		scan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanQueued, SkillID: &skill.ID}
 		gdb.Create(&scan)
 		w := &Worker{
-			DB:      gdb,
-			Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
-			DataDir: dataDir,
-			Runner:  r,
+			DB:             gdb,
+			Log:            slog.New(slog.NewTextHandler(io.Discard, nil)),
+			DataDir:        dataDir,
+			Runner:         r,
+			PrepareRepoSrc: stubPrepareRepoSrc,
 		}
 		body, _ := json.Marshal(queue.Payload{ScanID: scan.ID})
 		if err := w.wrap(w.doSkill)(context.Background(), body); err != nil {

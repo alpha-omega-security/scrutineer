@@ -7,50 +7,23 @@ import (
 	"strings"
 )
 
-// locationURL turns a finding location ("path/to/file.rb:12-34") into a blob
-// link on the upstream forge, anchored to the line range. Returns "" when we
-// don't have enough to build one (no html_url, no commit, unrecognised host).
-//
-// Host matching parses htmlURL and compares against u.Hostname() so a path
-// segment like ".../github.com/..." on an unrelated host can't be mistaken
-// for the real forge.
-func locationURL(htmlURL, commit, location string) string {
-	if htmlURL == "" || commit == "" || location == "" {
+// locationURL turns a finding location ("path/to/file.rb:12-34") into a
+// link to the in-app code browser pinned to the recorded scan commit.
+// Returns "" when commit or location are missing; the template then
+// renders the location as plain text.
+func locationURL(repoID uint, commit, location string) string {
+	if repoID == 0 || commit == "" || location == "" {
 		return ""
 	}
 	path, frag := splitLocation(location)
 	if path == "" {
 		return ""
 	}
-	u, err := url.Parse(htmlURL)
-	if err != nil {
-		return ""
+	u := fmt.Sprintf("/repositories/%d/blob/%s/%s", repoID, commit, escapeBlobPath(path))
+	if frag != "" {
+		u += "?line=" + frag + "#L" + firstLine(frag)
 	}
-	host := strings.ToLower(u.Hostname())
-	base := strings.TrimSuffix(htmlURL, "/")
-	switch {
-	case host == "github.com":
-		u := fmt.Sprintf("%s/blob/%s/%s", base, commit, path)
-		if frag != "" {
-			u += "#" + githubFragment(frag)
-		}
-		return u
-	case host == "codeberg.org":
-		// Codeberg runs Gitea, which uses /src/commit/{sha}/ for blob views.
-		// Line anchors use the same L1 / L1-L5 shape as GitHub.
-		u := fmt.Sprintf("%s/src/commit/%s/%s", base, commit, path)
-		if frag != "" {
-			u += "#" + githubFragment(frag)
-		}
-		return u
-	case strings.HasPrefix(host, "gitlab."):
-		u := fmt.Sprintf("%s/-/blob/%s/%s", base, commit, path)
-		if frag != "" {
-			u += "#" + gitlabFragment(frag)
-		}
-		return u
-	}
-	return ""
+	return u
 }
 
 // locRE splits a finding location into its file path and line spec. The
@@ -67,16 +40,17 @@ func splitLocation(loc string) (path, lines string) {
 	return loc, ""
 }
 
-func githubFragment(lines string) string {
-	if a, b, ok := strings.Cut(lines, "-"); ok {
-		return "L" + a + "-L" + b
+func escapeBlobPath(p string) string {
+	parts := strings.Split(p, "/")
+	for i, s := range parts {
+		parts[i] = url.PathEscape(s)
 	}
-	return "L" + lines
+	return strings.Join(parts, "/")
 }
 
-func gitlabFragment(lines string) string {
-	if a, b, ok := strings.Cut(lines, "-"); ok {
-		return "L" + a + "-" + b
+func firstLine(lines string) string {
+	if a, _, ok := strings.Cut(lines, "-"); ok {
+		return a
 	}
-	return "L" + lines
+	return lines
 }

@@ -1,6 +1,6 @@
 {{define "threat_model"}}
 {{$tm := index . "TM"}}
-{{$htmlurl := index . "HTMLURL"}}
+{{$repoID := index . "RepoID"}}
 {{$commit := index . "Commit"}}
 <section class="accordion">
 
@@ -264,7 +264,7 @@
           <tr>
             <td><code>{{index . "id"}}</code></td>
             {{$loc := index . "location"}}
-            <td class="whitespace-normal">{{template "loc-link" (dict "HTMLURL" $htmlurl "Commit" $commit "Location" $loc)}}</td>
+            <td class="whitespace-normal">{{template "loc-link" (dict "RepoID" $repoID "Commit" $commit "Location" $loc)}}</td>
             <td class="whitespace-normal"><span class="badge-outline">{{index . "class"}}</span></td>
             <td class="whitespace-normal text-sm">{{index . "primitive"}}</td>
             <td class="whitespace-normal text-muted-foreground text-sm">{{index . "consumes"}}</td>

@@ -115,13 +115,15 @@ If you need an output shape that is not in this list, see "When you need Go chan
 
 When a scan starts, the worker creates `./data/work/scan-{id}/` with:
 
-    ./src/                       clone of the target repository at the requested ref
+    ./src/                       working copy of the target repository at the requested ref
     ./context.json               who you are scanning and how to call scrutineer back
     ./.claude/skills/{name}/     this skill's SKILL.md, schema.json, and any aux files
     ./schema.json                copy of the skill's schema for the model to read
     ./report.json                the skill writes its output here
 
-then runs `claude -p "Use the {name} skill in this workspace"` with the working directory set to the workspace root. Anything the skill writes outside `./report.json` is discarded when the workspace is cleaned. Write intermediate files under `./` rather than `/tmp`; concurrent scans share `/tmp` in the docker runner.
+`./src/` is copied from a per-URL persistent clone under `./data/work/repo-cache/<sha256(url)>/src/` so the second scan of the same repository only fetches the delta. The cache is always full-history; the code browser at `/repositories/{id}/blob/{commit}/{path}` resolves historical commits against it via `git show`.
+
+The worker then runs `claude -p "Use the {name} skill in this workspace"` with the working directory set to the workspace root. Anything the skill writes outside `./report.json` is discarded when the workspace is cleaned. Write intermediate files under `./` rather than `/tmp`; concurrent scans share `/tmp` in the docker runner.
 
 ## context.json
 

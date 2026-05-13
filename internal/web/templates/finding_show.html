@@ -36,8 +36,8 @@
   <div>
     <dt class="text-muted-foreground">Location</dt>
     <dd>
-      {{$u := locurl $repo.HTMLURL $scan.Commit $f.Location}}
-      {{if $u}}<a href="{{$u}}" target="_blank" rel="noopener" class="underline underline-offset-2">
+      {{$u := locurl $repo.ID $scan.Commit $f.Location}}
+      {{if $u}}<a href="{{$u}}" class="underline underline-offset-2">
         <code>{{$f.Location}}</code></a>
       {{else}}<code>{{$f.Location}}</code>{{end}}
       {{if $f.ExtraLocationCount}}
@@ -48,8 +48,8 @@
         <ul class="mt-1 space-y-0.5">
           {{range $i, $loc := $f.LocationList}}{{if $i}}
           <li>
-            {{$lu := locurl $repo.HTMLURL $scan.Commit $loc}}
-            {{if $lu}}<a href="{{$lu}}" target="_blank" rel="noopener"
+            {{$lu := locurl $repo.ID $scan.Commit $loc}}
+            {{if $lu}}<a href="{{$lu}}"
               class="underline underline-offset-2"><code class="text-xs">{{$loc}}</code></a>
             {{else}}<code class="text-xs">{{$loc}}</code>{{end}}
           </li>

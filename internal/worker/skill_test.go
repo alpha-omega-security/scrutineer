@@ -55,10 +55,11 @@ func TestDoSkill_findingsKind(t *testing.T) {
 	    "trace":"t","boundary":"b","validation":"v","rating":"High"}]}`
 
 	w := &Worker{
-		DB:      gdb,
-		Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
-		DataDir: t.TempDir(),
-		Runner:  fakeRunner{skillRes: SkillResult{Commit: "abc", Report: report}},
+		DB:             gdb,
+		Log:            slog.New(slog.NewTextHandler(io.Discard, nil)),
+		DataDir:        t.TempDir(),
+		Runner:         fakeRunner{skillRes: SkillResult{Commit: "abc", Report: report}},
+		PrepareRepoSrc: stubPrepareRepoSrc,
 	}
 
 	body, _ := json.Marshal(queue.Payload{ScanID: scan.ID})
@@ -111,10 +112,11 @@ func TestDoSkill_maintainersKind(t *testing.T) {
 	gdb.Create(&scan)
 
 	w := &Worker{
-		DB:      gdb,
-		Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
-		DataDir: t.TempDir(),
-		Runner:  fakeRunner{skillRes: SkillResult{Commit: "abc", Report: maintainersReport}},
+		DB:             gdb,
+		Log:            slog.New(slog.NewTextHandler(io.Discard, nil)),
+		DataDir:        t.TempDir(),
+		Runner:         fakeRunner{skillRes: SkillResult{Commit: "abc", Report: maintainersReport}},
+		PrepareRepoSrc: stubPrepareRepoSrc,
 	}
 
 	body, _ := json.Marshal(queue.Payload{ScanID: scan.ID})
@@ -171,7 +173,10 @@ func TestDoSkill_cloneErrorFlagsRepo(t *testing.T) {
 		DB:      gdb,
 		Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
 		DataDir: t.TempDir(),
-		Runner:  fakeRunner{skillErr: cloneErr},
+		Runner:  fakeRunner{},
+		PrepareRepoSrc: func(context.Context, string, string, string, func(Event)) (string, error) {
+			return "", cloneErr
+		},
 	}
 
 	body, _ := json.Marshal(queue.Payload{ScanID: scan.ID})
@@ -218,10 +223,11 @@ func TestDoSkill_successClearsCloneError(t *testing.T) {
 	gdb.Create(&scan)
 
 	w := &Worker{
-		DB:      gdb,
-		Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
-		DataDir: t.TempDir(),
-		Runner:  fakeRunner{skillRes: SkillResult{Commit: "abc", Report: "{}"}},
+		DB:             gdb,
+		Log:            slog.New(slog.NewTextHandler(io.Discard, nil)),
+		DataDir:        t.TempDir(),
+		Runner:         fakeRunner{skillRes: SkillResult{Commit: "abc", Report: "{}"}},
+		PrepareRepoSrc: stubPrepareRepoSrc,
 	}
 
 	body, _ := json.Marshal(queue.Payload{ScanID: scan.ID})

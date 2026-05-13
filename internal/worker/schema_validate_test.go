@@ -200,9 +200,10 @@ func TestWrap_schemaStrictKeepsReportOnFailure(t *testing.T) {
 	report := `{"tier":{"x":1}}`
 	w := &Worker{
 		DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		DataDir:      t.TempDir(),
-		SchemaStrict: true,
-		Runner:       fakeRunner{skillRes: SkillResult{Commit: "abc", Report: report}},
+		DataDir:        t.TempDir(),
+		SchemaStrict:   true,
+		Runner:         fakeRunner{skillRes: SkillResult{Commit: "abc", Report: report}},
+		PrepareRepoSrc: stubPrepareRepoSrc,
 	}
 	body, _ := json.Marshal(queue.Payload{ScanID: scan.ID})
 	if err := w.wrap(w.doSkill)(context.Background(), body); err != nil {

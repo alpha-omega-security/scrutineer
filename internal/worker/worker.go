@@ -52,11 +52,16 @@ type Worker struct {
 	mu      sync.Mutex
 	running map[uint]context.CancelFunc
 
-	// cacheMu serialises clone/fetch on the dependent-clone cache per
-	// URL. A Mutex per URL keeps two exposure scans from racing inside
-	// the same physical dir while leaving scans of different
-	// dependents free to run in parallel.
+	// cacheMu serialises clone/fetch on the per-URL repo and dependent
+	// caches. One Mutex per URL keeps two scans from racing inside the
+	// same physical dir while leaving scans of different URLs free to
+	// run in parallel.
 	cacheMu sync.Map
+
+	// PrepareRepoSrc overrides the default per-URL repo-cache populate
+	// step in doSkill. Tests set it to skip the network; production
+	// leaves it nil and falls through to prepareRepoSrc.
+	PrepareRepoSrc func(ctx context.Context, url, ref, workRoot string, emit func(Event)) (string, error)
 }
 
 // Cancel aborts an in-flight scan. Returns true if a running job was found and

@@ -146,7 +146,7 @@
         <td class="text-muted-foreground">
           {{if .CWE}}<span data-tooltip="{{cwename .CWE}}">{{with cwecatid .CWE}}<span class="text-muted-foreground">{{.}} ›</span> {{end}}{{.CWE}}</span>{{end}}
         </td>
-        <td class="whitespace-normal">{{template "loc-link" (dict "HTMLURL" $repo.HTMLURL "Commit" .Commit "Location" .Location "Extra" .ExtraLocationCount)}}</td>
+        <td class="whitespace-normal">{{template "loc-link" (dict "RepoID" $repo.ID "Commit" .Commit "Location" .Location "Extra" .ExtraLocationCount)}}</td>
         <td class="text-muted-foreground">#{{.ScanID}}</td>
       </tr>
     {{end}}
