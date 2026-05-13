@@ -172,12 +172,12 @@ func TestWorker_workspaceCleanup(t *testing.T) {
 		t.Errorf("workspace %s not removed after successful scan", okRoot)
 	}
 
-	// Failed scan: workspace kept for inspection.
+	// Failed scan: workspace also removed (prevents disk exhaustion).
 	fail, failRoot := run(fakeRunner{skillErr: errors.New("boom")})
 	if fail.Status != db.ScanFailed {
 		t.Fatalf("status = %s, want failed", fail.Status)
 	}
-	if _, err := os.Stat(failRoot); err != nil {
-		t.Errorf("workspace %s should be kept after failed scan: %v", failRoot, err)
+	if _, err := os.Stat(failRoot); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("workspace %s not removed after failed scan", failRoot)
 	}
 }
