@@ -196,12 +196,12 @@
         </button>
         <div data-popover aria-hidden="true" data-align="end">
           <div role="menu">
-            <a role="menuitem" href="/repositories/{{.Repo.ID}}">All categories</a>
+            <a role="menuitem" href="/repositories/{{.Repo.ID}}#rt4">All categories</a>
             {{range .Categories}}
-              <a role="menuitem" href="/repositories/{{$.Repo.ID}}?category={{.}}"
+              <a role="menuitem" href="/repositories/{{$.Repo.ID}}?category={{.}}#rt4"
                  {{if eq . $.Category}}aria-current="true"{{end}}>{{catlabel .}}</a>
             {{end}}
-            <a role="menuitem" href="/repositories/{{.Repo.ID}}?category={{.Uncategorized}}"
+            <a role="menuitem" href="/repositories/{{.Repo.ID}}?category={{.Uncategorized}}#rt4"
                {{if eq .Uncategorized .Category}}aria-current="true"{{end}}>{{.Uncategorized}}</a>
           </div>
         </div>
