@@ -193,7 +193,7 @@ func (w *Worker) wrap(h handler) func(context.Context, []byte) error {
 		if saveErr := w.DB.Save(&scan).Error; saveErr != nil {
 			return saveErr
 		}
-		if scan.Status == db.ScanDone {
+		if scan.Status.Terminal() {
 			if rmErr := os.RemoveAll(w.workRoot(scan.ID)); rmErr != nil {
 				w.Log.Warn("workspace cleanup failed", "scan", scan.ID, "err", rmErr)
 			}
