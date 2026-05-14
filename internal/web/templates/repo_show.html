@@ -103,22 +103,27 @@
       <p class="text-muted-foreground text-sm mb-6">Metadata not fetched yet.</p>
     {{end}}
 
-    <details class="mb-4 max-w-3xl">
-      <summary class="text-sm text-muted-foreground cursor-pointer hover:underline">
+    <div class="mb-4 max-w-3xl">
+      <h3 class="text-sm font-medium flex items-center gap-2">
         <i data-lucide="send"></i>
-        Disclosure channel{{if not .Repo.DisclosureChannel}}<span class="italic"> — not set</span>{{end}}
-      </summary>
+        Disclosure channel
+      </h3>
       {{if .Repo.DisclosureChannel}}
         <p class="text-sm mt-2 whitespace-pre-wrap">{{.Repo.DisclosureChannel}}</p>
+      {{else}}
+        <p class="text-sm mt-2 italic text-muted-foreground">not set</p>
       {{end}}
-      <form method="post" action="/repositories/{{.Repo.ID}}/disclosure-channel" class="form grid grid-cols-[1fr_auto] gap-2 mt-2">
-        <input class="input text-xs" type="text" name="disclosure_channel"
-               value="{{.Repo.DisclosureChannel}}"
-               placeholder="security@example.org, https://…/security/advisories, …">
-        <button class="btn-sm" type="submit">Save</button>
-      </form>
-      <p class="text-xs text-muted-foreground mt-1">Auto-filled by the maintainers skill from <code>SECURITY.md</code>, registry owner data, or CODEOWNERS. Edit freely.</p>
-    </details>
+      <details class="mt-2">
+        <summary class="text-xs text-muted-foreground cursor-pointer hover:underline">Edit</summary>
+        <form method="post" action="/repositories/{{.Repo.ID}}/disclosure-channel" class="form grid grid-cols-[1fr_auto] gap-2 mt-2">
+          <input class="input text-xs" type="text" name="disclosure_channel"
+                 value="{{.Repo.DisclosureChannel}}"
+                 placeholder="security@example.org, https://…/security/advisories, …">
+          <button class="btn-sm" type="submit">Save</button>
+        </form>
+        <p class="text-xs text-muted-foreground mt-1">Auto-filled by the maintainers skill from <code>SECURITY.md</code>, registry owner data, or CODEOWNERS. Edit freely.</p>
+      </details>
+    </div>
 
     {{if .Subprojects}}
       <h3 class="font-medium mb-2">Subprojects <span class="text-muted-foreground text-xs">({{len .Subprojects}})</span></h3>
