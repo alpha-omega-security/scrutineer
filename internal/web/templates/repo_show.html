@@ -106,10 +106,13 @@
     <details class="mb-4 max-w-3xl">
       <summary class="text-sm text-muted-foreground cursor-pointer hover:underline">
         <i data-lucide="send"></i>
-        Disclosure channel{{if .Repo.DisclosureChannel}}: <code class="text-xs">{{.Repo.DisclosureChannel}}</code>{{else}}<span class="italic"> not set</span>{{end}}
+        Disclosure channel{{if not .Repo.DisclosureChannel}}<span class="italic"> — not set</span>{{end}}
       </summary>
+      {{if .Repo.DisclosureChannel}}
+        <p class="text-sm mt-2 whitespace-pre-wrap">{{.Repo.DisclosureChannel}}</p>
+      {{end}}
       <form method="post" action="/repositories/{{.Repo.ID}}/disclosure-channel" class="form grid grid-cols-[1fr_auto] gap-2 mt-2">
-        <input class="input font-mono text-xs" type="text" name="disclosure_channel"
+        <input class="input text-xs" type="text" name="disclosure_channel"
                value="{{.Repo.DisclosureChannel}}"
                placeholder="security@example.org, https://…/security/advisories, …">
         <button class="btn-sm" type="submit">Save</button>
