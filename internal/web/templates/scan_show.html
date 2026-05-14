@@ -17,10 +17,17 @@
         <i data-lucide="download"></i> Export as markdown
       </a>
       {{end}}
+      {{if or (eq (status .Status) "queued") (eq (status .Status) "running")}}
+      <form method="post" action="/scans/{{.ID}}/cancel"
+            hx-post="/scans/{{.ID}}/cancel" hx-swap="none">
+        <button type="submit" class="btn-outline"><i data-lucide="x"></i> Cancel</button>
+      </form>
+      {{else}}
       <form method="post" action="/scans/{{.ID}}/retry"
             hx-post="/scans/{{.ID}}/retry" hx-swap="none">
         <button type="submit" class="btn-outline"><i data-lucide="refresh-cw"></i> Retry</button>
       </form>
+      {{end}}
     </div>
   {{else if .HasExportableReport}}
     <a href="/scans/{{.ID}}/report.md" class="btn-outline" download>
