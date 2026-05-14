@@ -565,28 +565,33 @@ func firstNonEmpty(vals ...string) string {
 // loadRepoFindings returns the open findings for a repo split into two
 // slices: deep-dive output and tool-scanner output (zizmor, semgrep, …).
 // Findings with no matching scan or an empty skill_name are treated as
-// deep-dive so legacy rows don't get lost. The returned scanSkill map is
-// keyed by scan ID and is what the template reads to label scanner cards.
+// deep-dive so legacy rows don't get lost. The returned scanSkill and
+// scanCommit maps are keyed by scan ID; the template reads scanSkill to
+// label scanner cards and scanCommit to build forge links for each
+// finding's location (each scan can be on a different commit).
 // When category is non-empty, only the deep-dive slice is narrowed to the
 // View-1400 bucket; scanner findings are returned unfiltered so the Scanners
 // tab stays reachable.
-func loadRepoFindings(gdb *gorm.DB, repoID uint, category string) ([]db.Finding, []db.Finding, map[uint]string) {
+func loadRepoFindings(gdb *gorm.DB, repoID uint, category string) ([]db.Finding, []db.Finding, map[uint]string, map[uint]string) {
 	var all []db.Finding
 	gdb.Where("repository_id = ? AND status NOT IN ?", repoID,
 		[]db.FindingLifecycle{db.FindingRejected, db.FindingDuplicate}).
 		Order(severityOrder).Order("id desc").Find(&all)
 
 	scanSkill := map[uint]string{}
+	scanCommit := map[uint]string{}
 	if len(all) == 0 {
-		return nil, nil, scanSkill
+		return nil, nil, scanSkill, scanCommit
 	}
 	var rows []struct {
 		ID        uint
 		SkillName string
+		Commit    string
 	}
-	gdb.Raw(`SELECT id, COALESCE(skill_name, '') AS skill_name FROM scans WHERE repository_id = ?`, repoID).Scan(&rows)
+	gdb.Raw("SELECT id, COALESCE(skill_name, '') AS skill_name, COALESCE(`commit`, '') AS `commit` FROM scans WHERE repository_id = ?", repoID).Scan(&rows)
 	for _, row := range rows {
 		scanSkill[row.ID] = row.SkillName
+		scanCommit[row.ID] = row.Commit
 	}
 	var deepDive, scanners []db.Finding
 	for _, f := range all {
@@ -600,7 +605,7 @@ func loadRepoFindings(gdb *gorm.DB, repoID uint, category string) ([]db.Finding,
 			scanners = append(scanners, f)
 		}
 	}
-	return deepDive, scanners, scanSkill
+	return deepDive, scanners, scanSkill, scanCommit
 }
 
 func (s *Server) findings(w http.ResponseWriter, r *http.Request) {
@@ -1220,7 +1225,7 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 		Select("COALESCE(SUM(cost_usd), 0)").Scan(&totalCost)
 
 	category := r.URL.Query().Get("category")
-	findings, scannerFindings, scanSkill := loadRepoFindings(s.DB, repo.ID, category)
+	findings, scannerFindings, scanSkill, scanCommit := loadRepoFindings(s.DB, repo.ID, category)
 
 	var maintainers []db.Maintainer
 	s.DB.Joins("JOIN repository_maintainers ON repository_maintainers.maintainer_id = maintainers.id").
@@ -1282,6 +1287,7 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 		"Findings":        findings,
 		"ScannerFindings": scannerFindings,
 		"ScanSkill":       scanSkill,
+		"ScanCommit":      scanCommit,
 		"FailedScans":     failedScans,
 		"TotalCost":       totalCost,
 		"TMCommit":        tmCommit,

@@ -167,8 +167,7 @@
               <td class="min-w-0 whitespace-normal"><a href="/findings/{{.ID}}">{{.Title}}</a></td>
               <td>{{template "finding-status" (fstatus .Status)}}</td>
               <td class="whitespace-normal">
-                <code class="text-xs break-all">{{.Location}}</code>
-                {{with .ExtraLocationCount}}<span class="ml-1 rounded bg-muted px-1 text-xs text-muted-foreground">+{{.}}</span>{{end}}
+                {{template "loc-link" (dict "HTMLURL" $.Repo.HTMLURL "Commit" $.Latest.Commit "Location" .Location "Extra" .ExtraLocationCount)}}
               </td>
             </tr>
           {{end}}
@@ -211,6 +210,7 @@
       <p class="text-sm text-muted-foreground">No findings in this category.</p>
     {{end}}
     <div class="grid gap-4">
+      {{$commits := .ScanCommit}}
       {{range .Findings}}
         <div id="finding-card-{{.ID}}" class="card">
           <header>
@@ -221,8 +221,7 @@
               {{if .CWE}}<span class="badge-outline ml-auto" data-tooltip="{{cwename .CWE}}">{{with cwecatid .CWE}}<span class="text-muted-foreground">{{.}} ›</span> {{end}}{{.CWE}}</span>{{end}}
             </div>
             <p>
-              <code class="text-xs">{{.Location}}</code>
-              {{with .ExtraLocationCount}}<span class="ml-1 rounded bg-muted px-1 text-xs text-muted-foreground">+{{.}}</span>{{end}}
+              {{template "loc-link" (dict "HTMLURL" $.Repo.HTMLURL "Commit" (index $commits .ScanID) "Location" .Location "Extra" .ExtraLocationCount)}}
               <span class="text-xs text-muted-foreground">&middot; scan <a class="hover:underline" href="/scans/{{.ScanID}}">#{{.ScanID}}</a></span>
             </p>
           </header>
@@ -243,6 +242,7 @@
     </p>
     <div class="grid gap-4">
       {{$skills := .ScanSkill}}
+      {{$commits := .ScanCommit}}
       {{range .ScannerFindings}}
         <div id="finding-card-{{.ID}}" class="card">
           <header>
@@ -254,7 +254,7 @@
               {{if .CWE}}<span class="badge-outline" data-tooltip="{{cwename .CWE}}">{{with cwecatid .CWE}}<span class="text-muted-foreground">{{.}} ›</span> {{end}}{{.CWE}}</span>{{end}}
             </div>
             <p>
-              <code class="text-xs">{{.Location}}</code>
+              {{template "loc-link" (dict "HTMLURL" $.Repo.HTMLURL "Commit" (index $commits .ScanID) "Location" .Location "Extra" .ExtraLocationCount)}}
               <span class="text-xs text-muted-foreground">&middot; scan <a class="hover:underline" href="/scans/{{.ScanID}}">#{{.ScanID}}</a></span>
             </p>
           </header>
