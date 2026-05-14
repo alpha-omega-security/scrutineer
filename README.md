@@ -189,7 +189,7 @@ When the docker runner is active, scrutineer starts an authenticated egress prox
 | `-scan-timeout` | `1h` | Wall-clock limit per scan; exceeded scans fail |
 | `-max-turns` | `0` | Passed as `--max-turns` to claude-code (0 = unlimited) |
 | `-schema-strict` | `false` | Fail a scan when its `report.json` does not validate against the skill's `schema.json` (default: warn in the scan log and parse anyway) |
-| `-backend` | `anthropic` | Backend to use: `anthropic` or `openai` |
+| `-backend` | `anthropic` | Backend to use: `anthropic`, `openai`, or `codex` |
 | `-anthropic-base-url` | - | Custom Anthropic API base URL (env: `ANTHROPIC_BASE_URL`) |
 
 ## Config file
@@ -222,7 +222,22 @@ Or configure it in `scrutineer.yaml`:
       - name: Function Gemma 3
         id: functiongemma:270m
 
-The `OPENAI_API_KEY` env var is required by the client library but can be set to any value when talking to a local server that doesn't check it.
+The `OPENAI_API_KEY` env var is optional. When unset, requests are sent without an Authorization header, which is fine for local servers like Ollama that don't check it.
+
+## Codex backend (OpenAI's coding agent)
+
+Scrutineer can use [OpenAI Codex](https://github.com/openai/codex) as the harness instead of claude-code. The codex backend communicates with the codex app-server via the [codex-sdk-go](https://pkg.go.dev/github.com/pmenglund/codex-sdk-go) library over JSON-RPC:
+
+    npm install -g @openai/codex
+    export OPENAI_API_KEY=sk-...
+    go run ./cmd/scrutineer -skills ./skills -backend codex
+
+Or in `scrutineer.yaml`:
+
+    backend: codex
+    default_model: codex-mini-latest
+
+The codex backend requires the `codex` CLI on PATH (the SDK spawns `codex app-server` as a subprocess) and a valid `OPENAI_API_KEY`. Each scan starts a thread with full-auto approval and runs the skill prompt as a single turn.
 
 ## Security
 

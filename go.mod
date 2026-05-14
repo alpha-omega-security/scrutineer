@@ -7,6 +7,7 @@ toolchain go1.26.3
 require (
 	github.com/git-pkgs/sbom v0.1.0
 	github.com/glebarez/sqlite v1.11.0
+	github.com/pmenglund/codex-sdk-go v0.0.0-20260509000142-89b0f6c5c176
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	github.com/yuin/goldmark v1.8.2
 	gopkg.in/yaml.v3 v3.0.1

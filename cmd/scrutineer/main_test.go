@@ -223,3 +223,30 @@ func TestSelectRunner_local(t *testing.T) {
 		t.Errorf("MaxTurns = %d", r.MaxTurns)
 	}
 }
+
+func TestSelectRunner_codex(t *testing.T) {
+	f := &flags{
+		addr:      "127.0.0.1:8080",
+		backend:   "codex",
+		cloneMode: "full",
+		maxTurns:  25,
+		set:       map[string]bool{},
+	}
+	runner, apiBase, err := selectRunner(slog.New(slog.NewTextHandler(io.Discard, nil)), f, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if apiBase != "http://127.0.0.1:8080/api" {
+		t.Errorf("apiBase = %q", apiBase)
+	}
+	r, ok := runner.(worker.CodexRunner)
+	if !ok {
+		t.Fatalf("runner type = %T, want CodexRunner", runner)
+	}
+	if !r.FullClone {
+		t.Error("FullClone = false, want true")
+	}
+	if r.MaxTurns != 25 {
+		t.Errorf("MaxTurns = %d, want 25", r.MaxTurns)
+	}
+}

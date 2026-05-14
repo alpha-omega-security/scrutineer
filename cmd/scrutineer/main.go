@@ -310,6 +310,12 @@ func run(log *slog.Logger) error {
 func selectRunner(log *slog.Logger, f *flags, egressExtra []string) (worker.SkillRunner, string, error) { //nolint:ireturn // factory function
 	apiBase := "http://" + f.addr + "/api"
 	switch {
+	case f.backend == "codex":
+		log.Info("using codex harness")
+		return worker.CodexRunner{
+			FullClone: f.fullClone(),
+			MaxTurns:  f.maxTurns,
+		}, apiBase, nil
 	case f.backend == "openai":
 		openaiBase := os.Getenv("OPENAI_BASE_URL")
 		if openaiBase == "" {
