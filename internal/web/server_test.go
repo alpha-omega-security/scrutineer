@@ -240,6 +240,51 @@ func TestRepoNew_fallbackPages(t *testing.T) {
 	}
 }
 
+func TestRepoCreate_htmxInvalidURL_rendersToastOOB(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	form := url.Values{"url": {"not-a-url"}}
+	r := httptest.NewRequest("POST", "/repositories", strings.NewReader(form.Encode()))
+	r.Host = testHost
+	r.Header.Set("Sec-Fetch-Site", "same-origin")
+	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	r.Header.Set("HX-Request", "true")
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200 (htmx error path renders inline, no redirect)", w.Code)
+	}
+	if loc := w.Header().Get("Location"); loc != "" {
+		t.Errorf("unexpected Location %q (htmx error path must not redirect)", loc)
+	}
+	if hx := w.Header().Get("HX-Redirect"); hx != "" {
+		t.Errorf("unexpected HX-Redirect %q (htmx error path must not redirect)", hx)
+	}
+	if ct := w.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Errorf("Content-Type %q, want text/html", ct)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, `hx-swap-oob="afterbegin:#toaster"`) {
+		t.Errorf("body missing toast-oob wrapper:\n%s", body)
+	}
+	if !strings.Contains(body, `data-category="error"`) {
+		t.Errorf("body missing error toast category:\n%s", body)
+	}
+	if !strings.Contains(body, "Invalid repository URL") {
+		t.Errorf("body missing error title:\n%s", body)
+	}
+
+	var n int64
+	s.DB.Model(&db.Repository{}).Count(&n)
+	if n != 0 {
+		t.Errorf("repository count = %d, want 0 (invalid input must not persist)", n)
+	}
+}
+
 func TestFlash_roundtrip(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
