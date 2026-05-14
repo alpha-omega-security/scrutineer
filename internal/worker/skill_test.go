@@ -266,8 +266,8 @@ func TestStageContext_writesRepoFacts(t *testing.T) {
 }
 
 func TestStageSkill_writesMarkdownAndSchema(t *testing.T) {
-	dst := t.TempDir()
-	dir := filepath.Join(dst, "ns")
+	work := t.TempDir()
+	dir := filepath.Join(work, ".claude", "skills", "s")
 	skill := &db.Skill{
 		Name:        "s",
 		Description: "d",
@@ -275,7 +275,7 @@ func TestStageSkill_writesMarkdownAndSchema(t *testing.T) {
 		SchemaJSON:  `{"x":1}`,
 		Source:      "ui",
 	}
-	if err := stageSkill(skill, dir); err != nil {
+	if err := stageSkill(skill, work, dir); err != nil {
 		t.Fatal(err)
 	}
 	md, err := os.ReadFile(filepath.Join(dir, "SKILL.md"))
@@ -293,7 +293,14 @@ func TestStageSkill_writesMarkdownAndSchema(t *testing.T) {
 		t.Fatal(err)
 	}
 	if string(sch) != `{"x":1}` {
-		t.Errorf("schema: %q", string(sch))
+		t.Errorf("schema in skill dir: %q", string(sch))
+	}
+	rootSch, err := os.ReadFile(filepath.Join(work, "schema.json"))
+	if err != nil {
+		t.Fatalf("schema.json not staged at work root: %v", err)
+	}
+	if string(rootSch) != `{"x":1}` {
+		t.Errorf("schema at work root: %q", string(rootSch))
 	}
 }
 

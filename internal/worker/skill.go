@@ -90,11 +90,11 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 		return "", err
 	}
 	skillDir := filepath.Join(workRoot, ".claude", "skills", skill.Name)
-	if err := stageSkill(&skill, skillDir); err != nil {
-		return "", fmt.Errorf("stage skill: %w", err)
-	}
 	if err := stageContext(workRoot, w.APIBase, w.ForkOrg, scan, &scan.Repository); err != nil {
 		return "", fmt.Errorf("stage context: %w", err)
+	}
+	if err := stageSkill(&skill, workRoot, skillDir); err != nil {
+		return "", fmt.Errorf("stage skill: %w", err)
 	}
 
 	prompt := buildSkillPrompt(skill.Name, skill.OutputFile)
@@ -446,7 +446,10 @@ func validateSkillPaths(name, outputFile string) error {
 // at ./.claude/skills/{name}. Only SKILL.md and schema.json are reconstructed
 // from the DB; supplementary files (scripts/, references/, assets/) are
 // copied from SourcePath when the skill was loaded from disk.
-func stageSkill(skill *db.Skill, dst string) error {
+//
+// schema.json is also written to workRoot so the `./schema.json` path every
+// SKILL.md references resolves without the model having to glob for it (#221).
+func stageSkill(skill *db.Skill, workRoot, dst string) error {
 	if err := os.RemoveAll(dst); err != nil {
 		return err
 	}
@@ -459,6 +462,9 @@ func stageSkill(skill *db.Skill, dst string) error {
 	}
 	if skill.SchemaJSON != "" {
 		if err := os.WriteFile(filepath.Join(dst, "schema.json"), []byte(skill.SchemaJSON), filePerm); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(workRoot, "schema.json"), []byte(skill.SchemaJSON), filePerm); err != nil {
 			return err
 		}
 	}

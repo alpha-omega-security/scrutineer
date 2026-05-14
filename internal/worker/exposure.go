@@ -159,7 +159,7 @@ func (w *Worker) doExposure(ctx context.Context, scan *db.Scan, emit func(Event)
 	scan.Commit = cacheCommit
 
 	skillDir := filepath.Join(workRoot, ".claude", "skills", skill.Name)
-	if err := stageSkill(&skill, skillDir); err != nil {
+	if err := stageSkill(&skill, workRoot, skillDir); err != nil {
 		return "", fmt.Errorf("stage skill: %w", err)
 	}
 	if err := stageContext(workRoot, w.APIBase, w.ForkOrg, scan, &scan.Repository); err != nil {
