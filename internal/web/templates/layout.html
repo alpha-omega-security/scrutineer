@@ -92,16 +92,19 @@
   <div>
     <header><h2>Add repository</h2></header>
     <section>
-      <form method="post" action="/repositories" class="form grid gap-3">
-        <input class="input" type="text" name="url"
+      <form method="post" action="/repositories"
+            hx-post="/repositories" hx-swap="none"
+            class="form grid gap-3">
+        <input class="input" type="url" name="url"
                placeholder="https://github.com/maragudk/goqite.git" required>
         <footer class="flex justify-between items-center gap-2">
           <a href="/repositories/new?bulk=1" data-dialog="bulk-add-repo" class="btn-ghost-sm">
             <i data-lucide="list-plus"></i> Add multiple
           </a>
           <div class="flex gap-2">
-            <button type="submit" class="btn-outline" formmethod="dialog" formnovalidate>Cancel</button>
-            <button type="submit" class="btn" hx-post="/repositories" hx-swap="none">
+            <button type="button" class="btn-outline"
+                    onclick="this.closest('dialog').close()">Cancel</button>
+            <button type="submit" class="btn">
               <i data-lucide="play"></i> Scan
             </button>
           </div>
@@ -122,12 +125,15 @@
       </p>
     </header>
     <section>
-      <form method="post" action="/repositories/bulk" class="form grid gap-3">
+      <form method="post" action="/repositories/bulk"
+            hx-post="/repositories/bulk" hx-swap="none"
+            class="form grid gap-3">
         <textarea class="input font-mono text-xs" name="urls" rows="10" required
                   placeholder="https://github.com/maragudk/goqite.git&#10;https://github.com/spf13/cobra.git&#10;https://github.com/stretchr/testify.git"></textarea>
         <footer class="flex justify-end gap-2">
-          <button type="submit" class="btn-outline" formmethod="dialog" formnovalidate>Cancel</button>
-          <button type="submit" class="btn" hx-post="/repositories/bulk" hx-swap="none">
+          <button type="button" class="btn-outline"
+                  onclick="this.closest('dialog').close()">Cancel</button>
+          <button type="submit" class="btn">
             <i data-lucide="play"></i> Import
           </button>
         </footer>
@@ -196,6 +202,8 @@
   </div>
 </div>
 {{end}}
+
+{{define "toast-oob"}}<div hx-swap-oob="afterbegin:#toaster">{{template "toast" .}}</div>{{end}}
 
 {{define "status-badge"}}
   {{if eq . "done"}}<span class="badge-secondary"><i data-lucide="check"></i> complete</span>

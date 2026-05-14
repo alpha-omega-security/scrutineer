@@ -1034,15 +1034,33 @@ func (s *Server) findingShow(w http.ResponseWriter, r *http.Request) {
 func (s *Server) repoCreate(w http.ResponseWriter, r *http.Request) {
 	input, err := ParseRepoInput(r.FormValue("url"))
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+		s.repoCreateError(w, r, "Invalid repository URL", err, http.StatusUnprocessableEntity)
 		return
 	}
 	repo, _, err := s.createOrTriageRepo(r.Context(), input, r.FormValue("model"))
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		s.repoCreateError(w, r, "Couldn't add repository", err, http.StatusInternalServerError)
 		return
 	}
 	s.redirect(w, r, fmt.Sprintf("/repositories/%d", repo.ID))
+}
+
+// repoCreateError renders feedback for a failed Add Repository submission.
+// htmx clients get an OOB toast so the dialog stays open and the user can
+// fix their input; plain form posts fall back to a basic error page.
+func (s *Server) repoCreateError(w http.ResponseWriter, r *http.Request, title string, err error, status int) {
+	if !isHX(r) {
+		http.Error(w, err.Error(), status)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if execErr := s.tmpl.ExecuteTemplate(w, "toast-oob", Flash{
+		Category:    "error",
+		Title:       title,
+		Description: err.Error(),
+	}); execErr != nil {
+		s.Log.Error("render toast-oob", "err", execErr)
+	}
 }
 
 // repoNew is the no-javascript fallback for the Add Repository dialog.
