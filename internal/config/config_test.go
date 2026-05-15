@@ -174,3 +174,14 @@ func TestLoad_parsesTheme(t *testing.T) {
 		t.Errorf("theme=%q, want catppuccin", c.Theme)
 	}
 }
+
+func TestValidateBackend(t *testing.T) {
+	for _, name := range []string{"", "claude-code", "anthropic", "codex", "opencode"} {
+		if err := ValidateBackend(name); err != nil {
+			t.Errorf("ValidateBackend(%q) = %v, want nil", name, err)
+		}
+	}
+	if err := ValidateBackend("unknown"); err == nil {
+		t.Error("expected error for unknown backend")
+	}
+}

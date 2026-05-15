@@ -78,7 +78,7 @@ func parseFlags() *flags {
 	flag.StringVar(&f.addr, "addr", "127.0.0.1:8080", "listen address")
 	flag.StringVar(&f.dataDir, "data", "./data", "data directory (db + workspaces)")
 	flag.StringVar(&f.effort, "effort", "high", "claude effort")
-	flag.StringVar(&f.backend, "backend", "", "LLM backend: claude-code (default) or openai")
+	flag.StringVar(&f.backend, "backend", "", "LLM backend: anthropic (default), codex, or opencode")
 	flag.BoolVar(&f.noDocker, "no-docker", false, "disable containerised runner even if docker is available")
 	flag.StringVar(&f.runnerImage, "runner-image", worker.DefaultRunnerImage, "docker image for per-job containers")
 	flag.StringVar(&f.skillsRepo, "skills-repo", "", "clone skills from this git https URL on startup")
@@ -309,29 +309,17 @@ func run(log *slog.Logger) error {
 
 func selectRunner(log *slog.Logger, f *flags, egressExtra []string) (worker.SkillRunner, string, error) { //nolint:ireturn // factory function
 	apiBase := "http://" + f.addr + "/api"
+
+	// Map backend flag to harness name for DockerRunner.
+	harness := "claude"
+	switch f.backend {
+	case "codex":
+		harness = "codex"
+	case "opencode":
+		harness = "opencode"
+	}
+
 	switch {
-	case f.backend == "codex":
-		log.Info("using codex harness")
-		return worker.CodexRunner{
-			FullClone: f.fullClone(),
-			MaxTurns:  f.maxTurns,
-		}, apiBase, nil
-	case f.backend == "openai":
-		openaiBase := os.Getenv("OPENAI_BASE_URL")
-		if openaiBase == "" {
-			openaiBase = "https://api.openai.com/v1"
-		}
-		openaiKey := os.Getenv("OPENAI_API_KEY")
-		if openaiKey == "" {
-			log.Warn("OPENAI_API_KEY is not set; requests will have no Authorization header (OK for local servers like Ollama)")
-		}
-		log.Info("using openai-compatible backend", "base_url", openaiBase)
-		return worker.OpenAIRunner{
-			BaseURL:   openaiBase,
-			APIKey:    openaiKey,
-			FullClone: f.fullClone(),
-			MaxTurns:  f.maxTurns,
-		}, apiBase, nil
 	case !f.noDocker && worker.DockerAvailable():
 		allow := append(append([]string{}, worker.DefaultEgressAllow...), egressExtra...)
 		token := worker.NewProxyToken()
@@ -341,11 +329,13 @@ func selectRunner(log *slog.Logger, f *flags, egressExtra []string) (worker.Skil
 		}
 		gwIP := worker.ResolveHostGatewayIPv4(f.runnerImage)
 		log.Info("docker detected, using containerised runner",
-			"image", f.runnerImage, "egress_proxy_port", port, "egress_allow", len(allow),
+			"image", f.runnerImage, "harness", harness,
+			"egress_proxy_port", port, "egress_allow", len(allow),
 			"host_gateway_ipv4", gwIP)
 		r := worker.DockerRunner{
 			Image:            f.runnerImage,
 			Effort:           f.effort,
+			Harness:          harness,
 			ProxyURL:         worker.ProxyURL(token, port),
 			FullClone:        f.fullClone(),
 			MaxTurns:         f.maxTurns,
@@ -357,7 +347,7 @@ func selectRunner(log *slog.Logger, f *flags, egressExtra []string) (worker.Skil
 		apiBase = "http://" + net.JoinHostPort(worker.HostGatewayAlias, addrPort(f.addr)) + "/api"
 		return r, apiBase, nil
 	default:
-		log.Info("docker not available or disabled, using local runner (no isolation)")
+		log.Info("docker not available or disabled, using local runner (no isolation)", "harness", harness)
 		return worker.LocalClaude{Effort: f.effort, FullClone: f.fullClone(), MaxTurns: f.maxTurns}, apiBase, nil
 	}
 }

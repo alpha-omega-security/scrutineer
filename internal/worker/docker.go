@@ -17,12 +17,14 @@ import (
 
 const DefaultRunnerImage = "ghcr.io/alpha-omega-security/scrutineer-runner:latest"
 
-// DockerRunner launches claude inside an ephemeral container with the scan
+// DockerRunner launches a skill inside an ephemeral container with the scan
 // workspace (clone + staged skill + output file) mounted at /work. It
-// implements SkillRunner.
+// implements SkillRunner. The Harness field selects which CLI the container
+// execs: "claude" (default), "codex", or "opencode".
 type DockerRunner struct {
 	Image            string
 	Effort           string
+	Harness          string // "claude" (default), "codex", or "opencode"
 	ProxyURL         string // http://user:token@host.docker.internal:port; "" disables egress
 	FullClone        bool
 	MaxTurns         int
@@ -35,6 +37,36 @@ func (d DockerRunner) image() string {
 		return d.Image
 	}
 	return DefaultRunnerImage
+}
+
+func (d DockerRunner) harness() string {
+	if d.Harness != "" {
+		return d.Harness
+	}
+	return "claude"
+}
+
+// buildEntrypoint returns the command+args the container should exec based
+// on the configured harness.
+func (d DockerRunner) buildEntrypoint(sj SkillJob) []string {
+	switch d.harness() {
+	case "codex":
+		args := []string{"codex", "exec"}
+		if sj.Model != "" {
+			args = append(args, "--model", sj.Model)
+		}
+		args = append(args, buildSkillPrompt(sj.Name, sj.OutputFile))
+		return args
+	case "opencode":
+		args := []string{"opencode", "run"}
+		if sj.Model != "" {
+			args = append(args, "--model", sj.Model)
+		}
+		args = append(args, buildSkillPrompt(sj.Name, sj.OutputFile))
+		return args
+	default: // "claude"
+		return append([]string{"claude"}, buildClaudeArgs(sj, d.Effort, d.MaxTurns)...)
+	}
 }
 
 // RunSkill runs a skill inside an ephemeral container. The whole workspace
@@ -57,7 +89,7 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 		_ = os.Remove(outPath)
 	}
 
-	claudeArgs := append([]string{"claude"}, buildClaudeArgs(sj, d.Effort, d.MaxTurns)...)
+	entrypoint := d.buildEntrypoint(sj)
 
 	gwTarget := "host-gateway"
 	if d.HostGatewayIP != "" {
@@ -94,8 +126,11 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 	if d.AnthropicBaseURL != "" {
 		dockerArgs = append(dockerArgs, "-e", "ANTHROPIC_BASE_URL="+d.AnthropicBaseURL)
 	}
+	if os.Getenv("OPENAI_API_KEY") != "" {
+		dockerArgs = append(dockerArgs, "-e", "OPENAI_API_KEY")
+	}
 	dockerArgs = append(dockerArgs, d.image())
-	dockerArgs = append(dockerArgs, claudeArgs...)
+	dockerArgs = append(dockerArgs, entrypoint...)
 
 	cmd := exec.CommandContext(ctx, "docker", dockerArgs...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -107,7 +142,7 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 	}
 	cmd.Stderr = cmd.Stdout
 
-	logLine := "$ docker run --rm " + d.image() + " <skill:" + sj.Name + ">"
+	logLine := "$ docker run --rm " + d.image() + " " + d.harness() + " <skill:" + sj.Name + ">"
 	if d.AnthropicBaseURL != "" {
 		logLine += " [ANTHROPIC_BASE_URL=" + d.AnthropicBaseURL + "]"
 	}

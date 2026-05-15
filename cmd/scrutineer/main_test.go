@@ -125,74 +125,8 @@ func TestBaseURLHost(t *testing.T) {
 	}
 }
 
-func TestSelectRunner_openai(t *testing.T) {
-	t.Setenv("OPENAI_BASE_URL", "http://localhost:11434/v1")
-	t.Setenv("OPENAI_API_KEY", "test-key")
-
-	f := &flags{
-		addr:      "127.0.0.1:8080",
-		backend:   "openai",
-		cloneMode: "shallow",
-		maxTurns:  50,
-		set:       map[string]bool{},
-	}
-	runner, apiBase, err := selectRunner(slog.New(slog.NewTextHandler(io.Discard, nil)), f, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if apiBase != "http://127.0.0.1:8080/api" {
-		t.Errorf("apiBase = %q", apiBase)
-	}
-	r, ok := runner.(worker.OpenAIRunner)
-	if !ok {
-		t.Fatalf("runner type = %T, want OpenAIRunner", runner)
-	}
-	if r.BaseURL != "http://localhost:11434/v1" {
-		t.Errorf("BaseURL = %q", r.BaseURL)
-	}
-	if r.APIKey != "test-key" {
-		t.Errorf("APIKey = %q", r.APIKey)
-	}
-	if r.MaxTurns != 50 {
-		t.Errorf("MaxTurns = %d", r.MaxTurns)
-	}
-}
-
-func TestSelectRunner_openaiDefaultBase(t *testing.T) {
-	t.Setenv("OPENAI_BASE_URL", "")
-	t.Setenv("OPENAI_API_KEY", "k")
-
-	f := &flags{addr: "127.0.0.1:8080", backend: "openai", cloneMode: "shallow", set: map[string]bool{}}
-	runner, _, err := selectRunner(slog.New(slog.NewTextHandler(io.Discard, nil)), f, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	r := runner.(worker.OpenAIRunner)
-	if r.BaseURL != "https://api.openai.com/v1" {
-		t.Errorf("BaseURL = %q, want default", r.BaseURL)
-	}
-}
-
-func TestSelectRunner_openaiMissingKey(t *testing.T) {
-	t.Setenv("OPENAI_BASE_URL", "http://localhost:11434/v1")
-	t.Setenv("OPENAI_API_KEY", "")
-
-	f := &flags{addr: "127.0.0.1:8080", backend: "openai", cloneMode: "shallow", set: map[string]bool{}}
-	runner, _, err := selectRunner(slog.New(slog.NewTextHandler(io.Discard, nil)), f, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	r, ok := runner.(worker.OpenAIRunner)
-	if !ok {
-		t.Fatalf("runner type = %T, want OpenAIRunner", runner)
-	}
-	if r.APIKey != "" {
-		t.Errorf("APIKey = %q, want empty", r.APIKey)
-	}
-}
-
 func TestSelectRunner_local(t *testing.T) {
-	// With noDocker=true and backend != openai, should get LocalClaude.
+	// With noDocker=true, should get LocalClaude regardless of backend.
 	f := &flags{
 		addr:      "127.0.0.1:8080",
 		backend:   "anthropic",
@@ -224,29 +158,20 @@ func TestSelectRunner_local(t *testing.T) {
 	}
 }
 
-func TestSelectRunner_codex(t *testing.T) {
+func TestSelectRunner_localCodexBackend(t *testing.T) {
+	// With noDocker=true and backend=codex, still get LocalClaude (harness only matters inside Docker).
 	f := &flags{
 		addr:      "127.0.0.1:8080",
 		backend:   "codex",
-		cloneMode: "full",
-		maxTurns:  25,
+		noDocker:  true,
+		cloneMode: "shallow",
 		set:       map[string]bool{},
 	}
-	runner, apiBase, err := selectRunner(slog.New(slog.NewTextHandler(io.Discard, nil)), f, nil)
+	runner, _, err := selectRunner(slog.New(slog.NewTextHandler(io.Discard, nil)), f, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if apiBase != "http://127.0.0.1:8080/api" {
-		t.Errorf("apiBase = %q", apiBase)
-	}
-	r, ok := runner.(worker.CodexRunner)
-	if !ok {
-		t.Fatalf("runner type = %T, want CodexRunner", runner)
-	}
-	if !r.FullClone {
-		t.Error("FullClone = false, want true")
-	}
-	if r.MaxTurns != 25 {
-		t.Errorf("MaxTurns = %d, want 25", r.MaxTurns)
+	if _, ok := runner.(worker.LocalClaude); !ok {
+		t.Fatalf("runner type = %T, want LocalClaude", runner)
 	}
 }

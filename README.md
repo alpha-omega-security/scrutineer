@@ -189,7 +189,7 @@ When the docker runner is active, scrutineer starts an authenticated egress prox
 | `-scan-timeout` | `1h` | Wall-clock limit per scan; exceeded scans fail |
 | `-max-turns` | `0` | Passed as `--max-turns` to claude-code (0 = unlimited) |
 | `-schema-strict` | `false` | Fail a scan when its `report.json` does not validate against the skill's `schema.json` (default: warn in the scan log and parse anyway) |
-| `-backend` | `anthropic` | Backend to use: `anthropic`, `openai`, or `codex` |
+| `-backend` | `anthropic` | Backend to use: `anthropic`, `openai`, `codex`, or `opencode` |
 | `-anthropic-base-url` | - | Custom Anthropic API base URL (env: `ANTHROPIC_BASE_URL`) |
 
 ## Config file
@@ -238,6 +238,20 @@ Or in `scrutineer.yaml`:
     default_model: codex-mini-latest
 
 The codex backend requires the `codex` CLI on PATH (the SDK spawns `codex app-server` as a subprocess) and a valid `OPENAI_API_KEY`. Each scan starts a thread with full-auto approval and runs the skill prompt as a single turn.
+
+## Opencode backend
+
+Scrutineer can use [opencode](https://opencode.ai) as the agent harness. The opencode backend communicates with a running opencode server via the [opencode-sdk-go](https://pkg.go.dev/github.com/sst/opencode-sdk-go) library:
+
+    opencode  # start the opencode server
+    export OPENCODE_BASE_URL=http://localhost:54321  # default
+    go run ./cmd/scrutineer -skills ./skills -backend opencode
+
+Or in `scrutineer.yaml`:
+
+    backend: opencode
+
+The opencode backend requires a running opencode server. Each scan creates a session, sends the skill prompt, and collects the text response.
 
 ## Security
 

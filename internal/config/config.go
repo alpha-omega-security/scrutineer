@@ -31,10 +31,10 @@ type Config struct {
 	SkillsRepo   string   `yaml:"skills_repo"`
 	NoDocker     *bool    `yaml:"no_docker"`
 	RunnerImage  string   `yaml:"runner_image"`
-	// Backend selects the LLM execution backend: "claude-code" (default,
-	// shells out to the claude CLI) or "openai" (calls an OpenAI-compatible
-	// chat completions API directly). The openai backend requires
-	// OPENAI_API_KEY and optionally OPENAI_BASE_URL.
+	// Backend selects the LLM execution backend: "anthropic" (default,
+	// shells out to the claude CLI), "codex" (OpenAI Codex CLI inside the
+	// container), or "opencode" (opencode CLI inside the container). All
+	// backends run inside DockerRunner when Docker is available.
 	Backend string `yaml:"backend"`
 	// EgressAllow extends the docker runner's egress proxy allowlist with
 	// extra hostnames. Entries are appended to worker.DefaultEgressAllow,
@@ -119,13 +119,13 @@ func ValidateTheme(s string) error {
 }
 
 // ValidateBackend returns an error when s is not a known backend name.
-// Empty is valid (caller keeps the default "claude-code").
+// Empty is valid (caller keeps the default "anthropic").
 func ValidateBackend(s string) error {
 	switch s {
-	case "", "claude-code", "anthropic", "openai", "codex":
+	case "", "claude-code", "anthropic", "codex", "opencode":
 		return nil
 	default:
-		return fmt.Errorf("backend: must be \"claude-code\", \"anthropic\", \"openai\", or \"codex\", got %q", s)
+		return fmt.Errorf("backend: must be \"anthropic\", \"codex\", or \"opencode\", got %q", s)
 	}
 }
 
