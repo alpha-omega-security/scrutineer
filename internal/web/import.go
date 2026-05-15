@@ -135,6 +135,7 @@ func (s *Server) importFindings(scan *db.Scan, res ingest.Result) (created []uin
 			Trace:          in.Description,
 			SuggestedFix:   in.SuggestedFix,
 			ImportedFrom:   res.Tool,
+			SourceJob:      res.Tool,
 			LastSeenScanID: scan.ID,
 			LastSeenCommit: scan.Commit,
 			SeenCount:      1,

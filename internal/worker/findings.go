@@ -53,7 +53,7 @@ func parseReport(raw []byte) (scanReport, error) {
 	return r, nil
 }
 
-func (r scanReport) toFindings(scanID, repoID uint, commit, subPath string) []db.Finding {
+func (r scanReport) toFindings(scanID, repoID uint, commit, subPath, sourceJob string) []db.Finding {
 	out := make([]db.Finding, 0, len(r.Findings))
 	for _, f := range r.Findings {
 		out = append(out, db.Finding{
@@ -72,6 +72,7 @@ func (r scanReport) toFindings(scanID, repoID uint, commit, subPath string) []db
 			Affected:     f.Affected,
 			Reachability: f.Reachability,
 			QualityTier:  f.QualityTier,
+			SourceJob:    sourceJob,
 			Trace:        f.Trace,
 			Boundary:     f.Boundary,
 			Validation:   f.Validation,

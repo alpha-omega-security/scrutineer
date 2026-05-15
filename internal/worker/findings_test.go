@@ -19,7 +19,7 @@ func TestToFindings_carriesReachabilityAndQualityTier(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := rep.toFindings(1, 1, "abc", "")
+	got := rep.toFindings(1, 1, "abc", "", "test-job")
 	if len(got) != 1 {
 		t.Fatalf("got %d findings, want 1", len(got))
 	}

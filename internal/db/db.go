@@ -378,6 +378,9 @@ type Finding struct {
 	// scrutineer produced itself. Used as the skill-name input to the
 	// fingerprint so re-importing the same external report dedupes.
 	ImportedFrom string `gorm:"index"`
+	// SourceJob records the name of the tool or model that generated this finding.
+	// Used for provenance tagging (T5) and to conditionally render AI caveats.
+	SourceJob string `gorm:"index"`
 
 	// Disclosure / triage fields. Any of these may be set by a tool, a
 	// model-backed skill, or the analyst; see FindingHistory for the trail.

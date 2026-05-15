@@ -7,7 +7,13 @@
     <div class="flex-1">
       {{if eq $s "new"}}
         <p class="text-sm mb-1 font-medium">Awaiting verification</p>
-        <p class="text-sm text-muted-foreground">This finding was identified by the claude audit. Verify it independently before triaging.</p>
+        {{if eq .SourceJob "claude"}}
+          <p class="text-sm text-muted-foreground">This finding was identified by the claude audit. Verify it independently before triaging.</p>
+        {{else if .SourceJob}}
+          <p class="text-sm text-muted-foreground">This finding was identified by {{.SourceJob}}. Review the evidence before triaging.</p>
+        {{else}}
+          <p class="text-sm text-muted-foreground">This finding was imported or identified by an external scanner. Review the evidence before triaging.</p>
+        {{end}}
       {{else if eq $s "enriched"}}
         <p class="text-sm mb-1 font-medium">Verification complete</p>
         <p class="text-sm text-muted-foreground">The confirm job ran and validated this finding. Review the evidence and triage.</p>
