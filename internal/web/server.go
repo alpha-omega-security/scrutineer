@@ -696,6 +696,11 @@ func (s *Server) depScan(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not resolve repository URL for "+dep.Name, http.StatusUnprocessableEntity)
 		return
 	}
+	u, err := url.Parse(repoURL)
+	if err != nil || !worker.HostAllowed(worker.DefaultEgressAllow, u.Hostname()) {
+		http.Error(w, "resolved repository URL is not on the forge allowlist", http.StatusForbidden)
+		return
+	}
 	s.addRepoAndScan(w, r, repoURL)
 }
 
@@ -729,6 +734,11 @@ func (s *Server) dependentScan(w http.ResponseWriter, r *http.Request) {
 	}
 	if dep.RepositoryURL == "" {
 		http.Error(w, "no repository URL for this dependent", http.StatusUnprocessableEntity)
+		return
+	}
+	u, err := url.Parse(dep.RepositoryURL)
+	if err != nil || !worker.HostAllowed(worker.DefaultEgressAllow, u.Hostname()) {
+		http.Error(w, "dependent repository URL is not on the forge allowlist", http.StatusForbidden)
 		return
 	}
 	s.addRepoAndScan(w, r, dep.RepositoryURL)

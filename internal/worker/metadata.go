@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"time"
@@ -20,6 +21,25 @@ const (
 	httpTimeout     = 30 * time.Second
 	maxResponseBody = 10 * 1024 * 1024 // 10 MB cap on API responses (T7)
 )
+
+var safeClient = &http.Client{
+	Timeout: httpTimeout,
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		if len(via) >= 10 {
+			return fmt.Errorf("stopped after 10 redirects")
+		}
+		ips, err := net.LookupIP(req.URL.Hostname())
+		if err != nil {
+			return err
+		}
+		for _, ip := range ips {
+			if ip.IsPrivate() || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
+				return fmt.Errorf("redirect to internal IP blocked: %s", ip)
+			}
+		}
+		return nil
+	},
+}
 
 // FetchPackagesByPURL resolves a dep's PURL to its upstream package records
 // via packages.ecosyste.ms. Used by the web handler's "import dependency"
@@ -38,7 +58,7 @@ func FetchPackagesByPURL(ctx context.Context, purl string) ([]json.RawMessage, [
 	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := safeClient.Do(req)
 	if err != nil {
 		return nil, nil, err
 	}
