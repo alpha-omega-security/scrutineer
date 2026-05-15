@@ -5,7 +5,7 @@ go 1.26
 toolchain go1.26.3
 
 require (
-	github.com/git-pkgs/sbom v0.1.0
+	github.com/git-pkgs/sbom v0.1.1
 	github.com/glebarez/sqlite v1.11.0
 	github.com/pandatix/go-cvss v0.6.2
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
