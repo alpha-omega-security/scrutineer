@@ -20,13 +20,14 @@ const (
 	userAgent       = "scrutineer (andrew@ecosyste.ms)"
 	httpTimeout     = 30 * time.Second
 	maxResponseBody = 10 * 1024 * 1024 // 10 MB cap on API responses (T7)
+	maxRedirects    = 10
 )
 
 var safeClient = &http.Client{
 	Timeout: httpTimeout,
 	CheckRedirect: func(req *http.Request, via []*http.Request) error {
-		if len(via) >= 10 {
-			return fmt.Errorf("stopped after 10 redirects")
+		if len(via) >= maxRedirects {
+			return fmt.Errorf("stopped after %d redirects", maxRedirects)
 		}
 		ips, err := net.LookupIP(req.URL.Hostname())
 		if err != nil {
