@@ -57,6 +57,12 @@
 
     if (e.target.nodeName === 'DIALOG') e.target.close();
 
+    var closer = e.target.closest('[data-close]');
+    if (closer) {
+      var dlgToClose = closer.closest('dialog');
+      if (dlgToClose) { e.preventDefault(); dlgToClose.close(); return; }
+    }
+
     var opener = e.target.closest('[data-dialog]');
     if (opener) {
       var dlg = document.getElementById(opener.getAttribute('data-dialog'));

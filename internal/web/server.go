@@ -1583,10 +1583,26 @@ func formatUSD(v float64) string {
 	return fmt.Sprintf("$%.2f", v)
 }
 
+// cspPolicy blocks inline scripts (the XSS mitigation that motivated this
+// header) and locks down loading to same-origin resources. 'unsafe-inline' is
+// kept for styles because tailwindcss-browser injects style tags at runtime.
+const cspPolicy = "default-src 'self'; " +
+	"script-src 'self'; " +
+	"style-src 'self' 'unsafe-inline'; " +
+	"img-src 'self' data:; " +
+	"font-src 'self' data:; " +
+	"connect-src 'self'; " +
+	"base-uri 'self'; " +
+	"form-action 'self'; " +
+	"frame-ancestors 'none'; " +
+	"object-src 'none'"
+
 // securityHeaders enforces T3 mitigations: host header check to prevent DNS
-// rebinding, and Sec-Fetch-Site check on POST to prevent cross-origin CSRF.
+// rebinding, Sec-Fetch-Site check on POST to prevent cross-origin CSRF, and
+// a CSP that prevents stored XSS in any rendered content from executing JS.
 func securityHeaders(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Security-Policy", cspPolicy)
 		host := r.Host
 		// Strip port for comparison
 		if i := strings.LastIndex(host, ":"); i >= 0 {
