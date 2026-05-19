@@ -2,6 +2,7 @@ package web
 
 import (
 	"fmt"
+	"html"
 	"io"
 	"net/http"
 	"strconv"
@@ -102,9 +103,12 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		case <-ctx.Done():
 			return
 		case e := <-c.ch:
-			data := e.Data
-			if e.Name == "scan-status" {
+			var data string
+			switch e.Name {
+			case "scan-status":
 				data = s.renderScanStatus(e.ScanID)
+			default:
+				data = html.EscapeString(e.Data)
 			}
 			writeSSEEvent(w, e.Name, data)
 			flusher.Flush()
