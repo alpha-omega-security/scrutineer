@@ -257,7 +257,10 @@ func run(log *slog.Logger) error {
 
 	var runner worker.SkillRunner
 	apiBase := "http://" + f.addr + "/api"
-	if !f.noDocker && worker.DockerAvailable() {
+	if !f.noDocker && !worker.DockerAvailable() {
+		return fmt.Errorf("docker not available: install and start docker, or pass --no-docker to run without containerisation (no isolation)")
+	}
+	if !f.noDocker {
 		allow := append(append([]string{}, worker.DefaultEgressAllow...), egressExtra...)
 		token := worker.NewProxyToken()
 		port, err := worker.StartEgressProxy(&worker.EgressProxy{Allow: allow, Token: token, APIPort: addrPort(f.addr), Log: log})
@@ -281,7 +284,7 @@ func run(log *slog.Logger) error {
 		// which the egress proxy rewrites to 127.0.0.1 when dialing.
 		apiBase = "http://" + net.JoinHostPort(worker.HostGatewayAlias, addrPort(f.addr)) + "/api"
 	} else {
-		log.Info("docker not available or disabled, using local runner (no isolation)")
+		log.Info("--no-docker set, using local runner (no isolation)")
 		runner = worker.LocalClaude{Effort: f.effort, FullClone: f.fullClone(), MaxTurns: f.maxTurns}
 	}
 
