@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -240,7 +241,7 @@ func TestRepoNew_fallbackPages(t *testing.T) {
 	}
 }
 
-func TestRepoCreate_htmxInvalidURL_rendersToastOOB(t *testing.T) {
+func TestRepoCreate_htmxInvalidURL_rendersInlineAlert(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
 
@@ -268,11 +269,8 @@ func TestRepoCreate_htmxInvalidURL_rendersToastOOB(t *testing.T) {
 	}
 
 	body := w.Body.String()
-	if !strings.Contains(body, `hx-swap-oob="afterbegin:#toaster"`) {
-		t.Errorf("body missing toast-oob wrapper:\n%s", body)
-	}
-	if !strings.Contains(body, `data-category="error"`) {
-		t.Errorf("body missing error toast category:\n%s", body)
+	if !strings.Contains(body, `id="add-repo-alert"`) {
+		t.Errorf("body missing inline alert target:\n%s", body)
 	}
 	if !strings.Contains(body, "Invalid repository URL") {
 		t.Errorf("body missing error title:\n%s", body)
@@ -1681,6 +1679,35 @@ func TestEnqueueSkillWith_emptySkillsRepoSHAByDefault(t *testing.T) {
 	}
 }
 
+func TestEnqueueSkillWith_localRepoRejectsRemoteOnlySkill(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	local := db.Repository{URL: "file:///srv/projects/myrepo", Name: "myrepo"}
+	s.DB.Create(&local)
+	remote := db.Repository{URL: "https://github.com/foo/bar", Name: "bar"}
+	s.DB.Create(&remote)
+	remoteSkill := db.Skill{Name: "fork", Body: "b", OutputFile: "r.json", OutputKind: "freeform",
+		Version: 1, Active: true, Source: "ui", RequiresRemote: true}
+	s.DB.Create(&remoteSkill)
+	localSkill := db.Skill{Name: "deep", Body: "b", OutputFile: "r.json", OutputKind: "freeform",
+		Version: 1, Active: true, Source: "ui"}
+	s.DB.Create(&localSkill)
+
+	_, err := s.enqueueSkillWith(context.Background(), local.ID, remoteSkill.ID, ScanOpts{})
+	if err == nil {
+		t.Error("expected enqueue of RequiresRemote skill on local repo to fail")
+	} else if !errors.Is(err, ErrSkillRequiresRemote) {
+		t.Errorf("expected ErrSkillRequiresRemote, got %v", err)
+	}
+	if _, err := s.enqueueSkillWith(context.Background(), local.ID, localSkill.ID, ScanOpts{}); err != nil {
+		t.Errorf("local-friendly skill on local repo should succeed, got %v", err)
+	}
+	if _, err := s.enqueueSkillWith(context.Background(), remote.ID, remoteSkill.ID, ScanOpts{}); err != nil {
+		t.Errorf("RequiresRemote skill on remote repo should succeed, got %v", err)
+	}
+}
+
 func TestEnqueueSkillWith_findingScopedJumpsQueue(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
@@ -2895,6 +2922,79 @@ func TestRepoCreate_branchURLTriggersTriageWithRef(t *testing.T) {
 	}
 	if scan.Ref != "2.4.x" {
 		t.Errorf("scan.Ref = %q, want %q", scan.Ref, "2.4.x")
+	}
+}
+
+func TestRepoCreate_localDirectoryStoredAsFileURL(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	s.DB.Create(&db.Skill{Name: "triage", Active: true, Source: "test", Body: "b", OutputFile: "report.json", OutputKind: "freeform", Version: 1})
+
+	dir := t.TempDir()
+	form := url.Values{"url": {dir}}
+	req := httptest.NewRequest("POST", "/repositories", strings.NewReader(form.Encode()))
+	req.Host = testHost
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+
+	var repo db.Repository
+	if err := s.DB.Where("url = ?", "file://"+dir).First(&repo).Error; err != nil {
+		t.Fatalf("local repo not created: %v", err)
+	}
+	if !repo.IsLocal() {
+		t.Errorf("repo.IsLocal() = false, want true")
+	}
+}
+
+func TestRepoCreate_localDirectorySkipsRequiresRemoteDefaultSkill(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	s.DB.Create(&db.Skill{Name: "triage", Active: true, Source: "test", Body: "b",
+		OutputFile: "report.json", OutputKind: "freeform", Version: 1, RequiresRemote: true})
+
+	dir := t.TempDir()
+	form := url.Values{"url": {dir}}
+	req := httptest.NewRequest("POST", "/repositories", strings.NewReader(form.Encode()))
+	req.Host = testHost
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+
+	var repo db.Repository
+	if err := s.DB.Where("url = ?", "file://"+dir).First(&repo).Error; err != nil {
+		t.Fatalf("local repo not created: %v", err)
+	}
+	var scanCount int64
+	s.DB.Model(&db.Scan{}).Where("repository_id = ?", repo.ID).Count(&scanCount)
+	if scanCount != 0 {
+		t.Errorf("scans created = %d, want 0 (default skill is RequiresRemote on a local repo)", scanCount)
+	}
+}
+
+func TestRepoCreate_missingLocalPathRejected(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	form := url.Values{"url": {"/does/not/exist/scrutineer-test-xyz"}}
+	req := httptest.NewRequest("POST", "/repositories", strings.NewReader(form.Encode()))
+	req.Host = testHost
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code == http.StatusSeeOther {
+		t.Fatalf("expected error for missing local path, got 303")
 	}
 }
 

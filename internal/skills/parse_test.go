@@ -110,6 +110,65 @@ body
 	}
 }
 
+func TestParseFile_requiresRemote(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSkill(t, dir, "remote-only", `---
+name: remote-only
+description: Skill that needs a forge.
+metadata:
+  scrutineer.output_file: report.json
+  scrutineer.requires_remote: true
+---
+
+body
+`)
+	p, err := ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.RequiresRemote {
+		t.Error("requires_remote = false, want true")
+	}
+	m, _ := p.ToModel("local")
+	if !m.RequiresRemote {
+		t.Error("model RequiresRemote = false, want true")
+	}
+}
+
+func TestParseFile_requiresRemoteWrongType(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSkill(t, dir, "bad", `---
+name: bad
+description: Skill with bad requires_remote.
+metadata:
+  scrutineer.requires_remote: "yes"
+---
+
+body
+`)
+	if _, err := ParseFile(path); err == nil {
+		t.Fatal("expected error on non-boolean requires_remote")
+	}
+}
+
+func TestParseFile_requiresRemoteUnsetDefaultsFalse(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSkill(t, dir, "default", `---
+name: default
+description: Skill without the key.
+---
+
+body
+`)
+	p, err := ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.RequiresRemote {
+		t.Error("RequiresRemote should default to false")
+	}
+}
+
 func TestParseFile_maxTurnsUnset(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSkill(t, dir, "unbounded", `---

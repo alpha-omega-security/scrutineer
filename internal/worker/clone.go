@@ -26,6 +26,36 @@ func (e *RepoUnreachableError) Error() string {
 
 func (e *RepoUnreachableError) Unwrap() error { return e.Err }
 
+// prepareLocalSrc populates workRoot/src by copying the user's local
+// directory. Mirrors prepareDependentSrc's "copy into per-scan src"
+// pattern so the Docker mount can write into /work without touching the
+// user's source tree. Validates that the path exists and is a directory
+// before touching anything.
+func prepareLocalSrc(localPath, workRoot string, emit func(Event)) error {
+	info, err := os.Stat(localPath)
+	if err != nil {
+		return fmt.Errorf("stat %s: %w", localPath, err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("%s is not a directory", localPath)
+	}
+	// filepath.Walk lstats the root, so a symlink-to-dir would be recreated
+	// as a single dangling link inside ./src instead of its contents.
+	resolved, err := filepath.EvalSymlinks(localPath)
+	if err != nil {
+		return fmt.Errorf("resolve %s: %w", localPath, err)
+	}
+	dst := filepath.Join(workRoot, "src")
+	if err := os.MkdirAll(workRoot, dirPerm); err != nil {
+		return err
+	}
+	if err := os.RemoveAll(dst); err != nil {
+		return err
+	}
+	emit(Event{Kind: KindText, Text: "$ cp -r " + localPath + " ./src"})
+	return copyTree(resolved, dst)
+}
+
 // ensureClone returns the path to an up-to-date clone of repo.URL under
 // the given work root. fullClone selects between --depth 1 (false, the
 // default) and full history (true). Clones on first call; fetches +
@@ -100,7 +130,13 @@ func cloneOrFetch(ctx context.Context, url, dst string, fullClone bool, ref stri
 }
 
 func gitHead(dir string) string {
-	out, _ := git(context.Background(), dir, "rev-parse", "HEAD")
+	out, err := git(context.Background(), dir, "rev-parse", "HEAD")
+	if err != nil {
+		// Not a git repository (e.g. a local-directory scan with no .git).
+		// Scan.Commit stays empty so downstream consumers know we have no
+		// reproducible pin, rather than receiving stderr as a fake SHA.
+		return ""
+	}
 	return strings.TrimSpace(out)
 }
 

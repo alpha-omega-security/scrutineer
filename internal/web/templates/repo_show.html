@@ -6,10 +6,16 @@
     <h2 class="text-2xl font-semibold mt-1 flex items-center gap-2">
       <i data-lucide="folder-git-2"></i> {{.Repo.Name}}
     </h2>
+    {{if .Repo.IsLocal}}
+    <span class="text-sm text-muted-foreground inline-flex items-center gap-1">
+      <i data-lucide="hard-drive" class="size-3"></i> {{.Repo.LocalPath}}
+    </span>
+    {{else}}
     <a href="{{.Repo.URL}}" target="_blank" rel="noopener"
        class="text-sm text-muted-foreground hover:underline inline-flex items-center gap-1">
       {{.Repo.URL}}<i data-lucide="external-link" class="size-3"></i>
     </a>
+    {{end}}
   </div>
   <div class="flex items-center gap-2">
     {{if .Skills}}

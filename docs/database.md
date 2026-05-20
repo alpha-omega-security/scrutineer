@@ -9,7 +9,7 @@ The central entity. One row per git URL.
 | Column | Type | Notes |
 |--------|------|-------|
 | id | integer PK | |
-| url | text, unique | The git clone URL. Always https://. |
+| url | text, unique | The git clone URL (`https://...`) or, for a local-directory scan, `file://<abs-path>`. |
 | name | text | Short display name derived from the URL. |
 | full_name | text | Owner/repo from ecosyste.ms (e.g. `splitrb/split`). |
 | owner | text | Repository owner from ecosyste.ms. |
@@ -90,6 +90,7 @@ One row per installed skill. Loaded from `skills/` directories on disk or the UI
 | output_kind | text | Parser key: `findings`, `maintainers`, `packages`, `advisories`, `dependents`, `dependencies`, `repo_metadata`, `repo_overview`, `subprojects`, `posture`, `verify`, `patch`, `threat_model`, `exposure`, `freeform`. Promoted from metadata. |
 | version | integer | Bumps on every save. |
 | active | boolean | |
+| requires_remote | boolean | When true, scrutineer refuses to enqueue this skill against a local-directory repository (file:// URL). Set via `scrutineer.requires_remote: true` in SKILL.md frontmatter. Use for skills that depend on a forge URL or remote-only data (advisories, dependents, exposure, fork, maintainers, metadata, packages, report-upstream). |
 | source | text | `local`, `remote`, or `ui`. |
 | source_path | text | Directory on disk (for local/remote). Empty for UI-created. |
 | source_hash | text | sha256 of SKILL.md + schema.json. Used by the loader to detect changes. |

@@ -5,6 +5,27 @@ import (
 	"testing"
 )
 
+func TestRepositoryIsLocal(t *testing.T) {
+	cases := []struct {
+		url      string
+		local    bool
+		wantPath string
+	}{
+		{"https://github.com/foo/bar", false, ""},
+		{"file:///srv/projects/x", true, "/srv/projects/x"},
+		{"", false, ""},
+	}
+	for _, tc := range cases {
+		r := Repository{URL: tc.url}
+		if got := r.IsLocal(); got != tc.local {
+			t.Errorf("IsLocal(%q) = %v, want %v", tc.url, got, tc.local)
+		}
+		if got := r.LocalPath(); got != tc.wantPath {
+			t.Errorf("LocalPath(%q) = %q, want %q", tc.url, got, tc.wantPath)
+		}
+	}
+}
+
 func TestFindingLocationList(t *testing.T) {
 	var empty Finding
 	if empty.LocationList() != nil || empty.ExtraLocationCount() != 0 {

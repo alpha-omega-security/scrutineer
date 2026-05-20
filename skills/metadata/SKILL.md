@@ -8,6 +8,7 @@ metadata:
   scrutineer.version: 1
   scrutineer.output_file: report.json
   scrutineer.output_kind: repo_metadata
+  scrutineer.requires_remote: true
 ---
 
 # metadata

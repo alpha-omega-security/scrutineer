@@ -3,8 +3,13 @@ package web
 import (
 	"fmt"
 	"net/url"
+	"path/filepath"
 	"strings"
 )
+
+// LocalScheme is the URL prefix used to mark a Repository.URL as a path
+// on disk rather than a remote git URL.
+const LocalScheme = "file://"
 
 // RepoInput is the parsed form of a user-supplied repository reference.
 // CloneURL is what scrutineer passes to `git clone`; SubPath is the
@@ -12,6 +17,11 @@ import (
 // the repo root). Branch is extracted from /tree/<branch>/<path> URLs so
 // the operator knows it was present, but is not honoured for clone (see
 // #19 discussion) — scrutineer still clones the default branch.
+//
+// For local directory inputs (file:// or absolute path), CloneURL is
+// file://<abs-path>, Name is the directory basename, Owner is empty, and
+// Branch/SubPath stay empty. Local is true so callers can branch on the
+// kind without re-parsing.
 //
 // Owner and Name are derived from the URL path (last two segments) and
 // seed the Repository row at import time so listings and the orgs view
@@ -24,6 +34,7 @@ type RepoInput struct {
 	Name     string
 	SubPath  string
 	Branch   string
+	Local    bool
 }
 
 // ParseRepoInput accepts the three user-facing shapes:
@@ -46,8 +57,11 @@ func ParseRepoInput(raw string) (RepoInput, error) {
 	if raw == "" {
 		return RepoInput{}, fmt.Errorf("url required")
 	}
+	if strings.HasPrefix(raw, LocalScheme) || strings.HasPrefix(raw, "/") {
+		return parseLocalInput(raw)
+	}
 	if !strings.HasPrefix(raw, "https://") {
-		return RepoInput{}, fmt.Errorf("only https:// URLs are allowed, got %q", raw)
+		return RepoInput{}, fmt.Errorf("only https:// URLs and local absolute paths are allowed, got %q", raw)
 	}
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -167,4 +181,31 @@ func DefaultHTMLURL(cloneURL string) string {
 		return stripGitSuffix(cloneURL)
 	}
 	return ""
+}
+
+// parseLocalInput accepts either file:///abs/path or /abs/path and
+// returns a RepoInput whose CloneURL is file://<cleaned-abs-path>. The
+// path is required to be absolute and free of `..` segments after
+// cleaning so a caller cannot escape past the supplied root by feeding
+// in `/srv/../etc`. Existence is not checked here — handlers stat the
+// path before persisting so a typo surfaces at submission time rather
+// than as a ghost Repository row.
+func parseLocalInput(raw string) (RepoInput, error) {
+	path := strings.TrimPrefix(raw, LocalScheme)
+	if !filepath.IsAbs(path) {
+		return RepoInput{}, fmt.Errorf("local path must be absolute, got %q", raw)
+	}
+	// Check `..` against the pre-Clean path so `/srv/../etc` is rejected
+	// rather than silently collapsed to `/etc`.
+	for _, seg := range strings.Split(path, "/") {
+		if seg == ".." {
+			return RepoInput{}, fmt.Errorf("local path must not contain .. segments, got %q", raw)
+		}
+	}
+	clean := filepath.Clean(path)
+	name := filepath.Base(clean)
+	if name == "/" || name == "." {
+		return RepoInput{}, fmt.Errorf("local path %q has no basename", raw)
+	}
+	return RepoInput{CloneURL: LocalScheme + clean, Name: name, Local: true}, nil
 }

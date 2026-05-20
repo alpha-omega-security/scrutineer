@@ -84,6 +84,7 @@ metadata:
 | `metadata.scrutineer.min_confidence` | `low` `medium` `high` | Findings below this confidence are dropped before they reach the database. |
 | `metadata.scrutineer.report_on` | `Low` `Medium` `High` `Critical` | Lowest severity that produces a Finding row. Lower-severity hits are recorded on the scan but not surfaced. |
 | `metadata.scrutineer.fail_on` | `Low` `Medium` `High` `Critical` | If any finding meets or exceeds this severity, the scan is marked failed. Useful for CI-style gating. |
+| `metadata.scrutineer.requires_remote` | bool | When `true`, this skill is skipped on local-directory scans (`file://` repos). Set on skills that need a forge URL or remote-only data such as `advisories`, `dependents`, `exposure`, `fork`, `maintainers`, `metadata`, `packages`, `report-upstream`. Defaults to `false` so new skills run on both remote and local repositories. |
 
 `min_confidence`, `report_on`, and `fail_on` only apply when `output_kind` is `findings`.
 

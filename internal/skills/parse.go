@@ -26,19 +26,20 @@ import (
 )
 
 const (
-	skillFile         = "SKILL.md"
-	schemaFile        = "schema.json"
-	maxNameLen        = 64
-	maxDescLen        = 1024
-	maxCompatLen      = 500
-	metaOutputFile    = "scrutineer.output_file"
-	metaOutputKind    = "scrutineer.output_kind"
-	metaMaxTurns      = "scrutineer.max_turns"
-	metaModel         = "scrutineer.model"
-	metaVersion       = "scrutineer.version"
-	metaMinConfidence = "scrutineer.min_confidence"
-	metaReportOn      = "scrutineer.report_on"
-	metaFailOn        = "scrutineer.fail_on"
+	skillFile          = "SKILL.md"
+	schemaFile         = "schema.json"
+	maxNameLen         = 64
+	maxDescLen         = 1024
+	maxCompatLen       = 500
+	metaOutputFile     = "scrutineer.output_file"
+	metaOutputKind     = "scrutineer.output_kind"
+	metaMaxTurns       = "scrutineer.max_turns"
+	metaModel          = "scrutineer.model"
+	metaVersion        = "scrutineer.version"
+	metaMinConfidence  = "scrutineer.min_confidence"
+	metaReportOn       = "scrutineer.report_on"
+	metaFailOn         = "scrutineer.fail_on"
+	metaRequiresRemote = "scrutineer.requires_remote"
 
 	// SchemaVersion is the only scrutineer.version this build accepts.
 	// Skills omitting the key are treated as version 1. Bump when the
@@ -52,14 +53,15 @@ const (
 // parse time so a typo like scrutineer.outputkind surfaces immediately
 // rather than after a worker falls through to freeform.
 var scrutineerKeys = map[string]bool{
-	metaOutputFile:    true,
-	metaOutputKind:    true,
-	metaMaxTurns:      true,
-	metaModel:         true,
-	metaVersion:       true,
-	metaMinConfidence: true,
-	metaReportOn:      true,
-	metaFailOn:        true,
+	metaOutputFile:     true,
+	metaOutputKind:     true,
+	metaMaxTurns:       true,
+	metaModel:          true,
+	metaVersion:        true,
+	metaMinConfidence:  true,
+	metaReportOn:       true,
+	metaFailOn:         true,
+	metaRequiresRemote: true,
 }
 
 var confidenceLevels = map[string]bool{"low": true, "medium": true, "high": true}
@@ -106,15 +108,16 @@ type Parsed struct {
 	AllowedTools  string
 	Metadata      map[string]any
 
-	Body          string
-	SchemaJSON    string
-	OutputFile    string
-	OutputKind    string
-	MaxTurns      int
-	Model         string
-	MinConfidence string
-	ReportOn      string
-	FailOn        string
+	Body           string
+	SchemaJSON     string
+	OutputFile     string
+	OutputKind     string
+	MaxTurns       int
+	Model          string
+	MinConfidence  string
+	ReportOn       string
+	FailOn         string
+	RequiresRemote bool
 
 	SourcePath string // absolute path to the skill directory
 	SourceHash string // sha256 of SKILL.md + schema.json contents
@@ -235,6 +238,11 @@ func (p *Parsed) validateMetadata() error {
 			return fmt.Errorf("%s must be an integer, got %T", metaMaxTurns, v)
 		}
 	}
+	if v, ok := p.Metadata[metaRequiresRemote]; ok {
+		if _, ok := v.(bool); !ok {
+			return fmt.Errorf("%s must be a boolean, got %T", metaRequiresRemote, v)
+		}
+	}
 	if err := checkEnum(p.Metadata, metaMinConfidence, confidenceLevels); err != nil {
 		return err
 	}
@@ -291,6 +299,9 @@ func (p *Parsed) extractMetadataKeys() {
 	if v, ok := p.Metadata[metaFailOn].(string); ok {
 		p.FailOn = strings.TrimSpace(v)
 	}
+	if v, ok := p.Metadata[metaRequiresRemote].(bool); ok {
+		p.RequiresRemote = v
+	}
 }
 
 func (p *Parsed) loadSchema() {
@@ -322,24 +333,25 @@ func (p *Parsed) ToModel(source string) (*db.Skill, error) {
 		meta = string(b)
 	}
 	return &db.Skill{
-		Name:          p.Name,
-		Description:   p.Description,
-		License:       p.License,
-		Compatibility: p.Compatibility,
-		AllowedTools:  p.AllowedTools,
-		Metadata:      meta,
-		Body:          p.Body,
-		SchemaJSON:    p.SchemaJSON,
-		OutputFile:    p.OutputFile,
-		OutputKind:    p.OutputKind,
-		MaxTurns:      p.MaxTurns,
-		Model:         p.Model,
-		MinConfidence: p.MinConfidence,
-		ReportOn:      p.ReportOn,
-		FailOn:        p.FailOn,
-		Active:        true,
-		Source:        source,
-		SourcePath:    p.SourcePath,
-		SourceHash:    p.SourceHash,
+		Name:           p.Name,
+		Description:    p.Description,
+		License:        p.License,
+		Compatibility:  p.Compatibility,
+		AllowedTools:   p.AllowedTools,
+		Metadata:       meta,
+		Body:           p.Body,
+		SchemaJSON:     p.SchemaJSON,
+		OutputFile:     p.OutputFile,
+		OutputKind:     p.OutputKind,
+		MaxTurns:       p.MaxTurns,
+		Model:          p.Model,
+		MinConfidence:  p.MinConfidence,
+		ReportOn:       p.ReportOn,
+		FailOn:         p.FailOn,
+		RequiresRemote: p.RequiresRemote,
+		Active:         true,
+		Source:         source,
+		SourcePath:     p.SourcePath,
+		SourceHash:     p.SourceHash,
 	}, nil
 }

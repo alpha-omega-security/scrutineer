@@ -81,8 +81,9 @@
       <form method="post" action="/repositories"
             hx-post="/repositories" hx-swap="none"
             class="form grid gap-3">
-        <input class="input" type="url" name="url"
-               placeholder="https://github.com/maragudk/goqite.git" required>
+        <div id="add-repo-alert" hidden></div>
+        <input class="input" type="text" name="url"
+               placeholder="https://github.com/owner/repo or /path/to/project" required>
         <footer class="flex justify-between items-center gap-2">
           <a href="/repositories/new?bulk=1" data-dialog="bulk-add-repo" class="btn-sm-ghost">
             <i data-lucide="list-plus"></i> Add multiple
@@ -188,6 +189,11 @@
 {{end}}
 
 {{define "toast-oob"}}<div hx-swap-oob="afterbegin:#toaster">{{template "toast" .}}</div>{{end}}
+
+{{define "add-repo-alert-oob"}}<div id="add-repo-alert" hx-swap-oob="outerHTML" class="alert-destructive mb-2" role="alert">
+  <i data-lucide="triangle-alert"></i>
+  <section><strong>{{.Title}}</strong>{{if .Description}} {{.Description}}{{end}}</section>
+</div>{{end}}
 
 {{define "status-badge"}}
   {{if eq . "done"}}<span class="badge-secondary"><i data-lucide="check"></i> complete</span>

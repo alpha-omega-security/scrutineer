@@ -90,22 +90,31 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 	if err := validateSkillPaths(skill.Name, skill.OutputFile); err != nil {
 		return "", err
 	}
+	if scan.Repository.IsLocal() && skill.RequiresRemote {
+		return "", fmt.Errorf("skill %q requires a remote repository; cannot run on local directory", skill.Name)
+	}
 	if err := os.MkdirAll(workRoot, dirPerm); err != nil {
 		return "", fmt.Errorf("mkdir work: %w", err)
 	}
-	prepare := w.PrepareRepoSrc
-	if prepare == nil {
-		prepare = w.prepareRepoSrc
-	}
-	cacheCommit, err := prepare(ctx, scan.Repository.URL, scan.Ref, workRoot, emit)
-	if err != nil {
-		if report, ok := w.handleCloneError(scan, err, emit); ok {
-			return report, nil
+	if scan.Repository.IsLocal() {
+		if err := prepareLocalSrc(scan.Repository.LocalPath(), workRoot, emit); err != nil {
+			return "", fmt.Errorf("copy local source: %w", err)
 		}
-		return "", err
+	} else {
+		prepare := w.PrepareRepoSrc
+		if prepare == nil {
+			prepare = w.prepareRepoSrc
+		}
+		cacheCommit, err := prepare(ctx, scan.Repository.URL, scan.Ref, workRoot, emit)
+		if err != nil {
+			if report, ok := w.handleCloneError(scan, err, emit); ok {
+				return report, nil
+			}
+			return "", err
+		}
+		scan.Commit = cacheCommit
+		w.clearCloneError(scan)
 	}
-	scan.Commit = cacheCommit
-	w.clearCloneError(scan)
 
 	skillDir := filepath.Join(workRoot, ".claude", "skills", skill.Name)
 	if err := stageContext(workRoot, w.APIBase, w.ForkOrg, scan, &scan.Repository); err != nil {

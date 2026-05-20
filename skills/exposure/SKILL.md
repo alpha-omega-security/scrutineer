@@ -7,6 +7,7 @@ metadata:
   scrutineer.version: 1
   scrutineer.output_file: report.json
   scrutineer.output_kind: exposure
+  scrutineer.requires_remote: true
 ---
 
 # exposure

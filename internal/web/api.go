@@ -226,6 +226,10 @@ func (s *Server) apiRunSkill(w http.ResponseWriter, r *http.Request) {
 		Ref:   body.Ref,
 	})
 	if err != nil {
+		if errors.Is(err, ErrSkillRequiresRemote) {
+			writeAPIError(w, http.StatusNotFound, err.Error())
+			return
+		}
 		writeAPIError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -260,6 +264,10 @@ func (s *Server) apiRunFindingSkill(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewDecoder(r.Body).Decode(&body)
 	scanID, err := s.enqueueSkillScoped(r.Context(), repoID, skill.ID, new(uint(id)), body.Model)
 	if err != nil {
+		if errors.Is(err, ErrSkillRequiresRemote) {
+			writeAPIError(w, http.StatusNotFound, err.Error())
+			return
+		}
 		writeAPIError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

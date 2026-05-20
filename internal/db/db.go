@@ -70,6 +70,21 @@ type Repository struct {
 	Maintainers []Maintainer `gorm:"many2many:repository_maintainers"`
 }
 
+// IsLocal reports whether this Repository points at a directory on disk
+// (file://<abs-path>) rather than a remote git URL. Used by the worker
+// to skip the clone step and by the enqueue path to filter out skills
+// that require a forge.
+func (r Repository) IsLocal() bool { return strings.HasPrefix(r.URL, "file://") }
+
+// LocalPath returns the filesystem path encoded in a local Repository's
+// URL. Empty for remote repos.
+func (r Repository) LocalPath() string {
+	if !r.IsLocal() {
+		return ""
+	}
+	return strings.TrimPrefix(r.URL, "file://")
+}
+
 type ScanStatus string
 
 const (
@@ -631,6 +646,14 @@ type Skill struct {
 
 	Version int  `gorm:"not null;default:1"`
 	Active  bool `gorm:"not null;default:true"`
+
+	// RequiresRemote opts a skill out of running on local-directory
+	// repositories (file:// URLs). Set via the SKILL.md frontmatter key
+	// `scrutineer.requires_remote: true` on skills that need a forge URL
+	// or remote-only data (fork, exposure, ecosyste.ms enrichment).
+	// Default false so newly added skills work on local scans unless they
+	// declare otherwise.
+	RequiresRemote bool
 
 	Source     string // "local" | "remote" | "ui"
 	SourcePath string // directory on disk (local/remote) or empty (ui)

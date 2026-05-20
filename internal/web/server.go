@@ -5,12 +5,14 @@ import (
 	"embed"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html/template"
 	"log/slog"
 	"maps"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,6 +25,12 @@ import (
 	"scrutineer/internal/queue"
 	"scrutineer/internal/worker"
 )
+
+// ErrSkillRequiresRemote is returned by enqueueSkillWith when the caller
+// asks to run a `requires_remote` skill against a local-directory repo.
+// The API layer maps it to 404 so triage's existing "skill not found or
+// inactive" skip branch handles it without needing a new bucket.
+var ErrSkillRequiresRemote = errors.New("skill requires a remote repository")
 
 //go:embed templates/*.html
 var tmplFS embed.FS
@@ -1065,20 +1073,20 @@ func (s *Server) repoCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 // repoCreateError renders feedback for a failed Add Repository submission.
-// htmx clients get an OOB toast so the dialog stays open and the user can
-// fix their input; plain form posts fall back to a basic error page.
+// htmx clients get an inline alert inside the dialog (a toast would render
+// behind the modal's top layer); plain form posts fall back to a basic
+// error page.
 func (s *Server) repoCreateError(w http.ResponseWriter, r *http.Request, title string, err error, status int) {
 	if !isHX(r) {
 		http.Error(w, err.Error(), status)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if execErr := s.tmpl.ExecuteTemplate(w, "toast-oob", Flash{
-		Category:    "error",
+	if execErr := s.tmpl.ExecuteTemplate(w, "add-repo-alert-oob", Flash{
 		Title:       title,
 		Description: err.Error(),
 	}); execErr != nil {
-		s.Log.Error("render toast-oob", "err", execErr)
+		s.Log.Error("render add-repo-alert-oob", "err", execErr)
 	}
 }
 
@@ -1135,6 +1143,16 @@ func (s *Server) repoBulkCreate(w http.ResponseWriter, r *http.Request) {
 // the default skill. isNew reports whether the repo was actually created
 // (so callers can distinguish "queued" from "already present").
 func (s *Server) createOrTriageRepo(ctx context.Context, input RepoInput, model string) (db.Repository, bool, error) {
+	if input.Local {
+		path := strings.TrimPrefix(input.CloneURL, LocalScheme)
+		info, err := os.Stat(path)
+		if err != nil {
+			return db.Repository{}, false, fmt.Errorf("local path %s: %w", path, err)
+		}
+		if !info.IsDir() {
+			return db.Repository{}, false, fmt.Errorf("local path %s is not a directory", path)
+		}
+	}
 	existing := int64(0)
 	s.DB.Model(&db.Repository{}).Where("url = ?", input.CloneURL).Count(&existing)
 	// Owner, FullName, and HTMLURL seed from ParseRepoInput so the orgs
@@ -1160,6 +1178,10 @@ func (s *Server) createOrTriageRepo(ctx context.Context, input RepoInput, model 
 	var skill db.Skill
 	if err := s.DB.Where("name = ? AND active = ?", defaultSkillName, true).First(&skill).Error; err != nil {
 		s.Log.Warn("default skill not found, repo added with no scans", "skill", defaultSkillName)
+		return repo, isNew, nil
+	}
+	if repo.IsLocal() && skill.RequiresRemote {
+		s.Log.Info("default skill requires remote, skipping for local repo", "skill", skill.Name, "repo", repo.URL)
 		return repo, isNew, nil
 	}
 	if _, err := s.enqueueSkillWith(ctx, repo.ID, skill.ID, ScanOpts{
@@ -1408,9 +1430,17 @@ func (s *Server) enqueueSkillScoped(ctx context.Context, repoID, skillID uint, f
 // SubPath means root-scoped. Model precedence is: explicit opts.Model >
 // the skill's preferred Model > server default.
 func (s *Server) enqueueSkillWith(ctx context.Context, repoID, skillID uint, opts ScanOpts) (uint, error) {
+	var repo db.Repository
+	if err := s.DB.Select("id, url").First(&repo, repoID).Error; err != nil {
+		return 0, err
+	}
+	var sk db.Skill
+	hasSkill := s.DB.Select("name, requires_remote, model").First(&sk, skillID).Error == nil
+	if repo.IsLocal() && hasSkill && sk.RequiresRemote {
+		return 0, fmt.Errorf("%w: %q", ErrSkillRequiresRemote, sk.Name)
+	}
 	if !ValidModel(opts.Model) {
-		var sk db.Skill
-		if err := s.DB.Select("model").First(&sk, skillID).Error; err == nil && ValidModel(sk.Model) {
+		if hasSkill && ValidModel(sk.Model) {
 			opts.Model = sk.Model
 		} else {
 			opts.Model = DefaultModel()

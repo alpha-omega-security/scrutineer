@@ -155,13 +155,38 @@ func TestParseRepoInput(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:    "file scheme rejected",
-			input:   "file:///etc/passwd",
+			name:    "empty rejected",
+			input:   "   ",
 			wantErr: true,
 		},
 		{
-			name:    "empty rejected",
-			input:   "   ",
+			name:  "file scheme absolute path accepted as local",
+			input: "file:///srv/projects/myrepo",
+			want:  RepoInput{CloneURL: "file:///srv/projects/myrepo", Name: "myrepo", Local: true},
+		},
+		{
+			name:  "bare absolute path accepted as local",
+			input: "/home/alice/code/foo",
+			want:  RepoInput{CloneURL: "file:///home/alice/code/foo", Name: "foo", Local: true},
+		},
+		{
+			name:  "local path trailing slash stripped",
+			input: "/home/alice/code/foo/",
+			want:  RepoInput{CloneURL: "file:///home/alice/code/foo", Name: "foo", Local: true},
+		},
+		{
+			name:    "relative local path rejected",
+			input:   "file://./relative",
+			wantErr: true,
+		},
+		{
+			name:    "local path with .. rejected",
+			input:   "/srv/../etc",
+			wantErr: true,
+		},
+		{
+			name:    "bare root rejected",
+			input:   "/",
 			wantErr: true,
 		},
 	}
