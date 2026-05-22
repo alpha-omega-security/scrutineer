@@ -234,6 +234,13 @@ const (
 	FindingDuplicate    FindingLifecycle = "duplicate"
 )
 
+// FindingLifecycles lists every finding status in workflow order. Used to
+// render the Status filter on the findings index.
+var FindingLifecycles = []FindingLifecycle{
+	FindingNew, FindingEnriched, FindingTriaged, FindingReady, FindingReported,
+	FindingAcknowledged, FindingFixed, FindingPublished, FindingRejected, FindingDuplicate,
+}
+
 // Advisory is a known security advisory from advisories.ecosyste.ms.
 type Advisory struct {
 	ID           uint `gorm:"primarykey"`

@@ -710,6 +710,60 @@ func TestFindings_categoryFilter(t *testing.T) {
 	}
 }
 
+func TestFindings_statusFilter(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: "security-deep-dive"}
+	s.DB.Create(&scan)
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "fresh finding",
+		Severity: "High", Status: db.FindingNew})
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "triaged finding",
+		Severity: "High", Status: db.FindingTriaged})
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "fixed finding",
+		Severity: "High", Status: db.FindingFixed})
+
+	cases := []struct {
+		status  string
+		want    []string
+		missing []string
+	}{
+		{"new", []string{"fresh finding"}, []string{"triaged finding", "fixed finding"}},
+		{"triaged", []string{"triaged finding"}, []string{"fresh finding", "fixed finding"}},
+		{"fixed", []string{"fixed finding"}, []string{"fresh finding", "triaged finding"}},
+		{"rejected", nil, []string{"fresh finding", "triaged finding", "fixed finding"}},
+	}
+	for _, tc := range cases {
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, localReq("GET", "/findings?status="+url.QueryEscape(tc.status)))
+		if w.Code != 200 {
+			t.Errorf("status=%q status code %d", tc.status, w.Code)
+			continue
+		}
+		body := w.Body.String()
+		for _, title := range tc.want {
+			if !strings.Contains(body, ">"+title+"</a>") {
+				t.Errorf("status=%q missing %q", tc.status, title)
+			}
+		}
+		for _, title := range tc.missing {
+			if strings.Contains(body, ">"+title+"</a>") {
+				t.Errorf("status=%q should not include %q", tc.status, title)
+			}
+		}
+	}
+
+	// The status filter is preserved across the other filter links.
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/findings?status=new"))
+	body := w.Body.String()
+	if !strings.Contains(body, "severity=High&status=new&category=") {
+		t.Error("severity dropdown links should carry status=new")
+	}
+}
+
 func TestPackagesSearchFilters(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
@@ -1020,7 +1074,7 @@ func TestFindings_missedFilterAndBadge(t *testing.T) {
 		t.Error("?missed=1 should show findings with missed_count > 0")
 	}
 	// Severity/sort links preserve the missed filter.
-	if !strings.Contains(body, "severity=High&category=&sort=newest&missed=1") {
+	if !strings.Contains(body, "severity=High&status=&category=&sort=newest&missed=1") {
 		t.Error("severity dropdown links should carry missed=1")
 	}
 }

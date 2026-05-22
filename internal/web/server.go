@@ -621,6 +621,10 @@ func (s *Server) findings(w http.ResponseWriter, r *http.Request) {
 	if sev != "" {
 		q = q.Where("severity = ?", sev)
 	}
+	status := r.URL.Query().Get("status")
+	if status != "" {
+		q = q.Where("status = ?", status)
+	}
 	category := r.URL.Query().Get("category")
 	if category != "" {
 		q = applyCWECategoryFilter(q, category)
@@ -682,6 +686,7 @@ func (s *Server) findings(w http.ResponseWriter, r *http.Request) {
 		"Repos": reposByID, "Q": search, "AnySubPath": anySubPath,
 		"Owner": owner, "Missed": missed, "MissedTotal": missedTotal,
 		"Scanners": scanners, "ScannerTotal": scannerTotal,
+		"Status": status, "Statuses": db.FindingLifecycles,
 	})
 }
 
