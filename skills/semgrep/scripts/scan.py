@@ -4,6 +4,9 @@
 Requires semgrep on PATH. Writes structured JSON to stdout. Stderr carries
 progress and errors.
 
+semgrep is invoked with cwd=./src so paths in results are repo-relative
+(e.g. `lib/foo.py:42`) rather than carrying a `src/` prefix.
+
 Results are grouped by (check_id, message): the rule's message template
 interpolates whatever metavars the rule author considered significant, so
 identical messages are the rule author's signal that the matches are
@@ -39,8 +42,9 @@ def main():
             "p/secrets",
             "--json",
             "--quiet",
-            "./src",
+            ".",
         ],
+        cwd="./src",
         capture_output=True,
         text=True,
     )
