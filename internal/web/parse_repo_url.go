@@ -143,10 +143,10 @@ func stripGitSuffix(u string) string {
 // stays with the metadata skill.
 //
 // Recognised: github.com, codeberg.org, bitbucket.org, and any gitlab.*
-// host. The locationURL link builder only resolves the first three of
-// those (no bitbucket case there); we still seed bitbucket because the
-// field is consumed by other surfaces (repo pages, API output) that
-// just want any sensible HTML URL.
+// host. The locationURL link builder resolves GitHub/Codeberg/GitLab,
+// but not Bitbucket; we still seed bitbucket because the field is
+// consumed by other surfaces (repo pages, API output) that just want
+// any sensible HTML URL.
 func DefaultHTMLURL(cloneURL string) string {
 	if cloneURL == "" {
 		return ""
