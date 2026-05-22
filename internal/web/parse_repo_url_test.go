@@ -181,3 +181,26 @@ func TestParseRepoInput(t *testing.T) {
 		})
 	}
 }
+
+func TestDefaultHTMLURL(t *testing.T) {
+	cases := []struct {
+		name, in, want string
+	}{
+		{"github", "https://github.com/owner/repo", "https://github.com/owner/repo"},
+		{"codeberg", "https://codeberg.org/owner/repo", "https://codeberg.org/owner/repo"},
+		{"gitlab.com", "https://gitlab.com/group/proj", "https://gitlab.com/group/proj"},
+		{"self-hosted gitlab", "https://gitlab.example.com/group/proj", "https://gitlab.example.com/group/proj"},
+		{"bitbucket", "https://bitbucket.org/owner/repo", "https://bitbucket.org/owner/repo"},
+		{"unknown forge", "https://git.example.com/owner/repo", ""},
+		{"sourcehut", "https://git.sr.ht/~user/repo", ""},
+		{"empty", "", ""},
+		{"garbage", "://", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := DefaultHTMLURL(tc.in); got != tc.want {
+				t.Errorf("DefaultHTMLURL(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+		})
+	}
+}

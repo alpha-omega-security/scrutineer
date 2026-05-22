@@ -77,7 +77,12 @@ func (s *Server) importResult(res ingest.Result, repoOverride string) (map[strin
 	if err != nil {
 		return nil, fmt.Errorf("repository %q: %w", repoURL, err)
 	}
-	repo := db.Repository{URL: input.CloneURL, Name: input.Name, Owner: input.Owner}
+	repo := db.Repository{
+		URL:     input.CloneURL,
+		Name:    input.Name,
+		Owner:   input.Owner,
+		HTMLURL: DefaultHTMLURL(input.CloneURL),
+	}
 	if input.Owner != "" {
 		repo.FullName = input.Owner + "/" + input.Name
 	}

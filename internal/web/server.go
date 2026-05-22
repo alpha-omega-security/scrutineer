@@ -1123,10 +1123,16 @@ func (s *Server) repoBulkCreate(w http.ResponseWriter, r *http.Request) {
 func (s *Server) createOrTriageRepo(ctx context.Context, input RepoInput, model string) (db.Repository, bool, error) {
 	existing := int64(0)
 	s.DB.Model(&db.Repository{}).Where("url = ?", input.CloneURL).Count(&existing)
-	// Owner and FullName seed from ParseRepoInput so the orgs view groups
-	// newly added repos before the metadata job has run; the metadata job
-	// later overwrites them with the canonical forge values.
-	repo := db.Repository{URL: input.CloneURL, Name: input.Name, Owner: input.Owner}
+	// Owner, FullName, and HTMLURL seed from ParseRepoInput so the orgs
+	// view groups newly added repos and finding-location links work before
+	// the metadata job has run; the metadata job later overwrites them
+	// with the canonical forge values.
+	repo := db.Repository{
+		URL:     input.CloneURL,
+		Name:    input.Name,
+		Owner:   input.Owner,
+		HTMLURL: DefaultHTMLURL(input.CloneURL),
+	}
 	if input.Owner != "" {
 		repo.FullName = input.Owner + "/" + input.Name
 	}

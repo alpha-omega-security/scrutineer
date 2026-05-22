@@ -133,3 +133,35 @@ func stripGitSuffix(u string) string {
 	u = strings.TrimRight(u, "/")
 	return strings.TrimSuffix(u, ".git")
 }
+
+// DefaultHTMLURL seeds Repository.HTMLURL at row-create time for the
+// common case where the clone URL is also the web-UI URL — every major
+// public forge. The repo_metadata skill still overwrites this with the
+// canonical value when it runs; this just makes the HTML URL available
+// in the gap before that skill lands, and on instances where it never
+// runs. Returns "" for hosts we don't recognise so authority for those
+// stays with the metadata skill.
+//
+// Recognised: github.com, codeberg.org, bitbucket.org, and any gitlab.*
+// host. The locationURL link builder only resolves the first three of
+// those (no bitbucket case there); we still seed bitbucket because the
+// field is consumed by other surfaces (repo pages, API output) that
+// just want any sensible HTML URL.
+func DefaultHTMLURL(cloneURL string) string {
+	if cloneURL == "" {
+		return ""
+	}
+	u, err := url.Parse(cloneURL)
+	if err != nil {
+		return ""
+	}
+	host := strings.ToLower(u.Host)
+	switch {
+	case host == "github.com",
+		host == "codeberg.org",
+		host == "bitbucket.org",
+		strings.HasPrefix(host, "gitlab."):
+		return cloneURL
+	}
+	return ""
+}
