@@ -239,9 +239,14 @@ func writeReportFinding(b *strings.Builder, gdb *gorm.DB, f db.Finding, latest *
 	b.WriteString("\n")
 	_ = latest // reserved for future use, e.g. linking location to a permalink
 
-	// List grouped match positions (#193) so the export mirrors the
-	// "N more locations" block in finding_show.html. Sorted by
-	// (path, line-as-int) to avoid lexicographic order (:110 before :56).
+	// For findings the worker grouped across multiple match positions
+	// (#193 — same rule firing in many file:lines collapsed into one
+	// row whose Locations column carries the full set), list the
+	// additional positions so the markdown export shows the same scope
+	// the finding_show.html "N more locations" details block does.
+	// Sorted by (path, line-as-int) so within a single file lines
+	// appear in ascending numeric order rather than lexicographic
+	// (which puts :110 before :56).
 	if f.ExtraLocationCount() > 0 {
 		locs := f.LocationList()[1:]
 		sort.Slice(locs, func(i, j int) bool {
@@ -508,8 +513,10 @@ func sanitiseFilename(s string) string {
 	return out
 }
 
-// locationLess sorts file:line strings by path, then by line as an
-// integer (so "x:110" sorts after "x:56").
+// locationLess sorts file:line strings naturally: by file path first,
+// then by line number as an integer. Without this, "x.html:110" sorts
+// before "x.html:56" because '1' < '5' lexicographically, which surprises
+// a reader scanning a multi-line list.
 func locationLess(a, b string) bool {
 	ap, al := splitFileLine(a)
 	bp, bl := splitFileLine(b)
@@ -519,8 +526,9 @@ func locationLess(a, b string) bool {
 	return al < bl
 }
 
-// splitFileLine splits a "path:line" string. LastIndex handles Windows
-// paths with colons; an unparseable line degrades to 0.
+// splitFileLine splits a "path:line" location string. LastIndex handles
+// Windows-style paths that contain colons; an unparseable line number
+// degrades to 0 so the location still sorts (by path) instead of panicking.
 func splitFileLine(s string) (path string, line int) {
 	i := strings.LastIndex(s, ":")
 	if i < 0 {

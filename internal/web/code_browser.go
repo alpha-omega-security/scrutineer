@@ -63,6 +63,17 @@ func (s *Server) repoBlob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := s.Worker.EnsureCommit(r.Context(), repo.URL, commit); err != nil {
+		s.render(w, r, "code_browser.html", map[string]any{
+			"Repo":      repo,
+			"Commit":    commit,
+			"Path":      cleanPath,
+			"Highlight": parseHighlight(r.URL.Query().Get("line")),
+			"Error":     err.Error(),
+		})
+		return
+	}
+
 	content, binary, truncated, err := gitShowBlob(r.Context(), cacheSrc, commit, cleanPath)
 	if err != nil {
 		s.render(w, r, "code_browser.html", map[string]any{

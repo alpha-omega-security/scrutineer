@@ -45,8 +45,10 @@ func seedScanWithFindings(t *testing.T, s *Server) (db.Repository, db.Skill, db.
 		Location: "src/typestubs/py_serializable/__init__.pyi:5",
 		Trace:    "xml.etree.ElementTree is vulnerable to XXE",
 	}
-	// Grouped multi-location case (#193). Locations are not pre-sorted
-	// and include numbers that mis-order lexicographically (:33 < :5)
+	// medium is the grouped multi-location case from #193 — same rule
+	// firing at several template positions, collapsed into one row.
+	// Locations are intentionally not pre-sorted, and include numbers
+	// that would mis-order under lexicographic comparison (:33 < :5),
 	// to exercise the natural-sort path in writeReportFinding.
 	medium := db.Finding{
 		ScanID: scan.ID, RepositoryID: repo.ID, Commit: scan.Commit,
@@ -80,7 +82,8 @@ func TestScanReport_findingsDispatch(t *testing.T) {
 	if cd := w.Header().Get("Content-Disposition"); !strings.Contains(cd, "attachment") || !strings.Contains(cd, ".md") {
 		t.Errorf("content-disposition = %q", cd)
 	}
-	// Filename encodes repo, scan id, and skill to stay unambiguous.
+	// Filename should encode repo, scan id, and skill so a directory of
+	// downloaded reports stays unambiguous without renaming.
 	if cd := w.Header().Get("Content-Disposition"); !strings.Contains(cd, "scan-") || !strings.Contains(cd, "semgrep") {
 		t.Errorf("content-disposition missing scan/skill in filename: %q", cd)
 	}
@@ -116,14 +119,16 @@ func TestScanReport_findingsDispatch(t *testing.T) {
 			t.Errorf("body missing %q", want)
 		}
 	}
-	// Only the multi-location finding gets an "Additional locations" block.
+	// Single-location finding (the High XXE one) should NOT get the
+	// "Additional locations" block, only the multi-location one should.
 	if strings.Count(body, "#### Additional locations") != 1 {
 		t.Errorf("expected exactly one Additional locations block (multi-location finding only), got %d",
 			strings.Count(body, "#### Additional locations"))
 	}
 
-	// Natural sort: index.html before topnav.html, and topnav.html:33
-	// before :110 (numeric, not lexicographic).
+	// Additional locations must be naturally sorted: index.html comes
+	// alphabetically before topnav.html, and within topnav.html line 33
+	// must precede line 110 (numeric, not lexicographic, where "110" < "33").
 	indexAt := strings.Index(body, "`src/atr/templates/index.html:88`")
 	topnav33At := strings.Index(body, "`src/atr/templates/topnav.html:33`")
 	topnav110At := strings.Index(body, "`src/atr/templates/topnav.html:110`")
@@ -179,7 +184,9 @@ func TestScanReport_freeformRendersAsTable(t *testing.T) {
 			t.Errorf("body missing %q\nbody:\n%s", want, body)
 		}
 	}
-	// Table rendering replaced the raw JSON dump; no fenced block, no Findings section.
+	// We replaced the raw JSON dump with table rendering. The fenced
+	// block should be gone, and we should not see a Findings section
+	// either (different output kind).
 	if strings.Contains(body, "```json") {
 		t.Errorf("freeform with table-shaped JSON should not emit a json code block")
 	}
@@ -247,7 +254,9 @@ func TestScanReport_rawFallbackForUntabulatableJSON(t *testing.T) {
 	}
 	s.DB.Create(&skill)
 	now := time.Now()
-	// Bare array at top level: should fall through to the raw JSON block.
+	// Bare array at top level — can't be classified as scalars+arrays
+	// because the writer expects a top-level object. Should fall through
+	// to the raw JSON block path.
 	scan := db.Scan{
 		RepositoryID: repo.ID, Kind: worker.JobSkill, Status: db.ScanDone,
 		SkillID: &skill.ID, SkillName: skill.Name, Commit: "abcdef0123456",
@@ -272,9 +281,10 @@ func TestScanReport_rawFallbackForUntabulatableJSON(t *testing.T) {
 }
 
 func TestScanReport_findsReObservedFindings(t *testing.T) {
-	// Regression: when every finding is a re-observation (scan_id points
-	// at an earlier scan, last_seen_scan_id at this one), querying by
-	// scan_id alone returns nothing and the export says "No findings".
+	// Regression test for the case where every finding in a scan is a
+	// re-observation: scan_id points at an earlier scan, last_seen_scan_id
+	// points at this one. Querying by scan_id alone returns nothing and
+	// the markdown export erroneously says "No findings recorded".
 	s, done := newTestServer(t)
 	defer done()
 	repo := db.Repository{URL: "https://github.com/acme/thing", Name: "thing"}

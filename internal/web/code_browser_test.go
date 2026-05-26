@@ -127,6 +127,20 @@ func TestRepoBlob_servesHistoricalCommit(t *testing.T) {
 	}
 	check(c1, "func main() {}")
 	check(c2, "println")
+
+	req := localReq("GET", "/repositories/"+strconv.FormatUint(uint64(repo.ID), 10)+"/blob/"+c2+"/hello.go")
+	req.SetPathValue("id", strconv.FormatUint(uint64(repo.ID), 10))
+	req.SetPathValue("commit", c2)
+	req.SetPathValue("path", "hello.go")
+	rec := httptest.NewRecorder()
+	s.repoBlob(rec, req)
+	body := rec.Body.String()
+	if !strings.Contains(body, `<script src="/static/code_browser.js" defer></script>`) {
+		t.Errorf("body missing external code_browser.js script tag:\n%s", body)
+	}
+	if strings.Contains(body, "balanceSpansAtNewlines") {
+		t.Errorf("body still contains inline JS (CSP would block it):\n%s", body)
+	}
 }
 
 func TestRepoBlob_rejectsBadInputs(t *testing.T) {
