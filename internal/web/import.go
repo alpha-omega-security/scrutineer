@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -137,15 +138,11 @@ func (s *Server) importFindings(scan *db.Scan, res ingest.Result) (created []uin
 			Confidence:     firstNonEmpty(in.Confidence, "low"),
 			CWE:            in.CWE,
 			Location:       in.Location,
-			Trace:          in.Description,
-			SuggestedFix:   in.SuggestedFix,
+			Trace:          appendFixDescription(in.Description, in.SuggestedFix),
 			ImportedFrom:   res.Tool,
 			LastSeenScanID: scan.ID,
 			LastSeenCommit: scan.Commit,
 			SeenCount:      1,
-		}
-		if f.SuggestedFix != "" {
-			f.SuggestedFixCommit = scan.Commit
 		}
 		f.Fingerprint = db.FingerprintFinding(res.Tool, "", f.CWE, f.Location, f.Title)
 
@@ -186,4 +183,18 @@ func (s *Server) importFindings(scan *db.Scan, res ingest.Result) (created []uin
 		created = append(created, f.ID)
 	}
 	return created, observed
+}
+
+// appendFixDescription folds an ingested fix description into the Trace
+// markdown rather than writing Finding.SuggestedFix, which is reserved for
+// diffs that have passed gatePatch (see finding_patch.go).
+func appendFixDescription(desc, fix string) string {
+	fix = strings.TrimSpace(fix)
+	if fix == "" {
+		return desc
+	}
+	if desc == "" {
+		return "## Suggested fix\n\n" + fix
+	}
+	return desc + "\n\n## Suggested fix\n\n" + fix
 }

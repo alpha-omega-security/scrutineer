@@ -29,7 +29,10 @@ func TestSecurityHeadersAllowsLocalhost(t *testing.T) {
 	})
 	h := securityHeaders(inner)
 
-	for _, host := range []string{"127.0.0.1:8080", "localhost:8080", "[::1]:8080"} {
+	for _, host := range []string{
+		"127.0.0.1:8080", "localhost:8080", "[::1]:8080",
+		"127.0.0.1", "localhost", "[::1]",
+	} {
 		r := httptest.NewRequest("GET", "/", nil)
 		r.Host = host
 		w := httptest.NewRecorder()

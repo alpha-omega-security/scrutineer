@@ -52,9 +52,12 @@ func (s *Server) apiAuth(next http.Handler) http.Handler {
 			return
 		}
 		ctx := context.WithValue(r.Context(), apiCtxKey{}, &scan)
+		r.Body = http.MaxBytesReader(w, r.Body, apiMaxBody)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
+
+const apiMaxBody = 1 << 20
 
 func bearer(h string) string {
 	const prefix = "Bearer "

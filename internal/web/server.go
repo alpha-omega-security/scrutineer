@@ -10,6 +10,7 @@ import (
 	"html/template"
 	"log/slog"
 	"maps"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -1654,11 +1655,11 @@ func securityHeaders(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Security-Policy", cspPolicy)
 		host := r.Host
-		// Strip port for comparison
-		if i := strings.LastIndex(host, ":"); i >= 0 {
-			host = host[:i]
+		if h, _, err := net.SplitHostPort(host); err == nil {
+			host = h
 		}
-		if host != "127.0.0.1" && host != "localhost" && host != "[::1]" {
+		host = strings.Trim(host, "[]")
+		if host != "127.0.0.1" && host != "localhost" && host != "::1" {
 			http.Error(w, "forbidden: invalid host", http.StatusForbidden)
 			return
 		}

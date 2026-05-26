@@ -1,9 +1,11 @@
 package web
 
 import (
+	"strings"
 	"testing"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/ingest"
 )
 
 func TestKnownPURLsMatchWithAndWithoutQualifiers(t *testing.T) {
@@ -85,5 +87,55 @@ func TestKnownURLsMatchDependents(t *testing.T) {
 	}
 	if rid := knownURLs["https://github.com/foo/bar"]; rid != 0 {
 		t.Errorf("unknown URL: got repo %d, want 0", rid)
+	}
+}
+
+func TestAppendFixDescription(t *testing.T) {
+	if got := appendFixDescription("desc", ""); got != "desc" {
+		t.Errorf("empty fix: got %q", got)
+	}
+	if got := appendFixDescription("", "do x"); got != "## Suggested fix\n\ndo x" {
+		t.Errorf("empty desc: got %q", got)
+	}
+	if got := appendFixDescription("desc", "  do x  "); got != "desc\n\n## Suggested fix\n\ndo x" {
+		t.Errorf("both: got %q", got)
+	}
+}
+
+func TestImportFindings_keepsSuggestedFixGated(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/r", Name: "r"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Status: db.ScanDone, Commit: "abc"}
+	s.DB.Create(&scan)
+
+	res := ingest.Result{
+		Tool: "sarif-tool",
+		Findings: []ingest.Finding{{
+			Title:        "thing",
+			Severity:     "High",
+			Location:     "a.go:1",
+			Description:  "explanation",
+			SuggestedFix: "validate input before use",
+		}},
+	}
+	created, _ := s.importFindings(&scan, res)
+	if len(created) != 1 {
+		t.Fatalf("created %d findings, want 1", len(created))
+	}
+	var f db.Finding
+	s.DB.First(&f, created[0])
+	if f.SuggestedFix != "" {
+		t.Errorf("SuggestedFix = %q, want empty (gated column)", f.SuggestedFix)
+	}
+	if f.SuggestedFixCommit != "" {
+		t.Errorf("SuggestedFixCommit = %q, want empty", f.SuggestedFixCommit)
+	}
+	if !strings.Contains(f.Trace, "validate input before use") {
+		t.Errorf("Trace = %q, want fix text folded in", f.Trace)
+	}
+	if !strings.Contains(f.Trace, "explanation") {
+		t.Errorf("Trace = %q, want original description retained", f.Trace)
 	}
 }

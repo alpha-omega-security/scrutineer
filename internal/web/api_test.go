@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
@@ -426,4 +427,23 @@ func toString(v any) string {
 		return strconv.Itoa(x)
 	}
 	return ""
+}
+
+func TestAPIAuth_capsRequestBody(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo, scan := seedRunningScan(t, s)
+
+	body := `{"fork":"` + strings.Repeat("x", apiMaxBody) + `"}`
+	r := httptest.NewRequest("PATCH", "/api/repositories/"+strconv.FormatUint(uint64(repo.ID), 10), strings.NewReader(body))
+	r.Host = testHost
+	r.Header.Set("Authorization", "Bearer "+scan.APIToken)
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code == http.StatusNoContent {
+		t.Fatalf("oversized body accepted: status %d", w.Code)
+	}
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status %d, want 400 (decode fails on capped body)", w.Code)
+	}
 }

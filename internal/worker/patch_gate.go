@@ -169,6 +169,9 @@ func parseUnifiedDiff(diff string) ([]diffFile, error) {
 			if to == "/dev/null" {
 				path = ""
 			}
+			if path != "" && !filepath.IsLocal(path) {
+				return nil, fmt.Errorf("diff target escapes workspace: %q", path)
+			}
 			files = append(files, diffFile{Path: path, NewFile: newFile})
 			cur = &files[len(files)-1]
 			newFile = false

@@ -100,7 +100,7 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 	if d.AnthropicBaseURL != "" {
 		dockerArgs = append(dockerArgs, "-e", "ANTHROPIC_BASE_URL="+d.AnthropicBaseURL)
 	}
-	dockerArgs = append(dockerArgs, d.image())
+	dockerArgs = append(dockerArgs, "--", d.image())
 	dockerArgs = append(dockerArgs, claudeArgs...)
 
 	cmd := exec.CommandContext(ctx, "docker", dockerArgs...)
@@ -163,7 +163,7 @@ func ResolveHostGatewayIPv4(image string) string {
 	out, err := exec.Command("docker", "run", "--rm",
 		"--add-host", "hgw:host-gateway",
 		"--entrypoint", "grep",
-		image, "hgw", "/etc/hosts").Output()
+		"--", image, "hgw", "/etc/hosts").Output()
 	if err != nil {
 		return ""
 	}

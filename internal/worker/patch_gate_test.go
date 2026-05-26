@@ -85,6 +85,15 @@ func TestParseUnifiedDiff_errors(t *testing.T) {
 	if _, err := parseUnifiedDiff("--- a/x\n+++ b/x\n@@ garbage @@\n"); err == nil {
 		t.Error("expected error for bad hunk header")
 	}
+	if _, err := parseUnifiedDiff("--- a/x\n+++ b/../../etc/passwd\n@@ -1 +1 @@\n"); err == nil {
+		t.Error("expected error for .. escape in target path")
+	}
+	if _, err := parseUnifiedDiff("--- a/x\n+++ b//etc/passwd\n@@ -1 +1 @@\n"); err == nil {
+		t.Error("expected error for absolute target path")
+	}
+	if _, err := parseUnifiedDiff("--- /dev/null\n+++ b/sub/new.go\n@@ -0,0 +1 @@\n"); err != nil {
+		t.Errorf("local relative path should be accepted: %v", err)
+	}
 }
 
 func TestParseLocation(t *testing.T) {

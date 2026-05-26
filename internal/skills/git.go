@@ -96,7 +96,7 @@ func cloneOrPull(ctx context.Context, url, ref, dst string, fullClone bool) (str
 	}
 	target := "origin/HEAD"
 	if ref != "" {
-		if out, err := git(ctx, dst, "fetch", "--quiet", "origin", ref); err != nil {
+		if out, err := git(ctx, dst, "fetch", "--quiet", "origin", "--end-of-options", ref); err != nil {
 			return "", fmt.Errorf("fetch ref %s: %s: %w", ref, out, err)
 		}
 		target = "FETCH_HEAD"
