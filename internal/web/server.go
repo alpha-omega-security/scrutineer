@@ -1458,6 +1458,7 @@ func (s *Server) enqueueSkillWith(ctx context.Context, repoID, skillID uint, opt
 		StatusPriority: db.StatusPriorityFor(db.ScanQueued),
 		Model:          opts.Model,
 		SkillID:        &skillID,
+		SkillName:      sk.Name,
 		FindingID:      opts.FindingID,
 		DependentID:    opts.DependentID,
 		SubPath:        opts.SubPath,
