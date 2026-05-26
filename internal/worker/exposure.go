@@ -182,10 +182,15 @@ func (w *Worker) doExposure(ctx context.Context, scan *db.Scan, emit func(Event)
 		MaxTurns:     skill.MaxTurns,
 		AllowedTools: skill.AllowedTools,
 		SrcReady:     true,
+		Profile:      scan.Profile,
 	}
 	res, err := w.Runner.RunSkill(ctx, sj, emit)
 	if res.Commit != "" {
 		scan.Commit = res.Commit
+	}
+	if res.Profile != "" && res.Profile != scan.Profile {
+		scan.Profile = res.Profile
+		w.DB.Model(scan).Update("profile", res.Profile)
 	}
 	if err != nil {
 		if _, ok := errors.AsType[*MaxTurnsReachedError](err); ok && res.Report != "" {

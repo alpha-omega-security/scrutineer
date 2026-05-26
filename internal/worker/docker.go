@@ -28,6 +28,10 @@ type DockerRunner struct {
 	MaxTurns         int
 	AnthropicBaseURL string // passed as ANTHROPIC_BASE_URL env var to the container
 	HostGatewayIP    string // IPv4 address for --add-host; falls back to "host-gateway"
+	// ProfilesDir is the host directory containing docker/profiles/<name>/
+	// Dockerfile entries. When empty, profile resolution is skipped and
+	// every scan runs in the default Image.
+	ProfilesDir string
 }
 
 func (d DockerRunner) image() string {
@@ -56,6 +60,8 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 	commit := gitHead(src)
 	work := sj.WorkRoot
 	absWork, _ := filepath.Abs(work)
+
+	profile, image := d.resolveProfile(ctx, sj.Profile, src, emit)
 
 	var outPath string
 	if sj.OutputFile != "" {
@@ -100,7 +106,7 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 	if d.AnthropicBaseURL != "" {
 		dockerArgs = append(dockerArgs, "-e", "ANTHROPIC_BASE_URL="+d.AnthropicBaseURL)
 	}
-	dockerArgs = append(dockerArgs, "--", d.image())
+	dockerArgs = append(dockerArgs, "--", image)
 	dockerArgs = append(dockerArgs, claudeArgs...)
 
 	cmd := exec.CommandContext(ctx, "docker", dockerArgs...)
@@ -113,7 +119,7 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 	}
 	cmd.Stderr = cmd.Stdout
 
-	logLine := "$ docker run --rm " + d.image() + " <skill:" + sj.Name + ">"
+	logLine := "$ docker run --rm " + image + " <skill:" + sj.Name + ">"
 	if d.AnthropicBaseURL != "" {
 		logLine += " [ANTHROPIC_BASE_URL=" + d.AnthropicBaseURL + "]"
 	}
@@ -135,7 +141,7 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
 	}
 
-	res := SkillResult{Commit: commit}
+	res := SkillResult{Commit: commit, Profile: profile}
 	if outPath != "" {
 		res.Report = readCappedReport(outPath, emit)
 	}
@@ -146,6 +152,41 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 		return res, fmt.Errorf("docker exited: %w", waitErr)
 	}
 	return res, nil
+}
+
+// resolveProfile picks the runner image for this scan. When requested
+// is non-empty, the operator's choice wins (and "default" forces the
+// default image); when empty, scrutineer probes the clone with `brief`
+// to auto-select. Any failure along the way falls back to the default
+// image with a log line so a missing profile never blocks a scan.
+func (d DockerRunner) resolveProfile(ctx context.Context, requested, src string, emit func(Event)) (string, string) {
+	defaultImg := d.image()
+	if d.ProfilesDir == "" {
+		return "", defaultImg
+	}
+	var p Profile
+	if requested != "" {
+		if requested == "default" {
+			return "", defaultImg
+		}
+		p = ProfileByName(requested)
+		if p.IsDefault() {
+			emit(Event{Kind: KindText, Text: "profile: unknown " + requested + ", using default"})
+			return "", defaultImg
+		}
+	} else {
+		p = DetectProfile(ctx, defaultImg, src)
+		if p.IsDefault() {
+			return "", defaultImg
+		}
+	}
+	img, err := p.EnsureImage(ctx, d.ProfilesDir, defaultImg)
+	if err != nil {
+		emit(Event{Kind: KindText, Text: "profile: " + p.Name + " build failed, using default: " + err.Error()})
+		return "", defaultImg
+	}
+	emit(Event{Kind: KindText, Text: "profile: " + p.Name + " (" + img + ")"})
+	return p.Name, img
 }
 
 // DockerAvailable checks if docker is in PATH and the daemon is reachable.

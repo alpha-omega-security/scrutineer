@@ -18,6 +18,7 @@ import (
 	"gorm.io/gorm"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/worker"
 )
 
 const apiPrefix = "/api"
@@ -220,13 +221,19 @@ func (s *Server) apiRunSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Model string `json:"model"`
-		Ref   string `json:"ref"`
+		Model   string `json:"model"`
+		Ref     string `json:"ref"`
+		Profile string `json:"profile"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&body)
+	if body.Profile != "" && !worker.KnownProfile(body.Profile) {
+		writeAPIError(w, http.StatusBadRequest, "unknown profile")
+		return
+	}
 	scanID, err := s.enqueueSkillWith(r.Context(), uint(id), skill.ID, ScanOpts{
-		Model: body.Model,
-		Ref:   body.Ref,
+		Model:   body.Model,
+		Ref:     body.Ref,
+		Profile: body.Profile,
 	})
 	if err != nil {
 		if errors.Is(err, ErrSkillRequiresRemote) {

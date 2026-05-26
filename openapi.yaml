@@ -221,12 +221,25 @@ paths:
                 model:
                   type: string
                   description: Override model; defaults to the system default.
+                ref:
+                  type: string
+                  description: Git ref to checkout; empty means the repository's default branch.
+                profile:
+                  type: string
+                  description: |
+                    Runner profile name (e.g. `php`). Empty auto-detects from the clone via `brief`;
+                    `default` forces the default runner image. Unknown names return 400.
       responses:
         '201':
           description: Scan enqueued
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Scan' }
+        '400':
+          description: Bad request (e.g. unknown profile)
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404':
           description: Skill or repository not found

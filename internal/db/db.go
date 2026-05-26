@@ -151,6 +151,12 @@ type Scan struct {
 	// external APIs (packages/advisories/dependents) ignore it.
 	SubPath string `gorm:"index"`
 
+	// Profile is the runner profile that ran (or was overridden to run)
+	// this scan. Empty means the default runner image; non-empty names
+	// a docker/profiles/<name>/ entry. Persisted so retries reuse the
+	// operator's override and the UI can show the chosen ecosystem.
+	Profile string `gorm:"index"`
+
 	Commit     string
 	StartedAt  *time.Time
 	FinishedAt *time.Time

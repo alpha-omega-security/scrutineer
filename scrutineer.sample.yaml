@@ -37,6 +37,14 @@
 # Docker image used for per-scan containers.
 # runner_image: ghcr.io/alpha-omega-security/scrutineer-runner:latest
 
+# Directory containing per-ecosystem runner profiles. Each profile is a
+# Dockerfile under <dir>/<name>/Dockerfile; the worker auto-detects the
+# right profile from the cloned source via `brief` and builds the image
+# locally on demand (cache-keyed on the Dockerfile sha). Operators can
+# force a profile by passing `profile: <name>` to the API. Empty value
+# disables the mechanism entirely.
+# profiles_dir: docker/profiles
+
 # Extra hosts the docker runner's egress proxy will tunnel to, on top of
 # the built-in allowlist (Anthropic API, *.ecosyste.ms, major forges,
 # package registries, advisory sources, host.docker.internal). Use

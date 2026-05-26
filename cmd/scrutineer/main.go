@@ -56,6 +56,7 @@ type flags struct {
 	effort           string
 	noDocker         bool
 	runnerImage      string
+	profilesDir      string
 	skillsRepo       string
 	concurrency      int
 	cloneMode        string
@@ -79,6 +80,7 @@ func parseFlags() *flags {
 	flag.StringVar(&f.effort, "effort", "high", "claude effort")
 	flag.BoolVar(&f.noDocker, "no-docker", false, "disable containerised runner even if docker is available")
 	flag.StringVar(&f.runnerImage, "runner-image", worker.DefaultRunnerImage, "docker image for per-job containers")
+	flag.StringVar(&f.profilesDir, "profiles-dir", "docker/profiles", "directory containing per-ecosystem runner profiles (Dockerfile per profile); empty disables profiles")
 	flag.StringVar(&f.skillsRepo, "skills-repo", "", "clone skills on startup; owner/repo[@ref] or https://host/path[@ref]")
 	flag.IntVar(&f.concurrency, "concurrency", queue.DefaultWorkerConcurrency, "number of scans to run in parallel")
 	flag.StringVar(&f.cloneMode, "clone", "shallow", "clone depth: shallow (--depth 1) or full")
@@ -115,6 +117,9 @@ func (f *flags) merge(cfg *config.Config) {
 	}
 	if cfg.RunnerImage != "" && !f.set["runner-image"] {
 		f.runnerImage = cfg.RunnerImage
+	}
+	if cfg.ProfilesDir != "" && !f.set["profiles-dir"] {
+		f.profilesDir = cfg.ProfilesDir
 	}
 	if cfg.SkillsRepo != "" && !f.set["skills-repo"] {
 		f.skillsRepo = cfg.SkillsRepo
@@ -279,6 +284,7 @@ func run(log *slog.Logger) error {
 			MaxTurns:         f.maxTurns,
 			AnthropicBaseURL: f.anthropicBaseURL,
 			HostGatewayIP:    gwIP,
+			ProfilesDir:      f.profilesDir,
 		}
 		// Skills inside the container reach the host via host.docker.internal,
 		// which the egress proxy rewrites to 127.0.0.1 when dialing.

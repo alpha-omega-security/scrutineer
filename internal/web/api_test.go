@@ -356,6 +356,56 @@ func TestAPIListDependencyFindings(t *testing.T) {
 	}
 }
 
+func TestAPIRunSkill_profileOverridePersists(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo, scan := seedRunningScan(t, s)
+
+	skill := db.Skill{Name: "metadata", Description: "m", Body: "b", OutputFile: "report.json", Version: 1, Active: true, Source: "ui"}
+	s.DB.Create(&skill)
+
+	path := "/api/repositories/" + strconv.FormatUint(uint64(repo.ID), 10) + "/skills/metadata/run"
+	r := httptest.NewRequest("POST", path, strings.NewReader(`{"profile":"php"}`))
+	r.Host = testHost
+	r.Header.Set("Authorization", "Bearer "+scan.APIToken)
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != 201 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	var row db.Scan
+	s.DB.Where("skill_id = ?", skill.ID).First(&row)
+	if row.Profile != "php" {
+		t.Errorf("scan.Profile = %q, want %q", row.Profile, "php")
+	}
+}
+
+func TestAPIRunSkill_unknownProfileRejected(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo, scan := seedRunningScan(t, s)
+
+	skill := db.Skill{Name: "metadata", Description: "m", Body: "b", OutputFile: "report.json", Version: 1, Active: true, Source: "ui"}
+	s.DB.Create(&skill)
+
+	path := "/api/repositories/" + strconv.FormatUint(uint64(repo.ID), 10) + "/skills/metadata/run"
+	r := httptest.NewRequest("POST", path, strings.NewReader(`{"profile":"bogus"}`))
+	r.Host = testHost
+	r.Header.Set("Authorization", "Bearer "+scan.APIToken)
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != 400 {
+		t.Fatalf("status %d, want 400. body=%s", w.Code, w.Body)
+	}
+	var count int64
+	s.DB.Model(&db.Scan{}).Where("skill_id = ?", skill.ID).Count(&count)
+	if count != 0 {
+		t.Errorf("rejected enqueue still created %d scans", count)
+	}
+}
+
 func TestAPIRunFindingSkill_scopesFindingID(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

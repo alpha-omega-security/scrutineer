@@ -1414,6 +1414,7 @@ type ScanOpts struct {
 	DependentID *uint
 	SubPath     string
 	Ref         string
+	Profile     string
 }
 
 func (s *Server) enqueueSkill(ctx context.Context, repoID, skillID uint, model string) (uint, error) {
@@ -1462,6 +1463,7 @@ func (s *Server) enqueueSkillWith(ctx context.Context, repoID, skillID uint, opt
 		DependentID:    opts.DependentID,
 		SubPath:        opts.SubPath,
 		Ref:            opts.Ref,
+		Profile:        opts.Profile,
 		SkillsRepoSHA:  s.SkillsRepoSHA,
 		APIToken:       NewAPIToken(),
 	}

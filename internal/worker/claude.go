@@ -54,11 +54,20 @@ type SkillJob struct {
 	// cache). When true the runner skips its own clone and reads HEAD
 	// from the existing tree.
 	SrcReady bool
+	// Profile names a runner profile (docker/profiles/<name>/). Empty
+	// means "auto-detect from the clone"; "default" forces the default
+	// runner image. Only the docker runner honours this; the local
+	// runner ignores it (no per-profile image to swap to).
+	Profile string
 }
 
 type SkillResult struct {
 	Commit string
 	Report string // contents of OutputFile, or "" if none declared/written
+	// Profile is the runner profile actually used. Empty when the
+	// default runner image ran. The worker persists this on the scan
+	// so retries and the UI can show what was picked.
+	Profile string
 }
 
 type LocalClaude struct {

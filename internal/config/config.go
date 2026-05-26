@@ -31,6 +31,7 @@ type Config struct {
 	SkillsRepo   string   `yaml:"skills_repo"`
 	NoDocker     *bool    `yaml:"no_docker"`
 	RunnerImage  string   `yaml:"runner_image"`
+	ProfilesDir  string   `yaml:"profiles_dir"`
 	// EgressAllow extends the docker runner's egress proxy allowlist with
 	// extra hostnames. Entries are appended to worker.DefaultEgressAllow,
 	// not replacing it. "*.example.com" matches subdomains.
