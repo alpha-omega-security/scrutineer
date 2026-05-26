@@ -165,7 +165,7 @@ GORM usage is consistently parameterised; no `Raw`, no string-built `Where`, and
 - [x] `--` separator before URL in `git clone` (T2).
 - [x] `GIT_PROTOCOL_FROM_USER=0` in clone environment (T2).
 - [x] `io.LimitReader` (10 MB cap) on all ecosyste.ms response bodies (T7).
-- [x] `safeURL` validation on HTMLURL and IconURL before storing (T7).
+- [ ] `safeURL` validation on HTMLURL and IconURL before storing (T7).
 - [x] `0700` on the data directory at startup (T8).
 - [x] `toolchain go1.26.2` in go.mod so host builds match the image (T10).
 - [x] Pin tool versions in Dockerfile: claude-code, semgrep, git-pkgs, brief, zizmor (T11).
