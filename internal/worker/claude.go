@@ -5,10 +5,8 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
-	"syscall"
 
 	"scrutineer/internal/db"
 )
@@ -82,44 +80,19 @@ func (l LocalClaude) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)
 		_ = os.Remove(outPath)
 	}
 
-	args := buildClaudeArgs(sj, l.Effort, l.MaxTurns)
-	cmd := exec.CommandContext(ctx, "claude", args...)
-	cmd.Dir = work
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return SkillResult{}, err
-	}
-	cmd.Stderr = cmd.Stdout
-
-	emit(Event{Kind: KindText, Text: "$ claude -p <skill:" + sj.Name + ">"})
-	if err := cmd.Start(); err != nil {
-		return SkillResult{}, fmt.Errorf("start claude: %w", err)
-	}
-
-	hitMaxTurns := false
-	wrappedEmit := func(e Event) {
-		if e.Kind == KindError && e.Text == "hit max turns" {
-			hitMaxTurns = true
-		}
-		emit(e)
-	}
-	ParseStream(stdout, wrappedEmit)
-	waitErr := cmd.Wait()
-	if cmd.Process != nil {
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
-	}
+	err = runCommand(ctx, runSpec{
+		Name: "claude",
+		Args: buildClaudeArgs(sj, l.Effort, l.MaxTurns),
+		Dir:  work,
+		Log:  "$ claude -p <skill:" + sj.Name + ">",
+	}, emit)
 
 	res := SkillResult{Commit: commit}
 	if outPath != "" {
 		res.Report = readCappedReport(outPath, emit)
 	}
-	if waitErr != nil {
-		if hitMaxTurns {
-			return res, &MaxTurnsReachedError{}
-		}
-		return res, fmt.Errorf("claude exited: %w", waitErr)
+	if err != nil {
+		return res, err
 	}
 	return res, nil
 }

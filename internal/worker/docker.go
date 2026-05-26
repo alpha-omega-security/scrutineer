@@ -12,7 +12,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 )
 
 const DefaultRunnerImage = "ghcr.io/alpha-omega-security/scrutineer-runner:latest"
@@ -132,47 +131,24 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 	dockerArgs = append(dockerArgs, d.image())
 	dockerArgs = append(dockerArgs, entrypoint...)
 
-	cmd := exec.CommandContext(ctx, "docker", dockerArgs...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Env = os.Environ()
-
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return SkillResult{}, err
-	}
-	cmd.Stderr = cmd.Stdout
-
 	logLine := "$ docker run --rm " + d.image() + " " + d.harness() + " <skill:" + sj.Name + ">"
 	if d.AnthropicBaseURL != "" {
 		logLine += " [ANTHROPIC_BASE_URL=" + d.AnthropicBaseURL + "]"
 	}
-	emit(Event{Kind: KindText, Text: logLine})
-	if err := cmd.Start(); err != nil {
-		return SkillResult{}, fmt.Errorf("start docker: %w", err)
-	}
 
-	hitMaxTurns := false
-	wrappedEmit := func(e Event) {
-		if e.Kind == KindError && e.Text == "hit max turns" {
-			hitMaxTurns = true
-		}
-		emit(e)
-	}
-	ParseStream(stdout, wrappedEmit)
-	waitErr := cmd.Wait()
-	if cmd.Process != nil {
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
-	}
+	err = runCommand(ctx, runSpec{
+		Name: "docker",
+		Args: dockerArgs,
+		Env:  os.Environ(),
+		Log:  logLine,
+	}, emit)
 
 	res := SkillResult{Commit: commit}
 	if outPath != "" {
 		res.Report = readCappedReport(outPath, emit)
 	}
-	if waitErr != nil {
-		if hitMaxTurns {
-			return res, &MaxTurnsReachedError{}
-		}
-		return res, fmt.Errorf("docker exited: %w", waitErr)
+	if err != nil {
+		return res, err
 	}
 	return res, nil
 }
