@@ -347,7 +347,10 @@ func selectRunner(log *slog.Logger, f *flags, egressExtra []string) (worker.Skil
 		apiBase = "http://" + net.JoinHostPort(worker.HostGatewayAlias, addrPort(f.addr)) + "/api"
 		return r, apiBase, nil
 	default:
-		log.Info("docker not available or disabled, using local runner (no isolation)", "harness", harness)
+		if harness != "claude" {
+			return nil, "", fmt.Errorf("backend %q requires Docker but Docker is not available or --no-docker is set", f.backend)
+		}
+		log.Info("docker not available or disabled, using local runner (no isolation)")
 		return worker.LocalClaude{Effort: f.effort, FullClone: f.fullClone(), MaxTurns: f.maxTurns}, apiBase, nil
 	}
 }

@@ -159,7 +159,7 @@ func TestSelectRunner_local(t *testing.T) {
 }
 
 func TestSelectRunner_localCodexBackend(t *testing.T) {
-	// With noDocker=true and backend=codex, still get LocalClaude (harness only matters inside Docker).
+	// With noDocker=true and backend=codex, selectRunner must return an error.
 	f := &flags{
 		addr:      "127.0.0.1:8080",
 		backend:   "codex",
@@ -167,11 +167,8 @@ func TestSelectRunner_localCodexBackend(t *testing.T) {
 		cloneMode: "shallow",
 		set:       map[string]bool{},
 	}
-	runner, _, err := selectRunner(slog.New(slog.NewTextHandler(io.Discard, nil)), f, nil)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if _, ok := runner.(worker.LocalClaude); !ok {
-		t.Fatalf("runner type = %T, want LocalClaude", runner)
+	_, _, err := selectRunner(slog.New(slog.NewTextHandler(io.Discard, nil)), f, nil)
+	if err == nil {
+		t.Fatal("expected error when codex backend used without Docker")
 	}
 }
