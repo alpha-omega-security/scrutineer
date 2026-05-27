@@ -368,3 +368,170 @@ func TestStageContext_includesForkOrg(t *testing.T) {
 		t.Errorf("fork_org = %q, want fork-central", got.Scrutineer.ForkOrg)
 	}
 }
+
+func TestApplyPathFilters_builtinSkipList(t *testing.T) {
+	work := t.TempDir()
+	src := filepath.Join(work, "src")
+	writeFiles(t, src, map[string]string{
+		"main.go":                   "package main",
+		"node_modules/foo/index.js": "x",
+		"package-lock.json":         "{}",
+		"dist/bundle.js":            "x",
+		"src/app.go":                "x",
+		"app.min.js":                "x",
+	})
+	var events []string
+	emit := func(e Event) { events = append(events, e.Text) }
+
+	if err := applyPathFilters(work, &db.Skill{}, emit); err != nil {
+		t.Fatalf("applyPathFilters: %v", err)
+	}
+	assertExists(t, src, "main.go", "src/app.go")
+	assertGone(t, src, "node_modules/foo/index.js", "package-lock.json", "dist/bundle.js", "app.min.js")
+	if !hasMatchingEvent(events, "excluded by path filters") {
+		t.Errorf("expected scan-log event, got %v", events)
+	}
+}
+
+func TestApplyPathFilters_pathsOverrideSkipList(t *testing.T) {
+	work := t.TempDir()
+	src := filepath.Join(work, "src")
+	writeFiles(t, src, map[string]string{
+		"src/main.go":               "x",
+		"lib/util.go":               "x",
+		"docs/readme.md":            "x",
+		"node_modules/foo/index.js": "x",
+	})
+	skill := &db.Skill{Paths: "node_modules/**\nsrc/**"}
+	if err := applyPathFilters(work, skill, func(Event) {}); err != nil {
+		t.Fatalf("applyPathFilters: %v", err)
+	}
+	assertExists(t, src, "src/main.go", "node_modules/foo/index.js")
+	assertGone(t, src, "lib/util.go", "docs/readme.md")
+}
+
+func TestApplyPathFilters_ignorePathsCumulative(t *testing.T) {
+	work := t.TempDir()
+	src := filepath.Join(work, "src")
+	writeFiles(t, src, map[string]string{
+		"src/foo.go":      "x",
+		"src/foo_test.go": "x",
+		"src/bar.go":      "x",
+	})
+	skill := &db.Skill{IgnorePaths: "**/*_test.go"}
+	if err := applyPathFilters(work, skill, func(Event) {}); err != nil {
+		t.Fatalf("applyPathFilters: %v", err)
+	}
+	assertExists(t, src, "src/foo.go", "src/bar.go")
+	assertGone(t, src, "src/foo_test.go")
+}
+
+func TestApplyPathFilters_gitPreserved(t *testing.T) {
+	work := t.TempDir()
+	src := filepath.Join(work, "src")
+	writeFiles(t, src, map[string]string{
+		".git/HEAD":         "ref: refs/heads/main",
+		".git/objects/info": "x",
+		"main.go":           "x",
+	})
+	skill := &db.Skill{Paths: "src/**"} // would otherwise wipe everything
+	if err := applyPathFilters(work, skill, func(Event) {}); err != nil {
+		t.Fatalf("applyPathFilters: %v", err)
+	}
+	assertExists(t, src, ".git/HEAD", ".git/objects/info")
+	assertGone(t, src, "main.go")
+}
+
+func TestApplyPathFilters_skipsExcludedSubtree(t *testing.T) {
+	work := t.TempDir()
+	src := filepath.Join(work, "src")
+	writeFiles(t, src, map[string]string{
+		"main.go":                        "x",
+		"node_modules/a/b/c/d/deep.js":   "x",
+		"node_modules/.bin/cli":          "x",
+		"pkg/node_modules/inner/leaf.js": "x",
+		"vendor/lib.go":                  "x",
+	})
+	var events []string
+	emit := func(e Event) { events = append(events, e.Text) }
+
+	if err := applyPathFilters(work, &db.Skill{}, emit); err != nil {
+		t.Fatalf("applyPathFilters: %v", err)
+	}
+
+	assertExists(t, src, "main.go")
+	assertGone(t, src,
+		"node_modules",
+		"node_modules/a/b/c/d/deep.js",
+		"pkg/node_modules",
+		"pkg/node_modules/inner/leaf.js",
+		"vendor",
+		"vendor/lib.go",
+	)
+	if _, err := os.Stat(filepath.Join(src, "pkg")); err != nil {
+		t.Errorf("pkg/ (parent of an excluded subtree) should survive: %v", err)
+	}
+	if !hasMatchingEvent(events, "4 file(s) excluded by path filters") {
+		t.Errorf("expected count of 4 file(s) in event, got %v", events)
+	}
+}
+
+func TestApplyPathFilters_noopWhenNoSrcDir(t *testing.T) {
+	work := t.TempDir()
+	if err := applyPathFilters(work, &db.Skill{}, func(Event) {}); err != nil {
+		t.Errorf("missing src/ should not be an error, got %v", err)
+	}
+}
+
+func TestApplyPathFilters_noEventWhenNothingExcluded(t *testing.T) {
+	work := t.TempDir()
+	src := filepath.Join(work, "src")
+	writeFiles(t, src, map[string]string{"main.go": "x"})
+	var emitted int
+	if err := applyPathFilters(work, &db.Skill{}, func(Event) { emitted++ }); err != nil {
+		t.Fatal(err)
+	}
+	if emitted != 0 {
+		t.Errorf("emitted %d event(s), want 0 when nothing is excluded", emitted)
+	}
+}
+
+func writeFiles(t *testing.T, root string, files map[string]string) {
+	t.Helper()
+	for rel, body := range files {
+		full := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func assertExists(t *testing.T, root string, rels ...string) {
+	t.Helper()
+	for _, rel := range rels {
+		if _, err := os.Stat(filepath.Join(root, rel)); err != nil {
+			t.Errorf("expected %s to survive: %v", rel, err)
+		}
+	}
+}
+
+func assertGone(t *testing.T, root string, rels ...string) {
+	t.Helper()
+	for _, rel := range rels {
+		if _, err := os.Stat(filepath.Join(root, rel)); err == nil {
+			t.Errorf("expected %s to be filtered out", rel)
+		}
+	}
+}
+
+func hasMatchingEvent(events []string, substr string) bool {
+	for _, e := range events {
+		if strings.Contains(e, substr) {
+			return true
+		}
+	}
+	return false
+}

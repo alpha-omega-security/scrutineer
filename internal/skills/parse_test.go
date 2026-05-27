@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -645,5 +646,116 @@ v2`)
 	}
 	if !strings.Contains(s3.Body, "v2") {
 		t.Errorf("body not updated: %q", s3.Body)
+	}
+}
+
+func TestParseFile_pathsAndIgnorePaths(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSkill(t, dir, "scoped", `---
+name: scoped
+description: Skill with path scoping.
+metadata:
+  scrutineer.paths:
+    - src/**
+    - lib/**
+  scrutineer.ignore_paths:
+    - "**/*.test.*"
+---
+
+body
+`)
+	p, err := ParseFile(path)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got, want := p.Paths, []string{"src/**", "lib/**"}; !slices.Equal(got, want) {
+		t.Errorf("Paths = %v, want %v", got, want)
+	}
+	if got, want := p.IgnorePaths, []string{"**/*.test.*"}; !slices.Equal(got, want) {
+		t.Errorf("IgnorePaths = %v, want %v", got, want)
+	}
+	m, err := p.ToModel("local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Paths != "src/**\nlib/**" {
+		t.Errorf("db Paths = %q", m.Paths)
+	}
+	if m.IgnorePaths != "**/*.test.*" {
+		t.Errorf("db IgnorePaths = %q", m.IgnorePaths)
+	}
+}
+
+func TestParseFile_pathsWrongType(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSkill(t, dir, "bad-paths", `---
+name: bad-paths
+description: Skill with non-list paths.
+metadata:
+  scrutineer.paths: "src/**"
+---
+
+body
+`)
+	if _, err := ParseFile(path); err == nil {
+		t.Fatal("expected error when scrutineer.paths is not a list")
+	}
+}
+
+func TestParseFile_pathsItemWrongType(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSkill(t, dir, "bad-item", `---
+name: bad-item
+description: Skill with a non-string list entry.
+metadata:
+  scrutineer.ignore_paths:
+    - "**/*.js"
+    - 42
+---
+
+body
+`)
+	if _, err := ParseFile(path); err == nil {
+		t.Fatal("expected error when scrutineer.ignore_paths contains a non-string")
+	}
+}
+
+func TestParseFile_pathsMalformedGlob(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSkill(t, dir, "bad-glob", `---
+name: bad-glob
+description: Skill with a malformed glob pattern.
+metadata:
+  scrutineer.paths:
+    - "src/**"
+    - "[unclosed"
+---
+
+body
+`)
+	_, err := ParseFile(path)
+	if err == nil {
+		t.Fatal("expected error when scrutineer.paths contains a malformed glob")
+	}
+	if !strings.Contains(err.Error(), "[unclosed") {
+		t.Errorf("expected the offending pattern in the error, got: %v", err)
+	}
+}
+
+func TestParseFile_pathsUnsetDefaultsNil(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSkill(t, dir, "no-paths", `---
+name: no-paths
+description: Skill without path scoping.
+---
+
+body
+`)
+	p, err := ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Paths != nil || p.IgnorePaths != nil {
+		t.Errorf("paths defaults: %v / %v", p.Paths, p.IgnorePaths)
 	}
 }

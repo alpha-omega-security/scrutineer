@@ -7,6 +7,17 @@ metadata:
   scrutineer.version: 1
   scrutineer.output_file: report.json
   scrutineer.output_kind: dependencies
+  scrutineer.paths:
+    - "**"
+  scrutineer.ignore_paths:
+    - "**/node_modules/**"
+    - "**/dist/**"
+    - "**/build/**"
+    - "**/vendor/**"
+    - "**/generated/**"
+    - "**/__generated__/**"
+    - "**/*.min.js"
+    - "**/*.min.css"
 ---
 
 # dependencies

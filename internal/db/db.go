@@ -669,6 +669,14 @@ type Skill struct {
 	// auto-detection resolves to a different profile.
 	RequiresProfile string
 
+	// Paths and IgnorePaths are newline-joined shell-glob patterns from
+	// scrutineer.paths / scrutineer.ignore_paths in the frontmatter. When
+	// Paths is non-empty the skill sees only files matching one of its
+	// patterns and the builtin skip list is bypassed; IgnorePaths is
+	// always applied on top. See internal/skills.PathIncluded.
+	Paths       string `gorm:"type:text"`
+	IgnorePaths string `gorm:"type:text"`
+
 	Source     string // "local" | "remote" | "ui"
 	SourcePath string // directory on disk (local/remote) or empty (ui)
 	SourceHash string // sha256 of SKILL.md + schema.json contents

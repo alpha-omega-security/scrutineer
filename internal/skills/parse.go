@@ -41,6 +41,8 @@ const (
 	metaFailOn          = "scrutineer.fail_on"
 	metaRequiresRemote  = "scrutineer.requires_remote"
 	metaRequiresProfile = "scrutineer.requires_profile"
+	metaPaths           = "scrutineer.paths"
+	metaIgnorePaths     = "scrutineer.ignore_paths"
 
 	// SchemaVersion is the only scrutineer.version this build accepts.
 	// Skills omitting the key are treated as version 1. Bump when the
@@ -64,6 +66,8 @@ var scrutineerKeys = map[string]bool{
 	metaFailOn:          true,
 	metaRequiresRemote:  true,
 	metaRequiresProfile: true,
+	metaPaths:           true,
+	metaIgnorePaths:     true,
 }
 
 var confidenceLevels = map[string]bool{"low": true, "medium": true, "high": true}
@@ -127,6 +131,8 @@ type Parsed struct {
 	FailOn          string
 	RequiresRemote  bool
 	RequiresProfile string
+	Paths           []string
+	IgnorePaths     []string
 
 	SourcePath string // absolute path to the skill directory
 	SourceHash string // sha256 of SKILL.md + schema.json contents
@@ -264,6 +270,33 @@ func (p *Parsed) validateMetadata() error {
 	if err := checkEnum(p.Metadata, metaFailOn, severityLevels); err != nil {
 		return err
 	}
+	if err := checkGlobList(p.Metadata, metaPaths); err != nil {
+		return err
+	}
+	if err := checkGlobList(p.Metadata, metaIgnorePaths); err != nil {
+		return err
+	}
+	return nil
+}
+
+func checkGlobList(m map[string]any, key string) error {
+	v, ok := m[key]
+	if !ok {
+		return nil
+	}
+	list, ok := v.([]any)
+	if !ok {
+		return fmt.Errorf("%s must be a list of strings, got %T", key, v)
+	}
+	for i, item := range list {
+		s, ok := item.(string)
+		if !ok {
+			return fmt.Errorf("%s[%d] must be a string, got %T", key, i, item)
+		}
+		if err := ValidateGlob(s); err != nil {
+			return fmt.Errorf("%s[%d] %q: %w", key, i, s, err)
+		}
+	}
 	return nil
 }
 
@@ -336,6 +369,27 @@ func (p *Parsed) extractMetadataKeys() {
 	if v, ok := p.Metadata[metaRequiresProfile].(string); ok {
 		p.RequiresProfile = strings.TrimSpace(v)
 	}
+	p.Paths = extractStringList(p.Metadata, metaPaths)
+	p.IgnorePaths = extractStringList(p.Metadata, metaIgnorePaths)
+}
+
+func extractStringList(m map[string]any, key string) []string {
+	v, ok := m[key].([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(v))
+	for _, item := range v {
+		if s, ok := item.(string); ok {
+			if t := strings.TrimSpace(s); t != "" {
+				out = append(out, t)
+			}
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func (p *Parsed) loadSchema() {
@@ -384,6 +438,8 @@ func (p *Parsed) ToModel(source string) (*db.Skill, error) {
 		FailOn:          p.FailOn,
 		RequiresRemote:  p.RequiresRemote,
 		RequiresProfile: p.RequiresProfile,
+		Paths:           JoinPatterns(p.Paths),
+		IgnorePaths:     JoinPatterns(p.IgnorePaths),
 		Active:          true,
 		Source:          source,
 		SourcePath:      p.SourcePath,

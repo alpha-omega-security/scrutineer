@@ -66,6 +66,11 @@ metadata:
   scrutineer.min_confidence: medium
   scrutineer.report_on: Medium
   scrutineer.fail_on: Critical
+  scrutineer.paths:
+    - src/**
+    - lib/**
+  scrutineer.ignore_paths:
+    - "**/*.test.*"
 ---
 ```
 
@@ -86,8 +91,24 @@ metadata:
 | `metadata.scrutineer.fail_on` | `Low` `Medium` `High` `Critical` | If any finding meets or exceeds this severity, the scan is marked failed. Useful for CI-style gating. |
 | `metadata.scrutineer.requires_remote` | bool | When `true`, this skill is skipped on local-directory scans (`file://` repos). Set on skills that need a forge URL or remote-only data such as `advisories`, `dependents`, `exposure`, `fork`, `maintainers`, `metadata`, `packages`, `report-upstream`. Defaults to `false` so new skills run on both remote and local repositories. |
 | `metadata.scrutineer.requires_profile` | string | Pins the skill to a single registered runner profile (e.g. `php`). The enqueue API returns `400` when the requested profile mismatches; if the operator does not force a profile, the worker fails the scan when auto-detection resolves to a different one. Must name a profile registered in `internal/worker/profile.go` — `default` and the empty string are not valid here (use the absence of the key for "no constraint"). |
+| `metadata.scrutineer.paths` | list of string | Shell-glob allow-list (`*`, `?`, `**`) of paths the skill sees inside the workspace `src/`. When set, only matching files are exposed and the builtin skip list is bypassed. |
+| `metadata.scrutineer.ignore_paths` | list of string | Shell-glob deny-list applied on top of `paths` (or, by default, the builtin skip list). |
 
 `min_confidence`, `report_on`, and `fail_on` only apply when `output_kind` is `findings`.
+
+## Path filtering
+
+Before each scan, scrutineer prunes `workRoot/src/` so the skill only sees the files it cares about. The default filter drops lockfiles, minified bundles, build outputs, and vendored or generated trees:
+
+```
+**/pnpm-lock.yaml, **/package-lock.json, **/yarn.lock, **/Cargo.lock,
+**/go.sum, **/Gemfile.lock, **/poetry.lock, **/composer.lock,
+**/*.min.js, **/*.min.css,
+**/dist/**, **/build/**, **/node_modules/**, **/vendor/**,
+**/generated/**, **/__generated__/**
+```
+
+Declaring `scrutineer.paths` replaces this skip list entirely: the skill sees only files matching one of its patterns. `scrutineer.ignore_paths` always layers on top. `.git/` is always preserved so git-aware skills can read history. Skills that walk external APIs and never touch the clone can leave both keys unset. The scan log reports `N file(s) excluded by path filters` whenever the filter trims at least one file.
 
 ## Output kinds
 

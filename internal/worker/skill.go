@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/skills"
 )
 
 const filePerm = 0o644
@@ -114,6 +115,9 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 		}
 		scan.Commit = cacheCommit
 		w.clearCloneError(scan)
+	}
+	if err := applyPathFilters(workRoot, &skill, emit); err != nil {
+		return "", fmt.Errorf("apply path filters: %w", err)
 	}
 
 	skillDir := filepath.Join(workRoot, ".claude", "skills", skill.Name)
@@ -462,6 +466,88 @@ func (w *Worker) parseMaintainersOutput(scan *db.Scan, report string, emit func(
 	}
 	emit(Event{Kind: KindText, Text: fmt.Sprintf("identified %d maintainer(s)", len(result.Maintainers))})
 	return nil
+}
+
+// applyPathFilters prunes workRoot/src down to the files visible to the
+// skill given its scrutineer.paths / scrutineer.ignore_paths. This is a
+// scoping mechanism for performance and noise reduction, not an
+// isolation boundary: symlinks within the workspace are preserved by
+// the upstream copyTree, so a skill that follows one can still read
+// outside the filtered tree. The builtin skip list applies whenever the
+// skill has not declared scrutineer.paths; ignore_paths layers on top.
+// Whole subtrees blanket-excluded by deny patterns are removed in one
+// shot rather than walked file-by-file. .git is always preserved.
+// Emits a one-line scan-log entry with the count when at least one file
+// is removed.
+func applyPathFilters(workRoot string, skill *db.Skill, emit func(Event)) error {
+	paths := skills.SplitPatterns(skill.Paths)
+	ignorePaths := skills.SplitPatterns(skill.IgnorePaths)
+	src := filepath.Join(workRoot, "src")
+	if _, err := os.Stat(src); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	excluded := 0
+	err := filepath.WalkDir(src, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if p == src {
+			return nil
+		}
+		rel, relErr := filepath.Rel(src, p)
+		if relErr != nil {
+			return relErr
+		}
+		rel = filepath.ToSlash(rel)
+		if d.IsDir() {
+			if rel == ".git" {
+				return filepath.SkipDir
+			}
+			if skills.DirAllExcluded(rel, paths, ignorePaths) {
+				n, rmErr := removeSubtree(p)
+				if rmErr != nil {
+					return rmErr
+				}
+				excluded += n
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !skills.PathIncluded(rel, paths, ignorePaths) {
+			if rmErr := os.Remove(p); rmErr != nil {
+				return rmErr
+			}
+			excluded++
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if excluded > 0 {
+		emit(Event{Kind: KindText, Text: fmt.Sprintf("%d file(s) excluded by path filters", excluded)})
+	}
+	return nil
+}
+
+func removeSubtree(root string) (int, error) {
+	n := 0
+	walkErr := filepath.WalkDir(root, func(_ string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			n++
+		}
+		return nil
+	})
+	if walkErr != nil {
+		return 0, walkErr
+	}
+	if err := os.RemoveAll(root); err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 func validateSkillPaths(name, outputFile string) error {

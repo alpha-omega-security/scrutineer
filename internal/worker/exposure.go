@@ -158,6 +158,10 @@ func (w *Worker) doExposure(ctx context.Context, scan *db.Scan, emit func(Event)
 	}
 	scan.Commit = cacheCommit
 
+	if err := applyPathFilters(workRoot, &skill, emit); err != nil {
+		return "", fmt.Errorf("apply path filters: %w", err)
+	}
+
 	skillDir := filepath.Join(workRoot, ".claude", "skills", skill.Name)
 	if err := stageSkill(&skill, workRoot, skillDir); err != nil {
 		return "", fmt.Errorf("stage skill: %w", err)
