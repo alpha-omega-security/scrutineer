@@ -140,6 +140,9 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 	if err := stageContext(workRoot, w.APIBase, w.ForkOrg, w.metadataDir(), scan, &scan.Repository); err != nil {
 		return "", fmt.Errorf("stage context: %w", err)
 	}
+	if err := stageThreatModel(workRoot, scan.Repository.ThreatModel); err != nil {
+		return "", fmt.Errorf("stage threat model: %w", err)
+	}
 	if err := stageSkill(&skill, workRoot, skillDir); err != nil {
 		return "", fmt.Errorf("stage skill: %w", err)
 	}
@@ -917,6 +920,17 @@ func stageContext(workRoot, apiBase, forkOrg, metadataDir string, scan *db.Scan,
 		return err
 	}
 	return os.WriteFile(filepath.Join(workRoot, "context.json"), b, filePerm)
+}
+
+// stageThreatModel writes the repository's operator-edited threat model to
+// ./threat_model.json so skills that consume one (security-deep-dive) can
+// load it in preference to fetching the latest threat-model scan from the
+// API. No-op when the repository has no override set.
+func stageThreatModel(workRoot, model string) error {
+	if model == "" {
+		return nil
+	}
+	return os.WriteFile(filepath.Join(workRoot, "threat_model.json"), []byte(model), filePerm)
 }
 
 // copyAux copies every top-level entry in src other than SKILL.md and
