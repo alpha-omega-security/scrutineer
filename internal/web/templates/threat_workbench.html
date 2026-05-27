@@ -1,0 +1,134 @@
+{{define "threat_workbench"}}
+{{$wb := .Workbench}}
+<p class="text-sm text-muted-foreground mb-4 max-w-3xl">
+  Edit this repository's threat model and run <code>security-deep-dive</code> against
+  the edited copy. While an override is set, every deep-dive run loads it instead of
+  the latest <code>threat-model</code> scan. The diff below compares the two most
+  recent completed deep-dive runs so you can see which sinks moved between
+  <em>findings</em> and <em>ruled out</em> after a model change.
+  <span class="badge-outline ml-1">experimental</span>
+</p>
+
+<form method="post" action="/repositories/{{.Repo.ID}}/threat-model" class="form mb-6">
+  <textarea name="threat_model" rows="24" spellcheck="false"
+            class="input w-full font-mono text-xs"
+            placeholder="No threat-model scan has run yet. Run the threat-model skill to seed this editor, or paste a model here.">{{prettyjson $wb.Model}}</textarea>
+  <div class="flex items-center gap-2 mt-2">
+    <button type="submit" class="btn-outline">
+      <i data-lucide="save"></i> Save
+    </button>
+    <button type="submit" class="btn"
+            formaction="/repositories/{{.Repo.ID}}/threat-model/run">
+      <i data-lucide="play"></i> Save &amp; run deep-dive
+    </button>
+    {{if $wb.HasOverride}}
+      <button type="submit" class="btn-outline ml-auto"
+              formaction="/repositories/{{.Repo.ID}}/threat-model/clear"
+              formnovalidate
+              hx-confirm="Clear the override? Deep-dive will go back to fetching the latest threat-model scan.">
+        <i data-lucide="eraser"></i> Clear override
+      </button>
+    {{end}}
+  </div>
+  {{if $wb.HasOverride}}
+    <p class="text-xs text-muted-foreground mt-1">
+      Override active: deep-dive currently loads this model instead of fetching from the API.
+    </p>
+  {{end}}
+</form>
+
+{{if $wb.Runs}}
+<h3 class="font-medium mb-2">Recent deep-dive runs</h3>
+<table class="table w-full mb-6">
+  <thead><tr>
+    <th class="w-16">#</th><th class="w-24">Status</th><th class="w-24">Findings</th>
+    <th>Commit</th><th>Started</th><th>Duration</th><th class="w-24">Cost</th>
+  </tr></thead>
+  <tbody>
+  {{range $i, $r := $wb.Runs}}
+    <tr>
+      <td><a href="/scans/{{$r.ID}}">{{$r.ID}}</a>{{if eq $i 0}} <span class="badge-outline text-xs">latest</span>{{end}}</td>
+      <td>{{template "status-badge" (status $r.Status)}}</td>
+      <td>{{if gt $r.FindingsCount 0}}{{template "findings-badge" $r.FindingsCount}}{{else}}<span class="text-muted-foreground">0</span>{{end}}</td>
+      <td><code>{{short $r.Commit}}</code></td>
+      <td>{{if $r.StartedAt}}{{since $r.StartedAt}}{{end}}</td>
+      <td>{{if $r.FinishedAt}}{{dur $r.Duration}}{{end}}</td>
+      <td class="text-muted-foreground">{{if gt $r.CostUSD 0.0}}{{usd $r.CostUSD}}{{end}}</td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+{{end}}
+
+{{if ge (len $wb.Runs) 2}}
+<h3 class="font-medium mb-2">
+  Diff
+  <span class="text-xs text-muted-foreground font-normal">
+    scan <a class="hover:underline" href="/scans/{{(index $wb.Runs 1).ID}}">#{{(index $wb.Runs 1).ID}}</a>
+    &rarr;
+    scan <a class="hover:underline" href="/scans/{{(index $wb.Runs 0).ID}}">#{{(index $wb.Runs 0).ID}}</a>
+  </span>
+</h3>
+
+{{if $wb.Diff.Empty}}
+  <p class="text-sm text-muted-foreground mb-6">
+    No outcome changes. {{$wb.Diff.Unchanged}} sinks matched between runs.
+    {{if or $wb.Diff.OnlyInCurr $wb.Diff.OnlyInPrev}}
+      ({{$wb.Diff.OnlyInCurr}} only in latest, {{$wb.Diff.OnlyInPrev}} only in previous &mdash; inventory drift, not a model effect.)
+    {{end}}
+  </p>
+{{else}}
+
+{{with $wb.Diff.NowReported}}
+  <h4 class="text-sm font-medium mt-4 mb-1 flex items-center gap-2">
+    <i data-lucide="alert-triangle"></i> Now reported <span class="badge-destructive">{{len .}}</span>
+  </h4>
+  <p class="text-xs text-muted-foreground mb-2">Sinks that were ruled out previously but are findings under the current model.</p>
+  {{template "wb-diff-table" .}}
+{{end}}
+
+{{with $wb.Diff.NowSuppressed}}
+  <h4 class="text-sm font-medium mt-4 mb-1 flex items-center gap-2">
+    <i data-lucide="shield-check"></i> Now suppressed <span class="badge-outline">{{len .}}</span>
+  </h4>
+  <p class="text-xs text-muted-foreground mb-2">Sinks that were findings previously but are ruled out under the current model.</p>
+  {{template "wb-diff-table" .}}
+{{end}}
+
+{{with $wb.Diff.ReasonChanged}}
+  <h4 class="text-sm font-medium mt-4 mb-1 flex items-center gap-2">
+    <i data-lucide="diff"></i> Reason changed <span class="badge-outline">{{len .}}</span>
+  </h4>
+  <p class="text-xs text-muted-foreground mb-2">Ruled out in both runs but with a different disposition label.</p>
+  {{template "wb-diff-table" .}}
+{{end}}
+
+<p class="text-xs text-muted-foreground mt-4">
+  {{$wb.Diff.Unchanged}} unchanged &middot;
+  {{$wb.Diff.OnlyInCurr}} only in latest &middot;
+  {{$wb.Diff.OnlyInPrev}} only in previous
+</p>
+{{end}}
+
+{{else if eq (len $wb.Runs) 1}}
+  <p class="text-sm text-muted-foreground">One completed deep-dive run so far. Run again after editing the model to see a diff.</p>
+{{else}}
+  <p class="text-sm text-muted-foreground">No completed deep-dive runs yet.</p>
+{{end}}
+{{end}}
+
+{{define "wb-diff-table"}}
+<table class="table w-full mb-2">
+  <thead><tr><th class="w-64">Location</th><th class="w-32">Class</th><th>Before</th><th>After</th></tr></thead>
+  <tbody>
+  {{range .}}
+    <tr>
+      <td><code class="text-xs break-all">{{.Location}}</code></td>
+      <td><span class="badge-outline text-xs">{{.Class}}</span></td>
+      <td class="whitespace-normal text-xs text-muted-foreground">{{.Before}}</td>
+      <td class="whitespace-normal text-xs">{{.After}}</td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+{{end}}

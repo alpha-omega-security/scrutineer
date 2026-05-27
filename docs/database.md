@@ -30,6 +30,7 @@ The central entity. One row per git URL.
 | posture_summary | text | One-line explanation that goes with `posture`. |
 | fork | text | `owner/name` of the staging fork inside `-fork-org`. Written by the `fork` skill. |
 | clone_error | text | Last clone/fetch failure message; non-empty means the repo is currently unreachable. Cleared on next successful clone. |
+| threat_model | text | Operator's working-copy threat-model JSON. When set, the worker writes it to `./threat_model.json` in every skill workspace and `security-deep-dive` loads it instead of fetching the latest `threat-model` scan. Edited via the threat-model workbench tab. Empty = no override. |
 | created_at | datetime | |
 | updated_at | datetime | |
 

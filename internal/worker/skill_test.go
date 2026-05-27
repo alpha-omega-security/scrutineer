@@ -15,6 +15,28 @@ import (
 	"scrutineer/internal/queue"
 )
 
+func TestStageThreatModel(t *testing.T) {
+	dir := t.TempDir()
+	if err := stageThreatModel(dir, ""); err != nil {
+		t.Fatalf("empty: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "threat_model.json")); err == nil {
+		t.Error("empty model should not write threat_model.json")
+	}
+
+	model := `{"spec_version":1}`
+	if err := stageThreatModel(dir, model); err != nil {
+		t.Fatalf("non-empty: %v", err)
+	}
+	got, err := os.ReadFile(filepath.Join(dir, "threat_model.json"))
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if string(got) != model {
+		t.Errorf("contents = %q, want %q", got, model)
+	}
+}
+
 const maintainersReport = `{"maintainers":[
   {"login":"alice","name":"Alice","email":"alice@example.com","role":"lead","status":"active","evidence":"80% of past-year commits"},
   {"login":"bob","role":"contributor","status":"inactive","evidence":"last commit 2022"}

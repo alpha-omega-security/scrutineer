@@ -75,6 +75,10 @@
       Threat Model
     </button>
     {{end}}
+    <button type="button" role="tab" id="rt12" aria-controls="rp12" aria-selected="false">
+      Workbench
+      {{if .Workbench.HasOverride}}<span class="badge-outline ml-1">override</span>{{end}}
+    </button>
     {{if .Advisories}}
     <button type="button" role="tab" id="rt8" aria-controls="rp8" aria-selected="false">
       Advisories
@@ -335,6 +339,10 @@
     {{template "threat_model" (dict "TM" .ThreatModel "RepoID" .Repo.ID "Commit" $.TMCommit)}}
   </div>
   {{end}}
+
+  <div role="tabpanel" id="rp12" aria-labelledby="rt12" hidden>
+    {{template "threat_workbench" .}}
+  </div>
 
   {{if .Advisories}}
   <div role="tabpanel" id="rp8" aria-labelledby="rt8" hidden>
