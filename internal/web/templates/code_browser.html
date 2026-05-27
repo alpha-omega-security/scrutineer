@@ -4,9 +4,20 @@
   .Repo.Name (printf "/repositories/%d" .Repo.ID)
   .Path "")}}
 
+{{$forgeFile := forgeBlobURL .Repo.HTMLURL .Commit .Path 0}}
+{{$forgeCommit := forgeCommitURL .Repo.HTMLURL .Commit}}
 <header class="mb-4 flex flex-wrap items-baseline gap-2">
   <h2 class="text-xl font-semibold font-mono break-all">{{.Path}}</h2>
-  <span class="text-muted-foreground text-xs font-mono">@ {{short .Commit}}</span>
+  <span class="text-muted-foreground text-xs font-mono">@
+    {{if $forgeCommit}}<a href="{{$forgeCommit}}" class="hover:underline" rel="noopener noreferrer" target="_blank">{{short .Commit}}</a>
+    {{else}}{{short .Commit}}{{end}}
+  </span>
+  {{if $forgeFile}}
+    <a href="{{$forgeFile}}" rel="noopener noreferrer" target="_blank"
+       class="text-xs text-muted-foreground hover:text-foreground hover:underline ml-auto inline-flex items-center gap-1">
+      <i data-lucide="external-link" class="size-3.5"></i> View on forge
+    </a>
+  {{end}}
 </header>
 
 {{if .Missing}}

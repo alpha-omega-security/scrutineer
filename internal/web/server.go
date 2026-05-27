@@ -130,6 +130,8 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *work
 			l, _ := loc.(string)
 			return locationURL(id, c, l)
 		},
+		"forgeBlobURL":   forgeBlobURL,
+		"forgeCommitURL": forgeCommitURL,
 		"domain": func(u string) string {
 			u = strings.TrimPrefix(u, "https://")
 			u = strings.TrimPrefix(u, "http://")
