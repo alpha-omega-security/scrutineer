@@ -14,11 +14,11 @@ import (
 type forgeKind int
 
 const (
-	forgeUnknown forgeKind = iota
-	forgeGitHub            // github.com
-	forgeGitLab            // gitlab.*
-	forgeGitea             // codeberg.org / Gitea / Forgejo
-	forgeBitbucket         // bitbucket.org
+	forgeUnknown   forgeKind = iota
+	forgeGitHub              // github.com
+	forgeGitLab              // gitlab.*
+	forgeGitea               // codeberg.org / Gitea / Forgejo
+	forgeBitbucket           // bitbucket.org
 )
 
 func detectForge(htmlURL string) forgeKind {
@@ -106,4 +106,3 @@ func forgeCommitURL(htmlURL, commit string) string {
 	}
 	return ""
 }
-

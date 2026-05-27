@@ -4,10 +4,10 @@ import "testing"
 
 func TestForgeBlobURL(t *testing.T) {
 	cases := []struct {
-		name                string
-		htmlURL, commit, p  string
-		line                int
-		want                string
+		name               string
+		htmlURL, commit, p string
+		line               int
+		want               string
 	}{
 		{"github no line", "https://github.com/owner/repo", "abc123", "lib/x.rb", 0,
 			"https://github.com/owner/repo/blob/abc123/lib/x.rb"},
@@ -66,4 +66,3 @@ func TestForgeCommitURL(t *testing.T) {
 		})
 	}
 }
-

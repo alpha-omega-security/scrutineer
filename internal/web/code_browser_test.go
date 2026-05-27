@@ -268,4 +268,3 @@ func TestRepoBlob_rendersForgeLinkInMissingState(t *testing.T) {
 		t.Errorf("body missing forge commit link:\n%s", body)
 	}
 }
-
