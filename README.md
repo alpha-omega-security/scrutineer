@@ -147,7 +147,7 @@ Each finding from the `security-deep-dive` skill starts at **new** and moves thr
 4. **ready** -- draft prepared. Run the `report-upstream` skill to file it via GitHub PVR (github.com only, requires `gh` auth), or click "Mark as reported" after sending it yourself
 5. **reported** -- sent to maintainer. Click "Acknowledged" when they respond
 6. **acknowledged** -- maintainer working on fix. Click "Mark fixed" when it ships
-7. **fixed** -- patch available. Click "Publish" to issue the advisory
+7. **fixed** -- patch available. Click "Mark published" to issue the advisory
 8. **published** -- done
 
 Each finding page has a notes section for recording triage reasoning and communication history.

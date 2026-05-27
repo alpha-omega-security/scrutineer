@@ -103,7 +103,7 @@
       {{else if eq $s "fixed"}}
         <button type="submit" name="status" value="published" class="btn"
                 hx-post="/findings/{{$id}}/status">
-          <i data-lucide="globe"></i> Publish
+          <i data-lucide="globe"></i> Mark published
         </button>
 
       {{else if or (eq $s "rejected") (eq $s "duplicate")}}
