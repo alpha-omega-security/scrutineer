@@ -108,7 +108,7 @@ func (w *Worker) parsePackagesOutput(scan *db.Scan, report string, emit func(Eve
 		row := db.Package{
 			RepositoryID:         scan.RepositoryID,
 			Name:                 p.Name,
-			Ecosystem:            p.Ecosystem,
+			Ecosystem:            normalizeEcosystem(p.Ecosystem, p.PURL, p.RegistryURL),
 			PURL:                 p.PURL,
 			Licenses:             p.Licenses,
 			LatestVersion:        p.LatestVersion,
@@ -215,7 +215,7 @@ func (w *Worker) parseDependentsOutput(scan *db.Scan, report string, emit func(E
 		rows = append(rows, db.Dependent{
 			RepositoryID:   scan.RepositoryID,
 			Name:           d.Name,
-			Ecosystem:      d.Ecosystem,
+			Ecosystem:      normalizeEcosystem(d.Ecosystem, d.PURL, d.RegistryURL),
 			PURL:           d.PURL,
 			RepositoryURL:  d.RepositoryURL,
 			Downloads:      d.Downloads,
@@ -264,7 +264,7 @@ func (w *Worker) parseDependenciesOutput(scan *db.Scan, report string, emit func
 		rows = append(rows, db.Dependency{
 			RepositoryID:   scan.RepositoryID,
 			Name:           d.Name,
-			Ecosystem:      d.Ecosystem,
+			Ecosystem:      normalizeEcosystem(d.Ecosystem, d.PURL, ""),
 			PURL:           d.PURL,
 			Requirement:    d.Requirement,
 			DependencyType: depType,
