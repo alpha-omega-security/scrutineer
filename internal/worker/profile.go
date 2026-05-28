@@ -55,9 +55,9 @@ func ProfileByName(name string) Profile {
 	return Profile{}
 }
 
-// KnownProfile reports whether name is a registered non-default profile.
-// Use this to validate operator-supplied `?profile=` values before
-// silently falling back to the default.
+// KnownProfile reports whether name is an acceptable `?profile=` value:
+// empty, "default", or a registered named profile. Use this to validate
+// operator-supplied values before silently falling back to the default.
 func KnownProfile(name string) bool {
 	if name == "" || name == "default" {
 		return true
