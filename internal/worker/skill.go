@@ -130,6 +130,7 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 
 	sj := SkillJob{
 		Repo:            scan.Repository,
+		ScanID:          scan.ID,
 		WorkRoot:        workRoot,
 		Model:           scan.Model,
 		Name:            skill.Name,

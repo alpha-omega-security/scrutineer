@@ -173,6 +173,7 @@ func (w *Worker) doExposure(ctx context.Context, scan *db.Scan, emit func(Event)
 
 	sj := SkillJob{
 		Repo:            depRepo,
+		ScanID:          scan.ID,
 		WorkRoot:        workRoot,
 		Model:           scan.Model,
 		Name:            skill.Name,

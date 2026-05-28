@@ -33,13 +33,24 @@ type DockerRunner struct {
 	// every scan runs in the default Image.
 	ProfilesDir string
 	// Hardened toggles the strict sandbox: rootfs is mounted read-only,
-	// no-new-privileges is set on the container, and the runner attaches
-	// to HardenedNetwork (which must be --internal) so the only egress
-	// path is the host proxy. Profile images must work with a read-only
-	// rootfs when this is enabled (writable paths beyond /work and /tmp
-	// will fail).
-	Hardened        bool
-	HardenedNetwork string
+	// no-new-privileges is set on the container, and the runner creates
+	// a per-scan --internal docker network so the only egress path is
+	// the host proxy and concurrent scans cannot reach each other.
+	// Profile images must work with a read-only rootfs when this is
+	// enabled (writable paths beyond /work and /tmp will fail).
+	Hardened bool
+}
+
+// hardenedNetworkPrefix is the common prefix used to name the per-scan
+// --internal docker networks. SweepOrphanHardenedNetworks relies on it
+// to identify residue from crashed scrutineer processes.
+const hardenedNetworkPrefix = "scrutineer-hardened-"
+
+// hardenedNetworkName returns the docker network name dedicated to a
+// single hardened scan. Uniqueness per scan is the whole isolation
+// property: two scans must never produce the same name.
+func hardenedNetworkName(scanID uint) string {
+	return fmt.Sprintf("%s%d", hardenedNetworkPrefix, scanID)
 }
 
 func (d DockerRunner) image() string {
@@ -96,6 +107,20 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 		return SkillResult{Commit: commit, Profile: profile}, fmt.Errorf("skill %q requires profile %q, resolved %q", sj.Name, sj.RequiresProfile, got)
 	}
 
+	var perScanNetwork string
+	if d.Hardened {
+		if sj.ScanID == 0 {
+			return SkillResult{Commit: commit, Profile: profile}, fmt.Errorf("hardened mode requires SkillJob.ScanID; refusing to share %s0 across scans", hardenedNetworkPrefix)
+		}
+		perScanNetwork = hardenedNetworkName(sj.ScanID)
+		if err := EnsureHardenedNetwork(perScanNetwork); err != nil {
+			return SkillResult{Commit: commit, Profile: profile}, fmt.Errorf("create hardened network: %w", err)
+		}
+		defer func() {
+			_ = exec.Command("docker", "network", "rm", "--", perScanNetwork).Run()
+		}()
+	}
+
 	var outPath string
 	if sj.OutputFile != "" {
 		outPath = filepath.Join(work, sj.OutputFile)
@@ -103,7 +128,7 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 	}
 
 	claudeArgs := append([]string{"claude"}, buildClaudeArgs(sj, d.Effort, d.MaxTurns)...)
-	dockerArgs := append(d.buildDockerArgs(absWork, image), claudeArgs...)
+	dockerArgs := append(d.buildDockerArgs(absWork, image, perScanNetwork), claudeArgs...)
 
 	cmd := exec.CommandContext(ctx, "docker", dockerArgs...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -155,9 +180,17 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 // the in-container command. Split out of RunSkill to keep its cognitive
 // complexity manageable as new toggles (hardened mode, proxy, profiles)
 // accumulate.
-func (d DockerRunner) buildDockerArgs(absWork, image string) []string {
+func (d DockerRunner) buildDockerArgs(absWork, image, perScanNetwork string) []string {
 	gwTarget := "host-gateway"
-	if d.HostGatewayIP != "" {
+	if d.Hardened {
+		// Each --internal network has its own subnet and gateway, so the
+		// IPv4 must be probed against the per-scan network the runner
+		// will actually attach to. An empty probe result falls through
+		// to docker's literal host-gateway alias.
+		if ip := ResolveHostGatewayIPv4(image, perScanNetwork); ip != "" {
+			gwTarget = ip
+		}
+	} else if d.HostGatewayIP != "" {
 		gwTarget = d.HostGatewayIP
 	}
 	args := []string{
@@ -189,7 +222,7 @@ func (d DockerRunner) buildDockerArgs(absWork, image string) []string {
 		args = append(args,
 			"--read-only",
 			"--security-opt", "no-new-privileges",
-			"--network", d.HardenedNetwork,
+			"--network", perScanNetwork,
 		)
 	}
 	if d.ProxyURL != "" {
@@ -309,11 +342,11 @@ func dirSize(root string) (int64, error) {
 // given name if it does not already exist. --internal blocks routes
 // to external networks; the container can still reach the host via
 // the bridge gateway, so the egress proxy on the host remains the only
-// path out. The function is idempotent so scrutineer restarts after a
-// crash (when the network may still exist with orphan endpoints) do
-// not fail.
+// path out. The function is idempotent: a retry of a scan that crashed
+// after the network was created (but before the post-scan rm ran) will
+// reuse the existing network instead of failing.
 func EnsureHardenedNetwork(name string) error {
-	if out, err := exec.Command("docker", "network", "inspect", name).Output(); err == nil && len(out) > 0 {
+	if out, err := exec.Command("docker", "network", "inspect", "--", name).Output(); err == nil && len(out) > 0 {
 		return nil
 	}
 	cmd := exec.Command("docker", "network", "create", "--internal", "--", name)
@@ -321,4 +354,42 @@ func EnsureHardenedNetwork(name string) error {
 		return fmt.Errorf("docker network create --internal %s: %w: %s", name, err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// SweepOrphanHardenedNetworks removes per-scan hardened docker networks
+// left over by previous scrutineer processes (typically after a crash
+// mid-scan). Docker refuses to remove a network that still has
+// containers attached, so a concurrently running scan from another
+// scrutineer instance is safe from this sweep. Returns the number of
+// networks actually removed; rm failures are intentionally swallowed
+// since a busy network is exactly what we want to leave alone.
+func SweepOrphanHardenedNetworks() (int, error) {
+	out, err := exec.Command("docker", "network", "ls",
+		"--filter", "name="+hardenedNetworkPrefix,
+		"--format", "{{.Name}}").Output()
+	if err != nil {
+		return 0, fmt.Errorf("docker network ls: %w", err)
+	}
+	removed := 0
+	for _, n := range parseHardenedNetworkNames(out) {
+		if err := exec.Command("docker", "network", "rm", "--", n).Run(); err == nil {
+			removed++
+		}
+	}
+	return removed, nil
+}
+
+// parseHardenedNetworkNames extracts strict-prefix matches from the
+// output of `docker network ls --format {{.Name}}`. Docker's --filter
+// name= is a substring match, so we re-check the prefix here to avoid
+// touching a user-named network that happens to contain the substring.
+func parseHardenedNetworkNames(out []byte) []string {
+	var names []string
+	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
+		name := strings.TrimSpace(line)
+		if name != "" && strings.HasPrefix(name, hardenedNetworkPrefix) {
+			names = append(names, name)
+		}
+	}
+	return names
 }

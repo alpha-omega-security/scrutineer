@@ -40,7 +40,13 @@ type SkillRunner interface {
 // parallel skills on the same repository do not share src or
 // report.json, so neither clobbers the other's output.
 type SkillJob struct {
-	Repo         db.Repository
+	Repo db.Repository
+	// ScanID identifies the scan that owns this job. Required when the
+	// runner is hardened: it disambiguates the per-scan docker network so
+	// concurrent scans can never share one. A zero value collapses
+	// distinct scans onto a single network and defeats the isolation, so
+	// the docker runner refuses to start hardened with ScanID == 0.
+	ScanID       uint
 	WorkRoot     string
 	Model        string
 	Name         string

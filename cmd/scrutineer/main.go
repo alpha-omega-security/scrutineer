@@ -33,10 +33,9 @@ func (s *skillDirs) String() string     { return strings.Join(*s, ",") }
 func (s *skillDirs) Set(v string) error { *s = append(*s, v); return nil }
 
 const (
-	dataPermSecure      = 0o700
-	shutdownTimeout     = 5 * time.Second
-	skillsCloneTimeout  = 2 * time.Minute
-	hardenedNetworkName = "scrutineer-hardened"
+	dataPermSecure     = 0o700
+	shutdownTimeout    = 5 * time.Second
+	skillsCloneTimeout = 2 * time.Minute
 )
 
 func main() {
@@ -379,14 +378,21 @@ func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRu
 	if err != nil {
 		return nil, "", fmt.Errorf("start egress proxy: %w", err)
 	}
-	var network string
+	// Hardened mode owns its docker networks per-scan, so the gateway
+	// IP must be probed inside RunSkill against the network the runner
+	// is about to attach to. Probing once here would point every scan
+	// at whichever network happened to be probed first. The startup
+	// sweep collects per-scan networks left over by crashed processes.
+	var gwIP string
 	if f.hardened {
-		network = hardenedNetworkName
-		if err := worker.EnsureHardenedNetwork(network); err != nil {
-			return nil, "", fmt.Errorf("create hardened network: %w", err)
+		if removed, err := worker.SweepOrphanHardenedNetworks(); err != nil {
+			log.Warn("orphan hardened network sweep failed", "err", err)
+		} else if removed > 0 {
+			log.Info("removed orphan hardened networks", "count", removed)
 		}
+	} else {
+		gwIP = worker.ResolveHostGatewayIPv4(f.runnerImage, "")
 	}
-	gwIP := worker.ResolveHostGatewayIPv4(f.runnerImage, network)
 	log.Info("docker detected, using containerised runner",
 		"image", f.runnerImage, "egress_proxy_port", port, "egress_allow", len(allow),
 		"host_gateway_ipv4", gwIP, "hardened", f.hardened)
@@ -403,7 +409,6 @@ func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRu
 		HostGatewayIP:    gwIP,
 		ProfilesDir:      f.profilesDir,
 		Hardened:         f.hardened,
-		HardenedNetwork:  network,
 	}, apiBase, nil
 }
 
