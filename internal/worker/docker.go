@@ -32,6 +32,14 @@ type DockerRunner struct {
 	// Dockerfile entries. When empty, profile resolution is skipped and
 	// every scan runs in the default Image.
 	ProfilesDir string
+	// Hardened toggles the strict sandbox: rootfs is mounted read-only,
+	// no-new-privileges is set on the container, and the runner attaches
+	// to HardenedNetwork (which must be --internal) so the only egress
+	// path is the host proxy. Profile images must work with a read-only
+	// rootfs when this is enabled (writable paths beyond /work and /tmp
+	// will fail).
+	Hardened        bool
+	HardenedNetwork string
 }
 
 func (d DockerRunner) image() string {
@@ -40,6 +48,15 @@ func (d DockerRunner) image() string {
 	}
 	return DefaultRunnerImage
 }
+
+// HardenedWorkspaceCapBytes caps the per-scan workspace footprint that
+// hardened mode tolerates after clone completes. This is a post-clone
+// check, not a clone-time bound: a clone that already exceeds disk
+// capacity fails earlier on its own, so this cap is what hardened mode
+// will agree to scan, not a guarantee against disk fill during clone
+// (use OS-level disk quotas for that). 2 GiB leaves room for genuinely
+// large legitimate repos.
+const HardenedWorkspaceCapBytes int64 = 2 << 30
 
 // RunSkill runs a skill inside an ephemeral container. The whole workspace
 // (clone + staged .claude/skills + context.json + output) is mounted at
@@ -55,6 +72,15 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 		src, err = ensureClone(ctx, sj.Repo, sj.WorkRoot, d.FullClone, sj.Ref, emit)
 		if err != nil {
 			return SkillResult{}, err
+		}
+	}
+	if d.Hardened {
+		size, err := dirSize(sj.WorkRoot)
+		if err != nil {
+			return SkillResult{}, fmt.Errorf("hardened workspace size check: %w", err)
+		}
+		if size > HardenedWorkspaceCapBytes {
+			return SkillResult{}, fmt.Errorf("hardened workspace exceeds %d bytes after clone (got %d)", HardenedWorkspaceCapBytes, size)
 		}
 	}
 	commit := gitHead(src)
@@ -87,6 +113,17 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 		"-w", "/work",
 		"--add-host", HostGatewayAlias + ":" + gwTarget,
 	}
+	if d.Hardened {
+		// Read-only rootfs + no-new-privileges close the residual paths a
+		// hostile skill could use to escalate inside the container. /work
+		// stays writable (skill output) and /tmp is the tmpfs declared
+		// above with HOME=/tmp redirecting claude session storage.
+		dockerArgs = append(dockerArgs,
+			"--read-only",
+			"--security-opt", "no-new-privileges",
+			"--network", d.HardenedNetwork,
+		)
+	}
 	if d.ProxyURL != "" {
 		dockerArgs = append(dockerArgs,
 			"-e", "HTTPS_PROXY="+d.ProxyURL,
@@ -94,7 +131,7 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 			"-e", "ALL_PROXY="+d.ProxyURL,
 			"-e", "NO_PROXY=",
 		)
-	} else {
+	} else if !d.Hardened {
 		dockerArgs = append(dockerArgs, "--network", "none")
 	}
 	if os.Getenv("ANTHROPIC_API_KEY") != "" {
@@ -196,15 +233,21 @@ func DockerAvailable() bool {
 }
 
 // ResolveHostGatewayIPv4 returns the IPv4 address that Docker's
-// host-gateway maps to. Docker adds both IPv4 and IPv6 /etc/hosts
-// entries for host-gateway; tools that prefer IPv6 (like Node's fetch)
-// fail when the server only listens on 127.0.0.1. Using the explicit
-// IPv4 address avoids the dual-stack ambiguity.
-func ResolveHostGatewayIPv4(image string) string {
-	out, err := exec.Command("docker", "run", "--rm",
-		"--add-host", "hgw:host-gateway",
-		"--entrypoint", "grep",
-		"--", image, "hgw", "/etc/hosts").Output()
+// host-gateway maps to on the given network. An empty network probes
+// the default bridge, which is what scrutineer uses outside hardened
+// mode. The hardened path passes its --internal network name so the
+// resolved gateway matches the network the runner actually attaches to.
+// Docker adds both IPv4 and IPv6 /etc/hosts entries for host-gateway;
+// tools that prefer IPv6 (like Node's fetch) fail when the server only
+// listens on 127.0.0.1. Using the explicit IPv4 address avoids the
+// dual-stack ambiguity.
+func ResolveHostGatewayIPv4(image, network string) string {
+	args := []string{"run", "--rm", "--add-host", "hgw:host-gateway"}
+	if network != "" {
+		args = append(args, "--network", network)
+	}
+	args = append(args, "--entrypoint", "grep", "--", image, "hgw", "/etc/hosts")
+	out, err := exec.Command("docker", args...).Output()
 	if err != nil {
 		return ""
 	}
@@ -219,4 +262,40 @@ func ResolveHostGatewayIPv4(image string) string {
 		}
 	}
 	return ""
+}
+
+// dirSize sums the on-disk size of every regular file under root. Used
+// by hardened mode to refuse a scan whose workspace is large enough to
+// fill the host disk. Errors during the walk are returned so the caller
+// can decide whether to fail the scan or skip the cap.
+func dirSize(root string) (int64, error) {
+	var total int64
+	err := filepath.Walk(root, func(_ string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.Mode().IsRegular() {
+			total += info.Size()
+		}
+		return nil
+	})
+	return total, err
+}
+
+// EnsureHardenedNetwork creates an internal docker network with the
+// given name if it does not already exist. --internal blocks routes
+// to external networks; the container can still reach the host via
+// the bridge gateway, so the egress proxy on the host remains the only
+// path out. The function is idempotent so scrutineer restarts after a
+// crash (when the network may still exist with orphan endpoints) do
+// not fail.
+func EnsureHardenedNetwork(name string) error {
+	if out, err := exec.Command("docker", "network", "inspect", name).Output(); err == nil && len(out) > 0 {
+		return nil
+	}
+	cmd := exec.Command("docker", "network", "create", "--internal", "--", name)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("docker network create --internal %s: %w: %s", name, err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }

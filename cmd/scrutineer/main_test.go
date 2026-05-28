@@ -1,10 +1,14 @@
 package main
 
 import (
+	"io"
+	"log/slog"
+	"slices"
 	"testing"
 	"time"
 
 	"scrutineer/internal/config"
+	"scrutineer/internal/worker"
 )
 
 func fullConfig() *config.Config {
@@ -13,6 +17,7 @@ func fullConfig() *config.Config {
 		Data:             "/var/lib/scrutineer",
 		Effort:           "medium",
 		NoDocker:         new(true),
+		Hardened:         new(true),
 		RunnerImage:      "custom:v1",
 		SkillsRepo:       "https://example.com/skills.git",
 		Skills:           []string{"/etc/skills"},
@@ -37,6 +42,9 @@ func TestFlagsMerge_configFillsUnset(t *testing.T) {
 	}
 	if !f.noDocker {
 		t.Errorf("noDocker not applied")
+	}
+	if !f.hardened {
+		t.Errorf("hardened not applied")
 	}
 	if f.concurrency != 8 {
 		t.Errorf("concurrency = %d", f.concurrency)
@@ -102,6 +110,60 @@ func TestFlagsMerge_zeroConfigLeavesDefaults(t *testing.T) {
 	if f.anthropicBaseURL != "" {
 		t.Errorf("empty config set anthropicBaseURL: %q", f.anthropicBaseURL)
 	}
+}
+
+func TestFlagsMerge_hardenedCliWinsOverConfig(t *testing.T) {
+	// CLI hardened=false must not be overridden by config hardened:true.
+	cfg := &config.Config{Hardened: new(true)}
+	f := &flags{set: map[string]bool{"hardened": true}}
+	f.merge(cfg)
+	if f.hardened {
+		t.Errorf("CLI --hardened=false was overridden by config")
+	}
+}
+
+func TestBuildEgressAllow_defaultIncludesConfigAndAnthropicHost(t *testing.T) {
+	cfg := &config.Config{EgressAllow: []string{"artifactory.internal", "*.mycorp.net"}}
+	allow := buildEgressAllow(false, cfg, "https://proxy.corp.com/v1", quietLog())
+
+	if !slices.Contains(allow, "*.ecosyste.ms") {
+		t.Errorf("default mode dropped DefaultEgressAllow entries: %v", allow)
+	}
+	if !slices.Contains(allow, "artifactory.internal") || !slices.Contains(allow, "*.mycorp.net") {
+		t.Errorf("default mode did not honour egress_allow: %v", allow)
+	}
+	if !slices.Contains(allow, "proxy.corp.com") {
+		t.Errorf("default mode did not auto-add anthropic base URL host: %v", allow)
+	}
+}
+
+func TestBuildEgressAllow_hardenedDropsConfigKeepsAnthropic(t *testing.T) {
+	cfg := &config.Config{EgressAllow: []string{"artifactory.internal"}}
+	allow := buildEgressAllow(true, cfg, "https://proxy.corp.com/v1", quietLog())
+
+	if slices.Contains(allow, "*.ecosyste.ms") {
+		t.Errorf("hardened leaked DefaultEgressAllow entries: %v", allow)
+	}
+	if slices.Contains(allow, "artifactory.internal") {
+		t.Errorf("hardened honoured egress_allow when it must not: %v", allow)
+	}
+	if !slices.Contains(allow, "*.anthropic.com") || !slices.Contains(allow, worker.HostGatewayAlias) {
+		t.Errorf("hardened did not include HardenedEgressAllow entries: %v", allow)
+	}
+	if !slices.Contains(allow, "proxy.corp.com") {
+		t.Errorf("hardened dropped the anthropic base URL host: %v", allow)
+	}
+}
+
+func TestBuildEgressAllow_hardenedNilConfig(t *testing.T) {
+	allow := buildEgressAllow(true, nil, "", quietLog())
+	if len(allow) != len(worker.HardenedEgressAllow) {
+		t.Errorf("hardened minimal allow = %v, want exactly HardenedEgressAllow", allow)
+	}
+}
+
+func quietLog() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
 func TestBaseURLHost(t *testing.T) {

@@ -57,6 +57,7 @@ skills:
   - /srv/skills
 skills_repo: https://github.com/org/skills
 no_docker: true
+hardened: true
 runner_image: custom-runner
 egress_allow:
   - artifactory.internal
@@ -82,6 +83,9 @@ fork_org: fork-central
 	}
 	if c.NoDocker == nil || !*c.NoDocker {
 		t.Errorf("no_docker: %v", c.NoDocker)
+	}
+	if c.Hardened == nil || !*c.Hardened {
+		t.Errorf("hardened: %v", c.Hardened)
 	}
 	if c.Concurrency != 8 {
 		t.Errorf("concurrency: %d", c.Concurrency)

@@ -17,6 +17,31 @@ func quietLog() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
+func TestHardenedEgressAllow_minimalSurface(t *testing.T) {
+	// HardenedEgressAllow must allow Anthropic and the host skill API,
+	// and reject every host that DefaultEgressAllow opens up. Adding a
+	// new entry here is a deliberate widening of the hardened surface
+	// and should not happen accidentally.
+	allow := HardenedEgressAllow
+	if !HostAllowed(allow, "api.anthropic.com") {
+		t.Errorf("hardened blocked api.anthropic.com")
+	}
+	if !HostAllowed(allow, HostGatewayAlias) {
+		t.Errorf("hardened blocked %s", HostGatewayAlias)
+	}
+	for _, host := range []string{
+		"packages.ecosyste.ms",
+		"github.com",
+		"registry.npmjs.org",
+		"pypi.org",
+		"osv.dev",
+	} {
+		if HostAllowed(allow, host) {
+			t.Errorf("hardened allowed %s, must not", host)
+		}
+	}
+}
+
 func TestHostAllowed(t *testing.T) {
 	allow := []string{
 		"api.anthropic.com",

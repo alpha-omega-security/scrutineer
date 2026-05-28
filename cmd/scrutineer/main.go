@@ -33,9 +33,10 @@ func (s *skillDirs) String() string     { return strings.Join(*s, ",") }
 func (s *skillDirs) Set(v string) error { *s = append(*s, v); return nil }
 
 const (
-	dataPermSecure     = 0o700
-	shutdownTimeout    = 5 * time.Second
-	skillsCloneTimeout = 2 * time.Minute
+	dataPermSecure      = 0o700
+	shutdownTimeout     = 5 * time.Second
+	skillsCloneTimeout  = 2 * time.Minute
+	hardenedNetworkName = "scrutineer-hardened"
 )
 
 func main() {
@@ -55,6 +56,7 @@ type flags struct {
 	dataDir          string
 	effort           string
 	noDocker         bool
+	hardened         bool
 	runnerImage      string
 	profilesDir      string
 	skillsRepo       string
@@ -79,6 +81,7 @@ func parseFlags() *flags {
 	flag.StringVar(&f.dataDir, "data", "./data", "data directory (db + workspaces)")
 	flag.StringVar(&f.effort, "effort", "high", "claude effort")
 	flag.BoolVar(&f.noDocker, "no-docker", false, "disable containerised runner even if docker is available")
+	flag.BoolVar(&f.hardened, "hardened", false, "strict sandbox mode: docker required (no --no-docker fallback), egress restricted to *.anthropic.com + host skill API, read-only rootfs, internal docker network")
 	flag.StringVar(&f.runnerImage, "runner-image", worker.DefaultRunnerImage, "docker image for per-job containers")
 	flag.StringVar(&f.profilesDir, "profiles-dir", "docker/profiles", "directory containing per-ecosystem runner profiles (Dockerfile per profile); empty disables profiles")
 	flag.StringVar(&f.skillsRepo, "skills-repo", "", "clone skills on startup; owner/repo[@ref] or https://host/path[@ref]")
@@ -114,6 +117,9 @@ func (f *flags) merge(cfg *config.Config) {
 	}
 	if cfg.NoDocker != nil && !f.set["no-docker"] {
 		f.noDocker = *cfg.NoDocker
+	}
+	if cfg.Hardened != nil && !f.set["hardened"] {
+		f.hardened = *cfg.Hardened
 	}
 	if cfg.RunnerImage != "" && !f.set["runner-image"] {
 		f.runnerImage = cfg.RunnerImage
@@ -251,47 +257,9 @@ func run(log *slog.Logger) error {
 
 	broker := web.NewBroker()
 
-	var egressExtra []string
-	if cfg != nil {
-		egressExtra = cfg.EgressAllow
-	}
-	if h := baseURLHost(f.anthropicBaseURL); h != "" {
-		egressExtra = append(egressExtra, h)
-		log.Info("added anthropic base URL host to egress allowlist", "host", h)
-	}
-
-	var runner worker.SkillRunner
-	apiBase := "http://" + f.addr + "/api"
-	if !f.noDocker && !worker.DockerAvailable() {
-		return fmt.Errorf("docker not available: install and start docker, or pass --no-docker to run without containerisation (no isolation)")
-	}
-	if !f.noDocker {
-		allow := append(append([]string{}, worker.DefaultEgressAllow...), egressExtra...)
-		token := worker.NewProxyToken()
-		port, err := worker.StartEgressProxy(&worker.EgressProxy{Allow: allow, Token: token, APIPort: addrPort(f.addr), Log: log})
-		if err != nil {
-			return fmt.Errorf("start egress proxy: %w", err)
-		}
-		gwIP := worker.ResolveHostGatewayIPv4(f.runnerImage)
-		log.Info("docker detected, using containerised runner",
-			"image", f.runnerImage, "egress_proxy_port", port, "egress_allow", len(allow),
-			"host_gateway_ipv4", gwIP)
-		runner = worker.DockerRunner{
-			Image:            f.runnerImage,
-			Effort:           f.effort,
-			ProxyURL:         worker.ProxyURL(token, port),
-			FullClone:        f.fullClone(),
-			MaxTurns:         f.maxTurns,
-			AnthropicBaseURL: f.anthropicBaseURL,
-			HostGatewayIP:    gwIP,
-			ProfilesDir:      f.profilesDir,
-		}
-		// Skills inside the container reach the host via host.docker.internal,
-		// which the egress proxy rewrites to 127.0.0.1 when dialing.
-		apiBase = "http://" + net.JoinHostPort(worker.HostGatewayAlias, addrPort(f.addr)) + "/api"
-	} else {
-		log.Info("--no-docker set, using local runner (no isolation)")
-		runner = worker.LocalClaude{Effort: f.effort, FullClone: f.fullClone(), MaxTurns: f.maxTurns}
+	runner, apiBase, err := setupRunner(f, cfg, log)
+	if err != nil {
+		return err
 	}
 
 	w := &worker.Worker{
@@ -379,6 +347,87 @@ func addrPort(addr string) string {
 func hashPath(s string) string {
 	r := strings.NewReplacer("/", "_", ":", "_", "?", "_", "&", "_", "=", "_")
 	return r.Replace(s)
+}
+
+// setupRunner picks the SkillRunner implementation for the run loop:
+// DockerRunner when docker is in use, LocalClaude otherwise. It also
+// starts the egress proxy, creates the hardened network if requested,
+// and returns the apiBase the worker should advertise to skills (the
+// docker path rewrites it to host.docker.internal so containers can
+// reach the loopback-bound web server).
+//
+//nolint:ireturn // dispatched on f.noDocker; concrete types live in the worker pkg
+func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRunner, string, error) {
+	apiBase := "http://" + f.addr + "/api"
+	if f.hardened && f.noDocker {
+		return nil, "", fmt.Errorf("--hardened requires the docker runner; remove --no-docker")
+	}
+	if !f.noDocker && !worker.DockerAvailable() {
+		if f.hardened {
+			return nil, "", fmt.Errorf("docker not available: --hardened requires docker, install and start it")
+		}
+		return nil, "", fmt.Errorf("docker not available: install and start docker, or pass --no-docker to run without containerisation (no isolation)")
+	}
+	if f.noDocker {
+		log.Info("--no-docker set, using local runner (no isolation)")
+		return worker.LocalClaude{Effort: f.effort, FullClone: f.fullClone(), MaxTurns: f.maxTurns}, apiBase, nil
+	}
+	allow := buildEgressAllow(f.hardened, cfg, f.anthropicBaseURL, log)
+	token := worker.NewProxyToken()
+	port, err := worker.StartEgressProxy(&worker.EgressProxy{Allow: allow, Token: token, APIPort: addrPort(f.addr), Log: log})
+	if err != nil {
+		return nil, "", fmt.Errorf("start egress proxy: %w", err)
+	}
+	var network string
+	if f.hardened {
+		network = hardenedNetworkName
+		if err := worker.EnsureHardenedNetwork(network); err != nil {
+			return nil, "", fmt.Errorf("create hardened network: %w", err)
+		}
+	}
+	gwIP := worker.ResolveHostGatewayIPv4(f.runnerImage, network)
+	log.Info("docker detected, using containerised runner",
+		"image", f.runnerImage, "egress_proxy_port", port, "egress_allow", len(allow),
+		"host_gateway_ipv4", gwIP, "hardened", f.hardened)
+	// Skills inside the container reach the host via host.docker.internal,
+	// which the egress proxy rewrites to 127.0.0.1 when dialing.
+	apiBase = "http://" + net.JoinHostPort(worker.HostGatewayAlias, addrPort(f.addr)) + "/api"
+	return worker.DockerRunner{
+		Image:            f.runnerImage,
+		Effort:           f.effort,
+		ProxyURL:         worker.ProxyURL(token, port),
+		FullClone:        f.fullClone(),
+		MaxTurns:         f.maxTurns,
+		AnthropicBaseURL: f.anthropicBaseURL,
+		HostGatewayIP:    gwIP,
+		ProfilesDir:      f.profilesDir,
+		Hardened:         f.hardened,
+		HardenedNetwork:  network,
+	}, apiBase, nil
+}
+
+// buildEgressAllow assembles the proxy allowlist. Hardened mode starts
+// from HardenedEgressAllow and ignores cfg.EgressAllow (the operator
+// must drop --hardened to widen). The anthropic base URL host is still
+// auto-added in both modes since it routes the same Anthropic API.
+func buildEgressAllow(hardened bool, cfg *config.Config, anthropicBaseURL string, log *slog.Logger) []string {
+	var allow []string
+	if hardened {
+		allow = append(allow, worker.HardenedEgressAllow...)
+		if cfg != nil && len(cfg.EgressAllow) > 0 {
+			log.Warn("ignoring egress_allow config entries under --hardened", "count", len(cfg.EgressAllow))
+		}
+	} else {
+		allow = append(allow, worker.DefaultEgressAllow...)
+		if cfg != nil {
+			allow = append(allow, cfg.EgressAllow...)
+		}
+	}
+	if h := baseURLHost(anthropicBaseURL); h != "" {
+		allow = append(allow, h)
+		log.Info("added anthropic base URL host to egress allowlist", "host", h)
+	}
+	return allow
 }
 
 func baseURLHost(raw string) string {

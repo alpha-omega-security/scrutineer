@@ -34,6 +34,15 @@
 # Disable the docker runner even if docker is available on the host.
 # no_docker: false
 
+# Strict sandbox mode. Forces the docker runner (no --no-docker fallback),
+# restricts the egress allowlist to *.anthropic.com plus host.docker.internal,
+# mounts the container rootfs read-only, sets no-new-privileges, and attaches
+# the runner to an --internal docker network so the only route out is the
+# scrutineer host proxy. egress_allow below is ignored under hardened mode;
+# bundled skills that need ecosyste.ms or a package registry won't work
+# unless they route via the host skill API.
+# hardened: false
+
 # Docker image used for per-scan containers.
 # runner_image: ghcr.io/alpha-omega-security/scrutineer-runner:latest
 

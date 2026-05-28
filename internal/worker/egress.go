@@ -19,6 +19,16 @@ import (
 // scrutineer API even though the web server only listens on loopback.
 const HostGatewayAlias = "host.docker.internal"
 
+// HardenedEgressAllow is the strict allowlist used when --hardened is
+// set. Only the Anthropic API and the host skill API (reached through
+// host.docker.internal) are permitted; anything else returns 403 at
+// the proxy. Skills that need ecosyste.ms or a package registry must
+// route through the host API, or the operator must drop hardened mode.
+var HardenedEgressAllow = []string{
+	"*.anthropic.com",
+	HostGatewayAlias,
+}
+
 // DefaultEgressAllow is the built-in host allowlist for the docker
 // runner's egress proxy. It covers what the bundled skills actually
 // reach: the Anthropic API, ecosyste.ms services, the major code forges,
