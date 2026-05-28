@@ -81,6 +81,15 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 		"--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()),
 		"-e", "HOME=/tmp",
 		"-e", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
+		// Suppress telemetry traffic
+		// Denied by the egress proxy anyway, but noisy in the log.
+		"-e", "OTEL_SDK_DISABLED=true",
+		"-e", "DISABLE_TELEMETRY=1",
+		"-e", "DISABLE_ERROR_REPORTING=1",
+		"-e", "DISABLE_BUG_COMMAND=1",
+		"-e", "DISABLE_AUTOUPDATER=1",
+		// Disable auxiliary calls not useful in headless mode
+		"-e", "DISABLE_NON_ESSENTIAL_MODEL_CALLS=1",
 		"-e", "SEMGREP_SEND_METRICS=off",
 		"--tmpfs", "/tmp:rw,noexec,nosuid,size=256m",
 		"-v", absWork + ":/work",
