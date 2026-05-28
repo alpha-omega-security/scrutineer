@@ -1,9 +1,28 @@
 package worker
 
 import (
+	"context"
 	"slices"
+	"strings"
 	"testing"
 )
+
+func TestLocalClaude_RunSkill_rejectsProfileRequiringSkill(t *testing.T) {
+	work := t.TempDir()
+	sj := SkillJob{
+		Name:            "php-only",
+		WorkRoot:        work,
+		SrcReady:        true,
+		RequiresProfile: "php",
+	}
+	_, err := LocalClaude{}.RunSkill(context.Background(), sj, func(Event) {})
+	if err == nil {
+		t.Fatal("expected requires_profile to be rejected by local runner")
+	}
+	if !strings.Contains(err.Error(), "php") || !strings.Contains(err.Error(), "local runner") {
+		t.Errorf("error %q should mention php and local runner", err)
+	}
+}
 
 func TestBuildClaudeArgs_NoAllowedTools(t *testing.T) {
 	sj := SkillJob{Name: "metadata", Model: "claude-opus-4-7", OutputFile: "report.json"}

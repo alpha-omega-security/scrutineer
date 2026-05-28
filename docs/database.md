@@ -92,6 +92,7 @@ One row per installed skill. Loaded from `skills/` directories on disk or the UI
 | version | integer | Bumps on every save. |
 | active | boolean | |
 | requires_remote | boolean | When true, scrutineer refuses to enqueue this skill against a local-directory repository (file:// URL). Set via `scrutineer.requires_remote: true` in SKILL.md frontmatter. Use for skills that depend on a forge URL or remote-only data (advisories, dependents, exposure, fork, maintainers, metadata, packages, report-upstream). |
+| requires_profile | text | Constrains the skill to a single registered runner profile (e.g. `php`). Empty means no constraint. Set via `scrutineer.requires_profile` in SKILL.md frontmatter. Enqueue returns 400 when the requested profile mismatches; the worker fails the scan when auto-detection resolves to a different profile. |
 | source | text | `local`, `remote`, or `ui`. |
 | source_path | text | Directory on disk (for local/remote). Empty for UI-created. |
 | source_hash | text | sha256 of SKILL.md + schema.json. Used by the loader to detect changes. |

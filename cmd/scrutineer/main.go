@@ -236,6 +236,7 @@ func run(log *slog.Logger) error {
 	}
 
 	skills.ModelValidator = web.ValidModel
+	skills.ProfileValidator = worker.IsNamedProfile
 	skillsRepoSHA, err := loadSkills(log, gdb, f.dataDir, f.skillLocal, f.skillsRepo, f.fullClone())
 	if err != nil {
 		return err

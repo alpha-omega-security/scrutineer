@@ -62,6 +62,13 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 	absWork, _ := filepath.Abs(work)
 
 	profile, image := d.resolveProfile(ctx, sj.Profile, src, emit)
+	if sj.RequiresProfile != "" && profile != sj.RequiresProfile {
+		got := profile
+		if got == "" {
+			got = "default"
+		}
+		return SkillResult{Commit: commit, Profile: profile}, fmt.Errorf("skill %q requires profile %q, resolved %q", sj.Name, sj.RequiresProfile, got)
+	}
 
 	var outPath string
 	if sj.OutputFile != "" {

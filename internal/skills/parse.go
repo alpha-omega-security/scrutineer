@@ -26,20 +26,21 @@ import (
 )
 
 const (
-	skillFile          = "SKILL.md"
-	schemaFile         = "schema.json"
-	maxNameLen         = 64
-	maxDescLen         = 1024
-	maxCompatLen       = 500
-	metaOutputFile     = "scrutineer.output_file"
-	metaOutputKind     = "scrutineer.output_kind"
-	metaMaxTurns       = "scrutineer.max_turns"
-	metaModel          = "scrutineer.model"
-	metaVersion        = "scrutineer.version"
-	metaMinConfidence  = "scrutineer.min_confidence"
-	metaReportOn       = "scrutineer.report_on"
-	metaFailOn         = "scrutineer.fail_on"
-	metaRequiresRemote = "scrutineer.requires_remote"
+	skillFile           = "SKILL.md"
+	schemaFile          = "schema.json"
+	maxNameLen          = 64
+	maxDescLen          = 1024
+	maxCompatLen        = 500
+	metaOutputFile      = "scrutineer.output_file"
+	metaOutputKind      = "scrutineer.output_kind"
+	metaMaxTurns        = "scrutineer.max_turns"
+	metaModel           = "scrutineer.model"
+	metaVersion         = "scrutineer.version"
+	metaMinConfidence   = "scrutineer.min_confidence"
+	metaReportOn        = "scrutineer.report_on"
+	metaFailOn          = "scrutineer.fail_on"
+	metaRequiresRemote  = "scrutineer.requires_remote"
+	metaRequiresProfile = "scrutineer.requires_profile"
 
 	// SchemaVersion is the only scrutineer.version this build accepts.
 	// Skills omitting the key are treated as version 1. Bump when the
@@ -53,15 +54,16 @@ const (
 // parse time so a typo like scrutineer.outputkind surfaces immediately
 // rather than after a worker falls through to freeform.
 var scrutineerKeys = map[string]bool{
-	metaOutputFile:     true,
-	metaOutputKind:     true,
-	metaMaxTurns:       true,
-	metaModel:          true,
-	metaVersion:        true,
-	metaMinConfidence:  true,
-	metaReportOn:       true,
-	metaFailOn:         true,
-	metaRequiresRemote: true,
+	metaOutputFile:      true,
+	metaOutputKind:      true,
+	metaMaxTurns:        true,
+	metaModel:           true,
+	metaVersion:         true,
+	metaMinConfidence:   true,
+	metaReportOn:        true,
+	metaFailOn:          true,
+	metaRequiresRemote:  true,
+	metaRequiresProfile: true,
 }
 
 var confidenceLevels = map[string]bool{"low": true, "medium": true, "high": true}
@@ -98,6 +100,12 @@ var nameRE = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 // from main.go after the model list is configured.
 var ModelValidator func(string) bool
 
+// ProfileValidator gates the scrutineer.requires_profile metadata key.
+// When non-nil, a skill declaring a profile the validator rejects fails
+// at parse time so a typo surfaces at startup rather than at scan time.
+// Wired from main.go after the profile registry is set.
+var ProfileValidator func(string) bool
+
 // Parsed is a SKILL.md-plus-neighbours as extracted from disk. It mirrors the
 // Skill model shape so the caller can persist it without further work.
 type Parsed struct {
@@ -108,16 +116,17 @@ type Parsed struct {
 	AllowedTools  string
 	Metadata      map[string]any
 
-	Body           string
-	SchemaJSON     string
-	OutputFile     string
-	OutputKind     string
-	MaxTurns       int
-	Model          string
-	MinConfidence  string
-	ReportOn       string
-	FailOn         string
-	RequiresRemote bool
+	Body            string
+	SchemaJSON      string
+	OutputFile      string
+	OutputKind      string
+	MaxTurns        int
+	Model           string
+	MinConfidence   string
+	ReportOn        string
+	FailOn          string
+	RequiresRemote  bool
+	RequiresProfile string
 
 	SourcePath string // absolute path to the skill directory
 	SourceHash string // sha256 of SKILL.md + schema.json contents
@@ -243,6 +252,9 @@ func (p *Parsed) validateMetadata() error {
 			return fmt.Errorf("%s must be a boolean, got %T", metaRequiresRemote, v)
 		}
 	}
+	if err := checkRequiresProfile(p.Metadata); err != nil {
+		return err
+	}
 	if err := checkEnum(p.Metadata, metaMinConfidence, confidenceLevels); err != nil {
 		return err
 	}
@@ -251,6 +263,25 @@ func (p *Parsed) validateMetadata() error {
 	}
 	if err := checkEnum(p.Metadata, metaFailOn, severityLevels); err != nil {
 		return err
+	}
+	return nil
+}
+
+func checkRequiresProfile(m map[string]any) error {
+	v, ok := m[metaRequiresProfile]
+	if !ok {
+		return nil
+	}
+	s, ok := v.(string)
+	if !ok {
+		return fmt.Errorf("%s must be a string, got %T", metaRequiresProfile, v)
+	}
+	s = strings.TrimSpace(s)
+	if s == "" || s == "default" {
+		return fmt.Errorf("%s must name a registered profile, got %q", metaRequiresProfile, s)
+	}
+	if ProfileValidator != nil && !ProfileValidator(s) {
+		return fmt.Errorf("%s %q is not a registered profile", metaRequiresProfile, s)
 	}
 	return nil
 }
@@ -302,6 +333,9 @@ func (p *Parsed) extractMetadataKeys() {
 	if v, ok := p.Metadata[metaRequiresRemote].(bool); ok {
 		p.RequiresRemote = v
 	}
+	if v, ok := p.Metadata[metaRequiresProfile].(string); ok {
+		p.RequiresProfile = strings.TrimSpace(v)
+	}
 }
 
 func (p *Parsed) loadSchema() {
@@ -333,25 +367,26 @@ func (p *Parsed) ToModel(source string) (*db.Skill, error) {
 		meta = string(b)
 	}
 	return &db.Skill{
-		Name:           p.Name,
-		Description:    p.Description,
-		License:        p.License,
-		Compatibility:  p.Compatibility,
-		AllowedTools:   p.AllowedTools,
-		Metadata:       meta,
-		Body:           p.Body,
-		SchemaJSON:     p.SchemaJSON,
-		OutputFile:     p.OutputFile,
-		OutputKind:     p.OutputKind,
-		MaxTurns:       p.MaxTurns,
-		Model:          p.Model,
-		MinConfidence:  p.MinConfidence,
-		ReportOn:       p.ReportOn,
-		FailOn:         p.FailOn,
-		RequiresRemote: p.RequiresRemote,
-		Active:         true,
-		Source:         source,
-		SourcePath:     p.SourcePath,
-		SourceHash:     p.SourceHash,
+		Name:            p.Name,
+		Description:     p.Description,
+		License:         p.License,
+		Compatibility:   p.Compatibility,
+		AllowedTools:    p.AllowedTools,
+		Metadata:        meta,
+		Body:            p.Body,
+		SchemaJSON:      p.SchemaJSON,
+		OutputFile:      p.OutputFile,
+		OutputKind:      p.OutputKind,
+		MaxTurns:        p.MaxTurns,
+		Model:           p.Model,
+		MinConfidence:   p.MinConfidence,
+		ReportOn:        p.ReportOn,
+		FailOn:          p.FailOn,
+		RequiresRemote:  p.RequiresRemote,
+		RequiresProfile: p.RequiresProfile,
+		Active:          true,
+		Source:          source,
+		SourcePath:      p.SourcePath,
+		SourceHash:      p.SourceHash,
 	}, nil
 }

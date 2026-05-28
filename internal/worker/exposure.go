@@ -172,17 +172,18 @@ func (w *Worker) doExposure(ctx context.Context, scan *db.Scan, emit func(Event)
 	w.DB.Model(scan).Update("prompt", prompt)
 
 	sj := SkillJob{
-		Repo:         depRepo,
-		WorkRoot:     workRoot,
-		Model:        scan.Model,
-		Name:         skill.Name,
-		SkillDir:     skillDir,
-		OutputFile:   skill.OutputFile,
-		Ref:          scan.Ref,
-		MaxTurns:     skill.MaxTurns,
-		AllowedTools: skill.AllowedTools,
-		SrcReady:     true,
-		Profile:      scan.Profile,
+		Repo:            depRepo,
+		WorkRoot:        workRoot,
+		Model:           scan.Model,
+		Name:            skill.Name,
+		SkillDir:        skillDir,
+		OutputFile:      skill.OutputFile,
+		Ref:             scan.Ref,
+		MaxTurns:        skill.MaxTurns,
+		AllowedTools:    skill.AllowedTools,
+		SrcReady:        true,
+		Profile:         scan.Profile,
+		RequiresProfile: skill.RequiresProfile,
 	}
 	res, err := w.Runner.RunSkill(ctx, sj, emit)
 	if res.Commit != "" {

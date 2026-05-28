@@ -59,6 +59,10 @@ type SkillJob struct {
 	// runner image. Only the docker runner honours this; the local
 	// runner ignores it (no per-profile image to swap to).
 	Profile string
+	// RequiresProfile pins the skill to a named profile. When set, the
+	// runner fails the scan if the resolved profile does not match.
+	// Empty means no constraint. Mirrors db.Skill.RequiresProfile.
+	RequiresProfile string
 }
 
 type SkillResult struct {
@@ -95,6 +99,10 @@ func (l LocalClaude) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)
 	}
 	commit := gitHead(src)
 	work := sj.WorkRoot
+
+	if sj.RequiresProfile != "" {
+		return SkillResult{Commit: commit}, fmt.Errorf("skill %q requires profile %q, not supported by the local runner", sj.Name, sj.RequiresProfile)
+	}
 
 	var outPath string
 	if sj.OutputFile != "" {

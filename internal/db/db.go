@@ -661,6 +661,14 @@ type Skill struct {
 	// declare otherwise.
 	RequiresRemote bool
 
+	// RequiresProfile constrains the skill to a single registered runner
+	// profile (e.g. "php"). Set via `scrutineer.requires_profile` in the
+	// SKILL.md frontmatter. Empty means no constraint; any other value
+	// must match a profile registered in worker.builtinProfiles. Enqueue
+	// rejects mismatched overrides with 400; the worker fails the scan if
+	// auto-detection resolves to a different profile.
+	RequiresProfile string
+
 	Source     string // "local" | "remote" | "ui"
 	SourcePath string // directory on disk (local/remote) or empty (ui)
 	SourceHash string // sha256 of SKILL.md + schema.json contents

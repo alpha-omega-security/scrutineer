@@ -13,11 +13,12 @@ func TestProfileByName(t *testing.T) {
 		name    string
 		want    string
 		isKnown bool
+		isNamed bool
 	}{
-		{"", "", true},
-		{"default", "", true},
-		{"php", "php", true},
-		{"unknown", "", false},
+		{"", "", true, false},
+		{"default", "", true, false},
+		{"php", "php", true, true},
+		{"unknown", "", false, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -27,6 +28,9 @@ func TestProfileByName(t *testing.T) {
 			}
 			if KnownProfile(tt.name) != tt.isKnown {
 				t.Errorf("KnownProfile(%q) = %v, want %v", tt.name, !tt.isKnown, tt.isKnown)
+			}
+			if IsNamedProfile(tt.name) != tt.isNamed {
+				t.Errorf("IsNamedProfile(%q) = %v, want %v", tt.name, !tt.isNamed, tt.isNamed)
 			}
 		})
 	}

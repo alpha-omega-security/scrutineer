@@ -1708,6 +1708,31 @@ func TestEnqueueSkillWith_localRepoRejectsRemoteOnlySkill(t *testing.T) {
 	}
 }
 
+func TestEnqueueSkillWith_profileMismatch(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://github.com/foo/bar", Name: "bar"}
+	s.DB.Create(&repo)
+	phpSkill := db.Skill{Name: "php-only", Body: "b", OutputFile: "r.json", OutputKind: "freeform",
+		Version: 1, Active: true, Source: "ui", RequiresProfile: "php"}
+	s.DB.Create(&phpSkill)
+
+	if _, err := s.enqueueSkillWith(context.Background(), repo.ID, phpSkill.ID, ScanOpts{Profile: "default"}); err == nil {
+		t.Error("expected enqueue with mismatched profile to fail")
+	} else if !errors.Is(err, ErrSkillProfileMismatch) {
+		t.Errorf("expected ErrSkillProfileMismatch, got %v", err)
+	}
+
+	if _, err := s.enqueueSkillWith(context.Background(), repo.ID, phpSkill.ID, ScanOpts{Profile: "php"}); err != nil {
+		t.Errorf("matching profile should succeed, got %v", err)
+	}
+
+	if _, err := s.enqueueSkillWith(context.Background(), repo.ID, phpSkill.ID, ScanOpts{}); err != nil {
+		t.Errorf("empty profile (auto-detect) should not be gated at enqueue, got %v", err)
+	}
+}
+
 func TestEnqueueSkillWith_findingScopedJumpsQueue(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

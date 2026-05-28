@@ -240,6 +240,10 @@ func (s *Server) apiRunSkill(w http.ResponseWriter, r *http.Request) {
 			writeAPIError(w, http.StatusNotFound, err.Error())
 			return
 		}
+		if errors.Is(err, ErrSkillProfileMismatch) {
+			writeAPIError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		writeAPIError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

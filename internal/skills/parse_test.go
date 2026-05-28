@@ -169,6 +169,88 @@ body
 	}
 }
 
+func TestParseFile_requiresProfile(t *testing.T) {
+	old := ProfileValidator
+	t.Cleanup(func() { ProfileValidator = old })
+	ProfileValidator = func(s string) bool { return s == "php" }
+
+	dir := t.TempDir()
+	path := writeSkill(t, dir, "php-only", `---
+name: php-only
+description: Skill that needs the PHP runner.
+metadata:
+  scrutineer.requires_profile: php
+---
+
+body
+`)
+	p, err := ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.RequiresProfile != "php" {
+		t.Errorf("RequiresProfile = %q, want php", p.RequiresProfile)
+	}
+	m, _ := p.ToModel("local")
+	if m.RequiresProfile != "php" {
+		t.Errorf("model RequiresProfile = %q, want php", m.RequiresProfile)
+	}
+}
+
+func TestParseFile_requiresProfileUnknown(t *testing.T) {
+	old := ProfileValidator
+	t.Cleanup(func() { ProfileValidator = old })
+	ProfileValidator = func(s string) bool { return s == "php" }
+
+	dir := t.TempDir()
+	path := writeSkill(t, dir, "typo", `---
+name: typo
+description: Skill with a typo'd profile.
+metadata:
+  scrutineer.requires_profile: pph
+---
+
+body
+`)
+	if _, err := ParseFile(path); err == nil {
+		t.Fatal("expected error on unknown requires_profile")
+	}
+}
+
+func TestParseFile_requiresProfileEmptyOrDefault(t *testing.T) {
+	for _, val := range []string{`""`, `"default"`, `"   "`} {
+		dir := t.TempDir()
+		path := writeSkill(t, dir, "bad", `---
+name: bad
+description: Skill with empty requires_profile.
+metadata:
+  scrutineer.requires_profile: `+val+`
+---
+
+body
+`)
+		if _, err := ParseFile(path); err == nil {
+			t.Fatalf("expected error on requires_profile = %s", val)
+		}
+	}
+}
+
+func TestParseFile_requiresProfileWrongType(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSkill(t, dir, "bad", `---
+name: bad
+description: Skill with non-string requires_profile.
+metadata:
+  scrutineer.requires_profile: 42
+---
+
+body
+`)
+	if _, err := ParseFile(path); err == nil {
+		t.Fatal("expected error on non-string requires_profile")
+	}
+}
+
 func TestParseFile_maxTurnsUnset(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSkill(t, dir, "unbounded", `---

@@ -62,6 +62,13 @@ func KnownProfile(name string) bool {
 	if name == "" || name == "default" {
 		return true
 	}
+	return IsNamedProfile(name)
+}
+
+// IsNamedProfile reports whether name is a registered profile, excluding
+// the default (which is the *absence* of a profile and cannot be the
+// target of `requires_profile`).
+func IsNamedProfile(name string) bool {
 	for _, p := range builtinProfiles {
 		if p.Name == name {
 			return true

@@ -33,6 +33,12 @@ import (
 // inactive" skip branch handles it without needing a new bucket.
 var ErrSkillRequiresRemote = errors.New("skill requires a remote repository")
 
+// ErrSkillProfileMismatch is returned by enqueueSkillWith when the caller
+// forces a runner profile that does not match the skill's required one.
+// The API layer maps it to 400 so the operator gets immediate feedback
+// instead of a ghost scan failing on the worker.
+var ErrSkillProfileMismatch = errors.New("skill requires a different runner profile")
+
 //go:embed templates/*.html
 var tmplFS embed.FS
 
@@ -1439,9 +1445,12 @@ func (s *Server) enqueueSkillWith(ctx context.Context, repoID, skillID uint, opt
 		return 0, err
 	}
 	var sk db.Skill
-	hasSkill := s.DB.Select("name, requires_remote, model").First(&sk, skillID).Error == nil
+	hasSkill := s.DB.Select("name, requires_remote, requires_profile, model").First(&sk, skillID).Error == nil
 	if repo.IsLocal() && hasSkill && sk.RequiresRemote {
 		return 0, fmt.Errorf("%w: %q", ErrSkillRequiresRemote, sk.Name)
+	}
+	if hasSkill && sk.RequiresProfile != "" && opts.Profile != "" && opts.Profile != sk.RequiresProfile {
+		return 0, fmt.Errorf("%w: %q needs %q, got %q", ErrSkillProfileMismatch, sk.Name, sk.RequiresProfile, opts.Profile)
 	}
 	if !ValidModel(opts.Model) {
 		if hasSkill && ValidModel(sk.Model) {

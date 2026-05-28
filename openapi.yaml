@@ -228,7 +228,8 @@ paths:
                   type: string
                   description: |
                     Runner profile name (e.g. `php`). Empty auto-detects from the clone via `brief`;
-                    `default` forces the default runner image. Unknown names return 400.
+                    `default` forces the default runner image. Unknown names return 400, as do
+                    overrides that conflict with the skill's `requires_profile` constraint.
       responses:
         '201':
           description: Scan enqueued
@@ -236,7 +237,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Scan' }
         '400':
-          description: Bad request (e.g. unknown profile)
+          description: Bad request (unknown profile or profile mismatch with the skill's `requires_profile`)
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
