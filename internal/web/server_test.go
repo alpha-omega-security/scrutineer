@@ -1342,6 +1342,9 @@ func TestAdvisoriesIndex(t *testing.T) {
 		URL: "https://example.com/a2", Title: "XSS in admin",
 		Severity: "MODERATE", CVSSScore: 5.4, Packages: "django",
 		Classification: "CWE-79", PublishedAt: &now})
+	s.DB.Create(&db.Advisory{RepositoryID: djangoRepo.ID, UUID: "u3",
+		URL: "", Title: "advisory without upstream link",
+		Severity: "HIGH", CVSSScore: 7.2, Packages: "django"})
 
 	// All advisories render.
 	w := httptest.NewRecorder()
@@ -1353,12 +1356,22 @@ func TestAdvisoriesIndex(t *testing.T) {
 	for _, want := range []string{
 		"SQL injection in activerecord",
 		"XSS in admin",
+		"advisory without upstream link",
 		"rails", "django",
 		"9.8", "5.4",
+		`badge-destructive">Critical`,
+		`badge-destructive">High`,
+		`badge-primary">Medium`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing %q", want)
 		}
+	}
+	if strings.Contains(body, `href=""`) {
+		t.Error("empty URL produced a broken anchor pointing to the current page")
+	}
+	if strings.Contains(body, ">MODERATE<") || strings.Contains(body, ">Moderate<") {
+		t.Error("severity rendered without casing normalization")
 	}
 
 	// Severity filter: only CRITICAL rows.

@@ -65,6 +65,24 @@ type Server struct {
 	skillNamesTTL   time.Time
 }
 
+// displaySeverity maps any known casing of a severity string to its
+// canonical Title-case form. Advisory rows come from
+// advisories.ecosyste.ms upper-cased and use MODERATE; findings use
+// Title case with Medium.
+func displaySeverity(s string) string {
+	switch s {
+	case "Critical", "CRITICAL":
+		return "Critical"
+	case "High", "HIGH":
+		return "High"
+	case "Medium", "MEDIUM", "MODERATE":
+		return "Medium"
+	case "Low", "LOW":
+		return "Low"
+	}
+	return s
+}
+
 func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *worker.Worker) (*Server, error) {
 	funcs := template.FuncMap{
 		"since": func(v any) string {
@@ -85,11 +103,12 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *work
 			}
 			return humanDuration(time.Since(t)) + " ago"
 		},
-		"dur":     humanDuration,
-		"usd":     formatUSD,
-		"pct":     formatPct,
-		"status":  func(s db.ScanStatus) string { return string(s) },
-		"fstatus": func(s db.FindingLifecycle) string { return string(s) },
+		"dur":      humanDuration,
+		"usd":      formatUSD,
+		"pct":      formatPct,
+		"status":   func(s db.ScanStatus) string { return string(s) },
+		"fstatus":  func(s db.FindingLifecycle) string { return string(s) },
+		"sevlabel": displaySeverity,
 		"dict": func(kv ...any) map[string]any {
 			m := map[string]any{}
 			for i := 0; i+1 < len(kv); i += 2 {

@@ -141,9 +141,10 @@
 {{end}}
 
 {{define "severity-badge"}}
-  {{if eq . "Critical"}}<span class="badge-destructive">Critical</span>
-  {{else if eq . "High"}}<span class="badge-destructive">High</span>
-  {{else if eq . "Medium"}}<span class="badge-primary">Medium</span>
+  {{if or (eq . "Critical") (eq . "CRITICAL")}}<span class="badge-destructive">Critical</span>
+  {{else if or (eq . "High") (eq . "HIGH")}}<span class="badge-destructive">High</span>
+  {{else if or (eq . "Medium") (eq . "MEDIUM") (eq . "MODERATE")}}<span class="badge-primary">Medium</span>
+  {{else if or (eq . "Low") (eq . "LOW")}}<span class="badge-secondary">Low</span>
   {{else}}<span class="badge-secondary">{{.}}</span>{{end}}
 {{end}}
 

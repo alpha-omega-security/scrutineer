@@ -14,7 +14,7 @@
     <div class="dropdown-menu">
       <button type="button" class="btn-outline" aria-haspopup="menu" aria-expanded="false">
         <i data-lucide="filter"></i>
-        {{if .Severity}}{{.Severity}}{{else}}Severity{{end}}
+        {{if .Severity}}{{sevlabel .Severity}}{{else}}Severity{{end}}
         <i data-lucide="chevron-down"></i>
       </button>
       <div data-popover aria-hidden="true" data-align="end">
@@ -22,7 +22,7 @@
           <a role="menuitem" href="/advisories?q={{.Q}}&sort={{.Sort}}">All</a>
           {{range .Severities}}
             <a role="menuitem" href="/advisories?q={{$.Q}}&severity={{.}}&sort={{$.Sort}}"
-               {{if eq . $.Severity}}aria-current="true"{{end}}>{{.}}</a>
+               {{if eq . $.Severity}}aria-current="true"{{end}}>{{sevlabel .}}</a>
           {{end}}
         </div>
       </div>
@@ -60,15 +60,11 @@
     {{range .Advisories}}
       {{$repo := index $repos .RepositoryID}}
       <tr>
-        <td>
-          {{if eq .Severity "CRITICAL"}}<span class="badge-destructive">Critical</span>
-          {{else if eq .Severity "HIGH"}}<span class="badge-destructive">High</span>
-          {{else if eq .Severity "MODERATE"}}<span class="badge-primary">Moderate</span>
-          {{else}}<span class="badge-secondary">{{.Severity}}</span>{{end}}
-        </td>
+        <td>{{template "severity-badge" .Severity}}</td>
         <td class="text-muted-foreground">{{if .CVSSScore}}{{printf "%.1f" .CVSSScore}}{{end}}</td>
         <td class="min-w-0 whitespace-normal">
-          <a href="{{.URL}}" target="_blank" rel="noopener" class="font-medium hover:underline">{{.Title}}</a>
+          {{if .URL}}<a href="{{.URL}}" target="_blank" rel="noopener" class="font-medium hover:underline">{{.Title}}</a>
+          {{else}}<span class="font-medium">{{.Title}}</span>{{end}}
           {{if .Classification}}<div class="text-xs text-muted-foreground">{{.Classification}}</div>{{end}}
         </td>
         <td class="truncate">
