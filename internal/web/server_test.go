@@ -1150,6 +1150,28 @@ func TestFindingShow_rendersMissedCount(t *testing.T) {
 	}
 }
 
+func TestFindingShow_hidesExposureForZizmorFindings(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/r", Name: "r"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: zizmorSkillName}
+	s.DB.Create(&scan)
+	f := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "workflow issue", Severity: "High"}
+	s.DB.Create(&f)
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", fmt.Sprintf("/findings/%d", f.ID)))
+	body := w.Body.String()
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, body)
+	}
+	if strings.Contains(body, "Dependent exposure") || strings.Contains(body, "/exposure") {
+		t.Error("zizmor findings should not render dependent exposure controls")
+	}
+}
+
 func TestOrgReport_rendersFindingsAcrossRepos(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

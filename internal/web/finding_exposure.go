@@ -29,6 +29,10 @@ func (s *Server) findingExposureRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "scan for finding not found", http.StatusInternalServerError)
 		return
 	}
+	if !findingSupportsExposure(scan) {
+		http.Error(w, "dependent exposure is not supported for this finding", http.StatusUnprocessableEntity)
+		return
+	}
 	var skill db.Skill
 	if err := s.DB.Where("name = ? AND active = ?", exposureSkillName, true).First(&skill).Error; err != nil {
 		http.Error(w, "exposure skill is not installed", http.StatusPreconditionFailed)

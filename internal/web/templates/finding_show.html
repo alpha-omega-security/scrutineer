@@ -215,6 +215,7 @@
   </details>
   {{end}}
 
+  {{if .ShowExposure}}
   <details open class="group border-b">
     <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
       <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
@@ -251,6 +252,7 @@
       {{end}}
     </section>
   </details>
+  {{end}}
 
   {{if .Patch}}{{$p := .Patch}}{{$ps := .PatchScan}}
   <details open class="group border-b">

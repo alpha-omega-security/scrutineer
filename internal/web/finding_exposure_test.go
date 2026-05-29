@@ -2,6 +2,7 @@ package web
 
 import (
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -68,6 +69,30 @@ func TestFindingExposureRun_noDependents422(t *testing.T) {
 	s.Handler().ServeHTTP(w, localReq("POST", fmt.Sprintf("/findings/%d/exposure", f.ID)))
 	if w.Code != 422 {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+}
+
+func TestFindingExposureRun_rejectsZizmorFindings(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://github.com/example/lib.git", Name: "lib"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: worker.JobSkill, Status: db.ScanDone, SkillName: zizmorSkillName}
+	s.DB.Create(&scan)
+	f := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "workflow issue", Severity: "High"}
+	s.DB.Create(&f)
+	s.DB.Create(&db.Skill{Name: exposureSkillName, Body: "x", Active: true, OutputFile: "report.json", OutputKind: "exposure"})
+	s.DB.Create(&db.Dependent{RepositoryID: repo.ID, Name: "a",
+		RepositoryURL: "https://github.com/example/a", DependentRepos: 1})
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("POST", fmt.Sprintf("/findings/%d/exposure", f.ID)))
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	if !strings.Contains(w.Body.String(), "not supported") {
+		t.Errorf("body = %q", w.Body.String())
 	}
 }
 

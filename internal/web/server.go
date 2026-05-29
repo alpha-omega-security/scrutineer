@@ -797,6 +797,7 @@ const (
 	// tab when present; repos that predate it fall back to the boundaries
 	// section of the deep-dive report so older scans keep rendering.
 	threatModelSkillName = "threat-model"
+	zizmorSkillName      = "zizmor"
 )
 
 // deepDiveFindingsCountSQL is a correlated subselect that counts deep-dive
@@ -815,6 +816,10 @@ const deepDiveFindingsCountSQL = `SELECT COUNT(*) FROM findings f
 func deepDiveScanIDs(gdb *gorm.DB) *gorm.DB {
 	return gdb.Model(&db.Scan{}).Select("id").
 		Where("skill_name = ? OR skill_name = '' OR skill_name IS NULL", deepDiveSkillName)
+}
+
+func findingSupportsExposure(scan db.Scan) bool {
+	return scan.SkillName != zizmorSkillName
 }
 
 func (s *Server) addRepoAndScan(w http.ResponseWriter, r *http.Request, repoURL string) {
@@ -1147,6 +1152,7 @@ func (s *Server) findingShow(w http.ResponseWriter, r *http.Request) {
 		"AllLabels":      labels,
 		"Selected":       selected,
 		"Exposures":      exposures,
+		"ShowExposure":   findingSupportsExposure(scan),
 	}
 	if id, c, ok := LookupCWE(f.CWE); ok {
 		data["CWE"] = map[string]any{"ID": id, "Name": c.Name, "Description": c.Description}
