@@ -95,6 +95,17 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 		}
 		return SkillResult{Commit: commit, Profile: profile}, fmt.Errorf("skill %q requires profile %q, resolved %q", sj.Name, sj.RequiresProfile, got)
 	}
+	profileGuide := d.profileGuidePath(profile)
+	if profileGuide != "" {
+		target := filepath.Join(absWork, "CLAUDE.md")
+		if data, err := os.ReadFile(profileGuide); err != nil {
+			emit(Event{Kind: KindText, Text: "profile guide: read " + profileGuide + ": " + err.Error()})
+		} else if err := os.WriteFile(target, data, 0o644); err != nil {
+			emit(Event{Kind: KindText, Text: "profile guide: write " + target + ": " + err.Error()})
+		} else {
+			emit(Event{Kind: KindText, Text: "profile guide: " + profileGuide + " -> /work/CLAUDE.md"})
+		}
+	}
 
 	var outPath string
 	if sj.OutputFile != "" {
@@ -240,6 +251,26 @@ func (d DockerRunner) resolveProfile(ctx context.Context, requested, src string,
 	}
 	emit(Event{Kind: KindText, Text: "profile: " + p.Name + " (" + img + ")"})
 	return p.Name, img
+}
+
+// profileGuidePath returns the profile's on-disk PROFILE.md if present.
+// The caller mounts it at the agent's project-memory path (CLAUDE.md
+// for claude-code) so it's auto-loaded before the skill prompt runs.
+// The on-disk name stays agent-neutral to support a future codex runner
+// reading the same file as AGENTS.md.
+func (d DockerRunner) profileGuidePath(profile string) string {
+	if profile == "" || d.ProfilesDir == "" {
+		return ""
+	}
+	guide := filepath.Join(d.ProfilesDir, profile, "PROFILE.md")
+	abs, err := filepath.Abs(guide)
+	if err != nil {
+		return ""
+	}
+	if _, err := os.Stat(abs); err != nil {
+		return ""
+	}
+	return abs
 }
 
 // DockerAvailable checks if docker is in PATH and the daemon is reachable.

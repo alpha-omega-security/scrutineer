@@ -18,6 +18,7 @@ func TestProfileByName(t *testing.T) {
 		{"", "", true, false},
 		{"default", "", true, false},
 		{"php", "php", true, true},
+		{"php-ext", "php-ext", true, true},
 		{"unknown", "", false, false},
 	}
 	for _, tt := range tests {
@@ -36,24 +37,121 @@ func TestProfileByName(t *testing.T) {
 	}
 }
 
+const configM4Body = `dnl Minimal extension config
+PHP_ARG_ENABLE([example], [whether to enable example], [--enable-example])
+if test "$PHP_EXAMPLE" != "no"; then
+  PHP_NEW_EXTENSION(example, example.c, $ext_shared)
+fi
+`
+
+const configM4WithoutPHPArg = `dnl just a stray autoconf file
+AC_INIT([thing], [1.0])
+`
+
+func writeMarker(t *testing.T, dir, name, contents string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, name), []byte(contents), 0o644); err != nil {
+		t.Fatalf("write %s: %v", name, err)
+	}
+}
+
 func TestMatchProfile(t *testing.T) {
 	tests := []struct {
-		name string
-		json string
-		want string
+		name    string
+		json    string
+		setup   func(t *testing.T, dir string)
+		want    string
+		noSrcOK bool // if true, srcDir is "" for this case
 	}{
-		{"composer matches php", `{"package_managers":[{"name":"Composer"}]}`, "php"},
-		{"composer case-insensitive", `{"package_managers":[{"name":"composer"}]}`, "php"},
-		{"first match wins over later", `{"package_managers":[{"name":"Composer"},{"name":"npm"}]}`, "php"},
-		{"unknown manager falls back", `{"package_managers":[{"name":"npm"}]}`, ""},
-		{"empty list falls back", `{"package_managers":[]}`, ""},
-		{"missing field falls back", `{}`, ""},
-		{"invalid json falls back", `not json`, ""},
-		{"no first match but later is known", `{"package_managers":[{"name":"npm"},{"name":"Composer"}]}`, "php"},
+		{
+			name: "composer matches php",
+			json: `{"package_managers":[{"name":"Composer"}]}`,
+			want: "php",
+		},
+		{
+			name: "composer case-insensitive",
+			json: `{"package_managers":[{"name":"composer"}]}`,
+			want: "php",
+		},
+		{
+			name: "first composer match wins",
+			json: `{"package_managers":[{"name":"Composer"},{"name":"npm"}]}`,
+			want: "php",
+		},
+		{
+			name: "composer present even if not first",
+			json: `{"package_managers":[{"name":"npm"},{"name":"Composer"}]}`,
+			want: "php",
+		},
+		{
+			name: "unknown manager falls back",
+			json: `{"package_managers":[{"name":"npm"}]}`,
+			want: "",
+		},
+		{
+			name: "empty manager list falls back",
+			json: `{"package_managers":[]}`,
+			want: "",
+		},
+		{
+			name: "missing field falls back",
+			json: `{}`,
+			want: "",
+		},
+		{
+			name: "invalid json falls back",
+			json: `not json`,
+			want: "",
+		},
+		{
+			name: "config.m4 with PHP_ARG selects php-ext",
+			json: `{"package_managers":[]}`,
+			setup: func(t *testing.T, dir string) {
+				writeMarker(t, dir, "config.m4", configM4Body)
+			},
+			want: "php-ext",
+		},
+		{
+			name: "php-ext wins over php when both signals present",
+			json: `{"package_managers":[{"name":"Composer"}]}`,
+			setup: func(t *testing.T, dir string) {
+				writeMarker(t, dir, "config.m4", configM4Body)
+			},
+			want: "php-ext",
+		},
+		{
+			name: "config.m4 without PHP_ARG does not match php-ext",
+			json: `{"package_managers":[{"name":"Composer"}]}`,
+			setup: func(t *testing.T, dir string) {
+				writeMarker(t, dir, "config.m4", configM4WithoutPHPArg)
+			},
+			want: "php", // composer marker still picks php
+		},
+		{
+			name: "config.m4 without PHP_ARG and no composer falls back",
+			json: `{"package_managers":[]}`,
+			setup: func(t *testing.T, dir string) {
+				writeMarker(t, dir, "config.m4", configM4WithoutPHPArg)
+			},
+			want: "",
+		},
+		{
+			name:    "marker profile cannot match without srcDir",
+			json:    `{"package_managers":[]}`,
+			noSrcOK: true,
+			want:    "",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := matchProfile([]byte(tt.json))
+			dir := ""
+			if !tt.noSrcOK {
+				dir = t.TempDir()
+			}
+			if tt.setup != nil {
+				tt.setup(t, dir)
+			}
+			got := matchProfile([]byte(tt.json), dir)
 			if got.Name != tt.want {
 				t.Errorf("matchProfile = %q, want %q", got.Name, tt.want)
 			}
@@ -122,8 +220,14 @@ func TestEnsureImage_missingDockerfile(t *testing.T) {
 func TestRepoShipsPHPDockerfile(t *testing.T) {
 	wd, _ := os.Getwd()
 	repoRoot := filepath.Join(wd, "..", "..")
-	path := filepath.Join(repoRoot, "docker", "profiles", "php", "Dockerfile")
-	if _, err := os.Stat(path); err != nil {
-		t.Errorf("expected php profile Dockerfile to exist: %v", err)
+	for _, profile := range []string{"php", "php-ext"} {
+		path := filepath.Join(repoRoot, "docker", "profiles", profile, "Dockerfile")
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("expected %s profile Dockerfile to exist: %v", profile, err)
+		}
+		guide := filepath.Join(repoRoot, "docker", "profiles", profile, "PROFILE.md")
+		if _, err := os.Stat(guide); err != nil {
+			t.Errorf("expected %s profile PROFILE.md to exist: %v", profile, err)
+		}
 	}
 }

@@ -1,18 +1,29 @@
 package worker
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 )
+
+// ProfileMarker refines profile selection beyond what brief reports.
+// Path is relative to the cloned source root; Contains, when set, must
+// also appear inside the file — used e.g. to distinguish a phpize
+// config.m4 from any unrelated autoconf file.
+type ProfileMarker struct {
+	Path     string
+	Contains string
+}
 
 // Profile selects a per-ecosystem runner image. The default profile
 // (empty name) uses the runner image configured globally; named profiles
@@ -22,20 +33,29 @@ type Profile struct {
 	// Name matches the directory under docker/profiles/. Empty means
 	// "use the default runner image, no per-profile build".
 	Name string
-	// Ecosystem is the `brief` package_managers[0].name that auto-selects
-	// this profile. Matched case-insensitively.
+	// Ecosystem is a `brief` package_managers[].name, matched
+	// case-insensitively. Empty falls back to Markers — useful for
+	// ecosystems brief cannot see (e.g. a PECL C extension repo without
+	// composer.json).
 	Ecosystem string
+	Markers   []ProfileMarker
 }
 
 // IsDefault reports whether p falls back to the configured runner image
 // instead of a profile-specific built one.
 func (p Profile) IsDefault() bool { return p.Name == "" }
 
-// builtinProfiles is the v1 registry. Add a new entry plus a Dockerfile
-// under docker/profiles/<name>/ to expose a profile. Kept in code (not
-// YAML) until a second/third profile lands and the duplication justifies
-// the indirection.
+// builtinProfiles is the v1 registry. Order matters: first match wins,
+// so more specific profiles (php-ext) come before their general
+// counterparts (php). Add a new entry plus a Dockerfile under
+// docker/profiles/<name>/ to expose a profile.
 var builtinProfiles = []Profile{
+	{
+		Name: "php-ext",
+		Markers: []ProfileMarker{
+			{Path: "config.m4", Contains: "PHP_ARG_"},
+		},
+	},
 	{Name: "php", Ecosystem: "Composer"},
 }
 
@@ -77,26 +97,78 @@ func IsNamedProfile(name string) bool {
 	return false
 }
 
-// matchProfile picks the registered profile whose Ecosystem matches the
-// first package manager `brief` detected. Returns the zero profile when
-// nothing matches.
-func matchProfile(briefOut []byte) Profile {
+func matchProfile(briefOut []byte, srcDir string) Profile {
 	var brief struct {
 		PackageManagers []struct {
 			Name string `json:"name"`
 		} `json:"package_managers"`
 	}
-	if err := json.Unmarshal(briefOut, &brief); err != nil {
-		return Profile{}
-	}
+	_ = json.Unmarshal(briefOut, &brief)
+	pms := make([]string, 0, len(brief.PackageManagers))
 	for _, pm := range brief.PackageManagers {
-		for _, p := range builtinProfiles {
-			if strings.EqualFold(pm.Name, p.Ecosystem) {
-				return p
-			}
+		pms = append(pms, pm.Name)
+	}
+	for _, p := range builtinProfiles {
+		if !ecosystemMatch(p.Ecosystem, pms) {
+			continue
 		}
+		if !markersMatch(p.Markers, srcDir) {
+			continue
+		}
+		return p
 	}
 	return Profile{}
+}
+
+func ecosystemMatch(ecosystem string, pms []string) bool {
+	if ecosystem == "" {
+		return true
+	}
+	for _, pm := range pms {
+		if strings.EqualFold(pm, ecosystem) {
+			return true
+		}
+	}
+	return false
+}
+
+func markersMatch(markers []ProfileMarker, srcDir string) bool {
+	if len(markers) == 0 {
+		return true
+	}
+	if srcDir == "" {
+		return false
+	}
+	for _, m := range markers {
+		full := filepath.Join(srcDir, m.Path)
+		if m.Contains == "" {
+			if _, err := os.Stat(full); err != nil {
+				return false
+			}
+			continue
+		}
+		if !fileContains(full, m.Contains) {
+			return false
+		}
+	}
+	return true
+}
+
+// markerReadCap bounds Contains-substring scans so a hostile or
+// runaway file can't stall detection.
+const markerReadCap = 1 << 20
+
+func fileContains(path, needle string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = f.Close() }()
+	b, err := io.ReadAll(io.LimitReader(f, markerReadCap))
+	if err != nil {
+		return false
+	}
+	return bytes.Contains(b, []byte(needle))
 }
 
 // DetectProfile runs `brief` against the cloned source inside the
@@ -117,9 +189,10 @@ func DetectProfile(ctx context.Context, runnerImage, srcDir string) Profile {
 	)
 	out, err := cmd.Output()
 	if err != nil {
-		return Profile{}
+		// Marker-only profiles can still match when brief is unavailable.
+		out = nil
 	}
-	return matchProfile(out)
+	return matchProfile(out, absSrc)
 }
 
 // ErrNoProfilesDir is returned by EnsureImage when the worker has no
