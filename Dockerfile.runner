@@ -38,6 +38,7 @@ RUN python3 -m venv /opt/semgrep && \
     ln -s /opt/semgrep/bin/semgrep /usr/local/bin/semgrep && \
     ln -s /opt/semgrep/bin/pysemgrep /usr/local/bin/pysemgrep && \
     python3 --version && \
+    curl --version && \
     gh --version && \
     semgrep --version && \
     pysemgrep --version

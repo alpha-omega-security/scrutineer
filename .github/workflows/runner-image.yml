@@ -60,6 +60,7 @@ jobs:
         run: |
           set -euxo pipefail
           docker run --rm scrutineer-runner:ci claude --version
+          docker run --rm scrutineer-runner:ci curl --version
           docker run --rm scrutineer-runner:ci semgrep --version
           docker run --rm scrutineer-runner:ci zizmor --version
           docker run --rm scrutineer-runner:ci git-pkgs --version
