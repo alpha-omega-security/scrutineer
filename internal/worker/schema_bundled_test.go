@@ -55,6 +55,14 @@ func TestBundledSchemas_compileAndAcceptSamples(t *testing.T) {
 			`{"error":"git-pkgs: exit 1"}`,
 		},
 		{
+			"../../skills/dependencies/schema.json",
+			`{"dependencies":[]}`,
+		},
+		{
+			"../../skills/dependencies/schema.json",
+			`{"dependencies":[],"error":"git-pkgs not found on PATH"}`,
+		},
+		{
 			"../../skills/threat-model/schema.json",
 			`{"spec_version":1,"repository":"https://github.com/o/r","commit":"abc1234",
 			  "date":"2026-05-08","scope_subpath":null,"description":"x",
@@ -109,6 +117,7 @@ func TestBundledSchemas_rejectBadShapes(t *testing.T) {
 		{"../../skills/sbom/schema.json", `{"bomFormat":"SPDX","specVersion":"1.5"}`, "/bomFormat"},
 		{"../../skills/sbom/schema.json", `{"specVersion":"1.5"}`, "bomFormat"},
 		{"../../skills/sbom/schema.json", `{}`, "oneOf"},
+		{"../../skills/dependencies/schema.json", `{"dependencies":null}`, "/dependencies"},
 		{"../../skills/threat-model/schema.json", `{"spec_version":2}`, "/spec_version"},
 		{"../../skills/threat-model/schema.json",
 			`{"spec_version":1,"repository":"https://x","commit":"abc1234","date":"2026-01-01",

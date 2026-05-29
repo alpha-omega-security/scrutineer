@@ -5,6 +5,7 @@
   "required": ["dependencies"],
   "additionalProperties": false,
   "properties": {
+    "error": { "type": "string" },
     "dependencies": {
       "type": "array",
       "items": {
