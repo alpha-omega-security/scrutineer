@@ -57,6 +57,7 @@ var builtinProfiles = []Profile{
 		},
 	},
 	{Name: "php", Ecosystem: "Composer"},
+	{Name: "ruby", Ecosystem: "Bundler"},
 }
 
 // ProfileByName returns the registered profile, or the default profile

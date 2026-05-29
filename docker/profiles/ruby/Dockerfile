@@ -1,0 +1,58 @@
+# Ruby profile. Extends the scrutineer runner with a modern Ruby
+# interpreter and Bundler so scans of Bundler/RubyGems projects can audit
+# or reproduce in-place.
+#
+# The runner's Debian release (bookworm-slim, inherited via FROM) only
+# supplies the build toolchain here -- Ruby itself is compiled from source
+# by ruby-build at an explicit pinned version, so the interpreter is
+# current regardless of what the distro packages.
+#
+# Built on-demand by the worker; the image tag is content-addressed on
+# this Dockerfile's sha so an edit invalidates the cache automatically.
+#
+#   docker build --build-arg RUNNER_IMAGE=<digest-pinned-runner> \
+#     -t scrutineer-profile-ruby:<sha> docker/profiles/ruby
+
+ARG RUNNER_IMAGE=ghcr.io/alpha-omega-security/scrutineer-runner:latest
+FROM ${RUNNER_IMAGE}
+
+# Explicit, verifiable Ruby version (vs. the fragile distro apt epoch
+# string). Bump to pull a newer interpreter; the content-addressed image
+# tag invalidates the cache on any edit to this file.
+ARG RUBY_VERSION=3.4.9
+# ruby-build ref supplies the build recipe for RUBY_VERSION. Pinned to a
+# release tag (not master) so the build is reproducible and not exposed to
+# a moving branch -- mirrors the rest of the image's pinned tooling. When
+# bumping RUBY_VERSION, advance this to a release tag that ships that
+# version's definition under share/ruby-build/.
+ARG RUBY_BUILD_REF=v20260520
+
+USER root
+# ruby-build compiles CRuby from source, so it needs the C toolchain plus
+# the headers Ruby links against (openssl, yaml/psych, zlib, readline,
+# ffi/fiddle, gmp, ncurses, gdbm). Bundler ships with Ruby since 2.6, so
+# installing the interpreter yields `ruby`, `gem`, and `bundle`. The
+# toolchain is also what Bundler needs to build native gem extensions when
+# a scan reproduces a Gemfile in-place, so it is kept in the final image.
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+        build-essential \
+        autoconf \
+        patch \
+        git \
+        libssl-dev \
+        libyaml-dev \
+        zlib1g-dev \
+        libreadline-dev \
+        libffi-dev \
+        libgmp-dev \
+        libncurses-dev \
+        libgdbm-dev \
+ && git clone --depth 1 --branch "${RUBY_BUILD_REF}" \
+        https://github.com/rbenv/ruby-build.git /tmp/ruby-build \
+ && /tmp/ruby-build/bin/ruby-build "${RUBY_VERSION}" /usr/local \
+ && rm -rf /tmp/ruby-build /var/lib/apt/lists/* \
+ && ruby --version \
+ && bundle --version
+
+USER runner

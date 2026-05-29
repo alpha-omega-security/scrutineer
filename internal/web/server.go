@@ -236,6 +236,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /findings/{id}/csaf.json", s.findingCSAF)
 	mux.HandleFunc("POST /findings/{id}/status", s.findingStatus)
 	mux.HandleFunc("POST /findings/{id}/verify", s.findingVerify)
+	mux.HandleFunc("POST /repositories/{id}/verify-all", s.repoVerifyAll)
 	mux.HandleFunc("POST /findings/{id}/disclose", s.findingDisclose)
 	mux.HandleFunc("POST /findings/{id}/patch", s.findingPatchRun)
 	mux.HandleFunc("POST /findings/{id}/exposure", s.findingExposureRun)
@@ -895,6 +896,77 @@ func (s *Server) runFindingSkill(w http.ResponseWriter, r *http.Request, name st
 	s.redirect(w, r, fmt.Sprintf("/scans/%d", scanID))
 }
 
+// repoVerifyAll is the bulk equivalent of the per-finding Verify button: it
+// enqueues the verify skill for every deep-dive finding on the repo that is
+// still awaiting verification (status "new"). The ?category= filter is
+// honoured so the action scope matches the visible (and badge-counted)
+// findings on the tab. Findings that already have a queued or running verify
+// scan are skipped, so re-clicking the button doesn't pile up duplicate jobs.
+func (s *Server) repoVerifyAll(w http.ResponseWriter, r *http.Request) {
+	repo, ok := loadByID[db.Repository](s, w, r)
+	if !ok {
+		return
+	}
+	var skill db.Skill
+	if err := s.DB.Where("name = ? AND active = ?", verifySkillName, true).First(&skill).Error; err != nil {
+		setFlash(w, Flash{Category: "error", Title: verifySkillName + " skill is not installed"})
+		s.redirect(w, r, fmt.Sprintf("/repositories/%d#rt4", repo.ID))
+		return
+	}
+
+	q := s.DB.Model(&db.Finding{}).
+		Where("repository_id = ? AND status = ? AND scan_id IN (?)",
+			repo.ID, db.FindingNew, deepDiveScanIDs(s.DB))
+	if category := r.URL.Query().Get("category"); category != "" {
+		q = applyCWECategoryFilter(q, category)
+	}
+	var findings []db.Finding
+	q.Select("id").Find(&findings)
+
+	model := r.FormValue("model")
+	var queued, skipped, errored int
+	for _, f := range findings {
+		var inflight int64
+		s.DB.Model(&db.Scan{}).
+			Where("finding_id = ? AND skill_id = ? AND status IN ?",
+				f.ID, skill.ID, []db.ScanStatus{db.ScanQueued, db.ScanRunning}).
+			Count(&inflight)
+		if inflight > 0 {
+			skipped++
+			continue
+		}
+		if _, err := s.enqueueSkillScoped(r.Context(), repo.ID, skill.ID, new(f.ID), model); err != nil {
+			errored++
+			continue
+		}
+		queued++
+	}
+	setFlash(w, verifyAllToast(queued, skipped, errored))
+	// Land on the Scans tab so the operator can watch the verify jobs run.
+	s.redirect(w, r, fmt.Sprintf("/repositories/%d#rt3", repo.ID))
+}
+
+func verifyAllToast(queued, skipped, errored int) Flash {
+	if queued == 0 && skipped == 0 && errored == 0 {
+		return Flash{Category: "success", Title: "No findings awaiting verification"}
+	}
+	parts := []string{fmt.Sprintf("%d queued", queued)}
+	if skipped > 0 {
+		parts = append(parts, fmt.Sprintf("%d already running", skipped))
+	}
+	if errored > 0 {
+		parts = append(parts, fmt.Sprintf("%d errored", errored))
+	}
+	cat := "success"
+	switch {
+	case errored > 0:
+		cat = "error"
+	case queued == 0:
+		cat = "warning"
+	}
+	return Flash{Category: cat, Title: "Verify all: " + strings.Join(parts, ", ")}
+}
+
 func (s *Server) findingNotes(w http.ResponseWriter, r *http.Request) {
 	f, ok := loadByID[db.Finding](s, w, r)
 	if !ok {
@@ -1315,6 +1387,18 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 	category := r.URL.Query().Get("category")
 	findings, scannerFindings, scanSkill, scanCommit := loadRepoFindings(s.DB, repo.ID, category)
 
+	// Count deep-dive findings still awaiting verification, scoped to the
+	// same category filter as the visible list. Drives the "Verify all new"
+	// button on the Findings tab; the bulk handler acts on this exact set.
+	newFindingsQuery := s.DB.Model(&db.Finding{}).
+		Where("repository_id = ? AND status = ? AND scan_id IN (?)",
+			repo.ID, db.FindingNew, deepDiveScanIDs(s.DB))
+	if category != "" {
+		newFindingsQuery = applyCWECategoryFilter(newFindingsQuery, category)
+	}
+	var newFindings int64
+	newFindingsQuery.Count(&newFindings)
+
 	var maintainers []db.Maintainer
 	s.DB.Joins("JOIN repository_maintainers ON repository_maintainers.maintainer_id = maintainers.id").
 		Where("repository_maintainers.repository_id = ?", repo.ID).Find(&maintainers)
@@ -1376,6 +1460,7 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 		"ScannerFindings": scannerFindings,
 		"ScanSkill":       scanSkill,
 		"ScanCommit":      scanCommit,
+		"NewFindingCount": int(newFindings),
 		"FailedScans":     failedScans,
 		"TotalCost":       totalCost,
 		"TMCommit":        tmCommit,

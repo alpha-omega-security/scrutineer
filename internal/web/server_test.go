@@ -1787,6 +1787,120 @@ func TestEnqueueSkillWith_findingScopedJumpsQueue(t *testing.T) {
 	}
 }
 
+func TestRepoVerifyAll(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://github.com/foo/bar", Name: "bar"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: "security-deep-dive"}
+	s.DB.Create(&scan)
+	verify := db.Skill{Name: "verify", Body: "b", OutputFile: "r.json", OutputKind: "freeform", Version: 1, Active: true, Source: "ui"}
+	s.DB.Create(&verify)
+
+	// Three findings awaiting verification.
+	for i := range 3 {
+		s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repo.ID,
+			FindingID: fmt.Sprintf("N%d", i), Title: "x", Severity: "High", Status: db.FindingNew})
+	}
+	// A triaged finding that must be ignored.
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repo.ID,
+		FindingID: "T1", Title: "x", Severity: "High", Status: db.FindingTriaged})
+	// A new finding that already has a running verify scan: must be skipped.
+	skipF := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID,
+		FindingID: "S1", Title: "x", Severity: "High", Status: db.FindingNew}
+	s.DB.Create(&skipF)
+	s.DB.Create(&db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanRunning,
+		SkillName: "verify", SkillID: new(verify.ID), FindingID: new(skipF.ID)})
+
+	req := httptest.NewRequest("POST", fmt.Sprintf("/repositories/%d/verify-all", repo.ID), nil)
+	req.Host = testHost
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+
+	// One queued verify scan per "new" finding without an in-flight verify.
+	var queued []db.Scan
+	s.DB.Where("skill_name = ? AND status = ?", "verify", db.ScanQueued).Find(&queued)
+	if len(queued) != 3 {
+		t.Fatalf("queued verify scans = %d, want 3", len(queued))
+	}
+	for _, sc := range queued {
+		if sc.FindingID == nil {
+			t.Errorf("queued verify scan %d missing finding id", sc.ID)
+		}
+	}
+	if f := flashFrom(t, w); !strings.Contains(f.Title, "3 queued") || !strings.Contains(f.Title, "1 already running") {
+		t.Errorf("flash = %q, want 3 queued / 1 already running", f.Title)
+	}
+}
+
+func TestRepoVerifyAll_respectsCategoryFilter(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://github.com/foo/bar", Name: "bar"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: "security-deep-dive"}
+	s.DB.Create(&scan)
+	verify := db.Skill{Name: "verify", Body: "b", OutputFile: "r.json", OutputKind: "freeform", Version: 1, Active: true, Source: "ui"}
+	s.DB.Create(&verify)
+
+	// One new finding in each of two categories.
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repo.ID,
+		FindingID: "INJ", Title: "x", Severity: "High", Status: db.FindingNew, CWE: "CWE-78"})
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repo.ID,
+		FindingID: "MEM", Title: "x", Severity: "High", Status: db.FindingNew, CWE: "CWE-416"})
+
+	// The badge counts only the filtered category.
+	body := getRepoPage(t, s, repo.ID)
+	if !strings.Contains(body, "Verify all new (2)") {
+		t.Errorf("unfiltered badge should be 2; body=%s", body)
+	}
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", fmt.Sprintf("/repositories/%d?category=Injection", repo.ID)))
+	if !strings.Contains(w.Body.String(), "Verify all new (1)") {
+		t.Errorf("Injection-filtered badge should be 1; body=%s", w.Body)
+	}
+
+	// The action enqueues only the filtered category's finding.
+	req := httptest.NewRequest("POST", fmt.Sprintf("/repositories/%d/verify-all?category=Injection", repo.ID), nil)
+	req.Host = testHost
+	w = httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+
+	var queued []db.Scan
+	s.DB.Where("skill_name = ? AND status = ?", "verify", db.ScanQueued).Find(&queued)
+	if len(queued) != 1 {
+		t.Fatalf("queued verify scans = %d, want 1 (category-scoped)", len(queued))
+	}
+}
+
+func TestRepoVerifyAll_skillNotInstalled(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://github.com/foo/bar", Name: "bar"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: "security-deep-dive"}
+	s.DB.Create(&scan)
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repo.ID,
+		FindingID: "N1", Title: "x", Severity: "High", Status: db.FindingNew})
+
+	req := httptest.NewRequest("POST", fmt.Sprintf("/repositories/%d/verify-all", repo.ID), nil)
+	req.Host = testHost
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+
+	var n int64
+	s.DB.Model(&db.Scan{}).Where("skill_name = ?", "verify").Count(&n)
+	if n != 0 {
+		t.Errorf("verify scans created = %d, want 0 when skill missing", n)
+	}
+	if f := flashFrom(t, w); f.Category != "error" {
+		t.Errorf("flash category = %q, want error", f.Category)
+	}
+}
+
 func TestFindingPatchDownload(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
@@ -2557,6 +2671,36 @@ func TestRepoShow_retryFailedButton(t *testing.T) {
 	}
 	if !strings.Contains(body, fmt.Sprintf(`/scans/retry-failed?repository=%d`, repo.ID)) {
 		t.Error("button form action should scope retry to this repository")
+	}
+}
+
+func TestRepoShow_verifyAllButton(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/rep", Name: "rep"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: deepDiveSkillName}
+	s.DB.Create(&scan)
+
+	// A triaged finding does not count as awaiting verification, so no button.
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repo.ID,
+		FindingID: "T1", Title: "x", Severity: "High", Status: db.FindingTriaged})
+	if body := getRepoPage(t, s, repo.ID); strings.Contains(body, "Verify all new") {
+		t.Error("button should not appear when no findings await verification")
+	}
+
+	// Two new findings: button renders with the count and repo-scoped action.
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repo.ID,
+		FindingID: "N1", Title: "x", Severity: "High", Status: db.FindingNew})
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repo.ID,
+		FindingID: "N2", Title: "x", Severity: "High", Status: db.FindingNew})
+	body := getRepoPage(t, s, repo.ID)
+	if !strings.Contains(body, "Verify all new (2)") {
+		t.Errorf("expected 'Verify all new (2)' button; body=%s", body)
+	}
+	if !strings.Contains(body, fmt.Sprintf(`/repositories/%d/verify-all`, repo.ID)) {
+		t.Error("button form action should scope verify-all to this repository")
 	}
 }
 

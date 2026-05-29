@@ -201,6 +201,18 @@
         Rejected and duplicate findings are hidden.{{if .ScannerFindings}} See the
         Scanners tab for zizmor/semgrep output.{{end}}
       </p>
+      <div class="flex items-center gap-2 shrink-0">
+      {{if gt .NewFindingCount 0}}
+        <form method="post"
+              action="/repositories/{{.Repo.ID}}/verify-all{{if .Category}}?category={{.Category}}{{end}}"
+              hx-post="/repositories/{{.Repo.ID}}/verify-all{{if .Category}}?category={{.Category}}{{end}}"
+              hx-swap="none"
+              hx-confirm="Enqueue a verification job for {{.NewFindingCount}} finding(s) awaiting verification?">
+          <button type="submit" class="btn-outline">
+            <i data-lucide="shield-check"></i> Verify all new ({{.NewFindingCount}})
+          </button>
+        </form>
+      {{end}}
       <div class="dropdown-menu">
         <button type="button" class="btn-outline" aria-haspopup="menu" aria-expanded="false">
           <i data-lucide="tags"></i>
@@ -218,6 +230,7 @@
                {{if eq .Uncategorized .Category}}aria-current="true"{{end}}>{{.Uncategorized}}</a>
           </div>
         </div>
+      </div>
       </div>
     </div>
     {{if not .Findings}}

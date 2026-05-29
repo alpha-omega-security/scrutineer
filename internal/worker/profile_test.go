@@ -19,6 +19,7 @@ func TestProfileByName(t *testing.T) {
 		{"default", "", true, false},
 		{"php", "php", true, true},
 		{"php-ext", "php-ext", true, true},
+		{"ruby", "ruby", true, true},
 		{"unknown", "", false, false},
 	}
 	for _, tt := range tests {
@@ -76,6 +77,16 @@ func TestMatchProfile(t *testing.T) {
 			want: "php",
 		},
 		{
+			name: "bundler matches ruby",
+			json: `{"package_managers":[{"name":"Bundler"}]}`,
+			want: "ruby",
+		},
+		{
+			name: "bundler case-insensitive",
+			json: `{"package_managers":[{"name":"bundler"}]}`,
+			want: "ruby",
+		},
+		{
 			name: "first composer match wins",
 			json: `{"package_managers":[{"name":"Composer"},{"name":"npm"}]}`,
 			want: "php",
@@ -83,6 +94,16 @@ func TestMatchProfile(t *testing.T) {
 		{
 			name: "composer present even if not first",
 			json: `{"package_managers":[{"name":"npm"},{"name":"Composer"}]}`,
+			want: "php",
+		},
+		{
+			name: "composer + bundler picks php (registry order)",
+			json: `{"package_managers":[{"name":"Composer"},{"name":"Bundler"}]}`,
+			want: "php",
+		},
+		{
+			name: "bundler + composer still picks php (registry order, not brief order)",
+			json: `{"package_managers":[{"name":"Bundler"},{"name":"Composer"}]}`,
 			want: "php",
 		},
 		{
@@ -219,17 +240,61 @@ func TestEnsureImage_missingDockerfile(t *testing.T) {
 	}
 }
 
-func TestRepoShipsPHPDockerfile(t *testing.T) {
+// TestBuiltinProfiles_registrySanity guards the invariants matchProfile
+// and the validators rely on: every entry must have a name and either an
+// Ecosystem or at least one Marker, names must be unique, and ecosystems
+// must be unique case-insensitively (a duplicate would silently make
+// auto-detection resolve the wrong profile, with no other test failing).
+// Marker-only profiles legitimately have an empty Ecosystem and are
+// excluded from the ecosystem-uniqueness check.
+func TestBuiltinProfiles_registrySanity(t *testing.T) {
+	names := map[string]bool{}
+	ecosystems := map[string]bool{}
+	for _, p := range builtinProfiles {
+		if p.Name == "" {
+			t.Error("profile with empty Name")
+		}
+		if p.Ecosystem == "" && len(p.Markers) == 0 {
+			t.Errorf("profile %q has neither Ecosystem nor Markers", p.Name)
+		}
+		if names[p.Name] {
+			t.Errorf("duplicate profile Name %q", p.Name)
+		}
+		names[p.Name] = true
+		if p.Ecosystem == "" {
+			continue
+		}
+		eco := strings.ToLower(p.Ecosystem)
+		if ecosystems[eco] {
+			t.Errorf("duplicate profile Ecosystem %q (case-insensitive)", p.Ecosystem)
+		}
+		ecosystems[eco] = true
+	}
+}
+
+func TestRepoShipsProfileDockerfiles(t *testing.T) {
 	wd, _ := os.Getwd()
 	repoRoot := filepath.Join(wd, "..", "..")
-	for _, profile := range []string{"php", "php-ext"} {
-		path := filepath.Join(repoRoot, "docker", "profiles", profile, "Dockerfile")
+	for _, p := range builtinProfiles {
+		path := filepath.Join(repoRoot, "docker", "profiles", p.Name, "Dockerfile")
 		if _, err := os.Stat(path); err != nil {
-			t.Errorf("expected %s profile Dockerfile to exist: %v", profile, err)
+			t.Errorf("expected %s profile Dockerfile to exist: %v", p.Name, err)
 		}
-		guide := filepath.Join(repoRoot, "docker", "profiles", profile, "PROFILE.md")
+	}
+}
+
+// TestProfileGuidesShipForPHP keeps the php / php-ext profiles honest
+// about the per-container PROFILE.md they advertise. PROFILE.md is
+// optional in general (a profile without one simply gets no orientation
+// injected at scan time); the php profiles document specifics the
+// agent needs to behave correctly, so missing them is a real regression.
+func TestProfileGuidesShipForPHP(t *testing.T) {
+	wd, _ := os.Getwd()
+	repoRoot := filepath.Join(wd, "..", "..")
+	for _, name := range []string{"php", "php-ext"} {
+		guide := filepath.Join(repoRoot, "docker", "profiles", name, "PROFILE.md")
 		if _, err := os.Stat(guide); err != nil {
-			t.Errorf("expected %s profile PROFILE.md to exist: %v", profile, err)
+			t.Errorf("expected %s profile PROFILE.md to exist: %v", name, err)
 		}
 	}
 }
