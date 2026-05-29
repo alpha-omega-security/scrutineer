@@ -6,6 +6,10 @@ FROM composer:2.9.8 AS composer
 
 FROM ${RUNNER_IMAGE}
 
+ARG PHP_VERSION=8.4.21-3+0~20260514.49+debian12~1.gbp45ccaf
+# php8.4-redis is the only PECL pkg whose sury build differs across arches.
+ARG TARGETARCH
+
 USER root
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -17,16 +21,47 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && echo "deb [signed-by=/etc/apt/keyrings/sury-php.gpg] https://packages.sury.org/php/ $(lsb_release -sc) main" \
         > /etc/apt/sources.list.d/sury-php.list \
  && apt-get update \
+ && case "${TARGETARCH}" in \
+      amd64) PHP_REDIS=6.3.0-2+0~20251204.66+debian12~1.gbpd148c3 ;; \
+      arm64) PHP_REDIS=6.3.0-1+0~20251120.64+debian12~1.gbpd464c1 ;; \
+      *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
  && apt-get install -y --no-install-recommends \
-        php8.4-cli php8.4-common php8.4-dev \
-        php8.4-amqp php8.4-apcu php8.4-bcmath php8.4-bz2 php8.4-curl \
-        php8.4-dba php8.4-gd php8.4-gmp php8.4-grpc php8.4-igbinary \
-        php8.4-imagick php8.4-imap php8.4-intl php8.4-ldap \
-        php8.4-mbstring php8.4-memcached php8.4-mongodb php8.4-msgpack \
-        php8.4-mysql php8.4-opcache php8.4-pgsql php8.4-protobuf \
-        php8.4-rdkafka php8.4-redis php8.4-snmp php8.4-soap \
-        php8.4-sqlite3 php8.4-tidy php8.4-xml php8.4-xsl \
-        php8.4-yaml php8.4-zip \
+        php8.4-cli=${PHP_VERSION} \
+        php8.4-common=${PHP_VERSION} \
+        php8.4-dev=${PHP_VERSION} \
+        php8.4-bcmath=${PHP_VERSION} \
+        php8.4-bz2=${PHP_VERSION} \
+        php8.4-curl=${PHP_VERSION} \
+        php8.4-dba=${PHP_VERSION} \
+        php8.4-gd=${PHP_VERSION} \
+        php8.4-gmp=${PHP_VERSION} \
+        php8.4-intl=${PHP_VERSION} \
+        php8.4-ldap=${PHP_VERSION} \
+        php8.4-mbstring=${PHP_VERSION} \
+        php8.4-mysql=${PHP_VERSION} \
+        php8.4-opcache=${PHP_VERSION} \
+        php8.4-pgsql=${PHP_VERSION} \
+        php8.4-snmp=${PHP_VERSION} \
+        php8.4-soap=${PHP_VERSION} \
+        php8.4-sqlite3=${PHP_VERSION} \
+        php8.4-tidy=${PHP_VERSION} \
+        php8.4-xml=${PHP_VERSION} \
+        php8.4-xsl=${PHP_VERSION} \
+        php8.4-zip=${PHP_VERSION} \
+        php8.4-amqp=2.1.2-7+0~20260519.35+debian12~1.gbpff72ce \
+        php8.4-apcu=5.1.28-1+0~20260518.58+debian12~1.gbp5969fc \
+        php8.4-grpc=1.80.0-1+0~20260331.43+debian12~1.gbpa12d0b \
+        php8.4-igbinary=3.2.16-6+0~20260330.57+debian12~1.gbp1eff65 \
+        php8.4-imagick=3.8.1-1+0~20251220.54+debian12~1.gbpde1d95 \
+        php8.4-imap=3:1.0.3-2+0~20251203.6+debian12~1.gbp0bf79d \
+        php8.4-memcached=3.4.0-1+0~20260331.75+debian12~1.gbp3fb0c0 \
+        php8.4-mongodb=2.1.4-4+0~20251203.65+debian12~1.gbp6dbd50 \
+        php8.4-msgpack=1:3.0.0-2+0~20251124.50+debian12~1.gbp330ae0 \
+        php8.4-protobuf=4.33.2-1+0~20251220.29+debian12~1.gbp93d410 \
+        php8.4-rdkafka=6.0.5-2+0~20251124.9+debian12~1.gbpdc15a9 \
+        php8.4-redis=${PHP_REDIS} \
+        php8.4-yaml=2.3.0-2+0~20251124.42+debian12~1.gbp29d390 \
         build-essential autoconf libtool pkg-config re2c \
  && rm -rf /var/lib/apt/lists/*
 
