@@ -22,9 +22,7 @@ var BuiltinSkipPaths = []string{
 	"**/*.min.js",
 	"**/*.min.css",
 	"**/dist/**",
-	"**/build/**",
 	"**/node_modules/**",
-	"**/vendor/**",
 	"**/generated/**",
 	"**/__generated__/**",
 }

@@ -113,7 +113,7 @@ When a repo is added, the `triage` skill is enqueued. Its SKILL.md lists the ski
 
 Edit `skills/triage/SKILL.md` to change what gets run by default. Drop new skill directories in `skills/` to add scan types; no code changes needed. See [docs/skills.md](docs/skills.md) for the frontmatter reference, the `scrutineer.*` metadata keys, the `context.json` shape, output kinds, schema validation, and the skill-facing HTTP API.
 
-Before each scan, lockfiles, minified bundles, and vendored/generated trees are stripped from the workspace so the skill doesn't waste turns on them. The builtin skip list covers `node_modules`, `vendor`, `dist`, `build`, `generated`, `__generated__`, `*.min.js`/`*.min.css`, and the common lockfiles (`pnpm-lock.yaml`, `package-lock.json`, `yarn.lock`, `Cargo.lock`, `go.sum`, `Gemfile.lock`, `poetry.lock`, `composer.lock`). Skills can override this with `scrutineer.paths` (allow-list) and layer `scrutineer.ignore_paths` on top; see [docs/skills.md](docs/skills.md#path-filtering).
+Before each scan, lockfiles, minified bundles, and generated trees are stripped from the workspace so the skill doesn't waste turns on them. The builtin skip list covers `node_modules`, `dist`, `generated`, `__generated__`, `*.min.js`/`*.min.css`, and the common lockfiles (`pnpm-lock.yaml`, `package-lock.json`, `yarn.lock`, `Cargo.lock`, `go.sum`, `Gemfile.lock`, `poetry.lock`, `composer.lock`). Skills can override this with `scrutineer.paths` (allow-list) and layer `scrutineer.ignore_paths` on top; see [docs/skills.md](docs/skills.md#path-filtering).
 
 ## Importing findings from other tools
 

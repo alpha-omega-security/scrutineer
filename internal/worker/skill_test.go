@@ -450,7 +450,7 @@ func TestApplyPathFilters_skipsExcludedSubtree(t *testing.T) {
 		"node_modules/a/b/c/d/deep.js":   "x",
 		"node_modules/.bin/cli":          "x",
 		"pkg/node_modules/inner/leaf.js": "x",
-		"vendor/lib.go":                  "x",
+		"dist/bundle.js":                 "x",
 	})
 	var events []string
 	emit := func(e Event) { events = append(events, e.Text) }
@@ -465,8 +465,8 @@ func TestApplyPathFilters_skipsExcludedSubtree(t *testing.T) {
 		"node_modules/a/b/c/d/deep.js",
 		"pkg/node_modules",
 		"pkg/node_modules/inner/leaf.js",
-		"vendor",
-		"vendor/lib.go",
+		"dist",
+		"dist/bundle.js",
 	)
 	if _, err := os.Stat(filepath.Join(src, "pkg")); err != nil {
 		t.Errorf("pkg/ (parent of an excluded subtree) should survive: %v", err)

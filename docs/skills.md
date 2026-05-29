@@ -98,13 +98,13 @@ metadata:
 
 ## Path filtering
 
-Before each scan, scrutineer prunes `workRoot/src/` so the skill only sees the files it cares about. The default filter drops lockfiles, minified bundles, build outputs, and vendored or generated trees:
+Before each scan, scrutineer prunes `workRoot/src/` so the skill only sees the files it cares about. The default filter drops lockfiles, minified bundles, build outputs, and generated trees:
 
 ```
 **/pnpm-lock.yaml, **/package-lock.json, **/yarn.lock, **/Cargo.lock,
 **/go.sum, **/Gemfile.lock, **/poetry.lock, **/composer.lock,
 **/*.min.js, **/*.min.css,
-**/dist/**, **/build/**, **/node_modules/**, **/vendor/**,
+**/dist/**, **/node_modules/**,
 **/generated/**, **/__generated__/**
 ```
 

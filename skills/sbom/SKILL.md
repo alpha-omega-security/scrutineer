@@ -12,8 +12,6 @@ metadata:
   scrutineer.ignore_paths:
     - "**/node_modules/**"
     - "**/dist/**"
-    - "**/build/**"
-    - "**/vendor/**"
     - "**/generated/**"
     - "**/__generated__/**"
     - "**/*.min.js"
