@@ -103,64 +103,7 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 	}
 
 	claudeArgs := append([]string{"claude"}, buildClaudeArgs(sj, d.Effort, d.MaxTurns)...)
-
-	gwTarget := "host-gateway"
-	if d.HostGatewayIP != "" {
-		gwTarget = d.HostGatewayIP
-	}
-	dockerArgs := []string{
-		"run", "--rm",
-		"--cap-drop", "ALL",
-		"--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()),
-		"-e", "HOME=/tmp",
-		"-e", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
-		// Suppress telemetry traffic
-		// Denied by the egress proxy anyway, but noisy in the log.
-		"-e", "OTEL_SDK_DISABLED=true",
-		"-e", "DISABLE_TELEMETRY=1",
-		"-e", "DISABLE_ERROR_REPORTING=1",
-		"-e", "DISABLE_BUG_COMMAND=1",
-		"-e", "DISABLE_AUTOUPDATER=1",
-		// Disable auxiliary calls not useful in headless mode
-		"-e", "DISABLE_NON_ESSENTIAL_MODEL_CALLS=1",
-		"-e", "SEMGREP_SEND_METRICS=off",
-		"--tmpfs", "/tmp:rw,noexec,nosuid,size=256m",
-		"-v", absWork + ":/work",
-		"-w", "/work",
-		"--add-host", HostGatewayAlias + ":" + gwTarget,
-	}
-	if d.Hardened {
-		// Read-only rootfs + no-new-privileges close the residual paths a
-		// hostile skill could use to escalate inside the container. /work
-		// stays writable (skill output) and /tmp is the tmpfs declared
-		// above with HOME=/tmp redirecting claude session storage.
-		dockerArgs = append(dockerArgs,
-			"--read-only",
-			"--security-opt", "no-new-privileges",
-			"--network", d.HardenedNetwork,
-		)
-	}
-	if d.ProxyURL != "" {
-		dockerArgs = append(dockerArgs,
-			"-e", "HTTPS_PROXY="+d.ProxyURL,
-			"-e", "HTTP_PROXY="+d.ProxyURL,
-			"-e", "ALL_PROXY="+d.ProxyURL,
-			"-e", "NO_PROXY=",
-		)
-	} else if !d.Hardened {
-		dockerArgs = append(dockerArgs, "--network", "none")
-	}
-	if os.Getenv("ANTHROPIC_API_KEY") != "" {
-		dockerArgs = append(dockerArgs, "-e", "ANTHROPIC_API_KEY")
-	}
-	if os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") != "" {
-		dockerArgs = append(dockerArgs, "-e", "CLAUDE_CODE_OAUTH_TOKEN")
-	}
-	if d.AnthropicBaseURL != "" {
-		dockerArgs = append(dockerArgs, "-e", "ANTHROPIC_BASE_URL="+d.AnthropicBaseURL)
-	}
-	dockerArgs = append(dockerArgs, "--", image)
-	dockerArgs = append(dockerArgs, claudeArgs...)
+	dockerArgs := append(d.buildDockerArgs(absWork, image), claudeArgs...)
 
 	cmd := exec.CommandContext(ctx, "docker", dockerArgs...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -205,6 +148,70 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 		return res, fmt.Errorf("docker exited: %w", waitErr)
 	}
 	return res, nil
+}
+
+// buildDockerArgs assembles the `docker run` flags for a skill invocation.
+// Returns the args up to and including the image name; the caller appends
+// the in-container command. Split out of RunSkill to keep its cognitive
+// complexity manageable as new toggles (hardened mode, proxy, profiles)
+// accumulate.
+func (d DockerRunner) buildDockerArgs(absWork, image string) []string {
+	gwTarget := "host-gateway"
+	if d.HostGatewayIP != "" {
+		gwTarget = d.HostGatewayIP
+	}
+	args := []string{
+		"run", "--rm",
+		"--cap-drop", "ALL",
+		"--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()),
+		"-e", "HOME=/tmp",
+		"-e", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
+		// Suppress telemetry traffic
+		// Denied by the egress proxy anyway, but noisy in the log.
+		"-e", "OTEL_SDK_DISABLED=true",
+		"-e", "DISABLE_TELEMETRY=1",
+		"-e", "DISABLE_ERROR_REPORTING=1",
+		"-e", "DISABLE_BUG_COMMAND=1",
+		"-e", "DISABLE_AUTOUPDATER=1",
+		// Disable auxiliary calls not useful in headless mode
+		"-e", "DISABLE_NON_ESSENTIAL_MODEL_CALLS=1",
+		"-e", "SEMGREP_SEND_METRICS=off",
+		"--tmpfs", "/tmp:rw,noexec,nosuid,size=256m",
+		"-v", absWork + ":/work",
+		"-w", "/work",
+		"--add-host", HostGatewayAlias + ":" + gwTarget,
+	}
+	if d.Hardened {
+		// Read-only rootfs + no-new-privileges close the residual paths a
+		// hostile skill could use to escalate inside the container. /work
+		// stays writable (skill output) and /tmp is the tmpfs declared
+		// above with HOME=/tmp redirecting claude session storage.
+		args = append(args,
+			"--read-only",
+			"--security-opt", "no-new-privileges",
+			"--network", d.HardenedNetwork,
+		)
+	}
+	if d.ProxyURL != "" {
+		args = append(args,
+			"-e", "HTTPS_PROXY="+d.ProxyURL,
+			"-e", "HTTP_PROXY="+d.ProxyURL,
+			"-e", "ALL_PROXY="+d.ProxyURL,
+			"-e", "NO_PROXY=",
+		)
+	} else if !d.Hardened {
+		args = append(args, "--network", "none")
+	}
+	if os.Getenv("ANTHROPIC_API_KEY") != "" {
+		args = append(args, "-e", "ANTHROPIC_API_KEY")
+	}
+	if os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") != "" {
+		args = append(args, "-e", "CLAUDE_CODE_OAUTH_TOKEN")
+	}
+	if d.AnthropicBaseURL != "" {
+		args = append(args, "-e", "ANTHROPIC_BASE_URL="+d.AnthropicBaseURL)
+	}
+	return append(args, "--", image)
 }
 
 // resolveProfile picks the runner image for this scan. When requested
