@@ -22,10 +22,12 @@ FROM ${RUNNER_IMAGE}
 # string). Bump to pull a newer interpreter; the content-addressed image
 # tag invalidates the cache on any edit to this file.
 ARG RUBY_VERSION=3.4.9
-# ruby-build ref supplies the build recipe for RUBY_VERSION. master always
-# carries definitions for released versions; pin to a release tag for
-# stricter reproducibility.
-ARG RUBY_BUILD_REF=master
+# ruby-build ref supplies the build recipe for RUBY_VERSION. Pinned to a
+# release tag (not master) so the build is reproducible and not exposed to
+# a moving branch -- mirrors the rest of the image's pinned tooling. When
+# bumping RUBY_VERSION, advance this to a release tag that ships that
+# version's definition under share/ruby-build/.
+ARG RUBY_BUILD_REF=v20260520
 
 USER root
 # ruby-build compiles CRuby from source, so it needs the C toolchain plus
