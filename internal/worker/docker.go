@@ -240,7 +240,7 @@ func (d DockerRunner) resolveProfile(ctx context.Context, requested, src string,
 			return "", defaultImg
 		}
 	}
-	img, err := p.EnsureImage(ctx, d.ProfilesDir, defaultImg)
+	img, err := p.EnsureImage(ctx, d.ProfilesDir, defaultImg, emit)
 	if err != nil {
 		emit(Event{Kind: KindText, Text: "profile: " + p.Name + " build failed, using default: " + err.Error()})
 		return "", defaultImg

@@ -100,27 +100,39 @@ func TestLockForTag_sameTagSameMutex(t *testing.T) {
 }
 
 func TestEnsureImage_defaultReturnsRunnerImage(t *testing.T) {
-	img, err := Profile{}.EnsureImage(context.Background(), "", "default-runner:latest")
+	var emitted int
+	img, err := Profile{}.EnsureImage(context.Background(), "", "default-runner:latest", func(Event) { emitted++ })
 	if err != nil {
 		t.Fatalf("default profile: %v", err)
 	}
 	if img != "default-runner:latest" {
 		t.Errorf("got %q, want default runner image", img)
 	}
+	if emitted != 0 {
+		t.Errorf("default profile emitted %d events, want 0", emitted)
+	}
 }
 
 func TestEnsureImage_noProfilesDir(t *testing.T) {
-	_, err := Profile{Name: "php"}.EnsureImage(context.Background(), "", "default:latest")
+	var emitted int
+	_, err := Profile{Name: "php"}.EnsureImage(context.Background(), "", "default:latest", func(Event) { emitted++ })
 	if err == nil {
 		t.Fatal("expected ErrNoProfilesDir, got nil")
+	}
+	if emitted != 0 {
+		t.Errorf("ErrNoProfilesDir path emitted %d events, want 0", emitted)
 	}
 }
 
 func TestEnsureImage_missingDockerfile(t *testing.T) {
 	dir := t.TempDir()
-	_, err := Profile{Name: "php"}.EnsureImage(context.Background(), dir, "default:latest")
+	var emitted int
+	_, err := Profile{Name: "php"}.EnsureImage(context.Background(), dir, "default:latest", func(Event) { emitted++ })
 	if err == nil {
 		t.Fatal("expected error for missing dockerfile, got nil")
+	}
+	if emitted != 0 {
+		t.Errorf("missing-dockerfile path emitted %d events, want 0", emitted)
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 )
 
 // Profile selects a per-ecosystem runner image. The default profile
@@ -167,8 +168,10 @@ func imageTag(profileName string, dockerfile []byte, runnerImage string) string 
 // local cache and returns the tag to pass to `docker run`. The
 // `--build-arg RUNNER_IMAGE=...` is wired so the profile's FROM picks
 // up whichever runner image the operator configured. Concurrency-safe:
-// a per-tag mutex serialises duplicate builds.
-func (p Profile) EnsureImage(ctx context.Context, profilesDir, runnerImage string) (string, error) {
+// a per-tag mutex serialises duplicate builds. emit is called only on
+// a cache miss (before and after the docker build) so the scan log
+// shows progress during a multi-minute first build.
+func (p Profile) EnsureImage(ctx context.Context, profilesDir, runnerImage string, emit func(Event)) (string, error) {
 	if p.IsDefault() {
 		return runnerImage, nil
 	}
@@ -189,6 +192,8 @@ func (p Profile) EnsureImage(ctx context.Context, profilesDir, runnerImage strin
 	if imageExistsLocally(ctx, tag) {
 		return tag, nil
 	}
+	emit(Event{Kind: KindText, Text: "profile: building " + tag + " (first build can take several minutes)"})
+	start := time.Now()
 	buildArgs := []string{"build", "-t", tag, "-f", dockerfile}
 	if runnerImage != "" {
 		buildArgs = append(buildArgs, "--build-arg", "RUNNER_IMAGE="+runnerImage)
@@ -198,6 +203,7 @@ func (p Profile) EnsureImage(ctx context.Context, profilesDir, runnerImage strin
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("docker build %s: %w\n%s", tag, err, out)
 	}
+	emit(Event{Kind: KindText, Text: "profile: built " + tag + " in " + time.Since(start).Round(time.Second).String()})
 	return tag, nil
 }
 
