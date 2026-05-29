@@ -228,7 +228,7 @@ Package dependencies discovered by the `dependencies` skill. Replaced wholesale 
 | id | integer PK | |
 | repository_id | integer FK | |
 | name | text | |
-| ecosystem | text | e.g. `gem`, `npm`, `go`. Indexed. |
+| ecosystem | text | PURL type, e.g. `gem`, `npm`, `golang`. Derived from `p_url` (or the source ecosystem string when no PURL was recorded). Indexed. |
 | p_url | text | Package URL. |
 | requirement | text | Version constraint from the manifest. |
 | dependency_type | text | `runtime` or `development`. |
@@ -247,7 +247,7 @@ Registry entries from the `packages` skill. Replaced each run.
 | id | integer PK | |
 | repository_id | integer FK | |
 | name | text | |
-| ecosystem | text | |
+| ecosystem | text | PURL type, derived as in `dependencies`. |
 | p_url | text | |
 | licenses | text | |
 | latest_version | text | |
@@ -270,7 +270,7 @@ Top runtime dependents of this repository's packages. Populated by the `dependen
 | id | integer PK | |
 | repository_id | integer FK | |
 | name | text | |
-| ecosystem | text | |
+| ecosystem | text | PURL type, derived as in `dependencies`. |
 | p_url | text | |
 | repository_url | text | Git URL of the dependent. Used by the import button. |
 | downloads | integer | |

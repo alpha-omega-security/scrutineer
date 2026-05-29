@@ -1,26 +1,69 @@
 package db
 
-import "gorm.io/gorm"
+import (
+	"strings"
 
-// dependencyEcosystemAlias maps git-pkgs ecosystem names (as stored on
-// Dependency rows) to packages.ecosyste.ms registry names (as stored on
-// Package rows). The two sources disagree for a handful of registries; the
-// join in DependencyFindings needs them to agree.
-var dependencyEcosystemAlias = map[string]string{
-	"gem":            "rubygems",
-	"golang":         "go",
-	"composer":       "packagist",
-	"github-actions": "actions",
-	"brew":           "homebrew",
-	"swift":          "swiftpm",
-	"nix":            "nixpkgs",
+	"github.com/git-pkgs/purl"
+	"gorm.io/gorm"
+)
+
+// sourceEcosystemAlias rewrites the ecosystem spellings that purl's namespace
+// logic does not recognise to the git-pkgs spellings it does. Two cases need
+// it: packages.ecosyste.ms emits "actions"/"homebrew"/"swiftpm"/"nixpkgs" (and
+// its upstream PURL is stored verbatim) where git-pkgs emits "github-actions"/
+// "brew"/"swift"/"nix"; and a row's own stored type is the canonical
+// "githubactions", which purl.MakePURL only namespace-splits under the
+// hyphenated "github-actions". Reconciling first lets both sources collapse to
+// one PURL type and lets the no-PURL fallback split owner/repo, so the join
+// still matches a github-actions counterpart that carries a PURL (issue #255).
+var sourceEcosystemAlias = map[string]string{
+	"actions":       "github-actions",
+	"githubactions": "github-actions",
+	"homebrew":      "brew",
+	"swiftpm":       "swift",
+	"nixpkgs":       "nix",
 }
 
-func CanonicalEcosystem(dep string) string {
-	if v, ok := dependencyEcosystemAlias[dep]; ok {
-		return v
+func reconcileEcosystem(ecosystem string) string {
+	if alias, ok := sourceEcosystemAlias[strings.ToLower(ecosystem)]; ok {
+		return alias
 	}
-	return dep
+	return ecosystem
+}
+
+// canonicalType reduces a PURL type or ecosystem string to the one PURL type
+// both sources agree on.
+func canonicalType(token string) string {
+	return purl.EcosystemToPURLType(reconcileEcosystem(token))
+}
+
+// ecosystemKey derives the (type, namespace, name) join key for a row. The PURL
+// is authoritative; when absent the key is rebuilt by constructing the PURL the
+// row would carry and parsing it, so a no-PURL row keys identically to a
+// counterpart that has one: same namespace split, same case-folding.
+func ecosystemKey(purlStr, ecosystem, name string) (eco, namespace, pkg string) {
+	if p, err := purl.Parse(purlStr); err == nil {
+		return canonicalType(p.Type), p.Namespace, p.Name
+	}
+	built := purl.MakePURL(reconcileEcosystem(ecosystem), name, "")
+	if p, err := purl.Parse(built.String()); err == nil {
+		return canonicalType(p.Type), p.Namespace, p.Name
+	}
+	// MakePURL produced an invalid PURL: a namespace-required type whose
+	// path-like name it does not split (swift). Split on the last separator the
+	// way purl.Parse splits a path namespace; if there is none, keep it whole.
+	if i := strings.LastIndex(name, "/"); i > 0 {
+		return canonicalType(built.Type), name[:i], name[i+1:]
+	}
+	return canonicalType(built.Type), built.Namespace, built.Name
+}
+
+// EcosystemType returns the canonical PURL-type ecosystem to store on Package
+// and Dependency rows: the parsed PURL type when present, else the declared
+// ecosystem string normalised to its PURL type.
+func EcosystemType(purlStr, ecosystem string) string {
+	eco, _, _ := ecosystemKey(purlStr, ecosystem, "")
+	return eco
 }
 
 // DependencyFinding is one finding on a library that the given application
@@ -48,18 +91,21 @@ type DependencyFinding struct {
 
 // DependencyFindings joins an application repository's Dependency rows
 // against every Package row in the database (any repository) and returns
-// the live Findings on the matched library repositories. Self-matches and
-// findings already marked fixed/rejected/duplicate are excluded.
+// the live Findings on the matched library repositories. The join key is the
+// parsed PURL (type, namespace, name) on both sides, so the two sources agree
+// without a write-time alias map. Self-matches and findings already marked
+// fixed/rejected/duplicate are excluded.
 func DependencyFindings(g *gorm.DB, appRepoID uint) ([]DependencyFinding, error) {
 	var deps []Dependency
 	if err := g.Where("repository_id = ?", appRepoID).Find(&deps).Error; err != nil {
 		return nil, err
 	}
 
-	type key struct{ name, eco string }
+	type key struct{ eco, namespace, name string }
 	want := map[key]Dependency{}
 	for _, d := range deps {
-		k := key{d.Name, CanonicalEcosystem(d.Ecosystem)}
+		eco, ns, name := ecosystemKey(d.PURL, d.Ecosystem, d.Name)
+		k := key{eco, ns, name}
 		if cur, ok := want[k]; !ok || preferDep(d, cur) {
 			want[k] = d
 		}
@@ -71,12 +117,13 @@ func DependencyFindings(g *gorm.DB, appRepoID uint) ([]DependencyFinding, error)
 	type pkgRow struct {
 		Name          string
 		Ecosystem     string
+		PURL          string
 		RepositoryID  uint
 		RepositoryURL string
 	}
 	var pkgs []pkgRow
 	if err := g.Table("packages").
-		Select("packages.name, packages.ecosystem, packages.repository_id, repositories.url AS repository_url").
+		Select("packages.name, packages.ecosystem, packages.p_url, packages.repository_id, repositories.url AS repository_url").
 		Joins("JOIN repositories ON repositories.id = packages.repository_id").
 		Where("packages.repository_id <> ?", appRepoID).
 		Scan(&pkgs).Error; err != nil {
@@ -85,7 +132,8 @@ func DependencyFindings(g *gorm.DB, appRepoID uint) ([]DependencyFinding, error)
 
 	libDeps := map[uint]DependencyFinding{}
 	for _, p := range pkgs {
-		d, ok := want[key{p.Name, p.Ecosystem}]
+		eco, ns, name := ecosystemKey(p.PURL, p.Ecosystem, p.Name)
+		d, ok := want[key{eco, ns, name}]
 		if !ok {
 			continue
 		}
