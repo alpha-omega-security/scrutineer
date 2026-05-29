@@ -11,7 +11,7 @@ The repository under `./src` is a PHP project.
 
 ## Operating procedure
 
-### Code scanning preperations
+### Code scanning preparations
 
 Before deeper analysis, `./src/composer.lock` exists, install dependencies first:
 
