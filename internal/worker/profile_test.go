@@ -48,10 +48,12 @@ const configM4WithoutPHPArg = `dnl just a stray autoconf file
 AC_INIT([thing], [1.0])
 `
 
-func writeMarker(t *testing.T, dir, name, contents string) {
+func writeConfigM4(t *testing.T, dir, contents string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(contents), 0o644); err != nil {
-		t.Fatalf("write %s: %v", name, err)
+	const configM4FileMode = 0o644
+	path := filepath.Join(dir, "config.m4")
+	if err := os.WriteFile(path, []byte(contents), configM4FileMode); err != nil {
+		t.Fatalf("write %s: %v", path, err)
 	}
 }
 
@@ -107,7 +109,7 @@ func TestMatchProfile(t *testing.T) {
 			name: "config.m4 with PHP_ARG selects php-ext",
 			json: `{"package_managers":[]}`,
 			setup: func(t *testing.T, dir string) {
-				writeMarker(t, dir, "config.m4", configM4Body)
+				writeConfigM4(t, dir, configM4Body)
 			},
 			want: "php-ext",
 		},
@@ -115,7 +117,7 @@ func TestMatchProfile(t *testing.T) {
 			name: "php-ext wins over php when both signals present",
 			json: `{"package_managers":[{"name":"Composer"}]}`,
 			setup: func(t *testing.T, dir string) {
-				writeMarker(t, dir, "config.m4", configM4Body)
+				writeConfigM4(t, dir, configM4Body)
 			},
 			want: "php-ext",
 		},
@@ -123,7 +125,7 @@ func TestMatchProfile(t *testing.T) {
 			name: "config.m4 without PHP_ARG does not match php-ext",
 			json: `{"package_managers":[{"name":"Composer"}]}`,
 			setup: func(t *testing.T, dir string) {
-				writeMarker(t, dir, "config.m4", configM4WithoutPHPArg)
+				writeConfigM4(t, dir, configM4WithoutPHPArg)
 			},
 			want: "php", // composer marker still picks php
 		},
@@ -131,7 +133,7 @@ func TestMatchProfile(t *testing.T) {
 			name: "config.m4 without PHP_ARG and no composer falls back",
 			json: `{"package_managers":[]}`,
 			setup: func(t *testing.T, dir string) {
-				writeMarker(t, dir, "config.m4", configM4WithoutPHPArg)
+				writeConfigM4(t, dir, configM4WithoutPHPArg)
 			},
 			want: "",
 		},

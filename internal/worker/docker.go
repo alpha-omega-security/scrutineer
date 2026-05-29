@@ -74,14 +74,8 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 			return SkillResult{}, err
 		}
 	}
-	if d.Hardened {
-		size, err := dirSize(sj.WorkRoot)
-		if err != nil {
-			return SkillResult{}, fmt.Errorf("hardened workspace size check: %w", err)
-		}
-		if size > HardenedWorkspaceCapBytes {
-			return SkillResult{}, fmt.Errorf("hardened workspace exceeds %d bytes after clone (got %d)", HardenedWorkspaceCapBytes, size)
-		}
+	if err := d.checkHardenedWorkspace(sj.WorkRoot); err != nil {
+		return SkillResult{}, err
 	}
 	commit := gitHead(src)
 	work := sj.WorkRoot
@@ -95,17 +89,7 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 		}
 		return SkillResult{Commit: commit, Profile: profile}, fmt.Errorf("skill %q requires profile %q, resolved %q", sj.Name, sj.RequiresProfile, got)
 	}
-	profileGuide := d.profileGuidePath(profile)
-	if profileGuide != "" {
-		target := filepath.Join(absWork, "CLAUDE.md")
-		if data, err := os.ReadFile(profileGuide); err != nil {
-			emit(Event{Kind: KindText, Text: "profile guide: read " + profileGuide + ": " + err.Error()})
-		} else if err := os.WriteFile(target, data, 0o644); err != nil {
-			emit(Event{Kind: KindText, Text: "profile guide: write " + target + ": " + err.Error()})
-		} else {
-			emit(Event{Kind: KindText, Text: "profile guide: " + profileGuide + " -> /work/CLAUDE.md"})
-		}
-	}
+	d.injectProfileGuide(profile, absWork, emit)
 
 	var outPath string
 	if sj.OutputFile != "" {
@@ -251,6 +235,53 @@ func (d DockerRunner) resolveProfile(ctx context.Context, requested, src string,
 	}
 	emit(Event{Kind: KindText, Text: "profile: " + p.Name + " (" + img + ")"})
 	return p.Name, img
+}
+
+// profileGuideFileMode is the mode used when copying a profile's
+// PROFILE.md into the workspace as CLAUDE.md. The workspace already
+// belongs to the host user (the docker runner mounts it as that uid),
+// so a plain 0644 keeps it readable by the agent without surprises.
+const profileGuideFileMode os.FileMode = 0o644
+
+// checkHardenedWorkspace returns an error when hardened mode is on
+// and the cloned workspace exceeds HardenedWorkspaceCapBytes. A no-op
+// outside hardened mode so the cap doesn't apply to default scans.
+func (d DockerRunner) checkHardenedWorkspace(workRoot string) error {
+	if !d.Hardened {
+		return nil
+	}
+	size, err := dirSize(workRoot)
+	if err != nil {
+		return fmt.Errorf("hardened workspace size check: %w", err)
+	}
+	if size > HardenedWorkspaceCapBytes {
+		return fmt.Errorf("hardened workspace exceeds %d bytes after clone (got %d)", HardenedWorkspaceCapBytes, size)
+	}
+	return nil
+}
+
+// injectProfileGuide copies the resolved profile's PROFILE.md into the
+// workspace as CLAUDE.md so claude-code auto-loads it as project memory
+// ahead of the skill prompt. A workspace copy (rather than a bind mount)
+// avoids Docker Desktop's refusal to materialise a sub-path mountpoint
+// inside another bind mount. No-ops when the profile has no guide;
+// failures are reported via emit but never block the scan.
+func (d DockerRunner) injectProfileGuide(profile, absWork string, emit func(Event)) {
+	guide := d.profileGuidePath(profile)
+	if guide == "" {
+		return
+	}
+	target := filepath.Join(absWork, "CLAUDE.md")
+	data, err := os.ReadFile(guide)
+	if err != nil {
+		emit(Event{Kind: KindText, Text: "profile guide: read " + guide + ": " + err.Error()})
+		return
+	}
+	if err := os.WriteFile(target, data, profileGuideFileMode); err != nil {
+		emit(Event{Kind: KindText, Text: "profile guide: write " + target + ": " + err.Error()})
+		return
+	}
+	emit(Event{Kind: KindText, Text: "profile guide: " + guide + " -> /work/CLAUDE.md"})
 }
 
 // profileGuidePath returns the profile's on-disk PROFILE.md if present.
