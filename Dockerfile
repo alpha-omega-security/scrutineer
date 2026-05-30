@@ -6,7 +6,7 @@ COPY . .
 RUN CGO_ENABLED=0 go build -o /scrutineer ./cmd/scrutineer
 
 FROM node:26-alpine@sha256:7c6af15abe4e3de859690e7db171d0d711bf37d27528eddfe625b2fe89e097f8 AS claude
-RUN npm install -g @anthropic-ai/claude-code@2.1.119
+RUN npm install -g @anthropic-ai/claude-code@2.1.160
 
 FROM python:3.14.5-alpine@sha256:5a824eb82cc75361f98611f3cfc5091ea33f10a6ccea4d4ebdabbc523b9a1614 AS python-tools
 RUN pip install --no-cache-dir semgrep==1.116.0 "setuptools<81"
