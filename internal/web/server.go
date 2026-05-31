@@ -124,7 +124,7 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *work
 		"dur":      humanDuration,
 		"usd":      formatUSD,
 		"pct":      formatPct,
-		"status":   func(s db.ScanStatus) string { return string(s) },
+		statusKey:  func(s db.ScanStatus) string { return string(s) },
 		"fstatus":  func(s db.FindingLifecycle) string { return string(s) },
 		"sevlabel": displaySeverity,
 		"dict": func(kv ...any) map[string]any {
@@ -266,6 +266,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /scans/{id}", s.scanShow)
 	mux.HandleFunc("GET /scans/{id}/report.md", s.scanReport)
 	mux.HandleFunc("POST /scans/{id}/retry", s.scanRetry)
+	mux.HandleFunc("POST /scans/{id}/resume", s.scanResume)
+	mux.HandleFunc("POST /scans/pause-queued", s.scansPauseQueued)
+	mux.HandleFunc("POST /scans/resume-paused", s.scansResumePaused)
 	mux.HandleFunc("POST /scans/retry-failed", s.scansRetryFailed)
 	mux.HandleFunc("POST /scans/{id}/cancel", s.scanCancel)
 	mux.HandleFunc("GET /scans/{id}/log", s.scanLog)
@@ -383,6 +386,10 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 const (
 	perPage     = 20
 	defaultSort = "newest"
+	statusKey   = "status"
+	errorKey    = "error"
+	successKey  = "success"
+	warningKey  = "warning"
 	// sortRepository and sortSeverity are the shared sort options used by
 	// the findings, scans, advisories, and SBOM indexes.
 	sortRepository = "repository"
@@ -680,7 +687,7 @@ func (s *Server) findings(w http.ResponseWriter, r *http.Request) {
 	if sev != "" {
 		q = q.Where("severity = ?", sev)
 	}
-	status := r.URL.Query().Get("status")
+	status := r.URL.Query().Get(statusKey)
 	if status != "" {
 		q = q.Where("status = ?", status)
 	}
@@ -859,12 +866,12 @@ func (s *Server) findingStatus(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	status := db.FindingLifecycle(r.FormValue("status"))
+	status := db.FindingLifecycle(r.FormValue(statusKey))
 	switch status {
 	case db.FindingNew, db.FindingEnriched, db.FindingTriaged, db.FindingReady,
 		db.FindingReported, db.FindingAcknowledged, db.FindingFixed, db.FindingPublished,
 		db.FindingRejected, db.FindingDuplicate:
-		if err := db.WriteFindingField(s.DB, f.ID, "status", string(status), db.SourceAnalyst, ""); err != nil {
+		if err := db.WriteFindingField(s.DB, f.ID, statusKey, string(status), db.SourceAnalyst, ""); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -932,7 +939,7 @@ func (s *Server) repoVerifyAll(w http.ResponseWriter, r *http.Request) {
 	}
 	var skill db.Skill
 	if err := s.DB.Where("name = ? AND active = ?", verifySkillName, true).First(&skill).Error; err != nil {
-		setFlash(w, Flash{Category: "error", Title: verifySkillName + " skill is not installed"})
+		setFlash(w, Flash{Category: errorKey, Title: verifySkillName + " skill is not installed"})
 		s.redirect(w, r, fmt.Sprintf("/repositories/%d#rt4", repo.ID))
 		return
 	}
@@ -971,7 +978,7 @@ func (s *Server) repoVerifyAll(w http.ResponseWriter, r *http.Request) {
 
 func verifyAllToast(queued, skipped, errored int) Flash {
 	if queued == 0 && skipped == 0 && errored == 0 {
-		return Flash{Category: "success", Title: "No findings awaiting verification"}
+		return Flash{Category: successKey, Title: "No findings awaiting verification"}
 	}
 	parts := []string{fmt.Sprintf("%d queued", queued)}
 	if skipped > 0 {
@@ -980,12 +987,12 @@ func verifyAllToast(queued, skipped, errored int) Flash {
 	if errored > 0 {
 		parts = append(parts, fmt.Sprintf("%d errored", errored))
 	}
-	cat := "success"
+	cat := successKey
 	switch {
 	case errored > 0:
-		cat = "error"
+		cat = errorKey
 	case queued == 0:
-		cat = "warning"
+		cat = warningKey
 	}
 	return Flash{Category: cat, Title: "Verify all: " + strings.Join(parts, ", ")}
 }
@@ -1320,12 +1327,12 @@ func (s *Server) createOrTriageRepo(ctx context.Context, input RepoInput, model 
 
 func bulkToastCategory(created int, invalid []string) string {
 	if created > 0 && len(invalid) == 0 {
-		return "success"
+		return successKey
 	}
 	if created == 0 && len(invalid) > 0 {
-		return "error"
+		return errorKey
 	}
-	return "warning"
+	return warningKey
 }
 
 func bulkToastTitle(created, skipped, invalid int) string {

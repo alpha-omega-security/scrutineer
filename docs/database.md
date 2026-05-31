@@ -42,8 +42,8 @@ One row per skill execution or external import. `skill_name` / `skill_version` p
 | id | integer PK | |
 | repository_id | integer FK | References `repositories.id`. Cascade delete. |
 | kind | text | `skill` for native scans, `import` for findings ingested via `POST /api/v1/import`. |
-| status | text | `queued`, `running`, `done`, `failed`, `cancelled`. Stale `running` rows are swept to `failed` on startup. |
-| status_priority | integer | Denormalised sort key for the scans index: 0 running, 1 queued, 2 terminal. |
+| status | text | `queued`, `paused`, `running`, `done`, `failed`, `cancelled`. Stale `running` rows are swept to `failed` on startup. |
+| status_priority | integer | Denormalised sort key for the scans index: 0 running, 1 queued, 2 paused, 3 terminal. |
 | model | text | Claude model ID. |
 | skill_id | integer FK | References `skills.id`. Null for legacy non-skill rows. |
 | skill_version | integer | Version of the skill at run time; the skill row's `version` bumps on every edit so older scans stay readable. |

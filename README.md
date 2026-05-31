@@ -134,7 +134,7 @@ Every index page has a search box plus filter and sort dropdowns; the specifics 
 - **Advisories** -- known CVEs and security advisories pulled for any scanned package.
 - **Maintainers** -- people identified as maintainers, with their linked repos and findings.
 - **SBOMs** -- uploaded CycloneDX/SPDX documents. Each component is resolved to a source repository and can be imported for scanning.
-- **Scans** -- every scan that has run. Running or queued scans can be cancelled; failed ones retried.
+- **Scans** -- every scan that has run. Queued scans can be paused/resumed, running or queued scans can be cancelled and failed ones retried.
 - **Skills** -- installed skills from disk and from the UI; view, edit, or run any of them.
 - **Usage** -- token and cost totals across all scans, broken down by skill.
 - **Settings** -- theme, colour scheme, default model, and system stats (record counts, DB size, concurrency, paths).

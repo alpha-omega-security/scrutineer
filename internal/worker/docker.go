@@ -139,9 +139,16 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 	}
 	emit(Event{Kind: KindText, Text: logLine})
 
-	hitMaxTurns, sessionID, waitErr := d.runDockerOnce(ctx, dockerBase, sj, emit)
+	planLimitText := ""
+	wrappedEmit := func(e Event) {
+		if planLimitText == "" {
+			planLimitText = claudePlanLimitText(e.Text)
+		}
+		emit(e)
+	}
+	hitMaxTurns, sessionID, waitErr := d.runDockerOnce(ctx, dockerBase, sj, wrappedEmit)
 
-	if waitErr != nil && sj.ResumeSessionID != "" && sessionID == "" {
+	if waitErr != nil && sj.ResumeSessionID != "" && sessionID == "" && planLimitText == "" {
 		// The resume produced no session event, so claude could not load the
 		// saved conversation (gone from the mounted store). Restart fresh in
 		// the same /work + config mount so the retry lineage isn't wedged on
@@ -149,7 +156,7 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 		emit(Event{Kind: KindText, Text: "resume of session " + sj.ResumeSessionID + " failed; restarting fresh"})
 		fresh := sj
 		fresh.ResumeSessionID = ""
-		hitMaxTurns, sessionID, waitErr = d.runDockerOnce(ctx, dockerBase, fresh, emit)
+		hitMaxTurns, sessionID, waitErr = d.runDockerOnce(ctx, dockerBase, fresh, wrappedEmit)
 	}
 
 	res := SkillResult{Commit: commit, Profile: profile, SessionID: sessionID}
@@ -159,6 +166,9 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 	if waitErr != nil {
 		if hitMaxTurns {
 			return res, &MaxTurnsReachedError{}
+		}
+		if planLimitText != "" {
+			return res, &ClaudePlanLimitError{Detail: planLimitText}
 		}
 		return res, fmt.Errorf("docker exited: %w", waitErr)
 	}

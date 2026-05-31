@@ -176,7 +176,7 @@ func (s *Server) apiListScans(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := s.DB.Where("repository_id = ?", id).Order("id desc")
-	if status := r.URL.Query().Get("status"); status != "" {
+	if status := r.URL.Query().Get(statusKey); status != "" {
 		q = q.Where("status = ?", status)
 	}
 	if skill := r.URL.Query().Get("skill"); skill != "" {
@@ -363,14 +363,14 @@ func scanSummary(sc db.Scan) map[string]any {
 		"id":            sc.ID,
 		"repository_id": sc.RepositoryID,
 		"kind":          sc.Kind,
-		"status":        string(sc.Status),
+		statusKey:       string(sc.Status),
 		"model":         sc.Model,
 		"commit":        sc.Commit,
 		"skill_name":    sc.SkillName,
 		"skill_version": sc.SkillVersion,
 		"started_at":    sc.StartedAt,
 		"finished_at":   sc.FinishedAt,
-		"error":         sc.Error,
+		errorKey:        sc.Error,
 	}
 	if sc.Ref != "" {
 		m["ref"] = sc.Ref
@@ -385,5 +385,5 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 }
 
 func writeAPIError(w http.ResponseWriter, code int, msg string) {
-	writeJSON(w, code, map[string]string{"error": msg})
+	writeJSON(w, code, map[string]string{errorKey: msg})
 }

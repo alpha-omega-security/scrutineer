@@ -25,12 +25,12 @@ func (s *Server) apiListMaintainers(w http.ResponseWriter, r *http.Request) {
 	out := make([]map[string]any, 0, len(rows))
 	for _, m := range rows {
 		out = append(out, map[string]any{
-			"id":     m.ID,
-			"login":  m.Login,
-			"name":   m.Name,
-			"email":  m.Email,
-			"status": string(m.Status),
-			"notes":  m.Notes,
+			"id":      m.ID,
+			"login":   m.Login,
+			"name":    m.Name,
+			"email":   m.Email,
+			statusKey: string(m.Status),
+			"notes":   m.Notes,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -184,7 +184,7 @@ func (s *Server) apiListFindings(w http.ResponseWriter, r *http.Request) {
 	if sev := r.URL.Query().Get("severity"); sev != "" {
 		q = q.Where("severity = ?", sev)
 	}
-	if status := r.URL.Query().Get("status"); status != "" {
+	if status := r.URL.Query().Get(statusKey); status != "" {
 		q = q.Where("status = ?", status)
 	}
 	var rows []db.Finding
@@ -231,7 +231,7 @@ func findingSummary(f db.Finding) map[string]any {
 		"sinks":         f.Sinks,
 		"title":         f.Title,
 		"severity":      f.Severity,
-		"status":        string(f.Status),
+		statusKey:       string(f.Status),
 		"cwe":           f.CWE,
 		"location":      f.Location,
 		"affected":      f.Affected,

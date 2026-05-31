@@ -11,7 +11,7 @@ import (
 
 func (s *Server) maintainersList(w http.ResponseWriter, r *http.Request) {
 	q := s.DB.Model(&db.Maintainer{})
-	status := r.URL.Query().Get("status")
+	status := r.URL.Query().Get(statusKey)
 	if status != "" {
 		q = q.Where("status = ?", status)
 	}
@@ -27,7 +27,7 @@ func (s *Server) maintainersList(w http.ResponseWriter, r *http.Request) {
 	switch sort {
 	case "login":
 		q = q.Order("login")
-	case "status":
+	case statusKey:
 		q = q.Order("status, name")
 	case "newest":
 		q = q.Order("id desc")

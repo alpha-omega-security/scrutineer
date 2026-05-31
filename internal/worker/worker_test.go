@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -141,6 +142,74 @@ func TestWorker_maxTurnsReachedCompletesNotFails(t *testing.T) {
 	}
 	if got.Report != `{"partial":true}` {
 		t.Errorf("report = %q, want partial report preserved", got.Report)
+	}
+}
+
+func TestWorker_claudePlanLimitUsesHelpfulError(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "limit.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
+	gdb.Create(&repo)
+	skill := db.Skill{Name: "limited", Description: "x", Body: "b", Active: true, Source: "ui", Version: 1}
+	gdb.Create(&skill)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanQueued, SkillID: &skill.ID}
+	gdb.Create(&scan)
+
+	w := &Worker{
+		DB:             gdb,
+		Log:            slog.New(slog.NewTextHandler(io.Discard, nil)),
+		DataDir:        t.TempDir(),
+		Runner:         fakeRunner{skillErr: &ClaudePlanLimitError{Detail: "usage limit reached"}},
+		PrepareRepoSrc: stubPrepareRepoSrc,
+	}
+	body, _ := json.Marshal(queue.Payload{ScanID: scan.ID})
+	if err := w.wrap(w.doSkill)(context.Background(), body); err != nil {
+		t.Fatalf("wrap: %v", err)
+	}
+
+	var got db.Scan
+	gdb.First(&got, scan.ID)
+	if got.Status != db.ScanFailed {
+		t.Errorf("status = %s, want failed", got.Status)
+	}
+	if !strings.Contains(got.Error, "Claude plan limit reached") {
+		t.Errorf("error = %q", got.Error)
+	}
+}
+
+func TestWorker_skipsPausedScan(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "paused.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
+	gdb.Create(&repo)
+	skill := db.Skill{Name: "paused", Description: "x", Body: "b", Active: true, Source: "ui", Version: 1}
+	gdb.Create(&skill)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanPaused, SkillID: &skill.ID}
+	gdb.Create(&scan)
+
+	w := &Worker{
+		DB:             gdb,
+		Log:            slog.New(slog.NewTextHandler(io.Discard, nil)),
+		DataDir:        t.TempDir(),
+		Runner:         fakeRunner{skillErr: errors.New("should not run")},
+		PrepareRepoSrc: stubPrepareRepoSrc,
+	}
+	body, _ := json.Marshal(queue.Payload{ScanID: scan.ID})
+	if err := w.wrap(w.doSkill)(context.Background(), body); err != nil {
+		t.Fatalf("wrap: %v", err)
+	}
+
+	var got db.Scan
+	gdb.First(&got, scan.ID)
+	if got.Status != db.ScanPaused {
+		t.Errorf("status = %s, want paused", got.Status)
+	}
+	if got.Error != "" {
+		t.Errorf("paused scan should not run; error = %q", got.Error)
 	}
 }
 
