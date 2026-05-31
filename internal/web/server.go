@@ -498,6 +498,7 @@ func (s *Server) repoList(w http.ResponseWriter, r *http.Request) {
 			Select("repository_id, COUNT(*) AS n").
 			Where("repository_id IN ?", repoIDs).
 			Where("scan_id IN (?)", deepDiveScanIDs(s.DB)).
+			Where("status NOT IN ?", repoListClosedFindingStatuses).
 			Group("repository_id").
 			Scan(&counts)
 		for _, c := range counts {
@@ -805,9 +806,14 @@ const (
 // "findings" sort. Tool-scanner skills are excluded so the ordering matches
 // the counts shown in the Findings column.
 const deepDiveFindingsCountSQL = `SELECT COUNT(*) FROM findings f
-    WHERE f.repository_id = repositories.id
-      AND f.scan_id IN (SELECT id FROM scans
-        WHERE skill_name = '` + deepDiveSkillName + `' OR skill_name = '' OR skill_name IS NULL)`
+	    WHERE f.repository_id = repositories.id
+	      AND f.status NOT IN ('fixed', 'published', 'rejected', 'duplicate')
+	      AND f.scan_id IN (SELECT id FROM scans
+	        WHERE skill_name = '` + deepDiveSkillName + `' OR skill_name = '' OR skill_name IS NULL)`
+
+var repoListClosedFindingStatuses = []db.FindingLifecycle{
+	db.FindingFixed, db.FindingPublished, db.FindingRejected, db.FindingDuplicate,
+}
 
 // deepDiveScanIDs returns a GORM subquery selecting scan IDs that belong to
 // the curated audit (security-deep-dive) or to legacy/empty skill_name rows.

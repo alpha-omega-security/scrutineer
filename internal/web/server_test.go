@@ -48,6 +48,19 @@ func localReq(method, path string) *http.Request {
 	return r
 }
 
+func requireRepoListRow(t *testing.T, body string, repoID uint) string {
+	t.Helper()
+	start := strings.Index(body, fmt.Sprintf(`<tr id="repo-%d">`, repoID))
+	if start < 0 {
+		t.Fatalf("missing repo row %d in body=%s", repoID, body)
+	}
+	end := strings.Index(body[start:], "</tr>")
+	if end < 0 {
+		t.Fatalf("unterminated repo row %d in body=%s", repoID, body[start:])
+	}
+	return body[start : start+end]
+}
+
 func TestSeverityOrder(t *testing.T) {
 	want := "CASE severity WHEN 'Low' THEN 3 WHEN 'Medium' THEN 2 WHEN 'High' THEN 1 WHEN 'Critical' THEN 0 ELSE 4 END"
 	if severityOrder != want {
@@ -134,6 +147,46 @@ func TestRepoList_batchedFindingsCountAcrossRepos(t *testing.T) {
 		if !strings.Contains(body, want.count) {
 			t.Errorf("missing %s count %q in body", want.repo, want.count)
 		}
+	}
+}
+
+func TestRepoList_findingsCountIgnoresClosedFindings(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/statuses", Name: "statuses"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: "security-deep-dive"}
+	s.DB.Create(&scan)
+
+	statuses := []db.FindingLifecycle{
+		db.FindingNew,
+		db.FindingEnriched,
+		db.FindingTriaged,
+		db.FindingReady,
+		db.FindingReported,
+		db.FindingAcknowledged,
+		db.FindingFixed,
+		db.FindingPublished,
+		db.FindingRejected,
+		db.FindingDuplicate,
+	}
+	for i, status := range statuses {
+		s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repo.ID,
+			Title: fmt.Sprintf("finding-%d", i), Severity: "High", Status: status})
+	}
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/"))
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	row := requireRepoListRow(t, w.Body.String(), repo.ID)
+	if !strings.Contains(row, `<span class="badge-destructive">6</span>`) {
+		t.Errorf("expected only six open findings in repo row, row=%s", row)
+	}
+	if strings.Contains(row, `<span class="badge-destructive">10</span>`) {
+		t.Errorf("closed findings should not be counted, row=%s", row)
 	}
 }
 
@@ -472,23 +525,36 @@ func TestRepoList_sortByFindings(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
 
-	mk := func(slug string, n int) {
+	mk := func(slug string, n int) db.Repository {
 		repo := db.Repository{URL: "https://x/" + slug, Name: slug}
 		s.DB.Create(&repo)
 		if n == 0 {
-			return
+			return repo
 		}
 		scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: "security-deep-dive"}
 		s.DB.Create(&scan)
 		for i := 0; i < n; i++ {
 			s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repo.ID,
-				Title: fmt.Sprintf("F%d", i), Severity: "High"})
+				Title: fmt.Sprintf("F%d", i), Severity: "High", Status: db.FindingNew})
 		}
+		return repo
+	}
+	mkClosed := func(slug string, n int) db.Repository {
+		repo := db.Repository{URL: "https://x/" + slug, Name: slug}
+		s.DB.Create(&repo)
+		scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: "security-deep-dive"}
+		s.DB.Create(&scan)
+		for i := 0; i < n; i++ {
+			s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repo.ID,
+				Title: fmt.Sprintf("closed-%d", i), Severity: "High", Status: db.FindingFixed})
+		}
+		return repo
 	}
 	mk("two-findings", 2)
 	mk("zero-findings", 0)
 	mk("five-findings", 5)
-	mk("one-finding", 1)
+	one := mk("one-finding", 1)
+	closed := mkClosed("closed-findings", 10)
 
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, localReq("GET", "/?sort=findings"))
@@ -508,6 +574,22 @@ func TestRepoList_sortByFindings(t *testing.T) {
 			t.Errorf("%q out of order (want descending by finding count)", slug)
 		}
 		last = i
+	}
+	closedIndex := strings.Index(body, "x/closed-findings")
+	oneIndex := strings.Index(body, "x/one-finding")
+	if closedIndex < 0 {
+		t.Fatalf("missing closed-findings in body")
+	}
+	if closedIndex < oneIndex {
+		t.Errorf("repo with only closed findings sorted above open findings")
+	}
+	closedRow := requireRepoListRow(t, body, closed.ID)
+	if !strings.Contains(closedRow, `<span class="badge-secondary">0</span>`) {
+		t.Errorf("expected closed-only repo to show zero findings, row=%s", closedRow)
+	}
+	oneRow := requireRepoListRow(t, body, one.ID)
+	if !strings.Contains(oneRow, `<span class="badge-destructive">1</span>`) {
+		t.Errorf("expected one open finding, row=%s", oneRow)
 	}
 }
 
