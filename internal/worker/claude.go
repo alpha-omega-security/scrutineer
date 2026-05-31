@@ -205,7 +205,7 @@ func buildClaudeArgs(sj SkillJob, effort string, globalMaxTurns int) []string {
 	if sj.AllowedTools != "" {
 		args = append(args,
 			"--permission-mode", "acceptEdits",
-			"--allowedTools", sj.AllowedTools,
+			"--allowedTools", sj.AllowedTools+",Skill",
 		)
 	} else {
 		args = append(args, "--permission-mode", "bypassPermissions")

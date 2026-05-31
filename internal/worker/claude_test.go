@@ -55,8 +55,8 @@ func TestBuildClaudeArgs_AllowedTools(t *testing.T) {
 	if got := flagValue(args, "--permission-mode"); got != "acceptEdits" {
 		t.Errorf("permission-mode = %q, want acceptEdits", got)
 	}
-	if got := flagValue(args, "--allowedTools"); got != "Read,Write,WebFetch" {
-		t.Errorf("allowedTools = %q, want Read,Write,WebFetch", got)
+	if got := flagValue(args, "--allowedTools"); got != "Read,Write,WebFetch,Skill" {
+		t.Errorf("allowedTools = %q, want Read,Write,WebFetch,Skill", got)
 	}
 	if got := flagValue(args, "--model"); got != "claude-sonnet-4-6" {
 		t.Errorf("model = %q", got)

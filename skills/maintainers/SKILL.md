@@ -10,7 +10,6 @@ metadata:
   scrutineer.output_kind: maintainers
   scrutineer.requires_remote: true
   scrutineer.model: claude-sonnet-4-6
-  scrutineer.max_turns: 20
 ---
 
 # maintainers
