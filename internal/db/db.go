@@ -63,6 +63,14 @@ type Repository struct {
 	// currently unreachable. Cleared on next successful clone.
 	CloneError string
 
+	// ThreatModel is the operator's working-copy threat-model JSON for
+	// this repository. When non-empty the worker writes it to
+	// ./threat_model.json in every skill workspace, and security-deep-dive
+	// loads that file in preference to the latest threat-model scan
+	// (#249). Seeded from a threat-model scan's report and edited via the
+	// workbench tab; empty means no override.
+	ThreatModel string `gorm:"type:text"`
+
 	CreatedAt time.Time
 	UpdatedAt time.Time
 
