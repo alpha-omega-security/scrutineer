@@ -197,7 +197,7 @@ func (s *Server) scansRetryFailed(w http.ResponseWriter, r *http.Request) {
 
 func retryFailedToast(retried, skipped, errored int) Flash {
 	if retried == 0 && skipped == 0 && errored == 0 {
-		return Flash{Category: "success", Title: "No failed scans to retry"}
+		return Flash{Category: flashSuccess, Title: "No failed scans to retry"}
 	}
 	parts := []string{fmt.Sprintf("%d retried", retried)}
 	if skipped > 0 {
@@ -206,7 +206,7 @@ func retryFailedToast(retried, skipped, errored int) Flash {
 	if errored > 0 {
 		parts = append(parts, fmt.Sprintf("%d errored", errored))
 	}
-	cat := "success"
+	cat := flashSuccess
 	switch {
 	case errored > 0:
 		cat = "error"

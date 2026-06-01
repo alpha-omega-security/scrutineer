@@ -184,7 +184,7 @@ func (w *Worker) doExposure(ctx context.Context, scan *db.Scan, emit func(Event)
 		SkillDir:        skillDir,
 		OutputFile:      skill.OutputFile,
 		Ref:             scan.Ref,
-		MaxTurns:        skill.MaxTurns,
+		MaxTurns:        w.resolveMaxTurns(skill.MaxTurns),
 		AllowedTools:    skill.AllowedTools,
 		SrcReady:        true,
 		Profile:         scan.Profile,

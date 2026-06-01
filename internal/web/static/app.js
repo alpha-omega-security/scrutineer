@@ -68,6 +68,12 @@
       if (dlgToClose) { e.preventDefault(); dlgToClose.close(); return; }
     }
 
+    var dismiss = e.target.closest('[data-dismiss]');
+    if (dismiss) {
+      var toClear = document.getElementById(dismiss.getAttribute('data-dismiss'));
+      if (toClear) { e.preventDefault(); toClear.replaceChildren(); return; }
+    }
+
     var opener = e.target.closest('[data-dialog]');
     if (opener) {
       var dlg = document.getElementById(opener.getAttribute('data-dialog'));

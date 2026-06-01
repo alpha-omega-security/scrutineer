@@ -282,6 +282,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /settings/theme", s.settingsUpdateTheme)
 	mux.HandleFunc("POST /settings/model", s.settingsUpdateModel)
 	mux.HandleFunc("POST /settings/color-scheme", s.settingsUpdateColorScheme)
+	mux.HandleFunc("POST /settings/concurrency", s.settingsUpdateConcurrency)
+	mux.HandleFunc("POST /settings/runner/restart", s.settingsRestartRunner)
+	mux.HandleFunc("POST /settings/max-turns", s.settingsUpdateMaxTurns)
 
 	// API routes get bearer-auth middleware and skip the browser CSRF checks;
 	// skills call these from inside a scan workspace, not from a browser.
@@ -318,6 +321,10 @@ type Flash struct {
 	Href        string `json:"h,omitempty"`
 	Label       string `json:"l,omitempty"`
 }
+
+// flashSuccess is the Category for a positive flash. Extracted as a constant
+// because it recurs across handlers (goconst).
+const flashSuccess = "success"
 
 func setFlash(w http.ResponseWriter, f Flash) {
 	b, _ := json.Marshal(f)
@@ -971,7 +978,7 @@ func (s *Server) repoVerifyAll(w http.ResponseWriter, r *http.Request) {
 
 func verifyAllToast(queued, skipped, errored int) Flash {
 	if queued == 0 && skipped == 0 && errored == 0 {
-		return Flash{Category: "success", Title: "No findings awaiting verification"}
+		return Flash{Category: flashSuccess, Title: "No findings awaiting verification"}
 	}
 	parts := []string{fmt.Sprintf("%d queued", queued)}
 	if skipped > 0 {
@@ -980,7 +987,7 @@ func verifyAllToast(queued, skipped, errored int) Flash {
 	if errored > 0 {
 		parts = append(parts, fmt.Sprintf("%d errored", errored))
 	}
-	cat := "success"
+	cat := flashSuccess
 	switch {
 	case errored > 0:
 		cat = "error"
@@ -1320,7 +1327,7 @@ func (s *Server) createOrTriageRepo(ctx context.Context, input RepoInput, model 
 
 func bulkToastCategory(created int, invalid []string) string {
 	if created > 0 && len(invalid) == 0 {
-		return "success"
+		return flashSuccess
 	}
 	if created == 0 && len(invalid) > 0 {
 		return "error"
