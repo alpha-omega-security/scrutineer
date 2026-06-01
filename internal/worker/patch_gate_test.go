@@ -131,11 +131,12 @@ func TestCheckLocationFile(t *testing.T) {
 }
 
 // gateRepo creates a git repo under dir with one file pkg/foo.go containing
-// numbered lines 1..20, edits targetLine, captures a real `git diff`, then
+// numbered lines 1..20, edits line 12, captures a real `git diff`, then
 // resets the working tree. The returned diff is what the patch skill would
 // produce, so git apply --check accepts it without --unidiff-zero.
-func gateRepo(t *testing.T, dir string, targetLine int) (relPath, diff string) {
+func gateRepo(t *testing.T, dir string) (relPath, diff string) {
 	t.Helper()
+	const targetLine = 12
 	relPath = "pkg/foo.go"
 	full := filepath.Join(dir, relPath)
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
@@ -175,7 +176,7 @@ func gateRepo(t *testing.T, dir string, targetLine int) (relPath, diff string) {
 
 func TestGatePatch(t *testing.T) {
 	src := t.TempDir()
-	rel, diff := gateRepo(t, src, 12)
+	rel, diff := gateRepo(t, src)
 
 	if r := gatePatch(src, rel+":12", diff); r != "" {
 		t.Errorf("pass case rejected: %q", r)
@@ -203,6 +204,24 @@ func TestGatePatch(t *testing.T) {
 	newFileDiff := "--- /dev/null\n+++ b/pkg/foo_test.go\n@@ -0,0 +1 @@\n+test\n" + diff
 	if r := gatePatch(src, rel+":12", newFileDiff); r != "" {
 		t.Errorf("new-file alongside fix rejected: %q", r)
+	}
+}
+
+func TestGatePatch_dirtyWorkspaceFromSkill(t *testing.T) {
+	// The real patch skill captures its diff with `git diff HEAD` and leaves
+	// the edits applied in the workspace (it never reverts). The gate must
+	// reset to HEAD before git apply --check, otherwise re-applying an
+	// already-applied diff fails. gateRepo resets the tree, so reproduce the
+	// skill's behaviour by re-applying the diff to dirty it first.
+	src := t.TempDir()
+	rel, diff := gateRepo(t, src)
+	apply := exec.Command("git", "-C", src, "apply", "-")
+	apply.Stdin = strings.NewReader(diff)
+	if out, err := apply.CombinedOutput(); err != nil {
+		t.Fatalf("seed dirty workspace: %v: %s", err, out)
+	}
+	if r := gatePatch(src, rel+":12", diff); r != "" {
+		t.Errorf("gate rejected a valid patch against a skill-dirtied workspace: %q", r)
 	}
 }
 
@@ -236,7 +255,7 @@ func TestParsePatchOutput_passWritesColumnsAndHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	src := filepath.Join(w.workRoot(sc.ID), "src")
-	_, diff := gateRepo(t, src, 12)
+	_, diff := gateRepo(t, src)
 	report := fmt.Sprintf(`{"patch":%q,"base_commit":"abc123"}`, diff)
 
 	var events []string
@@ -268,7 +287,7 @@ func TestParsePatchOutput_gateRejectLeavesColumnsEmpty(t *testing.T) {
 		t.Fatal(err)
 	}
 	src := filepath.Join(w.workRoot(sc.ID), "src")
-	gateRepo(t, src, 12)
+	gateRepo(t, src)
 	report := `{"patch":"--- a/pkg/missing.go\n+++ b/pkg/missing.go\n@@ -1 +1 @@\n-x\n+y\n","base_commit":"abc"}`
 
 	var events []string

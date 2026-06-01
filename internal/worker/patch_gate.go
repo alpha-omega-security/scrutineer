@@ -200,6 +200,16 @@ func locationPaths(location string) []string {
 }
 
 func gitApplyCheck(srcDir, diff string) (string, error) {
+	// The patch skill captures its diff with `git diff HEAD` and leaves the
+	// edits applied in srcDir; it never reverts. Re-applying an already-applied
+	// diff always fails, so reset the per-scan copy to HEAD first. reset --hard
+	// clears the skill's `git add -N` index entries; clean -fd drops any new
+	// files it created so a /dev/null hunk can recreate them.
+	for _, args := range [][]string{{"reset", "-q", "--hard", "HEAD"}, {"clean", "-qfd"}} {
+		if out, err := exec.Command("git", append([]string{"-C", srcDir}, args...)...).CombinedOutput(); err != nil {
+			return string(out), err
+		}
+	}
 	cmd := exec.Command("git", "-C", srcDir, "apply", "--check", "-")
 	cmd.Stdin = strings.NewReader(diff)
 	var out bytes.Buffer
