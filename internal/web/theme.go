@@ -5,6 +5,7 @@ import (
 	"slices"
 
 	"scrutineer/internal/config"
+	"scrutineer/internal/db"
 )
 
 const cookieMaxAge = 365 * 24 * 60 * 60 //nolint:mnd
@@ -42,17 +43,21 @@ func resolveColorScheme(r *http.Request) string {
 
 func (s *Server) settingsShow(w http.ResponseWriter, r *http.Request) {
 	var stats struct {
-		Repos       int64
-		Scans       int64
-		Findings    int64
-		Packages    int64
-		Advisories  int64
-		Maintainers int64
-		Skills      int64
+		Repos           int64
+		Scans           int64
+		Findings        int64
+		ScannerFindings int64
+		Packages        int64
+		Advisories      int64
+		Maintainers     int64
+		Skills          int64
 	}
 	s.DB.Table("repositories").Count(&stats.Repos)
 	s.DB.Table("scans").Count(&stats.Scans)
-	s.DB.Table("findings").Count(&stats.Findings)
+	// Split findings the same way the repo page does: deep-dive (curated
+	// audit) findings versus tool-scanner output (zizmor, semgrep, …).
+	s.DB.Model(&db.Finding{}).Where("scan_id IN (?)", deepDiveScanIDs(s.DB)).Count(&stats.Findings)
+	s.DB.Model(&db.Finding{}).Where("scan_id NOT IN (?)", deepDiveScanIDs(s.DB)).Count(&stats.ScannerFindings)
 	s.DB.Table("packages").Count(&stats.Packages)
 	s.DB.Table("advisories").Count(&stats.Advisories)
 	s.DB.Table("maintainers").Count(&stats.Maintainers)

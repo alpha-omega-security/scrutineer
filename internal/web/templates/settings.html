@@ -63,7 +63,7 @@
 <section class="card">
   <header><h2>System</h2></header>
   <section>
-    <div class="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-7 gap-3 text-sm">
+    <div class="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-8 gap-3 text-sm">
       <div class="bg-muted/50 rounded-lg px-3 py-2">
         <div class="text-muted-foreground text-xs">Repositories</div>
         <div class="font-medium text-lg">{{bignum .Stats.Repos}}</div>
@@ -75,6 +75,10 @@
       <div class="bg-muted/50 rounded-lg px-3 py-2">
         <div class="text-muted-foreground text-xs">Findings</div>
         <div class="font-medium text-lg">{{bignum .Stats.Findings}}</div>
+      </div>
+      <div class="bg-muted/50 rounded-lg px-3 py-2">
+        <div class="text-muted-foreground text-xs">Scanner findings</div>
+        <div class="font-medium text-lg">{{bignum .Stats.ScannerFindings}}</div>
       </div>
       <div class="bg-muted/50 rounded-lg px-3 py-2">
         <div class="text-muted-foreground text-xs">Packages</div>
