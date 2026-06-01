@@ -78,6 +78,34 @@
 </section>
 
 <section class="card">
+  <header>
+    <h2>Runner</h2>
+    <p class="text-muted-foreground text-sm">How scans execute. Changing concurrency restarts the runner (in-flight scans are cancelled, queued scans are kept); the default turn cap applies to the next scan.</p>
+  </header>
+  <section>
+    <div class="grid sm:grid-cols-2 gap-4">
+      <form method="post" action="/settings/concurrency" hx-post="/settings/concurrency" hx-swap="none" class="grid gap-2">
+        <label for="concurrency">Concurrency</label>
+        <div class="flex gap-2">
+          <input id="concurrency" class="input" type="number" name="concurrency" value="{{.ConcurrencyInput}}" min="1" max="64" required>
+          <button type="submit" class="btn">Save</button>
+        </div>
+        <p class="text-xs text-muted-foreground">Scans run in parallel. Currently running with {{.Concurrency}}.</p>
+      </form>
+      <form method="post" action="/settings/max-turns" hx-post="/settings/max-turns" hx-swap="none" class="grid gap-2">
+        <label for="max_turns">Default turns</label>
+        <div class="flex gap-2">
+          <input id="max_turns" class="input" type="number" name="max_turns" {{if .MaxTurns}}value="{{.MaxTurns}}"{{end}} min="1" max="500" placeholder="default: {{.DefaultMaxTurns}}" required>
+          <button type="submit" class="btn">Save</button>
+        </div>
+        <p class="text-xs text-muted-foreground">Turn cap for skills that set none. Applies to the next scan.</p>
+      </form>
+    </div>
+    <div id="concurrency-confirm"></div>
+  </section>
+</section>
+
+<section class="card">
   <header><h2>System</h2></header>
   <section>
     <div class="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-8 gap-3 text-sm">
@@ -115,10 +143,6 @@
       </div>
     </div>
     <div class="grid grid-cols-2 gap-3 text-sm mt-3">
-      <div class="bg-muted/50 rounded-lg px-3 py-2">
-        <div class="text-muted-foreground text-xs">Concurrency</div>
-        <div class="font-medium text-lg">{{.Concurrency}}</div>
-      </div>
       <div class="bg-muted/50 rounded-lg px-3 py-2">
         <div class="text-muted-foreground text-xs">Database size</div>
         <div class="font-medium text-lg">{{bytes .DBSize}}</div>
@@ -185,5 +209,17 @@
   .theme-swatch-accent[data-swatch="northern-lights"]  { background: oklch(0.83 0.11 211.96); }
   .theme-swatch-muted[data-swatch="northern-lights"]   { background: oklch(0.88 0.03 98.1); }
 </style>
+
+{{define "concurrency-confirm-oob"}}<div id="concurrency-confirm" hx-swap-oob="innerHTML">
+  <div class="rounded-lg border border-primary/40 bg-muted/50 px-4 py-3 text-sm mt-4 flex flex-wrap items-center justify-between gap-3">
+    <p class="flex-1 min-w-[16rem]">Concurrency {{.Concurrency}} saved. Restart the runner to apply it now — this cancels {{.Running}} running scan(s) (queued scans are kept). Otherwise it takes effect on the next restart.</p>
+    <div class="flex gap-2 shrink-0">
+      <form method="post" action="/settings/runner/restart" hx-post="/settings/runner/restart" hx-swap="none">
+        <button type="submit" class="btn"><i data-lucide="power"></i> Restart runner</button>
+      </form>
+      <button type="button" class="btn-outline" data-dismiss="concurrency-confirm">Not now</button>
+    </div>
+  </div>
+</div>{{end}}
 
 {{template "foot" .}}

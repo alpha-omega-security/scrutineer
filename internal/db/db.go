@@ -831,7 +831,7 @@ func Open(dsn string) (*gorm.DB, error) {
 		&FindingCommunication{}, &FindingReference{}, &FindingHistory{},
 		&Dependency{}, &Package{}, &Dependent{}, &FindingDependent{}, &Advisory{},
 		&Maintainer{}, &Skill{}, &Subproject{},
-		&SBOMUpload{}, &SBOMPackage{}, &CNA{},
+		&SBOMUpload{}, &SBOMPackage{}, &CNA{}, &Setting{},
 	); err != nil {
 		return nil, fmt.Errorf("automigrate: %w", err)
 	}

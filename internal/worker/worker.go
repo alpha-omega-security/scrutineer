@@ -88,6 +88,18 @@ func (w *Worker) workRoot(scanID uint) string {
 	return filepath.Join(w.DataDir, fmt.Sprintf("scan-%d", scanID))
 }
 
+// resolveMaxTurns picks a scan's turn cap: the skill's own cap when it sets
+// one, else the operator-configured default read live from settings so a
+// change on the Settings page applies to the next scan without a restart. A
+// 0 result leaves the runner's startup default (the --max-turns flag) as the
+// downstream fallback.
+func (w *Worker) resolveMaxTurns(skillMaxTurns int) int {
+	if skillMaxTurns > 0 {
+		return skillMaxTurns
+	}
+	return db.SettingInt(w.DB, db.SettingDefaultMaxTurns)
+}
+
 // workspaceScanID returns the scan id whose workspace path a run should
 // use. A fresh scan uses its own id; a retry that resumes a session reuses
 // the lineage-root id so claude executes in the same working directory the

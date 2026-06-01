@@ -260,6 +260,15 @@ func run(log *slog.Logger) error {
 		return err
 	}
 
+	// A UI-configured concurrency (Settings page) persists in the DB and
+	// applies on restart, but an explicit --concurrency flag still wins so
+	// the operator who just typed it isn't overridden. Mirrors merge().
+	if !f.set["concurrency"] {
+		if v := db.SettingInt(gdb, db.SettingConcurrency); v > 0 {
+			f.concurrency = v
+		}
+	}
+
 	q, err := queue.New(sqldb, log, f.concurrency)
 	if err != nil {
 		return fmt.Errorf("queue: %w", err)

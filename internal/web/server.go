@@ -287,6 +287,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /settings/model", s.settingsUpdateModel)
 	mux.HandleFunc("POST /settings/effort", s.settingsUpdateEffort)
 	mux.HandleFunc("POST /settings/color-scheme", s.settingsUpdateColorScheme)
+	mux.HandleFunc("POST /settings/concurrency", s.settingsUpdateConcurrency)
+	mux.HandleFunc("POST /settings/runner/restart", s.settingsRestartRunner)
+	mux.HandleFunc("POST /settings/max-turns", s.settingsUpdateMaxTurns)
 
 	// API routes get bearer-auth middleware and skip the browser CSRF checks;
 	// skills call these from inside a scan workspace, not from a browser.
