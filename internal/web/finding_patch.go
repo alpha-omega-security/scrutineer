@@ -48,7 +48,7 @@ func (s *Server) latestPatchScan(findingID uint) (*db.Scan, *patchReport, error)
 // findingPatchDownload serves Finding.SuggestedFix as a .patch file. The
 // column is only ever populated by parsePatchOutput after the applicability
 // gate passes, so a download is always a diff that parsed, targeted real
-// files, overlapped Location, and survived git apply --check.
+// files, touched a file named in Location, and survived git apply --check.
 func (s *Server) findingPatchDownload(w http.ResponseWriter, r *http.Request) {
 	f, ok := loadByID[db.Finding](s, w, r)
 	if !ok {

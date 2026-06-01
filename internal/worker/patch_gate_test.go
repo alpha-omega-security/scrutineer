@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -22,31 +23,28 @@ func TestParseUnifiedDiff(t *testing.T) {
 		{
 			"single file single hunk",
 			"--- a/pkg/foo.go\n+++ b/pkg/foo.go\n@@ -10,3 +10,4 @@ func x() {\n a\n-b\n+c\n+d\n",
-			[]diffFile{{Path: "pkg/foo.go", Hunks: []diffHunk{{OldStart: 10, OldCount: 3}}}},
+			[]diffFile{{Path: "pkg/foo.go"}},
 		},
 		{
 			"multi file",
 			"diff --git a/a.go b/a.go\n--- a/a.go\n+++ b/a.go\n@@ -1 +1 @@\n-x\n+y\n" +
 				"diff --git a/b.go b/b.go\n--- a/b.go\n+++ b/b.go\n@@ -5,2 +5,3 @@\n a\n-b\n+c\n+d\n",
-			[]diffFile{
-				{Path: "a.go", Hunks: []diffHunk{{OldStart: 1, OldCount: 1}}},
-				{Path: "b.go", Hunks: []diffHunk{{OldStart: 5, OldCount: 2}}},
-			},
+			[]diffFile{{Path: "a.go"}, {Path: "b.go"}},
 		},
 		{
 			"new file",
 			"--- /dev/null\n+++ b/new.go\n@@ -0,0 +1,3 @@\n+a\n+b\n+c\n",
-			[]diffFile{{Path: "new.go", NewFile: true, Hunks: []diffHunk{{OldStart: 0, OldCount: 0}}}},
+			[]diffFile{{Path: "new.go", NewFile: true}},
 		},
 		{
 			"deleted file",
 			"--- a/gone.go\n+++ /dev/null\n@@ -1,2 +0,0 @@\n-a\n-b\n",
-			[]diffFile{{Path: "", Hunks: []diffHunk{{OldStart: 1, OldCount: 2}}}},
+			[]diffFile{{Path: ""}},
 		},
 		{
 			"timestamp after path",
 			"--- a/x.go\t2026-01-01\n+++ b/x.go\t2026-01-02\n@@ -3 +3 @@\n-a\n+b\n",
-			[]diffFile{{Path: "x.go", Hunks: []diffHunk{{OldStart: 3, OldCount: 1}}}},
+			[]diffFile{{Path: "x.go"}},
 		},
 	}
 	for _, tc := range tests {
@@ -55,21 +53,8 @@ func TestParseUnifiedDiff(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(got) != len(tc.want) {
-				t.Fatalf("files = %d, want %d: %+v", len(got), len(tc.want), got)
-			}
-			for i := range got {
-				if got[i].Path != tc.want[i].Path || got[i].NewFile != tc.want[i].NewFile {
-					t.Errorf("file[%d] = %+v, want %+v", i, got[i], tc.want[i])
-				}
-				if len(got[i].Hunks) != len(tc.want[i].Hunks) {
-					t.Fatalf("file[%d] hunks = %d, want %d", i, len(got[i].Hunks), len(tc.want[i].Hunks))
-				}
-				for j := range got[i].Hunks {
-					if got[i].Hunks[j] != tc.want[i].Hunks[j] {
-						t.Errorf("file[%d] hunk[%d] = %+v, want %+v", i, j, got[i].Hunks[j], tc.want[i].Hunks[j])
-					}
-				}
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("parseUnifiedDiff = %+v, want %+v", got, tc.want)
 			}
 		})
 	}
@@ -96,53 +81,51 @@ func TestParseUnifiedDiff_errors(t *testing.T) {
 	}
 }
 
-func TestParseLocation(t *testing.T) {
+func TestLocationPaths(t *testing.T) {
 	tests := []struct {
-		in         string
-		path       string
-		start, end int
-		ok         bool
+		in   string
+		want []string
 	}{
-		{"pkg/foo.go:42", "pkg/foo.go", 42, 42, true},
-		{"pkg/foo.go:10-20", "pkg/foo.go", 10, 20, true},
-		{"pkg/foo.go", "pkg/foo.go", 0, 0, true},
-		{"", "", 0, 0, false},
-		{"a/b/c.rs:abc", "a/b/c.rs:abc", 0, 0, true},
-		{"a/b/c.rs:5-2", "a/b/c.rs:5-2", 0, 0, true},
-		{"  pkg/foo.go:7  ", "pkg/foo.go", 7, 7, true},
+		{"pkg/foo.go:42", []string{"pkg/foo.go"}},
+		{"pkg/foo.go:10-20", []string{"pkg/foo.go"}},
+		{"pkg/foo.go", []string{"pkg/foo.go"}},
+		{"", nil},
+		{"  pkg/foo.go:7  ", []string{"pkg/foo.go"}},
+		// Composite location from a deep-dive finding: several flagged files
+		// plus a "(data path: ...)" trace. Every path:line reference is pulled
+		// out and the trailing ")" must not leak into the last path.
+		{
+			"internal/ui/logtable.go:227-352, internal/ui/logsidepanel.go:206 (data path: internal/fetcher/lognetlistener.go -> internal/fetcher/logentry.go:106-135)",
+			[]string{"internal/ui/logtable.go", "internal/ui/logsidepanel.go", "internal/fetcher/logentry.go"},
+		},
 	}
 	for _, tc := range tests {
-		path, start, end, ok := parseLocation(tc.in)
-		if path != tc.path || start != tc.start || end != tc.end || ok != tc.ok {
-			t.Errorf("parseLocation(%q) = (%q,%d,%d,%v), want (%q,%d,%d,%v)",
-				tc.in, path, start, end, ok, tc.path, tc.start, tc.end, tc.ok)
+		if got := locationPaths(tc.in); !slices.Equal(got, tc.want) {
+			t.Errorf("locationPaths(%q) = %v, want %v", tc.in, got, tc.want)
 		}
 	}
 }
 
-func TestCheckLocationOverlap(t *testing.T) {
-	files := []diffFile{
-		{Path: "pkg/foo.go", Hunks: []diffHunk{{OldStart: 10, OldCount: 5}}},
-		{Path: "pkg/bar.go", Hunks: []diffHunk{{OldStart: 100, OldCount: 1}}},
-	}
+func TestCheckLocationFile(t *testing.T) {
+	files := []diffFile{{Path: "pkg/foo.go"}, {Path: "pkg/bar.go"}}
 	tests := []struct {
 		loc  string
 		want string
 	}{
 		{"pkg/foo.go:12", ""},
-		{"pkg/foo.go:10", ""},
-		{"pkg/foo.go:14", ""},
-		{"pkg/foo.go:8-11", ""},
-		{"pkg/foo.go:50", "no hunk overlaps pkg/foo.go:50"},
+		{"pkg/foo.go:50", ""},
 		{"pkg/foo.go", ""},
-		{"pkg/other.go:5", "no hunk overlaps pkg/other.go:5"},
-		{"pkg/other.go", "no hunk touches pkg/other.go"},
+		{"pkg/bar.go:100", ""},
 		{"", ""},
+		// File named in the location is patched even though the flagged line
+		// (:99) sits far from the hunk: a choke-point fix must still pass.
+		{"pkg/zzz.go:1, pkg/foo.go:99 (data path: pkg/a.go -> pkg/b.go:2)", ""},
+		{"pkg/other.go:5", "no patched file matches location pkg/other.go:5"},
+		{"pkg/other.go", "no patched file matches location pkg/other.go"},
 	}
 	for _, tc := range tests {
-		got := checkLocationOverlap(files, tc.loc)
-		if got != tc.want {
-			t.Errorf("checkLocationOverlap(%q) = %q, want %q", tc.loc, got, tc.want)
+		if got := checkLocationFile(files, tc.loc); got != tc.want {
+			t.Errorf("checkLocationFile(%q) = %q, want %q", tc.loc, got, tc.want)
 		}
 	}
 }
@@ -197,8 +180,14 @@ func TestGatePatch(t *testing.T) {
 	if r := gatePatch(src, rel+":12", diff); r != "" {
 		t.Errorf("pass case rejected: %q", r)
 	}
-	if r := gatePatch(src, rel+":3", diff); !strings.Contains(r, "no hunk overlaps") {
-		t.Errorf("expected overlap rejection, got %q", r)
+	// File-level match: a fix to pkg/foo.go passes even when the flagged line
+	// (:3) sits far from the hunk (line 12). This is the choke-point case the
+	// old line-overlap gate wrongly rejected.
+	if r := gatePatch(src, rel+":3", diff); r != "" {
+		t.Errorf("file-level pass case rejected: %q", r)
+	}
+	if r := gatePatch(src, "pkg/unrelated.go:12", diff); !strings.Contains(r, "no patched file matches location") {
+		t.Errorf("expected unrelated-location rejection, got %q", r)
 	}
 	if r := gatePatch(src, "pkg/missing.go:12",
 		"--- a/pkg/missing.go\n+++ b/pkg/missing.go\n@@ -1 +1 @@\n-x\n+y\n"); !strings.Contains(r, "missing file") {
