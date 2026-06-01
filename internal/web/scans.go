@@ -94,18 +94,37 @@ func (s *Server) scanRetry(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "scan cannot be retried: no skill reference", http.StatusBadRequest)
 		return
 	}
+	sessionID, resumeOf := resumeOpts(scan)
 	newID, err := s.enqueueSkillWith(r.Context(), scan.RepositoryID, *scan.SkillID, ScanOpts{
-		Model:     scan.Model,
-		FindingID: scan.FindingID,
-		SubPath:   scan.SubPath,
-		Ref:       scan.Ref,
-		Profile:   scan.Profile,
+		Model:             scan.Model,
+		FindingID:         scan.FindingID,
+		SubPath:           scan.SubPath,
+		Ref:               scan.Ref,
+		Profile:           scan.Profile,
+		SessionID:         sessionID,
+		ResumedFromScanID: resumeOf,
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	s.redirect(w, r, fmt.Sprintf("/scans/%d", newID))
+}
+
+// resumeOpts decides whether a retry of scan should resume its claude
+// session. Only a failed scan that captured a session is resumable; a done
+// or cancelled scan, or one that never reached the model, retries fresh.
+// ResumedFromScanID is pinned to the lineage root so a chain of retries all
+// reuse one workspace and session rather than forking a new one each time.
+func resumeOpts(scan db.Scan) (sessionID string, resumeOf *uint) {
+	if scan.Status != db.ScanFailed || scan.SessionID == "" {
+		return "", nil
+	}
+	root := scan.ID
+	if scan.ResumedFromScanID != nil && *scan.ResumedFromScanID != 0 {
+		root = *scan.ResumedFromScanID
+	}
+	return scan.SessionID, &root
 }
 
 func (s *Server) scansRetryFailed(w http.ResponseWriter, r *http.Request) {
@@ -127,7 +146,7 @@ func (s *Server) scansRetryFailed(w http.ResponseWriter, r *http.Request) {
 	// (repository, skill, sub_path, ref, finding_id) tuple already in
 	// queued/running/done.
 	var scans []db.Scan
-	err := q.Select("id, repository_id, skill_id, model, finding_id, sub_path, ref, profile").
+	err := q.Select("id, repository_id, skill_id, model, finding_id, sub_path, ref, profile, status, session_id, resumed_from_scan_id").
 		Where(`NOT EXISTS (
 			SELECT 1 FROM scans n
 			WHERE n.id > scans.id
@@ -146,12 +165,15 @@ func (s *Server) scansRetryFailed(w http.ResponseWriter, r *http.Request) {
 
 	var retried, errored int
 	for _, sc := range scans {
+		sessionID, resumeOf := resumeOpts(sc)
 		if _, err := s.enqueueSkillWith(r.Context(), sc.RepositoryID, *sc.SkillID, ScanOpts{
-			Model:     sc.Model,
-			FindingID: sc.FindingID,
-			SubPath:   sc.SubPath,
-			Ref:       sc.Ref,
-			Profile:   sc.Profile,
+			Model:             sc.Model,
+			FindingID:         sc.FindingID,
+			SubPath:           sc.SubPath,
+			Ref:               sc.Ref,
+			Profile:           sc.Profile,
+			SessionID:         sessionID,
+			ResumedFromScanID: resumeOf,
 		}); err != nil {
 			errored++
 			continue

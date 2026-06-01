@@ -41,6 +41,50 @@ not json at all
 	}
 }
 
+func TestParseStream_SessionID(t *testing.T) {
+	in := `
+{"type":"system","subtype":"init","session_id":"sess-abc","tools":[]}
+{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}
+{"type":"result","subtype":"success","session_id":"sess-abc","result":"ok","num_turns":2}
+`
+	var sessions []string
+	ParseStream(strings.NewReader(in), func(e Event) {
+		if e.Kind == KindSession {
+			sessions = append(sessions, e.SessionID)
+		}
+	})
+
+	// Only the init message yields a session event; the result's session id
+	// is deliberately ignored so a failed --resume (which emits no init but
+	// a result carrying a throwaway id) isn't mistaken for a loaded session.
+	if len(sessions) != 1 {
+		t.Fatalf("want 1 session event, got %d: %v", len(sessions), sessions)
+	}
+	if sessions[0] != "sess-abc" {
+		t.Errorf("session id = %q, want sess-abc", sessions[0])
+	}
+}
+
+func TestParseStream_FailedResumeEmitsNoSession(t *testing.T) {
+	// A --resume that can't find the conversation emits no init event, just
+	// an error line and a result with a fresh throwaway session id. The
+	// runner relies on seeing no session event here to fall back to a fresh
+	// run, so this must produce zero KindSession events.
+	in := `No conversation found with session ID: dead
+{"type":"result","subtype":"error_during_execution","is_error":true,"session_id":"throwaway-id","num_turns":0}`
+	for _, e := range collectEvents(in) {
+		if e.Kind == KindSession {
+			t.Errorf("unexpected session event: %+v", e)
+		}
+	}
+}
+
+func collectEvents(in string) []Event {
+	var got []Event
+	ParseStream(strings.NewReader(in), func(e Event) { got = append(got, e) })
+	return got
+}
+
 func TestFormatEvent(t *testing.T) {
 	e := Event{Kind: "tool", Tool: "Read", Text: "/tmp/x"}
 	if s := FormatEvent(e); s != "[read] /tmp/x" {

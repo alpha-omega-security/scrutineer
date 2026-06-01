@@ -157,6 +157,24 @@ type Scan struct {
 	// operator's override and the UI can show the chosen ecosystem.
 	Profile string `gorm:"index"`
 
+	// SessionID is the claude-code session this scan's run belongs to,
+	// captured from the stream-json init/result events. It is written as
+	// soon as the init event arrives (before the run finishes) so it
+	// survives a crash, and cleared once the scan reaches "done" so a
+	// deliberate re-run from the UI starts a fresh conversation. A retry
+	// of a failed scan carries this value forward so the runner can pass
+	// `claude -p --resume <id>` and continue from where it left off
+	// instead of restarting from turn 0.
+	SessionID string
+	// ResumedFromScanID points at the lineage-root scan whose claude session
+	// and workspace a retry reuses. Nil on a fresh scan. claude keys its
+	// session store by working directory, so a resuming run must execute
+	// in the same per-scan workspace path as the original; this pins that
+	// path across the whole retry chain. Always the root of the lineage,
+	// not the immediate parent, so N retries deep still resolve to one
+	// workspace.
+	ResumedFromScanID *uint `gorm:"index"`
+
 	Commit     string
 	StartedAt  *time.Time
 	FinishedAt *time.Time

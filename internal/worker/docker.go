@@ -122,42 +122,33 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 		_ = os.Remove(outPath)
 	}
 
-	claudeArgs := append([]string{"claude"}, buildClaudeArgs(sj, d.Effort, d.MaxTurns)...)
-	dockerArgs := append(d.buildDockerArgs(absWork, image, perScanNetwork), claudeArgs...)
-
-	cmd := exec.CommandContext(ctx, "docker", dockerArgs...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Env = os.Environ()
-
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return SkillResult{}, err
+	if sj.ClaudeConfigDir != "" {
+		if err := os.MkdirAll(sj.ClaudeConfigDir, dirPerm); err != nil {
+			return SkillResult{Commit: commit, Profile: profile}, fmt.Errorf("create claude config dir: %w", err)
+		}
 	}
-	cmd.Stderr = cmd.Stdout
+	dockerBase := d.buildDockerArgs(absWork, image, perScanNetwork, sj.ClaudeConfigDir)
 
 	logLine := "$ docker run --rm " + image + " <skill:" + sj.Name + ">"
 	if d.AnthropicBaseURL != "" {
 		logLine += " [ANTHROPIC_BASE_URL=" + d.AnthropicBaseURL + "]"
 	}
 	emit(Event{Kind: KindText, Text: logLine})
-	if err := cmd.Start(); err != nil {
-		return SkillResult{}, fmt.Errorf("start docker: %w", err)
+
+	waitErr, hitMaxTurns, sessionID := d.runDockerOnce(ctx, dockerBase, sj, emit)
+
+	if waitErr != nil && sj.ResumeSessionID != "" && sessionID == "" {
+		// The resume produced no session event, so claude could not load the
+		// saved conversation (gone from the mounted store). Restart fresh in
+		// the same /work + config mount so the retry lineage isn't wedged on
+		// a dead session id.
+		emit(Event{Kind: KindText, Text: "resume of session " + sj.ResumeSessionID + " failed; restarting fresh"})
+		fresh := sj
+		fresh.ResumeSessionID = ""
+		waitErr, hitMaxTurns, sessionID = d.runDockerOnce(ctx, dockerBase, fresh, emit)
 	}
 
-	hitMaxTurns := false
-	wrappedEmit := func(e Event) {
-		if e.Kind == KindError && e.Text == "hit max turns" {
-			hitMaxTurns = true
-		}
-		emit(e)
-	}
-	ParseStream(stdout, wrappedEmit)
-	waitErr := cmd.Wait()
-	if cmd.Process != nil {
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
-	}
-
-	res := SkillResult{Commit: commit, Profile: profile}
+	res := SkillResult{Commit: commit, Profile: profile, SessionID: sessionID}
 	if outPath != "" {
 		res.Report = readCappedReport(outPath, emit)
 	}
@@ -170,12 +161,51 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 	return res, nil
 }
 
+// runDockerOnce launches one container for the given skill job, appending
+// the in-container `claude` command to dockerBase, streaming its output
+// through emit, and reporting the wait error, whether the run hit the
+// max-turns cap, and the session id from the init event (empty when no init
+// event arrived, e.g. a --resume that could not find the conversation).
+func (d DockerRunner) runDockerOnce(ctx context.Context, dockerBase []string, sj SkillJob, emit func(Event)) (waitErr error, hitMaxTurns bool, sessionID string) {
+	claudeArgs := append([]string{"claude"}, buildClaudeArgs(sj, d.Effort, d.MaxTurns)...)
+	dockerArgs := append(append([]string{}, dockerBase...), claudeArgs...)
+
+	cmd := exec.CommandContext(ctx, "docker", dockerArgs...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Env = os.Environ()
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return err, false, ""
+	}
+	cmd.Stderr = cmd.Stdout
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start docker: %w", err), false, ""
+	}
+
+	wrappedEmit := func(e Event) {
+		switch {
+		case e.Kind == KindError && e.Text == "hit max turns":
+			hitMaxTurns = true
+		case e.Kind == KindSession && e.SessionID != "":
+			sessionID = e.SessionID
+		}
+		emit(e)
+	}
+	ParseStream(stdout, wrappedEmit)
+	waitErr = cmd.Wait()
+	if cmd.Process != nil {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+	}
+	return waitErr, hitMaxTurns, sessionID
+}
+
 // buildDockerArgs assembles the `docker run` flags for a skill invocation.
 // Returns the args up to and including the image name; the caller appends
 // the in-container command. Split out of RunSkill to keep its cognitive
 // complexity manageable as new toggles (hardened mode, proxy, profiles)
 // accumulate.
-func (d DockerRunner) buildDockerArgs(absWork, image, perScanNetwork string) []string {
+func (d DockerRunner) buildDockerArgs(absWork, image, perScanNetwork, claudeConfigDir string) []string {
 	gwTarget := "host-gateway"
 	if d.Hardened {
 		// Each --internal network has its own subnet and gateway, so the
@@ -208,6 +238,17 @@ func (d DockerRunner) buildDockerArgs(absWork, image, perScanNetwork string) []s
 		"-v", absWork + ":/work",
 		"-w", "/work",
 		"--add-host", HostGatewayAlias + ":" + gwTarget,
+	}
+	if claudeConfigDir != "" {
+		// Persist the resumable claude session store outside the container.
+		// Without this it lands in the /tmp tmpfs and dies with the
+		// container, so --resume on a retry would find nothing. The bind
+		// mount stays writable even under hardened mode's --read-only
+		// rootfs, so resume works there too.
+		args = append(args,
+			"-v", claudeConfigDir+":/claude-config",
+			"-e", "CLAUDE_CONFIG_DIR=/claude-config",
+		)
 	}
 	if d.Hardened {
 		// Read-only rootfs + no-new-privileges close the residual paths a

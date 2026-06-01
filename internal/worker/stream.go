@@ -14,6 +14,7 @@ const (
 	KindTool     = "tool"
 	KindResult   = "result"
 	KindError    = "error"
+	KindSession  = "session"
 
 	lineLimit = 300
 )
@@ -21,12 +22,13 @@ const (
 // Event is one line of activity from a claude -p stream-json run, flattened
 // into something a human can read in a log view.
 type Event struct {
-	Kind    string
-	Tool    string // for KindTool
-	Text    string
-	CostUSD float64 // for KindResult
-	Turns   int     // for KindResult
-	Usage   Usage   // for KindResult
+	Kind      string
+	Tool      string // for KindTool
+	Text      string
+	CostUSD   float64 // for KindResult
+	Turns     int     // for KindResult
+	Usage     Usage   // for KindResult
+	SessionID string  // for KindSession
 }
 
 // Usage is the token breakdown from a result event.
@@ -38,15 +40,16 @@ type Usage struct {
 }
 
 type streamMessage struct {
-	Type     string          `json:"type"`
-	Subtype  string          `json:"subtype"`
-	Message  *assistantMsg   `json:"message"`
-	Result   json.RawMessage `json:"result"`
-	CostUSD  *float64        `json:"total_cost_usd"`
-	Duration *int64          `json:"duration_ms"`
-	NumTurns *int            `json:"num_turns"`
-	Usage    *Usage          `json:"usage"`
-	Error    json.RawMessage `json:"error"`
+	Type      string          `json:"type"`
+	Subtype   string          `json:"subtype"`
+	SessionID string          `json:"session_id"`
+	Message   *assistantMsg   `json:"message"`
+	Result    json.RawMessage `json:"result"`
+	CostUSD   *float64        `json:"total_cost_usd"`
+	Duration  *int64          `json:"duration_ms"`
+	NumTurns  *int            `json:"num_turns"`
+	Usage     *Usage          `json:"usage"`
+	Error     json.RawMessage `json:"error"`
 }
 
 type assistantMsg struct {
@@ -80,6 +83,19 @@ func ParseStream(r io.Reader, emit func(Event)) {
 			continue
 		}
 		switch msg.Type {
+		case "system":
+			// The init system message is the first line of a run and is the
+			// only reliable place to read the session id. Capturing it here
+			// lets the worker persist it before the run finishes, so a crash
+			// mid-run is resumable. It is also the signal a `--resume`
+			// actually loaded the conversation: a resume that fails to find
+			// the session emits no init at all (just an error and a result
+			// carrying a brand-new throwaway session id), so the runner must
+			// not treat the result's session id as "resume succeeded" — only
+			// this init event counts.
+			if msg.Subtype == "init" && msg.SessionID != "" {
+				emit(Event{Kind: KindSession, SessionID: msg.SessionID})
+			}
 		case "assistant":
 			emitAssistant(msg.Message, emit)
 		case "result":
@@ -178,6 +194,8 @@ func FormatEvent(e Event) string {
 		return fmt.Sprintf("[%s] %s", strings.ToLower(e.Tool), truncate(e.Text))
 	case KindResult:
 		return fmt.Sprintf("[result] cost=$%.4f turns=%d %s", e.CostUSD, e.Turns, truncate(e.Text))
+	case KindSession:
+		return "[session] " + e.SessionID
 	case KindError:
 		return "[error] " + e.Text
 	default:

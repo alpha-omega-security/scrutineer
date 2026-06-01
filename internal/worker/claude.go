@@ -69,6 +69,16 @@ type SkillJob struct {
 	// runner fails the scan if the resolved profile does not match.
 	// Empty means no constraint. Mirrors db.Skill.RequiresProfile.
 	RequiresProfile string
+	// ResumeSessionID, when non-empty, makes the runner invoke
+	// `claude -p --resume <id>` so a retried scan continues the previous
+	// conversation with full history instead of restarting from turn 0.
+	// The runner falls back to a fresh run if the session can't be found.
+	ResumeSessionID string
+	// ClaudeConfigDir is a host directory the docker runner mounts as the
+	// container's CLAUDE_CONFIG_DIR so the resumable session store persists
+	// across container restarts. Empty disables the mount (the local runner
+	// ignores it and relies on the host's own ~/.claude).
+	ClaudeConfigDir string
 }
 
 type SkillResult struct {
@@ -78,6 +88,11 @@ type SkillResult struct {
 	// default runner image ran. The worker persists this on the scan
 	// so retries and the UI can show what was picked.
 	Profile string
+	// SessionID is the claude session this run belonged to, as seen in the
+	// stream. The worker already persists it live via the emit callback;
+	// this is a backstop so the final save reflects the latest value (e.g.
+	// after a resume-fallback started a fresh session).
+	SessionID string
 }
 
 type LocalClaude struct {
@@ -116,36 +131,23 @@ func (l LocalClaude) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)
 		_ = os.Remove(outPath)
 	}
 
-	args := buildClaudeArgs(sj, l.Effort, l.MaxTurns)
-	cmd := exec.CommandContext(ctx, "claude", args...)
-	cmd.Dir = work
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return SkillResult{}, err
-	}
-	cmd.Stderr = cmd.Stdout
-
 	emit(Event{Kind: KindText, Text: "$ claude -p <skill:" + sj.Name + ">"})
-	if err := cmd.Start(); err != nil {
-		return SkillResult{}, fmt.Errorf("start claude: %w", err)
+	args := buildClaudeArgs(sj, l.Effort, l.MaxTurns)
+	waitErr, hitMaxTurns, sessionID := l.runClaudeOnce(ctx, args, work, emit)
+
+	if waitErr != nil && sj.ResumeSessionID != "" && sessionID == "" {
+		// The resume never produced a session event, so claude could not
+		// load the saved conversation (expired or pruned). Restart fresh in
+		// the same workspace so the retry lineage isn't permanently wedged
+		// on a dead session id.
+		emit(Event{Kind: KindText, Text: "resume of session " + sj.ResumeSessionID + " failed; restarting fresh"})
+		fresh := sj
+		fresh.ResumeSessionID = ""
+		args = buildClaudeArgs(fresh, l.Effort, l.MaxTurns)
+		waitErr, hitMaxTurns, sessionID = l.runClaudeOnce(ctx, args, work, emit)
 	}
 
-	hitMaxTurns := false
-	wrappedEmit := func(e Event) {
-		if e.Kind == KindError && e.Text == "hit max turns" {
-			hitMaxTurns = true
-		}
-		emit(e)
-	}
-	ParseStream(stdout, wrappedEmit)
-	waitErr := cmd.Wait()
-	if cmd.Process != nil {
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
-	}
-
-	res := SkillResult{Commit: commit}
+	res := SkillResult{Commit: commit, SessionID: sessionID}
 	if outPath != "" {
 		res.Report = readCappedReport(outPath, emit)
 	}
@@ -156,6 +158,41 @@ func (l LocalClaude) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)
 		return res, fmt.Errorf("claude exited: %w", waitErr)
 	}
 	return res, nil
+}
+
+// runClaudeOnce starts one `claude -p` invocation in work, streams its
+// output through emit, and reports the wait error, whether the run hit the
+// max-turns cap, and the session id from the init event (empty when no init
+// event arrived, e.g. a --resume that could not find the conversation).
+func (l LocalClaude) runClaudeOnce(ctx context.Context, args []string, work string, emit func(Event)) (waitErr error, hitMaxTurns bool, sessionID string) {
+	cmd := exec.CommandContext(ctx, "claude", args...)
+	cmd.Dir = work
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return err, false, ""
+	}
+	cmd.Stderr = cmd.Stdout
+	if err := cmd.Start(); err != nil {
+		return fmt.Errorf("start claude: %w", err), false, ""
+	}
+
+	wrappedEmit := func(e Event) {
+		switch {
+		case e.Kind == KindError && e.Text == "hit max turns":
+			hitMaxTurns = true
+		case e.Kind == KindSession && e.SessionID != "":
+			sessionID = e.SessionID
+		}
+		emit(e)
+	}
+	ParseStream(stdout, wrappedEmit)
+	waitErr = cmd.Wait()
+	if cmd.Process != nil {
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+	}
+	return waitErr, hitMaxTurns, sessionID
 }
 
 // maxReportBytes caps how much of a skill's report.json scrutineer will
@@ -213,8 +250,15 @@ func buildClaudeArgs(sj SkillJob, effort string, globalMaxTurns int) []string {
 	if effort != "" {
 		args = append(args, "--effort", effort)
 	}
+	if sj.ResumeSessionID != "" {
+		args = append(args, "--resume", sj.ResumeSessionID)
+	}
 	args = append(args, "--max-turns", strconv.Itoa(effectiveMaxTurns(sj.MaxTurns, globalMaxTurns)))
-	args = append(args, buildSkillPrompt(sj.Name, sj.OutputFile))
+	if sj.ResumeSessionID != "" {
+		args = append(args, buildResumePrompt(sj.Name, sj.OutputFile))
+	} else {
+		args = append(args, buildSkillPrompt(sj.Name, sj.OutputFile))
+	}
 	return args
 }
 
@@ -235,6 +279,18 @@ func effectiveMaxTurns(perSkill, global int) int {
 // claude which skill to use and where the repo lives.
 func buildSkillPrompt(name, outputFile string) string {
 	p := fmt.Sprintf("Use the %q skill on the repository cloned at ./src.", name)
+	if outputFile != "" {
+		p += fmt.Sprintf(" Write your structured output to ./%s as the skill specifies.", outputFile)
+	}
+	return p
+}
+
+// buildResumePrompt is the nudge handed to a `--resume`d run. The prior
+// turns are already in context, so this just tells the agent to carry on and
+// restates the deliverable — the report file is the whole point of the run,
+// and a resumed agent should not forget to write it.
+func buildResumePrompt(name, outputFile string) string {
+	p := fmt.Sprintf("Continue the %q skill on the repository at ./src from where you left off.", name)
 	if outputFile != "" {
 		p += fmt.Sprintf(" Write your structured output to ./%s as the skill specifies.", outputFile)
 	}

@@ -9,6 +9,37 @@ import (
 	"testing"
 )
 
+func TestBuildDockerArgs_ClaudeConfigMount(t *testing.T) {
+	d := DockerRunner{}
+
+	with := d.buildDockerArgs("/work/abs", "img:latest", "", "/data/claude-config/scan-7")
+	if !hasAdjacent(with, "-v", "/data/claude-config/scan-7:/claude-config") {
+		t.Errorf("expected the config dir bind mount in %v", with)
+	}
+	if !hasAdjacent(with, "-e", "CLAUDE_CONFIG_DIR=/claude-config") {
+		t.Errorf("expected CLAUDE_CONFIG_DIR env in %v", with)
+	}
+
+	// No config dir → no mount and no env, so default scans are unchanged.
+	without := d.buildDockerArgs("/work/abs", "img:latest", "", "")
+	for _, a := range without {
+		if strings.Contains(a, "/claude-config") || strings.HasPrefix(a, "CLAUDE_CONFIG_DIR=") {
+			t.Errorf("did not expect any claude-config args, got %q in %v", a, without)
+		}
+	}
+}
+
+// hasAdjacent reports whether args contains flag immediately followed by val,
+// matching how docker run takes `-v host:container` / `-e KEY=VAL` pairs.
+func hasAdjacent(args []string, flag, val string) bool {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == flag && args[i+1] == val {
+			return true
+		}
+	}
+	return false
+}
+
 func TestDirSize_SumsRegularFilesAcrossSubdirs(t *testing.T) {
 	root := t.TempDir()
 	sub := filepath.Join(root, "nested", "deep")

@@ -1533,6 +1533,12 @@ type ScanOpts struct {
 	SubPath     string
 	Ref         string
 	Profile     string
+	// SessionID and ResumedFromScanID carry a failed scan's claude session
+	// into its retry so the new run continues the conversation with
+	// `claude -p --resume` instead of restarting from turn 0. Both empty
+	// on a normal (non-resuming) enqueue. See scanRetry.
+	SessionID         string
+	ResumedFromScanID *uint
 }
 
 func (s *Server) enqueueSkill(ctx context.Context, repoID, skillID uint, model string) (uint, error) {
@@ -1574,20 +1580,22 @@ func (s *Server) enqueueSkillWith(ctx context.Context, repoID, skillID uint, opt
 		kind = worker.JobExposure
 	}
 	scan := db.Scan{
-		RepositoryID:   repoID,
-		Kind:           kind,
-		Status:         db.ScanQueued,
-		StatusPriority: db.StatusPriorityFor(db.ScanQueued),
-		Model:          opts.Model,
-		SkillID:        &skillID,
-		SkillName:      sk.Name,
-		FindingID:      opts.FindingID,
-		DependentID:    opts.DependentID,
-		SubPath:        opts.SubPath,
-		Ref:            opts.Ref,
-		Profile:        opts.Profile,
-		SkillsRepoSHA:  s.SkillsRepoSHA,
-		APIToken:       NewAPIToken(),
+		RepositoryID:      repoID,
+		Kind:              kind,
+		Status:            db.ScanQueued,
+		StatusPriority:    db.StatusPriorityFor(db.ScanQueued),
+		Model:             opts.Model,
+		SkillID:           &skillID,
+		SkillName:         sk.Name,
+		FindingID:         opts.FindingID,
+		DependentID:       opts.DependentID,
+		SubPath:           opts.SubPath,
+		Ref:               opts.Ref,
+		Profile:           opts.Profile,
+		SessionID:         opts.SessionID,
+		ResumedFromScanID: opts.ResumedFromScanID,
+		SkillsRepoSHA:     s.SkillsRepoSHA,
+		APIToken:          NewAPIToken(),
 	}
 	if err := s.DB.Create(&scan).Error; err != nil {
 		return 0, err

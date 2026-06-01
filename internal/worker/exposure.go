@@ -140,7 +140,7 @@ func (w *Worker) doExposure(ctx context.Context, scan *db.Scan, emit func(Event)
 		"skill_version": skill.Version,
 	})
 
-	workRoot := w.workRoot(scan.ID)
+	workRoot := w.scanWorkRoot(scan)
 	if err := validateSkillPaths(skill.Name, skill.OutputFile); err != nil {
 		return "", err
 	}
@@ -190,7 +190,11 @@ func (w *Worker) doExposure(ctx context.Context, scan *db.Scan, emit func(Event)
 		Profile:         scan.Profile,
 		RequiresProfile: skill.RequiresProfile,
 	}
+	w.applyResume(scan, &sj, emit)
 	res, err := w.Runner.RunSkill(ctx, sj, emit)
+	if res.SessionID != "" && res.SessionID != scan.SessionID {
+		scan.SessionID = res.SessionID
+	}
 	if res.Commit != "" {
 		scan.Commit = res.Commit
 	}
