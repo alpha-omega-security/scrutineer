@@ -176,7 +176,7 @@ Or with a Claude Code OAuth token instead of an API key:
 
 Always bind to `127.0.0.1`. The UI has no authentication; binding to `0.0.0.0` exposes your findings database to anyone on the network.
 
-If docker is available on the host, scrutineer runs each scan in an ephemeral container for isolation. The runner image is published to GHCR and pulled automatically on first use:
+If docker is available on the host, scrutineer runs each scan in an ephemeral container for isolation. The runner image is published to GHCR as a multi-arch manifest (`linux/amd64` and `linux/arm64`) and pulled automatically on first use:
 
     go run ./cmd/scrutineer -skills ./skills
 
