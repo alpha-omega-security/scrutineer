@@ -9,7 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"strconv"
+	"slices"
 	"strings"
 
 	"scrutineer/internal/db"
@@ -69,8 +69,8 @@ func (w *Worker) parsePatchOutput(scan *db.Scan, report string, emit func(Event)
 }
 
 // gatePatch returns "" when the diff is acceptable, otherwise a one-line
-// reason. Checks: diff parses; every target file exists under srcDir; at
-// least one hunk overlaps the line in location; git apply --check accepts it.
+// reason. Checks: diff parses; every target file exists under srcDir; the
+// diff touches a file named in location; git apply --check accepts it.
 func gatePatch(srcDir, location, diff string) string {
 	files, err := parseUnifiedDiff(diff)
 	if err != nil {
@@ -89,7 +89,7 @@ func gatePatch(srcDir, location, diff string) string {
 		}
 	}
 
-	if reason := checkLocationOverlap(files, location); reason != "" {
+	if reason := checkLocationFile(files, location); reason != "" {
 		return reason
 	}
 
@@ -100,51 +100,38 @@ func gatePatch(srcDir, location, diff string) string {
 	return ""
 }
 
-func checkLocationOverlap(files []diffFile, location string) string {
-	locPath, start, end, ok := parseLocation(location)
-	if !ok {
+// checkLocationFile returns "" when the diff touches at least one file named
+// in location, otherwise a one-line reason. It matches on file, not line: a
+// fix often lands in a shared helper far from the flagged sink, so requiring a
+// hunk to overlap the exact line wrongly rejects correct choke-point patches.
+// git apply --check still guarantees the diff applies.
+func checkLocationFile(files []diffFile, location string) string {
+	want := locationPaths(location)
+	if want == nil {
 		return ""
 	}
 	for _, df := range files {
-		if df.Path != locPath {
-			continue
-		}
-		if start == 0 {
+		if slices.Contains(want, df.Path) {
 			return ""
 		}
-		for _, h := range df.Hunks {
-			if h.OldStart <= end && h.OldStart+h.OldCount-1 >= start {
-				return ""
-			}
-		}
 	}
-	if start == 0 {
-		return "no hunk touches " + locPath
-	}
-	return fmt.Sprintf("no hunk overlaps %s:%d", locPath, start)
+	return "no patched file matches location " + location
 }
 
 type diffFile struct {
 	Path    string
 	NewFile bool
-	Hunks   []diffHunk
 }
 
-type diffHunk struct {
-	OldStart int
-	OldCount int
-}
-
-var hunkRE = regexp.MustCompile(`^@@ -(\d+)(?:,(\d+))? \+\d+(?:,\d+)? @@`)
+var hunkRE = regexp.MustCompile(`^@@ -\d+(?:,\d+)? \+\d+(?:,\d+)? @@`)
 
 const maxDiffLineBytes = 4 << 20
 
-// parseUnifiedDiff extracts target file paths and old-side hunk ranges from
-// a unified diff. It is deliberately minimal: enough to drive the gate, not
-// a general diff library.
+// parseUnifiedDiff extracts target file paths from a unified diff, rejecting
+// paths that escape the workspace and malformed hunk headers. It is
+// deliberately minimal: enough to drive the gate, not a general diff library.
 func parseUnifiedDiff(diff string) ([]diffFile, error) {
 	var files []diffFile
-	var cur *diffFile
 	sawFrom := false
 	newFile := false
 
@@ -173,22 +160,14 @@ func parseUnifiedDiff(diff string) ([]diffFile, error) {
 				return nil, fmt.Errorf("diff target escapes workspace: %q", path)
 			}
 			files = append(files, diffFile{Path: path, NewFile: newFile})
-			cur = &files[len(files)-1]
 			newFile = false
 		case strings.HasPrefix(line, "@@ "):
-			if cur == nil {
+			if len(files) == 0 {
 				return nil, fmt.Errorf("hunk header before any file header")
 			}
-			m := hunkRE.FindStringSubmatch(line)
-			if m == nil {
+			if !hunkRE.MatchString(line) {
 				return nil, fmt.Errorf("bad hunk header: %q", line)
 			}
-			start, _ := strconv.Atoi(m[1])
-			count := 1
-			if m[2] != "" {
-				count, _ = strconv.Atoi(m[2])
-			}
-			cur.Hunks = append(cur.Hunks, diffHunk{OldStart: start, OldCount: count})
 		}
 	}
 	if err := sc.Err(); err != nil {
@@ -197,32 +176,40 @@ func parseUnifiedDiff(diff string) ([]diffFile, error) {
 	return files, nil
 }
 
-// parseLocation accepts "path/to/file.ext:N", "path/to/file.ext:N-M", or a
-// bare path. Returns ok=false for anything else (empty, multiple colons that
-// don't end in a line spec); callers treat that as "no overlap check".
-func parseLocation(loc string) (path string, start, end int, ok bool) {
-	loc = strings.TrimSpace(loc)
-	if loc == "" {
-		return "", 0, 0, false
+// locPathRE matches a "path:N" reference inside a Finding.Location. The path
+// class excludes the comma, parenthesis and trailing range that surround it in
+// composite locations, so "logentry.go:106-135)" yields just "logentry.go".
+var locPathRE = regexp.MustCompile(`([^\s,:()]+):\d+`)
+
+// locationPaths returns the file paths a Finding.Location names. A location
+// may list several files with line ranges and a "(data path: a -> b)" trace,
+// e.g. "pkg/a.go:10-20, pkg/b.go:5 (data path: pkg/c.go -> pkg/d.go:30)"; we
+// pull out every "path:line" reference. A location carrying no such reference
+// is treated as a single bare path. Returns nil for an empty location.
+func locationPaths(location string) []string {
+	var paths []string
+	for _, m := range locPathRE.FindAllStringSubmatch(location, -1) {
+		paths = append(paths, m[1])
 	}
-	i := strings.LastIndexByte(loc, ':')
-	if i < 0 {
-		return loc, 0, 0, true
-	}
-	spec := loc[i+1:]
-	if lo, hi, found := strings.Cut(spec, "-"); found {
-		a, errA := strconv.Atoi(lo)
-		b, errB := strconv.Atoi(hi)
-		if errA == nil && errB == nil && a > 0 && b >= a {
-			return loc[:i], a, b, true
+	if paths == nil {
+		if loc := strings.TrimSpace(location); loc != "" {
+			paths = append(paths, loc)
 		}
-	} else if n, err := strconv.Atoi(spec); err == nil && n > 0 {
-		return loc[:i], n, n, true
 	}
-	return loc, 0, 0, true
+	return paths
 }
 
 func gitApplyCheck(srcDir, diff string) (string, error) {
+	// The patch skill captures its diff with `git diff HEAD` and leaves the
+	// edits applied in srcDir; it never reverts. Re-applying an already-applied
+	// diff always fails, so reset the per-scan copy to HEAD first. reset --hard
+	// clears the skill's `git add -N` index entries; clean -fd drops any new
+	// files it created so a /dev/null hunk can recreate them.
+	for _, args := range [][]string{{"reset", "-q", "--hard", "HEAD"}, {"clean", "-qfd"}} {
+		if out, err := exec.Command("git", append([]string{"-C", srcDir}, args...)...).CombinedOutput(); err != nil {
+			return string(out), err
+		}
+	}
 	cmd := exec.Command("git", "-C", srcDir, "apply", "--check", "-")
 	cmd.Stdin = strings.NewReader(diff)
 	var out bytes.Buffer

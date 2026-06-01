@@ -436,9 +436,9 @@ type Finding struct {
 	DisclosureDraft string            `gorm:"type:text"`
 	Assignee        string            `gorm:"index"`
 	// SuggestedFix is a unified diff from the patch skill that has passed
-	// the applicability gate (parses, targets real files, overlaps
-	// Location, git apply --check clean). Empty when no patch has run or
-	// the gate rejected it. SuggestedFixCommit is the sha it applies to.
+	// the applicability gate (parses, targets real files, touches a file
+	// named in Location, git apply --check clean). Empty when no patch has
+	// run or the gate rejected it. SuggestedFixCommit is the sha it applies to.
 	SuggestedFix       string `gorm:"type:text"`
 	SuggestedFixCommit string
 
