@@ -162,6 +162,21 @@ func TestLocalClaude_ResumeFallsBackToFresh(t *testing.T) {
 	}
 }
 
+func TestClaudePlanLimitText(t *testing.T) {
+	for _, text := range []string{
+		"Claude usage limit reached. Your limit will reset later.",
+		"API Error: 429 Too Many Requests",
+		"quota exceeded for this account",
+	} {
+		if got := claudePlanLimitText(text); got == "" {
+			t.Errorf("claudePlanLimitText(%q) did not match", text)
+		}
+	}
+	if got := claudePlanLimitText("syntax error in generated report"); got != "" {
+		t.Errorf("claudePlanLimitText returned false positive %q", got)
+	}
+}
+
 func flagValue(args []string, flag string) string {
 	for i, a := range args {
 		if a == flag && i+1 < len(args) {

@@ -52,7 +52,7 @@ func (s *Server) apiExportScans(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := s.DB.Model(&db.Scan{}).Order("id desc")
-	if v := r.URL.Query().Get("status"); v != "" {
+	if v := r.URL.Query().Get(statusKey); v != "" {
 		q = q.Where("status = ?", v)
 	}
 	if v := r.URL.Query().Get("skill"); v != "" {
@@ -73,7 +73,7 @@ func applyFindingFilters(q *gorm.DB, r *http.Request) *gorm.DB {
 	if v := r.URL.Query().Get("severity"); v != "" {
 		q = q.Where("severity = ?", v)
 	}
-	if v := r.URL.Query().Get("status"); v != "" {
+	if v := r.URL.Query().Get(statusKey); v != "" {
 		q = q.Where("status = ?", v)
 	}
 	return q
@@ -124,7 +124,7 @@ func findingExport(f db.Finding) map[string]any {
 		"sinks":               f.Sinks,
 		"title":               f.Title,
 		"severity":            f.Severity,
-		"status":              string(f.Status),
+		statusKey:             string(f.Status),
 		"cwe":                 f.CWE,
 		"location":            f.Location,
 		"affected":            f.Affected,
@@ -157,7 +157,7 @@ func scanExport(sc db.Scan) map[string]any {
 		"id":                 sc.ID,
 		"repository_id":      sc.RepositoryID,
 		"kind":               sc.Kind,
-		"status":             string(sc.Status),
+		statusKey:            string(sc.Status),
 		"model":              sc.Model,
 		"skill_id":           sc.SkillID,
 		"skill_version":      sc.SkillVersion,
@@ -176,7 +176,7 @@ func scanExport(sc db.Scan) map[string]any {
 		"prompt":             sc.Prompt,
 		"report":             sc.Report,
 		"log":                sc.Log,
-		"error":              sc.Error,
+		errorKey:             sc.Error,
 		"findings_count":     sc.FindingsCount,
 		"created_at":         sc.CreatedAt,
 		"updated_at":         sc.UpdatedAt,

@@ -2942,6 +2942,106 @@ func TestScanCancel_terminalRejected(t *testing.T) {
 	}
 }
 
+func TestScansPauseQueued(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/x.git", Name: "x"}
+	s.DB.Create(&repo)
+	queued := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanQueued, StatusPriority: db.StatusPriorityFor(db.ScanQueued)}
+	running := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanRunning, StatusPriority: db.StatusPriorityFor(db.ScanRunning)}
+	s.DB.Create(&queued)
+	s.DB.Create(&running)
+
+	req := httptest.NewRequest("POST", "/scans/pause-queued", nil)
+	req.Host = testHost
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("pause status %d: %s", w.Code, w.Body)
+	}
+	if loc := w.Header().Get("Location"); loc != "/scans?status=paused" {
+		t.Errorf("redirect = %q, want paused filter", loc)
+	}
+
+	var gotQueued, gotRunning db.Scan
+	s.DB.First(&gotQueued, queued.ID)
+	s.DB.First(&gotRunning, running.ID)
+	if gotQueued.Status != db.ScanPaused {
+		t.Errorf("queued status = %s, want paused", gotQueued.Status)
+	}
+	if gotQueued.StatusPriority != db.StatusPriorityFor(db.ScanPaused) {
+		t.Errorf("paused priority = %d", gotQueued.StatusPriority)
+	}
+	if gotRunning.Status != db.ScanRunning {
+		t.Errorf("running status = %s, want running", gotRunning.Status)
+	}
+}
+
+func TestScanResumePaused(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/x.git", Name: "x"}
+	s.DB.Create(&repo)
+	skill := db.Skill{Name: "deep-dive", Description: "x", Body: "b", Active: true, Source: "ui", Version: 1}
+	s.DB.Create(&skill)
+	scan := db.Scan{
+		RepositoryID: repo.ID, Kind: "skill", Status: db.ScanPaused,
+		StatusPriority: db.StatusPriorityFor(db.ScanPaused),
+		SkillID:        &skill.ID, SkillName: skill.Name, Error: "paused by user",
+	}
+	s.DB.Create(&scan)
+
+	req := httptest.NewRequest("POST", fmt.Sprintf("/scans/%d/resume", scan.ID), nil)
+	req.Host = testHost
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("resume status %d: %s", w.Code, w.Body)
+	}
+
+	var got db.Scan
+	s.DB.First(&got, scan.ID)
+	if got.Status != db.ScanQueued {
+		t.Errorf("status = %s, want queued", got.Status)
+	}
+	if got.StatusPriority != db.StatusPriorityFor(db.ScanQueued) {
+		t.Errorf("priority = %d", got.StatusPriority)
+	}
+	if got.Error != "" {
+		t.Errorf("error = %q, want cleared", got.Error)
+	}
+}
+
+func TestJobs_showsPlanLimitPauseActions(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/x.git", Name: "x"}
+	s.DB.Create(&repo)
+	s.DB.Create(&db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanQueued, StatusPriority: db.StatusPriorityFor(db.ScanQueued)})
+	s.DB.Create(&db.Scan{
+		RepositoryID: repo.ID, Kind: "skill", Status: db.ScanFailed,
+		StatusPriority: db.StatusPriorityFor(db.ScanFailed),
+		Error:          "Claude plan limit reached. Pause queued scans and retry after your limit resets.",
+	})
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/scans"))
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	body := w.Body.String()
+	for _, want := range []string{"Claude plan limit reached", "/scans/pause-queued"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q in jobs body", want)
+		}
+	}
+}
+
 func TestSubprojectsRenderedOnRepoPage(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

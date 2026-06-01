@@ -5,6 +5,20 @@
     <i data-lucide="list-checks"></i> Scans
   </h2>
   <div class="flex items-center gap-2">
+    {{if .QueuedCount}}
+      <form method="post" action="/scans/pause-queued"
+            hx-post="/scans/pause-queued" hx-swap="none"
+            hx-confirm="Pause every queued scan? Running scans will continue.">
+        <button type="submit" class="btn-outline"><i data-lucide="pause"></i> Pause queued</button>
+      </form>
+    {{end}}
+    {{if .PausedCount}}
+      <form method="post" action="/scans/resume-paused"
+            hx-post="/scans/resume-paused" hx-swap="none"
+            hx-confirm="Resume every paused scan?">
+        <button type="submit" class="btn-outline"><i data-lucide="play"></i> Resume paused</button>
+      </form>
+    {{end}}
     {{if and (eq .Status "failed") .Page.Total}}
       <form method="post" action="/scans/retry-failed?skill={{.Skill}}"
             hx-post="/scans/retry-failed?skill={{.Skill}}" hx-swap="none"
@@ -37,7 +51,7 @@
       <div data-popover aria-hidden="true" data-align="end">
         <div role="menu">
           <a role="menuitem" href="/scans?skill={{.Skill}}&sort={{.Sort}}">All statuses</a>
-          {{range (list "queued" "running" "done" "failed" "cancelled")}}
+          {{range (list "queued" "paused" "running" "done" "failed" "cancelled")}}
             <a role="menuitem" href="/scans?skill={{$.Skill}}&status={{.}}&sort={{$.Sort}}"
                {{if eq . $.Status}}aria-current="true"{{end}}>{{.}}</a>
           {{end}}
@@ -61,6 +75,16 @@
     </div>
   </div>
 </div>
+
+{{if and .PlanLimitFailedCount .QueuedCount}}
+  <div class="alert-destructive mb-6">
+    <i data-lucide="triangle-alert"></i>
+    <section>
+      <strong>Claude plan limit reached.</strong>
+      Pause queued scans so they do not keep starting, then resume them after the limit resets.
+    </section>
+  </div>
+{{end}}
 
 {{if .Scans}}
   <table class="table">

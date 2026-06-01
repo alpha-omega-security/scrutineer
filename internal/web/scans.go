@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -18,7 +19,7 @@ func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 	if skillName != "" {
 		q = q.Where("skill_name = ?", skillName)
 	}
-	status := r.URL.Query().Get("status")
+	status := r.URL.Query().Get(statusKey)
 	if status != "" {
 		q = q.Where("status = ?", status)
 	}
@@ -27,7 +28,7 @@ func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 	switch sort {
 	case "skill":
 		q = q.Order("skill_name, id desc")
-	case "status":
+	case statusKey:
 		q = q.Order("status, id desc")
 	case sortRepository:
 		q = q.Joins("Repository").Order("`Repository`.name, scans.id desc")
@@ -45,6 +46,9 @@ func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 		Limit(perPage).Offset((page.N - 1) * perPage).Find(&scans)
 
 	skillNames := s.scanSkillNames()
+	queuedCount := s.scanStatusCount(db.ScanQueued)
+	pausedCount := s.scanStatusCount(db.ScanPaused)
+	planLimitFailedCount := s.planLimitFailedCount()
 
 	anySubPath := false
 	for _, sc := range scans {
@@ -56,8 +60,23 @@ func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "jobs.html", map[string]any{
 		"Scans": scans, "Page": page,
 		"Skill": skillName, "Status": status, "Sort": sort, "Skills": skillNames,
-		"AnySubPath": anySubPath,
+		"AnySubPath": anySubPath, "QueuedCount": queuedCount, "PausedCount": pausedCount,
+		"PlanLimitFailedCount": planLimitFailedCount,
 	})
+}
+
+func (s *Server) scanStatusCount(status db.ScanStatus) int64 {
+	var n int64
+	s.DB.Model(&db.Scan{}).Where("status = ?", status).Count(&n)
+	return n
+}
+
+func (s *Server) planLimitFailedCount() int64 {
+	var n int64
+	s.DB.Model(&db.Scan{}).
+		Where("status = ? AND error LIKE ?", db.ScanFailed, "Claude plan limit reached.%").
+		Count(&n)
+	return n
 }
 
 const skillNamesCacheTTL = 30 * time.Second
@@ -195,9 +214,82 @@ func (s *Server) scansRetryFailed(w http.ResponseWriter, r *http.Request) {
 	s.redirect(w, r, target)
 }
 
+func (s *Server) scansPauseQueued(w http.ResponseWriter, r *http.Request) {
+	var scans []db.Scan
+	if err := s.DB.Where("status = ?", db.ScanQueued).Find(&scans).Error; err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	now := time.Now()
+	for _, sc := range scans {
+		s.DB.Model(&db.Scan{}).Where("id = ? AND status = ?", sc.ID, db.ScanQueued).Updates(map[string]any{
+			statusKey:         db.ScanPaused,
+			"status_priority": db.StatusPriorityFor(db.ScanPaused),
+			errorKey:          "paused by user",
+			"finished_at":     &now,
+		})
+	}
+	setFlash(w, Flash{Category: successKey, Title: fmt.Sprintf("%d queued scans paused", len(scans))})
+	s.redirect(w, r, "/scans?status=paused")
+}
+
+func (s *Server) scansResumePaused(w http.ResponseWriter, r *http.Request) {
+	var scans []db.Scan
+	if err := s.DB.Where("status = ?", db.ScanPaused).Find(&scans).Error; err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	var resumed, errored int
+	for _, sc := range scans {
+		if err := s.resumeScan(r.Context(), &sc); err != nil {
+			errored++
+			continue
+		}
+		resumed++
+	}
+	cat := successKey
+	if errored > 0 {
+		cat = errorKey
+	}
+	setFlash(w, Flash{Category: cat, Title: fmt.Sprintf("%d paused scans resumed", resumed)})
+	s.redirect(w, r, "/scans?status=queued")
+}
+
+func (s *Server) scanResume(w http.ResponseWriter, r *http.Request) {
+	scan, ok := loadByID[db.Scan](s, w, r)
+	if !ok {
+		return
+	}
+	if scan.Status != db.ScanPaused {
+		http.Error(w, "scan is not paused", http.StatusBadRequest)
+		return
+	}
+	if err := s.resumeScan(r.Context(), &scan); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.redirect(w, r, fmt.Sprintf("/scans/%d", scan.ID))
+}
+
+func (s *Server) resumeScan(ctx context.Context, scan *db.Scan) error {
+	priority := worker.PrioScan
+	if scan.FindingID != nil {
+		priority = worker.PrioFinding
+	}
+	if err := s.Queue.Enqueue(ctx, scan.Kind, scan.ID, priority); err != nil {
+		return err
+	}
+	return s.DB.Model(&db.Scan{}).Where("id = ? AND status = ?", scan.ID, db.ScanPaused).Updates(map[string]any{
+		statusKey:         db.ScanQueued,
+		"status_priority": db.StatusPriorityFor(db.ScanQueued),
+		errorKey:          "",
+		"finished_at":     nil,
+	}).Error
+}
+
 func retryFailedToast(retried, skipped, errored int) Flash {
 	if retried == 0 && skipped == 0 && errored == 0 {
-		return Flash{Category: "success", Title: "No failed scans to retry"}
+		return Flash{Category: successKey, Title: "No failed scans to retry"}
 	}
 	parts := []string{fmt.Sprintf("%d retried", retried)}
 	if skipped > 0 {
@@ -206,12 +298,12 @@ func retryFailedToast(retried, skipped, errored int) Flash {
 	if errored > 0 {
 		parts = append(parts, fmt.Sprintf("%d errored", errored))
 	}
-	cat := "success"
+	cat := successKey
 	switch {
 	case errored > 0:
-		cat = "error"
+		cat = errorKey
 	case retried == 0:
-		cat = "warning"
+		cat = warningKey
 	}
 	return Flash{Category: cat, Title: strings.Join(parts, ", ")}
 }
@@ -225,12 +317,17 @@ func (s *Server) scanCancel(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "scan already finished", http.StatusBadRequest)
 		return
 	}
+	if scan.Status == db.ScanPaused {
+		http.Error(w, "scan is paused", http.StatusBadRequest)
+		return
+	}
 	if !s.Worker.Cancel(scan.ID) {
 		// Not in flight: mark the row so the queue handler drops it on pickup.
+		now := time.Now()
 		s.DB.Model(&scan).Updates(map[string]any{
-			"status":      db.ScanCancelled,
-			"error":       "cancelled by user",
-			"finished_at": new(time.Now()),
+			statusKey:     db.ScanCancelled,
+			errorKey:      "cancelled by user",
+			"finished_at": &now,
 		})
 	}
 	s.redirect(w, r, fmt.Sprintf("/scans/%d", scan.ID))

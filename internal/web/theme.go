@@ -140,7 +140,7 @@ func (s *Server) settingsUpdateTheme(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,
 	})
-	setFlash(w, Flash{Category: "success", Title: "Theme updated"})
+	setFlash(w, Flash{Category: successKey, Title: "Theme updated"})
 	s.redirect(w, r, "/settings")
 }
 
@@ -151,7 +151,7 @@ func (s *Server) settingsUpdateModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	SetDefaultModel(model)
-	setFlash(w, Flash{Category: "success", Title: "Default model updated"})
+	setFlash(w, Flash{Category: successKey, Title: "Default model updated"})
 	s.redirect(w, r, "/settings")
 }
 
@@ -168,6 +168,6 @@ func (s *Server) settingsUpdateColorScheme(w http.ResponseWriter, r *http.Reques
 		MaxAge:   cookieMaxAge,
 		SameSite: http.SameSiteStrictMode,
 	})
-	setFlash(w, Flash{Category: "success", Title: "Color scheme updated"})
+	setFlash(w, Flash{Category: successKey, Title: "Color scheme updated"})
 	s.redirect(w, r, "/settings")
 }

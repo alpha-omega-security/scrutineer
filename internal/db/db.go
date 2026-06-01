@@ -90,6 +90,7 @@ type ScanStatus string
 const (
 	ScanQueued    ScanStatus = "queued"
 	ScanRunning   ScanStatus = "running"
+	ScanPaused    ScanStatus = "paused"
 	ScanDone      ScanStatus = "done"
 	ScanFailed    ScanStatus = "failed"
 	ScanCancelled ScanStatus = "cancelled"
@@ -787,14 +788,23 @@ func (s ScanStatus) Terminal() bool {
 	return s == ScanDone || s == ScanFailed || s == ScanCancelled
 }
 
+const (
+	scanPriorityRunning = iota
+	scanPriorityQueued
+	scanPriorityPaused
+	scanPriorityTerminal
+)
+
 func StatusPriorityFor(s ScanStatus) int {
 	switch s {
 	case ScanRunning:
-		return 0
+		return scanPriorityRunning
 	case ScanQueued:
-		return 1
+		return scanPriorityQueued
+	case ScanPaused:
+		return scanPriorityPaused
 	default:
-		return 2 //nolint:mnd
+		return scanPriorityTerminal
 	}
 }
 
@@ -922,7 +932,8 @@ type Subproject struct {
 func BackfillStatusPriority(gdb *gorm.DB) {
 	gdb.Exec(`UPDATE scans SET status_priority = 0 WHERE status = 'running' AND (status_priority IS NULL OR status_priority != 0)`)
 	gdb.Exec(`UPDATE scans SET status_priority = 1 WHERE status = 'queued' AND (status_priority IS NULL OR status_priority != 1)`)
-	gdb.Exec(`UPDATE scans SET status_priority = 2 WHERE status NOT IN ('running', 'queued') AND (status_priority IS NULL OR status_priority != 2)`)
+	gdb.Exec(`UPDATE scans SET status_priority = 2 WHERE status = 'paused' AND (status_priority IS NULL OR status_priority != 2)`)
+	gdb.Exec(`UPDATE scans SET status_priority = 3 WHERE status NOT IN ('running', 'queued', 'paused') AND (status_priority IS NULL OR status_priority != 3)`)
 }
 
 // BackfillFindingRepository copies Scan.RepositoryID onto Finding rows

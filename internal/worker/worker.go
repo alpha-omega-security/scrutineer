@@ -194,7 +194,7 @@ func (w *Worker) wrap(h handler) func(context.Context, []byte) error {
 		if err := w.DB.Preload("Repository").First(&scan, p.ScanID).Error; err != nil {
 			return fmt.Errorf("load scan %d: %w", p.ScanID, err)
 		}
-		if scan.Status.Terminal() {
+		if scan.Status != db.ScanQueued {
 			w.Log.Info("dropping stale job", "scan", scan.ID, "status", scan.Status)
 			return nil
 		}
@@ -230,39 +230,7 @@ func (w *Worker) wrap(h handler) func(context.Context, []byte) error {
 
 		report, err := h(ctx, &scan, emit)
 
-		scan.FinishedAt = new(time.Now())
-		switch {
-		case errors.Is(ctx.Err(), context.DeadlineExceeded):
-			scan.Status = db.ScanFailed
-			scan.Error = fmt.Sprintf("scan timed out after %s", timeout)
-			emit(Event{Kind: KindError, Text: scan.Error})
-		case errors.Is(ctx.Err(), context.Canceled):
-			scan.Status = db.ScanCancelled
-			scan.Error = "cancelled by user"
-			emit(Event{Kind: KindError, Text: "cancelled by user"})
-		case err != nil:
-			if _, ok := errors.AsType[*MaxTurnsReachedError](err); ok {
-				scan.Status = db.ScanDone
-				scan.Report = report
-				emit(Event{Kind: KindText, Text: "scan completed (hit max turns cap)"})
-			} else if _, ok := errors.AsType[*FailOnThresholdError](err); ok {
-				scan.Status = db.ScanFailed
-				scan.Report = report
-				scan.Error = err.Error()
-				emit(Event{Kind: KindError, Text: err.Error()})
-			} else if _, ok := errors.AsType[*SchemaValidationError](err); ok {
-				scan.Status = db.ScanFailed
-				scan.Report = report
-				scan.Error = err.Error()
-			} else {
-				scan.Status = db.ScanFailed
-				scan.Error = err.Error()
-				emit(Event{Kind: KindError, Text: err.Error()})
-			}
-		default:
-			scan.Status = db.ScanDone
-			scan.Report = report
-		}
+		finishScan(ctx, &scan, report, err, timeout, emit)
 		if scan.Status == db.ScanDone {
 			w.clearSessionStore(&scan)
 		}
@@ -278,5 +246,49 @@ func (w *Worker) wrap(h handler) func(context.Context, []byte) error {
 		w.publish(scan.ID, scan.RepositoryID, "scan-status", string(scan.Status))
 		w.Log.Info("job finished", "scan", scan.ID, "kind", scan.Kind, "status", scan.Status)
 		return nil
+	}
+}
+
+func finishScan(ctx context.Context, scan *db.Scan, report string, err error, timeout time.Duration, emit func(Event)) {
+	scan.FinishedAt = new(time.Now())
+	switch {
+	case errors.Is(ctx.Err(), context.DeadlineExceeded):
+		scan.Status = db.ScanFailed
+		scan.Error = fmt.Sprintf("scan timed out after %s", timeout)
+		emit(Event{Kind: KindError, Text: scan.Error})
+	case errors.Is(ctx.Err(), context.Canceled):
+		scan.Status = db.ScanCancelled
+		scan.Error = "cancelled by user"
+		emit(Event{Kind: KindError, Text: scan.Error})
+	case err != nil:
+		finishErroredScan(scan, report, err, emit)
+	default:
+		scan.Status = db.ScanDone
+		scan.Report = report
+	}
+}
+
+func finishErroredScan(scan *db.Scan, report string, err error, emit func(Event)) {
+	scan.Status = db.ScanFailed
+	scan.Error = err.Error()
+	_, maxTurns := errors.AsType[*MaxTurnsReachedError](err)
+	_, failOnThreshold := errors.AsType[*FailOnThresholdError](err)
+	_, schemaValidation := errors.AsType[*SchemaValidationError](err)
+	_, planLimit := errors.AsType[*ClaudePlanLimitError](err)
+	switch {
+	case maxTurns:
+		scan.Status = db.ScanDone
+		scan.Report = report
+		scan.Error = ""
+		emit(Event{Kind: KindText, Text: "scan completed (hit max turns cap)"})
+	case failOnThreshold:
+		scan.Report = report
+		emit(Event{Kind: KindError, Text: scan.Error})
+	case schemaValidation:
+		scan.Report = report
+	case planLimit:
+		emit(Event{Kind: KindError, Text: scan.Error})
+	default:
+		emit(Event{Kind: KindError, Text: scan.Error})
 	}
 }

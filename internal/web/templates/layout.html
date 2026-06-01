@@ -168,6 +168,11 @@
           hx-swap="none">
       <button type="submit" class="btn-sm-ghost" data-tooltip="Cancel"><i data-lucide="x"></i></button>
     </form>
+  {{else if eq (status .Status) "paused"}}
+    <form method="post" action="/scans/{{.ID}}/resume" hx-post="/scans/{{.ID}}/resume"
+          hx-swap="none">
+      <button type="submit" class="btn-sm-ghost" data-tooltip="Resume"><i data-lucide="play"></i></button>
+    </form>
   {{else if and (or (eq (status .Status) "failed") (eq (status .Status) "cancelled")) .SkillID}}
     <form method="post" action="/scans/{{.ID}}/retry" hx-post="/scans/{{.ID}}/retry"
           hx-swap="none">
@@ -200,6 +205,7 @@
   {{if eq . "done"}}<span class="badge-secondary"><i data-lucide="check"></i> complete</span>
   {{else if eq . "failed"}}<span class="badge-destructive"><i data-lucide="x"></i> failed</span>
   {{else if eq . "cancelled"}}<span class="badge-outline"><i data-lucide="circle-slash"></i> cancelled</span>
+  {{else if eq . "paused"}}<span class="badge-outline"><i data-lucide="pause"></i> paused</span>
   {{else if eq . "running"}}<span class="badge-primary"><i data-lucide="loader-circle" class="animate-spin"></i> running</span>
   {{else if eq . "active"}}<span class="badge-secondary"><i data-lucide="circle-check"></i> active</span>
   {{else if eq . "inactive"}}<span class="badge-outline"><i data-lucide="moon"></i> inactive</span>

@@ -160,14 +160,14 @@ func TestStatusPriority_sortOrder(t *testing.T) {
 	repo := Repository{URL: "https://example.com/sort-test", Name: "sort-test"}
 	gdb.Create(&repo)
 
-	for _, st := range []ScanStatus{ScanDone, ScanRunning, ScanQueued} {
+	for _, st := range []ScanStatus{ScanDone, ScanPaused, ScanRunning, ScanQueued} {
 		sc := Scan{RepositoryID: repo.ID, Kind: "skill", Status: st, StatusPriority: StatusPriorityFor(st)}
 		gdb.Create(&sc)
 	}
 
 	var scans []Scan
 	gdb.Order("status_priority, id desc").Find(&scans)
-	if len(scans) != 3 {
+	if len(scans) != 4 {
 		t.Fatalf("got %d scans", len(scans))
 	}
 	if scans[0].Status != ScanRunning {
@@ -176,8 +176,11 @@ func TestStatusPriority_sortOrder(t *testing.T) {
 	if scans[1].Status != ScanQueued {
 		t.Errorf("second scan status = %s, want queued", scans[1].Status)
 	}
-	if scans[2].Status != ScanDone {
-		t.Errorf("third scan status = %s, want done", scans[2].Status)
+	if scans[2].Status != ScanPaused {
+		t.Errorf("third scan status = %s, want paused", scans[2].Status)
+	}
+	if scans[3].Status != ScanDone {
+		t.Errorf("fourth scan status = %s, want done", scans[3].Status)
 	}
 	for _, sc := range scans {
 		t.Logf("id=%d status=%s priority=%d", sc.ID, sc.Status, sc.StatusPriority)

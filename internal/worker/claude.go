@@ -132,10 +132,17 @@ func (l LocalClaude) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)
 	}
 
 	emit(Event{Kind: KindText, Text: "$ claude -p <skill:" + sj.Name + ">"})
+	planLimitText := ""
+	wrappedEmit := func(e Event) {
+		if planLimitText == "" {
+			planLimitText = claudePlanLimitText(e.Text)
+		}
+		emit(e)
+	}
 	args := buildClaudeArgs(sj, l.Effort, l.MaxTurns)
-	hitMaxTurns, sessionID, waitErr := l.runClaudeOnce(ctx, args, work, emit)
+	hitMaxTurns, sessionID, waitErr := l.runClaudeOnce(ctx, args, work, wrappedEmit)
 
-	if waitErr != nil && sj.ResumeSessionID != "" && sessionID == "" {
+	if waitErr != nil && sj.ResumeSessionID != "" && sessionID == "" && planLimitText == "" {
 		// The resume never produced a session event, so claude could not
 		// load the saved conversation (expired or pruned). Restart fresh in
 		// the same workspace so the retry lineage isn't permanently wedged
@@ -144,7 +151,7 @@ func (l LocalClaude) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)
 		fresh := sj
 		fresh.ResumeSessionID = ""
 		args = buildClaudeArgs(fresh, l.Effort, l.MaxTurns)
-		hitMaxTurns, sessionID, waitErr = l.runClaudeOnce(ctx, args, work, emit)
+		hitMaxTurns, sessionID, waitErr = l.runClaudeOnce(ctx, args, work, wrappedEmit)
 	}
 
 	res := SkillResult{Commit: commit, SessionID: sessionID}
@@ -154,6 +161,9 @@ func (l LocalClaude) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)
 	if waitErr != nil {
 		if hitMaxTurns {
 			return res, &MaxTurnsReachedError{}
+		}
+		if planLimitText != "" {
+			return res, &ClaudePlanLimitError{Detail: planLimitText}
 		}
 		return res, fmt.Errorf("claude exited: %w", waitErr)
 	}
