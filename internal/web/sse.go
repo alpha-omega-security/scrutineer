@@ -127,7 +127,7 @@ func (s *Server) renderScanStatus(scanID uint) string {
 	s.DB.Model(&db.Finding{}).Where("scan_id = ?", scan.ID).Count(&n)
 	scan.FindingsCount = int(n)
 
-	cat := "success"
+	cat := flashSuccess
 	if scan.Status != db.ScanDone {
 		cat = "error"
 	}

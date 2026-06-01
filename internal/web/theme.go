@@ -2,13 +2,25 @@ package web
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"slices"
+	"strconv"
 	"time"
 
 	"scrutineer/internal/config"
 	"scrutineer/internal/db"
 	"scrutineer/internal/worker"
+)
+
+// Bounds for the operator-tunable knobs on the Settings page. They guard
+// against nonsense values (a 0 or 5000-wide concurrency, a 1-turn cap that
+// fails every scan) rather than enforcing a hard system limit.
+const (
+	minConcurrency = 1
+	maxConcurrency = 64
+	minMaxTurns    = 1
+	maxMaxTurns    = 500
 )
 
 const cookieMaxAge = 365 * 24 * 60 * 60 //nolint:mnd
@@ -74,18 +86,30 @@ func (s *Server) settingsShow(w http.ResponseWriter, r *http.Request) {
 
 	meta := s.toolMetadataCached(r.Context())
 
+	// ConcurrencyInput pre-fills the form with the persisted value when set,
+	// else the value the runner is actually using now. MaxTurns is 0 when
+	// unconfigured; the template then shows an empty field whose placeholder
+	// names the built-in fallback rather than asserting an active number.
+	concurrencyInput := s.Queue.Concurrency()
+	if v := db.SettingInt(s.DB, db.SettingConcurrency); v > 0 {
+		concurrencyInput = v
+	}
+
 	s.render(w, r, "settings.html", map[string]any{
-		"Themes":       config.Themes,
-		"Models":       Models,
-		"DefaultModel": DefaultModel(),
-		"ColorScheme":  resolveColorScheme(r),
-		"Concurrency":  s.Queue.Concurrency,
-		"Stats":        stats,
-		"DBSize":       dbSizeBytes,
-		"DBPath":       dbPath,
-		"WorkDir":      s.Worker.DataDir,
-		"Commit":       s.Commit,
-		"Meta":         meta,
+		"Themes":           config.Themes,
+		"Models":           Models,
+		"DefaultModel":     DefaultModel(),
+		"ColorScheme":      resolveColorScheme(r),
+		"Concurrency":      s.Queue.Concurrency(),
+		"ConcurrencyInput": concurrencyInput,
+		"MaxTurns":         db.SettingInt(s.DB, db.SettingDefaultMaxTurns),
+		"DefaultMaxTurns":  worker.DefaultSkillMaxTurns,
+		"Stats":            stats,
+		"DBSize":           dbSizeBytes,
+		"DBPath":           dbPath,
+		"WorkDir":          s.Worker.DataDir,
+		"Commit":           s.Commit,
+		"Meta":             meta,
 	})
 }
 
@@ -140,7 +164,7 @@ func (s *Server) settingsUpdateTheme(w http.ResponseWriter, r *http.Request) {
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,
 	})
-	setFlash(w, Flash{Category: "success", Title: "Theme updated"})
+	setFlash(w, Flash{Category: flashSuccess, Title: "Theme updated"})
 	s.redirect(w, r, "/settings")
 }
 
@@ -151,7 +175,7 @@ func (s *Server) settingsUpdateModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	SetDefaultModel(model)
-	setFlash(w, Flash{Category: "success", Title: "Default model updated"})
+	setFlash(w, Flash{Category: flashSuccess, Title: "Default model updated"})
 	s.redirect(w, r, "/settings")
 }
 
@@ -168,6 +192,68 @@ func (s *Server) settingsUpdateColorScheme(w http.ResponseWriter, r *http.Reques
 		MaxAge:   cookieMaxAge,
 		SameSite: http.SameSiteStrictMode,
 	})
-	setFlash(w, Flash{Category: "success", Title: "Color scheme updated"})
+	setFlash(w, Flash{Category: flashSuccess, Title: "Color scheme updated"})
+	s.redirect(w, r, "/settings")
+}
+
+func (s *Server) settingsUpdateConcurrency(w http.ResponseWriter, r *http.Request) {
+	n, err := strconv.Atoi(r.FormValue("concurrency"))
+	if err != nil || n < minConcurrency || n > maxConcurrency {
+		http.Error(w, "concurrency must be between 1 and 64", http.StatusUnprocessableEntity)
+		return
+	}
+	if err := db.SetSetting(s.DB, db.SettingConcurrency, strconv.Itoa(n)); err != nil {
+		http.Error(w, "could not save setting", http.StatusInternalServerError)
+		return
+	}
+	if n == s.Queue.Concurrency() {
+		setFlash(w, Flash{Category: flashSuccess, Title: "Concurrency saved"})
+		s.redirect(w, r, "/settings")
+		return
+	}
+	// The runner's limit is fixed at construction, so applying a new value
+	// means standing up a fresh runner, which aborts whatever is mid-flight.
+	// With nothing running there's nothing to lose, so apply immediately;
+	// otherwise ask before cancelling.
+	var running int64
+	s.DB.Model(&db.Scan{}).Where("status = ?", db.ScanRunning).Count(&running)
+	if running == 0 {
+		s.Queue.Reconfigure(n)
+		setFlash(w, Flash{Category: flashSuccess, Title: "Concurrency applied", Description: fmt.Sprintf("Runner now runs %d scans in parallel.", n)})
+		s.redirect(w, r, "/settings")
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if execErr := s.tmpl.ExecuteTemplate(w, "concurrency-confirm-oob", map[string]any{
+		"Concurrency": n,
+		"Running":     running,
+	}); execErr != nil {
+		s.Log.Error("render concurrency-confirm-oob", "err", execErr)
+	}
+}
+
+// settingsRestartRunner rebuilds the runner at the saved concurrency, applying
+// it live. In-flight scans are cancelled by the swap; queued scans survive.
+func (s *Server) settingsRestartRunner(w http.ResponseWriter, r *http.Request) {
+	n := db.SettingInt(s.DB, db.SettingConcurrency)
+	if n <= 0 {
+		n = s.Queue.Concurrency()
+	}
+	s.Queue.Reconfigure(n)
+	setFlash(w, Flash{Category: flashSuccess, Title: "Runner restarted", Description: fmt.Sprintf("Now running %d scans in parallel; in-flight scans were cancelled.", n)})
+	s.redirect(w, r, "/settings")
+}
+
+func (s *Server) settingsUpdateMaxTurns(w http.ResponseWriter, r *http.Request) {
+	n, err := strconv.Atoi(r.FormValue("max_turns"))
+	if err != nil || n < minMaxTurns || n > maxMaxTurns {
+		http.Error(w, "default turns must be between 1 and 500", http.StatusUnprocessableEntity)
+		return
+	}
+	if err := db.SetSetting(s.DB, db.SettingDefaultMaxTurns, strconv.Itoa(n)); err != nil {
+		http.Error(w, "could not save setting", http.StatusInternalServerError)
+		return
+	}
+	setFlash(w, Flash{Category: flashSuccess, Title: "Default turns updated", Description: "Applies to the next scan."})
 	s.redirect(w, r, "/settings")
 }
