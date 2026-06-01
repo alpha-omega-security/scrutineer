@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	"scrutineer/internal/db"
@@ -87,28 +88,8 @@ func cloneOrFetch(ctx context.Context, url, dst string, fullClone bool, ref stri
 	if err := validateGitURL(url); err != nil {
 		return err
 	}
-	resetTarget := "origin/HEAD"
-	if ref != "" {
-		resetTarget = "origin/" + ref
-	}
 	if _, err := os.Stat(filepath.Join(dst, ".git")); err == nil {
-		fetchArgs := []string{"-C", dst, "fetch", "--quiet", "origin"}
-		fetchMsg := "$ git fetch && reset"
-		if fullClone {
-			out, _ := git(ctx, "", "-C", dst, "rev-parse", "--is-shallow-repository")
-			if strings.TrimSpace(out) == "true" {
-				fetchArgs = []string{"-C", dst, "fetch", "--unshallow", "--quiet", "origin"}
-				fetchMsg = "$ git fetch --unshallow && reset"
-			}
-		}
-		emit(Event{Kind: KindText, Text: fetchMsg})
-		if out, err := git(ctx, "", fetchArgs...); err != nil {
-			return fmt.Errorf("%s: %w", out, err)
-		}
-		if out, err := git(ctx, "", "-C", dst, "reset", "--quiet", "--hard", resetTarget); err != nil {
-			return fmt.Errorf("%s: %w", out, err)
-		}
-		return nil
+		return fetchRef(ctx, dst, ref, fullClone, emit)
 	}
 	args := []string{"clone", "--quiet"}
 	msg := "$ git clone " + url
@@ -127,6 +108,79 @@ func cloneOrFetch(ctx context.Context, url, dst string, fullClone bool, ref stri
 		return fmt.Errorf("%s: %w", out, err)
 	}
 	return nil
+}
+
+// fetchRef updates an existing cache checkout to ref, or to the remote's
+// default branch when ref is empty. It fetches the ref by name and resets
+// to FETCH_HEAD rather than to origin/<ref>: the cache is a single-branch
+// shallow clone, so origin/<ref> only resolves for the one branch it was
+// first cloned at. A different ref — another maintained release branch, a
+// tag, or a commit — is in no remote-tracking ref, but fetching it by name
+// always lands it in FETCH_HEAD.
+func fetchRef(ctx context.Context, dst, ref string, fullClone bool, emit func(Event)) error {
+	target := ref
+	if target == "" {
+		target = "HEAD"
+	}
+	fetchArgs := []string{"-C", dst, "fetch", "--quiet"}
+	fetchMsg := "$ git fetch origin " + target + " && reset"
+	if fullClone {
+		out, _ := git(ctx, "", "-C", dst, "rev-parse", "--is-shallow-repository")
+		if strings.TrimSpace(out) == "true" {
+			fetchArgs = append(fetchArgs, "--unshallow")
+			fetchMsg = "$ git fetch --unshallow origin " + target + " && reset"
+		}
+	}
+	// "--" stops a ref like "--upload-pack=..." (from the branch field or a
+	// /tree/<branch> URL) being parsed as a git option, matching the clone
+	// and ls-remote paths. Valid refs never start with "-" so this is safe.
+	fetchArgs = append(fetchArgs, "--", "origin", target)
+	emit(Event{Kind: KindText, Text: fetchMsg})
+	if out, err := git(ctx, "", fetchArgs...); err != nil {
+		return fmt.Errorf("%s: %w", out, err)
+	}
+	if out, err := git(ctx, "", "-C", dst, "reset", "--quiet", "--hard", "FETCH_HEAD"); err != nil {
+		return fmt.Errorf("%s: %w", out, err)
+	}
+	return nil
+}
+
+// ListRemoteBranches returns the branch names a remote advertises, for the
+// add-repo form's branch picker. https-only (validated like clone) and
+// best-effort: callers treat any error as "no suggestions" and fall back to
+// free-text entry. GIT_TERMINAL_PROMPT=0 and an empty credential helper make
+// a private repo fail fast instead of blocking on a credential prompt.
+func ListRemoteBranches(ctx context.Context, cloneURL string) ([]string, error) {
+	if err := validateGitURL(cloneURL); err != nil {
+		return nil, err
+	}
+	out, err := gitWithEnv(ctx, "", []string{"GIT_TERMINAL_PROMPT=0"},
+		"-c", "credential.helper=", "ls-remote", "--heads", "--", cloneURL)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", strings.TrimSpace(out), err)
+	}
+	return parseRemoteHeads(out), nil
+}
+
+// parseRemoteHeads extracts branch names from `git ls-remote --heads`
+// output (lines of "<sha>\trefs/heads/<name>"), sorted and de-duplicated.
+func parseRemoteHeads(out string) []string {
+	seen := map[string]bool{}
+	var names []string
+	for _, line := range strings.Split(out, "\n") {
+		_, ref, ok := strings.Cut(line, "\t")
+		if !ok {
+			continue
+		}
+		name, ok := strings.CutPrefix(strings.TrimSpace(ref), "refs/heads/")
+		if !ok || name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 func gitHead(dir string) string {
