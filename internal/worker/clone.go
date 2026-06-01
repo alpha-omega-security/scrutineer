@@ -83,6 +83,16 @@ func validateGitURL(u string) error {
 	return nil
 }
 
+// safeURL enforces that untrusted metadata links (T7) only use safe schemes.
+// It returns an empty string if the URL is not http/https.
+func safeURL(u string) string {
+	u = strings.TrimSpace(u)
+	if strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://") {
+		return u
+	}
+	return ""
+}
+
 func cloneOrFetch(ctx context.Context, url, dst string, fullClone bool, ref string, emit func(Event)) error {
 	if err := validateGitURL(url); err != nil {
 		return err
