@@ -14,9 +14,10 @@ const LocalScheme = "file://"
 // RepoInput is the parsed form of a user-supplied repository reference.
 // CloneURL is what scrutineer passes to `git clone`; SubPath is the
 // sub-folder within the checkout that scans should scope to (empty means
-// the repo root). Branch is extracted from /tree/<branch>/<path> URLs so
-// the operator knows it was present, but is not honoured for clone (see
-// #19 discussion) — scrutineer still clones the default branch.
+// the repo root). Branch is extracted from /tree/<branch>/<path> URLs (or
+// supplied explicitly via the add-repo form's branch field) and is honoured
+// for checkout: createOrTriageRepo passes it to Scan.Ref. Empty means the
+// repository's default branch.
 //
 // For local directory inputs (file:// or absolute path), CloneURL is
 // file://<abs-path>, Name is the directory basename, Owner is empty, and

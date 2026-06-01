@@ -2377,6 +2377,44 @@ func TestBulkImport_createsAndEnqueues(t *testing.T) {
 	}
 }
 
+func TestBulkImport_branchFromTreeURL(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	s.DB.Create(&db.Skill{Name: "triage", Description: "o", Body: "b", Active: true, Source: "ui", Version: 1})
+
+	urls := "https://github.com/symfony/symfony/tree/7.2\nhttps://github.com/spf13/cobra\n"
+	form := url.Values{"urls": {urls}}
+	req := httptest.NewRequest("POST", "/repositories/bulk", strings.NewReader(form.Encode()))
+	req.Host = testHost
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+
+	refFor := func(repoURL string) string {
+		t.Helper()
+		var repo db.Repository
+		if err := s.DB.Where("url = ?", repoURL).First(&repo).Error; err != nil {
+			t.Fatalf("repo %s: %v", repoURL, err)
+		}
+		var scan db.Scan
+		if err := s.DB.Where("repository_id = ?", repo.ID).First(&scan).Error; err != nil {
+			t.Fatalf("scan for %s: %v", repoURL, err)
+		}
+		return scan.Ref
+	}
+	// The /tree/7.2 line pins that scan to 7.2; the plain URL stays on the
+	// default branch (empty Ref) — the per-line branch syntax in bulk.
+	if got := refFor("https://github.com/symfony/symfony"); got != "7.2" {
+		t.Errorf("symfony scan.Ref = %q, want 7.2 (from /tree/ line)", got)
+	}
+	if got := refFor("https://github.com/spf13/cobra"); got != "" {
+		t.Errorf("cobra scan.Ref = %q, want empty (default branch)", got)
+	}
+}
+
 func TestBulkImport_skipsDuplicates(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
@@ -2500,6 +2538,156 @@ func TestCreateRepo_parsesGitHubTreeURL(t *testing.T) {
 	s.DB.First(&scan)
 	if scan.SubPath != "airflow-core" {
 		t.Errorf("scan.SubPath = %q, want airflow-core", scan.SubPath)
+	}
+}
+
+func TestCreateRepo_branchPrecedence(t *testing.T) {
+	// The URL always carries /tree/6.4; the ref field decides the outcome:
+	// a non-empty field wins, a blank one falls back to the URL's branch.
+	cases := []struct{ name, ref, wantRef string }{
+		{"field overrides /tree/", "7.2", "7.2"},
+		{"blank field falls back to /tree/", "  ", "6.4"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			s, done := newTestServer(t)
+			defer done()
+			s.DB.Create(&db.Skill{Name: "triage", Description: "o", Body: "b", Active: true, Source: "ui", Version: 1})
+
+			form := url.Values{"url": {"https://github.com/symfony/symfony/tree/6.4"}, "ref": {c.ref}}
+			req := httptest.NewRequest("POST", "/repositories", strings.NewReader(form.Encode()))
+			req.Host = testHost
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			w := httptest.NewRecorder()
+			s.Handler().ServeHTTP(w, req)
+			if w.Code != http.StatusSeeOther {
+				t.Fatalf("status %d: %s", w.Code, w.Body)
+			}
+
+			var scan db.Scan
+			if err := s.DB.First(&scan).Error; err != nil {
+				t.Fatal(err)
+			}
+			if scan.Ref != c.wantRef {
+				t.Errorf("scan.Ref = %q, want %q", scan.Ref, c.wantRef)
+			}
+		})
+	}
+}
+
+func TestRepoBranches_rendersDatalistFromStub(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	var gotURL string
+	s.listBranches = func(_ context.Context, cloneURL string) ([]string, error) {
+		gotURL = cloneURL
+		return []string{"6.4", "7.2", "main"}, nil
+	}
+
+	q := url.Values{"url": {"https://github.com/symfony/symfony/tree/6.4"}}
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/repositories/branches?"+q.Encode()))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d", w.Code)
+	}
+	body := w.Body.String()
+	for _, b := range []string{"6.4", "7.2", "main"} {
+		if !strings.Contains(body, `<option value="`+b+`">`) {
+			t.Errorf("datalist missing option %q; body=%q", b, body)
+		}
+	}
+	if gotURL != "https://github.com/symfony/symfony" {
+		t.Errorf("listBranches got url %q, want normalized clone URL", gotURL)
+	}
+}
+
+func TestRepoBranches_localURLSkipsLookup(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	called := false
+	s.listBranches = func(context.Context, string) ([]string, error) {
+		called = true
+		return []string{"x"}, nil
+	}
+
+	q := url.Values{"url": {"/srv/local/repo"}}
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/repositories/branches?"+q.Encode()))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d", w.Code)
+	}
+	if called {
+		t.Error("a local path must not trigger a remote branch lookup")
+	}
+	if strings.Contains(w.Body.String(), "<option") {
+		t.Errorf("local path should yield an empty datalist, got %q", w.Body.String())
+	}
+}
+
+func TestRepoList_showsBranchTags(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	symfony := db.Repository{URL: "https://github.com/symfony/symfony", Name: "symfony"}
+	s.DB.Create(&symfony)
+	s.DB.Create(&db.Scan{RepositoryID: symfony.ID, Kind: "skill", SkillName: "triage", Status: db.ScanDone, Ref: "7.2"})
+
+	cobra := db.Repository{URL: "https://github.com/spf13/cobra", Name: "cobra"}
+	s.DB.Create(&cobra)
+	s.DB.Create(&db.Scan{RepositoryID: cobra.ID, Kind: "skill", SkillName: "triage", Status: db.ScanDone, Ref: ""})
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `data-lucide="git-branch"`) || !strings.Contains(body, "7.2") {
+		t.Errorf("repo list should tag symfony's scanned branch; body=%q", body)
+	}
+	// Exactly one tag: the default-only repo (empty Ref) must not get one.
+	if n := strings.Count(body, `data-lucide="git-branch"`); n != 1 {
+		t.Errorf("want exactly 1 branch tag, got %d", n)
+	}
+}
+
+func TestScansIndex_showsBranchTag(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://github.com/symfony/symfony", Name: "symfony"}
+	s.DB.Create(&repo)
+	s.DB.Create(&db.Scan{
+		RepositoryID: repo.ID, Kind: "skill", SkillName: "triage",
+		Status: db.ScanDone, StatusPriority: db.StatusPriorityFor(db.ScanDone), Ref: "7.2",
+	})
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/scans"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d", w.Code)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, `data-lucide="git-branch"`) || !strings.Contains(body, "7.2") {
+		t.Errorf("scans index should tag the scan's branch (ref); body=%q", body)
+	}
+}
+
+func TestScansIndex_noBranchTagForDefaultBranch(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://github.com/spf13/cobra", Name: "cobra"}
+	s.DB.Create(&repo)
+	s.DB.Create(&db.Scan{
+		RepositoryID: repo.ID, Kind: "skill", SkillName: "triage",
+		Status: db.ScanDone, StatusPriority: db.StatusPriorityFor(db.ScanDone), Ref: "",
+	})
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/scans"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d", w.Code)
+	}
+	if strings.Contains(w.Body.String(), `data-lucide="git-branch"`) {
+		t.Error("a default-branch scan (empty Ref) must not render a branch tag")
 	}
 }
 

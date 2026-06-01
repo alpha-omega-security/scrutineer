@@ -49,6 +49,7 @@
         <td>
           <a href="/repositories/{{.ID}}">{{trimscheme .URL}}</a>
           {{if .CloneError}}<span class="badge-destructive ml-1" role="img" aria-label="Clone error: {{.CloneError}}" data-tooltip="{{.CloneError}}"><i data-lucide="wifi-off"></i></span>{{end}}
+          {{range .Branches}}{{template "branch-tag" .}}{{end}}
         </td>
         <td class="text-muted-foreground">{{if .Languages}}{{.Languages}}{{else}}-{{end}}</td>
         <td>{{if .LastScan}}{{.LastScan.CreatedAt.Format "15:04:05"}}{{else}}never{{end}}</td>

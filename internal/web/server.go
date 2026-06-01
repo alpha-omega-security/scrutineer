@@ -71,6 +71,11 @@ type Server struct {
 	resolvePURL func(ctx context.Context, purl string) string
 	resolveSync bool
 
+	// listBranches enumerates a remote's branches for the add-repo branch
+	// picker. Field rather than a direct worker call so tests can stub the
+	// network lookup, mirroring resolvePURL.
+	listBranches func(ctx context.Context, cloneURL string) ([]string, error)
+
 	skillNamesMu    sync.Mutex
 	skillNamesCache []string
 	skillNamesTTL   time.Time
@@ -218,7 +223,7 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *work
 		return nil, fmt.Errorf("load csaf schema: %w", err)
 	}
 	return &Server{DB: gdb, Queue: q, Log: log, Broker: broker, Worker: w, tmpl: t,
-		resolvePURL: resolvePURLRepo}, nil
+		resolvePURL: resolvePURLRepo, listBranches: worker.ListRemoteBranches}, nil
 }
 
 func (s *Server) Handler() http.Handler {
@@ -228,6 +233,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /{$}", s.index)
 	mux.HandleFunc("GET /repositories", s.repoList)
 	mux.HandleFunc("GET /repositories/new", s.repoNew)
+	mux.HandleFunc("GET /repositories/branches", s.repoBranches)
 	mux.HandleFunc("POST /repositories", s.repoCreate)
 	mux.HandleFunc("POST /repositories/bulk", s.repoBulkCreate)
 	mux.HandleFunc("GET /repositories/{id}", s.repoShow)
@@ -434,6 +440,10 @@ type repoRow struct {
 	LastScan      *db.Scan
 	FindingsTotal int
 	DiskBytes     int64
+	// Branches lists the distinct non-default refs this repo has been
+	// scanned on, for the branch tags next to its name. Empty when every
+	// scan ran on the default branch.
+	Branches []string
 }
 
 // distinctLanguages returns the sorted set of individual language names
@@ -547,6 +557,25 @@ func (s *Server) repoList(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	branchesByRepo := map[uint][]string{}
+	if len(repoIDs) > 0 {
+		// Distinct non-default branches scanned per repo. Ordered by ref so
+		// each repo's badges render in a reproducible order.
+		type repoRef struct {
+			RepositoryID uint
+			Ref          string
+		}
+		var refs []repoRef
+		s.DB.Model(&db.Scan{}).
+			Select("DISTINCT repository_id, ref").
+			Where("repository_id IN ? AND ref != ''", repoIDs).
+			Order("ref").
+			Scan(&refs)
+		for _, rr := range refs {
+			branchesByRepo[rr.RepositoryID] = append(branchesByRepo[rr.RepositoryID], rr.Ref)
+		}
+	}
+
 	rows := make([]repoRow, 0, len(repos))
 	for _, repo := range repos {
 		rows = append(rows, repoRow{
@@ -554,6 +583,7 @@ func (s *Server) repoList(w http.ResponseWriter, r *http.Request) {
 			LastScan:      lastScans[repo.ID],
 			FindingsTotal: findingCounts[repo.ID],
 			DiskBytes:     worker.RepoDiskUsage(s.Worker.DataDir, repo),
+			Branches:      branchesByRepo[repo.ID],
 		})
 	}
 	languages := distinctLanguages(s.DB)
@@ -1203,6 +1233,11 @@ func (s *Server) repoCreate(w http.ResponseWriter, r *http.Request) {
 		s.repoCreateError(w, r, "Invalid repository URL", err, http.StatusUnprocessableEntity)
 		return
 	}
+	// The explicit branch field is the operator's clear choice, so it wins
+	// over any /tree/<branch> already embedded in the pasted URL.
+	if ref := strings.TrimSpace(r.FormValue("ref")); ref != "" {
+		input.Branch = ref
+	}
 	repo, _, err := s.createOrTriageRepo(r.Context(), input, r.FormValue("model"))
 	if err != nil {
 		s.repoCreateError(w, r, "Couldn't add repository", err, http.StatusInternalServerError)
@@ -1232,6 +1267,27 @@ func (s *Server) repoCreateError(w http.ResponseWriter, r *http.Request, title s
 // repoNew is the no-javascript fallback for the Add Repository dialog.
 func (s *Server) repoNew(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "repo_new.html", map[string]any{"Bulk": r.FormValue("bulk") != ""})
+}
+
+// branchListTimeout caps the remote ls-remote so a slow or unreachable host
+// cannot hang the add-repo form's branch picker.
+const branchListTimeout = 8 * time.Second
+
+// repoBranches feeds the add-repo form's branch picker a <datalist> of the
+// remote's branch names. Best-effort: a local, non-https, invalid, or
+// unreachable URL yields an empty list (the field stays free-text) and the
+// request never 500s or blocks the form.
+func (s *Server) repoBranches(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	var branches []string
+	if input, err := ParseRepoInput(r.URL.Query().Get("url")); err == nil && !input.Local {
+		ctx, cancel := context.WithTimeout(r.Context(), branchListTimeout)
+		defer cancel()
+		branches, _ = s.listBranches(ctx, input.CloneURL)
+	}
+	if err := s.tmpl.ExecuteTemplate(w, "branch-options", branches); err != nil {
+		s.Log.Error("render branch-options", "err", err)
+	}
 }
 
 // repoBulkCreate accepts a newline-separated list of repository URLs,

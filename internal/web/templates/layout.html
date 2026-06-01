@@ -83,7 +83,12 @@
             class="form grid gap-3">
         <div id="add-repo-alert" hidden></div>
         <input class="input" type="text" name="url"
-               placeholder="https://github.com/owner/repo or /path/to/project" required>
+               placeholder="https://github.com/owner/repo or /path/to/project" required
+               hx-get="/repositories/branches" hx-trigger="change delay:300ms"
+               hx-target="#branch-options" hx-swap="innerHTML">
+        <input class="input" type="text" name="ref" list="branch-options" autocomplete="off"
+               placeholder="Branch (optional, default branch if empty)">
+        <datalist id="branch-options"></datalist>
         <footer class="flex justify-between items-center gap-2">
           <a href="/repositories/new?bulk=1" data-dialog="bulk-add-repo" class="btn-sm-ghost">
             <i data-lucide="list-plus"></i> Add multiple
@@ -107,6 +112,7 @@
       <h2>Bulk import repositories</h2>
       <p class="text-sm text-muted-foreground">
         One URL per line. Only <code>https://</code> URLs are accepted.
+        Add <code>/tree/&lt;branch&gt;</code> to a URL to scan a specific branch.
         Duplicates are skipped; each new repo is queued with the default scan set.
       </p>
     </header>
@@ -200,6 +206,10 @@
   <i data-lucide="triangle-alert"></i>
   <section><strong>{{.Title}}</strong>{{if .Description}} {{.Description}}{{end}}</section>
 </div>{{end}}
+
+{{define "branch-options"}}{{range .}}<option value="{{.}}"></option>{{end}}{{end}}
+
+{{define "branch-tag"}}{{if .}}<span class="badge-outline"><i data-lucide="git-branch"></i>{{.}}</span>{{end}}{{end}}
 
 {{define "status-badge"}}
   {{if eq . "done"}}<span class="badge-secondary"><i data-lucide="check"></i> complete</span>

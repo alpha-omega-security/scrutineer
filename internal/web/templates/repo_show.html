@@ -479,7 +479,7 @@
 {{define "scan-row"}}{{with .S}}
   <tr id="scan-{{.ID}}"{{if $.OOB}} hx-swap-oob="true"{{end}}>
     <td><a href="/scans/{{.ID}}">{{.ID}}</a></td>
-    <td>{{if .SkillName}}{{.SkillName}}{{else}}{{.Kind}}{{end}}</td>
+    <td>{{if .SkillName}}{{.SkillName}}{{else}}{{.Kind}}{{end}} {{template "branch-tag" .Ref}}</td>
     <td>{{template "status-badge" (status .Status)}}</td>
     <td>{{if gt .FindingsCount 0}}{{template "findings-badge" .FindingsCount}}{{end}}</td>
     <td class="text-muted-foreground">{{if .Model}}{{.Model}}{{else}}-{{end}}</td>
