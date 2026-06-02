@@ -22,6 +22,18 @@ func RepoCacheRoot(dataDir, url string) string {
 	return filepath.Join(dataDir, "repo-cache", hex.EncodeToString(sum[:]))
 }
 
+// RepoDiskUsage returns the on-disk size in bytes of the persistent
+// clone cache for repo. Local repositories keep no managed copy (their
+// source stays at LocalPath), and a repo that has never been scanned has
+// no cache directory yet — both cases report 0.
+func RepoDiskUsage(dataDir string, repo db.Repository) int64 {
+	if repo.IsLocal() {
+		return 0
+	}
+	n, _ := dirSize(RepoCacheRoot(dataDir, repo.URL))
+	return n
+}
+
 // prepareRepoSrc updates the per-URL cache under a lock, copies the
 // tree into workRoot/src, and returns the cache HEAD commit. Shallow
 // by default; the code browser unshallows on demand when a historical

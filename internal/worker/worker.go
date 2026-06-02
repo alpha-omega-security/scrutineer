@@ -112,7 +112,27 @@ func (w *Worker) scanWorkRoot(scan *db.Scan) string {
 // by the lineage root so a retry finds the original run's session. The
 // local runner ignores it and uses the host's own ~/.claude.
 func (w *Worker) claudeConfigDir(scan *db.Scan) string {
-	return filepath.Join(w.DataDir, "claude-config", fmt.Sprintf("scan-%d", workspaceScanID(scan)))
+	return w.claudeConfigDirID(workspaceScanID(scan))
+}
+
+func (w *Worker) claudeConfigDirID(scanID uint) string {
+	return filepath.Join(w.DataDir, "claude-config", fmt.Sprintf("scan-%d", scanID))
+}
+
+// RemoveScanArtifacts deletes the on-disk per-scan workspace and claude
+// session store for scanID. A terminal scan removes its own workspace and a
+// done scan its session store, so this reclaims space left by scans still
+// holding a workspace (queued/running, or crashed before cleanup) and by
+// failed scans whose session store is kept for --resume. It is a no-op when
+// the directories are already gone. Passing every scan id of a repository
+// covers resume lineages too: a retry reuses its root's workspace id, and the
+// root scan is itself in the repo, while the retry's own id maps to a
+// directory that was never created.
+func (w *Worker) RemoveScanArtifacts(scanID uint) error {
+	return errors.Join(
+		os.RemoveAll(w.workRoot(scanID)),
+		os.RemoveAll(w.claudeConfigDirID(scanID)),
+	)
 }
 
 // applyResume fills a SkillJob's session-resume inputs from the scan: the

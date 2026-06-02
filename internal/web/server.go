@@ -234,6 +234,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /repositories/{id}/blob/{commit}/{path...}", s.repoBlob)
 	mux.HandleFunc("GET /repositories/{id}/report.md", s.repoReport)
 	mux.HandleFunc("POST /repositories/{id}/scan", s.repoScan)
+	mux.HandleFunc("POST /repositories/{id}/delete", s.repoDelete)
 	mux.HandleFunc("POST /repositories/{id}/disclosure-channel", s.repoDisclosureChannel)
 	mux.HandleFunc("GET /scans", s.jobs)
 	mux.HandleFunc("GET /orgs", s.orgsList)
@@ -429,6 +430,7 @@ type repoRow struct {
 	db.Repository
 	LastScan      *db.Scan
 	FindingsTotal int
+	DiskBytes     int64
 }
 
 // distinctLanguages returns the sorted set of individual language names
@@ -548,6 +550,7 @@ func (s *Server) repoList(w http.ResponseWriter, r *http.Request) {
 			Repository:    repo,
 			LastScan:      lastScans[repo.ID],
 			FindingsTotal: findingCounts[repo.ID],
+			DiskBytes:     worker.RepoDiskUsage(s.Worker.DataDir, repo),
 		})
 	}
 	languages := distinctLanguages(s.DB)
@@ -1496,6 +1499,7 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 		"NewFindingCount": int(newFindings),
 		"FailedScans":     failedScans,
 		"TotalCost":       totalCost,
+		"DiskBytes":       worker.RepoDiskUsage(s.Worker.DataDir, repo),
 		"TMCommit":        tmCommit,
 		"Deps":            deps, "Pkgs": pkgs, "Dependents": dependents, "Advisories": advisories, "Maintainers": maintainers, "ThreatModel": threatModel,
 		"KnownURLs": knownURLs, "KnownPURLs": knownPURLs,
@@ -1529,6 +1533,96 @@ func (s *Server) repoScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.redirect(w, r, fmt.Sprintf("/repositories/%d", repo.ID))
+}
+
+// repoDelete removes a repository and every row that hangs off it, then
+// drops its on-disk clone cache. Every linked table is deleted explicitly
+// inside one transaction rather than leaning on ON DELETE CASCADE, which is
+// unreliable here: sqlite's foreign_keys pragma is per-connection and set on
+// only one pooled connection. The order matters because foreign_keys *is*
+// enforced on the connection that ends up serving the delete in production:
+//   - scans.finding_id -> findings.id is NO ACTION (verify/patch scans are
+//     finding-scoped), so that link is nulled first or findings can't go.
+//   - finding_labels_join.finding_id is also NO ACTION, so the join rows go
+//     before the findings they reference.
+//   - findings are deleted before scans (findings.scan_id is the cascade
+//     direction; the reverse link was already nulled).
+//
+// Maintainers are shared across repos, so only the join rows go; matched SBOM
+// packages belong to their upload, so their cross-reference is nulled rather
+// than deleted. The filesystem removal runs after the commit so a failed
+// transaction never strands a live repo row with its clone deleted.
+func (s *Server) repoDelete(w http.ResponseWriter, r *http.Request) {
+	repo, ok := loadByID[db.Repository](s, w, r)
+	if !ok {
+		return
+	}
+
+	// Collected before the transaction deletes the scan rows: each scan's
+	// per-scan workspace and claude session store under DataDir are reclaimed
+	// after the commit.
+	var scanIDs []uint
+	s.DB.Model(&db.Scan{}).Where("repository_id = ?", repo.ID).Pluck("id", &scanIDs)
+
+	err := s.DB.Transaction(func(tx *gorm.DB) error {
+		// Match scans by the *finding's* repo, not the scan's own: a finding-
+		// scoped scan can in principle live on a different repository_id than
+		// the finding it points at, and any scan referencing a doomed finding
+		// must have its NO ACTION link cleared or the finding delete 787s. The
+		// subquery also avoids materialising a (possibly >999) id list.
+		const findingsOfRepo = "finding_id IN (SELECT id FROM findings WHERE repository_id = ?)"
+		if err := tx.Model(&db.Scan{}).Where(findingsOfRepo, repo.ID).
+			Update("finding_id", nil).Error; err != nil {
+			return err
+		}
+		// Finding children. notes/comms/refs/history cascade from a finding
+		// delete, but are removed here too so the cleanup stays correct even
+		// when foreign_keys happens to be off on the serving connection.
+		if err := tx.Exec("DELETE FROM finding_labels_join WHERE "+findingsOfRepo, repo.ID).Error; err != nil {
+			return err
+		}
+		for _, child := range []any{
+			&db.FindingNote{}, &db.FindingCommunication{}, &db.FindingReference{},
+			&db.FindingHistory{}, &db.FindingDependent{},
+		} {
+			if err := tx.Where(findingsOfRepo, repo.ID).Delete(child).Error; err != nil {
+				return err
+			}
+		}
+		for _, child := range []any{
+			&db.Finding{}, &db.Scan{}, &db.Subproject{}, &db.Dependency{},
+			&db.Dependent{}, &db.Package{}, &db.Advisory{},
+		} {
+			if err := tx.Where("repository_id = ?", repo.ID).Delete(child).Error; err != nil {
+				return err
+			}
+		}
+		if err := tx.Model(&db.SBOMPackage{}).Where("repository_id = ?", repo.ID).
+			Update("repository_id", nil).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec("DELETE FROM repository_maintainers WHERE repository_id = ?", repo.ID).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&repo).Error
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if err := os.RemoveAll(worker.RepoCacheRoot(s.Worker.DataDir, repo.URL)); err != nil {
+		s.Log.Error("repoDelete: remove clone cache", "repo", repo.ID, "err", err)
+	}
+	for _, id := range scanIDs {
+		if err := s.Worker.RemoveScanArtifacts(id); err != nil {
+			s.Log.Error("repoDelete: remove scan workspace", "scan", id, "err", err)
+		}
+	}
+
+	setFlash(w, Flash{Category: "success", Title: "Repository deleted",
+		Description: repo.Name + " and all its scans, findings and cached clone were removed."})
+	s.redirect(w, r, "/")
 }
 
 // repoDisclosureChannel lets the analyst overwrite (or clear) the

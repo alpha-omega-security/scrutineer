@@ -42,6 +42,11 @@
     <a href="/repositories/{{.Repo.ID}}/report.md" class="btn-outline" download>
       <i data-lucide="download"></i> Export report
     </a>
+    <form method="post" action="/repositories/{{.Repo.ID}}/delete"
+          hx-post="/repositories/{{.Repo.ID}}/delete" hx-swap="none"
+          hx-confirm="Permanently delete {{.Repo.Name}}? This removes the repository, all its scans and findings, and its cached clone on disk. This cannot be undone.">
+      <button class="btn-destructive" type="submit"><i data-lucide="trash-2"></i> Delete</button>
+    </form>
     <form method="post" action="/repositories/{{.Repo.ID}}/scan"
           hx-post="/repositories/{{.Repo.ID}}/scan" hx-swap="none">
       <button class="btn" type="submit"><i data-lucide="play"></i> New scan</button>
@@ -95,18 +100,27 @@
   <div role="tabpanel" id="rp1" aria-labelledby="rt1">
     {{if .Repo.FetchedAt}}
       {{if .Repo.Description}}<p class="mb-4 max-w-3xl">{{.Repo.Description}}</p>{{end}}
-      <div class="flex flex-wrap gap-2 mb-6">
-        {{if .Repo.Languages}}<span class="badge-outline"><i data-lucide="code"></i><span class="sr-only">Languages: </span>{{.Repo.Languages}}</span>{{end}}
-        {{if .Repo.DefaultBranch}}<span class="badge-outline"><i data-lucide="git-branch"></i><span class="sr-only">Default branch: </span>{{.Repo.DefaultBranch}}</span>{{end}}
-        {{if .Repo.Stars}}<span class="badge-outline"><i data-lucide="star"></i><span class="sr-only">Stars: </span>{{bignum .Repo.Stars}}</span>{{end}}
-        {{if .Repo.License}}<span class="badge-outline"><i data-lucide="scale"></i><span class="sr-only">License: </span>{{.Repo.License}}</span>{{end}}
-        {{if .Repo.PushedAt}}<span class="badge-outline"><i data-lucide="clock"></i>pushed {{since .Repo.PushedAt}}</span>{{end}}
-        {{if gt .TotalCost 0.0}}<span class="badge-outline" data-tooltip="Total scan spend on this repository"><i data-lucide="coins"></i><span class="sr-only">Total scan spend: </span>{{usd .TotalCost}}</span>{{end}}
-        {{if .Repo.Archived}}<span class="badge-destructive"><i data-lucide="archive"></i>archived</span>{{end}}
-        {{if .Repo.CloneError}}<span class="badge-destructive" data-tooltip="{{.Repo.CloneError}}"><i data-lucide="wifi-off"></i>unreachable<span class="sr-only">: {{.Repo.CloneError}}</span></span>{{end}}
-      </div>
     {{else}}
       <p class="text-muted-foreground text-sm mb-6">Metadata not fetched yet.</p>
+    {{end}}
+
+    {{/* One badge row. Metadata badges depend on the fetch; the disk-usage
+         badge depends only on a clone existing, so it shares the row but is
+         shown independently — same visibility rule as the repo list. */}}
+    {{if or .Repo.FetchedAt .DiskBytes}}
+      <div class="flex flex-wrap gap-2 mb-6">
+        {{if .Repo.FetchedAt}}
+          {{if .Repo.Languages}}<span class="badge-outline"><i data-lucide="code"></i><span class="sr-only">Languages: </span>{{.Repo.Languages}}</span>{{end}}
+          {{if .Repo.DefaultBranch}}<span class="badge-outline"><i data-lucide="git-branch"></i><span class="sr-only">Default branch: </span>{{.Repo.DefaultBranch}}</span>{{end}}
+          {{if .Repo.Stars}}<span class="badge-outline"><i data-lucide="star"></i><span class="sr-only">Stars: </span>{{bignum .Repo.Stars}}</span>{{end}}
+          {{if .Repo.License}}<span class="badge-outline"><i data-lucide="scale"></i><span class="sr-only">License: </span>{{.Repo.License}}</span>{{end}}
+          {{if .Repo.PushedAt}}<span class="badge-outline"><i data-lucide="clock"></i>pushed {{since .Repo.PushedAt}}</span>{{end}}
+          {{if gt .TotalCost 0.0}}<span class="badge-outline" data-tooltip="Total scan spend on this repository"><i data-lucide="coins"></i><span class="sr-only">Total scan spend: </span>{{usd .TotalCost}}</span>{{end}}
+          {{if .Repo.Archived}}<span class="badge-destructive"><i data-lucide="archive"></i>archived</span>{{end}}
+          {{if .Repo.CloneError}}<span class="badge-destructive" data-tooltip="{{.Repo.CloneError}}"><i data-lucide="wifi-off"></i>unreachable<span class="sr-only">: {{.Repo.CloneError}}</span></span>{{end}}
+        {{end}}
+        {{if .DiskBytes}}<span class="badge-outline" data-tooltip="On-disk size of the cached clone"><i data-lucide="hard-drive"></i>{{bytes .DiskBytes}}</span>{{end}}
+      </div>
     {{end}}
 
     <div class="mb-4 max-w-3xl">
