@@ -2,7 +2,11 @@
   'use strict';
 
   function icons() {
-    if (window.lucide) lucide.createIcons();
+    // Icons are decorative: every interactive control has visible text or an
+    // aria-label, so hide the generated SVGs from assistive tech to avoid noise.
+    if (window.lucide) {
+      lucide.createIcons({ attrs: { 'aria-hidden': 'true', focusable: 'false' } });
+    }
   }
 
   function highlight() {
