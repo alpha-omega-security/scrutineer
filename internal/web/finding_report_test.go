@@ -15,7 +15,7 @@ import (
 func TestFindingReport_scopedToSingleFinding(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
-	_, _, scan := seedScanWithFindings(t, s)
+	repo, scan := seedScanWithFindings(t, s)
 
 	var high db.Finding
 	if err := s.DB.Where("scan_id = ? AND severity = ?", scan.ID, "High").First(&high).Error; err != nil {
@@ -44,8 +44,8 @@ func TestFindingReport_scopedToSingleFinding(t *testing.T) {
 
 	body := w.Body.String()
 	wants := []string{
-		"acme/thing — finding #",
-		"acme/thing",
+		repo.FullName + " — finding #",
+		repo.FullName,
 		"### Finding #",
 		"python.lang.security.use-defused-xml",
 		"#### Trace",
