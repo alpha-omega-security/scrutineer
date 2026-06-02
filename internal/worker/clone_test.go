@@ -86,8 +86,10 @@ func TestPrepareLocalSrcRejectsMissing(t *testing.T) {
 
 // TestFetchRefChecksOutRequestedRef exercises the cache-reuse path: a
 // single-branch shallow cache cloned at the default branch must still be
-// able to check out a different branch, a tag, and back to the default —
-// the breakage that motivated fetching by name and resetting to FETCH_HEAD.
+// able to check out a different branch, a tag, a raw commit SHA, and back
+// to the default — the breakage that motivated fetching by name and
+// resetting to FETCH_HEAD. The SHA case also backs the first-clone path,
+// which now resolves a ref through fetchRef instead of `git clone --branch`.
 func TestFetchRefChecksOutRequestedRef(t *testing.T) {
 	origin := t.TempDir()
 	git := func(dir string, args ...string) string {
@@ -112,9 +114,13 @@ func TestFetchRefChecksOutRequestedRef(t *testing.T) {
 	git(origin, "config", "user.email", "t@t.t")
 	git(origin, "config", "user.name", "t")
 	git(origin, "config", "commit.gpgsign", "false")
+	// Let the origin serve an unadvertised commit by SHA; without this a
+	// `git fetch origin <sha>` for a non-tip commit is refused.
+	git(origin, "config", "uploadpack.allowAnySHA1InWant", "true")
 	write("a")
 	git(origin, "add", "f")
 	git(origin, "commit", "-qm", "a")
+	firstSHA := git(origin, "rev-parse", "HEAD")
 	git(origin, "checkout", "-q", "-b", "feature")
 	write("c")
 	git(origin, "commit", "-qam", "c")
@@ -135,6 +141,7 @@ func TestFetchRefChecksOutRequestedRef(t *testing.T) {
 	cases := []struct{ ref, want string }{
 		{"feature", featureSHA}, // a non-default branch absent from the cache
 		{"v1", tagSHA},          // a tag
+		{firstSHA, firstSHA},    // a raw commit SHA — what `git clone --branch` rejects
 		{"", mainSHA},           // empty ref -> default branch
 	}
 	for _, c := range cases {

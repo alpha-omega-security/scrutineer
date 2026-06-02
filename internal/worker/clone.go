@@ -93,10 +93,6 @@ func cloneOrFetch(ctx context.Context, url, dst string, fullClone bool, ref stri
 	}
 	args := []string{"clone", "--quiet"}
 	msg := "$ git clone " + url
-	if ref != "" {
-		args = append(args, "--branch", ref)
-		msg += " --branch " + ref
-	}
 	if !fullClone {
 		args = append(args, "--depth", "1")
 		msg += " (shallow)"
@@ -106,6 +102,13 @@ func cloneOrFetch(ctx context.Context, url, dst string, fullClone bool, ref stri
 	out, err := gitWithEnv(ctx, "", []string{"GIT_PROTOCOL_FROM_USER=0"}, args...)
 	if err != nil {
 		return fmt.Errorf("%s: %w", out, err)
+	}
+	// Resolve ref through the same fetchRef the cache-reuse path uses, rather
+	// than `git clone --branch <ref>`: --branch rejects a commit SHA, so a SHA
+	// in the branch field would fail the first scan yet work on every later
+	// one. Going through fetchRef makes both paths pin a ref identically.
+	if ref != "" {
+		return fetchRef(ctx, dst, ref, fullClone, emit)
 	}
 	return nil
 }
