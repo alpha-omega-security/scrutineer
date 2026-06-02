@@ -188,6 +188,7 @@ func (f *flags) merge(cfg *config.Config) {
 	if cfg.DefaultModel != "" {
 		web.SetDefaultModel(cfg.DefaultModel)
 	}
+	web.SetDefaultEffort(f.effort)
 	if cfg.Theme != "" {
 		web.SetTheme(cfg.Theme)
 	}

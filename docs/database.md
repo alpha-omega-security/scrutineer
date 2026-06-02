@@ -45,6 +45,7 @@ One row per skill execution or external import. `skill_name` / `skill_version` p
 | status | text | `queued`, `paused`, `running`, `done`, `failed`, `cancelled`. Stale `running` rows are swept to `failed` on startup. |
 | status_priority | integer | Denormalised sort key for the scans index: 0 running, 1 queued, 2 paused, 3 terminal. |
 | model | text | Claude model ID. |
+| effort | text | Claude `--effort` level (`low`–`max`) snapshotted from the runtime setting at enqueue. Empty on legacy rows; the runner falls back to its configured default. |
 | skill_id | integer FK | References `skills.id`. Null for legacy non-skill rows. |
 | skill_version | integer | Version of the skill at run time; the skill row's `version` bumps on every edit so older scans stay readable. |
 | skill_name | text | Denormalised skill name for UI display. |

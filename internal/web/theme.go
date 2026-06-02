@@ -75,17 +75,19 @@ func (s *Server) settingsShow(w http.ResponseWriter, r *http.Request) {
 	meta := s.toolMetadataCached(r.Context())
 
 	s.render(w, r, "settings.html", map[string]any{
-		"Themes":       config.Themes,
-		"Models":       Models,
-		"DefaultModel": DefaultModel(),
-		"ColorScheme":  resolveColorScheme(r),
-		"Concurrency":  s.Queue.Concurrency,
-		"Stats":        stats,
-		"DBSize":       dbSizeBytes,
-		"DBPath":       dbPath,
-		"WorkDir":      s.Worker.DataDir,
-		"Commit":       s.Commit,
-		"Meta":         meta,
+		"Themes":        config.Themes,
+		"Models":        Models,
+		"DefaultModel":  DefaultModel(),
+		"Efforts":       Efforts,
+		"DefaultEffort": DefaultEffort(),
+		"ColorScheme":   resolveColorScheme(r),
+		"Concurrency":   s.Queue.Concurrency,
+		"Stats":         stats,
+		"DBSize":        dbSizeBytes,
+		"DBPath":        dbPath,
+		"WorkDir":       s.Worker.DataDir,
+		"Commit":        s.Commit,
+		"Meta":          meta,
 	})
 }
 
@@ -152,6 +154,17 @@ func (s *Server) settingsUpdateModel(w http.ResponseWriter, r *http.Request) {
 	}
 	SetDefaultModel(model)
 	setFlash(w, Flash{Category: successKey, Title: "Default model updated"})
+	s.redirect(w, r, "/settings")
+}
+
+func (s *Server) settingsUpdateEffort(w http.ResponseWriter, r *http.Request) {
+	effort := r.FormValue("effort")
+	if !ValidEffort(effort) {
+		http.Error(w, "unknown effort", http.StatusUnprocessableEntity)
+		return
+	}
+	SetDefaultEffort(effort)
+	setFlash(w, Flash{Category: successKey, Title: "Default effort updated"})
 	s.redirect(w, r, "/settings")
 }
 

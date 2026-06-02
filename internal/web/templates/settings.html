@@ -61,6 +61,23 @@
 </section>
 
 <section class="card">
+  <header><h2>Effort</h2></header>
+  <section>
+    <div class="flex flex-wrap gap-3">
+      {{$effort := .DefaultEffort}}
+      {{range .Efforts}}
+      <form method="post" action="/settings/effort" hx-post="/settings/effort" hx-swap="none">
+        <input type="hidden" name="effort" value="{{.Value}}">
+        <button type="submit" class="rounded-lg border px-4 py-3 text-center hover:bg-muted transition-colors cursor-pointer {{if eq .Value $effort}}border-primary bg-muted/50{{else}}border-transparent{{end}}">
+          <span class="text-sm font-medium">{{.Label}}</span>
+        </button>
+      </form>
+      {{end}}
+    </div>
+  </section>
+</section>
+
+<section class="card">
   <header><h2>System</h2></header>
   <section>
     <div class="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-8 gap-3 text-sm">

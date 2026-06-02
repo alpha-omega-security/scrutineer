@@ -116,6 +116,7 @@ func (s *Server) scanRetry(w http.ResponseWriter, r *http.Request) {
 	sessionID, resumeOf := resumeOpts(scan)
 	newID, err := s.enqueueSkillWith(r.Context(), scan.RepositoryID, *scan.SkillID, ScanOpts{
 		Model:             scan.Model,
+		Effort:            scan.Effort,
 		FindingID:         scan.FindingID,
 		SubPath:           scan.SubPath,
 		Ref:               scan.Ref,
@@ -165,7 +166,7 @@ func (s *Server) scansRetryFailed(w http.ResponseWriter, r *http.Request) {
 	// (repository, skill, sub_path, ref, finding_id) tuple already in
 	// queued/running/done.
 	var scans []db.Scan
-	err := q.Select("id, repository_id, skill_id, model, finding_id, sub_path, ref, profile, status, session_id, resumed_from_scan_id").
+	err := q.Select("id, repository_id, skill_id, model, effort, finding_id, sub_path, ref, profile, status, session_id, resumed_from_scan_id").
 		Where(`NOT EXISTS (
 			SELECT 1 FROM scans n
 			WHERE n.id > scans.id
@@ -187,6 +188,7 @@ func (s *Server) scansRetryFailed(w http.ResponseWriter, r *http.Request) {
 		sessionID, resumeOf := resumeOpts(sc)
 		if _, err := s.enqueueSkillWith(r.Context(), sc.RepositoryID, *sc.SkillID, ScanOpts{
 			Model:             sc.Model,
+			Effort:            sc.Effort,
 			FindingID:         sc.FindingID,
 			SubPath:           sc.SubPath,
 			Ref:               sc.Ref,

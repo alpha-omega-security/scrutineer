@@ -108,6 +108,11 @@ type Scan struct {
 	Kind   string     `gorm:"index;not null"`
 	Status ScanStatus `gorm:"index;not null"`
 	Model  string
+	// Effort is the claude `--effort` level snapshotted from the runtime
+	// setting (or, on a retry, the source scan) at enqueue, so each scan
+	// records the effort it ran at. Empty on rows created before the
+	// column existed; the runner falls back to its configured default then.
+	Effort string
 
 	// SkillID/SkillVersion are set when Kind is "skill": they pin which
 	// skill row and which version of it produced this scan. SkillName is

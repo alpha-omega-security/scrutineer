@@ -1753,6 +1753,42 @@ func TestEnqueueSkillWith_modelPrecedence(t *testing.T) {
 	}
 }
 
+func TestEnqueueSkillWith_effort(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	defer restoreEffort(defaultEffortOverride)
+	defaultEffortOverride = "high"
+
+	repo := db.Repository{URL: "https://github.com/foo/bar", Name: "bar"}
+	s.DB.Create(&repo)
+	skill := db.Skill{Name: "lite", Body: "b", OutputFile: "r.json", OutputKind: "freeform",
+		Version: 1, Active: true, Source: "ui"}
+	s.DB.Create(&skill)
+
+	cases := []struct {
+		name string
+		opts ScanOpts
+		want string
+	}{
+		{"explicit effort honored", ScanOpts{Effort: "max"}, "max"},
+		{"runtime default fills empty effort", ScanOpts{}, "high"},
+		{"runtime default fills invalid effort", ScanOpts{Effort: "garbage"}, "high"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			scanID, err := s.enqueueSkillWith(context.Background(), repo.ID, skill.ID, tc.opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var sc db.Scan
+			s.DB.First(&sc, scanID)
+			if sc.Effort != tc.want {
+				t.Errorf("scan.Effort = %q, want %q", sc.Effort, tc.want)
+			}
+		})
+	}
+}
+
 func TestEnqueueSkillWith_stampsSkillsRepoSHA(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
@@ -2564,6 +2600,43 @@ func TestScansRetryFailed(t *testing.T) {
 	}
 }
 
+func TestScansRetryFailed_preservesEffort(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	defer restoreEffort(defaultEffortOverride)
+	// Force the runtime default away from the scan's effort so a dropped
+	// `effort` column in the retry Select would surface as "low", not "max".
+	defaultEffortOverride = "low"
+
+	repo := db.Repository{URL: "https://example.com/x.git", Name: "x"}
+	s.DB.Create(&repo)
+	skill := db.Skill{Name: "deep-dive", Description: "x", Body: "b", Active: true, Source: "ui", Version: 1}
+	s.DB.Create(&skill)
+	orig := db.Scan{
+		RepositoryID: repo.ID, Kind: "skill", Status: db.ScanFailed,
+		StatusPriority: db.StatusPriorityFor(db.ScanFailed),
+		SkillID:        &skill.ID, SkillName: "deep-dive", Effort: "max",
+	}
+	s.DB.Create(&orig)
+
+	req := httptest.NewRequest("POST", "/scans/retry-failed", nil)
+	req.Host = testHost
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+
+	var fresh db.Scan
+	if err := s.DB.Where("id != ?", orig.ID).First(&fresh).Error; err != nil {
+		t.Fatal(err)
+	}
+	if fresh.Effort != "max" {
+		t.Errorf("retry lost effort: got %q, want max", fresh.Effort)
+	}
+}
+
 func TestScansRetryFailed_skipsAlreadyRetried(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
@@ -3171,6 +3244,42 @@ func TestSettingsUpdateTheme_rejectsInvalid(t *testing.T) {
 	s.Handler().ServeHTTP(w, req)
 	if w.Code != http.StatusUnprocessableEntity {
 		t.Errorf("want 422 for invalid theme, got %d", w.Code)
+	}
+}
+
+func TestSettingsUpdateEffort_setsDefault(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	defer restoreEffort(defaultEffortOverride)
+
+	form := url.Values{"effort": {"max"}}
+	req := httptest.NewRequest("POST", "/settings/effort", strings.NewReader(form.Encode()))
+	req.Host = testHost
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	if got := DefaultEffort(); got != "max" {
+		t.Errorf("DefaultEffort() = %q, want max", got)
+	}
+}
+
+func TestSettingsUpdateEffort_rejectsInvalid(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	defer restoreEffort(defaultEffortOverride)
+
+	form := url.Values{"effort": {"extreme"}}
+	req := httptest.NewRequest("POST", "/settings/effort", strings.NewReader(form.Encode()))
+	req.Host = testHost
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Errorf("want 422 for invalid effort, got %d", w.Code)
 	}
 }
 

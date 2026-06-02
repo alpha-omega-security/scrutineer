@@ -54,6 +54,7 @@ type SkillJob struct {
 	OutputFile   string // relative to the scan workspace, e.g. "report.json"
 	Ref          string // git ref to checkout; empty = default branch
 	MaxTurns     int    // per-skill cap; 0 = use runner default
+	Effort       string // per-scan claude --effort; "" = use runner default
 	AllowedTools string // comma-separated; "" = full tool set under bypassPermissions
 	// SrcReady declares that WorkRoot/src is already populated by the
 	// caller (e.g. by the exposure handler copying from a dependent
@@ -257,8 +258,8 @@ func buildClaudeArgs(sj SkillJob, effort string, globalMaxTurns int) []string {
 	} else {
 		args = append(args, "--permission-mode", "bypassPermissions")
 	}
-	if effort != "" {
-		args = append(args, "--effort", effort)
+	if e := effectiveEffort(sj.Effort, effort); e != "" {
+		args = append(args, "--effort", e)
 	}
 	if sj.ResumeSessionID != "" {
 		args = append(args, "--resume", sj.ResumeSessionID)
@@ -282,6 +283,15 @@ func effectiveMaxTurns(perSkill, global int) int {
 		return global
 	}
 	return DefaultSkillMaxTurns
+}
+
+// effectiveEffort resolves the claude --effort level: the per-scan value
+// snapshotted at enqueue wins, then the runner's configured default.
+func effectiveEffort(perScan, runnerDefault string) string {
+	if perScan != "" {
+		return perScan
+	}
+	return runnerDefault
 }
 
 // buildSkillPrompt is the activation prompt handed to claude. It's a thin

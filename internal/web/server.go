@@ -284,6 +284,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /settings", s.settingsShow)
 	mux.HandleFunc("POST /settings/theme", s.settingsUpdateTheme)
 	mux.HandleFunc("POST /settings/model", s.settingsUpdateModel)
+	mux.HandleFunc("POST /settings/effort", s.settingsUpdateEffort)
 	mux.HandleFunc("POST /settings/color-scheme", s.settingsUpdateColorScheme)
 
 	// API routes get bearer-auth middleware and skip the browser CSRF checks;
@@ -1553,6 +1554,7 @@ func (s *Server) repoDisclosureChannel(w http.ResponseWriter, r *http.Request) {
 // new options (SubPath, FindingID, Model) accumulate.
 type ScanOpts struct {
 	Model       string
+	Effort      string
 	FindingID   *uint
 	DependentID *uint
 	SubPath     string
@@ -1579,7 +1581,8 @@ func (s *Server) enqueueSkillScoped(ctx context.Context, repoID, skillID uint, f
 // enqueueSkillWith creates a skill scan using the given ScanOpts. Empty
 // fields default cleanly: unset FindingID means not-finding-scoped, empty
 // SubPath means root-scoped. Model precedence is: explicit opts.Model >
-// the skill's preferred Model > server default.
+// the skill's preferred Model > server default. Effort precedence is:
+// explicit opts.Effort > the runtime default effort.
 func (s *Server) enqueueSkillWith(ctx context.Context, repoID, skillID uint, opts ScanOpts) (uint, error) {
 	var repo db.Repository
 	if err := s.DB.Select("id, url").First(&repo, repoID).Error; err != nil {
@@ -1600,6 +1603,9 @@ func (s *Server) enqueueSkillWith(ctx context.Context, repoID, skillID uint, opt
 			opts.Model = DefaultModel()
 		}
 	}
+	if !ValidEffort(opts.Effort) {
+		opts.Effort = DefaultEffort()
+	}
 	kind := worker.JobSkill
 	if opts.DependentID != nil {
 		kind = worker.JobExposure
@@ -1610,6 +1616,7 @@ func (s *Server) enqueueSkillWith(ctx context.Context, repoID, skillID uint, opt
 		Status:            db.ScanQueued,
 		StatusPriority:    db.StatusPriorityFor(db.ScanQueued),
 		Model:             opts.Model,
+		Effort:            opts.Effort,
 		SkillID:           &skillID,
 		SkillName:         sk.Name,
 		FindingID:         opts.FindingID,

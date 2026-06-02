@@ -71,6 +71,42 @@ func TestBuildClaudeArgs_AllowedTools(t *testing.T) {
 	}
 }
 
+func TestBuildClaudeArgs_EffortPerScanWins(t *testing.T) {
+	sj := SkillJob{Name: "security-deep-dive", Model: "claude-opus-4-8", OutputFile: "report.json", Effort: "max"}
+	args := buildClaudeArgs(sj, "high", 0)
+	if got := flagValue(args, "--effort"); got != "max" {
+		t.Errorf("effort = %q, want per-scan max over runner high", got)
+	}
+}
+
+func TestBuildClaudeArgs_EffortFallsBackToRunner(t *testing.T) {
+	sj := SkillJob{Name: "metadata", Model: "claude-opus-4-8", OutputFile: "report.json"}
+	args := buildClaudeArgs(sj, "high", 0)
+	if got := flagValue(args, "--effort"); got != "high" {
+		t.Errorf("effort = %q, want runner default high", got)
+	}
+}
+
+func TestBuildClaudeArgs_NoEffortWhenUnset(t *testing.T) {
+	sj := SkillJob{Name: "metadata", Model: "claude-opus-4-8", OutputFile: "report.json"}
+	args := buildClaudeArgs(sj, "", 0)
+	if slices.Contains(args, "--effort") {
+		t.Errorf("did not expect --effort in %v", args)
+	}
+}
+
+func TestEffectiveEffort(t *testing.T) {
+	if got := effectiveEffort("max", "high"); got != "max" {
+		t.Errorf("per-scan should win: got %q", got)
+	}
+	if got := effectiveEffort("", "high"); got != "high" {
+		t.Errorf("empty per-scan falls back to runner: got %q", got)
+	}
+	if got := effectiveEffort("", ""); got != "" {
+		t.Errorf("both empty stays empty: got %q", got)
+	}
+}
+
 func TestBuildClaudeArgs_Resume(t *testing.T) {
 	sj := SkillJob{
 		Name:            "security-deep-dive",
