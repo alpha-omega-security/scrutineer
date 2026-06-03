@@ -44,7 +44,7 @@
     </a>
     <form method="post" action="/repositories/{{.Repo.ID}}/delete"
           hx-post="/repositories/{{.Repo.ID}}/delete" hx-swap="none"
-          hx-confirm="Permanently delete {{.Repo.Name}}? This removes the repository, all its scans and findings, and its cached clone on disk. This cannot be undone.">
+          hx-confirm="{{if .ActiveScans}}{{.ActiveScans}} scan(s) on {{.Repo.Name}} are still running or queued and will keep writing to disk until they finish; cancel them first. {{end}}Permanently delete {{.Repo.Name}}? This removes the repository, all its scans and findings, and its cached clone on disk. This cannot be undone.">
       <button class="btn-destructive" type="submit"><i data-lucide="trash-2"></i> Delete</button>
     </form>
     <form method="post" action="/repositories/{{.Repo.ID}}/scan"

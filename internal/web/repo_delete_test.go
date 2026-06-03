@@ -225,6 +225,58 @@ func mkScanDirs(t *testing.T, dataDir string, id uint) (ws, cfg string) {
 	return ws, cfg
 }
 
+// A repo with running and queued scans must warn in the delete confirm that
+// those scans keep writing to disk until they finish — the followup to #310:
+// deleting under a live scan leaves a worker writing into a removed inode.
+func TestRepoDelete_confirmWarnsAboutActiveScans(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://github.com/acme/busy", Name: "busy"}
+	s.DB.Create(&repo)
+	s.DB.Create(&db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanRunning, SkillName: deepDiveSkillName})
+	s.DB.Create(&db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanQueued, SkillName: "verify"})
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", fmt.Sprintf("/repositories/%d", repo.ID)))
+	if w.Code != 200 {
+		t.Fatalf("detail status %d: %s", w.Code, w.Body)
+	}
+	// Count covers both running and queued, so the warning reports 2.
+	if body := w.Body.String(); !strings.Contains(body, "2 scan(s) on busy are still running or queued and will keep writing to disk") {
+		t.Errorf("delete confirm should warn about the 2 active scans; body=%s", body)
+	}
+}
+
+// Neither terminal scans (done/failed/cancelled) nor a paused one are in the
+// cancellable running/queued set, so the warning must stay out of the confirm
+// while the base copy survives. The paused case pins the deliberate exclusion:
+// it can't be cancelled and the worker isn't writing for it.
+func TestRepoDelete_confirmNoWarningWhenNoActiveScans(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://github.com/acme/idle", Name: "idle"}
+	s.DB.Create(&repo)
+	s.DB.Create(&db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: deepDiveSkillName})
+	s.DB.Create(&db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanFailed, SkillName: "verify"})
+	s.DB.Create(&db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanCancelled, SkillName: "exposure"})
+	s.DB.Create(&db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanPaused, SkillName: "patch"})
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", fmt.Sprintf("/repositories/%d", repo.ID)))
+	if w.Code != 200 {
+		t.Fatalf("detail status %d: %s", w.Code, w.Body)
+	}
+	body := w.Body.String()
+	if strings.Contains(body, "still running or queued and will keep writing to disk") {
+		t.Errorf("delete confirm must not warn when every scan is terminal; body=%s", body)
+	}
+	if !strings.Contains(body, "all its scans and findings, and its cached clone") {
+		t.Errorf("base delete confirm copy missing; body=%s", body)
+	}
+}
+
 func TestRepoDelete_unknownIs404(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

@@ -1493,6 +1493,14 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Drives the delete-confirm warning: a running scan keeps writing into the
+	// repo's clone/workspace until it returns, so the operator should cancel
+	// before deleting. Counted over every scan, not the latest-per-skill set,
+	// and over the cancellable non-terminal states (paused can't be cancelled).
+	var activeScans int64
+	s.DB.Model(&db.Scan{}).Where("repository_id = ? AND status IN ?",
+		repo.ID, []db.ScanStatus{db.ScanRunning, db.ScanQueued}).Count(&activeScans)
+
 	data := map[string]any{
 		"Repo": repo, "Scans": scans, "Latest": latest,
 		"Findings":        findings,
@@ -1501,6 +1509,7 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 		"ScanCommit":      scanCommit,
 		"NewFindingCount": int(newFindings),
 		"FailedScans":     failedScans,
+		"ActiveScans":     int(activeScans),
 		"TotalCost":       totalCost,
 		"DiskBytes":       worker.RepoDiskUsage(s.Worker.DataDir, repo),
 		"TMCommit":        tmCommit,
