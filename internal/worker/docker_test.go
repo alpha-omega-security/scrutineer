@@ -156,3 +156,21 @@ func TestDirSize_IgnoresIrregularEntries(t *testing.T) {
 		t.Errorf("dirSize = %d, want 256 (symlinks must not be counted)", n)
 	}
 }
+
+func TestRedactURLUserinfo(t *testing.T) {
+	cases := []struct {
+		in, want string
+	}{
+		{"https://proxy.example.com/v1", "https://proxy.example.com/v1"},
+		{"https://user:secret@proxy.example.com/v1", "https://REDACTED@proxy.example.com/v1"},
+		{"https://onlyuser@proxy.example.com/v1", "https://REDACTED@proxy.example.com/v1"},
+		{"not a url", "not a url"},
+		{"", ""},
+	}
+	for _, c := range cases {
+		got := redactURLUserinfo(c.in)
+		if got != c.want {
+			t.Errorf("redactURLUserinfo(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}

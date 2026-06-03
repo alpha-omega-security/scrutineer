@@ -84,8 +84,43 @@ func validateGitURL(u string) error {
 	return nil
 }
 
+// ValidateGitRef restricts refs to a conservative branch/tag-name charset
+// before they flow into the fetchRef path. The clone code already passes
+// ref after a `--` argv stopper, which blocks `-`-prefixed option-shaped
+// values; this validator adds the rest: `..` rejected so git's refspec
+// resolver cannot treat the value as a range, plus a strict allow-list
+// for the body so spaces, control characters, and shell metacharacters
+// cannot reach git as an "exotic but legal" ref. Exported so the web
+// layer can reject bad input at the API boundary rather than letting a
+// scan get enqueued and then fail at clone time.
+func ValidateGitRef(ref string) error {
+	if ref == "" {
+		return nil
+	}
+	if strings.HasPrefix(ref, "-") {
+		return fmt.Errorf("invalid ref %q: must not start with -", ref)
+	}
+	if strings.Contains(ref, "..") {
+		return fmt.Errorf(`invalid ref %q: must not contain ".."`, ref)
+	}
+	for _, r := range ref {
+		switch {
+		case r >= 'a' && r <= 'z',
+			r >= 'A' && r <= 'Z',
+			r >= '0' && r <= '9',
+			r == '.', r == '_', r == '/', r == '-':
+		default:
+			return fmt.Errorf("invalid ref %q: contains disallowed character %q", ref, r)
+		}
+	}
+	return nil
+}
+
 func cloneOrFetch(ctx context.Context, url, dst string, fullClone bool, ref string, emit func(Event)) error {
 	if err := validateGitURL(url); err != nil {
+		return err
+	}
+	if err := ValidateGitRef(ref); err != nil {
 		return err
 	}
 	if _, err := os.Stat(filepath.Join(dst, ".git")); err == nil {

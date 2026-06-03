@@ -39,6 +39,12 @@ var ErrSkillRequiresRemote = errors.New("skill requires a remote repository")
 // instead of a ghost scan failing on the worker.
 var ErrSkillProfileMismatch = errors.New("skill requires a different runner profile")
 
+// ErrInvalidRef is returned by enqueueSkillWith when opts.Ref fails the
+// shared ref-charset validation. Mirrors ErrSkillProfileMismatch so the
+// API path rejects a bad ref at the boundary (400) instead of enqueueing
+// a scan that will fail later at git-clone time.
+var ErrInvalidRef = errors.New("invalid git ref")
+
 //go:embed templates/*.html
 var tmplFS embed.FS
 
@@ -1749,6 +1755,9 @@ func (s *Server) enqueueSkillWith(ctx context.Context, repoID, skillID uint, opt
 	}
 	if hasSkill && sk.RequiresProfile != "" && opts.Profile != "" && opts.Profile != sk.RequiresProfile {
 		return 0, fmt.Errorf("%w: %q needs %q, got %q", ErrSkillProfileMismatch, sk.Name, sk.RequiresProfile, opts.Profile)
+	}
+	if err := worker.ValidateGitRef(opts.Ref); err != nil {
+		return 0, fmt.Errorf("%w: %v", ErrInvalidRef, err)
 	}
 	if !ValidModel(opts.Model) {
 		if hasSkill && ValidModel(sk.Model) {

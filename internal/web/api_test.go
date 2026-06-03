@@ -432,6 +432,34 @@ func TestAPIRunSkill_profileMismatchRejected(t *testing.T) {
 	}
 }
 
+func TestAPIRunSkill_badRefRejectedAt400(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo, scan := seedRunningScan(t, s)
+
+	skill := db.Skill{Name: "metadata", Description: "m", Body: "b", OutputFile: "report.json", Version: 1, Active: true, Source: "ui"}
+	s.DB.Create(&skill)
+
+	path := "/api/repositories/" + strconv.FormatUint(uint64(repo.ID), 10) + "/skills/metadata/run"
+	r := httptest.NewRequest("POST", path, strings.NewReader(`{"ref":"--upload-pack=/bin/sh"}`))
+	r.Host = testHost
+	r.Header.Set("Authorization", "Bearer "+scan.APIToken)
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != 400 {
+		t.Fatalf("status %d, want 400. body=%s", w.Code, w.Body)
+	}
+	if !strings.Contains(w.Body.String(), "invalid git ref") {
+		t.Errorf("response body should name the failure, got %s", w.Body)
+	}
+	var count int64
+	s.DB.Model(&db.Scan{}).Where("skill_id = ?", skill.ID).Count(&count)
+	if count != 0 {
+		t.Errorf("rejected enqueue still created %d scans, want 0", count)
+	}
+}
+
 func TestAPIRunFindingSkill_scopesFindingID(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

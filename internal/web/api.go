@@ -244,6 +244,10 @@ func (s *Server) apiRunSkill(w http.ResponseWriter, r *http.Request) {
 			writeAPIError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		if errors.Is(err, ErrInvalidRef) {
+			writeAPIError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		writeAPIError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

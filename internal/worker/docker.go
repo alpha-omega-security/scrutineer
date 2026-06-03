@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -58,6 +59,21 @@ func (d DockerRunner) image() string {
 		return d.Image
 	}
 	return DefaultRunnerImage
+}
+
+// redactURLUserinfo strips embedded credentials from a URL before logging.
+// Anthropic-compatible base URLs sometimes carry a token in userinfo
+// (https://user:tok@proxy/...); we still want to surface that auth was
+// configured, so the username is replaced with "REDACTED" rather than
+// dropped entirely. Inputs that fail to parse as URLs or that carry no
+// userinfo round-trip unchanged.
+func redactURLUserinfo(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.User == nil {
+		return raw
+	}
+	u.User = url.User("REDACTED")
+	return u.String()
 }
 
 // HardenedWorkspaceCapBytes caps the per-scan workspace footprint that
@@ -135,7 +151,7 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 
 	logLine := "$ docker run --rm " + image + " <skill:" + sj.Name + ">"
 	if d.AnthropicBaseURL != "" {
-		logLine += " [ANTHROPIC_BASE_URL=" + d.AnthropicBaseURL + "]"
+		logLine += " [ANTHROPIC_BASE_URL=" + redactURLUserinfo(d.AnthropicBaseURL) + "]"
 	}
 	emit(Event{Kind: KindText, Text: logLine})
 
