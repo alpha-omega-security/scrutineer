@@ -35,6 +35,15 @@ const (
 // more than this; a scan that does is almost always wedged.
 const DefaultScanTimeout = time.Hour
 
+// defaultLogFlushInterval bounds how long a scan's log can lag behind the
+// in-memory accumulator. Each emitted event used to UPDATE the whole
+// scans.log TEXT column, so a token-heavy scan fired thousands of full
+// rewrites; batching to once every couple of seconds collapses that to a
+// trickle. Real-time UI updates flow through publish() on every event and
+// are independent of this cadence; wrap()'s closing Save flushes the
+// final buffered tail regardless of how long ago the last write was.
+const defaultLogFlushInterval = 2 * time.Second
+
 type Worker struct {
 	DB          *gorm.DB
 	Log         *slog.Logger
@@ -62,6 +71,18 @@ type Worker struct {
 	// step in doSkill. Tests set it to skip the network; production
 	// leaves it nil and falls through to prepareRepoSrc.
 	PrepareRepoSrc func(ctx context.Context, url, ref, workRoot string, emit func(Event)) (string, error)
+
+	// LogFlushInterval overrides defaultLogFlushInterval. Tests set it to
+	// a tiny or huge value to assert flush behaviour without sleeping.
+	// Zero falls through to the const default.
+	LogFlushInterval time.Duration
+}
+
+func (w *Worker) logFlushInterval() time.Duration {
+	if w.LogFlushInterval > 0 {
+		return w.LogFlushInterval
+	}
+	return defaultLogFlushInterval
 }
 
 // Cancel aborts an in-flight scan. Returns true if a running job was found and
@@ -161,13 +182,17 @@ func (w *Worker) applyResume(scan *db.Scan, sj *SkillJob, emit func(Event)) {
 }
 
 // scanEmitter returns the emit callback handed to a job handler. It appends
-// each event to the scan log (persisting incrementally so the UI streams it)
-// and snapshots result-event token usage. Session events are special: they
-// carry no log line and instead persist the claude session id the moment it
-// appears so a crash mid-run leaves the scan resumable. The in-memory struct
-// is kept in sync too — wrap's final Save(&scan) writes every column and
-// would otherwise clobber a column-only update with a stale value.
+// each event to scan.Log in memory and streams it live to subscribers via
+// publish(); DB persistence is batched to logFlushInterval so a token-heavy
+// scan does not rewrite the whole log TEXT column on every event. wrap's
+// final Save(&scan) flushes the tail along with every other column, so a
+// scan that finishes between flushes still lands its full log. Session
+// events bypass batching: a session id is small, terminal-only changes,
+// and must hit the DB the moment it appears so a crash mid-run leaves the
+// scan resumable.
 func (w *Worker) scanEmitter(scan *db.Scan) func(Event) {
+	interval := w.logFlushInterval()
+	lastFlush := time.Now()
 	return func(e Event) {
 		if e.Kind == KindSession {
 			if e.SessionID != "" && e.SessionID != scan.SessionID {
@@ -178,7 +203,10 @@ func (w *Worker) scanEmitter(scan *db.Scan) func(Event) {
 		}
 		line := FormatEvent(e)
 		scan.Log += line + "\n"
-		w.DB.Model(&db.Scan{}).Where("id = ?", scan.ID).Update("log", scan.Log)
+		if time.Since(lastFlush) >= interval {
+			w.DB.Model(&db.Scan{}).Where("id = ?", scan.ID).Update("log", scan.Log)
+			lastFlush = time.Now()
+		}
 		if e.Kind == KindResult {
 			scan.CostUSD = e.CostUSD
 			scan.Turns = e.Turns
