@@ -14,7 +14,7 @@ import (
 // seedScanWithFindings creates a repo + a findings-kind skill + a completed
 // scan with two findings. Used to exercise the findings dispatch path of
 // scanReport.
-func seedScanWithFindings(t *testing.T, s *Server) (db.Repository, db.Skill, db.Scan) {
+func seedScanWithFindings(t *testing.T, s *Server) (db.Repository, db.Scan) {
 	t.Helper()
 	repo := db.Repository{
 		URL: "https://github.com/acme/thing", Name: "thing", FullName: "acme/thing",
@@ -61,13 +61,13 @@ func seedScanWithFindings(t *testing.T, s *Server) (db.Repository, db.Skill, db.
 	s.DB.Create(&high)
 	s.DB.Create(&medium)
 
-	return repo, skill, scan
+	return repo, scan
 }
 
 func TestScanReport_findingsDispatch(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
-	_, _, scan := seedScanWithFindings(t, s)
+	_, scan := seedScanWithFindings(t, s)
 
 	path := "/scans/" + strconv.FormatUint(uint64(scan.ID), 10) + "/report.md"
 	w := httptest.NewRecorder()

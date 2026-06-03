@@ -9,10 +9,15 @@
   (printf "scan #%d" $f.ScanID) (printf "/scans/%d" $f.ScanID)
   (printf "finding #%d" $f.ID) "")}}
 
-<h2 class="text-2xl font-semibold mt-1 mb-4 flex items-center gap-3">
-  {{$f.Title}}
-  {{template "finding-status" (fstatus $f.Status)}}
-</h2>
+<div class="flex items-start justify-between gap-4 mt-1 mb-4">
+  <h2 class="text-2xl font-semibold flex items-center gap-3">
+    {{$f.Title}}
+    {{template "finding-status" (fstatus $f.Status)}}
+  </h2>
+  <a href="/findings/{{$f.ID}}/report.md" class="btn-outline shrink-0" download>
+    <i data-lucide="download"></i> Export report
+  </a>
+</div>
 
 {{if $f.Labels}}
 <div class="flex flex-wrap gap-1 mb-4">
