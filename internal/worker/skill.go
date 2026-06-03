@@ -162,7 +162,7 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 	}
 	if err != nil {
 		if _, ok := errors.AsType[*MaxTurnsReachedError](err); ok && res.Report != "" {
-			_ = w.parseSkillOutput(&skill, scan, res.Report, emit)
+			w.parsePartialSkillReport(&skill, scan, res.Report, emit)
 		}
 		return res.Report, err
 	}
@@ -173,6 +173,16 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 		}
 	}
 	return res.Report, nil
+}
+
+// parsePartialSkillReport runs parseSkillOutput against a max-turns
+// partial and logs on failure. The scan is already returning a
+// MaxTurnsReachedError so the parse error has nowhere useful to
+// propagate; logging keeps a silently-malformed partial from vanishing.
+func (w *Worker) parsePartialSkillReport(skill *db.Skill, scan *db.Scan, report string, emit func(Event)) {
+	if err := w.parseSkillOutput(skill, scan, report, emit); err != nil {
+		w.Log.Warn("parse partial skill output after max turns", "scan", scan.ID, "skill", skill.Name, "err", err)
+	}
 }
 
 func (w *Worker) parseSkillOutput(skill *db.Skill, scan *db.Scan, report string, emit func(Event)) error {
@@ -287,13 +297,15 @@ func (w *Worker) parseFindingsOutput(skill *db.Skill, scan *db.Scan, report stri
 			}).Error; uerr != nil {
 				return fmt.Errorf("update finding %d: %w", existing.ID, uerr)
 			}
-			_ = w.DB.Create(&db.FindingHistory{
+			if herr := w.DB.Create(&db.FindingHistory{
 				FindingID: existing.ID,
 				Field:     "observed",
 				NewValue:  fmt.Sprintf("scan %d @ %s", scan.ID, scan.Commit),
 				Source:    db.SourceTool,
 				By:        scan.SkillName,
-			}).Error
+			}).Error; herr != nil {
+				w.Log.Warn("record observed-again finding history", "finding", existing.ID, "scan", scan.ID, "err", herr)
+			}
 			observed++
 			continue
 		}

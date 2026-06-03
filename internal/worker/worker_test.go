@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -395,5 +396,46 @@ func TestScanEmitter_finalSaveCoversUnflushedTail(t *testing.T) {
 	gdb.First(&got, scan.ID)
 	if !strings.Contains(got.Log, "running skill fast") {
 		t.Errorf("final Save should persist the buffered log tail; got %q", got.Log)
+	}
+}
+
+// TestWorker_maxTurnsParseFailureLogged pins the contract that a partial
+// report from a max-turns run is parsed best-effort and a malformed
+// payload surfaces as a warn log instead of being silently dropped. The
+// scan still completes as ScanDone because the max-turns path treats a
+// hit cap as completion, not failure; the log line is the only signal
+// to operators that the partial wasn't usable.
+func TestWorker_maxTurnsParseFailureLogged(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "mtparse.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
+	gdb.Create(&repo)
+	skill := db.Skill{Name: "maint", Description: "x", Body: "b", Active: true, Source: "ui", Version: 1, OutputKind: "maintainers", MaxTurns: 5}
+	gdb.Create(&skill)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanQueued, SkillID: &skill.ID}
+	gdb.Create(&scan)
+
+	var logBuf bytes.Buffer
+	w := &Worker{
+		DB:             gdb,
+		Log:            slog.New(slog.NewTextHandler(&logBuf, &slog.HandlerOptions{Level: slog.LevelWarn})),
+		DataDir:        t.TempDir(),
+		Runner:         fakeRunner{skillRes: SkillResult{Report: "not json"}, skillErr: &MaxTurnsReachedError{}},
+		PrepareRepoSrc: stubPrepareRepoSrc,
+	}
+	body, _ := json.Marshal(queue.Payload{ScanID: scan.ID})
+	if err := w.wrap(w.doSkill)(context.Background(), body); err != nil {
+		t.Fatalf("wrap: %v", err)
+	}
+
+	var got db.Scan
+	gdb.First(&got, scan.ID)
+	if got.Status != db.ScanDone {
+		t.Errorf("status = %s, want done (max-turns still completes)", got.Status)
+	}
+	if !strings.Contains(logBuf.String(), "parse partial skill output after max turns") {
+		t.Errorf("expected warn log about partial parse, got: %s", logBuf.String())
 	}
 }

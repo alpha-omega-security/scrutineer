@@ -205,7 +205,12 @@ func (w *Worker) doExposure(ctx context.Context, scan *db.Scan, emit func(Event)
 	}
 	if err != nil {
 		if _, ok := errors.AsType[*MaxTurnsReachedError](err); ok && res.Report != "" {
-			_ = w.parseExposureOutput(&skill, scan, dep.ID, res.Report, emit)
+			// Same best-effort parse-the-partial pattern as doSkill: keep
+			// propagating the original err but surface parse failures so a
+			// silently-malformed exposure report doesn't vanish.
+			if perr := w.parseExposureOutput(&skill, scan, dep.ID, res.Report, emit); perr != nil {
+				w.Log.Warn("parse partial exposure output after max turns", "scan", scan.ID, "dependent", dep.ID, "err", perr)
+			}
 		}
 		return res.Report, err
 	}
