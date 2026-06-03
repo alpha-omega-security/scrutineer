@@ -17,7 +17,7 @@ Decide whether a CVE Numbering Authority covers this repository. When one does, 
 - `./src` — the cloned repository. Useful mainly for `SECURITY.md`, which sometimes names the CNA directly.
 - `./context.json` — read `repository.url` and `repository.full_name`, plus the `scrutineer` block with `api_base`, `token`, `repository_id`. The owner is the part of `full_name` before the `/`.
 - `./report.json` — write your result here.
-- `./schema.json` — the JSON schema your report must validate against.
+- `./schema.json` — the JSON schema for `./report.json`.
 
 ## Data
 

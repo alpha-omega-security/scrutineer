@@ -26,7 +26,7 @@ You are identifying who maintains a repository so a security disclosure can reac
 - `./src` — the cloned repository. Useful for reading `SECURITY.md`, `CODEOWNERS`, `.github/`, and `git log`.
 - `./context.json` — the repository URL and metadata. Read the `repository.url` field.
 - `./report.json` — write your final report here.
-- `./schema.json` — the JSON schema your report must validate against.
+- `./schema.json` — the JSON schema for `./report.json`.
 
 ## Data sources
 
