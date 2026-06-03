@@ -1,6 +1,6 @@
 ---
 name: dependencies
-description: Index dependencies reported by git-pkgs for the repository's manifest and lockfile files (package.json, Gemfile, go.mod, requirements.txt, etc.) and record each one with its manifest path, ecosystem, and requirement string. Use to populate the Dependencies tab.
+description: Index the repository's dependencies via `git-pkgs list`, recording manifest path, ecosystem, and requirement per entry.
 license: MIT
 compatibility: Requires `git-pkgs` (https://github.com/ecosyste-ms/git-pkgs) and `python3` on PATH.
 metadata:

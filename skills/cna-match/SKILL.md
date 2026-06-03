@@ -1,6 +1,6 @@
 ---
 name: cna-match
-description: Determine which CVE Numbering Authority (if any) covers this repository, so disclosures can be routed to the CNA's security contact rather than only the maintainer. Reads scrutineer's cached CNA list and matches the repo's owner, project name, and published packages against each CNA's published scope.
+description: Match the repository to a CVE Numbering Authority so disclosures route to the CNA's security contact when one covers the repo.
 license: MIT
 metadata:
   scrutineer.version: 1

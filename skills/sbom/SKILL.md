@@ -1,6 +1,6 @@
 ---
 name: sbom
-description: Generate a CycloneDX Software Bill of Materials for the repository. Use when you want a standard-format inventory of components for downstream tooling, compliance, or archival. Stored verbatim on the scan.
+description: Generate a CycloneDX SBOM for the repository via `git-pkgs sbom`. Stored verbatim on the scan.
 license: MIT
 compatibility: Requires the `git-pkgs` CLI on PATH.
 metadata:

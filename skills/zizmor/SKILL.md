@@ -1,6 +1,6 @@
 ---
 name: zizmor
-description: Audit the repository's GitHub Actions workflows for common security issues (credential mishandling, untrusted inputs, template injection, overly permissive tokens) and convert findings to scrutineer's shape. Use on any repo with a .github/workflows directory.
+description: Audit GitHub Actions workflows with zizmor and map hits into the findings shape.
 license: MIT
 compatibility: Requires `zizmor` (https://github.com/zizmorcore/zizmor) and `python3` on PATH.
 metadata:
@@ -30,4 +30,4 @@ Run zizmor against `./src/.github/workflows` and map each issue into scrutineer'
 python3 scripts/scan.py > ./report.json
 ```
 
-The script handles missing workflows directories, a missing zizmor binary, and zizmor's non-zero "I found something" exit code gracefully — don't add retry or error handling on top. If stderr is noisy that's fine, scrutineer only reads the JSON on stdout.
+The script handles missing workflows directories, a missing zizmor binary, and zizmor's non-zero "I found something" exit code gracefully — don't add retry or error handling on top.

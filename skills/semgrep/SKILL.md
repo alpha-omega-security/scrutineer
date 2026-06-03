@@ -1,6 +1,6 @@
 ---
 name: semgrep
-description: Run semgrep static analysis with the security-audit and secrets rulesets, then map each hit into scrutineer's findings shape so it surfaces alongside model-driven audits. Use as a fast deterministic pass before or alongside deeper skills.
+description: Run semgrep's `p/security-audit` and `p/secrets` rulesets and map hits into the findings shape.
 license: MIT
 compatibility: Requires `semgrep` (https://semgrep.dev) and `python3` on PATH.
 metadata:
@@ -30,4 +30,4 @@ Run semgrep against `./src` using the `p/security-audit` and `p/secrets` ruleset
 python3 scripts/scan.py > ./report.json
 ```
 
-The script self-reports tool-missing errors into the JSON envelope so failures are visible on the scan page rather than silent. Don't post-process its output.
+Don't post-process its output. Tool-missing errors are reported into the JSON envelope so failures are visible on the scan page.

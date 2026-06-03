@@ -1,6 +1,6 @@
 ---
 name: repo-overview
-description: Produce a structured plain-language overview of what a repository does, who maintains it, its activity level, and the shape of its codebase. Use when you want a quick orientation before deeper analysis.
+description: Run `brief --json` to produce a structured overview of the repository. Used by other skills as orientation.
 license: MIT
 compatibility: Requires the `brief` CLI (https://github.com/ecosyste-ms/brief) on PATH.
 metadata:
@@ -33,10 +33,4 @@ If `scan_subpath` points at a directory that does not exist under `./src`, write
 brief --json ./src > ./report.json
 ```
 
-That is the whole workflow. If `brief` exits non-zero, read its stderr and write a short `{"error": "..."}` JSON document to `./report.json` so the caller can see what went wrong rather than getting an empty file.
-
-## Notes
-
-- `brief` is pinned by the deployment (container image or host install). Do not try to install it here.
-- Do not post-process the output. The consumer of this report expects brief's native schema.
-- If the tool is missing, say so clearly in the error JSON rather than inventing content.
+That is the whole workflow. If `brief` exits non-zero (including when it is missing), read its stderr and write a short `{"error": "..."}` JSON document to `./report.json` so the caller can see what went wrong rather than getting an empty file. Do not post-process brief's output; the consumer expects its native schema. Do not try to install `brief`; it is pinned by the deployment.

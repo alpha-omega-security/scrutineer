@@ -1,6 +1,6 @@
 ---
 name: verify
-description: Independently verify a specific finding by re-running its reproduction against the current repository state. Records whether the finding still reproduces, was fixed upstream, or could not be reproduced. Use on a finding before investing analyst time in disclosure.
+description: Re-run a finding's reproduction against current HEAD and record whether it is confirmed, fixed, or inconclusive.
 license: MIT
 compatibility: Needs network access to the scrutineer API (http://host:port/api). Expects the finding's reproduction instructions to be runnable against ./src with commonly available tooling.
 metadata:

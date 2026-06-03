@@ -1,6 +1,6 @@
 ---
 name: dependents
-description: For each published package of this repository, fetch the top runtime dependents so later exposure-analysis skills have a ranked shortlist to work against. Use after the packages skill has populated which packages exist.
+description: Fetch the top runtime dependents for each of this repository's published packages, ranked, so reach skills have a shortlist.
 license: MIT
 compatibility: Needs network access to packages.ecosyste.ms.
 allowed-tools: Read,Write,WebFetch,Grep,Glob,LS

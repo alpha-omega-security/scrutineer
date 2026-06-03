@@ -1,6 +1,6 @@
 ---
 name: packages
-description: Look up every published package that corresponds to a repository, across all registries, and record download counts, dependent counts, latest version, and registry URL. Use to populate the Packages tab.
+description: Look up every package this repository publishes across all registries via packages.ecosyste.ms, with downloads, dependent counts, latest version, and registry URL.
 license: MIT
 compatibility: Needs network access to packages.ecosyste.ms.
 allowed-tools: Read,Write,WebFetch,Grep,Glob,LS

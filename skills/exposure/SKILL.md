@@ -1,6 +1,6 @@
 ---
 name: exposure
-description: For one (finding, dependent) pair, decide whether the dependent's published code actually reaches the upstream library finding. Emit one CSAF 2.0 product_status verdict so scrutineer can record affected vs not_affected and stamp the right VEX justification.
+description: For one (finding, dependent) pair, decide whether the dependent's code reaches the upstream finding. Emits a CSAF 2.0 product_status verdict with VEX justification.
 license: MIT
 allowed-tools: Read,Write,Glob,Grep,WebFetch,LS
 metadata:

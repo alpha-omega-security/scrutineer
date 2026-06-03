@@ -1,6 +1,6 @@
 ---
 name: metadata
-description: Fetch high-level repository metadata (description, default branch, languages, license, stars, forks, archived status, icon) and save it against the scan's repository row. Use as the first scan on a new repository or to refresh after upstream changes.
+description: Fetch repository metadata (description, default branch, languages, license, stars, archived, icon) from repos.ecosyste.ms and save it on the repository row.
 license: MIT
 compatibility: Needs network access to repos.ecosyste.ms.
 allowed-tools: Read,Write,WebFetch,Grep,Glob,LS
