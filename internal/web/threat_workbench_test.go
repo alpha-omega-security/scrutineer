@@ -264,6 +264,55 @@ func TestLoadWorkbench_prefersOverrideAndDiffs(t *testing.T) {
 	}
 }
 
+// TestLoadWorkbench_ignoresSubPathDeepDives pins that a subproject
+// deep-dive does not leak into the root-scoped workbench history.
+// Without the sub_path filter, a recent subproject run would show its
+// inventory drift as a model effect against the previous root run.
+func TestLoadWorkbench_ignoresSubPathDeepDives(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://github.com/o/r-sub", Name: "r-sub"}
+	s.DB.Create(&repo)
+	s.DB.Create(&db.Scan{RepositoryID: repo.ID, SkillName: deepDiveSkillName, Status: db.ScanDone, Report: ddReportA})
+	s.DB.Create(&db.Scan{RepositoryID: repo.ID, SkillName: deepDiveSkillName, Status: db.ScanDone, Report: ddReportB, SubPath: "packages/inner"})
+
+	wb := loadWorkbench(s.DB, &repo, "")
+	if len(wb.Runs) != 1 {
+		t.Fatalf("Runs len = %d, want 1 (sub_path run must be filtered out)", len(wb.Runs))
+	}
+	if wb.Runs[0].SubPath != "" {
+		t.Errorf("Runs[0].SubPath = %q, want root", wb.Runs[0].SubPath)
+	}
+}
+
+// TestRepoShow_subPathThreatModelDoesNotSeedRootWorkbench pins that a
+// threat-model scan with a non-empty SubPath does not become the root
+// workbench's editor seed. The workbench override lives on Repository
+// and runs at root scope, so a subproject threat model is the wrong
+// starting point.
+func TestRepoShow_subPathThreatModelDoesNotSeedRootWorkbench(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://github.com/o/r-sub-seed", Name: "r-sub-seed"}
+	s.DB.Create(&repo)
+	s.DB.Create(&db.Scan{
+		RepositoryID: repo.ID, SkillName: threatModelSkillName,
+		Status: db.ScanDone, Report: `{"sub":"path","model":"x"}`,
+		SubPath: "packages/inner",
+	})
+
+	r := localReq("GET", "/repositories/"+strconv.Itoa(int(repo.ID)))
+	r.SetPathValue("id", strconv.Itoa(int(repo.ID)))
+	w := httptest.NewRecorder()
+	s.repoShow(w, r)
+	if w.Code != 200 {
+		t.Fatalf("status = %d: %s", w.Code, w.Body)
+	}
+	if strings.Contains(w.Body.String(), `"sub":"path"`) {
+		t.Error("workbench editor seeded from sub_path threat-model scan; should be empty at root")
+	}
+}
+
 func TestRepoShow_rendersWorkbenchTab(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
