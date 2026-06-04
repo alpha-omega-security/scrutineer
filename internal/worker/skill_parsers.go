@@ -62,11 +62,11 @@ func (w *Worker) parseRepoMetadataOutput(scan *db.Scan, report string, emit func
 	if t, ok := parseTime(m.PushedAt); ok {
 		updates["pushed_at"] = t
 	}
-	if m.HTMLURL != "" {
-		updates["html_url"] = m.HTMLURL
+	if u := safeURL(m.HTMLURL); u != "" {
+		updates["html_url"] = u
 	}
-	if m.IconURL != "" {
-		updates["icon_url"] = m.IconURL
+	if u := safeURL(m.IconURL); u != "" {
+		updates["icon_url"] = u
 	}
 	if err := w.DB.Model(&db.Repository{}).Where("id = ?", scan.RepositoryID).Updates(updates).Error; err != nil {
 		return fmt.Errorf("update repository: %w", err)
