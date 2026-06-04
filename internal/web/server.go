@@ -1697,7 +1697,7 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 	var tmSeed string
 	if tmScan != nil {
 		_ = json.Unmarshal([]byte(tmScan.Report), &threatModel)
-		if tmScan.SkillName == threatModelSkillName {
+		if tmScan.SkillName == threatModelSkillName && tmScan.SubPath == "" {
 			tmSeed = tmScan.Report
 		}
 	}
