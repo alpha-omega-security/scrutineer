@@ -64,6 +64,16 @@ func (d WorkbenchDiff) Empty() bool {
 	return len(d.NowReported)+len(d.NowSuppressed)+len(d.ReasonChanged) == 0
 }
 
+// workbenchSeed returns the report to seed the editor with when the operator
+// has not saved an override yet. Only a root-scoped threat-model scan
+// qualifies; a subproject run or a deep-dive fallback returns "".
+func workbenchSeed(s *db.Scan) string {
+	if s != nil && s.SkillName == threatModelSkillName && s.SubPath == "" {
+		return s.Report
+	}
+	return ""
+}
+
 // loadWorkbench assembles the workbench tab's data. seedReport is the
 // latest threat-model scan's report.json, used to seed the editor when
 // the operator has not saved an override yet.

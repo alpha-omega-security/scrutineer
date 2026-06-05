@@ -1481,14 +1481,10 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 		tmScan = tmFallback
 	}
 	var threatModel map[string]any
-	var tmSeed string
 	if tmScan != nil {
 		_ = json.Unmarshal([]byte(tmScan.Report), &threatModel)
-		if tmScan.SkillName == threatModelSkillName && tmScan.SubPath == "" {
-			tmSeed = tmScan.Report
-		}
 	}
-	wb := loadWorkbench(s.DB, &repo, tmSeed)
+	wb := loadWorkbench(s.DB, &repo, workbenchSeed(tmScan))
 
 	var totalCost float64
 	s.DB.Model(&db.Scan{}).Where("repository_id = ?", repo.ID).
