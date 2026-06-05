@@ -1,4 +1,4 @@
-FROM golang:1.26.3-alpine@sha256:91eda9776261207ea25fd06b5b7fed8d397dd2c0a283e77f2ab6e91bfa71079d AS build
+FROM golang:1.26.4-alpine@sha256:f23e8b227fb4493eabe03bede4d5a32d04092da71962f1fb79b5f7d1e6c2a17f AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -10,13 +10,13 @@ COPY . .
 ARG COMMIT=""
 RUN CGO_ENABLED=0 go build -ldflags "-X main.commit=${COMMIT}" -o /scrutineer ./cmd/scrutineer
 
-FROM node:26-alpine@sha256:7c6af15abe4e3de859690e7db171d0d711bf37d27528eddfe625b2fe89e097f8 AS claude
+FROM node:26-alpine@sha256:144769ec3f32e8ee36b3cfde91e82bee25d9367b20f31a151f3f7eea3a2a8541 AS claude
 RUN npm install -g @anthropic-ai/claude-code@2.1.160
 
 FROM python:3.14.5-alpine@sha256:5a824eb82cc75361f98611f3cfc5091ea33f10a6ccea4d4ebdabbc523b9a1614 AS python-tools
 RUN pip install --no-cache-dir semgrep==1.116.0 "setuptools<81"
 
-FROM golang:1.26.3-alpine@sha256:91eda9776261207ea25fd06b5b7fed8d397dd2c0a283e77f2ab6e91bfa71079d AS go-tools
+FROM golang:1.26.4-alpine@sha256:f23e8b227fb4493eabe03bede4d5a32d04092da71962f1fb79b5f7d1e6c2a17f AS go-tools
 RUN apk add --no-cache git
 RUN GOBIN=/out go install github.com/git-pkgs/git-pkgs@v0.15.3 && \
     GOBIN=/out go install github.com/git-pkgs/brief/cmd/brief@v0.6.0

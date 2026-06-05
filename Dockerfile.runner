@@ -5,7 +5,7 @@
 ARG CLAUDE_VERSION=2.1.160
 ARG SEMGREP_VERSION=1.116.0
 
-FROM golang:1.26-bookworm@sha256:386d475a660466863d9f8c766fec64d7fdad3edac2c6a05020c09534d71edb4b AS go-tools
+FROM golang:1.26.4-bookworm@sha256:5d2b868674b57c9e48cdd39e891acce4196b6926ca6d11e9c270a8f85106203d AS go-tools
 RUN GOBIN=/out go install github.com/git-pkgs/git-pkgs@v0.15.3 && \
     GOBIN=/out go install github.com/git-pkgs/brief/cmd/brief@v0.6.0
 
