@@ -12,17 +12,6 @@ import (
 	"scrutineer/internal/db"
 )
 
-func postForm(t *testing.T, s *Server, path string, form url.Values) *httptest.ResponseRecorder {
-	t.Helper()
-	r := httptest.NewRequest("POST", path, strings.NewReader(form.Encode()))
-	r.Host = testHost
-	r.Header.Set("Sec-Fetch-Site", "same-origin")
-	r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	w := httptest.NewRecorder()
-	s.Handler().ServeHTTP(w, r)
-	return w
-}
-
 func TestNormaliseThreatModel(t *testing.T) {
 	cases := []struct {
 		name    string
