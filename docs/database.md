@@ -2,6 +2,8 @@
 
 SQLite with WAL mode. GORM handles migrations on startup. The queue table (`goqite`) is managed separately with an embedded SQL schema.
 
+See [backup.md](backup.md) for backing up and restoring this file: WAL mode means a plain `cp` can be inconsistent, so use `scrutineer backup`/`restore` or one of the documented strategies.
+
 ## repositories
 
 The central entity. One row per git URL.

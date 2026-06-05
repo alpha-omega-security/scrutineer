@@ -64,6 +64,13 @@ const (
 
 func main() {
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
+	if handled, err := dispatch(os.Args[1:], os.Stdout); handled {
+		if err != nil {
+			log.Error("command failed", "err", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(log); err != nil {
 		log.Error("fatal", "err", err)
 		os.Exit(1)

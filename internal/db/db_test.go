@@ -2,8 +2,64 @@ package db
 
 import (
 	"math"
+	"os"
+	"path/filepath"
 	"testing"
 )
+
+func TestSnapshot(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.db")
+	gdb, err := Open(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Keep the source open across Snapshot to mirror a live server holding
+	// the DB: Snapshot must still produce a usable copy via a second conn.
+	defer func() {
+		if sqldb, err := gdb.DB(); err == nil {
+			_ = sqldb.Close()
+		}
+	}()
+	if err := gdb.Exec("CREATE TABLE probe(v INTEGER)").Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := gdb.Exec("INSERT INTO probe(v) VALUES (4242)").Error; err != nil {
+		t.Fatal(err)
+	}
+
+	dest := filepath.Join(dir, "snap.db")
+	if err := Snapshot(src, dest); err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+
+	snap, err := Open(dest)
+	if err != nil {
+		t.Fatalf("open snapshot: %v", err)
+	}
+	var v int
+	if err := snap.Raw("SELECT v FROM probe").Scan(&v).Error; err != nil {
+		t.Fatalf("read probe from snapshot: %v", err)
+	}
+	if v != 4242 {
+		t.Errorf("probe = %d, want 4242", v)
+	}
+}
+
+func TestSnapshot_destExists(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.db")
+	if _, err := Open(src); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(dir, "snap.db")
+	if err := os.WriteFile(dest, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Snapshot(src, dest); err == nil {
+		t.Error("Snapshot to an existing dest should fail")
+	}
+}
 
 func TestRepositoryIsLocal(t *testing.T) {
 	cases := []struct {

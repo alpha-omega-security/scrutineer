@@ -6,8 +6,10 @@
 package db
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -837,6 +839,49 @@ func Open(dsn string) (*gorm.DB, error) {
 	}
 	gdb.Exec(`CREATE INDEX IF NOT EXISTS idx_scans_priority_id ON scans (status_priority, id DESC)`)
 	return gdb, nil
+}
+
+// Snapshot writes a consistent copy of the SQLite database at src to dest
+// using VACUUM INTO. Unlike Open it neither migrates nor otherwise writes to
+// src, so a backup never mutates the live database, and it takes only a read
+// lock so it is safe to run while scrutineer is serving. WAL frames not yet
+// checkpointed are included, so the snapshot is complete even mid-scan.
+//
+// dest must not already exist: the modernc driver's VACUUM INTO overwrites a
+// target file rather than refusing it (unlike upstream SQLite), which would
+// leave trailing bytes from a larger prior file, so Snapshot guards the case
+// itself. The parent directory of dest must exist.
+func Snapshot(src, dest string) error {
+	if _, err := os.Stat(dest); err == nil {
+		return fmt.Errorf("destination already exists: %s", dest)
+	}
+	gdb, err := gorm.Open(sqlite.Open(src), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
+	if err != nil {
+		return fmt.Errorf("open sqlite: %w", err)
+	}
+	sqldb, err := gdb.DB()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = sqldb.Close() }()
+	// Pin one connection so the busy_timeout pragma and VACUUM INTO share it
+	// (a pooled Exec could otherwise land the VACUUM on a connection without
+	// the pragma). The timeout matches Open so a snapshot taken while the
+	// server writes waits out a transient lock (e.g. a checkpoint) rather
+	// than failing with SQLITE_BUSY.
+	ctx := context.Background()
+	conn, err := sqldb.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = conn.Close() }()
+	if _, err := conn.ExecContext(ctx, "PRAGMA busy_timeout=5000"); err != nil {
+		return fmt.Errorf("pragma: %w", err)
+	}
+	if _, err := conn.ExecContext(ctx, "VACUUM INTO ?", dest); err != nil {
+		return fmt.Errorf("vacuum into %s: %w", dest, err)
+	}
+	return nil
 }
 
 // SBOMUpload is one CycloneDX or SPDX document a user uploaded. Packages
