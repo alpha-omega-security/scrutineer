@@ -128,7 +128,7 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 		return "", fmt.Errorf("stage skill: %w", err)
 	}
 
-	prompt := buildSkillPrompt(skill.Name, skill.OutputFile)
+	prompt := buildLoggedPrompt(&skill)
 	scan.Prompt = prompt
 	w.DB.Model(scan).Update("prompt", prompt)
 

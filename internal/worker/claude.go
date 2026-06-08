@@ -305,6 +305,15 @@ func buildSkillPrompt(name, outputFile string) string {
 	return p
 }
 
+// buildLoggedPrompt is what scrutineer records on scan.Prompt for the UI. It
+// pairs the activation invocation with the rendered SKILL.md so the Prompt
+// tab shows the actual instructions Claude executed (#308), not just the
+// "use the X skill" wrapper.
+func buildLoggedPrompt(skill *db.Skill) string {
+	return buildSkillPrompt(skill.Name, skill.OutputFile) +
+		"\n\n--- SKILL.md ---\n\n" + renderSkillMD(skill)
+}
+
 // buildResumePrompt is the nudge handed to a `--resume`d run. The prior
 // turns are already in context, so this just tells the agent to carry on and
 // restates the deliverable — the report file is the whole point of the run,

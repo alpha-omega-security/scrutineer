@@ -81,6 +81,9 @@ func TestDoSkill_findingsKind(t *testing.T) {
 	if !strings.Contains(got.Prompt, "spec-deep") || !strings.Contains(got.Prompt, "report.json") {
 		t.Errorf("prompt missing skill name or output file: %q", got.Prompt)
 	}
+	if !strings.Contains(got.Prompt, "--- SKILL.md ---") || !strings.Contains(got.Prompt, "Do the thing.") {
+		t.Errorf("prompt missing rendered SKILL.md body: %q", got.Prompt)
+	}
 }
 
 func TestDoSkill_maintainersKind(t *testing.T) {
