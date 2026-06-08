@@ -608,8 +608,52 @@ func stageSkill(skill *db.Skill, workRoot, dst string) error {
 		if err := copyAux(skill.SourcePath, dst); err != nil {
 			return fmt.Errorf("copy aux files: %w", err)
 		}
+		if err := mirrorScripts(skill.SourcePath, workRoot); err != nil {
+			return fmt.Errorf("mirror scripts: %w", err)
+		}
 	}
 	return nil
+}
+
+// mirrorScripts copies the skill's scripts/ directory (if any) to
+// workRoot/scripts/ so the `bash scripts/foo.sh` / `python3 scripts/foo.py`
+// instructions every SKILL.md uses resolve from the workspace root on the
+// first try, without the model having to glob for them. Same pattern as
+// schema.json (#221).
+func mirrorScripts(src, workRoot string) error {
+	srcScripts := filepath.Join(src, "scripts")
+	info, err := os.Stat(srcScripts)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return nil
+	}
+	return copyDir(srcScripts, filepath.Join(workRoot, "scripts"))
+}
+
+func copyDir(src, dst string) error {
+	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if info.IsDir() {
+			return os.MkdirAll(target, dirPerm)
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, b, info.Mode())
+	})
 }
 
 // renderSkillMD rebuilds a SKILL.md from the stored fields. The frontmatter
