@@ -56,23 +56,60 @@ var DefaultEgressAllow = []string{
 	"codeberg.org",
 	"bitbucket.org",
 
-	// package registries
+	// package registries — API, content, web, and stats endpoints for the
+	// ecosystems packages.ecosyste.ms covers. Grouped so adding a new
+	// registry stays a focused diff.
+	// npm
 	"registry.npmjs.org",
+	"api.npmjs.org",
+	"www.npmjs.com",
+	// PyPI
 	"pypi.org",
 	"files.pythonhosted.org",
+	"pypistats.org",
+	// RubyGems
 	"rubygems.org",
 	"index.rubygems.org",
+	// crates.io
 	"crates.io",
 	"static.crates.io",
 	"index.crates.io",
+	// Go
 	"proxy.golang.org",
 	"sum.golang.org",
 	"pkg.go.dev",
+	// Packagist (PHP)
 	"packagist.org",
 	"repo.packagist.org",
+	// Hex (Elixir/Erlang)
 	"hex.pm",
 	"repo.hex.pm",
+	// NuGet (.NET)
 	"api.nuget.org",
+	"www.nuget.org",
+	// Maven Central (Java)
+	"repo.maven.apache.org",
+	"repo1.maven.org",
+	"search.maven.org",
+	"central.sonatype.com",
+	// Conda
+	"anaconda.org",
+	"conda.anaconda.org",
+	// CocoaPods (Swift / Objective-C)
+	"cocoapods.org",
+	"trunk.cocoapods.org",
+	// CPAN (Perl)
+	"metacpan.org",
+	"fastapi.metacpan.org",
+	// CRAN (R)
+	"cran.r-project.org",
+	// Homebrew
+	"formulae.brew.sh",
+	// Pub (Dart / Flutter)
+	"pub.dev",
+	// Conan (C / C++)
+	"conan.io",
+	"center.conan.io",
 
 	// advisory / rule sources
 	"semgrep.dev",
