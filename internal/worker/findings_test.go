@@ -31,6 +31,38 @@ func TestToFindings_carriesReachabilityAndQualityTier(t *testing.T) {
 	}
 }
 
+func TestToFindings_carriesReferences(t *testing.T) {
+	raw := []byte(`{
+	  "findings": [{
+	    "id": "F1", "title": "artipacked", "severity": "Medium",
+	    "location": ".github/workflows/x.yml:18",
+	    "references": [
+	      {"url": "https://docs.zizmor.sh/audits/#artipacked", "summary": "zizmor docs: artipacked", "tags": "docs"},
+	      {"url": "  ", "summary": "blank"},
+	      {"url": "https://example.com/  ", "summary": " trimmed "}
+	    ]
+	  }]
+	}`)
+	rep, err := parseReport(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := rep.toFindings(1, 1, "abc", "")
+	if len(got) != 1 {
+		t.Fatalf("got %d findings, want 1", len(got))
+	}
+	refs := got[0].References
+	if len(refs) != 2 {
+		t.Fatalf("references = %d, want 2 (blank URL dropped)", len(refs))
+	}
+	if refs[0].URL != "https://docs.zizmor.sh/audits/#artipacked" || refs[0].Tags != "docs" {
+		t.Errorf("first reference = %+v", refs[0])
+	}
+	if refs[1].URL != "https://example.com/" || refs[1].Summary != "trimmed" {
+		t.Errorf("second reference whitespace not trimmed: %+v", refs[1])
+	}
+}
+
 func TestParseReport_toleratesNonStringTopLevelFields(t *testing.T) {
 	// #172: models sometimes copy context.json's repository object (and invent
 	// an artefact object) into report.json. Only findings[] is consumed, so

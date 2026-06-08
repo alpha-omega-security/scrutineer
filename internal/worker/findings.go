@@ -32,6 +32,8 @@ type scanFinding struct {
 	ReachChecked int      `json:"reach_checked"`
 	ReachExposed int      `json:"reach_exposed"`
 
+	References []scanReference `json:"references"`
+
 	// Per-step markdown (security-deep-dive schema)
 	Trace      string `json:"trace"`
 	Boundary   string `json:"boundary"`
@@ -43,6 +45,14 @@ type scanFinding struct {
 	// Legacy fields (old schema)
 	Summary string `json:"summary"`
 	Details string `json:"details"`
+}
+
+// scanReference is an external URL a skill attaches to a finding (rule docs,
+// upstream advisory, blog post). Materialises as a db.FindingReference row.
+type scanReference struct {
+	URL     string `json:"url"`
+	Summary string `json:"summary"`
+	Tags    string `json:"tags"`
 }
 
 func parseReport(raw []byte) (scanReport, error) {
@@ -78,6 +88,23 @@ func (r scanReport) toFindings(scanID, repoID uint, commit, subPath string) []db
 			PriorArt:     f.PriorArt,
 			Reach:        f.Reach,
 			Rating:       f.Rating,
+			References:   toReferences(f.References),
+		})
+	}
+	return out
+}
+
+func toReferences(refs []scanReference) []db.FindingReference {
+	out := make([]db.FindingReference, 0, len(refs))
+	for _, r := range refs {
+		url := strings.TrimSpace(r.URL)
+		if url == "" {
+			continue
+		}
+		out = append(out, db.FindingReference{
+			URL:     url,
+			Summary: strings.TrimSpace(r.Summary),
+			Tags:    strings.TrimSpace(r.Tags),
 		})
 	}
 	return out

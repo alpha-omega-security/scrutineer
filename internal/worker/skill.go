@@ -297,6 +297,9 @@ func (w *Worker) parseFindingsOutput(skill *db.Skill, scan *db.Scan, report stri
 			}).Error; uerr != nil {
 				return fmt.Errorf("update finding %d: %w", existing.ID, uerr)
 			}
+			if rerr := w.upsertFindingReferences(existing.ID, f.References); rerr != nil {
+				w.Log.Warn("upsert finding references", "finding", existing.ID, "scan", scan.ID, "err", rerr)
+			}
 			if herr := w.DB.Create(&db.FindingHistory{
 				FindingID: existing.ID,
 				Field:     "observed",
@@ -322,6 +325,34 @@ func (w *Worker) parseFindingsOutput(skill *db.Skill, scan *db.Scan, report stri
 
 	if db.SeverityAtLeast(worst, skill.FailOn) {
 		return &FailOnThresholdError{Worst: worst, Threshold: skill.FailOn}
+	}
+	return nil
+}
+
+// upsertFindingReferences inserts any reference URLs not already on the
+// finding. Used in the dedup branch so a re-observed finding picks up new
+// or migration-added references without duplicating ones already present.
+func (w *Worker) upsertFindingReferences(findingID uint, refs []db.FindingReference) error {
+	if len(refs) == 0 {
+		return nil
+	}
+	var existingURLs []string
+	if err := w.DB.Model(&db.FindingReference{}).
+		Where("finding_id = ?", findingID).
+		Pluck("url", &existingURLs).Error; err != nil {
+		return err
+	}
+	have := make(map[string]bool, len(existingURLs))
+	for _, u := range existingURLs {
+		have[u] = true
+	}
+	for _, r := range refs {
+		if have[r.URL] {
+			continue
+		}
+		if _, err := db.AddFindingReference(w.DB, findingID, r.URL, r.Tags, r.Summary); err != nil {
+			return err
+		}
 	}
 	return nil
 }

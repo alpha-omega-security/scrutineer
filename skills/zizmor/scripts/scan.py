@@ -74,6 +74,11 @@ def main():
             "locations": locations,
             "trace": desc,
             "rating": f"{severity} from zizmor rule {ident}{suffix}",
+            "references": [{
+                "url": f"https://docs.zizmor.sh/audits/#{ident}",
+                "summary": f"zizmor docs: {ident}",
+                "tags": "docs",
+            }],
         })
 
     print(json.dumps({"findings": findings}))

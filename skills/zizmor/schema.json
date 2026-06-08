@@ -19,7 +19,19 @@
           "location": { "type": "string" },
           "locations": { "type": "array", "items": { "type": "string" } },
           "trace":    { "type": "string" },
-          "rating":   { "type": "string" }
+          "rating":   { "type": "string" },
+          "references": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["url"],
+              "properties": {
+                "url":     { "type": "string", "format": "uri" },
+                "summary": { "type": "string" },
+                "tags":    { "type": "string" }
+              }
+            }
+          }
         }
       }
     }

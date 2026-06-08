@@ -11,6 +11,61 @@ import (
 	"scrutineer/internal/db"
 )
 
+func TestParseFindingsOutput_referencesCreatedOnNewAndUpsertedOnReobserve(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://x/r", Name: "r"}
+	gdb.Create(&repo)
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	scan1 := &db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "zizmor", Status: db.ScanDone, Commit: "aaa"}
+	gdb.Create(scan1)
+	report1 := `{"findings":[{
+		"id":"F1","title":"artipacked","severity":"Medium","location":".github/workflows/x.yml:18",
+		"references":[{"url":"https://docs.zizmor.sh/audits/#artipacked","summary":"zizmor docs: artipacked","tags":"docs"}]
+	}]}`
+	if err := w.parseFindingsOutput(&db.Skill{}, scan1, report1, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+
+	var refs []db.FindingReference
+	gdb.Find(&refs)
+	if len(refs) != 1 || refs[0].URL != "https://docs.zizmor.sh/audits/#artipacked" || refs[0].Tags != "docs" {
+		t.Fatalf("after first scan: refs = %+v, want one docs reference", refs)
+	}
+
+	// Re-observe the same finding with the same docs reference plus a new one;
+	// only the new URL should be inserted, the existing row is not duplicated.
+	scan2 := &db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "zizmor", Status: db.ScanDone, Commit: "bbb"}
+	gdb.Create(scan2)
+	report2 := `{"findings":[{
+		"id":"F1","title":"artipacked","severity":"Medium","location":".github/workflows/x.yml:18",
+		"references":[
+			{"url":"https://docs.zizmor.sh/audits/#artipacked","summary":"zizmor docs: artipacked","tags":"docs"},
+			{"url":"https://example.com/blog/artipacked","summary":"blog","tags":"article"}
+		]
+	}]}`
+	if err := w.parseFindingsOutput(&db.Skill{}, scan2, report2, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+
+	gdb.Order("url").Find(&refs)
+	if len(refs) != 2 {
+		t.Fatalf("after re-observe: %d references, want 2 (existing + new)", len(refs))
+	}
+	if refs[0].URL != "https://docs.zizmor.sh/audits/#artipacked" || refs[1].URL != "https://example.com/blog/artipacked" {
+		t.Errorf("references not upserted as expected: %+v", refs)
+	}
+
+	var n int64
+	gdb.Model(&db.Finding{}).Count(&n)
+	if n != 1 {
+		t.Errorf("expected dedup: 1 finding row, got %d", n)
+	}
+}
+
 func TestParseFindingsOutput_minConfidenceDropsBelowThreshold(t *testing.T) {
 	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
 	if err != nil {
