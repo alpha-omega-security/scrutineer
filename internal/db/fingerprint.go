@@ -15,9 +15,13 @@ import (
 // file path from Location with any :line:col suffix stripped. File-level
 // (not line-level) matching means a finding that drifts a few lines
 // between commits still dedupes; the cost is that two distinct same-CWE
-// issues in the same file collide into one row. When both CWE and
-// Location are empty the title is folded in so freeform-style findings
-// still get a key.
+// issues in the same file collide into one row. When the CWE is empty the
+// title is folded in to keep distinct findings apart: a CWE-less finding
+// has nothing else to distinguish it from another in the same file, so
+// without the title every rule that fires on one file (e.g. zizmor's many
+// per-file audits) would collapse into a single row. Findings that carry a
+// CWE keep CWE+file matching, so line drift and title rewording still
+// dedupe.
 func FingerprintFinding(skillName, subPath, cwe, location, title string) string {
 	loc := normaliseLocation(location)
 	parts := []string{
@@ -26,7 +30,7 @@ func FingerprintFinding(skillName, subPath, cwe, location, title string) string 
 		strings.ToUpper(strings.TrimSpace(cwe)),
 		loc,
 	}
-	if cwe == "" && loc == "" {
+	if cwe == "" {
 		parts = append(parts, strings.ToLower(strings.TrimSpace(title)))
 	}
 	h := sha256.Sum256([]byte(strings.Join(parts, "|")))
