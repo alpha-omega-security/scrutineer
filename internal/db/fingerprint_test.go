@@ -55,6 +55,34 @@ func TestFingerprintFinding(t *testing.T) {
 	}
 }
 
+// TestFingerprintCWELessRulesStayDistinct guards the zizmor regression: tools
+// that emit findings with a location but no CWE (zizmor, semgrep without a
+// CWE mapping) legitimately fire several distinct rules on the same workflow
+// file. The rule name (title) must keep them apart, or groupByFingerprint
+// collapses them into one row and silently drops the rest.
+func TestFingerprintCWELessRulesStayDistinct(t *testing.T) {
+	const file = ".github/workflows/foo.yml"
+
+	// Different rules in the same file -> different fingerprints.
+	artipacked := FingerprintFinding("zizmor", "", "", file+":18", "artipacked")
+	unpinned := FingerprintFinding("zizmor", "", "", file+":18", "unpinned-uses")
+	cachePoison := FingerprintFinding("zizmor", "", "", file+":2", "cache-poisoning")
+	if artipacked == unpinned || artipacked == cachePoison || unpinned == cachePoison {
+		t.Errorf("distinct CWE-less rules in the same file must not collide")
+	}
+
+	// Same rule, different lines in the same file -> still one fingerprint
+	// (per-rule folding into the locations set is intentional).
+	if artipacked != FingerprintFinding("zizmor", "", "", file+":40", "artipacked") {
+		t.Errorf("same rule + same file must dedupe regardless of line")
+	}
+
+	// Same rule, different file -> different fingerprint.
+	if artipacked == FingerprintFinding("zizmor", "", "", ".github/workflows/bar.yml:3", "artipacked") {
+		t.Errorf("same rule in a different file must change fingerprint")
+	}
+}
+
 func TestBackfillFindingFingerprints(t *testing.T) {
 	gdb, err := Open(":memory:")
 	if err != nil {
