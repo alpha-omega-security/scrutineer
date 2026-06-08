@@ -7,7 +7,31 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"scrutineer/internal/db"
 )
+
+func TestBuildLoggedPrompt_includesActivationAndRenderedSkill(t *testing.T) {
+	skill := &db.Skill{
+		Name:        "metadata",
+		Description: "Identify the repository.",
+		Body:        "## Workspace\n\n- `./src` — the cloned repo.",
+		OutputFile:  "report.json",
+	}
+	got := buildLoggedPrompt(skill)
+	for _, want := range []string{
+		buildSkillPrompt("metadata", "report.json"),
+		"--- SKILL.md ---",
+		"name: metadata",
+		"description: Identify the repository.",
+		"## Workspace",
+		"./src",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("logged prompt missing %q\nfull prompt:\n%s", want, got)
+		}
+	}
+}
 
 func TestLocalClaude_RunSkill_rejectsProfileRequiringSkill(t *testing.T) {
 	work := t.TempDir()
