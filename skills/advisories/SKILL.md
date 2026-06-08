@@ -3,7 +3,6 @@ name: advisories
 description: Fetch published GHSA and CVE advisories affecting any package this repository produces, via advisories.ecosyste.ms.
 license: MIT
 compatibility: Needs network access to advisories.ecosyste.ms.
-allowed-tools: Read,Write,WebFetch,Grep,Glob,LS
 metadata:
   scrutineer.version: 1
   scrutineer.output_file: report.json

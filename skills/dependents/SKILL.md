@@ -3,7 +3,6 @@ name: dependents
 description: Fetch the top runtime dependents for each of this repository's published packages, ranked, so reach skills have a shortlist.
 license: MIT
 compatibility: Needs network access to packages.ecosyste.ms.
-allowed-tools: Read,Write,WebFetch,Grep,Glob,LS
 metadata:
   scrutineer.version: 1
   scrutineer.output_file: report.json

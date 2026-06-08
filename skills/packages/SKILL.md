@@ -3,7 +3,6 @@ name: packages
 description: Look up every package this repository publishes across all registries via packages.ecosyste.ms, with downloads, dependent counts, latest version, and registry URL.
 license: MIT
 compatibility: Needs network access to packages.ecosyste.ms.
-allowed-tools: Read,Write,WebFetch,Grep,Glob,LS
 metadata:
   scrutineer.version: 1
   scrutineer.output_file: report.json

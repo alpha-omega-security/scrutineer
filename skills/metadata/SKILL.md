@@ -3,7 +3,6 @@ name: metadata
 description: Fetch repository metadata (description, default branch, languages, license, stars, archived, icon) from repos.ecosyste.ms and save it on the repository row.
 license: MIT
 compatibility: Needs network access to repos.ecosyste.ms.
-allowed-tools: Read,Write,WebFetch,Grep,Glob,LS
 metadata:
   scrutineer.version: 1
   scrutineer.output_file: report.json
