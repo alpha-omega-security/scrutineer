@@ -791,3 +791,81 @@ body
 		t.Errorf("paths defaults: %v / %v", p.Paths, p.IgnorePaths)
 	}
 }
+
+func TestParseFile_requires(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSkill(t, dir, "gated", `---
+name: gated
+description: Skill with declared prereqs.
+metadata:
+  scrutineer.requires:
+    - threat-model
+    - semgrep
+---
+
+body
+`)
+	p, err := ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(p.Requires, []string{"threat-model", "semgrep"}) {
+		t.Errorf("Requires = %v, want [threat-model semgrep]", p.Requires)
+	}
+	m, _ := p.ToModel("local")
+	if !slices.Equal(SplitPatterns(m.Requires), []string{"threat-model", "semgrep"}) {
+		t.Errorf("model Requires roundtrip = %q", m.Requires)
+	}
+}
+
+func TestParseFile_requiresWrongType(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSkill(t, dir, "bad-req", `---
+name: bad-req
+description: Requires must be a list.
+metadata:
+  scrutineer.requires: threat-model
+---
+
+body
+`)
+	if _, err := ParseFile(path); err == nil || !strings.Contains(err.Error(), "list of strings") {
+		t.Errorf("expected list-of-strings error, got %v", err)
+	}
+}
+
+func TestParseFile_requiresEmptyEntry(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSkill(t, dir, "empty-req", `---
+name: empty-req
+description: Empty entries reject so a typo surfaces.
+metadata:
+  scrutineer.requires:
+    - threat-model
+    - ""
+---
+
+body
+`)
+	if _, err := ParseFile(path); err == nil || !strings.Contains(err.Error(), "must not be empty") {
+		t.Errorf("expected empty-entry error, got %v", err)
+	}
+}
+
+func TestParseFile_requiresUnsetDefaultsNil(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSkill(t, dir, "no-req", `---
+name: no-req
+description: Skill without requires.
+---
+
+body
+`)
+	p, err := ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Requires != nil {
+		t.Errorf("Requires default = %v, want nil", p.Requires)
+	}
+}

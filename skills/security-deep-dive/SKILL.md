@@ -8,6 +8,14 @@ metadata:
   scrutineer.output_kind: findings
   scrutineer.max_turns: 120
   scrutineer.model: max
+  scrutineer.requires:
+    - threat-model
+    - semgrep
+    - repo-overview
+    - advisories
+    - packages
+    - dependents
+    - maintainers
 ---
 
 # security-deep-dive

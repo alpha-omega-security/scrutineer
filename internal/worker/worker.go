@@ -35,6 +35,17 @@ const (
 // more than this; a scan that does is almost always wedged.
 const DefaultScanTimeout = time.Hour
 
+// Prereq gate defaults. A skill declaring scrutineer.requires has its
+// dispatch deferred when any listed upstream scan is not yet done; the
+// queue message is re-published with DefaultPrereqRetryDelay between each
+// attempt, up to DefaultMaxPrereqAttempts. The two together cap the wait
+// at roughly DefaultPrereqRetryDelay * DefaultMaxPrereqAttempts before the
+// scan fails with a "prereq not satisfied" error.
+const (
+	DefaultPrereqRetryDelay  = 30 * time.Second
+	DefaultMaxPrereqAttempts = 20
+)
+
 // defaultLogFlushInterval bounds how long a scan's log can lag behind the
 // in-memory accumulator. Each emitted event used to UPDATE the whole
 // scans.log TEXT column, so a token-heavy scan fired thousands of full
@@ -72,6 +83,18 @@ type Worker struct {
 	// revised value.
 	OnRevalidateVerdict func(scan *db.Scan, finding *db.Finding, verdict, severity string)
 	ScanTimeout         time.Duration
+
+	// Queue is the queue this worker is registered on. Required for the
+	// prereq gate to re-enqueue a scan whose upstream skills have not yet
+	// completed. Register() sets it from its argument so callers do not
+	// need to wire it twice.
+	Queue *queue.Queue
+
+	// PrereqRetryDelay and MaxPrereqAttempts override the prereq-gate
+	// defaults. Tests set these to keep gate behaviour deterministic
+	// without the production backoff. Zero falls through to the consts.
+	PrereqRetryDelay  time.Duration
+	MaxPrereqAttempts int
 	// SchemaStrict makes a report.json that fails validation against the
 	// skill's schema.json fail the scan. When false the validator output
 	// is emitted to the log and the kind-specific parser still runs.
@@ -258,6 +281,7 @@ func (w *Worker) clearSessionStore(scan *db.Scan) {
 }
 
 func (w *Worker) Register(q *queue.Queue) {
+	w.Queue = q
 	q.Register(JobSkill, w.wrap(w.doSkill))
 	q.Register(JobExposure, w.wrap(w.doExposure))
 }
@@ -284,6 +308,16 @@ func (w *Worker) wrap(h handler) func(context.Context, []byte) error {
 		if scan.Status != db.ScanQueued {
 			w.Log.Info("dropping stale job", "scan", scan.ID, "status", scan.Status)
 			return nil
+		}
+
+		if scan.Kind == JobSkill {
+			deferred, err := w.preflightSkill(ctx, &scan, p.Attempt)
+			if err != nil {
+				return err
+			}
+			if deferred {
+				return nil
+			}
 		}
 
 		timeout := w.ScanTimeout

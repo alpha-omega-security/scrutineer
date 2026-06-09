@@ -43,6 +43,7 @@ const (
 	metaRequiresProfile = "scrutineer.requires_profile"
 	metaPaths           = "scrutineer.paths"
 	metaIgnorePaths     = "scrutineer.ignore_paths"
+	metaRequires        = "scrutineer.requires"
 
 	// SchemaVersion is the only scrutineer.version this build accepts.
 	// Skills omitting the key are treated as version 1. Bump when the
@@ -68,6 +69,7 @@ var scrutineerKeys = map[string]bool{
 	metaRequiresProfile: true,
 	metaPaths:           true,
 	metaIgnorePaths:     true,
+	metaRequires:        true,
 }
 
 var confidenceLevels = map[string]bool{"low": true, "medium": true, "high": true}
@@ -138,6 +140,7 @@ type Parsed struct {
 	RequiresProfile string
 	Paths           []string
 	IgnorePaths     []string
+	Requires        []string
 
 	SourcePath string // absolute path to the skill directory
 	SourceHash string // sha256 of SKILL.md + schema.json contents
@@ -281,6 +284,30 @@ func (p *Parsed) validateMetadata() error {
 	if err := checkGlobList(p.Metadata, metaIgnorePaths); err != nil {
 		return err
 	}
+	if err := checkStringList(p.Metadata, metaRequires); err != nil {
+		return err
+	}
+	return nil
+}
+
+func checkStringList(m map[string]any, key string) error {
+	v, ok := m[key]
+	if !ok {
+		return nil
+	}
+	list, ok := v.([]any)
+	if !ok {
+		return fmt.Errorf("%s must be a list of strings, got %T", key, v)
+	}
+	for i, item := range list {
+		s, ok := item.(string)
+		if !ok {
+			return fmt.Errorf("%s[%d] must be a string, got %T", key, i, item)
+		}
+		if strings.TrimSpace(s) == "" {
+			return fmt.Errorf("%s[%d] must not be empty", key, i)
+		}
+	}
 	return nil
 }
 
@@ -376,6 +403,7 @@ func (p *Parsed) extractMetadataKeys() {
 	}
 	p.Paths = extractStringList(p.Metadata, metaPaths)
 	p.IgnorePaths = extractStringList(p.Metadata, metaIgnorePaths)
+	p.Requires = extractStringList(p.Metadata, metaRequires)
 }
 
 func extractStringList(m map[string]any, key string) []string {
@@ -445,6 +473,7 @@ func (p *Parsed) ToModel(source string) (*db.Skill, error) {
 		RequiresProfile: p.RequiresProfile,
 		Paths:           JoinPatterns(p.Paths),
 		IgnorePaths:     JoinPatterns(p.IgnorePaths),
+		Requires:        JoinPatterns(p.Requires),
 		Active:          true,
 		Source:          source,
 		SourcePath:      p.SourcePath,

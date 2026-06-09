@@ -23,8 +23,14 @@ var schema string
 // Payload is what travels on the queue. The job handler looks up the Scan
 // row by ID; everything else (repo URL, kind) hangs off that record so the
 // queue message stays small and the DB is the source of truth.
+//
+// Attempt counts re-enqueues from the prereq gate (worker.preflightSkill).
+// It is zero on first dispatch and increments each time a skill's required
+// upstream scans were not yet done. The worker caps the count so a missing
+// prereq fails the scan instead of looping forever.
 type Payload struct {
-	ScanID uint `json:"scan_id"`
+	ScanID  uint `json:"scan_id"`
+	Attempt int  `json:"attempt,omitempty"`
 }
 
 type Queue struct {
@@ -152,6 +158,18 @@ func (q *Queue) Enqueue(ctx context.Context, jobName string, scanID uint, priori
 		return err
 	}
 	_, err = jobs.Create(ctx, q.q, jobName, goqite.Message{Body: body, Priority: priority})
+	return err
+}
+
+// EnqueueRetry re-puts a job on the queue with an attempt count and a delay
+// before it becomes visible. Used by the prereq gate to back off a scan
+// whose upstream skills have not yet completed.
+func (q *Queue) EnqueueRetry(ctx context.Context, jobName string, scanID uint, priority, attempt int, delay time.Duration) error {
+	body, err := json.Marshal(Payload{ScanID: scanID, Attempt: attempt})
+	if err != nil {
+		return err
+	}
+	_, err = jobs.Create(ctx, q.q, jobName, goqite.Message{Body: body, Priority: priority, Delay: delay})
 	return err
 }
 
