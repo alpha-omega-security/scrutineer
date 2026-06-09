@@ -209,6 +209,8 @@ func (w *Worker) parseSkillOutput(skill *db.Skill, scan *db.Scan, report string,
 		return w.parseDependentsOutput(scan, report, emit)
 	case "dependencies":
 		return w.parseDependenciesOutput(scan, report, emit)
+	case "finding_dedup":
+		return w.parseFindingDedupOutput(scan, report, emit)
 	case "verify":
 		return w.parseVerifyOutput(scan, report, emit)
 	case "subprojects":

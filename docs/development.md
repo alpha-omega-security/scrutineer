@@ -17,7 +17,7 @@
 | `internal/worker/docker.go` | DockerRunner (ephemeral container per scan) |
 | `internal/worker/clone.go` | git clone/fetch helpers, URL validation |
 | `internal/worker/skill.go` | doSkill: stage skill + context, invoke claude, dispatch output to the right parser |
-| `internal/worker/skill_parsers.go` | one parser per output_kind: findings, maintainers, packages, advisories, dependents, dependencies, repo_metadata, verify |
+| `internal/worker/skill_parsers.go` | one parser per output_kind: findings, maintainers, packages, advisories, dependents, dependencies, finding_dedup, repo_metadata, verify |
 | `internal/worker/stream.go` | claude stream-json line parser |
 | `internal/worker/findings.go` | structured report parser used by `output_kind=findings` |
 | `internal/worker/metadata.go` | FetchPackagesByPURL helper used by the web import button |
