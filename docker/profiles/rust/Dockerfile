@@ -1,3 +1,6 @@
+# docker pull ghcr.io/alpha-omega-security/scrutineer-runner:latest && \
+# docker build -t scrutineer-profile-rust:latest docker/profiles/rust
+
 ARG RUNNER_IMAGE=ghcr.io/alpha-omega-security/scrutineer-runner:latest
 FROM ${RUNNER_IMAGE}
 
@@ -27,5 +30,7 @@ RUN echo 'source $HOME/.cargo/env' >> $HOME/.bashrc
 RUN . $HOME/.cargo/env && rustup toolchain install nightly && rustup default nightly
 # Install tools and associated
 RUN . $HOME/.cargo/env && \
-       rustup component add miri && \
-       cargo install cargo-audit
+       rustup component add miri
+
+ENV RUSTFLAGS='-Zsanitizer=address'
+ENV ASAN_OPTIONS=detect_leaks=0
