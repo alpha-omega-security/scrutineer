@@ -703,6 +703,15 @@ type Skill struct {
 	Paths       string `gorm:"type:text"`
 	IgnorePaths string `gorm:"type:text"`
 
+	// Requires is a newline-joined list of skill names that must have a
+	// completed scan on the same repository before this skill can run.
+	// Set via `scrutineer.requires` in the SKILL.md frontmatter. The
+	// worker re-queues a job whose prereqs are not yet satisfied; see
+	// worker.gateOnPrereqs. A missing prereq skill (never enqueued for
+	// the repo, or 404 at the API) is treated as satisfied so gating
+	// decisions in triage do not deadlock dependents.
+	Requires string `gorm:"type:text"`
+
 	Source     string // "local" | "remote" | "ui"
 	SourcePath string // directory on disk (local/remote) or empty (ui)
 	SourceHash string // sha256 of SKILL.md + schema.json contents

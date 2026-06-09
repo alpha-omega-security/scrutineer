@@ -8,6 +8,8 @@ metadata:
   scrutineer.output_file: report.json
   scrutineer.output_kind: dependents
   scrutineer.requires_remote: true
+  scrutineer.requires:
+    - packages
 ---
 
 # dependents
