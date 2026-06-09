@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "finding dedup report",
+  "type": "object",
+  "required": ["duplicates"],
+  "additionalProperties": false,
+  "properties": {
+    "duplicates": {
+      "type": "array",
+      "description": "Groups of open findings that describe the same underlying vulnerability.",
+      "items": {
+        "type": "object",
+        "required": ["canonical_id", "duplicate_ids", "reason"],
+        "additionalProperties": false,
+        "properties": {
+          "canonical_id": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Database id of the finding that should remain active."
+          },
+          "duplicate_ids": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": {
+              "type": "integer",
+              "minimum": 1
+            },
+            "description": "Database ids of open findings to mark duplicate."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Why these findings are the same underlying vulnerability."
+          }
+        }
+      }
+    }
+  }
+}
