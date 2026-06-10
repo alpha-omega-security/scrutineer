@@ -31,6 +31,53 @@ func reconcileEcosystem(ecosystem string) string {
 	return ecosystem
 }
 
+const (
+	DependencyRuntime = "runtime"
+	DependencyDev     = "dev"
+	DependencyTest    = "test"
+	DependencyBuild   = "build"
+)
+
+// NormalizeDependencyType reduces git-pkgs and ecosystem-specific dependency
+// phase names to the four buckets scrutineer uses in UI filters and reachability.
+func NormalizeDependencyType(raw string) string {
+	s := strings.ToLower(strings.TrimSpace(raw))
+	s = strings.ReplaceAll(s, "_", "-")
+	s = strings.ReplaceAll(s, " ", "-")
+	switch s {
+	case "", "runtime", "production", "prod", "dependencies", "dependency", "direct", "indirect", "normal", "required", "requires", "compile", "peer", "optional":
+		return DependencyRuntime
+	case "development", "dev", "dev-dependencies", "development-dependencies", "devdependency", "devdependencies":
+		return DependencyDev
+	case "test", "tests", "testing", "test-requires", "test-require", "test-requirements", "test-dependencies", "testdependency", "testdependencies":
+		return DependencyTest
+	case "build", "build-requires", "build-require", "build-requirements", "build-dependencies", "builddependency", "builddependencies", "configure", "configure-requires", "configure-require", "configure-requirements":
+		return DependencyBuild
+	}
+	switch {
+	case strings.Contains(s, "test"):
+		return DependencyTest
+	case strings.Contains(s, "build") || strings.Contains(s, "configure"):
+		return DependencyBuild
+	case strings.Contains(s, "dev") || strings.Contains(s, "development"):
+		return DependencyDev
+	default:
+		return s
+	}
+}
+
+// DependencyVisibleByDefault reports whether a dependency should be treated as
+// part of the shipped/runtime graph. Unknown values stay visible so new
+// ecosystems do not disappear until their phase mapping is taught explicitly.
+func DependencyVisibleByDefault(raw string) bool {
+	switch NormalizeDependencyType(raw) {
+	case DependencyDev, DependencyTest, DependencyBuild:
+		return false
+	default:
+		return true
+	}
+}
+
 // canonicalType reduces a PURL type or ecosystem string to the one PURL type
 // both sources agree on.
 func canonicalType(token string) string {
@@ -94,7 +141,8 @@ type DependencyFinding struct {
 // the live Findings on the matched library repositories. The join key is the
 // parsed PURL (type, namespace, name) on both sides, so the two sources agree
 // without a write-time alias map. Self-matches and findings already marked
-// fixed/rejected/duplicate are excluded.
+// fixed/rejected/duplicate are excluded. Dev/test/build dependencies are not
+// considered reachable dependency edges.
 func DependencyFindings(g *gorm.DB, appRepoID uint) ([]DependencyFinding, error) {
 	var deps []Dependency
 	if err := g.Where("repository_id = ?", appRepoID).Find(&deps).Error; err != nil {
@@ -104,6 +152,9 @@ func DependencyFindings(g *gorm.DB, appRepoID uint) ([]DependencyFinding, error)
 	type key struct{ eco, namespace, name string }
 	want := map[key]Dependency{}
 	for _, d := range deps {
+		if !DependencyVisibleByDefault(d.DependencyType) {
+			continue
+		}
 		eco, ns, name := ecosystemKey(d.PURL, d.Ecosystem, d.Name)
 		k := key{eco, ns, name}
 		if cur, ok := want[k]; !ok || preferDep(d, cur) {
@@ -181,11 +232,10 @@ func DependencyFindings(g *gorm.DB, appRepoID uint) ([]DependencyFinding, error)
 }
 
 // preferDep picks the more informative of two Dependency rows for the same
-// package: a lockfile row (concrete requirement) beats a manifest row, and
-// a runtime dependency beats a development one.
+// package: a runtime-like dependency beats a non-runtime one, and a lockfile
+// row with a concrete requirement beats a manifest range.
 func preferDep(a, b Dependency) bool {
-	const runtime = "runtime"
-	aRT, bRT := a.DependencyType == runtime, b.DependencyType == runtime
+	aRT, bRT := DependencyVisibleByDefault(a.DependencyType), DependencyVisibleByDefault(b.DependencyType)
 	if aRT != bRT {
 		return aRT
 	}

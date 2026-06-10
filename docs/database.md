@@ -234,7 +234,7 @@ Package dependencies discovered by the `dependencies` skill. Replaced wholesale 
 | ecosystem | text | PURL type, e.g. `gem`, `npm`, `golang`. Derived from `p_url` (or the source ecosystem string when no PURL was recorded). Indexed. |
 | p_url | text | Package URL. |
 | requirement | text | Version constraint from the manifest. |
-| dependency_type | text | `runtime` or `development`. |
+| dependency_type | text | Normalised dependency phase: `runtime`, `dev`, `test`, `build`, or an unrecognised source value kept verbatim. |
 | manifest_path | text | Which file declared this dependency. |
 | manifest_kind | text | `manifest` or `lockfile`. |
 | created_at | datetime | |

@@ -310,16 +310,22 @@ func TestParseVerify_inconclusiveLeavesStatus(t *testing.T) {
 func TestParseDependencies_acceptsTypeOrDependencyType(t *testing.T) {
 	report := `{"dependencies":[
 		{"name":"a","ecosystem":"npm","type":"runtime","manifest_path":"package.json"},
-		{"name":"b","ecosystem":"npm","dependency_type":"development","manifest_path":"package.json"}
+		{"name":"b","ecosystem":"npm","dependency_type":"development","manifest_path":"package.json"},
+		{"name":"c","ecosystem":"cpan","dependency_type":"test_requires","manifest_path":"META.json"},
+		{"name":"d","ecosystem":"cpan","dependency_type":"configure_requires","manifest_path":"META.json"}
 	]}`
 	repo, gdb := runSkillWithReport(t, "dependencies", report)
 	var rows []db.Dependency
 	gdb.Where("repository_id = ?", repo.ID).Find(&rows)
-	if len(rows) != 2 {
-		t.Fatalf("rows = %d, want 2", len(rows))
+	if len(rows) != 4 {
+		t.Fatalf("rows = %d, want 4", len(rows))
 	}
-	gotTypes := map[string]string{rows[0].Name: rows[0].DependencyType, rows[1].Name: rows[1].DependencyType}
-	if gotTypes["a"] != "runtime" || gotTypes["b"] != "development" {
+	gotTypes := map[string]string{}
+	for _, row := range rows {
+		gotTypes[row.Name] = row.DependencyType
+	}
+	if gotTypes["a"] != db.DependencyRuntime || gotTypes["b"] != db.DependencyDev ||
+		gotTypes["c"] != db.DependencyTest || gotTypes["d"] != db.DependencyBuild {
 		t.Errorf("types: %+v", gotTypes)
 	}
 }
