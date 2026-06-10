@@ -17,7 +17,10 @@
           "ecosystem":       { "type": "string" },
           "purl":            { "type": "string" },
           "requirement":     { "type": "string" },
-          "dependency_type": { "type": "string" },
+          "dependency_type": {
+            "type": "string",
+            "description": "Dependency phase. Scrutineer normalizes common aliases to runtime, dev, test, or build."
+          },
           "manifest_path":   { "type": "string" },
           "manifest_kind":   { "type": "string" }
         }

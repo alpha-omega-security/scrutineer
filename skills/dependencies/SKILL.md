@@ -20,7 +20,7 @@ metadata:
 
 # dependencies
 
-Wrap `git-pkgs list --format json` so scrutineer can read the result as a dependencies report.
+Wrap `git-pkgs list --format json` so scrutineer can read the result as a dependencies report. Preserve dependency phase/type fields from git-pkgs; scrutineer normalizes common aliases to `runtime`, `dev`, `test`, or `build`.
 
 ## Workspace
 
@@ -43,6 +43,6 @@ bash scripts/index.sh > ./report.json
 
 If the script exits non-zero, read its stderr, then write a short `{"dependencies": [], "error": "..."}` document to `./report.json` so the caller sees why no dependencies were indexed.
 
-The wrapper already emits the exact schema the parser expects — no post-processing needed.
+The wrapper already emits the exact schema the parser expects — no post-processing needed. Do not merge test, build, development, and runtime dependencies together; keep the phase/type field on each row when git-pkgs reports one.
 
 Do not inspect manifests yourself, infer dependencies from files that `git-pkgs` did not report, or hand-author dependency rows. If the wrapper returns `{"dependencies":[]}`, write that exact report and stop. Missing coverage in `git-pkgs` should produce an empty dependency report, not model-authored package data.
