@@ -336,16 +336,20 @@ type Dependent struct {
 // Dependency is one package dependency discovered by the git-pkgs job.
 // Rows are replaced wholesale each time the job runs for a repository.
 type Dependency struct {
-	ID             uint `gorm:"primarykey"`
-	RepositoryID   uint `gorm:"index;not null"`
-	Name           string
-	Ecosystem      string `gorm:"index"`
-	PURL           string
-	Requirement    string
-	DependencyType string
-	ManifestPath   string
-	ManifestKind   string
-	CreatedAt      time.Time
+	ID           uint `gorm:"primarykey"`
+	RepositoryID uint `gorm:"index;not null"`
+	Name         string
+	Ecosystem    string `gorm:"index"`
+	PURL         string
+	Requirement  string
+	// RequirementUnresolved is true when Requirement still contains a
+	// manifest-level expression such as ${project.version}. Advisory matching
+	// should treat it as informational, not a concrete version/range.
+	RequirementUnresolved bool
+	DependencyType        string
+	ManifestPath          string
+	ManifestKind          string
+	CreatedAt             time.Time
 }
 
 // FindingResolution says how a finding got resolved. Set by the analyst

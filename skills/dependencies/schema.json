@@ -17,6 +17,10 @@
           "ecosystem":       { "type": "string" },
           "purl":            { "type": "string" },
           "requirement":     { "type": "string" },
+          "requirement_unresolved": {
+            "type": "boolean",
+            "description": "True when the requirement still contains an unresolved manifest expression such as ${missing.version}."
+          },
           "dependency_type": {
             "type": "string",
             "description": "Dependency phase. Scrutineer normalizes common aliases to runtime, dev, test, or build."
