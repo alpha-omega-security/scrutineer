@@ -804,16 +804,41 @@ func TestFindings_statusFilter(t *testing.T) {
 		Severity: "High", Status: db.FindingTriaged})
 	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "fixed finding",
 		Severity: "High", Status: db.FindingFixed})
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "published finding",
+		Severity: "High", Status: db.FindingPublished})
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "rejected finding",
+		Severity: "High", Status: db.FindingRejected})
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "duplicate finding",
+		Severity: "High", Status: db.FindingDuplicate})
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/findings"))
+	if w.Code != 200 {
+		t.Fatalf("default status code %d", w.Code)
+	}
+	body := w.Body.String()
+	for _, title := range []string{"fresh finding", "triaged finding"} {
+		if !strings.Contains(body, ">"+title+"</a>") {
+			t.Errorf("default listing missing %q", title)
+		}
+	}
+	for _, title := range []string{"fixed finding", "published finding", "rejected finding", "duplicate finding"} {
+		if strings.Contains(body, ">"+title+"</a>") {
+			t.Errorf("default listing should hide closed finding %q", title)
+		}
+	}
 
 	cases := []struct {
 		status  string
 		want    []string
 		missing []string
 	}{
-		{"new", []string{"fresh finding"}, []string{"triaged finding", "fixed finding"}},
-		{"triaged", []string{"triaged finding"}, []string{"fresh finding", "fixed finding"}},
-		{"fixed", []string{"fixed finding"}, []string{"fresh finding", "triaged finding"}},
-		{"rejected", nil, []string{"fresh finding", "triaged finding", "fixed finding"}},
+		{"new", []string{"fresh finding"}, []string{"triaged finding", "fixed finding", "published finding", "rejected finding", "duplicate finding"}},
+		{"triaged", []string{"triaged finding"}, []string{"fresh finding", "fixed finding", "published finding", "rejected finding", "duplicate finding"}},
+		{"fixed", []string{"fixed finding"}, []string{"fresh finding", "triaged finding", "published finding", "rejected finding", "duplicate finding"}},
+		{"published", []string{"published finding"}, []string{"fresh finding", "triaged finding", "fixed finding", "rejected finding", "duplicate finding"}},
+		{"rejected", []string{"rejected finding"}, []string{"fresh finding", "triaged finding", "fixed finding", "published finding", "duplicate finding"}},
+		{"duplicate", []string{"duplicate finding"}, []string{"fresh finding", "triaged finding", "fixed finding", "published finding", "rejected finding"}},
 	}
 	for _, tc := range cases {
 		w := httptest.NewRecorder()
@@ -836,9 +861,9 @@ func TestFindings_statusFilter(t *testing.T) {
 	}
 
 	// The status filter is preserved across the other filter links.
-	w := httptest.NewRecorder()
+	w = httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, localReq("GET", "/findings?status=new"))
-	body := w.Body.String()
+	body = w.Body.String()
 	if !strings.Contains(body, "severity=High&status=new&category=") {
 		t.Error("severity dropdown links should carry status=new")
 	}
@@ -2262,11 +2287,13 @@ func TestRepoShow_findingsTabAggregatesAcrossScans(t *testing.T) {
 	repo := db.Repository{URL: "https://example.com/agg", Name: "agg"}
 	s.DB.Create(&repo)
 
-	// Older deep-dive scan with two findings, one of which is rejected.
+	// Older deep-dive scan with findings in active and closed states.
 	older := db.Scan{RepositoryID: repo.ID, Kind: "skill", SkillName: deepDiveSkillName, Status: db.ScanDone}
 	s.DB.Create(&older)
 	s.DB.Create(&db.Finding{ScanID: older.ID, RepositoryID: repo.ID, Title: "old-high", Severity: "High", Status: db.FindingNew})
 	s.DB.Create(&db.Finding{ScanID: older.ID, RepositoryID: repo.ID, Title: "old-noise", Severity: "Low", Status: db.FindingRejected})
+	s.DB.Create(&db.Finding{ScanID: older.ID, RepositoryID: repo.ID, Title: "old-fixed", Severity: "High", Status: db.FindingFixed})
+	s.DB.Create(&db.Finding{ScanID: older.ID, RepositoryID: repo.ID, Title: "old-published", Severity: "High", Status: db.FindingPublished})
 
 	// A non-deep-dive skill also produced a finding.
 	other := db.Scan{RepositoryID: repo.ID, Kind: "skill", SkillName: "secrets", Status: db.ScanDone}
@@ -2291,8 +2318,10 @@ func TestRepoShow_findingsTabAggregatesAcrossScans(t *testing.T) {
 	if !strings.Contains(body, "leaked-key") {
 		t.Errorf("finding from non-deep-dive skill not shown")
 	}
-	if strings.Contains(body, "old-noise") {
-		t.Errorf("rejected finding should be hidden from the tab")
+	for _, hidden := range []string{"old-noise", "old-fixed", "old-published"} {
+		if strings.Contains(body, hidden) {
+			t.Errorf("closed finding %q should be hidden from the tab", hidden)
+		}
 	}
 	// Deep-dive output and tool-scanner output render in separate tabs so the
 	// curated audit list isn't drowned out by lint noise.
