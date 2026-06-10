@@ -385,13 +385,14 @@ func TestParseDependencies_acceptsTypeOrDependencyType(t *testing.T) {
 		{"name":"a","ecosystem":"npm","type":"runtime","manifest_path":"package.json"},
 		{"name":"b","ecosystem":"npm","dependency_type":"development","manifest_path":"package.json"},
 		{"name":"c","ecosystem":"cpan","dependency_type":"test_requires","manifest_path":"META.json"},
-		{"name":"d","ecosystem":"cpan","dependency_type":"configure_requires","manifest_path":"META.json"}
+		{"name":"d","ecosystem":"cpan","dependency_type":"configure_requires","manifest_path":"META.json"},
+		{"name":"m","ecosystem":"maven","requirement":"${missing.version}","requirement_unresolved":true,"manifest_path":"pom.xml"}
 	]}`
 	repo, gdb := runSkillWithReport(t, "dependencies", report)
 	var rows []db.Dependency
 	gdb.Where("repository_id = ?", repo.ID).Find(&rows)
-	if len(rows) != 4 {
-		t.Fatalf("rows = %d, want 4", len(rows))
+	if len(rows) != 5 {
+		t.Fatalf("rows = %d, want 5", len(rows))
 	}
 	gotTypes := map[string]string{}
 	for _, row := range rows {
@@ -400,6 +401,13 @@ func TestParseDependencies_acceptsTypeOrDependencyType(t *testing.T) {
 	if gotTypes["a"] != db.DependencyRuntime || gotTypes["b"] != db.DependencyDev ||
 		gotTypes["c"] != db.DependencyTest || gotTypes["d"] != db.DependencyBuild {
 		t.Errorf("types: %+v", gotTypes)
+	}
+	var maven db.Dependency
+	if err := gdb.Where("repository_id = ? AND name = ?", repo.ID, "m").First(&maven).Error; err != nil {
+		t.Fatalf("missing maven dep: %v", err)
+	}
+	if !maven.RequirementUnresolved {
+		t.Errorf("RequirementUnresolved = false, want true")
 	}
 }
 

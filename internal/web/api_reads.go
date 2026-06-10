@@ -90,6 +90,7 @@ func (s *Server) apiListAdvisories(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+//nolint:dupl // Field projections differ per row type; sharing boilerplate would hide that.
 func (s *Server) apiListDependents(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(r.PathValue("id"))
 	if !s.scanOwnsRepo(r, uint(id)) {
@@ -115,6 +116,7 @@ func (s *Server) apiListDependents(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+//nolint:dupl // Field projections differ per row type; sharing boilerplate would hide that.
 func (s *Server) apiListDependencies(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(r.PathValue("id"))
 	if !s.scanOwnsRepo(r, uint(id)) {
@@ -126,14 +128,15 @@ func (s *Server) apiListDependencies(w http.ResponseWriter, r *http.Request) {
 	out := make([]map[string]any, 0, len(rows))
 	for _, d := range rows {
 		out = append(out, map[string]any{
-			"id":              d.ID,
-			"name":            d.Name,
-			"ecosystem":       d.Ecosystem,
-			"purl":            d.PURL,
-			"requirement":     d.Requirement,
-			"dependency_type": d.DependencyType,
-			"manifest_path":   d.ManifestPath,
-			"manifest_kind":   d.ManifestKind,
+			"id":                     d.ID,
+			"name":                   d.Name,
+			"ecosystem":              d.Ecosystem,
+			"purl":                   d.PURL,
+			"requirement":            d.Requirement,
+			"requirement_unresolved": d.RequirementUnresolved,
+			"dependency_type":        d.DependencyType,
+			"manifest_path":          d.ManifestPath,
+			"manifest_kind":          d.ManifestKind,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)

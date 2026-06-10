@@ -241,14 +241,15 @@ func (w *Worker) parseDependentsOutput(scan *db.Scan, report string, emit func(E
 func (w *Worker) parseDependenciesOutput(scan *db.Scan, report string, emit func(Event)) error {
 	var result struct {
 		Dependencies []struct {
-			Name           string `json:"name"`
-			Ecosystem      string `json:"ecosystem"`
-			PURL           string `json:"purl"`
-			Requirement    string `json:"requirement"`
-			Type           string `json:"type"`
-			DependencyType string `json:"dependency_type"`
-			ManifestPath   string `json:"manifest_path"`
-			ManifestKind   string `json:"manifest_kind"`
+			Name                  string `json:"name"`
+			Ecosystem             string `json:"ecosystem"`
+			PURL                  string `json:"purl"`
+			Requirement           string `json:"requirement"`
+			RequirementUnresolved bool   `json:"requirement_unresolved"`
+			Type                  string `json:"type"`
+			DependencyType        string `json:"dependency_type"`
+			ManifestPath          string `json:"manifest_path"`
+			ManifestKind          string `json:"manifest_kind"`
 		} `json:"dependencies"`
 	}
 	if err := json.Unmarshal([]byte(report), &result); err != nil {
@@ -265,14 +266,15 @@ func (w *Worker) parseDependenciesOutput(scan *db.Scan, report string, emit func
 		}
 		depType = db.NormalizeDependencyType(depType)
 		rows = append(rows, db.Dependency{
-			RepositoryID:   scan.RepositoryID,
-			Name:           d.Name,
-			Ecosystem:      db.EcosystemType(d.PURL, d.Ecosystem),
-			PURL:           d.PURL,
-			Requirement:    d.Requirement,
-			DependencyType: depType,
-			ManifestPath:   d.ManifestPath,
-			ManifestKind:   d.ManifestKind,
+			RepositoryID:          scan.RepositoryID,
+			Name:                  d.Name,
+			Ecosystem:             db.EcosystemType(d.PURL, d.Ecosystem),
+			PURL:                  d.PURL,
+			Requirement:           d.Requirement,
+			RequirementUnresolved: d.RequirementUnresolved,
+			DependencyType:        depType,
+			ManifestPath:          d.ManifestPath,
+			ManifestKind:          d.ManifestKind,
 		})
 	}
 	if len(rows) > 0 {
