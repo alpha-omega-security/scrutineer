@@ -195,9 +195,12 @@ func (w *Worker) parsePartialSkillReport(skill *db.Skill, scan *db.Scan, report 
 }
 
 func (w *Worker) repairAndParseSkillOutput(ctx context.Context, skill *db.Skill, scan *db.Scan, sj SkillJob, report string, emit func(Event)) (string, error) {
-	report, err := w.repairSchemaReport(ctx, skill, scan, sj, report, emit)
-	if err != nil {
-		return report, err
+	if skill.SchemaJSON != "" {
+		if detail := validateReportSchema(skill.SchemaJSON, report); detail != "" {
+			if repairedReport, ok := w.repairSchemaReport(ctx, skill, scan, sj, report, detail, emit); ok {
+				report = repairedReport
+			}
+		}
 	}
 	if err := w.parseSkillOutput(skill, scan, report, emit); err != nil {
 		return report, err
@@ -205,25 +208,17 @@ func (w *Worker) repairAndParseSkillOutput(ctx context.Context, skill *db.Skill,
 	return report, nil
 }
 
-func (w *Worker) repairSchemaReport(ctx context.Context, skill *db.Skill, scan *db.Scan, sj SkillJob, report string, emit func(Event)) (string, error) {
-	if skill.SchemaJSON == "" {
-		return report, nil
-	}
-	detail := validateReportSchema(skill.SchemaJSON, report)
-	if detail == "" {
-		return report, nil
-	}
-	emit(Event{Kind: KindError, Text: fmt.Sprintf("schema: %s does not validate against %s:\n%s", defaultSkillOutputFile, skillSchemaFile, detail)})
+func (w *Worker) repairSchemaReport(ctx context.Context, skill *db.Skill, scan *db.Scan, sj SkillJob, report, detail string, emit func(Event)) (string, bool) {
+	outputFile := skillOutputFile(skill)
 	if scan.SessionID == "" {
-		return report, nil
+		return "", false
 	}
 
-	repairedReport := report
 	for attempt := 1; attempt <= schemaRepairMaxAttempts; attempt++ {
-		emit(Event{Kind: KindText, Text: fmt.Sprintf("schema: asking claude to repair %s (attempt %d/%d)", defaultSkillOutputFile, attempt, schemaRepairMaxAttempts)})
+		emit(Event{Kind: KindText, Text: fmt.Sprintf("schema: %s failed validation; asking claude to repair it (attempt %d/%d)", outputFile, attempt, schemaRepairMaxAttempts)})
 		repairJob := sj
 		repairJob.ResumeSessionID = scan.SessionID
-		repairJob.ResumePrompt = buildSchemaRepairPrompt(skill, detail, repairedReport)
+		repairJob.ResumePrompt = buildSchemaRepairPrompt(skill, detail, report)
 		res, err := w.Runner.RunSkill(ctx, repairJob, emit)
 		if res.SessionID != "" && res.SessionID != scan.SessionID {
 			scan.SessionID = res.SessionID
@@ -236,29 +231,24 @@ func (w *Worker) repairSchemaReport(ctx context.Context, skill *db.Skill, scan *
 			w.DB.Model(scan).Update("profile", res.Profile)
 		}
 		if err != nil {
-			if res.Report != "" {
-				repairedReport = res.Report
-			}
-			return repairedReport, err
+			emit(Event{Kind: KindError, Text: fmt.Sprintf("schema: repair attempt for %s failed: %v; parsing original output", outputFile, err)})
+			return "", false
 		}
-		if res.Report != "" {
-			repairedReport = res.Report
-			detail = validateReportSchema(skill.SchemaJSON, repairedReport)
-			if detail == "" {
-				emit(Event{Kind: KindText, Text: fmt.Sprintf("schema: repaired %s validates", defaultSkillOutputFile)})
-				return repairedReport, nil
-			}
-			emit(Event{Kind: KindError, Text: fmt.Sprintf("schema: repaired %s still does not validate against %s:\n%s", defaultSkillOutputFile, skillSchemaFile, detail)})
+		if res.Report == "" {
+			emit(Event{Kind: KindError, Text: fmt.Sprintf("schema: repair attempt did not produce %s; parsing original output", outputFile)})
+			return "", false
 		}
+		if detail = validateReportSchema(skill.SchemaJSON, res.Report); detail == "" {
+			emit(Event{Kind: KindText, Text: fmt.Sprintf("schema: repaired %s validates", outputFile)})
+			return res.Report, true
+		}
+		emit(Event{Kind: KindText, Text: fmt.Sprintf("schema: repaired %s still does not validate; parsing original output", outputFile)})
 	}
-	return repairedReport, nil
+	return "", false
 }
 
 func buildSchemaRepairPrompt(skill *db.Skill, detail, report string) string {
-	outputFile := skill.OutputFile
-	if outputFile == "" {
-		outputFile = defaultSkillOutputFile
-	}
+	outputFile := skillOutputFile(skill)
 	return fmt.Sprintf(`Your previous %q skill run wrote ./%s, but it failed validation against ./%s.
 
 Validation errors:
@@ -268,6 +258,17 @@ Rewrite only ./%s with JSON that validates against ./%s. Preserve the facts from
 
 Previous invalid ./%s:
 %s`, skill.Name, outputFile, skillSchemaFile, detail, outputFile, skillSchemaFile, outputFile, truncateSchemaRepairReport(report))
+}
+
+func skillOutputFile(skill *db.Skill) string {
+	if skill.OutputFile != "" {
+		return skill.OutputFile
+	}
+	return defaultSkillOutputFile
+}
+
+func schemaValidationEvent(skill *db.Skill, detail string) Event {
+	return Event{Kind: KindError, Text: fmt.Sprintf("schema: %s does not validate against %s:\n%s", skillOutputFile(skill), skillSchemaFile, detail)}
 }
 
 func truncateSchemaRepairReport(report string) string {
@@ -281,7 +282,7 @@ func truncateSchemaRepairReport(report string) string {
 func (w *Worker) parseSkillOutput(skill *db.Skill, scan *db.Scan, report string, emit func(Event)) error {
 	if skill.SchemaJSON != "" {
 		if detail := validateReportSchema(skill.SchemaJSON, report); detail != "" {
-			emit(Event{Kind: KindError, Text: "schema: report.json does not validate against schema.json:\n" + detail})
+			emit(schemaValidationEvent(skill, detail))
 			if w.SchemaStrict {
 				return &SchemaValidationError{Skill: skill.Name, Detail: detail}
 			}
