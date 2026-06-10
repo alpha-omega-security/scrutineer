@@ -87,6 +87,7 @@ var OutputKinds = map[string]bool{
 	"advisories":    true,
 	"dependents":    true,
 	"dependencies":  true,
+	"finding_dedup": true,
 	"verify":        true,
 	"subprojects":   true,
 	"repo_overview": true,

@@ -26,6 +26,7 @@ These ship in `skills/` and are loaded with `-skills ./skills`. The `triage` ski
 | `zizmor` | Audits GitHub Actions workflows and maps hits into the findings shape. |
 | `threat-model` | Derives the project's security contract from source and docs: components, entry-point trust table, claimed and disclaimed properties, and disposition labels. Loaded by `security-deep-dive` so it does not re-derive boundaries per run. |
 | `security-deep-dive` | The model-driven audit. Inventories trust boundaries and sinks, then runs a six-step trace/boundary/validate/prior-art/reach/rate analysis on each. |
+| `finding-dedup` | Compares open findings in one repository and marks findings that describe the same underlying vulnerability as duplicates. |
 | `reachability` | Traces sinks already found in this app's dependencies through the app's own code to see which are reachable from its trust boundaries. |
 | `exposure` | For one (finding, dependent) pair, decides whether the dependent's published code actually reaches the upstream library finding. Emits one CSAF 2.0 product_status verdict so scrutineer can record affected vs not_affected and stamp the right VEX justification. |
 | `verify` | Re-checks one finding against current HEAD and records reproduces / fixed / cannot-reproduce. |
@@ -124,6 +125,7 @@ Declaring `scrutineer.paths` replaces this skip list entirely: the skill sees on
 | `advisories` | Advisory rows. |
 | `dependents` | Dependent rows. |
 | `dependencies` | Dependency rows. |
+| `finding_dedup` | Duplicate decisions applied to existing Finding rows through status history and notes. |
 | `maintainers` | Maintainer rows. |
 | `subprojects` | Subproject rows for monorepo scoping. |
 | `posture` | Posture tier and check results on the Repository row. |

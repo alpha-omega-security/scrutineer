@@ -307,6 +307,79 @@ func TestParseVerify_inconclusiveLeavesStatus(t *testing.T) {
 	}
 }
 
+func TestParseFindingDedup_marksDuplicatesWithHistoryAndNote(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "dedup.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
+	gdb.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanDone, SkillName: "finding-dedup"}
+	gdb.Create(&scan)
+	canonical := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, FindingID: "F1", Title: "canonical", Severity: "High", Status: db.FindingTriaged}
+	duplicate := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, FindingID: "F2", Title: "duplicate", Severity: "High", Status: db.FindingNew}
+	gdb.Create(&canonical)
+	gdb.Create(&duplicate)
+
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	report := `{"duplicates":[{"canonical_id":` + strconv.Itoa(int(canonical.ID)) + `,"duplicate_ids":[` + strconv.Itoa(int(duplicate.ID)) + `],"reason":"same sink and dataflow; only the line range differs"}]}`
+	if err := w.parseFindingDedupOutput(&scan, report, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+
+	var refreshed db.Finding
+	gdb.First(&refreshed, duplicate.ID)
+	if refreshed.Status != db.FindingDuplicate {
+		t.Fatalf("status = %s, want duplicate", refreshed.Status)
+	}
+	var hist db.FindingHistory
+	if err := gdb.Where("finding_id = ? AND field = ?", duplicate.ID, "status").First(&hist).Error; err != nil {
+		t.Fatalf("missing status history: %v", err)
+	}
+	if hist.By != findingDedupSkill || hist.NewValue != string(db.FindingDuplicate) {
+		t.Fatalf("history = %+v", hist)
+	}
+	notes := findingNotes(gdb, duplicate.ID)
+	if len(notes) == 0 || !strings.Contains(notes[0].Body, "duplicates finding #") {
+		t.Fatalf("missing dedup note: %+v", notes)
+	}
+}
+
+func TestParseFindingDedup_skipsClosedAndCrossRepoFindings(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "dedup-skip.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
+	otherRepo := db.Repository{URL: "https://example.com/y", Name: "y"}
+	gdb.Create(&repo)
+	gdb.Create(&otherRepo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanDone, SkillName: "finding-dedup"}
+	gdb.Create(&scan)
+	canonical := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, FindingID: "F1", Title: "canonical", Severity: "High", Status: db.FindingTriaged}
+	closed := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, FindingID: "F2", Title: "closed", Severity: "High", Status: db.FindingFixed}
+	crossRepo := db.Finding{ScanID: scan.ID, RepositoryID: otherRepo.ID, FindingID: "F3", Title: "cross", Severity: "High", Status: db.FindingNew}
+	gdb.Create(&canonical)
+	gdb.Create(&closed)
+	gdb.Create(&crossRepo)
+
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	report := `{"duplicates":[{"canonical_id":` + strconv.Itoa(int(canonical.ID)) + `,"duplicate_ids":[` + strconv.Itoa(int(closed.ID)) + `,` + strconv.Itoa(int(crossRepo.ID)) + `],"reason":"same issue"}]}`
+	if err := w.parseFindingDedupOutput(&scan, report, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+
+	var gotClosed, gotCross db.Finding
+	gdb.First(&gotClosed, closed.ID)
+	gdb.First(&gotCross, crossRepo.ID)
+	if gotClosed.Status != db.FindingFixed {
+		t.Fatalf("closed finding status changed: %s", gotClosed.Status)
+	}
+	if gotCross.Status != db.FindingNew {
+		t.Fatalf("cross-repo finding status changed: %s", gotCross.Status)
+	}
+}
+
 func TestParseDependencies_acceptsTypeOrDependencyType(t *testing.T) {
 	report := `{"dependencies":[
 		{"name":"a","ecosystem":"npm","type":"runtime","manifest_path":"package.json"},

@@ -11,6 +11,8 @@ import (
 
 const insertBatchSize = 50
 
+const findingDedupSkill = "finding-dedup"
+
 // parseRepoMetadataOutput updates the Repository columns that previously
 // came from the metadata Go handler. Shape matches the subset of
 // repos.ecosyste.ms fields scrutineer actually uses; the skill picks them
@@ -464,6 +466,88 @@ func (w *Worker) parseVerifyOutput(scan *db.Scan, report string, emit func(Event
 	}
 
 	emit(Event{Kind: KindText, Text: "finding " + fmt.Sprint(f.ID) + " -> " + result.Status})
+	return nil
+}
+
+func (w *Worker) parseFindingDedupOutput(scan *db.Scan, report string, emit func(Event)) error {
+	var result struct {
+		Duplicates []struct {
+			CanonicalID  uint   `json:"canonical_id"`
+			DuplicateIDs []uint `json:"duplicate_ids"`
+			Reason       string `json:"reason"`
+		} `json:"duplicates"`
+	}
+	if err := json.Unmarshal([]byte(report), &result); err != nil {
+		return fmt.Errorf("parse finding_dedup report: %w", err)
+	}
+	if len(result.Duplicates) == 0 {
+		emit(Event{Kind: KindText, Text: "finding-dedup: no duplicates reported"})
+		return nil
+	}
+
+	marked, skipped := 0, 0
+	for _, group := range result.Duplicates {
+		canonical, ok := w.dedupFinding(scan.RepositoryID, group.CanonicalID)
+		if !ok || !dedupCandidateOpen(canonical.Status) {
+			skipped += len(group.DuplicateIDs)
+			continue
+		}
+		for _, duplicateID := range group.DuplicateIDs {
+			if duplicateID == 0 || duplicateID == canonical.ID {
+				skipped++
+				continue
+			}
+			duplicate, ok := w.dedupFinding(scan.RepositoryID, duplicateID)
+			if !ok || !dedupCandidateOpen(duplicate.Status) {
+				skipped++
+				continue
+			}
+			if err := db.WriteFindingField(w.DB, duplicate.ID, "status", string(db.FindingDuplicate), db.SourceModel, findingDedupSkill); err != nil {
+				return fmt.Errorf("mark finding %d duplicate: %w", duplicate.ID, err)
+			}
+			if err := w.addDedupNote(duplicate.ID, canonical.ID, group.Reason); err != nil {
+				return err
+			}
+			marked++
+		}
+	}
+
+	emit(Event{Kind: KindText, Text: fmt.Sprintf("finding-dedup: marked %d duplicate(s), skipped %d", marked, skipped)})
+	return nil
+}
+
+func (w *Worker) dedupFinding(repoID, findingID uint) (db.Finding, bool) {
+	if findingID == 0 {
+		return db.Finding{}, false
+	}
+	var f db.Finding
+	if err := w.DB.First(&f, findingID).Error; err != nil {
+		return db.Finding{}, false
+	}
+	if f.RepositoryID != repoID {
+		return db.Finding{}, false
+	}
+	return f, true
+}
+
+func dedupCandidateOpen(status db.FindingLifecycle) bool {
+	switch status {
+	case db.FindingNew, db.FindingEnriched, db.FindingTriaged, db.FindingReady, db.FindingReported, db.FindingAcknowledged:
+		return true
+	default:
+		return false
+	}
+}
+
+func (w *Worker) addDedupNote(duplicateID, canonicalID uint, reason string) error {
+	var b strings.Builder
+	fmt.Fprintf(&b, "finding-dedup: duplicates finding #%d", canonicalID)
+	if strings.TrimSpace(reason) != "" {
+		fmt.Fprintf(&b, "\n\n%s", strings.TrimSpace(reason))
+	}
+	if _, err := db.AddFindingNote(w.DB, duplicateID, b.String(), findingDedupSkill); err != nil {
+		return fmt.Errorf("record dedup note for finding %d: %w", duplicateID, err)
+	}
 	return nil
 }
 
