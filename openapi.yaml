@@ -886,6 +886,7 @@ components:
         status:        { type: string }
         cwe:           { type: string }
         location:      { type: string }
+        vid:           { type: string, description: "Code identifier (VID-...) hashed from the sink code at the scanned commit; correlates findings across tools. Empty when not computed." }
         affected:      { type: string }
         reachability:  { type: string, enum: [reachable, harness_only, unclear] }
         quality_tier:  { type: string, enum: [high, low] }

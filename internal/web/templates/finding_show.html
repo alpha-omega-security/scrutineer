@@ -65,6 +65,11 @@
     </dd>
   </div>
   <div>
+    <dt class="text-muted-foreground">VID</dt>
+    <dd>{{if $f.VID}}<code class="text-xs break-all"
+        title="Identifies the code at the sink, not the finding; computed from the function bytes so independent tools derive the same value">{{$f.VID}}</code>{{else}}-{{end}}</dd>
+  </div>
+  <div>
     <dt class="text-muted-foreground">Affected</dt>
     <dd>{{if $f.Affected}}{{$f.Affected}}{{else}}-{{end}}</dd>
   </div>

@@ -127,6 +127,7 @@ func findingExport(f db.Finding) map[string]any {
 		statusKey:             string(f.Status),
 		"cwe":                 f.CWE,
 		"location":            f.Location,
+		"vid":                 f.VID,
 		"affected":            f.Affected,
 		"reachability":        f.Reachability,
 		"quality_tier":        f.QualityTier,

@@ -21,6 +21,13 @@ RUN apk add --no-cache git
 RUN GOBIN=/out go install github.com/git-pkgs/git-pkgs@v0.15.3 && \
     GOBIN=/out go install github.com/git-pkgs/brief/cmd/brief@v0.6.0
 
+# vid links tree-sitter grammars (C), so unlike the main binary it needs
+# cgo; build-base provides gcc and musl headers, matching the musl-based
+# final image.
+FROM golang:1.26.4-alpine@sha256:f23e8b227fb4493eabe03bede4d5a32d04092da71962f1fb79b5f7d1e6c2a17f AS vid-build
+RUN apk add --no-cache build-base git
+RUN GOBIN=/out CGO_ENABLED=1 go install github.com/andrew/VID/cmd/vid@v0.1.0
+
 FROM rust:1.96-alpine@sha256:66f48b19d6e88519e2e58bebe0d945779a6a4ca41c2db17db78c9569655b50ac AS zizmor-build
 RUN apk add --no-cache build-base linux-headers
 RUN cargo install --locked --root /out zizmor@1.24.1
@@ -46,6 +53,9 @@ COPY --from=go-tools /out/* /usr/local/bin/
 
 # zizmor
 COPY --from=zizmor-build /out/bin/zizmor /usr/local/bin/zizmor
+
+# vid
+COPY --from=vid-build /out/vid /usr/local/bin/vid
 
 # Non-root user (T1/T11: reduce blast radius)
 RUN adduser -D -h /home/scrutineer scrutineer && \

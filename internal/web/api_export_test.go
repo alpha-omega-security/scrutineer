@@ -287,6 +287,7 @@ func TestExportFindings_carriesDBFields(t *testing.T) {
 		ScanID: scan.ID, RepositoryID: repo.ID, Commit: "abc123", SubPath: "core",
 		Fingerprint: "fp-1", LastSeenScanID: scan.ID, LastSeenCommit: "abc123", SeenCount: 3,
 		FindingID: "F1", Title: "boom", Severity: sevHigh, Status: db.FindingTriaged,
+		VID:   "VID-aaaa-bbbb-cccc-dddd-eeee-ffff",
 		Trace: "t", Boundary: "b", Validation: "v", PriorArt: "p", Reach: "r", Rating: "x",
 		DisclosureDraft: "d",
 	})
@@ -302,7 +303,7 @@ func TestExportFindings_carriesDBFields(t *testing.T) {
 	}
 	want := []string{
 		"id", "scan_id", "repository_id", "commit", "sub_path",
-		"fingerprint", "last_seen_scan_id", "last_seen_commit", "seen_count",
+		"fingerprint", "last_seen_scan_id", "last_seen_commit", "seen_count", "vid",
 		"finding_id", "sinks", "title", "severity", "status", "cwe", "location", "affected",
 		"reachability", "quality_tier",
 		"cve_id", "cvss_vector", "cvss_score", "fix_version", "fix_commit",

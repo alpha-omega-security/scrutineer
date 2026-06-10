@@ -269,6 +269,13 @@ func (w *Worker) parseFindingsOutput(skill *db.Skill, scan *db.Scan, report stri
 	}
 	scan.FindingsCount = len(findings)
 
+	// VIDs hash the code at each sink, so they can only be computed
+	// while the scanned checkout is still on disk at workRoot/src.
+	srcDir := filepath.Join(w.scanWorkRoot(scan), "src")
+	for i := range findings {
+		findings[i].VID = w.computeVID(srcDir, findings[i].Locations)
+	}
+
 	worst := ""
 	created, observed := 0, 0
 	seenThisScan := map[string]bool{}
@@ -286,7 +293,7 @@ func (w *Worker) parseFindingsOutput(skill *db.Skill, scan *db.Scan, report stri
 		err := w.DB.Where("repository_id = ? AND fingerprint = ?", scan.RepositoryID, f.Fingerprint).
 			Order("id").First(&existing).Error
 		if err == nil {
-			if uerr := w.DB.Model(&db.Finding{}).Where("id = ?", existing.ID).Updates(map[string]any{
+			updates := map[string]any{
 				"last_seen_scan_id":   scan.ID,
 				"last_seen_commit":    scan.Commit,
 				"seen_count":          existing.SeenCount + 1,
@@ -294,7 +301,14 @@ func (w *Worker) parseFindingsOutput(skill *db.Skill, scan *db.Scan, report stri
 				"last_missed_scan_id": 0,
 				"location":            f.Location,
 				"locations":           f.Locations,
-			}).Error; uerr != nil {
+			}
+			// Refresh the VID so it tracks the code as it drifts, but
+			// never wipe a stored one just because this run could not
+			// compute (vid binary missing, location gone).
+			if f.VID != "" {
+				updates["vid"] = f.VID
+			}
+			if uerr := w.DB.Model(&db.Finding{}).Where("id = ?", existing.ID).Updates(updates).Error; uerr != nil {
 				return fmt.Errorf("update finding %d: %w", existing.ID, uerr)
 			}
 			if herr := w.DB.Create(&db.FindingHistory{

@@ -399,6 +399,17 @@ type Finding struct {
 	MissedCount      int
 	LastMissedScanID uint
 
+	// VID identifies the code being pointed at, not the finding: a hash
+	// of the enclosing function (or file) bytes at each sink location,
+	// computed by the vid CLI (github.com/andrew/VID) against the scanned
+	// checkout. Two parties looking at the same code derive the same VID
+	// without coordinating, so it correlates findings across tools and
+	// reporters. Refreshed on re-observation so it tracks the code as it
+	// drifts; empty when the vid binary was unavailable or no location
+	// resolved to a file in the checkout. Unlike Fingerprint it is NOT
+	// used for dedup: a VID changes whenever the function's bytes change.
+	VID string `gorm:"column:vid;index"`
+
 	FindingID  string // e.g. F1, F2 within the report
 	Sinks      string // comma-joined sink IDs
 	Title      string

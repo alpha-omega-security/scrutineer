@@ -72,6 +72,14 @@ type Worker struct {
 	// leaves it nil and falls through to prepareRepoSrc.
 	PrepareRepoSrc func(ctx context.Context, url, ref, workRoot string, emit func(Event)) (string, error)
 
+	// VIDCommand overrides the vid binary name for computeVID. Tests
+	// point it at a stub; empty falls through to "vid" on PATH.
+	VIDCommand string
+
+	// vidMissingOnce gates the missing-binary warning so a deployment
+	// without vid on PATH logs it once, not once per finding.
+	vidMissingOnce sync.Once
+
 	// LogFlushInterval overrides defaultLogFlushInterval. Tests set it to
 	// a tiny or huge value to assert flush behaviour without sleeping.
 	// Zero falls through to the const default.
