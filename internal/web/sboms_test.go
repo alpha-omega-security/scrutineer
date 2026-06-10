@@ -156,7 +156,10 @@ func TestSBOMShow_aggregatesFindings(t *testing.T) {
 	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone}
 	s.DB.Create(&scan)
 	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "rce-in-r", Severity: "High", Status: db.FindingTriaged})
-	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "noise", Severity: "Low", Status: db.FindingRejected})
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "fixed-noise", Severity: "Low", Status: db.FindingFixed})
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "published-noise", Severity: "Low", Status: db.FindingPublished})
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "rejected-noise", Severity: "Low", Status: db.FindingRejected})
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "duplicate-noise", Severity: "Low", Status: db.FindingDuplicate})
 
 	other := db.Repository{URL: "https://example.com/other", Name: "other"}
 	s.DB.Create(&other)
@@ -176,8 +179,10 @@ func TestSBOMShow_aggregatesFindings(t *testing.T) {
 	if !strings.Contains(body, "rce-in-r") {
 		t.Errorf("finding from linked repo not shown")
 	}
-	if strings.Contains(body, "noise") {
-		t.Errorf("rejected finding should be hidden")
+	for _, hidden := range []string{"fixed-noise", "published-noise", "rejected-noise", "duplicate-noise"} {
+		if strings.Contains(body, hidden) {
+			t.Errorf("closed finding %q should be hidden", hidden)
+		}
 	}
 	if strings.Contains(body, "unrelated") {
 		t.Errorf("finding from unlinked repo should not be shown")
