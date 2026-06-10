@@ -106,6 +106,54 @@ func newSchemaTestWorker(t *testing.T, strict bool) (*Worker, *db.Skill, *db.Sca
 	return w, &skill, &scan
 }
 
+type sequenceRunner struct {
+	results []SkillResult
+	errs    []error
+	jobs    []SkillJob
+}
+
+func (r *sequenceRunner) RunSkill(_ context.Context, sj SkillJob, emit func(Event)) (SkillResult, error) {
+	r.jobs = append(r.jobs, sj)
+	emit(Event{Kind: KindText, Text: "running skill " + sj.Name})
+	idx := len(r.jobs) - 1
+	var res SkillResult
+	if idx < len(r.results) {
+		res = r.results[idx]
+	}
+	var err error
+	if idx < len(r.errs) {
+		err = r.errs[idx]
+	}
+	return res, err
+}
+
+func newQueuedSchemaSkillWorker(t *testing.T, strict bool, runner SkillRunner) (*Worker, uint, uint) {
+	t.Helper()
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
+	gdb.Create(&repo)
+	skill := db.Skill{
+		Name: "posture-test", Description: "d", Body: "b",
+		OutputFile: "report.json", OutputKind: "posture",
+		SchemaJSON: testSchema, Version: 1, Active: true, Source: "ui",
+	}
+	gdb.Create(&skill)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanQueued,
+		SkillID: &skill.ID, Model: "fake"}
+	gdb.Create(&scan)
+	w := &Worker{
+		DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		DataDir:        t.TempDir(),
+		SchemaStrict:   strict,
+		Runner:         runner,
+		PrepareRepoSrc: stubPrepareRepoSrc,
+	}
+	return w, repo.ID, scan.ID
+}
+
 func TestParseSkillOutput_schemaWarnAndContinue(t *testing.T) {
 	w, skill, scan := newSchemaTestWorker(t, false)
 
@@ -138,6 +186,79 @@ func TestParseSkillOutput_schemaWarnAndContinue(t *testing.T) {
 	w.DB.First(&repo, scan.RepositoryID)
 	if repo.Posture != "ready" {
 		t.Errorf("repo.Posture = %q, want ready (parser should have run)", repo.Posture)
+	}
+}
+
+func TestDoSkill_schemaMismatchResumesForRepair(t *testing.T) {
+	runner := &sequenceRunner{results: []SkillResult{
+		{SessionID: "sess-1", Report: `{"tier":{"x":1}}`},
+		{SessionID: "sess-1", Report: `{"tier":"ready","summary":"fixed"}`},
+	}}
+	w, repoID, scanID := newQueuedSchemaSkillWorker(t, true, runner)
+	body, _ := json.Marshal(queue.Payload{ScanID: scanID})
+	if err := w.wrap(w.doSkill)(context.Background(), body); err != nil {
+		t.Fatalf("wrap should save and return nil, got %v", err)
+	}
+
+	if len(runner.jobs) != 2 {
+		t.Fatalf("RunSkill calls = %d, want 2", len(runner.jobs))
+	}
+	if runner.jobs[0].ResumeSessionID != "" {
+		t.Errorf("fresh run ResumeSessionID = %q, want empty", runner.jobs[0].ResumeSessionID)
+	}
+	repairJob := runner.jobs[1]
+	if repairJob.ResumeSessionID != "sess-1" {
+		t.Errorf("repair ResumeSessionID = %q, want sess-1", repairJob.ResumeSessionID)
+	}
+	for _, want := range []string{"schema.json", "report.json", "/tier", "Previous invalid"} {
+		if !strings.Contains(repairJob.ResumePrompt, want) {
+			t.Errorf("repair prompt should mention %q; got %q", want, repairJob.ResumePrompt)
+		}
+	}
+
+	var got db.Scan
+	w.DB.First(&got, scanID)
+	if got.Status != db.ScanDone {
+		t.Fatalf("Status = %s, want done: %s", got.Status, got.Error)
+	}
+	if got.Report != `{"tier":"ready","summary":"fixed"}` {
+		t.Errorf("Report = %q, want repaired report", got.Report)
+	}
+	if !strings.Contains(got.Log, "asking claude to repair report.json") {
+		t.Errorf("Log should mention repair attempt, got %q", got.Log)
+	}
+
+	var fresh db.Repository
+	w.DB.First(&fresh, repoID)
+	if fresh.Posture != "ready" {
+		t.Errorf("repo.Posture = %q, want ready", fresh.Posture)
+	}
+}
+
+func TestDoSkill_schemaRepairStillInvalidFailsStrict(t *testing.T) {
+	runner := &sequenceRunner{results: []SkillResult{
+		{SessionID: "sess-1", Report: `{"tier":{"x":1}}`},
+		{SessionID: "sess-1", Report: `{"tier":"wrong"}`},
+	}}
+	w, _, scanID := newQueuedSchemaSkillWorker(t, true, runner)
+	body, _ := json.Marshal(queue.Payload{ScanID: scanID})
+	if err := w.wrap(w.doSkill)(context.Background(), body); err != nil {
+		t.Fatalf("wrap should save and return nil, got %v", err)
+	}
+
+	var got db.Scan
+	w.DB.First(&got, scanID)
+	if got.Status != db.ScanFailed {
+		t.Fatalf("Status = %s, want failed", got.Status)
+	}
+	if got.Report != `{"tier":"wrong"}` {
+		t.Errorf("Report = %q, want last repaired report", got.Report)
+	}
+	if !strings.Contains(got.Error, "schema validation") {
+		t.Errorf("Error = %q, want schema validation error", got.Error)
+	}
+	if len(runner.jobs) != 2 {
+		t.Errorf("RunSkill calls = %d, want 2", len(runner.jobs))
 	}
 }
 

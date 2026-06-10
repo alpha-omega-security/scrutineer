@@ -158,6 +158,21 @@ func TestBuildClaudeArgs_Resume(t *testing.T) {
 	}
 }
 
+func TestBuildClaudeArgs_CustomResumePrompt(t *testing.T) {
+	sj := SkillJob{
+		Name:            "metadata",
+		Model:           "claude-opus-4-8",
+		OutputFile:      "report.json",
+		ResumeSessionID: "abc-123",
+		ResumePrompt:    "repair the schema mismatch",
+	}
+	args := buildClaudeArgs(sj, "", 0)
+
+	if got := args[len(args)-1]; got != sj.ResumePrompt {
+		t.Errorf("final arg = %q, want custom resume prompt", got)
+	}
+}
+
 func TestBuildClaudeArgs_NoResumeWhenUnset(t *testing.T) {
 	sj := SkillJob{Name: "metadata", Model: "claude-opus-4-8", OutputFile: "report.json"}
 	args := buildClaudeArgs(sj, "", 0)

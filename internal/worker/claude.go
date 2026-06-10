@@ -75,6 +75,10 @@ type SkillJob struct {
 	// conversation with full history instead of restarting from turn 0.
 	// The runner falls back to a fresh run if the session can't be found.
 	ResumeSessionID string
+	// ResumePrompt, when non-empty, replaces the default generic resume
+	// prompt. It lets callers resume the same conversation with targeted
+	// corrective instructions, such as rewriting an invalid report.json.
+	ResumePrompt string
 	// ClaudeConfigDir is a host directory the docker runner mounts as the
 	// container's CLAUDE_CONFIG_DIR so the resumable session store persists
 	// across container restarts. Empty disables the mount (the local runner
@@ -266,7 +270,11 @@ func buildClaudeArgs(sj SkillJob, effort string, globalMaxTurns int) []string {
 	}
 	args = append(args, "--max-turns", strconv.Itoa(effectiveMaxTurns(sj.MaxTurns, globalMaxTurns)))
 	if sj.ResumeSessionID != "" {
-		args = append(args, buildResumePrompt(sj.Name, sj.OutputFile))
+		if sj.ResumePrompt != "" {
+			args = append(args, sj.ResumePrompt)
+		} else {
+			args = append(args, buildResumePrompt(sj.Name, sj.OutputFile))
+		}
 	} else {
 		args = append(args, buildSkillPrompt(sj.Name, sj.OutputFile))
 	}

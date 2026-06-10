@@ -13,7 +13,13 @@ import (
 	"scrutineer/internal/skills"
 )
 
-const filePerm = 0o644
+const (
+	filePerm                  = 0o644
+	defaultSkillOutputFile    = "report.json"
+	skillSchemaFile           = "schema.json"
+	schemaRepairMaxAttempts   = 1
+	schemaRepairReportMaxSize = 4000
+)
 
 // skillContext is the JSON document scrutineer writes to ./context.json in
 // every skill workspace before invoking claude. Skills that need to know who
@@ -167,12 +173,15 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 		return res.Report, err
 	}
 
-	if res.Report != "" {
-		if err := w.parseSkillOutput(&skill, scan, res.Report, emit); err != nil {
-			return res.Report, err
+	report := res.Report
+	if report != "" {
+		var err error
+		report, err = w.repairAndParseSkillOutput(ctx, &skill, scan, sj, report, emit)
+		if err != nil {
+			return report, err
 		}
 	}
-	return res.Report, nil
+	return report, nil
 }
 
 // parsePartialSkillReport runs parseSkillOutput against a max-turns
@@ -183,6 +192,90 @@ func (w *Worker) parsePartialSkillReport(skill *db.Skill, scan *db.Scan, report 
 	if err := w.parseSkillOutput(skill, scan, report, emit); err != nil {
 		w.Log.Warn("parse partial skill output after max turns", "scan", scan.ID, "skill", skill.Name, "err", err)
 	}
+}
+
+func (w *Worker) repairAndParseSkillOutput(ctx context.Context, skill *db.Skill, scan *db.Scan, sj SkillJob, report string, emit func(Event)) (string, error) {
+	report, err := w.repairSchemaReport(ctx, skill, scan, sj, report, emit)
+	if err != nil {
+		return report, err
+	}
+	if err := w.parseSkillOutput(skill, scan, report, emit); err != nil {
+		return report, err
+	}
+	return report, nil
+}
+
+func (w *Worker) repairSchemaReport(ctx context.Context, skill *db.Skill, scan *db.Scan, sj SkillJob, report string, emit func(Event)) (string, error) {
+	if skill.SchemaJSON == "" {
+		return report, nil
+	}
+	detail := validateReportSchema(skill.SchemaJSON, report)
+	if detail == "" {
+		return report, nil
+	}
+	emit(Event{Kind: KindError, Text: fmt.Sprintf("schema: %s does not validate against %s:\n%s", defaultSkillOutputFile, skillSchemaFile, detail)})
+	if scan.SessionID == "" {
+		return report, nil
+	}
+
+	repairedReport := report
+	for attempt := 1; attempt <= schemaRepairMaxAttempts; attempt++ {
+		emit(Event{Kind: KindText, Text: fmt.Sprintf("schema: asking claude to repair %s (attempt %d/%d)", defaultSkillOutputFile, attempt, schemaRepairMaxAttempts)})
+		repairJob := sj
+		repairJob.ResumeSessionID = scan.SessionID
+		repairJob.ResumePrompt = buildSchemaRepairPrompt(skill, detail, repairedReport)
+		res, err := w.Runner.RunSkill(ctx, repairJob, emit)
+		if res.SessionID != "" && res.SessionID != scan.SessionID {
+			scan.SessionID = res.SessionID
+		}
+		if res.Commit != "" {
+			scan.Commit = res.Commit
+		}
+		if res.Profile != "" && res.Profile != scan.Profile {
+			scan.Profile = res.Profile
+			w.DB.Model(scan).Update("profile", res.Profile)
+		}
+		if err != nil {
+			if res.Report != "" {
+				repairedReport = res.Report
+			}
+			return repairedReport, err
+		}
+		if res.Report != "" {
+			repairedReport = res.Report
+			detail = validateReportSchema(skill.SchemaJSON, repairedReport)
+			if detail == "" {
+				emit(Event{Kind: KindText, Text: fmt.Sprintf("schema: repaired %s validates", defaultSkillOutputFile)})
+				return repairedReport, nil
+			}
+			emit(Event{Kind: KindError, Text: fmt.Sprintf("schema: repaired %s still does not validate against %s:\n%s", defaultSkillOutputFile, skillSchemaFile, detail)})
+		}
+	}
+	return repairedReport, nil
+}
+
+func buildSchemaRepairPrompt(skill *db.Skill, detail, report string) string {
+	outputFile := skill.OutputFile
+	if outputFile == "" {
+		outputFile = defaultSkillOutputFile
+	}
+	return fmt.Sprintf(`Your previous %q skill run wrote ./%s, but it failed validation against ./%s.
+
+Validation errors:
+%s
+
+Rewrite only ./%s with JSON that validates against ./%s. Preserve the facts from the previous run, do not restart the analysis, and do not write prose outside the JSON file.
+
+Previous invalid ./%s:
+%s`, skill.Name, outputFile, skillSchemaFile, detail, outputFile, skillSchemaFile, outputFile, truncateSchemaRepairReport(report))
+}
+
+func truncateSchemaRepairReport(report string) string {
+	report = strings.TrimSpace(report)
+	if len(report) <= schemaRepairReportMaxSize {
+		return report
+	}
+	return report[:schemaRepairReportMaxSize] + "\n... truncated ..."
 }
 
 func (w *Worker) parseSkillOutput(skill *db.Skill, scan *db.Scan, report string, emit func(Event)) error {
