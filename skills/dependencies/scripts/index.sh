@@ -42,6 +42,7 @@ if not isinstance(deps, list):
 
 expr_re = re.compile(r"\$\{([^}]+)\}")
 pom_cache = {}
+src_root = os.path.realpath(os.getcwd())
 
 def lname(tag):
     return tag.rsplit("}", 1)[-1]
@@ -77,8 +78,32 @@ def resolve_value(value, props):
         prev = cur
     return prev
 
+def under_src(path):
+    try:
+        return os.path.commonpath([src_root, path]) == src_root
+    except ValueError:
+        return False
+
+def normalize_pom_path(path):
+    if not path:
+        return ""
+    path = os.path.realpath(path)
+    if not under_src(path):
+        return ""
+    return path
+
+def parent_pom_path(path, rel):
+    parent_path = os.path.realpath(os.path.join(os.path.dirname(path), rel))
+    if os.path.isdir(parent_path):
+        parent_path = os.path.realpath(os.path.join(parent_path, "pom.xml"))
+    if not under_src(parent_path):
+        return ""
+    return parent_path
+
 def parse_pom(path, stack=()):
-    path = os.path.normpath(path)
+    path = normalize_pom_path(path)
+    if not path:
+        return {}
     if path in pom_cache:
         return dict(pom_cache[path])
     if path in stack or not os.path.exists(path):
@@ -87,7 +112,7 @@ def parse_pom(path, stack=()):
 
     try:
         root = ET.parse(path).getroot()
-    except ET.ParseError:
+    except (ET.ParseError, OSError):
         pom_cache[path] = {}
         return {}
 
@@ -101,10 +126,7 @@ def parse_pom(path, stack=()):
         rel_el = child(parent, "relativePath")
         rel = "../pom.xml" if rel_el is None else (rel_el.text or "").strip()
         if rel:
-            parent_path = os.path.normpath(os.path.join(os.path.dirname(path), rel))
-            if os.path.isdir(parent_path):
-                parent_path = os.path.join(parent_path, "pom.xml")
-            props.update(parse_pom(parent_path, stack + (path,)))
+            props.update(parse_pom(parent_pom_path(path, rel), stack + (path,)))
             parent_version = resolve_value(parent_version, props)
 
     group_id = text(root, "groupId") or parent_group
