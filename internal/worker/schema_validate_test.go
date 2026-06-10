@@ -224,7 +224,7 @@ func TestDoSkill_schemaMismatchResumesForRepair(t *testing.T) {
 	if got.Report != `{"tier":"ready","summary":"fixed"}` {
 		t.Errorf("Report = %q, want repaired report", got.Report)
 	}
-	if !strings.Contains(got.Log, "asking claude to repair report.json") {
+	if !strings.Contains(got.Log, "report.json failed validation; asking claude to repair it") {
 		t.Errorf("Log should mention repair attempt, got %q", got.Log)
 	}
 
@@ -251,14 +251,54 @@ func TestDoSkill_schemaRepairStillInvalidFailsStrict(t *testing.T) {
 	if got.Status != db.ScanFailed {
 		t.Fatalf("Status = %s, want failed", got.Status)
 	}
-	if got.Report != `{"tier":"wrong"}` {
-		t.Errorf("Report = %q, want last repaired report", got.Report)
+	if got.Report != `{"tier":{"x":1}}` {
+		t.Errorf("Report = %q, want original report after invalid repair", got.Report)
 	}
 	if !strings.Contains(got.Error, "schema validation") {
 		t.Errorf("Error = %q, want schema validation error", got.Error)
 	}
 	if len(runner.jobs) != 2 {
 		t.Errorf("RunSkill calls = %d, want 2", len(runner.jobs))
+	}
+	if count := strings.Count(got.Log, "does not validate against schema.json"); count != 1 {
+		t.Errorf("schema validation detail logged %d times, want 1; log:\n%s", count, got.Log)
+	}
+}
+
+func TestDoSkill_schemaRepairErrorFallsBackInWarnMode(t *testing.T) {
+	original := `{"tier":"ready","summary":"ok","extra":1}`
+	runner := &sequenceRunner{
+		results: []SkillResult{
+			{SessionID: "sess-1", Report: original},
+			{SessionID: "sess-1"},
+		},
+		errs: []error{nil, errors.New("cli flake")},
+	}
+	w, repoID, scanID := newQueuedSchemaSkillWorker(t, false, runner)
+	body, _ := json.Marshal(queue.Payload{ScanID: scanID})
+	if err := w.wrap(w.doSkill)(context.Background(), body); err != nil {
+		t.Fatalf("wrap should save and return nil, got %v", err)
+	}
+
+	var got db.Scan
+	w.DB.First(&got, scanID)
+	if got.Status != db.ScanDone {
+		t.Fatalf("Status = %s, want done: %s", got.Status, got.Error)
+	}
+	if got.Report != original {
+		t.Errorf("Report = %q, want original report after repair error", got.Report)
+	}
+	if !strings.Contains(got.Log, "repair attempt for report.json failed: cli flake; parsing original output") {
+		t.Errorf("Log should mention best-effort repair failure, got %q", got.Log)
+	}
+	if count := strings.Count(got.Log, "does not validate against schema.json"); count != 1 {
+		t.Errorf("schema validation detail logged %d times, want 1; log:\n%s", count, got.Log)
+	}
+
+	var repo db.Repository
+	w.DB.First(&repo, repoID)
+	if repo.Posture != "ready" {
+		t.Errorf("repo.Posture = %q, want ready from original report", repo.Posture)
 	}
 }
 
@@ -285,6 +325,26 @@ func TestParseSkillOutput_schemaStrictFails(t *testing.T) {
 	if repo.Posture != "" {
 		t.Errorf("repo.Posture = %q, want empty (parser should not have run)", repo.Posture)
 	}
+}
+
+func TestParseSkillOutput_schemaMessageUsesOutputFile(t *testing.T) {
+	w, skill, scan := newSchemaTestWorker(t, false)
+	skill.OutputFile = "custom-output.json"
+
+	var events []Event
+	err := w.parseSkillOutput(skill, scan, `{"tier":"ready","summary":"ok","extra":1}`, func(e Event) { events = append(events, e) })
+	if err != nil {
+		t.Fatalf("warn mode should not fail on schema mismatch: %v", err)
+	}
+	for _, e := range events {
+		if e.Kind == KindError && strings.Contains(e.Text, "schema:") {
+			if !strings.Contains(e.Text, "custom-output.json does not validate against schema.json") {
+				t.Errorf("schema message should use output file, got %q", e.Text)
+			}
+			return
+		}
+	}
+	t.Fatal("expected schema error event")
 }
 
 func TestParseSkillOutput_schemaStrictPassesThrough(t *testing.T) {
