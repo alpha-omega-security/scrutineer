@@ -37,7 +37,7 @@ COPY --from=claude /usr/local/lib/node_modules /usr/local/lib/node_modules
 COPY --from=claude /usr/local/bin/claude /usr/local/bin/claude
 
 # semgrep
-COPY --from=python-tools /usr/local/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
+COPY --from=python-tools /usr/local/lib/python3.14/site-packages /usr/local/lib/python3.14/site-packages
 COPY --from=python-tools /usr/local/bin/semgrep* /usr/local/bin/
 COPY --from=python-tools /usr/local/bin/pysemgrep /usr/local/bin/
 
