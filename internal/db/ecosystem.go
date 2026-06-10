@@ -141,8 +141,9 @@ type DependencyFinding struct {
 // the live Findings on the matched library repositories. The join key is the
 // parsed PURL (type, namespace, name) on both sides, so the two sources agree
 // without a write-time alias map. Self-matches and findings already marked
-// fixed/rejected/duplicate are excluded. Dev/test/build dependencies are not
-// considered reachable dependency edges.
+// fixed/rejected/duplicate are excluded. Dependency phase is returned to the
+// caller but does not filter reachability: build dependencies can still be
+// supply-chain edges, and the UI layer owns phase filtering for display.
 func DependencyFindings(g *gorm.DB, appRepoID uint) ([]DependencyFinding, error) {
 	var deps []Dependency
 	if err := g.Where("repository_id = ?", appRepoID).Find(&deps).Error; err != nil {
@@ -152,9 +153,6 @@ func DependencyFindings(g *gorm.DB, appRepoID uint) ([]DependencyFinding, error)
 	type key struct{ eco, namespace, name string }
 	want := map[key]Dependency{}
 	for _, d := range deps {
-		if !DependencyVisibleByDefault(d.DependencyType) {
-			continue
-		}
 		eco, ns, name := ecosystemKey(d.PURL, d.Ecosystem, d.Name)
 		k := key{eco, ns, name}
 		if cur, ok := want[k]; !ok || preferDep(d, cur) {

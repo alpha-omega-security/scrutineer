@@ -138,7 +138,7 @@ func TestDependencyFindingsPURLJoin(t *testing.T) {
 	}
 }
 
-func TestDependencyFindingsIgnoresNonRuntimeDependencies(t *testing.T) {
+func TestDependencyFindingsIncludesNonRuntimeDependencies(t *testing.T) {
 	gdb, err := Open("file::memory:")
 	if err != nil {
 		t.Fatal(err)
@@ -162,8 +162,11 @@ func TestDependencyFindingsIgnoresNonRuntimeDependencies(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 0 {
-		t.Fatalf("rows=%d want=0 for test-only dependency: %+v", len(rows), rows)
+	if len(rows) != 1 {
+		t.Fatalf("rows=%d want=1 for test-only dependency: %+v", len(rows), rows)
+	}
+	if rows[0].DependencyType != DependencyTest {
+		t.Fatalf("DependencyType = %q, want %q", rows[0].DependencyType, DependencyTest)
 	}
 }
 
