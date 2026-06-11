@@ -1,8 +1,8 @@
 ---
 name: patch
-description: Propose a code patch for a finding. Produces a unified diff against the current HEAD plus a short rationale, written back as a finding note so the analyst can review, adjust, and open a PR themselves. The skill never pushes to the remote.
+description: Propose a code patch for a finding. Produces a unified diff against the scanned ref plus a short rationale; a diff that passes the worker's applicability gate is stored on the finding as its suggested fix, and a summary note is posted for analyst review. The skill never pushes to the remote.
 license: MIT
-compatibility: Needs network access to the scrutineer API (http://host:port/api). Finding-scoped; runs against ./src at HEAD.
+compatibility: Needs network access to the scrutineer API (http://host:port/api). Finding-scoped; runs against ./src at the scanned ref's HEAD.
 metadata:
   scrutineer.version: 1
   scrutineer.output_file: report.json
@@ -15,7 +15,7 @@ Propose a minimal code patch that fixes a confirmed finding. You are not shippin
 
 ## Workspace
 
-- `./src` — the repository at its current HEAD, on the default branch, writable
+- `./src` — the repository at the scanned ref (the default branch unless the scan was started on a branch), writable
 - `./context.json` — has `scrutineer.api_base`, `scrutineer.token`, `scrutineer.repository_id`, `scrutineer.scan_id`, `scrutineer.finding_id` (required; this skill only makes sense finding-scoped)
 - `./report.json` — write the patch + rationale here
 - `./schema.json` — shape of `report.json`
@@ -53,7 +53,7 @@ Propose a minimal code patch that fixes a confirmed finding. You are not shippin
    }
    ```
 
-   The note lives on the finding page; the full diff lives in `report.json` and is viewable on the scan page.
+   The note lives on the finding page; the full diff lives in `report.json` and is viewable on the scan page. A diff that passes the worker's applicability gate is also stored on the finding as `suggested_fix` and served from the finding page as a `.patch` download.
 
 6. Do not PATCH any editable fields on the finding. Specifically:
    - Do not set `fix_commit` — that field means a shipped upstream fix, not a proposal. The analyst sets it after their PR merges.

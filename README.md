@@ -107,7 +107,7 @@ When a repo is added, the `triage` skill is enqueued. Its SKILL.md lists the ski
 | `finding-dedup` | Compares open findings and marks overlapping reports as duplicates |
 | `verify` | Re-checks one finding against current HEAD; records reproduces / fixed / can't-reproduce |
 | `disclose` | Drafts a GHSA-shaped advisory (title, description, CVSS, CWEs, references) for one finding |
-| `patch` | Proposes a unified diff fixing one finding, written back as a note for analyst review |
+| `patch` | Proposes a unified diff fixing one finding; a diff that passes the applicability gate is stored on the finding as its suggested fix |
 | `report-upstream` | Files one finding on the upstream repository via GitHub PVR with the proposed patch attached; the action that moves a finding to `reported` |
 | `reachability` | Traces dependency sinks through application code to determine which are reachable from trust boundaries |
 | `cna-match` | Matches a repository to its CVE Numbering Authority so disclosures route to the right contact |
@@ -155,6 +155,8 @@ Each finding from the `security-deep-dive` skill starts at **new** and moves thr
 8. **published** -- done
 
 Each finding page has a notes section for recording triage reasoning and communication history.
+
+A `patch` run whose diff survives the applicability gate (the diff parses, targets files that exist, touches the flagged file, and passes `git apply --check`) is stored on the finding as `suggested_fix` with its base commit, downloadable from the finding page as a `.patch` file and included in markdown report exports. To revise a fix, push your edits to a branch, scan that branch (the Branch field, or a `/tree/<branch>` URL suffix), and run `patch` against the new scan: the diff is proposed against that ref's tree, so each round of edit, push, and rescan gets a fresh proposal on top of your work.
 
 ## Exploring dependencies
 
