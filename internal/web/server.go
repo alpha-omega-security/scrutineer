@@ -760,15 +760,7 @@ func (s *Server) findings(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-	var missedTotal int64
-	s.findingsIndexQuery(r, scanners, false).
-		Where("missed_count > 0").
-		Count(&missedTotal)
-
-	var scannerTotal int64
-	s.findingsIndexQuery(r, true, true).
-		Where("scan_id NOT IN (?)", deepDiveScanIDs(s.DB)).
-		Count(&scannerTotal)
+	missedTotal, scannerTotal := s.findingsBadgeTotals(r, scanners, missed)
 
 	s.render(w, r, "findings.html", map[string]any{
 		"Findings": rows, "Page": page, "Severity": sev, "Sort": sort,
@@ -805,6 +797,29 @@ func (s *Server) findingsIndexQuery(r *http.Request, includeScanners, includeMis
 			like, like, like, like, like)
 	}
 	return q
+}
+
+func (s *Server) findingsBadgeTotals(r *http.Request, includeScanners, missed bool) (int64, int64) {
+	missedCond := "missed_count > 0"
+	args := []any{}
+	if !includeScanners {
+		missedCond += " AND scan_id IN (?)"
+		args = append(args, deepDiveScanIDs(s.DB))
+	}
+	scannerCond := "scan_id NOT IN (?)"
+	args = append(args, deepDiveScanIDs(s.DB))
+	if missed {
+		scannerCond += " AND missed_count > 0"
+	}
+	var totals struct {
+		MissedTotal  int64
+		ScannerTotal int64
+	}
+	s.findingsIndexQuery(r, true, false).
+		Select("COALESCE(SUM(CASE WHEN "+missedCond+" THEN 1 ELSE 0 END), 0) AS missed_total, "+
+			"COALESCE(SUM(CASE WHEN "+scannerCond+" THEN 1 ELSE 0 END), 0) AS scanner_total", args...).
+		Scan(&totals)
+	return totals.MissedTotal, totals.ScannerTotal
 }
 
 func applyFindingStatusFilter(q *gorm.DB, status string) *gorm.DB {
