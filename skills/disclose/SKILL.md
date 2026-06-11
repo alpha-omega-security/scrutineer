@@ -88,9 +88,11 @@ Draft disclosure content for an existing finding in a shape that maps one-to-one
 
    **`severity` / `cvss_vector_string`.** GHSA accepts exactly one of the two; prefer the CVSS vector when you can derive one confidently, fall back to the severity label otherwise.
 
-   Use CVSS 3.1. Derive each metric from the finding prose: `AV` from the attack surface described in Boundary, `AC` from how contrived the trigger is in Validation, `PR`/`UI` from whether the trigger needs authentication or human interaction, `S` from whether the impact crosses a trust boundary, and `C`/`I`/`A` from the dangerous behaviour in Rating. Write the full vector string (e.g. `CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H`). If any single metric cannot be derived from the prose, do not guess a value for it; omit `cvss_vector_string` entirely and emit the `severity` label instead.
+   Derive a 3.1 vector for the GHSA body (the GHSA form's CVSS picker accepts a 3.1 vector string). Derive each metric from the finding prose: `AV` from the attack surface described in Boundary, `AC` from how contrived the trigger is in Validation, `PR`/`UI` from whether the trigger needs authentication or human interaction, `S` from whether the impact crosses a trust boundary, and `C`/`I`/`A` from the dangerous behaviour in Rating. Write the full vector string (e.g. `CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H`). If any single metric cannot be derived from the prose, do not guess a value for it; omit `cvss_vector_string` entirely and emit the `severity` label instead.
 
-   For the severity label fallback, map scrutineer's `severity` field (`Critical`/`High`/`Medium`/`Low`) to GHSA's lowercase `critical`/`high`/`medium`/`low`. If the finding has a pre-existing `cvss_vector`, leave it alone and reuse it here — do not overwrite analyst edits.
+   Also derive a CVSS 4.0 vector and store it in `cvss_v4_vector` (the OSS-SIRT brief and downstream OSV consumers prefer v4; v3.1 stays for legacy pipelines). The metric set is wider: same base metrics, plus `VC`/`VI`/`VA` (impact on the vulnerable system) and `SC`/`SI`/`SA` (impact on subsequent systems). When the finding's blast radius stops at the vulnerable component, `SC=N SI=N SA=N`. Same rule: omit `cvss_v4_vector` rather than guess. The 4.0 form is `CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N`.
+
+   For the severity label fallback, map scrutineer's `severity` field (`Critical`/`High`/`Medium`/`Low`) to GHSA's lowercase `critical`/`high`/`medium`/`low`. If the finding has a pre-existing `cvss_vector` or `cvss_v4_vector`, leave it alone and reuse it here — do not overwrite analyst edits.
 
    **`cwe_ids[]`.** Split the finding's comma-joined `cwe` field into an array of `CWE-N` strings (GHSA accepts multiple). Do not invent CWEs not in the finding.
 
@@ -107,6 +109,7 @@ Draft disclosure content for an existing finding in a shape that maps one-to-one
      "fields": {
        "title": "<summary>",
        "cvss_vector": "CVSS:3.1/...",
+       "cvss_v4_vector": "CVSS:4.0/...",
        "affected": ">=1.0, <2.3.1",
        "fix_version": "2.3.1",
        "disclosure_draft": "<description markdown>"
@@ -115,7 +118,7 @@ Draft disclosure content for an existing finding in a shape that maps one-to-one
    }
    ```
 
-   Only include fields you want to change. If the finding already had a non-empty `cvss_vector`, `affected`, `fix_version`, or `title`, leave those keys out of the body so the analyst's value is preserved. `disclosure_draft` may be overwritten — a re-run is allowed to produce a fresh draft.
+   Only include fields you want to change. If the finding already had a non-empty `cvss_vector`, `cvss_v4_vector`, `affected`, `fix_version`, or `title`, leave those keys out of the body so the analyst's value is preserved. `disclosure_draft` may be overwritten — a re-run is allowed to produce a fresh draft.
 
    **POST each reference** — for every URL cited in the description, `POST {api_base}/findings/{finding_id}/references` with:
 

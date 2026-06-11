@@ -122,8 +122,14 @@
   {{end}}
   {{if $f.CVSSVector}}
   <div class="col-span-2">
-    <dt class="text-muted-foreground">CVSS</dt>
+    <dt class="text-muted-foreground">CVSS v3</dt>
     <dd><code>{{$f.CVSSVector}}</code>{{if $f.CVSSScore}} ({{$f.CVSSScore}}){{end}}</dd>
+  </div>
+  {{end}}
+  {{if $f.CVSSv4Vector}}
+  <div class="col-span-2">
+    <dt class="text-muted-foreground">CVSS v4</dt>
+    <dd><code>{{$f.CVSSv4Vector}}</code>{{if $f.CVSSv4Score}} ({{$f.CVSSv4Score}}){{end}}</dd>
   </div>
   {{end}}
   {{if $f.FixCommit}}
@@ -339,9 +345,14 @@ git commit -m "fix: {{$f.Title}}"</pre>
           <input class="input" name="cve_id" value="{{$f.CVEID}}" placeholder="CVE-2026-12345">
         </div>
         <div class="grid gap-1 col-span-2">
-          <label class="text-xs text-muted-foreground">CVSS vector</label>
+          <label class="text-xs text-muted-foreground">CVSS v3 vector</label>
           <input class="input font-mono text-xs" name="cvss_vector" value="{{$f.CVSSVector}}"
                  placeholder="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H">
+        </div>
+        <div class="grid gap-1 col-span-2">
+          <label class="text-xs text-muted-foreground">CVSS v4 vector</label>
+          <input class="input font-mono text-xs" name="cvss_v4_vector" value="{{$f.CVSSv4Vector}}"
+                 placeholder="CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N">
         </div>
         <div class="grid gap-1">
           <label class="text-xs text-muted-foreground">Affected versions</label>

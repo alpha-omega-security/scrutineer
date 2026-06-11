@@ -2,6 +2,32 @@ package db
 
 import "testing"
 
+func TestScoreFromV4Vector(t *testing.T) {
+	cases := []struct {
+		name   string
+		vector string
+		ok     bool
+	}{
+		{"v4 critical", "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N", true},
+		{"v4 medium", "CVSS:4.0/AV:N/AC:L/AT:N/PR:L/UI:N/VC:L/VI:L/VA:N/SC:N/SI:N/SA:N", true},
+		{"empty", "", false},
+		{"garbage", "not-a-vector", false},
+		{"v3 rejected", "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H", false},
+		{"truncated", "CVSS:4.0/AV:N/AC:L", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := ScoreFromV4Vector(tc.vector)
+			if ok != tc.ok {
+				t.Fatalf("ok = %v, want %v (score %v)", ok, tc.ok, got)
+			}
+			if ok && (got <= 0 || got > 10) {
+				t.Errorf("score %v out of [0,10]", got)
+			}
+		})
+	}
+}
+
 func TestBaseScoreFromVector(t *testing.T) {
 	cases := []struct {
 		name   string

@@ -446,9 +446,18 @@ type Finding struct {
 
 	// Disclosure / triage fields. Any of these may be set by a tool, a
 	// model-backed skill, or the analyst; see FindingHistory for the trail.
-	CVEID           string
+	CVEID string
+	// CVSSVector is the canonical CVSS v3.x base vector (3.0 or 3.1).
+	// CVSSv4Vector is the v4.0 base vector. Both may be populated when
+	// the analyst (or the disclose skill) carries both forward, which
+	// coordinators like the OSS-SIRT expect; v3.1 stays for legacy
+	// pipelines that have not yet adopted v4. Each vector has its own
+	// derived base-score column so the two scales do not get mixed up
+	// (4.0 changes the metric set and the base-score formula).
 	CVSSVector      string
 	CVSSScore       float64
+	CVSSv4Vector    string  `gorm:"column:cvss_v4_vector"`
+	CVSSv4Score     float64 `gorm:"column:cvss_v4_score"`
 	FixVersion      string
 	FixCommit       string
 	Resolution      FindingResolution `gorm:"index"`

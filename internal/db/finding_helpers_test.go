@@ -141,6 +141,44 @@ func TestWriteFindingField_cvssVectorSyncsScore(t *testing.T) {
 	}
 }
 
+func TestWriteFindingField_cvssV4VectorSyncsScore(t *testing.T) {
+	gdb := newTestDB(t)
+	f := seedFinding(t, gdb)
+
+	const vec = "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N"
+	if err := WriteFindingField(gdb, f.ID, "cvss_v4_vector", vec, SourceAnalyst, "me"); err != nil {
+		t.Fatal(err)
+	}
+	var refreshed Finding
+	gdb.First(&refreshed, f.ID)
+	if refreshed.CVSSv4Vector != vec {
+		t.Errorf("v4 vector = %q, want %q", refreshed.CVSSv4Vector, vec)
+	}
+	if refreshed.CVSSv4Score <= 0 || refreshed.CVSSv4Score > 10 {
+		t.Errorf("v4 score = %v, want > 0 (out of [0,10])", refreshed.CVSSv4Score)
+	}
+	if refreshed.CVSSScore != 0 {
+		t.Errorf("v3 score = %v, want 0 (v4 write must not touch v3 column)", refreshed.CVSSScore)
+	}
+}
+
+func TestWriteFindingField_cvssV4VectorInvalidClearsScore(t *testing.T) {
+	gdb := newTestDB(t)
+	f := seedFinding(t, gdb)
+	gdb.Model(&Finding{}).Where("id = ?", f.ID).Updates(map[string]any{
+		"cvss_v4_vector": "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N",
+		"cvss_v4_score":  9.3,
+	})
+	if err := WriteFindingField(gdb, f.ID, "cvss_v4_vector", "garbage", SourceAnalyst, ""); err != nil {
+		t.Fatal(err)
+	}
+	var refreshed Finding
+	gdb.First(&refreshed, f.ID)
+	if refreshed.CVSSv4Score != 0 {
+		t.Errorf("v4 score = %v, want 0", refreshed.CVSSv4Score)
+	}
+}
+
 func TestWriteFindingField_cvssVectorInvalidClearsScore(t *testing.T) {
 	gdb := newTestDB(t)
 	f := seedFinding(t, gdb)

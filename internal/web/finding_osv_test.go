@@ -99,6 +99,74 @@ func TestFindingOSV_cvss30Validates(t *testing.T) {
 	}
 }
 
+func TestFindingOSV_emitsBothCVSSv3AndCVSSv4(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	const v3 = "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+	const v4 = "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N"
+	f := seedCSAFFinding(t, s, func(f *db.Finding) {
+		f.CVSSVector = v3
+		f.CVSSScore = 9.8
+		f.CVSSv4Vector = v4
+		f.CVSSv4Score = 9.3
+	})
+	w := getOSV(t, s, f.ID)
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	doc := decodeCSAF(t, w.Body.Bytes())
+	sevs := doc["severity"].([]any)
+	if len(sevs) != 2 {
+		t.Fatalf("severity entries = %d, want 2 (one each for v4 and v3): %+v", len(sevs), sevs)
+	}
+	first := sevs[0].(map[string]any)
+	if first["type"] != "CVSS_V4" || first["score"] != v4 {
+		t.Errorf("first severity must be CVSS_V4 with the v4 vector: %+v", first)
+	}
+	second := sevs[1].(map[string]any)
+	if second["type"] != "CVSS_V3" || second["score"] != v3 {
+		t.Errorf("second severity must be CVSS_V3 with the v3.1 vector: %+v", second)
+	}
+}
+
+func TestFindingOSV_emitsOnlyV4WhenV3Absent(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	const v4 = "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N"
+	f := seedCSAFFinding(t, s, func(f *db.Finding) {
+		f.CVSSVector = ""
+		f.CVSSScore = 0
+		f.CVSSv4Vector = v4
+		f.CVSSv4Score = 9.3
+	})
+	w := getOSV(t, s, f.ID)
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	doc := decodeCSAF(t, w.Body.Bytes())
+	raw, ok := doc["severity"]
+	if !ok {
+		t.Fatalf("severity key missing in OSV doc keys=%v", mapKeys(doc))
+	}
+	sevs, ok := raw.([]any)
+	if !ok || len(sevs) != 1 {
+		t.Fatalf("severity entries = %v, want 1 (v4 only)", raw)
+	}
+	if sevs[0].(map[string]any)["type"] != "CVSS_V4" {
+		t.Errorf("severity[0].type = %v", sevs[0])
+	}
+}
+
+func mapKeys(m map[string]any) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}
+
 func TestFindingOSV_packageWithPURLBecomesAffectedPackage(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

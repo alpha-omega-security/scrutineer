@@ -45,6 +45,9 @@ func WriteFindingField(gdb *gorm.DB, findingID uint, field, newValue string, sou
 	if field == "cvss_vector" {
 		return syncCVSSScore(gdb, &f, newValue, source, by)
 	}
+	if field == "cvss_v4_vector" {
+		return syncCVSSv4Score(gdb, &f, newValue, source, by)
+	}
 	return nil
 }
 
@@ -64,6 +67,28 @@ func syncCVSSScore(gdb *gorm.DB, f *Finding, vector string, source FindingSource
 		FindingID: f.ID,
 		Field:     "cvss_score",
 		OldValue:  strconv.FormatFloat(f.CVSSScore, 'f', -1, 64),
+		NewValue:  strconv.FormatFloat(score, 'f', -1, 64),
+		Source:    source,
+		By:        by,
+		CreatedAt: time.Now(),
+	}).Error
+}
+
+// syncCVSSv4Score is the v4 twin of syncCVSSScore. CVSS v4 changes the
+// metric set and the base-score formula, so it lives in its own
+// vector/score columns rather than overloading the v3 ones.
+func syncCVSSv4Score(gdb *gorm.DB, f *Finding, vector string, source FindingSource, by string) error {
+	score, _ := ScoreFromV4Vector(vector)
+	if f.CVSSv4Score == score {
+		return nil
+	}
+	if err := gdb.Model(&Finding{}).Where("id = ?", f.ID).Update("cvss_v4_score", score).Error; err != nil {
+		return fmt.Errorf("update cvss_v4_score: %w", err)
+	}
+	return gdb.Create(&FindingHistory{
+		FindingID: f.ID,
+		Field:     "cvss_v4_score",
+		OldValue:  strconv.FormatFloat(f.CVSSv4Score, 'f', -1, 64),
 		NewValue:  strconv.FormatFloat(score, 'f', -1, 64),
 		Source:    source,
 		By:        by,
@@ -134,6 +159,8 @@ func findingFieldAccessor(f *Finding, field string) (current, column string, err
 		return f.CVEID, "cve_id", nil
 	case "cvss_vector":
 		return f.CVSSVector, "cvss_vector", nil
+	case "cvss_v4_vector":
+		return f.CVSSv4Vector, "cvss_v4_vector", nil
 	case "fix_version":
 		return f.FixVersion, "fix_version", nil
 	case "fix_commit":

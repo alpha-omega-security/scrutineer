@@ -212,16 +212,20 @@ func osvAliases(f db.Finding, refs []db.FindingReference) []string {
 	return out
 }
 
-// osvSeverityList emits the CVSS vector string (OSV's severity.score is the
-// vector, not a number). Gated on go-cvss parsing the vector: a vector it
-// accepts also satisfies the schema's CVSS_V3 score pattern, and gating here
-// keeps a malformed or truncated vector from failing validation. v4 vectors
-// fall through (go-cvss only parses 3.0/3.1) and severity is then omitted.
+// osvSeverityList emits one CVSS vector entry per version the finding
+// carries (OSV's severity.score is the vector, not a number). Each
+// entry is gated on go-cvss parsing the vector so a malformed value is
+// dropped rather than failing schema validation. When both are
+// present, v4 comes first (matching the OSS-SIRT advisory template).
 func osvSeverityList(f db.Finding) []osvSeverity {
-	if _, ok := db.BaseScoreFromVector(f.CVSSVector); !ok {
-		return nil
+	var out []osvSeverity
+	if _, ok := db.ScoreFromV4Vector(f.CVSSv4Vector); ok {
+		out = append(out, osvSeverity{Type: "CVSS_V4", Score: f.CVSSv4Vector})
 	}
-	return []osvSeverity{{Type: "CVSS_V3", Score: f.CVSSVector}}
+	if _, ok := db.BaseScoreFromVector(f.CVSSVector); ok {
+		out = append(out, osvSeverity{Type: "CVSS_V3", Score: f.CVSSVector})
+	}
+	return out
 }
 
 // osvEcosystemByPURLType maps a canonical PURL type to its OSV ecosystem name.
