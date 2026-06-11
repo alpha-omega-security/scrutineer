@@ -148,7 +148,7 @@ Each finding from the `security-deep-dive` skill starts at **new** and moves thr
 1. **new** -- just identified. Click "Verify" to trigger independent confirmation, or "Skip to triage" if you trust the audit, or "Reject"
 2. **enriched** -- verification ran. Review and click "Triage"
 3. **triaged** -- confirmed real. Click "Prepare disclosure"
-4. **ready** -- draft prepared. Run the `report-upstream` skill to file it via GitHub PVR (github.com only, requires `gh` auth), or click "Mark as reported" after sending it yourself
+4. **ready** -- draft prepared. Run the `report-upstream` skill to file it via GitHub PVR (github.com only, requires `gh` auth), or click "Mark as reported" after sending it yourself. When upstream has no PVR, follow the runbook in [docs/disclosure-fallback.md](docs/disclosure-fallback.md): route to a CNA when `cna-match` names one, otherwise contact the channel `maintainers` returned
 5. **reported** -- sent to maintainer. Click "Acknowledged" when they respond
 6. **acknowledged** -- maintainer working on fix. Click "Mark fixed" when it ships
 7. **fixed** -- patch available. Click "Mark published" to issue the advisory
