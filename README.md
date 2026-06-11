@@ -156,6 +156,8 @@ Each finding from the `security-deep-dive` skill starts at **new** and moves thr
 
 Each finding page has a notes section for recording triage reasoning and communication history.
 
+A `patch` run whose diff survives the applicability gate (the diff parses, targets files that exist, touches the flagged file, and passes `git apply --check`) is stored on the finding as `suggested_fix` with its base commit, downloadable from the finding page as a `.patch` file and included in markdown report exports. To revise a fix, push your edits to a branch, scan that branch (the Branch field, or a `/tree/<branch>` URL suffix), and run `patch` against the new scan: the diff is proposed against that ref's tree, so each round of edit, push, and rescan gets a fresh proposal on top of your work.
+
 ## Exploring dependencies
 
 The Dependencies tab on a repo groups packages by name and shows all manifest files where each appears. The import button (arrow icon) next to a dependency resolves it to a repository URL via packages.ecosyste.ms and queues the full pipeline for it. Dependencies you've already imported show a link icon instead.
