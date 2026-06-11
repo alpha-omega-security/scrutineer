@@ -150,6 +150,17 @@
     <dd>{{$f.Assignee}}</dd>
   </div>
   {{end}}
+  {{if eq $f.ExploitedInWild "yes"}}
+  <div>
+    <dt class="text-muted-foreground">Exploited in wild</dt>
+    <dd><span class="badge-destructive">yes</span></dd>
+  </div>
+  {{else if eq $f.ExploitedInWild "no"}}
+  <div>
+    <dt class="text-muted-foreground">Exploited in wild</dt>
+    <dd><span class="badge-outline">no</span></dd>
+  </div>
+  {{end}}
 </dl>
 
 <section class="accordion">

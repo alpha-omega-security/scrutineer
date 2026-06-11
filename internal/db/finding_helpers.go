@@ -152,6 +152,10 @@ func findingFieldAccessor(f *Finding, field string) (current, column string, err
 		return f.BreakingChange, "breaking_change", nil
 	case "breaking_change_rationale":
 		return f.BreakingChangeRationale, "breaking_change_rationale", nil
+	case "exploited_in_wild":
+		return f.ExploitedInWild, "exploited_in_wild", nil
+	case "exploited_in_wild_evidence":
+		return f.ExploitedInWildEvidence, "exploited_in_wild_evidence", nil
 	default:
 		return "", "", fmt.Errorf("field %q is not editable", field)
 	}

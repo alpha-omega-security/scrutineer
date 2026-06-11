@@ -613,6 +613,17 @@ func buildAuditNotes(f db.Finding) []csafNote {
 		}
 		out = append(out, csafNote{Category: "details", Title: s.title, Text: s.text})
 	}
+	// Exploitation status surfaces as a CSAF note rather than under a
+	// `threats` block: the latter is reserved for impact descriptors
+	// the spec accepts at write time, while a free-text exploitation
+	// note travels reliably to coordinators that scan note titles.
+	if f.ExploitedInWild != "" {
+		text := "Exploited in wild: " + f.ExploitedInWild
+		if e := strings.TrimSpace(f.ExploitedInWildEvidence); e != "" {
+			text += "\n\n" + e
+		}
+		out = append(out, csafNote{Category: "details", Title: "exploited_in_wild", Text: text})
+	}
 	return out
 }
 

@@ -146,6 +146,8 @@ One row per vulnerability. Lifecycle columns are mutated through `db.WriteFindin
 | suggested_fix_commit | text | Sha the suggested_fix applies cleanly against. |
 | breaking_change | text | `breaking`, `non_breaking`, or `unknown`; verdict of the `breaking-change` skill on the suggested fix. Empty when the skill has not run. |
 | breaking_change_rationale | text | Human-readable rationale plus the list of affected dependents from the same skill run. |
+| exploited_in_wild | text | Analyst's call: `yes`, `no`, or empty (unknown). On the OSS-SIRT intake list; surfaced on the finding page, in the OSV `database_specific` block, in the CSAF audit notes, and in the markdown report. Automation never writes this. |
+| exploited_in_wild_evidence | text | Free-text source note: researcher, ticket link, traffic observation. |
 | trace | text | Step 1 prose. Markdown. |
 | boundary | text | Step 2. |
 | validation | text | Step 3: reproduction. |

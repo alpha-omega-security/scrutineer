@@ -477,6 +477,20 @@ type Finding struct {
 	BreakingChange          string `gorm:"index"`
 	BreakingChangeRationale string `gorm:"type:text"`
 
+	// ExploitedInWild is the analyst's call on whether this finding is
+	// known to be exploited at the time of disclosure. One of `yes`,
+	// `no`, or empty (`unknown`). Disclosure coordinators ask for this
+	// (the OSS-SIRT intake list includes it) and a `yes` changes triage
+	// priority. Automation never sets this column: a model guess at
+	// exploitation is worse than no answer. Updates flow through
+	// WriteFindingField with source=analyst so the timestamp lives in
+	// FindingHistory.
+	ExploitedInWild string `gorm:"index"`
+	// ExploitedInWildEvidence is the source note for the value above:
+	// who reported it, the ticket or article link, what the analyst saw.
+	// Free-text; empty when the analyst has not weighed in.
+	ExploitedInWildEvidence string `gorm:"type:text"`
+
 	// Per-step prose from the six-step audit checklist.
 	Trace      string `gorm:"type:text"`
 	Boundary   string `gorm:"type:text"`

@@ -341,6 +341,8 @@ func osvDatabaseSpecific(f db.Finding) map[string]any {
 	put("location", f.Location)
 	put("commit", f.Commit)
 	put("sub_path", f.SubPath)
+	put("exploited_in_wild", f.ExploitedInWild)
+	put("exploited_in_wild_evidence", f.ExploitedInWildEvidence)
 	if locs := f.LocationList(); len(locs) > 1 {
 		ds["locations"] = locs
 	}

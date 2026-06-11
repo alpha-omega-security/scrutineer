@@ -914,6 +914,8 @@ components:
         fix_commit:    { type: string }
         resolution:    { type: string, enum: [fix, migrate, workaround, adopt, wontfix, ""] }
         assignee:      { type: string }
+        exploited_in_wild: { type: string, enum: [yes, no, ""], description: "Analyst's call on whether this finding is being exploited in the wild. Empty means unknown. Automation never sets this." }
+        exploited_in_wild_evidence: { type: string }
 
     FindingDetail:
       allOf:

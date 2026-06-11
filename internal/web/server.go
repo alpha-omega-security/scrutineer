@@ -263,6 +263,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /findings/{id}/csaf.json", s.findingCSAF)
 	mux.HandleFunc("GET /findings/{id}/osv.json", s.findingOSV)
 	mux.HandleFunc("POST /findings/{id}/status", s.findingStatus)
+	mux.HandleFunc("POST /findings/{id}/exploited-in-wild", s.findingExploitedInWild)
 	mux.HandleFunc("POST /findings/{id}/verify", s.findingVerify)
 	mux.HandleFunc("POST /repositories/{id}/verify-all", s.repoVerifyAll)
 	mux.HandleFunc("POST /findings/{id}/disclose", s.findingDisclose)
@@ -923,6 +924,37 @@ func (s *Server) findingStatus(w http.ResponseWriter, r *http.Request) {
 		}
 	default:
 		http.Error(w, "invalid status", http.StatusUnprocessableEntity)
+		return
+	}
+	s.redirect(w, r, fmt.Sprintf("/findings/%d", f.ID))
+}
+
+// findingExploitedInWild handles the analyst form on the finding page
+// for marking whether the finding is being exploited in the wild. The
+// status is a closed enum (yes / no / empty for unknown); the evidence
+// field is free text and may stand alone (an analyst recording context
+// without yet committing to yes/no). Both writes go through
+// WriteFindingField so the change history records who set them and
+// when.
+func (s *Server) findingExploitedInWild(w http.ResponseWriter, r *http.Request) {
+	f, ok := loadByID[db.Finding](s, w, r)
+	if !ok {
+		return
+	}
+	status := strings.TrimSpace(r.FormValue("exploited_in_wild"))
+	switch status {
+	case "", "yes", "no":
+	default:
+		http.Error(w, "exploited_in_wild must be yes, no, or empty", http.StatusUnprocessableEntity)
+		return
+	}
+	evidence := strings.TrimSpace(r.FormValue("exploited_in_wild_evidence"))
+	if err := db.WriteFindingField(s.DB, f.ID, "exploited_in_wild", status, db.SourceAnalyst, ""); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if err := db.WriteFindingField(s.DB, f.ID, "exploited_in_wild_evidence", evidence, db.SourceAnalyst, ""); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	s.redirect(w, r, fmt.Sprintf("/findings/%d", f.ID))

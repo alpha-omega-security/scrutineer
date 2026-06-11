@@ -215,6 +215,7 @@ func writeReportFinding(b *strings.Builder, gdb *gorm.DB, f db.Finding, latest *
 		{"Location", "`" + f.Location + "`"},
 		{"Sinks", f.Sinks},
 		{"Affected", f.Affected},
+		{"Exploited in wild", f.ExploitedInWild},
 		{"CVE", f.CVEID},
 		{"CVSS", f.CVSSVector},
 		{"Fix version", f.FixVersion},
@@ -265,6 +266,11 @@ func writeReportFinding(b *strings.Builder, gdb *gorm.DB, f db.Finding, latest *
 	writeProse(b, "#### Prior art", f.PriorArt)
 	writeProse(b, "#### Reach", f.Reach)
 	writeProse(b, "#### Rating", f.Rating)
+
+	if f.ExploitedInWild != "" && f.ExploitedInWildEvidence != "" {
+		fmt.Fprintf(b, "#### Exploitation status\n\nExploited in wild: **%s**.\n\n%s\n\n",
+			f.ExploitedInWild, strings.TrimSpace(f.ExploitedInWildEvidence))
+	}
 
 	if f.DisclosureDraft != "" {
 		fmt.Fprintf(b, "#### Disclosure draft\n\n%s\n\n", strings.TrimSpace(f.DisclosureDraft))

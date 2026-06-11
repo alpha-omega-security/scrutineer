@@ -114,5 +114,31 @@
       {{end}}
     </form>
   </section>
+
+  <details class="mt-4 border-t pt-3" {{if eq .ExploitedInWild "yes"}}open{{end}}>
+    <summary class="text-xs text-muted-foreground cursor-pointer hover:underline flex items-center gap-2">
+      <i data-lucide="bug"></i>
+      Exploitation status
+      {{if eq .ExploitedInWild "yes"}}<span class="badge-destructive ml-auto">yes</span>{{else if eq .ExploitedInWild "no"}}<span class="badge-outline ml-auto">no</span>{{else}}<span class="text-muted-foreground ml-auto">unknown</span>{{end}}
+    </summary>
+    <form method="post" action="/findings/{{$id}}/exploited-in-wild" class="grid gap-2 mt-3 text-sm">
+      <div class="flex items-center gap-2">
+        <label class="text-xs text-muted-foreground w-24">Exploited?</label>
+        <select class="input" name="exploited_in_wild">
+          <option value=""{{if eq .ExploitedInWild ""}} selected{{end}}>unknown</option>
+          <option value="yes"{{if eq .ExploitedInWild "yes"}} selected{{end}}>yes</option>
+          <option value="no"{{if eq .ExploitedInWild "no"}} selected{{end}}>no</option>
+        </select>
+      </div>
+      <div class="grid gap-1">
+        <label class="text-xs text-muted-foreground">Evidence / source</label>
+        <textarea class="input text-xs" name="exploited_in_wild_evidence" rows="2"
+                  placeholder="Where this came from — researcher report, CERT advisory, in-the-wild traffic, etc.">{{.ExploitedInWildEvidence}}</textarea>
+      </div>
+      <div class="flex justify-end">
+        <button type="submit" class="btn-sm">Save exploitation status</button>
+      </div>
+    </form>
+  </details>
 </div>
 {{end}}
