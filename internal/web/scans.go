@@ -46,9 +46,7 @@ func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 		Limit(perPage).Offset((page.N - 1) * perPage).Find(&scans)
 
 	skillNames := s.scanSkillNames()
-	queuedCount := s.scanStatusCount(db.ScanQueued)
-	pausedCount := s.scanStatusCount(db.ScanPaused)
-	planLimitFailedCount := s.planLimitFailedCount()
+	stats := s.scanListStats()
 
 	anySubPath := false
 	for _, sc := range scans {
@@ -60,23 +58,31 @@ func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "jobs.html", map[string]any{
 		"Scans": scans, "Page": page,
 		"Skill": skillName, "Status": status, "Sort": sort, "Skills": skillNames,
-		"AnySubPath": anySubPath, "QueuedCount": queuedCount, "PausedCount": pausedCount,
-		"PlanLimitFailedCount": planLimitFailedCount,
+		"AnySubPath": anySubPath, "QueuedCount": stats.QueuedCount, "PausedCount": stats.PausedCount,
+		"PlanLimitFailedCount": stats.PlanLimitFailedCount,
 	})
 }
 
-func (s *Server) scanStatusCount(status db.ScanStatus) int64 {
-	var n int64
-	s.DB.Model(&db.Scan{}).Where("status = ?", status).Count(&n)
-	return n
+type scanListStats struct {
+	QueuedCount          int64
+	PausedCount          int64
+	PlanLimitFailedCount int64
 }
 
-func (s *Server) planLimitFailedCount() int64 {
-	var n int64
+func (s *Server) scanListStats() scanListStats {
+	var stats scanListStats
 	s.DB.Model(&db.Scan{}).
-		Where("status = ? AND error LIKE ?", db.ScanFailed, "Claude plan limit reached.%").
-		Count(&n)
-	return n
+		Select(
+			"COUNT(CASE WHEN status = ? THEN 1 END) AS queued_count, "+
+				"COUNT(CASE WHEN status = ? THEN 1 END) AS paused_count, "+
+				"COUNT(CASE WHEN status = ? AND error LIKE ? THEN 1 END) AS plan_limit_failed_count",
+			db.ScanQueued,
+			db.ScanPaused,
+			db.ScanFailed,
+			"Claude plan limit reached.%",
+		).
+		Scan(&stats)
+	return stats
 }
 
 const skillNamesCacheTTL = 30 * time.Second

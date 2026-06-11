@@ -21,7 +21,7 @@ import (
 	"scrutineer/internal/worker"
 )
 
-func newTestServer(t *testing.T) (*Server, func()) {
+func newTestServer(t testing.TB) (*Server, func()) {
 	t.Helper()
 	gdb, err := db.Open("file::memory:?cache=shared")
 	if err != nil {
