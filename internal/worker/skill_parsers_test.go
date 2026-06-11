@@ -411,6 +411,76 @@ func TestParseRevalidate_adjustedSeverityWritesFieldAndHistory(t *testing.T) {
 	}
 }
 
+func TestParseRevalidate_invokesCallbackWithFinalSeverity(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "rcb.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
+	gdb.Create(&repo)
+	priorScan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanDone, SkillName: "security-deep-dive"}
+	gdb.Create(&priorScan)
+	f := db.Finding{ScanID: priorScan.ID, RepositoryID: repo.ID, FindingID: "F1", Title: "t", Severity: "Critical", Status: db.FindingNew}
+	gdb.Create(&f)
+
+	var gotVerdict, gotSeverity string
+	var gotFindingID uint
+	w := &Worker{
+		DB:  gdb,
+		Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		OnRevalidateVerdict: func(_ *db.Scan, finding *db.Finding, verdict, severity string) {
+			gotVerdict = verdict
+			gotSeverity = severity
+			gotFindingID = finding.ID
+		},
+	}
+	fid := f.ID
+	scan := &db.Scan{RepositoryID: repo.ID, SkillName: "revalidate", FindingID: &fid}
+	report := `{"verdict":"true_positive","reason":"sink still live","adjusted_severity":"Medium","adjusted_severity_reason":"requires auth"}`
+	if err := w.parseRevalidateOutput(scan, report, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	if gotVerdict != "true_positive" {
+		t.Errorf("verdict = %q, want true_positive", gotVerdict)
+	}
+	if gotSeverity != "Medium" {
+		t.Errorf("severity = %q, want Medium (the adjusted value)", gotSeverity)
+	}
+	if gotFindingID != f.ID {
+		t.Errorf("finding id = %d, want %d", gotFindingID, f.ID)
+	}
+}
+
+func TestParseRevalidate_callbackGetsOriginalSeverityWhenUnadjusted(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "rcbu.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
+	gdb.Create(&repo)
+	priorScan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanDone, SkillName: "security-deep-dive"}
+	gdb.Create(&priorScan)
+	f := db.Finding{ScanID: priorScan.ID, RepositoryID: repo.ID, FindingID: "F1", Title: "t", Severity: "High", Status: db.FindingNew}
+	gdb.Create(&f)
+
+	var gotSeverity string
+	w := &Worker{
+		DB:  gdb,
+		Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		OnRevalidateVerdict: func(_ *db.Scan, _ *db.Finding, _, severity string) {
+			gotSeverity = severity
+		},
+	}
+	fid := f.ID
+	scan := &db.Scan{RepositoryID: repo.ID, SkillName: "revalidate", FindingID: &fid}
+	if err := w.parseRevalidateOutput(scan, `{"verdict":"true_positive","reason":"x"}`, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	if gotSeverity != "High" {
+		t.Errorf("severity = %q, want High (the original)", gotSeverity)
+	}
+}
+
 func TestParseRevalidate_rejectsUnknownVerdict(t *testing.T) {
 	w := &Worker{}
 	scan := &db.Scan{}

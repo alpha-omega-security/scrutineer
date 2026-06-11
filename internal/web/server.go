@@ -232,6 +232,7 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *work
 		resolvePURL: resolvePURLRepo, listBranches: worker.ListRemoteBranches}
 	if w != nil {
 		w.OnFindingCreated = s.autoEnqueueRevalidate
+		w.OnRevalidateVerdict = s.autoChainVerifyAfterRevalidate
 	}
 	return s, nil
 }

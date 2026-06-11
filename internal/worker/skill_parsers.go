@@ -736,6 +736,18 @@ func (w *Worker) parseRevalidateOutput(scan *db.Scan, report string, emit func(E
 	}
 
 	emit(Event{Kind: KindText, Text: "finding " + fmt.Sprint(f.ID) + " -> " + result.Verdict})
+
+	// Hand the verdict to the web layer for downstream chaining. The
+	// post-adjustment severity is what the chain reads: when revalidate
+	// downgrades a High to Medium, the chain to verify must respect that,
+	// not the original claim.
+	finalSeverity := f.Severity
+	if result.AdjustedSeverity != "" {
+		finalSeverity = result.AdjustedSeverity
+	}
+	if w.OnRevalidateVerdict != nil {
+		w.OnRevalidateVerdict(scan, &f, result.Verdict, finalSeverity)
+	}
 	return nil
 }
 

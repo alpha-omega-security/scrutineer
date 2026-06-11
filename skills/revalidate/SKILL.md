@@ -75,5 +75,6 @@ Scrutineer applies this:
 - `verdict` and `reason` are appended to the finding's notes as a timestamped revalidate record.
 - `true_positive` moves a `new` finding to `enriched`. Any other verdict leaves status alone (rejection is a human act).
 - `adjusted_severity` overwrites the finding's severity field, with the change recorded in finding history (so the original is preserved and auditable). The analyst can always change it back.
+- When `verdict` is `true_positive` AND the post-adjustment severity is `High` or `Critical`, scrutineer chains the `verify` skill: a finding-scoped run that actually executes the reproduction against HEAD. The chain reads the adjusted severity, so a Critical you mark down to Medium correctly stops at revalidate.
 
 If you cannot decide cleanly, say so in `reason`; an `uncertain` verdict with a sharp question is more useful than a confident wrong guess.

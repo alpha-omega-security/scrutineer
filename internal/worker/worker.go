@@ -58,7 +58,16 @@ type Worker struct {
 	// security-deep-dive. The worker has no queue access of its own;
 	// this callback is the seam.
 	OnFindingCreated func(scan *db.Scan, finding *db.Finding)
-	ScanTimeout      time.Duration
+	// OnRevalidateVerdict, when non-nil, is called after parseRevalidateOutput
+	// applies a verdict to a finding. The web layer wires it up to
+	// auto-enqueue a verify scan when revalidate confirms a High/Critical
+	// finding as a true positive, completing the triage pipeline for
+	// imports and high-severity scan output. severity is the
+	// post-adjustment severity: revalidate may have rated the finding
+	// lower than the original claim, and the chain to verify uses the
+	// revised value.
+	OnRevalidateVerdict func(scan *db.Scan, finding *db.Finding, verdict, severity string)
+	ScanTimeout         time.Duration
 	// SchemaStrict makes a report.json that fails validation against the
 	// skill's schema.json fail the scan. When false the validator output
 	// is emitted to the log and the kind-specific parser still runs.

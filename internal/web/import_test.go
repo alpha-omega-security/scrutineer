@@ -227,6 +227,103 @@ func TestAutoEnqueueRevalidate_onlyHighAndCriticalFromDeepDive(t *testing.T) {
 	}
 }
 
+// chainTestSetup creates a repo, a parent scan, a verify skill, and a
+// finding the callback tests can act on. Returns the server, the verify
+// skill, and a fresh-finding factory.
+func chainTestSetup(t *testing.T) (*Server, func(), db.Skill, func(string) *db.Finding) {
+	t.Helper()
+	s, done := newTestServer(t)
+	repo := db.Repository{URL: "https://example.com/r", Name: "r"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Status: db.ScanDone, SkillName: "revalidate"}
+	s.DB.Create(&scan)
+	verify := db.Skill{Name: "verify", OutputFile: "report.json", OutputKind: "verify", Version: 1, Active: true}
+	s.DB.Create(&verify)
+	newFinding := func(severity string) *db.Finding {
+		f := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "t", Severity: severity}
+		s.DB.Create(&f)
+		return &f
+	}
+	return s, done, verify, newFinding
+}
+
+func TestAutoChainVerify_truePositiveHighEnqueuesVerify(t *testing.T) {
+	s, done, verify, newFinding := chainTestSetup(t)
+	defer done()
+	f := newFinding("High")
+	s.autoChainVerifyAfterRevalidate(nil, f, "true_positive", "High")
+
+	var queued int64
+	s.DB.Model(&db.Scan{}).
+		Where("finding_id = ? AND skill_id = ? AND status = ?", f.ID, verify.ID, db.ScanQueued).
+		Count(&queued)
+	if queued != 1 {
+		t.Errorf("queued verify scans = %d, want 1", queued)
+	}
+}
+
+func TestAutoChainVerify_respectsAdjustedSeverity(t *testing.T) {
+	s, done, verify, newFinding := chainTestSetup(t)
+	defer done()
+	// Finding's stored severity is High but the callback gets the
+	// post-adjustment Medium value, which must stop the chain.
+	f := newFinding("High")
+	s.autoChainVerifyAfterRevalidate(nil, f, "true_positive", "Medium")
+
+	var queued int64
+	s.DB.Model(&db.Scan{}).
+		Where("finding_id = ? AND skill_id = ?", f.ID, verify.ID).
+		Count(&queued)
+	if queued != 0 {
+		t.Errorf("queued = %d, want 0 (revalidate downgraded the severity)", queued)
+	}
+}
+
+func TestAutoChainVerify_skipsNonTruePositive(t *testing.T) {
+	s, done, verify, newFinding := chainTestSetup(t)
+	defer done()
+	for _, verdict := range []string{"false_positive", "already_fixed", "uncertain"} {
+		t.Run(verdict, func(t *testing.T) {
+			f := newFinding("Critical")
+			s.autoChainVerifyAfterRevalidate(nil, f, verdict, "Critical")
+			var queued int64
+			s.DB.Model(&db.Scan{}).
+				Where("finding_id = ? AND skill_id = ?", f.ID, verify.ID).
+				Count(&queued)
+			if queued != 0 {
+				t.Errorf("queued = %d, want 0 for verdict %q", queued, verdict)
+			}
+		})
+	}
+}
+
+func TestAutoChainVerify_doesNotDoubleQueue(t *testing.T) {
+	s, done, verify, newFinding := chainTestSetup(t)
+	defer done()
+	f := newFinding("High")
+	s.autoChainVerifyAfterRevalidate(nil, f, "true_positive", "High")
+	s.autoChainVerifyAfterRevalidate(nil, f, "true_positive", "High")
+
+	var queued int64
+	s.DB.Model(&db.Scan{}).Where("finding_id = ? AND skill_id = ?", f.ID, verify.ID).Count(&queued)
+	if queued != 1 {
+		t.Errorf("queued = %d, want 1 (re-chain guard)", queued)
+	}
+}
+
+func TestAutoChainVerify_gracefulWhenVerifySkillAbsent(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/r", Name: "r"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Status: db.ScanDone, SkillName: "revalidate"}
+	s.DB.Create(&scan)
+	// No verify skill registered: must not panic, no scan to assert.
+	f := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "t", Severity: "High"}
+	s.DB.Create(&f)
+	s.autoChainVerifyAfterRevalidate(nil, &f, "true_positive", "High")
+}
+
 func TestAutoEnqueueRevalidate_doesNotDoubleQueue(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
