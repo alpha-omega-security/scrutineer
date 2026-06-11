@@ -264,13 +264,14 @@ func TestLoadWorkbench_ignoresSubPathDeepDives(t *testing.T) {
 	s.DB.Create(&repo)
 	s.DB.Create(&db.Scan{RepositoryID: repo.ID, SkillName: deepDiveSkillName, Status: db.ScanDone, Report: ddReportA})
 	s.DB.Create(&db.Scan{RepositoryID: repo.ID, SkillName: deepDiveSkillName, Status: db.ScanDone, Report: ddReportB, SubPath: "packages/inner"})
+	s.DB.Create(&db.Scan{RepositoryID: repo.ID, SkillName: deepDiveSkillName, Status: db.ScanDone, Report: ddReportB, Ref: "release/2.x"})
 
 	wb := loadWorkbench(s.DB, &repo, "")
 	if len(wb.Runs) != 1 {
-		t.Fatalf("Runs len = %d, want 1 (sub_path run must be filtered out)", len(wb.Runs))
+		t.Fatalf("Runs len = %d, want 1 (sub_path and ref runs must be filtered out)", len(wb.Runs))
 	}
-	if wb.Runs[0].SubPath != "" {
-		t.Errorf("Runs[0].SubPath = %q, want root", wb.Runs[0].SubPath)
+	if wb.Runs[0].SubPath != "" || wb.Runs[0].Ref != "" {
+		t.Errorf("Runs[0] sub_path=%q ref=%q, want root default-branch run", wb.Runs[0].SubPath, wb.Runs[0].Ref)
 	}
 }
 

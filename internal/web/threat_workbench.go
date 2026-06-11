@@ -86,11 +86,11 @@ func loadWorkbench(gdb *gorm.DB, repo *db.Repository, seedReport string) Workben
 		wb.Model = seedReport
 	}
 	// Workbench is repository-root scoped: the override lives on Repository
-	// and repoThreatModelRun enqueues with empty SubPath. Restrict the
-	// history (and the diff that feeds off it) to root deep-dives so a
-	// recent subproject run doesn't show its inventory drift as a
-	// model effect.
-	gdb.Where("repository_id = ? AND skill_name = ? AND status = ? AND sub_path = '' AND report <> ''",
+	// and repoThreatModelRun enqueues with empty SubPath and Ref. Restrict
+	// the history (and the diff that feeds off it) to root default-branch
+	// deep-dives so a recent subproject or branch run doesn't show its
+	// inventory drift as a model effect.
+	gdb.Where("repository_id = ? AND skill_name = ? AND status = ? AND sub_path = '' AND ref = '' AND report <> ''",
 		repo.ID, deepDiveSkillName, db.ScanDone).
 		Order("id DESC").Limit(workbenchRunHistory).Find(&wb.Runs)
 	if len(wb.Runs) > 1 {
