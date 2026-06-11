@@ -142,6 +142,7 @@ When a scan starts, the worker creates `./data/work/scan-{id}/` with:
     ./context.json               who you are scanning and how to call scrutineer back
     ./.claude/skills/{name}/     this skill's SKILL.md, schema.json, and any aux files
     ./schema.json                copy of the skill's schema for the model to read
+    ./scripts/                   copy of the skill's scripts/, so `bash scripts/foo.sh` resolves from cwd
     ./report.json                the skill writes its output here
 
 `./src/` is copied from a per-URL persistent clone under `./data/work/repo-cache/<sha256(url)>/src/` so the second scan of the same repository only fetches the delta. The cache is always full-history; the code browser at `/repositories/{id}/blob/{commit}/{path}` resolves historical commits against it via `git show`.

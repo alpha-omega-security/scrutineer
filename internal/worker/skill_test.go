@@ -350,6 +350,51 @@ func TestStageSkill_mirrorsScriptsToWorkRoot(t *testing.T) {
 	}
 }
 
+func TestStageSkill_remirrorClearsStaleScripts(t *testing.T) {
+	// A retry restages into the same workspace. After the skill's scripts/
+	// changed on disk, the mirror must not leave a removed script behind,
+	// and a dangling symlink in scripts/ must not abort staging.
+	src := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(src, "scripts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "SKILL.md"), []byte("# placeholder\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "scripts", "old.sh"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	work := t.TempDir()
+	skill := &db.Skill{Name: "s", Description: "d", Body: "body", SourcePath: src, Source: "disk"}
+	if err := stageSkill(skill, work, filepath.Join(work, ".claude", "skills", "s")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Remove(filepath.Join(src, "scripts", "old.sh")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "scripts", "new.sh"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("does-not-exist", filepath.Join(src, "scripts", "dangling")); err != nil {
+		t.Fatal(err)
+	}
+	if err := stageSkill(skill, work, filepath.Join(work, ".claude", "skills", "s")); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(filepath.Join(work, "scripts", "old.sh")); !os.IsNotExist(err) {
+		t.Errorf("stale old.sh survived remirror, err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(work, "scripts", "new.sh")); err != nil {
+		t.Errorf("new.sh not mirrored: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(work, "scripts", "dangling")); err != nil {
+		t.Errorf("dangling symlink should be recreated, not dropped or fatal: %v", err)
+	}
+}
+
 func TestStageSkill_noScriptsDirIsNoop(t *testing.T) {
 	// A skill without scripts/ on disk must not error out and must not
 	// leave a stray empty scripts/ at work root.
