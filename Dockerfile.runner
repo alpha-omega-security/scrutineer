@@ -2,7 +2,7 @@
 # tools, not the web server or database. Built separately:
 #   docker build -t scrutineer-runner -f Dockerfile.runner .
 
-ARG CLAUDE_VERSION=2.1.160
+ARG CLAUDE_VERSION=2.1.173
 ARG SEMGREP_VERSION=1.116.0
 
 FROM golang:1.26.4-bookworm@sha256:5d2b868674b57c9e48cdd39e891acce4196b6926ca6d11e9c270a8f85106203d AS go-tools
@@ -46,8 +46,8 @@ RUN python3 -m venv /opt/semgrep && \
 ARG TARGETARCH
 RUN set -eux; \
     case "${TARGETARCH}" in \
-      amd64) arch=x64;   sha=827cf45f8be2290deb55edeadd7252921e486e8bc4bedd182649390dc87f4b47 ;; \
-      arm64) arch=arm64; sha=06244908bde09bdb1d807d02b5932be10520eb33b42111423fb48c6d8184742e ;; \
+      amd64) arch=x64;   sha=b3d1afba5c02fa0fed43150e9470e556cf0cfc3a5c27d836a199d54051c96390 ;; \
+      arm64) arch=arm64; sha=2f0038e9f7b3ee049e7db202b4f10af7d2e62af542b7fd7d1f542ea04166a4fe ;; \
       *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
     curl -fsSL -o /tmp/claude.tgz \
