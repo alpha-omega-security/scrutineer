@@ -90,6 +90,7 @@ var OutputKinds = map[string]bool{
 	"finding_dedup":   true,
 	"verify":          true,
 	"breaking_change": true,
+	"mitigation":      true,
 	"subprojects":     true,
 	"repo_overview":   true,
 	"posture":         true,

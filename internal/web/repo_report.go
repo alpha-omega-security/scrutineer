@@ -276,6 +276,13 @@ func writeReportFinding(b *strings.Builder, gdb *gorm.DB, f db.Finding, latest *
 		fmt.Fprintf(b, "#### Disclosure draft\n\n%s\n\n", strings.TrimSpace(f.DisclosureDraft))
 	}
 
+	if f.Mitigation != "" {
+		fmt.Fprintf(b, "#### Mitigation\n\n%s\n\n", strings.TrimSpace(f.Mitigation))
+		if f.MitigationSemgrep != "" {
+			fmt.Fprintf(b, "##### Semgrep rule\n\n```yaml\n%s\n```\n\n", strings.TrimSpace(f.MitigationSemgrep))
+		}
+	}
+
 	if f.SuggestedFix != "" {
 		fmt.Fprintf(b, "#### Suggested fix\n\n")
 		if f.SuggestedFixCommit != "" {

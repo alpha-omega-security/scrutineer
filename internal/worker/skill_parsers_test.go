@@ -359,6 +359,52 @@ func TestParseBreakingChange_rejectsUnknownVerdict(t *testing.T) {
 	}
 }
 
+func TestParseMitigation_writesGuidanceAndRule(t *testing.T) {
+	report := `{
+		"guidance": "## Workarounds\n\nDisable the eval flag.\n\n## Detection\n\nWatch for stack frames matching foo.eval.",
+		"semgrep_rule": "rules:\n  - id: foo-eval\n    pattern: foo.eval(...)\n    message: 'foo.eval is vulnerable to CVE-2026-XXXX'\n    severity: ERROR\n    languages: [go]"
+	}`
+	f, gdb := runSkillWithFinding(t, "mitigation", report, db.FindingTriaged)
+	if !strings.Contains(f.Mitigation, "Workarounds") {
+		t.Errorf("Mitigation missing workarounds section: %q", f.Mitigation)
+	}
+	if !strings.Contains(f.MitigationSemgrep, "foo-eval") {
+		t.Errorf("MitigationSemgrep missing rule id: %q", f.MitigationSemgrep)
+	}
+	var hist db.FindingHistory
+	if err := gdb.Where("finding_id = ? AND field = ?", f.ID, "mitigation").First(&hist).Error; err != nil {
+		t.Fatalf("missing mitigation history: %v", err)
+	}
+	if hist.By != "mitigate" {
+		t.Errorf("history.By = %q, want mitigate", hist.By)
+	}
+}
+
+func TestParseMitigation_emptySemgrepClearsRule(t *testing.T) {
+	report := `{"guidance":"## Workarounds\n\nset debug=false","semgrep_rule":""}`
+	f, _ := runSkillWithFinding(t, "mitigation", report, db.FindingTriaged)
+	if f.MitigationSemgrep != "" {
+		t.Errorf("MitigationSemgrep should remain empty, got %q", f.MitigationSemgrep)
+	}
+	if f.Mitigation == "" {
+		t.Errorf("Mitigation should be populated")
+	}
+}
+
+func TestParseMitigation_rejectsEmptyGuidance(t *testing.T) {
+	w := &Worker{}
+	scan := &db.Scan{}
+	if err := w.parseMitigationOutput(scan, `{"guidance":"  "}`, func(Event) {}); err == nil || !strings.Contains(err.Error(), "finding_id") {
+		t.Fatalf("expected missing finding_id error, got %v", err)
+	}
+	fid := uint(1)
+	scan.FindingID = &fid
+	err := w.parseMitigationOutput(scan, `{"guidance":"   "}`, func(Event) {})
+	if err == nil || !strings.Contains(err.Error(), "empty guidance") {
+		t.Errorf("expected empty-guidance error, got %v", err)
+	}
+}
+
 func TestParseFindingDedup_marksDuplicatesWithHistoryAndNote(t *testing.T) {
 	gdb, err := db.Open(filepath.Join(t.TempDir(), "dedup.db"))
 	if err != nil {

@@ -73,6 +73,10 @@
                 hx-post="/findings/{{$id}}/patch">
           <i data-lucide="wrench"></i> Propose patch
         </button>
+        <button type="submit" class="btn-outline" formaction="/findings/{{$id}}/mitigate"
+                hx-post="/findings/{{$id}}/mitigate">
+          <i data-lucide="shield"></i> Draft mitigation
+        </button>
         <button type="submit" name="status" value="ready" class="btn-outline"
                 hx-post="/findings/{{$id}}/status">
           Mark ready

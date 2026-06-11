@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "mitigate report",
+  "type": "object",
+  "required": ["guidance"],
+  "additionalProperties": false,
+  "properties": {
+    "guidance": {
+      "type": "string",
+      "description": "Markdown body covering workarounds (config flags, input restrictions, safe defaults, process restrictions) and detection guidance (what to log, what shape to alert on)."
+    },
+    "semgrep_rule": {
+      "type": "string",
+      "description": "Optional YAML for a single semgrep rule that flags the vulnerable pattern. Omit rather than emit a stub or noisy rule."
+    }
+  }
+}
