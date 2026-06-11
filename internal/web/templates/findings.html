@@ -63,12 +63,15 @@
     <div class="dropdown-menu">
       <button type="button" class="btn-outline" aria-haspopup="menu" aria-expanded="false">
         <i data-lucide="circle-dot"></i>
-        {{if .Status}}{{.Status}}{{else}}Status{{end}}
+        {{if eq .Status "all"}}All statuses{{else if .Status}}{{.Status}}{{else}}Open{{end}}
         <i data-lucide="chevron-down"></i>
       </button>
       <div data-popover aria-hidden="true" data-align="end">
         <div role="menu">
-          <a role="menuitem" href="/findings?q={{.Q}}&severity={{.Severity}}&category={{.Category}}&sort={{.Sort}}&missed={{$mp}}&scanners={{$sc}}">All statuses</a>
+          <a role="menuitem" href="/findings?q={{.Q}}&severity={{.Severity}}&category={{.Category}}&sort={{.Sort}}&missed={{$mp}}&scanners={{$sc}}"
+             {{if not .Status}}aria-current="true"{{end}}>Open</a>
+          <a role="menuitem" href="/findings?q={{.Q}}&severity={{.Severity}}&status=all&category={{.Category}}&sort={{.Sort}}&missed={{$mp}}&scanners={{$sc}}"
+             {{if eq .Status "all"}}aria-current="true"{{end}}>All statuses</a>
           {{range .Statuses}}
             <a role="menuitem" href="/findings?q={{$.Q}}&severity={{$.Severity}}&status={{.}}&category={{$.Category}}&sort={{$.Sort}}&missed={{$mp}}&scanners={{$sc}}"
                {{if eq (printf "%s" .) $.Status}}aria-current="true"{{end}}>{{.}}</a>

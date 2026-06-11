@@ -827,12 +827,16 @@ func TestFindings_statusFilter(t *testing.T) {
 			t.Errorf("default listing should hide closed finding %q", title)
 		}
 	}
+	if !strings.Contains(body, ">Open</a>") || !strings.Contains(body, "status=all") {
+		t.Error("status dropdown should expose Open and status=all options")
+	}
 
 	cases := []struct {
 		status  string
 		want    []string
 		missing []string
 	}{
+		{"all", []string{"fresh finding", "triaged finding", "fixed finding", "published finding", "rejected finding", "duplicate finding"}, nil},
 		{"new", []string{"fresh finding"}, []string{"triaged finding", "fixed finding", "published finding", "rejected finding", "duplicate finding"}},
 		{"triaged", []string{"triaged finding"}, []string{"fresh finding", "fixed finding", "published finding", "rejected finding", "duplicate finding"}},
 		{"fixed", []string{"fixed finding"}, []string{"fresh finding", "triaged finding", "published finding", "rejected finding", "duplicate finding"}},
@@ -1153,6 +1157,8 @@ func TestFindings_missedFilterAndBadge(t *testing.T) {
 		Severity: "High"})
 	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "possibly-fixed finding",
 		Severity: "High", MissedCount: 2, LastMissedScanID: scan.ID})
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "closed-missed finding",
+		Severity: "High", Status: db.FindingFixed, MissedCount: 1, LastMissedScanID: scan.ID})
 
 	// Unfiltered: both visible, missed one shows the count, toolbar shows total.
 	w := httptest.NewRecorder()
@@ -1165,7 +1171,7 @@ func TestFindings_missedFilterAndBadge(t *testing.T) {
 		t.Error("missed-count marker not rendered on row")
 	}
 	if !strings.Contains(body, "Not seen on rescan (1)") {
-		t.Error("toolbar should show total findings with missed_count > 0")
+		t.Error("toolbar should show total open findings with missed_count > 0")
 	}
 
 	// ?missed=1: only the missed finding.
@@ -1178,9 +1184,23 @@ func TestFindings_missedFilterAndBadge(t *testing.T) {
 	if !strings.Contains(body, "possibly-fixed finding") {
 		t.Error("?missed=1 should show findings with missed_count > 0")
 	}
+	if strings.Contains(body, "closed-missed finding") {
+		t.Error("?missed=1 should still hide closed findings by default")
+	}
 	// Severity/sort links preserve the missed filter.
 	if !strings.Contains(body, "severity=High&status=&category=&sort=newest&missed=1") {
 		t.Error("severity dropdown links should carry missed=1")
+	}
+
+	// Explicit closed-status filters count and list closed missed findings.
+	w = httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/findings?status=fixed&missed=1"))
+	body = w.Body.String()
+	if !strings.Contains(body, "closed-missed finding") || strings.Contains(body, "possibly-fixed finding") {
+		t.Errorf("fixed missed filter should show only fixed missed findings: %s", body)
+	}
+	if !strings.Contains(body, "Not seen on rescan (1)") {
+		t.Error("missed badge should count fixed missed findings under status=fixed")
 	}
 }
 
@@ -1199,6 +1219,10 @@ func TestFindings_scannerToggle(t *testing.T) {
 	s.DB.Create(&db.Finding{ScanID: dd.ID, RepositoryID: repo.ID, Title: "audit-finding", Severity: "High"})
 	s.DB.Create(&db.Finding{ScanID: sg.ID, RepositoryID: repo.ID, Title: "semgrep-finding", Severity: "High"})
 	s.DB.Create(&db.Finding{ScanID: zz.ID, RepositoryID: repo.ID, Title: "zizmor-finding", Severity: "High"})
+	s.DB.Create(&db.Finding{ScanID: dd.ID, RepositoryID: repo.ID, Title: "fixed-audit-finding",
+		Severity: "High", Status: db.FindingFixed})
+	s.DB.Create(&db.Finding{ScanID: sg.ID, RepositoryID: repo.ID, Title: "fixed-semgrep-finding",
+		Severity: "High", Status: db.FindingFixed})
 
 	// Default: scanner findings hidden, audit visible. Toggle advertises the
 	// total scanner count so the operator knows what they're suppressing.
@@ -1223,6 +1247,17 @@ func TestFindings_scannerToggle(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("?scanners=1 should include %q", want)
 		}
+	}
+
+	// Explicit closed-status filters count matching scanner findings too.
+	w = httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/findings?status=fixed"))
+	body = w.Body.String()
+	if !strings.Contains(body, "fixed-audit-finding") || strings.Contains(body, "fixed-semgrep-finding") {
+		t.Errorf("status=fixed should show fixed audit findings and hide scanner rows by default: %s", body)
+	}
+	if !strings.Contains(body, "Include scanners (1)") {
+		t.Error("scanner badge should count fixed scanner findings under status=fixed")
 	}
 }
 

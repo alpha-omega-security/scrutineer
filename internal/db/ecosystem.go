@@ -206,7 +206,7 @@ func DependencyFindings(g *gorm.DB, appRepoID uint) ([]DependencyFinding, error)
 	}
 	var findings []Finding
 	if err := g.Where("repository_id IN ?", libIDs).
-		Where("status NOT IN ?", []FindingLifecycle{FindingFixed, FindingRejected, FindingDuplicate}).
+		Where("status NOT IN ?", ClosedFindingLifecycles).
 		Order("CASE severity WHEN 'Critical' THEN 0 WHEN 'High' THEN 1 WHEN 'Medium' THEN 2 ELSE 3 END, repository_id").
 		Find(&findings).Error; err != nil {
 		return nil, err
