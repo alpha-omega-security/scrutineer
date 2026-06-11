@@ -165,6 +165,10 @@ func (d DockerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event
 	hitMaxTurns, sessionID, waitErr := d.runDockerOnce(ctx, dockerBase, sj, wrappedEmit)
 
 	if waitErr != nil && sj.ResumeSessionID != "" && sessionID == "" && planLimitText == "" {
+		if sj.ResumePrompt != "" {
+			emit(Event{Kind: KindText, Text: "resume of session " + sj.ResumeSessionID + " failed; " + resumePromptNoFreshFallbackText})
+			return SkillResult{Commit: commit, Profile: profile}, fmt.Errorf("docker exited: %w", waitErr)
+		}
 		// The resume produced no session event, so claude could not load the
 		// saved conversation (gone from the mounted store). Restart fresh in
 		// the same /work + config mount so the retry lineage isn't wedged on

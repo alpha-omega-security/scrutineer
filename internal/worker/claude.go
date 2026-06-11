@@ -17,6 +17,8 @@ import (
 // metadata nor the global config set a value.
 const DefaultSkillMaxTurns = 30
 
+const resumePromptNoFreshFallbackText = "not restarting repair prompt fresh"
+
 // MaxTurnsReachedError is returned when claude-code exits after hitting the
 // --max-turns cap. The caller should treat this as a soft completion.
 type MaxTurnsReachedError struct{}
@@ -148,6 +150,10 @@ func (l LocalClaude) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)
 	hitMaxTurns, sessionID, waitErr := l.runClaudeOnce(ctx, args, work, wrappedEmit)
 
 	if waitErr != nil && sj.ResumeSessionID != "" && sessionID == "" && planLimitText == "" {
+		if sj.ResumePrompt != "" {
+			emit(Event{Kind: KindText, Text: "resume of session " + sj.ResumeSessionID + " failed; " + resumePromptNoFreshFallbackText})
+			return SkillResult{Commit: commit}, fmt.Errorf("claude exited: %w", waitErr)
+		}
 		// The resume never produced a session event, so claude could not
 		// load the saved conversation (expired or pruned). Restart fresh in
 		// the same workspace so the retry lineage isn't permanently wedged

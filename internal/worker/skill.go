@@ -17,7 +17,7 @@ const (
 	filePerm                  = 0o644
 	defaultSkillOutputFile    = "report.json"
 	skillSchemaFile           = "schema.json"
-	schemaRepairMaxAttempts   = 1
+	schemaRepairMaxTurns      = 4
 	schemaRepairReportMaxSize = 4000
 )
 
@@ -214,36 +214,35 @@ func (w *Worker) repairSchemaReport(ctx context.Context, skill *db.Skill, scan *
 		return "", false
 	}
 
-	for attempt := 1; attempt <= schemaRepairMaxAttempts; attempt++ {
-		emit(Event{Kind: KindText, Text: fmt.Sprintf("schema: %s failed validation; asking claude to repair it (attempt %d/%d)", outputFile, attempt, schemaRepairMaxAttempts)})
-		repairJob := sj
-		repairJob.ResumeSessionID = scan.SessionID
-		repairJob.ResumePrompt = buildSchemaRepairPrompt(skill, detail, report)
-		res, err := w.Runner.RunSkill(ctx, repairJob, emit)
-		if res.SessionID != "" && res.SessionID != scan.SessionID {
-			scan.SessionID = res.SessionID
-		}
-		if res.Commit != "" {
-			scan.Commit = res.Commit
-		}
-		if res.Profile != "" && res.Profile != scan.Profile {
-			scan.Profile = res.Profile
-			w.DB.Model(scan).Update("profile", res.Profile)
-		}
-		if err != nil {
-			emit(Event{Kind: KindError, Text: fmt.Sprintf("schema: repair attempt for %s failed: %v; parsing original output", outputFile, err)})
-			return "", false
-		}
-		if res.Report == "" {
-			emit(Event{Kind: KindError, Text: fmt.Sprintf("schema: repair attempt did not produce %s; parsing original output", outputFile)})
-			return "", false
-		}
-		if detail = validateReportSchema(skill.SchemaJSON, res.Report); detail == "" {
-			emit(Event{Kind: KindText, Text: fmt.Sprintf("schema: repaired %s validates", outputFile)})
-			return res.Report, true
-		}
-		emit(Event{Kind: KindText, Text: fmt.Sprintf("schema: repaired %s still does not validate; parsing original output", outputFile)})
+	emit(Event{Kind: KindText, Text: fmt.Sprintf("schema: %s failed validation; asking claude to repair it", outputFile)})
+	repairJob := sj
+	repairJob.ResumeSessionID = scan.SessionID
+	repairJob.ResumePrompt = buildSchemaRepairPrompt(skill, detail, report)
+	repairJob.MaxTurns = schemaRepairMaxTurns
+	res, err := w.Runner.RunSkill(ctx, repairJob, emit)
+	if res.SessionID != "" && res.SessionID != scan.SessionID {
+		scan.SessionID = res.SessionID
 	}
+	if res.Commit != "" {
+		scan.Commit = res.Commit
+	}
+	if res.Profile != "" && res.Profile != scan.Profile {
+		scan.Profile = res.Profile
+		w.DB.Model(scan).Update("profile", res.Profile)
+	}
+	if err != nil {
+		emit(Event{Kind: KindError, Text: fmt.Sprintf("schema: repair attempt for %s failed: %v; parsing original output", outputFile, err)})
+		return "", false
+	}
+	if res.Report == "" {
+		emit(Event{Kind: KindError, Text: fmt.Sprintf("schema: repair attempt did not produce %s; parsing original output", outputFile)})
+		return "", false
+	}
+	if detail = validateReportSchema(skill.SchemaJSON, res.Report); detail == "" {
+		emit(Event{Kind: KindText, Text: fmt.Sprintf("schema: repaired %s validates", outputFile)})
+		return res.Report, true
+	}
+	emit(Event{Kind: KindText, Text: fmt.Sprintf("schema: repaired %s still does not validate; parsing original output", outputFile)})
 	return "", false
 }
 

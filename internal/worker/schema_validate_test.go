@@ -109,6 +109,7 @@ func newSchemaTestWorker(t *testing.T, strict bool) (*Worker, *db.Skill, *db.Sca
 type sequenceRunner struct {
 	results []SkillResult
 	errs    []error
+	events  [][]Event
 	jobs    []SkillJob
 }
 
@@ -116,6 +117,11 @@ func (r *sequenceRunner) RunSkill(_ context.Context, sj SkillJob, emit func(Even
 	r.jobs = append(r.jobs, sj)
 	emit(Event{Kind: KindText, Text: "running skill " + sj.Name})
 	idx := len(r.jobs) - 1
+	if idx < len(r.events) {
+		for _, e := range r.events[idx] {
+			emit(e)
+		}
+	}
 	var res SkillResult
 	if idx < len(r.results) {
 		res = r.results[idx]
@@ -193,6 +199,17 @@ func TestDoSkill_schemaMismatchResumesForRepair(t *testing.T) {
 	runner := &sequenceRunner{results: []SkillResult{
 		{SessionID: "sess-1", Report: `{"tier":{"x":1}}`},
 		{SessionID: "sess-1", Report: `{"tier":"ready","summary":"fixed"}`},
+	}, events: [][]Event{
+		{
+			{Kind: KindResult, CostUSD: 1.25, Turns: 8, Usage: Usage{
+				InputTokens: 100, OutputTokens: 20, CacheReadTokens: 300, CacheWriteTokens: 40,
+			}},
+		},
+		{
+			{Kind: KindResult, CostUSD: 0.25, Turns: 2, Usage: Usage{
+				InputTokens: 30, OutputTokens: 10, CacheReadTokens: 70, CacheWriteTokens: 5,
+			}},
+		},
 	}}
 	w, repoID, scanID := newQueuedSchemaSkillWorker(t, true, runner)
 	body, _ := json.Marshal(queue.Payload{ScanID: scanID})
@@ -210,6 +227,9 @@ func TestDoSkill_schemaMismatchResumesForRepair(t *testing.T) {
 	if repairJob.ResumeSessionID != "sess-1" {
 		t.Errorf("repair ResumeSessionID = %q, want sess-1", repairJob.ResumeSessionID)
 	}
+	if repairJob.MaxTurns != schemaRepairMaxTurns {
+		t.Errorf("repair MaxTurns = %d, want %d", repairJob.MaxTurns, schemaRepairMaxTurns)
+	}
 	for _, want := range []string{"schema.json", "report.json", "/tier", "Previous invalid"} {
 		if !strings.Contains(repairJob.ResumePrompt, want) {
 			t.Errorf("repair prompt should mention %q; got %q", want, repairJob.ResumePrompt)
@@ -226,6 +246,16 @@ func TestDoSkill_schemaMismatchResumesForRepair(t *testing.T) {
 	}
 	if !strings.Contains(got.Log, "report.json failed validation; asking claude to repair it") {
 		t.Errorf("Log should mention repair attempt, got %q", got.Log)
+	}
+	if got.CostUSD != 1.50 {
+		t.Errorf("CostUSD = %.2f, want 1.50", got.CostUSD)
+	}
+	if got.Turns != 10 {
+		t.Errorf("Turns = %d, want 10", got.Turns)
+	}
+	if got.InputTokens != 130 || got.OutputTokens != 30 || got.CacheReadTokens != 370 || got.CacheWriteTokens != 45 {
+		t.Errorf("usage = in:%d out:%d read:%d write:%d, want in:130 out:30 read:370 write:45",
+			got.InputTokens, got.OutputTokens, got.CacheReadTokens, got.CacheWriteTokens)
 	}
 
 	var fresh db.Repository
