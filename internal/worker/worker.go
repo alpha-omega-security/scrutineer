@@ -235,12 +235,12 @@ func (w *Worker) scanEmitter(scan *db.Scan) func(Event) {
 			lastFlush = time.Now()
 		}
 		if e.Kind == KindResult {
-			scan.CostUSD = e.CostUSD
-			scan.Turns = e.Turns
-			scan.InputTokens = e.Usage.InputTokens
-			scan.OutputTokens = e.Usage.OutputTokens
-			scan.CacheReadTokens = e.Usage.CacheReadTokens
-			scan.CacheWriteTokens = e.Usage.CacheWriteTokens
+			scan.CostUSD += e.CostUSD
+			scan.Turns += e.Turns
+			scan.InputTokens += e.Usage.InputTokens
+			scan.OutputTokens += e.Usage.OutputTokens
+			scan.CacheReadTokens += e.Usage.CacheReadTokens
+			scan.CacheWriteTokens += e.Usage.CacheWriteTokens
 		}
 		w.publish(scan.ID, scan.RepositoryID, "scan-log", line+"\n")
 	}
