@@ -31,7 +31,7 @@ These ship in `skills/` and are loaded with `-skills ./skills`. The `triage` ski
 | `exposure` | For one (finding, dependent) pair, decides whether the dependent's published code actually reaches the upstream library finding. Emits one CSAF 2.0 product_status verdict so scrutineer can record affected vs not_affected and stamp the right VEX justification. |
 | `verify` | Re-checks one finding against current HEAD and records reproduces / fixed / cannot-reproduce. |
 | `disclose` | Drafts a GHSA-shaped advisory (title, description, CVSS, CWEs, references) for one finding. |
-| `patch` | Proposes a unified diff fixing one finding, written back as a note for analyst review. |
+| `patch` | Proposes a unified diff fixing one finding; a diff that passes the applicability gate is stored on the finding as its suggested fix. |
 | `fork` | Forks the repository into the configured org, enables private vulnerability reporting on the fork, and files each finding as a draft advisory there. Only useful when `-fork-org` is set. |
 | `report-upstream` | Files one finding on the upstream repository through GitHub's private vulnerability reporting, requests the temporary private fork, and pushes the proposed patch to it when available. github.com only. |
 

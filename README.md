@@ -107,7 +107,7 @@ When a repo is added, the `triage` skill is enqueued. Its SKILL.md lists the ski
 | `finding-dedup` | Compares open findings and marks overlapping reports as duplicates |
 | `verify` | Re-checks one finding against current HEAD; records reproduces / fixed / can't-reproduce |
 | `disclose` | Drafts a GHSA-shaped advisory (title, description, CVSS, CWEs, references) for one finding |
-| `patch` | Proposes a unified diff fixing one finding, written back as a note for analyst review |
+| `patch` | Proposes a unified diff fixing one finding; a diff that passes the applicability gate is stored on the finding as its suggested fix |
 | `report-upstream` | Files one finding on the upstream repository via GitHub PVR with the proposed patch attached; the action that moves a finding to `reported` |
 | `reachability` | Traces dependency sinks through application code to determine which are reachable from trust boundaries |
 | `cna-match` | Matches a repository to its CVE Numbering Authority so disclosures route to the right contact |
