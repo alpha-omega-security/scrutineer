@@ -61,22 +61,40 @@ func seedPreflightFixtures(t *testing.T, w *Worker, requires string) *db.Scan {
 	return &scan
 }
 
-func seedPrereqSkillAndDoneScan(t *testing.T, w *Worker, repoID uint, prereq string) {
+func seedPrereqSkill(t *testing.T, w *Worker, prereq string, active bool) *db.Skill {
 	t.Helper()
-	s := db.Skill{Name: prereq, Body: "x"}
+	s := db.Skill{Name: prereq, Body: "x", Active: active}
 	if err := w.DB.Create(&s).Error; err != nil {
 		t.Fatal(err)
 	}
-	done := db.Scan{
+	// Active has default:true, so GORM drops a zero-value false on
+	// create; flip it with an explicit update.
+	if !active {
+		if err := w.DB.Model(&s).Update("active", false).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	return &s
+}
+
+func seedPrereqScan(t *testing.T, w *Worker, s *db.Skill, repoID uint, status db.ScanStatus) {
+	t.Helper()
+	scan := db.Scan{
 		RepositoryID: repoID,
 		Kind:         JobSkill,
-		Status:       db.ScanDone,
-		SkillName:    prereq,
+		Status:       status,
+		SkillName:    s.Name,
 	}
-	done.SkillID = &s.ID
-	if err := w.DB.Create(&done).Error; err != nil {
+	scan.SkillID = &s.ID
+	if err := w.DB.Create(&scan).Error; err != nil {
 		t.Fatal(err)
 	}
+}
+
+func seedPrereqSkillAndDoneScan(t *testing.T, w *Worker, repoID uint, prereq string) {
+	t.Helper()
+	s := seedPrereqSkill(t, w, prereq, true)
+	seedPrereqScan(t, w, s, repoID, db.ScanDone)
 }
 
 func TestPreflightSkill_noRequires(t *testing.T) {
@@ -111,11 +129,9 @@ func TestPreflightSkill_missingPrereqRequeues(t *testing.T) {
 	w := newPreflightWorker(t)
 	scan := seedPreflightFixtures(t, w, "threat-model\nsemgrep")
 	seedPrereqSkillAndDoneScan(t, w, scan.RepositoryID, "threat-model")
-	// semgrep is registered but has no done scan yet
-	semgrepSkill := db.Skill{Name: "semgrep", Body: "x"}
-	if err := w.DB.Create(&semgrepSkill).Error; err != nil {
-		t.Fatal(err)
-	}
+	// semgrep is enqueued on this repo but has no done scan yet
+	semgrepSkill := seedPrereqSkill(t, w, "semgrep", true)
+	seedPrereqScan(t, w, semgrepSkill, scan.RepositoryID, db.ScanQueued)
 
 	deferred, err := w.preflightSkill(context.Background(), scan, 0)
 	if err != nil {
@@ -150,13 +166,63 @@ func TestPreflightSkill_unknownPrereqTreatedSatisfied(t *testing.T) {
 	}
 }
 
+func TestPreflightSkill_neverEnqueuedPrereqTreatedSatisfied(t *testing.T) {
+	// Bundled skills are always registered, so a prereq that triage
+	// decided to skip (e.g. dependents on a no-packages repo) shows up
+	// as registered with zero scan rows on the repo. That must count as
+	// satisfied or every such repo deadlocks its deep-dive.
+	w := newPreflightWorker(t)
+	scan := seedPreflightFixtures(t, w, "dependents")
+	seedPrereqSkill(t, w, "dependents", true)
+
+	deferred, err := w.preflightSkill(context.Background(), scan, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deferred {
+		t.Error("prereq never enqueued for the repo should not block dispatch")
+	}
+}
+
+func TestPreflightSkill_inactivePrereqTreatedSatisfied(t *testing.T) {
+	w := newPreflightWorker(t)
+	scan := seedPreflightFixtures(t, w, "semgrep")
+	semgrep := seedPrereqSkill(t, w, "semgrep", false)
+	seedPrereqScan(t, w, semgrep, scan.RepositoryID, db.ScanQueued)
+
+	deferred, err := w.preflightSkill(context.Background(), scan, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deferred {
+		t.Error("disabled prereq skill should not block dispatch; it can never complete")
+	}
+}
+
+func TestPrereqBackoff(t *testing.T) {
+	cases := []struct {
+		attempt int
+		want    time.Duration
+	}{
+		{0, 30 * time.Second},
+		{1, time.Minute},
+		{2, 2 * time.Minute},
+		{3, 4 * time.Minute},
+		{4, MaxPrereqRetryDelay},
+		{19, MaxPrereqRetryDelay},
+	}
+	for _, tc := range cases {
+		if got := prereqBackoff(30*time.Second, tc.attempt); got != tc.want {
+			t.Errorf("prereqBackoff(30s, %d) = %v, want %v", tc.attempt, got, tc.want)
+		}
+	}
+}
+
 func TestPreflightSkill_attemptCapFailsScan(t *testing.T) {
 	w := newPreflightWorker(t)
 	scan := seedPreflightFixtures(t, w, "threat-model")
-	semg := db.Skill{Name: "threat-model", Body: "x"}
-	if err := w.DB.Create(&semg).Error; err != nil {
-		t.Fatal(err)
-	}
+	tm := seedPrereqSkill(t, w, "threat-model", true)
+	seedPrereqScan(t, w, tm, scan.RepositoryID, db.ScanQueued)
 
 	deferred, err := w.preflightSkill(context.Background(), scan, w.MaxPrereqAttempts)
 	if err != nil {
@@ -181,12 +247,15 @@ func TestPreflightSkill_attemptCapFailsScan(t *testing.T) {
 func TestPreflightSkill_doneScanForDifferentRepoDoesNotSatisfy(t *testing.T) {
 	w := newPreflightWorker(t)
 	scan := seedPreflightFixtures(t, w, "threat-model")
-	// Seed a done scan for the prereq, but on a different repo.
+	// The prereq is enqueued on this repo (not yet done) and done on a
+	// different repo; the other repo's result must not satisfy the gate.
 	otherRepo := db.Repository{URL: "https://example.com/other", Name: "other"}
 	if err := w.DB.Create(&otherRepo).Error; err != nil {
 		t.Fatal(err)
 	}
-	seedPrereqSkillAndDoneScan(t, w, otherRepo.ID, "threat-model")
+	tm := seedPrereqSkill(t, w, "threat-model", true)
+	seedPrereqScan(t, w, tm, scan.RepositoryID, db.ScanQueued)
+	seedPrereqScan(t, w, tm, otherRepo.ID, db.ScanDone)
 
 	deferred, err := w.preflightSkill(context.Background(), scan, 0)
 	if err != nil {

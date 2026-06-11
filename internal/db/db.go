@@ -707,8 +707,8 @@ type Skill struct {
 	// completed scan on the same repository before this skill can run.
 	// Set via `scrutineer.requires` in the SKILL.md frontmatter. The
 	// worker re-queues a job whose prereqs are not yet satisfied; see
-	// worker.gateOnPrereqs. A missing prereq skill (never enqueued for
-	// the repo, or 404 at the API) is treated as satisfied so gating
+	// worker.preflightSkill. A prereq that is unregistered, disabled, or
+	// never enqueued for the repo is treated as satisfied so gating
 	// decisions in triage do not deadlock dependents.
 	Requires string `gorm:"type:text"`
 
