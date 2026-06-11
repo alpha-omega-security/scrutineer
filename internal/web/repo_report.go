@@ -270,6 +270,14 @@ func writeReportFinding(b *strings.Builder, gdb *gorm.DB, f db.Finding, latest *
 		fmt.Fprintf(b, "#### Disclosure draft\n\n%s\n\n", strings.TrimSpace(f.DisclosureDraft))
 	}
 
+	if f.SuggestedFix != "" {
+		fmt.Fprintf(b, "#### Suggested fix\n\n")
+		if f.SuggestedFixCommit != "" {
+			fmt.Fprintf(b, "Applies to commit `%s`.\n\n", f.SuggestedFixCommit)
+		}
+		fmt.Fprintf(b, "```diff\n%s\n```\n\n", strings.TrimSpace(f.SuggestedFix))
+	}
+
 	writeFindingNotes(b, gdb, f.ID)
 	writeFindingCommunications(b, gdb, f.ID)
 	writeFindingReferences(b, gdb, f.ID)

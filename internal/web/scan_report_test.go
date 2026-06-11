@@ -42,8 +42,10 @@ func seedScanWithFindings(t *testing.T, s *Server) (db.Repository, db.Scan) {
 		ScanID: scan.ID, RepositoryID: repo.ID, Commit: scan.Commit,
 		FindingID: "F1", Title: "python.lang.security.use-defused-xml",
 		Severity: "High", Status: db.FindingNew, CWE: "CWE-611",
-		Location: "src/typestubs/py_serializable/__init__.pyi:5",
-		Trace:    "xml.etree.ElementTree is vulnerable to XXE",
+		Location:           "src/typestubs/py_serializable/__init__.pyi:5",
+		Trace:              "xml.etree.ElementTree is vulnerable to XXE",
+		SuggestedFix:       "--- a/src/parse.py\n+++ b/src/parse.py\n@@ -1 +1 @@\n-import xml.etree.ElementTree\n+import defusedxml.ElementTree\n",
+		SuggestedFixCommit: "deadbeef1234567",
 	}
 	// medium is the grouped multi-location case from #193 — same rule
 	// firing at several template positions, collapsed into one row.
@@ -105,6 +107,11 @@ func TestScanReport_findingsDispatch(t *testing.T) {
 		"python.lang.security.use-defused-xml",
 		"#### Trace",
 		"xml.etree.ElementTree is vulnerable to XXE",
+		// Gated suggested-fix diff is included with its base commit
+		"#### Suggested fix",
+		"Applies to commit `deadbeef1234567`.",
+		"```diff\n--- a/src/parse.py",
+		"+import defusedxml.ElementTree",
 		"### Finding #",
 		"generic.html-templates.security.var-in-href",
 		"template variable in href",
@@ -124,6 +131,13 @@ func TestScanReport_findingsDispatch(t *testing.T) {
 	if strings.Count(body, "#### Additional locations") != 1 {
 		t.Errorf("expected exactly one Additional locations block (multi-location finding only), got %d",
 			strings.Count(body, "#### Additional locations"))
+	}
+
+	// Only the High finding carries a gated diff; the Medium one has no
+	// SuggestedFix and must not get an empty section.
+	if strings.Count(body, "#### Suggested fix") != 1 {
+		t.Errorf("expected exactly one Suggested fix block, got %d",
+			strings.Count(body, "#### Suggested fix"))
 	}
 
 	// Additional locations must be naturally sorted: index.html comes
