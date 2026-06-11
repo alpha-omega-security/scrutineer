@@ -1,0 +1,77 @@
+{{template "head" .}}
+
+<div class="flex items-center justify-between gap-4 mb-6">
+  <h2 class="text-2xl font-semibold flex items-center gap-2">
+    <i data-lucide="clipboard-check"></i> Audit
+  </h2>
+  <a href="/api/v1/audit/queue" class="btn-outline-sm" title="Export the queue as JSON">
+    <i data-lucide="download"></i> Export queue
+  </a>
+</div>
+
+<p class="text-sm text-muted-foreground mb-6 max-w-3xl">
+  A sample of findings the automation has bucketed as not worth pursuing: low-severity, rejected, or marked by <code>revalidate</code> as false positive, already fixed, or uncertain. Spot-check these to keep the heuristics calibrated. Findings that already have a recorded review drop out of the queue.
+</p>
+
+<section class="grid gap-4 grid-cols-1 md:grid-cols-4 mb-8">
+  <div class="border rounded p-4">
+    <div class="text-xs text-muted-foreground uppercase">Reviews recorded</div>
+    <div class="text-2xl font-semibold mt-1">{{.Metrics.TotalReviews}}</div>
+  </div>
+  <div class="border rounded p-4">
+    <div class="text-xs text-muted-foreground uppercase">With automation outcome</div>
+    <div class="text-2xl font-semibold mt-1">{{.Metrics.WithAutomatedOutcome}}</div>
+    <div class="text-xs text-muted-foreground mt-1">Comparable for agreement</div>
+  </div>
+  <div class="border rounded p-4">
+    <div class="text-xs text-muted-foreground uppercase">Agreements</div>
+    <div class="text-2xl font-semibold mt-1">{{.Metrics.Agreements}}</div>
+  </div>
+  <div class="border rounded p-4">
+    <div class="text-xs text-muted-foreground uppercase">Agreement rate</div>
+    <div class="text-2xl font-semibold mt-1">{{.AgreementPct}}%</div>
+    <div class="text-xs text-muted-foreground mt-1">Humans vs automation</div>
+  </div>
+</section>
+
+{{if .Metrics.ByVerdict}}
+<section class="mb-8">
+  <h3 class="text-sm font-medium mb-2">Reviews by verdict</h3>
+  <ul class="grid gap-1 text-sm">
+    {{range $verdict := .VerdictLabels}}
+      {{$count := index $.Metrics.ByVerdict $verdict}}
+      <li class="flex justify-between border-b py-1"><span>{{$verdict}}</span><span class="text-muted-foreground">{{$count}}</span></li>
+    {{end}}
+  </ul>
+</section>
+{{end}}
+
+<section>
+  <h3 class="text-sm font-medium mb-3">Queue ({{len .Queue}})</h3>
+  {{if .Queue}}
+    <table class="w-full text-sm">
+      <thead>
+        <tr class="text-left text-xs text-muted-foreground uppercase border-b">
+          <th class="py-2">Finding</th>
+          <th class="py-2">Severity</th>
+          <th class="py-2">Status</th>
+          <th class="py-2">Updated</th>
+        </tr>
+      </thead>
+      <tbody>
+      {{range .Queue}}
+        <tr class="border-b">
+          <td class="py-2"><a class="hover:underline" href="/findings/{{.ID}}#reviews">{{.Title}}</a><div class="text-xs text-muted-foreground">{{.Location}}</div></td>
+          <td class="py-2">{{sevlabel .Severity}}</td>
+          <td class="py-2">{{fstatus .Status}}</td>
+          <td class="py-2 text-muted-foreground text-xs">{{since .UpdatedAt}}</td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+  {{else}}
+    <p class="text-sm text-muted-foreground">Nothing to audit right now. Either the automation has not bucketed anything in this category yet, or you have reviewed everything available.</p>
+  {{end}}
+</section>
+
+{{template "foot" .}}

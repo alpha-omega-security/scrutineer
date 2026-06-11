@@ -258,6 +258,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /maintainers/{id}", s.maintainerShow)
 	mux.HandleFunc("POST /maintainers/{id}/do-not-contact", s.maintainerDoNotContact)
 	mux.HandleFunc("GET /findings", s.findings)
+	mux.HandleFunc("GET /audit", s.auditPage)
+	mux.HandleFunc("POST /findings/{id}/reviews", s.findingReviewCreate)
 	mux.HandleFunc("GET /findings/{id}", s.findingShow)
 	mux.HandleFunc("GET /findings/{id}/report.md", s.findingReport)
 	mux.HandleFunc("GET /findings/{id}/csaf.json", s.findingCSAF)
@@ -380,7 +382,7 @@ func navKey(path string) string {
 	for _, p := range []struct{ prefix, key string }{
 		{"/settings", "settings"}, {"/usage", "usage"}, {"/skills", "skills"}, {"/maintainers", "maintainers"},
 		{"/orgs", "orgs"}, {"/packages", "packages"}, {"/advisories", "advisories"},
-		{"/findings", "findings"}, {"/scans", "scans"}, {"/sboms", "sboms"},
+		{"/findings", "findings"}, {"/scans", "scans"}, {"/sboms", "sboms"}, {"/audit", "audit"},
 	} {
 		if strings.HasPrefix(path, p.prefix) {
 			return p.key
@@ -1214,6 +1216,8 @@ func (s *Server) findingShow(w http.ResponseWriter, r *http.Request) {
 	s.DB.Where("finding_id = ?", f.ID).Order("id desc").Find(&refs)
 	var history []db.FindingHistory
 	s.DB.Where("finding_id = ?", f.ID).Order("created_at desc").Find(&history)
+	reviews, _ := db.ListFindingReviews(s.DB, f.ID)
+	latestRevalidate := db.LatestRevalidateVerdict(s.DB, f.ID)
 	var labels []db.FindingLabel
 	s.DB.Order("name").Find(&labels)
 	selected := make(map[string]bool, len(f.Labels))
@@ -1254,17 +1258,19 @@ func (s *Server) findingShow(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := map[string]any{
-		"F":              f,
-		"Scan":           scan,
-		"Repo":           repo,
-		"Notes":          notes,
-		"Communications": comms,
-		"References":     refs,
-		"History":        history,
-		"AllLabels":      labels,
-		"Selected":       selected,
-		"Exposures":      exposures,
-		"ShowExposure":   findingSupportsExposure(scan),
+		"F":                f,
+		"Scan":             scan,
+		"Repo":             repo,
+		"Notes":            notes,
+		"Communications":   comms,
+		"References":       refs,
+		"History":          history,
+		"Reviews":          reviews,
+		"LatestRevalidate": latestRevalidate,
+		"AllLabels":        labels,
+		"Selected":         selected,
+		"Exposures":        exposures,
+		"ShowExposure":     findingSupportsExposure(scan),
 	}
 	if id, c, ok := LookupCWE(f.CWE); ok {
 		data["CWE"] = map[string]any{"ID": id, "Name": c.Name, "Description": c.Description}

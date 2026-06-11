@@ -189,6 +189,23 @@ Timestamped internal notes on a finding. Replaced the old `findings.notes` colum
 | by | text | Free-text author. |
 | created_at | datetime | |
 
+## finding_reviews
+
+Structured human verdicts on a finding, mirroring the revalidate skill's
+enum so reviewer agreement with the model is computable. Populated by the
+`/audit` page and `POST /findings/{id}/reviews`. The audit queue excludes
+findings that already have a row here.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | integer PK | |
+| finding_id | integer FK | Cascade delete. |
+| verdict | text | `true_positive`, `false_positive`, `already_fixed`, `uncertain`. |
+| reason | text | Free-text justification. |
+| automated_outcome | text | Snapshot of the automation verdict (typically the latest revalidate verdict) at review time. Empty when no automation has spoken. |
+| reviewer | text | Optional free-text reviewer identity. |
+| created_at | datetime | |
+
 ## finding_communications
 
 External interactions about a finding: emails, GHSA submissions, issue replies, etc.

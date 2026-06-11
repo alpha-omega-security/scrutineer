@@ -711,6 +711,30 @@ type FindingHistory struct {
 	CreatedAt time.Time
 }
 
+// FindingReview is a structured human verdict against an automation
+// outcome. Verdict mirrors the revalidate skill's enum so reviewer
+// agreement with the model can be measured directly. AutomatedOutcome
+// snapshots what the automation said about this finding at the moment
+// of review (typically the last revalidate verdict; empty when no
+// automation has spoken yet). This is the data behind the audit queue
+// in internal/web/audit.go: surfacing recently auto-bucketed findings
+// without lasting marks of human review, so the TOC can confirm the
+// automation is calibrated and so the agreement rate is computable.
+type FindingReview struct {
+	ID        uint   `gorm:"primarykey"`
+	FindingID uint   `gorm:"index;not null"`
+	Verdict   string `gorm:"index"` // true_positive | false_positive | already_fixed | uncertain
+	Reason    string `gorm:"type:text"`
+	// AutomatedOutcome is the automation verdict (revalidate's) the
+	// human is judging. Empty when revalidate has not run on this
+	// finding; agreement metrics ignore reviews with empty automated
+	// outcomes since there is nothing to compare to.
+	AutomatedOutcome string `gorm:"index"`
+	Reviewer         string
+
+	CreatedAt time.Time
+}
+
 // Skill is one scan recipe expressed as a claude-code skill. It maps 1:1 to
 // the agentskills.io SKILL.md format: Body is the markdown that sits after
 // the frontmatter, the other fields are frontmatter. Metadata holds the raw
@@ -899,7 +923,7 @@ func Open(dsn string) (*gorm.DB, error) {
 	if err := gdb.AutoMigrate(
 		&Repository{}, &Scan{},
 		&Finding{}, &FindingLabel{}, &FindingNote{},
-		&FindingCommunication{}, &FindingReference{}, &FindingHistory{},
+		&FindingCommunication{}, &FindingReference{}, &FindingHistory{}, &FindingReview{},
 		&Dependency{}, &Package{}, &Dependent{}, &FindingDependent{}, &Advisory{},
 		&Maintainer{}, &Skill{}, &Subproject{},
 		&SBOMUpload{}, &SBOMPackage{}, &CNA{}, &Setting{},

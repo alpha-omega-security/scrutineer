@@ -351,6 +351,106 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/FindingNote' }
 
+  /findings/{id}/reviews:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+    get:
+      summary: List structured human verdicts on a finding
+      operationId: listFindingReviews
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/FindingReview' }
+    post:
+      summary: Record one structured human verdict on a finding
+      description: |
+        Verdicts mirror the revalidate skill's enum so reviewer agreement
+        with the model is computed by direct string comparison. When
+        automated_outcome is omitted the server snapshots the latest
+        revalidate verdict from the finding's notes; explicit values
+        win to support older notes the operator wants to re-pin.
+      operationId: addFindingReview
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [verdict]
+              properties:
+                verdict:
+                  type: string
+                  enum: [true_positive, false_positive, already_fixed, uncertain]
+                reason: { type: string }
+                reviewer: { type: string }
+                automated_outcome:
+                  type: string
+                  description: Optional override for the automation outcome the human is judging. When empty the server pulls it from the finding's latest revalidate note.
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FindingReview' }
+
+  /audit/queue:
+    get:
+      summary: Sample of recently auto-bucketed findings without a recorded review
+      description: |
+        Returns findings the automation has bucketed as not worth pursuing
+        (low-severity, rejected, or marked by revalidate as false positive,
+        already fixed, or uncertain) and that do not yet have a
+        FindingReview row. Spot-check the queue to keep automated triage
+        calibrated.
+      operationId: getAuditQueue
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50, maximum: 500 }
+        - name: since
+          in: query
+          description: RFC3339 timestamp; excludes findings older than this.
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Finding' }
+
+  /audit/metrics:
+    get:
+      summary: Aggregate audit metrics
+      description: |
+        Total reviews, those comparable to an automation outcome,
+        agreements between human verdict and automation, and the
+        agreement rate (0..1). The audit page renders the same numbers.
+      operationId: getAuditMetrics
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  TotalReviews: { type: integer }
+                  WithAutomatedOutcome: { type: integer }
+                  Agreements: { type: integer }
+                  AgreementRate: { type: number, format: float }
+                  ByVerdict:
+                    type: object
+                    additionalProperties: { type: integer }
+
   /findings/{id}/communications:
     parameters:
       - name: id
@@ -1054,6 +1154,18 @@ components:
         body:       { type: string }
         by:         { type: string }
         created_at: { type: string, format: date-time }
+
+    FindingReview:
+      type: object
+      required: [id, finding_id, verdict]
+      properties:
+        id:                { type: integer, format: int64 }
+        finding_id:        { type: integer, format: int64 }
+        verdict:           { type: string, enum: [true_positive, false_positive, already_fixed, uncertain] }
+        reason:            { type: string }
+        automated_outcome: { type: string, description: Automation verdict snapshotted at review time, empty when no revalidate run had spoken. }
+        reviewer:          { type: string }
+        created_at:        { type: string, format: date-time }
 
     FindingCommunication:
       type: object
