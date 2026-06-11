@@ -83,6 +83,7 @@ When the containerised runner is active (the default when Docker is available), 
 - **OSV export** -- download any finding as a schema-validated OSV record, anchored to the source repo when it maps to no registry package
 - **JSONL export** -- stream all findings or scans as line-delimited JSON for ingestion elsewhere
 - **Markdown report export** -- download a single consolidated `report.md` per repository or organisation
+- **Disclosure bundle** -- download `bundle.tar.gz` per finding: OSV, CSAF, markdown report, patch.diff, and a manifest naming the contents; ready to hand to a coordinator or attach to a private email when filing outside GitHub PVR
 
 ## The default pipeline
 

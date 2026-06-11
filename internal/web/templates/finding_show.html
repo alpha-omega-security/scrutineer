@@ -14,9 +14,16 @@
     {{$f.Title}}
     {{template "finding-status" (fstatus $f.Status)}}
   </h2>
-  <a href="/findings/{{$f.ID}}/report.md" class="btn-outline shrink-0" download>
-    <i data-lucide="download"></i> Export report
-  </a>
+  <div class="flex gap-2 shrink-0">
+    <a href="/findings/{{$f.ID}}/report.md" class="btn-outline" download>
+      <i data-lucide="download"></i> Export report
+    </a>
+    <a href="/findings/{{$f.ID}}/bundle.tar.gz" class="btn-outline"
+       title="OSV + CSAF + markdown report + patch + manifest, packaged for a disclosure recipient"
+       download>
+      <i data-lucide="package"></i> Disclosure bundle
+    </a>
+  </div>
 </div>
 
 {{if $f.Labels}}

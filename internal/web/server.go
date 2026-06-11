@@ -269,6 +269,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /findings/{id}/patch", s.findingPatchRun)
 	mux.HandleFunc("POST /findings/{id}/exposure", s.findingExposureRun)
 	mux.HandleFunc("GET /findings/{id}/patch.diff", s.findingPatchDownload)
+	mux.HandleFunc("GET /findings/{id}/bundle.tar.gz", s.findingBundleDownload)
 	mux.HandleFunc("POST /findings/{id}/notes", s.findingNotes)
 	mux.HandleFunc("POST /findings/{id}/fields", s.findingFields)
 	mux.HandleFunc("POST /findings/{id}/communications", s.findingCommunications)

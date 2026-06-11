@@ -286,6 +286,34 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /findings/{id}/bundle.tar.gz:
+    get:
+      summary: Disclosure bundle for one finding
+      operationId: getFindingBundle
+      description: |
+        A gzipped tar containing every per-finding export scrutineer
+        produces (OSV, CSAF, markdown report, patch.diff when one is on
+        file) plus a manifest.json header naming the finding and the
+        archive contents. The per-file bytes are identical to what the
+        matching /findings/{id}/{file} endpoint serves directly; the
+        bundle is a composition, not a new format. Shape mirrors the
+        OSS-SIRT intake brief: one summary line, aliases for
+        cross-system identifiers, contents map.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        '200':
+          description: tar.gz archive.
+          content:
+            application/gzip:
+              schema: { type: string, format: binary }
+        '404': { description: Finding not found }
+        '410': { description: Finding is a duplicate; bundle unavailable }
+        '500': { description: Underlying export failed }
+
   /findings/{id}/notes:
     parameters:
       - name: id
