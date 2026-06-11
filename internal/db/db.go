@@ -202,6 +202,12 @@ type Scan struct {
 	Log    string
 	Error  string
 
+	// ImportPayload carries the raw uploaded report for an ingest-skill
+	// run created by the /v1/import fallback. The worker stages it into
+	// the workspace at import/report before the skill starts. Empty for
+	// every other scan.
+	ImportPayload []byte
+
 	FindingsCount int
 	Findings      []Finding `gorm:"constraint:OnDelete:CASCADE"`
 

@@ -37,6 +37,21 @@ Each import becomes one `Scan` row per repository with `kind = import` and `skil
 
 Re-importing the same report against the same repository upserts: findings with a matching fingerprint update `last_seen_scan_id`, bump `seen_count`, and clear the missed-count counter. Nothing is duplicated and nothing is deleted. Findings that were imported once and not present in a later import simply do not get observed; the existing miss-count machinery is the right tool for "the upstream scanner no longer flags this" and it is left to the operator to run `verify` if they want to confirm.
 
+## Unrecognised formats
+
+A body that matches none of the formats below is not rejected outright. When `?repo=` is supplied, the payload is handed to the `ingest` skill instead: the raw bytes are staged into the skill's workspace at `import/report`, the repository is cloned alongside at `./src`, and the model normalises whatever the report is (a scanner's bespoke JSON, a pentest write-up, a pasted email) into findings, verifying each claimed location against the checkout. The response is `202 Accepted` with the queued `scan_id`:
+
+    {
+      "format":        "unrecognised",
+      "repository_id": 42,
+      "repository":    "https://github.com/example/widget",
+      "scan_id":       1031,
+      "skill":         "ingest",
+      "status":        "queued"
+    }
+
+Findings land asynchronously when the scan completes, through the same fingerprint upsert as every skill run. Without `?repo=` there is nothing to clone (an unparseable body has no readable provenance), so the request still fails with `422`. The skill treats the report as untrusted input: its output is schema-validated like any skill report, and instructions embedded in the report body are ignored rather than followed.
+
 ## Supported formats
 
 The detector reads the first few bytes of the body and dispatches:

@@ -1831,6 +1831,10 @@ type ScanOpts struct {
 	// on a normal (non-resuming) enqueue. See scanRetry.
 	SessionID         string
 	ResumedFromScanID *uint
+	// ImportPayload is the raw uploaded report for an ingest-skill run
+	// created by the /v1/import fallback; the worker stages it into the
+	// workspace at import/report. Empty for every other enqueue.
+	ImportPayload []byte
 }
 
 func (s *Server) enqueueSkill(ctx context.Context, repoID, skillID uint, model string) (uint, error) {
@@ -1894,6 +1898,7 @@ func (s *Server) enqueueSkillWith(ctx context.Context, repoID, skillID uint, opt
 		Profile:           opts.Profile,
 		SessionID:         opts.SessionID,
 		ResumedFromScanID: opts.ResumedFromScanID,
+		ImportPayload:     opts.ImportPayload,
 		SkillsRepoSHA:     s.SkillsRepoSHA,
 		APIToken:          NewAPIToken(),
 	}

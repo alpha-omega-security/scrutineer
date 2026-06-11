@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ingest findings report",
+  "type": "object",
+  "required": ["findings"],
+  "additionalProperties": true,
+  "properties": {
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "severity", "location"],
+        "additionalProperties": true,
+        "properties": {
+          "id":         { "type": "string" },
+          "title":      { "type": "string" },
+          "severity":   { "type": "string", "enum": ["Critical", "High", "Medium", "Low"] },
+          "confidence": { "type": "string", "enum": ["low", "medium", "high"] },
+          "cwe":        { "type": "string" },
+          "location":   { "type": "string" },
+          "locations":  { "type": "array", "items": { "type": "string" } },
+          "trace":      { "type": "string" }
+        }
+      }
+    },
+    "notes": { "type": "string" }
+  }
+}

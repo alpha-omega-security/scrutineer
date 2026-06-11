@@ -667,8 +667,12 @@ paths:
         field, the CSV `Repository` column, the markdown location link);
         when absent the caller must pass `?repo=`. Re-importing the same
         report dedupes by fingerprint and bumps `seen_count` rather than
-        inserting duplicates. No bearer token; localhost-only. See
-        docs/import.md for the per-format field mapping.
+        inserting duplicates. A body matching no supported format is
+        routed to the `ingest` skill instead when `?repo=` is supplied:
+        the raw payload is staged into the skill workspace and a scan is
+        queued, returning 202 with the scan id. No bearer token;
+        localhost-only. See docs/import.md for the per-format field
+        mapping.
       operationId: importFindings
       security: []
       parameters:
@@ -699,6 +703,19 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ImportResponse' }
+        '202':
+          description: Unrecognised format routed to the ingest skill; a scan is queued.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  format: { type: string, enum: [unrecognised] }
+                  repository_id: { type: integer }
+                  repository: { type: string }
+                  scan_id: { type: integer }
+                  skill: { type: string, enum: [ingest] }
+                  status: { type: string, enum: [queued] }
         '400':
           description: Body unreadable or empty
         '403':
@@ -706,7 +723,7 @@ paths:
         '413':
           description: Body exceeds 16 MiB
         '422':
-          description: Body matches no supported format, or repository unknown
+          description: Unrecognised format without `?repo=` (or with the ingest skill unavailable), recognised format that fails to parse, or repository unknown
 
 components:
   securitySchemes:

@@ -127,6 +127,9 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 	if err := stageSkill(&skill, workRoot, skillDir); err != nil {
 		return "", fmt.Errorf("stage skill: %w", err)
 	}
+	if err := stageImportPayload(workRoot, scan.ImportPayload); err != nil {
+		return "", fmt.Errorf("stage import payload: %w", err)
+	}
 
 	prompt := buildLoggedPrompt(&skill)
 	scan.Prompt = prompt
@@ -646,6 +649,21 @@ func oneLine(s string) string {
 	s = strings.ReplaceAll(s, "\r\n", " ")
 	s = strings.ReplaceAll(s, "\n", " ")
 	return strings.TrimSpace(s)
+}
+
+// stageImportPayload writes the raw report bytes from an import-fallback
+// run into the workspace at import/report, where the ingest skill expects
+// to find them. Every scan without a payload (everything except the
+// import fallback) stages nothing.
+func stageImportPayload(workRoot string, payload []byte) error {
+	if len(payload) == 0 {
+		return nil
+	}
+	dir := filepath.Join(workRoot, "import")
+	if err := os.MkdirAll(dir, dirPerm); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(dir, "report"), payload, filePerm)
 }
 
 // stageContext writes the workspace-level context.json that every skill can

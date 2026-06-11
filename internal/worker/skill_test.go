@@ -274,6 +274,30 @@ func TestStageContext_writesRepoFacts(t *testing.T) {
 	}
 }
 
+func TestStageImportPayload(t *testing.T) {
+	dir := t.TempDir()
+	if err := stageImportPayload(dir, []byte("scanner output")); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "import", "report"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != "scanner output" {
+		t.Errorf("payload = %q", string(b))
+	}
+}
+
+func TestStageImportPayload_emptyStagesNothing(t *testing.T) {
+	dir := t.TempDir()
+	if err := stageImportPayload(dir, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "import")); !os.IsNotExist(err) {
+		t.Errorf("import dir should not exist, stat err = %v", err)
+	}
+}
+
 func TestStageSkill_writesMarkdownAndSchema(t *testing.T) {
 	work := t.TempDir()
 	dir := filepath.Join(work, ".claude", "skills", "s")

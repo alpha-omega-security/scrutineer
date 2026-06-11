@@ -163,13 +163,79 @@ func TestHandleImportRejectsNoRepo(t *testing.T) {
 	}
 }
 
-func TestHandleImportRejectsUnknownFormat(t *testing.T) {
+func TestHandleImportRejectsUnknownFormatWithoutRepo(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
 
 	w := postImport(t, s, "/api/v1/import", `{"hello":"world"}`)
 	if w.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, want 422", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "ingest skill") {
+		t.Errorf("body should hint at the ingest route, got %q", w.Body.String())
+	}
+}
+
+func TestHandleImportRejectsUnknownFormatWithoutIngestSkill(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	w := postImport(t, s, "/api/v1/import?repo=https://github.com/acme/widget", `{"hello":"world"}`)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "not available") {
+		t.Errorf("body = %q", w.Body.String())
+	}
+}
+
+func TestHandleImportRoutesUnknownFormatToIngestSkill(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	skill := db.Skill{
+		Name:       "ingest",
+		OutputFile: "report.json",
+		OutputKind: "findings",
+		Version:    1,
+		Active:     true,
+	}
+	if err := s.DB.Create(&skill).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	body := `weird scanner output, line 12 of main.go looks bad`
+	w := postImport(t, s, "/api/v1/import?repo=https://github.com/acme/widget", body)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Format       string `json:"format"`
+		RepositoryID uint   `json:"repository_id"`
+		ScanID       uint   `json:"scan_id"`
+		Skill        string `json:"skill"`
+		Status       string `json:"status"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Format != "unrecognised" || resp.Skill != "ingest" || resp.Status != "queued" {
+		t.Errorf("response = %+v", resp)
+	}
+
+	var scan db.Scan
+	if err := s.DB.First(&scan, resp.ScanID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if scan.SkillName != "ingest" || scan.Kind != "skill" || scan.Status != db.ScanQueued {
+		t.Errorf("scan = kind %q skill %q status %q", scan.Kind, scan.SkillName, scan.Status)
+	}
+	if string(scan.ImportPayload) != body {
+		t.Errorf("payload = %q", string(scan.ImportPayload))
+	}
+	if scan.RepositoryID != resp.RepositoryID {
+		t.Errorf("repository id = %d, want %d", scan.RepositoryID, resp.RepositoryID)
 	}
 }
 

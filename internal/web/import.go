@@ -45,6 +45,10 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	results, format, err := ingest.Parse(body)
+	if errors.Is(err, ingest.ErrUnrecognised) {
+		s.importFallback(w, r, body)
+		return
+	}
 	if err != nil {
 		writeAPIError(w, http.StatusUnprocessableEntity, err.Error())
 		return
@@ -66,17 +70,56 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *Server) importResult(res ingest.Result, repoOverride string) (map[string]any, error) {
-	repoURL := res.RepoURL
-	if repoOverride != "" {
-		repoURL = repoOverride
-	}
+// ingestSkillName is the skill that normalises reports no deterministic
+// parser recognises.
+const ingestSkillName = "ingest"
+
+// importFallback routes a payload that matched no supported format to the
+// ingest skill. The raw bytes ride on the Scan row and the worker stages
+// them into the workspace at import/report, where the skill reads them.
+// Nothing parsed, so there is no provenance to take a repository from;
+// ?repo= is required.
+func (s *Server) importFallback(w http.ResponseWriter, r *http.Request, body []byte) {
+	repoURL := r.URL.Query().Get("repo")
 	if repoURL == "" {
-		return nil, fmt.Errorf("repository unknown: report has no provenance and no ?repo= supplied")
+		writeAPIError(w, http.StatusUnprocessableEntity,
+			ingest.ErrUnrecognised.Error()+"; pass ?repo= to route the payload to the ingest skill instead")
+		return
 	}
+	var skill db.Skill
+	if err := s.DB.Where("name = ? AND active = ?", ingestSkillName, true).First(&skill).Error; err != nil {
+		writeAPIError(w, http.StatusUnprocessableEntity,
+			ingest.ErrUnrecognised.Error()+"; the ingest skill is not available to take it")
+		return
+	}
+	repo, err := s.ensureImportRepo(repoURL)
+	if err != nil {
+		writeAPIError(w, http.StatusUnprocessableEntity, err.Error())
+		return
+	}
+	scanID, err := s.enqueueSkillWith(r.Context(), repo.ID, skill.ID, ScanOpts{ImportPayload: body})
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.Log.Info("import: routed unrecognised payload to ingest skill",
+		"repo", repo.URL, "scan", scanID, "bytes", len(body))
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"format":        "unrecognised",
+		"repository_id": repo.ID,
+		"repository":    repo.URL,
+		"scan_id":       scanID,
+		"skill":         ingestSkillName,
+		"status":        "queued",
+	})
+}
+
+// ensureImportRepo resolves a repository URL from an import request to a
+// Repository row, creating it on first sight.
+func (s *Server) ensureImportRepo(repoURL string) (db.Repository, error) {
 	input, err := ParseRepoInput(repoURL)
 	if err != nil {
-		return nil, fmt.Errorf("repository %q: %w", repoURL, err)
+		return db.Repository{}, fmt.Errorf("repository %q: %w", repoURL, err)
 	}
 	repo := db.Repository{
 		URL:     input.CloneURL,
@@ -88,6 +131,21 @@ func (s *Server) importResult(res ingest.Result, repoOverride string) (map[strin
 		repo.FullName = input.Owner + "/" + input.Name
 	}
 	if err := s.DB.Where(db.Repository{URL: input.CloneURL}).FirstOrCreate(&repo).Error; err != nil {
+		return db.Repository{}, err
+	}
+	return repo, nil
+}
+
+func (s *Server) importResult(res ingest.Result, repoOverride string) (map[string]any, error) {
+	repoURL := res.RepoURL
+	if repoOverride != "" {
+		repoURL = repoOverride
+	}
+	if repoURL == "" {
+		return nil, fmt.Errorf("repository unknown: report has no provenance and no ?repo= supplied")
+	}
+	repo, err := s.ensureImportRepo(repoURL)
+	if err != nil {
 		return nil, err
 	}
 
