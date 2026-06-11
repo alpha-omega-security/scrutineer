@@ -6,6 +6,14 @@ metadata:
   scrutineer.version: 1
   scrutineer.output_file: report.json
   scrutineer.output_kind: findings
+  scrutineer.requires:
+    - threat-model
+    - semgrep
+    - repo-overview
+    - advisories
+    - packages
+    - dependents
+    - maintainers
 ---
 
 # security-deep-dive
