@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -740,6 +741,69 @@ func TestParseDependencies_acceptsTypeOrDependencyType(t *testing.T) {
 	}
 }
 
+func TestParseDependencies_resolvesMavenRequirementsWithPOM(t *testing.T) {
+	w, scan, gdb, repo := newDependencyParser(t)
+	src := filepath.Join(w.scanWorkRoot(scan), "src")
+	writeMavenResolverFixture(t, src)
+
+	report := `{"dependencies":[
+		{"name":"org.openjdk.jmh:jmh-core","ecosystem":"maven","requirement":"${jmh.version}","manifest_path":"pom.xml"},
+		{"name":"org.example:child-dep","ecosystem":"maven","requirement":"${project.version}","manifest_path":"module/pom.xml"},
+		{"name":"org.example:missing","ecosystem":"maven","requirement":"${missing.version}","manifest_path":"pom.xml"}
+	]}`
+	if err := w.parseDependenciesOutput(scan, report, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+
+	got := map[string]db.Dependency{}
+	var rows []db.Dependency
+	gdb.Where("repository_id = ?", repo.ID).Find(&rows)
+	for _, row := range rows {
+		got[row.Name] = row
+	}
+	if got["org.openjdk.jmh:jmh-core"].Requirement != "1.37" || got["org.openjdk.jmh:jmh-core"].RequirementUnresolved {
+		t.Fatalf("direct property not resolved: %+v", got["org.openjdk.jmh:jmh-core"])
+	}
+	if got["org.openjdk.jmh:jmh-core"].RequirementResolution != "resolved" {
+		t.Fatalf("direct property resolution = %q", got["org.openjdk.jmh:jmh-core"].RequirementResolution)
+	}
+	if got["org.example:child-dep"].Requirement != "2.0.0" || got["org.example:child-dep"].RequirementUnresolved {
+		t.Fatalf("parent project.version not resolved: %+v", got["org.example:child-dep"])
+	}
+	if got["org.example:missing"].Requirement != "${missing.version}" || !got["org.example:missing"].RequirementUnresolved {
+		t.Fatalf("missing property should be flagged unresolved: %+v", got["org.example:missing"])
+	}
+	if got["org.example:missing"].RequirementResolution != "unresolved_property" {
+		t.Fatalf("missing property resolution = %q", got["org.example:missing"].RequirementResolution)
+	}
+}
+
+func TestParseDependencies_skipsMavenParentOutsideSrc(t *testing.T) {
+	w, scan, gdb, repo := newDependencyParser(t)
+	writeEscapingMavenResolverFixture(t, w.scanWorkRoot(scan))
+
+	report := `{"dependencies":[
+		{"name":"org.example:escape","ecosystem":"maven","requirement":"${secret.version}","manifest_path":"escape/pom.xml"}
+	]}`
+	if err := w.parseDependenciesOutput(scan, report, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+
+	var dep db.Dependency
+	if err := gdb.Where("repository_id = ? AND name = ?", repo.ID, "org.example:escape").First(&dep).Error; err != nil {
+		t.Fatal(err)
+	}
+	if dep.Requirement != "${secret.version}" {
+		t.Fatalf("requirement = %q, want unresolved placeholder", dep.Requirement)
+	}
+	if !dep.RequirementUnresolved {
+		t.Fatalf("RequirementUnresolved = false, want true")
+	}
+	if dep.RequirementResolution != "unresolved_parent" {
+		t.Fatalf("RequirementResolution = %q, want unresolved_parent", dep.RequirementResolution)
+	}
+}
+
 func TestParseDependencies_largeBatchExceedsSQLiteVariableLimit(t *testing.T) {
 	const n = 200
 	deps := make([]map[string]string, n)
@@ -757,5 +821,119 @@ func TestParseDependencies_largeBatchExceedsSQLiteVariableLimit(t *testing.T) {
 	gdb.Model(&db.Dependency{}).Where("repository_id = ?", repo.ID).Count(&count)
 	if count != n {
 		t.Fatalf("count = %d, want %d", count, n)
+	}
+}
+
+func newDependencyParser(t *testing.T) (*Worker, *db.Scan, *gorm.DB, db.Repository) {
+	t.Helper()
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
+	gdb.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID}
+	gdb.Create(&scan)
+	w := &Worker{
+		DB:      gdb,
+		Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+		DataDir: t.TempDir(),
+	}
+	if err := os.MkdirAll(filepath.Join(w.scanWorkRoot(&scan), "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return w, &scan, gdb, repo
+}
+
+func writeMavenResolverFixture(t *testing.T, src string) {
+	t.Helper()
+	writeFile(t, filepath.Join(src, "pom.xml"), `<?xml version="1.0"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>org.example</groupId>
+  <artifactId>parent</artifactId>
+  <version>2.0.0</version>
+  <properties>
+    <jmh.version>1.37</jmh.version>
+  </properties>
+  <dependencies>
+    <dependency>
+      <groupId>org.openjdk.jmh</groupId>
+      <artifactId>jmh-core</artifactId>
+      <version>${jmh.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.example</groupId>
+      <artifactId>missing</artifactId>
+      <version>${missing.version}</version>
+    </dependency>
+  </dependencies>
+</project>
+`)
+	if err := os.Mkdir(filepath.Join(src, "module"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(src, "module", "pom.xml"), `<?xml version="1.0"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>org.example</groupId>
+    <artifactId>parent</artifactId>
+    <version>2.0.0</version>
+  </parent>
+  <artifactId>child</artifactId>
+  <dependencies>
+    <dependency>
+      <groupId>org.example</groupId>
+      <artifactId>child-dep</artifactId>
+      <version>${project.version}</version>
+    </dependency>
+  </dependencies>
+</project>
+`)
+}
+
+func writeEscapingMavenResolverFixture(t *testing.T, workRoot string) {
+	t.Helper()
+	writeFile(t, filepath.Join(workRoot, "host-parent.xml"), `<?xml version="1.0"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>org.example</groupId>
+  <artifactId>host-parent</artifactId>
+  <version>9.9.9</version>
+  <properties>
+    <secret.version>leaked-from-outside-src</secret.version>
+  </properties>
+</project>
+`)
+	escapeDir := filepath.Join(workRoot, "src", "escape")
+	if err := os.Mkdir(escapeDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFile(t, filepath.Join(escapeDir, "pom.xml"), `<?xml version="1.0"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <groupId>org.example</groupId>
+    <artifactId>host-parent</artifactId>
+    <version>9.9.9</version>
+    <relativePath>../../host-parent.xml</relativePath>
+  </parent>
+  <artifactId>escape</artifactId>
+  <dependencies>
+    <dependency>
+      <groupId>org.example</groupId>
+      <artifactId>escape</artifactId>
+      <version>${secret.version}</version>
+    </dependency>
+  </dependencies>
+</project>
+`)
+}
+
+func writeFile(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
 	}
 }

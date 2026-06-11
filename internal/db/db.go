@@ -346,6 +346,7 @@ type Dependency struct {
 	// manifest-level expression such as ${project.version}. Advisory matching
 	// should treat it as informational, not a concrete version/range.
 	RequirementUnresolved bool
+	RequirementResolution string
 	DependencyType        string
 	ManifestPath          string
 	ManifestKind          string

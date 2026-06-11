@@ -1,7 +1,6 @@
 package worker
 
 import (
-	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -49,69 +48,6 @@ func TestDependenciesScriptRejectsNonArrayGitPkgsOutput(t *testing.T) {
 	}
 }
 
-func TestDependenciesScriptResolvesMavenPropertyRequirements(t *testing.T) {
-	out, err := runDependenciesScript(t, "maven")
-	if err != nil {
-		t.Fatalf("script failed: %v\n%s", err, out)
-	}
-	var report struct {
-		Dependencies []struct {
-			Name                  string `json:"name"`
-			Requirement           string `json:"requirement"`
-			RequirementUnresolved bool   `json:"requirement_unresolved"`
-		} `json:"dependencies"`
-	}
-	if err := json.Unmarshal([]byte(out), &report); err != nil {
-		t.Fatalf("parse report: %v\n%s", err, out)
-	}
-	got := map[string]struct {
-		req        string
-		unresolved bool
-	}{}
-	for _, dep := range report.Dependencies {
-		got[dep.Name] = struct {
-			req        string
-			unresolved bool
-		}{dep.Requirement, dep.RequirementUnresolved}
-	}
-	if got["org.openjdk.jmh:jmh-core"].req != "1.37" || got["org.openjdk.jmh:jmh-core"].unresolved {
-		t.Fatalf("direct property not resolved: %+v", got["org.openjdk.jmh:jmh-core"])
-	}
-	if got["org.example:child"].req != "2.0.0" || got["org.example:child"].unresolved {
-		t.Fatalf("parent project.version not resolved: %+v", got["org.example:child"])
-	}
-	if got["org.example:missing"].req != "${missing.version}" || !got["org.example:missing"].unresolved {
-		t.Fatalf("missing property should be flagged unresolved: %+v", got["org.example:missing"])
-	}
-}
-
-func TestDependenciesScriptSkipsMavenParentOutsideSrc(t *testing.T) {
-	out, err := runDependenciesScript(t, "maven-escaping-parent")
-	if err != nil {
-		t.Fatalf("script failed: %v\n%s", err, out)
-	}
-	var report struct {
-		Dependencies []struct {
-			Name                  string `json:"name"`
-			Requirement           string `json:"requirement"`
-			RequirementUnresolved bool   `json:"requirement_unresolved"`
-		} `json:"dependencies"`
-	}
-	if err := json.Unmarshal([]byte(out), &report); err != nil {
-		t.Fatalf("parse report: %v\n%s", err, out)
-	}
-	if len(report.Dependencies) != 1 {
-		t.Fatalf("dependencies = %d, want 1: %s", len(report.Dependencies), out)
-	}
-	dep := report.Dependencies[0]
-	if dep.Requirement != "${secret.version}" {
-		t.Fatalf("requirement = %q, want unresolved placeholder", dep.Requirement)
-	}
-	if !dep.RequirementUnresolved {
-		t.Fatalf("requirement_unresolved = false, want true")
-	}
-}
-
 func runDependenciesScript(t *testing.T, mode string) (string, error) {
 	t.Helper()
 	script, err := filepath.Abs("../../skills/dependencies/scripts/index.sh")
@@ -121,10 +57,6 @@ func runDependenciesScript(t *testing.T, mode string) (string, error) {
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, "src"), 0o755); err != nil {
 		t.Fatal(err)
-	}
-	if strings.HasPrefix(mode, "maven") {
-		writeMavenFixture(t, filepath.Join(root, "src"))
-		writeEscapingMavenFixture(t, root)
 	}
 	bin := filepath.Join(root, "bin")
 	if err := os.Mkdir(bin, 0o755); err != nil {
@@ -150,16 +82,6 @@ case "$1" in
       array)
         printf '[{"name":"left-pad","ecosystem":"npm"}]\n'
         ;;
-      maven)
-        cat <<'JSON'
-[{"name":"org.openjdk.jmh:jmh-core","ecosystem":"maven","requirement":"${jmh.version}","manifest_path":"pom.xml"},{"name":"org.example:child","ecosystem":"maven","requirement":"${project.version}","manifest_path":"module/pom.xml"},{"name":"org.example:missing","ecosystem":"maven","requirement":"${missing.version}","manifest_path":"pom.xml"}]
-JSON
-        ;;
-      maven-escaping-parent)
-        cat <<'JSON'
-[{"name":"org.example:escape","ecosystem":"maven","requirement":"${secret.version}","manifest_path":"escape/pom.xml"}]
-JSON
-        ;;
       *)
         echo "unknown mode: ${GIT_PKGS_LIST_OUTPUT}" >&2
         exit 2
@@ -183,72 +105,4 @@ esac
 	)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
-}
-
-func writeMavenFixture(t *testing.T, src string) {
-	t.Helper()
-	if err := os.WriteFile(filepath.Join(src, "pom.xml"), []byte(`<?xml version="1.0"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0">
-  <modelVersion>4.0.0</modelVersion>
-  <groupId>org.example</groupId>
-  <artifactId>parent</artifactId>
-  <version>2.0.0</version>
-  <properties>
-    <jmh.version>1.37</jmh.version>
-  </properties>
-</project>
-`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(filepath.Join(src, "module"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(src, "module", "pom.xml"), []byte(`<?xml version="1.0"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0">
-  <modelVersion>4.0.0</modelVersion>
-  <parent>
-    <groupId>org.example</groupId>
-    <artifactId>parent</artifactId>
-    <version>2.0.0</version>
-  </parent>
-  <artifactId>child</artifactId>
-</project>
-`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func writeEscapingMavenFixture(t *testing.T, root string) {
-	t.Helper()
-	if err := os.WriteFile(filepath.Join(root, "host-parent.xml"), []byte(`<?xml version="1.0"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0">
-  <modelVersion>4.0.0</modelVersion>
-  <groupId>org.example</groupId>
-  <artifactId>host-parent</artifactId>
-  <version>9.9.9</version>
-  <properties>
-    <secret.version>leaked-from-outside-src</secret.version>
-  </properties>
-</project>
-`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	escapeDir := filepath.Join(root, "src", "escape")
-	if err := os.Mkdir(escapeDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(escapeDir, "pom.xml"), []byte(`<?xml version="1.0"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0">
-  <modelVersion>4.0.0</modelVersion>
-  <parent>
-    <groupId>org.example</groupId>
-    <artifactId>host-parent</artifactId>
-    <version>9.9.9</version>
-    <relativePath>../../host-parent.xml</relativePath>
-  </parent>
-  <artifactId>escape</artifactId>
-</project>
-`), 0o644); err != nil {
-		t.Fatal(err)
-	}
 }
