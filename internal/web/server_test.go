@@ -2786,6 +2786,58 @@ func TestRetry_preservesSubPath(t *testing.T) {
 	}
 }
 
+func TestRetry_preservesImportPayload(t *testing.T) {
+	// An ingest scan's input is the uploaded payload, not ./src. Both
+	// retry paths must carry it or the rerun stages no import/report.
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/x.git", Name: "x"}
+	s.DB.Create(&repo)
+	skill := db.Skill{Name: "ingest", Description: "x", Body: "b", Active: true, Source: "ui", Version: 1}
+	s.DB.Create(&skill)
+	payload := []byte(`{"vendor":"weird","items":[1]}`)
+	orig := db.Scan{
+		RepositoryID: repo.ID, Kind: "skill", Status: db.ScanFailed,
+		SkillID: &skill.ID, SkillName: "ingest",
+		ImportPayload: payload, FinishedAt: new(time.Now()),
+	}
+	s.DB.Create(&orig)
+
+	req := httptest.NewRequest("POST", fmt.Sprintf("/scans/%d/retry", orig.ID), nil)
+	req.Host = testHost
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("retry status %d: %s", w.Code, w.Body)
+	}
+
+	var fresh db.Scan
+	s.DB.Where("id != ?", orig.ID).First(&fresh)
+	if string(fresh.ImportPayload) != string(payload) {
+		t.Errorf("single retry lost import payload: got %q", fresh.ImportPayload)
+	}
+
+	// Bulk retry-failed path uses a column Select; it must include the
+	// payload column too.
+	s.DB.Where("id != ?", orig.ID).Delete(&db.Scan{})
+	req = httptest.NewRequest("POST", "/scans/retry-failed", nil)
+	req.Host = testHost
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	w = httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("retry-failed status %d: %s", w.Code, w.Body)
+	}
+
+	var bulk db.Scan
+	s.DB.Where("id != ?", orig.ID).First(&bulk)
+	if string(bulk.ImportPayload) != string(payload) {
+		t.Errorf("bulk retry lost import payload: got %q", bulk.ImportPayload)
+	}
+}
+
 func TestScansRetryFailed(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
