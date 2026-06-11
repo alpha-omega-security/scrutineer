@@ -140,7 +140,7 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 	if err := stageContext(workRoot, w.APIBase, w.ForkOrg, w.metadataDir(), scan, &scan.Repository); err != nil {
 		return "", fmt.Errorf("stage context: %w", err)
 	}
-	if err := stageThreatModel(workRoot, scan.Repository.ThreatModel); err != nil {
+	if err := stageThreatModel(workRoot, scan.SubPath, scan.Repository.ThreatModel); err != nil {
 		return "", fmt.Errorf("stage threat model: %w", err)
 	}
 	if err := stageSkill(&skill, workRoot, skillDir); err != nil {
@@ -925,9 +925,12 @@ func stageContext(workRoot, apiBase, forkOrg, metadataDir string, scan *db.Scan,
 // stageThreatModel writes the repository's operator-edited threat model to
 // ./threat_model.json so skills that consume one (security-deep-dive) can
 // load it in preference to fetching the latest threat-model scan from the
-// API. No-op when the repository has no override set.
-func stageThreatModel(workRoot, model string) error {
-	if model == "" {
+// API. No-op when the repository has no override set, and for
+// subpath-scoped scans: the override is authored against the repository
+// root, and the staged file would take precedence over anything the
+// skill derives from the subproject itself.
+func stageThreatModel(workRoot, subPath, model string) error {
+	if model == "" || subPath != "" {
 		return nil
 	}
 	return os.WriteFile(filepath.Join(workRoot, "threat_model.json"), []byte(model), filePerm)

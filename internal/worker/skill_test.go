@@ -17,7 +17,7 @@ import (
 
 func TestStageThreatModel(t *testing.T) {
 	dir := t.TempDir()
-	if err := stageThreatModel(dir, ""); err != nil {
+	if err := stageThreatModel(dir, "", ""); err != nil {
 		t.Fatalf("empty: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "threat_model.json")); err == nil {
@@ -25,7 +25,14 @@ func TestStageThreatModel(t *testing.T) {
 	}
 
 	model := `{"spec_version":1}`
-	if err := stageThreatModel(dir, model); err != nil {
+	if err := stageThreatModel(dir, "packages/core", model); err != nil {
+		t.Fatalf("subpath: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "threat_model.json")); err == nil {
+		t.Error("subpath-scoped scan should not receive the root override")
+	}
+
+	if err := stageThreatModel(dir, "", model); err != nil {
 		t.Fatalf("non-empty: %v", err)
 	}
 	got, err := os.ReadFile(filepath.Join(dir, "threat_model.json"))
