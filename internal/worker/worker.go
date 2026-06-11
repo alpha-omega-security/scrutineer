@@ -36,13 +36,16 @@ const (
 const DefaultScanTimeout = time.Hour
 
 // Prereq gate defaults. A skill declaring scrutineer.requires has its
-// dispatch deferred when any listed upstream scan is not yet done; the
-// queue message is re-published with DefaultPrereqRetryDelay between each
-// attempt, up to DefaultMaxPrereqAttempts. The two together cap the wait
-// at roughly DefaultPrereqRetryDelay * DefaultMaxPrereqAttempts before the
-// scan fails with a "prereq not satisfied" error.
+// dispatch deferred when any listed upstream scan is enqueued but not
+// yet done; the queue message is re-published with the delay doubling
+// from DefaultPrereqRetryDelay up to MaxPrereqRetryDelay, for up to
+// DefaultMaxPrereqAttempts attempts. With the defaults that spans
+// roughly 90 minutes of wall clock — enough for an hour-scale prereq
+// scan to finish under runner contention — before the scan fails with
+// a "prereqs not satisfied" error.
 const (
 	DefaultPrereqRetryDelay  = 30 * time.Second
+	MaxPrereqRetryDelay      = 5 * time.Minute
 	DefaultMaxPrereqAttempts = 20
 )
 

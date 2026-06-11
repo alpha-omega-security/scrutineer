@@ -9,10 +9,12 @@
 // rule across all prereqs avoids special cases. Triage's commit-aware
 // skip set covers the redo-on-new-commit case at a different layer.
 //
-// A prereq skill with no scans at all is treated as satisfied. This
-// keeps a triage-gated prereq (e.g. dependents on a no-packages repo)
-// from deadlocking the dependent skill; the operator can disable the
-// dependent or remove the requires line if the wait is unwanted.
+// A prereq with no scan rows at all on the repository is treated as
+// satisfied: triage (or the operator) decided not to enqueue it — e.g.
+// dependents on a no-packages repo — and waiting would deadlock the
+// dependent skill. The same applies to a prereq skill that is not
+// registered or is disabled. Only a prereq that has been enqueued for
+// the repository but has no done scan yet defers the job.
 
 package worker
 
@@ -56,9 +58,14 @@ func (w *Worker) preflightSkill(ctx context.Context, scan *db.Scan, attempt int)
 		return true, nil
 	}
 
-	delay := w.PrereqRetryDelay
-	if delay <= 0 {
-		delay = DefaultPrereqRetryDelay
+	base := w.PrereqRetryDelay
+	if base <= 0 {
+		base = DefaultPrereqRetryDelay
+	}
+	delay := prereqBackoff(base, attempt)
+	prio := PrioScan
+	if scan.FindingID != nil {
+		prio = PrioFinding
 	}
 	w.Log.Info("deferring skill on unmet prereqs",
 		"scan", scan.ID,
@@ -66,14 +73,31 @@ func (w *Worker) preflightSkill(ctx context.Context, scan *db.Scan, attempt int)
 		"missing", missing,
 		"attempt", attempt+1,
 		"delay", delay)
-	if err := w.Queue.EnqueueRetry(ctx, JobSkill, scan.ID, PrioScan, attempt+1, delay); err != nil {
+	if err := w.Queue.EnqueueRetry(ctx, JobSkill, scan.ID, prio, attempt+1, delay); err != nil {
 		return false, fmt.Errorf("requeue scan %d on prereq wait: %w", scan.ID, err)
 	}
 	return true, nil
 }
 
-// unsatisfiedPrereqs returns the subset of names with no done scan on
-// the repository. A skill name that does not exist in the skills table
+// prereqBackoff doubles the base delay per attempt up to
+// MaxPrereqRetryDelay. Prereqs include hour-scale scans (semgrep,
+// threat-model) competing for runner slots, so a fixed short delay
+// exhausts the attempt budget long before a slow prereq can finish;
+// backing off stretches the same attempt count across a much longer
+// wall-clock window without hammering the queue.
+func prereqBackoff(base time.Duration, attempt int) time.Duration {
+	for range attempt {
+		base *= 2
+		if base >= MaxPrereqRetryDelay {
+			return MaxPrereqRetryDelay
+		}
+	}
+	return base
+}
+
+// unsatisfiedPrereqs returns the subset of names that have been
+// enqueued on the repository but have no done scan yet. A prereq that
+// is unregistered, disabled, or has never been enqueued for this repo
 // is treated as satisfied; see file header for why.
 func (w *Worker) unsatisfiedPrereqs(repoID uint, names []string) []string {
 	missing := make([]string, 0, len(names))
@@ -85,11 +109,23 @@ func (w *Worker) unsatisfiedPrereqs(repoID uint, names []string) []string {
 				"prereq", name, "repo", repoID)
 			continue
 		}
-		var n int64
+		if !skillRow.Active {
+			w.Log.Warn("prereq skill disabled; treating as satisfied",
+				"prereq", name, "repo", repoID)
+			continue
+		}
+		var total int64
+		w.DB.Model(&db.Scan{}).
+			Where("repository_id = ? AND skill_name = ?", repoID, name).
+			Count(&total)
+		if total == 0 {
+			continue
+		}
+		var done int64
 		w.DB.Model(&db.Scan{}).
 			Where("repository_id = ? AND skill_name = ? AND status = ?", repoID, name, db.ScanDone).
-			Count(&n)
-		if n == 0 {
+			Count(&done)
+		if done == 0 {
 			missing = append(missing, name)
 		}
 	}
