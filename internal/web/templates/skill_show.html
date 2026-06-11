@@ -21,7 +21,7 @@
   <div><dt class="text-muted-foreground">Output kind</dt><dd>{{if .OutputKind}}{{.OutputKind}}{{else}}<span class="text-muted-foreground">none</span>{{end}}</dd></div>
   <div><dt class="text-muted-foreground">Output file</dt><dd>{{if .OutputFile}}{{.OutputFile}}{{else}}<span class="text-muted-foreground">none</span>{{end}}</dd></div>
   <div><dt class="text-muted-foreground">Max turns</dt><dd>{{if .MaxTurns}}{{.MaxTurns}}{{else}}<span class="text-muted-foreground">default (30)</span>{{end}}</dd></div>
-  <div><dt class="text-muted-foreground">Preferred model</dt><dd>{{if .Model}}{{.Model}}{{else}}<span class="text-muted-foreground">server default</span>{{end}}</dd></div>
+  <div><dt class="text-muted-foreground">Model preference</dt><dd>{{if .Model}}{{.Model}}{{else}}<span class="text-muted-foreground">skill default tier</span>{{end}}</dd></div>
   {{if .License}}<div><dt class="text-muted-foreground">License</dt><dd>{{.License}}</dd></div>{{end}}
   {{if .Compatibility}}<div class="col-span-2"><dt class="text-muted-foreground">Compatibility</dt><dd>{{.Compatibility}}</dd></div>{{end}}
 </dl>

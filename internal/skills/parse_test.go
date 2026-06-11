@@ -307,6 +307,38 @@ body
 	}
 }
 
+func TestParseFile_modelTier(t *testing.T) {
+	old := ModelValidator
+	t.Cleanup(func() { ModelValidator = old })
+	ModelValidator = func(s string) bool { return s == "high" }
+
+	dir := t.TempDir()
+	path := writeSkill(t, dir, "tiered", `---
+name: tiered
+description: Skill with a model tier.
+metadata:
+  scrutineer.model: high
+---
+
+body
+`)
+	p, err := ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Model != "high" {
+		t.Errorf("model = %q, want high", p.Model)
+	}
+
+	m, err := p.ToModel("local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Model != "high" {
+		t.Errorf("db.Skill.Model = %q, want high", m.Model)
+	}
+}
+
 func TestParseFile_modelInvalidIgnoredWithWarning(t *testing.T) {
 	old := ModelValidator
 	t.Cleanup(func() { ModelValidator = old })

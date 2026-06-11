@@ -36,10 +36,39 @@ func TestSettingsShow_rendersRunnerControls(t *testing.T) {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
 	body := w.Body.String()
-	for _, want := range []string{`name="concurrency"`, `value="9"`, `name="max_turns"`, "Default turns"} {
+	for _, want := range []string{`name="tier" value="mid"`, `name="concurrency"`, `value="9"`, `name="max_turns"`, "Default turns"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("settings page missing %q", want)
 		}
+	}
+}
+
+func TestSettingsUpdateModelTier(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	w := postForm(t, s, "/settings/model", url.Values{
+		"tier":  {ModelTierMid},
+		"model": {"claude-sonnet-4-6"},
+	})
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	if got := ModelForTier(s.DB, ModelTierMid); got != "claude-sonnet-4-6" {
+		t.Errorf("mid tier model = %q, want claude-sonnet-4-6", got)
+	}
+
+	for _, form := range []url.Values{
+		{"tier": {"unknown"}, "model": {"claude-sonnet-4-6"}},
+		{"tier": {ModelTierMid}, "model": {"not-a-model"}},
+	} {
+		w := postForm(t, s, "/settings/model", form)
+		if w.Code != http.StatusUnprocessableEntity {
+			t.Errorf("form=%v: status %d, want 422", form, w.Code)
+		}
+	}
+	if got := ModelForTier(s.DB, ModelTierMid); got != "claude-sonnet-4-6" {
+		t.Errorf("invalid update clobbered mid tier = %q", got)
 	}
 }
 

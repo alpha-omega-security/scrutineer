@@ -98,7 +98,8 @@ func (s *Server) settingsShow(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "settings.html", map[string]any{
 		"Themes":           config.Themes,
 		"Models":           Models,
-		"DefaultModel":     DefaultModel(),
+		"ModelTiers":       ModelTiers,
+		"TierModels":       ModelTierValues(s.DB),
 		"Efforts":          Efforts,
 		"DefaultEffort":    DefaultEffort(),
 		"ColorScheme":      resolveColorScheme(r),
@@ -174,6 +175,20 @@ func (s *Server) settingsUpdateModel(w http.ResponseWriter, r *http.Request) {
 	model := r.FormValue("model")
 	if !ValidModel(model) {
 		http.Error(w, "unknown model", http.StatusUnprocessableEntity)
+		return
+	}
+	tier := r.FormValue("tier")
+	if tier != "" {
+		if !ValidModelTier(tier) {
+			http.Error(w, "unknown model tier", http.StatusUnprocessableEntity)
+			return
+		}
+		if err := db.SetSetting(s.DB, modelTierSettingKey(tier), model); err != nil {
+			http.Error(w, "could not save setting", http.StatusInternalServerError)
+			return
+		}
+		setFlash(w, Flash{Category: successKey, Title: "Model tier updated"})
+		s.redirect(w, r, "/settings")
 		return
 	}
 	SetDefaultModel(model)

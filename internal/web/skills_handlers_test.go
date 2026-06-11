@@ -163,6 +163,7 @@ func TestParseSkillModel(t *testing.T) {
 		{"", ""},
 		{"   ", ""},
 		{"garbage", ""},
+		{ModelTierHigh, ModelTierHigh},
 		{"claude-sonnet-4-6", "claude-sonnet-4-6"},
 		{" claude-opus-4-7 ", "claude-opus-4-7"},
 	}
