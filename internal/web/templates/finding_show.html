@@ -310,6 +310,19 @@ git commit -m "fix: {{$f.Title}}"</pre>
       {{if $p.Notes}}
         <div class="text-xs text-muted-foreground border-l-2 pl-3 mt-1">{{$p.Notes}}</div>
       {{end}}
+      {{if $f.BreakingChange}}
+        <div class="mt-3 border rounded p-3 text-sm">
+          <div class="flex items-center justify-between gap-2">
+            <div class="flex items-center gap-2">
+              <span class="text-xs text-muted-foreground uppercase">Breaking change</span>
+              <span class="font-medium">{{$f.BreakingChange}}</span>
+            </div>
+          </div>
+          {{if $f.BreakingChangeRationale}}
+            <pre class="whitespace-pre-wrap font-sans text-xs text-muted-foreground mt-2">{{$f.BreakingChangeRationale}}</pre>
+          {{end}}
+        </div>
+      {{end}}
     </section>
   </details>
   {{end}}

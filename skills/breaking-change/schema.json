@@ -1,0 +1,49 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "breaking-change report",
+  "type": "object",
+  "required": ["verdict", "rationale"],
+  "additionalProperties": false,
+  "properties": {
+    "verdict": {
+      "type": "string",
+      "enum": ["breaking", "non_breaking", "unknown"],
+      "description": "Static breakage call from analysing the unified-diff fix against typical dependent usage. Empirical test-running is not part of this verdict."
+    },
+    "rationale": {
+      "type": "string",
+      "description": "One paragraph of justification, citing the diff lines and naming each affected dependent."
+    },
+    "api_changes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["kind", "symbol"],
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "type": "string",
+            "enum": ["signature_change", "removed_export", "tightened_contract", "behavioural_change", "addition"]
+          },
+          "symbol":     { "type": "string" },
+          "before":     { "type": "string" },
+          "after":      { "type": "string" },
+          "diff_lines": { "type": "string" }
+        }
+      }
+    },
+    "affected_dependents": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name"],
+        "additionalProperties": false,
+        "properties": {
+          "name":     { "type": "string" },
+          "registry": { "type": "string" },
+          "reason":   { "type": "string" }
+        }
+      }
+    }
+  }
+}

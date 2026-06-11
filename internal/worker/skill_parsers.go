@@ -470,6 +470,82 @@ func (w *Worker) parseVerifyOutput(scan *db.Scan, report string, emit func(Event
 	return nil
 }
 
+// parseBreakingChangeOutput records the breaking-change verdict on a
+// finding from a static analysis of the suggested-fix diff. The verdict
+// goes into Finding.BreakingChange (with the change recorded in finding
+// history via WriteFindingField); the prose rationale and the
+// affected_dependents list become the human-readable body in
+// Finding.BreakingChangeRationale.
+func (w *Worker) parseBreakingChangeOutput(scan *db.Scan, report string, emit func(Event)) error {
+	if scan.FindingID == nil {
+		return fmt.Errorf("breaking-change scan has no finding_id")
+	}
+	var result struct {
+		Verdict    string `json:"verdict"`
+		Rationale  string `json:"rationale"`
+		APIChanges []struct {
+			Kind      string `json:"kind"`
+			Symbol    string `json:"symbol"`
+			Before    string `json:"before"`
+			After     string `json:"after"`
+			DiffLines string `json:"diff_lines"`
+		} `json:"api_changes"`
+		AffectedDependents []struct {
+			Name     string `json:"name"`
+			Registry string `json:"registry"`
+			Reason   string `json:"reason"`
+		} `json:"affected_dependents"`
+	}
+	if err := json.Unmarshal([]byte(report), &result); err != nil {
+		return fmt.Errorf("parse breaking-change report: %w", err)
+	}
+	switch result.Verdict {
+	case "breaking", "non_breaking", "unknown":
+	default:
+		return fmt.Errorf("breaking-change verdict %q is not one of breaking|non_breaking|unknown", result.Verdict)
+	}
+
+	if err := db.WriteFindingField(w.DB, *scan.FindingID, "breaking_change", result.Verdict, db.SourceModel, "breaking-change"); err != nil {
+		return fmt.Errorf("update breaking_change: %w", err)
+	}
+
+	var b strings.Builder
+	if reason := strings.TrimSpace(result.Rationale); reason != "" {
+		b.WriteString(reason)
+		b.WriteString("\n")
+	}
+	if len(result.AffectedDependents) > 0 {
+		b.WriteString("\nAffected dependents:\n")
+		for _, d := range result.AffectedDependents {
+			name := d.Name
+			if d.Registry != "" {
+				name = d.Registry + ":" + name
+			}
+			if r := strings.TrimSpace(d.Reason); r != "" {
+				fmt.Fprintf(&b, "- %s — %s\n", name, r)
+			} else {
+				fmt.Fprintf(&b, "- %s\n", name)
+			}
+		}
+	}
+	if len(result.APIChanges) > 0 {
+		b.WriteString("\nAPI changes:\n")
+		for _, c := range result.APIChanges {
+			fmt.Fprintf(&b, "- %s %s", c.Kind, c.Symbol)
+			if c.DiffLines != "" {
+				fmt.Fprintf(&b, " (%s)", c.DiffLines)
+			}
+			b.WriteString("\n")
+		}
+	}
+	if err := db.WriteFindingField(w.DB, *scan.FindingID, "breaking_change_rationale", strings.TrimRight(b.String(), "\n"), db.SourceModel, "breaking-change"); err != nil {
+		return fmt.Errorf("update breaking_change_rationale: %w", err)
+	}
+
+	emit(Event{Kind: KindText, Text: "finding " + fmt.Sprint(*scan.FindingID) + " -> " + result.Verdict})
+	return nil
+}
+
 func (w *Worker) parseFindingDedupOutput(scan *db.Scan, report string, emit func(Event)) error {
 	var result struct {
 		Duplicates []struct {

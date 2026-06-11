@@ -148,6 +148,10 @@ func findingFieldAccessor(f *Finding, field string) (current, column string, err
 		return f.SuggestedFix, "suggested_fix", nil
 	case "suggested_fix_commit":
 		return f.SuggestedFixCommit, "suggested_fix_commit", nil
+	case "breaking_change":
+		return f.BreakingChange, "breaking_change", nil
+	case "breaking_change_rationale":
+		return f.BreakingChangeRationale, "breaking_change_rationale", nil
 	default:
 		return "", "", fmt.Errorf("field %q is not editable", field)
 	}

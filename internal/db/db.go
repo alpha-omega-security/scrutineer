@@ -461,6 +461,16 @@ type Finding struct {
 	SuggestedFix       string `gorm:"type:text"`
 	SuggestedFixCommit string
 
+	// BreakingChange and BreakingChangeRationale are the verdict of the
+	// breaking-change skill, which analyses the SuggestedFix diff for
+	// public-API changes that would break top dependents. Empty when
+	// the skill has not run; one of `breaking`, `non_breaking`, or
+	// `unknown` once it has. Rationale is the prose the analyst reads,
+	// including a bullet list of affected dependents when the verdict
+	// is `breaking`.
+	BreakingChange          string `gorm:"index"`
+	BreakingChangeRationale string `gorm:"type:text"`
+
 	// Per-step prose from the six-step audit checklist.
 	Trace      string `gorm:"type:text"`
 	Boundary   string `gorm:"type:text"`

@@ -213,6 +213,8 @@ func (w *Worker) parseSkillOutput(skill *db.Skill, scan *db.Scan, report string,
 		return w.parseFindingDedupOutput(scan, report, emit)
 	case "verify":
 		return w.parseVerifyOutput(scan, report, emit)
+	case "breaking_change":
+		return w.parseBreakingChangeOutput(scan, report, emit)
 	case "subprojects":
 		return w.parseSubprojectsOutput(scan, report, emit)
 	case "repo_overview":

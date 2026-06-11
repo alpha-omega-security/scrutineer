@@ -307,6 +307,58 @@ func TestParseVerify_inconclusiveLeavesStatus(t *testing.T) {
 	}
 }
 
+func TestParseBreakingChange_writesVerdictAndRationale(t *testing.T) {
+	report := `{
+		"verdict": "breaking",
+		"rationale": "removes the public Init() return type.",
+		"api_changes": [{"kind":"signature_change","symbol":"foo.Init","diff_lines":"foo.go:10-12"}],
+		"affected_dependents": [{"name":"@scope/cli","registry":"npm","reason":"calls Init directly"}]
+	}`
+	f, gdb := runSkillWithFinding(t, "breaking_change", report, db.FindingTriaged)
+	if f.BreakingChange != "breaking" {
+		t.Errorf("verdict = %q, want breaking", f.BreakingChange)
+	}
+	if !strings.Contains(f.BreakingChangeRationale, "Affected dependents:") {
+		t.Errorf("rationale missing dependent list: %q", f.BreakingChangeRationale)
+	}
+	if !strings.Contains(f.BreakingChangeRationale, "API changes:") {
+		t.Errorf("rationale missing API changes: %q", f.BreakingChangeRationale)
+	}
+	var hist db.FindingHistory
+	if err := gdb.Where("finding_id = ? AND field = ?", f.ID, "breaking_change").First(&hist).Error; err != nil {
+		t.Fatalf("missing breaking_change history: %v", err)
+	}
+	if hist.By != "breaking-change" || hist.NewValue != "breaking" {
+		t.Errorf("history = %+v", hist)
+	}
+}
+
+func TestParseBreakingChange_nonBreakingNoListSection(t *testing.T) {
+	report := `{"verdict":"non_breaking","rationale":"diff is a pure addition of an optional argument."}`
+	f, _ := runSkillWithFinding(t, "breaking_change", report, db.FindingTriaged)
+	if f.BreakingChange != "non_breaking" {
+		t.Errorf("verdict = %q", f.BreakingChange)
+	}
+	if strings.Contains(f.BreakingChangeRationale, "Affected dependents:") {
+		t.Errorf("rationale should not include empty dependent list: %q", f.BreakingChangeRationale)
+	}
+}
+
+func TestParseBreakingChange_rejectsUnknownVerdict(t *testing.T) {
+	w := &Worker{}
+	scan := &db.Scan{}
+	err := w.parseBreakingChangeOutput(scan, `{"verdict":"breaking","rationale":"x"}`, func(Event) {})
+	if err == nil || !strings.Contains(err.Error(), "finding_id") {
+		t.Fatalf("missing-finding error = %v", err)
+	}
+	fid := uint(1)
+	scan.FindingID = &fid
+	err = w.parseBreakingChangeOutput(scan, `{"verdict":"maybe","rationale":"x"}`, func(Event) {})
+	if err == nil || !strings.Contains(err.Error(), "verdict") {
+		t.Errorf("unknown-verdict error = %v", err)
+	}
+}
+
 func TestParseFindingDedup_marksDuplicatesWithHistoryAndNote(t *testing.T) {
 	gdb, err := db.Open(filepath.Join(t.TempDir(), "dedup.db"))
 	if err != nil {
