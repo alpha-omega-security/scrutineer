@@ -1506,9 +1506,11 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 	s.DB.Joins("JOIN repository_maintainers ON repository_maintainers.maintainer_id = maintainers.id").
 		Where("repository_maintainers.repository_id = ?", repo.ID).Find(&maintainers)
 
+	showAllDeps := r.URL.Query().Get("deps") == "all"
 	var rawDeps []db.Dependency
 	s.DB.Where("repository_id = ?", repo.ID).Order("ecosystem, name, manifest_kind desc").Find(&rawDeps)
-	deps := groupDeps(rawDeps)
+	visibleDeps, hiddenDeps := filterRepoDeps(rawDeps, showAllDeps)
+	deps := groupDeps(visibleDeps)
 
 	var depsCommit string
 	if len(deps) > 0 {
@@ -1585,6 +1587,7 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 		"DepsCommit":      depsCommit,
 		"Deps":            deps, "Pkgs": pkgs, "Dependents": dependents, "Advisories": advisories, "Maintainers": maintainers, "ThreatModel": threatModel,
 		"KnownURLs": knownURLs, "KnownPURLs": knownPURLs,
+		"ShowAllDeps": showAllDeps, "HiddenDeps": hiddenDeps,
 		"Skills":        activeSkills,
 		"Subprojects":   subprojects,
 		"SubScanCount":  subScanCount,
@@ -1959,10 +1962,8 @@ func groupDeps(deps []db.Dependency) []DepGroup {
 			order = append(order, k)
 		}
 		g.Manifests = append(g.Manifests, d.ManifestPath)
-		// Prefer lockfile version (exact) over manifest (range)
-		if d.ManifestKind == "lockfile" && g.ManifestKind != "lockfile" {
-			g.Requirement = d.Requirement
-			g.ManifestKind = d.ManifestKind
+		if preferDependencyForGroup(d, g.Dependency) {
+			g.Dependency = d
 		}
 	}
 	out := make([]DepGroup, 0, len(order))
@@ -1970,6 +1971,30 @@ func groupDeps(deps []db.Dependency) []DepGroup {
 		out = append(out, *m[k])
 	}
 	return out
+}
+
+func filterRepoDeps(deps []db.Dependency, includeNonRuntime bool) ([]db.Dependency, int) {
+	if includeNonRuntime {
+		return deps, 0
+	}
+	out := make([]db.Dependency, 0, len(deps))
+	hidden := 0
+	for _, d := range deps {
+		if db.DependencyVisibleByDefault(d.DependencyType) {
+			out = append(out, d)
+		} else {
+			hidden++
+		}
+	}
+	return out, hidden
+}
+
+func preferDependencyForGroup(a, b db.Dependency) bool {
+	aRuntime, bRuntime := db.DependencyVisibleByDefault(a.DependencyType), db.DependencyVisibleByDefault(b.DependencyType)
+	if aRuntime != bRuntime {
+		return aRuntime
+	}
+	return a.ManifestKind == "lockfile" && b.ManifestKind != "lockfile"
 }
 
 func (s *Server) lookupKnownPURLs(deps []DepGroup) map[string]uint {

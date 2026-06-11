@@ -263,6 +263,7 @@ func (w *Worker) parseDependenciesOutput(scan *db.Scan, report string, emit func
 		if depType == "" {
 			depType = d.DependencyType
 		}
+		depType = db.NormalizeDependencyType(depType)
 		rows = append(rows, db.Dependency{
 			RepositoryID:   scan.RepositoryID,
 			Name:           d.Name,

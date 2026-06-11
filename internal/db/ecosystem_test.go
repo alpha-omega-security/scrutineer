@@ -45,6 +45,27 @@ func TestEcosystemType(t *testing.T) {
 	}
 }
 
+func TestNormalizeDependencyType(t *testing.T) {
+	cases := []struct {
+		raw, want string
+	}{
+		{"", DependencyRuntime},
+		{"direct", DependencyRuntime},
+		{"runtime", DependencyRuntime},
+		{"development", DependencyDev},
+		{"devDependencies", DependencyDev},
+		{"test_requires", DependencyTest},
+		{"build-requires", DependencyBuild},
+		{"configure_requires", DependencyBuild},
+		{"plugin", "plugin"},
+	}
+	for _, tc := range cases {
+		if got := NormalizeDependencyType(tc.raw); got != tc.want {
+			t.Errorf("NormalizeDependencyType(%q) = %q, want %q", tc.raw, got, tc.want)
+		}
+	}
+}
+
 // TestEcosystemKeyReconcilesSources guards the DependencyFindings join: it
 // matches a Dependency row to a Package row by the key ecosystemKey produces.
 // git-pkgs (Dependency) and ecosyste.ms (Package) spell some ecosystems
@@ -114,6 +135,38 @@ func TestDependencyFindingsPURLJoin(t *testing.T) {
 	}
 	if rows[0].Title != "path traversal" || rows[0].LibRepoURL != "https://example.com/mux" {
 		t.Errorf("unexpected row %+v", rows[0])
+	}
+}
+
+func TestDependencyFindingsIncludesNonRuntimeDependencies(t *testing.T) {
+	gdb, err := Open("file::memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqldb, _ := gdb.DB()
+	defer func() { _ = sqldb.Close() }()
+
+	app := Repository{URL: "https://example.com/app", Name: "app"}
+	lib := Repository{URL: "https://example.com/test-helper", Name: "test-helper"}
+	gdb.Create(&app)
+	gdb.Create(&lib)
+
+	gdb.Create(&Dependency{RepositoryID: app.ID, Name: "test-helper", Ecosystem: "npm", ManifestPath: "package.json", DependencyType: DependencyTest})
+	gdb.Create(&Package{RepositoryID: lib.ID, Name: "test-helper", Ecosystem: "npm"})
+
+	scan := Scan{RepositoryID: lib.ID, Kind: "skill", Status: ScanDone}
+	gdb.Create(&scan)
+	gdb.Create(&Finding{ScanID: scan.ID, RepositoryID: lib.ID, Title: "dev-only bug", Severity: "High", Status: FindingNew})
+
+	rows, err := DependencyFindings(gdb, app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows=%d want=1 for test-only dependency: %+v", len(rows), rows)
+	}
+	if rows[0].DependencyType != DependencyTest {
+		t.Fatalf("DependencyType = %q, want %q", rows[0].DependencyType, DependencyTest)
 	}
 }
 

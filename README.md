@@ -158,7 +158,7 @@ Each finding page has a notes section for recording triage reasoning and communi
 
 ## Exploring dependencies
 
-The Dependencies tab on a repo groups packages by name and shows all manifest files where each appears. The import button (arrow icon) next to a dependency resolves it to a repository URL via packages.ecosyste.ms and queues the full pipeline for it. Dependencies you've already imported show a link icon instead.
+The Dependencies tab on a repo groups packages by name and shows all manifest files where each appears. It shows runtime dependencies by default, with a toggle for test/build/dev rows. The import button (arrow icon) next to a dependency resolves it to a repository URL via packages.ecosyste.ms and queues the full pipeline for it. Dependencies you've already imported show a link icon instead.
 
 The same applies to the Dependents tab -- you can import any dependent's repository with one click.
 

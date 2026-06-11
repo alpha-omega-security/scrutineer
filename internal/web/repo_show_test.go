@@ -30,8 +30,13 @@ const threatModelReport = `{
 
 func getRepoPage(t *testing.T, s *Server, id uint) string {
 	t.Helper()
+	return getRepoPagePath(t, s, fmt.Sprintf("/repositories/%d", id))
+}
+
+func getRepoPagePath(t *testing.T, s *Server, path string) string {
+	t.Helper()
 	w := httptest.NewRecorder()
-	s.Handler().ServeHTTP(w, localReq("GET", fmt.Sprintf("/repositories/%d", id)))
+	s.Handler().ServeHTTP(w, localReq("GET", path))
 	if w.Code != 200 {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
@@ -148,6 +153,36 @@ func TestRepoShow_dependenciesTab_plainManifestWithoutDoneScan(t *testing.T) {
 	}
 	if !strings.Contains(body, "package.json") {
 		t.Errorf("expected manifest path to still render as text")
+	}
+}
+
+func TestRepoShow_dependenciesTab_hidesNonRuntimeByDefault(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/r", Name: "r"}
+	s.DB.Create(&repo)
+	s.DB.Create(&db.Dependency{RepositoryID: repo.ID, Name: "runtime-lib", Ecosystem: "npm",
+		DependencyType: db.DependencyRuntime, ManifestPath: "package.json", ManifestKind: "manifest"})
+	s.DB.Create(&db.Dependency{RepositoryID: repo.ID, Name: "test-helper", Ecosystem: "npm",
+		DependencyType: db.DependencyTest, ManifestPath: "package.json", ManifestKind: "manifest"})
+
+	body := getRepoPage(t, s, repo.ID)
+	if !strings.Contains(body, "runtime-lib") {
+		t.Errorf("runtime dependency should render in default view")
+	}
+	if strings.Contains(body, "test-helper") {
+		t.Errorf("test dependency should be hidden by default")
+	}
+	if !strings.Contains(body, "Include test/build/dev") {
+		t.Errorf("default view should render non-runtime toggle")
+	}
+
+	body = getRepoPagePath(t, s, fmt.Sprintf("/repositories/%d?deps=all", repo.ID))
+	if !strings.Contains(body, "test-helper") {
+		t.Errorf("deps=all should render non-runtime dependencies")
+	}
+	if !strings.Contains(body, "Runtime only") {
+		t.Errorf("deps=all should render runtime-only toggle")
 	}
 }
 
