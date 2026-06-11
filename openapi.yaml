@@ -559,7 +559,7 @@ paths:
 
   /findings/{id}/skills/{name}/run:
     post:
-      summary: Enqueue a finding-scoped skill (verify, patch, disclose)
+      summary: Enqueue a finding-scoped skill (verify, revalidate, patch, disclose)
       operationId: runFindingSkill
       description: |
         The authenticated scan's repository must own the finding. The scan

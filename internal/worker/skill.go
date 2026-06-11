@@ -216,6 +216,8 @@ func (w *Worker) parseSkillOutput(skill *db.Skill, scan *db.Scan, report string,
 		return w.parseFindingDedupOutput(scan, report, emit)
 	case "verify":
 		return w.parseVerifyOutput(scan, report, emit)
+	case "revalidate":
+		return w.parseRevalidateOutput(scan, report, emit)
 	case "breaking_change":
 		return w.parseBreakingChangeOutput(scan, report, emit)
 	case "mitigation":
@@ -314,6 +316,9 @@ func (w *Worker) parseFindingsOutput(skill *db.Skill, scan *db.Scan, report stri
 			return fmt.Errorf("save finding: %w", cerr)
 		}
 		created++
+		if w.OnFindingCreated != nil {
+			w.OnFindingCreated(scan, f)
+		}
 	}
 
 	missed := w.markNotObserved(scan, seenThisScan)

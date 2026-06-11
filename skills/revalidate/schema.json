@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "revalidate report",
+  "type": "object",
+  "required": ["verdict", "reason"],
+  "additionalProperties": false,
+  "properties": {
+    "verdict": {
+      "type": "string",
+      "enum": ["true_positive", "false_positive", "already_fixed", "uncertain"],
+      "description": "Cheap classifier outcome from prose plus git history. Never asserts true_positive from the reproduction running; this skill does not execute."
+    },
+    "reason": {
+      "type": "string",
+      "description": "One paragraph of justification, citing the file, line, and any commit SHA that supports the decision."
+    },
+    "adjusted_severity": {
+      "type": "string",
+      "enum": ["Critical", "High", "Medium", "Low"],
+      "description": "Optional severity override using the precondition rubric. Omit to leave the original severity in place."
+    },
+    "adjusted_severity_reason": {
+      "type": "string",
+      "description": "One line explaining the adjustment. Required when adjusted_severity is set."
+    }
+  },
+  "dependentRequired": {
+    "adjusted_severity": ["adjusted_severity_reason"],
+    "adjusted_severity_reason": ["adjusted_severity"]
+  }
+}

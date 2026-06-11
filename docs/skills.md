@@ -31,6 +31,7 @@ These ship in `skills/` and are loaded with `-skills ./skills`. The `triage` ski
 | `reachability` | Traces sinks already found in this app's dependencies through the app's own code to see which are reachable from its trust boundaries. |
 | `exposure` | For one (finding, dependent) pair, decides whether the dependent's published code actually reaches the upstream library finding. Emits one CSAF 2.0 product_status verdict so scrutineer can record affected vs not_affected and stamp the right VEX justification. |
 | `verify` | Re-checks one finding against current HEAD and records reproduces / fixed / cannot-reproduce. |
+| `revalidate` | Cheap, read-only classifier. Reads a finding's prose plus `git log` over its location and emits `true_positive`/`false_positive`/`already_fixed`/`uncertain`, with an optional adjusted severity. Auto-enqueued for High/Critical findings from `security-deep-dive` and for every imported finding so the human queue is pre-sorted. |
 | `breaking-change` | Static breaking-change check: reads the finding's suggested-fix diff and the top dependents list, identifies public API surface changes, and records a verdict (`breaking`/`non_breaking`/`unknown`) with a rationale and the list of affected dependents. Read-only; reasons from the diff and dependent metadata. |
 | `release-watch` | After a finding reaches `fixed`, lists the upstream's releases and looks for one that contains `fix_commit` (or whose tag matches `fix_version`). Records the release tag, URL, and timestamp on the finding so the lifecycle visibly ends at a shipped version rather than at the commit landing. The triage skill auto-enqueues this for every `fixed` finding on each repo run. |
 | `disclose` | Drafts a GHSA-shaped advisory (title, description, CVSS, CWEs, references) for one finding. |
@@ -133,6 +134,7 @@ Declaring `scrutineer.paths` replaces this skip list entirely: the skill sees on
 | `subprojects` | Subproject rows for monorepo scoping. |
 | `posture` | Posture tier and check results on the Repository row. |
 | `verify` | Verification result and miss-count update on one Finding. |
+| `revalidate` | Cheap classifier verdict (`true_positive`/`false_positive`/`already_fixed`/`uncertain`) appended as a Note on one Finding. `true_positive` transitions a `new` finding to `enriched`; an optional `adjusted_severity` overwrites the finding's severity with the change recorded in FindingHistory. |
 | `breaking_change` | `breaking_change` verdict and `breaking_change_rationale` prose on one Finding, with the verdict change recorded in FindingHistory. |
 | `patch` | Suggested-fix diff and base commit on one Finding. |
 | `mitigation` | Mitigation prose and optional semgrep rule on one Finding (`mitigation`, `mitigation_semgrep` columns), with the change recorded in FindingHistory. |
@@ -186,7 +188,7 @@ The worker then runs `claude -p "Use the {name} skill in this workspace"` with t
 }
 ```
 
-`finding_id` is only present for finding-scoped skills (`verify`, `breaking-change`, `disclose`, `patch`, `mitigate`, `release-watch`, `exposure`). `dependent_id` is only set on `exposure` runs and points to the dependent whose code is under audit; `./src` is then a copy of that dependent's clone, not of the finding's repository. `scan_ref` is empty when the scan is on the default branch. `scan_subpath` is set when the operator scoped the scan to a monorepo sub-folder; skills that walk source honour it, skills that query external APIs by repository URL ignore it. `fork_org` is absent unless `-fork-org` is configured. `packages` is a convenience copy of the package rows when the `packages` skill has already run; otherwise it is omitted.
+`finding_id` is only present for finding-scoped skills (`verify`, `revalidate`, `breaking-change`, `disclose`, `patch`, `mitigate`, `release-watch`, `exposure`). `dependent_id` is only set on `exposure` runs and points to the dependent whose code is under audit; `./src` is then a copy of that dependent's clone, not of the finding's repository. `scan_ref` is empty when the scan is on the default branch. `scan_subpath` is set when the operator scoped the scan to a monorepo sub-folder; skills that walk source honour it, skills that query external APIs by repository URL ignore it. `fork_org` is absent unless `-fork-org` is configured. `packages` is a convenience copy of the package rows when the `packages` skill has already run; otherwise it is omitted.
 
 ## schema.json
 

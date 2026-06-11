@@ -360,6 +360,72 @@ func TestParseBreakingChange_rejectsUnknownVerdict(t *testing.T) {
 	}
 }
 
+func TestParseRevalidate_truePositiveMovesNewToEnriched(t *testing.T) {
+	report := `{"verdict":"true_positive","reason":"sink at line 42 still reaches user input; git log shows no guard added"}`
+	f, gdb := runSkillWithFinding(t, "revalidate", report, db.FindingNew)
+	if f.Status != db.FindingEnriched {
+		t.Errorf("status = %s, want enriched", f.Status)
+	}
+	notes := findingNotes(gdb, f.ID)
+	if len(notes) == 0 || !strings.Contains(notes[0].Body, "true_positive") {
+		t.Errorf("notes missing revalidate verdict: %+v", notes)
+	}
+}
+
+func TestParseRevalidate_falsePositiveDoesNotAutoReject(t *testing.T) {
+	report := `{"verdict":"false_positive","reason":"the path lives under test/ fixtures; threat model disclaims it"}`
+	f, gdb := runSkillWithFinding(t, "revalidate", report, db.FindingNew)
+	if f.Status != db.FindingNew {
+		t.Errorf("status = %s, want new (analyst owns rejection)", f.Status)
+	}
+	notes := findingNotes(gdb, f.ID)
+	if len(notes) == 0 || !strings.Contains(notes[0].Body, "false_positive") {
+		t.Errorf("notes missing revalidate verdict: %+v", notes)
+	}
+}
+
+func TestParseRevalidate_uncertainLeavesStatus(t *testing.T) {
+	report := `{"verdict":"uncertain","reason":"validation prose is missing the trigger; cannot decide from git log alone"}`
+	f, _ := runSkillWithFinding(t, "revalidate", report, db.FindingNew)
+	if f.Status != db.FindingNew {
+		t.Errorf("status = %s, want new (unchanged)", f.Status)
+	}
+}
+
+func TestParseRevalidate_adjustedSeverityWritesFieldAndHistory(t *testing.T) {
+	report := `{"verdict":"true_positive","reason":"sink still live","adjusted_severity":"Medium","adjusted_severity_reason":"requires authenticated session"}`
+	f, gdb := runSkillWithFinding(t, "revalidate", report, db.FindingNew)
+	if f.Severity != "Medium" {
+		t.Errorf("severity = %s, want Medium (the adjusted value)", f.Severity)
+	}
+	var hist db.FindingHistory
+	if err := gdb.Where("finding_id = ? AND field = ?", f.ID, "severity").First(&hist).Error; err != nil {
+		t.Fatalf("missing severity history row: %v", err)
+	}
+	if hist.By != "revalidate" || hist.NewValue != "Medium" {
+		t.Errorf("history = %+v", hist)
+	}
+	notes := findingNotes(gdb, f.ID)
+	if len(notes) == 0 || !strings.Contains(notes[0].Body, "-> Medium") {
+		t.Errorf("note missing severity transition: %+v", notes)
+	}
+}
+
+func TestParseRevalidate_rejectsUnknownVerdict(t *testing.T) {
+	w := &Worker{}
+	scan := &db.Scan{}
+	err := w.parseRevalidateOutput(scan, `{"verdict":"true_positive","reason":"x"}`, func(Event) {})
+	if err == nil || !strings.Contains(err.Error(), "finding_id") {
+		t.Fatalf("missing-finding error = %v", err)
+	}
+	fid := uint(1)
+	scan.FindingID = &fid
+	err = w.parseRevalidateOutput(scan, `{"verdict":"banana","reason":"x"}`, func(Event) {})
+	if err == nil || !strings.Contains(err.Error(), "verdict") {
+		t.Errorf("unknown-verdict error = %v", err)
+	}
+}
+
 func TestParseMitigation_writesGuidanceAndRule(t *testing.T) {
 	report := `{
 		"guidance": "## Workarounds\n\nDisable the eval flag.\n\n## Detection\n\nWatch for stack frames matching foo.eval.",

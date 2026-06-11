@@ -228,8 +228,12 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *work
 	if _, err := getCSAFSchema(); err != nil {
 		return nil, fmt.Errorf("load csaf schema: %w", err)
 	}
-	return &Server{DB: gdb, Queue: q, Log: log, Broker: broker, Worker: w, tmpl: t,
-		resolvePURL: resolvePURLRepo, listBranches: worker.ListRemoteBranches}, nil
+	s := &Server{DB: gdb, Queue: q, Log: log, Broker: broker, Worker: w, tmpl: t,
+		resolvePURL: resolvePURLRepo, listBranches: worker.ListRemoteBranches}
+	if w != nil {
+		w.OnFindingCreated = s.autoEnqueueRevalidate
+	}
+	return s, nil
 }
 
 func (s *Server) Handler() http.Handler {

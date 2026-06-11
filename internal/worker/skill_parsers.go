@@ -660,6 +660,85 @@ func (w *Worker) parseReleaseWatchOutput(scan *db.Scan, report string, emit func
 	return nil
 }
 
+// parseRevalidateOutput records the cheap classifier verdict for a
+// finding. The verdict and reason become a FindingNote; an adjusted
+// severity overwrites the finding's severity (with the change recorded
+// in finding history via WriteFindingField); status transitions
+// new -> enriched only on true_positive. Rejection of false positives
+// stays a human act, so false_positive does not transition status.
+func (w *Worker) parseRevalidateOutput(scan *db.Scan, report string, emit func(Event)) error {
+	if scan.FindingID == nil {
+		return fmt.Errorf("revalidate scan has no finding_id")
+	}
+	var result struct {
+		Verdict                string `json:"verdict"`
+		Reason                 string `json:"reason"`
+		AdjustedSeverity       string `json:"adjusted_severity"`
+		AdjustedSeverityReason string `json:"adjusted_severity_reason"`
+	}
+	if err := json.Unmarshal([]byte(report), &result); err != nil {
+		return fmt.Errorf("parse revalidate report: %w", err)
+	}
+	switch result.Verdict {
+	case "true_positive", "false_positive", "already_fixed", "uncertain":
+	default:
+		return fmt.Errorf("revalidate verdict %q is not one of true_positive|false_positive|already_fixed|uncertain", result.Verdict)
+	}
+	var f db.Finding
+	if err := w.DB.First(&f, *scan.FindingID).Error; err != nil {
+		return fmt.Errorf("load finding %d: %w", *scan.FindingID, err)
+	}
+
+	// Cache the verdict on the finding so the audit queue can filter
+	// without scanning finding_notes (#362). Written before the status
+	// transition so a true_positive promotion sits on top of the verdict
+	// row in finding history.
+	if err := db.WriteFindingField(w.DB, f.ID, "last_revalidate_verdict", result.Verdict, db.SourceModel, "revalidate"); err != nil {
+		return fmt.Errorf("update last_revalidate_verdict: %w", err)
+	}
+
+	// Status transition: only true_positive promotes new -> enriched.
+	// false_positive does not auto-reject; the analyst owns rejection.
+	if result.Verdict == "true_positive" && f.Status == db.FindingNew {
+		if err := db.WriteFindingField(w.DB, f.ID, "status", string(db.FindingEnriched), db.SourceModel, "revalidate"); err != nil {
+			return fmt.Errorf("update status: %w", err)
+		}
+	}
+
+	// Severity adjustment, with history. WriteFindingField is a no-op
+	// when the value is unchanged, so an "adjusted" severity that
+	// matches the original leaves the audit trail clean.
+	if result.AdjustedSeverity != "" {
+		switch result.AdjustedSeverity {
+		case "Critical", "High", "Medium", "Low":
+		default:
+			return fmt.Errorf("revalidate adjusted_severity %q is not one of Critical|High|Medium|Low", result.AdjustedSeverity)
+		}
+		if err := db.WriteFindingField(w.DB, f.ID, "severity", result.AdjustedSeverity, db.SourceModel, "revalidate"); err != nil {
+			return fmt.Errorf("update severity: %w", err)
+		}
+	}
+
+	var b strings.Builder
+	fmt.Fprintf(&b, "revalidate: %s\n", result.Verdict)
+	if reason := strings.TrimSpace(result.Reason); reason != "" {
+		fmt.Fprintf(&b, "\n%s\n", reason)
+	}
+	if result.AdjustedSeverity != "" {
+		fmt.Fprintf(&b, "\nseverity %s -> %s", f.Severity, result.AdjustedSeverity)
+		if r := strings.TrimSpace(result.AdjustedSeverityReason); r != "" {
+			fmt.Fprintf(&b, ": %s", r)
+		}
+		b.WriteString("\n")
+	}
+	if _, err := db.AddFindingNote(w.DB, f.ID, b.String(), "revalidate"); err != nil {
+		return fmt.Errorf("record revalidate note: %w", err)
+	}
+
+	emit(Event{Kind: KindText, Text: "finding " + fmt.Sprint(f.ID) + " -> " + result.Verdict})
+	return nil
+}
+
 func (w *Worker) parseFindingDedupOutput(scan *db.Scan, report string, emit func(Event)) error {
 	var result struct {
 		Duplicates []struct {

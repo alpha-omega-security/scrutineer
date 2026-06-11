@@ -108,6 +108,7 @@ When a repo is added, the `triage` skill is enqueued. Its SKILL.md lists the ski
 | `security-deep-dive` | The model-backed audit producing structured findings |
 | `finding-dedup` | Compares open findings and marks overlapping reports as duplicates |
 | `verify` | Re-checks one finding against current HEAD; records reproduces / fixed / can't-reproduce |
+| `revalidate` | Cheap read-only classifier (prose + `git log`, no PoC execution) that emits true / false positive / already-fixed / uncertain; auto-enqueued for High/Critical from `security-deep-dive` and for every imported finding |
 | `breaking-change` | Static breaking-change check on the suggested-fix diff; records `breaking`/`non_breaking`/`unknown` with rationale and the affected dependents |
 | `release-watch` | After a finding reaches `fixed`, watches the upstream for a release containing the fix commit; records release tag, URL, and timestamp on the finding |
 | `disclose` | Drafts a GHSA-shaped advisory (title, description, CVSS, CWEs, references) for one finding |

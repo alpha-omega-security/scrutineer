@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -239,6 +240,12 @@ func (s *Server) importFindings(scan *db.Scan, res ingest.Result) (created []uin
 			continue
 		}
 		created = append(created, f.ID)
+		// Imported findings carry an external tool's unvalidated severity
+		// claim, so revalidate runs over every newly-imported finding
+		// regardless of severity (not just High/Critical, as it does for
+		// security-deep-dive output).
+		fcopy := f
+		s.enqueueRevalidateForFinding(context.Background(), &fcopy)
 	}
 	return created, observed
 }

@@ -89,6 +89,7 @@ var OutputKinds = map[string]bool{
 	"dependencies":    true,
 	"finding_dedup":   true,
 	"verify":          true,
+	"revalidate":      true,
 	"breaking_change": true,
 	"mitigation":      true,
 	"release_watch":   true,

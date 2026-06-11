@@ -45,14 +45,20 @@ const DefaultScanTimeout = time.Hour
 const defaultLogFlushInterval = 2 * time.Second
 
 type Worker struct {
-	DB          *gorm.DB
-	Log         *slog.Logger
-	DataDir     string // workspace root for clones
-	APIBase     string // base URL for the scrutineer skill API (http://host:port/api)
-	ForkOrg     string // github org the fork skill targets; empty disables it
-	Runner      SkillRunner
-	OnEvent     func(scanID, repoID uint, name, data string) // optional SSE bridge
-	ScanTimeout time.Duration
+	DB      *gorm.DB
+	Log     *slog.Logger
+	DataDir string // workspace root for clones
+	APIBase string // base URL for the scrutineer skill API (http://host:port/api)
+	ForkOrg string // github org the fork skill targets; empty disables it
+	Runner  SkillRunner
+	OnEvent func(scanID, repoID uint, name, data string) // optional SSE bridge
+	// OnFindingCreated, when non-nil, is called after a findings-emitting
+	// scan persists a fresh Finding row. The web layer wires it up to
+	// auto-enqueue a revalidate scan over High/Critical findings from
+	// security-deep-dive. The worker has no queue access of its own;
+	// this callback is the seam.
+	OnFindingCreated func(scan *db.Scan, finding *db.Finding)
+	ScanTimeout      time.Duration
 	// SchemaStrict makes a report.json that fails validation against the
 	// skill's schema.json fail the scan. When false the validator output
 	// is emitted to the log and the kind-specific parser still runs.
