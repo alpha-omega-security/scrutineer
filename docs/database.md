@@ -235,6 +235,7 @@ Package dependencies discovered by the `dependencies` skill. Replaced wholesale 
 | p_url | text | Package URL. |
 | requirement | text | Version constraint from the manifest. |
 | requirement_unresolved | boolean | True when `requirement` still contains an unresolved manifest expression such as `${project.version}`. |
+| requirement_resolution | text | Resolver tag for `requirement`, e.g. `resolved`, `unresolved_property`, `unresolved_env`, `unresolved_parent`, `unresolved_profile_gated`, or `unresolved_missing`. |
 | dependency_type | text | Normalised dependency phase: `runtime`, `dev`, `test`, `build`, or an unrecognised source value kept verbatim. |
 | manifest_path | text | Which file declared this dependency. |
 | manifest_kind | text | `manifest` or `lockfile`. |

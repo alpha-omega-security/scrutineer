@@ -5,6 +5,7 @@ go 1.26
 toolchain go1.26.4
 
 require (
+	github.com/git-pkgs/pom v0.1.4
 	github.com/git-pkgs/purl v0.1.12
 	github.com/git-pkgs/sbom v0.1.2
 	github.com/glebarez/sqlite v1.11.0

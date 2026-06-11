@@ -134,6 +134,7 @@ func (s *Server) apiListDependencies(w http.ResponseWriter, r *http.Request) {
 			"purl":                   d.PURL,
 			"requirement":            d.Requirement,
 			"requirement_unresolved": d.RequirementUnresolved,
+			"requirement_resolution": d.RequirementResolution,
 			"dependency_type":        d.DependencyType,
 			"manifest_path":          d.ManifestPath,
 			"manifest_kind":          d.ManifestKind,
