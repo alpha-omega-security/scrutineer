@@ -17,6 +17,14 @@
           "ecosystem":       { "type": "string" },
           "purl":            { "type": "string" },
           "requirement":     { "type": "string" },
+          "requirement_unresolved": {
+            "type": "boolean",
+            "description": "True when the requirement still contains an unresolved manifest expression such as ${missing.version}."
+          },
+          "requirement_resolution": {
+            "type": "string",
+            "description": "Resolver tag explaining how requirement was determined, such as resolved, unresolved_property, unresolved_env, unresolved_parent, unresolved_profile_gated, or unresolved_missing."
+          },
           "dependency_type": {
             "type": "string",
             "description": "Dependency phase. Scrutineer normalizes common aliases to runtime, dev, test, or build."

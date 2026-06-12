@@ -364,7 +364,7 @@
           <tr>
             <td class="whitespace-normal font-medium"><code class="text-sm break-all">{{.Name}}</code></td>
             <td><span class="badge-outline">{{.Ecosystem}}</span></td>
-            <td class="text-muted-foreground whitespace-normal break-all">{{if .Requirement}}{{.Requirement}}{{else}}-{{end}}</td>
+            <td class="text-muted-foreground whitespace-normal break-all">{{if .Requirement}}{{.Requirement}}{{else}}-{{end}}{{if .RequirementUnresolved}} <span class="badge-outline" data-tooltip="{{if .RequirementResolution}}{{.RequirementResolution}}{{else}}Requirement contains an unresolved manifest expression{{end}}">unresolved</span>{{end}}</td>
             <td class="text-muted-foreground">{{.DependencyType}}</td>
             <td class="whitespace-normal text-muted-foreground text-xs">{{range $i, $m := .Manifests}}{{if $i}}, {{end}}{{$u := locurl $.Repo.ID $.DepsCommit $m}}{{if $u}}<a href="{{$u}}" class="hover:underline break-all">{{$m}}</a>{{else}}{{$m}}{{end}}{{end}}</td>
             <td>{{if .PURL}}{{$rid := lookup $.KnownPURLs .PURL}}{{if $rid}}<a href="/repositories/{{$rid}}" class="btn-sm-ghost" aria-label="View repository" data-tooltip="View repository"><i data-lucide="external-link"></i></a>{{else}}<form method="post" action="/dependencies/{{.ID}}/scan" hx-post="/dependencies/{{.ID}}/scan" hx-swap="none"><button type="submit" class="btn-sm-ghost" aria-label="Import repository" data-tooltip="Import repository"><i data-lucide="import"></i></button></form>{{end}}{{end}}</td>

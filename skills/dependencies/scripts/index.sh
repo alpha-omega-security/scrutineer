@@ -19,10 +19,14 @@ git fetch --unshallow --quiet >/dev/null 2>&1 || true
 git-pkgs init --no-hooks >/dev/null
 
 # Wrap the array in a top-level object so the output matches schema.json.
-# Older git-pkgs builds can emit null or nothing when they find no manifests;
-# both mean "no dependencies" here, not permission to infer rows by hand.
-git-pkgs list --format json | python3 -c 'import json, sys
-raw = sys.stdin.read().strip()
+tmp="$(mktemp)"
+trap 'rm -f "$tmp"' EXIT
+git-pkgs list --format json > "$tmp"
+python3 - "$tmp" <<'PY'
+import json
+import sys
+
+raw = open(sys.argv[1], encoding="utf-8").read().strip()
 if raw == "" or raw == "null":
     deps = []
 else:
@@ -31,6 +35,7 @@ if deps is None:
     deps = []
 if not isinstance(deps, list):
     raise SystemExit(f"git-pkgs list returned {type(deps).__name__}, want array")
+
 json.dump({"dependencies": deps}, sys.stdout, separators=(",", ":"))
 sys.stdout.write("\n")
-'
+PY

@@ -1,10 +1,15 @@
 package worker
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
+
+	mavenpom "github.com/git-pkgs/pom"
 
 	"scrutineer/internal/db"
 )
@@ -240,20 +245,12 @@ func (w *Worker) parseDependentsOutput(scan *db.Scan, report string, emit func(E
 // (name, ecosystem, manifest_path) tuple.
 func (w *Worker) parseDependenciesOutput(scan *db.Scan, report string, emit func(Event)) error {
 	var result struct {
-		Dependencies []struct {
-			Name           string `json:"name"`
-			Ecosystem      string `json:"ecosystem"`
-			PURL           string `json:"purl"`
-			Requirement    string `json:"requirement"`
-			Type           string `json:"type"`
-			DependencyType string `json:"dependency_type"`
-			ManifestPath   string `json:"manifest_path"`
-			ManifestKind   string `json:"manifest_kind"`
-		} `json:"dependencies"`
+		Dependencies []dependencyReportRow `json:"dependencies"`
 	}
 	if err := json.Unmarshal([]byte(report), &result); err != nil {
 		return fmt.Errorf("parse dependencies: %w", err)
 	}
+	w.resolveMavenDependencyRequirements(scan, result.Dependencies, emit)
 	if err := w.DB.Where("repository_id = ?", scan.RepositoryID).Delete(&db.Dependency{}).Error; err != nil {
 		return fmt.Errorf("delete old dependencies: %w", err)
 	}
@@ -265,14 +262,16 @@ func (w *Worker) parseDependenciesOutput(scan *db.Scan, report string, emit func
 		}
 		depType = db.NormalizeDependencyType(depType)
 		rows = append(rows, db.Dependency{
-			RepositoryID:   scan.RepositoryID,
-			Name:           d.Name,
-			Ecosystem:      db.EcosystemType(d.PURL, d.Ecosystem),
-			PURL:           d.PURL,
-			Requirement:    d.Requirement,
-			DependencyType: depType,
-			ManifestPath:   d.ManifestPath,
-			ManifestKind:   d.ManifestKind,
+			RepositoryID:          scan.RepositoryID,
+			Name:                  d.Name,
+			Ecosystem:             db.EcosystemType(d.PURL, d.Ecosystem),
+			PURL:                  d.PURL,
+			Requirement:           d.Requirement,
+			RequirementUnresolved: d.RequirementUnresolved,
+			RequirementResolution: d.RequirementResolution,
+			DependencyType:        depType,
+			ManifestPath:          d.ManifestPath,
+			ManifestKind:          d.ManifestKind,
 		})
 	}
 	if len(rows) > 0 {
@@ -282,6 +281,180 @@ func (w *Worker) parseDependenciesOutput(scan *db.Scan, report string, emit func
 	}
 	emit(Event{Kind: KindText, Text: fmt.Sprintf("saved %d dependenc(ies)", len(rows))})
 	return nil
+}
+
+type dependencyReportRow struct {
+	Name                  string `json:"name"`
+	Ecosystem             string `json:"ecosystem"`
+	PURL                  string `json:"purl"`
+	Requirement           string `json:"requirement"`
+	RequirementUnresolved bool   `json:"requirement_unresolved"`
+	RequirementResolution string `json:"requirement_resolution"`
+	Type                  string `json:"type"`
+	DependencyType        string `json:"dependency_type"`
+	ManifestPath          string `json:"manifest_path"`
+	ManifestKind          string `json:"manifest_kind"`
+}
+
+func (w *Worker) resolveMavenDependencyRequirements(scan *db.Scan, deps []dependencyReportRow, emit func(Event)) {
+	srcRoot := filepath.Join(w.scanWorkRoot(scan), "src")
+	resolved := map[string]map[string]mavenpom.ResolvedDep{}
+	for i := range deps {
+		if !isMavenPOMDependency(deps[i]) {
+			continue
+		}
+		pomPath, ok := containedPOMPath(srcRoot, deps[i].ManifestPath)
+		if !ok {
+			markRequirementUnresolved(&deps[i], string(mavenpom.UnresolvedParent))
+			continue
+		}
+		byGA, ok := resolved[pomPath]
+		if !ok {
+			byGA = resolveLocalPOMDependencies(pomPath, srcRoot, emit)
+			resolved[pomPath] = byGA
+		}
+		if byGA == nil {
+			markRequirementUnresolved(&deps[i], string(mavenpom.UnresolvedParent))
+			continue
+		}
+		rd, ok := byGA[deps[i].Name]
+		if !ok {
+			markRequirementUnresolved(&deps[i], fallbackRequirementResolution(deps[i].Requirement))
+			continue
+		}
+		if rd.Version != "" {
+			deps[i].Requirement = rd.Version
+		} else if rd.Expression != "" {
+			deps[i].Requirement = rd.Expression
+		}
+		deps[i].RequirementResolution = string(rd.Resolution)
+		deps[i].RequirementUnresolved = rd.Resolution != mavenpom.Resolved
+	}
+}
+
+func isMavenPOMDependency(dep dependencyReportRow) bool {
+	if dep.ManifestPath == "" || filepath.Base(dep.ManifestPath) != "pom.xml" {
+		return false
+	}
+	if strings.HasPrefix(dep.PURL, "pkg:maven/") {
+		return true
+	}
+	return strings.EqualFold(dep.Ecosystem, "maven")
+}
+
+func resolveLocalPOMDependencies(pomPath, srcRoot string, emit func(Event)) map[string]mavenpom.ResolvedDep {
+	if !localPOMParentsStayUnderRoot(pomPath, srcRoot) {
+		return nil
+	}
+	ep, err := mavenpom.ResolveLocal(context.Background(), pomPath, mavenpom.Options{})
+	if err != nil {
+		emit(Event{Kind: KindText, Text: "maven pom resolver skipped " + pomPath + ": " + err.Error()})
+		return nil
+	}
+	deps := make(map[string]mavenpom.ResolvedDep, len(ep.Dependencies))
+	for _, dep := range ep.Dependencies {
+		deps[dep.GroupID+":"+dep.ArtifactID] = dep
+	}
+	return deps
+}
+
+func markRequirementUnresolved(dep *dependencyReportRow, resolution string) {
+	dep.RequirementUnresolved = true
+	if dep.RequirementResolution == "" {
+		dep.RequirementResolution = resolution
+	}
+}
+
+func fallbackRequirementResolution(requirement string) string {
+	if strings.Contains(requirement, "${env.") {
+		return string(mavenpom.UnresolvedEnv)
+	}
+	if strings.Contains(requirement, "${") {
+		return string(mavenpom.UnresolvedProperty)
+	}
+	return string(mavenpom.UnresolvedMissing)
+}
+
+func containedPOMPath(srcRoot, manifestPath string) (string, bool) {
+	if manifestPath == "" || filepath.IsAbs(manifestPath) || !filepath.IsLocal(manifestPath) {
+		return "", false
+	}
+	if filepath.Base(manifestPath) != "pom.xml" {
+		return "", false
+	}
+	srcRootAbs, err := filepath.Abs(srcRoot)
+	if err != nil {
+		return "", false
+	}
+	pomPath := filepath.Join(srcRootAbs, filepath.Clean(manifestPath))
+	if !pathUnderRoot(pomPath, srcRootAbs) || !realPathUnderRoot(pomPath, srcRootAbs) {
+		return "", false
+	}
+	return pomPath, true
+}
+
+const maxLocalPOMParentDepth = 32
+
+func localPOMParentsStayUnderRoot(rootPath, srcRoot string) bool {
+	seen := map[string]bool{}
+	path := rootPath
+	for range maxLocalPOMParentDepth {
+		if seen[path] || !realPathUnderRoot(path, srcRoot) {
+			return false
+		}
+		seen[path] = true
+		info, err := os.Lstat(path)
+		if err != nil {
+			return true
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return false
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return true
+		}
+		p, err := mavenpom.ParsePOM(data)
+		if err != nil || p.Parent == nil {
+			return true
+		}
+		rel := p.Parent.LocalPath()
+		if rel == "" {
+			return true
+		}
+		if filepath.IsAbs(rel) {
+			return false
+		}
+		next := filepath.Clean(filepath.Join(filepath.Dir(path), rel))
+		if info, err := os.Lstat(next); err == nil && info.IsDir() {
+			next = filepath.Join(next, "pom.xml")
+		}
+		if !pathUnderRoot(next, srcRoot) || !realPathUnderRoot(next, srcRoot) {
+			return false
+		}
+		path = next
+	}
+	return false
+}
+
+func pathUnderRoot(path, root string) bool {
+	rel, err := filepath.Rel(root, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator))
+}
+
+func realPathUnderRoot(path, root string) bool {
+	realRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return false
+	}
+	realPath, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		realPath, err = filepath.Abs(path)
+		if err != nil {
+			return false
+		}
+	}
+	return pathUnderRoot(realPath, realRoot)
 }
 
 // parseSubprojectsOutput replaces Subproject rows for the scan's

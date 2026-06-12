@@ -864,6 +864,8 @@ components:
         ecosystem:       { type: string }
         purl:            { type: string }
         requirement:     { type: string }
+        requirement_unresolved: { type: boolean }
+        requirement_resolution: { type: string }
         dependency_type: { type: string, description: 'Normalised phase: runtime, dev, test, build, or an unrecognised source value.' }
         manifest_path:   { type: string }
         manifest_kind:   { type: string }

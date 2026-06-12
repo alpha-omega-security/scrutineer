@@ -20,7 +20,7 @@ metadata:
 
 # dependencies
 
-Wrap `git-pkgs list --format json` so scrutineer can read the result as a dependencies report. Preserve dependency phase/type fields from git-pkgs; scrutineer normalizes common aliases to `runtime`, `dev`, `test`, or `build`.
+Wrap `git-pkgs list --format json` so scrutineer can read the result as a dependencies report. Preserve dependency phase/type fields from git-pkgs; scrutineer normalizes common aliases to `runtime`, `dev`, `test`, or `build`. Scrutineer's worker resolves Maven requirements from local `pom.xml` files with `git-pkgs/pom`, fills `requirement_resolution`, and marks unresolved placeholders with `requirement_unresolved`.
 
 ## Workspace
 
