@@ -480,3 +480,141 @@ func TestOSVEcosystem(t *testing.T) {
 		}
 	}
 }
+
+func TestOSVCWEIDs_splitsAndNormalises(t *testing.T) {
+	cases := []struct {
+		in   string
+		want []string
+	}{
+		{"", nil},
+		{"CWE-79", []string{"CWE-79"}},
+		{"cwe-79, CWE-89", []string{"CWE-79", "CWE-89"}},
+		{"CWE-79, CWE-79, CWE-89", []string{"CWE-79", "CWE-89"}},
+		// Mixed-case duplicate: case normalisation must run before dedup,
+		// so the second occurrence collapses even when its case differs.
+		{"CWE-79, cwe-79", []string{"CWE-79"}},
+	}
+	for _, tc := range cases {
+		got := osvCWEIDs(tc.in)
+		if len(got) != len(tc.want) {
+			t.Fatalf("osvCWEIDs(%q) = %v, want %v", tc.in, got, tc.want)
+		}
+		for i := range got {
+			if got[i] != tc.want[i] {
+				t.Errorf("osvCWEIDs(%q)[%d] = %q, want %q", tc.in, i, got[i], tc.want[i])
+			}
+		}
+	}
+}
+
+func TestOSVSemverRangeFromFix(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"", false},
+		{"1.6.3", true},
+		{"v1.6.3", true},
+		{"1.6", false},
+		{"<1.6.3", false},
+		{"1.6.3-beta.1", true},
+	}
+	for _, tc := range cases {
+		_, ok := osvSemverRangeFromFix(tc.in)
+		if ok != tc.want {
+			t.Errorf("osvSemverRangeFromFix(%q) ok=%v want %v", tc.in, ok, tc.want)
+		}
+	}
+}
+
+func TestFindingOSV_includesSIRTTemplateFields(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	f := seedCSAFFinding(t, s, func(f *db.Finding) {
+		f.FixVersion = "1.6.3"
+	})
+	w := getOSV(t, s, f.ID)
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	doc := decodeCSAF(t, w.Body.Bytes())
+
+	credits, ok := doc["credits"].([]any)
+	if !ok || len(credits) == 0 {
+		t.Errorf("credits missing/empty: %v", doc["credits"])
+	}
+	var sawCoordinator bool
+	for _, c := range credits {
+		m := c.(map[string]any)
+		if m["type"] == "COORDINATOR" && m["name"] == "scrutineer" {
+			sawCoordinator = true
+		}
+	}
+	if !sawCoordinator {
+		t.Errorf("expected a COORDINATOR credit named scrutineer: %v", credits)
+	}
+
+	ds := doc["database_specific"].(map[string]any)
+	if ds["tracking_id"] == nil {
+		t.Errorf("database_specific.tracking_id missing: %v", ds)
+	}
+	if _, ok := ds["cwe_ids"].([]any); !ok {
+		t.Errorf("database_specific.cwe_ids missing or not an array: %v", ds["cwe_ids"])
+	}
+}
+
+func TestFindingOSV_withdrawnSetWhenRejected(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	f := seedCSAFFinding(t, s, func(f *db.Finding) {
+		f.Status = db.FindingRejected
+	})
+	w := getOSV(t, s, f.ID)
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	doc := decodeCSAF(t, w.Body.Bytes())
+	if doc["withdrawn"] == nil || doc["withdrawn"] == "" {
+		t.Errorf("rejected finding must carry withdrawn timestamp, got %v", doc["withdrawn"])
+	}
+}
+
+func TestFindingOSV_packageHasSemverRangeFromFixVersion(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	f := seedCSAFFinding(t, s, func(f *db.Finding) {
+		f.FixVersion = "2.3.1"
+	})
+	// Add a package so the affected entry takes the package shape (not GIT).
+	s.DB.Create(&db.Package{
+		RepositoryID: f.RepositoryID,
+		Name:         "lib",
+		Ecosystem:    "npm",
+		PURL:         "pkg:npm/lib",
+	})
+	w := getOSV(t, s, f.ID)
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	doc := decodeCSAF(t, w.Body.Bytes())
+	affected := doc["affected"].([]any)
+	if len(affected) == 0 {
+		t.Fatal("affected[] is empty")
+	}
+	a0 := affected[0].(map[string]any)
+	ranges, ok := a0["ranges"].([]any)
+	if !ok || len(ranges) == 0 {
+		t.Fatalf("affected[0].ranges missing: %v", a0)
+	}
+	r0 := ranges[0].(map[string]any)
+	if r0["type"] != "SEMVER" {
+		t.Errorf("range type = %v, want SEMVER", r0["type"])
+	}
+	events := r0["events"].([]any)
+	if len(events) < 2 {
+		t.Fatalf("SEMVER range needs introduced + fixed events: %v", events)
+	}
+	if events[1].(map[string]any)["fixed"] != "2.3.1" {
+		t.Errorf("fixed event = %v, want 2.3.1", events[1])
+	}
+}
