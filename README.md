@@ -251,7 +251,7 @@ The config file can also replace the model pick list and pin the fallback defaul
       - name: Opus
         id:   claude-opus-4-7
 
-Scrutineer resolves skill models through tiers. `metadata` defaults to the `mid` tier, `security-deep-dive` defaults to the `max` tier, and other skills default to `high`. The Settings page lets you map each tier to any configured model. A skill can still pin `scrutineer.model` to an exact model id, or to a tier name (`mid`, `high`, `max`).
+Scrutineer resolves skill models through tiers. Skills default to the `high` tier unless their `SKILL.md` metadata pins `scrutineer.model` to another tier or exact model id. Bundled lightweight skills such as `metadata` use `mid`, while `security-deep-dive` uses `max`. The Settings page lets you map each tier to any configured model.
 
 ## Sandboxed Claude Code configs
 

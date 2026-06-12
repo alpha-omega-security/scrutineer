@@ -105,7 +105,7 @@ var nameRE = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
 // ModelValidator gates the scrutineer.model metadata key. When non-nil, a
 // skill declaring a model preference the validator rejects gets a warning and
-// the field is left empty (the scan falls back to the skill's default tier).
+// the field is left empty (the scan falls back to the high tier).
 // Wired from main.go after the model list is configured.
 var ModelValidator func(string) bool
 

@@ -95,9 +95,10 @@
 #     id:   claude-opus-4-7
 
 # Pin the default model id. When set, this wins over the "first entry
-# in models wins" rule. A skill can declare its own preferred model
-# (scrutineer.model in SKILL.md metadata); per-skill wins over this
-# default, and an explicit per-scan model wins over both.
+# in models wins" rule for the high tier. The Settings page can map
+# each tier (mid, high, max) to a configured model. A skill can declare
+# scrutineer.model in SKILL.md metadata as either a tier or exact model,
+# and an explicit per-scan model wins over the skill preference.
 # default_model: claude-sonnet-4-6
 
 # GitHub organisation the fork skill stages scanned repositories into as

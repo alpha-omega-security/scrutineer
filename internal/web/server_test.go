@@ -1789,10 +1789,10 @@ func TestEnqueueSkillWith_modelPrecedence(t *testing.T) {
 		Version: 1, Active: true, Source: "ui"}
 	s.DB.Create(&noModel)
 	metadata := db.Skill{Name: "metadata", Body: "b", OutputFile: "r.json", OutputKind: "freeform",
-		Version: 1, Active: true, Source: "ui"}
+		Version: 1, Active: true, Source: "ui", Model: ModelTierMid}
 	s.DB.Create(&metadata)
 	deepDive := db.Skill{Name: deepDiveSkillName, Body: "b", OutputFile: "r.json", OutputKind: "freeform",
-		Version: 1, Active: true, Source: "ui"}
+		Version: 1, Active: true, Source: "ui", Model: ModelTierMax}
 	s.DB.Create(&deepDive)
 
 	cases := []struct {
@@ -1807,8 +1807,8 @@ func TestEnqueueSkillWith_modelPrecedence(t *testing.T) {
 		{"skill model fills invalid scan model", withModel.ID, ScanOpts{Model: "garbage"}, "claude-sonnet-4-6"},
 		{"skill tier resolves through settings", withTier.ID, ScanOpts{}, "claude-sonnet-4-6"},
 		{"generic skill defaults to high tier", noModel.ID, ScanOpts{}, "claude-opus-4-7"},
-		{"metadata defaults to mid tier", metadata.ID, ScanOpts{}, "claude-sonnet-4-6"},
-		{"deep dive defaults to max tier", deepDive.ID, ScanOpts{}, "claude-opus-4-8"},
+		{"metadata metadata uses mid tier", metadata.ID, ScanOpts{}, "claude-sonnet-4-6"},
+		{"deep dive metadata uses max tier", deepDive.ID, ScanOpts{}, "claude-opus-4-8"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

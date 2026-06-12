@@ -157,7 +157,7 @@ func parseMaxTurns(s string) int {
 
 // parseSkillModel keeps the form value only if it's a configured model ID or
 // model tier. Anything else is silently dropped so the scan falls back to the
-// skill's default tier at enqueue time.
+// high tier at enqueue time.
 func parseSkillModel(s string) string {
 	s = strings.TrimSpace(s)
 	if !ValidModelPreference(s) {

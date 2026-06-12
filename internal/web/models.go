@@ -129,6 +129,10 @@ func ModelTierValues(gdb *gorm.DB) map[string]string {
 }
 
 func builtinModelForTier(tier string) string {
+	// Built-in tiers assume the built-in Anthropic-flavoured model ids and
+	// ordering. If operators replace Models with a multi-vendor list that
+	// lacks "sonnet" or "opus", the tier intentionally falls back to
+	// DefaultModel unless they configure the tier in Settings.
 	switch tier {
 	case ModelTierMid:
 		if id := firstModelContaining("sonnet"); id != "" {
@@ -160,23 +164,12 @@ func lastModelContaining(needle string) string {
 	return ""
 }
 
-func defaultModelTierForSkill(skillName string) string {
-	switch skillName {
-	case "metadata":
-		return ModelTierMid
-	case deepDiveSkillName:
-		return ModelTierMax
-	default:
-		return ModelTierHigh
-	}
-}
-
-func resolveModelPreference(gdb *gorm.DB, skillName, preference string) string {
+func resolveModelPreference(gdb *gorm.DB, preference string) string {
 	if ValidModel(preference) {
 		return preference
 	}
 	if ValidModelTier(preference) {
 		return ModelForTier(gdb, preference)
 	}
-	return ModelForTier(gdb, defaultModelTierForSkill(skillName))
+	return ModelForTier(gdb, ModelTierHigh)
 }
