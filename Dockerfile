@@ -1,4 +1,4 @@
-FROM golang:1.26.4-alpine@sha256:f23e8b227fb4493eabe03bede4d5a32d04092da71962f1fb79b5f7d1e6c2a17f AS build
+FROM golang:1.26.4-alpine@sha256:7a3e50096189ad57c9f9f865e7e4aa8585ed1585248513dc5cda498e2f41812c AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -10,13 +10,13 @@ COPY . .
 ARG COMMIT=""
 RUN CGO_ENABLED=0 go build -ldflags "-X main.commit=${COMMIT}" -o /scrutineer ./cmd/scrutineer
 
-FROM node:26-alpine@sha256:144769ec3f32e8ee36b3cfde91e82bee25d9367b20f31a151f3f7eea3a2a8541 AS claude
+FROM node:26-alpine@sha256:3ad34ca6292aec4a91d8ddeb9229e29d9c2f689efd0dd242860889ac71842eba AS claude
 RUN npm install -g @anthropic-ai/claude-code@2.1.173
 
-FROM python:3.14.5-alpine@sha256:5a824eb82cc75361f98611f3cfc5091ea33f10a6ccea4d4ebdabbc523b9a1614 AS python-tools
+FROM python:3.15.0b2-alpine@sha256:7b994e30eec677e35f9b57882dda3da2077dfb3936908f320397c5442e2654bb AS python-tools
 RUN pip install --no-cache-dir semgrep==1.116.0 "setuptools<81"
 
-FROM golang:1.26.4-alpine@sha256:f23e8b227fb4493eabe03bede4d5a32d04092da71962f1fb79b5f7d1e6c2a17f AS go-tools
+FROM golang:1.26.4-alpine@sha256:7a3e50096189ad57c9f9f865e7e4aa8585ed1585248513dc5cda498e2f41812c AS go-tools
 RUN apk add --no-cache git
 RUN GOBIN=/out go install github.com/git-pkgs/git-pkgs@v0.15.3 && \
     GOBIN=/out go install github.com/git-pkgs/brief/cmd/brief@v0.6.0
@@ -24,15 +24,15 @@ RUN GOBIN=/out go install github.com/git-pkgs/git-pkgs@v0.15.3 && \
 # vid links tree-sitter grammars (C), so unlike the main binary it needs
 # cgo; build-base provides gcc and musl headers, matching the musl-based
 # final image.
-FROM golang:1.26.4-alpine@sha256:f23e8b227fb4493eabe03bede4d5a32d04092da71962f1fb79b5f7d1e6c2a17f AS vid-build
+FROM golang:1.26.4-alpine@sha256:7a3e50096189ad57c9f9f865e7e4aa8585ed1585248513dc5cda498e2f41812c AS vid-build
 RUN apk add --no-cache build-base git
 RUN GOBIN=/out CGO_ENABLED=1 go install github.com/andrew/VID/cmd/vid@v0.1.0
 
-FROM rust:1.96-alpine@sha256:66f48b19d6e88519e2e58bebe0d945779a6a4ca41c2db17db78c9569655b50ac AS zizmor-build
+FROM rust:1.96-alpine@sha256:2ea3db105d38fdfa4e31f366674287fcaa828087e2fe3973befdc537f2d443b1 AS zizmor-build
 RUN apk add --no-cache build-base linux-headers
 RUN cargo install --locked --root /out zizmor@1.24.1
 
-FROM python:3.14.5-alpine@sha256:5a824eb82cc75361f98611f3cfc5091ea33f10a6ccea4d4ebdabbc523b9a1614
+FROM python:3.15.0b2-alpine@sha256:7b994e30eec677e35f9b57882dda3da2077dfb3936908f320397c5442e2654bb
 RUN apk add --no-cache git ca-certificates bash nodejs coreutils && \
     rm -f /usr/local/bin/pip* /usr/local/bin/idle* /usr/local/bin/pydoc*
 
