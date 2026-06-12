@@ -1,6 +1,6 @@
 ---
 name: breaking-change
-description: Decide whether a finding's suggested fix is a breaking change for top dependents. Reads the unified-diff fix on the finding, identifies the public API surface that changes (signatures, exports, removed fields, renamed types), and lists which top dependents are most likely to break. Reasons statically from the diff and the scrutineer API's dependent metadata; never executes dependent code.
+description: Decide whether a finding's suggested fix is a breaking change for top dependents. Reads the unified-diff fix on the finding, identifies the public API surface that changes (signatures, exports, removed fields, renamed types), and lists which top dependents are most likely to break. Static analysis on the diff and the dependent metadata from the scrutineer API; never executes dependent code.
 license: MIT
 compatibility: Needs network access to the scrutineer skill API to read the finding and its dependents list. Read-only against `./src` (the upstream library at the scanned commit); never runs the reproduction or any dependent code.
 metadata:
