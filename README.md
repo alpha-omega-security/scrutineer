@@ -58,32 +58,51 @@ When the containerised runner is active (the default when Docker is available), 
 
 ## Features
 
+### Scanning and analysis
+
 - **Skill-based scan pipeline** -- every scan is a claude-code skill on disk (SKILL.md + schema + optional scripts). The default pipeline for a new repo is itself a skill (`triage`) that enqueues the others; edit its SKILL.md to change what runs
 - **Structured findings** -- vulnerability reports parsed into a database with severity, CWE, location (linked to source), affected versions, and a six-step analysis trace
-- **Finding workflow** -- guided triage flow from new through verification, disclosure, and publication with human gates at each step
 - **Threat model view** -- the project's security contract (components, entry-point trust table, properties provided and disclaimed, known non-findings) rendered from the `threat-model` scan, falling back to the deep-dive's boundaries and sink inventory on older repositories
 - **Dependency exploration** -- dependency and dependent tables with one-click import to scan any package's source repository
 - **Package registry data** -- downloads, dependents, versions, and registry links for every published package
 - **Known advisories** -- existing CVEs and security advisories pulled automatically
 - **Maintainer identification** -- model-backed skill combining commit history, issue/PR activity, and registry ownership to identify who to contact for disclosure
 - **CWE catalogue** -- embedded MITRE CWE data with tooltips on finding tables and full descriptions on finding pages
-- **Live updates** -- SSE streaming of scan logs and status changes, no polling
-- **Themes** -- six colour themes plus a light/dark/system toggle, set on the Settings page
-- **Containerised runner** -- optional per-scan Docker isolation with read-only source mounts, dropped capabilities, and an authenticated egress allowlist proxy
-- **Skill HTTP API** -- running skills can call back into scrutineer to list prior scans and enqueue further skills; surface documented in `openapi.yaml`
-- **Organisation rollup** -- repos, findings, and maintainers grouped by owning org, with per-org markdown exports
-- **Usage tracking** -- per-scan token and cost figures plus a `/usage` page totalling spend per skill
-- **SBOM import** -- upload a CycloneDX or SPDX document, resolve each component to a source repository, and queue scans automatically
-- **Finding import** -- POST SARIF, CSV, markdown, or minimal-JSON findings from external scanners and pentest reports into the same workflow as native scans, with fingerprint dedup against re-imports
-- **CNA matching** -- identify the CVE Numbering Authority whose scope covers a repo so disclosures go to the right contact
-- **Upstream reporting** -- file a finding on the upstream repository through GitHub's private vulnerability reporting with the proposed patch attached, and push the fix to the temporary private fork when GitHub grants access. A PVR report is hard to unsend; before pointing this at an external repository, run it once end-to-end against a repository you control with PVR enabled to confirm the body shape and patch attachment land the way you expect.
 - **Reachability analysis** -- trace sinks found in dependencies through application code to see which are actually reachable
 - **Rescan dedup** -- findings carry a content fingerprint so re-running a scan updates existing rows instead of creating duplicates; same-fingerprint hits within one scan collapse to a single finding with a `+N` expandable location list, and findings that stop appearing are marked "not seen" with a miss count
+
+### Triage and disclosure workflow
+
+- **Finding workflow** -- guided triage flow from new through verification, disclosure, and publication with human gates at each step
+- **Cheap-classifier pre-sort** -- the `revalidate` skill auto-enqueues for High/Critical deep-dive findings and every imported finding, emitting `true_positive` / `false_positive` / `already_fixed` / `uncertain` plus an optional severity adjustment; a `true_positive` on a High/Critical finding chains into `verify` automatically
+- **Audit queue** -- random sample of recent low and false-positive verdicts at `/audit` so the operator can spot-check the classifier; each review records an agreement-or-overturn verdict on the finding
+- **Exploited-in-the-wild flag** -- analyst-only `yes`/`no` field on findings with free-text evidence, surfaced on the finding page, in the OSV `database_specific` block, in CSAF audit notes, and in markdown report exports
+- **Breaking-change classifier** -- the `breaking-change` skill runs over a suggested-fix diff plus the top dependents, recording `breaking` / `non_breaking` / `unknown` with a rationale and the list of affected dependents
+- **Mitigation guidance** -- the `mitigate` skill drafts short-term workarounds and an optional semgrep rule per finding, separate from the code fix
+- **CVSS v3.1 and v4.0** -- both vectors stored side by side with derived scores; analyst form, OSV/CSAF exports, and the `disclose` skill all carry both forward, with the v4 metric set kept distinct from v3
+- **Release watch** -- the `release-watch` skill closes the gap between fix-landed and fix-shipped: once a finding reaches `fixed`, the skill polls upstream releases and records the release tag, URL, and timestamp when it appears
+- **CNA matching** -- identify the CVE Numbering Authority whose scope covers a repo so disclosures go to the right contact
+- **Upstream reporting** -- file a finding on the upstream repository through GitHub's private vulnerability reporting with the proposed patch attached, and push the fix to the temporary private fork when GitHub grants access. A PVR report is hard to unsend; before pointing this at an external repository, run it once end-to-end against a repository you control with PVR enabled to confirm the body shape and patch attachment land the way you expect. When upstream has no PVR available, follow the runbook in [docs/disclosure-fallback.md](docs/disclosure-fallback.md)
+
+### Imports and exports
+
+- **SBOM import** -- upload a CycloneDX or SPDX document, resolve each component to a source repository, and queue scans automatically
+- **Finding import** -- POST SARIF, CSV, markdown, or minimal-JSON findings from external scanners and pentest reports into the same workflow as native scans, with fingerprint dedup against re-imports
+- **Free-form ingest** -- when the format sniffer in `/api/v1/import` cannot place a payload, the `ingest` skill normalises it against the source checkout (resolving locations) before it enters the findings table
 - **CSAF export** -- download any finding as a schema-validated CSAF 2.0 advisory document
-- **OSV export** -- download any finding as a schema-validated OSV record, anchored to the source repo when it maps to no registry package
+- **OSV export** -- download any finding as a schema-validated OSV record, aligned with the OSS-SIRT advisory template (credits, CWE IDs, withdrawn, SEMVER ranges, CVSS v3 + v4 severity entries)
 - **JSONL export** -- stream all findings or scans as line-delimited JSON for ingestion elsewhere
 - **Markdown report export** -- download a single consolidated `report.md` per repository or organisation
 - **Disclosure bundle** -- download `bundle.tar.gz` per finding: OSV, CSAF, markdown report, patch.diff, and a manifest naming the contents; ready to hand to a coordinator or attach to a private email when filing outside GitHub PVR
+
+### Operational
+
+- **Containerised runner** -- optional per-scan Docker isolation with read-only source mounts, dropped capabilities, and an authenticated egress allowlist proxy
+- **Skill HTTP API** -- running skills can call back into scrutineer to list prior scans and enqueue further skills; surface documented in `openapi.yaml`
+- **Live updates** -- SSE streaming of scan logs and status changes, no polling
+- **Organisation rollup** -- repos, findings, and maintainers grouped by owning org, with per-org markdown exports
+- **Usage tracking** -- per-scan token and cost figures plus a `/usage` page totalling spend per skill
+- **Themes** -- six colour themes plus a light/dark/system toggle, set on the Settings page
 
 ## The default pipeline
 
@@ -141,6 +160,7 @@ Every index page has a search box plus filter and sort dropdowns; the specifics 
 - **Advisories** -- known CVEs and security advisories pulled for any scanned package.
 - **Maintainers** -- people identified as maintainers, with their linked repos and findings.
 - **SBOMs** -- uploaded CycloneDX/SPDX documents. Each component is resolved to a source repository and can be imported for scanning.
+- **Audit** -- random sample of recent low and false-positive verdicts for spot-checking the cheap-classifier output. Each row records the analyst's agreement-or-overturn verdict, and a small dashboard shows the running overturn rate.
 - **Scans** -- every scan that has run. Queued scans can be paused/resumed, running or queued scans can be cancelled and failed ones retried.
 - **Skills** -- installed skills from disk and from the UI; view, edit, or run any of them.
 - **Usage** -- token and cost totals across all scans, broken down by skill.
@@ -150,7 +170,7 @@ Every index page has a search box plus filter and sort dropdowns; the specifics 
 
 Each finding from the `security-deep-dive` skill starts at **new** and moves through a guided workflow:
 
-1. **new** -- just identified. Click "Verify" to trigger independent confirmation, or "Skip to triage" if you trust the audit, or "Reject"
+1. **new** -- just identified. High/Critical from `security-deep-dive` and every imported finding auto-enqueue a `revalidate` pass first, which records `true_positive` / `false_positive` / `already_fixed` / `uncertain` on the finding and (when true_positive on High/Critical) chains into `verify`. Outside that path: click "Verify" to trigger independent confirmation, "Skip to triage" if you trust the audit, or "Reject"
 2. **enriched** -- verification ran. Review and click "Triage"
 3. **triaged** -- confirmed real. Click "Prepare disclosure"
 4. **ready** -- draft prepared. Run the `report-upstream` skill to file it via GitHub PVR (github.com only, requires `gh` auth), or click "Mark as reported" after sending it yourself. When upstream has no PVR, follow the runbook in [docs/disclosure-fallback.md](docs/disclosure-fallback.md): route to a CNA when `cna-match` names one, otherwise contact the channel `maintainers` returned
