@@ -490,6 +490,9 @@ func TestOSVCWEIDs_splitsAndNormalises(t *testing.T) {
 		{"CWE-79", []string{"CWE-79"}},
 		{"cwe-79, CWE-89", []string{"CWE-79", "CWE-89"}},
 		{"CWE-79, CWE-79, CWE-89", []string{"CWE-79", "CWE-89"}},
+		// Mixed-case duplicate: case normalisation must run before dedup,
+		// so the second occurrence collapses even when its case differs.
+		{"CWE-79, cwe-79", []string{"CWE-79"}},
 	}
 	for _, tc := range cases {
 		got := osvCWEIDs(tc.in)
