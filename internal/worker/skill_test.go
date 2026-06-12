@@ -313,6 +313,108 @@ func TestStageSkill_writesMarkdownAndSchema(t *testing.T) {
 	}
 }
 
+func TestStageSkill_mirrorsScriptsToWorkRoot(t *testing.T) {
+	// On-disk skill with a scripts/ dir: stageSkill should copy it to the
+	// workspace root so `bash scripts/...` resolves from cwd, not from
+	// .claude/skills/{name}/scripts/.
+	src := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(src, "scripts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "scripts", "run.sh"), []byte("#!/bin/sh\necho hi\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "scripts", "helper.py"), []byte("print('x')\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "SKILL.md"), []byte("# placeholder\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	work := t.TempDir()
+	skill := &db.Skill{Name: "s", Description: "d", Body: "body", SourcePath: src, Source: "disk"}
+	if err := stageSkill(skill, work, filepath.Join(work, ".claude", "skills", "s")); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, rel := range []string{"scripts/run.sh", "scripts/helper.py"} {
+		if _, err := os.Stat(filepath.Join(work, rel)); err != nil {
+			t.Errorf("expected %s at work root: %v", rel, err)
+		}
+	}
+	// File mode of executable scripts should be preserved so `bash` /
+	// direct invocation works.
+	info, err := os.Stat(filepath.Join(work, "scripts", "run.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm()&0o100 == 0 {
+		t.Errorf("run.sh executable bit lost: %v", info.Mode())
+	}
+}
+
+func TestStageSkill_remirrorClearsStaleScripts(t *testing.T) {
+	// A retry restages into the same workspace. After the skill's scripts/
+	// changed on disk, the mirror must not leave a removed script behind,
+	// and a dangling symlink in scripts/ must not abort staging.
+	src := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(src, "scripts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "SKILL.md"), []byte("# placeholder\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "scripts", "old.sh"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	work := t.TempDir()
+	skill := &db.Skill{Name: "s", Description: "d", Body: "body", SourcePath: src, Source: "disk"}
+	if err := stageSkill(skill, work, filepath.Join(work, ".claude", "skills", "s")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Remove(filepath.Join(src, "scripts", "old.sh")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "scripts", "new.sh"), []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("does-not-exist", filepath.Join(src, "scripts", "dangling")); err != nil {
+		t.Fatal(err)
+	}
+	if err := stageSkill(skill, work, filepath.Join(work, ".claude", "skills", "s")); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(filepath.Join(work, "scripts", "old.sh")); !os.IsNotExist(err) {
+		t.Errorf("stale old.sh survived remirror, err=%v", err)
+	}
+	if _, err := os.Stat(filepath.Join(work, "scripts", "new.sh")); err != nil {
+		t.Errorf("new.sh not mirrored: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(work, "scripts", "dangling")); err != nil {
+		t.Errorf("dangling symlink should be recreated, not dropped or fatal: %v", err)
+	}
+}
+
+func TestStageSkill_noScriptsDirIsNoop(t *testing.T) {
+	// A skill without scripts/ on disk must not error out and must not
+	// leave a stray empty scripts/ at work root.
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "SKILL.md"), []byte("# placeholder\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	work := t.TempDir()
+	skill := &db.Skill{Name: "s", Description: "d", Body: "body", SourcePath: src, Source: "disk"}
+	if err := stageSkill(skill, work, filepath.Join(work, ".claude", "skills", "s")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(work, "scripts")); !os.IsNotExist(err) {
+		t.Errorf("expected no scripts/ dir at work root, got err=%v", err)
+	}
+}
+
 func TestStageContext_includesRef(t *testing.T) {
 	dir := t.TempDir()
 	repo := &db.Repository{URL: "https://example.com/x", Name: "x"}

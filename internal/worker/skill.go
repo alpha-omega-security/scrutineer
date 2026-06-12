@@ -655,8 +655,36 @@ func stageSkill(skill *db.Skill, workRoot, dst string) error {
 		if err := copyAux(skill.SourcePath, dst); err != nil {
 			return fmt.Errorf("copy aux files: %w", err)
 		}
+		if err := mirrorScripts(skill.SourcePath, workRoot); err != nil {
+			return fmt.Errorf("mirror scripts: %w", err)
+		}
 	}
 	return nil
+}
+
+// mirrorScripts copies the skill's scripts/ directory (if any) to
+// workRoot/scripts/ so the `bash scripts/foo.sh` / `python3 scripts/foo.py`
+// instructions every SKILL.md uses resolve from the workspace root on the
+// first try, without the model having to glob for them. Same pattern as
+// schema.json (#221). The destination is cleared first so a retry after a
+// skill edit doesn't run a mix of old and new scripts.
+func mirrorScripts(src, workRoot string) error {
+	srcScripts := filepath.Join(src, "scripts")
+	info, err := os.Stat(srcScripts)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if !info.IsDir() {
+		return nil
+	}
+	dst := filepath.Join(workRoot, "scripts")
+	if err := os.RemoveAll(dst); err != nil {
+		return err
+	}
+	return copyTree(srcScripts, dst)
 }
 
 // renderSkillMD rebuilds a SKILL.md from the stored fields. The frontmatter
