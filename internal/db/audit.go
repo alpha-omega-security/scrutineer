@@ -118,23 +118,28 @@ type AuditMetrics struct {
 // aggregate stats for the audit page. A review counts toward agreement
 // only when both the human verdict and the automated outcome are
 // known: empty automated outcomes (no revalidate run) say nothing
-// about calibration.
+// about calibration. The three count-style metrics fold into one
+// query with conditional aggregation so the /audit page hits the
+// table once for them; the per-verdict histogram is a separate GROUP BY.
 func ComputeAuditMetrics(gdb *gorm.DB) (AuditMetrics, error) {
 	var m AuditMetrics
 	m.ByVerdict = map[string]int64{}
-	if err := gdb.Model(&FindingReview{}).Count(&m.TotalReviews).Error; err != nil {
-		return m, err
+	var counts struct {
+		TotalReviews         int64
+		WithAutomatedOutcome int64
+		Agreements           int64
 	}
 	if err := gdb.Model(&FindingReview{}).
-		Where("automated_outcome != ''").
-		Count(&m.WithAutomatedOutcome).Error; err != nil {
+		Select(`
+			COUNT(*) AS total_reviews,
+			COUNT(CASE WHEN automated_outcome != '' THEN 1 END) AS with_automated_outcome,
+			COUNT(CASE WHEN automated_outcome != '' AND verdict = automated_outcome THEN 1 END) AS agreements`).
+		Scan(&counts).Error; err != nil {
 		return m, err
 	}
-	if err := gdb.Model(&FindingReview{}).
-		Where("automated_outcome != '' AND verdict = automated_outcome").
-		Count(&m.Agreements).Error; err != nil {
-		return m, err
-	}
+	m.TotalReviews = counts.TotalReviews
+	m.WithAutomatedOutcome = counts.WithAutomatedOutcome
+	m.Agreements = counts.Agreements
 	if m.WithAutomatedOutcome > 0 {
 		m.AgreementRate = float64(m.Agreements) / float64(m.WithAutomatedOutcome)
 	}
