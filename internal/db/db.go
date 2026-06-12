@@ -478,6 +478,12 @@ type Finding struct {
 	Resolution      FindingResolution `gorm:"index"`
 	DisclosureDraft string            `gorm:"type:text"`
 	Assignee        string            `gorm:"index"`
+	// LastRevalidateVerdict caches the latest verdict from the
+	// revalidate skill (true_positive | false_positive | already_fixed
+	// | uncertain; empty when revalidate has not run) so the audit
+	// queue can filter on an indexed column rather than LIKE-scanning
+	// finding_notes for the revalidate header.
+	LastRevalidateVerdict string `gorm:"index"`
 	// SuggestedFix is a unified diff from the patch skill that has passed
 	// the applicability gate (parses, targets real files, touches a file
 	// named in Location, git apply --check clean). Empty when no patch has

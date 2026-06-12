@@ -67,10 +67,10 @@ type AuditQueueOptions struct {
 //   - Findings with severity Low (the automation's lowest bucket)
 //   - Findings in status rejected (whoever rejected them, human or
 //     automated)
-//   - Findings whose latest revalidate FindingNote begins with a
-//     non-true_positive verdict (false_positive, already_fixed,
-//     uncertain). This is intentionally fragile: when the revalidate
-//     skill is absent, the LIKE matches nothing and the queue degrades
+//   - Findings whose cached last_revalidate_verdict is one of the
+//     non-true_positive verdicts (false_positive, already_fixed,
+//     uncertain). When the revalidate skill is absent or has not run
+//     yet on this install, the column is empty and the queue degrades
 //     to low-severity and rejected findings only.
 //
 // Findings already carrying a FindingReview row are excluded.
@@ -83,15 +83,7 @@ func AuditQueue(gdb *gorm.DB, opts AuditQueueOptions) ([]Finding, error) {
 		Where(
 			gdb.Where("severity = ?", "Low").
 				Or("status = ?", FindingRejected).
-				Or(`id IN (
-					SELECT n.finding_id FROM finding_notes n
-					WHERE n."by" = 'revalidate'
-					AND (
-						n.body LIKE 'revalidate: false_positive%'
-						OR n.body LIKE 'revalidate: already_fixed%'
-						OR n.body LIKE 'revalidate: uncertain%'
-					)
-				)`),
+				Or("last_revalidate_verdict IN ?", []string{"false_positive", "already_fixed", "uncertain"}),
 		).
 		Where("id NOT IN (SELECT finding_id FROM finding_reviews)")
 	if !opts.Since.IsZero() {

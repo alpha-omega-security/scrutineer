@@ -245,6 +245,8 @@ func findingFieldAccessor(f *Finding, field string) (current, column string, err
 		return f.ReleaseTag, "release_tag", nil
 	case "release_url":
 		return f.ReleaseURL, "release_url", nil
+	case "last_revalidate_verdict":
+		return f.LastRevalidateVerdict, "last_revalidate_verdict", nil
 	default:
 		return "", "", fmt.Errorf("field %q is not editable", field)
 	}

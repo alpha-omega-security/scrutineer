@@ -66,14 +66,12 @@ func TestAuditQueue_includesLowRejectedAndRevalidatedNotTruePositive(t *testing.
 	gdb.Create(&low)
 	rejected := Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "rej", Severity: "High", Status: FindingRejected}
 	gdb.Create(&rejected)
-	revalFP := Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "rev-fp", Severity: "High", Status: FindingNew}
+	revalFP := Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "rev-fp", Severity: "High", Status: FindingNew, LastRevalidateVerdict: "false_positive"}
 	gdb.Create(&revalFP)
-	_, _ = AddFindingNote(gdb, revalFP.ID, "revalidate: false_positive\n\ntest fixture path", "revalidate")
 	highOK := Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "high", Severity: "High", Status: FindingNew}
 	gdb.Create(&highOK)
-	revalTP := Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "rev-tp", Severity: "High", Status: FindingNew}
+	revalTP := Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "rev-tp", Severity: "High", Status: FindingNew, LastRevalidateVerdict: "true_positive"}
 	gdb.Create(&revalTP)
-	_, _ = AddFindingNote(gdb, revalTP.ID, "revalidate: true_positive\n\nstill live", "revalidate")
 
 	rows, err := AuditQueue(gdb, AuditQueueOptions{})
 	if err != nil {
