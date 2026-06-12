@@ -139,6 +139,10 @@ func TestWriteFindingField_cvssVectorSyncsScore(t *testing.T) {
 	if history[1].NewValue != "9.8" || history[1].Source != SourceAnalyst || history[1].By != "me" {
 		t.Errorf("score history row: %+v", history[1])
 	}
+	if refreshed.CVSSv4Score != 0 || refreshed.CVSSv4Vector != "" {
+		t.Errorf("v4 columns mutated by v3 write: vec=%q score=%v",
+			refreshed.CVSSv4Vector, refreshed.CVSSv4Score)
+	}
 }
 
 func TestWriteFindingField_cvssV4VectorSyncsScore(t *testing.T) {
