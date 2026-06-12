@@ -491,6 +491,16 @@ type Finding struct {
 	// Free-text; empty when the analyst has not weighed in.
 	ExploitedInWildEvidence string `gorm:"type:text"`
 
+	// Mitigation is the body of operational mitigation guidance the
+	// `mitigate` skill drafts: workarounds consumers can apply now
+	// (config flags, input restrictions, safe defaults), plus detection
+	// guidance for what to log and what to alert on while the fix is in
+	// flight. Markdown. MitigationSemgrep is the optional semgrep rule
+	// the same skill emits when the vulnerable pattern is structural
+	// enough to flag reliably; YAML, empty when no rule was warranted.
+	Mitigation        string `gorm:"type:text"`
+	MitigationSemgrep string `gorm:"type:text"`
+
 	// Per-step prose from the six-step audit checklist.
 	Trace      string `gorm:"type:text"`
 	Boundary   string `gorm:"type:text"`

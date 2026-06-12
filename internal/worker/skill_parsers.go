@@ -546,6 +546,37 @@ func (w *Worker) parseBreakingChangeOutput(scan *db.Scan, report string, emit fu
 	return nil
 }
 
+// parseMitigationOutput stores the operational mitigation guidance and
+// the optional semgrep rule the mitigate skill emits. Both go to the
+// finding through WriteFindingField so analyst edits and re-runs both
+// land in FindingHistory. An empty guidance body is a hard error: the
+// skill is meant to produce something or write nothing at all.
+func (w *Worker) parseMitigationOutput(scan *db.Scan, report string, emit func(Event)) error {
+	if scan.FindingID == nil {
+		return fmt.Errorf("mitigate scan has no finding_id")
+	}
+	var result struct {
+		Guidance    string `json:"guidance"`
+		SemgrepRule string `json:"semgrep_rule"`
+	}
+	if err := json.Unmarshal([]byte(report), &result); err != nil {
+		return fmt.Errorf("parse mitigation report: %w", err)
+	}
+	guidance := strings.TrimSpace(result.Guidance)
+	if guidance == "" {
+		return fmt.Errorf("mitigate report has empty guidance")
+	}
+	if err := db.WriteFindingField(w.DB, *scan.FindingID, "mitigation", guidance, db.SourceModel, "mitigate"); err != nil {
+		return fmt.Errorf("update mitigation: %w", err)
+	}
+	rule := strings.TrimSpace(result.SemgrepRule)
+	if err := db.WriteFindingField(w.DB, *scan.FindingID, "mitigation_semgrep", rule, db.SourceModel, "mitigate"); err != nil {
+		return fmt.Errorf("update mitigation_semgrep: %w", err)
+	}
+	emit(Event{Kind: KindText, Text: fmt.Sprintf("finding %d mitigation drafted (%d bytes, semgrep=%v)", *scan.FindingID, len(guidance), rule != "")})
+	return nil
+}
+
 func (w *Worker) parseFindingDedupOutput(scan *db.Scan, report string, emit func(Event)) error {
 	var result struct {
 		Duplicates []struct {

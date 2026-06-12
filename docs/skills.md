@@ -134,6 +134,7 @@ Declaring `scrutineer.paths` replaces this skip list entirely: the skill sees on
 | `verify` | Verification result and miss-count update on one Finding. |
 | `breaking_change` | `breaking_change` verdict and `breaking_change_rationale` prose on one Finding, with the verdict change recorded in FindingHistory. |
 | `patch` | Suggested-fix diff and base commit on one Finding. |
+| `mitigation` | Mitigation prose and optional semgrep rule on one Finding (`mitigation`, `mitigation_semgrep` columns), with the change recorded in FindingHistory. |
 | `threat_model` | Raw on the scan row; rendered on the repository's Threat Model tab. |
 | `exposure` | One CSAF product_status verdict upserted into a `finding_dependents` row keyed by `(finding_id, dependent_id)`. |
 
@@ -183,7 +184,7 @@ The worker then runs `claude -p "Use the {name} skill in this workspace"` with t
 }
 ```
 
-`finding_id` is only present for finding-scoped skills (`verify`, `breaking-change`, `disclose`, `patch`, `exposure`). `dependent_id` is only set on `exposure` runs and points to the dependent whose code is under audit; `./src` is then a copy of that dependent's clone, not of the finding's repository. `scan_ref` is empty when the scan is on the default branch. `scan_subpath` is set when the operator scoped the scan to a monorepo sub-folder; skills that walk source honour it, skills that query external APIs by repository URL ignore it. `fork_org` is absent unless `-fork-org` is configured. `packages` is a convenience copy of the package rows when the `packages` skill has already run; otherwise it is omitted.
+`finding_id` is only present for finding-scoped skills (`verify`, `breaking-change`, `disclose`, `patch`, `mitigate`, `exposure`). `dependent_id` is only set on `exposure` runs and points to the dependent whose code is under audit; `./src` is then a copy of that dependent's clone, not of the finding's repository. `scan_ref` is empty when the scan is on the default branch. `scan_subpath` is set when the operator scoped the scan to a monorepo sub-folder; skills that walk source honour it, skills that query external APIs by repository URL ignore it. `fork_org` is absent unless `-fork-org` is configured. `packages` is a convenience copy of the package rows when the `packages` skill has already run; otherwise it is omitted.
 
 ## schema.json
 

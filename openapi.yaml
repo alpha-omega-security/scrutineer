@@ -916,6 +916,8 @@ components:
         assignee:      { type: string }
         exploited_in_wild: { type: string, enum: [yes, no, ""], description: "Analyst's call on whether this finding is being exploited in the wild. Empty means unknown. Automation never sets this." }
         exploited_in_wild_evidence: { type: string }
+        mitigation:    { type: string, description: "Markdown body of operational mitigation guidance from the mitigate skill: workarounds, detection, optionally a semgrep rule (see mitigation_semgrep)." }
+        mitigation_semgrep: { type: string, description: "Optional YAML semgrep rule from the mitigate skill. Empty when no rule was warranted." }
 
     FindingDetail:
       allOf:

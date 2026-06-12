@@ -148,6 +148,8 @@ One row per vulnerability. Lifecycle columns are mutated through `db.WriteFindin
 | breaking_change_rationale | text | Human-readable rationale plus the list of affected dependents from the same skill run. |
 | exploited_in_wild | text | Analyst's call: `yes`, `no`, or empty (unknown). On the OSS-SIRT intake list; surfaced on the finding page, in the OSV `database_specific` block, in the CSAF audit notes, and in the markdown report. Automation never writes this. |
 | exploited_in_wild_evidence | text | Free-text source note: researcher, ticket link, traffic observation. |
+| mitigation | text | Markdown body from the `mitigate` skill: workarounds consumers can apply before the fix ships, plus detection guidance. |
+| mitigation_semgrep | text | Optional YAML semgrep rule from the same skill that flags the vulnerable pattern. Empty when no rule was warranted. |
 | trace | text | Step 1 prose. Markdown. |
 | boundary | text | Step 2. |
 | validation | text | Step 3: reproduction. |
