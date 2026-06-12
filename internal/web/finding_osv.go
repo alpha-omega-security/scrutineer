@@ -118,13 +118,27 @@ type osvRecord struct {
 	ID               string         `json:"id"`
 	Modified         string         `json:"modified"`
 	Published        string         `json:"published,omitempty"`
+	Withdrawn        string         `json:"withdrawn,omitempty"`
 	Aliases          []string       `json:"aliases,omitempty"`
+	Related          []string       `json:"related,omitempty"`
 	Summary          string         `json:"summary,omitempty"`
 	Details          string         `json:"details,omitempty"`
 	Severity         []osvSeverity  `json:"severity,omitempty"`
 	Affected         []osvAffected  `json:"affected,omitempty"`
 	References       []osvReference `json:"references,omitempty"`
+	Credits          []osvCredit    `json:"credits,omitempty"`
 	DatabaseSpecific map[string]any `json:"database_specific,omitempty"`
+}
+
+// osvCredit is the credits entry: who reported the finding (FINDER) and
+// who coordinated disclosure (COORDINATOR). The schema's credit_type
+// enum is broader (FINDER, REPORTER, ANALYST, COORDINATOR, REMEDIATION_*,
+// SPONSOR, OTHER); these two are what scrutineer can fill from the
+// finding row plus the operator configuration.
+type osvCredit struct {
+	Name    string   `json:"name"`
+	Type    string   `json:"type,omitempty"`
+	Contact []string `json:"contact,omitempty"`
 }
 
 type osvSeverity struct {
@@ -133,8 +147,10 @@ type osvSeverity struct {
 }
 
 type osvAffected struct {
-	Package *osvPackage `json:"package,omitempty"`
-	Ranges  []osvRange  `json:"ranges,omitempty"`
+	Package           *osvPackage    `json:"package,omitempty"`
+	Ranges            []osvRange     `json:"ranges,omitempty"`
+	EcosystemSpecific map[string]any `json:"ecosystem_specific,omitempty"`
+	DatabaseSpecific  map[string]any `json:"database_specific,omitempty"`
 }
 
 type osvPackage struct {
@@ -173,15 +189,71 @@ func buildOSV(f db.Finding, repo db.Repository, refs []db.FindingReference, pkgs
 		Summary:          f.Title,
 		Details:          f.Trace,
 		Aliases:          osvAliases(f, refs),
+		Related:          osvRelated(refs),
 		Severity:         osvSeverityList(f),
 		Affected:         osvAffectedList(f, repo, pkgs),
 		References:       osvReferences(f, repo, refs),
+		Credits:          osvCredits(f),
 		DatabaseSpecific: osvDatabaseSpecific(f),
 	}
 	if !f.CreatedAt.IsZero() {
 		rec.Published = f.CreatedAt.UTC().Format(time.RFC3339)
 	}
+	// `withdrawn` is set when a finding is rejected: the OSV record
+	// stays available so consumers can see the history, but it carries
+	// the withdrawn timestamp so anyone caching the advisory drops it.
+	if f.Status == db.FindingRejected && !f.UpdatedAt.IsZero() {
+		rec.Withdrawn = f.UpdatedAt.UTC().Format(time.RFC3339)
+	}
 	return rec
+}
+
+// osvRelated returns the OSV ids the finding carries via FindingReference
+// rows. Anything tagged `related` is verbatim; CVE and GHSA references
+// fall in as well, since OSV consumers prefer those identifiers in the
+// related list rather than as plain web URLs. The list is deduped and
+// keeps insertion order so re-exports stay stable.
+func osvRelated(refs []db.FindingReference) []string {
+	seen := map[string]bool{}
+	var out []string
+	add := func(id string) {
+		if id == "" || seen[id] {
+			return
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	for _, r := range refs {
+		tags := strings.ToLower(r.Tags)
+		if strings.Contains(tags, "related") {
+			add(strings.TrimSpace(r.Summary))
+			continue
+		}
+		// GHSA / CVE shaped URLs surface as related when the tag does
+		// not explicitly mark them as the primary alias.
+		add(ghsaRE.FindString(r.URL))
+		add(ghsaRE.FindString(r.Summary))
+	}
+	return out
+}
+
+// osvCredits emits the FINDER (when the finding's prior_art names a
+// researcher) and the COORDINATOR (scrutineer's host operator).
+// Schema requires `name`; everything else is optional and only set when
+// it can be filled honestly.
+func osvCredits(f db.Finding) []osvCredit {
+	var out []osvCredit
+	if name := strings.TrimSpace(f.Assignee); name != "" {
+		out = append(out, osvCredit{Name: name, Type: "ANALYST"})
+	}
+	out = append(out, osvCredit{
+		Name: "scrutineer",
+		Type: "COORDINATOR",
+		Contact: []string{
+			"https://github.com/alpha-omega-security/scrutineer",
+		},
+	})
+	return out
 }
 
 var ghsaRE = regexp.MustCompile(`(?i)GHSA(-[0-9a-z]{4}){3}`)
@@ -269,9 +341,18 @@ func osvAffectedList(f db.Finding, repo db.Repository, pkgs []db.Package) []osvA
 		if !ok {
 			continue
 		}
-		out = append(out, osvAffected{
+		entry := osvAffected{
 			Package: &osvPackage{Ecosystem: eco, Name: firstNonEmpty(pkg.Name, "unknown"), PURL: pkg.PURL},
-		})
+		}
+		// A package-scoped affected entry pairs with a SEMVER range when
+		// the finding has a fix_version that parses as a single anchor.
+		// SIRT's intake template expects this shape; without it,
+		// downstream tooling cannot tell which version the consumer
+		// should upgrade to.
+		if r, ok := osvSemverRangeFromFix(f.FixVersion); ok {
+			entry.Ranges = []osvRange{r}
+		}
+		out = append(out, entry)
 	}
 	if len(out) > 0 {
 		return out
@@ -287,6 +368,34 @@ func osvAffectedList(f db.Finding, repo db.Repository, pkgs []db.Package) []osvA
 		Ranges: []osvRange{{Type: "GIT", Repo: repo.URL, Events: events}},
 	}}
 }
+
+// osvSemverRangeFromFix turns a `fix_version` like "1.6.3" (with or
+// without a leading "v") into a SEMVER range pinned at introduced=0
+// and fixed=<that version>. The intent is to give downstream tooling
+// a concrete version to compare against; the introduced=0 sentinel
+// matches the convention OSV consumers use when the introduced
+// version is unknown. Returns ok=false when fix_version is empty or
+// not a clean dotted version, so the caller can omit the range
+// cleanly rather than emit something that fails schema validation.
+func osvSemverRangeFromFix(fix string) (osvRange, bool) {
+	v := strings.TrimSpace(fix)
+	v = strings.TrimPrefix(v, "v")
+	if v == "" {
+		return osvRange{}, false
+	}
+	if !semverLooseRE.MatchString(v) {
+		return osvRange{}, false
+	}
+	return osvRange{
+		Type: "SEMVER",
+		Events: []osvEvent{
+			{Introduced: "0"},
+			{Fixed: v},
+		},
+	}, true
+}
+
+var semverLooseRE = regexp.MustCompile(`^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$`)
 
 func osvReferences(f db.Finding, repo db.Repository, refs []db.FindingReference) []osvReference {
 	var out []osvReference
@@ -329,7 +438,11 @@ func osvReferenceType(tags string) string {
 func osvDatabaseSpecific(f db.Finding) map[string]any {
 	ds := map[string]any{
 		"scrutineer_finding_id": f.ID,
-		"status":                string(f.Status),
+		// Coordinator-facing identifier: the SIRT advisory template
+		// expects a tracking_id key for cross-system reference, and
+		// scrutineer's finding id is the natural value.
+		"tracking_id": fmt.Sprintf("scrutineer-finding-%d", f.ID),
+		"status":      string(f.Status),
 	}
 	put := func(k, v string) {
 		if v != "" {
@@ -341,14 +454,40 @@ func osvDatabaseSpecific(f db.Finding) map[string]any {
 	put("confidence", f.Confidence)
 	put("reachability", f.Reachability)
 	put("quality_tier", f.QualityTier)
-	put("cwe", f.CWE)
 	put("location", f.Location)
 	put("commit", f.Commit)
 	put("sub_path", f.SubPath)
 	put("exploited_in_wild", f.ExploitedInWild)
 	put("exploited_in_wild_evidence", f.ExploitedInWildEvidence)
+	// `cwe_ids` is the OSV-spec / SIRT-template idiom (an array of
+	// `CWE-N` strings) while `cwe` was scrutineer's older comma-joined
+	// scalar; emit both so consumers reading either still find the
+	// data, but prefer cwe_ids in the canonical place.
+	if ids := osvCWEIDs(f.CWE); len(ids) > 0 {
+		ds["cwe_ids"] = ids
+	}
+	put("cwe", f.CWE)
 	if locs := f.LocationList(); len(locs) > 1 {
 		ds["locations"] = locs
 	}
 	return ds
+}
+
+// osvCWEIDs splits the finding's comma-joined CWE string into an array
+// of normalised `CWE-N` ids, deduped and order-preserved.
+func osvCWEIDs(cwe string) []string {
+	if strings.TrimSpace(cwe) == "" {
+		return nil
+	}
+	seen := map[string]bool{}
+	var out []string
+	for _, token := range strings.Split(cwe, ",") {
+		id := strings.ToUpper(strings.TrimSpace(token))
+		if id == "" || seen[id] {
+			continue
+		}
+		seen[id] = true
+		out = append(out, id)
+	}
+	return out
 }
