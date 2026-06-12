@@ -639,9 +639,21 @@ func (w *Worker) parseReleaseWatchOutput(scan *db.Scan, report string, emit func
 		return fmt.Errorf("update released_at: %w", err)
 	}
 
-	if _, err := db.AddFindingReference(w.DB, f.ID, result.ReleaseURL, "upstream-release",
-		"Upstream release "+result.ReleaseTag+" containing the fix"); err != nil {
-		return fmt.Errorf("record release reference: %w", err)
+	// Dedupe the references row so re-runs that re-confirm the same
+	// release (the skill's idempotency contract) do not pile up identical
+	// rows in the references panel. Match on (finding, tag, URL); a
+	// different URL for the same finding would still be a separate row.
+	var existingRef int64
+	if err := w.DB.Model(&db.FindingReference{}).
+		Where("finding_id = ? AND tags = ? AND url = ?", f.ID, "upstream-release", result.ReleaseURL).
+		Count(&existingRef).Error; err != nil {
+		return fmt.Errorf("check existing release reference: %w", err)
+	}
+	if existingRef == 0 {
+		if _, err := db.AddFindingReference(w.DB, f.ID, result.ReleaseURL, "upstream-release",
+			"Upstream release "+result.ReleaseTag+" containing the fix"); err != nil {
+			return fmt.Errorf("record release reference: %w", err)
+		}
 	}
 
 	emit(Event{Kind: KindText, Text: fmt.Sprintf("finding %d released as %s (%s)", f.ID, result.ReleaseTag, releaseAt.UTC().Format(time.RFC3339))})

@@ -439,6 +439,40 @@ func TestParseReleaseWatch_releasedWritesColumnsAndReference(t *testing.T) {
 	}
 }
 
+func TestParseReleaseWatch_idempotentOnRepeatedRun(t *testing.T) {
+	report := `{
+		"released": true,
+		"release_tag": "v2.3.1",
+		"release_url": "https://github.com/example/lib/releases/tag/v2.3.1",
+		"release_at": "2026-06-02T14:00:00Z",
+		"notes": "matched by fix_commit"
+	}`
+	f, gdb := runSkillWithFinding(t, "release_watch", report, db.FindingFixed)
+
+	// Replay the parser by hand against the same finding row so we are
+	// testing the parser's idempotency contract (the SKILL.md says
+	// "Idempotent: a finding with a release already recorded re-confirms
+	// the existing value rather than flapping").
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	scan := &db.Scan{RepositoryID: f.RepositoryID, FindingID: &f.ID, SkillName: "release-watch"}
+	if err := w.parseReleaseWatchOutput(scan, report, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+
+	var refs []db.FindingReference
+	gdb.Where("finding_id = ? AND tags = ?", f.ID, "upstream-release").Find(&refs)
+	if len(refs) != 1 {
+		t.Errorf("references = %d, want 1 (re-run must not duplicate the reference row)", len(refs))
+	}
+	// History rows: the no-op WriteFindingField / WriteFindingTimeField
+	// path means the second run logs no new history.
+	var hist []db.FindingHistory
+	gdb.Where("finding_id = ? AND field IN ?", f.ID, []string{"release_tag", "release_url", "released_at"}).Find(&hist)
+	if len(hist) != 3 {
+		t.Errorf("history rows = %d, want 3 (one per field, unchanged on re-run): %+v", len(hist), hist)
+	}
+}
+
 func TestParseReleaseWatch_notReleasedAddsNote(t *testing.T) {
 	report := `{"released": false, "notes": "latest release v2.2.0 predates fix_commit"}`
 	f, gdb := runSkillWithFinding(t, "release_watch", report, db.FindingFixed)
