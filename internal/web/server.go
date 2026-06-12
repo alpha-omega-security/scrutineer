@@ -404,12 +404,13 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 }
 
 const (
-	perPage     = 20
-	defaultSort = "newest"
-	statusKey   = "status"
-	errorKey    = "error"
-	successKey  = "success"
-	warningKey  = "warning"
+	perPage        = 20
+	defaultSort    = "newest"
+	statusKey      = "status"
+	allStatusValue = "all"
+	errorKey       = "error"
+	successKey     = "success"
+	warningKey     = "warning"
 	// sortRepository and sortSeverity are the shared sort options used by
 	// the findings, scans, advisories, and SBOM indexes.
 	sortRepository = "repository"
@@ -542,7 +543,7 @@ func (s *Server) repoList(w http.ResponseWriter, r *http.Request) {
 			Select("repository_id, COUNT(*) AS n").
 			Where("repository_id IN ?", repoIDs).
 			Where("scan_id IN (?)", deepDiveScanIDs(s.DB)).
-			Where("status NOT IN ?", repoListClosedFindingStatuses).
+			Where("status NOT IN ?", db.ClosedFindingLifecycles).
 			Group("repository_id").
 			Scan(&counts)
 		for _, c := range counts {
@@ -686,8 +687,7 @@ func firstNonEmpty(vals ...string) string {
 // tab stays reachable.
 func loadRepoFindings(gdb *gorm.DB, repoID uint, category string) ([]db.Finding, []db.Finding, map[uint]string, map[uint]string) {
 	var all []db.Finding
-	gdb.Where("repository_id = ? AND status NOT IN ?", repoID,
-		[]db.FindingLifecycle{db.FindingRejected, db.FindingDuplicate}).
+	gdb.Where("repository_id = ? AND status NOT IN ?", repoID, db.ClosedFindingLifecycles).
 		Order(severityOrder).Order("id desc").Find(&all)
 
 	scanSkill := map[uint]string{}
@@ -721,41 +721,17 @@ func loadRepoFindings(gdb *gorm.DB, repoID uint, category string) ([]db.Finding,
 }
 
 func (s *Server) findings(w http.ResponseWriter, r *http.Request) {
-	q := s.DB.Model(&db.Finding{})
 	// Default to deep-dive findings only; scanner skills (zizmor, semgrep)
 	// are noisy enough to drown out the audit list. ?scanners=1 includes
 	// them and is exposed as a toggle in the UI.
 	scanners := r.URL.Query().Get("scanners") == "1"
-	if !scanners {
-		q = q.Where("scan_id IN (?)", deepDiveScanIDs(s.DB))
-	}
+	q := s.findingsIndexQuery(r, scanners, true)
 	sev := r.URL.Query().Get("severity")
-	if sev != "" {
-		q = q.Where("severity = ?", sev)
-	}
 	status := r.URL.Query().Get(statusKey)
-	if status != "" {
-		q = q.Where("status = ?", status)
-	}
 	category := r.URL.Query().Get("category")
-	if category != "" {
-		q = applyCWECategoryFilter(q, category)
-	}
 	owner := r.URL.Query().Get("owner")
-	if owner != "" {
-		q = q.Where("repository_id IN (?)",
-			s.DB.Model(&db.Repository{}).Select("id").Where("owner = ?", owner))
-	}
 	missed := r.URL.Query().Get("missed") == "1"
-	if missed {
-		q = q.Where("missed_count > 0")
-	}
 	search := strings.TrimSpace(r.URL.Query().Get("q"))
-	if search != "" {
-		like := "%" + search + "%"
-		q = q.Where("title LIKE ? OR location LIKE ? OR cwe LIKE ? OR cve_id LIKE ? OR affected LIKE ?",
-			like, like, like, like, like)
-	}
 
 	sort := r.URL.Query().Get("sort")
 	switch sort {
@@ -784,13 +760,7 @@ func (s *Server) findings(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-	var missedTotal int64
-	s.DB.Model(&db.Finding{}).Where("missed_count > 0").Count(&missedTotal)
-
-	var scannerTotal int64
-	s.DB.Model(&db.Finding{}).
-		Where("scan_id NOT IN (?)", deepDiveScanIDs(s.DB)).
-		Count(&scannerTotal)
+	missedTotal, scannerTotal := s.findingsBadgeTotals(r, scanners, missed)
 
 	s.render(w, r, "findings.html", map[string]any{
 		"Findings": rows, "Page": page, "Severity": sev, "Sort": sort,
@@ -800,6 +770,67 @@ func (s *Server) findings(w http.ResponseWriter, r *http.Request) {
 		"Scanners": scanners, "ScannerTotal": scannerTotal,
 		"Status": status, "Statuses": db.FindingLifecycles,
 	})
+}
+
+func (s *Server) findingsIndexQuery(r *http.Request, includeScanners, includeMissed bool) *gorm.DB {
+	q := s.DB.Model(&db.Finding{})
+	if !includeScanners {
+		q = q.Where("scan_id IN (?)", deepDiveScanIDs(s.DB))
+	}
+	if sev := r.URL.Query().Get("severity"); sev != "" {
+		q = q.Where("severity = ?", sev)
+	}
+	q = applyFindingStatusFilter(q, r.URL.Query().Get(statusKey))
+	if category := r.URL.Query().Get("category"); category != "" {
+		q = applyCWECategoryFilter(q, category)
+	}
+	if owner := r.URL.Query().Get("owner"); owner != "" {
+		q = q.Where("repository_id IN (?)",
+			s.DB.Model(&db.Repository{}).Select("id").Where("owner = ?", owner))
+	}
+	if includeMissed && r.URL.Query().Get("missed") == "1" {
+		q = q.Where("missed_count > 0")
+	}
+	if search := strings.TrimSpace(r.URL.Query().Get("q")); search != "" {
+		like := "%" + search + "%"
+		q = q.Where("title LIKE ? OR location LIKE ? OR cwe LIKE ? OR cve_id LIKE ? OR affected LIKE ?",
+			like, like, like, like, like)
+	}
+	return q
+}
+
+func (s *Server) findingsBadgeTotals(r *http.Request, includeScanners, missed bool) (int64, int64) {
+	missedCond := "missed_count > 0"
+	args := []any{}
+	if !includeScanners {
+		missedCond += " AND scan_id IN (?)"
+		args = append(args, deepDiveScanIDs(s.DB))
+	}
+	scannerCond := "scan_id NOT IN (?)"
+	args = append(args, deepDiveScanIDs(s.DB))
+	if missed {
+		scannerCond += " AND missed_count > 0"
+	}
+	var totals struct {
+		MissedTotal  int64
+		ScannerTotal int64
+	}
+	s.findingsIndexQuery(r, true, false).
+		Select("COALESCE(SUM(CASE WHEN "+missedCond+" THEN 1 ELSE 0 END), 0) AS missed_total, "+
+			"COALESCE(SUM(CASE WHEN "+scannerCond+" THEN 1 ELSE 0 END), 0) AS scanner_total", args...).
+		Scan(&totals)
+	return totals.MissedTotal, totals.ScannerTotal
+}
+
+func applyFindingStatusFilter(q *gorm.DB, status string) *gorm.DB {
+	switch status {
+	case "":
+		return q.Where("status NOT IN ?", db.ClosedFindingLifecycles)
+	case allStatusValue:
+		return q
+	default:
+		return q.Where("status = ?", status)
+	}
 }
 
 func (s *Server) depScan(w http.ResponseWriter, r *http.Request) {
@@ -870,15 +901,11 @@ const (
 // findings for the surrounding repositories row. Used in the repos list
 // "findings" sort. Tool-scanner skills are excluded so the ordering matches
 // the counts shown in the Findings column.
-const deepDiveFindingsCountSQL = `SELECT COUNT(*) FROM findings f
+var deepDiveFindingsCountSQL = `SELECT COUNT(*) FROM findings f
 	    WHERE f.repository_id = repositories.id
-	      AND f.status NOT IN ('fixed', 'published', 'rejected', 'duplicate')
+	      AND f.status NOT IN (` + db.ClosedFindingLifecycleSQLValues() + `)
 	      AND f.scan_id IN (SELECT id FROM scans
 	        WHERE skill_name = '` + deepDiveSkillName + `' OR skill_name = '' OR skill_name IS NULL)`
-
-var repoListClosedFindingStatuses = []db.FindingLifecycle{
-	db.FindingFixed, db.FindingPublished, db.FindingRejected, db.FindingDuplicate,
-}
 
 // deepDiveScanIDs returns a GORM subquery selecting scan IDs that belong to
 // the curated audit (security-deep-dive) or to legacy/empty skill_name rows.

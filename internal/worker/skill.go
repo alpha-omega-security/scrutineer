@@ -262,17 +262,10 @@ func (w *Worker) parseFindingsOutput(skill *db.Skill, scan *db.Scan, report stri
 	findings := rep.toFindings(scan.ID, scan.RepositoryID, scan.Commit, scan.SubPath)
 	findings = groupByFingerprint(findings, scan.SkillName)
 
-	if skill.MinConfidence != "" {
-		kept := findings[:0]
-		for _, f := range findings {
-			if db.ConfidenceAtLeast(f.Confidence, skill.MinConfidence) {
-				kept = append(kept, f)
-			}
-		}
-		if dropped := len(findings) - len(kept); dropped > 0 {
-			emit(Event{Kind: KindText, Text: fmt.Sprintf("dropped %d finding(s) below min_confidence=%s", dropped, skill.MinConfidence)})
-		}
-		findings = kept
+	var dropped int
+	findings, dropped = filterFindingsByMinConfidence(findings, skill.MinConfidence)
+	if dropped > 0 {
+		emit(Event{Kind: KindText, Text: fmt.Sprintf("dropped %d finding(s) below min_confidence=%s", dropped, skill.MinConfidence)})
 	}
 	scan.FindingsCount = len(findings)
 
@@ -296,45 +289,13 @@ func (w *Worker) parseFindingsOutput(skill *db.Skill, scan *db.Scan, report stri
 		f.SeenCount = 1
 		seenThisScan[f.Fingerprint] = true
 
-		var existing db.Finding
-		err := w.DB.Where("repository_id = ? AND fingerprint = ?", scan.RepositoryID, f.Fingerprint).
-			Order("id").First(&existing).Error
-		if err == nil {
-			updates := map[string]any{
-				"last_seen_scan_id":   scan.ID,
-				"last_seen_commit":    scan.Commit,
-				"seen_count":          existing.SeenCount + 1,
-				"missed_count":        0,
-				"last_missed_scan_id": 0,
-				"location":            f.Location,
-				"locations":           f.Locations,
-			}
-			// Refresh the VID so it tracks the code as it drifts, but
-			// never wipe a stored one just because this run could not
-			// compute (vid binary missing, location gone).
-			if f.VID != "" {
-				updates["vid"] = f.VID
-			}
-			if uerr := w.DB.Model(&db.Finding{}).Where("id = ?", existing.ID).Updates(updates).Error; uerr != nil {
-				return fmt.Errorf("update finding %d: %w", existing.ID, uerr)
-			}
-			if rerr := w.upsertFindingReferences(existing.ID, f.References); rerr != nil {
-				w.Log.Warn("upsert finding references", "finding", existing.ID, "scan", scan.ID, "err", rerr)
-			}
-			if herr := w.DB.Create(&db.FindingHistory{
-				FindingID: existing.ID,
-				Field:     "observed",
-				NewValue:  fmt.Sprintf("scan %d @ %s", scan.ID, scan.Commit),
-				Source:    db.SourceTool,
-				By:        scan.SkillName,
-			}).Error; herr != nil {
-				w.Log.Warn("record observed-again finding history", "finding", existing.ID, "scan", scan.ID, "err", herr)
-			}
+		wasObserved, err := w.saveOrObserveFinding(scan, f)
+		if err != nil {
+			return err
+		}
+		if wasObserved {
 			observed++
 			continue
-		}
-		if cerr := w.DB.Create(f).Error; cerr != nil {
-			return fmt.Errorf("save finding: %w", cerr)
 		}
 		created++
 	}
@@ -346,6 +307,68 @@ func (w *Worker) parseFindingsOutput(skill *db.Skill, scan *db.Scan, report stri
 
 	if db.SeverityAtLeast(worst, skill.FailOn) {
 		return &FailOnThresholdError{Worst: worst, Threshold: skill.FailOn}
+	}
+	return nil
+}
+
+func filterFindingsByMinConfidence(findings []db.Finding, minConfidence string) ([]db.Finding, int) {
+	if minConfidence == "" {
+		return findings, 0
+	}
+	kept := findings[:0]
+	for _, f := range findings {
+		if db.ConfidenceAtLeast(f.Confidence, minConfidence) {
+			kept = append(kept, f)
+		}
+	}
+	return kept, len(findings) - len(kept)
+}
+
+func (w *Worker) saveOrObserveFinding(scan *db.Scan, f *db.Finding) (bool, error) {
+	var existing db.Finding
+	err := w.DB.Where("repository_id = ? AND fingerprint = ?", scan.RepositoryID, f.Fingerprint).
+		Order("id").First(&existing).Error
+	if err != nil {
+		if cerr := w.DB.Create(f).Error; cerr != nil {
+			return false, fmt.Errorf("save finding: %w", cerr)
+		}
+		return false, nil
+	}
+	if err := w.recordFindingObservedAgain(scan, &existing, f); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (w *Worker) recordFindingObservedAgain(scan *db.Scan, existing, current *db.Finding) error {
+	updates := map[string]any{
+		"last_seen_scan_id":   scan.ID,
+		"last_seen_commit":    scan.Commit,
+		"seen_count":          existing.SeenCount + 1,
+		"missed_count":        0,
+		"last_missed_scan_id": 0,
+		"location":            current.Location,
+		"locations":           current.Locations,
+	}
+	// Refresh the VID so it tracks the code as it drifts, but never wipe a
+	// stored one just because this run could not compute it.
+	if current.VID != "" {
+		updates["vid"] = current.VID
+	}
+	if err := w.DB.Model(&db.Finding{}).Where("id = ?", existing.ID).Updates(updates).Error; err != nil {
+		return fmt.Errorf("update finding %d: %w", existing.ID, err)
+	}
+	if err := w.upsertFindingReferences(existing.ID, current.References); err != nil {
+		w.Log.Warn("upsert finding references", "finding", existing.ID, "scan", scan.ID, "err", err)
+	}
+	if err := w.DB.Create(&db.FindingHistory{
+		FindingID: existing.ID,
+		Field:     "observed",
+		NewValue:  fmt.Sprintf("scan %d @ %s", scan.ID, scan.Commit),
+		Source:    db.SourceTool,
+		By:        scan.SkillName,
+	}).Error; err != nil {
+		w.Log.Warn("record observed-again finding history", "finding", existing.ID, "scan", scan.ID, "err", err)
 	}
 	return nil
 }
@@ -442,16 +465,13 @@ func (e *FailOnThresholdError) Error() string {
 // published, rejected, duplicate) are left alone. Returns the number of
 // rows touched so the scan log can report it.
 func (w *Worker) markNotObserved(scan *db.Scan, seen map[string]bool) int {
-	closed := []db.FindingLifecycle{
-		db.FindingFixed, db.FindingPublished, db.FindingRejected, db.FindingDuplicate,
-	}
 	sameSkill := w.DB.Model(&db.Scan{}).Select("id").
 		Where("repository_id = ? AND skill_name = ?", scan.RepositoryID, scan.SkillName)
 	var prior []db.Finding
 	w.DB.Where("repository_id = ? AND sub_path = ?", scan.RepositoryID, scan.SubPath).
 		Where("scan_id IN (?)", sameSkill).
 		Where("scan_id <> ?", scan.ID).
-		Where("status NOT IN ?", closed).
+		Where("status NOT IN ?", db.ClosedFindingLifecycles).
 		Find(&prior)
 
 	missed := 0
