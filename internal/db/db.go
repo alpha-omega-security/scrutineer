@@ -472,9 +472,9 @@ type Finding struct {
 	// fixed-to-released latency rather than ending the funnel at the
 	// commit landing. All three move together: zero/empty until a
 	// release is found.
-	ReleasedAt *time.Time
-	ReleaseTag string
-	ReleaseURL string
+	ReleasedAt      *time.Time
+	ReleaseTag      string
+	ReleaseURL      string
 	Resolution      FindingResolution `gorm:"index"`
 	DisclosureDraft string            `gorm:"type:text"`
 	Assignee        string            `gorm:"index"`
