@@ -51,6 +51,60 @@ func WriteFindingField(gdb *gorm.DB, findingID uint, field, newValue string, sou
 	return nil
 }
 
+// WriteFindingTimeField is the time.Time twin of WriteFindingField for
+// timestamp columns the analyst (or a skill) can set. The closed set
+// of writable timestamp columns lives in findingTimeFieldAccessor, so
+// typos surface here rather than reach the DB. The new value is
+// normalised to UTC before write and storage; the history row formats
+// it as RFC3339 so it slots into the existing OldValue/NewValue text
+// columns alongside the string-typed history rows.
+//
+// No-op when the new value equals the stored value (a re-run that
+// reports the same release timestamp does not log a redundant history
+// row).
+func WriteFindingTimeField(gdb *gorm.DB, findingID uint, field string, newValue time.Time, source FindingSource, by string) error {
+	var f Finding
+	if err := gdb.First(&f, findingID).Error; err != nil {
+		return fmt.Errorf("load finding %d: %w", findingID, err)
+	}
+	old, colName, err := findingTimeFieldAccessor(&f, field)
+	if err != nil {
+		return err
+	}
+	newUTC := newValue.UTC()
+	if old != nil && old.Equal(newUTC) {
+		return nil
+	}
+	if err := gdb.Model(&Finding{}).Where("id = ?", f.ID).Update(colName, newUTC).Error; err != nil {
+		return fmt.Errorf("update %s: %w", colName, err)
+	}
+	oldStr := ""
+	if old != nil {
+		oldStr = old.UTC().Format(time.RFC3339)
+	}
+	return gdb.Create(&FindingHistory{
+		FindingID: f.ID,
+		Field:     field,
+		OldValue:  oldStr,
+		NewValue:  newUTC.Format(time.RFC3339),
+		Source:    source,
+		By:        by,
+		CreatedAt: time.Now(),
+	}).Error
+}
+
+// findingTimeFieldAccessor mirrors findingFieldAccessor for timestamp
+// columns. Same closed-list pattern: adding a new editable timestamp
+// means adding a case here.
+func findingTimeFieldAccessor(f *Finding, field string) (current *time.Time, column string, err error) {
+	switch field {
+	case "released_at":
+		return f.ReleasedAt, "released_at", nil
+	default:
+		return nil, "", fmt.Errorf("field %q is not an editable timestamp", field)
+	}
+}
+
 // syncCVSSScore keeps cvss_score in lock-step with cvss_vector. The
 // vector is the canonical input (analyst form, disclose skill), the
 // score is a pure function of it — anything else drifts. An empty or

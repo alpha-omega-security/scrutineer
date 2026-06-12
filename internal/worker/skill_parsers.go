@@ -635,27 +635,8 @@ func (w *Worker) parseReleaseWatchOutput(scan *db.Scan, report string, emit func
 	if err := db.WriteFindingField(w.DB, f.ID, "release_url", result.ReleaseURL, db.SourceModel, "release-watch"); err != nil {
 		return fmt.Errorf("update release_url: %w", err)
 	}
-	// released_at is not editable through findingFieldAccessor (its a
-	// timestamp, not a string), so write directly and log history.
-	old := ""
-	if f.ReleasedAt != nil {
-		old = f.ReleasedAt.UTC().Format(time.RFC3339)
-	}
-	releaseAtUTC := releaseAt.UTC()
-	if old != releaseAtUTC.Format(time.RFC3339) {
-		if err := w.DB.Model(&db.Finding{}).Where("id = ?", f.ID).Update("released_at", releaseAtUTC).Error; err != nil {
-			return fmt.Errorf("update released_at: %w", err)
-		}
-		if err := w.DB.Create(&db.FindingHistory{
-			FindingID: f.ID,
-			Field:     "released_at",
-			OldValue:  old,
-			NewValue:  releaseAtUTC.Format(time.RFC3339),
-			Source:    db.SourceModel,
-			By:        "release-watch",
-		}).Error; err != nil {
-			return fmt.Errorf("history released_at: %w", err)
-		}
+	if err := db.WriteFindingTimeField(w.DB, f.ID, "released_at", releaseAt, db.SourceModel, "release-watch"); err != nil {
+		return fmt.Errorf("update released_at: %w", err)
 	}
 
 	if _, err := db.AddFindingReference(w.DB, f.ID, result.ReleaseURL, "upstream-release",
@@ -663,7 +644,7 @@ func (w *Worker) parseReleaseWatchOutput(scan *db.Scan, report string, emit func
 		return fmt.Errorf("record release reference: %w", err)
 	}
 
-	emit(Event{Kind: KindText, Text: fmt.Sprintf("finding %d released as %s (%s)", f.ID, result.ReleaseTag, releaseAtUTC.Format(time.RFC3339))})
+	emit(Event{Kind: KindText, Text: fmt.Sprintf("finding %d released as %s (%s)", f.ID, result.ReleaseTag, releaseAt.UTC().Format(time.RFC3339))})
 	return nil
 }
 
