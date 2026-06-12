@@ -5,10 +5,13 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"time"
+
+	"gorm.io/gorm"
 
 	"scrutineer/internal/db"
 )
@@ -93,15 +96,31 @@ type bundleEntry struct {
 }
 
 func (s *Server) bundleEntries(f *db.Finding, repo *db.Repository) ([]bundleEntry, error) {
+	// Coordinator bundles need to fail loudly: a silent half-build that
+	// drops references or packages can produce an advisory that looks
+	// complete but is missing crucial context. Each Find() is tolerant
+	// of an empty result (gorm returns no error for zero rows on a Find),
+	// but a real DB failure bubbles up.
 	var refs []db.FindingReference
-	s.DB.Where("finding_id = ?", f.ID).Order("id desc").Find(&refs)
+	if err := s.DB.Where("finding_id = ?", f.ID).Order("id desc").Find(&refs).Error; err != nil {
+		return nil, fmt.Errorf("load references: %w", err)
+	}
 	var pkgs []db.Package
-	s.DB.Where("repository_id = ?", f.RepositoryID).Find(&pkgs)
+	if err := s.DB.Where("repository_id = ?", f.RepositoryID).Find(&pkgs).Error; err != nil {
+		return nil, fmt.Errorf("load packages: %w", err)
+	}
 	var fdRows []db.FindingDependent
-	s.DB.Where("finding_id = ?", f.ID).Find(&fdRows)
+	if err := s.DB.Where("finding_id = ?", f.ID).Find(&fdRows).Error; err != nil {
+		return nil, fmt.Errorf("load finding dependents: %w", err)
+	}
 	deps := loadFindingDependents(s, fdRows)
+	// Scan load is best-effort: a finding with a missing parent scan
+	// row (e.g. a scan that was deleted) still has a valid bundle to
+	// produce, since the bundle does not embed scan-specific fields.
 	var scan db.Scan
-	s.DB.First(&scan, f.ScanID)
+	if err := s.DB.First(&scan, f.ScanID).Error; err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, fmt.Errorf("load scan: %w", err)
+	}
 
 	// Aliases give a coordinator their cross-system identifiers up front:
 	// the OSV builder already collects them from CVE plus any GHSA-shaped
