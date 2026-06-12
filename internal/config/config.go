@@ -62,9 +62,10 @@ type Config struct {
 	// Theme selects the colour scheme: "claude" (default), "ocean-breeze",
 	// "catppuccin", "sunset-horizon", "midnight-bloom", or "northern-lights".
 	Theme string `yaml:"theme"`
-	// ForkOrg is the GitHub organisation the fork skill forks scanned
-	// repositories into and files draft advisories against. Empty disables
-	// the fork skill (it will refuse to run without a target org).
+	// ForkOrg is the GitHub organisation the fork skill stages scanned
+	// repositories into as private repos and files finding issues against.
+	// Empty disables the fork skill (it will refuse to run without a target
+	// org).
 	ForkOrg string `yaml:"fork_org"`
 	// SchemaStrict makes a skill report that fails JSON-schema validation
 	// fail the scan. When false (the default) the validator output is

@@ -12,7 +12,7 @@ metadata:
 
 # report-upstream
 
-Submit a finding to the upstream repository's maintainers through GitHub's private vulnerability reporting (PVR), and hand them the proposed fix. Unlike `fork`, which stages drafts on our own fork for internal review, this skill files against the upstream repo and is visible to its maintainers. Do not run it on a finding the analyst has not signed off on.
+Submit a finding to the upstream repository's maintainers through GitHub's private vulnerability reporting (PVR), and hand them the proposed fix. Unlike `fork`, which stands up a private staging repo in the org for internal review, this skill files against the upstream repo and is visible to its maintainers. Do not run it on a finding the analyst has not signed off on.
 
 ## Workspace
 
@@ -64,7 +64,7 @@ When `suggested_fix` is empty, append `## Proposed fix\n\nNo patch is attached. 
 
 GitHub caps `description` at 65535 characters. If the assembled description exceeds that, drop the diff block (keep the prose explaining a diff is available on request) and try again. If it still exceeds the cap, truncate `disclosure_draft` from the bottom and note `truncated: true` in `report.json`.
 
-End the description with a final line `[scrutineer-finding:{finding_id}]` so re-runs and the `fork` skill can recognise this advisory.
+End the description with a final line `[scrutineer-finding:{finding_id}]` so re-runs can recognise this advisory and the staging issue filed by `fork` carries the same marker.
 
 ## 2. File the report
 
@@ -72,7 +72,7 @@ End the description with a final line `[scrutineer-finding:{finding_id}]` so re-
 gh api -X POST repos/{owner}/{repo}/security-advisories/reports --input ./advisory.json
 ```
 
-This is the external-reporter endpoint; do not use the bare `/security-advisories` admin endpoint, which only works for repo admins and is what `fork` uses on our own staging fork. Capture `ghsa_id` and `html_url` from the response.
+This is the external-reporter endpoint; do not use the bare `/security-advisories` admin endpoint, which only works for repo admins. Capture `ghsa_id` and `html_url` from the response.
 
 A 422 with `Private vulnerability reporting is disabled` means PVR was turned off between the precondition check and the POST; treat as a refusal. A 422 mentioning a specific field (`vulnerabilities`, `cvss_vector_string`) means the body shape was rejected; fix the named field (drop `vulnerable_version_range`, drop `cvss_vector_string` in favour of `severity`) and retry once. Any other non-2xx is a refusal with the response body in `error`.
 
