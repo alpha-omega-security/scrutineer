@@ -54,8 +54,8 @@ type Worker struct {
 	// keeps per-project metadata. Empty means the worker substitutes
 	// the default, `.scrutineer/`, when staging the skill context.
 	MetadataDir string
-	Runner  SkillRunner
-	OnEvent func(scanID, repoID uint, name, data string) // optional SSE bridge
+	Runner      SkillRunner
+	OnEvent     func(scanID, repoID uint, name, data string) // optional SSE bridge
 	// OnFindingCreated, when non-nil, is called after a findings-emitting
 	// scan persists a fresh Finding row. The web layer wires it up to
 	// auto-enqueue a revalidate scan over High/Critical findings from
