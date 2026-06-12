@@ -106,6 +106,60 @@ func newSchemaTestWorker(t *testing.T, strict bool) (*Worker, *db.Skill, *db.Sca
 	return w, &skill, &scan
 }
 
+type sequenceRunner struct {
+	results []SkillResult
+	errs    []error
+	events  [][]Event
+	jobs    []SkillJob
+}
+
+func (r *sequenceRunner) RunSkill(_ context.Context, sj SkillJob, emit func(Event)) (SkillResult, error) {
+	r.jobs = append(r.jobs, sj)
+	emit(Event{Kind: KindText, Text: "running skill " + sj.Name})
+	idx := len(r.jobs) - 1
+	if idx < len(r.events) {
+		for _, e := range r.events[idx] {
+			emit(e)
+		}
+	}
+	var res SkillResult
+	if idx < len(r.results) {
+		res = r.results[idx]
+	}
+	var err error
+	if idx < len(r.errs) {
+		err = r.errs[idx]
+	}
+	return res, err
+}
+
+func newQueuedSchemaSkillWorker(t *testing.T, strict bool, runner SkillRunner) (*Worker, uint, uint) {
+	t.Helper()
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
+	gdb.Create(&repo)
+	skill := db.Skill{
+		Name: "posture-test", Description: "d", Body: "b",
+		OutputFile: "report.json", OutputKind: "posture",
+		SchemaJSON: testSchema, Version: 1, Active: true, Source: "ui",
+	}
+	gdb.Create(&skill)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanQueued,
+		SkillID: &skill.ID, Model: "fake"}
+	gdb.Create(&scan)
+	w := &Worker{
+		DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		DataDir:        t.TempDir(),
+		SchemaStrict:   strict,
+		Runner:         runner,
+		PrepareRepoSrc: stubPrepareRepoSrc,
+	}
+	return w, repo.ID, scan.ID
+}
+
 func TestParseSkillOutput_schemaWarnAndContinue(t *testing.T) {
 	w, skill, scan := newSchemaTestWorker(t, false)
 
@@ -141,6 +195,143 @@ func TestParseSkillOutput_schemaWarnAndContinue(t *testing.T) {
 	}
 }
 
+func TestDoSkill_schemaMismatchResumesForRepair(t *testing.T) {
+	runner := &sequenceRunner{results: []SkillResult{
+		{SessionID: "sess-1", Report: `{"tier":{"x":1}}`},
+		{SessionID: "sess-1", Report: `{"tier":"ready","summary":"fixed"}`},
+	}, events: [][]Event{
+		{
+			{Kind: KindResult, CostUSD: 1.25, Turns: 8, Usage: Usage{
+				InputTokens: 100, OutputTokens: 20, CacheReadTokens: 300, CacheWriteTokens: 40,
+			}},
+		},
+		{
+			{Kind: KindResult, CostUSD: 0.25, Turns: 2, Usage: Usage{
+				InputTokens: 30, OutputTokens: 10, CacheReadTokens: 70, CacheWriteTokens: 5,
+			}},
+		},
+	}}
+	w, repoID, scanID := newQueuedSchemaSkillWorker(t, true, runner)
+	body, _ := json.Marshal(queue.Payload{ScanID: scanID})
+	if err := w.wrap(w.doSkill)(context.Background(), body); err != nil {
+		t.Fatalf("wrap should save and return nil, got %v", err)
+	}
+
+	if len(runner.jobs) != 2 {
+		t.Fatalf("RunSkill calls = %d, want 2", len(runner.jobs))
+	}
+	if runner.jobs[0].ResumeSessionID != "" {
+		t.Errorf("fresh run ResumeSessionID = %q, want empty", runner.jobs[0].ResumeSessionID)
+	}
+	repairJob := runner.jobs[1]
+	if repairJob.ResumeSessionID != "sess-1" {
+		t.Errorf("repair ResumeSessionID = %q, want sess-1", repairJob.ResumeSessionID)
+	}
+	if repairJob.MaxTurns != schemaRepairMaxTurns {
+		t.Errorf("repair MaxTurns = %d, want %d", repairJob.MaxTurns, schemaRepairMaxTurns)
+	}
+	for _, want := range []string{"schema.json", "report.json", "/tier", "Previous invalid"} {
+		if !strings.Contains(repairJob.ResumePrompt, want) {
+			t.Errorf("repair prompt should mention %q; got %q", want, repairJob.ResumePrompt)
+		}
+	}
+
+	var got db.Scan
+	w.DB.First(&got, scanID)
+	if got.Status != db.ScanDone {
+		t.Fatalf("Status = %s, want done: %s", got.Status, got.Error)
+	}
+	if got.Report != `{"tier":"ready","summary":"fixed"}` {
+		t.Errorf("Report = %q, want repaired report", got.Report)
+	}
+	if !strings.Contains(got.Log, "report.json failed validation; asking claude to repair it") {
+		t.Errorf("Log should mention repair attempt, got %q", got.Log)
+	}
+	if got.CostUSD != 1.50 {
+		t.Errorf("CostUSD = %.2f, want 1.50", got.CostUSD)
+	}
+	if got.Turns != 10 {
+		t.Errorf("Turns = %d, want 10", got.Turns)
+	}
+	if got.InputTokens != 130 || got.OutputTokens != 30 || got.CacheReadTokens != 370 || got.CacheWriteTokens != 45 {
+		t.Errorf("usage = in:%d out:%d read:%d write:%d, want in:130 out:30 read:370 write:45",
+			got.InputTokens, got.OutputTokens, got.CacheReadTokens, got.CacheWriteTokens)
+	}
+
+	var fresh db.Repository
+	w.DB.First(&fresh, repoID)
+	if fresh.Posture != "ready" {
+		t.Errorf("repo.Posture = %q, want ready", fresh.Posture)
+	}
+}
+
+func TestDoSkill_schemaRepairStillInvalidFailsStrict(t *testing.T) {
+	runner := &sequenceRunner{results: []SkillResult{
+		{SessionID: "sess-1", Report: `{"tier":{"x":1}}`},
+		{SessionID: "sess-1", Report: `{"tier":"wrong"}`},
+	}}
+	w, _, scanID := newQueuedSchemaSkillWorker(t, true, runner)
+	body, _ := json.Marshal(queue.Payload{ScanID: scanID})
+	if err := w.wrap(w.doSkill)(context.Background(), body); err != nil {
+		t.Fatalf("wrap should save and return nil, got %v", err)
+	}
+
+	var got db.Scan
+	w.DB.First(&got, scanID)
+	if got.Status != db.ScanFailed {
+		t.Fatalf("Status = %s, want failed", got.Status)
+	}
+	if got.Report != `{"tier":{"x":1}}` {
+		t.Errorf("Report = %q, want original report after invalid repair", got.Report)
+	}
+	if !strings.Contains(got.Error, "schema validation") {
+		t.Errorf("Error = %q, want schema validation error", got.Error)
+	}
+	if len(runner.jobs) != 2 {
+		t.Errorf("RunSkill calls = %d, want 2", len(runner.jobs))
+	}
+	if count := strings.Count(got.Log, "does not validate against schema.json"); count != 1 {
+		t.Errorf("schema validation detail logged %d times, want 1; log:\n%s", count, got.Log)
+	}
+}
+
+func TestDoSkill_schemaRepairErrorFallsBackInWarnMode(t *testing.T) {
+	original := `{"tier":"ready","summary":"ok","extra":1}`
+	runner := &sequenceRunner{
+		results: []SkillResult{
+			{SessionID: "sess-1", Report: original},
+			{SessionID: "sess-1"},
+		},
+		errs: []error{nil, errors.New("cli flake")},
+	}
+	w, repoID, scanID := newQueuedSchemaSkillWorker(t, false, runner)
+	body, _ := json.Marshal(queue.Payload{ScanID: scanID})
+	if err := w.wrap(w.doSkill)(context.Background(), body); err != nil {
+		t.Fatalf("wrap should save and return nil, got %v", err)
+	}
+
+	var got db.Scan
+	w.DB.First(&got, scanID)
+	if got.Status != db.ScanDone {
+		t.Fatalf("Status = %s, want done: %s", got.Status, got.Error)
+	}
+	if got.Report != original {
+		t.Errorf("Report = %q, want original report after repair error", got.Report)
+	}
+	if !strings.Contains(got.Log, "repair attempt for report.json failed: cli flake; parsing original output") {
+		t.Errorf("Log should mention best-effort repair failure, got %q", got.Log)
+	}
+	if count := strings.Count(got.Log, "does not validate against schema.json"); count != 1 {
+		t.Errorf("schema validation detail logged %d times, want 1; log:\n%s", count, got.Log)
+	}
+
+	var repo db.Repository
+	w.DB.First(&repo, repoID)
+	if repo.Posture != "ready" {
+		t.Errorf("repo.Posture = %q, want ready from original report", repo.Posture)
+	}
+}
+
 func TestParseSkillOutput_schemaStrictFails(t *testing.T) {
 	w, skill, scan := newSchemaTestWorker(t, true)
 
@@ -164,6 +355,26 @@ func TestParseSkillOutput_schemaStrictFails(t *testing.T) {
 	if repo.Posture != "" {
 		t.Errorf("repo.Posture = %q, want empty (parser should not have run)", repo.Posture)
 	}
+}
+
+func TestParseSkillOutput_schemaMessageUsesOutputFile(t *testing.T) {
+	w, skill, scan := newSchemaTestWorker(t, false)
+	skill.OutputFile = "custom-output.json"
+
+	var events []Event
+	err := w.parseSkillOutput(skill, scan, `{"tier":"ready","summary":"ok","extra":1}`, func(e Event) { events = append(events, e) })
+	if err != nil {
+		t.Fatalf("warn mode should not fail on schema mismatch: %v", err)
+	}
+	for _, e := range events {
+		if e.Kind == KindError && strings.Contains(e.Text, "schema:") {
+			if !strings.Contains(e.Text, "custom-output.json does not validate against schema.json") {
+				t.Errorf("schema message should use output file, got %q", e.Text)
+			}
+			return
+		}
+	}
+	t.Fatal("expected schema error event")
 }
 
 func TestParseSkillOutput_schemaStrictPassesThrough(t *testing.T) {

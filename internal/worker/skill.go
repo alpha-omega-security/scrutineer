@@ -13,7 +13,13 @@ import (
 	"scrutineer/internal/skills"
 )
 
-const filePerm = 0o644
+const (
+	filePerm                  = 0o644
+	defaultSkillOutputFile    = "report.json"
+	skillSchemaFile           = "schema.json"
+	schemaRepairMaxTurns      = 4
+	schemaRepairReportMaxSize = 4000
+)
 
 // skillContext is the JSON document scrutineer writes to ./context.json in
 // every skill workspace before invoking claude. Skills that need to know who
@@ -170,12 +176,15 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 		return res.Report, err
 	}
 
-	if res.Report != "" {
-		if err := w.parseSkillOutput(&skill, scan, res.Report, emit); err != nil {
-			return res.Report, err
+	report := res.Report
+	if report != "" {
+		var err error
+		report, err = w.repairAndParseSkillOutput(ctx, &skill, scan, sj, report, emit)
+		if err != nil {
+			return report, err
 		}
 	}
-	return res.Report, nil
+	return report, nil
 }
 
 // parsePartialSkillReport runs parseSkillOutput against a max-turns
@@ -188,10 +197,94 @@ func (w *Worker) parsePartialSkillReport(skill *db.Skill, scan *db.Scan, report 
 	}
 }
 
+func (w *Worker) repairAndParseSkillOutput(ctx context.Context, skill *db.Skill, scan *db.Scan, sj SkillJob, report string, emit func(Event)) (string, error) {
+	if skill.SchemaJSON != "" {
+		if detail := validateReportSchema(skill.SchemaJSON, report); detail != "" {
+			if repairedReport, ok := w.repairSchemaReport(ctx, skill, scan, sj, report, detail, emit); ok {
+				report = repairedReport
+			}
+		}
+	}
+	if err := w.parseSkillOutput(skill, scan, report, emit); err != nil {
+		return report, err
+	}
+	return report, nil
+}
+
+func (w *Worker) repairSchemaReport(ctx context.Context, skill *db.Skill, scan *db.Scan, sj SkillJob, report, detail string, emit func(Event)) (string, bool) {
+	outputFile := skillOutputFile(skill)
+	if scan.SessionID == "" {
+		return "", false
+	}
+
+	emit(Event{Kind: KindText, Text: fmt.Sprintf("schema: %s failed validation; asking claude to repair it", outputFile)})
+	repairJob := sj
+	repairJob.ResumeSessionID = scan.SessionID
+	repairJob.ResumePrompt = buildSchemaRepairPrompt(skill, detail, report)
+	repairJob.MaxTurns = schemaRepairMaxTurns
+	res, err := w.Runner.RunSkill(ctx, repairJob, emit)
+	if res.SessionID != "" && res.SessionID != scan.SessionID {
+		scan.SessionID = res.SessionID
+	}
+	if res.Commit != "" {
+		scan.Commit = res.Commit
+	}
+	if res.Profile != "" && res.Profile != scan.Profile {
+		scan.Profile = res.Profile
+		w.DB.Model(scan).Update("profile", res.Profile)
+	}
+	if err != nil {
+		emit(Event{Kind: KindError, Text: fmt.Sprintf("schema: repair attempt for %s failed: %v; parsing original output", outputFile, err)})
+		return "", false
+	}
+	if res.Report == "" {
+		emit(Event{Kind: KindError, Text: fmt.Sprintf("schema: repair attempt did not produce %s; parsing original output", outputFile)})
+		return "", false
+	}
+	if detail = validateReportSchema(skill.SchemaJSON, res.Report); detail == "" {
+		emit(Event{Kind: KindText, Text: fmt.Sprintf("schema: repaired %s validates", outputFile)})
+		return res.Report, true
+	}
+	emit(Event{Kind: KindText, Text: fmt.Sprintf("schema: repaired %s still does not validate; parsing original output", outputFile)})
+	return "", false
+}
+
+func buildSchemaRepairPrompt(skill *db.Skill, detail, report string) string {
+	outputFile := skillOutputFile(skill)
+	return fmt.Sprintf(`Your previous %q skill run wrote ./%s, but it failed validation against ./%s.
+
+Validation errors:
+%s
+
+Rewrite only ./%s with JSON that validates against ./%s. Preserve the facts from the previous run, do not restart the analysis, and do not write prose outside the JSON file.
+
+Previous invalid ./%s:
+%s`, skill.Name, outputFile, skillSchemaFile, detail, outputFile, skillSchemaFile, outputFile, truncateSchemaRepairReport(report))
+}
+
+func skillOutputFile(skill *db.Skill) string {
+	if skill.OutputFile != "" {
+		return skill.OutputFile
+	}
+	return defaultSkillOutputFile
+}
+
+func schemaValidationEvent(skill *db.Skill, detail string) Event {
+	return Event{Kind: KindError, Text: fmt.Sprintf("schema: %s does not validate against %s:\n%s", skillOutputFile(skill), skillSchemaFile, detail)}
+}
+
+func truncateSchemaRepairReport(report string) string {
+	report = strings.TrimSpace(report)
+	if len(report) <= schemaRepairReportMaxSize {
+		return report
+	}
+	return report[:schemaRepairReportMaxSize] + "\n... truncated ..."
+}
+
 func (w *Worker) parseSkillOutput(skill *db.Skill, scan *db.Scan, report string, emit func(Event)) error {
 	if skill.SchemaJSON != "" {
 		if detail := validateReportSchema(skill.SchemaJSON, report); detail != "" {
-			emit(Event{Kind: KindError, Text: "schema: report.json does not validate against schema.json:\n" + detail})
+			emit(schemaValidationEvent(skill, detail))
 			if w.SchemaStrict {
 				return &SchemaValidationError{Skill: skill.Name, Detail: detail}
 			}
@@ -262,17 +355,10 @@ func (w *Worker) parseFindingsOutput(skill *db.Skill, scan *db.Scan, report stri
 	findings := rep.toFindings(scan.ID, scan.RepositoryID, scan.Commit, scan.SubPath)
 	findings = groupByFingerprint(findings, scan.SkillName)
 
-	if skill.MinConfidence != "" {
-		kept := findings[:0]
-		for _, f := range findings {
-			if db.ConfidenceAtLeast(f.Confidence, skill.MinConfidence) {
-				kept = append(kept, f)
-			}
-		}
-		if dropped := len(findings) - len(kept); dropped > 0 {
-			emit(Event{Kind: KindText, Text: fmt.Sprintf("dropped %d finding(s) below min_confidence=%s", dropped, skill.MinConfidence)})
-		}
-		findings = kept
+	var dropped int
+	findings, dropped = filterFindingsByMinConfidence(findings, skill.MinConfidence)
+	if dropped > 0 {
+		emit(Event{Kind: KindText, Text: fmt.Sprintf("dropped %d finding(s) below min_confidence=%s", dropped, skill.MinConfidence)})
 	}
 	scan.FindingsCount = len(findings)
 
@@ -296,45 +382,13 @@ func (w *Worker) parseFindingsOutput(skill *db.Skill, scan *db.Scan, report stri
 		f.SeenCount = 1
 		seenThisScan[f.Fingerprint] = true
 
-		var existing db.Finding
-		err := w.DB.Where("repository_id = ? AND fingerprint = ?", scan.RepositoryID, f.Fingerprint).
-			Order("id").First(&existing).Error
-		if err == nil {
-			updates := map[string]any{
-				"last_seen_scan_id":   scan.ID,
-				"last_seen_commit":    scan.Commit,
-				"seen_count":          existing.SeenCount + 1,
-				"missed_count":        0,
-				"last_missed_scan_id": 0,
-				"location":            f.Location,
-				"locations":           f.Locations,
-			}
-			// Refresh the VID so it tracks the code as it drifts, but
-			// never wipe a stored one just because this run could not
-			// compute (vid binary missing, location gone).
-			if f.VID != "" {
-				updates["vid"] = f.VID
-			}
-			if uerr := w.DB.Model(&db.Finding{}).Where("id = ?", existing.ID).Updates(updates).Error; uerr != nil {
-				return fmt.Errorf("update finding %d: %w", existing.ID, uerr)
-			}
-			if rerr := w.upsertFindingReferences(existing.ID, f.References); rerr != nil {
-				w.Log.Warn("upsert finding references", "finding", existing.ID, "scan", scan.ID, "err", rerr)
-			}
-			if herr := w.DB.Create(&db.FindingHistory{
-				FindingID: existing.ID,
-				Field:     "observed",
-				NewValue:  fmt.Sprintf("scan %d @ %s", scan.ID, scan.Commit),
-				Source:    db.SourceTool,
-				By:        scan.SkillName,
-			}).Error; herr != nil {
-				w.Log.Warn("record observed-again finding history", "finding", existing.ID, "scan", scan.ID, "err", herr)
-			}
+		wasObserved, err := w.saveOrObserveFinding(scan, f)
+		if err != nil {
+			return err
+		}
+		if wasObserved {
 			observed++
 			continue
-		}
-		if cerr := w.DB.Create(f).Error; cerr != nil {
-			return fmt.Errorf("save finding: %w", cerr)
 		}
 		created++
 	}
@@ -346,6 +400,68 @@ func (w *Worker) parseFindingsOutput(skill *db.Skill, scan *db.Scan, report stri
 
 	if db.SeverityAtLeast(worst, skill.FailOn) {
 		return &FailOnThresholdError{Worst: worst, Threshold: skill.FailOn}
+	}
+	return nil
+}
+
+func filterFindingsByMinConfidence(findings []db.Finding, minConfidence string) ([]db.Finding, int) {
+	if minConfidence == "" {
+		return findings, 0
+	}
+	kept := findings[:0]
+	for _, f := range findings {
+		if db.ConfidenceAtLeast(f.Confidence, minConfidence) {
+			kept = append(kept, f)
+		}
+	}
+	return kept, len(findings) - len(kept)
+}
+
+func (w *Worker) saveOrObserveFinding(scan *db.Scan, f *db.Finding) (bool, error) {
+	var existing db.Finding
+	err := w.DB.Where("repository_id = ? AND fingerprint = ?", scan.RepositoryID, f.Fingerprint).
+		Order("id").First(&existing).Error
+	if err != nil {
+		if cerr := w.DB.Create(f).Error; cerr != nil {
+			return false, fmt.Errorf("save finding: %w", cerr)
+		}
+		return false, nil
+	}
+	if err := w.recordFindingObservedAgain(scan, &existing, f); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (w *Worker) recordFindingObservedAgain(scan *db.Scan, existing, current *db.Finding) error {
+	updates := map[string]any{
+		"last_seen_scan_id":   scan.ID,
+		"last_seen_commit":    scan.Commit,
+		"seen_count":          existing.SeenCount + 1,
+		"missed_count":        0,
+		"last_missed_scan_id": 0,
+		"location":            current.Location,
+		"locations":           current.Locations,
+	}
+	// Refresh the VID so it tracks the code as it drifts, but never wipe a
+	// stored one just because this run could not compute it.
+	if current.VID != "" {
+		updates["vid"] = current.VID
+	}
+	if err := w.DB.Model(&db.Finding{}).Where("id = ?", existing.ID).Updates(updates).Error; err != nil {
+		return fmt.Errorf("update finding %d: %w", existing.ID, err)
+	}
+	if err := w.upsertFindingReferences(existing.ID, current.References); err != nil {
+		w.Log.Warn("upsert finding references", "finding", existing.ID, "scan", scan.ID, "err", err)
+	}
+	if err := w.DB.Create(&db.FindingHistory{
+		FindingID: existing.ID,
+		Field:     "observed",
+		NewValue:  fmt.Sprintf("scan %d @ %s", scan.ID, scan.Commit),
+		Source:    db.SourceTool,
+		By:        scan.SkillName,
+	}).Error; err != nil {
+		w.Log.Warn("record observed-again finding history", "finding", existing.ID, "scan", scan.ID, "err", err)
 	}
 	return nil
 }

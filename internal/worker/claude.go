@@ -17,6 +17,8 @@ import (
 // metadata nor the global config set a value.
 const DefaultSkillMaxTurns = 30
 
+const resumePromptNoFreshFallbackText = "not restarting repair prompt fresh"
+
 // MaxTurnsReachedError is returned when claude-code exits after hitting the
 // --max-turns cap. The caller should treat this as a soft completion.
 type MaxTurnsReachedError struct{}
@@ -75,6 +77,10 @@ type SkillJob struct {
 	// conversation with full history instead of restarting from turn 0.
 	// The runner falls back to a fresh run if the session can't be found.
 	ResumeSessionID string
+	// ResumePrompt, when non-empty, replaces the default generic resume
+	// prompt. It lets callers resume the same conversation with targeted
+	// corrective instructions, such as rewriting an invalid report.json.
+	ResumePrompt string
 	// ClaudeConfigDir is a host directory the docker runner mounts as the
 	// container's CLAUDE_CONFIG_DIR so the resumable session store persists
 	// across container restarts. Empty disables the mount (the local runner
@@ -144,6 +150,10 @@ func (l LocalClaude) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)
 	hitMaxTurns, sessionID, waitErr := l.runClaudeOnce(ctx, args, work, wrappedEmit)
 
 	if waitErr != nil && sj.ResumeSessionID != "" && sessionID == "" && planLimitText == "" {
+		if sj.ResumePrompt != "" {
+			emit(Event{Kind: KindText, Text: "resume of session " + sj.ResumeSessionID + " failed; " + resumePromptNoFreshFallbackText})
+			return SkillResult{Commit: commit}, fmt.Errorf("claude exited: %w", waitErr)
+		}
 		// The resume never produced a session event, so claude could not
 		// load the saved conversation (expired or pruned). Restart fresh in
 		// the same workspace so the retry lineage isn't permanently wedged
@@ -266,7 +276,11 @@ func buildClaudeArgs(sj SkillJob, effort string, globalMaxTurns int) []string {
 	}
 	args = append(args, "--max-turns", strconv.Itoa(effectiveMaxTurns(sj.MaxTurns, globalMaxTurns)))
 	if sj.ResumeSessionID != "" {
-		args = append(args, buildResumePrompt(sj.Name, sj.OutputFile))
+		if sj.ResumePrompt != "" {
+			args = append(args, sj.ResumePrompt)
+		} else {
+			args = append(args, buildResumePrompt(sj.Name, sj.OutputFile))
+		}
 	} else {
 		args = append(args, buildSkillPrompt(sj.Name, sj.OutputFile))
 	}

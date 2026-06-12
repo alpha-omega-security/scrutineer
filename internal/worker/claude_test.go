@@ -158,6 +158,21 @@ func TestBuildClaudeArgs_Resume(t *testing.T) {
 	}
 }
 
+func TestBuildClaudeArgs_CustomResumePrompt(t *testing.T) {
+	sj := SkillJob{
+		Name:            "metadata",
+		Model:           "claude-opus-4-8",
+		OutputFile:      "report.json",
+		ResumeSessionID: "abc-123",
+		ResumePrompt:    "repair the schema mismatch",
+	}
+	args := buildClaudeArgs(sj, "", 0)
+
+	if got := args[len(args)-1]; got != sj.ResumePrompt {
+		t.Errorf("final arg = %q, want custom resume prompt", got)
+	}
+}
+
 func TestBuildClaudeArgs_NoResumeWhenUnset(t *testing.T) {
 	sj := SkillJob{Name: "metadata", Model: "claude-opus-4-8", OutputFile: "report.json"}
 	args := buildClaudeArgs(sj, "", 0)
@@ -219,6 +234,61 @@ func TestLocalClaude_ResumeFallsBackToFresh(t *testing.T) {
 	}
 	if res.Report != `{"done":true}` {
 		t.Errorf("Report = %q, want the fresh run's output", res.Report)
+	}
+}
+
+func TestLocalClaude_ResumePromptDoesNotFallbackToFresh(t *testing.T) {
+	bin := t.TempDir()
+	script := "#!/bin/sh\n" +
+		"for a in \"$@\"; do\n" +
+		"  if [ \"$a\" = \"--resume\" ]; then\n" +
+		"    echo 'No conversation found with session ID: x'\n" +
+		"    echo '{\"type\":\"result\",\"subtype\":\"error_during_execution\",\"is_error\":true,\"num_turns\":0}'\n" +
+		"    exit 1\n" +
+		"  fi\n" +
+		"done\n" +
+		"printf '{\"fresh\":true}' > report.json\n" +
+		"echo '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"fresh-sess\"}'\n" +
+		"echo '{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"ok\",\"num_turns\":1}'\n" +
+		"exit 0\n"
+	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	work := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(work, "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sj := SkillJob{
+		Name:            "deep",
+		Model:           "m",
+		WorkRoot:        work,
+		SrcReady:        true,
+		OutputFile:      "report.json",
+		ResumeSessionID: "dead-session",
+		ResumePrompt:    "repair report.json",
+	}
+	var sawNoFreshLog bool
+	res, err := LocalClaude{}.RunSkill(context.Background(), sj, func(e Event) {
+		if e.Kind == KindText && strings.Contains(e.Text, resumePromptNoFreshFallbackText) {
+			sawNoFreshLog = true
+		}
+	})
+	if err == nil {
+		t.Fatal("RunSkill succeeded, want resume failure without fresh fallback")
+	}
+	if !sawNoFreshLog {
+		t.Error("expected log explaining repair resume was not restarted fresh")
+	}
+	if res.SessionID != "" {
+		t.Errorf("SessionID = %q, want empty", res.SessionID)
+	}
+	if res.Report != "" {
+		t.Errorf("Report = %q, want empty because fresh fallback must not run", res.Report)
+	}
+	if _, err := os.Stat(filepath.Join(work, "report.json")); !os.IsNotExist(err) {
+		t.Fatalf("fresh fallback wrote report.json; stat err = %v", err)
 	}
 }
 

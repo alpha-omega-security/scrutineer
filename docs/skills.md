@@ -187,7 +187,7 @@ The worker then runs `claude -p "Use the {name} skill in this workspace"` with t
 
 ## schema.json
 
-If a `schema.json` sits next to `SKILL.md`, scrutineer stages it into the workspace so the model can read the expected output shape, and after the run validates `report.json` against it with a draft 2020-12 validator. By default a mismatch is logged to the scan transcript and the parser still runs, so a stricter schema does not break ingestion. Start scrutineer with `-schema-strict` (or `schema_strict: true` in the config file) to turn that warning into a scan failure with the validator output in `Scan.Error`; useful while iterating on a skill locally.
+If a `schema.json` sits next to `SKILL.md`, scrutineer stages it into the workspace so the model can read the expected output shape, and after the run validates `report.json` against it with a draft 2020-12 validator. When validation fails and the Claude session is still available, scrutineer resumes that session once with the validator output and asks it to rewrite `report.json` before parsing. If the repaired report still fails validation, the mismatch is logged to the scan transcript and the parser still runs by default, so a stricter schema does not break ingestion. Start scrutineer with `-schema-strict` (or `schema_strict: true` in the config file) to turn the remaining warning into a scan failure with the validator output in `Scan.Error`; useful while iterating on a skill locally.
 
 Bundled skills with typed output kinds carry a schema; skills with `output_kind: freeform` generally do not.
 
