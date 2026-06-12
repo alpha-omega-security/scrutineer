@@ -577,6 +577,96 @@ func (w *Worker) parseMitigationOutput(scan *db.Scan, report string, emit func(E
 	return nil
 }
 
+// parseReleaseWatchOutput records whether the upstream has cut a
+// release containing the fix. When released=true, the tag, URL, and
+// timestamp go to the finding's release_tag / release_url / released_at
+// columns through WriteFindingField (history recorded), and a
+// FindingReference row tagged `upstream-release` makes the link visible
+// in the references panel. A released=false run is also fine: it just
+// records a short note and waits for the next run to check again.
+func (w *Worker) parseReleaseWatchOutput(scan *db.Scan, report string, emit func(Event)) error {
+	if scan.FindingID == nil {
+		return fmt.Errorf("release-watch scan has no finding_id")
+	}
+	var result struct {
+		Released   bool   `json:"released"`
+		ReleaseTag string `json:"release_tag"`
+		ReleaseURL string `json:"release_url"`
+		ReleaseAt  string `json:"release_at"`
+		Notes      string `json:"notes"`
+	}
+	if err := json.Unmarshal([]byte(report), &result); err != nil {
+		return fmt.Errorf("parse release-watch report: %w", err)
+	}
+	// Validate the report shape before touching the DB so a malformed
+	// run fails fast and the rejection paths can be tested without a
+	// backing database.
+	var releaseAt time.Time
+	if result.Released {
+		if strings.TrimSpace(result.ReleaseTag) == "" || strings.TrimSpace(result.ReleaseURL) == "" {
+			return fmt.Errorf("release-watch report claims released=true but is missing release_tag or release_url")
+		}
+		parsed, err := time.Parse(time.RFC3339, result.ReleaseAt)
+		if err != nil {
+			return fmt.Errorf("parse release_at %q: %w", result.ReleaseAt, err)
+		}
+		releaseAt = parsed
+	}
+	var f db.Finding
+	if err := w.DB.First(&f, *scan.FindingID).Error; err != nil {
+		return fmt.Errorf("load finding %d: %w", *scan.FindingID, err)
+	}
+
+	if !result.Released {
+		// Negative observations get a note row so the operator can see
+		// what the latest run said without trawling scan logs.
+		if reason := strings.TrimSpace(result.Notes); reason != "" {
+			if _, err := db.AddFindingNote(w.DB, f.ID, "release-watch: not released\n\n"+reason, "release-watch"); err != nil {
+				return fmt.Errorf("record release-watch note: %w", err)
+			}
+		}
+		emit(Event{Kind: KindText, Text: fmt.Sprintf("finding %d: no release yet", f.ID)})
+		return nil
+	}
+
+	if err := db.WriteFindingField(w.DB, f.ID, "release_tag", result.ReleaseTag, db.SourceModel, "release-watch"); err != nil {
+		return fmt.Errorf("update release_tag: %w", err)
+	}
+	if err := db.WriteFindingField(w.DB, f.ID, "release_url", result.ReleaseURL, db.SourceModel, "release-watch"); err != nil {
+		return fmt.Errorf("update release_url: %w", err)
+	}
+	// released_at is not editable through findingFieldAccessor (its a
+	// timestamp, not a string), so write directly and log history.
+	old := ""
+	if f.ReleasedAt != nil {
+		old = f.ReleasedAt.UTC().Format(time.RFC3339)
+	}
+	releaseAtUTC := releaseAt.UTC()
+	if old != releaseAtUTC.Format(time.RFC3339) {
+		if err := w.DB.Model(&db.Finding{}).Where("id = ?", f.ID).Update("released_at", releaseAtUTC).Error; err != nil {
+			return fmt.Errorf("update released_at: %w", err)
+		}
+		if err := w.DB.Create(&db.FindingHistory{
+			FindingID: f.ID,
+			Field:     "released_at",
+			OldValue:  old,
+			NewValue:  releaseAtUTC.Format(time.RFC3339),
+			Source:    db.SourceModel,
+			By:        "release-watch",
+		}).Error; err != nil {
+			return fmt.Errorf("history released_at: %w", err)
+		}
+	}
+
+	if _, err := db.AddFindingReference(w.DB, f.ID, result.ReleaseURL, "upstream-release",
+		"Upstream release "+result.ReleaseTag+" containing the fix"); err != nil {
+		return fmt.Errorf("record release reference: %w", err)
+	}
+
+	emit(Event{Kind: KindText, Text: fmt.Sprintf("finding %d released as %s (%s)", f.ID, result.ReleaseTag, releaseAtUTC.Format(time.RFC3339))})
+	return nil
+}
+
 func (w *Worker) parseFindingDedupOutput(scan *db.Scan, report string, emit func(Event)) error {
 	var result struct {
 		Duplicates []struct {

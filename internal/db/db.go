@@ -460,12 +460,21 @@ type Finding struct {
 	// pipelines that have not yet adopted v4. Each vector has its own
 	// derived base-score column so the two scales do not get mixed up
 	// (4.0 changes the metric set and the base-score formula).
-	CVSSVector      string
-	CVSSScore       float64
-	CVSSv4Vector    string  `gorm:"column:cvss_v4_vector"`
-	CVSSv4Score     float64 `gorm:"column:cvss_v4_score"`
-	FixVersion      string
-	FixCommit       string
+	CVSSVector   string
+	CVSSScore    float64
+	CVSSv4Vector string  `gorm:"column:cvss_v4_vector"`
+	CVSSv4Score  float64 `gorm:"column:cvss_v4_score"`
+	FixVersion   string
+	FixCommit    string
+	// ReleasedAt, ReleaseTag, ReleaseURL record the upstream release
+	// that first contained the fix. Written by the release-watch skill
+	// once `status=fixed`, so the metrics in dora-metrics.md can compute
+	// fixed-to-released latency rather than ending the funnel at the
+	// commit landing. All three move together: zero/empty until a
+	// release is found.
+	ReleasedAt *time.Time
+	ReleaseTag string
+	ReleaseURL string
 	Resolution      FindingResolution `gorm:"index"`
 	DisclosureDraft string            `gorm:"type:text"`
 	Assignee        string            `gorm:"index"`

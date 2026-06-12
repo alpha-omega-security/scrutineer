@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -402,6 +403,66 @@ func TestParseMitigation_rejectsEmptyGuidance(t *testing.T) {
 	err := w.parseMitigationOutput(scan, `{"guidance":"   "}`, func(Event) {})
 	if err == nil || !strings.Contains(err.Error(), "empty guidance") {
 		t.Errorf("expected empty-guidance error, got %v", err)
+	}
+}
+
+func TestParseReleaseWatch_releasedWritesColumnsAndReference(t *testing.T) {
+	report := `{
+		"released": true,
+		"release_tag": "v2.3.1",
+		"release_url": "https://github.com/example/lib/releases/tag/v2.3.1",
+		"release_at": "2026-06-02T14:00:00Z",
+		"notes": "matched by fix_commit"
+	}`
+	f, gdb := runSkillWithFinding(t, "release_watch", report, db.FindingFixed)
+	if f.ReleaseTag != "v2.3.1" {
+		t.Errorf("ReleaseTag = %q, want v2.3.1", f.ReleaseTag)
+	}
+	if f.ReleaseURL == "" {
+		t.Errorf("ReleaseURL empty")
+	}
+	if f.ReleasedAt == nil {
+		t.Fatalf("ReleasedAt is nil")
+	}
+	if !f.ReleasedAt.Equal(time.Date(2026, 6, 2, 14, 0, 0, 0, time.UTC)) {
+		t.Errorf("ReleasedAt = %v", f.ReleasedAt)
+	}
+	var refs []db.FindingReference
+	gdb.Where("finding_id = ?", f.ID).Find(&refs)
+	if len(refs) != 1 || refs[0].Tags != "upstream-release" {
+		t.Errorf("references = %+v, want one upstream-release", refs)
+	}
+	var hist []db.FindingHistory
+	gdb.Where("finding_id = ? AND field IN ?", f.ID, []string{"release_tag", "release_url", "released_at"}).Find(&hist)
+	if len(hist) != 3 {
+		t.Errorf("history rows = %d, want 3 (tag/url/released_at): %+v", len(hist), hist)
+	}
+}
+
+func TestParseReleaseWatch_notReleasedAddsNote(t *testing.T) {
+	report := `{"released": false, "notes": "latest release v2.2.0 predates fix_commit"}`
+	f, gdb := runSkillWithFinding(t, "release_watch", report, db.FindingFixed)
+	if f.ReleaseTag != "" {
+		t.Errorf("ReleaseTag should remain empty: %q", f.ReleaseTag)
+	}
+	var notes []db.FindingNote
+	gdb.Where("finding_id = ? AND `by` = ?", f.ID, "release-watch").Find(&notes)
+	if len(notes) != 1 || !strings.Contains(notes[0].Body, "not released") {
+		t.Errorf("notes = %+v, want one release-watch note", notes)
+	}
+}
+
+func TestParseReleaseWatch_rejectsMissingTimestamp(t *testing.T) {
+	w := &Worker{}
+	scan := &db.Scan{}
+	if err := w.parseReleaseWatchOutput(scan, `{"released":true,"release_tag":"v1","release_url":"http://x"}`, func(Event) {}); err == nil || !strings.Contains(err.Error(), "finding_id") {
+		t.Fatalf("missing finding_id error = %v", err)
+	}
+	fid := uint(1)
+	scan.FindingID = &fid
+	err := w.parseReleaseWatchOutput(scan, `{"released":true,"release_tag":"v1","release_url":"http://x","release_at":"not-a-date"}`, func(Event) {})
+	if err == nil || !strings.Contains(err.Error(), "release_at") {
+		t.Errorf("expected release_at parse error, got %v", err)
 	}
 }
 

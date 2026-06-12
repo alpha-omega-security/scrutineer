@@ -109,6 +109,7 @@ When a repo is added, the `triage` skill is enqueued. Its SKILL.md lists the ski
 | `finding-dedup` | Compares open findings and marks overlapping reports as duplicates |
 | `verify` | Re-checks one finding against current HEAD; records reproduces / fixed / can't-reproduce |
 | `breaking-change` | Static breaking-change check on the suggested-fix diff; records `breaking`/`non_breaking`/`unknown` with rationale and the affected dependents |
+| `release-watch` | After a finding reaches `fixed`, watches the upstream for a release containing the fix commit; records release tag, URL, and timestamp on the finding |
 | `disclose` | Drafts a GHSA-shaped advisory (title, description, CVSS, CWEs, references) for one finding |
 | `patch` | Proposes a unified diff fixing one finding; a diff that passes the applicability gate is stored on the finding as its suggested fix |
 | `report-upstream` | Files one finding on the upstream repository via GitHub PVR with the proposed patch attached; the action that moves a finding to `reported` |

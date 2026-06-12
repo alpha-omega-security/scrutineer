@@ -141,6 +141,9 @@ One row per vulnerability. Lifecycle columns are mutated through `db.WriteFindin
 | cvss_v4_score | real | Derived from `cvss_v4_vector` on write. Cleared on empty/unparseable, same as the v3 score. |
 | fix_version | text | |
 | fix_commit | text | |
+| release_tag | text | Tag of the upstream release that first contained the fix (e.g. `v2.3.1`). Set by the release-watch skill once `status=fixed`. |
+| release_url | text | Permalink to the release page. |
+| released_at | datetime | When the release was published upstream. Together with `release_tag` and `release_url`, these close the gap between fix-landed and fix-shipped for the metrics in dora-metrics. |
 | resolution | text | `fix`, `migrate`, `workaround`, `adopt`, `wontfix`. |
 | disclosure_draft | text | Draft advisory text. |
 | assignee | text | Free-text. |

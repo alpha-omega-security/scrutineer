@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "release-watch report",
+  "type": "object",
+  "required": ["released"],
+  "additionalProperties": false,
+  "properties": {
+    "released": {
+      "type": "boolean",
+      "description": "True when a release containing the fix has been identified upstream."
+    },
+    "release_tag": {
+      "type": "string",
+      "description": "e.g. v2.3.1; required when released=true."
+    },
+    "release_url": {
+      "type": "string",
+      "description": "Permalink to the release page; required when released=true."
+    },
+    "release_at": {
+      "type": "string",
+      "description": "ISO 8601 timestamp the release was published; required when released=true."
+    },
+    "notes": {
+      "type": "string",
+      "description": "Short prose explaining the match (or the gap when released=false)."
+    }
+  }
+}

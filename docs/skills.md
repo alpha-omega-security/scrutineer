@@ -32,6 +32,7 @@ These ship in `skills/` and are loaded with `-skills ./skills`. The `triage` ski
 | `exposure` | For one (finding, dependent) pair, decides whether the dependent's published code actually reaches the upstream library finding. Emits one CSAF 2.0 product_status verdict so scrutineer can record affected vs not_affected and stamp the right VEX justification. |
 | `verify` | Re-checks one finding against current HEAD and records reproduces / fixed / cannot-reproduce. |
 | `breaking-change` | Static breaking-change check: reads the finding's suggested-fix diff and the top dependents list, identifies public API surface changes, and records a verdict (`breaking`/`non_breaking`/`unknown`) with a rationale and the list of affected dependents. Read-only; reasons from the diff and dependent metadata. |
+| `release-watch` | After a finding reaches `fixed`, lists the upstream's releases and looks for one that contains `fix_commit` (or whose tag matches `fix_version`). Records the release tag, URL, and timestamp on the finding so the lifecycle visibly ends at a shipped version rather than at the commit landing. The triage skill auto-enqueues this for every `fixed` finding on each repo run. |
 | `disclose` | Drafts a GHSA-shaped advisory (title, description, CVSS, CWEs, references) for one finding. |
 | `patch` | Proposes a unified diff fixing one finding; a diff that passes the applicability gate is stored on the finding as its suggested fix. |
 | `fork` | Forks the repository into the configured org, enables private vulnerability reporting on the fork, and files each finding as a draft advisory there. Only useful when `-fork-org` is set. |
@@ -135,6 +136,7 @@ Declaring `scrutineer.paths` replaces this skip list entirely: the skill sees on
 | `breaking_change` | `breaking_change` verdict and `breaking_change_rationale` prose on one Finding, with the verdict change recorded in FindingHistory. |
 | `patch` | Suggested-fix diff and base commit on one Finding. |
 | `mitigation` | Mitigation prose and optional semgrep rule on one Finding (`mitigation`, `mitigation_semgrep` columns), with the change recorded in FindingHistory. |
+| `release_watch` | `release_tag`, `release_url`, `released_at` on one Finding (with history rows), plus a `FindingReference` tagged `upstream-release`. |
 | `threat_model` | Raw on the scan row; rendered on the repository's Threat Model tab. |
 | `exposure` | One CSAF product_status verdict upserted into a `finding_dependents` row keyed by `(finding_id, dependent_id)`. |
 
@@ -184,7 +186,7 @@ The worker then runs `claude -p "Use the {name} skill in this workspace"` with t
 }
 ```
 
-`finding_id` is only present for finding-scoped skills (`verify`, `breaking-change`, `disclose`, `patch`, `mitigate`, `exposure`). `dependent_id` is only set on `exposure` runs and points to the dependent whose code is under audit; `./src` is then a copy of that dependent's clone, not of the finding's repository. `scan_ref` is empty when the scan is on the default branch. `scan_subpath` is set when the operator scoped the scan to a monorepo sub-folder; skills that walk source honour it, skills that query external APIs by repository URL ignore it. `fork_org` is absent unless `-fork-org` is configured. `packages` is a convenience copy of the package rows when the `packages` skill has already run; otherwise it is omitted.
+`finding_id` is only present for finding-scoped skills (`verify`, `breaking-change`, `disclose`, `patch`, `mitigate`, `release-watch`, `exposure`). `dependent_id` is only set on `exposure` runs and points to the dependent whose code is under audit; `./src` is then a copy of that dependent's clone, not of the finding's repository. `scan_ref` is empty when the scan is on the default branch. `scan_subpath` is set when the operator scoped the scan to a monorepo sub-folder; skills that walk source honour it, skills that query external APIs by repository URL ignore it. `fork_org` is absent unless `-fork-org` is configured. `packages` is a convenience copy of the package rows when the `packages` skill has already run; otherwise it is omitted.
 
 ## schema.json
 

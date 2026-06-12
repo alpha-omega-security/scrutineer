@@ -187,6 +187,10 @@ func findingFieldAccessor(f *Finding, field string) (current, column string, err
 		return f.Mitigation, "mitigation", nil
 	case "mitigation_semgrep":
 		return f.MitigationSemgrep, "mitigation_semgrep", nil
+	case "release_tag":
+		return f.ReleaseTag, "release_tag", nil
+	case "release_url":
+		return f.ReleaseURL, "release_url", nil
 	default:
 		return "", "", fmt.Errorf("field %q is not editable", field)
 	}

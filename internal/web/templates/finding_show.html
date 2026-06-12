@@ -151,6 +151,15 @@
     <dd>{{$f.FixVersion}}</dd>
   </div>
   {{end}}
+  {{if $f.ReleaseTag}}
+  <div>
+    <dt class="text-muted-foreground">Released</dt>
+    <dd>
+      {{if $f.ReleaseURL}}<a class="hover:underline" href="{{$f.ReleaseURL}}" rel="noopener" target="_blank">{{$f.ReleaseTag}}</a>{{else}}{{$f.ReleaseTag}}{{end}}
+      {{if $f.ReleasedAt}}<span class="text-xs text-muted-foreground">on {{$f.ReleasedAt.Format "2006-01-02"}}</span>{{end}}
+    </dd>
+  </div>
+  {{end}}
   {{if $f.Resolution}}
   <div>
     <dt class="text-muted-foreground">Resolution</dt>

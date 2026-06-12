@@ -72,7 +72,11 @@ If a skill name comes back `404 skill not found or inactive`, skip it and note w
 
 If this repository has been scanned before there may be findings already reported to the maintainer that have since been fixed upstream. For each of `status=reported` and `status=acknowledged`, fetch `GET {api_base}/repositories/{repository_id}/findings?status={status}` and collect the returned `id` values. For every finding id, enqueue a verify run: `POST {api_base}/findings/{id}/skills/verify/run` with the bearer header and an empty JSON body. Record the ids you enqueued in the `verify` field of your report; if there are none, write an empty list. If the verify endpoint returns `404 skill not found or inactive`, leave `verify` empty and carry on.
 
-Do not verify findings in other states. `new`, `enriched`, `triaged`, and `ready` are handled by the audit skills re-running above; `fixed`, `published`, `rejected`, and `duplicate` are closed.
+Do not verify findings in `new`, `enriched`, `triaged`, `ready`, `published`, `rejected`, or `duplicate` states. The audit skills re-running above handle the first four; the last three are closed.
+
+## Watch fixed findings for an upstream release
+
+When a finding reaches `fixed` the maintainer has landed a patch, but consumers cannot pin to a commit — they need a tagged release. For findings in `status=fixed`, enqueue release-watch the same way: `POST {api_base}/findings/{id}/skills/release-watch/run`. Record the ids in a `release_watch` field of your report. If the endpoint returns `404 skill not found or inactive`, leave the field empty and carry on. Release-watch is idempotent: a finding that already has a release recorded re-confirms the existing value rather than flapping.
 
 ## Output
 
@@ -87,8 +91,9 @@ Write `./report.json` as:
   "skipped":   ["semgrep"],
   "gated":     [],
   "already_done": ["metadata"],
-  "verify":    [12, 34],
-  "errors":    []
+  "verify":        [12, 34],
+  "release_watch": [55, 56],
+  "errors":        []
 }
 ```
 
