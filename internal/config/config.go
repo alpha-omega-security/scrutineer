@@ -67,6 +67,12 @@ type Config struct {
 	// Empty disables the fork skill (it will refuse to run without a target
 	// org).
 	ForkOrg string `yaml:"fork_org"`
+	// MetadataDir is the path inside a staging repo where scrutineer keeps
+	// its per-project metadata (repo-level metadata.yaml plus one directory
+	// per finding). Empty defaults to `.scrutineer/`. Operators with a
+	// different consortium-flavoured convention can override it (e.g.
+	// `.ossprey/`), which keeps the rest of the codebase neutral.
+	MetadataDir string `yaml:"metadata_dir"`
 	// SchemaStrict makes a skill report that fails JSON-schema validation
 	// fail the scan. When false (the default) the validator output is
 	// emitted to the scan log and the kind-specific parser still runs.

@@ -67,6 +67,7 @@ clone: full
 scan_timeout: 30m
 max_turns: 200
 fork_org: fork-central
+metadata_dir: .ossprey/
 `)
 	c, err := Load(path)
 	if err != nil {
@@ -101,6 +102,9 @@ fork_org: fork-central
 	}
 	if c.ForkOrg != "fork-central" {
 		t.Errorf("fork_org=%q, want fork-central", c.ForkOrg)
+	}
+	if c.MetadataDir != ".ossprey/" {
+		t.Errorf("metadata_dir=%q, want .ossprey/", c.MetadataDir)
 	}
 }
 

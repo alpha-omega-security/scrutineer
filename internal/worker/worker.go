@@ -50,6 +50,10 @@ type Worker struct {
 	DataDir string // workspace root for clones
 	APIBase string // base URL for the scrutineer skill API (http://host:port/api)
 	ForkOrg string // github org the fork skill targets; empty disables it
+	// MetadataDir is the directory in a staging repo where scrutineer
+	// keeps per-project metadata. Empty means the worker substitutes
+	// the default, `.scrutineer/`, when staging the skill context.
+	MetadataDir string
 	Runner  SkillRunner
 	OnEvent func(scanID, repoID uint, name, data string) // optional SSE bridge
 	// OnFindingCreated, when non-nil, is called after a findings-emitting

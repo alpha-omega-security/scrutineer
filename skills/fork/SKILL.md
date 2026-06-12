@@ -1,6 +1,6 @@
 ---
 name: fork
-description: Stage a scanned repository into a private repo in the configured GitHub organisation. Creates the repo (no fork relationship), seeds it with the upstream tree, writes scrutineer metadata under `.ossprey/`, files one issue per open finding, and gives an org team push access. The staging repo is the per-project working surface for triage, fix development, and the disclosure paper trail.
+description: Stage a scanned repository into a private repo in the configured GitHub organisation. Creates the repo (no fork relationship), seeds it with the upstream tree, writes scrutineer metadata under the configured metadata directory, files one issue per open finding, and gives an org team push access. The staging repo is the per-project working surface for triage, fix development, and the disclosure paper trail.
 license: MIT
 compatibility: Needs the gh CLI authenticated with a token that can create private repos in `fork_org`, write to issues there, and manage team repo access. Needs network access to api.github.com and the scrutineer API. github.com upstreams only for now; other hosts will route through the same skill once `host__owner__repo` naming generalises.
 metadata:
@@ -12,12 +12,14 @@ metadata:
 
 # fork
 
-Stand up a private staging repo for one scanned upstream. The staging repo is a plain clone of the upstream tree (no GitHub fork relationship), lives in `fork_org`, and is the working surface for everything that follows: finding issues, PoC files, patch diffs, and validation reports all live here. Scrutineer's metadata sits in `.ossprey/` at the repo root. Run after a scan has produced findings; idempotent on re-runs.
+Stand up a private staging repo for one scanned upstream. The staging repo is a plain clone of the upstream tree (no GitHub fork relationship), lives in `fork_org`, and is the working surface for everything that follows: finding issues, PoC files, patch diffs, and validation reports all live here. Scrutineer's metadata sits at the repo root in the directory named by `scrutineer.metadata_dir` (default `.scrutineer/`). Run after a scan has produced findings; idempotent on re-runs.
+
+Below, the placeholder `{metadata_dir}` stands for the value of `scrutineer.metadata_dir` from `./context.json`. Substitute it verbatim before issuing any git or shell command.
 
 ## Workspace
 
 - `./src` — the upstream clone at the commit that was scanned
-- `./context.json` — has `repository.url`, `repository.full_name`, `repository.default_branch`, `scrutineer.api_base`, `scrutineer.token`, `scrutineer.repository_id`, `scrutineer.scan_id`, and `scrutineer.fork_org`
+- `./context.json` — has `repository.url`, `repository.full_name`, `repository.default_branch`, `scrutineer.api_base`, `scrutineer.token`, `scrutineer.repository_id`, `scrutineer.scan_id`, `scrutineer.fork_org`, and `scrutineer.metadata_dir`
 - `./report.json` — write what you did
 
 Use the `gh` CLI for every GitHub call. Do not use curl against api.github.com.
@@ -85,7 +87,7 @@ Authorization: Bearer {token}
 Build the per-repo metadata block:
 
 ```yaml
-# .ossprey/metadata.yaml
+# {metadata_dir}/metadata.yaml
 upstream:
   url: {repository.url}
   host: github.com
@@ -100,17 +102,17 @@ last_scan_commit: {same as seeded_commit on first run; refresh on re-runs}
 
 On re-runs only the `last_scan_*` fields change.
 
-The simplest write path is one commit per skill run carrying every file under `.ossprey/` that changed in this run. Clone the staging repo into a temp working tree, write the files, commit, push:
+The simplest write path is one commit per skill run carrying every file under `{metadata_dir}` that changed in this run. Clone the staging repo into a temp working tree, write the files, commit, push:
 
 ```
 TMP=$(mktemp -d)
 git clone --depth 1 https://github.com/{fork_org}/{host}__{owner}__{repo}.git "$TMP/staging"
 cd "$TMP/staging"
-mkdir -p .ossprey
-# write .ossprey/metadata.yaml and per-finding files (see step 4) here
-git add .ossprey
+mkdir -p {metadata_dir}
+# write {metadata_dir}/metadata.yaml and per-finding files (see step 4) here
+git add {metadata_dir}
 git -c user.email=scrutineer@local -c user.name=scrutineer \
-  commit -m "scrutineer: scan {scan_id} at {short-commit}" -m "Updated .ossprey/ from scrutineer run."
+  commit -m "scrutineer: scan {scan_id} at {short-commit}" -m "Updated {metadata_dir} from scrutineer run."
 git push origin {repository.default_branch}
 ```
 
@@ -122,7 +124,7 @@ Fetch the repository's findings: `GET {api_base}/repositories/{repository_id}/fi
 
 For each remaining finding fetch the full record (`GET {api_base}/findings/{id}`) so you have its prose, severity, status, CVSS, CWE, `disclosure_draft`, and `suggested_fix`.
 
-In the staging working tree, write the following files under `.ossprey/findings/{finding_id}/`:
+In the staging working tree, write the following files under `{metadata_dir}/findings/{finding_id}/`:
 
 - `metadata.yaml`:
   ```yaml
@@ -219,14 +221,14 @@ Colours: `severity:critical` `#8b0000`, `severity:high` `#dc3545`, `severity:med
 
 Status labels (`status:*`) are not applied by this skill yet; they belong with a future state-sync pass. Filing them prematurely would conflict with the future taxonomy.
 
-Capture the issue URL from the create response. Update `.ossprey/findings/{finding_id}/metadata.yaml` with `issue_url`. Then write the issue link back to scrutineer:
+Capture the issue URL from the create response. Update `{metadata_dir}/findings/{finding_id}/metadata.yaml` with `issue_url`. Then write the issue link back to scrutineer:
 
 - `POST {api_base}/findings/{id}/references` with `{"url": "<issue_url>", "tags": "staging-issue", "summary": "Issue on {fork_org} staging repo"}`
 - `POST {api_base}/findings/{id}/communications` with `{"channel": "github-issue", "direction": "outbound", "actor": "fork", "body": "Issue #{number} opened on {fork_org}/{host}__{owner}__{repo}"}`
 
 Do not change the finding's `status`. A staging issue is not a report upstream.
 
-After all writes, the working tree should contain one updated `.ossprey/metadata.yaml`, the per-finding directories with refreshed metadata and (where present) draft/patch files, and an unmodified upstream tree. Commit and push as described in step 3.
+After all writes, the working tree should contain one updated `{metadata_dir}/metadata.yaml`, the per-finding directories with refreshed metadata and (where present) draft/patch files, and an unmodified upstream tree. Commit and push as described in step 3.
 
 ## 6. Pick a team and give it push access
 

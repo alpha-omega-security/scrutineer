@@ -255,7 +255,7 @@ func TestStageContext_writesRepoFacts(t *testing.T) {
 		DefaultBranch: "main",
 	}
 	scan := &db.Scan{ID: 7, RepositoryID: 3, APIToken: "tok"}
-	if err := stageContext(dir, "http://127.0.0.1:8080/api", "", scan, repo); err != nil {
+	if err := stageContext(dir, "http://127.0.0.1:8080/api", "", "", scan, repo); err != nil {
 		t.Fatal(err)
 	}
 	b, err := os.ReadFile(filepath.Join(dir, "context.json"))
@@ -341,7 +341,7 @@ func TestStageContext_includesRef(t *testing.T) {
 	dir := t.TempDir()
 	repo := &db.Repository{URL: "https://example.com/x", Name: "x"}
 	scan := &db.Scan{ID: 1, RepositoryID: 1, APIToken: "t", Ref: "2.4.x"}
-	if err := stageContext(dir, "http://127.0.0.1:8080/api", "", scan, repo); err != nil {
+	if err := stageContext(dir, "http://127.0.0.1:8080/api", "", "", scan, repo); err != nil {
 		t.Fatal(err)
 	}
 	b, err := os.ReadFile(filepath.Join(dir, "context.json"))
@@ -361,7 +361,7 @@ func TestStageContext_omitsRefWhenEmpty(t *testing.T) {
 	dir := t.TempDir()
 	repo := &db.Repository{URL: "https://example.com/x", Name: "x"}
 	scan := &db.Scan{ID: 1, RepositoryID: 1, APIToken: "t"}
-	if err := stageContext(dir, "http://127.0.0.1:8080/api", "", scan, repo); err != nil {
+	if err := stageContext(dir, "http://127.0.0.1:8080/api", "", "", scan, repo); err != nil {
 		t.Fatal(err)
 	}
 	b, err := os.ReadFile(filepath.Join(dir, "context.json"))
@@ -380,7 +380,7 @@ func TestStageContext_includesForkOrg(t *testing.T) {
 	dir := t.TempDir()
 	repo := &db.Repository{URL: "https://github.com/o/r", Name: "r"}
 	scan := &db.Scan{ID: 1, RepositoryID: 1, APIToken: "t"}
-	if err := stageContext(dir, "http://127.0.0.1:8080/api", "fork-central", scan, repo); err != nil {
+	if err := stageContext(dir, "http://127.0.0.1:8080/api", "fork-central", "", scan, repo); err != nil {
 		t.Fatal(err)
 	}
 	b, err := os.ReadFile(filepath.Join(dir, "context.json"))
@@ -393,6 +393,37 @@ func TestStageContext_includesForkOrg(t *testing.T) {
 	}
 	if got.Scrutineer.ForkOrg != "fork-central" {
 		t.Errorf("fork_org = %q, want fork-central", got.Scrutineer.ForkOrg)
+	}
+}
+
+func TestStageContext_includesMetadataDir(t *testing.T) {
+	dir := t.TempDir()
+	repo := &db.Repository{URL: "https://github.com/o/r", Name: "r"}
+	scan := &db.Scan{ID: 1, RepositoryID: 1, APIToken: "t"}
+	if err := stageContext(dir, "http://127.0.0.1:8080/api", "", ".ossprey/", scan, repo); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "context.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got skillContext
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Scrutineer.MetadataDir != ".ossprey/" {
+		t.Errorf("metadata_dir = %q, want .ossprey/", got.Scrutineer.MetadataDir)
+	}
+}
+
+func TestWorker_metadataDir_defaultsWhenUnset(t *testing.T) {
+	w := &Worker{}
+	if got := w.metadataDir(); got != DefaultMetadataDir {
+		t.Errorf("default = %q, want %q", got, DefaultMetadataDir)
+	}
+	w.MetadataDir = ".custom/"
+	if got := w.metadataDir(); got != ".custom/" {
+		t.Errorf("override = %q, want .custom/", got)
 	}
 }
 

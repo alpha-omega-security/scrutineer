@@ -96,6 +96,7 @@ type flags struct {
 	maxTurns         int
 	anthropicBaseURL string
 	forkOrg          string
+	metadataDir      string
 	schemaStrict     bool
 	skillLocal       skillDirs
 
@@ -180,6 +181,9 @@ func (f *flags) merge(cfg *config.Config) {
 	}
 	if cfg.ForkOrg != "" && !f.set["fork-org"] {
 		f.forkOrg = cfg.ForkOrg
+	}
+	if cfg.MetadataDir != "" {
+		f.metadataDir = cfg.MetadataDir
 	}
 	if cfg.SchemaStrict != nil && !f.set["schema-strict"] {
 		f.schemaStrict = *cfg.SchemaStrict
@@ -309,6 +313,7 @@ func run(log *slog.Logger) error {
 		DataDir:      filepath.Join(f.dataDir, "work"),
 		APIBase:      apiBase,
 		ForkOrg:      f.forkOrg,
+		MetadataDir:  f.metadataDir,
 		Runner:       runner,
 		ScanTimeout:  f.scanTimeout,
 		SchemaStrict: f.schemaStrict,

@@ -166,7 +166,7 @@ func (w *Worker) doExposure(ctx context.Context, scan *db.Scan, emit func(Event)
 	if err := stageSkill(&skill, workRoot, skillDir); err != nil {
 		return "", fmt.Errorf("stage skill: %w", err)
 	}
-	if err := stageContext(workRoot, w.APIBase, w.ForkOrg, scan, &scan.Repository); err != nil {
+	if err := stageContext(workRoot, w.APIBase, w.ForkOrg, w.metadataDir(), scan, &scan.Repository); err != nil {
 		return "", fmt.Errorf("stage context: %w", err)
 	}
 

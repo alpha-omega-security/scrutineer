@@ -99,3 +99,15 @@
 # (scrutineer.model in SKILL.md metadata); per-skill wins over this
 # default, and an explicit per-scan model wins over both.
 # default_model: claude-sonnet-4-6
+
+# GitHub organisation the fork skill stages scanned repositories into as
+# private repos. Empty disables the fork skill. Also exposed as
+# `-fork-org` on the command line; flag wins over this value.
+# fork_org: your-security-forks
+
+# Directory inside a staging repo where scrutineer keeps per-project
+# metadata (a repo-level metadata.yaml plus one folder per finding).
+# Default is `.scrutineer/`. Operators with a consortium-flavoured
+# convention can override it (e.g. `.ossprey/`); the scrutineer codebase
+# treats it as opaque.
+# metadata_dir: .scrutineer/

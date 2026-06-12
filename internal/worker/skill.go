@@ -43,10 +43,20 @@ type skillContextScrutineer struct {
 	// support). Empty means the repo root. Skills that walk files honour
 	// this; skills that query external APIs ignore it.
 	ScanSubPath string `json:"scan_subpath,omitempty"`
-	// ForkOrg is the GitHub organisation the fork skill forks into and
-	// files draft advisories against. Absent when fork_org is unconfigured.
+	// ForkOrg is the GitHub organisation the fork skill stages scanned
+	// repositories into. Absent when fork_org is unconfigured.
 	ForkOrg string `json:"fork_org,omitempty"`
+	// MetadataDir is the path inside a staging repo where scrutineer
+	// metadata lives (`.scrutineer/` by default). Always written so
+	// skills can build paths without re-applying the default.
+	MetadataDir string `json:"metadata_dir"`
 }
+
+// DefaultMetadataDir is the value used when scrutineer.yaml does not
+// configure `metadata_dir`. Keep it scrutineer-flavoured; an operator
+// who wants a consortium-flavoured directory (e.g. `.ossprey/`) sets
+// metadata_dir explicitly.
+const DefaultMetadataDir = ".scrutineer/"
 
 type skillContextRepo struct {
 	URL           string `json:"url"`
@@ -121,7 +131,7 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 	}
 
 	skillDir := filepath.Join(workRoot, ".claude", "skills", skill.Name)
-	if err := stageContext(workRoot, w.APIBase, w.ForkOrg, scan, &scan.Repository); err != nil {
+	if err := stageContext(workRoot, w.APIBase, w.ForkOrg, w.metadataDir(), scan, &scan.Repository); err != nil {
 		return "", fmt.Errorf("stage context: %w", err)
 	}
 	if err := stageSkill(&skill, workRoot, skillDir); err != nil {
@@ -738,7 +748,17 @@ func stageImportPayload(workRoot string, payload []byte) error {
 // rely on. Kept small and boring on purpose: skills that need more detail
 // can read it from the clone. The scrutineer block gives skills enough to
 // call back into the host API (list scans, trigger more skills).
-func stageContext(workRoot, apiBase, forkOrg string, scan *db.Scan, repo *db.Repository) error {
+// metadataDir returns the per-staging-repo metadata directory the
+// worker should hand to skills. Empty config falls back to the default
+// so callers never have to repeat the constant.
+func (w *Worker) metadataDir() string {
+	if w.MetadataDir == "" {
+		return DefaultMetadataDir
+	}
+	return w.MetadataDir
+}
+
+func stageContext(workRoot, apiBase, forkOrg, metadataDir string, scan *db.Scan, repo *db.Repository) error {
 	if err := os.MkdirAll(workRoot, dirPerm); err != nil {
 		return err
 	}
@@ -751,11 +771,12 @@ func stageContext(workRoot, apiBase, forkOrg string, scan *db.Scan, repo *db.Rep
 			DefaultBranch: repo.DefaultBranch,
 		},
 		Scrutineer: skillContextScrutineer{
-			APIBase: apiBase,
-			ScanID:  scan.ID,
-			Token:   scan.APIToken,
-			RepoID:  scan.RepositoryID,
-			ForkOrg: forkOrg,
+			APIBase:     apiBase,
+			ScanID:      scan.ID,
+			Token:       scan.APIToken,
+			RepoID:      scan.RepositoryID,
+			ForkOrg:     forkOrg,
+			MetadataDir: metadataDir,
 		},
 	}
 	if scan.SkillID != nil {
