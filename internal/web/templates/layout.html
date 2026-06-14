@@ -123,6 +123,45 @@
             class="form grid gap-3">
         <textarea class="input font-mono text-xs" name="urls" rows="10" required
                   placeholder="https://github.com/maragudk/goqite.git&#10;https://github.com/spf13/cobra.git&#10;https://github.com/stretchr/testify.git"></textarea>
+        <footer class="flex justify-between items-center gap-2">
+          <a href="/repositories/new?org=1" data-dialog="org-add-repo" class="btn-sm-ghost">
+            <i data-lucide="building-2"></i> Import a whole org
+          </a>
+          <div class="flex gap-2">
+            <button type="button" class="btn-outline" data-close>Cancel</button>
+            <button type="submit" class="btn">
+              <i data-lucide="play"></i> Import
+            </button>
+          </div>
+        </footer>
+      </form>
+    </section>
+    <form method="dialog"><button aria-label="Close"><i data-lucide="x"></i></button></form>
+  </div>
+</dialog>
+
+<dialog id="org-add-repo" class="dialog w-full sm:max-w-md">
+  <div>
+    <header>
+      <h2>Import a GitHub organization</h2>
+      <p class="text-sm text-muted-foreground">
+        Fetches every repository in a GitHub org (or user) and queues each one
+        with the default scan set. Duplicates are skipped. Forks and archived
+        repos are skipped unless you opt in.
+      </p>
+    </header>
+    <section>
+      <form method="post" action="/repositories/org"
+            hx-post="/repositories/org" hx-swap="none"
+            class="form grid gap-3">
+        <div id="org-import-alert" hidden></div>
+        <input class="input" type="text" name="org" required placeholder="kubernetes">
+        <label class="flex items-center gap-2 text-sm">
+          <input type="checkbox" name="include_forks" value="1"> Include forks
+        </label>
+        <label class="flex items-center gap-2 text-sm">
+          <input type="checkbox" name="include_archived" value="1"> Include archived repos
+        </label>
         <footer class="flex justify-end gap-2">
           <button type="button" class="btn-outline" data-close>Cancel</button>
           <button type="submit" class="btn">
@@ -204,6 +243,11 @@
 {{define "toast-oob"}}<div hx-swap-oob="afterbegin:#toaster">{{template "toast" .}}</div>{{end}}
 
 {{define "add-repo-alert-oob"}}<div id="add-repo-alert" hx-swap-oob="outerHTML" class="alert-destructive mb-2" role="alert">
+  <i data-lucide="triangle-alert"></i>
+  <section><strong>{{.Title}}</strong>{{if .Description}} {{.Description}}{{end}}</section>
+</div>{{end}}
+
+{{define "org-import-alert-oob"}}<div id="org-import-alert" hx-swap-oob="outerHTML" class="alert-destructive mb-2" role="alert">
   <i data-lucide="triangle-alert"></i>
   <section><strong>{{.Title}}</strong>{{if .Description}} {{.Description}}{{end}}</section>
 </div>{{end}}

@@ -83,6 +83,11 @@ type Server struct {
 	// network lookup, mirroring resolvePURL.
 	listBranches func(ctx context.Context, cloneURL string) ([]string, error)
 
+	// fetchOrgRepos lists every repository in a GitHub org for the
+	// org-import path. Field rather than a direct call so tests can stub
+	// the network lookup, mirroring resolvePURL and listBranches.
+	fetchOrgRepos func(ctx context.Context, org string) ([]OrgRepo, error)
+
 	skillNamesMu    sync.Mutex
 	skillNamesCache []string
 	skillNamesTTL   time.Time
@@ -231,7 +236,8 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *work
 		return nil, fmt.Errorf("load csaf schema: %w", err)
 	}
 	s := &Server{DB: gdb, Queue: q, Log: log, Broker: broker, Worker: w, tmpl: t,
-		resolvePURL: resolvePURLRepo, listBranches: worker.ListRemoteBranches}
+		resolvePURL: resolvePURLRepo, listBranches: worker.ListRemoteBranches,
+		fetchOrgRepos: fetchGitHubOrgRepos}
 	if w != nil {
 		w.OnFindingCreated = s.autoEnqueueRevalidate
 		w.OnRevalidateVerdict = s.autoChainVerifyAfterRevalidate
@@ -249,6 +255,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /repositories/branches", s.repoBranches)
 	mux.HandleFunc("POST /repositories", s.repoCreate)
 	mux.HandleFunc("POST /repositories/bulk", s.repoBulkCreate)
+	mux.HandleFunc("POST /repositories/org", s.repoOrgImport)
 	mux.HandleFunc("GET /repositories/{id}", s.repoShow)
 	mux.HandleFunc("GET /repositories/{id}/blob/{commit}/{path...}", s.repoBlob)
 	mux.HandleFunc("GET /repositories/{id}/report.md", s.repoReport)
@@ -1437,22 +1444,33 @@ func (s *Server) repoCreate(w http.ResponseWriter, r *http.Request) {
 // behind the modal's top layer); plain form posts fall back to a basic
 // error page.
 func (s *Server) repoCreateError(w http.ResponseWriter, r *http.Request, title string, err error, status int) {
+	s.repoFormError(w, r, "add-repo-alert-oob", title, err, status)
+}
+
+// repoFormError renders an inline error for a failed add-repo-style
+// submission. For htmx requests it swaps the named OOB alert template (each
+// dialog has its own alert div, so the error lands in the visible one); plain
+// posts get a plain-text error at the given status.
+func (s *Server) repoFormError(w http.ResponseWriter, r *http.Request, alertTmpl, title string, err error, status int) {
 	if !isHX(r) {
 		http.Error(w, err.Error(), status)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if execErr := s.tmpl.ExecuteTemplate(w, "add-repo-alert-oob", Flash{
+	if execErr := s.tmpl.ExecuteTemplate(w, alertTmpl, Flash{
 		Title:       title,
 		Description: err.Error(),
 	}); execErr != nil {
-		s.Log.Error("render add-repo-alert-oob", "err", execErr)
+		s.Log.Error("render "+alertTmpl, "err", execErr)
 	}
 }
 
 // repoNew is the no-javascript fallback for the Add Repository dialog.
 func (s *Server) repoNew(w http.ResponseWriter, r *http.Request) {
-	s.render(w, r, "repo_new.html", map[string]any{"Bulk": r.FormValue("bulk") != ""})
+	s.render(w, r, "repo_new.html", map[string]any{
+		"Bulk": r.FormValue("bulk") != "",
+		"Org":  r.FormValue("org") != "",
+	})
 }
 
 // branchListTimeout caps the remote ls-remote so a slow or unreachable host
