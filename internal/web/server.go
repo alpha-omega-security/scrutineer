@@ -254,6 +254,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /repositories/{id}/scan-all", s.repoScanAll)
 	mux.HandleFunc("POST /repositories/{id}/delete", s.repoDelete)
 	mux.HandleFunc("POST /repositories/{id}/disclosure-channel", s.repoDisclosureChannel)
+	mux.HandleFunc("POST /repositories/{id}/threat-model", s.repoThreatModelSave)
+	mux.HandleFunc("POST /repositories/{id}/threat-model/run", s.repoThreatModelRun)
+	mux.HandleFunc("POST /repositories/{id}/threat-model/clear", s.repoThreatModelClear)
 	mux.HandleFunc("GET /scans", s.jobs)
 	mux.HandleFunc("GET /orgs", s.orgsList)
 	mux.HandleFunc("GET /orgs/{login}", s.orgShow)
@@ -1534,6 +1537,7 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 	if tmScan != nil {
 		_ = json.Unmarshal([]byte(tmScan.Report), &threatModel)
 	}
+	wb := loadWorkbench(s.DB, &repo, workbenchSeed(tmScan))
 
 	var totalCost float64
 	s.DB.Model(&db.Scan{}).Where("repository_id = ?", repo.ID).
@@ -1643,6 +1647,7 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 		"Skills":        activeSkills,
 		"Subprojects":   subprojects,
 		"SubScanCount":  subScanCount,
+		"Workbench":     wb,
 		"Category":      category,
 		"Categories":    CWECategories(),
 		"Uncategorized": UncategorizedCWE,
