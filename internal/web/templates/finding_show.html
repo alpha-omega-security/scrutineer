@@ -130,7 +130,7 @@
   {{if $f.GHSAID}}
   <div>
     <dt class="text-muted-foreground">GHSA</dt>
-    <dd><a class="hover:underline" href="https://github.com/advisories/{{$f.GHSAID}}"
+    <dd><a class="hover:underline" href="{{if $repo.HTMLURL}}{{$repo.HTMLURL}}/security/advisories/{{$f.GHSAID}}{{else}}https://github.com/advisories/{{$f.GHSAID}}{{end}}"
       rel="noopener" target="_blank"><code>{{$f.GHSAID}}</code></a></dd>
   </div>
   {{end}}

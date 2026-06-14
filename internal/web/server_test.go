@@ -1232,6 +1232,56 @@ func TestFindingShow_rendersMissedCount(t *testing.T) {
 	}
 }
 
+func TestFindingShow_ghsaLinksToRepoAdvisory(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://github.com/savonrb/savon", Name: "savon",
+		HTMLURL: "https://github.com/savonrb/savon"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: "x"}
+	s.DB.Create(&scan)
+	f := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "xxe", Severity: "High",
+		GHSAID: "GHSA-mx5j-mp4f-g8jg"}
+	s.DB.Create(&f)
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", fmt.Sprintf("/findings/%d", f.ID)))
+	body := w.Body.String()
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, body)
+	}
+	want := "https://github.com/savonrb/savon/security/advisories/GHSA-mx5j-mp4f-g8jg"
+	if !strings.Contains(body, want) {
+		t.Errorf("expected repo-nested GHSA advisory link %q on finding page", want)
+	}
+}
+
+func TestFindingShow_ghsaFallsBackToGlobalAdvisory(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	// Local/non-GitHub repos have no HTMLURL; the link falls back to the
+	// global advisories page rather than emitting a broken relative URL.
+	repo := db.Repository{URL: "file:///tmp/r", Name: "r"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: "x"}
+	s.DB.Create(&scan)
+	f := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "xxe", Severity: "High",
+		GHSAID: "GHSA-mx5j-mp4f-g8jg"}
+	s.DB.Create(&f)
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", fmt.Sprintf("/findings/%d", f.ID)))
+	body := w.Body.String()
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, body)
+	}
+	if !strings.Contains(body, "https://github.com/advisories/GHSA-mx5j-mp4f-g8jg") {
+		t.Error("expected global GHSA advisory link when repo has no HTMLURL")
+	}
+}
+
 func TestFindingShow_hidesExposureForZizmorFindings(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
