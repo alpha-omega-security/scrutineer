@@ -150,7 +150,7 @@
         repos are skipped unless you opt in.
       </p>
     </header>
-    <section>
+    <section id="org-import-step">
       <form method="post" action="/repositories/org"
             hx-post="/repositories/org" hx-swap="none"
             class="form grid gap-3">
@@ -165,7 +165,7 @@
         <footer class="flex justify-end gap-2">
           <button type="button" class="btn-outline" data-close>Cancel</button>
           <button type="submit" class="btn">
-            <i data-lucide="play"></i> Import
+            <i data-lucide="arrow-right"></i> Continue
           </button>
         </footer>
       </form>
@@ -251,6 +251,42 @@
   <i data-lucide="triangle-alert"></i>
   <section><strong>{{.Title}}</strong>{{if .Description}} {{.Description}}{{end}}</section>
 </div>{{end}}
+
+{{define "org-import-confirm-oob"}}<section id="org-import-step" hx-swap-oob="outerHTML">
+  {{if gt .Count 0}}
+  <div class="alert mb-3" role="status">
+    <i data-lucide="building-2"></i>
+    <section>
+      <strong>This will add {{.Count}} {{if eq .Count 1}}repo{{else}}repos{{end}} from {{.Org}}.</strong>
+      {{if gt .Filtered 0}} {{.Filtered}} forks/archived excluded.{{end}}
+      Already-imported repos are skipped automatically.
+    </section>
+  </div>
+  <form method="post" action="/repositories/org"
+        hx-post="/repositories/org" hx-swap="none"
+        class="form grid gap-3">
+    <input type="hidden" name="org" value="{{.Org}}">
+    <input type="hidden" name="confirm" value="1">
+    {{if .IncludeForks}}<input type="hidden" name="include_forks" value="1">{{end}}
+    {{if .IncludeArchived}}<input type="hidden" name="include_archived" value="1">{{end}}
+    {{if .Model}}<input type="hidden" name="model" value="{{.Model}}">{{end}}
+    <footer class="flex justify-end gap-2">
+      <button type="button" class="btn-outline" data-close>Cancel</button>
+      <button type="submit" class="btn">
+        <i data-lucide="play"></i> Import {{.Count}} {{if eq .Count 1}}repo{{else}}repos{{end}}
+      </button>
+    </footer>
+  </form>
+  {{else}}
+  <div class="alert-destructive mb-3" role="alert">
+    <i data-lucide="triangle-alert"></i>
+    <section><strong>Nothing to import.</strong> {{.Org}} has no repositories matching your filters{{if gt .Filtered 0}} ({{.Filtered}} forks/archived excluded){{end}}.</section>
+  </div>
+  <footer class="flex justify-end gap-2">
+    <button type="button" class="btn-outline" data-close>Close</button>
+  </footer>
+  {{end}}
+</section>{{end}}
 
 {{define "branch-options"}}{{range .}}<option value="{{.}}"></option>{{end}}{{end}}
 

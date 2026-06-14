@@ -1,7 +1,36 @@
 {{template "head" .}}
 
 <div class="max-w-lg">
-{{if .Org}}
+{{if .OrgConfirm}}
+  {{with .OrgConfirm}}
+  <h2 class="text-2xl font-semibold mb-2">Confirm import</h2>
+  {{if gt .Count 0}}
+    <p class="text-sm text-muted-foreground mb-4">
+      This will add {{.Count}} {{if eq .Count 1}}repo{{else}}repos{{end}} from
+      <strong>{{.Org}}</strong>.{{if gt .Filtered 0}} {{.Filtered}} forks/archived excluded.{{end}}
+      Already-imported repos are skipped automatically.
+    </p>
+    <form method="post" action="/repositories/org" class="form grid gap-3">
+      <input type="hidden" name="org" value="{{.Org}}">
+      <input type="hidden" name="confirm" value="1">
+      {{if .IncludeForks}}<input type="hidden" name="include_forks" value="1">{{end}}
+      {{if .IncludeArchived}}<input type="hidden" name="include_archived" value="1">{{end}}
+      {{if .Model}}<input type="hidden" name="model" value="{{.Model}}">{{end}}
+      <footer class="flex justify-end gap-2">
+        <a href="/" class="btn-outline">Cancel</a>
+        <button type="submit" class="btn">
+          <i data-lucide="play"></i> Import {{.Count}} {{if eq .Count 1}}repo{{else}}repos{{end}}
+        </button>
+      </footer>
+    </form>
+  {{else}}
+    <p class="text-sm text-muted-foreground mb-4">
+      <strong>{{.Org}}</strong> has no repositories matching your filters{{if gt .Filtered 0}} ({{.Filtered}} forks/archived excluded){{end}}.
+    </p>
+    <a href="/" class="btn-outline">Back</a>
+  {{end}}
+  {{end}}
+{{else if .Org}}
   <h2 class="text-2xl font-semibold mb-2">Import a GitHub organization</h2>
   <p class="text-sm text-muted-foreground mb-4">
     Fetches every repository in a GitHub org (or user) and queues each one

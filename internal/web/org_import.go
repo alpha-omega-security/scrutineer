@@ -132,10 +132,27 @@ func fetchGitHubRepos(ctx context.Context, kind, owner string) ([]OrgRepo, error
 // well under this; the limit just guards against a hostile response.
 const maxOrgResponseBody = 25 * 1024 * 1024
 
+// OrgImportPreview carries the confirmation-step data: how many repos a given
+// org/filters combination would queue, plus the inputs needed to re-submit the
+// import once the operator confirms.
+type OrgImportPreview struct {
+	Org             string
+	Count           int // repos that pass the fork/archived filters
+	Filtered        int // repos held back by the filters
+	IncludeForks    bool
+	IncludeArchived bool
+	Model           string
+}
+
 // repoOrgImport fetches every repository in a GitHub org and queues each one
 // for scanning, reusing the single-repo createOrTriageRepo path so dedup and
 // default-skill enqueue behave exactly like a manual add. Forks and archived
 // repos are skipped unless the corresponding toggle is set.
+//
+// The first submission previews the count ("this will add N repos") and asks
+// the operator to confirm before queueing potentially hundreds of repos. The
+// confirm step re-posts with confirm=1; because the import is synchronous and
+// keeps no state between requests, that step re-fetches the org listing.
 //
 // Imports run synchronously within the request, like the bulk-paste path, so a
 // very large org (thousands of repos) makes for a slow request; the per-repo
@@ -149,6 +166,7 @@ func (s *Server) repoOrgImport(w http.ResponseWriter, r *http.Request) {
 	}
 	includeForks := r.FormValue("include_forks") != ""
 	includeArchived := r.FormValue("include_archived") != ""
+	model := r.FormValue("model")
 
 	repos, err := s.fetchOrgRepos(r.Context(), org)
 	if err != nil {
@@ -156,12 +174,10 @@ func (s *Server) repoOrgImport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var created, skipped, filtered int
-	var invalid []string
-	// landingOwner is the canonical owner slug as ParseRepoInput normalizes it
-	// (e.g. github.com lower-cases it). The org page matches Owner exactly, so
-	// redirecting to the user-typed casing could 404; use the stored casing.
-	landingOwner := org
+	// Apply the fork/archived filters once so the preview count and the import
+	// operate on the same candidate set.
+	var toImport []OrgRepo
+	var filtered int
 	for _, repo := range repos {
 		if repo.Fork && !includeForks {
 			filtered++
@@ -171,6 +187,28 @@ func (s *Server) repoOrgImport(w http.ResponseWriter, r *http.Request) {
 			filtered++
 			continue
 		}
+		toImport = append(toImport, repo)
+	}
+
+	if r.FormValue("confirm") == "" {
+		s.orgImportConfirm(w, r, OrgImportPreview{
+			Org:             org,
+			Count:           len(toImport),
+			Filtered:        filtered,
+			IncludeForks:    includeForks,
+			IncludeArchived: includeArchived,
+			Model:           model,
+		})
+		return
+	}
+
+	var created, skipped int
+	var invalid []string
+	// landingOwner is the canonical owner slug as ParseRepoInput normalizes it
+	// (e.g. github.com lower-cases it). The org page matches Owner exactly, so
+	// redirecting to the user-typed casing could 404; use the stored casing.
+	landingOwner := org
+	for _, repo := range toImport {
 		input, err := ParseRepoInput(repo.CloneURL)
 		if err != nil {
 			invalid = append(invalid, repo.FullName)
@@ -179,7 +217,7 @@ func (s *Server) repoOrgImport(w http.ResponseWriter, r *http.Request) {
 		if input.Owner != "" {
 			landingOwner = input.Owner
 		}
-		_, isNew, err := s.createOrTriageRepo(r.Context(), input, r.FormValue("model"))
+		_, isNew, err := s.createOrTriageRepo(r.Context(), input, model)
 		if err != nil {
 			invalid = append(invalid, repo.FullName)
 			continue
@@ -202,6 +240,20 @@ func (s *Server) repoOrgImport(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, "/orgs/"+url.PathEscape(landingOwner))
 	} else {
 		s.redirect(w, r, "/")
+	}
+}
+
+// orgImportConfirm renders the "this will add N repos" confirmation step.
+// htmx clients get an OOB swap that replaces the dialog's input form with a
+// confirmation panel; plain form posts fall back to the no-JS confirm page.
+func (s *Server) orgImportConfirm(w http.ResponseWriter, r *http.Request, p OrgImportPreview) {
+	if !isHX(r) {
+		s.render(w, r, "repo_new.html", map[string]any{"OrgConfirm": p})
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.tmpl.ExecuteTemplate(w, "org-import-confirm-oob", p); err != nil {
+		s.Log.Error("render org-import-confirm-oob", "err", err)
 	}
 }
 

@@ -45,7 +45,7 @@ func TestOrgImport_skipsForksAndArchivedByDefault(t *testing.T) {
 		return orgRepoFixture, nil
 	}
 
-	w := postOrgImport(t, s, url.Values{"org": {"acme"}})
+	w := postOrgImport(t, s, url.Values{"org": {"acme"}, "confirm": {"1"}})
 	if w.Code != http.StatusSeeOther {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
@@ -69,6 +69,79 @@ func TestOrgImport_skipsForksAndArchivedByDefault(t *testing.T) {
 	}
 }
 
+// TestOrgImport_previewDoesNotImport confirms the first POST (no confirm flag)
+// only previews the count: it must not write any repos and must surface the
+// post-filter count for the operator to confirm.
+func TestOrgImport_previewDoesNotImport(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	s.DB.Create(&db.Skill{Name: "triage", Description: "o", Body: "b", Active: true, Source: "ui", Version: 1})
+	s.fetchOrgRepos = func(context.Context, string) ([]OrgRepo, error) { return orgRepoFixture, nil }
+
+	w := postOrgImport(t, s, url.Values{"org": {"acme"}})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200 (preview, not redirect); body=%s", w.Code, w.Body)
+	}
+	// Default filters keep only the one plain repo.
+	if body := w.Body.String(); !strings.Contains(body, "add 1 repo") {
+		t.Errorf("preview body missing 'add 1 repo' count; got %s", body)
+	}
+	var n int64
+	s.DB.Model(&db.Repository{}).Count(&n)
+	if n != 0 {
+		t.Fatalf("preview wrote %d repos, want 0 (nothing imported until confirmed)", n)
+	}
+}
+
+// TestOrgImport_previewHXSwapsConfirmStep confirms an htmx request gets the
+// OOB confirmation panel (replacing the input form) rather than the full page.
+func TestOrgImport_previewHXSwapsConfirmStep(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	s.DB.Create(&db.Skill{Name: "triage", Description: "o", Body: "b", Active: true, Source: "ui", Version: 1})
+	s.fetchOrgRepos = func(context.Context, string) ([]OrgRepo, error) { return orgRepoFixture, nil }
+
+	req := httptest.NewRequest("POST", "/repositories/org", strings.NewReader(url.Values{"org": {"acme"}}.Encode()))
+	req.Host = testHost
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+
+	body := w.Body.String()
+	for _, want := range []string{`id="org-import-step"`, `hx-swap-oob="outerHTML"`, `name="confirm"`, "add 1 repo"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("htmx preview missing %q; got %s", want, body)
+		}
+	}
+	var n int64
+	s.DB.Model(&db.Repository{}).Count(&n)
+	if n != 0 {
+		t.Fatalf("htmx preview wrote %d repos, want 0", n)
+	}
+}
+
+// TestOrgImport_previewCountReflectsToggles confirms the previewed count uses
+// the fork/archived toggles: with both on, all three fixture repos qualify.
+func TestOrgImport_previewCountReflectsToggles(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	s.DB.Create(&db.Skill{Name: "triage", Description: "o", Body: "b", Active: true, Source: "ui", Version: 1})
+	s.fetchOrgRepos = func(context.Context, string) ([]OrgRepo, error) { return orgRepoFixture, nil }
+
+	w := postOrgImport(t, s, url.Values{
+		"org":              {"acme"},
+		"include_forks":    {"1"},
+		"include_archived": {"1"},
+	})
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d, want 200; body=%s", w.Code, w.Body)
+	}
+	if body := w.Body.String(); !strings.Contains(body, "add 3 repos") {
+		t.Errorf("preview body missing 'add 3 repos' count; got %s", body)
+	}
+}
+
 func TestOrgImport_includeForksAndArchived(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
@@ -79,6 +152,7 @@ func TestOrgImport_includeForksAndArchived(t *testing.T) {
 		"org":              {"acme"},
 		"include_forks":    {"1"},
 		"include_archived": {"1"},
+		"confirm":          {"1"},
 	})
 	if w.Code != http.StatusSeeOther {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
@@ -106,7 +180,7 @@ func TestOrgImport_skipsExistingRepos(t *testing.T) {
 	s.DB.Create(&db.Repository{URL: "https://github.com/acme/app", Name: "app"})
 	s.fetchOrgRepos = func(context.Context, string) ([]OrgRepo, error) { return orgRepoFixture, nil }
 
-	w := postOrgImport(t, s, url.Values{"org": {"acme"}})
+	w := postOrgImport(t, s, url.Values{"org": {"acme"}, "confirm": {"1"}})
 	if w.Code != http.StatusSeeOther {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
