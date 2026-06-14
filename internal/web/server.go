@@ -296,6 +296,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /scans/pause-queued", s.scansPauseQueued)
 	mux.HandleFunc("POST /scans/resume-paused", s.scansResumePaused)
 	mux.HandleFunc("POST /scans/retry-failed", s.scansRetryFailed)
+	mux.HandleFunc("POST /scans/cancel-all", s.scansCancelAll)
 	mux.HandleFunc("POST /scans/{id}/cancel", s.scanCancel)
 	mux.HandleFunc("GET /scans/{id}/log", s.scanLog)
 	mux.HandleFunc("GET /usage", s.usage)

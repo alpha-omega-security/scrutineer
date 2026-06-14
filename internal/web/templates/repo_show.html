@@ -467,8 +467,18 @@
   </div>
 
   <div role="tabpanel" id="rp3" aria-labelledby="rt3" hidden>
-    {{if gt .FailedScans 0}}
-      <div class="flex justify-end mb-2">
+    {{if or (gt .ActiveScans 0) (gt .FailedScans 0)}}
+      <div class="flex justify-end gap-2 mb-2">
+        {{if gt .ActiveScans 0}}
+        <form method="post" action="/scans/cancel-all?repository={{.Repo.ID}}"
+              hx-post="/scans/cancel-all?repository={{.Repo.ID}}" hx-swap="none"
+              hx-confirm="Cancel all {{.ActiveScans}} running or queued scan(s) on {{.Repo.Name}}? Any work in progress is discarded.">
+          <button type="submit" class="btn-outline">
+            <i data-lucide="x"></i> Cancel all ({{.ActiveScans}})
+          </button>
+        </form>
+        {{end}}
+        {{if gt .FailedScans 0}}
         <form method="post" action="/scans/retry-failed?repository={{.Repo.ID}}"
               hx-post="/scans/retry-failed?repository={{.Repo.ID}}" hx-swap="none"
               hx-confirm="Re-enqueue every failed scan on this repository?">
@@ -476,6 +486,7 @@
             <i data-lucide="refresh-cw"></i> Retry failed ({{.FailedScans}})
           </button>
         </form>
+        {{end}}
       </div>
     {{end}}
     <table class="table">

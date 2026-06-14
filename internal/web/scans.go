@@ -334,16 +334,74 @@ func (s *Server) scanCancel(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "scan is paused", http.StatusBadRequest)
 		return
 	}
-	if !s.Worker.Cancel(scan.ID) {
-		// Not in flight: mark the row so the queue handler drops it on pickup.
-		now := time.Now()
-		s.DB.Model(&scan).Updates(map[string]any{
-			statusKey:     db.ScanCancelled,
-			errorKey:      "cancelled by user",
-			"finished_at": &now,
-		})
+	if s.cancelScan(&scan) {
+		// A queued scan isn't in flight, so the worker never publishes a
+		// scan-status event for it; push one ourselves so the repo Scans tab
+		// and the scan page reflect the cancellation live.
+		s.Broker.Publish(Event{Name: "scan-status", ScanID: scan.ID, RepoID: scan.RepositoryID})
 	}
-	s.redirect(w, r, fmt.Sprintf("/scans/%d", scan.ID))
+	// Deliberately no redirect: cancelling from a list (repo Scans tab, jobs)
+	// should leave the operator on that list so they can cancel the next one,
+	// rather than bouncing to the scan page on every click. htmx clients get a
+	// live row update over SSE; the plain-form fallback reloads the referrer.
+	if isHX(r) {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if ref := r.Header.Get("Referer"); ref != "" {
+		http.Redirect(w, r, ref, http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, fmt.Sprintf("/scans/%d", scan.ID), http.StatusSeeOther)
+}
+
+// cancelScan aborts one non-terminal scan. A running scan is signalled through
+// the worker, which flips its row and publishes scan-status as it unwinds; a
+// queued scan isn't in flight, so we flip the row here (the queue handler drops
+// a cancelled row on pickup) and return true so the caller can publish a
+// scan-status event itself. Returns false when there was nothing to do.
+func (s *Server) cancelScan(scan *db.Scan) (flippedQueued bool) {
+	if s.Worker.Cancel(scan.ID) {
+		return false
+	}
+	now := time.Now()
+	// Gate on the live status so a scan the worker picks up between the caller's
+	// read and this write doesn't get a "cancelled" row while it keeps running.
+	res := s.DB.Model(&db.Scan{}).
+		Where("id = ? AND status IN ?", scan.ID, []db.ScanStatus{db.ScanQueued, db.ScanRunning}).
+		Updates(map[string]any{
+			statusKey:         db.ScanCancelled,
+			"status_priority": db.StatusPriorityFor(db.ScanCancelled),
+			errorKey:          "cancelled by user",
+			"finished_at":     &now,
+		})
+	return res.RowsAffected > 0
+}
+
+// scansCancelAll cancels every queued or running scan on a repository — the
+// bulk companion to the per-row Cancel button, so an operator who fired off a
+// batch can stop them all in one click instead of cancelling each in turn.
+func (s *Server) scansCancelAll(w http.ResponseWriter, r *http.Request) {
+	repoID, _ := strconv.Atoi(r.URL.Query().Get("repository"))
+	if repoID <= 0 {
+		http.Error(w, "missing repository", http.StatusBadRequest)
+		return
+	}
+	var scans []db.Scan
+	if err := s.DB.Where("repository_id = ? AND status IN ?",
+		repoID, []db.ScanStatus{db.ScanQueued, db.ScanRunning}).Find(&scans).Error; err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	var cancelled int
+	for i := range scans {
+		s.cancelScan(&scans[i])
+		cancelled++
+	}
+	setFlash(w, Flash{Category: successKey, Title: fmt.Sprintf("%d scan(s) cancelled", cancelled)})
+	// Back to the Scans tab: the redirect re-renders the table with fresh DB
+	// state, so every flipped row shows "cancelled" without per-scan SSE pushes.
+	s.redirect(w, r, fmt.Sprintf("/repositories/%d#rt3", repoID))
 }
 
 // scanLog returns just the <pre> log block. The scan page polls this with
