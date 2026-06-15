@@ -2,12 +2,12 @@ package web
 
 import "testing"
 
-func withTestModels(t *testing.T, models []Model, defaultModel string) {
+func withTestModels(t *testing.T, models []Model) {
 	t.Helper()
 	oldModels := Models
 	oldDefault := defaultModelOverride
 	Models = models
-	defaultModelOverride = defaultModel
+	defaultModelOverride = ""
 	t.Cleanup(func() {
 		Models = oldModels
 		defaultModelOverride = oldDefault
@@ -20,7 +20,7 @@ func TestModelTiers(t *testing.T) {
 		{Name: "Sonnet", ID: "test-sonnet"},
 		{Name: "Opus A", ID: "test-opus-a"},
 		{Name: "Opus B", ID: "test-opus-b"},
-	}, "")
+	})
 
 	if !ValidModelTier(ModelTierMid) || !ValidModelTier(ModelTierHigh) || !ValidModelTier(ModelTierMax) {
 		t.Fatal("built-in model tiers should be valid")
@@ -43,7 +43,7 @@ func TestModelTiersFallbackToDefaultModelWithCustomModelList(t *testing.T) {
 	withTestModels(t, []Model{
 		{Name: "Default", ID: "vendor-default"},
 		{Name: "Small", ID: "vendor-small"},
-	}, "")
+	})
 
 	for _, tier := range []string{ModelTierMid, ModelTierHigh, ModelTierMax} {
 		if got := builtinModelForTier(tier); got != "vendor-default" {
@@ -57,7 +57,7 @@ func TestResolveModelPreference(t *testing.T) {
 		{Name: "High", ID: "test-high"},
 		{Name: "Sonnet", ID: "test-sonnet"},
 		{Name: "Opus", ID: "test-opus"},
-	}, "")
+	})
 
 	if got := resolveModelPreference(nil, "test-opus"); got != "test-opus" {
 		t.Errorf("exact model = %q, want test-opus", got)

@@ -278,10 +278,17 @@ func (w *Worker) parseFindingsOutput(skill *db.Skill, scan *db.Scan, report stri
 	findings := rep.toFindings(scan.ID, scan.RepositoryID, scan.Commit, scan.SubPath)
 	findings = groupByFingerprint(findings, scan.SkillName)
 
-	var dropped int
-	findings, dropped = filterFindingsByMinConfidence(findings, skill.MinConfidence)
-	if dropped > 0 {
-		emit(Event{Kind: KindText, Text: fmt.Sprintf("dropped %d finding(s) below min_confidence=%s", dropped, skill.MinConfidence)})
+	if skill.MinConfidence != "" {
+		kept := findings[:0]
+		for _, f := range findings {
+			if db.ConfidenceAtLeast(f.Confidence, skill.MinConfidence) {
+				kept = append(kept, f)
+			}
+		}
+		if dropped := len(findings) - len(kept); dropped > 0 {
+			emit(Event{Kind: KindText, Text: fmt.Sprintf("dropped %d finding(s) below min_confidence=%s", dropped, skill.MinConfidence)})
+		}
+		findings = kept
 	}
 	scan.FindingsCount = len(findings)
 
@@ -305,13 +312,18 @@ func (w *Worker) parseFindingsOutput(skill *db.Skill, scan *db.Scan, report stri
 		f.SeenCount = 1
 		seenThisScan[f.Fingerprint] = true
 
-		wasObserved, err := w.saveOrObserveFinding(scan, f)
-		if err != nil {
-			return err
-		}
-		if wasObserved {
+		var existing db.Finding
+		err := w.DB.Where("repository_id = ? AND fingerprint = ?", scan.RepositoryID, f.Fingerprint).
+			Order("id").First(&existing).Error
+		if err == nil {
+			if uerr := w.reobserveFinding(&existing, f, scan); uerr != nil {
+				return uerr
+			}
 			observed++
 			continue
+		}
+		if cerr := w.DB.Create(f).Error; cerr != nil {
+			return fmt.Errorf("save finding: %w", cerr)
 		}
 		created++
 		if w.OnFindingCreated != nil {
@@ -328,35 +340,6 @@ func (w *Worker) parseFindingsOutput(skill *db.Skill, scan *db.Scan, report stri
 		return &FailOnThresholdError{Worst: worst, Threshold: skill.FailOn}
 	}
 	return nil
-}
-
-func filterFindingsByMinConfidence(findings []db.Finding, minConfidence string) ([]db.Finding, int) {
-	if minConfidence == "" {
-		return findings, 0
-	}
-	kept := findings[:0]
-	for _, f := range findings {
-		if db.ConfidenceAtLeast(f.Confidence, minConfidence) {
-			kept = append(kept, f)
-		}
-	}
-	return kept, len(findings) - len(kept)
-}
-
-func (w *Worker) saveOrObserveFinding(scan *db.Scan, f *db.Finding) (bool, error) {
-	var existing db.Finding
-	err := w.DB.Where("repository_id = ? AND fingerprint = ?", scan.RepositoryID, f.Fingerprint).
-		Order("id").First(&existing).Error
-	if err != nil {
-		if cerr := w.DB.Create(f).Error; cerr != nil {
-			return false, fmt.Errorf("save finding: %w", cerr)
-		}
-		return false, nil
-	}
-	if err := w.reobserveFinding(&existing, f, scan); err != nil {
-		return false, err
-	}
-	return true, nil
 }
 
 // reobserveFinding handles the dedup branch in parseFindingsOutput:

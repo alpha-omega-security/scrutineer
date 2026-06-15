@@ -1765,22 +1765,29 @@ func TestFindingPatchRunEnqueuesPatchSkill(t *testing.T) {
 }
 
 func TestEnqueueSkillWith_modelPrecedence(t *testing.T) {
+	withTestModels(t, []Model{
+		{Name: "Test High", ID: "test-high"},
+		{Name: "Test Mid", ID: "test-mid"},
+		{Name: "Test Max", ID: "test-max"},
+		{Name: "Test Exact", ID: "test-exact"},
+	})
+
 	s, done := newTestServer(t)
 	defer done()
 
-	if err := db.SetSetting(s.DB, db.SettingModelTierMid, "claude-sonnet-4-6"); err != nil {
+	if err := db.SetSetting(s.DB, db.SettingModelTierMid, "test-mid"); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.SetSetting(s.DB, db.SettingModelTierHigh, "claude-opus-4-7"); err != nil {
+	if err := db.SetSetting(s.DB, db.SettingModelTierHigh, "test-high"); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.SetSetting(s.DB, db.SettingModelTierMax, "claude-opus-4-8"); err != nil {
+	if err := db.SetSetting(s.DB, db.SettingModelTierMax, "test-max"); err != nil {
 		t.Fatal(err)
 	}
 	repo := db.Repository{URL: "https://github.com/foo/bar", Name: "bar"}
 	s.DB.Create(&repo)
 	withModel := db.Skill{Name: "lite", Body: "b", OutputFile: "r.json", OutputKind: "freeform",
-		Version: 1, Active: true, Source: "ui", Model: "claude-sonnet-4-6"}
+		Version: 1, Active: true, Source: "ui", Model: "test-exact"}
 	s.DB.Create(&withModel)
 	withTier := db.Skill{Name: "tiered", Body: "b", OutputFile: "r.json", OutputKind: "freeform",
 		Version: 1, Active: true, Source: "ui", Model: ModelTierMid}
@@ -1801,14 +1808,14 @@ func TestEnqueueSkillWith_modelPrecedence(t *testing.T) {
 		opts    ScanOpts
 		want    string
 	}{
-		{"explicit scan model wins", withTier.ID, ScanOpts{Model: "claude-opus-4-8"}, "claude-opus-4-8"},
-		{"explicit scan tier wins", withModel.ID, ScanOpts{Model: ModelTierMax}, "claude-opus-4-8"},
-		{"skill model fills empty scan model", withModel.ID, ScanOpts{}, "claude-sonnet-4-6"},
-		{"skill model fills invalid scan model", withModel.ID, ScanOpts{Model: "garbage"}, "claude-sonnet-4-6"},
-		{"skill tier resolves through settings", withTier.ID, ScanOpts{}, "claude-sonnet-4-6"},
-		{"generic skill defaults to high tier", noModel.ID, ScanOpts{}, "claude-opus-4-7"},
-		{"metadata metadata uses mid tier", metadata.ID, ScanOpts{}, "claude-sonnet-4-6"},
-		{"deep dive metadata uses max tier", deepDive.ID, ScanOpts{}, "claude-opus-4-8"},
+		{"explicit scan model wins", withTier.ID, ScanOpts{Model: "test-max"}, "test-max"},
+		{"explicit scan tier wins", withModel.ID, ScanOpts{Model: ModelTierMax}, "test-max"},
+		{"skill model fills empty scan model", withModel.ID, ScanOpts{}, "test-exact"},
+		{"skill model fills invalid scan model", withModel.ID, ScanOpts{Model: "garbage"}, "test-exact"},
+		{"skill tier resolves through settings", withTier.ID, ScanOpts{}, "test-mid"},
+		{"generic skill defaults to high tier", noModel.ID, ScanOpts{}, "test-high"},
+		{"metadata skill uses mid tier", metadata.ID, ScanOpts{}, "test-mid"},
+		{"deep dive skill uses max tier", deepDive.ID, ScanOpts{}, "test-max"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
