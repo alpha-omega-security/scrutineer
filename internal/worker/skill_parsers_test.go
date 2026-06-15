@@ -37,11 +37,17 @@ func TestParseSubprojectsOutput(t *testing.T) {
 		t.Errorf("row[1] = %+v", rows[1])
 	}
 
-	// A second run replaces the previous set rather than appending.
-	repo2, gdb2 := runSkillWithReport(t, "subprojects", `{"subprojects":[{"path":"only","name":"only"}]}`)
-	gdb2.Where("repository_id = ?", repo2.ID).Find(&rows)
+	// A second run replaces the previous set rather than appending. Reuse the
+	// same DB and repo so the prior two rows are present to be replaced.
+	scan := db.Scan{RepositoryID: repo.ID}
+	gdb.Create(&scan)
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if err := w.parseSubprojectsOutput(&scan, `{"subprojects":[{"path":"only","name":"only"}]}`, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	gdb.Where("repository_id = ?", repo.ID).Find(&rows)
 	if len(rows) != 1 || rows[0].Path != "only" {
-		t.Errorf("second run rows = %+v, want [only]", rows)
+		t.Errorf("second run rows = %+v, want [only] (prior set replaced, not appended)", rows)
 	}
 }
 
