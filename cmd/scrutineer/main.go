@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"flag"
@@ -17,6 +19,10 @@ import (
 	"syscall"
 	"time"
 
+	"filippo.io/age"
+	"filippo.io/age/agessh"
+	"golang.org/x/crypto/ssh"
+	"golang.org/x/term"
 	"gorm.io/gorm"
 
 	"scrutineer/internal/config"
@@ -98,6 +104,8 @@ type flags struct {
 	forkOrg          string
 	metadataDir      string
 	schemaStrict     bool
+	recipientsFile   string
+	identityFile     string
 	skillLocal       skillDirs
 
 	// set records which flags were passed on the command line so merge
@@ -123,6 +131,8 @@ func parseFlags() *flags {
 	flag.StringVar(&f.anthropicBaseURL, "anthropic-base-url", "", "custom Anthropic API base URL (env: ANTHROPIC_BASE_URL)")
 	flag.StringVar(&f.forkOrg, "fork-org", "", "GitHub org the fork skill forks into and files draft advisories against")
 	flag.BoolVar(&f.schemaStrict, "schema-strict", false, "fail scans whose report.json does not validate against the skill's schema (default: warn and continue)")
+	flag.StringVar(&f.recipientsFile, "recipients-file", "", "age recipients file (public keys) for encrypted export")
+	flag.StringVar(&f.identityFile, "identity-file", "", "age identity file or SSH private key for decrypting imports")
 	flag.Var(&f.skillLocal, "skills", "directory to load SKILL.md files from (repeatable)")
 	flag.Parse()
 
@@ -187,6 +197,12 @@ func (f *flags) merge(cfg *config.Config) {
 	}
 	if cfg.SchemaStrict != nil && !f.set["schema-strict"] {
 		f.schemaStrict = *cfg.SchemaStrict
+	}
+	if cfg.RecipientsFile != "" && !f.set["recipients-file"] {
+		f.recipientsFile = cfg.RecipientsFile
+	}
+	if cfg.IdentityFile != "" && !f.set["identity-file"] {
+		f.identityFile = cfg.IdentityFile
 	}
 
 	if len(cfg.Models) > 0 {
@@ -329,6 +345,23 @@ func run(log *slog.Logger) error {
 	}
 	srv.SkillsRepoSHA = skillsRepoSHA
 	srv.Commit = buildCommit()
+
+	if f.recipientsFile != "" {
+		recs, err := loadRecipients(f.recipientsFile)
+		if err != nil {
+			return fmt.Errorf("recipients: %w", err)
+		}
+		srv.EncRecipients = recs
+		log.Info("loaded recipients", "file", f.recipientsFile, "count", len(recs))
+	}
+	if f.identityFile != "" {
+		ids, err := loadIdentities(f.identityFile)
+		if err != nil {
+			return fmt.Errorf("identity: %w", err)
+		}
+		srv.EncIdentities = ids
+		log.Info("loaded identities", "file", f.identityFile, "count", len(ids))
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -500,4 +533,102 @@ func cfgPath(flagValue string) string {
 		return flagValue
 	}
 	return config.DefaultPath
+}
+
+// loadRecipients parses a flat text file of public keys (one per line,
+// '#' comments). Both age X25519 and SSH public keys are accepted.
+func loadRecipients(path string) ([]age.Recipient, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	var out []age.Recipient
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		var r age.Recipient
+		var perr error
+		switch {
+		case strings.HasPrefix(line, "age1"):
+			r, perr = age.ParseX25519Recipient(line)
+		case strings.HasPrefix(line, "ssh-"):
+			r, perr = agessh.ParseRecipient(line)
+		default:
+			perr = fmt.Errorf("unrecognised recipient key format: %q", line)
+		}
+		if perr != nil {
+			return nil, perr
+		}
+		out = append(out, r)
+	}
+	return out, sc.Err()
+}
+
+// loadIdentities reads an age identity file (one or more AGE-SECRET-KEY
+// lines) or an SSH private key (PEM). Both formats are auto-detected.
+// Encrypted SSH keys are supported: when one is detected, the user is
+// prompted for the passphrase on stdin (echo disabled).
+func loadIdentities(path string) ([]age.Identity, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	// SSH private keys start with a PEM header.
+	if bytes.Contains(data, []byte("PRIVATE KEY")) {
+		id, err := agessh.ParseIdentity(data)
+		if err == nil {
+			return []age.Identity{id}, nil
+		}
+		// Encrypted SSH key — prompt for passphrase.
+		var pme *ssh.PassphraseMissingError
+		if !errors.As(err, &pme) {
+			return nil, fmt.Errorf("parse SSH identity: %w", err)
+		}
+		if pme.PublicKey == nil {
+			return nil, fmt.Errorf("encrypted SSH key has no embedded public key; use the OpenSSH format or provide an unencrypted key")
+		}
+		passphrase, err := promptPassphrase(path)
+		if err != nil {
+			return nil, err
+		}
+		// Validate the passphrase immediately so startup fails fast.
+		if _, err := ssh.ParseRawPrivateKeyWithPassphrase(data, passphrase); err != nil {
+			return nil, fmt.Errorf("wrong passphrase for %s", path)
+		}
+		eid, err := agessh.NewEncryptedSSHIdentity(pme.PublicKey, data, func() ([]byte, error) {
+			return passphrase, nil
+		})
+		if err != nil {
+			return nil, fmt.Errorf("encrypted SSH identity: %w", err)
+		}
+		return []age.Identity{eid}, nil
+	}
+	// Fall back to age-native identity format.
+	ids, err := age.ParseIdentities(bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("parse age identity: %w", err)
+	}
+	return ids, nil
+}
+
+// promptPassphrase is the function called when an encrypted SSH key needs
+// a passphrase. Variable so tests can substitute a non-interactive provider.
+var promptPassphrase = defaultPromptPassphrase
+
+func defaultPromptPassphrase(keyPath string) ([]byte, error) {
+	fd := int(os.Stdin.Fd())
+	if !term.IsTerminal(fd) {
+		return nil, fmt.Errorf("encrypted SSH key %s requires a passphrase but stdin is not a terminal", keyPath)
+	}
+	fmt.Fprintf(os.Stderr, "Enter passphrase for %s: ", keyPath)
+	pass, err := term.ReadPassword(fd)
+	fmt.Fprintln(os.Stderr) // newline after hidden input
+	if err != nil {
+		return nil, fmt.Errorf("read passphrase: %w", err)
+	}
+	return pass, nil
 }

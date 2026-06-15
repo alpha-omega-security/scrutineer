@@ -78,6 +78,13 @@ type Config struct {
 	// emitted to the scan log and the kind-specific parser still runs.
 	// Intended as a development aid while iterating on a skill.
 	SchemaStrict *bool `yaml:"schema_strict"`
+	// RecipientsFile is a flat text file of public keys (one per line,
+	// age X25519 or SSH) used to encrypt format=bundle exports. Empty
+	// disables encrypted export.
+	RecipientsFile string `yaml:"recipients_file"`
+	// IdentityFile is an age identity file or SSH private key used to
+	// decrypt encrypted imports. Empty disables encrypted import.
+	IdentityFile string `yaml:"identity_file"`
 }
 
 // ParseScanTimeout validates and parses a scan_timeout string. Empty

@@ -1,11 +1,18 @@
 package main
 
 import (
+	"crypto/ed25519"
+	"encoding/pem"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 	"time"
+
+	"filippo.io/age"
+	"golang.org/x/crypto/ssh"
 
 	"scrutineer/internal/config"
 	"scrutineer/internal/worker"
@@ -164,6 +171,162 @@ func TestBuildEgressAllow_hardenedNilConfig(t *testing.T) {
 
 func quietLog() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+// writeTestKey writes PEM bytes to a temp file and returns the path.
+func writeTestKey(t *testing.T, data []byte) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "key")
+	if err := os.WriteFile(p, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// genSSHKey returns an unencrypted OpenSSH ed25519 private key PEM and
+// the corresponding public key line.
+func genSSHKey(t *testing.T) (pemBytes []byte, pubLine string) {
+	t.Helper()
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, err := ssh.MarshalPrivateKey(priv, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sshPub, err := ssh.NewPublicKey(pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pem.EncodeToMemory(block), string(ssh.MarshalAuthorizedKey(sshPub))
+}
+
+// genEncryptedSSHKey returns a passphrase-protected OpenSSH ed25519
+// private key PEM.
+func genEncryptedSSHKey(t *testing.T, passphrase []byte) (pemBytes []byte, pubLine string) {
+	t.Helper()
+	pub, priv, err := ed25519.GenerateKey(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	block, err := ssh.MarshalPrivateKeyWithPassphrase(priv, "", passphrase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sshPub, err := ssh.NewPublicKey(pub)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return pem.EncodeToMemory(block), string(ssh.MarshalAuthorizedKey(sshPub))
+}
+
+func TestLoadIdentities_unencryptedSSH(t *testing.T) {
+	pemData, _ := genSSHKey(t)
+	ids, err := loadIdentities(writeTestKey(t, pemData))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 1 {
+		t.Fatalf("got %d identities, want 1", len(ids))
+	}
+}
+
+func TestLoadIdentities_encryptedSSH(t *testing.T) {
+	passphrase := []byte("test-passphrase")
+	pemData, _ := genEncryptedSSHKey(t, passphrase)
+
+	// Inject the passphrase so the prompt is not needed.
+	orig := promptPassphrase
+	promptPassphrase = func(string) ([]byte, error) { return passphrase, nil }
+	t.Cleanup(func() { promptPassphrase = orig })
+
+	ids, err := loadIdentities(writeTestKey(t, pemData))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 1 {
+		t.Fatalf("got %d identities, want 1", len(ids))
+	}
+}
+
+func TestLoadIdentities_encryptedSSH_wrongPassphrase(t *testing.T) {
+	pemData, _ := genEncryptedSSHKey(t, []byte("correct"))
+
+	orig := promptPassphrase
+	promptPassphrase = func(string) ([]byte, error) { return []byte("wrong"), nil }
+	t.Cleanup(func() { promptPassphrase = orig })
+
+	_, err := loadIdentities(writeTestKey(t, pemData))
+	if err == nil {
+		t.Fatal("expected error for wrong passphrase")
+	}
+}
+
+func TestLoadIdentities_encryptedSSH_noTerminal(t *testing.T) {
+	pemData, _ := genEncryptedSSHKey(t, []byte("secret"))
+
+	// Use the real promptPassphrase — stdin is not a terminal in tests.
+	orig := promptPassphrase
+	promptPassphrase = defaultPromptPassphrase
+	t.Cleanup(func() { promptPassphrase = orig })
+
+	_, err := loadIdentities(writeTestKey(t, pemData))
+	if err == nil {
+		t.Fatal("expected error when stdin is not a terminal")
+	}
+}
+
+func TestLoadIdentities_ageNative(t *testing.T) {
+	id, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids, err := loadIdentities(writeTestKey(t, []byte(id.String()+"\n")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 1 {
+		t.Fatalf("got %d identities, want 1", len(ids))
+	}
+}
+
+func TestLoadRecipients_mixedKeyTypes(t *testing.T) {
+	_, sshPub := genSSHKey(t)
+	ageID, _ := age.GenerateX25519Identity()
+
+	content := "# comment\n" + sshPub + ageID.Recipient().String() + "\n"
+	recs, err := loadRecipients(writeTestKey(t, []byte(content)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recs) != 2 {
+		t.Fatalf("got %d recipients, want 2 (one SSH, one age)", len(recs))
+	}
+}
+
+func TestFlagsMerge_recipientsAndIdentity(t *testing.T) {
+	cfg := &config.Config{
+		RecipientsFile: "/etc/recipients.txt",
+		IdentityFile:   "/etc/identity.key",
+	}
+	f := &flags{set: map[string]bool{}}
+	f.merge(cfg)
+	if f.recipientsFile != cfg.RecipientsFile {
+		t.Errorf("recipientsFile = %q, want %q", f.recipientsFile, cfg.RecipientsFile)
+	}
+	if f.identityFile != cfg.IdentityFile {
+		t.Errorf("identityFile = %q, want %q", f.identityFile, cfg.IdentityFile)
+	}
+}
+
+func TestFlagsMerge_recipientsCliFlagWins(t *testing.T) {
+	cfg := &config.Config{RecipientsFile: "/from/config"}
+	f := &flags{recipientsFile: "/from/cli", set: map[string]bool{"recipients-file": true}}
+	f.merge(cfg)
+	if f.recipientsFile != "/from/cli" {
+		t.Errorf("CLI flag should win, got %q", f.recipientsFile)
+	}
 }
 
 func TestBaseURLHost(t *testing.T) {

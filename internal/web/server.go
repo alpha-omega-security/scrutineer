@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"filippo.io/age"
 	"gorm.io/gorm"
 
 	"scrutineer/internal/db"
@@ -70,6 +71,13 @@ type Server struct {
 	// settings page. Set once by main; empty when the build carries no VCS
 	// stamp (e.g. an ldflags-less build outside a git checkout).
 	Commit string
+
+	// EncRecipients is the parsed recipients file; nil disables encrypted
+	// export. Supports age X25519 and SSH public keys.
+	EncRecipients []age.Recipient
+	// EncIdentities decrypts encrypted imports. Multiple entries support
+	// key rotation (old + new). nil disables encrypted import.
+	EncIdentities []age.Identity
 
 	// resolvePURL maps a Package URL to its source repository URL via
 	// packages.ecosyste.ms. Field rather than direct call so tests can
