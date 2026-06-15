@@ -41,6 +41,16 @@ func auditAPIReq(t *testing.T, s *Server, method, path, token, body string) *htt
 	return w
 }
 
+// decodeJSON unmarshals a recorded response body into out, failing the test
+// with the body on error so a non-JSON response (e.g. an error page) shows up
+// as the real failure rather than a confusing downstream assertion.
+func decodeJSON(t *testing.T, w *httptest.ResponseRecorder, out any) {
+	t.Helper()
+	if err := json.Unmarshal(w.Body.Bytes(), out); err != nil {
+		t.Fatalf("decode response: %v; status=%d body=%s", err, w.Code, w.Body)
+	}
+}
+
 func TestAuditPage_listsQueueAndAgreementRate(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
@@ -162,13 +172,15 @@ func TestApiAddFindingReview_validation(t *testing.T) {
 	}
 
 	// Explicit automated_outcome wins over the revalidate snapshot.
-	_, _ = db.AddFindingNote(s.DB, f.ID, "revalidate: false_positive\n\nfixture", "revalidate")
+	if _, err := db.AddFindingNote(s.DB, f.ID, "revalidate: false_positive\n\nfixture", "revalidate"); err != nil {
+		t.Fatalf("seed revalidate note: %v", err)
+	}
 	w := auditAPIReq(t, s, "POST", path, tok, `{"verdict":"true_positive","automated_outcome":"uncertain"}`)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("status = %d; body=%s", w.Code, w.Body)
 	}
 	var rev db.FindingReview
-	_ = json.Unmarshal(w.Body.Bytes(), &rev)
+	decodeJSON(t, w, &rev)
 	if rev.AutomatedOutcome != "uncertain" {
 		t.Errorf("automated_outcome = %q, want explicit value to win over snapshot", rev.AutomatedOutcome)
 	}
@@ -187,7 +199,7 @@ func TestApiListFindingReviews(t *testing.T) {
 		t.Fatalf("status = %d; body=%s", w.Code, w.Body)
 	}
 	var rows []db.FindingReview
-	_ = json.Unmarshal(w.Body.Bytes(), &rows)
+	decodeJSON(t, w, &rows)
 	if len(rows) != 1 || rows[0].Verdict != "false_positive" {
 		t.Errorf("reviews = %+v, want 1 false_positive row", rows)
 	}
@@ -208,14 +220,16 @@ func TestApiAuditQueue(t *testing.T) {
 	// A Low finding that already has a review is excluded.
 	reviewed := db.Finding{ScanID: f.ScanID, RepositoryID: f.RepositoryID, Title: "done", Severity: "Low"}
 	s.DB.Create(&reviewed)
-	_, _ = db.AddFindingReview(s.DB, reviewed.ID, "false_positive", "", "", "")
+	if _, err := db.AddFindingReview(s.DB, reviewed.ID, "false_positive", "", "", ""); err != nil {
+		t.Fatalf("seed review: %v", err)
+	}
 
 	w := auditAPIReq(t, s, "GET", "/api/audit/queue", tok, "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d; body=%s", w.Code, w.Body)
 	}
 	var rows []db.Finding
-	_ = json.Unmarshal(w.Body.Bytes(), &rows)
+	decodeJSON(t, w, &rows)
 	ids := map[uint]bool{}
 	for _, r := range rows {
 		ids[r.ID] = true
@@ -232,8 +246,11 @@ func TestApiAuditQueue(t *testing.T) {
 
 	// limit applies.
 	w = auditAPIReq(t, s, "GET", "/api/audit/queue?limit=1", tok, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("limit=1 status = %d; body=%s", w.Code, w.Body)
+	}
 	rows = nil
-	_ = json.Unmarshal(w.Body.Bytes(), &rows)
+	decodeJSON(t, w, &rows)
 	if len(rows) != 1 {
 		t.Errorf("limit=1 returned %d rows", len(rows))
 	}
@@ -248,7 +265,7 @@ func TestApiAuditQueue(t *testing.T) {
 			t.Fatalf("since=%s status = %d; body=%s", since, w.Code, w.Body)
 		}
 		var got []db.Finding
-		_ = json.Unmarshal(w.Body.Bytes(), &got)
+		decodeJSON(t, w, &got)
 		return len(got)
 	}
 	if n := countAt("2099-01-01T00:00:00Z"); n != 0 {
@@ -263,7 +280,9 @@ func TestFindingReviewCreate(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
 	f, _ := seedAuditFixture(t, s)
-	_, _ = db.AddFindingNote(s.DB, f.ID, "revalidate: already_fixed\n\nfixture", "revalidate")
+	if _, err := db.AddFindingNote(s.DB, f.ID, "revalidate: already_fixed\n\nfixture", "revalidate"); err != nil {
+		t.Fatalf("seed revalidate note: %v", err)
+	}
 	path := "/findings/" + strconv.Itoa(int(f.ID)) + "/reviews"
 
 	w := postForm(t, s, path, url.Values{
