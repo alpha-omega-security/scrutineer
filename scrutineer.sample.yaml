@@ -111,3 +111,14 @@
 # convention can override it (e.g. `.ossprey/`); the scrutineer codebase
 # treats it as opaque.
 # metadata_dir: .scrutineer/
+
+# Path to a flat text file of public keys (one per line, age X25519 or SSH)
+# used to encrypt format=bundle exports. Distribute via a reviewed repo;
+# adding/removing a contributor is a one-line commit. Empty disables
+# encrypted export.
+# recipients_file: ./recipients.txt
+
+# Path to an age identity file (AGE-SECRET-KEY-1...) or an SSH private key
+# used to decrypt encrypted imports. Mode 0600 recommended. Empty disables
+# encrypted import.
+# identity_file: ~/.age/scrutineer.key

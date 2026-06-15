@@ -1,10 +1,14 @@
 package web
 
 import (
+	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strconv"
 
+	"filippo.io/age"
+	"filippo.io/age/armor"
 	"gorm.io/gorm"
 
 	"scrutineer/internal/db"
@@ -22,9 +26,12 @@ func (s *Server) exportHandler() http.Handler {
 }
 
 func (s *Server) apiExportRepoFindings(w http.ResponseWriter, r *http.Request) {
-	if !validateExportFormat(w, r) {
+	format := r.URL.Query().Get("format")
+	if format != "" && format != "jsonl" && format != "bundle" {
+		writeAPIError(w, http.StatusBadRequest, "unsupported format: jsonl or bundle")
 		return
 	}
+
 	id, _ := strconv.Atoi(r.PathValue("id"))
 	var repo db.Repository
 	if err := s.DB.First(&repo, id).Error; err != nil {
@@ -32,11 +39,120 @@ func (s *Server) apiExportRepoFindings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if format == "bundle" {
+		s.apiExportRepoBundle(w, r, &repo)
+		return
+	}
 	q := s.DB.Model(&db.Finding{}).
 		Where("scan_id IN (?)", s.DB.Model(&db.Scan{}).Select("id").Where("repository_id = ?", id)).
 		Order("id desc")
 	q = applyFindingFilters(q, r)
 	streamJSONL(w, q, findingExport)
+}
+
+// sharingBundle is the self-contained sharing format that round-trips
+// through ingest.Parse (the "minimal" shape). The shareable unit is one
+// repository.
+type sharingBundle struct {
+	Repository string           `json:"repository"`
+	Commit     string           `json:"commit"`
+	Tool       string           `json:"tool"`
+	Findings   []sharingFinding `json:"findings"`
+}
+
+type sharingFinding struct {
+	Title       string `json:"title"`
+	Description string `json:"description"`
+	Severity    string `json:"severity"`
+	Confidence  string `json:"confidence"`
+	CWE         string `json:"cwe"`
+	Location    string `json:"location"`
+	Patch       string `json:"patch"`
+}
+
+func (s *Server) apiExportRepoBundle(w http.ResponseWriter, r *http.Request, repo *db.Repository) {
+	encrypt := r.URL.Query().Get("encrypt") != ""
+	if encrypt && len(s.EncRecipients) == 0 {
+		writeAPIError(w, http.StatusBadRequest, "encryption requested but no recipients configured")
+		return
+	}
+
+	var findings []db.Finding
+	q := s.DB.Where("scan_id IN (?)",
+		s.DB.Model(&db.Scan{}).Select("id").Where("repository_id = ?", repo.ID)).
+		Order("id desc")
+	q = applyFindingFilters(q, r)
+	if err := q.Find(&findings).Error; err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	bundle := sharingBundle{
+		Repository: repo.URL,
+		Tool:       "scrutineer",
+	}
+	for _, f := range findings {
+		if bundle.Commit == "" {
+			bundle.Commit = f.Commit
+		}
+		bundle.Findings = append(bundle.Findings, sharingFinding{
+			Title:       f.Title,
+			Description: f.Trace,
+			Severity:    f.Severity,
+			Confidence:  f.Confidence,
+			CWE:         f.CWE,
+			Location:    f.Location,
+			Patch:       f.SuggestedFix,
+		})
+	}
+
+	data, err := json.Marshal(bundle)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	if !encrypt {
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		_, _ = w.Write(data)
+		return
+	}
+
+	// Encrypt to all configured recipients. The entire bundle is built in
+	// memory so we can return a proper error code on failure instead of a
+	// truncated body.
+	ct, err := encryptBundle(data, s.EncRecipients)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="findings.bundle.age"`)
+	_, _ = w.Write(ct)
+}
+
+// encryptBundle wraps plaintext in armored age for the given recipients.
+//
+// Confidentiality + integrity only, not sender authentication: a recipient
+// can verify the bundle wasn't tampered with, but cannot cryptographically
+// prove who produced it.
+func encryptBundle(plain []byte, recipients []age.Recipient) ([]byte, error) {
+	var buf bytes.Buffer
+	armorW := armor.NewWriter(&buf)
+	aw, err := age.Encrypt(armorW, recipients...)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := io.Copy(aw, bytes.NewReader(plain)); err != nil {
+		return nil, err
+	}
+	if err := aw.Close(); err != nil {
+		return nil, err
+	}
+	if err := armorW.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 func (s *Server) apiExportFindings(w http.ResponseWriter, r *http.Request) {

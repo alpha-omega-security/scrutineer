@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -9,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"filippo.io/age"
+	"filippo.io/age/armor"
 	"gorm.io/gorm"
 
 	"scrutineer/internal/db"
@@ -43,6 +46,10 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(body) == 0 {
 		writeAPIError(w, http.StatusBadRequest, "empty body")
+		return
+	}
+	if body, err = s.maybeDecrypt(body); err != nil {
+		writeAPIError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
 	results, format, err := ingest.Parse(body)
@@ -248,6 +255,43 @@ func (s *Server) importFindings(scan *db.Scan, res ingest.Result) (created []uin
 		s.enqueueRevalidateForFinding(context.Background(), &fcopy)
 	}
 	return created, observed
+}
+
+// maybeDecrypt transparently decrypts an age-encrypted body. If the body
+// is not encrypted (no age header), it is returned unchanged — so
+// unencrypted imports keep working regardless of whether identities are
+// configured.
+//
+// The live DB stays plaintext by design (it is inside the trust boundary);
+// only the exported sharing artifact is encrypted.
+//
+// No revocation: removing someone from the recipients file only blocks
+// future exports; anything they already received stays decryptable.
+//
+// No sender authentication: a recipient can verify the bundle wasn't
+// tampered with, but not cryptographically prove who produced it.
+func (s *Server) maybeDecrypt(body []byte) ([]byte, error) {
+	const (
+		ageArmorHeader = "-----BEGIN AGE ENCRYPTED FILE-----"
+		ageBinaryMagic = "age-encryption.org/v1\n"
+	)
+	var src io.Reader
+	switch {
+	case bytes.HasPrefix(body, []byte(ageArmorHeader)):
+		src = armor.NewReader(bytes.NewReader(body))
+	case bytes.HasPrefix(body, []byte(ageBinaryMagic)):
+		src = bytes.NewReader(body)
+	default:
+		return body, nil // not encrypted — pass straight through
+	}
+	if len(s.EncIdentities) == 0 {
+		return nil, errors.New("encrypted import received but no identity configured (-identity-file)")
+	}
+	r, err := age.Decrypt(src, s.EncIdentities...)
+	if err != nil {
+		return nil, fmt.Errorf("decrypt: %w", err)
+	}
+	return io.ReadAll(r)
 }
 
 // appendFixDescription folds an ingested fix description into the Trace
