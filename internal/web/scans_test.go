@@ -116,6 +116,10 @@ func TestScanCancel_refererRedirect(t *testing.T) {
 		{"same-origin absolute", "http://" + testHost + "/repositories/1#rt3", "http://" + testHost + "/repositories/1#rt3"},
 		{"same-origin path-only", "/jobs", "/jobs"},
 		{"cross-origin ignored", "https://evil.example.com/phish", ""},
+		{"javascript scheme ignored", "javascript:alert(1)", ""},
+		{"data scheme ignored", "data:text/html,<script>alert(1)</script>", ""},
+		{"opaque http ignored", "http:evil.com", ""},
+		{"protocol-relative ignored", "//evil.example.com/phish", ""},
 		{"garbage ignored", "://not a url", ""},
 		{"no referer", "", ""},
 	}
