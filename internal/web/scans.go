@@ -348,11 +348,27 @@ func (s *Server) scanCancel(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	if ref := r.Header.Get("Referer"); ref != "" {
+	if ref := sameOriginReferer(r); ref != "" {
 		http.Redirect(w, r, ref, http.StatusSeeOther)
 		return
 	}
 	http.Redirect(w, r, fmt.Sprintf("/scans/%d", scan.ID), http.StatusSeeOther)
+}
+
+// sameOriginReferer returns the Referer header value only if it points back at
+// this server (same host, or a relative path). Anything else is dropped so a
+// "redirect back where you came from" handler can't be turned into an open
+// redirect by a forged Referer.
+func sameOriginReferer(r *http.Request) string {
+	ref := r.Header.Get("Referer")
+	if ref == "" {
+		return ""
+	}
+	u, err := url.Parse(ref)
+	if err != nil || u.Host != "" && u.Host != r.Host {
+		return ""
+	}
+	return ref
 }
 
 // cancelScan aborts one non-terminal scan. A running scan is signalled through

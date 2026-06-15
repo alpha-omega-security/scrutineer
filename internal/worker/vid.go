@@ -83,7 +83,7 @@ func (w *Worker) computeVID(srcDir, locations string) string {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), vidTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, bin, sinks...)
+	cmd := exec.CommandContext(ctx, bin, append([]string{"--"}, sinks...)...)
 	cmd.Dir = srcDir
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

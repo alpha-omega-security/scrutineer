@@ -95,6 +95,55 @@ func TestScanCancel_flipsQueuedWithoutRedirect(t *testing.T) {
 	}
 }
 
+func TestScanCancel_refererRedirect(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/r", Name: "r"}
+	s.DB.Create(&repo)
+
+	mk := func() db.Scan {
+		sc := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanQueued,
+			StatusPriority: db.StatusPriorityFor(db.ScanQueued)}
+		s.DB.Create(&sc)
+		return sc
+	}
+
+	cases := []struct {
+		name    string
+		referer string
+		wantLoc string
+	}{
+		{"same-origin absolute", "http://" + testHost + "/repositories/1#rt3", "http://" + testHost + "/repositories/1#rt3"},
+		{"same-origin path-only", "/jobs", "/jobs"},
+		{"cross-origin ignored", "https://evil.example.com/phish", ""},
+		{"garbage ignored", "://not a url", ""},
+		{"no referer", "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			scan := mk()
+			r := localReq("POST", fmt.Sprintf("/scans/%d/cancel", scan.ID))
+			r.SetPathValue("id", fmt.Sprint(scan.ID))
+			if tc.referer != "" {
+				r.Header.Set("Referer", tc.referer)
+			}
+			w := httptest.NewRecorder()
+			s.scanCancel(w, r)
+
+			if w.Code != http.StatusSeeOther {
+				t.Fatalf("status = %d, want 303", w.Code)
+			}
+			want := tc.wantLoc
+			if want == "" {
+				want = fmt.Sprintf("/scans/%d", scan.ID)
+			}
+			if got := w.Header().Get("Location"); got != want {
+				t.Errorf("Location = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
 func TestScansCancelAll_cancelsRepoQueuedAndRunning(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
