@@ -279,7 +279,7 @@
         </div>
       {{end}}
     </div>
-    {{- template "row-cap" (dict "Shown" .Findings "Total" .FindingsTotal "Href" (printf "/findings?owner=%s" .Repo.Owner))}}
+    {{- template "row-cap" (dict "Shown" .Findings "Total" .FindingsTotal "Href" (printf "/findings?owner=%s&category=%s" .Repo.Owner .Category))}}
   </div>
   {{end}}
 

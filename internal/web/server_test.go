@@ -2441,8 +2441,56 @@ func TestRepoShow_tabRowCapAppliesAndShowsNotice(t *testing.T) {
 	if got := strings.Count(body, notice); got != 3 {
 		t.Errorf("found %d %q notices, want 3 (findings, dependents, advisories)", got, notice)
 	}
-	if !strings.Contains(body, "/findings?owner=capowner") {
-		t.Error("findings cap notice should link to the owner-filtered findings index")
+	if !strings.Contains(body, "/findings?owner=capowner&amp;category=") {
+		t.Error("findings cap notice should link to the owner+category-filtered findings index")
+	}
+}
+
+func TestRepoShow_depsCapAppliesAfterRuntimeFilter(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/deps", Name: "deps"}
+	s.DB.Create(&repo)
+
+	// Seed tabRowCap+5 dev deps (sort early by ecosystem) and 3 runtime deps
+	// (sort later). Before the fix, the cap fired on the dev deps and the
+	// runtime-only default view came up empty.
+	devDeps := make([]db.Dependency, tabRowCap+5)
+	for i := range devDeps {
+		devDeps[i] = db.Dependency{RepositoryID: repo.ID, Name: fmt.Sprintf("dev%03d", i),
+			Ecosystem: "aaa", DependencyType: db.DependencyDev, ManifestPath: "package.json"}
+	}
+	s.DB.CreateInBatches(&devDeps, 100)
+	for i := range 3 {
+		s.DB.Create(&db.Dependency{RepositoryID: repo.ID, Name: fmt.Sprintf("rt%d", i),
+			Ecosystem: "zzz", DependencyType: db.DependencyRuntime, ManifestPath: "package.json"})
+	}
+
+	// Default (runtime-only) view shows the 3 runtime deps and no cap notice.
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", fmt.Sprintf("/repositories/%d", repo.ID)))
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	body := w.Body.String()
+	for _, want := range []string{"rt0", "rt1", "rt2"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("runtime-only view missing %q (cap fired before filter)", want)
+		}
+	}
+	if strings.Contains(body, "Dependency list capped") {
+		t.Error("runtime-only view should not show cap notice (only 3 runtime deps)")
+	}
+	if !strings.Contains(body, fmt.Sprintf("%d test/build/dev row(s) hidden", tabRowCap+5)) {
+		t.Error("hidden-deps count should be the SQL total, not capped")
+	}
+
+	// deps=all view caps at tabRowCap and shows the notice with the all-deps total.
+	w = httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", fmt.Sprintf("/repositories/%d?deps=all", repo.ID)))
+	body = w.Body.String()
+	if !strings.Contains(body, fmt.Sprintf("first %d of %d rows", tabRowCap, tabRowCap+5+3)) {
+		t.Errorf("deps=all view missing cap notice with total=%d", tabRowCap+5+3)
 	}
 }
 

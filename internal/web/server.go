@@ -147,7 +147,7 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *work
 			return m
 		},
 		"list":  func(xs ...string) []string { return xs },
-		"len64": func(v any) int64 { return int64(reflect.ValueOf(v).Len()) },
+		"len64": tmplLen64,
 		"cwename": func(id string) string {
 			if _, c, ok := LookupCWE(id); ok {
 				return c.Name
@@ -438,6 +438,19 @@ const (
 	sortRepository = "repository"
 	sortSeverity   = "severity"
 )
+
+// tmplLen64 is the len64 template func: returns len(v) as an int64 for
+// comparison against COUNT(*)-typed totals. Non-len-able or nil values
+// return 0 instead of panicking so a stray template arg renders as
+// "not capped" rather than 500ing the page.
+func tmplLen64(v any) int64 {
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Slice, reflect.Array, reflect.Map, reflect.String, reflect.Chan:
+		return int64(rv.Len())
+	}
+	return 0
+}
 
 type Page struct {
 	N     int
@@ -1671,14 +1684,25 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 	s.DB.Joins("JOIN repository_maintainers ON repository_maintainers.maintainer_id = maintainers.id").
 		Where("repository_maintainers.repository_id = ?", repo.ID).Find(&maintainers)
 
+	// Apply the runtime-only filter in SQL before capping, so the first N
+	// rows on the default tab are runtime deps, not whatever sorts first
+	// by name. hiddenDeps and depsTotal both describe the same set the tab
+	// is rendering.
 	showAllDeps := r.URL.Query().Get("deps") == "all"
-	var rawDeps []db.Dependency
+	hiddenTypes := []string{db.DependencyDev, db.DependencyTest, db.DependencyBuild}
+	var hiddenDeps int64
+	s.DB.Model(&db.Dependency{}).
+		Where("repository_id = ? AND dependency_type IN ?", repo.ID, hiddenTypes).
+		Count(&hiddenDeps)
+	depQ := s.DB.Model(&db.Dependency{}).Where("repository_id = ?", repo.ID)
+	if !showAllDeps {
+		depQ = depQ.Where("dependency_type NOT IN ?", hiddenTypes)
+	}
 	var depsTotal int64
-	s.DB.Model(&db.Dependency{}).Where("repository_id = ?", repo.ID).Count(&depsTotal)
-	s.DB.Where("repository_id = ?", repo.ID).Order("ecosystem, name, manifest_kind desc").
-		Limit(tabRowCap).Find(&rawDeps)
-	visibleDeps, hiddenDeps := filterRepoDeps(rawDeps, showAllDeps)
-	deps := groupDeps(visibleDeps)
+	depQ.Count(&depsTotal)
+	var rawDeps []db.Dependency
+	depQ.Order("ecosystem, name, manifest_kind desc").Limit(tabRowCap).Find(&rawDeps)
+	deps := groupDeps(rawDeps)
 
 	var depsCommit string
 	if len(deps) > 0 {
@@ -2155,22 +2179,6 @@ func groupDeps(deps []db.Dependency) []DepGroup {
 		out = append(out, *m[k])
 	}
 	return out
-}
-
-func filterRepoDeps(deps []db.Dependency, includeNonRuntime bool) ([]db.Dependency, int) {
-	if includeNonRuntime {
-		return deps, 0
-	}
-	out := make([]db.Dependency, 0, len(deps))
-	hidden := 0
-	for _, d := range deps {
-		if db.DependencyVisibleByDefault(d.DependencyType) {
-			out = append(out, d)
-		} else {
-			hidden++
-		}
-	}
-	return out, hidden
 }
 
 func preferDependencyForGroup(a, b db.Dependency) bool {
