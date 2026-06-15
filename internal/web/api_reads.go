@@ -90,7 +90,6 @@ func (s *Server) apiListAdvisories(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-//nolint:dupl // Field projections differ per row type; sharing boilerplate would hide that.
 func (s *Server) apiListDependents(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(r.PathValue("id"))
 	if !s.scanOwnsRepo(r, uint(id)) {
@@ -116,28 +115,39 @@ func (s *Server) apiListDependents(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-//nolint:dupl // Field projections differ per row type; sharing boilerplate would hide that.
 func (s *Server) apiListDependencies(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(r.PathValue("id"))
 	if !s.scanOwnsRepo(r, uint(id)) {
 		writeAPIError(w, http.StatusForbidden, "scan may only read its own repository")
 		return
 	}
+	type dependencyResponse struct {
+		ID                    uint   `json:"id"`
+		Name                  string `json:"name"`
+		Ecosystem             string `json:"ecosystem"`
+		PURL                  string `json:"purl"`
+		Requirement           string `json:"requirement"`
+		RequirementUnresolved bool   `json:"requirement_unresolved"`
+		RequirementResolution string `json:"requirement_resolution"`
+		DependencyType        string `json:"dependency_type"`
+		ManifestPath          string `json:"manifest_path"`
+		ManifestKind          string `json:"manifest_kind"`
+	}
 	var rows []db.Dependency
 	s.DB.Where("repository_id = ?", id).Order("ecosystem, name").Find(&rows)
-	out := make([]map[string]any, 0, len(rows))
+	out := make([]dependencyResponse, 0, len(rows))
 	for _, d := range rows {
-		out = append(out, map[string]any{
-			"id":                     d.ID,
-			"name":                   d.Name,
-			"ecosystem":              d.Ecosystem,
-			"purl":                   d.PURL,
-			"requirement":            d.Requirement,
-			"requirement_unresolved": d.RequirementUnresolved,
-			"requirement_resolution": d.RequirementResolution,
-			"dependency_type":        d.DependencyType,
-			"manifest_path":          d.ManifestPath,
-			"manifest_kind":          d.ManifestKind,
+		out = append(out, dependencyResponse{
+			ID:                    d.ID,
+			Name:                  d.Name,
+			Ecosystem:             d.Ecosystem,
+			PURL:                  d.PURL,
+			Requirement:           d.Requirement,
+			RequirementUnresolved: d.RequirementUnresolved,
+			RequirementResolution: d.RequirementResolution,
+			DependencyType:        d.DependencyType,
+			ManifestPath:          d.ManifestPath,
+			ManifestKind:          d.ManifestKind,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
