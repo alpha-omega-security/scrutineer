@@ -114,6 +114,45 @@ func TestAuditQueue_excludesReviewedFindings(t *testing.T) {
 	}
 }
 
+// TestAuditQueue_sinceFilterComparesInstants pins the fix for SQLite's
+// text-based timestamp comparison: a created_at stored with a +02:00 offset
+// must compare against a UTC Since by instant, not by lexical string order.
+func TestAuditQueue_sinceFilterComparesInstants(t *testing.T) {
+	gdb, err := Open(filepath.Join(t.TempDir(), "since.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := Repository{URL: "https://example.com/x", Name: "x"}
+	gdb.Create(&repo)
+	scan := Scan{RepositoryID: repo.ID, Status: ScanDone}
+	gdb.Create(&scan)
+	f := Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "low", Severity: "Low", Status: FindingNew}
+	gdb.Create(&f)
+
+	// 2026-01-01 12:00 +02:00 == 2026-01-01 10:00 UTC. As text it sorts after
+	// "2026-01-01 11:00...+00:00", so a naive >= comparison includes it even
+	// though Since is an hour later.
+	zone := time.FixedZone("E2", 2*3600)
+	created := time.Date(2026, 1, 1, 12, 0, 0, 0, zone)
+	gdb.Model(&Finding{}).Where("id = ?", f.ID).Update("created_at", created)
+
+	count := func(since time.Time) int {
+		rows, err := AuditQueue(gdb, AuditQueueOptions{Since: since})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return len(rows)
+	}
+	after := time.Date(2026, 1, 1, 11, 0, 0, 0, time.UTC)
+	if n := count(after); n != 0 {
+		t.Errorf("Since one hour after creation returned %d rows, want 0", n)
+	}
+	before := time.Date(2026, 1, 1, 9, 0, 0, 0, time.UTC)
+	if n := count(before); n != 1 {
+		t.Errorf("Since one hour before creation returned %d rows, want 1", n)
+	}
+}
+
 func TestComputeAuditMetrics_agreementOnlyCountsKnownAutomatedOutcomes(t *testing.T) {
 	gdb, err := Open(filepath.Join(t.TempDir(), "metrics.db"))
 	if err != nil {

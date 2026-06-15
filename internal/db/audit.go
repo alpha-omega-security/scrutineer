@@ -87,7 +87,10 @@ func AuditQueue(gdb *gorm.DB, opts AuditQueueOptions) ([]Finding, error) {
 		).
 		Where("id NOT IN (SELECT finding_id FROM finding_reviews)")
 	if !opts.Since.IsZero() {
-		q = q.Where("created_at >= ?", opts.Since)
+		// SQLite stores timestamps as text with whatever TZ offset the
+		// driver serialised, so a bare >= compares strings, not instants.
+		// datetime() normalises both sides to UTC YYYY-MM-DD HH:MM:SS.
+		q = q.Where("datetime(created_at) >= datetime(?)", opts.Since)
 	}
 	var out []Finding
 	err := q.Order("updated_at desc").Limit(limit).Find(&out).Error
