@@ -4,12 +4,42 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"scrutineer/internal/db"
 )
+
+// seedAuditFixture creates a repo with a running scan (for the bearer token)
+// and a Low-severity finding so it lands in the audit queue.
+func seedAuditFixture(t *testing.T, s *Server) (db.Finding, string) {
+	t.Helper()
+	repo := db.Repository{URL: "https://example.com/audit", Name: "audit"}
+	s.DB.Create(&repo)
+	auth := db.Scan{RepositoryID: repo.ID, Status: db.ScanRunning, APIToken: "tok-audit"}
+	s.DB.Create(&auth)
+	scan := db.Scan{RepositoryID: repo.ID, Status: db.ScanDone}
+	s.DB.Create(&scan)
+	f := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "low-sev", Severity: "Low"}
+	s.DB.Create(&f)
+	return f, auth.APIToken
+}
+
+func auditAPIReq(t *testing.T, s *Server, method, path, token, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	r := httptest.NewRequest(method, path, strings.NewReader(body))
+	r.Host = testHost
+	r.Header.Set("Authorization", "Bearer "+token)
+	if body != "" {
+		r.Header.Set("Content-Type", "application/json")
+	}
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	return w
+}
 
 func TestAuditPage_listsQueueAndAgreementRate(t *testing.T) {
 	s, done := newTestServer(t)
@@ -115,5 +145,190 @@ func TestApiAuditMetrics_returnsAggregate(t *testing.T) {
 	}
 	if m.TotalReviews != 2 || m.WithAutomatedOutcome != 2 || m.Agreements != 1 {
 		t.Errorf("metrics = %+v, want total=2 auto=2 agree=1", m)
+	}
+}
+
+func TestApiAddFindingReview_validation(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	f, tok := seedAuditFixture(t, s)
+	path := "/api/findings/" + strconv.Itoa(int(f.ID)) + "/reviews"
+
+	if w := auditAPIReq(t, s, "POST", path, tok, `{"verdict":"not-a-verdict"}`); w.Code != http.StatusUnprocessableEntity {
+		t.Errorf("invalid verdict: status = %d, want 422", w.Code)
+	}
+	if w := auditAPIReq(t, s, "POST", path, tok, `not json`); w.Code != http.StatusBadRequest {
+		t.Errorf("bad json: status = %d, want 400", w.Code)
+	}
+
+	// Explicit automated_outcome wins over the revalidate snapshot.
+	_, _ = db.AddFindingNote(s.DB, f.ID, "revalidate: false_positive\n\nfixture", "revalidate")
+	w := auditAPIReq(t, s, "POST", path, tok, `{"verdict":"true_positive","automated_outcome":"uncertain"}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d; body=%s", w.Code, w.Body)
+	}
+	var rev db.FindingReview
+	_ = json.Unmarshal(w.Body.Bytes(), &rev)
+	if rev.AutomatedOutcome != "uncertain" {
+		t.Errorf("automated_outcome = %q, want explicit value to win over snapshot", rev.AutomatedOutcome)
+	}
+}
+
+func TestApiListFindingReviews(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	f, tok := seedAuditFixture(t, s)
+	if _, err := db.AddFindingReview(s.DB, f.ID, "false_positive", "noise", "", "andrew"); err != nil {
+		t.Fatal(err)
+	}
+
+	w := auditAPIReq(t, s, "GET", "/api/findings/"+strconv.Itoa(int(f.ID))+"/reviews", tok, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", w.Code, w.Body)
+	}
+	var rows []db.FindingReview
+	_ = json.Unmarshal(w.Body.Bytes(), &rows)
+	if len(rows) != 1 || rows[0].Verdict != "false_positive" {
+		t.Errorf("reviews = %+v, want 1 false_positive row", rows)
+	}
+}
+
+func TestApiAuditQueue(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	f, tok := seedAuditFixture(t, s)
+
+	// A High-severity finding with no other audit signal does not qualify.
+	high := db.Finding{ScanID: f.ScanID, RepositoryID: f.RepositoryID, Title: "high", Severity: "High"}
+	s.DB.Create(&high)
+	// A High-severity finding marked false_positive by revalidate qualifies.
+	revalidated := db.Finding{ScanID: f.ScanID, RepositoryID: f.RepositoryID, Title: "fp",
+		Severity: "High", LastRevalidateVerdict: "false_positive"}
+	s.DB.Create(&revalidated)
+	// A Low finding that already has a review is excluded.
+	reviewed := db.Finding{ScanID: f.ScanID, RepositoryID: f.RepositoryID, Title: "done", Severity: "Low"}
+	s.DB.Create(&reviewed)
+	_, _ = db.AddFindingReview(s.DB, reviewed.ID, "false_positive", "", "", "")
+
+	w := auditAPIReq(t, s, "GET", "/api/audit/queue", tok, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", w.Code, w.Body)
+	}
+	var rows []db.Finding
+	_ = json.Unmarshal(w.Body.Bytes(), &rows)
+	ids := map[uint]bool{}
+	for _, r := range rows {
+		ids[r.ID] = true
+	}
+	if !ids[f.ID] || !ids[revalidated.ID] {
+		t.Errorf("queue missing eligible findings: got ids=%v", ids)
+	}
+	if ids[high.ID] {
+		t.Errorf("queue included High-severity finding with no audit signal")
+	}
+	if ids[reviewed.ID] {
+		t.Errorf("queue included already-reviewed finding")
+	}
+
+	// limit applies.
+	w = auditAPIReq(t, s, "GET", "/api/audit/queue?limit=1", tok, "")
+	rows = nil
+	_ = json.Unmarshal(w.Body.Bytes(), &rows)
+	if len(rows) != 1 {
+		t.Errorf("limit=1 returned %d rows", len(rows))
+	}
+
+	// since is wired through. SQLite stores created_at as text with the local
+	// TZ offset and compares it lexically against the bound parameter, so
+	// sub-day cutoffs across timezones are unreliable; use date-level
+	// boundaries here so the comparison holds regardless of encoding.
+	countAt := func(since string) int {
+		w := auditAPIReq(t, s, "GET", "/api/audit/queue?since="+url.QueryEscape(since), tok, "")
+		if w.Code != http.StatusOK {
+			t.Fatalf("since=%s status = %d; body=%s", since, w.Code, w.Body)
+		}
+		var got []db.Finding
+		_ = json.Unmarshal(w.Body.Bytes(), &got)
+		return len(got)
+	}
+	if n := countAt("2099-01-01T00:00:00Z"); n != 0 {
+		t.Errorf("since=2099 returned %d rows, want 0", n)
+	}
+	if n := countAt("2000-01-01T00:00:00Z"); n != 2 {
+		t.Errorf("since=2000 returned %d rows, want 2", n)
+	}
+}
+
+func TestFindingReviewCreate(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	f, _ := seedAuditFixture(t, s)
+	_, _ = db.AddFindingNote(s.DB, f.ID, "revalidate: already_fixed\n\nfixture", "revalidate")
+	path := "/findings/" + strconv.Itoa(int(f.ID)) + "/reviews"
+
+	w := postForm(t, s, path, url.Values{
+		"verdict":  {"true_positive"},
+		"reason":   {"reproduced locally"},
+		"reviewer": {"andrew"},
+	})
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303; body=%s", w.Code, w.Body)
+	}
+	if loc := w.Header().Get("Location"); loc != "/findings/"+strconv.Itoa(int(f.ID)) {
+		t.Errorf("Location = %q", loc)
+	}
+	var rows []db.FindingReview
+	s.DB.Where("finding_id = ?", f.ID).Find(&rows)
+	if len(rows) != 1 || rows[0].Verdict != "true_positive" || rows[0].AutomatedOutcome != "already_fixed" {
+		t.Errorf("review = %+v, want true_positive snapshotting already_fixed", rows)
+	}
+
+	// Explicit automated_outcome wins over the snapshot.
+	w = postForm(t, s, path, url.Values{
+		"verdict":           {"uncertain"},
+		"automated_outcome": {"false_positive"},
+	})
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("explicit-outcome status = %d", w.Code)
+	}
+	s.DB.Where("finding_id = ?", f.ID).Order("id").Find(&rows)
+	if len(rows) != 2 || rows[1].AutomatedOutcome != "false_positive" {
+		t.Errorf("second review = %+v, want explicit automated_outcome", rows)
+	}
+
+	if w := postForm(t, s, path, url.Values{"verdict": {"not-a-verdict"}}); w.Code != http.StatusUnprocessableEntity {
+		t.Errorf("invalid verdict: status = %d, want 422", w.Code)
+	}
+	if w := postForm(t, s, "/findings/999999/reviews", url.Values{"verdict": {"uncertain"}}); w.Code != http.StatusNotFound {
+		t.Errorf("missing finding: status = %d, want 404", w.Code)
+	}
+}
+
+func TestAuditQueueOptionsFromQuery(t *testing.T) {
+	at := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	cases := []struct {
+		query     string
+		wantLimit int
+		wantSince time.Time
+	}{
+		{"", 0, time.Time{}},
+		{"?limit=10", 10, time.Time{}},
+		{"?limit=999999", auditMaxLimit, time.Time{}},
+		{"?limit=0", 0, time.Time{}},
+		{"?limit=-5", 0, time.Time{}},
+		{"?limit=notanumber", 0, time.Time{}},
+		{"?since=" + at.Format(time.RFC3339), 0, at},
+		{"?since=not-a-date", 0, time.Time{}},
+		{"?limit=3&since=" + at.Format(time.RFC3339), 3, at},
+	}
+	for _, tc := range cases {
+		r := httptest.NewRequest("GET", "/api/audit/queue"+tc.query, nil)
+		got := auditQueueOptionsFromQuery(r)
+		if got.Limit != tc.wantLimit {
+			t.Errorf("%q: Limit = %d, want %d", tc.query, got.Limit, tc.wantLimit)
+		}
+		if !got.Since.Equal(tc.wantSince) {
+			t.Errorf("%q: Since = %v, want %v", tc.query, got.Since, tc.wantSince)
+		}
 	}
 }
