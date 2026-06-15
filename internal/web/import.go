@@ -271,13 +271,10 @@ func (s *Server) importFindings(scan *db.Scan, res ingest.Result) (created []uin
 // No sender authentication: a recipient can verify the bundle wasn't
 // tampered with, but not cryptographically prove who produced it.
 func (s *Server) maybeDecrypt(body []byte) ([]byte, error) {
-	const (
-		ageArmorHeader = "-----BEGIN AGE ENCRYPTED FILE-----"
-		ageBinaryMagic = "age-encryption.org/v1\n"
-	)
+	const ageBinaryMagic = "age-encryption.org/v1\n"
 	var src io.Reader
 	switch {
-	case bytes.HasPrefix(body, []byte(ageArmorHeader)):
+	case bytes.HasPrefix(body, []byte(armor.Header)):
 		src = armor.NewReader(bytes.NewReader(body))
 	case bytes.HasPrefix(body, []byte(ageBinaryMagic)):
 		src = bytes.NewReader(body)

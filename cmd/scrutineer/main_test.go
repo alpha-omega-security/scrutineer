@@ -204,9 +204,9 @@ func genSSHKey(t *testing.T) (pemBytes []byte, pubLine string) {
 
 // genEncryptedSSHKey returns a passphrase-protected OpenSSH ed25519
 // private key PEM.
-func genEncryptedSSHKey(t *testing.T, passphrase []byte) (pemBytes []byte, pubLine string) {
+func genEncryptedSSHKey(t *testing.T, passphrase []byte) []byte {
 	t.Helper()
-	pub, priv, err := ed25519.GenerateKey(nil)
+	_, priv, err := ed25519.GenerateKey(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,11 +214,7 @@ func genEncryptedSSHKey(t *testing.T, passphrase []byte) (pemBytes []byte, pubLi
 	if err != nil {
 		t.Fatal(err)
 	}
-	sshPub, err := ssh.NewPublicKey(pub)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return pem.EncodeToMemory(block), string(ssh.MarshalAuthorizedKey(sshPub))
+	return pem.EncodeToMemory(block)
 }
 
 func TestLoadIdentities_unencryptedSSH(t *testing.T) {
@@ -234,7 +230,7 @@ func TestLoadIdentities_unencryptedSSH(t *testing.T) {
 
 func TestLoadIdentities_encryptedSSH(t *testing.T) {
 	passphrase := []byte("test-passphrase")
-	pemData, _ := genEncryptedSSHKey(t, passphrase)
+	pemData := genEncryptedSSHKey(t, passphrase)
 
 	// Inject the passphrase so the prompt is not needed.
 	orig := promptPassphrase
@@ -251,7 +247,7 @@ func TestLoadIdentities_encryptedSSH(t *testing.T) {
 }
 
 func TestLoadIdentities_encryptedSSH_wrongPassphrase(t *testing.T) {
-	pemData, _ := genEncryptedSSHKey(t, []byte("correct"))
+	pemData := genEncryptedSSHKey(t, []byte("correct"))
 
 	orig := promptPassphrase
 	promptPassphrase = func(string) ([]byte, error) { return []byte("wrong"), nil }
@@ -264,7 +260,7 @@ func TestLoadIdentities_encryptedSSH_wrongPassphrase(t *testing.T) {
 }
 
 func TestLoadIdentities_encryptedSSH_noTerminal(t *testing.T) {
-	pemData, _ := genEncryptedSSHKey(t, []byte("secret"))
+	pemData := genEncryptedSSHKey(t, []byte("secret"))
 
 	// Use the real promptPassphrase — stdin is not a terminal in tests.
 	orig := promptPassphrase
@@ -302,6 +298,64 @@ func TestLoadRecipients_mixedKeyTypes(t *testing.T) {
 	}
 	if len(recs) != 2 {
 		t.Fatalf("got %d recipients, want 2 (one SSH, one age)", len(recs))
+	}
+}
+
+func TestLoadRecipients_empty(t *testing.T) {
+	// A file with only comments and blank lines yields zero recipients.
+	// That must be an error: the operator configured the path expecting
+	// keys, so loading nothing silently would defer the failure to a
+	// confusing 400 at export time.
+	path := writeTestKey(t, []byte("# only a comment\n\n   \n"))
+	_, err := loadRecipients(path)
+	if err == nil {
+		t.Fatal("expected error for a recipients file with no keys")
+	}
+}
+
+func TestExpandHome(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skipf("no home dir available: %v", err)
+	}
+	cases := []struct{ in, want string }{
+		{"", ""},
+		{"/etc/recipients.txt", "/etc/recipients.txt"},
+		{"relative/path", "relative/path"},
+		{"~", home},
+		{"~/.ssh/id_ed25519", filepath.Join(home, ".ssh/id_ed25519")},
+		{"~notme/keys", "~notme/keys"}, // ~user form is left untouched
+	}
+	for _, tc := range cases {
+		got, err := expandHome(tc.in)
+		if err != nil {
+			t.Fatalf("expandHome(%q): %v", tc.in, err)
+		}
+		if got != tc.want {
+			t.Errorf("expandHome(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func TestLoadRecipients_tildeExpansion(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	if h, _ := os.UserHomeDir(); h != home {
+		t.Skipf("os.UserHomeDir()=%q does not follow $HOME on this platform", h)
+	}
+	ageID, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, "recipients.txt"), []byte(ageID.Recipient().String()+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	recs, err := loadRecipients("~/recipients.txt")
+	if err != nil {
+		t.Fatalf("loadRecipients(~/recipients.txt): %v", err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("got %d recipients, want 1", len(recs))
 	}
 }
 

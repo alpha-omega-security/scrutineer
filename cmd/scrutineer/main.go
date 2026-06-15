@@ -535,14 +535,40 @@ func cfgPath(flagValue string) string {
 	return config.DefaultPath
 }
 
+// expandHome expands a leading "~" or "~/" in path to the current user's
+// home directory. Go's os.Open/os.ReadFile don't perform tilde expansion
+// (only the shell does), so a config value like "~/.ssh/id_ed25519" would
+// otherwise fail with file-not-found even though the equivalent CLI example
+// works.
+func expandHome(path string) (string, error) {
+	if path != "~" && !strings.HasPrefix(path, "~/") {
+		return path, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	if path == "~" {
+		return home, nil
+	}
+	return filepath.Join(home, path[len("~/"):]), nil
+}
+
 // loadRecipients parses a flat text file of public keys (one per line,
-// '#' comments). Both age X25519 and SSH public keys are accepted.
+// '#' comments). Both age X25519 and SSH public keys are accepted. A
+// configured file that yields zero recipients is treated as an error: the
+// operator asked for encrypted export, so silently loading nothing would
+// only surface later as a confusing 400 at request time.
 func loadRecipients(path string) ([]age.Recipient, error) {
+	path, err := expandHome(path)
+	if err != nil {
+		return nil, err
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	var out []age.Recipient
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
@@ -565,7 +591,13 @@ func loadRecipients(path string) ([]age.Recipient, error) {
 		}
 		out = append(out, r)
 	}
-	return out, sc.Err()
+	if err := sc.Err(); err != nil {
+		return nil, err
+	}
+	if len(out) == 0 {
+		return nil, fmt.Errorf("no recipients found in %s (expected one age or SSH public key per line)", path)
+	}
+	return out, nil
 }
 
 // loadIdentities reads an age identity file (one or more AGE-SECRET-KEY
@@ -573,6 +605,10 @@ func loadRecipients(path string) ([]age.Recipient, error) {
 // Encrypted SSH keys are supported: when one is detected, the user is
 // prompted for the passphrase on stdin (echo disabled).
 func loadIdentities(path string) ([]age.Identity, error) {
+	path, err := expandHome(path)
+	if err != nil {
+		return nil, err
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err

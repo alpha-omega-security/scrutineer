@@ -55,6 +55,8 @@ Plaintext bundles work too — drop `&encrypt=1` on export and import accepts th
 
 The shareable unit is one repository. Severity and status filters apply: `?format=bundle&severity=High` exports only High findings.
 
+Only the substance of each finding travels: title, description, severity, confidence, CWE, location, and suggested patch. Analyst-set triage state (status, CVE/GHSA id, affected packages, fix version, references) is intentionally left out — the recipient imports the finding, not your team's triage, and triages it independently on their side (in their case management tool of choice).
+
 ## Key types
 
 SSH keys are the default. Age-native X25519 keys also work if you prefer them.
@@ -105,10 +107,10 @@ For age-native identities, the identity file can hold multiple keys (one per lin
 
 ## What the encryption covers
 
-- The **exported artifact** is encrypted. The live SQLite database stays plaintext on `127.0.0.1` — it is already inside the trust boundary.
-- **Confidentiality + integrity**, not sender authentication. A recipient can verify the bundle wasn't tampered with, but cannot cryptographically prove who produced it.
-- **No revocation.** Removing someone from `recipients.txt` blocks future exports. Anything they already received stays decryptable. Offboarding = "they keep what they already had."
-- **Encrypt to yourself.** age does not auto-add the sender. Your own public key must be in `recipients.txt` or you cannot open your own archived bundles.
+- The exported artifact is encrypted; the live SQLite database stays plaintext on `127.0.0.1`, already inside the trust boundary.
+- It provides confidentiality and integrity, not sender authentication: a recipient can verify the bundle wasn't tampered with, but cannot cryptographically prove who produced it.
+- There is no revocation. Removing someone from `recipients.txt` blocks future exports, but anything they already received stays decryptable — offboarding means they keep what they already had.
+- age does not auto-add the sender, so your own public key must be in `recipients.txt` or you cannot open your own archived bundles.
 
 ## Flags and config
 

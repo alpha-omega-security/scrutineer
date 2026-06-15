@@ -31,6 +31,14 @@ func (s *Server) apiExportRepoFindings(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "unsupported format: jsonl or bundle")
 		return
 	}
+	// encrypt only applies to the bundle format. Rejecting it here is a
+	// safety guard: without it, encrypt=1 on the default (NDJSON) path would
+	// be silently ignored and return plaintext — a request that asked for
+	// encryption must never get cleartext back.
+	if r.URL.Query().Get("encrypt") != "" && format != "bundle" {
+		writeAPIError(w, http.StatusBadRequest, "encrypt requires format=bundle")
+		return
+	}
 
 	id, _ := strconv.Atoi(r.PathValue("id"))
 	var repo db.Repository
@@ -60,6 +68,11 @@ type sharingBundle struct {
 	Findings   []sharingFinding `json:"findings"`
 }
 
+// sharingFinding carries only the substance of a finding — what the analyst
+// found, not how they triaged it. Analyst-set state (status, CVE/GHSA id,
+// affected, fix_version, references) is intentionally dropped: a bundle shares
+// the finding, and the receiving team owns their own triage. Imported findings
+// therefore land fresh and untriaged on the recipient's side.
 type sharingFinding struct {
 	Title       string `json:"title"`
 	Description string `json:"description"`

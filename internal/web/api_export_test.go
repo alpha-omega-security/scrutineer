@@ -591,21 +591,19 @@ func TestExportEncryptRejectsWithoutBundle(t *testing.T) {
 	defer done()
 	repo := seedFindings(t, s)
 
-	// encrypt=1 without format=bundle should fall through to the NDJSON
-	// path which ignores the encrypt param (NDJSON can't be re-imported).
-	// The per-repo handler only checks encrypt inside the bundle branch,
-	// and the default format passes through to streamJSONL.
+	// encrypt=1 without format=bundle must 400, never silently fall through
+	// to the plaintext NDJSON path. A request that asked for encryption and
+	// got cleartext is the worst failure mode for this feature.
 	r := httptest.NewRequest("GET", "/api/v1/repositories/"+strconv.FormatUint(uint64(repo.ID), 10)+"/findings?encrypt=1", nil)
 	r.Host = testHost
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, r)
 
-	// Should succeed as NDJSON (encrypt param silently ignored).
-	if w.Code != 200 {
-		t.Fatalf("status %d, want 200", w.Code)
+	if w.Code != 400 {
+		t.Fatalf("status %d, want 400", w.Code)
 	}
-	if ct := w.Header().Get("Content-Type"); !strings.Contains(ct, "ndjson") {
-		t.Errorf("content-type %q, want ndjson", ct)
+	if !strings.Contains(w.Body.String(), "format=bundle") {
+		t.Errorf("error should mention the format=bundle requirement, got: %s", w.Body)
 	}
 }
 
