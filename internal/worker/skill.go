@@ -939,6 +939,13 @@ func copyAux(src, dst string) error {
 		if info.IsDir() {
 			return os.MkdirAll(target, dirPerm)
 		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			link, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			return os.Symlink(link, target)
+		}
 		b, err := os.ReadFile(path)
 		if err != nil {
 			return err
