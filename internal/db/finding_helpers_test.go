@@ -3,6 +3,7 @@ package db
 import (
 	"path/filepath"
 	"testing"
+	"time"
 
 	"gorm.io/gorm"
 )
@@ -249,6 +250,169 @@ func TestWriteFindingField_ghsaIDValidates(t *testing.T) {
 				t.Errorf("ghsa_id = %q, want %q", refreshed.GHSAID, tc.value)
 			}
 		}
+	}
+}
+
+// editableFindingFields lists every API field name findingFieldAccessor
+// accepts. Kept next to the round-trip test so a new accessor case that
+// isn't added here trips the unknown-field check below.
+var editableFindingFields = []string{
+	"title", "severity", "status", "cwe", "location", "affected",
+	"reachability", "quality_tier", "cve_id", "ghsa_id",
+	"cvss_vector", "cvss_v4_vector", "fix_version", "fix_commit",
+	"resolution", "disclosure_draft", "assignee",
+	"suggested_fix", "suggested_fix_commit",
+	"breaking_change", "breaking_change_rationale",
+	"exploited_in_wild", "exploited_in_wild_evidence",
+	"mitigation", "mitigation_semgrep",
+	"release_tag", "release_url", "last_revalidate_verdict",
+}
+
+// fieldTestValue returns a value WriteFindingField will accept for field.
+// Most fields are free text; a few have format constraints.
+func fieldTestValue(field string) string {
+	switch field {
+	case "ghsa_id":
+		return "GHSA-aaaa-bbbb-cccc"
+	case "cvss_vector":
+		return "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+	case "cvss_v4_vector":
+		return "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N"
+	default:
+		return "v-" + field
+	}
+}
+
+func TestWriteFindingField_allEditableFieldsRoundTrip(t *testing.T) {
+	gdb := newTestDB(t)
+	f := seedFinding(t, gdb)
+
+	for _, field := range editableFindingFields {
+		want := fieldTestValue(field)
+		if err := WriteFindingField(gdb, f.ID, field, want, SourceAnalyst, "tester"); err != nil {
+			t.Fatalf("WriteFindingField(%q): %v", field, err)
+		}
+		var refreshed Finding
+		gdb.First(&refreshed, f.ID)
+		got, col, err := findingFieldAccessor(&refreshed, field)
+		if err != nil {
+			t.Fatalf("findingFieldAccessor(%q): %v", field, err)
+		}
+		if got != want {
+			t.Errorf("field %q -> column %q = %q, want %q", field, col, got, want)
+		}
+	}
+
+	if _, _, err := findingFieldAccessor(&f, "not-a-field"); err == nil {
+		t.Error("findingFieldAccessor accepted an unknown field")
+	}
+}
+
+func TestWriteFindingTimeField(t *testing.T) {
+	gdb := newTestDB(t)
+	f := seedFinding(t, gdb)
+
+	at := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
+	if err := WriteFindingTimeField(gdb, f.ID, "released_at", at, SourceModel, "release-watch"); err != nil {
+		t.Fatalf("WriteFindingTimeField: %v", err)
+	}
+	var refreshed Finding
+	gdb.First(&refreshed, f.ID)
+	if refreshed.ReleasedAt == nil || !refreshed.ReleasedAt.Equal(at) {
+		t.Fatalf("ReleasedAt = %v, want %v", refreshed.ReleasedAt, at)
+	}
+	var hist []FindingHistory
+	gdb.Where("finding_id = ? AND field = ?", f.ID, "released_at").Find(&hist)
+	if len(hist) != 1 || hist[0].NewValue != at.Format(time.RFC3339) {
+		t.Fatalf("history = %+v, want one row with NewValue=%q", hist, at.Format(time.RFC3339))
+	}
+
+	// Same value is a no-op: no second history row.
+	if err := WriteFindingTimeField(gdb, f.ID, "released_at", at, SourceModel, "release-watch"); err != nil {
+		t.Fatalf("WriteFindingTimeField (noop): %v", err)
+	}
+	gdb.Where("finding_id = ? AND field = ?", f.ID, "released_at").Find(&hist)
+	if len(hist) != 1 {
+		t.Errorf("noop write logged a second history row: %+v", hist)
+	}
+
+	// A non-UTC value is normalised to UTC, so a re-run reporting the same
+	// instant in a different zone is still a no-op.
+	if err := WriteFindingTimeField(gdb, f.ID, "released_at", at.In(time.FixedZone("PST", -8*3600)), SourceModel, ""); err != nil {
+		t.Fatalf("WriteFindingTimeField (zone): %v", err)
+	}
+	gdb.Where("finding_id = ? AND field = ?", f.ID, "released_at").Find(&hist)
+	if len(hist) != 1 {
+		t.Errorf("same-instant different-zone write logged history: %+v", hist)
+	}
+
+	// Changing the value writes OldValue from the stored timestamp.
+	later := at.Add(24 * time.Hour)
+	if err := WriteFindingTimeField(gdb, f.ID, "released_at", later, SourceModel, ""); err != nil {
+		t.Fatalf("WriteFindingTimeField (update): %v", err)
+	}
+	gdb.Where("finding_id = ? AND field = ?", f.ID, "released_at").Order("id").Find(&hist)
+	if len(hist) != 2 || hist[1].OldValue != at.Format(time.RFC3339) {
+		t.Errorf("update history = %+v, want OldValue=%q on second row", hist, at.Format(time.RFC3339))
+	}
+
+	if err := WriteFindingTimeField(gdb, f.ID, "not_a_field", at, SourceModel, ""); err == nil {
+		t.Error("unknown timestamp field should error")
+	}
+	if err := WriteFindingTimeField(gdb, 999999, "released_at", at, SourceModel, ""); err == nil {
+		t.Error("missing finding should error")
+	}
+}
+
+func TestAddFindingCommunication(t *testing.T) {
+	gdb := newTestDB(t)
+	f := seedFinding(t, gdb)
+
+	at := time.Date(2026, 6, 1, 9, 0, 0, 0, time.UTC)
+	c, err := AddFindingCommunication(gdb, f.ID, "email", "outbound", "alice", "sent disclosure", "patch", at)
+	if err != nil {
+		t.Fatalf("AddFindingCommunication: %v", err)
+	}
+	if c.ID == 0 || c.Channel != "email" || c.Direction != "outbound" || !c.At.Equal(at) {
+		t.Errorf("communication = %+v", c)
+	}
+
+	// Zero At defaults to now.
+	c2, err := AddFindingCommunication(gdb, f.ID, "github", "inbound", "bot", "ack", "", time.Time{})
+	if err != nil {
+		t.Fatalf("AddFindingCommunication (zero at): %v", err)
+	}
+	if c2.At.IsZero() {
+		t.Error("zero At should default to now")
+	}
+
+	var n int64
+	gdb.Model(&FindingCommunication{}).Where("finding_id = ?", f.ID).Count(&n)
+	if n != 2 {
+		t.Errorf("communication count = %d, want 2", n)
+	}
+}
+
+func TestAddFindingReference(t *testing.T) {
+	gdb := newTestDB(t)
+	f := seedFinding(t, gdb)
+
+	ref, err := AddFindingReference(gdb, f.ID, "https://example.com/advisory", "advisory,upstream", "Upstream advisory")
+	if err != nil {
+		t.Fatalf("AddFindingReference: %v", err)
+	}
+	if ref.ID == 0 || ref.URL != "https://example.com/advisory" || ref.Tags != "advisory,upstream" {
+		t.Errorf("reference = %+v", ref)
+	}
+
+	if _, err := AddFindingReference(gdb, f.ID, "   ", "", ""); err == nil {
+		t.Error("empty URL should error")
+	}
+
+	var n int64
+	gdb.Model(&FindingReference{}).Where("finding_id = ?", f.ID).Count(&n)
+	if n != 1 {
+		t.Errorf("reference count = %d, want 1 (empty rejected)", n)
 	}
 }
 
