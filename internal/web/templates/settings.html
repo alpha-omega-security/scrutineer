@@ -44,16 +44,22 @@
 </section>
 
 <section class="card">
-  <header><h2>Default model</h2></header>
+  <header><h2>Model tiers</h2></header>
   <section>
-    <div class="flex flex-wrap gap-3">
-      {{$model := .DefaultModel}}
-      {{range .Models}}
-      <form method="post" action="/settings/model" hx-post="/settings/model" hx-swap="none">
-        <input type="hidden" name="model" value="{{.ID}}">
-        <button type="submit" class="rounded-lg border px-4 py-3 text-center hover:bg-muted transition-colors cursor-pointer {{if eq .ID $model}}border-primary bg-muted/50{{else}}border-transparent{{end}}">
-          <span class="text-sm font-medium">{{.Name}}</span>
-        </button>
+    <div class="grid sm:grid-cols-3 gap-4">
+      {{range .ModelTiers}}
+      {{$tier := .Value}}
+      {{$current := index $.TierModels $tier}}
+      <form method="post" action="/settings/model" hx-post="/settings/model" hx-swap="none" class="grid gap-2">
+        <input type="hidden" name="tier" value="{{$tier}}">
+        <label for="model_{{$tier}}">{{.Name}}</label>
+        <select id="model_{{$tier}}" class="input" name="model">
+          {{range $.Models}}
+          <option value="{{.ID}}"{{if eq .ID $current}} selected{{end}}>{{.Name}}</option>
+          {{end}}
+        </select>
+        <p class="text-xs text-muted-foreground">{{.Description}}</p>
+        <button type="submit" class="btn justify-self-start">Save</button>
       </form>
       {{end}}
     </div>

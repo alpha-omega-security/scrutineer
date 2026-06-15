@@ -7,6 +7,7 @@ metadata:
   scrutineer.output_file: report.json
   scrutineer.output_kind: findings
   scrutineer.max_turns: 120
+  scrutineer.model: max
 ---
 
 # security-deep-dive

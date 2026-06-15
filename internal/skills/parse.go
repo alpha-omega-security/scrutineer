@@ -104,9 +104,9 @@ var OutputKinds = map[string]bool{
 var nameRE = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
 // ModelValidator gates the scrutineer.model metadata key. When non-nil, a
-// skill declaring a model the validator rejects gets a warning and the
-// field is left empty (the scan falls back to the server default). Wired
-// from main.go after the model list is configured.
+// skill declaring a model preference the validator rejects gets a warning and
+// the field is left empty (the scan falls back to the high tier).
+// Wired from main.go after the model list is configured.
 var ModelValidator func(string) bool
 
 // ProfileValidator gates the scrutineer.requires_profile metadata key.
@@ -355,7 +355,7 @@ func (p *Parsed) extractMetadataKeys() {
 			if ModelValidator == nil || ModelValidator(m) {
 				p.Model = m
 			} else {
-				p.Warnings = append(p.Warnings, fmt.Sprintf("model %q is not in the configured model list, ignoring", m))
+				p.Warnings = append(p.Warnings, fmt.Sprintf("model preference %q is not a configured model or tier, ignoring", m))
 			}
 		}
 	}

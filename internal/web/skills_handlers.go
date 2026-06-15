@@ -46,6 +46,7 @@ func (s *Server) skillNew(w http.ResponseWriter, r *http.Request) {
 		"Action": "/skills",
 		"Verb":   "Create",
 		"Models": Models,
+		"Tiers":  ModelTiers,
 	})
 }
 
@@ -61,6 +62,7 @@ func (s *Server) skillEdit(w http.ResponseWriter, r *http.Request) {
 		"Action": "/skills/" + strconv.Itoa(int(skill.ID)),
 		"Verb":   "Save",
 		"Models": Models,
+		"Tiers":  ModelTiers,
 	})
 }
 
@@ -153,12 +155,12 @@ func parseMaxTurns(s string) int {
 	return n
 }
 
-// parseSkillModel keeps the form value only if it's in the configured Models
-// list. Anything else (typo, blank, model removed from config) is silently
-// dropped so the scan falls back to the server default at enqueue time.
+// parseSkillModel keeps the form value only if it's a configured model ID or
+// model tier. Anything else is silently dropped so the scan falls back to the
+// high tier at enqueue time.
 func parseSkillModel(s string) string {
 	s = strings.TrimSpace(s)
-	if !ValidModel(s) {
+	if !ValidModelPreference(s) {
 		return ""
 	}
 	return s

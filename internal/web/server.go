@@ -1906,7 +1906,8 @@ func (s *Server) enqueueSkillScoped(ctx context.Context, repoID, skillID uint, f
 // enqueueSkillWith creates a skill scan using the given ScanOpts. Empty
 // fields default cleanly: unset FindingID means not-finding-scoped, empty
 // SubPath means root-scoped. Model precedence is: explicit opts.Model >
-// the skill's preferred Model > server default. Effort precedence is:
+// the skill's preferred Model > the high tier. Concrete model IDs win as-is;
+// tier names resolve through Settings. Effort precedence is:
 // explicit opts.Effort > the runtime default effort.
 func (s *Server) enqueueSkillWith(ctx context.Context, repoID, skillID uint, opts ScanOpts) (uint, error) {
 	var repo db.Repository
@@ -1924,13 +1925,10 @@ func (s *Server) enqueueSkillWith(ctx context.Context, repoID, skillID uint, opt
 	if err := worker.ValidateGitRef(opts.Ref); err != nil {
 		return 0, fmt.Errorf("%w: %v", ErrInvalidRef, err)
 	}
-	if !ValidModel(opts.Model) {
-		if hasSkill && ValidModel(sk.Model) {
-			opts.Model = sk.Model
-		} else {
-			opts.Model = DefaultModel()
-		}
+	if !ValidModelPreference(opts.Model) && hasSkill {
+		opts.Model = sk.Model
 	}
+	opts.Model = resolveModelPreference(s.DB, opts.Model)
 	if !ValidEffort(opts.Effort) {
 		opts.Effort = DefaultEffort()
 	}

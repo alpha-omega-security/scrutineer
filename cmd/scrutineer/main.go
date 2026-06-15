@@ -285,7 +285,7 @@ func run(log *slog.Logger) error {
 		return fmt.Errorf("queue: %w", err)
 	}
 
-	skills.ModelValidator = web.ValidModel
+	skills.ModelValidator = web.ValidModelPreference
 	skills.ProfileValidator = worker.IsNamedProfile
 	skillsRepoSHA, err := loadSkills(log, gdb, f.dataDir, f.skillLocal, f.skillsRepo, f.fullClone())
 	if err != nil {

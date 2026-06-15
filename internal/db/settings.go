@@ -19,6 +19,9 @@ type Setting struct {
 const (
 	SettingConcurrency     = "concurrency"
 	SettingDefaultMaxTurns = "default_max_turns"
+	SettingModelTierMid    = "model_tier_mid"
+	SettingModelTierHigh   = "model_tier_high"
+	SettingModelTierMax    = "model_tier_max"
 )
 
 // GetSetting returns the stored value for key and whether a row exists. It

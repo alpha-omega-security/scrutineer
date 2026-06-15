@@ -164,7 +164,7 @@ Every index page has a search box plus filter and sort dropdowns; the specifics 
 - **Scans** -- every scan that has run. Queued scans can be paused/resumed, running or queued scans can be cancelled and failed ones retried.
 - **Skills** -- installed skills from disk and from the UI; view, edit, or run any of them.
 - **Usage** -- token and cost totals across all scans, broken down by skill.
-- **Settings** -- theme, colour scheme, default model, runner concurrency (restarts the runner to apply, cancelling in-flight scans) and default turn cap (applied to the next scan), plus system stats (record counts, DB size, paths).
+- **Settings** -- theme, colour scheme, model tiers, runner concurrency (restarts the runner to apply, cancelling in-flight scans) and default turn cap (applied to the next scan), plus system stats (record counts, DB size, paths).
 
 ## Finding workflow
 
@@ -242,7 +242,7 @@ For deployments that treat skill prompts as untrusted, pass `--hardened` (or `ha
 
 Every flag above can be set in a YAML config file instead. The loader checks `./scrutineer.yaml` by default; override with `-config path/to/file`. Command-line flags always win. See [scrutineer.sample.yaml](scrutineer.sample.yaml) for the full shape.
 
-The config file can also replace the model pick list and pin the default model:
+The config file can also replace the model pick list and pin the fallback default model used by the high tier:
 
     default_model: claude-sonnet-4-6
     models:
@@ -250,6 +250,8 @@ The config file can also replace the model pick list and pin the default model:
         id:   claude-sonnet-4-6
       - name: Opus
         id:   claude-opus-4-7
+
+Scrutineer resolves skill models through tiers. Skills default to the `high` tier unless their `SKILL.md` metadata pins `scrutineer.model` to another tier or exact model id. Bundled lightweight skills such as `metadata` use `mid`, while `security-deep-dive` uses `max`. The Settings page lets you map each tier to any configured model.
 
 ## Sandboxed Claude Code configs
 

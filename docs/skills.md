@@ -67,7 +67,7 @@ metadata:
   scrutineer.output_file: report.json
   scrutineer.output_kind: findings
   scrutineer.max_turns: 30
-  scrutineer.model: claude-sonnet-4-6
+  scrutineer.model: high
   scrutineer.min_confidence: medium
   scrutineer.report_on: Medium
   scrutineer.fail_on: Critical
@@ -90,7 +90,7 @@ metadata:
 | `metadata.scrutineer.output_file` | string | Path, relative to the workspace, the skill writes its result to. Almost always `report.json`. |
 | `metadata.scrutineer.output_kind` | string | Picks the parser scrutineer runs over `output_file` after the scan. See the table below. |
 | `metadata.scrutineer.max_turns` | int | Per-skill cap on `claude --max-turns`. Overrides the global `-max-turns` flag for this skill only. |
-| `metadata.scrutineer.model` | string | Model id from the configured list. Overrides the server default for this skill only. Ignored with a warning if not in the list. |
+| `metadata.scrutineer.model` | string | Model tier (`mid`, `high`, `max`) or model id from the configured list. Omit to use the `high` tier. Ignored with a warning if it is not a known tier or configured model. |
 | `metadata.scrutineer.min_confidence` | `low` `medium` `high` | Findings below this confidence are dropped before they reach the database. |
 | `metadata.scrutineer.report_on` | `Low` `Medium` `High` `Critical` | Lowest severity that produces a Finding row. Lower-severity hits are recorded on the scan but not surfaced. |
 | `metadata.scrutineer.fail_on` | `Low` `Medium` `High` `Critical` | If any finding meets or exceeds this severity, the scan is marked failed. Useful for CI-style gating. |
