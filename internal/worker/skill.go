@@ -566,16 +566,13 @@ func (e *FailOnThresholdError) Error() string {
 // published, rejected, duplicate) are left alone. Returns the number of
 // rows touched so the scan log can report it.
 func (w *Worker) markNotObserved(scan *db.Scan, seen map[string]bool) int {
-	closed := []db.FindingLifecycle{
-		db.FindingFixed, db.FindingPublished, db.FindingRejected, db.FindingDuplicate,
-	}
 	sameSkill := w.DB.Model(&db.Scan{}).Select("id").
 		Where("repository_id = ? AND skill_name = ?", scan.RepositoryID, scan.SkillName)
 	var prior []db.Finding
 	w.DB.Where("repository_id = ? AND sub_path = ?", scan.RepositoryID, scan.SubPath).
 		Where("scan_id IN (?)", sameSkill).
 		Where("scan_id <> ?", scan.ID).
-		Where("status NOT IN ?", closed).
+		Where("status NOT IN ?", db.ClosedFindingLifecycles).
 		Find(&prior)
 
 	missed := 0

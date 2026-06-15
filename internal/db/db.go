@@ -296,6 +296,19 @@ var FindingLifecycles = []FindingLifecycle{
 	FindingAcknowledged, FindingFixed, FindingPublished, FindingRejected, FindingDuplicate,
 }
 
+// ClosedFindingLifecycles are terminal or hidden-by-default findings.
+var ClosedFindingLifecycles = []FindingLifecycle{
+	FindingFixed, FindingPublished, FindingRejected, FindingDuplicate,
+}
+
+func ClosedFindingLifecycleSQLValues() string {
+	values := make([]string, 0, len(ClosedFindingLifecycles))
+	for _, status := range ClosedFindingLifecycles {
+		values = append(values, "'"+strings.ReplaceAll(string(status), "'", "''")+"'")
+	}
+	return strings.Join(values, ", ")
+}
+
 // Advisory is a known security advisory from advisories.ecosyste.ms.
 type Advisory struct {
 	ID           uint `gorm:"primarykey"`
