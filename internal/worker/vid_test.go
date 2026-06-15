@@ -87,8 +87,8 @@ func TestComputeVID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(args) != "a.rb:12\n" {
-		t.Errorf("vid argv = %q, want %q", args, "a.rb:12\n")
+	if string(args) != "--\na.rb:12\n" {
+		t.Errorf("vid argv = %q, want %q", args, "--\na.rb:12\n")
 	}
 
 	w.VIDCommand = stubVid(t, "VID-aaaa-bbbb-cccc-dddd-eeee-ffff", 1)
@@ -109,6 +109,27 @@ func TestComputeVID(t *testing.T) {
 	w.VIDCommand = stubVid(t, "VID-aaaa-bbbb-cccc-dddd-eeee-ffff", 0)
 	if got := w.computeVID(srcDir, "missing.rb:1"); got != "" {
 		t.Errorf("no resolvable sinks should yield empty VID, got %q", got)
+	}
+}
+
+// TestComputeVID_dashPrefixedSink confirms a hostile repo file like "-x" can't
+// be turned into a flag on the vid command line: the -- separator stays
+// between the binary and the model-derived sinks.
+func TestComputeVID_dashPrefixedSink(t *testing.T) {
+	srcDir := t.TempDir()
+	writeSrcFile(t, srcDir, "-x")
+	w := &Worker{Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	w.VIDCommand = stubVid(t, "VID-aaaa-bbbb-cccc-dddd-eeee-ffff", 0)
+
+	if got := w.computeVID(srcDir, "-x:1"); got != "VID-aaaa-bbbb-cccc-dddd-eeee-ffff" {
+		t.Errorf("computeVID = %q", got)
+	}
+	args, err := os.ReadFile(filepath.Join(filepath.Dir(w.VIDCommand), "args.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(args) != "--\n-x:1\n" {
+		t.Errorf("vid argv = %q, want -- separator before dash-prefixed sink", args)
 	}
 }
 
