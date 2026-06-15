@@ -488,6 +488,31 @@ func TestParseRevalidate_truePositiveMovesNewToEnriched(t *testing.T) {
 	}
 }
 
+func TestParseTimeField_emitsOnUnparseable(t *testing.T) {
+	var events []Event
+	emit := func(e Event) { events = append(events, e) }
+
+	if _, ok := parseTimeField(emit, "pushed_at", "2026-06-01T12:00:00Z"); !ok {
+		t.Error("RFC3339 should parse")
+	}
+	if _, ok := parseTimeField(emit, "pushed_at", "2026-06-01"); !ok {
+		t.Error("date-only should parse")
+	}
+	if _, ok := parseTimeField(emit, "pushed_at", ""); ok {
+		t.Error("empty should return ok=false")
+	}
+	if len(events) != 0 {
+		t.Errorf("valid/empty inputs should not emit: %+v", events)
+	}
+
+	if _, ok := parseTimeField(emit, "pushed_at", "yesterday"); ok {
+		t.Error("garbage should return ok=false")
+	}
+	if len(events) != 1 || !strings.Contains(events[0].Text, `pushed_at value "yesterday"`) {
+		t.Errorf("unparseable input should emit a transcript line: %+v", events)
+	}
+}
+
 func TestParseRevalidate_falsePositiveDoesNotAutoReject(t *testing.T) {
 	report := `{"verdict":"false_positive","reason":"the path lives under test/ fixtures; threat model disclaims it"}`
 	f, gdb := runSkillWithFinding(t, "revalidate", report, db.FindingNew)
