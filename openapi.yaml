@@ -686,19 +686,34 @@ paths:
 
   /v1/repositories/{id}/findings:
     get:
-      summary: Export findings for a repository as JSONL
+      summary: Export findings for a repository (JSONL, or a shareable bundle)
       description: |
-        Returns one JSON object per line (`application/x-ndjson`). No bearer
-        token; localhost-only. Each line is a `FindingExport` carrying the
-        full set of `db.Finding` columns.
+        With `format=jsonl` (the default) returns one JSON object per line
+        (`application/x-ndjson`), each a `FindingExport` carrying the full set
+        of `db.Finding` columns. With `format=bundle` returns a single
+        self-contained JSON document (the minimal ingest shape) that
+        round-trips through `/v1/import`; the bundle carries only finding
+        substance, not analyst-set triage state (status, CVE/GHSA id, affected,
+        fix_version, references). Adding `encrypt=1` (bundle only) wraps the
+        bundle in armored age, encrypted to every configured recipient. No
+        bearer token; localhost-only.
       operationId: exportRepositoryFindings
       security: []
       parameters:
         - $ref: '#/components/parameters/RepositoryID'
         - name: format
           in: query
-          description: Only `jsonl` is supported; other values get a 400.
-          schema: { type: string, enum: [jsonl] }
+          description: |
+            `jsonl` (default) streams NDJSON; `bundle` returns one JSON sharing
+            document. Other values get a 400.
+          schema: { type: string, enum: [jsonl, bundle] }
+        - name: encrypt
+          in: query
+          description: |
+            Any non-empty value wraps a `format=bundle` export in armored age,
+            encrypted to the configured recipients. Requires `format=bundle`
+            and at least one configured recipient, else 400.
+          schema: { type: string }
         - name: severity
           in: query
           schema: { type: string, enum: [Critical, High, Medium, Low] }
@@ -709,12 +724,21 @@ paths:
             enum: [new, enriched, triaged, ready, reported, acknowledged, fixed, published, rejected, duplicate]
       responses:
         '200':
-          description: JSONL stream of FindingExport objects, one per line.
+          description: |
+            JSONL stream (`format=jsonl`), a JSON sharing bundle
+            (`format=bundle`), or armored age ciphertext
+            (`format=bundle&encrypt=1`).
           content:
             application/x-ndjson:
               schema: { $ref: '#/components/schemas/FindingExport' }
+            application/json:
+              schema: { $ref: '#/components/schemas/ImportMinimal' }
+            text/plain:
+              schema:
+                type: string
+                description: Armored age ciphertext, starting `-----BEGIN AGE ENCRYPTED FILE-----`.
         '400':
-          description: Unsupported format query value
+          description: Unsupported format, `encrypt` without `format=bundle`, or encryption requested with no recipients configured.
         '403':
           description: Host header is not localhost
         '404':
@@ -748,7 +772,7 @@ paths:
             application/x-ndjson:
               schema: { $ref: '#/components/schemas/FindingExport' }
         '400':
-          description: Unsupported format query value
+          description: Unsupported format query value, or `encrypt` requested (only valid on per-repository bundle exports).
         '403':
           description: Host header is not localhost
 
@@ -779,7 +803,7 @@ paths:
             application/x-ndjson:
               schema: { $ref: '#/components/schemas/ScanExport' }
         '400':
-          description: Unsupported format query value
+          description: Unsupported format query value, or `encrypt` requested (only valid on per-repository bundle exports).
         '403':
           description: Host header is not localhost
 
@@ -798,9 +822,11 @@ paths:
         inserting duplicates. A body matching no supported format is
         routed to the `ingest` skill instead when `?repo=` is supplied:
         the raw payload is staged into the skill workspace and a scan is
-        queued, returning 202 with the scan id. No bearer token;
-        localhost-only. See docs/import.md for the per-format field
-        mapping.
+        queued, returning 202 with the scan id. Age-encrypted bodies (armored
+        or binary) are transparently decrypted first when an identity is
+        configured (`-identity-file`); plaintext bodies pass through untouched.
+        No bearer token; localhost-only. See docs/import.md for the per-format
+        field mapping.
       operationId: importFindings
       security: []
       parameters:
@@ -825,6 +851,14 @@ paths:
             schema:
               type: string
               description: One H1 per finding with H2 sections and a `**Key:** value` metadata block.
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+              description: |
+                An age-encrypted bundle (armored or binary). Decrypted in place
+                when an identity is configured, then ingested as the minimal
+                JSON shape above.
       responses:
         '201':
           description: Findings created and/or re-observed.
@@ -851,7 +885,7 @@ paths:
         '413':
           description: Body exceeds 16 MiB
         '422':
-          description: Unrecognised format without `?repo=` (or with the ingest skill unavailable), recognised format that fails to parse, or repository unknown
+          description: Unrecognised format without `?repo=` (or with the ingest skill unavailable), recognised format that fails to parse, repository unknown, or an age-encrypted body received with no identity configured
 
 components:
   securitySchemes:

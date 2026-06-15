@@ -337,25 +337,38 @@ func TestExpandHome(t *testing.T) {
 	}
 }
 
-func TestLoadRecipients_tildeExpansion(t *testing.T) {
+func TestNormalizePaths(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	if h, _ := os.UserHomeDir(); h != home {
 		t.Skipf("os.UserHomeDir()=%q does not follow $HOME on this platform", h)
 	}
-	ageID, err := age.GenerateX25519Identity()
-	if err != nil {
+
+	f := &flags{
+		dataDir:        "~/data",
+		profilesDir:    "~/profiles",
+		recipientsFile: "~/keys/recipients.txt",
+		identityFile:   "/abs/identity", // absolute — left untouched
+		metadataDir:    "~/in-repo",     // in-repo path — must NOT expand
+		skillLocal:     skillDirs{"~/skills-a", "./skills-b"},
+	}
+	if err := f.normalizePaths(); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(home, "recipients.txt"), []byte(ageID.Recipient().String()+"\n"), 0o600); err != nil {
-		t.Fatal(err)
+
+	checks := []struct{ name, got, want string }{
+		{"dataDir", f.dataDir, filepath.Join(home, "data")},
+		{"profilesDir", f.profilesDir, filepath.Join(home, "profiles")},
+		{"recipientsFile", f.recipientsFile, filepath.Join(home, "keys/recipients.txt")},
+		{"identityFile", f.identityFile, "/abs/identity"},
+		{"metadataDir", f.metadataDir, "~/in-repo"},
+		{"skillLocal[0]", f.skillLocal[0], filepath.Join(home, "skills-a")},
+		{"skillLocal[1]", f.skillLocal[1], "./skills-b"},
 	}
-	recs, err := loadRecipients("~/recipients.txt")
-	if err != nil {
-		t.Fatalf("loadRecipients(~/recipients.txt): %v", err)
-	}
-	if len(recs) != 1 {
-		t.Fatalf("got %d recipients, want 1", len(recs))
+	for _, c := range checks {
+		if c.got != c.want {
+			t.Errorf("%s = %q, want %q", c.name, c.got, c.want)
+		}
 	}
 }
 

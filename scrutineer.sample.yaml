@@ -3,6 +3,11 @@
 #
 # Every key is optional. Command-line flags always win; only values the
 # user did NOT pass on the command line are taken from here.
+#
+# Paths that point at the host filesystem — data, skills, profiles_dir,
+# recipients_file and identity_file — may begin with ~ to mean your home
+# directory. (metadata_dir is a path inside the staging repo, not the host,
+# so ~ is left as-is there.)
 
 # Listen address for the web UI + skill API.
 # addr: 127.0.0.1:8080

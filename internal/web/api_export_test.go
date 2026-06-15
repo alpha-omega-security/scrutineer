@@ -607,6 +607,28 @@ func TestExportEncryptRejectsWithoutBundle(t *testing.T) {
 	}
 }
 
+func TestExportEncryptRejectedOnGlobalEndpoints(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	seedFindings(t, s)
+
+	// encrypt only applies to per-repo bundle exports. The cross-repo
+	// findings and scans endpoints must 400, never silently stream plaintext
+	// NDJSON when encryption was requested.
+	for _, path := range []string{"/api/v1/findings?encrypt=1", "/api/v1/scans?encrypt=1"} {
+		r := httptest.NewRequest("GET", path, nil)
+		r.Host = testHost
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, r)
+		if w.Code != 400 {
+			t.Errorf("%s: status %d, want 400", path, w.Code)
+		}
+		if !strings.Contains(w.Body.String(), "encrypt") {
+			t.Errorf("%s: error should mention encrypt, got: %s", path, w.Body)
+		}
+	}
+}
+
 func TestExportFindings_carriesDBFields(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

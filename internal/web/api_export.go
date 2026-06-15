@@ -195,6 +195,13 @@ func validateExportFormat(w http.ResponseWriter, r *http.Request) bool {
 		writeAPIError(w, http.StatusBadRequest, "unsupported format: only jsonl")
 		return false
 	}
+	// encrypt is only meaningful for per-repository bundle exports. Rejecting
+	// it here stops a request that asked for encryption from silently
+	// streaming plaintext NDJSON off these endpoints.
+	if r.URL.Query().Get("encrypt") != "" {
+		writeAPIError(w, http.StatusBadRequest, "encrypt is only supported on per-repository bundle exports")
+		return false
+	}
 	return true
 }
 

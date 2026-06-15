@@ -223,6 +223,47 @@ func (f *flags) merge(cfg *config.Config) {
 
 func (f *flags) fullClone() bool { return f.cloneMode == "full" }
 
+// normalizePaths expands a leading ~ in the host-filesystem paths scrutineer
+// opens or creates (data dir, local skill dirs, profiles dir, and the
+// recipients/identity key files), so config values like "data: ~/scrutineer"
+// work — the shell expands ~ for CLI flags but never for config-file values,
+// and Go's os package does no tilde expansion of its own. metadata_dir is
+// deliberately excluded (it names a path inside a staging git repo, not a host
+// path); skills_repo is a URL, not a path.
+func (f *flags) normalizePaths() error {
+	for _, p := range []*string{&f.dataDir, &f.profilesDir, &f.recipientsFile, &f.identityFile} {
+		expanded, err := expandHome(*p)
+		if err != nil {
+			return err
+		}
+		*p = expanded
+	}
+	for i, dir := range f.skillLocal {
+		expanded, err := expandHome(dir)
+		if err != nil {
+			return err
+		}
+		f.skillLocal[i] = expanded
+	}
+	return nil
+}
+
+// expandHome expands a leading "~" or "~/" in path to the current user's
+// home directory. Go's os.Open/os.ReadFile don't perform tilde expansion
+// (only the shell does), so a config value like "~/.ssh/id_ed25519" would
+// otherwise fail with file-not-found even though the equivalent CLI example
+// works.
+func expandHome(path string) (string, error) {
+	if path != "~" && !strings.HasPrefix(path, "~/") {
+		return path, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, strings.TrimPrefix(path, "~")), nil
+}
+
 func run(log *slog.Logger) error {
 	f := parseFlags()
 
@@ -233,6 +274,9 @@ func run(log *slog.Logger) error {
 	if cfg != nil {
 		f.merge(cfg)
 		log.Info("loaded config", "path", cfgPath(f.configPath))
+	}
+	if err := f.normalizePaths(); err != nil {
+		return err
 	}
 	if err := config.ValidateClone(f.cloneMode); err != nil {
 		return err
@@ -535,35 +579,13 @@ func cfgPath(flagValue string) string {
 	return config.DefaultPath
 }
 
-// expandHome expands a leading "~" or "~/" in path to the current user's
-// home directory. Go's os.Open/os.ReadFile don't perform tilde expansion
-// (only the shell does), so a config value like "~/.ssh/id_ed25519" would
-// otherwise fail with file-not-found even though the equivalent CLI example
-// works.
-func expandHome(path string) (string, error) {
-	if path != "~" && !strings.HasPrefix(path, "~/") {
-		return path, nil
-	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	if path == "~" {
-		return home, nil
-	}
-	return filepath.Join(home, path[len("~/"):]), nil
-}
-
 // loadRecipients parses a flat text file of public keys (one per line,
 // '#' comments). Both age X25519 and SSH public keys are accepted. A
 // configured file that yields zero recipients is treated as an error: the
 // operator asked for encrypted export, so silently loading nothing would
-// only surface later as a confusing 400 at request time.
+// only surface later as a confusing 400 at request time. The path is assumed
+// already tilde-expanded by normalizePaths.
 func loadRecipients(path string) ([]age.Recipient, error) {
-	path, err := expandHome(path)
-	if err != nil {
-		return nil, err
-	}
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -603,12 +625,9 @@ func loadRecipients(path string) ([]age.Recipient, error) {
 // loadIdentities reads an age identity file (one or more AGE-SECRET-KEY
 // lines) or an SSH private key (PEM). Both formats are auto-detected.
 // Encrypted SSH keys are supported: when one is detected, the user is
-// prompted for the passphrase on stdin (echo disabled).
+// prompted for the passphrase on stdin (echo disabled). The path is assumed
+// already tilde-expanded by normalizePaths.
 func loadIdentities(path string) ([]age.Identity, error) {
-	path, err := expandHome(path)
-	if err != nil {
-		return nil, err
-	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
