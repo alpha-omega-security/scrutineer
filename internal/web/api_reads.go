@@ -239,6 +239,7 @@ func findingSummary(f db.Finding) map[string]any {
 		"reachability":  f.Reachability,
 		"quality_tier":  f.QualityTier,
 		"cve_id":        f.CVEID,
+		"ghsa_id":       f.GHSAID,
 		"cvss_vector":   f.CVSSVector,
 		"cvss_score":    f.CVSSScore,
 		"fix_version":   f.FixVersion,

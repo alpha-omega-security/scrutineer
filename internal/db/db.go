@@ -455,6 +455,10 @@ type Finding struct {
 	// Disclosure / triage fields. Any of these may be set by a tool, a
 	// model-backed skill, or the analyst; see FindingHistory for the trail.
 	CVEID string
+	// GHSAID is the GitHub Security Advisory identifier (GHSA-xxxx-xxxx-xxxx),
+	// populated once the advisory has been published on GitHub. It sits
+	// alongside CVEID; a finding may carry both.
+	GHSAID string `gorm:"column:ghsa_id"`
 	// CVSSVector is the canonical CVSS v3.x base vector (3.0 or 3.1).
 	// CVSSv4Vector is the v4.0 base vector. Both may be populated when
 	// the analyst (or the disclose skill) carries both forward, which

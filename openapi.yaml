@@ -279,7 +279,7 @@ paths:
                   description: |
                     Map of field name to new value. Allowed fields:
                     title, severity, status, cwe, location, affected,
-                    cve_id, cvss_vector, cvss_v4_vector, fix_version, fix_commit,
+                    cve_id, ghsa_id, cvss_vector, cvss_v4_vector, fix_version, fix_commit,
                     resolution, disclosure_draft, assignee.
       responses:
         '204': { description: Updated }
@@ -1036,6 +1036,7 @@ components:
         reachability:  { type: string, enum: [reachable, harness_only, unclear] }
         quality_tier:  { type: string, enum: [high, low] }
         cve_id:        { type: string }
+        ghsa_id:       { type: string, description: "GitHub Security Advisory id (GHSA-xxxx-xxxx-xxxx), set once the advisory is published." }
         cvss_vector:    { type: string, description: "CVSS v3.x base vector (3.0 or 3.1)." }
         cvss_score:     { type: number, description: "Base score derived from cvss_vector." }
         cvss_v4_vector: { type: string, description: "CVSS v4.0 base vector. Independent of cvss_vector; both may be populated." }

@@ -412,6 +412,24 @@ func TestFindingOSV_aliasesIncludeGHSAFromReferences(t *testing.T) {
 	}
 }
 
+func TestFindingOSV_aliasesIncludeGHSAID(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	f := seedCSAFFinding(t, s, func(f *db.Finding) {
+		f.GHSAID = "GHSA-jfh8-c2jp-5v3q"
+	})
+
+	w := getOSV(t, s, f.ID)
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	doc := decodeCSAF(t, w.Body.Bytes())
+	if !slices.Contains(toStringSlice(doc["aliases"]), "GHSA-jfh8-c2jp-5v3q") {
+		t.Errorf("aliases should include the finding's GHSA id: %v", doc["aliases"])
+	}
+}
+
 func TestFindingOSV_duplicateReturns410(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

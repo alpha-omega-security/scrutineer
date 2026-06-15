@@ -2,12 +2,33 @@ package db
 
 import (
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
 
 	"gorm.io/gorm"
 )
+
+// ghsaIDRE matches a GitHub Security Advisory id: the GHSA prefix
+// followed by three 4-character base32 groups, e.g. GHSA-jfh8-c2jp-5v3q.
+// Case-insensitive; callers gate it on a non-empty value so clearing the
+// field stays allowed.
+var ghsaIDRE = regexp.MustCompile(`^(?i)GHSA(-[0-9a-z]{4}){3}$`)
+
+// validateFindingField rejects values that must follow a fixed format
+// before they reach the column. Most fields are free text and pass
+// through untouched; an empty value is always allowed so a field can be
+// cleared. Errors surface to the analyst (422 in the web/API layer).
+func validateFindingField(field, value string) error {
+	if value == "" {
+		return nil
+	}
+	if field == "ghsa_id" && !ghsaIDRE.MatchString(value) {
+		return fmt.Errorf("ghsa_id %q is not a valid GHSA id (expected GHSA-xxxx-xxxx-xxxx)", value)
+	}
+	return nil
+}
 
 // WriteFindingField updates a Finding column and records the change in
 // FindingHistory. Callers pass the JSON-style field name (severity,
@@ -27,6 +48,9 @@ func WriteFindingField(gdb *gorm.DB, findingID uint, field, newValue string, sou
 	}
 	if old == newValue {
 		return nil
+	}
+	if err := validateFindingField(field, newValue); err != nil {
+		return err
 	}
 	if err := gdb.Model(&Finding{}).Where("id = ?", f.ID).Update(colName, newValue).Error; err != nil {
 		return fmt.Errorf("update %s: %w", colName, err)
@@ -211,6 +235,8 @@ func findingFieldAccessor(f *Finding, field string) (current, column string, err
 		return f.QualityTier, "quality_tier", nil
 	case "cve_id":
 		return f.CVEID, "cve_id", nil
+	case "ghsa_id":
+		return f.GHSAID, "ghsa_id", nil
 	case "cvss_vector":
 		return f.CVSSVector, "cvss_vector", nil
 	case "cvss_v4_vector":

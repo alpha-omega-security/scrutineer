@@ -763,8 +763,8 @@ func (s *Server) findings(w http.ResponseWriter, r *http.Request) {
 	search := strings.TrimSpace(r.URL.Query().Get("q"))
 	if search != "" {
 		like := "%" + search + "%"
-		q = q.Where("title LIKE ? OR location LIKE ? OR cwe LIKE ? OR cve_id LIKE ? OR affected LIKE ?",
-			like, like, like, like, like)
+		q = q.Where("title LIKE ? OR location LIKE ? OR cwe LIKE ? OR cve_id LIKE ? OR ghsa_id LIKE ? OR affected LIKE ?",
+			like, like, like, like, like, like)
 	}
 
 	sort := r.URL.Query().Get("sort")

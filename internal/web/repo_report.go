@@ -217,6 +217,7 @@ func writeReportFinding(b *strings.Builder, gdb *gorm.DB, f db.Finding, latest *
 		{"Affected", f.Affected},
 		{"Exploited in wild", f.ExploitedInWild},
 		{"CVE", f.CVEID},
+		{"GHSA", f.GHSAID},
 		{"CVSS", f.CVSSVector},
 		{"Fix version", f.FixVersion},
 		{"Fix commit", f.FixCommit},

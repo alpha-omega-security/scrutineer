@@ -219,6 +219,39 @@ func TestWriteFindingField_cvssVectorEmptyClearsScore(t *testing.T) {
 	}
 }
 
+func TestWriteFindingField_ghsaIDValidates(t *testing.T) {
+	cases := []struct {
+		value   string
+		wantErr bool
+	}{
+		{"GHSA-jfh8-c2jp-5v3q", false},
+		{"ghsa-jfh8-c2jp-5v3q", false}, // case-insensitive
+		{"", false},                    // clearing is allowed
+		{"GHSA-jfh8-c2jp", true},       // too few groups
+		{"CVE-2026-12345", true},       // wrong prefix
+		{"GHSA-jfh8-c2jp-5v3q-extra", true},
+		{"not an id", true},
+	}
+	for _, tc := range cases {
+		gdb := newTestDB(t)
+		f := seedFinding(t, gdb)
+		err := WriteFindingField(gdb, f.ID, "ghsa_id", tc.value, SourceAnalyst, "")
+		if tc.wantErr && err == nil {
+			t.Errorf("ghsa_id %q: expected error, got nil", tc.value)
+		}
+		if !tc.wantErr && err != nil {
+			t.Errorf("ghsa_id %q: unexpected error: %v", tc.value, err)
+		}
+		if !tc.wantErr {
+			var refreshed Finding
+			gdb.First(&refreshed, f.ID)
+			if refreshed.GHSAID != tc.value {
+				t.Errorf("ghsa_id = %q, want %q", refreshed.GHSAID, tc.value)
+			}
+		}
+	}
+}
+
 func TestAddFindingNote_rejectsEmpty(t *testing.T) {
 	gdb := newTestDB(t)
 	f := seedFinding(t, gdb)

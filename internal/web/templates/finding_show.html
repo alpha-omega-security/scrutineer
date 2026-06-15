@@ -127,6 +127,13 @@
     <dd><code>{{$f.CVEID}}</code></dd>
   </div>
   {{end}}
+  {{if $f.GHSAID}}
+  <div>
+    <dt class="text-muted-foreground">GHSA</dt>
+    <dd><a class="hover:underline" href="{{if $repo.HTMLURL}}{{$repo.HTMLURL}}/security/advisories/{{$f.GHSAID}}{{else}}https://github.com/advisories/{{$f.GHSAID}}{{end}}"
+      rel="noopener" target="_blank"><code>{{$f.GHSAID}}</code></a></dd>
+  </div>
+  {{end}}
   {{if $f.CVSSVector}}
   <div class="col-span-2">
     <dt class="text-muted-foreground">CVSS v3</dt>
@@ -403,6 +410,11 @@ git commit -m "fix: {{$f.Title}}"</pre>
         <div class="grid gap-1">
           <label class="text-xs text-muted-foreground">CVE ID</label>
           <input class="input" name="cve_id" value="{{$f.CVEID}}" placeholder="CVE-2026-12345">
+        </div>
+        <div class="grid gap-1">
+          <label class="text-xs text-muted-foreground">GHSA ID</label>
+          <input class="input" name="ghsa_id" value="{{$f.GHSAID}}" placeholder="GHSA-xxxx-xxxx-xxxx"
+            pattern="[Gg][Hh][Ss][Aa](-[0-9A-Za-z]{4}){3}" title="GHSA-xxxx-xxxx-xxxx">
         </div>
         <div class="grid gap-1 col-span-2">
           <label class="text-xs text-muted-foreground">CVSS v3 vector</label>

@@ -135,6 +135,7 @@ One row per vulnerability. Lifecycle columns are mutated through `db.WriteFindin
 | imported_from | text | Originating tool name when the finding came in via `POST /api/v1/import`; empty for native scans. |
 | affected | text | Version range, e.g. `>=0.2.0, <=4.0.5`. |
 | cve_id | text | e.g. `CVE-2026-12345`. |
+| ghsa_id | text | GitHub Security Advisory id, e.g. `GHSA-xxxx-xxxx-xxxx`; set once the advisory is published on GitHub. |
 | cvss_vector | text | CVSS v3.x base vector, e.g. `CVSS:3.1/AV:N/AC:L/...`. |
 | cvss_score | real | Derived from `cvss_vector` on write. Cleared when the vector is empty or unparseable. |
 | cvss_v4_vector | text | CVSS v4.0 base vector, e.g. `CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N`. Stored independently of `cvss_vector` because the v4 metric set and scoring formula differ. |

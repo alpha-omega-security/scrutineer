@@ -18,7 +18,7 @@ import (
 // reject it anyway.
 var analystFields = []string{
 	"title", "severity", "cwe", "location", "affected",
-	"cve_id", "cvss_vector", "cvss_v4_vector", "fix_version", "fix_commit",
+	"cve_id", "ghsa_id", "cvss_vector", "cvss_v4_vector", "fix_version", "fix_commit",
 	"resolution", "disclosure_draft", "assignee",
 }
 
