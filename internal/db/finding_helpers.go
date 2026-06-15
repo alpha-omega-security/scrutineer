@@ -10,11 +10,14 @@ import (
 	"gorm.io/gorm"
 )
 
-// ghsaIDRE matches a GitHub Security Advisory id: the GHSA prefix
+// GHSAIDPattern matches a GitHub Security Advisory id: the GHSA prefix
 // followed by three 4-character base32 groups, e.g. GHSA-jfh8-c2jp-5v3q.
-// Case-insensitive; callers gate it on a non-empty value so clearing the
-// field stays allowed.
-var ghsaIDRE = regexp.MustCompile(`^(?i)GHSA(-[0-9a-z]{4}){3}$`)
+// Case-insensitive. Exported as the unanchored body so the web layer can
+// reuse it for FindString scanning of free text without the format
+// drifting between packages; this package anchors it for input validation.
+const GHSAIDPattern = `(?i)GHSA(-[0-9a-z]{4}){3}`
+
+var ghsaIDRE = regexp.MustCompile("^" + GHSAIDPattern + "$")
 
 // validateFindingField rejects values that must follow a fixed format
 // before they reach the column. Most fields are free text and pass

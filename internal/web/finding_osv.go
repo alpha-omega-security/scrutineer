@@ -256,7 +256,7 @@ func osvCredits(f db.Finding) []osvCredit {
 	return out
 }
 
-var ghsaRE = regexp.MustCompile(`(?i)GHSA(-[0-9a-z]{4}){3}`)
+var ghsaRE = regexp.MustCompile(db.GHSAIDPattern)
 
 // gitSHARE matches the full commit hashes a GIT range event accepts (the
 // schema constrains introduced/fixed to ^(0|[a-f0-9]{40}|[a-f0-9]{64})$). A

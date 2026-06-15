@@ -23,6 +23,10 @@ import (
 // browser; larger files render as a "too large" notice.
 const maxBrowserBytes = 2 << 20
 
+// commitRE accepts abbreviated SHAs (down to 4 hex chars) because the code
+// browser is fed user-clicked links that often carry the short form. Contrast
+// gitSHARE in finding_osv.go, which requires a full 40/64-char hash because
+// the OSV GIT range schema does.
 var commitRE = regexp.MustCompile(`^[0-9a-f]{4,40}$`)
 
 // repoBlob reads one file via `git show <commit>:<path>` from the worker's
