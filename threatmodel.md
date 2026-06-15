@@ -92,13 +92,13 @@ Mitigation remaining: tag finding rows with their source job; render claude-sour
 
 ### T6: Stored XSS via finding fields (mitigated by stdlib + toolchain upgrade)
 
-Go's `html/template` auto-escapes all finding fields. `internal/web/jsontree.go` returns `template.HTML` but escapes every leaf through `html.EscapeString`. `internal/web/location.go` builds hrefs from `HTMLURL`, which is not yet scheme-validated (see T7).
+Go's `html/template` auto-escapes all finding fields. `internal/web/jsontree.go` returns `template.HTML` but escapes every leaf through `html.EscapeString`. `internal/web/location.go` builds hrefs from `HTMLURL`, which is scheme-validated at the write site by `safeURL` (see T7).
 
 The two `html/template` XSS vulnerabilities (`GO-2026-4865`, `GO-2026-4603`) are fixed by `toolchain go1.26.2` in go.mod.
 
-### T7: Untrusted upstream metadata (partially mitigated)
+### T7: Untrusted upstream metadata (mitigated)
 
-All five `io.ReadAll` calls in `metadata.go` are wrapped with `io.LimitReader(resp.Body, 10MB)` to prevent OOM from hostile endpoints. `HTMLURL` and `IconURL` are stored as-is without scheme validation; `safeURL()` is planned but not yet landed (#236).
+All five `io.ReadAll` calls in `metadata.go` are wrapped with `io.LimitReader(resp.Body, 10MB)` to prevent OOM from hostile endpoints. `HTMLURL` and `IconURL` are scheme-validated by `safeURL()` in `parseRepoMetadataOutput` before storage, so only http/https values reach the database and the templates that render them.
 
 Residual: no certificate pinning for ecosyste.ms. A MITM'd response could still return a hostile `repository_url` that passes the `https://` check, leading to cloning an attacker repo. Accepted risk given HTTPS + public CA is the standard trust model.
 
@@ -175,7 +175,7 @@ GORM usage is consistently parameterised; no `Raw`, no string-built `Where`, and
 - [x] `--` separator before URL in `git clone` (T2).
 - [x] `GIT_PROTOCOL_FROM_USER=0` in clone environment (T2).
 - [x] `io.LimitReader` (10 MB cap) on all ecosyste.ms response bodies (T7).
-- [ ] `safeURL` validation on HTMLURL and IconURL before storing (T7).
+- [x] `safeURL` validation on HTMLURL and IconURL before storing (T7).
 - [x] `0700` on the data directory at startup (T8).
 - [x] `toolchain go1.26.2` in go.mod so host builds match the image (T10).
 - [x] Pin tool versions in Dockerfile: claude-code, semgrep, git-pkgs, brief, zizmor (T11).

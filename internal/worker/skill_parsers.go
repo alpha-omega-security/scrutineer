@@ -69,17 +69,30 @@ func (w *Worker) parseRepoMetadataOutput(scan *db.Scan, report string, emit func
 	if t, ok := parseTimeField(emit, "pushed_at", m.PushedAt); ok {
 		updates["pushed_at"] = t
 	}
-	if m.HTMLURL != "" {
-		updates["html_url"] = m.HTMLURL
+	if u := safeURL(m.HTMLURL); u != "" {
+		updates["html_url"] = u
 	}
-	if m.IconURL != "" {
-		updates["icon_url"] = m.IconURL
+	if u := safeURL(m.IconURL); u != "" {
+		updates["icon_url"] = u
 	}
 	if err := w.DB.Model(&db.Repository{}).Where("id = ?", scan.RepositoryID).Updates(updates).Error; err != nil {
 		return fmt.Errorf("update repository: %w", err)
 	}
 	emit(Event{Kind: KindText, Text: "updated repository metadata"})
 	return nil
+}
+
+// safeURL returns u trimmed when it carries an http or https scheme, else
+// empty. Applied to model-emitted URLs (html_url, icon_url) before they
+// reach the database so a hostile metadata response cannot land a
+// javascript: or data: URI that the templates then render as a clickable
+// link (T7 in threatmodel.md).
+func safeURL(u string) string {
+	u = strings.TrimSpace(u)
+	if strings.HasPrefix(u, "http://") || strings.HasPrefix(u, "https://") {
+		return u
+	}
+	return ""
 }
 
 // parsePackagesOutput replaces Package rows for the scan's repository. We
