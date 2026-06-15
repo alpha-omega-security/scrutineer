@@ -15,6 +15,27 @@ import (
 	"scrutineer/internal/worker"
 )
 
+func TestCommitRE(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"abcd", true},
+		{strings.Repeat("a", 40), true},
+		{strings.Repeat("a", 64), true},
+		{"abc", false},
+		{strings.Repeat("a", 65), false},
+		{"abcg", false},
+		{"ABCDEF12", false},
+		{"", false},
+	}
+	for _, tc := range cases {
+		if got := commitRE.MatchString(tc.in); got != tc.want {
+			t.Errorf("commitRE(%q) = %v, want %v", tc.in, got, tc.want)
+		}
+	}
+}
+
 func TestSanitizeBlobPath(t *testing.T) {
 	cases := []struct {
 		in   string

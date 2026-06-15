@@ -24,10 +24,10 @@ import (
 const maxBrowserBytes = 2 << 20
 
 // commitRE accepts abbreviated SHAs (down to 4 hex chars) because the code
-// browser is fed user-clicked links that often carry the short form. Contrast
-// gitSHARE in finding_osv.go, which requires a full 40/64-char hash because
-// the OSV GIT range schema does.
-var commitRE = regexp.MustCompile(`^[0-9a-f]{4,40}$`)
+// browser is fed user-clicked links that often carry the short form, and up
+// to 64 for SHA-256 object-format repos. Contrast gitSHARE in finding_osv.go,
+// which requires a full 40/64-char hash because the OSV GIT range schema does.
+var commitRE = regexp.MustCompile(`^[0-9a-f]{4,64}$`)
 
 // repoBlob reads one file via `git show <commit>:<path>` from the worker's
 // repo-cache, so historical commits resolve even after rescans move HEAD.
