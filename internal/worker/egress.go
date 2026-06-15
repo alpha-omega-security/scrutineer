@@ -273,6 +273,10 @@ func StartEgressProxy(p *EgressProxy) (int, error) {
 		return 0, err
 	}
 	srv := &http.Server{Handler: p, ReadHeaderTimeout: egressDialTimeout}
+	// The proxy lives for the process lifetime: it is started once from
+	// main.setupRunner and every container talks through it. There is no
+	// per-scan teardown, so no Shutdown wiring is needed; process exit
+	// closes the listener.
 	go func() { _ = srv.Serve(ln) }()
 	return ln.Addr().(*net.TCPAddr).Port, nil
 }

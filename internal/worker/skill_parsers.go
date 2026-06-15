@@ -66,7 +66,7 @@ func (w *Worker) parseRepoMetadataOutput(scan *db.Scan, report string, emit func
 	updates["stars"] = m.Stars
 	updates["forks"] = m.Forks
 	updates["archived"] = m.Archived
-	if t, ok := parseTime(m.PushedAt); ok {
+	if t, ok := parseTimeField(emit, "pushed_at", m.PushedAt); ok {
 		updates["pushed_at"] = t
 	}
 	if m.HTMLURL != "" {
@@ -126,7 +126,7 @@ func (w *Worker) parsePackagesOutput(scan *db.Scan, report string, emit func(Eve
 			RegistryURL:          p.RegistryURL,
 			DependentPackagesURL: p.DependentPackagesURL,
 		}
-		if t, ok := parseTime(p.LatestReleaseAt); ok {
+		if t, ok := parseTimeField(emit, "latest_release_at", p.LatestReleaseAt); ok {
 			row.LatestReleaseAt = &t
 		}
 		if p.Metadata != nil {
@@ -180,10 +180,10 @@ func (w *Worker) parseAdvisoriesOutput(scan *db.Scan, report string, emit func(E
 			Classification: a.Classification,
 			Packages:       a.Packages,
 		}
-		if t, ok := parseTime(a.PublishedAt); ok {
+		if t, ok := parseTimeField(emit, "published_at", a.PublishedAt); ok {
 			row.PublishedAt = &t
 		}
-		if t, ok := parseTime(a.WithdrawnAt); ok {
+		if t, ok := parseTimeField(emit, "withdrawn_at", a.WithdrawnAt); ok {
 			row.WithdrawnAt = &t
 		}
 		rows = append(rows, row)
@@ -1018,4 +1018,16 @@ func parseTime(s string) (time.Time, bool) {
 		}
 	}
 	return time.Time{}, false
+}
+
+// parseTimeField wraps parseTime and emits a transcript line when a non-empty
+// value matches none of the accepted layouts, so a model emitting timestamps
+// in an unexpected format is visible in the scan log instead of silently
+// dropping the field.
+func parseTimeField(emit func(Event), field, s string) (time.Time, bool) {
+	t, ok := parseTime(s)
+	if !ok && s != "" {
+		emit(Event{Kind: KindText, Text: fmt.Sprintf("ignoring unparseable %s value %q (want RFC3339 or YYYY-MM-DD)", field, s)})
+	}
+	return t, ok
 }
