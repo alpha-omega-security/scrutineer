@@ -50,7 +50,7 @@ Sink classes to enumerate. The classes are conceptual; the language you are audi
 - Command execution: anything that hands a string to a shell or spawns a process where arguments are built by concatenation rather than passed as an array.
 - File operations: open, read, write, delete, chmod, link, where the path is computed. Includes the language's module/import mechanism if it accepts dynamic paths.
 - Path handling: join, normalise, canonicalise, where the result is used for access decisions. Traversal, symlink following, case-fold confusion on case-insensitive filesystems.
-- Archive extraction: any unpack of tar, zip, or similar where entry names become filesystem paths.
+- Archive extraction: any unpack of tar, zip, or similar where entry names become filesystem paths. For the rust ecosystem, a crate file is actually a tar.gz file
 - Deserialisation: any format that can instantiate types or call constructors during parse. The safe-parse vs unsafe-load distinction exists in most languages; find which is which here.
 - Template or interpolation: any place a value reaches another interpreted context — HTML, SQL, shell, regex, format strings, log lines — without escaping for that context.
 - Network: clients that follow redirects, accept URLs from input, resolve hostnames from data, or make requests to computed targets. DNS resolution, TLS verification settings, proxy handling.
