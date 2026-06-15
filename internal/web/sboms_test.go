@@ -99,6 +99,76 @@ func TestSBOMUpload_rejectsUnrecognized(t *testing.T) {
 	}
 }
 
+func TestSBOMResolveHandler(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	s.resolveSync = true
+	s.resolvePURL = func(_ context.Context, purl string) string {
+		if strings.Contains(purl, "lodash") {
+			return "https://github.com/lodash/lodash"
+		}
+		return ""
+	}
+	triage := db.Skill{Name: defaultSkillName, Body: "b", Active: true}
+	s.DB.Create(&triage)
+
+	up := db.SBOMUpload{Name: "demo", Packages: []db.SBOMPackage{
+		{Name: "lodash", PURL: "pkg:npm/lodash@4.17.21"},
+	}}
+	s.DB.Create(&up)
+
+	r := localReq("POST", fmt.Sprintf("/sboms/%d/resolve", up.ID))
+	r.Header.Set("Sec-Fetch-Site", "same-origin")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303; body=%s", w.Code, w.Body)
+	}
+	if loc := w.Header().Get("Location"); loc != fmt.Sprintf("/sboms/%d", up.ID) {
+		t.Errorf("Location = %q", loc)
+	}
+
+	var pkg db.SBOMPackage
+	s.DB.Where("sbom_upload_id = ?", up.ID).First(&pkg)
+	if pkg.RepositoryID == nil {
+		t.Errorf("package not linked after resolve handler: %+v", pkg)
+	}
+
+	r = localReq("POST", "/sboms/999999/resolve")
+	r.Header.Set("Sec-Fetch-Site", "same-origin")
+	w = httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusNotFound {
+		t.Errorf("missing upload: status = %d, want 404", w.Code)
+	}
+}
+
+func TestSBOMDelete(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	up := db.SBOMUpload{Name: "doomed", Packages: []db.SBOMPackage{
+		{Name: "lodash", PURL: "pkg:npm/lodash@4.17.21"},
+	}}
+	s.DB.Create(&up)
+
+	r := localReq("POST", fmt.Sprintf("/sboms/%d/delete", up.ID))
+	r.Header.Set("Sec-Fetch-Site", "same-origin")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303; body=%s", w.Code, w.Body)
+	}
+	if loc := w.Header().Get("Location"); loc != "/sboms" {
+		t.Errorf("Location = %q, want /sboms", loc)
+	}
+
+	var n int64
+	s.DB.Model(&db.SBOMUpload{}).Where("id = ?", up.ID).Count(&n)
+	if n != 0 {
+		t.Errorf("upload count = %d, want 0", n)
+	}
+}
+
 func TestSBOMResolve_linksRepoAndEnqueuesTriage(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

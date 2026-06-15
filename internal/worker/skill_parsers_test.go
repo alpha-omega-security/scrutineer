@@ -17,6 +17,115 @@ import (
 	"scrutineer/internal/queue"
 )
 
+func TestParseSubprojectsOutput(t *testing.T) {
+	report := `{"subprojects":[
+		{"path":"packages/core","name":"core","kind":"library","description":"shared core"},
+		{"path":" /packages/cli/ ","name":"cli","kind":"binary"},
+		{"path":"","name":"ignored"},
+		{"path":"   ","name":"also ignored"}
+	]}`
+	repo, gdb := runSkillWithReport(t, "subprojects", report)
+	var rows []db.Subproject
+	gdb.Where("repository_id = ?", repo.ID).Order("path").Find(&rows)
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want 2 (empty paths dropped)", len(rows))
+	}
+	if rows[0].Path != "packages/cli" || rows[0].Name != "cli" {
+		t.Errorf("row[0] = %+v, want trimmed cli", rows[0])
+	}
+	if rows[1].Path != "packages/core" || rows[1].Kind != "library" || rows[1].Description != "shared core" {
+		t.Errorf("row[1] = %+v", rows[1])
+	}
+
+	// A second run replaces the previous set rather than appending.
+	repo2, gdb2 := runSkillWithReport(t, "subprojects", `{"subprojects":[{"path":"only","name":"only"}]}`)
+	gdb2.Where("repository_id = ?", repo2.ID).Find(&rows)
+	if len(rows) != 1 || rows[0].Path != "only" {
+		t.Errorf("second run rows = %+v, want [only]", rows)
+	}
+}
+
+func TestParseSubprojectsOutput_invalidJSON(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
+	gdb.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID}
+	gdb.Create(&scan)
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if err := w.parseSubprojectsOutput(&scan, "not json", func(Event) {}); err == nil {
+		t.Error("expected error on invalid JSON")
+	}
+}
+
+func TestParseRepoOverviewOutput(t *testing.T) {
+	report := `{
+		"git": {"default_branch": "develop"},
+		"languages": [
+			{"name":"Go","category":"language"},
+			{"name":"Ruby","category":""},
+			{"name":"Docker","category":"container"},
+			{"name":"","category":"language"}
+		],
+		"resources": {"license_type": "MIT"}
+	}`
+	repo, gdb := runSkillWithReport(t, "repo_overview", report)
+	var got db.Repository
+	gdb.First(&got, repo.ID)
+	if got.DefaultBranch != "develop" {
+		t.Errorf("DefaultBranch = %q, want develop", got.DefaultBranch)
+	}
+	if got.Languages != "Go, Ruby" {
+		t.Errorf("Languages = %q, want 'Go, Ruby' (non-language category and empty name dropped)", got.Languages)
+	}
+	if got.License != "MIT" {
+		t.Errorf("License = %q, want MIT", got.License)
+	}
+}
+
+func TestParseRepoOverviewOutput_partialAndEmpty(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://example.com/x", Name: "x",
+		DefaultBranch: "main", Languages: "Python", License: "Apache-2.0"}
+	gdb.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID}
+	gdb.Create(&scan)
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	// Unparseable JSON is skipped, no error.
+	if err := w.parseRepoOverviewOutput(&scan, "not json", func(Event) {}); err != nil {
+		t.Errorf("unparseable: %v", err)
+	}
+	var got db.Repository
+	gdb.First(&got, repo.ID)
+	if got.Languages != "Python" {
+		t.Errorf("unparseable input should not touch repo: %+v", got)
+	}
+
+	// Empty document writes nothing (existing fields preserved).
+	if err := w.parseRepoOverviewOutput(&scan, `{}`, func(Event) {}); err != nil {
+		t.Errorf("empty: %v", err)
+	}
+	gdb.First(&got, repo.ID)
+	if got.DefaultBranch != "main" || got.Languages != "Python" || got.License != "Apache-2.0" {
+		t.Errorf("empty document overwrote repo: %+v", got)
+	}
+
+	// Partial document only writes the present fields.
+	if err := w.parseRepoOverviewOutput(&scan, `{"git":{"default_branch":"trunk"}}`, func(Event) {}); err != nil {
+		t.Errorf("partial: %v", err)
+	}
+	gdb.First(&got, repo.ID)
+	if got.DefaultBranch != "trunk" || got.Languages != "Python" {
+		t.Errorf("partial = %+v, want default_branch=trunk, languages preserved", got)
+	}
+}
+
 // runSkillWithReport wires a fakeRunner that returns the given report, runs
 // one skill scan against a fresh DB, and returns the scanned Repository and
 // the *gorm.DB for further assertions.

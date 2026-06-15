@@ -148,6 +148,55 @@ func TestScansCancelAll_cancelsRepoQueuedAndRunning(t *testing.T) {
 	}
 }
 
+func TestScansResumePaused(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/r", Name: "r"}
+	s.DB.Create(&repo)
+
+	mk := func(st db.ScanStatus) db.Scan {
+		sc := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: st,
+			StatusPriority: db.StatusPriorityFor(st)}
+		s.DB.Create(&sc)
+		return sc
+	}
+	p1 := mk(db.ScanPaused)
+	p2 := mk(db.ScanPaused)
+	queued := mk(db.ScanQueued)
+	finished := mk(db.ScanDone)
+
+	r := localReq("POST", "/scans/resume-paused")
+	r.Header.Set("Sec-Fetch-Site", "same-origin")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303; body=%s", w.Code, w.Body)
+	}
+	if loc := w.Header().Get("Location"); loc != "/scans?status=queued" {
+		t.Errorf("Location = %q, want /scans?status=queued", loc)
+	}
+
+	statusOf := func(id uint) db.ScanStatus {
+		var sc db.Scan
+		s.DB.First(&sc, id)
+		return sc.Status
+	}
+	if statusOf(p1.ID) != db.ScanQueued || statusOf(p2.ID) != db.ScanQueued {
+		t.Errorf("paused scans should be queued: p1=%s p2=%s", statusOf(p1.ID), statusOf(p2.ID))
+	}
+	if statusOf(queued.ID) != db.ScanQueued {
+		t.Errorf("already-queued scan touched: %s", statusOf(queued.ID))
+	}
+	if statusOf(finished.ID) != db.ScanDone {
+		t.Errorf("done scan touched: %s", statusOf(finished.ID))
+	}
+	var p1got db.Scan
+	s.DB.First(&p1got, p1.ID)
+	if p1got.StatusPriority != db.StatusPriorityFor(db.ScanQueued) {
+		t.Errorf("status_priority = %d, want queued priority", p1got.StatusPriority)
+	}
+}
+
 func TestScansCancelAll_requiresRepository(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
