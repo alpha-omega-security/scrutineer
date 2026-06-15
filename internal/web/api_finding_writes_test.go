@@ -213,7 +213,9 @@ func TestAPIListFindingHistory(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
 	f, tok, _ := seedFindingForAPI(t, s)
-	_ = db.WriteFindingField(s.DB, f.ID, "severity", "Critical", db.SourceAnalyst, "")
+	if err := db.WriteFindingField(s.DB, f.ID, "severity", "Critical", db.SourceAnalyst, ""); err != nil {
+		t.Fatalf("seed history: %v", err)
+	}
 
 	w := apiReq(t, s, "GET", fmt.Sprintf("/api/findings/%d/history", f.ID), tok, "")
 	if w.Code != http.StatusOK {
@@ -235,8 +237,6 @@ func TestSourceFromRequest(t *testing.T) {
 		r := httptest.NewRequest("GET", "/api/findings/1", nil)
 		r.Host = testHost
 		r.Header.Set("Authorization", "Bearer "+tok)
-		// scanFromRequest reads the scan the auth middleware stashes on the
-		// request context, so route through Handler to populate it.
 		return r
 	}
 

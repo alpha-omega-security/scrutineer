@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"testing"
 
 	"scrutineer/internal/db"
@@ -57,10 +58,18 @@ func TestFindingFields(t *testing.T) {
 		}
 	}
 
-	// validateFindingField surfaces as 422 and no further fields are written.
+	// validateFindingField surfaces as 422 and the bad value is not stored.
 	w = postForm(t, s, path, url.Values{"ghsa_id": {"not-a-ghsa"}})
 	if w.Code != http.StatusUnprocessableEntity {
 		t.Errorf("invalid ghsa_id: status = %d, want 422", w.Code)
+	}
+	s.DB.First(&got, f.ID)
+	if got.GHSAID != "" {
+		t.Errorf("GHSAID = %q, want empty (rejected value should not be stored)", got.GHSAID)
+	}
+	s.DB.Where("finding_id = ?", f.ID).Find(&hist)
+	if len(hist) != 3 {
+		t.Errorf("history rows after rejected write = %d, want still 3", len(hist))
 	}
 
 	if w := postForm(t, s, "/findings/999999/fields", url.Values{"severity": {"Low"}}); w.Code != http.StatusNotFound {
@@ -139,6 +148,7 @@ func TestFindingLabels(t *testing.T) {
 		for i, l := range got.Labels {
 			names[i] = l.Name
 		}
+		slices.Sort(names)
 		return names
 	}
 
@@ -147,8 +157,8 @@ func TestFindingLabels(t *testing.T) {
 	if w.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, want 303; body=%s", w.Code, w.Body)
 	}
-	if got := labelsOf(); len(got) != 2 {
-		t.Errorf("labels = %v, want [wontfix needs-info]", got)
+	if got := labelsOf(); !slices.Equal(got, []string{"needs-info", "wontfix"}) {
+		t.Errorf("labels = %v, want [needs-info wontfix]", got)
 	}
 
 	// Comma-style: one labels= value with commas.
@@ -156,8 +166,8 @@ func TestFindingLabels(t *testing.T) {
 	if w.Code != http.StatusSeeOther {
 		t.Fatalf("comma status = %d", w.Code)
 	}
-	if got := labelsOf(); len(got) != 2 {
-		t.Errorf("labels after comma input = %v, want [regression duplicate]", got)
+	if got := labelsOf(); !slices.Equal(got, []string{"duplicate", "regression"}) {
+		t.Errorf("labels after comma input = %v, want [duplicate regression]", got)
 	}
 
 	// Clearing.
