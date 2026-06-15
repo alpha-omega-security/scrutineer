@@ -43,6 +43,7 @@
     {{end}}
     </tbody>
   </table>
+  {{template "pagination" .Page}}
 {{else}}
   {{template "empty" (dict "Icon" "file-box" "Title" "No SBOMs yet" "Body" "Upload a CycloneDX or SPDX JSON document to scan every package it lists.")}}
 {{end}}

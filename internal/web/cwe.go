@@ -120,21 +120,6 @@ func CWEsInCategory(category string) []string {
 	return cweByCategory[category]
 }
 
-// findingMatchesCategory reports whether a finding's CWE belongs to the given
-// View-1400 category. Mirrors applyCWECategoryFilter for callers that need to
-// filter an already-loaded slice instead of narrowing a query.
-func findingMatchesCategory(cwe, category string) bool {
-	if category == UncategorizedCWE {
-		if cwe == "" {
-			return true
-		}
-		_, ok := cweIndex[cwe]
-		return !ok || cweIndex[cwe].Category == ""
-	}
-	c, ok := cweIndex[cwe]
-	return ok && c.Category == category
-}
-
 // applyCWECategoryFilter restricts a findings query to the CWE-IDs in the
 // given View-1400 category. UncategorizedCWE matches findings whose cwe is
 // empty or absent from the catalogue. An unknown category matches nothing.

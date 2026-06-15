@@ -2402,6 +2402,80 @@ func TestRepoShow_findingsTabAggregatesAcrossScans(t *testing.T) {
 	}
 }
 
+func TestRepoShow_tabRowCapAppliesAndShowsNotice(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/cap", Name: "cap", Owner: "capowner"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", SkillName: deepDiveSkillName, Status: db.ScanDone}
+	s.DB.Create(&scan)
+
+	// Seed past the cap on findings, dependents, and advisories so each tab
+	// renders exactly tabRowCap rows plus the "Showing N of M" notice. Batched
+	// inserts keep the test under a second.
+	over := tabRowCap + 5
+	fs := make([]db.Finding, over)
+	deps := make([]db.Dependent, over)
+	advs := make([]db.Advisory, over)
+	for i := range over {
+		fs[i] = db.Finding{ScanID: scan.ID, RepositoryID: repo.ID,
+			Title: fmt.Sprintf("f%d", i), Severity: "High", Status: db.FindingNew}
+		deps[i] = db.Dependent{RepositoryID: repo.ID, Name: fmt.Sprintf("dep%d", i), Ecosystem: "npm"}
+		advs[i] = db.Advisory{RepositoryID: repo.ID, Title: fmt.Sprintf("a%d", i), Severity: "High"}
+	}
+	s.DB.CreateInBatches(&fs, 100)
+	s.DB.CreateInBatches(&deps, 100)
+	s.DB.CreateInBatches(&advs, 100)
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", fmt.Sprintf("/repositories/%d", repo.ID)))
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	body := w.Body.String()
+	// Each capped tab shows exactly tabRowCap rows.
+	if n := strings.Count(body, `id="finding-card-`); n != tabRowCap {
+		t.Errorf("rendered %d finding cards, want %d", n, tabRowCap)
+	}
+	notice := fmt.Sprintf("Showing %d of %d.", tabRowCap, over)
+	if got := strings.Count(body, notice); got != 3 {
+		t.Errorf("found %d %q notices, want 3 (findings, dependents, advisories)", got, notice)
+	}
+	if !strings.Contains(body, "/findings?owner=capowner") {
+		t.Error("findings cap notice should link to the owner-filtered findings index")
+	}
+}
+
+func TestFindingShow_historyCapAppliesAndShowsNotice(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/hist", Name: "hist"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone}
+	s.DB.Create(&scan)
+	f := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "t", Severity: "High"}
+	s.DB.Create(&f)
+
+	over := historyRowCap + 5
+	rows := make([]db.FindingHistory, over)
+	for i := range over {
+		rows[i] = db.FindingHistory{FindingID: f.ID, Field: "observed",
+			NewValue: fmt.Sprintf("scan %d", i), Source: db.SourceTool}
+	}
+	s.DB.CreateInBatches(&rows, 100)
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", fmt.Sprintf("/findings/%d", f.ID)))
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	body := w.Body.String()
+	notice := fmt.Sprintf("Showing %d of %d.", historyRowCap, over)
+	if !strings.Contains(body, notice) {
+		t.Errorf("missing history cap notice %q", notice)
+	}
+}
+
 func TestRepoShow_categoryFilterKeepsScannerTab(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

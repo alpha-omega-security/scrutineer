@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -145,7 +146,8 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *work
 			}
 			return m
 		},
-		"list": func(xs ...string) []string { return xs },
+		"list":  func(xs ...string) []string { return xs },
+		"len64": func(v any) int64 { return int64(reflect.ValueOf(v).Len()) },
 		"cwename": func(id string) string {
 			if _, c, ok := LookupCWE(id); ok {
 				return c.Name
@@ -415,8 +417,17 @@ func (s *Server) index(w http.ResponseWriter, r *http.Request) {
 }
 
 const (
-	perPage        = 20
-	defaultSort    = "newest"
+	perPage     = 20
+	defaultSort = "newest"
+	// tabRowCap bounds per-tab collections on detail pages (repo Findings,
+	// Dependencies, Dependents, Advisories; SBOM Findings/Advisories). The
+	// tabs are summary views: when a repo has more rows than this, the page
+	// shows the first N with a count and a link to the full filtered index.
+	tabRowCap = 200
+	// historyRowCap bounds the FindingHistory list on a finding page. A
+	// finding observed across hundreds of rescans accumulates one row each;
+	// only the most recent are useful inline.
+	historyRowCap  = 100
 	statusKey      = "status"
 	allStatusValue = "all"
 	errorKey       = "error"
@@ -696,39 +707,60 @@ func firstNonEmpty(vals ...string) string {
 // When category is non-empty, only the deep-dive slice is narrowed to the
 // View-1400 bucket; scanner findings are returned unfiltered so the Scanners
 // tab stays reachable.
-func loadRepoFindings(gdb *gorm.DB, repoID uint, category string) ([]db.Finding, []db.Finding, map[uint]string, map[uint]string) {
-	var all []db.Finding
-	gdb.Where("repository_id = ? AND status NOT IN ?", repoID, db.ClosedFindingLifecycles).
-		Order(severityOrder).Order("id desc").Find(&all)
+func loadRepoFindings(gdb *gorm.DB, repoID uint, category string) repoFindings {
+	base := func() *gorm.DB {
+		return gdb.Model(&db.Finding{}).
+			Where("repository_id = ? AND status NOT IN ?", repoID, db.ClosedFindingLifecycles)
+	}
 
-	scanSkill := map[uint]string{}
-	scanCommit := map[uint]string{}
-	if len(all) == 0 {
-		return nil, nil, scanSkill, scanCommit
+	ddQ := base().Where("scan_id IN (?)", deepDiveScanIDs(gdb))
+	if category != "" {
+		ddQ = applyCWECategoryFilter(ddQ, category)
+	}
+	var rf repoFindings
+	ddQ.Count(&rf.DeepDiveTotal)
+	ddQ.Order(severityOrder).Order("id desc").Limit(tabRowCap).Find(&rf.DeepDive)
+
+	scQ := base().Where("scan_id NOT IN (?)", deepDiveScanIDs(gdb))
+	scQ.Count(&rf.ScannersTotal)
+	scQ.Order(severityOrder).Order("id desc").Limit(tabRowCap).Find(&rf.Scanners)
+
+	rf.ScanSkill = map[uint]string{}
+	rf.ScanCommit = map[uint]string{}
+	if len(rf.DeepDive)+len(rf.Scanners) == 0 {
+		return rf
+	}
+	scanIDs := make([]uint, 0, len(rf.DeepDive)+len(rf.Scanners))
+	seen := map[uint]bool{}
+	for _, f := range append(rf.DeepDive, rf.Scanners...) {
+		if !seen[f.ScanID] {
+			seen[f.ScanID] = true
+			scanIDs = append(scanIDs, f.ScanID)
+		}
 	}
 	var rows []struct {
 		ID        uint
 		SkillName string
 		Commit    string
 	}
-	gdb.Raw("SELECT id, COALESCE(skill_name, '') AS skill_name, COALESCE(`commit`, '') AS `commit` FROM scans WHERE repository_id = ?", repoID).Scan(&rows)
+	gdb.Raw("SELECT id, COALESCE(skill_name, '') AS skill_name, COALESCE(`commit`, '') AS `commit` FROM scans WHERE id IN ?", scanIDs).Scan(&rows)
 	for _, row := range rows {
-		scanSkill[row.ID] = row.SkillName
-		scanCommit[row.ID] = row.Commit
+		rf.ScanSkill[row.ID] = row.SkillName
+		rf.ScanCommit[row.ID] = row.Commit
 	}
-	var deepDive, scanners []db.Finding
-	for _, f := range all {
-		name := scanSkill[f.ScanID]
-		if name == "" || name == deepDiveSkillName {
-			if category != "" && !findingMatchesCategory(f.CWE, category) {
-				continue
-			}
-			deepDive = append(deepDive, f)
-		} else {
-			scanners = append(scanners, f)
-		}
-	}
-	return deepDive, scanners, scanSkill, scanCommit
+	return rf
+}
+
+// repoFindings carries the two capped finding sets for a repo's tabs plus
+// the per-scan lookup maps the template needs to render the producing skill
+// name and the location-link commit.
+type repoFindings struct {
+	DeepDive      []db.Finding
+	DeepDiveTotal int64
+	Scanners      []db.Finding
+	ScannersTotal int64
+	ScanSkill     map[uint]string
+	ScanCommit    map[uint]string
 }
 
 func (s *Server) findings(w http.ResponseWriter, r *http.Request) {
@@ -1297,7 +1329,10 @@ func (s *Server) findingShow(w http.ResponseWriter, r *http.Request) {
 	var refs []db.FindingReference
 	s.DB.Where("finding_id = ?", f.ID).Order("id desc").Find(&refs)
 	var history []db.FindingHistory
-	s.DB.Where("finding_id = ?", f.ID).Order("created_at desc").Find(&history)
+	var historyTotal int64
+	s.DB.Model(&db.FindingHistory{}).Where("finding_id = ?", f.ID).Count(&historyTotal)
+	s.DB.Where("finding_id = ?", f.ID).Order("created_at desc").
+		Limit(historyRowCap).Find(&history)
 	reviews, _ := db.ListFindingReviews(s.DB, f.ID)
 	latestRevalidate := db.LatestRevalidateVerdict(s.DB, f.ID)
 	var labels []db.FindingLabel
@@ -1347,6 +1382,7 @@ func (s *Server) findingShow(w http.ResponseWriter, r *http.Request) {
 		"Communications":   comms,
 		"References":       refs,
 		"History":          history,
+		"HistoryTotal":     historyTotal,
 		"Reviews":          reviews,
 		"LatestRevalidate": latestRevalidate,
 		"AllLabels":        labels,
@@ -1617,7 +1653,7 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 		Select("COALESCE(SUM(cost_usd), 0)").Scan(&totalCost)
 
 	category := r.URL.Query().Get("category")
-	findings, scannerFindings, scanSkill, scanCommit := loadRepoFindings(s.DB, repo.ID, category)
+	rf := loadRepoFindings(s.DB, repo.ID, category)
 
 	// Count deep-dive findings still awaiting verification, scoped to the
 	// same category filter as the visible list. Drives the "Verify all new"
@@ -1637,7 +1673,10 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 
 	showAllDeps := r.URL.Query().Get("deps") == "all"
 	var rawDeps []db.Dependency
-	s.DB.Where("repository_id = ?", repo.ID).Order("ecosystem, name, manifest_kind desc").Find(&rawDeps)
+	var depsTotal int64
+	s.DB.Model(&db.Dependency{}).Where("repository_id = ?", repo.ID).Count(&depsTotal)
+	s.DB.Where("repository_id = ?", repo.ID).Order("ecosystem, name, manifest_kind desc").
+		Limit(tabRowCap).Find(&rawDeps)
 	visibleDeps, hiddenDeps := filterRepoDeps(rawDeps, showAllDeps)
 	deps := groupDeps(visibleDeps)
 
@@ -1650,10 +1689,16 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 	s.DB.Where("repository_id = ?", repo.ID).Order("dependent_repos desc, downloads desc").Find(&pkgs)
 
 	var dependents []db.Dependent
-	s.DB.Where("repository_id = ?", repo.ID).Order("dependent_repos desc").Find(&dependents)
+	var dependentsTotal int64
+	s.DB.Model(&db.Dependent{}).Where("repository_id = ?", repo.ID).Count(&dependentsTotal)
+	s.DB.Where("repository_id = ?", repo.ID).Order("dependent_repos desc").
+		Limit(tabRowCap).Find(&dependents)
 
 	var advisories []db.Advisory
-	s.DB.Where("repository_id = ?", repo.ID).Order("cvss_score desc").Find(&advisories)
+	var advisoriesTotal int64
+	s.DB.Model(&db.Advisory{}).Where("repository_id = ?", repo.ID).Count(&advisoriesTotal)
+	s.DB.Where("repository_id = ?", repo.ID).Order("cvss_score desc").
+		Limit(tabRowCap).Find(&advisories)
 
 	knownPURLs := s.lookupKnownPURLs(deps)
 	knownURLs := s.lookupKnownURLs(dependents)
@@ -1703,18 +1748,24 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 
 	data := map[string]any{
 		"Repo": repo, "Scans": scans, "Latest": latest,
-		"Findings":        findings,
-		"ScannerFindings": scannerFindings,
-		"ScanSkill":       scanSkill,
-		"ScanCommit":      scanCommit,
-		"NewFindingCount": int(newFindings),
-		"FailedScans":     failedScans,
-		"ActiveScans":     int(activeScans),
-		"TotalCost":       totalCost,
-		"DiskBytes":       worker.RepoDiskUsage(s.Worker.DataDir, repo),
-		"TMCommit":        tmCommit,
-		"DepsCommit":      depsCommit,
-		"Deps":            deps, "Pkgs": pkgs, "Dependents": dependents, "Advisories": advisories, "Maintainers": maintainers, "ThreatModel": threatModel,
+		"Findings":             rf.DeepDive,
+		"FindingsTotal":        rf.DeepDiveTotal,
+		"ScannerFindings":      rf.Scanners,
+		"ScannerFindingsTotal": rf.ScannersTotal,
+		"ScanSkill":            rf.ScanSkill,
+		"ScanCommit":           rf.ScanCommit,
+		"NewFindingCount":      int(newFindings),
+		"FailedScans":          failedScans,
+		"ActiveScans":          int(activeScans),
+		"TotalCost":            totalCost,
+		"DiskBytes":            worker.RepoDiskUsage(s.Worker.DataDir, repo),
+		"TMCommit":             tmCommit,
+		"DepsCommit":           depsCommit,
+		"Deps":                 deps, "DepsTotal": depsTotal,
+		"Pkgs":       pkgs,
+		"Dependents": dependents, "DependentsTotal": dependentsTotal,
+		"Advisories": advisories, "AdvisoriesTotal": advisoriesTotal,
+		"Maintainers": maintainers, "ThreatModel": threatModel,
 		"KnownURLs": knownURLs, "KnownPURLs": knownPURLs,
 		"ShowAllDeps": showAllDeps, "HiddenDeps": hiddenDeps,
 		"Skills":        activeSkills,
@@ -1723,6 +1774,7 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 		"Category":      category,
 		"Categories":    CWECategories(),
 		"Uncategorized": UncategorizedCWE,
+		"TabRowCap":     int64(tabRowCap),
 	}
 	s.render(w, r, "repo_show.html", data)
 }

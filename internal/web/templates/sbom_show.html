@@ -181,6 +181,7 @@
       {{end}}
       </tbody>
     </table>
+    {{template "row-cap" (dict "Shown" .Findings "Total" .FindingsTotal)}}
   </div>
   {{end}}
 
@@ -210,6 +211,7 @@
       {{end}}
       </tbody>
     </table>
+    {{template "row-cap" (dict "Shown" .Advisories "Total" .AdvisoriesTotal)}}
   </div>
   {{end}}
 </div>

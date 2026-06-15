@@ -29,6 +29,12 @@
 {{end}}
 {{end}}
 
+{{define "row-cap"}}{{- if gt .Total (len64 .Shown) -}}
+<p class="text-sm text-muted-foreground mt-3">
+  Showing {{len .Shown}} of {{.Total}}.{{if .Href}} <a class="hover:underline" href="{{.Href}}">View all</a>.{{end}}
+</p>
+{{- end -}}{{end}}
+
 {{define "loc-link"}}
   {{$u := locurl .RepoID .Commit .Location}}
   {{if $u}}

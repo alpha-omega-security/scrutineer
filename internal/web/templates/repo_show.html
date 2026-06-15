@@ -279,6 +279,7 @@
         </div>
       {{end}}
     </div>
+    {{- template "row-cap" (dict "Shown" .Findings "Total" .FindingsTotal "Href" (printf "/findings?owner=%s" .Repo.Owner))}}
   </div>
   {{end}}
 
@@ -312,6 +313,7 @@
         </div>
       {{end}}
     </div>
+    {{- template "row-cap" (dict "Shown" .ScannerFindings "Total" .ScannerFindingsTotal "Href" (printf "/findings?owner=%s&scanners=1" .Repo.Owner))}}
   </div>
   {{end}}
 
@@ -372,6 +374,11 @@
         {{end}}
         </tbody>
       </table>
+      {{if gt .DepsTotal .TabRowCap}}
+      <p class="text-sm text-muted-foreground mt-3">
+        Dependency list capped at the first {{.TabRowCap}} of {{.DepsTotal}} rows.
+      </p>
+      {{end}}
     {{else if .HiddenDeps}}
       <p class="text-muted-foreground text-sm p-4">No runtime dependencies in the default view.</p>
     {{else}}
@@ -408,6 +415,7 @@
       {{end}}
       </tbody>
     </table>
+    {{- template "row-cap" (dict "Shown" .Advisories "Total" .AdvisoriesTotal)}}
   </div>
   {{end}}
 
@@ -431,6 +439,7 @@
       {{end}}
       </tbody>
     </table>
+    {{- template "row-cap" (dict "Shown" .Dependents "Total" .DependentsTotal)}}
   </div>
   {{end}}
 

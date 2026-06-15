@@ -169,6 +169,31 @@ func TestSBOMDelete(t *testing.T) {
 	}
 }
 
+func TestSBOMList_paginates(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	for i := range perPage + 5 {
+		s.DB.Create(&db.SBOMUpload{Name: fmt.Sprintf("sbom%d", i), Format: "cyclonedx"})
+	}
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/sboms"))
+	body := w.Body.String()
+	if n := strings.Count(body, `<tr id="sbom-`); n != perPage {
+		t.Errorf("page 1 rendered %d rows, want %d", n, perPage)
+	}
+	if !strings.Contains(body, "of 2") {
+		t.Errorf("page 1 missing pagination 'of 2'")
+	}
+
+	w = httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/sboms?page=2"))
+	body = w.Body.String()
+	if n := strings.Count(body, `<tr id="sbom-`); n != 5 {
+		t.Errorf("page 2 rendered %d rows, want 5", n)
+	}
+}
+
 func TestSBOMResolve_linksRepoAndEnqueuesTriage(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
