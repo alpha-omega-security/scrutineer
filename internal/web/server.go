@@ -771,15 +771,7 @@ func (s *Server) findings(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-	var missedTotal int64
-	s.findingsIndexQuery(r, scanners, false).
-		Where("missed_count > 0").
-		Count(&missedTotal)
-
-	var scannerTotal int64
-	s.findingsIndexQuery(r, true, true).
-		Where("scan_id NOT IN (?)", deepDiveScanIDs(s.DB)).
-		Count(&scannerTotal)
+	missedTotal, scannerTotal := s.findingToggleCounts(r, scanners)
 
 	s.render(w, r, "findings.html", map[string]any{
 		"Findings": rows, "Page": page, "Severity": sev, "Sort": sort,
@@ -816,6 +808,78 @@ func (s *Server) findingsIndexQuery(r *http.Request, includeScanners, includeMis
 			like, like, like, like, like, like)
 	}
 	return q
+}
+
+func (s *Server) findingToggleCounts(r *http.Request, scanners bool) (int64, int64) {
+	missedWhere, missedArgs := findingIndexWhereSQL(r, scanners, false)
+	missedWhere = append(missedWhere, "missed_count > 0")
+
+	scannerWhere, scannerArgs := findingIndexWhereSQL(r, true, true)
+	scannerWhere = append(scannerWhere, "scan_id NOT IN (SELECT id FROM scans WHERE skill_name = ? OR skill_name = '' OR skill_name IS NULL)")
+	scannerArgs = append(scannerArgs, deepDiveSkillName)
+
+	var counts struct {
+		MissedTotal  int64
+		ScannerTotal int64
+	}
+	sql := fmt.Sprintf(
+		"SELECT (SELECT COUNT(*) FROM findings WHERE %s) AS missed_total, (SELECT COUNT(*) FROM findings WHERE %s) AS scanner_total",
+		strings.Join(missedWhere, " AND "),
+		strings.Join(scannerWhere, " AND "),
+	)
+	args := make([]any, 0, len(missedArgs)+len(scannerArgs))
+	args = append(args, missedArgs...)
+	args = append(args, scannerArgs...)
+	s.DB.Raw(sql, args...).Scan(&counts)
+	return counts.MissedTotal, counts.ScannerTotal
+}
+
+func findingIndexWhereSQL(r *http.Request, includeScanners, includeMissed bool) ([]string, []any) {
+	where := []string{"1 = 1"}
+	var args []any
+	if !includeScanners {
+		where = append(where, "scan_id IN (SELECT id FROM scans WHERE skill_name = ? OR skill_name = '' OR skill_name IS NULL)")
+		args = append(args, deepDiveSkillName)
+	}
+	if sev := r.URL.Query().Get("severity"); sev != "" {
+		where = append(where, "severity = ?")
+		args = append(args, sev)
+	}
+	switch status := r.URL.Query().Get(statusKey); status {
+	case "":
+		where = append(where, "status NOT IN ("+db.ClosedFindingLifecycleSQLValues()+")")
+	case allStatusValue:
+	default:
+		where = append(where, "status = ?")
+		args = append(args, status)
+	}
+	if category := r.URL.Query().Get("category"); category != "" {
+		switch {
+		case category == UncategorizedCWE && len(categorizedIDs) == 0:
+			where = append(where, "cwe = ''")
+		case category == UncategorizedCWE:
+			where = append(where, "(cwe = '' OR cwe NOT IN ?)")
+			args = append(args, categorizedIDs)
+		case len(CWEsInCategory(category)) == 0:
+			where = append(where, "1 = 0")
+		default:
+			where = append(where, "cwe IN ?")
+			args = append(args, CWEsInCategory(category))
+		}
+	}
+	if owner := r.URL.Query().Get("owner"); owner != "" {
+		where = append(where, "repository_id IN (SELECT id FROM repositories WHERE owner = ?)")
+		args = append(args, owner)
+	}
+	if includeMissed && r.URL.Query().Get("missed") == "1" {
+		where = append(where, "missed_count > 0")
+	}
+	if search := strings.TrimSpace(r.URL.Query().Get("q")); search != "" {
+		like := "%" + search + "%"
+		where = append(where, "(title LIKE ? OR location LIKE ? OR cwe LIKE ? OR cve_id LIKE ? OR ghsa_id LIKE ? OR affected LIKE ?)")
+		args = append(args, like, like, like, like, like, like)
+	}
+	return where, args
 }
 
 func applyFindingStatusFilter(q *gorm.DB, status string) *gorm.DB {
