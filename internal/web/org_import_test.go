@@ -53,8 +53,8 @@ func TestOrgImport_skipsForksAndArchivedByDefault(t *testing.T) {
 		t.Errorf("Location = %q, want /orgs/acme", loc)
 	}
 	f := flashFrom(t, w)
-	if !strings.Contains(f.Title, "1 added") || !strings.Contains(f.Title, "2 forks/archived skipped") {
-		t.Errorf("flash title = %q, want '1 added' and '2 forks/archived skipped'", f.Title)
+	if !strings.Contains(f.Title, "1 added") || !strings.Contains(f.Title, "2 forks/archived/mirrors skipped") {
+		t.Errorf("flash title = %q, want '1 added' and '2 forks/archived/mirrors skipped'", f.Title)
 	}
 
 	var repos []db.Repository
@@ -168,6 +168,40 @@ func TestOrgImport_includeForksAndArchived(t *testing.T) {
 	s.DB.Model(&db.Repository{}).Count(&n)
 	if n != 3 {
 		t.Fatalf("want 3 repos imported, got %d", n)
+	}
+}
+
+// TestOrgImport_skipsMirrors confirms mirrors are excluded unconditionally —
+// there is no opt-in toggle, so even include_forks/include_archived leave them
+// out.
+func TestOrgImport_skipsMirrors(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	s.DB.Create(&db.Skill{Name: "triage", Description: "o", Body: "b", Active: true, Source: "ui", Version: 1})
+	s.fetchOrgRepos = func(context.Context, string) ([]OrgRepo, error) {
+		return []OrgRepo{
+			{FullName: "acme/app", CloneURL: "https://github.com/acme/app.git"},
+			{FullName: "acme/mirror", CloneURL: "https://github.com/acme/mirror.git", MirrorURL: "https://upstream.example/repo.git"},
+		}, nil
+	}
+
+	w := postOrgImport(t, s, url.Values{
+		"org":              {"acme"},
+		"include_forks":    {"1"},
+		"include_archived": {"1"},
+		"confirm":          {"1"},
+	})
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	f := flashFrom(t, w)
+	if !strings.Contains(f.Title, "1 added") || !strings.Contains(f.Title, "1 forks/archived/mirrors skipped") {
+		t.Errorf("flash title = %q, want '1 added' and '1 forks/archived/mirrors skipped'", f.Title)
+	}
+	var repos []db.Repository
+	s.DB.Find(&repos)
+	if len(repos) != 1 || repos[0].URL != "https://github.com/acme/app" {
+		t.Fatalf("want only acme/app imported (mirror skipped), got %+v", repos)
 	}
 }
 
@@ -340,6 +374,12 @@ func TestFetchGitHubOrgRepos_userFallback(t *testing.T) {
 		case strings.HasPrefix(r.URL.Path, "/orgs/"):
 			http.Error(w, "not found", http.StatusNotFound)
 		case r.URL.Path == "/users/octocat/repos":
+			// We must not send type=all on the user path: GitHub's default of
+			// type=owner is what we want, and type=all would pull in repos the
+			// user only collaborates on.
+			if got := r.URL.Query().Get("type"); got != "" {
+				t.Errorf("/users request carried type=%q, want no type param", got)
+			}
 			_ = json.NewEncoder(w).Encode(makeRepos("octocat", 2))
 		default:
 			http.Error(w, "not found", http.StatusNotFound)
@@ -378,7 +418,7 @@ func TestOrgImportToastTitle(t *testing.T) {
 		want                                string
 	}{
 		{3, 0, 0, 0, "acme: 3 added"},
-		{1, 2, 5, 0, "acme: 1 added, 2 already present, 5 forks/archived skipped"},
+		{1, 2, 5, 0, "acme: 1 added, 2 already present, 5 forks/archived/mirrors skipped"},
 		{0, 0, 0, 2, "acme: 0 added, 2 invalid"},
 	}
 	for _, c := range cases {

@@ -258,7 +258,7 @@
     <i data-lucide="building-2"></i>
     <section>
       <strong>This will add {{.Count}} {{if eq .Count 1}}repo{{else}}repos{{end}} from {{.Org}}.</strong>
-      {{if gt .Filtered 0}} {{.Filtered}} forks/archived excluded.{{end}}
+      {{if gt .Filtered 0}} {{.Filtered}} forks/archived/mirrors excluded.{{end}}
       Already-imported repos are skipped automatically.
     </section>
   </div>
@@ -269,7 +269,6 @@
     <input type="hidden" name="confirm" value="1">
     {{if .IncludeForks}}<input type="hidden" name="include_forks" value="1">{{end}}
     {{if .IncludeArchived}}<input type="hidden" name="include_archived" value="1">{{end}}
-    {{if .Model}}<input type="hidden" name="model" value="{{.Model}}">{{end}}
     <footer class="flex justify-end gap-2">
       <button type="button" class="btn-outline" data-close>Cancel</button>
       <button type="submit" class="btn">

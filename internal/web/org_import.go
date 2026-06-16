@@ -15,10 +15,11 @@ import (
 // OrgRepo is the slim view of a forge repository the org-import path needs:
 // enough to build a clone URL and apply the fork/archived filters.
 type OrgRepo struct {
-	FullName string `json:"full_name"`
-	CloneURL string `json:"clone_url"`
-	Fork     bool   `json:"fork"`
-	Archived bool   `json:"archived"`
+	FullName  string `json:"full_name"`
+	CloneURL  string `json:"clone_url"`
+	Fork      bool   `json:"fork"`
+	Archived  bool   `json:"archived"`
+	MirrorURL string `json:"mirror_url"`
 }
 
 // githubAPI is the API base. It is a var, not a const, so tests can point the
@@ -78,10 +79,12 @@ func fetchGitHubRepos(ctx context.Context, kind, owner string) ([]OrgRepo, error
 	token := strings.TrimSpace(os.Getenv("GITHUB_TOKEN"))
 	var all []OrgRepo
 	for page := 1; page <= orgMaxPages; page++ {
+		// No type filter: GitHub defaults to "all" for /orgs (every repo the
+		// caller can see) and "owner" for /users (repos the user owns, not ones
+		// they merely collaborate on), which is what we want on each path.
 		q := url.Values{
 			"per_page": {fmt.Sprint(orgPerPage)},
 			"page":     {fmt.Sprint(page)},
-			"type":     {"all"},
 		}
 		endpoint := fmt.Sprintf("%s/%s/%s/repos?%s", githubAPI, kind, url.PathEscape(owner), q.Encode())
 
@@ -141,7 +144,6 @@ type OrgImportPreview struct {
 	Filtered        int // repos held back by the filters
 	IncludeForks    bool
 	IncludeArchived bool
-	Model           string
 }
 
 // repoOrgImport fetches every repository in a GitHub org and queues each one
@@ -166,7 +168,6 @@ func (s *Server) repoOrgImport(w http.ResponseWriter, r *http.Request) {
 	}
 	includeForks := r.FormValue("include_forks") != ""
 	includeArchived := r.FormValue("include_archived") != ""
-	model := r.FormValue("model")
 
 	repos, err := s.fetchOrgRepos(r.Context(), org)
 	if err != nil {
@@ -187,6 +188,12 @@ func (s *Server) repoOrgImport(w http.ResponseWriter, r *http.Request) {
 			filtered++
 			continue
 		}
+		// Mirrors track an upstream and are never worth scanning on their own;
+		// skip them unconditionally (no opt-in toggle).
+		if repo.MirrorURL != "" {
+			filtered++
+			continue
+		}
 		toImport = append(toImport, repo)
 	}
 
@@ -197,7 +204,6 @@ func (s *Server) repoOrgImport(w http.ResponseWriter, r *http.Request) {
 			Filtered:        filtered,
 			IncludeForks:    includeForks,
 			IncludeArchived: includeArchived,
-			Model:           model,
 		})
 		return
 	}
@@ -217,7 +223,7 @@ func (s *Server) repoOrgImport(w http.ResponseWriter, r *http.Request) {
 		if input.Owner != "" {
 			landingOwner = input.Owner
 		}
-		_, isNew, err := s.createOrTriageRepo(r.Context(), input, model)
+		_, isNew, err := s.createOrTriageRepo(r.Context(), input, r.FormValue("model"))
 		if err != nil {
 			invalid = append(invalid, repo.FullName)
 			continue
@@ -265,7 +271,7 @@ func orgImportToastTitle(org string, created, skipped, filtered, invalid int) st
 		parts = append(parts, fmt.Sprintf("%d already present", skipped))
 	}
 	if filtered > 0 {
-		parts = append(parts, fmt.Sprintf("%d forks/archived skipped", filtered))
+		parts = append(parts, fmt.Sprintf("%d forks/archived/mirrors skipped", filtered))
 	}
 	if invalid > 0 {
 		parts = append(parts, fmt.Sprintf("%d invalid", invalid))
