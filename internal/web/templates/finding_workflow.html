@@ -119,30 +119,41 @@
     </form>
   </section>
 
-  <details class="mt-4 border-t pt-3 px-6" {{if eq .ExploitedInWild "yes"}}open{{end}}>
-    <summary class="text-xs text-muted-foreground cursor-pointer hover:underline flex items-center gap-2">
-      <i data-lucide="bug"></i>
-      Exploitation status
-      {{if eq .ExploitedInWild "yes"}}<span class="badge-destructive ml-auto">yes</span>{{else if eq .ExploitedInWild "no"}}<span class="badge-outline ml-auto">no</span>{{else}}<span class="text-muted-foreground ml-auto">unknown</span>{{end}}
-    </summary>
-    <form method="post" action="/findings/{{$id}}/exploited-in-wild" class="grid gap-2 mt-3 text-sm">
-      <div class="flex items-center gap-2">
-        <label class="text-xs text-muted-foreground w-24">Exploited?</label>
-        <select class="input" name="exploited_in_wild">
+  <footer class="border-t mt-4 flex items-center gap-2 text-sm text-muted-foreground">
+    <i data-lucide="bug" class="size-4"></i>
+    <span>Exploitation status</span>
+    {{if eq .ExploitedInWild "yes"}}<span class="badge-destructive">yes</span>{{else if eq .ExploitedInWild "no"}}<span class="badge-outline">no</span>{{else}}<span>unknown</span>{{end}}
+    <button type="button" data-dialog="exploitation-{{$id}}" class="btn-sm btn-outline ml-auto">
+      <i data-lucide="pencil"></i> Edit
+    </button>
+  </footer>
+</div>
+
+<dialog id="exploitation-{{$id}}" class="dialog">
+  <article>
+    <header>
+      <h2>Exploitation status</h2>
+      <p class="text-sm text-muted-foreground">Has this finding been exploited in the wild?</p>
+    </header>
+    <form method="post" action="/findings/{{$id}}/exploited-in-wild" class="form grid gap-4">
+      <div class="grid gap-2">
+        <label class="label" for="exploited-{{$id}}">Exploited?</label>
+        <select class="input" id="exploited-{{$id}}" name="exploited_in_wild">
           <option value=""{{if eq .ExploitedInWild ""}} selected{{end}}>unknown</option>
           <option value="yes"{{if eq .ExploitedInWild "yes"}} selected{{end}}>yes</option>
           <option value="no"{{if eq .ExploitedInWild "no"}} selected{{end}}>no</option>
         </select>
       </div>
-      <div class="grid gap-1">
-        <label class="text-xs text-muted-foreground">Evidence / source</label>
-        <textarea class="input text-xs" name="exploited_in_wild_evidence" rows="2"
+      <div class="grid gap-2">
+        <label class="label" for="evidence-{{$id}}">Evidence / source</label>
+        <textarea class="input" id="evidence-{{$id}}" name="exploited_in_wild_evidence" rows="3"
                   placeholder="Where this came from — researcher report, CERT advisory, in-the-wild traffic, etc.">{{.ExploitedInWildEvidence}}</textarea>
       </div>
-      <div class="flex justify-end">
-        <button type="submit" class="btn-sm">Save exploitation status</button>
-      </div>
+      <footer class="flex justify-end gap-2">
+        <button type="submit" class="btn-outline" formmethod="dialog" formnovalidate>Cancel</button>
+        <button type="submit" class="btn">Save</button>
+      </footer>
     </form>
-  </details>
-</div>
+  </article>
+</dialog>
 {{end}}
