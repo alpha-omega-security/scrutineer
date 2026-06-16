@@ -119,16 +119,16 @@
     </form>
   </section>
 
-  <section class="border-t pt-6 grid gap-1 text-sm text-muted-foreground">
+  <section class="border-t pt-3 grid gap-1 text-xs text-muted-foreground">
     <div class="flex items-center gap-2">
-      <i data-lucide="bug" class="size-4"></i>
+      <i data-lucide="bug" class="size-3.5"></i>
       <span>Exploitation status</span>
       {{if eq .ExploitedInWild "yes"}}<span class="badge-destructive">yes</span>{{else if eq .ExploitedInWild "no"}}<span class="badge-outline">no</span>{{else}}<span>unknown</span>{{end}}
       <button type="button" data-dialog="exploitation-{{$id}}" class="btn-sm btn-outline ml-auto">
         <i data-lucide="pencil"></i> Edit
       </button>
     </div>
-    {{if .ExploitedInWildEvidence}}<p class="text-xs pl-6">{{.ExploitedInWildEvidence}}</p>{{end}}
+    {{if .ExploitedInWildEvidence}}<p class="pl-6">{{.ExploitedInWildEvidence}}</p>{{end}}
   </section>
 </div>
 
