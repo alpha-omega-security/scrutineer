@@ -291,6 +291,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /findings/{id}/verify", s.findingVerify)
 	mux.HandleFunc("POST /repositories/{id}/verify-all", s.repoVerifyAll)
 	mux.HandleFunc("POST /findings/{id}/disclose", s.findingDisclose)
+	mux.HandleFunc("POST /findings/{id}/public-issue", s.findingPublicIssue)
 	mux.HandleFunc("POST /findings/{id}/mitigate", s.findingMitigate)
 	mux.HandleFunc("POST /findings/{id}/patch", s.findingPatchRun)
 	mux.HandleFunc("POST /findings/{id}/exposure", s.findingExposureRun)
@@ -1112,6 +1113,9 @@ const verifySkillName = "verify"
 // discloseSkillName is the skill the Draft disclosure button runs.
 const discloseSkillName = "disclose"
 
+// publicIssueSkillName is the skill the File public issue button runs.
+const publicIssueSkillName = "public-issue"
+
 // patchSkillName is the skill the Propose patch button runs.
 const patchSkillName = "patch"
 
@@ -1124,6 +1128,10 @@ func (s *Server) findingVerify(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) findingDisclose(w http.ResponseWriter, r *http.Request) {
 	s.runFindingSkill(w, r, discloseSkillName)
+}
+
+func (s *Server) findingPublicIssue(w http.ResponseWriter, r *http.Request) {
+	s.runFindingSkill(w, r, publicIssueSkillName)
 }
 
 func (s *Server) findingPatchRun(w http.ResponseWriter, r *http.Request) {

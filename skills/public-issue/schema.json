@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "public-issue report",
+  "description": "Outcome of filing a low-severity finding as an ordinary public GitHub issue.",
+  "type": "object",
+  "additionalProperties": false,
+  "oneOf": [
+    {
+      "required": ["upstream", "title", "url"],
+      "properties": { "error": { "type": "null" } }
+    },
+    {
+      "required": ["error"],
+      "properties": { "error": { "type": "string" } }
+    }
+  ],
+  "properties": {
+    "upstream": {
+      "type": "string",
+      "pattern": "^[^/]+/[^/]+$"
+    },
+    "title": {
+      "type": "string"
+    },
+    "url": {
+      "type": "string",
+      "format": "uri"
+    },
+    "truncated": {
+      "type": "boolean"
+    },
+    "error": {
+      "type": ["string", "null"]
+    }
+  }
+}

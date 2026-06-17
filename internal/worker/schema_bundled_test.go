@@ -63,6 +63,15 @@ func TestBundledSchemas_compileAndAcceptSamples(t *testing.T) {
 			`{"dependencies":[],"error":"git-pkgs not found on PATH"}`,
 		},
 		{
+			"../../skills/public-issue/schema.json",
+			`{"upstream":"owner/repo","title":"Harden parser input handling",
+			  "url":"https://github.com/owner/repo/issues/123","truncated":false,"error":null}`,
+		},
+		{
+			"../../skills/public-issue/schema.json",
+			`{"error":"finding is High severity; use private disclosure"}`,
+		},
+		{
 			"../../skills/threat-model/schema.json",
 			`{"spec_version":1,"repository":"https://github.com/o/r","commit":"abc1234",
 			  "date":"2026-05-08","scope_subpath":null,"description":"x",
@@ -118,6 +127,8 @@ func TestBundledSchemas_rejectBadShapes(t *testing.T) {
 		{"../../skills/sbom/schema.json", `{"specVersion":"1.5"}`, "bomFormat"},
 		{"../../skills/sbom/schema.json", `{}`, "oneOf"},
 		{"../../skills/dependencies/schema.json", `{"dependencies":null}`, "/dependencies"},
+		{"../../skills/public-issue/schema.json",
+			`{"upstream":"owner/repo","url":"https://github.com/owner/repo/issues/123"}`, "oneOf"},
 		{"../../skills/threat-model/schema.json", `{"spec_version":2}`, "/spec_version"},
 		{"../../skills/threat-model/schema.json",
 			`{"spec_version":1,"repository":"https://x","commit":"abc1234","date":"2026-01-01",

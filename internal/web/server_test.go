@@ -1364,6 +1364,58 @@ func TestFindingShow_hidesExposureForZizmorFindings(t *testing.T) {
 	}
 }
 
+func TestFindingShow_rendersPublicIssueActionForReadyFinding(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://github.com/foo/bar", Name: "bar"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: "x"}
+	s.DB.Create(&scan)
+	f := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "low severity hardening", Severity: "Low", Status: db.FindingReady}
+	s.DB.Create(&f)
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", fmt.Sprintf("/findings/%d", f.ID)))
+	body := w.Body.String()
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, body)
+	}
+	if !strings.Contains(body, fmt.Sprintf("/findings/%d/public-issue", f.ID)) {
+		t.Error("ready finding page missing public issue action")
+	}
+	if !strings.Contains(body, "File public issue") {
+		t.Error("ready finding page missing public issue label")
+	}
+}
+
+func TestFindingShow_hidesPublicIssueActionForHighSeverityReadyFinding(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://github.com/foo/bar", Name: "bar"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: "x"}
+	s.DB.Create(&scan)
+	for _, severity := range []string{"High", "Critical"} {
+		f := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: severity + " severity finding", Severity: severity, Status: db.FindingReady}
+		s.DB.Create(&f)
+
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, localReq("GET", fmt.Sprintf("/findings/%d", f.ID)))
+		body := w.Body.String()
+		if w.Code != http.StatusOK {
+			t.Fatalf("status %d: %s", w.Code, body)
+		}
+		if strings.Contains(body, fmt.Sprintf("/findings/%d/public-issue", f.ID)) {
+			t.Errorf("%s ready finding page should not render public issue action", severity)
+		}
+		if strings.Contains(body, "File public issue") {
+			t.Errorf("%s ready finding page should not render public issue label", severity)
+		}
+	}
+}
+
 func TestOrgReport_rendersFindingsAcrossRepos(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
@@ -1787,6 +1839,41 @@ func TestFindingDiscloseEnqueuesDiscloseSkill(t *testing.T) {
 
 	var row db.Scan
 	s.DB.Where("skill_id = ?", disclose.ID).First(&row)
+	if row.FindingID == nil || *row.FindingID != finding.ID {
+		t.Errorf("scan FindingID = %v, want %d", row.FindingID, finding.ID)
+	}
+	if row.APIToken == "" {
+		t.Error("scan missing api token")
+	}
+}
+
+func TestFindingPublicIssueEnqueuesPublicIssueSkill(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://github.com/foo/bar", Name: "bar"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: "security-deep-dive"}
+	s.DB.Create(&scan)
+	finding := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, FindingID: "F1", Title: "x", Severity: "Low", Status: db.FindingReady}
+	s.DB.Create(&finding)
+	publicIssue := db.Skill{Name: publicIssueSkillName, Description: "p", Body: "b", OutputFile: "report.json", OutputKind: "freeform", Version: 1, Active: true, Source: "ui"}
+	s.DB.Create(&publicIssue)
+
+	req := httptest.NewRequest("POST", fmt.Sprintf("/findings/%d/public-issue", finding.ID), nil)
+	req.Host = testHost
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	if !strings.HasPrefix(w.Header().Get("Location"), "/scans/") {
+		t.Errorf("expected redirect to scan, got %q", w.Header().Get("Location"))
+	}
+
+	var row db.Scan
+	s.DB.Where("skill_id = ?", publicIssue.ID).First(&row)
 	if row.FindingID == nil || *row.FindingID != finding.ID {
 		t.Errorf("scan FindingID = %v, want %d", row.FindingID, finding.ID)
 	}
@@ -2341,6 +2428,27 @@ func TestFindingDisclose404WhenSkillMissing(t *testing.T) {
 	s.Handler().ServeHTTP(w, req)
 	if w.Code != http.StatusPreconditionFailed {
 		t.Fatalf("expected 412 when disclose skill not installed, got %d: %s", w.Code, w.Body)
+	}
+}
+
+func TestFindingPublicIssue404WhenSkillMissing(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://github.com/foo/bar", Name: "bar"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: "x"}
+	s.DB.Create(&scan)
+	finding := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, FindingID: "F1", Title: "x", Severity: "Low", Status: db.FindingReady}
+	s.DB.Create(&finding)
+
+	req := httptest.NewRequest("POST", fmt.Sprintf("/findings/%d/public-issue", finding.ID), nil)
+	req.Host = testHost
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusPreconditionFailed {
+		t.Fatalf("expected 412 when public issue skill not installed, got %d: %s", w.Code, w.Body)
 	}
 }
 
