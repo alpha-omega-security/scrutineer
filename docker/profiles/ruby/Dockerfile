@@ -2,7 +2,7 @@
 # interpreter and Bundler so scans of Bundler/RubyGems projects can audit
 # or reproduce in-place.
 #
-# The runner's Debian release (bookworm-slim, inherited via FROM) only
+# The runner's Debian release (trixie-slim, inherited via FROM) only
 # supplies the build toolchain here -- Ruby itself is compiled from source
 # by ruby-build at an explicit pinned version, so the interpreter is
 # current regardless of what the distro packages.
