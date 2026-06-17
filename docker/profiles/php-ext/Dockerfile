@@ -1,6 +1,28 @@
 # PHP-extension profile.
 #
 # Ships PHP, built from source with --enable-debug + ASan + UBSan.
+#
+# At runtime the worker builds this on demand (see internal/worker/profile.go:
+# EnsureImage), tagging the result scrutineer-profile-php-ext:<dockerfile-sha>
+# and passing the configured runner image via --build-arg RUNNER_IMAGE. The
+# build installs its toolchain with apt, so RUNNER_IMAGE must resolve to the
+# Debian runner built from ./Dockerfile.runner, not the legacy Alpine image.
+#
+# To build it manually the way the project does, from the repo root:
+#
+#   # 1. Build the base runner image locally (Debian/glibc, ships brief etc.):
+#   docker build -t scrutineer-runner:local -f Dockerfile.runner .
+#
+#   # 2. Build this PHP-extension profile on top of that local runner
+#   #    (compiles PHP from source with ASan/UBSan; takes several minutes):
+#   docker build -t scrutineer-profile-php-ext \
+#       -f docker/profiles/php-ext/Dockerfile \
+#       --build-arg RUNNER_IMAGE=scrutineer-runner:local \
+#       docker/profiles/php-ext
+#
+#   # 3. Smoke-test it (debug build, sanitizers wired in):
+#   docker run --rm --entrypoint sh scrutineer-profile-php-ext \
+#       -c 'php -v && composer --version'
 
 ARG RUNNER_IMAGE=ghcr.io/alpha-omega-security/scrutineer-runner:latest
 ARG PHP_GIT_URL=https://github.com/php/php-src.git
