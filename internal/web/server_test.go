@@ -1629,7 +1629,7 @@ func TestMaintainersSortOptions(t *testing.T) {
 	logins := func(body string) []string {
 		idx := map[string]int{}
 		for _, want := range []string{alpha, charlie, zeta} {
-			if i := strings.Index(body, want); i >= 0 {
+			if i := strings.Index(body, ">"+want+"</td>"); i >= 0 {
 				idx[want] = i
 			}
 		}
@@ -2976,6 +2976,55 @@ func TestRepoList_showsBranchTags(t *testing.T) {
 	// Exactly one tag: the default-only repo (empty Ref) must not get one.
 	if n := strings.Count(body, `data-lucide="git-branch"`); n != 1 {
 		t.Errorf("want exactly 1 branch tag, got %d", n)
+	}
+}
+
+func TestRepoList_showsLastScanDate(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://github.com/example/repo", Name: "repo"}
+	s.DB.Create(&repo)
+	created := time.Date(2026, time.June, 16, 19, 15, 8, 0, time.UTC)
+	s.DB.Create(&db.Scan{
+		RepositoryID: repo.ID,
+		Kind:         "skill",
+		SkillName:    "triage",
+		Status:       db.ScanDone,
+		CreatedAt:    created,
+	})
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	row := requireRepoListRow(t, w.Body.String(), repo.ID)
+	if !strings.Contains(row, "2026-06-16 19:15") {
+		t.Errorf("repo row missing date-bearing last scan timestamp: %s", row)
+	}
+	if !strings.Contains(row, `title="2026-06-16 19:15:08 UTC"`) {
+		t.Errorf("repo row missing full last scan tooltip: %s", row)
+	}
+}
+
+func TestLayout_linksToProjectResources(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	body := w.Body.String()
+	for _, want := range []string{
+		`href="https://github.com/alpha-omega-security/scrutineer"`,
+		`href="https://github.com/alpha-omega-security/scrutineer#readme"`,
+		`href="https://github.com/alpha-omega-security/scrutineer/issues/new"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("layout missing project link %s", want)
+		}
 	}
 }
 
