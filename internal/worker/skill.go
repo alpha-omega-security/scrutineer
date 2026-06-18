@@ -919,37 +919,24 @@ func stageContext(workRoot, apiBase, forkOrg, metadataDir string, scan *db.Scan,
 	return os.WriteFile(filepath.Join(workRoot, "context.json"), b, filePerm)
 }
 
-// copyAux walks src looking for any files other than SKILL.md and schema.json
-// (which are staged from the DB row) and copies them into dst at the same
-// relative path. This preserves scripts/ and references/ for skills that
-// bundle them.
+// copyAux copies every top-level entry in src other than SKILL.md and
+// schema.json (which are staged from the DB row) into dst, recursively.
+// Delegates to copyTree so symlink and permission handling lives in one
+// place; this preserves scripts/ and references/ for skills that bundle
+// them.
 func copyAux(src, dst string) error {
-	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
+	entries, err := os.ReadDir(src)
+	if err != nil {
+		return err
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if name == "SKILL.md" || name == "schema.json" {
+			continue
+		}
+		if err := copyTree(filepath.Join(src, name), filepath.Join(dst, name)); err != nil {
 			return err
 		}
-		rel, err := filepath.Rel(src, path)
-		if err != nil {
-			return err
-		}
-		if rel == "." || rel == "SKILL.md" || rel == "schema.json" {
-			return nil
-		}
-		target := filepath.Join(dst, rel)
-		if info.IsDir() {
-			return os.MkdirAll(target, dirPerm)
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			link, err := os.Readlink(path)
-			if err != nil {
-				return err
-			}
-			return os.Symlink(link, target)
-		}
-		b, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		return os.WriteFile(target, b, info.Mode())
-	})
+	}
+	return nil
 }

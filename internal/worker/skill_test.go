@@ -420,6 +420,12 @@ func TestStageSkill_remirrorClearsStaleScripts(t *testing.T) {
 	if _, err := os.Lstat(filepath.Join(work, "scripts", "dangling")); err != nil {
 		t.Errorf("dangling symlink should be recreated, not dropped or fatal: %v", err)
 	}
+	// copyAux stages the same scripts/ into .claude/skills/{name}/ before
+	// mirrorScripts runs; it must also recreate the dangling link rather
+	// than choke on it.
+	if _, err := os.Lstat(filepath.Join(work, ".claude", "skills", "s", "scripts", "dangling")); err != nil {
+		t.Errorf("copyAux dropped dangling symlink under .claude/skills: %v", err)
+	}
 }
 
 func TestStageSkill_noScriptsDirIsNoop(t *testing.T) {
