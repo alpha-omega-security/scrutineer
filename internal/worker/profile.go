@@ -75,6 +75,14 @@ var builtinProfiles = []Profile{
 	},
 	{Name: "php", Ecosystem: "Composer"},
 	{Name: "ruby", Ecosystem: "Bundler"},
+	{
+		// Before python: a repo whose setup.py declares a C Extension is
+		// shipping native code, so route it to the ASan/UBSan interpreter.
+		Name: "python-ext",
+		Markers: []ProfileMarker{
+			{Path: "setup.py", Contains: "Extension("},
+		},
+	},
 	{Name: "python", Ecosystems: []string{"pip", "Pipenv", "Poetry", "uv", "PDM"}},
 }
 
