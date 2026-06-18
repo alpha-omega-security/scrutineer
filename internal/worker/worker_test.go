@@ -30,10 +30,14 @@ func stubPrepareRepoSrc(_ context.Context, _, _, workRoot string, _ func(Event))
 type fakeRunner struct {
 	skillRes SkillResult
 	skillErr error
+	session  string
 }
 
 func (f fakeRunner) RunSkill(_ context.Context, sj SkillJob, emit func(Event)) (SkillResult, error) {
 	emit(Event{Kind: "text", Text: "running skill " + sj.Name})
+	if f.session != "" {
+		emit(Event{Kind: KindSession, SessionID: f.session})
+	}
 	return f.skillRes, f.skillErr
 }
 
@@ -128,7 +132,7 @@ func TestWorker_maxTurnsReachedCompletesNotFails(t *testing.T) {
 		DB:             gdb,
 		Log:            slog.New(slog.NewTextHandler(io.Discard, nil)),
 		DataDir:        t.TempDir(),
-		Runner:         fakeRunner{skillRes: SkillResult{Report: `{"partial":true}`}, skillErr: &MaxTurnsReachedError{}},
+		Runner:         fakeRunner{skillRes: SkillResult{Report: `{"partial":true}`}, skillErr: &MaxTurnsReachedError{}, session: "sess-1"},
 		PrepareRepoSrc: stubPrepareRepoSrc,
 	}
 	body, _ := json.Marshal(queue.Payload{ScanID: scan.ID})
@@ -143,6 +147,12 @@ func TestWorker_maxTurnsReachedCompletesNotFails(t *testing.T) {
 	}
 	if got.Report != `{"partial":true}` {
 		t.Errorf("report = %q, want partial report preserved", got.Report)
+	}
+	if !got.MaxTurnsHit {
+		t.Error("MaxTurnsHit = false, want true")
+	}
+	if got.SessionID != "sess-1" {
+		t.Errorf("session id = %q, want preserved max-turns session", got.SessionID)
 	}
 }
 

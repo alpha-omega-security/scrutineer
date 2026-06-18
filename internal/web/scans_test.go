@@ -29,6 +29,16 @@ func TestResumeOpts(t *testing.T) {
 			wantSID: "s1", wantResume: uintPtr(7),
 		},
 		{
+			name:    "max-turns done scan resumes from its own id",
+			scan:    db.Scan{ID: 7, Status: db.ScanDone, MaxTurnsHit: true, SessionID: "s1"},
+			wantSID: "s1", wantResume: uintPtr(7),
+		},
+		{
+			name:    "max-turns retry keeps the lineage root",
+			scan:    db.Scan{ID: 9, Status: db.ScanDone, MaxTurnsHit: true, SessionID: "s1", ResumedFromScanID: uintPtr(7)},
+			wantSID: "s1", wantResume: uintPtr(7),
+		},
+		{
 			name: "done scan retries fresh",
 			scan: db.Scan{ID: 7, Status: db.ScanDone, SessionID: ""},
 		},

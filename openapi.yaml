@@ -945,13 +945,14 @@ components:
         id:            { type: integer, format: int64 }
         repository_id: { type: integer, format: int64 }
         kind:          { type: string }
-        status:        { type: string, enum: [queued, running, done, failed] }
+        status:        { type: string, enum: [queued, running, paused, done, failed, cancelled] }
         model:         { type: string }
         commit:        { type: string }
         skill_name:    { type: string }
         skill_version: { type: integer }
         started_at:    { type: string, format: date-time, nullable: true }
         finished_at:   { type: string, format: date-time, nullable: true }
+        max_turns_hit: { type: boolean, description: True when the scan completed with partial output after hitting the Claude max-turns cap; retry resumes the saved session when available. }
         error:         { type: string }
 
     ScanDetail:

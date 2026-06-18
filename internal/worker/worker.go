@@ -180,14 +180,13 @@ func (w *Worker) claudeConfigDirID(scanID uint) string {
 }
 
 // RemoveScanArtifacts deletes the on-disk per-scan workspace and claude
-// session store for scanID. A terminal scan removes its own workspace and a
-// done scan its session store, so this reclaims space left by scans still
-// holding a workspace (queued/running, or crashed before cleanup) and by
-// failed scans whose session store is kept for --resume. It is a no-op when
-// the directories are already gone. Passing every scan id of a repository
-// covers resume lineages too: a retry reuses its root's workspace id, and the
-// root scan is itself in the repo, while the retry's own id maps to a
-// directory that was never created.
+// session store for scanID. Normal terminal cleanup removes workspaces, while
+// resumable scans (failed or max-turns-hit) keep their session store for
+// --resume; this explicit removal path reclaims both. It is a no-op when the
+// directories are already gone. Passing every scan id of a repository covers
+// resume lineages too: a retry reuses its root's workspace id, and the root
+// scan is itself in the repo, while the retry's own id maps to a directory
+// that was never created.
 func (w *Worker) RemoveScanArtifacts(scanID uint) error {
 	return errors.Join(
 		os.RemoveAll(w.workRoot(scanID)),
@@ -197,9 +196,9 @@ func (w *Worker) RemoveScanArtifacts(scanID uint) error {
 
 // applyResume fills a SkillJob's session-resume inputs from the scan: the
 // claude session id to --resume (set on a retry that carries one forward
-// from a failed run) and the persistent config dir the docker runner mounts
-// so the session store survives a container exit. A fresh scan has an empty
-// SessionID, so the runner just starts a new conversation.
+// from a failed or max-turns-hit run) and the persistent config dir the docker
+// runner mounts so the session store survives a container exit. A fresh scan
+// has an empty SessionID, so the runner just starts a new conversation.
 func (w *Worker) applyResume(scan *db.Scan, sj *SkillJob, emit func(Event)) {
 	sj.ClaudeConfigDir = w.claudeConfigDir(scan)
 	if scan.SessionID != "" {
@@ -248,8 +247,9 @@ func (w *Worker) scanEmitter(scan *db.Scan) func(Event) {
 
 // clearSessionStore wipes a finished scan's resume state so its next
 // deliberate re-run starts fresh: it drops the session id and tears down the
-// persisted claude session store. Only called on "done" — a failed scan
-// keeps both so a UI retry can --resume instead of restarting from turn 0.
+// persisted claude session store. Only called on ordinary "done" — failed and
+// max-turns-hit scans keep both so a UI retry can --resume instead of
+// restarting from turn 0.
 func (w *Worker) clearSessionStore(scan *db.Scan) {
 	scan.SessionID = ""
 	if rmErr := os.RemoveAll(w.claudeConfigDir(scan)); rmErr != nil {
@@ -318,7 +318,7 @@ func (w *Worker) wrap(h handler) func(context.Context, []byte) error {
 		report, err := h(ctx, &scan, emit)
 
 		finishScan(ctx, &scan, report, err, timeout, emit)
-		if scan.Status == db.ScanDone {
+		if scan.Status == db.ScanDone && !scan.MaxTurnsHit {
 			w.clearSessionStore(&scan)
 		}
 		scan.StatusPriority = db.StatusPriorityFor(scan.Status)
@@ -338,6 +338,7 @@ func (w *Worker) wrap(h handler) func(context.Context, []byte) error {
 
 func finishScan(ctx context.Context, scan *db.Scan, report string, err error, timeout time.Duration, emit func(Event)) {
 	scan.FinishedAt = new(time.Now())
+	scan.MaxTurnsHit = false
 	switch {
 	case errors.Is(ctx.Err(), context.DeadlineExceeded):
 		scan.Status = db.ScanFailed
@@ -367,6 +368,7 @@ func finishErroredScan(scan *db.Scan, report string, err error, emit func(Event)
 		scan.Status = db.ScanDone
 		scan.Report = report
 		scan.Error = ""
+		scan.MaxTurnsHit = true
 		emit(Event{Kind: KindText, Text: "scan completed (hit max turns cap)"})
 	case failOnThreshold:
 		scan.Report = report

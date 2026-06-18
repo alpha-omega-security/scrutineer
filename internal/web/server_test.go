@@ -3069,6 +3069,34 @@ func TestScansIndex_noBranchTagForDefaultBranch(t *testing.T) {
 	}
 }
 
+func TestScansIndex_maxTurnsScanShowsBadgeAndRetry(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://github.com/spf13/cobra", Name: "cobra"}
+	s.DB.Create(&repo)
+	skill := db.Skill{Name: "security-deep-dive", Description: "x", Body: "b", Active: true, Source: "ui", Version: 1}
+	s.DB.Create(&skill)
+	scan := db.Scan{
+		RepositoryID: repo.ID, Kind: "skill", SkillName: "security-deep-dive",
+		SkillID: &skill.ID, Status: db.ScanDone, StatusPriority: db.StatusPriorityFor(db.ScanDone),
+		MaxTurnsHit: true, SessionID: "sess-1",
+	}
+	s.DB.Create(&scan)
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/scans"))
+	body := w.Body.String()
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, body)
+	}
+	if !strings.Contains(body, "max turns") {
+		t.Error("max-turns scan should render a badge")
+	}
+	if !strings.Contains(body, fmt.Sprintf(`/scans/%d/retry`, scan.ID)) {
+		t.Error("max-turns scan should render retry action")
+	}
+}
+
 func TestRetry_preservesSubPath(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
@@ -3097,6 +3125,43 @@ func TestRetry_preservesSubPath(t *testing.T) {
 	s.DB.Where("id != ?", orig.ID).First(&fresh)
 	if fresh.SubPath != "airflow-core" {
 		t.Errorf("retry lost sub-path: got %q, want airflow-core", fresh.SubPath)
+	}
+}
+
+func TestRetry_maxTurnsDoneScanResumesSession(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://github.com/apache/airflow.git", Name: "airflow"}
+	s.DB.Create(&repo)
+	skill := db.Skill{Name: "security-deep-dive", Description: "x", Body: "b", Active: true, Source: "ui", Version: 1}
+	s.DB.Create(&skill)
+	orig := db.Scan{
+		RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone,
+		SkillID: &skill.ID, SkillName: "security-deep-dive",
+		SessionID: "sess-1", MaxTurnsHit: true, FinishedAt: new(time.Now()),
+	}
+	s.DB.Create(&orig)
+
+	req := httptest.NewRequest("POST", fmt.Sprintf("/scans/%d/retry", orig.ID), nil)
+	req.Host = testHost
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("retry status %d: %s", w.Code, w.Body)
+	}
+
+	var fresh db.Scan
+	s.DB.Where("id != ?", orig.ID).First(&fresh)
+	if fresh.SessionID != "sess-1" {
+		t.Errorf("retry session id = %q, want sess-1", fresh.SessionID)
+	}
+	if fresh.ResumedFromScanID == nil || *fresh.ResumedFromScanID != orig.ID {
+		t.Errorf("retry resumed_from_scan_id = %v, want %d", fresh.ResumedFromScanID, orig.ID)
+	}
+	if fresh.MaxTurnsHit {
+		t.Error("fresh retry should not inherit MaxTurnsHit before it runs")
 	}
 }
 

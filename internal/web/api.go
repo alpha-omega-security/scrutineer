@@ -378,6 +378,7 @@ func scanSummary(sc db.Scan) map[string]any {
 		"skill_version": sc.SkillVersion,
 		"started_at":    sc.StartedAt,
 		"finished_at":   sc.FinishedAt,
+		"max_turns_hit": sc.MaxTurnsHit,
 		errorKey:        sc.Error,
 	}
 	if sc.Ref != "" {

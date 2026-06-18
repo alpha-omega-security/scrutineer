@@ -311,6 +311,7 @@ func scanExport(sc db.Scan) map[string]any {
 		"output_tokens":      sc.OutputTokens,
 		"cache_read_tokens":  sc.CacheReadTokens,
 		"cache_write_tokens": sc.CacheWriteTokens,
+		"max_turns_hit":      sc.MaxTurnsHit,
 		"prompt":             sc.Prompt,
 		"report":             sc.Report,
 		"log":                sc.Log,
