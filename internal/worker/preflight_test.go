@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -263,5 +264,61 @@ func TestPreflightSkill_doneScanForDifferentRepoDoesNotSatisfy(t *testing.T) {
 	}
 	if !deferred {
 		t.Error("done scan for a different repo should not satisfy the gate")
+	}
+}
+
+func TestPreflightSkill_failedPrereqFailsFast(t *testing.T) {
+	// Every scan for the prereq on this repo is terminal but not done;
+	// it will never recover on its own, so the dependent fails on the
+	// first preflight rather than spending the retry budget waiting.
+	w := newPreflightWorker(t)
+	scan := seedPreflightFixtures(t, w, "threat-model")
+	tm := seedPrereqSkill(t, w, "threat-model", true)
+	seedPrereqScan(t, w, tm, scan.RepositoryID, db.ScanFailed)
+	seedPrereqScan(t, w, tm, scan.RepositoryID, db.ScanCancelled)
+
+	deferred, err := w.preflightSkill(context.Background(), scan, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !deferred {
+		t.Fatal("dead prereq should defer (caller skips handler)")
+	}
+
+	var loaded db.Scan
+	if err := w.DB.First(&loaded, scan.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Status != db.ScanFailed {
+		t.Errorf("scan status = %q, want failed immediately on dead prereq", loaded.Status)
+	}
+	if !strings.Contains(loaded.Error, "threat-model") || !strings.Contains(loaded.Error, "failed") {
+		t.Errorf("scan error should name the dead prereq and say it failed, got %q", loaded.Error)
+	}
+}
+
+func TestPreflightSkill_failedPrereqWithRetryInFlightDefers(t *testing.T) {
+	// One failed run plus a queued retry: the prereq can still complete,
+	// so defer rather than fail-fast.
+	w := newPreflightWorker(t)
+	scan := seedPreflightFixtures(t, w, "threat-model")
+	tm := seedPrereqSkill(t, w, "threat-model", true)
+	seedPrereqScan(t, w, tm, scan.RepositoryID, db.ScanFailed)
+	seedPrereqScan(t, w, tm, scan.RepositoryID, db.ScanQueued)
+
+	deferred, err := w.preflightSkill(context.Background(), scan, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !deferred {
+		t.Fatal("in-flight retry should defer, not dispatch")
+	}
+
+	var loaded db.Scan
+	if err := w.DB.First(&loaded, scan.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Status != db.ScanQueued {
+		t.Errorf("scan status = %q, want queued (defer while retry is in flight)", loaded.Status)
 	}
 }

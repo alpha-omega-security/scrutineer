@@ -13,8 +13,12 @@
 // satisfied: triage (or the operator) decided not to enqueue it — e.g.
 // dependents on a no-packages repo — and waiting would deadlock the
 // dependent skill. The same applies to a prereq skill that is not
-// registered or is disabled. Only a prereq that has been enqueued for
-// the repository but has no done scan yet defers the job.
+// registered or is disabled. A prereq that has been enqueued for the
+// repository but has no done scan yet defers the job while one is
+// still in flight (queued/running/paused); when every attempt has
+// reached a terminal failed/cancelled state the dependent fails
+// immediately rather than burning the retry budget waiting on
+// something that will not recover on its own.
 
 package worker
 
@@ -44,8 +48,13 @@ func (w *Worker) preflightSkill(ctx context.Context, scan *db.Scan, attempt int)
 	if len(requires) == 0 {
 		return false, nil
 	}
-	missing := w.unsatisfiedPrereqs(scan.RepositoryID, requires)
-	if len(missing) == 0 {
+	pending, dead := w.unsatisfiedPrereqs(scan.RepositoryID, requires)
+	if len(dead) > 0 {
+		w.failScanPrereqs(scan, skill.Name,
+			fmt.Sprintf("prereqs failed: %v", dead), dead)
+		return true, nil
+	}
+	if len(pending) == 0 {
 		return false, nil
 	}
 
@@ -54,7 +63,8 @@ func (w *Worker) preflightSkill(ctx context.Context, scan *db.Scan, attempt int)
 		maxAttempts = DefaultMaxPrereqAttempts
 	}
 	if attempt >= maxAttempts {
-		w.failScanPrereqsUnmet(scan, skill.Name, missing, attempt)
+		w.failScanPrereqs(scan, skill.Name,
+			fmt.Sprintf("prereqs not satisfied after %d attempts: %v", attempt, pending), pending)
 		return true, nil
 	}
 
@@ -70,7 +80,7 @@ func (w *Worker) preflightSkill(ctx context.Context, scan *db.Scan, attempt int)
 	w.Log.Info("deferring skill on unmet prereqs",
 		"scan", scan.ID,
 		"skill", skill.Name,
-		"missing", missing,
+		"pending", pending,
 		"attempt", attempt+1,
 		"delay", delay)
 	if err := w.Queue.EnqueueRetry(ctx, JobSkill, scan.ID, prio, attempt+1, delay); err != nil {
@@ -95,12 +105,17 @@ func prereqBackoff(base time.Duration, attempt int) time.Duration {
 	return base
 }
 
-// unsatisfiedPrereqs returns the subset of names that have been
-// enqueued on the repository but have no done scan yet. A prereq that
-// is unregistered, disabled, or has never been enqueued for this repo
-// is treated as satisfied; see file header for why.
-func (w *Worker) unsatisfiedPrereqs(repoID uint, names []string) []string {
-	missing := make([]string, 0, len(names))
+// unsatisfiedPrereqs classifies declared prereqs against the
+// repository's scan history. A name lands in pending when it has at
+// least one in-flight scan (queued/running/paused) and no done scan
+// yet — the gate should defer and re-check later. A name lands in
+// dead when every scan for it on the repo is terminal but none is
+// done — the prereq has irrecoverably failed and the dependent should
+// fail now rather than burn the retry budget. A prereq that is
+// unregistered, disabled, or has never been enqueued for this repo is
+// treated as satisfied; see file header for why.
+func (w *Worker) unsatisfiedPrereqs(repoID uint, names []string) (pending, dead []string) {
+	inFlight := []db.ScanStatus{db.ScanQueued, db.ScanRunning, db.ScanPaused}
 	for _, name := range names {
 		var skillRow db.Skill
 		err := w.DB.Where("name = ?", name).First(&skillRow).Error
@@ -125,16 +140,24 @@ func (w *Worker) unsatisfiedPrereqs(repoID uint, names []string) []string {
 		w.DB.Model(&db.Scan{}).
 			Where("repository_id = ? AND skill_name = ? AND status = ?", repoID, name, db.ScanDone).
 			Count(&done)
-		if done == 0 {
-			missing = append(missing, name)
+		if done > 0 {
+			continue
+		}
+		var live int64
+		w.DB.Model(&db.Scan{}).
+			Where("repository_id = ? AND skill_name = ? AND status IN ?", repoID, name, inFlight).
+			Count(&live)
+		if live > 0 {
+			pending = append(pending, name)
+		} else {
+			dead = append(dead, name)
 		}
 	}
-	return missing
+	return pending, dead
 }
 
-func (w *Worker) failScanPrereqsUnmet(scan *db.Scan, skillName string, missing []string, attempt int) {
+func (w *Worker) failScanPrereqs(scan *db.Scan, skillName, msg string, missing []string) {
 	now := time.Now()
-	msg := fmt.Sprintf("prereqs not satisfied after %d attempts: %v", attempt, missing)
 	scan.Status = db.ScanFailed
 	scan.StatusPriority = db.StatusPriorityFor(db.ScanFailed)
 	scan.Error = msg
