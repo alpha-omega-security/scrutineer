@@ -102,6 +102,20 @@ func TestBundledSchemas_compileAndAcceptSamples(t *testing.T) {
 			    "known_non_finding","model_gap"],
 			  "open_questions":[{"claim":"path is trusted","field":"entry_points","proposed":"yes"}]}`,
 		},
+		{
+			"../../skills/vuln-scan/schema.json",
+			`{"findings":[{"id":"F001","title":"Archive extraction writes outside the target directory",
+			  "severity":"High","confidence":"medium","cwe":"CWE-22","location":"pkg/archive/extract.go:88",
+			  "locations":["pkg/archive/extract.go:71"],"reachability":"reachable","quality_tier":"high",
+			  "trace":"Archive entry names flow from ParseArchive to filepath.Join before Create.",
+			  "boundary":"The public extraction API accepts caller-provided archives and does not document trusted entry names.",
+			  "validation":"Static-only review checked for Clean, EvalSymlinks, and containment checks before file creation.",
+			  "rating":"High impact because traversal can overwrite files outside the extraction root; medium confidence because no PoC was executed."}]}`,
+		},
+		{
+			"../../skills/vuln-scan/schema.json",
+			`{"findings":[]}`,
+		},
 	}
 	for _, tc := range cases {
 		schema, err := os.ReadFile(tc.schema)
@@ -130,6 +144,16 @@ func TestBundledSchemas_rejectBadShapes(t *testing.T) {
 		{"../../skills/public-issue/schema.json",
 			`{"upstream":"owner/repo","url":"https://github.com/owner/repo/issues/123"}`, "oneOf"},
 		{"../../skills/threat-model/schema.json", `{"spec_version":2}`, "/spec_version"},
+		{"../../skills/vuln-scan/schema.json",
+			`{"findings":[{"id":"F001","title":"Bad confidence","severity":"High",
+			  "confidence":"maybe","cwe":"CWE-22","location":"pkg/archive/extract.go:88","reachability":"reachable",
+			  "quality_tier":"high","trace":"x","boundary":"x","validation":"x","rating":"x"}]}`,
+			"/findings/0/confidence"},
+		{"../../skills/vuln-scan/schema.json",
+			`{"findings":[{"id":"F001","title":"Bad location","severity":"High","confidence":"high",
+			  "cwe":"CWE-22","location":"pkg/archive/extract.go","reachability":"reachable",
+			  "quality_tier":"high","trace":"x","boundary":"x","validation":"x","rating":"x"}]}`,
+			"/findings/0/location"},
 		{"../../skills/threat-model/schema.json",
 			`{"spec_version":1,"repository":"https://x","commit":"abc1234","date":"2026-01-01",
 			  "description":"x","components":[{"name":"c","entry_points":[],"touches":[],

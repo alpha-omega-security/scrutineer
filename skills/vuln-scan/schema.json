@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "vuln-scan findings report",
+  "type": "object",
+  "required": ["findings"],
+  "additionalProperties": false,
+  "properties": {
+    "findings": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/finding" }
+    }
+  },
+  "$defs": {
+    "severity": {
+      "type": "string",
+      "enum": ["Critical", "High", "Medium", "Low"]
+    },
+    "confidence": {
+      "type": "string",
+      "enum": ["high", "medium", "low"]
+    },
+    "cwe": {
+      "type": "string",
+      "pattern": "^(CWE-[0-9]+)?$"
+    },
+    "reachability": {
+      "type": "string",
+      "enum": ["reachable", "harness_only", "unclear"]
+    },
+    "quality_tier": {
+      "type": "string",
+      "enum": ["high", "low"]
+    },
+    "location": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[^:]+:[0-9]+$"
+    },
+    "markdown": {
+      "type": "string",
+      "minLength": 1,
+      "contentMediaType": "text/markdown"
+    },
+    "finding": {
+      "type": "object",
+      "required": [
+        "id",
+        "title",
+        "severity",
+        "confidence",
+        "cwe",
+        "location",
+        "reachability",
+        "quality_tier",
+        "trace",
+        "boundary",
+        "validation",
+        "rating"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^F[0-9]+$" },
+        "sinks": { "type": "array", "items": { "type": "string" } },
+        "title": { "type": "string", "minLength": 1 },
+        "severity": { "$ref": "#/$defs/severity" },
+        "confidence": { "$ref": "#/$defs/confidence" },
+        "cwe": { "$ref": "#/$defs/cwe" },
+        "location": { "$ref": "#/$defs/location" },
+        "locations": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/location" }
+        },
+        "affected": { "type": "string" },
+        "reachability": { "$ref": "#/$defs/reachability" },
+        "quality_tier": { "$ref": "#/$defs/quality_tier" },
+        "reach_checked": { "type": "integer", "minimum": 0 },
+        "reach_exposed": { "type": "integer", "minimum": 0 },
+        "references": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "trace": { "$ref": "#/$defs/markdown" },
+        "boundary": { "$ref": "#/$defs/markdown" },
+        "validation": { "$ref": "#/$defs/markdown" },
+        "prior_art": { "$ref": "#/$defs/markdown" },
+        "reach": { "$ref": "#/$defs/markdown" },
+        "rating": { "$ref": "#/$defs/markdown" }
+      }
+    }
+  }
+}
