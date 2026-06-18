@@ -49,9 +49,11 @@ USER root
 # image dir, exec-capable) rather than $HOME=/tmp, which the worker mounts
 # noexec -- `go run`/`go test` exec the binaries they build, so GOTMPDIR
 # must sit on an exec-capable path. 1777 so any host uid can write; the
-# container is --rm'd after the scan. (Hardened mode mounts the rootfs
-# read-only, leaving only /work and /tmp writable, so in that mode point
-# these at a /work subdir instead.)
+# container is --rm'd after the scan. Known limitation: hardened mode
+# mounts the rootfs read-only (only /work and /tmp stay writable), so
+# these /opt cache paths are not writable there and a build would fail --
+# same constraint as the php pie-home dir. Default (non-hardened) scans,
+# which is what these profiles target, are unaffected.
 ENV PATH=/usr/local/go/bin:$PATH \
     GOTOOLCHAIN=local \
     GOPATH=/opt/go/path \
