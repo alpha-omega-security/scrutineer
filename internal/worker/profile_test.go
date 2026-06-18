@@ -22,6 +22,7 @@ func TestProfileByName(t *testing.T) {
 		{"ruby", "ruby", true, true},
 		{"node", "node", true, true},
 		{"python", "python", true, true},
+		{"python-ext", "python-ext", true, true},
 		{"unknown", "", false, false},
 	}
 	for _, tt := range tests {
@@ -56,6 +57,23 @@ func writeConfigM4(t *testing.T, dir, contents string) {
 	const configM4FileMode = 0o644
 	path := filepath.Join(dir, "config.m4")
 	if err := os.WriteFile(path, []byte(contents), configM4FileMode); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+const setupPyWithExtension = `from setuptools import setup, Extension
+setup(ext_modules=[Extension("pkg._speedups", ["src/speedups.c"])])
+`
+
+const setupPyPurePython = `from setuptools import setup
+setup(name="pkg", version="1.0", packages=["pkg"])
+`
+
+func writeSetupPy(t *testing.T, dir, contents string) {
+	t.Helper()
+	const setupPyFileMode = 0o644
+	path := filepath.Join(dir, "setup.py")
+	if err := os.WriteFile(path, []byte(contents), setupPyFileMode); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
 }
@@ -141,6 +159,30 @@ func TestMatchProfile(t *testing.T) {
 		{
 			name: "pdm matches python",
 			json: `{"package_managers":[{"name":"PDM"}]}`,
+			want: "python",
+		},
+		{
+			name: "setup.py with Extension selects python-ext",
+			json: `{"package_managers":[{"name":"pip"}]}`,
+			setup: func(t *testing.T, dir string) {
+				writeSetupPy(t, dir, setupPyWithExtension)
+			},
+			want: "python-ext",
+		},
+		{
+			name: "setup.py with Extension matches python-ext even without a manager",
+			json: `{"package_managers":[]}`,
+			setup: func(t *testing.T, dir string) {
+				writeSetupPy(t, dir, setupPyWithExtension)
+			},
+			want: "python-ext",
+		},
+		{
+			name: "pure-python setup.py does not match python-ext, pip picks python",
+			json: `{"package_managers":[{"name":"pip"}]}`,
+			setup: func(t *testing.T, dir string) {
+				writeSetupPy(t, dir, setupPyPurePython)
+			},
 			want: "python",
 		},
 		{
@@ -342,7 +384,7 @@ func TestRepoShipsProfileDockerfiles(t *testing.T) {
 func TestProfileGuidesShip(t *testing.T) {
 	wd, _ := os.Getwd()
 	repoRoot := filepath.Join(wd, "..", "..")
-	for _, name := range []string{"php", "php-ext", "ruby", "node", "python"} {
+	for _, name := range []string{"php", "php-ext", "ruby", "node", "python", "python-ext"} {
 		guide := filepath.Join(repoRoot, "docker", "profiles", name, "PROFILE.md")
 		if _, err := os.Stat(guide); err != nil {
 			t.Errorf("expected %s profile PROFILE.md to exist: %v", name, err)
