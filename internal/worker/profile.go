@@ -35,9 +35,12 @@ type Profile struct {
 	// "use the default runner image, no per-profile build".
 	Name string
 	// Ecosystem is a `brief` package_managers[].name, matched
-	// case-insensitively. When Ecosystem and Ecosystems are both empty the
-	// profile matches on Markers/AnyMarkers alone — useful for ecosystems
-	// brief cannot see (e.g. a PECL C extension repo without composer.json).
+	// case-insensitively, for runtimes brief can see. A profile needs at
+	// least one of Ecosystem/Ecosystems, Markers, or AnyMarkers: each
+	// matcher treats an empty constraint as "no constraint", so an entry
+	// with all of them empty would match every repo. The registry sanity
+	// test rejects that. Markers/AnyMarkers cover ecosystems brief cannot
+	// see (e.g. a PECL C extension repo without composer.json).
 	Ecosystem string
 	// Ecosystems lists additional `brief` package_managers[].name values
 	// the profile also matches, for ecosystems one runtime serves under

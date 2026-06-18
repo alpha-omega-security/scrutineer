@@ -60,9 +60,11 @@ RUN apt-get update \
         cppcheck \
  # clang ships its sanitizer runtimes (libclang_rt.asan/ubsan/...) in a
  # separate, version-suffixed package; without it `clang -fsanitize=...`
- # fails to link. Derive the suffix from the installed clang so this keeps
- # working as the base distro moves clang forward.
- && clangver="$(clang --version | sed -n 's/.*version \([0-9][0-9]*\).*/\1/p' | head -n1)" \
+ # fails to link. Derive the major version with `clang -dumpversion` (a
+ # stable, machine-readable single value, vs parsing --version prose) so
+ # this keeps working as the base distro moves clang forward.
+ && clangver="$(clang -dumpversion | cut -d. -f1)" \
+ && test -n "$clangver" \
  && apt-get install -y --no-install-recommends "libclang-rt-${clangver}-dev" \
  && rm -rf /var/lib/apt/lists/* \
  && gcc --version \
