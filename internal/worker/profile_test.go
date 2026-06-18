@@ -17,13 +17,18 @@ func TestProfileByName(t *testing.T) {
 	}{
 		{"", "", true, false},
 		{"default", "", true, false},
-		{"php", "php", true, true},
-		{"php-ext", "php-ext", true, true},
-		{"ruby", "ruby", true, true},
-		{"node", "node", true, true},
-		{"python", "python", true, true},
-		{"python-ext", "python-ext", true, true},
 		{"unknown", "", false, false},
+	}
+	// Every registered profile resolves to itself and is known/named.
+	// Deriving these from builtinProfiles keeps this table out of the
+	// conflict path when a profile is added.
+	for _, p := range builtinProfiles {
+		tests = append(tests, struct {
+			name    string
+			want    string
+			isKnown bool
+			isNamed bool
+		}{p.Name, p.Name, true, true})
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -184,6 +189,16 @@ func TestMatchProfile(t *testing.T) {
 				writeSetupPy(t, dir, setupPyPurePython)
 			},
 			want: "python",
+		},
+		{
+			name: "go modules matches go",
+			json: `{"package_managers":[{"name":"Go Modules"}]}`,
+			want: "go",
+		},
+		{
+			name: "go modules case-insensitive",
+			json: `{"package_managers":[{"name":"go modules"}]}`,
+			want: "go",
 		},
 		{
 			name: "truly unknown manager falls back",

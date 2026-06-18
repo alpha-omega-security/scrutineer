@@ -85,6 +85,7 @@ var builtinProfiles = []Profile{
 		},
 	},
 	{Name: "python", Ecosystems: []string{"pip", "Pipenv", "Poetry", "uv", "PDM"}},
+	{Name: "go", Ecosystem: "Go Modules"},
 }
 
 // ProfileByName returns the registered profile, or the default profile
