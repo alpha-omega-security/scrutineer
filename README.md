@@ -124,6 +124,7 @@ When a repo is added, the `triage` skill is enqueued. Its SKILL.md lists the ski
 | `subprojects` | Enumerates monorepo packages/workspaces so deep-dives can be scoped to a sub-path |
 | `threat-model` | Derives the project's security contract (components, entry-point trust table, claimed and disclaimed properties) for the deep-dive to load |
 | `semgrep` | Static analysis mapped into findings shape |
+| `vuln-scan` | High-recall model-backed static candidate scan adapted from Anthropic's defending-code reference harness |
 | `zizmor` | GitHub Actions workflow audit mapped into findings shape |
 | `ingest` | Normalizes external reports in arbitrary formats into findings when `/v1/import` cannot recognise the payload |
 | `security-deep-dive` | The model-backed audit producing structured findings |
