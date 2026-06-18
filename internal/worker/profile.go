@@ -39,12 +39,28 @@ type Profile struct {
 	// ecosystems brief cannot see (e.g. a PECL C extension repo without
 	// composer.json).
 	Ecosystem string
-	Markers   []ProfileMarker
+	// Ecosystems lists additional `brief` package_managers[].name values
+	// the profile also matches, for ecosystems one runtime serves under
+	// several names (e.g. Python's pip / Poetry / Pipenv / uv / PDM). The
+	// profile matches if any of Ecosystem or Ecosystems matches.
+	Ecosystems []string
+	Markers    []ProfileMarker
 }
 
 // IsDefault reports whether p falls back to the configured runner image
 // instead of a profile-specific built one.
 func (p Profile) IsDefault() bool { return p.Name == "" }
+
+// allEcosystems returns every brief package-manager name the profile
+// matches: the singular Ecosystem (if set) plus any in Ecosystems.
+func (p Profile) allEcosystems() []string {
+	out := make([]string, 0, len(p.Ecosystems)+1)
+	if p.Ecosystem != "" {
+		out = append(out, p.Ecosystem)
+	}
+	out = append(out, p.Ecosystems...)
+	return out
+}
 
 // builtinProfiles is the v1 registry. Order matters: first match wins,
 // so more specific profiles (php-ext) come before their general
@@ -59,6 +75,7 @@ var builtinProfiles = []Profile{
 	},
 	{Name: "php", Ecosystem: "Composer"},
 	{Name: "ruby", Ecosystem: "Bundler"},
+	{Name: "python", Ecosystems: []string{"pip", "Pipenv", "Poetry", "uv", "PDM"}},
 }
 
 // ProfileByName returns the registered profile, or the default profile
@@ -111,7 +128,7 @@ func matchProfile(briefOut []byte, srcDir string) Profile {
 		pms = append(pms, pm.Name)
 	}
 	for _, p := range builtinProfiles {
-		if !ecosystemMatch(p.Ecosystem, pms) {
+		if !ecosystemMatch(p.allEcosystems(), pms) {
 			continue
 		}
 		if !markersMatch(p.Markers, srcDir) {
@@ -122,13 +139,15 @@ func matchProfile(briefOut []byte, srcDir string) Profile {
 	return Profile{}
 }
 
-func ecosystemMatch(ecosystem string, pms []string) bool {
-	if ecosystem == "" {
+func ecosystemMatch(ecosystems, pms []string) bool {
+	if len(ecosystems) == 0 {
 		return true
 	}
-	for _, pm := range pms {
-		if strings.EqualFold(pm, ecosystem) {
-			return true
+	for _, e := range ecosystems {
+		for _, pm := range pms {
+			if strings.EqualFold(pm, e) {
+				return true
+			}
 		}
 	}
 	return false
