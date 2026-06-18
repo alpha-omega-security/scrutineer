@@ -130,7 +130,7 @@
       <i data-lucide="bug" class="size-3.5"></i>
       <span>Exploitation status</span>
       {{if eq .ExploitedInWild "yes"}}<span class="badge-destructive">yes</span>{{else if eq .ExploitedInWild "no"}}<span class="badge-outline">no</span>{{else}}<span>unknown</span>{{end}}
-      <button type="button" data-dialog="exploitation-{{$id}}" class="btn-sm btn-outline ml-auto">
+      <button type="button" data-dialog="exploitation-{{$id}}" class="btn-sm-outline ml-auto">
         <i data-lucide="pencil"></i> Edit
       </button>
     </div>
