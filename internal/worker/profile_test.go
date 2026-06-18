@@ -226,6 +226,21 @@ func TestMatchProfile(t *testing.T) {
 			want: "dotnet",
 		},
 		{
+			name: "mix matches beam",
+			json: `{"package_managers":[{"name":"Mix"}]}`,
+			want: "beam",
+		},
+		{
+			name: "rebar3 matches beam (secondary ecosystem)",
+			json: `{"package_managers":[{"name":"rebar3"}]}`,
+			want: "beam",
+		},
+		{
+			name: "mix case-insensitive",
+			json: `{"package_managers":[{"name":"mix"}]}`,
+			want: "beam",
+		},
+		{
 			name: "truly unknown manager falls back",
 			json: `{"package_managers":[{"name":"Cargo"}]}`,
 			want: "",
