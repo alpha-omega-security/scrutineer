@@ -14,7 +14,7 @@ FROM node:26-alpine@sha256:3ad34ca6292aec4a91d8ddeb9229e29d9c2f689efd0dd24286088
 RUN npm install -g @anthropic-ai/claude-code@2.1.173
 
 FROM python:3.15.0b2-alpine@sha256:7b994e30eec677e35f9b57882dda3da2077dfb3936908f320397c5442e2654bb AS python-tools
-RUN pip install --no-cache-dir semgrep==1.116.0 "setuptools<81"
+RUN pip install --no-cache-dir semgrep==1.167.0 "setuptools<81"
 
 FROM golang:1.26.4-alpine@sha256:7a3e50096189ad57c9f9f865e7e4aa8585ed1585248513dc5cda498e2f41812c AS go-tools
 RUN apk add --no-cache git
