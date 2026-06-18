@@ -83,6 +83,15 @@ func writeSetupPy(t *testing.T, dir, contents string) {
 	}
 }
 
+func writeMarkerFile(t *testing.T, dir, name string) {
+	t.Helper()
+	const markerFileMode = 0o644
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, []byte("x\n"), markerFileMode); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
 func TestMatchProfile(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -239,6 +248,38 @@ func TestMatchProfile(t *testing.T) {
 			name: "mix case-insensitive",
 			json: `{"package_managers":[{"name":"mix"}]}`,
 			want: "beam",
+		},
+		{
+			name: "CMakeLists.txt selects c-cpp (no package manager)",
+			json: `{"package_managers":[]}`,
+			setup: func(t *testing.T, dir string) {
+				writeMarkerFile(t, dir, "CMakeLists.txt")
+			},
+			want: "c-cpp",
+		},
+		{
+			name: "Makefile selects c-cpp",
+			json: `{"package_managers":[]}`,
+			setup: func(t *testing.T, dir string) {
+				writeMarkerFile(t, dir, "Makefile")
+			},
+			want: "c-cpp",
+		},
+		{
+			name: "meson.build selects c-cpp",
+			json: `{"package_managers":[]}`,
+			setup: func(t *testing.T, dir string) {
+				writeMarkerFile(t, dir, "meson.build")
+			},
+			want: "c-cpp",
+		},
+		{
+			name: "language ecosystem wins over a c-cpp build file",
+			json: `{"package_managers":[{"name":"Composer"}]}`,
+			setup: func(t *testing.T, dir string) {
+				writeMarkerFile(t, dir, "Makefile")
+			},
+			want: "php",
 		},
 		{
 			name: "truly unknown manager falls back",
@@ -403,8 +444,8 @@ func TestBuiltinProfiles_registrySanity(t *testing.T) {
 			t.Error("profile with empty Name")
 		}
 		ecos := p.allEcosystems()
-		if len(ecos) == 0 && len(p.Markers) == 0 {
-			t.Errorf("profile %q has neither Ecosystem nor Markers", p.Name)
+		if len(ecos) == 0 && len(p.Markers) == 0 && len(p.AnyMarkers) == 0 {
+			t.Errorf("profile %q has no Ecosystem, Markers, or AnyMarkers", p.Name)
 		}
 		if names[p.Name] {
 			t.Errorf("duplicate profile Name %q", p.Name)

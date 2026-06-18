@@ -36,8 +36,8 @@ type Profile struct {
 	Name string
 	// Ecosystem is a `brief` package_managers[].name, matched
 	// case-insensitively. When Ecosystem and Ecosystems are both empty the
-	// profile matches on Markers alone — useful for ecosystems that brief
-	// cannot see (e.g. a PECL C extension repo without composer.json).
+	// profile matches on Markers/AnyMarkers alone — useful for ecosystems
+	// brief cannot see (e.g. a PECL C extension repo without composer.json).
 	Ecosystem string
 	// Ecosystems lists additional `brief` package_managers[].name values
 	// the profile also matches, for ecosystems one runtime serves under
@@ -45,7 +45,14 @@ type Profile struct {
 	// JVM's Maven and Gradle). The profile matches if any of Ecosystem or
 	// Ecosystems matches.
 	Ecosystems []string
-	Markers    []ProfileMarker
+	// Markers must ALL be present (AND) for the profile to match. Use for a
+	// precise signal, e.g. a config.m4 that contains PHP_ARG_.
+	Markers []ProfileMarker
+	// AnyMarkers match if at least ONE is present (OR). Use when a single
+	// ecosystem has several equally-valid build-file signals and brief
+	// reports no package manager for it — e.g. C/C++ projects built with
+	// CMake, Make, autotools, or meson.
+	AnyMarkers []ProfileMarker
 }
 
 // IsDefault reports whether p falls back to the configured runner image
@@ -90,6 +97,22 @@ var builtinProfiles = []Profile{
 	{Name: "java", Ecosystems: []string{"Maven", "Gradle"}},
 	{Name: "dotnet", Ecosystem: "NuGet"},
 	{Name: "beam", Ecosystems: []string{"Mix", "rebar3"}},
+	{
+		// Last: brief reports no package manager for C/C++, so this is a
+		// fallback for repos that match no language ecosystem above but
+		// carry a native build file. Language repos (which also often have
+		// a Makefile) match their ecosystem first, so this only catches
+		// repos that are actually native.
+		Name: "c-cpp",
+		AnyMarkers: []ProfileMarker{
+			{Path: "CMakeLists.txt"},
+			{Path: "Makefile"},
+			{Path: "GNUmakefile"},
+			{Path: "configure.ac"},
+			{Path: "configure.in"},
+			{Path: "meson.build"},
+		},
+	},
 }
 
 // ProfileByName returns the registered profile, or the default profile
@@ -148,6 +171,9 @@ func matchProfile(briefOut []byte, srcDir string) Profile {
 		if !markersMatch(p.Markers, srcDir) {
 			continue
 		}
+		if !anyMarkersMatch(p.AnyMarkers, srcDir) {
+			continue
+		}
 		return p
 	}
 	return Profile{}
@@ -187,6 +213,31 @@ func markersMatch(markers []ProfileMarker, srcDir string) bool {
 		}
 	}
 	return true
+}
+
+// anyMarkersMatch reports whether at least one marker is present (OR). An
+// empty list matches (the profile imposes no AnyMarkers constraint); a
+// non-empty list with no srcDir cannot match.
+func anyMarkersMatch(markers []ProfileMarker, srcDir string) bool {
+	if len(markers) == 0 {
+		return true
+	}
+	if srcDir == "" {
+		return false
+	}
+	for _, m := range markers {
+		full := filepath.Join(srcDir, m.Path)
+		if m.Contains == "" {
+			if _, err := os.Stat(full); err == nil {
+				return true
+			}
+			continue
+		}
+		if fileContains(full, m.Contains) {
+			return true
+		}
+	}
+	return false
 }
 
 // markerReadCap bounds Contains-substring scans so a hostile or
