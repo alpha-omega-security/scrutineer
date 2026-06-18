@@ -156,7 +156,7 @@ func TestWorker_maxTurnsReachedCompletesNotFails(t *testing.T) {
 	}
 }
 
-func TestWorker_claudePlanLimitUsesHelpfulError(t *testing.T) {
+func TestWorker_claudePlanLimitPausesScanAndQueue(t *testing.T) {
 	gdb, err := db.Open(filepath.Join(t.TempDir(), "limit.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -167,6 +167,10 @@ func TestWorker_claudePlanLimitUsesHelpfulError(t *testing.T) {
 	gdb.Create(&skill)
 	scan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanQueued, SkillID: &skill.ID}
 	gdb.Create(&scan)
+	// A second queued scan (e.g. from a "scan all subprojects" batch) that
+	// has not started yet; it must be paused, not left to hit the same wall.
+	other := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanQueued, SkillID: &skill.ID}
+	gdb.Create(&other)
 
 	w := &Worker{
 		DB:             gdb,
@@ -182,11 +186,20 @@ func TestWorker_claudePlanLimitUsesHelpfulError(t *testing.T) {
 
 	var got db.Scan
 	gdb.First(&got, scan.ID)
-	if got.Status != db.ScanFailed {
-		t.Errorf("status = %s, want failed", got.Status)
+	if got.Status != db.ScanPaused {
+		t.Errorf("triggering scan status = %s, want paused", got.Status)
 	}
 	if !strings.Contains(got.Error, "Claude plan limit reached") {
 		t.Errorf("error = %q", got.Error)
+	}
+
+	var gotOther db.Scan
+	gdb.First(&gotOther, other.ID)
+	if gotOther.Status != db.ScanPaused {
+		t.Errorf("other queued scan status = %s, want paused", gotOther.Status)
+	}
+	if !strings.Contains(gotOther.Error, "Claude plan limit reached") {
+		t.Errorf("other scan error = %q, want plan-limit prefix", gotOther.Error)
 	}
 }
 

@@ -3943,17 +3943,18 @@ func TestScanResumePaused(t *testing.T) {
 	}
 }
 
-func TestJobs_showsPlanLimitPauseActions(t *testing.T) {
+func TestJobs_showsPlanLimitResumeActions(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
 
 	repo := db.Repository{URL: "https://example.com/x.git", Name: "x"}
 	s.DB.Create(&repo)
-	s.DB.Create(&db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanQueued, StatusPriority: db.StatusPriorityFor(db.ScanQueued)})
+	// A scan auto-paused because the account hit the Claude token limit. The
+	// banner should surface it and the Resume-paused action should be offered.
 	s.DB.Create(&db.Scan{
-		RepositoryID: repo.ID, Kind: "skill", Status: db.ScanFailed,
-		StatusPriority: db.StatusPriorityFor(db.ScanFailed),
-		Error:          "Claude plan limit reached. Pause queued scans and retry after your limit resets.",
+		RepositoryID: repo.ID, Kind: "skill", Status: db.ScanPaused,
+		StatusPriority: db.StatusPriorityFor(db.ScanPaused),
+		Error:          "Claude plan limit reached. Queued scan paused automatically; resume after the limit resets.",
 	})
 
 	w := httptest.NewRecorder()
@@ -3962,7 +3963,7 @@ func TestJobs_showsPlanLimitPauseActions(t *testing.T) {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
 	body := w.Body.String()
-	for _, want := range []string{"Claude plan limit reached", "/scans/pause-queued"} {
+	for _, want := range []string{"Claude plan limit reached", "/scans/resume-paused"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q in jobs body", want)
 		}

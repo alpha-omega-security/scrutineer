@@ -368,9 +368,11 @@ func (w *Worker) wrap(h handler) func(context.Context, []byte) error {
 	}
 }
 
-// finalizeScan persists the terminal scan state, fires post-completion
-// hooks, cleans up the workspace, and publishes the status. It returns an
-// error only when the terminal save fails, which wrap propagates to goqite.
+// finalizeScan persists the terminal/paused scan state, fires
+// post-completion hooks, bulk-pauses the rest of the queue when this scan
+// hit a Claude token limit, cleans up the workspace, and publishes the
+// status. It returns an error only when the terminal save fails, which
+// wrap propagates to goqite.
 func (w *Worker) finalizeScan(ctx context.Context, scan *db.Scan, report string, err error, timeout time.Duration, emit func(Event)) error {
 	finishScan(ctx, scan, report, err, timeout, emit)
 	if scan.Status == db.ScanDone && !scan.MaxTurnsHit {
@@ -381,6 +383,9 @@ func (w *Worker) finalizeScan(ctx context.Context, scan *db.Scan, report string,
 		return saveErr
 	}
 	w.maybeFireScanFinalized(scan, err)
+	if _, isLimit := errors.AsType[*ClaudePlanLimitError](err); isLimit && scan.Status == db.ScanPaused {
+		w.pauseQueuedOnTokenLimit(scan.ID)
+	}
 	if scan.Status.Terminal() {
 		if rmErr := os.RemoveAll(w.scanWorkRoot(scan)); rmErr != nil {
 			w.Log.Warn("workspace cleanup failed", "scan", scan.ID, "err", rmErr)
@@ -446,8 +451,44 @@ func finishErroredScan(scan *db.Scan, report string, err error, emit func(Event)
 	case schemaValidation:
 		scan.Report = report
 	case planLimit:
+		// A token/credit limit is not this scan's fault and is recoverable
+		// once the limit resets, so pause rather than fail: the operator
+		// resumes the batch instead of retrying each scan. The remaining
+		// queued scans are paused by the worker loop (pauseQueuedOnTokenLimit).
+		scan.Status = db.ScanPaused
 		emit(Event{Kind: KindError, Text: scan.Error})
 	default:
 		emit(Event{Kind: KindError, Text: scan.Error})
+	}
+}
+
+// tokenLimitPauseReason is recorded on scans auto-paused because another
+// scan hit the account's Claude token/credit limit. It keeps the "Claude
+// plan limit reached." prefix the scans page matches on, so these paused
+// scans surface in the limit banner alongside the one that triggered it.
+const tokenLimitPauseReason = "Claude plan limit reached. Queued scan paused automatically; resume after the limit resets."
+
+// pauseQueuedOnTokenLimit pauses every still-queued scan after one scan
+// hit a Claude token/credit limit. The limit is account-wide, so the rest
+// of the queue would only run into the same wall; pausing keeps the batch
+// intact for a later resume instead of failing it scan by scan. The worker
+// loop drops the now-stale queue jobs when they fire (see wrap), exactly as
+// a manual "pause queued" does, so updating the rows here is enough.
+func (w *Worker) pauseQueuedOnTokenLimit(triggerID uint) {
+	now := time.Now()
+	res := w.DB.Model(&db.Scan{}).
+		Where("status = ?", db.ScanQueued).
+		Updates(map[string]any{
+			"status":          db.ScanPaused,
+			"status_priority": db.StatusPriorityFor(db.ScanPaused),
+			"error":           tokenLimitPauseReason,
+			"finished_at":     &now,
+		})
+	if res.Error != nil {
+		w.Log.Warn("pause-on-token-limit failed", "trigger", triggerID, "err", res.Error)
+		return
+	}
+	if res.RowsAffected > 0 {
+		w.Log.Info("paused queued scans after Claude token limit", "count", res.RowsAffected, "trigger", triggerID)
 	}
 }

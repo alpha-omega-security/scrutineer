@@ -59,14 +59,14 @@ func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 		"Scans": scans, "Page": page,
 		"Skill": skillName, "Status": status, "Sort": sort, "Skills": skillNames,
 		"AnySubPath": anySubPath, "QueuedCount": stats.QueuedCount, "PausedCount": stats.PausedCount,
-		"PlanLimitFailedCount": stats.PlanLimitFailedCount,
+		"PlanLimitPausedCount": stats.PlanLimitPausedCount,
 	})
 }
 
 type scanListStats struct {
 	QueuedCount          int64
 	PausedCount          int64
-	PlanLimitFailedCount int64
+	PlanLimitPausedCount int64
 }
 
 func (s *Server) scanListStats() scanListStats {
@@ -75,10 +75,10 @@ func (s *Server) scanListStats() scanListStats {
 		Select(
 			"COUNT(CASE WHEN status = ? THEN 1 END) AS queued_count, "+
 				"COUNT(CASE WHEN status = ? THEN 1 END) AS paused_count, "+
-				"COUNT(CASE WHEN status = ? AND error LIKE ? THEN 1 END) AS plan_limit_failed_count",
+				"COUNT(CASE WHEN status = ? AND error LIKE ? THEN 1 END) AS plan_limit_paused_count",
 			db.ScanQueued,
 			db.ScanPaused,
-			db.ScanFailed,
+			db.ScanPaused,
 			"Claude plan limit reached.%",
 		).
 		Scan(&stats)
