@@ -96,6 +96,16 @@ type Server struct {
 	// the network lookup, mirroring resolvePURL and listBranches.
 	fetchOrgRepos func(ctx context.Context, org string) ([]OrgRepo, error)
 
+	// Runtime defaults a new scan inherits when the caller pins none.
+	// Both are seeded at startup from config/flags and mutable via the
+	// settings page, so a request can write while another reads. One
+	// mutex covers both; the default-model getter falls back to
+	// Models[0] and the default-effort getter to builtinDefaultEffort
+	// when unset.
+	defaultsMu    sync.RWMutex
+	defaultModel  string
+	defaultEffort string
+
 	skillNamesMu    sync.Mutex
 	skillNamesCache []string
 	skillNamesTTL   time.Time
@@ -2158,9 +2168,9 @@ func (s *Server) enqueueSkillWith(ctx context.Context, repoID, skillID uint, opt
 	if !ValidModelPreference(opts.Model) && hasSkill {
 		opts.Model = sk.Model
 	}
-	opts.Model = resolveModelPreference(s.DB, opts.Model)
+	opts.Model = resolveModelPreference(s.DB, opts.Model, s.DefaultModel())
 	if !ValidEffort(opts.Effort) {
-		opts.Effort = DefaultEffort()
+		opts.Effort = s.DefaultEffort()
 	}
 	kind := worker.JobSkill
 	if opts.DependentID != nil {

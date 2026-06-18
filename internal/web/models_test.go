@@ -5,13 +5,29 @@ import "testing"
 func withTestModels(t *testing.T, models []Model) {
 	t.Helper()
 	oldModels := Models
-	oldDefault := defaultModelOverride
 	Models = models
-	defaultModelOverride = ""
-	t.Cleanup(func() {
-		Models = oldModels
-		defaultModelOverride = oldDefault
+	t.Cleanup(func() { Models = oldModels })
+}
+
+func TestServerDefaultModel(t *testing.T) {
+	withTestModels(t, []Model{
+		{Name: "First", ID: "first-entry"},
+		{Name: "Second", ID: "second-entry"},
 	})
+	var s Server
+	if got := s.DefaultModel(); got != "first-entry" {
+		t.Errorf("DefaultModel() with no override = %q, want first pick-list entry", got)
+	}
+	s.SetDefaultModel("second-entry")
+	if got := s.DefaultModel(); got != "second-entry" {
+		t.Errorf("DefaultModel() with override = %q, want second-entry", got)
+	}
+	// Empty must not clobber an existing override; main.go calls
+	// SetDefaultModel unconditionally with whatever the config held.
+	s.SetDefaultModel("")
+	if got := s.DefaultModel(); got != "second-entry" {
+		t.Errorf("SetDefaultModel(\"\") cleared override to %q", got)
+	}
 }
 
 func TestModelTiers(t *testing.T) {
@@ -28,13 +44,14 @@ func TestModelTiers(t *testing.T) {
 	if ValidModelTier("ultra") {
 		t.Fatal("unknown tier should not be valid")
 	}
-	if got := builtinModelForTier(ModelTierMid); got != "test-sonnet" {
+	const fallback = "test-high"
+	if got := builtinModelForTier(ModelTierMid, fallback); got != "test-sonnet" {
 		t.Errorf("mid tier default = %q, want sonnet", got)
 	}
-	if got := builtinModelForTier(ModelTierHigh); got != DefaultModel() {
-		t.Errorf("high tier default = %q, want DefaultModel()", got)
+	if got := builtinModelForTier(ModelTierHigh, fallback); got != fallback {
+		t.Errorf("high tier default = %q, want fallback", got)
 	}
-	if got := builtinModelForTier(ModelTierMax); got != "test-opus-b" {
+	if got := builtinModelForTier(ModelTierMax, fallback); got != "test-opus-b" {
 		t.Errorf("max tier default = %q, want latest opus", got)
 	}
 }
@@ -46,7 +63,7 @@ func TestModelTiersFallbackToDefaultModelWithCustomModelList(t *testing.T) {
 	})
 
 	for _, tier := range []string{ModelTierMid, ModelTierHigh, ModelTierMax} {
-		if got := builtinModelForTier(tier); got != "vendor-default" {
+		if got := builtinModelForTier(tier, "vendor-default"); got != "vendor-default" {
 			t.Errorf("builtinModelForTier(%q) = %q, want vendor-default", tier, got)
 		}
 	}
@@ -59,13 +76,14 @@ func TestResolveModelPreference(t *testing.T) {
 		{Name: "Opus", ID: "test-opus"},
 	})
 
-	if got := resolveModelPreference(nil, "test-opus"); got != "test-opus" {
+	const fallback = "test-high"
+	if got := resolveModelPreference(nil, "test-opus", fallback); got != "test-opus" {
 		t.Errorf("exact model = %q, want test-opus", got)
 	}
-	if got := resolveModelPreference(nil, ModelTierMid); got != "test-sonnet" {
+	if got := resolveModelPreference(nil, ModelTierMid, fallback); got != "test-sonnet" {
 		t.Errorf("tier model = %q, want test-sonnet", got)
 	}
-	if got := resolveModelPreference(nil, "not-configured"); got != "test-high" {
+	if got := resolveModelPreference(nil, "not-configured", fallback); got != "test-high" {
 		t.Errorf("invalid preference fallback = %q, want high tier default", got)
 	}
 }

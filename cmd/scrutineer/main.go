@@ -91,6 +91,7 @@ type flags struct {
 	addr             string
 	dataDir          string
 	effort           string
+	defaultModel     string
 	noDocker         bool
 	hardened         bool
 	runnerImage      string
@@ -142,8 +143,9 @@ func parseFlags() *flags {
 }
 
 // merge layers cfg underneath f: a config value applies only when the
-// matching CLI flag was not set explicitly. Also pushes model overrides
-// into the web package.
+// matching CLI flag was not set explicitly. Also pushes the model pick
+// list and theme into the web package; runtime defaults (model, effort)
+// are stored on flags here and applied to the Server after construction.
 //
 //nolint:gocognit,gocyclo // flat: one guarded assignment per config key
 func (f *flags) merge(cfg *config.Config) {
@@ -213,9 +215,8 @@ func (f *flags) merge(cfg *config.Config) {
 		web.SetModels(models)
 	}
 	if cfg.DefaultModel != "" {
-		web.SetDefaultModel(cfg.DefaultModel)
+		f.defaultModel = cfg.DefaultModel
 	}
-	web.SetDefaultEffort(f.effort)
 	if cfg.Theme != "" {
 		web.SetTheme(cfg.Theme)
 	}
@@ -389,6 +390,8 @@ func run(log *slog.Logger) error {
 	}
 	srv.SkillsRepoSHA = skillsRepoSHA
 	srv.Commit = buildCommit()
+	srv.SetDefaultModel(f.defaultModel)
+	srv.SetDefaultEffort(f.effort)
 
 	if f.recipientsFile != "" {
 		recs, err := loadRecipients(f.recipientsFile)

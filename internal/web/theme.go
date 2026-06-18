@@ -100,9 +100,9 @@ func (s *Server) settingsShow(w http.ResponseWriter, r *http.Request) {
 		"Themes":           config.Themes,
 		"Models":           Models,
 		"ModelTiers":       ModelTiers,
-		"TierModels":       ModelTierValues(s.DB),
+		"TierModels":       ModelTierValues(s.DB, s.DefaultModel()),
 		"Efforts":          Efforts,
-		"DefaultEffort":    DefaultEffort(),
+		"DefaultEffort":    s.DefaultEffort(),
 		"ColorScheme":      resolveColorScheme(r),
 		"Concurrency":      s.Queue.Concurrency(),
 		"ConcurrencyInput": concurrencyInput,
@@ -192,7 +192,7 @@ func (s *Server) settingsUpdateModel(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, "/settings")
 		return
 	}
-	SetDefaultModel(model)
+	s.SetDefaultModel(model)
 	setFlash(w, Flash{Category: successKey, Title: "Default model updated"})
 	s.redirect(w, r, "/settings")
 }
@@ -203,7 +203,7 @@ func (s *Server) settingsUpdateEffort(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown effort", http.StatusUnprocessableEntity)
 		return
 	}
-	SetDefaultEffort(effort)
+	s.SetDefaultEffort(effort)
 	setFlash(w, Flash{Category: successKey, Title: "Default effort updated"})
 	s.redirect(w, r, "/settings")
 }

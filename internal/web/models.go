@@ -34,8 +34,8 @@ var ModelTiers = []ModelTier{
 	{Name: "Max", Value: ModelTierMax, Description: "Best available model for deep security review."},
 }
 
-// Models is the pick list. The first entry is the default unless
-// defaultModelOverride is set by the config loader.
+// Models is the pick list. The first entry is the default unless the
+// server's runtime override is set; see Server.DefaultModel.
 var Models = []Model{
 	{"Opus 4.6", "claude-opus-4-6"},
 	{"Opus 4.7", "claude-opus-4-7"},
@@ -43,10 +43,6 @@ var Models = []Model{
 	{"Sonnet", "claude-sonnet-4-6"},
 	{"Fable 5", "claude-fable-5[1m]"},
 }
-
-// defaultModelOverride, when non-empty, replaces the first-entry-wins
-// rule. Set at startup from config; empty leaves Models[0] as default.
-var defaultModelOverride string
 
 // SetModels replaces the pick list. Called at startup from config; no-op
 // for an empty list so a config with only default_model set keeps the
@@ -58,15 +54,27 @@ func SetModels(models []Model) {
 	Models = models
 }
 
-// SetDefaultModel pins the default model id, overriding "first entry".
-// Called at startup from config.
-func SetDefaultModel(id string) {
-	defaultModelOverride = id
+// SetDefaultModel pins the default model id, overriding "first entry in
+// the pick list". Set at startup from config and mutable via
+// /settings/model; in-memory only, so restart resets it to the
+// configured default.
+func (s *Server) SetDefaultModel(id string) {
+	if id == "" {
+		return
+	}
+	s.defaultsMu.Lock()
+	s.defaultModel = id
+	s.defaultsMu.Unlock()
 }
 
-func DefaultModel() string {
-	if defaultModelOverride != "" {
-		return defaultModelOverride
+// DefaultModel is the model id a tier falls back to when no
+// tier-specific setting is configured. The runtime override wins;
+// otherwise the first entry in the pick list.
+func (s *Server) DefaultModel() string {
+	s.defaultsMu.RLock()
+	defer s.defaultsMu.RUnlock()
+	if s.defaultModel != "" {
+		return s.defaultModel
 	}
 	return Models[0].ID
 }
@@ -106,7 +114,12 @@ func modelTierSettingKey(tier string) string {
 	}
 }
 
-func ModelForTier(gdb *gorm.DB, tier string) string {
+// ModelForTier resolves a tier name to a concrete model id: a
+// per-tier setting in the DB wins, then a built-in heuristic over the
+// pick list, then the caller-supplied fallback (the server's default
+// model). The fallback is threaded in rather than read from a global
+// so the runtime default lives on Server behind a mutex.
+func ModelForTier(gdb *gorm.DB, tier, fallback string) string {
 	if !ValidModelTier(tier) {
 		tier = ModelTierHigh
 	}
@@ -117,18 +130,18 @@ func ModelForTier(gdb *gorm.DB, tier string) string {
 			}
 		}
 	}
-	return builtinModelForTier(tier)
+	return builtinModelForTier(tier, fallback)
 }
 
-func ModelTierValues(gdb *gorm.DB) map[string]string {
+func ModelTierValues(gdb *gorm.DB, fallback string) map[string]string {
 	values := make(map[string]string, len(ModelTiers))
 	for _, tier := range ModelTiers {
-		values[tier.Value] = ModelForTier(gdb, tier.Value)
+		values[tier.Value] = ModelForTier(gdb, tier.Value, fallback)
 	}
 	return values
 }
 
-func builtinModelForTier(tier string) string {
+func builtinModelForTier(tier, fallback string) string {
 	// Built-in tiers assume the built-in Anthropic-flavoured model ids and
 	// ordering. If operators replace Models with a multi-vendor list that
 	// lacks "sonnet" or "opus", the tier intentionally falls back to
@@ -143,7 +156,7 @@ func builtinModelForTier(tier string) string {
 			return id
 		}
 	}
-	return DefaultModel()
+	return fallback
 }
 
 func firstModelContaining(needle string) string {
@@ -164,12 +177,12 @@ func lastModelContaining(needle string) string {
 	return ""
 }
 
-func resolveModelPreference(gdb *gorm.DB, preference string) string {
+func resolveModelPreference(gdb *gorm.DB, preference, fallback string) string {
 	if ValidModel(preference) {
 		return preference
 	}
 	if ValidModelTier(preference) {
-		return ModelForTier(gdb, preference)
+		return ModelForTier(gdb, preference, fallback)
 	}
-	return ModelForTier(gdb, ModelTierHigh)
+	return ModelForTier(gdb, ModelTierHigh, fallback)
 }

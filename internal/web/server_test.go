@@ -2045,8 +2045,7 @@ func TestEnqueueSkillWith_modelPrecedence(t *testing.T) {
 func TestEnqueueSkillWith_effort(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
-	defer restoreEffort(defaultEffortOverride)
-	defaultEffortOverride = "high"
+	s.SetDefaultEffort("high")
 
 	repo := db.Repository{URL: "https://github.com/foo/bar", Name: "bar"}
 	s.DB.Create(&repo)
@@ -3457,10 +3456,9 @@ func TestScansRetryFailed(t *testing.T) {
 func TestScansRetryFailed_preservesEffort(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
-	defer restoreEffort(defaultEffortOverride)
 	// Force the runtime default away from the scan's effort so a dropped
 	// `effort` column in the retry Select would surface as "low", not "max".
-	defaultEffortOverride = "low"
+	s.SetDefaultEffort("low")
 
 	repo := db.Repository{URL: "https://example.com/x.git", Name: "x"}
 	s.DB.Create(&repo)
@@ -4104,7 +4102,6 @@ func TestSettingsUpdateTheme_rejectsInvalid(t *testing.T) {
 func TestSettingsUpdateEffort_setsDefault(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
-	defer restoreEffort(defaultEffortOverride)
 
 	form := url.Values{"effort": {"max"}}
 	req := httptest.NewRequest("POST", "/settings/effort", strings.NewReader(form.Encode()))
@@ -4115,7 +4112,7 @@ func TestSettingsUpdateEffort_setsDefault(t *testing.T) {
 	if w.Code != http.StatusSeeOther {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
-	if got := DefaultEffort(); got != "max" {
+	if got := s.DefaultEffort(); got != "max" {
 		t.Errorf("DefaultEffort() = %q, want max", got)
 	}
 }
@@ -4123,7 +4120,6 @@ func TestSettingsUpdateEffort_setsDefault(t *testing.T) {
 func TestSettingsUpdateEffort_rejectsInvalid(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
-	defer restoreEffort(defaultEffortOverride)
 
 	form := url.Values{"effort": {"extreme"}}
 	req := httptest.NewRequest("POST", "/settings/effort", strings.NewReader(form.Encode()))

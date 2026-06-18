@@ -1,6 +1,7 @@
 package web
 
 import (
+	"sync"
 	"testing"
 
 	"scrutineer/internal/config"
@@ -37,33 +38,53 @@ func TestValidEffort(t *testing.T) {
 	}
 }
 
-func TestDefaultEffort(t *testing.T) {
-	defer restoreEffort(defaultEffortOverride)
-
-	defaultEffortOverride = ""
-	if got := DefaultEffort(); got != builtinDefaultEffort {
+func TestServerDefaultEffort(t *testing.T) {
+	var s Server
+	if got := s.DefaultEffort(); got != builtinDefaultEffort {
 		t.Errorf("DefaultEffort() with no override = %q, want %q", got, builtinDefaultEffort)
 	}
-	defaultEffortOverride = "max"
-	if got := DefaultEffort(); got != "max" {
+	s.SetDefaultEffort("max")
+	if got := s.DefaultEffort(); got != "max" {
 		t.Errorf("DefaultEffort() with override = %q, want max", got)
 	}
 }
 
-func TestSetDefaultEffort(t *testing.T) {
-	defer restoreEffort(defaultEffortOverride)
-
-	defaultEffortOverride = "high"
-	SetDefaultEffort("xhigh")
-	if defaultEffortOverride != "xhigh" {
-		t.Errorf("SetDefaultEffort(xhigh) = %q, want xhigh", defaultEffortOverride)
+func TestServerSetDefaultEffort_rejectsInvalid(t *testing.T) {
+	var s Server
+	s.SetDefaultEffort("xhigh")
+	if got := s.DefaultEffort(); got != "xhigh" {
+		t.Fatalf("SetDefaultEffort(xhigh) = %q, want xhigh", got)
 	}
 	// An empty or unknown value must not clobber the current setting.
-	SetDefaultEffort("")
-	SetDefaultEffort("garbage")
-	if defaultEffortOverride != "xhigh" {
-		t.Errorf("invalid SetDefaultEffort changed it to %q, want xhigh", defaultEffortOverride)
+	s.SetDefaultEffort("")
+	s.SetDefaultEffort("garbage")
+	if got := s.DefaultEffort(); got != "xhigh" {
+		t.Errorf("invalid SetDefaultEffort changed it to %q, want xhigh", got)
 	}
 }
 
-func restoreEffort(v string) { defaultEffortOverride = v }
+func TestServerDefaults_concurrentReadWrite(t *testing.T) {
+	// Exercises the defaultsMu guard so `go test -race` flags any
+	// regression to unguarded package-level state. Both default-model
+	// and default-effort share the mutex.
+	var s Server
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			for range 100 {
+				s.SetDefaultEffort("max")
+				s.SetDefaultModel("claude-opus-4-8")
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			for range 100 {
+				_ = s.DefaultEffort()
+				_ = s.DefaultModel()
+			}
+		}()
+	}
+	wg.Wait()
+}
