@@ -87,6 +87,12 @@
         </button>
 
       {{else if eq $s "ready"}}
+        {{if not (or (eq .Severity "High") (eq .Severity "Critical"))}}
+          <button type="submit" class="btn-outline" formaction="/findings/{{$id}}/public-issue"
+                  hx-post="/findings/{{$id}}/public-issue">
+            <i data-lucide="message-square-plus"></i> File public issue
+          </button>
+        {{end}}
         <button type="submit" name="status" value="reported" class="btn"
                 hx-post="/findings/{{$id}}/status">
           <i data-lucide="send"></i> Mark as reported

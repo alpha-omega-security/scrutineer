@@ -66,4 +66,5 @@ Because the rows on the finding are the same shape regardless of which channel w
 - `cna-match` — whether a CNA covers the package, and that CNA's contact channel
 - `disclose` — drafts the advisory body, regardless of which channel it goes down
 - `report-upstream` — the PVR path, included here only to name where this runbook starts
+- `public-issue` — the public GitHub issue path for reviewed low-severity findings that do not warrant private disclosure
 - Issue [#117](https://github.com/alpha-omega-security/scrutineer/issues/117) — extends `maintainers` to file-level owner routing for large repos
