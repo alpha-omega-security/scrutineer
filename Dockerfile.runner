@@ -3,7 +3,7 @@
 #   docker build -t scrutineer-runner -f Dockerfile.runner .
 
 ARG CLAUDE_VERSION=2.1.173
-ARG SEMGREP_VERSION=1.116.0
+ARG SEMGREP_VERSION=1.167.0
 
 FROM golang:1.26.4-trixie@sha256:bbf22ddccb3205344f2755ea8fa4fe39f7a8b2b77b9f7b764ec2aad31406f6fc AS go-tools
 RUN GOBIN=/out go install github.com/git-pkgs/git-pkgs@v0.15.3 && \
