@@ -2,7 +2,7 @@
 name: maintainers
 description: Identify the real maintainers of a repository and the best way to contact them about a security issue. Distinguishes active leads from occasional contributors and bots, using commit history, issue activity, and registry ownership. Use when preparing a disclosure and needing to know who to reach.
 license: MIT
-compatibility: Needs network access to commits.ecosyste.ms, issues.ecosyste.ms, and packages.ecosyste.ms.
+compatibility: Needs network access to commits.ecosyste.ms, issues.ecosyste.ms, packages.ecosyste.ms, and api.github.com (to verify private vulnerability reporting before proposing the GitHub advisories channel).
 metadata:
   scrutineer.version: 1
   scrutineer.output_file: report.json
@@ -60,7 +60,7 @@ Filter bots out of the final list unless the repo's only active account is a bot
 Pick the best one, based on what you found:
 
 - `SECURITY.md` email or contact block if present
-- GitHub Security Advisories if the repo is on GitHub and has advisories enabled
+- GitHub Security Advisories **only when private vulnerability reporting is actually enabled**: fetch `https://api.github.com/repos/{owner}/{repo}/private-vulnerability-reporting` (no auth needed for public repos) and require `{"enabled": true}`. If it returns `{"enabled": false}`, a 404, or any error, the GitHub advisories URL would 404 for a reporter — skip this option and fall through to the next channel. Do not infer this from a SECURITY.md that merely *says* "report via GitHub advisories"; the maintainer may not have turned the feature on.
 - Registry owner contact if packages data surfaced one
 - The lead's git-log author email if none of the above; if it is a `noreply.github.com` address, skip it
 
