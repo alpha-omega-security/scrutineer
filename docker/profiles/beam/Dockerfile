@@ -74,11 +74,15 @@ RUN apt-get update \
  && echo "${KERL_SHA256}  /usr/local/bin/kerl" | sha256sum -c - \
  && chmod +x /usr/local/bin/kerl \
  # Build and install Erlang/OTP, skipping the GUI/Java components to keep
- # the build fast and the image lean.
+ # the build fast and the image lean. KERL_BASE_DIR is set explicitly (kerl
+ # otherwise defaults it to $HOME/.kerl) so the build artifacts land in a
+ # known path that is deleted afterwards, instead of depending on $HOME
+ # being set during the image build.
+ && export KERL_BASE_DIR=/var/tmp/kerl \
  && KERL_CONFIGURE_OPTIONS="--without-wx --without-javac --without-debugger --without-observer --without-et --without-megaco --without-jinterface" \
         kerl build "${OTP_VERSION}" "${OTP_VERSION}" \
  && kerl install "${OTP_VERSION}" /opt/otp \
- && rm -rf "$HOME/.kerl" \
+ && rm -rf /var/tmp/kerl \
  # Elixir precompiled release (BEAM bytecode, arch-independent).
  && curl -fsSL -o /tmp/elixir.zip \
         "https://github.com/elixir-lang/elixir/releases/download/v${ELIXIR_VERSION}/elixir-otp-${ELIXIR_OTP_MAJOR}.zip" \

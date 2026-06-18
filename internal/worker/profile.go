@@ -36,7 +36,7 @@ type Profile struct {
 	Name string
 	// Ecosystem is a `brief` package_managers[].name, matched
 	// case-insensitively. When Ecosystem and Ecosystems are both empty the
-	// profile matches on Markers alone — useful for ecosystems brief
+	// profile matches on Markers alone — useful for ecosystems that brief
 	// cannot see (e.g. a PECL C extension repo without composer.json).
 	Ecosystem string
 	// Ecosystems lists additional `brief` package_managers[].name values
