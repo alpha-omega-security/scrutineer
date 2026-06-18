@@ -41,8 +41,9 @@ type Profile struct {
 	Ecosystem string
 	// Ecosystems lists additional `brief` package_managers[].name values
 	// the profile also matches, for ecosystems one runtime serves under
-	// several names (e.g. Python's pip / Poetry / Pipenv / uv / PDM). The
-	// profile matches if any of Ecosystem or Ecosystems matches.
+	// several names (e.g. Python's pip / Poetry / Pipenv / uv / PDM, or the
+	// JVM's Maven and Gradle). The profile matches if any of Ecosystem or
+	// Ecosystems matches.
 	Ecosystems []string
 	Markers    []ProfileMarker
 }
@@ -86,6 +87,7 @@ var builtinProfiles = []Profile{
 	},
 	{Name: "python", Ecosystems: []string{"pip", "Pipenv", "Poetry", "uv", "PDM"}},
 	{Name: "go", Ecosystem: "Go Modules"},
+	{Name: "java", Ecosystems: []string{"Maven", "Gradle"}},
 }
 
 // ProfileByName returns the registered profile, or the default profile
