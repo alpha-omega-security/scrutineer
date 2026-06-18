@@ -20,6 +20,7 @@ func TestProfileByName(t *testing.T) {
 		{"php", "php", true, true},
 		{"php-ext", "php-ext", true, true},
 		{"ruby", "ruby", true, true},
+		{"node", "node", true, true},
 		{"unknown", "", false, false},
 	}
 	for _, tt := range tests {
@@ -107,8 +108,23 @@ func TestMatchProfile(t *testing.T) {
 			want: "php",
 		},
 		{
-			name: "unknown manager falls back",
+			name: "npm matches node",
 			json: `{"package_managers":[{"name":"npm"}]}`,
+			want: "node",
+		},
+		{
+			name: "npm case-insensitive",
+			json: `{"package_managers":[{"name":"NPM"}]}`,
+			want: "node",
+		},
+		{
+			name: "composer before node when both present (registry order)",
+			json: `{"package_managers":[{"name":"npm"},{"name":"Composer"}]}`,
+			want: "php",
+		},
+		{
+			name: "truly unknown manager falls back",
+			json: `{"package_managers":[{"name":"Cargo"}]}`,
 			want: "",
 		},
 		{
@@ -303,7 +319,7 @@ func TestRepoShipsProfileDockerfiles(t *testing.T) {
 func TestProfileGuidesShip(t *testing.T) {
 	wd, _ := os.Getwd()
 	repoRoot := filepath.Join(wd, "..", "..")
-	for _, name := range []string{"php", "php-ext", "ruby"} {
+	for _, name := range []string{"php", "php-ext", "ruby", "node"} {
 		guide := filepath.Join(repoRoot, "docker", "profiles", name, "PROFILE.md")
 		if _, err := os.Stat(guide); err != nil {
 			t.Errorf("expected %s profile PROFILE.md to exist: %v", name, err)
