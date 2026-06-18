@@ -216,6 +216,16 @@ func TestMatchProfile(t *testing.T) {
 			want: "java",
 		},
 		{
+			name: "nuget matches dotnet",
+			json: `{"package_managers":[{"name":"NuGet"}]}`,
+			want: "dotnet",
+		},
+		{
+			name: "nuget case-insensitive",
+			json: `{"package_managers":[{"name":"nuget"}]}`,
+			want: "dotnet",
+		},
+		{
 			name: "truly unknown manager falls back",
 			json: `{"package_managers":[{"name":"Cargo"}]}`,
 			want: "",
