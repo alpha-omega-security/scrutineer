@@ -21,6 +21,7 @@ func TestProfileByName(t *testing.T) {
 		{"php-ext", "php-ext", true, true},
 		{"ruby", "ruby", true, true},
 		{"node", "node", true, true},
+		{"python", "python", true, true},
 		{"unknown", "", false, false},
 	}
 	for _, tt := range tests {
@@ -121,6 +122,26 @@ func TestMatchProfile(t *testing.T) {
 			name: "composer before node when both present (registry order)",
 			json: `{"package_managers":[{"name":"npm"},{"name":"Composer"}]}`,
 			want: "php",
+		},
+		{
+			name: "pip matches python",
+			json: `{"package_managers":[{"name":"pip"}]}`,
+			want: "python",
+		},
+		{
+			name: "poetry matches python (secondary ecosystem)",
+			json: `{"package_managers":[{"name":"Poetry"}]}`,
+			want: "python",
+		},
+		{
+			name: "uv matches python case-insensitive",
+			json: `{"package_managers":[{"name":"UV"}]}`,
+			want: "python",
+		},
+		{
+			name: "pdm matches python",
+			json: `{"package_managers":[{"name":"PDM"}]}`,
+			want: "python",
 		},
 		{
 			name: "truly unknown manager falls back",
@@ -273,8 +294,10 @@ func TestEnsureImage_missingDockerfile(t *testing.T) {
 // Ecosystem or at least one Marker, names must be unique, and ecosystems
 // must be unique case-insensitively (a duplicate would silently make
 // auto-detection resolve the wrong profile, with no other test failing).
-// Marker-only profiles legitimately have an empty Ecosystem and are
-// excluded from the ecosystem-uniqueness check.
+// Marker-only profiles legitimately have no Ecosystem and are excluded
+// from the ecosystem-uniqueness check. A profile that matches several
+// ecosystems (e.g. python) lists them via Ecosystems; every one is
+// checked for uniqueness against every other profile's.
 func TestBuiltinProfiles_registrySanity(t *testing.T) {
 	names := map[string]bool{}
 	ecosystems := map[string]bool{}
@@ -282,21 +305,21 @@ func TestBuiltinProfiles_registrySanity(t *testing.T) {
 		if p.Name == "" {
 			t.Error("profile with empty Name")
 		}
-		if p.Ecosystem == "" && len(p.Markers) == 0 {
+		ecos := p.allEcosystems()
+		if len(ecos) == 0 && len(p.Markers) == 0 {
 			t.Errorf("profile %q has neither Ecosystem nor Markers", p.Name)
 		}
 		if names[p.Name] {
 			t.Errorf("duplicate profile Name %q", p.Name)
 		}
 		names[p.Name] = true
-		if p.Ecosystem == "" {
-			continue
+		for _, e := range ecos {
+			eco := strings.ToLower(e)
+			if ecosystems[eco] {
+				t.Errorf("duplicate profile Ecosystem %q (case-insensitive)", e)
+			}
+			ecosystems[eco] = true
 		}
-		eco := strings.ToLower(p.Ecosystem)
-		if ecosystems[eco] {
-			t.Errorf("duplicate profile Ecosystem %q (case-insensitive)", p.Ecosystem)
-		}
-		ecosystems[eco] = true
 	}
 }
 
@@ -319,7 +342,7 @@ func TestRepoShipsProfileDockerfiles(t *testing.T) {
 func TestProfileGuidesShip(t *testing.T) {
 	wd, _ := os.Getwd()
 	repoRoot := filepath.Join(wd, "..", "..")
-	for _, name := range []string{"php", "php-ext", "ruby", "node"} {
+	for _, name := range []string{"php", "php-ext", "ruby", "node", "python"} {
 		guide := filepath.Join(repoRoot, "docker", "profiles", name, "PROFILE.md")
 		if _, err := os.Stat(guide); err != nil {
 			t.Errorf("expected %s profile PROFILE.md to exist: %v", name, err)
