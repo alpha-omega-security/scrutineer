@@ -98,17 +98,23 @@ RUN apt-get update \
  # extract libnative-platform.so to the noexec $HOME=/tmp and fail. A
  # gradle.properties in GRADLE_USER_HOME fixes the daemon's java.io.tmpdir
  # and disables the daemon (scans are one-shot, so a daemon only adds risk).
+ # It is left root-owned and read-only (0644) so a scanned project cannot
+ # rewrite the noexec workaround or re-enable the daemon; GRADLE_USER_HOME
+ # itself is sticky-writable (1777) so the scan uid can still create the
+ # native/ cache and its lock files beside it.
  && printf 'org.gradle.daemon=false\norg.gradle.jvmargs=-Djava.io.tmpdir=/opt/java-tmp\n' \
         > /opt/gradle-home/gradle.properties \
- && chmod 0666 /opt/gradle-home/gradle.properties \
+ && chmod 0644 /opt/gradle-home/gradle.properties \
+ # Smoke-test the toolchain with throwaway home/tmp dirs so the build does
+ # not seed /opt/{gradle-home,m2/repo,java-tmp} with root-owned files the
+ # scan uid (the host uid, not the image user) could not then write beside.
+ # The scan populates those dirs itself, fresh, as that uid.
+ && BOOT=/tmp/jvm-bootstrap \
+ && mkdir -p "$BOOT/gradle" "$BOOT/jtmp" \
  && java -version \
  && javac -version \
- && mvn -version \
- && gradle --version \
- # `gradle --version` (run as root here) extracts its native libraries
- # into GRADLE_USER_HOME/native owned by root; the scan runs as the host
- # uid and must be able to write the .lock files beside them, so open up
- # the pre-populated caches. Ephemeral container, --rm'd after the scan.
- && chmod -R a+rwX /opt/gradle-home /opt/m2/repo
+ && MAVEN_OPTS="-Djava.io.tmpdir=$BOOT/jtmp" mvn -version \
+ && GRADLE_USER_HOME="$BOOT/gradle" GRADLE_OPTS="-Djava.io.tmpdir=$BOOT/jtmp" gradle --version \
+ && rm -rf "$BOOT"
 
 USER runner
