@@ -35,9 +35,9 @@ type Profile struct {
 	// "use the default runner image, no per-profile build".
 	Name string
 	// Ecosystem is a `brief` package_managers[].name, matched
-	// case-insensitively. Empty falls back to Markers — useful for
-	// ecosystems brief cannot see (e.g. a PECL C extension repo without
-	// composer.json).
+	// case-insensitively. When Ecosystem and Ecosystems are both empty the
+	// profile matches on Markers alone — useful for ecosystems brief
+	// cannot see (e.g. a PECL C extension repo without composer.json).
 	Ecosystem string
 	// Ecosystems lists additional `brief` package_managers[].name values
 	// the profile also matches, for ecosystems one runtime serves under

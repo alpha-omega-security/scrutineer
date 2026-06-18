@@ -1,6 +1,8 @@
-# Python profile. Extends the scrutineer runner with a pinned CPython,
-# uv, and pip so scans of pip/Poetry/Pipenv/PDM/uv projects can install
-# their dependency set and reproduce findings in-place.
+# Python profile. Extends the scrutineer runner with a pinned CPython and
+# uv so scans of pip/Poetry/Pipenv/PDM/uv projects can install their
+# dependency set and reproduce findings in-place. There is no global pip;
+# the interpreter is externally managed and uv handles installs (uv pip,
+# uv venv, uv sync).
 #
 # CPython is installed by uv from a sha-verified standalone build at an
 # explicit pinned version, so the interpreter is current and identical
@@ -76,17 +78,16 @@ RUN apt-get update \
  && install -m 0755 "/tmp/uv-${arch}-unknown-linux-gnu/uvx" /usr/local/bin/uvx \
  && rm -rf /tmp/uv.tar.gz "/tmp/uv-${arch}-unknown-linux-gnu" \
  && uv python install "${PYTHON_VERSION}" \
- && ln -s "$(uv python find "${PYTHON_VERSION}")" /usr/local/bin/python3 \
- && ln -s /usr/local/bin/python3 /usr/local/bin/python \
+ && ln -sf "$(uv python find "${PYTHON_VERSION}")" /usr/local/bin/python3 \
+ && ln -sf /usr/local/bin/python3 /usr/local/bin/python \
  && python --version \
  && python3 --version \
  && uv --version
 
-# The pinned interpreter and its install dir must stay readable, and pip
-# must be able to write a per-user cache, when the container runs as the
-# host's uid (docker --user $(id -u):$(id -g)) rather than the image user.
-# Container is ephemeral and --rm'd after the scan, so the blast radius of
-# a write here is zero.
+# The pinned interpreter and its install dir must stay readable when the
+# container runs as the host's uid (docker --user $(id -u):$(id -g))
+# rather than the image user. uv writes its own caches under HOME at scan
+# time, so only read/execute access is needed here.
 RUN chmod -R a+rX /opt/uv
 
 USER runner
