@@ -142,12 +142,14 @@ func (s *Server) scanRetry(w http.ResponseWriter, r *http.Request) {
 }
 
 // resumeOpts decides whether a retry of scan should resume its claude
-// session. Only a failed scan that captured a session is resumable; a done
-// or cancelled scan, or one that never reached the model, retries fresh.
-// ResumedFromScanID is pinned to the lineage root so a chain of retries all
-// reuse one workspace and session rather than forking a new one each time.
+// session. Failed scans and soft-success scans that hit max turns are
+// resumable when they captured a session; ordinary done/cancelled scans, or
+// scans that never reached the model, retry fresh. ResumedFromScanID is pinned
+// to the lineage root so a chain of retries all reuse one workspace and
+// session rather than forking a new one each time.
 func resumeOpts(scan db.Scan) (sessionID string, resumeOf *uint) {
-	if scan.Status != db.ScanFailed || scan.SessionID == "" {
+	resumableStatus := scan.Status == db.ScanFailed || (scan.Status == db.ScanDone && scan.MaxTurnsHit)
+	if !resumableStatus || scan.SessionID == "" {
 		return "", nil
 	}
 	root := scan.ID

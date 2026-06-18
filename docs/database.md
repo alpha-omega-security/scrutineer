@@ -67,6 +67,7 @@ One row per skill execution or external import. `skill_name` / `skill_version` p
 | output_tokens | integer | Output tokens billed. |
 | cache_read_tokens | integer | `cache_read_input_tokens` from the result event. |
 | cache_write_tokens | integer | `cache_creation_input_tokens` from the result event. |
+| max_turns_hit | boolean | True when the scan is `done` with partial output because Claude hit the configured max-turns cap. Such scans keep their session id so Retry can resume. |
 | prompt | text | Activation prompt sent to claude. The skill body lives in the Skill row, not here. |
 | report | text | The skill's primary output. JSON for parsed kinds, freeform for everything else. |
 | log | text | Line-by-line transcript of the scan. Streamed to the UI via SSE. |

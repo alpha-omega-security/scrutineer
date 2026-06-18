@@ -9,6 +9,7 @@
   <h2 class="text-2xl font-semibold flex items-center gap-3">
     {{if .SkillName}}{{if .SkillID}}<a href="/skills/{{.SkillID}}">{{.SkillName}}</a>{{else}}{{.SkillName}}{{end}}{{else}}{{.Kind}}{{end}} / scan #{{.ID}}
     {{template "status-badge" (status .Status)}}
+    {{if .MaxTurnsHit}}<span class="badge-outline"><i data-lucide="timer-off"></i> max turns</span>{{end}}
   </h2>
   {{if and (eq .Kind "skill") .SkillID}}
     <div class="flex items-center gap-2">
@@ -103,6 +104,13 @@
   <div class="alert-destructive mb-6">
     <i data-lucide="triangle-alert"></i>
     <section>{{.Error}}</section>
+  </div>
+{{end}}
+
+{{if .MaxTurnsHit}}
+  <div class="alert mb-6">
+    <i data-lucide="timer-off"></i>
+    <section>This scan hit the max turns cap after producing partial output. Retry will resume the saved Claude session.</section>
   </div>
 {{end}}
 

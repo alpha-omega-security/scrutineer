@@ -170,12 +170,16 @@ type Scan struct {
 	// SessionID is the claude-code session this scan's run belongs to,
 	// captured from the stream-json init/result events. It is written as
 	// soon as the init event arrives (before the run finishes) so it
-	// survives a crash, and cleared once the scan reaches "done" so a
-	// deliberate re-run from the UI starts a fresh conversation. A retry
-	// of a failed scan carries this value forward so the runner can pass
-	// `claude -p --resume <id>` and continue from where it left off
-	// instead of restarting from turn 0.
+	// survives a crash, and cleared once the scan reaches ordinary "done"
+	// so a deliberate re-run from the UI starts a fresh conversation. A
+	// retry of a failed or max-turns-hit scan carries this value forward
+	// so the runner can pass `claude -p --resume <id>` and continue from
+	// where it left off instead of restarting from turn 0.
 	SessionID string
+	// MaxTurnsHit marks scans that completed with partial output because
+	// claude-code hit --max-turns. They stay status=done because the
+	// partial report is real output, but keep SessionID so Retry can resume.
+	MaxTurnsHit bool `gorm:"not null;default:false"`
 	// ResumedFromScanID points at the lineage-root scan whose claude session
 	// and workspace a retry reuses. Nil on a fresh scan. claude keys its
 	// session store by working directory, so a resuming run must execute
