@@ -295,15 +295,15 @@ func TestRepoShipsProfileDockerfiles(t *testing.T) {
 	}
 }
 
-// TestProfileGuidesShipForPHP keeps the php / php-ext profiles honest
-// about the per-container PROFILE.md they advertise. PROFILE.md is
-// optional in general (a profile without one simply gets no orientation
-// injected at scan time); the php profiles document specifics the
-// agent needs to behave correctly, so missing them is a real regression.
-func TestProfileGuidesShipForPHP(t *testing.T) {
+// TestProfileGuidesShip keeps the language profiles honest about the
+// per-container PROFILE.md they advertise. PROFILE.md is optional in
+// general (a profile without one simply gets no orientation injected at
+// scan time); these profiles document specifics the agent needs to
+// behave correctly, so missing them is a real regression.
+func TestProfileGuidesShip(t *testing.T) {
 	wd, _ := os.Getwd()
 	repoRoot := filepath.Join(wd, "..", "..")
-	for _, name := range []string{"php", "php-ext"} {
+	for _, name := range []string{"php", "php-ext", "ruby"} {
 		guide := filepath.Join(repoRoot, "docker", "profiles", name, "PROFILE.md")
 		if _, err := os.Stat(guide); err != nil {
 			t.Errorf("expected %s profile PROFILE.md to exist: %v", name, err)
