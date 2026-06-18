@@ -36,14 +36,19 @@ func (s *Server) repoReport(w http.ResponseWriter, r *http.Request) {
 }
 
 func renderRepoReport(gdb *gorm.DB, repo *db.Repository) string {
+	// Findings and sink dispositions are computed once up front so the
+	// summary, threat-model inventory, and findings sections all render
+	// from the same data without re-querying.
+	latest, threatModel := latestDeepDive(gdb, repo.ID)
+	findings := loadReportFindings(gdb, repo.ID)
+	disp := buildSinkDispositions(threatModel, findings)
+
 	var b strings.Builder
 	writeReportHeader(&b, repo)
+	writeReportSummary(&b, latest, findings, disp)
 	writeReportMetadata(&b, repo)
-
-	latest, threatModel := latestDeepDive(gdb, repo.ID)
-	writeReportThreatModel(&b, latest, threatModel)
-
-	writeReportFindings(&b, gdb, repo.ID, latest)
+	writeReportThreatModel(&b, latest, threatModel, disp)
+	writeReportFindings(&b, gdb, findings, latest)
 	writeReportPackages(&b, gdb, repo.ID)
 	writeReportAdvisories(&b, gdb, repo.ID)
 	writeReportDependents(&b, gdb, repo.ID)
@@ -106,7 +111,149 @@ func latestDeepDive(gdb *gorm.DB, repoID uint) (*db.Scan, map[string]any) {
 	return &scan, tm
 }
 
-func writeReportThreatModel(b *strings.Builder, scan *db.Scan, tm map[string]any) {
+// loadReportFindings mirrors the repo page Findings tab: deep-dive output
+// only, ordered Critical-first so the summary's top-N and the findings
+// section share one ordering.
+func loadReportFindings(gdb *gorm.DB, repoID uint) []db.Finding {
+	var findings []db.Finding
+	gdb.Where("repository_id = ?", repoID).
+		Where("scan_id IN (?)", deepDiveScanIDs(gdb)).
+		Order(severityOrder).Order("id").Find(&findings)
+	return findings
+}
+
+// sinkDisposition records where one inventory sink id ended up so the
+// inventory table can show outcome alongside catalogue and the summary
+// can report coverage without the reader cross-referencing the
+// inventory and ruled-out sections.
+type sinkDisposition struct {
+	findingID uint
+	ruled     bool
+	step      int
+	reason    string
+}
+
+func (d sinkDisposition) cell() string {
+	switch {
+	case d.findingID != 0:
+		return fmt.Sprintf("→ Finding #%d", d.findingID)
+	case d.ruled:
+		r := firstClause(d.reason)
+		if r == "" {
+			return fmt.Sprintf("ruled out, step %d", d.step)
+		}
+		return fmt.Sprintf("ruled out, step %d — %s", d.step, r)
+	default:
+		return "unresolved"
+	}
+}
+
+// buildSinkDispositions maps each inventory sink id to its outcome. The
+// deep-dive skill guarantees every inventory entry lands in either a
+// finding's Sinks or a ruled_out entry, so anything left over is a
+// coverage gap worth surfacing as "unresolved". A sink claimed by both
+// keeps the finding outcome since that is the actionable one.
+func buildSinkDispositions(tm map[string]any, findings []db.Finding) map[string]sinkDisposition {
+	inv := listSlice(tm, "inventory")
+	if len(inv) == 0 {
+		return nil
+	}
+	disp := make(map[string]sinkDisposition, len(inv))
+	for _, x := range inv {
+		if m, ok := x.(map[string]any); ok {
+			if id, _ := m["id"].(string); id != "" {
+				disp[id] = sinkDisposition{}
+			}
+		}
+	}
+	for _, x := range listSlice(tm, "ruled_out") {
+		m, ok := x.(map[string]any)
+		if !ok {
+			continue
+		}
+		step := intVal(m["step"])
+		reason, _ := m["reason"].(string)
+		for _, id := range stringSlice(m["sinks"]) {
+			if _, ok := disp[id]; ok {
+				disp[id] = sinkDisposition{ruled: true, step: step, reason: reason}
+			}
+		}
+	}
+	for _, f := range findings {
+		for _, id := range splitSinks(f.Sinks) {
+			if _, ok := disp[id]; ok {
+				disp[id] = sinkDisposition{findingID: f.ID}
+			}
+		}
+	}
+	return disp
+}
+
+// dispositionCounts returns (ruled out, became findings, unresolved). The
+// catalogued count is len(disp).
+func dispositionCounts(disp map[string]sinkDisposition) (ruled, found, unresolved int) {
+	for _, d := range disp {
+		switch {
+		case d.findingID != 0:
+			found++
+		case d.ruled:
+			ruled++
+		default:
+			unresolved++
+		}
+	}
+	return ruled, found, unresolved
+}
+
+const summaryTopN = 3
+
+// writeReportSummary emits a five-line block a maintainer can read in
+// thirty seconds: severity counts, top findings, sink coverage, where
+// to start, and which tree it applies to. Upstream feedback was that
+// the full report takes hours to digest before it is actionable; this
+// gives them the headline first.
+func writeReportSummary(b *strings.Builder, scan *db.Scan, findings []db.Finding, disp map[string]sinkDisposition) {
+	if scan == nil && len(findings) == 0 {
+		return
+	}
+	fmt.Fprintf(b, "## Summary\n\n")
+
+	by := severityCounts(findings)
+	fmt.Fprintf(b, "- %d findings: %d critical, %d high, %d medium, %d low\n",
+		len(findings), by["Critical"], by["High"], by["Medium"], by["Low"])
+
+	for i, f := range findings {
+		if i >= summaryTopN {
+			break
+		}
+		fmt.Fprintf(b, "- **%s** — Finding #%d, %s\n", escapeMD(f.Title), f.ID, f.Severity)
+	}
+
+	if len(disp) > 0 {
+		ruled, found, unresolved := dispositionCounts(disp)
+		fmt.Fprintf(b, "- Sink coverage: %d catalogued, %d ruled out, %d became findings, %d unresolved\n",
+			len(disp), ruled, found, unresolved)
+	}
+
+	if len(findings) > 0 {
+		fmt.Fprintf(b, "- Start with Finding #%d\n", findings[0].ID)
+	}
+
+	if scan != nil {
+		fmt.Fprintf(b, "- Scan at commit `%s` (%s)\n", shortCommit(scan.Commit), formatScanDate(scan))
+	}
+	b.WriteString("\n")
+}
+
+func severityCounts(findings []db.Finding) map[string]int {
+	by := make(map[string]int, len(db.SeverityLevels))
+	for _, f := range findings {
+		by[f.Severity]++
+	}
+	return by
+}
+
+func writeReportThreatModel(b *strings.Builder, scan *db.Scan, tm map[string]any, disp map[string]sinkDisposition) {
 	fmt.Fprintf(b, "## Threat model\n\n")
 	if scan == nil {
 		fmt.Fprintf(b, "No completed %s scan yet.\n\n", deepDiveSkillName)
@@ -144,12 +291,14 @@ func writeReportThreatModel(b *strings.Builder, scan *db.Scan, tm map[string]any
 
 	if inventory := listSlice(tm, "inventory"); len(inventory) > 0 {
 		fmt.Fprintf(b, "### Sink inventory\n\n")
-		fmt.Fprintf(b, "| # | Class | Primitive | Location | Consumes |\n|---|---|---|---|---|\n")
+		fmt.Fprintf(b, "| # | Class | Primitive | Location | Consumes | Disposition |\n|---|---|---|---|---|---|\n")
 		for _, x := range inventory {
 			if m, ok := x.(map[string]any); ok {
-				fmt.Fprintf(b, "| %s | %s | %s | `%s` | %s |\n",
-					mdCell(m, "id"), mdCell(m, "class"), mdCell(m, "primitive"),
-					mdCell(m, "location"), mdCell(m, "consumes"))
+				id, _ := m["id"].(string)
+				fmt.Fprintf(b, "| %s | %s | %s | `%s` | %s | %s |\n",
+					escapeMD(id), mdCell(m, "class"), mdCell(m, "primitive"),
+					mdCell(m, "location"), mdCell(m, "consumes"),
+					escapeMD(disp[id].cell()))
 			}
 		}
 		b.WriteString("\n")
@@ -178,15 +327,8 @@ func writeReportThreatModel(b *strings.Builder, scan *db.Scan, tm map[string]any
 	}
 }
 
-func writeReportFindings(b *strings.Builder, gdb *gorm.DB, repoID uint, latest *db.Scan) {
+func writeReportFindings(b *strings.Builder, gdb *gorm.DB, findings []db.Finding, latest *db.Scan) {
 	fmt.Fprintf(b, "## Findings\n\n")
-	// Mirrors the repo page Findings tab: deep-dive output only. Scanner
-	// findings (zizmor, semgrep) belong to the Scanners tab and stay out of
-	// the curated report so download recipients don't drown in lint noise.
-	var findings []db.Finding
-	gdb.Where("repository_id = ?", repoID).
-		Where("scan_id IN (?)", deepDiveScanIDs(gdb)).
-		Order("severity, id").Find(&findings)
 	if len(findings) == 0 {
 		fmt.Fprintf(b, "No findings recorded for this repository.\n\n")
 		return
@@ -477,6 +619,48 @@ func stringSlice(v any) []string {
 func mdCell(m map[string]any, key string) string {
 	v, _ := m[key].(string)
 	return escapeMD(v)
+}
+
+// intVal extracts an int from an untyped JSON value. encoding/json
+// decodes numbers as float64 by default; ruled_out.step is documented
+// as an integer so the truncation is exact in practice.
+func intVal(v any) int {
+	switch n := v.(type) {
+	case float64:
+		return int(n)
+	case int:
+		return n
+	}
+	return 0
+}
+
+// splitSinks tokenises a Finding.Sinks column ("S1, S2") into ids.
+// findings.go writes them comma-joined with a trailing space; older
+// rows might lack the space, so trim each token.
+func splitSinks(s string) []string {
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// firstClause returns the text up to the first sentence or clause
+// terminator, trimmed. Used to fit a ruled-out reason into one
+// inventory-table cell while the full prose stays in the Ruled out
+// section below.
+func firstClause(s string) string {
+	s = strings.TrimSpace(s)
+	if i := strings.IndexAny(s, ".;\n"); i >= 0 {
+		s = s[:i]
+	}
+	return strings.TrimSpace(s)
 }
 
 func escapeMD(s string) string {

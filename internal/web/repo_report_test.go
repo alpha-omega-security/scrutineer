@@ -46,7 +46,7 @@ func seedRepoWithReport(t *testing.T, s *Server) db.Repository {
 		ScanID: scan.ID, RepositoryID: repo.ID, Commit: scan.Commit,
 		FindingID: "F1", Title: "OS command injection via arg",
 		Severity: "High", Status: db.FindingEnriched, CWE: "CWE-78",
-		Location: "main.go:12", Affected: ">=1.0,<1.4",
+		Location: "main.go:12", Sinks: "S1", Affected: ">=1.0,<1.4",
 		Trace: "arg comes in, hits os.Exec", Boundary: "crosses caller boundary",
 		Validation: "`echo $(cat repro.sh)` triggers", Rating: "High because X",
 		CVEID: "CVE-2026-00042", CVSSVector: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
@@ -112,6 +112,8 @@ func TestRepoReport_includesEverySection(t *testing.T) {
 	wants := []string{
 		"# acme/thing",
 		"https://github.com/acme/thing",
+		"## Summary",
+		"1 findings: 0 critical, 1 high, 0 medium, 0 low",
 		"## Repository metadata",
 		"| Languages | Go |",
 		"| License | MIT |",
@@ -119,7 +121,9 @@ func TestRepoReport_includesEverySection(t *testing.T) {
 		"### Trust boundaries",
 		"| caller | yes | arg | README |",
 		"### Sink inventory",
+		"Disposition",
 		"Command execution",
+		"→ Finding #",
 		"### Ruled out",
 		"internal path, no caller provides",
 		"## Findings",
@@ -198,6 +202,103 @@ func TestRepoReport_omitsSkillsRepoSHAWhenUnset(t *testing.T) {
 	body := w.Body.String()
 	if strings.Contains(body, "skills repo") {
 		t.Errorf("expected no skills-repo mention, got:\n%s", body)
+	}
+}
+
+func TestRepoReport_summaryAndSinkDisposition(t *testing.T) {
+	// A repository with three sinks: S1 becomes a Critical finding, S2
+	// is ruled out at step 3, S3 appears in neither. The report must
+	// open with a summary (severity counts, top finding pointer, sink
+	// coverage) and the inventory table must carry a Disposition column
+	// joining each sink to its outcome.
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://github.com/acme/three", Name: "three"}
+	s.DB.Create(&repo)
+
+	now := time.Now()
+	report := `{
+		"repository":"https://github.com/acme/three","commit":"feedfacecafe",
+		"spec_version":10,"model":"t","date":"2026-06-01","languages":["Go"],
+		"boundaries":[{"actor":"user","trusted":"no","controls":"input","source":"docs"}],
+		"inventory":[
+			{"id":"S1","class":"Command execution","location":"a.go:10","consumes":"arg","primitive":"os.Exec"},
+			{"id":"S2","class":"Filesystem write","location":"b.go:20","consumes":"path","primitive":"os.Create"},
+			{"id":"S3","class":"Network egress","location":"c.go:30","consumes":"url","primitive":"http.Get"}
+		],
+		"ruled_out":[{"sinks":["S2"],"step":3,"reason":"path is a compile-time constant. No caller controls it."}],
+		"findings":[]
+	}`
+	scan := db.Scan{
+		RepositoryID: repo.ID, Kind: worker.JobSkill, Status: db.ScanDone,
+		SkillName: "security-deep-dive", Commit: "feedfacecafebeef", Report: report,
+		FinishedAt: &now, CreatedAt: now,
+	}
+	s.DB.Create(&scan)
+
+	crit := db.Finding{
+		ScanID: scan.ID, RepositoryID: repo.ID, Commit: scan.Commit,
+		FindingID: "F1", Title: "Argument injection into os.Exec",
+		Severity: "Critical", Status: db.FindingReady, Sinks: "S1",
+		Location: "a.go:10", Trace: "user input reaches exec",
+	}
+	s.DB.Create(&crit)
+	med := db.Finding{
+		ScanID: scan.ID, RepositoryID: repo.ID, Commit: scan.Commit,
+		FindingID: "F2", Title: "Verbose error leaks path",
+		Severity: "Medium", Status: db.FindingEnriched,
+		Location: "d.go:5",
+	}
+	s.DB.Create(&med)
+
+	body := renderRepoReport(s.DB, &repo)
+
+	// Summary block precedes the metadata table.
+	if i, j := strings.Index(body, "## Summary"), strings.Index(body, "## Repository metadata"); i < 0 || i > j {
+		t.Errorf("summary missing or after metadata; idx summary=%d metadata=%d", i, j)
+	}
+	wants := []string{
+		"## Summary",
+		"2 findings: 1 critical, 0 high, 1 medium, 0 low",
+		"Argument injection into os.Exec",
+		"Sink coverage: 3 catalogued, 1 ruled out, 1 became findings, 1 unresolved",
+		"Start with Finding #" + strconv.FormatUint(uint64(crit.ID), 10),
+		"`feedfacecaf",
+	}
+	for _, want := range wants {
+		if !strings.Contains(body, want) {
+			t.Errorf("summary missing %q", want)
+		}
+	}
+
+	// Disposition column on the inventory table.
+	if !strings.Contains(body, "| # | Class | Primitive | Location | Consumes | Disposition |") {
+		t.Error("inventory header missing Disposition column")
+	}
+	for _, want := range []string{
+		"| S1 |", "→ Finding #" + strconv.FormatUint(uint64(crit.ID), 10),
+		"| S2 |", "ruled out, step 3 — path is a compile-time constant",
+		"| S3 |", "unresolved",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("inventory row missing %q", want)
+		}
+	}
+}
+
+func TestFirstClause(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"single sentence", "single sentence"},
+		{"first. second.", "first"},
+		{"first; second", "first"},
+		{"  spaced  ", "spaced"},
+		{"", ""},
+	}
+	for _, tc := range cases {
+		if got := firstClause(tc.in); got != tc.want {
+			t.Errorf("firstClause(%q) = %q, want %q", tc.in, got, tc.want)
+		}
 	}
 }
 
