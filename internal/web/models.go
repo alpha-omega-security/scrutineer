@@ -57,9 +57,13 @@ func SetModels(models []Model) {
 // SetDefaultModel pins the default model id, overriding "first entry in
 // the pick list". Set at startup from config and mutable via
 // /settings/model; in-memory only, so restart resets it to the
-// configured default.
+// configured default. The empty string and any id not in the pick list
+// are no-ops, so a bad default_model in config can't silently install an
+// invalid runtime default that resolveModelPreference would then
+// propagate into scans. Mirrors SetDefaultEffort. Call SetModels first so
+// a configured pick list is in place to validate against.
 func (s *Server) SetDefaultModel(id string) {
-	if id == "" {
+	if id == "" || !ValidModel(id) {
 		return
 	}
 	s.defaultsMu.Lock()

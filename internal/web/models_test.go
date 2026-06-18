@@ -28,6 +28,12 @@ func TestServerDefaultModel(t *testing.T) {
 	if got := s.DefaultModel(); got != "second-entry" {
 		t.Errorf("SetDefaultModel(\"\") cleared override to %q", got)
 	}
+	// An id outside the pick list (e.g. a typo in config's default_model)
+	// must be rejected rather than installed as the runtime default.
+	s.SetDefaultModel("not-in-pick-list")
+	if got := s.DefaultModel(); got != "second-entry" {
+		t.Errorf("SetDefaultModel(invalid) changed override to %q, want second-entry", got)
+	}
 }
 
 func TestModelTiers(t *testing.T) {
