@@ -137,17 +137,8 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 	}
 
 	skillDir := filepath.Join(workRoot, ".claude", "skills", skill.Name)
-	if err := stageContext(workRoot, w.APIBase, w.ForkOrg, w.metadataDir(), scan, &scan.Repository); err != nil {
-		return "", fmt.Errorf("stage context: %w", err)
-	}
-	if err := stageThreatModel(workRoot, scan.SubPath, scan.Repository.ThreatModel); err != nil {
-		return "", fmt.Errorf("stage threat model: %w", err)
-	}
-	if err := stageSkill(&skill, workRoot, skillDir); err != nil {
-		return "", fmt.Errorf("stage skill: %w", err)
-	}
-	if err := stageImportPayload(workRoot, scan.ImportPayload); err != nil {
-		return "", fmt.Errorf("stage import payload: %w", err)
+	if err := w.stageWorkspace(workRoot, skillDir, scan, &skill); err != nil {
+		return "", err
 	}
 
 	prompt := buildLoggedPrompt(&skill)
@@ -920,6 +911,28 @@ func stageContext(workRoot, apiBase, forkOrg, metadataDir string, scan *db.Scan,
 		return err
 	}
 	return os.WriteFile(filepath.Join(workRoot, "context.json"), b, filePerm)
+}
+
+// stageWorkspace writes everything other than ./src into the scan
+// workspace: context.json, the operator's threat-model override, the
+// skill bundle under .claude/skills/{name}/, and any import payload.
+// Pulled out of doSkill to keep that function under the gocognit
+// threshold; the error wrapping stays here so failures still name the
+// staging step.
+func (w *Worker) stageWorkspace(workRoot, skillDir string, scan *db.Scan, skill *db.Skill) error {
+	if err := stageContext(workRoot, w.APIBase, w.ForkOrg, w.metadataDir(), scan, &scan.Repository); err != nil {
+		return fmt.Errorf("stage context: %w", err)
+	}
+	if err := stageThreatModel(workRoot, scan.SubPath, scan.Repository.ThreatModel); err != nil {
+		return fmt.Errorf("stage threat model: %w", err)
+	}
+	if err := stageSkill(skill, workRoot, skillDir); err != nil {
+		return fmt.Errorf("stage skill: %w", err)
+	}
+	if err := stageImportPayload(workRoot, scan.ImportPayload); err != nil {
+		return fmt.Errorf("stage import payload: %w", err)
+	}
+	return nil
 }
 
 // stageThreatModel writes the repository's operator-edited threat model to
