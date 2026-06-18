@@ -531,7 +531,7 @@ func mergeLocations(base string, more ...string) string {
 	seen := map[string]bool{}
 	var out []string
 	add := func(s string) {
-		for _, e := range strings.Split(s, "\n") {
+		for e := range strings.SplitSeq(s, "\n") {
 			e = strings.TrimSpace(e)
 			if e == "" || seen[e] {
 				continue
