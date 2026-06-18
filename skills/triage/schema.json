@@ -5,8 +5,9 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
-    "has_code":     { "type": "boolean" },
-    "has_packages": { "type": "boolean" },
+    "has_code":      { "type": "boolean" },
+    "has_packages":  { "type": "boolean" },
+    "has_workflows": { "type": "boolean" },
     "brief": {
       "type": "object",
       "description": "Subset of brief --json the gates were derived from.",
