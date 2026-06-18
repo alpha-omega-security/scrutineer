@@ -287,6 +287,61 @@ func TestRepoReport_summaryAndSinkDisposition(t *testing.T) {
 	}
 }
 
+func TestRepoReport_sinkDispositionScopedToLatestScan(t *testing.T) {
+	// Sink ids are only unique within one report. An older deep-dive scan
+	// produced a finding for its "S1"; the latest scan's inventory also has
+	// an "S1" but no finding for it. The disposition must read "unresolved"
+	// for the latest S1, not point at the older scan's finding.
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://github.com/acme/two-scans", Name: "two-scans"}
+	s.DB.Create(&repo)
+
+	now := time.Now()
+	old := now.Add(-time.Hour)
+	oldReport := `{"repository":"r","commit":"old","spec_version":10,"model":"t","date":"2026-05-01","languages":["Go"],
+		"inventory":[{"id":"S1","class":"Command execution","location":"old.go:1","consumes":"a","primitive":"exec"}],
+		"ruled_out":[],"findings":[]}`
+	oldScan := db.Scan{
+		RepositoryID: repo.ID, Kind: worker.JobSkill, Status: db.ScanDone,
+		SkillName: "security-deep-dive", Commit: "oldcommit", Report: oldReport,
+		FinishedAt: &old, CreatedAt: old,
+	}
+	s.DB.Create(&oldScan)
+	// The older scan's finding claims its own S1.
+	oldFinding := db.Finding{
+		ScanID: oldScan.ID, RepositoryID: repo.ID, Commit: oldScan.Commit,
+		FindingID: "OLD1", Title: "Old scan command injection",
+		Severity: "Critical", Status: db.FindingReady, Sinks: "S1", Location: "old.go:1",
+	}
+	s.DB.Create(&oldFinding)
+
+	latestReport := `{"repository":"r","commit":"new","spec_version":10,"model":"t","date":"2026-06-01","languages":["Go"],
+		"inventory":[{"id":"S1","class":"Network egress","location":"new.go:9","consumes":"url","primitive":"http.Get"}],
+		"ruled_out":[],"findings":[]}`
+	latestScan := db.Scan{
+		RepositoryID: repo.ID, Kind: worker.JobSkill, Status: db.ScanDone,
+		SkillName: "security-deep-dive", Commit: "newcommit", Report: latestReport,
+		FinishedAt: &now, CreatedAt: now,
+	}
+	s.DB.Create(&latestScan)
+
+	body := renderRepoReport(s.DB, &repo)
+
+	// The latest S1 row must be unresolved; its disposition must not point
+	// at the older scan's finding. (The older finding is still open, so it
+	// legitimately appears in the findings list — what must not happen is
+	// its id showing up as a disposition pointer.)
+	if !strings.Contains(body, "| S1 |") || !strings.Contains(body, "unresolved") {
+		t.Errorf("latest S1 should be unresolved; body:\n%s", body)
+	}
+	oldPointer := "→ Finding #" + strconv.FormatUint(uint64(oldFinding.ID), 10)
+	if strings.Contains(body, oldPointer) {
+		t.Errorf("older scan's finding %q leaked into a disposition cell", oldPointer)
+	}
+}
+
 func TestFirstClause(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"single sentence", "single sentence"},

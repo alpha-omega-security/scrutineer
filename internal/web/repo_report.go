@@ -41,7 +41,7 @@ func renderRepoReport(gdb *gorm.DB, repo *db.Repository) string {
 	// from the same data without re-querying.
 	latest, threatModel := latestDeepDive(gdb, repo.ID)
 	findings := loadReportFindings(gdb, repo.ID)
-	disp := buildSinkDispositions(threatModel, findings)
+	disp := buildSinkDispositions(threatModel, latestScanFindings(gdb, latest))
 
 	var b strings.Builder
 	writeReportHeader(&b, repo)
@@ -111,14 +111,32 @@ func latestDeepDive(gdb *gorm.DB, repoID uint) (*db.Scan, map[string]any) {
 	return &scan, tm
 }
 
-// loadReportFindings mirrors the repo page Findings tab: deep-dive output
-// only, ordered Critical-first so the summary's top-N and the findings
-// section share one ordering.
+// loadReportFindings mirrors the repo page Findings tab: open deep-dive
+// findings (closed lifecycles excluded, as the tab does), ordered
+// Critical-first then most-recent id, so the summary's top-N and the
+// findings section share the same ordering the UI shows.
 func loadReportFindings(gdb *gorm.DB, repoID uint) []db.Finding {
 	var findings []db.Finding
 	gdb.Where("repository_id = ?", repoID).
+		Where("status NOT IN ?", db.ClosedFindingLifecycles).
 		Where("scan_id IN (?)", deepDiveScanIDs(gdb)).
-		Order(severityOrder).Order("id").Find(&findings)
+		Order(severityOrder).Order("id desc").Find(&findings)
+	return findings
+}
+
+// latestScanFindings loads the findings produced by one scan, for
+// resolving sink dispositions. Inventory sink ids (S1, S2, …) are only
+// unique within a single deep-dive report, so dispositions must be built
+// from the findings of the same scan that produced the inventory; mixing
+// in an older scan's findings would let its "S1" claim this scan's
+// inventory "S1". All lifecycles are kept on purpose — a sink that became
+// a finding is covered even if that finding was later triaged closed.
+func latestScanFindings(gdb *gorm.DB, scan *db.Scan) []db.Finding {
+	if scan == nil {
+		return nil
+	}
+	var findings []db.Finding
+	gdb.Where("scan_id = ?", scan.ID).Find(&findings)
 	return findings
 }
 
