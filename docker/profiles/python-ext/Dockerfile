@@ -8,7 +8,8 @@
 # guess at. This mirrors the php-ext profile.
 #
 # Auto-selected for repos whose setup.py declares a C Extension (see
-# internal/worker/profile.go); also selectable by name via ?profile=. The
+# internal/worker/profile.go); also selectable by name via
+# ?profile=python-ext. The
 # debug+sanitizer interpreter is much slower than the plain python
 # profile, so it is scoped to repos that actually ship native code.
 #
