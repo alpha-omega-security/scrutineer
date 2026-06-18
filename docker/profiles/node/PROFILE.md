@@ -13,7 +13,7 @@ The repository under `./src` is a JavaScript or TypeScript project.
 
 ### Code scanning preparations
 
-Install dependencies with the manager that matches the lockfile present, so requires resolve and any native addons build:
+Install dependencies with the manager that matches the lockfile present, so imports resolve and any native addons build:
 
 ```bash
 cd src
