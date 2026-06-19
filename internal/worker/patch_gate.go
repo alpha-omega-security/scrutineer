@@ -52,7 +52,7 @@ func (w *Worker) parsePatchOutput(scan *db.Scan, report string, emit func(Event)
 		return fmt.Errorf("load finding %d: %w", *scan.FindingID, err)
 	}
 
-	srcDir := filepath.Join(w.workRoot(scan.ID), "src")
+	srcDir := filepath.Join(w.scanWorkRoot(scan), "src")
 	if reason := gatePatch(srcDir, f.Location, rep.Patch); reason != "" {
 		emit(Event{Kind: KindText, Text: "patch: gate rejected: " + reason})
 		return nil
