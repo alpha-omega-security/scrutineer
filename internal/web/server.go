@@ -1426,6 +1426,11 @@ func (s *Server) findingShow(w http.ResponseWriter, r *http.Request) {
 		"Exposures":        exposures,
 		"ShowExposure":     findingSupportsExposure(scan),
 	}
+	if data["ShowExposure"].(bool) {
+		var depCount int64
+		s.DB.Model(&db.Dependent{}).Where("repository_id = ?", scan.RepositoryID).Count(&depCount)
+		data["HasDependents"] = depCount > 0
+	}
 	if id, c, ok := LookupCWE(f.CWE); ok {
 		data["CWE"] = map[string]any{"ID": id, "Name": c.Name, "Description": c.Description}
 	}
