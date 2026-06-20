@@ -20,13 +20,19 @@
 // immediately rather than burning the retry budget waiting on
 // something that will not recover on its own.
 //
-// One content-aware special case sits on top of the generic rule: the
-// dependents skill is meaningful only when the repository publishes a
-// package. Once its packages prereq is satisfied, if packages ran but
-// produced no Package rows the dependents scan is marked a no-op done
-// rather than dispatched, sparing an agent run that could only emit an
-// empty result. dependents is the sole skill that requires packages, so
-// this stays a name-keyed check here instead of generic machinery.
+// Two content-aware special cases sit on top of the generic rule for the
+// dependents skill, which is meaningful only when the repository publishes
+// a package:
+//  1. A packages re-scan is in progress (done scan + live scan): Package
+//     rows are mid delete-recreate, so a zero count is "parsing" not
+//     "empty". Treat packages as pending so dependents defers until the
+//     re-scan settles.
+//  2. packages ran and produced no Package rows: skip dependents as a
+//     no-op done, sparing an agent run that could only emit an empty
+//     result.
+//
+// dependents is the sole skill that requires packages, so both checks
+// stay name-keyed here instead of in generic machinery.
 
 package worker
 
@@ -67,16 +73,23 @@ func (w *Worker) preflightSkill(ctx context.Context, scan *db.Scan, attempt int)
 		return true, nil
 	}
 	if len(pending) == 0 {
-		// Prereqs satisfied. The dependents skill still has nothing to do
-		// when its packages prereq ran and found no published package —
-		// skip it as a no-op rather than burning an agent run. dependents
-		// is the only skill that requires packages, so keying on the name
-		// keeps this content-aware gate out of the generic path.
-		if skill.Name == "dependents" && w.packagesRanButEmpty(scan.RepositoryID) {
-			w.skipScanNoPackages(scan, skill.Name)
-			return true, nil
+		// Prereqs satisfied. Apply the two content-aware dependents checks
+		// (see file header). The rescan check must come first: during a
+		// re-scan Package rows are momentarily zero (mid delete-recreate),
+		// so packagesRanButEmpty would fire falsely if called in that
+		// window. Appending "packages" to pending lets the defer machinery
+		// below re-enqueue dependents until the re-scan settles.
+		if skill.Name == "dependents" {
+			if w.packagesRescanInFlight(scan.RepositoryID) {
+				pending = append(pending, "packages")
+			} else if w.packagesRanButEmpty(scan.RepositoryID) {
+				w.skipScanNoPackages(scan, skill.Name)
+				return true, nil
+			}
 		}
-		return false, nil
+		if len(pending) == 0 {
+			return false, nil
+		}
 	}
 
 	maxAttempts := w.MaxPrereqAttempts
@@ -177,24 +190,13 @@ func (w *Worker) unsatisfiedPrereqs(repoID uint, names []string) (pending, dead 
 	return pending, dead
 }
 
-// packagesRanButEmpty reports whether the `packages` skill has a done
-// scan for the repository yet produced zero Package rows — i.e. the repo
-// publishes nothing. parsePackagesOutput commits Package rows before the
-// packages scan is marked done, so done+zero-rows reliably means "ran and
-// found nothing" with no read race. Returns false when packages has no
-// done scan: zero rows there means "not yet known", not "no packages", and
-// must not trigger a skip — the gated skill dispatches as it does today and
-// self-gates if packages later turns up empty.
-//
-// An in-flight packages scan (queued/running/paused) also returns false even
-// though an earlier done scan exists. On a re-scan the satisfied prereq is the
-// previous commit's done scan, while the current commit's packages run is
-// mid-flight: parsePackagesOutput deletes then re-creates Package rows in two
-// non-transactional calls, so the row count is momentarily zero while the new
-// run parses. Skipping in that window would wrongly drop a publishing library's
-// dependents. Deferring instead lets the fresh packages run finish; dependents
-// then re-checks against a stable count.
-func (w *Worker) packagesRanButEmpty(repoID uint) bool {
+// packagesRescanInFlight reports whether a packages re-scan is in progress:
+// a prior done scan satisfies the prereq while a new run is still live
+// (queued/running/paused). During this window parsePackagesOutput has deleted
+// the old Package rows and not yet committed the new ones, so the row count is
+// momentarily zero even for a repo that publishes packages. Callers must check
+// this before packagesRanButEmpty; see preflightSkill.
+func (w *Worker) packagesRescanInFlight(repoID uint) bool {
 	var done int64
 	w.DB.Model(&db.Scan{}).
 		Where("repository_id = ? AND skill_name = ? AND status = ?", repoID, "packages", db.ScanDone).
@@ -207,7 +209,25 @@ func (w *Worker) packagesRanButEmpty(repoID uint) bool {
 		Where("repository_id = ? AND skill_name = ? AND status IN ?",
 			repoID, "packages", []db.ScanStatus{db.ScanQueued, db.ScanRunning, db.ScanPaused}).
 		Count(&live)
-	if live > 0 {
+	return live > 0
+}
+
+// packagesRanButEmpty reports whether the `packages` skill has a done scan for
+// the repository yet produced zero Package rows — i.e. the repo publishes
+// nothing. parsePackagesOutput commits Package rows before the packages scan is
+// marked done, so done+zero-rows reliably means "ran and found nothing" with no
+// read race. Returns false when packages has no done scan: zero rows there means
+// "not yet known", not "no packages".
+//
+// Callers must check packagesRescanInFlight first. During a re-scan Package rows
+// are momentarily zero (mid delete-recreate), so this function would incorrectly
+// return true in that window.
+func (w *Worker) packagesRanButEmpty(repoID uint) bool {
+	var done int64
+	w.DB.Model(&db.Scan{}).
+		Where("repository_id = ? AND skill_name = ? AND status = ?", repoID, "packages", db.ScanDone).
+		Count(&done)
+	if done == 0 {
 		return false
 	}
 	var pkgs int64

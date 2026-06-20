@@ -407,12 +407,12 @@ func TestPreflightSkill_dependentsDispatchesWhenPackagesFound(t *testing.T) {
 	}
 }
 
-func TestPreflightSkill_dependentsDispatchesWhenPackagesRescanInFlight(t *testing.T) {
+func TestPreflightSkill_dependentsDeferredWhenPackagesRescanInFlight(t *testing.T) {
 	// Re-scan window: an earlier commit's packages scan is done (satisfying
 	// the prereq) while the current commit's packages run is in flight. The
 	// parser deletes-then-recreates Package rows non-transactionally, so a
 	// zero row count here is "mid-parse", not "no packages". The gate must
-	// NOT skip — dispatch and let the fresh packages run settle.
+	// defer — not skip and not dispatch — until the re-scan settles.
 	w := newPreflightWorker(t)
 	scan := seedDependentsScan(t, w)
 	pkgSkill := seedPrereqSkill(t, w, "packages", true)
@@ -425,8 +425,8 @@ func TestPreflightSkill_dependentsDispatchesWhenPackagesRescanInFlight(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if deferred {
-		t.Fatal("dependents must dispatch (not skip) while a packages re-scan is in flight")
+	if !deferred {
+		t.Fatal("dependents must defer (not dispatch or skip) while a packages re-scan is in flight")
 	}
 
 	var loaded db.Scan
@@ -434,7 +434,7 @@ func TestPreflightSkill_dependentsDispatchesWhenPackagesRescanInFlight(t *testin
 		t.Fatal(err)
 	}
 	if loaded.Status != db.ScanQueued {
-		t.Errorf("scan status = %q, want queued (dispatch leaves it for the handler), not skipped to done", loaded.Status)
+		t.Errorf("scan status = %q, want queued (deferred, not skipped to done)", loaded.Status)
 	}
 }
 
