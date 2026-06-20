@@ -581,6 +581,13 @@ func TestLoadDirectory_bundledSkillsAreValid(t *testing.T) {
 	if n == 0 {
 		t.Fatal("no skills loaded from ../../skills")
 	}
+	var patch db.Skill
+	if err := gdb.Where("name = ?", "patch").First(&patch).Error; err != nil {
+		t.Fatalf("patch skill not loaded: %v", err)
+	}
+	if patch.MaxTurns != 50 {
+		t.Errorf("patch max_turns = %d, want 50", patch.MaxTurns)
+	}
 }
 
 func TestLoadDirectory_failsOnInvalidSkill(t *testing.T) {
