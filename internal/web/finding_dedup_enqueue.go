@@ -11,6 +11,11 @@ import (
 // See skills/finding-dedup/SKILL.md.
 const findingDedupSkillName = "finding-dedup"
 
+// dedupMinFindings is the fewest open non-scanner findings a repository must
+// hold for a dedup pass to be worth running: dedup compares findings pairwise,
+// so it needs at least a pair.
+const dedupMinFindings = 2
+
 // autoEnqueueFindingDedupAfterDeepDive is wired onto Worker.OnScanFinalized.
 // The worker calls it once after a scan completes and its findings are
 // committed. We enqueue a repository-scoped finding-dedup run only when both
@@ -61,7 +66,7 @@ func (s *Server) autoEnqueueFindingDedupAfterDeepDive(scan *db.Scan) {
 			"scan", scan.ID, "repo", scan.RepositoryID, "err", err)
 		return
 	}
-	if openNonScanner < 2 {
+	if openNonScanner < dedupMinFindings {
 		return
 	}
 
