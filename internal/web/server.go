@@ -1123,26 +1123,26 @@ const patchSkillName = "patch"
 const mitigateSkillName = "mitigate"
 
 func (s *Server) findingVerify(w http.ResponseWriter, r *http.Request) {
-	s.runFindingSkill(w, r, verifySkillName)
+	s.runFindingSkill(w, r, verifySkillName, true)
 }
 
 func (s *Server) findingDisclose(w http.ResponseWriter, r *http.Request) {
-	s.runFindingSkill(w, r, discloseSkillName)
+	s.runFindingSkill(w, r, discloseSkillName, false)
 }
 
 func (s *Server) findingPublicIssue(w http.ResponseWriter, r *http.Request) {
-	s.runFindingSkill(w, r, publicIssueSkillName)
+	s.runFindingSkill(w, r, publicIssueSkillName, false)
 }
 
 func (s *Server) findingPatchRun(w http.ResponseWriter, r *http.Request) {
-	s.runFindingSkill(w, r, patchSkillName)
+	s.runFindingSkill(w, r, patchSkillName, false)
 }
 
 func (s *Server) findingMitigate(w http.ResponseWriter, r *http.Request) {
-	s.runFindingSkill(w, r, mitigateSkillName)
+	s.runFindingSkill(w, r, mitigateSkillName, false)
 }
 
-func (s *Server) runFindingSkill(w http.ResponseWriter, r *http.Request, name string) {
+func (s *Server) runFindingSkill(w http.ResponseWriter, r *http.Request, name string, skipOpen bool) {
 	f, ok := loadByID[db.Finding](s, w, r)
 	if !ok {
 		return
@@ -1157,12 +1157,32 @@ func (s *Server) runFindingSkill(w http.ResponseWriter, r *http.Request, name st
 		http.Error(w, name+" skill is not installed", http.StatusPreconditionFailed)
 		return
 	}
+	if skipOpen {
+		if openScan, ok := s.openFindingSkillScan(f.ID, name); ok {
+			setFlash(w, Flash{Category: warningKey, Title: name + " already queued or running"})
+			s.redirect(w, r, fmt.Sprintf("/scans/%d", openScan.ID))
+			return
+		}
+	}
 	scanID, err := s.enqueueSkillScoped(r.Context(), scan.RepositoryID, skill.ID, new(f.ID), r.FormValue("model"))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	s.redirect(w, r, fmt.Sprintf("/scans/%d", scanID))
+}
+
+func (s *Server) openFindingSkillScan(findingID uint, skillName string) (db.Scan, bool) {
+	var scan db.Scan
+	err := s.DB.
+		Where("finding_id = ? AND skill_name = ? AND status IN ?",
+			findingID, skillName, []db.ScanStatus{db.ScanQueued, db.ScanRunning}).
+		Order("status_priority asc, id desc").
+		First(&scan).Error
+	if err != nil {
+		return db.Scan{}, false
+	}
+	return scan, true
 }
 
 // repoVerifyAll is the bulk equivalent of the per-finding Verify button: it
@@ -1348,6 +1368,11 @@ func (s *Server) advisoriesList(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+type findingWorkflowData struct {
+	db.Finding
+	VerifyInFlight bool
+}
+
 func (s *Server) findingShow(w http.ResponseWriter, r *http.Request) {
 	var f db.Finding
 	if err := s.DB.Preload("Labels").First(&f, r.PathValue("id")).Error; err != nil {
@@ -1377,6 +1402,7 @@ func (s *Server) findingShow(w http.ResponseWriter, r *http.Request) {
 	for _, l := range f.Labels {
 		selected[l.Name] = true
 	}
+	_, verifyInFlight := s.openFindingSkillScan(f.ID, verifySkillName)
 
 	type exposureRow struct {
 		Dep    db.Dependent
@@ -1423,6 +1449,7 @@ func (s *Server) findingShow(w http.ResponseWriter, r *http.Request) {
 		"LatestRevalidate": latestRevalidate,
 		"AllLabels":        labels,
 		"Selected":         selected,
+		"Workflow":         findingWorkflowData{Finding: f, VerifyInFlight: verifyInFlight},
 		"Exposures":        exposures,
 		"ShowExposure":     findingSupportsExposure(scan),
 	}

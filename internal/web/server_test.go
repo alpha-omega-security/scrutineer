@@ -1292,6 +1292,33 @@ func TestFindingShow_rendersMissedCount(t *testing.T) {
 	}
 }
 
+func TestFindingShow_disablesVerifyActionWhenVerifyInFlight(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/r", Name: "r"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: "security-deep-dive"}
+	s.DB.Create(&scan)
+	f := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "awaiting verify", Severity: "High", Status: db.FindingNew}
+	s.DB.Create(&f)
+	s.DB.Create(&db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanRunning,
+		StatusPriority: db.StatusPriorityFor(db.ScanRunning), SkillName: verifySkillName, FindingID: new(f.ID)})
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", fmt.Sprintf("/findings/%d", f.ID)))
+	body := w.Body.String()
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, body)
+	}
+	if strings.Contains(body, fmt.Sprintf(`hx-post="/findings/%d/verify"`, f.ID)) {
+		t.Error("finding page should not render an active verify action while verify is in flight")
+	}
+	if !strings.Contains(body, `button type="button" class="btn" disabled`) || !strings.Contains(body, "Verify in progress") {
+		t.Errorf("finding page should render disabled verify state, body=%s", body)
+	}
+}
+
 func TestFindingShow_ghsaLinksToRepoAdvisory(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
@@ -1879,6 +1906,42 @@ func TestFindingPublicIssueEnqueuesPublicIssueSkill(t *testing.T) {
 	}
 	if row.APIToken == "" {
 		t.Error("scan missing api token")
+	}
+}
+
+func TestFindingVerifySkipsOpenVerifyScan(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://github.com/foo/bar", Name: "bar"}
+	s.DB.Create(&repo)
+	parent := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: "security-deep-dive"}
+	s.DB.Create(&parent)
+	finding := db.Finding{ScanID: parent.ID, RepositoryID: repo.ID, FindingID: "F1", Title: "x", Severity: "High", Status: db.FindingNew}
+	s.DB.Create(&finding)
+	verify := db.Skill{Name: verifySkillName, Description: "v", Body: "b", OutputFile: "report.json", OutputKind: "verify", Version: 1, Active: true, Source: "ui"}
+	s.DB.Create(&verify)
+	openScan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanQueued,
+		StatusPriority: db.StatusPriorityFor(db.ScanQueued), SkillName: verifySkillName, SkillID: new(verify.ID), FindingID: new(finding.ID)}
+	s.DB.Create(&openScan)
+
+	req := httptest.NewRequest("POST", fmt.Sprintf("/findings/%d/verify", finding.ID), nil)
+	req.Host = testHost
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	if got, want := w.Header().Get("Location"), fmt.Sprintf("/scans/%d", openScan.ID); got != want {
+		t.Errorf("redirect = %q, want existing scan %q", got, want)
+	}
+	var count int64
+	s.DB.Model(&db.Scan{}).
+		Where("finding_id = ? AND skill_name = ?", finding.ID, verifySkillName).
+		Count(&count)
+	if count != 1 {
+		t.Errorf("verify scans = %d, want 1", count)
 	}
 }
 
