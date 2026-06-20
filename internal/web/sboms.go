@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/git-pkgs/sbom"
+	"gorm.io/gorm"
 
 	"scrutineer/internal/db"
 )
@@ -210,7 +212,23 @@ func (s *Server) goResolve(uploadID uint) {
 }
 
 func (s *Server) sbomDelete(w http.ResponseWriter, r *http.Request) {
-	if err := s.DB.Delete(&db.SBOMUpload{}, r.PathValue("id")).Error; err != nil {
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	// Delete the upload's packages explicitly inside one transaction rather
+	// than leaning on the SBOMUpload.Packages ON DELETE CASCADE: sqlite's
+	// foreign_keys pragma is per-connection and enforced on only one pooled
+	// connection, so the cascade silently no-ops on most serving connections
+	// and orphans the package rows (same reason repoDelete deletes children
+	// by hand).
+	if err := s.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("sbom_upload_id = ?", id).Delete(&db.SBOMPackage{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&db.SBOMUpload{}, id).Error
+	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

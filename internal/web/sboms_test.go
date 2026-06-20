@@ -146,6 +146,17 @@ func TestSBOMResolveHandler(t *testing.T) {
 func TestSBOMDelete(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
+
+	// Pin to one connection with foreign_keys OFF to reproduce production: a
+	// pooled in-memory DB applies the pragma to only one connection, so the
+	// serving connection usually has FK enforcement disabled and ON DELETE
+	// CASCADE silently no-ops. sbomDelete must remove the packages itself.
+	sqldb, _ := s.DB.DB()
+	sqldb.SetMaxOpenConns(1)
+	if err := s.DB.Exec("PRAGMA foreign_keys=OFF").Error; err != nil {
+		t.Fatal(err)
+	}
+
 	up := db.SBOMUpload{Name: "doomed", Packages: []db.SBOMPackage{
 		{Name: "lodash", PURL: "pkg:npm/lodash@4.17.21"},
 	}}
@@ -166,6 +177,15 @@ func TestSBOMDelete(t *testing.T) {
 	s.DB.Model(&db.SBOMUpload{}).Where("id = ?", up.ID).Count(&n)
 	if n != 0 {
 		t.Errorf("upload count = %d, want 0", n)
+	}
+
+	// The upload's packages must go too. Deleting the upload alone relies on
+	// ON DELETE CASCADE, which sqlite enforces only when foreign_keys is on
+	// for the serving connection, so sbomDelete removes them explicitly.
+	var pkgs int64
+	s.DB.Model(&db.SBOMPackage{}).Where("sbom_upload_id = ?", up.ID).Count(&pkgs)
+	if pkgs != 0 {
+		t.Errorf("orphaned package count = %d, want 0", pkgs)
 	}
 }
 
