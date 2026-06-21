@@ -16,7 +16,7 @@ const findingDedupSkillName = "finding-dedup"
 // so it needs at least a pair.
 const dedupMinFindings = 2
 
-// autoEnqueueFindingDedupAfterDeepDive is wired onto Worker.OnScanFinalized.
+// autoEnqueueFindingDedup is wired onto Worker.OnScanFinalized.
 // The worker calls it once after a scan completes and its findings are
 // committed. We enqueue a repository-scoped finding-dedup run only when both
 // conditions the dedup pass needs to be worth its model spend hold:
@@ -39,7 +39,7 @@ const dedupMinFindings = 2
 //
 // Errors are logged and swallowed: failing to enqueue the dedup pass must
 // never fail the upstream scan.
-func (s *Server) autoEnqueueFindingDedupAfterDeepDive(scan *db.Scan) {
+func (s *Server) autoEnqueueFindingDedup(scan *db.Scan) {
 	if scan == nil || scan.SkillName != deepDiveSkillName {
 		return
 	}

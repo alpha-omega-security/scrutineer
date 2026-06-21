@@ -119,7 +119,7 @@ func loadReportFindings(gdb *gorm.DB, repoID uint) []db.Finding {
 	var findings []db.Finding
 	gdb.Where("repository_id = ?", repoID).
 		Where("status NOT IN ?", db.ClosedFindingLifecycles).
-		Where("scan_id IN (?)", deepDiveScanIDs(gdb)).
+		Where("scan_id IN (?)", findingsScanIDs(gdb)).
 		Order(severityOrder).Order("id desc").Find(&findings)
 	return findings
 }

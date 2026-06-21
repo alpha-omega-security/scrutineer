@@ -259,7 +259,7 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *work
 	if w != nil {
 		w.OnFindingCreated = s.autoEnqueueRevalidate
 		w.OnRevalidateVerdict = s.autoChainVerifyAfterRevalidate
-		w.OnScanFinalized = s.autoEnqueueFindingDedupAfterDeepDive
+		w.OnScanFinalized = s.autoEnqueueFindingDedup
 	}
 	return s, nil
 }
@@ -607,7 +607,7 @@ func (s *Server) repoList(w http.ResponseWriter, r *http.Request) {
 		s.DB.Model(&db.Finding{}).
 			Select("repository_id, COUNT(*) AS n").
 			Where("repository_id IN ?", repoIDs).
-			Where("scan_id IN (?)", deepDiveScanIDs(s.DB)).
+			Where("scan_id IN (?)", findingsScanIDs(s.DB)).
 			Where("status NOT IN ?", db.ClosedFindingLifecycles).
 			Group("repository_id").
 			Scan(&counts)
@@ -756,7 +756,7 @@ func loadRepoFindings(gdb *gorm.DB, repoID uint, category string) repoFindings {
 			Where("repository_id = ? AND status NOT IN ?", repoID, db.ClosedFindingLifecycles)
 	}
 
-	ddQ := base().Where("scan_id IN (?)", deepDiveScanIDs(gdb))
+	ddQ := base().Where("scan_id IN (?)", findingsScanIDs(gdb))
 	if category != "" {
 		ddQ = applyCWECategoryFilter(ddQ, category)
 	}
@@ -764,7 +764,7 @@ func loadRepoFindings(gdb *gorm.DB, repoID uint, category string) repoFindings {
 	ddQ.Count(&rf.DeepDiveTotal)
 	ddQ.Order(severityOrder).Order("id desc").Limit(tabRowCap).Find(&rf.DeepDive)
 
-	scQ := base().Where("scan_id NOT IN (?)", deepDiveScanIDs(gdb))
+	scQ := base().Where("scan_id NOT IN (?)", findingsScanIDs(gdb))
 	scQ.Count(&rf.ScannersTotal)
 	scQ.Order(severityOrder).Order("id desc").Limit(tabRowCap).Find(&rf.Scanners)
 
@@ -861,7 +861,7 @@ func (s *Server) findings(w http.ResponseWriter, r *http.Request) {
 func (s *Server) findingsIndexQuery(r *http.Request, includeScanners, includeMissed bool) *gorm.DB {
 	q := s.DB.Model(&db.Finding{})
 	if !includeScanners {
-		q = q.Where("scan_id IN (?)", deepDiveScanIDs(s.DB))
+		q = q.Where("scan_id IN (?)", findingsScanIDs(s.DB))
 	}
 	if sev := r.URL.Query().Get("severity"); sev != "" {
 		q = q.Where("severity = ?", sev)
@@ -1053,11 +1053,11 @@ var deepDiveFindingsCountSQL = `SELECT COUNT(*) FROM findings f
 	      AND f.scan_id IN (SELECT id FROM scans
 	        WHERE skill_name = '` + deepDiveSkillName + `' OR skill_name = '' OR skill_name IS NULL)`
 
-// deepDiveScanIDs returns a GORM subquery selecting scan IDs that belong to
+// findingsScanIDs returns a GORM subquery selecting scan IDs that belong to
 // the curated audit (security-deep-dive) or to legacy/empty skill_name rows.
 // Use it as a `scan_id IN (?)` filter to keep listings consistent with the
 // repo Findings tab.
-func deepDiveScanIDs(gdb *gorm.DB) *gorm.DB {
+func findingsScanIDs(gdb *gorm.DB) *gorm.DB {
 	return gdb.Model(&db.Scan{}).Select("id").
 		Where("skill_name = ? OR skill_name = '' OR skill_name IS NULL", deepDiveSkillName)
 }
@@ -1230,7 +1230,7 @@ func (s *Server) repoVerifyAll(w http.ResponseWriter, r *http.Request) {
 
 	q := s.DB.Model(&db.Finding{}).
 		Where("repository_id = ? AND status = ? AND scan_id IN (?)",
-			repo.ID, db.FindingNew, deepDiveScanIDs(s.DB))
+			repo.ID, db.FindingNew, findingsScanIDs(s.DB))
 	if category := r.URL.Query().Get("category"); category != "" {
 		q = applyCWECategoryFilter(q, category)
 	}
@@ -1765,7 +1765,7 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 	// button on the Findings tab; the bulk handler acts on this exact set.
 	newFindingsQuery := s.DB.Model(&db.Finding{}).
 		Where("repository_id = ? AND status = ? AND scan_id IN (?)",
-			repo.ID, db.FindingNew, deepDiveScanIDs(s.DB))
+			repo.ID, db.FindingNew, findingsScanIDs(s.DB))
 	if category != "" {
 		newFindingsQuery = applyCWECategoryFilter(newFindingsQuery, category)
 	}

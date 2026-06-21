@@ -71,7 +71,7 @@ func (s *Server) settingsShow(w http.ResponseWriter, r *http.Request) {
 	s.DB.Table("scans").Count(&stats.Scans)
 	// Split findings the same way the repo page does: deep-dive (curated
 	// audit) findings versus tool-scanner output (zizmor, semgrep, …).
-	dd := deepDiveScanIDs(s.DB)
+	dd := findingsScanIDs(s.DB)
 	s.DB.Model(&db.Finding{}).Where("scan_id IN (?)", dd).Count(&stats.Findings)
 	s.DB.Model(&db.Finding{}).Where("scan_id NOT IN (?)", dd).Count(&stats.ScannerFindings)
 	s.DB.Table("packages").Count(&stats.Packages)

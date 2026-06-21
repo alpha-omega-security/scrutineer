@@ -120,7 +120,7 @@ func (s *Server) maintainerShow(w http.ResponseWriter, r *http.Request) {
 		// keeping scanner noise off the maintainer view used for disclosure
 		// routing.
 		s.DB.Where("repository_id IN ?", repoIDs).
-			Where("scan_id IN (?)", deepDiveScanIDs(s.DB)).
+			Where("scan_id IN (?)", findingsScanIDs(s.DB)).
 			Order("id desc").Find(&findings)
 	}
 	reposByID := loadRepoMap(s.DB, findings, findingRepoID)

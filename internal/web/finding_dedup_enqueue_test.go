@@ -129,7 +129,7 @@ func TestAutoEnqueueFindingDedup_conditions(t *testing.T) {
 				newFindingUnder(t, s, repoID, scan.ID, db.FindingNew)
 			}
 
-			s.autoEnqueueFindingDedupAfterDeepDive(scan)
+			s.autoEnqueueFindingDedup(scan)
 
 			got := dedupQueued(s, repoID, dedupID) > 0
 			if got != c.wantQueued {
@@ -148,8 +148,8 @@ func TestAutoEnqueueFindingDedup_doesNotDoubleQueue(t *testing.T) {
 	scan := newScan(t, s, repoID, "security-deep-dive")
 	newFindingUnder(t, s, repoID, scan.ID, db.FindingNew)
 
-	s.autoEnqueueFindingDedupAfterDeepDive(scan)
-	s.autoEnqueueFindingDedupAfterDeepDive(scan)
+	s.autoEnqueueFindingDedup(scan)
+	s.autoEnqueueFindingDedup(scan)
 
 	if n := dedupQueued(s, repoID, dedupID); n != 1 {
 		t.Errorf("queued = %d, want 1 (re-queue guard)", n)
@@ -167,11 +167,11 @@ func TestAutoEnqueueFindingDedup_gracefulWhenSkillAbsent(t *testing.T) {
 	scan := newScan(t, s, repo.ID, "security-deep-dive")
 	newFindingUnder(t, s, repo.ID, scan.ID, db.FindingNew)
 
-	s.autoEnqueueFindingDedupAfterDeepDive(scan)
+	s.autoEnqueueFindingDedup(scan)
 }
 
 func TestAutoEnqueueFindingDedup_nilScan(t *testing.T) {
 	s, done, _, _ := dedupTestSetup(t)
 	defer done()
-	s.autoEnqueueFindingDedupAfterDeepDive(nil) // must not panic
+	s.autoEnqueueFindingDedup(nil) // must not panic
 }

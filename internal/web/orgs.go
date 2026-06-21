@@ -167,7 +167,7 @@ func (s *Server) orgShow(w http.ResponseWriter, r *http.Request) {
 		Select("repository_id, COUNT(*) AS n").
 		Where("repository_id IN ?", repoIDs).
 		Where("status NOT IN ?", db.ClosedFindingLifecycles).
-		Where("scan_id IN (?)", deepDiveScanIDs(s.DB)).
+		Where("scan_id IN (?)", findingsScanIDs(s.DB)).
 		Group("repository_id").Scan(&counts)
 	for _, c := range counts {
 		findingCounts[c.RepositoryID] = c.N
@@ -180,7 +180,7 @@ func (s *Server) orgShow(w http.ResponseWriter, r *http.Request) {
 	category := r.URL.Query().Get("category")
 	findingsQ := s.DB.Where("repository_id IN ?", repoIDs).
 		Where("status NOT IN ?", db.ClosedFindingLifecycles).
-		Where("scan_id IN (?)", deepDiveScanIDs(s.DB))
+		Where("scan_id IN (?)", findingsScanIDs(s.DB))
 	if category != "" {
 		findingsQ = applyCWECategoryFilter(findingsQ, category)
 	}

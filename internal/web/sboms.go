@@ -144,7 +144,7 @@ func (s *Server) sbomShow(w http.ResponseWriter, r *http.Request) {
 		// downstream-impact view, where lint output from per-repo scanners
 		// (zizmor, semgrep) would be misleading at this level.
 		q := s.DB.Where("repository_id IN ? AND status NOT IN ?", repoIDs, db.ClosedFindingLifecycles).
-			Where("scan_id IN (?)", deepDiveScanIDs(s.DB))
+			Where("scan_id IN (?)", findingsScanIDs(s.DB))
 		if sev := r.URL.Query().Get("severity"); sev != "" {
 			q = q.Where("severity = ?", sev)
 		}
