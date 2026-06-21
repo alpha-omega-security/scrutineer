@@ -201,6 +201,21 @@ func TestMatchProfile(t *testing.T) {
 			want: "go",
 		},
 		{
+			name: "maven matches java",
+			json: `{"package_managers":[{"name":"Maven"}]}`,
+			want: "java",
+		},
+		{
+			name: "gradle matches java (secondary ecosystem)",
+			json: `{"package_managers":[{"name":"Gradle"}]}`,
+			want: "java",
+		},
+		{
+			name: "gradle case-insensitive",
+			json: `{"package_managers":[{"name":"gradle"}]}`,
+			want: "java",
+		},
+		{
 			name: "truly unknown manager falls back",
 			json: `{"package_managers":[{"name":"Cargo"}]}`,
 			want: "",
@@ -353,7 +368,7 @@ func TestEnsureImage_missingDockerfile(t *testing.T) {
 // auto-detection resolve the wrong profile, with no other test failing).
 // Marker-only profiles legitimately have no Ecosystem and are excluded
 // from the ecosystem-uniqueness check. A profile that matches several
-// ecosystems (e.g. python) lists them via Ecosystems; every one is
+// ecosystems (e.g. python, java) lists them via Ecosystems; every one is
 // checked for uniqueness against every other profile's.
 func TestBuiltinProfiles_registrySanity(t *testing.T) {
 	names := map[string]bool{}
