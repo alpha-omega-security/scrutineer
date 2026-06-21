@@ -377,17 +377,19 @@ func TestRepoShipsProfileDockerfiles(t *testing.T) {
 }
 
 // TestProfileGuidesShip keeps the language profiles honest about the
-// per-container PROFILE.md they advertise. PROFILE.md is optional in
-// general (a profile without one simply gets no orientation injected at
-// scan time); these profiles document specifics the agent needs to
-// behave correctly, so missing them is a real regression.
+// per-container PROFILE.md they advertise. The runtime treats PROFILE.md
+// as optional (a profile without one simply gets no orientation injected
+// at scan time), but every shipped profile documents specifics the agent
+// needs to behave correctly, so the test requires one per registered
+// profile. Iterating builtinProfiles rather than a hand-kept list keeps
+// this test out of the conflict path when a profile is added.
 func TestProfileGuidesShip(t *testing.T) {
 	wd, _ := os.Getwd()
 	repoRoot := filepath.Join(wd, "..", "..")
-	for _, name := range []string{"php", "php-ext", "ruby", "node", "python", "python-ext"} {
-		guide := filepath.Join(repoRoot, "docker", "profiles", name, "PROFILE.md")
+	for _, p := range builtinProfiles {
+		guide := filepath.Join(repoRoot, "docker", "profiles", p.Name, "PROFILE.md")
 		if _, err := os.Stat(guide); err != nil {
-			t.Errorf("expected %s profile PROFILE.md to exist: %v", name, err)
+			t.Errorf("expected %s profile PROFILE.md to exist: %v", p.Name, err)
 		}
 	}
 }
