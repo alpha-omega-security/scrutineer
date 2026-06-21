@@ -484,7 +484,7 @@
   </div>
 
   <div role="tabpanel" id="rp3" aria-labelledby="rt3" hidden>
-    {{if or (gt .ActiveScans 0) (gt .FailedScans 0)}}
+    {{if or (gt .ActiveScans 0) (gt .PausedScans 0) (gt .FailedScans 0)}}
       <div class="flex justify-end gap-2 mb-2">
         {{if gt .ActiveScans 0}}
         <form method="post" action="/scans/cancel-all?repository={{.Repo.ID}}"
@@ -492,6 +492,15 @@
               hx-confirm="Cancel all {{.ActiveScans}} running or queued scan(s) on {{.Repo.Name}}? Any work in progress is discarded.">
           <button type="submit" class="btn-outline">
             <i data-lucide="x"></i> Cancel all ({{.ActiveScans}})
+          </button>
+        </form>
+        {{end}}
+        {{if gt .PausedScans 0}}
+        <form method="post" action="/scans/resume-paused?repository={{.Repo.ID}}"
+              hx-post="/scans/resume-paused?repository={{.Repo.ID}}" hx-swap="none"
+              hx-confirm="Resume all {{.PausedScans}} paused scan(s) on {{.Repo.Name}}?">
+          <button type="submit" class="btn-outline">
+            <i data-lucide="play"></i> Resume all ({{.PausedScans}})
           </button>
         </form>
         {{end}}

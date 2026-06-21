@@ -260,6 +260,51 @@ func TestScansResumePaused(t *testing.T) {
 	}
 }
 
+func TestScansResumePaused_scopedToRepo(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/a", Name: "a"}
+	other := db.Repository{URL: "https://example.com/b", Name: "b"}
+	s.DB.Create(&repo)
+	s.DB.Create(&other)
+
+	mk := func(repoID uint, st db.ScanStatus) db.Scan {
+		sc := db.Scan{RepositoryID: repoID, Kind: "skill", Status: st,
+			StatusPriority: db.StatusPriorityFor(st)}
+		s.DB.Create(&sc)
+		return sc
+	}
+	paused := mk(repo.ID, db.ScanPaused)
+	otherPaused := mk(other.ID, db.ScanPaused)
+	finished := mk(repo.ID, db.ScanDone)
+
+	r := localReq("POST", fmt.Sprintf("/scans/resume-paused?repository=%d", repo.ID))
+	r.Header.Set("HX-Request", "true")
+	w := httptest.NewRecorder()
+	s.scansResumePaused(w, r)
+
+	if loc := w.Header().Get("HX-Redirect"); loc != fmt.Sprintf("/repositories/%d#rt3", repo.ID) {
+		t.Errorf("HX-Redirect = %q, want repo Scans tab", loc)
+	}
+
+	statusOf := func(id uint) db.ScanStatus {
+		var sc db.Scan
+		s.DB.First(&sc, id)
+		return sc.Status
+	}
+	// Only this repo's paused scan is resumed; the other repo's paused scan and
+	// terminal scans are untouched.
+	if got := statusOf(paused.ID); got != db.ScanQueued {
+		t.Errorf("paused -> %q, want queued", got)
+	}
+	if got := statusOf(otherPaused.ID); got != db.ScanPaused {
+		t.Errorf("other repo paused -> %q, want paused (untouched)", got)
+	}
+	if got := statusOf(finished.ID); got != db.ScanDone {
+		t.Errorf("done -> %q, want done", got)
+	}
+}
+
 func TestScansCancelAll_requiresRepository(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

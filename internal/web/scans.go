@@ -249,8 +249,13 @@ func (s *Server) scansPauseQueued(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) scansResumePaused(w http.ResponseWriter, r *http.Request) {
+	repoID, _ := strconv.Atoi(r.URL.Query().Get("repository"))
+	q := s.DB.Where("status = ?", db.ScanPaused)
+	if repoID > 0 {
+		q = q.Where("repository_id = ?", repoID)
+	}
 	var scans []db.Scan
-	if err := s.DB.Where("status = ?", db.ScanPaused).Find(&scans).Error; err != nil {
+	if err := q.Find(&scans).Error; err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -267,6 +272,12 @@ func (s *Server) scansResumePaused(w http.ResponseWriter, r *http.Request) {
 		cat = errorKey
 	}
 	setFlash(w, Flash{Category: cat, Title: fmt.Sprintf("%d paused scans resumed", resumed)})
+	// Repo-scoped resumes return to that repo's Scans tab so the operator stays
+	// in context; otherwise we send them to the global queued list.
+	if repoID > 0 {
+		s.redirect(w, r, fmt.Sprintf("/repositories/%d#rt3", repoID))
+		return
+	}
 	s.redirect(w, r, "/scans?status=queued")
 }
 

@@ -1698,6 +1698,17 @@ func bulkToastDescription(invalid []string) string {
 	return fmt.Sprintf("Rejected: %s, and %d more", strings.Join(invalid[:maxShow], ", "), len(invalid)-maxShow)
 }
 
+// repoScanActionCounts returns the number of cancellable (running/queued) and
+// resumable (paused) scans on a repo, driving the "Cancel all" and "Resume all"
+// bulk buttons on the Scans tab.
+func (s *Server) repoScanActionCounts(repoID uint) (active, paused int64) {
+	s.DB.Model(&db.Scan{}).Where("repository_id = ? AND status IN ?",
+		repoID, []db.ScanStatus{db.ScanRunning, db.ScanQueued}).Count(&active)
+	s.DB.Model(&db.Scan{}).Where("repository_id = ? AND status = ?",
+		repoID, db.ScanPaused).Count(&paused)
+	return active, paused
+}
+
 func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 	repo, ok := loadByID[db.Repository](s, w, r)
 	if !ok {
@@ -1854,13 +1865,11 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Drives the delete-confirm warning: a running scan keeps writing into the
-	// repo's clone/workspace until it returns, so the operator should cancel
-	// before deleting. Counted over every scan, not the latest-per-skill set,
-	// and over the cancellable non-terminal states (paused can't be cancelled).
-	var activeScans int64
-	s.DB.Model(&db.Scan{}).Where("repository_id = ? AND status IN ?",
-		repo.ID, []db.ScanStatus{db.ScanRunning, db.ScanQueued}).Count(&activeScans)
+	// activeScans drives both the delete-confirm warning (a running scan keeps
+	// writing into the repo's clone/workspace until it returns) and the "Cancel
+	// all" button; pausedScans drives "Resume all". Both are counted over every
+	// scan, not the latest-per-skill set.
+	activeScans, pausedScans := s.repoScanActionCounts(repo.ID)
 
 	data := map[string]any{
 		"Repo": repo, "Scans": scans, "Latest": latest,
@@ -1873,6 +1882,7 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 		"NewFindingCount":      int(newFindings),
 		"FailedScans":          failedScans,
 		"ActiveScans":          int(activeScans),
+		"PausedScans":          int(pausedScans),
 		"TotalCost":            totalCost,
 		"DiskBytes":            worker.RepoDiskUsage(s.Worker.DataDir, repo),
 		"TMCommit":             tmCommit,
