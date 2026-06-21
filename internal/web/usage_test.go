@@ -114,6 +114,58 @@ func TestUsage_perSkillStatsAndOrdering(t *testing.T) {
 	}
 }
 
+func TestUsage_perDay(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://x/day", Name: "day"}
+	s.DB.Create(&repo)
+
+	day1 := time.Date(2025, 1, 10, 12, 0, 0, 0, time.UTC)
+	day2 := time.Date(2025, 1, 11, 12, 0, 0, 0, time.UTC)
+	mk := func(skill string, status db.ScanStatus, cost float64, finished *time.Time) {
+		s.DB.Create(&db.Scan{RepositoryID: repo.ID, Kind: "skill", SkillName: skill,
+			Status: status, CostUSD: cost, FinishedAt: finished})
+	}
+	mk("audit", db.ScanDone, 1.00, &day1)
+	mk("audit", db.ScanDone, 2.00, &day1)
+	mk("metadata", db.ScanFailed, 0.50, &day2)
+	// queued/running excluded.
+	mk("audit", db.ScanQueued, 0, nil)
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/usage?view=day"))
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	body := w.Body.String()
+
+	// Both dates present; newest (day2) should appear before day1.
+	if !strings.Contains(body, "2025-01-10") {
+		t.Errorf("missing 2025-01-10 row")
+	}
+	if !strings.Contains(body, "2025-01-11") {
+		t.Errorf("missing 2025-01-11 row")
+	}
+	if strings.Index(body, "2025-01-11") > strings.Index(body, "2025-01-10") {
+		t.Errorf("expected newer date before older date")
+	}
+	// Day1 total = $3.00; day2 total = $0.50.
+	if !strings.Contains(body, "$3.00") {
+		t.Errorf("missing day1 total $3.00")
+	}
+	if !strings.Contains(body, "$0.50") {
+		t.Errorf("missing day2 total $0.50")
+	}
+	// Header totals still cover all days.
+	if !strings.Contains(body, "$3.50") {
+		t.Errorf("missing grand total $3.50")
+	}
+	if !strings.Contains(body, "3 runs") {
+		t.Errorf("missing 3 runs count")
+	}
+}
+
 func TestRepoShow_totalCostBadge(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

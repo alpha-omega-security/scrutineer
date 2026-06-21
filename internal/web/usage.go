@@ -20,6 +20,16 @@ type SkillUsage struct {
 	TokensOut int
 }
 
+// DayUsage is one row of the /usage?view=day table: total cost and
+// token spend for all skill scans that finished on a given calendar day.
+type DayUsage struct {
+	Date      string
+	Runs      int
+	TotalCost float64
+	TokensIn  int
+	TokensOut int
+}
+
 type Stats struct {
 	Min    float64
 	Median float64
@@ -29,12 +39,18 @@ type Stats struct {
 }
 
 func (s *Server) usage(w http.ResponseWriter, r *http.Request) {
+	view := r.URL.Query().Get("view")
+	if view != "day" {
+		view = "skill"
+	}
+
 	// Only completed runs contribute to the distribution; queued/running
 	// rows have zero cost and would drag the floor down, and failed runs
 	// did still spend tokens so they stay in.
 	var scans []db.Scan
 	s.DB.Select("skill_name", "cost_usd", "turns",
-		"input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens").
+		"input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens",
+		"finished_at", "created_at").
 		Where("status IN ?", []db.ScanStatus{db.ScanDone, db.ScanFailed}).
 		Where("skill_name != ''").
 		Find(&scans)
@@ -43,11 +59,26 @@ func (s *Server) usage(w http.ResponseWriter, r *http.Request) {
 	turnsBy := map[string][]float64{}
 	inBy := map[string]int{}
 	outBy := map[string]int{}
+	costByDay := map[string]float64{}
+	runsByDay := map[string]int{}
+	inByDay := map[string]int{}
+	outByDay := map[string]int{}
 	for _, sc := range scans {
 		costBy[sc.SkillName] = append(costBy[sc.SkillName], sc.CostUSD)
 		turnsBy[sc.SkillName] = append(turnsBy[sc.SkillName], float64(sc.Turns))
 		inBy[sc.SkillName] += sc.TotalInputTokens()
 		outBy[sc.SkillName] += sc.OutputTokens
+
+		var day string
+		if sc.FinishedAt != nil {
+			day = sc.FinishedAt.UTC().Format("2006-01-02")
+		} else {
+			day = sc.CreatedAt.UTC().Format("2006-01-02")
+		}
+		costByDay[day] += sc.CostUSD
+		runsByDay[day]++
+		inByDay[day] += sc.TotalInputTokens()
+		outByDay[day] += sc.OutputTokens
 	}
 
 	rows := make([]SkillUsage, 0, len(costBy))
@@ -68,10 +99,24 @@ func (s *Server) usage(w http.ResponseWriter, r *http.Request) {
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].Cost.Sum > rows[j].Cost.Sum })
 
+	dayRows := make([]DayUsage, 0, len(costByDay))
+	for day, cost := range costByDay {
+		dayRows = append(dayRows, DayUsage{
+			Date:      day,
+			Runs:      runsByDay[day],
+			TotalCost: cost,
+			TokensIn:  inByDay[day],
+			TokensOut: outByDay[day],
+		})
+	}
+	sort.Slice(dayRows, func(i, j int) bool { return dayRows[i].Date > dayRows[j].Date })
+
 	s.render(w, r, "usage.html", map[string]any{
 		"Rows":      rows,
+		"DayRows":   dayRows,
 		"TotalCost": totalCost,
 		"TotalRuns": totalRuns,
+		"View":      view,
 	})
 }
 
