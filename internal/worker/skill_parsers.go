@@ -601,17 +601,18 @@ func (w *Worker) parsePostureOutput(scan *db.Scan, report string, emit func(Even
 }
 
 // parseVerifyOutput records the outcome of a finding-scoped verification
-// run. Evidence and notes become a FindingNote; the status transition is
-// written via WriteFindingField with source=model_suggested so the audit
-// trail on the finding page shows the skill as the author.
+// run. Reproducer, evidence and notes become a FindingNote; the status
+// transition is written via WriteFindingField with source=model_suggested so
+// the audit trail on the finding page shows the skill as the author.
 func (w *Worker) parseVerifyOutput(scan *db.Scan, report string, emit func(Event)) error {
 	if scan.FindingID == nil {
 		return fmt.Errorf("verify scan has no finding_id")
 	}
 	var result struct {
-		Status   string `json:"status"`
-		Evidence string `json:"evidence"`
-		Notes    string `json:"notes"`
+		Status     string `json:"status"`
+		Reproducer string `json:"reproducer"`
+		Evidence   string `json:"evidence"`
+		Notes      string `json:"notes"`
 	}
 	if err := json.Unmarshal([]byte(report), &result); err != nil {
 		return fmt.Errorf("parse verify report: %w", err)
@@ -642,6 +643,9 @@ func (w *Worker) parseVerifyOutput(scan *db.Scan, report string, emit func(Event
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "verify: %s\n", result.Status)
+	if result.Reproducer != "" {
+		fmt.Fprintf(&b, "\n%s\n", strings.TrimSpace(result.Reproducer))
+	}
 	if result.Evidence != "" {
 		fmt.Fprintf(&b, "\n%s\n", strings.TrimSpace(result.Evidence))
 	}

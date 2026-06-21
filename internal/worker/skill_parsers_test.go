@@ -436,7 +436,7 @@ func findingNotes(gdb *gorm.DB, findingID uint) []db.FindingNote {
 }
 
 func TestParseVerify_confirmedMovesNewToEnriched(t *testing.T) {
-	report := `{"status":"confirmed","evidence":"ran repro.rb, got the same error","notes":"no code change"}`
+	report := `{"status":"confirmed","reproducer":"ruby -e 'load %q(./src/x.rb); X.call(%q(../etc))'","evidence":"got the same error","notes":"no code change"}`
 	f, gdb := runSkillWithFinding(t, "verify", report, db.FindingNew)
 	if f.Status != db.FindingEnriched {
 		t.Errorf("status = %s, want enriched", f.Status)
@@ -444,6 +444,15 @@ func TestParseVerify_confirmedMovesNewToEnriched(t *testing.T) {
 	notes := findingNotes(gdb, f.ID)
 	if len(notes) == 0 || !strings.Contains(notes[0].Body, "confirmed") {
 		t.Errorf("notes missing verify record: %+v", notes)
+	}
+	body := notes[0].Body
+	if !strings.Contains(body, "ruby -e") {
+		t.Errorf("reproducer source not recorded in note: %q", body)
+	}
+	r := strings.Index(body, "ruby -e")
+	e := strings.Index(body, "got the same error")
+	if r == -1 || e == -1 || r > e {
+		t.Errorf("reproducer should land ahead of evidence in note: %q", body)
 	}
 }
 
