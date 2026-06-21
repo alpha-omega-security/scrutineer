@@ -149,7 +149,7 @@ func writeScanReportFindings(b *strings.Builder, gdb *gorm.DB, scan *db.Scan) {
 	// FK and undercounts the same way; worth a separate issue.
 	var findings []db.Finding
 	gdb.Where("last_seen_scan_id = ? OR scan_id = ?", scan.ID, scan.ID).
-		Order("severity, id").Find(&findings)
+		Order(severityOrder).Order("id").Find(&findings)
 	fmt.Fprintf(b, "## Findings\n\n")
 	if len(findings) == 0 {
 		fmt.Fprintf(b, "No findings recorded by this scan.\n\n")

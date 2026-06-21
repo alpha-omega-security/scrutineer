@@ -57,7 +57,7 @@ func renderOrgReport(gdb *gorm.DB, owner string, repos []db.Repository) string {
 	var findings []db.Finding
 	gdb.Where("repository_id IN ?", repoIDs).
 		Where("scan_id IN (?)", deepDiveScanIDs(gdb)).
-		Order("severity, id").Find(&findings)
+		Order(severityOrder).Order("id").Find(&findings)
 
 	bySeverity := map[string]int{}
 	byStatus := map[string]int{}
