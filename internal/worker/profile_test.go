@@ -358,13 +358,16 @@ func TestMatchProfile(t *testing.T) {
 }
 
 func TestImageTag_contentAddressed(t *testing.T) {
-	a := imageTag("php", []byte("FROM x\nRUN echo a\n"), "runner:1")
-	b := imageTag("php", []byte("FROM x\nRUN echo a\n"), "runner:1")
-	c := imageTag("php", []byte("FROM x\nRUN echo b\n"), "runner:1")
-	d := imageTag("php", []byte("FROM x\nRUN echo a\n"), "runner:2")
+	df := []byte("FROM x\nRUN echo a\n")
+	a := imageTag("php", df, "runner:1", "sha256:aaa")
+	b := imageTag("php", df, "runner:1", "sha256:aaa")
+	c := imageTag("php", []byte("FROM x\nRUN echo b\n"), "runner:1", "sha256:aaa")
+	d := imageTag("php", df, "runner:2", "sha256:aaa")
+	moved := imageTag("php", df, "runner:1", "sha256:bbb")
+	unresolved := imageTag("php", df, "runner:1", "")
 
 	if a != b {
-		t.Errorf("same contents and runner should yield same tag: %q vs %q", a, b)
+		t.Errorf("same contents, runner, and digest should yield same tag: %q vs %q", a, b)
 	}
 	if a == c {
 		t.Errorf("different contents should yield different tag, both %q", a)
@@ -372,8 +375,33 @@ func TestImageTag_contentAddressed(t *testing.T) {
 	if a == d {
 		t.Errorf("different runner image should yield different tag, both %q", a)
 	}
+	// The runner ref is unchanged (still runner:1) but its resolved base
+	// digest moved, so the tag must change and force a rebuild.
+	if a == moved {
+		t.Errorf("a moved base digest under the same ref should yield a different tag, both %q", a)
+	}
+	// An unresolved digest falls back to keying on the ref alone, which must
+	// not collide with the resolved tag.
+	if a == unresolved {
+		t.Errorf("resolved digest should differ from the unresolved fallback, both %q", a)
+	}
 	if !strings.HasPrefix(a, "scrutineer-profile-php:") {
 		t.Errorf("tag %q does not have expected prefix", a)
+	}
+}
+
+func TestResolveBaseDigest_fallsBackToEmpty(t *testing.T) {
+	// An empty ref short-circuits without shelling out to docker.
+	if got := resolveBaseDigest(context.Background(), ""); got != "" {
+		t.Errorf("empty ref: got %q, want empty", got)
+	}
+	// A cancelled context aborts the docker call before it runs, standing in
+	// for any resolution failure (offline, local-only ref, buildx missing);
+	// the function must fall back to "" so imageTag keys on the ref alone.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if got := resolveBaseDigest(ctx, "ghcr.io/example/runner:latest"); got != "" {
+		t.Errorf("cancelled ctx: got %q, want empty", got)
 	}
 }
 
