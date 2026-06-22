@@ -26,7 +26,7 @@ const testSchema = `{
 }`
 
 func TestValidateReportSchema_valid(t *testing.T) {
-	got := validateReportSchema(testSchema, `{"tier":"ready","summary":"ok"}`)
+	got := ValidateReportSchema(testSchema, `{"tier":"ready","summary":"ok"}`)
 	if got != "" {
 		t.Errorf("expected no validation error, got %q", got)
 	}
@@ -46,7 +46,7 @@ func TestValidateReportSchema_failures(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := validateReportSchema(testSchema, tc.report)
+			got := ValidateReportSchema(testSchema, tc.report)
 			if got == "" {
 				t.Fatalf("expected validation failure, got none")
 			}
@@ -58,10 +58,10 @@ func TestValidateReportSchema_failures(t *testing.T) {
 }
 
 func TestValidateReportSchema_malformedSchema(t *testing.T) {
-	if got := validateReportSchema(`not json`, `{}`); !strings.Contains(got, "schema.json is not valid JSON") {
+	if got := ValidateReportSchema(`not json`, `{}`); !strings.Contains(got, "schema.json is not valid JSON") {
 		t.Errorf("got %q", got)
 	}
-	if got := validateReportSchema(`{"type":42}`, `{}`); !strings.Contains(got, "schema.json could not be compiled") {
+	if got := ValidateReportSchema(`{"type":42}`, `{}`); !strings.Contains(got, "schema.json could not be compiled") {
 		t.Errorf("got %q", got)
 	}
 }
@@ -73,7 +73,7 @@ func TestValidateReportSchema_capsErrorCount(t *testing.T) {
 		"g":{"type":"string"},"h":{"type":"string"},"i":{"type":"string"},
 		"j":{"type":"string"}}}`
 	report := `{"a":1,"b":1,"c":1,"d":1,"e":1,"f":1,"g":1,"h":1,"i":1,"j":1}`
-	got := validateReportSchema(schema, report)
+	got := ValidateReportSchema(schema, report)
 	lines := strings.Count(got, "\n") + 1
 	if lines > maxSchemaErrors+1 {
 		t.Errorf("output has %d lines, want at most %d (cap + ellipsis): %q", lines, maxSchemaErrors+1, got)

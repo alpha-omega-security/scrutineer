@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"scrutineer/internal/db"
@@ -315,8 +316,23 @@ func buildSkillPrompt(name, outputFile string) string {
 	p := fmt.Sprintf("Use the %q skill on the repository cloned at ./src.", name)
 	if outputFile != "" {
 		p += fmt.Sprintf(" Write your structured output to ./%s as the skill specifies.", outputFile)
+		p += schemaValidationHint(outputFile)
 	}
 	return p
+}
+
+// schemaValidationHint tells claude to validate its JSON output against the
+// skill's schema via scrutineer's API instead of installing a JSON Schema
+// library inside the runner container. The package-install route wastes turns
+// (the container has no pip/gem) and is unreliable (Ruby's json_schemer chokes
+// on contentMediaType annotations); the endpoint reuses the harness's own
+// validator, so a pass here means the post-scan check will also pass. Only
+// emitted for JSON outputs, since the endpoint validates against schema.json.
+func schemaValidationHint(outputFile string) string {
+	if !strings.HasSuffix(outputFile, ".json") {
+		return ""
+	}
+	return fmt.Sprintf(" To check ./%s against ./schema.json, POST it to {scrutineer.api_base}/scans/{scrutineer.scan_id}/validate-report (header \"Authorization: Bearer {scrutineer.token}\", values in ./context.json); {\"valid\":true} means it conforms. Don't install a schema validator.", outputFile)
 }
 
 // buildLoggedPrompt is what scrutineer records on scan.Prompt for the UI. It

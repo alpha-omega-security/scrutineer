@@ -551,3 +551,140 @@ func TestAPIAuth_capsRequestBody(t *testing.T) {
 		t.Errorf("status %d, want 400 (decode fails on capped body)", w.Code)
 	}
 }
+
+// seedScanWithSkill creates a repo + skill (with the given schema) + running
+// scan whose APIToken authenticates and whose SkillID points at the skill, so
+// validate-report calls resolve a schema to check against.
+func seedScanWithSkill(t *testing.T, s *Server, schema string) db.Scan {
+	t.Helper()
+	repo := db.Repository{URL: "https://example.com/vr", Name: "vr"}
+	s.DB.Create(&repo)
+	skill := db.Skill{Name: "threat-model", Description: "t", Body: "b", OutputFile: "report.json",
+		SchemaJSON: schema, Version: 1, Active: true, Source: "ui"}
+	s.DB.Create(&skill)
+	now := time.Now()
+	scan := db.Scan{
+		RepositoryID: repo.ID,
+		Kind:         worker.JobSkill,
+		Status:       db.ScanRunning,
+		SkillID:      &skill.ID,
+		SkillName:    skill.Name,
+		APIToken:     "tok-vr",
+		StartedAt:    &now,
+	}
+	s.DB.Create(&scan)
+	return scan
+}
+
+const validateTestSchema = `{
+  "type": "object",
+  "required": ["tier"],
+  "properties": {"tier": {"type": "string"}}
+}`
+
+func postValidate(t *testing.T, s *Server, scanID uint, token, body string) (int, map[string]any) {
+	t.Helper()
+	path := "/api/scans/" + strconv.FormatUint(uint64(scanID), 10) + "/validate-report"
+	r := httptest.NewRequest("POST", path, strings.NewReader(body))
+	r.Host = testHost
+	r.Header.Set("Authorization", "Bearer "+token)
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	var out map[string]any
+	_ = json.NewDecoder(w.Body).Decode(&out)
+	return w.Code, out
+}
+
+func TestAPIValidateReport_valid(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	scan := seedScanWithSkill(t, s, validateTestSchema)
+
+	code, out := postValidate(t, s, scan.ID, scan.APIToken, `{"tier":"ready"}`)
+	if code != 200 {
+		t.Fatalf("status %d, want 200", code)
+	}
+	if out["valid"] != true {
+		t.Errorf("response = %+v, want valid:true", out)
+	}
+}
+
+func TestAPIValidateReport_invalidMatchesValidator(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	scan := seedScanWithSkill(t, s, validateTestSchema)
+
+	const report = `{"tier":42}`
+	code, out := postValidate(t, s, scan.ID, scan.APIToken, report)
+	if code != 200 {
+		t.Fatalf("status %d, want 200", code)
+	}
+	if out["valid"] != false {
+		t.Fatalf("response = %+v, want valid:false", out)
+	}
+	want := worker.ValidateReportSchema(validateTestSchema, report)
+	if want == "" {
+		t.Fatal("expected the validator to reject the report")
+	}
+	if got, _ := out["errors"].(string); got != want {
+		t.Errorf("errors = %q, want %q (must match the harness validator)", got, want)
+	}
+}
+
+func TestAPIValidateReport_crossScanForbidden(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	scan := seedScanWithSkill(t, s, validateTestSchema)
+
+	// A different running scan with its own token must not validate against
+	// scan's ID using its own credentials.
+	now := time.Now()
+	other := db.Scan{RepositoryID: scan.RepositoryID, Kind: worker.JobSkill, Status: db.ScanRunning,
+		SkillID: scan.SkillID, APIToken: "tok-other", StartedAt: &now}
+	s.DB.Create(&other)
+
+	code, out := postValidate(t, s, scan.ID, other.APIToken, `{"tier":"ready"}`)
+	if code != http.StatusForbidden {
+		t.Fatalf("status %d, want 403. body=%+v", code, out)
+	}
+}
+
+func TestAPIValidateReport_noSchema(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	scan := seedScanWithSkill(t, s, "")
+
+	code, out := postValidate(t, s, scan.ID, scan.APIToken, `{"anything":true}`)
+	if code != 200 {
+		t.Fatalf("status %d, want 200", code)
+	}
+	if out["valid"] != true || out["note"] != "skill has no schema" {
+		t.Errorf("response = %+v, want valid:true with no-schema note", out)
+	}
+}
+
+func TestAPIValidateReport_noSkill(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	_, scan := seedRunningScan(t, s) // SkillID is nil
+
+	code, out := postValidate(t, s, scan.ID, scan.APIToken, `{}`)
+	if code != http.StatusBadRequest {
+		t.Fatalf("status %d, want 400. body=%+v", code, out)
+	}
+}
+
+func TestAPIValidateReport_oversizedBodyRejected(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	scan := seedScanWithSkill(t, s, validateTestSchema)
+
+	// apiAuth caps every request body at apiMaxBody; a larger report is
+	// rejected rather than silently truncated.
+	body := `{"tier":"` + strings.Repeat("x", apiMaxBody) + `"}`
+	code, _ := postValidate(t, s, scan.ID, scan.APIToken, body)
+	if code != http.StatusRequestEntityTooLarge {
+		t.Errorf("status %d, want 413", code)
+	}
+}

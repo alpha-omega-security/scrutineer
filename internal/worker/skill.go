@@ -203,7 +203,7 @@ func (w *Worker) parsePartialSkillReport(skill *db.Skill, scan *db.Scan, report 
 
 func (w *Worker) repairAndParseSkillOutput(ctx context.Context, skill *db.Skill, scan *db.Scan, sj SkillJob, report string, emit func(Event)) (string, error) {
 	if skill.SchemaJSON != "" {
-		if detail := validateReportSchema(skill.SchemaJSON, report); detail != "" {
+		if detail := ValidateReportSchema(skill.SchemaJSON, report); detail != "" {
 			if repairedReport, ok := w.repairSchemaReport(ctx, skill, scan, sj, report, detail, emit); ok {
 				report = repairedReport
 			}
@@ -245,7 +245,7 @@ func (w *Worker) repairSchemaReport(ctx context.Context, skill *db.Skill, scan *
 		emit(Event{Kind: KindError, Text: fmt.Sprintf("schema: repair attempt did not produce %s; parsing original output", outputFile)})
 		return "", false
 	}
-	if detail = validateReportSchema(skill.SchemaJSON, res.Report); detail == "" {
+	if detail = ValidateReportSchema(skill.SchemaJSON, res.Report); detail == "" {
 		emit(Event{Kind: KindText, Text: fmt.Sprintf("schema: repaired %s validates", outputFile)})
 		return res.Report, true
 	}
@@ -287,7 +287,7 @@ func truncateSchemaRepairReport(report string) string {
 
 func (w *Worker) parseSkillOutput(skill *db.Skill, scan *db.Scan, report string, emit func(Event)) error {
 	if skill.SchemaJSON != "" {
-		if detail := validateReportSchema(skill.SchemaJSON, report); detail != "" {
+		if detail := ValidateReportSchema(skill.SchemaJSON, report); detail != "" {
 			emit(schemaValidationEvent(skill, detail))
 			if w.SchemaStrict {
 				return &SchemaValidationError{Skill: skill.Name, Detail: detail}

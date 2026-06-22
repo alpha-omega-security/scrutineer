@@ -31,7 +31,7 @@ func TestDependenciesScriptNormalizesEmptyGitPkgsOutput(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := validateReportSchema(string(schema), out); got != "" {
+			if got := ValidateReportSchema(string(schema), out); got != "" {
 				t.Fatalf("script output failed schema validation: %s\n%s", got, out)
 			}
 		})

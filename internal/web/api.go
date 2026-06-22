@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -98,6 +99,7 @@ func (s *Server) apiHandler() http.Handler {
 	mux.HandleFunc("POST /repositories/{id}/skills/{name}/run", s.apiRunSkill)
 	mux.HandleFunc("POST /findings/{id}/skills/{name}/run", s.apiRunFindingSkill)
 	mux.HandleFunc("GET /scans/{id}", s.apiGetScan)
+	mux.HandleFunc("POST /scans/{id}/validate-report", s.apiValidateReport)
 	mux.HandleFunc("GET /findings/{id}", s.apiGetFinding)
 	mux.HandleFunc("PATCH /findings/{id}", s.apiPatchFinding)
 	mux.HandleFunc("GET /findings/{id}/notes", s.apiListFindingNotes)
@@ -210,6 +212,47 @@ func (s *Server) apiGetScan(w http.ResponseWriter, r *http.Request) {
 	summary["report"] = sc.Report
 	summary["log"] = sc.Log
 	writeJSON(w, http.StatusOK, summary)
+}
+
+// apiValidateReport lets a running skill check a candidate report.json against
+// its skill's schema without installing a JSON Schema library inside the runner
+// container. The request body is the candidate report; the response is
+// {"valid":true} or {"valid":false,"errors":"..."} using the exact same
+// validator (worker.ValidateReportSchema) the harness runs after the scan, so
+// an in-container pass guarantees the harness will not send a repair prompt.
+//
+// The body is already capped at apiMaxBody (1 MB) by apiAuth's MaxBytesReader;
+// an oversized report is rejected rather than silently truncated.
+func (s *Server) apiValidateReport(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.Atoi(r.PathValue("id"))
+	scan := scanFromRequest(r)
+	if scan == nil || scan.ID != uint(id) {
+		writeAPIError(w, http.StatusForbidden, "scan may only validate its own report")
+		return
+	}
+	if scan.SkillID == nil {
+		writeAPIError(w, http.StatusBadRequest, "scan has no skill")
+		return
+	}
+	var skill db.Skill
+	if err := s.DB.First(&skill, *scan.SkillID).Error; err != nil {
+		writeAPIError(w, http.StatusNotFound, "skill not found")
+		return
+	}
+	if skill.SchemaJSON == "" {
+		writeJSON(w, http.StatusOK, map[string]any{"valid": true, "note": "skill has no schema"})
+		return
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeAPIError(w, http.StatusRequestEntityTooLarge, "could not read body (max 1 MB)")
+		return
+	}
+	if detail := worker.ValidateReportSchema(skill.SchemaJSON, string(body)); detail != "" {
+		writeJSON(w, http.StatusOK, map[string]any{"valid": false, "errors": detail})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"valid": true})
 }
 
 func (s *Server) apiRunSkill(w http.ResponseWriter, r *http.Request) {

@@ -122,7 +122,7 @@ func TestBundledSchemas_compileAndAcceptSamples(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read %s: %v", tc.schema, err)
 		}
-		if got := validateReportSchema(string(schema), tc.report); got != "" {
+		if got := ValidateReportSchema(string(schema), tc.report); got != "" {
 			t.Errorf("%s rejected sample: %s\nreport: %s", tc.schema, got, tc.report)
 		}
 	}
@@ -177,7 +177,7 @@ func TestBundledSchemas_rejectBadShapes(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read %s: %v", tc.schema, err)
 		}
-		got := validateReportSchema(string(schema), tc.report)
+		got := ValidateReportSchema(string(schema), tc.report)
 		if got == "" {
 			t.Errorf("%s accepted bad report %s", tc.schema, tc.report)
 			continue

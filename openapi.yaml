@@ -617,6 +617,53 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /scans/{id}/validate-report:
+    post:
+      summary: Validate a candidate report.json against the skill's schema
+      description: >
+        Lets a running skill check its report against its skill's schema using
+        scrutineer's own validator, instead of installing a JSON Schema library
+        inside the runner container. The request body is the candidate report
+        JSON; a 200 response carries {"valid": true} when it conforms, or
+        {"valid": false, "errors": "..."} listing the failures. A skill with no
+        schema returns {"valid": true, "note": "skill has no schema"}. The token
+        may only validate the scan it was issued for. Body is capped at 1 MB.
+      operationId: validateReport
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object, additionalProperties: true }
+      responses:
+        '200':
+          description: Validation result (valid true or false; never a schema error)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  valid: { type: boolean }
+                  errors: { type: string }
+                  note: { type: string }
+                required: [valid]
+        '400':
+          description: Scan has no associated skill
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '413':
+          description: Report body exceeds the 1 MB limit
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
   /findings/{id}:
     get:
       summary: Fetch one finding with its six-step prose

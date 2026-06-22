@@ -22,13 +22,17 @@ func (e *SchemaValidationError) Error() string {
 
 const maxSchemaErrors = 8
 
-// validateReportSchema compiles schemaJSON and validates report against it.
+// ValidateReportSchema compiles schemaJSON and validates report against it.
 // Returns "" when valid, otherwise a one-line-per-failure summary capped at
 // maxSchemaErrors. A schema that does not compile, or a report that is not
 // JSON, returns a single line saying so; both are treated as validation
 // failures rather than scan errors so a malformed schema cannot fail every
 // scan in strict mode.
-func validateReportSchema(schemaJSON, report string) string {
+//
+// It is exported so the web API can offer skills a server-side validation
+// endpoint that uses the exact same validator as the harness, sparing them
+// from installing a JSON Schema library inside the runner container.
+func ValidateReportSchema(schemaJSON, report string) string {
 	c := jsonschema.NewCompiler()
 	doc, err := jsonschema.UnmarshalJSON(strings.NewReader(schemaJSON))
 	if err != nil {
