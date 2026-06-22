@@ -65,6 +65,13 @@ Create three to ten focus areas. Prefer focus areas from the threat model if one
 
 For small repositories, a single pass is fine. For larger repositories, use one subagent per focus area, capped at ten. If subagents are unavailable, review the focus areas sequentially.
 
+The subagents you spawn do not see this SKILL.md. They get only the prompt you write for them and the shared working directory, where `report.json` and `schema.json` sit in plain view. Left to infer the deliverable, each subagent writes `./report.json` and overwrites the previous one, silently discarding every other focus area's candidates — and a clobbered report is still schema-valid, so nothing downstream flags the loss. When you delegate:
+
+- Tell every subagent, in its prompt, not to write or touch `./report.json`. That file is yours to write, once, at the end.
+- Give each subagent a distinct scratch file for its focus area — `./candidates-<area>.json` — and have it return that path. Distinct names mean two subagents never write the same file, so single-writer is mechanical rather than a thing you have to trust the agents to honour. (Returning the candidates as message text works for small slices but truncates and re-transcribes lossily on large ones; on a repository big enough to need fan-out, prefer the scratch file.)
+- Give each subagent the Review Rules below verbatim in its prompt, since it cannot read them here.
+- You are the sole writer of `./report.json`. Read back every scratch file, union the candidates, run Consolidation below over the merged set, and write the one report yourself.
+
 ## Review Rules
 
 Report only candidate vulnerabilities with a concrete source path, sink, trust boundary, and plausible exploit scenario.
@@ -100,7 +107,7 @@ Use these common CWE mappings when they fit: command injection `CWE-78`, path tr
 
 ## Consolidation
 
-Before writing the report:
+Before writing the report, union every focus area's candidates into one list. If you fanned out, this is every `./candidates-<area>.json` scratch file read back; the union is over all of them, not a copy of the last one. Then over the merged list:
 
 1. Drop candidates that lack a concrete code location.
 2. Drop candidates whose exploit depends only on a trusted developer/operator choosing unsafe local configuration.
