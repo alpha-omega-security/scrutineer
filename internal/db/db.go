@@ -473,7 +473,15 @@ type Finding struct {
 	// the primary, so it is non-empty for any finding written through
 	// the parser; rows that predate the column have it empty.
 	Locations string `gorm:"type:text"`
-	Affected  string // version range
+	// Snippet is the source excerpt around Location (a few lines either
+	// side), captured at ingest while the scanned checkout is still on
+	// disk (#426). Empty for rows written before the column, for locations
+	// that carry no line, or that did not resolve to a readable file in the
+	// checkout; the markdown report skips the source block when empty.
+	// Refreshed on re-observation like VID, but a stored snippet is never
+	// wiped when a later scan cannot recompute it.
+	Snippet  string `gorm:"type:text"`
+	Affected string // version range
 	// Reachability records whether a public entry point in the shipped
 	// artefact reaches the sink with attacker-controlled input
 	// (reachable), only a test driver does (harness_only), or the audit

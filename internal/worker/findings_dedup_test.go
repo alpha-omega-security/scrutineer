@@ -4,12 +4,76 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"scrutineer/internal/db"
 )
+
+func TestParseFindingsOutput_capturesSnippetAndRefreshesOnReobserve(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://x/r", Name: "r"}
+	gdb.Create(&repo)
+	w := &Worker{DB: gdb, DataDir: t.TempDir(), Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	report := `{"findings":[{"id":"F1","title":"t","severity":"High","location":"main.go:10"}]}`
+
+	// Scan 1: checkout on disk, snippet captured around line 10.
+	scan1 := &db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "sd", Status: db.ScanDone, Commit: "aaa"}
+	gdb.Create(scan1)
+	writeNumberedFile(t, filepath.Join(w.scanWorkRoot(scan1), "src"), "main.go", 20)
+	if err := w.parseFindingsOutput(&db.Skill{}, scan1, report, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	var f db.Finding
+	gdb.First(&f)
+	if !strings.Contains(f.Snippet, "line 10") || !strings.Contains(f.Snippet, "line 5") {
+		t.Fatalf("ingest did not capture snippet: %q", f.Snippet)
+	}
+	first := f.Snippet
+
+	// Scan 2: checkout present but the code drifted; the snippet refreshes.
+	scan2 := &db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "sd", Status: db.ScanDone, Commit: "bbb"}
+	gdb.Create(scan2)
+	src2 := filepath.Join(w.scanWorkRoot(scan2), "src")
+	if err := os.MkdirAll(src2, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src2, "main.go"),
+		[]byte("a\nb\nc\nd\ne\nf\ng\nh\ni\nDRIFTED\nk\nl\nm\nn\no\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.parseFindingsOutput(&db.Skill{}, scan2, report, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	gdb.First(&f)
+	if !strings.Contains(f.Snippet, "DRIFTED") || f.Snippet == first {
+		t.Errorf("re-observe with a present checkout did not refresh snippet: %q", f.Snippet)
+	}
+	drifted := f.Snippet
+
+	// Scan 3: checkout evicted; the stored snippet must survive, not be wiped.
+	scan3 := &db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "sd", Status: db.ScanDone, Commit: "ccc"}
+	gdb.Create(scan3)
+	if err := w.parseFindingsOutput(&db.Skill{}, scan3, report, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	gdb.First(&f)
+	if f.Snippet != drifted {
+		t.Errorf("re-observe without a checkout wiped snippet: was %q now %q", drifted, f.Snippet)
+	}
+
+	var n int64
+	gdb.Model(&db.Finding{}).Count(&n)
+	if n != 1 {
+		t.Errorf("expected one deduped finding row, got %d", n)
+	}
+}
 
 func TestParseFindingsOutput_referencesCreatedOnNewAndUpsertedOnReobserve(t *testing.T) {
 	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
