@@ -167,7 +167,7 @@ func writeScanReportFindings(b *strings.Builder, gdb *gorm.DB, scan *db.Scan) {
 	// Reuse the per-finding prose renderer from repo_report.go so a scan
 	// report and a repo report describe the same finding the same way.
 	for _, f := range findings {
-		writeReportFinding(b, gdb, f, scan)
+		writeReportFinding(b, gdb, f, scan, audienceAnalyst)
 	}
 }
 

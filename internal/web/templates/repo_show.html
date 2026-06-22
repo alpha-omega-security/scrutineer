@@ -42,6 +42,10 @@
     <a href="/repositories/{{.Repo.ID}}/report.md" class="btn-outline" download>
       <i data-lucide="download"></i> Export report
     </a>
+    <a href="/repositories/{{.Repo.ID}}/report.md?audience=upstream" class="btn-outline" download
+       data-tooltip="Trimmed report for an upstream maintainer: summary, threat model, findings and fixes only — no internal notes, communications, labels, or repo-wide inventory.">
+      <i data-lucide="share-2"></i> Export for upstream
+    </a>
     <form method="post" action="/repositories/{{.Repo.ID}}/delete"
           hx-post="/repositories/{{.Repo.ID}}/delete" hx-swap="none"
           hx-confirm="{{if .ActiveScans}}{{.ActiveScans}} scan(s) on {{.Repo.Name}} are still running or queued and will keep writing to disk until they finish; cancel them first. {{end}}Permanently delete {{.Repo.Name}}? This removes the repository, all its scans and findings, and its cached clone on disk. This cannot be undone.">

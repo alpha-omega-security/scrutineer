@@ -46,7 +46,7 @@ func (s *Server) findingReport(w http.ResponseWriter, r *http.Request) {
 func renderFindingReport(gdb *gorm.DB, f *db.Finding, scan *db.Scan, repo *db.Repository) string {
 	var b strings.Builder
 	writeFindingReportHeader(&b, f, repo)
-	writeReportFinding(&b, gdb, *f, scan)
+	writeReportFinding(&b, gdb, *f, scan, audienceAnalyst)
 	return b.String()
 }
 

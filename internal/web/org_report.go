@@ -144,6 +144,6 @@ func writeOrgRepoSection(b *strings.Builder, gdb *gorm.DB, repo db.Repository, f
 	b.WriteString("\n")
 
 	for _, f := range findings {
-		writeReportFinding(b, gdb, f, nil)
+		writeReportFinding(b, gdb, f, nil, audienceAnalyst)
 	}
 }

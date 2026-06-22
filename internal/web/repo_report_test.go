@@ -12,9 +12,10 @@ import (
 )
 
 // seedRepoWithReport creates a repo with a completed security-deep-dive scan,
-// two findings with six-step prose + labels + notes + comms + refs, a
-// package, a dependent, an advisory, a dependency, and a maintainer.
-// Used by the report tests to exercise every section end to end.
+// a finding carrying six-step prose, snippet, disclosure draft, suggested fix,
+// labels, notes, comms, and refs, plus a package, a dependent, an advisory, a
+// dependency, and a maintainer. Used by the report tests to exercise every
+// section end to end (and, for the upstream audience, which ones drop).
 func seedRepoWithReport(t *testing.T, s *Server) db.Repository {
 	t.Helper()
 	repo := db.Repository{
@@ -49,7 +50,11 @@ func seedRepoWithReport(t *testing.T, s *Server) db.Repository {
 		Location: "main.go:12", Sinks: "S1", Affected: ">=1.0,<1.4",
 		Trace: "arg comes in, hits os.Exec", Boundary: "crosses caller boundary",
 		Validation: "`echo $(cat repro.sh)` triggers", Rating: "High because X",
-		CVEID: "CVE-2026-00042", CVSSVector: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
+		PriorArt: "No prior CVE for this sink", Reach: "Reachable from the public CLI",
+		Snippet:         "func run(arg string) {\n\texec.Command(arg)\n}",
+		DisclosureDraft: "GHSA draft: command injection in acme/thing via arg",
+		SuggestedFix:    "--- a/main.go\n+++ b/main.go\n@@\n-exec.Command(arg)\n+exec.Command(\"/bin/echo\", arg)",
+		CVEID:           "CVE-2026-00042", CVSSVector: "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H",
 		CVSSScore: 9.8, FixVersion: "1.4.0", FixCommit: "abcd1234",
 		Resolution: db.ResolutionFix,
 	}
@@ -132,6 +137,11 @@ func TestRepoReport_includesEverySection(t *testing.T) {
 		"CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H (9.8)",
 		"#### Trace",
 		"arg comes in, hits os.Exec",
+		"#### Prior art",
+		"#### Reach",
+		"#### Source",
+		"#### Disclosure draft",
+		"#### Suggested fix",
 		"#### Notes",
 		"Triage note: confirmed by verify skill",
 		"#### Communications",
@@ -155,6 +165,91 @@ func TestRepoReport_includesEverySection(t *testing.T) {
 	for _, want := range wants {
 		if !strings.Contains(body, want) {
 			t.Errorf("report missing %q", want)
+		}
+	}
+}
+
+func TestRepoReport_upstreamAudienceTrimsToMaintainerView(t *testing.T) {
+	// ?audience=upstream drops the analyst's internal workspace (notes,
+	// communications, labels, disclosure draft) and the repo-wide inventory
+	// the maintainer already owns (packages, dependents, dependencies,
+	// maintainers), keeping the security-actionable content (#427).
+	s, done := newTestServer(t)
+	defer done()
+	repo := seedRepoWithReport(t, s)
+
+	path := "/repositories/" + strconv.FormatUint(uint64(repo.ID), 10) + "/report.md?audience=upstream"
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", path))
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	// The filename hint distinguishes the upstream export from the full one.
+	if cd := w.Header().Get("Content-Disposition"); !strings.Contains(cd, "-upstream.md") {
+		t.Errorf("content-disposition = %q, want -upstream.md suffix", cd)
+	}
+
+	body := w.Body.String()
+
+	// Kept: the maintainer-actionable view. Each heading below only renders
+	// from the per-finding section or a kept repo-wide section, so its
+	// presence really proves that content survived the trim.
+	for _, want := range []string{
+		"## Summary",
+		"## Threat model",
+		"### Sink inventory",
+		"→ Finding #", // disposition column, sink joined to its finding
+		"#### Trace",
+		"#### Prior art",
+		"#### Reach",
+		"#### Source", // snippet, kept (#426)
+		"#### Suggested fix",
+		"#### References",         // external corroboration, kept on purpose
+		"## Published advisories", // already-public CVEs, kept on purpose
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("upstream report missing kept section %q", want)
+		}
+	}
+
+	// Dropped: internal chatter and repo-wide inventory the maintainer owns.
+	for _, drop := range []string{
+		"#### Notes",
+		"#### Communications",
+		"#### Labels",
+		"#### Disclosure draft",
+		"## Packages",
+		"## Top dependents",
+		"## Dependencies",
+		"## Maintainers",
+	} {
+		if strings.Contains(body, drop) {
+			t.Errorf("upstream report should drop %q", drop)
+		}
+	}
+}
+
+func TestRepoReport_unknownAudienceFallsBackToFull(t *testing.T) {
+	// An unrecognised ?audience value is not the upstream view: it renders
+	// the full analyst report, with no -upstream filename suffix.
+	s, done := newTestServer(t)
+	defer done()
+	repo := seedRepoWithReport(t, s)
+
+	path := "/repositories/" + strconv.FormatUint(uint64(repo.ID), 10) + "/report.md?audience=bogus"
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", path))
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	if cd := w.Header().Get("Content-Disposition"); strings.Contains(cd, "-upstream") {
+		t.Errorf("content-disposition = %q, unexpected -upstream suffix for unknown audience", cd)
+	}
+	body := w.Body.String()
+	// Sections the upstream view drops are still present in the fallback.
+	for _, want := range []string{"#### Notes", "#### Disclosure draft", "## Packages", "## Maintainers"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("fallback report missing %q (should be the full analyst view)", want)
 		}
 	}
 }
@@ -297,7 +392,7 @@ func TestRepoReport_summaryAndSinkDisposition(t *testing.T) {
 	}
 	s.DB.Create(&med)
 
-	body := renderRepoReport(s.DB, &repo)
+	body := renderRepoReport(s.DB, &repo, audienceAnalyst)
 
 	// Summary block precedes the metadata table.
 	if i, j := strings.Index(body, "## Summary"), strings.Index(body, "## Repository metadata"); i < 0 || i > j {
@@ -372,7 +467,7 @@ func TestRepoReport_sinkDispositionScopedToLatestScan(t *testing.T) {
 	}
 	s.DB.Create(&latestScan)
 
-	body := renderRepoReport(s.DB, &repo)
+	body := renderRepoReport(s.DB, &repo, audienceAnalyst)
 
 	// The latest S1 row must be unresolved; its disposition must not point
 	// at the older scan's finding. (The older finding is still open, so it

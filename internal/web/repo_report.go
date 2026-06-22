@@ -14,10 +14,25 @@ import (
 	"scrutineer/internal/db"
 )
 
-// repoReport renders a shareable markdown document covering everything the
-// repo page shows: identity, threat model, findings (with six-step prose,
-// scoring fields, notes, communications, references), packages, advisories,
-// dependents, dependencies, and maintainers. Served as text/markdown with
+// reportAudience selects how much of the repo report renders. The zero value
+// (analyst) is the full workspace; upstream trims it to what a maintainer
+// receiving the report needs to act on, dropping internal chatter (notes,
+// communications, labels, disclosure draft) and the repo-wide inventory the
+// maintainer already owns (packages, dependents, dependencies, maintainers).
+// See issue #427.
+type reportAudience int
+
+const (
+	audienceAnalyst reportAudience = iota
+	audienceUpstream
+)
+
+// repoReport renders a shareable markdown document of the repo page. The
+// default (analyst) audience covers everything the page shows: identity,
+// threat model, findings (with six-step prose, scoring fields, notes,
+// communications, references), packages, advisories, dependents,
+// dependencies, and maintainers. With ?audience=upstream it renders the
+// trimmed maintainer view (see reportAudience). Served as text/markdown with
 // a filename hint so clicking the download button saves a file.
 func (s *Server) repoReport(w http.ResponseWriter, r *http.Request) {
 	repo, ok := loadByID[db.Repository](s, w, r)
@@ -25,17 +40,24 @@ func (s *Server) repoReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	body := renderRepoReport(s.DB, &repo)
+	audience := audienceAnalyst
+	suffix := ""
+	if r.URL.Query().Get("audience") == "upstream" {
+		audience = audienceUpstream
+		suffix = "-upstream"
+	}
 
-	filename := fmt.Sprintf("scrutineer-%s-%s.md",
+	body := renderRepoReport(s.DB, &repo, audience)
+
+	filename := fmt.Sprintf("scrutineer-%s-%s%s.md",
 		sanitiseFilename(repo.Name),
-		time.Now().UTC().Format("20060102"))
+		time.Now().UTC().Format("20060102"), suffix)
 	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
 	_, _ = w.Write([]byte(body))
 }
 
-func renderRepoReport(gdb *gorm.DB, repo *db.Repository) string {
+func renderRepoReport(gdb *gorm.DB, repo *db.Repository, audience reportAudience) string {
 	// Findings and sink dispositions are computed once up front so the
 	// summary, threat-model inventory, and findings sections all render
 	// from the same data without re-querying.
@@ -48,12 +70,19 @@ func renderRepoReport(gdb *gorm.DB, repo *db.Repository) string {
 	writeReportSummary(&b, latest, findings, disp)
 	writeReportMetadata(&b, repo)
 	writeReportThreatModel(&b, latest, threatModel, disp)
-	writeReportFindings(&b, gdb, findings, latest)
-	writeReportPackages(&b, gdb, repo.ID)
+	writeReportFindings(&b, gdb, findings, latest, audience)
+	// Published advisories (already-public CVEs/GHSAs) are kept for every
+	// audience; the rest of the repo-wide inventory is dropped for upstream,
+	// who already own their own packages, dependents, and maintainers.
+	if audience != audienceUpstream {
+		writeReportPackages(&b, gdb, repo.ID)
+	}
 	writeReportAdvisories(&b, gdb, repo.ID)
-	writeReportDependents(&b, gdb, repo.ID)
-	writeReportDependencies(&b, gdb, repo.ID)
-	writeReportMaintainers(&b, gdb, repo.ID)
+	if audience != audienceUpstream {
+		writeReportDependents(&b, gdb, repo.ID)
+		writeReportDependencies(&b, gdb, repo.ID)
+		writeReportMaintainers(&b, gdb, repo.ID)
+	}
 
 	return b.String()
 }
@@ -345,7 +374,7 @@ func writeReportThreatModel(b *strings.Builder, scan *db.Scan, tm map[string]any
 	}
 }
 
-func writeReportFindings(b *strings.Builder, gdb *gorm.DB, findings []db.Finding, latest *db.Scan) {
+func writeReportFindings(b *strings.Builder, gdb *gorm.DB, findings []db.Finding, latest *db.Scan, audience reportAudience) {
 	fmt.Fprintf(b, "## Findings\n\n")
 	if len(findings) == 0 {
 		fmt.Fprintf(b, "No findings recorded for this repository.\n\n")
@@ -361,11 +390,11 @@ func writeReportFindings(b *strings.Builder, gdb *gorm.DB, findings []db.Finding
 	b.WriteString("\n")
 
 	for _, f := range findings {
-		writeReportFinding(b, gdb, f, latest)
+		writeReportFinding(b, gdb, f, latest, audience)
 	}
 }
 
-func writeReportFinding(b *strings.Builder, gdb *gorm.DB, f db.Finding, latest *db.Scan) {
+func writeReportFinding(b *strings.Builder, gdb *gorm.DB, f db.Finding, latest *db.Scan, audience reportAudience) {
 	fmt.Fprintf(b, "### Finding #%d: %s\n\n", f.ID, f.Title)
 
 	rows := [][2]string{
@@ -438,7 +467,9 @@ func writeReportFinding(b *strings.Builder, gdb *gorm.DB, f db.Finding, latest *
 			f.ExploitedInWild, strings.TrimSpace(f.ExploitedInWildEvidence))
 	}
 
-	if f.DisclosureDraft != "" {
+	// The disclosure draft is the GHSA text, not part of the overview an
+	// upstream maintainer reads — drop it for that audience (#427).
+	if audience != audienceUpstream && f.DisclosureDraft != "" {
 		fmt.Fprintf(b, "#### Disclosure draft\n\n%s\n\n", strings.TrimSpace(f.DisclosureDraft))
 	}
 
@@ -457,10 +488,16 @@ func writeReportFinding(b *strings.Builder, gdb *gorm.DB, f db.Finding, latest *
 		fmt.Fprintf(b, "```diff\n%s\n```\n\n", strings.TrimSpace(f.SuggestedFix))
 	}
 
-	writeFindingNotes(b, gdb, f.ID)
-	writeFindingCommunications(b, gdb, f.ID)
+	// Notes, communications, and labels are the analyst's internal workspace;
+	// the upstream maintainer only needs the external references (#427).
+	if audience != audienceUpstream {
+		writeFindingNotes(b, gdb, f.ID)
+		writeFindingCommunications(b, gdb, f.ID)
+	}
 	writeFindingReferences(b, gdb, f.ID)
-	writeFindingLabels(b, gdb, f.ID)
+	if audience != audienceUpstream {
+		writeFindingLabels(b, gdb, f.ID)
+	}
 }
 
 func writeProse(b *strings.Builder, heading, body string) {
