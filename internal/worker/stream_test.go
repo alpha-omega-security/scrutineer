@@ -1,8 +1,11 @@
 package worker
 
 import (
+	"errors"
+	"io"
 	"strings"
 	"testing"
+	"testing/iotest"
 )
 
 func TestParseStream(t *testing.T) {
@@ -83,6 +86,77 @@ func collectEvents(in string) []Event {
 	var got []Event
 	ParseStream(strings.NewReader(in), func(e Event) { got = append(got, e) })
 	return got
+}
+
+// A single >1 MiB stream-json line (a large thinking block, or a
+// tool_use/tool_result echoing a big file) must not truncate the rest of the
+// stream: the terminal result event carries cost/turns/usage and the
+// max-turns signal, so dropping it silently mis-records the scan (#467).
+func TestParseStream_oversizedLineDoesNotTruncate(t *testing.T) {
+	huge := `{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"` +
+		strings.Repeat("x", 2*1024*1024) + `"}]}}`
+	in := huge + "\n" +
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"after"}]}}` + "\n" +
+		`{"type":"result","subtype":"error_max_turns","total_cost_usd":1.5,"num_turns":40}` + "\n"
+
+	got := collectEvents(in)
+
+	var sawAfter, sawResult, sawMaxTurns bool
+	for _, e := range got {
+		switch {
+		case e.Kind == KindText && e.Text == "after":
+			sawAfter = true
+		case e.Kind == KindResult:
+			sawResult = true
+			if e.CostUSD != 1.5 || e.Turns != 40 {
+				t.Errorf("result event = %+v, want cost=1.5 turns=40", e)
+			}
+		case e.Kind == KindError && e.Text == "hit max turns":
+			sawMaxTurns = true
+		}
+	}
+	if !sawAfter {
+		t.Error("event after the oversized line was dropped")
+	}
+	if !sawResult {
+		t.Error("terminal result event was dropped")
+	}
+	if !sawMaxTurns {
+		t.Error("max-turns error event was dropped")
+	}
+	// The oversized line itself must still parse, not be dropped.
+	if got[0].Kind != KindThinking || len(got[0].Text) != 2*1024*1024 {
+		t.Errorf("oversized thinking event: kind=%q len=%d", got[0].Kind, len(got[0].Text))
+	}
+}
+
+// A final line with no trailing newline (the process closed stdout without
+// flushing one) must still be parsed, not silently lost on EOF.
+func TestParseStream_finalLineWithoutNewline(t *testing.T) {
+	in := `{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}` + "\n" +
+		`{"type":"result","total_cost_usd":0.1,"num_turns":3}`
+	got := collectEvents(in)
+	if len(got) != 2 || got[1].Kind != KindResult || got[1].Turns != 3 {
+		t.Errorf("events = %+v, want text + result", got)
+	}
+}
+
+// A read error other than EOF is surfaced as an error event so a broken pipe
+// or short read is visible in the scan log rather than swallowed.
+func TestParseStream_readErrorIsEmitted(t *testing.T) {
+	r := io.MultiReader(
+		strings.NewReader(`{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}`+"\n"),
+		iotest.ErrReader(errors.New("pipe broke")),
+	)
+	var got []Event
+	ParseStream(r, func(e Event) { got = append(got, e) })
+
+	if len(got) != 2 {
+		t.Fatalf("events = %+v, want text + error", got)
+	}
+	if got[1].Kind != KindError || !strings.Contains(got[1].Text, "pipe broke") {
+		t.Errorf("last event = %+v, want error carrying the read error", got[1])
+	}
 }
 
 func TestFormatEvent(t *testing.T) {

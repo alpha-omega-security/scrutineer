@@ -67,49 +67,66 @@ type contentBlock struct {
 // ParseStream reads claude --output-format stream-json lines from r and
 // calls emit for each event. Lines that fail to decode are passed through
 // as text so nothing is silently dropped.
+//
+// Lines are read with bufio.Reader rather than bufio.Scanner so a single
+// oversized line (a large thinking block, or a tool_use/tool_result echoing
+// a big file) does not truncate the rest of the stream — which would lose
+// the terminal result event carrying cost/turns/usage and the max-turns
+// signal (#467). A read error other than EOF is surfaced as an error event.
 func ParseStream(r io.Reader, emit func(Event)) {
-	const bufSize = 1024 * 1024
-	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 0, bufSize), bufSize)
+	br := bufio.NewReader(r)
+	for {
+		raw, readErr := br.ReadBytes('\n')
+		if len(raw) > 0 {
+			parseStreamLine(raw, emit)
+		}
+		if readErr == io.EOF {
+			return
+		}
+		if readErr != nil {
+			emit(Event{Kind: KindError, Text: "stream read: " + readErr.Error()})
+			return
+		}
+	}
+}
 
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" {
-			continue
+func parseStreamLine(raw []byte, emit func(Event)) {
+	line := strings.TrimSpace(string(raw))
+	if line == "" {
+		return
+	}
+	var msg streamMessage
+	if err := json.Unmarshal([]byte(line), &msg); err != nil {
+		emit(Event{Kind: KindText, Text: line})
+		return
+	}
+	switch msg.Type {
+	case "system":
+		// The init system message is the first line of a run and is the
+		// only reliable place to read the session id. Capturing it here
+		// lets the worker persist it before the run finishes, so a crash
+		// mid-run is resumable. It is also the signal a `--resume`
+		// actually loaded the conversation: a resume that fails to find
+		// the session emits no init at all (just an error and a result
+		// carrying a brand-new throwaway session id), so the runner must
+		// not treat the result's session id as "resume succeeded" — only
+		// this init event counts.
+		if msg.Subtype == "init" && msg.SessionID != "" {
+			emit(Event{Kind: KindSession, SessionID: msg.SessionID})
 		}
-		var msg streamMessage
-		if err := json.Unmarshal([]byte(line), &msg); err != nil {
-			emit(Event{Kind: KindText, Text: line})
-			continue
+	case "assistant":
+		emitAssistant(msg.Message, emit)
+	case "result":
+		emit(resultEvent(msg))
+		if msg.Subtype == "error_max_turns" {
+			emit(Event{Kind: KindError, Text: "hit max turns"})
 		}
-		switch msg.Type {
-		case "system":
-			// The init system message is the first line of a run and is the
-			// only reliable place to read the session id. Capturing it here
-			// lets the worker persist it before the run finishes, so a crash
-			// mid-run is resumable. It is also the signal a `--resume`
-			// actually loaded the conversation: a resume that fails to find
-			// the session emits no init at all (just an error and a result
-			// carrying a brand-new throwaway session id), so the runner must
-			// not treat the result's session id as "resume succeeded" — only
-			// this init event counts.
-			if msg.Subtype == "init" && msg.SessionID != "" {
-				emit(Event{Kind: KindSession, SessionID: msg.SessionID})
-			}
-		case "assistant":
-			emitAssistant(msg.Message, emit)
-		case "result":
-			emit(resultEvent(msg))
-			if msg.Subtype == "error_max_turns" {
-				emit(Event{Kind: KindError, Text: "hit max turns"})
-			}
-		case "error":
-			var s string
-			if json.Unmarshal(msg.Error, &s) != nil {
-				s = string(msg.Error)
-			}
-			emit(Event{Kind: KindError, Text: s})
+	case "error":
+		var s string
+		if json.Unmarshal(msg.Error, &s) != nil {
+			s = string(msg.Error)
 		}
+		emit(Event{Kind: KindError, Text: s})
 	}
 }
 
