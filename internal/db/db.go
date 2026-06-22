@@ -976,17 +976,34 @@ func StatusPriorityFor(s ScanStatus) int {
 	}
 }
 
+// connectionPragmas are appended to the DSN so the modernc driver applies
+// them on every connection it opens, not just whichever pooled connection a
+// post-open gdb.Exec happens to land on (#457). foreign_keys and
+// busy_timeout are per-connection in SQLite; setting them once via Exec
+// left most of the pool running with the defaults (foreign_keys=OFF,
+// busy_timeout=0), which #453 observed as 3/8 connections without FK
+// enforcement. journal_mode is per-database and persistent, so it would
+// stick after one Exec, but setting it here keeps all three together.
+const connectionPragmas = "_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
+
+// withPragmas appends connectionPragmas to dsn, joining with ? or &
+// depending on whether dsn already carries a query string (the in-memory
+// test DSNs do).
+func withPragmas(dsn string) string {
+	sep := "?"
+	if strings.Contains(dsn, "?") {
+		sep = "&"
+	}
+	return dsn + sep + connectionPragmas
+}
+
 func Open(dsn string) (*gorm.DB, error) {
 	cfg := &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Warn),
 	}
-	gdb, err := gorm.Open(sqlite.Open(dsn), cfg)
+	gdb, err := gorm.Open(sqlite.Open(withPragmas(dsn)), cfg)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
-	}
-	// WAL so the web server can read while the worker writes.
-	if err := gdb.Exec("PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;").Error; err != nil {
-		return nil, fmt.Errorf("pragma: %w", err)
 	}
 	if err := gdb.AutoMigrate(
 		&Repository{}, &Scan{},

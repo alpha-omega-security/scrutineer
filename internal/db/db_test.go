@@ -1,6 +1,8 @@
 package db
 
 import (
+	"context"
+	"database/sql"
 	"math"
 	"os"
 	"path/filepath"
@@ -202,6 +204,67 @@ func TestOpenAndMigrate(t *testing.T) {
 	}
 	if err := gdb.Create(&CNA{ShortName: "apache"}).Error; err == nil {
 		t.Errorf("expected unique-index violation on duplicate ShortName")
+	}
+}
+
+func TestWithPragmas_joinsOnExistingQuery(t *testing.T) {
+	cases := map[string]string{
+		"data/scrutineer.db":         "data/scrutineer.db?" + connectionPragmas,
+		":memory:":                   ":memory:?" + connectionPragmas,
+		"file::memory:?cache=shared": "file::memory:?cache=shared&" + connectionPragmas,
+	}
+	for in, want := range cases {
+		if got := withPragmas(in); got != want {
+			t.Errorf("withPragmas(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+// foreign_keys and busy_timeout are per-connection in SQLite. Setting them
+// via a single gdb.Exec only configures whichever pooled connection that
+// Exec lands on, leaving the rest at the defaults (#457). Open now folds
+// the pragmas into the DSN so the driver applies them on every connection
+// it opens; this test pulls several distinct connections off the pool and
+// checks each one.
+func TestOpen_pragmasApplyToEveryConnection(t *testing.T) {
+	gdb, err := Open(filepath.Join(t.TempDir(), "p.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqldb, err := gdb.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = sqldb.Close() }()
+
+	const n = 8
+	sqldb.SetMaxOpenConns(n)
+	ctx := context.Background()
+	conns := make([]*sql.Conn, 0, n)
+	for i := 0; i < n; i++ {
+		c, err := sqldb.Conn(ctx)
+		if err != nil {
+			t.Fatalf("conn %d: %v", i, err)
+		}
+		conns = append(conns, c)
+	}
+	// Holding all n at once forces n distinct connections out of the pool;
+	// release them after the loop so each iteration sees a fresh one.
+	for i, c := range conns {
+		var fk, bt int
+		if err := c.QueryRowContext(ctx, "PRAGMA foreign_keys").Scan(&fk); err != nil {
+			t.Fatalf("conn %d foreign_keys: %v", i, err)
+		}
+		if err := c.QueryRowContext(ctx, "PRAGMA busy_timeout").Scan(&bt); err != nil {
+			t.Fatalf("conn %d busy_timeout: %v", i, err)
+		}
+		if fk != 1 {
+			t.Errorf("conn %d: foreign_keys = %d, want 1", i, fk)
+		}
+		if bt != 5000 {
+			t.Errorf("conn %d: busy_timeout = %d, want 5000", i, bt)
+		}
+		_ = c.Close()
 	}
 }
 
