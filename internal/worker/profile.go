@@ -310,18 +310,48 @@ func lockForTag(tag string) *sync.Mutex {
 }
 
 // imageTag returns the content-addressed tag for a profile's Dockerfile.
-// The runner image ref is folded into the hash so a `--runner-image`
-// bump invalidates profile images whose FROM resolved to the old base.
-// Editing the Dockerfile produces a new tag, so the local cache is
-// invalidated transparently. Old tags stay cached until the operator
-// prunes them.
-func imageTag(profileName string, dockerfile []byte, runnerImage string) string {
+// The runner image ref and its resolved registry digest are both folded
+// into the hash: editing the Dockerfile, pointing --runner-image at a
+// different ref, or a moved tag (the default :latest resolving to a new
+// digest) each yield a new tag, so the local cache is invalidated
+// transparently and the new image builds alongside the old. baseDigest is
+// empty when the digest can't be resolved (offline, or a local-only ref);
+// the tag then keys on the ref string alone, the behaviour before the
+// digest was folded in. Old tags stay cached until the operator prunes
+// them.
+func imageTag(profileName string, dockerfile []byte, runnerImage, baseDigest string) string {
 	h := sha256.New()
 	h.Write(dockerfile)
 	h.Write([]byte{0})
 	h.Write([]byte(runnerImage))
+	if baseDigest != "" {
+		h.Write([]byte{0})
+		h.Write([]byte(baseDigest))
+	}
 	sum := h.Sum(nil)
 	return fmt.Sprintf("scrutineer-profile-%s:%s", profileName, hex.EncodeToString(sum[:6]))
+}
+
+// resolveBaseDigest returns a content fingerprint of runnerImage as it
+// currently resolves in the registry, so a moved tag (notably the default
+// :latest) produces a new profile tag and forces a rebuild against the new
+// base instead of reusing a months-old cached profile image. It shells out
+// to `docker buildx imagetools inspect --raw`, which fetches the canonical
+// manifest bytes without pulling layers; buildx ships wherever `docker
+// build` runs, so it is available on the profile-build path. Best-effort:
+// returns "" when the registry is unreachable or the ref is local-only
+// (e.g. scrutineer-runner:local), so imageTag falls back to keying on the
+// ref string alone rather than blocking the scan.
+func resolveBaseDigest(ctx context.Context, runnerImage string) string {
+	if runnerImage == "" {
+		return ""
+	}
+	out, err := exec.CommandContext(ctx, "docker", "buildx", "imagetools", "inspect", runnerImage, "--raw").Output()
+	if err != nil || len(out) == 0 {
+		return ""
+	}
+	sum := sha256.Sum256(out)
+	return hex.EncodeToString(sum[:])
 }
 
 // EnsureImage builds the profile's Docker image if it is not in the
@@ -343,7 +373,7 @@ func (p Profile) EnsureImage(ctx context.Context, profilesDir, runnerImage strin
 	if err != nil {
 		return "", fmt.Errorf("read profile dockerfile: %w", err)
 	}
-	tag := imageTag(p.Name, contents, runnerImage)
+	tag := imageTag(p.Name, contents, runnerImage, resolveBaseDigest(ctx, runnerImage))
 
 	mu := lockForTag(tag)
 	mu.Lock()
