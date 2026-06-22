@@ -15,7 +15,7 @@
           "url":            { "type": "string" },
           "title":          { "type": "string" },
           "description":    { "type": "string" },
-          "severity":       { "type": "string" },
+          "severity":       { "type": "string", "enum": ["CRITICAL", "HIGH", "MEDIUM", "LOW"] },
           "cvss_score":     { "type": "number", "minimum": 0, "maximum": 10 },
           "classification": { "type": "string" },
           "packages":       { "type": "string" },
