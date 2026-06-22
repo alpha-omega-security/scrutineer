@@ -68,6 +68,14 @@ type Repository struct {
 	// currently unreachable. Cleared on next successful clone.
 	CloneError string
 
+	// DiskBytes caches the on-disk size of the persistent clone cache so
+	// the repo list can render the disk-usage badge from a column instead
+	// of walking each repo's cache directory per row on every render
+	// (#126). Refreshed by the worker when a scan finishes and backfilled
+	// once at startup; 0 for local repos (no managed clone) and for remote
+	// repos not scanned since the column was added.
+	DiskBytes int64
+
 	// ThreatModel is the operator's working-copy threat-model JSON for
 	// this repository. When non-empty the worker writes it to
 	// ./threat_model.json in every skill workspace, and security-deep-dive

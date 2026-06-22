@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"gorm.io/gorm"
+
 	"scrutineer/internal/db"
 )
 
@@ -32,6 +34,45 @@ func RepoDiskUsage(dataDir string, repo db.Repository) int64 {
 	}
 	n, _ := dirSize(RepoCacheRoot(dataDir, repo.URL))
 	return n
+}
+
+// refreshRepoDiskUsage recomputes the clone-cache size for one repository
+// and stores it on the row, so the repo list can read the badge from a
+// column instead of walking the filesystem per row (#126). Best-effort:
+// called after a scan finishes, when the cache has just changed; a load or
+// walk failure is logged and the stored value is left as-is.
+func (w *Worker) refreshRepoDiskUsage(repoID uint) {
+	var repo db.Repository
+	if err := w.DB.First(&repo, repoID).Error; err != nil {
+		w.Log.Warn("disk usage refresh: load repo", "repo", repoID, "err", err)
+		return
+	}
+	usage := RepoDiskUsage(w.DataDir, repo)
+	if err := w.DB.Model(&db.Repository{}).Where("id = ?", repoID).
+		Update("disk_bytes", usage).Error; err != nil {
+		w.Log.Warn("disk usage refresh: store", "repo", repoID, "err", err)
+	}
+}
+
+// BackfillRepoDiskUsage fills Repository.DiskBytes for remote repos that
+// have no cached value yet, so the disk-usage badge shows immediately on
+// upgrade instead of waiting for each repo's next scan. Runs once at
+// startup. Only repos with disk_bytes = 0 are walked, so a second boot
+// re-walks just the genuinely-empty ones (a single failed stat each);
+// local repos are skipped entirely.
+func BackfillRepoDiskUsage(gdb *gorm.DB, dataDir string) {
+	var repos []db.Repository
+	gdb.Where("disk_bytes = 0").Find(&repos)
+	for _, repo := range repos {
+		if repo.IsLocal() {
+			continue
+		}
+		usage := RepoDiskUsage(dataDir, repo)
+		if usage == 0 {
+			continue
+		}
+		gdb.Model(&db.Repository{}).Where("id = ?", repo.ID).Update("disk_bytes", usage)
+	}
 }
 
 // prepareRepoSrc updates the per-URL cache under a lock, copies the

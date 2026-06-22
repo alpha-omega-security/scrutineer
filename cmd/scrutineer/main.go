@@ -321,6 +321,7 @@ func run(log *slog.Logger) error {
 	db.BackfillFindingRepository(gdb)
 	db.BackfillFindingFingerprints(gdb)
 	db.BackfillStatusPriority(gdb)
+	worker.BackfillRepoDiskUsage(gdb, f.dataDir)
 	if err := db.SeedDefaultLabels(gdb); err != nil {
 		return fmt.Errorf("seed labels: %w", err)
 	}

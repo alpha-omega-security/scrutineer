@@ -3,6 +3,7 @@ package web
 import (
 	"fmt"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -87,6 +88,30 @@ func BenchmarkListPagesLargeDataset(b *testing.B) {
 				}
 			}
 		})
+	}
+}
+
+// The repo list renders the disk-usage badge from Repository.DiskBytes, not
+// by walking each repo's clone cache per row (#126). Seeding the column with
+// no cache directory on disk and seeing the size render proves the column is
+// the source: the old per-row filepath.Walk would have found nothing and
+// shown "-".
+func TestRepoList_diskBadgeReadsCachedColumn(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/sized", Name: "sized", DiskBytes: 2048}
+	if err := s.DB.Create(&repo).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/"))
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	row := requireRepoListRow(t, w.Body.String(), repo.ID)
+	if !strings.Contains(row, "2.0 KB") {
+		t.Errorf("repo row did not render cached disk size from the column: %s", row)
 	}
 }
 

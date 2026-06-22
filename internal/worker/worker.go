@@ -386,6 +386,12 @@ func (w *Worker) finalizeScan(ctx context.Context, scan *db.Scan, report string,
 	if _, isLimit := errors.AsType[*ClaudePlanLimitError](err); isLimit && scan.Status == db.ScanPaused {
 		w.pauseQueuedOnTokenLimit(scan.ID)
 	}
+	// The clone cache may have grown (clone/fetch/unshallow); refresh the
+	// cached size so the repo list reads it from the row instead of walking
+	// the filesystem per render (#126).
+	if !scan.Repository.IsLocal() {
+		w.refreshRepoDiskUsage(scan.RepositoryID)
+	}
 	if scan.Status.Terminal() {
 		if rmErr := os.RemoveAll(w.scanWorkRoot(scan)); rmErr != nil {
 			w.Log.Warn("workspace cleanup failed", "scan", scan.ID, "err", rmErr)

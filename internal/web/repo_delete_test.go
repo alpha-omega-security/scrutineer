@@ -295,22 +295,12 @@ func TestRepoDiskSize_renderedInListAndSummary(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
 
-	dataDir := t.TempDir()
-	s.Worker = &worker.Worker{DataDir: dataDir}
-
 	// No FetchedAt: disk size must render in the summary regardless of
 	// whether upstream metadata has been fetched (it renders unconditionally
-	// in the list, so the detail page must match).
-	repo := db.Repository{URL: "https://github.com/acme/sized", Name: "sized"}
+	// in the list, so the detail page must match). DiskBytes is the cached
+	// column the worker refreshes after each scan (#126); both pages read it.
+	repo := db.Repository{URL: "https://github.com/acme/sized", Name: "sized", DiskBytes: 2048}
 	s.DB.Create(&repo)
-
-	cacheDir := worker.RepoCacheRoot(dataDir, repo.URL)
-	if err := os.MkdirAll(cacheDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(cacheDir, "blob"), make([]byte, 2048), 0o644); err != nil {
-		t.Fatal(err)
-	}
 
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, localReq("GET", "/"))

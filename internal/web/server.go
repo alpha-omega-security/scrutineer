@@ -656,8 +656,11 @@ func (s *Server) repoList(w http.ResponseWriter, r *http.Request) {
 			Repository:    repo,
 			LastScan:      lastScans[repo.ID],
 			FindingsTotal: findingCounts[repo.ID],
-			DiskBytes:     worker.RepoDiskUsage(s.Worker.DataDir, repo),
-			Branches:      branchesByRepo[repo.ID],
+			// Read the cached size from the row; the worker refreshes it on
+			// each scan and a startup backfill seeds it, so the list never
+			// walks the clone cache per row (#126).
+			DiskBytes: repo.DiskBytes,
+			Branches:  branchesByRepo[repo.ID],
 		})
 	}
 	languages := distinctLanguages(s.DB)
@@ -1884,10 +1887,11 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 		"ActiveScans":          int(activeScans),
 		"PausedScans":          int(pausedScans),
 		"TotalCost":            totalCost,
-		"DiskBytes":            worker.RepoDiskUsage(s.Worker.DataDir, repo),
-		"TMCommit":             tmCommit,
-		"DepsCommit":           depsCommit,
-		"Deps":                 deps, "DepsTotal": depsTotal,
+		// Cached on the row, refreshed by the worker after each scan (#126).
+		"DiskBytes":  repo.DiskBytes,
+		"TMCommit":   tmCommit,
+		"DepsCommit": depsCommit,
+		"Deps":       deps, "DepsTotal": depsTotal,
 		"Pkgs":       pkgs,
 		"Dependents": dependents, "DependentsTotal": dependentsTotal,
 		"Advisories": advisories, "AdvisoriesTotal": advisoriesTotal,

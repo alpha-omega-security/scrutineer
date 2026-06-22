@@ -2,12 +2,104 @@ package worker
 
 import (
 	"context"
+	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"scrutineer/internal/db"
 )
+
+// seedCacheFile writes a file of n bytes into the clone cache for url under
+// dataDir, so RepoDiskUsage reports a known non-zero size.
+func seedCacheFile(t *testing.T, dataDir, url string, n int) {
+	t.Helper()
+	dir := RepoCacheRoot(dataDir, url)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "blob"), make([]byte, n), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRefreshRepoDiskUsage_storesComputedSize(t *testing.T) {
+	dataDir := t.TempDir()
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "r.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://example.com/a", Name: "a"}
+	gdb.Create(&repo)
+	seedCacheFile(t, dataDir, repo.URL, 2048)
+
+	w := &Worker{DB: gdb, DataDir: dataDir, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	w.refreshRepoDiskUsage(repo.ID)
+
+	var got db.Repository
+	gdb.First(&got, repo.ID)
+	if got.DiskBytes != 2048 {
+		t.Errorf("DiskBytes = %d, want 2048", got.DiskBytes)
+	}
+}
+
+func TestBackfillRepoDiskUsage_fillsZeroRowsSkipsLocal(t *testing.T) {
+	dataDir := t.TempDir()
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "b.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote := db.Repository{URL: "https://example.com/remote", Name: "remote"}
+	local := db.Repository{URL: "file:///tmp/local", Name: "local"}
+	uncached := db.Repository{URL: "https://example.com/uncached", Name: "uncached"}
+	gdb.Create(&remote)
+	gdb.Create(&local)
+	gdb.Create(&uncached)
+	seedCacheFile(t, dataDir, remote.URL, 4096)
+	// A local repo with a stray cache dir must still be skipped on IsLocal.
+	seedCacheFile(t, dataDir, local.URL, 9999)
+
+	BackfillRepoDiskUsage(gdb, dataDir)
+
+	sizeOf := func(id uint) int64 {
+		var r db.Repository
+		gdb.First(&r, id)
+		return r.DiskBytes
+	}
+	if got := sizeOf(remote.ID); got != 4096 {
+		t.Errorf("remote DiskBytes = %d, want 4096", got)
+	}
+	if got := sizeOf(local.ID); got != 0 {
+		t.Errorf("local DiskBytes = %d, want 0 (local repos skipped)", got)
+	}
+	if got := sizeOf(uncached.ID); got != 0 {
+		t.Errorf("uncached DiskBytes = %d, want 0 (no cache dir)", got)
+	}
+}
+
+func TestBackfillRepoDiskUsage_leavesNonZeroAlone(t *testing.T) {
+	dataDir := t.TempDir()
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "n.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://example.com/keep", Name: "keep", DiskBytes: 123}
+	gdb.Create(&repo)
+	// Cache on disk says 4096, but the row already carries a value; the
+	// backfill only touches rows at 0, so the stored value must be kept.
+	seedCacheFile(t, dataDir, repo.URL, 4096)
+
+	BackfillRepoDiskUsage(gdb, dataDir)
+
+	var got db.Repository
+	gdb.First(&got, repo.ID)
+	if got.DiskBytes != 123 {
+		t.Errorf("DiskBytes = %d, want 123 (non-zero rows are not re-walked)", got.DiskBytes)
+	}
+}
 
 func TestRepoCacheRoot(t *testing.T) {
 	a := RepoCacheRoot("/data", "https://github.com/a/b")
