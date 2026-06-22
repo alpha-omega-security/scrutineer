@@ -373,7 +373,8 @@ func (p Profile) EnsureImage(ctx context.Context, profilesDir, runnerImage strin
 	if err != nil {
 		return "", fmt.Errorf("read profile dockerfile: %w", err)
 	}
-	tag := imageTag(p.Name, contents, runnerImage, resolveBaseDigest(ctx, runnerImage))
+	baseDigest := resolveBaseDigest(ctx, runnerImage)
+	tag := imageTag(p.Name, contents, runnerImage, baseDigest)
 
 	mu := lockForTag(tag)
 	mu.Lock()
@@ -384,7 +385,18 @@ func (p Profile) EnsureImage(ctx context.Context, profilesDir, runnerImage strin
 	}
 	emit(Event{Kind: KindText, Text: "profile: building " + tag + " (first build can take several minutes)"})
 	start := time.Now()
-	buildArgs := []string{"build", "-t", tag, "-f", dockerfile}
+	buildArgs := []string{"build"}
+	if baseDigest != "" {
+		// resolveBaseDigest found the runner in a registry and keyed the
+		// tag on its remote digest; --pull makes BuildKit fetch that base
+		// rather than reuse a stale locally cached :latest, so the layers
+		// match the digest the tag is keyed on. Skipped when the digest
+		// did not resolve (offline, or a local-only ref like
+		// scrutineer-runner:local) so the build still works against the
+		// local cache. See #477.
+		buildArgs = append(buildArgs, "--pull")
+	}
+	buildArgs = append(buildArgs, "-t", tag, "-f", dockerfile)
 	if runnerImage != "" {
 		buildArgs = append(buildArgs, "--build-arg", "RUNNER_IMAGE="+runnerImage)
 	}
