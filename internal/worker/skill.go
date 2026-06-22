@@ -379,11 +379,13 @@ func (w *Worker) parseFindingsOutput(skill *db.Skill, scan *db.Scan, report stri
 	}
 	scan.FindingsCount = len(findings)
 
-	// VIDs hash the code at each sink, so they can only be computed
-	// while the scanned checkout is still on disk at workRoot/src.
+	// VIDs hash the code at each sink and snippets excerpt it around the
+	// primary location, so both can only be captured while the scanned
+	// checkout is still on disk at workRoot/src.
 	srcDir := filepath.Join(w.scanWorkRoot(scan), "src")
 	for i := range findings {
 		findings[i].VID = w.computeVID(srcDir, findings[i].Locations)
+		findings[i].Snippet = readSnippet(srcDir, findings[i].Location)
 	}
 
 	worst := ""
@@ -444,11 +446,14 @@ func (w *Worker) reobserveFinding(existing, f *db.Finding, scan *db.Scan) error 
 		"location":            f.Location,
 		"locations":           f.Locations,
 	}
-	// Refresh the VID so it tracks the code as it drifts, but never
-	// wipe a stored one just because this run could not compute (vid
-	// binary missing, location gone).
+	// Refresh the VID and snippet so they track the code as it drifts,
+	// but never wipe a stored one just because this run could not capture
+	// it (vid binary missing, location gone, checkout evicted).
 	if f.VID != "" {
 		updates["vid"] = f.VID
+	}
+	if f.Snippet != "" {
+		updates["snippet"] = f.Snippet
 	}
 	if err := w.DB.Model(&db.Finding{}).Where("id = ?", existing.ID).Updates(updates).Error; err != nil {
 		return fmt.Errorf("update finding %d: %w", existing.ID, err)

@@ -132,6 +132,7 @@ One row per vulnerability. Lifecycle columns are mutated through `db.WriteFindin
 | cwe | text | e.g. `CWE-352`. Tooltips come from the embedded MITRE catalogue. |
 | location | text | Primary `file:line` or `file:start-end`. |
 | locations | text | Newline-joined set of every `file:line` that hit the same fingerprint in this scan. `location` is the first; the rest render as a `+N` badge and an expandable list on the finding page. Empty on rows that predate the column until the next rescan. |
+| snippet | text | Source excerpt around `location` (a few lines either side), captured at ingest while the scanned checkout is still on disk. Renders as a fenced code block in the markdown report. Empty for rows written before the column, locations without a line, or paths that did not resolve to a readable file in the checkout; not backfilled. Refreshed on re-observation, never wiped when a later scan cannot recompute it. |
 | reachability | text | `reachable`, `harness_only`, `unclear`. `harness_only` is a real bug but not disclosable as a vulnerability on its own. |
 | quality_tier | text | `high` (heap overflow, UAF, type confusion, controllable write, shell/eval injection) or `low` (stack exhaustion, assertion failure, fixed-offset null deref, log injection). |
 | imported_from | text | Originating tool name when the finding came in via `POST /api/v1/import`; empty for native scans. |

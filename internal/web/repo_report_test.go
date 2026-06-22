@@ -159,6 +159,51 @@ func TestRepoReport_includesEverySection(t *testing.T) {
 	}
 }
 
+func TestRepoReport_rendersSourceSnippet(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
+	s.DB.Create(&repo)
+	now := time.Now()
+	scan := db.Scan{
+		RepositoryID: repo.ID, Kind: worker.JobSkill, Status: db.ScanDone,
+		SkillName: "security-deep-dive", Commit: "abcdef1234567",
+		Report: `{"version":1}`, FinishedAt: &now, CreatedAt: now,
+	}
+	s.DB.Create(&scan)
+
+	s.DB.Create(&db.Finding{
+		ScanID: scan.ID, RepositoryID: repo.ID, Commit: scan.Commit,
+		FindingID: "F1", Title: "has snippet", Severity: "High", Status: db.FindingNew,
+		Location: "main.go:12", Snippet: "func vulnerable() {\n\texec.Command(arg)\n}",
+		Trace: "arg reaches exec",
+	})
+	// A finding without a captured snippet (older row, or location that did
+	// not resolve) must render no Source block: an empty snippet leaves no
+	// dangling heading.
+	s.DB.Create(&db.Finding{
+		ScanID: scan.ID, RepositoryID: repo.ID, Commit: scan.Commit,
+		FindingID: "F2", Title: "no snippet", Severity: "Low", Status: db.FindingNew,
+		Location: "other.go:3", Trace: "nothing captured",
+	})
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET",
+		"/repositories/"+strconv.FormatUint(uint64(repo.ID), 10)+"/report.md"))
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	body := w.Body.String()
+
+	if !strings.Contains(body, "#### Source\n\n```go\nfunc vulnerable() {") {
+		t.Errorf("expected go-fenced source block for the finding with a snippet:\n%s", body)
+	}
+	if n := strings.Count(body, "#### Source"); n != 1 {
+		t.Errorf("#### Source count = %d, want 1 (empty snippet must render no block)", n)
+	}
+}
+
 func TestRepoReport_includesSkillsRepoSHA(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

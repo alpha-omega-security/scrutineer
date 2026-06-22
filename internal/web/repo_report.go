@@ -421,6 +421,11 @@ func writeReportFinding(b *strings.Builder, gdb *gorm.DB, f db.Finding, latest *
 		b.WriteString("\n")
 	}
 
+	if f.Snippet != "" {
+		path, _ := splitFileLine(f.Location)
+		fmt.Fprintf(b, "#### Source\n\n```%s\n%s\n```\n\n", highlightLang(path), f.Snippet)
+	}
+
 	writeProse(b, "#### Trace", f.Trace)
 	writeProse(b, "#### Trust boundary", f.Boundary)
 	writeProse(b, "#### Validation", f.Validation)
