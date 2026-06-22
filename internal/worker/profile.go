@@ -353,12 +353,9 @@ func (p Profile) EnsureImage(ctx context.Context, profilesDir, runnerImage strin
 		return tag, nil
 	}
 	emit(Event{Kind: KindText, Text: "profile: building " + tag + " (first build can take several minutes)"})
+	pullRunnerImage(ctx, runnerImage, emit)
 	start := time.Now()
-	buildArgs := []string{"build", "-t", tag, "-f", dockerfile}
-	if runnerImage != "" {
-		buildArgs = append(buildArgs, "--build-arg", "RUNNER_IMAGE="+runnerImage)
-	}
-	buildArgs = append(buildArgs, filepath.Join(profilesDir, p.Name))
+	buildArgs := profileBuildArgs(tag, dockerfile, filepath.Join(profilesDir, p.Name), runnerImage)
 	cmd := exec.CommandContext(ctx, "docker", buildArgs...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("docker build %s: %w\n%s", tag, err, out)
@@ -369,4 +366,32 @@ func (p Profile) EnsureImage(ctx context.Context, profilesDir, runnerImage strin
 
 func imageExistsLocally(ctx context.Context, tag string) bool {
 	return exec.CommandContext(ctx, "docker", "image", "inspect", tag).Run() == nil
+}
+
+// profileBuildArgs returns the `docker build` argument vector for a
+// profile image. Split out so the assembly can be unit-tested without
+// shelling out.
+func profileBuildArgs(tag, dockerfile, contextDir, runnerImage string) []string {
+	args := []string{"build", "-t", tag, "-f", dockerfile}
+	if runnerImage != "" {
+		args = append(args, "--build-arg", "RUNNER_IMAGE="+runnerImage)
+	}
+	return append(args, contextDir)
+}
+
+// pullRunnerImage refreshes the runner image from its registry before a
+// profile build so the FROM resolves to the current upstream rather than
+// a stale locally cached :latest. Best-effort: a pull failure (offline,
+// or runnerImage points at a locally built tag with no registry behind
+// it) is logged via emit and the build proceeds with whatever is cached.
+// See https://github.com/alpha-omega-security/scrutineer/issues/477.
+func pullRunnerImage(ctx context.Context, runnerImage string, emit func(Event)) {
+	if runnerImage == "" {
+		return
+	}
+	emit(Event{Kind: KindText, Text: "profile: pulling base " + runnerImage})
+	out, err := exec.CommandContext(ctx, "docker", "pull", "--", runnerImage).CombinedOutput()
+	if err != nil {
+		emit(Event{Kind: KindText, Text: "profile: pull " + runnerImage + " failed (using local cache): " + firstLine(string(out))})
+	}
 }

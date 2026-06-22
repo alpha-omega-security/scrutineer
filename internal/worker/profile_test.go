@@ -377,6 +377,27 @@ func TestImageTag_contentAddressed(t *testing.T) {
 	}
 }
 
+func TestProfileBuildArgs(t *testing.T) {
+	got := profileBuildArgs("scrutineer-profile-python:abc", "/p/python/Dockerfile", "/p/python", "ghcr.io/x/runner:latest")
+	want := []string{
+		"build", "-t", "scrutineer-profile-python:abc",
+		"-f", "/p/python/Dockerfile",
+		"--build-arg", "RUNNER_IMAGE=ghcr.io/x/runner:latest",
+		"/p/python",
+	}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Errorf("profileBuildArgs\n got: %v\nwant: %v", got, want)
+	}
+
+	noRunner := profileBuildArgs("t:x", "/p/Dockerfile", "/p", "")
+	for _, a := range noRunner {
+		if strings.HasPrefix(a, "RUNNER_IMAGE=") || a == "--build-arg" {
+			t.Errorf("empty runnerImage should not add build-arg, got %v", noRunner)
+			break
+		}
+	}
+}
+
 func TestLockForTag_sameTagSameMutex(t *testing.T) {
 	a := lockForTag("scrutineer-profile-test:abc")
 	b := lockForTag("scrutineer-profile-test:abc")
