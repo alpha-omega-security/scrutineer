@@ -42,6 +42,25 @@ type Repository struct {
 	Metadata      string `gorm:"type:text"`
 	FetchedAt     *time.Time
 
+	// Ecosystems* hold raw ecosyste.ms payloads pre-fetched server-side so
+	// the metadata/packages/advisories/maintainers/dependents skills can read
+	// a known URL from the API instead of issuing a WebFetch and carrying the
+	// payload across every turn. Each Data column mirrors the Metadata
+	// blob pattern above; the paired FetchedAt drives the per-source TTL
+	// refresh. Empty Data means "never fetched" (skills fall back to WebFetch).
+	EcosystemsRepoData            string `gorm:"type:text"`
+	EcosystemsRepoFetchedAt       *time.Time
+	EcosystemsPackagesData        string `gorm:"type:text"`
+	EcosystemsPackagesFetchedAt   *time.Time
+	EcosystemsAdvisoriesData      string `gorm:"type:text"`
+	EcosystemsAdvisoriesFetchedAt *time.Time
+	EcosystemsCommitsData         string `gorm:"type:text"`
+	EcosystemsCommitsFetchedAt    *time.Time
+	EcosystemsIssuesData          string `gorm:"type:text"`
+	EcosystemsIssuesFetchedAt     *time.Time
+	EcosystemsDependentsData      string `gorm:"type:text"`
+	EcosystemsDependentsFetchedAt *time.Time
+
 	// DisclosureChannel is the preferred vector for reporting a
 	// vulnerability in this repo — an email, GHSA URL, registry owner
 	// handle, or SECURITY.md URL. Written by the maintainers skill from

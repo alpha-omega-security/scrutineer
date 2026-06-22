@@ -96,6 +96,12 @@ type Server struct {
 	// the network lookup, mirroring resolvePURL and listBranches.
 	fetchOrgRepos func(ctx context.Context, org string) ([]OrgRepo, error)
 
+	// prefetchEcosystems warms the per-repository ecosyste.ms cache
+	// when a new repo is added, in parallel with the triage enqueue. Field
+	// rather than a direct call so tests can stub the network fan-out,
+	// mirroring resolvePURL and friends.
+	prefetchEcosystems func(repoID uint)
+
 	// Runtime defaults a new scan inherits when the caller pins none.
 	// Both are seeded at startup from config/flags and mutable via the
 	// settings page, so a request can write while another reads. One
@@ -256,12 +262,26 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *work
 	s := &Server{DB: gdb, Queue: q, Log: log, Broker: broker, Worker: w, tmpl: t,
 		resolvePURL: resolvePURLRepo, listBranches: worker.ListRemoteBranches,
 		fetchOrgRepos: fetchGitHubOrgRepos}
+	s.prefetchEcosystems = s.ecosystemsPrefetch
 	if w != nil {
 		w.OnFindingCreated = s.autoEnqueueRevalidate
 		w.OnRevalidateVerdict = s.autoChainVerifyAfterRevalidate
 		w.OnScanFinalized = s.autoEnqueueFindingDedup
 	}
 	return s, nil
+}
+
+// ecosystemsPrefetch warms the ecosyste.ms cache for a freshly added repo in a
+// detached goroutine: the HTTP request that created the repo returns
+// immediately while the fetch runs on its own timeout. Best-effort.
+func (s *Server) ecosystemsPrefetch(repoID uint) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), worker.EcosystemsPrefetchTimeout)
+		defer cancel()
+		if err := worker.RefreshEcosystems(ctx, s.DB, repoID, false, s.Log); err != nil {
+			s.Log.Warn("ecosystems prefetch failed", "repo", repoID, "err", err)
+		}
+	}()
 }
 
 func (s *Server) Handler() http.Handler {
@@ -1647,6 +1667,12 @@ func (s *Server) createOrTriageRepo(ctx context.Context, input RepoInput, model 
 		return repo, false, err
 	}
 	isNew := existing == 0
+	// Eagerly warm the ecosyste.ms cache for a freshly added remote repo, in
+	// parallel with the triage enqueue below. Local repos have no
+	// upstream entry; the goroutine is best-effort and detached from ctx.
+	if isNew && !repo.IsLocal() && s.prefetchEcosystems != nil {
+		s.prefetchEcosystems(repo.ID)
+	}
 	if !isNew && input.Branch == "" && input.SubPath == "" {
 		return repo, false, nil
 	}

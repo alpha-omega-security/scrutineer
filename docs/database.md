@@ -27,6 +27,18 @@ The central entity. One row per git URL.
 | icon_url | text | Avatar/icon URL. |
 | metadata | text | Full ecosyste.ms JSON response. Queryable with `json_extract`. |
 | fetched_at | datetime | When the metadata skill last ran. |
+| ecosystems_repo_data | text | Cached raw `repos.ecosyste.ms` lookup payload, pre-fetched server-side. |
+| ecosystems_repo_fetched_at | datetime | When `ecosystems_repo_data` was last refreshed. TTL 30 days. |
+| ecosystems_packages_data | text | Cached raw `packages.ecosyste.ms` lookup payload. |
+| ecosystems_packages_fetched_at | datetime | When `ecosystems_packages_data` was last refreshed. TTL 30 days. |
+| ecosystems_advisories_data | text | Cached `advisories.ecosyste.ms` payload, paginated and concatenated. |
+| ecosystems_advisories_fetched_at | datetime | When `ecosystems_advisories_data` was last refreshed. TTL 7 days. |
+| ecosystems_commits_data | text | Cached raw `commits.ecosyste.ms` lookup payload. |
+| ecosystems_commits_fetched_at | datetime | When `ecosystems_commits_data` was last refreshed. TTL 7 days. |
+| ecosystems_issues_data | text | Cached raw `issues.ecosyste.ms` lookup payload. |
+| ecosystems_issues_fetched_at | datetime | When `ecosystems_issues_data` was last refreshed. TTL 7 days. |
+| ecosystems_dependents_data | text | Cached dependents, chained off the packages lookup (per-package top dependents, capped). |
+| ecosystems_dependents_fetched_at | datetime | When `ecosystems_dependents_data` was last refreshed. TTL 30 days. |
 | disclosure_channel | text | Preferred reporting vector (email, GHSA URL, registry owner handle, SECURITY.md URL). Written by `maintainers`/`cna-match`; analyst-editable. |
 | posture | text | Disclosure-readiness tier from the `posture` skill: `ready`, `partial`, `unprepared`. |
 | posture_summary | text | One-line explanation that goes with `posture`. |

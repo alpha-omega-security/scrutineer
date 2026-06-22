@@ -128,6 +128,32 @@ paths:
                 items: { $ref: '#/components/schemas/Dependent' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  /repositories/{id}/ecosystems/{source}/raw:
+    get:
+      summary: Verbatim cached ecosyste.ms payload for one source
+      description: >
+        Returns the raw upstream payload pre-fetched and cached server-side.
+        A 404 signals nothing is cached, in which case the caller falls
+        back to a direct WebFetch.
+      operationId: getRepositoryEcosystemsRaw
+      parameters:
+        - $ref: '#/components/parameters/RepositoryID'
+        - name: source
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [repo, packages, advisories, commits, issues, dependents]
+      responses:
+        '200':
+          description: Cached payload, returned verbatim
+          content:
+            application/json: {}
+        '400':
+          description: Unknown source
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /repositories/{id}/dependencies:
     get:
       summary: List dependencies declared by this repository's manifests

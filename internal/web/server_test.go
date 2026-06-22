@@ -39,6 +39,7 @@ func newTestServer(t testing.TB) (*Server, func()) {
 	}
 	s.resolvePURL = func(context.Context, string) string { return "" }
 	s.resolveSync = true
+	s.prefetchEcosystems = func(uint) {}
 	return s, func() { _ = sqldb.Close() }
 }
 

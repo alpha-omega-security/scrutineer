@@ -128,6 +128,12 @@ type Worker struct {
 	// leaves it nil and falls through to prepareRepoSrc.
 	PrepareRepoSrc func(ctx context.Context, url, ref, workRoot string, emit func(Event)) (string, error)
 
+	// RefreshEcosystemsCache, when non-nil, runs the stale-only ecosyste.ms
+	// cache refresh at scan start so rescans see fresh-enough data.
+	// main wires it to RefreshEcosystems; tests leave it nil so scans stay
+	// hermetic. Best-effort: errors are logged, never fail the scan.
+	RefreshEcosystemsCache func(ctx context.Context, repoID uint) error
+
 	// VIDCommand overrides the vid binary name for computeVID. Tests
 	// point it at a stub; empty falls through to "vid" on PATH.
 	VIDCommand string
@@ -359,6 +365,12 @@ func (w *Worker) wrap(h handler) func(context.Context, []byte) error {
 		scan.Error = ""
 		if err := w.DB.Save(&scan).Error; err != nil {
 			return err
+		}
+
+		if w.RefreshEcosystemsCache != nil && !scan.Repository.IsLocal() {
+			if err := w.RefreshEcosystemsCache(ctx, scan.RepositoryID); err != nil {
+				w.Log.Warn("ecosystems refresh failed", "scan", scan.ID, "repo", scan.RepositoryID, "err", err)
+			}
 		}
 
 		emit := w.scanEmitter(&scan)
