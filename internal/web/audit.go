@@ -63,7 +63,11 @@ func (s *Server) apiListFindingReviews(w http.ResponseWriter, r *http.Request) {
 }
 
 // apiAuditQueue returns the queue payload as JSON, so a TOC export can
-// pull it into a spreadsheet without scraping the HTML page.
+// pull it into a spreadsheet without scraping the HTML page. The query
+// covers findings across every repository on the instance, so it is
+// served from the host-only /api/v1 mux, not the per-scan bearer API: a
+// scan token issued for one repo must not be able to read other repos'
+// undisclosed findings (#454).
 func (s *Server) apiAuditQueue(w http.ResponseWriter, r *http.Request) {
 	rows, err := db.AuditQueue(s.DB, auditQueueOptionsFromQuery(r))
 	if err != nil {

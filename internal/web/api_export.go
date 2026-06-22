@@ -22,6 +22,11 @@ func (s *Server) exportHandler() http.Handler {
 	mux.HandleFunc("GET /findings", s.apiExportFindings)
 	mux.HandleFunc("GET /scans", s.apiExportScans)
 	mux.HandleFunc("POST /import", s.handleImport)
+	// Audit endpoints return instance-wide findings and review aggregates,
+	// so they live behind the host-only boundary with the other operator
+	// exports rather than under per-scan bearer auth (#454).
+	mux.HandleFunc("GET /audit/queue", s.apiAuditQueue)
+	mux.HandleFunc("GET /audit/metrics", s.apiAuditMetrics)
 	return mux
 }
 

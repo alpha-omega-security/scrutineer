@@ -400,7 +400,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/FindingReview' }
 
-  /audit/queue:
+  /v1/audit/queue:
     get:
       summary: Sample of recently auto-bucketed findings without a recorded review
       description: |
@@ -409,6 +409,10 @@ paths:
         already fixed, or uncertain) and that do not yet have a
         FindingReview row. Spot-check the queue to keep automated triage
         calibrated.
+
+        Instance-wide and unauthenticated; relies on the host-only
+        boundary like the other `/v1/*` exports. Not reachable with a
+        per-scan bearer token.
       operationId: getAuditQueue
       parameters:
         - name: limit
@@ -427,13 +431,16 @@ paths:
                 type: array
                 items: { $ref: '#/components/schemas/Finding' }
 
-  /audit/metrics:
+  /v1/audit/metrics:
     get:
       summary: Aggregate audit metrics
       description: |
         Total reviews, those comparable to an automation outcome,
         agreements between human verdict and automation, and the
         agreement rate (0..1). The audit page renders the same numbers.
+
+        Instance-wide and unauthenticated; relies on the host-only
+        boundary like the other `/v1/*` exports.
       operationId: getAuditMetrics
       responses:
         '200':

@@ -104,8 +104,10 @@ func (s *Server) apiHandler() http.Handler {
 	mux.HandleFunc("POST /findings/{id}/notes", s.apiAddFindingNote)
 	mux.HandleFunc("GET /findings/{id}/reviews", s.apiListFindingReviews)
 	mux.HandleFunc("POST /findings/{id}/reviews", s.apiAddFindingReview)
-	mux.HandleFunc("GET /audit/queue", s.apiAuditQueue)
-	mux.HandleFunc("GET /audit/metrics", s.apiAuditMetrics)
+	// /audit/queue and /audit/metrics are intentionally on the host-only
+	// /api/v1 export mux, not here: they return findings across every
+	// repository on the instance, so a scan token issued for one repo
+	// must not be able to read them (#454).
 	mux.HandleFunc("GET /findings/{id}/communications", s.apiListFindingCommunications)
 	mux.HandleFunc("POST /findings/{id}/communications", s.apiAddFindingCommunication)
 	mux.HandleFunc("GET /findings/{id}/references", s.apiListFindingReferences)

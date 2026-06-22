@@ -128,8 +128,6 @@ func TestApiAuditMetrics_returnsAggregate(t *testing.T) {
 	defer done()
 	repo := db.Repository{URL: "https://example.com/r", Name: "r"}
 	s.DB.Create(&repo)
-	authScan := db.Scan{RepositoryID: repo.ID, Status: db.ScanRunning, APIToken: "T2"}
-	s.DB.Create(&authScan)
 	scan := db.Scan{RepositoryID: repo.ID, Status: db.ScanDone}
 	s.DB.Create(&scan)
 	mk := func(id string) db.Finding {
@@ -141,9 +139,8 @@ func TestApiAuditMetrics_returnsAggregate(t *testing.T) {
 	_, _ = db.AddFindingReview(s.DB, a.ID, "false_positive", "", "false_positive", "andrew")
 	_, _ = db.AddFindingReview(s.DB, b.ID, "true_positive", "", "false_positive", "andrew")
 
-	r := httptest.NewRequest(http.MethodGet, "/api/audit/metrics", nil)
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/audit/metrics", nil)
 	r.Host = "127.0.0.1:8080"
-	r.Header.Set("Authorization", "Bearer T2")
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, r)
 	if w.Code != http.StatusOK {
@@ -205,6 +202,40 @@ func TestApiListFindingReviews(t *testing.T) {
 	}
 }
 
+// The audit endpoints return findings across every repository on the
+// instance, so a per-repo scan token must not reach them (#454). They are
+// on the host-only /api/v1 mux, which rejects non-localhost Host headers,
+// and the per-scan /api mux no longer routes them at all.
+func TestApiAudit_notReachableFromScanContainer(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	_, tok := seedAuditFixture(t, s)
+
+	// The host-only mux rejects the Host header a runner container uses.
+	for _, path := range []string{"/api/v1/audit/queue", "/api/v1/audit/metrics"} {
+		r := httptest.NewRequest("GET", path, nil)
+		r.Host = "host.docker.internal:8080"
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, r)
+		if w.Code != http.StatusForbidden {
+			t.Errorf("%s with non-localhost Host: status = %d, want 403", path, w.Code)
+		}
+	}
+
+	// The per-scan bearer API no longer routes these at all, so a valid
+	// scan token gets a 404 rather than instance-wide findings.
+	for _, path := range []string{"/api/audit/queue", "/api/audit/metrics"} {
+		r := httptest.NewRequest("GET", path, nil)
+		r.Host = testHost
+		r.Header.Set("Authorization", "Bearer "+tok)
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, r)
+		if w.Code != http.StatusNotFound {
+			t.Errorf("%s on scan-token mux: status = %d, want 404", path, w.Code)
+		}
+	}
+}
+
 func TestApiAuditQueue(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
@@ -224,7 +255,7 @@ func TestApiAuditQueue(t *testing.T) {
 		t.Fatalf("seed review: %v", err)
 	}
 
-	w := auditAPIReq(t, s, "GET", "/api/audit/queue", tok, "")
+	w := auditAPIReq(t, s, "GET", "/api/v1/audit/queue", tok, "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d; body=%s", w.Code, w.Body)
 	}
@@ -245,7 +276,7 @@ func TestApiAuditQueue(t *testing.T) {
 	}
 
 	// limit applies.
-	w = auditAPIReq(t, s, "GET", "/api/audit/queue?limit=1", tok, "")
+	w = auditAPIReq(t, s, "GET", "/api/v1/audit/queue?limit=1", tok, "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("limit=1 status = %d; body=%s", w.Code, w.Body)
 	}
@@ -260,7 +291,7 @@ func TestApiAuditQueue(t *testing.T) {
 	// sub-day cutoffs across timezones are unreliable; use date-level
 	// boundaries here so the comparison holds regardless of encoding.
 	countAt := func(since string) int {
-		w := auditAPIReq(t, s, "GET", "/api/audit/queue?since="+url.QueryEscape(since), tok, "")
+		w := auditAPIReq(t, s, "GET", "/api/v1/audit/queue?since="+url.QueryEscape(since), tok, "")
 		if w.Code != http.StatusOK {
 			t.Fatalf("since=%s status = %d; body=%s", since, w.Code, w.Body)
 		}
@@ -341,7 +372,7 @@ func TestAuditQueueOptionsFromQuery(t *testing.T) {
 		{"?limit=3&since=" + at.Format(time.RFC3339), 3, at},
 	}
 	for _, tc := range cases {
-		r := httptest.NewRequest("GET", "/api/audit/queue"+tc.query, nil)
+		r := httptest.NewRequest("GET", "/api/v1/audit/queue"+tc.query, nil)
 		got := auditQueueOptionsFromQuery(r)
 		if got.Limit != tc.wantLimit {
 			t.Errorf("%q: Limit = %d, want %d", tc.query, got.Limit, tc.wantLimit)
