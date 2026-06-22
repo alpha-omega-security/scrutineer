@@ -319,6 +319,8 @@ func (w *Worker) parseSkillOutput(skill *db.Skill, scan *db.Scan, report string,
 		return w.parseBreakingChangeOutput(scan, report, emit)
 	case "mitigation":
 		return w.parseMitigationOutput(scan, report, emit)
+	case "disclose":
+		return w.parseDiscloseOutput(scan, report, emit)
 	case "release_watch":
 		return w.parseReleaseWatchOutput(scan, report, emit)
 	case "subprojects":

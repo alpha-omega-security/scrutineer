@@ -804,6 +804,63 @@ func (w *Worker) parseMitigationOutput(scan *db.Scan, report string, emit func(E
 	return nil
 }
 
+// parseDiscloseOutput posts a FindingNote summarising a disclose run so the
+// finding's Notes panel records that a draft was prepared, alongside the
+// verify/revalidate/patch entries (#482). The draft itself is on
+// Finding.DisclosureDraft (PATCHed by the skill via the API); this note is
+// the audit trail pointing at it: the GHSA summary, which fields were
+// patched/preserved, references added, and the report's notes prose. An
+// error-only report records why the skill refused to draft.
+func (w *Worker) parseDiscloseOutput(scan *db.Scan, report string, emit func(Event)) error {
+	if scan.FindingID == nil {
+		return fmt.Errorf("disclose scan has no finding_id")
+	}
+	var result struct {
+		GHSA struct {
+			Summary string `json:"summary"`
+		} `json:"ghsa"`
+		Patched           []string `json:"patched"`
+		Preserved         []string `json:"preserved"`
+		ReferencesAdded   int      `json:"references_added"`
+		ReferencesSkipped int      `json:"references_skipped"`
+		Notes             string   `json:"notes"`
+		Error             string   `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(report), &result); err != nil {
+		return fmt.Errorf("parse disclose report: %w", err)
+	}
+
+	var b strings.Builder
+	if result.Error != "" {
+		fmt.Fprintf(&b, "disclose: refused\n\n%s\n", strings.TrimSpace(result.Error))
+	} else {
+		b.WriteString("disclose: drafted")
+		if result.GHSA.Summary != "" {
+			fmt.Fprintf(&b, " %q", result.GHSA.Summary)
+		}
+		b.WriteString("\n\n")
+		if len(result.Patched) > 0 {
+			fmt.Fprintf(&b, "Patched: %s\n", strings.Join(result.Patched, ", "))
+		}
+		if len(result.Preserved) > 0 {
+			fmt.Fprintf(&b, "Preserved: %s\n", strings.Join(result.Preserved, ", "))
+		}
+		if result.ReferencesAdded > 0 || result.ReferencesSkipped > 0 {
+			fmt.Fprintf(&b, "References: %d added, %d skipped\n",
+				result.ReferencesAdded, result.ReferencesSkipped)
+		}
+		if result.Notes != "" {
+			fmt.Fprintf(&b, "\n%s\n", strings.TrimSpace(result.Notes))
+		}
+	}
+	if _, err := db.AddFindingNote(w.DB, *scan.FindingID, b.String(), "disclose"); err != nil {
+		return fmt.Errorf("record disclose note: %w", err)
+	}
+
+	emit(Event{Kind: KindText, Text: fmt.Sprintf("finding %d disclosure draft note posted", *scan.FindingID)})
+	return nil
+}
+
 // parseReleaseWatchOutput records whether the upstream has cut a
 // release containing the fix. When released=true, the tag, URL, and
 // timestamp go to the finding's release_tag / release_url / released_at

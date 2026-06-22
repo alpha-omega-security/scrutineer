@@ -887,6 +887,60 @@ func TestParseReleaseWatch_rejectsMissingTimestamp(t *testing.T) {
 	}
 }
 
+func TestParseDisclose_postsSummaryNote(t *testing.T) {
+	report := `{
+		"ghsa": {"summary": "Command injection in run()"},
+		"patched": ["cvss_vector", "affected", "disclosure_draft"],
+		"preserved": ["title"],
+		"references_added": 2,
+		"references_skipped": 1,
+		"notes": "Source-only advisory; no published packages."
+	}`
+	f, gdb := runSkillWithFinding(t, "disclose", report, db.FindingTriaged)
+
+	var notes []db.FindingNote
+	gdb.Where("finding_id = ? AND `by` = ?", f.ID, "disclose").Find(&notes)
+	if len(notes) != 1 {
+		t.Fatalf("want one disclose note, got %d: %+v", len(notes), notes)
+	}
+	body := notes[0].Body
+	for _, want := range []string{
+		`disclose: drafted "Command injection in run()"`,
+		"Patched: cvss_vector, affected, disclosure_draft",
+		"Preserved: title",
+		"References: 2 added, 1 skipped",
+		"Source-only advisory; no published packages.",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("note body missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestParseDisclose_errorReportRecordsRefusal(t *testing.T) {
+	report := `{"error": "finding has no Trace prose; cannot draft a description"}`
+	f, gdb := runSkillWithFinding(t, "disclose", report, db.FindingNew)
+
+	var notes []db.FindingNote
+	gdb.Where("finding_id = ? AND `by` = ?", f.ID, "disclose").Find(&notes)
+	if len(notes) != 1 {
+		t.Fatalf("want one disclose note, got %d", len(notes))
+	}
+	if !strings.Contains(notes[0].Body, "disclose: refused") {
+		t.Errorf("note body = %q, want refused header", notes[0].Body)
+	}
+	if !strings.Contains(notes[0].Body, "no Trace prose") {
+		t.Errorf("note body = %q, want error reason", notes[0].Body)
+	}
+}
+
+func TestParseDisclose_requiresFindingID(t *testing.T) {
+	w := &Worker{}
+	if err := w.parseDiscloseOutput(&db.Scan{}, `{}`, func(Event) {}); err == nil || !strings.Contains(err.Error(), "finding_id") {
+		t.Errorf("missing finding_id error = %v", err)
+	}
+}
+
 func TestParseFindingDedup_marksDuplicatesWithHistoryAndNote(t *testing.T) {
 	gdb, err := db.Open(filepath.Join(t.TempDir(), "dedup.db"))
 	if err != nil {

@@ -94,6 +94,7 @@ var OutputKinds = map[string]bool{
 	"revalidate":      true,
 	"breaking_change": true,
 	"mitigation":      true,
+	"disclose":        true,
 	"release_watch":   true,
 	"subprojects":     true,
 	"repo_overview":   true,
