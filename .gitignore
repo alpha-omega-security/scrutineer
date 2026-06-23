@@ -9,3 +9,13 @@
 .vscode/
 .claude/
 scrutineer.yaml
+
+# Vim swap/session/temp files
+[._]*.s[a-v][a-z]
+[._]*.sw[a-p]
+[._]s[a-rt-v][a-z]
+[._]ss[a-gi-z]
+[._]sw[a-p]
+Session.vim
+.netrwhist
+*~
