@@ -259,7 +259,7 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *work
 	if w != nil {
 		w.OnFindingCreated = s.autoEnqueueRevalidate
 		w.OnRevalidateVerdict = s.autoChainVerifyAfterRevalidate
-		w.OnScanFinalized = s.autoEnqueueFindingDedup
+		w.OnScanFinalized = s.onScanFinalized
 	}
 	return s, nil
 }
@@ -280,6 +280,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /repositories/{id}/report.md", s.repoReport)
 	mux.HandleFunc("POST /repositories/{id}/scan", s.repoScan)
 	mux.HandleFunc("POST /repositories/{id}/scan-all", s.repoScanAll)
+	mux.HandleFunc("POST /repositories/{id}/validate-fix", s.validateFix)
 	mux.HandleFunc("POST /repositories/{id}/delete", s.repoDelete)
 	mux.HandleFunc("POST /repositories/{id}/disclosure-channel", s.repoDisclosureChannel)
 	mux.HandleFunc("POST /repositories/{id}/threat-model", s.repoThreatModelSave)
@@ -2137,9 +2138,12 @@ type ScanOpts struct {
 	Effort      string
 	FindingID   *uint
 	DependentID *uint
-	SubPath     string
-	Ref         string
-	Profile     string
+	// BaselineScanID marks a fix-validation anchor scan and pins the baseline
+	// scan it diffs against. See validate_fix.go.
+	BaselineScanID *uint
+	SubPath        string
+	Ref            string
+	Profile        string
 	// SessionID and ResumedFromScanID carry a failed scan's claude session
 	// into its retry so the new run continues the conversation with
 	// `claude -p --resume` instead of restarting from turn 0. Both empty
@@ -2206,6 +2210,7 @@ func (s *Server) enqueueSkillWith(ctx context.Context, repoID, skillID uint, opt
 		SkillName:         sk.Name,
 		FindingID:         opts.FindingID,
 		DependentID:       opts.DependentID,
+		BaselineScanID:    opts.BaselineScanID,
 		SubPath:           opts.SubPath,
 		Ref:               opts.Ref,
 		Profile:           opts.Profile,

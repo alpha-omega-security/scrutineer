@@ -30,7 +30,11 @@ func (s *Server) autoEnqueueRevalidate(scan *db.Scan, f *db.Finding) {
 	if scan == nil || f == nil {
 		return
 	}
-	if scan.SkillName != deepDiveSkillName {
+	// A fix-validation anchor (validate_fix.go) re-runs deep-dive on a fix
+	// ref only to diff fingerprints; feeding its findings back into the
+	// revalidate -> verify funnel would double the spend and race the
+	// finding-scoped verify the pipeline already enqueued against that ref.
+	if scan.SkillName != deepDiveSkillName || scan.BaselineScanID != nil {
 		return
 	}
 	if !db.SeverityAtLeast(f.Severity, "High") {
