@@ -193,7 +193,7 @@ func TestResolveProfile_SubPath(t *testing.T) {
 
 	// 1. Root path should NOT match php-ext (will default or fallback)
 	d.resolveProfile(context.Background(), "", work, "", emit)
-	
+
 	matchedPhpExtAtRoot := false
 	for _, e := range events {
 		if strings.Contains(e.Text, "profile: php-ext") {
