@@ -505,6 +505,40 @@ func TestParseVerify_fixedJumpsToFixed(t *testing.T) {
 	}
 }
 
+func TestParseVerify_fixedAgainstRefDoesNotFlipStatus(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "v.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
+	gdb.Create(&repo)
+	priorScan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanDone, SkillName: "security-deep-dive"}
+	gdb.Create(&priorScan)
+	finding := db.Finding{ScanID: priorScan.ID, RepositoryID: repo.ID, Title: "x", Severity: "High", Status: db.FindingTriaged}
+	gdb.Create(&finding)
+	// A verify scan the validate-fix pipeline points at a candidate fix ref,
+	// not the default branch.
+	scan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanRunning,
+		SkillName: "verify", FindingID: new(finding.ID), Ref: "fix-branch"}
+	gdb.Create(&scan)
+
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	report := `{"status":"fixed","evidence":"no longer reproduces on the PR branch"}`
+	if err := w.parseVerifyOutput(&scan, report, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+
+	var refreshed db.Finding
+	gdb.First(&refreshed, finding.ID)
+	if refreshed.Status != db.FindingTriaged {
+		t.Errorf("status = %s, want triaged: a fixed verdict on a specific ref must not flip the lifecycle", refreshed.Status)
+	}
+	notes := findingNotes(gdb, finding.ID)
+	if len(notes) == 0 || !strings.Contains(notes[0].Body, "fixed") {
+		t.Errorf("the per-ref verdict should still be recorded in notes: %+v", notes)
+	}
+}
+
 func TestParseVerify_inconclusiveLeavesStatus(t *testing.T) {
 	report := `{"status":"inconclusive","notes":"tooling missing"}`
 	f, gdb := runSkillWithFinding(t, "verify", report, db.FindingNew)

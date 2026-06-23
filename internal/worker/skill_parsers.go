@@ -666,7 +666,15 @@ func (w *Worker) parseVerifyOutput(scan *db.Scan, report string, emit func(Event
 			nextStatus = db.FindingEnriched
 		}
 	case "fixed":
-		nextStatus = db.FindingFixed
+		// Only a verify against the default branch (empty Ref) moves the
+		// finding to fixed. A "fixed" verdict on an explicit fix ref — the
+		// validate-fix pipeline points verify at a candidate ref, often an
+		// unmerged PR branch — means the fix works there, not that a release
+		// carries it; the note below and the fix-validation report still
+		// capture the per-ref verdict.
+		if scan.Ref == "" {
+			nextStatus = db.FindingFixed
+		}
 	case "inconclusive":
 		// Leave status alone.
 	default:
