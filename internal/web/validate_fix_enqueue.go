@@ -212,10 +212,13 @@ func (s *Server) fixValidationVerdicts(baseline []db.Finding, ref string) []fixV
 	}
 
 	var scans []db.Scan
-	s.DB.Select("finding_id, status, report").
+	if err := s.DB.Select("finding_id, status, report").
 		Where("finding_id IN ? AND skill_name = ? AND ref = ?", ids, verifySkillName, ref).
 		Order("id desc").
-		Find(&scans)
+		Find(&scans).Error; err != nil {
+		s.Log.Warn("fix-validation: load verify verdicts", "ref", ref, "err", err)
+		return nil
+	}
 
 	seen := map[uint]bool{}
 	var out []fixValidationVerify
