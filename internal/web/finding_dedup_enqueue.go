@@ -40,7 +40,10 @@ const dedupMinFindings = 2
 // Errors are logged and swallowed: failing to enqueue the dedup pass must
 // never fail the upstream scan.
 func (s *Server) autoEnqueueFindingDedup(scan *db.Scan) {
-	if scan == nil || scan.SkillName != deepDiveSkillName {
+	// A fix-validation anchor (validate_fix.go) re-runs deep-dive on a fix ref
+	// purely to diff fingerprints; its findings are validation scratch, not a
+	// repo's working set, so they must not trigger a dedup pass.
+	if scan == nil || scan.SkillName != deepDiveSkillName || scan.BaselineScanID != nil {
 		return
 	}
 

@@ -93,6 +93,7 @@ func (s *Server) apiHandler() http.Handler {
 	mux.HandleFunc("GET /repositories/{id}/packages", s.apiListPackages)
 	mux.HandleFunc("GET /repositories/{id}/advisories", s.apiListAdvisories)
 	mux.HandleFunc("GET /repositories/{id}/dependents", s.apiListDependents)
+	mux.HandleFunc("GET /repositories/{id}/ecosystems/{source}/raw", s.apiGetEcosystemsRaw)
 	mux.HandleFunc("GET /repositories/{id}/dependencies", s.apiListDependencies)
 	mux.HandleFunc("GET /repositories/{id}/findings", s.apiListFindings)
 	mux.HandleFunc("GET /repositories/{id}/dependency-findings", s.apiListDependencyFindings)
@@ -148,6 +149,45 @@ func (s *Server) apiGetRepository(w http.ResponseWriter, r *http.Request) {
 		"posture":         repo.Posture,
 		"posture_summary": repo.PostureSummary,
 	})
+}
+
+// ecosystemsRawColumns maps the {source} path segment of the diagnostic
+// endpoint to the Repository column holding that source's cached payload.
+var ecosystemsRawColumns = map[string]string{
+	"repo":       "ecosystems_repo_data",
+	"packages":   "ecosystems_packages_data",
+	"advisories": "ecosystems_advisories_data",
+	"commits":    "ecosystems_commits_data",
+	"issues":     "ecosystems_issues_data",
+	"dependents": "ecosystems_dependents_data",
+}
+
+// apiGetEcosystemsRaw returns the verbatim cached ecosyste.ms payload for one
+// source: an operator/debug escape hatch, and a skill fallback when a
+// digested endpoint does not cover an edge case. 404 when nothing is cached
+// (the skill then falls back to WebFetch); 400 for an unknown source.
+func (s *Server) apiGetEcosystemsRaw(w http.ResponseWriter, r *http.Request) {
+	id, _ := strconv.Atoi(r.PathValue("id"))
+	if !s.scanOwnsRepo(r, uint(id)) {
+		writeAPIError(w, http.StatusForbidden, "scan may only read its own repository")
+		return
+	}
+	column, ok := ecosystemsRawColumns[r.PathValue("source")]
+	if !ok {
+		writeAPIError(w, http.StatusBadRequest, "unknown ecosystems source")
+		return
+	}
+	var payload string
+	if err := s.DB.Model(&db.Repository{}).Where("id = ?", id).Pluck(column, &payload).Error; err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if payload == "" {
+		writeAPIError(w, http.StatusNotFound, "no cached payload for source")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_, _ = w.Write([]byte(payload))
 }
 
 // apiPatchRepository lets a skill write back fields it derived for the

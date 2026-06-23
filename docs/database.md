@@ -27,6 +27,18 @@ The central entity. One row per git URL.
 | icon_url | text | Avatar/icon URL. |
 | metadata | text | Full ecosyste.ms JSON response. Queryable with `json_extract`. |
 | fetched_at | datetime | When the metadata skill last ran. |
+| ecosystems_repo_data | text | Cached raw `repos.ecosyste.ms` lookup payload, pre-fetched server-side. |
+| ecosystems_repo_fetched_at | datetime | When `ecosystems_repo_data` was last refreshed. TTL 30 days. |
+| ecosystems_packages_data | text | Cached raw `packages.ecosyste.ms` lookup payload. |
+| ecosystems_packages_fetched_at | datetime | When `ecosystems_packages_data` was last refreshed. TTL 30 days. |
+| ecosystems_advisories_data | text | Cached `advisories.ecosyste.ms` payload, paginated and concatenated. |
+| ecosystems_advisories_fetched_at | datetime | When `ecosystems_advisories_data` was last refreshed. TTL 7 days. |
+| ecosystems_commits_data | text | Cached raw `commits.ecosyste.ms` lookup payload. |
+| ecosystems_commits_fetched_at | datetime | When `ecosystems_commits_data` was last refreshed. TTL 7 days. |
+| ecosystems_issues_data | text | Cached raw `issues.ecosyste.ms` lookup payload. |
+| ecosystems_issues_fetched_at | datetime | When `ecosystems_issues_data` was last refreshed. TTL 7 days. |
+| ecosystems_dependents_data | text | Cached dependents, chained off the packages lookup (per-package top dependents, capped). |
+| ecosystems_dependents_fetched_at | datetime | When `ecosystems_dependents_data` was last refreshed. TTL 30 days. |
 | disclosure_channel | text | Preferred reporting vector (email, GHSA URL, registry owner handle, SECURITY.md URL). Written by `maintainers`/`cna-match`; analyst-editable. |
 | posture | text | Disclosure-readiness tier from the `posture` skill: `ready`, `partial`, `unprepared`. |
 | posture_summary | text | One-line explanation that goes with `posture`. |
@@ -55,6 +67,7 @@ One row per skill execution or external import. `skill_name` / `skill_version` p
 | skill_name | text | Denormalised skill name for UI display. |
 | finding_id | integer FK | Set when the scan is finding-scoped (verify/patch/disclose/exposure). References `findings.id`. |
 | dependent_id | integer FK | Set on `exposure` scans only. References `dependents.id`; identifies which downstream consumer the skill is auditing for reachability of the upstream finding. |
+| baseline_scan_id | integer FK | Set on a fix-validation scan (`POST /repositories/{id}/validate-fix`). References the baseline `scans.id` the fix ref is diffed against. Marks the scan as a validation anchor (the auto triage funnel skips it) and, when it finalises, drives the fingerprint diff written back to `report`. Null on ordinary scans. |
 | api_token | text | Per-scan bearer token that the skill presents when calling `/api`. Only valid while the scan is running. |
 | ref | text | Git ref to checkout after cloning. Empty means the default branch. |
 | skills_repo_sha | text | Commit of `-skills-repo` resolved at startup and stamped on every skill scan. Empty when `-skills-repo` is unset or for `import` scans. |
@@ -71,7 +84,7 @@ One row per skill execution or external import. `skill_name` / `skill_version` p
 | cache_write_tokens | integer | `cache_creation_input_tokens` from the result event. |
 | max_turns_hit | boolean | True when the scan is `done` with partial output because Claude hit the configured max-turns cap. Such scans keep their session id so Retry can resume. |
 | prompt | text | Activation prompt sent to claude. The skill body lives in the Skill row, not here. |
-| report | text | The skill's primary output. JSON for parsed kinds, freeform for everything else. |
+| report | text | The skill's primary output. JSON for parsed kinds, freeform for everything else. On a fix-validation anchor (`baseline_scan_id` set) it is replaced, once the scan finalises, by the JSON validation report: the resolved/surviving/new fingerprint diff against the baseline plus the finding-scoped verify verdicts. |
 | log | text | Line-by-line transcript of the scan. Streamed to the UI via SSE. |
 | error | text | Error message if the scan failed. |
 | findings_count | integer | Denormalised count of findings parsed from the report. |

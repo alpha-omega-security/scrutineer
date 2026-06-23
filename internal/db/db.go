@@ -42,6 +42,25 @@ type Repository struct {
 	Metadata      string `gorm:"type:text"`
 	FetchedAt     *time.Time
 
+	// Ecosystems* hold raw ecosyste.ms payloads pre-fetched server-side so
+	// the metadata/packages/advisories/maintainers/dependents skills can read
+	// a known URL from the API instead of issuing a WebFetch and carrying the
+	// payload across every turn. Each Data column mirrors the Metadata
+	// blob pattern above; the paired FetchedAt drives the per-source TTL
+	// refresh. Empty Data means "never fetched" (skills fall back to WebFetch).
+	EcosystemsRepoData            string `gorm:"type:text"`
+	EcosystemsRepoFetchedAt       *time.Time
+	EcosystemsPackagesData        string `gorm:"type:text"`
+	EcosystemsPackagesFetchedAt   *time.Time
+	EcosystemsAdvisoriesData      string `gorm:"type:text"`
+	EcosystemsAdvisoriesFetchedAt *time.Time
+	EcosystemsCommitsData         string `gorm:"type:text"`
+	EcosystemsCommitsFetchedAt    *time.Time
+	EcosystemsIssuesData          string `gorm:"type:text"`
+	EcosystemsIssuesFetchedAt     *time.Time
+	EcosystemsDependentsData      string `gorm:"type:text"`
+	EcosystemsDependentsFetchedAt *time.Time
+
 	// DisclosureChannel is the preferred vector for reporting a
 	// vulnerability in this repo — an email, GHSA URL, registry owner
 	// handle, or SECURITY.md URL. Written by the maintainers skill from
@@ -152,8 +171,16 @@ type Scan struct {
 	// auditing for reachability of the upstream finding. The scan's
 	// Repository remains the library; ./src is staged from the
 	// dependent's repo URL via the dependent-clone cache.
-	DependentID *uint  `gorm:"index"`
-	APIToken    string `gorm:"index"`
+	DependentID *uint `gorm:"index"`
+	// BaselineScanID is set on a fix-validation scan (see validate_fix.go):
+	// it re-runs a finding's producing skill against a candidate fix ref,
+	// then records in its Report how the baseline scan's findings fared
+	// (resolved/surviving/new) alongside the finding-scoped verify verdicts.
+	// The pointer both marks the scan as a validation anchor — so the auto
+	// triage funnel skips it — and pins the baseline scan it diffs against.
+	// Nil on every ordinary scan.
+	BaselineScanID *uint  `gorm:"index"`
+	APIToken       string `gorm:"index"`
 
 	// StatusPriority is a denormalised sort key so the scans index can use
 	// an index instead of evaluating a CASE on every row. 0 = running,

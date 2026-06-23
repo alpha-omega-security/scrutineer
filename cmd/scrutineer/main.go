@@ -383,6 +383,9 @@ func run(log *slog.Logger) error {
 			broker.Publish(web.Event{Name: name, Data: data, ScanID: scanID, RepoID: repoID})
 		},
 	}
+	w.RefreshEcosystemsCache = func(ctx context.Context, repoID uint) error {
+		return worker.RefreshEcosystems(ctx, gdb, repoID, true, log)
+	}
 	w.Register(q)
 
 	srv, err := web.New(gdb, q, log, broker, w)
