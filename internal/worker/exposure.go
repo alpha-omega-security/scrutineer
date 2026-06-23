@@ -179,7 +179,6 @@ func (w *Worker) doExposure(ctx context.Context, scan *db.Scan, emit func(Event)
 		Repo:            depRepo,
 		ScanID:          scan.ID,
 		WorkRoot:        workRoot,
-		SubPath:         scan.SubPath,
 		Model:           scan.Model,
 		Effort:          scan.Effort,
 		Name:            skill.Name,

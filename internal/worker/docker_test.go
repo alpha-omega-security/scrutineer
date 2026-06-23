@@ -174,3 +174,48 @@ func TestRedactURLUserinfo(t *testing.T) {
 		}
 	}
 }
+
+func TestResolveProfile_SubPath(t *testing.T) {
+	d := DockerRunner{ProfilesDir: t.TempDir()} // Provide a ProfilesDir so it doesn't short-circuit
+
+	work := t.TempDir()
+	sub := filepath.Join(work, "nested", "php-ext")
+	if err := os.MkdirAll(sub, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// The php-ext profile detects config.m4 containing PHP_ARG_
+	if err := os.WriteFile(filepath.Join(sub, "config.m4"), []byte("PHP_ARG_"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var events []Event
+	emit := func(e Event) { events = append(events, e) }
+
+	// 1. Root path should NOT match php-ext (will default or fallback)
+	d.resolveProfile(context.Background(), "", work, "", emit)
+	
+	matchedPhpExtAtRoot := false
+	for _, e := range events {
+		if strings.Contains(e.Text, "profile: php-ext") {
+			matchedPhpExtAtRoot = true
+		}
+	}
+	if matchedPhpExtAtRoot {
+		t.Errorf("expected no php-ext profile match at root")
+	}
+
+	events = nil // clear
+
+	// 2. SubPath should match php-ext
+	d.resolveProfile(context.Background(), "", work, "nested/php-ext", emit)
+
+	matchedPhpExtInSubPath := false
+	for _, e := range events {
+		if strings.Contains(e.Text, "profile: php-ext") {
+			matchedPhpExtInSubPath = true
+		}
+	}
+	if !matchedPhpExtInSubPath {
+		t.Errorf("expected php-ext profile match using subPath")
+	}
+}
