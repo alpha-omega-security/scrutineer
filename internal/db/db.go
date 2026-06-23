@@ -152,8 +152,16 @@ type Scan struct {
 	// auditing for reachability of the upstream finding. The scan's
 	// Repository remains the library; ./src is staged from the
 	// dependent's repo URL via the dependent-clone cache.
-	DependentID *uint  `gorm:"index"`
-	APIToken    string `gorm:"index"`
+	DependentID *uint `gorm:"index"`
+	// BaselineScanID is set on a fix-validation scan (see validate_fix.go):
+	// it re-runs a finding's producing skill against a candidate fix ref,
+	// then records in its Report how the baseline scan's findings fared
+	// (resolved/surviving/new) alongside the finding-scoped verify verdicts.
+	// The pointer both marks the scan as a validation anchor — so the auto
+	// triage funnel skips it — and pins the baseline scan it diffs against.
+	// Nil on every ordinary scan.
+	BaselineScanID *uint  `gorm:"index"`
+	APIToken       string `gorm:"index"`
 
 	// StatusPriority is a denormalised sort key so the scans index can use
 	// an index instead of evaluating a CASE on every row. 0 = running,
