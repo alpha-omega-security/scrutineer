@@ -223,7 +223,7 @@ func (s *Server) repoOrgImport(w http.ResponseWriter, r *http.Request) {
 		if input.Owner != "" {
 			landingOwner = input.Owner
 		}
-		_, isNew, err := s.createOrTriageRepo(r.Context(), input, r.FormValue("model"))
+		_, isNew, err := s.createOrTriageRepo(r.Context(), input, r.FormValue("model"), true)
 		if err != nil {
 			invalid = append(invalid, repo.FullName)
 			continue
