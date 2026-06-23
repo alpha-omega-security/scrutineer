@@ -1320,6 +1320,34 @@ func TestFindingShow_disablesVerifyActionWhenVerifyInFlight(t *testing.T) {
 	}
 }
 
+func TestFindingShow_rendersValidateFixForm(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/r", Name: "r"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: "security-deep-dive"}
+	s.DB.Create(&scan)
+	f := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "needs a fix", Severity: "High", Status: db.FindingTriaged}
+	s.DB.Create(&f)
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", fmt.Sprintf("/findings/%d", f.ID)))
+	body := w.Body.String()
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, body)
+	}
+	if !strings.Contains(body, fmt.Sprintf(`action="/repositories/%d/validate-fix"`, repo.ID)) {
+		t.Errorf("expected a validate-fix form posting to the repo endpoint, body=%s", body)
+	}
+	if !strings.Contains(body, fmt.Sprintf(`name="finding_ids" value="%d"`, f.ID)) {
+		t.Error("expected this finding's id wired into the validate-fix form")
+	}
+	if !strings.Contains(body, `name="ref"`) {
+		t.Error("expected a ref input in the validate-fix form")
+	}
+}
+
 func TestFindingShow_ghsaLinksToRepoAdvisory(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

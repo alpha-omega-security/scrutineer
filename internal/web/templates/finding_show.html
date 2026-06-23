@@ -306,6 +306,32 @@
   </details>
   {{end}}
 
+  <details class="group border-b">
+    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
+        Fix validation
+        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
+      </h3>
+    </summary>
+    <section class="pb-4 grid gap-3">
+      <p class="text-xs text-muted-foreground">
+        Re-scan a candidate fix ref with this finding's skill and re-run verify against it, then diff the
+        findings by fingerprint: resolved, surviving, or newly introduced. The validation report lands on
+        the scan it kicks off.
+      </p>
+      <form method="post" action="/repositories/{{$repo.ID}}/validate-fix"
+            hx-post="/repositories/{{$repo.ID}}/validate-fix" hx-swap="none"
+            class="flex flex-wrap items-center gap-2">
+        <input type="hidden" name="finding_ids" value="{{$f.ID}}">
+        <input class="input max-w-xs" type="text" name="ref" required
+               placeholder="fix branch, tag, or commit">
+        <button type="submit" class="btn-sm">
+          <i data-lucide="git-compare"></i> Validate fix
+        </button>
+      </form>
+    </section>
+  </details>
+
   {{if $f.Mitigation}}
   <details open class="group border-b">
     <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
