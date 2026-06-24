@@ -1674,6 +1674,9 @@ func (s *Server) createOrTriageRepo(ctx context.Context, input RepoInput, model 
 	if isNew && !repo.IsLocal() && s.prefetchEcosystems != nil {
 		s.prefetchEcosystems(repo.ID)
 	}
+	if !triage {
+		return repo, isNew, nil
+	}
 	if !isNew && input.Branch == "" && input.SubPath == "" {
 		return repo, false, nil
 	}
@@ -1686,14 +1689,12 @@ func (s *Server) createOrTriageRepo(ctx context.Context, input RepoInput, model 
 		s.Log.Info("default skill requires remote, skipping for local repo", "skill", skill.Name, "repo", repo.URL)
 		return repo, isNew, nil
 	}
-	if triage {
-		if _, err := s.enqueueSkillWith(ctx, repo.ID, skill.ID, ScanOpts{
-			Model:   model,
-			SubPath: input.SubPath,
-			Ref:     input.Branch,
-		}); err != nil {
-			return repo, isNew, err
-		}
+	if _, err := s.enqueueSkillWith(ctx, repo.ID, skill.ID, ScanOpts{
+		Model:   model,
+		SubPath: input.SubPath,
+		Ref:     input.Branch,
+	}); err != nil {
+		return repo, isNew, err
 	}
 	return repo, isNew, nil
 }

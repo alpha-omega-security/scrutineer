@@ -223,6 +223,9 @@ func TestSBOMResolve_linksRepoAndEnqueuesTriage(t *testing.T) {
 		if strings.Contains(purl, "lodash") {
 			return "https://github.com/lodash/lodash"
 		}
+		if strings.Contains(purl, "flat") {
+			return "https://github.com/lodash/flat"
+		}
 		if strings.Contains(purl, "transitive") {
 			return "https://github.com/lodash/transitive"
 		}
@@ -233,6 +236,7 @@ func TestSBOMResolve_linksRepoAndEnqueuesTriage(t *testing.T) {
 
 	up := db.SBOMUpload{Name: "demo", Packages: []db.SBOMPackage{
 		{Name: "lodash", PURL: "pkg:npm/lodash@4.17.21", Scope: scopeDirect},
+		{Name: "flat", PURL: "pkg:npm/flat@1.0.0"},
 		{Name: "transitive", PURL: "pkg:npm/transitive@1.0.0", Scope: scopeTransitive},
 		{Name: "nopurl"},
 		{Name: "noresolve", PURL: "pkg:npm/ghost@1.0.0"},
@@ -259,18 +263,26 @@ func TestSBOMResolve_linksRepoAndEnqueuesTriage(t *testing.T) {
 	}
 
 	if pkgs[1].RepositoryID == nil {
-		t.Fatalf("transitive not linked: %+v", pkgs[1])
+		t.Fatalf("flat-scope package not linked: %+v", pkgs[1])
 	}
 	s.DB.Model(&db.Scan{}).Where("repository_id = ?", *pkgs[1].RepositoryID).Count(&scans)
+	if scans != 1 {
+		t.Errorf("triage scan not enqueued for flat-scope dependency, scans = %d", scans)
+	}
+
+	if pkgs[2].RepositoryID == nil {
+		t.Fatalf("transitive not linked: %+v", pkgs[2])
+	}
+	s.DB.Model(&db.Scan{}).Where("repository_id = ?", *pkgs[2].RepositoryID).Count(&scans)
 	if scans != 0 {
 		t.Errorf("triage scan enqueued for transitive dependency, scans = %d", scans)
 	}
 
-	if pkgs[2].ResolveError != "no purl" {
-		t.Errorf("nopurl error = %q", pkgs[2].ResolveError)
+	if pkgs[3].ResolveError != "no purl" {
+		t.Errorf("nopurl error = %q", pkgs[3].ResolveError)
 	}
-	if pkgs[3].ResolveError != "no repository_url for purl" {
-		t.Errorf("noresolve error = %q", pkgs[3].ResolveError)
+	if pkgs[4].ResolveError != "no repository_url for purl" {
+		t.Errorf("noresolve error = %q", pkgs[4].ResolveError)
 	}
 }
 
