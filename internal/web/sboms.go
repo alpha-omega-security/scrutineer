@@ -263,7 +263,7 @@ func (s *Server) resolveSBOMPackages(uploadID uint) {
 			s.DB.Model(p).Update("resolve_error", err.Error())
 			continue
 		}
-		repo, _, err := s.createOrTriageRepo(ctx, input, "")
+		repo, _, err := s.createOrTriageRepo(ctx, input, "", p.Scope != scopeTransitive)
 		if err != nil {
 			s.DB.Model(p).Update("resolve_error", err.Error())
 			continue

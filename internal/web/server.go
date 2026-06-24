@@ -1096,7 +1096,7 @@ func (s *Server) addRepoAndScan(w http.ResponseWriter, r *http.Request, repoURL 
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
-	repo, _, err := s.createOrTriageRepo(r.Context(), input, "")
+	repo, _, err := s.createOrTriageRepo(r.Context(), input, "", true)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -1528,7 +1528,7 @@ func (s *Server) repoCreate(w http.ResponseWriter, r *http.Request) {
 	if ref := strings.TrimSpace(r.FormValue("ref")); ref != "" {
 		input.Branch = ref
 	}
-	repo, _, err := s.createOrTriageRepo(r.Context(), input, r.FormValue("model"))
+	repo, _, err := s.createOrTriageRepo(r.Context(), input, r.FormValue("model"), true)
 	if err != nil {
 		s.repoCreateError(w, r, "Couldn't add repository", err, http.StatusInternalServerError)
 		return
@@ -1611,7 +1611,7 @@ func (s *Server) repoBulkCreate(w http.ResponseWriter, r *http.Request) {
 			invalid = append(invalid, line)
 			continue
 		}
-		_, isNew, err := s.createOrTriageRepo(r.Context(), input, r.FormValue("model"))
+		_, isNew, err := s.createOrTriageRepo(r.Context(), input, r.FormValue("model"), true)
 		if err != nil {
 			invalid = append(invalid, line)
 			continue
@@ -1635,10 +1635,10 @@ func (s *Server) repoBulkCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 // createOrTriageRepo is the shared path for both single-add and bulk-add.
-// It FirstOrCreates the Repository row and, when the row is new, enqueues
-// the default skill. isNew reports whether the repo was actually created
-// (so callers can distinguish "queued" from "already present").
-func (s *Server) createOrTriageRepo(ctx context.Context, input RepoInput, model string) (db.Repository, bool, error) {
+// It FirstOrCreates the Repository row and, when the row is new and triage
+// is true, enqueues the default skill. isNew reports whether the repo was
+// actually created (so callers can distinguish "queued" from "already present").
+func (s *Server) createOrTriageRepo(ctx context.Context, input RepoInput, model string, triage bool) (db.Repository, bool, error) {
 	if input.Local {
 		path := strings.TrimPrefix(input.CloneURL, LocalScheme)
 		info, err := os.Stat(path)
@@ -1673,6 +1673,9 @@ func (s *Server) createOrTriageRepo(ctx context.Context, input RepoInput, model 
 	// upstream entry; the goroutine is best-effort and detached from ctx.
 	if isNew && !repo.IsLocal() && s.prefetchEcosystems != nil {
 		s.prefetchEcosystems(repo.ID)
+	}
+	if !triage {
+		return repo, isNew, nil
 	}
 	if !isNew && input.Branch == "" && input.SubPath == "" {
 		return repo, false, nil

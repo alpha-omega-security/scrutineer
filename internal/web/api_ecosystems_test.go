@@ -87,7 +87,7 @@ func TestCreateOrTriageRepo_prefetchesNewRemoteRepo(t *testing.T) {
 
 	repo, _, err := s.createOrTriageRepo(context.Background(), RepoInput{
 		CloneURL: "https://github.com/acme/widget", Owner: "acme", Name: "widget",
-	}, "")
+	}, "", true)
 	if err != nil {
 		t.Fatalf("createOrTriageRepo: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestCreateOrTriageRepo_skipsPrefetchForLocalRepo(t *testing.T) {
 
 	if _, _, err := s.createOrTriageRepo(context.Background(), RepoInput{
 		CloneURL: LocalScheme + t.TempDir(), Name: "local", Local: true,
-	}, ""); err != nil {
+	}, "", true); err != nil {
 		t.Fatalf("createOrTriageRepo: %v", err)
 	}
 	if called {
@@ -119,10 +119,10 @@ func TestCreateOrTriageRepo_skipsPrefetchForExistingRepo(t *testing.T) {
 	s.prefetchEcosystems = func(id uint) { got = append(got, id) }
 
 	in := RepoInput{CloneURL: "https://github.com/acme/widget", Owner: "acme", Name: "widget"}
-	if _, _, err := s.createOrTriageRepo(context.Background(), in, ""); err != nil {
+	if _, _, err := s.createOrTriageRepo(context.Background(), in, "", true); err != nil {
 		t.Fatalf("first add: %v", err)
 	}
-	if _, _, err := s.createOrTriageRepo(context.Background(), in, ""); err != nil {
+	if _, _, err := s.createOrTriageRepo(context.Background(), in, "", true); err != nil {
 		t.Fatalf("second add: %v", err)
 	}
 	if len(got) != 1 {
