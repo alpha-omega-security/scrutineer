@@ -43,15 +43,15 @@ type DockerRunner struct {
 	// Profile images must work with a read-only rootfs when this is
 	// enabled (writable paths beyond /work and /tmp will fail).
 	Hardened bool
-	// HardenedRootlessRuntime applies the container-level half of --hardened --
-	// a read-only rootfs and no-new-privileges -- WITHOUT the per-scan --internal
-	// network. Those two are pure container options with no network dependency,
-	// so unlike full --hardened they work under rootless podman (whose --internal
-	// network cannot route to the host egress proxy; see docs/podman.md). The
-	// always-on baseline (--cap-drop ALL, non-root --user, the /tmp tmpfs)
-	// applies regardless of this field. --hardened already implies these two, so
-	// this is the rootless stand-in for the container hardening, not an addition
-	// on top of it (setting both is harmless). The read-only rootfs can break
+	// HardenedRootlessRuntime applies the non-network half of --hardened -- a
+	// read-only rootfs, no-new-privileges, and the post-clone workspace cap --
+	// WITHOUT the per-scan --internal network. Those are all independent of the
+	// network, so unlike full --hardened they work under rootless podman (whose
+	// --internal network cannot route to the host egress proxy; see
+	// docs/podman.md). The always-on baseline (--cap-drop ALL, non-root --user,
+	// the /tmp tmpfs) applies regardless of this field. --hardened already
+	// implies all of these, so this is the rootless stand-in for them, not an
+	// addition on top (setting both is harmless). The read-only rootfs can break
 	// custom profile images that write outside /work and /tmp.
 	HardenedRootlessRuntime bool
 	// Runtime selects the OCI engine (docker or podman) and carries the
@@ -103,13 +103,15 @@ func redactURLUserinfo(raw string) string {
 	return u.String()
 }
 
-// HardenedWorkspaceCapBytes caps the per-scan workspace footprint that
-// hardened mode tolerates after clone completes. This is a post-clone
-// check, not a clone-time bound: a clone that already exceeds disk
-// capacity fails earlier on its own, so this cap is what hardened mode
-// will agree to scan, not a guarantee against disk fill during clone
-// (use OS-level disk quotas for that). 2 GiB leaves room for genuinely
-// large legitimate repos.
+// HardenedWorkspaceCapBytes caps the per-scan workspace footprint that the
+// hardening modes (--hardened and --hardened-rootless-runtime) tolerate after
+// clone completes. This is a post-clone check, not a clone-time bound: a clone
+// that already exceeds disk capacity fails earlier on its own, so this cap is
+// what hardening will agree to scan, not a guarantee against disk fill during
+// clone (use OS-level disk quotas for that). It is a pure host-side size check
+// with no container/network/rootless dependency, which is why it applies under
+// --hardened-rootless-runtime too. 2 GiB leaves room for genuinely large
+// legitimate repos.
 const HardenedWorkspaceCapBytes int64 = 2 << 30
 
 // RunSkill runs a skill inside an ephemeral container. The whole workspace
@@ -396,19 +398,20 @@ func (d DockerRunner) resolveProfile(ctx context.Context, requested, src string,
 // so a plain 0644 keeps it readable by the agent without surprises.
 const profileGuideFileMode os.FileMode = 0o644
 
-// checkHardenedWorkspace returns an error when hardened mode is on
-// and the cloned workspace exceeds HardenedWorkspaceCapBytes. A no-op
-// outside hardened mode so the cap doesn't apply to default scans.
+// checkHardenedWorkspace returns an error when a hardening mode is on and the
+// cloned workspace exceeds HardenedWorkspaceCapBytes. It applies under both
+// --hardened and --hardened-rootless-runtime (the cap is a host-side size check,
+// not network-coupled), and is a no-op for plain default scans.
 func (d DockerRunner) checkHardenedWorkspace(workRoot string) error {
-	if !d.Hardened {
+	if !d.Hardened && !d.HardenedRootlessRuntime {
 		return nil
 	}
 	size, err := dirSize(workRoot)
 	if err != nil {
-		return fmt.Errorf("hardened workspace size check: %w", err)
+		return fmt.Errorf("workspace size check: %w", err)
 	}
 	if size > HardenedWorkspaceCapBytes {
-		return fmt.Errorf("hardened workspace exceeds %d bytes after clone (got %d)", HardenedWorkspaceCapBytes, size)
+		return fmt.Errorf("workspace exceeds the %d-byte hardening cap after clone (got %d)", HardenedWorkspaceCapBytes, size)
 	}
 	return nil
 }

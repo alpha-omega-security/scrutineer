@@ -124,22 +124,26 @@ Weakest change to strongest isolation:
    rootless without the scan container ever needing to reach the host. Tracked as
    future work.
 
-### `--hardened-rootless-runtime`: container hardening without the network
+### `--hardened-rootless-runtime`: the non-network half of hardened
 
-Read-only rootfs and `no-new-privileges` are pure container options with **no
-network dependency**, so they don't need `--internal` and work fine under
-rootless podman's default network. `--hardened-rootless-runtime` (config
-`hardened_rootless_runtime: true`) applies exactly those two — and nothing else —
-independently of `--hardened`:
+Three of hardened mode's controls have **no network dependency** — a read-only
+rootfs, `no-new-privileges`, and the post-clone workspace cap — so they don't
+need `--internal` and work fine under rootless podman's default network.
+`--hardened-rootless-runtime` (config `hardened_rootless_runtime: true`) applies
+exactly those, independently of `--hardened`:
 
 - `--read-only` on the container rootfs. Writable paths remain `/work`, the
   `/tmp` tmpfs (with `HOME=/tmp`), and the `/claude-config` bind mount on
   resumable runs.
 - `--security-opt no-new-privileges`.
+- The 2 GiB post-clone workspace cap — a host-side size check that refuses
+  pathologically large clones (threatmodel T9). It's pure host-side `du`, so it
+  has nothing to do with the runtime, network, or rootless-ness; it belongs here
+  precisely because it isn't network-coupled.
 
 It is the recommended add-on for rootless deployments that can't use full
 `--hardened`. It is not strictly rootless-specific — it works under docker and
-rootful podman too — but `--hardened` already implies both options there, so the
+rootful podman too — but `--hardened` already implies all of it there, so the
 flag is redundant with (and harmless alongside) `--hardened`. It has no effect
 under `--no-docker` (there is no container; startup warns if you combine them),
 and startup logs `hardened_rootless_runtime=<bool>` so you can confirm it is
@@ -152,36 +156,40 @@ toolchain that caches under a path other than `$HOME`, which is `/tmp` here).
 This is the same constraint `--hardened` carries, and the reason container
 hardening is opt-in rather than always-on.
 
-### What running rootless *without* `--hardened` gives up
+### What each mode applies
 
-Every container mode — default, `--hardened-rootless-runtime`, and `--hardened`
-— **always** applies the baseline isolation: `--cap-drop ALL`, the non-root
-invoking user (`--user <uid>:<gid>`, mapped back to you by `--userns=keep-id`
-under rootless), a `noexec,nosuid` `/tmp` tmpfs, the runtime's default
-seccomp/AppArmor profiles, and — on an enforcing host — the SELinux `:z` relabel.
-On top of that baseline:
+| control | default | `--hardened-rootless-runtime` | `--hardened` |
+|---|:---:|:---:|:---:|
+| `--cap-drop ALL` | ✓ | ✓ | ✓ |
+| non-root `--user <uid>:<gid>` | ✓ | ✓ | ✓ |
+| `/tmp` tmpfs (`noexec,nosuid`) | ✓ | ✓ | ✓ |
+| SELinux `:z` (enforcing host), keep-id (rootless), default seccomp/AppArmor | ✓ | ✓ | ✓ |
+| read-only rootfs + `no-new-privileges` | ✗ | ✓ | ✓ |
+| 2 GiB post-clone workspace cap (T9 DoS guard) | ✗ | ✓ | ✓ |
+| per-scan `--internal` network — enforced egress + inter-scan isolation | ✗ | ✗ | ✓ |
 
-- **Read-only rootfs + `no-new-privileges`** — *no longer lost under rootless*:
-  add `--hardened-rootless-runtime` to get both under the default network (see
-  the subsection above). Only the custom-profile caveat applies.
-- **Enforced egress** — still needs `--hardened`. The proxy is *cooperative* in
-  default mode: a workload that ignores `HTTPS_PROXY` / `HTTP_PROXY` can dial the
-  internet directly (threatmodel T13). The `--internal` network is the only thing
-  that turns the proxy into a hard wall, and it's the part that can't work
-  rootless. Without it, only the pinned-and-audited runner image (T11) bounds a
+The top four rows are the unconditional baseline; `--hardened-rootless-runtime`
+adds the next two; full `--hardened` adds the last row on top.
+
+### What running rootless *without* full `--hardened` gives up
+
+With `--hardened-rootless-runtime` the **only** remaining gap is the bottom row of
+the table — the per-scan `--internal` network, i.e. *network enforcement*. That's
+two things, both network, and both structurally impossible under rootless without
+the sidecar:
+
+- **Enforced egress** — the proxy stays *cooperative*: a workload that ignores
+  `HTTPS_PROXY` / `HTTP_PROXY` can dial the internet directly (threatmodel T13).
+  The `--internal` network is the only thing that turns it into a hard wall, and
+  it's the part that can't reach the host proxy across the rootless netns
+  boundary. Without it, only the pinned-and-audited runner image (T11) bounds a
   proxy-ignoring workload.
-- **Per-scan network isolation** — still needs `--hardened`: each hardened scan
-  gets its own `--internal` network, so a hostile clone in one scan can't probe a
-  concurrent scan's container; otherwise scans share the runtime's default
-  network.
-- **The post-clone workspace cap** (2 GiB) — still `--hardened`-only.
+- **Per-scan network isolation** — concurrent scans share the runtime's default
+  network instead of each getting its own `--internal` network.
 
-So under rootless, `--hardened-rootless-runtime` closes the *container*-hardening
-gap entirely; what stays exclusive to full `--hardened` (and therefore to
-rootful/docker or the future sidecar) is the *network* enforcement and isolation.
-For untrusted inputs where enforced egress matters, prefer option 2 (or wait for
-option 3); otherwise rootless + `--hardened-rootless-runtime` + SELinux is a
-strong posture given the blast-radius reduction rootless already provides.
+Restoring these under rootless needs the egress-gateway sidecar (option 3); until
+then, rootless + `--hardened-rootless-runtime` + SELinux is a strong posture, and
+rootful podman/docker is the route to full enforced egress.
 
 ## SELinux and bind-mount file passing
 

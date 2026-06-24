@@ -152,6 +152,31 @@ func TestBuildDockerArgs_ContainerHardening(t *testing.T) {
 	}
 }
 
+func TestCheckHardenedWorkspace_GatedOnHardeningFlags(t *testing.T) {
+	// A small real workspace is under the cap, so every mode passes.
+	small := t.TempDir()
+	for _, d := range []DockerRunner{{}, {HardenedRootlessRuntime: true}, {Hardened: true}} {
+		if err := d.checkHardenedWorkspace(small); err != nil {
+			t.Errorf("%+v: small workspace should pass: %v", d, err)
+		}
+	}
+
+	// The check must be ACTIVE under both hardening flags and a no-op otherwise.
+	// dirSize errors on a missing path, so an active check surfaces that error
+	// while a no-op returns nil -- a cheap way to assert the gating without
+	// building a 2 GiB tree. This is the cap being folded into rootless hardening.
+	missing := filepath.Join(t.TempDir(), "gone")
+	if err := (DockerRunner{}).checkHardenedWorkspace(missing); err != nil {
+		t.Errorf("default mode must be a no-op, got %v", err)
+	}
+	if err := (DockerRunner{HardenedRootlessRuntime: true}).checkHardenedWorkspace(missing); err == nil {
+		t.Error("--hardened-rootless-runtime must run the workspace cap check")
+	}
+	if err := (DockerRunner{Hardened: true}).checkHardenedWorkspace(missing); err == nil {
+		t.Error("--hardened must run the workspace cap check")
+	}
+}
+
 // hasAdjacent reports whether args contains flag immediately followed by val,
 // matching how docker run takes `-v host:container` / `-e KEY=VAL` pairs.
 func hasAdjacent(args []string, flag, val string) bool {

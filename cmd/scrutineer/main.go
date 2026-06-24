@@ -128,7 +128,7 @@ func parseFlags() *flags {
 	flag.StringVar(&f.selinux, "selinux", "auto", "SELinux bind-mount relabeling: auto (relabel when SELinux is detected on the host), on (always), off (never). Relabeling (\":z\") lets the container read /work and write its output on enforcing-SELinux hosts")
 	flag.BoolVar(&f.noDocker, "no-docker", false, "disable containerised runner even if a container runtime is available")
 	flag.BoolVar(&f.hardened, "hardened", false, "strict sandbox mode: container runtime required (no --no-docker fallback), egress restricted to *.anthropic.com + host skill API, read-only rootfs, internal network")
-	flag.BoolVar(&f.hardenedRootless, "hardened-rootless-runtime", false, "container hardening (read-only rootfs + no-new-privileges) WITHOUT the per-scan --internal network, so it works under rootless podman where --hardened cannot; --cap-drop ALL + non-root user + tmpfs apply regardless. Implied by --hardened")
+	flag.BoolVar(&f.hardenedRootless, "hardened-rootless-runtime", false, "the non-network half of --hardened (read-only rootfs + no-new-privileges + 2 GiB post-clone workspace cap) WITHOUT the per-scan --internal network, so it works under rootless podman where --hardened cannot; --cap-drop ALL + non-root user + tmpfs apply regardless. Implied by --hardened")
 	flag.StringVar(&f.runnerImage, "runner-image", worker.DefaultRunnerImage, "docker image for per-job containers")
 	flag.StringVar(&f.profilesDir, "profiles-dir", "docker/profiles", "directory containing per-ecosystem runner profiles (Dockerfile per profile); empty disables profiles")
 	flag.StringVar(&f.skillsRepo, "skills-repo", "", "clone skills on startup; owner/repo[@ref] or https://host/path[@ref]")

@@ -64,13 +64,14 @@
 # package registry won't work unless they route via the host skill API.
 # hardened: false
 
-# Container hardening WITHOUT the per-scan --internal network: mounts the
-# rootfs read-only and sets no-new-privileges, but skips the network isolation
-# that rootless podman can't route to the host proxy. This is how rootless
-# deployments get container hardening, since full --hardened is refused there
-# (see docs/podman.md). --cap-drop ALL + non-root user + /tmp tmpfs apply in
-# every mode regardless. Implied by hardened. A read-only rootfs can break
-# custom profile images that write outside /work and /tmp.
+# The non-network half of hardened mode WITHOUT the per-scan --internal network:
+# mounts the rootfs read-only, sets no-new-privileges, and applies the 2 GiB
+# post-clone workspace cap, but skips the network isolation that rootless podman
+# can't route to the host proxy. This is how rootless deployments get hardening,
+# since full --hardened is refused there (see docs/podman.md). --cap-drop ALL +
+# non-root user + /tmp tmpfs apply in every mode regardless. Implied by hardened.
+# A read-only rootfs can break custom profile images that write outside /work
+# and /tmp.
 # hardened_rootless_runtime: false
 
 # Container image used for per-scan containers.
