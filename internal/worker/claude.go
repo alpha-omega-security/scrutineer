@@ -51,6 +51,7 @@ type SkillJob struct {
 	// the docker runner refuses to start hardened with ScanID == 0.
 	ScanID       uint
 	WorkRoot     string
+	SubPath      string
 	Model        string
 	Name         string
 	SkillDir     string // host absolute path to the staged skill directory
