@@ -116,6 +116,7 @@ var builtinProfiles = []Profile{
 			{Path: "meson.build"},
 		},
 	},
+	{Name: "rust", Ecosystem: "Cargo"},
 }
 
 // ProfileByName returns the registered profile, or the default profile
