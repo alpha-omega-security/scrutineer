@@ -40,9 +40,10 @@ func dedupQueued(s *Server, repoID, dedupID uint) int64 {
 }
 
 // TestAutoEnqueueFindingDedup_conditions covers the two gating conditions:
-// the deep dive must produce at least one new finding, and the repo must end
-// up with at least two open non-scanner findings to compare against (the new
-// rows count, so a first-ever deep-dive emitting several findings qualifies).
+// a curated LLM audit (security-deep-dive or vuln-scan) must produce at least
+// one new finding, and the repo must end up with at least two open non-scanner
+// findings to compare against (the new rows count, so a first-ever audit
+// emitting several findings qualifies).
 func TestAutoEnqueueFindingDedup_conditions(t *testing.T) {
 	cases := []struct {
 		name string
@@ -74,6 +75,18 @@ func TestAutoEnqueueFindingDedup_conditions(t *testing.T) {
 			name:        "prior legacy (empty skill) finding also counts",
 			scanSkill:   "security-deep-dive",
 			newFindings: 1, hasPrior: true, priorSkill: "", priorStatus: db.FindingNew,
+			wantQueued: true,
+		},
+		{
+			name:        "first-ever vuln-scan emitting two new findings",
+			scanSkill:   "vuln-scan",
+			newFindings: 2, hasPrior: false,
+			wantQueued: true,
+		},
+		{
+			name:        "vuln-scan new finding with prior vuln-scan finding",
+			scanSkill:   "vuln-scan",
+			newFindings: 1, hasPrior: true, priorSkill: "vuln-scan", priorStatus: db.FindingNew,
 			wantQueued: true,
 		},
 		{

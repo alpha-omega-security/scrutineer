@@ -1097,6 +1097,15 @@ func findingsScanIDs(gdb *gorm.DB) *gorm.DB {
 	return gdb.Model(&db.Scan{}).Select("id").Where(findingsBucketSkillSQL)
 }
 
+// isLLMAuditSkill reports whether a finalized scan is one of the curated LLM
+// audits (security-deep-dive, vuln-scan) whose fresh output drives the
+// auto-triage funnels (finding-dedup). Unlike findingsBucketSkillSQL this
+// deliberately excludes legacy empty/NULL skill_name rows: those are inert
+// imports, not a live scan that just produced new findings worth triaging.
+func isLLMAuditSkill(skillName string) bool {
+	return skillName == deepDiveSkillName || skillName == vulnScanSkillName
+}
+
 func findingSupportsExposure(scan db.Scan) bool {
 	return scan.SkillName != zizmorSkillName
 }
