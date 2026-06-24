@@ -43,6 +43,17 @@ type DockerRunner struct {
 	// Profile images must work with a read-only rootfs when this is
 	// enabled (writable paths beyond /work and /tmp will fail).
 	Hardened bool
+	// HardenedRootlessRuntime applies the container-level half of --hardened --
+	// a read-only rootfs and no-new-privileges -- WITHOUT the per-scan --internal
+	// network. Those two are pure container options with no network dependency,
+	// so unlike full --hardened they work under rootless podman (whose --internal
+	// network cannot route to the host egress proxy; see docs/podman.md). The
+	// always-on baseline (--cap-drop ALL, non-root --user, the /tmp tmpfs)
+	// applies regardless of this field. --hardened already implies these two, so
+	// this is the rootless stand-in for the container hardening, not an addition
+	// on top of it (setting both is harmless). The read-only rootfs can break
+	// custom profile images that write outside /work and /tmp.
+	HardenedRootlessRuntime bool
 	// Runtime selects the OCI engine (docker or podman) and carries the
 	// rootless flag that gates --userns=keep-id. The zero value is docker, so
 	// a bare DockerRunner{} keeps shelling out to "docker".
@@ -299,16 +310,28 @@ func (d DockerRunner) buildDockerArgs(absWork, image, perScanNetwork, claudeConf
 			"-e", "CLAUDE_CONFIG_DIR=/claude-config",
 		)
 	}
-	if d.Hardened {
+	if d.Hardened || d.HardenedRootlessRuntime {
 		// Read-only rootfs + no-new-privileges close the residual paths a
 		// hostile skill could use to escalate inside the container. /work
-		// stays writable (skill output) and /tmp is the tmpfs declared
-		// above with HOME=/tmp redirecting claude session storage.
+		// stays writable (skill output) and /tmp is the tmpfs declared above
+		// with HOME=/tmp redirecting claude session storage. These are pure
+		// container options with no network dependency, so --hardened-rootless-
+		// runtime applies them under the default network -- unlike the
+		// --internal network below, which rootless podman can't route to the
+		// host proxy. --cap-drop ALL and the non-root --user are already set
+		// unconditionally above, in every mode.
 		args = append(args,
 			"--read-only",
 			"--security-opt", "no-new-privileges",
-			"--network", perScanNetwork,
 		)
+	}
+	if d.Hardened {
+		// The per-scan --internal network is the egress-enforcement half of
+		// --hardened, kept separate from the container hardening above because
+		// it does not work under rootless podman (the startup verification
+		// fails closed when it can't reach the host proxy here; see
+		// docs/podman.md). --hardened-rootless-runtime deliberately omits it.
+		args = append(args, "--network", perScanNetwork)
 	}
 	if d.ProxyURL != "" {
 		args = append(args,

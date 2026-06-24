@@ -48,9 +48,14 @@ type Config struct {
 	// read-only, and the runner attaches to an internal network whose only
 	// route out is scrutineer's allowlisting proxy. egress_allow is ignored
 	// under hardened mode; the operator must drop hardened to widen it.
-	Hardened    *bool  `yaml:"hardened"`
-	RunnerImage string `yaml:"runner_image"`
-	ProfilesDir string `yaml:"profiles_dir"`
+	Hardened *bool `yaml:"hardened"`
+	// HardenedRootlessRuntime applies the container-level half of hardened mode
+	// (read-only rootfs + no-new-privileges) without the per-scan --internal
+	// network, so it works under rootless podman where full --hardened does not.
+	// See docs/podman.md.
+	HardenedRootlessRuntime *bool  `yaml:"hardened_rootless_runtime"`
+	RunnerImage             string `yaml:"runner_image"`
+	ProfilesDir             string `yaml:"profiles_dir"`
 	// EgressAllow extends the container runner's egress proxy allowlist with
 	// extra hostnames. Entries are appended to worker.DefaultEgressAllow,
 	// not replacing it. "*.example.com" matches subdomains.

@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -89,6 +90,64 @@ func TestBuildDockerArgs_SELinuxRelabel(t *testing.T) {
 	for _, a := range got {
 		if strings.HasSuffix(a, ":z") || strings.HasSuffix(a, ",z") {
 			t.Errorf("did not expect any :z relabel when SELinuxRelabel is false, got %q in %v", a, got)
+		}
+	}
+}
+
+func TestBuildDockerArgs_ContainerHardening(t *testing.T) {
+	user := fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid())
+	const tmpfs = "/tmp:rw,noexec,nosuid,size=256m"
+	const net = "scrutineer-hardened-9"
+
+	hasNoNewPrivs := func(args []string) bool { return hasAdjacent(args, "--security-opt", "no-new-privileges") }
+
+	// --hardened-rootless-runtime: read-only + no-new-privileges, but NOT the
+	// per-scan --internal network -- that network is the part rootless podman
+	// can't route to the host proxy, and is the whole reason this flag exists.
+	roR := DockerRunner{HardenedRootlessRuntime: true}.buildDockerArgs("/work/abs", "img:latest", net, "")
+	if !slices.Contains(roR, "--read-only") || !hasNoNewPrivs(roR) {
+		t.Errorf("hardened-rootless-runtime: expected --read-only + no-new-privileges in %v", roR)
+	}
+	if hasAdjacent(roR, "--network", net) {
+		t.Errorf("hardened-rootless-runtime must NOT attach the per-scan --internal network: %v", roR)
+	}
+
+	// --hardened: the container hardening AND the per-scan network.
+	h := DockerRunner{Hardened: true}.buildDockerArgs("/work/abs", "img:latest", net, "")
+	if !slices.Contains(h, "--read-only") || !hasNoNewPrivs(h) {
+		t.Errorf("hardened: expected --read-only + no-new-privileges in %v", h)
+	}
+	if !hasAdjacent(h, "--network", net) {
+		t.Errorf("hardened: expected the per-scan --internal network in %v", h)
+	}
+	// No-regression guard for --hardened: read-only, no-new-privileges, and the
+	// per-scan network must stay one contiguous, correctly-ordered run. Splitting
+	// the old single `if d.Hardened` block into two must not reorder or separate
+	// them, so --hardened's arg vector is byte-for-byte what it was before.
+	if i := slices.Index(h, "--read-only"); i < 0 || i+4 >= len(h) ||
+		h[i+1] != "--security-opt" || h[i+2] != "no-new-privileges" ||
+		h[i+3] != "--network" || h[i+4] != net {
+		t.Errorf("hardened arg order changed (possible regression): %v", h)
+	}
+
+	// Default mode: neither container-hardening option (byte-for-byte unchanged).
+	def := DockerRunner{}.buildDockerArgs("/work/abs", "img:latest", "", "")
+	if slices.Contains(def, "--read-only") || hasNoNewPrivs(def) {
+		t.Errorf("default mode must set neither --read-only nor no-new-privileges: %v", def)
+	}
+
+	// The baseline -- --cap-drop ALL, non-root --user, the /tmp tmpfs -- is
+	// present in EVERY mode; the new flag must not disturb that invariant.
+	for _, mode := range []DockerRunner{{}, {HardenedRootlessRuntime: true}, {Hardened: true}} {
+		args := mode.buildDockerArgs("/work/abs", "img:latest", net, "")
+		if !hasAdjacent(args, "--cap-drop", "ALL") {
+			t.Errorf("%+v: missing --cap-drop ALL: %v", mode, args)
+		}
+		if !hasAdjacent(args, "--user", user) {
+			t.Errorf("%+v: missing --user %s: %v", mode, user, args)
+		}
+		if !hasAdjacent(args, "--tmpfs", tmpfs) {
+			t.Errorf("%+v: missing --tmpfs: %v", mode, args)
 		}
 	}
 }

@@ -233,7 +233,7 @@ Requirements:
 - **`skopeo` (optional)** — used in place of `docker buildx` to notice when a moved `:latest` runner tag should rebuild per-ecosystem profile images. Without it, profiles still build but key their cache on the image ref alone.
 - **SELinux** — on an SELinux-enabled host (the Fedora/RHEL/Rocky/Alma default) the runner relabels its bind mounts with `:z` so the container can read the clone and write its output; without it every scan fails with permission errors. This is handled automatically: `--selinux auto` (the default) detects the host, and a startup smoke test verifies a real relabeled mount works. Use `--selinux off` if you pre-label paths yourself, or `--selinux on` to force it. See [docs/podman.md](docs/podman.md#selinux-and-bind-mount-file-passing) for the `:z`-vs-`:Z` rationale.
 
-`--hardened` is supported under rootless podman and is verified fail-closed per scan (see the hardened-mode paragraph above). See [docs/podman.md](docs/podman.md) for the runtime's full security model and known gaps.
+`--hardened` is verified fail-closed per scan, but its per-scan `--internal` network is **frequently unreachable under rootless podman** (the scan container can't route to the host proxy across the rootless network-namespace boundary), so hardened scans are refused there. Use rootful podman or docker for full `--hardened`, or `--hardened-rootless-runtime` to get the read-only-rootfs + `no-new-privileges` half under rootless — the always-on `--cap-drop ALL` / non-root user / `/tmp` tmpfs / SELinux `:z` baseline applies in every mode regardless. See [docs/podman.md](docs/podman.md) for the full security model, the rootless `--hardened` limitation, and known gaps.
 
 The `docker build` / `docker run` commands shown in this repo -- for the runner image and the per-ecosystem profile images under `docker/profiles/` -- are CLI-compatible with podman; substitute `podman` for `docker`.
 
@@ -251,6 +251,7 @@ The `docker build` / `docker run` commands shown in this repo -- for the runner 
 | `--selinux` | `auto` | Bind-mount SELinux relabeling: `auto` (relabel when SELinux is detected), `on`, or `off` |
 | `--no-docker` | false | Disable containerised runner |
 | `--hardened` | false | Strict sandbox: container runtime required, egress restricted to `*.anthropic.com` + host skill API, read-only rootfs, internal network |
+| `--hardened-rootless-runtime` | false | Read-only rootfs + `no-new-privileges` **without** the per-scan `--internal` network; works under rootless podman where `--hardened` can't (implied by `--hardened`) |
 | `--runner-image` | `ghcr.io/alpha-omega-security/scrutineer-runner:latest` | Container image for per-scan containers |
 | `-concurrency` | `4` | Number of scans to run in parallel |
 | `-clone` | `shallow` | Clone depth: `shallow` (`--depth 1`) or `full` |

@@ -50,6 +50,14 @@ func (rt ContainerRuntime) needsKeepID() bool {
 	return rt.Bin == "podman" && rt.Rootless
 }
 
+// NeedsKeepID is the exported form of needsKeepID for callers outside the
+// package. The startup path uses it to log a "warming" notice before the
+// keep-id smoke test, since the first such run remaps the whole runner image
+// into the subuid range and can take ~a minute.
+func (rt ContainerRuntime) NeedsKeepID() bool {
+	return rt.needsKeepID()
+}
+
 // runtimeProber runs a runtime command and returns its stdout. The production
 // prober shells out; tests inject a stub so DetectRuntime's selection logic is
 // exercised without a live daemon.

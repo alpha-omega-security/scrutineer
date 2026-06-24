@@ -74,6 +74,115 @@ scan is **refused** rather than run under a weaker sandbox. It is gated to
 podman, so it covers both rootless and rootful podman; docker keeps its trusted
 path and pays no probe cost.
 
+## `--hardened` under rootless podman
+
+`--hardened` is frequently **not usable under rootless podman**, and scrutineer
+will refuse such scans rather than run them degraded. This is structural, not a
+misconfiguration:
+
+- Hardened mode puts each scan on its own `--internal` network and routes the
+  scan's only egress through scrutineer's proxy **on the host**, reached via the
+  container's gateway.
+- `--internal` deliberately severs the route out of the container's network
+  namespace. Under **docker (or rootful podman)** the bridge gateway *is* the
+  host, so the host proxy is still reachable. Under **rootless podman** the host
+  proxy lives *across* the rootless network-namespace boundary (pasta /
+  slirp4netns), and `--internal` cuts exactly that path — so the scan container
+  cannot reach the proxy at all.
+
+The per-scan verification (probe 2 above) catches this and **fails closed**:
+
+    hardened network verification: internal network "scrutineer-hardened-N"
+    cannot reach the host egress proxy at <gateway>:<port> ("UNREACHABLE");
+    the only egress path is broken
+
+That is the safe outcome — scrutineer refuses rather than silently running a
+weaker sandbox — but it means hardened scans do not start on these hosts. (Note
+this is independent of any host firewall: it reproduces with a fully open
+`iptables`/`nftables`, because the break is the namespace boundary, not a packet
+filter. It is also independent of SELinux.)
+
+### Three ways to deal with it
+
+Weakest change to strongest isolation:
+
+1. **Default mode under rootless** *(recommended baseline; no change)* — drop
+   `--hardened`. Add **`--hardened-rootless-runtime`** to still get a read-only
+   rootfs and `no-new-privileges` (they don't need the `--internal` network — see
+   the next subsection). You keep the non-root-equivalent runtime and, on an
+   enforcing host, SELinux `:z` confinement; you give up only enforced egress.
+2. **Rootful podman or docker for `--hardened`** — with a daemon runtime the
+   `--internal` gateway *is* the host, so hardened works as designed. The cost is
+   the T12 property: runtime access becomes root-equivalent again, which is the
+   main reason to prefer rootless. Reasonable only on a dedicated/throwaway host.
+3. **Egress-gateway sidecar** *(not yet implemented; the proper fix)* — run the
+   allowlisting proxy as a container attached to **both** the per-scan
+   `--internal` network and a normal egress network. The scan container stays
+   internal-only and reaches *only* the sidecar; the sidecar enforces the
+   allowlist and forwards out its egress interface (and reaches the host skill
+   API the way default mode does today). This makes enforced egress work under
+   rootless without the scan container ever needing to reach the host. Tracked as
+   future work.
+
+### `--hardened-rootless-runtime`: container hardening without the network
+
+Read-only rootfs and `no-new-privileges` are pure container options with **no
+network dependency**, so they don't need `--internal` and work fine under
+rootless podman's default network. `--hardened-rootless-runtime` (config
+`hardened_rootless_runtime: true`) applies exactly those two — and nothing else —
+independently of `--hardened`:
+
+- `--read-only` on the container rootfs. Writable paths remain `/work`, the
+  `/tmp` tmpfs (with `HOME=/tmp`), and the `/claude-config` bind mount on
+  resumable runs.
+- `--security-opt no-new-privileges`.
+
+It is the recommended add-on for rootless deployments that can't use full
+`--hardened`. It is not strictly rootless-specific — it works under docker and
+rootful podman too — but `--hardened` already implies both options there, so the
+flag is redundant with (and harmless alongside) `--hardened`. It has no effect
+under `--no-docker` (there is no container; startup warns if you combine them),
+and startup logs `hardened_rootless_runtime=<bool>` so you can confirm it is
+active.
+
+**Caveat — custom profile images.** A read-only rootfs breaks any runner image
+that writes outside `/work` and `/tmp` at scan time. The default runner image is
+built to run read-only; a per-ecosystem profile image may not be (e.g. a
+toolchain that caches under a path other than `$HOME`, which is `/tmp` here).
+This is the same constraint `--hardened` carries, and the reason container
+hardening is opt-in rather than always-on.
+
+### What running rootless *without* `--hardened` gives up
+
+Every container mode — default, `--hardened-rootless-runtime`, and `--hardened`
+— **always** applies the baseline isolation: `--cap-drop ALL`, the non-root
+invoking user (`--user <uid>:<gid>`, mapped back to you by `--userns=keep-id`
+under rootless), a `noexec,nosuid` `/tmp` tmpfs, the runtime's default
+seccomp/AppArmor profiles, and — on an enforcing host — the SELinux `:z` relabel.
+On top of that baseline:
+
+- **Read-only rootfs + `no-new-privileges`** — *no longer lost under rootless*:
+  add `--hardened-rootless-runtime` to get both under the default network (see
+  the subsection above). Only the custom-profile caveat applies.
+- **Enforced egress** — still needs `--hardened`. The proxy is *cooperative* in
+  default mode: a workload that ignores `HTTPS_PROXY` / `HTTP_PROXY` can dial the
+  internet directly (threatmodel T13). The `--internal` network is the only thing
+  that turns the proxy into a hard wall, and it's the part that can't work
+  rootless. Without it, only the pinned-and-audited runner image (T11) bounds a
+  proxy-ignoring workload.
+- **Per-scan network isolation** — still needs `--hardened`: each hardened scan
+  gets its own `--internal` network, so a hostile clone in one scan can't probe a
+  concurrent scan's container; otherwise scans share the runtime's default
+  network.
+- **The post-clone workspace cap** (2 GiB) — still `--hardened`-only.
+
+So under rootless, `--hardened-rootless-runtime` closes the *container*-hardening
+gap entirely; what stays exclusive to full `--hardened` (and therefore to
+rootful/docker or the future sidecar) is the *network* enforcement and isolation.
+For untrusted inputs where enforced egress matters, prefer option 2 (or wait for
+option 3); otherwise rootless + `--hardened-rootless-runtime` + SELinux is a
+strong posture given the blast-radius reduction rootless already provides.
+
 ## SELinux and bind-mount file passing
 
 On hosts with SELinux enabled — the default on Fedora, RHEL, CentOS Stream,
@@ -140,7 +249,10 @@ simple.
 These are **not** addressed by the podman / rootless runtime and remain open:
 
 1. **Default-mode egress is cooperative, not enforced.** Only `--hardened`
-   blocks a proxy-ignoring workload (pre-existing T13 residual; both runtimes).
+   blocks a proxy-ignoring workload (pre-existing T13 residual; both runtimes) —
+   and `--hardened` is itself often unavailable under rootless podman (see
+   [`--hardened` under rootless podman](#--hardened-under-rootless-podman)), so
+   rootless deployments commonly run with cooperative egress.
 2. **keep-id widens the user namespace to include the operator's uid.** A
    container escape that pivots to that uid could touch host files owned by the
    operator *that are reachable through the bind mounts*. Far better than
@@ -190,9 +302,15 @@ These are **not** addressed by the podman / rootless runtime and remain open:
 
 ## Operational guidance
 
-- For untrusted inputs, prefer `--runtime podman --hardened`: a
-  non-root-equivalent runtime plus verified network isolation is the strongest
-  configuration this tool offers.
+- For untrusted inputs, the strongest posture is a non-root-equivalent runtime
+  plus verified network isolation. But `--hardened` is **frequently unusable
+  under rootless podman** — the scan container can't reach the host proxy on an
+  `--internal` network, so the scan is refused (see [`--hardened` under rootless
+  podman](#--hardened-under-rootless-podman)). Use **rootful podman or docker**
+  if you need full `--hardened` today; otherwise run **rootless with
+  `--hardened-rootless-runtime`** (read-only rootfs + no-new-privileges on the
+  always-on `--cap-drop ALL` / non-root / SELinux baseline), accepting that
+  egress is then cooperative, not enforced.
 - Run scrutineer as a **dedicated low-privilege OS user** to bound gap #2.
 - Ensure **podman ≥ 4.7** and a configured `/etc/subuid` / `/etc/subgid` range
   for that user (`podman system migrate` applies changes). Install **skopeo** if
