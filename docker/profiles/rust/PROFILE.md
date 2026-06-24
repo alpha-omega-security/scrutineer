@@ -1,67 +1,104 @@
 # Rust scanning container
 
-The repository under `./src` is a Rust project.
+The repository under `./src` is a Rust project, built with Cargo. The job is to find **security vulnerabilities** in it.
 
 ## Runtime
 
-- **rustup** - Rust toolchains and  tools are installed using the `rustup` tool. Both the latest stable and nightly are installed.
-- **Rust 1.96** - `cargo` / `rustc` (a pinned rust toolchain installed with `rustup`). 
-- `cargo` - The rust package manager and compiling tool to use. Use this tool for building and running Rust projects.
-- `rustc` - The underlying rust compiler invoked by `cargo`
-- C toolchain (`build-essential`, `pkg-config`) plus the `openssl`/`libssh` dev headers
-- `miri` - an Undefined Behavior detection tool for Rust. It can run binaries and test suites of cargo projects and detect unsafe code that fails to uphold its safety requirements.
+- **rustup 1.29** — manages toolchains and components; `RUSTUP_HOME=/usr/local/rustup`, `CARGO_HOME=/usr/local/cargo`,
+  both on PATH and writable.
+- **Rust 1.96 (stable)** — the default toolchain. `cargo` drives builds, tests, and runs; `rustc` is the compiler it
+  invokes. Use stable for normal building, testing, and reproducing.
+- **Nightly (`nightly-2026-06-24`)** with the `rust-src` component — required for the `-Z` flags that the rest of this
+  profile relies on (sanitizers, `-Zbuild-std`, Miri). Select it per-invocation with `cargo +nightly` / `rustc
+  +nightly`.
+- **Miri** — installed on the nightly toolchain and already initialized (`cargo +nightly miri setup`). It interprets
+  MIR to catch undefined behaviour (out-of-bounds, use-after-free, invalid aliasing, data races, uninitialized reads)
+  that compiles and runs cleanly under a normal build.
+- **C toolchain** — `build-essential` (gcc/g++), `pkg-config`, `autoconf`/`automake`, and `gcc-multilib` for 32-bit
+  (`i686`) targets, plus the `openssl` (`libssl-dev`) and `libssh` (`libssh-dev`) development headers. This is what lets
+  `-sys` crates and `build.rs` scripts compile and link their C/FFI code in-place.
+
+Dependencies and Cargo's caches resolve under `CARGO_HOME=/usr/local/cargo`, which is on an exec-capable path, so the
+test and example binaries Cargo builds can run. There is no bundled `clang`; sanitizer builds use the LLVM runtime that
+ships with the nightly `rust-src` (see below). If you need to instrument linked C code with a matching clang runtime
+(`-Zexternal-clangrt`), install `clang` with `apt-get` first.
 
 ## Operating procedure
 
-### Additional Knowledge
+### Background
 
-- Some rust packages have the `-sys` name extension. This is a standard, and not a rule, but suggests the package imports external
-  C dependecies. You can also identify this if a `build.rs` file exists. In these cases, it means this crate also imports this external
-  C code. Make sure to give special attention to these cases, as they suggest FFI boundaries and sources of undefined behavior both in the
-  third party dependecy and in the Rust usage of it. This means there is a boundary of different safety garuntees which requires 
-  special attention.
-- Rust code specifically has `unsafe` code which ignores Rust safety rules. Please consider both memory-safety vulnerabilities and other
-- standard vulnerabilities in these cases. In pure Rust code, you are focusing more on logic and design vulnerabilities.
+- A `-sys` crate suffix or a `build.rs` build script usually means external C/FFI code is compiled and linked in. Treat
+  that boundary as a prime target: scrutinize both the upstream C dependency and how the Rust side calls into it
+  (pointer/length handling, ownership of returned buffers, error-code checks).
+- In `unsafe` blocks, look for the classic memory-safety failures — out-of-bounds, use-after-free, double-free, invalid
+  `transmute`, aliasing violations, integer overflow feeding an allocation or index, and broken invariants that safe
+  callers can violate. In safe Rust, focus on logic and design flaws: panics on attacker input (DoS), path traversal,
+  deserialization, command/SQL injection, `unwrap`/`expect` on untrusted data, and incorrect auth/crypto.
 
 ### Code scanning preparations
 
-Download a given .crate file and extract it as the source code. Inspect the extracted Cargo.toml file - a project may be a 
-library or a binary, so you need to determine whether you need to use integration tests or directly invoking the binary if 
-performing tests. 
+Inspect the manifest to learn the shape of the project, then warm the build so dependencies resolve and any `-sys`
+crates compile:
 
-For libraries, you may need to create your own new project with `cargo new`, which utilizes the library. You can also create 
-integration tests for the same purpose. Always prioritize an integration test over a new test project.
+```bash
+cd src
+cargo metadata --no-deps --format-version 1   # crate names, targets, whether it's a workspace
+cargo build --all-targets                     # compile lib, bins, examples, and tests
+```
 
-For binaries, leverage creating new integration tests for scanning and identification. 
+`Cargo.toml` tells you what you're scanning: a `[lib]` table (or a top-level `src/lib.rs`) is a library, `[[bin]]`
+entries (or `src/main.rs`) are binaries, and `[workspace]` means multiple member crates — build and reason about each.
+Note any `[features]`, since vulnerable code may sit behind a non-default feature that must be enabled with
+`--features <name>` (or `--all-features`) to compile and reach it.
 
-Miri is installed, and should be used to scan and identify for cases of undefined behavior. 
+- **Libraries:** add an integration test under `tests/` that calls the public API, or scaffold a consumer crate with
+  `cargo new /tmp/consumer` and add the target as a path dependency (`mylib = { path = "../src" }`).
+- **Binaries:** prefer an integration test that drives the vulnerable code path, or run the built binary from
+  `target/debug/` against crafted input.
 
+Dependencies resolve from `Cargo.toml`/`Cargo.lock`; there is no separate install step — Cargo fetches crates on first
+build. If a fetch fails with a network error the scan is offline: work from the source and vendored crates already
+present and note which checks you had to skip.
 
-### Address Sanitizer Support
-ASAN is available for builds during inspection, and can be instantiated during a build using an environmental variable RUSTFLAGS='-Zsanitizer=<flags>'
+### Sanitizers
 
-To enable a sanitizer compile with `-Zsanitizer=address`, `-Zsanitizer=cfi`, `-Zsanitizer=dataflow`,`-Zsanitizer=hwaddress`,`-Zsanitizer=leak`,`-Zsanitizer=memory`, 
-`-Zsanitizer=memtag`, `-Zsanitizer=realtime`, `-Zsanitizer=shadow-call-stack` or `-Zsanitizer=thread`. You might also need the `--target` and build-std flags. 
-If you’re working with other languages that are also instrumented with sanitizers, you might need the external-clangrt flag. See the section on working with 
-other languages.
+Rust's sanitizers are nightly-only and need std rebuilt with instrumentation, so they require an explicit `--target` and
+`-Zbuild-std` (the `rust-src` component is already installed):
 
-You may need to use `build-std` for sanitizer support, which is invoked via `-Z build-std`
+```bash
+cd src
+RUSTFLAGS="-Zsanitizer=address" \
+  cargo +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu
+```
+
+Supported `-Zsanitizer` kinds include `address`, `leak`, `memory`, `thread`, `hwaddress`, `memtag`, `cfi`, `dataflow`,
+`realtime`, and `shadow-call-stack`. AddressSanitizer (`address`) is the workhorse for `unsafe`/FFI memory bugs;
+ThreadSanitizer (`thread`) for data races; MemorySanitizer (`memory`) for uninitialized reads. For builds that also
+instrument linked C code, add `-Zexternal-clangrt` (requires `clang`, see Runtime). Quote the sanitizer's `SUMMARY:`
+line and the top of its stack as evidence.
 
 ### Creating reproducers
 
-Every finding ships with a reproducer — a small piece of code that, when run in this container, actually triggers the
-issue. Paste the exact command you ran and the verbatim output (error message, return value, observable side effect)
-into the finding. Reasoning-only or "this would" reproducers do not count; if you couldn't run it here, say so
-explicitly instead of inventing one.
+Every finding ships with a reproducer — code that, run in this container, actually triggers the issue. Paste the exact
+command you ran and the verbatim output (panic message, sanitizer report, Miri diagnostic, observable side effect) into
+the finding. Reasoning-only or "this would" reproducers do not count; if you couldn't run it here, say so explicitly
+instead of inventing one.
 
-- Use cargo script when able to create a complete reproduction. This should be a single contained .rs file which can be executed with `cargo poc.rs`
-- Generate a test case which triggers the exploit. This can be done as an integration test in the project. 
-- When the vulnerability is undefined behavior or an unsafe code segment, make sure a test case is generated which miri will identify.
+- **Integration test (preferred):** drop `tests/poc.rs` next to the project and run
+  `cargo test --test poc -- --nocapture`. The test output is the evidence. Add `--features <name>` if the sink is
+  feature-gated.
+- **Standalone crate:** `cargo new /tmp/poc`, add the target as a dependency (`path` or version) in its `Cargo.toml`,
+  write the trigger in `src/main.rs`, and `cargo run --manifest-path /tmp/poc/Cargo.toml`.
+- **Undefined behaviour / `unsafe`:** write a test that exercises the suspect code and run it under Miri —
+  `cargo +nightly miri test --test poc`. A Miri error is strong evidence of UB; note that Miri can't execute most FFI,
+  so for `-sys`/C boundaries fall back to an AddressSanitizer build instead.
+- **Memory corruption in `unsafe`/FFI:** reproduce under AddressSanitizer (see Sanitizers) and quote the report.
+- Drive the vulnerable function directly with the malicious input rather than booting the whole program — it keeps the
+  reproducer minimal and the evidence trivial to verify.
 
-## Scope
+## Out of scope
 
-You should inspect this source for vulnerabilities that exist directly within its source. Third-party dependencies
-vulnerabilities should be excluded from scanning. However, if you identify known vulnerabilities in dependencies, 
-such as vulnerablilities in imported C libraries in sys crates, please report them as a finding. When a third party
-C dependency is being imported via a `-sys` crate or you identify a `build.rs` building and linking C code, consider 
-the boundary to this code and the dependency as in scope.
+- Third-party dependencies under `CARGO_HOME` (`/usr/local/cargo/registry`) — not the target of this scan unless a
+  finding specifically pivots through one. Still report *known-vulnerable* dependencies, especially C libraries pulled
+  in by `-sys` crates: when a `-sys` crate or `build.rs` builds and links C code, that boundary and the linked library
+  are in scope.

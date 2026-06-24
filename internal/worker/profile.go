@@ -100,6 +100,7 @@ var builtinProfiles = []Profile{
 	{Name: "java", Ecosystems: []string{"Maven", "Gradle"}},
 	{Name: "dotnet", Ecosystem: "NuGet"},
 	{Name: "beam", Ecosystems: []string{"Mix", "rebar3"}},
+	{Name: "rust", Ecosystem: "Cargo"},
 	{
 		// Last: brief reports no package manager for C/C++, so this is a
 		// fallback for repos that match no language ecosystem above but
@@ -116,7 +117,6 @@ var builtinProfiles = []Profile{
 			{Path: "meson.build"},
 		},
 	},
-	{Name: "rust", Ecosystem: "Cargo"},
 }
 
 // ProfileByName returns the registered profile, or the default profile

@@ -282,8 +282,18 @@ func TestMatchProfile(t *testing.T) {
 			want: "php",
 		},
 		{
-			name: "truly unknown manager falls back",
+			name: "cargo matches rust",
 			json: `{"package_managers":[{"name":"Cargo"}]}`,
+			want: "rust",
+		},
+		{
+			name: "cargo case-insensitive",
+			json: `{"package_managers":[{"name":"cargo"}]}`,
+			want: "rust",
+		},
+		{
+			name: "truly unknown manager falls back",
+			json: `{"package_managers":[{"name":"Conan"}]}`,
 			want: "",
 		},
 		{
