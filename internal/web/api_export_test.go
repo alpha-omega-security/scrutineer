@@ -180,6 +180,66 @@ func TestExportFindings_emptyDB(t *testing.T) {
 	}
 }
 
+func TestExportRepositories(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{
+		URL:                    "https://github.com/example/repo",
+		Name:                   "repo",
+		FullName:               "example/repo",
+		Owner:                  "example",
+		Languages:              "Go, JavaScript",
+		Stars:                  42,
+		Metadata:               "large metadata blob",
+		EcosystemsRepoData:     "large repo ecosystem blob",
+		EcosystemsPackagesData: "large package ecosystem blob",
+		ThreatModel:            "large threat model blob",
+	}
+	s.DB.Create(&repo)
+	deep := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: deepDiveSkillName, Commit: "abc123"}
+	s.DB.Create(&deep)
+	s.DB.Create(&db.Finding{ScanID: deep.ID, RepositoryID: repo.ID, Title: "SSRF", Severity: sevHigh, Status: db.FindingNew})
+	s.DB.Create(&db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanRunning, SkillName: "repo-overview", Commit: "def456"})
+
+	r := httptest.NewRequest("GET", "/api/v1/repositories", nil)
+	r.Host = testHost
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != 200 {
+		t.Fatalf("status %d, want 200. body=%s", w.Code, w.Body)
+	}
+
+	rows := readJSONL(t, w.Body.String())
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1", len(rows))
+	}
+	row := rows[0]
+	for _, k := range []string{"id", "url", "name", "full_name", "owner", "languages", "stars", "findings_count", "last_scan"} {
+		if _, ok := row[k]; !ok {
+			t.Errorf("repository export missing %q", k)
+		}
+	}
+	if row["findings_count"] != float64(1) {
+		t.Errorf("findings_count = %v, want 1", row["findings_count"])
+	}
+	last, ok := row["last_scan"].(map[string]any)
+	if !ok {
+		t.Fatalf("last_scan = %#v, want object", row["last_scan"])
+	}
+	if last["status"] != string(db.ScanRunning) || last["skill_name"] != "repo-overview" || last["commit"] != "def456" {
+		t.Errorf("last_scan = %#v", last)
+	}
+	for _, k := range []string{"metadata", "ecosystems_repo_data", "ecosystems_packages_data", "threat_model"} {
+		if _, ok := row[k]; ok {
+			t.Errorf("repository export should not include large column %q", k)
+		}
+	}
+	if got := w.Body.String(); strings.Contains(got, "large metadata blob") || strings.Contains(got, "large repo ecosystem blob") {
+		t.Errorf("repository export leaked large blob data: %s", got)
+	}
+}
+
 func TestExportScans(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
@@ -270,7 +330,7 @@ func TestExportRejectsUnknownFormat(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
 
-	for _, path := range []string{"/api/v1/findings", "/api/v1/scans", "/api/v1/repositories/1/findings"} {
+	for _, path := range []string{"/api/v1/repositories", "/api/v1/findings", "/api/v1/scans", "/api/v1/repositories/1/findings"} {
 		r := httptest.NewRequest("GET", path+"?format=csv", nil)
 		r.Host = testHost
 		w := httptest.NewRecorder()

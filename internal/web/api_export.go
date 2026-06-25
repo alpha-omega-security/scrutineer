@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"time"
 
 	"filippo.io/age"
 	"filippo.io/age/armor"
@@ -19,6 +20,7 @@ const exportPrefix = "/api/v1"
 func (s *Server) exportHandler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /repositories/{id}/findings", s.apiExportRepoFindings)
+	mux.HandleFunc("GET /repositories", s.apiExportRepositories)
 	mux.HandleFunc("GET /findings", s.apiExportFindings)
 	mux.HandleFunc("GET /scans", s.apiExportScans)
 	mux.HandleFunc("POST /import", s.handleImport)
@@ -28,6 +30,58 @@ func (s *Server) exportHandler() http.Handler {
 	mux.HandleFunc("GET /audit/queue", s.apiAuditQueue)
 	mux.HandleFunc("GET /audit/metrics", s.apiAuditMetrics)
 	return mux
+}
+
+type repositoryExportRow struct {
+	ID                 uint
+	URL                string
+	Name               string
+	FullName           string
+	Owner              string
+	Languages          string
+	Stars              int
+	CreatedAt          time.Time
+	UpdatedAt          time.Time
+	LastScanID         *uint
+	LastScanKind       string
+	LastScanStatus     db.ScanStatus
+	LastScanSkillName  string
+	LastScanCommit     string
+	LastScanCreatedAt  *time.Time
+	LastScanFinishedAt *time.Time
+	FindingsCount      int
+}
+
+func (s *Server) apiExportRepositories(w http.ResponseWriter, r *http.Request) {
+	if !validateExportFormat(w, r) {
+		return
+	}
+	q := s.DB.Table("repositories").
+		Select(`repositories.id,
+			repositories.url,
+			repositories.name,
+			repositories.full_name,
+			repositories.owner,
+			repositories.languages,
+			repositories.stars,
+			repositories.created_at,
+			repositories.updated_at,
+			last_scans.id AS last_scan_id,
+			last_scans.kind AS last_scan_kind,
+			last_scans.status AS last_scan_status,
+			last_scans.skill_name AS last_scan_skill_name,
+			last_scans."commit" AS last_scan_commit,
+			last_scans.created_at AS last_scan_created_at,
+			last_scans.finished_at AS last_scan_finished_at,
+			(` + deepDiveFindingsCountSQL + `) AS findings_count`).
+		Joins(`LEFT JOIN scans AS last_scans ON last_scans.id = (
+			SELECT id FROM scans
+			WHERE repository_id = repositories.id
+			ORDER BY id DESC
+			LIMIT 1
+		)`).
+		Order("repositories.updated_at desc")
+	streamJSONL(w, q, repositoryExport)
 }
 
 func (s *Server) apiExportRepoFindings(w http.ResponseWriter, r *http.Request) {
@@ -193,6 +247,35 @@ func (s *Server) apiExportScans(w http.ResponseWriter, r *http.Request) {
 		q = q.Where("skill_name = ?", v)
 	}
 	streamJSONL(w, q, scanExport)
+}
+
+func repositoryExport(row repositoryExportRow) map[string]any {
+	out := map[string]any{
+		"id":             row.ID,
+		"url":            row.URL,
+		"name":           row.Name,
+		"full_name":      row.FullName,
+		"owner":          row.Owner,
+		"languages":      row.Languages,
+		"stars":          row.Stars,
+		"findings_count": row.FindingsCount,
+		"created_at":     row.CreatedAt,
+		"updated_at":     row.UpdatedAt,
+	}
+	if row.LastScanID == nil {
+		out["last_scan"] = nil
+		return out
+	}
+	out["last_scan"] = map[string]any{
+		"id":          *row.LastScanID,
+		"kind":        row.LastScanKind,
+		statusKey:     string(row.LastScanStatus),
+		"skill_name":  row.LastScanSkillName,
+		"commit":      row.LastScanCommit,
+		"created_at":  row.LastScanCreatedAt,
+		"finished_at": row.LastScanFinishedAt,
+	}
+	return out
 }
 
 func validateExportFormat(w http.ResponseWriter, r *http.Request) bool {

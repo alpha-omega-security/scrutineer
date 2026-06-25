@@ -764,6 +764,33 @@ paths:
                     root:         { type: string }
                     types:        { type: string }
 
+  /v1/repositories:
+    get:
+      summary: Export repositories as JSONL
+      description: |
+        Returns one JSON object per line (`application/x-ndjson`) for the
+        Repositories tab data set. Each line includes selected scalar
+        repository columns, the latest scan summary, and the same curated
+        findings count shown in the UI. Large metadata and ecosystems cache
+        blobs are intentionally omitted to keep the payload suitable for
+        automation. No bearer token; localhost-only.
+      operationId: exportRepositories
+      security: []
+      parameters:
+        - name: format
+          in: query
+          schema: { type: string, enum: [jsonl] }
+      responses:
+        '200':
+          description: JSONL stream of RepositoryExport objects, one per line.
+          content:
+            application/x-ndjson:
+              schema: { $ref: '#/components/schemas/RepositoryExport' }
+        '400':
+          description: Unsupported format query value, or `encrypt` requested (only valid on per-repository bundle exports).
+        '403':
+          description: Host header is not localhost
+
   /v1/repositories/{id}/findings:
     get:
       summary: Export findings for a repository (JSONL, or a shareable bundle)
@@ -1017,6 +1044,35 @@ components:
         fork:           { type: string, description: 'owner/name of the staging fork in fork_org, when one exists.' }
         posture:        { type: string, enum: [ready, partial, unprepared], description: 'Disclosure-readiness tier from the posture skill. Empty when posture has not run.' }
         posture_summary: { type: string }
+
+    RepositoryExport:
+      description: |
+        Compact repository row used by the unauthenticated JSONL export. This
+        intentionally omits large metadata and ecosystems cache blobs.
+      type: object
+      required: [id, url, name, findings_count, last_scan]
+      properties:
+        id:             { type: integer, format: int64 }
+        url:            { type: string, format: uri }
+        name:           { type: string }
+        full_name:      { type: string }
+        owner:          { type: string }
+        languages:      { type: string, description: Comma-joined language names. }
+        stars:          { type: integer }
+        findings_count: { type: integer, description: Curated open findings count matching the Repositories tab. }
+        created_at:     { type: string, format: date-time }
+        updated_at:     { type: string, format: date-time }
+        last_scan:
+          nullable: true
+          type: object
+          properties:
+            id:          { type: integer, format: int64 }
+            kind:        { type: string }
+            status:      { type: string, enum: [queued, running, paused, done, failed, cancelled] }
+            skill_name:  { type: string }
+            commit:      { type: string }
+            created_at:  { type: string, format: date-time, nullable: true }
+            finished_at: { type: string, format: date-time, nullable: true }
 
     Scan:
       type: object
