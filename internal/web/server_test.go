@@ -228,6 +228,49 @@ func TestMaintainersIndex_rendersFindingsCountAndDNCBadge(t *testing.T) {
 	}
 }
 
+// Imports show in the Findings tab, so they must also count toward the
+// maintainer index badge. Regression for the aliasedFindingsScanFilter drift:
+// the count query once filtered skill_name only and silently dropped imports.
+func TestMaintainersIndex_countsImportedFindings(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://github.com/foo/bar.git", Name: "bar"}
+	s.DB.Create(&repo)
+
+	// One deep-dive audit finding and one operator-import finding. An import
+	// scan carries the producing tool's name as skill_name with kind=import —
+	// the same shape import.go writes — so a skill_name-only filter misses it.
+	dd := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: deepDiveSkillName}
+	s.DB.Create(&dd)
+	imp := db.Scan{RepositoryID: repo.ID, Kind: "import", Status: db.ScanDone, SkillName: "trivy"}
+	s.DB.Create(&imp)
+	// A scanner finding stays out of the count — per-repo lint noise.
+	sg := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: "semgrep"}
+	s.DB.Create(&sg)
+	s.DB.Create(&db.Finding{ScanID: dd.ID, RepositoryID: repo.ID, Title: "audit", Severity: "High"})
+	s.DB.Create(&db.Finding{ScanID: imp.ID, RepositoryID: repo.ID, Title: "imported", Severity: "Medium"})
+	s.DB.Create(&db.Finding{ScanID: sg.ID, RepositoryID: repo.ID, Title: "scanner", Severity: "Low"})
+
+	alice := db.Maintainer{Login: "alice", Name: "Alice", Status: db.MaintainerActive}
+	s.DB.Create(&alice)
+	if err := s.DB.Model(&repo).Association("Maintainers").Append([]db.Maintainer{alice}); err != nil {
+		t.Fatal(err)
+	}
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/maintainers"))
+	if w.Code != 200 {
+		t.Fatalf("status %d", w.Code)
+	}
+	body := w.Body.String()
+	// deep-dive + import = 2; the semgrep scanner finding is excluded. Before
+	// the fix this rendered 1 (import dropped); a scanner leak would render 3.
+	if !strings.Contains(body, `<span class="badge-destructive">2</span>`) {
+		t.Errorf("expected maintainer findings badge of 2 (deep-dive + import, scanner excluded); body=%s", body)
+	}
+}
+
 func flashFrom(t *testing.T, w *httptest.ResponseRecorder) Flash {
 	t.Helper()
 	r := &http.Request{Header: http.Header{"Cookie": w.Header().Values("Set-Cookie")}}
@@ -940,6 +983,41 @@ func TestOrgsList_aggregatesByOwner(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing %q", want)
 		}
+	}
+}
+
+// The orgs index finding total is a sibling of the maintainer count and once
+// drifted the same way: imports showed in the Findings tab but were filtered
+// out of the cross-org total. Regression for aliasedFindingsScanFilter.
+func TestOrgsList_countsImportedFindings(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	// Single owner, single repo (Repos column = 1, so a "2" badge can only be
+	// the findings total). One deep-dive finding plus one import finding; a
+	// zizmor scanner finding stays in the per-repo Scanners tab, not the total.
+	repo := db.Repository{URL: "https://example.com/acme/svc", Name: "svc", Owner: "acme"}
+	s.DB.Create(&repo)
+	dd := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: deepDiveSkillName}
+	s.DB.Create(&dd)
+	imp := db.Scan{RepositoryID: repo.ID, Kind: "import", Status: db.ScanDone, SkillName: "grype"}
+	s.DB.Create(&imp)
+	sg := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: "zizmor"}
+	s.DB.Create(&sg)
+	s.DB.Create(&db.Finding{ScanID: dd.ID, RepositoryID: repo.ID, Title: "audit", Severity: "High"})
+	s.DB.Create(&db.Finding{ScanID: imp.ID, RepositoryID: repo.ID, Title: "imported", Severity: "Medium"})
+	s.DB.Create(&db.Finding{ScanID: sg.ID, RepositoryID: repo.ID, Title: "scanner", Severity: "Low"})
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/orgs"))
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	body := w.Body.String()
+	// deep-dive + import = 2; the zizmor scanner finding is excluded. Before
+	// the fix this rendered 1 (import dropped); a scanner leak would render 3.
+	if !strings.Contains(body, `<span class="badge-destructive">2</span>`) {
+		t.Errorf("expected org findings total badge of 2 (deep-dive + import, scanner excluded); body=%s", body)
 	}
 }
 

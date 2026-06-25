@@ -1063,6 +1063,19 @@ const (
 	// sync — so imports now also count toward the dedup-pass threshold.
 	nonScannerScanFilter = "scan_id IN (SELECT id FROM scans WHERE skill_name = ? OR skill_name = '' OR skill_name IS NULL OR kind = 'import')"
 	scannerScanFilter    = "NOT (" + nonScannerScanFilter + ")"
+	// aliasedFindingsScanFilter is the same Findings-tab predicate as
+	// nonScannerScanFilter, written for the raw aggregate counts on the
+	// maintainers and orgs indexes. Those queries LEFT JOIN scans under the
+	// alias `s` and group findings, so they filter s.skill_name/s.kind directly
+	// rather than threading findings.scan_id through a subquery. A finding
+	// counts when its scan is the deep-dive audit, a legacy/empty skill_name,
+	// or an operator import (kind=import); the single ? binds deepDiveSkillName.
+	// The `s.skill_name IS NULL` arm doubles as the LEFT JOIN "this row has no
+	// findings" guard, so zero-count maintainers/orgs stay in the result with
+	// n=0. Keep it in lockstep with the three forms in this file — a copy that
+	// lacked the kind='import' arm is exactly what kept imports out of these
+	// totals after they began showing in the Findings tab.
+	aliasedFindingsScanFilter = "(s.skill_name = ? OR s.skill_name = '' OR s.skill_name IS NULL OR s.kind = 'import')"
 	// threatModelSkillName is the skill whose report feeds the Threat Model
 	// tab when present; repos that predate it fall back to the boundaries
 	// section of the deep-dive report so older scans keep rendering.
