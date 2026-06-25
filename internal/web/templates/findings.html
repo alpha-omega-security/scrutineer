@@ -3,6 +3,7 @@
 <div class="flex items-center justify-between gap-4 mb-6">
   <h2 class="text-2xl font-semibold flex items-center gap-2">
     <i data-lucide="bug"></i> Findings
+    <span class="text-base font-normal text-muted-foreground">({{.Page.Total}})</span>
   </h2>
   <div class="flex items-center gap-2">
     {{$mp := ""}}{{if .Missed}}{{$mp = "1"}}{{end}}
