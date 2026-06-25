@@ -1262,6 +1262,21 @@ func TestFindings_scannerToggle(t *testing.T) {
 	}
 }
 
+func TestDeepDiveSkillNameSafeForSplicing(t *testing.T) {
+	// deepDiveSkillName is interpolated as text into deepDiveFindingsCountSQL
+	// (an ORDER BY correlated subquery that cannot take a bind parameter), so
+	// it must never carry a SQL metacharacter. This tripwire fails loudly if a
+	// refactor changes the constant or makes the value dynamic.
+	if strings.ContainsAny(deepDiveSkillName, "'\";\\\x00") {
+		t.Errorf("deepDiveSkillName %q must stay free of SQL metacharacters; it is spliced into deepDiveFindingsCountSQL", deepDiveSkillName)
+	}
+	// And the escaping it now goes through is a faithful single-quote wrap for
+	// a value with no embedded quotes.
+	if got := db.SQLStringLiteral(deepDiveSkillName); got != "'"+deepDiveSkillName+"'" {
+		t.Errorf("SQLStringLiteral(%q) = %q, want simple quoting", deepDiveSkillName, got)
+	}
+}
+
 func TestFindings_importsShownByDefault(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

@@ -1075,11 +1075,17 @@ const (
 // "findings" sort. Tool-scanner skills are excluded so the ordering matches
 // the counts shown in the Findings column; operator imports (kind=import)
 // are included so the column agrees with the Findings tab.
+//
+// This fragment is spliced into an ORDER BY (q.Order below), which cannot take
+// a bind parameter, so the constants are interpolated as text. Both spliced
+// values are trusted compile-time constants — never request data — and both go
+// through db.SQLStringLiteral so a constant that ever gained a quote is escaped
+// rather than able to break out. See TestDeepDiveSkillNameSafeForSplicing.
 var deepDiveFindingsCountSQL = `SELECT COUNT(*) FROM findings f
 	    WHERE f.repository_id = repositories.id
 	      AND f.status NOT IN (` + db.ClosedFindingLifecycleSQLValues() + `)
 	      AND f.scan_id IN (SELECT id FROM scans
-	        WHERE skill_name = '` + deepDiveSkillName + `' OR skill_name = '' OR skill_name IS NULL OR kind = 'import')`
+	        WHERE skill_name = ` + db.SQLStringLiteral(deepDiveSkillName) + ` OR skill_name = '' OR skill_name IS NULL OR kind = 'import')`
 
 // findingsScanIDs returns a GORM subquery selecting scan IDs that belong to
 // the curated audit (security-deep-dive), to legacy/empty skill_name rows, or
