@@ -14,7 +14,6 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends \
         build-essential \
         pkg-config \
-        gcc-multilib \
         ca-certificates \
         autoconf \
         automake \
@@ -24,9 +23,13 @@ RUN apt-get update \
         wget \
  && rm -rf /var/lib/apt/lists/*
 
-# Add rust to the container
+# Add rust to the container. MIRI_SYSROOT is pinned so the sysroot built
+# below as root is the one the runner user finds at scan time (the worker
+# runs with HOME=/tmp, which is noexec, so the default ~/.cache/miri
+# location would force a rebuild that then fails to execute).
 ENV RUSTUP_HOME=/usr/local/rustup \
     CARGO_HOME=/usr/local/cargo \
+    MIRI_SYSROOT=/usr/local/miri-sysroot \
     PATH=/usr/local/cargo/bin:$PATH \
     RUSTUP_VERSION=${RUSTUP_VERSION} \
     RUST_STABLE_VERSION=${RUST_STABLE_VERSION} \
@@ -80,10 +83,14 @@ RUN set -eux; \
     cargo --version; \
     rustc --version;
 
-# Install nightly
+# Install the pinned nightly with rust-src (for -Zbuild-std / sanitizers)
+# and miri, then run miri's one-time sysroot build so scans don't pay it.
+# The bare `nightly` channel is deliberately not installed; select this
+# toolchain with `+${RUST_NIGHTLY_VERSION}` (exported via ENV above).
 RUN rustup toolchain install ${RUST_NIGHTLY_VERSION} \
-       --component rust-src
-RUN rustup component add --toolchain nightly-x86_64-unknown-linux-gnu miri \
-       && cargo +nightly miri setup
+        --component rust-src \
+        --component miri \
+ && cargo +${RUST_NIGHTLY_VERSION} miri setup \
+ && chmod -R a+w $RUSTUP_HOME $CARGO_HOME $MIRI_SYSROOT
 
 USER runner

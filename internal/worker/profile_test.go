@@ -92,6 +92,7 @@ func writeMarkerFile(t *testing.T, dir, name string) {
 	}
 }
 
+//nolint:maintidx // exhaustive table: one case per builtinProfiles entry plus precedence/fallback edges; splitting would scatter the coverage.
 func TestMatchProfile(t *testing.T) {
 	tests := []struct {
 		name    string

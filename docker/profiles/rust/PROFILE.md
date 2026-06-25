@@ -8,15 +8,18 @@ The repository under `./src` is a Rust project, built with Cargo. The job is to 
   both on PATH and writable.
 - **Rust 1.96 (stable)** — the default toolchain. `cargo` drives builds, tests, and runs; `rustc` is the compiler it
   invokes. Use stable for normal building, testing, and reproducing.
-- **Nightly (`nightly-2026-06-24`)** with the `rust-src` component — required for the `-Z` flags that the rest of this
-  profile relies on (sanitizers, `-Zbuild-std`, Miri). Select it per-invocation with `cargo +nightly` / `rustc
-  +nightly`.
-- **Miri** — installed on the nightly toolchain and already initialized (`cargo +nightly miri setup`). It interprets
-  MIR to catch undefined behaviour (out-of-bounds, use-after-free, invalid aliasing, data races, uninitialized reads)
-  that compiles and runs cleanly under a normal build.
-- **C toolchain** — `build-essential` (gcc/g++), `pkg-config`, `autoconf`/`automake`, and `gcc-multilib` for 32-bit
-  (`i686`) targets, plus the `openssl` (`libssl-dev`) and `libssh` (`libssh-dev`) development headers. This is what lets
-  `-sys` crates and `build.rs` scripts compile and link their C/FFI code in-place.
+- **Nightly** with the `rust-src` component — required for the `-Z` flags that the rest of this profile relies on
+  (sanitizers, `-Zbuild-std`, Miri). The pinned toolchain name is exported as `$RUST_NIGHTLY_VERSION`
+  (e.g. `nightly-2026-06-24`); select it per-invocation with `cargo +$RUST_NIGHTLY_VERSION` /
+  `rustc +$RUST_NIGHTLY_VERSION`. The bare `nightly` channel is not installed.
+- **Miri** — installed on the nightly toolchain and already initialized (`cargo +$RUST_NIGHTLY_VERSION miri setup`).
+  It interprets MIR to catch undefined behaviour (out-of-bounds, use-after-free, invalid aliasing, data races,
+  uninitialized reads) that compiles and runs cleanly under a normal build. Miri can also interpret for a foreign
+  target with `--target <triple>`, which is useful for pointer-width- or endianness-dependent bugs without
+  cross-compiling.
+- **C toolchain** — `build-essential` (gcc/g++), `pkg-config`, `autoconf`/`automake`, plus the `openssl`
+  (`libssl-dev`) and `libssh` (`libssh-dev`) development headers. This is what lets `-sys` crates and `build.rs`
+  scripts compile and link their C/FFI code in-place.
 
 Dependencies and Cargo's caches resolve under `CARGO_HOME=/usr/local/cargo`, which is on an exec-capable path, so the
 test and example binaries Cargo builds can run. There is no bundled `clang`; sanitizer builds use the LLVM runtime that
@@ -57,8 +60,9 @@ Note any `[features]`, since vulnerable code may sit behind a non-default featur
   `target/debug/` against crafted input.
 
 Dependencies resolve from `Cargo.toml`/`Cargo.lock`; there is no separate install step — Cargo fetches crates on first
-build. If a fetch fails with a network error the scan is offline: work from the source and vendored crates already
-present and note which checks you had to skip.
+build. A downloaded `.crate` file (e.g. under `$CARGO_HOME/registry/cache` or fetched from crates.io) is a gzipped
+tarball: `tar -xzf foo-1.2.3.crate` unpacks it. If a fetch fails with a network error the scan is offline: work from
+the source and vendored crates already present and note which checks you had to skip.
 
 ### Sanitizers
 
@@ -68,7 +72,7 @@ Rust's sanitizers are nightly-only and need std rebuilt with instrumentation, so
 ```bash
 cd src
 RUSTFLAGS="-Zsanitizer=address" \
-  cargo +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu
+  cargo +$RUST_NIGHTLY_VERSION test -Zbuild-std --target x86_64-unknown-linux-gnu
 ```
 
 Supported `-Zsanitizer` kinds include `address`, `leak`, `memory`, `thread`, `hwaddress`, `memtag`, `cfi`, `dataflow`,
@@ -90,8 +94,8 @@ instead of inventing one.
 - **Standalone crate:** `cargo new /tmp/poc`, add the target as a dependency (`path` or version) in its `Cargo.toml`,
   write the trigger in `src/main.rs`, and `cargo run --manifest-path /tmp/poc/Cargo.toml`.
 - **Undefined behaviour / `unsafe`:** write a test that exercises the suspect code and run it under Miri —
-  `cargo +nightly miri test --test poc`. A Miri error is strong evidence of UB; note that Miri can't execute most FFI,
-  so for `-sys`/C boundaries fall back to an AddressSanitizer build instead.
+  `cargo +$RUST_NIGHTLY_VERSION miri test --test poc`. A Miri error is strong evidence of UB; note that Miri can't
+  execute most FFI, so for `-sys`/C boundaries fall back to an AddressSanitizer build instead.
 - **Memory corruption in `unsafe`/FFI:** reproduce under AddressSanitizer (see Sanitizers) and quote the report.
 - Drive the vulnerable function directly with the malicious input rather than booting the whole program — it keeps the
   reproducer minimal and the evidence trivial to verify.

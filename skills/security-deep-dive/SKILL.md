@@ -123,8 +123,6 @@ For round-trip pairs, the reproduction is the round-trip. Construct values conta
 
 If the reproduction fails — the sink is gated by a check you missed, the input is sanitised on the way in, the type system prevents it — write what stopped it and move to the next sink.
 
-Rust .crate files are gzipped tarballs.
-
 ### Step 4: Prior art
 
 Check scrutineer's advisory cache first: `GET {api_base}/repositories/{repository_id}/advisories`. Every advisory already published against this repository's packages shows up here, with CVSS, classification, packages affected, and the original URL. Anything that overlaps with your finding is prior art — cite the advisory uuid and url.
