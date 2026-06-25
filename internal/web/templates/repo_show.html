@@ -5,6 +5,7 @@
     {{template "crumbs" (crumbs "Repositories" "/" .Repo.Name "")}}
     <h2 class="text-2xl font-semibold mt-1 flex items-center gap-2">
       <i data-lucide="folder-git-2"></i> {{.Repo.Name}}
+      <span class="text-muted-foreground font-normal text-lg">#{{.Repo.ID}}</span>
     </h2>
     {{if .Repo.IsLocal}}
     <span class="text-sm text-muted-foreground inline-flex items-center gap-1">
