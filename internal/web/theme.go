@@ -86,6 +86,13 @@ func (s *Server) settingsShow(w http.ResponseWriter, r *http.Request) {
 	s.DB.Raw("SELECT file FROM pragma_database_list WHERE name = 'main'").Scan(&dbPath)
 
 	meta := s.toolMetadataCached(r.Context())
+	// Overlay the boot-time staleness verdict onto the (separately cached)
+	// version metadata so the banner stays current without re-probing here.
+	if st := s.runnerImageStatus(); st.Stale {
+		meta.Stale = true
+		meta.StaleDays = st.AgeDays
+		meta.PullCommand = st.PullCommand
+	}
 
 	// ConcurrencyInput pre-fills the form with the persisted value when set,
 	// else the value the runner is actually using now. MaxTurns is 0 when
@@ -124,6 +131,12 @@ type toolMetadata struct {
 	worker.RunnerToolVersions
 	Runtime     string
 	RunnerImage string
+	// Staleness of the runner image, from the boot-time check (issue #337).
+	// Overlaid onto the cached metadata per request so the banner reflects the
+	// latest verdict rather than the 5-minute version cache.
+	Stale       bool
+	StaleDays   int
+	PullCommand string
 }
 
 // toolMetadataTTL bounds how long a gathered version set is reused. Versions

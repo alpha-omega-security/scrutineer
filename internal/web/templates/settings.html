@@ -2,6 +2,17 @@
 
 <h1 class="text-2xl font-semibold mb-6">Settings</h1>
 
+{{if .Meta.Stale}}
+<div class="alert mb-6" role="status">
+  <i data-lucide="package-search"></i>
+  <section>
+    <strong>Runner image is {{.Meta.StaleDays}} days old.</strong>
+    A newer build of the analysis toolchain is available. Update to pick it up:
+    <code class="font-mono">{{.Meta.PullCommand}}</code>
+  </section>
+</div>
+{{end}}
+
 <div class="grid gap-6">
 
 <section class="card">

@@ -479,11 +479,40 @@ func run(log *slog.Logger) error {
 		_ = httpSrv.Shutdown(sctx)
 	}()
 
+	// Notice (but never pull) a stale runner image. Runs in the background so a
+	// slow or unreachable registry can't delay startup, and fails soft to
+	// silence -- see issue #337. A genuine auto-update is left to the operator
+	// (watchtower or `--pull=always`); this only surfaces the drift.
+	go checkRunnerImage(srv, runner, log)
+
 	log.Info("listening", "addr", "http://"+f.addr)
 	if err := httpSrv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
 	return nil
+}
+
+// checkRunnerImage compares the pulled runner image against the registry and,
+// when it is stale (a newer build exists and the local one is past the age
+// threshold), logs a one-line nag and records the result so the Settings page
+// can show a banner. It is deliberately quiet otherwise: a fresh image, a host
+// without a container runtime, or an unreachable registry all produce no output.
+func checkRunnerImage(srv *web.Server, runner worker.SkillRunner, log *slog.Logger) {
+	image := worker.RunnerImageName(runner)
+	if image == "" {
+		return // --no-container: no fixed image to compare against.
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), worker.RunnerStalenessTimeout)
+	defer cancel()
+	status, ok := worker.RunnerImageStaleness(ctx, worker.RuntimeOf(runner), image)
+	if !ok {
+		return // couldn't reach a verdict (registry down, image not pulled, ...): stay silent.
+	}
+	srv.SetRunnerImageStatus(status)
+	if status.Stale {
+		log.Warn("runner image is stale; update to pick up newer analysis tools",
+			"image", image, "age_days", status.AgeDays, "update", status.PullCommand)
+	}
 }
 
 // loadSkills loads local skill directories and, if a remote skills repo is
