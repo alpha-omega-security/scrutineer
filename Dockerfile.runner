@@ -11,6 +11,7 @@ RUN GOBIN=/out go install github.com/git-pkgs/git-pkgs@v0.15.3 && \
     GOBIN=/out go install github.com/git-pkgs/brief/cmd/brief@v0.6.0
 
 FROM rust:1.96-trixie@sha256:6df234c1eb92b0545468fab8c18fc5f9adfb994e7d4f67d81d45fe2fcabf5657 AS zizmor-build
+ENV CARGO_HTTP_MULTIPLEXING=false
 RUN cargo install --locked --root /out zizmor@1.26.1
 
 FROM debian:trixie-slim@sha256:28de0877c2189802884ccd20f15ee41c203573bd87bb6b883f5f46362d24c5c2
