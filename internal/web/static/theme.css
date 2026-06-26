@@ -443,6 +443,13 @@ pre.skill-src code { background: none; padding: 0; }
 }
 .alert-warning > svg { color: oklch(0.66 0.15 60); }
 
+/* ── copy-to-clipboard button ── */
+/* Holds two stacked lucide icons; app.js sets data-copied for ~1s after a copy,
+   which swaps the clipboard glyph for a green check as transient confirmation. */
+.copy-btn .copied-icon { display: none; }
+.copy-btn[data-copied] .copy-icon { display: none; }
+.copy-btn[data-copied] .copied-icon { display: inline-block; color: oklch(0.62 0.17 150); }
+
 /* ── reduced motion ── */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

@@ -8,7 +8,14 @@
   <section>
     <strong>Runner image is {{.Meta.StaleDays}} days old.</strong>
     A newer build of the analysis toolchain is available. Update to pick it up:
-    <code class="font-mono">{{.Meta.PullCommand}}</code>
+    <span class="inline-flex items-center gap-1.5">
+      <code class="font-mono">{{.Meta.PullCommand}}</code>
+      <button type="button" class="btn-icon-ghost copy-btn" data-copy="{{.Meta.PullCommand}}"
+              aria-label="Copy command" title="Copy command">
+        <i data-lucide="copy" class="copy-icon"></i>
+        <i data-lucide="check" class="copied-icon"></i>
+      </button>
+    </span>
   </section>
 </div>
 {{end}}
