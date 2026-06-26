@@ -64,6 +64,31 @@ func RuntimeServerVersion(ctx context.Context, rt ContainerRuntime) string {
 	return rt.bin() + " " + v
 }
 
+// RunnerImageRevision returns the git commit the runner image was built from,
+// read from the org.opencontainers.image.revision OCI label that
+// docker/metadata-action bakes in during the runner-image workflow. This is far
+// more useful on the settings page than the image's ":latest" tag, which never
+// changes. Returns "" when the image isn't present locally, carries no revision
+// label (e.g. a locally built --runner-image), or inspect fails -- the settings
+// page then shows "unavailable" rather than a misleading value. The caller
+// supplies a context to bound a hung daemon.
+func RunnerImageRevision(ctx context.Context, rt ContainerRuntime, image string) string {
+	if image == "" {
+		return ""
+	}
+	const format = `{{index .Config.Labels "org.opencontainers.image.revision"}}`
+	out, err := exec.CommandContext(ctx, rt.bin(), "image", "inspect", "--format", format, "--", image).Output()
+	if err != nil {
+		return ""
+	}
+	rev := strings.TrimSpace(string(out))
+	// A missing label renders as the literal "<no value>"; treat it as absent.
+	if rev == "" || rev == "<no value>" {
+		return ""
+	}
+	return rev
+}
+
 // RunnerToolVersions holds the versions of the analysis tools baked into the
 // runner image. Any field is "" when its tool could not be queried.
 type RunnerToolVersions struct {
