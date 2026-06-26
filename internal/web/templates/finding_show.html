@@ -482,6 +482,13 @@ git commit -m "fix: {{$f.Title}}"</pre>
         <div class="grid gap-1 col-span-2">
           <label class="text-xs text-muted-foreground">Disclosure draft</label>
           <textarea class="input font-mono text-xs" name="disclosure_draft" rows="6">{{$f.DisclosureDraft}}</textarea>
+          {{if $f.DisclosureDraft}}
+          <a href="/findings/{{$f.ID}}/disclosure.html" target="_blank" rel="noopener"
+             class="text-xs text-muted-foreground hover:text-foreground hover:underline inline-flex items-center gap-1 justify-self-start"
+             title="Open the draft as styled HTML, then select-all and paste into a Gmail compose window">
+            <i data-lucide="external-link" class="size-3.5"></i> Open Gmail-ready HTML
+          </a>
+          {{end}}
         </div>
         <div class="col-span-2 flex justify-end">
           <button type="submit" class="btn-sm">Save</button>

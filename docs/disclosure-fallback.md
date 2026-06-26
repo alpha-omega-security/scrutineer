@@ -29,7 +29,7 @@ If the CNA wants the report submitted through a GitHub PVR on a different repo (
 
 The upstream is reachable but the maintainer has not turned PVR on. Two paths, depending on the project's apparent readiness signals from `posture`:
 
-**Readiness signals present (`security_policy`, `security_txt`, or a contact in `funding.yml`).** Use the channel they advertise. `maintainers` reads `SECURITY.md`, `.github/SECURITY.md`, `security.txt`, and the funding metadata, then emits the best channel in `disclosure_channel`. Send an encrypted email if a PGP key is in their policy; otherwise plain mail with the GHSA draft inline. Drop the patch as an attachment, not a public link.
+**Readiness signals present (`security_policy`, `security_txt`, or a contact in `funding.yml`).** Use the channel they advertise. `maintainers` reads `SECURITY.md`, `.github/SECURITY.md`, `security.txt`, and the funding metadata, then emits the best channel in `disclosure_channel`. Send an encrypted email if a PGP key is in their policy; otherwise plain mail with the GHSA draft inline. To paste the draft into a Gmail compose window with its formatting intact, open `GET /findings/{id}/disclosure.html` (linked under the disclosure draft on the finding page): it renders the draft markdown with inline styles Gmail keeps on paste, so you select-all and paste rather than reformatting by hand. Drop the patch as an attachment, not a public link.
 
 The maintainer may respond by enabling PVR; once they confirm, you can rerun `report-upstream` to file the formal report through GitHub. Treat that as the moment the finding moves to `reported`; the email exchange before it is `FindingCommunication` rows with `direction=outbound`/`inbound`, `channel=email`.
 

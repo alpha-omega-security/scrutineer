@@ -321,6 +321,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /findings/{id}/report.md", s.findingReport)
 	mux.HandleFunc("GET /findings/{id}/csaf.json", s.findingCSAF)
 	mux.HandleFunc("GET /findings/{id}/osv.json", s.findingOSV)
+	mux.HandleFunc("GET /findings/{id}/disclosure.html", s.findingDisclosureHTML)
 	mux.HandleFunc("POST /findings/{id}/status", s.findingStatus)
 	mux.HandleFunc("POST /findings/{id}/exploited-in-wild", s.findingExploitedInWild)
 	mux.HandleFunc("POST /findings/{id}/verify", s.findingVerify)
