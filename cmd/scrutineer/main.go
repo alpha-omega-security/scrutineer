@@ -136,7 +136,7 @@ func registerFlags(fs *flag.FlagSet, f *flags) {
 	fs.StringVar(&f.addr, "addr", "127.0.0.1:8080", "listen address")
 	fs.StringVar(&f.dataDir, "data", "./data", "data directory (db + workspaces)")
 	fs.StringVar(&f.effort, "effort", "high", "claude effort")
-	fs.StringVar(&f.runtime, "runtime", "docker", "container runtime: docker or podman (rootless podman supported)")
+	fs.StringVar(&f.runtime, "runtime", "docker", "container runtime: docker, podman (rootless supported), or apple (Apple, experimental)")
 	fs.StringVar(&f.selinux, "selinux", "auto", "SELinux bind-mount relabeling: auto (relabel when SELinux is detected on the host), on (always), off (never). Relabeling (\":z\") lets the container read /work and write its output on enforcing-SELinux hosts")
 	fs.BoolVar(&f.noContainer, "no-container", false, "disable the containerised runner and run claude directly on the host (no isolation), even if a container runtime is available")
 	fs.BoolVar(&f.noContainer, "no-docker", false, "deprecated alias for --no-container")
@@ -540,11 +540,12 @@ func hashPath(s string) string {
 const defaultRuntimeSmokeTimeout = 5 * time.Minute
 
 // setupRunner picks the SkillRunner implementation for the run loop:
-// ContainerRunner (docker or podman) when a container runtime is in use,
+// ContainerRunner (docker, podman, or Apple's container) when a container runtime is in use,
 // LocalClaude otherwise. It also starts the egress proxy, sweeps stale hardened
 // networks, runs the rootless keep-id smoke test, and returns the apiBase the
-// worker advertises to skills (the container path rewrites it to
-// host.docker.internal so containers can reach the loopback-bound web server).
+// worker advertises to skills (the container path rewrites it to the selected
+// runtime's host endpoint so containers can reach the loopback-bound web
+// server through the egress proxy).
 //
 //nolint:ireturn // dispatched on f.noContainer; concrete types live in the worker pkg
 func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRunner, string, error) {
@@ -565,6 +566,17 @@ func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRu
 			return nil, "", fmt.Errorf("%s not available: --hardened requires a container runtime, install and start it", f.runtime)
 		}
 		return nil, "", fmt.Errorf("%s not available: install and start it, or pass --no-container to run without containerisation (no isolation)", f.runtime)
+	}
+	if err := rt.HardeningSupportError(f.hardened, f.hardenedRootless); err != nil {
+		return nil, "", err
+	}
+	if rt.Bin == "apple" {
+		log.Warn("Apple container runtime support is experimental", "version", rt.Version)
+		if f.hardened {
+			log.Info("Apple hardened mode: per-container VM boundary substitutes for " +
+				"--security-opt no-new-privileges (not exposed by Apple's CLI); the " +
+				"per-scan --internal network is verified fail-closed before each scan")
+		}
 	}
 	// Older podman lacks the host-gateway alias the egress path needs; warn
 	// rather than fail since the hardened path verifies reachability per-scan.
@@ -595,18 +607,13 @@ func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRu
 	if err := worker.VerifySELinuxMount(selinuxCtx, rt, f.runnerImage, relabel); err != nil {
 		return nil, "", err
 	}
-	allow := buildEgressAllow(f.hardened, cfg, f.anthropicBaseURL, log)
-	token := worker.NewProxyToken()
-	port, err := worker.StartEgressProxy(&worker.EgressProxy{Allow: allow, Token: token, APIPort: addrPort(f.addr), Log: log})
-	if err != nil {
-		return nil, "", fmt.Errorf("start egress proxy: %w", err)
-	}
 	// Hardened mode owns its per-scan networks, so the gateway IP must be
 	// probed inside RunSkill against the network the runner is about to attach
 	// to. Probing once here would point every scan at whichever network
 	// happened to be probed first. The startup sweep collects per-scan networks
 	// left over by crashed processes.
 	var gwIP string
+	apiHost := worker.HostGatewayAlias
 	if f.hardened {
 		if removed, err := worker.SweepOrphanHardenedNetworks(rt); err != nil {
 			log.Warn("orphan hardened network sweep failed", "err", err)
@@ -615,7 +622,8 @@ func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRu
 		}
 	} else {
 		gwIP = worker.ResolveHostGatewayIPv4(rt, f.runnerImage, "")
-		if rt.Bin == "podman" && gwIP == "" {
+		switch {
+		case rt.Bin == "podman" && gwIP == "":
 			// Reuses the resolve probe just run (no extra launch). An empty
 			// result means host-gateway is not wired, so containers cannot reach
 			// the host egress proxy and scans will fail with network errors --
@@ -623,20 +631,40 @@ func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRu
 			log.Warn("host-gateway did not resolve under podman; scans may fail to " +
 				"reach the network because the container cannot reach the host egress " +
 				"proxy (needs podman >= 4.7; see docs/podman.md)")
+		case rt.Bin == "apple":
+			if gwIP == "" {
+				return nil, "", fmt.Errorf("could not resolve the Apple container host gateway; cannot route scans to the egress proxy")
+			}
+			apiHost = gwIP
 		}
+	}
+	allow := buildEgressAllow(f.hardened, cfg, f.anthropicBaseURL, log)
+	if apiHost != worker.HostGatewayAlias {
+		allow = append(allow, apiHost)
+	}
+	token := worker.NewProxyToken()
+	port, err := worker.StartEgressProxy(&worker.EgressProxy{
+		Allow:    allow,
+		Token:    token,
+		APIPort:  addrPort(f.addr),
+		APIHosts: []string{apiHost},
+		Log:      log,
+	})
+	if err != nil {
+		return nil, "", fmt.Errorf("start egress proxy: %w", err)
 	}
 	log.Info("container runtime detected, using containerised runner",
 		"runtime", rt.Bin, "rootless", rt.Rootless, "image", f.runnerImage,
 		"egress_proxy_port", port, "egress_allow", len(allow),
-		"host_gateway_ipv4", gwIP, "hardened", f.hardened,
+		"container_host", apiHost, "host_gateway_ipv4", gwIP, "hardened", f.hardened,
 		"hardened_rootless_runtime", f.hardenedRootless, "selinux_relabel", relabel)
-	// Skills inside the container reach the host via host.docker.internal,
-	// which the egress proxy rewrites to 127.0.0.1 when dialing.
-	apiBase = "http://" + net.JoinHostPort(worker.HostGatewayAlias, addrPort(f.addr)) + "/api"
+	// Skills inside the container reach the host via the runtime's host endpoint,
+	// which the egress proxy rewrites to 127.0.0.1 when dialing the app.
+	apiBase = "http://" + net.JoinHostPort(apiHost, addrPort(f.addr)) + "/api"
 	return worker.ContainerRunner{
 		Image:                   f.runnerImage,
 		Effort:                  f.effort,
-		ProxyURL:                worker.ProxyURL(token, port),
+		ProxyURL:                worker.ProxyURLForHost(token, apiHost, port),
 		FullClone:               f.fullClone(),
 		MaxTurns:                f.maxTurns,
 		AnthropicBaseURL:        f.anthropicBaseURL,

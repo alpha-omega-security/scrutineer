@@ -1,6 +1,12 @@
 package worker
 
-import "testing"
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
 func TestParseToolVersions(t *testing.T) {
 	out := "zizmor=zizmor 1.26.1\n" +
@@ -39,4 +45,83 @@ func TestRunnerImageName(t *testing.T) {
 	if got := RunnerImageName(nil); got != "" {
 		t.Errorf("RunnerImageName(nil) = %q, want empty", got)
 	}
+}
+
+func TestRuntimeServerVersion_Apple(t *testing.T) {
+	fakeContainer(t)
+	got := RuntimeServerVersion(context.Background(), ContainerRuntime{Bin: "apple"})
+	if got != "Apple container 1.2.3" {
+		t.Errorf("RuntimeServerVersion(apple) = %q, want Apple container 1.2.3", got)
+	}
+}
+
+func TestQueryRunnerToolVersions_AppleSkipsMissingImage(t *testing.T) {
+	logPath := fakeContainer(t)
+	got := QueryRunnerToolVersions(context.Background(), ContainerRuntime{Bin: "apple"}, "missing:latest")
+	if got != (RunnerToolVersions{}) {
+		t.Errorf("QueryRunnerToolVersions(missing image) = %+v, want zero value", got)
+	}
+	log := readFakeContainerLog(t, logPath)
+	if !strings.Contains(log, "image inspect missing:latest") {
+		t.Fatalf("expected local image probe, log = %q", log)
+	}
+	if strings.Contains(log, "\nrun ") || strings.HasPrefix(log, "run ") {
+		t.Fatalf("missing Apple image should not trigger container run, log = %q", log)
+	}
+}
+
+func TestQueryRunnerToolVersions_AppleRunsLocalImageWithoutPullNever(t *testing.T) {
+	logPath := fakeContainer(t)
+	got := QueryRunnerToolVersions(context.Background(), ContainerRuntime{Bin: "apple"}, "present:latest")
+	if got.Zizmor != "1.2.3" || got.Semgrep != "4.5.6" || got.Claude != "7.8.9" {
+		t.Fatalf("QueryRunnerToolVersions(local image) = %+v", got)
+	}
+	log := readFakeContainerLog(t, logPath)
+	if !strings.Contains(log, "run --progress none --rm") {
+		t.Errorf("Apple run should suppress progress, log = %q", log)
+	}
+	if strings.Contains(log, "--pull never") {
+		t.Errorf("Apple run must not use Docker/Podman pull policy, log = %q", log)
+	}
+}
+
+func fakeContainer(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "container.log")
+	appleBinary := ContainerRuntime{Bin: "apple"}.bin()
+	script := `#!/bin/sh
+printf '%s\n' "$*" >> "$SCRUTINEER_FAKE_CONTAINER_LOG"
+if [ "$1" = "--version" ]; then
+  echo "container CLI version 1.2.3 (build: release)"
+  exit 0
+fi
+if [ "$1" = "image" ] && [ "$2" = "inspect" ]; then
+  [ "$3" = "present:latest" ]
+  exit $?
+fi
+if [ "$1" = "run" ]; then
+  echo "zizmor=zizmor 1.2.3"
+  echo "semgrep=4.5.6"
+  echo "claude=7.8.9 (Claude Code)"
+  exit 0
+fi
+exit 64
+`
+	bin := filepath.Join(dir, appleBinary)
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("SCRUTINEER_FAKE_CONTAINER_LOG", logPath)
+	return logPath
+}
+
+func readFakeContainerLog(t *testing.T, path string) string {
+	t.Helper()
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
 }

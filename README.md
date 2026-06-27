@@ -209,16 +209,16 @@ Or with a Claude Code OAuth token instead of an API key:
 
 Always bind to `127.0.0.1`. The UI has no authentication; binding to `0.0.0.0` exposes your findings database to anyone on the network.
 
-If a container runtime (docker or rootless podman) is available on the host, scrutineer runs each scan in an ephemeral container for isolation. The runner image is published to GHCR as a multi-arch manifest (`linux/amd64` and `linux/arm64`) and pulled automatically on first use:
+If a container runtime (docker, rootless podman, or Apple's `container`) is available on the host, scrutineer runs each scan in an ephemeral container for isolation. The runner image is published to GHCR as a multi-arch manifest (`linux/amd64` and `linux/arm64`) and pulled automatically on first use:
 
     go run ./cmd/scrutineer -skills ./skills
 
-Use `--runtime podman` to run scans under podman instead of docker (see [Podman (rootless)](#podman-rootless) below), `--no-container` to disable containerised execution entirely, or `--runner-image` to specify a different image. To build the runner locally instead of pulling from GHCR (use `podman build` instead if you run scans under podman):
+Use `--runtime podman` to run scans under podman instead of docker (see [Podman (rootless)](#podman-rootless) below), `--runtime apple` to run scans under Apple's `container` runtime on macOS (see [Apple container (experimental)](#apple-container-experimental) below), `--no-container` to disable containerised execution entirely, or `--runner-image` to specify a different image. To build the runner locally instead of pulling from GHCR (use `podman build` or `container build` instead if you run scans under those runtimes):
 
     docker build -t scrutineer-runner -f Dockerfile.runner .
     go run ./cmd/scrutineer -skills ./skills --runner-image scrutineer-runner
 
-When the container runner is active, scrutineer starts an authenticated egress proxy on the host and points `HTTPS_PROXY`/`HTTP_PROXY` inside the container at it. The proxy only tunnels to an allowlist of hosts: the Anthropic API, `*.ecosyste.ms`, the major forges (GitHub, GitLab, Codeberg, Bitbucket), common package registries (npm, PyPI, RubyGems, crates.io, Go module proxy, Packagist, Hex, NuGet), advisory sources (semgrep.dev, OSV, NVD, cwe.mitre.org), and `host.docker.internal` for the local skill API. Requests to anything else get a 403 and are logged. Extend the list with `egress_allow` in the config file. When `-anthropic-base-url` is set (or falls back to the `ANTHROPIC_BASE_URL` env var), its hostname is automatically added to the allowlist. The proxy uses a per-process random token so it isn't an open relay; tools that ignore the proxy env are not blocked at the network layer (see `threatmodel.md`).
+When the container runner is active, scrutineer starts an authenticated egress proxy on the host and points `HTTPS_PROXY`/`HTTP_PROXY` inside the container at it. The proxy only tunnels to an allowlist of hosts: the Anthropic API, `*.ecosyste.ms`, the major forges (GitHub, GitLab, Codeberg, Bitbucket), common package registries (npm, PyPI, RubyGems, crates.io, Go module proxy, Packagist, Hex, NuGet), advisory sources (semgrep.dev, OSV, NVD, cwe.mitre.org), and the runtime's host endpoint (`host.docker.internal` for docker/podman, the default gateway IP for Apple's `container`) for the local skill API. Requests to anything else get a 403 and are logged. Extend the list with `egress_allow` in the config file. When `-anthropic-base-url` is set (or falls back to the `ANTHROPIC_BASE_URL` env var), its hostname is automatically added to the allowlist. The proxy uses a per-process random token so it isn't an open relay; tools that ignore the proxy env are not blocked at the network layer (see `threatmodel.md`).
 
 For deployments that treat skill prompts as untrusted, pass `--hardened` (or `hardened: true` in the config). The flag forces the container runner (`--no-container` is rejected), trims the egress allowlist to `*.anthropic.com` plus the host skill API (so `egress_allow` is ignored, drop the flag if you need to widen it), mounts the container rootfs read-only with `no-new-privileges`, attaches each scan to its own ephemeral network created with `--internal` (removed when the scan ends) so a process that ignores `HTTPS_PROXY` has no route out and concurrent scans cannot reach each other, and refuses scans whose workspace footprint exceeds 2 GiB once the clone completes. The 2 GiB check is post-clone: it bounds what hardened mode will agree to scan, not what can land on disk during the clone itself; use OS-level disk quotas if you need a clone-time guarantee. Bundled skills that hit ecosyste.ms or a package registry directly will fail under hardened mode unless they route through the host skill API. Per-ecosystem runner profiles still apply, but profile images that need writable paths beyond `/work` and `/tmp` are incompatible. Under podman, each hardened scan first verifies its `--internal` network actually blocks external egress while still reaching the host proxy, and refuses the scan if that cannot be confirmed, so the sandbox never silently weakens.
 
@@ -237,6 +237,19 @@ Requirements:
 
 The `docker build` / `docker run` commands shown in this repo -- for the runner image and the per-ecosystem profile images under `docker/profiles/` -- are CLI-compatible with podman; substitute `podman` for `docker`.
 
+## Apple container (experimental)
+
+Pass `--runtime apple` (or `runtime: apple` in the config) to run scans under Apple's [`container`](https://github.com/apple/container) runtime instead of docker. This path is explicit opt-in; the default stays docker and scrutineer does not auto-detect a docker-less Mac. It is labelled experimental because it is new and Apple's networking has known rough edges, not because of a capability gap: both ordinary and `--hardened` scans are supported.
+
+Requirements and notes:
+
+- **macOS 26 (Tahoe) on Apple silicon**: Apple supports `container` only on macOS 26 and will not address issues that cannot be reproduced there, so older macOS is out of scope.
+- **Apple `container` with `container system start` running**: startup checks `container system status` and refuses the runtime if the service is unavailable.
+- **Host gateway**: scrutineer starts its egress proxy on the host and points scan containers at the runtime's gateway IP, discovered from `/proc/net/route` inside the runner image. The proxy rewrites local skill-API requests back to `127.0.0.1`.
+- **Hardened mode**: `--hardened` is supported. Each container runs in its own lightweight VM, so the VM boundary is the isolation; `container network create --internal` is a vmnet host-only network (egress blocked, host proxy reachable) and each hardened scan proves that fail-closed before running. The one `--hardened` flag Apple's CLI cannot set is `--security-opt no-new-privileges`, which the per-container VM boundary substitutes for (Apple's own untrusted-code sandbox hardens the same way). `--hardened-rootless-runtime` is a rootless-podman concept and is refused; use `--hardened`.
+
+The `docker build` commands shown for the runner image and profiles can be run as `container build` when you use this runtime. See [docs/apple.md](docs/apple.md) for the full parity matrix, the VM-isolation security model, and how hardened mode works.
+
 ## Flags
 
 | Flag | Default | Description |
@@ -247,7 +260,7 @@ The `docker build` / `docker run` commands shown in this repo -- for the runner 
 | `-effort` | `high` | Claude effort level |
 | `-skills` | - | Local directory to load SKILL.md files from (repeatable) |
 | `-skills-repo` | - | `owner/repo[@ref]` or git HTTPS URL `https://host/path[@ref]` to clone skills from on startup; `@ref` pins a branch, tag or commit and the resolved SHA is recorded on every scan |
-| `--runtime` | `docker` | Container runtime: `docker` or `podman` (rootless podman supported) |
+| `--runtime` | `docker` | Container runtime: `docker`, `podman` (rootless podman supported), or `apple` (Apple, experimental) |
 | `--selinux` | `auto` | Bind-mount SELinux relabeling: `auto` (relabel when SELinux is detected), `on`, or `off` |
 | `--no-container` | false | Disable the containerised runner; run claude directly on the host (no isolation). Deprecated alias: `--no-docker` |
 | `--hardened` | false | Strict sandbox: container runtime required, egress restricted to `*.anthropic.com` + host skill API, read-only rootfs, internal network |

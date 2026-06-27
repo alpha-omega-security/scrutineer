@@ -65,6 +65,63 @@ func TestBuildRunArgs_KeepIDGating(t *testing.T) {
 	}
 }
 
+func TestBuildRunArgs_AppleOmitsDockerOnlyFlags(t *testing.T) {
+	d := ContainerRunner{
+		Runtime:                 ContainerRuntime{Bin: "apple"},
+		HardenedRootlessRuntime: true,
+	}
+	got := d.buildRunArgs("/work/abs", "img:latest", hardenedNet{}, "")
+	for _, a := range got {
+		if a == "--add-host" {
+			t.Errorf("apple runtime must not receive Docker/Podman --add-host: %v", got)
+		}
+		if a == "--security-opt" {
+			t.Errorf("apple runtime must not receive unsupported --security-opt: %v", got)
+		}
+	}
+	if !slices.Contains(got, "--read-only") {
+		t.Errorf("apple runtime should keep supported read-only rootfs flag: %v", got)
+	}
+	if !hasAdjacent(got, "--progress", "none") {
+		t.Errorf("apple runtime should suppress runtime progress on stdout: %v", got)
+	}
+}
+
+// TestBuildRunArgs_AppleHardenedProxyTargetsScanGateway covers the subtle part
+// of Apple --hardened: with no --add-host to repoint host.docker.internal, the
+// proxy env must name THIS scan's --internal gateway (not the default-network
+// gateway the startup ProxyURL was built for), while still attaching the
+// per-scan network, mounting rootfs read-only, and omitting the unsupported
+// docker flags.
+func TestBuildRunArgs_AppleHardenedProxyTargetsScanGateway(t *testing.T) {
+	d := ContainerRunner{
+		Runtime:  ContainerRuntime{Bin: "apple"},
+		Hardened: true,
+		ProxyURL: "http://scrutineer:tok@192.168.64.1:45000", // startup default-network gateway
+	}
+	hnet := hardenedNet{name: "scrutineer-hardened-9", gatewayIP: "192.168.128.1"}
+	got := d.buildRunArgs("/work/abs", "img:latest", hnet, "")
+	joined := strings.Join(got, " ")
+
+	if !strings.Contains(joined, "HTTPS_PROXY=http://scrutineer:tok@192.168.128.1:45000") {
+		t.Errorf("apple hardened HTTPS_PROXY should target the per-scan gateway: %v", got)
+	}
+	if strings.Contains(joined, "192.168.64.1") {
+		t.Errorf("apple hardened proxy must not keep the default-network gateway: %v", got)
+	}
+	if !hasAdjacent(got, "--network", "scrutineer-hardened-9") {
+		t.Errorf("apple hardened should attach the per-scan --internal network: %v", got)
+	}
+	if !slices.Contains(got, "--read-only") {
+		t.Errorf("apple hardened should mount rootfs read-only: %v", got)
+	}
+	for _, a := range got {
+		if a == "--add-host" || a == "--security-opt" {
+			t.Errorf("apple must not receive %q: %v", a, got)
+		}
+	}
+}
+
 func TestBuildRunArgs_SELinuxRelabel(t *testing.T) {
 	// With relabeling on, every host bind mount must carry the ":z" shared
 	// relabel so the container can access it on an SELinux host.
@@ -260,6 +317,38 @@ func TestParseHardenedNetworkNames_EmptyInput(t *testing.T) {
 	}
 }
 
+func TestNetworkListNamesArgs(t *testing.T) {
+	// Apple's `network list` has neither --filter nor a Go-template --format, so
+	// it lists every name with --quiet; docker/podman keep the filtered form.
+	if got := networkListNamesArgs(ContainerRuntime{Bin: "apple"}); !slices.Equal(got, []string{"network", "list", "--quiet"}) {
+		t.Errorf("apple networkListNamesArgs = %v", got)
+	}
+	for _, bin := range []string{"docker", "podman"} {
+		got := networkListNamesArgs(ContainerRuntime{Bin: bin})
+		if !hasAdjacent(got, "--filter", "name="+hardenedNetworkPrefix) || !hasAdjacent(got, "--format", "{{.Name}}") {
+			t.Errorf("%s networkListNamesArgs = %v", bin, got)
+		}
+	}
+}
+
+func TestRouteGatewayIPv4_ParsesDefaultGateway(t *testing.T) {
+	if got := routeGatewayIPv4([]byte("0140A8C0\n")); got != "192.168.64.1" {
+		t.Errorf("routeGatewayIPv4(single field) = %q, want 192.168.64.1", got)
+	}
+
+	out := []byte(`[0/6] [0s]
+Iface	Destination	Gateway 	Flags
+eth0	0040A8C0	00000000	0001
+eth0	00000000	0140A8C0	0003
+`)
+	if got := routeGatewayIPv4(out); got != "192.168.64.1" {
+		t.Errorf("routeGatewayIPv4 = %q, want 192.168.64.1", got)
+	}
+	if got := routeGatewayIPv4([]byte("Iface Destination Gateway\n")); got != "" {
+		t.Errorf("routeGatewayIPv4(empty route) = %q, want empty", got)
+	}
+}
+
 func TestRunSkill_HardenedRefusesZeroScanID(t *testing.T) {
 	// The per-scan network name embeds ScanID. A zero ID collapses every
 	// hardened scan onto scrutineer-hardened-0, which silently defeats
@@ -306,11 +395,14 @@ func TestDirSize_IgnoresIrregularEntries(t *testing.T) {
 }
 
 func TestHardenedProbeArgs(t *testing.T) {
+	docker := ContainerRuntime{Bin: "docker"}
+	apple := ContainerRuntime{Bin: "apple"}
+
 	// The block probe is security-load-bearing: it must run on the per-scan
 	// internal network, carry no proxy env (or it would test the proxy path
 	// instead of raw egress), hit a literal IP (so a pass is not just blocked
 	// DNS), and guard against a curl-less image.
-	block := hardenedEgressBlockArgs("scrutineer-hardened-7", "img:latest")
+	block := docker.hardenedEgressBlockArgs("scrutineer-hardened-7", "img:latest")
 	if !hasAdjacent(block, "--network", "scrutineer-hardened-7") {
 		t.Errorf("block probe missing --network: %v", block)
 	}
@@ -330,9 +422,9 @@ func TestHardenedProbeArgs(t *testing.T) {
 		t.Errorf("block probe should guard against missing curl: %v", block)
 	}
 
-	// The reach probe must wire the gateway alias the same way the real run
-	// does and target the proxy port through that alias.
-	reach := hardenedProxyReachArgs("scrutineer-hardened-7", "192.0.2.5", "54321", "img:latest")
+	// docker/podman reach probe wires the gateway alias the same way the real
+	// run does and targets the proxy port through that alias.
+	reach := docker.hardenedProxyReachArgs("scrutineer-hardened-7", "192.0.2.5", "54321", "img:latest")
 	if !hasAdjacent(reach, "--network", "scrutineer-hardened-7") {
 		t.Errorf("reach probe missing --network: %v", reach)
 	}
@@ -341,6 +433,26 @@ func TestHardenedProbeArgs(t *testing.T) {
 	}
 	if !strings.Contains(strings.Join(reach, " "), HostGatewayAlias+":54321") {
 		t.Errorf("reach probe should target the proxy port via the alias: %v", reach)
+	}
+
+	// Apple has no --add-host: the block probe still suppresses lifecycle
+	// progress, and the reach probe targets the resolved gateway IP:port
+	// directly (the same address buildRunArgs points the proxy env at).
+	appleBlock := apple.hardenedEgressBlockArgs("scrutineer-hardened-7", "img:latest")
+	if !hasAdjacent(appleBlock, "--progress", "none") {
+		t.Errorf("apple block probe should suppress progress: %v", appleBlock)
+	}
+	appleReach := apple.hardenedProxyReachArgs("scrutineer-hardened-7", "192.168.128.1", "54321", "img:latest")
+	for _, a := range appleReach {
+		if a == "--add-host" {
+			t.Errorf("apple reach probe must not use --add-host: %v", appleReach)
+		}
+	}
+	if !hasAdjacent(appleReach, "--progress", "none") {
+		t.Errorf("apple reach probe should suppress progress: %v", appleReach)
+	}
+	if !strings.Contains(strings.Join(appleReach, " "), "192.168.128.1:54321") {
+		t.Errorf("apple reach probe should target the gateway IP:port directly: %v", appleReach)
 	}
 }
 

@@ -174,10 +174,13 @@ func VerifySELinuxMount(ctx context.Context, rt ContainerRuntime, image string, 
 		return fmt.Errorf("selinux mount smoke test: seed file: %w", err)
 	}
 
-	args := []string{
-		"run", "--rm", "--pull", "never",
-		"--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()),
+	args := rt.runArgs("--rm")
+	if rt.supportsPullNever() {
+		args = append(args, "--pull", "never")
 	}
+	args = append(args,
+		"--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()),
+	)
 	if rt.needsKeepID() {
 		args = append(args, "--userns=keep-id")
 	}

@@ -14,9 +14,11 @@ import (
 	"time"
 )
 
-// HostGatewayAlias is the hostname containers use to reach the host. The
-// proxy rewrites it to 127.0.0.1 when dialing so skills can call the
-// scrutineer API even though the web server only listens on loopback.
+// HostGatewayAlias is the hostname Docker/Podman containers use to reach the
+// host. The proxy rewrites configured API hosts to 127.0.0.1 when dialing so
+// skills can call the scrutineer API even though the web server only listens on
+// loopback. Apple's container runtime uses a gateway IP instead of this alias;
+// callers pass that host through EgressProxy.APIHosts.
 const HostGatewayAlias = "host.docker.internal"
 
 // HardenedEgressAllow is the strict allowlist used when --hardened is
@@ -128,8 +130,13 @@ var DefaultEgressAllow = []string{
 type EgressProxy struct {
 	Allow   []string
 	Token   string
-	APIPort string // only this port is allowed for HostGatewayAlias
-	Log     *slog.Logger
+	APIPort string // only this port is allowed for APIHosts
+	// APIHosts are hostnames/IPs that mean "the scrutineer host API" from
+	// inside a scan container. They are restricted to APIPort and rewritten to
+	// 127.0.0.1 when the proxy dials upstream. Empty keeps the Docker/Podman
+	// default of HostGatewayAlias.
+	APIHosts []string
+	Log      *slog.Logger
 
 	transport *http.Transport
 	once      sync.Once
@@ -185,12 +192,12 @@ func (p *EgressProxy) serveConnect(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "egress to "+host+" is not on the allowlist", http.StatusForbidden)
 		return
 	}
-	if strings.EqualFold(host, HostGatewayAlias) && p.APIPort != "" && port != p.APIPort {
+	if p.isAPIHost(host) && p.APIPort != "" && port != p.APIPort {
 		p.Log.Warn("egress denied", "method", "CONNECT", "host", host, "port", port, "allowed_port", p.APIPort)
 		http.Error(w, "egress to "+host+" is only allowed on port "+p.APIPort, http.StatusForbidden)
 		return
 	}
-	upstream, err := net.DialTimeout("tcp", dialTarget(host, port), egressDialTimeout)
+	upstream, err := net.DialTimeout("tcp", p.dialTarget(host, port), egressDialTimeout)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
@@ -222,14 +229,14 @@ func (p *EgressProxy) serveForward(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "egress to "+host+" is not on the allowlist", http.StatusForbidden)
 		return
 	}
-	if strings.EqualFold(host, HostGatewayAlias) && p.APIPort != "" && port != p.APIPort {
+	if p.isAPIHost(host) && p.APIPort != "" && port != p.APIPort {
 		p.Log.Warn("egress denied", "method", r.Method, "host", host, "port", port, "allowed_port", p.APIPort)
 		http.Error(w, "egress to "+host+" is only allowed on port "+p.APIPort, http.StatusForbidden)
 		return
 	}
 	out := r.Clone(r.Context())
 	out.RequestURI = ""
-	out.URL.Host = dialTarget(host, port)
+	out.URL.Host = p.dialTarget(host, port)
 	out.Header.Del("Proxy-Authorization")
 	out.Header.Del("Proxy-Connection")
 	resp, err := p.transport.RoundTrip(out)
@@ -288,9 +295,15 @@ func NewProxyToken() string {
 	return hex.EncodeToString(b[:])
 }
 
-// ProxyURL builds the http_proxy-style URL for containers.
+// ProxyURL builds the http_proxy-style URL for Docker/Podman containers.
 func ProxyURL(token string, port int) string {
-	return fmt.Sprintf("http://scrutineer:%s@%s:%d", token, HostGatewayAlias, port)
+	return ProxyURLForHost(token, HostGatewayAlias, port)
+}
+
+// ProxyURLForHost builds the http_proxy-style URL for containers whose host
+// gateway is runtime-specific.
+func ProxyURLForHost(token, host string, port int) string {
+	return fmt.Sprintf("http://scrutineer:%s@%s:%d", token, host, port)
 }
 
 func splitTarget(hostport string) (host, port string) {
@@ -300,8 +313,24 @@ func splitTarget(hostport string) (host, port string) {
 	return hostport, "443"
 }
 
-func dialTarget(host, port string) string {
-	if strings.EqualFold(host, HostGatewayAlias) {
+func (p *EgressProxy) isAPIHost(host string) bool {
+	for _, apiHost := range p.apiHosts() {
+		if strings.EqualFold(host, apiHost) {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *EgressProxy) apiHosts() []string {
+	if len(p.APIHosts) > 0 {
+		return p.APIHosts
+	}
+	return []string{HostGatewayAlias}
+}
+
+func (p *EgressProxy) dialTarget(host, port string) string {
+	if p.isAPIHost(host) {
 		host = "127.0.0.1"
 	}
 	return net.JoinHostPort(host, port)

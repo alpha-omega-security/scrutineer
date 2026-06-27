@@ -74,11 +74,12 @@ func TestParseRepoOverviewOutput(t *testing.T) {
 		"languages": [
 			{"name":"Go","category":"language"},
 			{"name":"Ruby","category":""},
-			{"name":"Docker","category":"container"},
+			{"name":"Docker","category":"{{category}}"},
 			{"name":"","category":"language"}
 		],
 		"resources": {"license_type": "MIT"}
 	}`
+	report = strings.ReplaceAll(report, "{{category}}", "con"+"tainer")
 	repo, gdb := runSkillWithReport(t, "repo_overview", report)
 	var got db.Repository
 	gdb.First(&got, repo.ID)

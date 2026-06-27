@@ -167,6 +167,17 @@ func TestLoad_rejectsInvalidClone(t *testing.T) {
 	}
 }
 
+func TestValidateRuntime(t *testing.T) {
+	for _, name := range []string{"", "docker", "podman", "apple"} {
+		if err := ValidateRuntime(name); err != nil {
+			t.Errorf("ValidateRuntime(%q) = %v, want nil", name, err)
+		}
+	}
+	if err := ValidateRuntime("containerd"); err == nil {
+		t.Error("expected error for unknown runtime")
+	}
+}
+
 func TestLoad_rejectsUnparseable(t *testing.T) {
 	path := write(t, "addr: [this is not valid yaml: for a string")
 	if _, err := Load(path); err == nil {

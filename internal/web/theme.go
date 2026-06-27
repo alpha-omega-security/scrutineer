@@ -131,9 +131,14 @@ type toolMetadata struct {
 // a generous TTL keeps the settings page DB-fast without going stale for long.
 const toolMetadataTTL = 5 * time.Minute
 
-// toolMetadataTimeout caps the runtime shell-outs so a hung or missing daemon
-// degrades to "unavailable" instead of stalling the settings page.
-const toolMetadataTimeout = 5 * time.Second
+// toolMetadataTimeout caps EACH runtime shell-out (not a shared budget across
+// them) so a hung or missing daemon degrades to "unavailable" instead of
+// stalling the settings page. It is generous enough for Apple's container
+// runtime, whose first `container run` cold-starts a VM and can take several
+// seconds: a shorter shared budget let that slow tool-version probe expire the
+// deadline before the fast `container --version` runtime probe even ran, so the
+// whole panel read "unavailable".
+const toolMetadataTimeout = 15 * time.Second
 
 func (s *Server) toolMetadataCached(ctx context.Context) toolMetadata {
 	s.toolMetaMu.Lock()
@@ -141,13 +146,21 @@ func (s *Server) toolMetadataCached(ctx context.Context) toolMetadata {
 	if time.Now().Before(s.toolMetaTTL) {
 		return s.toolMetaCache
 	}
-	ctx, cancel := context.WithTimeout(ctx, toolMetadataTimeout)
-	defer cancel()
 	rt := worker.RuntimeOf(s.Worker.Runner)
 	image := worker.RunnerImageName(s.Worker.Runner)
+	// Each probe gets its own deadline so the slow tool-version `container run`
+	// cannot starve the fast runtime-version `container --version`.
+	toolsCtx, toolsCancel := context.WithTimeout(ctx, toolMetadataTimeout)
+	defer toolsCancel()
+	tools := worker.QueryRunnerToolVersions(toolsCtx, rt, image)
+
+	rtCtx, rtCancel := context.WithTimeout(ctx, toolMetadataTimeout)
+	defer rtCancel()
+	runtimeVer := worker.RuntimeServerVersion(rtCtx, rt)
+
 	meta := toolMetadata{
-		RunnerToolVersions: worker.QueryRunnerToolVersions(ctx, rt, image),
-		Runtime:            worker.RuntimeServerVersion(ctx, rt),
+		RunnerToolVersions: tools,
+		Runtime:            runtimeVer,
 		RunnerImage:        image,
 	}
 	s.toolMetaCache = meta

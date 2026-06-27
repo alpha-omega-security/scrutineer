@@ -130,7 +130,7 @@ func TestIntegration_HardenedEgressBlocked(t *testing.T) {
 
 	// Baseline on the default network: if the host itself has no egress we
 	// cannot prove the --internal network is what blocks it, so skip.
-	if base := runProbeOutput(t, rt, hardenedEgressBlockArgs("podman", image)); !strings.Contains(base, "REACHED") {
+	if base := runProbeOutput(t, rt, rt.hardenedEgressBlockArgs("podman", image)); !strings.Contains(base, "REACHED") {
 		t.Skipf("host has no baseline egress (probe: %q); cannot prove --internal blocks it", base)
 	}
 
@@ -140,7 +140,7 @@ func TestIntegration_HardenedEgressBlocked(t *testing.T) {
 	}
 	defer func() { _ = exec.Command(rt.bin(), "network", "rm", "--", netName).Run() }()
 
-	if got := runProbeOutput(t, rt, hardenedEgressBlockArgs(netName, image)); !strings.Contains(got, "BLOCKED") {
+	if got := runProbeOutput(t, rt, rt.hardenedEgressBlockArgs(netName, image)); !strings.Contains(got, "BLOCKED") {
 		t.Errorf("egress on --internal network = %q, want BLOCKED", got)
 	}
 }

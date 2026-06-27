@@ -1,10 +1,9 @@
 package worker
 
-// Container runtime selection. scrutineer shells out to an OCI engine (docker
-// or podman) to run each scan in an ephemeral container. This file owns the
-// engine choice and the one trait that changes the generated `run` flags --
-// rootless podman's uid remapping -- so the rest of the package stays
-// runtime-neutral.
+// Container runtime selection. scrutineer shells out to an OCI engine (docker,
+// podman, or Apple's container) to run each scan in an ephemeral container.
+// This file owns the engine choice and the small set of traits that changes the
+// generated `run` flags so the rest of the package stays runtime-neutral.
 
 import (
 	"bytes"
@@ -15,15 +14,20 @@ import (
 	"strings"
 )
 
+// runtimeApple is the ContainerRuntime.Bin value for Apple's container runtime.
+// Hoisted to a constant because the identifier is checked throughout the package.
+const runtimeApple = "apple"
+
 // ContainerRuntime identifies the OCI engine scrutineer shells out to and the
-// one trait that changes the generated `run` flags: rootless podman maps
+// main trait that changes the generated `run` flags: rootless podman maps
 // --user uid:gid through /etc/subuid, so files written to bind mounts land as
 // the wrong host uid unless --userns=keep-id is set. docker and rootful podman
-// both run the container process as the host uid directly, so they need no
-// remap. The zero value is the docker runtime, so a bare ContainerRunner{}
-// (tests, RunnerImageName) keeps shelling out to "docker".
+// both run the container process as the host uid directly, and Apple's
+// per-container VMs do not use podman's subuid remap, so they need no remap.
+// The zero value is the docker runtime, so a bare ContainerRunner{} (tests,
+// RunnerImageName) keeps shelling out to "docker".
 type ContainerRuntime struct {
-	Bin      string // "docker" or "podman"; "" means docker
+	Bin      string // "docker", "podman", or "apple"; "" means docker
 	Rootless bool   // true only for rootless podman
 	// Version is the engine version captured at detection (e.g. "4.9.4").
 	// Best-effort and only used for the startup host-gateway check; "" when
@@ -36,10 +40,14 @@ type ContainerRuntime struct {
 // bin returns the executable name, defaulting to docker so the zero value
 // stays valid. Mirrors ContainerRunner.image()'s empty-default pattern.
 func (rt ContainerRuntime) bin() string {
-	if rt.Bin != "" {
+	switch rt.Bin {
+	case "":
+		return "docker"
+	case runtimeApple:
+		return "container"
+	default:
 		return rt.Bin
 	}
-	return "docker"
 }
 
 // needsKeepID reports whether `run` invocations must add --userns=keep-id to
@@ -59,15 +67,73 @@ func (rt ContainerRuntime) NeedsKeepID() bool {
 }
 
 // needsHardenedNetVerify reports whether a hardened scan must prove its per-scan
-// --internal network fail-closed before running. True only for rootless podman:
-// its pasta/slirp4netns host path is what varies across backends and what
-// --internal can sever, so the isolation must be proven, not assumed. docker and
+// --internal network fail-closed before running. True for rootless podman and
+// for Apple's container runtime. Rootless podman's pasta/slirp4netns host path
+// is what varies across backends and what --internal can sever. Apple's vmnet
+// host-only network has the right semantics (egress blocked, host reachable) but
+// the implementation has known rough edges (DNS quirks, the host-access caveat
+// in apple/container#1320, nftables filtering still pending), and this is a
+// security boundary, so it is proven per scan rather than assumed. docker and
 // rootful podman both run a bridge in the host netns (gateway on the host), so
-// they keep the trusted path and pay no probe cost. Same condition as
-// needsKeepID today, but a deliberately separate concern (network trust vs uid
-// remap) so the two can diverge without surprising each other.
+// they keep the trusted path and pay no probe cost.
 func (rt ContainerRuntime) needsHardenedNetVerify() bool {
-	return rt.Bin == "podman" && rt.Rootless
+	return rt.Bin == runtimeApple || (rt.Bin == "podman" && rt.Rootless)
+}
+
+// supportsHostGatewayAddHost reports whether the runtime accepts Docker's
+// `--add-host name:host-gateway` marker. Apple's container CLI does not expose
+// that flag; it reaches host services through the default gateway address
+// instead.
+func (rt ContainerRuntime) supportsHostGatewayAddHost() bool {
+	return rt.Bin != runtimeApple
+}
+
+// supportsPullNever reports whether `run --pull never` is supported. Apple's
+// container CLI does not expose a pull policy flag, so callers that need a
+// no-pull probe must check the local image cache before running.
+func (rt ContainerRuntime) supportsPullNever() bool {
+	return rt.Bin != runtimeApple
+}
+
+// supportsNoNewPrivileges reports whether the runtime accepts Docker/Podman's
+// `--security-opt no-new-privileges` hardening flag.
+func (rt ContainerRuntime) supportsNoNewPrivileges() bool {
+	return rt.Bin != runtimeApple
+}
+
+// HardeningSupportError reports why the runtime cannot honour the requested
+// hardening modes, or nil when it can. Apple's container runtime supports
+// --hardened: its `container network create --internal` is a vmnet host-only
+// network (external egress blocked, host gateway still reachable -- the per-scan
+// network enforcement --hardened needs), and the runner verifies that
+// fail-closed per scan (see needsHardenedNetVerify). The one flag Apple's CLI
+// does not expose is --security-opt no-new-privileges, but on a VM-per-container
+// runtime the VM boundary is the isolation, not in-guest privilege hardening: an
+// escalated process is still trapped in a disposable VM with no host filesystem
+// or credentials. Apple's own untrusted-code sandbox (containerization's
+// examples/sandboxy) hardens exactly this way -- VM + read-only mounts +
+// host-only network + allowlisting proxy, no no-new-privileges. So --hardened is
+// accepted; only --hardened-rootless-runtime (the rootless-podman non-network
+// half) is refused, since Apple's network half works. See docs/apple.md.
+func (rt ContainerRuntime) HardeningSupportError(hardened, hardenedRootless bool) error {
+	if rt.Bin == runtimeApple && hardenedRootless {
+		return fmt.Errorf("--runtime apple does not support --hardened-rootless-runtime " +
+			"(that is the rootless-podman non-network half); use --hardened, whose " +
+			"--internal host-only network Apple's container runtime supports")
+	}
+	return nil
+}
+
+// runArgs starts a runtime `run` command, adding runtime-specific flags that
+// must precede the common options. Apple's container CLI writes lifecycle
+// progress to stdout by default; suppress it so probe parsers and Claude's
+// stream-json reader only see the container payload.
+func (rt ContainerRuntime) runArgs(args ...string) []string {
+	out := []string{"run"}
+	if rt.Bin == runtimeApple {
+		out = append(out, "--progress", "none")
+	}
+	return append(out, args...)
 }
 
 // runtimeProber runs a runtime command and returns its stdout. The production
@@ -81,7 +147,7 @@ func execProber(name string, args ...string) ([]byte, error) {
 
 // DetectRuntime resolves the operator's --runtime choice into a
 // ContainerRuntime, verifying the engine is actually reachable. prefer is
-// "docker" (or "" defaulting to docker) or "podman". There is no
+// "docker" (or "" defaulting to docker), "podman", or "apple". There is no
 // auto-detection or fallback: a podman-only host left at the docker default
 // still reports unavailable, by design (explicit opt-in). For podman it also
 // probes rootless-ness so the run path can decide on --userns=keep-id.
@@ -119,6 +185,15 @@ func detectRuntime(prefer string, probe runtimeProber) (ContainerRuntime, bool) 
 			return ContainerRuntime{}, false
 		}
 		return ContainerRuntime{Bin: "podman", Rootless: rootless, Version: version}, true
+	case runtimeApple:
+		// Apple's container CLI has no docker/podman-compatible `info`
+		// template. `system status` verifies the background service is running;
+		// parse the apiserver version best-effort for logs/settings.
+		out, err := probe("container", "system", "status")
+		if err != nil || len(bytes.TrimSpace(out)) == 0 {
+			return ContainerRuntime{}, false
+		}
+		return ContainerRuntime{Bin: runtimeApple, Version: parseAppleStatus(out)}, true
 	default:
 		return ContainerRuntime{}, false
 	}
@@ -139,6 +214,31 @@ func parsePodmanInfo(out []byte) (version string, rootless bool, ok bool) {
 		return "", false, false
 	}
 	return strings.TrimSpace(v), b, true
+}
+
+// parseAppleStatus extracts the apiserver version from `container system status`
+// output. The runtime identity is "apple"; this parses the Apple CLI output.
+func parseAppleStatus(out []byte) string {
+	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 || fields[0] != "apiserver.version" {
+			continue
+		}
+		if v := firstDottedVersion(strings.Join(fields[1:], " ")); v != "" {
+			return v
+		}
+	}
+	return firstDottedVersion(string(out))
+}
+
+func firstDottedVersion(s string) string {
+	for _, field := range strings.Fields(s) {
+		field = strings.Trim(field, "(),")
+		if _, _, ok := parseMajorMinor(field); ok {
+			return field
+		}
+	}
+	return ""
 }
 
 // podman gained `--add-host name:host-gateway` in 4.7; below that the egress
