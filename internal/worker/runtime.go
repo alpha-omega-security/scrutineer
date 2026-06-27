@@ -70,6 +70,15 @@ func (rt ContainerRuntime) needsHardenedNetVerify() bool {
 	return rt.Bin == "podman" && rt.Rootless
 }
 
+// NeedsHardenedNetVerify is the exported form of needsHardenedNetVerify. The
+// startup path uses it to decide whether a hardened run routes egress through
+// the proxy sidecar -- the same rootless-podman condition under which the
+// per-scan --internal network's isolation must be proven, since that
+// is exactly where the host proxy is unreachable across the namespace boundary.
+func (rt ContainerRuntime) NeedsHardenedNetVerify() bool {
+	return rt.needsHardenedNetVerify()
+}
+
 // runtimeProber runs a runtime command and returns its stdout. The production
 // prober shells out; tests inject a stub so DetectRuntime's selection logic is
 // exercised without a live daemon.
@@ -148,6 +157,14 @@ const (
 	podmanHostGatewayMinor = 7
 )
 
+// podman 5.0 makes pasta the default rootless network backend; pasta forwards
+// host-gateway to the host loopback (--map-host-loopback), which the egress
+// proxy sidecar needs to reach the loopback-bound host skill API. Below 5.0 the
+// default is slirp4netns, which also reaches host loopback when host-loopback is
+// enabled -- so this is a soft signal, not a gate (the sidecar verifies
+// reachability fail-closed regardless).
+const podmanPastaDefaultMajor = 5
+
 // podmanHostGatewaySupported reports whether the podman version is recent enough
 // to honour `--add-host host.docker.internal:host-gateway`, which the egress
 // path depends on. An unparseable version returns true so a probe quirk never
@@ -158,6 +175,18 @@ func podmanHostGatewaySupported(version string) bool {
 		return true
 	}
 	return major > podmanHostGatewayMajor || (major == podmanHostGatewayMajor && minor >= podmanHostGatewayMinor)
+}
+
+// podmanPastaDefault reports whether the podman version defaults to the pasta
+// backend (>= 5.0), the most reliable host-gateway -> host-loopback path for the
+// egress proxy sidecar. An unparseable version returns true so a probe quirk
+// never produces a spurious warning.
+func podmanPastaDefault(version string) bool {
+	major, _, ok := parseMajorMinor(version)
+	if !ok {
+		return true
+	}
+	return major >= podmanPastaDefaultMajor
 }
 
 // parseMajorMinor pulls the leading major and minor integers out of a dotted
@@ -187,6 +216,20 @@ func (rt ContainerRuntime) HostGatewaySupported() bool {
 		return true
 	}
 	return podmanHostGatewaySupported(rt.Version)
+}
+
+// HostLoopbackBackendLikely reports whether the detected podman is recent enough
+// to default to a backend (pasta >= 5.0) that forwards host-gateway to the host
+// loopback, which the egress proxy sidecar needs to reach the loopback-bound
+// host skill API. Used for a soft startup warning on the rootless --hardened
+// sidecar path, not a hard gate: older podman with a host-loopback-enabled
+// slirp4netns also works, and the sidecar verifies reachability fail-closed
+// regardless. Always true for non-podman; an unparseable version returns true.
+func (rt ContainerRuntime) HostLoopbackBackendLikely() bool {
+	if rt.Bin != "podman" {
+		return true
+	}
+	return podmanPastaDefault(rt.Version)
 }
 
 // VerifyKeepID smoke-tests `--userns=keep-id` for rootless podman so a missing

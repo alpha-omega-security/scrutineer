@@ -13,6 +13,18 @@ RUN GOBIN=/out go install github.com/git-pkgs/git-pkgs@v0.15.3 && \
 FROM rust:1.96-trixie@sha256:c6811167278337db5f3b0234964ced5f538f154a2a20f09ec03721d7411c933d AS zizmor-build
 RUN cargo install --locked --root /out zizmor@1.26.1
 
+# The scrutineer binary is baked in only for its `proxy` subcommand: under
+# rootless podman --hardened the egress proxy runs as a sidecar from THIS image
+# (`scrutineer proxy`) instead of a second published image. Built CGO-free and
+# static like the main server image, so it drops into the slim runtime as a
+# plain copy with no glibc dependency.
+FROM golang:1.26.4-trixie@sha256:bbf22ddccb3205344f2755ea8fa4fe39f7a8b2b77b9f7b764ec2aad31406f6fc AS scrutineer-build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -o /out/scrutineer ./cmd/scrutineer
+
 FROM debian:trixie-slim@sha256:4e401d95de7083948053197a9c3913343cd06b706bf15eb6a0c3ccd26f436a0e
 ARG CLAUDE_VERSION
 ARG SEMGREP_VERSION
@@ -58,6 +70,7 @@ RUN set -eux; \
 
 COPY --from=go-tools /out/* /usr/local/bin/
 COPY --from=zizmor-build /out/bin/zizmor /usr/local/bin/zizmor
+COPY --from=scrutineer-build /out/scrutineer /usr/local/bin/scrutineer
 
 RUN useradd -ms /bin/bash runner
 USER runner

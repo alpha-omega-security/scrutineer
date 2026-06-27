@@ -199,6 +199,27 @@ func TestBuildEgressAllow_hardenedNilConfig(t *testing.T) {
 	}
 }
 
+func TestResolveEgressSidecar_NoSidecarForNonRootless(t *testing.T) {
+	// docker, rootful podman, and the zero (docker) runtime keep the in-process
+	// host proxy: resolveEgressSidecar returns the zero config (no sidecar), and
+	// without probing for a gateway. Only rootless podman gets a sidecar, which
+	// is covered end to end by the podman integration test.
+	f := &flags{addr: "127.0.0.1:8080", runnerImage: "img"}
+	for _, rt := range []worker.ContainerRuntime{
+		{Bin: "docker"},
+		{Bin: "podman"}, // rootful
+		{},              // zero value = docker
+	} {
+		got, err := resolveEgressSidecar(rt, f, []string{"x"}, "tok", quietLog())
+		if err != nil {
+			t.Errorf("runtime %+v: unexpected error: %v", rt, err)
+		}
+		if got.Token != "" || got.GatewayIP != "" || got.APIPort != "" || got.Allow != nil {
+			t.Errorf("runtime %+v: expected no sidecar config, got %+v", rt, got)
+		}
+	}
+}
+
 func quietLog() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }

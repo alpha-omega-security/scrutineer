@@ -78,53 +78,75 @@ host path across the pasta/slirp4netns boundary, which is why it alone is proven
 
 ## `--hardened` under rootless podman
 
-`--hardened` is frequently **not usable under rootless podman**, and scrutineer
-will refuse such scans rather than run them degraded. This is structural, not a
-misconfiguration:
+Under rootless podman, `--hardened` routes egress through a **per-scan proxy
+sidecar container** instead of a host process. This is automatic — no flag
+selects it; scrutineer uses the sidecar whenever the runtime is rootless podman
+and `--hardened` is set — and it is what makes enforced egress work under
+rootless. (On docker and rootful podman the host-proxy path is unchanged.)
 
-- Hardened mode puts each scan on its own `--internal` network and routes the
-  scan's only egress through scrutineer's proxy **on the host**, reached via the
-  container's gateway.
-- `--internal` deliberately severs the route out of the container's network
-  namespace. Under **docker (or rootful podman)** the bridge gateway *is* the
-  host, so the host proxy is still reachable. Under **rootless podman** the host
-  proxy lives *across* the rootless network-namespace boundary (pasta /
-  slirp4netns), and `--internal` cuts exactly that path — so the scan container
-  cannot reach the proxy at all.
+Why a sidecar is needed here and nowhere else:
 
-The per-scan verification (probe 2 above) catches this and **fails closed**:
+- Hardened mode puts each scan on its own `--internal` network, which
+  deliberately severs the route out of the container's network namespace.
+- Under **docker (or rootful podman)** the bridge gateway *is* the host, so a
+  proxy **on the host** is still reachable across `--internal`. scrutineer keeps
+  that path on those runtimes.
+- Under **rootless podman** the host lives *across* the pasta / slirp4netns
+  boundary and `--internal` cuts exactly that path, so a host proxy is
+  unreachable. The proxy instead runs as a container (`scrutineer proxy`, from
+  the runner image) attached to **both** the per-scan `--internal` network (the
+  scan reaches it by name) and the default network (it reaches `*.anthropic.com`
+  and, via the host-gateway, the host skill API). The scan stays internal-only
+  and reaches *only* the sidecar; the sidecar enforces the allowlist and forwards
+  out its egress leg. Enforced egress then works without the scan ever needing to
+  reach the host.
+
+### The one new requirement: host-gateway must reach the host loopback
+
+The scrutineer web server (the skill API) listens on **loopback**
+(`127.0.0.1`). The host proxy reached it by a same-process rewrite to
+`127.0.0.1`; the sidecar is a *separate* container, so it reaches the skill API
+over its egress leg via the host-gateway alias instead. That only lands on a
+loopback-bound server if the rootless network backend **forwards host-gateway to
+the host loopback**:
+
+- **pasta** (podman's default rootless backend since 5.0) maps the host with
+  `--map-host-loopback`, so host loopback services are reachable.
+- **slirp4netns** reaches host loopback when host-loopback is enabled (podman's
+  default for `host.containers.internal`).
+
+Where the backend does **not** forward host-gateway to the host loopback, the
+sidecar cannot reach the skill API and the scan is **refused** (fail closed),
+not run degraded. The refusal is enforced twice: the sidecar refuses to start
+serving until it confirms it can reach the host skill API, and the per-scan
+verification then refuses the scan when the scan cannot reach the sidecar:
 
     hardened network verification: internal network "scrutineer-hardened-N"
-    cannot reach the host egress proxy at <gateway>:<port> ("UNREACHABLE");
-    the only egress path is broken
+    cannot reach the egress proxy sidecar at scrutineer-proxy-N:3128 (...);
+    sidecar logs: ... host skill API at <gateway>:<port> unreachable ...
 
-That is the safe outcome — scrutineer refuses rather than silently running a
-weaker sandbox — but it means hardened scans do not start on these hosts. (Note
-this is independent of any host firewall: it reproduces with a fully open
+(This is independent of any host firewall — it reproduces with fully open
 `iptables`/`nftables`, because the break is the namespace boundary, not a packet
-filter. It is also independent of SELinux.)
+filter — and independent of SELinux.)
 
-### Three ways to deal with it
+See [egress-sidecar.md](egress-sidecar.md) for the operator validation checklist
+(confirming host-loopback forwarding, version requirements, and an end-to-end
+hardened scan).
+
+### If the sidecar can't run: fallbacks
 
 Weakest change to strongest isolation:
 
-1. **Default mode under rootless** *(recommended baseline; no change)* — drop
-   `--hardened`. Add **`--hardened-rootless-runtime`** to still get a read-only
-   rootfs and `no-new-privileges` (they don't need the `--internal` network — see
-   the next subsection). You keep the non-root-equivalent runtime and, on an
-   enforcing host, SELinux `:z` confinement; you give up only enforced egress.
+1. **`--hardened-rootless-runtime`** *(recommended where the sidecar can't run)*
+   — keep a read-only rootfs and `no-new-privileges` without the `--internal`
+   network (see the next subsection). You keep the non-root-equivalent runtime
+   and, on an enforcing host, SELinux `:z` confinement; you give up only enforced
+   egress.
 2. **Rootful podman or docker for `--hardened`** — with a daemon runtime the
-   `--internal` gateway *is* the host, so hardened works as designed. The cost is
-   the T12 property: runtime access becomes root-equivalent again, which is the
-   main reason to prefer rootless. Reasonable only on a dedicated/throwaway host.
-3. **Egress-gateway sidecar** *(not yet implemented; the proper fix)* — run the
-   allowlisting proxy as a container attached to **both** the per-scan
-   `--internal` network and a normal egress network. The scan container stays
-   internal-only and reaches *only* the sidecar; the sidecar enforces the
-   allowlist and forwards out its egress interface (and reaches the host skill
-   API the way default mode does today). This makes enforced egress work under
-   rootless without the scan container ever needing to reach the host. Tracked as
-   future work.
+   `--internal` gateway *is* the host, so the host-proxy path works without a
+   sidecar. The cost is the T12 property: runtime access becomes root-equivalent
+   again, which is the main reason to prefer rootless. Reasonable only on a
+   dedicated/throwaway host.
 
 ### `--hardened-rootless-runtime`: the non-network half of hardened
 
@@ -168,30 +190,39 @@ hardening is opt-in rather than always-on.
 | SELinux `:z` (enforcing host), keep-id (rootless), default seccomp/AppArmor | ✓ | ✓ | ✓ |
 | read-only rootfs + `no-new-privileges` | ✗ | ✓ | ✓ |
 | 2 GiB post-clone workspace cap (T9 DoS guard) | ✗ | ✓ | ✓ |
-| per-scan `--internal` network — enforced egress + inter-scan isolation | ✗ | ✗ | ✓ |
+| per-scan `--internal` network — enforced egress + inter-scan isolation | ✗ | ✗ | ✓ † |
 
 The top four rows are the unconditional baseline; `--hardened-rootless-runtime`
 adds the next two; full `--hardened` adds the last row on top.
 
+† Under rootless podman the last row is delivered by the per-scan egress proxy
+sidecar, which requires the network backend to forward host-gateway to the host
+loopback; where it does not, `--hardened` is refused (fail closed)
+and `--hardened-rootless-runtime` is the fallback. See [`--hardened` under
+rootless podman](#--hardened-under-rootless-podman).
+
 ### What running rootless *without* full `--hardened` gives up
 
-With `--hardened-rootless-runtime` the **only** remaining gap is the bottom row of
-the table — the per-scan `--internal` network, i.e. *network enforcement*. That's
-two things, both network, and both structurally impossible under rootless without
-the sidecar:
+`--hardened` is the way to get *network enforcement* (the bottom table row) under
+rootless — the per-scan egress proxy sidecar restores it. `--hardened-rootless-
+runtime` is the fallback for hosts where the sidecar can't run (the backend does
+not forward host-gateway to the host loopback). There the **only** remaining gap
+is that bottom row, which is two things, both network:
 
 - **Enforced egress** — the proxy stays *cooperative*: a workload that ignores
   `HTTPS_PROXY` / `HTTP_PROXY` can dial the internet directly (threatmodel T13).
   The `--internal` network is the only thing that turns it into a hard wall, and
-  it's the part that can't reach the host proxy across the rootless netns
-  boundary. Without it, only the pinned-and-audited runner image (T11) bounds a
+  on these hosts it can't reach an egress proxy at all (neither the host proxy
+  across the netns boundary, nor a sidecar that itself can't reach the host API).
+  Without it, only the pinned-and-audited runner image (T11) bounds a
   proxy-ignoring workload.
 - **Per-scan network isolation** — concurrent scans share the runtime's default
   network instead of each getting its own `--internal` network.
 
-Restoring these under rootless needs the egress-gateway sidecar (option 3); until
-then, rootless + `--hardened-rootless-runtime` + SELinux is a strong posture, and
-rootful podman/docker is the route to full enforced egress.
+So: prefer `--hardened` under rootless (the sidecar makes it work on a modern
+pasta/slirp4netns backend); fall back to `--hardened-rootless-runtime` + SELinux
+where it can't, and rootful podman/docker remains a route to full enforced egress
+without the host-loopback-forwarding requirement.
 
 ## SELinux and bind-mount file passing
 
@@ -259,10 +290,13 @@ simple.
 These are **not** addressed by the podman / rootless runtime and remain open:
 
 1. **Default-mode egress is cooperative, not enforced.** Only `--hardened`
-   blocks a proxy-ignoring workload (pre-existing T13 residual; both runtimes) —
-   and `--hardened` is itself often unavailable under rootless podman (see
-   [`--hardened` under rootless podman](#--hardened-under-rootless-podman)), so
-   rootless deployments commonly run with cooperative egress.
+   blocks a proxy-ignoring workload (pre-existing T13 residual; both runtimes).
+   Under rootless podman `--hardened` now works via the per-scan egress proxy
+   sidecar (see [`--hardened` under rootless
+   podman](#--hardened-under-rootless-podman)) provided the backend forwards
+   host-gateway to the host loopback; where it does not, the scan is refused and
+   the operator falls back to cooperative egress with
+   `--hardened-rootless-runtime`.
 2. **keep-id widens the user namespace to include the operator's uid.** A
    container escape that pivots to that uid could touch host files owned by the
    operator *that are reachable through the bind mounts*. Far better than
@@ -276,10 +310,18 @@ These are **not** addressed by the podman / rootless runtime and remain open:
    (gap #1), not an enforcement boundary. scrutineer logs a startup warning
    when it cannot resolve the host-gateway under podman; the fix is podman
    >= 4.7 and a working rootless network backend. Not auto-remediated beyond
-   the warning.
-4. **podman < 4.7 is warned, not gated.** `--add-host …:host-gateway` is
+   the warning. The hardened **sidecar** adds a stricter form of this
+   dependency: it must reach the host *loopback* skill API over host-gateway, so
+   a backend that routes host-gateway to the host but not to its loopback also
+   refuses hardened scans (the sidecar self-checks before serving). See
+   [egress-sidecar.md](egress-sidecar.md).
+4. **podman version is warned, not gated.** `--add-host …:host-gateway` is
    unsupported below 4.7, so egress breaks; startup logs a warning (hardened
-   additionally catches it via verification) but does not block.
+   additionally catches it via verification) but does not block. Separately, the
+   rootless `--hardened` sidecar's host-loopback leg is most reliable on podman
+   ≥ 5.0 (pasta default, `--map-host-loopback`); startup warns on < 5.0 under
+   `--hardened` but does not gate, since a host-loopback-enabled slirp4netns also
+   works and the sidecar verifies reachability fail-closed.
 5. **Profile base-image freshness degrades without `skopeo`.** podman has no
    `buildx imagetools`; without skopeo a moved `:latest` runner tag won't
    trigger a per-ecosystem profile rebuild (the cache keys on the ref string),
@@ -313,18 +355,22 @@ These are **not** addressed by the podman / rootless runtime and remain open:
 ## Operational guidance
 
 - For untrusted inputs, the strongest posture is a non-root-equivalent runtime
-  plus verified network isolation. But `--hardened` is **frequently unusable
-  under rootless podman** — the scan container can't reach the host proxy on an
-  `--internal` network, so the scan is refused (see [`--hardened` under rootless
-  podman](#--hardened-under-rootless-podman)). Use **rootful podman or docker**
-  if you need full `--hardened` today; otherwise run **rootless with
-  `--hardened-rootless-runtime`** (read-only rootfs + no-new-privileges on the
-  always-on `--cap-drop ALL` / non-root / SELinux baseline), accepting that
-  egress is then cooperative, not enforced.
+  plus verified network isolation. Under rootless podman, `--hardened` delivers
+  enforced egress through the **per-scan proxy sidecar** (see [`--hardened` under
+  rootless podman](#--hardened-under-rootless-podman)), so prefer it. It needs a
+  network backend that forwards host-gateway to the host loopback (modern pasta
+  or slirp4netns); validate this once with [egress-sidecar.md](egress-sidecar.md).
+  Where the sidecar can't run, scrutineer refuses hardened scans (fail closed) —
+  fall back to **rootless with `--hardened-rootless-runtime`** (read-only rootfs +
+  no-new-privileges on the always-on `--cap-drop ALL` / non-root / SELinux
+  baseline), accepting cooperative egress, or use **rootful podman or docker**
+  for `--hardened` without the host-loopback-forwarding requirement.
 - Run scrutineer as a **dedicated low-privilege OS user** to bound gap #2.
 - Ensure **podman ≥ 4.7** and a configured `/etc/subuid` / `/etc/subgid` range
-  for that user (`podman system migrate` applies changes). Install **skopeo** if
-  you rely on per-ecosystem profiles staying current.
+  for that user (`podman system migrate` applies changes). For `--hardened`,
+  prefer **podman ≥ 5.0** (pasta default, with host-loopback mapping) or a
+  slirp4netns backend with host-loopback. Install **skopeo** if you rely on
+  per-ecosystem profiles staying current.
 - Treat the open threatmodel residuals (T9 resource caps, T13 cooperative
   default) as still applying under podman.
 

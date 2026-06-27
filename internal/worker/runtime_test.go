@@ -170,3 +170,45 @@ func TestPodmanHostGatewaySupported(t *testing.T) {
 		}
 	}
 }
+
+func TestPodmanPastaDefault(t *testing.T) {
+	tests := []struct {
+		version string
+		want    bool
+	}{
+		{"5.0.0", true},
+		{"5.0", true},
+		{"5.4.1", true},
+		{"6.0.0", true},
+		{"4.9.4", false},
+		{"4.7.0", false},
+		{"3.4.0", false},
+		{"", true},        // unparseable: don't warn
+		{"garbage", true}, // unparseable: don't warn
+		{"5", true},       // no minor: don't warn
+	}
+	for _, tc := range tests {
+		if got := podmanPastaDefault(tc.version); got != tc.want {
+			t.Errorf("podmanPastaDefault(%q) = %v, want %v", tc.version, got, tc.want)
+		}
+	}
+}
+
+func TestHostLoopbackBackendLikely(t *testing.T) {
+	tests := []struct {
+		rt   ContainerRuntime
+		want bool
+	}{
+		{ContainerRuntime{Bin: "docker"}, true},                   // non-podman: always true
+		{ContainerRuntime{}, true},                                // zero value = docker
+		{ContainerRuntime{Bin: "podman", Version: "5.0.0"}, true}, // pasta default
+		{ContainerRuntime{Bin: "podman", Version: "6.1.0"}, true},
+		{ContainerRuntime{Bin: "podman", Version: "4.9.4"}, false}, // pre-5.0: warn
+		{ContainerRuntime{Bin: "podman", Version: ""}, true},       // unparseable: don't warn
+	}
+	for _, tc := range tests {
+		if got := tc.rt.HostLoopbackBackendLikely(); got != tc.want {
+			t.Errorf("HostLoopbackBackendLikely(%+v) = %v, want %v", tc.rt, got, tc.want)
+		}
+	}
+}

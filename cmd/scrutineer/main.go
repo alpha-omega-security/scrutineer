@@ -142,7 +142,7 @@ func registerFlags(fs *flag.FlagSet, f *flags) {
 	fs.BoolVar(&f.noContainer, "no-docker", false, "deprecated alias for --no-container")
 	fs.BoolVar(&f.hardened, "hardened", false, "strict sandbox mode: container runtime required (no --no-container fallback), egress restricted to *.anthropic.com + host skill API, read-only rootfs, internal network")
 	fs.BoolVar(&f.hardenedRootless, "hardened-rootless-runtime", false, "the non-network half of --hardened (read-only rootfs + no-new-privileges + 2 GiB post-clone workspace cap) WITHOUT the per-scan --internal network, so it works under rootless podman where --hardened cannot; --cap-drop ALL + non-root user + tmpfs apply regardless. Implied by --hardened")
-	fs.StringVar(&f.runnerImage, "runner-image", worker.DefaultRunnerImage, "container image for per-job containers")
+	fs.StringVar(&f.runnerImage, "runner-image", worker.DefaultRunnerImage, "container image for per-job containers (a custom image needs curl, and under rootless --hardened the scrutineer binary for the egress sidecar; build from Dockerfile.runner)")
 	fs.StringVar(&f.profilesDir, "profiles-dir", "docker/profiles", "directory containing per-ecosystem runner profiles (Dockerfile per profile); empty disables profiles")
 	fs.StringVar(&f.skillsRepo, "skills-repo", "", "clone skills on startup; owner/repo[@ref] or https://host/path[@ref]")
 	fs.IntVar(&f.concurrency, "concurrency", queue.DefaultWorkerConcurrency, "number of scans to run in parallel")
@@ -607,11 +607,23 @@ func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRu
 	// happened to be probed first. The startup sweep collects per-scan networks
 	// left over by crashed processes.
 	var gwIP string
+	var egress worker.EgressSidecarConfig
 	if f.hardened {
+		// Crash residue cleanup: remove orphan egress proxy sidecars first (a
+		// lingering sidecar pins its per-scan network), then the freed networks.
+		if removed, err := worker.SweepOrphanProxySidecars(rt); err != nil {
+			log.Warn("orphan proxy sidecar sweep failed", "err", err)
+		} else if removed > 0 {
+			log.Info("removed orphan egress proxy sidecars", "count", removed)
+		}
 		if removed, err := worker.SweepOrphanHardenedNetworks(rt); err != nil {
 			log.Warn("orphan hardened network sweep failed", "err", err)
 		} else if removed > 0 {
 			log.Info("removed orphan hardened networks", "count", removed)
+		}
+		egress, err = resolveEgressSidecar(rt, f, allow, token, log)
+		if err != nil {
+			return nil, "", err
 		}
 	} else {
 		gwIP = worker.ResolveHostGatewayIPv4(rt, f.runnerImage, "")
@@ -629,6 +641,7 @@ func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRu
 		"runtime", rt.Bin, "rootless", rt.Rootless, "image", f.runnerImage,
 		"egress_proxy_port", port, "egress_allow", len(allow),
 		"host_gateway_ipv4", gwIP, "hardened", f.hardened,
+		"egress_sidecar", egress.GatewayIP != "",
 		"hardened_rootless_runtime", f.hardenedRootless, "selinux_relabel", relabel)
 	// Skills inside the container reach the host via host.docker.internal,
 	// which the egress proxy rewrites to 127.0.0.1 when dialing.
@@ -646,7 +659,45 @@ func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRu
 		HardenedRootlessRuntime: f.hardenedRootless,
 		Runtime:                 rt,
 		SELinuxRelabel:          relabel,
+		Egress:                  egress,
 	}, apiBase, nil
+}
+
+// resolveEgressSidecar builds the egress proxy sidecar config for a rootless
+// --hardened run. It resolves the default-network host-gateway the sidecar dials
+// to reach the loopback-bound host skill API, and warns when the podman backend
+// may not forward host-gateway to the host loopback. Returns the zero value (no
+// sidecar) for docker, rootful podman, and any non-rootless run -- those keep
+// the in-process host proxy.
+func resolveEgressSidecar(rt worker.ContainerRuntime, f *flags, allow []string, token string, log *slog.Logger) (worker.EgressSidecarConfig, error) {
+	if !rt.NeedsHardenedNetVerify() {
+		return worker.EgressSidecarConfig{}, nil
+	}
+	// Fail fast if the runner image lacks the scrutineer binary the sidecar runs,
+	// rather than letting every hardened scan fail with a cryptic per-scan error.
+	smokeCtx, cancel := context.WithTimeout(context.Background(), f.smokeTimeout)
+	defer cancel()
+	if err := worker.VerifyProxyBinary(smokeCtx, rt, f.runnerImage); err != nil {
+		return worker.EgressSidecarConfig{}, err
+	}
+	// Rootless podman: the per-scan --internal network cannot reach the host
+	// proxy, so egress runs through a proxy sidecar on the network. The sidecar
+	// reaches the host skill API over its egress leg via the default-network
+	// host-gateway, resolved once here.
+	if !rt.HostLoopbackBackendLikely() {
+		log.Warn("podman < 5.0 does not default to the pasta network backend; the egress proxy "+
+			"sidecar needs the backend to forward host-gateway to the host loopback (pasta "+
+			"--map-host-loopback, default in podman >= 5.0, or slirp4netns with host-loopback). "+
+			"Hardened scans are refused fail-closed if it is unavailable; see docs/egress-sidecar.md",
+			"version", rt.Version)
+	}
+	egressGwIP := worker.ResolveHostGatewayIPv4(rt, f.runnerImage, "")
+	if egressGwIP == "" {
+		log.Warn("host-gateway did not resolve under rootless podman; hardened scans will be refused " +
+			"because the egress proxy sidecar cannot reach the host skill API (needs podman >= 4.7 and a " +
+			"working rootless network backend; see docs/podman.md)")
+	}
+	return worker.EgressSidecarConfig{Token: token, Allow: allow, APIPort: addrPort(f.addr), GatewayIP: egressGwIP}, nil
 }
 
 // buildEgressAllow assembles the proxy allowlist. Hardened mode starts
