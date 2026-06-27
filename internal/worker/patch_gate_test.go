@@ -217,6 +217,7 @@ func TestGatePatch_dirtyWorkspaceFromSkill(t *testing.T) {
 	src := t.TempDir()
 	rel, diff := gateRepo(t, src)
 	apply := exec.Command("git", "-C", src, "apply", "-")
+	apply.Env = testGitEnv()
 	apply.Stdin = strings.NewReader(diff)
 	if out, err := apply.CombinedOutput(); err != nil {
 		t.Fatalf("seed dirty workspace: %v: %s", err, out)
