@@ -154,6 +154,7 @@ func gateRepo(t *testing.T, dir string) (relPath, diff string) {
 	write(lines)
 	run := func(args ...string) string {
 		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = testGitEnv()
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("git %v: %v: %s", args, err, out)
