@@ -176,16 +176,16 @@ func (d ContainerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Ev
 	}
 	emit(Event{Kind: KindText, Text: logLine})
 
-	planLimitText := ""
+	accountErrText := ""
 	wrappedEmit := func(e Event) {
-		if planLimitText == "" {
-			planLimitText = claudePlanLimitText(e.Text)
+		if accountErrText == "" {
+			accountErrText = claudeAccountErrorText(e.Text)
 		}
 		emit(e)
 	}
 	hitMaxTurns, sessionID, waitErr := d.runContainerOnce(ctx, runBase, sj, wrappedEmit)
 
-	if waitErr != nil && sj.ResumeSessionID != "" && sessionID == "" && planLimitText == "" {
+	if waitErr != nil && sj.ResumeSessionID != "" && sessionID == "" && accountErrText == "" {
 		if sj.ResumePrompt != "" {
 			emit(Event{Kind: KindText, Text: "resume of session " + sj.ResumeSessionID + " failed; " + resumePromptNoFreshFallbackText})
 			return SkillResult{Commit: commit, Profile: profile}, fmt.Errorf("%s exited: %w", d.Runtime.bin(), waitErr)
@@ -208,8 +208,8 @@ func (d ContainerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Ev
 		if hitMaxTurns {
 			return res, &MaxTurnsReachedError{}
 		}
-		if planLimitText != "" {
-			return res, &ClaudePlanLimitError{Detail: planLimitText}
+		if accountErrText != "" {
+			return res, &ClaudeAccountError{Detail: accountErrText}
 		}
 		return res, fmt.Errorf("%s exited: %w", d.Runtime.bin(), waitErr)
 	}

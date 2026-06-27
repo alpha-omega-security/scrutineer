@@ -141,17 +141,17 @@ func (l LocalClaude) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)
 	}
 
 	emit(Event{Kind: KindText, Text: "$ claude -p <skill:" + sj.Name + ">"})
-	planLimitText := ""
+	accountErrText := ""
 	wrappedEmit := func(e Event) {
-		if planLimitText == "" {
-			planLimitText = claudePlanLimitText(e.Text)
+		if accountErrText == "" {
+			accountErrText = claudeAccountErrorText(e.Text)
 		}
 		emit(e)
 	}
 	args := buildClaudeArgs(sj, l.Effort, l.MaxTurns)
 	hitMaxTurns, sessionID, waitErr := l.runClaudeOnce(ctx, args, work, wrappedEmit)
 
-	if waitErr != nil && sj.ResumeSessionID != "" && sessionID == "" && planLimitText == "" {
+	if waitErr != nil && sj.ResumeSessionID != "" && sessionID == "" && accountErrText == "" {
 		if sj.ResumePrompt != "" {
 			emit(Event{Kind: KindText, Text: "resume of session " + sj.ResumeSessionID + " failed; " + resumePromptNoFreshFallbackText})
 			return SkillResult{Commit: commit}, fmt.Errorf("claude exited: %w", waitErr)
@@ -175,8 +175,8 @@ func (l LocalClaude) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)
 		if hitMaxTurns {
 			return res, &MaxTurnsReachedError{}
 		}
-		if planLimitText != "" {
-			return res, &ClaudePlanLimitError{Detail: planLimitText}
+		if accountErrText != "" {
+			return res, &ClaudeAccountError{Detail: accountErrText}
 		}
 		return res, fmt.Errorf("claude exited: %w", waitErr)
 	}
