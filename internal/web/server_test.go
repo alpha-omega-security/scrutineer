@@ -228,6 +228,49 @@ func TestMaintainersIndex_rendersFindingsCountAndDNCBadge(t *testing.T) {
 	}
 }
 
+// Imports show in the Findings tab, so they must also count toward the
+// maintainer index badge. Regression for the aliasedFindingsScanFilter drift:
+// the count query once filtered skill_name only and silently dropped imports.
+func TestMaintainersIndex_countsImportedFindings(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://github.com/foo/bar.git", Name: "bar"}
+	s.DB.Create(&repo)
+
+	// One deep-dive audit finding and one operator-import finding. An import
+	// scan carries the producing tool's name as skill_name with kind=import —
+	// the same shape import.go writes — so a skill_name-only filter misses it.
+	dd := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: deepDiveSkillName}
+	s.DB.Create(&dd)
+	imp := db.Scan{RepositoryID: repo.ID, Kind: "import", Status: db.ScanDone, SkillName: "trivy"}
+	s.DB.Create(&imp)
+	// A scanner finding stays out of the count — per-repo lint noise.
+	sg := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: "semgrep"}
+	s.DB.Create(&sg)
+	s.DB.Create(&db.Finding{ScanID: dd.ID, RepositoryID: repo.ID, Title: "audit", Severity: "High"})
+	s.DB.Create(&db.Finding{ScanID: imp.ID, RepositoryID: repo.ID, Title: "imported", Severity: "Medium"})
+	s.DB.Create(&db.Finding{ScanID: sg.ID, RepositoryID: repo.ID, Title: "scanner", Severity: "Low"})
+
+	alice := db.Maintainer{Login: "alice", Name: "Alice", Status: db.MaintainerActive}
+	s.DB.Create(&alice)
+	if err := s.DB.Model(&repo).Association("Maintainers").Append([]db.Maintainer{alice}); err != nil {
+		t.Fatal(err)
+	}
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/maintainers"))
+	if w.Code != 200 {
+		t.Fatalf("status %d", w.Code)
+	}
+	body := w.Body.String()
+	// deep-dive + import = 2; the semgrep scanner finding is excluded. Before
+	// the fix this rendered 1 (import dropped); a scanner leak would render 3.
+	if !strings.Contains(body, `<span class="badge-destructive">2</span>`) {
+		t.Errorf("expected maintainer findings badge of 2 (deep-dive + import, scanner excluded); body=%s", body)
+	}
+}
+
 func flashFrom(t *testing.T, w *httptest.ResponseRecorder) Flash {
 	t.Helper()
 	r := &http.Request{Header: http.Header{"Cookie": w.Header().Values("Set-Cookie")}}
@@ -943,6 +986,84 @@ func TestOrgsList_aggregatesByOwner(t *testing.T) {
 	}
 }
 
+// The orgs index finding total is a sibling of the maintainer count and once
+// drifted the same way: imports showed in the Findings tab but were filtered
+// out of the cross-org total. Regression for aliasedFindingsScanFilter.
+func TestOrgsList_countsImportedFindings(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	// Single owner, single repo (Repos column = 1, so a "2" badge can only be
+	// the findings total). One deep-dive finding plus one import finding; a
+	// zizmor scanner finding stays in the per-repo Scanners tab, not the total.
+	repo := db.Repository{URL: "https://example.com/acme/svc", Name: "svc", Owner: "acme"}
+	s.DB.Create(&repo)
+	dd := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: deepDiveSkillName}
+	s.DB.Create(&dd)
+	imp := db.Scan{RepositoryID: repo.ID, Kind: "import", Status: db.ScanDone, SkillName: "grype"}
+	s.DB.Create(&imp)
+	sg := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: "zizmor"}
+	s.DB.Create(&sg)
+	s.DB.Create(&db.Finding{ScanID: dd.ID, RepositoryID: repo.ID, Title: "audit", Severity: "High"})
+	s.DB.Create(&db.Finding{ScanID: imp.ID, RepositoryID: repo.ID, Title: "imported", Severity: "Medium"})
+	s.DB.Create(&db.Finding{ScanID: sg.ID, RepositoryID: repo.ID, Title: "scanner", Severity: "Low"})
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/orgs"))
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	body := w.Body.String()
+	// deep-dive + import = 2; the zizmor scanner finding is excluded. Before
+	// the fix this rendered 1 (import dropped); a scanner leak would render 3.
+	if !strings.Contains(body, `<span class="badge-destructive">2</span>`) {
+		t.Errorf("expected org findings total badge of 2 (deep-dive + import, scanner excluded); body=%s", body)
+	}
+}
+
+// TestIndexTotals_countVulnScanFindings pins vuln-scan's inclusion in the
+// maintainers/orgs index aggregates: aliasedFindingsScanFilter was widened to
+// s.skill_name IN (?, ?) so vuln-scan findings count toward the cross-repo
+// totals alongside deep-dive, while scanner output stays excluded. It exercises
+// the second bound placeholder (vulnScanSkillName) in BOTH aggregate queries —
+// the path TestVulnScanBucketedAsFinding (repo bucket + /findings toggle) and
+// the import-count tests (first placeholder + kind='import') do not reach.
+func TestIndexTotals_countVulnScanFindings(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	// One owner + one maintainer on a single repo. Two vuln-scan findings count
+	// toward both index totals; a semgrep scanner finding stays out. A "2" badge
+	// is unambiguous (Repos column = 1) and separates the correct total from a
+	// regression: 0 if vuln-scan were treated as a scanner, 3 if semgrep leaked.
+	repo := db.Repository{URL: "https://example.com/acme/svc", Name: "svc", Owner: "acme"}
+	s.DB.Create(&repo)
+	vs := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: vulnScanSkillName}
+	s.DB.Create(&vs)
+	sg := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: "semgrep"}
+	s.DB.Create(&sg)
+	s.DB.Create(&db.Finding{ScanID: vs.ID, RepositoryID: repo.ID, Title: "vuln-scan a", Severity: "High"})
+	s.DB.Create(&db.Finding{ScanID: vs.ID, RepositoryID: repo.ID, Title: "vuln-scan b", Severity: "Medium"})
+	s.DB.Create(&db.Finding{ScanID: sg.ID, RepositoryID: repo.ID, Title: "scanner", Severity: "Low"})
+
+	alice := db.Maintainer{Login: "alice", Name: "Alice", Status: db.MaintainerActive}
+	s.DB.Create(&alice)
+	if err := s.DB.Model(&repo).Association("Maintainers").Append([]db.Maintainer{alice}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, path := range []string{"/maintainers", "/orgs"} {
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, localReq("GET", path))
+		if w.Code != 200 {
+			t.Fatalf("GET %s: status %d", path, w.Code)
+		}
+		if body := w.Body.String(); !strings.Contains(body, `<span class="badge-destructive">2</span>`) {
+			t.Errorf("GET %s: want vuln-scan findings total badge of 2 (semgrep excluded); body=%s", path, body)
+		}
+	}
+}
+
 func TestOrgsList_sortOptions(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
@@ -1259,6 +1380,59 @@ func TestFindings_scannerToggle(t *testing.T) {
 	}
 	if !strings.Contains(body, "Include scanners (1)") {
 		t.Error("scanner badge should count fixed scanner findings under status=fixed")
+	}
+}
+
+func TestDeepDiveSkillNameSafeForSplicing(t *testing.T) {
+	// deepDiveSkillName and vulnScanSkillName are spliced into
+	// findingsBucketSkillSQL as raw single-quoted literals (it feeds SQL such as
+	// the deepDiveFindingsCountSQL ORDER BY subquery, which cannot take a bind
+	// parameter), so neither may ever carry a SQL metacharacter. This tripwire
+	// fails loudly if a refactor changes a constant or makes a value dynamic.
+	for _, name := range []string{deepDiveSkillName, vulnScanSkillName} {
+		if strings.ContainsAny(name, "'\";\\\x00") {
+			t.Errorf("skill name %q must stay free of SQL metacharacters; it is spliced into findingsBucketSkillSQL", name)
+		}
+		// The literal it is spliced as must be a faithful single-quote wrap —
+		// the same output db.SQLStringLiteral would produce — and must actually
+		// appear in findingsBucketSkillSQL.
+		quoted := db.SQLStringLiteral(name)
+		if quoted != "'"+name+"'" {
+			t.Errorf("SQLStringLiteral(%q) = %q, want simple quoting", name, quoted)
+		}
+		if !strings.Contains(findingsBucketSkillSQL, quoted) {
+			t.Errorf("findingsBucketSkillSQL %q must splice %s as %q", findingsBucketSkillSQL, name, quoted)
+		}
+	}
+}
+
+func TestFindings_importsShownByDefault(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/imp", Name: "imp"}
+	s.DB.Create(&repo)
+	// An operator import: kind=import, with the producing tool in skill_name.
+	imp := db.Scan{RepositoryID: repo.ID, Kind: "import", Status: db.ScanDone, SkillName: "CodeQL"}
+	s.DB.Create(&imp)
+	// A genuine tool scanner running as a skill must stay hidden by default.
+	sg := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: "semgrep"}
+	s.DB.Create(&sg)
+	s.DB.Create(&db.Finding{ScanID: imp.ID, RepositoryID: repo.ID, Title: "imported-finding", Severity: "High"})
+	s.DB.Create(&db.Finding{ScanID: sg.ID, RepositoryID: repo.ID, Title: "semgrep-finding", Severity: "High"})
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/findings"))
+	body := w.Body.String()
+	if !strings.Contains(body, "imported-finding") {
+		t.Error("imported findings should appear in the default findings list")
+	}
+	if strings.Contains(body, "semgrep-finding") {
+		t.Error("tool-scanner findings should still be hidden by default")
+	}
+	// The scanners toggle counts only the genuine scanner, not the import.
+	if !strings.Contains(body, "Include scanners (1)") {
+		t.Errorf("scanner badge should count only the semgrep finding, not the import: %s", body)
 	}
 }
 

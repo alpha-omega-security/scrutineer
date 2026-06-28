@@ -25,6 +25,22 @@ type minimalFinding struct {
 	CWE         string `json:"cwe"`
 	Location    string `json:"location"`
 	Patch       string `json:"patch"`
+
+	// Extended fields scrutineer's own bundle emits. Absent in hand-written
+	// reports and in bundles produced before these were added; unmarshalling
+	// just leaves them empty, so older bundles still import unchanged.
+	Commit       string `json:"commit"`
+	SubPath      string `json:"sub_path"`
+	Locations    string `json:"locations"`
+	VID          string `json:"vid"`
+	Reachability string `json:"reachability"`
+	QualityTier  string `json:"quality_tier"`
+	Boundary     string `json:"boundary"`
+	Validation   string `json:"validation"`
+	PriorArt     string `json:"prior_art"`
+	Reach        string `json:"reach"`
+	Rating       string `json:"rating"`
+	FixCommit    string `json:"fix_commit"`
 }
 
 func parseMinimal(data []byte) ([]Result, error) {
@@ -49,6 +65,18 @@ func parseMinimal(data []byte) ([]Result, error) {
 			CWE:          f.CWE,
 			Location:     f.Location,
 			SuggestedFix: f.Patch,
+			Commit:       f.Commit,
+			SubPath:      f.SubPath,
+			Locations:    f.Locations,
+			VID:          f.VID,
+			Reachability: strings.ToLower(strings.TrimSpace(f.Reachability)),
+			QualityTier:  strings.ToLower(strings.TrimSpace(f.QualityTier)),
+			Boundary:     f.Boundary,
+			Validation:   f.Validation,
+			PriorArt:     f.PriorArt,
+			Reach:        f.Reach,
+			Rating:       f.Rating,
+			FixCommit:    f.FixCommit,
 		})
 	}
 	return []Result{res}, nil

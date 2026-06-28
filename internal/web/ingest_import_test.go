@@ -150,6 +150,61 @@ func TestHandleImportRepoOverride(t *testing.T) {
 	}
 }
 
+func TestHandleImportRevalidateToggle(t *testing.T) {
+	cases := []struct {
+		name       string
+		query      string
+		wantQueued int64
+	}{
+		// Omitting the param must behave exactly as before: revalidate runs.
+		// This is the no-interface-change guard.
+		{"default runs", "", 1},
+		{"explicit true runs", "&revalidate=true", 1},
+		{"false skips", "&revalidate=false", 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, done := newTestServer(t)
+			defer done()
+			revalidate := db.Skill{Name: "revalidate", OutputFile: "report.json", OutputKind: "revalidate", Version: 1, Active: true}
+			s.DB.Create(&revalidate)
+
+			body := `{"findings":[{"title":"x","cwe":"CWE-1","location":"a.go:1"}]}`
+			w := postImport(t, s, "/api/v1/import?repo=https://github.com/acme/thing"+tc.query, body)
+			if w.Code != http.StatusCreated {
+				t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+			}
+			var queued int64
+			s.DB.Model(&db.Scan{}).
+				Where("skill_id = ? AND status = ?", revalidate.ID, db.ScanQueued).
+				Count(&queued)
+			if queued != tc.wantQueued {
+				t.Errorf("queued revalidate scans = %d, want %d", queued, tc.wantQueued)
+			}
+		})
+	}
+}
+
+func TestHandleImportRejectsBadRevalidate(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	body := `{"findings":[{"title":"x","cwe":"CWE-1","location":"a.go:1"}]}`
+	w := postImport(t, s, "/api/v1/import?repo=https://github.com/acme/thing&revalidate=banana", body)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400, body = %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "revalidate") {
+		t.Errorf("body = %q, want it to name the bad param", w.Body.String())
+	}
+	// A malformed toggle must abort the whole import, not import-then-ignore.
+	var findings int64
+	s.DB.Model(&db.Finding{}).Count(&findings)
+	if findings != 0 {
+		t.Errorf("findings created = %d, want 0 (request rejected)", findings)
+	}
+}
+
 func TestHandleImportRejectsNoRepo(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
