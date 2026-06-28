@@ -7,7 +7,7 @@ metadata:
   scrutineer.version: 1
   scrutineer.output_file: report.json
   scrutineer.output_kind: breaking_change
-  scrutineer.model: claude-sonnet-4-6
+  scrutineer.model: mid
   scrutineer.requires_remote: true
 ---
 
