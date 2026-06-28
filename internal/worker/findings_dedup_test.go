@@ -572,6 +572,79 @@ func TestParseFindingsOutput_reobservationResetsMissedCount(t *testing.T) {
 	}
 }
 
+func TestParseFindingsOutput_autoRejectReversibility(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://x/r", Name: "r"}
+	gdb.Create(&repo)
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), AutoRejectMissedCount: 2}
+	emit := func(Event) {}
+
+	report := `{"findings":[{"id":"F1","title":"x","severity":"High","cwe":"CWE-89","location":"a.rb:1"}]}`
+	mkScan := func(commit string) *db.Scan {
+		s := &db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "security-deep-dive",
+			Status: db.ScanDone, Commit: commit}
+		gdb.Create(s)
+		return s
+	}
+
+	// 1. Initial observation
+	if err := w.parseFindingsOutput(&db.Skill{}, mkScan("aaa"), report, emit); err != nil {
+		t.Fatal(err)
+	}
+
+	// Set the status to triaged manually to verify it restores to triaged, not new
+	var f db.Finding
+	gdb.First(&f)
+	gdb.Model(&f).Update("status", db.FindingTriaged)
+	gdb.Create(&db.FindingHistory{FindingID: f.ID, Field: "status", OldValue: "new", NewValue: "triaged", Source: db.SourceAnalyst, By: "test"})
+
+	// 2. Missed twice -> auto-rejected
+	if err := w.parseFindingsOutput(&db.Skill{}, mkScan("bbb"), `{"findings":[]}`, emit); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.parseFindingsOutput(&db.Skill{}, mkScan("ccc"), `{"findings":[]}`, emit); err != nil {
+		t.Fatal(err)
+	}
+
+	gdb.First(&f)
+	if f.Status != db.FindingRejected {
+		t.Fatalf("finding should be auto-rejected after 2 misses, got %s", f.Status)
+	}
+
+	// 3. Re-observed -> status restored
+	if err := w.parseFindingsOutput(&db.Skill{}, mkScan("ddd"), report, emit); err != nil {
+		t.Fatal(err)
+	}
+
+	gdb.First(&f)
+	if f.Status != db.FindingTriaged {
+		t.Fatalf("finding should be restored to triaged, got %s", f.Status)
+	}
+
+	var hist db.FindingHistory
+	gdb.Where("finding_id = ? AND field = 'status'", f.ID).Order("id desc").First(&hist)
+	if hist.Source != db.SourceSystem || hist.NewValue != "triaged" {
+		t.Errorf("expected SourceSystem reopen history row, got source=%s new_value=%s", hist.Source, hist.NewValue)
+	}
+
+	// 4. Analyst rejects it
+	gdb.Model(&f).Update("status", db.FindingRejected)
+	gdb.Create(&db.FindingHistory{FindingID: f.ID, Field: "status", OldValue: "triaged", NewValue: "rejected", Source: db.SourceAnalyst, By: "tester"})
+
+	// 5. Re-observed again -> remains rejected because last change was analyst
+	if err := w.parseFindingsOutput(&db.Skill{}, mkScan("eee"), report, emit); err != nil {
+		t.Fatal(err)
+	}
+
+	gdb.First(&f)
+	if f.Status != db.FindingRejected {
+		t.Fatalf("analyst-rejected finding should not reopen, got %s", f.Status)
+	}
+}
+
 func TestParseFindingsOutput_notObservedSkipsClosedFindings(t *testing.T) {
 	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
 	if err != nil {

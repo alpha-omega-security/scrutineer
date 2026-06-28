@@ -449,6 +449,19 @@ func (w *Worker) reobserveFinding(existing, f *db.Finding, scan *db.Scan) error 
 		"location":            f.Location,
 		"locations":           f.Locations,
 	}
+
+	var statusRestore string
+	if existing.Status == db.FindingRejected {
+		var lastStatus db.FindingHistory
+		if err := w.DB.Where("finding_id = ? AND field = ?", existing.ID, "status").
+			Order("id desc").First(&lastStatus).Error; err == nil {
+			if lastStatus.Source == db.SourceSystem {
+				statusRestore = lastStatus.OldValue
+				updates["status"] = statusRestore
+			}
+		}
+	}
+
 	// Refresh the VID and snippet so they track the code as it drifts,
 	// but never wipe a stored one just because this run could not capture
 	// it (vid binary missing, location gone, checkout evicted).
@@ -473,6 +486,20 @@ func (w *Worker) reobserveFinding(existing, f *db.Finding, scan *db.Scan) error 
 	}).Error; err != nil {
 		w.Log.Warn("record observed-again finding history", "finding", existing.ID, "scan", scan.ID, "err", err)
 	}
+
+	if statusRestore != "" {
+		if err := w.DB.Create(&db.FindingHistory{
+			FindingID: existing.ID,
+			Field:     "status",
+			OldValue:  string(db.FindingRejected),
+			NewValue:  statusRestore,
+			Source:    db.SourceSystem,
+			By:        "re-observed in scan",
+		}).Error; err != nil {
+			w.Log.Warn("record finding status reopen history", "finding", existing.ID, "scan", scan.ID, "err", err)
+		}
+	}
+
 	return nil
 }
 
