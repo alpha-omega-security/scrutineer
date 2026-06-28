@@ -787,7 +787,7 @@ paths:
             application/x-ndjson:
               schema: { $ref: '#/components/schemas/RepositoryExport' }
         '400':
-          description: Unsupported format query value, or `encrypt` requested (only valid on per-repository bundle exports).
+          description: Unsupported format query value, or `encrypt`/`scope` requested (only valid on per-repository bundle exports).
         '403':
           description: Host header is not localhost
 

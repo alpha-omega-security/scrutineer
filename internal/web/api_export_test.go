@@ -241,6 +241,38 @@ func TestExportRepositories(t *testing.T) {
 	}
 }
 
+func TestExportRepositories_noScans(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{
+		URL:      "https://github.com/example/unscanned",
+		Name:     "unscanned",
+		FullName: "example/unscanned",
+		Owner:    "example",
+	}
+	s.DB.Create(&repo)
+
+	r := httptest.NewRequest("GET", "/api/v1/repositories", nil)
+	r.Host = testHost
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != 200 {
+		t.Fatalf("status %d, want 200. body=%s", w.Code, w.Body)
+	}
+
+	rows := readJSONL(t, w.Body.String())
+	if len(rows) != 1 {
+		t.Fatalf("got %d rows, want 1", len(rows))
+	}
+	if rows[0]["last_scan"] != nil {
+		t.Fatalf("last_scan = %#v, want nil", rows[0]["last_scan"])
+	}
+	if rows[0]["findings_count"] != float64(0) {
+		t.Errorf("findings_count = %v, want 0", rows[0]["findings_count"])
+	}
+}
+
 func TestExportScans(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
@@ -1015,6 +1047,7 @@ func TestExportBundle_scopeRejected(t *testing.T) {
 	for _, tc := range []struct{ name, path string }{
 		{"unknown scope value", "/api/v1/repositories/" + id + "/findings?format=bundle&scope=bogus"},
 		{"scope without bundle", "/api/v1/repositories/" + id + "/findings?scope=findings"},
+		{"scope on repositories", "/api/v1/repositories?scope=findings"},
 		{"scope on global findings", "/api/v1/findings?scope=findings"},
 		{"scope on global scans", "/api/v1/scans?scope=findings"},
 	} {

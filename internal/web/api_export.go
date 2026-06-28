@@ -32,6 +32,10 @@ func (s *Server) exportHandler() http.Handler {
 	return mux
 }
 
+// repositoryExportRow is the selected Repositories-tab projection used by the
+// JSONL export. It keeps large blob/cache columns out of the query and computes
+// FindingsCount with deepDiveFindingsCountSQL so the value matches the UI
+// Findings column.
 type repositoryExportRow struct {
 	ID                 uint
 	URL                string
@@ -52,6 +56,10 @@ type repositoryExportRow struct {
 	FindingsCount      int
 }
 
+// apiExportRepositories streams the Repositories-tab data set as NDJSON for
+// local automation. The export includes scalar repository columns and a latest
+// scan summary, deliberately omitting metadata, ecosystems caches, and other
+// large text blobs.
 func (s *Server) apiExportRepositories(w http.ResponseWriter, r *http.Request) {
 	if !validateExportFormat(w, r) {
 		return
@@ -305,6 +313,8 @@ func (s *Server) apiExportScans(w http.ResponseWriter, r *http.Request) {
 	streamJSONL(w, q, scanExport)
 }
 
+// repositoryExport maps a repositoryExportRow to the public JSON object. Repos
+// with no scans emit last_scan: null; scanned repos get a compact scan summary.
 func repositoryExport(row repositoryExportRow) map[string]any {
 	out := map[string]any{
 		"id":             row.ID,
