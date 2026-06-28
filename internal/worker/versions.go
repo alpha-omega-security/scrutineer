@@ -7,26 +7,47 @@ import (
 	"strings"
 )
 
-// RunnerImageName returns the docker image the given runner uses for scans,
-// or "" when the runner is not the docker runner (e.g. LocalClaude under
-// --no-docker), where there is no fixed image to interrogate.
+// RunnerImageName returns the container image the given runner uses for scans,
+// or "" when the runner is not container-backed (e.g. LocalClaude under
+// --no-container), where there is no fixed image to interrogate.
 func RunnerImageName(r SkillRunner) string {
-	if d, ok := r.(DockerRunner); ok {
+	if d, ok := r.(ContainerRunner); ok {
 		return d.image()
 	}
 	return ""
 }
 
-// DockerServerVersion returns the docker daemon's server version, or "" if
-// docker is unavailable or the command fails. Mirrors DockerAvailable's
-// shell-out style; the caller supplies a context so the settings page can
-// bound how long it waits.
-func DockerServerVersion(ctx context.Context) string {
-	out, err := exec.CommandContext(ctx, "docker", "version", "--format", "{{.Server.Version}}").Output()
+// RuntimeOf returns the container runtime the given runner uses, or the docker
+// zero value when the runner is not container-backed (LocalClaude under
+// --no-container). The web settings page passes it to the version probes so a
+// podman host queries podman rather than a non-existent docker daemon.
+func RuntimeOf(r SkillRunner) ContainerRuntime {
+	if d, ok := r.(ContainerRunner); ok {
+		return d.Runtime
+	}
+	return ContainerRuntime{}
+}
+
+// RuntimeServerVersion returns a human-readable engine version for the settings
+// page, e.g. "docker 24.0.7" or "podman 4.9.4", or "" when the runtime is
+// unavailable or the command fails. docker exposes the daemon version at
+// {{.Server.Version}}; podman's version schema has no .Server, so the engine
+// version lives at {{.Version}}. The caller supplies a context so the settings
+// page can bound how long it waits.
+func RuntimeServerVersion(ctx context.Context, rt ContainerRuntime) string {
+	format := "{{.Server.Version}}"
+	if rt.Bin == "podman" {
+		format = "{{.Version}}"
+	}
+	out, err := exec.CommandContext(ctx, rt.bin(), "version", "--format", format).Output()
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(out))
+	v := strings.TrimSpace(string(out))
+	if v == "" {
+		return ""
+	}
+	return rt.bin() + " " + v
 }
 
 // RunnerToolVersions holds the versions of the analysis tools baked into the
@@ -53,11 +74,11 @@ const queryToolsScript = `echo "zizmor=$(zizmor --version 2>/dev/null)"; ` +
 // registry pull, so the settings page never blocks on a download. The caller
 // must pass a context with a timeout to bound a hung daemon. Returns a zero
 // value (all fields "") for an empty image name or any failure.
-func QueryRunnerToolVersions(ctx context.Context, image string) RunnerToolVersions {
+func QueryRunnerToolVersions(ctx context.Context, rt ContainerRuntime, image string) RunnerToolVersions {
 	if image == "" {
 		return RunnerToolVersions{}
 	}
-	out, err := exec.CommandContext(ctx, "docker", "run", "--rm",
+	out, err := exec.CommandContext(ctx, rt.bin(), "run", "--rm",
 		"--pull", "never", "--entrypoint", "sh", "--", image, "-c", queryToolsScript).Output()
 	if err != nil {
 		return RunnerToolVersions{}

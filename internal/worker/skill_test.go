@@ -474,6 +474,28 @@ func TestStageSkill_noScriptsDirIsNoop(t *testing.T) {
 	}
 }
 
+func TestStageSkill_mirrorsContextJSONToSkillDir(t *testing.T) {
+	// stageContext writes context.json to workRoot; stageSkill must copy it
+	// into the skill directory so ./context.json resolves from the skill dir.
+	work := t.TempDir()
+	ctx := `{"repository":{"url":"https://example.com/r"}}`
+	if err := os.WriteFile(filepath.Join(work, "context.json"), []byte(ctx), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	skill := &db.Skill{Name: "s", Description: "d", Body: "body", Source: "ui"}
+	dst := filepath.Join(work, ".claude", "skills", "s")
+	if err := stageSkill(skill, work, dst); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(dst, "context.json"))
+	if err != nil {
+		t.Fatalf("context.json not mirrored into skill dir: %v", err)
+	}
+	if string(got) != ctx {
+		t.Errorf("mirrored context.json = %q, want %q", string(got), ctx)
+	}
+}
+
 func TestStageContext_includesRef(t *testing.T) {
 	dir := t.TempDir()
 	repo := &db.Repository{URL: "https://example.com/x", Name: "x"}

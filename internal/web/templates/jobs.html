@@ -76,12 +76,12 @@
   </div>
 </div>
 
-{{if .PlanLimitPausedCount}}
+{{if .AccountPausedCount}}
   <div class="alert-destructive mb-6">
     <i data-lucide="triangle-alert"></i>
     <section>
-      <strong>Claude plan limit reached.</strong>
-      Queued scans were paused automatically. Resume them after the limit resets.
+      <strong>Claude account access paused.</strong>
+      Queued scans were held automatically. Resume them once the account recovers.
     </section>
   </div>
 {{end}}

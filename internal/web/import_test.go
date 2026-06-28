@@ -91,14 +91,22 @@ func TestKnownURLsMatchDependents(t *testing.T) {
 }
 
 func TestAppendFixDescription(t *testing.T) {
-	if got := appendFixDescription("desc", ""); got != "desc" {
+	if got := appendFixDescription("desc", "", ""); got != "desc" {
 		t.Errorf("empty fix: got %q", got)
 	}
-	if got := appendFixDescription("", "do x"); got != "## Suggested fix\n\ndo x" {
+	if got := appendFixDescription("", "do x", ""); got != "## Suggested fix\n\ndo x" {
 		t.Errorf("empty desc: got %q", got)
 	}
-	if got := appendFixDescription("desc", "  do x  "); got != "desc\n\n## Suggested fix\n\ndo x" {
+	if got := appendFixDescription("desc", "  do x  ", ""); got != "desc\n\n## Suggested fix\n\ndo x" {
 		t.Errorf("both: got %q", got)
+	}
+	// A fix commit is noted inside the suggested-fix section so the operator
+	// can rebase before promoting the diff; an empty fix drops it entirely.
+	if got := appendFixDescription("", "do x", "abc123"); got != "## Suggested fix\n\nApplies to commit `abc123`.\n\ndo x" {
+		t.Errorf("with fix commit: got %q", got)
+	}
+	if got := appendFixDescription("desc", "", "abc123"); got != "desc" {
+		t.Errorf("fix commit but no fix: got %q", got)
 	}
 }
 
@@ -120,7 +128,7 @@ func TestImportFindings_keepsSuggestedFixGated(t *testing.T) {
 			SuggestedFix: "validate input before use",
 		}},
 	}
-	created, _ := s.importFindings(&scan, res)
+	created, _ := s.importFindings(&scan, res, true)
 	if len(created) != 1 {
 		t.Fatalf("created %d findings, want 1", len(created))
 	}
@@ -140,36 +148,47 @@ func TestImportFindings_keepsSuggestedFixGated(t *testing.T) {
 	}
 }
 
-func TestImportFindings_enqueuesRevalidate(t *testing.T) {
-	s, done := newTestServer(t)
-	defer done()
-	repo := db.Repository{URL: "https://example.com/r", Name: "r"}
-	s.DB.Create(&repo)
-	scan := db.Scan{RepositoryID: repo.ID, Status: db.ScanDone, Commit: "abc"}
-	s.DB.Create(&scan)
-	revalidate := db.Skill{Name: "revalidate", OutputFile: "report.json", OutputKind: "revalidate", Version: 1, Active: true}
-	s.DB.Create(&revalidate)
-
-	res := ingest.Result{
-		Tool: "external-scanner",
-		Findings: []ingest.Finding{
-			{Title: "high", Severity: "High", Location: "a.go:1"},
-			{Title: "low", Severity: "Low", Location: "b.go:1"},
-		},
+func TestImportFindings_revalidateToggle(t *testing.T) {
+	cases := []struct {
+		name       string
+		revalidate bool
+		// Every imported finding gets a revalidate run regardless of severity
+		// when enabled (import severity is an unvalidated external claim, so
+		// even Low is worth revalidating); revalidate=false primes nothing.
+		wantQueued int64
+	}{
+		{"enabled enqueues one per finding", true, 2},
+		{"disabled enqueues nothing", false, 0},
 	}
-	if created, _ := s.importFindings(&scan, res); len(created) != 2 {
-		t.Fatalf("created %d findings, want 2", len(created))
-	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, done := newTestServer(t)
+			defer done()
+			repo := db.Repository{URL: "https://example.com/r", Name: "r"}
+			s.DB.Create(&repo)
+			scan := db.Scan{RepositoryID: repo.ID, Status: db.ScanDone, Commit: "abc"}
+			s.DB.Create(&scan)
+			revalidate := db.Skill{Name: "revalidate", OutputFile: "report.json", OutputKind: "revalidate", Version: 1, Active: true}
+			s.DB.Create(&revalidate)
 
-	// Every imported finding gets a revalidate run regardless of severity:
-	// import severity is an unvalidated external claim, so even Low is
-	// worth revalidating.
-	var queued int64
-	s.DB.Model(&db.Scan{}).
-		Where("skill_id = ? AND status = ?", revalidate.ID, db.ScanQueued).
-		Count(&queued)
-	if queued != 2 {
-		t.Errorf("queued revalidate scans = %d, want 2 (one per imported finding)", queued)
+			res := ingest.Result{
+				Tool: "external-scanner",
+				Findings: []ingest.Finding{
+					{Title: "high", Severity: "High", Location: "a.go:1"},
+					{Title: "low", Severity: "Low", Location: "b.go:1"},
+				},
+			}
+			if created, _ := s.importFindings(&scan, res, tc.revalidate); len(created) != 2 {
+				t.Fatalf("created %d findings, want 2", len(created))
+			}
+			var queued int64
+			s.DB.Model(&db.Scan{}).
+				Where("skill_id = ? AND status = ?", revalidate.ID, db.ScanQueued).
+				Count(&queued)
+			if queued != tc.wantQueued {
+				t.Errorf("queued revalidate scans = %d, want %d", queued, tc.wantQueued)
+			}
+		})
 	}
 }
 
@@ -182,12 +201,12 @@ func TestImportFindings_skipsRevalidateWhenSkillAbsent(t *testing.T) {
 	s.DB.Create(&scan)
 	// No revalidate skill registered. Import must still succeed.
 	res := ingest.Result{Tool: "x", Findings: []ingest.Finding{{Title: "t", Severity: "High", Location: "a.go:1"}}}
-	if created, _ := s.importFindings(&scan, res); len(created) != 1 {
+	if created, _ := s.importFindings(&scan, res, true); len(created) != 1 {
 		t.Fatalf("created = %d, want 1", len(created))
 	}
 }
 
-func TestAutoEnqueueRevalidate_onlyHighAndCriticalFromDeepDive(t *testing.T) {
+func TestAutoEnqueueRevalidate_onlyHighAndCriticalFromLLMAudits(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
 	repo := db.Repository{URL: "https://example.com/r", Name: "r"}
@@ -205,6 +224,9 @@ func TestAutoEnqueueRevalidate_onlyHighAndCriticalFromDeepDive(t *testing.T) {
 		{"deep-dive High", "security-deep-dive", "High", true},
 		{"deep-dive Medium", "security-deep-dive", "Medium", false},
 		{"deep-dive Low", "security-deep-dive", "Low", false},
+		{"vuln-scan Critical", "vuln-scan", "Critical", true},
+		{"vuln-scan High", "vuln-scan", "High", true},
+		{"vuln-scan Medium", "vuln-scan", "Medium", false},
 		{"semgrep High", "semgrep", "High", false},
 		{"zizmor Critical", "zizmor", "Critical", false},
 	}

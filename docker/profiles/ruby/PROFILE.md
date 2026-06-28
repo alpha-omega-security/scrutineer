@@ -39,5 +39,6 @@ explicitly instead of inventing one.
 
 ## Out of scope
 
-- Installed gems (Bundler's gem path, or `./src/vendor/bundle` if the project vendors there) — third-party code, not
-  the target of this scan unless a finding specifically pivots through it.
+- Installed gems — third-party code, not the target of this scan unless a finding specifically pivots through it.
+  Gems install under `/work/.gem` (`GEM_HOME`, a sibling of `./src` — not inside it); a project that vendors instead
+  goes to `./src/vendor/bundle`. Treat neither as project code.

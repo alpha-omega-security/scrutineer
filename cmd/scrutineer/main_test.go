@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/ed25519"
 	"encoding/pem"
+	"flag"
 	"io"
 	"log/slog"
 	"os"
@@ -23,7 +24,7 @@ func fullConfig() *config.Config {
 		Addr:             "0.0.0.0:9090",
 		Data:             "/var/lib/scrutineer",
 		Effort:           "medium",
-		NoDocker:         new(true),
+		NoContainer:      new(true),
 		Hardened:         new(true),
 		RunnerImage:      "custom:v1",
 		SkillsRepo:       "https://example.com/skills.git",
@@ -47,8 +48,8 @@ func TestFlagsMerge_configFillsUnset(t *testing.T) {
 	if f.dataDir != cfg.Data {
 		t.Errorf("dataDir = %q", f.dataDir)
 	}
-	if !f.noDocker {
-		t.Errorf("noDocker not applied")
+	if !f.noContainer {
+		t.Errorf("noContainer not applied")
 	}
 	if !f.hardened {
 		t.Errorf("hardened not applied")
@@ -126,6 +127,35 @@ func TestFlagsMerge_hardenedCliWinsOverConfig(t *testing.T) {
 	f.merge(cfg)
 	if f.hardened {
 		t.Errorf("CLI --hardened=false was overridden by config")
+	}
+}
+
+func TestFlagsMerge_legacyNoDockerFlagHonored(t *testing.T) {
+	// The pre-rename --no-docker alias must behave exactly like --no-container:
+	// passing it on the CLI suppresses a conflicting config value. Both flags
+	// bind to the same variable, and merge checks both set-keys.
+	cfg := &config.Config{NoContainer: new(false)} // config wants the container ON
+	f := &flags{noContainer: true, set: map[string]bool{"no-docker": true}}
+	f.merge(cfg)
+	if !f.noContainer {
+		t.Error("legacy --no-docker on the CLI was overridden by config; the alias must win like --no-container")
+	}
+}
+
+func TestRegisterFlags_noContainerAliasParsesFromArgv(t *testing.T) {
+	// Both the canonical --no-container and the deprecated --no-docker alias
+	// must parse off the command line and set the same noContainer field, so
+	// existing `scrutineer --no-docker ...` invocations keep working.
+	for _, name := range []string{"--no-container", "--no-docker"} {
+		f := &flags{}
+		fs := flag.NewFlagSet("test", flag.ContinueOnError)
+		registerFlags(fs, f)
+		if err := fs.Parse([]string{name}); err != nil {
+			t.Fatalf("Parse(%q): %v", name, err)
+		}
+		if !f.noContainer {
+			t.Errorf("%s did not set noContainer", name)
+		}
 	}
 }
 

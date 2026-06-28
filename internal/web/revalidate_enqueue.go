@@ -7,8 +7,9 @@ import (
 )
 
 // revalidateSkillName is the cheap finding classifier auto-enqueued for
-// High/Critical findings from security-deep-dive and for every finding
-// created via the /v1/import path. See skills/revalidate/SKILL.md.
+// High/Critical findings from the LLM audits (security-deep-dive, vuln-scan)
+// and for every finding created via the /v1/import path.
+// See skills/revalidate/SKILL.md.
 const revalidateSkillName = "revalidate"
 
 // verifySkillName is shared with server.go: the heavier
@@ -17,12 +18,15 @@ const revalidateSkillName = "revalidate"
 
 // autoEnqueueRevalidate is wired onto Worker.OnFindingCreated. The worker
 // calls it after persisting each fresh Finding row from a findings-emitting
-// scan. We only act for High/Critical findings produced by
-// security-deep-dive: smaller scanners (semgrep, zizmor) and finding-scoped
-// re-runs go straight to a human, and lower severities are not worth the
-// model spend at this stage of the funnel. Re-running deep-dive on the same
-// repo bumps the existing finding's seen_count rather than creating a new
-// one, so we never enqueue against an observed-again row.
+// scan. We only act for High/Critical findings produced by the curated LLM
+// audits (security-deep-dive, vuln-scan): smaller scanners (semgrep, zizmor)
+// and finding-scoped re-runs go straight to a human, and lower severities are
+// not worth the model spend at this stage of the funnel. vuln-scan is the
+// high-recall skill, so its High/Critical output needs the cheap revalidate
+// pre-sort most — without it those candidates would sit untriaged in the same
+// queue as triaged deep-dive rows. Re-running an audit on the same repo bumps
+// the existing finding's seen_count rather than creating a new one, so we
+// never enqueue against an observed-again row.
 //
 // Errors are logged and swallowed: failing to enqueue the pre-sort step
 // must never fail the upstream scan.
@@ -34,7 +38,7 @@ func (s *Server) autoEnqueueRevalidate(scan *db.Scan, f *db.Finding) {
 	// ref only to diff fingerprints; feeding its findings back into the
 	// revalidate -> verify funnel would double the spend and race the
 	// finding-scoped verify the pipeline already enqueued against that ref.
-	if scan.SkillName != deepDiveSkillName || scan.BaselineScanID != nil {
+	if !isLLMAuditSkill(scan.SkillName) || scan.BaselineScanID != nil {
 		return
 	}
 	if !db.SeverityAtLeast(f.Severity, "High") {

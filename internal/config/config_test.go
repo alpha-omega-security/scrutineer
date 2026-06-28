@@ -56,7 +56,7 @@ skills:
   - ./skills
   - /srv/skills
 skills_repo: https://github.com/org/skills
-no_docker: true
+no_container: true
 hardened: true
 runner_image: custom-runner
 egress_allow:
@@ -82,8 +82,8 @@ metadata_dir: .ossprey/
 	if len(c.Skills) != 2 {
 		t.Errorf("skills: %+v", c.Skills)
 	}
-	if c.NoDocker == nil || !*c.NoDocker {
-		t.Errorf("no_docker: %v", c.NoDocker)
+	if c.NoContainer == nil || !*c.NoContainer {
+		t.Errorf("no_container: %v", c.NoContainer)
 	}
 	if c.Hardened == nil || !*c.Hardened {
 		t.Errorf("hardened: %v", c.Hardened)
@@ -105,6 +105,26 @@ metadata_dir: .ossprey/
 	}
 	if c.MetadataDir != ".ossprey/" {
 		t.Errorf("metadata_dir=%q, want .ossprey/", c.MetadataDir)
+	}
+}
+
+func TestLoad_noContainerAlias(t *testing.T) {
+	// no_docker is the retained pre-rename alias; Load folds it into NoContainer.
+	aliasOnly, err := Load(write(t, "no_docker: true\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if aliasOnly.NoContainer == nil || !*aliasOnly.NoContainer {
+		t.Errorf("no_docker alias did not set NoContainer: %v", aliasOnly.NoContainer)
+	}
+
+	// no_container is canonical and wins when both keys are present.
+	both, err := Load(write(t, "no_container: false\nno_docker: true\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if both.NoContainer == nil || *both.NoContainer {
+		t.Errorf("no_container should win over no_docker: %v", both.NoContainer)
 	}
 }
 

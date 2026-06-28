@@ -118,20 +118,20 @@ func (s *Server) settingsShow(w http.ResponseWriter, r *http.Request) {
 }
 
 // toolMetadata is the runtime version info shown on the settings page:
-// the scanner tools baked into the runner image plus the host docker
-// daemon and the runner image name itself.
+// the scanner tools baked into the runner image plus the host container
+// runtime version and the runner image name itself.
 type toolMetadata struct {
 	worker.RunnerToolVersions
-	Docker      string
+	Runtime     string
 	RunnerImage string
 }
 
 // toolMetadataTTL bounds how long a gathered version set is reused. Versions
-// only change when the operator pulls a new image or restarts docker, so a
-// generous TTL keeps the settings page DB-fast without going stale for long.
+// only change when the operator pulls a new image or restarts the runtime, so
+// a generous TTL keeps the settings page DB-fast without going stale for long.
 const toolMetadataTTL = 5 * time.Minute
 
-// toolMetadataTimeout caps the docker shell-outs so a hung or missing daemon
+// toolMetadataTimeout caps the runtime shell-outs so a hung or missing daemon
 // degrades to "unavailable" instead of stalling the settings page.
 const toolMetadataTimeout = 5 * time.Second
 
@@ -143,10 +143,11 @@ func (s *Server) toolMetadataCached(ctx context.Context) toolMetadata {
 	}
 	ctx, cancel := context.WithTimeout(ctx, toolMetadataTimeout)
 	defer cancel()
+	rt := worker.RuntimeOf(s.Worker.Runner)
 	image := worker.RunnerImageName(s.Worker.Runner)
 	meta := toolMetadata{
-		RunnerToolVersions: worker.QueryRunnerToolVersions(ctx, image),
-		Docker:             worker.DockerServerVersion(ctx),
+		RunnerToolVersions: worker.QueryRunnerToolVersions(ctx, rt, image),
+		Runtime:            worker.RuntimeServerVersion(ctx, rt),
 		RunnerImage:        image,
 	}
 	s.toolMetaCache = meta

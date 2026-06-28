@@ -14,7 +14,8 @@
 | `internal/skills/` | SKILL.md parser + loader for local dirs and remote git repos |
 | `internal/worker/` | one job kind (JobSkill) and the runner plumbing |
 | `internal/worker/claude.go` | LocalClaude runner (bare-metal) |
-| `internal/worker/docker.go` | DockerRunner (ephemeral container per scan) |
+| `internal/worker/runtime.go` | ContainerRuntime + DetectRuntime (docker / rootless podman selection) |
+| `internal/worker/container.go` | ContainerRunner (ephemeral container per scan; docker or podman) |
 | `internal/worker/clone.go` | git clone/fetch helpers, URL validation |
 | `internal/worker/skill.go` | doSkill: stage skill + context, invoke claude, dispatch output to the right parser |
 | `internal/worker/skill_parsers.go` | one parser per output_kind: findings, maintainers, packages, advisories, dependents, dependencies, finding_dedup, repo_metadata, verify, revalidate, breaking_change, mitigation, release_watch, subprojects, repo_overview, posture, patch (plus `exposure` handled by `exposure.go`, and `threat_model` stored as-is for the threat-model tab) |

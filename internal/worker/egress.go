@@ -29,7 +29,7 @@ var HardenedEgressAllow = []string{
 	HostGatewayAlias,
 }
 
-// DefaultEgressAllow is the built-in host allowlist for the docker
+// DefaultEgressAllow is the built-in host allowlist for the container
 // runner's egress proxy. It covers what the bundled skills actually
 // reach: the Anthropic API, ecosyste.ms services, the major code forges,
 // the package registries those forges publish to, and the advisory
@@ -120,11 +120,11 @@ var DefaultEgressAllow = []string{
 	"cwe.mitre.org",
 }
 
-// EgressProxy is a small forward proxy the docker runner points
+// EgressProxy is a small forward proxy the container runner points
 // HTTPS_PROXY/HTTP_PROXY at. It only tunnels to hosts on Allow. Clients
 // must present Token via Proxy-Authorization basic auth (any username);
-// the proxy listens on all interfaces so the docker bridge can reach it,
-// and the token stops it being an open relay on the LAN.
+// the proxy listens on all interfaces so the container can reach it on its
+// gateway, and the token stops it being an open relay on the LAN.
 type EgressProxy struct {
 	Allow   []string
 	Token   string

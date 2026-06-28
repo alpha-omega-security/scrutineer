@@ -148,7 +148,7 @@ func TestEgressProxy_ForwardAllowedRewritesGateway(t *testing.T) {
 	}
 }
 
-// TestEgressProxy_ConnectEndToEnd exercises the full path the docker
+// TestEgressProxy_ConnectEndToEnd exercises the full path the container
 // runner uses: a real listener, Proxy-Authorization in the proxy URL,
 // CONNECT tunnel, then a TLS request over it. The upstream is a local
 // httptest TLS server allowlisted as 127.0.0.1.

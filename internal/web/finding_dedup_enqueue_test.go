@@ -40,9 +40,10 @@ func dedupQueued(s *Server, repoID, dedupID uint) int64 {
 }
 
 // TestAutoEnqueueFindingDedup_conditions covers the two gating conditions:
-// the deep dive must produce at least one new finding, and the repo must end
-// up with at least two open non-scanner findings to compare against (the new
-// rows count, so a first-ever deep-dive emitting several findings qualifies).
+// a curated LLM audit (security-deep-dive or vuln-scan) must produce at least
+// one new finding, and the repo must end up with at least two open non-scanner
+// findings to compare against (the new rows count, so a first-ever audit
+// emitting several findings qualifies).
 func TestAutoEnqueueFindingDedup_conditions(t *testing.T) {
 	cases := []struct {
 		name string
@@ -52,9 +53,11 @@ func TestAutoEnqueueFindingDedup_conditions(t *testing.T) {
 		// completed scan (condition 1 needs at least one).
 		newFindings int
 		// hasPrior, when set, creates a pre-existing finding from an earlier
-		// scan described by priorSkill/priorStatus (counts toward condition 2).
+		// scan described by priorSkill/priorKind/priorStatus (counts toward
+		// condition 2). priorKind defaults to a skill run when empty.
 		hasPrior    bool
 		priorSkill  string
+		priorKind   string
 		priorStatus db.FindingLifecycle
 		wantQueued  bool
 	}{
@@ -77,6 +80,18 @@ func TestAutoEnqueueFindingDedup_conditions(t *testing.T) {
 			wantQueued: true,
 		},
 		{
+			name:        "first-ever vuln-scan emitting two new findings",
+			scanSkill:   "vuln-scan",
+			newFindings: 2, hasPrior: false,
+			wantQueued: true,
+		},
+		{
+			name:        "vuln-scan new finding with prior vuln-scan finding",
+			scanSkill:   "vuln-scan",
+			newFindings: 1, hasPrior: true, priorSkill: "vuln-scan", priorStatus: db.FindingNew,
+			wantQueued: true,
+		},
+		{
 			name:        "no new finding does not enqueue",
 			scanSkill:   "security-deep-dive",
 			newFindings: 0, hasPrior: true, priorSkill: "security-deep-dive", priorStatus: db.FindingNew,
@@ -95,10 +110,13 @@ func TestAutoEnqueueFindingDedup_conditions(t *testing.T) {
 			wantQueued: false,
 		},
 		{
-			name:        "prior import finding does not count",
+			// An import (kind=import) is curated data, not noisy scanner
+			// output: it shows in the Findings list by default and so counts
+			// toward the dedup-pass threshold, unlike a tool-scanner skill.
+			name:        "prior import finding now counts (kind=import)",
 			scanSkill:   "security-deep-dive",
-			newFindings: 1, hasPrior: true, priorSkill: "CodeQL", priorStatus: db.FindingNew,
-			wantQueued: false,
+			newFindings: 1, hasPrior: true, priorSkill: "CodeQL", priorKind: "import", priorStatus: db.FindingNew,
+			wantQueued: true,
 		},
 		{
 			name:        "prior closed non-scanner finding does not count",
@@ -121,6 +139,10 @@ func TestAutoEnqueueFindingDedup_conditions(t *testing.T) {
 
 			if c.hasPrior {
 				prior := newScan(t, s, repoID, c.priorSkill)
+				if c.priorKind != "" {
+					prior.Kind = c.priorKind
+					s.DB.Save(prior)
+				}
 				newFindingUnder(t, s, repoID, prior.ID, c.priorStatus)
 			}
 

@@ -55,4 +55,13 @@ RUN apt-get update \
  && ruby --version \
  && bundle --version
 
+# Gems install into the writable, exec-capable workspace mount rather than the
+# image's root-owned gem dir (unwritable to the non-root --user runtime) or the
+# HOME=/tmp fallback (a noexec, 256 MB tmpfs where native gem .so files can't be
+# loaded). /work is host-owned via --userns=keep-id under rootless podman,
+# survives hardened mode's --read-only rootfs, and /work/.gem sits outside /src
+# so installed gems stay out of the scanned tree.
+ENV GEM_HOME=/work/.gem \
+    PATH=/work/.gem/bin:$PATH
+
 USER runner

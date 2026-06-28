@@ -28,14 +28,14 @@ We rate confirmed issues as Low, Medium, High, or Critical and publish that rati
 
 ## Scope
 
-Scrutineer is a single-operator tool that clones third-party repositories and runs analysis over them. By default scans run inside a container; with `--no-docker` they run directly on the host. The threat model assumes scanned repositories are hostile; see `threatmodel.md` for the current boundaries and known residuals. We are interested in reports where:
+Scrutineer is a single-operator tool that clones third-party repositories and runs analysis over them. By default scans run inside a container; with `--no-container` they run directly on the host. The threat model assumes scanned repositories are hostile; see `threatmodel.md` for the current boundaries and known residuals. We are interested in reports where:
 
 - a malicious repository can escape the scan workspace or container
 - the web UI or HTTP API can be abused from outside `127.0.0.1`
 - a skill or scan can read or write data belonging to another scan
 - stored data (findings, tokens, reports) can leak to a third party
 
-Issues that require the operator to deliberately point scrutineer at hostile input and run with `--no-docker` are lower priority but still welcome.
+Issues that require the operator to deliberately point scrutineer at hostile input and run with `--no-container` are lower priority but still welcome.
 
 ## Out of scope
 

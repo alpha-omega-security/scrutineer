@@ -134,7 +134,9 @@ func TestEnsureCommit_reachableCommitIsNoOp(t *testing.T) {
 		t.Fatal(err)
 	}
 	run := func(args ...string) string {
-		out, err := exec.Command("git", append([]string{"-C", cacheSrc}, args...)...).CombinedOutput()
+		cmd := exec.Command("git", append([]string{"-C", cacheSrc}, args...)...)
+		cmd.Env = testGitEnv()
+		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
@@ -166,7 +168,9 @@ func TestEnsureCommit_unreachableNonShallowIsNoOp(t *testing.T) {
 	if err := os.MkdirAll(cacheSrc, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	out, err := exec.Command("git", "-C", cacheSrc, "init", "--quiet", "-b", "main").CombinedOutput()
+	cmd := exec.Command("git", "-C", cacheSrc, "init", "--quiet", "-b", "main")
+	cmd.Env = testGitEnv()
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git init: %v\n%s", err, out)
 	}

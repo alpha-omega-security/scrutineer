@@ -98,6 +98,19 @@ func (s *Server) apiExportRepoFindings(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "encrypt requires format=bundle")
 		return
 	}
+	// scope=findings curates the bundle to the Findings bucket (deep-dive,
+	// vuln-scan, imports), dropping per-repo scanner noise. Like encrypt it only
+	// applies to the bundle format; reject it elsewhere rather than silently
+	// returning the full set a caller asked to narrow.
+	scope := r.URL.Query().Get("scope")
+	if scope != "" && scope != "findings" {
+		writeAPIError(w, http.StatusBadRequest, "unsupported scope: findings")
+		return
+	}
+	if scope != "" && format != "bundle" {
+		writeAPIError(w, http.StatusBadRequest, "scope requires format=bundle")
+		return
+	}
 
 	id, _ := strconv.Atoi(r.PathValue("id"))
 	var repo db.Repository
@@ -119,19 +132,29 @@ func (s *Server) apiExportRepoFindings(w http.ResponseWriter, r *http.Request) {
 
 // sharingBundle is the self-contained sharing format that round-trips
 // through ingest.Parse (the "minimal" shape). The shareable unit is one
-// repository.
+// repository. GeneratedAt records when the bundle was produced (RFC3339
+// UTC); it lives inside the encrypted JSON, not in cleartext metadata, and
+// the importer ignores it (it is provenance for the human recipient).
 type sharingBundle struct {
-	Repository string           `json:"repository"`
-	Commit     string           `json:"commit"`
-	Tool       string           `json:"tool"`
-	Findings   []sharingFinding `json:"findings"`
+	Repository  string           `json:"repository"`
+	Commit      string           `json:"commit"`
+	Tool        string           `json:"tool"`
+	GeneratedAt string           `json:"generated_at,omitempty"`
+	Findings    []sharingFinding `json:"findings"`
 }
 
-// sharingFinding carries only the substance of a finding — what the analyst
-// found, not how they triaged it. Analyst-set state (status, CVE/GHSA id,
-// affected, fix_version, references) is intentionally dropped: a bundle shares
+// sharingFinding carries the substance of a finding — what was found and the
+// reasoning that justifies it (the six-step audit checklist, reachability,
+// sink quality, the cross-party VID), plus enough provenance (commit,
+// sub-path, all hit locations) to resolve Location unambiguously on the
+// receiving side. Analyst-set triage state (status, CVE/GHSA id, affected,
+// fix_version, references, assignee) is intentionally dropped: a bundle shares
 // the finding, and the receiving team owns their own triage. Imported findings
 // therefore land fresh and untriaged on the recipient's side.
+//
+// All fields after Patch are emitted with omitempty so a finding that lacks
+// them — and a bundle produced before they existed — stays byte-compatible
+// with the original seven-field shape.
 type sharingFinding struct {
 	Title       string `json:"title"`
 	Description string `json:"description"`
@@ -140,6 +163,19 @@ type sharingFinding struct {
 	CWE         string `json:"cwe"`
 	Location    string `json:"location"`
 	Patch       string `json:"patch"`
+
+	Commit       string `json:"commit,omitempty"`
+	SubPath      string `json:"sub_path,omitempty"`
+	Locations    string `json:"locations,omitempty"`
+	VID          string `json:"vid,omitempty"`
+	Reachability string `json:"reachability,omitempty"`
+	QualityTier  string `json:"quality_tier,omitempty"`
+	Boundary     string `json:"boundary,omitempty"`
+	Validation   string `json:"validation,omitempty"`
+	PriorArt     string `json:"prior_art,omitempty"`
+	Reach        string `json:"reach,omitempty"`
+	Rating       string `json:"rating,omitempty"`
+	FixCommit    string `json:"fix_commit,omitempty"`
 }
 
 func (s *Server) apiExportRepoBundle(w http.ResponseWriter, r *http.Request, repo *db.Repository) {
@@ -153,6 +189,13 @@ func (s *Server) apiExportRepoBundle(w http.ResponseWriter, r *http.Request, rep
 	q := s.DB.Where("scan_id IN (?)",
 		s.DB.Model(&db.Scan{}).Select("id").Where("repository_id = ?", repo.ID)).
 		Order("id desc")
+	if r.URL.Query().Get("scope") == "findings" {
+		// Curate to the Findings bucket — drop semgrep/zizmor scanner noise,
+		// keep deep-dive, vuln-scan, and operator imports (nonScannerScanFilter,
+		// the same predicate the Findings tab uses). Validated in
+		// apiExportRepoFindings; the default (no scope) shares every finding.
+		q = q.Where(nonScannerScanFilter)
+	}
 	q = applyFindingFilters(q, r)
 	if err := q.Find(&findings).Error; err != nil {
 		writeAPIError(w, http.StatusInternalServerError, err.Error())
@@ -160,21 +203,34 @@ func (s *Server) apiExportRepoBundle(w http.ResponseWriter, r *http.Request, rep
 	}
 
 	bundle := sharingBundle{
-		Repository: repo.URL,
-		Tool:       "scrutineer",
+		Repository:  repo.URL,
+		Tool:        "scrutineer",
+		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
 	}
 	for _, f := range findings {
 		if bundle.Commit == "" {
 			bundle.Commit = f.Commit
 		}
 		bundle.Findings = append(bundle.Findings, sharingFinding{
-			Title:       f.Title,
-			Description: f.Trace,
-			Severity:    f.Severity,
-			Confidence:  f.Confidence,
-			CWE:         f.CWE,
-			Location:    f.Location,
-			Patch:       f.SuggestedFix,
+			Title:        f.Title,
+			Description:  f.Trace,
+			Severity:     f.Severity,
+			Confidence:   f.Confidence,
+			CWE:          f.CWE,
+			Location:     f.Location,
+			Patch:        f.SuggestedFix,
+			Commit:       f.Commit,
+			SubPath:      f.SubPath,
+			Locations:    f.Locations,
+			VID:          f.VID,
+			Reachability: f.Reachability,
+			QualityTier:  f.QualityTier,
+			Boundary:     f.Boundary,
+			Validation:   f.Validation,
+			PriorArt:     f.PriorArt,
+			Reach:        f.Reach,
+			Rating:       f.Rating,
+			FixCommit:    f.SuggestedFixCommit,
 		})
 	}
 
@@ -288,6 +344,12 @@ func validateExportFormat(w http.ResponseWriter, r *http.Request) bool {
 	// streaming plaintext NDJSON off these endpoints.
 	if r.URL.Query().Get("encrypt") != "" {
 		writeAPIError(w, http.StatusBadRequest, "encrypt is only supported on per-repository bundle exports")
+		return false
+	}
+	// scope curates the per-repository bundle and has no meaning on these
+	// cross-repo NDJSON dumps; reject it rather than silently ignore it.
+	if r.URL.Query().Get("scope") != "" {
+		writeAPIError(w, http.StatusBadRequest, "scope is only supported on per-repository bundle exports")
 		return false
 	}
 	return true

@@ -116,9 +116,9 @@ type Server struct {
 	skillNamesCache []string
 	skillNamesTTL   time.Time
 
-	// toolMeta caches the scanner-tool and docker versions shown on the
-	// settings page. Gathering them shells out to docker, so it is cached
-	// behind a TTL to keep the page DB-fast on repeat loads.
+	// toolMeta caches the scanner-tool and container runtime versions shown on
+	// the settings page. Gathering them shells out to the runtime, so it is
+	// cached behind a TTL to keep the page DB-fast on repeat loads.
 	toolMetaMu    sync.Mutex
 	toolMetaCache toolMetadata
 	toolMetaTTL   time.Time
@@ -321,6 +321,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /findings/{id}/report.md", s.findingReport)
 	mux.HandleFunc("GET /findings/{id}/csaf.json", s.findingCSAF)
 	mux.HandleFunc("GET /findings/{id}/osv.json", s.findingOSV)
+	mux.HandleFunc("GET /findings/{id}/disclosure.html", s.findingDisclosureHTML)
 	mux.HandleFunc("POST /findings/{id}/status", s.findingStatus)
 	mux.HandleFunc("POST /findings/{id}/exploited-in-wild", s.findingExploitedInWild)
 	mux.HandleFunc("POST /findings/{id}/verify", s.findingVerify)
@@ -915,7 +916,6 @@ func (s *Server) findingToggleCounts(r *http.Request, scanners bool) (int64, int
 
 	scannerWhere, scannerArgs := findingIndexWhereSQL(r, true, true)
 	scannerWhere = append(scannerWhere, scannerScanFilter)
-	scannerArgs = append(scannerArgs, deepDiveSkillName)
 
 	var counts struct {
 		MissedTotal  int64
@@ -938,7 +938,6 @@ func findingIndexWhereSQL(r *http.Request, includeScanners, includeMissed bool) 
 	var args []any
 	if !includeScanners {
 		where = append(where, nonScannerScanFilter)
-		args = append(args, deepDiveSkillName)
 	}
 	if sev := r.URL.Query().Get("severity"); sev != "" {
 		where = append(where, "severity = ?")
@@ -1049,17 +1048,25 @@ const (
 	// deepDiveSkillName is the skill whose reports feed the Summary, Findings
 	// and Threat Model tabs on the repository page.
 	deepDiveSkillName = "security-deep-dive"
-	// nonScannerScanFilter selects findings whose parent scan is the
-	// security-deep-dive scanner, the legacy claude job (empty skill name),
-	// or has no recorded source — everything the UI groups under
-	// "non-scanner". scannerScanFilter is its structural inverse: the cheap
-	// tool scanners (semgrep, zizmor) and imported reports (CodeQL, Snyk,
-	// which carry the tool name as skill_name). Both take deepDiveSkillName
-	// as the single bound parameter; deriving one from the other keeps the
-	// Findings toggle and the dedup auto-enqueue agreeing on what "scanner"
-	// means without a second copy of the subquery to keep in sync.
-	nonScannerScanFilter = "scan_id IN (SELECT id FROM scans WHERE skill_name = ? OR skill_name = '' OR skill_name IS NULL)"
-	scannerScanFilter    = "NOT (" + nonScannerScanFilter + ")"
+	// vulnScanSkillName is the LLM-driven high-recall candidate scan. Like
+	// security-deep-dive it uses a model to find real vulnerabilities, so its
+	// findings belong in the curated Findings bucket alongside the deep-dive
+	// audit rather than the Scanners tab full of cheap tool output (#458).
+	vulnScanSkillName = "vuln-scan"
+	// aliasedFindingsScanFilter is the same Findings-tab predicate as
+	// nonScannerScanFilter, written for the raw aggregate counts on the
+	// maintainers and orgs indexes. Those queries LEFT JOIN scans under the
+	// alias `s` and group findings, so they filter s.skill_name/s.kind directly
+	// rather than threading findings.scan_id through a subquery. A finding
+	// counts when its scan is one of the LLM audits (security-deep-dive,
+	// vuln-scan), a legacy/empty skill_name, or an operator import (kind=import);
+	// the two ?s bind deepDiveSkillName and vulnScanSkillName in that order.
+	// The `s.skill_name IS NULL` arm doubles as the LEFT JOIN "this row has no
+	// findings" guard, so zero-count maintainers/orgs stay in the result with
+	// n=0. Keep it in lockstep with findingsBucketSkillSQL — a copy that lacked
+	// the kind='import' arm is exactly what kept imports out of these totals
+	// after they began showing in the Findings tab.
+	aliasedFindingsScanFilter = "(s.skill_name IN (?, ?) OR s.skill_name = '' OR s.skill_name IS NULL OR s.kind = 'import')"
 	// threatModelSkillName is the skill whose report feeds the Threat Model
 	// tab when present; repos that predate it fall back to the boundaries
 	// section of the deep-dive report so older scans keep rendering.
@@ -1067,23 +1074,68 @@ const (
 	zizmorSkillName      = "zizmor"
 )
 
-// deepDiveFindingsCountSQL is a correlated subselect that counts deep-dive
+// The Findings-bucket filters are vars rather than consts because they splice
+// the skill names through db.SQLStringLiteral for defense-in-depth quote
+// escaping — a function call, which a Go const initializer cannot contain.
+var (
+	// findingsBucketSkillSQL is the single source of truth for which scans'
+	// findings populate the curated Findings bucket: the LLM audit skills
+	// (security-deep-dive, vuln-scan), legacy claude jobs with an empty or NULL
+	// skill_name, and operator imports (kind='import'). An import is a
+	// deliberate curation act, not noisy auto-scanner output, so it sits with
+	// the audit findings and shows by default rather than behind the Scanners
+	// toggle. The skill names are spliced in as literals rather than bound
+	// parameters because this fragment is embedded raw into larger SQL (e.g. an
+	// Order clause) that can't carry args; each is escaped through
+	// db.SQLStringLiteral so a name that ever gained a quote is doubled rather
+	// than able to break out (see TestDeepDiveSkillNameSafeForSplicing).
+	// Parenthesised so it can be embedded in larger expressions without
+	// precedence surprises.
+	findingsBucketSkillSQL = "(skill_name IN (" + db.SQLStringLiteral(deepDiveSkillName) + ", " + db.SQLStringLiteral(vulnScanSkillName) + ") OR skill_name = '' OR skill_name IS NULL OR kind = 'import')"
+	// nonScannerScanFilter selects findings whose parent scan populates the
+	// Findings bucket (findingsBucketSkillSQL) — every finding the UI shows by
+	// default. scannerScanFilter is its structural inverse: the cheap tool
+	// scanners (semgrep, zizmor) that run as skills and carry the tool name as
+	// skill_name. Deriving both from findingsBucketSkillSQL keeps the Findings
+	// toggle, the repo Findings tab, and the dedup auto-enqueue agreeing on what
+	// "scanner" means without a second copy of the subquery to keep in sync — so
+	// vuln-scan findings and imports both count toward the dedup-pass threshold.
+	nonScannerScanFilter = "scan_id IN (SELECT id FROM scans WHERE " + findingsBucketSkillSQL + ")"
+	scannerScanFilter    = "NOT (" + nonScannerScanFilter + ")"
+)
+
+// deepDiveFindingsCountSQL is a correlated subselect that counts curated
 // findings for the surrounding repositories row. Used in the repos list
 // "findings" sort. Tool-scanner skills are excluded so the ordering matches
-// the counts shown in the Findings column.
+// the counts shown in the Findings column. The LLM audit skills
+// (security-deep-dive, vuln-scan), legacy rows, and operator imports
+// (kind='import') all count via findingsBucketSkillSQL, so the column agrees
+// with the Findings tab. The skill names are spliced into findingsBucketSkillSQL
+// as text (this fragment feeds an ORDER BY that can't take a bind parameter);
+// both are trusted compile-time constants kept free of SQL metacharacters by
+// TestDeepDiveSkillNameSafeForSplicing.
 var deepDiveFindingsCountSQL = `SELECT COUNT(*) FROM findings f
 	    WHERE f.repository_id = repositories.id
 	      AND f.status NOT IN (` + db.ClosedFindingLifecycleSQLValues() + `)
-	      AND f.scan_id IN (SELECT id FROM scans
-	        WHERE skill_name = '` + deepDiveSkillName + `' OR skill_name = '' OR skill_name IS NULL)`
+	      AND f.scan_id IN (SELECT id FROM scans WHERE ` + findingsBucketSkillSQL + `)`
 
 // findingsScanIDs returns a GORM subquery selecting scan IDs that belong to
-// the curated audit (security-deep-dive) or to legacy/empty skill_name rows.
-// Use it as a `scan_id IN (?)` filter to keep listings consistent with the
-// repo Findings tab.
+// the curated LLM audits (security-deep-dive, vuln-scan), to legacy/empty
+// skill_name rows, or to an operator import (kind='import') — everything in
+// findingsBucketSkillSQL. Use it as a `scan_id IN (?)` filter to keep listings
+// consistent with the repo Findings tab.
 func findingsScanIDs(gdb *gorm.DB) *gorm.DB {
-	return gdb.Model(&db.Scan{}).Select("id").
-		Where("skill_name = ? OR skill_name = '' OR skill_name IS NULL", deepDiveSkillName)
+	return gdb.Model(&db.Scan{}).Select("id").Where(findingsBucketSkillSQL)
+}
+
+// isLLMAuditSkill reports whether a finalized scan is one of the curated LLM
+// audits (security-deep-dive, vuln-scan) whose fresh output drives the
+// auto-triage funnels (finding-dedup and the revalidate pre-sort). Unlike
+// findingsBucketSkillSQL this deliberately excludes legacy empty/NULL
+// skill_name rows and imports: those are inert, not a live scan that just
+// produced new findings worth triaging.
+func isLLMAuditSkill(skillName string) bool {
+	return skillName == deepDiveSkillName || skillName == vulnScanSkillName
 }
 
 func findingSupportsExposure(scan db.Scan) bool {

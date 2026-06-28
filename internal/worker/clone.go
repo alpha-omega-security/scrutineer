@@ -29,7 +29,7 @@ func (e *RepoUnreachableError) Unwrap() error { return e.Err }
 
 // prepareLocalSrc populates workRoot/src by copying the user's local
 // directory. Mirrors prepareDependentSrc's "copy into per-scan src"
-// pattern so the Docker mount can write into /work without touching the
+// pattern so the container mount can write into /work without touching the
 // user's source tree. Validates that the path exists and is a directory
 // before touching anything.
 func prepareLocalSrc(localPath, workRoot string, emit func(Event)) error {

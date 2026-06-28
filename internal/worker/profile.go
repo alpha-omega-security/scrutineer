@@ -100,6 +100,7 @@ var builtinProfiles = []Profile{
 	{Name: "java", Ecosystems: []string{"Maven", "Gradle"}},
 	{Name: "dotnet", Ecosystem: "NuGet"},
 	{Name: "beam", Ecosystems: []string{"Mix", "rebar3"}},
+	{Name: "rust", Ecosystem: "Cargo"},
 	{
 		// Last: brief reports no package manager for C/C++, so this is a
 		// fallback for repos that match no language ecosystem above but
@@ -263,16 +264,18 @@ func fileContains(path, needle string) bool {
 // DetectProfile runs `brief` against the cloned source inside the
 // default runner image (which already ships brief) and returns the
 // matching profile. Falls back to the zero profile on any error so a
-// detection blip never blocks a scan.
-func DetectProfile(ctx context.Context, runnerImage, srcDir string) Profile {
+// detection blip never blocks a scan. relabel mirrors the runner's
+// --selinux setting so the read-only /src mount is relabeled (":ro,z")
+// on an SELinux host, just like the real scan's /work mount.
+func DetectProfile(ctx context.Context, rt ContainerRuntime, runnerImage, srcDir string, relabel bool) Profile {
 	absSrc, err := filepath.Abs(srcDir)
 	if err != nil {
 		return Profile{}
 	}
-	cmd := exec.CommandContext(ctx, "docker", "run", "--rm",
+	cmd := exec.CommandContext(ctx, rt.bin(), "run", "--rm",
 		"--network", "none",
 		"--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()),
-		"-v", absSrc+":/src:ro",
+		"-v", bindMount(absSrc, "/src", relabel, "ro"),
 		"--entrypoint", "brief",
 		runnerImage, "/src",
 	)
@@ -289,7 +292,7 @@ func DetectProfile(ctx context.Context, runnerImage, srcDir string) Profile {
 // deployment). The caller falls back to the default runner image.
 var ErrNoProfilesDir = errors.New("profiles dir not configured")
 
-// profileBuildLocks serialises `docker build` per image tag. Two scans
+// profileBuildLocks serialises the image build per tag. Two scans
 // that both detect the same profile must not race on the local image
 // cache. One mutex per tag avoids serialising builds of distinct
 // profiles.
@@ -335,18 +338,30 @@ func imageTag(profileName string, dockerfile []byte, runnerImage, baseDigest str
 // resolveBaseDigest returns a content fingerprint of runnerImage as it
 // currently resolves in the registry, so a moved tag (notably the default
 // :latest) produces a new profile tag and forces a rebuild against the new
-// base instead of reusing a months-old cached profile image. It shells out
-// to `docker buildx imagetools inspect --raw`, which fetches the canonical
-// manifest bytes without pulling layers; buildx ships wherever `docker
-// build` runs, so it is available on the profile-build path. Best-effort:
-// returns "" when the registry is unreachable or the ref is local-only
-// (e.g. scrutineer-runner:local), so imageTag falls back to keying on the
-// ref string alone rather than blocking the scan.
-func resolveBaseDigest(ctx context.Context, runnerImage string) string {
+// base instead of reusing a months-old cached profile image. On docker it
+// shells out to `docker buildx imagetools inspect --raw`; on podman, which has
+// no buildx, it uses `skopeo inspect --raw` when skopeo is installed. Both
+// fetch the canonical manifest bytes without pulling layers. Best-effort:
+// returns "" when the tool is unavailable, the registry is unreachable, or the
+// ref is local-only (e.g. scrutineer-runner:local), so imageTag falls back to
+// keying on the ref string alone rather than blocking the scan.
+func resolveBaseDigest(ctx context.Context, rt ContainerRuntime, runnerImage string) string {
 	if runnerImage == "" {
 		return ""
 	}
-	out, err := exec.CommandContext(ctx, "docker", "buildx", "imagetools", "inspect", runnerImage, "--raw").Output()
+	var out []byte
+	var err error
+	if rt.Bin == "podman" {
+		// podman has no `buildx imagetools`; skopeo fetches the same canonical
+		// manifest bytes without pulling layers. "" when skopeo is absent, so
+		// the caller keeps the ref-string fallback (no new failure mode).
+		if _, lookErr := exec.LookPath("skopeo"); lookErr != nil {
+			return ""
+		}
+		out, err = exec.CommandContext(ctx, "skopeo", "inspect", "--raw", "docker://"+runnerImage).Output()
+	} else {
+		out, err = exec.CommandContext(ctx, "docker", "buildx", "imagetools", "inspect", runnerImage, "--raw").Output()
+	}
 	if err != nil || len(out) == 0 {
 		return ""
 	}
@@ -354,14 +369,14 @@ func resolveBaseDigest(ctx context.Context, runnerImage string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// EnsureImage builds the profile's Docker image if it is not in the
-// local cache and returns the tag to pass to `docker run`. The
+// EnsureImage builds the profile's container image if it is not in the
+// local cache and returns the tag to pass to the runtime's `run`. The
 // `--build-arg RUNNER_IMAGE=...` is wired so the profile's FROM picks
 // up whichever runner image the operator configured. Concurrency-safe:
 // a per-tag mutex serialises duplicate builds. emit is called only on
-// a cache miss (before and after the docker build) so the scan log
+// a cache miss (before and after the image build) so the scan log
 // shows progress during a multi-minute first build.
-func (p Profile) EnsureImage(ctx context.Context, profilesDir, runnerImage string, emit func(Event)) (string, error) {
+func (p Profile) EnsureImage(ctx context.Context, rt ContainerRuntime, profilesDir, runnerImage string, emit func(Event)) (string, error) {
 	if p.IsDefault() {
 		return runnerImage, nil
 	}
@@ -373,14 +388,14 @@ func (p Profile) EnsureImage(ctx context.Context, profilesDir, runnerImage strin
 	if err != nil {
 		return "", fmt.Errorf("read profile dockerfile: %w", err)
 	}
-	baseDigest := resolveBaseDigest(ctx, runnerImage)
+	baseDigest := resolveBaseDigest(ctx, rt, runnerImage)
 	tag := imageTag(p.Name, contents, runnerImage, baseDigest)
 
 	mu := lockForTag(tag)
 	mu.Lock()
 	defer mu.Unlock()
 
-	if imageExistsLocally(ctx, tag) {
+	if imageExistsLocally(ctx, rt, tag) {
 		return tag, nil
 	}
 	emit(Event{Kind: KindText, Text: "profile: building " + tag + " (first build can take several minutes)"})
@@ -401,14 +416,14 @@ func (p Profile) EnsureImage(ctx context.Context, profilesDir, runnerImage strin
 		buildArgs = append(buildArgs, "--build-arg", "RUNNER_IMAGE="+runnerImage)
 	}
 	buildArgs = append(buildArgs, filepath.Join(profilesDir, p.Name))
-	cmd := exec.CommandContext(ctx, "docker", buildArgs...)
+	cmd := exec.CommandContext(ctx, rt.bin(), buildArgs...)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("docker build %s: %w\n%s", tag, err, out)
+		return "", fmt.Errorf("%s build %s: %w\n%s", rt.bin(), tag, err, out)
 	}
 	emit(Event{Kind: KindText, Text: "profile: built " + tag + " in " + time.Since(start).Round(time.Second).String()})
 	return tag, nil
 }
 
-func imageExistsLocally(ctx context.Context, tag string) bool {
-	return exec.CommandContext(ctx, "docker", "image", "inspect", tag).Run() == nil
+func imageExistsLocally(ctx context.Context, rt ContainerRuntime, tag string) bool {
+	return exec.CommandContext(ctx, rt.bin(), "image", "inspect", tag).Run() == nil
 }

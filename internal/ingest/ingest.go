@@ -70,6 +70,37 @@ type Finding struct {
 	CWE          string
 	Location     string
 	SuggestedFix string
+
+	// The fields below are carried by scrutineer's own sharing bundle (see
+	// internal/web/api_export.go) so an instance-to-instance round-trip
+	// preserves the substance of a finding, not just its title. Other
+	// parsers (SARIF, CSV, markdown) leave them empty and the import path
+	// then writes the same empty columns it always did.
+
+	// Commit is the revision this individual finding was observed at. Falls
+	// back to Result.Commit on import, so a bundle can span findings from
+	// scans at different commits without mispinning each Location.
+	Commit string
+	// SubPath is the monorepo subdirectory Location is relative to.
+	SubPath string
+	// Locations is the full newline-joined set of file:line positions when a
+	// finding fired at several sites; Location holds the primary one.
+	Locations string
+	// VID is the cross-tool/cross-party correlation hash (the vid CLI).
+	VID string
+	// Reachability (reachable/harness_only/unclear) and QualityTier
+	// (high/low) carry the source's exploitability and sink-quality verdicts.
+	Reachability string
+	QualityTier  string
+	// Boundary, Validation, PriorArt, Reach and Rating are steps two through
+	// six of the audit checklist; Description carries the first (Trace).
+	Boundary   string
+	Validation string
+	PriorArt   string
+	Reach      string
+	Rating     string
+	// FixCommit is the base revision SuggestedFix applies to.
+	FixCommit string
 }
 
 // Format names the detected input encoding. Exposed so callers can log

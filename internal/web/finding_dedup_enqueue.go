@@ -21,15 +21,16 @@ const dedupMinFindings = 2
 // committed. We enqueue a repository-scoped finding-dedup run only when both
 // conditions the dedup pass needs to be worth its model spend hold:
 //
-//  1. The scan is a security-deep-dive that produced at least one *new*
-//     finding. Re-observed findings keep the scan_id of the run that first
-//     created them, so counting findings with scan_id == this scan counts
-//     exactly the new rows. Nothing new means nothing fresh to dedup.
+//  1. The scan is a curated LLM audit (security-deep-dive or vuln-scan) that
+//     produced at least one *new* finding. Re-observed findings keep the
+//     scan_id of the run that first created them, so counting findings with
+//     scan_id == this scan counts exactly the new rows. Nothing new means
+//     nothing fresh to dedup.
 //  2. The repository now holds at least two open non-scanner findings in
 //     total (the new rows count toward this). Dedup needs a pair to compare,
-//     but the pair need not predate this scan: a first-ever deep-dive that
-//     emits several findings describing the same bug from different subagent
-//     angles is exactly what dedup exists to collapse.
+//     but the pair need not predate this scan: a first-ever audit that emits
+//     several findings describing the same bug from different subagent angles
+//     is exactly what dedup exists to collapse.
 //
 // "Non-scanner" matches the Findings-tab toggle exactly (nonScannerScanFilter):
 // the cheap tool scanners (semgrep, zizmor) and tool imports (CodeQL, Snyk)
@@ -40,10 +41,10 @@ const dedupMinFindings = 2
 // Errors are logged and swallowed: failing to enqueue the dedup pass must
 // never fail the upstream scan.
 func (s *Server) autoEnqueueFindingDedup(scan *db.Scan) {
-	// A fix-validation anchor (validate_fix.go) re-runs deep-dive on a fix ref
+	// A fix-validation anchor (validate_fix.go) re-runs an audit on a fix ref
 	// purely to diff fingerprints; its findings are validation scratch, not a
 	// repo's working set, so they must not trigger a dedup pass.
-	if scan == nil || scan.SkillName != deepDiveSkillName || scan.BaselineScanID != nil {
+	if scan == nil || !isLLMAuditSkill(scan.SkillName) || scan.BaselineScanID != nil {
 		return
 	}
 
@@ -62,7 +63,7 @@ func (s *Server) autoEnqueueFindingDedup(scan *db.Scan) {
 	var openNonScanner int64
 	if err := s.DB.Model(&db.Finding{}).
 		Where("repository_id = ?", scan.RepositoryID).
-		Where(nonScannerScanFilter, deepDiveSkillName).
+		Where(nonScannerScanFilter).
 		Where("status NOT IN (" + db.ClosedFindingLifecycleSQLValues() + ")").
 		Count(&openNonScanner).Error; err != nil {
 		s.Log.Warn("auto-enqueue finding-dedup: count open findings",

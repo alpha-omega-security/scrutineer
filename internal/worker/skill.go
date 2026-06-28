@@ -754,12 +754,15 @@ func validateSkillPaths(name, outputFile string) error {
 }
 
 // stageSkill writes the skill's files into dst so claude-code discovers them
-// at ./.claude/skills/{name}. Only SKILL.md and schema.json are reconstructed
-// from the DB; supplementary files (scripts/, references/, assets/) are
-// copied from SourcePath when the skill was loaded from disk.
+// at ./.claude/skills/{name}. SKILL.md and schema.json are reconstructed from
+// the DB; supplementary files (scripts/, references/, assets/) are copied
+// from SourcePath when the skill was loaded from disk.
 //
 // schema.json is also written to workRoot so the `./schema.json` path every
 // SKILL.md references resolves without the model having to glob for it (#221).
+// context.json is mirrored from workRoot into dst so `./context.json` resolves
+// from the skill directory as well as the workspace root; that read means
+// stageSkill must run after stageContext, which is what produces the file.
 func stageSkill(skill *db.Skill, workRoot, dst string) error {
 	if err := os.RemoveAll(dst); err != nil {
 		return err
@@ -777,6 +780,16 @@ func stageSkill(skill *db.Skill, workRoot, dst string) error {
 		}
 		if err := os.WriteFile(filepath.Join(workRoot, "schema.json"), []byte(skill.SchemaJSON), filePerm); err != nil {
 			return err
+		}
+	}
+	switch data, err := os.ReadFile(filepath.Join(workRoot, "context.json")); {
+	case errors.Is(err, os.ErrNotExist):
+		// stageContext hasn't run (or this caller doesn't use one); no mirror.
+	case err != nil:
+		return fmt.Errorf("read context.json: %w", err)
+	default:
+		if werr := os.WriteFile(filepath.Join(dst, "context.json"), data, filePerm); werr != nil {
+			return werr
 		}
 	}
 	if skill.SourcePath != "" && skill.Source != "ui" {

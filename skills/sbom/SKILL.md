@@ -4,6 +4,7 @@ description: Generate a CycloneDX SBOM for the repository via `git-pkgs sbom`. S
 license: MIT
 compatibility: Requires the `git-pkgs` CLI on PATH.
 metadata:
+  scrutineer.model: mid
   scrutineer.version: 1
   scrutineer.output_file: report.json
   scrutineer.output_kind: freeform

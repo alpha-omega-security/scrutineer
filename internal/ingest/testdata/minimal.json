@@ -10,7 +10,19 @@
       "confidence": "high",
       "location": "src/handlers/download.js:88",
       "description": "filename parameter is joined to the static root without normalisation.",
-      "patch": "--- a/src/handlers/download.js\n+++ b/src/handlers/download.js\n@@\n- const p = path.join(root, req.query.filename)\n+ const p = path.join(root, path.basename(req.query.filename))\n"
+      "patch": "--- a/src/handlers/download.js\n+++ b/src/handlers/download.js\n@@\n- const p = path.join(root, req.query.filename)\n+ const p = path.join(root, path.basename(req.query.filename))\n",
+      "commit": "c0ffee1",
+      "sub_path": "services/api",
+      "locations": "src/handlers/download.js:88\nsrc/handlers/legacy.js:12",
+      "vid": "VID-1111-2222-3333-4444-5555-6666",
+      "reachability": "reachable",
+      "quality_tier": "high",
+      "boundary": "Reachable from the public /download HTTP handler.",
+      "validation": "Confirmed by retrieving /etc/passwd in a local checkout.",
+      "prior_art": "Mirrors CVE-2021-1234 in a sibling project.",
+      "reach": "Public entry point with attacker-controlled filename.",
+      "rating": "High impact, trivial to exploit.",
+      "fix_commit": "deadbeef"
     }
   ]
 }

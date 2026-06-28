@@ -168,7 +168,7 @@
 <section class="card">
   <header>
     <h2>About</h2>
-    <p class="text-muted-foreground text-sm">Versions of Scrutineer and the analysis tools that run inside the runner image. Scanner versions are read from the running image and may be unavailable when Docker is not in use.</p>
+    <p class="text-muted-foreground text-sm">Versions of Scrutineer and the analysis tools that run inside the runner image. Scanner versions are read from the running image and may be unavailable when no container runtime is in use.</p>
   </header>
   <section>
     {{define "metarow"}}
@@ -182,7 +182,7 @@
       {{template "metarow" (dict "Label" "Claude Code" "Value" .Meta.Claude)}}
       {{template "metarow" (dict "Label" "Semgrep" "Value" .Meta.Semgrep)}}
       {{template "metarow" (dict "Label" "Zizmor" "Value" .Meta.Zizmor)}}
-      {{template "metarow" (dict "Label" "Docker" "Value" .Meta.Docker)}}
+      {{template "metarow" (dict "Label" "Container runtime" "Value" .Meta.Runtime)}}
       {{template "metarow" (dict "Label" "Runner image" "Value" .Meta.RunnerImage)}}
     </div>
   </section>

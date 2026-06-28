@@ -26,7 +26,7 @@ type MaxTurnsReachedError struct{}
 
 func (MaxTurnsReachedError) Error() string { return "hit max turns cap" }
 
-// SkillRunner executes one skill scan. Tests and the docker-backed runner
+// SkillRunner executes one skill scan. Tests and the container-backed runner
 // substitute the process launch without touching the queue plumbing.
 type SkillRunner interface {
 	RunSkill(ctx context.Context, sj SkillJob, emit func(Event)) (SkillResult, error)
@@ -45,10 +45,10 @@ type SkillRunner interface {
 type SkillJob struct {
 	Repo db.Repository
 	// ScanID identifies the scan that owns this job. Required when the
-	// runner is hardened: it disambiguates the per-scan docker network so
+	// runner is hardened: it disambiguates the per-scan network so
 	// concurrent scans can never share one. A zero value collapses
 	// distinct scans onto a single network and defeats the isolation, so
-	// the docker runner refuses to start hardened with ScanID == 0.
+	// the container runner refuses to start hardened with ScanID == 0.
 	ScanID       uint
 	WorkRoot     string
 	SubPath      string
@@ -67,7 +67,7 @@ type SkillJob struct {
 	SrcReady bool
 	// Profile names a runner profile (docker/profiles/<name>/). Empty
 	// means "auto-detect from the clone"; "default" forces the default
-	// runner image. Only the docker runner honours this; the local
+	// runner image. Only the container runner honours this; the local
 	// runner ignores it (no per-profile image to swap to).
 	Profile string
 	// RequiresProfile pins the skill to a named profile. When set, the
@@ -83,7 +83,7 @@ type SkillJob struct {
 	// prompt. It lets callers resume the same conversation with targeted
 	// corrective instructions, such as rewriting an invalid report.json.
 	ResumePrompt string
-	// ClaudeConfigDir is a host directory the docker runner mounts as the
+	// ClaudeConfigDir is a host directory the container runner mounts as the
 	// container's CLAUDE_CONFIG_DIR so the resumable session store persists
 	// across container restarts. Empty disables the mount (the local runner
 	// ignores it and relies on the host's own ~/.claude).
@@ -113,7 +113,7 @@ type LocalClaude struct {
 // RunSkill runs claude against a staged skill in a local workspace. The
 // workspace layout is:
 //
-//	{DataDir}/scan-{id}/src/                clone (read-only in docker)
+//	{DataDir}/scan-{id}/src/                clone (read-only in the container)
 //	{DataDir}/scan-{id}/.claude/skills/NAME staged skill (read by claude-code)
 //	{DataDir}/scan-{id}/OutputFile          where the skill writes, if any
 func (l LocalClaude) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)) (SkillResult, error) {
@@ -141,17 +141,17 @@ func (l LocalClaude) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)
 	}
 
 	emit(Event{Kind: KindText, Text: "$ claude -p <skill:" + sj.Name + ">"})
-	planLimitText := ""
+	accountErrText := ""
 	wrappedEmit := func(e Event) {
-		if planLimitText == "" {
-			planLimitText = claudePlanLimitText(e.Text)
+		if accountErrText == "" {
+			accountErrText = claudeAccountErrorText(e.Text)
 		}
 		emit(e)
 	}
 	args := buildClaudeArgs(sj, l.Effort, l.MaxTurns)
 	hitMaxTurns, sessionID, waitErr := l.runClaudeOnce(ctx, args, work, wrappedEmit)
 
-	if waitErr != nil && sj.ResumeSessionID != "" && sessionID == "" && planLimitText == "" {
+	if waitErr != nil && sj.ResumeSessionID != "" && sessionID == "" && accountErrText == "" {
 		if sj.ResumePrompt != "" {
 			emit(Event{Kind: KindText, Text: "resume of session " + sj.ResumeSessionID + " failed; " + resumePromptNoFreshFallbackText})
 			return SkillResult{Commit: commit}, fmt.Errorf("claude exited: %w", waitErr)
@@ -175,8 +175,8 @@ func (l LocalClaude) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)
 		if hitMaxTurns {
 			return res, &MaxTurnsReachedError{}
 		}
-		if planLimitText != "" {
-			return res, &ClaudePlanLimitError{Detail: planLimitText}
+		if accountErrText != "" {
+			return res, &ClaudeAccountError{Detail: accountErrText}
 		}
 		return res, fmt.Errorf("claude exited: %w", waitErr)
 	}
@@ -251,7 +251,7 @@ func readCappedReport(path string, emit func(Event)) string {
 }
 
 // buildClaudeArgs assembles the `claude -p` argv shared by the local and
-// docker runners. When the skill declares an allowed-tools list the agent
+// container runners. When the skill declares an allowed-tools list the agent
 // is held to it under acceptEdits (writes to report.json still go through
 // unprompted, arbitrary Bash does not); otherwise it falls back to the
 // historical bypassPermissions behaviour.

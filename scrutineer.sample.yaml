@@ -36,19 +36,47 @@
 # skills_repo: https://github.com/alpha-omega-security/scrutineer-skills
 # skills_repo: alpha-omega-security/scrutineer-skills@v0.3.1
 
-# Disable the docker runner even if docker is available on the host.
-# no_docker: false
+# Container runtime: docker (default) or podman. Rootless podman is detected
+# automatically and gets --userns=keep-id so scan output stays host-owned;
+# podman >= 4.7 and an /etc/subuid range are required. There is no
+# auto-detection -- a podman-only host must set this explicitly.
+# runtime: docker
 
-# Strict sandbox mode. Forces the docker runner (no --no-docker fallback),
+# SELinux bind-mount relabeling for the container runner. "auto" (default) adds
+# ":z" to the runner's bind mounts only when SELinux is detected on the host
+# (the Fedora/RHEL/Rocky/Alma default), so the container can read the clone and
+# write its output; without it every scan fails with permission errors on such
+# hosts. "on" forces it; "off" disables it (set this if you pre-label the data
+# dir yourself). Non-SELinux hosts are unaffected either way. A startup smoke
+# test verifies a real relabeled mount works. See docs/podman.md.
+# selinux: auto
+
+# Disable the container runner even if a runtime is available on the host;
+# claude then runs directly on the host with no isolation. (no_docker is the
+# retained back-compat alias for this key.)
+# no_container: false
+
+# Strict sandbox mode. Forces the container runner (no --no-container fallback),
 # restricts the egress allowlist to *.anthropic.com plus host.docker.internal,
 # mounts the container rootfs read-only, sets no-new-privileges, and attaches
-# the runner to an --internal docker network so the only route out is the
-# scrutineer host proxy. egress_allow below is ignored under hardened mode;
-# bundled skills that need ecosyste.ms or a package registry won't work
-# unless they route via the host skill API.
+# the runner to an --internal network so the only route out is the scrutineer
+# host proxy. Under podman, each hardened scan first verifies that network
+# blocks external egress and refuses to run otherwise. egress_allow below is
+# ignored under hardened mode; bundled skills that need ecosyste.ms or a
+# package registry won't work unless they route via the host skill API.
 # hardened: false
 
-# Docker image used for per-scan containers.
+# The non-network half of hardened mode WITHOUT the per-scan --internal network:
+# mounts the rootfs read-only, sets no-new-privileges, and applies the 2 GiB
+# post-clone workspace cap, but skips the network isolation that rootless podman
+# can't route to the host proxy. This is how rootless deployments get hardening,
+# since full --hardened is refused there (see docs/podman.md). --cap-drop ALL +
+# non-root user + /tmp tmpfs apply in every mode regardless. Implied by hardened.
+# A read-only rootfs can break custom profile images that write outside /work
+# and /tmp.
+# hardened_rootless_runtime: false
+
+# Container image used for per-scan containers.
 # runner_image: ghcr.io/alpha-omega-security/scrutineer-runner:latest
 
 # Directory containing per-ecosystem runner profiles. Each profile is a
@@ -59,7 +87,7 @@
 # disables the mechanism entirely.
 # profiles_dir: docker/profiles
 
-# Extra hosts the docker runner's egress proxy will tunnel to, on top of
+# Extra hosts the container runner's egress proxy will tunnel to, on top of
 # the built-in allowlist (Anthropic API, *.ecosyste.ms, major forges,
 # package registries, advisory sources, host.docker.internal). Use
 # "*.example.com" to allow every subdomain.

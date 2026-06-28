@@ -292,18 +292,21 @@ func TestLocalClaude_ResumePromptDoesNotFallbackToFresh(t *testing.T) {
 	}
 }
 
-func TestClaudePlanLimitText(t *testing.T) {
+func TestClaudeAccountErrorText(t *testing.T) {
 	for _, text := range []string{
+		// usage / rate / quota limits
 		"Claude usage limit reached. Your limit will reset later.",
 		"API Error: 429 Too Many Requests",
 		"quota exceeded for this account",
+		// access disabled or revoked (the message a suspended account returns)
+		"Your organization has disabled Claude subscription access for Claude Code · Use an Anthropic API key instead, or ask your admin to enable access",
 	} {
-		if got := claudePlanLimitText(text); got == "" {
-			t.Errorf("claudePlanLimitText(%q) did not match", text)
+		if got := claudeAccountErrorText(text); got == "" {
+			t.Errorf("claudeAccountErrorText(%q) did not match", text)
 		}
 	}
-	if got := claudePlanLimitText("syntax error in generated report"); got != "" {
-		t.Errorf("claudePlanLimitText returned false positive %q", got)
+	if got := claudeAccountErrorText("syntax error in generated report"); got != "" {
+		t.Errorf("claudeAccountErrorText returned false positive %q", got)
 	}
 }
 

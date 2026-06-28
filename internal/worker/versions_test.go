@@ -27,10 +27,10 @@ func TestParseToolVersions_missingTools(t *testing.T) {
 }
 
 func TestRunnerImageName(t *testing.T) {
-	if got := RunnerImageName(DockerRunner{Image: "example/runner:1"}); got != "example/runner:1" {
+	if got := RunnerImageName(ContainerRunner{Image: "example/runner:1"}); got != "example/runner:1" {
 		t.Errorf("RunnerImageName(custom) = %q, want example/runner:1", got)
 	}
-	if got := RunnerImageName(DockerRunner{}); got != DefaultRunnerImage {
+	if got := RunnerImageName(ContainerRunner{}); got != DefaultRunnerImage {
 		t.Errorf("RunnerImageName(default) = %q, want %q", got, DefaultRunnerImage)
 	}
 	if got := RunnerImageName(LocalClaude{}); got != "" {

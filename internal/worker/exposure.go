@@ -163,11 +163,11 @@ func (w *Worker) doExposure(ctx context.Context, scan *db.Scan, emit func(Event)
 	}
 
 	skillDir := filepath.Join(workRoot, ".claude", "skills", skill.Name)
-	if err := stageSkill(&skill, workRoot, skillDir); err != nil {
-		return "", fmt.Errorf("stage skill: %w", err)
-	}
 	if err := stageContext(workRoot, w.APIBase, w.ForkOrg, w.metadataDir(), scan, &scan.Repository); err != nil {
 		return "", fmt.Errorf("stage context: %w", err)
+	}
+	if err := stageSkill(&skill, workRoot, skillDir); err != nil {
+		return "", fmt.Errorf("stage skill: %w", err)
 	}
 
 	depRepo := db.Repository{URL: dep.RepositoryURL, Name: dep.Name}
