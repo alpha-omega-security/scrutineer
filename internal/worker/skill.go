@@ -582,10 +582,24 @@ func (w *Worker) markNotObserved(scan *db.Scan, seen map[string]bool) int {
 		if seen[f.Fingerprint] {
 			continue
 		}
-		if uerr := w.DB.Model(&db.Finding{}).Where("id = ?", f.ID).Updates(map[string]any{
-			"missed_count":        f.MissedCount + 1,
+
+		missedCount := f.MissedCount + 1
+		updates := map[string]any{
+			"missed_count":        missedCount,
 			"last_missed_scan_id": scan.ID,
-		}).Error; uerr != nil {
+		}
+
+		autoReject := false
+		if w.AutoRejectMissedCount > 0 && missedCount >= w.AutoRejectMissedCount {
+			if f.Status == db.FindingNew || f.Status == db.FindingEnriched || f.Status == db.FindingTriaged || f.Status == db.FindingReady {
+				if !w.hasEverBeenReportedOrAcknowledged(f.ID) {
+					autoReject = true
+					updates["status"] = db.FindingRejected
+				}
+			}
+		}
+
+		if uerr := w.DB.Model(&db.Finding{}).Where("id = ?", f.ID).Updates(updates).Error; uerr != nil {
 			w.Log.Error("mark finding not-observed", "finding", f.ID, "err", uerr)
 			continue
 		}
@@ -596,9 +610,31 @@ func (w *Worker) markNotObserved(scan *db.Scan, seen map[string]bool) int {
 			Source:    db.SourceTool,
 			By:        scan.SkillName,
 		}).Error
+
+		if autoReject {
+			_ = w.DB.Create(&db.FindingHistory{
+				FindingID: f.ID,
+				Field:     "status",
+				OldValue:  string(f.Status),
+				NewValue:  string(db.FindingRejected),
+				Source:    db.SourceSystem,
+				By:        fmt.Sprintf("not observed in %d consecutive rescans", missedCount),
+			}).Error
+		}
+
 		missed++
 	}
 	return missed
+}
+
+// hasEverBeenReportedOrAcknowledged checks if the finding ever reached reported or acknowledged status.
+func (w *Worker) hasEverBeenReportedOrAcknowledged(findingID uint) bool {
+	var count int64
+	w.DB.Model(&db.FindingHistory{}).
+		Where("finding_id = ? AND field = ? AND (new_value = ? OR new_value = ?)",
+			findingID, "status", string(db.FindingReported), string(db.FindingAcknowledged)).
+		Count(&count)
+	return count > 0
 }
 
 // parseMaintainersOutput upserts Maintainer rows and links them to the

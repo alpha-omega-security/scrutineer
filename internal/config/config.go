@@ -107,6 +107,10 @@ type Config struct {
 	// IdentityFile is an age identity file or SSH private key used to
 	// decrypt encrypted imports. Empty disables encrypted import.
 	IdentityFile string `yaml:"identity_file"`
+	// AutoRejectMissedCount is the threshold of consecutive missed rescans at
+	// which an open finding is automatically transitioned to 'rejected'.
+	// 0 (the default) means this feature is disabled.
+	AutoRejectMissedCount int `yaml:"auto_reject_missed_count"`
 }
 
 // ParseScanTimeout validates and parses a scan_timeout string. Empty

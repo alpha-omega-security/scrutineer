@@ -97,6 +97,10 @@ type Worker struct {
 	// of its own so this callback is the seam.
 	OnScanFinalized func(scan *db.Scan)
 	ScanTimeout     time.Duration
+	// AutoRejectMissedCount is the threshold of consecutive missed rescans at
+	// which an open finding is automatically transitioned to 'rejected'.
+	// 0 means disabled.
+	AutoRejectMissedCount int
 
 	// Queue is the queue this worker is registered on. Required for the
 	// prereq gate to re-enqueue a scan whose upstream skills have not yet

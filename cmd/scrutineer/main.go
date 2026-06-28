@@ -87,31 +87,32 @@ func main() {
 // parseFlags fills defaults and CLI overrides; merge layers the config
 // file underneath any flag the user set explicitly.
 type flags struct {
-	configPath       string
-	addr             string
-	dataDir          string
-	effort           string
-	defaultModel     string
-	noContainer      bool
-	runtime          string
-	selinux          string
-	hardened         bool
-	hardenedRootless bool
-	runnerImage      string
-	profilesDir      string
-	skillsRepo       string
-	concurrency      int
-	cloneMode        string
-	scanTimeout      time.Duration
-	smokeTimeout     time.Duration
-	maxTurns         int
-	anthropicBaseURL string
-	forkOrg          string
-	metadataDir      string
-	schemaStrict     bool
-	recipientsFile   string
-	identityFile     string
-	skillLocal       skillDirs
+	configPath            string
+	addr                  string
+	dataDir               string
+	effort                string
+	defaultModel          string
+	noContainer           bool
+	runtime               string
+	selinux               string
+	hardened              bool
+	hardenedRootless      bool
+	runnerImage           string
+	profilesDir           string
+	skillsRepo            string
+	concurrency           int
+	cloneMode             string
+	scanTimeout           time.Duration
+	smokeTimeout          time.Duration
+	maxTurns              int
+	anthropicBaseURL      string
+	forkOrg               string
+	metadataDir           string
+	schemaStrict          bool
+	recipientsFile        string
+	identityFile          string
+	autoRejectMissedCount int
+	skillLocal            skillDirs
 
 	// set records which flags were passed on the command line so merge
 	// knows not to let the config file override them.
@@ -155,6 +156,7 @@ func registerFlags(fs *flag.FlagSet, f *flags) {
 	fs.BoolVar(&f.schemaStrict, "schema-strict", false, "fail scans whose report.json does not validate against the skill's schema (default: warn and continue)")
 	fs.StringVar(&f.recipientsFile, "recipients-file", "", "age recipients file (public keys) for encrypted export")
 	fs.StringVar(&f.identityFile, "identity-file", "", "age identity file or SSH private key for decrypting imports")
+	fs.IntVar(&f.autoRejectMissedCount, "auto-reject-missed-count", 0, "auto-reject findings after this many consecutive missed rescans (0 disables)")
 	fs.Var(&f.skillLocal, "skills", "directory to load SKILL.md files from (repeatable)")
 }
 
@@ -230,6 +232,9 @@ func (f *flags) merge(cfg *config.Config) {
 	}
 	if cfg.IdentityFile != "" && !f.set["identity-file"] {
 		f.identityFile = cfg.IdentityFile
+	}
+	if cfg.AutoRejectMissedCount > 0 && !f.set["auto-reject-missed-count"] {
+		f.autoRejectMissedCount = cfg.AutoRejectMissedCount
 	}
 
 	if len(cfg.Models) > 0 {
@@ -416,15 +421,16 @@ func run(log *slog.Logger) error {
 	}
 
 	w := &worker.Worker{
-		DB:           gdb,
-		Log:          log,
-		DataDir:      filepath.Join(f.dataDir, "work"),
-		APIBase:      apiBase,
-		ForkOrg:      f.forkOrg,
-		MetadataDir:  f.metadataDir,
-		Runner:       runner,
-		ScanTimeout:  f.scanTimeout,
-		SchemaStrict: f.schemaStrict,
+		DB:                    gdb,
+		Log:                   log,
+		DataDir:               filepath.Join(f.dataDir, "work"),
+		APIBase:               apiBase,
+		ForkOrg:               f.forkOrg,
+		MetadataDir:           f.metadataDir,
+		Runner:                runner,
+		ScanTimeout:           f.scanTimeout,
+		SchemaStrict:          f.schemaStrict,
+		AutoRejectMissedCount: f.autoRejectMissedCount,
 		OnEvent: func(scanID, repoID uint, name, data string) {
 			broker.Publish(web.Event{Name: name, Data: data, ScanID: scanID, RepoID: repoID})
 		},

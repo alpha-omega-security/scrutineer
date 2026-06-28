@@ -453,6 +453,7 @@ const (
 	SourceTool    FindingSource = "tool"
 	SourceModel   FindingSource = "model_suggested"
 	SourceAnalyst FindingSource = "analyst"
+	SourceSystem  FindingSource = "system"
 )
 
 // Finding is one vulnerability reported by a scan. The Finding row holds
