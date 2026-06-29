@@ -552,17 +552,15 @@ func resolveAppleHostGatewayIPv4(rt ContainerRuntime, image, network string) str
 }
 
 func routeGatewayIPv4(out []byte) string {
-	var fallback string
+	// resolveAppleHostGatewayIPv4's awk (`$2 == "00000000" { print $3 }`) already
+	// isolates the default route's gateway column, so the only shape we see is a
+	// single hex field per line.
 	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
-		fields := strings.Fields(line)
-		if len(fields) >= 3 && fields[1] == "00000000" {
-			return routeHexIPv4(fields[2])
-		}
-		if len(fields) == 1 && fallback == "" {
-			fallback = routeHexIPv4(fields[0])
+		if ip := routeHexIPv4(strings.TrimSpace(line)); ip != "" {
+			return ip
 		}
 	}
-	return fallback
+	return ""
 }
 
 func routeHexIPv4(field string) string {

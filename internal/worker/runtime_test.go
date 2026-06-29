@@ -8,7 +8,7 @@ import (
 )
 
 func TestContainerRuntimeBin(t *testing.T) {
-	appleBinary := "con" + "tainer"
+	appleBinary := "container"
 	tests := []struct {
 		rt   ContainerRuntime
 		want string
@@ -115,23 +115,19 @@ func TestHardeningSupportError(t *testing.T) {
 	tests := []struct {
 		name             string
 		rt               ContainerRuntime
-		hardened         bool
 		hardenedRootless bool
 		wantErr          bool
 	}{
-		{"docker hardened", ContainerRuntime{Bin: "docker"}, true, false, false},
-		{"docker hardened-rootless", ContainerRuntime{Bin: "docker"}, false, true, false},
-		{"podman rootless hardened", ContainerRuntime{Bin: "podman", Rootless: true}, true, false, false},
-		{"apple ordinary scan", ContainerRuntime{Bin: "apple"}, false, false, false},
-		{"apple hardened allowed", ContainerRuntime{Bin: "apple"}, true, false, false},
-		{"apple hardened-rootless refused", ContainerRuntime{Bin: "apple"}, false, true, true},
-		{"apple both -> rootless half refused", ContainerRuntime{Bin: "apple"}, true, true, true},
+		{"docker hardened-rootless", ContainerRuntime{Bin: "docker"}, true, false},
+		{"podman rootless hardened-rootless", ContainerRuntime{Bin: "podman", Rootless: true}, true, false},
+		{"apple plain (ordinary or --hardened)", ContainerRuntime{Bin: "apple"}, false, false},
+		{"apple hardened-rootless refused", ContainerRuntime{Bin: "apple"}, true, true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			err := tc.rt.HardeningSupportError(tc.hardened, tc.hardenedRootless)
+			err := tc.rt.HardeningSupportError(tc.hardenedRootless)
 			if (err != nil) != tc.wantErr {
-				t.Errorf("HardeningSupportError(%v, %v) err = %v, wantErr %v", tc.hardened, tc.hardenedRootless, err, tc.wantErr)
+				t.Errorf("HardeningSupportError(%v) err = %v, wantErr %v", tc.hardenedRootless, err, tc.wantErr)
 			}
 		})
 	}
@@ -139,7 +135,7 @@ func TestHardeningSupportError(t *testing.T) {
 
 func TestDetectRuntime(t *testing.T) {
 	probeErr := errors.New("not installed")
-	appleBinary := "con" + "tainer"
+	appleBinary := "container"
 	type call struct {
 		name string
 		args []string

@@ -567,7 +567,7 @@ func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRu
 		}
 		return nil, "", fmt.Errorf("%s not available: install and start it, or pass --no-container to run without containerisation (no isolation)", f.runtime)
 	}
-	if err := rt.HardeningSupportError(f.hardened, f.hardenedRootless); err != nil {
+	if err := rt.HardeningSupportError(f.hardenedRootless); err != nil {
 		return nil, "", err
 	}
 	if rt.Bin == "apple" {

@@ -47,6 +47,10 @@ at the default still reports docker unavailable, by design.
 | `--hardened`: `--security-opt no-new-privileges` | yes | yes | no (VM boundary substitutes) |
 | `--hardened-rootless-runtime` | yes | yes | n/a (use `--hardened`) |
 
+Per-ecosystem profiles use the same code paths as docker/podman: profile images
+build with `container build --pull`, and profile auto-detection runs `brief` in
+a `--network none` container. Both were verified on `container` 1.0.0.
+
 ## Why no `no-new-privileges`, and why that is fine here
 
 Apple's `container` CLI does not expose `--security-opt` at all, so the
@@ -91,6 +95,13 @@ otherwise. This guards against Apple's known networking rough edges (DNS quirks,
 the host-access caveat in
 [apple/container#1320](https://github.com/apple/container/issues/1320), nftables
 filtering still pending).
+
+One quirk worth knowing: under `--hardened` the skill API base advertised to the
+container (in `context.json`) stays `host.docker.internal`, not the gateway IP
+that non-hardened apple advertises. That name does not resolve inside the VM, but
+it never has to: hardened routes everything through the proxy, which recognises
+the alias and rewrites it to `127.0.0.1`. Only the `HTTPS_PROXY` address itself
+is the per-scan gateway IP.
 
 `--hardened-rootless-runtime` (the rootless-podman non-network half) is refused
 under `--runtime apple`: Apple's network half works, so `--hardened` is the

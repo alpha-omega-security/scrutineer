@@ -332,20 +332,16 @@ func TestNetworkListNamesArgs(t *testing.T) {
 }
 
 func TestRouteGatewayIPv4_ParsesDefaultGateway(t *testing.T) {
+	// The awk filter emits just the default route's gateway hex field, so that
+	// single-field line is the only shape this needs to parse.
 	if got := routeGatewayIPv4([]byte("0140A8C0\n")); got != "192.168.64.1" {
-		t.Errorf("routeGatewayIPv4(single field) = %q, want 192.168.64.1", got)
-	}
-
-	out := []byte(`[0/6] [0s]
-Iface	Destination	Gateway 	Flags
-eth0	0040A8C0	00000000	0001
-eth0	00000000	0140A8C0	0003
-`)
-	if got := routeGatewayIPv4(out); got != "192.168.64.1" {
 		t.Errorf("routeGatewayIPv4 = %q, want 192.168.64.1", got)
 	}
-	if got := routeGatewayIPv4([]byte("Iface Destination Gateway\n")); got != "" {
-		t.Errorf("routeGatewayIPv4(empty route) = %q, want empty", got)
+	if got := routeGatewayIPv4([]byte("")); got != "" {
+		t.Errorf("routeGatewayIPv4(empty) = %q, want empty", got)
+	}
+	if got := routeGatewayIPv4([]byte("nothex\n")); got != "" {
+		t.Errorf("routeGatewayIPv4(non-hex) = %q, want empty", got)
 	}
 }
 
