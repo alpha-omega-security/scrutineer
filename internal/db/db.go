@@ -1269,3 +1269,11 @@ func SweepRunning(gdb *gorm.DB) error {
 			"finished_at": new(time.Now()),
 		}).Error
 }
+
+// RetireDependentsSkill performs a one-time deactivation of the dependents
+// skill on startup so existing instances don't keep running a deleted skill.
+func RetireDependentsSkill(gdb *gorm.DB) error {
+	return gdb.Model(&Skill{}).
+		Where("name = ? AND source = ?", "dependents", "local").
+		Update("active", false).Error
+}

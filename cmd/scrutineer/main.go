@@ -379,6 +379,9 @@ func run(log *slog.Logger) error {
 	if err := db.SweepRunning(gdb); err != nil {
 		return fmt.Errorf("sweep: %w", err)
 	}
+	if err := db.RetireDependentsSkill(gdb); err != nil {
+		return fmt.Errorf("retire dependents: %w", err)
+	}
 	sqldb, err := gdb.DB()
 	if err != nil {
 		return err

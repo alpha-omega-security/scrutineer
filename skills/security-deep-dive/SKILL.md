@@ -141,7 +141,7 @@ For libraries published to a registry: start with scrutineer's dependents cache:
 
 Unpack the published version of each — not git HEAD; the released artefact. Read how it calls this sink. Some will not be exposed (safe variant, mitigating flag, migrated off); note these as counterexamples with line numbers. The first significant exposed dependent is the headline; if it is itself widely depended on, follow it one level.
 
-If the dependents list is empty the dependents skill has not run yet — fall back to packages.ecosyste.ms directly.
+If the dependents list is empty the repository's ecosystem data has not been fetched yet — fall back to packages.ecosyste.ms directly.
 
 For targets that are not library-shaped — package managers, servers, build tools — trace the input paths through the trust tiers from Phase 1 instead. Who can supply this input under each documented deployment.
 

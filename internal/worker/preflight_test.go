@@ -169,12 +169,12 @@ func TestPreflightSkill_unknownPrereqTreatedSatisfied(t *testing.T) {
 
 func TestPreflightSkill_neverEnqueuedPrereqTreatedSatisfied(t *testing.T) {
 	// Bundled skills are always registered, so a prereq that triage
-	// decided to skip (e.g. dependents on a no-packages repo) shows up
+	// decided to skip (e.g. zizmor on a no-workflows repo) shows up
 	// as registered with zero scan rows on the repo. That must count as
 	// satisfied or every such repo deadlocks its deep-dive.
 	w := newPreflightWorker(t)
-	scan := seedPreflightFixtures(t, w, "dependents")
-	seedPrereqSkill(t, w, "dependents", true)
+	scan := seedPreflightFixtures(t, w, "zizmor")
+	seedPrereqSkill(t, w, "zizmor", true)
 
 	deferred, err := w.preflightSkill(context.Background(), scan, 0)
 	if err != nil {
