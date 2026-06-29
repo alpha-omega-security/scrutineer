@@ -2,7 +2,7 @@
 name: maintainers
 description: Identify the real maintainers of a repository and the best way to contact them about a security issue. Distinguishes active leads from occasional contributors and bots, using commit history, issue activity, and registry ownership. Use when preparing a disclosure and needing to know who to reach.
 license: MIT
-compatibility: Uses a python script (scripts/summarise.py) to aggregate cached ecosyste.ms data, parse local security files, and check PVR status, saving LLM tokens.
+compatibility: Requires python3 on PATH; needs network access to the scrutineer API and api.github.com.
 metadata:
   scrutineer.version: 1
   scrutineer.output_file: report.json
@@ -30,7 +30,7 @@ You are identifying who maintains a repository so a security disclosure can reac
 ## Data sources
 
 Run `python3 .claude/skills/maintainers/scripts/summarise.py`
-The script uses `context.json` to query the Scrutineer API for cached commits, issues, and packages data, parses `SECURITY.md` and `CODEOWNERS`, and hits the GitHub PVR endpoint if applicable.
+The script uses `context.json` to query the Scrutineer API for cached commits, issues, and packages data, parses `SECURITY.md`, `CODEOWNERS`, and `README.md`, and hits the GitHub PVR endpoint if applicable.
 
 After running the script, read `summary.json`. It contains all the necessary data to classify the maintainers and pick a disclosure channel.
 If the API data is missing, the script will fall back to git logs, which will be present in `summary.json`.

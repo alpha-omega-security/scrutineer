@@ -5,6 +5,8 @@ import urllib.request
 import subprocess
 import re
 import sys
+from collections import Counter
+import urllib.error
 
 
 def get_json(url, token=None):
@@ -12,7 +14,7 @@ def get_json(url, token=None):
     if token:
         req.add_header("Authorization", f"Bearer {token}")
     try:
-        with urllib.request.urlopen(req) as response:
+        with urllib.request.urlopen(req, timeout=10) as response:
             if response.status == 200:
                 data = response.read().decode("utf-8")
                 if data:
@@ -50,7 +52,30 @@ def main():
     if api_base and token and repo_id:
         base_url = f"{api_base}/repositories/{repo_id}/ecosystems"
         summary["commits_data"] = get_json(f"{base_url}/commits/raw", token)
+        if summary["commits_data"] and isinstance(summary["commits_data"], dict):
+            commits = summary["commits_data"].get("commits", [])
+            if commits:
+                authors = [
+                    c.get("author_name")
+                    or c.get("login")
+                    or (c.get("author") or {}).get("login")
+                    or "unknown"
+                    for c in commits
+                ]
+                top = Counter(authors).most_common(20)
+                summary["commits_data"] = {"top_committers": top}
+
         summary["issues_data"] = get_json(f"{base_url}/issues/raw", token)
+        if summary["issues_data"] and isinstance(summary["issues_data"], dict):
+            issues = summary["issues_data"].get("issues", [])
+            if issues:
+                actors = [
+                    i.get("user") or i.get("closed_by") or i.get("login") or "unknown"
+                    for i in issues
+                ]
+                top = Counter(actors).most_common(20)
+                summary["issues_data"] = {"top_issue_actors": top}
+
         summary["packages_data"] = get_json(f"{base_url}/packages/raw", token)
 
     if (
@@ -60,7 +85,15 @@ def main():
     ):
         try:
             summary["fallback_git_shortlog"] = subprocess.check_output(
-                ["git", "-C", "./src", "shortlog", "-sne", "--since=1 year ago"],
+                [
+                    "git",
+                    "-C",
+                    "./src",
+                    "shortlog",
+                    "-sne",
+                    "--since=1 year ago",
+                    "HEAD",
+                ],
                 text=True,
                 stderr=subprocess.DEVNULL,
             )
@@ -87,10 +120,19 @@ def main():
                 summary["security_md"] = f.read()
             break
 
-    codeowners_path = os.path.join("./src", "CODEOWNERS")
-    if os.path.exists(codeowners_path):
-        with open(codeowners_path, "r", errors="ignore") as f:
-            summary["codeowners"] = f.read()
+    for path in ["CODEOWNERS", ".github/CODEOWNERS", "docs/CODEOWNERS"]:
+        codeowners_path = os.path.join("./src", path)
+        if os.path.exists(codeowners_path):
+            with open(codeowners_path, "r", errors="ignore") as f:
+                summary["codeowners"] = f.read()
+            break
+
+    for path in ["README.md", "README", "README.txt", "readme.md"]:
+        readme_path = os.path.join("./src", path)
+        if os.path.exists(readme_path):
+            with open(readme_path, "r", errors="ignore") as f:
+                summary["readme_md"] = f.read()
+            break
 
     match = re.search(r"github\.com/([^/]+)/([^/]+?)(?:\.git)?$", repo_url)
     if match:
@@ -99,7 +141,7 @@ def main():
         req = urllib.request.Request(pvr_url)
         req.add_header("Accept", "application/vnd.github+json")
         try:
-            with urllib.request.urlopen(req) as response:
+            with urllib.request.urlopen(req, timeout=10) as response:
                 if response.status == 200:
                     data = json.loads(response.read().decode("utf-8"))
                     summary["pvr_checked"] = True

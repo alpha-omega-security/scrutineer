@@ -15,7 +15,6 @@ metadata:
     - advisories
     - packages
     - dependents
-    - maintainers
 ---
 
 # security-deep-dive
