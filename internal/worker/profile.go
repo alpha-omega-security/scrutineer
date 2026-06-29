@@ -347,6 +347,12 @@ func imageTag(profileName string, dockerfile []byte, runnerImage, baseDigest str
 // returns "" when the tool is unavailable, the registry is unreachable, or the
 // ref is local-only (e.g. scrutineer-runner:local), so imageTag falls back to
 // keying on the ref string alone rather than blocking the scan.
+//
+// remoteRunnerDigest (the runner-image staleness check) is the other caller; it
+// prepends "sha256:" and compares the result against the local RepoDigest. That
+// only holds because this hashes the canonical manifest bytes, which is exactly
+// what a registry records as a tag's digest -- keep it that way (don't switch to
+// a config or layer digest) or the staleness banner silently mis-fires.
 func resolveBaseDigest(ctx context.Context, rt ContainerRuntime, runnerImage string) string {
 	if runnerImage == "" {
 		return ""

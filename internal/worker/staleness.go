@@ -2,8 +2,6 @@ package worker
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"os/exec"
 	"strings"
 	"time"
@@ -122,28 +120,17 @@ func parseImageInspect(out string) (digest string, created time.Time) {
 }
 
 // remoteRunnerDigest fetches the registry digest of the image's current tag
-// (typically :latest) without pulling layers. It hashes the raw manifest the
-// registry serves -- on docker via `buildx imagetools inspect --raw`, on podman
-// (no buildx) via `skopeo inspect --raw`. The registry digest of a manifest is
-// by definition the sha256 of its canonical bytes, which is exactly what
-// `image inspect` records in RepoDigests, so the result is directly comparable
-// to the local digest without depending on any particular inspect output field.
-// Mirrors resolveBaseDigest. Best-effort: returns false (fail soft) when the
-// tool is missing or the registry is unreachable.
+// (typically :latest) without pulling layers, as a "sha256:<hex>" string
+// directly comparable to the RepoDigest localRunnerImage reads. It delegates to
+// resolveBaseDigest -- the same registry-manifest hash the profile cache keys on
+// -- and prepends the "sha256:" prefix the RepoDigest carries. Keeping the
+// single registry-digest path here means #513 (and anything else that extends
+// runtime coverage) only has to touch resolveBaseDigest. Best-effort: returns
+// false (fail soft) when the tool is missing or the registry is unreachable.
 func remoteRunnerDigest(ctx context.Context, rt ContainerRuntime, image string) (string, bool) {
-	var out []byte
-	var err error
-	if rt.Bin == "podman" {
-		if _, lookErr := exec.LookPath("skopeo"); lookErr != nil {
-			return "", false
-		}
-		out, err = exec.CommandContext(ctx, "skopeo", "inspect", "--raw", "docker://"+image).Output()
-	} else {
-		out, err = exec.CommandContext(ctx, "docker", "buildx", "imagetools", "inspect", image, "--raw").Output()
-	}
-	if err != nil || len(out) == 0 {
+	digest := resolveBaseDigest(ctx, rt, image)
+	if digest == "" {
 		return "", false
 	}
-	sum := sha256.Sum256(out)
-	return "sha256:" + hex.EncodeToString(sum[:]), true
+	return "sha256:" + digest, true
 }
