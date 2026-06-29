@@ -51,7 +51,6 @@ If `scrutineer.scan_ref` is set in `context.json`, include it in the POST body a
 Always:
 
 - `metadata`
-- `maintainers`
 - `repo-overview`
 - `packages`
 - `advisories`
