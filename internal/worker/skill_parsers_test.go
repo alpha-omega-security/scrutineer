@@ -415,18 +415,6 @@ func TestParsePosture_emptyTierLeavesRepoAlone(t *testing.T) {
 	}
 }
 
-func TestParseDependents_replacesDependentRows(t *testing.T) {
-	report := `{"dependents":[
-		{"name":"rails-x","ecosystem":"rubygems","purl":"pkg:gem/rails-x","downloads":5000,"dependent_repos":200,"latest_version":"7.0.0"}
-	]}`
-	repo, gdb := runSkillWithReport(t, "dependents", report)
-	var rows []db.Dependent
-	gdb.Where("repository_id = ?", repo.ID).Find(&rows)
-	if len(rows) != 1 || rows[0].Name != "rails-x" || rows[0].DependentRepos != 200 {
-		t.Fatalf("rows: %+v", rows)
-	}
-}
-
 func runSkillWithFinding(t *testing.T, outputKind, report string, startStatus db.FindingLifecycle) (db.Finding, *gorm.DB) {
 	t.Helper()
 	gdb, err := db.Open(filepath.Join(t.TempDir(), "v.db"))

@@ -226,56 +226,6 @@ func (w *Worker) parseAdvisoriesOutput(scan *db.Scan, report string, emit func(E
 	return nil
 }
 
-// parseDependentsOutput replaces Dependent rows for the scan's repository.
-func (w *Worker) parseDependentsOutput(scan *db.Scan, report string, emit func(Event)) error {
-	var result struct {
-		Dependents []struct {
-			Name           string `json:"name"`
-			Ecosystem      string `json:"ecosystem"`
-			PURL           string `json:"purl"`
-			RepositoryURL  string `json:"repository_url"`
-			Downloads      int64  `json:"downloads"`
-			DependentRepos int    `json:"dependent_repos"`
-			RegistryURL    string `json:"registry_url"`
-			LatestVersion  string `json:"latest_version"`
-		} `json:"dependents"`
-	}
-	if err := json.Unmarshal([]byte(report), &result); err != nil {
-		return fmt.Errorf("parse dependents: %w", err)
-	}
-	rows := make([]db.Dependent, 0, len(result.Dependents))
-	for _, d := range result.Dependents {
-		rows = append(rows, db.Dependent{
-			RepositoryID:   scan.RepositoryID,
-			Name:           d.Name,
-			Ecosystem:      db.EcosystemType(d.PURL, d.Ecosystem),
-			PURL:           d.PURL,
-			RepositoryURL:  d.RepositoryURL,
-			Downloads:      d.Downloads,
-			DependentRepos: d.DependentRepos,
-			RegistryURL:    d.RegistryURL,
-			LatestVersion:  d.LatestVersion,
-		})
-	}
-	// Replace the prior row set atomically so a failed insert can't leave
-	// the repository with zero dependents.
-	if err := w.DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("repository_id = ?", scan.RepositoryID).Delete(&db.Dependent{}).Error; err != nil {
-			return fmt.Errorf("delete old dependents: %w", err)
-		}
-		if len(rows) > 0 {
-			if err := tx.CreateInBatches(&rows, insertBatchSize).Error; err != nil {
-				return fmt.Errorf("save dependents: %w", err)
-			}
-		}
-		return nil
-	}); err != nil {
-		return err
-	}
-	emit(Event{Kind: KindText, Text: fmt.Sprintf("saved %d dependent(s)", len(rows))})
-	return nil
-}
-
 // parseDependenciesOutput replaces Dependency rows for the scan's repository.
 // Dependencies come from a git-pkgs-style manifest scan: one row per
 // (name, ecosystem, manifest_path) tuple.
