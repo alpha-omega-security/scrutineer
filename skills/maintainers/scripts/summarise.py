@@ -5,7 +5,6 @@ import urllib.request
 import subprocess
 import re
 import sys
-from collections import Counter
 import urllib.error
 
 
@@ -51,30 +50,23 @@ def main():
 
     if api_base and token and repo_id:
         base_url = f"{api_base}/repositories/{repo_id}/ecosystems"
-        summary["commits_data"] = get_json(f"{base_url}/commits/raw", token)
-        if summary["commits_data"] and isinstance(summary["commits_data"], dict):
-            commits = summary["commits_data"].get("commits", [])
-            if commits:
-                authors = [
-                    c.get("author_name")
-                    or c.get("login")
-                    or (c.get("author") or {}).get("login")
-                    or "unknown"
-                    for c in commits
-                ]
-                top = Counter(authors).most_common(20)
-                summary["commits_data"] = {"top_committers": top}
+        raw = get_json(f"{base_url}/commits/raw", token)
+        if isinstance(raw, dict):
+            summary["commits_data"] = {
+                "past_year_committers": (raw.get("past_year_committers") or [])[:20],
+                "total_committers": raw.get("total_committers"),
+            }
 
-        summary["issues_data"] = get_json(f"{base_url}/issues/raw", token)
-        if summary["issues_data"] and isinstance(summary["issues_data"], dict):
-            issues = summary["issues_data"].get("issues", [])
-            if issues:
-                actors = [
-                    i.get("user") or i.get("closed_by") or i.get("login") or "unknown"
-                    for i in issues
-                ]
-                top = Counter(actors).most_common(20)
-                summary["issues_data"] = {"top_issue_actors": top}
+        raw = get_json(f"{base_url}/issues/raw", token)
+        if isinstance(raw, dict):
+            summary["issues_data"] = {
+                "maintainers": raw.get("maintainers"),
+                "active_maintainers": raw.get("active_maintainers"),
+                "past_year_issue_authors": raw.get("past_year_issue_authors"),
+                "past_year_pull_request_authors": raw.get(
+                    "past_year_pull_request_authors"
+                ),
+            }
 
         summary["packages_data"] = get_json(f"{base_url}/packages/raw", token)
 
@@ -146,7 +138,7 @@ def main():
                     data = json.loads(response.read().decode("utf-8"))
                     summary["pvr_checked"] = True
                     summary["pvr_enabled"] = data.get("enabled", False)
-        except urllib.error.HTTPError as e:
+        except urllib.error.HTTPError:
             summary["pvr_checked"] = True
         except Exception:
             pass
