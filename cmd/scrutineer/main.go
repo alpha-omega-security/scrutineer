@@ -309,6 +309,7 @@ func validateFlags(f *flags) error {
 	return config.ValidateSELinux(f.selinux)
 }
 
+//nolint:gocognit
 func run(log *slog.Logger) error {
 	f := parseFlags()
 
