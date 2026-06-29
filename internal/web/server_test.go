@@ -109,6 +109,29 @@ func TestLoadByID(t *testing.T) {
 	if _, ok := loadByID[db.Repository](s, w, r); ok || w.Code != http.StatusNotFound {
 		t.Errorf("missing id: ok=%v code=%d, want false/404", ok, w.Code)
 	}
+
+	// A non-numeric id must 404 before reaching the DB rather than being
+	// spliced into the GORM inline condition as raw SQL (the SQLi this
+	// fix closes).
+	r.SetPathValue("id", "1; DROP TABLE repositories")
+	w = httptest.NewRecorder()
+	if _, ok := loadByID[db.Repository](s, w, r); ok || w.Code != http.StatusNotFound {
+		t.Errorf("injection id: ok=%v code=%d, want false/404", ok, w.Code)
+	}
+}
+
+// TestFindingShow_nonNumericID covers the same SQLi guard on a handler
+// that loads via Preload("...").First, exercising the second code path
+// (handlers that parse the id inline rather than through loadByID).
+func TestFindingShow_nonNumericID(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/findings/abc"))
+	if w.Code != http.StatusNotFound {
+		t.Errorf("non-numeric finding id: code=%d, want 404", w.Code)
+	}
 }
 
 func TestRepoList_batchedFindingsCountAcrossRepos(t *testing.T) {

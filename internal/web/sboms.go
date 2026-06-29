@@ -116,8 +116,6 @@ func (s *Server) sbomShow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The scope filter only makes sense when at least one package has a
-	// known direct/transitive value; flat-list SBOMs leave them all blank.
 	hasScope := anyPackageHasScope(up.Packages)
 
 	scope := r.URL.Query().Get("scope")
