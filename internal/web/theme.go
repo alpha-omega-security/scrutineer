@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"scrutineer/internal/config"
@@ -86,6 +87,14 @@ func (s *Server) settingsShow(w http.ResponseWriter, r *http.Request) {
 	s.DB.Raw("SELECT file FROM pragma_database_list WHERE name = 'main'").Scan(&dbPath)
 
 	meta := s.toolMetadataCached(r.Context())
+	// Overlay the boot-time staleness verdict onto the (separately cached)
+	// version metadata. This is the verdict from the startup check; it is not
+	// re-probed per request, so it reflects the runner image as of boot.
+	if st := s.runnerImageStatus(); st.Stale {
+		meta.Stale = true
+		meta.StaleDays = st.AgeDays
+		meta.PullCommand = st.PullCommand
+	}
 
 	// ConcurrencyInput pre-fills the form with the persisted value when set,
 	// else the value the runner is actually using now. MaxTurns is 0 when
@@ -124,6 +133,37 @@ type toolMetadata struct {
 	worker.RunnerToolVersions
 	Runtime     string
 	RunnerImage string
+	// Revision is the git commit the runner image was built from (its
+	// org.opencontainers.image.revision label), folded into the displayed image
+	// reference so the settings page names an actual build. "" when the image
+	// carries no such label.
+	Revision string
+	// Staleness of the runner image, from the boot-time check (issue #337).
+	// Overlaid onto the cached metadata per request; the verdict itself is the
+	// one computed at startup and is not refreshed for the process lifetime.
+	Stale       bool
+	StaleDays   int
+	PullCommand string
+}
+
+// shortSHALen is how many leading hex chars of a commit to show -- enough to be
+// unambiguous in practice without spilling the truncated metadata row.
+const shortSHALen = 12
+
+// RunnerImageRef is the runner image annotated with the git commit it was built
+// from, e.g. "ghcr.io/.../scrutineer-runner @ abc123def456", for the settings
+// "Runner image" row. The rolling ":latest" tag says nothing about which build
+// is running, so it's dropped in favour of the commit. Falls back to the bare
+// image reference when the revision label is absent.
+func (m toolMetadata) RunnerImageRef() string {
+	if m.Revision == "" {
+		return m.RunnerImage
+	}
+	rev := m.Revision
+	if len(rev) > shortSHALen {
+		rev = rev[:shortSHALen]
+	}
+	return strings.TrimSuffix(m.RunnerImage, ":latest") + " @ " + rev
 }
 
 // toolMetadataTTL bounds how long a gathered version set is reused. Versions
@@ -162,6 +202,7 @@ func (s *Server) toolMetadataCached(ctx context.Context) toolMetadata {
 		RunnerToolVersions: tools,
 		Runtime:            runtimeVer,
 		RunnerImage:        image,
+		Revision:           worker.RunnerImageRevision(ctx, rt, image),
 	}
 	s.toolMetaCache = meta
 	s.toolMetaTTL = time.Now().Add(toolMetadataTTL)

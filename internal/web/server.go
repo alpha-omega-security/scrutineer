@@ -122,6 +122,30 @@ type Server struct {
 	toolMetaMu    sync.Mutex
 	toolMetaCache toolMetadata
 	toolMetaTTL   time.Time
+
+	// runnerStatus is the result of the boot-time runner-image staleness check
+	// (issue #337), set once by main shortly after startup and read by the
+	// settings page to render the stale-image banner. The zero value renders
+	// nothing, so reads before the check completes are safe.
+	runnerStatusMu sync.Mutex
+	runnerStatus   worker.RunnerImageStatus
+}
+
+// SetRunnerImageStatus records the boot-time runner-image staleness result so
+// the settings page can surface it. Called once from main after the background
+// check finishes.
+func (s *Server) SetRunnerImageStatus(st worker.RunnerImageStatus) {
+	s.runnerStatusMu.Lock()
+	defer s.runnerStatusMu.Unlock()
+	s.runnerStatus = st
+}
+
+// runnerImageStatus returns the last recorded staleness result, or the zero
+// value (Stale=false) when the check has not run or found nothing to report.
+func (s *Server) runnerImageStatus() worker.RunnerImageStatus {
+	s.runnerStatusMu.Lock()
+	defer s.runnerStatusMu.Unlock()
+	return s.runnerStatus
 }
 
 // displaySeverity maps any known casing of a severity string to its
