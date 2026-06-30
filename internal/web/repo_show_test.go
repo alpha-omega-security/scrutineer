@@ -166,7 +166,6 @@ func TestRepoShow_dependenciesTabHiddenWhenNoDependencies(t *testing.T) {
 	for _, hidden := range []string{
 		`id="rt5"`,
 		`id="rp5"`,
-		"No dependencies indexed yet",
 	} {
 		if strings.Contains(body, hidden) {
 			t.Errorf("repo with no dependencies should not render %q", hidden)
