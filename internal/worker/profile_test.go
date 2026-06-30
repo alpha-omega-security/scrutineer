@@ -251,6 +251,69 @@ func TestMatchProfile(t *testing.T) {
 			want: "beam",
 		},
 		{
+			// brief reports package_managers:null for Perl, so the profile
+			// is marker-only and the json carries no signal here.
+			name: "Makefile.PL selects perl",
+			json: `{"package_managers":[]}`,
+			setup: func(t *testing.T, dir string) {
+				writeMarkerFile(t, dir, "Makefile.PL")
+			},
+			want: "perl",
+		},
+		{
+			name: "Build.PL selects perl",
+			json: `{"package_managers":[]}`,
+			setup: func(t *testing.T, dir string) {
+				writeMarkerFile(t, dir, "Build.PL")
+			},
+			want: "perl",
+		},
+		{
+			name: "cpanfile selects perl",
+			json: `{"package_managers":[]}`,
+			setup: func(t *testing.T, dir string) {
+				writeMarkerFile(t, dir, "cpanfile")
+			},
+			want: "perl",
+		},
+		{
+			name: "dist.ini selects perl",
+			json: `{"package_managers":[]}`,
+			setup: func(t *testing.T, dir string) {
+				writeMarkerFile(t, dir, "dist.ini")
+			},
+			want: "perl",
+		},
+		{
+			name: "META.json selects perl",
+			json: `{"package_managers":[]}`,
+			setup: func(t *testing.T, dir string) {
+				writeMarkerFile(t, dir, "META.json")
+			},
+			want: "perl",
+		},
+		{
+			// A CPAN dist that also commits a generated Makefile must still
+			// route to perl, not c-cpp -- registry order guarantees this.
+			name: "Makefile.PL wins over a c-cpp build file",
+			json: `{"package_managers":[]}`,
+			setup: func(t *testing.T, dir string) {
+				writeMarkerFile(t, dir, "Makefile.PL")
+				writeMarkerFile(t, dir, "Makefile")
+			},
+			want: "perl",
+		},
+		{
+			// brief returns null (not []) for Perl projects; matchProfile
+			// must tolerate the absent key and still match on markers.
+			name: "perl marker matches when package_managers is null",
+			json: `{"package_managers":null}`,
+			setup: func(t *testing.T, dir string) {
+				writeMarkerFile(t, dir, "cpanfile")
+			},
+			want: "perl",
+		},
+		{
 			name: "CMakeLists.txt selects c-cpp (no package manager)",
 			json: `{"package_managers":[]}`,
 			setup: func(t *testing.T, dir string) {

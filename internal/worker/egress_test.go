@@ -521,6 +521,8 @@ func TestDefaultEgressAllowCoversSkillHosts(t *testing.T) {
 		"anaconda.org",
 		"trunk.cocoapods.org",
 		"metacpan.org",
+		"cpan.metacpan.org",
+		"www.cpan.org",
 		"cran.r-project.org",
 		"formulae.brew.sh",
 		"pub.dev",

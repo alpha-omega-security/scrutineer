@@ -102,6 +102,23 @@ var builtinProfiles = []Profile{
 	{Name: "beam", Ecosystems: []string{"Mix", "rebar3"}},
 	{Name: "rust", Ecosystem: "Cargo"},
 	{
+		// brief reports no package manager for Perl (it parses cpanfile /
+		// META.json into purls but leaves package_managers null), so the
+		// profile matches on the dist's build files instead. Before c-cpp so
+		// a CPAN dist that also commits a generated Makefile, or whose
+		// Makefile.PL has already been run, routes here rather than to the
+		// native toolchain.
+		Name: "perl",
+		AnyMarkers: []ProfileMarker{
+			{Path: "Makefile.PL"},
+			{Path: "Build.PL"},
+			{Path: "cpanfile"},
+			{Path: "dist.ini"},
+			{Path: "META.json"},
+			{Path: "META.yml"},
+		},
+	},
+	{
 		// Last: brief reports no package manager for C/C++, so this is a
 		// fallback for repos that match no language ecosystem above but
 		// carry a native build file. Language repos (which also often have
