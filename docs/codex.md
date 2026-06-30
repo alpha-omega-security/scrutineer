@@ -36,9 +36,10 @@ image, not on the host, and the local fallback (`LocalClaude`) is claude-only.
 
 ## How the harness maps
 
-Each per-harness seam (`internal/worker/harness.go`) has a codex value:
+Everything the container runner asks of the agent CLI goes through the
+`Harness` interface (`internal/worker/harness.go`). The codex values:
 
-| Seam | claude | codex |
+| Aspect | claude | codex |
 | --- | --- | --- |
 | Binary | `claude` | `codex` |
 | Argv | `claude -p --output-format stream-json ...` | `codex exec --json --sandbox workspace-write --skip-git-repo-check ...` |
