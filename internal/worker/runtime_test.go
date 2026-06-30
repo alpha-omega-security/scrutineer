@@ -69,6 +69,32 @@ func TestContainerRuntimeNeedsHardenedNetVerify(t *testing.T) {
 	}
 }
 
+func TestContainerRuntimeNeedsEgressSidecar(t *testing.T) {
+	// The egress proxy sidecar is for rootless podman ONLY -- the one runtime
+	// where the host proxy is unreachable across the --internal boundary. Apple
+	// keeps the in-process host proxy (its CLI has no --network podman / network
+	// connect), and docker and rootful podman use the trusted host-netns bridge.
+	tests := []struct {
+		rt   ContainerRuntime
+		want bool
+	}{
+		{ContainerRuntime{}, false},                             // docker (zero value)
+		{ContainerRuntime{Bin: "docker"}, false},                // docker explicit
+		{ContainerRuntime{Bin: "podman"}, false},                // rootful podman -> host proxy
+		{ContainerRuntime{Bin: "podman", Rootless: true}, true}, // rootless podman -> sidecar
+		{ContainerRuntime{Bin: "apple"}, false},                 // apple -> host proxy, NOT a sidecar
+	}
+	for _, tc := range tests {
+		if got := tc.rt.needsEgressSidecar(); got != tc.want {
+			t.Errorf("%+v.needsEgressSidecar() = %v, want %v", tc.rt, got, tc.want)
+		}
+		// The exported wrapper must agree with the internal predicate.
+		if got := tc.rt.NeedsEgressSidecar(); got != tc.want {
+			t.Errorf("%+v.NeedsEgressSidecar() = %v, want %v", tc.rt, got, tc.want)
+		}
+	}
+}
+
 // TestContainerRuntimeCapabilityFlags is the run-flag parity matrix: for each
 // runtime it pins exactly which Docker/Podman flags apply and how `run` starts.
 // docker and podman are identical; apple diverges only where its CLI lacks the
