@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -78,6 +79,7 @@ type stubHarness struct {
 	bin    string
 	guide  string
 	egress []string
+	env    []string
 }
 
 func (s stubHarness) Binary() string                      { return s.bin }
@@ -85,6 +87,107 @@ func (s stubHarness) Args(SkillJob, string, int) []string { return []string{"--s
 func (s stubHarness) ParseStream(io.Reader, func(Event))  {}
 func (s stubHarness) GuideFilename() string               { return s.guide }
 func (s stubHarness) EgressHosts() []string               { return s.egress }
+func (s stubHarness) Env(string) []string                 { return s.env }
+
+func TestClaudeHarness_Env(t *testing.T) {
+	// With both credentials set on the host and a base URL, Env must
+	// pass both through (bare KEY) and set the base URL explicitly,
+	// alongside the fixed telemetry suppressors.
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "oat-test")
+	got := ClaudeHarness{}.Env("https://proxy.corp.com/v1")
+	for _, want := range []string{
+		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
+		"OTEL_SDK_DISABLED=true",
+		"DISABLE_TELEMETRY=1",
+		"DISABLE_ERROR_REPORTING=1",
+		"DISABLE_BUG_COMMAND=1",
+		"DISABLE_AUTOUPDATER=1",
+		"DISABLE_NON_ESSENTIAL_MODEL_CALLS=1",
+		"ANTHROPIC_API_KEY",
+		"CLAUDE_CODE_OAUTH_TOKEN",
+		"ANTHROPIC_BASE_URL=https://proxy.corp.com/v1",
+	} {
+		if !slices.Contains(got, want) {
+			t.Errorf("Env() missing %q: %v", want, got)
+		}
+	}
+}
+
+func TestClaudeHarness_EnvOmitsUnsetCredentials(t *testing.T) {
+	// docker -e KEY (bare) reads the host value at run time; when the
+	// host has none, passing the bare key would clear an inherited value
+	// and is just noise. Env must omit credentials the host does not set,
+	// and omit the base URL when none is configured.
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "")
+	got := ClaudeHarness{}.Env("")
+	for _, absent := range []string{"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"} {
+		if slices.Contains(got, absent) {
+			t.Errorf("Env() included unset credential %q: %v", absent, got)
+		}
+	}
+	for _, e := range got {
+		if strings.HasPrefix(e, "ANTHROPIC_BASE_URL=") {
+			t.Errorf("Env() set base URL with none configured: %v", got)
+		}
+	}
+}
+
+func TestBuildRunArgs_includesHarnessEnv(t *testing.T) {
+	// The harness's Env() entries land on the container command line
+	// each as its own `-e <entry>` pair, and a non-claude harness
+	// contributes only its own keys -- nothing claude-specific leaks
+	// from buildRunArgs itself.
+	d := ContainerRunner{Harness: stubHarness{env: []string{"OPENAI_API_KEY", "STUB_OPT=1"}}}
+	got := d.buildRunArgs("/work/abs", "img:latest", hardenedNet{}, "")
+
+	if !containsEnvFlag(got, "OPENAI_API_KEY") || !containsEnvFlag(got, "STUB_OPT=1") {
+		t.Errorf("harness env not wired into run args: %v", got)
+	}
+	for _, leaked := range []string{
+		"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN",
+		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1", "DISABLE_AUTOUPDATER=1",
+	} {
+		if containsEnvFlag(got, leaked) {
+			t.Errorf("non-claude harness leaked claude env %q: %v", leaked, got)
+		}
+	}
+	// Harness-neutral env stays put regardless of harness.
+	if !containsEnvFlag(got, "HOME=/tmp") || !containsEnvFlag(got, "SEMGREP_SEND_METRICS=off") {
+		t.Errorf("harness-neutral env dropped: %v", got)
+	}
+}
+
+func TestBuildRunArgs_defaultHarnessKeepsClaudeEnv(t *testing.T) {
+	// The zero ContainerRunner{} (no Harness set) must keep producing
+	// the claude env it always has, so this refactor is no behaviour
+	// change for existing deployments.
+	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test")
+	d := ContainerRunner{AnthropicBaseURL: "https://proxy.corp.com/v1"}
+	got := d.buildRunArgs("/work/abs", "img:latest", hardenedNet{}, "")
+	for _, want := range []string{
+		"ANTHROPIC_API_KEY",
+		"ANTHROPIC_BASE_URL=https://proxy.corp.com/v1",
+		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
+		"DISABLE_AUTOUPDATER=1",
+	} {
+		if !containsEnvFlag(got, want) {
+			t.Errorf("default harness dropped claude env %q: %v", want, got)
+		}
+	}
+}
+
+// containsEnvFlag reports whether the docker/podman argv s carries the
+// pair `-e entry`. Adjacency matters: `-e A -e B` must not match `-e B A`.
+func containsEnvFlag(s []string, entry string) bool {
+	for i := 0; i+1 < len(s); i++ {
+		if s[i] == "-e" && s[i+1] == entry {
+			return true
+		}
+	}
+	return false
+}
 
 func TestInjectProfileGuide_writesHarnessFilename(t *testing.T) {
 	profilesDir := t.TempDir()

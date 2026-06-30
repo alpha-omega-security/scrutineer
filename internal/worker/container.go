@@ -372,21 +372,16 @@ func (d ContainerRunner) buildRunArgs(absWork, image string, hnet hardenedNet, c
 		"--cap-drop", "ALL",
 		"--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()),
 		"-e", "HOME=/tmp",
-		"-e", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
-		// Suppress telemetry traffic
-		// Denied by the egress proxy anyway, but noisy in the log.
-		"-e", "OTEL_SDK_DISABLED=true",
-		"-e", "DISABLE_TELEMETRY=1",
-		"-e", "DISABLE_ERROR_REPORTING=1",
-		"-e", "DISABLE_BUG_COMMAND=1",
-		"-e", "DISABLE_AUTOUPDATER=1",
-		// Disable auxiliary calls not useful in headless mode
-		"-e", "DISABLE_NON_ESSENTIAL_MODEL_CALLS=1",
 		"-e", "SEMGREP_SEND_METRICS=off",
 		"--tmpfs", "/tmp:rw,noexec,nosuid,size=256m",
 		"-v", bindMount(absWork, "/work", d.SELinuxRelabel),
 		"-w", "/work",
 	)
+	// Harness-specific env: model-API credential, base URL, and the
+	// harness's own telemetry / autoupdate suppressors.
+	for _, e := range d.harness().Env(d.AnthropicBaseURL) {
+		args = append(args, "-e", e)
+	}
 	if d.Runtime.supportsHostGatewayAddHost() {
 		args = append(args, "--add-host", HostGatewayAlias+":"+gwTarget)
 	}
@@ -458,18 +453,6 @@ func (d ContainerRunner) buildRunArgs(absWork, image string, hnet hardenedNet, c
 		)
 	} else if !d.Hardened {
 		args = append(args, "--network", "none")
-	}
-	// Forwarding the host Anthropic credential into the container is a known
-	// residual: in-container code (T1) can read it. Closing it needs proxy-side
-	// credential injection -- see threatmodel.md T1/T13.
-	if os.Getenv("ANTHROPIC_API_KEY") != "" {
-		args = append(args, "-e", "ANTHROPIC_API_KEY")
-	}
-	if os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") != "" {
-		args = append(args, "-e", "CLAUDE_CODE_OAUTH_TOKEN")
-	}
-	if d.AnthropicBaseURL != "" {
-		args = append(args, "-e", "ANTHROPIC_BASE_URL="+d.AnthropicBaseURL)
 	}
 	return append(args, "--", image)
 }
