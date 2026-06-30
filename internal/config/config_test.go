@@ -56,6 +56,7 @@ skills:
   - ./skills
   - /srv/skills
 skills_repo: https://github.com/org/skills
+backend: codex
 no_container: true
 hardened: true
 runner_image: custom-runner
@@ -81,6 +82,9 @@ metadata_dir: .ossprey/
 	}
 	if len(c.Skills) != 2 {
 		t.Errorf("skills: %+v", c.Skills)
+	}
+	if c.Backend != "codex" {
+		t.Errorf("backend: %q, want codex", c.Backend)
 	}
 	if c.NoContainer == nil || !*c.NoContainer {
 		t.Errorf("no_container: %v", c.NoContainer)

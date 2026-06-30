@@ -92,6 +92,7 @@ type flags struct {
 	dataDir               string
 	effort                string
 	defaultModel          string
+	backend               string
 	noContainer           bool
 	runtime               string
 	selinux               string
@@ -137,6 +138,7 @@ func registerFlags(fs *flag.FlagSet, f *flags) {
 	fs.StringVar(&f.addr, "addr", "127.0.0.1:8080", "listen address")
 	fs.StringVar(&f.dataDir, "data", "./data", "data directory (db + workspaces)")
 	fs.StringVar(&f.effort, "effort", "high", "claude effort")
+	fs.StringVar(&f.backend, "backend", "", "agent CLI the container runner execs: "+worker.HarnessNames()+" (default claude). Non-claude backends require the containerised runner")
 	fs.StringVar(&f.runtime, "runtime", "docker", "container runtime: docker, podman (rootless supported), or apple (Apple, experimental)")
 	fs.StringVar(&f.selinux, "selinux", "auto", "SELinux bind-mount relabeling: auto (relabel when SELinux is detected on the host), on (always), off (never). Relabeling (\":z\") lets the container read /work and write its output on enforcing-SELinux hosts")
 	fs.BoolVar(&f.noContainer, "no-container", false, "disable the containerised runner and run claude directly on the host (no isolation), even if a container runtime is available")
@@ -179,6 +181,9 @@ func (f *flags) merge(cfg *config.Config) {
 	}
 	if cfg.NoContainer != nil && !f.set["no-container"] && !f.set["no-docker"] {
 		f.noContainer = *cfg.NoContainer
+	}
+	if cfg.Backend != "" && !f.set["backend"] {
+		f.backend = cfg.Backend
 	}
 	if cfg.Runtime != "" && !f.set["runtime"] {
 		f.runtime = cfg.Runtime
@@ -307,6 +312,9 @@ func expandHome(path string) (string, error) {
 // complexity in check.
 func validateFlags(f *flags) error {
 	if err := config.ValidateClone(f.cloneMode); err != nil {
+		return err
+	}
+	if _, err := worker.HarnessByName(f.backend); err != nil {
 		return err
 	}
 	if err := config.ValidateRuntime(f.runtime); err != nil {
@@ -591,8 +599,14 @@ const defaultRuntimeSmokeTimeout = 5 * time.Minute
 //nolint:ireturn // dispatched on f.noContainer; concrete types live in the worker pkg
 func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRunner, string, error) {
 	apiBase := "http://" + f.addr + "/api"
+	// Already validated in run(); ignore the error here.
+	h, _ := worker.HarnessByName(f.backend)
+	_, isClaude := h.(worker.ClaudeHarness)
 	if f.hardened && f.noContainer {
 		return nil, "", fmt.Errorf("--hardened requires a container runtime; remove --no-container")
+	}
+	if !isClaude && f.noContainer {
+		return nil, "", fmt.Errorf("backend %q requires the containerised runner; remove --no-container", f.backend)
 	}
 	if f.hardenedRuntimeOnly && f.noContainer {
 		log.Warn("--hardened-runtime-only has no effect with --no-container (no container to harden)")
@@ -652,11 +666,6 @@ func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRu
 	if err != nil {
 		return nil, "", err
 	}
-	// The harness is resolved here, before the egress allowlist, so its
-	// model-API hosts are on the proxy from the start. With no -backend
-	// flag yet (#211) it is always claude; once the flag exists this
-	// becomes a name lookup and nothing downstream changes.
-	h := worker.ClaudeHarness{}
 	var egress worker.EgressSidecarConfig
 	allow := buildEgressAllow(h.EgressHosts(), f.hardened, cfg, f.anthropicBaseURL, log)
 	if apiHost != worker.HostGatewayAlias {
@@ -682,7 +691,7 @@ func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRu
 		}
 	}
 	log.Info("container runtime detected, using containerised runner",
-		"runtime", rt.Bin, "rootless", rt.Rootless, "image", f.runnerImage,
+		"runtime", rt.Bin, "rootless", rt.Rootless, "harness", h.Binary(), "image", f.runnerImage,
 		"egress_proxy_port", port, "egress_allow", len(allow),
 		"container_host", apiHost, "host_gateway_ipv4", gwIP, "hardened", f.hardened,
 		"egress_sidecar", egress.GatewayIP != "",

@@ -267,6 +267,7 @@ The `docker build` commands shown for the runner image and profiles can be run a
 | `-effort` | `high` | Claude effort level |
 | `-skills` | - | Local directory to load SKILL.md files from (repeatable) |
 | `-skills-repo` | - | `owner/repo[@ref]` or git HTTPS URL `https://host/path[@ref]` to clone skills from on startup; `@ref` pins a branch, tag or commit and the resolved SHA is recorded on every scan |
+| `-backend` | `claude` | Agent CLI the container runner execs: `claude` or `codex`. Non-claude backends require the containerised runner |
 | `--runtime` | `docker` | Container runtime: `docker`, `podman` (rootless podman supported), or `apple` (Apple, experimental) |
 | `--selinux` | `auto` | Bind-mount SELinux relabeling: `auto` (relabel when SELinux is detected), `on`, or `off` |
 | `--no-container` | false | Disable the containerised runner; run claude directly on the host (no isolation). Deprecated alias: `--no-docker` |
@@ -295,6 +296,17 @@ The config file can also replace the model pick list and pin the fallback defaul
 
 Scrutineer resolves skill models through tiers. Skills default to the `high` tier unless their `SKILL.md` metadata pins `scrutineer.model` to another tier or exact model id. Bundled lightweight skills such as `metadata` use `mid`, while `security-deep-dive` uses `max`. The Settings page lets you map each tier to any configured model.
 
+## Codex backend
+
+Scrutineer can drive OpenAI's [codex](https://github.com/openai/codex) CLI instead of claude-code. The runner image bundles the `codex` binary, so switching is the flag (or `backend: codex` in `scrutineer.yaml`) plus a credential:
+
+    export OPENAI_API_KEY=sk-...
+    go run ./cmd/scrutineer -skills ./skills -backend codex
+
+The container, egress proxy, language profiles and skill staging stay the same; only the agent CLI inside the container changes. The egress allowlist picks up `api.openai.com` (and the ChatGPT auth hosts for Codex Pro accounts) automatically. Set `models:` in the config to OpenAI model ids. The codex backend requires the containerised runner; `--no-container` with `-backend codex` is rejected at startup.
+
+See [docs/codex.md](docs/codex.md) for the per-seam mapping, sandbox interaction and differences from claude.
+
 ## Sandboxed Claude Code configs
 
 In `--no-container` mode the `claude` subprocess inherits your `~/.claude/settings.json`, so [sandbox settings](https://code.claude.com/docs/en/sandboxing) that restrict network or filesystem access there will fail skills that need them. Point `claude` at a separate config directory just for scrutineer runs:
@@ -316,6 +328,7 @@ See [SECURITY.md](SECURITY.md) for the reporting policy and [threatmodel.md](thr
 - [docs/backup.md](docs/backup.md) -- backing up and restoring the database (built-in `scrutineer backup`/`restore`, `sqlite3`, Litestream)
 - [docs/development.md](docs/development.md) -- project layout, regenerating embedded data, running tests
 - [docs/encrypted-sharing.md](docs/encrypted-sharing.md) -- encrypted findings sharing between contributors (age + SSH keys, team keyring management)
+- [docs/codex.md](docs/codex.md) -- the codex backend: per-seam mapping, sandbox interaction, adding another harness
 - [docs/podman.md](docs/podman.md) -- security model and known gaps for the podman / rootless runtime (sandbox isolation, hardened-mode verification)
 - [docs/egress-sidecar.md](docs/egress-sidecar.md) -- operator validation checklist for the rootless `--hardened` egress proxy sidecar
 
