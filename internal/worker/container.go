@@ -341,7 +341,7 @@ func (d ContainerRunner) runContainerOnce(ctx context.Context, runBase []string,
 		}
 		emit(e)
 	}
-	ParseStream(stdout, wrappedEmit)
+	h.ParseStream(stdout, wrappedEmit)
 	waitErr = cmd.Wait()
 	if cmd.Process != nil {
 		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
@@ -569,7 +569,7 @@ func (d ContainerRunner) harness() Harness { //nolint:ireturn // nil-default acc
 	if d.Harness != nil {
 		return d.Harness
 	}
-	return claudeHarness{}
+	return ClaudeHarness{}
 }
 
 // profileGuidePath returns the profile's on-disk PROFILE.md if present.

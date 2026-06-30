@@ -49,8 +49,8 @@ type Config struct {
 	// write its output. Non-SELinux hosts are unaffected. See docs/podman.md.
 	SELinux string `yaml:"selinux"`
 	// Hardened enforces the strictest sandbox mode: a container runtime is
-	// required (no --no-container fallback), egress is restricted to
-	// *.anthropic.com plus the runtime's host endpoint, the container rootfs is
+	// required (no --no-container fallback), egress is restricted to the
+	// harness's model API plus the runtime's host endpoint, the container rootfs is
 	// read-only, and the runner attaches to an internal network whose only route
 	// out is scrutineer's allowlisting proxy. egress_allow is ignored under
 	// hardened mode; the operator must drop hardened to widen it.

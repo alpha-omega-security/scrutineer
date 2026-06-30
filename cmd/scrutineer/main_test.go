@@ -195,8 +195,11 @@ func TestFlagsMerge_hardenedRuntimeOnlyConfigAlias(t *testing.T) {
 
 func TestBuildEgressAllow_defaultIncludesConfigAndAnthropicHost(t *testing.T) {
 	cfg := &config.Config{EgressAllow: []string{"artifactory.internal", "*.mycorp.net"}}
-	allow := buildEgressAllow(false, cfg, "https://proxy.corp.com/v1", quietLog())
+	allow := buildEgressAllow(worker.ClaudeHarness{}.EgressHosts(), false, cfg, "https://proxy.corp.com/v1", quietLog())
 
+	if !slices.Contains(allow, "*.anthropic.com") {
+		t.Errorf("default mode dropped harness egress hosts: %v", allow)
+	}
 	if !slices.Contains(allow, "*.ecosyste.ms") {
 		t.Errorf("default mode dropped DefaultEgressAllow entries: %v", allow)
 	}
@@ -208,9 +211,9 @@ func TestBuildEgressAllow_defaultIncludesConfigAndAnthropicHost(t *testing.T) {
 	}
 }
 
-func TestBuildEgressAllow_hardenedDropsConfigKeepsAnthropic(t *testing.T) {
+func TestBuildEgressAllow_hardenedDropsConfigKeepsHarness(t *testing.T) {
 	cfg := &config.Config{EgressAllow: []string{"artifactory.internal"}}
-	allow := buildEgressAllow(true, cfg, "https://proxy.corp.com/v1", quietLog())
+	allow := buildEgressAllow(worker.ClaudeHarness{}.EgressHosts(), true, cfg, "https://proxy.corp.com/v1", quietLog())
 
 	if slices.Contains(allow, "*.ecosyste.ms") {
 		t.Errorf("hardened leaked DefaultEgressAllow entries: %v", allow)
@@ -218,7 +221,10 @@ func TestBuildEgressAllow_hardenedDropsConfigKeepsAnthropic(t *testing.T) {
 	if slices.Contains(allow, "artifactory.internal") {
 		t.Errorf("hardened honoured egress_allow when it must not: %v", allow)
 	}
-	if !slices.Contains(allow, "*.anthropic.com") || !slices.Contains(allow, worker.HostGatewayAlias) {
+	if !slices.Contains(allow, "*.anthropic.com") {
+		t.Errorf("hardened did not include the harness egress hosts: %v", allow)
+	}
+	if !slices.Contains(allow, worker.HostGatewayAlias) {
 		t.Errorf("hardened did not include HardenedEgressAllow entries: %v", allow)
 	}
 	if !slices.Contains(allow, "proxy.corp.com") {
@@ -227,9 +233,22 @@ func TestBuildEgressAllow_hardenedDropsConfigKeepsAnthropic(t *testing.T) {
 }
 
 func TestBuildEgressAllow_hardenedNilConfig(t *testing.T) {
-	allow := buildEgressAllow(true, nil, "", quietLog())
-	if len(allow) != len(worker.HardenedEgressAllow) {
-		t.Errorf("hardened minimal allow = %v, want exactly HardenedEgressAllow", allow)
+	harnessHosts := worker.ClaudeHarness{}.EgressHosts()
+	allow := buildEgressAllow(harnessHosts, true, nil, "", quietLog())
+	if len(allow) != len(harnessHosts)+len(worker.HardenedEgressAllow) {
+		t.Errorf("hardened minimal allow = %v, want exactly harness hosts + HardenedEgressAllow", allow)
+	}
+}
+
+func TestBuildEgressAllow_nonClaudeHarnessExcludesAnthropic(t *testing.T) {
+	// A non-claude harness must not inherit *.anthropic.com from the
+	// static lists; only the hosts it declares are added.
+	allow := buildEgressAllow([]string{"api.openai.com"}, true, nil, "", quietLog())
+	if slices.Contains(allow, "*.anthropic.com") {
+		t.Errorf("non-claude harness allowlist still contains anthropic: %v", allow)
+	}
+	if !slices.Contains(allow, "api.openai.com") {
+		t.Errorf("non-claude harness hosts not included: %v", allow)
 	}
 }
 

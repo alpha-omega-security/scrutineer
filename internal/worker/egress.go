@@ -23,27 +23,26 @@ import (
 // callers pass that host through EgressProxy.APIHosts.
 const HostGatewayAlias = "host.docker.internal"
 
-// HardenedEgressAllow is the strict allowlist used when --hardened is
-// set. Only the Anthropic API and the host skill API (reached through
-// host.docker.internal) are permitted; anything else returns 403 at
-// the proxy. Skills that need ecosyste.ms or a package registry must
-// route through the host API, or the operator must drop hardened mode.
+// HardenedEgressAllow is the strict harness-neutral allowlist used when
+// --hardened is set. Only the host skill API (reached through
+// host.docker.internal) is permitted; the harness's model-API hosts
+// (Harness.EgressHosts) are appended at startup so the agent can talk to
+// its provider, and anything else returns 403 at the proxy. Skills that
+// need ecosyste.ms or a package registry must route through the host
+// API, or the operator must drop hardened mode.
 var HardenedEgressAllow = []string{
-	"*.anthropic.com",
 	HostGatewayAlias,
 }
 
-// DefaultEgressAllow is the built-in host allowlist for the container
-// runner's egress proxy. It covers what the bundled skills actually
-// reach: the Anthropic API, ecosyste.ms services, the major code forges,
-// the package registries those forges publish to, and the advisory
-// sources the security skills consult. Entries are matched
+// DefaultEgressAllow is the built-in harness-neutral host allowlist for
+// the container runner's egress proxy. It covers what the bundled skills
+// actually reach: ecosyste.ms services, the major code forges, the
+// package registries those forges publish to, and the advisory sources
+// the security skills consult. The harness's model-API hosts
+// (Harness.EgressHosts) are appended at startup. Entries are matched
 // case-insensitively against the CONNECT/request host with the port
 // stripped; a leading "*." matches any subdomain.
 var DefaultEgressAllow = []string{
-	// model
-	"*.anthropic.com",
-
 	// scrutineer skill API on the host
 	HostGatewayAlias,
 
