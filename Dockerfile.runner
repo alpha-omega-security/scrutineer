@@ -4,6 +4,7 @@
 #   docker build -t scrutineer-runner -f Dockerfile.runner .
 
 ARG CLAUDE_VERSION=2.1.173
+ARG CODEX_VERSION=0.142.4
 ARG SEMGREP_VERSION=1.167.0
 
 FROM golang:1.26.4-trixie@sha256:68b7145ec43d1820b9a56704554b53d1520aa2a15cb5233e374188a31b2a1bce AS go-tools
@@ -28,6 +29,7 @@ RUN CGO_ENABLED=0 go build -o /out/scrutineer ./cmd/scrutineer
 
 FROM debian:trixie-slim@sha256:28de0877c2189802884ccd20f15ee41c203573bd87bb6b883f5f46362d24c5c2
 ARG CLAUDE_VERSION
+ARG CODEX_VERSION
 ARG SEMGREP_VERSION
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -68,6 +70,22 @@ RUN set -eux; \
       "https://github.com/anthropics/claude-code/releases/download/v${CLAUDE_VERSION}/claude-linux-${arch}.tar.gz"; \
     echo "${sha}  /tmp/claude.tgz" | sha256sum -c -; \
     tar -xzf /tmp/claude.tgz -C /usr/local/bin claude && rm /tmp/claude.tgz
+
+# OpenAI codex CLI (-backend codex). The musl tarball contains a single
+# static binary named codex-${triple}; install it as /usr/local/bin/codex.
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+      amd64) triple=x86_64-unknown-linux-musl;  sha=f0ac43751c6d3b29a973a860a8de528ad79cb20cc1296611930a3d5c91ddef95 ;; \
+      arm64) triple=aarch64-unknown-linux-musl; sha=a546ee05915313fea340f8315b54f43d077f4390afbb5af2de944d48013d447f ;; \
+      *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /tmp/codex.tgz \
+      "https://github.com/openai/codex/releases/download/rust-v${CODEX_VERSION}/codex-${triple}.tar.gz"; \
+    echo "${sha}  /tmp/codex.tgz" | sha256sum -c -; \
+    tar -xzf /tmp/codex.tgz -C /tmp; \
+    install -m 0755 "/tmp/codex-${triple}" /usr/local/bin/codex; \
+    rm /tmp/codex.tgz "/tmp/codex-${triple}"; \
+    codex --version
 
 COPY --from=go-tools /out/* /usr/local/bin/
 COPY --from=zizmor-build /out/bin/zizmor /usr/local/bin/zizmor
