@@ -162,7 +162,7 @@ func (w *Worker) doExposure(ctx context.Context, scan *db.Scan, emit func(Event)
 		return "", fmt.Errorf("apply path filters: %w", err)
 	}
 
-	skillDir := filepath.Join(workRoot, ".claude", "skills", skill.Name)
+	skillDir := w.Runner.SkillDir(workRoot, skill.Name)
 	if err := stageContext(workRoot, w.APIBase, w.ForkOrg, w.metadataDir(), scan, &scan.Repository); err != nil {
 		return "", fmt.Errorf("stage context: %w", err)
 	}

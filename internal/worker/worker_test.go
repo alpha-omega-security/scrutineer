@@ -41,6 +41,10 @@ func (f fakeRunner) RunSkill(_ context.Context, sj SkillJob, emit func(Event)) (
 	return f.skillRes, f.skillErr
 }
 
+func (fakeRunner) SkillDir(workRoot, name string) string {
+	return ClaudeHarness{}.SkillDir(workRoot, name)
+}
+
 type blockingRunner struct {
 	started chan struct{}
 }
@@ -49,6 +53,10 @@ func (b blockingRunner) RunSkill(ctx context.Context, _ SkillJob, _ func(Event))
 	close(b.started)
 	<-ctx.Done()
 	return SkillResult{}, ctx.Err()
+}
+
+func (blockingRunner) SkillDir(workRoot, name string) string {
+	return ClaudeHarness{}.SkillDir(workRoot, name)
 }
 
 func TestWorker_CancelStopsRunningScan(t *testing.T) {

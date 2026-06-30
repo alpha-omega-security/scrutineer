@@ -30,6 +30,11 @@ func (MaxTurnsReachedError) Error() string { return "hit max turns cap" }
 // substitute the process launch without touching the queue plumbing.
 type SkillRunner interface {
 	RunSkill(ctx context.Context, sj SkillJob, emit func(Event)) (SkillResult, error)
+	// SkillDir is where the worker stages SKILL.md/schema.json before
+	// calling RunSkill, so the runner's harness discovers it. The path
+	// varies per harness (.claude/skills/{name}, skills/{name},
+	// .opencode/skill/{name}); the staged content does not.
+	SkillDir(workRoot, name string) string
 }
 
 // SkillJob is a scan driven by an on-disk claude-code skill. The runner
@@ -108,6 +113,12 @@ type LocalClaude struct {
 	Effort    string
 	FullClone bool
 	MaxTurns  int
+}
+
+// SkillDir is fixed at claude's discovery path: the no-container
+// fallback is claude-only by design.
+func (LocalClaude) SkillDir(workRoot, name string) string {
+	return ClaudeHarness{}.SkillDir(workRoot, name)
 }
 
 // RunSkill runs claude against a staged skill in a local workspace. The

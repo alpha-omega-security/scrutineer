@@ -545,6 +545,12 @@ func (d ContainerRunner) injectProfileGuide(profile, absWork string, emit func(E
 	emit(Event{Kind: KindText, Text: "profile guide: " + guide + " -> /work/" + name})
 }
 
+// SkillDir delegates to the harness so the worker stages SKILL.md
+// where this runner's agent CLI will discover it.
+func (d ContainerRunner) SkillDir(workRoot, name string) string {
+	return d.harness().SkillDir(workRoot, name)
+}
+
 // harness returns the agent CLI to exec inside the container, defaulting
 // to claude-code when none is set so the zero ContainerRunner{} keeps its
 // historical behaviour.

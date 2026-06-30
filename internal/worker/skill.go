@@ -136,7 +136,7 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 		return "", fmt.Errorf("apply path filters: %w", err)
 	}
 
-	skillDir := filepath.Join(workRoot, ".claude", "skills", skill.Name)
+	skillDir := w.Runner.SkillDir(workRoot, skill.Name)
 	if err := w.stageWorkspace(workRoot, skillDir, scan, &skill); err != nil {
 		return "", err
 	}

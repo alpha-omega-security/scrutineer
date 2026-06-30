@@ -44,6 +44,36 @@ not json
 	}
 }
 
+func TestClaudeHarness_SkillDir(t *testing.T) {
+	// claude-code discovers skills at ./.claude/skills/{name}; this is
+	// the path stageSkill has always written to, so the seam preserves
+	// it exactly.
+	got := ClaudeHarness{}.SkillDir("/work/scan-7", "deep-dive")
+	want := filepath.Join("/work/scan-7", ".claude", "skills", "deep-dive")
+	if got != want {
+		t.Errorf("ClaudeHarness.SkillDir = %q, want %q", got, want)
+	}
+	// LocalClaude is claude-only and must agree.
+	if lc := (LocalClaude{}).SkillDir("/work/scan-7", "deep-dive"); lc != want {
+		t.Errorf("LocalClaude.SkillDir = %q, want %q", lc, want)
+	}
+}
+
+func TestContainerRunner_SkillDirDelegatesToHarness(t *testing.T) {
+	// The runner exposes SkillDir on SkillRunner so the worker can stage
+	// SKILL.md before calling RunSkill; it must delegate to whatever
+	// harness is configured and default to claude when none is.
+	claudePath := ClaudeHarness{}.SkillDir("/w", "s")
+	if got := (ContainerRunner{}).SkillDir("/w", "s"); got != claudePath {
+		t.Errorf("default ContainerRunner.SkillDir = %q, want claude path %q", got, claudePath)
+	}
+	d := ContainerRunner{Harness: stubHarness{}}
+	want := filepath.Join("/w", "stub-skills", "s")
+	if got := d.SkillDir("/w", "s"); got != want {
+		t.Errorf("stub-harness ContainerRunner.SkillDir = %q, want %q", got, want)
+	}
+}
+
 func TestClaudeHarness_binaryGuideEgress(t *testing.T) {
 	h := ClaudeHarness{}
 	if h.Binary() != "claude" {
@@ -85,6 +115,7 @@ type stubHarness struct {
 func (s stubHarness) Binary() string                      { return s.bin }
 func (s stubHarness) Args(SkillJob, string, int) []string { return []string{"--stub"} }
 func (s stubHarness) ParseStream(io.Reader, func(Event))  {}
+func (s stubHarness) SkillDir(wr, n string) string        { return filepath.Join(wr, "stub-skills", n) }
 func (s stubHarness) GuideFilename() string               { return s.guide }
 func (s stubHarness) EgressHosts() []string               { return s.egress }
 func (s stubHarness) Env(string) []string                 { return s.env }

@@ -21,6 +21,10 @@ func (c *captureRunner) RunSkill(_ context.Context, sj SkillJob, _ func(Event)) 
 	return SkillResult{}, nil
 }
 
+func (*captureRunner) SkillDir(workRoot, name string) string {
+	return ClaudeHarness{}.SkillDir(workRoot, name)
+}
+
 func TestWorker_resolvesDefaultMaxTurns(t *testing.T) {
 	tests := []struct {
 		name         string

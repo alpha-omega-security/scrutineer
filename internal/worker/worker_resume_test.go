@@ -30,6 +30,10 @@ func (r *recordingRunner) RunSkill(_ context.Context, sj SkillJob, emit func(Eve
 	return r.res, r.err
 }
 
+func (*recordingRunner) SkillDir(workRoot, name string) string {
+	return ClaudeHarness{}.SkillDir(workRoot, name)
+}
+
 func newResumeTestWorker(t *testing.T, runner SkillRunner) (*Worker, *db.Skill, uint) {
 	t.Helper()
 	gdb, err := db.Open(filepath.Join(t.TempDir(), "r.db"))

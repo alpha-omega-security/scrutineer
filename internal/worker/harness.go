@@ -3,6 +3,7 @@ package worker
 import (
 	"io"
 	"os"
+	"path/filepath"
 )
 
 // A Harness is the agent CLI the container runner execs to drive a skill.
@@ -14,7 +15,7 @@ import (
 // inside the container changes.
 //
 // The interface is grown incrementally as call sites are wired to it
-// (#211). Skill staging and exit classification follow.
+// (#211). Exit classification follows.
 type Harness interface {
 	// Binary is the executable on the runner image's PATH.
 	Binary() string
@@ -28,6 +29,15 @@ type Harness interface {
 	// the harness's own output format onto it so the scan log, session
 	// capture and max-turns detection work the same regardless of agent.
 	ParseStream(r io.Reader, emit func(Event))
+	// SkillDir is the directory under workRoot where stageSkill writes
+	// SKILL.md, schema.json, and the skill's auxiliary files so this
+	// harness's own discovery picks them up. All three current harnesses
+	// look for a file literally named SKILL.md and follow symlinks, so
+	// only the directory differs: claude reads .claude/skills/{name},
+	// codex reads skills/{name}, opencode reads .opencode/skill/{name}.
+	// The activation prompt that points the agent at the skill is the
+	// harness's own concern, inside Args.
+	SkillDir(workRoot, name string) string
 	// GuideFilename is the workspace-relative path the harness auto-loads
 	// as project memory, where injectProfileGuide writes the profile's
 	// PROFILE.md. claude-code reads CLAUDE.md; codex and opencode read
@@ -64,6 +74,10 @@ func (ClaudeHarness) Args(sj SkillJob, effort string, globalMaxTurns int) []stri
 
 func (ClaudeHarness) ParseStream(r io.Reader, emit func(Event)) {
 	ParseStream(r, emit)
+}
+
+func (ClaudeHarness) SkillDir(workRoot, name string) string {
+	return filepath.Join(workRoot, ".claude", "skills", name)
 }
 
 func (ClaudeHarness) GuideFilename() string { return "CLAUDE.md" }

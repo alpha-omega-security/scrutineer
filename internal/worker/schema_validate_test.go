@@ -113,6 +113,10 @@ type sequenceRunner struct {
 	jobs    []SkillJob
 }
 
+func (*sequenceRunner) SkillDir(workRoot, name string) string {
+	return ClaudeHarness{}.SkillDir(workRoot, name)
+}
+
 func (r *sequenceRunner) RunSkill(_ context.Context, sj SkillJob, emit func(Event)) (SkillResult, error) {
 	r.jobs = append(r.jobs, sj)
 	emit(Event{Kind: KindText, Text: "running skill " + sj.Name})
