@@ -153,6 +153,14 @@ func TestIntegration_HardenedEgressBlocked(t *testing.T) {
 // egress yet still reach the host proxy.
 func TestIntegration_VerifyHardenedNetwork(t *testing.T) {
 	rt := podmanOrSkip(t)
+	if rt.Rootless {
+		// Host-proxy reachability across an --internal network is rootful-only:
+		// on rootless podman the host proxy sits in the host netns, unreachable
+		// from the isolated network, which is why hardened mode runs the egress
+		// proxy as a sidecar there instead. The rootless path is covered by
+		// TestIntegration_ProxySidecarEnforcedEgress.
+		t.Skip("host-proxy across --internal is rootful-only; rootless uses the egress sidecar")
+	}
 	image := pullOrSkip(t, rt, curlImage)
 
 	token := NewProxyToken()
