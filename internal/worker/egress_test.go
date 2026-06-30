@@ -471,8 +471,8 @@ func TestEgressProxy_NoPortRestrictionForOtherHosts(t *testing.T) {
 	}
 }
 
-func TestProxyURLShape(t *testing.T) {
-	got := ProxyURL("abc", 1234)
+func TestProxyURLForHostShape(t *testing.T) {
+	got := ProxyURLForHost("abc", HostGatewayAlias, 1234)
 	want := "http://scrutineer:abc@host.docker.internal:1234"
 	if got != want {
 		t.Errorf("got %q want %q", got, want)

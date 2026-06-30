@@ -180,7 +180,7 @@ func TestIntegration_VerifyHardenedNetwork(t *testing.T) {
 		t.Skip("host-gateway unresolved on this network; cannot test proxy reachability")
 	}
 
-	d := ContainerRunner{Runtime: rt, Hardened: true, ProxyURL: ProxyURL(token, port)}
+	d := ContainerRunner{Runtime: rt, Hardened: true, ProxyURL: ProxyURLForHost(token, HostGatewayAlias, port)}
 	if err := d.verifyHardenedNetwork(hardenedNet{name: netName, gatewayIP: gwIP}, image); err != nil {
 		t.Fatalf("verifyHardenedNetwork on a correct internal network: %v", err)
 	}

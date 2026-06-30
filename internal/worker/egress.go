@@ -306,14 +306,9 @@ func NewProxyToken() string {
 	return hex.EncodeToString(b[:])
 }
 
-// ProxyURL builds the http_proxy-style URL for Docker/Podman containers
-// reaching the in-process host proxy via the host-gateway alias.
-func ProxyURL(token string, port int) string {
-	return ProxyURLForHost(token, HostGatewayAlias, port)
-}
-
-// ProxyURLForHost builds the http_proxy-style URL for containers whose host
-// gateway is runtime-specific.
+// ProxyURLForHost builds the http_proxy-style URL for containers reaching the
+// in-process host proxy. Docker/Podman pass HostGatewayAlias; Apple's
+// container runtime passes the resolved gateway IP.
 func ProxyURLForHost(token, host string, port int) string {
 	return fmt.Sprintf("http://scrutineer:%s@%s:%d", token, host, port)
 }
