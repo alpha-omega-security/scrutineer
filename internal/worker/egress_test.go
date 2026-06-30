@@ -21,16 +21,19 @@ func quietLog() *slog.Logger {
 }
 
 func TestHardenedEgressAllow_minimalSurface(t *testing.T) {
-	// HardenedEgressAllow must allow Anthropic and the host skill API,
-	// and reject every host that DefaultEgressAllow opens up. Adding a
-	// new entry here is a deliberate widening of the hardened surface
-	// and should not happen accidentally.
+	// HardenedEgressAllow is harness-neutral: it must allow only the
+	// host skill API. The harness's own model-API hosts (e.g.
+	// *.anthropic.com for claude) are layered on at startup, so they
+	// must NOT appear in the static list -- a non-claude harness would
+	// otherwise inherit anthropic by accident. Adding a new entry here
+	// is a deliberate widening of the hardened surface and should not
+	// happen accidentally.
 	allow := HardenedEgressAllow
-	if !HostAllowed(allow, "api.anthropic.com") {
-		t.Errorf("hardened blocked api.anthropic.com")
-	}
 	if !HostAllowed(allow, HostGatewayAlias) {
 		t.Errorf("hardened blocked %s", HostGatewayAlias)
+	}
+	if HostAllowed(allow, "api.anthropic.com") {
+		t.Errorf("hardened static list still contains anthropic; that belongs in ClaudeHarness.EgressHosts")
 	}
 	for _, host := range []string{
 		"packages.ecosyste.ms",
@@ -495,8 +498,11 @@ func TestProxyURLForEndpointShape(t *testing.T) {
 }
 
 func TestDefaultEgressAllowCoversSkillHosts(t *testing.T) {
+	// DefaultEgressAllow is harness-neutral; the model-API hosts come
+	// from Harness.EgressHosts and are layered on at startup. This test
+	// covers the static list only -- api.anthropic.com belonging in the
+	// claude harness is asserted by TestClaudeHarness_binaryGuideEgress.
 	for _, h := range []string{
-		"api.anthropic.com",
 		"packages.ecosyste.ms",
 		"repos.ecosyste.ms",
 		"advisories.ecosyste.ms",

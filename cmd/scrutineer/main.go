@@ -141,7 +141,7 @@ func registerFlags(fs *flag.FlagSet, f *flags) {
 	fs.StringVar(&f.selinux, "selinux", "auto", "SELinux bind-mount relabeling: auto (relabel when SELinux is detected on the host), on (always), off (never). Relabeling (\":z\") lets the container read /work and write its output on enforcing-SELinux hosts")
 	fs.BoolVar(&f.noContainer, "no-container", false, "disable the containerised runner and run claude directly on the host (no isolation), even if a container runtime is available")
 	fs.BoolVar(&f.noContainer, "no-docker", false, "deprecated alias for --no-container")
-	fs.BoolVar(&f.hardened, "hardened", false, "strict sandbox mode: container runtime required (no --no-container fallback), egress restricted to *.anthropic.com + host skill API, read-only rootfs, internal network")
+	fs.BoolVar(&f.hardened, "hardened", false, "strict sandbox mode: container runtime required (no --no-container fallback), egress restricted to the harness's model API + host skill API, read-only rootfs, internal network")
 	fs.BoolVar(&f.hardenedRuntimeOnly, "hardened-runtime-only", false, "the non-network half of --hardened (read-only rootfs + no-new-privileges + 2 GiB post-clone workspace cap) WITHOUT the per-scan --internal network, so it works under rootless podman where --hardened cannot; --cap-drop ALL + non-root user + tmpfs apply regardless. Implied by --hardened")
 	fs.BoolVar(&f.hardenedRuntimeOnly, "hardened-rootless-runtime", false, "deprecated alias for --hardened-runtime-only")
 	fs.StringVar(&f.runnerImage, "runner-image", worker.DefaultRunnerImage, "container image for per-job containers (a custom image needs curl, and under rootless --hardened the scrutineer binary for the egress sidecar; build from Dockerfile.runner)")
@@ -652,8 +652,13 @@ func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRu
 	if err != nil {
 		return nil, "", err
 	}
+	// The harness is resolved here, before the egress allowlist, so its
+	// model-API hosts are on the proxy from the start. With no -backend
+	// flag yet (#211) it is always claude; once the flag exists this
+	// becomes a name lookup and nothing downstream changes.
+	h := worker.ClaudeHarness{}
 	var egress worker.EgressSidecarConfig
-	allow := buildEgressAllow(f.hardened, cfg, f.anthropicBaseURL, log)
+	allow := buildEgressAllow(h.EgressHosts(), f.hardened, cfg, f.anthropicBaseURL, log)
 	if apiHost != worker.HostGatewayAlias {
 		allow = append(allow, apiHost)
 	}
@@ -688,6 +693,7 @@ func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRu
 	return worker.ContainerRunner{
 		Image:               f.runnerImage,
 		Effort:              f.effort,
+		Harness:             h,
 		ProxyURL:            worker.ProxyURLForHost(token, apiHost, port),
 		FullClone:           f.fullClone(),
 		MaxTurns:            f.maxTurns,
@@ -783,12 +789,13 @@ func resolveEgressSidecar(rt worker.ContainerRuntime, f *flags, allow []string, 
 	return worker.EgressSidecarConfig{Token: token, Allow: allow, APIPort: addrPort(f.addr), GatewayIP: egressGwIP}, nil
 }
 
-// buildEgressAllow assembles the proxy allowlist. Hardened mode starts
-// from HardenedEgressAllow and ignores cfg.EgressAllow (the operator
-// must drop --hardened to widen). The anthropic base URL host is still
-// auto-added in both modes since it routes the same Anthropic API.
-func buildEgressAllow(hardened bool, cfg *config.Config, anthropicBaseURL string, log *slog.Logger) []string {
-	var allow []string
+// buildEgressAllow assembles the proxy allowlist: the harness's
+// model-API hosts first, then the harness-neutral base. Hardened mode
+// starts from HardenedEgressAllow and ignores cfg.EgressAllow (the
+// operator must drop --hardened to widen). The anthropic base URL host
+// is still auto-added in both modes since it routes the same model API.
+func buildEgressAllow(harnessHosts []string, hardened bool, cfg *config.Config, anthropicBaseURL string, log *slog.Logger) []string {
+	allow := append([]string{}, harnessHosts...)
 	if hardened {
 		allow = append(allow, worker.HardenedEgressAllow...)
 		if cfg != nil && len(cfg.EgressAllow) > 0 {
