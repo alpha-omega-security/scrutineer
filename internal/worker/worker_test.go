@@ -156,7 +156,7 @@ func TestWorker_maxTurnsReachedCompletesNotFails(t *testing.T) {
 	}
 }
 
-func TestWorker_claudePlanLimitPausesScanAndQueue(t *testing.T) {
+func TestWorker_claudeAccountErrorPausesScanAndQueue(t *testing.T) {
 	gdb, err := db.Open(filepath.Join(t.TempDir(), "limit.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -176,7 +176,7 @@ func TestWorker_claudePlanLimitPausesScanAndQueue(t *testing.T) {
 		DB:             gdb,
 		Log:            slog.New(slog.NewTextHandler(io.Discard, nil)),
 		DataDir:        t.TempDir(),
-		Runner:         fakeRunner{skillErr: &ClaudePlanLimitError{Detail: "usage limit reached"}},
+		Runner:         fakeRunner{skillErr: &ClaudeAccountError{Detail: "usage limit reached"}},
 		PrepareRepoSrc: stubPrepareRepoSrc,
 	}
 	body, _ := json.Marshal(queue.Payload{ScanID: scan.ID})
@@ -189,7 +189,7 @@ func TestWorker_claudePlanLimitPausesScanAndQueue(t *testing.T) {
 	if got.Status != db.ScanPaused {
 		t.Errorf("triggering scan status = %s, want paused", got.Status)
 	}
-	if !strings.Contains(got.Error, "Claude plan limit reached") {
+	if !strings.Contains(got.Error, "Claude account access paused") {
 		t.Errorf("error = %q", got.Error)
 	}
 
@@ -198,8 +198,8 @@ func TestWorker_claudePlanLimitPausesScanAndQueue(t *testing.T) {
 	if gotOther.Status != db.ScanPaused {
 		t.Errorf("other queued scan status = %s, want paused", gotOther.Status)
 	}
-	if !strings.Contains(gotOther.Error, "Claude plan limit reached") {
-		t.Errorf("other scan error = %q, want plan-limit prefix", gotOther.Error)
+	if !strings.Contains(gotOther.Error, "Claude account access paused") {
+		t.Errorf("other scan error = %q, want account-pause prefix", gotOther.Error)
 	}
 }
 

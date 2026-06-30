@@ -55,6 +55,17 @@
   });
 
   document.addEventListener('click', function (e) {
+    var copyBtn = e.target.closest('[data-copy]');
+    if (copyBtn && navigator.clipboard) {
+      e.preventDefault();
+      navigator.clipboard.writeText(copyBtn.getAttribute('data-copy')).then(function () {
+        // Flash a check for ~1s; CSS swaps the icon while data-copied is set.
+        copyBtn.setAttribute('data-copied', '');
+        setTimeout(function () { copyBtn.removeAttribute('data-copied'); }, 1200);
+      });
+      return;
+    }
+
     var tr = e.target.closest('.table tbody tr');
     if (tr && !e.target.closest('a, button, form, input')) {
       var a = tr.querySelector('a[href]');

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"scrutineer/internal/config"
@@ -86,6 +87,14 @@ func (s *Server) settingsShow(w http.ResponseWriter, r *http.Request) {
 	s.DB.Raw("SELECT file FROM pragma_database_list WHERE name = 'main'").Scan(&dbPath)
 
 	meta := s.toolMetadataCached(r.Context())
+	// Overlay the boot-time staleness verdict onto the (separately cached)
+	// version metadata. This is the verdict from the startup check; it is not
+	// re-probed per request, so it reflects the runner image as of boot.
+	if st := s.runnerImageStatus(); st.Stale {
+		meta.Stale = true
+		meta.StaleDays = st.AgeDays
+		meta.PullCommand = st.PullCommand
+	}
 
 	// ConcurrencyInput pre-fills the form with the persisted value when set,
 	// else the value the runner is actually using now. MaxTurns is 0 when
@@ -124,6 +133,37 @@ type toolMetadata struct {
 	worker.RunnerToolVersions
 	Runtime     string
 	RunnerImage string
+	// Revision is the git commit the runner image was built from (its
+	// org.opencontainers.image.revision label), folded into the displayed image
+	// reference so the settings page names an actual build. "" when the image
+	// carries no such label.
+	Revision string
+	// Staleness of the runner image, from the boot-time check (issue #337).
+	// Overlaid onto the cached metadata per request; the verdict itself is the
+	// one computed at startup and is not refreshed for the process lifetime.
+	Stale       bool
+	StaleDays   int
+	PullCommand string
+}
+
+// shortSHALen is how many leading hex chars of a commit to show -- enough to be
+// unambiguous in practice without spilling the truncated metadata row.
+const shortSHALen = 12
+
+// RunnerImageRef is the runner image annotated with the git commit it was built
+// from, e.g. "ghcr.io/.../scrutineer-runner @ abc123def456", for the settings
+// "Runner image" row. The rolling ":latest" tag says nothing about which build
+// is running, so it's dropped in favour of the commit. Falls back to the bare
+// image reference when the revision label is absent.
+func (m toolMetadata) RunnerImageRef() string {
+	if m.Revision == "" {
+		return m.RunnerImage
+	}
+	rev := m.Revision
+	if len(rev) > shortSHALen {
+		rev = rev[:shortSHALen]
+	}
+	return strings.TrimSuffix(m.RunnerImage, ":latest") + " @ " + rev
 }
 
 // toolMetadataTTL bounds how long a gathered version set is reused. Versions
@@ -131,9 +171,14 @@ type toolMetadata struct {
 // a generous TTL keeps the settings page DB-fast without going stale for long.
 const toolMetadataTTL = 5 * time.Minute
 
-// toolMetadataTimeout caps the runtime shell-outs so a hung or missing daemon
-// degrades to "unavailable" instead of stalling the settings page.
-const toolMetadataTimeout = 5 * time.Second
+// toolMetadataTimeout caps EACH runtime shell-out (not a shared budget across
+// them) so a hung or missing daemon degrades to "unavailable" instead of
+// stalling the settings page. It is generous enough for Apple's container
+// runtime, whose first `container run` cold-starts a VM and can take several
+// seconds: a shorter shared budget let that slow tool-version probe expire the
+// deadline before the fast `container --version` runtime probe even ran, so the
+// whole panel read "unavailable".
+const toolMetadataTimeout = 15 * time.Second
 
 func (s *Server) toolMetadataCached(ctx context.Context) toolMetadata {
 	s.toolMetaMu.Lock()
@@ -141,14 +186,23 @@ func (s *Server) toolMetadataCached(ctx context.Context) toolMetadata {
 	if time.Now().Before(s.toolMetaTTL) {
 		return s.toolMetaCache
 	}
-	ctx, cancel := context.WithTimeout(ctx, toolMetadataTimeout)
-	defer cancel()
 	rt := worker.RuntimeOf(s.Worker.Runner)
 	image := worker.RunnerImageName(s.Worker.Runner)
+	// Each probe gets its own deadline so the slow tool-version `container run`
+	// cannot starve the fast runtime-version `container --version`.
+	toolsCtx, toolsCancel := context.WithTimeout(ctx, toolMetadataTimeout)
+	defer toolsCancel()
+	tools := worker.QueryRunnerToolVersions(toolsCtx, rt, image)
+
+	rtCtx, rtCancel := context.WithTimeout(ctx, toolMetadataTimeout)
+	defer rtCancel()
+	runtimeVer := worker.RuntimeServerVersion(rtCtx, rt)
+
 	meta := toolMetadata{
-		RunnerToolVersions: worker.QueryRunnerToolVersions(ctx, rt, image),
-		Runtime:            worker.RuntimeServerVersion(ctx, rt),
+		RunnerToolVersions: tools,
+		Runtime:            runtimeVer,
 		RunnerImage:        image,
+		Revision:           worker.RunnerImageRevision(ctx, rt, image),
 	}
 	s.toolMetaCache = meta
 	s.toolMetaTTL = time.Now().Add(toolMetadataTTL)

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,7 +24,12 @@ import (
 // scalar fields, no arrays of objects).
 func (s *Server) scanReport(w http.ResponseWriter, r *http.Request) {
 	var scan db.Scan
-	if err := s.DB.Preload("Repository").First(&scan, r.PathValue("id")).Error; err != nil {
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if err := s.DB.Preload("Repository").First(&scan, id).Error; err != nil {
 		http.NotFound(w, r)
 		return
 	}

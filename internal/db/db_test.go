@@ -9,6 +9,21 @@ import (
 	"testing"
 )
 
+func TestSQLStringLiteral(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"security-deep-dive", "'security-deep-dive'"},
+		{"", "''"},
+		{"o'brien", "'o''brien'"},
+		{"a'b'c", "'a''b''c'"},
+		{"'; DROP TABLE findings;--", "'''; DROP TABLE findings;--'"},
+	}
+	for _, c := range cases {
+		if got := SQLStringLiteral(c.in); got != c.want {
+			t.Errorf("SQLStringLiteral(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
 func TestSnapshot(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "src.db")

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/worker"
 )
 
 func postForm(t *testing.T, s *Server, path string, form url.Values) *httptest.ResponseRecorder {
@@ -40,6 +41,52 @@ func TestSettingsShow_rendersRunnerControls(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("settings page missing %q", want)
 		}
+	}
+}
+
+func TestSettingsShow_rendersStaleRunnerBanner(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	s.SetRunnerImageStatus(worker.RunnerImageStatus{
+		Stale:       true,
+		AgeDays:     10,
+		PullCommand: "docker pull ghcr.io/example/runner:latest",
+	})
+
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/settings", nil)
+	r.Host = "127.0.0.1:8080"
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	body := w.Body.String()
+	// Covers both the template's banner text and the data-copy attribute the
+	// settingsShow overlay feeds it.
+	for _, want := range []string{
+		"Runner image is 10 days old.",
+		`data-copy="docker pull ghcr.io/example/runner:latest"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("stale-runner banner missing %q", want)
+		}
+	}
+}
+
+func TestSettingsShow_noBannerWhenFresh(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	// No SetRunnerImageStatus call: the zero value is not stale, so the banner
+	// must not render.
+	w := httptest.NewRecorder()
+	r := httptest.NewRequest("GET", "/settings", nil)
+	r.Host = "127.0.0.1:8080"
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	if strings.Contains(w.Body.String(), "days old.") {
+		t.Error("stale-runner banner rendered for a fresh image")
 	}
 }
 

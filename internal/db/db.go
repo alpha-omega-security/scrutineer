@@ -357,10 +357,20 @@ func (s FindingLifecycle) Closed() bool {
 	return slices.Contains(ClosedFindingLifecycles, s)
 }
 
+// SQLStringLiteral renders s as a single-quoted SQL string literal, doubling
+// any embedded single quote. It is for splicing a TRUSTED CONSTANT into a
+// query fragment that cannot take a bind parameter — e.g. a correlated
+// subquery used inside an ORDER BY. It is defence-in-depth against a constant
+// later gaining a quote, NOT a licence to interpolate user input: anything
+// reachable from a request must still go through a `?` placeholder.
+func SQLStringLiteral(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+}
+
 func ClosedFindingLifecycleSQLValues() string {
 	values := make([]string, 0, len(ClosedFindingLifecycles))
 	for _, status := range ClosedFindingLifecycles {
-		values = append(values, "'"+strings.ReplaceAll(string(status), "'", "''")+"'")
+		values = append(values, SQLStringLiteral(string(status)))
 	}
 	return strings.Join(values, ", ")
 }
@@ -443,6 +453,7 @@ const (
 	SourceTool    FindingSource = "tool"
 	SourceModel   FindingSource = "model_suggested"
 	SourceAnalyst FindingSource = "analyst"
+	SourceSystem  FindingSource = "system"
 )
 
 // Finding is one vulnerability reported by a scan. The Finding row holds

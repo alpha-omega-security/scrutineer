@@ -87,31 +87,32 @@ func main() {
 // parseFlags fills defaults and CLI overrides; merge layers the config
 // file underneath any flag the user set explicitly.
 type flags struct {
-	configPath       string
-	addr             string
-	dataDir          string
-	effort           string
-	defaultModel     string
-	noContainer      bool
-	runtime          string
-	selinux          string
-	hardened         bool
-	hardenedRootless bool
-	runnerImage      string
-	profilesDir      string
-	skillsRepo       string
-	concurrency      int
-	cloneMode        string
-	scanTimeout      time.Duration
-	smokeTimeout     time.Duration
-	maxTurns         int
-	anthropicBaseURL string
-	forkOrg          string
-	metadataDir      string
-	schemaStrict     bool
-	recipientsFile   string
-	identityFile     string
-	skillLocal       skillDirs
+	configPath            string
+	addr                  string
+	dataDir               string
+	effort                string
+	defaultModel          string
+	noContainer           bool
+	runtime               string
+	selinux               string
+	hardened              bool
+	hardenedRootless      bool
+	runnerImage           string
+	profilesDir           string
+	skillsRepo            string
+	concurrency           int
+	cloneMode             string
+	scanTimeout           time.Duration
+	smokeTimeout          time.Duration
+	maxTurns              int
+	anthropicBaseURL      string
+	forkOrg               string
+	metadataDir           string
+	schemaStrict          bool
+	recipientsFile        string
+	identityFile          string
+	autoRejectMissedCount int
+	skillLocal            skillDirs
 
 	// set records which flags were passed on the command line so merge
 	// knows not to let the config file override them.
@@ -136,7 +137,7 @@ func registerFlags(fs *flag.FlagSet, f *flags) {
 	fs.StringVar(&f.addr, "addr", "127.0.0.1:8080", "listen address")
 	fs.StringVar(&f.dataDir, "data", "./data", "data directory (db + workspaces)")
 	fs.StringVar(&f.effort, "effort", "high", "claude effort")
-	fs.StringVar(&f.runtime, "runtime", "docker", "container runtime: docker or podman (rootless podman supported)")
+	fs.StringVar(&f.runtime, "runtime", "docker", "container runtime: docker, podman (rootless supported), or apple (Apple, experimental)")
 	fs.StringVar(&f.selinux, "selinux", "auto", "SELinux bind-mount relabeling: auto (relabel when SELinux is detected on the host), on (always), off (never). Relabeling (\":z\") lets the container read /work and write its output on enforcing-SELinux hosts")
 	fs.BoolVar(&f.noContainer, "no-container", false, "disable the containerised runner and run claude directly on the host (no isolation), even if a container runtime is available")
 	fs.BoolVar(&f.noContainer, "no-docker", false, "deprecated alias for --no-container")
@@ -155,6 +156,7 @@ func registerFlags(fs *flag.FlagSet, f *flags) {
 	fs.BoolVar(&f.schemaStrict, "schema-strict", false, "fail scans whose report.json does not validate against the skill's schema (default: warn and continue)")
 	fs.StringVar(&f.recipientsFile, "recipients-file", "", "age recipients file (public keys) for encrypted export")
 	fs.StringVar(&f.identityFile, "identity-file", "", "age identity file or SSH private key for decrypting imports")
+	fs.IntVar(&f.autoRejectMissedCount, "auto-reject-missed-count", 0, "auto-reject findings after this many consecutive missed rescans (0 disables)")
 	fs.Var(&f.skillLocal, "skills", "directory to load SKILL.md files from (repeatable)")
 }
 
@@ -230,6 +232,9 @@ func (f *flags) merge(cfg *config.Config) {
 	}
 	if cfg.IdentityFile != "" && !f.set["identity-file"] {
 		f.identityFile = cfg.IdentityFile
+	}
+	if cfg.AutoRejectMissedCount > 0 && !f.set["auto-reject-missed-count"] {
+		f.autoRejectMissedCount = cfg.AutoRejectMissedCount
 	}
 
 	if len(cfg.Models) > 0 {
@@ -416,15 +421,16 @@ func run(log *slog.Logger) error {
 	}
 
 	w := &worker.Worker{
-		DB:           gdb,
-		Log:          log,
-		DataDir:      filepath.Join(f.dataDir, "work"),
-		APIBase:      apiBase,
-		ForkOrg:      f.forkOrg,
-		MetadataDir:  f.metadataDir,
-		Runner:       runner,
-		ScanTimeout:  f.scanTimeout,
-		SchemaStrict: f.schemaStrict,
+		DB:                    gdb,
+		Log:                   log,
+		DataDir:               filepath.Join(f.dataDir, "work"),
+		APIBase:               apiBase,
+		ForkOrg:               f.forkOrg,
+		MetadataDir:           f.metadataDir,
+		Runner:                runner,
+		ScanTimeout:           f.scanTimeout,
+		SchemaStrict:          f.schemaStrict,
+		AutoRejectMissedCount: f.autoRejectMissedCount,
 		OnEvent: func(scanID, repoID uint, name, data string) {
 			broker.Publish(web.Event{Name: name, Data: data, ScanID: scanID, RepoID: repoID})
 		},
@@ -473,11 +479,40 @@ func run(log *slog.Logger) error {
 		_ = httpSrv.Shutdown(sctx)
 	}()
 
+	// Notice (but never pull) a stale runner image. Runs in the background so a
+	// slow or unreachable registry can't delay startup, and fails soft to
+	// silence -- see issue #337. A genuine auto-update is left to the operator
+	// (watchtower or `--pull=always`); this only surfaces the drift.
+	go checkRunnerImage(srv, runner, log)
+
 	log.Info("listening", "addr", "http://"+f.addr)
 	if err := httpSrv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
 	return nil
+}
+
+// checkRunnerImage compares the pulled runner image against the registry and,
+// when it is stale (a newer build exists and the local one is past the age
+// threshold), logs a one-line nag and records the result so the Settings page
+// can show a banner. It is deliberately quiet otherwise: a fresh image, a host
+// without a container runtime, or an unreachable registry all produce no output.
+func checkRunnerImage(srv *web.Server, runner worker.SkillRunner, log *slog.Logger) {
+	image := worker.RunnerImageName(runner)
+	if image == "" {
+		return // --no-container: no fixed image to compare against.
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), worker.RunnerStalenessTimeout)
+	defer cancel()
+	status, ok := worker.RunnerImageStaleness(ctx, worker.RuntimeOf(runner), image)
+	if !ok {
+		return // couldn't reach a verdict (registry down, image not pulled, ...): stay silent.
+	}
+	srv.SetRunnerImageStatus(status)
+	if status.Stale {
+		log.Warn("runner image is stale; update to pick up newer analysis tools",
+			"image", image, "age_days", status.AgeDays, "update", status.PullCommand)
+	}
 }
 
 // loadSkills loads local skill directories and, if a remote skills repo is
@@ -540,11 +575,12 @@ func hashPath(s string) string {
 const defaultRuntimeSmokeTimeout = 5 * time.Minute
 
 // setupRunner picks the SkillRunner implementation for the run loop:
-// ContainerRunner (docker or podman) when a container runtime is in use,
+// ContainerRunner (docker, podman, or Apple's container) when a container runtime is in use,
 // LocalClaude otherwise. It also starts the egress proxy, sweeps stale hardened
 // networks, runs the rootless keep-id smoke test, and returns the apiBase the
-// worker advertises to skills (the container path rewrites it to
-// host.docker.internal so containers can reach the loopback-bound web server).
+// worker advertises to skills (the container path rewrites it to the selected
+// runtime's host endpoint so containers can reach the loopback-bound web
+// server through the egress proxy).
 //
 //nolint:ireturn // dispatched on f.noContainer; concrete types live in the worker pkg
 func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRunner, string, error) {
@@ -565,6 +601,17 @@ func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRu
 			return nil, "", fmt.Errorf("%s not available: --hardened requires a container runtime, install and start it", f.runtime)
 		}
 		return nil, "", fmt.Errorf("%s not available: install and start it, or pass --no-container to run without containerisation (no isolation)", f.runtime)
+	}
+	if err := rt.HardeningSupportError(f.hardenedRootless); err != nil {
+		return nil, "", err
+	}
+	if rt.Bin == "apple" {
+		log.Warn("Apple container runtime support is experimental", "version", rt.Version)
+		if f.hardened {
+			log.Info("Apple hardened mode: per-container VM boundary substitutes for " +
+				"--security-opt no-new-privileges (not exposed by Apple's CLI); the " +
+				"per-scan --internal network is verified fail-closed before each scan")
+		}
 	}
 	// Older podman lacks the host-gateway alias the egress path needs; warn
 	// rather than fail since the hardened path verifies reachability per-scan.
@@ -595,12 +642,6 @@ func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRu
 	if err := worker.VerifySELinuxMount(selinuxCtx, rt, f.runnerImage, relabel); err != nil {
 		return nil, "", err
 	}
-	allow := buildEgressAllow(f.hardened, cfg, f.anthropicBaseURL, log)
-	token := worker.NewProxyToken()
-	port, err := worker.StartEgressProxy(&worker.EgressProxy{Allow: allow, Token: token, APIPort: addrPort(f.addr), Log: log})
-	if err != nil {
-		return nil, "", fmt.Errorf("start egress proxy: %w", err)
-	}
 	// Hardened mode owns its per-scan networks, so the gateway IP must be
 	// probed inside RunSkill against the network the runner is about to attach
 	// to. Probing once here would point every scan at whichever network
@@ -608,6 +649,7 @@ func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRu
 	// left over by crashed processes.
 	var gwIP string
 	var egress worker.EgressSidecarConfig
+	apiHost := worker.HostGatewayAlias
 	if f.hardened {
 		// Crash residue cleanup: remove orphan egress proxy sidecars first (a
 		// lingering sidecar pins its per-scan network), then the freed networks.
@@ -621,13 +663,10 @@ func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRu
 		} else if removed > 0 {
 			log.Info("removed orphan hardened networks", "count", removed)
 		}
-		egress, err = resolveEgressSidecar(rt, f, allow, token, log)
-		if err != nil {
-			return nil, "", err
-		}
 	} else {
 		gwIP = worker.ResolveHostGatewayIPv4(rt, f.runnerImage, "")
-		if rt.Bin == "podman" && gwIP == "" {
+		switch {
+		case rt.Bin == "podman" && gwIP == "":
 			// Reuses the resolve probe just run (no extra launch). An empty
 			// result means host-gateway is not wired, so containers cannot reach
 			// the host egress proxy and scans will fail with network errors --
@@ -635,21 +674,49 @@ func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRu
 			log.Warn("host-gateway did not resolve under podman; scans may fail to " +
 				"reach the network because the container cannot reach the host egress " +
 				"proxy (needs podman >= 4.7; see docs/podman.md)")
+		case rt.Bin == "apple":
+			if gwIP == "" {
+				return nil, "", fmt.Errorf("could not resolve the Apple container host gateway; cannot route scans to the egress proxy")
+			}
+			apiHost = gwIP
+		}
+	}
+	allow := buildEgressAllow(f.hardened, cfg, f.anthropicBaseURL, log)
+	if apiHost != worker.HostGatewayAlias {
+		allow = append(allow, apiHost)
+	}
+	token := worker.NewProxyToken()
+	port, err := worker.StartEgressProxy(&worker.EgressProxy{
+		Allow:    allow,
+		Token:    token,
+		APIPort:  addrPort(f.addr),
+		APIHosts: []string{apiHost},
+		Log:      log,
+	})
+	if err != nil {
+		return nil, "", fmt.Errorf("start egress proxy: %w", err)
+	}
+	// Rootless --hardened runs the egress proxy as a sidecar reusing the host
+	// proxy's allow-list and token, so resolve its config now that both exist.
+	if f.hardened {
+		egress, err = resolveEgressSidecar(rt, f, allow, token, log)
+		if err != nil {
+			return nil, "", err
 		}
 	}
 	log.Info("container runtime detected, using containerised runner",
 		"runtime", rt.Bin, "rootless", rt.Rootless, "image", f.runnerImage,
 		"egress_proxy_port", port, "egress_allow", len(allow),
-		"host_gateway_ipv4", gwIP, "hardened", f.hardened,
+		"container_host", apiHost, "host_gateway_ipv4", gwIP, "hardened", f.hardened,
 		"egress_sidecar", egress.GatewayIP != "",
 		"hardened_rootless_runtime", f.hardenedRootless, "selinux_relabel", relabel)
-	// Skills inside the container reach the host via host.docker.internal,
-	// which the egress proxy rewrites to 127.0.0.1 when dialing.
-	apiBase = "http://" + net.JoinHostPort(worker.HostGatewayAlias, addrPort(f.addr)) + "/api"
+	// Skills inside the container reach the host via the runtime's host endpoint,
+	// which the egress proxy rewrites to 127.0.0.1 when dialing the app.
+	apiBase = "http://" + net.JoinHostPort(apiHost, addrPort(f.addr)) + "/api"
 	return worker.ContainerRunner{
 		Image:                   f.runnerImage,
 		Effort:                  f.effort,
-		ProxyURL:                worker.ProxyURL(token, port),
+		ProxyURL:                worker.ProxyURLForHost(token, apiHost, port),
 		FullClone:               f.fullClone(),
 		MaxTurns:                f.maxTurns,
 		AnthropicBaseURL:        f.anthropicBaseURL,

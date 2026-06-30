@@ -16,9 +16,11 @@ import (
 	"time"
 )
 
-// HostGatewayAlias is the hostname containers use to reach the host. The
-// proxy rewrites it to 127.0.0.1 when dialing so skills can call the
-// scrutineer API even though the web server only listens on loopback.
+// HostGatewayAlias is the hostname Docker/Podman containers use to reach the
+// host. The proxy rewrites configured API hosts to 127.0.0.1 when dialing so
+// skills can call the scrutineer API even though the web server only listens on
+// loopback. Apple's container runtime uses a gateway IP instead of this alias;
+// callers pass that host through EgressProxy.APIHosts.
 const HostGatewayAlias = "host.docker.internal"
 
 // HardenedEgressAllow is the strict allowlist used when --hardened is
@@ -130,8 +132,13 @@ var DefaultEgressAllow = []string{
 type EgressProxy struct {
 	Allow   []string
 	Token   string
-	APIPort string // only this port is allowed for HostGatewayAlias
-	Log     *slog.Logger
+	APIPort string // only this port is allowed for APIHosts
+	// APIHosts are hostnames/IPs that mean "the scrutineer host API" from
+	// inside a scan container. They are restricted to APIPort and rewritten to
+	// 127.0.0.1 when the proxy dials upstream. Empty keeps the Docker/Podman
+	// default of HostGatewayAlias.
+	APIHosts []string
+	Log      *slog.Logger
 	// GatewayDialHost overrides the address the proxy dials for the host skill
 	// API (requests whose host is HostGatewayAlias). The in-process host proxy
 	// leaves it "" and dials 127.0.0.1: it shares the host's loopback, so the
@@ -196,7 +203,7 @@ func (p *EgressProxy) serveConnect(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "egress to "+host+" is not on the allowlist", http.StatusForbidden)
 		return
 	}
-	if strings.EqualFold(host, HostGatewayAlias) && p.APIPort != "" && port != p.APIPort {
+	if p.isAPIHost(host) && p.APIPort != "" && port != p.APIPort {
 		p.Log.Warn("egress denied", "method", "CONNECT", "host", host, "port", port, "allowed_port", p.APIPort)
 		http.Error(w, "egress to "+host+" is only allowed on port "+p.APIPort, http.StatusForbidden)
 		return
@@ -233,7 +240,7 @@ func (p *EgressProxy) serveForward(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "egress to "+host+" is not on the allowlist", http.StatusForbidden)
 		return
 	}
-	if strings.EqualFold(host, HostGatewayAlias) && p.APIPort != "" && port != p.APIPort {
+	if p.isAPIHost(host) && p.APIPort != "" && port != p.APIPort {
 		p.Log.Warn("egress denied", "method", r.Method, "host", host, "port", port, "allowed_port", p.APIPort)
 		http.Error(w, "egress to "+host+" is only allowed on port "+p.APIPort, http.StatusForbidden)
 		return
@@ -299,10 +306,16 @@ func NewProxyToken() string {
 	return hex.EncodeToString(b[:])
 }
 
-// ProxyURL builds the http_proxy-style URL for containers reaching the
-// in-process host proxy via the host-gateway alias.
+// ProxyURL builds the http_proxy-style URL for Docker/Podman containers
+// reaching the in-process host proxy via the host-gateway alias.
 func ProxyURL(token string, port int) string {
-	return fmt.Sprintf("http://scrutineer:%s@%s:%d", token, HostGatewayAlias, port)
+	return ProxyURLForHost(token, HostGatewayAlias, port)
+}
+
+// ProxyURLForHost builds the http_proxy-style URL for containers whose host
+// gateway is runtime-specific.
+func ProxyURLForHost(token, host string, port int) string {
+	return fmt.Sprintf("http://scrutineer:%s@%s:%d", token, host, port)
 }
 
 // ProxyURLForEndpoint builds the http_proxy-style URL for a proxy reachable at
@@ -320,12 +333,28 @@ func splitTarget(hostport string) (host, port string) {
 	return hostport, "443"
 }
 
+func (p *EgressProxy) isAPIHost(host string) bool {
+	for _, apiHost := range p.apiHosts() {
+		if strings.EqualFold(host, apiHost) {
+			return true
+		}
+	}
+	return false
+}
+
+func (p *EgressProxy) apiHosts() []string {
+	if len(p.APIHosts) > 0 {
+		return p.APIHosts
+	}
+	return []string{HostGatewayAlias}
+}
+
 // dialTarget resolves a request's host:port to the address the proxy actually
-// dials. HostGatewayAlias is rewritten to gatewayDialHost (127.0.0.1 for the
-// in-process host proxy, the egress-network host-gateway IPv4 for the sidecar);
-// every other host is dialed as given.
+// dials. A request to an API host (HostGatewayAlias by default) is rewritten to
+// gatewayDialHost (127.0.0.1 for the in-process host proxy, the egress-network
+// host-gateway IPv4 for the sidecar); every other host is dialed as given.
 func (p *EgressProxy) dialTarget(host, port string) string {
-	if strings.EqualFold(host, HostGatewayAlias) {
+	if p.isAPIHost(host) {
 		host = p.gatewayDialHost()
 	}
 	return net.JoinHostPort(host, port)

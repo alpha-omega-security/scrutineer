@@ -2,6 +2,24 @@
 
 <h1 class="text-2xl font-semibold mb-6">Settings</h1>
 
+{{if .Meta.Stale}}
+<div class="alert alert-warning mb-6" role="status">
+  <i data-lucide="triangle-alert"></i>
+  <section>
+    <strong>Runner image is {{.Meta.StaleDays}} days old.</strong>
+    A newer build of the analysis toolchain is available. Update to pick it up:
+    <span class="inline-flex items-center gap-1.5">
+      <code class="font-mono">{{.Meta.PullCommand}}</code>
+      <button type="button" class="btn-icon-ghost copy-btn" data-copy="{{.Meta.PullCommand}}"
+              aria-label="Copy command" title="Copy command">
+        <i data-lucide="copy" class="copy-icon"></i>
+        <i data-lucide="check" class="copied-icon"></i>
+      </button>
+    </span>
+  </section>
+</div>
+{{end}}
+
 <div class="grid gap-6">
 
 <section class="card">
@@ -183,7 +201,7 @@
       {{template "metarow" (dict "Label" "Semgrep" "Value" .Meta.Semgrep)}}
       {{template "metarow" (dict "Label" "Zizmor" "Value" .Meta.Zizmor)}}
       {{template "metarow" (dict "Label" "Container runtime" "Value" .Meta.Runtime)}}
-      {{template "metarow" (dict "Label" "Runner image" "Value" .Meta.RunnerImage)}}
+      {{template "metarow" (dict "Label" "Runner image" "Value" .Meta.RunnerImageRef)}}
     </div>
   </section>
 </section>

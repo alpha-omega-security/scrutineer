@@ -101,6 +101,24 @@ func TestDialTargetRewritesGatewayAlias(t *testing.T) {
 	}
 }
 
+func TestEgressProxyDialTargetRewritesAPIHosts(t *testing.T) {
+	p := &EgressProxy{}
+	if got := p.dialTarget(HostGatewayAlias, "8080"); got != "127.0.0.1:8080" {
+		t.Errorf("got %q", got)
+	}
+	if got := p.dialTarget("Host.Docker.Internal", "9090"); got != "127.0.0.1:9090" {
+		t.Errorf("case-insensitive rewrite failed: %q", got)
+	}
+
+	p = &EgressProxy{APIHosts: []string{"192.168.64.1"}}
+	if got := p.dialTarget("192.168.64.1", "8080"); got != "127.0.0.1:8080" {
+		t.Errorf("custom API host rewrite failed: %q", got)
+	}
+	if got := p.dialTarget("api.anthropic.com", "443"); got != "api.anthropic.com:443" {
+		t.Errorf("got %q", got)
+	}
+}
+
 func TestDialTargetSidecarUsesGatewayDialHost(t *testing.T) {
 	// The sidecar cannot use 127.0.0.1 -- that is its own loopback, not the
 	// host's -- so it sets GatewayDialHost to the egress-network host-gateway
@@ -189,6 +207,28 @@ func TestEgressProxy_SidecarForwardDialsGatewayHost(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "/api/ping") {
 		t.Errorf("body = %q", w.Body.String())
+	}
+}
+
+func TestEgressProxy_ForwardAllowedRewritesCustomAPIHost(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Upstream", "yes")
+		_, _ = io.WriteString(w, "hello "+r.URL.Path)
+	}))
+	defer upstream.Close()
+	_, port, _ := net.SplitHostPort(upstream.Listener.Addr().String())
+
+	const apiHost = "192.168.64.1"
+	p := &EgressProxy{Allow: []string{apiHost}, APIHosts: []string{apiHost}, Log: quietLog()}
+	target := "http://" + net.JoinHostPort(apiHost, port) + "/api/ping"
+	r := httptest.NewRequest("GET", target, nil)
+	w := httptest.NewRecorder()
+	p.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("got %d: %s", w.Code, w.Body)
+	}
+	if w.Header().Get("X-Upstream") != "yes" {
+		t.Errorf("upstream header not copied through")
 	}
 }
 
@@ -423,6 +463,12 @@ func TestProxyURLShape(t *testing.T) {
 	want := "http://scrutineer:abc@host.docker.internal:1234"
 	if got != want {
 		t.Errorf("got %q want %q", got, want)
+	}
+
+	got = ProxyURLForHost("abc", "192.168.64.1", 1234)
+	want = "http://scrutineer:abc@192.168.64.1:1234"
+	if got != want {
+		t.Errorf("custom host got %q want %q", got, want)
 	}
 }
 

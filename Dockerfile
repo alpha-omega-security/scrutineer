@@ -10,10 +10,10 @@ COPY . .
 ARG COMMIT=""
 RUN CGO_ENABLED=0 go build -ldflags "-X main.commit=${COMMIT}" -o /scrutineer ./cmd/scrutineer
 
-FROM node:26-alpine@sha256:a2dc166a387cc6ca1e62d0c8e265e49ca985d6e60abc9fe6e6c3d6ce8e63f606 AS claude
+FROM node:26-alpine@sha256:725aeba2364a9b16beae49e180d83bd597dbd0b15c47f1f28875c290bfd255b9 AS claude
 RUN npm install -g @anthropic-ai/claude-code@2.1.173
 
-FROM python:3.15.0b2-alpine@sha256:05458e2cf3a3b7a158d3c2e11940de557c626c064f41311f874a2c08ede01074 AS python-tools
+FROM python:3.15.0b3-alpine@sha256:c1320e80e60b0229497c6fd1b0698a36f704a97dc3139c2e122b4b3f28e187d9 AS python-tools
 RUN pip install --no-cache-dir semgrep==1.167.0 "setuptools<81"
 
 FROM golang:1.26.4-alpine@sha256:3ad57304ad93bbec8548a0437ad9e06a455660655d9af011d58b993f6f615648 AS go-tools
@@ -32,7 +32,7 @@ FROM rust:1.96-alpine@sha256:f87aa870663e2b57ec8c69de82c7eedf7383bee987eef7612c0
 RUN apk add --no-cache build-base linux-headers
 RUN cargo install --locked --root /out zizmor@1.26.1
 
-FROM python:3.15.0b2-alpine@sha256:05458e2cf3a3b7a158d3c2e11940de557c626c064f41311f874a2c08ede01074
+FROM python:3.15.0b3-alpine@sha256:c1320e80e60b0229497c6fd1b0698a36f704a97dc3139c2e122b4b3f28e187d9
 RUN apk add --no-cache git ca-certificates bash nodejs coreutils && \
     rm -f /usr/local/bin/pip* /usr/local/bin/idle* /usr/local/bin/pydoc*
 

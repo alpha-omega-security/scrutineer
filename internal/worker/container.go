@@ -1,9 +1,10 @@
 // Package worker provides a ContainerRunner that executes claude in an ephemeral
-// container via a container runtime (docker or podman). Used when a runtime is
-// available on the host; falls back to LocalClaude otherwise. The scrutineer
-// process runs on the host (not containerised) and calls the runtime directly
-// -- no socket mounting needed (T12). Rootless podman is supported, which keeps
-// runtime access non-root-equivalent (see threatmodel.md T12).
+// container via a container runtime (docker, podman, or Apple's container).
+// Used when a runtime is available on the host; falls back to LocalClaude
+// otherwise. The scrutineer process runs on the host (not containerised) and
+// calls the runtime directly -- no socket mounting needed (T12). Rootless podman
+// is supported, which keeps runtime access non-root-equivalent (see
+// threatmodel.md T12).
 package worker
 
 import (
@@ -14,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -23,24 +25,25 @@ const DefaultRunnerImage = "ghcr.io/alpha-omega-security/scrutineer-runner:lates
 
 // ContainerRunner launches claude inside an ephemeral container with the scan
 // workspace (clone + staged skill + output file) mounted at /work. It drives
-// either docker or podman (selected via the Runtime field) and implements
-// SkillRunner.
+// docker, podman, or Apple's container (selected via the Runtime field) and
+// implements SkillRunner.
 type ContainerRunner struct {
 	Image            string
 	Effort           string
-	ProxyURL         string // http://user:token@host.docker.internal:port; "" disables egress
+	ProxyURL         string // http://user:token@host-or-gateway:port; "" disables egress
 	FullClone        bool
 	MaxTurns         int
 	AnthropicBaseURL string // passed as ANTHROPIC_BASE_URL env var to the container
-	HostGatewayIP    string // IPv4 address for --add-host; falls back to "host-gateway"
+	HostGatewayIP    string // Docker/Podman IPv4 address for --add-host; falls back to "host-gateway"
 	// ProfilesDir is the host directory containing docker/profiles/<name>/
 	// Dockerfile entries. When empty, profile resolution is skipped and
 	// every scan runs in the default Image.
 	ProfilesDir string
 	// Hardened toggles the strict sandbox: rootfs is mounted read-only,
-	// no-new-privileges is set on the container, and the runner creates
-	// a per-scan --internal network so the only egress path is
-	// the host proxy and concurrent scans cannot reach each other.
+	// no-new-privileges is set on the container where the runtime supports it
+	// (Apple's CLI does not expose it, so its per-container VM substitutes), and
+	// the runner creates a per-scan --internal network so the only egress path
+	// is the host proxy and concurrent scans cannot reach each other.
 	// Profile images must work with a read-only rootfs when this is
 	// enabled (writable paths beyond /work and /tmp will fail).
 	Hardened bool
@@ -55,9 +58,9 @@ type ContainerRunner struct {
 	// addition on top (setting both is harmless). The read-only rootfs can break
 	// custom profile images that write outside /work and /tmp.
 	HardenedRootlessRuntime bool
-	// Runtime selects the OCI engine (docker or podman) and carries the
-	// rootless flag that gates --userns=keep-id. The zero value is docker, so
-	// a bare ContainerRunner{} keeps shelling out to "docker".
+	// Runtime selects the OCI engine (docker, podman, or Apple's container) and
+	// carries the rootless flag that gates --userns=keep-id. The zero value is
+	// docker, so a bare ContainerRunner{} keeps shelling out to "docker".
 	Runtime ContainerRuntime
 	// SELinuxRelabel, when true, appends the ":z" relabel option to every host
 	// bind mount (/work, /claude-config, /src) so the container can access them
@@ -170,6 +173,21 @@ func redactURLUserinfo(raw string) string {
 	return u.String()
 }
 
+// proxyURLWithHost rewrites the host of a proxy URL, keeping its scheme, the
+// proxy-token userinfo, and port. Apple --hardened scans reach the host proxy
+// through the per-scan --internal network's gateway rather than the default
+// network's, and Apple has no --add-host alias to repoint, so the gateway IP is
+// baked into the proxy env here. Returns the input unchanged if it does not
+// parse.
+func proxyURLWithHost(proxyURL, host string) string {
+	u, err := url.Parse(proxyURL)
+	if err != nil {
+		return proxyURL
+	}
+	u.Host = net.JoinHostPort(host, u.Port())
+	return u.String()
+}
+
 // HardenedWorkspaceCapBytes caps the per-scan workspace footprint that the
 // hardening modes (--hardened and --hardened-rootless-runtime) tolerate after
 // clone completes. This is a post-clone check, not a clone-time bound: a clone
@@ -245,16 +263,16 @@ func (d ContainerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Ev
 	}
 	emit(Event{Kind: KindText, Text: logLine})
 
-	planLimitText := ""
+	accountErrText := ""
 	wrappedEmit := func(e Event) {
-		if planLimitText == "" {
-			planLimitText = claudePlanLimitText(e.Text)
+		if accountErrText == "" {
+			accountErrText = claudeAccountErrorText(e.Text)
 		}
 		emit(e)
 	}
 	hitMaxTurns, sessionID, waitErr := d.runContainerOnce(ctx, runBase, sj, wrappedEmit)
 
-	if waitErr != nil && sj.ResumeSessionID != "" && sessionID == "" && planLimitText == "" {
+	if waitErr != nil && sj.ResumeSessionID != "" && sessionID == "" && accountErrText == "" {
 		if sj.ResumePrompt != "" {
 			emit(Event{Kind: KindText, Text: "resume of session " + sj.ResumeSessionID + " failed; " + resumePromptNoFreshFallbackText})
 			return SkillResult{Commit: commit, Profile: profile}, fmt.Errorf("%s exited: %w", d.Runtime.bin(), waitErr)
@@ -277,8 +295,8 @@ func (d ContainerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Ev
 		if hitMaxTurns {
 			return res, &MaxTurnsReachedError{}
 		}
-		if planLimitText != "" {
-			return res, &ClaudePlanLimitError{Detail: planLimitText}
+		if accountErrText != "" {
+			return res, &ClaudeAccountError{Detail: accountErrText}
 		}
 		return res, fmt.Errorf("%s exited: %w", d.Runtime.bin(), waitErr)
 	}
@@ -342,8 +360,8 @@ func (d ContainerRunner) buildRunArgs(absWork, image string, hnet hardenedNet, c
 	} else if d.HostGatewayIP != "" {
 		gwTarget = d.HostGatewayIP
 	}
-	args := []string{
-		"run", "--rm",
+	args := d.Runtime.runArgs(
+		"--rm",
 		"--cap-drop", "ALL",
 		"--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()),
 		"-e", "HOME=/tmp",
@@ -361,7 +379,9 @@ func (d ContainerRunner) buildRunArgs(absWork, image string, hnet hardenedNet, c
 		"--tmpfs", "/tmp:rw,noexec,nosuid,size=256m",
 		"-v", bindMount(absWork, "/work", d.SELinuxRelabel),
 		"-w", "/work",
-		"--add-host", HostGatewayAlias + ":" + gwTarget,
+	)
+	if d.Runtime.supportsHostGatewayAddHost() {
+		args = append(args, "--add-host", HostGatewayAlias+":"+gwTarget)
 	}
 	if d.Runtime.needsKeepID() {
 		// Rootless podman remaps --user uid:gid through /etc/subuid, so writes
@@ -393,8 +413,10 @@ func (d ContainerRunner) buildRunArgs(absWork, image string, hnet hardenedNet, c
 		// unconditionally above, in every mode.
 		args = append(args,
 			"--read-only",
-			"--security-opt", "no-new-privileges",
 		)
+		if d.Runtime.supportsNoNewPrivileges() {
+			args = append(args, "--security-opt", "no-new-privileges")
+		}
 	}
 	if d.Hardened {
 		// The per-scan --internal network is the egress-enforcement half of
@@ -410,6 +432,15 @@ func (d ContainerRunner) buildRunArgs(absWork, image string, hnet hardenedNet, c
 	proxyURL := d.ProxyURL
 	if hnet.proxyEndpoint != "" {
 		proxyURL = ProxyURLForEndpoint(d.Egress.Token, hnet.proxyEndpoint)
+	}
+	// Apple has no --add-host, so the proxy env must name the per-scan
+	// gateway directly. Under --hardened the runner attaches to its own
+	// --internal network, whose gateway differs from the default network the
+	// startup ProxyURL was built for, so rewrite the host to this scan's
+	// gateway. docker/podman instead keep a constant host.docker.internal
+	// that --add-host repoints per scan.
+	if d.Runtime.Bin == runtimeApple && d.Hardened && hnet.gatewayIP != "" {
+		proxyURL = proxyURLWithHost(d.ProxyURL, hnet.gatewayIP)
 	}
 	if proxyURL != "" {
 		args = append(args,
@@ -553,7 +584,10 @@ func (d ContainerRunner) profileGuidePath(profile string) string {
 // server only listens on 127.0.0.1. Using the explicit IPv4 address avoids
 // the dual-stack ambiguity.
 func ResolveHostGatewayIPv4(rt ContainerRuntime, image, network string) string {
-	args := []string{"run", "--rm", "--add-host", "hgw:host-gateway"}
+	if rt.Bin == runtimeApple {
+		return resolveAppleHostGatewayIPv4(rt, image, network)
+	}
+	args := rt.runArgs("--rm", "--add-host", "hgw:host-gateway")
 	if network != "" {
 		args = append(args, "--network", network)
 	}
@@ -573,6 +607,48 @@ func ResolveHostGatewayIPv4(rt ContainerRuntime, image, network string) string {
 		}
 	}
 	return ""
+}
+
+func resolveAppleHostGatewayIPv4(rt ContainerRuntime, image, network string) string {
+	if image == "" {
+		return ""
+	}
+	const script = `awk '$2 == "00000000" { print $3; exit }' /proc/net/route`
+	args := rt.runArgs("--rm")
+	if network != "" {
+		args = append(args, "--network", network)
+	}
+	args = append(args, "--entrypoint", "sh", "--", image, "-c", script)
+	out, err := exec.Command(rt.bin(), args...).Output()
+	if err != nil {
+		return ""
+	}
+	return routeGatewayIPv4(out)
+}
+
+func routeGatewayIPv4(out []byte) string {
+	// resolveAppleHostGatewayIPv4's awk (`$2 == "00000000" { print $3 }`) already
+	// isolates the default route's gateway column, so the only shape we see is a
+	// single hex field per line.
+	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
+		if ip := routeHexIPv4(strings.TrimSpace(line)); ip != "" {
+			return ip
+		}
+	}
+	return ""
+}
+
+func routeHexIPv4(field string) string {
+	const ipv4HexLen = 8 // a 32-bit IPv4 address is 8 hex digits
+	if len(field) != ipv4HexLen {
+		return ""
+	}
+	n, err := strconv.ParseUint(field, 16, 32)
+	if err != nil || n == 0 {
+		return ""
+	}
+	// /proc/net/route stores the gateway little-endian, so shift each octet out.
+	return net.IPv4(byte(n), byte(n>>8), byte(n>>16), byte(n>>24)).String() //nolint:mnd // octet shifts
 }
 
 // dirSize sums the on-disk size of every regular file under root. Used
@@ -647,9 +723,18 @@ func (d ContainerRunner) setupHardenedNetwork(sj SkillJob, image string) (harden
 	}
 	cleanup := func() { _ = exec.Command(d.Runtime.bin(), "network", "rm", "--", network).Run() }
 	// Resolve the host-gateway once against the network just created; reused by
-	// both the verification probe and the real run (an empty result falls through
-	// to the literal host-gateway alias downstream).
+	// both the verification probe and the real run (for docker/podman an empty
+	// result falls through to the literal host-gateway alias downstream).
 	hn := hardenedNet{name: network, gatewayIP: ResolveHostGatewayIPv4(d.Runtime, image, network)}
+
+	// Apple has no host-gateway alias to fall back on: the per-scan --internal
+	// network has its own gateway and the proxy env must name its IP, so an
+	// unresolved gateway means the scan cannot reach the egress proxy. Fail
+	// closed rather than run a container with no working egress path.
+	if d.Runtime.Bin == runtimeApple && hn.gatewayIP == "" {
+		cleanup()
+		return hardenedNet{}, noop, fmt.Errorf("hardened mode: could not resolve the Apple --internal network gateway for %q; cannot route to the egress proxy", network)
+	}
 
 	// Under rootless podman the scan cannot reach the host proxy across the
 	// --internal boundary, so the proxy runs as a sidecar on this network. Start
@@ -670,8 +755,8 @@ func (d ContainerRunner) setupHardenedNetwork(sj SkillJob, image string) (harden
 	}
 
 	// docker's bridge --internal is trusted, and so is rootful podman's (netavark
-	// + a bridge in the host netns, gateway on the host -- docker's model). Only
-	// rootless podman needs per-scan proof; see needsHardenedNetVerify.
+	// + a bridge in the host netns, gateway on the host -- docker's model).
+	// Rootless podman and Apple need per-scan proof; see needsHardenedNetVerify.
 	if d.Runtime.needsHardenedNetVerify() {
 		if err := d.verifyHardenedNetwork(hn, image); err != nil {
 			cleanup()
@@ -837,7 +922,7 @@ func VerifyProxyBinary(ctx context.Context, rt ContainerRuntime, image string) e
 func (d ContainerRunner) verifyHardenedNetwork(hn hardenedNet, image string) error {
 	network := hn.name
 
-	out, err := exec.Command(d.Runtime.bin(), hardenedEgressBlockArgs(network, image)...).CombinedOutput()
+	out, err := exec.Command(d.Runtime.bin(), d.Runtime.hardenedEgressBlockArgs(network, image)...).CombinedOutput()
 	s := strings.TrimSpace(string(out))
 	if err != nil {
 		return fmt.Errorf("egress-block probe could not run on network %q: %w: %s", network, err, s)
@@ -869,7 +954,7 @@ func (d ContainerRunner) verifyHostProxyReachable(hn hardenedNet, image string) 
 	if err != nil {
 		return fmt.Errorf("parse proxy url: %w", err)
 	}
-	out, err := exec.Command(d.Runtime.bin(), hardenedProxyReachArgs(hn.name, gwTarget, port, image)...).CombinedOutput()
+	out, err := exec.Command(d.Runtime.bin(), d.Runtime.hardenedProxyReachArgs(hn.name, gwTarget, port, image)...).CombinedOutput()
 	s := strings.TrimSpace(string(out))
 	if err != nil {
 		return fmt.Errorf("proxy-reach probe could not run on network %q: %w: %s", hn.name, err, s)
@@ -933,28 +1018,33 @@ func (d ContainerRunner) sidecarLogTail(name string) string {
 // the per-scan --internal network, no proxy env, that must fail to reach a
 // routable public IP. A literal IP avoids a false pass from blocked DNS. curl
 // absence is reported as NOCURL so the caller can fail closed rather than read
-// the curl-not-found exit as "egress blocked".
-func hardenedEgressBlockArgs(network, image string) []string {
+// the curl-not-found exit as "egress blocked". runArgs keeps Apple's
+// --progress none out of the probe output.
+func (rt ContainerRuntime) hardenedEgressBlockArgs(network, image string) []string {
 	const script = `command -v curl >/dev/null 2>&1 || { echo NOCURL; exit 0; }
 curl -s -m 5 -o /dev/null http://1.1.1.1 && echo REACHED || echo BLOCKED`
-	return []string{
-		"run", "--rm", "--cap-drop", "ALL", "--network", network,
-		"--entrypoint", "sh", "--", image, "-c", script,
-	}
+	return rt.runArgs("--rm", "--cap-drop", "ALL", "--network", network,
+		"--entrypoint", "sh", "--", image, "-c", script)
 }
 
 // hardenedProxyReachArgs builds the `run` args for probe (b): a container on the
-// per-scan --internal network, with the host-gateway alias wired exactly as the
-// real run wires it, that must reach the host egress proxy. curl exit 0 (the
-// proxy answers, e.g. 407 without auth) means the TCP path to the host is open.
-func hardenedProxyReachArgs(network, gatewayIP, proxyPort, image string) []string {
-	target := "http://" + HostGatewayAlias + ":" + proxyPort + "/"
-	script := "curl -s -m 5 -o /dev/null " + target + " && echo REACHED || echo UNREACHABLE"
-	return []string{
-		"run", "--rm", "--cap-drop", "ALL", "--network", network,
-		"--add-host", HostGatewayAlias + ":" + gatewayIP,
-		"--entrypoint", "sh", "--", image, "-c", script,
+// per-scan --internal network that must reach the host egress proxy. curl exit 0
+// (the proxy answers, e.g. 407 without auth) means the TCP path to the host is
+// open. docker/podman wire the host-gateway alias with --add-host exactly as the
+// real run does; Apple's CLI has no --add-host, so the probe targets the
+// resolved gateway IP directly -- the same address buildRunArgs points the proxy
+// env at for an Apple hardened scan.
+func (rt ContainerRuntime) hardenedProxyReachArgs(network, gatewayIP, proxyPort, image string) []string {
+	args := rt.runArgs("--rm", "--cap-drop", "ALL", "--network", network)
+	var target string
+	if rt.supportsHostGatewayAddHost() {
+		args = append(args, "--add-host", HostGatewayAlias+":"+gatewayIP)
+		target = "http://" + HostGatewayAlias + ":" + proxyPort + "/"
+	} else {
+		target = "http://" + net.JoinHostPort(gatewayIP, proxyPort) + "/"
 	}
+	script := "curl -s -m 5 -o /dev/null " + target + " && echo REACHED || echo UNREACHABLE"
+	return append(args, "--entrypoint", "sh", "--", image, "-c", script)
 }
 
 // sidecarReachArgs builds the `run` args for the sidecar variant of probe (b): a
@@ -974,7 +1064,7 @@ func sidecarReachArgs(network, endpoint, image string) []string {
 }
 
 // proxyPortFromURL extracts the port from a proxy URL of the shape ProxyURL
-// produces (http://user:tok@host.docker.internal:PORT).
+// produces (http://user:tok@HOST:PORT).
 func proxyPortFromURL(proxyURL string) (string, error) {
 	u, err := url.Parse(proxyURL)
 	if err != nil {
@@ -994,11 +1084,9 @@ func proxyPortFromURL(proxyURL string) (string, error) {
 // networks actually removed; rm failures are intentionally swallowed
 // since a busy network is exactly what we want to leave alone.
 func SweepOrphanHardenedNetworks(rt ContainerRuntime) (int, error) {
-	out, err := exec.Command(rt.bin(), "network", "ls",
-		"--filter", "name="+hardenedNetworkPrefix,
-		"--format", "{{.Name}}").Output()
+	out, err := exec.Command(rt.bin(), networkListNamesArgs(rt)...).Output()
 	if err != nil {
-		return 0, fmt.Errorf("%s network ls: %w", rt.bin(), err)
+		return 0, fmt.Errorf("%s network list: %w", rt.bin(), err)
 	}
 	removed := 0
 	for _, n := range parseHardenedNetworkNames(out) {
@@ -1009,10 +1097,24 @@ func SweepOrphanHardenedNetworks(rt ContainerRuntime) (int, error) {
 	return removed, nil
 }
 
+// networkListNamesArgs returns the args that list one network name per line.
+// docker/podman support `network ls --filter name= --format {{.Name}}`; Apple's
+// CLI has neither flag, so it lists every name with `network list --quiet`.
+// parseHardenedNetworkNames re-applies the prefix filter for all runtimes (the
+// docker/podman --filter name= is only a substring match), so listing every
+// Apple network and filtering in Go is equivalent.
+func networkListNamesArgs(rt ContainerRuntime) []string {
+	if rt.Bin == runtimeApple {
+		return []string{"network", "list", "--quiet"}
+	}
+	return []string{"network", "ls", "--filter", "name=" + hardenedNetworkPrefix, "--format", "{{.Name}}"}
+}
+
 // parseHardenedNetworkNames extracts strict-prefix matches from the
-// output of the runtime's `network ls --format {{.Name}}`. Its --filter
-// name= is a substring match, so we re-check the prefix here to avoid
-// touching a user-named network that happens to contain the substring.
+// output of the runtime's network listing. The docker/podman --filter
+// name= is a substring match (and Apple's --quiet is unfiltered), so we
+// re-check the prefix here to avoid touching a user-named network that
+// happens to contain the substring.
 func parseHardenedNetworkNames(out []byte) []string {
 	var names []string
 	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {

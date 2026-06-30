@@ -36,10 +36,13 @@
 # skills_repo: https://github.com/alpha-omega-security/scrutineer-skills
 # skills_repo: alpha-omega-security/scrutineer-skills@v0.3.1
 
-# Container runtime: docker (default) or podman. Rootless podman is detected
-# automatically and gets --userns=keep-id so scan output stays host-owned;
-# podman >= 4.7 and an /etc/subuid range are required. There is no
-# auto-detection -- a podman-only host must set this explicitly.
+# Container runtime: docker (default), podman, or Apple's container runtime
+# (`apple`, experimental). Rootless podman is detected automatically and
+# gets --userns=keep-id so scan output stays host-owned; podman >= 4.7 and an
+# /etc/subuid range are required. There is no auto-detection -- a non-docker
+# host must set this explicitly. Apple's container runtime (experimental)
+# supports ordinary and --hardened scans; --hardened-rootless-runtime is a
+# rootless-podman concept and is refused there. See docs/apple.md.
 # runtime: docker
 
 # SELinux bind-mount relabeling for the container runner. "auto" (default) adds
@@ -57,13 +60,13 @@
 # no_container: false
 
 # Strict sandbox mode. Forces the container runner (no --no-container fallback),
-# restricts the egress allowlist to *.anthropic.com plus host.docker.internal,
-# mounts the container rootfs read-only, sets no-new-privileges, and attaches
-# the runner to an --internal network so the only route out is the scrutineer
-# host proxy. Under podman, each hardened scan first verifies that network
-# blocks external egress and refuses to run otherwise. egress_allow below is
-# ignored under hardened mode; bundled skills that need ecosyste.ms or a
-# package registry won't work unless they route via the host skill API.
+# restricts the egress allowlist to *.anthropic.com plus the runtime's host
+# endpoint, mounts the container rootfs read-only, sets no-new-privileges, and
+# attaches the runner to an --internal network so the only route out is the
+# scrutineer host proxy. Under podman, each hardened scan first verifies that
+# network blocks external egress and refuses to run otherwise. egress_allow
+# below is ignored under hardened mode; bundled skills that need ecosyste.ms or
+# a package registry won't work unless they route via the host skill API.
 # hardened: false
 
 # The non-network half of hardened mode WITHOUT the per-scan --internal network:
@@ -87,9 +90,9 @@
 # disables the mechanism entirely.
 # profiles_dir: docker/profiles
 
-# Extra hosts the container runner's egress proxy will tunnel to, on top of
-# the built-in allowlist (Anthropic API, *.ecosyste.ms, major forges,
-# package registries, advisory sources, host.docker.internal). Use
+# Extra hosts the container runner's egress proxy will tunnel to, on top of the
+# built-in allowlist (Anthropic API, *.ecosyste.ms, major forges, package
+# registries, advisory sources, and the runtime's host endpoint). Use
 # "*.example.com" to allow every subdomain.
 # egress_allow:
 #   - artifactory.internal
@@ -113,6 +116,10 @@
 # and the parser still runs. Turn on while iterating on a skill so shape
 # mistakes surface as a scan failure rather than a buried log line.
 # schema_strict: false
+
+# Auto-reject open findings if they are not observed in this many
+# consecutive rescans of the same repository and subpath. 0 disables.
+# auto_reject_missed_count: 0
 
 # Custom Anthropic API base URL. When set, the hostname is automatically
 # added to the egress allowlist. Falls back to the ANTHROPIC_BASE_URL

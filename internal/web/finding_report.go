@@ -3,6 +3,7 @@ package web
 import (
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -20,7 +21,12 @@ import (
 // finding inside a scan or repo report.
 func (s *Server) findingReport(w http.ResponseWriter, r *http.Request) {
 	var f db.Finding
-	if err := s.DB.First(&f, r.PathValue("id")).Error; err != nil {
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if err := s.DB.First(&f, id).Error; err != nil {
 		http.NotFound(w, r)
 		return
 	}

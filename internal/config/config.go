@@ -35,11 +35,12 @@ type Config struct {
 	// (coalesced in Load).
 	NoContainer *bool `yaml:"no_container"`
 	NoDocker    *bool `yaml:"no_docker"`
-	// Runtime selects the container engine: "docker" (default) or "podman".
-	// Empty leaves the built-in default (docker). Rootless podman is detected
-	// automatically and gets --userns=keep-id so bind-mount output stays
-	// host-owned. There is no auto-detection: a podman-only host must set this
-	// (or pass --runtime podman) explicitly.
+	// Runtime selects the container engine: "docker" (default), "podman", or
+	// "apple" (Apple's container runtime, experimental). Empty leaves the
+	// built-in default (docker). Rootless podman is detected automatically and gets
+	// --userns=keep-id so bind-mount output stays host-owned. There is no
+	// auto-detection: a non-docker host must set this (or pass --runtime)
+	// explicitly.
 	Runtime string `yaml:"runtime"`
 	// SELinux controls bind-mount relabeling for the container runner: "auto"
 	// (default/empty -- relabel only when SELinux is detected on the host), "on"
@@ -49,10 +50,10 @@ type Config struct {
 	SELinux string `yaml:"selinux"`
 	// Hardened enforces the strictest sandbox mode: a container runtime is
 	// required (no --no-container fallback), egress is restricted to
-	// *.anthropic.com plus host.docker.internal, the container rootfs is
-	// read-only, and the runner attaches to an internal network whose only
-	// route out is scrutineer's allowlisting proxy. egress_allow is ignored
-	// under hardened mode; the operator must drop hardened to widen it.
+	// *.anthropic.com plus the runtime's host endpoint, the container rootfs is
+	// read-only, and the runner attaches to an internal network whose only route
+	// out is scrutineer's allowlisting proxy. egress_allow is ignored under
+	// hardened mode; the operator must drop hardened to widen it.
 	Hardened *bool `yaml:"hardened"`
 	// HardenedRootlessRuntime applies the non-network half of hardened mode
 	// (read-only rootfs + no-new-privileges + the 2 GiB post-clone workspace cap)
@@ -107,6 +108,10 @@ type Config struct {
 	// IdentityFile is an age identity file or SSH private key used to
 	// decrypt encrypted imports. Empty disables encrypted import.
 	IdentityFile string `yaml:"identity_file"`
+	// AutoRejectMissedCount is the threshold of consecutive missed rescans at
+	// which an open finding is automatically transitioned to 'rejected'.
+	// 0 (the default) means this feature is disabled.
+	AutoRejectMissedCount int `yaml:"auto_reject_missed_count"`
 }
 
 // ParseScanTimeout validates and parses a scan_timeout string. Empty
@@ -137,14 +142,15 @@ func ValidateClone(s string) error {
 	}
 }
 
-// ValidateRuntime returns an error when s is neither empty, "docker", nor
-// "podman". Exposed so the CLI flag can use the same rule as the YAML field.
+// ValidateRuntime returns an error when s is neither empty, "docker", "podman",
+// nor "apple". Exposed so the CLI flag can use the same rule as the YAML
+// field.
 func ValidateRuntime(s string) error {
 	switch s {
-	case "", "docker", "podman":
+	case "", "docker", "podman", "apple":
 		return nil
 	default:
-		return fmt.Errorf("runtime: must be \"docker\" or \"podman\", got %q", s)
+		return fmt.Errorf("runtime: must be \"docker\", \"podman\", or \"apple\", got %q", s)
 	}
 }
 

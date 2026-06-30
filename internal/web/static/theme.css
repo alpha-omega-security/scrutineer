@@ -428,6 +428,28 @@ pre.skill-src code { background: none; padding: 0; }
   border: 0;
 }
 
+/* ── warning alert (e.g. a stale runner image) ── */
+/* basecoat ships only neutral .alert and red .alert-destructive; this amber
+   variant reads as "heads up" without the alarm of destructive red. Use it
+   alongside .alert (class="alert alert-warning") so it inherits basecoat's grid
+   layout and only the colours change. The amber hue is fixed -- the palette has
+   no warning token -- but the surface and border mix toward the active theme so
+   it sits right in both light and dark. theme.css loads after basecoat, so these
+   equal-specificity rules win. */
+.alert-warning {
+  border-color: color-mix(in oklch, oklch(0.75 0.15 75) 55%, var(--border));
+  background-color: color-mix(in oklch, oklch(0.85 0.13 85) 18%, var(--card));
+  color: var(--card-foreground);
+}
+.alert-warning > svg { color: oklch(0.66 0.15 60); }
+
+/* ── copy-to-clipboard button ── */
+/* Holds two stacked lucide icons; app.js sets data-copied for ~1s after a copy,
+   which swaps the clipboard glyph for a green check as transient confirmation. */
+.copy-btn .copied-icon { display: none; }
+.copy-btn[data-copied] .copy-icon { display: none; }
+.copy-btn[data-copied] .copied-icon { display: inline-block; color: oklch(0.62 0.17 150); }
+
 /* ── reduced motion ── */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

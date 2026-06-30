@@ -58,17 +58,18 @@ func (s *Server) maintainersList(w http.ResponseWriter, r *http.Request) {
 			N            int
 		}
 		var counts []row
-		// LEFT JOIN scans so the COUNT only includes curated LLM-audit findings
-		// (security-deep-dive, vuln-scan). Scanner output (zizmor, semgrep) is
-		// per-repo lint noise and shouldn't drive maintainer routing. Mirrors
-		// findingsBucketSkillSQL, qualified to the scans alias for the join.
+		// LEFT JOIN scans so the COUNT only includes the findings the Findings
+		// tab shows — the LLM audits (security-deep-dive, vuln-scan) plus
+		// operator imports, via aliasedFindingsScanFilter. Scanner output
+		// (zizmor, semgrep) is per-repo lint noise and shouldn't drive
+		// maintainer routing.
 		s.DB.Raw(`
 			SELECT rm.maintainer_id, COUNT(f.id) AS n
 			FROM repository_maintainers rm
 			LEFT JOIN findings f ON f.repository_id = rm.repository_id
 			LEFT JOIN scans s ON s.id = f.scan_id
 			WHERE rm.maintainer_id IN ?
-			  AND (s.skill_name IS NULL OR s.skill_name = '' OR s.skill_name IN (?, ?))
+			  AND `+aliasedFindingsScanFilter+`
 			GROUP BY rm.maintainer_id
 		`, ids, deepDiveSkillName, vulnScanSkillName).Scan(&counts)
 		for _, c := range counts {
@@ -106,7 +107,12 @@ func (s *Server) maintainerDoNotContact(w http.ResponseWriter, r *http.Request) 
 
 func (s *Server) maintainerShow(w http.ResponseWriter, r *http.Request) {
 	var m db.Maintainer
-	if err := s.DB.Preload("Repositories").First(&m, r.PathValue("id")).Error; err != nil {
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if err := s.DB.Preload("Repositories").First(&m, id).Error; err != nil {
 		http.NotFound(w, r)
 		return
 	}

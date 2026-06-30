@@ -29,12 +29,26 @@ func RuntimeOf(r SkillRunner) ContainerRuntime {
 }
 
 // RuntimeServerVersion returns a human-readable engine version for the settings
-// page, e.g. "docker 24.0.7" or "podman 4.9.4", or "" when the runtime is
-// unavailable or the command fails. docker exposes the daemon version at
-// {{.Server.Version}}; podman's version schema has no .Server, so the engine
-// version lives at {{.Version}}. The caller supplies a context so the settings
-// page can bound how long it waits.
+// page, e.g. "docker 24.0.7", "podman 4.9.4", or "Apple container 1.0.0", or ""
+// when the runtime is unavailable or the command fails. docker exposes the
+// daemon version at {{.Server.Version}}; podman's version schema has no
+// .Server, so the engine version lives at {{.Version}}; Apple's container CLI
+// reports its version from `container --version`. The caller supplies a context
+// so the settings page can bound how long it waits.
 func RuntimeServerVersion(ctx context.Context, rt ContainerRuntime) string {
+	if rt.Bin == runtimeApple {
+		out, err := exec.CommandContext(ctx, rt.bin(), "--version").Output()
+		if err != nil {
+			return ""
+		}
+		v := firstDottedVersion(string(out))
+		if v == "" {
+			return ""
+		}
+		// Display the product identity ("Apple container"), not just the bare
+		// executable, so the settings row is traceable to --runtime apple.
+		return "Apple " + rt.bin() + " " + v
+	}
 	format := "{{.Server.Version}}"
 	if rt.Bin == "podman" {
 		format = "{{.Version}}"
@@ -48,6 +62,31 @@ func RuntimeServerVersion(ctx context.Context, rt ContainerRuntime) string {
 		return ""
 	}
 	return rt.bin() + " " + v
+}
+
+// RunnerImageRevision returns the git commit the runner image was built from,
+// read from the org.opencontainers.image.revision OCI label that
+// docker/metadata-action bakes in during the runner-image workflow. This is far
+// more useful on the settings page than the image's ":latest" tag, which never
+// changes. Returns "" when the image isn't present locally, carries no revision
+// label (e.g. a locally built --runner-image), or inspect fails -- the settings
+// page then shows "unavailable" rather than a misleading value. The caller
+// supplies a context to bound a hung daemon.
+func RunnerImageRevision(ctx context.Context, rt ContainerRuntime, image string) string {
+	if image == "" {
+		return ""
+	}
+	const format = `{{index .Config.Labels "org.opencontainers.image.revision"}}`
+	out, err := exec.CommandContext(ctx, rt.bin(), "image", "inspect", "--format", format, "--", image).Output()
+	if err != nil {
+		return ""
+	}
+	rev := strings.TrimSpace(string(out))
+	// A missing label renders as the literal "<no value>"; treat it as absent.
+	if rev == "" || rev == "<no value>" {
+		return ""
+	}
+	return rev
 }
 
 // RunnerToolVersions holds the versions of the analysis tools baked into the
@@ -71,15 +110,23 @@ const queryToolsScript = `echo "zizmor=$(zizmor --version 2>/dev/null)"; ` +
 // pinned ARGs), so we interrogate the image rather than parse the Dockerfile.
 //
 // --pull never means a missing image fails fast instead of triggering a slow
-// registry pull, so the settings page never blocks on a download. The caller
+// registry pull, so the settings page never blocks on a download. Apple's
+// container CLI lacks a pull-policy flag, so that path checks the local image
+// cache first and only runs the image when it is already present. The caller
 // must pass a context with a timeout to bound a hung daemon. Returns a zero
 // value (all fields "") for an empty image name or any failure.
 func QueryRunnerToolVersions(ctx context.Context, rt ContainerRuntime, image string) RunnerToolVersions {
 	if image == "" {
 		return RunnerToolVersions{}
 	}
-	out, err := exec.CommandContext(ctx, rt.bin(), "run", "--rm",
-		"--pull", "never", "--entrypoint", "sh", "--", image, "-c", queryToolsScript).Output()
+	args := rt.runArgs("--rm")
+	if rt.supportsPullNever() {
+		args = append(args, "--pull", "never")
+	} else if !imageExistsLocally(ctx, rt, image) {
+		return RunnerToolVersions{}
+	}
+	args = append(args, "--entrypoint", "sh", "--", image, "-c", queryToolsScript)
+	out, err := exec.CommandContext(ctx, rt.bin(), args...).Output()
 	if err != nil {
 		return RunnerToolVersions{}
 	}

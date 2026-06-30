@@ -48,14 +48,14 @@ func TestScanListStatsAggregatesCounts(t *testing.T) {
 	for _, status := range []db.ScanStatus{db.ScanQueued, db.ScanQueued, db.ScanPaused, db.ScanRunning} {
 		s.DB.Create(&db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: status})
 	}
-	// A scan paused because the account hit the Claude token/credit limit
+	// A scan paused because the account hit an account-level Claude problem
 	// (auto-paused by the worker), plus an unrelated failure that must not
 	// be counted.
 	s.DB.Create(&db.Scan{
 		RepositoryID: repo.ID,
 		Kind:         "skill",
 		Status:       db.ScanPaused,
-		Error:        "Claude plan limit reached. Queued scan paused automatically; resume after the limit resets.",
+		Error:        "Claude account access paused. Queued scan held automatically; resume once the account recovers.",
 	})
 	s.DB.Create(&db.Scan{
 		RepositoryID: repo.ID,
@@ -64,11 +64,11 @@ func TestScanListStatsAggregatesCounts(t *testing.T) {
 		Error:        "different failure",
 	})
 
-	// PausedCount counts both the bare paused scan and the plan-limit one;
-	// PlanLimitPausedCount counts only the latter.
+	// PausedCount counts both the bare paused scan and the account-paused one;
+	// AccountPausedCount counts only the latter.
 	stats := s.scanListStats()
-	if stats.QueuedCount != 2 || stats.PausedCount != 2 || stats.PlanLimitPausedCount != 1 {
-		t.Fatalf("scanListStats = %+v, want queued=2 paused=2 plan-limit-paused=1", stats)
+	if stats.QueuedCount != 2 || stats.PausedCount != 2 || stats.AccountPausedCount != 1 {
+		t.Fatalf("scanListStats = %+v, want queued=2 paused=2 account-paused=1", stats)
 	}
 }
 

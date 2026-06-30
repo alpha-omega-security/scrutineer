@@ -92,22 +92,31 @@ func (s *Server) sbomUpload(w http.ResponseWriter, r *http.Request) {
 	s.redirect(w, r, fmt.Sprintf("/sboms/%d", up.ID))
 }
 
+// anyPackageHasScope reports whether at least one package carries a
+// direct/transitive scope value; flat-list SBOMs leave them all blank, in
+// which case the scope filter is hidden.
+func anyPackageHasScope(pkgs []db.SBOMPackage) bool {
+	for _, p := range pkgs {
+		if p.Scope != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Server) sbomShow(w http.ResponseWriter, r *http.Request) {
 	var up db.SBOMUpload
-	if err := s.DB.Preload("Packages.Repository").First(&up, r.PathValue("id")).Error; err != nil {
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if err := s.DB.Preload("Packages.Repository").First(&up, id).Error; err != nil {
 		http.NotFound(w, r)
 		return
 	}
 
-	// The scope filter only makes sense when at least one package has a
-	// known direct/transitive value; flat-list SBOMs leave them all blank.
-	hasScope := false
-	for _, p := range up.Packages {
-		if p.Scope != "" {
-			hasScope = true
-			break
-		}
-	}
+	hasScope := anyPackageHasScope(up.Packages)
 
 	scope := r.URL.Query().Get("scope")
 	pkgs := up.Packages

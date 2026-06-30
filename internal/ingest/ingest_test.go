@@ -94,6 +94,43 @@ func TestParseMinimal(t *testing.T) {
 	if f.SuggestedFix == "" {
 		t.Error("SuggestedFix empty, want patch")
 	}
+	// Extended bundle fields round-trip through the minimal parser.
+	if f.Commit != "c0ffee1" {
+		t.Errorf("Commit = %q, want c0ffee1", f.Commit)
+	}
+	if f.SubPath != "services/api" {
+		t.Errorf("SubPath = %q, want services/api", f.SubPath)
+	}
+	if f.Locations != "src/handlers/download.js:88\nsrc/handlers/legacy.js:12" {
+		t.Errorf("Locations = %q", f.Locations)
+	}
+	if f.VID != "VID-1111-2222-3333-4444-5555-6666" {
+		t.Errorf("VID = %q", f.VID)
+	}
+	if f.Reachability != "reachable" || f.QualityTier != "high" {
+		t.Errorf("Reachability/QualityTier = %q/%q, want reachable/high", f.Reachability, f.QualityTier)
+	}
+	if f.Boundary == "" || f.Validation == "" || f.PriorArt == "" || f.Reach == "" || f.Rating == "" {
+		t.Errorf("audit prose fields should be populated: %+v", f)
+	}
+	if f.FixCommit != "deadbeef" {
+		t.Errorf("FixCommit = %q, want deadbeef", f.FixCommit)
+	}
+}
+
+func TestParseMinimal_normalisesReachabilityAndTier(t *testing.T) {
+	body := []byte(`{"repository":"https://x/y","findings":[{"title":"t","reachability":"  Harness_Only ","quality_tier":"LOW"}]}`)
+	results, _, err := Parse(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := results[0].Findings[0]
+	if f.Reachability != "harness_only" {
+		t.Errorf("Reachability = %q, want harness_only", f.Reachability)
+	}
+	if f.QualityTier != "low" {
+		t.Errorf("QualityTier = %q, want low", f.QualityTier)
+	}
 }
 
 func TestParseMinimalDefaultsTool(t *testing.T) {

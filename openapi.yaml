@@ -764,6 +764,33 @@ paths:
                     root:         { type: string }
                     types:        { type: string }
 
+  /v1/repositories:
+    get:
+      summary: Export repositories as JSONL
+      description: |
+        Returns one JSON object per line (`application/x-ndjson`) for the
+        Repositories tab data set. Each line includes selected scalar
+        repository columns, the latest scan summary, and the same curated
+        findings count shown in the UI. Large metadata and ecosystems cache
+        blobs are intentionally omitted to keep the payload suitable for
+        automation. No bearer token; localhost-only.
+      operationId: exportRepositories
+      security: []
+      parameters:
+        - name: format
+          in: query
+          schema: { type: string, enum: [jsonl] }
+      responses:
+        '200':
+          description: JSONL stream of RepositoryExport objects, one per line.
+          content:
+            application/x-ndjson:
+              schema: { $ref: '#/components/schemas/RepositoryExport' }
+        '400':
+          description: Unsupported format query value, or `encrypt`/`scope` requested (only valid on per-repository bundle exports).
+        '403':
+          description: Host header is not localhost
+
   /v1/repositories/{id}/findings:
     get:
       summary: Export findings for a repository (JSONL, or a shareable bundle)
@@ -775,8 +802,10 @@ paths:
         round-trips through `/v1/import`; the bundle carries only finding
         substance, not analyst-set triage state (status, CVE/GHSA id, affected,
         fix_version, references). Adding `encrypt=1` (bundle only) wraps the
-        bundle in armored age, encrypted to every configured recipient. No
-        bearer token; localhost-only.
+        bundle in armored age, encrypted to every configured recipient. Adding
+        `scope=findings` (bundle only) curates the bundle to the Findings bucket
+        (deep-dive and vuln-scan audits plus operator imports), dropping per-repo
+        scanner noise. No bearer token; localhost-only.
       operationId: exportRepositoryFindings
       security: []
       parameters:
@@ -794,6 +823,15 @@ paths:
             encrypted to the configured recipients. Requires `format=bundle`
             and at least one configured recipient, else 400.
           schema: { type: string }
+        - name: scope
+          in: query
+          description: |
+            `findings` curates a `format=bundle` export to the Findings bucket
+            (deep-dive and vuln-scan audits plus operator imports), excluding
+            per-repo scanner noise. Requires `format=bundle`; any other value,
+            or use on the cross-repo `/v1/findings` and `/v1/scans` endpoints,
+            gets a 400. Omitted: the bundle carries every finding.
+          schema: { type: string, enum: [findings] }
         - name: severity
           in: query
           schema: { type: string, enum: [Critical, High, Medium, Low] }
@@ -818,7 +856,7 @@ paths:
                 type: string
                 description: Armored age ciphertext, starting `-----BEGIN AGE ENCRYPTED FILE-----`.
         '400':
-          description: Unsupported format, `encrypt` without `format=bundle`, or encryption requested with no recipients configured.
+          description: Unsupported `format`, `encrypt`/`scope` without `format=bundle`, an unknown `scope` value, or encryption requested with no recipients configured.
         '403':
           description: Host header is not localhost
         '404':
@@ -914,6 +952,16 @@ paths:
           in: query
           description: Repository URL to attribute findings to. Overrides any provenance in the body.
           schema: { type: string, format: uri }
+        - name: revalidate
+          in: query
+          description: |
+            Whether each newly-imported finding is enqueued for the
+            `revalidate` pre-sort (which chains into `verify` on a confirmed
+            High/Critical). Defaults to true. Pass `false` to import
+            already-audited findings — e.g. a trusted sharing bundle — without
+            priming the funnel. A value that is neither true/false nor 1/0 is a
+            400.
+          schema: { type: boolean, default: true }
       requestBody:
         required: true
         content:
@@ -959,7 +1007,7 @@ paths:
                   skill: { type: string, enum: [ingest] }
                   status: { type: string, enum: [queued] }
         '400':
-          description: Body unreadable or empty
+          description: Body unreadable or empty, or `revalidate` is not a boolean
         '403':
           description: Host header is not localhost
         '413':
@@ -1017,6 +1065,35 @@ components:
         fork:           { type: string, description: 'owner/name of the staging fork in fork_org, when one exists.' }
         posture:        { type: string, enum: [ready, partial, unprepared], description: 'Disclosure-readiness tier from the posture skill. Empty when posture has not run.' }
         posture_summary: { type: string }
+
+    RepositoryExport:
+      description: |
+        Compact repository row used by the unauthenticated JSONL export. This
+        intentionally omits large metadata and ecosystems cache blobs.
+      type: object
+      required: [id, url, name, findings_count, last_scan]
+      properties:
+        id:             { type: integer, format: int64 }
+        url:            { type: string, format: uri }
+        name:           { type: string }
+        full_name:      { type: string }
+        owner:          { type: string }
+        languages:      { type: string, description: Comma-joined language names. }
+        stars:          { type: integer }
+        findings_count: { type: integer, description: Curated open findings count matching the Repositories tab. }
+        created_at:     { type: string, format: date-time }
+        updated_at:     { type: string, format: date-time }
+        last_scan:
+          nullable: true
+          type: object
+          properties:
+            id:          { type: integer, format: int64 }
+            kind:        { type: string }
+            status:      { type: string, enum: [queued, running, paused, done, failed, cancelled] }
+            skill_name:  { type: string }
+            commit:      { type: string }
+            created_at:  { type: string, format: date-time, nullable: true }
+            finished_at: { type: string, format: date-time, nullable: true }
 
     Scan:
       type: object
