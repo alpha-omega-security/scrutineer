@@ -28,8 +28,13 @@ const DefaultRunnerImage = "ghcr.io/alpha-omega-security/scrutineer-runner:lates
 // docker, podman, or Apple's container (selected via the Runtime field) and
 // implements SkillRunner.
 type ContainerRunner struct {
-	Image            string
-	Effort           string
+	Image  string
+	Effort string
+	// Harness is the agent CLI exec'd inside the container. nil means
+	// claude-code (the historical default), so a bare ContainerRunner{}
+	// keeps working and no caller needs to set it until a second harness
+	// exists.
+	Harness          Harness
 	ProxyURL         string // http://user:token@host-or-gateway:port; "" disables egress
 	FullClone        bool
 	MaxTurns         int
@@ -310,8 +315,9 @@ func (d ContainerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Ev
 // max-turns cap, and the session id from the init event (empty when no init
 // event arrived, e.g. a --resume that could not find the conversation).
 func (d ContainerRunner) runContainerOnce(ctx context.Context, runBase []string, sj SkillJob, emit func(Event)) (hitMaxTurns bool, sessionID string, waitErr error) {
-	claudeArgs := append([]string{"claude"}, buildClaudeArgs(sj, d.Effort, d.MaxTurns)...)
-	runArgs := append(append([]string{}, runBase...), claudeArgs...)
+	h := d.harness()
+	harnessArgs := append([]string{h.Binary()}, h.Args(sj, d.Effort, d.MaxTurns)...)
+	runArgs := append(append([]string{}, runBase...), harnessArgs...)
 
 	cmd := exec.CommandContext(ctx, d.Runtime.bin(), runArgs...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -542,7 +548,8 @@ func (d ContainerRunner) injectProfileGuide(profile, absWork string, emit func(E
 	if guide == "" {
 		return
 	}
-	target := filepath.Join(absWork, "CLAUDE.md")
+	name := d.harness().GuideFilename()
+	target := filepath.Join(absWork, name)
 	data, err := os.ReadFile(guide)
 	if err != nil {
 		emit(Event{Kind: KindText, Text: "profile guide: read " + guide + ": " + err.Error()})
@@ -552,7 +559,17 @@ func (d ContainerRunner) injectProfileGuide(profile, absWork string, emit func(E
 		emit(Event{Kind: KindText, Text: "profile guide: write " + target + ": " + err.Error()})
 		return
 	}
-	emit(Event{Kind: KindText, Text: "profile guide: " + guide + " -> /work/CLAUDE.md"})
+	emit(Event{Kind: KindText, Text: "profile guide: " + guide + " -> /work/" + name})
+}
+
+// harness returns the agent CLI to exec inside the container, defaulting
+// to claude-code when none is set so the zero ContainerRunner{} keeps its
+// historical behaviour.
+func (d ContainerRunner) harness() Harness { //nolint:ireturn // nil-default accessor; the field IS the interface
+	if d.Harness != nil {
+		return d.Harness
+	}
+	return claudeHarness{}
 }
 
 // profileGuidePath returns the profile's on-disk PROFILE.md if present.
