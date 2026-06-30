@@ -15,7 +15,9 @@ import (
 // inside the container changes.
 //
 // The interface is grown incrementally as call sites are wired to it
-// (#211). Exit classification follows.
+// (#211). All seams the container runner needs are now covered; the
+// codex implementation, -backend flag, and HarnessByName registry land
+// next.
 type Harness interface {
 	// Binary is the executable on the runner image's PATH.
 	Binary() string
@@ -57,6 +59,21 @@ type Harness interface {
 	// "" means none. Harness-neutral env (HOME, the proxy vars, semgrep)
 	// stays in buildRunArgs.
 	Env(baseURL string) []string
+	// StateEnv returns the env entries (KEY=VALUE) that point the harness
+	// at containerPath as its persistent state/config directory. The
+	// runner bind-mounts a per-scan host directory there so the session
+	// store survives the container, letting a retry resume the agent
+	// loop. claude reads CLAUDE_CONFIG_DIR; codex reads CODEX_HOME;
+	// opencode reads OPENCODE_CONFIG_DIR and OPENCODE_DB.
+	StateEnv(containerPath string) []string
+	// AccountErrorText returns s when it looks like an account-level
+	// failure from the harness's provider (a usage/rate/plan limit, or
+	// access disabled/revoked) and "" otherwise. The runner consults it
+	// only after the harness exited non-zero, so a stray phrase in
+	// normal output never triggers. A non-empty match becomes a
+	// ClaudeAccountError that pauses the queue, since retrying cannot
+	// succeed until the account recovers.
+	AccountErrorText(s string) string
 }
 
 // ClaudeHarness is the default and (for now) only harness: it wraps the
@@ -111,4 +128,12 @@ func (ClaudeHarness) Env(baseURL string) []string {
 		env = append(env, "ANTHROPIC_BASE_URL="+baseURL)
 	}
 	return env
+}
+
+func (ClaudeHarness) StateEnv(containerPath string) []string {
+	return []string{"CLAUDE_CONFIG_DIR=" + containerPath}
+}
+
+func (ClaudeHarness) AccountErrorText(s string) string {
+	return claudeAccountErrorText(s)
 }

@@ -106,10 +106,12 @@ func TestContainerRunner_harnessDefaultsToClaude(t *testing.T) {
 // real second implementation. The set of harnesses is open-ended; this
 // stands in for any of them.
 type stubHarness struct {
-	bin    string
-	guide  string
-	egress []string
-	env    []string
+	bin     string
+	guide   string
+	egress  []string
+	env     []string
+	state   []string
+	acctErr string
 }
 
 func (s stubHarness) Binary() string                      { return s.bin }
@@ -119,6 +121,68 @@ func (s stubHarness) SkillDir(wr, n string) string        { return filepath.Join
 func (s stubHarness) GuideFilename() string               { return s.guide }
 func (s stubHarness) EgressHosts() []string               { return s.egress }
 func (s stubHarness) Env(string) []string                 { return s.env }
+func (s stubHarness) StateEnv(string) []string            { return s.state }
+func (s stubHarness) AccountErrorText(t string) string {
+	if s.acctErr != "" && strings.Contains(t, s.acctErr) {
+		return t
+	}
+	return ""
+}
+
+func TestClaudeHarness_StateEnv(t *testing.T) {
+	got := ClaudeHarness{}.StateEnv("/claude-config")
+	want := []string{"CLAUDE_CONFIG_DIR=/claude-config"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("StateEnv(/claude-config) = %v, want %v", got, want)
+	}
+}
+
+func TestClaudeHarness_AccountErrorTextDelegates(t *testing.T) {
+	// The harness method must classify exactly as the package function
+	// does so the queue-pause behaviour is unchanged.
+	for _, s := range []string{
+		"Error: Claude usage limit reached",
+		"429 too many requests",
+		"this is fine",
+		"",
+	} {
+		if got, want := (ClaudeHarness{}).AccountErrorText(s), claudeAccountErrorText(s); got != want {
+			t.Errorf("AccountErrorText(%q) = %q, want %q", s, got, want)
+		}
+	}
+}
+
+func TestBuildRunArgs_stateEnvFromHarness(t *testing.T) {
+	// With a config dir, the runner bind-mounts it and asks the harness
+	// for the env entries that point at the mount. A non-claude harness
+	// must NOT get CLAUDE_CONFIG_DIR; it gets only what its StateEnv
+	// returns.
+	d := ContainerRunner{Harness: stubHarness{state: []string{"CODEX_HOME=/claude-config", "CODEX_SQLITE_HOME=/claude-config"}}}
+	got := d.buildRunArgs("/work/abs", "img:latest", hardenedNet{}, "/data/cfg/scan-7")
+
+	if !containsEnvFlag(got, "CODEX_HOME=/claude-config") || !containsEnvFlag(got, "CODEX_SQLITE_HOME=/claude-config") {
+		t.Errorf("harness StateEnv not wired: %v", got)
+	}
+	if containsEnvFlag(got, "CLAUDE_CONFIG_DIR=/claude-config") {
+		t.Errorf("non-claude harness leaked CLAUDE_CONFIG_DIR: %v", got)
+	}
+	// The bind mount itself is harness-neutral and must still be present.
+	mounted := false
+	for i := 0; i+1 < len(got); i++ {
+		if got[i] == "-v" && strings.HasPrefix(got[i+1], "/data/cfg/scan-7:/claude-config") {
+			mounted = true
+		}
+	}
+	if !mounted {
+		t.Errorf("state dir bind mount missing: %v", got)
+	}
+
+	// Default harness keeps the historical env var.
+	def := ContainerRunner{}.buildRunArgs("/work/abs", "img:latest", hardenedNet{}, "/data/cfg/scan-7")
+	if !containsEnvFlag(def, "CLAUDE_CONFIG_DIR=/claude-config") {
+		t.Errorf("default harness dropped CLAUDE_CONFIG_DIR: %v", def)
+	}
+}
 
 func TestClaudeHarness_Env(t *testing.T) {
 	// With both credentials set on the host and a base URL, Env must

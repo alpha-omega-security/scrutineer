@@ -269,10 +269,11 @@ func (d ContainerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Ev
 	}
 	emit(Event{Kind: KindText, Text: logLine})
 
+	h := d.harness()
 	accountErrText := ""
 	wrappedEmit := func(e Event) {
 		if accountErrText == "" {
-			accountErrText = claudeAccountErrorText(e.Text)
+			accountErrText = h.AccountErrorText(e.Text)
 		}
 		emit(e)
 	}
@@ -393,15 +394,17 @@ func (d ContainerRunner) buildRunArgs(absWork, image string, hnet hardenedNet, c
 		args = append(args, "--userns=keep-id")
 	}
 	if claudeConfigDir != "" {
-		// Persist the resumable claude session store outside the container.
-		// Without this it lands in the /tmp tmpfs and dies with the
-		// container, so --resume on a retry would find nothing. The bind
-		// mount stays writable even under hardened mode's --read-only
-		// rootfs, so resume works there too.
-		args = append(args,
-			"-v", bindMount(claudeConfigDir, "/claude-config", d.SELinuxRelabel),
-			"-e", "CLAUDE_CONFIG_DIR=/claude-config",
-		)
+		// Persist the harness's resumable session store outside the
+		// container. Without this it lands in the /tmp tmpfs and dies
+		// with the container, so a retry could not resume the agent
+		// loop. The bind mount stays writable even under hardened
+		// mode's --read-only rootfs. The /claude-config mountpoint name
+		// is historical; only the env var that points the harness at it
+		// varies (CLAUDE_CONFIG_DIR, CODEX_HOME, OPENCODE_CONFIG_DIR).
+		args = append(args, "-v", bindMount(claudeConfigDir, "/claude-config", d.SELinuxRelabel))
+		for _, e := range d.harness().StateEnv("/claude-config") {
+			args = append(args, "-e", e)
+		}
 	}
 	if d.Hardened || d.HardenedRuntimeOnly {
 		// Read-only rootfs + no-new-privileges close the residual paths a
