@@ -321,9 +321,22 @@ func TestVerifyUpstreamDNS(t *testing.T) {
 	if err := verifyUpstreamDNS(ctx, []string{"*.anthropic.com"}, resolves); err != nil {
 		t.Errorf("resolves case: %v", err)
 	}
-	// NXDOMAIN -> the resolver answered, so DNS works.
-	if err := verifyUpstreamDNS(ctx, []string{"*.anthropic.com"}, nxdomain); err != nil {
-		t.Errorf("NXDOMAIN must count as working DNS: %v", err)
+	// Every candidate NXDOMAINs -> a resolver that answers but can't forward
+	// externally (e.g. an --internal aardvark); fail closed (it would 502 mid-scan).
+	if err := verifyUpstreamDNS(ctx, []string{"*.anthropic.com"}, nxdomain); err == nil {
+		t.Error("all-NXDOMAIN must fail closed (non-forwarding resolver)")
+	}
+	// NXDOMAIN on one candidate but a real resolution on another -> pass.
+	nxCalls := 0
+	nxThenResolve := func(c context.Context, h string) ([]string, error) {
+		nxCalls++
+		if nxCalls == 1 {
+			return nxdomain(c, h)
+		}
+		return resolves(c, h)
+	}
+	if err := verifyUpstreamDNS(ctx, []string{"*.anthropic.com", "osv.dev"}, nxThenResolve); err != nil {
+		t.Errorf("a real resolution after an NXDOMAIN should pass: %v", err)
 	}
 	// Every candidate hits an unreachable resolver -> fail closed.
 	if err := verifyUpstreamDNS(ctx, []string{"*.anthropic.com", "osv.dev"}, unreachable); err == nil {

@@ -398,15 +398,15 @@ func dnsCandidates(allow []string) []string {
 	return out
 }
 
-// VerifyUpstreamDNS fails closed when the sidecar cannot reach a DNS resolver
-// for its allowlisted upstreams. Under rootless --hardened, upstream names
-// (e.g. api.anthropic.com) are resolved by the sidecar CONTAINER, not the host,
-// so a rootless netns whose resolver the host has but the container doesn't
-// would let a scan start and then fail mid-run on the first model call. This
-// turns that into a clear fail-closed startup refusal. It passes as soon as any
-// candidate resolves OR returns NXDOMAIN -- both mean the resolver answered, so
-// DNS works -- and fails only when every lookup hits an unreachable resolver. A
-// pure host-gateway allowlist has no upstreams to prove and passes.
+// VerifyUpstreamDNS fails closed when the sidecar cannot resolve its allowlisted
+// upstreams. Under rootless --hardened, upstream names (e.g. api.anthropic.com)
+// are resolved by the sidecar CONTAINER, not the host, so a rootless netns whose
+// resolver the host has but the container doesn't would let a scan start and then
+// fail mid-run on the first model call. This turns that into a clear fail-closed
+// startup refusal. It passes as soon as any candidate actually resolves; it fails
+// closed when every candidate returns NXDOMAIN (a resolver that answers but cannot
+// forward external lookups, e.g. an --internal network's aardvark) or the resolver
+// is unreachable. A pure host-gateway allowlist has no upstreams to prove and passes.
 func VerifyUpstreamDNS(ctx context.Context, allow []string) error {
 	return verifyUpstreamDNS(ctx, allow, (&net.Resolver{}).LookupHost)
 }
@@ -417,16 +417,24 @@ func verifyUpstreamDNS(ctx context.Context, allow []string, lookup func(context.
 		return nil
 	}
 	var lastErr error
+	nxdomain := 0
 	for _, h := range candidates {
 		_, err := lookup(ctx, h)
 		if err == nil {
-			return nil // resolved: the resolver works
+			return nil // actually resolved: the resolver forwards external lookups
 		}
 		var dnsErr *net.DNSError
 		if errors.As(err, &dnsErr) && dnsErr.IsNotFound {
-			return nil // NXDOMAIN: the resolver answered, so DNS works
+			nxdomain++ // NXDOMAIN: keep looking for a real resolution
 		}
 		lastErr = err
+	}
+	// Nothing resolved. NXDOMAIN for every candidate means the resolver answers
+	// but cannot forward external lookups (e.g. an --internal network's aardvark),
+	// which would let a scan start and then 502 on its first model call -- so fail
+	// closed rather than treat "the resolver answered" as working DNS.
+	if nxdomain == len(candidates) {
+		return fmt.Errorf("sidecar resolver returned NXDOMAIN for every allowlisted upstream (%v); it cannot forward external DNS -- check the rootless network backend's DNS", candidates)
 	}
 	return fmt.Errorf("sidecar cannot reach a DNS resolver for any allowlisted upstream (tried %v): %w; check the rootless network backend's DNS", candidates, lastErr)
 }

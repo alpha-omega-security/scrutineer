@@ -680,7 +680,12 @@ func EnsureHardenedNetwork(rt ContainerRuntime, name string) error {
 	if out, err := exec.Command(rt.bin(), "network", "inspect", "--", name).Output(); err == nil && len(out) > 0 {
 		return nil
 	}
-	cmd := exec.Command(rt.bin(), "network", "create", "--internal", "--", name)
+	// --disable-dns: a sidecar later connected to this network must not inherit
+	// its aardvark resolver. On an --internal network that resolver cannot forward
+	// external lookups and answers NXDOMAIN first, which would shadow the sidecar's
+	// working bridge resolver. The scan dials the sidecar by IP, so the network
+	// needs no name resolution of its own.
+	cmd := exec.Command(rt.bin(), "network", "create", "--internal", "--disable-dns", "--", name)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("%s network create --internal %s: %w: %s", rt.bin(), name, err, strings.TrimSpace(string(out)))
 	}
@@ -695,11 +700,15 @@ func EnsureHardenedNetwork(rt ContainerRuntime, name string) error {
 type hardenedNet struct {
 	name      string // per-scan --internal network name
 	gatewayIP string // host-gateway IPv4 for that network; "" if unresolved
-	// proxyEndpoint is the host:port the scan reaches the egress proxy sidecar
-	// at (the sidecar's container name on the --internal network, e.g.
-	// scrutineer-proxy-7:3128). "" when there is no sidecar -- the host-proxy
-	// path -- in which case egress goes through d.ProxyURL via the gateway.
+	// proxyEndpoint is the IP:port the scan reaches the egress proxy sidecar at
+	// (the sidecar's address on the --internal network, e.g. 10.89.1.2:3128). The
+	// scan dials it by IP because the --internal network runs no DNS (see
+	// EnsureHardenedNetwork). "" when there is no sidecar -- the host-proxy path --
+	// in which case egress goes through d.ProxyURL via the gateway.
 	proxyEndpoint string
+	// proxyName is the sidecar's container name, used for status and log lookups
+	// (the scan addresses the sidecar by IP via proxyEndpoint, not by name).
+	proxyName string
 }
 
 // setupHardenedNetwork creates the per-scan --internal network for a hardened
@@ -752,6 +761,7 @@ func (d ContainerRunner) setupHardenedNetwork(sj SkillJob, image string) (harden
 			netCleanup()
 		}
 		hn.proxyEndpoint = endpoint
+		hn.proxyName = proxySidecarName(sj.ScanID)
 	}
 
 	// docker's bridge --internal is trusted, and so is rootful podman's (netavark
@@ -795,7 +805,31 @@ func (d ContainerRunner) startProxySidecar(sj SkillJob, network string) (endpoin
 		rmName()
 		return "", noop, fmt.Errorf("%s network connect %s: %w: %s", d.Runtime.bin(), network, e, strings.TrimSpace(string(out)))
 	}
-	return net.JoinHostPort(name, proxySidecarPort), rmName, nil
+	// The --internal network runs no DNS, so the scan must reach the sidecar by
+	// its address on that network rather than by name.
+	ip, e := d.sidecarNetworkIP(name, network)
+	if e != nil {
+		rmName()
+		return "", noop, fmt.Errorf("resolve egress sidecar address on %s: %w", network, e)
+	}
+	return net.JoinHostPort(ip, proxySidecarPort), rmName, nil
+}
+
+// sidecarNetworkIP returns the sidecar's IP on the per-scan --internal network.
+// The scan addresses the sidecar by this IP because that network is created with
+// --disable-dns (its aardvark resolver would otherwise NXDOMAIN the sidecar's own
+// external lookups), so a container name would not resolve there.
+func (d ContainerRunner) sidecarNetworkIP(name, network string) (string, error) {
+	format := fmt.Sprintf(`{{(index .NetworkSettings.Networks %q).IPAddress}}`, network)
+	out, err := exec.Command(d.Runtime.bin(), "inspect", "--format", format, "--", name).Output()
+	if err != nil {
+		return "", fmt.Errorf("%s inspect %s: %w", d.Runtime.bin(), name, err)
+	}
+	ip := strings.TrimSpace(string(out))
+	if ip == "" {
+		return "", fmt.Errorf("sidecar %q has no address on network %q", name, network)
+	}
+	return ip, nil
 }
 
 // proxySidecarRunArgs builds the detached `run` args for the egress proxy
@@ -981,7 +1015,7 @@ func (d ContainerRunner) verifyHostProxyReachable(hn hardenedNet, image string) 
 // the deadline passes, the error is enriched with the sidecar's logs, which name
 // the real cause.
 func (d ContainerRunner) verifyProxySidecarReachable(hn hardenedNet, image string) error {
-	name, _, _ := net.SplitHostPort(hn.proxyEndpoint)
+	name := hn.proxyName
 	deadline := time.Now().Add(proxySidecarReadyTimeout)
 	var last string
 	for {
