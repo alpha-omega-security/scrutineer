@@ -642,45 +642,11 @@ func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRu
 	if err := worker.VerifySELinuxMount(selinuxCtx, rt, f.runnerImage, relabel); err != nil {
 		return nil, "", err
 	}
-	// Hardened mode owns its per-scan networks, so the gateway IP must be
-	// probed inside RunSkill against the network the runner is about to attach
-	// to. Probing once here would point every scan at whichever network
-	// happened to be probed first. The startup sweep collects per-scan networks
-	// left over by crashed processes.
-	var gwIP string
-	var egress worker.EgressSidecarConfig
-	apiHost := worker.HostGatewayAlias
-	if f.hardened {
-		// Crash residue cleanup: remove orphan egress proxy sidecars first (a
-		// lingering sidecar pins its per-scan network), then the freed networks.
-		if removed, err := worker.SweepOrphanProxySidecars(rt); err != nil {
-			log.Warn("orphan proxy sidecar sweep failed", "err", err)
-		} else if removed > 0 {
-			log.Info("removed orphan egress proxy sidecars", "count", removed)
-		}
-		if removed, err := worker.SweepOrphanHardenedNetworks(rt); err != nil {
-			log.Warn("orphan hardened network sweep failed", "err", err)
-		} else if removed > 0 {
-			log.Info("removed orphan hardened networks", "count", removed)
-		}
-	} else {
-		gwIP = worker.ResolveHostGatewayIPv4(rt, f.runnerImage, "")
-		switch {
-		case rt.Bin == "podman" && gwIP == "":
-			// Reuses the resolve probe just run (no extra launch). An empty
-			// result means host-gateway is not wired, so containers cannot reach
-			// the host egress proxy and scans will fail with network errors --
-			// surface the likely cause now rather than once per scan.
-			log.Warn("host-gateway did not resolve under podman; scans may fail to " +
-				"reach the network because the container cannot reach the host egress " +
-				"proxy (needs podman >= 4.7; see docs/podman.md)")
-		case rt.Bin == "apple":
-			if gwIP == "" {
-				return nil, "", fmt.Errorf("could not resolve the Apple container host gateway; cannot route scans to the egress proxy")
-			}
-			apiHost = gwIP
-		}
+	gwIP, apiHost, err := resolveScanNetworking(rt, f, log)
+	if err != nil {
+		return nil, "", err
 	}
+	var egress worker.EgressSidecarConfig
 	allow := buildEgressAllow(f.hardened, cfg, f.anthropicBaseURL, log)
 	if apiHost != worker.HostGatewayAlias {
 		allow = append(allow, apiHost)
@@ -728,6 +694,50 @@ func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRu
 		SELinuxRelabel:          relabel,
 		Egress:                  egress,
 	}, apiBase, nil
+}
+
+// resolveScanNetworking prepares per-scan networking before the egress proxy
+// starts. In hardened mode it owns its per-scan networks -- the gateway IP is
+// probed inside RunSkill against the network the runner will actually attach to,
+// so it is left empty here -- and it sweeps orphan sidecars and networks left
+// behind by crashed scans. Outside hardened mode it resolves the host-gateway
+// IPv4 and the host the container reaches the skill API on: apiHost defaults to
+// the host-gateway alias, and only Apple (which has no --add-host) needs the
+// resolved gateway IP, where failing to resolve it is fatal.
+func resolveScanNetworking(rt worker.ContainerRuntime, f *flags, log *slog.Logger) (gwIP, apiHost string, err error) {
+	apiHost = worker.HostGatewayAlias
+	if f.hardened {
+		// Crash residue cleanup: remove orphan egress proxy sidecars first (a
+		// lingering sidecar pins its per-scan network), then the freed networks.
+		if removed, err := worker.SweepOrphanProxySidecars(rt); err != nil {
+			log.Warn("orphan proxy sidecar sweep failed", "err", err)
+		} else if removed > 0 {
+			log.Info("removed orphan egress proxy sidecars", "count", removed)
+		}
+		if removed, err := worker.SweepOrphanHardenedNetworks(rt); err != nil {
+			log.Warn("orphan hardened network sweep failed", "err", err)
+		} else if removed > 0 {
+			log.Info("removed orphan hardened networks", "count", removed)
+		}
+		return gwIP, apiHost, nil
+	}
+	gwIP = worker.ResolveHostGatewayIPv4(rt, f.runnerImage, "")
+	switch {
+	case rt.Bin == "podman" && gwIP == "":
+		// Reuses the resolve probe just run (no extra launch). An empty
+		// result means host-gateway is not wired, so containers cannot reach
+		// the host egress proxy and scans will fail with network errors --
+		// surface the likely cause now rather than once per scan.
+		log.Warn("host-gateway did not resolve under podman; scans may fail to " +
+			"reach the network because the container cannot reach the host egress " +
+			"proxy (needs podman >= 4.7; see docs/podman.md)")
+	case rt.Bin == "apple":
+		if gwIP == "" {
+			return "", "", fmt.Errorf("could not resolve the Apple container host gateway; cannot route scans to the egress proxy")
+		}
+		apiHost = gwIP
+	}
+	return gwIP, apiHost, nil
 }
 
 // resolveEgressSidecar builds the egress proxy sidecar config for a rootless
