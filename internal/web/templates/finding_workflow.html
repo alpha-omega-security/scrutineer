@@ -12,23 +12,52 @@
         <p class="text-sm mb-1 font-medium">Verification complete</p>
         <p class="text-sm text-muted-foreground">The confirm job ran and validated this finding. Review the evidence and triage.</p>
       {{else if eq $s "triaged"}}
-        <p class="text-sm mb-1 font-medium">Triaged, ready to prepare disclosure</p>
-        <p class="text-sm text-muted-foreground">You've confirmed this is a real finding. Run the disclose skill to get a GHSA-shaped draft, review and edit, then mark ready.</p>
+        {{if .HasDependents}}
+          <p class="text-sm mb-1 font-medium">Triaged, ready to prepare disclosure</p>
+          <p class="text-sm text-muted-foreground">You've confirmed this is a real finding. Run the disclose skill to get a GHSA-shaped draft, review and edit, then mark ready.</p>
+        {{else}}
+          <p class="text-sm mb-1 font-medium">Triaged, ready for operator handoff</p>
+          <p class="text-sm text-muted-foreground">You've confirmed this is a real finding. No dependents are recorded, so prepare an operator handoff with a patch or mitigation, then mark ready.</p>
+        {{end}}
       {{else if eq $s "ready"}}
-        <p class="text-sm mb-1 font-medium">Disclosure draft ready</p>
-        <p class="text-sm text-muted-foreground">The draft is prepared. Review it in the notes, edit if needed, then send to the maintainer.</p>
+        {{if .HasDependents}}
+          <p class="text-sm mb-1 font-medium">Disclosure draft ready</p>
+          <p class="text-sm text-muted-foreground">The draft is prepared. Review it in the notes, edit if needed, then send to the maintainer.</p>
+        {{else}}
+          <p class="text-sm mb-1 font-medium">Remediation handoff ready</p>
+          <p class="text-sm text-muted-foreground">Review the patch or mitigation notes, edit if needed, then share with the operator or remediation owner.</p>
+        {{end}}
       {{else if eq $s "reported"}}
-        <p class="text-sm mb-1 font-medium">Reported to maintainer</p>
-        <p class="text-sm text-muted-foreground">Waiting for a response. Update the status when they acknowledge.</p>
+        {{if .HasDependents}}
+          <p class="text-sm mb-1 font-medium">Reported to maintainer</p>
+          <p class="text-sm text-muted-foreground">Waiting for a response. Update the status when they acknowledge.</p>
+        {{else}}
+          <p class="text-sm mb-1 font-medium">Shared with operator</p>
+          <p class="text-sm text-muted-foreground">Waiting for the remediation owner to acknowledge. Update the status when they do.</p>
+        {{end}}
       {{else if eq $s "acknowledged"}}
-        <p class="text-sm mb-1 font-medium">Maintainer acknowledged</p>
-        <p class="text-sm text-muted-foreground">The maintainer is working on a fix. Update when the fix ships.</p>
+        {{if .HasDependents}}
+          <p class="text-sm mb-1 font-medium">Maintainer acknowledged</p>
+          <p class="text-sm text-muted-foreground">The maintainer is working on a fix. Update when the fix ships.</p>
+        {{else}}
+          <p class="text-sm mb-1 font-medium">Operator acknowledged</p>
+          <p class="text-sm text-muted-foreground">The remediation owner is working on a fix. Update when the fix ships.</p>
+        {{end}}
       {{else if eq $s "fixed"}}
         <p class="text-sm mb-1 font-medium">Fix available</p>
-        <p class="text-sm text-muted-foreground">A fix has been released. Publish the advisory when ready.</p>
+        {{if .HasDependents}}
+          <p class="text-sm text-muted-foreground">A fix has been released. Publish the advisory when ready.</p>
+        {{else}}
+          <p class="text-sm text-muted-foreground">A fix has been released. Publish or close out the internal advisory when ready.</p>
+        {{end}}
       {{else if eq $s "published"}}
-        <p class="text-sm mb-1 font-medium">Published</p>
-        <p class="text-sm text-muted-foreground">Advisory is public. This finding is complete.</p>
+        {{if .HasDependents}}
+          <p class="text-sm mb-1 font-medium">Published</p>
+          <p class="text-sm text-muted-foreground">Advisory is public. This finding is complete.</p>
+        {{else}}
+          <p class="text-sm mb-1 font-medium">Closed out</p>
+          <p class="text-sm text-muted-foreground">Internal advisory or remediation follow-up is complete.</p>
+        {{end}}
       {{else if eq $s "rejected"}}
         <p class="text-sm mb-1 font-medium">Rejected</p>
         <p class="text-sm text-muted-foreground">This finding was determined to be invalid. Reopen if new evidence appears.</p>
@@ -101,7 +130,7 @@
         {{end}}
         <button type="submit" name="status" value="reported" class="btn"
                 hx-post="/findings/{{$id}}/status">
-          <i data-lucide="send"></i> Mark as reported
+          <i data-lucide="send"></i> {{if .HasDependents}}Mark as reported{{else}}Mark shared{{end}}
         </button>
 
       {{else if eq $s "reported"}}

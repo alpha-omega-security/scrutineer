@@ -1506,6 +1506,7 @@ func (s *Server) advisoriesList(w http.ResponseWriter, r *http.Request) {
 type findingWorkflowData struct {
 	db.Finding
 	VerifyInFlight bool
+	HasDependents  bool
 }
 
 func (s *Server) findingShow(w http.ResponseWriter, r *http.Request) {
@@ -1543,6 +1544,9 @@ func (s *Server) findingShow(w http.ResponseWriter, r *http.Request) {
 		selected[l.Name] = true
 	}
 	_, verifyInFlight := s.openFindingSkillScan(f.ID, verifySkillName)
+	var dependentCount int64
+	s.DB.Model(&db.Dependent{}).Where("repository_id = ?", scan.RepositoryID).Count(&dependentCount)
+	hasDependents := dependentCount > 0
 
 	type exposureRow struct {
 		Dep    db.Dependent
@@ -1589,14 +1593,16 @@ func (s *Server) findingShow(w http.ResponseWriter, r *http.Request) {
 		"LatestRevalidate": latestRevalidate,
 		"AllLabels":        labels,
 		"Selected":         selected,
-		"Workflow":         findingWorkflowData{Finding: f, VerifyInFlight: verifyInFlight},
-		"Exposures":        exposures,
-		"ShowExposure":     findingSupportsExposure(scan),
+		"Workflow": findingWorkflowData{
+			Finding:        f,
+			VerifyInFlight: verifyInFlight,
+			HasDependents:  hasDependents,
+		},
+		"Exposures":    exposures,
+		"ShowExposure": findingSupportsExposure(scan),
 	}
 	if data["ShowExposure"].(bool) {
-		var depCount int64
-		s.DB.Model(&db.Dependent{}).Where("repository_id = ?", scan.RepositoryID).Count(&depCount)
-		data["HasDependents"] = depCount > 0
+		data["HasDependents"] = hasDependents
 	}
 	if id, c, ok := LookupCWE(f.CWE); ok {
 		data["CWE"] = map[string]any{"ID": id, "Name": c.Name, "Description": c.Description}

@@ -1669,6 +1669,81 @@ func TestFindingShow_hidesPublicIssueActionForHighSeverityReadyFinding(t *testin
 	}
 }
 
+func TestFindingShow_operatorWorkflowWhenNoDependents(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://github.com/foo/app", Name: "app"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: deepDiveSkillName}
+	s.DB.Create(&scan)
+
+	cases := []struct {
+		status db.FindingLifecycle
+		want   []string
+	}{
+		{db.FindingTriaged, []string{"Triaged, ready for operator handoff", "patch or mitigation"}},
+		{db.FindingReady, []string{"Remediation handoff ready", "share with the operator", "Mark shared"}},
+		{db.FindingReported, []string{"Shared with operator", "remediation owner"}},
+		{db.FindingAcknowledged, []string{"Operator acknowledged", "remediation owner is working on a fix"}},
+		{db.FindingFixed, []string{"internal advisory"}},
+		{db.FindingPublished, []string{"Closed out", "Internal advisory or remediation follow-up is complete"}},
+	}
+	for _, tc := range cases {
+		f := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: string(tc.status) + " finding",
+			Severity: "High", Status: tc.status}
+		s.DB.Create(&f)
+
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, localReq("GET", fmt.Sprintf("/findings/%d", f.ID)))
+		body := w.Body.String()
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s status %d: %s", tc.status, w.Code, body)
+		}
+		for _, want := range tc.want {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s finding page missing no-dependent workflow text %q", tc.status, want)
+			}
+		}
+		for _, gone := range []string{"send to the maintainer", "Mark as reported"} {
+			if strings.Contains(body, gone) {
+				t.Errorf("%s finding page should not render dependent-disclosure text %q", tc.status, gone)
+			}
+		}
+	}
+}
+
+func TestFindingShow_dependentWorkflowWhenDependentsExist(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://github.com/foo/lib", Name: "lib"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: deepDiveSkillName}
+	s.DB.Create(&scan)
+	s.DB.Create(&db.Dependent{RepositoryID: repo.ID, Name: "downstream", Ecosystem: "npm"})
+	f := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "ready finding",
+		Severity: "High", Status: db.FindingReady}
+	s.DB.Create(&f)
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", fmt.Sprintf("/findings/%d", f.ID)))
+	body := w.Body.String()
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, body)
+	}
+	for _, want := range []string{"Disclosure draft ready", "send to the maintainer", "Mark as reported"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("dependent workflow missing %q", want)
+		}
+	}
+	for _, gone := range []string{"Remediation handoff ready", "Mark shared"} {
+		if strings.Contains(body, gone) {
+			t.Errorf("dependent workflow should not render no-dependent text %q", gone)
+		}
+	}
+}
+
 func TestOrgReport_rendersFindingsAcrossRepos(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
