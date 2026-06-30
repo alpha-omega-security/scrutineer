@@ -15,9 +15,10 @@ import (
 // The empty string and "claude" both resolve to ClaudeHarness so an
 // unset backend keeps the historical default.
 var harnesses = map[string]Harness{
-	"":       ClaudeHarness{},
-	"claude": ClaudeHarness{},
-	"codex":  CodexHarness{},
+	"":         ClaudeHarness{},
+	"claude":   ClaudeHarness{},
+	"codex":    CodexHarness{},
+	"opencode": OpencodeHarness{},
 }
 
 // HarnessByName resolves a -backend value to its Harness, or returns
