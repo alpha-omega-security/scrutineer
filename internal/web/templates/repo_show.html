@@ -77,9 +77,11 @@
       Packages
     </button>
     {{end}}
-    <button type="button" role="tab" id="rt5" aria-controls="rp5" aria-selected="false">
-      Dependencies
-    </button>
+    {{if or .Deps .HiddenDeps}}
+      <button type="button" role="tab" id="rt5" aria-controls="rp5" aria-selected="false">
+        Dependencies
+      </button>
+    {{end}}
     {{if .ThreatModel}}
     <button type="button" role="tab" id="rt10" aria-controls="rp10" aria-selected="false">
       Threat Model
@@ -350,20 +352,19 @@
   </div>
   {{end}}
 
+  {{if or .Deps .HiddenDeps}}
   <div role="tabpanel" id="rp5" aria-labelledby="rt5" hidden>
-    {{if or .Deps .HiddenDeps}}
-      <div class="flex items-center justify-between gap-3 mb-3">
-        <p class="text-sm text-muted-foreground">
-          {{if .ShowAllDeps}}Showing all dependency phases.{{else}}Showing runtime dependencies.{{end}}
-          {{if .HiddenDeps}}{{.HiddenDeps}} test/build/dev row(s) hidden.{{end}}
-        </p>
-        {{if .ShowAllDeps}}
-          <a class="btn-sm-outline" href="/repositories/{{.Repo.ID}}#rt5">Runtime only</a>
-        {{else if .HiddenDeps}}
-          <a class="btn-sm-outline" href="/repositories/{{.Repo.ID}}?deps=all#rt5">Include test/build/dev</a>
-        {{end}}
-      </div>
-    {{end}}
+    <div class="flex items-center justify-between gap-3 mb-3">
+      <p class="text-sm text-muted-foreground">
+        {{if .ShowAllDeps}}Showing all dependency phases.{{else}}Showing runtime dependencies.{{end}}
+        {{if .HiddenDeps}}{{.HiddenDeps}} test/build/dev row(s) hidden.{{end}}
+      </p>
+      {{if .ShowAllDeps}}
+        <a class="btn-sm-outline" href="/repositories/{{.Repo.ID}}#rt5">Runtime only</a>
+      {{else if .HiddenDeps}}
+        <a class="btn-sm-outline" href="/repositories/{{.Repo.ID}}?deps=all#rt5">Include test/build/dev</a>
+      {{end}}
+    </div>
     {{if .Deps}}
       <table class="table w-full">
         <thead><tr>
@@ -390,10 +391,9 @@
       {{end}}
     {{else if .HiddenDeps}}
       <p class="text-muted-foreground text-sm p-4">No runtime dependencies in the default view.</p>
-    {{else}}
-      <p class="text-muted-foreground text-sm p-4">No dependencies indexed yet. The git-pkgs job populates this.</p>
     {{end}}
   </div>
+  {{end}}
 
   {{if .ThreatModel}}
   <div role="tabpanel" id="rp10" aria-labelledby="rt10" hidden>

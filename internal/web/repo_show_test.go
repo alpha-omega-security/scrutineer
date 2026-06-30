@@ -156,6 +156,23 @@ func TestRepoShow_dependenciesTab_plainManifestWithoutDoneScan(t *testing.T) {
 	}
 }
 
+func TestRepoShow_dependenciesTabHiddenWhenNoDependencies(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/r", Name: "r"}
+	s.DB.Create(&repo)
+
+	body := getRepoPage(t, s, repo.ID)
+	for _, hidden := range []string{
+		`id="rt5"`,
+		`id="rp5"`,
+	} {
+		if strings.Contains(body, hidden) {
+			t.Errorf("repo with no dependencies should not render %q", hidden)
+		}
+	}
+}
+
 func TestRepoShow_dependenciesTab_hidesNonRuntimeByDefault(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
@@ -175,6 +192,9 @@ func TestRepoShow_dependenciesTab_hidesNonRuntimeByDefault(t *testing.T) {
 	}
 	if !strings.Contains(body, "Include test/build/dev") {
 		t.Errorf("default view should render non-runtime toggle")
+	}
+	if !strings.Contains(body, `id="rt5"`) || !strings.Contains(body, `id="rp5"`) {
+		t.Errorf("dependencies tab should still render when only filtered dependency rows are hidden")
 	}
 
 	body = getRepoPagePath(t, s, fmt.Sprintf("/repositories/%d?deps=all", repo.ID))
