@@ -14,7 +14,6 @@ metadata:
     - repo-overview
     - advisories
     - packages
-    - dependents
     - maintainers
 ---
 

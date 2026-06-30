@@ -121,9 +121,67 @@ func refreshEcosystems(ctx context.Context, gdb *gorm.DB, repoID uint, staleOnly
 			src.fetchedCol: now,
 		}).Error; err != nil {
 			log.Warn("ecosystems cache write failed", "repo", repoID, "source", src.key, "err", err)
+		} else if src.key == "dependents" {
+			if err := updateDependentsTable(gdb, repoID, body); err != nil {
+				log.Warn("ecosystems dependents table write failed", "repo", repoID, "err", err)
+			}
 		}
 	}
 	return nil
+}
+
+func updateDependentsTable(gdb *gorm.DB, repoID uint, body []byte) error {
+	var entries []dependentsEntry
+	if err := json.Unmarshal(body, &entries); err != nil {
+		return fmt.Errorf("decode dependents body: %w", err)
+	}
+
+	var rows []db.Dependent
+	seen := make(map[string]bool)
+	for _, entry := range entries {
+		for _, rawDep := range entry.Dependents {
+			var d struct {
+				Name           string `json:"name"`
+				Ecosystem      string `json:"ecosystem"`
+				PURL           string `json:"purl"`
+				RepositoryURL  string `json:"repository_url"`
+				Downloads      int64  `json:"downloads"`
+				DependentRepos int    `json:"dependent_repos"`
+				RegistryURL    string `json:"registry_url"`
+				LatestVersion  string `json:"latest_version"`
+			}
+			if err := json.Unmarshal(rawDep, &d); err != nil {
+				continue
+			}
+			key := d.Ecosystem + ":" + d.Name
+			if !seen[key] {
+				seen[key] = true
+				rows = append(rows, db.Dependent{
+					RepositoryID:   repoID,
+					Name:           d.Name,
+					Ecosystem:      d.Ecosystem,
+					PURL:           d.PURL,
+					RepositoryURL:  d.RepositoryURL,
+					Downloads:      d.Downloads,
+					DependentRepos: d.DependentRepos,
+					RegistryURL:    d.RegistryURL,
+					LatestVersion:  d.LatestVersion,
+				})
+			}
+		}
+	}
+
+	return gdb.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("repository_id = ?", repoID).Delete(&db.Dependent{}).Error; err != nil {
+			return fmt.Errorf("delete old dependents: %w", err)
+		}
+		if len(rows) > 0 {
+			if err := tx.Create(&rows).Error; err != nil {
+				return fmt.Errorf("save dependents: %w", err)
+			}
+		}
+		return nil
+	})
 }
 
 // stale reports whether the source's cached payload is missing or older than
