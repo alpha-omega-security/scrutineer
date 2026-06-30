@@ -292,7 +292,7 @@ The `docker build` commands shown for the runner image and profiles can be run a
 | `-effort` | `high` | Claude effort level |
 | `-skills` | - | Local directory to load SKILL.md files from (repeatable) |
 | `-skills-repo` | - | `owner/repo[@ref]` or git HTTPS URL `https://host/path[@ref]` to clone skills from on startup; `@ref` pins a branch, tag or commit and the resolved SHA is recorded on every scan |
-| `-backend` | `claude` | Agent CLI the container runner execs: `claude` or `codex`. Non-claude backends require the containerised runner |
+| `-backend` | `claude` | Agent CLI the container runner execs: `claude`, `codex`, or `opencode`. Non-claude backends require the containerised runner |
 | `--runtime` | `docker` | Container runtime: `docker`, `podman` (rootless podman supported), or `apple` (Apple, experimental) |
 | `--selinux` | `auto` | Bind-mount SELinux relabeling: `auto` (relabel when SELinux is detected), `on`, or `off` |
 | `--no-container` | false | Disable the containerised runner; run claude directly on the host (no isolation). Deprecated alias: `--no-docker` |
@@ -334,6 +334,15 @@ The container, egress proxy, language profiles and skill staging stay the same; 
 
 See [docs/codex.md](docs/codex.md) for what differs from claude (argv, skill staging, credentials, egress), which model ids the pinned codex version accepts, and why codex's own sandbox is disabled inside scrutineer's container.
 
+## Opencode backend
+
+[opencode](https://opencode.ai) is provider-agnostic, so `-backend opencode` runs whichever model you configure (Anthropic, OpenAI, or anything opencode supports). The runner image bundles the `opencode` binary; set the credential for your provider and the model id in `provider/model` form:
+
+    backend: opencode
+    default_model: anthropic/claude-sonnet-4-6
+
+The egress allowlist covers `models.dev` plus the Anthropic and OpenAI API hosts; other providers go in `egress_allow:`. Like codex, the opencode backend requires the containerised runner. See [docs/opencode.md](docs/opencode.md) for provider-credential handling and what differs from claude.
+
 ## Sandboxed Claude Code configs
 
 In `--no-container` mode the `claude` subprocess inherits your `~/.claude/settings.json`, so [sandbox settings](https://code.claude.com/docs/en/sandboxing) that restrict network or filesystem access there will fail skills that need them. Point `claude` at a separate config directory just for scrutineer runs:
@@ -356,6 +365,7 @@ See [SECURITY.md](SECURITY.md) for the reporting policy and [threatmodel.md](thr
 - [docs/development.md](docs/development.md) -- project layout, regenerating embedded data, running tests
 - [docs/encrypted-sharing.md](docs/encrypted-sharing.md) -- encrypted findings sharing between contributors (age + SSH keys, team keyring management)
 - [docs/codex.md](docs/codex.md) -- the codex backend: what differs from claude, sandbox interaction, adding another harness
+- [docs/opencode.md](docs/opencode.md) -- the opencode backend: provider-agnostic credentials and egress
 - [docs/podman.md](docs/podman.md) -- security model and known gaps for the podman / rootless runtime (sandbox isolation, hardened-mode verification)
 - [docs/egress-sidecar.md](docs/egress-sidecar.md) -- operator validation checklist for the rootless `--hardened` egress proxy sidecar
 
