@@ -2,7 +2,7 @@
 name: maintainers
 description: Identify the real maintainers of a repository and the best way to contact them about a security issue. Distinguishes active leads from occasional contributors and bots, using commit history, issue activity, and registry ownership. Use when preparing a disclosure and needing to know who to reach.
 license: MIT
-compatibility: Needs network access to commits.ecosyste.ms, issues.ecosyste.ms, packages.ecosyste.ms, and api.github.com (to verify private vulnerability reporting before proposing the GitHub advisories channel).
+compatibility: Requires python3 on PATH; needs network access to the scrutineer API and api.github.com.
 metadata:
   scrutineer.version: 1
   scrutineer.output_file: report.json
@@ -29,17 +29,11 @@ You are identifying who maintains a repository so a security disclosure can reac
 
 ## Data sources
 
-Fetch each of these using your fetch tool. Each returns JSON. Include the repository URL from `context.json` as the query parameter.
+Run `python3 .claude/skills/maintainers/scripts/summarise.py`
+The script uses `context.json` to query the Scrutineer API for cached commits, issues, and packages data, parses `SECURITY.md`, `CODEOWNERS`, and `README.md`, and hits the GitHub PVR endpoint if applicable.
 
-1. **Commits**: `https://commits.ecosyste.ms/api/v1/repositories/lookup?url={repo_url}` — who has written code, how much, past-year activity. Follow redirects.
-2. **Issues and PRs**: `https://issues.ecosyste.ms/api/v1/repositories/lookup?url={repo_url}` — who reviews, responds, closes issues. Follow redirects.
-3. **Packages**: `https://packages.ecosyste.ms/api/v1/packages/lookup?repository_url={repo_url}` — registry owners and publishers.
-
-URL-encode the repository URL before substituting it into the query string.
-
-If all three lookups return empty or 404, fall back to `git -C ./src shortlog -sne --since='1 year ago'` plus `git -C ./src log --no-merges -20 --format='%aN <%aE>'` and classify from that alone; say so in `notes`.
-
-Also read `SECURITY.md`, `.github/SECURITY.md`, `CODEOWNERS`, and `README.md` in `./src` if they exist. These often name a security contact directly.
+After running the script, read `summary.json`. It contains all the necessary data to classify the maintainers and pick a disclosure channel.
+If the API data is missing, the script will fall back to git logs, which will be present in `summary.json`.
 
 ## How to classify
 
@@ -57,10 +51,10 @@ Filter bots out of the final list unless the repo's only active account is a bot
 
 ## Disclosure channel
 
-Pick the best one, based on what you found:
+Pick the best one, based on what you found in `summary.json`:
 
 - `SECURITY.md` email or contact block if present
-- GitHub Security Advisories **only when private vulnerability reporting is actually enabled**: fetch `https://api.github.com/repos/{owner}/{repo}/private-vulnerability-reporting` (no auth needed for public repos) and require `{"enabled": true}`. If it returns `{"enabled": false}`, a 404, or any error, the GitHub advisories URL would 404 for a reporter — skip this option and fall through to the next channel. Do not infer this from a SECURITY.md that merely *says* "report via GitHub advisories"; the maintainer may not have turned the feature on.
+- GitHub Security Advisories **only when private vulnerability reporting is actually enabled**: check `pvr_enabled` in `summary.json`. If it is `false` or not present, skip this option and fall through to the next channel. Do not infer this from a SECURITY.md that merely *says* "report via GitHub advisories"; the maintainer may not have turned the feature on.
 - Registry owner contact if packages data surfaced one
 - The lead's git-log author email if none of the above; if it is a `noreply.github.com` address, skip it
 
