@@ -293,6 +293,14 @@ func TestMatchProfile(t *testing.T) {
 			want: "perl",
 		},
 		{
+			name: "META.yml selects perl",
+			json: `{"package_managers":[]}`,
+			setup: func(t *testing.T, dir string) {
+				writeMarkerFile(t, dir, "META.yml")
+			},
+			want: "perl",
+		},
+		{
 			// A CPAN dist that also commits a generated Makefile must still
 			// route to perl, not c-cpp -- registry order guarantees this.
 			name: "Makefile.PL wins over a c-cpp build file",
