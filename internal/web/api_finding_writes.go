@@ -187,13 +187,10 @@ func (s *Server) findingScoped(w http.ResponseWriter, r *http.Request) (uint, bo
 	return uint(id), true
 }
 
-// sourceFromRequest picks model_suggested when the authenticated scan has
-// a skill context (skills write as themselves) and analyst otherwise. The
-// browser UI currently also uses bearer tokens, so analyst edits come
-// through with the finding-scoped scan's token; we treat those as
-// model_suggested here. Bypass path for purely UI edits lives in the
-// server's non-API handlers (findingStatus, findingNotes) which write
-// with source=analyst directly.
+// sourceFromRequest attributes API PATCH writes: model_suggested when the
+// bearer token scan has a skill, analyst otherwise. Browser form edits do
+// not come through here: findingFields and findingStatus write SourceAnalyst
+// directly, while findingNotes appends analyst notes through AddFindingNote.
 func sourceFromRequest(r *http.Request) db.FindingSource {
 	sc := scanFromRequest(r)
 	if sc != nil && sc.SkillID != nil {
