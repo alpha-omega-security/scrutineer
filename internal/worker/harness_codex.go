@@ -6,15 +6,16 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
 // CodexHarness drives OpenAI's codex CLI in headless `codex exec` mode.
 // It maps the nine Harness seams onto codex's conventions: SKILL.md
 // discovery at ./skills/{name}, AGENTS.md for project memory, CODEX_HOME
-// for the persistent thread store, and OPENAI_API_KEY / OPENAI_BASE_URL
-// for credentials. The container, egress proxy and workspace stay the
-// same as for claude; only what runs inside changes.
+// for the persistent thread store, and CODEX_API_KEY for non-interactive
+// API-key auth. The container, egress proxy and workspace stay the same
+// as for claude; only what runs inside changes.
 type CodexHarness struct{}
 
 func (CodexHarness) Binary() string { return "codex" }
@@ -25,8 +26,12 @@ func (CodexHarness) Binary() string { return "codex" }
 // uses `exec resume <session>` with the session id codex reported in a
 // prior run's stream. There is no per-turn cap in codex exec, so the
 // max-turns inputs are accepted and ignored.
-func (CodexHarness) Args(sj SkillJob, _ string, _ int) []string {
-	args := []string{
+func (CodexHarness) Args(sj SkillJob, _ string, _ int, baseURL string) []string {
+	var args []string
+	if baseURL != "" {
+		args = append(args, "-c", "openai_base_url="+strconv.Quote(baseURL))
+	}
+	args = append(args,
 		"exec",
 		"--json",
 		// scrutineer's container already drops caps, runs non-root,
@@ -35,7 +40,7 @@ func (CodexHarness) Args(sj SkillJob, _ string, _ int) []string {
 		// is the lightest mode that still lets codex edit /work.
 		"--sandbox", "workspace-write",
 		"--skip-git-repo-check",
-	}
+	)
 	if sj.Model != "" {
 		args = append(args, "--model", sj.Model)
 	}
@@ -103,6 +108,16 @@ type codexLine struct {
 	Name      string          `json:"name"`
 	Input     json.RawMessage `json:"input"`
 	Error     string          `json:"error"`
+	Item      *codexItem      `json:"item"`
+}
+
+type codexItem struct {
+	Type    string          `json:"type"`
+	Text    string          `json:"text"`
+	Command string          `json:"command"`
+	Tool    string          `json:"tool"`
+	Name    string          `json:"name"`
+	Input   json.RawMessage `json:"input"`
 }
 
 func parseCodexLine(raw []byte, emit func(Event)) {
@@ -122,6 +137,11 @@ func parseCodexLine(raw []byte, emit func(Event)) {
 			id = ev.ThreadID
 		}
 		emit(Event{Kind: KindSession, SessionID: id})
+	case ev.Item != nil && ev.Item.Text != "":
+		emit(Event{Kind: KindText, Text: ev.Item.Text})
+	case ev.Item != nil && isCodexToolItem(ev.Item.Type):
+		name := codexToolName(ev.Item)
+		emit(Event{Kind: KindTool, Tool: name, Text: codexToolText(ev.Item)})
 	case ev.Type == "tool" || ev.Tool != "":
 		name := ev.Tool
 		if name == "" {
@@ -139,6 +159,29 @@ func parseCodexLine(raw []byte, emit func(Event)) {
 	}
 }
 
+func isCodexToolItem(t string) bool {
+	return strings.Contains(t, "command") || strings.Contains(t, "tool")
+}
+
+func codexToolName(item *codexItem) string {
+	for _, name := range []string{item.Tool, item.Name} {
+		if name != "" {
+			return name
+		}
+	}
+	if strings.Contains(item.Type, "command") {
+		return "command"
+	}
+	return item.Type
+}
+
+func codexToolText(item *codexItem) string {
+	if item.Command != "" {
+		return item.Command
+	}
+	return summariseInput(codexToolName(item), item.Input)
+}
+
 func (CodexHarness) SkillDir(workRoot, name string) string {
 	return filepath.Join(workRoot, "skills", name)
 }
@@ -152,7 +195,7 @@ func (CodexHarness) EgressHosts() []string {
 	return []string{"api.openai.com", "auth0.openai.com", "chatgpt.com"}
 }
 
-func (CodexHarness) Env(baseURL string) []string {
+func (CodexHarness) Env(_ string) []string {
 	env := []string{
 		// Suppress codex's own OpenTelemetry exporter; the egress
 		// proxy denies it anyway, this just keeps the log quiet.
@@ -160,11 +203,8 @@ func (CodexHarness) Env(baseURL string) []string {
 	}
 	// Same T1/T13 residual as claude: forwarding the host credential
 	// into the container exposes it to in-container code.
-	if os.Getenv("OPENAI_API_KEY") != "" {
-		env = append(env, "OPENAI_API_KEY")
-	}
-	if baseURL != "" {
-		env = append(env, "OPENAI_BASE_URL="+baseURL)
+	if os.Getenv("CODEX_API_KEY") != "" {
+		env = append(env, "CODEX_API_KEY")
 	}
 	return env
 }

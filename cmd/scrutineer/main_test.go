@@ -246,7 +246,7 @@ func TestBuildEgressAllow_defaultIncludesConfigAndAnthropicHost(t *testing.T) {
 		t.Errorf("default mode did not honour egress_allow: %v", allow)
 	}
 	if !slices.Contains(allow, "proxy.corp.com") {
-		t.Errorf("default mode did not auto-add anthropic base URL host: %v", allow)
+		t.Errorf("default mode did not auto-add model base URL host: %v", allow)
 	}
 }
 
@@ -267,7 +267,7 @@ func TestBuildEgressAllow_hardenedDropsConfigKeepsHarness(t *testing.T) {
 		t.Errorf("hardened did not include HardenedEgressAllow entries: %v", allow)
 	}
 	if !slices.Contains(allow, "proxy.corp.com") {
-		t.Errorf("hardened dropped the anthropic base URL host: %v", allow)
+		t.Errorf("hardened dropped the model base URL host: %v", allow)
 	}
 }
 

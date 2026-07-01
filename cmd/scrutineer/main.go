@@ -155,7 +155,7 @@ func registerFlags(fs *flag.FlagSet, f *flags) {
 	fs.DurationVar(&f.scanTimeout, "scan-timeout", worker.DefaultScanTimeout, "wall-clock limit per scan")
 	fs.DurationVar(&f.smokeTimeout, "runtime-smoke-timeout", defaultRuntimeSmokeTimeout, "timeout for each rootless-podman startup container check (keep-id image remap, SELinux mount probe); raise if first-run image remapping is slow, lower if the image is pre-warmed")
 	fs.IntVar(&f.maxTurns, "max-turns", 0, "claude --max-turns limit (0 = unlimited)")
-	fs.StringVar(&f.anthropicBaseURL, "anthropic-base-url", "", "custom Anthropic API base URL (env: ANTHROPIC_BASE_URL)")
+	fs.StringVar(&f.anthropicBaseURL, "anthropic-base-url", "", "custom model API base URL for the active backend (env fallback: ANTHROPIC_BASE_URL for claude)")
 	fs.StringVar(&f.forkOrg, "fork-org", "", "GitHub org the fork skill forks into and files draft advisories against")
 	fs.BoolVar(&f.schemaStrict, "schema-strict", false, "fail scans whose report.json does not validate against the skill's schema (default: warn and continue)")
 	fs.BoolVar(&f.downgradeOnOverage, "downgrade-on-overage", false, "on a subscription token, fall the model tier back from max/high to the mid tier for new scans while the account is on overage; restores when the window resets")
@@ -355,6 +355,13 @@ func run(log *slog.Logger) error {
 	if key := os.Getenv("ANTHROPIC_API_KEY"); strings.HasPrefix(key, "sk-ant-oat") {
 		log.Warn("ANTHROPIC_API_KEY looks like an OAuth token from `claude setup-token`; set it as CLAUDE_CODE_OAUTH_TOKEN instead")
 	}
+	h, _ := worker.HarnessByName(f.backend)
+	_, usingClaude := h.(worker.ClaudeHarness)
+	_, usingCodex := h.(worker.CodexHarness)
+	if usingCodex && os.Getenv("CODEX_API_KEY") == "" && os.Getenv("OPENAI_API_KEY") != "" {
+		_ = os.Setenv("CODEX_API_KEY", os.Getenv("OPENAI_API_KEY"))
+		log.Warn("using OPENAI_API_KEY as CODEX_API_KEY for codex backend; prefer CODEX_API_KEY for codex exec")
+	}
 
 	// Suppress claude-code's telemetry, error reporting, auto-updater and
 	// feedback command, and semgrep's metrics POST. The container runner sets
@@ -365,13 +372,13 @@ func run(log *slog.Logger) error {
 	_ = os.Setenv("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
 	_ = os.Setenv("SEMGREP_SEND_METRICS", "off")
 
-	if f.anthropicBaseURL == "" {
+	if f.anthropicBaseURL == "" && usingClaude {
 		f.anthropicBaseURL = os.Getenv("ANTHROPIC_BASE_URL")
 	}
 	// LocalClaude inherits the host env, so writing the resolved value
 	// back here is what makes flag/config precedence apply on the local
 	// runner path. ContainerRunner gets it explicitly via its struct field.
-	if f.anthropicBaseURL != "" {
+	if f.anthropicBaseURL != "" && usingClaude {
 		_ = os.Setenv("ANTHROPIC_BASE_URL", f.anthropicBaseURL)
 	}
 
@@ -823,8 +830,8 @@ func resolveEgressSidecar(rt worker.ContainerRuntime, f *flags, allow []string, 
 // buildEgressAllow assembles the proxy allowlist: the harness's
 // model-API hosts first, then the harness-neutral base. Hardened mode
 // starts from HardenedEgressAllow and ignores cfg.EgressAllow (the
-// operator must drop --hardened to widen). The anthropic base URL host
-// is still auto-added in both modes since it routes the same model API.
+// operator must drop --hardened to widen). The model base URL host is
+// still auto-added in both modes since it routes the same model API.
 func buildEgressAllow(harnessHosts []string, hardened bool, cfg *config.Config, anthropicBaseURL string, log *slog.Logger) []string {
 	allow := append([]string{}, harnessHosts...)
 	if hardened {
@@ -840,7 +847,7 @@ func buildEgressAllow(harnessHosts []string, hardened bool, cfg *config.Config, 
 	}
 	if h := baseURLHost(anthropicBaseURL); h != "" {
 		allow = append(allow, h)
-		log.Info("added anthropic base URL host to egress allowlist", "host", h)
+		log.Info("added model base URL host to egress allowlist", "host", h)
 	}
 	return allow
 }
