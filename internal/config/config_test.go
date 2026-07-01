@@ -48,7 +48,7 @@ data: /var/lib/scrutineer
 effort: medium
 default_model: claude-sonnet-4-6
 models:
-  - name: Sonnet
+  - name: Sonnet 4.6
     id:   claude-sonnet-4-6
   - name: Opus
     id:   claude-opus-4-6
@@ -76,7 +76,7 @@ metadata_dir: .ossprey/
 	if c.Addr != "0.0.0.0:9000" || c.DefaultModel != "claude-sonnet-4-6" {
 		t.Errorf("flat fields: %+v", c)
 	}
-	if len(c.Models) != 2 || c.Models[0].Name != "Sonnet" {
+	if len(c.Models) != 2 || c.Models[0].Name != "Sonnet 4.6" {
 		t.Errorf("models: %+v", c.Models)
 	}
 	if len(c.Skills) != 2 {
