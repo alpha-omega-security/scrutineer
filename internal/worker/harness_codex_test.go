@@ -64,9 +64,9 @@ func TestCodexHarness_seamConstants(t *testing.T) {
 
 func TestCodexHarness_Args(t *testing.T) {
 	h := CodexHarness{}
-	got := h.Args(SkillJob{Name: "deep-dive", Model: "gpt-5", OutputFile: "report.json"}, "high", 30)
+	got := h.Args(SkillJob{Name: "deep-dive", Model: "gpt-5", OutputFile: "report.json"}, "high", 30, "https://proxy.corp.com/v1")
 
-	for _, want := range []string{"exec", "--json", "--sandbox", "workspace-write", "--skip-git-repo-check"} {
+	for _, want := range []string{"exec", "-c", `openai_base_url="https://proxy.corp.com/v1"`, "--json", "--sandbox", "workspace-write", "--skip-git-repo-check"} {
 		if !slices.Contains(got, want) {
 			t.Errorf("Args missing %q: %v", want, got)
 		}
@@ -88,7 +88,7 @@ func TestCodexHarness_Args(t *testing.T) {
 
 func TestCodexHarness_ArgsResume(t *testing.T) {
 	h := CodexHarness{}
-	got := h.Args(SkillJob{Name: "deep-dive", ResumeSessionID: "thr-7"}, "", 0)
+	got := h.Args(SkillJob{Name: "deep-dive", ResumeSessionID: "thr-7"}, "", 0, "")
 	if i := slices.Index(got, "resume"); i < 0 || got[i+1] != "thr-7" {
 		t.Errorf("resume args missing 'resume thr-7': %v", got)
 	}
@@ -98,16 +98,16 @@ func TestCodexHarness_ArgsResume(t *testing.T) {
 
 	// An explicit ResumePrompt (e.g. the schema-repair nudge) replaces
 	// the default continue prompt.
-	got = h.Args(SkillJob{Name: "deep-dive", ResumeSessionID: "thr-7", ResumePrompt: "fix the report"}, "", 0)
+	got = h.Args(SkillJob{Name: "deep-dive", ResumeSessionID: "thr-7", ResumePrompt: "fix the report"}, "", 0, "")
 	if got[len(got)-1] != "fix the report" {
 		t.Errorf("explicit ResumePrompt not used: %q", got[len(got)-1])
 	}
 }
 
 func TestCodexHarness_Env(t *testing.T) {
-	t.Setenv("OPENAI_API_KEY", "sk-test")
+	t.Setenv("CODEX_API_KEY", "sk-test")
 	got := CodexHarness{}.Env("https://proxy.corp.com/v1")
-	for _, want := range []string{"OPENAI_API_KEY", "OPENAI_BASE_URL=https://proxy.corp.com/v1"} {
+	for _, want := range []string{"CODEX_API_KEY"} {
 		if !slices.Contains(got, want) {
 			t.Errorf("Env() missing %q: %v", want, got)
 		}
@@ -118,13 +118,13 @@ func TestCodexHarness_Env(t *testing.T) {
 		}
 	}
 
-	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("CODEX_API_KEY", "")
 	got = CodexHarness{}.Env("")
-	if slices.Contains(got, "OPENAI_API_KEY") {
-		t.Errorf("Env() included unset OPENAI_API_KEY: %v", got)
+	if slices.Contains(got, "CODEX_API_KEY") {
+		t.Errorf("Env() included unset CODEX_API_KEY: %v", got)
 	}
 	for _, e := range got {
-		if strings.HasPrefix(e, "OPENAI_BASE_URL=") {
+		if strings.HasPrefix(e, "OPENAI_BASE_URL=") || strings.HasPrefix(e, "openai_base_url=") {
 			t.Errorf("Env() set base URL with none configured: %v", got)
 		}
 	}
@@ -137,6 +137,7 @@ func TestCodexHarness_AccountErrorText(t *testing.T) {
 		"429 Too Many Requests":               true,
 		"insufficient_quota for this account": true,
 		"invalid_api_key provided":            true,
+		"repo mentions billing integrations":  false,
 		"compiling skill":                     false,
 		"":                                    false,
 	} {
@@ -152,13 +153,15 @@ func TestCodexHarness_AccountErrorText(t *testing.T) {
 
 func TestCodexHarness_ParseStream(t *testing.T) {
 	in := `{"type":"init","session_id":"sess-1"}
-{"thread_id":"thr-2"}
-{"type":"text","text":"hello"}
-{"message":"working"}
-{"type":"tool","tool":"bash","input":{"command":"ls"}}
-{"error":"rate_limit_exceeded"}
-not json
-`
+	{"thread_id":"thr-2"}
+	{"type":"text","text":"hello"}
+	{"message":"working"}
+	{"type":"tool","tool":"bash","input":{"command":"ls"}}
+	{"type":"item.started","item":{"id":"item_1","type":"command_execution","command":"bash -lc ls","status":"in_progress"}}
+	{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"done"}}
+	{"error":"rate_limit_exceeded"}
+	not json
+	`
 	var got []Event
 	CodexHarness{}.ParseStream(strings.NewReader(in), func(e Event) { got = append(got, e) })
 
@@ -181,14 +184,14 @@ not json
 	if got[0].SessionID != "sess-1" || got[1].SessionID != "thr-2" {
 		t.Errorf("session ids not extracted: %v", got)
 	}
-	if tools != 1 || got[4].Tool != "bash" {
+	if tools != 2 || got[4].Tool != "bash" || got[5].Tool != "command" || got[5].Text != "bash -lc ls" {
 		t.Errorf("tool event not mapped: %v", got)
 	}
-	if errs != 1 || got[5].Text != "rate_limit_exceeded" {
+	if errs != 1 || got[7].Text != "rate_limit_exceeded" {
 		t.Errorf("error event not mapped: %v", got)
 	}
-	// "hello", "working", and the non-JSON line all pass through as text.
-	if texts != 3 {
-		t.Errorf("text events = %d, want 3: %v", texts, got)
+	// "hello", "working", "done", and the non-JSON line all pass through as text.
+	if texts != 4 {
+		t.Errorf("text events = %d, want 4: %v", texts, got)
 	}
 }

@@ -64,8 +64,10 @@ type Harness interface {
 	Binary() string
 	// Args is the argv (without the binary) for one skill run. effort is
 	// the runner's configured default; globalMaxTurns is the runner's
-	// -max-turns flag. Per-scan overrides on sj win over both.
-	Args(sj SkillJob, effort string, globalMaxTurns int) []string
+	// -max-turns flag. Per-scan overrides on sj win over both. baseURL is
+	// the operator's model-API base URL override; harnesses that do not
+	// pass it as an env var can translate it into CLI/config arguments.
+	Args(sj SkillJob, effort string, globalMaxTurns int, baseURL string) []string
 	// ParseStream reads the harness's combined stdout/stderr and emits one
 	// Event per logical line. The Event vocabulary (KindText, KindTool,
 	// KindSession, KindError, ...) is harness-neutral; this method maps
@@ -126,7 +128,7 @@ type ClaudeHarness struct{}
 
 func (ClaudeHarness) Binary() string { return "claude" }
 
-func (ClaudeHarness) Args(sj SkillJob, effort string, globalMaxTurns int) []string {
+func (ClaudeHarness) Args(sj SkillJob, effort string, globalMaxTurns int, _ string) []string {
 	return buildClaudeArgs(sj, effort, globalMaxTurns)
 }
 

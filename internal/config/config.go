@@ -87,10 +87,11 @@ type Config struct {
 	ScanTimeout string `yaml:"scan_timeout"`
 	// MaxTurns is passed as --max-turns to claude-code. 0 means no limit.
 	MaxTurns int `yaml:"max_turns"`
-	// AnthropicBaseURL overrides the default Anthropic API endpoint. When
-	// set, the hostname is automatically added to the egress allowlist and
-	// the value is passed as ANTHROPIC_BASE_URL to the claude-code process.
-	// Falls back to the ANTHROPIC_BASE_URL environment variable if empty.
+	// AnthropicBaseURL overrides the default model API endpoint. When set,
+	// the hostname is automatically added to the egress allowlist. Claude
+	// receives it as ANTHROPIC_BASE_URL; Codex receives it as the
+	// openai_base_url config override. For compatibility, only the Claude
+	// backend falls back to the ANTHROPIC_BASE_URL environment variable.
 	AnthropicBaseURL string `yaml:"anthropic_base_url"`
 	// Theme selects the colour scheme: "claude" (default), "ocean-breeze",
 	// "catppuccin", "sunset-horizon", "midnight-bloom", or "northern-lights".
