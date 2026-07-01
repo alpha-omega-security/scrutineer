@@ -22,7 +22,7 @@ func (OpencodeHarness) Binary() string { return "opencode" }
 // SKILL.md but does not auto-invoke it, so the prompt points at it
 // explicitly. --auto suppresses interactive permission prompts (the
 // container is the sandbox); --format json yields a JSONL event stream.
-func (OpencodeHarness) Args(sj SkillJob, _ string, _ int) []string {
+func (OpencodeHarness) Args(sj SkillJob, _ string, _ int, _ string) []string {
 	args := []string{
 		"run",
 		"--format", "json",

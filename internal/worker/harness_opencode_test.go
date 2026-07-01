@@ -44,7 +44,7 @@ func TestOpencodeHarness_seamConstants(t *testing.T) {
 
 func TestOpencodeHarness_Args(t *testing.T) {
 	h := OpencodeHarness{}
-	got := h.Args(SkillJob{Name: "deep-dive", Model: "anthropic/claude-sonnet-4-6", OutputFile: "report.json"}, "high", 30)
+	got := h.Args(SkillJob{Name: "deep-dive", Model: "anthropic/claude-sonnet-4-6", OutputFile: "report.json"}, "high", 30, "https://ignored")
 
 	for _, want := range []string{"run", "--auto"} {
 		if !slices.Contains(got, want) {
@@ -71,7 +71,7 @@ func TestOpencodeHarness_Args(t *testing.T) {
 
 func TestOpencodeHarness_ArgsResume(t *testing.T) {
 	h := OpencodeHarness{}
-	got := h.Args(SkillJob{Name: "deep-dive", ResumeSessionID: "ses-7"}, "", 0)
+	got := h.Args(SkillJob{Name: "deep-dive", ResumeSessionID: "ses-7"}, "", 0, "")
 	if i := slices.Index(got, "--session"); i < 0 || got[i+1] != "ses-7" {
 		t.Errorf("resume args missing '--session ses-7': %v", got)
 	}
@@ -82,7 +82,7 @@ func TestOpencodeHarness_ArgsResume(t *testing.T) {
 		t.Errorf("resume prompt does not say continue: %q", got[len(got)-1])
 	}
 
-	got = h.Args(SkillJob{Name: "deep-dive", ResumeSessionID: "ses-7", ResumePrompt: "fix the report"}, "", 0)
+	got = h.Args(SkillJob{Name: "deep-dive", ResumeSessionID: "ses-7", ResumePrompt: "fix the report"}, "", 0, "")
 	if got[len(got)-1] != "fix the report" {
 		t.Errorf("explicit ResumePrompt not used: %q", got[len(got)-1])
 	}
