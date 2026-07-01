@@ -77,11 +77,16 @@ func (OpencodeHarness) ParseStream(r io.Reader, emit func(Event)) {
 type opencodeLine struct {
 	Type      string          `json:"type"`
 	SessionID string          `json:"sessionID"`
-	Text      string          `json:"text"`
-	Tool      string          `json:"tool"`
-	Name      string          `json:"name"`
-	Input     json.RawMessage `json:"input"`
-	Error     string          `json:"error"`
+	Part      *opencodePart   `json:"part"`
+	Error     json.RawMessage `json:"error"`
+}
+
+type opencodePart struct {
+	Type  string          `json:"type"`
+	Text  string          `json:"text"`
+	Tool  string          `json:"tool"`
+	Name  string          `json:"name"`
+	Input json.RawMessage `json:"input"`
 }
 
 func parseOpencodeLine(raw []byte, emit func(Event)) {
@@ -97,25 +102,58 @@ func parseOpencodeLine(raw []byte, emit func(Event)) {
 	switch {
 	case ev.Type == "step_start" && ev.SessionID != "":
 		emit(Event{Kind: KindSession, SessionID: ev.SessionID})
-	case ev.Type == "tool_use":
-		name := ev.Tool
+	case isOpencodeToolEvent(ev):
+		name := ev.Part.Tool
 		if name == "" {
-			name = ev.Name
+			name = ev.Part.Name
 		}
-		emit(Event{Kind: KindTool, Tool: name, Text: summariseInput(name, ev.Input)})
-	case ev.Type == "error" || ev.Error != "":
-		msg := ev.Error
-		if msg == "" {
-			msg = ev.Text
-		}
-		emit(Event{Kind: KindError, Text: msg})
-	case ev.Type == "text" || ev.Type == "reasoning":
-		emit(Event{Kind: KindText, Text: ev.Text})
+		emit(Event{Kind: KindTool, Tool: name, Text: summariseInput(name, ev.Part.Input)})
+	case ev.Type == "error" || len(ev.Error) > 0:
+		emit(Event{Kind: KindError, Text: opencodeErrorText(ev.Error, line)})
+	case isOpencodeTextEvent(ev):
+		emit(Event{Kind: KindText, Text: ev.Part.Text})
 	case ev.Type == "step_finish":
 		// noise; the scan log doesn't need step boundaries
 	default:
 		emit(Event{Kind: KindText, Text: line})
 	}
+}
+
+func isOpencodeToolEvent(ev opencodeLine) bool {
+	if ev.Part == nil {
+		return false
+	}
+	return ev.Type == "tool_use" || ev.Part.Type == "tool_use" || ev.Part.Tool != "" || ev.Part.Name != ""
+}
+
+func isOpencodeTextEvent(ev opencodeLine) bool {
+	if ev.Part == nil || ev.Part.Text == "" {
+		return false
+	}
+	return ev.Type == "text" || ev.Type == "reasoning" || ev.Part.Type == "text" || ev.Part.Type == "reasoning"
+}
+
+func opencodeErrorText(raw json.RawMessage, fallback string) string {
+	if len(raw) == 0 {
+		return fallback
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s
+	}
+	var e struct {
+		Message string `json:"message"`
+		Name    string `json:"name"`
+		Code    string `json:"code"`
+	}
+	if err := json.Unmarshal(raw, &e); err == nil {
+		for _, text := range []string{e.Message, e.Code, e.Name} {
+			if text != "" {
+				return text
+			}
+		}
+	}
+	return strings.TrimSpace(string(raw))
 }
 
 func (OpencodeHarness) SkillDir(workRoot, name string) string {
