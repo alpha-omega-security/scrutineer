@@ -328,6 +328,39 @@ func validateFlags(f *flags) error {
 	return config.ValidateSELinux(f.selinux)
 }
 
+func configureBackendEnvironment(f *flags, log *slog.Logger) {
+	if key := os.Getenv("ANTHROPIC_API_KEY"); strings.HasPrefix(key, "sk-ant-oat") {
+		log.Warn("ANTHROPIC_API_KEY looks like an OAuth token from `claude setup-token`; set it as CLAUDE_CODE_OAUTH_TOKEN instead")
+	}
+	h, _ := worker.HarnessByName(f.backend)
+	if _, ok := h.(worker.CodexHarness); ok && os.Getenv("CODEX_API_KEY") == "" && os.Getenv("OPENAI_API_KEY") != "" {
+		_ = os.Setenv("CODEX_API_KEY", os.Getenv("OPENAI_API_KEY"))
+		log.Warn("using OPENAI_API_KEY as CODEX_API_KEY for codex backend; prefer CODEX_API_KEY for codex exec")
+	}
+
+	// Suppress claude-code's telemetry, error reporting, auto-updater and
+	// feedback command, and semgrep's metrics POST. The container runner sets
+	// these on the container too; setting them here covers the local
+	// runner, which inherits host env. The egress proxy already blocks the
+	// hosts these reach (DataDog log-intake, metrics.semgrep.dev) so
+	// without this the operator just sees denied-CONNECT noise.
+	_ = os.Setenv("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
+	_ = os.Setenv("SEMGREP_SEND_METRICS", "off")
+
+	if _, ok := h.(worker.ClaudeHarness); !ok {
+		return
+	}
+	if f.anthropicBaseURL == "" {
+		f.anthropicBaseURL = os.Getenv("ANTHROPIC_BASE_URL")
+	}
+	// LocalClaude inherits the host env, so writing the resolved value
+	// back here is what makes flag/config precedence apply on the local
+	// runner path. ContainerRunner gets it explicitly via its struct field.
+	if f.anthropicBaseURL != "" {
+		_ = os.Setenv("ANTHROPIC_BASE_URL", f.anthropicBaseURL)
+	}
+}
+
 func run(log *slog.Logger) error {
 	f := parseFlags()
 
@@ -352,35 +385,7 @@ func run(log *slog.Logger) error {
 	if f.set["selinux"] {
 		log.Info("selinux", "flag", f.selinux, "state", worker.HostSELinuxState())
 	}
-	if key := os.Getenv("ANTHROPIC_API_KEY"); strings.HasPrefix(key, "sk-ant-oat") {
-		log.Warn("ANTHROPIC_API_KEY looks like an OAuth token from `claude setup-token`; set it as CLAUDE_CODE_OAUTH_TOKEN instead")
-	}
-	h, _ := worker.HarnessByName(f.backend)
-	_, usingClaude := h.(worker.ClaudeHarness)
-	_, usingCodex := h.(worker.CodexHarness)
-	if usingCodex && os.Getenv("CODEX_API_KEY") == "" && os.Getenv("OPENAI_API_KEY") != "" {
-		_ = os.Setenv("CODEX_API_KEY", os.Getenv("OPENAI_API_KEY"))
-		log.Warn("using OPENAI_API_KEY as CODEX_API_KEY for codex backend; prefer CODEX_API_KEY for codex exec")
-	}
-
-	// Suppress claude-code's telemetry, error reporting, auto-updater and
-	// feedback command, and semgrep's metrics POST. The container runner sets
-	// these on the container too; setting them here covers the local
-	// runner, which inherits host env. The egress proxy already blocks the
-	// hosts these reach (DataDog log-intake, metrics.semgrep.dev) so
-	// without this the operator just sees denied-CONNECT noise.
-	_ = os.Setenv("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
-	_ = os.Setenv("SEMGREP_SEND_METRICS", "off")
-
-	if f.anthropicBaseURL == "" && usingClaude {
-		f.anthropicBaseURL = os.Getenv("ANTHROPIC_BASE_URL")
-	}
-	// LocalClaude inherits the host env, so writing the resolved value
-	// back here is what makes flag/config precedence apply on the local
-	// runner path. ContainerRunner gets it explicitly via its struct field.
-	if f.anthropicBaseURL != "" && usingClaude {
-		_ = os.Setenv("ANTHROPIC_BASE_URL", f.anthropicBaseURL)
-	}
+	configureBackendEnvironment(f, log)
 
 	if err := os.MkdirAll(f.dataDir, dataPermSecure); err != nil {
 		return err
