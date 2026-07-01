@@ -137,6 +137,7 @@ func TestCodexHarness_AccountErrorText(t *testing.T) {
 		"429 Too Many Requests":               true,
 		"insufficient_quota for this account": true,
 		"invalid_api_key provided":            true,
+		"repo mentions billing integrations":  false,
 		"compiling skill":                     false,
 		"":                                    false,
 	} {
