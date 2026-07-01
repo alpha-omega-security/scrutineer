@@ -231,7 +231,7 @@ func (CodexHarness) AccountErrorText(s string) string {
 		"invalid_api_key",
 		"incorrect api key",
 		"account is not active",
-		"billing",
+		"billing details",
 	} {
 		if strings.Contains(lower, phrase) {
 			return text
