@@ -13,7 +13,7 @@ The runner image already bundles the `codex` binary (a static musl build,
 sha256-pinned in `Dockerfile.runner`), so there's nothing to install. Set the
 credential and start scrutineer:
 
-    export OPENAI_API_KEY=sk-...
+    export CODEX_API_KEY=sk-...
     go run ./cmd/scrutineer -skills ./skills -backend codex
 
 or in `scrutineer.yaml`:
@@ -26,9 +26,9 @@ or in `scrutineer.yaml`:
 
 Codex Pro accounts (the ChatGPT login flow rather than an API key) authenticate
 via `auth0.openai.com` and `chatgpt.com`; both are on the egress allowlist by
-default. To point codex at a different endpoint, set `OPENAI_BASE_URL` the same
-way `ANTHROPIC_BASE_URL` works for claude; the host is added to the allowlist
-automatically.
+default. To point codex at a different endpoint, pass `-anthropic-base-url` or
+set `anthropic_base_url:` in config for now; scrutineer adds the host to the
+allowlist and passes the value to codex as `openai_base_url`.
 
 The codex backend requires the containerised runner. `--no-container` with
 `-backend codex` is rejected at startup: the codex binary lives in the runner
@@ -46,8 +46,8 @@ Everything the container runner asks of the agent CLI goes through the
 | Skill staging | `./.claude/skills/{name}/SKILL.md` | `./skills/{name}/SKILL.md` |
 | Project memory | `CLAUDE.md` | `AGENTS.md` |
 | Egress hosts | `*.anthropic.com` | `api.openai.com`, `auth0.openai.com`, `chatgpt.com` |
-| Credential env | `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` | `OPENAI_API_KEY` |
-| Base URL env | `ANTHROPIC_BASE_URL` | `OPENAI_BASE_URL` |
+| Credential env | `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` | `CODEX_API_KEY` |
+| Base URL override | `ANTHROPIC_BASE_URL` env / `ANTHROPIC_BASE_URL` in-container | `-c openai_base_url=...` |
 | State dir env | `CLAUDE_CONFIG_DIR` | `CODEX_HOME` |
 | Account-error phrases | claude usage/plan/access messages | OpenAI `rate_limit`, `insufficient_quota`, `invalid_api_key`, `429` |
 
@@ -88,7 +88,7 @@ codex's sandbox is layered inside that, not a substitute for it. Under
 exactly as for claude.
 
 The threat-model T1 residual (the model-API credential is readable by
-in-container code) applies the same: `OPENAI_API_KEY` is passed as a container
+in-container code) applies the same: `CODEX_API_KEY` is passed as a container
 env var.
 
 ## Known gaps
@@ -101,15 +101,14 @@ Claude's `-effort` setting has no codex equivalent and is ignored.
 
 The stream parser (`CodexHarness.ParseStream`) maps codex's `--json` events
 onto the scan log: `session_id` / `thread_id` become session events (so resume
-works), `tool` events show as tool calls, `error` events surface as errors, and
-text passes through. The mapping is built from reading the codex source, not
-from exercising every event shape against a live run, so unknown shapes fall
-through as raw text rather than structured events. Reports of rough edges
-welcome on #211.
+works), nested `item` command/tool events show as tool calls, nested agent
+message text is emitted as text, `error` events surface as errors, and unknown
+shapes fall through as raw text rather than being dropped. Reports of rough
+edges welcome on #211.
 
 The `-anthropic-base-url` flag is reused as the model-API base-URL override for
-whichever harness is active; under codex it sets `OPENAI_BASE_URL`. A
-harness-neutral flag name will follow.
+whichever harness is active; under codex it becomes the `openai_base_url` config
+override for `codex exec`. A harness-neutral flag name will follow.
 
 ## Adding another harness
 

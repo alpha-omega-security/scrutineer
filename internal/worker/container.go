@@ -38,7 +38,7 @@ type ContainerRunner struct {
 	ProxyURL         string // http://user:token@host-or-gateway:port; "" disables egress
 	FullClone        bool
 	MaxTurns         int
-	AnthropicBaseURL string // passed as ANTHROPIC_BASE_URL env var to the container
+	AnthropicBaseURL string // model-API base URL override; the active harness decides how to pass it
 	HostGatewayIP    string // Docker/Podman IPv4 address for --add-host; falls back to "host-gateway"
 	// ProfilesDir is the host directory containing docker/profiles/<name>/
 	// Dockerfile entries. When empty, profile resolution is skipped and
@@ -265,7 +265,7 @@ func (d ContainerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Ev
 
 	logLine := "$ " + d.Runtime.bin() + " run --rm " + image + " <skill:" + sj.Name + ">"
 	if d.AnthropicBaseURL != "" {
-		logLine += " [ANTHROPIC_BASE_URL=" + redactURLUserinfo(d.AnthropicBaseURL) + "]"
+		logLine += " [MODEL_BASE_URL=" + redactURLUserinfo(d.AnthropicBaseURL) + "]"
 	}
 	emit(Event{Kind: KindText, Text: logLine})
 
@@ -317,7 +317,7 @@ func (d ContainerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Ev
 // event arrived, e.g. a --resume that could not find the conversation).
 func (d ContainerRunner) runContainerOnce(ctx context.Context, runBase []string, sj SkillJob, emit func(Event)) (hitMaxTurns bool, sessionID string, waitErr error) {
 	h := d.harness()
-	harnessArgs := append([]string{h.Binary()}, h.Args(sj, d.Effort, d.MaxTurns)...)
+	harnessArgs := append([]string{h.Binary()}, h.Args(sj, d.Effort, d.MaxTurns, d.AnthropicBaseURL)...)
 	runArgs := append(append([]string{}, runBase...), harnessArgs...)
 
 	cmd := exec.CommandContext(ctx, d.Runtime.bin(), runArgs...)
