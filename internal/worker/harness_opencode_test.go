@@ -130,10 +130,10 @@ func TestOpencodeHarness_AccountErrorText(t *testing.T) {
 
 func TestOpencodeHarness_ParseStream(t *testing.T) {
 	in := `{"type":"step_start","sessionID":"ses-1"}
-{"type":"text","text":"hello"}
-{"type":"reasoning","text":"thinking"}
-{"type":"tool_use","tool":"bash","input":{"command":"ls"}}
-{"type":"error","error":"rate_limit"}
+{"type":"text","part":{"type":"text","text":"hello"}}
+{"type":"reasoning","part":{"type":"reasoning","text":"thinking"}}
+{"type":"tool_use","part":{"type":"tool_use","tool":"bash","input":{"command":"ls"}}}
+{"type":"error","error":{"message":"rate_limit"}}
 {"type":"step_finish"}
 not json
 `
@@ -156,14 +156,14 @@ not json
 	if sessions != 1 || got[0].SessionID != "ses-1" {
 		t.Errorf("session event not extracted: %v", got)
 	}
-	if tools != 1 {
-		t.Errorf("tool events = %d, want 1: %v", tools, got)
+	if tools != 1 || got[3].Tool != "bash" || got[3].Text == "" {
+		t.Errorf("tool event not mapped: %v", got)
 	}
-	if errs != 1 {
-		t.Errorf("error events = %d, want 1: %v", errs, got)
+	if errs != 1 || got[4].Text != "rate_limit" {
+		t.Errorf("error event not mapped: %v", got)
 	}
 	// "hello", "thinking", and the non-JSON line; step_finish is dropped.
-	if texts != 3 {
+	if texts != 3 || got[1].Text != "hello" || got[2].Text != "thinking" {
 		t.Errorf("text events = %d, want 3: %v", texts, got)
 	}
 }

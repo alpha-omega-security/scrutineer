@@ -37,7 +37,7 @@ ARG SEMGREP_VERSION
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates curl git bash coreutils \
+        ca-certificates curl git bash coreutils musl \
         python3 python3-venv \
  && install -d -m 0755 /etc/apt/keyrings \
  && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
