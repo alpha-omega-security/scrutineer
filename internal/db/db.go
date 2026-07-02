@@ -219,6 +219,13 @@ type Scan struct {
 	// operator's override and the UI can show the chosen ecosystem.
 	Profile string `gorm:"index"`
 
+	// Backend is the harness (agent CLI) that ran this scan — the -backend
+	// value, e.g. "claude" or "codex". Stamped by the worker so a retry
+	// after switching -backend can drop the recorded SessionID rather than
+	// pass one harness's session/thread id to another's resume command.
+	// Empty on rows that predate the column or never reached the runner.
+	Backend string `gorm:"index"`
+
 	// SessionID is the claude-code session this scan's run belongs to,
 	// captured from the stream-json init/result events. It is written as
 	// soon as the init event arrives (before the run finishes) so it

@@ -193,16 +193,7 @@ func (w *Worker) doExposure(ctx context.Context, scan *db.Scan, emit func(Event)
 	}
 	w.applyResume(scan, &sj, emit)
 	res, err := w.Runner.RunSkill(ctx, sj, emit)
-	if res.SessionID != "" && res.SessionID != scan.SessionID {
-		scan.SessionID = res.SessionID
-	}
-	if res.Commit != "" {
-		scan.Commit = res.Commit
-	}
-	if res.Profile != "" && res.Profile != scan.Profile {
-		scan.Profile = res.Profile
-		w.DB.Model(scan).Update("profile", res.Profile)
-	}
+	w.applySkillResult(scan, res)
 	if err != nil {
 		if _, ok := errors.AsType[*MaxTurnsReachedError](err); ok && res.Report != "" {
 			// Same best-effort parse-the-partial pattern as doSkill: keep

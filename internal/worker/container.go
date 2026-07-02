@@ -230,18 +230,19 @@ func (d ContainerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Ev
 	absWork, _ := filepath.Abs(work)
 
 	profile, image := d.resolveProfile(ctx, sj.Profile, src, sj.SubPath, emit)
+	backend := HarnessName(d.harness())
 	if sj.RequiresProfile != "" && profile != sj.RequiresProfile {
 		got := profile
 		if got == "" {
 			got = "default"
 		}
-		return SkillResult{Commit: commit, Profile: profile}, fmt.Errorf("skill %q requires profile %q, resolved %q", sj.Name, sj.RequiresProfile, got)
+		return SkillResult{Commit: commit, Profile: profile, Backend: backend}, fmt.Errorf("skill %q requires profile %q, resolved %q", sj.Name, sj.RequiresProfile, got)
 	}
 	d.injectProfileGuide(profile, absWork, emit)
 
 	hnet, cleanupNetwork, err := d.setupHardenedNetwork(sj, image)
 	if err != nil {
-		return SkillResult{Commit: commit, Profile: profile}, err
+		return SkillResult{Commit: commit, Profile: profile, Backend: backend}, err
 	}
 	// Capture the sidecar's egress decisions (allowlist denials) into the scan
 	// record before teardown removes the ephemeral sidecar.
@@ -259,7 +260,7 @@ func (d ContainerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Ev
 	if sj.ClaudeConfigDir != "" {
 		absConfig, _ = filepath.Abs(sj.ClaudeConfigDir)
 		if err := os.MkdirAll(absConfig, dirPerm); err != nil {
-			return SkillResult{Commit: commit, Profile: profile}, fmt.Errorf("create claude config dir: %w", err)
+			return SkillResult{Commit: commit, Profile: profile, Backend: backend}, fmt.Errorf("create claude config dir: %w", err)
 		}
 	}
 	runBase := d.buildRunArgs(absWork, image, hnet, absConfig)
@@ -285,7 +286,7 @@ func (d ContainerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Ev
 	if waitErr != nil && sj.ResumeSessionID != "" && sessionID == "" && accountErrText == "" {
 		if sj.ResumePrompt != "" {
 			emit(Event{Kind: KindText, Text: "resume of session " + sj.ResumeSessionID + " failed; " + resumePromptNoFreshFallbackText})
-			return SkillResult{Commit: commit, Profile: profile}, fmt.Errorf("%s exited: %w", d.Runtime.bin(), waitErr)
+			return SkillResult{Commit: commit, Profile: profile, Backend: backend}, fmt.Errorf("%s exited: %w", d.Runtime.bin(), waitErr)
 		}
 		// The resume produced no session event, so claude could not load the
 		// saved conversation (gone from the mounted store). Restart fresh in
@@ -297,7 +298,7 @@ func (d ContainerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Ev
 		hitMaxTurns, sessionID, waitErr = d.runContainerOnce(ctx, runBase, fresh, wrappedEmit)
 	}
 
-	res := SkillResult{Commit: commit, Profile: profile, SessionID: sessionID}
+	res := SkillResult{Commit: commit, Profile: profile, Backend: backend, SessionID: sessionID}
 	if outPath != "" {
 		res.Report = readCappedReport(outPath, emit)
 	}

@@ -102,6 +102,11 @@ type SkillResult struct {
 	// default runner image ran. The worker persists this on the scan
 	// so retries and the UI can show what was picked.
 	Profile string
+	// Backend is the harness that ran this scan (HarnessName). Persisted on
+	// the scan so a retry after switching -backend knows the SessionID
+	// belongs to a different agent CLI and starts fresh instead of passing
+	// e.g. a codex thread id to claude --resume.
+	Backend string
 	// SessionID is the claude session this run belonged to, as seen in the
 	// stream. The worker already persists it live via the emit callback;
 	// this is a backstop so the final save reflects the latest value (e.g.

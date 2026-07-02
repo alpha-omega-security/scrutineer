@@ -74,6 +74,12 @@ type Server struct {
 	// stamp (e.g. an ldflags-less build outside a git checkout).
 	Commit string
 
+	// Backend is the canonical -backend value the runner was started with
+	// (worker.HarnessName). Set once by main. resumeOpts compares it to
+	// Scan.Backend so a retry after switching backends starts fresh instead
+	// of passing one harness's session id to another's resume command.
+	Backend string
+
 	// EncRecipients is the parsed recipients file; nil disables encrypted
 	// export. Supports age X25519 and SSH public keys.
 	EncRecipients []age.Recipient

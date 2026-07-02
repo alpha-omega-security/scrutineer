@@ -32,6 +32,15 @@ func TestHarnessByName(t *testing.T) {
 	}
 }
 
+func TestHarnessName(t *testing.T) {
+	if got := HarnessName(ClaudeHarness{}); got != "claude" {
+		t.Errorf("HarnessName(ClaudeHarness) = %q, want claude", got)
+	}
+	if got := HarnessName(CodexHarness{}); got != "codex" {
+		t.Errorf("HarnessName(CodexHarness) = %q, want codex", got)
+	}
+}
+
 func TestHarnessNames(t *testing.T) {
 	got := HarnessNames()
 	if !strings.Contains(got, "claude") || !strings.Contains(got, "codex") {

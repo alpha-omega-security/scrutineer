@@ -479,6 +479,9 @@ func run(log *slog.Logger) error {
 	}
 	srv.SkillsRepoSHA = skillsRepoSHA
 	srv.Commit = buildCommit()
+	if h, err := worker.HarnessByName(f.backend); err == nil {
+		srv.Backend = worker.HarnessName(h)
+	}
 	srv.SetDefaultModel(f.defaultModel)
 	srv.SetDefaultEffort(f.effort)
 
