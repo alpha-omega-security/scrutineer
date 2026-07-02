@@ -3478,6 +3478,91 @@ func TestRepoList_showsLastScanDate(t *testing.T) {
 	}
 }
 
+func TestRepoList_statusScanPrecedence(t *testing.T) {
+	type scanSeed struct {
+		status db.ScanStatus
+		at     time.Time
+	}
+	cases := []struct {
+		name       string
+		scans      []scanSeed
+		wantBadge  string
+		wantAbsent string
+		wantLatest string
+	}{
+		{
+			name: "running beats newer queued",
+			scans: []scanSeed{
+				{status: db.ScanRunning, at: time.Date(2026, time.July, 1, 9, 45, 0, 0, time.UTC)},
+				{status: db.ScanQueued, at: time.Date(2026, time.July, 1, 9, 47, 0, 0, time.UTC)},
+			},
+			wantBadge:  "running",
+			wantAbsent: "queued",
+			wantLatest: "2026-07-01 09:47",
+		},
+		{
+			name: "queued beats newer paused",
+			scans: []scanSeed{
+				{status: db.ScanQueued, at: time.Date(2026, time.July, 1, 10, 1, 0, 0, time.UTC)},
+				{status: db.ScanPaused, at: time.Date(2026, time.July, 1, 10, 2, 0, 0, time.UTC)},
+			},
+			wantBadge:  "queued",
+			wantLatest: "2026-07-01 10:02",
+		},
+		{
+			name: "paused beats newer terminal",
+			scans: []scanSeed{
+				{status: db.ScanPaused, at: time.Date(2026, time.July, 1, 10, 3, 0, 0, time.UTC)},
+				{status: db.ScanDone, at: time.Date(2026, time.July, 1, 10, 4, 0, 0, time.UTC)},
+			},
+			wantBadge:  "paused",
+			wantLatest: "2026-07-01 10:04",
+		},
+		{
+			name: "terminal only uses latest terminal",
+			scans: []scanSeed{
+				{status: db.ScanDone, at: time.Date(2026, time.July, 1, 10, 5, 0, 0, time.UTC)},
+				{status: db.ScanFailed, at: time.Date(2026, time.July, 1, 10, 6, 0, 0, time.UTC)},
+			},
+			wantBadge:  "failed",
+			wantLatest: "2026-07-01 10:06",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, done := newTestServer(t)
+			defer done()
+			repo := db.Repository{URL: "https://github.com/homebrew/ruby-macho/" + strings.ReplaceAll(tc.name, " ", "-"), Name: "ruby-macho"}
+			s.DB.Create(&repo)
+			for i, seed := range tc.scans {
+				s.DB.Create(&db.Scan{
+					RepositoryID: repo.ID,
+					Kind:         "skill",
+					SkillName:    fmt.Sprintf("skill-%d", i),
+					Status:       seed.status,
+					CreatedAt:    seed.at,
+				})
+			}
+
+			w := httptest.NewRecorder()
+			s.Handler().ServeHTTP(w, localReq("GET", "/"))
+			if w.Code != http.StatusOK {
+				t.Fatalf("status %d: %s", w.Code, w.Body)
+			}
+			row := requireRepoListRow(t, w.Body.String(), repo.ID)
+			if !strings.Contains(row, " "+tc.wantBadge+"</span>") {
+				t.Errorf("repo row status = %s, want %s", row, tc.wantBadge)
+			}
+			if tc.wantAbsent != "" && strings.Contains(row, " "+tc.wantAbsent+"</span>") {
+				t.Errorf("repo row should not render %s: %s", tc.wantAbsent, row)
+			}
+			if !strings.Contains(row, tc.wantLatest) {
+				t.Errorf("last scan timestamp should still come from the newest scan: %s", row)
+			}
+		})
+	}
+}
+
 func TestLayout_linksToProjectResources(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
