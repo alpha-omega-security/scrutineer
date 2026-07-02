@@ -148,12 +148,12 @@ host, weigh it on a shared one. Re-run the Step 1 probe; it should print
 ## Step 2 — build the runner image (it now carries the `scrutineer` binary)
 
 The sidecar runs `scrutineer proxy` from the runner image, so the image must be
-built from the updated `Dockerfile.runner` (which bakes in the static
-`scrutineer` binary). Building needs network access for `go mod download`, so do
-it in CI or a network-enabled environment:
+built from the updated `docker/runner/Dockerfile.runner` (which bakes in the
+static `scrutineer` binary). Building needs network access for `go mod download`,
+so do it in CI or a network-enabled environment:
 
 ```sh
-podman build -t scrutineer-runner:dev -f Dockerfile.runner .
+podman build -t scrutineer-runner:dev -f docker/runner/Dockerfile.runner .
 podman run --rm scrutineer-runner:dev scrutineer proxy -h   # smoke test: exits 0
 ```
 
@@ -162,10 +162,11 @@ podman run --rm scrutineer-runner:dev scrutineer proxy -h   # smoke test: exits 
 > host running an **old cached runner image** (no `scrutineer` inside) can't run
 > the sidecar. scrutineer guards this — under rootless `--hardened` it smoke-tests
 > the runner image at **startup** and refuses to boot with a clear "rebuild from
-> Dockerfile.runner" message rather than failing every scan cryptically. So when
-> you upgrade, rebuild/pull the runner image too. A **custom** `--runner-image`
-> must therefore include the `scrutineer` binary (and `curl`); build it FROM the
-> stock runner image or replicate the `Dockerfile.runner` build stage.
+> docker/runner/Dockerfile.runner" message rather than failing every scan
+> cryptically. So when you upgrade, rebuild/pull the runner image too. A
+> **custom** `--runner-image` must therefore include the `scrutineer` binary
+> (and `curl`); build it FROM the stock runner image or replicate the
+> `docker/runner/Dockerfile.runner` build stage.
 
 ## Step 3 — run a real hardened scan under rootless podman
 
@@ -254,10 +255,10 @@ go test -tags podman -run TestIntegration -count=1 -v ./internal/worker/
 | Startup warning: host-gateway did not resolve under rootless podman | podman < 4.7 or no host-gateway wiring | Upgrade to podman ≥ 4.7; check the rootless network backend. |
 | Sidecar log: `refusing to start: host skill API ... unreachable`; scan refused with `sidecar ... exited before becoming reachable` | Backend doesn't forward host-gateway to host loopback (Step 1) | Upgrade to podman ≥ 5.0 / pasta with `--map-host-loopback`; or use `--hardened-runtime-only` / rootful / docker. |
 | Sidecar log: `refusing to start: ... cannot reach a DNS resolver ...` or `... returned NXDOMAIN for every allowlisted upstream ...`; scan refused | The sidecar can't resolve upstreams — resolver unreachable, or it answers but can't forward externally (e.g. a `127.0.0.53` stub not reachable from the rootless netns) | Check the bridge resolver / pasta forwarder and `/etc/resolv.conf` propagation. |
-| Startup fails: `runner image ... is missing the scrutineer binary ... rebuild it from Dockerfile.runner` | The deployed runner image predates the sidecar (no `scrutineer` baked in), or a custom image lacks it | Rebuild/pull the runner image from the current `Dockerfile.runner`. |
+| Startup fails: `runner image ... is missing the scrutineer binary ... rebuild it from docker/runner/Dockerfile.runner` | The deployed runner image predates the sidecar (no `scrutineer` baked in), or a custom image lacks it | Rebuild/pull the runner image from the current `docker/runner/Dockerfile.runner`. |
 | Verification: `internal network ... cannot reach the egress proxy sidecar` | Sidecar didn't come up in time, or it couldn't be reached at its `--internal` IP | Check `podman logs scrutineer-proxy-<id>`; confirm the sidecar attached to the per-scan network. |
 | Verification: `did not block external egress` | `--internal` isn't isolating egress on this backend | Backend/version issue; do not run hardened here. |
-| `runner image ... lacks curl` | Custom runner image missing curl (hardened verification needs it) | Use an image built from `Dockerfile.runner`. |
+| `runner image ... lacks curl` | Custom runner image missing curl (hardened verification needs it) | Use an image built from `docker/runner/Dockerfile.runner`. |
 
 ## See also
 

@@ -5,8 +5,8 @@ RUN go mod download
 COPY . .
 # COMMIT is the git SHA being built. .git is excluded from the build context
 # (.dockerignore), so the Go VCS stamp is unavailable here; pass it explicitly
-# with `docker build --build-arg COMMIT=$(git rev-parse HEAD)` to surface it on
-# the settings page. Empty when not supplied.
+# with `docker build -f docker/cmd/Dockerfile --build-arg COMMIT=$(git rev-parse HEAD) .`
+# to surface it on the settings page. Empty when not supplied.
 ARG COMMIT=""
 RUN CGO_ENABLED=0 go build -ldflags "-X main.commit=${COMMIT}" -o /scrutineer ./cmd/scrutineer
 

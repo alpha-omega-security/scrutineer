@@ -21,7 +21,7 @@
 # To build it manually the way the project does, from the repo root:
 #
 #   # 1. Build the base runner image locally (Debian/glibc, ships brief etc.):
-#   docker build -t scrutineer-runner:local -f Dockerfile.runner .
+#   docker build -t scrutineer-runner:local -f docker/runner/Dockerfile.runner .
 #
 #   # 2. Build this C/C++ profile on top of that local runner:
 #   docker build -t scrutineer-profile-c-cpp \

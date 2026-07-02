@@ -940,7 +940,7 @@ func noteworthyProxyLogLine(line string) bool {
 // VerifyProxyBinary smoke-tests that the runner image carries the scrutineer
 // binary the egress proxy sidecar runs (`scrutineer proxy`). A runner image
 // without it -- an old cached image, or a custom --runner-image not built from
-// Dockerfile.runner -- would otherwise make every rootless --hardened scan fail
+// docker/runner/Dockerfile.runner -- would otherwise make every rootless --hardened scan fail
 // with a cryptic per-scan exec error; this turns that into one clear startup
 // failure. It is a no-op when the image is not present locally yet (the first
 // scan pulls it and would surface the same issue then), matching VerifyKeepID.
@@ -953,7 +953,7 @@ func VerifyProxyBinary(ctx context.Context, rt ContainerRuntime, image string) e
 		"--", image, "scrutineer", "proxy", "-h").CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("runner image %q is missing the scrutineer binary required for the "+
-			"rootless --hardened egress proxy sidecar (rebuild it from Dockerfile.runner): %w: %s",
+			"rootless --hardened egress proxy sidecar (rebuild it from docker/runner/Dockerfile.runner): %w: %s",
 			image, err, strings.TrimSpace(string(out)))
 	}
 	return nil

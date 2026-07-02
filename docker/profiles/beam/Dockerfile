@@ -18,7 +18,7 @@
 # To build it manually the way the project does, from the repo root:
 #
 #   # 1. Build the base runner image locally (Debian/glibc, ships brief etc.):
-#   docker build -t scrutineer-runner:local -f Dockerfile.runner .
+#   docker build -t scrutineer-runner:local -f docker/runner/Dockerfile.runner .
 #
 #   # 2. Build this BEAM profile on top of that local runner
 #   #    (compiles Erlang/OTP from source; takes several minutes):

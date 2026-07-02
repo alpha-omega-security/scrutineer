@@ -6,12 +6,12 @@
 # EnsureImage), tagging the result scrutineer-profile-php-ext:<dockerfile-sha>
 # and passing the configured runner image via --build-arg RUNNER_IMAGE. The
 # build installs its toolchain with apt, so RUNNER_IMAGE must resolve to the
-# Debian runner built from ./Dockerfile.runner, not the legacy Alpine image.
+# Debian runner built from ./docker/runner/Dockerfile.runner, not the legacy Alpine image.
 #
 # To build it manually the way the project does, from the repo root:
 #
 #   # 1. Build the base runner image locally (Debian/glibc, ships brief etc.):
-#   docker build -t scrutineer-runner:local -f Dockerfile.runner .
+#   docker build -t scrutineer-runner:local -f docker/runner/Dockerfile.runner .
 #
 #   # 2. Build this PHP-extension profile on top of that local runner
 #   #    (compiles PHP from source with ASan/UBSan; takes several minutes):

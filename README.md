@@ -194,7 +194,7 @@ The same applies to the Dependents tab -- you can import any dependent's reposit
 
 ## Docker
 
-    docker build -t scrutineer .
+    docker build -t scrutineer -f docker/cmd/Dockerfile .
     docker run -p 127.0.0.1:8080:8080 -v scrutineer-data:/data \
       -e ANTHROPIC_API_KEY=sk-ant-api03-... \
       -e ANTHROPIC_BASE_URL=https://... \
@@ -214,7 +214,7 @@ If a container runtime (docker, rootless podman, or Apple's `container`) is avai
 
 Use `--runtime podman` to run scans under podman instead of docker (see [Podman (rootless)](#podman-rootless) below), `--runtime apple` to run scans under Apple's `container` runtime on macOS (see [Apple container (experimental)](#apple-container-experimental) below), `--no-container` to disable containerised execution entirely, or `--runner-image` to specify a different image. To build the runner locally instead of pulling from GHCR (use `podman build` or `container build` instead if you run scans under those runtimes):
 
-    docker build -t scrutineer-runner -f Dockerfile.runner .
+    docker build -t scrutineer-runner -f docker/runner/Dockerfile.runner .
     go run ./cmd/scrutineer -skills ./skills --runner-image scrutineer-runner
 
 The runner image is not auto-updated, so the analysis toolchain stays on whatever digest you pulled until you pull again. To keep that drift visible, scrutineer checks the registry once at startup (in the background, and failing silently if the registry is unreachable) and flags the runner image when it is more than seven days behind the published `:latest` -- both in the boot log and as a banner on the Settings page. Update with:

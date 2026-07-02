@@ -1,7 +1,7 @@
 # Minimal image for per-job ephemeral containers. Contains only the analysis
 # tools, not the web server or database. Built separately (podman build also
 # works -- substitute the binary):
-#   docker build -t scrutineer-runner -f Dockerfile.runner .
+#   docker build -t scrutineer-runner -f docker/runner/Dockerfile.runner .
 
 ARG CLAUDE_VERSION=2.1.173
 ARG SEMGREP_VERSION=1.167.0

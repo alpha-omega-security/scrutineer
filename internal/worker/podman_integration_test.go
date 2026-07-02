@@ -198,7 +198,7 @@ func runnerImageOrSkip(t *testing.T, rt ContainerRuntime) string {
 		image = DefaultRunnerImage
 	}
 	if !imageExistsLocally(context.Background(), rt, image) {
-		t.Skipf("runner image %q not present locally; build it (Dockerfile.runner) or set SCRUTINEER_TEST_RUNNER_IMAGE", image)
+		t.Skipf("runner image %q not present locally; build it (docker/runner/Dockerfile.runner) or set SCRUTINEER_TEST_RUNNER_IMAGE", image)
 	}
 	return image
 }

@@ -51,7 +51,7 @@ jobs:
       - uses: docker/build-push-action@f9f3042f7e2789586610d6e8b85c8f03e5195baf # v7.2.0
         with:
           context: .
-          file: Dockerfile.runner
+          file: docker/runner/Dockerfile.runner
           platforms: ${{ matrix.platform }}
           load: true
           push: false
@@ -85,7 +85,7 @@ jobs:
         if: github.event_name == 'push'
         with:
           context: .
-          file: Dockerfile.runner
+          file: docker/runner/Dockerfile.runner
           platforms: ${{ matrix.platform }}
           tags: ${{ env.IMAGE }}
           labels: ${{ steps.meta.outputs.labels }}
