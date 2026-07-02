@@ -12,8 +12,27 @@
 # Listen address for the web UI + skill API.
 # addr: 127.0.0.1:8080
 
-# Where scan workspaces and the sqlite DB live.
+# Where scan workspaces and (for the default sqlite backend) the database
+# file live.
 # data: ./data
+
+# Database backend. Omit the block to use the embedded SQLite file at
+# <data>/scrutineer.db (the default, zero-config). Set driver: postgres with
+# a dsn to store everything in an external PostgreSQL server instead — useful
+# for multi-instance or backed-up-elsewhere deployments. The schema is created
+# automatically (GORM AutoMigrate) on first connect, same as SQLite.
+#
+# To move an existing SQLite database into postgres, run the one-shot
+# migrator before switching over:
+#   go run ./scripts/migrate-sqlite-to-postgres \
+#     -sqlite ./data/scrutineer.db -postgres postgres://user:pass@host:5432/db
+#
+# NOTE: the `scrutineer backup` / `scrutineer restore` subcommands are
+# SQLite-only. Under postgres, back up with your own tooling (pg_dump /
+# pg_restore or your provider's managed snapshots).
+# database:
+#   driver: postgres
+#   dsn: postgres://scrutineer:secret@localhost:5432/scrutineer?sslmode=disable
 
 # Claude effort level for model-backed skills.
 # effort: high
