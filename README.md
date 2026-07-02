@@ -223,7 +223,7 @@ The runner image is not auto-updated, so the analysis toolchain stays on whateve
 
 If you would rather update automatically, run [watchtower](https://github.com/containrrr/watchtower) against the runner image or pass `--pull=always` to the runtime; scrutineer deliberately does not pull on its own so a scan's toolchain only changes when you choose to update it.
 
-When the container runner is active, scrutineer starts an authenticated egress proxy on the host and points `HTTPS_PROXY`/`HTTP_PROXY` inside the container at it. The proxy only tunnels to an allowlist of hosts: the Anthropic API, `*.ecosyste.ms`, the major forges (GitHub, GitLab, Codeberg, Bitbucket), common package registries (npm, PyPI, RubyGems, crates.io, Go module proxy, Packagist, Hex, NuGet), advisory sources (semgrep.dev, OSV, NVD, cwe.mitre.org), and the runtime's host endpoint (`host.docker.internal` for docker/podman, the default gateway IP for Apple's `container`) for the local skill API. Requests to anything else get a 403 and are logged. Extend the list with `egress_allow` in the config file. When `-anthropic-base-url` is set (or falls back to the `ANTHROPIC_BASE_URL` env var), its hostname is automatically added to the allowlist. The proxy uses a per-process random token so it isn't an open relay; tools that ignore the proxy env are not blocked at the network layer (see `threatmodel.md`).
+When the container runner is active, scrutineer starts an authenticated egress proxy on the host and points `HTTPS_PROXY`/`HTTP_PROXY` inside the container at it. The proxy only tunnels to an allowlist of hosts: the active model API, `*.ecosyste.ms`, the major forges (GitHub, GitLab, Codeberg, Bitbucket), common package registries (npm, PyPI, RubyGems, crates.io, Go module proxy, Packagist, Hex, NuGet), advisory sources (semgrep.dev, OSV, NVD, cwe.mitre.org), and the runtime's host endpoint (`host.docker.internal` for docker/podman, the default gateway IP for Apple's `container`) for the local skill API. Requests to anything else get a 403 and are logged. Extend the list with `egress_allow` in the config file. When `-anthropic-base-url` is set (or, for Claude, falls back to the `ANTHROPIC_BASE_URL` env var), its hostname is automatically added to the allowlist. The proxy uses a per-process random token so it isn't an open relay; tools that ignore the proxy env are not blocked at the network layer (see `threatmodel.md`).
 
 For deployments that treat skill prompts as untrusted, pass `--hardened` (or `hardened: true` in the config). The flag forces the container runner (`--no-container` is rejected), trims the egress allowlist to `*.anthropic.com` plus the host skill API (so `egress_allow` is ignored, drop the flag if you need to widen it), mounts the container rootfs read-only with `no-new-privileges`, attaches each scan to its own ephemeral network created with `--internal` (removed when the scan ends) so a process that ignores `HTTPS_PROXY` has no route out and concurrent scans cannot reach each other, and refuses scans whose workspace footprint exceeds 2 GiB once the clone completes. The 2 GiB check is post-clone: it bounds what hardened mode will agree to scan, not what can land on disk during the clone itself; use OS-level disk quotas if you need a clone-time guarantee. Bundled skills that hit ecosyste.ms or a package registry directly will fail under hardened mode unless they route through the host skill API. Per-ecosystem runner profiles still apply, but profile images that need writable paths beyond `/work` and `/tmp` are incompatible. Under rootless podman the proxy runs as a per-scan sidecar container on the `--internal` network (the host proxy is unreachable there; see [docs/podman.md](docs/podman.md)). Under podman, each hardened scan first verifies its `--internal` network actually blocks external egress while still reaching the egress proxy, and refuses the scan if that cannot be confirmed, so the sandbox never silently weakens.
 
@@ -266,6 +266,7 @@ The `docker build` commands shown for the runner image and profiles can be run a
 | `-effort` | `high` | Claude effort level |
 | `-skills` | - | Local directory to load SKILL.md files from (repeatable) |
 | `-skills-repo` | - | `owner/repo[@ref]` or git HTTPS URL `https://host/path[@ref]` to clone skills from on startup; `@ref` pins a branch, tag or commit and the resolved SHA is recorded on every scan |
+| `-backend` | `claude` | Agent CLI the container runner execs: `claude` or `codex`. Non-claude backends require the containerised runner |
 | `--runtime` | `docker` | Container runtime: `docker`, `podman` (rootless podman supported), or `apple` (Apple, experimental) |
 | `--selinux` | `auto` | Bind-mount SELinux relabeling: `auto` (relabel when SELinux is detected), `on`, or `off` |
 | `--no-container` | false | Disable the containerised runner; run claude directly on the host (no isolation). Deprecated alias: `--no-docker` |
@@ -277,7 +278,7 @@ The `docker build` commands shown for the runner image and profiles can be run a
 | `-scan-timeout` | `1h` | Wall-clock limit per scan; exceeded scans fail |
 | `-max-turns` | `0` | Passed as `--max-turns` to claude-code (0 = unlimited) |
 | `-schema-strict` | `false` | Fail a scan when its `report.json` does not validate against the skill's `schema.json` (default: warn in the scan log and parse anyway) |
-| `-anthropic-base-url` | - | Custom Anthropic API base URL (env: `ANTHROPIC_BASE_URL`) |
+| `-anthropic-base-url` | - | Custom model API base URL for the active backend (env fallback: `ANTHROPIC_BASE_URL` for Claude) |
 
 ## Config file
 
@@ -295,6 +296,17 @@ The config file can also replace the model pick list and pin the fallback defaul
         id:   claude-opus-4-7
 
 Scrutineer resolves skill models through tiers. Skills default to the `high` tier unless their `SKILL.md` metadata pins `scrutineer.model` to another tier or exact model id. Bundled lightweight skills such as `metadata` use `mid`, while `security-deep-dive` uses `max`. The Settings page lets you map each tier to any configured model.
+
+## Codex backend
+
+Scrutineer can drive OpenAI's [codex](https://github.com/openai/codex) CLI instead of claude-code. The runner image bundles the `codex` binary, so switching is the flag (or `backend: codex` in `scrutineer.yaml`) plus a credential:
+
+    export CODEX_API_KEY=sk-...
+    go run ./cmd/scrutineer -skills ./skills -backend codex
+
+The container, egress proxy, language profiles and skill staging stay the same; only the agent CLI inside the container changes. The egress allowlist picks up `api.openai.com` (and the ChatGPT auth hosts for Codex Pro accounts) automatically. Set `models:` in the config to OpenAI model ids. Use `-anthropic-base-url` or `anthropic_base_url:` for a custom OpenAI-compatible endpoint; under Codex it is passed as `openai_base_url` to `codex exec`. The codex backend requires the containerised runner; `--no-container` with `-backend codex` is rejected at startup.
+
+See [docs/codex.md](docs/codex.md) for what differs from claude (argv, skill staging, credentials, egress) and how the codex sandbox layers inside scrutineer's container.
 
 ## Sandboxed Claude Code configs
 
@@ -317,6 +329,7 @@ See [SECURITY.md](SECURITY.md) for the reporting policy and [threatmodel.md](thr
 - [docs/backup.md](docs/backup.md) -- backing up and restoring the database (built-in `scrutineer backup`/`restore`, `sqlite3`, Litestream)
 - [docs/development.md](docs/development.md) -- project layout, regenerating embedded data, running tests
 - [docs/encrypted-sharing.md](docs/encrypted-sharing.md) -- encrypted findings sharing between contributors (age + SSH keys, team keyring management)
+- [docs/codex.md](docs/codex.md) -- the codex backend: what differs from claude, sandbox interaction, adding another harness
 - [docs/podman.md](docs/podman.md) -- security model and known gaps for the podman / rootless runtime (sandbox isolation, hardened-mode verification)
 - [docs/egress-sidecar.md](docs/egress-sidecar.md) -- operator validation checklist for the rootless `--hardened` egress proxy sidecar
 

@@ -1,10 +1,50 @@
 package worker
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 )
+
+// harnesses is the -backend registry. Add a new harness here and
+// nothing else in the runner needs to change: the container, egress
+// proxy and workspace plumbing all go through the Harness interface.
+// The empty string and "claude" both resolve to ClaudeHarness so an
+// unset backend keeps the historical default.
+var harnesses = map[string]Harness{
+	"":       ClaudeHarness{},
+	"claude": ClaudeHarness{},
+	"codex":  CodexHarness{},
+}
+
+// HarnessByName resolves a -backend value to its Harness, or returns
+// an error listing the valid names. Used both to validate the flag at
+// startup and to construct the runner's harness once.
+//
+//nolint:ireturn // registry; the concrete type is the registrant's choice
+func HarnessByName(name string) (Harness, error) {
+	if h, ok := harnesses[strings.ToLower(name)]; ok {
+		return h, nil
+	}
+	return nil, fmt.Errorf("backend: unknown %q, must be one of %s", name, HarnessNames())
+}
+
+// HarnessNames lists the registered backends (excluding the
+// empty-string default alias) for the README and the -backend flag's
+// help text.
+func HarnessNames() string {
+	names := make([]string, 0, len(harnesses))
+	for n := range harnesses {
+		if n != "" {
+			names = append(names, n)
+		}
+	}
+	sort.Strings(names)
+	return strings.Join(names, ", ")
+}
 
 // A Harness is the agent CLI the container runner execs to drive a skill.
 // It owns everything that varies between claude-code and an alternative
@@ -23,8 +63,10 @@ type Harness interface {
 	Binary() string
 	// Args is the argv (without the binary) for one skill run. effort is
 	// the runner's configured default; globalMaxTurns is the runner's
-	// -max-turns flag. Per-scan overrides on sj win over both.
-	Args(sj SkillJob, effort string, globalMaxTurns int) []string
+	// -max-turns flag. Per-scan overrides on sj win over both. baseURL is
+	// the operator's model-API base URL override; harnesses that do not
+	// pass it as an env var can translate it into CLI/config arguments.
+	Args(sj SkillJob, effort string, globalMaxTurns int, baseURL string) []string
 	// ParseStream reads the harness's combined stdout/stderr and emits one
 	// Event per logical line. The Event vocabulary (KindText, KindTool,
 	// KindSession, KindError, ...) is harness-neutral; this method maps
@@ -85,7 +127,7 @@ type ClaudeHarness struct{}
 
 func (ClaudeHarness) Binary() string { return "claude" }
 
-func (ClaudeHarness) Args(sj SkillJob, effort string, globalMaxTurns int) []string {
+func (ClaudeHarness) Args(sj SkillJob, effort string, globalMaxTurns int, _ string) []string {
 	return buildClaudeArgs(sj, effort, globalMaxTurns)
 }
 

@@ -20,7 +20,7 @@ func TestClaudeHarness_argsMatchBuildClaudeArgs(t *testing.T) {
 		{Name: "deep-dive", Model: "m", AllowedTools: "Read,Write", Effort: "low", MaxTurns: 7},
 		{Name: "deep-dive", Model: "m", ResumeSessionID: "sess-1", OutputFile: "report.json"},
 	} {
-		got := ClaudeHarness{}.Args(sj, "high", 30)
+		got := ClaudeHarness{}.Args(sj, "high", 30, "https://proxy.corp.com/v1")
 		want := buildClaudeArgs(sj, "high", 30)
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("ClaudeHarness.Args(%+v) = %v, want %v", sj, got, want)
@@ -114,14 +114,14 @@ type stubHarness struct {
 	acctErr string
 }
 
-func (s stubHarness) Binary() string                      { return s.bin }
-func (s stubHarness) Args(SkillJob, string, int) []string { return []string{"--stub"} }
-func (s stubHarness) ParseStream(io.Reader, func(Event))  {}
-func (s stubHarness) SkillDir(wr, n string) string        { return filepath.Join(wr, "stub-skills", n) }
-func (s stubHarness) GuideFilename() string               { return s.guide }
-func (s stubHarness) EgressHosts() []string               { return s.egress }
-func (s stubHarness) Env(string) []string                 { return s.env }
-func (s stubHarness) StateEnv(string) []string            { return s.state }
+func (s stubHarness) Binary() string                              { return s.bin }
+func (s stubHarness) Args(SkillJob, string, int, string) []string { return []string{"--stub"} }
+func (s stubHarness) ParseStream(io.Reader, func(Event))          {}
+func (s stubHarness) SkillDir(wr, n string) string                { return filepath.Join(wr, "stub-skills", n) }
+func (s stubHarness) GuideFilename() string                       { return s.guide }
+func (s stubHarness) EgressHosts() []string                       { return s.egress }
+func (s stubHarness) Env(string) []string                         { return s.env }
+func (s stubHarness) StateEnv(string) []string                    { return s.state }
 func (s stubHarness) AccountErrorText(t string) string {
 	if s.acctErr != "" && strings.Contains(t, s.acctErr) {
 		return t
@@ -234,10 +234,10 @@ func TestBuildRunArgs_includesHarnessEnv(t *testing.T) {
 	// each as its own `-e <entry>` pair, and a non-claude harness
 	// contributes only its own keys -- nothing claude-specific leaks
 	// from buildRunArgs itself.
-	d := ContainerRunner{Harness: stubHarness{env: []string{"OPENAI_API_KEY", "STUB_OPT=1"}}}
+	d := ContainerRunner{Harness: stubHarness{env: []string{"CODEX_API_KEY", "STUB_OPT=1"}}}
 	got := d.buildRunArgs("/work/abs", "img:latest", hardenedNet{}, "")
 
-	if !containsEnvFlag(got, "OPENAI_API_KEY") || !containsEnvFlag(got, "STUB_OPT=1") {
+	if !containsEnvFlag(got, "CODEX_API_KEY") || !containsEnvFlag(got, "STUB_OPT=1") {
 		t.Errorf("harness env not wired into run args: %v", got)
 	}
 	for _, leaked := range []string{

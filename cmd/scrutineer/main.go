@@ -92,6 +92,7 @@ type flags struct {
 	dataDir               string
 	effort                string
 	defaultModel          string
+	backend               string
 	noContainer           bool
 	runtime               string
 	selinux               string
@@ -137,6 +138,7 @@ func registerFlags(fs *flag.FlagSet, f *flags) {
 	fs.StringVar(&f.addr, "addr", "127.0.0.1:8080", "listen address")
 	fs.StringVar(&f.dataDir, "data", "./data", "data directory (db + workspaces)")
 	fs.StringVar(&f.effort, "effort", "high", "claude effort")
+	fs.StringVar(&f.backend, "backend", "", "agent CLI the container runner execs: "+worker.HarnessNames()+" (default claude). Non-claude backends require the containerised runner")
 	fs.StringVar(&f.runtime, "runtime", "docker", "container runtime: docker, podman (rootless supported), or apple (Apple, experimental)")
 	fs.StringVar(&f.selinux, "selinux", "auto", "SELinux bind-mount relabeling: auto (relabel when SELinux is detected on the host), on (always), off (never). Relabeling (\":z\") lets the container read /work and write its output on enforcing-SELinux hosts")
 	fs.BoolVar(&f.noContainer, "no-container", false, "disable the containerised runner and run claude directly on the host (no isolation), even if a container runtime is available")
@@ -152,7 +154,7 @@ func registerFlags(fs *flag.FlagSet, f *flags) {
 	fs.DurationVar(&f.scanTimeout, "scan-timeout", worker.DefaultScanTimeout, "wall-clock limit per scan")
 	fs.DurationVar(&f.smokeTimeout, "runtime-smoke-timeout", defaultRuntimeSmokeTimeout, "timeout for each rootless-podman startup container check (keep-id image remap, SELinux mount probe); raise if first-run image remapping is slow, lower if the image is pre-warmed")
 	fs.IntVar(&f.maxTurns, "max-turns", 0, "claude --max-turns limit (0 = unlimited)")
-	fs.StringVar(&f.anthropicBaseURL, "anthropic-base-url", "", "custom Anthropic API base URL (env: ANTHROPIC_BASE_URL)")
+	fs.StringVar(&f.anthropicBaseURL, "anthropic-base-url", "", "custom model API base URL for the active backend (env fallback: ANTHROPIC_BASE_URL for claude)")
 	fs.StringVar(&f.forkOrg, "fork-org", "", "GitHub org the fork skill forks into and files draft advisories against")
 	fs.BoolVar(&f.schemaStrict, "schema-strict", false, "fail scans whose report.json does not validate against the skill's schema (default: warn and continue)")
 	fs.StringVar(&f.recipientsFile, "recipients-file", "", "age recipients file (public keys) for encrypted export")
@@ -179,6 +181,9 @@ func (f *flags) merge(cfg *config.Config) {
 	}
 	if cfg.NoContainer != nil && !f.set["no-container"] && !f.set["no-docker"] {
 		f.noContainer = *cfg.NoContainer
+	}
+	if cfg.Backend != "" && !f.set["backend"] {
+		f.backend = cfg.Backend
 	}
 	if cfg.Runtime != "" && !f.set["runtime"] {
 		f.runtime = cfg.Runtime
@@ -309,10 +314,46 @@ func validateFlags(f *flags) error {
 	if err := config.ValidateClone(f.cloneMode); err != nil {
 		return err
 	}
+	if _, err := worker.HarnessByName(f.backend); err != nil {
+		return err
+	}
 	if err := config.ValidateRuntime(f.runtime); err != nil {
 		return err
 	}
 	return config.ValidateSELinux(f.selinux)
+}
+
+func configureBackendEnvironment(f *flags, log *slog.Logger) {
+	if key := os.Getenv("ANTHROPIC_API_KEY"); strings.HasPrefix(key, "sk-ant-oat") {
+		log.Warn("ANTHROPIC_API_KEY looks like an OAuth token from `claude setup-token`; set it as CLAUDE_CODE_OAUTH_TOKEN instead")
+	}
+	h, _ := worker.HarnessByName(f.backend)
+	if _, ok := h.(worker.CodexHarness); ok && os.Getenv("CODEX_API_KEY") == "" && os.Getenv("OPENAI_API_KEY") != "" {
+		_ = os.Setenv("CODEX_API_KEY", os.Getenv("OPENAI_API_KEY"))
+		log.Warn("using OPENAI_API_KEY as CODEX_API_KEY for codex backend; prefer CODEX_API_KEY for codex exec")
+	}
+
+	// Suppress claude-code's telemetry, error reporting, auto-updater and
+	// feedback command, and semgrep's metrics POST. The container runner sets
+	// these on the container too; setting them here covers the local
+	// runner, which inherits host env. The egress proxy already blocks the
+	// hosts these reach (DataDog log-intake, metrics.semgrep.dev) so
+	// without this the operator just sees denied-CONNECT noise.
+	_ = os.Setenv("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
+	_ = os.Setenv("SEMGREP_SEND_METRICS", "off")
+
+	if _, ok := h.(worker.ClaudeHarness); !ok {
+		return
+	}
+	if f.anthropicBaseURL == "" {
+		f.anthropicBaseURL = os.Getenv("ANTHROPIC_BASE_URL")
+	}
+	// LocalClaude inherits the host env, so writing the resolved value
+	// back here is what makes flag/config precedence apply on the local
+	// runner path. ContainerRunner gets it explicitly via its struct field.
+	if f.anthropicBaseURL != "" {
+		_ = os.Setenv("ANTHROPIC_BASE_URL", f.anthropicBaseURL)
+	}
 }
 
 func run(log *slog.Logger) error {
@@ -339,28 +380,7 @@ func run(log *slog.Logger) error {
 	if f.set["selinux"] {
 		log.Info("selinux", "flag", f.selinux, "state", worker.HostSELinuxState())
 	}
-	if key := os.Getenv("ANTHROPIC_API_KEY"); strings.HasPrefix(key, "sk-ant-oat") {
-		log.Warn("ANTHROPIC_API_KEY looks like an OAuth token from `claude setup-token`; set it as CLAUDE_CODE_OAUTH_TOKEN instead")
-	}
-
-	// Suppress claude-code's telemetry, error reporting, auto-updater and
-	// feedback command, and semgrep's metrics POST. The container runner sets
-	// these on the container too; setting them here covers the local
-	// runner, which inherits host env. The egress proxy already blocks the
-	// hosts these reach (DataDog log-intake, metrics.semgrep.dev) so
-	// without this the operator just sees denied-CONNECT noise.
-	_ = os.Setenv("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
-	_ = os.Setenv("SEMGREP_SEND_METRICS", "off")
-
-	if f.anthropicBaseURL == "" {
-		f.anthropicBaseURL = os.Getenv("ANTHROPIC_BASE_URL")
-	}
-	// LocalClaude inherits the host env, so writing the resolved value
-	// back here is what makes flag/config precedence apply on the local
-	// runner path. ContainerRunner gets it explicitly via its struct field.
-	if f.anthropicBaseURL != "" {
-		_ = os.Setenv("ANTHROPIC_BASE_URL", f.anthropicBaseURL)
-	}
+	configureBackendEnvironment(f, log)
 
 	if err := os.MkdirAll(f.dataDir, dataPermSecure); err != nil {
 		return err
@@ -598,8 +618,14 @@ const defaultRuntimeSmokeTimeout = 5 * time.Minute
 //nolint:ireturn // dispatched on f.noContainer; concrete types live in the worker pkg
 func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRunner, string, error) {
 	apiBase := "http://" + f.addr + "/api"
+	// Already validated in run(); ignore the error here.
+	h, _ := worker.HarnessByName(f.backend)
+	_, isClaude := h.(worker.ClaudeHarness)
 	if f.hardened && f.noContainer {
 		return nil, "", fmt.Errorf("--hardened requires a container runtime; remove --no-container")
+	}
+	if !isClaude && f.noContainer {
+		return nil, "", fmt.Errorf("backend %q requires the containerised runner; remove --no-container", f.backend)
 	}
 	if f.hardenedRuntimeOnly && f.noContainer {
 		log.Warn("--hardened-runtime-only has no effect with --no-container (no container to harden)")
@@ -659,11 +685,6 @@ func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRu
 	if err != nil {
 		return nil, "", err
 	}
-	// The harness is resolved here, before the egress allowlist, so its
-	// model-API hosts are on the proxy from the start. With no -backend
-	// flag yet (#211) it is always claude; once the flag exists this
-	// becomes a name lookup and nothing downstream changes.
-	h := worker.ClaudeHarness{}
 	var egress worker.EgressSidecarConfig
 	allow := buildEgressAllow(h.EgressHosts(), f.hardened, cfg, f.anthropicBaseURL, log)
 	if apiHost != worker.HostGatewayAlias {
@@ -689,7 +710,7 @@ func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRu
 		}
 	}
 	log.Info("container runtime detected, using containerised runner",
-		"runtime", rt.Bin, "rootless", rt.Rootless, "image", f.runnerImage,
+		"runtime", rt.Bin, "rootless", rt.Rootless, "harness", h.Binary(), "image", f.runnerImage,
 		"egress_proxy_port", port, "egress_allow", len(allow),
 		"container_host", apiHost, "host_gateway_ipv4", gwIP, "hardened", f.hardened,
 		"egress_sidecar", egress.GatewayIP != "",
@@ -799,8 +820,8 @@ func resolveEgressSidecar(rt worker.ContainerRuntime, f *flags, allow []string, 
 // buildEgressAllow assembles the proxy allowlist: the harness's
 // model-API hosts first, then the harness-neutral base. Hardened mode
 // starts from HardenedEgressAllow and ignores cfg.EgressAllow (the
-// operator must drop --hardened to widen). The anthropic base URL host
-// is still auto-added in both modes since it routes the same model API.
+// operator must drop --hardened to widen). The model base URL host is
+// still auto-added in both modes since it routes the same model API.
 func buildEgressAllow(harnessHosts []string, hardened bool, cfg *config.Config, anthropicBaseURL string, log *slog.Logger) []string {
 	allow := append([]string{}, harnessHosts...)
 	if hardened {
@@ -816,7 +837,7 @@ func buildEgressAllow(harnessHosts []string, hardened bool, cfg *config.Config, 
 	}
 	if h := baseURLHost(anthropicBaseURL); h != "" {
 		allow = append(allow, h)
-		log.Info("added anthropic base URL host to egress allowlist", "host", h)
+		log.Info("added model base URL host to egress allowlist", "host", h)
 	}
 	return allow
 }

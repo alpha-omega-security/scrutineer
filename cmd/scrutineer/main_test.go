@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -24,6 +25,7 @@ func fullConfig() *config.Config {
 		Addr:             "0.0.0.0:9090",
 		Data:             "/var/lib/scrutineer",
 		Effort:           "medium",
+		Backend:          "codex",
 		NoContainer:      new(true),
 		Hardened:         new(true),
 		RunnerImage:      "custom:v1",
@@ -50,6 +52,9 @@ func TestFlagsMerge_configFillsUnset(t *testing.T) {
 	}
 	if !f.noContainer {
 		t.Errorf("noContainer not applied")
+	}
+	if f.backend != "codex" {
+		t.Errorf("backend = %q, want codex", f.backend)
 	}
 	if !f.hardened {
 		t.Errorf("hardened not applied")
@@ -142,6 +147,37 @@ func TestFlagsMerge_legacyNoDockerFlagHonored(t *testing.T) {
 	}
 }
 
+func TestFlagsMerge_backendCLIOverridesConfig(t *testing.T) {
+	cfg := &config.Config{Backend: "codex"}
+	f := &flags{backend: "claude", set: map[string]bool{"backend": true}}
+	f.merge(cfg)
+	if f.backend != "claude" {
+		t.Errorf("CLI -backend was overridden by config: got %q", f.backend)
+	}
+}
+
+func TestSetupRunner_nonClaudeBackendRejectsNoContainer(t *testing.T) {
+	// Non-claude harnesses run only inside the container (their binaries
+	// live in the runner image, not the host), so combining one with
+	// --no-container must fail at startup rather than later when the
+	// binary is missing.
+	f := &flags{backend: "codex", noContainer: true, addr: "127.0.0.1:8080"}
+	_, _, err := setupRunner(f, nil, quietLog())
+	if err == nil || !strings.Contains(err.Error(), "containerised runner") {
+		t.Errorf("codex + --no-container: err = %v, want a container-required error", err)
+	}
+
+	// claude (the default) keeps working under --no-container.
+	f = &flags{backend: "", noContainer: true, addr: "127.0.0.1:8080"}
+	r, _, err := setupRunner(f, nil, quietLog())
+	if err != nil {
+		t.Fatalf("default backend + --no-container: %v", err)
+	}
+	if _, ok := r.(worker.LocalClaude); !ok {
+		t.Errorf("default backend + --no-container returned %T, want LocalClaude", r)
+	}
+}
+
 func TestRegisterFlags_noContainerAliasParsesFromArgv(t *testing.T) {
 	// Both the canonical --no-container and the deprecated --no-docker alias
 	// must parse off the command line and set the same noContainer field, so
@@ -207,7 +243,7 @@ func TestBuildEgressAllow_defaultIncludesConfigAndAnthropicHost(t *testing.T) {
 		t.Errorf("default mode did not honour egress_allow: %v", allow)
 	}
 	if !slices.Contains(allow, "proxy.corp.com") {
-		t.Errorf("default mode did not auto-add anthropic base URL host: %v", allow)
+		t.Errorf("default mode did not auto-add model base URL host: %v", allow)
 	}
 }
 
@@ -228,7 +264,7 @@ func TestBuildEgressAllow_hardenedDropsConfigKeepsHarness(t *testing.T) {
 		t.Errorf("hardened did not include HardenedEgressAllow entries: %v", allow)
 	}
 	if !slices.Contains(allow, "proxy.corp.com") {
-		t.Errorf("hardened dropped the anthropic base URL host: %v", allow)
+		t.Errorf("hardened dropped the model base URL host: %v", allow)
 	}
 }
 

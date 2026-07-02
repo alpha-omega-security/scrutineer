@@ -29,6 +29,13 @@ type Config struct {
 	Models       []Model  `yaml:"models"`
 	Skills       []string `yaml:"skills"`
 	SkillsRepo   string   `yaml:"skills_repo"`
+	// Backend selects the agent CLI the container runner execs:
+	// "claude" (default) or "codex". Empty leaves the built-in default
+	// (claude). Non-claude backends require the containerised runner;
+	// --no-container with a non-claude backend is rejected at startup.
+	// Validated against worker.HarnessByName so the set of accepted
+	// values stays in one place.
+	Backend string `yaml:"backend"`
 	// NoContainer disables the containerised runner so claude runs directly on
 	// the host (no isolation). NoDocker is the pre-rename alias, still honoured
 	// so existing configs keep working; no_container wins when both are set
@@ -79,10 +86,11 @@ type Config struct {
 	ScanTimeout string `yaml:"scan_timeout"`
 	// MaxTurns is passed as --max-turns to claude-code. 0 means no limit.
 	MaxTurns int `yaml:"max_turns"`
-	// AnthropicBaseURL overrides the default Anthropic API endpoint. When
-	// set, the hostname is automatically added to the egress allowlist and
-	// the value is passed as ANTHROPIC_BASE_URL to the claude-code process.
-	// Falls back to the ANTHROPIC_BASE_URL environment variable if empty.
+	// AnthropicBaseURL overrides the default model API endpoint. When set,
+	// the hostname is automatically added to the egress allowlist. Claude
+	// receives it as ANTHROPIC_BASE_URL; Codex receives it as the
+	// openai_base_url config override. For compatibility, only the Claude
+	// backend falls back to the ANTHROPIC_BASE_URL environment variable.
 	AnthropicBaseURL string `yaml:"anthropic_base_url"`
 	// Theme selects the colour scheme: "claude" (default), "ocean-breeze",
 	// "catppuccin", "sunset-horizon", "midnight-bloom", or "northern-lights".

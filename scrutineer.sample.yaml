@@ -121,9 +121,10 @@
 # consecutive rescans of the same repository and subpath. 0 disables.
 # auto_reject_missed_count: 0
 
-# Custom Anthropic API base URL. When set, the hostname is automatically
-# added to the egress allowlist. Falls back to the ANTHROPIC_BASE_URL
-# environment variable when empty.
+# Custom model API base URL. When set, the hostname is automatically added to
+# the egress allowlist. Claude receives it as ANTHROPIC_BASE_URL; Codex receives
+# it as openai_base_url. For compatibility, only the Claude backend falls back
+# to the ANTHROPIC_BASE_URL environment variable when empty.
 # anthropic_base_url: https://my-proxy.corp.com/v1
 
 # The model picker in the UI. Replacing this list replaces the built-in
