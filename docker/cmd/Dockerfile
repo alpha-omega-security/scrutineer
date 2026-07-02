@@ -14,6 +14,7 @@ FROM node:26-alpine@sha256:725aeba2364a9b16beae49e180d83bd597dbd0b15c47f1f28875c
 RUN npm install -g @anthropic-ai/claude-code@2.1.173
 
 FROM python:3.15.0b3-alpine@sha256:c1320e80e60b0229497c6fd1b0698a36f704a97dc3139c2e122b4b3f28e187d9 AS python-tools
+RUN apk add --no-cache build-base libgcc libffi-dev
 RUN pip install --no-cache-dir semgrep==1.167.0 "setuptools<81"
 
 FROM golang:1.26.4-alpine@sha256:3ad57304ad93bbec8548a0437ad9e06a455660655d9af011d58b993f6f615648 AS go-tools
@@ -29,7 +30,7 @@ RUN apk add --no-cache build-base git
 RUN GOBIN=/out CGO_ENABLED=1 go install github.com/andrew/VID/cmd/vid@v0.1.0
 
 FROM rust:1.96-alpine@sha256:f87aa870663e2b57ec8c69de82c7eedf7383bee987eef7612c0359635eaadb41 AS zizmor-build
-RUN apk add --no-cache build-base linux-headers
+RUN apk add --no-cache build-base linux-headers libgcc
 RUN cargo install --locked --root /out zizmor@1.26.1
 
 FROM python:3.15.0b3-alpine@sha256:c1320e80e60b0229497c6fd1b0698a36f704a97dc3139c2e122b4b3f28e187d9
@@ -44,7 +45,7 @@ COPY --from=claude /usr/local/lib/node_modules /usr/local/lib/node_modules
 COPY --from=claude /usr/local/bin/claude /usr/local/bin/claude
 
 # semgrep
-COPY --from=python-tools /usr/local/lib/python3.14/site-packages /usr/local/lib/python3.14/site-packages
+COPY --from=python-tools /usr/local/lib/python3.15/site-packages /usr/local/lib/python3.15/site-packages
 COPY --from=python-tools /usr/local/bin/semgrep* /usr/local/bin/
 COPY --from=python-tools /usr/local/bin/pysemgrep /usr/local/bin/
 
