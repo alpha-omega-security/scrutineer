@@ -558,6 +558,7 @@ func paginate(r *http.Request, total int64) Page {
 type repoRow struct {
 	db.Repository
 	LastScan      *db.Scan
+	StatusScan    *db.Scan
 	FindingsTotal int
 	DiskBytes     int64
 	// Branches lists the distinct non-default refs this repo has been
@@ -676,6 +677,33 @@ func (s *Server) repoList(w http.ResponseWriter, r *http.Request) {
 			lastScans[scans[i].RepositoryID] = &scans[i]
 		}
 	}
+	statusScans := map[uint]*db.Scan{}
+	if len(repoIDs) > 0 {
+		// Status badge prefers active work over recency, so an older running
+		// scan outranks a newer queued one. Rank from status, not the
+		// denormalized status_priority (which can go stale); keep in lockstep
+		// with db.StatusPriorityFor.
+		var scans []db.Scan
+		s.DB.Raw(`
+			SELECT * FROM (
+				SELECT s.*, ROW_NUMBER() OVER (
+					PARTITION BY s.repository_id
+					ORDER BY CASE s.status
+						WHEN ? THEN 0
+						WHEN ? THEN 1
+						WHEN ? THEN 2
+						ELSE 3
+					END, s.id DESC
+				) AS rn
+				FROM scans s
+				WHERE s.repository_id IN ?
+			) ranked
+			WHERE rn = 1
+		`, db.ScanRunning, db.ScanQueued, db.ScanPaused, repoIDs).Scan(&scans)
+		for i := range scans {
+			statusScans[scans[i].RepositoryID] = &scans[i]
+		}
+	}
 
 	branchesByRepo := map[uint][]string{}
 	if len(repoIDs) > 0 {
@@ -701,6 +729,7 @@ func (s *Server) repoList(w http.ResponseWriter, r *http.Request) {
 		rows = append(rows, repoRow{
 			Repository:    repo,
 			LastScan:      lastScans[repo.ID],
+			StatusScan:    statusScans[repo.ID],
 			FindingsTotal: findingCounts[repo.ID],
 			// Read the cached size from the row; the worker refreshes it on
 			// each scan and a startup backfill seeds it, so the list never
@@ -1603,11 +1632,9 @@ func (s *Server) findingShow(w http.ResponseWriter, r *http.Request) {
 			VerifyInFlight: verifyInFlight,
 			HasDependents:  hasDependents,
 		},
-		"Exposures":    exposures,
-		"ShowExposure": findingSupportsExposure(scan),
-	}
-	if data["ShowExposure"].(bool) {
-		data["HasDependents"] = hasDependents
+		"Exposures":     exposures,
+		"HasDependents": hasDependents,
+		"ShowExposure":  findingSupportsExposure(scan) && hasDependents,
 	}
 	if id, c, ok := LookupCWE(f.CWE); ok {
 		data["CWE"] = map[string]any{"ID": id, "Name": c.Name, "Description": c.Description}

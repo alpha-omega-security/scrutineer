@@ -114,6 +114,10 @@ func (s *Server) bundleEntries(f *db.Finding, repo *db.Repository) ([]bundleEntr
 		return nil, fmt.Errorf("load finding dependents: %w", err)
 	}
 	deps := loadFindingDependents(s, fdRows)
+	var dependentCount int64
+	if err := s.DB.Model(&db.Dependent{}).Where("repository_id = ?", f.RepositoryID).Count(&dependentCount).Error; err != nil {
+		return nil, fmt.Errorf("count dependents: %w", err)
+	}
 	// Scan load is best-effort: a finding with a missing parent scan
 	// row (e.g. a scan that was deleted) still has a valid bundle to
 	// produce, since the bundle does not embed scan-specific fields.
@@ -137,12 +141,14 @@ func (s *Server) bundleEntries(f *db.Finding, repo *db.Repository) ([]bundleEntr
 	entries = append(entries, bundleEntry{Name: "osv.json", Data: osvRaw})
 	contents["osv.json"] = "OSV 1.6.0 record (machine-readable advisory)"
 
-	csafRaw, err := json.MarshalIndent(buildCSAF(*f, *repo, refs, pkgs, fdRows, deps), "", "  ")
-	if err != nil {
-		return nil, fmt.Errorf("build CSAF: %w", err)
+	if dependentCount > 0 {
+		csafRaw, err := json.MarshalIndent(buildCSAF(*f, *repo, refs, pkgs, fdRows, deps), "", "  ")
+		if err != nil {
+			return nil, fmt.Errorf("build CSAF: %w", err)
+		}
+		entries = append(entries, bundleEntry{Name: "csaf.json", Data: csafRaw})
+		contents["csaf.json"] = "CSAF 2.0 document (with VEX product_status for dependents)"
 	}
-	entries = append(entries, bundleEntry{Name: "csaf.json", Data: csafRaw})
-	contents["csaf.json"] = "CSAF 2.0 document (with VEX product_status for dependents)"
 
 	report := renderFindingReport(s.DB, f, &scan, repo)
 	entries = append(entries, bundleEntry{Name: "report.md", Data: []byte(report)})

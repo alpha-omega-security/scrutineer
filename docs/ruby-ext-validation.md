@@ -1,7 +1,15 @@
-# Validating the `ruby-ext` ASan recipe
+# Validating the `ruby-ext` recipe (sanitizers + Brakeman)
 
-One-time check that the sanitized interpreter actually catches a memory-safety or UB bug in a native gem.
-Needs Docker + network. The image build compiles Ruby (and Rust) from source — ~15–20 min.
+One-time check that the sanitized interpreter actually catches a memory-safety or UB bug in a
+native gem, and that Brakeman runs. Needs Docker + network. The image build compiles Ruby (and
+Rust) from source — ~15–20 min.
+
+> `docs/exercise-ruby-profiles.sh` runs §3–§7 end-to-end against pre-built images — use it for a
+> quick pass; the sections below are the manual/explanatory form.
+>
+> **SELinux hosts:** every `docker run -v …:/src` below uses `:z` to relabel the mount (mirroring
+> the scanner's `:ro,z`). Without it the container — even as root — gets `Permission denied`
+> reading the mounted files. Harmless where SELinux is off / on Docker Desktop.
 
 ## 1. Build the images
 
@@ -60,10 +68,14 @@ puts "NO CRASH"
 RB
 ```
 
+> The extension deliberately *uses* the buffer (`rb_str_new(buf, n)` then `xfree`): at the
+> profile's `-O1`, a `memcpy` into a buffer that is never read or freed gets dead-store-eliminated
+> and the overflow silently disappears. Keep the read/free or the reproducer won't fire.
+
 ## 4. Build under ASan + trigger
 
 ```bash
-docker run --rm --user root -v /tmp/boom:/src -w /src scrutineer-profile-ruby-ext sh -c '
+docker run --rm --user root -v /tmp/boom:/src:z -w /src scrutineer-profile-ruby-ext sh -c '
   cd ext/boom && ruby extconf.rb && make && cd /src && ruby poc.rb'
 ```
 
@@ -73,7 +85,7 @@ docker run --rm --user root -v /tmp/boom:/src -w /src scrutineer-profile-ruby-ex
 Negative control (must print `NO CRASH`, no ASan output):
 
 ```bash
-docker run --rm --user root -v /tmp/boom:/src -w /src scrutineer-profile-ruby-ext sh -c '
+docker run --rm --user root -v /tmp/boom:/src:z -w /src scrutineer-profile-ruby-ext sh -c '
   cd /src && ruby -e "require_relative %q(ext/boom/boom); Boom.copy(%q(short)); puts %q(NO CRASH)"'
 ```
 
@@ -109,7 +121,7 @@ void Init_aln(void) {
 }
 C
 
-docker run --rm --user root -v /tmp/aln:/src -w /src scrutineer-profile-ruby-ext sh -c '
+docker run --rm --user root -v /tmp/aln:/src:z -w /src scrutineer-profile-ruby-ext sh -c '
   cd ext/aln && ruby extconf.rb && make V=1 && cd /src &&
   ruby -e "require_relative %q(ext/aln/aln); Aln.go"'
 ```
@@ -140,13 +152,36 @@ docker run --rm scrutineer-profile-ruby-ext sh -c '
 Stock interpreter, separate uninstrumented build:
 
 ```bash
-docker run --rm --user root -v /tmp/boom:/src -w /src scrutineer-profile-ruby-ext sh -c '
+docker run --rm --user root -v /tmp/boom:/src:z -w /src scrutineer-profile-ruby-ext sh -c '
   cd ext/boom && rm -f *.o *.so Makefile && /usr/bin/ruby extconf.rb && make && cd /src &&
   valgrind --suppressions=/usr/local/share/ruby-ext/ruby.supp --error-exitcode=99 /usr/bin/ruby poc.rb'
 ```
 
 **Pass:** `Invalid write of size …` in `boom_copy`, exit 99, with no GC-noise errors leaking past
 the suppressions.
+
+## 7. Brakeman (Rails SAST)
+
+`ruby-ext` ships Brakeman too — a native gem that is also a Rails app must still get Rails SAST,
+and `ruby-rails` is the same check on the stock interpreter. Scaffold a minimal app with a SQL
+injection and confirm Brakeman flags it:
+
+```bash
+mkdir -p /tmp/rails/app/controllers /tmp/rails/config
+printf 'source "https://rubygems.org"\ngem "rails"\n' > /tmp/rails/Gemfile
+printf 'module Demo\n  class Application < Rails::Application; end\nend\n' > /tmp/rails/config/application.rb
+cat > /tmp/rails/app/controllers/users_controller.rb <<'RB'
+class UsersController < ApplicationController
+  def show; User.where("name = '#{params[:name]}'"); end   # SQLi
+end
+RB
+
+docker run --rm --user root -v /tmp/rails:/src:z -w /src scrutineer-profile-ruby-ext sh -c '
+  cd /src && brakeman -q --no-pager .'
+```
+
+**Pass:** the report lists a `SQL Injection` warning in `users_controller.rb`. Repeat with
+`scrutineer-profile-ruby-rails` for the ruby-rails profile — same result.
 
 ## If a sanitizer doesn't fire / the interpreter crashes in the GC
 

@@ -1617,6 +1617,57 @@ func TestFindingShow_hidesExposureForZizmorFindings(t *testing.T) {
 	}
 }
 
+func TestFindingShow_hidesExposureWhenNoDependents(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/r", Name: "r"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: deepDiveSkillName}
+	s.DB.Create(&scan)
+	f := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "app issue", Severity: "High"}
+	s.DB.Create(&f)
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", fmt.Sprintf("/findings/%d", f.ID)))
+	body := w.Body.String()
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, body)
+	}
+	if strings.Contains(body, "Dependent exposure") || strings.Contains(body, "/exposure") {
+		t.Error("findings without dependents should not render dependent exposure controls")
+	}
+	if strings.Contains(body, "CSAF VEX") {
+		t.Error("findings without dependents should not advertise CSAF VEX in the disclosure bundle")
+	}
+}
+
+func TestFindingShow_rendersExposureWhenDependentsExist(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/r", Name: "r"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: deepDiveSkillName}
+	s.DB.Create(&scan)
+	f := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "library issue", Severity: "High"}
+	s.DB.Create(&f)
+	dep := db.Dependent{RepositoryID: repo.ID, Name: "downstream", Ecosystem: "go", RepositoryURL: "https://example.com/downstream"}
+	s.DB.Create(&dep)
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", fmt.Sprintf("/findings/%d", f.ID)))
+	body := w.Body.String()
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, body)
+	}
+	for _, want := range []string{"Dependent exposure", "/exposure", "CSAF VEX"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("dependent-backed finding missing %q", want)
+		}
+	}
+}
+
 func TestFindingShow_rendersPublicIssueActionForReadyFinding(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
@@ -3475,6 +3526,91 @@ func TestRepoList_showsLastScanDate(t *testing.T) {
 	}
 	if !strings.Contains(row, `title="2026-06-16 19:15:08 UTC"`) {
 		t.Errorf("repo row missing full last scan tooltip: %s", row)
+	}
+}
+
+func TestRepoList_statusScanPrecedence(t *testing.T) {
+	type scanSeed struct {
+		status db.ScanStatus
+		at     time.Time
+	}
+	cases := []struct {
+		name       string
+		scans      []scanSeed
+		wantBadge  string
+		wantAbsent string
+		wantLatest string
+	}{
+		{
+			name: "running beats newer queued",
+			scans: []scanSeed{
+				{status: db.ScanRunning, at: time.Date(2026, time.July, 1, 9, 45, 0, 0, time.UTC)},
+				{status: db.ScanQueued, at: time.Date(2026, time.July, 1, 9, 47, 0, 0, time.UTC)},
+			},
+			wantBadge:  "running",
+			wantAbsent: "queued",
+			wantLatest: "2026-07-01 09:47",
+		},
+		{
+			name: "queued beats newer paused",
+			scans: []scanSeed{
+				{status: db.ScanQueued, at: time.Date(2026, time.July, 1, 10, 1, 0, 0, time.UTC)},
+				{status: db.ScanPaused, at: time.Date(2026, time.July, 1, 10, 2, 0, 0, time.UTC)},
+			},
+			wantBadge:  "queued",
+			wantLatest: "2026-07-01 10:02",
+		},
+		{
+			name: "paused beats newer terminal",
+			scans: []scanSeed{
+				{status: db.ScanPaused, at: time.Date(2026, time.July, 1, 10, 3, 0, 0, time.UTC)},
+				{status: db.ScanDone, at: time.Date(2026, time.July, 1, 10, 4, 0, 0, time.UTC)},
+			},
+			wantBadge:  "paused",
+			wantLatest: "2026-07-01 10:04",
+		},
+		{
+			name: "terminal only uses latest terminal",
+			scans: []scanSeed{
+				{status: db.ScanDone, at: time.Date(2026, time.July, 1, 10, 5, 0, 0, time.UTC)},
+				{status: db.ScanFailed, at: time.Date(2026, time.July, 1, 10, 6, 0, 0, time.UTC)},
+			},
+			wantBadge:  "failed",
+			wantLatest: "2026-07-01 10:06",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, done := newTestServer(t)
+			defer done()
+			repo := db.Repository{URL: "https://github.com/homebrew/ruby-macho/" + strings.ReplaceAll(tc.name, " ", "-"), Name: "ruby-macho"}
+			s.DB.Create(&repo)
+			for i, seed := range tc.scans {
+				s.DB.Create(&db.Scan{
+					RepositoryID: repo.ID,
+					Kind:         "skill",
+					SkillName:    fmt.Sprintf("skill-%d", i),
+					Status:       seed.status,
+					CreatedAt:    seed.at,
+				})
+			}
+
+			w := httptest.NewRecorder()
+			s.Handler().ServeHTTP(w, localReq("GET", "/"))
+			if w.Code != http.StatusOK {
+				t.Fatalf("status %d: %s", w.Code, w.Body)
+			}
+			row := requireRepoListRow(t, w.Body.String(), repo.ID)
+			if !strings.Contains(row, " "+tc.wantBadge+"</span>") {
+				t.Errorf("repo row status = %s, want %s", row, tc.wantBadge)
+			}
+			if tc.wantAbsent != "" && strings.Contains(row, " "+tc.wantAbsent+"</span>") {
+				t.Errorf("repo row should not render %s: %s", tc.wantAbsent, row)
+			}
+			if !strings.Contains(row, tc.wantLatest) {
+				t.Errorf("last scan timestamp should still come from the newest scan: %s", row)
+			}
+		})
 	}
 }
 

@@ -44,7 +44,7 @@ func (s *Server) autoEnqueueRevalidate(scan *db.Scan, f *db.Finding) {
 	if !db.SeverityAtLeast(f.Severity, "High") {
 		return
 	}
-	s.enqueueRevalidateForFinding(context.Background(), f)
+	s.enqueueRevalidateForFinding(context.Background(), f, scan.Profile)
 }
 
 // enqueueRevalidateForFinding looks up the active revalidate skill and
@@ -53,7 +53,12 @@ func (s *Server) autoEnqueueRevalidate(scan *db.Scan, f *db.Finding) {
 // rather than failing the upstream scan. A revalidate run already queued
 // or in flight for this finding is also a no-op so re-imports and rescans
 // do not pile up duplicate work.
-func (s *Server) enqueueRevalidateForFinding(ctx context.Context, f *db.Finding) {
+//
+// profile carries the parent scan's resolved runner profile onto the derived
+// scan so it skips DetectProfile (a container-spawning `brief` run) and
+// reproduces on the same image the finding came from. Empty means detect
+// fresh — the import path passes "" because there is no parent scan. See #548.
+func (s *Server) enqueueRevalidateForFinding(ctx context.Context, f *db.Finding, profile string) {
 	var skill db.Skill
 	if err := s.DB.Where("name = ? AND active = ?", revalidateSkillName, true).First(&skill).Error; err != nil {
 		return
@@ -62,7 +67,7 @@ func (s *Server) enqueueRevalidateForFinding(ctx context.Context, f *db.Finding)
 		return
 	}
 	fid := f.ID
-	if _, err := s.enqueueSkillWith(ctx, f.RepositoryID, skill.ID, ScanOpts{FindingID: &fid}); err != nil {
+	if _, err := s.enqueueSkillWith(ctx, f.RepositoryID, skill.ID, ScanOpts{FindingID: &fid, Profile: profile}); err != nil {
 		s.Log.Warn("auto-enqueue revalidate",
 			"finding", f.ID, "repo", f.RepositoryID, "skill", revalidateSkillName, "err", err)
 	}
@@ -105,7 +110,7 @@ func (s *Server) hasOpenScan(scope string, args ...any) bool {
 //
 // Errors are logged and swallowed; failing to chain verify must not
 // roll back the revalidate verdict.
-func (s *Server) autoChainVerifyAfterRevalidate(_ *db.Scan, f *db.Finding, verdict, severity string) {
+func (s *Server) autoChainVerifyAfterRevalidate(scan *db.Scan, f *db.Finding, verdict, severity string) {
 	if f == nil {
 		return
 	}
@@ -115,13 +120,23 @@ func (s *Server) autoChainVerifyAfterRevalidate(_ *db.Scan, f *db.Finding, verdi
 	if !db.SeverityAtLeast(severity, "High") {
 		return
 	}
-	s.enqueueVerifyForFinding(context.Background(), f)
+	// Carry the revalidate scan's resolved profile so verify reproduces on the
+	// same image (an ASan crash needs the ruby-ext interpreter, not a
+	// re-detected guess) and skips a redundant DetectProfile container spawn.
+	// scan is never nil in production (the worker passes the revalidate scan);
+	// nil-safe for direct callers. See #548.
+	var profile string
+	if scan != nil {
+		profile = scan.Profile
+	}
+	s.enqueueVerifyForFinding(context.Background(), f, profile)
 }
 
 // enqueueVerifyForFinding looks up the active verify skill and enqueues a
 // finding-scoped run, with the same absent-skill, already-queued, and
-// log-but-do-not-fail behaviour as the revalidate enqueue.
-func (s *Server) enqueueVerifyForFinding(ctx context.Context, f *db.Finding) {
+// log-but-do-not-fail behaviour as the revalidate enqueue. profile carries
+// the parent scan's resolved runner profile; empty means detect fresh.
+func (s *Server) enqueueVerifyForFinding(ctx context.Context, f *db.Finding, profile string) {
 	var skill db.Skill
 	if err := s.DB.Where("name = ? AND active = ?", verifySkillName, true).First(&skill).Error; err != nil {
 		return
@@ -130,7 +145,7 @@ func (s *Server) enqueueVerifyForFinding(ctx context.Context, f *db.Finding) {
 		return
 	}
 	fid := f.ID
-	if _, err := s.enqueueSkillWith(ctx, f.RepositoryID, skill.ID, ScanOpts{FindingID: &fid}); err != nil {
+	if _, err := s.enqueueSkillWith(ctx, f.RepositoryID, skill.ID, ScanOpts{FindingID: &fid, Profile: profile}); err != nil {
 		s.Log.Warn("auto-chain verify after revalidate",
 			"finding", f.ID, "repo", f.RepositoryID, "skill", verifySkillName, "err", err)
 	}
