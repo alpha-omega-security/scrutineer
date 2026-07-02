@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 )
@@ -36,10 +37,13 @@ func HarnessByName(name string) (Harness, error) {
 // -backend flag would take to select it. Persisted on Scan.Backend so a
 // retry knows which harness a session id belongs to. Reverse-looks-up
 // the harnesses map rather than adding a Name() method so a new harness
-// only registers in one place.
+// only registers in one place. Compares by concrete type, not interface
+// equality, so a future harness whose struct carries a non-comparable
+// field (slice, map) does not panic here.
 func HarnessName(h Harness) string {
+	ht := reflect.TypeOf(h)
 	for name, hh := range harnesses {
-		if name != "" && hh == h {
+		if name != "" && reflect.TypeOf(hh) == ht {
 			return name
 		}
 	}

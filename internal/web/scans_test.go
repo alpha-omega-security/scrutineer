@@ -65,8 +65,9 @@ func TestResumeOpts(t *testing.T) {
 			wantSID: "s1", wantResume: uintPtr(7),
 		},
 		{
-			// Rows predating the Backend column (empty) resume as before.
-			name:    "empty backend resumes (pre-column rows)",
+			// Rows predating the Backend column (empty) are treated as claude,
+			// so under a claude server they resume.
+			name:    "empty backend resumes under claude (pre-column rows)",
 			scan:    db.Scan{ID: 7, Status: db.ScanFailed, SessionID: "s1", Backend: ""},
 			wantSID: "s1", wantResume: uintPtr(7),
 		},
@@ -88,6 +89,17 @@ func TestResumeOpts(t *testing.T) {
 				t.Errorf("resumeOf = %d, want %d", *resume, *tc.wantResume)
 			}
 		})
+	}
+}
+
+// TestResumeOpts_emptyBackendUnderCodex locks that a pre-column row (empty
+// Backend, so a claude session) retried under a codex server starts fresh
+// rather than passing a claude session id to codex exec resume.
+func TestResumeOpts_emptyBackendUnderCodex(t *testing.T) {
+	s := &Server{Backend: "codex", Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	sid, resume := s.resumeOpts(db.Scan{ID: 7, Status: db.ScanFailed, SessionID: "s1", Backend: ""})
+	if sid != "" || resume != nil {
+		t.Errorf("empty-backend row under codex: sid=%q resume=%v, want fresh", sid, resume)
 	}
 }
 

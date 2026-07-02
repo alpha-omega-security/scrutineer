@@ -177,15 +177,22 @@ func (s *Server) scanRetry(w http.ResponseWriter, r *http.Request) {
 // also retries fresh: the session id belongs to a different agent CLI
 // (e.g. a codex thread id passed to claude --resume would fail), so drop it
 // rather than wedge the retry lineage. An empty scan.Backend (rows predating
-// the column, or the local runner which sets none) resumes as before.
+// the column, or the local runner which sets none) is treated as claude,
+// since claude was the only backend before the column existed and the local
+// runner is claude-only.
 func (s *Server) resumeOpts(scan db.Scan) (sessionID string, resumeOf *uint) {
 	resumableStatus := scan.Status == db.ScanFailed || (scan.Status == db.ScanDone && scan.MaxTurnsHit)
 	if !resumableStatus || scan.SessionID == "" {
 		return "", nil
 	}
-	if scan.Backend != "" && s.Backend != "" && scan.Backend != s.Backend {
+	scanBackend := scan.Backend
+	if scanBackend == "" {
+		// Rows predating the column, and LocalClaude runs, are claude sessions.
+		scanBackend = "claude"
+	}
+	if s.Backend != "" && scanBackend != s.Backend {
 		s.Log.Info("retry: backend changed since scan ran; starting fresh instead of resuming",
-			"scan", scan.ID, "scan_backend", scan.Backend, "server_backend", s.Backend)
+			"scan", scan.ID, "scan_backend", scanBackend, "server_backend", s.Backend)
 		return "", nil
 	}
 	root := scan.ID
