@@ -32,6 +32,7 @@ services:
     build:
       context: .
       dockerfile: docker/cmd/Dockerfile
+    group_add: ["${DOCKER_GID:-}"]
     depends_on:
       db:
         condition: service_healthy
@@ -40,14 +41,16 @@ services:
       - "127.0.0.1:8080:8080"
     volumes:
       - scrutineer-data:/data                              # scan workspaces
+      - ./skills:/skills
       - ./scrutineer.yaml:/config/scrutineer.yaml:ro      # the repo-root config
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
       CLAUDE_CODE_OAUTH_TOKEN: "${CLAUDE_CODE_OAUTH_TOKEN:-}"
       ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
       ANTHROPIC_BASE_URL: "${ANTHROPIC_BASE_URL:-}"
     # Override the default CMD to load the postgres config. -data still holds
     # scan workspaces; the database itself now lives in the db service.
-    command: ["-addr", "0.0.0.0:8080", "-data", "/data", "-config", "/config/scrutineer.yaml"]
+    command: ["-addr", "0.0.0.0:8080", "-skills", "/skills", "-data", "/data", "-config", "/config/scrutineer.yaml"]
     restart: unless-stopped
 
 volumes:
