@@ -1,4 +1,5 @@
 /data/
+/data-*/
 /scrutineer
 *.db
 *.db-shm
@@ -9,6 +10,8 @@
 .vscode/
 .claude/
 scrutineer.yaml
+scrutineer.*.yaml
+!scrutineer.sample.yaml
 
 # Vim swap/session/temp files
 [._]*.s[a-v][a-z]
