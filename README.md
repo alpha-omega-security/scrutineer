@@ -330,9 +330,9 @@ Scrutineer can drive OpenAI's [codex](https://github.com/openai/codex) CLI inste
     export CODEX_API_KEY=sk-...
     go run ./cmd/scrutineer -skills ./skills -backend codex
 
-The container, egress proxy, language profiles and skill staging stay the same; only the agent CLI inside the container changes. The egress allowlist picks up `api.openai.com` (and the ChatGPT auth hosts for Codex Pro accounts) automatically. Set `models:` in the config to OpenAI model ids. Use `-anthropic-base-url` or `anthropic_base_url:` for a custom OpenAI-compatible endpoint; under Codex it is passed as `openai_base_url` to `codex exec`. The codex backend requires the containerised runner; `--no-container` with `-backend codex` is rejected at startup.
+The container, egress proxy, language profiles and skill staging stay the same; only the agent CLI inside the container changes. The egress allowlist picks up `api.openai.com` automatically. Set `models:` in the config to OpenAI model ids (tag entries with `tier: mid|high|max` so the model tiers in Settings default sensibly). Use `-anthropic-base-url` or `anthropic_base_url:` for a custom OpenAI-compatible endpoint; under Codex it is passed as `openai_base_url` to `codex exec`. The codex backend requires the containerised runner; `--no-container` with `-backend codex` is rejected at startup.
 
-See [docs/codex.md](docs/codex.md) for what differs from claude (argv, skill staging, credentials, egress) and how the codex sandbox layers inside scrutineer's container.
+See [docs/codex.md](docs/codex.md) for what differs from claude (argv, skill staging, credentials, egress), which model ids the pinned codex version accepts, and why codex's own sandbox is disabled inside scrutineer's container.
 
 ## Sandboxed Claude Code configs
 
