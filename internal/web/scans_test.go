@@ -2,6 +2,8 @@ package web
 
 import (
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -50,11 +52,30 @@ func TestResumeOpts(t *testing.T) {
 			name: "cancelled scan retries fresh even with a session",
 			scan: db.Scan{ID: 7, Status: db.ScanCancelled, SessionID: "s1"},
 		},
+		{
+			// A scan that ran under a different -backend than the current
+			// server retries fresh: its session id belongs to another agent
+			// CLI (e.g. a codex thread id passed to claude --resume fails).
+			name: "different backend retries fresh (cross-backend session id)",
+			scan: db.Scan{ID: 7, Status: db.ScanFailed, SessionID: "codex-thr-1", Backend: "codex"},
+		},
+		{
+			name:    "same backend resumes",
+			scan:    db.Scan{ID: 7, Status: db.ScanFailed, SessionID: "s1", Backend: "claude"},
+			wantSID: "s1", wantResume: uintPtr(7),
+		},
+		{
+			// Rows predating the Backend column (empty) resume as before.
+			name:    "empty backend resumes (pre-column rows)",
+			scan:    db.Scan{ID: 7, Status: db.ScanFailed, SessionID: "s1", Backend: ""},
+			wantSID: "s1", wantResume: uintPtr(7),
+		},
 	}
 
+	s := &Server{Backend: "claude", Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			sid, resume := resumeOpts(tc.scan)
+			sid, resume := s.resumeOpts(tc.scan)
 			if sid != tc.wantSID {
 				t.Errorf("sessionID = %q, want %q", sid, tc.wantSID)
 			}

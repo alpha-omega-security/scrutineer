@@ -32,6 +32,22 @@ func HarnessByName(name string) (Harness, error) {
 	return nil, fmt.Errorf("backend: unknown %q, must be one of %s", name, HarnessNames())
 }
 
+// HarnessName returns the canonical registry name for h — the value the
+// -backend flag would take to select it. Persisted on Scan.Backend so a
+// retry knows which harness a session id belongs to. Reverse-looks-up
+// the harnesses map rather than adding a Name() method so a new harness
+// only registers in one place.
+func HarnessName(h Harness) string {
+	for name, hh := range harnesses {
+		if name != "" && hh == h {
+			return name
+		}
+	}
+	// Unregistered harness (a test double); Binary() is the closest
+	// stable identifier.
+	return h.Binary()
+}
+
 // HarnessNames lists the registered backends (excluding the
 // empty-string default alias) for the README and the -backend flag's
 // help text.

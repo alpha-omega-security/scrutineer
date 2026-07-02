@@ -124,7 +124,7 @@ func (s *Server) scanRetry(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "scan cannot be retried: no skill reference", http.StatusBadRequest)
 		return
 	}
-	sessionID, resumeOf := resumeOpts(scan)
+	sessionID, resumeOf := s.resumeOpts(scan)
 	newID, err := s.enqueueSkillWith(r.Context(), scan.RepositoryID, *scan.SkillID, ScanOpts{
 		Model:             scan.Model,
 		Effort:            scan.Effort,
@@ -146,15 +146,26 @@ func (s *Server) scanRetry(w http.ResponseWriter, r *http.Request) {
 	s.redirect(w, r, fmt.Sprintf("/scans/%d", newID))
 }
 
-// resumeOpts decides whether a retry of scan should resume its claude
+// resumeOpts decides whether a retry of scan should resume its harness
 // session. Failed scans and soft-success scans that hit max turns are
 // resumable when they captured a session; ordinary done/cancelled scans, or
 // scans that never reached the model, retry fresh. ResumedFromScanID is pinned
 // to the lineage root so a chain of retries all reuse one workspace and
 // session rather than forking a new one each time.
-func resumeOpts(scan db.Scan) (sessionID string, resumeOf *uint) {
+//
+// A scan whose recorded Backend differs from the running server's -backend
+// also retries fresh: the session id belongs to a different agent CLI
+// (e.g. a codex thread id passed to claude --resume would fail), so drop it
+// rather than wedge the retry lineage. An empty scan.Backend (rows predating
+// the column, or the local runner which sets none) resumes as before.
+func (s *Server) resumeOpts(scan db.Scan) (sessionID string, resumeOf *uint) {
 	resumableStatus := scan.Status == db.ScanFailed || (scan.Status == db.ScanDone && scan.MaxTurnsHit)
 	if !resumableStatus || scan.SessionID == "" {
+		return "", nil
+	}
+	if scan.Backend != "" && s.Backend != "" && scan.Backend != s.Backend {
+		s.Log.Info("retry: backend changed since scan ran; starting fresh instead of resuming",
+			"scan", scan.ID, "scan_backend", scan.Backend, "server_backend", s.Backend)
 		return "", nil
 	}
 	root := scan.ID
@@ -183,7 +194,7 @@ func (s *Server) scansRetryFailed(w http.ResponseWriter, r *http.Request) {
 	// (repository, skill, sub_path, ref, finding_id) tuple already in
 	// queued/running/done.
 	var scans []db.Scan
-	err := q.Select("id, repository_id, skill_id, model, effort, finding_id, sub_path, ref, profile, status, session_id, resumed_from_scan_id, import_payload").
+	err := q.Select("id, repository_id, skill_id, model, effort, finding_id, sub_path, ref, profile, backend, status, session_id, resumed_from_scan_id, import_payload").
 		Where(`NOT EXISTS (
 			SELECT 1 FROM scans n
 			WHERE n.id > scans.id
@@ -202,7 +213,7 @@ func (s *Server) scansRetryFailed(w http.ResponseWriter, r *http.Request) {
 
 	var retried, errored int
 	for _, sc := range scans {
-		sessionID, resumeOf := resumeOpts(sc)
+		sessionID, resumeOf := s.resumeOpts(sc)
 		if _, err := s.enqueueSkillWith(r.Context(), sc.RepositoryID, *sc.SkillID, ScanOpts{
 			Model:             sc.Model,
 			Effort:            sc.Effort,

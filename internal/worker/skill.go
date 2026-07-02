@@ -164,16 +164,7 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 	}
 	w.applyResume(scan, &sj, emit)
 	res, err := w.Runner.RunSkill(ctx, sj, emit)
-	if res.SessionID != "" && res.SessionID != scan.SessionID {
-		scan.SessionID = res.SessionID
-	}
-	if res.Commit != "" {
-		scan.Commit = res.Commit
-	}
-	if res.Profile != "" && res.Profile != scan.Profile {
-		scan.Profile = res.Profile
-		w.DB.Model(scan).Update("profile", res.Profile)
-	}
+	w.applySkillResult(scan, res)
 	if err != nil {
 		if _, ok := errors.AsType[*MaxTurnsReachedError](err); ok && res.Report != "" {
 			w.parsePartialSkillReport(&skill, scan, res.Report, emit)
@@ -190,6 +181,29 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 		}
 	}
 	return report, nil
+}
+
+// applySkillResult writes back the fields RunSkill reports about the run
+// itself (as opposed to the skill's report) onto the scan row: session id
+// and commit onto the in-memory struct (persisted by wrap()'s closing Save),
+// and Profile/Backend to the DB immediately so a retry sees them even if the
+// scan later fails hard. Called from every RunSkill call site so the four
+// fields stay in one place.
+func (w *Worker) applySkillResult(scan *db.Scan, res SkillResult) {
+	if res.SessionID != "" && res.SessionID != scan.SessionID {
+		scan.SessionID = res.SessionID
+	}
+	if res.Commit != "" {
+		scan.Commit = res.Commit
+	}
+	if res.Profile != "" && res.Profile != scan.Profile {
+		scan.Profile = res.Profile
+		w.DB.Model(scan).Update("profile", res.Profile)
+	}
+	if res.Backend != "" && res.Backend != scan.Backend {
+		scan.Backend = res.Backend
+		w.DB.Model(scan).Update("backend", res.Backend)
+	}
 }
 
 // parsePartialSkillReport runs parseSkillOutput against a max-turns
@@ -228,16 +242,7 @@ func (w *Worker) repairSchemaReport(ctx context.Context, skill *db.Skill, scan *
 	repairJob.ResumePrompt = buildSchemaRepairPrompt(skill, detail, report)
 	repairJob.MaxTurns = schemaRepairMaxTurns
 	res, err := w.Runner.RunSkill(ctx, repairJob, emit)
-	if res.SessionID != "" && res.SessionID != scan.SessionID {
-		scan.SessionID = res.SessionID
-	}
-	if res.Commit != "" {
-		scan.Commit = res.Commit
-	}
-	if res.Profile != "" && res.Profile != scan.Profile {
-		scan.Profile = res.Profile
-		w.DB.Model(scan).Update("profile", res.Profile)
-	}
+	w.applySkillResult(scan, res)
 	if err != nil {
 		emit(Event{Kind: KindError, Text: fmt.Sprintf("schema: repair attempt for %s failed: %v; parsing original output", outputFile, err)})
 		return "", false
