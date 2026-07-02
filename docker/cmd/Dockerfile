@@ -58,6 +58,9 @@ COPY --from=zizmor-build /out/bin/zizmor /usr/local/bin/zizmor
 # vid
 COPY --from=vid-build /out/vid /usr/local/bin/vid
 
+# Add docker cli to the  container
+RUN apk add --no-cache docker-cli
+
 # Non-root user (T1/T11: reduce blast radius)
 RUN adduser -D -h /home/scrutineer scrutineer && \
     mkdir -p /data && chown scrutineer:scrutineer /data

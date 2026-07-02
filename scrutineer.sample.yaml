@@ -32,7 +32,7 @@
 # pg_restore or your provider's managed snapshots).
 # database:
 #   driver: postgres
-#   dsn: postgres://scrutineer:secret@localhost:5432/scrutineer?sslmode=disable
+#   dsn: postgres://scrutineer:scrutineer@db:5432/scrutineer?sslmode=disable
 
 # Claude effort level for model-backed skills.
 # effort: high
