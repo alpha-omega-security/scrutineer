@@ -121,11 +121,11 @@ var builtinProfiles = []Profile{
 		// installs Brakeman (see docker/profiles/ruby-ext/Dockerfile) — so a
 		// gem that also looks like a Rails app still gets Rails SAST despite
 		// matching here first, and a false match against a *Ruby* repo only
-		// costs build time, never coverage. Robust detection also lets the
-		// verify skill (which re-detects rather than carrying the scan's
-		// profile) re-pick ruby-ext and actually reproduce an ASan crash,
-		// instead of landing on stock ruby and reporting the finding
-		// inconclusive.
+		// costs build time, never coverage. The auto-chained revalidate/verify
+		// scans now inherit the parent scan's resolved profile (#548), so verify
+		// reproduces an ASan crash on this same image; robust detection still
+		// matters for a manual re-run or the /v1/import path, which detect
+		// fresh.
 		//
 		// It is NOT a superset of the rust profile (no Miri, only a minimal
 		// rustc for rb-sys shims), so the Cargo.toml marker below is gated on

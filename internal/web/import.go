@@ -299,7 +299,10 @@ func (s *Server) importFindings(scan *db.Scan, res ingest.Result, revalidate boo
 		// findings such as a trusted sharing bundle.
 		if revalidate {
 			fcopy := f
-			s.enqueueRevalidateForFinding(context.Background(), &fcopy)
+			// Imports have no parent scan and hence no resolved profile to carry;
+			// revalidate detects fresh, and its resolved profile then carries into
+			// the chained verify (autoChainVerifyAfterRevalidate). See #548.
+			s.enqueueRevalidateForFinding(context.Background(), &fcopy, "")
 		}
 	}
 	return created, observed
