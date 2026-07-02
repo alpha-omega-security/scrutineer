@@ -1,8 +1,11 @@
 // Package db holds GORM setup and the persistent models.
 //
-// SQLite is the default backend. GORM speaks PostgreSQL with a one-line
-// driver swap (gorm.io/driver/postgres) and the schema below uses nothing
-// SQLite-specific, so the migration path is "change the Open call".
+// SQLite is the default backend; PostgreSQL is selected via the database
+// block in the config file (see OpenBackend). The GORM models are shared
+// across both dialects, and the handful of dialect-specific SQL sites
+// branch on gdb.Dialector.Name() ("sqlite" vs "postgres"). SQLite-only
+// operations (VACUUM INTO backups, PRAGMA-based introspection) are guarded
+// so they never run against PostgreSQL.
 package db
 
 import (
@@ -15,9 +18,28 @@ import (
 	"time"
 
 	"github.com/glebarez/sqlite"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
+
+// Dialect names a supported database backend. It matches both the config
+// file's driver value and the string gorm's Dialector.Name() reports, so
+// callers can compare gdb.Dialector.Name() against these constants.
+type Dialect string
+
+const (
+	DialectSQLite   Dialect = "sqlite"
+	DialectPostgres Dialect = "postgres"
+)
+
+// Options selects and locates the backend OpenBackend connects to. For
+// SQLite, DSN is the database file path (an in-memory DSN in tests); for
+// PostgreSQL it is a pgx/libpq connection string or URL.
+type Options struct {
+	Dialect Dialect
+	DSN     string
+}
 
 type Repository struct {
 	ID   uint   `gorm:"primarykey"`
@@ -1053,26 +1075,77 @@ func withPragmas(dsn string) string {
 	return dsn + sep + connectionPragmas
 }
 
+// Open connects to a SQLite database at dsn (a file path or in-memory DSN)
+// and runs migrations. It is the historical single-argument entrypoint,
+// retained for tests and any SQLite-only caller; OpenBackend is the
+// config-driven path that also handles PostgreSQL.
 func Open(dsn string) (*gorm.DB, error) {
+	return OpenBackend(Options{Dialect: DialectSQLite, DSN: dsn})
+}
+
+// OpenBackend connects to the backend named by opts, then runs AutoMigrate
+// and creates the extra composite index. SQLite gets the per-connection
+// pragmas appended to its DSN (foreign_keys, busy_timeout, WAL); PostgreSQL
+// takes the DSN verbatim. AutoMigrate is dialect-portable, so the same model
+// set builds the schema on either backend.
+func OpenBackend(opts Options) (*gorm.DB, error) {
 	cfg := &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Warn),
 	}
-	gdb, err := gorm.Open(sqlite.Open(withPragmas(dsn)), cfg)
-	if err != nil {
-		return nil, fmt.Errorf("open sqlite: %w", err)
+	var (
+		dialector gorm.Dialector
+		openErr   string
+	)
+	switch opts.Dialect {
+	case DialectPostgres:
+		dialector, openErr = postgres.Open(opts.DSN), "open postgres"
+	case DialectSQLite, "":
+		dialector, openErr = sqlite.Open(withPragmas(opts.DSN)), "open sqlite"
+	default:
+		return nil, fmt.Errorf("unknown database dialect %q", opts.Dialect)
 	}
-	if err := gdb.AutoMigrate(
+	gdb, err := gorm.Open(dialector, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", openErr, err)
+	}
+	if err := migrate(gdb); err != nil {
+		return nil, fmt.Errorf("automigrate: %w", err)
+	}
+	gdb.Exec(`CREATE INDEX IF NOT EXISTS idx_scans_priority_id ON scans (status_priority, id DESC)`)
+	return gdb, nil
+}
+
+// models is the full set AutoMigrate manages, parents ahead of children.
+// scans.finding_id and findings.scan_id reference each other, so the set
+// contains a foreign-key cycle no ordering can linearise.
+func models() []any {
+	return []any{
 		&Repository{}, &Scan{},
 		&Finding{}, &FindingLabel{}, &FindingNote{},
 		&FindingCommunication{}, &FindingReference{}, &FindingHistory{}, &FindingReview{},
 		&Dependency{}, &Package{}, &Dependent{}, &FindingDependent{}, &Advisory{},
 		&Maintainer{}, &Skill{}, &Subproject{},
 		&SBOMUpload{}, &SBOMPackage{}, &CNA{}, &Setting{},
-	); err != nil {
-		return nil, fmt.Errorf("automigrate: %w", err)
 	}
-	gdb.Exec(`CREATE INDEX IF NOT EXISTS idx_scans_priority_id ON scans (status_priority, id DESC)`)
-	return gdb, nil
+}
+
+// migrate runs AutoMigrate over every model. SQLite migrates in one pass:
+// it accepts an inline REFERENCES to a table created later, so the
+// scans<->findings foreign-key cycle is fine. PostgreSQL rejects a forward
+// reference at CREATE TABLE, so it takes two passes — first create every
+// table with foreign-key constraints suppressed, then a second pass that
+// adds the constraints now that all tables exist. The end state (all tables,
+// all FKs, cascade deletes) is identical on both backends.
+func migrate(gdb *gorm.DB) error {
+	if gdb.Dialector.Name() == "postgres" {
+		gdb.Config.DisableForeignKeyConstraintWhenMigrating = true
+		err := gdb.AutoMigrate(models()...)
+		gdb.Config.DisableForeignKeyConstraintWhenMigrating = false
+		if err != nil {
+			return err
+		}
+	}
+	return gdb.AutoMigrate(models()...)
 }
 
 // Snapshot writes a consistent copy of the SQLite database at src to dest

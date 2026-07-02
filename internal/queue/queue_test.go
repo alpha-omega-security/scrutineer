@@ -22,7 +22,7 @@ func newTestQueue(t *testing.T, concurrency int) *Queue {
 	if err != nil {
 		t.Fatal(err)
 	}
-	q, err := New(sqldb, slog.New(slog.NewTextHandler(io.Discard, nil)), concurrency)
+	q, err := New(sqldb, slog.New(slog.NewTextHandler(io.Discard, nil)), concurrency, SQLite)
 	if err != nil {
 		t.Fatal(err)
 	}

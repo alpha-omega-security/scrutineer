@@ -80,11 +80,19 @@ func (s *Server) settingsShow(w http.ResponseWriter, r *http.Request) {
 	s.DB.Table("maintainers").Count(&stats.Maintainers)
 	s.DB.Table("skills").Count(&stats.Skills)
 
+	// DB size + location are introspected differently per backend: SQLite
+	// exposes them via table-valued pragmas, PostgreSQL via catalog
+	// functions. dbPath is a filesystem path on SQLite and the database name
+	// on PostgreSQL (the file lives on the server, not here).
 	var dbSizeBytes int64
-	s.DB.Raw("SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()").Scan(&dbSizeBytes)
-
 	var dbPath string
-	s.DB.Raw("SELECT file FROM pragma_database_list WHERE name = 'main'").Scan(&dbPath)
+	if s.DB.Dialector.Name() == "postgres" {
+		s.DB.Raw("SELECT pg_database_size(current_database())").Scan(&dbSizeBytes)
+		s.DB.Raw("SELECT current_database()").Scan(&dbPath)
+	} else {
+		s.DB.Raw("SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()").Scan(&dbSizeBytes)
+		s.DB.Raw("SELECT file FROM pragma_database_list WHERE name = 'main'").Scan(&dbPath)
+	}
 
 	meta := s.toolMetadataCached(r.Context())
 	// Overlay the boot-time staleness verdict onto the (separately cached)

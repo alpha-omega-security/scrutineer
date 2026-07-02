@@ -840,7 +840,12 @@ func loadRepoFindings(gdb *gorm.DB, repoID uint, category string) repoFindings {
 		SkillName string
 		Commit    string
 	}
-	gdb.Raw("SELECT id, COALESCE(skill_name, '') AS skill_name, COALESCE(`commit`, '') AS `commit` FROM scans WHERE id IN ?", scanIDs).Scan(&rows)
+	// "commit" is quoted because it is a reserved word; double quotes are the
+	// SQL-standard identifier quote both SQLite and PostgreSQL accept (and the
+	// input resolves to the column, not a string literal, because the column
+	// exists). The output alias stays "commit" so GORM maps it onto the
+	// struct's Commit field.
+	gdb.Raw(`SELECT id, COALESCE(skill_name, '') AS skill_name, COALESCE("commit", '') AS "commit" FROM scans WHERE id IN ?`, scanIDs).Scan(&rows)
 	for _, row := range rows {
 		rf.ScanSkill[row.ID] = row.SkillName
 		rf.ScanCommit[row.ID] = row.Commit
@@ -2047,11 +2052,11 @@ func (s *Server) latestDepsCommit(repoID uint) string {
 	var commits []string
 	s.DB.Model(&db.Scan{}).
 		Joins("JOIN skills ON skills.id = scans.skill_id").
-		Where("scans.repository_id = ? AND skills.output_kind = ? AND scans.status = ? AND scans.`commit` <> ''",
+		Where(`scans.repository_id = ? AND skills.output_kind = ? AND scans.status = ? AND scans."commit" <> ''`,
 			repoID, "dependencies", db.ScanDone).
 		Order("scans.id DESC").
 		Limit(1).
-		Pluck("scans.commit", &commits)
+		Pluck(`scans."commit"`, &commits)
 	if len(commits) > 0 {
 		return commits[0]
 	}

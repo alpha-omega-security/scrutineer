@@ -62,6 +62,9 @@ func runBackup(args []string, out io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if err := errPostgresManaged(cfg); err != nil {
+		return err
+	}
 	dbPath := filepath.Join(resolveDataDir(cfg, dataDir), dbFileName)
 	if _, err := os.Stat(dbPath); err != nil {
 		return fmt.Errorf("no database at %s: %w", dbPath, err)
@@ -108,6 +111,9 @@ func runRestore(args []string, out io.Writer) error {
 
 	cfg, err := config.Load(configPath)
 	if err != nil {
+		return err
+	}
+	if err := errPostgresManaged(cfg); err != nil {
 		return err
 	}
 	if ok, err := isSQLiteFile(from); err != nil {
@@ -209,6 +215,18 @@ func serverRunning(addr string) bool {
 	}
 	_ = conn.Close()
 	return true
+}
+
+// errPostgresManaged returns a non-nil error when the config selects the
+// postgres backend. The backup/restore subcommands are SQLite-only (they use
+// VACUUM INTO and file swaps); PostgreSQL deployments back up through the
+// operator's own tooling (pg_dump/pg_restore, managed snapshots), so scrutineer
+// declines rather than pretending to.
+func errPostgresManaged(cfg *config.Config) error {
+	if cfg != nil && cfg.Database.Driver == "postgres" {
+		return errors.New("backup/restore is SQLite-only; PostgreSQL backups are operator-managed (use pg_dump/pg_restore or your provider's snapshots)")
+	}
+	return nil
 }
 
 // resolveDataDir mirrors the server's precedence: an explicit flag wins over

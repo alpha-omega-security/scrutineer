@@ -18,7 +18,35 @@ import (
 )
 
 //go:embed schema_sqlite.sql
-var schema string
+var schemaSQLite string
+
+//go:embed schema_postgres.sql
+var schemaPostgres string
+
+// Dialect selects which backend the queue table lives in. It mirrors the
+// database dialect chosen for the main GORM handle so goqite emits SQL in
+// the matching flavour (placeholders, upsert syntax) and we run the right
+// schema.
+type Dialect int
+
+const (
+	SQLite Dialect = iota
+	Postgres
+)
+
+func (d Dialect) schema() string {
+	if d == Postgres {
+		return schemaPostgres
+	}
+	return schemaSQLite
+}
+
+func (d Dialect) goqiteFlavor() goqite.SQLFlavor {
+	if d == Postgres {
+		return goqite.SQLFlavorPostgreSQL
+	}
+	return goqite.SQLFlavorSQLite
+}
 
 // Payload is what travels on the queue. The job handler looks up the Scan
 // row by ID; everything else (repo URL, kind) hangs off that record so the
@@ -55,20 +83,23 @@ const (
 	DefaultWorkerConcurrency = 4
 )
 
-// New builds a queue wired to goqite. concurrency controls how many jobs
-// the runner processes in parallel; pass 0 to use DefaultWorkerConcurrency.
-// The runner itself is built lazily in Start (and rebuilt by Reconfigure).
-func New(sqldb *sql.DB, log *slog.Logger, concurrency int) (*Queue, error) {
+// New builds a queue wired to goqite on the given dialect. concurrency
+// controls how many jobs the runner processes in parallel; pass 0 to use
+// DefaultWorkerConcurrency. The runner itself is built lazily in Start (and
+// rebuilt by Reconfigure). Both embedded schemas are idempotent, so running
+// them on every startup is safe.
+func New(sqldb *sql.DB, log *slog.Logger, concurrency int, dialect Dialect) (*Queue, error) {
 	if concurrency <= 0 {
 		concurrency = DefaultWorkerConcurrency
 	}
-	if _, err := sqldb.Exec(schema); err != nil {
+	if _, err := sqldb.Exec(dialect.schema()); err != nil {
 		return nil, fmt.Errorf("goqite schema: %w", err)
 	}
 	q := goqite.New(goqite.NewOpts{
-		DB:      sqldb,
-		Name:    "scans",
-		Timeout: visibilityTimeout,
+		DB:        sqldb,
+		Name:      "scans",
+		Timeout:   visibilityTimeout,
+		SQLFlavor: dialect.goqiteFlavor(),
 	})
 	queue := &Queue{q: q, log: log, handlers: map[string]jobs.Func{}}
 	queue.concurrency.Store(int64(concurrency))

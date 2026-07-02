@@ -1,0 +1,55 @@
+# scrutineer backed by the pre-provisioned PostgreSQL image in docker/postgresdb.
+#
+#   docker compose -f docker/docker-compose.postgres.yml up --build
+#
+# The db service comes up with scrutineer's schema already provisioned; the
+# scrutineer service points at it via docker/scrutineer.postgres.yaml.
+name: scrutineer-postgres
+
+services:
+  db:
+    build:
+      context: docker/postgresdb
+    environment:
+      POSTGRES_USER: scrutineer
+      POSTGRES_DB: scrutineer
+      # Dev default. Change this AND the database.dsn in the root scrutineer.yaml
+      # before exposing the stack anywhere real.
+      POSTGRES_PASSWORD: scrutineer
+    volumes:
+      - scrutineer-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # gate scrutineer's start on the server accepting connections; start_period
+      # covers the first-boot initdb (schema load).
+      test: ["CMD-SHELL", "pg_isready -U scrutineer -d scrutineer"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    restart: unless-stopped
+
+  scrutineer:
+    build:
+      context: .
+      dockerfile: docker/cmd/Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    # The UI has no authentication — bind to loopback on the host.
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - scrutineer-data:/data                              # scan workspaces
+      - ./scrutineer.yaml:/config/scrutineer.yaml:ro      # the repo-root config
+    environment:
+      CLAUDE_CODE_OAUTH_TOKEN: "${CLAUDE_CODE_OAUTH_TOKEN:-}"
+      ANTHROPIC_API_KEY: "${ANTHROPIC_API_KEY:-}"
+      ANTHROPIC_BASE_URL: "${ANTHROPIC_BASE_URL:-}"
+    # Override the default CMD to load the postgres config. -data still holds
+    # scan workspaces; the database itself now lives in the db service.
+    command: ["-addr", "0.0.0.0:8080", "-data", "/data", "-config", "/config/scrutineer.yaml"]
+    restart: unless-stopped
+
+volumes:
+  scrutineer-data:
+  scrutineer-pgdata:

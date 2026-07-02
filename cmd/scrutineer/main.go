@@ -112,7 +112,14 @@ type flags struct {
 	recipientsFile        string
 	identityFile          string
 	autoRejectMissedCount int
-	skillLocal            skillDirs
+	// dbDriver selects the database backend ("" or "sqlite" for the embedded
+	// file, "postgres" for an external server). dbDSN is the connection
+	// string for postgres; sqlite ignores it and uses dataDir/scrutineer.db.
+	// These are config-only (no CLI flag) — a DSN on the command line would
+	// land in shell history and process listings.
+	dbDriver   string
+	dbDSN      string
+	skillLocal skillDirs
 
 	// set records which flags were passed on the command line so merge
 	// knows not to let the config file override them.
@@ -144,7 +151,7 @@ func registerFlags(fs *flag.FlagSet, f *flags) {
 	fs.BoolVar(&f.hardened, "hardened", false, "strict sandbox mode: container runtime required (no --no-container fallback), egress restricted to the harness's model API + host skill API, read-only rootfs, internal network")
 	fs.BoolVar(&f.hardenedRuntimeOnly, "hardened-runtime-only", false, "the non-network half of --hardened (read-only rootfs + no-new-privileges + 2 GiB post-clone workspace cap) WITHOUT the per-scan --internal network, so it works under rootless podman where --hardened cannot; --cap-drop ALL + non-root user + tmpfs apply regardless. Implied by --hardened")
 	fs.BoolVar(&f.hardenedRuntimeOnly, "hardened-rootless-runtime", false, "deprecated alias for --hardened-runtime-only")
-	fs.StringVar(&f.runnerImage, "runner-image", worker.DefaultRunnerImage, "container image for per-job containers (a custom image needs curl, and under rootless --hardened the scrutineer binary for the egress sidecar; build from Dockerfile.runner)")
+	fs.StringVar(&f.runnerImage, "runner-image", worker.DefaultRunnerImage, "container image for per-job containers (a custom image needs curl, and under rootless --hardened the scrutineer binary for the egress sidecar; build from docker/runner/Dockerfile.runner)")
 	fs.StringVar(&f.profilesDir, "profiles-dir", "docker/profiles", "directory containing per-ecosystem runner profiles (Dockerfile per profile); empty disables profiles")
 	fs.StringVar(&f.skillsRepo, "skills-repo", "", "clone skills on startup; owner/repo[@ref] or https://host/path[@ref]")
 	fs.IntVar(&f.concurrency, "concurrency", queue.DefaultWorkerConcurrency, "number of scans to run in parallel")
@@ -242,6 +249,9 @@ func (f *flags) merge(cfg *config.Config) {
 	if cfg.AutoRejectMissedCount > 0 && !f.set["auto-reject-missed-count"] {
 		f.autoRejectMissedCount = cfg.AutoRejectMissedCount
 	}
+	// Database backend is config-only, so no f.set guard.
+	f.dbDriver = cfg.Database.Driver
+	f.dbDSN = cfg.Database.DSN
 
 	if len(cfg.Models) > 0 {
 		models := make([]web.Model, 0, len(cfg.Models))
@@ -256,6 +266,26 @@ func (f *flags) merge(cfg *config.Config) {
 	if cfg.Theme != "" {
 		web.SetTheme(cfg.Theme)
 	}
+}
+
+// databaseOptions maps the merged config onto db.OpenBackend's Options. For
+// postgres the DSN comes from config verbatim; for sqlite (the default) the
+// DSN is the database file inside the data directory, matching the historical
+// db.Open(dataDir/scrutineer.db) call.
+func (f *flags) databaseOptions() db.Options {
+	if f.dbDriver == "postgres" {
+		return db.Options{Dialect: db.DialectPostgres, DSN: f.dbDSN}
+	}
+	return db.Options{Dialect: db.DialectSQLite, DSN: filepath.Join(f.dataDir, dbFileName)}
+}
+
+// queueDialect selects the goqite backend to match databaseOptions so the
+// queue table lives in the same database as everything else.
+func (f *flags) queueDialect() queue.Dialect {
+	if f.dbDriver == "postgres" {
+		return queue.Postgres
+	}
+	return queue.SQLite
 }
 
 func (f *flags) fullClone() bool { return f.cloneMode == "full" }
@@ -370,7 +400,7 @@ func run(log *slog.Logger) error {
 	// walks into cloned scan workspaces under data/work/.
 	_ = os.WriteFile(filepath.Join(f.dataDir, "go.mod"), []byte("module scrutineer/data\n"), dataPermSecure)
 
-	gdb, err := db.Open(filepath.Join(f.dataDir, "scrutineer.db"))
+	gdb, err := db.OpenBackend(f.databaseOptions())
 	if err != nil {
 		return fmt.Errorf("open db: %w", err)
 	}
@@ -399,7 +429,7 @@ func run(log *slog.Logger) error {
 		}
 	}
 
-	q, err := queue.New(sqldb, log, f.concurrency)
+	q, err := queue.New(sqldb, log, f.concurrency, f.queueDialect())
 	if err != nil {
 		return fmt.Errorf("queue: %w", err)
 	}
