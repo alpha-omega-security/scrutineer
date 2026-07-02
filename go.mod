@@ -10,6 +10,7 @@ require (
 	github.com/git-pkgs/purl v0.1.12
 	github.com/git-pkgs/sbom v0.1.2
 	github.com/glebarez/sqlite v1.11.0
+	github.com/google/uuid v1.6.0
 	github.com/pandatix/go-cvss v0.6.2
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	github.com/yuin/goldmark v1.8.2
@@ -26,7 +27,6 @@ require (
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/git-pkgs/vers v0.2.5 // indirect
 	github.com/glebarez/go-sqlite v1.22.0 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/kr/text v0.2.0 // indirect

@@ -205,6 +205,14 @@ type Scan struct {
 	// external APIs (packages/advisories/dependents) ignore it.
 	SubPath string `gorm:"index"`
 
+	// ScanGroup ties together a cohort of deep-dive scans launched as one
+	// parallel batch (Scan-all-subprojects, or a single New-scan run), so an
+	// in-flight audit skill can list its siblings' findings via
+	// /repositories/{id}/findings?scan_group=... and avoid re-filing a bug a
+	// sibling already reported before the dedup judge runs. Empty on
+	// scans that were not launched as part of such a batch.
+	ScanGroup string `gorm:"index"`
+
 	// Profile is the runner profile that ran (or was overridden to run)
 	// this scan. Empty means the default runner image; non-empty names
 	// a docker/profiles/<name>/ entry. Persisted so retries reuse the
@@ -631,6 +639,13 @@ type Finding struct {
 	PriorArt   string `gorm:"type:text"`
 	Reach      string `gorm:"type:text"`
 	Rating     string `gorm:"type:text"`
+
+	// DupCheck is the audit agent's one-sentence rationale for why this
+	// finding is distinct from the sibling findings already filed under the
+	// same ScanGroup: which ones it compared against and why this is not a
+	// duplicate. The dedup judge weighs it alongside fingerprint matching.
+	// Empty for findings from skills that do not emit it.
+	DupCheck string `gorm:"type:text"`
 
 	Labels         []FindingLabel         `gorm:"many2many:finding_labels_join"`
 	Notes          []FindingNote          `gorm:"constraint:OnDelete:CASCADE"`

@@ -132,6 +132,7 @@ func (s *Server) scanRetry(w http.ResponseWriter, r *http.Request) {
 		SubPath:           scan.SubPath,
 		Ref:               scan.Ref,
 		Profile:           scan.Profile,
+		ScanGroup:         scan.ScanGroup,
 		SessionID:         sessionID,
 		ResumedFromScanID: resumeOf,
 		// An ingest scan's input is the uploaded payload, not ./src;
@@ -183,7 +184,7 @@ func (s *Server) scansRetryFailed(w http.ResponseWriter, r *http.Request) {
 	// (repository, skill, sub_path, ref, finding_id) tuple already in
 	// queued/running/done.
 	var scans []db.Scan
-	err := q.Select("id, repository_id, skill_id, model, effort, finding_id, sub_path, ref, profile, status, session_id, resumed_from_scan_id, import_payload").
+	err := q.Select("id, repository_id, skill_id, model, effort, finding_id, sub_path, ref, profile, scan_group, status, session_id, resumed_from_scan_id, import_payload").
 		Where(`NOT EXISTS (
 			SELECT 1 FROM scans n
 			WHERE n.id > scans.id
@@ -210,6 +211,7 @@ func (s *Server) scansRetryFailed(w http.ResponseWriter, r *http.Request) {
 			SubPath:           sc.SubPath,
 			Ref:               sc.Ref,
 			Profile:           sc.Profile,
+			ScanGroup:         sc.ScanGroup,
 			SessionID:         sessionID,
 			ResumedFromScanID: resumeOf,
 			ImportPayload:     sc.ImportPayload,

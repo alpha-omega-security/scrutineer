@@ -49,6 +49,11 @@ type skillContextScrutineer struct {
 	// support). Empty means the repo root. Skills that walk files honour
 	// this; skills that query external APIs ignore it.
 	ScanSubPath string `json:"scan_subpath,omitempty"`
+	// ScanGroup identifies the parallel batch this scan belongs to. An audit
+	// skill passes it to /repositories/{id}/findings?scan_group=... to read
+	// what its siblings have already filed before reporting its own.
+	// Empty when the scan was not launched as part of a batch.
+	ScanGroup string `json:"scan_group,omitempty"`
 	// ForkOrg is the GitHub organisation the fork skill stages scanned
 	// repositories into. Absent when fork_org is unconfigured.
 	ForkOrg string `json:"fork_org,omitempty"`
@@ -397,39 +402,58 @@ func (w *Worker) parseFindingsOutput(skill *db.Skill, scan *db.Scan, report stri
 		if db.SeverityAtLeast(f.Severity, worst) || worst == "" {
 			worst = f.Severity
 		}
-		f.LastSeenScanID = scan.ID
-		f.LastSeenCommit = scan.Commit
-		f.SeenCount = 1
 		seenThisScan[f.Fingerprint] = true
 
-		var existing db.Finding
-		err := w.DB.Where("repository_id = ? AND fingerprint = ?", scan.RepositoryID, f.Fingerprint).
-			Order("id").First(&existing).Error
-		if err == nil {
-			if uerr := w.reobserveFinding(&existing, f, scan); uerr != nil {
-				return uerr
-			}
+		wasCreated, perr := w.persistFinding(scan, f)
+		if perr != nil {
+			return perr
+		}
+		if wasCreated {
+			created++
+		} else {
 			observed++
-			continue
-		}
-		if cerr := w.DB.Create(f).Error; cerr != nil {
-			return fmt.Errorf("save finding: %w", cerr)
-		}
-		created++
-		if w.OnFindingCreated != nil {
-			w.OnFindingCreated(scan, f)
 		}
 	}
 
 	missed := w.markNotObserved(scan, seenThisScan)
+	retracted := w.markRetracted(scan, seenThisScan)
 
-	emit(Event{Kind: KindText, Text: fmt.Sprintf("parsed %d finding(s): %d new, %d re-observed, %d not-observed",
-		len(findings), created, observed, missed)})
+	emit(Event{Kind: KindText, Text: fmt.Sprintf("parsed %d finding(s): %d new, %d re-observed, %d not-observed, %d retracted",
+		len(findings), created, observed, missed, retracted)})
 
 	if db.SeverityAtLeast(worst, skill.FailOn) {
 		return &FailOnThresholdError{Worst: worst, Threshold: skill.FailOn}
 	}
 	return nil
+}
+
+// persistFinding writes one finding into the repository's finding set using
+// fingerprint dedup: a match re-observes the existing row, otherwise a new row
+// is created and OnFindingCreated fires. Shared by the end-of-scan report
+// ingestion and the streamed concurrent-finding log. On the dedup
+// branch f.ID is set to the existing row so callers can report the live id.
+func (w *Worker) persistFinding(scan *db.Scan, f *db.Finding) (created bool, err error) {
+	f.LastSeenScanID = scan.ID
+	f.LastSeenCommit = scan.Commit
+	f.SeenCount = 1
+
+	var existing db.Finding
+	lookup := w.DB.Where("repository_id = ? AND fingerprint = ?", scan.RepositoryID, f.Fingerprint).
+		Order("id").First(&existing).Error
+	if lookup == nil {
+		if uerr := w.reobserveFinding(&existing, f, scan); uerr != nil {
+			return false, uerr
+		}
+		f.ID = existing.ID
+		return false, nil
+	}
+	if cerr := w.DB.Create(f).Error; cerr != nil {
+		return false, fmt.Errorf("save finding: %w", cerr)
+	}
+	if w.OnFindingCreated != nil {
+		w.OnFindingCreated(scan, f)
+	}
+	return true, nil
 }
 
 // reobserveFinding handles the dedup branch in parseFindingsOutput:
@@ -438,10 +462,21 @@ func (w *Worker) parseFindingsOutput(skill *db.Skill, scan *db.Scan, report stri
 // Reference and history failures are logged but not fatal; the finding
 // row write itself does propagate so a real DB error stops the scan.
 func (w *Worker) reobserveFinding(existing, f *db.Finding, scan *db.Scan) error {
+	// A finding already last-seen in this same scan was streamed into the
+	// concurrent-finding log earlier in this run. Reconciling it from
+	// the final report must be idempotent: refresh drifting fields but do not
+	// bump seen_count or write another observed-history row, or a streamed
+	// finding would count as seen twice by one scan.
+	sameScan := existing.LastSeenScanID == scan.ID
+
+	seenCount := existing.SeenCount + 1
+	if sameScan {
+		seenCount = existing.SeenCount
+	}
 	updates := map[string]any{
 		"last_seen_scan_id":   scan.ID,
 		"last_seen_commit":    scan.Commit,
-		"seen_count":          existing.SeenCount + 1,
+		"seen_count":          seenCount,
 		"missed_count":        0,
 		"last_missed_scan_id": 0,
 		"location":            f.Location,
@@ -474,6 +509,9 @@ func (w *Worker) reobserveFinding(existing, f *db.Finding, scan *db.Scan) error 
 	}
 	if err := w.upsertFindingReferences(existing.ID, f.References); err != nil {
 		w.Log.Warn("upsert finding references", "finding", existing.ID, "scan", scan.ID, "err", err)
+	}
+	if sameScan {
+		return nil
 	}
 	if err := w.DB.Create(&db.FindingHistory{
 		FindingID: existing.ID,
@@ -660,6 +698,37 @@ func (w *Worker) hasEverBeenReportedOrAcknowledged(findingID uint) bool {
 			findingID, "status", string(db.FindingReported), string(db.FindingAcknowledged)).
 		Count(&count)
 	return count > 0
+}
+
+// markRetracted flags findings this scan streamed into the concurrent-finding
+// log but then left out of its final report.json. The row is kept — a sibling
+// may have stood down citing it, so deleting would lose the bug from both scans
+// — but a `retracted` history row records that the scan did not confirm it in
+// the end, so it is no longer indistinguishable from a confirmed finding. Only
+// rows this scan both created and last saw are considered; a finding a sibling
+// re-observed since stays live under that sibling.
+func (w *Worker) markRetracted(scan *db.Scan, seen map[string]bool) int {
+	var streamed []db.Finding
+	w.DB.Where("scan_id = ? AND last_seen_scan_id = ?", scan.ID, scan.ID).Find(&streamed)
+
+	retracted := 0
+	for _, f := range streamed {
+		if seen[f.Fingerprint] {
+			continue
+		}
+		if err := w.DB.Create(&db.FindingHistory{
+			FindingID: f.ID,
+			Field:     "retracted",
+			NewValue:  fmt.Sprintf("scan %d @ %s", scan.ID, scan.Commit),
+			Source:    db.SourceTool,
+			By:        scan.SkillName,
+		}).Error; err != nil {
+			w.Log.Error("mark finding retracted", "finding", f.ID, "err", err)
+			continue
+		}
+		retracted++
+	}
+	return retracted
 }
 
 // parseMaintainersOutput upserts Maintainer rows and links them to the
@@ -987,6 +1056,9 @@ func stageContext(workRoot, apiBase, forkOrg, metadataDir string, scan *db.Scan,
 	}
 	if scan.SubPath != "" {
 		ctx.Scrutineer.ScanSubPath = scan.SubPath
+	}
+	if scan.ScanGroup != "" {
+		ctx.Scrutineer.ScanGroup = scan.ScanGroup
 	}
 	b, err := json.MarshalIndent(ctx, "", "  ")
 	if err != nil {

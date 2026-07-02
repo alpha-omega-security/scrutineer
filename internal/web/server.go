@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"filippo.io/age"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 
 	"scrutineer/internal/db"
@@ -2071,8 +2072,9 @@ func (s *Server) repoScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := s.enqueueSkillWith(r.Context(), repo.ID, skill.ID, ScanOpts{
-		Model:   r.FormValue("model"),
-		SubPath: strings.TrimSpace(r.FormValue("sub_path")),
+		Model:     r.FormValue("model"),
+		SubPath:   strings.TrimSpace(r.FormValue("sub_path")),
+		ScanGroup: uuid.NewString(),
 	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -2101,6 +2103,10 @@ func (s *Server) repoScanAll(w http.ResponseWriter, r *http.Request) {
 	s.DB.Where("repository_id = ?", repo.ID).Order("path").Find(&subprojects)
 
 	model := r.FormValue("model")
+	// One shared group across the whole fan-out: every subproject deep-dive
+	// enqueued by this click is a sibling, so each can read the others'
+	// findings via ?scan_group= while they run in parallel.
+	group := uuid.NewString()
 	var queued, skipped, errored int
 	for _, sub := range subprojects {
 		var inflight int64
@@ -2113,8 +2119,9 @@ func (s *Server) repoScanAll(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if _, err := s.enqueueSkillWith(r.Context(), repo.ID, skill.ID, ScanOpts{
-			Model:   model,
-			SubPath: sub.Path,
+			Model:     model,
+			SubPath:   sub.Path,
+			ScanGroup: group,
 		}); err != nil {
 			errored++
 			continue
@@ -2270,6 +2277,10 @@ type ScanOpts struct {
 	SubPath        string
 	Ref            string
 	Profile        string
+	// ScanGroup tags this scan as part of a parallel batch so in-flight audit
+	// skills can list sibling findings before re-filing them. Empty
+	// when the scan is not part of a batch.
+	ScanGroup string
 	// SessionID and ResumedFromScanID carry a failed scan's claude session
 	// into its retry so the new run continues the conversation with
 	// `claude -p --resume` instead of restarting from turn 0. Both empty
@@ -2338,6 +2349,7 @@ func (s *Server) enqueueSkillWith(ctx context.Context, repoID, skillID uint, opt
 		DependentID:       opts.DependentID,
 		BaselineScanID:    opts.BaselineScanID,
 		SubPath:           opts.SubPath,
+		ScanGroup:         opts.ScanGroup,
 		Ref:               opts.Ref,
 		Profile:           opts.Profile,
 		SessionID:         opts.SessionID,

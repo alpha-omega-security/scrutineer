@@ -40,6 +40,8 @@ Find duplicate findings that fingerprinting missed because their line ranges, si
    - affected package/version scope
    - impact rating
 
+   Weigh each finding's `dup_check` field: when several deep-dives run in parallel, the audit agent records there which siblings it already compared this finding against and why it judged it distinct. Treat that as the agent's own argument, not a verdict — if its reasoning holds against the pair in front of you, it is evidence against merging; if it compared against the wrong finding or got the root cause wrong, override it.
+
 4. Mark a duplicate only when the findings are the same underlying vulnerability. Do not group findings that merely share a CWE, sink type, file, or helper function but have different attacker-controlled inputs, different exploit paths, or different impacts.
 
 5. Choose one canonical finding for each duplicate group. Prefer the lowest database `id` among the open findings unless a later finding has materially better evidence. Never choose a finding with status `fixed`, `published`, `rejected`, or `duplicate` as canonical.

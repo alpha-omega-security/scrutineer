@@ -36,6 +36,7 @@ Scrutineer API (call with `Authorization: Bearer {token}`):
 - `GET {api_base}/repositories/{repository_id}/dependents` — top dependents with download counts (reach)
 - `GET {api_base}/repositories/{repository_id}/scans?skill=threat-model&status=done` — then `GET /scans/{id}` and read `report` for the structured threat model, if one ran (Phase 1 boundaries)
 - `GET {api_base}/repositories/{repository_id}/findings?skill=semgrep` — static-analysis hits from a prior semgrep scan, if one ran (Phase 1 seeds)
+- `GET {api_base}/repositories/{repository_id}/findings?scan_group={scan_group}` — findings a sibling deep-dive in the same parallel batch has already filed (Concurrent findings below)
 - `GET {api_base}/repositories/{repository_id}/scans?skill=repo-overview&status=done` — then `GET /scans/{id}` for the brief summary
 
 If any of those return an empty list or a non-200 status, the upstream scans were not run yet or the API is unreachable; fall back to your own reasoning over `./src`.
@@ -172,6 +173,16 @@ The subagents you spawn do not see this SKILL.md. They get only the prompt you w
 - Tell every subagent, in its prompt, not to write or touch `./report.json`. That file is yours to write, once, at the end.
 - Give each subagent a distinct scratch file for its slice — `./inventory-<area>.json` for a Phase 1 slice, `./dispositions-<area>.json` for a Phase 2 batch — and have it return that path. Distinct names mean two subagents never write the same file, so single-writer is mechanical rather than a thing you have to trust the agents to honour. (Returning the slice as message text works for small slices but truncates and re-transcribes lossily on large ones; on a repository big enough to need fan-out, prefer the scratch file.)
 - You are the sole writer of `./report.json`. Read back every scratch file, union the slices, and write the one report yourself, per Output below.
+
+## Concurrent findings
+
+When several deep-dives run in parallel over one repository — one per subproject, fanned out together — they share a `scrutineer.scan_group` in `context.json`. Two things follow from that, a read before you confirm a finding and a write the moment you do.
+
+**Read.** Before writing up a candidate, fetch what your siblings have already filed under that group: `GET {api_base}/repositories/{repository_id}/findings?scan_group={scan_group}`. The list is best-effort — a sibling still mid-run has only published the findings it has confirmed so far, not all it will. If a candidate is already there (same sink, same root cause), drop it and rule the sink out citing the sibling rather than duplicating it.
+
+**Write.** As soon as you confirm a finding — not at the end, when the whole report lands — `POST {api_base}/repositories/{repository_id}/findings` with that one finding as the body (the same object shape it has in `report.json`: `title`, `severity`, `location`, `cwe`, `sinks`, `dup_check`, …). That publishes it into the shared log immediately, so a sibling still working the same overlap sees it and can stand down instead of re-deriving it ten minutes later. The finding still belongs in your final `report.json` exactly as before; the streamed copy reconciles against it, it does not replace it.
+
+On every finding you report, set `dup_check`: one sentence naming which existing findings you compared against and why this one is distinct. When `scan_group` is absent (an API or chained enqueue that did not set one) or the list came back empty, "no sibling findings to compare against" is a valid `dup_check`.
 
 ## Output
 

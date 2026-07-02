@@ -188,6 +188,10 @@ paths:
           in: query
           description: Only return findings produced by scans of this skill (e.g. `semgrep`, `security-deep-dive`).
           schema: { type: string }
+        - name: scan_group
+          in: query
+          description: Only return findings from scans in this parallel batch, so an in-flight audit skill reads only its siblings' findings.
+          schema: { type: string }
       responses:
         '200':
           description: OK
@@ -196,6 +200,32 @@ paths:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/FindingSummary' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      summary: Stream one finding into the concurrent-finding log
+      description: >
+        Records a single finding emitted mid-scan so sibling scans in the same
+        `scan_group` can read it before this scan completes. The body is one
+        finding in the same shape it has in the skill's `report.json`; the
+        scan's identity (scan id, repository, commit, sub-path) is stamped from
+        the bearer token, never trusted from the body. The finding still
+        belongs in the final `report.json`, which reconciles against the
+        streamed row by fingerprint rather than duplicating it.
+      operationId: streamRepositoryFinding
+      parameters:
+        - $ref: '#/components/parameters/RepositoryID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/FindingInput' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FindingSummary' }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
   /repositories/{id}/dependency-findings:
@@ -1039,6 +1069,11 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
+    BadRequest:
+      description: Malformed request body or a missing required field
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
 
   schemas:
     Error:
@@ -1211,6 +1246,23 @@ components:
         trace:                 { type: string }
         boundary:              { type: string }
 
+    FindingInput:
+      type: object
+      description: >
+        One finding as it appears in a skill's report.json, streamed into the
+        concurrent-finding log. Only title, severity and location are required;
+        the other report.json finding fields (cwe, sinks, dup_check, trace, …)
+        are accepted and stored. Scan-owned identity fields are ignored.
+      required: [title, severity, location]
+      additionalProperties: true
+      properties:
+        title:    { type: string }
+        severity: { type: string, enum: [Critical, High, Medium, Low] }
+        location: { type: string }
+        cwe:      { type: string }
+        sinks:    { type: array, items: { type: string } }
+        dup_check: { type: string, description: "One sentence: which siblings under this scan_group you compared against and why this one is distinct." }
+
     FindingSummary:
       type: object
       required: [id, scan_id, repository_id, severity, location]
@@ -1243,6 +1295,7 @@ components:
         exploited_in_wild_evidence: { type: string }
         mitigation:    { type: string, description: "Markdown body of operational mitigation guidance from the mitigate skill: workarounds, detection, optionally a semgrep rule (see mitigation_semgrep)." }
         mitigation_semgrep: { type: string, description: "Optional YAML semgrep rule from the mitigate skill. Empty when no rule was warranted." }
+        dup_check:     { type: string, description: "Audit agent's one-sentence rationale for why this finding is distinct from the siblings already filed under the same scan_group. Empty for findings from skills that do not emit it." }
 
     FindingDetail:
       allOf:
