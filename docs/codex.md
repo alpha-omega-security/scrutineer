@@ -19,15 +19,38 @@ credential and start scrutineer:
 or in `scrutineer.yaml`:
 
     backend: codex
-    default_model: gpt-5-codex
+    default_model: gpt-5.3-codex
     models:
-      - name: GPT-5 Codex
-        id:   gpt-5-codex
+      - name: GPT-5.3 Codex
+        id:   gpt-5.3-codex
+        tier: high
+      - name: GPT-5.4
+        id:   gpt-5.4
+      - name: GPT-5.4 mini
+        id:   gpt-5.4-mini
+        tier: mid
+      - name: GPT-5.5
+        id:   gpt-5.5
+        tier: max
 
-Codex Pro accounts (the ChatGPT login flow rather than an API key) authenticate
-via `auth0.openai.com` and `chatgpt.com`; both are on the egress allowlist by
-default. To point codex at a different endpoint, pass `-anthropic-base-url` or
-set `anthropic_base_url:` in config for now; scrutineer adds the host to the
+The `tier:` tag names which entry the mid/high/max model tier defaults to
+(shown in `/settings`). Without it, tier defaults use a claude-name heuristic
+that won't match OpenAI ids and every tier collapses to `default_model`.
+
+Model ids must be in the pinned codex version's built-in catalog
+(`codex-rs/models-manager/models.json` at the `rust-v${CODEX_VERSION}` tag);
+an id codex doesn't recognise still runs but emits a "model metadata not
+found" error item into every scan log (openai/codex#12100).
+
+Codex also supports a ChatGPT login flow (Codex Pro accounts, via
+`auth0.openai.com` / `chatgpt.com`) and those hosts are on the egress
+allowlist, but headless `codex exec` inside a container with a fresh per-scan
+`CODEX_HOME` cannot drive the interactive browser step, so a host-side `codex
+login` does not reach the scan and `CODEX_API_KEY` is the only working
+credential path.
+
+To point codex at a different endpoint, pass `-anthropic-base-url` or set
+`anthropic_base_url:` in config for now; scrutineer adds the host to the
 allowlist and passes the value to codex as `openai_base_url`.
 
 The codex backend requires the containerised runner. `--no-container` with
@@ -42,7 +65,7 @@ Everything the container runner asks of the agent CLI goes through the
 | Aspect | claude | codex |
 | --- | --- | --- |
 | Binary | `claude` | `codex` |
-| Argv | `claude -p --output-format stream-json ...` | `codex exec --json --sandbox workspace-write --skip-git-repo-check ...` |
+| Argv | `claude -p --output-format stream-json ...` | `codex exec --json --sandbox danger-full-access --skip-git-repo-check ...` |
 | Skill staging | `./.claude/skills/{name}/SKILL.md` | `./skills/{name}/SKILL.md` |
 | Project memory | `CLAUDE.md` | `AGENTS.md` |
 | Egress hosts | `*.anthropic.com` | `api.openai.com`, `auth0.openai.com`, `chatgpt.com` |
@@ -72,18 +95,22 @@ whole of what it sees.
 
 The session store (codex's thread database under `CODEX_HOME`) is bind-mounted
 the same way claude's is, so a retried scan can `codex exec resume <thread-id>`
-the previous run. The container mountpoint is still named `/claude-config` and
-the host directory `{data}/claude-config/scan-N`; that's historical and will be
-renamed once a second harness has soaked.
+the previous run. Each scan records which backend ran it (`scans.backend`), and
+a retry after switching `-backend` starts fresh rather than passing a codex
+thread id to `claude --resume` or vice versa. The container mountpoint is still
+named `/claude-config` and the host directory `{data}/claude-config/scan-N`;
+that's historical and will be renamed once a second harness has soaked.
 
 ## Sandbox interaction
 
-Codex has its own sandbox modes (`--sandbox workspace-write` /
-`danger-full-access`). Scrutineer runs it under `workspace-write`, the lightest
-mode that lets codex edit `/work`, with `--skip-git-repo-check` so the
-workspace doesn't need to be a git checkout. The container already drops all
-caps, runs non-root, mounts the workspace, and gates egress through the proxy;
-codex's sandbox is layered inside that, not a substitute for it. Under
+Codex has its own sandbox modes (`read-only` / `workspace-write` /
+`danger-full-access`). On Linux the first two are implemented with
+`bubblewrap`, which is not in the runner image and would not work under its
+`--cap-drop ALL` and default seccomp profile anyway (bwrap needs unprivileged
+user namespaces). Scrutineer's container already drops all caps, runs
+non-root, mounts the workspace, and gates egress through the proxy; that is
+the sandbox, so scrutineer runs codex with `--sandbox danger-full-access` and
+`--skip-git-repo-check`, disabling codex's own layer inside it. Under
 `--hardened` the read-only rootfs and per-scan `--internal` network apply
 exactly as for claude.
 
@@ -100,11 +127,13 @@ wall-clock limit still applies.
 Claude's `-effort` setting has no codex equivalent and is ignored.
 
 The stream parser (`CodexHarness.ParseStream`) maps codex's `--json` events
-onto the scan log: `session_id` / `thread_id` become session events (so resume
-works), nested `item` command/tool events show as tool calls, nested agent
-message text is emitted as text, `error` events surface as errors, and unknown
-shapes fall through as raw text rather than being dropped. Reports of rough
-edges welcome on #211.
+onto the scan log, verified against a live codex 0.142.5 run: `thread.started`
+becomes the session event (so resume works), `item.completed` agent messages
+are text, `item.completed` command/tool executions are tool calls
+(`item.started` for the same id is dropped so a command shows once), item-level
+`error` events surface as errors, `turn.completed` becomes the result event
+with token usage, and unknown shapes fall through as raw text rather than being
+dropped. Reports of rough edges welcome on #211.
 
 The `-anthropic-base-url` flag is reused as the model-API base-URL override for
 whichever harness is active; under codex it becomes the `openai_base_url` config
