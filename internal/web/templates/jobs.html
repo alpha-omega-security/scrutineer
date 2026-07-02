@@ -81,7 +81,8 @@
     <i data-lucide="triangle-alert"></i>
     <section>
       <strong>Claude account access paused.</strong>
-      Queued scans were held automatically. Resume them once the account recovers.
+      Queued scans were paused automatically.
+      {{if .NextAccountResume}}Scrutineer will resume them after {{.NextAccountResume.UTC.Format "2006-01-02 15:04 UTC"}}.{{else}}Resume them once the account recovers.{{end}}
     </section>
   </div>
 {{end}}

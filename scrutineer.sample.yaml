@@ -126,6 +126,9 @@
 # environment variable when empty.
 # anthropic_base_url: https://my-proxy.corp.com/v1
 
+# Claude subscription rate-limit auto-resume needs no configuration. Reset times
+# come from claude-code stream output; latest window status appears on /usage.
+
 # The model picker in the UI. Replacing this list replaces the built-in
 # set (Opus, Sonnet, Fable). Leave it out to keep the built-in list.
 # models:

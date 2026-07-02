@@ -153,9 +153,13 @@ func (l LocalClaude) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)
 
 	emit(Event{Kind: KindText, Text: "$ claude -p <skill:" + sj.Name + ">"})
 	accountErrText := ""
+	var lastRateLimit *RateLimitInfo
 	wrappedEmit := func(e Event) {
-		if accountErrText == "" {
-			accountErrText = claudeAccountErrorText(e.Text)
+		accountErrText = preferAccountErrText(accountErrText, claudeAccountErrorText(e.Text))
+		// Keep the latest reported window; account-pause extension reconciles
+		// concurrent scans to the furthest reset.
+		if e.Kind == KindRateLimit && e.RateLimit != nil {
+			lastRateLimit = e.RateLimit
 		}
 		emit(e)
 	}
@@ -187,7 +191,7 @@ func (l LocalClaude) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)
 			return res, &MaxTurnsReachedError{}
 		}
 		if accountErrText != "" {
-			return res, &ClaudeAccountError{Detail: accountErrText}
+			return res, &ClaudeAccountError{Detail: accountErrText, ResetAt: resumableReset(accountErrText, lastRateLimit)}
 		}
 		return res, fmt.Errorf("claude exited: %w", waitErr)
 	}
