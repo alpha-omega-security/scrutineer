@@ -34,11 +34,13 @@ func (CodexHarness) Args(sj SkillJob, _ string, _ int, baseURL string) []string 
 	args = append(args,
 		"exec",
 		"--json",
-		// scrutineer's container already drops caps, runs non-root,
-		// mounts the workspace, and gates egress through the proxy;
-		// codex's own sandbox would only fight that. workspace-write
-		// is the lightest mode that still lets codex edit /work.
-		"--sandbox", "workspace-write",
+		// codex's Linux sandbox is bubblewrap, which is not in the runner
+		// image and would not work under its --cap-drop ALL / default
+		// seccomp anyway (bwrap needs unprivileged userns). Scrutineer's
+		// container already drops all caps, runs non-root, mounts /work,
+		// and gates egress through the proxy -- that IS the sandbox --
+		// so disable codex's own layer rather than fight it.
+		"--sandbox", "danger-full-access",
 		"--skip-git-repo-check",
 	)
 	if sj.Model != "" {
@@ -95,9 +97,9 @@ func (CodexHarness) ParseStream(r io.Reader, emit func(Event)) {
 }
 
 // codexLine is the subset of `codex exec --json` event fields the
-// harness needs. Unknown types fall through to KindText so the scan
-// log still shows them; refine as the format is exercised against a
-// real codex run.
+// harness reads. Shapes here were verified against a live codex 0.142.5
+// run; unknown types still fall through to KindText so the scan log
+// shows them rather than dropping them.
 type codexLine struct {
 	Type      string          `json:"type"`
 	SessionID string          `json:"session_id"`
@@ -109,15 +111,25 @@ type codexLine struct {
 	Input     json.RawMessage `json:"input"`
 	Error     string          `json:"error"`
 	Item      *codexItem      `json:"item"`
+	Usage     *codexUsage     `json:"usage"`
 }
 
 type codexItem struct {
 	Type    string          `json:"type"`
 	Text    string          `json:"text"`
+	Message string          `json:"message"`
 	Command string          `json:"command"`
 	Tool    string          `json:"tool"`
 	Name    string          `json:"name"`
 	Input   json.RawMessage `json:"input"`
+}
+
+// codexUsage is the turn.completed token breakdown. Mapped onto the
+// harness-neutral Usage struct so codex runs report tokens like claude runs.
+type codexUsage struct {
+	InputTokens       int `json:"input_tokens"`
+	CachedInputTokens int `json:"cached_input_tokens"`
+	OutputTokens      int `json:"output_tokens"`
 }
 
 func parseCodexLine(raw []byte, emit func(Event)) {
@@ -127,6 +139,12 @@ func parseCodexLine(raw []byte, emit func(Event)) {
 	}
 	var ev codexLine
 	if err := json.Unmarshal(raw, &ev); err != nil {
+		// codex writes this to stderr on every headless run even with
+		// stdin at /dev/null; container.go merges stderr into the stream,
+		// so drop it here rather than show it in every scan log.
+		if strings.HasPrefix(line, "Reading additional input from stdin") {
+			return
+		}
 		emit(Event{Kind: KindText, Text: line})
 		return
 	}
@@ -137,6 +155,25 @@ func parseCodexLine(raw []byte, emit func(Event)) {
 			id = ev.ThreadID
 		}
 		emit(Event{Kind: KindSession, SessionID: id})
+	case ev.Type == "turn.started":
+		// Pure marker, no payload; item.completed events carry the content.
+		return
+	case ev.Type == "turn.completed":
+		var u Usage
+		if ev.Usage != nil {
+			u = Usage{
+				InputTokens:     ev.Usage.InputTokens,
+				OutputTokens:    ev.Usage.OutputTokens,
+				CacheReadTokens: ev.Usage.CachedInputTokens,
+			}
+		}
+		emit(Event{Kind: KindResult, Usage: u})
+	case ev.Type == "item.started":
+		// item.completed for the same id carries the same fields plus the
+		// result; emitting both would show every command twice in the log.
+		return
+	case ev.Item != nil && ev.Item.Type == "error":
+		emit(Event{Kind: KindError, Text: ev.Item.Message})
 	case ev.Item != nil && ev.Item.Text != "":
 		emit(Event{Kind: KindText, Text: ev.Item.Text})
 	case ev.Item != nil && isCodexToolItem(ev.Item.Type):
