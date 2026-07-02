@@ -53,7 +53,7 @@
         </td>
         <td class="text-muted-foreground">{{if .Languages}}{{.Languages}}{{else}}-{{end}}</td>
         <td>{{if .LastScan}}<span title="{{.LastScan.CreatedAt.Format "2006-01-02 15:04:05 MST"}}">{{.LastScan.CreatedAt.Format "2006-01-02 15:04"}}</span>{{else}}never{{end}}</td>
-        <td>{{if .LastScan}}{{template "status-badge" (status .LastScan.Status)}}{{end}}</td>
+        <td>{{if .StatusScan}}{{template "status-badge" (status .StatusScan.Status)}}{{end}}</td>
         <td>{{template "findings-badge" .FindingsTotal}}</td>
         <td class="text-muted-foreground">{{if .DiskBytes}}{{bytes .DiskBytes}}{{else}}-{{end}}</td>
         <td>
