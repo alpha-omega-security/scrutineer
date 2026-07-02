@@ -251,6 +251,9 @@ type Scan struct {
 	Report string
 	Log    string
 	Error  string
+	// PausedUntil is set for model-account pauses with a known reset time.
+	// Nil means a manual pause or an account pause without a reported reset.
+	PausedUntil *time.Time `gorm:"index"`
 
 	// ImportPayload carries the raw uploaded report for an ingest-skill
 	// run created by the /v1/import fallback. The worker stages it into

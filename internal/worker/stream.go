@@ -6,15 +6,17 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 )
 
 const (
-	KindThinking = "thinking"
-	KindText     = "text"
-	KindTool     = "tool"
-	KindResult   = "result"
-	KindError    = "error"
-	KindSession  = "session"
+	KindThinking  = "thinking"
+	KindText      = "text"
+	KindTool      = "tool"
+	KindResult    = "result"
+	KindError     = "error"
+	KindSession   = "session"
+	KindRateLimit = "rate_limit"
 
 	lineLimit = 300
 )
@@ -25,10 +27,29 @@ type Event struct {
 	Kind      string
 	Tool      string // for KindTool
 	Text      string
-	CostUSD   float64 // for KindResult
-	Turns     int     // for KindResult
-	Usage     Usage   // for KindResult
-	SessionID string  // for KindSession
+	CostUSD   float64        // for KindResult
+	Turns     int            // for KindResult
+	Usage     Usage          // for KindResult
+	SessionID string         // for KindSession
+	RateLimit *RateLimitInfo // for KindRateLimit
+}
+
+// RateLimitInfo is the subscription limit status claude-code reports in a
+// rate_limit_event line; it feeds auto-resume and the usage page panel.
+type RateLimitInfo struct {
+	Status   string `json:"status"`
+	ResetsAt int64  `json:"resetsAt"`
+	Type     string `json:"rateLimitType"`
+}
+
+// ResetTime converts the epoch-seconds resetsAt into a UTC time, or nil when
+// the event carried no usable reset (nil receiver or non-positive timestamp).
+func (r *RateLimitInfo) ResetTime() *time.Time {
+	if r == nil || r.ResetsAt <= 0 {
+		return nil
+	}
+	t := time.Unix(r.ResetsAt, 0).UTC()
+	return &t
 }
 
 // Usage is the token breakdown from a result event.
@@ -40,16 +61,17 @@ type Usage struct {
 }
 
 type streamMessage struct {
-	Type      string          `json:"type"`
-	Subtype   string          `json:"subtype"`
-	SessionID string          `json:"session_id"`
-	Message   *assistantMsg   `json:"message"`
-	Result    json.RawMessage `json:"result"`
-	CostUSD   *float64        `json:"total_cost_usd"`
-	Duration  *int64          `json:"duration_ms"`
-	NumTurns  *int            `json:"num_turns"`
-	Usage     *Usage          `json:"usage"`
-	Error     json.RawMessage `json:"error"`
+	Type          string          `json:"type"`
+	Subtype       string          `json:"subtype"`
+	SessionID     string          `json:"session_id"`
+	Message       *assistantMsg   `json:"message"`
+	Result        json.RawMessage `json:"result"`
+	CostUSD       *float64        `json:"total_cost_usd"`
+	Duration      *int64          `json:"duration_ms"`
+	NumTurns      *int            `json:"num_turns"`
+	Usage         *Usage          `json:"usage"`
+	Error         json.RawMessage `json:"error"`
+	RateLimitInfo *RateLimitInfo  `json:"rate_limit_info"`
 }
 
 type assistantMsg struct {
@@ -127,6 +149,10 @@ func parseStreamLine(raw []byte, emit func(Event)) {
 			s = string(msg.Error)
 		}
 		emit(Event{Kind: KindError, Text: s})
+	case "rate_limit_event":
+		if msg.RateLimitInfo != nil {
+			emit(Event{Kind: KindRateLimit, RateLimit: msg.RateLimitInfo})
+		}
 	}
 }
 
@@ -213,6 +239,15 @@ func FormatEvent(e Event) string {
 		return fmt.Sprintf("[result] cost=$%.4f turns=%d %s", e.CostUSD, e.Turns, truncate(e.Text))
 	case KindSession:
 		return "[session] " + e.SessionID
+	case KindRateLimit:
+		if e.RateLimit == nil {
+			return "[rate-limit]"
+		}
+		line := "[rate-limit] " + e.RateLimit.Type + " " + e.RateLimit.Status
+		if t := e.RateLimit.ResetTime(); t != nil {
+			line += " resets " + t.Format("2006-01-02 15:04 UTC")
+		}
+		return line
 	case KindError:
 		return "[error] " + e.Text
 	default:

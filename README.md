@@ -27,6 +27,8 @@ Then start scrutineer:
 
 Then open http://127.0.0.1:8080.
 
+Large batches pause and resume automatically at a Claude rate-limit wall, with no extra configuration. When claude-code (running with a Claude subscription token) reports an account-level rate/usage limit, scrutineer pauses the remaining queued scans, reads the reset time from the `rate_limit_event` claude-code emits in its own output, and re-queues the paused batch after that reset. If no reset is reported (for example an API-key account, which does not emit those events), the batch stays paused for manual resume. The most recent per-window status is shown on the `/usage` page.
+
 Scrutineer detects Docker and starts using it automatically: each scan runs in an ephemeral container with a read-only source mount and an egress allowlist proxy. The runner image (`ghcr.io/alpha-omega-security/scrutineer-runner`) is pulled on first use, so the first scan is slower while it downloads. If Docker isn't available scans run directly on the host with no isolation; see the Security section before doing that.
 
 Click **Add repository** in the sidebar, paste a git HTTPS URL, and scrutineer enqueues the `triage` skill. To scan a maintained branch instead of the default, fill the **Branch** field (it suggests the remote's branches as you type and also accepts a tag or commit), or append a `/tree/<branch>` suffix to the URL; the suffix also works one-per-line when bulk-importing. Triage then enqueues the rest of the pipeline in parallel. Metadata and package lookups finish in seconds; the security deep-dive takes a few minutes depending on repo size. Open the repo page and switch to the Scans tab to watch progress, or wait for the Findings tab to fill in.
@@ -103,7 +105,7 @@ When the containerised runner is active (the default when a container runtime is
 - **Skill HTTP API** -- running skills can call back into scrutineer to list prior scans and enqueue further skills; surface documented in `openapi.yaml`
 - **Live updates** -- SSE streaming of scan logs and status changes, no polling
 - **Organisation rollup** -- repos, findings, and maintainers grouped by owning org, with per-org markdown exports
-- **Usage tracking** -- per-scan token and cost figures plus a `/usage` page totalling spend per skill
+- **Usage tracking** -- per-scan token and cost figures plus a `/usage` page totalling spend per skill; on a Claude subscription token, a rate-limit wall auto-pauses the batch and resumes it after the reported reset, with per-window status shown on `/usage`
 - **Themes** -- six colour themes plus a light/dark/system toggle, set on the Settings page
 
 ## The default pipeline

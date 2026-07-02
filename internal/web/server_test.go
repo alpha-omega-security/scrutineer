@@ -4248,12 +4248,14 @@ func TestJobs_showsAccountPauseResumeActions(t *testing.T) {
 
 	repo := db.Repository{URL: "https://example.com/x.git", Name: "x"}
 	s.DB.Create(&repo)
+	resetAt := time.Date(2026, 7, 1, 12, 30, 0, 0, time.UTC)
 	// A scan auto-paused because the account hit an account-level Claude problem.
 	// The banner should surface it and the Resume-paused action should be offered.
 	s.DB.Create(&db.Scan{
 		RepositoryID: repo.ID, Kind: "skill", Status: db.ScanPaused,
 		StatusPriority: db.StatusPriorityFor(db.ScanPaused),
-		Error:          "Claude account access paused. Queued scan held automatically; resume once the account recovers.",
+		Error:          "Claude account access paused. Queued scan paused automatically; resume once the account recovers.",
+		PausedUntil:    &resetAt,
 	})
 
 	w := httptest.NewRecorder()
@@ -4262,7 +4264,7 @@ func TestJobs_showsAccountPauseResumeActions(t *testing.T) {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
 	body := w.Body.String()
-	for _, want := range []string{"Claude account access paused", "/scans/resume-paused"} {
+	for _, want := range []string{"Claude account access paused", "/scans/resume-paused", "2026-07-01 12:30 UTC"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q in jobs body", want)
 		}
