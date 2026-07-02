@@ -5,6 +5,7 @@ import (
 	"sort"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/worker"
 )
 
 // SkillUsage is one row of the /usage page: aggregate cost and turn
@@ -117,6 +118,7 @@ func (s *Server) usage(w http.ResponseWriter, r *http.Request) {
 		"TotalCost": totalCost,
 		"TotalRuns": totalRuns,
 		"View":      view,
+		"RateLimit": buildRateLimitPanel(s.Worker.RateLimitStatus()),
 	})
 }
 
@@ -157,4 +159,40 @@ func percentile(sorted []float64, p float64) float64 {
 		return sorted[len(sorted)-1]
 	}
 	return sorted[lo] + frac*(sorted[lo+1]-sorted[lo])
+}
+
+// rateLimitPanel is the usage page's in-memory Claude rate-limit snapshot.
+type rateLimitPanel struct {
+	Rows []rateLimitRow
+}
+
+type rateLimitRow struct {
+	Window  string
+	Status  string
+	ResetAt string
+}
+
+func rateLimitWindowLabel(t string) string {
+	switch t {
+	case "five_hour":
+		return "5-hour"
+	case "seven_day":
+		return "7-day"
+	default:
+		return t
+	}
+}
+
+// buildRateLimitPanel formats the worker's latest per-window stream status.
+func buildRateLimitPanel(statuses []worker.RateLimitInfo) rateLimitPanel {
+	var p rateLimitPanel
+	for _, st := range statuses {
+		row := rateLimitRow{Window: rateLimitWindowLabel(st.Type), Status: st.Status}
+		if t := st.ResetTime(); t != nil {
+			row.ResetAt = t.UTC().Format("2006-01-02 15:04 UTC")
+		}
+		p.Rows = append(p.Rows, row)
+	}
+	sort.Slice(p.Rows, func(i, j int) bool { return p.Rows[i].Window < p.Rows[j].Window })
+	return p
 }

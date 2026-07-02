@@ -60,6 +60,7 @@ func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 		"Skill": skillName, "Status": status, "Sort": sort, "Skills": skillNames,
 		"AnySubPath": anySubPath, "QueuedCount": stats.QueuedCount, "PausedCount": stats.PausedCount,
 		"AccountPausedCount": stats.AccountPausedCount,
+		"NextAccountResume":  stats.NextAccountResume,
 	})
 }
 
@@ -67,6 +68,7 @@ type scanListStats struct {
 	QueuedCount        int64
 	PausedCount        int64
 	AccountPausedCount int64
+	NextAccountResume  *time.Time
 }
 
 func (s *Server) scanListStats() scanListStats {
@@ -82,6 +84,13 @@ func (s *Server) scanListStats() scanListStats {
 			worker.ClaudeAccountPausePrefix+"%",
 		).
 		Scan(&stats)
+	var next db.Scan
+	s.DB.Select("id", "paused_until").
+		Where("status = ? AND error LIKE ? AND paused_until IS NOT NULL", db.ScanPaused, worker.ClaudeAccountPausePrefix+"%").
+		Order("paused_until ASC").
+		Limit(1).
+		Find(&next)
+	stats.NextAccountResume = next.PausedUntil
 	return stats
 }
 
@@ -315,6 +324,7 @@ func (s *Server) resumeScan(ctx context.Context, scan *db.Scan) error {
 		"status_priority": db.StatusPriorityFor(db.ScanQueued),
 		errorKey:          "",
 		"finished_at":     nil,
+		"paused_until":    nil,
 	}).Error
 }
 

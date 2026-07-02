@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/worker"
 )
 
 func almostEq(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
@@ -111,6 +112,42 @@ func TestUsage_perSkillStatsAndOrdering(t *testing.T) {
 	// Ordered by total cost desc: deep-dive ($12) before metadata ($0.0046).
 	if strings.Index(body, "security-deep-dive") > strings.Index(body, ">metadata<") {
 		t.Errorf("expected deep-dive row before metadata row")
+	}
+}
+
+func TestBuildRateLimitPanel(t *testing.T) {
+	reset := time.Date(2026, 7, 1, 12, 30, 0, 0, time.UTC)
+	// Unsorted input across both windows; the panel sorts by window label.
+	statuses := []worker.RateLimitInfo{
+		{Type: "seven_day", Status: "allowed", ResetsAt: reset.Add(48 * time.Hour).Unix()},
+		{Type: "five_hour", Status: "rejected", ResetsAt: reset.Unix()},
+	}
+	p := buildRateLimitPanel(statuses)
+	if len(p.Rows) != 2 {
+		t.Fatalf("rows = %d, want 2", len(p.Rows))
+	}
+	if p.Rows[0].Window != "5-hour" || p.Rows[1].Window != "7-day" {
+		t.Fatalf("window order = %q,%q, want 5-hour,7-day", p.Rows[0].Window, p.Rows[1].Window)
+	}
+	if p.Rows[0].Status != "rejected" {
+		t.Errorf("status = %q, want rejected", p.Rows[0].Status)
+	}
+	if p.Rows[0].ResetAt != "2026-07-01 12:30 UTC" {
+		t.Errorf("reset = %q, want formatted UTC", p.Rows[0].ResetAt)
+	}
+	if got := buildRateLimitPanel(nil); len(got.Rows) != 0 {
+		t.Errorf("nil statuses yielded %d rows, want 0", len(got.Rows))
+	}
+}
+
+func TestUsage_hidesRateLimitPanelWhenNoStatus(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	// No rate_limit_event captured -> panel is absent.
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/usage"))
+	if strings.Contains(w.Body.String(), "Claude subscription limits") {
+		t.Error("rate-limit panel rendered with no captured status")
 	}
 }
 
