@@ -2,8 +2,10 @@ package worker
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -91,6 +93,41 @@ func writeMarkerFile(t *testing.T, dir, name string) {
 		t.Fatalf("write %s: %v", path, err)
 	}
 }
+
+// writeFileAt writes contents to a slash-separated path relative to dir,
+// creating intermediate directories. Used for the ruby-ext markers, which
+// live under ext/<name>/ rather than at the repo root.
+func writeFileAt(t *testing.T, dir, rel, contents string) {
+	t.Helper()
+	const (
+		fileMode = 0o644
+		dirMode  = 0o755
+	)
+	path := filepath.Join(dir, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(path), dirMode); err != nil {
+		t.Fatalf("mkdir for %s: %v", path, err)
+	}
+	if err := os.WriteFile(path, []byte(contents), fileMode); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+// gemspecWithExtensions declares spec.extensions — RubyGems' own marker that
+// the gem builds native code. gemspecPureRuby mentions the word "extensions"
+// only in prose, so the ".extensions" Contains check must NOT match it.
+const gemspecWithExtensions = `Gem::Specification.new do |spec|
+  spec.name = "example"
+  spec.version = "1.0.0"
+  spec.extensions = ["ext/example/extconf.rb"]
+end
+`
+
+const gemspecPureRuby = `Gem::Specification.new do |spec|
+  spec.name = "example"
+  spec.version = "1.0.0"
+  spec.summary = "adds some useful extensions to core classes"
+end
+`
 
 //nolint:maintidx // exhaustive table: one case per builtinProfiles entry plus precedence/fallback edges; splitting would scatter the coverage.
 func TestMatchProfile(t *testing.T) {
@@ -427,6 +464,124 @@ func TestMatchProfile(t *testing.T) {
 			want: "",
 		},
 		{
+			name: "gemspec with spec.extensions selects ruby-ext",
+			json: `{"package_managers":[{"name":"Bundler"}]}`,
+			setup: func(t *testing.T, dir string) {
+				writeFileAt(t, dir, "example.gemspec", gemspecWithExtensions)
+			},
+			want: "ruby-ext",
+		},
+		{
+			name: "ext/<name>/extconf.rb selects ruby-ext",
+			json: `{"package_managers":[{"name":"Bundler"}]}`,
+			setup: func(t *testing.T, dir string) {
+				writeFileAt(t, dir, "ext/example/extconf.rb", "require 'mkmf'\ncreate_makefile('example')\n")
+			},
+			want: "ruby-ext",
+		},
+		{
+			name: "nested ext/<name>/<sub>/extconf.rb selects ruby-ext (bounded walk)",
+			json: `{"package_managers":[{"name":"Bundler"}]}`,
+			setup: func(t *testing.T, dir string) {
+				writeFileAt(t, dir, "ext/example/native/extconf.rb", "require 'mkmf'\n")
+			},
+			want: "ruby-ext",
+		},
+		{
+			name: "root extconf.rb selects ruby-ext (older single-dir gems)",
+			json: `{"package_managers":[{"name":"Bundler"}]}`,
+			setup: func(t *testing.T, dir string) {
+				writeFileAt(t, dir, "extconf.rb", "require 'mkmf'\n")
+			},
+			want: "ruby-ext",
+		},
+		{
+			name: "ext/<name>/Cargo.toml naming rb-sys selects ruby-ext (Cargo-native)",
+			json: `{"package_managers":[{"name":"Bundler"}]}`,
+			setup: func(t *testing.T, dir string) {
+				writeFileAt(t, dir, "ext/example/Cargo.toml", "[package]\nname = \"example\"\n\n[dependencies]\nrb-sys = \"0.9\"\n")
+			},
+			want: "ruby-ext",
+		},
+		{
+			// A Cargo-native gem (ext/**/Cargo.toml names rb-sys) still beats
+			// the rust profile even when brief only reports Cargo, because
+			// ruby-ext precedes rust in the registry.
+			name: "cargo-native gem naming rb-sys matches ruby-ext over rust",
+			json: `{"package_managers":[{"name":"Cargo"}]}`,
+			setup: func(t *testing.T, dir string) {
+				writeFileAt(t, dir, "ext/example/Cargo.toml", "[dependencies]\nrb-sys = \"0.9\"\n")
+			},
+			want: "ruby-ext",
+		},
+		{
+			// A pure-Rust crate that merely has an ext/ dir with a nested
+			// Cargo.toml (no rb-sys) must route to rust, not ruby-ext: ruby-ext
+			// is not a superset of rust (no Miri), so the Cargo.toml marker is
+			// gated on an rb-sys mention.
+			name: "pure-rust ext/**/Cargo.toml does not match ruby-ext, cargo picks rust",
+			json: `{"package_managers":[{"name":"Cargo"}]}`,
+			setup: func(t *testing.T, dir string) {
+				writeFileAt(t, dir, "ext/vendored/Cargo.toml", "[package]\nname = \"vendored\"\n")
+			},
+			want: "rust",
+		},
+		{
+			name: "ruby-ext matches without a package manager (brief unavailable)",
+			json: `{"package_managers":[]}`,
+			setup: func(t *testing.T, dir string) {
+				writeFileAt(t, dir, "ext/example/extconf.rb", "require 'mkmf'\n")
+			},
+			want: "ruby-ext",
+		},
+		{
+			name: "pure-ruby gemspec mentioning 'extensions' in prose does not match ruby-ext",
+			json: `{"package_managers":[{"name":"Bundler"}]}`,
+			setup: func(t *testing.T, dir string) {
+				writeFileAt(t, dir, "example.gemspec", gemspecPureRuby)
+			},
+			want: "ruby",
+		},
+		{
+			name: "pure-ruby Bundler repo selects ruby",
+			json: `{"package_managers":[{"name":"Bundler"}]}`,
+			setup: func(t *testing.T, dir string) {
+				writeFileAt(t, dir, "Gemfile", "source 'https://rubygems.org'\n")
+			},
+			want: "ruby",
+		},
+		{
+			name: "config/application.rb selects ruby-rails",
+			json: `{"package_managers":[{"name":"Bundler"}]}`,
+			setup: func(t *testing.T, dir string) {
+				writeFileAt(t, dir, "config/application.rb", "module App\n  class Application < Rails::Application\n  end\nend\n")
+			},
+			want: "ruby-rails",
+		},
+		{
+			// A config/application.rb that doesn't name Rails::Application (a
+			// coincidental path, any language) must not route to ruby-rails.
+			name: "config/application.rb without Rails::Application does not match ruby-rails",
+			json: `{"package_managers":[{"name":"Bundler"}]}`,
+			setup: func(t *testing.T, dir string) {
+				writeFileAt(t, dir, "config/application.rb", "# app config\nAPP_ROOT = __dir__\n")
+			},
+			want: "ruby", // Bundler still picks ruby; ruby-rails needs the Rails marker
+		},
+		{
+			// A Rails app that also ships a native extension matches both
+			// ruby-rails and ruby-ext; ruby-ext wins on registry order, and
+			// since ruby-ext now also carries Brakeman (a superset of
+			// ruby-rails) that no longer drops Rails SAST.
+			name: "ruby-ext beats ruby-rails when a Rails app also ships a native ext (registry order)",
+			json: `{"package_managers":[{"name":"Bundler"}]}`,
+			setup: func(t *testing.T, dir string) {
+				writeFileAt(t, dir, "config/application.rb", "class Application < Rails::Application; end\n")
+				writeFileAt(t, dir, "ext/example/extconf.rb", "require 'mkmf'\n")
+			},
+			want: "ruby-ext",
+		},
+		{
 			name:    "marker profile cannot match without srcDir",
 			json:    `{"package_managers":[]}`,
 			noSrcOK: true,
@@ -447,6 +602,52 @@ func TestMatchProfile(t *testing.T) {
 				t.Errorf("matchProfile = %q, want %q", got.Name, tt.want)
 			}
 		})
+	}
+}
+
+// TestWalkMarkerPresent_bounded locks the Walk matcher's depth bound: an
+// extconf.rb buried below markerWalkMaxDepth must not match (so a pathological
+// tree can't turn every repo into a ruby-ext candidate), while one within the
+// bound does.
+func TestWalkMarkerPresent_bounded(t *testing.T) {
+	m := ProfileMarker{Path: "ext/extconf.rb", Walk: true}
+
+	deep := t.TempDir()
+	rel := "ext/" + strings.Repeat("a/", markerWalkMaxDepth+2) + "extconf.rb"
+	writeFileAt(t, deep, rel, "require 'mkmf'\n")
+	if markerPresent(m, deep) {
+		t.Errorf("extconf.rb below depth %d should not match", markerWalkMaxDepth)
+	}
+
+	shallow := t.TempDir()
+	writeFileAt(t, shallow, "ext/example/extconf.rb", "require 'mkmf'\n")
+	if !markerPresent(m, shallow) {
+		t.Errorf("extconf.rb within depth bound should match")
+	}
+}
+
+// TestWalkMarkerPresent_fileCapAborts locks the file-count bound: once more
+// than maxFiles entries have been visited the walk aborts via SkipAll, so a
+// target sorted after the filler (only reached past the cap) is not found;
+// raising the cap by one finds it. Exercised through walkMarkerPresentBounded
+// so it needs a handful of files, not markerWalkMaxFiles of them.
+func TestWalkMarkerPresent_fileCapAborts(t *testing.T) {
+	m := ProfileMarker{Path: "ext/extconf.rb", Walk: true}
+	dir := t.TempDir()
+	// Filler files ("a00.txt"..) sort before the target ("extconf.rb"), so the
+	// target is visited only after all of them; WalkDir walks entries in
+	// lexical order, so a cap at the filler count trips before the match.
+	const filler = 5
+	for i := 0; i < filler; i++ {
+		writeFileAt(t, dir, fmt.Sprintf("ext/a%02d.txt", i), "x\n")
+	}
+	writeFileAt(t, dir, "ext/extconf.rb", "require 'mkmf'\n")
+
+	if walkMarkerPresentBounded(m, dir, markerWalkMaxDepth, filler) {
+		t.Errorf("walk should abort at the %d-file cap before reaching the target", filler)
+	}
+	if !walkMarkerPresentBounded(m, dir, markerWalkMaxDepth, filler+1) {
+		t.Errorf("with the cap above the file count the target should be found")
 	}
 }
 
@@ -548,6 +749,26 @@ func TestEnsureImage_missingDockerfile(t *testing.T) {
 	}
 }
 
+func TestEnsureImage_unknownBaseProfile(t *testing.T) {
+	dir := t.TempDir()
+	var emitted int
+	// A BaseProfile that names no registered profile is a registry bug, not a
+	// runtime one: EnsureImage errors out before touching the runtime (there is
+	// no base image to build FROM). TestBuiltinProfiles_registrySanity guards
+	// the real registry against this; here we lock the runtime behaviour.
+	_, err := Profile{Name: "ruby-rails", BaseProfile: "nope"}.EnsureImage(
+		context.Background(), ContainerRuntime{}, dir, "runner:latest", func(Event) { emitted++ })
+	if err == nil {
+		t.Fatal("expected error for unknown base profile, got nil")
+	}
+	if !strings.Contains(err.Error(), "unknown base profile") {
+		t.Errorf("error = %v, want it to mention the unknown base profile", err)
+	}
+	if emitted != 0 {
+		t.Errorf("unknown-base path emitted %d events, want 0", emitted)
+	}
+}
+
 // TestBuiltinProfiles_registrySanity guards the invariants matchProfile
 // and the validators rely on: every entry must have a name and either an
 // Ecosystem or at least one Marker, names must be unique, and ecosystems
@@ -580,6 +801,20 @@ func TestBuiltinProfiles_registrySanity(t *testing.T) {
 			ecosystems[eco] = true
 		}
 	}
+	// Every BaseProfile must name another registered profile, so the FROM
+	// chain in EnsureImage resolves; a typo would otherwise silently build
+	// FROM the runner via ProfileByName's default fallback.
+	for _, p := range builtinProfiles {
+		if p.BaseProfile == "" {
+			continue
+		}
+		if p.BaseProfile == p.Name {
+			t.Errorf("profile %q lists itself as BaseProfile", p.Name)
+		}
+		if !names[p.BaseProfile] {
+			t.Errorf("profile %q has unknown BaseProfile %q", p.Name, p.BaseProfile)
+		}
+	}
 }
 
 func TestRepoShipsProfileDockerfiles(t *testing.T) {
@@ -609,4 +844,64 @@ func TestProfileGuidesShip(t *testing.T) {
 			t.Errorf("expected %s profile PROFILE.md to exist: %v", p.Name, err)
 		}
 	}
+}
+
+// TestProfileBuildArgs pins the runner-vs-chained build-arg wiring EnsureImage
+// relies on, without a container runtime: a runner profile --pull's (only with
+// a resolved digest) and passes RUNNER_IMAGE; a chained profile passes
+// BASE_IMAGE (the base tag), never RUNNER_IMAGE, and never --pull's a
+// locally-built base.
+func TestProfileBuildArgs(t *testing.T) {
+	join := func(a []string) string { return strings.Join(a, " ") }
+	runner := Profile{Name: "ruby"}
+	chained := Profile{Name: "ruby-rails", BaseProfile: "ruby"}
+
+	a := join(profileBuildArgs(runner, "tag:1", "df", "ctx", "runner:latest", "deadbeef"))
+	if !strings.Contains(a, "--pull") || !strings.Contains(a, "--build-arg RUNNER_IMAGE=runner:latest") {
+		t.Errorf("runner+digest should --pull and pass RUNNER_IMAGE: %s", a)
+	}
+	b := join(profileBuildArgs(runner, "tag:1", "df", "ctx", "runner:latest", ""))
+	if strings.Contains(b, "--pull") {
+		t.Errorf("runner without a resolved digest must not --pull: %s", b)
+	}
+	c := join(profileBuildArgs(chained, "tag:2", "df", "ctx", "scrutineer-profile-ruby:abc", ""))
+	if strings.Contains(c, "--pull") {
+		t.Errorf("chained must not --pull a local base: %s", c)
+	}
+	if !strings.Contains(c, "--build-arg BASE_IMAGE=scrutineer-profile-ruby:abc") {
+		t.Errorf("chained should pass BASE_IMAGE: %s", c)
+	}
+	if strings.Contains(c, "RUNNER_IMAGE=") {
+		t.Errorf("chained must not pass RUNNER_IMAGE: %s", c)
+	}
+}
+
+// TestBrakemanVersionParity keeps ruby-ext's Brakeman pin in lockstep with
+// ruby-rails's. ruby-ext installs Brakeman too (it precedes ruby-rails in
+// detection and must stay a superset), so the two ARG pins are the one bit of
+// duplication the FROM-chain leaves; this catches silent drift.
+func TestBrakemanVersionParity(t *testing.T) {
+	wd, _ := os.Getwd()
+	repoRoot := filepath.Join(wd, "..", "..")
+	rails := brakemanVersion(t, filepath.Join(repoRoot, "docker", "profiles", "ruby-rails", "Dockerfile"))
+	ext := brakemanVersion(t, filepath.Join(repoRoot, "docker", "profiles", "ruby-ext", "Dockerfile"))
+	if rails == "" || ext == "" {
+		t.Fatalf("BRAKEMAN_VERSION pin not found: ruby-rails=%q ruby-ext=%q", rails, ext)
+	}
+	if rails != ext {
+		t.Errorf("BRAKEMAN_VERSION drift: ruby-rails=%q ruby-ext=%q (keep them in lockstep)", rails, ext)
+	}
+}
+
+func brakemanVersion(t *testing.T, dockerfile string) string {
+	t.Helper()
+	b, err := os.ReadFile(dockerfile)
+	if err != nil {
+		t.Fatalf("read %s: %v", dockerfile, err)
+	}
+	m := regexp.MustCompile(`(?m)^ARG BRAKEMAN_VERSION=(\S+)`).FindSubmatch(b)
+	if m == nil {
+		return ""
+	}
+	return string(m[1])
 }

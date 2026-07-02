@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,12 +19,32 @@ import (
 )
 
 // ProfileMarker refines profile selection beyond what brief reports.
-// Path is relative to the cloned source root; Contains, when set, must
-// also appear inside the file — used e.g. to distinguish a phpize
-// config.m4 from any unrelated autoconf file.
 type ProfileMarker struct {
-	Path     string
+	// Path is the marker location relative to the cloned source root.
+	// Its interpretation depends on Glob/Walk:
+	//   - default: an exact path, tested with os.Stat.
+	//   - Glob:    a filepath.Glob pattern (single-segment wildcards),
+	//              e.g. "*.gemspec".
+	//   - Walk:    "<root>/<basename>"; <basename> is searched for anywhere
+	//              under <root> by a depth- and count-bounded walk, e.g.
+	//              "ext/extconf.rb" finds an extconf.rb at any depth under
+	//              ext/.
+	Path string
+	// Contains, when set, must also appear inside the matched file — used
+	// e.g. to distinguish a phpize config.m4 from any unrelated autoconf
+	// file, or a gemspec that declares spec.extensions from one that merely
+	// mentions the word. Bounded by markerReadCap.
 	Contains string
+	// Glob makes Path a filepath.Glob pattern instead of an exact path.
+	// filepath.Glob expands * ? [..] within a single path segment, which
+	// covers root-level fan-outs like "*.gemspec".
+	Glob bool
+	// Walk makes Path a "<root>/<basename>" pair: <basename> (the last
+	// segment) is searched for anywhere beneath <root> (the rest) by a
+	// bounded directory walk. filepath.Glob cannot express "**", so this
+	// covers native-extension layouts like ext/<name>/extconf.rb and the
+	// deeper ext/<name>/<sub>/extconf.rb some gems use.
+	Walk bool
 }
 
 // Profile selects a per-ecosystem runner image. The default profile
@@ -56,6 +77,13 @@ type Profile struct {
 	// reports no package manager for it — e.g. C/C++ projects built with
 	// CMake, Make, autotools, or meson.
 	AnyMarkers []ProfileMarker
+	// BaseProfile, when set, names another registered profile whose built
+	// image this profile builds FROM instead of the runner image. EnsureImage
+	// builds that base first and passes its content-addressed tag as the
+	// BASE_IMAGE build-arg, folding the tag into this profile's own tag so a
+	// change anywhere up the chain (runner, base Dockerfile) rebuilds this
+	// profile too. Empty (the common case) means FROM the runner image.
+	BaseProfile string
 }
 
 // IsDefault reports whether p falls back to the configured runner image
@@ -85,6 +113,59 @@ var builtinProfiles = []Profile{
 		},
 	},
 	{Name: "php", Ecosystem: "Composer"},
+	{
+		// Before ruby: a gem that ships a native extension (C/C++, or Rust
+		// via rb-sys/Cargo) routes to the sanitizer-instrumented interpreter.
+		// ruby-ext is a SUPERSET of both the ruby and ruby-rails profiles — it
+		// keeps the full Ruby-level audit, adds memory-safety coverage, and
+		// installs Brakeman (see docker/profiles/ruby-ext/Dockerfile) — so a
+		// gem that also looks like a Rails app still gets Rails SAST despite
+		// matching here first, and a false match against a *Ruby* repo only
+		// costs build time, never coverage. Robust detection also lets the
+		// verify skill (which re-detects rather than carrying the scan's
+		// profile) re-pick ruby-ext and actually reproduce an ASan crash,
+		// instead of landing on stock ruby and reporting the finding
+		// inconclusive.
+		//
+		// It is NOT a superset of the rust profile (no Miri, only a minimal
+		// rustc for rb-sys shims), so the Cargo.toml marker below is gated on
+		// an rb-sys mention: an unqualified ext/**/Cargo.toml would pull a
+		// pure-Rust crate in here — ruby-ext precedes rust — and strip its
+		// Rust-specific coverage.
+		//
+		// Markers (OR): the gemspec's spec.extensions is RubyGems' own
+		// definition of "has native code" and is authoritative; the bounded
+		// ext/ walks catch the conventional ext/<name>/extconf.rb (mkmf, also
+		// used by rb-sys Rust) and a Cargo-native gem's ext/<name>/Cargo.toml
+		// that names rb-sys (magnus builds on it); the root extconf.rb covers
+		// the older single-dir style. A real Cargo-native gem also ships an
+		// extconf.rb or spec.extensions, so the sibling markers still catch it
+		// if the rb-sys needle is ever absent.
+		Name: "ruby-ext",
+		AnyMarkers: []ProfileMarker{
+			{Path: "*.gemspec", Glob: true, Contains: ".extensions"},
+			{Path: "ext/extconf.rb", Walk: true},
+			{Path: "ext/Cargo.toml", Walk: true, Contains: "rb-sys"},
+			{Path: "extconf.rb"},
+		},
+	},
+	{
+		// Before ruby: a Rails app (config/application.rb is the canonical
+		// boot file) also gets Brakeman, the Rails-specific SAST, on top of
+		// the ruby runtime. Like ruby-ext this is a superset of the ruby
+		// profile — it builds FROM the ruby profile image (BaseProfile) and
+		// adds Brakeman, so the interpreter is byte-identical with no second
+		// from-source compile. Marker-only so it does not collide with ruby's
+		// Bundler ecosystem in the registry-sanity test. The marker requires
+		// the file to name Rails::Application (the base class every app's
+		// Application subclasses) so a coincidental config/application.rb in a
+		// non-Rails repo — of any language — does not route here.
+		Name:        "ruby-rails",
+		BaseProfile: "ruby",
+		Markers: []ProfileMarker{
+			{Path: "config/application.rb", Contains: "Rails::Application"},
+		},
+	},
 	{Name: "ruby", Ecosystem: "Bundler"},
 	{Name: "node", Ecosystem: "npm"},
 	{
@@ -222,14 +303,7 @@ func markersMatch(markers []ProfileMarker, srcDir string) bool {
 		return false
 	}
 	for _, m := range markers {
-		full := filepath.Join(srcDir, m.Path)
-		if m.Contains == "" {
-			if _, err := os.Stat(full); err != nil {
-				return false
-			}
-			continue
-		}
-		if !fileContains(full, m.Contains) {
+		if !markerPresent(m, srcDir) {
 			return false
 		}
 	}
@@ -247,18 +321,90 @@ func anyMarkersMatch(markers []ProfileMarker, srcDir string) bool {
 		return false
 	}
 	for _, m := range markers {
-		full := filepath.Join(srcDir, m.Path)
-		if m.Contains == "" {
-			if _, err := os.Stat(full); err == nil {
-				return true
-			}
-			continue
-		}
-		if fileContains(full, m.Contains) {
+		if markerPresent(m, srcDir) {
 			return true
 		}
 	}
 	return false
+}
+
+// markerWalkMaxDepth and markerWalkMaxFiles bound the Walk matcher so a
+// deep or hostile tree can't stall detection. The depth is generous enough
+// for real ext/ layouts (ext/<name>/<sub>/extconf.rb) while the file cap is
+// a backstop against a pathological repo.
+const (
+	markerWalkMaxDepth = 6
+	markerWalkMaxFiles = 50_000
+)
+
+// markerPresent reports whether a single marker is satisfied under srcDir,
+// dispatching on the marker's mode (exact path, Glob pattern, or bounded
+// Walk). Contains, when set, additionally requires the matched file to hold
+// the substring.
+func markerPresent(m ProfileMarker, srcDir string) bool {
+	switch {
+	case m.Glob:
+		matches, err := filepath.Glob(filepath.Join(srcDir, m.Path))
+		if err != nil {
+			return false
+		}
+		for _, f := range matches {
+			if m.Contains == "" || fileContains(f, m.Contains) {
+				return true
+			}
+		}
+		return false
+	case m.Walk:
+		return walkMarkerPresent(m, srcDir)
+	default:
+		full := filepath.Join(srcDir, m.Path)
+		if m.Contains == "" {
+			_, err := os.Stat(full)
+			return err == nil
+		}
+		return fileContains(full, m.Contains)
+	}
+}
+
+// walkMarkerPresent searches for a file named filepath.Base(m.Path) anywhere
+// under filepath.Dir(m.Path) (relative to srcDir), bounded by
+// markerWalkMaxDepth and markerWalkMaxFiles. A missing or unreadable root is
+// simply "not present" — detection never fails a scan. When Contains is set
+// the matched file must also hold the substring.
+func walkMarkerPresent(m ProfileMarker, srcDir string) bool {
+	return walkMarkerPresentBounded(m, srcDir, markerWalkMaxDepth, markerWalkMaxFiles)
+}
+
+// walkMarkerPresentBounded is walkMarkerPresent with the depth and file bounds
+// injected, so both caps are unit-testable without materialising a
+// markerWalkMaxDepth-deep tree or markerWalkMaxFiles of files.
+func walkMarkerPresentBounded(m ProfileMarker, srcDir string, maxDepth, maxFiles int) bool {
+	root := filepath.Join(srcDir, filepath.Dir(m.Path))
+	target := filepath.Base(m.Path)
+	rootDepth := strings.Count(filepath.Clean(root), string(os.PathSeparator))
+	files := 0
+	found := false
+	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil // unreadable entry: skip it, don't abort the walk
+		}
+		if d.IsDir() {
+			if strings.Count(filepath.Clean(path), string(os.PathSeparator))-rootDepth > maxDepth {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		files++
+		if files > maxFiles {
+			return fs.SkipAll
+		}
+		if d.Name() == target && (m.Contains == "" || fileContains(path, m.Contains)) {
+			found = true
+			return fs.SkipAll
+		}
+		return nil
+	})
+	return found
 }
 
 // markerReadCap bounds Contains-substring scans so a hostile or
@@ -396,12 +542,14 @@ func resolveBaseDigest(ctx context.Context, rt ContainerRuntime, runnerImage str
 }
 
 // EnsureImage builds the profile's container image if it is not in the
-// local cache and returns the tag to pass to the runtime's `run`. The
-// `--build-arg RUNNER_IMAGE=...` is wired so the profile's FROM picks
-// up whichever runner image the operator configured. Concurrency-safe:
-// a per-tag mutex serialises duplicate builds. emit is called only on
-// a cache miss (before and after the image build) so the scan log
-// shows progress during a multi-minute first build.
+// local cache and returns the tag to pass to the runtime's `run`. A
+// runner-based profile is wired with `--build-arg RUNNER_IMAGE=...` so its
+// FROM picks up the configured runner; a chained profile (BaseProfile set) is
+// built FROM the base profile's image — built first and passed as
+// `--build-arg BASE_IMAGE=...`. Concurrency-safe: a per-tag mutex serialises
+// duplicate builds. emit is called only on a cache miss (before and after the
+// image build) so the scan log shows progress during a multi-minute first
+// build.
 func (p Profile) EnsureImage(ctx context.Context, rt ContainerRuntime, profilesDir, runnerImage string, emit func(Event)) (string, error) {
 	if p.IsDefault() {
 		return runnerImage, nil
@@ -409,13 +557,37 @@ func (p Profile) EnsureImage(ctx context.Context, rt ContainerRuntime, profilesD
 	if profilesDir == "" {
 		return "", ErrNoProfilesDir
 	}
+
+	// baseImage is what the profile's FROM resolves to. For a chained profile
+	// (BaseProfile set, e.g. ruby-rails FROM ruby) that is the base profile's
+	// own built image — build it first — so the shared base is never recompiled
+	// and the interpreter is byte-identical. Otherwise it is the runner image,
+	// and we fold in its resolved registry digest so a moved :latest rebuilds.
+	baseImage := runnerImage
+	baseDigest := ""
+	if p.BaseProfile != "" {
+		base := ProfileByName(p.BaseProfile)
+		if base.IsDefault() {
+			return "", fmt.Errorf("profile %s: unknown base profile %q", p.Name, p.BaseProfile)
+		}
+		var err error
+		if baseImage, err = base.EnsureImage(ctx, rt, profilesDir, runnerImage, emit); err != nil {
+			return "", fmt.Errorf("profile %s: build base %s: %w", p.Name, p.BaseProfile, err)
+		}
+	} else {
+		baseDigest = resolveBaseDigest(ctx, rt, runnerImage)
+	}
+
 	dockerfile := filepath.Join(profilesDir, p.Name, "Dockerfile")
 	contents, err := os.ReadFile(dockerfile)
 	if err != nil {
 		return "", fmt.Errorf("read profile dockerfile: %w", err)
 	}
-	baseDigest := resolveBaseDigest(ctx, rt, runnerImage)
-	tag := imageTag(p.Name, contents, runnerImage, baseDigest)
+	// Hashing baseImage in makes invalidation transitive: for a chained profile
+	// it is the base's already-content-addressed tag (so a base rebuild yields a
+	// new tag here), and for a runner profile it is the runner ref keyed
+	// alongside baseDigest exactly as before.
+	tag := imageTag(p.Name, contents, baseImage, baseDigest)
 
 	mu := lockForTag(tag)
 	mu.Lock()
@@ -426,28 +598,39 @@ func (p Profile) EnsureImage(ctx context.Context, rt ContainerRuntime, profilesD
 	}
 	emit(Event{Kind: KindText, Text: "profile: building " + tag + " (first build can take several minutes)"})
 	start := time.Now()
-	buildArgs := []string{"build"}
-	if baseDigest != "" {
-		// resolveBaseDigest found the runner in a registry and keyed the
-		// tag on its remote digest; --pull makes BuildKit fetch that base
-		// rather than reuse a stale locally cached :latest, so the layers
-		// match the digest the tag is keyed on. Skipped when the digest
-		// did not resolve (offline, or a local-only ref like
-		// scrutineer-runner:local) so the build still works against the
-		// local cache. See #477.
-		buildArgs = append(buildArgs, "--pull")
-	}
-	buildArgs = append(buildArgs, "-t", tag, "-f", dockerfile)
-	if runnerImage != "" {
-		buildArgs = append(buildArgs, "--build-arg", "RUNNER_IMAGE="+runnerImage)
-	}
-	buildArgs = append(buildArgs, filepath.Join(profilesDir, p.Name))
-	cmd := exec.CommandContext(ctx, rt.bin(), buildArgs...)
+	args := profileBuildArgs(p, tag, dockerfile, filepath.Join(profilesDir, p.Name), baseImage, baseDigest)
+	cmd := exec.CommandContext(ctx, rt.bin(), args...)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("%s build %s: %w\n%s", rt.bin(), tag, err, out)
 	}
 	emit(Event{Kind: KindText, Text: "profile: built " + tag + " in " + time.Since(start).Round(time.Second).String()})
 	return tag, nil
+}
+
+// profileBuildArgs assembles the `build` argv for a profile image. Pure (no
+// I/O) so the chained-vs-runner branching is unit-testable without a runtime.
+//
+//   - A chained profile (BaseProfile set) receives its base as BASE_IMAGE and
+//     never --pull's: the base is the locally-built base profile image, not a
+//     registry ref, so --pull would try to fetch a tag that exists only here.
+//     The runner's freshness is already handled when the base itself is built.
+//   - A runner-based profile passes RUNNER_IMAGE and --pull's the runner when
+//     its digest resolved, so BuildKit fetches the base the tag is keyed on
+//     rather than a stale cached :latest (see #477).
+func profileBuildArgs(p Profile, tag, dockerfile, contextDir, baseImage, baseDigest string) []string {
+	args := []string{"build"}
+	if p.BaseProfile == "" && baseDigest != "" {
+		args = append(args, "--pull")
+	}
+	args = append(args, "-t", tag, "-f", dockerfile)
+	switch {
+	case p.BaseProfile != "":
+		args = append(args, "--build-arg", "BASE_IMAGE="+baseImage)
+	case baseImage != "":
+		args = append(args, "--build-arg", "RUNNER_IMAGE="+baseImage)
+	}
+	args = append(args, contextDir)
+	return args
 }
 
 func imageExistsLocally(ctx context.Context, rt ContainerRuntime, tag string) bool {

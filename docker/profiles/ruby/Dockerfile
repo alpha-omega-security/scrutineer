@@ -49,11 +49,12 @@ RUN apt-get update \
         libncurses-dev \
         libgdbm-dev \
  && git clone --depth 1 --branch "${RUBY_BUILD_REF}" \
-        https://github.com/rbenv/ruby-build.git /tmp/ruby-build \
- && /tmp/ruby-build/bin/ruby-build "${RUBY_VERSION}" /usr/local \
- && rm -rf /tmp/ruby-build /var/lib/apt/lists/* \
+        https://github.com/rbenv/ruby-build.git /opt/ruby-build \
+ && /opt/ruby-build/bin/ruby-build "${RUBY_VERSION}" /usr/local \
+ && rm -rf /opt/ruby-build/.git /var/lib/apt/lists/* \
  && ruby --version \
- && bundle --version
+ && bundle --version \
+ && /opt/ruby-build/bin/ruby-build --version
 
 # Gems install into the writable, exec-capable workspace mount rather than the
 # image's root-owned gem dir (unwritable to the non-root --user runtime) or the
@@ -61,7 +62,13 @@ RUN apt-get update \
 # loaded). /work is host-owned via --userns=keep-id under rootless podman,
 # survives hardened mode's --read-only rootfs, and /work/.gem sits outside /src
 # so installed gems stay out of the scanned tree.
+#
+# ruby-build is kept at /opt/ruby-build (on PATH) so a scan can install a
+# project-pinned Ruby (a Gemfile `ruby "x.y.z"` directive, a .ruby-version, or
+# a gemspec required_ruby_version) when the image's 3.4 does not satisfy it --
+# otherwise Bundler refuses to install and the scan would silently lose its
+# runtime. The build toolchain above stays in the image for the same reason.
 ENV GEM_HOME=/work/.gem \
-    PATH=/work/.gem/bin:$PATH
+    PATH=/work/.gem/bin:/opt/ruby-build/bin:$PATH
 
 USER runner
