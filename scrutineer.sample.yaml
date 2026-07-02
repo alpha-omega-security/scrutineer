@@ -138,14 +138,19 @@
 # downgrade_on_overage: false
 
 # The model picker in the UI. Replacing this list replaces the built-in
-# set (Opus, Sonnet, Fable). Leave it out to keep the built-in list.
+# set (Opus, Sonnet, Fable). Leave it out to keep the built-in list. tier:
+# names which entry the mid/high/max model tier defaults to (see Settings);
+# with the built-in list the tiers are inferred (Sonnet = mid, latest Opus =
+# max).
 # models:
 #   - name: Sonnet 4.6
 #     id:   claude-sonnet-4-6
+#     tier: mid
 #   - name: Sonnet 5.0
 #     id:   claude-sonnet-5
 #   - name: Opus
 #     id:   claude-opus-4-7
+#     tier: max
 
 # Pin the default model id. When set, this wins over the "first entry
 # in models wins" rule for the high tier. The Settings page can map

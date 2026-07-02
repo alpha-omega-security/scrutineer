@@ -50,6 +50,7 @@ default_model: claude-sonnet-4-6
 models:
   - name: Sonnet 4.6
     id:   claude-sonnet-4-6
+    tier: mid
   - name: Opus
     id:   claude-opus-4-6
 skills:
@@ -77,7 +78,7 @@ metadata_dir: .ossprey/
 	if c.Addr != "0.0.0.0:9000" || c.DefaultModel != "claude-sonnet-4-6" {
 		t.Errorf("flat fields: %+v", c)
 	}
-	if len(c.Models) != 2 || c.Models[0].Name != "Sonnet 4.6" {
+	if len(c.Models) != 2 || c.Models[0].Name != "Sonnet 4.6" || c.Models[0].Tier != "mid" || c.Models[1].Tier != "" {
 		t.Errorf("models: %+v", c.Models)
 	}
 	if len(c.Skills) != 2 {
