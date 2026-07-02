@@ -227,6 +227,27 @@ When the container runner is active, scrutineer starts an authenticated egress p
 
 For deployments that treat skill prompts as untrusted, pass `--hardened` (or `hardened: true` in the config). The flag forces the container runner (`--no-container` is rejected), trims the egress allowlist to `*.anthropic.com` plus the host skill API (so `egress_allow` is ignored, drop the flag if you need to widen it), mounts the container rootfs read-only with `no-new-privileges`, attaches each scan to its own ephemeral network created with `--internal` (removed when the scan ends) so a process that ignores `HTTPS_PROXY` has no route out and concurrent scans cannot reach each other, and refuses scans whose workspace footprint exceeds 2 GiB once the clone completes. The 2 GiB check is post-clone: it bounds what hardened mode will agree to scan, not what can land on disk during the clone itself; use OS-level disk quotas if you need a clone-time guarantee. Bundled skills that hit ecosyste.ms or a package registry directly will fail under hardened mode unless they route through the host skill API. Per-ecosystem runner profiles still apply, but profile images that need writable paths beyond `/work` and `/tmp` are incompatible. Under rootless podman the proxy runs as a per-scan sidecar container on the `--internal` network (the host proxy is unreachable there; see [docs/podman.md](docs/podman.md)). Under podman, each hardened scan first verifies its `--internal` network actually blocks external egress while still reaching the egress proxy, and refuses the scan if that cannot be confirmed, so the sandbox never silently weakens.
 
+## Runner profiles
+
+When the container runner is active, scrutineer auto-detects a per-ecosystem **profile** for each scan: it runs `brief` against the clone to read the package managers, falling back to file markers for ecosystems `brief` can't see. The matched profile selects a runner image (built on demand from `docker/profiles/<name>/Dockerfile`, cached content-addressed by the Dockerfile's hash) and injects that profile's `PROFILE.md` as the agent's orientation. The most specific profile wins, so a native-extension repo resolves to its `*-ext` profile ahead of the plain language profile. Force one with `?profile=<name>` on the scan API (validated against the skill's `requires_profile`); `default` forces the base runner image.
+
+| Profile | Selected when | Adds |
+|---------|---------------|------|
+| `php` / `php-ext` | Composer / a `config.m4` with `PHP_ARG_` | PHP; `php-ext` builds PHP debug + ASan/UBSan for C extensions |
+| `python` / `python-ext` | pip/Poetry/uv/PDM / a `setup.py` declaring a C `Extension(` | CPython; `python-ext` builds CPython debug + ASan/UBSan |
+| `ruby` | Bundler | Ruby 3.4 + Bundler; metaprogramming / dynamic-dispatch guidance, plus a tripwire that flags an un-instrumented native extension |
+| `ruby-ext` | a gemspec with `spec.extensions`, or `ext/**/extconf.rb` / `ext/**/Cargo.toml` | A **superset** of `ruby`: adds an ASan/UBSan Ruby (the default interpreter), valgrind on the stock interpreter, and Rust nightly for rb-sys gems — memory-safety coverage for C/C++/Rust native gems |
+| `ruby-rails` | `config/application.rb` | A superset of `ruby` plus **Brakeman**, Rails-specific SAST |
+| `node` | npm | Node.js |
+| `go` | Go Modules | Go toolchain |
+| `java` | Maven/Gradle | JDK |
+| `dotnet` | NuGet | .NET SDK |
+| `beam` | Mix/rebar3 | Erlang/Elixir |
+| `rust` | Cargo | Rust stable + nightly, Miri, sanitizers |
+| `c-cpp` | a CMake/Make/autotools/meson build file and no language ecosystem | C/C++ build toolchain |
+
+The three Ruby profiles are mutually exclusive at selection time, but `ruby-ext` and `ruby-rails` are deliberate *supersets* of `ruby` (the same Ruby-level audit, plus their extra coverage), so a detection that errs toward `ruby-ext` costs only build time, never coverage. A native gem that slips through to the plain `ruby` profile is caught by that profile's tripwire, which records that memory-safety scanning needs `ruby-ext`. Add a profile by registering it in `internal/worker/profile.go` and adding `docker/profiles/<name>/{Dockerfile,PROFILE.md}`.
+
 ## Podman (rootless)
 
 Pass `--runtime podman` (or `runtime: podman` in the config) to run scans under podman instead of docker. Rootless podman is the recommended posture: because the runtime is not root-equivalent, a hostile repository that escapes the scan container lands as an unprivileged subordinate user rather than near-root on the host (see [threatmodel.md](threatmodel.md), T12). There is no auto-detection — a podman-only host must set `--runtime podman` explicitly; the default stays docker.

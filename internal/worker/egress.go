@@ -101,9 +101,12 @@ var DefaultEgressAllow = []string{
 	// CocoaPods (Swift / Objective-C)
 	"cocoapods.org",
 	"trunk.cocoapods.org",
-	// CPAN (Perl)
+	// CPAN (Perl) -- metacpan/fastapi for the index and API, www.cpan.org
+	// and cpan.metacpan.org for the tarballs cpanm actually fetches.
 	"metacpan.org",
 	"fastapi.metacpan.org",
+	"cpan.metacpan.org",
+	"www.cpan.org",
 	// CRAN (R)
 	"cran.r-project.org",
 	// Homebrew
