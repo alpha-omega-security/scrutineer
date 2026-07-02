@@ -19,7 +19,7 @@
       <i data-lucide="download"></i> Export report
     </a>
     <a href="/findings/{{$f.ID}}/bundle.tar.gz" class="btn-outline"
-       title="OSV + CSAF + markdown report + patch + manifest, packaged for a disclosure recipient"
+       title="{{if .HasDependents}}OSV + CSAF VEX + markdown report + patch + manifest{{else}}OSV + markdown report + patch + manifest{{end}}, packaged for a disclosure recipient"
        download>
       <i data-lucide="package"></i> Disclosure bundle
     </a>
@@ -277,10 +277,10 @@
     <section class="pb-4 grid gap-3">
       <div class="flex items-center gap-2">
         <form method="post" action="/findings/{{$f.ID}}/exposure" hx-post="/findings/{{$f.ID}}/exposure" hx-swap="none" hx-confirm="Run exposure on up to 10 dependents? This can enqueue up to 10 full scans.">
-          <button type="submit" class="btn-sm" {{if not .HasDependents}}disabled title="This repository has no recorded dependents."{{end}}>Run exposure on top-10 dependents</button>
+          <button type="submit" class="btn-sm">Run exposure on top-10 dependents</button>
         </form>
         <span class="text-xs text-muted-foreground">
-          {{if .HasDependents}}Clones each dependent and audits whether this finding is reachable in its code.{{else}}No dependents recorded for this repository.{{end}}
+          Clones each dependent and audits whether this finding is reachable in its code.
         </span>
       </div>
       {{if .Exposures}}

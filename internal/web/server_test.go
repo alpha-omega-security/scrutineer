@@ -1617,6 +1617,57 @@ func TestFindingShow_hidesExposureForZizmorFindings(t *testing.T) {
 	}
 }
 
+func TestFindingShow_hidesExposureWhenNoDependents(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/r", Name: "r"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: deepDiveSkillName}
+	s.DB.Create(&scan)
+	f := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "app issue", Severity: "High"}
+	s.DB.Create(&f)
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", fmt.Sprintf("/findings/%d", f.ID)))
+	body := w.Body.String()
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, body)
+	}
+	if strings.Contains(body, "Dependent exposure") || strings.Contains(body, "/exposure") {
+		t.Error("findings without dependents should not render dependent exposure controls")
+	}
+	if strings.Contains(body, "CSAF VEX") {
+		t.Error("findings without dependents should not advertise CSAF VEX in the disclosure bundle")
+	}
+}
+
+func TestFindingShow_rendersExposureWhenDependentsExist(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/r", Name: "r"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: deepDiveSkillName}
+	s.DB.Create(&scan)
+	f := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "library issue", Severity: "High"}
+	s.DB.Create(&f)
+	dep := db.Dependent{RepositoryID: repo.ID, Name: "downstream", Ecosystem: "go", RepositoryURL: "https://example.com/downstream"}
+	s.DB.Create(&dep)
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", fmt.Sprintf("/findings/%d", f.ID)))
+	body := w.Body.String()
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, body)
+	}
+	for _, want := range []string{"Dependent exposure", "/exposure", "CSAF VEX"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("dependent-backed finding missing %q", want)
+		}
+	}
+}
+
 func TestFindingShow_rendersPublicIssueActionForReadyFinding(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

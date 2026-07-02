@@ -1627,11 +1627,9 @@ func (s *Server) findingShow(w http.ResponseWriter, r *http.Request) {
 			VerifyInFlight: verifyInFlight,
 			HasDependents:  hasDependents,
 		},
-		"Exposures":    exposures,
-		"ShowExposure": findingSupportsExposure(scan),
-	}
-	if data["ShowExposure"].(bool) {
-		data["HasDependents"] = hasDependents
+		"Exposures":     exposures,
+		"HasDependents": hasDependents,
+		"ShowExposure":  findingSupportsExposure(scan) && hasDependents,
 	}
 	if id, c, ok := LookupCWE(f.CWE); ok {
 		data["CWE"] = map[string]any{"ID": id, "Name": c.Name, "Description": c.Description}
