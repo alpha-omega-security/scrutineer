@@ -66,7 +66,7 @@ func TestCodexHarness_Args(t *testing.T) {
 	h := CodexHarness{}
 	got := h.Args(SkillJob{Name: "deep-dive", Model: "gpt-5", OutputFile: "report.json"}, "high", 30, "https://proxy.corp.com/v1")
 
-	for _, want := range []string{"exec", "-c", `openai_base_url="https://proxy.corp.com/v1"`, "--json", "--sandbox", "workspace-write", "--skip-git-repo-check"} {
+	for _, want := range []string{"exec", "-c", `openai_base_url="https://proxy.corp.com/v1"`, "--json", "--sandbox", "danger-full-access", "--skip-git-repo-check"} {
 		if !slices.Contains(got, want) {
 			t.Errorf("Args missing %q: %v", want, got)
 		}
@@ -151,47 +151,73 @@ func TestCodexHarness_AccountErrorText(t *testing.T) {
 	}
 }
 
-func TestCodexHarness_ParseStream(t *testing.T) {
-	in := `{"type":"init","session_id":"sess-1"}
-	{"thread_id":"thr-2"}
-	{"type":"text","text":"hello"}
-	{"message":"working"}
-	{"type":"tool","tool":"bash","input":{"command":"ls"}}
-	{"type":"item.started","item":{"id":"item_1","type":"command_execution","command":"bash -lc ls","status":"in_progress"}}
-	{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"done"}}
-	{"error":"rate_limit_exceeded"}
-	not json
-	`
+// TestCodexHarness_ParseStream_live locks the parser against a fixture
+// captured from a real `codex exec --json` run at codex-cli 0.142.5, plus
+// the error item shape codex emits for an unknown model id. The mapping
+// verified here — one KindTool per command (item.started dropped),
+// item.type=="error" as KindError, turn.started dropped, turn.completed as
+// KindResult with usage — is what the PR body flagged for live verification.
+func TestCodexHarness_ParseStream_live(t *testing.T) {
+	in := `{"type":"thread.started","thread_id":"019f239d-99d0-7fa2-a42a-f4fac6a06a96"}
+{"type":"item.completed","item":{"id":"item_0","type":"error","message":"Model metadata for x not found."}}
+{"type":"turn.started"}
+{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"listing"}}
+{"type":"item.started","item":{"id":"item_2","type":"command_execution","command":"/bin/bash -lc 'ls ./src'","aggregated_output":"","exit_code":null,"status":"in_progress"}}
+{"type":"item.completed","item":{"id":"item_2","type":"command_execution","command":"/bin/bash -lc 'ls ./src'","aggregated_output":"README.md\n","exit_code":0,"status":"completed"}}
+{"type":"item.completed","item":{"id":"item_3","type":"agent_message","text":"done"}}
+{"type":"turn.completed","usage":{"input_tokens":17339,"cached_input_tokens":11008,"output_tokens":92,"reasoning_output_tokens":23}}
+`
+	want := []Event{
+		{Kind: KindSession, SessionID: "019f239d-99d0-7fa2-a42a-f4fac6a06a96"},
+		{Kind: KindError, Text: "Model metadata for x not found."},
+		// turn.started dropped
+		{Kind: KindText, Text: "listing"},
+		// item.started dropped: item.completed for the same command follows
+		{Kind: KindTool, Tool: "command", Text: "/bin/bash -lc 'ls ./src'"},
+		{Kind: KindText, Text: "done"},
+		{Kind: KindResult, Usage: Usage{InputTokens: 17339, OutputTokens: 92, CacheReadTokens: 11008}},
+	}
+	var got []Event
+	CodexHarness{}.ParseStream(strings.NewReader(in), func(e Event) { got = append(got, e) })
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ParseStream mismatch\n got: %+v\nwant: %+v", got, want)
+	}
+}
+
+// TestCodexHarness_ParseStream_fallthrough covers shapes not seen in the
+// live capture but that the parser is permissive about: a session_id key,
+// top-level text/message/tool/error, and a non-JSON line. These keep the
+// scan log readable if codex's format shifts.
+func TestCodexHarness_ParseStream_fallthrough(t *testing.T) {
+	in := `Reading additional input from stdin...
+{"type":"init","session_id":"sess-1"}
+{"type":"text","text":"hello"}
+{"message":"working"}
+{"type":"tool","tool":"bash","input":{"command":"ls"}}
+{"error":"rate_limit_exceeded"}
+not json
+`
 	var got []Event
 	CodexHarness{}.ParseStream(strings.NewReader(in), func(e Event) { got = append(got, e) })
 
-	var sessions, texts, tools, errs int
-	for _, e := range got {
-		switch e.Kind {
-		case KindSession:
-			sessions++
-		case KindText:
-			texts++
-		case KindTool:
-			tools++
-		case KindError:
-			errs++
-		}
+	kinds := make([]string, len(got))
+	for i, e := range got {
+		kinds[i] = e.Kind
 	}
-	if sessions != 2 {
-		t.Errorf("session events = %d, want 2 (session_id and thread_id both map): %v", sessions, got)
+	wantKinds := []string{KindSession, KindText, KindText, KindTool, KindError, KindText}
+	if !reflect.DeepEqual(kinds, wantKinds) {
+		t.Errorf("kinds = %v, want %v: %+v", kinds, wantKinds, got)
 	}
-	if got[0].SessionID != "sess-1" || got[1].SessionID != "thr-2" {
-		t.Errorf("session ids not extracted: %v", got)
+	if got[0].SessionID != "sess-1" {
+		t.Errorf("session_id not extracted: %+v", got[0])
 	}
-	if tools != 2 || got[4].Tool != "bash" || got[5].Tool != "command" || got[5].Text != "bash -lc ls" {
-		t.Errorf("tool event not mapped: %v", got)
+	if got[3].Tool != "bash" {
+		t.Errorf("top-level tool not mapped: %+v", got[3])
 	}
-	if errs != 1 || got[7].Text != "rate_limit_exceeded" {
-		t.Errorf("error event not mapped: %v", got)
+	if got[4].Text != "rate_limit_exceeded" {
+		t.Errorf("top-level error not mapped: %+v", got[4])
 	}
-	// "hello", "working", "done", and the non-JSON line all pass through as text.
-	if texts != 4 {
-		t.Errorf("text events = %d, want 4: %v", texts, got)
+	if got[5].Text != "not json" {
+		t.Errorf("non-JSON line not passed through: %+v", got[5])
 	}
 }
