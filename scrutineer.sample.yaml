@@ -128,12 +128,16 @@
 # anthropic_base_url: https://my-proxy.corp.com/v1
 
 # The model picker in the UI. Replacing this list replaces the built-in
-# set (Sonnet, Opus). Leave it out to keep the built-in list.
+# set (Sonnet, Opus). Leave it out to keep the built-in list. tier: names
+# which entry the mid/high/max model tier defaults to (see Settings); with
+# the built-in list the tiers are inferred (Sonnet = mid, latest Opus = max).
 # models:
 #   - name: Sonnet
 #     id:   claude-sonnet-4-6
+#     tier: mid
 #   - name: Opus
 #     id:   claude-opus-4-7
+#     tier: max
 
 # Pin the default model id. When set, this wins over the "first entry
 # in models wins" rule for the high tier. The Settings page can map

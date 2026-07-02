@@ -8,10 +8,15 @@ import (
 	"gorm.io/gorm"
 )
 
-// Model is a display-name → claude model id pair offered in the UI.
+// Model is a display-name → model id pair offered in the UI. Tier
+// optionally tags the entry as the default for one of the mid/high/max
+// model tiers, so operators declaring their own models: list can name
+// which entry each tier resolves to instead of relying on the built-in
+// substring heuristic.
 type Model struct {
 	Name string
 	ID   string
+	Tier string
 }
 
 // ModelTier is an operator-facing role whose concrete model can be swapped
@@ -37,11 +42,11 @@ var ModelTiers = []ModelTier{
 // Models is the pick list. The first entry is the default unless the
 // server's runtime override is set; see Server.DefaultModel.
 var Models = []Model{
-	{"Opus 4.6", "claude-opus-4-6"},
-	{"Opus 4.7", "claude-opus-4-7"},
-	{"Opus 4.8", "claude-opus-4-8"},
-	{"Sonnet", "claude-sonnet-4-6"},
-	{"Fable 5", "claude-fable-5[1m]"},
+	{Name: "Opus 4.6", ID: "claude-opus-4-6"},
+	{Name: "Opus 4.7", ID: "claude-opus-4-7"},
+	{Name: "Opus 4.8", ID: "claude-opus-4-8"},
+	{Name: "Sonnet", ID: "claude-sonnet-4-6"},
+	{Name: "Fable 5", ID: "claude-fable-5[1m]"},
 }
 
 // SetModels replaces the pick list. Called at startup from config; no-op
@@ -146,10 +151,18 @@ func ModelTierValues(gdb *gorm.DB, fallback string) map[string]string {
 }
 
 func builtinModelForTier(tier, fallback string) string {
-	// Built-in tiers assume the built-in Anthropic-flavoured model ids and
-	// ordering. If operators replace Models with a multi-vendor list that
-	// lacks "sonnet" or "opus", the tier intentionally falls back to
-	// DefaultModel unless they configure the tier in Settings.
+	// An entry explicitly tagged tier: <mid|high|max> in the models: list
+	// wins — the operator has said which model this tier means, so no
+	// guessing. First match wins if several entries share a tier.
+	for _, m := range Models {
+		if m.Tier == tier {
+			return m.ID
+		}
+	}
+	// Otherwise the substring heuristic covers the built-in Anthropic list
+	// (which carries no tier tags): Mid → first sonnet, Max → latest opus.
+	// A custom list that neither tags tiers nor matches these needles falls
+	// through to DefaultModel; set the tiers in /settings for that case.
 	switch tier {
 	case ModelTierMid:
 		if id := firstModelContaining("sonnet"); id != "" {

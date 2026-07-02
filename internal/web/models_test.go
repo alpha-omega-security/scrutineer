@@ -63,15 +63,51 @@ func TestModelTiers(t *testing.T) {
 }
 
 func TestModelTiersFallbackToDefaultModelWithCustomModelList(t *testing.T) {
+	// A list with no tier: tags and no sonnet/opus needle match: every
+	// tier falls back to the operator's default_model. Set the tiers in
+	// /settings or tag entries with tier: to avoid this.
 	withTestModels(t, []Model{
 		{Name: "Default", ID: "vendor-default"},
 		{Name: "Small", ID: "vendor-small"},
 	})
-
 	for _, tier := range []string{ModelTierMid, ModelTierHigh, ModelTierMax} {
 		if got := builtinModelForTier(tier, "vendor-default"); got != "vendor-default" {
 			t.Errorf("builtinModelForTier(%q) = %q, want vendor-default", tier, got)
 		}
+	}
+}
+
+func TestModelTiers_explicitTierTags(t *testing.T) {
+	// Entries tagged tier: <mid|high|max> in the models: list are the
+	// tier default, no needle matching. This is how a non-Anthropic model
+	// list (e.g. the codex backend's) declares which entry each tier means
+	// so the tiers UI doesn't collapse to default_model in every slot.
+	withTestModels(t, []Model{
+		{Name: "GPT-5.3 Codex", ID: "gpt-5.3-codex", Tier: ModelTierHigh},
+		{Name: "GPT-5.4", ID: "gpt-5.4"},
+		{Name: "GPT-5.4 mini", ID: "gpt-5.4-mini", Tier: ModelTierMid},
+		{Name: "GPT-5.5", ID: "gpt-5.5", Tier: ModelTierMax},
+	})
+	if got := builtinModelForTier(ModelTierMid, "gpt-5.3-codex"); got != "gpt-5.4-mini" {
+		t.Errorf("mid = %q, want gpt-5.4-mini (tier: mid)", got)
+	}
+	if got := builtinModelForTier(ModelTierHigh, "gpt-5.3-codex"); got != "gpt-5.3-codex" {
+		t.Errorf("high = %q, want gpt-5.3-codex (tier: high)", got)
+	}
+	if got := builtinModelForTier(ModelTierMax, "gpt-5.3-codex"); got != "gpt-5.5" {
+		t.Errorf("max = %q, want gpt-5.5 (tier: max)", got)
+	}
+}
+
+func TestModelTiers_explicitTierBeatsNeedle(t *testing.T) {
+	// An explicit tier: tag wins over the substring heuristic even when a
+	// needle would match a different entry.
+	withTestModels(t, []Model{
+		{Name: "Sonnet", ID: "test-sonnet"},
+		{Name: "Mid", ID: "test-explicit-mid", Tier: ModelTierMid},
+	})
+	if got := builtinModelForTier(ModelTierMid, "fallback"); got != "test-explicit-mid" {
+		t.Errorf("mid = %q, want test-explicit-mid (explicit tier: beats sonnet needle)", got)
 	}
 }
 

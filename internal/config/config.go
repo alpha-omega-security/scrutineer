@@ -175,12 +175,16 @@ func ValidateSELinux(s string) error {
 	}
 }
 
-// Model is a display-name plus the claude model id it resolves to. The
-// shape matches web.Model so main.go can pipe one into the other without
-// the two packages depending on each other.
+// Model is a display-name plus the model id it resolves to. The shape
+// matches web.Model so main.go can pipe one into the other without the
+// two packages depending on each other. Tier optionally tags the entry
+// as the default for one of the mid/high/max model tiers so operators
+// with a non-Anthropic model list get sensible tier defaults without
+// setting each one in /settings.
 type Model struct {
 	Name string `yaml:"name"`
 	ID   string `yaml:"id"`
+	Tier string `yaml:"tier"`
 }
 
 // Themes lists every valid theme name.

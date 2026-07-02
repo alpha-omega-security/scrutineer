@@ -251,7 +251,7 @@ func (f *flags) merge(cfg *config.Config) {
 	if len(cfg.Models) > 0 {
 		models := make([]web.Model, 0, len(cfg.Models))
 		for _, m := range cfg.Models {
-			models = append(models, web.Model{Name: m.Name, ID: m.ID})
+			models = append(models, web.Model{Name: m.Name, ID: m.ID, Tier: m.Tier})
 		}
 		web.SetModels(models)
 	}
