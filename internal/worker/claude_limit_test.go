@@ -57,7 +57,8 @@ func TestPreferAccountErrText(t *testing.T) {
 func TestPreferRateLimitReset(t *testing.T) {
 	allowed := &RateLimitInfo{Status: "allowed", ResetsAt: 100, Type: "five_hour"}
 	rejected := &RateLimitInfo{Status: "rejected", ResetsAt: 200, Type: "five_hour"}
-	overageRejected := &RateLimitInfo{Status: "allowed", OverageStatus: "rejected", ResetsAt: 300, Type: "seven_day"}
+	allowedOverageUnavailable := &RateLimitInfo{Status: "allowed", OverageStatus: "rejected", ResetsAt: 300, Type: "seven_day"}
+	activeOverageRejected := &RateLimitInfo{Status: "allowed", OverageStatus: "rejected", IsUsingOverage: true, ResetsAt: 300, Type: "seven_day"}
 	shorterRejected := &RateLimitInfo{Status: "rejected", ResetsAt: 150, Type: "five_hour"}
 
 	if got := preferRateLimitReset(nil, allowed); got != nil {
@@ -66,10 +67,13 @@ func TestPreferRateLimitReset(t *testing.T) {
 	if got := preferRateLimitReset(nil, rejected); got != rejected {
 		t.Errorf("rejected reset = %+v, want %+v", got, rejected)
 	}
-	if got := preferRateLimitReset(rejected, overageRejected); got != overageRejected {
-		t.Errorf("furthest rejected reset = %+v, want %+v", got, overageRejected)
+	if got := preferRateLimitReset(rejected, allowedOverageUnavailable); got != rejected {
+		t.Errorf("allowed overage-unavailable reset = %+v, want %+v", got, rejected)
 	}
-	if got := preferRateLimitReset(overageRejected, shorterRejected); got != overageRejected {
+	if got := preferRateLimitReset(rejected, activeOverageRejected); got != activeOverageRejected {
+		t.Errorf("active overage rejection = %+v, want %+v", got, activeOverageRejected)
+	}
+	if got := preferRateLimitReset(activeOverageRejected, shorterRejected); got != activeOverageRejected {
 		t.Errorf("shorter rejected reset replaced furthest: %+v", got)
 	}
 	if got := preferRateLimitReset(nil, &RateLimitInfo{Status: "rejected"}); got != nil {
@@ -85,6 +89,9 @@ func TestResumableReset(t *testing.T) {
 	}
 	if got := resumableReset("usage limit reached", &RateLimitInfo{Status: "allowed", ResetsAt: 1782990000}); got != nil {
 		t.Errorf("allowed reset = %v, want nil", got)
+	}
+	if got := resumableReset("usage limit reached", &RateLimitInfo{Status: "allowed", OverageStatus: "rejected", ResetsAt: 1782990000}); got != nil {
+		t.Errorf("allowed overage-unavailable reset = %v, want nil", got)
 	}
 	// Permanent access error -> nil even with a captured event (no auto-resume).
 	if got := resumableReset("ask your admin to enable access", rl); got != nil {

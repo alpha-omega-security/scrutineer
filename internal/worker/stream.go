@@ -37,10 +37,11 @@ type Event struct {
 // RateLimitInfo is the subscription limit status claude-code reports in a
 // rate_limit_event line; it feeds auto-resume and the usage page panel.
 type RateLimitInfo struct {
-	Status        string `json:"status"`
-	OverageStatus string `json:"overageStatus"`
-	ResetsAt      int64  `json:"resetsAt"`
-	Type          string `json:"rateLimitType"`
+	Status         string `json:"status"`
+	OverageStatus  string `json:"overageStatus"`
+	IsUsingOverage bool   `json:"isUsingOverage"`
+	ResetsAt       int64  `json:"resetsAt"`
+	Type           string `json:"rateLimitType"`
 }
 
 // ResetTime converts the epoch-seconds resetsAt into a UTC time, or nil when
@@ -57,7 +58,12 @@ func (r *RateLimitInfo) Rejected() bool {
 	if r == nil {
 		return false
 	}
-	return strings.EqualFold(r.Status, "rejected") || strings.EqualFold(r.OverageStatus, "rejected")
+	if strings.EqualFold(r.Status, "rejected") {
+		return true
+	}
+	// overageStatus:"rejected" is normal for accounts without extra-usage
+	// billing; it only blocks when the account is currently using overage.
+	return r.IsUsingOverage && strings.EqualFold(r.OverageStatus, "rejected")
 }
 
 // Usage is the token breakdown from a result event.

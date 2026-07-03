@@ -56,7 +56,7 @@ func TestParseStream_RateLimitEvent(t *testing.T) {
 	if got[0].Kind != KindRateLimit || rl == nil {
 		t.Fatalf("ev0: %+v", got[0])
 	}
-	if rl.Status != "allowed" || rl.OverageStatus != "rejected" || rl.Type != "five_hour" || rl.ResetsAt != 1782990000 {
+	if rl.Status != "allowed" || rl.OverageStatus != "rejected" || rl.IsUsingOverage || rl.Type != "five_hour" || rl.ResetsAt != 1782990000 {
 		t.Errorf("rate_limit_info = %+v", rl)
 	}
 	if reset := rl.ResetTime(); reset == nil || reset.Unix() != 1782990000 {
