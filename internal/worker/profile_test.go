@@ -815,6 +815,20 @@ func TestBuiltinProfiles_registrySanity(t *testing.T) {
 			t.Errorf("profile %q has unknown BaseProfile %q", p.Name, p.BaseProfile)
 		}
 	}
+	// Every FallbackProfile must name another registered profile, so the
+	// degrade chain in resolveProfile resolves instead of silently dropping to
+	// the guide-less default runner.
+	for _, p := range builtinProfiles {
+		if p.FallbackProfile == "" {
+			continue
+		}
+		if p.FallbackProfile == p.Name {
+			t.Errorf("profile %q lists itself as FallbackProfile", p.Name)
+		}
+		if !names[p.FallbackProfile] {
+			t.Errorf("profile %q has unknown FallbackProfile %q", p.Name, p.FallbackProfile)
+		}
+	}
 }
 
 func TestRepoShipsProfileDockerfiles(t *testing.T) {

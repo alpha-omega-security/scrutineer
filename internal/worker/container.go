@@ -491,6 +491,20 @@ func (d ContainerRunner) resolveProfile(ctx context.Context, requested, src, sub
 		}
 	}
 	img, err := p.EnsureImage(ctx, d.Runtime, d.ProfilesDir, defaultImg, emit)
+	// On a build failure, degrade along the FallbackProfile chain before giving
+	// up: a native profile that can't be built (runner base unreachable, ASan
+	// compile broke) should still run under its related base profile — whose
+	// PROFILE.md carries the "native extensions — escalate, do not skip" note —
+	// rather than the guide-less default runner, which silently under-covers.
+	for err != nil && p.FallbackProfile != "" {
+		fb := ProfileByName(p.FallbackProfile)
+		if fb.IsDefault() {
+			break // unknown fallback name; TestBuiltinProfiles_registrySanity guards this
+		}
+		emit(Event{Kind: KindText, Text: "profile: " + p.Name + " build failed (" + err.Error() + "), falling back to " + fb.Name})
+		p = fb
+		img, err = p.EnsureImage(ctx, d.Runtime, d.ProfilesDir, defaultImg, emit)
+	}
 	if err != nil {
 		emit(Event{Kind: KindText, Text: "profile: " + p.Name + " build failed, using default: " + err.Error()})
 		return "", defaultImg

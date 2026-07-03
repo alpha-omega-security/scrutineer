@@ -84,6 +84,16 @@ type Profile struct {
 	// change anywhere up the chain (runner, base Dockerfile) rebuilds this
 	// profile too. Empty (the common case) means FROM the runner image.
 	BaseProfile string
+	// FallbackProfile, when set, names the profile to degrade to when THIS
+	// profile's image cannot be built (runner base unreachable, the
+	// sanitizer-instrumented interpreter fails to compile, a toolchain step
+	// breaks). Unlike BaseProfile — which this profile builds FROM — the
+	// fallback is a coverage degrade: resolveProfile tries it next so the scan
+	// still runs under a related profile whose PROFILE.md carries the right
+	// guidance (notably the "native extensions — escalate, do not skip" note)
+	// instead of silently dropping to the guide-less default runner. Empty
+	// means degrade straight to the default image.
+	FallbackProfile string
 }
 
 // IsDefault reports whether p falls back to the configured runner image
@@ -141,7 +151,8 @@ var builtinProfiles = []Profile{
 		// the older single-dir style. A real Cargo-native gem also ships an
 		// extconf.rb or spec.extensions, so the sibling markers still catch it
 		// if the rb-sys needle is ever absent.
-		Name: "ruby-ext",
+		Name:            "ruby-ext",
+		FallbackProfile: "ruby",
 		AnyMarkers: []ProfileMarker{
 			{Path: "*.gemspec", Glob: true, Contains: ".extensions"},
 			{Path: "ext/extconf.rb", Walk: true},
@@ -160,8 +171,9 @@ var builtinProfiles = []Profile{
 		// the file to name Rails::Application (the base class every app's
 		// Application subclasses) so a coincidental config/application.rb in a
 		// non-Rails repo — of any language — does not route here.
-		Name:        "ruby-rails",
-		BaseProfile: "ruby",
+		Name:            "ruby-rails",
+		BaseProfile:     "ruby",
+		FallbackProfile: "ruby",
 		Markers: []ProfileMarker{
 			{Path: "config/application.rb", Contains: "Rails::Application"},
 		},
