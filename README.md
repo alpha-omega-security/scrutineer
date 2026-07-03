@@ -127,6 +127,7 @@ When a repo is added, the `triage` skill is enqueued. Its SKILL.md lists the ski
 | `zizmor` | GitHub Actions workflow audit mapped into findings shape |
 | `ingest` | Normalizes external reports in arbitrary formats into findings when `/v1/import` cannot recognise the payload |
 | `security-deep-dive` | The model-backed audit producing structured findings |
+| `advisory-deep-dive` | Re-audits every past advisory against its fix commit for a fix bypass, an incomplete fix, or the same bug class in sibling code the patch never touched; the deep-dive scoped to the advisory space |
 | `finding-dedup` | Compares open findings and marks overlapping reports as duplicates |
 | `verify` | Re-checks one finding against current HEAD; records reproduces / fixed / can't-reproduce |
 | `revalidate` | Cheap read-only classifier (prose + `git log`, no PoC execution) that emits true / false positive / already-fixed / uncertain; auto-enqueued for High/Critical from `security-deep-dive` and for every imported finding. A `true_positive` on a High/Critical finding chains automatically to `verify` |
