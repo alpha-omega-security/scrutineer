@@ -606,6 +606,18 @@ func (p Profile) EnsureImage(ctx context.Context, rt ContainerRuntime, profilesD
 	defer mu.Unlock()
 
 	if imageExistsLocally(ctx, rt, tag) {
+		// A runner-based profile whose runner digest couldn't be resolved (offline,
+		// auth denied, a local-only ref, or podman/Apple without skopeo) keys its
+		// tag on the ref string alone, so a moved runner :latest yields the SAME
+		// tag and this cached image is reused even though it may sit on a now-stale
+		// runner base. Surface that so the otherwise-silent staleness is visible.
+		// Chained profiles (BaseProfile set) inherit freshness from the base build
+		// and are exempt.
+		if p.BaseProfile == "" && baseDigest == "" {
+			emit(Event{Kind: KindText, Text: "profile: reusing cached " + tag +
+				" but could not verify the runner base is current (" + runnerImage +
+				" digest unresolved); if it changed, `" + rt.bin() + " rmi " + tag + "` to force a rebuild"})
+		}
 		return tag, nil
 	}
 	emit(Event{Kind: KindText, Text: "profile: building " + tag + " (first build can take several minutes)"})
