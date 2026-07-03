@@ -105,13 +105,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # ffi, gmp, readline, ncurses, gdbm). gdb/strace/valgrind for triage. The apt
 # `ruby` doubles as the BASERUBY the from-source build needs and as the stock
 # interpreter for fast reads / valgrind; ruby-dev lets it build a gem in-place
-# for a valgrind run. wget fetches rustup-init. ragel/flex regenerate a gem's C
-# scanner/lexer from a committed *.rl / *.l (and bison its *.y parser) when the
-# generated *.c is not checked in — many such gems ship only the generator
-# source and produce the .c at gem-build time, so the cloned repo can't compile
-# without them.
+# for a valgrind run. wget fetches rustup-init.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential autoconf bison flex ragel patch git pkg-config wget ca-certificates \
+        build-essential autoconf bison patch git pkg-config wget ca-certificates \
         gdb strace valgrind \
         ruby ruby-dev \
         libssl-dev libyaml-dev zlib1g-dev libffi-dev libgmp-dev \
