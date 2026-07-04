@@ -50,6 +50,13 @@ rake compile              # most gems; produces lib/<name>/<name>.so
 cd ext/<name> && ruby extconf.rb && make
 ```
 
+**Map the native surface first.** Before writing a reproducer, read each
+`Init_<name>` and list every `rb_define_method` / `rb_define_module_function` /
+`rb_define_singleton_method` it wires up — *including any built in a loop or from
+a table*. Those are the real Ruby→C entry points, and a method exposed only
+through metaprogramming (a `define_method` wrapper, `method_missing`, or dynamic
+dispatch on a computed name) is still attack surface.
+
 Then drive it from Ruby and let a sanitizer abort be the signal:
 
 ```bash

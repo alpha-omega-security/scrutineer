@@ -527,6 +527,62 @@ func TestResolveProfile_SubPath(t *testing.T) {
 	}
 }
 
+// TestResolveProfile_DegradesToFallback exercises the FallbackProfile degrade
+// loop: when a profile's own image can't be built, the scan must continue under
+// its fallback rather than the guide-less default runner. ruby-ext ships no
+// Dockerfile here, so EnsureImage fails the read before it touches the runtime;
+// ruby's Dockerfile is present, and a stub docker whose `image inspect` exits 0
+// lets ruby resolve from cache with no real build. resolveProfile should log the
+// fallback and hand back the ruby profile, not the default.
+func TestResolveProfile_DegradesToFallback(t *testing.T) {
+	// This drives ruby-ext -> ruby specifically; fail loudly if the registry
+	// wiring the test depends on ever changes.
+	if got := ProfileByName("ruby-ext").FallbackProfile; got != "ruby" {
+		t.Fatalf("test assumes ruby-ext falls back to ruby; registry now says %q", got)
+	}
+
+	profiles := t.TempDir()
+	// The fallback (ruby) ships a Dockerfile; the first profile (ruby-ext) does
+	// not, so its EnsureImage fails the read before any runtime call.
+	if err := os.MkdirAll(filepath.Join(profiles, "ruby"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(profiles, "ruby", "Dockerfile"), []byte("FROM scratch\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Stub docker: `image inspect` exits 0 so ruby resolves from the local cache
+	// (no real build); anything else (e.g. resolveBaseDigest's `buildx`) exits
+	// non-zero, which the callers already treat as a soft miss.
+	binDir := t.TempDir()
+	stub := "#!/bin/sh\n[ \"$1\" = \"image\" ] && exit 0\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(binDir, "docker"), []byte(stub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	d := ContainerRunner{ProfilesDir: profiles} // default Bin "docker" resolves to the stub
+
+	var events []Event
+	emit := func(e Event) { events = append(events, e) }
+
+	// Request ruby-ext explicitly to skip detection and drive the build directly.
+	name, _ := d.resolveProfile(context.Background(), "ruby-ext", t.TempDir(), "", emit)
+
+	if name != "ruby" {
+		t.Errorf("resolveProfile returned profile %q, want the ruby fallback", name)
+	}
+	var loggedFallback bool
+	for _, e := range events {
+		if strings.Contains(e.Text, "falling back to ruby") {
+			loggedFallback = true
+		}
+	}
+	if !loggedFallback {
+		t.Errorf("expected a %q log line; got events %v", "falling back to ruby", events)
+	}
+}
+
 func TestUsesEgressSidecar(t *testing.T) {
 	// The egress proxy sidecar is for exactly one configuration: rootless podman
 	// under --hardened, where the --internal network can't reach the host proxy.

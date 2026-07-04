@@ -493,6 +493,29 @@ func (d ContainerRunner) resolveProfile(ctx context.Context, requested, src, sub
 		}
 	}
 	img, err := p.EnsureImage(ctx, d.Runtime, d.ProfilesDir, defaultImg, emit)
+	// On a build failure, degrade along the FallbackProfile chain before giving
+	// up: a native profile that can't be built (runner base unreachable, ASan
+	// compile broke) should still run under its related base profile — whose
+	// PROFILE.md carries the "native extensions — escalate, do not skip" note —
+	// rather than the guide-less default runner, which silently under-covers.
+	// tried makes the loop terminate regardless of the registry data:
+	// TestBuiltinProfiles_registrySanity keeps the chain acyclic, but a repeat
+	// here would otherwise spin forever since every profile in a cycle keeps
+	// failing to build.
+	tried := map[string]bool{p.Name: true}
+	for err != nil && p.FallbackProfile != "" {
+		fb := ProfileByName(p.FallbackProfile)
+		if fb.IsDefault() {
+			break // unknown fallback name; TestBuiltinProfiles_registrySanity guards this
+		}
+		if tried[fb.Name] {
+			break // FallbackProfile cycle; registry-sanity guards this, but never spin
+		}
+		tried[fb.Name] = true
+		emit(Event{Kind: KindText, Text: "profile: " + p.Name + " build failed (" + err.Error() + "), falling back to " + fb.Name})
+		p = fb
+		img, err = p.EnsureImage(ctx, d.Runtime, d.ProfilesDir, defaultImg, emit)
+	}
 	if err != nil {
 		emit(Event{Kind: KindText, Text: "profile: " + p.Name + " build failed, using default: " + err.Error()})
 		return "", defaultImg

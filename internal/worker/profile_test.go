@@ -815,6 +815,47 @@ func TestBuiltinProfiles_registrySanity(t *testing.T) {
 			t.Errorf("profile %q has unknown BaseProfile %q", p.Name, p.BaseProfile)
 		}
 	}
+	// Every FallbackProfile must name another registered profile, so the
+	// degrade chain in resolveProfile resolves instead of silently dropping to
+	// the guide-less default runner.
+	for _, p := range builtinProfiles {
+		if p.FallbackProfile == "" {
+			continue
+		}
+		if p.FallbackProfile == p.Name {
+			t.Errorf("profile %q lists itself as FallbackProfile", p.Name)
+		}
+		if !names[p.FallbackProfile] {
+			t.Errorf("profile %q has unknown FallbackProfile %q", p.Name, p.FallbackProfile)
+		}
+	}
+	// Neither chain may cycle. The self-checks above catch the direct A->A case;
+	// assertProfileChainAcyclic walks the whole chain so a multi-hop A->B->A can't
+	// slip through.
+	assertProfileChainAcyclic(t, "BaseProfile", func(p Profile) string { return p.BaseProfile })
+	assertProfileChainAcyclic(t, "FallbackProfile", func(p Profile) string { return p.FallbackProfile })
+}
+
+// assertProfileChainAcyclic walks the chain reached by next() from every
+// registered profile and fails if a name repeats. A FallbackProfile cycle would
+// spin resolveProfile's degrade loop (which also breaks on a repeat at runtime)
+// and a BaseProfile cycle would recurse EnsureImage into a stack overflow, so an
+// acyclic registry is the invariant both rely on. Kept out of the registry
+// sanity test body so its cognitive complexity stays under the linter's cap.
+func assertProfileChainAcyclic(t *testing.T, kind string, next func(Profile) string) {
+	t.Helper()
+	for _, start := range builtinProfiles {
+		seen := map[string]bool{start.Name: true}
+		for cur := start; next(cur) != ""; {
+			n := next(cur)
+			if seen[n] {
+				t.Errorf("profile %q: %s chain cycles at %q", start.Name, kind, n)
+				break
+			}
+			seen[n] = true
+			cur = ProfileByName(n)
+		}
+	}
 }
 
 func TestRepoShipsProfileDockerfiles(t *testing.T) {
