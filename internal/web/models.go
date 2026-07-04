@@ -191,3 +191,11 @@ func resolveModelPreference(gdb *gorm.DB, preference, fallback string) string {
 	}
 	return ModelForTier(gdb, ModelTierHigh, fallback)
 }
+
+// isDowngradableTier reports whether a model preference is one of the expensive
+// tiers (max/high) or the empty default (which resolves to high), which the
+// overage fallback rewrites to mid. A concrete model id or the mid tier is left
+// as-is, so an explicit per-scan model choice is always honoured.
+func isDowngradableTier(preference string) bool {
+	return preference == "" || preference == ModelTierHigh || preference == ModelTierMax
+}

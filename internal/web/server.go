@@ -2344,6 +2344,14 @@ func (s *Server) enqueueSkillWith(ctx context.Context, repoID, skillID uint, opt
 	if !ValidModelPreference(opts.Model) && hasSkill {
 		opts.Model = sk.Model
 	}
+	// Overage fallback: while the subscription is past its included quota, rewrite
+	// the expensive tiers (max/high, and the empty default that resolves to high)
+	// to mid (Sonnet), when enabled. An explicit concrete model id is left alone.
+	// The resolved model is snapshotted onto the scan below, so this applies to
+	// scans enqueued from now on (including triage's fan-out), not queued ones.
+	if s.Worker.ShouldDowngradeModel() && isDowngradableTier(opts.Model) {
+		opts.Model = ModelTierMid
+	}
 	opts.Model = resolveModelPreference(s.DB, opts.Model, s.DefaultModel())
 	if !ValidEffort(opts.Effort) {
 		opts.Effort = s.DefaultEffort()

@@ -109,6 +109,7 @@ type flags struct {
 	forkOrg               string
 	metadataDir           string
 	schemaStrict          bool
+	downgradeOnOverage    bool
 	recipientsFile        string
 	identityFile          string
 	autoRejectMissedCount int
@@ -155,6 +156,7 @@ func registerFlags(fs *flag.FlagSet, f *flags) {
 	fs.StringVar(&f.anthropicBaseURL, "anthropic-base-url", "", "custom Anthropic API base URL (env: ANTHROPIC_BASE_URL)")
 	fs.StringVar(&f.forkOrg, "fork-org", "", "GitHub org the fork skill forks into and files draft advisories against")
 	fs.BoolVar(&f.schemaStrict, "schema-strict", false, "fail scans whose report.json does not validate against the skill's schema (default: warn and continue)")
+	fs.BoolVar(&f.downgradeOnOverage, "downgrade-on-overage", false, "on a subscription token, fall the model tier back from max/high to mid (Opus->Sonnet) for new scans while the account is on overage; restores when the window resets")
 	fs.StringVar(&f.recipientsFile, "recipients-file", "", "age recipients file (public keys) for encrypted export")
 	fs.StringVar(&f.identityFile, "identity-file", "", "age identity file or SSH private key for decrypting imports")
 	fs.IntVar(&f.autoRejectMissedCount, "auto-reject-missed-count", 0, "auto-reject findings after this many consecutive missed rescans (0 disables)")
@@ -232,6 +234,9 @@ func (f *flags) merge(cfg *config.Config) {
 	}
 	if cfg.SchemaStrict != nil && !f.set["schema-strict"] {
 		f.schemaStrict = *cfg.SchemaStrict
+	}
+	if cfg.DowngradeOnOverage != nil && !f.set["downgrade-on-overage"] {
+		f.downgradeOnOverage = *cfg.DowngradeOnOverage
 	}
 	if cfg.RecipientsFile != "" && !f.set["recipients-file"] {
 		f.recipientsFile = cfg.RecipientsFile
@@ -437,6 +442,7 @@ func run(log *slog.Logger) error {
 		Runner:                runner,
 		ScanTimeout:           f.scanTimeout,
 		SchemaStrict:          f.schemaStrict,
+		DowngradeOnOverage:    f.downgradeOnOverage,
 		AutoRejectMissedCount: f.autoRejectMissedCount,
 		OnEvent: func(scanID, repoID uint, name, data string) {
 			broker.Publish(web.Event{Name: name, Data: data, ScanID: scanID, RepoID: repoID})

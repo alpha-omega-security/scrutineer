@@ -38,12 +38,15 @@
     {{range .RateLimit.Rows}}
       <tr>
         <td class="font-medium">{{.Window}}</td>
-        <td class="text-muted-foreground">{{.Status}}</td>
+        <td class="text-muted-foreground">{{.Status}}{{if .Overage}} · overage{{end}}</td>
         <td class="text-right text-muted-foreground">{{if .ResetAt}}{{.ResetAt}}{{else}}—{{end}}</td>
       </tr>
     {{end}}
     </tbody>
   </table>
+  {{if .RateLimit.Downgrading}}
+    <p class="text-xs mt-3 flex items-center gap-2"><i data-lucide="triangle-alert"></i> Account on overage — new scans use the mid (Sonnet) tier until the window resets.</p>
+  {{end}}
 </div>
 {{end}}
 
