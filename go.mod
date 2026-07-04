@@ -7,7 +7,7 @@ toolchain go1.26.4
 require (
 	filippo.io/age v1.3.1
 	github.com/git-pkgs/pom v0.1.4
-	github.com/git-pkgs/purl v0.1.12
+	github.com/git-pkgs/purl v0.1.13
 	github.com/git-pkgs/sbom v0.1.2
 	github.com/glebarez/sqlite v1.11.0
 	github.com/pandatix/go-cvss v0.6.2
@@ -16,7 +16,7 @@ require (
 	golang.org/x/crypto v0.53.0
 	golang.org/x/term v0.44.0
 	gopkg.in/yaml.v3 v3.0.1
-	gorm.io/gorm v1.31.1
+	gorm.io/gorm v1.31.2
 	maragu.dev/goqite v0.4.0
 )
 
@@ -24,7 +24,7 @@ require (
 	filippo.io/edwards25519 v1.2.0 // indirect
 	filippo.io/hpke v0.4.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
-	github.com/git-pkgs/vers v0.2.5 // indirect
+	github.com/git-pkgs/vers v0.2.6 // indirect
 	github.com/glebarez/go-sqlite v1.22.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
