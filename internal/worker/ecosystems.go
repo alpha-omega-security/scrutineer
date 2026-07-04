@@ -59,8 +59,8 @@ const (
 	// package. Both bound the N+1 fan-out, and truncation is logged.
 	maxDependentPackages    = 25
 	maxDependentsPerPackage = 30
-	// maxAdvisoryPages bounds how far the advisories pagination is followed.
-	maxAdvisoryPages = 20
+	// maxEcosystemsPages bounds how far ecosyste.ms Link pagination is followed.
+	maxEcosystemsPages = 20
 )
 
 // ecosystemsSource describes one cached upstream payload: which columns it
@@ -157,12 +157,13 @@ func ecosystemsFetchedAt(repo db.Repository, key string) *time.Time {
 	return nil
 }
 
-// lookupFetcher builds a fetcher for the single-response ?param={repoURL}
-// lookup endpoints (repo, packages, commits, issues).
+// lookupFetcher builds a fetcher for the ?param={repoURL} lookup endpoints.
+// Object responses stay single-page; array responses follow Link pagination
+// until the page or cumulative-size cap.
 func lookupFetcher(param string, endpoint func(ecosystemsEndpoints) string) func(context.Context, ecosystemsEndpoints, string, *slog.Logger) ([]byte, error) {
-	return func(ctx context.Context, ep ecosystemsEndpoints, repoURL string, _ *slog.Logger) ([]byte, error) {
+	return func(ctx context.Context, ep ecosystemsEndpoints, repoURL string, log *slog.Logger) ([]byte, error) {
 		q := url.Values{param: {repoURL}}
-		return ecosystemsGet(ctx, endpoint(ep)+"?"+q.Encode())
+		return ecosystemsLookup(ctx, endpoint(ep)+"?"+q.Encode(), log, "lookup pagination capped", "repo", repoURL)
 	}
 }
 
@@ -174,7 +175,7 @@ func fetchAdvisories(ctx context.Context, ep ecosystemsEndpoints, repoURL string
 	next := ep.advisories + "?" + q.Encode()
 	all := []json.RawMessage{}
 	total := 0
-	for page := 0; next != "" && page < maxAdvisoryPages; page++ {
+	for page := 0; next != "" && page < maxEcosystemsPages; page++ {
 		body, link, err := ecosystemsGetWithLink(ctx, next)
 		if err != nil {
 			return nil, err
@@ -193,7 +194,7 @@ func fetchAdvisories(ctx context.Context, ep ecosystemsEndpoints, repoURL string
 		next = link
 	}
 	if next != "" {
-		log.Warn("advisories pagination capped", "repo", repoURL, "pages", maxAdvisoryPages)
+		log.Warn("advisories pagination capped", "repo", repoURL, "pages", maxEcosystemsPages)
 	}
 	return json.Marshal(all)
 }
@@ -205,44 +206,42 @@ type dependentsEntry struct {
 }
 
 // fetchDependents chains off the packages lookup: for each published package
-// it follows dependent_packages_url and keeps the first page (capped). Output
-// is sorted by package name so the cached blob is reproducible.
+// it follows dependent_packages_url and keeps results up to the configured
+// caps. Output is sorted by package name so the cached blob is reproducible.
 func fetchDependents(ctx context.Context, ep ecosystemsEndpoints, repoURL string, log *slog.Logger) ([]byte, error) {
 	q := url.Values{"repository_url": {repoURL}}
-	body, err := ecosystemsGet(ctx, ep.packages+"?"+q.Encode())
+	pkgRows, err := ecosystemsJSONArray(ctx, ep.packages+"?"+q.Encode(), maxDependentPackages, log,
+		"dependents package fan-out capped", "repo", repoURL, "cap", maxDependentPackages)
 	if err != nil {
 		return nil, err
 	}
-	var pkgs []struct {
+	pkgs := make([]struct {
 		Name                 string `json:"name"`
 		Ecosystem            string `json:"ecosystem"`
 		DependentPackagesURL string `json:"dependent_packages_url"`
-	}
-	if err := json.Unmarshal(body, &pkgs); err != nil {
-		return nil, fmt.Errorf("decode packages: %w", err)
+	}, 0, len(pkgRows))
+	for _, raw := range pkgRows {
+		var p struct {
+			Name                 string `json:"name"`
+			Ecosystem            string `json:"ecosystem"`
+			DependentPackagesURL string `json:"dependent_packages_url"`
+		}
+		if err := json.Unmarshal(raw, &p); err != nil {
+			return nil, fmt.Errorf("decode packages: %w", err)
+		}
+		pkgs = append(pkgs, p)
 	}
 	sort.Slice(pkgs, func(i, j int) bool { return pkgs[i].Name < pkgs[j].Name })
-	if len(pkgs) > maxDependentPackages {
-		log.Warn("dependents package fan-out capped", "repo", repoURL, "packages", len(pkgs), "cap", maxDependentPackages)
-		pkgs = pkgs[:maxDependentPackages]
-	}
 	out := make([]dependentsEntry, 0, len(pkgs))
 	for _, p := range pkgs {
 		if p.DependentPackagesURL == "" {
 			continue
 		}
-		depBody, err := ecosystemsGet(ctx, p.DependentPackagesURL)
+		deps, err := ecosystemsJSONArray(ctx, p.DependentPackagesURL, maxDependentsPerPackage, log,
+			"dependents fetch capped", "repo", repoURL, "package", p.Name, "cap", maxDependentsPerPackage)
 		if err != nil {
 			log.Warn("dependents fetch failed", "repo", repoURL, "package", p.Name, "err", err)
 			continue
-		}
-		var deps []json.RawMessage
-		if err := json.Unmarshal(depBody, &deps); err != nil {
-			log.Warn("dependents decode failed", "repo", repoURL, "package", p.Name, "err", err)
-			continue
-		}
-		if len(deps) > maxDependentsPerPackage {
-			deps = deps[:maxDependentsPerPackage]
 		}
 		out = append(out, dependentsEntry{Package: p.Name, Ecosystem: p.Ecosystem, Dependents: deps})
 	}
@@ -313,6 +312,70 @@ func updateDependentsTable(gdb *gorm.DB, repoID uint, payload []byte) error {
 func ecosystemsGet(ctx context.Context, endpoint string) ([]byte, error) {
 	body, _, err := ecosystemsGetWithLink(ctx, endpoint)
 	return body, err
+}
+
+func ecosystemsLookup(ctx context.Context, endpoint string, log *slog.Logger, warnMsg string, attrs ...any) ([]byte, error) {
+	body, link, err := ecosystemsGetWithLink(ctx, endpoint)
+	if err != nil {
+		return nil, err
+	}
+	if link == "" {
+		return body, nil
+	}
+	var first []json.RawMessage
+	if err := json.Unmarshal(body, &first); err != nil {
+		return body, nil
+	}
+	rows, err := appendEcosystemsPages(ctx, first, len(body), link, maxEcosystemsPages-1, 0, log, warnMsg, attrs...)
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(rows)
+}
+
+func ecosystemsJSONArray(ctx context.Context, endpoint string, maxItems int, log *slog.Logger, warnMsg string, attrs ...any) ([]json.RawMessage, error) {
+	body, link, err := ecosystemsGetWithLink(ctx, endpoint)
+	if err != nil {
+		return nil, err
+	}
+	var first []json.RawMessage
+	if err := json.Unmarshal(body, &first); err != nil {
+		return nil, err
+	}
+	return appendEcosystemsPages(ctx, first, len(body), link, maxEcosystemsPages-1, maxItems, log, warnMsg, attrs...)
+}
+
+func appendEcosystemsPages(ctx context.Context, rows []json.RawMessage, total int, next string, pagesLeft int, maxItems int, log *slog.Logger, warnMsg string, attrs ...any) ([]json.RawMessage, error) {
+	rows, capped := capEcosystemsRows(rows, maxItems)
+	for next != "" && pagesLeft > 0 && !capped && (maxItems <= 0 || len(rows) < maxItems) {
+		body, link, err := ecosystemsGetWithLink(ctx, next)
+		if err != nil {
+			return nil, err
+		}
+		var batch []json.RawMessage
+		if err := json.Unmarshal(body, &batch); err != nil {
+			return nil, err
+		}
+		rows = append(rows, batch...)
+		rows, capped = capEcosystemsRows(rows, maxItems)
+		total += len(body)
+		next = link
+		pagesLeft--
+		if total >= maxResponseBody {
+			capped = true
+		}
+	}
+	if next != "" || capped {
+		log.Warn(warnMsg, append(attrs, "pages", maxEcosystemsPages, "items", len(rows))...)
+	}
+	return rows, nil
+}
+
+func capEcosystemsRows(rows []json.RawMessage, maxItems int) ([]json.RawMessage, bool) {
+	if maxItems <= 0 || len(rows) <= maxItems {
+		return rows, false
+	}
+	return rows[:maxItems], true
 }
 
 // ecosystemsGetWithLink performs one GET and returns the size-capped body plus

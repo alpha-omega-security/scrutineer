@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -30,9 +31,14 @@ func ecosystemsTestServer(t *testing.T) (*httptest.Server, *int) {
 	mux.HandleFunc("/packages", func(w http.ResponseWriter, r *http.Request) {
 		hits++
 		base := "http://" + r.Host
+		if r.URL.Query().Get("page") == "2" {
+			_, _ = io.WriteString(w, `[`+
+				`{"name":"acme","ecosystem":"npm","dependent_packages_url":"`+base+`/deps/acme"}]`)
+			return
+		}
+		w.Header().Set("Link", `<http://`+r.Host+`/packages?page=2>; rel="next"`)
 		_, _ = io.WriteString(w, `[`+
-			`{"name":"widget","ecosystem":"npm","dependent_packages_url":"`+base+`/deps/widget"},`+
-			`{"name":"acme","ecosystem":"npm","dependent_packages_url":"`+base+`/deps/acme"}]`)
+			`{"name":"widget","ecosystem":"npm","dependent_packages_url":"`+base+`/deps/widget"}]`)
 	})
 	mux.HandleFunc("/advisories", func(w http.ResponseWriter, r *http.Request) {
 		hits++
@@ -51,7 +57,12 @@ func ecosystemsTestServer(t *testing.T) (*httptest.Server, *int) {
 		hits++
 		_, _ = io.WriteString(w, `{"issues":[{"login":"bob"}]}`)
 	})
-	mux.HandleFunc("/deps/widget", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/deps/widget", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("page") == "2" {
+			_, _ = io.WriteString(w, `[{"repo":"downstream-1b"}]`)
+			return
+		}
+		w.Header().Set("Link", `<http://`+r.Host+`/deps/widget?page=2>; rel="next"`)
 		_, _ = io.WriteString(w, `[{"repo":"downstream-1"}]`)
 	})
 	mux.HandleFunc("/deps/acme", func(w http.ResponseWriter, _ *http.Request) {
@@ -120,9 +131,104 @@ func TestRefreshEcosystems_populatesAllSources(t *testing.T) {
 	if !strings.Contains(got.EcosystemsAdvisoriesData, "GHSA-2") {
 		t.Errorf("advisories did not follow pagination: %q", got.EcosystemsAdvisoriesData)
 	}
+	if !strings.Contains(got.EcosystemsPackagesData, "acme") {
+		t.Errorf("packages did not follow pagination: %q", got.EcosystemsPackagesData)
+	}
 	if !strings.Contains(got.EcosystemsDependentsData, "downstream-2") {
 		t.Errorf("dependents missing second package: %q", got.EcosystemsDependentsData)
 	}
+	if !strings.Contains(got.EcosystemsDependentsData, "downstream-1b") {
+		t.Errorf("dependents did not follow dependent_packages_url pagination: %q", got.EcosystemsDependentsData)
+	}
+}
+
+func TestFetchDependentsPaginationStopsAtCaps(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/packages", func(w http.ResponseWriter, r *http.Request) {
+		base := "http://" + r.Host
+		start, end := 0, 24
+		if r.URL.Query().Get("page") == "2" {
+			start, end = 24, 26
+		} else {
+			w.Header().Set("Link", `<http://`+r.Host+`/packages?page=2>; rel="next"`)
+		}
+		writeJSONArray(w, start, end, func(i int) string {
+			name := fmt.Sprintf("pkg%02d", i)
+			return fmt.Sprintf(`{"name":%q,"ecosystem":"npm","dependent_packages_url":%q}`, name, base+"/deps/"+name)
+		})
+	})
+	mux.HandleFunc("/deps/pkg00", func(w http.ResponseWriter, r *http.Request) {
+		start, end := 0, 29
+		if r.URL.Query().Get("page") == "2" {
+			start, end = 29, 31
+		} else {
+			w.Header().Set("Link", `<http://`+r.Host+`/deps/pkg00?page=2>; rel="next"`)
+		}
+		writeJSONArray(w, start, end, func(i int) string {
+			return fmt.Sprintf(`{"name":"dep%02d","purl":"pkg:npm/dep%02d"}`, i, i)
+		})
+	})
+	mux.HandleFunc("/deps/", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `[]`)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	body, err := fetchDependents(context.Background(), ecosystemsEndpoints{packages: srv.URL + "/packages"},
+		"https://github.com/acme/widget", slog.Default())
+	if err != nil {
+		t.Fatalf("fetchDependents: %v", err)
+	}
+	var entries []dependentsEntry
+	if err := json.Unmarshal(body, &entries); err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != maxDependentPackages {
+		t.Fatalf("dependents entries = %d, want cap %d: %s", len(entries), maxDependentPackages, body)
+	}
+	if findDependentsEntry(entries, "pkg25") != nil {
+		t.Fatalf("package past cap was fetched: %s", body)
+	}
+	pkg00 := findDependentsEntry(entries, "pkg00")
+	if pkg00 == nil {
+		t.Fatalf("pkg00 entry missing: %s", body)
+	}
+	if len(pkg00.Dependents) != maxDependentsPerPackage {
+		t.Fatalf("pkg00 dependents = %d, want cap %d", len(pkg00.Dependents), maxDependentsPerPackage)
+	}
+	joined := string(mustMarshal(t, pkg00.Dependents))
+	if !strings.Contains(joined, "dep29") || strings.Contains(joined, "dep30") {
+		t.Fatalf("dependent pagination/cap wrong: %s", joined)
+	}
+}
+
+func writeJSONArray(w io.Writer, start, end int, item func(int) string) {
+	_, _ = io.WriteString(w, `[`)
+	for i := start; i < end; i++ {
+		if i > start {
+			_, _ = io.WriteString(w, `,`)
+		}
+		_, _ = io.WriteString(w, item(i))
+	}
+	_, _ = io.WriteString(w, `]`)
+}
+
+func findDependentsEntry(entries []dependentsEntry, name string) *dependentsEntry {
+	for i := range entries {
+		if entries[i].Package == name {
+			return &entries[i]
+		}
+	}
+	return nil
+}
+
+func mustMarshal(t *testing.T, v any) []byte {
+	t.Helper()
+	body, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return body
 }
 
 func TestRefreshEcosystems_staleOnlySkipsFresh(t *testing.T) {
