@@ -31,6 +31,30 @@ func TestToFindings_carriesReachabilityAndQualityTier(t *testing.T) {
 	}
 }
 
+func TestToFindings_carriesDupCheck(t *testing.T) {
+	raw := []byte(`{
+	  "findings": [
+	    {"id": "F1", "title": "with note", "severity": "Low", "location": "a.go:1",
+	     "dup_check": "compared against F0 (same file); distinct sink, different CWE"},
+	    {"id": "F2", "title": "without note", "severity": "Low", "location": "b.go:1"}
+	  ]
+	}`)
+	rep, err := parseReport(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := rep.toFindings(1, 1, "abc", "")
+	if len(got) != 2 {
+		t.Fatalf("got %d findings, want 2", len(got))
+	}
+	if got[0].DupCheck != "compared against F0 (same file); distinct sink, different CWE" {
+		t.Errorf("DupCheck = %q, want the emitted sentence", got[0].DupCheck)
+	}
+	if got[1].DupCheck != "" {
+		t.Errorf("DupCheck = %q, want empty when the field is absent", got[1].DupCheck)
+	}
+}
+
 func TestToFindings_carriesReferences(t *testing.T) {
 	raw := []byte(`{
 	  "findings": [{
