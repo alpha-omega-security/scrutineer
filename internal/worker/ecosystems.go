@@ -309,11 +309,6 @@ func updateDependentsTable(gdb *gorm.DB, repoID uint, payload []byte) error {
 	})
 }
 
-func ecosystemsGet(ctx context.Context, endpoint string) ([]byte, error) {
-	body, _, err := ecosystemsGetWithLink(ctx, endpoint)
-	return body, err
-}
-
 func ecosystemsLookup(ctx context.Context, endpoint string, log *slog.Logger, warnMsg string, attrs ...any) ([]byte, error) {
 	body, link, err := ecosystemsGetWithLink(ctx, endpoint)
 	if err != nil {
