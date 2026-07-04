@@ -830,27 +830,32 @@ func TestBuiltinProfiles_registrySanity(t *testing.T) {
 		}
 	}
 	// Neither chain may cycle. The self-checks above catch the direct A->A case;
-	// these walk the whole chain so a multi-hop A->B->A can't slip through. A
-	// FallbackProfile cycle would spin resolveProfile's degrade loop (which now
-	// also breaks on a repeat at runtime) and a BaseProfile cycle would recurse
-	// EnsureImage into a stack overflow — an acyclic registry is the invariant
-	// both rely on.
-	assertAcyclic := func(kind string, next func(Profile) string) {
-		for _, start := range builtinProfiles {
-			seen := map[string]bool{start.Name: true}
-			for cur := start; next(cur) != ""; {
-				n := next(cur)
-				if seen[n] {
-					t.Errorf("profile %q: %s chain cycles at %q", start.Name, kind, n)
-					break
-				}
-				seen[n] = true
-				cur = ProfileByName(n)
+	// assertProfileChainAcyclic walks the whole chain so a multi-hop A->B->A can't
+	// slip through.
+	assertProfileChainAcyclic(t, "BaseProfile", func(p Profile) string { return p.BaseProfile })
+	assertProfileChainAcyclic(t, "FallbackProfile", func(p Profile) string { return p.FallbackProfile })
+}
+
+// assertProfileChainAcyclic walks the chain reached by next() from every
+// registered profile and fails if a name repeats. A FallbackProfile cycle would
+// spin resolveProfile's degrade loop (which also breaks on a repeat at runtime)
+// and a BaseProfile cycle would recurse EnsureImage into a stack overflow, so an
+// acyclic registry is the invariant both rely on. Kept out of the registry
+// sanity test body so its cognitive complexity stays under the linter's cap.
+func assertProfileChainAcyclic(t *testing.T, kind string, next func(Profile) string) {
+	t.Helper()
+	for _, start := range builtinProfiles {
+		seen := map[string]bool{start.Name: true}
+		for cur := start; next(cur) != ""; {
+			n := next(cur)
+			if seen[n] {
+				t.Errorf("profile %q: %s chain cycles at %q", start.Name, kind, n)
+				break
 			}
+			seen[n] = true
+			cur = ProfileByName(n)
 		}
 	}
-	assertAcyclic("BaseProfile", func(p Profile) string { return p.BaseProfile })
-	assertAcyclic("FallbackProfile", func(p Profile) string { return p.FallbackProfile })
 }
 
 func TestRepoShipsProfileDockerfiles(t *testing.T) {
