@@ -91,6 +91,12 @@ func (s *Server) findingCSAF(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "finding is a duplicate; export not available", http.StatusGone)
 		return
 	}
+	var dependentCount int64
+	s.DB.Model(&db.Dependent{}).Where("repository_id = ?", f.RepositoryID).Count(&dependentCount)
+	if dependentCount == 0 {
+		http.Error(w, "CSAF VEX export is unavailable because this repository has no recorded dependents", http.StatusNotFound)
+		return
+	}
 	schema, err := getCSAFSchema()
 	if err != nil {
 		s.Log.Error("csaf schema", "err", err)
