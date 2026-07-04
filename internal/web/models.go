@@ -199,3 +199,14 @@ func resolveModelPreference(gdb *gorm.DB, preference, fallback string) string {
 func isDowngradableTier(preference string) bool {
 	return preference == "" || preference == ModelTierHigh || preference == ModelTierMax
 }
+
+// applyOverageDowngrade rewrites an expensive tier preference to mid when the
+// overage fallback is active; otherwise it returns the preference unchanged.
+// Kept as a pure function so the (active x preference) matrix is unit-testable
+// without a live worker on overage.
+func applyOverageDowngrade(preference string, active bool) string {
+	if active && isDowngradableTier(preference) {
+		return ModelTierMid
+	}
+	return preference
+}
