@@ -55,7 +55,7 @@ func TestScanListStatsAggregatesCounts(t *testing.T) {
 		RepositoryID: repo.ID,
 		Kind:         "skill",
 		Status:       db.ScanPaused,
-		Error:        "Claude account access paused. Queued scan held automatically; resume once the account recovers.",
+		Error:        "Claude account access paused. Queued scan paused automatically; resume once the account recovers.",
 	})
 	s.DB.Create(&db.Scan{
 		RepositoryID: repo.ID,

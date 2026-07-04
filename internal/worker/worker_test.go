@@ -211,6 +211,507 @@ func TestWorker_claudeAccountErrorPausesScanAndQueue(t *testing.T) {
 	}
 }
 
+func TestWorker_claudeAccountErrorRecordsResetTime(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "limit-reset.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
+	gdb.Create(&repo)
+	skill := db.Skill{Name: "limited", Description: "x", Body: "b", Active: true, Source: "ui", Version: 1}
+	gdb.Create(&skill)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanQueued, SkillID: &skill.ID}
+	gdb.Create(&scan)
+	other := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanQueued, SkillID: &skill.ID}
+	gdb.Create(&other)
+
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	resetAt := now.Add(15 * time.Minute)
+	w := &Worker{
+		DB:               gdb,
+		Log:              slog.New(slog.NewTextHandler(io.Discard, nil)),
+		DataDir:          t.TempDir(),
+		Runner:           fakeRunner{skillErr: &ClaudeAccountError{Detail: "rate limit reached", ResetAt: &resetAt}},
+		PrepareRepoSrc:   stubPrepareRepoSrc,
+		Now:              func() time.Time { return now },
+		LogFlushInterval: time.Hour,
+	}
+	body, _ := json.Marshal(queue.Payload{ScanID: scan.ID})
+	if err := w.wrap(w.doSkill)(context.Background(), body); err != nil {
+		t.Fatalf("wrap: %v", err)
+	}
+
+	for _, id := range []uint{scan.ID, other.ID} {
+		var got db.Scan
+		gdb.First(&got, id)
+		if got.PausedUntil == nil || !got.PausedUntil.Equal(resetAt) {
+			t.Fatalf("scan %d paused_until = %v, want %v", id, got.PausedUntil, resetAt)
+		}
+		if !strings.Contains(got.Error, "Auto-resume after 2026-07-01T12:15:00Z") {
+			t.Errorf("scan %d error = %q, want auto-resume timestamp", id, got.Error)
+		}
+		if id == scan.ID && !strings.Contains(got.Log, "rate limit reset detected; auto-resume after 2026-07-01T12:15:00Z") {
+			t.Errorf("trigger log = %q, want persisted reset diagnostic", got.Log)
+		}
+	}
+}
+
+func TestWorker_claudeAccountErrorRejectsFarFutureReset(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "limit-far-reset.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
+	gdb.Create(&repo)
+	skill := db.Skill{Name: "limited", Description: "x", Body: "b", Active: true, Source: "ui", Version: 1}
+	gdb.Create(&skill)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanQueued, SkillID: &skill.ID}
+	gdb.Create(&scan)
+	other := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanQueued, SkillID: &skill.ID}
+	gdb.Create(&other)
+
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	resetAt := now.Add(9 * 24 * time.Hour) // beyond the 8-day auto-resume cap
+	w := &Worker{
+		DB:             gdb,
+		Log:            slog.New(slog.NewTextHandler(io.Discard, nil)),
+		DataDir:        t.TempDir(),
+		Runner:         fakeRunner{skillErr: &ClaudeAccountError{Detail: "rate limit reached", ResetAt: &resetAt}},
+		PrepareRepoSrc: stubPrepareRepoSrc,
+		Now:            func() time.Time { return now },
+	}
+	body, _ := json.Marshal(queue.Payload{ScanID: scan.ID})
+	if err := w.wrap(w.doSkill)(context.Background(), body); err != nil {
+		t.Fatalf("wrap: %v", err)
+	}
+
+	for _, id := range []uint{scan.ID, other.ID} {
+		var got db.Scan
+		gdb.First(&got, id)
+		if got.PausedUntil != nil {
+			t.Fatalf("scan %d paused_until = %v, want nil for far reset", id, got.PausedUntil)
+		}
+	}
+}
+
+func TestWorker_applyAccountPauseResetExtendsBatchForward(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "extend-batch.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
+	gdb.Create(&repo)
+
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	fiveHour := now.Add(15 * time.Minute)
+	sevenDay := now.Add(7 * 24 * time.Hour)
+	later := sevenDay.Add(24 * time.Hour)
+	wantReset := later
+
+	paused1 := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanPaused, Error: accountPauseReason(&fiveHour), PausedUntil: &fiveHour}
+	paused2 := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanPaused, Error: accountPauseReason(&fiveHour), PausedUntil: &fiveHour}
+	// Prior trigger row with its own Claude detail.
+	triggerAErr := appendAutoResume((&ClaudeAccountError{Detail: "rate limit reached"}).Error(), &fiveHour)
+	triggerA := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanPaused, Error: triggerAErr, PausedUntil: &fiveHour}
+	triggerD := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanPaused, Error: "Claude account access paused. Claude reported: rate limit", PausedUntil: nil}
+	manual := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanPaused, Error: "paused by user", PausedUntil: &fiveHour}
+	longPaused := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanPaused, Error: accountPauseReason(&later), PausedUntil: &later}
+	gdb.Create(&paused1)
+	gdb.Create(&paused2)
+	gdb.Create(&triggerA)
+	gdb.Create(&triggerD)
+	gdb.Create(&manual)
+	gdb.Create(&longPaused)
+
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Now: func() time.Time { return now }}
+	effective, err := w.applyAccountPauseReset(triggerD.ID, triggerD.Error, &sevenDay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if effective == nil || !effective.Equal(wantReset) {
+		t.Fatalf("effective reset = %v, want %v", effective, wantReset)
+	}
+
+	get := func(id uint) db.Scan {
+		var s db.Scan
+		gdb.First(&s, id)
+		return s
+	}
+	if d := get(triggerD.ID); d.PausedUntil == nil || !d.PausedUntil.Equal(wantReset) {
+		t.Errorf("trigger paused_until = %v, want %v", d.PausedUntil, wantReset)
+	}
+	for _, id := range []uint{paused1.ID, paused2.ID} {
+		if s := get(id); s.PausedUntil == nil || !s.PausedUntil.Equal(wantReset) {
+			t.Errorf("paused scan %d paused_until = %v, want extended to %v", id, s.PausedUntil, wantReset)
+		}
+	}
+	if a := get(triggerA.ID); a.PausedUntil == nil || !a.PausedUntil.Equal(wantReset) {
+		t.Errorf("earlier trigger paused_until = %v, want extended to %v", a.PausedUntil, wantReset)
+	}
+	if a := get(triggerA.ID); !strings.Contains(a.Error, "Claude reported: rate limit reached") {
+		t.Errorf("earlier trigger lost its detail: %q", a.Error)
+	}
+	if a := get(triggerA.ID); !strings.Contains(a.Error, "Auto-resume after "+wantReset.UTC().Format(time.RFC3339)) ||
+		strings.Contains(a.Error, fiveHour.UTC().Format(time.RFC3339)) {
+		t.Errorf("earlier trigger suffix not swapped to effective reset: %q", a.Error)
+	}
+	if s := get(manual.ID); s.PausedUntil == nil || !s.PausedUntil.Equal(fiveHour) || s.Error != "paused by user" {
+		t.Errorf("manual pause modified: paused_until=%v error=%q", s.PausedUntil, s.Error)
+	}
+	if s := get(longPaused.ID); s.PausedUntil == nil || !s.PausedUntil.Equal(later) {
+		t.Errorf("long-paused row paused_until = %v, want unchanged %v", s.PausedUntil, later)
+	}
+}
+
+func TestWorker_applyAccountPauseResetTriggerForwardOnly(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "trigger-forward.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
+	gdb.Create(&repo)
+
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	fiveHour := now.Add(15 * time.Minute)
+	sevenDay := now.Add(7 * 24 * time.Hour)
+
+	// A concurrent finalizer already pushed this scan's own row to seven days.
+	triggerErr := appendAutoResume((&ClaudeAccountError{Detail: "rate limit reached"}).Error(), &sevenDay)
+	trigger := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanPaused, Error: triggerErr, PausedUntil: &sevenDay}
+	gdb.Create(&trigger)
+
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Now: func() time.Time { return now }}
+	// This finalizer's own reset is an earlier five-hour: it must not pull the
+	// row back, and must return the row's actual later reset.
+	effective, err := w.applyAccountPauseReset(trigger.ID, (&ClaudeAccountError{Detail: "rate limit reached"}).Error(), &fiveHour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if effective == nil || !effective.Equal(sevenDay) {
+		t.Fatalf("effective = %v, want seven-day %v (re-read)", effective, sevenDay)
+	}
+	var got db.Scan
+	gdb.First(&got, trigger.ID)
+	if got.PausedUntil == nil || !got.PausedUntil.Equal(sevenDay) {
+		t.Errorf("trigger pulled back to %v, want kept at %v", got.PausedUntil, sevenDay)
+	}
+}
+
+func TestWorker_applyAccountPauseResetIgnoresFarFutureRow(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "far-future.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
+	gdb.Create(&repo)
+
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	fiveHour := now.Add(15 * time.Minute)
+	farFuture := now.Add(30 * 24 * time.Hour) // beyond the 8-day auto-resume cap
+
+	// A stale/manual account-paused row far beyond the auto-resume window.
+	far := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanPaused, Error: accountPauseReason(&farFuture), PausedUntil: &farFuture}
+	trigger := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanPaused, Error: (&ClaudeAccountError{Detail: "rate limit reached"}).Error(), PausedUntil: nil}
+	gdb.Create(&far)
+	gdb.Create(&trigger)
+
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Now: func() time.Time { return now }}
+	effective, err := w.applyAccountPauseReset(trigger.ID, trigger.Error, &fiveHour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The far-future row must not drag the batch out; effective stays five-hour.
+	if effective == nil || !effective.Equal(fiveHour) {
+		t.Fatalf("effective = %v, want five-hour %v (far row ignored)", effective, fiveHour)
+	}
+	var gotFar db.Scan
+	gdb.First(&gotFar, far.ID)
+	if gotFar.PausedUntil == nil || !gotFar.PausedUntil.Equal(farFuture) {
+		t.Errorf("far row modified: %v, want unchanged %v", gotFar.PausedUntil, farFuture)
+	}
+}
+
+func TestWorker_applyAccountPauseResetMaxUsesUTCComparison(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "max-utc.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
+	gdb.Create(&repo)
+
+	nowUTC := time.Date(2026, 7, 1, 12, 1, 0, 0, time.UTC)
+	nowLocal := nowUTC.In(time.FixedZone("PDT", -7*60*60))
+	fiveHour := nowUTC.Add(15 * time.Minute)
+	validLater := nowUTC.Add(8*24*time.Hour - time.Minute)
+
+	longPaused := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanPaused, Error: accountPauseReason(&validLater), PausedUntil: &validLater}
+	trigger := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanPaused, Error: (&ClaudeAccountError{Detail: "rate limit reached"}).Error(), PausedUntil: nil}
+	gdb.Create(&longPaused)
+	gdb.Create(&trigger)
+
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Now: func() time.Time { return nowLocal }}
+	effective, err := w.applyAccountPauseReset(trigger.ID, trigger.Error, &fiveHour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if effective == nil || !effective.Equal(validLater) {
+		t.Fatalf("effective = %v, want valid later reset %v", effective, validLater)
+	}
+}
+
+func TestWorker_applyAccountPauseResetSkipsResumedTrigger(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "resumed-trigger.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
+	gdb.Create(&repo)
+
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	fiveHour := now.Add(15 * time.Minute)
+
+	// The trigger was manually resumed (queued, no reset) before this reset
+	// landed: the reset must not revive it, and effective must not be bumped off
+	// its stale value.
+	trigger := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanQueued, Error: "", PausedUntil: nil}
+	gdb.Create(&trigger)
+
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), Now: func() time.Time { return now }}
+	effective, err := w.applyAccountPauseReset(trigger.ID, (&ClaudeAccountError{Detail: "rate limit reached"}).Error(), &fiveHour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if effective == nil || !effective.Equal(fiveHour) {
+		t.Fatalf("effective = %v, want five-hour %v (no stale bump)", effective, fiveHour)
+	}
+	var got db.Scan
+	gdb.First(&got, trigger.ID)
+	if got.Status != db.ScanQueued || got.PausedUntil != nil {
+		t.Errorf("resumed trigger resurrected: status=%s paused_until=%v", got.Status, got.PausedUntil)
+	}
+}
+
+func TestWorker_recordRateLimitStatus(t *testing.T) {
+	w := &Worker{}
+	if len(w.RateLimitStatus()) != 0 {
+		t.Fatal("empty worker should report no rate-limit status")
+	}
+	w.recordRateLimit(RateLimitInfo{Type: "five_hour", Status: "allowed", ResetsAt: 100})
+	w.recordRateLimit(RateLimitInfo{Type: "seven_day", Status: "allowed", ResetsAt: 200})
+	w.recordRateLimit(RateLimitInfo{Type: "five_hour", Status: "rejected", ResetsAt: 300}) // latest wins per type
+	w.recordRateLimit(RateLimitInfo{Type: ""})                                             // no type: ignored
+
+	got := w.RateLimitStatus()
+	if len(got) != 2 {
+		t.Fatalf("status count = %d, want 2", len(got))
+	}
+	byType := map[string]RateLimitInfo{}
+	for _, s := range got {
+		byType[s.Type] = s
+	}
+	if byType["five_hour"].Status != "rejected" || byType["five_hour"].ResetsAt != 300 {
+		t.Errorf("five_hour = %+v, want latest rejected/300", byType["five_hour"])
+	}
+	if byType["seven_day"].ResetsAt != 200 {
+		t.Errorf("seven_day = %+v, want 200", byType["seven_day"])
+	}
+}
+
+func TestWorker_resumeAccountPaused(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "resume-account.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqldb, err := gdb.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	q, err := queue.New(sqldb, slog.New(slog.NewTextHandler(io.Discard, nil)), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
+	gdb.Create(&repo)
+	skill := db.Skill{Name: "limited", Description: "x", Body: "b", Active: true, Source: "ui", Version: 1}
+	gdb.Create(&skill)
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	past := now.Add(-time.Minute)
+	future := now.Add(time.Minute)
+	due := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanPaused, SkillID: &skill.ID, Error: accountPauseReason(&past), PausedUntil: &past}
+	notDue := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanPaused, SkillID: &skill.ID, Error: accountPauseReason(&future), PausedUntil: &future}
+	manual := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanPaused, SkillID: &skill.ID, Error: "paused by user", PausedUntil: &past}
+	gdb.Create(&due)
+	gdb.Create(&notDue)
+	gdb.Create(&manual)
+
+	w := &Worker{
+		DB:    gdb,
+		Queue: q,
+		Log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Now:   func() time.Time { return now },
+	}
+	resumed, err := w.resumeAccountPaused(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resumed != 1 {
+		t.Fatalf("resumed = %d, want 1", resumed)
+	}
+
+	var gotDue, gotNotDue, gotManual db.Scan
+	gdb.First(&gotDue, due.ID)
+	gdb.First(&gotNotDue, notDue.ID)
+	gdb.First(&gotManual, manual.ID)
+	if gotDue.Status != db.ScanQueued || gotDue.PausedUntil != nil || gotDue.Error != "" {
+		t.Errorf("due scan = status %s paused_until %v error %q", gotDue.Status, gotDue.PausedUntil, gotDue.Error)
+	}
+	if gotNotDue.Status != db.ScanPaused {
+		t.Errorf("notDue status = %s, want paused", gotNotDue.Status)
+	}
+	if gotManual.Status != db.ScanPaused {
+		t.Errorf("manual status = %s, want paused", gotManual.Status)
+	}
+}
+
+func TestWorker_resumeAccountPausedUsesUTCComparison(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "resume-account-utc.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqldb, err := gdb.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	q, err := queue.New(sqldb, slog.New(slog.NewTextHandler(io.Discard, nil)), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
+	gdb.Create(&repo)
+	skill := db.Skill{Name: "limited", Description: "x", Body: "b", Active: true, Source: "ui", Version: 1}
+	gdb.Create(&skill)
+
+	resetAt := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	nowLocal := resetAt.Add(time.Minute).In(time.FixedZone("PDT", -7*60*60))
+	due := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanPaused, SkillID: &skill.ID, Error: accountPauseReason(&resetAt), PausedUntil: &resetAt}
+	gdb.Create(&due)
+
+	w := &Worker{
+		DB:    gdb,
+		Queue: q,
+		Log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Now:   func() time.Time { return nowLocal },
+	}
+	resumed, err := w.resumeAccountPaused(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resumed != 1 {
+		t.Fatalf("resumed = %d, want 1", resumed)
+	}
+}
+
+func TestAppendAutoResumeFailure(t *testing.T) {
+	reset := time.Date(2026, 7, 1, 12, 15, 0, 0, time.UTC)
+	base := (&ClaudeAccountError{Detail: "rate limit reached"}).Error()
+	enqErr := errors.New("enqueue: closed")
+
+	// A row carrying an auto-resume timestamp: the stale timestamp is dropped
+	// so the message doesn't claim resume-at-past alongside a failure.
+	withReset := appendAutoResume(base, &reset)
+	got := appendAutoResumeFailure(withReset, enqErr)
+	if strings.Contains(got, autoResumeAfterPrefix) || strings.Contains(got, "2026-07-01T12:15:00Z") {
+		t.Errorf("stale auto-resume timestamp kept: %q", got)
+	}
+	if !strings.Contains(got, "rate limit reached") {
+		t.Errorf("Claude detail lost: %q", got)
+	}
+	if !strings.HasSuffix(got, autoResumeFailurePrefix+"enqueue: closed") {
+		t.Errorf("failure suffix = %q", got)
+	}
+
+	// A prior failure suffix is replaced, not stacked.
+	got2 := appendAutoResumeFailure(got, errors.New("enqueue: still closed"))
+	if strings.Count(got2, autoResumeFailurePrefix) != 1 || strings.Contains(got2, "enqueue: closed"+autoResumeFailurePrefix) {
+		t.Errorf("failure suffix stacked: %q", got2)
+	}
+	if !strings.HasSuffix(got2, "enqueue: still closed") {
+		t.Errorf("second failure = %q", got2)
+	}
+
+	// Empty message falls through to the shared account-pause reason.
+	if got := appendAutoResumeFailure("", enqErr); !strings.HasPrefix(got, ClaudeAccountPausePrefix) {
+		t.Errorf("empty msg = %q, want account-pause prefix", got)
+	}
+
+	// Oversized detail is truncated.
+	long := strings.Repeat("x", maxAutoResumeErrorBytes+100)
+	if got := appendAutoResumeFailure(base, errors.New(long)); len(got) > len(base)+len(autoResumeFailurePrefix)+maxAutoResumeErrorBytes+10 {
+		t.Errorf("failure detail not truncated: %d bytes", len(got))
+	}
+}
+
+func TestWorker_resumeAccountPausedRestoreOnEnqueueError(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "resume-account-restore.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqldb, err := gdb.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	q, err := queue.New(sqldb, slog.New(slog.NewTextHandler(io.Discard, nil)), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
+	gdb.Create(&repo)
+	skill := db.Skill{Name: "limited", Description: "x", Body: "b", Active: true, Source: "ui", Version: 1}
+	gdb.Create(&skill)
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	past := now.Add(-time.Minute)
+	errText := accountPauseReason(&past) + autoResumeFailurePrefix + "old error"
+	due := db.Scan{
+		RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanPaused, SkillID: &skill.ID,
+		Error: errText, PausedUntil: &past,
+	}
+	gdb.Create(&due)
+
+	w := &Worker{
+		DB:    gdb,
+		Queue: q,
+		Log:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Now:   func() time.Time { return now },
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	resumed, err := w.resumeAccountPaused(ctx)
+	if err == nil {
+		t.Fatal("resumeAccountPaused error = nil, want enqueue error")
+	}
+	if resumed != 0 {
+		t.Fatalf("resumed = %d, want 0", resumed)
+	}
+
+	var got db.Scan
+	gdb.First(&got, due.ID)
+	if got.Status != db.ScanPaused {
+		t.Fatalf("status = %s, want paused", got.Status)
+	}
+	if got.FinishedAt == nil {
+		t.Fatal("finished_at = nil, want restored pause timestamp")
+	}
+	if strings.Count(got.Error, autoResumeFailurePrefix) != 1 {
+		t.Fatalf("error = %q, want one auto-resume failure suffix", got.Error)
+	}
+	if strings.Contains(got.Error, "old error") {
+		t.Fatalf("error = %q, old failure detail should have been replaced", got.Error)
+	}
+	if strings.Contains(got.Error, autoResumeAfterPrefix) {
+		t.Fatalf("error = %q, stale auto-resume timestamp should have been dropped", got.Error)
+	}
+}
+
 func TestWorker_skipsPausedScan(t *testing.T) {
 	gdb, err := db.Open(filepath.Join(t.TempDir(), "paused.db"))
 	if err != nil {

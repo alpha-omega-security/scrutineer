@@ -82,7 +82,10 @@ func TestFlagsMerge_cliFlagWins(t *testing.T) {
 	f := &flags{
 		addr: "127.0.0.1:8080", cloneMode: "shallow", concurrency: 2,
 		anthropicBaseURL: "https://my-flag.example.com/v1",
-		set:              map[string]bool{"addr": true, "clone": true, "concurrency": true, "anthropic-base-url": true},
+		set: map[string]bool{
+			"addr": true, "clone": true, "concurrency": true,
+			"anthropic-base-url": true,
+		},
 	}
 	f.merge(cfg)
 	if f.addr != "127.0.0.1:8080" {

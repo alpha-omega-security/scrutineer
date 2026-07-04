@@ -44,6 +44,35 @@ not json at all
 	}
 }
 
+func TestParseStream_RateLimitEvent(t *testing.T) {
+	// The exact shape claude-code emits on a subscription run.
+	in := `{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1782990000,"rateLimitType":"five_hour","overageStatus":"rejected","isUsingOverage":false}}` + "\n"
+	var got []Event
+	ParseStream(strings.NewReader(in), func(e Event) { got = append(got, e) })
+	if len(got) != 1 {
+		t.Fatalf("want 1 event, got %d: %+v", len(got), got)
+	}
+	rl := got[0].RateLimit
+	if got[0].Kind != KindRateLimit || rl == nil {
+		t.Fatalf("ev0: %+v", got[0])
+	}
+	if rl.Status != "allowed" || rl.OverageStatus != "rejected" || rl.IsUsingOverage || rl.Type != "five_hour" || rl.ResetsAt != 1782990000 {
+		t.Errorf("rate_limit_info = %+v", rl)
+	}
+	if reset := rl.ResetTime(); reset == nil || reset.Unix() != 1782990000 {
+		t.Errorf("ResetTime() = %v", reset)
+	}
+}
+
+func TestRateLimitInfo_ResetTime_Absent(t *testing.T) {
+	if (*RateLimitInfo)(nil).ResetTime() != nil {
+		t.Error("nil receiver should yield nil reset")
+	}
+	if (&RateLimitInfo{ResetsAt: 0}).ResetTime() != nil {
+		t.Error("zero resetsAt should yield nil reset")
+	}
+}
+
 func TestParseStream_SessionID(t *testing.T) {
 	in := `
 {"type":"system","subtype":"init","session_id":"sess-abc","tools":[]}

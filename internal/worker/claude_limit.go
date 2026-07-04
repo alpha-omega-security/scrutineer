@@ -1,6 +1,9 @@
 package worker
 
-import "strings"
+import (
+	"strings"
+	"time"
+)
 
 // ClaudeAccountPausePrefix is the stable leading sentence shared by every
 // account-pause message: the scan that hit the wall (ClaudeAccountError) and the
@@ -10,20 +13,17 @@ import "strings"
 // web/templates/jobs.html in sync.
 const ClaudeAccountPausePrefix = "Claude account access paused."
 
-// ClaudeAccountError is returned when claude-code reports an account-level
-// problem -- a usage/plan limit, or access being disabled or revoked -- rather
-// than a per-scan failure. The worker pauses the scan and the rest of the queue
-// instead of failing each one, because retrying cannot succeed until the
-// account recovers: a usage limit resets, an admin re-enables access, or the
-// operator switches to an Anthropic API key. The claude message is carried in
-// Detail so the operator sees the real reason instead of a bare container exit
-// status.
+// ClaudeAccountError is returned for account-level Claude failures. The worker
+// pauses the batch instead of failing every scan; Detail preserves Claude's text.
 type ClaudeAccountError struct {
 	Detail string
+	// ResetAt is the reported recovery time for transient limits. Nil means
+	// manual resume.
+	ResetAt *time.Time
 }
 
 func (e *ClaudeAccountError) Error() string {
-	const base = ClaudeAccountPausePrefix + " This scan and the queued batch were held; " +
+	const base = ClaudeAccountPausePrefix + " This scan and queued scans were paused; " +
 		"resume once the account recovers."
 	if e.Detail == "" {
 		return base
@@ -31,38 +31,117 @@ func (e *ClaudeAccountError) Error() string {
 	return base + " Claude reported: " + e.Detail
 }
 
+// transientLimitPhrases mark limits that can auto-resume after reset.
+var transientLimitPhrases = []string{
+	"usage limit",
+	"session limit",
+	"plan limit",
+	"rate limit",
+	"rate_limit",
+	"too many requests",
+	"quota exceeded",
+	"credit balance",
+	"429",
+}
+
+// accessRevokedPhrases mark account problems that need operator action, not a
+// timed resume. Keep these close to Claude Code's auth-denied wording.
+var accessRevokedPhrases = []string{
+	"disabled claude subscription access",
+	"use an anthropic api key instead",
+	"ask your admin to enable access",
+}
+
 // claudeAccountErrorText returns s when it looks like an account-level message
 // from claude-code -- a usage/plan/rate limit, or access being disabled or
 // revoked -- and "" otherwise. The caller only consults it when the run already
 // failed (non-zero exit), so a stray "rate limit" in normal scan output never
-// pauses a healthy scan. The access phrases are deliberately specific (verbatim
-// fragments of Claude Code's auth-denied message) so a repository's own content
-// cannot trip them.
+// pauses a healthy scan.
 func claudeAccountErrorText(s string) string {
 	text := strings.TrimSpace(s)
 	if text == "" {
 		return ""
 	}
 	lower := strings.ToLower(text)
-	for _, phrase := range []string{
-		// usage / plan / rate limits (transient: resume after the limit resets)
-		"usage limit",
-		"session limit",
-		"plan limit",
-		"rate limit",
-		"rate_limit",
-		"too many requests",
-		"quota exceeded",
-		"credit balance",
-		"429",
-		// access disabled or revoked (account-level: retrying cannot help)
-		"disabled claude subscription access",
-		"use an anthropic api key instead",
-		"ask your admin to enable access",
-	} {
+	for _, phrase := range transientLimitPhrases {
+		if strings.Contains(lower, phrase) {
+			return text
+		}
+	}
+	for _, phrase := range accessRevokedPhrases {
 		if strings.Contains(lower, phrase) {
 			return text
 		}
 	}
 	return ""
+}
+
+// accountErrorAccessRevoked reports whether s mentions account access being
+// disabled or revoked -- a permanent problem that must never drive an automatic
+// resume, regardless of any transient wording elsewhere in the run.
+func accountErrorAccessRevoked(s string) bool {
+	lower := strings.ToLower(s)
+	for _, phrase := range accessRevokedPhrases {
+		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+// accountErrorResumable returns false for access/admin errors even when the
+// message also mentions a limit.
+func accountErrorResumable(s string) bool {
+	if accountErrorAccessRevoked(s) {
+		return false
+	}
+	lower := strings.ToLower(s)
+	for _, phrase := range transientLimitPhrases {
+		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+// preferAccountErrText picks which account-error message a run should keep as it
+// streams lines: the first account-error line seen, except that a later
+// access-revoked line overrides an earlier transient one. This keeps a
+// permanently revoked account from being auto-resumed just because a transient
+// line was printed first. candidate is claudeAccountErrorText(line) ("" for a
+// non-account line), so this can be folded over every emitted line.
+func preferAccountErrText(current, candidate string) string {
+	switch {
+	case candidate == "":
+		return current
+	case current == "":
+		return candidate
+	case accountErrorAccessRevoked(candidate) && !accountErrorAccessRevoked(current):
+		return candidate
+	default:
+		return current
+	}
+}
+
+func preferRateLimitReset(current, candidate *RateLimitInfo) *RateLimitInfo {
+	if candidate == nil || !candidate.Rejected() || candidate.ResetTime() == nil {
+		return current
+	}
+	if current == nil {
+		return candidate
+	}
+	curReset := current.ResetTime()
+	candReset := candidate.ResetTime()
+	if curReset == nil || candReset.After(*curReset) {
+		return candidate
+	}
+	return current
+}
+
+// resumableReset returns a captured reset only for transient account limits.
+func resumableReset(errText string, rl *RateLimitInfo) *time.Time {
+	if !accountErrorResumable(errText) || rl == nil || !rl.Rejected() {
+		return nil
+	}
+	return rl.ResetTime()
 }
