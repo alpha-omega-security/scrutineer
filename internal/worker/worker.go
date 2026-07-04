@@ -653,9 +653,7 @@ func appendAutoResumeFailure(msg string, err error) string {
 	if msg == "" {
 		msg = accountPauseReason(nil)
 	}
-	if i := strings.Index(msg, autoResumeFailurePrefix); i >= 0 {
-		msg = strings.TrimSpace(msg[:i])
-	}
+	msg = stripAutoResume(msg)
 	detail := err.Error()
 	if len(detail) > maxAutoResumeErrorBytes {
 		detail = detail[:maxAutoResumeErrorBytes] + "..."

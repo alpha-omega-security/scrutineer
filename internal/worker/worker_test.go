@@ -611,6 +611,46 @@ func TestWorker_resumeAccountPausedUsesUTCComparison(t *testing.T) {
 	}
 }
 
+func TestAppendAutoResumeFailure(t *testing.T) {
+	reset := time.Date(2026, 7, 1, 12, 15, 0, 0, time.UTC)
+	base := (&ClaudeAccountError{Detail: "rate limit reached"}).Error()
+	enqErr := errors.New("enqueue: closed")
+
+	// A row carrying an auto-resume timestamp: the stale timestamp is dropped
+	// so the message doesn't claim resume-at-past alongside a failure.
+	withReset := appendAutoResume(base, &reset)
+	got := appendAutoResumeFailure(withReset, enqErr)
+	if strings.Contains(got, autoResumeAfterPrefix) || strings.Contains(got, "2026-07-01T12:15:00Z") {
+		t.Errorf("stale auto-resume timestamp kept: %q", got)
+	}
+	if !strings.Contains(got, "rate limit reached") {
+		t.Errorf("Claude detail lost: %q", got)
+	}
+	if !strings.HasSuffix(got, autoResumeFailurePrefix+"enqueue: closed") {
+		t.Errorf("failure suffix = %q", got)
+	}
+
+	// A prior failure suffix is replaced, not stacked.
+	got2 := appendAutoResumeFailure(got, errors.New("enqueue: still closed"))
+	if strings.Count(got2, autoResumeFailurePrefix) != 1 || strings.Contains(got2, "enqueue: closed"+autoResumeFailurePrefix) {
+		t.Errorf("failure suffix stacked: %q", got2)
+	}
+	if !strings.HasSuffix(got2, "enqueue: still closed") {
+		t.Errorf("second failure = %q", got2)
+	}
+
+	// Empty message falls through to the shared account-pause reason.
+	if got := appendAutoResumeFailure("", enqErr); !strings.HasPrefix(got, ClaudeAccountPausePrefix) {
+		t.Errorf("empty msg = %q, want account-pause prefix", got)
+	}
+
+	// Oversized detail is truncated.
+	long := strings.Repeat("x", maxAutoResumeErrorBytes+100)
+	if got := appendAutoResumeFailure(base, errors.New(long)); len(got) > len(base)+len(autoResumeFailurePrefix)+maxAutoResumeErrorBytes+10 {
+		t.Errorf("failure detail not truncated: %d bytes", len(got))
+	}
+}
+
 func TestWorker_resumeAccountPausedRestoreOnEnqueueError(t *testing.T) {
 	gdb, err := db.Open(filepath.Join(t.TempDir(), "resume-account-restore.db"))
 	if err != nil {
@@ -666,6 +706,9 @@ func TestWorker_resumeAccountPausedRestoreOnEnqueueError(t *testing.T) {
 	}
 	if strings.Contains(got.Error, "old error") {
 		t.Fatalf("error = %q, old failure detail should have been replaced", got.Error)
+	}
+	if strings.Contains(got.Error, autoResumeAfterPrefix) {
+		t.Fatalf("error = %q, stale auto-resume timestamp should have been dropped", got.Error)
 	}
 }
 
