@@ -129,8 +129,8 @@
 # Claude subscription rate-limit auto-resume needs no configuration. Reset times
 # come from claude-code stream output; latest window status appears on /usage.
 
-# Fall the model tier back from max/high to mid (Opus -> Sonnet) for newly
-# enqueued scans while a Claude subscription is on overage (past its included
+# Fall the model tier back from max/high to the mid tier for newly enqueued
+# scans while a Claude subscription is on overage (past its included
 # quota), restoring it when the window resets. Off by default; only a
 # subscription token reports overage, so it is inert on an API key. The switch is
 # logged and shown on the jobs page and /usage. Flag: -downgrade-on-overage.

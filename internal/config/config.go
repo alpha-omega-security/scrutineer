@@ -103,9 +103,9 @@ type Config struct {
 	// emitted to the scan log and the kind-specific parser still runs.
 	// Intended as a development aid while iterating on a skill.
 	SchemaStrict *bool `yaml:"schema_strict"`
-	// DowngradeOnOverage falls the model tier back from max/high to mid (Opus ->
-	// Sonnet) for newly enqueued scans while the Claude subscription is past its
-	// included quota (on overage), restoring it when the window resets. Only a
+	// DowngradeOnOverage falls the model tier back from max/high to the mid tier
+	// for newly enqueued scans while the Claude subscription is past its included
+	// quota (on overage), restoring it when the window resets. Only a
 	// subscription token reports overage. Off by default; the switch is logged
 	// and shown on the jobs page and /usage.
 	DowngradeOnOverage *bool `yaml:"downgrade_on_overage"`

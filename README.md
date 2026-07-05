@@ -105,7 +105,7 @@ When the containerised runner is active (the default when a container runtime is
 - **Skill HTTP API** -- running skills can call back into scrutineer to list prior scans and enqueue further skills; surface documented in `openapi.yaml`
 - **Live updates** -- SSE streaming of scan logs and status changes, no polling
 - **Organisation rollup** -- repos, findings, and maintainers grouped by owning org, with per-org markdown exports
-- **Usage tracking** -- per-scan token and cost figures plus a `/usage` page totalling spend per skill; on a Claude subscription token, a rate-limit wall auto-pauses the batch and resumes it after the reported reset, with per-window status shown on `/usage`. Optionally (`downgrade_on_overage`), once the account crosses into overage the model tier falls back from max/high to Sonnet for new scans until the window resets -- announced in the log, on the jobs page, and on `/usage`
+- **Usage tracking** -- per-scan token and cost figures plus a `/usage` page totalling spend per skill; on a Claude subscription token, a rate-limit wall auto-pauses the batch and resumes it after the reported reset, with per-window status shown on `/usage`. Optionally (`downgrade_on_overage`), once the account crosses into overage the model tier falls back from max/high to the mid tier for new scans until the window resets -- announced in the log, on the jobs page, and on `/usage`
 - **Themes** -- six colour themes plus a light/dark/system toggle, set on the Settings page
 
 ## The default pipeline

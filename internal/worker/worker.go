@@ -162,10 +162,10 @@ type Worker struct {
 	// automatic resume. A reset farther out is treated as unreliable and leaves
 	// the batch paused for manual operator action.
 	MaxRateLimitAutoResumeDelay time.Duration
-	// DowngradeOnOverage falls the model tier back from max/high to mid (Opus ->
-	// Sonnet) for newly enqueued scans while the subscription is past its included
-	// quota (on overage), restoring it when the window resets. Off by default; only
-	// a subscription token reports overage, so it is inert on an API key.
+	// DowngradeOnOverage falls the model tier back from max/high to the mid tier
+	// for newly enqueued scans while the subscription is past its included quota
+	// (on overage), restoring it when the window resets. Off by default; only a
+	// subscription token reports overage, so it is inert on an API key.
 	DowngradeOnOverage bool
 	// Now overrides time.Now in tests.
 	Now func() time.Time
@@ -181,7 +181,7 @@ type Worker struct {
 
 // recordRateLimit stores the latest rate-limit status for its window type and,
 // when the overage fallback is enabled, logs the transition into or out of
-// overage so the switch to/from the mid (Sonnet) tier is visible in the log.
+// overage so the switch to/from the mid tier is visible in the log.
 func (w *Worker) recordRateLimit(info RateLimitInfo) {
 	if info.Type == "" {
 		return
@@ -196,7 +196,7 @@ func (w *Worker) recordRateLimit(info RateLimitInfo) {
 	w.rlStatusMu.Unlock()
 	if w.DowngradeOnOverage && before != after && w.Log != nil {
 		if after {
-			w.Log.Info("model overage fallback engaged: account on overage, new scans use the mid (Sonnet) tier")
+			w.Log.Info("model overage fallback engaged: account on overage, new scans use the mid tier")
 		} else {
 			w.Log.Info("model overage fallback lifted: overage cleared, new scans use the max/high tier again")
 		}
@@ -245,8 +245,8 @@ func (w *Worker) OnOverage() bool {
 	return w.onOverageLocked()
 }
 
-// ShouldDowngradeModel reports whether the Opus->Sonnet overage fallback is both
-// enabled and currently active. The web layer calls it at enqueue to rewrite
+// ShouldDowngradeModel reports whether the max/high-to-mid overage fallback is
+// both enabled and currently active. The web layer calls it at enqueue to rewrite
 // max/high tier preferences to mid, and to surface the fallback banner.
 func (w *Worker) ShouldDowngradeModel() bool {
 	return w != nil && w.DowngradeOnOverage && w.OnOverage()
