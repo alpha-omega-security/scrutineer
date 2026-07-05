@@ -156,7 +156,8 @@
         "validation": { "$ref": "#/$defs/markdown", "description": "The reproduction: the script or commands you ran, verbatim and in full, followed by their output. The script content is mandatory, not a description of it — output alone, without the thing that produced it, cannot be re-run or acted on by a later verify pass." },
         "prior_art":  { "$ref": "#/$defs/markdown" },
         "reach":      { "$ref": "#/$defs/markdown" },
-        "rating":     { "$ref": "#/$defs/markdown" }
+        "rating":     { "$ref": "#/$defs/markdown" },
+        "dup_check":  { "$ref": "#/$defs/markdown", "description": "One sentence: which findings already filed under this scan_group you compared this against, and why this one is distinct. Empty list of siblings is fine; say so. Lets the dedup judge weigh your reasoning before merging." }
       }
     }
   }

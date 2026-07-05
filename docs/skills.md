@@ -124,7 +124,7 @@ Declaring `scrutineer.paths` replaces this skip list entirely: the skill sees on
 | Kind | Stored as |
 |---|---|
 | `freeform` or empty | Raw text on the scan row. No further parsing. |
-| `findings` | Parsed into Finding rows with fingerprint dedupe against prior scans. |
+| `findings` | Parsed into Finding rows with fingerprint dedupe against prior scans. An optional per-finding `dup_check` sentence (the agent's reasoning on why it is distinct from siblings filed under the same `scan_group`) is carried through for the dedup judge. |
 | `repo_metadata` | Repository row fields (description, languages, license, stars, archived). |
 | `repo_overview` | Brief summary stored for other skills to read. |
 | `packages` | Package rows. |
@@ -185,13 +185,14 @@ The worker then runs `claude -p "Use the {name} skill in this workspace"` with t
     "dependent_id": 11,
     "scan_ref": "release/2.x",
     "scan_subpath": "packages/core",
+    "scan_group": "6b1f…",
     "fork_org": "your-security-forks",
     "metadata_dir": ".scrutineer/"
   }
 }
 ```
 
-`finding_id` is only present for finding-scoped skills (`verify`, `revalidate`, `breaking-change`, `disclose`, `patch`, `mitigate`, `public-issue`, `release-watch`, `exposure`). `dependent_id` is only set on `exposure` runs and points to the dependent whose code is under audit; `./src` is then a copy of that dependent's clone, not of the finding's repository. `scan_ref` is empty when the scan is on the default branch. `scan_subpath` is set when the operator scoped the scan to a monorepo sub-folder; skills that walk source honour it, skills that query external APIs by repository URL ignore it. `fork_org` is absent unless `-fork-org` is configured. `metadata_dir` is the directory inside a staging repo where scrutineer keeps its per-project metadata (`.scrutineer/` by default); operators with a different consortium-flavoured convention set `metadata_dir` in scrutineer.yaml. `packages` is a convenience copy of the package rows when the `packages` skill has already run; otherwise it is omitted.
+`finding_id` is only present for finding-scoped skills (`verify`, `revalidate`, `breaking-change`, `disclose`, `patch`, `mitigate`, `public-issue`, `release-watch`, `exposure`). `dependent_id` is only set on `exposure` runs and points to the dependent whose code is under audit; `./src` is then a copy of that dependent's clone, not of the finding's repository. `scan_ref` is empty when the scan is on the default branch. `scan_subpath` is set when the operator scoped the scan to a monorepo sub-folder; skills that walk source honour it, skills that query external APIs by repository URL ignore it. `scan_group` is set when the scan is one of a parallel batch (Scan-all-subprojects, or a single New-scan run); an audit skill passes it to `/repositories/{id}/findings?scan_group=...` to read what its siblings have already filed before reporting its own, and is absent otherwise. `fork_org` is absent unless `-fork-org` is configured. `metadata_dir` is the directory inside a staging repo where scrutineer keeps its per-project metadata (`.scrutineer/` by default); operators with a different consortium-flavoured convention set `metadata_dir` in scrutineer.yaml. `packages` is a convenience copy of the package rows when the `packages` skill has already run; otherwise it is omitted.
 
 ## schema.json
 

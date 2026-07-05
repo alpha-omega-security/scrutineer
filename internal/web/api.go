@@ -96,6 +96,7 @@ func (s *Server) apiHandler() http.Handler {
 	mux.HandleFunc("GET /repositories/{id}/ecosystems/{source}/raw", s.apiGetEcosystemsRaw)
 	mux.HandleFunc("GET /repositories/{id}/dependencies", s.apiListDependencies)
 	mux.HandleFunc("GET /repositories/{id}/findings", s.apiListFindings)
+	mux.HandleFunc("POST /repositories/{id}/findings", s.apiStreamFinding)
 	mux.HandleFunc("GET /repositories/{id}/dependency-findings", s.apiListDependencyFindings)
 	mux.HandleFunc("POST /repositories/{id}/skills/{name}/run", s.apiRunSkill)
 	mux.HandleFunc("POST /findings/{id}/skills/{name}/run", s.apiRunFindingSkill)

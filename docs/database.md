@@ -72,6 +72,7 @@ One row per skill execution or external import. `skill_name` / `skill_version` p
 | ref | text | Git ref to checkout after cloning. Empty means the default branch. |
 | skills_repo_sha | text | Commit of `-skills-repo` resolved at startup and stamped on every skill scan. Empty when `-skills-repo` is unset or for `import` scans. |
 | sub_path | text | Scopes code analysis to a sub-folder of the clone (monorepo packages). Empty means repo root. |
+| scan_group | text | Groups a cohort of deep-dive scans launched as one parallel batch (Scan-all-subprojects, or a single New-scan run). Each sibling streams a finding to `POST /repositories/{id}/findings` the moment it confirms it and reads `GET /repositories/{id}/findings?scan_group=...` before reporting, so an in-flight skill sees what a sibling has filed so far — not only after that sibling finishes — and can avoid re-filing it. Empty when not part of a batch. |
 | profile | text | Runner profile that ran the scan (e.g. `php`). Empty = the default runner image. Set explicitly via `?profile=` or auto-detected from the clone by `brief` before launch; persisted so retries reuse the choice. |
 | commit | text | Git HEAD at scan time. |
 | started_at | datetime | |
@@ -180,6 +181,7 @@ One row per vulnerability. Lifecycle columns are mutated through `db.WriteFindin
 | prior_art | text | Step 4. |
 | reach | text | Step 5: dependent exposure. |
 | rating | text | Step 6: severity justification. |
+| dup_check | text | The audit agent's one-sentence rationale for why this finding is distinct from siblings already filed under the same `scan_group`: which it compared against and why this is not a duplicate. The dedup judge weighs it alongside fingerprint matching. Empty for skills that do not emit it. |
 | created_at | datetime | |
 | updated_at | datetime | |
 
