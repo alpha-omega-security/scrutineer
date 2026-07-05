@@ -1996,17 +1996,7 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 
 	category := r.URL.Query().Get("category")
 	rf := loadRepoFindings(s.DB, repo.ID, category)
-	var expectedRows []db.ExpectedFinding
-	s.DB.Where("repository_id = ?", repo.ID).Order("file, cwe").Find(&expectedRows)
-	latestScanID := uint(0)
-	if latest != nil {
-		latestScanID = latest.ID
-	}
-	expectedMatches := expectedMatchesForRows(s.DB, repo.ID, latestScanID, expectedRows)
-	visibleFindings := make([]db.Finding, 0, len(rf.DeepDive)+len(rf.Scanners))
-	visibleFindings = append(visibleFindings, rf.DeepDive...)
-	visibleFindings = append(visibleFindings, rf.Scanners...)
-	expectedFindingStatus := expectedStatusForFindings(visibleFindings, expectedRows)
+	expectedView := loadRepoExpectedView(s.DB, repo.ID, latest, rf)
 
 	// Count deep-dive findings still awaiting verification, scoped to the
 	// same category filter as the visible list. Drives the "Verify all new"
@@ -2116,9 +2106,9 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 		"ScannerFindingsTotal":  rf.ScannersTotal,
 		"ScanSkill":             rf.ScanSkill,
 		"ScanCommit":            rf.ScanCommit,
-		"ExpectedFindings":      expectedMatches.Expected,
-		"ExpectedMatched":       expectedMatches.MatchedTotal,
-		"ExpectedFindingStatus": expectedFindingStatus,
+		"ExpectedFindings":      expectedView.Matches.Expected,
+		"ExpectedMatched":       expectedView.Matches.MatchedTotal,
+		"ExpectedFindingStatus": expectedView.FindingStatus,
 		"NewFindingCount":       int(newFindings),
 		"FailedScans":           failedScans,
 		"ActiveScans":           int(activeScans),

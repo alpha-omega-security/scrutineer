@@ -194,6 +194,27 @@ type expectedMatchSet struct {
 	FindingTotal  int
 }
 
+type repoExpectedView struct {
+	Matches       expectedMatchSet
+	FindingStatus map[uint]bool
+}
+
+func loadRepoExpectedView(gdb *gorm.DB, repoID uint, latest *db.Scan, rf repoFindings) repoExpectedView {
+	var expected []db.ExpectedFinding
+	gdb.Where("repository_id = ?", repoID).Order("file, cwe").Find(&expected)
+	latestScanID := uint(0)
+	if latest != nil {
+		latestScanID = latest.ID
+	}
+	visibleFindings := make([]db.Finding, 0, len(rf.DeepDive)+len(rf.Scanners))
+	visibleFindings = append(visibleFindings, rf.DeepDive...)
+	visibleFindings = append(visibleFindings, rf.Scanners...)
+	return repoExpectedView{
+		Matches:       expectedMatchesForRows(gdb, repoID, latestScanID, expected),
+		FindingStatus: expectedStatusForFindings(visibleFindings, expected),
+	}
+}
+
 func expectedMatchesForScan(gdb *gorm.DB, repoID, scanID uint) expectedMatchSet {
 	var expected []db.ExpectedFinding
 	gdb.Where("repository_id = ?", repoID).Order("file, cwe").Find(&expected)
