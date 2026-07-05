@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -16,6 +17,8 @@ func TestExpectedFindingsAPI(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
 	repo, scan := seedRunningScan(t, s)
+	row := db.ExpectedFinding{RepositoryID: repo.ID, File: "src/app.go", CWE: "CWE-79", CVE: "CVE-2026-0001", Note: "known sink"}
+	s.DB.Create(&row)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/repositories/"+strconv.FormatUint(uint64(repo.ID), 10)+"/expected",
 		strings.NewReader(`{"file":"./src/app.go","cwe":"cwe-79","cve":"CVE-2026-0001","note":"known sink"}`))
@@ -23,15 +26,8 @@ func TestExpectedFindingsAPI(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+scan.APIToken)
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("POST status %d: %s", w.Code, w.Body)
-	}
-	var created expectedFindingResponse
-	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
-		t.Fatalf("decode create: %v", err)
-	}
-	if created.File != "src/app.go" || created.CWE != "CWE-79" {
-		t.Fatalf("created = %+v", created)
+	if w.Code == http.StatusCreated || w.Code == http.StatusOK || w.Code == http.StatusNoContent {
+		t.Fatalf("scan-token POST unexpectedly succeeded: status %d", w.Code)
 	}
 
 	req = httptest.NewRequest(http.MethodGet, "/api/repositories/"+strconv.FormatUint(uint64(repo.ID), 10)+"/expected", nil)
@@ -46,18 +42,60 @@ func TestExpectedFindingsAPI(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&rows); err != nil {
 		t.Fatalf("decode list: %v", err)
 	}
-	if len(rows) != 1 || rows[0].ID != created.ID {
+	if len(rows) != 1 || rows[0].ID != row.ID {
 		t.Fatalf("rows = %+v", rows)
 	}
 
 	req = httptest.NewRequest(http.MethodDelete,
-		fmt.Sprintf("/api/repositories/%d/expected/%d", repo.ID, created.ID), nil)
+		fmt.Sprintf("/api/repositories/%d/expected/%d", repo.ID, row.ID), nil)
 	req.Host = testHost
 	req.Header.Set("Authorization", "Bearer "+scan.APIToken)
 	w = httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, req)
-	if w.Code != http.StatusNoContent {
-		t.Fatalf("DELETE status %d: %s", w.Code, w.Body)
+	if w.Code == http.StatusNoContent || w.Code == http.StatusOK {
+		t.Fatalf("scan-token DELETE unexpectedly succeeded: status %d", w.Code)
+	}
+	var count int64
+	s.DB.Model(&db.ExpectedFinding{}).Where("repository_id = ?", repo.ID).Count(&count)
+	if count != 1 {
+		t.Fatalf("expected findings count = %d, want unchanged row", count)
+	}
+}
+
+func TestExpectedFindingForms(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/bench-form", Name: "bench-form"}
+	s.DB.Create(&repo)
+
+	form := url.Values{
+		"file": {"./src/app.go"},
+		"cwe":  {"cwe-79"},
+		"cve":  {"CVE-2026-0001"},
+		"note": {"known sink"},
+	}
+	req := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/repositories/%d/expected", repo.ID), strings.NewReader(form.Encode()))
+	req.Host = testHost
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("create status %d: %s", w.Code, w.Body)
+	}
+	var row db.ExpectedFinding
+	if err := s.DB.Where("repository_id = ?", repo.ID).First(&row).Error; err != nil {
+		t.Fatalf("expected finding was not created: %v", err)
+	}
+	if row.File != "src/app.go" || row.CWE != "CWE-79" {
+		t.Fatalf("created row = %+v", row)
+	}
+
+	req = httptest.NewRequest(http.MethodPost, fmt.Sprintf("/repositories/%d/expected/%d/delete", repo.ID, row.ID), nil)
+	req.Host = testHost
+	w = httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("delete status %d: %s", w.Code, w.Body)
 	}
 	var count int64
 	s.DB.Model(&db.ExpectedFinding{}).Where("repository_id = ?", repo.ID).Count(&count)
@@ -75,7 +113,7 @@ func TestExpectedFindingMatchingIgnoresLineNumbers(t *testing.T) {
 	s.DB.Create(&scan)
 	expected := db.ExpectedFinding{RepositoryID: repo.ID, File: "src/app.go", CWE: "CWE-79"}
 	s.DB.Create(&expected)
-	matched := db.Finding{RepositoryID: repo.ID, ScanID: scan.ID, Title: "xss", Severity: "High", CWE: "CWE-79", Location: "src/app.go:77:4"}
+	matched := db.Finding{RepositoryID: repo.ID, ScanID: scan.ID, Title: "xss", Severity: "High", CWE: "cwe-79", Location: "src/app.go:77:4"}
 	unexpected := db.Finding{RepositoryID: repo.ID, ScanID: scan.ID, Title: "sqli", Severity: "Medium", CWE: "CWE-89", Location: "src/app.go:88"}
 	s.DB.Create(&matched)
 	s.DB.Create(&unexpected)
@@ -92,6 +130,39 @@ func TestExpectedFindingMatchingIgnoresLineNumbers(t *testing.T) {
 	}
 }
 
+func TestExpectedFindingMatchingIgnoresLowSeverityForBenchmarkTotals(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/bench-low", Name: "bench-low"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", SkillName: "vuln-scan", Status: db.ScanDone}
+	s.DB.Create(&scan)
+	s.DB.Create(&db.ExpectedFinding{RepositoryID: repo.ID, File: "src/app.go", CWE: "CWE-79"})
+	low := db.Finding{RepositoryID: repo.ID, ScanID: scan.ID, Title: "low xss", Severity: "Low", CWE: "CWE-79", Location: "src/app.go:77"}
+	s.DB.Create(&low)
+
+	got := expectedMatchesForScan(s.DB, repo.ID, scan.ID)
+	if got.MatchedTotal != 0 || got.FindingTotal != 0 || got.FindingStatus[low.ID] {
+		t.Fatalf("low severity finding affected benchmark totals/status: %+v", got)
+	}
+}
+
+func TestBuildExpectedFindingRejectsNonRepoRelativePaths(t *testing.T) {
+	bad := []string{"/etc/passwd", "../x.go", "src/../x.go", `src\..\x.go`}
+	for _, file := range bad {
+		if _, err := buildExpectedFinding(1, file, "CWE-79", "", ""); err == nil {
+			t.Fatalf("buildExpectedFinding(%q) succeeded, want error", file)
+		}
+	}
+	row, err := buildExpectedFinding(1, "./src/app.go", "cwe-79", "", "")
+	if err != nil {
+		t.Fatalf("valid expected finding rejected: %v", err)
+	}
+	if row.File != "src/app.go" || row.CWE != "CWE-79" {
+		t.Fatalf("normalized row = %+v", row)
+	}
+}
+
 func TestRepoShowExpectedFindingBadges(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
@@ -100,7 +171,9 @@ func TestRepoShowExpectedFindingBadges(t *testing.T) {
 	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", SkillName: deepDiveSkillName, Status: db.ScanDone, Model: "test-model"}
 	s.DB.Create(&scan)
 	s.DB.Create(&db.ExpectedFinding{RepositoryID: repo.ID, File: "src/app.go", CWE: "CWE-79"})
+	s.DB.Create(&db.ExpectedFinding{RepositoryID: repo.ID, File: "src/fixed.go", CWE: "CWE-22"})
 	s.DB.Create(&db.Finding{RepositoryID: repo.ID, ScanID: scan.ID, Title: "expected xss", Severity: "High", CWE: "CWE-79", Location: "src/app.go:7", Status: db.FindingNew})
+	s.DB.Create(&db.Finding{RepositoryID: repo.ID, ScanID: scan.ID, Title: "fixed path traversal", Severity: "High", CWE: "CWE-22", Location: "src/fixed.go:9", Status: db.FindingFixed})
 	s.DB.Create(&db.Finding{RepositoryID: repo.ID, ScanID: scan.ID, Title: "surprise sqli", Severity: "High", CWE: "CWE-89", Location: "src/db.go:9", Status: db.FindingNew})
 
 	w := httptest.NewRecorder()
@@ -109,10 +182,21 @@ func TestRepoShowExpectedFindingBadges(t *testing.T) {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
 	body := w.Body.String()
-	for _, want := range []string{"Benchmark", "1/1", "matched", "expected xss", "unexpected"} {
+	for _, want := range []string{"Benchmark", "2/2", "matched", "expected xss", "unexpected"} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("body missing %q:\n%s", want, body)
 		}
+	}
+	fixedIdx := strings.Index(body, "fixed path traversal")
+	if fixedIdx < 0 {
+		t.Fatalf("body missing closed latest finding:\n%s", body)
+	}
+	fixedRow := body[fixedIdx:]
+	if end := strings.Index(fixedRow, "</tr>"); end >= 0 {
+		fixedRow = fixedRow[:end]
+	}
+	if !strings.Contains(fixedRow, "expected") || strings.Contains(fixedRow, "unexpected") {
+		t.Fatalf("closed latest finding badge row = %s", fixedRow)
 	}
 }
 

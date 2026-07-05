@@ -169,46 +169,6 @@ paths:
                 type: array
                 items: { $ref: '#/components/schemas/ExpectedFinding' }
         '403': { $ref: '#/components/responses/Forbidden' }
-    post:
-      summary: Add an expected finding for benchmark comparison
-      operationId: addRepositoryExpectedFinding
-      parameters:
-        - $ref: '#/components/parameters/RepositoryID'
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: '#/components/schemas/ExpectedFindingInput' }
-      responses:
-        '201':
-          description: Created
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/ExpectedFinding' }
-        '400':
-          description: Malformed JSON
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '422':
-          description: Missing file/CWE or duplicate row
-
-  /repositories/{id}/expected/{expected_id}:
-    delete:
-      summary: Delete an expected finding
-      operationId: deleteRepositoryExpectedFinding
-      parameters:
-        - $ref: '#/components/parameters/RepositoryID'
-        - name: expected_id
-          in: path
-          required: true
-          schema: { type: integer, format: int64 }
-      responses:
-        '204':
-          description: Deleted
-        '400':
-          description: Invalid expected finding id
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
-
   /repositories/{id}/dependencies:
     get:
       summary: List dependencies declared by this repository's manifests
@@ -1195,15 +1155,6 @@ components:
         cwe:           { type: string, description: CWE identifier, e.g. CWE-79. }
         cve:           { type: string }
         note:          { type: string }
-
-    ExpectedFindingInput:
-      type: object
-      required: [file, cwe]
-      properties:
-        file: { type: string, description: Path relative to the repository root, without line number. }
-        cwe:  { type: string, description: CWE identifier, e.g. CWE-79. }
-        cve:  { type: string }
-        note: { type: string }
 
     Scan:
       type: object

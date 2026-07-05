@@ -35,55 +35,6 @@ func (s *Server) apiListExpectedFindings(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, expectedFindingResponses(rows))
 }
 
-func (s *Server) apiAddExpectedFinding(w http.ResponseWriter, r *http.Request) {
-	repoID, ok := s.repoScopedID(w, r)
-	if !ok {
-		return
-	}
-	var body struct {
-		File string `json:"file"`
-		CWE  string `json:"cwe"`
-		CVE  string `json:"cve"`
-		Note string `json:"note"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeAPIError(w, http.StatusBadRequest, "body must be JSON")
-		return
-	}
-	row, err := buildExpectedFinding(repoID, body.File, body.CWE, body.CVE, body.Note)
-	if err != nil {
-		writeAPIError(w, http.StatusUnprocessableEntity, err.Error())
-		return
-	}
-	if err := s.DB.Create(&row).Error; err != nil {
-		writeAPIError(w, http.StatusUnprocessableEntity, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusCreated, expectedFindingResponseFrom(row))
-}
-
-func (s *Server) apiDeleteExpectedFinding(w http.ResponseWriter, r *http.Request) {
-	repoID, ok := s.repoScopedID(w, r)
-	if !ok {
-		return
-	}
-	expectedID, err := strconv.Atoi(r.PathValue("expected_id"))
-	if err != nil {
-		writeAPIError(w, http.StatusBadRequest, "invalid expected finding id")
-		return
-	}
-	res := s.DB.Where("repository_id = ? AND id = ?", repoID, expectedID).Delete(&db.ExpectedFinding{})
-	if res.Error != nil {
-		writeAPIError(w, http.StatusInternalServerError, res.Error.Error())
-		return
-	}
-	if res.RowsAffected == 0 {
-		writeAPIError(w, http.StatusNotFound, "expected finding not found")
-		return
-	}
-	w.WriteHeader(http.StatusNoContent)
-}
-
 func (s *Server) repoExpectedFindingCreate(w http.ResponseWriter, r *http.Request) {
 	repo, ok := loadByID[db.Repository](s, w, r)
 	if !ok {
@@ -128,15 +79,16 @@ func (s *Server) repoExpectedFindingDelete(w http.ResponseWriter, r *http.Reques
 }
 
 func buildExpectedFinding(repoID uint, file, cwe, cve, note string) (db.ExpectedFinding, error) {
+	cleanFile, err := cleanExpectedFileInput(file)
+	if err != nil {
+		return db.ExpectedFinding{}, err
+	}
 	row := db.ExpectedFinding{
 		RepositoryID: repoID,
-		File:         normalizeExpectedFile(file),
-		CWE:          strings.ToUpper(strings.TrimSpace(cwe)),
+		File:         cleanFile,
+		CWE:          normalizeCWE(cwe),
 		CVE:          strings.TrimSpace(cve),
 		Note:         strings.TrimSpace(note),
-	}
-	if row.File == "" || row.File == "." {
-		return row, fmt.Errorf("file is required")
 	}
 	if row.CWE == "" {
 		return row, fmt.Errorf("cwe is required")
@@ -206,9 +158,16 @@ func loadRepoExpectedView(gdb *gorm.DB, repoID uint, latest *db.Scan, rf repoFin
 	if latest != nil {
 		latestScanID = latest.ID
 	}
-	visibleFindings := make([]db.Finding, 0, len(rf.DeepDive)+len(rf.Scanners))
+	visibleCap := len(rf.DeepDive) + len(rf.Scanners)
+	if latest != nil {
+		visibleCap += len(latest.Findings)
+	}
+	visibleFindings := make([]db.Finding, 0, visibleCap)
 	visibleFindings = append(visibleFindings, rf.DeepDive...)
 	visibleFindings = append(visibleFindings, rf.Scanners...)
+	if latest != nil {
+		visibleFindings = append(visibleFindings, latest.Findings...)
+	}
 	return repoExpectedView{
 		Matches:       expectedMatchesForRows(gdb, repoID, latestScanID, expected),
 		FindingStatus: expectedStatusForFindings(visibleFindings, expected),
@@ -235,9 +194,10 @@ func expectedMatchesForRows(gdb *gorm.DB, repoID, scanID uint, expected []db.Exp
 	var findings []db.Finding
 	gdb.Where("repository_id = ? AND scan_id = ?", repoID, scanID).Find(&findings)
 	for _, f := range findings {
-		if db.SeverityAtLeast(f.Severity, "Medium") {
-			out.FindingTotal++
+		if !db.SeverityAtLeast(f.Severity, "Medium") {
+			continue
 		}
+		out.FindingTotal++
 		for i := range out.Expected {
 			if findingMatchesExpected(f, out.Expected[i].Expected) {
 				out.FindingStatus[f.ID] = true
@@ -266,7 +226,7 @@ func expectedStatusForFindings(findings []db.Finding, expected []db.ExpectedFind
 }
 
 func findingMatchesExpected(f db.Finding, expected db.ExpectedFinding) bool {
-	if strings.TrimSpace(f.CWE) != strings.TrimSpace(expected.CWE) {
+	if normalizeCWE(f.CWE) != normalizeCWE(expected.CWE) {
 		return false
 	}
 	want := normalizeExpectedFile(expected.File)
@@ -293,6 +253,25 @@ func normalizeExpectedFile(file string) string {
 	return cleanRepoPath(file)
 }
 
+func cleanExpectedFileInput(file string) (string, error) {
+	raw := strings.TrimSpace(strings.ReplaceAll(file, "\\", "/"))
+	if raw == "" {
+		return "", fmt.Errorf("file is required")
+	}
+	if path.IsAbs(raw) || hasParentPathSegment(raw) {
+		return "", fmt.Errorf("file must be relative to the repository root")
+	}
+	clean := cleanRepoPath(raw)
+	if clean == "" || clean == "." || path.IsAbs(clean) || hasParentPathSegment(clean) {
+		return "", fmt.Errorf("file must be relative to the repository root")
+	}
+	return clean, nil
+}
+
+func normalizeCWE(cwe string) string {
+	return strings.ToUpper(strings.TrimSpace(cwe))
+}
+
 func normalizeLocationFile(loc string) string {
 	loc = strings.TrimSpace(strings.Split(strings.TrimSpace(loc), "\n")[0])
 	for {
@@ -307,11 +286,22 @@ func normalizeLocationFile(loc string) string {
 
 func cleanRepoPath(p string) string {
 	p = strings.TrimSpace(strings.ReplaceAll(p, "\\", "/"))
-	p = strings.TrimPrefix(p, "./")
+	for strings.HasPrefix(p, "./") {
+		p = strings.TrimPrefix(p, "./")
+	}
 	if p == "" {
 		return ""
 	}
 	return path.Clean(p)
+}
+
+func hasParentPathSegment(p string) bool {
+	for _, part := range strings.Split(p, "/") {
+		if part == ".." {
+			return true
+		}
+	}
+	return false
 }
 
 func allDigits(s string) bool {
