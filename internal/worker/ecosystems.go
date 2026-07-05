@@ -342,6 +342,7 @@ func ecosystemsJSONArray(ctx context.Context, endpoint string, maxItems int, log
 
 func appendEcosystemsPages(ctx context.Context, rows []json.RawMessage, total int, next string, pagesLeft int, maxItems int, log *slog.Logger, warnMsg string, attrs ...any) ([]json.RawMessage, error) {
 	rows, capped := capEcosystemsRows(rows, maxItems)
+	capped = capped || total >= maxResponseBody
 	for next != "" && pagesLeft > 0 && !capped && (maxItems <= 0 || len(rows) < maxItems) {
 		body, link, err := ecosystemsGetWithLink(ctx, next)
 		if err != nil {

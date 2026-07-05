@@ -202,6 +202,35 @@ func TestFetchDependentsPaginationStopsAtCaps(t *testing.T) {
 	}
 }
 
+func TestAppendEcosystemsPagesStopsWhenInitialBodyHitsCap(t *testing.T) {
+	hits := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits++
+		_, _ = io.WriteString(w, `[{"name":"second"}]`)
+	}))
+	t.Cleanup(srv.Close)
+
+	rows, err := appendEcosystemsPages(
+		context.Background(),
+		[]json.RawMessage{json.RawMessage(`{"name":"first"}`)},
+		maxResponseBody,
+		srv.URL,
+		maxEcosystemsPages-1,
+		0,
+		slog.Default(),
+		"test pagination cap",
+	)
+	if err != nil {
+		t.Fatalf("appendEcosystemsPages: %v", err)
+	}
+	if hits != 0 {
+		t.Fatalf("fetched next page after first page hit response cap: hits=%d", hits)
+	}
+	if len(rows) != 1 || !strings.Contains(string(rows[0]), "first") {
+		t.Fatalf("rows = %s, want only initial row", mustMarshal(t, rows))
+	}
+}
+
 func writeJSONArray(w io.Writer, start, end int, item func(int) string) {
 	_, _ = io.WriteString(w, `[`)
 	for i := start; i < end; i++ {
