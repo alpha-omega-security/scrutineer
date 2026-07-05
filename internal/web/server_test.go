@@ -437,6 +437,7 @@ func TestNavKey(t *testing.T) {
 		"/repositories/7": "repos",
 		"/findings":       "findings",
 		"/findings/42":    "findings",
+		"/benchmark":      "benchmark",
 		"/scans/1":        "scans",
 		"/sboms":          "sboms",
 		"/usage":          "usage",
@@ -2429,7 +2430,7 @@ func TestEnqueueSkillWith_effort(t *testing.T) {
 	}
 }
 
-func TestEnqueueSkillWith_stampsSkillsRepoSHA(t *testing.T) {
+func TestEnqueueSkillWith_stampsBenchmarkVersionFields(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
 	s.SkillsRepoSHA = "feedface0123456789abcdef0123456789abcdef"
@@ -2437,7 +2438,7 @@ func TestEnqueueSkillWith_stampsSkillsRepoSHA(t *testing.T) {
 	repo := db.Repository{URL: "https://github.com/foo/bar", Name: "bar"}
 	s.DB.Create(&repo)
 	skill := db.Skill{Name: "lite", Body: "b", OutputFile: "r.json", OutputKind: "freeform",
-		Version: 1, Active: true, Source: "ui"}
+		Version: 7, Metadata: `{"scrutineer.version":1}`, Active: true, Source: "ui"}
 	s.DB.Create(&skill)
 
 	scanID, err := s.enqueueSkillWith(context.Background(), repo.ID, skill.ID, ScanOpts{})
@@ -2448,6 +2449,12 @@ func TestEnqueueSkillWith_stampsSkillsRepoSHA(t *testing.T) {
 	s.DB.First(&sc, scanID)
 	if sc.SkillsRepoSHA != s.SkillsRepoSHA {
 		t.Errorf("scan.SkillsRepoSHA = %q, want %q", sc.SkillsRepoSHA, s.SkillsRepoSHA)
+	}
+	if sc.SkillVersion != skill.Version {
+		t.Errorf("scan.SkillVersion = %d, want %d", sc.SkillVersion, skill.Version)
+	}
+	if sc.SkillSchemaVersion != 1 {
+		t.Errorf("scan.SkillSchemaVersion = %d, want 1", sc.SkillSchemaVersion)
 	}
 }
 

@@ -322,6 +322,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /repositories/bulk", s.repoBulkCreate)
 	mux.HandleFunc("POST /repositories/org", s.repoOrgImport)
 	mux.HandleFunc("GET /repositories/{id}", s.repoShow)
+	mux.HandleFunc("POST /repositories/{id}/expected", s.repoExpectedFindingCreate)
+	mux.HandleFunc("POST /repositories/{id}/expected/{expected_id}/delete", s.repoExpectedFindingDelete)
 	mux.HandleFunc("GET /repositories/{id}/blob/{commit}/{path...}", s.repoBlob)
 	mux.HandleFunc("GET /repositories/{id}/report.md", s.repoReport)
 	mux.HandleFunc("POST /repositories/{id}/scan", s.repoScan)
@@ -341,6 +343,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /maintainers/{id}", s.maintainerShow)
 	mux.HandleFunc("POST /maintainers/{id}/do-not-contact", s.maintainerDoNotContact)
 	mux.HandleFunc("GET /findings", s.findings)
+	mux.HandleFunc("GET /benchmark", s.benchmark)
 	mux.HandleFunc("GET /audit", s.auditPage)
 	mux.HandleFunc("POST /findings/{id}/reviews", s.findingReviewCreate)
 	mux.HandleFunc("GET /findings/{id}", s.findingShow)
@@ -480,7 +483,7 @@ func navKey(path string) string {
 	for _, p := range []struct{ prefix, key string }{
 		{"/settings", "settings"}, {"/usage", "usage"}, {"/skills", "skills"}, {"/maintainers", "maintainers"},
 		{"/orgs", "orgs"}, {"/packages", "packages"}, {"/advisories", "advisories"},
-		{"/findings", "findings"}, {"/scans", "scans"}, {"/sboms", "sboms"}, {"/audit", "audit"},
+		{"/findings", "findings"}, {"/benchmark", "benchmark"}, {"/scans", "scans"}, {"/sboms", "sboms"}, {"/audit", "audit"},
 	} {
 		if strings.HasPrefix(path, p.prefix) {
 			return p.key
@@ -1993,6 +1996,17 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 
 	category := r.URL.Query().Get("category")
 	rf := loadRepoFindings(s.DB, repo.ID, category)
+	var expectedRows []db.ExpectedFinding
+	s.DB.Where("repository_id = ?", repo.ID).Order("file, cwe").Find(&expectedRows)
+	latestScanID := uint(0)
+	if latest != nil {
+		latestScanID = latest.ID
+	}
+	expectedMatches := expectedMatchesForRows(s.DB, repo.ID, latestScanID, expectedRows)
+	visibleFindings := make([]db.Finding, 0, len(rf.DeepDive)+len(rf.Scanners))
+	visibleFindings = append(visibleFindings, rf.DeepDive...)
+	visibleFindings = append(visibleFindings, rf.Scanners...)
+	expectedFindingStatus := expectedStatusForFindings(visibleFindings, expectedRows)
 
 	// Count deep-dive findings still awaiting verification, scoped to the
 	// same category filter as the visible list. Drives the "Verify all new"
@@ -2096,17 +2110,20 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 
 	data := map[string]any{
 		"Repo": repo, "Scans": scans, "Latest": latest,
-		"Findings":             rf.DeepDive,
-		"FindingsTotal":        rf.DeepDiveTotal,
-		"ScannerFindings":      rf.Scanners,
-		"ScannerFindingsTotal": rf.ScannersTotal,
-		"ScanSkill":            rf.ScanSkill,
-		"ScanCommit":           rf.ScanCommit,
-		"NewFindingCount":      int(newFindings),
-		"FailedScans":          failedScans,
-		"ActiveScans":          int(activeScans),
-		"PausedScans":          int(pausedScans),
-		"TotalCost":            totalCost,
+		"Findings":              rf.DeepDive,
+		"FindingsTotal":         rf.DeepDiveTotal,
+		"ScannerFindings":       rf.Scanners,
+		"ScannerFindingsTotal":  rf.ScannersTotal,
+		"ScanSkill":             rf.ScanSkill,
+		"ScanCommit":            rf.ScanCommit,
+		"ExpectedFindings":      expectedMatches.Expected,
+		"ExpectedMatched":       expectedMatches.MatchedTotal,
+		"ExpectedFindingStatus": expectedFindingStatus,
+		"NewFindingCount":       int(newFindings),
+		"FailedScans":           failedScans,
+		"ActiveScans":           int(activeScans),
+		"PausedScans":           int(pausedScans),
+		"TotalCost":             totalCost,
 		// Cached on the row, refreshed by the worker after each scan (#126).
 		"DiskBytes":  repo.DiskBytes,
 		"TMCommit":   tmCommit,
@@ -2407,7 +2424,7 @@ func (s *Server) enqueueSkillWith(ctx context.Context, repoID, skillID uint, opt
 		return 0, err
 	}
 	var sk db.Skill
-	hasSkill := s.DB.Select("name, requires_remote, requires_profile, model").First(&sk, skillID).Error == nil
+	hasSkill := s.DB.Select("name, version, metadata, requires_remote, requires_profile, model").First(&sk, skillID).Error == nil
 	if repo.IsLocal() && hasSkill && sk.RequiresRemote {
 		return 0, fmt.Errorf("%w: %q", ErrSkillRequiresRemote, sk.Name)
 	}
@@ -2435,26 +2452,28 @@ func (s *Server) enqueueSkillWith(ctx context.Context, repoID, skillID uint, opt
 		kind = worker.JobExposure
 	}
 	scan := db.Scan{
-		RepositoryID:      repoID,
-		Kind:              kind,
-		Status:            db.ScanQueued,
-		StatusPriority:    db.StatusPriorityFor(db.ScanQueued),
-		Model:             opts.Model,
-		Effort:            opts.Effort,
-		SkillID:           &skillID,
-		SkillName:         sk.Name,
-		FindingID:         opts.FindingID,
-		DependentID:       opts.DependentID,
-		BaselineScanID:    opts.BaselineScanID,
-		SubPath:           opts.SubPath,
-		ScanGroup:         opts.ScanGroup,
-		Ref:               opts.Ref,
-		Profile:           opts.Profile,
-		SessionID:         opts.SessionID,
-		ResumedFromScanID: opts.ResumedFromScanID,
-		ImportPayload:     opts.ImportPayload,
-		SkillsRepoSHA:     s.SkillsRepoSHA,
-		APIToken:          NewAPIToken(),
+		RepositoryID:       repoID,
+		Kind:               kind,
+		Status:             db.ScanQueued,
+		StatusPriority:     db.StatusPriorityFor(db.ScanQueued),
+		Model:              opts.Model,
+		Effort:             opts.Effort,
+		SkillID:            &skillID,
+		SkillVersion:       sk.Version,
+		SkillSchemaVersion: skillSchemaVersion(sk),
+		SkillName:          sk.Name,
+		FindingID:          opts.FindingID,
+		DependentID:        opts.DependentID,
+		BaselineScanID:     opts.BaselineScanID,
+		SubPath:            opts.SubPath,
+		ScanGroup:          opts.ScanGroup,
+		Ref:                opts.Ref,
+		Profile:            opts.Profile,
+		SessionID:          opts.SessionID,
+		ResumedFromScanID:  opts.ResumedFromScanID,
+		ImportPayload:      opts.ImportPayload,
+		SkillsRepoSHA:      s.SkillsRepoSHA,
+		APIToken:           NewAPIToken(),
 	}
 	if err := s.DB.Create(&scan).Error; err != nil {
 		return 0, err
