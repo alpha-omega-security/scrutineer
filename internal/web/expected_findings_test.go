@@ -119,7 +119,7 @@ func TestExpectedFindingMatchingIgnoresLineNumbers(t *testing.T) {
 	s.DB.Create(&unexpected)
 
 	got := expectedMatchesForScan(s.DB, repo.ID, scan.ID)
-	if got.MatchedTotal != 1 || got.FindingTotal != 2 {
+	if got.MatchedTotal != 1 || got.FindingTotal != 2 || got.TruePositiveFindings != 1 {
 		t.Fatalf("matches = %+v", got)
 	}
 	if !got.FindingStatus[matched.ID] || got.FindingStatus[unexpected.ID] {
@@ -127,6 +127,42 @@ func TestExpectedFindingMatchingIgnoresLineNumbers(t *testing.T) {
 	}
 	if len(got.Expected) != 1 || !got.Expected[0].Matched || got.Expected[0].FindingID != matched.ID {
 		t.Fatalf("expected status = %+v", got.Expected)
+	}
+}
+
+func TestExpectedFindingPrecisionUsesTruePositiveFindings(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/bench-precision", Name: "bench-precision"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", SkillName: "vuln-scan", Status: db.ScanDone}
+	s.DB.Create(&scan)
+	s.DB.Create(&db.ExpectedFinding{RepositoryID: repo.ID, File: "src/a.go", CWE: "CWE-79"})
+	s.DB.Create(&db.ExpectedFinding{RepositoryID: repo.ID, File: "src/b.go", CWE: "CWE-79"})
+	finding := db.Finding{
+		RepositoryID: repo.ID,
+		ScanID:       scan.ID,
+		Title:        "xss",
+		Severity:     "High",
+		CWE:          "CWE-79",
+		Location:     "src/a.go:7",
+		Locations:    "src/a.go:7\nsrc/b.go:9",
+	}
+	s.DB.Create(&finding)
+
+	got := expectedMatchesForScan(s.DB, repo.ID, scan.ID)
+	if got.MatchedTotal != 2 || got.FindingTotal != 1 || got.TruePositiveFindings != 1 {
+		t.Fatalf("matches = %+v", got)
+	}
+	rows, totals := loadBenchmarkRows(s.DB, "vuln-scan", "", "")
+	if len(rows) != 1 {
+		t.Fatalf("rows = %+v", rows)
+	}
+	if rows[0].Recall != 1 || rows[0].Precision != 1 || rows[0].F1 != 1 {
+		t.Fatalf("row metrics = recall %.2f precision %.2f f1 %.2f", rows[0].Recall, rows[0].Precision, rows[0].F1)
+	}
+	if totals.Recall != 1 || totals.Precision != 1 || totals.F1 != 1 {
+		t.Fatalf("totals = %+v", totals)
 	}
 }
 
@@ -142,7 +178,7 @@ func TestExpectedFindingMatchingIgnoresLowSeverityForBenchmarkTotals(t *testing.
 	s.DB.Create(&low)
 
 	got := expectedMatchesForScan(s.DB, repo.ID, scan.ID)
-	if got.MatchedTotal != 0 || got.FindingTotal != 0 || got.FindingStatus[low.ID] {
+	if got.MatchedTotal != 0 || got.FindingTotal != 0 || got.TruePositiveFindings != 0 || got.FindingStatus[low.ID] {
 		t.Fatalf("low severity finding affected benchmark totals/status: %+v", got)
 	}
 }
@@ -197,6 +233,32 @@ func TestRepoShowExpectedFindingBadges(t *testing.T) {
 	}
 	if !strings.Contains(fixedRow, "expected") || strings.Contains(fixedRow, "unexpected") {
 		t.Fatalf("closed latest finding badge row = %s", fixedRow)
+	}
+}
+
+func TestRepoShowBenchmarkTabUsesLatestVulnScan(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/bench-vuln", Name: "bench-vuln"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", SkillName: vulnScanSkillName, Status: db.ScanDone, Model: "test-model"}
+	s.DB.Create(&scan)
+	s.DB.Create(&db.ExpectedFinding{RepositoryID: repo.ID, File: "src/app.go", CWE: "CWE-79"})
+	s.DB.Create(&db.Finding{RepositoryID: repo.ID, ScanID: scan.ID, Title: "scanner xss", Severity: "High", CWE: "CWE-79", Location: "src/app.go:7", Status: db.FindingNew})
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq(http.MethodGet, fmt.Sprintf("/repositories/%d", repo.ID)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	body := w.Body.String()
+	for _, want := range []string{"Benchmark", "1/1", "scanner xss", "expected"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("body missing %q:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "missed") {
+		t.Fatalf("vuln-scan-only expected row was marked missed:\n%s", body)
 	}
 }
 

@@ -10,27 +10,29 @@ import (
 )
 
 type benchmarkRow struct {
-	Repo               db.Repository
-	Scan               *db.Scan
-	Expected           int
-	Matched            int
-	Findings           int
-	Recall             float64
-	Precision          float64
-	F1                 float64
-	Skill              string
-	Model              string
-	HarnessSHA         string
-	SkillSchemaVersion int
+	Repo                 db.Repository
+	Scan                 *db.Scan
+	Expected             int
+	Matched              int
+	Findings             int
+	TruePositiveFindings int
+	Recall               float64
+	Precision            float64
+	F1                   float64
+	Skill                string
+	Model                string
+	HarnessSHA           string
+	SkillSchemaVersion   int
 }
 
 type benchmarkTotals struct {
-	Expected  int
-	Matched   int
-	Findings  int
-	Recall    float64
-	Precision float64
-	F1        float64
+	Expected             int
+	Matched              int
+	Findings             int
+	TruePositiveFindings int
+	Recall               float64
+	Precision            float64
+	F1                   float64
 }
 
 func (s *Server) benchmark(w http.ResponseWriter, r *http.Request) {
@@ -66,21 +68,23 @@ func loadBenchmarkRows(gdb *gorm.DB, skill, model, harness string) ([]benchmarkR
 			row.Scan = scan
 			row.Matched = matches.MatchedTotal
 			row.Findings = matches.FindingTotal
+			row.TruePositiveFindings = matches.TruePositiveFindings
 			row.Skill = scan.SkillName
 			row.Model = scan.Model
 			row.HarnessSHA = scan.SkillsRepoSHA
 			row.SkillSchemaVersion = scan.SkillSchemaVersion
 			row.Recall = ratio(row.Matched, row.Expected)
-			row.Precision = ratio(row.Matched, row.Findings)
+			row.Precision = ratio(row.TruePositiveFindings, row.Findings)
 			row.F1 = f1(row.Recall, row.Precision)
 		}
 		totals.Expected += row.Expected
 		totals.Matched += row.Matched
 		totals.Findings += row.Findings
+		totals.TruePositiveFindings += row.TruePositiveFindings
 		rows = append(rows, row)
 	}
 	totals.Recall = ratio(totals.Matched, totals.Expected)
-	totals.Precision = ratio(totals.Matched, totals.Findings)
+	totals.Precision = ratio(totals.TruePositiveFindings, totals.Findings)
 	totals.F1 = f1(totals.Recall, totals.Precision)
 	return rows, totals
 }

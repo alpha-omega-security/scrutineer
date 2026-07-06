@@ -140,10 +140,11 @@ type expectedFindingStatus struct {
 }
 
 type expectedMatchSet struct {
-	Expected      []expectedFindingStatus
-	FindingStatus map[uint]bool
-	MatchedTotal  int
-	FindingTotal  int
+	Expected             []expectedFindingStatus
+	FindingStatus        map[uint]bool
+	MatchedTotal         int
+	FindingTotal         int
+	TruePositiveFindings int
 }
 
 type repoExpectedView struct {
@@ -155,8 +156,8 @@ func loadRepoExpectedView(gdb *gorm.DB, repoID uint, latest *db.Scan, rf repoFin
 	var expected []db.ExpectedFinding
 	gdb.Where("repository_id = ?", repoID).Order("file, cwe").Find(&expected)
 	latestScanID := uint(0)
-	if latest != nil {
-		latestScanID = latest.ID
+	if scan := latestBenchmarkScan(gdb, repoID, "", "", ""); scan != nil {
+		latestScanID = scan.ID
 	}
 	visibleCap := len(rf.DeepDive) + len(rf.Scanners)
 	if latest != nil {
@@ -198,15 +199,20 @@ func expectedMatchesForRows(gdb *gorm.DB, repoID, scanID uint, expected []db.Exp
 			continue
 		}
 		out.FindingTotal++
+		findingMatched := false
 		for i := range out.Expected {
 			if findingMatchesExpected(f, out.Expected[i].Expected) {
 				out.FindingStatus[f.ID] = true
+				findingMatched = true
 				if !out.Expected[i].Matched {
 					out.Expected[i].Matched = true
 					out.Expected[i].FindingID = f.ID
 					out.MatchedTotal++
 				}
 			}
+		}
+		if findingMatched {
+			out.TruePositiveFindings++
 		}
 	}
 	return out
