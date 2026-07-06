@@ -1150,10 +1150,9 @@ var (
 	// findings populate the curated Findings bucket: the LLM audit skills
 	// (security-deep-dive, vuln-scan, advisory-deep-dive), legacy claude jobs
 	// with an empty or NULL skill_name, and operator imports (kind='import'). An
-	// import is a
-	// deliberate curation act, not noisy auto-scanner output, so it sits with
-	// the audit findings and shows by default rather than behind the Scanners
-	// toggle. The skill names are spliced in as literals rather than bound
+	// import is a deliberate curation act, not noisy auto-scanner output, so it
+	// sits with the audit findings and shows by default rather than behind the
+	// Scanners toggle. The skill names are spliced in as literals rather than bound
 	// parameters because this fragment is embedded raw into larger SQL (e.g. an
 	// Order clause) that can't carry args; each is escaped through
 	// db.SQLStringLiteral so a name that ever gained a quote is doubled rather

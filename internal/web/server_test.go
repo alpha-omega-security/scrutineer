@@ -1407,12 +1407,13 @@ func TestFindings_scannerToggle(t *testing.T) {
 }
 
 func TestDeepDiveSkillNameSafeForSplicing(t *testing.T) {
-	// deepDiveSkillName and vulnScanSkillName are spliced into
-	// findingsBucketSkillSQL as raw single-quoted literals (it feeds SQL such as
-	// the deepDiveFindingsCountSQL ORDER BY subquery, which cannot take a bind
-	// parameter), so neither may ever carry a SQL metacharacter. This tripwire
-	// fails loudly if a refactor changes a constant or makes a value dynamic.
-	for _, name := range []string{deepDiveSkillName, vulnScanSkillName} {
+	// deepDiveSkillName, vulnScanSkillName and advisoryDeepDiveSkillName are
+	// spliced into findingsBucketSkillSQL as raw single-quoted literals (it feeds
+	// SQL such as the deepDiveFindingsCountSQL ORDER BY subquery, which cannot
+	// take a bind parameter), so none may ever carry a SQL metacharacter. This
+	// tripwire fails loudly if a refactor changes a constant or makes a value
+	// dynamic.
+	for _, name := range []string{deepDiveSkillName, vulnScanSkillName, advisoryDeepDiveSkillName} {
 		if strings.ContainsAny(name, "'\";\\\x00") {
 			t.Errorf("skill name %q must stay free of SQL metacharacters; it is spliced into findingsBucketSkillSQL", name)
 		}

@@ -54,8 +54,8 @@ func TestFindingClassification_advisoryDeepDiveIsCurated(t *testing.T) {
 		t.Error("semgrep finding missing from the Scanners bucket")
 	}
 
-	// The raw scannerScanFilter path (two bound skill names) must agree: only
-	// the semgrep finding counts as a scanner.
+	// The raw scannerScanFilter path must agree: only the semgrep finding counts
+	// as a scanner.
 	if _, scannerTotal := s.findingToggleCounts(localReq("GET", "/findings"), false); scannerTotal != 1 {
 		t.Errorf("findingToggleCounts scannerTotal = %d, want 1 (semgrep only)", scannerTotal)
 	}
