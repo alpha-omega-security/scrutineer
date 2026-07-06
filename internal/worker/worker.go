@@ -220,7 +220,8 @@ func (w *Worker) RateLimitStatus() []RateLimitInfo {
 }
 
 // onOverageLocked reports whether any tracked window is currently on overage
-// (past the included quota) with an unexpired reset. Caller holds rlStatusMu.
+// (past the included quota) with an unexpired reset, or with no reset timestamp
+// (unknown reset). Caller holds rlStatusMu.
 func (w *Worker) onOverageLocked() bool {
 	now := w.now().UTC()
 	for _, info := range w.rlStatus {
@@ -234,8 +235,8 @@ func (w *Worker) onOverageLocked() bool {
 }
 
 // OnOverage reports whether the Claude account is currently past its included
-// subscription quota (any tracked window isUsingOverage with an unexpired
-// reset). An API-key account never reports overage, so this stays false there.
+// subscription quota (any tracked window isUsingOverage with an unexpired reset
+// or no reset timestamp). An API-key account never reports overage, so this stays false there.
 func (w *Worker) OnOverage() bool {
 	if w == nil {
 		return false
