@@ -87,6 +87,16 @@
   </div>
 {{end}}
 
+{{if .ModelDowngraded}}
+  <div class="alert-warning mb-6">
+    <i data-lucide="triangle-alert"></i>
+    <section>
+      <strong>Model fallback active.</strong>
+      The account is on overage, so new scans run on the mid tier instead of max/high. Restores automatically when overage clears.
+    </section>
+  </div>
+{{end}}
+
 {{if .Scans}}
   <table class="table">
     <thead>

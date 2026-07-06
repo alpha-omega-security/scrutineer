@@ -162,6 +162,11 @@ type Worker struct {
 	// automatic resume. A reset farther out is treated as unreliable and leaves
 	// the batch paused for manual operator action.
 	MaxRateLimitAutoResumeDelay time.Duration
+	// DowngradeOnOverage falls the model tier back from max/high to the mid tier
+	// for newly enqueued scans while the subscription is past its included quota
+	// (on overage), restoring it when the window resets. Off by default; only a
+	// subscription token reports overage, so it is inert on an API key.
+	DowngradeOnOverage bool
 	// Now overrides time.Now in tests.
 	Now func() time.Time
 
@@ -174,7 +179,9 @@ type Worker struct {
 	rlStatus   map[string]RateLimitInfo
 }
 
-// recordRateLimit stores the latest rate-limit status for its window type.
+// recordRateLimit stores the latest rate-limit status for its window type and,
+// when the overage fallback is enabled, logs the transition into or out of
+// overage so the switch to/from the mid tier is visible in the log.
 func (w *Worker) recordRateLimit(info RateLimitInfo) {
 	if info.Type == "" {
 		return
@@ -183,8 +190,17 @@ func (w *Worker) recordRateLimit(info RateLimitInfo) {
 	if w.rlStatus == nil {
 		w.rlStatus = map[string]RateLimitInfo{}
 	}
+	before := w.onOverageLocked()
 	w.rlStatus[info.Type] = info
+	after := w.onOverageLocked()
 	w.rlStatusMu.Unlock()
+	if w.DowngradeOnOverage && before != after && w.Log != nil {
+		if after {
+			w.Log.Info("model overage fallback engaged: account on overage, new scans use the mid tier")
+		} else {
+			w.Log.Info("model overage fallback lifted: overage cleared, new scans use the max/high tier again")
+		}
+	}
 }
 
 // RateLimitStatus returns a snapshot of the latest rate-limit status per window,
@@ -201,6 +217,40 @@ func (w *Worker) RateLimitStatus() []RateLimitInfo {
 		out = append(out, v)
 	}
 	return out
+}
+
+// onOverageLocked reports whether any tracked window is currently on overage
+// (past the included quota) with an unexpired reset, or with no reset timestamp
+// (unknown reset). Caller holds rlStatusMu.
+func (w *Worker) onOverageLocked() bool {
+	now := w.now().UTC()
+	for _, info := range w.rlStatus {
+		if info.IsUsingOverage {
+			if t := info.ResetTime(); t == nil || t.After(now) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// OnOverage reports whether the Claude account is currently past its included
+// subscription quota (any tracked window isUsingOverage with an unexpired reset
+// or no reset timestamp). An API-key account never reports overage, so this stays false there.
+func (w *Worker) OnOverage() bool {
+	if w == nil {
+		return false
+	}
+	w.rlStatusMu.Lock()
+	defer w.rlStatusMu.Unlock()
+	return w.onOverageLocked()
+}
+
+// ShouldDowngradeModel reports whether the max/high-to-mid overage fallback is
+// both enabled and currently active. The web layer calls it at enqueue to rewrite
+// max/high tier preferences to mid, and to surface the fallback banner.
+func (w *Worker) ShouldDowngradeModel() bool {
+	return w != nil && w.DowngradeOnOverage && w.OnOverage()
 }
 
 func (w *Worker) logFlushInterval() time.Duration {

@@ -61,6 +61,7 @@ func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 		"AnySubPath": anySubPath, "QueuedCount": stats.QueuedCount, "PausedCount": stats.PausedCount,
 		"AccountPausedCount": stats.AccountPausedCount,
 		"NextAccountResume":  stats.NextAccountResume,
+		"ModelDowngraded":    s.Worker.ShouldDowngradeModel(),
 	})
 }
 
