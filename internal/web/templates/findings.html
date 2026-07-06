@@ -121,6 +121,7 @@
     <thead><tr>
       <th class="w-24">Severity</th><th>Title</th><th class="w-24">Status</th>
       <th class="w-32">Repository</th>
+      <th class="w-20">Repo ID</th>
       {{if .AnySubPath}}<th class="w-32">Sub-path</th>{{end}}
       <th class="w-44">CWE</th>
       <th class="w-56">Location</th><th class="w-16">Scan</th>
@@ -144,6 +145,7 @@
         </td>
         <td>{{template "finding-status" (fstatus .Status)}}</td>
         <td class="truncate">{{$repo.Name}}</td>
+        <td class="text-muted-foreground">{{$repo.ID}}</td>
         {{if $showSub}}
           <td class="text-muted-foreground text-xs">{{if .SubPath}}<code>{{.SubPath}}</code>{{else}}<span class="text-muted-foreground">root</span>{{end}}</td>
         {{end}}
