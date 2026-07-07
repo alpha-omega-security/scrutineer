@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Shared implementation for scripts/ruby-reset.sh and scripts/profiles-reset.sh.
+# Shared implementation for scripts/ruby-image-reset.sh and scripts/all-images-reset.sh.
 # NOT run directly — each wrapper sets `glob` and `desc`, then sources this file.
 #
 # Removes locally-built profile images matching $glob (forcing a rebuild on the
