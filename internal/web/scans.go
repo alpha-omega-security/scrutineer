@@ -34,6 +34,9 @@ func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 		q = q.Order("status " + dirOr(dir, "asc")).Order("scans.id desc")
 	case sortRepository:
 		q = q.Joins("Repository").Order("`Repository`.name " + dirOr(dir, "asc")).Order("scans.id desc")
+	case "findings":
+		// findings_count is a denormalised column on the scan row.
+		q = q.Order("findings_count " + dirOr(dir, "desc")).Order("scans.id desc")
 	default:
 		sortCol, dir = defaultSort, ""
 		q = q.Order("status_priority, scans.id desc")

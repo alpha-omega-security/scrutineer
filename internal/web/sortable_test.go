@@ -122,3 +122,96 @@ func TestFindings_sortDirection(t *testing.T) {
 		t.Errorf("sort=severity.asc should put Low before Critical")
 	}
 }
+
+// TestSort_derivedColumns covers the columns that sort via a correlated
+// subquery or denormalised key rather than a plain column: repo Last scan /
+// Status and the scans Findings count.
+func TestSort_derivedColumns(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repoOld := db.Repository{URL: "https://x/repo-old", Name: "repo-old"}
+	repoNew := db.Repository{URL: "https://x/repo-new", Name: "repo-new"}
+	s.DB.Create(&repoOld)
+	s.DB.Create(&repoNew)
+	// repoOld scanned first (lower id) and finished; repoNew scanned later
+	// (higher id) and still running, with more findings.
+	s.DB.Create(&db.Scan{RepositoryID: repoOld.ID, Kind: "skill", Status: db.ScanDone,
+		StatusPriority: db.StatusPriorityFor(db.ScanDone), FindingsCount: 2})
+	s.DB.Create(&db.Scan{RepositoryID: repoNew.ID, Kind: "skill", Status: db.ScanRunning,
+		StatusPriority: db.StatusPriorityFor(db.ScanRunning), FindingsCount: 9})
+
+	get := func(path string) string {
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, localReq("GET", path))
+		if w.Code != 200 {
+			t.Fatalf("GET %s status %d", path, w.Code)
+		}
+		return w.Body.String()
+	}
+	before := func(body, a, b string) bool { return strings.Index(body, a) < strings.Index(body, b) }
+
+	// Last scan: most-recently-scanned repo first, reversed under .asc.
+	if b := get("/?sort=scanned"); !before(b, "repo-new", "repo-old") {
+		t.Errorf("sort=scanned should put the most-recently-scanned repo first")
+	}
+	if b := get("/?sort=scanned.asc"); !before(b, "repo-old", "repo-new") {
+		t.Errorf("sort=scanned.asc should reverse")
+	}
+	// Status: running (rank 0) before done (rank 3) under the asc default.
+	if b := get("/?sort=status"); !before(b, "repo-new", "repo-old") {
+		t.Errorf("sort=status should rank the running repo before the done repo")
+	}
+	// Scans Findings: the higher findings_count first under the desc default.
+	if b := get("/scans?sort=findings"); !before(b, "repo-new", "repo-old") {
+		t.Errorf("/scans?sort=findings should rank the 9-finding scan before the 2-finding scan")
+	}
+}
+
+// TestSort_maliciousParamFallsBackSafely feeds hostile ?sort= values (unknown
+// keys, SQLi payloads, bad directions) to the index handlers and asserts they
+// fall back to the default order — HTTP 200, no error — and that no injected
+// statement executed (the tables survive with their row counts intact). This
+// is the regression guard for the switch/dirOr/orderByExpr allowlists: if a
+// later refactor lets request text reach an ORDER BY, a DROP/DELETE payload
+// would drop a table and fail these assertions loudly.
+func TestSort_maliciousParamFallsBackSafely(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://x/keep", Name: "keep"}
+	s.DB.Create(&repo)
+	s.DB.Create(&db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone,
+		StatusPriority: db.StatusPriorityFor(db.ScanDone), FindingsCount: 1})
+
+	payloads := []string{
+		"name); DROP TABLE repositories;--",
+		"scanned; DROP TABLE scans",
+		"status.asc'); DROP TABLE repositories;--",
+		"scanned.desc; DELETE FROM scans",
+		"findings) UNION SELECT 1--",
+		"status.evil",
+		"' OR '1'='1",
+		"(SELECT 1)",
+	}
+	// Both the repo index (/) and the scans index (/scans) go through the same
+	// allowlists, so exercise both with every payload.
+	for _, base := range []string{"/", "/scans"} {
+		for _, p := range payloads {
+			w := httptest.NewRecorder()
+			s.Handler().ServeHTTP(w, localReq("GET", base+"?sort="+url.QueryEscape(p)))
+			if w.Code != 200 {
+				t.Errorf("GET %s?sort=%q: status %d, want 200 (should fall back, not error)", base, p, w.Code)
+			}
+			// If any payload had been executed, a table would be gone and these
+			// counts would error or read zero.
+			var repos, scans int64
+			if err := s.DB.Model(&db.Repository{}).Count(&repos).Error; err != nil || repos != 1 {
+				t.Fatalf("after %s?sort=%q: repositories table harmed (count=%d err=%v)", base, p, repos, err)
+			}
+			if err := s.DB.Model(&db.Scan{}).Count(&scans).Error; err != nil || scans != 1 {
+				t.Fatalf("after %s?sort=%q: scans table harmed (count=%d err=%v)", base, p, scans, err)
+			}
+		}
+	}
+}

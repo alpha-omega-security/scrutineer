@@ -42,6 +42,30 @@ func dirOr(dir, def string) string {
 	return def
 }
 
+// orderByExpr renders an ORDER BY term for a TRUSTED, constant SQL expression
+// with a validated direction. Unlike expr+" "+dirOr(dir,…), the direction is
+// resolved to a boolean here and the ASC/DESC suffix comes from a code literal,
+// so the request never contributes a single byte to the clause — the result is
+// provably one of two fixed strings. Defence in depth over the switch/dirOr
+// allowlists, used for the sorts whose expression is a raw subquery.
+//
+// expr MUST be a compile-time constant; never pass request-derived text (a SQL
+// ORDER BY direction cannot be a bind parameter, so a raw expression here is
+// the boundary — keep it constant).
+func orderByExpr(expr, dir string, defaultDesc bool) string {
+	desc := defaultDesc
+	switch dir {
+	case "asc":
+		desc = false
+	case "desc":
+		desc = true
+	}
+	if desc {
+		return expr + " DESC"
+	}
+	return expr + " ASC"
+}
+
 // flipSQLDir returns the opposite SQL direction. It is used for columns whose
 // ORDER BY expression inverts the logical sense — e.g. severityOrder ranks the
 // most severe lowest, so "most severe first" is an ascending sort on it.

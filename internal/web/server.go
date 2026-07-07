@@ -626,7 +626,20 @@ func (s *Server) repoList(w http.ResponseWriter, r *http.Request) {
 		// thousands of repos so the per-row subselect is fine on sqlite.
 		// Scanner-skill findings (zizmor, semgrep, …) are excluded so the
 		// list reflects curated audit output, matching the repo Findings tab.
-		q = q.Order("(" + deepDiveFindingsCountSQL + ") " + dirOr(dir, "desc")).Order("updated_at desc")
+		// orderByExpr keeps the request out of the raw-subquery clause.
+		q = q.Order(orderByExpr("("+deepDiveFindingsCountSQL+")", dir, true)).Order("updated_at desc")
+	case "scanned":
+		// Order by each repo's latest scan id (the row the Last scan column
+		// renders), most-recent first by default; never-scanned repos (NULL)
+		// sort last under DESC. Correlated subquery, like the findings case.
+		q = q.Order(orderByExpr("(SELECT MAX(id) FROM scans WHERE scans.repository_id = repositories.id)", dir, true)).Order("updated_at desc")
+	case statusKey:
+		// Order by the same rank the scans index uses: the denormalised
+		// status_priority column (0=running .. 3=terminal), lowest-first by
+		// default so active repos surface. COALESCE pushes never-scanned repos
+		// last. The Status badge is computed live for display, but sorting can
+		// use the indexed column, exactly as /scans does.
+		q = q.Order(orderByExpr("COALESCE((SELECT MIN(status_priority) FROM scans WHERE scans.repository_id = repositories.id), 99)", dir, false)).Order("updated_at desc")
 	default:
 		sortCol, dir = defaultSort, ""
 		q = q.Order("updated_at desc")

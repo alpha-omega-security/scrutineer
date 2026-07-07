@@ -44,7 +44,8 @@
       <tr>
         {{template "th-sort" (dict "Sorter" .Sorter "Key" "name" "Def" "asc" "Label" "Repository" "Class" "")}}
         {{template "th-sort" (dict "Sorter" .Sorter "Key" "language" "Def" "asc" "Label" "Language" "Class" "")}}
-        <th>Last scan</th><th>Status</th>
+        {{template "th-sort" (dict "Sorter" .Sorter "Key" "scanned" "Def" "desc" "Label" "Last scan" "Class" "")}}
+        {{template "th-sort" (dict "Sorter" .Sorter "Key" "status" "Def" "asc" "Label" "Status" "Class" "")}}
         {{template "th-sort" (dict "Sorter" .Sorter "Key" "findings" "Def" "desc" "Label" "Findings" "Class" "")}}
         {{template "th-sort" (dict "Sorter" .Sorter "Key" "size" "Def" "desc" "Label" "Size" "Class" "")}}
         <th></th>

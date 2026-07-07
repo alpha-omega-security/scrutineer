@@ -106,7 +106,8 @@
         {{if .AnySubPath}}<th>Sub-path</th>{{end}}
         {{template "th-sort" (dict "Sorter" .Sorter "Key" "skill" "Def" "asc" "Label" "Skill" "Class" "")}}
         {{template "th-sort" (dict "Sorter" .Sorter "Key" "status" "Def" "asc" "Label" "Status" "Class" "")}}
-        <th>Findings</th><th>Model</th><th>Cost</th><th>Started</th><th>Duration</th><th class="w-12"></th>
+        {{template "th-sort" (dict "Sorter" .Sorter "Key" "findings" "Def" "desc" "Label" "Findings" "Class" "")}}
+        <th>Model</th><th>Cost</th><th>Started</th><th>Duration</th><th class="w-12"></th>
       </tr>
     </thead>
     <tbody>
