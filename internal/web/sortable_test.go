@@ -106,6 +106,10 @@ func TestFindings_sortDirection(t *testing.T) {
 	if !strings.Contains(body, `class="th-sort"`) {
 		t.Errorf("headers should render as th-sort links")
 	}
+	// The active column exposes its direction to assistive tech.
+	if !strings.Contains(body, `aria-sort="descending"`) {
+		t.Errorf("active severity header should set aria-sort=descending")
+	}
 
 	// Explicit ascending reverses it: Low before Critical.
 	body = get("?sort=severity.asc")
