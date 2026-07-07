@@ -437,9 +437,16 @@ func TestNextLink(t *testing.T) {
 	}{
 		{`<https://x/api?page=2>; rel="next"`, "https://x/api?page=2"},
 		{`<https://x/api?page=3>; rel="last", <https://x/api?page=2>; rel="next"`, "https://x/api?page=2"},
+		{`<https://x/api?page=2>; rel=next`, "https://x/api?page=2"},
 		{`<https://x/api?page=9>; rel="last"`, ""},
+		// Commas inside the <...> URI-Reference (e.g. in a query param)
+		// must not be treated as link separators (#543).
+		{`<https://x/api?page=2&f=a,b,c>; rel="next"`, "https://x/api?page=2&f=a,b,c"},
+		{`<https://x/api?f=a,b>; rel="prev", <https://x/api?page=2>; rel="next"`, "https://x/api?page=2"},
+		{`<https://x/api?page=1>; rel="prev", <https://x/api?page=2&f=a,b>; rel="next"`, "https://x/api?page=2&f=a,b"},
 		{"", ""},
 		{"garbage", ""},
+		{`<https://x/api?page=2; rel="next"`, ""}, // unterminated <...>
 	}
 	for _, c := range cases {
 		if got := nextLink(c.header); got != c.want {

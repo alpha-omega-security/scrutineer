@@ -402,19 +402,24 @@ func ecosystemsGetWithLink(ctx context.Context, endpoint string) ([]byte, string
 }
 
 // nextLink extracts the URL of the rel="next" entry from an RFC 8288 Link
-// header, or "" when absent.
+// header, or "" when absent. Links are located by their <...> URI-Reference
+// delimiters rather than by splitting on commas, so a comma inside the URL
+// (e.g. in a query parameter) does not truncate it (#543). RFC 3986 forbids a
+// literal '>' in a URI, so the first '>' after '<' is the terminator.
 func nextLink(header string) string {
-	for _, part := range strings.Split(header, ",") {
-		urlPart, params, found := strings.Cut(part, ";")
-		if !found {
-			continue
+	_, rest, found := strings.Cut(header, "<")
+	for found {
+		u, after, closed := strings.Cut(rest, ">")
+		if !closed {
+			return "" // unterminated <...>
 		}
-		if !strings.Contains(params, "rel=\"next\"") && !strings.Contains(params, "rel=next") {
-			continue
+		// The link's parameters run from '>' up to the next '<' (start of
+		// the following link-value) or the end of the header.
+		var params string
+		params, rest, found = strings.Cut(after, "<")
+		if strings.Contains(params, `rel="next"`) || strings.Contains(params, "rel=next") {
+			return u
 		}
-		u := strings.TrimSpace(urlPart)
-		u = strings.TrimPrefix(u, "<")
-		return strings.TrimSuffix(u, ">")
 	}
 	return ""
 }
