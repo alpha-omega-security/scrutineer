@@ -1,8 +1,10 @@
 package worker
 
 import (
+	"bytes"
 	"errors"
 	"io"
+	"log"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -10,6 +12,9 @@ import (
 	"testing"
 
 	"scrutineer/internal/db"
+
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 func TestParseFindingsOutput_capturesSnippetAndRefreshesOnReobserve(t *testing.T) {
@@ -347,6 +352,43 @@ func TestParseFindingsOutput_preservesAnalystStatusOnReobservation(t *testing.T)
 	}
 	if rows[0].SeenCount != 2 {
 		t.Errorf("seen count = %d, want 2", rows[0].SeenCount)
+	}
+}
+
+func TestParseFindingsOutput_rejectedWithoutStatusHistoryDoesNotLogRecordNotFound(t *testing.T) {
+	base, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	gdb := base.Session(&gorm.Session{
+		Logger: logger.New(log.New(&logs, "", 0), logger.Config{LogLevel: logger.Warn}),
+	})
+	repo := db.Repository{URL: "https://x/r", Name: "r"}
+	gdb.Create(&repo)
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	report := `{"findings":[{"id":"F1","title":"noise","severity":"Low","cwe":"CWE-200","location":"x.go:1"}]}`
+	s1 := &db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "semgrep", Status: db.ScanDone, Commit: "abc"}
+	gdb.Create(s1)
+	if err := w.parseFindingsOutput(&db.Skill{}, s1, report, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	gdb.Model(&db.Finding{}).Where("repository_id = ?", repo.ID).Update("status", db.FindingRejected)
+	logs.Reset()
+
+	s2 := &db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "semgrep", Status: db.ScanDone, Commit: "def"}
+	gdb.Create(s2)
+	if err := w.parseFindingsOutput(&db.Skill{}, s2, report, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(logs.String(), "record not found") {
+		t.Fatalf("expected rejected finding without status history to avoid noisy GORM miss log, got:\n%s", logs.String())
+	}
+	var got db.Finding
+	gdb.First(&got)
+	if got.Status != db.FindingRejected {
+		t.Errorf("finding without status history should remain rejected, got %s", got.Status)
 	}
 }
 

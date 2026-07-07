@@ -440,8 +440,11 @@ func (w *Worker) persistFinding(scan *db.Scan, f *db.Finding) (created bool, err
 
 	var existing db.Finding
 	lookup := w.DB.Where("repository_id = ? AND fingerprint = ?", scan.RepositoryID, f.Fingerprint).
-		Order("id").First(&existing).Error
-	if lookup == nil {
+		Order("id").Limit(1).Find(&existing)
+	if lookup.Error != nil {
+		return false, fmt.Errorf("lookup existing finding: %w", lookup.Error)
+	}
+	if lookup.RowsAffected > 0 {
 		if uerr := w.reobserveFinding(&existing, f, scan); uerr != nil {
 			return false, uerr
 		}
@@ -513,8 +516,11 @@ func (w *Worker) reobserveFinding(existing, f *db.Finding, scan *db.Scan) error 
 	var statusRestore string
 	if existing.Status == db.FindingRejected {
 		var lastStatus db.FindingHistory
-		if err := w.DB.Where("finding_id = ? AND field = ?", existing.ID, "status").
-			Order("id desc").First(&lastStatus).Error; err == nil {
+		lastStatusLookup := w.DB.Where("finding_id = ? AND field = ?", existing.ID, "status").
+			Order("id desc").Limit(1).Find(&lastStatus)
+		if lastStatusLookup.Error != nil {
+			w.Log.Warn("lookup finding status history", "finding", existing.ID, "scan", scan.ID, "err", lastStatusLookup.Error)
+		} else if lastStatusLookup.RowsAffected > 0 {
 			if lastStatus.Source == db.SourceSystem {
 				statusRestore = lastStatus.OldValue
 				updates["status"] = statusRestore

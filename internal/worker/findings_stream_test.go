@@ -1,13 +1,19 @@
 package worker
 
 import (
+	"bytes"
 	"errors"
 	"io"
+	"log"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"scrutineer/internal/db"
+
+	"gorm.io/gorm"
+	"gorm.io/gorm/logger"
 )
 
 func newStreamWorker(t *testing.T) (*Worker, db.Repository) {
@@ -43,6 +49,30 @@ func TestPersistStreamedFinding_createsRowFromBody(t *testing.T) {
 	}
 	if f.Fingerprint == "" {
 		t.Error("streamed finding has no fingerprint, final report cannot reconcile against it")
+	}
+}
+
+func TestPersistStreamedFinding_newFindingDoesNotLogRecordNotFound(t *testing.T) {
+	base, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	gdb := base.Session(&gorm.Session{
+		Logger: logger.New(log.New(&logs, "", 0), logger.Config{LogLevel: logger.Warn}),
+	})
+	repo := db.Repository{URL: "https://x/r", Name: "r"}
+	gdb.Create(&repo)
+	scan := &db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "sd", Status: db.ScanRunning, Commit: "aaa"}
+	gdb.Create(scan)
+	w := &Worker{DB: gdb, DataDir: t.TempDir(), Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	_, err = w.PersistStreamedFinding(scan, []byte(`{"id":"F1","title":"t","severity":"High","location":"main.go:10"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(logs.String(), "record not found") {
+		t.Fatalf("expected new streamed finding to avoid noisy GORM miss log, got:\n%s", logs.String())
 	}
 }
 
