@@ -61,6 +61,17 @@ func (s *Server) apiAuth(next http.Handler) http.Handler {
 
 const apiMaxBody = 1 << 20
 
+func decodeOptionalAPIBody(w http.ResponseWriter, r *http.Request, dst any) bool {
+	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
+		if errors.Is(err, io.EOF) {
+			return true
+		}
+		writeAPIError(w, http.StatusBadRequest, "invalid JSON request body")
+		return false
+	}
+	return true
+}
+
 func bearer(h string) string {
 	const prefix = "Bearer "
 	if strings.HasPrefix(h, prefix) {
@@ -315,7 +326,9 @@ func (s *Server) apiRunSkill(w http.ResponseWriter, r *http.Request) {
 		Ref     string `json:"ref"`
 		Profile string `json:"profile"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	if !decodeOptionalAPIBody(w, r, &body) {
+		return
+	}
 	if body.Profile != "" && !worker.KnownProfile(body.Profile) {
 		writeAPIError(w, http.StatusBadRequest, "unknown profile")
 		return
@@ -369,7 +382,9 @@ func (s *Server) apiRunFindingSkill(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Model string `json:"model"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	if !decodeOptionalAPIBody(w, r, &body) {
+		return
+	}
 	scanID, err := s.enqueueSkillScoped(r.Context(), repoID, skill.ID, new(uint(id)), body.Model)
 	if err != nil {
 		if errors.Is(err, ErrSkillRequiresRemote) {
