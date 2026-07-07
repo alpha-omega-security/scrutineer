@@ -31,14 +31,15 @@
 
 {{/* th-sort renders a sortable column header. Args (dict): Sorter (from
      render), Key (sort token), Def ("asc"/"desc" natural direction), Label,
-     Class (th classes). The active column shows a direction chevron and
-     aria-sort for assistive tech; the rest are plain links that a hover cursor
-     marks as clickable. */}}
+     Class (th classes). The active column shows a solid direction chevron and
+     aria-sort for assistive tech; every other sortable column shows a faded
+     up/down chevron so the affordance is visible before any click. */}}
 {{define "th-sort"}}
 {{- $d := .Sorter.Dir .Key .Def -}}
 <th class="{{.Class}}"{{if eq $d "asc"}} aria-sort="ascending"{{else if eq $d "desc"}} aria-sort="descending"{{end}}><a class="th-sort" href="{{.Sorter.URL .Key .Def}}">{{.Label}}
   {{- if eq $d "asc"}} <i data-lucide="chevron-up" class="th-sort-arrow"></i>
-  {{- else if eq $d "desc"}} <i data-lucide="chevron-down" class="th-sort-arrow"></i>{{end -}}
+  {{- else if eq $d "desc"}} <i data-lucide="chevron-down" class="th-sort-arrow"></i>
+  {{- else}} <i data-lucide="chevrons-up-down" class="th-sort-arrow th-sort-idle"></i>{{end -}}
 </a></th>
 {{end}}
 

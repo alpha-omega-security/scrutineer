@@ -378,6 +378,10 @@ pre.log { background: var(--muted); padding: 1rem; border-radius: var(--radius);
 .table th a.th-sort:hover { color: var(--foreground); text-decoration: underline;
                             text-underline-offset: 2px; }
 .th-sort-arrow { width: 0.9em; height: 0.9em; }
+/* Idle (unsorted) columns show a faded double chevron as a sort affordance;
+   it firms up on hover. The active column's solid chevron is full-strength. */
+.th-sort-idle { opacity: 0.4; }
+.table th a.th-sort:hover .th-sort-idle { opacity: 0.75; }
 
 /* ── prose (rendered markdown in finding fields) ── */
 .prose { font-size: 0.875rem; line-height: 1.625; max-width: 80ch; }

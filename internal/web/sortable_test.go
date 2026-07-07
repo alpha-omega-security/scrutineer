@@ -110,6 +110,11 @@ func TestFindings_sortDirection(t *testing.T) {
 	if !strings.Contains(body, `aria-sort="descending"`) {
 		t.Errorf("active severity header should set aria-sort=descending")
 	}
+	// Inactive sortable columns (e.g. Title) show the idle affordance so the
+	// header reads as sortable before any click.
+	if !strings.Contains(body, `data-lucide="chevrons-up-down"`) {
+		t.Errorf("inactive sortable headers should show the idle chevron")
+	}
 
 	// Explicit ascending reverses it: Low before Critical.
 	body = get("?sort=severity.asc")
