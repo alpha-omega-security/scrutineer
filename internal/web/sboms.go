@@ -30,12 +30,32 @@ func (s *Server) registerSBOMRoutes(mux *http.ServeMux) {
 }
 
 func (s *Server) sbomList(w http.ResponseWriter, r *http.Request) {
+	q := s.DB.Model(&db.SBOMUpload{})
+	sortCol, dir := splitSort(r.URL.Query().Get("sort"), "")
+	switch sortCol {
+	case "name":
+		q = q.Order("name " + dirOr(dir, "asc")).Order("id desc")
+	case "format":
+		q = q.Order("format " + dirOr(dir, "asc")).Order("id desc")
+	case "packages":
+		q = q.Order("package_count " + dirOr(dir, "desc")).Order("id desc")
+	case "uploaded":
+		q = q.Order("created_at " + dirOr(dir, "desc")).Order("id desc")
+	default:
+		sortCol, dir = defaultSort, ""
+		q = q.Order("id desc")
+	}
+	sort := sortCol
+	if dir != "" {
+		sort = sortCol + "." + dir
+	}
+
 	var total int64
-	s.DB.Model(&db.SBOMUpload{}).Count(&total)
+	q.Count(&total)
 	page := paginate(r, total)
 	var rows []db.SBOMUpload
-	s.DB.Order("id desc").Limit(perPage).Offset((page.N - 1) * perPage).Find(&rows)
-	s.render(w, r, "sboms.html", map[string]any{"SBOMs": rows, "Page": page})
+	q.Limit(perPage).Offset((page.N - 1) * perPage).Find(&rows)
+	s.render(w, r, "sboms.html", map[string]any{"SBOMs": rows, "Page": page, "Sort": sort})
 }
 
 func (s *Server) sbomNew(w http.ResponseWriter, r *http.Request) {

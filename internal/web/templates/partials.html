@@ -29,6 +29,18 @@
 {{end}}
 {{end}}
 
+{{/* th-sort renders a sortable column header. Args (dict): Sorter (from
+     render), Key (sort token), Def ("asc"/"desc" natural direction), Label,
+     Class (th classes). The active column shows a direction chevron; the rest
+     are plain links that a hover cursor marks as clickable. */}}
+{{define "th-sort"}}
+<th class="{{.Class}}"><a class="th-sort" href="{{.Sorter.URL .Key .Def}}">{{.Label}}
+  {{- $d := .Sorter.Dir .Key .Def -}}
+  {{if eq $d "asc"}} <i data-lucide="chevron-up" class="th-sort-arrow"></i>
+  {{- else if eq $d "desc"}} <i data-lucide="chevron-down" class="th-sort-arrow"></i>{{end -}}
+</a></th>
+{{end}}
+
 {{define "row-cap"}}{{- if gt .Total (len64 .Shown) -}}
 <p class="text-sm text-muted-foreground mt-3">
   Showing {{len .Shown}} of {{.Total}}.{{if .Href}} <a class="hover:underline" href="{{.Href}}">View all</a>.{{end}}

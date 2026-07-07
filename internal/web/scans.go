@@ -24,17 +24,23 @@ func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 		q = q.Where("status = ?", status)
 	}
 
-	sort := r.URL.Query().Get("sort")
-	switch sort {
+	sortCol, dir := splitSort(r.URL.Query().Get("sort"), "")
+	switch sortCol {
+	case "id":
+		q = q.Order("scans.id " + dirOr(dir, "desc"))
 	case "skill":
-		q = q.Order("skill_name, id desc")
+		q = q.Order("skill_name " + dirOr(dir, "asc")).Order("scans.id desc")
 	case statusKey:
-		q = q.Order("status, id desc")
+		q = q.Order("status " + dirOr(dir, "asc")).Order("scans.id desc")
 	case sortRepository:
-		q = q.Joins("Repository").Order("`Repository`.name, scans.id desc")
+		q = q.Joins("Repository").Order("`Repository`.name " + dirOr(dir, "asc")).Order("scans.id desc")
 	default:
-		sort = defaultSort
+		sortCol, dir = defaultSort, ""
 		q = q.Order("status_priority, scans.id desc")
+	}
+	sort := sortCol
+	if dir != "" {
+		sort = sortCol + "." + dir
 	}
 
 	var total int64

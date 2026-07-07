@@ -30,14 +30,14 @@
     <div class="dropdown-menu">
       <button type="button" class="btn-outline" aria-haspopup="menu" aria-expanded="false">
         <i data-lucide="arrow-down-wide-narrow"></i>
-        {{if eq .Sort "downloads"}}Downloads{{else if eq .Sort "dependents"}}Dependents{{else if eq .Sort "ecosystem"}}Ecosystem{{else}}Name{{end}}
+        {{$sk := sortkey .Sort}}{{if eq $sk "downloads"}}Downloads{{else if eq $sk "dependents"}}Dependents{{else if eq $sk "ecosystem"}}Ecosystem{{else}}Name{{end}}
         <i data-lucide="chevron-down"></i>
       </button>
       <div data-popover aria-hidden="true" data-align="end">
         <div role="menu">
           {{range (list "name" "downloads" "dependents" "ecosystem")}}
             <a role="menuitem" href="/packages?q={{$.Q}}&ecosystem={{$.Ecosystem}}&sort={{.}}"
-               {{if eq . $.Sort}}aria-current="true"{{end}}>{{.}}</a>
+               {{if eq . (sortkey $.Sort)}}aria-current="true"{{end}}>{{.}}</a>
           {{end}}
         </div>
       </div>
@@ -48,9 +48,12 @@
 {{if .Pkgs}}
   <table class="table w-full">
     <thead><tr>
-      <th>Name</th><th>Ecosystem</th><th>Registry</th>
-      <th>Latest</th><th>Downloads</th>
-      <th>Dependents</th>
+      {{template "th-sort" (dict "Sorter" .Sorter "Key" "name" "Def" "asc" "Label" "Name" "Class" "")}}
+      {{template "th-sort" (dict "Sorter" .Sorter "Key" "ecosystem" "Def" "asc" "Label" "Ecosystem" "Class" "")}}
+      {{template "th-sort" (dict "Sorter" .Sorter "Key" "registry" "Def" "asc" "Label" "Registry" "Class" "")}}
+      {{template "th-sort" (dict "Sorter" .Sorter "Key" "latest" "Def" "desc" "Label" "Latest" "Class" "")}}
+      {{template "th-sort" (dict "Sorter" .Sorter "Key" "downloads" "Def" "desc" "Label" "Downloads" "Class" "")}}
+      {{template "th-sort" (dict "Sorter" .Sorter "Key" "dependents" "Def" "desc" "Label" "Dependents" "Class" "")}}
     </tr></thead>
     <tbody>
     {{range .Pkgs}}

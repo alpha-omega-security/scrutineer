@@ -61,14 +61,14 @@
     <div class="dropdown-menu">
       <button type="button" class="btn-outline" aria-haspopup="menu" aria-expanded="false">
         <i data-lucide="arrow-down-wide-narrow"></i>
-        {{if eq .Sort "skill"}}Skill{{else if eq .Sort "status"}}Status{{else if eq .Sort "repository"}}Repository{{else}}Newest{{end}}
+        {{$sk := sortkey .Sort}}{{if eq $sk "skill"}}Skill{{else if eq $sk "status"}}Status{{else if eq $sk "repository"}}Repository{{else}}Newest{{end}}
         <i data-lucide="chevron-down"></i>
       </button>
       <div data-popover aria-hidden="true" data-align="end">
         <div role="menu">
           {{range (list "newest" "skill" "status" "repository")}}
             <a role="menuitem" href="/scans?skill={{$.Skill}}&status={{$.Status}}&sort={{.}}"
-               {{if eq . $.Sort}}aria-current="true"{{end}}>{{.}}</a>
+               {{if eq . (sortkey $.Sort)}}aria-current="true"{{end}}>{{.}}</a>
           {{end}}
         </div>
       </div>
@@ -101,9 +101,12 @@
   <table class="table">
     <thead>
       <tr>
-        <th>#</th><th>Repository</th>
+        {{template "th-sort" (dict "Sorter" .Sorter "Key" "id" "Def" "desc" "Label" "#" "Class" "")}}
+        {{template "th-sort" (dict "Sorter" .Sorter "Key" "repository" "Def" "asc" "Label" "Repository" "Class" "")}}
         {{if .AnySubPath}}<th>Sub-path</th>{{end}}
-        <th>Skill</th><th>Status</th><th>Findings</th><th>Model</th><th>Cost</th><th>Started</th><th>Duration</th><th class="w-12"></th>
+        {{template "th-sort" (dict "Sorter" .Sorter "Key" "skill" "Def" "asc" "Label" "Skill" "Class" "")}}
+        {{template "th-sort" (dict "Sorter" .Sorter "Key" "status" "Def" "asc" "Label" "Status" "Class" "")}}
+        <th>Findings</th><th>Model</th><th>Cost</th><th>Started</th><th>Duration</th><th class="w-12"></th>
       </tr>
     </thead>
     <tbody>

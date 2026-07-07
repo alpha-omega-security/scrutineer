@@ -200,8 +200,9 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *work
 			}
 			return m
 		},
-		"list":  func(xs ...string) []string { return xs },
-		"len64": tmplLen64,
+		"list":    func(xs ...string) []string { return xs },
+		"len64":   tmplLen64,
+		"sortkey": sortKey,
 		"cwename": func(id string) string {
 			if _, c, ok := LookupCWE(id); ok {
 				return c.Name
@@ -415,6 +416,7 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 	data["Theme"] = resolveTheme(r)
 	data["ColorScheme"] = resolveColorScheme(r)
 	data["Flash"] = popFlash(w, r)
+	data["Sorter"] = sortCtx{path: r.URL.Path, query: r.URL.Query()}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.tmpl.ExecuteTemplate(w, name, data); err != nil {
 		s.Log.Error("render", "tmpl", name, "err", err)
@@ -607,25 +609,31 @@ func (s *Server) repoList(w http.ResponseWriter, r *http.Request) {
 			like, like, like, like)
 	}
 
-	sort := r.URL.Query().Get("sort")
+	sortCol, dir := splitSort(r.URL.Query().Get("sort"), "")
 	const nameSort = "name"
-	switch sort {
+	switch sortCol {
 	case nameSort:
-		q = q.Order(nameSort)
+		q = q.Order(nameSort + " " + dirOr(dir, "asc"))
 	case "stars":
-		q = q.Order("stars desc")
+		q = q.Order("stars " + dirOr(dir, "desc"))
 	case "language":
-		q = q.Order("languages, name")
+		q = q.Order("languages " + dirOr(dir, "asc")).Order("name")
+	case "size":
+		q = q.Order("disk_bytes " + dirOr(dir, "desc")).Order("updated_at desc")
 	case "findings":
 		// Correlated subquery keeps the existing Count/Find chain intact
 		// (a JOIN+GROUP BY would change what Count(&total) returns). Low-
 		// thousands of repos so the per-row subselect is fine on sqlite.
 		// Scanner-skill findings (zizmor, semgrep, …) are excluded so the
 		// list reflects curated audit output, matching the repo Findings tab.
-		q = q.Order("(" + deepDiveFindingsCountSQL + ") desc, updated_at desc")
+		q = q.Order("(" + deepDiveFindingsCountSQL + ") " + dirOr(dir, "desc")).Order("updated_at desc")
 	default:
-		sort = defaultSort
+		sortCol, dir = defaultSort, ""
 		q = q.Order("updated_at desc")
+	}
+	sort := sortCol
+	if dir != "" {
+		sort = sortCol + "." + dir
 	}
 
 	var total int64
@@ -903,16 +911,33 @@ func (s *Server) findings(w http.ResponseWriter, r *http.Request) {
 	missed := r.URL.Query().Get("missed") == "1"
 	search := strings.TrimSpace(r.URL.Query().Get("q"))
 
-	sort := r.URL.Query().Get("sort")
-	switch sort {
+	sortCol, dir := splitSort(r.URL.Query().Get("sort"), "")
+	switch sortCol {
 	case sortSeverity:
-		q = q.Order(severityOrder).Order("id desc")
+		// severityOrder ranks the most severe LOWEST, so the intuitive default
+		// (most severe first, shown as "desc") is ascending on the expression;
+		// flip the SQL direction relative to the logical one.
+		q = q.Order("(" + severityOrder + ") " + flipSQLDir(dirOr(dir, "desc"))).Order("findings.id desc")
 	case sortRepository:
 		q = q.Joins("JOIN repositories r ON r.id = findings.repository_id").
-			Order("r.name").Order("findings.id desc")
+			Order("r.name " + dirOr(dir, "asc")).Order("findings.id desc")
+	case "title":
+		q = q.Order("findings.title " + dirOr(dir, "asc")).Order("findings.id desc")
+	case statusKey:
+		q = q.Order("findings.status " + dirOr(dir, "asc")).Order("findings.id desc")
+	case "repo_id":
+		q = q.Order("findings.repository_id " + dirOr(dir, "asc")).Order("findings.id desc")
+	case "cwe":
+		q = q.Order("findings.cwe " + dirOr(dir, "asc")).Order("findings.id desc")
+	case "scan":
+		q = q.Order("findings.scan_id " + dirOr(dir, "desc")).Order("findings.id desc")
 	default:
-		sort = defaultSort
+		sortCol, dir = defaultSort, ""
 		q = q.Order("id desc")
+	}
+	sort := sortCol
+	if dir != "" {
+		sort = sortCol + "." + dir
 	}
 
 	var total int64
@@ -1441,19 +1466,27 @@ func (s *Server) packages(w http.ResponseWriter, r *http.Request) {
 		q = q.Where("name LIKE ? OR p_url LIKE ? OR licenses LIKE ?", like, like, like)
 	}
 
-	sort := r.URL.Query().Get("sort")
-	switch sort {
+	sortCol, dir := splitSort(r.URL.Query().Get("sort"), "")
+	switch sortCol {
 	case "name":
-		q = q.Order("name")
+		q = q.Order("name " + dirOr(dir, "asc"))
 	case "downloads":
-		q = q.Order("downloads desc")
+		q = q.Order("downloads " + dirOr(dir, "desc"))
 	case "dependents":
-		q = q.Order("dependent_repos desc")
+		q = q.Order("dependent_repos " + dirOr(dir, "desc"))
 	case "ecosystem":
-		q = q.Order("ecosystem, name")
+		q = q.Order("ecosystem " + dirOr(dir, "asc")).Order("name")
+	case "registry":
+		q = q.Order("registry_url " + dirOr(dir, "asc")).Order("name")
+	case "latest":
+		q = q.Order("latest_release_at " + dirOr(dir, "desc")).Order("name")
 	default:
-		sort = "name"
+		sortCol, dir = "name", ""
 		q = q.Order("name")
+	}
+	sort := sortCol
+	if dir != "" {
+		sort = sortCol + "." + dir
 	}
 
 	var total int64
@@ -1503,16 +1536,24 @@ func (s *Server) advisoriesList(w http.ResponseWriter, r *http.Request) {
 			like, like, like, like)
 	}
 
-	sort := r.URL.Query().Get("sort")
-	switch sort {
+	sortCol, dir := splitSort(r.URL.Query().Get("sort"), "")
+	switch sortCol {
 	case "newest":
-		q = q.Order("published_at desc, id desc")
+		q = q.Order("published_at " + dirOr(dir, "desc")).Order("id desc")
 	case sortRepository:
 		q = q.Joins("JOIN repositories r ON r.id = advisories.repository_id").
-			Order("r.name").Order("advisories.cvss_score desc")
+			Order("r.name " + dirOr(dir, "asc")).Order("advisories.cvss_score desc")
+	case "title":
+		q = q.Order("title " + dirOr(dir, "asc")).Order("id desc")
+	case sortSeverity:
+		q = q.Order("cvss_score " + dirOr(dir, "desc")).Order("id desc")
 	default:
-		sort = "severity"
+		sortCol, dir = sortSeverity, ""
 		q = q.Order("cvss_score desc, id desc")
+	}
+	sort := sortCol
+	if dir != "" {
+		sort = sortCol + "." + dir
 	}
 
 	var total int64
