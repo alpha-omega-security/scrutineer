@@ -30,14 +30,14 @@
     <div class="dropdown-menu">
       <button type="button" class="btn-outline" aria-haspopup="menu" aria-expanded="false">
         <i data-lucide="arrow-down-wide-narrow"></i>
-        {{if eq .Sort "login"}}Login{{else if eq .Sort "status"}}Status{{else if eq .Sort "newest"}}Newest{{else}}Name{{end}}
+        {{$sk := sortkey .Sort}}{{if eq $sk "login"}}Login{{else if eq $sk "status"}}Status{{else if eq $sk "newest"}}Newest{{else}}Name{{end}}
         <i data-lucide="chevron-down"></i>
       </button>
       <div data-popover aria-hidden="true" data-align="end">
         <div role="menu">
           {{range (list "name" "login" "status" "newest")}}
             <a role="menuitem" href="/maintainers?q={{$.Q}}&status={{$.Status}}&sort={{.}}"
-               {{if eq . $.Sort}}aria-current="true"{{end}}>{{.}}</a>
+               {{if eq . (sortkey $.Sort)}}aria-current="true"{{end}}>{{.}}</a>
           {{end}}
         </div>
       </div>
@@ -48,7 +48,12 @@
 {{if .Maintainers}}
   <table class="table w-full">
     <thead><tr>
-      <th>Name</th><th>Login</th><th>Email</th><th>Company</th><th>Repos</th><th>Findings</th><th>Status</th>
+      {{template "th-sort" (dict "Sorter" .Sorter "Key" "name" "Def" "asc" "Label" "Name" "Class" "")}}
+      {{template "th-sort" (dict "Sorter" .Sorter "Key" "login" "Def" "asc" "Label" "Login" "Class" "")}}
+      {{template "th-sort" (dict "Sorter" .Sorter "Key" "email" "Def" "asc" "Label" "Email" "Class" "")}}
+      {{template "th-sort" (dict "Sorter" .Sorter "Key" "company" "Def" "asc" "Label" "Company" "Class" "")}}
+      <th>Repos</th><th>Findings</th>
+      {{template "th-sort" (dict "Sorter" .Sorter "Key" "status" "Def" "asc" "Label" "Status" "Class" "")}}
     </tr></thead>
     <tbody>
     {{$counts := .FindingCounts}}

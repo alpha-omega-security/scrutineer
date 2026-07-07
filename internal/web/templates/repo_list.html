@@ -25,14 +25,14 @@
   <div class="dropdown-menu">
     <button type="button" class="btn-outline" aria-haspopup="menu" aria-expanded="false">
       <i data-lucide="arrow-down-wide-narrow"></i>
-      {{if eq .Sort "name"}}Name{{else if eq .Sort "stars"}}Stars{{else if eq .Sort "language"}}Language{{else if eq .Sort "findings"}}Findings{{else}}Newest{{end}}
+      {{$sk := sortkey .Sort}}{{if eq $sk "name"}}Name{{else if eq $sk "stars"}}Stars{{else if eq $sk "language"}}Language{{else if eq $sk "findings"}}Findings{{else}}Newest{{end}}
       <i data-lucide="chevron-down"></i>
     </button>
     <div data-popover aria-hidden="true" data-align="end">
       <div role="menu">
         {{range (list "newest" "findings" "name" "stars" "language")}}
           <a role="menuitem" href="/?q={{$.Q}}&language={{$.Language}}&sort={{.}}"
-             {{if eq . $.Sort}}aria-current="true"{{end}}>{{.}}</a>
+             {{if eq . (sortkey $.Sort)}}aria-current="true"{{end}}>{{.}}</a>
         {{end}}
       </div>
     </div>
@@ -41,7 +41,15 @@
 {{if .Rows}}
   <table class="table">
     <thead>
-      <tr><th>Repository</th><th>Language</th><th>Last scan</th><th>Status</th><th>Findings</th><th>Size</th><th></th></tr>
+      <tr>
+        {{template "th-sort" (dict "Sorter" .Sorter "Key" "name" "Def" "asc" "Label" "Repository" "Class" "")}}
+        {{template "th-sort" (dict "Sorter" .Sorter "Key" "language" "Def" "asc" "Label" "Language" "Class" "")}}
+        {{template "th-sort" (dict "Sorter" .Sorter "Key" "scanned" "Def" "desc" "Label" "Last scan" "Class" "")}}
+        {{template "th-sort" (dict "Sorter" .Sorter "Key" "status" "Def" "asc" "Label" "Status" "Class" "")}}
+        {{template "th-sort" (dict "Sorter" .Sorter "Key" "findings" "Def" "desc" "Label" "Findings" "Class" "")}}
+        {{template "th-sort" (dict "Sorter" .Sorter "Key" "size" "Def" "desc" "Label" "Size" "Class" "")}}
+        <th></th>
+      </tr>
     </thead>
     <tbody>
     {{range .Rows}}

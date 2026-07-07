@@ -23,18 +23,29 @@ func (s *Server) maintainersList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	const nameSort = "name"
-	sort := r.URL.Query().Get("sort")
-	switch sort {
+	sortCol, dir := splitSort(r.URL.Query().Get("sort"), "")
+	switch sortCol {
 	case "login":
-		q = q.Order("login")
+		q = q.Order(orderByExpr("login", dir, false))
 	case statusKey:
-		q = q.Order("status, name")
+		q = q.Order(orderByExpr("status", dir, false)).Order("name")
+	case "email":
+		q = q.Order(orderByExpr("email", dir, false)).Order("name")
+	case "company":
+		q = q.Order(orderByExpr("company", dir, false)).Order("name")
 	case "newest":
-		q = q.Order("id desc")
+		q = q.Order(orderByExpr("id", dir, true))
+	case nameSort:
+		// Push empty names to the end regardless of direction.
+		q = q.Order("CASE WHEN name = '' THEN 1 ELSE 0 END").
+			Order(orderByExpr("name", dir, false)).Order("login")
 	default:
-		sort = nameSort
-		// Push empty names to the end instead of the front.
+		sortCol, dir = nameSort, ""
 		q = q.Order("CASE WHEN name = '' THEN 1 ELSE 0 END, name, login")
+	}
+	sort := sortCol
+	if dir != "" {
+		sort = sortCol + "." + dir
 	}
 
 	var total int64

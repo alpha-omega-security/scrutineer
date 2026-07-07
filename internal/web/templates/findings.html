@@ -99,16 +99,16 @@
       </div>
     </div>
     <div class="dropdown-menu">
-      <button type="button" class="btn-outline" aria-hashpopup="menu" aria-expanded="false">
+      <button type="button" class="btn-outline" aria-haspopup="menu" aria-expanded="false">
         <i data-lucide="arrow-down-wide-narrow"></i>
-        {{if eq .Sort "severity"}}Severity{{else if eq .Sort "repository"}}Repository{{else}}Newest{{end}}
+        {{if eq (sortkey .Sort) "severity"}}Severity{{else if eq (sortkey .Sort) "repository"}}Repository{{else}}Newest{{end}}
         <i data-lucide="chevron-down"></i>
       </button>
       <div data-popover aria-hidden="true" data-align="end">
         <div role="menu">
           {{range (list "newest" "severity" "repository")}}
             <a role="menuitem" href="/findings?q={{$.Q}}&severity={{$.Severity}}&status={{$st}}&category={{$.Category}}&sort={{.}}&missed={{$mp}}&scanners={{$sc}}"
-               {{if eq . $.Sort}}aria-current="true"{{end}}>{{.}}</a>
+               {{if eq . (sortkey $.Sort)}}aria-current="true"{{end}}>{{.}}</a>
           {{end}}
         </div>
       </div>
@@ -119,12 +119,15 @@
 {{if .Findings}}
   <table class="table table-fixed w-full">
     <thead><tr>
-      <th class="w-24">Severity</th><th>Title</th><th class="w-24">Status</th>
-      <th class="w-32">Repository</th>
-      <th class="w-20">Repo ID</th>
+      {{template "th-sort" (dict "Sorter" .Sorter "Key" "severity" "Def" "desc" "Label" "Severity" "Class" "w-24")}}
+      {{template "th-sort" (dict "Sorter" .Sorter "Key" "title" "Def" "asc" "Label" "Title" "Class" "")}}
+      {{template "th-sort" (dict "Sorter" .Sorter "Key" "status" "Def" "asc" "Label" "Status" "Class" "w-24")}}
+      {{template "th-sort" (dict "Sorter" .Sorter "Key" "repository" "Def" "asc" "Label" "Repository" "Class" "w-32")}}
+      {{template "th-sort" (dict "Sorter" .Sorter "Key" "repo_id" "Def" "asc" "Label" "Repo ID" "Class" "w-20")}}
       {{if .AnySubPath}}<th class="w-32">Sub-path</th>{{end}}
-      <th class="w-44">CWE</th>
-      <th class="w-56">Location</th><th class="w-16">Scan</th>
+      {{template "th-sort" (dict "Sorter" .Sorter "Key" "cwe" "Def" "asc" "Label" "CWE" "Class" "w-44")}}
+      <th class="w-56">Location</th>
+      {{template "th-sort" (dict "Sorter" .Sorter "Key" "scan" "Def" "desc" "Label" "Scan" "Class" "w-16")}}
     </tr></thead>
     <tbody>
     {{$repos := .Repos}}
