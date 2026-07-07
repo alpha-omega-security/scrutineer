@@ -1977,6 +1977,10 @@ func (s *Server) loadRepoShowView(
 	category := query.Get("category")
 	findings := loadRepoFindings(s.DB, repo.ID, category)
 	deps := s.loadRepoDependencyView(repo.ID, query.Get("deps") == "all")
+	// activeScans drives both the delete-confirm warning (a running scan keeps
+	// writing into the repo's clone/workspace until it returns) and the "Cancel
+	// all" button; pausedScans drives "Resume all". Both are counted over every
+	// scan, not the latest-per-skill set.
 	activeScans, pausedScans := s.repoScanActionCounts(repo.ID)
 	return repoShowView{
 		Repo:            repo,
@@ -2020,30 +2024,31 @@ func (v repoShowView) renderData() map[string]any {
 		"ActiveScans":           v.ActiveScans,
 		"PausedScans":           v.PausedScans,
 		"TotalCost":             v.TotalCost,
-		"DiskBytes":             v.Repo.DiskBytes,
-		"TMCommit":              v.TMCommit,
-		"DepsCommit":            v.Dependencies.Commit,
-		"Deps":                  v.Dependencies.Groups,
-		"DepsTotal":             v.Dependencies.Total,
-		"Pkgs":                  v.Inventory.Packages,
-		"Dependents":            v.Inventory.Dependents,
-		"DependentsTotal":       v.Inventory.DependentsTotal,
-		"Advisories":            v.Inventory.Advisories,
-		"AdvisoriesTotal":       v.Inventory.AdvisoriesTotal,
-		"Maintainers":           v.Maintainers,
-		"ThreatModel":           v.ThreatModel,
-		"KnownURLs":             v.Inventory.KnownURLs,
-		"KnownPURLs":            v.Inventory.KnownPURLs,
-		"ShowAllDeps":           v.Dependencies.ShowAll,
-		"HiddenDeps":            v.Dependencies.Hidden,
-		"Skills":                v.Skills,
-		"Subprojects":           v.Subprojects.Rows,
-		"SubScanCount":          v.Subprojects.ScanCount,
-		"Workbench":             v.Workbench,
-		"Category":              v.Category,
-		"Categories":            CWECategories(),
-		"Uncategorized":         UncategorizedCWE,
-		"TabRowCap":             int64(tabRowCap),
+		// Cached on the row, refreshed by the worker after each scan (#126).
+		"DiskBytes":       v.Repo.DiskBytes,
+		"TMCommit":        v.TMCommit,
+		"DepsCommit":      v.Dependencies.Commit,
+		"Deps":            v.Dependencies.Groups,
+		"DepsTotal":       v.Dependencies.Total,
+		"Pkgs":            v.Inventory.Packages,
+		"Dependents":      v.Inventory.Dependents,
+		"DependentsTotal": v.Inventory.DependentsTotal,
+		"Advisories":      v.Inventory.Advisories,
+		"AdvisoriesTotal": v.Inventory.AdvisoriesTotal,
+		"Maintainers":     v.Maintainers,
+		"ThreatModel":     v.ThreatModel,
+		"KnownURLs":       v.Inventory.KnownURLs,
+		"KnownPURLs":      v.Inventory.KnownPURLs,
+		"ShowAllDeps":     v.Dependencies.ShowAll,
+		"HiddenDeps":      v.Dependencies.Hidden,
+		"Skills":          v.Skills,
+		"Subprojects":     v.Subprojects.Rows,
+		"SubScanCount":    v.Subprojects.ScanCount,
+		"Workbench":       v.Workbench,
+		"Category":        v.Category,
+		"Categories":      CWECategories(),
+		"Uncategorized":   UncategorizedCWE,
+		"TabRowCap":       int64(tabRowCap),
 	}
 }
 
@@ -2232,6 +2237,9 @@ func (s *Server) loadRepoSubprojectView(repoID uint) repoSubprojectView {
 }
 
 func countFailedScans(scans []db.Scan) int {
+	// Count failed scans in the latest-per-skill set: same scope as the
+	// retry-failed handler would act on for this repo. Drives the
+	// "Retry failed" button on the Scans tab.
 	total := 0
 	for _, sc := range scans {
 		if sc.Status == db.ScanFailed {

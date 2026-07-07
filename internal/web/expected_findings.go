@@ -126,8 +126,6 @@ func skillSchemaVersion(skill db.Skill) int {
 	switch v := meta["scrutineer.version"].(type) {
 	case float64:
 		return int(v)
-	case int:
-		return v
 	default:
 		return 0
 	}
