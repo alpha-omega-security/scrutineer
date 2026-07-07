@@ -203,6 +203,17 @@ func (OpencodeHarness) StateEnv(containerPath string) []string {
 	}
 }
 
+func (OpencodeHarness) DefaultModels() []ModelDefault {
+	// opencode is provider-agnostic; it drives whichever provider the
+	// operator's OPENCODE_CONFIG_CONTENT / auth config points at. The
+	// default matches the credentials Env passes through with no extra
+	// config: with ANTHROPIC_API_KEY set, opencode drives Anthropic and
+	// the claude model list applies; an operator pointing it at a
+	// different provider sets models: in config. Reusing the claude
+	// list keeps the pricing tripwire satisfied without a second copy.
+	return ClaudeHarness{}.DefaultModels()
+}
+
 func (OpencodeHarness) AccountErrorText(s string) string {
 	text := strings.TrimSpace(s)
 	if text == "" {
