@@ -15,6 +15,7 @@ import (
 	"gorm.io/gorm"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/httpx"
 )
 
 // ecosystemsEndpoints are the upstream ecosyste.ms lookup roots. Held as a
@@ -327,7 +328,7 @@ func ecosystemsGetWithLink(ctx context.Context, endpoint string) ([]byte, string
 	}
 	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("Accept", "application/json")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpx.DoRetry(req, httpx.RetryOptions{})
 	if err != nil {
 		return nil, "", err
 	}

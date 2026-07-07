@@ -11,6 +11,8 @@ import (
 	"net/http"
 	"net/url"
 	"time"
+
+	"scrutineer/internal/httpx"
 )
 
 var packagesLookup = "https://packages.ecosyste.ms/api/v1/packages/lookup"
@@ -38,7 +40,7 @@ func FetchPackagesByPURL(ctx context.Context, purl string) ([]json.RawMessage, [
 	req.Header.Set("User-Agent", userAgent)
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpx.DoRetry(req, httpx.RetryOptions{})
 	if err != nil {
 		return nil, nil, err
 	}

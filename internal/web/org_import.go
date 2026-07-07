@@ -10,6 +10,8 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"scrutineer/internal/httpx"
 )
 
 // OrgRepo is the slim view of a forge repository the org-import path needs:
@@ -98,7 +100,7 @@ func fetchGitHubRepos(ctx context.Context, kind, owner string) ([]OrgRepo, error
 			req.Header.Set("Authorization", "Bearer "+token)
 		}
 
-		resp, err := http.DefaultClient.Do(req)
+		resp, err := httpx.DoRetry(req, httpx.RetryOptions{})
 		if err != nil {
 			return nil, err
 		}

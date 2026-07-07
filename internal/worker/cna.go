@@ -13,6 +13,7 @@ import (
 	"gorm.io/gorm/clause"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/httpx"
 )
 
 // CNAListURL is the public CVE Program partner list. Served as a static
@@ -35,7 +36,7 @@ func SyncCNAs(ctx context.Context, gdb *gorm.DB, url string) (int, error) {
 		return 0, err
 	}
 	req.Header.Set("User-Agent", userAgent)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpx.DoRetry(req, httpx.RetryOptions{})
 	if err != nil {
 		return 0, err
 	}
