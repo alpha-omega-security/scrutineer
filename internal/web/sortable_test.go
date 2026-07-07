@@ -172,9 +172,9 @@ func TestSort_derivedColumns(t *testing.T) {
 // keys, SQLi payloads, bad directions) to the index handlers and asserts they
 // fall back to the default order — HTTP 200, no error — and that no injected
 // statement executed (the tables survive with their row counts intact). This
-// is the regression guard for the switch/dirOr/orderByExpr allowlists: if a
-// later refactor lets request text reach an ORDER BY, a DROP/DELETE payload
-// would drop a table and fail these assertions loudly.
+// is the regression guard for the switch dispatch + orderByExpr: if a later
+// refactor lets request text reach an ORDER BY, a DROP/DELETE payload would
+// drop a table and fail these assertions loudly.
 func TestSort_maliciousParamFallsBackSafely(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
