@@ -248,7 +248,7 @@ func TestDoSkill_schemaMismatchResumesForRepair(t *testing.T) {
 	if got.Report != `{"tier":"ready","summary":"fixed"}` {
 		t.Errorf("Report = %q, want repaired report", got.Report)
 	}
-	if !strings.Contains(got.Log, "report.json failed validation; asking claude to repair it") {
+	if !strings.Contains(got.Log, "report.json failed validation; asking the agent to repair it") {
 		t.Errorf("Log should mention repair attempt, got %q", got.Log)
 	}
 	if got.CostUSD != 1.50 {

@@ -22,21 +22,21 @@ import (
 
 func fullConfig() *config.Config {
 	return &config.Config{
-		Addr:             "0.0.0.0:9090",
-		Data:             "/var/lib/scrutineer",
-		Effort:           "medium",
-		Backend:          "codex",
-		NoContainer:      new(true),
-		Hardened:         new(true),
-		RunnerImage:      "custom:v1",
-		SkillsRepo:       "https://example.com/skills.git",
-		Skills:           []string{"/etc/skills"},
-		Concurrency:      8,
-		Clone:            "full",
-		ScanTimeout:      "30m",
-		MaxTurns:         200,
-		AnthropicBaseURL: "https://proxy.corp.com/v1",
-		ForkOrg:          "fork-central",
+		Addr:         "0.0.0.0:9090",
+		Data:         "/var/lib/scrutineer",
+		Effort:       "medium",
+		Backend:      "codex",
+		NoContainer:  new(true),
+		Hardened:     new(true),
+		RunnerImage:  "custom:v1",
+		SkillsRepo:   "https://example.com/skills.git",
+		Skills:       []string{"/etc/skills"},
+		Concurrency:  8,
+		Clone:        "full",
+		ScanTimeout:  "30m",
+		MaxTurns:     200,
+		ModelBaseURL: "https://proxy.corp.com/v1",
+		ForkOrg:      "fork-central",
 	}
 }
 
@@ -74,8 +74,8 @@ func TestFlagsMerge_configFillsUnset(t *testing.T) {
 	if f.maxTurns != 200 {
 		t.Errorf("maxTurns = %d", f.maxTurns)
 	}
-	if f.anthropicBaseURL != cfg.AnthropicBaseURL {
-		t.Errorf("anthropicBaseURL = %q, want %q", f.anthropicBaseURL, cfg.AnthropicBaseURL)
+	if f.modelBaseURL != cfg.ModelBaseURL {
+		t.Errorf("modelBaseURL = %q, want %q", f.modelBaseURL, cfg.ModelBaseURL)
 	}
 	if f.forkOrg != cfg.ForkOrg {
 		t.Errorf("forkOrg = %q, want %q", f.forkOrg, cfg.ForkOrg)
@@ -86,10 +86,10 @@ func TestFlagsMerge_cliFlagWins(t *testing.T) {
 	cfg := fullConfig()
 	f := &flags{
 		addr: "127.0.0.1:8080", cloneMode: "shallow", concurrency: 2,
-		anthropicBaseURL: "https://my-flag.example.com/v1",
+		modelBaseURL: "https://my-flag.example.com/v1",
 		set: map[string]bool{
 			"addr": true, "clone": true, "concurrency": true,
-			"anthropic-base-url": true,
+			"model-base-url": true,
 		},
 	}
 	f.merge(cfg)
@@ -106,8 +106,8 @@ func TestFlagsMerge_cliFlagWins(t *testing.T) {
 	if f.effort != cfg.Effort {
 		t.Errorf("effort = %q, want %q", f.effort, cfg.Effort)
 	}
-	if f.anthropicBaseURL != "https://my-flag.example.com/v1" {
-		t.Errorf("anthropicBaseURL overridden despite explicit flag: %q", f.anthropicBaseURL)
+	if f.modelBaseURL != "https://my-flag.example.com/v1" {
+		t.Errorf("modelBaseURL overridden despite explicit flag: %q", f.modelBaseURL)
 	}
 }
 
@@ -123,8 +123,8 @@ func TestFlagsMerge_zeroConfigLeavesDefaults(t *testing.T) {
 	if f.scanTimeout != time.Hour {
 		t.Errorf("empty scan_timeout clobbered default: %v", f.scanTimeout)
 	}
-	if f.anthropicBaseURL != "" {
-		t.Errorf("empty config set anthropicBaseURL: %q", f.anthropicBaseURL)
+	if f.modelBaseURL != "" {
+		t.Errorf("empty config set modelBaseURL: %q", f.modelBaseURL)
 	}
 }
 
@@ -194,6 +194,23 @@ func TestRegisterFlags_noContainerAliasParsesFromArgv(t *testing.T) {
 		}
 		if !f.noContainer {
 			t.Errorf("%s did not set noContainer", name)
+		}
+	}
+}
+
+func TestRegisterFlags_modelBaseURLAliasParsesFromArgv(t *testing.T) {
+	// Both the canonical -model-base-url and the deprecated
+	// -anthropic-base-url alias must parse off the command line and set
+	// the same modelBaseURL field.
+	for _, name := range []string{"-model-base-url", "-anthropic-base-url"} {
+		f := &flags{}
+		fs := flag.NewFlagSet("test", flag.ContinueOnError)
+		registerFlags(fs, f)
+		if err := fs.Parse([]string{name, "https://x.test/v1"}); err != nil {
+			t.Fatalf("Parse(%q): %v", name, err)
+		}
+		if f.modelBaseURL != "https://x.test/v1" {
+			t.Errorf("%s did not set modelBaseURL: got %q", name, f.modelBaseURL)
 		}
 	}
 }

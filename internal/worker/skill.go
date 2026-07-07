@@ -242,7 +242,7 @@ func (w *Worker) repairSchemaReport(ctx context.Context, skill *db.Skill, scan *
 		return "", false
 	}
 
-	emit(Event{Kind: KindText, Text: fmt.Sprintf("schema: %s failed validation; asking claude to repair it", outputFile)})
+	emit(Event{Kind: KindText, Text: fmt.Sprintf("schema: %s failed validation; asking the agent to repair it", outputFile)})
 	repairJob := sj
 	repairJob.ResumeSessionID = scan.SessionID
 	repairJob.ResumePrompt = buildSchemaRepairPrompt(skill, detail, report)

@@ -14,19 +14,19 @@ import (
 func TestBuildRunArgs_ClaudeConfigMount(t *testing.T) {
 	d := ContainerRunner{}
 
-	with := d.buildRunArgs("/work/abs", "img:latest", hardenedNet{}, "/data/claude-config/scan-7")
-	if !hasAdjacent(with, "-v", "/data/claude-config/scan-7:/claude-config") {
+	with := d.buildRunArgs("/work/abs", "img:latest", hardenedNet{}, "/data/harness-state/scan-7")
+	if !hasAdjacent(with, "-v", "/data/harness-state/scan-7:/harness-state") {
 		t.Errorf("expected the config dir bind mount in %v", with)
 	}
-	if !hasAdjacent(with, "-e", "CLAUDE_CONFIG_DIR=/claude-config") {
+	if !hasAdjacent(with, "-e", "CLAUDE_CONFIG_DIR=/harness-state") {
 		t.Errorf("expected CLAUDE_CONFIG_DIR env in %v", with)
 	}
 
 	// No config dir → no mount and no env, so default scans are unchanged.
 	without := d.buildRunArgs("/work/abs", "img:latest", hardenedNet{}, "")
 	for _, a := range without {
-		if strings.Contains(a, "/claude-config") || strings.HasPrefix(a, "CLAUDE_CONFIG_DIR=") {
-			t.Errorf("did not expect any claude-config args, got %q in %v", a, without)
+		if strings.Contains(a, "/harness-state") || strings.HasPrefix(a, "CLAUDE_CONFIG_DIR=") {
+			t.Errorf("did not expect any harness-state args, got %q in %v", a, without)
 		}
 	}
 }
@@ -60,8 +60,8 @@ func TestBuildRunArgs_KeepIDGating(t *testing.T) {
 	if !slices.Contains(withCfg, "--userns=keep-id") {
 		t.Errorf("rootless+config: expected --userns=keep-id in %v", withCfg)
 	}
-	if !hasAdjacent(withCfg, "-v", "/data/cfg/scan-1:/claude-config") {
-		t.Errorf("rootless+config: expected claude-config mount in %v", withCfg)
+	if !hasAdjacent(withCfg, "-v", "/data/cfg/scan-1:/harness-state") {
+		t.Errorf("rootless+config: expected harness-state mount in %v", withCfg)
 	}
 }
 
@@ -130,8 +130,8 @@ func TestBuildRunArgs_SELinuxRelabel(t *testing.T) {
 	if !hasAdjacent(got, "-v", "/work/abs:/work:z") {
 		t.Errorf("expected /work mount relabeled with :z in %v", got)
 	}
-	if !hasAdjacent(got, "-v", "/data/cfg/scan-1:/claude-config:z") {
-		t.Errorf("expected /claude-config mount relabeled with :z in %v", got)
+	if !hasAdjacent(got, "-v", "/data/cfg/scan-1:/harness-state:z") {
+		t.Errorf("expected /harness-state mount relabeled with :z in %v", got)
 	}
 
 	// With relabeling off (the zero value / default), mounts are byte-for-byte
@@ -141,8 +141,8 @@ func TestBuildRunArgs_SELinuxRelabel(t *testing.T) {
 	if !hasAdjacent(got, "-v", "/work/abs:/work") {
 		t.Errorf("expected unrelabeled /work mount in %v", got)
 	}
-	if !hasAdjacent(got, "-v", "/data/cfg/scan-1:/claude-config") {
-		t.Errorf("expected unrelabeled /claude-config mount in %v", got)
+	if !hasAdjacent(got, "-v", "/data/cfg/scan-1:/harness-state") {
+		t.Errorf("expected unrelabeled /harness-state mount in %v", got)
 	}
 	for _, a := range got {
 		if strings.HasSuffix(a, ":z") || strings.HasSuffix(a, ",z") {

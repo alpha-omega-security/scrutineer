@@ -16,7 +16,7 @@ security model differs by design.
 Like docker and podman, the scrutineer process runs on the host (not in a
 container) and execs the `container` CLI directly. Each scan is an ephemeral
 container with the per-scan workspace mounted at `/work` (plus the resumable
-Claude session store at `/claude-config` when configured), run as the invoking
+Claude session store at `/harness-state` when configured), run as the invoking
 non-root user with `--cap-drop ALL`. The difference is the isolation boundary:
 Apple runs every container in its own lightweight VM, so "Each container has the
 isolation properties of a full VM"

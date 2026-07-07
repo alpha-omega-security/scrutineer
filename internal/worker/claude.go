@@ -88,11 +88,11 @@ type SkillJob struct {
 	// prompt. It lets callers resume the same conversation with targeted
 	// corrective instructions, such as rewriting an invalid report.json.
 	ResumePrompt string
-	// ClaudeConfigDir is a host directory the container runner mounts as the
+	// StateDir is a host directory the container runner mounts as the
 	// container's CLAUDE_CONFIG_DIR so the resumable session store persists
 	// across container restarts. Empty disables the mount (the local runner
 	// ignores it and relies on the host's own ~/.claude).
-	ClaudeConfigDir string
+	StateDir string
 }
 
 type SkillResult struct {
@@ -194,7 +194,7 @@ func (l LocalClaude) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)
 			return res, &MaxTurnsReachedError{}
 		}
 		if accountErrText != "" {
-			return res, &ClaudeAccountError{Detail: accountErrText, ResetAt: resumableReset(accountErrText, rateLimitReset)}
+			return res, &AccountError{Detail: accountErrText, ResetAt: resumableReset(accountErrText, rateLimitReset)}
 		}
 		return res, fmt.Errorf("claude exited: %w", waitErr)
 	}

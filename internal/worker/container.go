@@ -34,12 +34,12 @@ type ContainerRunner struct {
 	// claude-code (the historical default), so a bare ContainerRunner{}
 	// keeps working and no caller needs to set it until a second harness
 	// exists.
-	Harness          Harness
-	ProxyURL         string // http://user:token@host-or-gateway:port; "" disables egress
-	FullClone        bool
-	MaxTurns         int
-	AnthropicBaseURL string // model-API base URL override; the active harness decides how to pass it
-	HostGatewayIP    string // Docker/Podman IPv4 address for --add-host; falls back to "host-gateway"
+	Harness       Harness
+	ProxyURL      string // http://user:token@host-or-gateway:port; "" disables egress
+	FullClone     bool
+	MaxTurns      int
+	ModelBaseURL  string // model-API base URL override; the active harness decides how to pass it
+	HostGatewayIP string // Docker/Podman IPv4 address for --add-host; falls back to "host-gateway"
 	// ProfilesDir is the host directory containing docker/profiles/<name>/
 	// Dockerfile entries. When empty, profile resolution is skipped and
 	// every scan runs in the default Image.
@@ -68,7 +68,7 @@ type ContainerRunner struct {
 	// docker, so a bare ContainerRunner{} keeps shelling out to "docker".
 	Runtime ContainerRuntime
 	// SELinuxRelabel, when true, appends the ":z" relabel option to every host
-	// bind mount (/work, /claude-config, /src) so the container can access them
+	// bind mount (/work, /harness-state, /src) so the container can access them
 	// on an SELinux-enabled host. Without it, container_t is denied the host
 	// labels and every scan fails with EACCES on the clone and output. Resolved
 	// once at startup from the --selinux switch (auto/on/off); see bindMount for
@@ -257,17 +257,17 @@ func (d ContainerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Ev
 	// the runtime treats a non-absolute -v source as a named volume (which
 	// rejects '/'), so the config dir must be absolutised like absWork.
 	var absConfig string
-	if sj.ClaudeConfigDir != "" {
-		absConfig, _ = filepath.Abs(sj.ClaudeConfigDir)
+	if sj.StateDir != "" {
+		absConfig, _ = filepath.Abs(sj.StateDir)
 		if err := os.MkdirAll(absConfig, dirPerm); err != nil {
-			return SkillResult{Commit: commit, Profile: profile, Backend: backend}, fmt.Errorf("create claude config dir: %w", err)
+			return SkillResult{Commit: commit, Profile: profile, Backend: backend}, fmt.Errorf("create harness state dir: %w", err)
 		}
 	}
 	runBase := d.buildRunArgs(absWork, image, hnet, absConfig)
 
 	logLine := "$ " + d.Runtime.bin() + " run --rm " + image + " <skill:" + sj.Name + ">"
-	if d.AnthropicBaseURL != "" {
-		logLine += " [MODEL_BASE_URL=" + redactURLUserinfo(d.AnthropicBaseURL) + "]"
+	if d.ModelBaseURL != "" {
+		logLine += " [MODEL_BASE_URL=" + redactURLUserinfo(d.ModelBaseURL) + "]"
 	}
 	emit(Event{Kind: KindText, Text: logLine})
 
@@ -307,7 +307,7 @@ func (d ContainerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Ev
 			return res, &MaxTurnsReachedError{}
 		}
 		if accountErrText != "" {
-			return res, &ClaudeAccountError{Detail: accountErrText, ResetAt: resumableReset(accountErrText, rateLimitReset)}
+			return res, &AccountError{Detail: accountErrText, ResetAt: resumableReset(accountErrText, rateLimitReset)}
 		}
 		return res, fmt.Errorf("%s exited: %w", d.Runtime.bin(), waitErr)
 	}
@@ -321,7 +321,7 @@ func (d ContainerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Ev
 // event arrived, e.g. a --resume that could not find the conversation).
 func (d ContainerRunner) runContainerOnce(ctx context.Context, runBase []string, sj SkillJob, emit func(Event)) (hitMaxTurns bool, sessionID string, waitErr error) {
 	h := d.harness()
-	harnessArgs := append([]string{h.Binary()}, h.Args(sj, d.Effort, d.MaxTurns, d.AnthropicBaseURL)...)
+	harnessArgs := append([]string{h.Binary()}, h.Args(sj, d.Effort, d.MaxTurns, d.ModelBaseURL)...)
 	runArgs := append(append([]string{}, runBase...), harnessArgs...)
 
 	cmd := exec.CommandContext(ctx, d.Runtime.bin(), runArgs...)
@@ -359,7 +359,7 @@ func (d ContainerRunner) runContainerOnce(ctx context.Context, runBase []string,
 // the in-container command. Split out of RunSkill to keep its cognitive
 // complexity manageable as new toggles (hardened mode, proxy, profiles)
 // accumulate.
-func (d ContainerRunner) buildRunArgs(absWork, image string, hnet hardenedNet, claudeConfigDir string) []string {
+func (d ContainerRunner) buildRunArgs(absWork, image string, hnet hardenedNet, harnessStateDir string) []string {
 	gwTarget := "host-gateway"
 	if d.Hardened {
 		// setupHardenedNetwork resolved the gateway once against this per-scan
@@ -384,7 +384,7 @@ func (d ContainerRunner) buildRunArgs(absWork, image string, hnet hardenedNet, c
 	)
 	// Harness-specific env: model-API credential, base URL, and the
 	// harness's own telemetry / autoupdate suppressors.
-	for _, e := range d.harness().Env(d.AnthropicBaseURL) {
+	for _, e := range d.harness().Env(d.ModelBaseURL) {
 		args = append(args, "-e", e)
 	}
 	if d.Runtime.supportsHostGatewayAddHost() {
@@ -392,21 +392,21 @@ func (d ContainerRunner) buildRunArgs(absWork, image string, hnet hardenedNet, c
 	}
 	if d.Runtime.needsKeepID() {
 		// Rootless podman remaps --user uid:gid through /etc/subuid, so writes
-		// to the bind mounts (/work output and the /claude-config resume store)
+		// to the bind mounts (/work output and the /harness-state resume store)
 		// would land owned by a subordinate uid. keep-id maps the container
 		// user back to the invoking host uid so output stays host-owned.
 		args = append(args, "--userns=keep-id")
 	}
-	if claudeConfigDir != "" {
+	if harnessStateDir != "" {
 		// Persist the harness's resumable session store outside the
 		// container. Without this it lands in the /tmp tmpfs and dies
 		// with the container, so a retry could not resume the agent
 		// loop. The bind mount stays writable even under hardened
-		// mode's --read-only rootfs. The /claude-config mountpoint name
+		// mode's --read-only rootfs. The /harness-state mountpoint name
 		// is historical; only the env var that points the harness at it
 		// varies (CLAUDE_CONFIG_DIR, CODEX_HOME, OPENCODE_CONFIG_DIR).
-		args = append(args, "-v", bindMount(claudeConfigDir, "/claude-config", d.SELinuxRelabel))
-		for _, e := range d.harness().StateEnv("/claude-config") {
+		args = append(args, "-v", bindMount(harnessStateDir, "/harness-state", d.SELinuxRelabel))
+		for _, e := range d.harness().StateEnv("/harness-state") {
 			args = append(args, "-e", e)
 		}
 	}

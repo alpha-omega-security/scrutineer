@@ -133,6 +133,26 @@ func TestLoad_noContainerAlias(t *testing.T) {
 	}
 }
 
+func TestLoad_modelBaseURLAlias(t *testing.T) {
+	// anthropic_base_url is the retained pre-rename alias; Load folds it
+	// into ModelBaseURL.
+	aliasOnly, err := Load(write(t, "anthropic_base_url: https://x.test/v1\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if aliasOnly.ModelBaseURL != "https://x.test/v1" {
+		t.Errorf("anthropic_base_url alias did not set ModelBaseURL: %q", aliasOnly.ModelBaseURL)
+	}
+	// model_base_url is canonical and wins when both keys are present.
+	both, err := Load(write(t, "model_base_url: https://new.test/v1\nanthropic_base_url: https://old.test/v1\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if both.ModelBaseURL != "https://new.test/v1" {
+		t.Errorf("model_base_url should win over anthropic_base_url: %q", both.ModelBaseURL)
+	}
+}
+
 func TestParseScanTimeout(t *testing.T) {
 	tests := []struct {
 		in      string

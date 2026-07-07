@@ -29,7 +29,7 @@ You are identifying who maintains a repository so a security disclosure can reac
 
 ## Data sources
 
-Run `python3 .claude/skills/maintainers/scripts/summarise.py`
+Run `python3 ./scripts/summarise.py`
 The script uses `context.json` to query the Scrutineer API for cached commits, issues, and packages data, parses `SECURITY.md`, `CODEOWNERS`, and `README.md`, and hits the GitHub PVR endpoint if applicable.
 
 After running the script, read `summary.json`. It contains all the necessary data to classify the maintainers and pick a disclosure channel.

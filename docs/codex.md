@@ -33,9 +33,10 @@ or in `scrutineer.yaml`:
         id:   gpt-5.5
         tier: max
 
-The `tier:` tag names which entry the mid/high/max model tier defaults to
-(shown in `/settings`). Without it, tier defaults use a claude-name heuristic
-that won't match OpenAI ids and every tier collapses to `default_model`.
+The `models:` block is optional. Without it, the pick list is codex's own
+built-in catalog with mid/high/max tier tags already set, so a fresh install
+works with no config. Setting `models:` replaces that list; `tier:` on an
+entry marks it as the default for that tier in `/settings`.
 
 Model ids must be in the pinned codex version's built-in catalog
 (`codex-rs/models-manager/models.json` at the `rust-v${CODEX_VERSION}` tag);
@@ -49,9 +50,9 @@ allowlist, but headless `codex exec` inside a container with a fresh per-scan
 login` does not reach the scan and `CODEX_API_KEY` is the only working
 credential path.
 
-To point codex at a different endpoint, pass `-anthropic-base-url` or set
-`anthropic_base_url:` in config for now; scrutineer adds the host to the
-allowlist and passes the value to codex as `openai_base_url`.
+To point codex at a different endpoint, pass `-model-base-url` or set
+`model_base_url:` in config; scrutineer adds the host to the allowlist and
+passes the value to codex as `openai_base_url`.
 
 The codex backend requires the containerised runner. `--no-container` with
 `-backend codex` is rejected at startup: the codex binary lives in the runner
@@ -70,8 +71,8 @@ Everything the container runner asks of the agent CLI goes through the
 | Project memory | `CLAUDE.md` | `AGENTS.md` |
 | Egress hosts | `*.anthropic.com` | `api.openai.com`, `auth0.openai.com`, `chatgpt.com` |
 | Credential env | `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` | `CODEX_API_KEY` |
-| Base URL override | `ANTHROPIC_BASE_URL` env / `ANTHROPIC_BASE_URL` in-container | `-c openai_base_url=...` |
-| State dir env | `CLAUDE_CONFIG_DIR` | `CODEX_HOME` |
+| Base URL override | `ANTHROPIC_BASE_URL` env | `-c openai_base_url=...` |
+| State dir env (mounted at `/harness-state`) | `CLAUDE_CONFIG_DIR` | `CODEX_HOME` |
 | Account-error phrases | claude usage/plan/access messages | OpenAI `rate_limit`, `insufficient_quota`, `invalid_api_key`, `429` |
 
 Skill staging works because codex has its own `SKILL.md` discovery
@@ -94,12 +95,11 @@ cwd (32 KiB cap), so the single workspace-root file scrutineer writes is the
 whole of what it sees.
 
 The session store (codex's thread database under `CODEX_HOME`) is bind-mounted
-the same way claude's is, so a retried scan can `codex exec resume <thread-id>`
-the previous run. Each scan records which backend ran it (`scans.backend`), and
-a retry after switching `-backend` starts fresh rather than passing a codex
-thread id to `claude --resume` or vice versa. The container mountpoint is still
-named `/claude-config` and the host directory `{data}/claude-config/scan-N`;
-that's historical and will be renamed once a second harness has soaked.
+at `/harness-state` the same way claude's is, from
+`{data}/harness-state/scan-N` on the host, so a retried scan can `codex exec
+resume <thread-id>` the previous run. Each scan records which backend ran it
+(`scans.backend`), and a retry after switching `-backend` starts fresh rather
+than passing a codex thread id to `claude --resume` or vice versa.
 
 ## Sandbox interaction
 
@@ -135,14 +135,10 @@ are text, `item.completed` command/tool executions are tool calls
 with token usage, and unknown shapes fall through as raw text rather than being
 dropped. Reports of rough edges welcome on #211.
 
-The `-anthropic-base-url` flag is reused as the model-API base-URL override for
-whichever harness is active; under codex it becomes the `openai_base_url` config
-override for `codex exec`. A harness-neutral flag name will follow.
-
 ## Adding another harness
 
 Opencode (and any other agent CLI) slots in the same way: a struct
-implementing the nine `Harness` methods in `internal/worker/harness.go`, an
+implementing `Harness` in its own `internal/worker/harness_<name>.go`, an
 entry in the `harnesses` registry map, the binary in `Dockerfile.runner`, and a
 README/docs note. Opencode's discovery paths are
 `./.opencode/skill/{name}/SKILL.md` and `AGENTS.md` (both follow symlinks), its

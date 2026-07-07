@@ -3,8 +3,6 @@ package worker
 import (
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"reflect"
 	"sort"
 	"strings"
@@ -74,10 +72,10 @@ func HarnessNames() string {
 // workspace layout stay the same regardless of harness; only what runs
 // inside the container changes.
 //
-// The interface is grown incrementally as call sites are wired to it
-// (#211). All seams the container runner needs are now covered; the
-// codex implementation, -backend flag, and HarnessByName registry land
-// next.
+// To add a harness: implement this interface in its own
+// harness_<name>.go, add one entry to the harnesses registry above, and
+// ship its binary in Dockerfile.runner. Nothing else in the runner or
+// UI changes.
 type Harness interface {
 	// Binary is the executable on the runner image's PATH.
 	Binary() string
@@ -117,7 +115,7 @@ type Harness interface {
 	// docker -e form: a bare "KEY" passes the host value through, and
 	// "KEY=VALUE" sets it explicitly. Covers the model-API credential and
 	// the harness's own telemetry / autoupdate suppressors. baseURL is the
-	// operator's model-API base-URL override (-anthropic-base-url today);
+	// operator's model-API base-URL override (-model-base-url);
 	// "" means none. Harness-neutral env (HOME, the proxy vars, semgrep)
 	// stays in buildRunArgs.
 	Env(baseURL string) []string
@@ -132,70 +130,22 @@ type Harness interface {
 	// failure from the harness's provider (a usage/rate/plan limit, or
 	// access disabled/revoked) and "" otherwise. The runner consults it
 	// only after the harness exited non-zero, so a stray phrase in
-	// normal output never triggers. A non-empty match becomes a
-	// ClaudeAccountError that pauses the queue, since retrying cannot
-	// succeed until the account recovers.
+	// normal output never triggers. A non-empty match becomes an
+	// AccountError that pauses the queue, since retrying cannot succeed
+	// until the account recovers.
 	AccountErrorText(s string) string
+	// DefaultModels is the model pick list a fresh install of this
+	// harness offers when the operator has not set models: in config.
+	// The first entry is the default; Tier tags each entry as the
+	// mid/high/max default so tier resolution needs no heuristic.
+	DefaultModels() []ModelDefault
 }
 
-// ClaudeHarness is the default and (for now) only harness: it wraps the
-// existing buildClaudeArgs and ParseStream so behaviour is byte-for-byte
-// unchanged. Other harnesses (codex, opencode, ...) sit alongside it;
-// LocalClaude keeps calling those functions directly because the
-// no-container fallback is claude-only by design.
-type ClaudeHarness struct{}
-
-func (ClaudeHarness) Binary() string { return "claude" }
-
-func (ClaudeHarness) Args(sj SkillJob, effort string, globalMaxTurns int, _ string) []string {
-	return buildClaudeArgs(sj, effort, globalMaxTurns)
-}
-
-func (ClaudeHarness) ParseStream(r io.Reader, emit func(Event)) {
-	ParseStream(r, emit)
-}
-
-func (ClaudeHarness) SkillDir(workRoot, name string) string {
-	return filepath.Join(workRoot, ".claude", "skills", name)
-}
-
-func (ClaudeHarness) GuideFilename() string { return "CLAUDE.md" }
-
-func (ClaudeHarness) EgressHosts() []string { return []string{"*.anthropic.com"} }
-
-func (ClaudeHarness) Env(baseURL string) []string {
-	env := []string{
-		// claude-code's own opt-outs: telemetry, autoupdate, bug command,
-		// and the non-essential model calls (haiku title generation etc.)
-		// that a headless run does not need. Denied by the egress proxy
-		// anyway, but suppressing them keeps the scan log quiet.
-		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
-		"OTEL_SDK_DISABLED=true",
-		"DISABLE_TELEMETRY=1",
-		"DISABLE_ERROR_REPORTING=1",
-		"DISABLE_BUG_COMMAND=1",
-		"DISABLE_AUTOUPDATER=1",
-		"DISABLE_NON_ESSENTIAL_MODEL_CALLS=1",
-	}
-	// Forwarding the host credential into the container is a known
-	// residual: in-container code (T1) can read it. Closing it needs
-	// proxy-side credential injection -- see threatmodel.md T1/T13.
-	if os.Getenv("ANTHROPIC_API_KEY") != "" {
-		env = append(env, "ANTHROPIC_API_KEY")
-	}
-	if os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") != "" {
-		env = append(env, "CLAUDE_CODE_OAUTH_TOKEN")
-	}
-	if baseURL != "" {
-		env = append(env, "ANTHROPIC_BASE_URL="+baseURL)
-	}
-	return env
-}
-
-func (ClaudeHarness) StateEnv(containerPath string) []string {
-	return []string{"CLAUDE_CONFIG_DIR=" + containerPath}
-}
-
-func (ClaudeHarness) AccountErrorText(s string) string {
-	return claudeAccountErrorText(s)
+// ModelDefault is one entry a harness contributes to the model pick
+// list. Tier is one of "mid", "high", "max", or "" for entries that
+// are selectable but not a tier default.
+type ModelDefault struct {
+	Name string
+	ID   string
+	Tier string
 }

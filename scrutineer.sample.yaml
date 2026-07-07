@@ -125,7 +125,7 @@
 # the egress allowlist. Claude receives it as ANTHROPIC_BASE_URL; Codex receives
 # it as openai_base_url. For compatibility, only the Claude backend falls back
 # to the ANTHROPIC_BASE_URL environment variable when empty.
-# anthropic_base_url: https://my-proxy.corp.com/v1
+# model_base_url: https://my-proxy.corp.com/v1
 
 # Claude subscription rate-limit auto-resume needs no configuration. Reset times
 # come from claude-code stream output; latest window status appears on /usage.

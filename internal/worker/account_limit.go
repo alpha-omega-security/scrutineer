@@ -5,30 +5,38 @@ import (
 	"time"
 )
 
-// ClaudeAccountPausePrefix is the stable leading sentence shared by every
-// account-pause message: the scan that hit the wall (ClaudeAccountError) and the
+// AccountPausePrefix is the stable leading sentence shared by every
+// account-pause message: the scan that hit the wall (AccountError) and the
 // scans paused behind it (accountPauseReason). The scans page matches on it
 // (web.scanListStats) to surface them together in the account banner, so these
 // strings and that query share this prefix. Keep the heading in
 // web/templates/jobs.html in sync.
-const ClaudeAccountPausePrefix = "Claude account access paused."
+const AccountPausePrefix = "Model API account paused."
 
-// ClaudeAccountError is returned for account-level Claude failures. The worker
-// pauses the batch instead of failing every scan; Detail preserves Claude's text.
-type ClaudeAccountError struct {
+// legacyAccountPausePrefix is the pre-rename value of AccountPausePrefix.
+// migrateLegacyState rewrites it to the current value in scans.error at
+// startup so the LIKE queries in worker.go and web/scans.go stay
+// single-pattern. Remove once no deployment can have pre-rename paused
+// rows (one release after this change ships).
+const legacyAccountPausePrefix = "Claude account access paused."
+
+// AccountError is returned for account-level failures from the active
+// harness's model provider. The worker pauses the batch instead of
+// failing every scan; Detail preserves the provider's text.
+type AccountError struct {
 	Detail string
 	// ResetAt is the reported recovery time for transient limits. Nil means
 	// manual resume.
 	ResetAt *time.Time
 }
 
-func (e *ClaudeAccountError) Error() string {
-	const base = ClaudeAccountPausePrefix + " This scan and queued scans were paused; " +
+func (e *AccountError) Error() string {
+	const base = AccountPausePrefix + " This scan and queued scans were paused; " +
 		"resume once the account recovers."
 	if e.Detail == "" {
 		return base
 	}
-	return base + " Claude reported: " + e.Detail
+	return base + " Provider reported: " + e.Detail
 }
 
 // transientLimitPhrases mark limits that can auto-resume after reset.

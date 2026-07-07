@@ -91,12 +91,12 @@ func (s *Server) scanListStats() scanListStats {
 			db.ScanQueued,
 			db.ScanPaused,
 			db.ScanPaused,
-			worker.ClaudeAccountPausePrefix+"%",
+			worker.AccountPausePrefix+"%",
 		).
 		Scan(&stats)
 	var next db.Scan
 	s.DB.Select("id", "paused_until").
-		Where("status = ? AND error LIKE ? AND paused_until IS NOT NULL", db.ScanPaused, worker.ClaudeAccountPausePrefix+"%").
+		Where("status = ? AND error LIKE ? AND paused_until IS NOT NULL", db.ScanPaused, worker.AccountPausePrefix+"%").
 		Order("paused_until ASC").
 		Limit(1).
 		Find(&next)

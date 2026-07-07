@@ -63,8 +63,8 @@ func TestCodexHarness_seamConstants(t *testing.T) {
 	if got := h.SkillDir("/work/scan-7", "deep-dive"); got != wantDir {
 		t.Errorf("SkillDir = %q, want %q", got, wantDir)
 	}
-	if got := h.StateEnv("/claude-config"); !reflect.DeepEqual(got, []string{"CODEX_HOME=/claude-config"}) {
-		t.Errorf("StateEnv = %v, want CODEX_HOME=/claude-config", got)
+	if got := h.StateEnv("/harness-state"); !reflect.DeepEqual(got, []string{"CODEX_HOME=/harness-state"}) {
+		t.Errorf("StateEnv = %v, want CODEX_HOME=/harness-state", got)
 	}
 	if !slices.Contains(h.EgressHosts(), "api.openai.com") {
 		t.Errorf("EgressHosts() = %v, want api.openai.com included", h.EgressHosts())

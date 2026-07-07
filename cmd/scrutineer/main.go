@@ -106,7 +106,7 @@ type flags struct {
 	scanTimeout           time.Duration
 	smokeTimeout          time.Duration
 	maxTurns              int
-	anthropicBaseURL      string
+	modelBaseURL          string
 	forkOrg               string
 	metadataDir           string
 	schemaStrict          bool
@@ -155,7 +155,8 @@ func registerFlags(fs *flag.FlagSet, f *flags) {
 	fs.DurationVar(&f.scanTimeout, "scan-timeout", worker.DefaultScanTimeout, "wall-clock limit per scan")
 	fs.DurationVar(&f.smokeTimeout, "runtime-smoke-timeout", defaultRuntimeSmokeTimeout, "timeout for each rootless-podman startup container check (keep-id image remap, SELinux mount probe); raise if first-run image remapping is slow, lower if the image is pre-warmed")
 	fs.IntVar(&f.maxTurns, "max-turns", 0, "claude --max-turns limit (0 = unlimited)")
-	fs.StringVar(&f.anthropicBaseURL, "anthropic-base-url", "", "custom model API base URL for the active backend (env fallback: ANTHROPIC_BASE_URL for claude)")
+	fs.StringVar(&f.modelBaseURL, "model-base-url", "", "custom model API base URL for the active backend (env fallback: ANTHROPIC_BASE_URL for claude)")
+	fs.StringVar(&f.modelBaseURL, "anthropic-base-url", "", "deprecated alias for -model-base-url")
 	fs.StringVar(&f.forkOrg, "fork-org", "", "GitHub org the fork skill forks into and files draft advisories against")
 	fs.BoolVar(&f.schemaStrict, "schema-strict", false, "fail scans whose report.json does not validate against the skill's schema (default: warn and continue)")
 	fs.BoolVar(&f.downgradeOnOverage, "downgrade-on-overage", false, "on a subscription token, fall the model tier back from max/high to the mid tier for new scans while the account is on overage; restores when the window resets")
@@ -228,8 +229,8 @@ func (f *flags) merge(cfg *config.Config) {
 	if cfg.MaxTurns > 0 && !f.set["max-turns"] {
 		f.maxTurns = cfg.MaxTurns
 	}
-	if cfg.AnthropicBaseURL != "" && !f.set["anthropic-base-url"] {
-		f.anthropicBaseURL = cfg.AnthropicBaseURL
+	if cfg.ModelBaseURL != "" && !f.set["model-base-url"] {
+		f.modelBaseURL = cfg.ModelBaseURL
 	}
 	if cfg.ForkOrg != "" && !f.set["fork-org"] {
 		f.forkOrg = cfg.ForkOrg
@@ -253,6 +254,19 @@ func (f *flags) merge(cfg *config.Config) {
 		f.autoRejectMissedCount = cfg.AutoRejectMissedCount
 	}
 
+	// Seed the model pick list from the active harness's own defaults,
+	// so a fresh install of any backend has a working list with correct
+	// tier tags and no operator config. The operator's models: block
+	// then overrides. An invalid backend name is caught later by
+	// validateFlags; until then, HarnessByName("") gives claude.
+	if h, err := worker.HarnessByName(f.backend); err == nil {
+		defs := h.DefaultModels()
+		models := make([]web.Model, 0, len(defs))
+		for _, d := range defs {
+			models = append(models, web.Model{Name: d.Name, ID: d.ID, Tier: d.Tier})
+		}
+		web.SetModels(models)
+	}
 	if len(cfg.Models) > 0 {
 		models := make([]web.Model, 0, len(cfg.Models))
 		for _, m := range cfg.Models {
@@ -350,14 +364,14 @@ func configureBackendEnvironment(f *flags, log *slog.Logger) {
 	if _, ok := h.(worker.ClaudeHarness); !ok {
 		return
 	}
-	if f.anthropicBaseURL == "" {
-		f.anthropicBaseURL = os.Getenv("ANTHROPIC_BASE_URL")
+	if f.modelBaseURL == "" {
+		f.modelBaseURL = os.Getenv("ANTHROPIC_BASE_URL")
 	}
 	// LocalClaude inherits the host env, so writing the resolved value
 	// back here is what makes flag/config precedence apply on the local
 	// runner path. ContainerRunner gets it explicitly via its struct field.
-	if f.anthropicBaseURL != "" {
-		_ = os.Setenv("ANTHROPIC_BASE_URL", f.anthropicBaseURL)
+	if f.modelBaseURL != "" {
+		_ = os.Setenv("ANTHROPIC_BASE_URL", f.modelBaseURL)
 	}
 }
 
@@ -695,7 +709,7 @@ func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRu
 		return nil, "", err
 	}
 	var egress worker.EgressSidecarConfig
-	allow := buildEgressAllow(h.EgressHosts(), f.hardened, cfg, f.anthropicBaseURL, log)
+	allow := buildEgressAllow(h.EgressHosts(), f.hardened, cfg, f.modelBaseURL, log)
 	if apiHost != worker.HostGatewayAlias {
 		allow = append(allow, apiHost)
 	}
@@ -743,7 +757,7 @@ func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRu
 		ProxyURL:            proxyURL,
 		FullClone:           f.fullClone(),
 		MaxTurns:            f.maxTurns,
-		AnthropicBaseURL:    f.anthropicBaseURL,
+		ModelBaseURL:        f.modelBaseURL,
 		HostGatewayIP:       gwIP,
 		ProfilesDir:         f.profilesDir,
 		Hardened:            f.hardened,
@@ -840,7 +854,7 @@ func resolveEgressSidecar(rt worker.ContainerRuntime, f *flags, allow []string, 
 // starts from HardenedEgressAllow and ignores cfg.EgressAllow (the
 // operator must drop --hardened to widen). The model base URL host is
 // still auto-added in both modes since it routes the same model API.
-func buildEgressAllow(harnessHosts []string, hardened bool, cfg *config.Config, anthropicBaseURL string, log *slog.Logger) []string {
+func buildEgressAllow(harnessHosts []string, hardened bool, cfg *config.Config, modelBaseURL string, log *slog.Logger) []string {
 	allow := append([]string{}, harnessHosts...)
 	if hardened {
 		allow = append(allow, worker.HardenedEgressAllow...)
@@ -853,7 +867,7 @@ func buildEgressAllow(harnessHosts []string, hardened bool, cfg *config.Config, 
 			allow = append(allow, cfg.EgressAllow...)
 		}
 	}
-	if h := baseURLHost(anthropicBaseURL); h != "" {
+	if h := baseURLHost(modelBaseURL); h != "" {
 		allow = append(allow, h)
 		log.Info("added model base URL host to egress allowlist", "host", h)
 	}

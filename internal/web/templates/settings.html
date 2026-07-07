@@ -197,7 +197,7 @@
     {{end}}
     <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 text-sm">
       {{template "metarow" (dict "Label" "Scrutineer commit" "Value" (short .Commit))}}
-      {{template "metarow" (dict "Label" "Claude Code" "Value" .Meta.Claude)}}
+      {{template "metarow" (dict "Label" (printf "Backend (%s)" .Meta.Backend) "Value" .Meta.Harness)}}
       {{template "metarow" (dict "Label" "Semgrep" "Value" .Meta.Semgrep)}}
       {{template "metarow" (dict "Label" "Zizmor" "Value" .Meta.Zizmor)}}
       {{template "metarow" (dict "Label" "Container runtime" "Value" .Meta.Runtime)}}

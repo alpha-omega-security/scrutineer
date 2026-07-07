@@ -40,15 +40,11 @@ var ModelTiers = []ModelTier{
 }
 
 // Models is the pick list. The first entry is the default unless the
-// server's runtime override is set; see Server.DefaultModel.
-var Models = []Model{
-	{Name: "Opus 4.6", ID: "claude-opus-4-6"},
-	{Name: "Opus 4.7", ID: "claude-opus-4-7"},
-	{Name: "Opus 4.8", ID: "claude-opus-4-8"},
-	{Name: "Sonnet 4.6", ID: "claude-sonnet-4-6"},
-	{Name: "Sonnet 5.0", ID: "claude-sonnet-5"},
-	{Name: "Fable 5", ID: "claude-fable-5[1m]"},
-}
+// server's runtime override is set; see Server.DefaultModel. Populated
+// at startup by main.go from the active harness's DefaultModels(), or
+// from the operator's models: config; there is no built-in list here
+// so a new backend needs no edit to this file.
+var Models []Model
 
 // SetModels replaces the pick list. Called at startup from config; no-op
 // for an empty list so a config with only default_model set keeps the
@@ -85,6 +81,9 @@ func (s *Server) DefaultModel() string {
 	defer s.defaultsMu.RUnlock()
 	if s.defaultModel != "" {
 		return s.defaultModel
+	}
+	if len(Models) == 0 {
+		return ""
 	}
 	return Models[0].ID
 }

@@ -86,12 +86,17 @@ type Config struct {
 	ScanTimeout string `yaml:"scan_timeout"`
 	// MaxTurns is passed as --max-turns to claude-code. 0 means no limit.
 	MaxTurns int `yaml:"max_turns"`
-	// AnthropicBaseURL overrides the default model API endpoint. When set,
-	// the hostname is automatically added to the egress allowlist. Claude
-	// receives it as ANTHROPIC_BASE_URL; Codex receives it as the
-	// openai_base_url config override. For compatibility, only the Claude
-	// backend falls back to the ANTHROPIC_BASE_URL environment variable.
-	AnthropicBaseURL string `yaml:"anthropic_base_url"`
+	// ModelBaseURL overrides the default model API endpoint for the
+	// active backend. When set, the hostname is automatically added to
+	// the egress allowlist. Each harness applies it its own way (claude:
+	// ANTHROPIC_BASE_URL env; codex: -c openai_base_url=...). For
+	// compatibility, only the claude backend also falls back to the
+	// ANTHROPIC_BASE_URL environment variable when this is unset.
+	ModelBaseURL string `yaml:"model_base_url"`
+	// LegacyAnthropicBaseURL is the former name of ModelBaseURL, kept so
+	// existing configs keep working. Load merges it into ModelBaseURL
+	// with a deprecation warning; remove after one release.
+	LegacyAnthropicBaseURL string `yaml:"anthropic_base_url"`
 	// Theme selects the colour scheme: "claude" (default), "ocean-breeze",
 	// "catppuccin", "sunset-horizon", "midnight-bloom", or "northern-lights".
 	Theme string `yaml:"theme"`
@@ -243,6 +248,11 @@ func Load(path string) (*Config, error) {
 	// Fold the alias into NoContainer so the rest of the code reads one field.
 	if c.NoContainer == nil {
 		c.NoContainer = c.NoDocker
+	}
+	// model_base_url replaced anthropic_base_url; fold the old key so
+	// existing configs keep working. Remove after one release.
+	if c.ModelBaseURL == "" && c.LegacyAnthropicBaseURL != "" {
+		c.ModelBaseURL = c.LegacyAnthropicBaseURL
 	}
 	if err := ValidateClone(c.Clone); err != nil {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)

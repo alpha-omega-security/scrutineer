@@ -1,6 +1,20 @@
 package web
 
-import "testing"
+import (
+	"testing"
+
+	"scrutineer/internal/worker"
+)
+
+func init() {
+	// Production seeds Models from the active harness in main.go; tests
+	// need a non-empty list too. Use the claude harness's own defaults
+	// so tests that reference concrete ids (efforts_test.go,
+	// settings_handlers_test.go) match without a second hardcoded list.
+	for _, d := range (worker.ClaudeHarness{}).DefaultModels() {
+		Models = append(Models, Model{Name: d.Name, ID: d.ID, Tier: d.Tier})
+	}
+}
 
 func withTestModels(t *testing.T, models []Model) {
 	t.Helper()
@@ -36,9 +50,11 @@ func TestServerDefaultModel(t *testing.T) {
 	}
 }
 
-func TestBuiltInModelsIncludeSonnet5(t *testing.T) {
-	if !ValidModel("claude-sonnet-5") {
-		t.Fatal("built-in model list should include Sonnet 5.0")
+func TestDefaultModel_emptyListReturnsEmpty(t *testing.T) {
+	withTestModels(t, nil)
+	var s Server
+	if got := s.DefaultModel(); got != "" {
+		t.Errorf("DefaultModel() with empty list = %q, want empty", got)
 	}
 }
 

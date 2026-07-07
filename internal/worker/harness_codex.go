@@ -11,7 +11,7 @@ import (
 )
 
 // CodexHarness drives OpenAI's codex CLI in headless `codex exec` mode.
-// It maps the nine Harness seams onto codex's conventions: SKILL.md
+// It maps the Harness interface onto codex's conventions: SKILL.md
 // discovery at ./skills/{name}, AGENTS.md for project memory, CODEX_HOME
 // for the persistent thread store, and CODEX_API_KEY for non-interactive
 // API-key auth. The container, egress proxy and workspace stay the same
@@ -248,6 +248,21 @@ func (CodexHarness) Env(_ string) []string {
 
 func (CodexHarness) StateEnv(containerPath string) []string {
 	return []string{"CODEX_HOME=" + containerPath}
+}
+
+func (CodexHarness) DefaultModels() []ModelDefault {
+	// The ids are the public entries in codex's built-in catalog at the
+	// version pinned in Dockerfile.runner (codex-rs/models-manager/models.json).
+	// gpt-5.3-codex is first so it becomes the default; it is the
+	// codex-tuned model and what `codex exec` picks when no --model is
+	// given.
+	return []ModelDefault{
+		{Name: "GPT-5.3 Codex", ID: "gpt-5.3-codex", Tier: "high"},
+		{Name: "GPT-5.4 mini", ID: "gpt-5.4-mini", Tier: "mid"},
+		{Name: "GPT-5.4", ID: "gpt-5.4"},
+		{Name: "GPT-5.5", ID: "gpt-5.5", Tier: "max"},
+		{Name: "GPT-5.2", ID: "gpt-5.2"},
+	}
 }
 
 func (CodexHarness) AccountErrorText(s string) string {
