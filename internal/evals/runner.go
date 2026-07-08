@@ -242,6 +242,9 @@ func copyFile(src, dst string) error {
 		if err != nil {
 			return err
 		}
+		if err := os.MkdirAll(filepath.Dir(dst), dirPerm); err != nil {
+			return err
+		}
 		return os.Symlink(link, dst)
 	}
 	if !info.Mode().IsRegular() {

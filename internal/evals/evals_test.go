@@ -104,6 +104,31 @@ func TestRunnerStagesSkillAndScoresReport(t *testing.T) {
 	}
 }
 
+func TestCopyDirNestedSymlink(t *testing.T) {
+	src := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(src, "nested"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "target.txt"), []byte("ok"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../target.txt", filepath.Join(src, "nested", "link.txt")); err != nil {
+		t.Fatal(err)
+	}
+
+	dst := filepath.Join(t.TempDir(), "copy")
+	if err := copyDir(src, dst); err != nil {
+		t.Fatal(err)
+	}
+	link, err := os.Readlink(filepath.Join(dst, "nested", "link.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if link != "../target.txt" {
+		t.Fatalf("symlink target = %q, want ../target.txt", link)
+	}
+}
+
 func TestRunFixtures(t *testing.T) {
 	if os.Getenv("SCRUTINEER_RUN_EVALS") != "1" {
 		t.Skip("set SCRUTINEER_RUN_EVALS=1 to execute model-backed skill evals")
