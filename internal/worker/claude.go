@@ -88,10 +88,11 @@ type SkillJob struct {
 	// prompt. It lets callers resume the same conversation with targeted
 	// corrective instructions, such as rewriting an invalid report.json.
 	ResumePrompt string
-	// StateDir is a host directory the container runner mounts as the
-	// container's CLAUDE_CONFIG_DIR so the resumable session store persists
-	// across container restarts. Empty disables the mount (the local runner
-	// ignores it and relies on the host's own ~/.claude).
+	// StateDir is a host directory the container runner mounts at
+	// /harness-state and points the harness at via Harness.StateEnv, so
+	// the resumable session store persists across container restarts.
+	// Empty disables the mount (the local runner ignores it and relies on
+	// the host's own ~/.claude).
 	StateDir string
 }
 
@@ -107,8 +108,8 @@ type SkillResult struct {
 	// belongs to a different agent CLI and starts fresh instead of passing
 	// e.g. a codex thread id to claude --resume.
 	Backend string
-	// SessionID is the claude session this run belonged to, as seen in the
-	// stream. The worker already persists it live via the emit callback;
+	// SessionID is the harness session this run belonged to, as seen in
+	// the stream. The worker already persists it live via the emit callback;
 	// this is a backstop so the final save reflects the latest value (e.g.
 	// after a resume-fallback started a fresh session).
 	SessionID string

@@ -374,10 +374,11 @@ func (w *Worker) harnessStateDirID(scanID uint) string {
 	return filepath.Join(w.DataDir, harnessStateDirName, fmt.Sprintf("scan-%d", scanID))
 }
 
-// RemoveScanArtifacts deletes the on-disk per-scan workspace and claude
-// session store for scanID. Normal terminal cleanup removes workspaces, while
-// resumable scans (failed or max-turns-hit) keep their session store for
-// --resume; this explicit removal path reclaims both. It is a no-op when the
+// RemoveScanArtifacts deletes the on-disk per-scan workspace and harness
+// state directory for scanID. Normal terminal cleanup removes workspaces,
+// while resumable scans (failed or max-turns-hit) keep their state dir so a
+// retry can resume the session; this explicit removal path reclaims both. It
+// is a no-op when the
 // directories are already gone. Passing every scan id of a repository covers
 // resume lineages too: a retry reuses its root's workspace id, and the root
 // scan is itself in the repo, while the retry's own id maps to a directory
@@ -390,10 +391,12 @@ func (w *Worker) RemoveScanArtifacts(scanID uint) error {
 }
 
 // applyResume fills a SkillJob's session-resume inputs from the scan: the
-// claude session id to --resume (set on a retry that carries one forward
-// from a failed or max-turns-hit run) and the persistent config dir the container
-// runner mounts so the session store survives a container exit. A fresh scan
-// has an empty SessionID, so the runner just starts a new conversation.
+// harness session id to continue (set on a retry that carries one forward
+// from a failed or max-turns-hit run) and the persistent state dir the
+// container runner mounts so the session store survives a container exit.
+// A fresh scan has an empty SessionID, so the harness starts a new
+// conversation. What the id names depends on the harness (a claude session,
+// a codex thread, an opencode session); the runner never interprets it.
 func (w *Worker) applyResume(scan *db.Scan, sj *SkillJob, emit func(Event)) {
 	sj.StateDir = w.harnessStateDir(scan)
 	if scan.SessionID != "" {

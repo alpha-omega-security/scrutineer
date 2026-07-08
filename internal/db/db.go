@@ -226,24 +226,25 @@ type Scan struct {
 	// Empty on rows that predate the column or never reached the runner.
 	Backend string `gorm:"index"`
 
-	// SessionID is the claude-code session this scan's run belongs to,
-	// captured from the stream-json init/result events. It is written as
-	// soon as the init event arrives (before the run finishes) so it
-	// survives a crash, and cleared once the scan reaches ordinary "done"
-	// so a deliberate re-run from the UI starts a fresh conversation. A
-	// retry of a failed or max-turns-hit scan carries this value forward
-	// so the runner can pass `claude -p --resume <id>` and continue from
-	// where it left off instead of restarting from turn 0.
+	// SessionID is the harness session this scan's run belongs to,
+	// captured from the harness's own event stream. Its meaning depends
+	// on Backend (a claude session id, a codex thread id, ...). It is
+	// written as soon as the session event arrives (before the run
+	// finishes) so it survives a crash, and cleared once the scan reaches
+	// ordinary "done" so a deliberate re-run from the UI starts a fresh
+	// conversation. A retry of a failed or max-turns-hit scan carries
+	// this value forward so the harness can resume the same conversation
+	// instead of restarting from turn 0.
 	SessionID string
 	// MaxTurnsHit marks scans that completed with partial output because
 	// claude-code hit --max-turns. They stay status=done because the
 	// partial report is real output, but keep SessionID so Retry can resume.
 	MaxTurnsHit bool `gorm:"not null;default:false"`
-	// ResumedFromScanID points at the lineage-root scan whose claude session
-	// and workspace a retry reuses. Nil on a fresh scan. claude keys its
-	// session store by working directory, so a resuming run must execute
-	// in the same per-scan workspace path as the original; this pins that
-	// path across the whole retry chain. Always the root of the lineage,
+	// ResumedFromScanID points at the lineage-root scan whose harness
+	// session and workspace a retry reuses. Nil on a fresh scan. Harness
+	// session stores are keyed by working directory, so a resuming run
+	// must execute in the same per-scan workspace path as the original;
+	// this pins that path across the whole retry chain. Always the root of the lineage,
 	// not the immediate parent, so N retries deep still resolve to one
 	// workspace.
 	ResumedFromScanID *uint `gorm:"index"`

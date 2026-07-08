@@ -215,16 +215,21 @@ func resultEvent(msg streamMessage) Event {
 func summariseInput(tool string, raw json.RawMessage) string {
 	var m map[string]any
 	_ = json.Unmarshal(raw, &m)
-	switch tool {
-	case "Bash":
+	// Harnesses disagree on tool-name casing (claude reports "Bash", codex
+	// and opencode report "bash"); match case-insensitively so every
+	// harness gets the concise summary instead of raw JSON.
+	switch strings.ToLower(tool) {
+	case "bash", "shell":
 		if c, _ := m["command"].(string); c != "" {
 			return c
 		}
-	case "Read", "Write", "Edit":
-		if p, _ := m["file_path"].(string); p != "" {
-			return p
+	case "read", "write", "edit":
+		for _, k := range []string{"file_path", "path"} {
+			if p, _ := m[k].(string); p != "" {
+				return p
+			}
 		}
-	case "Grep", "Glob":
+	case "grep", "glob":
 		if p, _ := m["pattern"].(string); p != "" {
 			return p
 		}

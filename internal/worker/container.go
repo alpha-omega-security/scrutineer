@@ -402,9 +402,8 @@ func (d ContainerRunner) buildRunArgs(absWork, image string, hnet hardenedNet, h
 		// container. Without this it lands in the /tmp tmpfs and dies
 		// with the container, so a retry could not resume the agent
 		// loop. The bind mount stays writable even under hardened
-		// mode's --read-only rootfs. The /harness-state mountpoint name
-		// is historical; only the env var that points the harness at it
-		// varies (CLAUDE_CONFIG_DIR, CODEX_HOME, OPENCODE_CONFIG_DIR).
+		// mode's --read-only rootfs. The mountpoint is fixed; each
+		// harness points its own state env var(s) at it via StateEnv.
 		args = append(args, "-v", bindMount(harnessStateDir, "/harness-state", d.SELinuxRelabel))
 		for _, e := range d.harness().StateEnv("/harness-state") {
 			args = append(args, "-e", e)

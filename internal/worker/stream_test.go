@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"strings"
@@ -192,5 +193,25 @@ func TestFormatEvent(t *testing.T) {
 	e := Event{Kind: "tool", Tool: "Read", Text: "/tmp/x"}
 	if s := FormatEvent(e); s != "[read] /tmp/x" {
 		t.Errorf("got %q", s)
+	}
+}
+
+func TestSummariseInput_caseInsensitive(t *testing.T) {
+	// claude reports "Bash", codex/opencode report "bash"; both must
+	// summarise to the command string, not the raw JSON.
+	tests := []struct {
+		tool, raw, want string
+	}{
+		{"Bash", `{"command":"ls -la"}`, "ls -la"},
+		{"bash", `{"command":"ls -la"}`, "ls -la"},
+		{"Read", `{"file_path":"/tmp/x"}`, "/tmp/x"},
+		{"read", `{"path":"/tmp/x"}`, "/tmp/x"},
+		{"grep", `{"pattern":"foo"}`, "foo"},
+		{"unknown", `{"x":1}`, `{"x":1}`},
+	}
+	for _, tt := range tests {
+		if got := summariseInput(tt.tool, json.RawMessage(tt.raw)); got != tt.want {
+			t.Errorf("summariseInput(%q, %s) = %q, want %q", tt.tool, tt.raw, got, tt.want)
+		}
 	}
 }

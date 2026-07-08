@@ -95,7 +95,7 @@ type Config struct {
 	ModelBaseURL string `yaml:"model_base_url"`
 	// LegacyAnthropicBaseURL is the former name of ModelBaseURL, kept so
 	// existing configs keep working. Load merges it into ModelBaseURL
-	// with a deprecation warning; remove after one release.
+	// when that is unset; remove after one release.
 	LegacyAnthropicBaseURL string `yaml:"anthropic_base_url"`
 	// Theme selects the colour scheme: "claude" (default), "ocean-breeze",
 	// "catppuccin", "sunset-horizon", "midnight-bloom", or "northern-lights".
