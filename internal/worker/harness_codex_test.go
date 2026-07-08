@@ -116,7 +116,7 @@ func TestCodexHarness_ArgsResume(t *testing.T) {
 func TestCodexHarness_Env(t *testing.T) {
 	t.Setenv("CODEX_API_KEY", "sk-test")
 	got := CodexHarness{}.Env("https://proxy.corp.com/v1")
-	for _, want := range []string{"CODEX_API_KEY"} {
+	for _, want := range []string{"CODEX_API_KEY", "OMO_CODEX_SEND_ANONYMOUS_TELEMETRY=0", "OMO_CODEX_DISABLE_POSTHOG=1"} {
 		if !slices.Contains(got, want) {
 			t.Errorf("Env() missing %q: %v", want, got)
 		}
@@ -184,7 +184,7 @@ func TestCodexHarness_ParseStream_live(t *testing.T) {
 		// item.started dropped: item.completed for the same command follows
 		{Kind: KindTool, Tool: "command", Text: "/bin/bash -lc 'ls ./src'"},
 		{Kind: KindText, Text: "done"},
-		{Kind: KindResult, Usage: Usage{InputTokens: 17339, OutputTokens: 92, CacheReadTokens: 11008}},
+		{Kind: KindResult, Turns: 1, Usage: Usage{InputTokens: 17339, OutputTokens: 92, CacheReadTokens: 11008}},
 	}
 	var got []Event
 	CodexHarness{}.ParseStream(strings.NewReader(in), func(e Event) { got = append(got, e) })

@@ -37,6 +37,15 @@ type SkillRunner interface {
 	SkillDir(workRoot, name string) string
 }
 
+// BackendReporter is an optional SkillRunner extension: a runner that
+// knows which harness it drives reports it here so wrap() can stamp the
+// scan row before RunSkill starts. That closes the window where a server
+// restart mid-run leaves a scan with a session_id but no backend, which
+// resumeOpts then misreads as a claude session and refuses to resume.
+type BackendReporter interface {
+	Backend() string
+}
+
 // SkillJob is a scan driven by an on-disk claude-code skill. The runner
 // clones the repo, stages the skill under .claude/skills/{Name}/ next to
 // the clone, and invokes `claude -p` with a short activation prompt that
@@ -126,6 +135,8 @@ type LocalClaude struct {
 func (LocalClaude) SkillDir(workRoot, name string) string {
 	return ClaudeHarness{}.SkillDir(workRoot, name)
 }
+
+func (LocalClaude) Backend() string { return HarnessName(ClaudeHarness{}) }
 
 // RunSkill runs claude against a staged skill in a local workspace. The
 // workspace layout is:

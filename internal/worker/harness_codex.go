@@ -167,7 +167,9 @@ func parseCodexLine(raw []byte, emit func(Event)) {
 				CacheReadTokens: ev.Usage.CachedInputTokens,
 			}
 		}
-		emit(Event{Kind: KindResult, Usage: u})
+		// One turn.completed per turn; the accumulator sums Turns
+		// across events so the scan row records the count.
+		emit(Event{Kind: KindResult, Usage: u, Turns: 1})
 	case ev.Type == "item.started":
 		// item.completed for the same id carries the same fields plus the
 		// result; emitting both would show every command twice in the log.
@@ -237,6 +239,11 @@ func (CodexHarness) Env(_ string) []string {
 		// Suppress codex's own OpenTelemetry exporter; the egress
 		// proxy denies it anyway, this just keeps the log quiet.
 		"RUST_LOG=error,opentelemetry_sdk=off,opentelemetry_otlp=off",
+		// codex 0.142.5 also dials ab.chatgpt.com for A/B telemetry
+		// on every run; the egress proxy denies it and logs a WARN
+		// per scan. Disable it at source instead.
+		"OMO_CODEX_SEND_ANONYMOUS_TELEMETRY=0",
+		"OMO_CODEX_DISABLE_POSTHOG=1",
 	}
 	// Same T1/T13 residual as claude: forwarding the host credential
 	// into the container exposes it to in-container code.

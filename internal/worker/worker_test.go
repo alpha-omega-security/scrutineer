@@ -120,6 +120,8 @@ func (blockingRunner) SkillDir(workRoot, name string) string {
 	return ClaudeHarness{}.SkillDir(workRoot, name)
 }
 
+func (blockingRunner) Backend() string { return "codex" }
+
 func TestWorker_CancelStopsRunningScan(t *testing.T) {
 	gdb, err := db.Open(filepath.Join(t.TempDir(), "c.db"))
 	if err != nil {
@@ -146,6 +148,14 @@ func TestWorker_CancelStopsRunningScan(t *testing.T) {
 	go func() { done <- w.wrap(w.doSkill)(context.Background(), body) }()
 
 	<-runner.started
+	// Backend is stamped on the row when it transitions to running, before
+	// RunSkill returns, so a server restart mid-run leaves it resumable
+	// under the same backend.
+	var midRun db.Scan
+	gdb.First(&midRun, scan.ID)
+	if midRun.Backend != "codex" {
+		t.Errorf("scan.Backend = %q while RunSkill in flight, want codex", midRun.Backend)
+	}
 	if !w.Cancel(scan.ID) {
 		t.Fatal("Cancel reported scan not running")
 	}

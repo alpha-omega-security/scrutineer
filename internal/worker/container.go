@@ -580,6 +580,8 @@ func (d ContainerRunner) SkillDir(workRoot, name string) string {
 	return d.harness().SkillDir(workRoot, name)
 }
 
+func (d ContainerRunner) Backend() string { return HarnessName(d.harness()) }
+
 // harness returns the agent CLI to exec inside the container, defaulting
 // to claude-code when none is set so the zero ContainerRunner{} keeps its
 // historical behaviour.

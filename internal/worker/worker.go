@@ -568,6 +568,9 @@ func (w *Worker) wrap(h handler) func(context.Context, []byte) error {
 		scan.StartedAt = new(time.Now())
 		scan.Log = ""
 		scan.Error = ""
+		if br, ok := w.Runner.(BackendReporter); ok {
+			scan.Backend = br.Backend()
+		}
 		if err := w.DB.Save(&scan).Error; err != nil {
 			return err
 		}
