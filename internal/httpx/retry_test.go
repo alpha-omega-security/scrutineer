@@ -83,6 +83,39 @@ func TestDoRetryRespectsRetryAfter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	opts := testRetryOptions(func(_ context.Context, delay time.Duration) error {
+		delays = append(delays, delay)
+		return nil
+	})
+	opts.MaxDelay = 5 * time.Second
+	resp, err := DoRetry(req, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if len(delays) != 1 || delays[0] != 2*time.Second {
+		t.Fatalf("delays = %v, want [2s]", delays)
+	}
+}
+
+func TestDoRetryCapsRetryAfter(t *testing.T) {
+	hits := 0
+	var delays []time.Duration
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits++
+		if hits == 1 {
+			w.Header().Set("Retry-After", "3600")
+			http.Error(w, "rate limited", http.StatusTooManyRequests)
+			return
+		}
+		_, _ = io.WriteString(w, "ok")
+	}))
+	t.Cleanup(srv.Close)
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, srv.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	resp, err := DoRetry(req, testRetryOptions(func(_ context.Context, delay time.Duration) error {
 		delays = append(delays, delay)
 		return nil
@@ -91,8 +124,8 @@ func TestDoRetryRespectsRetryAfter(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = resp.Body.Close() }()
-	if len(delays) != 1 || delays[0] != 2*time.Second {
-		t.Fatalf("delays = %v, want [2s]", delays)
+	if len(delays) != 1 || delays[0] != time.Millisecond {
+		t.Fatalf("delays = %v, want [1ms]", delays)
 	}
 }
 

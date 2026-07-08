@@ -3,6 +3,7 @@ package httpx
 import (
 	"context"
 	"fmt"
+	"io"
 	"math/rand/v2"
 	"net/http"
 	"strconv"
@@ -63,7 +64,8 @@ func DoRetry(req *http.Request, opts RetryOptions) (*http.Response, error) {
 		if err != nil {
 			lastErr = err
 		} else {
-			delay = retryAfterDelay(resp.Header.Get("Retry-After"), delay)
+			delay = retryAfterDelay(resp.Header.Get("Retry-After"), delay, maxDelay)
+			_, _ = io.Copy(io.Discard, resp.Body)
 			_ = resp.Body.Close()
 		}
 		if err := sleep(req.Context(), delay); err != nil {
@@ -96,21 +98,28 @@ func retryableStatus(status int) bool {
 	}
 }
 
-func retryAfterDelay(header string, fallback time.Duration) time.Duration {
+func retryAfterDelay(header string, fallback, maxDelay time.Duration) time.Duration {
 	if header == "" {
 		return fallback
 	}
 	if seconds, err := strconv.Atoi(header); err == nil {
-		return time.Duration(seconds) * time.Second
+		return capDelay(time.Duration(seconds)*time.Second, maxDelay)
 	}
 	if at, err := http.ParseTime(header); err == nil {
 		delay := time.Until(at)
 		if delay > 0 {
-			return delay
+			return capDelay(delay, maxDelay)
 		}
 		return 0
 	}
 	return fallback
+}
+
+func capDelay(delay, maxDelay time.Duration) time.Duration {
+	if maxDelay > 0 && delay > maxDelay {
+		return maxDelay
+	}
+	return delay
 }
 
 func backoffDelay(attempt int, baseDelay, maxDelay time.Duration) time.Duration {
