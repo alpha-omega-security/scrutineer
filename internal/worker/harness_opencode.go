@@ -72,16 +72,13 @@ func (OpencodeHarness) ParseStream(r io.Reader, emit func(Event)) {
 }
 
 // opencodeLine is the subset of `opencode run --format json` event
-// fields the harness needs. The shape is {type, sessionID, ...} per
-// packages/opencode/src/cli/cmd/run.ts; step_finish carries per-step
-// cost and token counts alongside.
+// fields the harness needs. The shape is {type, sessionID, part} per
+// packages/opencode/src/cli/cmd/run.ts; every payload nests under part.
 type opencodeLine struct {
 	Type      string          `json:"type"`
 	SessionID string          `json:"sessionID"`
 	Part      *opencodePart   `json:"part"`
 	Error     json.RawMessage `json:"error"`
-	Cost      float64         `json:"cost"`
-	Tokens    *opencodeTokens `json:"tokens"`
 }
 
 type opencodePart struct {
@@ -90,6 +87,10 @@ type opencodePart struct {
 	Tool  string            `json:"tool"`
 	Name  string            `json:"name"`
 	State opencodeToolState `json:"state"`
+	// step_finish (part.type "step-finish") carries per-step cost and
+	// token counts here, not at the event top level.
+	Cost   float64         `json:"cost"`
+	Tokens *opencodeTokens `json:"tokens"`
 }
 
 type opencodeToolState struct {
@@ -129,8 +130,10 @@ func parseOpencodeLine(raw []byte, emit func(Event)) {
 		emit(Event{Kind: KindError, Text: opencodeErrorText(ev.Error, line)})
 	case isOpencodeTextEvent(ev):
 		emit(Event{Kind: KindText, Text: ev.Part.Text})
+	case ev.Type == "step_finish" && ev.Part != nil:
+		emit(Event{Kind: KindResult, CostUSD: ev.Part.Cost, Turns: 1, Usage: opencodeUsage(ev.Part.Tokens)})
 	case ev.Type == "step_finish":
-		emit(Event{Kind: KindResult, CostUSD: ev.Cost, Usage: opencodeUsage(ev.Tokens)})
+		// no part: nothing to record, but drop it rather than dump raw JSON
 	default:
 		emit(Event{Kind: KindText, Text: line})
 	}
@@ -267,7 +270,7 @@ func (OpencodeHarness) AccountErrorText(s string) string {
 		// failure phrases.
 		"rate limit", "rate_limit", "too many requests", "429",
 		"usage limit", "quota", "insufficient_quota",
-		"invalid_api_key", "incorrect api key",
+		"invalid_api_key", "incorrect api key", "invalid x-api-key",
 		"credit balance", "billing",
 	} {
 		if strings.Contains(lower, phrase) {

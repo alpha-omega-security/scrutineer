@@ -135,7 +135,7 @@ func TestOpencodeHarness_ParseStream(t *testing.T) {
 {"type":"reasoning","part":{"type":"reasoning","text":"thinking"}}
 {"type":"tool","part":{"type":"tool","tool":"bash","state":{"status":"completed","input":{"command":"ls"}}}}
 {"type":"error","error":{"name":"ProviderAuthError","data":{"message":"insufficient_quota: exceeded"}}}
-{"type":"step_finish","cost":0.0123,"tokens":{"input":100,"output":40,"reasoning":10,"cache":{"read":20,"write":5}}}
+{"type":"step_finish","sessionID":"ses-1","part":{"type":"step-finish","cost":0.0123,"tokens":{"input":100,"output":40,"reasoning":10,"cache":{"read":20,"write":5}}}}
 not json
 `
 	var got []Event
@@ -168,7 +168,7 @@ not json
 	if (OpencodeHarness{}).AccountErrorText(got[4].Text) == "" {
 		t.Errorf("parsed error text %q not recognised as account error", got[4].Text)
 	}
-	if results != 1 || got[5].CostUSD != 0.0123 {
+	if results != 1 || got[5].CostUSD != 0.0123 || got[5].Turns != 1 {
 		t.Errorf("step_finish not mapped to result: %+v", got[5])
 	}
 	wantUsage := Usage{InputTokens: 100, OutputTokens: 50, CacheReadTokens: 20, CacheWriteTokens: 5}
