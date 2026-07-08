@@ -1,0 +1,61 @@
+{{template "head" .}}
+
+<div class="flex items-start justify-between gap-4 mb-6">
+  <div>
+    {{template "crumbs" (crumbs "Benchmark" "")}}
+    <h2 class="text-2xl font-semibold mt-1 flex items-center gap-2">
+      <i data-lucide="gauge"></i> Benchmark
+    </h2>
+  </div>
+</div>
+
+<form method="get" action="/benchmark" class="form grid grid-cols-1 md:grid-cols-[1fr_1fr_1fr_auto] gap-2 mb-4">
+  <input class="input" type="search" name="skill" value="{{.Skill}}" placeholder="Skill">
+  <input class="input" type="search" name="model" value="{{.Model}}" placeholder="Model">
+  <input class="input" type="search" name="harness" value="{{.Harness}}" placeholder="Harness SHA">
+  <button class="btn-outline" type="submit"><i data-lucide="filter"></i> Filter</button>
+</form>
+
+{{if .Rows}}
+<div class="flex flex-wrap gap-2 mb-4">
+  <span class="badge-outline">Recall {{pct .Totals.Recall}}</span>
+  <span class="badge-outline">Precision {{pct .Totals.Precision}}</span>
+  <span class="badge-outline">F1 {{pct .Totals.F1}}</span>
+  <span class="badge-outline">{{.Totals.Matched}} / {{.Totals.Expected}} expected matched</span>
+</div>
+
+<table class="table w-full">
+  <thead><tr>
+    <th>Repository</th>
+    <th class="w-24 text-right">Recall</th>
+    <th class="w-24 text-right">Precision</th>
+    <th class="w-20 text-right">F1</th>
+    <th class="w-36">Expected</th>
+    <th class="w-40">Scan</th>
+    <th>Skill</th>
+    <th>Model</th>
+    <th class="w-20">Schema</th>
+    <th>Harness</th>
+  </tr></thead>
+  <tbody>
+  {{range .Rows}}
+    <tr>
+      <td><a class="font-medium" href="/repositories/{{.Repo.ID}}#rt13">{{.Repo.Name}}</a></td>
+      <td class="text-right">{{pct .Recall}}</td>
+      <td class="text-right">{{pct .Precision}}</td>
+      <td class="text-right">{{pct .F1}}</td>
+      <td>{{.Matched}} / {{.Expected}}</td>
+      <td>{{if .Scan}}<a class="hover:underline" href="/scans/{{.Scan.ID}}">#{{.Scan.ID}}</a>{{else}}<span class="text-muted-foreground">none</span>{{end}}</td>
+      <td class="whitespace-normal">{{.Skill}}</td>
+      <td class="whitespace-normal">{{.Model}}</td>
+      <td>{{if .SkillSchemaVersion}}v{{.SkillSchemaVersion}}{{end}}</td>
+      <td>{{if .HarnessSHA}}<code class="text-xs">{{short .HarnessSHA}}</code>{{end}}</td>
+    </tr>
+  {{end}}
+  </tbody>
+</table>
+{{else}}
+  {{template "empty" (dict "Icon" "gauge" "Title" "No benchmark repositories" "Body" "Add expected findings on a repository to include it here.")}}
+{{end}}
+
+{{template "foot" .}}

@@ -106,8 +106,9 @@ type Repository struct {
 	CreatedAt time.Time
 	UpdatedAt time.Time
 
-	Scans       []Scan       `gorm:"constraint:OnDelete:CASCADE"`
-	Maintainers []Maintainer `gorm:"many2many:repository_maintainers"`
+	Scans            []Scan            `gorm:"constraint:OnDelete:CASCADE"`
+	ExpectedFindings []ExpectedFinding `gorm:"constraint:OnDelete:CASCADE"`
+	Maintainers      []Maintainer      `gorm:"many2many:repository_maintainers"`
 }
 
 // IsLocal reports whether this Repository points at a directory on disk
@@ -160,9 +161,10 @@ type Scan struct {
 	// the skill is deleted. APIToken is a random bearer generated per-run
 	// so skills can call back into scrutineer's HTTP API from inside the
 	// workspace; it is cleared when the scan reaches a terminal state.
-	SkillID      *uint `gorm:"index"`
-	SkillVersion int
-	SkillName    string `gorm:"index"`
+	SkillID            *uint `gorm:"index"`
+	SkillVersion       int
+	SkillSchemaVersion int
+	SkillName          string `gorm:"index"`
 	// FindingID is set when a scan is finding-scoped (verify, patch,
 	// disclose). Skills read it from context.json to know which finding
 	// they are acting on.
@@ -441,6 +443,24 @@ type Dependency struct {
 	ManifestPath          string
 	ManifestKind          string
 	CreatedAt             time.Time
+}
+
+// ExpectedFinding is an operator-supplied benchmark target for a repository.
+// It records a known vulnerable file/CWE pair that model-backed scans should
+// rediscover. Matching intentionally ignores line numbers because they drift
+// between versions.
+type ExpectedFinding struct {
+	ID           uint `gorm:"primarykey"`
+	RepositoryID uint `gorm:"index;not null;uniqueIndex:idx_expected_repo_file_cwe,priority:1"`
+	Repository   Repository
+
+	File string `gorm:"not null;uniqueIndex:idx_expected_repo_file_cwe,priority:2"`
+	CWE  string `gorm:"not null;uniqueIndex:idx_expected_repo_file_cwe,priority:3"`
+	CVE  string
+	Note string `gorm:"type:text"`
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // FindingResolution says how a finding got resolved. Set by the analyst
@@ -1083,7 +1103,7 @@ func Open(dsn string) (*gorm.DB, error) {
 		&Repository{}, &Scan{},
 		&Finding{}, &FindingLabel{}, &FindingNote{},
 		&FindingCommunication{}, &FindingReference{}, &FindingHistory{}, &FindingReview{},
-		&Dependency{}, &Package{}, &Dependent{}, &FindingDependent{}, &Advisory{},
+		&Dependency{}, &ExpectedFinding{}, &Package{}, &Dependent{}, &FindingDependent{}, &Advisory{},
 		&Maintainer{}, &Skill{}, &Subproject{},
 		&SBOMUpload{}, &SBOMPackage{}, &CNA{}, &Setting{},
 	); err != nil {

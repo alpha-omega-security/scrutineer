@@ -105,6 +105,7 @@ func (s *Server) apiHandler() http.Handler {
 	mux.HandleFunc("GET /repositories/{id}/advisories", s.apiListAdvisories)
 	mux.HandleFunc("GET /repositories/{id}/dependents", s.apiListDependents)
 	mux.HandleFunc("GET /repositories/{id}/ecosystems/{source}/raw", s.apiGetEcosystemsRaw)
+	mux.HandleFunc("GET /repositories/{id}/expected", s.apiListExpectedFindings)
 	mux.HandleFunc("GET /repositories/{id}/dependencies", s.apiListDependencies)
 	mux.HandleFunc("GET /repositories/{id}/findings", s.apiListFindings)
 	mux.HandleFunc("POST /repositories/{id}/findings", s.apiStreamFinding)
@@ -469,18 +470,19 @@ func (s *Server) apiListSkills(w http.ResponseWriter, r *http.Request) {
 
 func scanSummary(sc db.Scan) map[string]any {
 	m := map[string]any{
-		"id":            sc.ID,
-		"repository_id": sc.RepositoryID,
-		"kind":          sc.Kind,
-		statusKey:       string(sc.Status),
-		"model":         sc.Model,
-		"commit":        sc.Commit,
-		"skill_name":    sc.SkillName,
-		"skill_version": sc.SkillVersion,
-		"started_at":    sc.StartedAt,
-		"finished_at":   sc.FinishedAt,
-		"max_turns_hit": sc.MaxTurnsHit,
-		errorKey:        sc.Error,
+		"id":                   sc.ID,
+		"repository_id":        sc.RepositoryID,
+		"kind":                 sc.Kind,
+		statusKey:              string(sc.Status),
+		"model":                sc.Model,
+		"commit":               sc.Commit,
+		"skill_name":           sc.SkillName,
+		"skill_version":        sc.SkillVersion,
+		"skill_schema_version": sc.SkillSchemaVersion,
+		"started_at":           sc.StartedAt,
+		"finished_at":          sc.FinishedAt,
+		"max_turns_hit":        sc.MaxTurnsHit,
+		errorKey:               sc.Error,
 	}
 	if sc.Ref != "" {
 		m["ref"] = sc.Ref

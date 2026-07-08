@@ -64,6 +64,7 @@ One row per skill execution or external import. `skill_name` / `skill_version` p
 | effort | text | Claude `--effort` level (`low`–`max`) snapshotted from the runtime setting at enqueue. Empty on legacy rows; the runner falls back to its configured default. |
 | skill_id | integer FK | References `skills.id`. Null for legacy non-skill rows. |
 | skill_version | integer | Version of the skill at run time; the skill row's `version` bumps on every edit so older scans stay readable. |
+| skill_schema_version | integer | Snapshot of the skill frontmatter `metadata.scrutineer.version` at enqueue time. Used by the benchmark page to attribute expected-finding results to the report schema/version the skill was asked to emit. |
 | skill_name | text | Denormalised skill name for UI display. |
 | finding_id | integer FK | Set when the scan is finding-scoped (verify/patch/disclose/exposure). References `findings.id`. |
 | dependent_id | integer FK | Set on `exposure` scans only. References `dependents.id`; identifies which downstream consumer the skill is auditing for reachability of the upstream finding. |
@@ -89,6 +90,21 @@ One row per skill execution or external import. `skill_name` / `skill_version` p
 | log | text | Line-by-line transcript of the scan. Streamed to the UI via SSE. |
 | error | text | Error message if the scan failed. |
 | findings_count | integer | Denormalised count of findings parsed from the report. |
+| created_at | datetime | |
+| updated_at | datetime | |
+
+## expected_findings
+
+Operator-supplied benchmark targets for a repository. Each row is a known file/CWE pair that model-backed scans should rediscover. Matching ignores line numbers, treats CWE case-insensitively, and currently compares Medium+ findings for benchmark metrics.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | integer PK | |
+| repository_id | integer FK | References `repositories.id`. Cascade delete. Part of the unique key with `file` and `cwe`. |
+| file | text | Repository-root-relative path, without line number. Absolute paths and parent-directory traversal are rejected by the write path. Part of the unique key with `repository_id` and `cwe`. |
+| cwe | text | Normalised CWE identifier, e.g. `CWE-79`. Part of the unique key with `repository_id` and `file`. |
+| cve | text | Optional external CVE identifier for operator context. Not used for matching. |
+| note | text | Optional free-text note explaining the expected target. |
 | created_at | datetime | |
 | updated_at | datetime | |
 

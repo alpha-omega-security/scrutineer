@@ -154,6 +154,21 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /repositories/{id}/expected:
+    get:
+      summary: List expected findings for benchmark comparison
+      operationId: listRepositoryExpectedFindings
+      parameters:
+        - $ref: '#/components/parameters/RepositoryID'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ExpectedFinding' }
+        '403': { $ref: '#/components/responses/Forbidden' }
   /repositories/{id}/dependencies:
     get:
       summary: List dependencies declared by this repository's manifests
@@ -1130,6 +1145,17 @@ components:
             created_at:  { type: string, format: date-time, nullable: true }
             finished_at: { type: string, format: date-time, nullable: true }
 
+    ExpectedFinding:
+      type: object
+      required: [id, repository_id, file, cwe]
+      properties:
+        id:            { type: integer, format: int64 }
+        repository_id: { type: integer, format: int64 }
+        file:          { type: string, description: Path relative to the repository root, without line number. }
+        cwe:           { type: string, description: CWE identifier, e.g. CWE-79. }
+        cve:           { type: string }
+        note:          { type: string }
+
     Scan:
       type: object
       required: [id, kind, status, repository_id]
@@ -1140,8 +1166,9 @@ components:
         status:        { type: string, enum: [queued, running, paused, done, failed, cancelled] }
         model:         { type: string }
         commit:        { type: string }
-        skill_name:    { type: string }
-        skill_version: { type: integer }
+        skill_name:           { type: string }
+        skill_version:        { type: integer, description: Snapshot of the Skill row version at enqueue time. }
+        skill_schema_version: { type: integer, description: Snapshot of metadata.scrutineer.version at enqueue time. }
         started_at:    { type: string, format: date-time, nullable: true }
         finished_at:   { type: string, format: date-time, nullable: true }
         max_turns_hit: { type: boolean, description: True when the scan completed with partial output after hitting the Claude max-turns cap; retry resumes the saved session when available. }
