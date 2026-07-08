@@ -118,12 +118,9 @@ func TestExpectedFindingMatchingIgnoresLineNumbers(t *testing.T) {
 	s.DB.Create(&matched)
 	s.DB.Create(&unexpected)
 
-	got := expectedMatchesForScan(s.DB, repo.ID, scan.ID)
+	got := expectedMatchesForRows(s.DB, repo.ID, scan.ID, []db.ExpectedFinding{expected})
 	if got.MatchedTotal != 1 || got.FindingTotal != 2 || got.TruePositiveFindings != 1 {
 		t.Fatalf("matches = %+v", got)
-	}
-	if !got.FindingStatus[matched.ID] || got.FindingStatus[unexpected.ID] {
-		t.Fatalf("finding status = %+v", got.FindingStatus)
 	}
 	if len(got.Expected) != 1 || !got.Expected[0].Matched || got.Expected[0].FindingID != matched.ID {
 		t.Fatalf("expected status = %+v", got.Expected)
@@ -137,8 +134,11 @@ func TestExpectedFindingPrecisionUsesTruePositiveFindings(t *testing.T) {
 	s.DB.Create(&repo)
 	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", SkillName: "vuln-scan", Status: db.ScanDone}
 	s.DB.Create(&scan)
-	s.DB.Create(&db.ExpectedFinding{RepositoryID: repo.ID, File: "src/a.go", CWE: "CWE-79"})
-	s.DB.Create(&db.ExpectedFinding{RepositoryID: repo.ID, File: "src/b.go", CWE: "CWE-79"})
+	expected := []db.ExpectedFinding{
+		{RepositoryID: repo.ID, File: "src/a.go", CWE: "CWE-79"},
+		{RepositoryID: repo.ID, File: "src/b.go", CWE: "CWE-79"},
+	}
+	s.DB.Create(&expected)
 	finding := db.Finding{
 		RepositoryID: repo.ID,
 		ScanID:       scan.ID,
@@ -150,7 +150,7 @@ func TestExpectedFindingPrecisionUsesTruePositiveFindings(t *testing.T) {
 	}
 	s.DB.Create(&finding)
 
-	got := expectedMatchesForScan(s.DB, repo.ID, scan.ID)
+	got := expectedMatchesForRows(s.DB, repo.ID, scan.ID, expected)
 	if got.MatchedTotal != 2 || got.FindingTotal != 1 || got.TruePositiveFindings != 1 {
 		t.Fatalf("matches = %+v", got)
 	}
@@ -173,13 +173,17 @@ func TestExpectedFindingMatchingIgnoresLowSeverityForBenchmarkTotals(t *testing.
 	s.DB.Create(&repo)
 	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", SkillName: "vuln-scan", Status: db.ScanDone}
 	s.DB.Create(&scan)
-	s.DB.Create(&db.ExpectedFinding{RepositoryID: repo.ID, File: "src/app.go", CWE: "CWE-79"})
+	expected := []db.ExpectedFinding{{RepositoryID: repo.ID, File: "src/app.go", CWE: "CWE-79"}}
+	s.DB.Create(&expected)
 	low := db.Finding{RepositoryID: repo.ID, ScanID: scan.ID, Title: "low xss", Severity: "Low", CWE: "CWE-79", Location: "src/app.go:77"}
 	s.DB.Create(&low)
 
-	got := expectedMatchesForScan(s.DB, repo.ID, scan.ID)
-	if got.MatchedTotal != 0 || got.FindingTotal != 0 || got.TruePositiveFindings != 0 || got.FindingStatus[low.ID] {
-		t.Fatalf("low severity finding affected benchmark totals/status: %+v", got)
+	got := expectedMatchesForRows(s.DB, repo.ID, scan.ID, expected)
+	if got.MatchedTotal != 0 || got.FindingTotal != 0 || got.TruePositiveFindings != 0 {
+		t.Fatalf("low severity finding affected benchmark totals: %+v", got)
+	}
+	if got.Expected[0].Matched {
+		t.Fatalf("low severity finding matched expected: %+v", got.Expected)
 	}
 }
 

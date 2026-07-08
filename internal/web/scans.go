@@ -24,7 +24,7 @@ func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 		q = q.Where("status = ?", status)
 	}
 
-	sortCol, dir := splitSort(r.URL.Query().Get("sort"), "")
+	sortCol, dir := splitSort(r.URL.Query().Get("sort"))
 	switch sortCol {
 	case "id":
 		q = q.Order(orderByExpr("scans.id", dir, true))

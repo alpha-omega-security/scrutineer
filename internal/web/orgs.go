@@ -106,7 +106,7 @@ func (s *Server) orgsList(w http.ResponseWriter, r *http.Request) {
 	// columns), so unlike the SQL indexes this sorts the slice and flips the
 	// comparator for direction via dirLess rather than an ORDER BY.
 	const nameSort = "name"
-	sortCol, dir := splitSort(r.URL.Query().Get("sort"), "")
+	sortCol, dir := splitSort(r.URL.Query().Get("sort"))
 	switch sortCol {
 	case "findings":
 		sortSlice(rows, dirLess(dir, "desc", func(a, b orgRow) bool { return a.FindingsTotal < b.FindingsTotal }))

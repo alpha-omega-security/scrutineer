@@ -22,14 +22,15 @@ type sortCtx struct {
 }
 
 // splitSort parses a "key.dir" sort token. The direction suffix is only
-// honoured when it is exactly "asc" or "desc"; otherwise defDir is returned,
-// so callers can pass a per-column default (or "" to detect "unset").
-func splitSort(token, defDir string) (key, dir string) {
+// honoured when it is exactly "asc" or "desc"; anything else returns the whole
+// token as the key with an empty direction, leaving the handler to apply its
+// own per-column default via wantDesc.
+func splitSort(token string) (key, dir string) {
 	key, rest, ok := strings.Cut(token, ".")
 	if ok && (rest == "asc" || rest == "desc") {
 		return key, rest
 	}
-	return token, defDir
+	return token, ""
 }
 
 // dirOr returns dir when it is a valid direction ("asc"/"desc"), else def. It
@@ -87,7 +88,7 @@ func orderByExpr(expr, dir string, defaultDesc bool) string {
 // natural default. Every other query param (filters, search) is preserved and
 // pagination resets to page 1.
 func (c sortCtx) URL(key, def string) string {
-	curKey, curDir := splitSort(c.query.Get("sort"), "")
+	curKey, curDir := splitSort(c.query.Get("sort"))
 	next := def
 	if curKey == key {
 		eff := curDir
@@ -114,7 +115,7 @@ func (c sortCtx) URL(key, def string) string {
 // Dir reports the active direction for key ("asc"/"desc") so a header can draw
 // its arrow, or "" when key is not the current sort.
 func (c sortCtx) Dir(key, def string) string {
-	curKey, curDir := splitSort(c.query.Get("sort"), "")
+	curKey, curDir := splitSort(c.query.Get("sort"))
 	if curKey != key {
 		return ""
 	}
@@ -125,6 +126,6 @@ func (c sortCtx) Dir(key, def string) string {
 // suffix. Templates use it to keep a sort dropdown's label and active-item
 // highlight in sync with a compound token like "severity.asc".
 func sortKey(token string) string {
-	key, _ := splitSort(token, "")
+	key, _ := splitSort(token)
 	return key
 }
