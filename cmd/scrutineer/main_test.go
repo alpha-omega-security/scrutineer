@@ -17,6 +17,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"scrutineer/internal/config"
+	"scrutineer/internal/web"
 	"scrutineer/internal/worker"
 )
 
@@ -125,6 +126,34 @@ func TestFlagsMerge_zeroConfigLeavesDefaults(t *testing.T) {
 	}
 	if f.modelBaseURL != "" {
 		t.Errorf("empty config set modelBaseURL: %q", f.modelBaseURL)
+	}
+}
+
+func TestFlagsMerge_zeroConfigSeedsModelsFromHarness(t *testing.T) {
+	// run() calls merge with an empty config when no config file exists;
+	// that path must still seed the pick list from the harness defaults so
+	// a fresh install has a working model dropdown.
+	saved := web.Models
+	web.Models = nil
+	t.Cleanup(func() { web.Models = saved })
+
+	f := &flags{set: map[string]bool{}}
+	f.merge(&config.Config{})
+	if len(web.Models) == 0 {
+		t.Fatal("merge with empty config did not seed web.Models from harness defaults")
+	}
+}
+
+func TestFlagsMerge_modelBaseURLAliasCliWins(t *testing.T) {
+	// The deprecated -anthropic-base-url flag must hold against a yaml
+	// model_base_url the same way the canonical flag does.
+	f := &flags{
+		modelBaseURL: "https://cli.example.com/v1",
+		set:          map[string]bool{"anthropic-base-url": true},
+	}
+	f.merge(&config.Config{ModelBaseURL: "https://yaml.example.com/v1"})
+	if f.modelBaseURL != "https://cli.example.com/v1" {
+		t.Errorf("modelBaseURL = %q; deprecated CLI alias lost to yaml", f.modelBaseURL)
 	}
 }
 

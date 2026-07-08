@@ -229,7 +229,7 @@ func (f *flags) merge(cfg *config.Config) {
 	if cfg.MaxTurns > 0 && !f.set["max-turns"] {
 		f.maxTurns = cfg.MaxTurns
 	}
-	if cfg.ModelBaseURL != "" && !f.set["model-base-url"] {
+	if cfg.ModelBaseURL != "" && !f.set["model-base-url"] && !f.set["anthropic-base-url"] {
 		f.modelBaseURL = cfg.ModelBaseURL
 	}
 	if cfg.ForkOrg != "" && !f.set["fork-org"] {
@@ -383,9 +383,15 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	if cfg != nil {
-		f.merge(cfg)
 		log.Info("loaded config", "path", cfgPath(f.configPath))
+	} else {
+		// merge seeds the model pick list from the active harness even
+		// when there is no config file to overlay, so a fresh install has
+		// a working model dropdown; every field-merge below is a no-op on
+		// the zero-value config.
+		cfg = &config.Config{}
 	}
+	f.merge(cfg)
 	if err := f.normalizePaths(); err != nil {
 		return err
 	}
