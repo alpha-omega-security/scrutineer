@@ -32,10 +32,9 @@ type Config struct {
 	// Backend selects the agent CLI the container runner execs:
 	// "claude" (default), "codex", or "opencode". Empty leaves the
 	// built-in default (claude). Non-claude backends require the
-	// containerised runner;
-	// --no-container with a non-claude backend is rejected at startup.
-	// Validated against worker.HarnessByName so the set of accepted
-	// values stays in one place.
+	// containerised runner: --no-container with a non-claude backend
+	// is rejected at startup. Validated against worker.HarnessByName
+	// so the set of accepted values stays in one place.
 	Backend string `yaml:"backend"`
 	// NoContainer disables the containerised runner so claude runs directly on
 	// the host (no isolation). NoDocker is the pre-rename alias, still honoured

@@ -37,8 +37,9 @@ ARG SEMGREP_VERSION
 ENV DEBIAN_FRONTEND=noninteractive
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates curl git bash coreutils musl \
+        ca-certificates curl git bash coreutils \
         python3 python3-venv \
+        libstdc++6 \
  && install -d -m 0755 /etc/apt/keyrings \
  && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
         -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
@@ -89,16 +90,17 @@ RUN set -eux; \
     rm /tmp/codex.tgz "/tmp/codex-${triple}"; \
     codex --version
 
-# opencode CLI (-backend opencode). The musl tarball contains a single
-# `opencode` binary.
+# opencode CLI (-backend opencode). The glibc tarball contains a single
+# `opencode` binary; it links libstdc++ dynamically (bun runtime), which
+# is why libstdc++6 is in the apt install list above.
 RUN set -eux; \
     case "${TARGETARCH}" in \
-      amd64) ocarch=x64;   sha=40b3210f6720ea8466fe885138e7b5f9310bb13103479f6ea52024b5c91a8c32 ;; \
-      arm64) ocarch=arm64; sha=069de507f4b2d646a2b02a6f27f3e1f4f40aa3a1b59cebc707da676282508853 ;; \
+      amd64) ocarch=x64;   sha=b41e3ae69b5033f6fba8b9fcf4cb19f0dc8093d449266ef01a5cd142f6f7064d ;; \
+      arm64) ocarch=arm64; sha=b36060c4c5bc8fee8e507a600af0ad8b2aa5e0c451f7f34cc3763a0d557b44d6 ;; \
       *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
     curl -fsSL -o /tmp/opencode.tgz \
-      "https://github.com/sst/opencode/releases/download/v${OPENCODE_VERSION}/opencode-linux-${ocarch}-musl.tar.gz"; \
+      "https://github.com/sst/opencode/releases/download/v${OPENCODE_VERSION}/opencode-linux-${ocarch}.tar.gz"; \
     echo "${sha}  /tmp/opencode.tgz" | sha256sum -c -; \
     tar -xzf /tmp/opencode.tgz -C /usr/local/bin opencode; \
     rm /tmp/opencode.tgz; \

@@ -170,7 +170,10 @@ func (OpencodeHarness) EgressHosts() []string {
 	return []string{"models.dev", "api.openai.com", "*.anthropic.com"}
 }
 
-func (OpencodeHarness) Env(baseURL string) []string {
+// Env returns opencode's container environment. baseURL is accepted for
+// interface symmetry and ignored: opencode has no single base-url
+// override; the operator sets it per-provider via OPENCODE_CONFIG_CONTENT.
+func (OpencodeHarness) Env(_ string) []string {
 	env := []string{
 		"OPENCODE_DISABLE_AUTOUPDATE=1",
 		"OPENCODE_DISABLE_MODELS_FETCH=1",
@@ -186,12 +189,6 @@ func (OpencodeHarness) Env(baseURL string) []string {
 		if os.Getenv(k) != "" {
 			env = append(env, k)
 		}
-	}
-	if baseURL != "" {
-		// opencode has no single base-url override; the operator sets
-		// it per-provider via OPENCODE_CONFIG_CONTENT. baseURL is
-		// accepted for interface symmetry and ignored.
-		_ = baseURL
 	}
 	return env
 }
