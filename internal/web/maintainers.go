@@ -43,10 +43,7 @@ func (s *Server) maintainersList(w http.ResponseWriter, r *http.Request) {
 		sortCol, dir = nameSort, ""
 		q = q.Order("CASE WHEN name = '' THEN 1 ELSE 0 END, name, login")
 	}
-	sort := sortCol
-	if dir != "" {
-		sort = sortCol + "." + dir
-	}
+	sort := joinSort(sortCol, dir)
 
 	var total int64
 	q.Count(&total)

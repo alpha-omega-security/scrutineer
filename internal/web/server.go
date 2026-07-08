@@ -664,10 +664,7 @@ func (s *Server) repoList(w http.ResponseWriter, r *http.Request) {
 		sortCol, dir = defaultSort, ""
 		q = q.Order("updated_at desc")
 	}
-	sort := sortCol
-	if dir != "" {
-		sort = sortCol + "." + dir
-	}
+	sort := joinSort(sortCol, dir)
 
 	var total int64
 	q.Count(&total)
@@ -968,10 +965,7 @@ func (s *Server) findings(w http.ResponseWriter, r *http.Request) {
 		sortCol, dir = defaultSort, ""
 		q = q.Order("id desc")
 	}
-	sort := sortCol
-	if dir != "" {
-		sort = sortCol + "." + dir
-	}
+	sort := joinSort(sortCol, dir)
 
 	var total int64
 	q.Count(&total)
@@ -1524,10 +1518,7 @@ func (s *Server) packages(w http.ResponseWriter, r *http.Request) {
 		sortCol, dir = "name", ""
 		q = q.Order("name")
 	}
-	sort := sortCol
-	if dir != "" {
-		sort = sortCol + "." + dir
-	}
+	sort := joinSort(sortCol, dir)
 
 	var total int64
 	q.Count(&total)
@@ -1591,10 +1582,7 @@ func (s *Server) advisoriesList(w http.ResponseWriter, r *http.Request) {
 		sortCol, dir = sortSeverity, ""
 		q = q.Order("cvss_score desc, id desc")
 	}
-	sort := sortCol
-	if dir != "" {
-		sort = sortCol + "." + dir
-	}
+	sort := joinSort(sortCol, dir)
 
 	var total int64
 	q.Count(&total)

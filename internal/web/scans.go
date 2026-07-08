@@ -41,10 +41,7 @@ func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 		sortCol, dir = defaultSort, ""
 		q = q.Order("status_priority, scans.id desc")
 	}
-	sort := sortCol
-	if dir != "" {
-		sort = sortCol + "." + dir
-	}
+	sort := joinSort(sortCol, dir)
 
 	var total int64
 	q.Count(&total)

@@ -45,10 +45,7 @@ func (s *Server) sbomList(w http.ResponseWriter, r *http.Request) {
 		sortCol, dir = defaultSort, ""
 		q = q.Order("id desc")
 	}
-	sort := sortCol
-	if dir != "" {
-		sort = sortCol + "." + dir
-	}
+	sort := joinSort(sortCol, dir)
 
 	var total int64
 	q.Count(&total)
@@ -163,7 +160,7 @@ func (s *Server) sbomShow(w http.ResponseWriter, r *http.Request) {
 		repoIDs = append(repoIDs, id)
 	}
 
-	sort := r.URL.Query().Get("sort")
+	sortCol, dir := splitSort(r.URL.Query().Get("sort"))
 	var findings []db.Finding
 	var findingsTotal int64
 	var advisories []db.Advisory
@@ -180,14 +177,16 @@ func (s *Server) sbomShow(w http.ResponseWriter, r *http.Request) {
 		if category := r.URL.Query().Get("category"); category != "" {
 			q = applyCWECategoryFilter(q, category)
 		}
-		switch sort {
+		switch sortCol {
 		case sortSeverity:
-			q = q.Order(severityOrder).Order("id desc")
+			// severityOrder ranks the most severe LOWEST, so the "desc" logical
+			// default is ascending on the expression; !wantDesc flips it.
+			q = q.Order(orderBySuffix("("+severityOrder+")", !wantDesc(dir, true))).Order("findings.id desc")
 		case sortRepository:
 			q = q.Joins("JOIN repositories r ON r.id = findings.repository_id").
-				Order("r.name").Order("findings.id desc")
+				Order(orderByExpr("r.name", dir, false)).Order("findings.id desc")
 		default:
-			sort = defaultSort
+			sortCol, dir = defaultSort, ""
 			q = q.Order("id desc")
 		}
 		q.Model(&db.Finding{}).Count(&findingsTotal)
@@ -214,7 +213,7 @@ func (s *Server) sbomShow(w http.ResponseWriter, r *http.Request) {
 		"Advisories": advisories, "AdvisoriesTotal": advisoriesTotal,
 		"Repos":    reposByID,
 		"Resolved": resolved, "WithRepo": withRepo,
-		"Severity": r.URL.Query().Get("severity"), "Sort": sort,
+		"Severity": r.URL.Query().Get("severity"), "Sort": joinSort(sortCol, dir),
 		"Category":   r.URL.Query().Get("category"),
 		"Categories": CWECategories(), "Uncategorized": UncategorizedCWE,
 		"Scope": scope, "HasScope": hasScope,

@@ -31,6 +31,45 @@ func TestSplitSort(t *testing.T) {
 	}
 }
 
+func TestJoinSort(t *testing.T) {
+	for _, tc := range []struct{ key, dir, want string }{
+		{"severity", "", "severity"},
+		{"severity", "asc", "severity.asc"},
+		{"severity", "desc", "severity.desc"},
+		{"", "", ""},
+	} {
+		if got := joinSort(tc.key, tc.dir); got != tc.want {
+			t.Errorf("joinSort(%q,%q) = %q, want %q", tc.key, tc.dir, got, tc.want)
+		}
+	}
+	// Round-trip: joinSort is the inverse of splitSort for every valid token.
+	for _, token := range []string{"severity", "severity.asc", "severity.desc", ""} {
+		key, dir := splitSort(token)
+		if got := joinSort(key, dir); got != token {
+			t.Errorf("joinSort(splitSort(%q)) = %q", token, got)
+		}
+	}
+}
+
+func TestWantDesc(t *testing.T) {
+	for _, tc := range []struct {
+		dir  string
+		def  bool
+		want bool
+	}{
+		{"asc", true, false},
+		{"asc", false, false},
+		{"desc", true, true},
+		{"desc", false, true},
+		{"", true, true},
+		{"", false, false},
+	} {
+		if got := wantDesc(tc.dir, tc.def); got != tc.want {
+			t.Errorf("wantDesc(%q, %v) = %v, want %v", tc.dir, tc.def, got, tc.want)
+		}
+	}
+}
+
 func TestSortCtxURL(t *testing.T) {
 	c := sortCtx{path: "/findings", query: url.Values{
 		"sort": {"severity"}, "status": {"all"}, "page": {"3"},
@@ -227,7 +266,7 @@ func TestSort_maliciousParamFallsBackSafely(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
 
-	repo := db.Repository{URL: "https://x/keep", Name: "keep"}
+	repo := db.Repository{URL: "https://x/keep", Name: "keep", Owner: "keep-org"}
 	s.DB.Create(&repo)
 	s.DB.Create(&db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone,
 		StatusPriority: db.StatusPriorityFor(db.ScanDone), FindingsCount: 1})
@@ -242,9 +281,11 @@ func TestSort_maliciousParamFallsBackSafely(t *testing.T) {
 		"' OR '1'='1",
 		"(SELECT 1)",
 	}
-	// Both the repo index (/) and the scans index (/scans) go through the same
-	// allowlists, so exercise both with every payload.
-	for _, base := range []string{"/", "/scans"} {
+	// Every sortable index has its own switch dispatch, so exercise each with
+	// every payload — a regression on any one of them would let request text
+	// reach an ORDER BY.
+	bases := []string{"/", "/scans", "/findings", "/packages", "/advisories", "/maintainers", "/orgs", "/sboms"}
+	for _, base := range bases {
 		for _, p := range payloads {
 			w := httptest.NewRecorder()
 			s.Handler().ServeHTTP(w, localReq("GET", base+"?sort="+url.QueryEscape(p)))
