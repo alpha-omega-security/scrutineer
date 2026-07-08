@@ -31,7 +31,7 @@ func (s *Server) registerSBOMRoutes(mux *http.ServeMux) {
 
 func (s *Server) sbomList(w http.ResponseWriter, r *http.Request) {
 	q := s.DB.Model(&db.SBOMUpload{})
-	sortCol, dir := splitSort(r.URL.Query().Get("sort"), "")
+	sortCol, dir := splitSort(r.URL.Query().Get("sort"))
 	switch sortCol {
 	case "name":
 		q = q.Order(orderByExpr("name", dir, false)).Order("id desc")

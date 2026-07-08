@@ -23,7 +23,7 @@ func (s *Server) maintainersList(w http.ResponseWriter, r *http.Request) {
 	}
 
 	const nameSort = "name"
-	sortCol, dir := splitSort(r.URL.Query().Get("sort"), "")
+	sortCol, dir := splitSort(r.URL.Query().Get("sort"))
 	switch sortCol {
 	case "login":
 		q = q.Order(orderByExpr("login", dir, false))

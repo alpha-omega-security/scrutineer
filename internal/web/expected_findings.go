@@ -99,20 +99,16 @@ func buildExpectedFinding(repoID uint, file, cwe, cve, note string) (db.Expected
 func expectedFindingResponses(rows []db.ExpectedFinding) []expectedFindingResponse {
 	out := make([]expectedFindingResponse, 0, len(rows))
 	for _, row := range rows {
-		out = append(out, expectedFindingResponseFrom(row))
+		out = append(out, expectedFindingResponse{
+			ID:           row.ID,
+			RepositoryID: row.RepositoryID,
+			File:         row.File,
+			CWE:          row.CWE,
+			CVE:          row.CVE,
+			Note:         row.Note,
+		})
 	}
 	return out
-}
-
-func expectedFindingResponseFrom(row db.ExpectedFinding) expectedFindingResponse {
-	return expectedFindingResponse{
-		ID:           row.ID,
-		RepositoryID: row.RepositoryID,
-		File:         row.File,
-		CWE:          row.CWE,
-		CVE:          row.CVE,
-		Note:         row.Note,
-	}
 }
 
 func skillSchemaVersion(skill db.Skill) int {
@@ -139,7 +135,6 @@ type expectedFindingStatus struct {
 
 type expectedMatchSet struct {
 	Expected             []expectedFindingStatus
-	FindingStatus        map[uint]bool
 	MatchedTotal         int
 	FindingTotal         int
 	TruePositiveFindings int
@@ -173,16 +168,9 @@ func loadRepoExpectedView(gdb *gorm.DB, repoID uint, latest *db.Scan, rf repoFin
 	}
 }
 
-func expectedMatchesForScan(gdb *gorm.DB, repoID, scanID uint) expectedMatchSet {
-	var expected []db.ExpectedFinding
-	gdb.Where("repository_id = ?", repoID).Order("file, cwe").Find(&expected)
-	return expectedMatchesForRows(gdb, repoID, scanID, expected)
-}
-
 func expectedMatchesForRows(gdb *gorm.DB, repoID, scanID uint, expected []db.ExpectedFinding) expectedMatchSet {
 	out := expectedMatchSet{
-		Expected:      make([]expectedFindingStatus, 0, len(expected)),
-		FindingStatus: map[uint]bool{},
+		Expected: make([]expectedFindingStatus, 0, len(expected)),
 	}
 	for _, row := range expected {
 		out.Expected = append(out.Expected, expectedFindingStatus{Expected: row})
@@ -200,7 +188,6 @@ func expectedMatchesForRows(gdb *gorm.DB, repoID, scanID uint, expected []db.Exp
 		findingMatched := false
 		for i := range out.Expected {
 			if findingMatchesExpected(f, out.Expected[i].Expected) {
-				out.FindingStatus[f.ID] = true
 				findingMatched = true
 				if !out.Expected[i].Matched {
 					out.Expected[i].Matched = true
@@ -233,7 +220,7 @@ func findingMatchesExpected(f db.Finding, expected db.ExpectedFinding) bool {
 	if normalizeCWE(f.CWE) != normalizeCWE(expected.CWE) {
 		return false
 	}
-	want := normalizeExpectedFile(expected.File)
+	want := cleanRepoPath(expected.File)
 	for _, loc := range findingLocations(f) {
 		if normalizeLocationFile(loc) == want {
 			return true
@@ -251,10 +238,6 @@ func findingLocations(f db.Finding) []string {
 		return nil
 	}
 	return []string{f.Location}
-}
-
-func normalizeExpectedFile(file string) string {
-	return cleanRepoPath(file)
 }
 
 func cleanExpectedFileInput(file string) (string, error) {

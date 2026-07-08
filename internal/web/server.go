@@ -629,7 +629,7 @@ func (s *Server) repoList(w http.ResponseWriter, r *http.Request) {
 			like, like, like, like)
 	}
 
-	sortCol, dir := splitSort(r.URL.Query().Get("sort"), "")
+	sortCol, dir := splitSort(r.URL.Query().Get("sort"))
 	const nameSort = "name"
 	switch sortCol {
 	case nameSort:
@@ -944,7 +944,7 @@ func (s *Server) findings(w http.ResponseWriter, r *http.Request) {
 	missed := r.URL.Query().Get("missed") == "1"
 	search := strings.TrimSpace(r.URL.Query().Get("q"))
 
-	sortCol, dir := splitSort(r.URL.Query().Get("sort"), "")
+	sortCol, dir := splitSort(r.URL.Query().Get("sort"))
 	switch sortCol {
 	case sortSeverity:
 		// severityOrder ranks the most severe LOWEST, so the intuitive default
@@ -1114,16 +1114,12 @@ func (s *Server) depScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	repoURL := resolveDepRepoURL(r.Context(), dep)
+	repoURL := resolvePURLRepo(r.Context(), dep.PURL)
 	if repoURL == "" {
 		http.Error(w, "could not resolve repository URL for "+dep.Name, http.StatusUnprocessableEntity)
 		return
 	}
 	s.addRepoAndScan(w, r, repoURL)
-}
-
-func resolveDepRepoURL(ctx context.Context, dep db.Dependency) string {
-	return resolvePURLRepo(ctx, dep.PURL)
 }
 
 // resolvePURLRepo asks packages.ecosyste.ms for the repository_url behind a
@@ -1510,7 +1506,7 @@ func (s *Server) packages(w http.ResponseWriter, r *http.Request) {
 		q = q.Where("name LIKE ? OR p_url LIKE ? OR licenses LIKE ?", like, like, like)
 	}
 
-	sortCol, dir := splitSort(r.URL.Query().Get("sort"), "")
+	sortCol, dir := splitSort(r.URL.Query().Get("sort"))
 	switch sortCol {
 	case "name":
 		q = q.Order(orderByExpr("name", dir, false))
@@ -1580,7 +1576,7 @@ func (s *Server) advisoriesList(w http.ResponseWriter, r *http.Request) {
 			like, like, like, like)
 	}
 
-	sortCol, dir := splitSort(r.URL.Query().Get("sort"), "")
+	sortCol, dir := splitSort(r.URL.Query().Get("sort"))
 	switch sortCol {
 	case "newest":
 		q = q.Order(orderByExpr("published_at", dir, true)).Order("id desc")

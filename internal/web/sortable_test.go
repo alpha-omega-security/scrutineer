@@ -11,23 +11,22 @@ import (
 
 func TestSplitSort(t *testing.T) {
 	for _, tc := range []struct {
-		token, defDir string
-		wantKey       string
-		wantDir       string
+		token   string
+		wantKey string
+		wantDir string
 	}{
-		{"severity.asc", "", "severity", "asc"},
-		{"severity.desc", "", "severity", "desc"},
-		{"severity", "", "severity", ""},
-		{"severity", "desc", "severity", "desc"},
-		{"", "asc", "", "asc"},
+		{"severity.asc", "severity", "asc"},
+		{"severity.desc", "severity", "desc"},
+		{"severity", "severity", ""},
+		{"", "", ""},
 		// An unrecognised direction suffix is not a direction: the whole token
 		// is treated as the key, so it falls through to a handler's default.
-		{"severity.bogus", "", "severity.bogus", ""},
+		{"severity.bogus", "severity.bogus", ""},
 	} {
-		key, dir := splitSort(tc.token, tc.defDir)
+		key, dir := splitSort(tc.token)
 		if key != tc.wantKey || dir != tc.wantDir {
-			t.Errorf("splitSort(%q,%q) = (%q,%q), want (%q,%q)",
-				tc.token, tc.defDir, key, dir, tc.wantKey, tc.wantDir)
+			t.Errorf("splitSort(%q) = (%q,%q), want (%q,%q)",
+				tc.token, key, dir, tc.wantKey, tc.wantDir)
 		}
 	}
 }

@@ -81,7 +81,6 @@ type streamMessage struct {
 	Message       *assistantMsg   `json:"message"`
 	Result        json.RawMessage `json:"result"`
 	CostUSD       *float64        `json:"total_cost_usd"`
-	Duration      *int64          `json:"duration_ms"`
 	NumTurns      *int            `json:"num_turns"`
 	Usage         *Usage          `json:"usage"`
 	Error         json.RawMessage `json:"error"`
