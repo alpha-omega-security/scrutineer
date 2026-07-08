@@ -4620,6 +4620,86 @@ func TestSettingsUpdateTheme_rejectsInvalid(t *testing.T) {
 	}
 }
 
+func TestSettingsUpdateColorScheme_setsCookie(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	form := url.Values{"color_scheme": {"dark"}}
+	req := httptest.NewRequest("POST", "/settings/color-scheme", strings.NewReader(form.Encode()))
+	req.Host = testHost
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+
+	var found bool
+	for _, sc := range w.Header().Values("Set-Cookie") {
+		if strings.HasPrefix(sc, "color_scheme=dark") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("color_scheme cookie not set; cookies: %v", w.Header().Values("Set-Cookie"))
+	}
+}
+
+func TestSettingsUpdateColorScheme_rejectsInvalid(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	form := url.Values{"color_scheme": {"sepia"}}
+	req := httptest.NewRequest("POST", "/settings/color-scheme", strings.NewReader(form.Encode()))
+	req.Host = testHost
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Errorf("want 422 for invalid color scheme, got %d", w.Code)
+	}
+}
+
+func TestHumanDuration(t *testing.T) {
+	for _, tc := range []struct {
+		d    time.Duration
+		want string
+	}{
+		{0, "0s"},
+		{999 * time.Millisecond, "0s"},
+		{45 * time.Second, "45s"},
+		{3 * time.Minute, "3m"},
+		{2 * time.Hour, "2h"},
+		{2*time.Hour + 30*time.Minute, "2h30m"},
+		{50 * time.Hour, "2d"},
+	} {
+		if got := humanDuration(tc.d); got != tc.want {
+			t.Errorf("humanDuration(%v) = %q, want %q", tc.d, got, tc.want)
+		}
+	}
+}
+
+func TestOrgActivityLess(t *testing.T) {
+	early := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	late := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	a := orgRow{LastActivity: &early}
+	b := orgRow{LastActivity: &late}
+	n := orgRow{LastActivity: nil}
+
+	if !orgActivityLess(a, b) || orgActivityLess(b, a) {
+		t.Errorf("earlier activity should sort before later")
+	}
+	// nil (never active) sorts oldest, so it comes before any real timestamp
+	// under the ascending comparator; dirLess flips this to newest-first.
+	if !orgActivityLess(n, a) || orgActivityLess(a, n) {
+		t.Errorf("nil LastActivity should sort before any real timestamp")
+	}
+	if orgActivityLess(n, orgRow{}) {
+		t.Errorf("nil vs nil should not sort strictly-before")
+	}
+}
+
 func TestSettingsUpdateEffort_setsDefault(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

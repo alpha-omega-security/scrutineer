@@ -11,6 +11,33 @@ import (
 	"time"
 )
 
+func TestRetryAfterDelay(t *testing.T) {
+	const fallback = 3 * time.Second
+	const maxDelay = 30 * time.Second
+	future := time.Now().Add(10 * time.Second).UTC().Format(http.TimeFormat)
+	longFuture := time.Now().Add(90 * time.Second).UTC().Format(http.TimeFormat)
+	past := time.Now().Add(-10 * time.Second).UTC().Format(http.TimeFormat)
+	for _, tc := range []struct {
+		name, header string
+		wantMin      time.Duration
+		wantMax      time.Duration
+	}{
+		{"empty falls back", "", fallback, fallback},
+		{"integer seconds", "5", 5 * time.Second, 5 * time.Second},
+		{"integer seconds capped", "90", maxDelay, maxDelay},
+		{"http-date future", future, 8 * time.Second, 12 * time.Second},
+		{"http-date future capped", longFuture, maxDelay, maxDelay},
+		{"http-date past yields zero", past, 0, 0},
+		{"garbage falls back", "not-a-time", fallback, fallback},
+	} {
+		got := retryAfterDelay(tc.header, fallback, maxDelay)
+		if got < tc.wantMin || got > tc.wantMax {
+			t.Errorf("%s: retryAfterDelay(%q) = %v, want in [%v, %v]",
+				tc.name, tc.header, got, tc.wantMin, tc.wantMax)
+		}
+	}
+}
+
 func TestDoRetrySucceedsAfterTransientStatus(t *testing.T) {
 	hits := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
