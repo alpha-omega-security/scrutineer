@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/testutil"
 )
 
 // seedCacheFile writes a file of n bytes into the clone cache for url under
@@ -135,7 +136,7 @@ func TestEnsureCommit_reachableCommitIsNoOp(t *testing.T) {
 	}
 	run := func(args ...string) string {
 		cmd := exec.Command("git", append([]string{"-C", cacheSrc}, args...)...)
-		cmd.Env = testGitEnv()
+		cmd.Env = testutil.GitEnv()
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
@@ -169,7 +170,7 @@ func TestEnsureCommit_unreachableNonShallowIsNoOp(t *testing.T) {
 		t.Fatal(err)
 	}
 	cmd := exec.Command("git", "-C", cacheSrc, "init", "--quiet", "-b", "main")
-	cmd.Env = testGitEnv()
+	cmd.Env = testutil.GitEnv()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git init: %v\n%s", err, out)

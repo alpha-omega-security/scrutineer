@@ -148,7 +148,7 @@ func TestFindingOSV_emitsOnlyV4WhenV3Absent(t *testing.T) {
 	doc := decodeCSAF(t, w.Body.Bytes())
 	raw, ok := doc["severity"]
 	if !ok {
-		t.Fatalf("severity key missing in OSV doc keys=%v", mapKeys(doc))
+		t.Fatalf("severity key missing in OSV doc keys=%v", keys(doc))
 	}
 	sevs, ok := raw.([]any)
 	if !ok || len(sevs) != 1 {
@@ -157,14 +157,6 @@ func TestFindingOSV_emitsOnlyV4WhenV3Absent(t *testing.T) {
 	if sevs[0].(map[string]any)["type"] != "CVSS_V4" {
 		t.Errorf("severity[0].type = %v", sevs[0])
 	}
-}
-
-func mapKeys(m map[string]any) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	return out
 }
 
 func TestFindingOSV_packageWithPURLBecomesAffectedPackage(t *testing.T) {

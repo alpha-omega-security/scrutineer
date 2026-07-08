@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/testutil"
 )
 
 func TestPrepareLocalSrc(t *testing.T) {
@@ -99,7 +100,7 @@ func TestFetchRefChecksOutRequestedRef(t *testing.T) {
 		t.Helper()
 		cmd := exec.Command("git", args...)
 		cmd.Dir = dir
-		cmd.Env = testGitEnv()
+		cmd.Env = testutil.GitEnv()
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("git %v: %s: %v", args, out, err)
