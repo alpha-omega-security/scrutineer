@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
@@ -84,6 +85,28 @@ func TestExportRepoFindings(t *testing.T) {
 				t.Errorf("export row missing %q", k)
 			}
 		}
+	}
+}
+
+func TestStreamJSONLRowsErrorReturns500(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	w := httptest.NewRecorder()
+	streamJSONL[db.Finding](w, s.DB.Raw("SELECT * FROM missing_export_table"), findingExport)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status %d, want 500. body=%s", w.Code, w.Body)
+	}
+	if ct := w.Header().Get("Content-Type"); ct != "application/json; charset=utf-8" {
+		t.Errorf("content-type %q, want JSON API error", ct)
+	}
+	var body map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatal(err)
+	}
+	if body[errorKey] == "" {
+		t.Fatalf("error response missing %q: %+v", errorKey, body)
 	}
 }
 
