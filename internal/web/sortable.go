@@ -33,6 +33,17 @@ func splitSort(token string) (key, dir string) {
 	return token, ""
 }
 
+// joinSort is the inverse of splitSort: it rebuilds a "key" or "key.dir" token
+// from the (allowlisted key, validated dir) a handler resolved. Handlers pass
+// this back to templates as .Sort so filter and pagination links preserve the
+// active sort — the same value sortCtx reads via c.query.Get("sort").
+func joinSort(key, dir string) string {
+	if dir == "" {
+		return key
+	}
+	return key + "." + dir
+}
+
 // dirOr returns dir when it is a valid direction ("asc"/"desc"), else def. It
 // resolves the request direction for the NON-SQL callers — the template arrow
 // (sortCtx.Dir) and the in-memory org comparator (dirLess). SQL ORDER BY

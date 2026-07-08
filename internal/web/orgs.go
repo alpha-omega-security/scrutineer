@@ -120,10 +120,7 @@ func (s *Server) orgsList(w http.ResponseWriter, r *http.Request) {
 		sortCol, dir = nameSort, ""
 		sortSlice(rows, orgNameLess)
 	}
-	sort := sortCol
-	if dir != "" {
-		sort = sortCol + "." + dir
-	}
+	sort := joinSort(sortCol, dir)
 
 	s.render(w, r, "orgs.html", map[string]any{
 		"Orgs": rows, "Q": search, "Sort": sort,
