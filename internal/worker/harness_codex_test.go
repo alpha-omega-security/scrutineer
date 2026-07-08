@@ -146,6 +146,7 @@ func TestCodexHarness_AccountErrorText(t *testing.T) {
 		"429 Too Many Requests":               true,
 		"insufficient_quota for this account": true,
 		"invalid_api_key provided":            true,
+		"update your billing details later":   false,
 		"repo mentions billing integrations":  false,
 		"compiling skill":                     false,
 		"":                                    false,
@@ -185,6 +186,23 @@ func TestCodexHarness_ParseStream_live(t *testing.T) {
 		{Kind: KindTool, Tool: "command", Text: "/bin/bash -lc 'ls ./src'"},
 		{Kind: KindText, Text: "done"},
 		{Kind: KindResult, Turns: 1, Usage: Usage{InputTokens: 17339, OutputTokens: 92, CacheReadTokens: 11008}},
+	}
+	var got []Event
+	CodexHarness{}.ParseStream(strings.NewReader(in), func(e Event) { got = append(got, e) })
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("ParseStream mismatch\n got: %+v\nwant: %+v", got, want)
+	}
+}
+
+func TestCodexHarness_ParseStream_threadIDDoesNotMaskPayloads(t *testing.T) {
+	in := `{"type":"turn.completed","thread_id":"thr-1","usage":{"input_tokens":12,"cached_input_tokens":3,"output_tokens":4}}
+{"type":"item.completed","thread_id":"thr-1","item":{"id":"item_1","type":"agent_message","text":"done"}}
+{"type":"error","thread_id":"thr-1","error":"rate_limit_exceeded"}
+`
+	want := []Event{
+		{Kind: KindResult, Turns: 1, Usage: Usage{InputTokens: 12, OutputTokens: 4, CacheReadTokens: 3}},
+		{Kind: KindText, Text: "done"},
+		{Kind: KindError, Text: "rate_limit_exceeded"},
 	}
 	var got []Event
 	CodexHarness{}.ParseStream(strings.NewReader(in), func(e Event) { got = append(got, e) })

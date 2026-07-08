@@ -159,8 +159,8 @@ func builtinModelForTier(tier, fallback string) string {
 			return m.ID
 		}
 	}
-	// Otherwise the substring heuristic covers the built-in Anthropic list
-	// (which carries no tier tags): Mid → first sonnet, Max → latest opus.
+	// Otherwise the substring heuristic keeps older or minimally tagged
+	// model lists usable: Mid → first sonnet, Max → latest opus.
 	// A custom list that neither tags tiers nor matches these needles falls
 	// through to DefaultModel; set the tiers in /settings for that case.
 	switch tier {

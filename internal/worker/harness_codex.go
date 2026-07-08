@@ -149,7 +149,7 @@ func parseCodexLine(raw []byte, emit func(Event)) {
 		return
 	}
 	switch {
-	case ev.SessionID != "" || ev.ThreadID != "":
+	case isCodexSessionEvent(ev) && (ev.SessionID != "" || ev.ThreadID != ""):
 		id := ev.SessionID
 		if id == "" {
 			id = ev.ThreadID
@@ -195,6 +195,15 @@ func parseCodexLine(raw []byte, emit func(Event)) {
 		emit(Event{Kind: KindText, Text: ev.Message})
 	default:
 		emit(Event{Kind: KindText, Text: line})
+	}
+}
+
+func isCodexSessionEvent(ev codexLine) bool {
+	switch ev.Type {
+	case "thread.started", "session.created", "init":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -290,7 +299,6 @@ func (CodexHarness) AccountErrorText(s string) string {
 		"invalid_api_key",
 		"incorrect api key",
 		"account is not active",
-		"billing details",
 	} {
 		if strings.Contains(lower, phrase) {
 			return text
