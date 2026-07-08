@@ -379,12 +379,13 @@ func applyFindingFilters(q *gorm.DB, r *http.Request) *gorm.DB {
 // preloads into memory. The body is partial on mid-stream errors: once
 // we have committed to 200, a truncated stream is the only honest signal.
 func streamJSONL[T any](w http.ResponseWriter, q *gorm.DB, project func(T) map[string]any) {
-	w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
 	rows, err := q.Rows()
 	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	defer func() { _ = rows.Close() }()
+	w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
 	enc := json.NewEncoder(w)
 	flusher, _ := w.(http.Flusher)
 	for rows.Next() {
