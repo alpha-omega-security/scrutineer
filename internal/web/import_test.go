@@ -1,8 +1,11 @@
 package web
 
 import (
+	"errors"
 	"strings"
 	"testing"
+
+	"gorm.io/gorm"
 
 	"scrutineer/internal/db"
 	"scrutineer/internal/ingest"
@@ -110,6 +113,105 @@ func TestAppendFixDescription(t *testing.T) {
 	}
 }
 
+func TestImportFindings_reimportBumpsSeenCount(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	res := ingest.Result{
+		RepoURL: "https://example.com/r",
+		Tool:    "external-scanner",
+		Commit:  "abc",
+		Findings: []ingest.Finding{
+			{Title: "one", Severity: "High", Location: "a.go:1", CWE: "CWE-79"},
+			{Title: "two", Severity: "Low", Location: "b.go:1", CWE: "CWE-89"},
+		},
+	}
+	first, err := s.importResult(res, "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first["created"] != 2 || first["observed"] != 0 {
+		t.Fatalf("first import created=%v observed=%v, want 2/0", first["created"], first["observed"])
+	}
+
+	// Second import: one finding matches, one is new.
+	res.Commit = "def"
+	res.Findings = []ingest.Finding{
+		{Title: "one", Severity: "High", Location: "a.go:1", CWE: "CWE-79"},
+		{Title: "three", Severity: "Medium", Location: "c.go:1", CWE: "CWE-22"},
+	}
+	second, err := s.importResult(res, "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second["created"] != 1 || second["observed"] != 1 {
+		t.Fatalf("second import created=%v observed=%v, want 1/1", second["created"], second["observed"])
+	}
+
+	var total int64
+	s.DB.Model(&db.Finding{}).Count(&total)
+	if total != 3 {
+		t.Fatalf("total findings = %d, want 3 (no duplicate for re-observed)", total)
+	}
+
+	var reobserved db.Finding
+	s.DB.Where("title = ?", "one").First(&reobserved)
+	if reobserved.SeenCount != 2 {
+		t.Errorf("SeenCount = %d, want 2", reobserved.SeenCount)
+	}
+	if reobserved.LastSeenCommit != "def" {
+		t.Errorf("LastSeenCommit = %q, want def", reobserved.LastSeenCommit)
+	}
+	if reobserved.LastSeenScanID != uint(second["scan_id"].(uint)) {
+		t.Errorf("LastSeenScanID = %d, want %d", reobserved.LastSeenScanID, second["scan_id"])
+	}
+	if reobserved.MissedCount != 0 {
+		t.Errorf("MissedCount = %d, want 0 (reset on re-observation)", reobserved.MissedCount)
+	}
+	var hist int64
+	s.DB.Model(&db.FindingHistory{}).
+		Where("finding_id = ? AND field = ?", reobserved.ID, "observed").Count(&hist)
+	if hist != 1 {
+		t.Errorf("history rows = %d, want 1", hist)
+	}
+}
+
+func TestImportFindings_rollbackLeavesNoScanOrFindings(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/r", Name: "r"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Status: db.ScanDone, Commit: "abc"}
+
+	// Run the same tx shape as importResult but force an error after the
+	// scan and findings have been written, so we can assert both roll back.
+	res := ingest.Result{
+		Tool: "external-scanner",
+		Findings: []ingest.Finding{
+			{Title: "ok", Severity: "High", Location: "a.go:1"},
+		},
+	}
+	err := s.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&scan).Error; err != nil {
+			return err
+		}
+		if _, _, err := s.importFindings(tx, &scan, res); err != nil {
+			return err
+		}
+		return errors.New("simulated post-write failure")
+	})
+	if err == nil {
+		t.Fatal("expected transaction to roll back")
+	}
+
+	var scans, findings int64
+	s.DB.Model(&db.Scan{}).Count(&scans)
+	s.DB.Model(&db.Finding{}).Count(&findings)
+	if scans != 0 || findings != 0 {
+		t.Fatalf("after rollback: scans=%d findings=%d, want 0/0", scans, findings)
+	}
+}
+
 func TestImportFindings_keepsSuggestedFixGated(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
@@ -128,12 +230,15 @@ func TestImportFindings_keepsSuggestedFixGated(t *testing.T) {
 			SuggestedFix: "validate input before use",
 		}},
 	}
-	created, _ := s.importFindings(&scan, res, true)
+	created, _, err := s.importFindings(s.DB, &scan, res)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(created) != 1 {
 		t.Fatalf("created %d findings, want 1", len(created))
 	}
 	var f db.Finding
-	s.DB.First(&f, created[0])
+	s.DB.First(&f, created[0].ID)
 	if f.SuggestedFix != "" {
 		t.Errorf("SuggestedFix = %q, want empty (gated column)", f.SuggestedFix)
 	}
@@ -164,22 +269,23 @@ func TestImportFindings_revalidateToggle(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			s, done := newTestServer(t)
 			defer done()
-			repo := db.Repository{URL: "https://example.com/r", Name: "r"}
-			s.DB.Create(&repo)
-			scan := db.Scan{RepositoryID: repo.ID, Status: db.ScanDone, Commit: "abc"}
-			s.DB.Create(&scan)
 			revalidate := db.Skill{Name: "revalidate", OutputFile: "report.json", OutputKind: "revalidate", Version: 1, Active: true}
 			s.DB.Create(&revalidate)
 
 			res := ingest.Result{
-				Tool: "external-scanner",
+				RepoURL: "https://example.com/r",
+				Tool:    "external-scanner",
 				Findings: []ingest.Finding{
 					{Title: "high", Severity: "High", Location: "a.go:1"},
 					{Title: "low", Severity: "Low", Location: "b.go:1"},
 				},
 			}
-			if created, _ := s.importFindings(&scan, res, tc.revalidate); len(created) != 2 {
-				t.Fatalf("created %d findings, want 2", len(created))
+			out, err := s.importResult(res, "", tc.revalidate)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if out["created"] != 2 {
+				t.Fatalf("created %v findings, want 2", out["created"])
 			}
 			var queued int64
 			s.DB.Model(&db.Scan{}).
@@ -195,14 +301,14 @@ func TestImportFindings_revalidateToggle(t *testing.T) {
 func TestImportFindings_skipsRevalidateWhenSkillAbsent(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
-	repo := db.Repository{URL: "https://example.com/r", Name: "r"}
-	s.DB.Create(&repo)
-	scan := db.Scan{RepositoryID: repo.ID, Status: db.ScanDone, Commit: "abc"}
-	s.DB.Create(&scan)
 	// No revalidate skill registered. Import must still succeed.
-	res := ingest.Result{Tool: "x", Findings: []ingest.Finding{{Title: "t", Severity: "High", Location: "a.go:1"}}}
-	if created, _ := s.importFindings(&scan, res, true); len(created) != 1 {
-		t.Fatalf("created = %d, want 1", len(created))
+	res := ingest.Result{RepoURL: "https://example.com/r", Tool: "x", Findings: []ingest.Finding{{Title: "t", Severity: "High", Location: "a.go:1"}}}
+	out, err := s.importResult(res, "", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out["created"] != 1 {
+		t.Fatalf("created = %v, want 1", out["created"])
 	}
 }
 
