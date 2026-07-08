@@ -53,9 +53,11 @@ func TestCostFromUsage_zeroUsageIsZero(t *testing.T) {
 
 func TestNormalizeModelID_stripsBracketSuffix(t *testing.T) {
 	for in, want := range map[string]string{
-		"claude-fable-5[1m]": "claude-fable-5",
-		"claude-opus-4-8":    "claude-opus-4-8",
-		"":                   "",
+		"claude-fable-5[1m]":           "claude-fable-5",
+		"claude-opus-4-8":              "claude-opus-4-8",
+		"anthropic/claude-opus-4-8":    "claude-opus-4-8",
+		"anthropic/claude-fable-5[1m]": "claude-fable-5",
+		"":                             "",
 	} {
 		if got := normalizeModelID(in); got != want {
 			t.Errorf("normalizeModelID(%q) = %q, want %q", in, got, want)

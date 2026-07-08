@@ -70,10 +70,14 @@ func costFromUsage(model string, u Usage) float64 {
 		float64(u.OutputTokens)*p.Out) / perMillion
 }
 
-// normalizeModelID strips a trailing [...] variant suffix (e.g.
-// "claude-fable-5[1m]" -> "claude-fable-5") so pricing keys stay on the
-// base model id regardless of context-window or routing variants.
+// normalizeModelID strips a leading provider/ prefix (opencode's
+// "anthropic/claude-opus-4-8" form) and a trailing [...] variant suffix
+// ("claude-fable-5[1m]" -> "claude-fable-5") so pricing keys stay on the
+// base model id regardless of harness or context-window variant.
 func normalizeModelID(id string) string {
+	if i := strings.LastIndexByte(id, '/'); i >= 0 {
+		id = id[i+1:]
+	}
 	if i := strings.IndexByte(id, '['); i > 0 {
 		return id[:i]
 	}

@@ -5,6 +5,7 @@
 
 ARG CLAUDE_VERSION=2.1.173
 ARG CODEX_VERSION=0.142.5
+ARG OPENCODE_VERSION=1.17.12
 ARG SEMGREP_VERSION=1.167.0
 
 FROM golang:1.26.4-trixie@sha256:68b7145ec43d1820b9a56704554b53d1520aa2a15cb5233e374188a31b2a1bce AS go-tools
@@ -30,6 +31,7 @@ RUN CGO_ENABLED=0 go build -o /out/scrutineer ./cmd/scrutineer
 FROM debian:trixie-slim@sha256:28de0877c2189802884ccd20f15ee41c203573bd87bb6b883f5f46362d24c5c2
 ARG CLAUDE_VERSION
 ARG CODEX_VERSION
+ARG OPENCODE_VERSION
 ARG SEMGREP_VERSION
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -37,6 +39,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl git bash coreutils \
         python3 python3-venv \
+        libstdc++6 ripgrep \
  && install -d -m 0755 /etc/apt/keyrings \
  && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
         -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
@@ -86,6 +89,22 @@ RUN set -eux; \
     install -m 0755 "/tmp/codex-${triple}" /usr/local/bin/codex; \
     rm /tmp/codex.tgz "/tmp/codex-${triple}"; \
     codex --version
+
+# opencode CLI (-backend opencode). The glibc tarball contains a single
+# `opencode` binary; it links libstdc++ dynamically (bun runtime), which
+# is why libstdc++6 is in the apt install list above.
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+      amd64) ocarch=x64;   sha=b41e3ae69b5033f6fba8b9fcf4cb19f0dc8093d449266ef01a5cd142f6f7064d ;; \
+      arm64) ocarch=arm64; sha=b36060c4c5bc8fee8e507a600af0ad8b2aa5e0c451f7f34cc3763a0d557b44d6 ;; \
+      *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /tmp/opencode.tgz \
+      "https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/opencode-linux-${ocarch}.tar.gz"; \
+    echo "${sha}  /tmp/opencode.tgz" | sha256sum -c -; \
+    tar -xzf /tmp/opencode.tgz -C /usr/local/bin opencode; \
+    rm /tmp/opencode.tgz; \
+    opencode --version
 
 COPY --from=go-tools /out/* /usr/local/bin/
 COPY --from=zizmor-build /out/bin/zizmor /usr/local/bin/zizmor
