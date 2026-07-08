@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/iotest"
 )
 
 func TestClaudeHarness_argsMatchBuildClaudeArgs(t *testing.T) {
@@ -355,5 +357,107 @@ func TestInjectProfileGuide_noopWithoutProfile(t *testing.T) {
 	entries, _ := os.ReadDir(work)
 	if len(entries) != 0 {
 		t.Errorf("no-profile / no-profiles-dir wrote %d files, want 0", len(entries))
+	}
+}
+
+// TestParseStream_readErrorEmittedForAllHarnesses proves every registered
+// harness's ParseStream goes through the shared scanJSONL loop: a mid-stream
+// read error must surface as a KindError event, and the line before it must
+// still be delivered. stream_test.go covers the oversized-line and
+// no-trailing-newline cases against scanJSONL directly (via ParseStream); this
+// pins each harness to that shared implementation.
+func TestParseStream_readErrorEmittedForAllHarnesses(t *testing.T) {
+	for name, h := range harnesses {
+		if name == "" {
+			continue
+		}
+		t.Run(name, func(t *testing.T) {
+			r := io.MultiReader(
+				strings.NewReader("plain-text-before-error\n"),
+				iotest.ErrReader(errors.New("pipe broke")),
+			)
+			var got []Event
+			h.ParseStream(r, func(e Event) { got = append(got, e) })
+			if len(got) != 2 {
+				t.Fatalf("%s: events = %+v, want [text, error]", name, got)
+			}
+			if got[0].Kind != KindText || got[0].Text != "plain-text-before-error" {
+				t.Errorf("%s: first event = %+v, want text before error", name, got[0])
+			}
+			if got[1].Kind != KindError || !strings.Contains(got[1].Text, "pipe broke") {
+				t.Errorf("%s: last event = %+v, want KindError mentioning read error", name, got[1])
+			}
+		})
+	}
+}
+
+func TestPassthroughEnv(t *testing.T) {
+	t.Setenv("SCRUTINEER_TEST_PASSTHROUGH_SET", "value")
+	t.Setenv("SCRUTINEER_TEST_PASSTHROUGH_UNSET", "")
+	got := passthroughEnv(
+		"SCRUTINEER_TEST_PASSTHROUGH_SET",
+		"SCRUTINEER_TEST_PASSTHROUGH_UNSET",
+		"SCRUTINEER_TEST_PASSTHROUGH_NEVER_SET",
+	)
+	want := []string{"SCRUTINEER_TEST_PASSTHROUGH_SET"}
+	if !slices.Equal(got, want) {
+		t.Errorf("passthroughEnv = %v, want %v", got, want)
+	}
+	if got := passthroughEnv(); got != nil {
+		t.Errorf("passthroughEnv() = %v, want nil", got)
+	}
+}
+
+func TestExplicitSkillPrompt(t *testing.T) {
+	fresh := explicitSkillPrompt(
+		SkillJob{Name: "deep-dive", OutputFile: "report.json"}, "./skills/deep-dive")
+	if !strings.HasPrefix(fresh, "Follow the instructions in ./skills/deep-dive/SKILL.md") {
+		t.Errorf("fresh prompt does not point at skill: %q", fresh)
+	}
+	if !strings.Contains(fresh, "./report.json") {
+		t.Errorf("fresh prompt does not name output file: %q", fresh)
+	}
+	if !strings.Contains(fresh, "validate-report") {
+		t.Errorf("JSON output should carry the schema-validation hint: %q", fresh)
+	}
+
+	resume := explicitSkillPrompt(
+		SkillJob{Name: "deep-dive", OutputFile: "report.json", ResumeSessionID: "s1"}, "./skills/deep-dive")
+	if !strings.HasPrefix(resume, "Continue following") {
+		t.Errorf("resume prompt should say continue: %q", resume)
+	}
+
+	override := explicitSkillPrompt(
+		SkillJob{Name: "deep-dive", ResumeSessionID: "s1", ResumePrompt: "fix the report"}, "./skills/deep-dive")
+	if override != "fix the report" {
+		t.Errorf("explicit ResumePrompt not returned verbatim: %q", override)
+	}
+
+	noOut := explicitSkillPrompt(SkillJob{Name: "posture"}, "./skills/posture")
+	if strings.Contains(noOut, "structured output") || strings.Contains(noOut, "validate-report") {
+		t.Errorf("no-output-file prompt should not mention output/validation: %q", noOut)
+	}
+}
+
+func TestMatchAccountPhrase(t *testing.T) {
+	listA := []string{"rate limit", "429"}
+	listB := []string{"revoked"}
+	for _, tc := range []struct {
+		s    string
+		want string
+	}{
+		{"  Error: Rate Limit exceeded  ", "Error: Rate Limit exceeded"},
+		{"HTTP 429 Too Many Requests", "HTTP 429 Too Many Requests"},
+		{"access REVOKED for org", "access REVOKED for org"},
+		{"unrelated failure", ""},
+		{"   ", ""},
+		{"", ""},
+	} {
+		if got := matchAccountPhrase(tc.s, listA, listB); got != tc.want {
+			t.Errorf("matchAccountPhrase(%q) = %q, want %q", tc.s, got, tc.want)
+		}
+	}
+	if got := matchAccountPhrase("rate limit"); got != "" {
+		t.Errorf("no lists: got %q, want empty", got)
 	}
 }

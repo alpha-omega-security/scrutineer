@@ -1,10 +1,8 @@
 package worker
 
 import (
-	"bufio"
 	"encoding/json"
 	"io"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -49,27 +47,7 @@ func (CodexHarness) Args(sj SkillJob, _ string, _ int, baseURL string) []string 
 	if sj.ResumeSessionID != "" {
 		args = append(args, "resume", sj.ResumeSessionID)
 	}
-	if sj.ResumeSessionID != "" && sj.ResumePrompt != "" {
-		return append(args, sj.ResumePrompt)
-	}
-	return append(args, codexSkillPrompt(sj.Name, sj.OutputFile, sj.ResumeSessionID != ""))
-}
-
-// codexSkillPrompt is the activation prompt for a codex run. codex
-// discovers ./skills/{name}/SKILL.md but does not auto-invoke it, so
-// the prompt points at it explicitly and restates the deliverable.
-func codexSkillPrompt(name, outputFile string, resume bool) string {
-	verb := "Follow"
-	if resume {
-		verb = "Continue following"
-	}
-	p := verb + " the instructions in ./skills/" + name +
-		"/SKILL.md against the repository cloned at ./src."
-	if outputFile != "" {
-		p += " Write your structured output to ./" + outputFile + " as the skill specifies."
-		p += schemaValidationHint(outputFile)
-	}
-	return p
+	return append(args, explicitSkillPrompt(sj, "./skills/"+sj.Name))
 }
 
 // ParseStream reads `codex exec --json` JSONL output. The event shapes
@@ -80,20 +58,7 @@ func codexSkillPrompt(name, outputFile string, resume bool) string {
 // through as KindText so nothing is silently dropped. codex has no
 // max-turns cap, so no "hit max turns" event is emitted.
 func (CodexHarness) ParseStream(r io.Reader, emit func(Event)) {
-	br := bufio.NewReader(r)
-	for {
-		raw, readErr := br.ReadBytes('\n')
-		if len(raw) > 0 {
-			parseCodexLine(raw, emit)
-		}
-		if readErr == io.EOF {
-			return
-		}
-		if readErr != nil {
-			emit(Event{Kind: KindError, Text: "stream read: " + readErr.Error()})
-			return
-		}
-	}
+	scanJSONL(r, emit, parseCodexLine)
 }
 
 // codexLine is the subset of `codex exec --json` event fields the
@@ -254,12 +219,7 @@ func (CodexHarness) Env(_ string) []string {
 		"OMO_CODEX_SEND_ANONYMOUS_TELEMETRY=0",
 		"OMO_CODEX_DISABLE_POSTHOG=1",
 	}
-	// Same T1/T13 residual as claude: forwarding the host credential
-	// into the container exposes it to in-container code.
-	if os.Getenv("CODEX_API_KEY") != "" {
-		env = append(env, "CODEX_API_KEY")
-	}
-	return env
+	return append(env, passthroughEnv("CODEX_API_KEY")...)
 }
 
 func (CodexHarness) StateEnv(containerPath string) []string {
@@ -281,28 +241,20 @@ func (CodexHarness) DefaultModels() []ModelDefault {
 	}
 }
 
+// codexAccountPhrases are the OpenAI API account-level failures that retrying
+// cannot fix until the account recovers.
+var codexAccountPhrases = []string{
+	"rate_limit",
+	"rate limit",
+	"too many requests",
+	"429",
+	"insufficient_quota",
+	"quota exceeded",
+	"invalid_api_key",
+	"incorrect api key",
+	"account is not active",
+}
+
 func (CodexHarness) AccountErrorText(s string) string {
-	text := strings.TrimSpace(s)
-	if text == "" {
-		return ""
-	}
-	lower := strings.ToLower(text)
-	for _, phrase := range []string{
-		// OpenAI API account-level failures that retrying cannot fix
-		// until the account recovers.
-		"rate_limit",
-		"rate limit",
-		"too many requests",
-		"429",
-		"insufficient_quota",
-		"quota exceeded",
-		"invalid_api_key",
-		"incorrect api key",
-		"account is not active",
-	} {
-		if strings.Contains(lower, phrase) {
-			return text
-		}
-	}
-	return ""
+	return matchAccountPhrase(s, codexAccountPhrases)
 }

@@ -60,28 +60,32 @@ var accessRevokedPhrases = []string{
 	"ask your admin to enable access",
 }
 
-// claudeAccountErrorText returns s when it looks like an account-level message
-// from claude-code -- a usage/plan/rate limit, or access being disabled or
-// revoked -- and "" otherwise. The caller only consults it when the run already
-// failed (non-zero exit), so a stray "rate limit" in normal scan output never
-// pauses a healthy scan.
-func claudeAccountErrorText(s string) string {
+// matchAccountPhrase returns the trimmed s when its lowercase form contains
+// any phrase from any of the given lists, and "" otherwise. It is the shared
+// core of every Harness.AccountErrorText: the caller only consults it after
+// the harness exited non-zero, so a stray phrase in normal scan output never
+// triggers.
+func matchAccountPhrase(s string, lists ...[]string) string {
 	text := strings.TrimSpace(s)
 	if text == "" {
 		return ""
 	}
 	lower := strings.ToLower(text)
-	for _, phrase := range transientLimitPhrases {
-		if strings.Contains(lower, phrase) {
-			return text
-		}
-	}
-	for _, phrase := range accessRevokedPhrases {
-		if strings.Contains(lower, phrase) {
-			return text
+	for _, list := range lists {
+		for _, phrase := range list {
+			if strings.Contains(lower, phrase) {
+				return text
+			}
 		}
 	}
 	return ""
+}
+
+// claudeAccountErrorText returns s when it looks like an account-level message
+// from claude-code -- a usage/plan/rate limit, or access being disabled or
+// revoked -- and "" otherwise.
+func claudeAccountErrorText(s string) string {
+	return matchAccountPhrase(s, transientLimitPhrases, accessRevokedPhrases)
 }
 
 // accountErrorAccessRevoked reports whether s mentions account access being

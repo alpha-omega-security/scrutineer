@@ -1,8 +1,10 @@
 package worker
 
 import (
+	"bufio"
 	"fmt"
 	"io"
+	"os"
 	"reflect"
 	"sort"
 	"strings"
@@ -140,6 +142,68 @@ type Harness interface {
 	// The first entry is the default; Tier tags each entry as the
 	// mid/high/max default so tier resolution needs no heuristic.
 	DefaultModels() []ModelDefault
+}
+
+// scanJSONL is the shared ParseStream loop: it reads r line-by-line via
+// bufio.ReadBytes (so an oversize line does not stall the reader the way
+// bufio.Scanner would), hands each non-empty line to the harness's own
+// per-line parser, and terminates on EOF or emits a single KindError on any
+// other read failure. All three harnesses stream JSONL, so only the per-line
+// mapping differs.
+func scanJSONL(r io.Reader, emit func(Event), line func([]byte, func(Event))) {
+	br := bufio.NewReader(r)
+	for {
+		raw, readErr := br.ReadBytes('\n')
+		if len(raw) > 0 {
+			line(raw, emit)
+		}
+		if readErr == io.EOF {
+			return
+		}
+		if readErr != nil {
+			emit(Event{Kind: KindError, Text: "stream read: " + readErr.Error()})
+			return
+		}
+	}
+}
+
+// passthroughEnv returns each key that is set in the host environment as a
+// bare "KEY" entry — the docker -e form that forwards the host value into
+// the container without embedding it in the argv. Used by every harness's
+// Env for its provider credential(s); the T1/T13 residual (in-container code
+// can read the forwarded credential) applies uniformly.
+func passthroughEnv(keys ...string) []string {
+	var out []string
+	for _, k := range keys {
+		if os.Getenv(k) != "" {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+// explicitSkillPrompt is the activation prompt for harnesses that discover
+// SKILL.md but do not auto-invoke it (codex, opencode): it points at the
+// staged skill by path, restates the deliverable, and appends the
+// schema-validation hint for JSON outputs. Returns sj.ResumePrompt verbatim
+// when a resume carries an explicit override (e.g. the schema-repair nudge).
+// claude has native slash-style skill invocation and uses buildSkillPrompt
+// instead.
+func explicitSkillPrompt(sj SkillJob, skillPath string) string {
+	resume := sj.ResumeSessionID != ""
+	if resume && sj.ResumePrompt != "" {
+		return sj.ResumePrompt
+	}
+	verb := "Follow"
+	if resume {
+		verb = "Continue following"
+	}
+	p := verb + " the instructions in " + skillPath + "/SKILL.md against the repository cloned at ./src."
+	if sj.OutputFile != "" {
+		p += " Write your structured output to ./" + sj.OutputFile + " as the skill specifies."
+		p += schemaValidationHint(sj.OutputFile)
+	}
+	return p
 }
 
 // ModelDefault is one entry a harness contributes to the model pick

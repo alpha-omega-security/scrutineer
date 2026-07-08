@@ -1,10 +1,8 @@
 package worker
 
 import (
-	"bufio"
 	"encoding/json"
 	"io"
-	"os"
 	"path/filepath"
 	"strings"
 )
@@ -34,41 +32,11 @@ func (OpencodeHarness) Args(sj SkillJob, _ string, _ int, _ string) []string {
 	if sj.ResumeSessionID != "" {
 		args = append(args, "--session", sj.ResumeSessionID)
 	}
-	if sj.ResumeSessionID != "" && sj.ResumePrompt != "" {
-		return append(args, sj.ResumePrompt)
-	}
-	return append(args, opencodeSkillPrompt(sj.Name, sj.OutputFile, sj.ResumeSessionID != ""))
-}
-
-func opencodeSkillPrompt(name, outputFile string, resume bool) string {
-	verb := "Follow"
-	if resume {
-		verb = "Continue following"
-	}
-	p := verb + " the instructions in ./.opencode/skill/" + name +
-		"/SKILL.md against the repository cloned at ./src."
-	if outputFile != "" {
-		p += " Write your structured output to ./" + outputFile + " as the skill specifies."
-		p += schemaValidationHint(outputFile)
-	}
-	return p
+	return append(args, explicitSkillPrompt(sj, "./.opencode/skill/"+sj.Name))
 }
 
 func (OpencodeHarness) ParseStream(r io.Reader, emit func(Event)) {
-	br := bufio.NewReader(r)
-	for {
-		raw, readErr := br.ReadBytes('\n')
-		if len(raw) > 0 {
-			parseOpencodeLine(raw, emit)
-		}
-		if readErr == io.EOF {
-			return
-		}
-		if readErr != nil {
-			emit(Event{Kind: KindError, Text: "stream read: " + readErr.Error()})
-			return
-		}
-	}
+	scanJSONL(r, emit, parseOpencodeLine)
 }
 
 // opencodeLine is the subset of `opencode run --format json` event
@@ -225,14 +193,11 @@ func (OpencodeHarness) Env(_ string) []string {
 	}
 	// opencode reads provider credentials from its auth config or from
 	// the provider's own env var; pass through whichever the operator
-	// has set so the common providers work without extra config. Same
-	// T1/T13 residual as the other harnesses.
-	for _, k := range []string{"OPENAI_API_KEY", "ANTHROPIC_API_KEY", "OPENCODE_CONFIG_CONTENT", "OPENCODE_AUTH_CONTENT"} {
-		if os.Getenv(k) != "" {
-			env = append(env, k)
-		}
-	}
-	return env
+	// has set so the common providers work without extra config.
+	return append(env, passthroughEnv(
+		"OPENAI_API_KEY", "ANTHROPIC_API_KEY",
+		"OPENCODE_CONFIG_CONTENT", "OPENCODE_AUTH_CONTENT",
+	)...)
 }
 
 func (OpencodeHarness) StateEnv(containerPath string) []string {
@@ -258,24 +223,16 @@ func (OpencodeHarness) DefaultModels() []ModelDefault {
 	return out
 }
 
+// opencodeAccountPhrases: opencode surfaces the underlying provider's own
+// error message, so this covers the union of the common providers'
+// account-level failure phrases.
+var opencodeAccountPhrases = []string{
+	"rate limit", "rate_limit", "too many requests", "429",
+	"usage limit", "quota", "insufficient_quota",
+	"invalid_api_key", "incorrect api key", "invalid x-api-key",
+	"credit balance", "billing",
+}
+
 func (OpencodeHarness) AccountErrorText(s string) string {
-	text := strings.TrimSpace(s)
-	if text == "" {
-		return ""
-	}
-	lower := strings.ToLower(text)
-	for _, phrase := range []string{
-		// opencode surfaces the underlying provider's message, so
-		// match the union of the common providers' account-level
-		// failure phrases.
-		"rate limit", "rate_limit", "too many requests", "429",
-		"usage limit", "quota", "insufficient_quota",
-		"invalid_api_key", "incorrect api key", "invalid x-api-key",
-		"credit balance", "billing",
-	} {
-		if strings.Contains(lower, phrase) {
-			return text
-		}
-	}
-	return ""
+	return matchAccountPhrase(s, opencodeAccountPhrases)
 }

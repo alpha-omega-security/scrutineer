@@ -2,7 +2,6 @@ package worker
 
 import (
 	"io"
-	"os"
 	"path/filepath"
 )
 
@@ -46,15 +45,10 @@ func (ClaudeHarness) Env(baseURL string) []string {
 		"DISABLE_AUTOUPDATER=1",
 		"DISABLE_NON_ESSENTIAL_MODEL_CALLS=1",
 	}
-	// Forwarding the host credential into the container is a known
-	// residual: in-container code (T1) can read it. Closing it needs
-	// proxy-side credential injection -- see threatmodel.md T1/T13.
-	if os.Getenv("ANTHROPIC_API_KEY") != "" {
-		env = append(env, "ANTHROPIC_API_KEY")
-	}
-	if os.Getenv("CLAUDE_CODE_OAUTH_TOKEN") != "" {
-		env = append(env, "CLAUDE_CODE_OAUTH_TOKEN")
-	}
+	// Closing the T1/T13 residual (in-container code can read the
+	// forwarded credential) needs proxy-side credential injection —
+	// see threatmodel.md.
+	env = append(env, passthroughEnv("ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN")...)
 	if baseURL != "" {
 		env = append(env, "ANTHROPIC_BASE_URL="+baseURL)
 	}
