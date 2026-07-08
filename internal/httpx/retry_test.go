@@ -11,6 +11,37 @@ import (
 	"time"
 )
 
+func TestRetryAfterDelay(t *testing.T) {
+	const fallback = 3 * time.Second
+	// The HTTP-date branch reads time.Now() internally, so those cases assert
+	// against a range rather than an exact value. The offsets are large and the
+	// window is 30s wide so a slow CI runner cannot flake the assertion; the
+	// point is which branch fired and whether the cap applied, not the precise
+	// remaining delay.
+	now := time.Now().UTC()
+	httpDate := func(d time.Duration) string { return now.Add(d).Format(http.TimeFormat) }
+	for _, tc := range []struct {
+		name, header string
+		maxDelay     time.Duration
+		wantMin      time.Duration
+		wantMax      time.Duration
+	}{
+		{"empty falls back", "", time.Minute, fallback, fallback},
+		{"integer seconds", "5", time.Minute, 5 * time.Second, 5 * time.Second},
+		{"integer seconds capped", "90", 30 * time.Second, 30 * time.Second, 30 * time.Second},
+		{"http-date future", httpDate(5 * time.Minute), time.Hour, 270 * time.Second, 300 * time.Second},
+		{"http-date future capped", httpDate(5 * time.Minute), 30 * time.Second, 30 * time.Second, 30 * time.Second},
+		{"http-date past yields zero", httpDate(-time.Minute), time.Hour, 0, 0},
+		{"garbage falls back", "not-a-time", time.Minute, fallback, fallback},
+	} {
+		got := retryAfterDelay(tc.header, fallback, tc.maxDelay)
+		if got < tc.wantMin || got > tc.wantMax {
+			t.Errorf("%s: retryAfterDelay(%q) = %v, want in [%v, %v]",
+				tc.name, tc.header, got, tc.wantMin, tc.wantMax)
+		}
+	}
+}
+
 func TestDoRetrySucceedsAfterTransientStatus(t *testing.T) {
 	hits := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

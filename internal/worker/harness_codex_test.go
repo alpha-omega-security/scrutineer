@@ -33,18 +33,26 @@ func TestHarnessByName(t *testing.T) {
 }
 
 func TestHarnessName(t *testing.T) {
-	if got := HarnessName(ClaudeHarness{}); got != "claude" {
-		t.Errorf("HarnessName(ClaudeHarness) = %q, want claude", got)
-	}
-	if got := HarnessName(CodexHarness{}); got != "codex" {
-		t.Errorf("HarnessName(CodexHarness) = %q, want codex", got)
+	for _, tc := range []struct {
+		h    Harness
+		want string
+	}{
+		{ClaudeHarness{}, "claude"},
+		{CodexHarness{}, "codex"},
+		{OpencodeHarness{}, "opencode"},
+	} {
+		if got := HarnessName(tc.h); got != tc.want {
+			t.Errorf("HarnessName(%T) = %q, want %q", tc.h, got, tc.want)
+		}
 	}
 }
 
 func TestHarnessNames(t *testing.T) {
 	got := HarnessNames()
-	if !strings.Contains(got, "claude") || !strings.Contains(got, "codex") {
-		t.Errorf("HarnessNames() = %q, want both claude and codex listed", got)
+	for _, want := range []string{"claude", "codex", "opencode"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("HarnessNames() = %q, want %q listed", got, want)
+		}
 	}
 	if strings.HasPrefix(got, ",") || strings.Contains(got, ", ,") {
 		t.Errorf("HarnessNames() = %q, empty default alias should not appear", got)
