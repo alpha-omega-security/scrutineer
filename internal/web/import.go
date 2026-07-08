@@ -301,8 +301,7 @@ func (s *Server) importFindings(tx *gorm.DB, scan *db.Scan, res ingest.Result) (
 }
 
 // buildImportFindings maps ingest.Finding rows onto db.Finding and
-// fingerprints them, dropping in-batch duplicates. Returned fingerprints
-// preserves input order for the existing-row lookup.
+// fingerprints them, dropping in-batch duplicates.
 func buildImportFindings(scan *db.Scan, res ingest.Result) ([]db.Finding, []string) {
 	seen := map[string]bool{}
 	incoming := make([]db.Finding, 0, len(res.Findings))
