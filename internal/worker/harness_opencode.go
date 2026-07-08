@@ -9,7 +9,7 @@ import (
 	"strings"
 )
 
-// OpencodeHarness drives the sst/opencode CLI in headless `opencode run`
+// OpencodeHarness drives the anomalyco/opencode CLI in headless `opencode run`
 // mode. opencode is provider-agnostic -- the model's provider determines
 // which API host it dials -- so EgressHosts and Env cover the two common
 // providers (Anthropic and OpenAI) plus opencode's own model registry;
@@ -32,7 +32,7 @@ func (OpencodeHarness) Args(sj SkillJob, _ string, _ int, _ string) []string {
 		args = append(args, "--model", sj.Model)
 	}
 	if sj.ResumeSessionID != "" {
-		args = append(args, "--session", sj.ResumeSessionID, "--replay=false")
+		args = append(args, "--session", sj.ResumeSessionID)
 	}
 	if sj.ResumeSessionID != "" && sj.ResumePrompt != "" {
 		return append(args, sj.ResumePrompt)
@@ -73,20 +73,37 @@ func (OpencodeHarness) ParseStream(r io.Reader, emit func(Event)) {
 
 // opencodeLine is the subset of `opencode run --format json` event
 // fields the harness needs. The shape is {type, sessionID, ...} per
-// packages/opencode/src/cli/cmd/run.ts.
+// packages/opencode/src/cli/cmd/run.ts; step_finish carries per-step
+// cost and token counts alongside.
 type opencodeLine struct {
 	Type      string          `json:"type"`
 	SessionID string          `json:"sessionID"`
 	Part      *opencodePart   `json:"part"`
 	Error     json.RawMessage `json:"error"`
+	Cost      float64         `json:"cost"`
+	Tokens    *opencodeTokens `json:"tokens"`
 }
 
 type opencodePart struct {
-	Type  string          `json:"type"`
-	Text  string          `json:"text"`
-	Tool  string          `json:"tool"`
-	Name  string          `json:"name"`
+	Type  string            `json:"type"`
+	Text  string            `json:"text"`
+	Tool  string            `json:"tool"`
+	Name  string            `json:"name"`
+	State opencodeToolState `json:"state"`
+}
+
+type opencodeToolState struct {
 	Input json.RawMessage `json:"input"`
+}
+
+type opencodeTokens struct {
+	Input     int `json:"input"`
+	Output    int `json:"output"`
+	Reasoning int `json:"reasoning"`
+	Cache     struct {
+		Read  int `json:"read"`
+		Write int `json:"write"`
+	} `json:"cache"`
 }
 
 func parseOpencodeLine(raw []byte, emit func(Event)) {
@@ -107,15 +124,30 @@ func parseOpencodeLine(raw []byte, emit func(Event)) {
 		if name == "" {
 			name = ev.Part.Name
 		}
-		emit(Event{Kind: KindTool, Tool: name, Text: summariseInput(name, ev.Part.Input)})
+		emit(Event{Kind: KindTool, Tool: name, Text: summariseInput(name, ev.Part.State.Input)})
 	case ev.Type == "error" || len(ev.Error) > 0:
 		emit(Event{Kind: KindError, Text: opencodeErrorText(ev.Error, line)})
 	case isOpencodeTextEvent(ev):
 		emit(Event{Kind: KindText, Text: ev.Part.Text})
 	case ev.Type == "step_finish":
-		// noise; the scan log doesn't need step boundaries
+		emit(Event{Kind: KindResult, CostUSD: ev.Cost, Usage: opencodeUsage(ev.Tokens)})
 	default:
 		emit(Event{Kind: KindText, Text: line})
+	}
+}
+
+func opencodeUsage(t *opencodeTokens) Usage {
+	if t == nil {
+		return Usage{}
+	}
+	// opencode reports reasoning tokens separately; the scan row only
+	// tracks input/output/cache, so fold reasoning into output for the
+	// per-scan total.
+	return Usage{
+		InputTokens:      t.Input,
+		OutputTokens:     t.Output + t.Reasoning,
+		CacheReadTokens:  t.Cache.Read,
+		CacheWriteTokens: t.Cache.Write,
 	}
 }
 
@@ -123,7 +155,7 @@ func isOpencodeToolEvent(ev opencodeLine) bool {
 	if ev.Part == nil {
 		return false
 	}
-	return ev.Type == "tool_use" || ev.Part.Type == "tool_use" || ev.Part.Tool != "" || ev.Part.Name != ""
+	return ev.Type == "tool" || ev.Part.Type == "tool" || ev.Part.Tool != "" || ev.Part.Name != ""
 }
 
 func isOpencodeTextEvent(ev opencodeLine) bool {
@@ -145,9 +177,15 @@ func opencodeErrorText(raw json.RawMessage, fallback string) string {
 		Message string `json:"message"`
 		Name    string `json:"name"`
 		Code    string `json:"code"`
+		// opencode's typed provider errors nest the provider's own
+		// message under data (ProviderAuthError, APIError, ...); that is
+		// where "rate limit"/"quota" phrases live, so prefer it.
+		Data struct {
+			Message string `json:"message"`
+		} `json:"data"`
 	}
 	if err := json.Unmarshal(raw, &e); err == nil {
-		for _, text := range []string{e.Message, e.Code, e.Name} {
+		for _, text := range []string{e.Data.Message, e.Message, e.Code, e.Name} {
 			if text != "" {
 				return text
 			}
@@ -174,12 +212,12 @@ func (OpencodeHarness) EgressHosts() []string {
 // interface symmetry and ignored: opencode has no single base-url
 // override; the operator sets it per-provider via OPENCODE_CONFIG_CONTENT.
 func (OpencodeHarness) Env(_ string) []string {
+	// --auto (see Args) grants tool permissions in headless mode; the
+	// container is the sandbox. OPENCODE_PERMISSION is not set because
+	// opencode JSON-parses it and there is no scalar "allow all" value.
 	env := []string{
 		"OPENCODE_DISABLE_AUTOUPDATE=1",
 		"OPENCODE_DISABLE_MODELS_FETCH=1",
-		// The container is the sandbox; opencode's own permission
-		// gate would just block headless runs.
-		"OPENCODE_PERMISSION=allow",
 	}
 	// opencode reads provider credentials from its auth config or from
 	// the provider's own env var; pass through whichever the operator
@@ -204,11 +242,16 @@ func (OpencodeHarness) DefaultModels() []ModelDefault {
 	// opencode is provider-agnostic; it drives whichever provider the
 	// operator's OPENCODE_CONFIG_CONTENT / auth config points at. The
 	// default matches the credentials Env passes through with no extra
-	// config: with ANTHROPIC_API_KEY set, opencode drives Anthropic and
-	// the claude model list applies; an operator pointing it at a
-	// different provider sets models: in config. Reusing the claude
-	// list keeps the pricing tripwire satisfied without a second copy.
-	return ClaudeHarness{}.DefaultModels()
+	// config: with ANTHROPIC_API_KEY set, opencode drives Anthropic. IDs
+	// are in opencode's provider/model form; --model without the prefix
+	// fails resolution. normalizeModelID strips the prefix for the
+	// pricing lookup so the table needs no per-provider copies.
+	defs := ClaudeHarness{}.DefaultModels()
+	out := make([]ModelDefault, len(defs))
+	for i, d := range defs {
+		out[i] = ModelDefault{Name: d.Name, ID: "anthropic/" + d.ID, Tier: d.Tier}
+	}
+	return out
 }
 
 func (OpencodeHarness) AccountErrorText(s string) string {

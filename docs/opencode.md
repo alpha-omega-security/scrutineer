@@ -55,10 +55,9 @@ explicitly (opencode discovers but does not auto-invoke skills in headless
 `run` mode). `PROFILE.md` lands at `AGENTS.md`, which opencode walks from cwd
 up to the project root.
 
-`--auto` and `OPENCODE_PERMISSION=allow` suppress opencode's interactive
-permission prompts; the container is the sandbox. `--replay=false` on a
-resumed session keeps the scan log from re-emitting the prior run's events.
-`OPENCODE_DISABLE_MODELS_FETCH=1` stops opencode fetching `models.dev` at
+`--auto` suppresses opencode's interactive permission prompts; the container
+is the sandbox. `OPENCODE_DISABLE_MODELS_FETCH=1` stops opencode fetching
+`models.dev` at
 startup (the host is still on the egress allowlist for runs that do need it).
 
 The session store (`OPENCODE_DB`, a SQLite file) and config
@@ -85,14 +84,15 @@ opencode has no per-turn cap in `run` mode, so `-max-turns` is ignored. The
 
 Claude's `-effort` setting has no opencode equivalent and is ignored.
 
-`-anthropic-base-url` is accepted for interface symmetry but ignored: opencode
+`-model-base-url` is accepted for interface symmetry but ignored: opencode
 has no single base-URL override; per-provider endpoints go in
 `OPENCODE_CONFIG_CONTENT`.
 
 The stream parser (`OpencodeHarness.ParseStream`) maps `step_start`
-(session id), `tool_use`, `text`/`reasoning`, and `error` events from
-`opencode run --format json` onto the scan log, dropping `step_finish` noise.
-Unknown event types pass through as raw text.
+(session id), `tool`, `text`/`reasoning`, and `error` events from
+`opencode run --format json` onto the scan log; `step_finish` carries
+per-step cost and token counts and is emitted as a result event so the
+scan row records usage. Unknown event types pass through as raw text.
 
 ## See also
 
