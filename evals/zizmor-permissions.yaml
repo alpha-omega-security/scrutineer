@@ -1,0 +1,11 @@
+given: a GitHub Actions workflow grants broad write permissions
+fixture: fixtures/github-actions-basic
+skill: zizmor
+should_find:
+  - finding: permissions
+    severity: Medium
+    path: .github/workflows/ci.yml
+    required: true
+should_not_find:
+  - missing workflow directory
+

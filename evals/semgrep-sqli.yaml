@@ -1,0 +1,12 @@
+given: a Python route builds a SQL query from request input
+fixture: fixtures/sqli-basic
+skill: semgrep
+should_find:
+  - finding: SQL injection
+    severity: High
+    cwe: CWE-89
+    path: app.py
+    required: true
+should_not_find:
+  - harmless string formatting in README examples
+
