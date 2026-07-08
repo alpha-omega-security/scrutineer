@@ -90,7 +90,7 @@ func TestOpencodeHarness_Env(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test")
 	t.Setenv("OPENCODE_CONFIG_CONTENT", "")
 	got := OpencodeHarness{}.Env("https://ignored")
-	for _, want := range []string{"OPENCODE_DISABLE_AUTOUPDATE=1", "OPENCODE_DISABLE_MODELS_FETCH=1", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"} {
+	for _, want := range []string{"OPENCODE_DISABLE_AUTOUPDATE=true", "OPENCODE_DISABLE_MODELS_FETCH=true", "OPENCODE_DISABLE_SHARE=true", "OPENAI_API_KEY", "ANTHROPIC_API_KEY"} {
 		if !slices.Contains(got, want) {
 			t.Errorf("Env() missing %q: %v", want, got)
 		}

@@ -216,8 +216,9 @@ func (OpencodeHarness) Env(_ string) []string {
 	// container is the sandbox. OPENCODE_PERMISSION is not set because
 	// opencode JSON-parses it and there is no scalar "allow all" value.
 	env := []string{
-		"OPENCODE_DISABLE_AUTOUPDATE=1",
-		"OPENCODE_DISABLE_MODELS_FETCH=1",
+		"OPENCODE_DISABLE_AUTOUPDATE=true",
+		"OPENCODE_DISABLE_MODELS_FETCH=true",
+		"OPENCODE_DISABLE_SHARE=true",
 	}
 	// opencode reads provider credentials from its auth config or from
 	// the provider's own env var; pass through whichever the operator
