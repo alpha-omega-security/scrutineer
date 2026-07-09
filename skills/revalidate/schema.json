@@ -12,7 +12,12 @@
     },
     "reason": {
       "type": "string",
-      "description": "One paragraph of justification, citing the file, line, and any commit SHA that supports the decision."
+      "description": "One paragraph of justification, citing the file, line, and any commit SHA that supports the decision. When the verdict cites the threat model, open with the disposition label from that model (out_of_model_trusted_input, by_design_disclaimed, etc.)."
+    },
+    "privilege_required": {
+      "type": "string",
+      "enum": ["none", "authenticated", "admin", "maintainer", "local-root"],
+      "description": "Minimum attacker position needed to reach the sink as the finding describes it. none = unauthenticated network peer or file input. authenticated = any logged-in user. admin = elevated role in the application. maintainer = repository or package publish rights. local-root = already root on the host. Recorded discretely so it is not buried in the severity-adjustment reason."
     },
     "adjusted_severity": {
       "type": "string",

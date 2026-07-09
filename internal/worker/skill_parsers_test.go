@@ -684,6 +684,45 @@ func TestParseRevalidate_truePositiveMovesNewToEnriched(t *testing.T) {
 	}
 }
 
+func TestParseRevalidate_recordsPrivilegeRequired(t *testing.T) {
+	report := `{"verdict":"true_positive","reason":"trace holds","privilege_required":"authenticated"}`
+	f, gdb := runSkillWithFinding(t, "revalidate", report, db.FindingNew)
+	body := findingNotes(gdb, f.ID)[0].Body
+	if !strings.Contains(body, "privilege: authenticated") {
+		t.Errorf("privilege line missing from note: %q", body)
+	}
+	// The privilege line sits directly under the verdict header, above the
+	// reason paragraph, so an analyst scanning the notes column sees it
+	// without reading the prose.
+	v := strings.Index(body, "revalidate:")
+	p := strings.Index(body, "privilege:")
+	r := strings.Index(body, "trace holds")
+	if v == -1 || p == -1 || r == -1 || v >= p || p >= r {
+		t.Errorf("want verdict < privilege < reason ordering, got %q", body)
+	}
+	_ = f
+}
+
+func TestParseRevalidate_rejectsUnknownPrivilege(t *testing.T) {
+	gdb, _ := db.Open(filepath.Join(t.TempDir(), "p.db"))
+	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
+	gdb.Create(&repo)
+	prior := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanDone}
+	gdb.Create(&prior)
+	finding := db.Finding{ScanID: prior.ID, RepositoryID: repo.ID, Title: "x", Severity: "High", Status: db.FindingNew}
+	gdb.Create(&finding)
+	scan := &db.Scan{RepositoryID: repo.ID, FindingID: new(finding.ID)}
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	err := w.parseRevalidateOutput(scan, `{"verdict":"true_positive","reason":"x","privilege_required":"superuser"}`, func(Event) {})
+	if err == nil || !strings.Contains(err.Error(), "none|authenticated|admin|maintainer|local-root") {
+		t.Errorf("want unknown-privilege error listing the enum, got %v", err)
+	}
+	// Empty is permitted (false_positive/already_fixed omit it).
+	if err := w.parseRevalidateOutput(scan, `{"verdict":"false_positive","reason":"x"}`, func(Event) {}); err != nil {
+		t.Errorf("empty privilege_required should be accepted: %v", err)
+	}
+}
+
 func TestParseTimeField_emitsOnUnparseable(t *testing.T) {
 	var events []Event
 	emit := func(e Event) { events = append(events, e) }
