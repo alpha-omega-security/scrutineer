@@ -483,47 +483,35 @@ func TestRedactURLUserinfo(t *testing.T) {
 }
 
 func TestResolveProfile_SubPath(t *testing.T) {
-	d := ContainerRunner{ProfilesDir: t.TempDir()} // Provide a ProfilesDir so it doesn't short-circuit
-
+	// Detection runs against work/subPath, not work: stub detectProfile to
+	// record the srcDir it was handed and assert the join happened.
 	work := t.TempDir()
-	sub := filepath.Join(work, "nested", "php-ext")
-	if err := os.MkdirAll(sub, 0o700); err != nil {
-		t.Fatal(err)
+	var seenSrc string
+	d := ContainerRunner{
+		ProfilesDir: t.TempDir(), // present so resolveProfile doesn't short-circuit
+		detectProfile: func(_ context.Context, _ ContainerRuntime, _, srcDir string, _ bool) Profile {
+			seenSrc = srcDir
+			return Profile{}
+		},
 	}
-	// The php-ext profile detects config.m4 containing PHP_ARG_
-	if err := os.WriteFile(filepath.Join(sub, "config.m4"), []byte("PHP_ARG_"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	emit := func(Event) {}
 
-	var events []Event
-	emit := func(e Event) { events = append(events, e) }
-
-	// 1. Root path should NOT match php-ext (will default or fallback)
 	d.resolveProfile(context.Background(), "", work, "", emit)
-
-	matchedPhpExtAtRoot := false
-	for _, e := range events {
-		if strings.Contains(e.Text, "profile: php-ext") {
-			matchedPhpExtAtRoot = true
-		}
-	}
-	if matchedPhpExtAtRoot {
-		t.Errorf("expected no php-ext profile match at root")
+	if seenSrc != work {
+		t.Errorf("no subPath: srcDir = %q, want %q", seenSrc, work)
 	}
 
-	events = nil // clear
-
-	// 2. SubPath should match php-ext
 	d.resolveProfile(context.Background(), "", work, "nested/php-ext", emit)
-
-	matchedPhpExtInSubPath := false
-	for _, e := range events {
-		if strings.Contains(e.Text, "profile: php-ext") {
-			matchedPhpExtInSubPath = true
-		}
+	want := filepath.Join(work, "nested", "php-ext")
+	if seenSrc != want {
+		t.Errorf("with subPath: srcDir = %q, want %q", seenSrc, want)
 	}
-	if !matchedPhpExtInSubPath {
-		t.Errorf("expected php-ext profile match using subPath")
+
+	// A requested profile bypasses detection entirely.
+	seenSrc = ""
+	d.resolveProfile(context.Background(), "php-ext", work, "nested", emit)
+	if seenSrc != "" {
+		t.Errorf("requested profile should not call detectProfile, but srcDir = %q", seenSrc)
 	}
 }
 
