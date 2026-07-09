@@ -48,6 +48,11 @@ var ErrSkillProfileMismatch = errors.New("skill requires a different runner prof
 // a scan that will fail later at git-clone time.
 var ErrInvalidRef = errors.New("invalid git ref")
 
+// ErrInvalidRescanMode is returned by enqueueSkillWith when opts.RescanMode is
+// not one of the persisted scan modes. API callers control this value, so the
+// API layer maps it to a 400 instead of reporting an internal server failure.
+var ErrInvalidRescanMode = errors.New("invalid rescan mode")
+
 //go:embed templates/*.html
 var tmplFS embed.FS
 
@@ -2582,7 +2587,7 @@ func (s *Server) enqueueSkillWith(ctx context.Context, repoID, skillID uint, opt
 		opts.RescanMode = db.ScanRescanModeFull
 	case db.ScanRescanModeDiff:
 	default:
-		return 0, fmt.Errorf("invalid rescan mode %q", opts.RescanMode)
+		return 0, fmt.Errorf("%w: %q", ErrInvalidRescanMode, opts.RescanMode)
 	}
 	if err := worker.ValidateGitRef(opts.Ref); err != nil {
 		return 0, fmt.Errorf("%w: %v", ErrInvalidRef, err)
