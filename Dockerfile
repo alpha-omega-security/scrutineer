@@ -19,7 +19,7 @@ RUN pip install --no-cache-dir semgrep==1.167.0 "setuptools<81"
 FROM golang:1.26.5-alpine@sha256:99e12cfb19b753915f9b9fdc5a99f1869a24a69d3a0955832d5702e7fa68f1be AS go-tools
 RUN apk add --no-cache git
 RUN GOBIN=/out go install github.com/git-pkgs/git-pkgs@v0.15.3 && \
-    GOBIN=/out go install github.com/git-pkgs/brief/cmd/brief@v0.6.0
+    GOBIN=/out go install github.com/git-pkgs/brief/cmd/brief@v0.9.3
 
 # vid links tree-sitter grammars (C), so unlike the main binary it needs
 # cgo; build-base provides gcc and musl headers, matching the musl-based

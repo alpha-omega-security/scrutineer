@@ -1,15 +1,12 @@
 package worker
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,33 +15,22 @@ import (
 	"time"
 )
 
-// ProfileMarker refines profile selection beyond what brief reports.
-type ProfileMarker struct {
-	// Path is the marker location relative to the cloned source root.
-	// Its interpretation depends on Glob/Walk:
-	//   - default: an exact path, tested with os.Stat.
-	//   - Glob:    a filepath.Glob pattern (single-segment wildcards),
-	//              e.g. "*.gemspec".
-	//   - Walk:    "<root>/<basename>"; <basename> is searched for anywhere
-	//              under <root> by a depth- and count-bounded walk, e.g.
-	//              "ext/extconf.rb" finds an extconf.rb at any depth under
-	//              ext/.
-	Path string
-	// Contains, when set, must also appear inside the matched file — used
-	// e.g. to distinguish a phpize config.m4 from any unrelated autoconf
-	// file, or a gemspec that declares spec.extensions from one that merely
-	// mentions the word. Bounded by markerReadCap.
-	Contains string
-	// Glob makes Path a filepath.Glob pattern instead of an exact path.
-	// filepath.Glob expands * ? [..] within a single path segment, which
-	// covers root-level fan-outs like "*.gemspec".
-	Glob bool
-	// Walk makes Path a "<root>/<basename>" pair: <basename> (the last
-	// segment) is searched for anywhere beneath <root> (the rest) by a
-	// bounded directory walk. filepath.Glob cannot express "**", so this
-	// covers native-extension layouts like ext/<name>/extconf.rb and the
-	// deeper ext/<name>/<sub>/extconf.rb some gems use.
-	Walk bool
+// Category names in brief's JSON output that BriefMatch.Category can
+// reference. package_manager and language are top-level arrays in the
+// report; everything else is a key under tools.
+const (
+	briefPackageManager  = "package_manager"
+	briefLanguage        = "language"
+	briefBuild           = "build"
+	briefNativeExtension = "native_extension"
+)
+
+// BriefMatch selects a profile when brief detected any of Names in the
+// given Category. Names are matched case-insensitively against
+// Detection.Name in brief's JSON output.
+type BriefMatch struct {
+	Category string
+	Names    []string
 }
 
 // Profile selects a per-ecosystem runner image. The default profile
@@ -55,28 +41,12 @@ type Profile struct {
 	// Name matches the directory under docker/profiles/. Empty means
 	// "use the default runner image, no per-profile build".
 	Name string
-	// Ecosystem is a `brief` package_managers[].name, matched
-	// case-insensitively, for runtimes brief can see. A profile needs at
-	// least one of Ecosystem/Ecosystems, Markers, or AnyMarkers: each
-	// matcher treats an empty constraint as "no constraint", so an entry
-	// with all of them empty would match every repo. The registry sanity
-	// test rejects that. Markers/AnyMarkers cover ecosystems brief cannot
-	// see (e.g. a PECL C extension repo without composer.json).
-	Ecosystem string
-	// Ecosystems lists additional `brief` package_managers[].name values
-	// the profile also matches, for ecosystems one runtime serves under
-	// several names (e.g. Python's pip / Poetry / Pipenv / uv / PDM, or the
-	// JVM's Maven and Gradle). The profile matches if any of Ecosystem or
-	// Ecosystems matches.
-	Ecosystems []string
-	// Markers must ALL be present (AND) for the profile to match. Use for a
-	// precise signal, e.g. a config.m4 that contains PHP_ARG_.
-	Markers []ProfileMarker
-	// AnyMarkers match if at least ONE is present (OR). Use when a single
-	// ecosystem has several equally-valid build-file signals and brief
-	// reports no package manager for it — e.g. C/C++ projects built with
-	// CMake, Make, autotools, or meson.
-	AnyMarkers []ProfileMarker
+	// Detect selects the profile from brief's structured output. The
+	// profile matches when any BriefMatch is satisfied; a BriefMatch is
+	// satisfied when brief detected any of its Names in its Category.
+	// Every profile must carry at least one entry: an empty Detect would
+	// match every repo, and the registry sanity test rejects that.
+	Detect []BriefMatch
 	// BaseProfile, when set, names another registered profile whose built
 	// image this profile builds FROM instead of the runner image. EnsureImage
 	// builds that base first and passes its content-addressed tag as the
@@ -100,15 +70,10 @@ type Profile struct {
 // instead of a profile-specific built one.
 func (p Profile) IsDefault() bool { return p.Name == "" }
 
-// allEcosystems returns every brief package-manager name the profile
-// matches: the singular Ecosystem (if set) plus any in Ecosystems.
-func (p Profile) allEcosystems() []string {
-	out := make([]string, 0, len(p.Ecosystems)+1)
-	if p.Ecosystem != "" {
-		out = append(out, p.Ecosystem)
-	}
-	out = append(out, p.Ecosystems...)
-	return out
+// pm returns a Detect list matching any of the given brief
+// package_manager names. Shorthand for the common single-category case.
+func pm(names ...string) []BriefMatch {
+	return []BriefMatch{{Category: briefPackageManager, Names: names}}
 }
 
 // builtinProfiles is the v1 registry. Order matters: first match wins,
@@ -117,12 +82,12 @@ func (p Profile) allEcosystems() []string {
 // docker/profiles/<name>/ to expose a profile.
 var builtinProfiles = []Profile{
 	{
-		Name: "php-ext",
-		Markers: []ProfileMarker{
-			{Path: "config.m4", Contains: "PHP_ARG_"},
-		},
+		// brief's phpize detector looks for PHP_ARG_/PHP_NEW_EXTENSION in
+		// config.m4, so an unrelated autoconf file doesn't route here.
+		Name:   "php-ext",
+		Detect: []BriefMatch{{briefNativeExtension, []string{"phpize"}}},
 	},
-	{Name: "php", Ecosystem: "Composer"},
+	{Name: "php", Detect: pm("Composer")},
 	{
 		// Before ruby: a gem that ships a native extension (C/C++, or Rust
 		// via rb-sys/Cargo) routes to the sanitizer-instrumented interpreter.
@@ -138,93 +103,65 @@ var builtinProfiles = []Profile{
 		// fresh.
 		//
 		// It is NOT a superset of the rust profile (no Miri, only a minimal
-		// rustc for rb-sys shims), so the Cargo.toml marker below is gated on
-		// an rb-sys mention: an unqualified ext/**/Cargo.toml would pull a
-		// pure-Rust crate in here — ruby-ext precedes rust — and strip its
-		// Rust-specific coverage.
-		//
-		// Markers (OR): the gemspec's spec.extensions is RubyGems' own
-		// definition of "has native code" and is authoritative; the bounded
-		// ext/ walks catch the conventional ext/<name>/extconf.rb (mkmf, also
-		// used by rb-sys Rust) and a Cargo-native gem's ext/<name>/Cargo.toml
-		// that names rb-sys (magnus builds on it); the root extconf.rb covers
-		// the older single-dir style. A real Cargo-native gem also ships an
-		// extconf.rb or spec.extensions, so the sibling markers still catch it
-		// if the rb-sys needle is ever absent.
+		// rustc for rb-sys shims). brief's mkmf detector keys on extconf.rb,
+		// which rb-sys/magnus gems also ship, so a Rust-backed gem still
+		// lands here without a separate Cargo.toml check; a pure-Rust crate
+		// with no extconf.rb falls through to the rust profile below.
 		Name:            "ruby-ext",
 		FallbackProfile: "ruby",
-		AnyMarkers: []ProfileMarker{
-			{Path: "*.gemspec", Glob: true, Contains: ".extensions"},
-			{Path: "ext/extconf.rb", Walk: true},
-			{Path: "ext/Cargo.toml", Walk: true, Contains: "rb-sys"},
-			{Path: "extconf.rb"},
-		},
+		Detect:          []BriefMatch{{briefNativeExtension, []string{"mkmf"}}},
 	},
 	{
-		// Before ruby: a Rails app (config/application.rb is the canonical
-		// boot file) also gets Brakeman, the Rails-specific SAST, on top of
-		// the ruby runtime. Like ruby-ext this is a superset of the ruby
-		// profile — it builds FROM the ruby profile image (BaseProfile) and
-		// adds Brakeman, so the interpreter is byte-identical with no second
-		// from-source compile. Marker-only so it does not collide with ruby's
-		// Bundler ecosystem in the registry-sanity test. The marker requires
-		// the file to name Rails::Application (the base class every app's
-		// Application subclasses) so a coincidental config/application.rb in a
-		// non-Rails repo — of any language — does not route here.
+		// Before ruby: a Rails app also gets Brakeman, the Rails-specific
+		// SAST, on top of the ruby runtime. Like ruby-ext this is a superset
+		// of the ruby profile — it builds FROM the ruby profile image
+		// (BaseProfile) and adds Brakeman, so the interpreter is
+		// byte-identical with no second from-source compile. brief detects
+		// Rails via config/routes.rb, bin/rails, or a `rails` dependency in
+		// the Gemfile, so a coincidental config/application.rb in a non-Rails
+		// repo does not route here.
 		Name:            "ruby-rails",
 		BaseProfile:     "ruby",
 		FallbackProfile: "ruby",
-		Markers: []ProfileMarker{
-			{Path: "config/application.rb", Contains: "Rails::Application"},
-		},
+		Detect:          []BriefMatch{{briefBuild, []string{"Rails"}}},
 	},
-	{Name: "ruby", Ecosystem: "Bundler"},
-	{Name: "node", Ecosystem: "npm"},
+	{Name: "ruby", Detect: pm("Bundler")},
+	{Name: "node", Detect: pm("npm", "pnpm", "Yarn", "Bun")},
 	{
-		// Before python: a repo whose setup.py declares a C Extension is
-		// shipping native code, so route it to the ASan/UBSan interpreter.
-		Name: "python-ext",
-		Markers: []ProfileMarker{
-			{Path: "setup.py", Contains: "Extension("},
-		},
+		// Before python: brief's setuptools-Extension detector keys on
+		// setup.py declaring Extension()/ext_modules or a .pyx file, so
+		// route it to the ASan/UBSan interpreter.
+		Name:            "python-ext",
+		FallbackProfile: "python",
+		Detect:          []BriefMatch{{briefNativeExtension, []string{"setuptools Extension"}}},
 	},
-	{Name: "python", Ecosystems: []string{"pip", "Pipenv", "Poetry", "uv", "PDM"}},
-	{Name: "go", Ecosystem: "Go Modules"},
-	{Name: "java", Ecosystems: []string{"Maven", "Gradle"}},
-	{Name: "dotnet", Ecosystem: "NuGet"},
-	{Name: "beam", Ecosystems: []string{"Mix", "rebar3"}},
-	{Name: "rust", Ecosystem: "Cargo"},
+	{Name: "python", Detect: pm("pip", "Pipenv", "Poetry", "uv", "PDM", "setuptools")},
+	{Name: "go", Detect: pm("Go Modules")},
+	{Name: "java", Detect: pm("Maven", "Gradle")},
+	{Name: "dotnet", Detect: pm("NuGet", "dotnet CLI")},
+	{Name: "beam", Detect: pm("Mix", "rebar3")},
+	{Name: "rust", Detect: pm("Cargo")},
 	{
-		// brief reports no package manager for Perl (it parses cpanfile /
-		// META.json into purls but leaves package_managers null), so the
-		// profile matches on the dist's build files instead. Before c-cpp so
-		// a CPAN dist that also commits a generated Makefile, or whose
-		// Makefile.PL has already been run, routes here rather than to the
-		// native toolchain.
+		// Before c-cpp so a CPAN dist that also commits a generated Makefile,
+		// or whose Makefile.PL has already been run, routes here rather than
+		// to the native toolchain. brief reports cpanm in package_managers
+		// for a repo with cpanfile/Makefile.PL/Build.PL/META.*; the language
+		// match is a belt-and-braces for a dist with only *.pl/*.pm.
 		Name: "perl",
-		AnyMarkers: []ProfileMarker{
-			{Path: "Makefile.PL"},
-			{Path: "Build.PL"},
-			{Path: "cpanfile"},
-			{Path: "dist.ini"},
-			{Path: "META.json"},
-			{Path: "META.yml"},
+		Detect: []BriefMatch{
+			{briefPackageManager, []string{"cpanm"}},
+			{briefLanguage, []string{"Perl"}},
 		},
 	},
 	{
-		// Last: brief reports no package manager for C/C++, so this is a
-		// fallback for repos that match no language ecosystem above but
-		// carry a native build file. Language repos (which also often have
-		// a Makefile) match their ecosystem first, so this only catches
-		// repos that are actually native.
+		// Last: brief reports no package manager for plain C/C++, so match
+		// on the build tool instead. Language repos that also carry a
+		// Makefile match their own package-manager profile first, so this
+		// only catches repos that are actually native.
 		Name: "c-cpp",
-		AnyMarkers: []ProfileMarker{
-			{Path: "CMakeLists.txt"},
-			{Path: "Makefile"},
-			{Path: "GNUmakefile"},
-			{Path: "configure.ac"},
-			{Path: "configure.in"},
-			{Path: "meson.build"},
+		Detect: []BriefMatch{
+			{briefBuild, []string{"CMake", "Make", "Autotools", "Meson"}},
+			{briefLanguage, []string{"C", "C++"}},
 		},
 	},
 }
@@ -267,173 +204,70 @@ func IsNamedProfile(name string) bool {
 	return false
 }
 
-func matchProfile(briefOut []byte, srcDir string) Profile {
-	var brief struct {
-		PackageManagers []struct {
-			Name string `json:"name"`
-		} `json:"package_managers"`
+// briefDetections flattens brief's JSON output into category -> lower(name)
+// -> true. package_managers and languages become the briefPackageManager /
+// briefLanguage categories; every key under tools becomes its own category.
+// Unknown JSON is tolerated: an unmarshal error or an absent field yields an
+// empty (never nil) map so profile matching degrades to "no match" rather
+// than failing the scan.
+func briefDetections(out []byte) map[string]map[string]bool {
+	type detection struct {
+		Name string `json:"name"`
 	}
-	_ = json.Unmarshal(briefOut, &brief)
-	pms := make([]string, 0, len(brief.PackageManagers))
-	for _, pm := range brief.PackageManagers {
-		pms = append(pms, pm.Name)
+	var r struct {
+		PackageManagers []detection            `json:"package_managers"`
+		Languages       []detection            `json:"languages"`
+		Tools           map[string][]detection `json:"tools"`
 	}
+	_ = json.Unmarshal(out, &r)
+	det := map[string]map[string]bool{}
+	add := func(cat, name string) {
+		if name == "" {
+			return
+		}
+		if det[cat] == nil {
+			det[cat] = map[string]bool{}
+		}
+		det[cat][strings.ToLower(name)] = true
+	}
+	for _, d := range r.PackageManagers {
+		add(briefPackageManager, d.Name)
+	}
+	for _, d := range r.Languages {
+		add(briefLanguage, d.Name)
+	}
+	for cat, ds := range r.Tools {
+		for _, d := range ds {
+			add(cat, d.Name)
+		}
+	}
+	return det
+}
+
+// matchProfile returns the first builtinProfiles entry whose Detect list
+// is satisfied by the brief output, or the zero Profile if none match.
+func matchProfile(briefOut []byte) Profile {
+	det := briefDetections(briefOut)
 	for _, p := range builtinProfiles {
-		if !ecosystemMatch(p.allEcosystems(), pms) {
-			continue
+		if p.matches(det) {
+			return p
 		}
-		if !markersMatch(p.Markers, srcDir) {
-			continue
-		}
-		if !anyMarkersMatch(p.AnyMarkers, srcDir) {
-			continue
-		}
-		return p
 	}
 	return Profile{}
 }
 
-func ecosystemMatch(ecosystems, pms []string) bool {
-	if len(ecosystems) == 0 {
-		return true
-	}
-	for _, e := range ecosystems {
-		for _, pm := range pms {
-			if strings.EqualFold(pm, e) {
+// matches reports whether any of p.Detect is satisfied by det. Names are
+// compared case-insensitively (det keys are already lowercased).
+func (p Profile) matches(det map[string]map[string]bool) bool {
+	for _, m := range p.Detect {
+		names := det[m.Category]
+		for _, want := range m.Names {
+			if names[strings.ToLower(want)] {
 				return true
 			}
 		}
 	}
 	return false
-}
-
-func markersMatch(markers []ProfileMarker, srcDir string) bool {
-	if len(markers) == 0 {
-		return true
-	}
-	if srcDir == "" {
-		return false
-	}
-	for _, m := range markers {
-		if !markerPresent(m, srcDir) {
-			return false
-		}
-	}
-	return true
-}
-
-// anyMarkersMatch reports whether at least one marker is present (OR). An
-// empty list matches (the profile imposes no AnyMarkers constraint); a
-// non-empty list with no srcDir cannot match.
-func anyMarkersMatch(markers []ProfileMarker, srcDir string) bool {
-	if len(markers) == 0 {
-		return true
-	}
-	if srcDir == "" {
-		return false
-	}
-	for _, m := range markers {
-		if markerPresent(m, srcDir) {
-			return true
-		}
-	}
-	return false
-}
-
-// markerWalkMaxDepth and markerWalkMaxFiles bound the Walk matcher so a
-// deep or hostile tree can't stall detection. The depth is generous enough
-// for real ext/ layouts (ext/<name>/<sub>/extconf.rb) while the file cap is
-// a backstop against a pathological repo.
-const (
-	markerWalkMaxDepth = 6
-	markerWalkMaxFiles = 50_000
-)
-
-// markerPresent reports whether a single marker is satisfied under srcDir,
-// dispatching on the marker's mode (exact path, Glob pattern, or bounded
-// Walk). Contains, when set, additionally requires the matched file to hold
-// the substring.
-func markerPresent(m ProfileMarker, srcDir string) bool {
-	switch {
-	case m.Glob:
-		matches, err := filepath.Glob(filepath.Join(srcDir, m.Path))
-		if err != nil {
-			return false
-		}
-		for _, f := range matches {
-			if m.Contains == "" || fileContains(f, m.Contains) {
-				return true
-			}
-		}
-		return false
-	case m.Walk:
-		return walkMarkerPresent(m, srcDir)
-	default:
-		full := filepath.Join(srcDir, m.Path)
-		if m.Contains == "" {
-			_, err := os.Stat(full)
-			return err == nil
-		}
-		return fileContains(full, m.Contains)
-	}
-}
-
-// walkMarkerPresent searches for a file named filepath.Base(m.Path) anywhere
-// under filepath.Dir(m.Path) (relative to srcDir), bounded by
-// markerWalkMaxDepth and markerWalkMaxFiles. A missing or unreadable root is
-// simply "not present" — detection never fails a scan. When Contains is set
-// the matched file must also hold the substring.
-func walkMarkerPresent(m ProfileMarker, srcDir string) bool {
-	return walkMarkerPresentBounded(m, srcDir, markerWalkMaxDepth, markerWalkMaxFiles)
-}
-
-// walkMarkerPresentBounded is walkMarkerPresent with the depth and file bounds
-// injected, so both caps are unit-testable without materialising a
-// markerWalkMaxDepth-deep tree or markerWalkMaxFiles of files.
-func walkMarkerPresentBounded(m ProfileMarker, srcDir string, maxDepth, maxFiles int) bool {
-	root := filepath.Join(srcDir, filepath.Dir(m.Path))
-	target := filepath.Base(m.Path)
-	rootDepth := strings.Count(filepath.Clean(root), string(os.PathSeparator))
-	files := 0
-	found := false
-	_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil // unreadable entry: skip it, don't abort the walk
-		}
-		if d.IsDir() {
-			if strings.Count(filepath.Clean(path), string(os.PathSeparator))-rootDepth > maxDepth {
-				return fs.SkipDir
-			}
-			return nil
-		}
-		files++
-		if files > maxFiles {
-			return fs.SkipAll
-		}
-		if d.Name() == target && (m.Contains == "" || fileContains(path, m.Contains)) {
-			found = true
-			return fs.SkipAll
-		}
-		return nil
-	})
-	return found
-}
-
-// markerReadCap bounds Contains-substring scans so a hostile or
-// runaway file can't stall detection.
-const markerReadCap = 1 << 20
-
-func fileContains(path, needle string) bool {
-	f, err := os.Open(path)
-	if err != nil {
-		return false
-	}
-	defer func() { _ = f.Close() }()
-	b, err := io.ReadAll(io.LimitReader(f, markerReadCap))
-	if err != nil {
-		return false
-	}
-	return bytes.Contains(b, []byte(needle))
 }
 
 // DetectProfile runs `brief` against the cloned source inside the
@@ -457,10 +291,11 @@ func DetectProfile(ctx context.Context, rt ContainerRuntime, runnerImage, srcDir
 	cmd := exec.CommandContext(ctx, rt.bin(), args...)
 	out, err := cmd.Output()
 	if err != nil {
-		// Marker-only profiles can still match when brief is unavailable.
-		out = nil
+		// A brief failure degrades to the default runner image; the scan
+		// still runs, without profile-specific tooling.
+		return Profile{}
 	}
-	return matchProfile(out, absSrc)
+	return matchProfile(out)
 }
 
 // ErrNoProfilesDir is returned by EnsureImage when the worker has no

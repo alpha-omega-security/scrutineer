@@ -83,6 +83,9 @@ type ContainerRunner struct {
 	// zero value keeps the host-proxy path (docker, rootful podman, and all
 	// non-hardened scans). See usesEgressSidecar.
 	Egress EgressSidecarConfig
+	// detectProfile lets tests stub profile auto-detection without a container
+	// runtime. nil means DetectProfile.
+	detectProfile func(ctx context.Context, rt ContainerRuntime, runnerImage, srcDir string, relabel bool) Profile
 }
 
 // EgressSidecarConfig carries what setupHardenedNetwork needs to launch the
@@ -488,7 +491,11 @@ func (d ContainerRunner) resolveProfile(ctx context.Context, requested, src, sub
 		if subPath != "" {
 			srcDir = filepath.Join(src, subPath)
 		}
-		p = DetectProfile(ctx, d.Runtime, defaultImg, srcDir, d.SELinuxRelabel)
+		detect := d.detectProfile
+		if detect == nil {
+			detect = DetectProfile
+		}
+		p = detect(ctx, d.Runtime, defaultImg, srcDir, d.SELinuxRelabel)
 		if p.IsDefault() {
 			return "", defaultImg
 		}
