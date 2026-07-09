@@ -75,6 +75,8 @@ func TestStripAgentDirectives_preservesGitAndBenignNames(t *testing.T) {
 		"docs/AGENTS_GUIDE.md":     "not a bare AGENTS.md",
 		"claude.go":                "package claude",
 		"src/ai/model.go":          "dir named ai but not dotted",
+		".ai/config.yml":           "generic .ai/ is not a known agent-CLI dir",
+		".llm/prompts/x.txt":       "generic .llm/ is not a known agent-CLI dir",
 		"rules.txt":                "not .rules",
 	})
 
@@ -92,6 +94,8 @@ func TestStripAgentDirectives_preservesGitAndBenignNames(t *testing.T) {
 		"docs/AGENTS_GUIDE.md",
 		"claude.go",
 		"src/ai/model.go",
+		".ai/config.yml",
+		".llm/prompts/x.txt",
 		"rules.txt",
 	)
 }

@@ -30,8 +30,9 @@ var agentDirectiveDirs = []string{
 	".codex",
 	".copilot",
 	".devin",
-	".ai",
-	".llm",
+	// .ai and .llm are deliberately excluded: no known agent CLI auto-loads
+	// from those exact basenames, and both are plausible non-agent config
+	// directories (ML project scaffolding, Adobe Illustrator asset dirs).
 }
 
 // agentDirectiveFiles are file basenames that AI coding CLIs auto-load as
