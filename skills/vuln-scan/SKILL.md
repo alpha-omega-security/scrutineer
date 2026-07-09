@@ -100,6 +100,7 @@ For each candidate, record:
 - `boundary` - why the input crosses a real trust boundary in this project's model
 - `validation` - static checks performed, including existing mitigations you looked for; note that no code was executed
 - `prior_art` - optional related fixes, advisories, or issues found in local context
+- `discovered_via` - one of `source`, `issue-tracker`, `advisory`, `documentation`. This scan is source-first, so default to `source`; use one of the others only when a semgrep anchor, an issue reference in a comment, or a doc paragraph is what first pointed you at the sink and you then confirmed it in code
 - `reach` - optional downstream or deployment reachability notes
 - `rating` - severity/confidence rationale, exploit scenario, and recommendation
 

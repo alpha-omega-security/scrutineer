@@ -79,7 +79,7 @@ For every candidate from Step 3, apply the `security-deep-dive` six steps in ord
 1. **Trace** the value from the sink back to a trust boundary.
 2. **Boundary** — is the input actually attacker-controlled in this project's threat model, or a trusted developer/operator choice? Check any existing mitigation the project already has before concluding the input reaches unguarded.
 3. **Validate** — write a reproduction and run it against current HEAD. Paste the script verbatim and its output into `validation`. A bypass or incomplete-fix candidate that cannot be reproduced at HEAD is not a finding: the fix held.
-4. **Prior art** — cite the advisory (`uuid`, `url`) this candidate descends from. Check issues and PRs for whether a maintainer already considered and declined this variant.
+4. **Prior art** — cite the advisory (`uuid`, `url`) this candidate descends from. Check issues and PRs for whether a maintainer already considered and declined this variant. Set `discovered_via` to `advisory` (this skill descends every candidate from one) unless the variant was actually described by an open issue you found while checking, in which case `issue-tracker`.
 5. **Reach** — is the candidate reachable from a public entry point in the shipped artefact? Record `reachable`, `harness_only`, or `unclear`.
 6. **Rate** severity and confidence given everything above.
 

@@ -37,7 +37,7 @@ Draft disclosure content for an existing finding in a shape that maps one-to-one
    ```
    ## Summary
 
-   Two or three sentences describing the vulnerability in the maintainer's own domain terms. Repeat the one-line summary then expand.
+   Two or three sentences describing the vulnerability in the maintainer's own domain terms. Repeat the one-line summary then expand. When the finding's `prior_art` field opens with `Discovered via issue-tracker.`, `Discovered via advisory.`, or `Discovered via documentation.`, lead with a sentence that acknowledges the maintainer already has a record of this ("This confirms and extends issue #N", "This is a bypass of GHSA-xxxx", "Your FAQ at docs/security.md describes this class"); when it opens with `Discovered via source.` or has no such prefix, lead with the finding itself.
 
    ## Impact
 
