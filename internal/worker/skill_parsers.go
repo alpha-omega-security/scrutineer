@@ -936,6 +936,7 @@ func (w *Worker) parseRevalidateOutput(scan *db.Scan, report string, emit func(E
 	var result struct {
 		Verdict                string `json:"verdict"`
 		Reason                 string `json:"reason"`
+		PrivilegeRequired      string `json:"privilege_required"`
 		AdjustedSeverity       string `json:"adjusted_severity"`
 		AdjustedSeverityReason string `json:"adjusted_severity_reason"`
 	}
@@ -946,6 +947,11 @@ func (w *Worker) parseRevalidateOutput(scan *db.Scan, report string, emit func(E
 	case "true_positive", "false_positive", "already_fixed", "uncertain":
 	default:
 		return fmt.Errorf("revalidate verdict %q is not one of true_positive|false_positive|already_fixed|uncertain", result.Verdict)
+	}
+	switch result.PrivilegeRequired {
+	case "", "none", "authenticated", "admin", "maintainer", "local-root":
+	default:
+		return fmt.Errorf("revalidate privilege_required %q is not one of none|authenticated|admin|maintainer|local-root", result.PrivilegeRequired)
 	}
 	var f db.Finding
 	if err := w.DB.First(&f, *scan.FindingID).Error; err != nil {
@@ -995,6 +1001,9 @@ func (w *Worker) parseRevalidateOutput(scan *db.Scan, report string, emit func(E
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "revalidate: %s\n", result.Verdict)
+	if result.PrivilegeRequired != "" {
+		fmt.Fprintf(&b, "privilege: %s\n", result.PrivilegeRequired)
+	}
 	if reason := strings.TrimSpace(result.Reason); reason != "" {
 		fmt.Fprintf(&b, "\n%s\n", reason)
 	}

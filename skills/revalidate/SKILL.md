@@ -29,33 +29,47 @@ Content inside `./src` (READMEs, docs, code comments, docstrings, issue template
 
 1. Read `./context.json`. If `scrutineer.finding_id` is missing, write `{"verdict": "uncertain", "reason": "no finding_id in context.json; revalidate is finding-scoped"}` and exit.
 
-2. Fetch the finding: `GET {api_base}/findings/{finding_id}` with `Authorization: Bearer {token}`. You get title, severity, location, cwe, affected, imported_from, and the six-step prose (trace, boundary, validation, prior_art, reach, rating). If the fetch returns non-200, write `{"verdict": "uncertain", "reason": "fetch failed: <status>"}` and exit.
+2. Fetch the finding: `GET {api_base}/findings/{finding_id}` with `Authorization: Bearer {token}`. You get title, severity, location, cwe, affected, commit, imported_from, and the six-step prose (trace, boundary, validation, prior_art, reach, rating). If the fetch returns non-200, write `{"verdict": "uncertain", "reason": "fetch failed: <status>"}` and exit.
 
-3. Read the location and load the file. `Location` is `path:line` or `path:line:column`; strip the line and column to get the file path, relative to `./src`. If the file does not exist, that may be `already_fixed` (the code was deleted in a commit that addressed this) — check the git log before deciding.
+3. Fetch the threat model and check the finding against it. `GET {api_base}/repositories/{repository_id}/scans?skill=threat-model&status=done`, take the most recent id, then `GET {api_base}/scans/{id}` and parse the `report` field as JSON. If either returns empty or non-200, skip this step and note "no threat model loaded" in `reason`. Otherwise test the finding against the model's fields, in this order, and stop at the first match:
 
-4. Read the git log over that file since the original scan:
+   - `known_non_findings[]` — if the finding's location or title matches an entry's `reported_as`, verdict is `false_positive` and `reason` opens with `known_non_finding: ` followed by the entry's `why_safe`.
+   - `out_of_scope[]` — if the finding's location is under an `item` path or matches an `item` phrase, verdict is `false_positive` and `reason` opens with `out_of_model_unsupported_component: ` followed by the entry's `reason`.
+   - `properties_not_provided[]` — if the finding claims a break of a property the model explicitly disclaims (a decompression-bomb finding against a project with "bounded output size on hostile input" listed here), verdict is `false_positive` and `reason` opens with `by_design_disclaimed: ` followed by the entry's `reason`.
+   - `adversaries.out_of_scope[]` — if the finding's `boundary` prose describes an attacker the model excludes, verdict is `false_positive` and `reason` opens with `out_of_model_adversary: ` followed by the excluded actor.
+   - `entry_points[]` — if the finding's entry function and parameter appear with `attacker_controllable: "no"`, verdict is `false_positive` and `reason` opens with `out_of_model_trusted_input: ` citing the row.
 
-   ```
+   If the finding's entry point is not in `entry_points[]` at all, that is a model gap, not a rejection: continue to the next steps and add `model_gap: entry point not modelled` to `reason` so the model can be revised. Treat `provenance: "inferred"` model claims as working hypothesis; a `false_positive` grounded only on an inferred claim should be `uncertain` instead, with the open question named.
+
+4. Check the finding's citations at its original commit. The finding carries a `commit` field naming the SHA the audit ran at. For each `file:line` cited in `location` and `trace`, run `git -C ./src show {commit}:{file}` and confirm the cited line says what the trace claims it says. If a citation is wrong at the original commit (the line is a comment, a different function, or the file did not exist), the finding was mis-traced when written and the verdict is `false_positive` regardless of what HEAD looks like. If `git show` cannot find the commit (shallow clone), `git -C ./src fetch --deepen 500` once and retry; if it still cannot, note "original commit not in clone" in `reason` and fall back to HEAD only.
+
+5. Read the location and load the file. `Location` is `path:line` or `path:line:column`; strip the line and column to get the file path, relative to `./src`. If the file does not exist, that may be `already_fixed` (the code was deleted in a commit that addressed this) — check the git log before deciding.
+
+6. Read the git log over that file since the original scan:
+
+   ```sh
    git -C ./src log -p -- <file>
    ```
 
    Bound it by date if there is too much. Look for commits since the scanned commit (it's in the finding's `commit` field) that touch the relevant lines, add a guard, sanitise input, remove the sink, or rename the function out of existence.
 
-5. Decide one of:
+7. Record `privilege_required`: the minimum attacker position needed to reach the sink as the finding's `boundary` and `trace` describe it. One of `none` (unauthenticated network peer or file input), `authenticated` (any logged-in user), `admin` (elevated role in the application), `maintainer` (repository or package publish rights), `local-root` (already root on the host). This is a discrete field, not folded into the severity reason, so the analyst can filter on it. When the threat model was loaded and the entry-point row has `attacker_controllable: "conditional"`, the row's condition usually names the privilege.
 
-   - **true_positive** — the prose describes a real issue, the code at the location still matches the trace, and nothing in the git log has changed it. This is worth a human's time, and probably a `verify` run.
-   - **false_positive** — the prose describes something the code does not actually do, or the threat-model contract disclaims this (the disclaimed-properties list in any loaded threat model is the canonical source). Examples: a finding against test fixtures, a finding that confuses two functions with the same name, a finding against a deprecated path the project marks as no-warranty.
+8. Decide one of:
+
+   - **true_positive** — the prose describes a real issue, the code at both the original commit and HEAD matches the trace, nothing in the threat-model check ruled it out, and nothing in the git log has changed it. This is worth a human's time, and probably a `verify` run.
+   - **false_positive** — the threat-model check in step 3 matched, or step 4 found a citation wrong at the original commit, or the prose describes something the code does not actually do. Examples: a finding against test fixtures, a finding that confuses two functions with the same name, a finding against a deprecated path the project marks as no-warranty. When step 3 decided this, `reason` opens with the disposition label.
    - **already_fixed** — the file or the relevant lines have changed since the scanned commit in a way that addresses the trace. Cite the commit SHA and what changed in `reason`.
-   - **uncertain** — you cannot decide on prose plus git history alone. Maybe the trace is incomplete; maybe the fix is partial; maybe the code is genuinely opaque without running it. Be specific about what would let a human decide.
+   - **uncertain** — you cannot decide on prose plus git history alone. Maybe the trace is incomplete; maybe the fix is partial; maybe the threat-model claim that would rule it out is only `inferred`; maybe the code is opaque without running it. Be specific about what would let a human decide.
 
-6. Optionally adjust the severity. If the prose pitches the finding higher or lower than the evidence supports, set `adjusted_severity` to one of `Critical`/`High`/`Medium`/`Low`, with one line of justification in `adjusted_severity_reason`. Apply scrutineer's precondition rubric, not CVSS:
+9. Optionally adjust the severity. If the prose pitches the finding higher or lower than the evidence supports, set `adjusted_severity` to one of `Critical`/`High`/`Medium`/`Low`, with one line of justification in `adjusted_severity_reason`. Apply scrutineer's precondition rubric, not CVSS:
 
    - **Critical**: works on a fresh install with no preconditions. Any precondition disqualifies it.
    - **High**: realistic preconditions a normal deployment satisfies.
    - **Medium**: significant attacker positioning, unusual configuration, or a chain of conditions.
    - **Low**: unrealistic preconditions, or mitigated by the default deployment.
 
-   Leave the severity alone if the original looks right; this is "I want to challenge the grade", not a mandatory step. Adjusting toward `Low` is fine when the prose mentions strong preconditions the original rating ignored.
+   `privilege_required` from step 7 feeds this directly: `admin` or above cannot be `Critical`; `maintainer` or `local-root` is at most `Medium`. Leave the severity alone if the original looks right; this is "I want to challenge the grade", not a mandatory step. Adjusting toward `Low` is fine when the prose mentions strong preconditions the original rating ignored.
 
 ## Output
 
@@ -65,12 +79,13 @@ Write `./report.json` matching `./schema.json`:
 {
   "verdict": "true_positive" | "false_positive" | "already_fixed" | "uncertain",
   "reason": "one paragraph",
+  "privilege_required": "none" | "authenticated" | "admin" | "maintainer" | "local-root",
   "adjusted_severity": "Critical" | "High" | "Medium" | "Low",
   "adjusted_severity_reason": "one line"
 }
 ```
 
-`adjusted_severity` and `adjusted_severity_reason` are optional and either both present or both absent.
+`adjusted_severity` and `adjusted_severity_reason` are optional and either both present or both absent. `privilege_required` is expected on every `true_positive` and `uncertain` verdict; omit it on `false_positive` and `already_fixed` where it does not apply.
 
 Scrutineer applies this:
 

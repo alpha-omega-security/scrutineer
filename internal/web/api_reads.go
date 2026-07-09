@@ -328,6 +328,7 @@ func findingSummary(f db.Finding) map[string]any {
 		"scan_id":       f.ScanID,
 		"repository_id": f.RepositoryID,
 		"finding_id":    f.FindingID,
+		"commit":        f.Commit,
 		"sinks":         f.Sinks,
 		"title":         f.Title,
 		"severity":      f.Severity,
