@@ -17,6 +17,7 @@ Run semgrep against `./src` using the `p/security-audit` and `p/secrets` ruleset
 ## Workspace
 
 - `./src` — the cloned repository
+- Diff rescans add `scrutineer.rescan` to `context.json` plus `./diff.patch` and `./changed_files.json`; the wrapper still runs the configured semgrep rules normally, and Scrutineer records the diff coverage metadata on the scan.
 - `./scripts/scan.py` — the wrapper
 - `./report.json` — write the findings report here
 - `./schema.json` — output shape

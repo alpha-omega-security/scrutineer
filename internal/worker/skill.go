@@ -62,6 +62,21 @@ type skillContextScrutineer struct {
 	// metadata lives (`.scrutineer/` by default). Always written so
 	// skills can build paths without re-applying the default.
 	MetadataDir string `json:"metadata_dir"`
+	// Rescan is present for diff-based rescans. It names the baseline and
+	// staged files a diff-aware skill should read.
+	Rescan *skillContextRescan `json:"rescan,omitempty"`
+}
+
+type skillContextRescan struct {
+	Mode                string `json:"mode"`
+	BaseScanID          uint   `json:"base_scan_id,omitempty"`
+	BaseCommit          string `json:"base_commit,omitempty"`
+	HeadCommit          string `json:"head_commit,omitempty"`
+	ThreatModelScanID   uint   `json:"threat_model_scan_id,omitempty"`
+	DiffFile            string `json:"diff_file,omitempty"`
+	ChangedFilesFile    string `json:"changed_files_file,omitempty"`
+	OldThreatModelFile  string `json:"old_threat_model_file,omitempty"`
+	CoverageMetadataKey string `json:"coverage_metadata_key,omitempty"`
 }
 
 // DefaultMetadataDir is the value used when scrutineer.yaml does not
@@ -123,6 +138,7 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 		if err := prepareLocalSrc(scan.Repository.LocalPath(), workRoot, emit); err != nil {
 			return "", fmt.Errorf("copy local source: %w", err)
 		}
+		scan.Commit = gitHead(filepath.Join(workRoot, "src"))
 	} else {
 		prepare := w.PrepareRepoSrc
 		if prepare == nil {
@@ -137,6 +153,9 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 		}
 		scan.Commit = cacheCommit
 		w.clearCloneError(scan)
+	}
+	if err := w.prepareDiffRescan(ctx, scan, workRoot, emit); err != nil {
+		return "", err
 	}
 	if err := applyPathFilters(workRoot, &skill, emit); err != nil {
 		return "", fmt.Errorf("apply path filters: %w", err)
@@ -421,7 +440,10 @@ func (w *Worker) parseFindingsOutput(skill *db.Skill, scan *db.Scan, report stri
 		}
 	}
 
-	missed := w.markNotObserved(scan, seenThisScan)
+	missed := 0
+	if scan.RescanMode != db.ScanRescanModeDiff {
+		missed = w.markNotObserved(scan, seenThisScan)
+	}
 	retracted := w.markRetracted(scan, seenThisScan)
 
 	emit(Event{Kind: KindText, Text: fmt.Sprintf("parsed %d finding(s): %d new, %d re-observed, %d not-observed, %d retracted",
@@ -1115,6 +1137,24 @@ func stageContext(workRoot, apiBase, forkOrg, metadataDir string, scan *db.Scan,
 	}
 	if scan.ScanGroup != "" {
 		ctx.Scrutineer.ScanGroup = scan.ScanGroup
+	}
+	if scan.RescanMode == db.ScanRescanModeDiff {
+		rc := &skillContextRescan{
+			Mode:                db.ScanRescanModeDiff,
+			BaseCommit:          scan.DiffBaseCommit,
+			HeadCommit:          scan.Commit,
+			DiffFile:            "diff.patch",
+			ChangedFilesFile:    "changed_files.json",
+			CoverageMetadataKey: "coverage",
+		}
+		if scan.DiffBaseScanID != nil {
+			rc.BaseScanID = *scan.DiffBaseScanID
+		}
+		if scan.DiffThreatModelScanID != nil {
+			rc.ThreatModelScanID = *scan.DiffThreatModelScanID
+			rc.OldThreatModelFile = "old_threat_model.json"
+		}
+		ctx.Scrutineer.Rescan = rc
 	}
 	b, err := json.MarshalIndent(ctx, "", "  ")
 	if err != nil {

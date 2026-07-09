@@ -48,6 +48,11 @@ var ErrSkillProfileMismatch = errors.New("skill requires a different runner prof
 // a scan that will fail later at git-clone time.
 var ErrInvalidRef = errors.New("invalid git ref")
 
+// ErrInvalidRescanMode is returned by enqueueSkillWith when opts.RescanMode is
+// not one of the persisted scan modes. API callers control this value, so the
+// API layer maps it to a 400 instead of reporting an internal server failure.
+var ErrInvalidRescanMode = errors.New("invalid rescan mode")
+
 //go:embed templates/*.html
 var tmplFS embed.FS
 
@@ -1122,17 +1127,7 @@ func resolvePURLRepo(ctx context.Context, purl string) string {
 	if purl == "" {
 		return ""
 	}
-	_, raw, err := worker.FetchPackagesByPURL(ctx, purl)
-	if err != nil {
-		return ""
-	}
-	var pkgs []struct {
-		RepoURL string `json:"repository_url"`
-	}
-	if json.Unmarshal(raw, &pkgs) == nil && len(pkgs) > 0 && pkgs[0].RepoURL != "" {
-		return pkgs[0].RepoURL
-	}
-	return ""
+	return worker.ResolvePURLRepositoryURL(ctx, purl)
 }
 
 func (s *Server) dependentScan(w http.ResponseWriter, r *http.Request) {
@@ -2277,6 +2272,10 @@ func (s *Server) repoScan(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if strings.TrimSpace(r.FormValue("rescan_mode")) == db.ScanRescanModeDiff {
+		s.repoDiffScan(w, r, repo)
+		return
+	}
 	// The "New scan" button enqueues the deep-dive skill; everything else is
 	// triggered either by the triage skill or by the explicit Run skill menu.
 	var skill db.Skill
@@ -2285,14 +2284,45 @@ func (s *Server) repoScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := s.enqueueSkillWith(r.Context(), repo.ID, skill.ID, ScanOpts{
-		Model:     r.FormValue("model"),
-		SubPath:   strings.TrimSpace(r.FormValue("sub_path")),
-		ScanGroup: uuid.NewString(),
+		Model:      r.FormValue("model"),
+		SubPath:    strings.TrimSpace(r.FormValue("sub_path")),
+		RescanMode: strings.TrimSpace(r.FormValue("rescan_mode")),
+		ScanGroup:  uuid.NewString(),
 	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	s.redirect(w, r, fmt.Sprintf("/repositories/%d", repo.ID))
+}
+
+func (s *Server) repoDiffScan(w http.ResponseWriter, r *http.Request, repo db.Repository) {
+	group := uuid.NewString()
+	model := r.FormValue("model")
+	subPath := strings.TrimSpace(r.FormValue("sub_path"))
+	names := []string{threatModelSkillName, "semgrep", deepDiveSkillName}
+	queued := 0
+	for _, name := range names {
+		var skill db.Skill
+		if err := s.DB.Where("name = ? AND active = ?", name, true).First(&skill).Error; err != nil {
+			if name == deepDiveSkillName {
+				http.Error(w, deepDiveSkillName+" skill is not installed", http.StatusPreconditionFailed)
+				return
+			}
+			continue
+		}
+		if _, err := s.enqueueSkillWith(r.Context(), repo.ID, skill.ID, ScanOpts{
+			Model:      model,
+			SubPath:    subPath,
+			RescanMode: db.ScanRescanModeDiff,
+			ScanGroup:  group,
+		}); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		queued++
+	}
+	setFlash(w, Flash{Category: successKey, Title: fmt.Sprintf("Diff rescan queued %d scan(s)", queued)})
+	s.redirect(w, r, fmt.Sprintf("/repositories/%d#rt3", repo.ID))
 }
 
 // repoScanAll is the bulk equivalent of the per-subproject "Scan" button: it
@@ -2490,6 +2520,13 @@ type ScanOpts struct {
 	SubPath        string
 	Ref            string
 	Profile        string
+	// RescanMode requests full or diff coverage. Empty preserves the existing
+	// full-scan behavior. A requested diff scan can fall back to full coverage
+	// once the worker resolves the clone and baseline.
+	RescanMode string
+	// DiffBaseScanID pins the baseline for a diff rescan. Nil asks the worker
+	// to choose the latest compatible same-skill completed scan.
+	DiffBaseScanID *uint
 	// ScanGroup tags this scan as part of a parallel batch so in-flight audit
 	// skills can list sibling findings before re-filing them. Empty
 	// when the scan is not part of a batch.
@@ -2535,6 +2572,13 @@ func (s *Server) enqueueSkillWith(ctx context.Context, repoID, skillID uint, opt
 	if hasSkill && sk.RequiresProfile != "" && opts.Profile != "" && opts.Profile != sk.RequiresProfile {
 		return 0, fmt.Errorf("%w: %q needs %q, got %q", ErrSkillProfileMismatch, sk.Name, sk.RequiresProfile, opts.Profile)
 	}
+	switch opts.RescanMode {
+	case "", db.ScanRescanModeFull:
+		opts.RescanMode = db.ScanRescanModeFull
+	case db.ScanRescanModeDiff:
+	default:
+		return 0, fmt.Errorf("%w: %q", ErrInvalidRescanMode, opts.RescanMode)
+	}
 	if err := worker.ValidateGitRef(opts.Ref); err != nil {
 		return 0, fmt.Errorf("%w: %v", ErrInvalidRef, err)
 	}
@@ -2572,6 +2616,8 @@ func (s *Server) enqueueSkillWith(ctx context.Context, repoID, skillID uint, opt
 		SubPath:            opts.SubPath,
 		ScanGroup:          opts.ScanGroup,
 		Ref:                opts.Ref,
+		RescanMode:         opts.RescanMode,
+		DiffBaseScanID:     opts.DiffBaseScanID,
 		Profile:            opts.Profile,
 		SessionID:          opts.SessionID,
 		ResumedFromScanID:  opts.ResumedFromScanID,

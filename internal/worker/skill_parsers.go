@@ -339,7 +339,7 @@ func resolveLocalPOMDependencies(pomPath, srcRoot string, emit func(Event)) map[
 	if !localPOMParentsStayUnderRoot(pomPath, srcRoot) {
 		return nil
 	}
-	ep, err := mavenpom.ResolveLocal(context.Background(), pomPath, mavenpom.Options{})
+	ep, err := mavenpom.ResolveLocal(context.Background(), pomPath, srcRoot, mavenpom.Options{})
 	if err != nil {
 		emit(Event{Kind: KindText, Text: "maven pom resolver skipped " + pomPath + ": " + err.Error()})
 		return nil
@@ -936,6 +936,7 @@ func (w *Worker) parseRevalidateOutput(scan *db.Scan, report string, emit func(E
 	var result struct {
 		Verdict                string `json:"verdict"`
 		Reason                 string `json:"reason"`
+		PrivilegeRequired      string `json:"privilege_required"`
 		AdjustedSeverity       string `json:"adjusted_severity"`
 		AdjustedSeverityReason string `json:"adjusted_severity_reason"`
 	}
@@ -946,6 +947,11 @@ func (w *Worker) parseRevalidateOutput(scan *db.Scan, report string, emit func(E
 	case "true_positive", "false_positive", "already_fixed", "uncertain":
 	default:
 		return fmt.Errorf("revalidate verdict %q is not one of true_positive|false_positive|already_fixed|uncertain", result.Verdict)
+	}
+	switch result.PrivilegeRequired {
+	case "", "none", "authenticated", "admin", "maintainer", "local-root":
+	default:
+		return fmt.Errorf("revalidate privilege_required %q is not one of none|authenticated|admin|maintainer|local-root", result.PrivilegeRequired)
 	}
 	var f db.Finding
 	if err := w.DB.First(&f, *scan.FindingID).Error; err != nil {
@@ -995,6 +1001,9 @@ func (w *Worker) parseRevalidateOutput(scan *db.Scan, report string, emit func(E
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "revalidate: %s\n", result.Verdict)
+	if result.PrivilegeRequired != "" {
+		fmt.Fprintf(&b, "privilege: %s\n", result.PrivilegeRequired)
+	}
 	if reason := strings.TrimSpace(result.Reason); reason != "" {
 		fmt.Fprintf(&b, "\n%s\n", reason)
 	}
@@ -1025,6 +1034,16 @@ func (w *Worker) parseRevalidateOutput(scan *db.Scan, report string, emit func(E
 	return nil
 }
 
+// dedupGroup is one head-plus-members relation from a finding-dedup report.
+// Duplicates and subsumed both fit this shape (canonical/parent + children);
+// chains have no head, so HeadID is 0 there and applyDedupChains reads
+// MemberIDs only.
+type dedupGroup struct {
+	HeadID    uint
+	MemberIDs []uint
+	Reason    string
+}
+
 func (w *Worker) parseFindingDedupOutput(scan *db.Scan, report string, emit func(Event)) error {
 	var result struct {
 		Duplicates []struct {
@@ -1032,44 +1051,151 @@ func (w *Worker) parseFindingDedupOutput(scan *db.Scan, report string, emit func
 			DuplicateIDs []uint `json:"duplicate_ids"`
 			Reason       string `json:"reason"`
 		} `json:"duplicates"`
+		Subsumed []struct {
+			ParentID    uint   `json:"parent_id"`
+			SubsumedIDs []uint `json:"subsumed_ids"`
+			Reason      string `json:"reason"`
+		} `json:"subsumed"`
+		Chains []struct {
+			FindingIDs []uint `json:"finding_ids"`
+			Reason     string `json:"reason"`
+		} `json:"chains"`
 	}
 	if err := json.Unmarshal([]byte(report), &result); err != nil {
 		return fmt.Errorf("parse finding_dedup report: %w", err)
 	}
-	if len(result.Duplicates) == 0 {
-		emit(Event{Kind: KindText, Text: "finding-dedup: no duplicates reported"})
+	if len(result.Duplicates)+len(result.Subsumed)+len(result.Chains) == 0 {
+		emit(Event{Kind: KindText, Text: "finding-dedup: no relations reported"})
 		return nil
 	}
 
-	marked, skipped := 0, 0
-	for _, group := range result.Duplicates {
-		canonical, ok := w.dedupFinding(scan.RepositoryID, group.CanonicalID)
-		if !ok || !dedupCandidateOpen(canonical.Status) {
-			skipped += len(group.DuplicateIDs)
-			continue
-		}
-		for _, duplicateID := range group.DuplicateIDs {
-			if duplicateID == 0 || duplicateID == canonical.ID {
-				skipped++
-				continue
-			}
-			duplicate, ok := w.dedupFinding(scan.RepositoryID, duplicateID)
-			if !ok || !dedupCandidateOpen(duplicate.Status) {
-				skipped++
-				continue
-			}
-			if err := db.WriteFindingField(w.DB, duplicate.ID, "status", string(db.FindingDuplicate), db.SourceModel, findingDedupSkill); err != nil {
-				return fmt.Errorf("mark finding %d duplicate: %w", duplicate.ID, err)
-			}
-			if err := w.addDedupNote(duplicate.ID, canonical.ID, group.Reason); err != nil {
-				return err
-			}
-			marked++
-		}
+	skipped := 0
+	marked, err := w.applyDedupHeaded(scan.RepositoryID, dedupHeaderDuplicate, true,
+		mapDedupGroups(result.Duplicates, func(g struct {
+			CanonicalID  uint   `json:"canonical_id"`
+			DuplicateIDs []uint `json:"duplicate_ids"`
+			Reason       string `json:"reason"`
+		}) dedupGroup {
+			return dedupGroup{HeadID: g.CanonicalID, MemberIDs: g.DuplicateIDs, Reason: g.Reason}
+		}), &skipped)
+	if err != nil {
+		return err
 	}
 
-	emit(Event{Kind: KindText, Text: fmt.Sprintf("finding-dedup: marked %d duplicate(s), skipped %d", marked, skipped)})
+	// Subsumed findings do not change status: the bug is real and stays in
+	// the database, but disclose and report-upstream read the note marker
+	// and refuse to file it separately (the parent is what the maintainer
+	// should see). Same repo-and-open guards as duplicates apply.
+	subsumed, err := w.applyDedupHeaded(scan.RepositoryID, dedupHeaderSubsumed, false,
+		mapDedupGroups(result.Subsumed, func(g struct {
+			ParentID    uint   `json:"parent_id"`
+			SubsumedIDs []uint `json:"subsumed_ids"`
+			Reason      string `json:"reason"`
+		}) dedupGroup {
+			return dedupGroup{HeadID: g.ParentID, MemberIDs: g.SubsumedIDs, Reason: g.Reason}
+		}), &skipped)
+	if err != nil {
+		return err
+	}
+
+	chained, err := w.applyDedupChains(scan.RepositoryID,
+		mapDedupGroups(result.Chains, func(g struct {
+			FindingIDs []uint `json:"finding_ids"`
+			Reason     string `json:"reason"`
+		}) dedupGroup {
+			return dedupGroup{MemberIDs: g.FindingIDs, Reason: g.Reason}
+		}), &skipped)
+	if err != nil {
+		return err
+	}
+
+	emit(Event{Kind: KindText, Text: fmt.Sprintf(
+		"finding-dedup: marked %d duplicate(s), noted %d subsumed, noted %d chain member(s), skipped %d",
+		marked, subsumed, chained, skipped)})
 	return nil
+}
+
+func mapDedupGroups[T any](in []T, f func(T) dedupGroup) []dedupGroup {
+	out := make([]dedupGroup, len(in))
+	for i, g := range in {
+		out[i] = f(g)
+	}
+	return out
+}
+
+// applyDedupHeaded handles the duplicate and subsumed shapes: one head
+// (canonical or parent) plus a list of members that each get a note
+// pointing at the head. When flipStatus is set the member's lifecycle
+// moves to duplicate; otherwise (subsumed) only the note lands.
+func (w *Worker) applyDedupHeaded(repoID uint, verb string, flipStatus bool, groups []dedupGroup, skipped *int) (int, error) {
+	n := 0
+	for _, g := range groups {
+		head, ok := w.dedupFinding(repoID, g.HeadID)
+		if !ok || !dedupCandidateOpen(head.Status) {
+			*skipped += len(g.MemberIDs)
+			continue
+		}
+		for _, id := range g.MemberIDs {
+			if id == 0 || id == head.ID {
+				*skipped++
+				continue
+			}
+			member, ok := w.dedupFinding(repoID, id)
+			if !ok || !dedupCandidateOpen(member.Status) {
+				*skipped++
+				continue
+			}
+			if flipStatus {
+				if err := db.WriteFindingField(w.DB, member.ID, "status", string(db.FindingDuplicate), db.SourceModel, findingDedupSkill); err != nil {
+					return n, fmt.Errorf("mark finding %d duplicate: %w", member.ID, err)
+				}
+			}
+			if err := w.addRelationNote(member.ID, verb, []uint{head.ID}, g.Reason); err != nil {
+				return n, err
+			}
+			n++
+		}
+	}
+	return n, nil
+}
+
+// minChainMembers is the smallest chain worth recording after the
+// repo-and-open filter has run: a chain with one surviving member has
+// nothing to compose with.
+const minChainMembers = 2
+
+// applyDedupChains handles the chain shape: every member stays open and
+// each gets a note listing the OTHER members so disclose on any one of
+// them can fetch exactly the ids it needs to compose.
+func (w *Worker) applyDedupChains(repoID uint, groups []dedupGroup, skipped *int) (int, error) {
+	n := 0
+	for _, g := range groups {
+		var members []uint
+		for _, id := range g.MemberIDs {
+			f, ok := w.dedupFinding(repoID, id)
+			if !ok || !dedupCandidateOpen(f.Status) {
+				*skipped++
+				continue
+			}
+			members = append(members, f.ID)
+		}
+		if len(members) < minChainMembers {
+			continue
+		}
+		for _, m := range members {
+			others := make([]uint, 0, len(members)-1)
+			for _, o := range members {
+				if o != m {
+					others = append(others, o)
+				}
+			}
+			if err := w.addRelationNote(m, dedupHeaderChains, others, g.Reason); err != nil {
+				return n, err
+			}
+			n++
+		}
+	}
+	return n, nil
 }
 
 func (w *Worker) dedupFinding(repoID, findingID uint) (db.Finding, bool) {
@@ -1093,14 +1219,36 @@ func dedupCandidateOpen(status db.FindingLifecycle) bool {
 	return !status.Closed()
 }
 
-func (w *Worker) addDedupNote(duplicateID, canonicalID uint, reason string) error {
+// dedupHeader* are the fixed first-line markers written to FindingNote by
+// finding-dedup, in the form "finding-dedup: <verb> finding #N[, #M...]".
+// disclose and report-upstream fetch GET /findings/{id}/notes and match on
+// these prefixes, so changing them is a coordinated change with those two
+// skills. The values are the human-readable verb, not an enum; the "#N"
+// suffix is what the reader parses.
+const (
+	dedupHeaderDuplicate = "duplicates"
+	dedupHeaderSubsumed  = "subsumed by"
+	dedupHeaderChains    = "chains with"
+)
+
+// addRelationNote records a finding-dedup relation on findingID as a note
+// whose first line is a fixed marker (see dedupHeader* above) followed by
+// the related ids, then a blank line and the reason. The marker line is
+// what downstream skills grep for; the reason is for the analyst.
+func (w *Worker) addRelationNote(findingID uint, verb string, relatedIDs []uint, reason string) error {
 	var b strings.Builder
-	fmt.Fprintf(&b, "finding-dedup: duplicates finding #%d", canonicalID)
-	if strings.TrimSpace(reason) != "" {
-		fmt.Fprintf(&b, "\n\n%s", strings.TrimSpace(reason))
+	fmt.Fprintf(&b, "finding-dedup: %s finding ", verb)
+	for i, id := range relatedIDs {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		fmt.Fprintf(&b, "#%d", id)
 	}
-	if _, err := db.AddFindingNote(w.DB, duplicateID, b.String(), findingDedupSkill); err != nil {
-		return fmt.Errorf("record dedup note for finding %d: %w", duplicateID, err)
+	if r := strings.TrimSpace(reason); r != "" {
+		fmt.Fprintf(&b, "\n\n%s", r)
+	}
+	if _, err := db.AddFindingNote(w.DB, findingID, b.String(), findingDedupSkill); err != nil {
+		return fmt.Errorf("record %s note for finding %d: %w", verb, findingID, err)
 	}
 	return nil
 }

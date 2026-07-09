@@ -152,6 +152,8 @@ func (s *Server) scanRetry(w http.ResponseWriter, r *http.Request) {
 		SubPath:           scan.SubPath,
 		Ref:               scan.Ref,
 		Profile:           scan.Profile,
+		RescanMode:        scan.RescanMode,
+		DiffBaseScanID:    scan.DiffBaseScanID,
 		ScanGroup:         scan.ScanGroup,
 		SessionID:         sessionID,
 		ResumedFromScanID: resumeOf,
@@ -222,7 +224,7 @@ func (s *Server) scansRetryFailed(w http.ResponseWriter, r *http.Request) {
 	// (repository, skill, sub_path, ref, finding_id) tuple already in
 	// queued/running/done.
 	var scans []db.Scan
-	err := q.Select("id, repository_id, skill_id, model, effort, finding_id, sub_path, ref, profile, scan_group, backend, status, session_id, resumed_from_scan_id, import_payload").
+	err := q.Select("id, repository_id, skill_id, model, effort, finding_id, sub_path, ref, profile, rescan_mode, diff_base_scan_id, scan_group, backend, status, session_id, resumed_from_scan_id, import_payload").
 		Where(`NOT EXISTS (
 			SELECT 1 FROM scans n
 			WHERE n.id > scans.id
@@ -249,6 +251,8 @@ func (s *Server) scansRetryFailed(w http.ResponseWriter, r *http.Request) {
 			SubPath:           sc.SubPath,
 			Ref:               sc.Ref,
 			Profile:           sc.Profile,
+			RescanMode:        sc.RescanMode,
+			DiffBaseScanID:    sc.DiffBaseScanID,
 			ScanGroup:         sc.ScanGroup,
 			SessionID:         sessionID,
 			ResumedFromScanID: resumeOf,

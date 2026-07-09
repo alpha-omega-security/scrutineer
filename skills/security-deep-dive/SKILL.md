@@ -26,6 +26,7 @@ Workspace layout:
 - `./src` — the cloned repository
 - `./context.json` — repo identity plus a `scrutineer` block with `api_base`, `token`, `repository_id`. If `scrutineer.scan_subpath` is set, scope every inventory, trace, and validation step to `./src/{scan_subpath}` only — do not reach outside that sub-folder for code analysis, and treat the sub-folder as the project root for all relative locations in the report. Other repositories' concerns (packages, advisories, maintainers) remain repo-wide. If prior scans or ecosystem prefetches of this repo have run, their results are available at the API documented below; use them instead of re-fetching from upstream.
 - `./threat_model.json` — optional. When present, an operator-supplied threat model that overrides the API-fetched one (see Phase 1).
+- Diff rescans add `scrutineer.rescan` to `context.json` plus `./diff.patch`, `./changed_files.json`, and, when available, `./old_threat_model.json`.
 - `./report.json` — write your final report here
 - `./schema.json` — the JSON schema your report must conform to
 
@@ -43,13 +44,21 @@ Scrutineer API (call with `Authorization: Bearer {token}`):
 
 If any of those return an empty list or a non-200 status, the upstream scans were not run yet or the API is unreachable; fall back to your own reasoning over `./src`.
 
+## Diff rescans
+
+When `context.json` has `scrutineer.rescan.mode == "diff"`, audit the change set rather than claiming a full fresh repository audit. Read `./changed_files.json` first, then `./diff.patch`, then the changed files in `./src`. Use `./old_threat_model.json` when present to understand the previous security contract, and fetch the latest threat-model scan through the API if the file is absent.
+
+Inventory only sinks that are new, modified, or whose reachability/security boundary plausibly changed because of the diff. Follow calls out of a changed file when needed to validate an attack path, but do not re-inventory unrelated untouched subsystems. A finding belongs in the report when the diff introduces it, exposes an existing sink to a new adversary, changes a validation/sanitisation guarantee, or makes an existing finding newly reachable or materially worse.
+
+Do not mark untouched historical findings as gone just because they are outside the diff. Use `findings: []` only to mean "no new or materially changed findings in this diff." Put ruled-out entries in the report for changed sinks you actually inspected; do not fill the ruled-out list with old inventory from untouched code.
+
 ## Phase 1: Inventory
 
 If `./threat_model.json` exists in the workdir, parse it and use it as the threat model; do not fetch one from the API. The operator placed it there to test how this audit behaves under an edited model, so the file takes precedence even if a `threat-model` scan has already run. Otherwise fetch the threat-model scan: `GET {api_base}/repositories/{repository_id}/scans?skill=threat-model&status=done`, take the most recent id, then `GET {api_base}/scans/{id}` and parse the `report` field as JSON. Either way, if you get one it already holds the trust map: `components` and `out_of_scope` say which code is in the model, `adversaries` names the actors, `trust_boundaries` describes the line per component, and `entry_points` is the per-parameter table Step 2 looks up. Fill this report's `boundaries[]` from those fields instead of deriving from scratch — one row per actor (callers and adversaries), with `trusted` set from whether the actor appears in `adversaries.in_scope` and `source` set from the threat model's `provenance`/`source` — then skip to listing sinks. Treat threat-model entries with `provenance: "inferred"` as working hypotheses you may overturn during Phase 2; `"documented"` entries cite a file:line you can re-read. An empty list or a non-200 means the threat-model skill has not run on this repository yet, in which case derive the boundaries yourself as below.
 
 Before listing sinks, name the trust boundaries this codebase has. For a small library this is one or two lines: who calls it, what they pass, where external data enters. For something larger — a package manager, a server, a build tool — it is a table: each actor, what they control, whether they are trusted, and where you found that documented. Write it down once. The per-sink boundary checks in Phase 2 reference what you wrote here; they do not re-derive it per sink.
 
-The boundaries you name should account for every public entry point. A library mostly called one way but with a documented secondary API has two boundaries, not one. A file the library writes and reads back is one boundary; the same file accepted as an argument from a public API is a second. List both. Step 2 checks each sink against this list; a missing boundary means a misjudged sink.
+The boundaries you name should account for every public entry point. A library mostly called one way but with a documented secondary API has two boundaries, not one. A file the library writes and reads back is one boundary; the same file accepted as an argument from a public API is a second. List both. Entry points are wherever data from outside the process arrives, which is often not an exported function or HTTP route: exported API/ABI/FFI and plugin loaders; callbacks, event buses, actor mailboxes, and channels; anonymous pipes, Unix domain sockets, Windows named pipes, shared memory, D-Bus, Binder, XPC, COM; gRPC, Thrift, Cap'n Proto, JSON-RPC, XML-RPC, SOAP, REST, GraphQL; message-queue consumers (AMQP, Kafka, MQTT, NATS, ZeroMQ, cloud queues); raw TCP/UDP, WebSockets, SSE, HTTP/2 and QUIC streams, WebRTC data channels; argv/stdin, env, config, spool and drop directories, lock and pid files, database-as-queue pollers, webhooks; file formats consumed and produced. Serialization formats such as Protobuf, Avro, MessagePack, CBOR, JSON, XML, and ASN.1 are the wire format, not the channel; note them with the boundary they ride on. Step 2 checks each sink against this list; a missing boundary means a misjudged sink.
 
 Then list every sink. Do not judge any of them yet. A sink is any place where the code does something that would be dangerous if the input were hostile, regardless of whether you currently think the input is hostile.
 
@@ -135,6 +144,8 @@ Check this package's history, not the weakness class's. A CVE in another project
 Check whether the behaviour is required by a standard the library implements. An RFC, a wire format, a protocol spec. A standard that allows a dangerous choice and a library that took it stays in scope. A standard that requires the behaviour moves the finding to the standard; cite the section, write "required by [standard, section]" in the ruled-out list, and move to the next sink.
 
 Note what you searched and what you found, even if nothing.
+
+Set `discovered_via` on the finding to record how you first identified it: `source` when you found it by reading code (grep, trace, or a semgrep anchor you then confirmed); `issue-tracker` when an open or closed issue described it and you confirmed it in the code; `advisory` when a prior CVE or GHSA on this or a sibling project pointed at it; `documentation` when the project's own docs, FAQ, or a code comment describe the weakness. This is the maintainer-facing provenance: "you already have an issue open for this" is a different opening than "we found this in the code", and `disclose` reads it to pick which one to write.
 
 ### Step 5: Reach
 

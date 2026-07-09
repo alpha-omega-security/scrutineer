@@ -155,6 +155,7 @@
         "boundary":   { "$ref": "#/$defs/markdown" },
         "validation": { "$ref": "#/$defs/markdown", "description": "The reproduction: the script or commands you ran, verbatim and in full, followed by their output. The script content is mandatory, not a description of it — output alone, without the thing that produced it, cannot be re-run or acted on by a later verify pass." },
         "prior_art":  { "$ref": "#/$defs/markdown" },
+        "discovered_via": { "type": "string", "enum": ["source", "issue-tracker", "advisory", "documentation"], "description": "How this finding was first identified. source = found by reading code. issue-tracker = an open or closed issue described it. advisory = a prior CVE/GHSA on this or a sibling project pointed at it. documentation = the project's own docs describe the weakness. Folded into prior_art on ingest so disclose can vary its opening line; not a separate database column." },
         "reach":      { "$ref": "#/$defs/markdown" },
         "rating":     { "$ref": "#/$defs/markdown" },
         "dup_check":  { "$ref": "#/$defs/markdown", "description": "One sentence: which findings already filed under this scan_group you compared this against, and why this one is distinct. Empty list of siblings is fine; say so. Lets the dedup judge weigh your reasoning before merging." }

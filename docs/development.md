@@ -21,7 +21,7 @@
 | `internal/worker/skill_parsers.go` | one parser per output_kind: findings, maintainers, packages, advisories, dependencies, finding_dedup, repo_metadata, verify, revalidate, breaking_change, mitigation, release_watch, subprojects, repo_overview, posture, patch (plus `exposure` handled by `exposure.go`, and `threat_model` stored as-is for the threat-model tab) |
 | `internal/worker/stream.go` | claude stream-json line parser |
 | `internal/worker/findings.go` | structured report parser used by `output_kind=findings` |
-| `internal/worker/metadata.go` | FetchPackagesByPURL helper used by the web import button |
+| `internal/worker/ecosystems.go` | ecosyste.ms cache refresh and dependent-package persistence |
 | `internal/web/` | HTTP handlers, templates, static assets, SSE broker |
 | `internal/web/server.go` | Server struct, routing, middleware, template funcs, shared helpers; repo + finding + package + advisory handlers |
 | `internal/web/orgs.go` | organisation index and show handlers |

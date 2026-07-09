@@ -1,7 +1,9 @@
 // Prereq gating for skill jobs. A skill declaring scrutineer.requires
 // only dispatches when each named upstream skill has a completed scan
 // for the same repository; otherwise the job is re-published with a
-// delay so the runner picks it up again later.
+// delay so the runner picks it up again later. Scans in a ScanGroup first
+// wait on prereq scans from that same group, which keeps grouped rescans from
+// dispatching against stale historical prereq results.
 //
 // "Satisfied" is currently any done scan on this repository, regardless
 // of commit. URL-keyed skills (packages, advisories, maintainers,
@@ -50,7 +52,7 @@ func (w *Worker) preflightSkill(ctx context.Context, scan *db.Scan, attempt int)
 	if len(requires) == 0 {
 		return false, nil
 	}
-	pending, dead := w.unsatisfiedPrereqs(scan.RepositoryID, requires)
+	pending, dead := w.unsatisfiedPrereqs(scan, requires)
 	if len(dead) > 0 {
 		w.failScanPrereqs(scan, skill.Name,
 			fmt.Sprintf("prereqs failed: %v", dead), dead)
@@ -116,46 +118,76 @@ func prereqBackoff(base time.Duration, attempt int) time.Duration {
 // fail now rather than burn the retry budget. A prereq that is
 // unregistered, disabled, or has never been enqueued for this repo is
 // treated as satisfied; see file header for why.
-func (w *Worker) unsatisfiedPrereqs(repoID uint, names []string) (pending, dead []string) {
+func (w *Worker) unsatisfiedPrereqs(scan *db.Scan, names []string) (pending, dead []string) {
 	inFlight := []db.ScanStatus{db.ScanQueued, db.ScanRunning, db.ScanPaused}
 	for _, name := range names {
 		var skillRow db.Skill
 		err := w.DB.Where("name = ?", name).First(&skillRow).Error
 		if err != nil {
 			w.Log.Warn("prereq skill not registered; treating as satisfied",
-				"prereq", name, "repo", repoID)
+				"prereq", name, "repo", scan.RepositoryID)
 			continue
 		}
 		if !skillRow.Active {
 			w.Log.Warn("prereq skill disabled; treating as satisfied",
-				"prereq", name, "repo", repoID)
+				"prereq", name, "repo", scan.RepositoryID)
 			continue
 		}
-		var total int64
-		w.DB.Model(&db.Scan{}).
-			Where("repository_id = ? AND skill_name = ?", repoID, name).
-			Count(&total)
-		if total == 0 {
-			continue
+		if scan.ScanGroup != "" {
+			if status := w.prereqStatus(
+				"repository_id = ? AND skill_name = ? AND scan_group = ?",
+				[]any{scan.RepositoryID, name, scan.ScanGroup},
+				inFlight,
+			); status != prereqAbsent {
+				switch status {
+				case prereqPending:
+					pending = append(pending, name)
+				case prereqDead:
+					dead = append(dead, name)
+				}
+				continue
+			}
 		}
-		var done int64
-		w.DB.Model(&db.Scan{}).
-			Where("repository_id = ? AND skill_name = ? AND status = ?", repoID, name, db.ScanDone).
-			Count(&done)
-		if done > 0 {
-			continue
-		}
-		var live int64
-		w.DB.Model(&db.Scan{}).
-			Where("repository_id = ? AND skill_name = ? AND status IN ?", repoID, name, inFlight).
-			Count(&live)
-		if live > 0 {
+		switch w.prereqStatus(
+			"repository_id = ? AND skill_name = ?",
+			[]any{scan.RepositoryID, name},
+			inFlight,
+		) {
+		case prereqPending:
 			pending = append(pending, name)
-		} else {
+		case prereqDead:
 			dead = append(dead, name)
 		}
 	}
 	return pending, dead
+}
+
+type prereqState int
+
+const (
+	prereqAbsent prereqState = iota
+	prereqSatisfied
+	prereqPending
+	prereqDead
+)
+
+func (w *Worker) prereqStatus(where string, args []any, inFlight []db.ScanStatus) prereqState {
+	var total int64
+	w.DB.Model(&db.Scan{}).Where(where, args...).Count(&total)
+	if total == 0 {
+		return prereqAbsent
+	}
+	var done int64
+	w.DB.Model(&db.Scan{}).Where(where, args...).Where("status = ?", db.ScanDone).Count(&done)
+	if done > 0 {
+		return prereqSatisfied
+	}
+	var live int64
+	w.DB.Model(&db.Scan{}).Where(where, args...).Where("status IN ?", inFlight).Count(&live)
+	if live > 0 {
+		return prereqPending
+	}
+	return prereqDead
 }
 
 func (w *Worker) failScanPrereqs(scan *db.Scan, skillName, msg string, missing []string) {

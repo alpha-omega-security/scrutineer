@@ -80,11 +80,17 @@ func seedPrereqSkill(t *testing.T, w *Worker, prereq string, active bool) *db.Sk
 
 func seedPrereqScan(t *testing.T, w *Worker, s *db.Skill, repoID uint, status db.ScanStatus) {
 	t.Helper()
+	seedPrereqScanInGroup(t, w, s, repoID, status, "")
+}
+
+func seedPrereqScanInGroup(t *testing.T, w *Worker, s *db.Skill, repoID uint, status db.ScanStatus, group string) {
+	t.Helper()
 	scan := db.Scan{
 		RepositoryID: repoID,
 		Kind:         JobSkill,
 		Status:       status,
 		SkillName:    s.Name,
+		ScanGroup:    group,
 	}
 	scan.SkillID = &s.ID
 	if err := w.DB.Create(&scan).Error; err != nil {
@@ -123,6 +129,63 @@ func TestPreflightSkill_allSatisfied(t *testing.T) {
 	}
 	if deferred {
 		t.Error("all prereqs satisfied; scan should dispatch")
+	}
+}
+
+func TestPreflightSkill_scanGroupWaitsOnSiblingPrereqs(t *testing.T) {
+	w := newPreflightWorker(t)
+	scan := seedPreflightFixtures(t, w, "threat-model")
+	scan.ScanGroup = "grp-1"
+	if err := w.DB.Save(scan).Error; err != nil {
+		t.Fatal(err)
+	}
+	tm := seedPrereqSkill(t, w, "threat-model", true)
+	seedPrereqScan(t, w, tm, scan.RepositoryID, db.ScanDone)
+	seedPrereqScanInGroup(t, w, tm, scan.RepositoryID, db.ScanQueued, scan.ScanGroup)
+
+	deferred, err := w.preflightSkill(context.Background(), scan, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !deferred {
+		t.Error("same-group queued prereq should block even when an older prereq scan is done")
+	}
+}
+
+func TestPreflightSkill_scanGroupSatisfiedBySiblingPrereq(t *testing.T) {
+	w := newPreflightWorker(t)
+	scan := seedPreflightFixtures(t, w, "threat-model")
+	scan.ScanGroup = "grp-1"
+	if err := w.DB.Save(scan).Error; err != nil {
+		t.Fatal(err)
+	}
+	tm := seedPrereqSkill(t, w, "threat-model", true)
+	seedPrereqScanInGroup(t, w, tm, scan.RepositoryID, db.ScanDone, scan.ScanGroup)
+
+	deferred, err := w.preflightSkill(context.Background(), scan, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deferred {
+		t.Error("same-group done prereq should satisfy the gate")
+	}
+}
+
+func TestPreflightSkill_scanGroupFallsBackWhenNoSiblingPrereq(t *testing.T) {
+	w := newPreflightWorker(t)
+	scan := seedPreflightFixtures(t, w, "threat-model")
+	scan.ScanGroup = "grp-1"
+	if err := w.DB.Save(scan).Error; err != nil {
+		t.Fatal(err)
+	}
+	seedPrereqSkillAndDoneScan(t, w, scan.RepositoryID, "threat-model")
+
+	deferred, err := w.preflightSkill(context.Background(), scan, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deferred {
+		t.Error("grouped scan with no sibling prereq rows should use historical prereq behavior")
 	}
 }
 

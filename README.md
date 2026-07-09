@@ -94,7 +94,7 @@ When the containerised runner is active (the default when a container runtime is
 - **OSV export** -- download any finding as a schema-validated OSV record, aligned with the OSS-SIRT advisory template (credits, CWE IDs, withdrawn, SEMVER ranges, CVSS v3 + v4 severity entries)
 - **JSONL export** -- stream all findings or scans as line-delimited JSON for ingestion elsewhere
 - **Markdown report export** -- download a single consolidated `report.md` per repository or organisation
-- **Disclosure bundle** -- download `bundle.tar.gz` per finding: OSV, CSAF, markdown report, patch.diff, and a manifest naming the contents; ready to hand to a coordinator or attach to a private email when filing outside GitHub PVR
+- **Disclosure bundle** -- download `bundle.tar.gz` per finding: OSV, CSAF, markdown report, patch.diff, a runnable `poc/` directory extracted from the finding's Validation step, and a manifest naming the contents; ready to hand to a coordinator or attach to a private email when filing outside GitHub PVR
 
 ### Operational
 
@@ -231,22 +231,23 @@ For deployments that treat skill prompts as untrusted, pass `--hardened` (or `ha
 
 ## Runner profiles
 
-When the container runner is active, scrutineer auto-detects a per-ecosystem **profile** for each scan: it runs `brief` against the clone to read the package managers, falling back to file markers for ecosystems `brief` doesn't cover. The matched profile selects a runner image (built on demand from `docker/profiles/<name>/Dockerfile`, cached content-addressed by the Dockerfile's hash) and injects that profile's `PROFILE.md` as the agent's orientation. The most specific profile wins, so a native-extension repo resolves to its `*-ext` profile ahead of the plain language profile. Force one with `?profile=<name>` on the scan API (validated against the skill's `requires_profile`); `default` forces the base runner image.
+When the container runner is active, scrutineer auto-detects a per-ecosystem **profile** for each scan: it runs `brief` against the clone and matches its structured package-manager, language, and tool detections. If `brief` fails or no selector matches, the scan uses the default runner image. The matched profile selects a runner image (built on demand from `docker/profiles/<name>/Dockerfile`, cached content-addressed by the Dockerfile's hash) and injects that profile's `PROFILE.md` as the agent's orientation. The most specific profile wins, so a native-extension repo resolves to its `*-ext` profile ahead of the plain language profile. Force one with `?profile=<name>` on the scan API (validated against the skill's `requires_profile`); `default` forces the base runner image.
 
 | Profile | Selected when | Adds |
 |---------|---------------|------|
-| `php` / `php-ext` | Composer / a `config.m4` with `PHP_ARG_` | PHP; `php-ext` builds PHP debug + ASan/UBSan for C extensions |
-| `python` / `python-ext` | pip/Poetry/uv/PDM / a `setup.py` declaring a C `Extension(` | CPython; `python-ext` builds CPython debug + ASan/UBSan |
+| `php` / `php-ext` | `package_manager:Composer` / `tools.native_extension:phpize` | PHP; `php-ext` builds PHP debug + ASan/UBSan for C extensions |
+| `python` / `python-ext` | `package_manager:pip` / `Pipenv` / `Poetry` / `uv` / `PDM` / `setuptools`; `python-ext` when `tools.native_extension:setuptools Extension` is present | CPython; `python-ext` builds CPython debug + ASan/UBSan |
 | `ruby` | Bundler | Ruby 3.4 + Bundler; metaprogramming / dynamic-dispatch guidance, plus a tripwire that flags an un-instrumented native extension |
-| `ruby-ext` | a gemspec with `spec.extensions`, or `ext/**/extconf.rb` / `ext/**/Cargo.toml` | A **superset** of `ruby`: adds an ASan/UBSan Ruby (the default interpreter), valgrind on the stock interpreter, and Rust nightly for rb-sys gems -- memory-safety coverage for C/C++/Rust native gems |
-| `ruby-rails` | `config/application.rb` | A superset of `ruby` plus **Brakeman**, Rails-specific SAST |
-| `node` | npm | Node.js |
+| `ruby-ext` | `tools.native_extension:mkmf` | A **superset** of `ruby`: adds an ASan/UBSan Ruby (the default interpreter), valgrind on the stock interpreter, Rust nightly for rb-sys gems, and Brakeman |
+| `ruby-rails` | `tools.build:Rails` | A superset of `ruby` plus **Brakeman**, Rails-specific SAST |
+| `node` | npm/pnpm/Yarn/Bun | Node.js |
 | `go` | Go Modules | Go toolchain |
 | `java` | Maven/Gradle | JDK |
-| `dotnet` | NuGet | .NET SDK |
+| `dotnet` | NuGet/dotnet CLI | .NET SDK |
 | `beam` | Mix/rebar3 | Erlang/Elixir |
 | `rust` | Cargo | Rust stable + nightly, Miri, sanitizers |
-| `c-cpp` | a CMake/Make/autotools/meson build file and no language ecosystem | C/C++ build toolchain |
+| `perl` | cpanm or Perl language detection | Perl toolchain |
+| `c-cpp` | `tools.build:CMake` / `Make` / `Autotools` / `Meson`, or C/C++ language detection, after language ecosystems have had a chance to match | C/C++ build toolchain |
 
 The three Ruby profiles are mutually exclusive at selection time, but `ruby-ext` and `ruby-rails` are deliberate *supersets* of `ruby` (the same Ruby-level audit, plus their extra coverage), so a detection that errs toward `ruby-ext` costs only build time, never coverage. A native gem that slips through to the plain `ruby` profile is caught by that profile's tripwire, which records that memory-safety scanning needs `ruby-ext`. Add a profile by registering it in `internal/worker/profile.go` and adding `docker/profiles/<name>/{Dockerfile,PROFILE.md}`.
 

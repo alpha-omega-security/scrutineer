@@ -323,9 +323,11 @@ func (s *Server) apiRunSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Model   string `json:"model"`
-		Ref     string `json:"ref"`
-		Profile string `json:"profile"`
+		Model          string `json:"model"`
+		Ref            string `json:"ref"`
+		Profile        string `json:"profile"`
+		RescanMode     string `json:"rescan_mode"`
+		BaselineScanID *uint  `json:"baseline_scan_id"`
 	}
 	if !decodeOptionalAPIBody(w, r, &body) {
 		return
@@ -335,9 +337,11 @@ func (s *Server) apiRunSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	scanID, err := s.enqueueSkillWith(r.Context(), uint(id), skill.ID, ScanOpts{
-		Model:   body.Model,
-		Ref:     body.Ref,
-		Profile: body.Profile,
+		Model:          body.Model,
+		Ref:            body.Ref,
+		Profile:        body.Profile,
+		RescanMode:     body.RescanMode,
+		DiffBaseScanID: body.BaselineScanID,
 	})
 	if err != nil {
 		if errors.Is(err, ErrSkillRequiresRemote) {
@@ -349,6 +353,10 @@ func (s *Server) apiRunSkill(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if errors.Is(err, ErrInvalidRef) {
+			writeAPIError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if errors.Is(err, ErrInvalidRescanMode) {
 			writeAPIError(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -486,6 +494,24 @@ func scanSummary(sc db.Scan) map[string]any {
 	}
 	if sc.Ref != "" {
 		m["ref"] = sc.Ref
+	}
+	if sc.RescanMode != "" {
+		m["rescan_mode"] = sc.RescanMode
+	}
+	if sc.DiffBaseScanID != nil {
+		m["diff_base_scan_id"] = *sc.DiffBaseScanID
+	}
+	if sc.DiffBaseCommit != "" {
+		m["diff_base_commit"] = sc.DiffBaseCommit
+	}
+	if sc.DiffThreatModelScanID != nil {
+		m["diff_threat_model_scan_id"] = *sc.DiffThreatModelScanID
+	}
+	if sc.DiffStats != "" {
+		m["diff_stats"] = sc.DiffStats
+	}
+	if sc.Coverage != "" {
+		m["coverage"] = sc.Coverage
 	}
 	return m
 }

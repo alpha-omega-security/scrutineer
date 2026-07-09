@@ -31,6 +31,56 @@ func TestToFindings_carriesReachabilityAndQualityTier(t *testing.T) {
 	}
 }
 
+func TestFoldDiscoveredVia(t *testing.T) {
+	cases := []struct {
+		via, priorArt, want string
+	}{
+		{"", "existing prose", "existing prose"},
+		{"", "", ""},
+		{"source", "", "Discovered via source."},
+		{" source ", "existing prose", "Discovered via source. existing prose"},
+		{"issue-tracker", "See issue #42.", "Discovered via issue-tracker. See issue #42."},
+		{"advisory", "  GHSA-xxxx cited.  ", "Discovered via advisory. GHSA-xxxx cited."},
+		{"not-an-enum", "existing prose", "existing prose"},
+		{"   ", "existing prose", "existing prose"},
+	}
+	for _, tc := range cases {
+		if got := foldDiscoveredVia(tc.via, tc.priorArt); got != tc.want {
+			t.Errorf("foldDiscoveredVia(%q, %q) = %q, want %q", tc.via, tc.priorArt, got, tc.want)
+		}
+	}
+}
+
+func TestToFindings_foldsDiscoveredViaIntoPriorArt(t *testing.T) {
+	raw := []byte(`{
+	  "findings": [
+	    {"id": "F1", "title": "x", "severity": "High", "location": "a.go:1",
+	     "discovered_via": "issue-tracker", "prior_art": "issue #42 describes this"},
+	    {"id": "F2", "title": "y", "severity": "High", "location": "b.go:1",
+	     "prior_art": "no via set"},
+	    {"id": "F3", "title": "z", "severity": "High", "location": "c.go:1",
+	     "discovered_via": "source"}
+	  ]
+	}`)
+	rep, err := parseReport(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := rep.toFindings(1, 1, "abc", "")
+	if len(got) != 3 {
+		t.Fatalf("got %d findings, want 3", len(got))
+	}
+	if got[0].PriorArt != "Discovered via issue-tracker. issue #42 describes this" {
+		t.Errorf("F1 PriorArt = %q, want prefix folded ahead of existing prose", got[0].PriorArt)
+	}
+	if got[1].PriorArt != "no via set" {
+		t.Errorf("F2 PriorArt = %q, want unchanged when discovered_via absent", got[1].PriorArt)
+	}
+	if got[2].PriorArt != "Discovered via source." {
+		t.Errorf("F3 PriorArt = %q, want bare prefix when prior_art empty", got[2].PriorArt)
+	}
+}
+
 func TestToFindings_carriesDupCheck(t *testing.T) {
 	raw := []byte(`{
 	  "findings": [

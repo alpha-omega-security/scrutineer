@@ -301,6 +301,18 @@ paths:
                     Runner profile name (e.g. `php`). Empty auto-detects from the clone via `brief`;
                     `default` forces the default runner image. Unknown names return 400, as do
                     overrides that conflict with the skill's `requires_profile` constraint.
+                rescan_mode:
+                  type: string
+                  enum: [full, diff]
+                  description: |
+                    `diff` asks Scrutineer to compare the current commit against a compatible baseline
+                    scan and stage `diff.patch` plus `changed_files.json` for diff-aware skills. The
+                    worker falls back to a full scan when no usable baseline exists or the diff exceeds
+                    safety limits.
+                baseline_scan_id:
+                  type: integer
+                  format: int64
+                  description: Optional baseline scan to use for `rescan_mode: diff`; omitted lets Scrutineer choose the latest compatible completed scan.
       responses:
         '201':
           description: Scan enqueued
@@ -308,7 +320,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/Scan' }
         '400':
-          description: Bad request (unknown profile or profile mismatch with the skill's `requires_profile`)
+          description: Bad request (unknown profile, profile mismatch with the skill's `requires_profile`, invalid ref, or invalid `rescan_mode`)
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -1166,6 +1178,29 @@ components:
         status:        { type: string, enum: [queued, running, paused, done, failed, cancelled] }
         model:         { type: string }
         commit:        { type: string }
+        rescan_mode:
+          type: string
+          enum: [full, diff]
+          description: Requested or resolved scan mode.
+        diff_base_scan_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: Baseline scan used for a diff rescan.
+        diff_base_commit:
+          type: string
+          description: Baseline commit used to generate the staged diff.
+        diff_threat_model_scan_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: Prior threat-model scan staged as `old_threat_model.json`, when available.
+        diff_stats:
+          type: string
+          description: JSON metadata for staged diff inputs, including changed files and size limits.
+        coverage:
+          type: string
+          description: JSON coverage metadata, including diff fallback reasons and threat-model update decisions.
         skill_name:           { type: string }
         skill_version:        { type: integer, description: Snapshot of the Skill row version at enqueue time. }
         skill_schema_version: { type: integer, description: Snapshot of metadata.scrutineer.version at enqueue time. }

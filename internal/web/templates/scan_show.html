@@ -51,6 +51,14 @@
     <dt class="text-muted-foreground">Ref</dt>
     <dd>{{.Ref}}</dd>
   </div>{{end}}
+  {{if eq .RescanMode "diff"}}<div>
+    <dt class="text-muted-foreground">Mode</dt>
+    <dd>diff rescan</dd>
+  </div>{{end}}
+  {{if .DiffBaseCommit}}<div>
+    <dt class="text-muted-foreground">Diff base</dt>
+    <dd><code>{{short .DiffBaseCommit}}</code></dd>
+  </div>{{end}}
   <div>
     <dt class="text-muted-foreground">Commit</dt>
     <dd><code>{{if .Commit}}{{short .Commit}}{{else}}-{{end}}</code></dd>
@@ -105,6 +113,13 @@
     <i data-lucide="triangle-alert"></i>
     <section>{{.Error}}</section>
   </div>
+{{end}}
+
+{{if .Coverage}}
+  <details class="mb-6">
+    <summary class="text-sm text-muted-foreground cursor-pointer hover:underline">Coverage metadata</summary>
+    <pre class="mt-2 overflow-auto rounded border bg-muted/40 p-3 text-xs">{{.Coverage}}</pre>
+  </details>
 {{end}}
 
 {{if .MaxTurnsHit}}

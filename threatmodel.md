@@ -96,11 +96,11 @@ Mitigation remaining: tag finding rows with their source job; render claude-sour
 
 Go's `html/template` auto-escapes all finding fields. `internal/web/jsontree.go` returns `template.HTML` but escapes every leaf through `html.EscapeString`. `internal/web/location.go` builds hrefs from `HTMLURL`, which is scheme-validated at the write site by `safeURL` (see T7).
 
-The two `html/template` XSS vulnerabilities (`GO-2026-4865`, `GO-2026-4603`) are fixed by `toolchain go1.26.2` in go.mod.
+The two `html/template` XSS vulnerabilities (`GO-2026-4865`, `GO-2026-4603`) are fixed by `toolchain go1.26.5` in go.mod.
 
 ### T7: Untrusted upstream metadata (mitigated)
 
-All five `io.ReadAll` calls in `metadata.go` are wrapped with `io.LimitReader(resp.Body, 10MB)` to prevent OOM from hostile endpoints. `HTMLURL` and `IconURL` are scheme-validated by `safeURL()` in `parseRepoMetadataOutput` before storage, so only http/https values reach the database and the templates that render them.
+ecosyste.ms fetches go through the generated `ecosystems-go` client rather than local raw response readers. `HTMLURL` and `IconURL` are scheme-validated by `safeURL()` in `parseRepoMetadataOutput` before storage, so only http/https values reach the database and the templates that render them.
 
 Residual: no certificate pinning for ecosyste.ms. A MITM'd response could still return a hostile `repository_url` that passes the `https://` check, leading to cloning an attacker repo. Accepted risk given HTTPS + public CA is the standard trust model.
 
@@ -116,11 +116,11 @@ No rate limiting on `POST /repositories`, no cap on clone size, no timeout on th
 
 ### T10: Stale Go toolchain (resolved)
 
-`go.mod` specifies `toolchain go1.26.2`. The Dockerfile builds with `golang:1.26.2-alpine`. All nine stdlib vulnerabilities are fixed.
+`go.mod` specifies `toolchain go1.26.5`. The Dockerfile builds with `golang:1.26.5-alpine`. All nine stdlib vulnerabilities are fixed.
 
 ### T11: Image supply chain (partially mitigated)
 
-Tool versions are pinned: `claude-code@2.1.173`, `semgrep==1.167.0`, `git-pkgs@v0.15.3`, `brief@v0.6.0`, `zizmor@1.26.1`. The final stage is `debian:trixie-slim`; the `golang:1.26-trixie` and `rust:1.96-trixie` builder stages are pinned by sha256 digest. The container runs as non-root user `runner`. The runner image is built in CI, smoke-tested, and published to GHCR; users pull a known-good artifact rather than rebuilding against live registries.
+Tool versions are pinned: `claude-code@2.1.173`, `semgrep==1.167.0`, `git-pkgs@v0.15.3`, `brief@v0.9.3`, `zizmor@1.26.1`. The final stage is `debian:trixie-slim`; the `golang:1.26.5-trixie` and `rust:1.96-trixie` builder stages are pinned by sha256 digest. The container runs as non-root user `runner`. The runner image is built in CI, smoke-tested, and published to GHCR; users pull a known-good artifact rather than rebuilding against live registries.
 
 Supply-chain surface in the final stage:
 - `apt` pulls from Debian's official mirrors plus the GitHub CLI repo at `cli.github.com/packages` (signed-by keyring under `/etc/apt/keyrings/`). `gh` is used at scan time by the `fork` and `report-upstream` skills.
@@ -164,7 +164,7 @@ Seccomp is left at Docker's default profile intentionally. The default already b
 
 ## Minor observations
 
-`internal/worker/metadata.go` embeds `andrew@ecosyste.ms` in the User-Agent. Worth a flag before anyone else runs it.
+The ecosyste.ms clients identify as `scrutineer (andrew@ecosyste.ms)`. Worth a config flag before anyone else runs it.
 
 `cmd/scrutineer/main.go` reads `-spec` from an arbitrary path. It is a CLI flag set by the operator, so traversal is a stretch, but resolving relative to cwd and rejecting absolute paths would avoid surprises.
 
@@ -185,7 +185,7 @@ GORM usage is consistently parameterised; no `Raw`, no string-built `Where`, and
 - [x] `io.LimitReader` (10 MB cap) on all ecosyste.ms response bodies (T7).
 - [x] `safeURL` validation on HTMLURL and IconURL before storing (T7).
 - [x] `0700` on the data directory at startup (T8).
-- [x] `toolchain go1.26.2` in go.mod so host builds match the image (T10).
+- [x] `toolchain go1.26.5` in go.mod so host builds match the image (T10).
 - [x] Pin tool versions in Dockerfile: claude-code, semgrep, git-pkgs, brief, zizmor (T11).
 - [x] Non-root `USER runner` in Dockerfile (T11).
 - [x] Trim final Docker stage: `npm` absent, `pip` scoped to the `/opt/semgrep` venv, `curl` retained for build- and scan-time fetches (T11).
