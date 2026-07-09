@@ -89,10 +89,13 @@ func (s *Server) findingBundleDownload(w http.ResponseWriter, r *http.Request) {
 }
 
 // bundleEntry is one file written into the archive: path inside the
-// tar plus its raw contents.
+// tar plus its raw contents. Mode overrides the default 0644 when
+// non-zero (poc/run.sh needs 0755 so a recipient can execute it
+// straight out of the unpacked archive).
 type bundleEntry struct {
 	Name string
 	Data []byte
+	Mode int64
 }
 
 func (s *Server) bundleEntries(f *db.Finding, repo *db.Repository) ([]bundleEntry, error) {
@@ -159,6 +162,11 @@ func (s *Server) bundleEntries(f *db.Finding, repo *db.Repository) ([]bundleEntr
 		contents["patch.diff"] = "Suggested unified diff; applied to commit recorded in the OSV affected[] git range"
 	}
 
+	if poc := bundlePoC(f.Validation); len(poc) > 0 {
+		entries = append(entries, poc...)
+		contents["poc/"] = "Runnable reproduction: run.sh plus probe/input files extracted from the finding's Validation step; README.md carries the verbatim prose"
+	}
+
 	manifest := bundleManifest{
 		GeneratedAt:  time.Now().UTC().Format(time.RFC3339),
 		GeneratorURL: "https://github.com/alpha-omega-security/scrutineer",
@@ -191,9 +199,13 @@ func buildTarGz(entries []bundleEntry) ([]byte, error) {
 	tw := tar.NewWriter(gz)
 	now := time.Now()
 	for _, e := range entries {
+		mode := e.Mode
+		if mode == 0 {
+			mode = filePerm
+		}
 		hdr := &tar.Header{
 			Name:    e.Name,
-			Mode:    filePerm,
+			Mode:    mode,
 			Size:    int64(len(e.Data)),
 			ModTime: now,
 		}

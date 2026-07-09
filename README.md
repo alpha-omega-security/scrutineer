@@ -94,7 +94,7 @@ When the containerised runner is active (the default when a container runtime is
 - **OSV export** -- download any finding as a schema-validated OSV record, aligned with the OSS-SIRT advisory template (credits, CWE IDs, withdrawn, SEMVER ranges, CVSS v3 + v4 severity entries)
 - **JSONL export** -- stream all findings or scans as line-delimited JSON for ingestion elsewhere
 - **Markdown report export** -- download a single consolidated `report.md` per repository or organisation
-- **Disclosure bundle** -- download `bundle.tar.gz` per finding: OSV, CSAF, markdown report, patch.diff, and a manifest naming the contents; ready to hand to a coordinator or attach to a private email when filing outside GitHub PVR
+- **Disclosure bundle** -- download `bundle.tar.gz` per finding: OSV, CSAF, markdown report, patch.diff, a runnable `poc/` directory extracted from the finding's Validation step, and a manifest naming the contents; ready to hand to a coordinator or attach to a private email when filing outside GitHub PVR
 
 ### Operational
 
