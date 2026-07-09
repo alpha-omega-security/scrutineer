@@ -1021,7 +1021,10 @@ func setupDedupRepo(t *testing.T, gdb *gorm.DB, n int) (db.Scan, []db.Finding) {
 }
 
 func TestParseFindingDedup_subsumedNotesWithoutStatusChange(t *testing.T) {
-	gdb, _ := db.Open(filepath.Join(t.TempDir(), "sub.db"))
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "sub.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	scan, fs := setupDedupRepo(t, gdb, 3)
 	parent, childA, childB := fs[0], fs[1], fs[2]
 
@@ -1056,7 +1059,10 @@ func TestParseFindingDedup_subsumedNotesWithoutStatusChange(t *testing.T) {
 }
 
 func TestParseFindingDedup_chainsNotesEachMemberWithOthers(t *testing.T) {
-	gdb, _ := db.Open(filepath.Join(t.TempDir(), "chain.db"))
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "chain.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	scan, fs := setupDedupRepo(t, gdb, 3)
 	a, b, c := fs[0], fs[1], fs[2]
 
@@ -1103,7 +1109,10 @@ func TestParseFindingDedup_chainsNotesEachMemberWithOthers(t *testing.T) {
 }
 
 func TestParseFindingDedup_chainOfOneAfterFilterIsNoop(t *testing.T) {
-	gdb, _ := db.Open(filepath.Join(t.TempDir(), "chain1.db"))
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "chain1.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	scan, fs := setupDedupRepo(t, gdb, 2)
 	// Close the second so only one open member survives the repo/open filter.
 	gdb.Model(&fs[1]).Update("status", db.FindingRejected)
@@ -1119,7 +1128,10 @@ func TestParseFindingDedup_chainOfOneAfterFilterIsNoop(t *testing.T) {
 }
 
 func TestParseFindingDedup_subsumedSkipsClosedParentAndSelfRef(t *testing.T) {
-	gdb, _ := db.Open(filepath.Join(t.TempDir(), "subskip.db"))
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "subskip.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	scan, fs := setupDedupRepo(t, gdb, 2)
 	gdb.Model(&fs[0]).Update("status", db.FindingFixed) // closed parent
 

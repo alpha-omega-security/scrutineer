@@ -1006,7 +1006,7 @@ func (w *Worker) parseRevalidateOutput(scan *db.Scan, report string, emit func(E
 
 // dedupGroup is one head-plus-members relation from a finding-dedup report.
 // Duplicates and subsumed both fit this shape (canonical/parent + children);
-// chains have no head, so HeadID is 0 there and applyDedupChain reads
+// chains have no head, so HeadID is 0 there and applyDedupChains reads
 // MemberIDs only.
 type dedupGroup struct {
 	HeadID    uint
