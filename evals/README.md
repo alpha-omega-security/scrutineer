@@ -21,7 +21,13 @@ Each scenario YAML names:
 - `skill`: bundled skill to execute.
 - `should_find`: required findings the report must include.
 - `should_not_find`: false positives the report must not include.
+- `evidence_contains`: terms that must appear in the matched finding's title,
+  location, or narrative fields (`trace`, `boundary`, `validation`, `rating`).
+- `must_not_contain`: repo-level terms that must not appear anywhere in the
+  report, such as an out-of-scope framework or nonexistent file.
 
 The default judge matches findings by title substring plus optional severity,
-CWE, and path. Model-backed judging can be plugged in by implementing
-`evals.Judge`.
+CWE, path, and evidence. These assertions define a minimum bar: additional
+findings do not fail an eval unless they match `should_not_find` or the report
+contains a `must_not_contain` term. Model-backed judging can be plugged in by
+implementing `evals.Judge`.

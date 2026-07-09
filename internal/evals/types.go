@@ -12,22 +12,24 @@ import (
 // Scenario is one YAML eval file under evals/. It points at a fixture
 // repository and names the skill whose output should be judged.
 type Scenario struct {
-	Path          string      `yaml:"-"`
-	Given         string      `yaml:"given"`
-	Fixture       string      `yaml:"fixture"`
-	Skill         string      `yaml:"skill"`
-	ShouldFind    []Assertion `yaml:"should_find"`
-	ShouldNotFind []Assertion `yaml:"should_not_find"`
+	Path           string      `yaml:"-"`
+	Given          string      `yaml:"given"`
+	Fixture        string      `yaml:"fixture"`
+	Skill          string      `yaml:"skill"`
+	ShouldFind     []Assertion `yaml:"should_find"`
+	ShouldNotFind  []Assertion `yaml:"should_not_find"`
+	MustNotContain []string    `yaml:"must_not_contain"`
 }
 
 // Assertion describes one expected positive or negative condition. Negative
 // assertions may be a scalar string in YAML; positives usually use fields.
 type Assertion struct {
-	Finding     string `yaml:"finding"`
-	Severity    string `yaml:"severity"`
-	CWE         string `yaml:"cwe"`
-	Path        string `yaml:"path"`
-	Required    bool   `yaml:"required"`
+	Finding     string   `yaml:"finding"`
+	Severity    string   `yaml:"severity"`
+	CWE         string   `yaml:"cwe"`
+	Path        string   `yaml:"path"`
+	Evidence    []string `yaml:"evidence_contains"`
+	Required    bool     `yaml:"required"`
 	requiredSet bool
 }
 
@@ -38,17 +40,18 @@ func (a *Assertion) UnmarshalYAML(value *yaml.Node) error {
 	}
 	for i := 0; i+1 < len(value.Content); i += 2 {
 		switch value.Content[i].Value {
-		case "finding", "severity", "cwe", "path", "required":
+		case "finding", "severity", "cwe", "path", "evidence_contains", "required":
 		default:
 			return fmt.Errorf("unknown assertion field %q", value.Content[i].Value)
 		}
 	}
 	var out struct {
-		Finding  string `yaml:"finding"`
-		Severity string `yaml:"severity"`
-		CWE      string `yaml:"cwe"`
-		Path     string `yaml:"path"`
-		Required *bool  `yaml:"required"`
+		Finding  string   `yaml:"finding"`
+		Severity string   `yaml:"severity"`
+		CWE      string   `yaml:"cwe"`
+		Path     string   `yaml:"path"`
+		Evidence []string `yaml:"evidence_contains"`
+		Required *bool    `yaml:"required"`
 	}
 	if err := value.Decode(&out); err != nil {
 		return err
@@ -57,6 +60,7 @@ func (a *Assertion) UnmarshalYAML(value *yaml.Node) error {
 	a.Severity = out.Severity
 	a.CWE = out.CWE
 	a.Path = out.Path
+	a.Evidence = out.Evidence
 	if out.Required != nil {
 		a.Required = *out.Required
 		a.requiredSet = true
@@ -99,6 +103,19 @@ func (s Scenario) validate() error {
 		if a.empty() {
 			return fmt.Errorf("%s has an empty should_not_find assertion", s.Path)
 		}
+		if err := a.validateEvidence(); err != nil {
+			return fmt.Errorf("%s has invalid should_not_find evidence_contains: %w", s.Path, err)
+		}
+	}
+	for _, a := range s.ShouldFind {
+		if err := a.validateEvidence(); err != nil {
+			return fmt.Errorf("%s has invalid should_find evidence_contains: %w", s.Path, err)
+		}
+	}
+	for _, term := range s.MustNotContain {
+		if strings.TrimSpace(term) == "" {
+			return fmt.Errorf("%s has an empty must_not_contain term", s.Path)
+		}
 	}
 	return nil
 }
@@ -107,16 +124,34 @@ func (a Assertion) empty() bool {
 	return strings.TrimSpace(a.Finding) == "" &&
 		strings.TrimSpace(a.Severity) == "" &&
 		strings.TrimSpace(a.CWE) == "" &&
-		strings.TrimSpace(a.Path) == ""
+		strings.TrimSpace(a.Path) == "" &&
+		len(a.Evidence) == 0
+}
+
+func (a Assertion) validateEvidence() error {
+	for _, term := range a.Evidence {
+		if strings.TrimSpace(term) == "" {
+			return fmt.Errorf("empty term")
+		}
+	}
+	return nil
 }
 
 // Finding is the subset of report.json finding fields the eval judge needs.
 type Finding struct {
-	Title     string   `json:"title"`
-	Severity  string   `json:"severity"`
-	CWE       string   `json:"cwe"`
-	Location  string   `json:"location"`
-	Locations []string `json:"locations"`
+	Title       string   `json:"title"`
+	Severity    string   `json:"severity"`
+	CWE         string   `json:"cwe"`
+	Location    string   `json:"location"`
+	Locations   []string `json:"locations"`
+	Trace       string   `json:"trace"`
+	Boundary    string   `json:"boundary"`
+	Validation  string   `json:"validation"`
+	Rating      string   `json:"rating"`
+	Description string   `json:"description"`
+	Affected    string   `json:"affected"`
+	PriorArt    string   `json:"prior_art"`
+	Reach       string   `json:"reach"`
 }
 
 type report struct {

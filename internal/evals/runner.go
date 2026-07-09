@@ -123,7 +123,7 @@ func (r Runner) RunScenario(ctx context.Context, sc Scenario) (Result, error) {
 			result.FailedRequired++
 		case !m.Matched && m.Kind == assertionShouldFind:
 			result.OptionalMisses++
-		case !m.Matched && m.Kind == assertionShouldNotFind:
+		case !m.Matched && (m.Kind == assertionShouldNotFind || m.Kind == assertionMustNotContain):
 			result.Unexpected++
 		}
 	}
