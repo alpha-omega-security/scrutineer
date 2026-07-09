@@ -145,7 +145,7 @@ func (w *Worker) prepareDiffRescan(ctx context.Context, scan *db.Scan, workRoot 
 }
 
 func (w *Worker) diffBaseline(scan *db.Scan) (db.Scan, bool) {
-	q := w.DB.Where("repository_id = ? AND status = ? AND commit <> ''", scan.RepositoryID, db.ScanDone)
+	q := w.DB.Where("repository_id = ? AND status = ? AND `commit` <> ''", scan.RepositoryID, db.ScanDone)
 	if scan.DiffBaseScanID != nil {
 		q = q.Where("id = ?", *scan.DiffBaseScanID)
 	} else {
