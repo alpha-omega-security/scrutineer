@@ -15,9 +15,9 @@ import (
 	"time"
 )
 
-// Category names in brief's JSON output that BriefMatch.Category can
-// reference. package_manager and language are top-level arrays in the
-// report; everything else is a key under tools.
+// Internal selector category names that BriefMatch.Category can reference.
+// package_manager and language map to brief's top-level package_managers and
+// languages arrays; everything else is a key under brief's tools object.
 const (
 	briefPackageManager  = "package_manager"
 	briefLanguage        = "language"
@@ -45,7 +45,7 @@ type Profile struct {
 	// profile matches when any BriefMatch is satisfied; a BriefMatch is
 	// satisfied when brief detected any of its Names in its Category.
 	// Every profile must carry at least one entry: an empty Detect would
-	// match every repo, and the registry sanity test rejects that.
+	// never match, and the registry sanity test rejects dead profiles.
 	Detect []BriefMatch
 	// BaseProfile, when set, names another registered profile whose built
 	// image this profile builds FROM instead of the runner image. EnsureImage

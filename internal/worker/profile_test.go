@@ -118,7 +118,6 @@ func TestMatchProfile(t *testing.T) {
 		{"composer + bundler picks php (registry order)", briefJSON("package_manager:Composer", "package_manager:Bundler"), "php"},
 		{"bundler + composer still picks php (registry order, not brief order)", briefJSON("package_manager:Bundler", "package_manager:Composer"), "php"},
 		{"composer before node when both present", briefJSON("package_manager:npm", "package_manager:Composer"), "php"},
-		{"composer present even if not first in brief output", briefJSON("package_manager:npm", "package_manager:Composer"), "php"},
 
 		// native_extension category (from brief v0.9.3)
 		{"phpize selects php-ext", briefJSON("native_extension:phpize"), "php-ext"},
