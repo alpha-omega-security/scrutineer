@@ -2,7 +2,7 @@ package db
 
 import "testing"
 
-func TestScoreFromV4Vector(t *testing.T) {
+func TestCVSSV4ScoreFromVector(t *testing.T) {
 	cases := []struct {
 		name   string
 		vector string
@@ -17,7 +17,7 @@ func TestScoreFromV4Vector(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, ok := ScoreFromV4Vector(tc.vector)
+			got, ok := cvssV4ScoreFromVector(tc.vector)
 			if ok != tc.ok {
 				t.Fatalf("ok = %v, want %v (score %v)", ok, tc.ok, got)
 			}
@@ -28,7 +28,7 @@ func TestScoreFromV4Vector(t *testing.T) {
 	}
 }
 
-func TestBaseScoreFromVector(t *testing.T) {
+func TestCVSSV3ScoreFromVector(t *testing.T) {
 	cases := []struct {
 		name   string
 		vector string
@@ -45,7 +45,7 @@ func TestBaseScoreFromVector(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, ok := BaseScoreFromVector(tc.vector)
+			got, ok := cvssV3ScoreFromVector(tc.vector)
 			if ok != tc.ok {
 				t.Fatalf("ok = %v, want %v", ok, tc.ok)
 			}

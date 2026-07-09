@@ -313,7 +313,7 @@ func TestFindingCSAF_scoreDerivedFromVectorIgnoresStoredScore(t *testing.T) {
 }
 
 // parseCVSSv3Vector tolerates a truncated vector (returns a partial
-// struct) but go-cvss rejects it; the scores block must be omitted
+// struct) but the shared CVSS parser rejects it; the scores block must be omitted
 // rather than emitted with a fabricated baseScore: 0.
 func TestFindingCSAF_partialVectorOmitsScores(t *testing.T) {
 	s, done := newTestServer(t)
@@ -330,7 +330,7 @@ func TestFindingCSAF_partialVectorOmitsScores(t *testing.T) {
 	doc := decodeCSAF(t, w.Body.Bytes())
 	v := doc["vulnerabilities"].([]any)[0].(map[string]any)
 	if _, ok := v["scores"]; ok {
-		t.Errorf("scores must be omitted when vector is unparseable by go-cvss: %+v", v["scores"])
+		t.Errorf("scores must be omitted when vector is unparseable by the shared CVSS parser: %+v", v["scores"])
 	}
 }
 
@@ -735,5 +735,22 @@ func TestParseCVSSv3Vector(t *testing.T) {
 				tc.checks(t, got)
 			}
 		})
+	}
+}
+
+func TestBuildScoreMulti_trimsCVSSVector(t *testing.T) {
+	// CSAF's embedded CVSS schema anchors vectorString, so a stored value
+	// with surrounding whitespace must be trimmed before emission.
+	const want = "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+	f := db.Finding{CVSSVector: "  " + want + "\n"}
+	got := buildScoreMulti(f, []string{"pkg:npm/example"})
+	if got == nil {
+		t.Fatal("buildScoreMulti = nil for padded valid vector")
+	}
+	if got.CVSSv3.VectorString != want {
+		t.Errorf("VectorString = %q, want %q", got.CVSSv3.VectorString, want)
+	}
+	if got.CVSSv3.BaseScore != 9.8 {
+		t.Errorf("BaseScore = %v, want 9.8", got.CVSSv3.BaseScore)
 	}
 }
