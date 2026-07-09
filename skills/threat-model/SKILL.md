@@ -47,7 +47,7 @@ Identify the public surface. Look further than exported symbols, HTTP routes, an
 - Loose coupling: argv/stdin, environment variables, config, spool and drop directories (maildir, cron.d), lock and pid files, database-as-queue polling, webhooks.
 - File formats consumed and produced.
 
-Serialization formats (Protobuf, Avro, MessagePack, CBOR, JSON, XML, ASN.1) are orthogonal: the wire format, not the channel. Record which one each entry point uses since parser bugs are their own boundary.
+Serialization formats (Protobuf, Avro, MessagePack, CBOR, JSON, XML, ASN.1) are orthogonal: the wire format, not the channel. Record the format in the existing `entry_point` or `parameter` text, for example `POST /hooks body (JSON)` or `message payload (Protobuf)`, since parser bugs are their own boundary.
 
 Carve the project into component families with distinct trust profiles. A typical library has a pure-computation core, a convenience layer that touches the OS (file helpers, env readers, socket wrappers), and shipped-but-unsupported code (`contrib/`, `examples/`, `test/`, `vendor/`, `third_party/`, `bindings/`, demo apps). A daemon or service usually has client-facing endpoints, an admin or operator surface, and peer-to-peer protocol handling. Model each family at its own trust level; do not average them.
 
