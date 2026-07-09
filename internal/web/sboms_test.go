@@ -235,9 +235,9 @@ func TestSBOMResolve_linksRepoAndEnqueuesTriage(t *testing.T) {
 	s.DB.Create(&triage)
 
 	up := db.SBOMUpload{Name: "demo", Packages: []db.SBOMPackage{
-		{Name: "lodash", PURL: "pkg:npm/lodash@4.17.21", Scope: scopeDirect},
+		{Name: "lodash", PURL: "pkg:npm/lodash@4.17.21", Scope: sbom.ScopeDirect},
 		{Name: "flat", PURL: "pkg:npm/flat@1.0.0"},
-		{Name: "transitive", PURL: "pkg:npm/transitive@1.0.0", Scope: scopeTransitive},
+		{Name: "transitive", PURL: "pkg:npm/transitive@1.0.0", Scope: sbom.ScopeTransitive},
 		{Name: "nopurl"},
 		{Name: "noresolve", PURL: "pkg:npm/ghost@1.0.0"},
 	}}
@@ -414,52 +414,6 @@ func TestSBOMList_renders(t *testing.T) {
 	}
 }
 
-func TestClassifyScope(t *testing.T) {
-	t.Run("cyclonedx graph", func(t *testing.T) {
-		// root → a, b; a → c. Root is identified by having no inbound edge.
-		doc := &sbom.SBOM{Relationships: []sbom.Relationship{
-			{SourceID: "root", TargetID: "a", Type: "DEPENDS_ON"},
-			{SourceID: "root", TargetID: "b", Type: "DEPENDS_ON"},
-			{SourceID: "a", TargetID: "c", Type: "DEPENDS_ON"},
-		}}
-		got := classifyScope(doc)
-		want := map[string]string{"a": scopeDirect, "b": scopeDirect, "c": scopeTransitive}
-		for id, s := range want {
-			if got[id] != s {
-				t.Errorf("%s = %q, want %q", id, got[id], s)
-			}
-		}
-	})
-	t.Run("spdx with DESCRIBES", func(t *testing.T) {
-		// DOCUMENT --DESCRIBES--> root; root --DEPENDS_ON--> a; a --DEPENDS_ON--> b.
-		doc := &sbom.SBOM{Relationships: []sbom.Relationship{
-			{SourceID: "SPDXRef-DOCUMENT", TargetID: "root", Type: "DESCRIBES"},
-			{SourceID: "root", TargetID: "a", Type: "DEPENDS_ON"},
-			{SourceID: "a", TargetID: "b", Type: "DEPENDS_ON"},
-		}}
-		got := classifyScope(doc)
-		if got["a"] != scopeDirect || got["b"] != scopeTransitive {
-			t.Errorf("got %v", got)
-		}
-	})
-	t.Run("direct wins over transitive", func(t *testing.T) {
-		// root → a, a → b, root → b. b should still be direct.
-		doc := &sbom.SBOM{Relationships: []sbom.Relationship{
-			{SourceID: "root", TargetID: "a", Type: "DEPENDS_ON"},
-			{SourceID: "a", TargetID: "b", Type: "DEPENDS_ON"},
-			{SourceID: "root", TargetID: "b", Type: "DEPENDS_ON"},
-		}}
-		if got := classifyScope(doc); got["b"] != scopeDirect {
-			t.Errorf("b = %q, want direct", got["b"])
-		}
-	})
-	t.Run("no graph", func(t *testing.T) {
-		if got := classifyScope(&sbom.SBOM{}); got != nil {
-			t.Errorf("expected nil for empty relationships, got %v", got)
-		}
-	})
-}
-
 func TestSBOMShow_scopeFilter(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
@@ -474,8 +428,8 @@ func TestSBOMShow_scopeFilter(t *testing.T) {
 	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repoB.ID, Title: "trans-dep-finding", Severity: "High"})
 
 	up := db.SBOMUpload{Name: "demo", PackageCount: 2, Packages: []db.SBOMPackage{
-		{Name: "pkg-direct", Scope: scopeDirect, RepositoryID: &repoA.ID},
-		{Name: "pkg-trans", Scope: scopeTransitive, RepositoryID: &repoB.ID},
+		{Name: "pkg-direct", Scope: sbom.ScopeDirect, RepositoryID: &repoA.ID},
+		{Name: "pkg-trans", Scope: sbom.ScopeTransitive, RepositoryID: &repoB.ID},
 	}}
 	s.DB.Create(&up)
 

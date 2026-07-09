@@ -8,7 +8,7 @@ require (
 	filippo.io/age v1.3.1
 	github.com/git-pkgs/pom v0.1.4
 	github.com/git-pkgs/purl v0.1.13
-	github.com/git-pkgs/sbom v0.1.2
+	github.com/git-pkgs/sbom v0.1.3
 	github.com/glebarez/sqlite v1.11.0
 	github.com/google/uuid v1.6.0
 	github.com/pandatix/go-cvss v0.6.2
@@ -41,3 +41,6 @@ require (
 	modernc.org/memory v1.11.0 // indirect
 	modernc.org/sqlite v1.50.0 // indirect
 )
+
+// TODO: remove once git-pkgs/sbom v0.1.3 is tagged (PR git-pkgs/sbom#9).
+replace github.com/git-pkgs/sbom => ../../git-pkgs/sbom
