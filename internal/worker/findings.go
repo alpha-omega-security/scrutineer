@@ -69,12 +69,13 @@ type scanFinding struct {
 	References []scanReference `json:"references"`
 
 	// Per-step markdown (security-deep-dive schema)
-	Trace      string `json:"trace"`
-	Boundary   string `json:"boundary"`
-	Validation string `json:"validation"`
-	PriorArt   string `json:"prior_art"`
-	Reach      string `json:"reach"`
-	Rating     string `json:"rating"`
+	Trace         string `json:"trace"`
+	Boundary      string `json:"boundary"`
+	Validation    string `json:"validation"`
+	PriorArt      string `json:"prior_art"`
+	DiscoveredVia string `json:"discovered_via"`
+	Reach         string `json:"reach"`
+	Rating        string `json:"rating"`
 
 	// DupCheck is the agent's one-sentence note on why this finding is
 	// distinct from the siblings already filed under the same scan_group.
@@ -109,6 +110,36 @@ func (r scanReport) toFindings(scanID, repoID uint, commit, subPath string) []db
 	return out
 }
 
+// discoveredViaPrefix is the fixed opening of a Finding.PriorArt field when
+// the emitting skill set discovered_via. disclose matches on this prefix to
+// vary its Summary opening ("this was surfaced by an open issue" vs "we
+// found this in the code"), so changing it is a coordinated change with
+// skills/disclose/SKILL.md. There is deliberately no db.Finding column for
+// the value: it lives in prose so a later move to a column can backfill by
+// scanning PriorArt for this prefix.
+const discoveredViaPrefix = "Discovered via "
+
+func foldDiscoveredVia(via, priorArt string) string {
+	via = strings.TrimSpace(via)
+	if !validDiscoveredVia(via) {
+		return priorArt
+	}
+	head := discoveredViaPrefix + via + "."
+	if p := strings.TrimSpace(priorArt); p != "" {
+		return head + " " + p
+	}
+	return head
+}
+
+func validDiscoveredVia(via string) bool {
+	switch via {
+	case "source", "issue-tracker", "advisory", "documentation":
+		return true
+	default:
+		return false
+	}
+}
+
 func (f scanFinding) toFinding(scanID, repoID uint, commit, subPath string) db.Finding {
 	return db.Finding{
 		ScanID:       scanID,
@@ -129,7 +160,7 @@ func (f scanFinding) toFinding(scanID, repoID uint, commit, subPath string) db.F
 		Trace:        f.Trace,
 		Boundary:     f.Boundary,
 		Validation:   f.Validation,
-		PriorArt:     f.PriorArt,
+		PriorArt:     foldDiscoveredVia(f.DiscoveredVia, f.PriorArt),
 		Reach:        f.Reach,
 		Rating:       f.Rating,
 		DupCheck:     f.DupCheck,

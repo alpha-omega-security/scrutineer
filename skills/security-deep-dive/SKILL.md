@@ -136,6 +136,8 @@ Check whether the behaviour is required by a standard the library implements. An
 
 Note what you searched and what you found, even if nothing.
 
+Set `discovered_via` on the finding to record how you first identified it: `source` when you found it by reading code (grep, trace, or a semgrep anchor you then confirmed); `issue-tracker` when an open or closed issue described it and you confirmed it in the code; `advisory` when a prior CVE or GHSA on this or a sibling project pointed at it; `documentation` when the project's own docs, FAQ, or a code comment describe the weakness. This is the maintainer-facing provenance: "you already have an issue open for this" is a different opening than "we found this in the code", and `disclose` reads it to pick which one to write.
+
 ### Step 5: Reach
 
 For libraries published to a registry: start with scrutineer's dependents cache: `GET {api_base}/repositories/{repository_id}/dependents`. It returns the top dependents already ranked by `dependent_repos` and `downloads`, with registry and repository URLs. Use this list; do not re-hit packages.ecosyste.ms.
