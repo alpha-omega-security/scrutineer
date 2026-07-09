@@ -737,3 +737,20 @@ func TestParseCVSSv3Vector(t *testing.T) {
 		})
 	}
 }
+
+func TestBuildScoreMulti_trimsCVSSVector(t *testing.T) {
+	// CSAF's embedded CVSS schema anchors vectorString, so a stored value
+	// with surrounding whitespace must be trimmed before emission.
+	const want = "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+	f := db.Finding{CVSSVector: "  " + want + "\n"}
+	got := buildScoreMulti(f, []string{"pkg:npm/example"})
+	if got == nil {
+		t.Fatal("buildScoreMulti = nil for padded valid vector")
+	}
+	if got.CVSSv3.VectorString != want {
+		t.Errorf("VectorString = %q, want %q", got.CVSSv3.VectorString, want)
+	}
+	if got.CVSSv3.BaseScore != 9.8 {
+		t.Errorf("BaseScore = %v, want 9.8", got.CVSSv3.BaseScore)
+	}
+}

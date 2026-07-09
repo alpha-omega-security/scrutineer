@@ -230,11 +230,11 @@ func osvAliases(f db.Finding, refs []db.FindingReference) []string {
 // present, v4 comes first (matching the OSS-SIRT advisory template).
 func osvSeverityList(f db.Finding) []vulns.Severity {
 	var out []vulns.Severity
-	if cvssVersion(f.CVSSv4Vector, "4.0") {
-		out = append(out, vulns.Severity{Type: "CVSS_V4", Score: f.CVSSv4Vector})
+	if v4 := strings.TrimSpace(f.CVSSv4Vector); cvssVersion(v4, "4.0") {
+		out = append(out, vulns.Severity{Type: "CVSS_V4", Score: v4})
 	}
-	if cvssVersion(f.CVSSVector, "3.0", "3.1") {
-		out = append(out, vulns.Severity{Type: "CVSS_V3", Score: f.CVSSVector})
+	if v3 := strings.TrimSpace(f.CVSSVector); cvssVersion(v3, "3.0", "3.1") {
+		out = append(out, vulns.Severity{Type: "CVSS_V3", Score: v3})
 	}
 	return out
 }

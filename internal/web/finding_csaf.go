@@ -529,17 +529,18 @@ func buildProductStatusMulti(f db.Finding, productIDs []string, fdRows []db.Find
 // otherwise emit baseScore: 0 / baseSeverity: NONE next to a populated
 // vector, which is worse than no score at all.
 func buildScoreMulti(f db.Finding, productIDs []string) *csafScore {
-	cvss := parseCVSSv3Vector(f.CVSSVector)
+	vector := strings.TrimSpace(f.CVSSVector)
+	cvss := parseCVSSv3Vector(vector)
 	if cvss == nil {
 		return nil
 	}
-	parsed, ok := parseCVSSVersion(f.CVSSVector, cvssVersion30, cvssVersion31)
+	parsed, ok := parseCVSSVersion(vector, cvssVersion30, cvssVersion31)
 	if !ok {
 		return nil
 	}
 	cvss.BaseScore = parsed.Score
 	cvss.BaseSeverity = severityLabel(parsed.Score)
-	cvss.VectorString = f.CVSSVector
+	cvss.VectorString = vector
 	return &csafScore{Products: productIDs, CVSSv3: cvss}
 }
 

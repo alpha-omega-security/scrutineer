@@ -628,3 +628,33 @@ func TestFindingOSV_packageHasSemverRangeFromFixVersion(t *testing.T) {
 		t.Errorf("fixed event = %v, want 2.3.1", events[1])
 	}
 }
+
+func TestOSVSeverityList_trimsCVSSVectors(t *testing.T) {
+	// The OSV schema anchors CVSS score patterns, so a vector stored with
+	// surrounding whitespace must be trimmed before emission or the export
+	// fails schema validation. vulns.ParseCVSS trims internally so the
+	// gate accepts padded input; the emitted Score must match.
+	f := db.Finding{
+		CVSSVector:   "  CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H\t",
+		CVSSv4Vector: " CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N ",
+	}
+	got := osvSeverityList(f)
+	if len(got) != 2 {
+		t.Fatalf("severity entries = %d, want 2", len(got))
+	}
+	for _, s := range got {
+		if s.Score != strings.TrimSpace(s.Score) {
+			t.Errorf("emitted %s score %q has surrounding whitespace", s.Type, s.Score)
+		}
+	}
+	if got[0].Type != "CVSS_V4" || got[1].Type != "CVSS_V3" {
+		t.Errorf("order = %s, %s; want CVSS_V4 then CVSS_V3", got[0].Type, got[1].Type)
+	}
+}
+
+func TestOSVSeverityList_dropsUnparseableVectors(t *testing.T) {
+	f := db.Finding{CVSSVector: "not-a-vector", CVSSv4Vector: "  "}
+	if got := osvSeverityList(f); len(got) != 0 {
+		t.Errorf("severity entries = %v, want none", got)
+	}
+}
