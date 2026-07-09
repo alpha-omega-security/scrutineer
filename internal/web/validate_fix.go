@@ -42,8 +42,8 @@ type fixValidationFinding struct {
 }
 
 // fixValidationVerify is one targeted finding's reproduction-level verdict
-// against the fix ref. Status mirrors the verify skill enum (fixed,
-// confirmed, inconclusive); "pending" means the verify scan had not finished
+// against the fix ref. Status mirrors the verify skill enum (confirmed, fixed,
+// inconclusive, deferred); "pending" means the verify scan had not finished
 // when the report was assembled.
 type fixValidationVerify struct {
 	FindingID uint   `json:"finding_id"`

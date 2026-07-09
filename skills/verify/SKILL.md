@@ -1,6 +1,6 @@
 ---
 name: verify
-description: Re-run a finding's reproduction against current HEAD and record whether it is confirmed, fixed, or inconclusive.
+description: Re-run a finding's reproduction against current HEAD and record whether it is confirmed, fixed, inconclusive, or deferred.
 license: MIT
 compatibility: Needs network access to the scrutineer API (http://host:port/api). Expects the finding's reproduction instructions to be runnable against ./src with commonly available tooling.
 metadata:
