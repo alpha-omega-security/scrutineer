@@ -242,6 +242,62 @@ func TestScansCancelAll_cancelsRepoQueuedAndRunning(t *testing.T) {
 	if got := statusOf(otherQueued.ID); got != db.ScanQueued {
 		t.Errorf("other repo queued -> %q, want queued (untouched)", got)
 	}
+	var queuedGot db.Scan
+	s.DB.First(&queuedGot, queued.ID)
+	if queuedGot.Error != "cancelled by user" || queuedGot.FinishedAt == nil {
+		t.Errorf("queued cancel fields: error=%q finished_at=%v", queuedGot.Error, queuedGot.FinishedAt)
+	}
+	if queuedGot.StatusPriority != db.StatusPriorityFor(db.ScanCancelled) {
+		t.Errorf("queued status_priority = %d, want cancelled priority", queuedGot.StatusPriority)
+	}
+}
+
+func TestScansPauseQueued_bulkUpdatesQueuedOnly(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/pause", Name: "pause"}
+	s.DB.Create(&repo)
+
+	mk := func(st db.ScanStatus) db.Scan {
+		sc := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: st, StatusPriority: db.StatusPriorityFor(st)}
+		s.DB.Create(&sc)
+		return sc
+	}
+	q1 := mk(db.ScanQueued)
+	q2 := mk(db.ScanQueued)
+	running := mk(db.ScanRunning)
+	doneScan := mk(db.ScanDone)
+
+	r := localReq("POST", "/scans/pause-queued")
+	r.Header.Set("Sec-Fetch-Site", "same-origin")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303; body=%s", w.Code, w.Body)
+	}
+	if loc := w.Header().Get("Location"); loc != "/scans?status=paused" {
+		t.Errorf("Location = %q, want /scans?status=paused", loc)
+	}
+
+	var q1got, q2got, runningGot, doneGot db.Scan
+	s.DB.First(&q1got, q1.ID)
+	s.DB.First(&q2got, q2.ID)
+	s.DB.First(&runningGot, running.ID)
+	s.DB.First(&doneGot, doneScan.ID)
+	for _, got := range []db.Scan{q1got, q2got} {
+		if got.Status != db.ScanPaused || got.StatusPriority != db.StatusPriorityFor(db.ScanPaused) {
+			t.Errorf("queued scan %d -> status=%s priority=%d, want paused", got.ID, got.Status, got.StatusPriority)
+		}
+		if got.Error != "paused by user" || got.FinishedAt == nil {
+			t.Errorf("queued scan %d pause fields: error=%q finished_at=%v", got.ID, got.Error, got.FinishedAt)
+		}
+	}
+	if runningGot.Status != db.ScanRunning {
+		t.Errorf("running -> %q, want running", runningGot.Status)
+	}
+	if doneGot.Status != db.ScanDone {
+		t.Errorf("done -> %q, want done", doneGot.Status)
+	}
 }
 
 func TestScansResumePaused(t *testing.T) {

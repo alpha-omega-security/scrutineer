@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -11,6 +12,9 @@ import (
 
 	"scrutineer/internal/db"
 	"scrutineer/internal/worker"
+
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
@@ -271,38 +275,88 @@ func (s *Server) scansRetryFailed(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) scansPauseQueued(w http.ResponseWriter, r *http.Request) {
-	var scans []db.Scan
-	if err := s.DB.Where("status = ?", db.ScanQueued).Find(&scans).Error; err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	now := time.Now()
+	res := s.DB.Model(&db.Scan{}).Where("status = ?", db.ScanQueued).Updates(scanStatusUpdates(
+		db.ScanPaused,
+		"paused by user",
+		&now,
+		nil,
+	))
+	if res.Error != nil {
+		http.Error(w, res.Error.Error(), http.StatusInternalServerError)
 		return
 	}
-	now := time.Now()
-	for _, sc := range scans {
-		s.DB.Model(&db.Scan{}).Where("id = ? AND status = ?", sc.ID, db.ScanQueued).Updates(map[string]any{
-			statusKey:         db.ScanPaused,
-			"status_priority": db.StatusPriorityFor(db.ScanPaused),
-			errorKey:          "paused by user",
-			"finished_at":     &now,
-		})
-	}
-	setFlash(w, Flash{Category: successKey, Title: fmt.Sprintf("%d queued scans paused", len(scans))})
+	setFlash(w, Flash{Category: successKey, Title: fmt.Sprintf("%d queued scans paused", res.RowsAffected)})
 	s.redirect(w, r, "/scans?status=paused")
+}
+
+func scanStatusUpdates(status db.ScanStatus, msg string, finishedAt *time.Time, pausedUntil *time.Time) map[string]any {
+	return map[string]any{
+		statusKey:         status,
+		"status_priority": db.StatusPriorityFor(status),
+		errorKey:          msg,
+		"finished_at":     finishedAt,
+		"paused_until":    pausedUntil,
+	}
+}
+
+func (s *Server) bulkResumePaused(base *gorm.DB) ([]db.Scan, error) {
+	var scans []db.Scan
+	res := base.Model(&scans).Clauses(clause.Returning{
+		Columns: []clause.Column{
+			{Name: "id"},
+			{Name: "kind"},
+			{Name: "finding_id"},
+			{Name: "error"},
+			{Name: "paused_until"},
+		},
+	}).Where("status = ?", db.ScanPaused).Updates(scanStatusUpdates(
+		db.ScanQueued,
+		"",
+		nil,
+		nil,
+	))
+	if res.Error != nil {
+		return nil, res.Error
+	}
+	return scans, nil
+}
+
+func (s *Server) restorePausedAfterResumeEnqueueFailure(scan db.Scan, err error) error {
+	now := time.Now()
+	return s.DB.Model(&db.Scan{}).Where("id = ? AND status = ?", scan.ID, db.ScanQueued).Updates(scanStatusUpdates(
+		db.ScanPaused,
+		"resume failed: "+err.Error(),
+		&now,
+		scan.PausedUntil,
+	)).Error
+}
+
+func (s *Server) enqueueResumedScan(ctx context.Context, scan db.Scan) error {
+	priority := worker.PrioScan
+	if scan.FindingID != nil {
+		priority = worker.PrioFinding
+	}
+	if err := s.Queue.Enqueue(ctx, scan.Kind, scan.ID, priority); err != nil {
+		return errors.Join(err, s.restorePausedAfterResumeEnqueueFailure(scan, err))
+	}
+	return nil
 }
 
 func (s *Server) scansResumePaused(w http.ResponseWriter, r *http.Request) {
 	repoID, _ := strconv.Atoi(r.URL.Query().Get("repository"))
-	q := s.DB.Where("status = ?", db.ScanPaused)
+	q := s.DB
 	if repoID > 0 {
 		q = q.Where("repository_id = ?", repoID)
 	}
-	var scans []db.Scan
-	if err := q.Find(&scans).Error; err != nil {
+	scans, err := s.bulkResumePaused(q)
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	var resumed, errored int
 	for _, sc := range scans {
-		if err := s.resumeScan(r.Context(), &sc); err != nil {
+		if err := s.enqueueResumedScan(r.Context(), sc); err != nil {
 			errored++
 			continue
 		}
@@ -463,13 +517,21 @@ func (s *Server) scansCancelAll(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing repository", http.StatusBadRequest)
 		return
 	}
+	now := time.Now()
+	queued := s.DB.Model(&db.Scan{}).
+		Where("repository_id = ? AND status = ?", repoID, db.ScanQueued).
+		Updates(scanStatusUpdates(db.ScanCancelled, "cancelled by user", &now, nil))
+	if queued.Error != nil {
+		http.Error(w, queued.Error.Error(), http.StatusInternalServerError)
+		return
+	}
 	var scans []db.Scan
 	if err := s.DB.Where("repository_id = ? AND status IN ?",
-		repoID, []db.ScanStatus{db.ScanQueued, db.ScanRunning}).Find(&scans).Error; err != nil {
+		repoID, []db.ScanStatus{db.ScanRunning}).Find(&scans).Error; err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	var cancelled int
+	cancelled := int(queued.RowsAffected)
 	for i := range scans {
 		s.cancelScan(&scans[i])
 		cancelled++
