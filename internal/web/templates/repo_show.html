@@ -56,6 +56,14 @@
           hx-post="/repositories/{{.Repo.ID}}/scan" hx-swap="none">
       <button class="btn" type="submit"><i data-lucide="play"></i> New scan</button>
     </form>
+    <form method="post" action="/repositories/{{.Repo.ID}}/scan"
+          hx-post="/repositories/{{.Repo.ID}}/scan" hx-swap="none">
+      <input type="hidden" name="rescan_mode" value="diff">
+      <button class="btn-outline" type="submit"
+              data-tooltip="Scan changes since the latest compatible deep-dive baseline; falls back to a full scan when no usable baseline exists.">
+        <i data-lucide="git-compare-arrows"></i> Diff rescan
+      </button>
+    </form>
   </div>
 </div>
 
@@ -609,7 +617,7 @@
 {{define "scan-row"}}{{with .S}}
   <tr id="scan-{{.ID}}"{{if $.OOB}} hx-swap-oob="true"{{end}}>
     <td><a href="/scans/{{.ID}}">{{.ID}}</a></td>
-    <td>{{if .SkillName}}{{.SkillName}}{{else}}{{.Kind}}{{end}} {{template "branch-tag" .Ref}}</td>
+    <td>{{if .SkillName}}{{.SkillName}}{{else}}{{.Kind}}{{end}} {{template "branch-tag" .Ref}}{{if eq .RescanMode "diff"}} <span class="badge-outline text-xs">diff</span>{{end}}</td>
     <td>{{template "status-badge" (status .Status)}} {{if .MaxTurnsHit}}<span class="badge-outline"><i data-lucide="timer-off"></i> max turns</span>{{end}}</td>
     <td>{{if gt .FindingsCount 0}}{{template "findings-badge" .FindingsCount}}{{end}}</td>
     <td class="text-muted-foreground">{{if .Model}}{{.Model}}{{else}}-{{end}}</td>

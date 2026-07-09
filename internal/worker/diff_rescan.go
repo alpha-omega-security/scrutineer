@@ -31,6 +31,7 @@ type diffStats struct {
 	ChangedFiles      int            `json:"changed_files"`
 	PatchBytes        int            `json:"patch_bytes"`
 	StatusCounts      map[string]int `json:"status_counts"`
+	Files             []changedFile  `json:"files,omitempty"`
 	ChangedFilesFile  string         `json:"changed_files_file,omitempty"`
 	DiffFile          string         `json:"diff_file,omitempty"`
 	ThreatModelScanID uint           `json:"threat_model_scan_id,omitempty"`
@@ -121,6 +122,7 @@ func (w *Worker) prepareDiffRescan(ctx context.Context, scan *db.Scan, workRoot 
 		ChangedFiles:      len(changed),
 		PatchBytes:        len(patch),
 		StatusCounts:      countChangedStatuses(changed),
+		Files:             changed,
 		ChangedFilesFile:  changedFilesFile,
 		DiffFile:          diffPatchFile,
 		ThreatModelScanID: uintValue(tmID),

@@ -2,6 +2,7 @@ package web
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -378,6 +379,37 @@ func TestAPIRunSkill_profileOverridePersists(t *testing.T) {
 	s.DB.Where("skill_id = ?", skill.ID).First(&row)
 	if row.Profile != "php" {
 		t.Errorf("scan.Profile = %q, want %q", row.Profile, "php")
+	}
+}
+
+func TestAPIRunSkill_diffRescanOptionsPersist(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo, scan := seedRunningScan(t, s)
+
+	skill := db.Skill{Name: "metadata", Description: "m", Body: "b", OutputFile: "report.json", Version: 1, Active: true, Source: "ui"}
+	s.DB.Create(&skill)
+	baseline := db.Scan{RepositoryID: repo.ID, Kind: worker.JobSkill, Status: db.ScanDone, SkillName: "metadata", Commit: "abc"}
+	s.DB.Create(&baseline)
+
+	body := fmt.Sprintf(`{"rescan_mode":"diff","baseline_scan_id":%d}`, baseline.ID)
+	path := "/api/repositories/" + strconv.FormatUint(uint64(repo.ID), 10) + "/skills/metadata/run"
+	r := httptest.NewRequest("POST", path, strings.NewReader(body))
+	r.Host = testHost
+	r.Header.Set("Authorization", "Bearer "+scan.APIToken)
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != 201 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	var row db.Scan
+	s.DB.Where("skill_id = ? AND status = ?", skill.ID, db.ScanQueued).First(&row)
+	if row.RescanMode != db.ScanRescanModeDiff {
+		t.Errorf("scan.RescanMode = %q, want diff", row.RescanMode)
+	}
+	if row.DiffBaseScanID == nil || *row.DiffBaseScanID != baseline.ID {
+		t.Errorf("scan.DiffBaseScanID = %v, want %d", row.DiffBaseScanID, baseline.ID)
 	}
 }
 

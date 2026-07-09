@@ -2277,6 +2277,10 @@ func (s *Server) repoScan(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if strings.TrimSpace(r.FormValue("rescan_mode")) == db.ScanRescanModeDiff {
+		s.repoDiffScan(w, r, repo)
+		return
+	}
 	// The "New scan" button enqueues the deep-dive skill; everything else is
 	// triggered either by the triage skill or by the explicit Run skill menu.
 	var skill db.Skill
@@ -2285,14 +2289,45 @@ func (s *Server) repoScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := s.enqueueSkillWith(r.Context(), repo.ID, skill.ID, ScanOpts{
-		Model:     r.FormValue("model"),
-		SubPath:   strings.TrimSpace(r.FormValue("sub_path")),
-		ScanGroup: uuid.NewString(),
+		Model:      r.FormValue("model"),
+		SubPath:    strings.TrimSpace(r.FormValue("sub_path")),
+		RescanMode: strings.TrimSpace(r.FormValue("rescan_mode")),
+		ScanGroup:  uuid.NewString(),
 	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	s.redirect(w, r, fmt.Sprintf("/repositories/%d", repo.ID))
+}
+
+func (s *Server) repoDiffScan(w http.ResponseWriter, r *http.Request, repo db.Repository) {
+	group := uuid.NewString()
+	model := r.FormValue("model")
+	subPath := strings.TrimSpace(r.FormValue("sub_path"))
+	names := []string{threatModelSkillName, "semgrep", deepDiveSkillName}
+	queued := 0
+	for _, name := range names {
+		var skill db.Skill
+		if err := s.DB.Where("name = ? AND active = ?", name, true).First(&skill).Error; err != nil {
+			if name == deepDiveSkillName {
+				http.Error(w, deepDiveSkillName+" skill is not installed", http.StatusPreconditionFailed)
+				return
+			}
+			continue
+		}
+		if _, err := s.enqueueSkillWith(r.Context(), repo.ID, skill.ID, ScanOpts{
+			Model:      model,
+			SubPath:    subPath,
+			RescanMode: db.ScanRescanModeDiff,
+			ScanGroup:  group,
+		}); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		queued++
+	}
+	setFlash(w, Flash{Category: successKey, Title: fmt.Sprintf("Diff rescan queued %d scan(s)", queued)})
+	s.redirect(w, r, fmt.Sprintf("/repositories/%d#rt3", repo.ID))
 }
 
 // repoScanAll is the bulk equivalent of the per-subproject "Scan" button: it

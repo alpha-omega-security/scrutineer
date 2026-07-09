@@ -187,13 +187,24 @@ The worker then runs `claude -p "Use the {name} skill in this workspace"` with t
     "scan_ref": "release/2.x",
     "scan_subpath": "packages/core",
     "scan_group": "6b1f…",
+    "rescan": {
+      "mode": "diff",
+      "base_scan_id": 41,
+      "base_commit": "1111111",
+      "head_commit": "abc123",
+      "diff_file": "diff.patch",
+      "changed_files_file": "changed_files.json",
+      "threat_model_scan_id": 40,
+      "old_threat_model_file": "old_threat_model.json",
+      "coverage_metadata_key": "coverage"
+    },
     "fork_org": "your-security-forks",
     "metadata_dir": ".scrutineer/"
   }
 }
 ```
 
-`finding_id` is only present for finding-scoped skills (`verify`, `revalidate`, `breaking-change`, `disclose`, `patch`, `mitigate`, `public-issue`, `release-watch`, `exposure`). `dependent_id` is only set on `exposure` runs and points to the dependent whose code is under audit; `./src` is then a copy of that dependent's clone, not of the finding's repository. `scan_ref` is empty when the scan is on the default branch. `scan_subpath` is set when the operator scoped the scan to a monorepo sub-folder; skills that walk source honour it, skills that query external APIs by repository URL ignore it. `scan_group` is set when the scan is one of a parallel batch (Scan-all-subprojects, or a single New-scan run); an audit skill passes it to `/repositories/{id}/findings?scan_group=...` to read what its siblings have already filed before reporting its own, and is absent otherwise. `fork_org` is absent unless `-fork-org` is configured. `metadata_dir` is the directory inside a staging repo where scrutineer keeps its per-project metadata (`.scrutineer/` by default); operators with a different consortium-flavoured convention set `metadata_dir` in scrutineer.yaml. `packages` is a convenience copy of the package rows when the `packages` skill has already run; otherwise it is omitted.
+`finding_id` is only present for finding-scoped skills (`verify`, `revalidate`, `breaking-change`, `disclose`, `patch`, `mitigate`, `public-issue`, `release-watch`, `exposure`). `dependent_id` is only set on `exposure` runs and points to the dependent whose code is under audit; `./src` is then a copy of that dependent's clone, not of the finding's repository. `scan_ref` is empty when the scan is on the default branch. `scan_subpath` is set when the operator scoped the scan to a monorepo sub-folder; skills that walk source honour it, skills that query external APIs by repository URL ignore it. `scan_group` is set when the scan is one of a parallel batch (Scan-all-subprojects, a single New-scan run, or a Diff rescan group); an audit skill passes it to `/repositories/{id}/findings?scan_group=...` to read what its siblings have already filed before reporting its own, and is absent otherwise. `rescan` is present only for diff rescans; the worker stages `diff.patch`, `changed_files.json`, and, when available, `old_threat_model.json` in the workspace root. `fork_org` is absent unless `-fork-org` is configured. `metadata_dir` is the directory inside a staging repo where scrutineer keeps its per-project metadata (`.scrutineer/` by default); operators with a different consortium-flavoured convention set `metadata_dir` in scrutineer.yaml. `packages` is a convenience copy of the package rows when the `packages` skill has already run; otherwise it is omitted.
 
 ## schema.json
 

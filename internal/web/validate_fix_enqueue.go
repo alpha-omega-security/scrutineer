@@ -158,6 +158,7 @@ func parseFindingIDs(r *http.Request) ([]uint, error) {
 // dedup pass for everything else. Both inspect committed state, so order does
 // not matter; autoEnqueueFindingDedup already skips anchor scans.
 func (s *Server) onScanFinalized(scan *db.Scan) {
+	s.autoUpdateThreatModel(scan)
 	s.autoComputeFixValidation(scan)
 	s.autoEnqueueFindingDedup(scan)
 }

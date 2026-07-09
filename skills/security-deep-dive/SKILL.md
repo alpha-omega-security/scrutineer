@@ -26,6 +26,7 @@ Workspace layout:
 - `./src` — the cloned repository
 - `./context.json` — repo identity plus a `scrutineer` block with `api_base`, `token`, `repository_id`. If `scrutineer.scan_subpath` is set, scope every inventory, trace, and validation step to `./src/{scan_subpath}` only — do not reach outside that sub-folder for code analysis, and treat the sub-folder as the project root for all relative locations in the report. Other repositories' concerns (packages, advisories, maintainers) remain repo-wide. If prior scans or ecosystem prefetches of this repo have run, their results are available at the API documented below; use them instead of re-fetching from upstream.
 - `./threat_model.json` — optional. When present, an operator-supplied threat model that overrides the API-fetched one (see Phase 1).
+- Diff rescans add `scrutineer.rescan` to `context.json` plus `./diff.patch`, `./changed_files.json`, and, when available, `./old_threat_model.json`.
 - `./report.json` — write your final report here
 - `./schema.json` — the JSON schema your report must conform to
 
@@ -40,6 +41,14 @@ Scrutineer API (call with `Authorization: Bearer {token}`):
 - `GET {api_base}/repositories/{repository_id}/scans?skill=repo-overview&status=done` — then `GET /scans/{id}` for the brief summary
 
 If any of those return an empty list or a non-200 status, the upstream scans were not run yet or the API is unreachable; fall back to your own reasoning over `./src`.
+
+## Diff rescans
+
+When `context.json` has `scrutineer.rescan.mode == "diff"`, audit the change set rather than claiming a full fresh repository audit. Read `./changed_files.json` first, then `./diff.patch`, then the changed files in `./src`. Use `./old_threat_model.json` when present to understand the previous security contract, and fetch the latest threat-model scan through the API if the file is absent.
+
+Inventory only sinks that are new, modified, or whose reachability/security boundary plausibly changed because of the diff. Follow calls out of a changed file when needed to validate an attack path, but do not re-inventory unrelated untouched subsystems. A finding belongs in the report when the diff introduces it, exposes an existing sink to a new adversary, changes a validation/sanitisation guarantee, or makes an existing finding newly reachable or materially worse.
+
+Do not mark untouched historical findings as gone just because they are outside the diff. Use `findings: []` only to mean "no new or materially changed findings in this diff." Put ruled-out entries in the report for changed sinks you actually inspected; do not fill the ruled-out list with old inventory from untouched code.
 
 ## Phase 1: Inventory
 

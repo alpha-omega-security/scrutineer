@@ -10,6 +10,24 @@ changed: new skills, better prompts, new runner images, or a model upgrade.
 Full scans are the right way to re-check the whole repository with improved
 tooling.
 
+## Starting One
+
+From a repository page, click **Diff rescan**. Scrutineer queues the
+diff-aware threat-model, semgrep, and security-deep-dive scans as one group.
+The deep-dive waits for the sibling threat-model and semgrep scans in that
+group before it runs.
+
+API callers can request diff mode when enqueueing a skill:
+
+```json
+{
+  "rescan_mode": "diff"
+}
+```
+
+Set `baseline_scan_id` only when you need to pin a specific baseline. Otherwise
+Scrutineer chooses the latest compatible completed scan for that skill.
+
 ## What Diff Mode Does
 
 A diff rescan compares the selected baseline scan commit with the current scan

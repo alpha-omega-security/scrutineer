@@ -19,6 +19,7 @@ You are running headless with no maintainer to consult. Every claim you write is
 
 - `./src` is the cloned repository.
 - `./context.json` has `repository.url`, `repository.full_name`, and a `scrutineer` block with `api_base`, `token`, `repository_id`. If `scrutineer.scan_subpath` is set, scope the model to that subtree and say so in the header.
+- Diff rescans add `scrutineer.rescan` to `context.json` plus `./diff.patch`, `./changed_files.json`, and, when available, `./old_threat_model.json`.
 - `./report.json` is the structured contract; write it to match `./schema.json`. This is the only file the worker keeps.
 
 Scrutineer API (optional, `Authorization: Bearer {token}`):
@@ -27,6 +28,14 @@ Scrutineer API (optional, `Authorization: Bearer {token}`):
 - `GET {api_base}/repositories/{repository_id}/advisories` for prior published advisories. A pattern across past CVEs ("historically overflows on 32-bit `size_t`") is a model claim; the CVE list itself is not.
 
 If either returns empty or non-200, carry on without it.
+
+## Diff rescans
+
+When `context.json` has `scrutineer.rescan.mode == "diff"`, update the threat model from `./old_threat_model.json` instead of re-deriving the whole repository cold. Read `./changed_files.json` and `./diff.patch`, inspect the changed files in `./src`, and produce a complete replacement threat model in `./report.json`, not a patch or commentary. Preserve unchanged fields from the old model when the diff does not affect them.
+
+Focus the update on changes that alter the security contract: public entry points, routing, authentication, authorization, parser surfaces, configuration defaults, build or feature flags, documented support boundaries, and known non-findings. If the diff is small and does not change those areas, keep the old model substantively unchanged and record the small-diff rationale in `open_questions` only if it depends on an inferred assumption.
+
+Diff mode is still a threat-model run, not a vulnerability scan. Do not report code findings.
 
 ## Orient
 
