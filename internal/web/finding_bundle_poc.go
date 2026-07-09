@@ -15,18 +15,18 @@ import (
 var fencedBlock = regexp.MustCompile("(?s)```([a-zA-Z0-9_+.-]*)[^\n]*\n(.*?)```")
 
 // probeExt maps a fence info string (already lowercased) to the
-// filename its body is written as under poc/. The empty and shell-family
-// entries all resolve to run.sh so a bundle with a single shell block
-// gives the recipient one obvious thing to execute.
+// filename its body is written as under poc/. Only explicit shell script
+// fences become run.sh; console, shell-session, text, and unmarked fences
+// are transcripts and may contain prompts or observed output.
 var probeExt = map[string]string{
-	"":             "run.sh",
+	"":             "transcript.txt",
 	"sh":           "run.sh",
 	"bash":         "run.sh",
 	"shell":        "run.sh",
 	"zsh":          "run.sh",
-	"console":      "run.sh",
-	"shellsession": "run.sh",
-	"text":         "run.sh",
+	"console":      "session.txt",
+	"shellsession": "session.txt",
+	"text":         "transcript.txt",
 	"python":       "probe.py",
 	"python3":      "probe.py",
 	"py":           "probe.py",
@@ -55,9 +55,9 @@ var probeExt = map[string]string{
 
 // probeRunner maps a probe filename to the shell line that runs it, for
 // the generated run.sh when the validation prose supplied a language
-// probe but no shell driver. Filenames not listed here (input.*, .go,
-// .rs, .c, .cpp, .java, request.http) have no obvious one-line runner;
-// the generated run.sh points at README.md instead.
+// probe but no shell driver. Filenames not listed here (transcripts,
+// input.*, .go, .rs, .c, .cpp, .java, request.http) have no obvious
+// one-line runner; the generated run.sh points at README.md instead.
 var probeRunner = map[string]string{
 	"probe.py":  "exec python3 probe.py \"$@\"",
 	"probe.rb":  "exec ruby probe.rb \"$@\"",

@@ -118,6 +118,32 @@ func TestBundlePoC_shellBlockWinsOverGeneratedRunSh(t *testing.T) {
 	}
 }
 
+func TestBundlePoC_consoleBlockBecomesTranscript(t *testing.T) {
+	validation := "```console\n$ curl -i http://127.0.0.1:8080/poc\nHTTP/1.1 500 Internal Server Error\nboom\n```"
+	got := pocEntries(t, bundlePoC(validation))
+	if _, ok := got["poc/session.txt"]; !ok {
+		t.Fatalf("missing poc/session.txt; have %v", keys(got))
+	}
+	if string(got["poc/session.txt"].Data) != "$ curl -i http://127.0.0.1:8080/poc\nHTTP/1.1 500 Internal Server Error\nboom\n" {
+		t.Errorf("session transcript body = %q", got["poc/session.txt"].Data)
+	}
+	run := string(got["poc/run.sh"].Data)
+	if !strings.Contains(run, "README.md") || !strings.Contains(run, "exit 2") {
+		t.Errorf("console transcript should get README fallback run.sh, got %q", run)
+	}
+}
+
+func TestBundlePoC_unmarkedBlockBecomesTranscript(t *testing.T) {
+	validation := "```\n$ ./poc\nexpected output\n```"
+	got := pocEntries(t, bundlePoC(validation))
+	if _, ok := got["poc/transcript.txt"]; !ok {
+		t.Fatalf("missing poc/transcript.txt; have %v", keys(got))
+	}
+	if body := string(got["poc/run.sh"].Data); !strings.Contains(body, "exit 2") {
+		t.Errorf("unmarked transcript should not be executable run.sh, got %q", body)
+	}
+}
+
 func TestBundlePoC_unknownLangUsesInfoStringAsExtension(t *testing.T) {
 	validation := "```lua\nprint('x')\n```"
 	got := pocEntries(t, bundlePoC(validation))
