@@ -137,6 +137,11 @@ const (
 	ScanCancelled ScanStatus = "cancelled"
 )
 
+const (
+	ScanRescanModeFull = "full"
+	ScanRescanModeDiff = "diff"
+)
+
 // Scan is one execution of a job against a repository. Kind names the job
 // ("claude", later "semgrep", "brief", "git-pkgs"). Report holds whatever
 // the job considers its primary artefact; Log holds the streamed transcript
@@ -214,6 +219,26 @@ type Scan struct {
 	// sibling already reported before the dedup judge runs. Empty on
 	// scans that were not launched as part of such a batch.
 	ScanGroup string `gorm:"index"`
+
+	// RescanMode records the actual coverage mode for this scan. Empty and
+	// "full" mean ordinary full coverage. "diff" means the worker staged a
+	// baseline diff and skills should not claim coverage over untouched code.
+	// A requested diff scan can fall back to full coverage; Coverage records
+	// why.
+	RescanMode string `gorm:"index"`
+	// DiffBaseScanID/DiffBaseCommit identify the baseline used for a diff
+	// rescan. The commit is denormalized so the scan remains understandable
+	// even if the baseline scan row is later deleted.
+	DiffBaseScanID *uint `gorm:"index"`
+	DiffBaseCommit string
+	// DiffThreatModelScanID points at the prior threat-model report staged as
+	// old_threat_model.json for a diff threat-model scan, when available.
+	DiffThreatModelScanID *uint `gorm:"index"`
+	// DiffStats and Coverage are JSON blobs. DiffStats describes changed
+	// files/counts; Coverage describes what this scan did or did not cover,
+	// including automatic fallback reasons.
+	DiffStats string `gorm:"type:text"`
+	Coverage  string `gorm:"type:text"`
 
 	// Profile is the runner profile that ran (or was overridden to run)
 	// this scan. Empty means the default runner image; non-empty names

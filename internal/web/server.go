@@ -2490,6 +2490,13 @@ type ScanOpts struct {
 	SubPath        string
 	Ref            string
 	Profile        string
+	// RescanMode requests full or diff coverage. Empty preserves the existing
+	// full-scan behavior. A requested diff scan can fall back to full coverage
+	// once the worker resolves the clone and baseline.
+	RescanMode string
+	// DiffBaseScanID pins the baseline for a diff rescan. Nil asks the worker
+	// to choose the latest compatible same-skill completed scan.
+	DiffBaseScanID *uint
 	// ScanGroup tags this scan as part of a parallel batch so in-flight audit
 	// skills can list sibling findings before re-filing them. Empty
 	// when the scan is not part of a batch.
@@ -2535,6 +2542,13 @@ func (s *Server) enqueueSkillWith(ctx context.Context, repoID, skillID uint, opt
 	if hasSkill && sk.RequiresProfile != "" && opts.Profile != "" && opts.Profile != sk.RequiresProfile {
 		return 0, fmt.Errorf("%w: %q needs %q, got %q", ErrSkillProfileMismatch, sk.Name, sk.RequiresProfile, opts.Profile)
 	}
+	switch opts.RescanMode {
+	case "", db.ScanRescanModeFull:
+		opts.RescanMode = db.ScanRescanModeFull
+	case db.ScanRescanModeDiff:
+	default:
+		return 0, fmt.Errorf("invalid rescan mode %q", opts.RescanMode)
+	}
 	if err := worker.ValidateGitRef(opts.Ref); err != nil {
 		return 0, fmt.Errorf("%w: %v", ErrInvalidRef, err)
 	}
@@ -2572,6 +2586,8 @@ func (s *Server) enqueueSkillWith(ctx context.Context, repoID, skillID uint, opt
 		SubPath:            opts.SubPath,
 		ScanGroup:          opts.ScanGroup,
 		Ref:                opts.Ref,
+		RescanMode:         opts.RescanMode,
+		DiffBaseScanID:     opts.DiffBaseScanID,
 		Profile:            opts.Profile,
 		SessionID:          opts.SessionID,
 		ResumedFromScanID:  opts.ResumedFromScanID,
