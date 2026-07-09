@@ -7,8 +7,24 @@
   "properties": {
     "status": {
       "type": "string",
-      "enum": ["confirmed", "fixed", "inconclusive"],
-      "description": "confirmed = the finding still reproduces. fixed = the original reproduction no longer triggers (upstream fix applied between original scan and this run). inconclusive = could not run the reproduction; explain why in notes."
+      "enum": ["confirmed", "fixed", "inconclusive", "deferred"],
+      "description": "confirmed = the finding still reproduces. fixed = the original reproduction no longer triggers (upstream fix applied between original scan and this run). inconclusive = could not run the reproduction; explain why in notes. deferred = the reproduction was not run because preflight classified it EXTERNAL-REACH; a human must run it in an environment with a callback listener."
+    },
+    "preflight": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "classification": {
+          "type": "string",
+          "enum": ["local-safe", "external-reach"],
+          "description": "local-safe = trigger uses only stdin/file input or connects only to loopback / a server the reproduction itself starts on loopback, and writes only under the workspace or OS temp. external-reach = resolves or connects to any other host, reads a credential file or credential env var, or writes outside the workspace and temp."
+        },
+        "justification": {
+          "type": "string",
+          "description": "The exact lines from the reproduction that decided the classification, quoted verbatim."
+        }
+      },
+      "required": ["classification", "justification"]
     },
     "reproducer": {
       "type": "string",
@@ -20,7 +36,13 @@
     },
     "notes": {
       "type": "string",
-      "description": "Short prose explaining what changed since the original scan, or why the reproduction was inconclusive."
+      "description": "Short prose explaining what changed since the original scan, or why the reproduction was inconclusive or deferred. When status is inconclusive because a runtime is missing, prefix with 'env-blocked:' so the operator knows to fix the container profile rather than re-read the finding."
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "deferred" } } },
+      "then": { "required": ["preflight"] }
+    }
+  ]
 }

@@ -539,6 +539,86 @@ func TestParseVerify_inconclusiveLeavesStatus(t *testing.T) {
 	}
 }
 
+func TestParseVerify_deferredLeavesStatusAndRecordsPreflight(t *testing.T) {
+	report := `{"status":"deferred","preflight":{"classification":"external-reach","justification":"requests.get('http://169.254.169.254/latest/')"},"notes":"SSRF repro dials link-local metadata; needs a callback listener"}`
+	f, gdb := runSkillWithFinding(t, "verify", report, db.FindingNew)
+	if f.Status != db.FindingNew {
+		t.Errorf("status = %s, want new (unchanged): deferred means the repro was not run, not that the finding is dead", f.Status)
+	}
+	notes := findingNotes(gdb, f.ID)
+	if len(notes) == 0 {
+		t.Fatal("no verify note recorded")
+	}
+	body := notes[0].Body
+	for _, want := range []string{"verify: deferred", "preflight: external-reach", "169.254.169.254", "callback listener"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("verify note missing %q:\n%s", want, body)
+		}
+	}
+}
+
+func TestParseVerify_deferredRequiresPreflight(t *testing.T) {
+	gdb, _ := db.Open(filepath.Join(t.TempDir(), "d.db"))
+	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
+	gdb.Create(&repo)
+	prior := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanDone}
+	gdb.Create(&prior)
+	finding := db.Finding{ScanID: prior.ID, RepositoryID: repo.ID, Title: "x", Severity: "High", Status: db.FindingNew}
+	gdb.Create(&finding)
+	scan := &db.Scan{RepositoryID: repo.ID, FindingID: new(finding.ID)}
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	for name, report := range map[string]string{
+		"missing preflight":   `{"status":"deferred","notes":"x"}`,
+		"empty class":         `{"status":"deferred","preflight":{"classification":"","justification":"x"}}`,
+		"empty justification": `{"status":"deferred","preflight":{"classification":"external-reach","justification":"  "}}`,
+	} {
+		if err := w.parseVerifyOutput(scan, report, func(Event) {}); err == nil || !strings.Contains(err.Error(), "requires preflight") {
+			t.Errorf("%s: want deferred-requires-preflight error, got %v", name, err)
+		}
+	}
+	// deferred WITH preflight is fine (covered in the main deferred test),
+	// and inconclusive without preflight is also fine (early-exit cases).
+	if err := w.parseVerifyOutput(scan, `{"status":"inconclusive","notes":"no finding_id"}`, func(Event) {}); err != nil {
+		t.Errorf("inconclusive without preflight should be accepted: %v", err)
+	}
+}
+
+func TestParseVerify_preflightRecordedOnConfirmed(t *testing.T) {
+	report := `{"status":"confirmed","preflight":{"classification":"local-safe","justification":"stdin only"},"reproducer":"echo x | ./bin","evidence":"boom"}`
+	f, gdb := runSkillWithFinding(t, "verify", report, db.FindingNew)
+	if f.Status != db.FindingEnriched {
+		t.Errorf("status = %s, want enriched", f.Status)
+	}
+	body := findingNotes(gdb, f.ID)[0].Body
+	if !strings.Contains(body, "preflight: local-safe") {
+		t.Errorf("preflight classification not recorded in note: %q", body)
+	}
+	// Preflight lands between the header and the reproducer so the note
+	// reads in the same order the skill worked: classify, run, observe.
+	p := strings.Index(body, "preflight:")
+	r := strings.Index(body, "echo x")
+	if p == -1 || r == -1 || p > r {
+		t.Errorf("preflight should land ahead of reproducer in note: %q", body)
+	}
+}
+
+func TestParseVerify_rejectsUnknownStatus(t *testing.T) {
+	gdb, _ := db.Open(filepath.Join(t.TempDir(), "u.db"))
+	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
+	gdb.Create(&repo)
+	prior := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanDone}
+	gdb.Create(&prior)
+	finding := db.Finding{ScanID: prior.ID, RepositoryID: repo.ID, Title: "x", Severity: "High", Status: db.FindingNew}
+	gdb.Create(&finding)
+	scan := db.Scan{RepositoryID: repo.ID, FindingID: new(finding.ID)}
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	err := w.parseVerifyOutput(&scan, `{"status":"maybe"}`, func(Event) {})
+	if err == nil || !strings.Contains(err.Error(), "confirmed|fixed|inconclusive|deferred") {
+		t.Errorf("want unknown-status error listing all four values, got %v", err)
+	}
+}
+
 func TestParseBreakingChange_writesVerdictAndRationale(t *testing.T) {
 	report := `{
 		"verdict": "breaking",

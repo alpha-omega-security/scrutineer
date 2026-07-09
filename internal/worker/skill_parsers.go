@@ -596,7 +596,11 @@ func (w *Worker) parseVerifyOutput(scan *db.Scan, report string, emit func(Event
 		return fmt.Errorf("verify scan has no finding_id")
 	}
 	var result struct {
-		Status     string `json:"status"`
+		Status    string `json:"status"`
+		Preflight struct {
+			Classification string `json:"classification"`
+			Justification  string `json:"justification"`
+		} `json:"preflight"`
 		Reproducer string `json:"reproducer"`
 		Evidence   string `json:"evidence"`
 		Notes      string `json:"notes"`
@@ -626,9 +630,20 @@ func (w *Worker) parseVerifyOutput(scan *db.Scan, report string, emit func(Event
 			nextStatus = db.FindingFixed
 		}
 	case "inconclusive":
-		// Leave status alone.
+		// Leave status alone: the reproduction could not be run or its
+		// outcome was unclassifiable.
+	case "deferred":
+		// Leave status alone: preflight found the reproduction reaches an
+		// external host or credential file and it was not run at all — a
+		// human must run it somewhere the callback can land. deferred is
+		// meaningless without the preflight that decided it, so an empty
+		// classification or justification is a hard error rather than a
+		// note that quietly loses the offending lines.
+		if result.Preflight.Classification == "" || strings.TrimSpace(result.Preflight.Justification) == "" {
+			return fmt.Errorf("verify status \"deferred\" requires preflight.classification and preflight.justification")
+		}
 	default:
-		return fmt.Errorf("verify status %q is not one of confirmed|fixed|inconclusive", result.Status)
+		return fmt.Errorf("verify status %q is not one of confirmed|fixed|inconclusive|deferred", result.Status)
 	}
 	if nextStatus != "" {
 		if err := db.WriteFindingField(w.DB, f.ID, "status", string(nextStatus), db.SourceModel, "verify"); err != nil {
@@ -638,6 +653,12 @@ func (w *Worker) parseVerifyOutput(scan *db.Scan, report string, emit func(Event
 
 	var b strings.Builder
 	fmt.Fprintf(&b, "verify: %s\n", result.Status)
+	if result.Preflight.Classification != "" {
+		fmt.Fprintf(&b, "preflight: %s\n", result.Preflight.Classification)
+		if j := strings.TrimSpace(result.Preflight.Justification); j != "" {
+			fmt.Fprintf(&b, "\n%s\n", j)
+		}
+	}
 	if result.Reproducer != "" {
 		fmt.Fprintf(&b, "\n%s\n", strings.TrimSpace(result.Reproducer))
 	}
