@@ -1,6 +1,6 @@
 ---
 name: finding-dedup
-description: Compare open findings in one repository and mark findings that describe the same underlying vulnerability as duplicates.
+description: Compare open findings in one repository and record how they relate. Marks same-vulnerability findings as duplicates, findings that another finding's fix will close as subsumed, and findings that combine into a higher-severity attack as a chain.
 license: MIT
 compatibility: Needs network access to the scrutineer API (http://host:port/api). Repository-scoped; compares existing finding rows and does not create new findings.
 metadata:
@@ -42,9 +42,15 @@ Find duplicate findings that fingerprinting missed because their line ranges, si
 
    Weigh each finding's `dup_check` field: when several deep-dives run in parallel, the audit agent records there which siblings it already compared this finding against and why it judged it distinct. Treat that as the agent's own argument, not a verdict — if its reasoning holds against the pair in front of you, it is evidence against merging; if it compared against the wrong finding or got the root cause wrong, override it.
 
-4. Mark a duplicate only when the findings are the same underlying vulnerability. Do not group findings that merely share a CWE, sink type, file, or helper function but have different attacker-controlled inputs, different exploit paths, or different impacts.
+4. Classify each related pair into exactly one of:
 
-5. Choose one canonical finding for each duplicate group. Prefer the lowest database `id` among the open findings unless a later finding has materially better evidence. Never choose a finding with status `fixed`, `published`, `rejected`, or `duplicate` as canonical.
+   - **duplicate** — same underlying vulnerability: same root cause, same vulnerable code path, same security impact. Do not group findings that merely share a CWE, sink type, file, or helper function but have different attacker-controlled inputs, different exploit paths, or different impacts.
+   - **subsumed** — different bugs, but one is only reachable through the other, and any correct fix for the parent closes the child too. Example: finding A is "unauthenticated user can reach the admin router"; finding B is "admin router path X lacks input validation". B is real on its own terms but a maintainer who fixes A has closed B's only unauthenticated path. B is subsumed by A. Do not use this when the child has an independent path the parent's fix leaves open; that is two findings.
+   - **chain** — two or more findings that combine into a higher-severity attack than any of them alone. Example: finding A is a low-severity path traversal that reads arbitrary files under the app root; finding B is a medium-severity secret written to a predictable path under the app root. Separately each is what it is; together they are credential disclosure. Both stay open; the chain is what `disclose` reports.
+
+   A pair that is none of these is unrelated; do not record it.
+
+5. For duplicate groups, choose one canonical finding. Prefer the lowest database `id` among the open findings unless a later finding has materially better evidence. Never choose a finding with status `fixed`, `published`, `rejected`, or `duplicate` as canonical. For subsumed groups, the parent is the finding whose fix closes the others; it is not chosen by id. For chains there is no canonical; list members in exploit order when the order matters.
 
 ## Output
 
@@ -58,10 +64,23 @@ Write `./report.json`:
       "duplicate_ids": [124, 125],
       "reason": "Same vulnerable parser branch and same untrusted field reaches the same allocation without a bounds check; the reports differ only by line range."
     }
+  ],
+  "subsumed": [
+    {
+      "parent_id": 130,
+      "subsumed_ids": [131],
+      "reason": "131 is only reachable via the unauthenticated admin route in 130; any fix that gates that route closes 131's only untrusted path."
+    }
+  ],
+  "chains": [
+    {
+      "finding_ids": [140, 141],
+      "reason": "140 reads arbitrary files under the app root; 141 writes a session token to a predictable path under the app root. Together: unauthenticated session takeover."
+    }
   ]
 }
 ```
 
-Use database `id` values, not per-scan `finding_id` values like `F1`. If there are no duplicates, write `{"duplicates":[]}`.
+Use database `id` values, not per-scan `finding_id` values like `F1`. `duplicates` is required; write `[]` when there are none. `subsumed` and `chains` are optional; omit them when empty.
 
-Scrutineer validates that every id belongs to this repository and only changes open findings. Accepted duplicate findings are moved to lifecycle status `duplicate`, and a note is appended explaining which canonical finding they duplicate.
+Scrutineer validates that every id belongs to this repository and only touches open findings. Accepted duplicates are moved to lifecycle status `duplicate` with a note naming the canonical. Subsumed findings and chain members do not change status; each gets a note whose first line is `finding-dedup: subsumed by finding #N` or `finding-dedup: chains with finding #N[, #M...]`. `disclose` and `report-upstream` read those notes: a subsumed finding is refused (file the parent instead), and a chain member's disclosure pulls the other members' traces into a Composed section.

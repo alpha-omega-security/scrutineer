@@ -35,6 +35,57 @@
           }
         }
       }
+    },
+    "subsumed": {
+      "type": "array",
+      "description": "Findings that are only reachable through another finding, such that any correct fix for the parent closes them too. Distinct from duplicates: the bugs are different, but the child does not need its own disclosure.",
+      "items": {
+        "type": "object",
+        "required": ["parent_id", "subsumed_ids", "reason"],
+        "additionalProperties": false,
+        "properties": {
+          "parent_id": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Database id of the finding whose fix closes the subsumed ones."
+          },
+          "subsumed_ids": {
+            "type": "array",
+            "minItems": 1,
+            "uniqueItems": true,
+            "items": { "type": "integer", "minimum": 1 },
+            "description": "Database ids of open findings to mark subsumed by the parent."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Why the parent's fix necessarily closes these."
+          }
+        }
+      }
+    },
+    "chains": {
+      "type": "array",
+      "description": "Groups of two or more findings that combine into a higher-severity attack than any of them alone. All members stay open; disclose reports them together.",
+      "items": {
+        "type": "object",
+        "required": ["finding_ids", "reason"],
+        "additionalProperties": false,
+        "properties": {
+          "finding_ids": {
+            "type": "array",
+            "minItems": 2,
+            "uniqueItems": true,
+            "items": { "type": "integer", "minimum": 1 },
+            "description": "Database ids of open findings that chain together. Order is the exploit order when it matters."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "description": "How the chain works and why the combined severity is higher."
+          }
+        }
+      }
     }
   }
 }

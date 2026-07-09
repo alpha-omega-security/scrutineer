@@ -27,6 +27,11 @@ Draft disclosure content for an existing finding in a shape that maps one-to-one
 2. Fetch the finding: `GET {api_base}/findings/{finding_id}` with `Authorization: Bearer {token}`. You get title, severity, cwe (comma-joined), location, affected, cvss_vector, cve_id, fix_version, fix_commit, and the six-step prose (trace, boundary, validation, prior_art, reach, rating). Also fetch:
    - `GET {api_base}/repositories/{repository_id}` for the upstream URL and default branch
    - `GET {api_base}/repositories/{repository_id}/packages` for the list of published packages; you need this to fill GHSA's affected-package block
+   - `GET {api_base}/findings/{finding_id}/notes` for relation markers written by `finding-dedup`
+
+   Scan the notes for a body whose first line starts with `finding-dedup: subsumed by finding #`. If one exists, this finding is only reachable through the parent named after the `#`, and any correct fix for the parent closes it. Write `{"error": "finding {id} is subsumed by finding #{parent}; disclose the parent instead"}` and exit 0.
+
+   Scan the notes for a body whose first line starts with `finding-dedup: chains with finding #`. If one exists, extract every `#N` on that line and fetch each with `GET {api_base}/findings/{N}`. These are the chain members whose traces the Composed section below pulls in.
 
 3. Compose the GHSA fields below. Every field names the GHSA REST key (`summary`, `description`, `vulnerabilities`, etc.) so the mapping is explicit. Keep each one factual and derived from the finding — do not invent details the audit did not establish.
 
@@ -56,9 +61,13 @@ Draft disclosure content for an existing finding in a shape that maps one-to-one
 
    Reuse the Validation prose, formatted as a short runnable recipe. Include the minimum needed to trigger the bug. A fenced code block when a script exists.
 
+   ## Composed with
+
+   Only when step 2 found chain members. One short paragraph per chained finding: its title, its location, and one sentence from its Trace naming the sink. Then one paragraph explaining how the chain works and why the combined severity is higher than any member alone (reuse the reason from the `finding-dedup: chains with` note). Close with "Each chained issue is tracked as scrutineer finding #{N}." so the maintainer knows the others exist as separate records but are being reported together here. Omit the whole section when there are no chain members.
+
    ## Fix suggestion
 
-   One or two sentences on where the guard belongs (sanitise here, validate there, remove the sink). Do not claim a specific patch unless the Trace identifies the exact line.
+   One or two sentences on where the guard belongs (sanitise here, validate there, remove the sink). Do not claim a specific patch unless the Trace identifies the exact line. When the finding chains, name which link the fix breaks.
 
    ## References
 

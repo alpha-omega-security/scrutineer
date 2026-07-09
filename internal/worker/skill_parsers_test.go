@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -998,6 +999,138 @@ func TestParseFindingDedup_marksDuplicatesWithHistoryAndNote(t *testing.T) {
 	notes := findingNotes(gdb, duplicate.ID)
 	if len(notes) == 0 || !strings.Contains(notes[0].Body, "duplicates finding #") {
 		t.Fatalf("missing dedup note: %+v", notes)
+	}
+}
+
+// setupDedupRepo creates a repo, a scan, and n open findings, returning the
+// scan and the findings in creation order. Cuts the boilerplate the
+// duplicate/subsumed/chain tests each repeat.
+func setupDedupRepo(t *testing.T, gdb *gorm.DB, n int) (db.Scan, []db.Finding) {
+	t.Helper()
+	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
+	gdb.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanDone, SkillName: "finding-dedup"}
+	gdb.Create(&scan)
+	fs := make([]db.Finding, n)
+	for i := range fs {
+		fs[i] = db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, FindingID: "F" + strconv.Itoa(i+1),
+			Title: "f" + strconv.Itoa(i+1), Severity: "High", Status: db.FindingNew}
+		gdb.Create(&fs[i])
+	}
+	return scan, fs
+}
+
+func TestParseFindingDedup_subsumedNotesWithoutStatusChange(t *testing.T) {
+	gdb, _ := db.Open(filepath.Join(t.TempDir(), "sub.db"))
+	scan, fs := setupDedupRepo(t, gdb, 3)
+	parent, childA, childB := fs[0], fs[1], fs[2]
+
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	report := fmt.Sprintf(`{"duplicates":[],"subsumed":[{"parent_id":%d,"subsumed_ids":[%d,%d],"reason":"only reachable via the unauth admin route in the parent"}]}`,
+		parent.ID, childA.ID, childB.ID)
+	if err := w.parseFindingDedupOutput(&scan, report, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, child := range []db.Finding{childA, childB} {
+		var got db.Finding
+		gdb.First(&got, child.ID)
+		if got.Status != db.FindingNew {
+			t.Errorf("child %d status = %s; subsumed must not change lifecycle", child.ID, got.Status)
+		}
+		notes := findingNotes(gdb, child.ID)
+		if len(notes) == 0 {
+			t.Fatalf("child %d: no note", child.ID)
+		}
+		wantHeader := fmt.Sprintf("finding-dedup: subsumed by finding #%d", parent.ID)
+		if !strings.HasPrefix(notes[0].Body, wantHeader) {
+			t.Errorf("child %d note header = %q, want prefix %q", child.ID, firstLine(notes[0].Body), wantHeader)
+		}
+		if !strings.Contains(notes[0].Body, "unauth admin route") {
+			t.Errorf("child %d note missing reason", child.ID)
+		}
+	}
+	if len(findingNotes(gdb, parent.ID)) != 0 {
+		t.Error("parent should not get a subsumed note; only children carry the marker")
+	}
+}
+
+func TestParseFindingDedup_chainsNotesEachMemberWithOthers(t *testing.T) {
+	gdb, _ := db.Open(filepath.Join(t.TempDir(), "chain.db"))
+	scan, fs := setupDedupRepo(t, gdb, 3)
+	a, b, c := fs[0], fs[1], fs[2]
+
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	report := fmt.Sprintf(`{"duplicates":[],"chains":[{"finding_ids":[%d,%d,%d],"reason":"traversal + predictable secret path = credential disclosure"}]}`,
+		a.ID, b.ID, c.ID)
+	if err := w.parseFindingDedupOutput(&scan, report, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Each member's note lists the OTHER members, not itself, so disclose on
+	// any one of them can fetch exactly the ids it needs to compose.
+	cases := []struct {
+		on     db.Finding
+		others []uint
+	}{
+		{a, []uint{b.ID, c.ID}},
+		{b, []uint{a.ID, c.ID}},
+		{c, []uint{a.ID, b.ID}},
+	}
+	for _, tc := range cases {
+		var got db.Finding
+		gdb.First(&got, tc.on.ID)
+		if got.Status != db.FindingNew {
+			t.Errorf("chain member %d status = %s; chains must not change lifecycle", tc.on.ID, got.Status)
+		}
+		notes := findingNotes(gdb, tc.on.ID)
+		if len(notes) == 0 {
+			t.Fatalf("member %d: no note", tc.on.ID)
+		}
+		header := firstLine(notes[0].Body)
+		if !strings.HasPrefix(header, "finding-dedup: chains with finding #") {
+			t.Errorf("member %d header = %q", tc.on.ID, header)
+		}
+		for _, other := range tc.others {
+			if !strings.Contains(header, fmt.Sprintf("#%d", other)) {
+				t.Errorf("member %d header missing #%d: %q", tc.on.ID, other, header)
+			}
+		}
+		if strings.Contains(header, fmt.Sprintf("#%d", tc.on.ID)) {
+			t.Errorf("member %d header should not reference itself: %q", tc.on.ID, header)
+		}
+	}
+}
+
+func TestParseFindingDedup_chainOfOneAfterFilterIsNoop(t *testing.T) {
+	gdb, _ := db.Open(filepath.Join(t.TempDir(), "chain1.db"))
+	scan, fs := setupDedupRepo(t, gdb, 2)
+	// Close the second so only one open member survives the repo/open filter.
+	gdb.Model(&fs[1]).Update("status", db.FindingRejected)
+
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	report := fmt.Sprintf(`{"duplicates":[],"chains":[{"finding_ids":[%d,%d],"reason":"x"}]}`, fs[0].ID, fs[1].ID)
+	if err := w.parseFindingDedupOutput(&scan, report, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	if len(findingNotes(gdb, fs[0].ID)) != 0 {
+		t.Error("chain with a single surviving member should write no notes")
+	}
+}
+
+func TestParseFindingDedup_subsumedSkipsClosedParentAndSelfRef(t *testing.T) {
+	gdb, _ := db.Open(filepath.Join(t.TempDir(), "subskip.db"))
+	scan, fs := setupDedupRepo(t, gdb, 2)
+	gdb.Model(&fs[0]).Update("status", db.FindingFixed) // closed parent
+
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	report := fmt.Sprintf(`{"duplicates":[],"subsumed":[{"parent_id":%d,"subsumed_ids":[%d],"reason":"x"},{"parent_id":%d,"subsumed_ids":[%d],"reason":"self"}]}`,
+		fs[0].ID, fs[1].ID, fs[1].ID, fs[1].ID)
+	if err := w.parseFindingDedupOutput(&scan, report, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	if len(findingNotes(gdb, fs[1].ID)) != 0 {
+		t.Error("closed parent and self-reference should both be skipped")
 	}
 }
 
