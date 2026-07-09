@@ -44,7 +44,7 @@ func TestPrepareDiffRescanStagesDiffInputs(t *testing.T) {
 
 	w := &Worker{DB: gdb, DataDir: t.TempDir(), Log: slog.Default()}
 	workRoot := w.scanWorkRoot(&scan)
-	if err := copyTree(repoDir, filepath.Join(workRoot, "src")); err != nil {
+	if err := CopyTree(repoDir, filepath.Join(workRoot, "src")); err != nil {
 		t.Fatal(err)
 	}
 	if err := w.prepareDiffRescan(context.Background(), &scan, workRoot, func(Event) {}); err != nil {
@@ -120,7 +120,7 @@ func TestPrepareDiffRescanScopesDiffToSubPath(t *testing.T) {
 
 	w := &Worker{DB: gdb, DataDir: t.TempDir(), Log: slog.Default()}
 	workRoot := w.scanWorkRoot(&scan)
-	if err := copyTree(repoDir, filepath.Join(workRoot, "src")); err != nil {
+	if err := CopyTree(repoDir, filepath.Join(workRoot, "src")); err != nil {
 		t.Fatal(err)
 	}
 	if err := w.prepareDiffRescan(context.Background(), &scan, workRoot, func(Event) {}); err != nil {
