@@ -3,84 +3,96 @@ package worker
 import (
 	"context"
 	"encoding/json"
-	"fmt"
-	"io"
+	"errors"
 	"log/slog"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/git-pkgs/enrichment"
 	"gorm.io/gorm"
 
 	"scrutineer/internal/db"
 )
 
-// ecosystemsTestServer serves canned responses for every ecosyste.ms source,
-// routed by path, plus the per-package dependent lists chained off /packages
-// and a two-page /advisories response so pagination is exercised.
-func ecosystemsTestServer(t *testing.T) (*httptest.Server, *int) {
-	t.Helper()
-	hits := 0
-	mux := http.NewServeMux()
-	mux.HandleFunc("/repos", func(w http.ResponseWriter, _ *http.Request) {
-		hits++
-		_, _ = io.WriteString(w, `{"full_name":"acme/widget","stars":10}`)
-	})
-	mux.HandleFunc("/packages", func(w http.ResponseWriter, r *http.Request) {
-		hits++
-		base := "http://" + r.Host
-		if r.URL.Query().Get("page") == "2" {
-			_, _ = io.WriteString(w, `[`+
-				`{"name":"acme","ecosystem":"npm","dependent_packages_url":"`+base+`/deps/acme"}]`)
-			return
-		}
-		w.Header().Set("Link", `<http://`+r.Host+`/packages?page=2>; rel="next"`)
-		_, _ = io.WriteString(w, `[`+
-			`{"name":"widget","ecosystem":"npm","dependent_packages_url":"`+base+`/deps/widget"}]`)
-	})
-	mux.HandleFunc("/advisories", func(w http.ResponseWriter, r *http.Request) {
-		hits++
-		if r.URL.Query().Get("page") == "2" {
-			_, _ = io.WriteString(w, `[{"id":"GHSA-2"}]`)
-			return
-		}
-		w.Header().Set("Link", `<http://`+r.Host+`/advisories?page=2>; rel="next"`)
-		_, _ = io.WriteString(w, `[{"id":"GHSA-1"}]`)
-	})
-	mux.HandleFunc("/commits", func(w http.ResponseWriter, _ *http.Request) {
-		hits++
-		_, _ = io.WriteString(w, `{"commits":[{"login":"alice"}]}`)
-	})
-	mux.HandleFunc("/issues", func(w http.ResponseWriter, _ *http.Request) {
-		hits++
-		_, _ = io.WriteString(w, `{"issues":[{"login":"bob"}]}`)
-	})
-	mux.HandleFunc("/deps/widget", func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("page") == "2" {
-			_, _ = io.WriteString(w, `[{"repo":"downstream-1b"}]`)
-			return
-		}
-		w.Header().Set("Link", `<http://`+r.Host+`/deps/widget?page=2>; rel="next"`)
-		_, _ = io.WriteString(w, `[{"repo":"downstream-1"}]`)
-	})
-	mux.HandleFunc("/deps/acme", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(w, `[{"repo":"downstream-2"}]`)
-	})
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
-	return srv, &hits
+type fakeEcosystemsFetcher struct {
+	payloads map[string][]byte
+	errs     map[string]error
+	hits     map[string]int
 }
 
-func testEndpoints(base string) ecosystemsEndpoints {
-	return ecosystemsEndpoints{
-		repo:       base + "/repos",
-		packages:   base + "/packages",
-		advisories: base + "/advisories",
-		commits:    base + "/commits",
-		issues:     base + "/issues",
+func newFakeEcosystemsFetcher() *fakeEcosystemsFetcher {
+	return &fakeEcosystemsFetcher{
+		payloads: map[string][]byte{
+			"repo":       []byte(`{"full_name":"acme/widget","stars":10}`),
+			"packages":   []byte(`[{"name":"widget","ecosystem":"npm"},{"name":"acme","ecosystem":"npm"}]`),
+			"advisories": []byte(`[{"id":"GHSA-1"},{"id":"GHSA-2"}]`),
+			"commits":    []byte(`{"commits":[{"login":"alice"}]}`),
+			"issues":     []byte(`{"issues":[{"login":"bob"}]}`),
+			"dependents": mustDependentsPayloadForTest(),
+		},
+		errs: map[string]error{},
+		hits: map[string]int{},
 	}
+}
+
+func (f *fakeEcosystemsFetcher) fetchRepository(context.Context, string) ([]byte, error) {
+	return f.fetch("repo")
+}
+
+func (f *fakeEcosystemsFetcher) fetchPackages(context.Context, string) ([]byte, error) {
+	return f.fetch("packages")
+}
+
+func (f *fakeEcosystemsFetcher) fetchAdvisories(context.Context, string) ([]byte, error) {
+	return f.fetch("advisories")
+}
+
+func (f *fakeEcosystemsFetcher) fetchCommits(context.Context, string) ([]byte, error) {
+	return f.fetch("commits")
+}
+
+func (f *fakeEcosystemsFetcher) fetchIssues(context.Context, string) ([]byte, error) {
+	return f.fetch("issues")
+}
+
+func (f *fakeEcosystemsFetcher) fetchDependents(context.Context, string) ([]byte, error) {
+	return f.fetch("dependents")
+}
+
+func (f *fakeEcosystemsFetcher) fetch(key string) ([]byte, error) {
+	f.hits[key]++
+	if err := f.errs[key]; err != nil {
+		return nil, err
+	}
+	return f.payloads[key], nil
+}
+
+func mustDependentsPayloadForTest() []byte {
+	payload := []dependentsEntry{
+		{
+			Package:   "widget",
+			Ecosystem: "npm",
+			PURL:      "pkg:npm/widget",
+			Dependents: []dependentPackage{
+				{Name: "downstream-1", Ecosystem: "npm", PURL: "pkg:npm/downstream-1", RepositoryURL: "https://github.com/acme/downstream-1", DependentReposCount: 2},
+				{Name: "downstream-1b", Ecosystem: "npm", PURL: "pkg:npm/downstream-1b", RepositoryURL: "https://github.com/acme/downstream-1b", DependentReposCount: 3},
+			},
+		},
+		{
+			Package:   "acme",
+			Ecosystem: "npm",
+			PURL:      "pkg:npm/acme",
+			Dependents: []dependentPackage{
+				{Name: "downstream-2", Ecosystem: "npm", PURL: "pkg:npm/downstream-2", RepositoryURL: "https://github.com/acme/downstream-2", DependentReposCount: 4},
+			},
+		},
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		panic(err)
+	}
+	return body
 }
 
 func openEcosystemsTestDB(t *testing.T) *gorm.DB {
@@ -93,12 +105,12 @@ func openEcosystemsTestDB(t *testing.T) *gorm.DB {
 }
 
 func TestRefreshEcosystems_populatesAllSources(t *testing.T) {
-	srv, _ := ecosystemsTestServer(t)
+	fetcher := newFakeEcosystemsFetcher()
 	gdb := openEcosystemsTestDB(t)
 	repo := db.Repository{URL: "https://github.com/acme/widget", Name: "widget"}
 	gdb.Create(&repo)
 
-	if err := refreshEcosystems(context.Background(), gdb, repo.ID, false, slog.Default(), testEndpoints(srv.URL)); err != nil {
+	if err := refreshEcosystems(context.Background(), gdb, repo.ID, false, slog.Default(), fetcher); err != nil {
 		t.Fatalf("refresh: %v", err)
 	}
 
@@ -125,146 +137,24 @@ func TestRefreshEcosystems_populatesAllSources(t *testing.T) {
 		if c.at == nil {
 			t.Errorf("%s fetched_at is nil, want set", c.name)
 		}
-	}
-
-	// advisories must concatenate both pages; dependents must cover both packages.
-	if !strings.Contains(got.EcosystemsAdvisoriesData, "GHSA-2") {
-		t.Errorf("advisories did not follow pagination: %q", got.EcosystemsAdvisoriesData)
-	}
-	if !strings.Contains(got.EcosystemsPackagesData, "acme") {
-		t.Errorf("packages did not follow pagination: %q", got.EcosystemsPackagesData)
-	}
-	if !strings.Contains(got.EcosystemsDependentsData, "downstream-2") {
-		t.Errorf("dependents missing second package: %q", got.EcosystemsDependentsData)
-	}
-	if !strings.Contains(got.EcosystemsDependentsData, "downstream-1b") {
-		t.Errorf("dependents did not follow dependent_packages_url pagination: %q", got.EcosystemsDependentsData)
-	}
-}
-
-func TestFetchDependentsPaginationStopsAtCaps(t *testing.T) {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/packages", func(w http.ResponseWriter, r *http.Request) {
-		base := "http://" + r.Host
-		start, end := 0, 24
-		if r.URL.Query().Get("page") == "2" {
-			start, end = 24, 26
-		} else {
-			w.Header().Set("Link", `<http://`+r.Host+`/packages?page=2>; rel="next"`)
-		}
-		writeJSONArray(w, start, end, func(i int) string {
-			name := fmt.Sprintf("pkg%02d", i)
-			return fmt.Sprintf(`{"name":%q,"ecosystem":"npm","dependent_packages_url":%q}`, name, base+"/deps/"+name)
-		})
-	})
-	mux.HandleFunc("/deps/pkg00", func(w http.ResponseWriter, r *http.Request) {
-		start, end := 0, 29
-		if r.URL.Query().Get("page") == "2" {
-			start, end = 29, 31
-		} else {
-			w.Header().Set("Link", `<http://`+r.Host+`/deps/pkg00?page=2>; rel="next"`)
-		}
-		writeJSONArray(w, start, end, func(i int) string {
-			return fmt.Sprintf(`{"name":"dep%02d","purl":"pkg:npm/dep%02d"}`, i, i)
-		})
-	})
-	mux.HandleFunc("/deps/", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(w, `[]`)
-	})
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
-
-	body, err := fetchDependents(context.Background(), ecosystemsEndpoints{packages: srv.URL + "/packages"},
-		"https://github.com/acme/widget", slog.Default())
-	if err != nil {
-		t.Fatalf("fetchDependents: %v", err)
-	}
-	var entries []dependentsEntry
-	if err := json.Unmarshal(body, &entries); err != nil {
-		t.Fatal(err)
-	}
-	if len(entries) != maxDependentPackages {
-		t.Fatalf("dependents entries = %d, want cap %d: %s", len(entries), maxDependentPackages, body)
-	}
-	if findDependentsEntry(entries, "pkg25") != nil {
-		t.Fatalf("package past cap was fetched: %s", body)
-	}
-	pkg00 := findDependentsEntry(entries, "pkg00")
-	if pkg00 == nil {
-		t.Fatalf("pkg00 entry missing: %s", body)
-	}
-	if len(pkg00.Dependents) != maxDependentsPerPackage {
-		t.Fatalf("pkg00 dependents = %d, want cap %d", len(pkg00.Dependents), maxDependentsPerPackage)
-	}
-	joined := string(mustMarshal(t, pkg00.Dependents))
-	if !strings.Contains(joined, "dep29") || strings.Contains(joined, "dep30") {
-		t.Fatalf("dependent pagination/cap wrong: %s", joined)
-	}
-}
-
-func TestAppendEcosystemsPagesStopsWhenInitialBodyHitsCap(t *testing.T) {
-	hits := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		hits++
-		_, _ = io.WriteString(w, `[{"name":"second"}]`)
-	}))
-	t.Cleanup(srv.Close)
-
-	rows, err := appendEcosystemsPages(
-		context.Background(),
-		[]json.RawMessage{json.RawMessage(`{"name":"first"}`)},
-		maxResponseBody,
-		srv.URL,
-		maxEcosystemsPages-1,
-		0,
-		slog.Default(),
-		"test pagination cap",
-	)
-	if err != nil {
-		t.Fatalf("appendEcosystemsPages: %v", err)
-	}
-	if hits != 0 {
-		t.Fatalf("fetched next page after first page hit response cap: hits=%d", hits)
-	}
-	if len(rows) != 1 || !strings.Contains(string(rows[0]), "first") {
-		t.Fatalf("rows = %s, want only initial row", mustMarshal(t, rows))
-	}
-}
-
-func writeJSONArray(w io.Writer, start, end int, item func(int) string) {
-	_, _ = io.WriteString(w, `[`)
-	for i := start; i < end; i++ {
-		if i > start {
-			_, _ = io.WriteString(w, `,`)
-		}
-		_, _ = io.WriteString(w, item(i))
-	}
-	_, _ = io.WriteString(w, `]`)
-}
-
-func findDependentsEntry(entries []dependentsEntry, name string) *dependentsEntry {
-	for i := range entries {
-		if entries[i].Package == name {
-			return &entries[i]
+		if fetcher.hits[c.name] != 1 {
+			t.Errorf("%s fetches = %d, want 1", c.name, fetcher.hits[c.name])
 		}
 	}
-	return nil
-}
 
-func mustMarshal(t *testing.T, v any) []byte {
-	t.Helper()
-	body, err := json.Marshal(v)
-	if err != nil {
-		t.Fatal(err)
+	var rows []db.Dependent
+	gdb.Where("repository_id = ?", repo.ID).Order("name").Find(&rows)
+	if len(rows) != 3 {
+		t.Fatalf("dependent rows = %+v, want 3", rows)
 	}
-	return body
 }
 
 func TestRefreshEcosystems_staleOnlySkipsFresh(t *testing.T) {
-	srv, _ := ecosystemsTestServer(t)
+	fetcher := newFakeEcosystemsFetcher()
 	gdb := openEcosystemsTestDB(t)
 
 	fresh := time.Now()
+	stale := fresh.Add(-8 * 24 * time.Hour)
 	repo := db.Repository{
 		URL:  "https://github.com/acme/widget",
 		Name: "widget",
@@ -273,11 +163,11 @@ func TestRefreshEcosystems_staleOnlySkipsFresh(t *testing.T) {
 		EcosystemsRepoFetchedAt: &fresh,
 		// commits TTL is 7d: backdate 8 days so it is stale and re-fetched.
 		EcosystemsCommitsData:      `{"cached":true}`,
-		EcosystemsCommitsFetchedAt: new(fresh.Add(-8 * 24 * time.Hour)),
+		EcosystemsCommitsFetchedAt: &stale,
 	}
 	gdb.Create(&repo)
 
-	if err := refreshEcosystems(context.Background(), gdb, repo.ID, true, slog.Default(), testEndpoints(srv.URL)); err != nil {
+	if err := refreshEcosystems(context.Background(), gdb, repo.ID, true, slog.Default(), fetcher); err != nil {
 		t.Fatalf("refresh: %v", err)
 	}
 
@@ -286,27 +176,25 @@ func TestRefreshEcosystems_staleOnlySkipsFresh(t *testing.T) {
 	if got.EcosystemsRepoData != `{"cached":true}` {
 		t.Errorf("fresh repo source was re-fetched: %q", got.EcosystemsRepoData)
 	}
+	if fetcher.hits["repo"] != 0 {
+		t.Errorf("fresh repo source fetched %d times, want 0", fetcher.hits["repo"])
+	}
 	if !strings.Contains(got.EcosystemsCommitsData, "alice") {
 		t.Errorf("stale commits source not refreshed: %q", got.EcosystemsCommitsData)
+	}
+	if fetcher.hits["commits"] != 1 {
+		t.Errorf("stale commits fetches = %d, want 1", fetcher.hits["commits"])
 	}
 }
 
 func TestRefreshEcosystems_fetchErrorIsNonFatal(t *testing.T) {
+	fetcher := newFakeEcosystemsFetcher()
+	fetcher.errs["commits"] = errors.New("temporary failure")
 	gdb := openEcosystemsTestDB(t)
-	// Server 500s on /commits only; every other source succeeds.
-	mux := http.NewServeMux()
-	mux.HandleFunc("/repos", func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, `{"full_name":"a/b"}`) })
-	mux.HandleFunc("/packages", func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, `[]`) })
-	mux.HandleFunc("/advisories", func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, `[]`) })
-	mux.HandleFunc("/commits", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusInternalServerError) })
-	mux.HandleFunc("/issues", func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, `{"issues":[]}`) })
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
-
 	repo := db.Repository{URL: "https://github.com/a/b", Name: "b"}
 	gdb.Create(&repo)
 
-	if err := refreshEcosystems(context.Background(), gdb, repo.ID, false, slog.Default(), testEndpoints(srv.URL)); err != nil {
+	if err := refreshEcosystems(context.Background(), gdb, repo.ID, false, slog.Default(), fetcher); err != nil {
 		t.Fatalf("refresh returned error, want nil (best-effort): %v", err)
 	}
 
@@ -324,17 +212,18 @@ func TestRefreshEcosystems_fetchErrorIsNonFatal(t *testing.T) {
 }
 
 func TestRefreshEcosystems_skipsLocalRepo(t *testing.T) {
-	srv, hits := ecosystemsTestServer(t)
+	fetcher := newFakeEcosystemsFetcher()
 	gdb := openEcosystemsTestDB(t)
 	repo := db.Repository{URL: "file:///tmp/local", Name: "local"}
 	gdb.Create(&repo)
-	*hits = 0
 
-	if err := refreshEcosystems(context.Background(), gdb, repo.ID, false, slog.Default(), testEndpoints(srv.URL)); err != nil {
+	if err := refreshEcosystems(context.Background(), gdb, repo.ID, false, slog.Default(), fetcher); err != nil {
 		t.Fatalf("refresh: %v", err)
 	}
-	if *hits != 0 {
-		t.Errorf("local repo triggered %d upstream fetches, want 0", *hits)
+	for key, hits := range fetcher.hits {
+		if hits != 0 {
+			t.Errorf("%s fetches = %d, want 0", key, hits)
+		}
 	}
 	var got db.Repository
 	gdb.First(&got, repo.ID)
@@ -345,12 +234,55 @@ func TestRefreshEcosystems_skipsLocalRepo(t *testing.T) {
 
 func TestRefreshEcosystems_missingRepoErrors(t *testing.T) {
 	gdb := openEcosystemsTestDB(t)
-	if err := refreshEcosystems(context.Background(), gdb, 9999, false, slog.Default(), defaultEcosystemsEndpoints); err == nil {
+	if err := refreshEcosystems(context.Background(), gdb, 9999, false, slog.Default(), nil); err == nil {
 		t.Fatal("want error for missing repository, got nil")
 	}
 }
 
-func TestUpdateDependentsTable_mapsUpstreamPayload(t *testing.T) {
+func TestDependentsPayload_mapsEnrichmentGroups(t *testing.T) {
+	body, err := dependentsPayload([]enrichment.RepositoryDependents{
+		{
+			PackageName: "widget",
+			Ecosystem:   "npm",
+			PURL:        "pkg:npm/widget",
+			Dependents: []enrichment.DependentPackage{
+				{
+					Name:                "app",
+					Ecosystem:           "npm",
+					PURL:                "pkg:npm/app",
+					Repository:          "https://github.com/acme/app",
+					RegistryURL:         "https://npmjs.org/app",
+					LatestVersion:       "1.2.3",
+					Downloads:           42,
+					DependentReposCount: 7,
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("dependentsPayload: %v", err)
+	}
+	var got []dependentsEntry
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatalf("decode payload: %v", err)
+	}
+	if len(got) != 1 || got[0].Package != "widget" || got[0].PURL != "pkg:npm/widget" {
+		t.Fatalf("group = %+v", got)
+	}
+	if len(got[0].Dependents) != 1 {
+		t.Fatalf("dependents = %+v, want 1", got[0].Dependents)
+	}
+	dep := got[0].Dependents[0]
+	if dep.RepositoryURL != "https://github.com/acme/app" ||
+		dep.RegistryURL != "https://npmjs.org/app" ||
+		dep.LatestVersion != "1.2.3" ||
+		dep.Downloads != 42 ||
+		dep.DependentReposCount != 7 {
+		t.Errorf("dependent = %+v", dep)
+	}
+}
+
+func TestUpdateDependentsTable_mapsEnrichmentPayload(t *testing.T) {
 	gdb := openEcosystemsTestDB(t)
 	repo := db.Repository{URL: "https://github.com/acme/widget", Name: "widget"}
 	gdb.Create(&repo)
@@ -360,41 +292,41 @@ func TestUpdateDependentsTable_mapsUpstreamPayload(t *testing.T) {
 		{
 			Package:   "widget",
 			Ecosystem: "npm",
-			Dependents: []json.RawMessage{
-				json.RawMessage(`{
-					"name":"rails-x",
-					"ecosystem":"rubygems",
-					"purl":"pkg:gem/rails-x",
-					"downloads":5000,
-					"dependent_repos_count":200,
-					"registry_url":"https://rubygems.org/gems/rails-x",
-					"latest_release_number":"7.0.0",
-					"repo_metadata":{"html_url":"https://github.com/acme/rails-x"}
-				}`),
-				json.RawMessage(`{
-					"name":"action-user",
-					"ecosystem":"github-actions",
-					"purl":"pkg:githubactions/acme/action-user",
-					"repository_url":"https://github.com/acme/action-user",
-					"downloads":42,
-					"dependent_repos_count":9,
-					"latest_release_number":"v1"
-				}`),
+			Dependents: []dependentPackage{
+				{
+					Name:                "rails-x",
+					Ecosystem:           "rubygems",
+					PURL:                "pkg:gem/rails-x",
+					RepositoryURL:       "https://github.com/acme/rails-x",
+					Downloads:           5000,
+					DependentReposCount: 200,
+					RegistryURL:         "https://rubygems.org/gems/rails-x",
+					LatestVersion:       "7.0.0",
+				},
+				{
+					Name:                "action-user",
+					Ecosystem:           "github-actions",
+					PURL:                "pkg:githubactions/acme/action-user",
+					RepositoryURL:       "https://github.com/acme/action-user",
+					Downloads:           42,
+					DependentReposCount: 9,
+					LatestVersion:       "v1",
+				},
 			},
 		},
 		{
 			Package:   "widget-extra",
 			Ecosystem: "npm",
-			Dependents: []json.RawMessage{
-				json.RawMessage(`{
-					"name":"rails-x-duplicate",
-					"ecosystem":"rubygems",
-					"purl":"pkg:gem/rails-x",
-					"downloads":9999,
-					"dependent_repos_count":999,
-					"repository_url":"https://github.com/acme/rails-x-duplicate",
-					"latest_release_number":"9.9.9"
-				}`),
+			Dependents: []dependentPackage{
+				{
+					Name:                "rails-x-duplicate",
+					Ecosystem:           "rubygems",
+					PURL:                "pkg:gem/rails-x",
+					RepositoryURL:       "https://github.com/acme/rails-x-duplicate",
+					Downloads:           9999,
+					DependentReposCount: 999,
+					LatestVersion:       "9.9.9",
+				},
 			},
 		},
 	}
@@ -427,30 +359,5 @@ func TestUpdateDependentsTable_mapsUpstreamPayload(t *testing.T) {
 		rows[1].RegistryURL != "https://rubygems.org/gems/rails-x" ||
 		rows[1].Downloads != 5000 {
 		t.Errorf("rails row = %+v", rows[1])
-	}
-}
-
-func TestNextLink(t *testing.T) {
-	cases := []struct {
-		header string
-		want   string
-	}{
-		{`<https://x/api?page=2>; rel="next"`, "https://x/api?page=2"},
-		{`<https://x/api?page=3>; rel="last", <https://x/api?page=2>; rel="next"`, "https://x/api?page=2"},
-		{`<https://x/api?page=2>; rel=next`, "https://x/api?page=2"},
-		{`<https://x/api?page=9>; rel="last"`, ""},
-		// Commas inside the <...> URI-Reference (e.g. in a query param)
-		// must not be treated as link separators (#543).
-		{`<https://x/api?page=2&f=a,b,c>; rel="next"`, "https://x/api?page=2&f=a,b,c"},
-		{`<https://x/api?f=a,b>; rel="prev", <https://x/api?page=2>; rel="next"`, "https://x/api?page=2"},
-		{`<https://x/api?page=1>; rel="prev", <https://x/api?page=2&f=a,b>; rel="next"`, "https://x/api?page=2&f=a,b"},
-		{"", ""},
-		{"garbage", ""},
-		{`<https://x/api?page=2; rel="next"`, ""}, // unterminated <...>
-	}
-	for _, c := range cases {
-		if got := nextLink(c.header); got != c.want {
-			t.Errorf("nextLink(%q) = %q, want %q", c.header, got, c.want)
-		}
 	}
 }

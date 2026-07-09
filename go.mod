@@ -6,7 +6,9 @@ toolchain go1.26.5
 
 require (
 	filippo.io/age v1.3.1
-	github.com/git-pkgs/pom v0.1.4
+	github.com/ecosyste-ms/ecosystems-go v0.3.0
+	github.com/git-pkgs/enrichment v0.6.0
+	github.com/git-pkgs/pom v0.1.5
 	github.com/git-pkgs/purl v0.1.14
 	github.com/git-pkgs/sarif v0.1.0
 	github.com/git-pkgs/sbom v0.1.3
@@ -25,14 +27,21 @@ require (
 require (
 	filippo.io/edwards25519 v1.2.0 // indirect
 	filippo.io/hpke v0.4.0 // indirect
+	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
+	github.com/git-pkgs/packageurl-go v0.3.1 // indirect
+	github.com/git-pkgs/registries v0.6.2 // indirect
+	github.com/git-pkgs/spdx v0.1.4 // indirect
 	github.com/git-pkgs/vers v0.2.6 // indirect
+	github.com/git-pkgs/vulns v0.1.5 // indirect
+	github.com/github/go-spdx/v2 v2.7.0 // indirect
 	github.com/glebarez/go-sqlite v1.22.0 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
 	github.com/jinzhu/now v1.1.5 // indirect
 	github.com/kr/text v0.2.0 // indirect
 	github.com/mattn/go-isatty v0.0.22 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
+	github.com/oapi-codegen/runtime v1.4.2 // indirect
 	github.com/package-url/packageurl-go v0.1.6 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	golang.org/x/sys v0.46.0 // indirect

@@ -339,7 +339,7 @@ func resolveLocalPOMDependencies(pomPath, srcRoot string, emit func(Event)) map[
 	if !localPOMParentsStayUnderRoot(pomPath, srcRoot) {
 		return nil
 	}
-	ep, err := mavenpom.ResolveLocal(context.Background(), pomPath, mavenpom.Options{})
+	ep, err := mavenpom.ResolveLocal(context.Background(), pomPath, srcRoot, mavenpom.Options{})
 	if err != nil {
 		emit(Event{Kind: KindText, Text: "maven pom resolver skipped " + pomPath + ": " + err.Error()})
 		return nil
