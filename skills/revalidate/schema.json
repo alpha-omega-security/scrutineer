@@ -32,5 +32,11 @@
   "dependentRequired": {
     "adjusted_severity": ["adjusted_severity_reason"],
     "adjusted_severity_reason": ["adjusted_severity"]
-  }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "verdict": { "enum": ["true_positive", "uncertain"] } } },
+      "then": { "required": ["privilege_required"] }
+    }
+  ]
 }
