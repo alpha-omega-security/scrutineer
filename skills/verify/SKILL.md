@@ -78,7 +78,7 @@ Write `./report.json`:
 }
 ```
 
-`reproducer` is the verbatim script/commands/input you ran; `evidence` is the output they produced. Both belong in the report — the output alone, without the thing that generated it, cannot be acted on. `preflight` is always present; on `deferred` it is the whole answer.
+`reproducer` is the verbatim script/commands/input you ran; `evidence` is the output they produced. Both belong in the report — the output alone, without the thing that generated it, cannot be acted on. `preflight` is present whenever step 4 ran (that is, on every status except the early-exit `inconclusive` cases in steps 1 and 2); on `deferred` it is required and is the whole answer.
 
 Scrutineer updates the finding's lifecycle status based on your answer:
 - `confirmed` moves a `new` finding to `enriched`

@@ -38,5 +38,11 @@
       "type": "string",
       "description": "Short prose explaining what changed since the original scan, or why the reproduction was inconclusive or deferred. When status is inconclusive because a runtime is missing, prefix with 'env-blocked:' so the operator knows to fix the container profile rather than re-read the finding."
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "deferred" } } },
+      "then": { "required": ["preflight"] }
+    }
+  ]
 }

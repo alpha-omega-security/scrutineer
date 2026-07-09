@@ -557,6 +557,33 @@ func TestParseVerify_deferredLeavesStatusAndRecordsPreflight(t *testing.T) {
 	}
 }
 
+func TestParseVerify_deferredRequiresPreflight(t *testing.T) {
+	gdb, _ := db.Open(filepath.Join(t.TempDir(), "d.db"))
+	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
+	gdb.Create(&repo)
+	prior := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanDone}
+	gdb.Create(&prior)
+	finding := db.Finding{ScanID: prior.ID, RepositoryID: repo.ID, Title: "x", Severity: "High", Status: db.FindingNew}
+	gdb.Create(&finding)
+	scan := &db.Scan{RepositoryID: repo.ID, FindingID: new(finding.ID)}
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	for name, report := range map[string]string{
+		"missing preflight":   `{"status":"deferred","notes":"x"}`,
+		"empty class":         `{"status":"deferred","preflight":{"classification":"","justification":"x"}}`,
+		"empty justification": `{"status":"deferred","preflight":{"classification":"external-reach","justification":"  "}}`,
+	} {
+		if err := w.parseVerifyOutput(scan, report, func(Event) {}); err == nil || !strings.Contains(err.Error(), "requires preflight") {
+			t.Errorf("%s: want deferred-requires-preflight error, got %v", name, err)
+		}
+	}
+	// deferred WITH preflight is fine (covered in the main deferred test),
+	// and inconclusive without preflight is also fine (early-exit cases).
+	if err := w.parseVerifyOutput(scan, `{"status":"inconclusive","notes":"no finding_id"}`, func(Event) {}); err != nil {
+		t.Errorf("inconclusive without preflight should be accepted: %v", err)
+	}
+}
+
 func TestParseVerify_preflightRecordedOnConfirmed(t *testing.T) {
 	report := `{"status":"confirmed","preflight":{"classification":"local-safe","justification":"stdin only"},"reproducer":"echo x | ./bin","evidence":"boom"}`
 	f, gdb := runSkillWithFinding(t, "verify", report, db.FindingNew)
