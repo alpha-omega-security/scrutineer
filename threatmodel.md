@@ -100,7 +100,7 @@ The two `html/template` XSS vulnerabilities (`GO-2026-4865`, `GO-2026-4603`) are
 
 ### T7: Untrusted upstream metadata (mitigated)
 
-All five `io.ReadAll` calls in `metadata.go` are wrapped with `io.LimitReader(resp.Body, 10MB)` to prevent OOM from hostile endpoints. `HTMLURL` and `IconURL` are scheme-validated by `safeURL()` in `parseRepoMetadataOutput` before storage, so only http/https values reach the database and the templates that render them.
+ecosyste.ms fetches go through the generated `ecosystems-go` client rather than local raw response readers. `HTMLURL` and `IconURL` are scheme-validated by `safeURL()` in `parseRepoMetadataOutput` before storage, so only http/https values reach the database and the templates that render them.
 
 Residual: no certificate pinning for ecosyste.ms. A MITM'd response could still return a hostile `repository_url` that passes the `https://` check, leading to cloning an attacker repo. Accepted risk given HTTPS + public CA is the standard trust model.
 
@@ -164,7 +164,7 @@ Seccomp is left at Docker's default profile intentionally. The default already b
 
 ## Minor observations
 
-`internal/worker/metadata.go` embeds `andrew@ecosyste.ms` in the User-Agent. Worth a flag before anyone else runs it.
+The ecosyste.ms clients identify as `scrutineer (andrew@ecosyste.ms)`. Worth a config flag before anyone else runs it.
 
 `cmd/scrutineer/main.go` reads `-spec` from an arbitrary path. It is a CLI flag set by the operator, so traversal is a stretch, but resolving relative to cwd and rejecting absolute paths would avoid surprises.
 

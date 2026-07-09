@@ -1122,17 +1122,7 @@ func resolvePURLRepo(ctx context.Context, purl string) string {
 	if purl == "" {
 		return ""
 	}
-	_, raw, err := worker.FetchPackagesByPURL(ctx, purl)
-	if err != nil {
-		return ""
-	}
-	var pkgs []struct {
-		RepoURL string `json:"repository_url"`
-	}
-	if json.Unmarshal(raw, &pkgs) == nil && len(pkgs) > 0 && pkgs[0].RepoURL != "" {
-		return pkgs[0].RepoURL
-	}
-	return ""
+	return worker.ResolvePURLRepositoryURL(ctx, purl)
 }
 
 func (s *Server) dependentScan(w http.ResponseWriter, r *http.Request) {
