@@ -17,6 +17,8 @@ const (
 	oldThreatModelFile     = "old_threat_model.json"
 	maxDiffPatchBytes      = 1 << 20
 	maxDiffChangedFileRows = 200
+	nameStatusMinColumns   = 2
+	nameStatusRenameCols   = 3
 )
 
 type diffCoverage struct {
@@ -219,11 +221,11 @@ func parseChangedFiles(raw string) []changedFile {
 			continue
 		}
 		parts := strings.Split(line, "\t")
-		if len(parts) < 2 {
+		if len(parts) < nameStatusMinColumns {
 			continue
 		}
 		status := parts[0]
-		if strings.HasPrefix(status, "R") && len(parts) >= 3 {
+		if strings.HasPrefix(status, "R") && len(parts) >= nameStatusRenameCols {
 			out = append(out, changedFile{Status: "R", Old: parts[1], Path: parts[2]})
 			continue
 		}
