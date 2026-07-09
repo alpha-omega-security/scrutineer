@@ -89,6 +89,55 @@ func TestPrepareDiffRescanStagesDiffInputs(t *testing.T) {
 	}
 }
 
+func TestPrepareDiffRescanScopesDiffToSubPath(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "d.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repoDir := initGitRepo(t)
+	writeDiffTestFile(t, repoDir, "pkg/app.go", "package pkg\n\nfunc old() {}\n")
+	writeDiffTestFile(t, repoDir, "README.md", "old\n")
+	base := gitCommit(t, repoDir, "base")
+	writeDiffTestFile(t, repoDir, "pkg/app.go", "package pkg\n\nfunc old() {}\nfunc added() {}\n")
+	writeDiffTestFile(t, repoDir, "README.md", "new\n")
+	head := gitCommit(t, repoDir, "head")
+
+	repo := db.Repository{URL: "file://" + repoDir, Name: "r"}
+	gdb.Create(&repo)
+	baseline := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "security-deep-dive", Status: db.ScanDone, Commit: base, SubPath: "pkg"}
+	gdb.Create(&baseline)
+	scan := db.Scan{
+		RepositoryID: repo.ID,
+		Repository:   repo,
+		Kind:         JobSkill,
+		SkillName:    "security-deep-dive",
+		Status:       db.ScanRunning,
+		Commit:       head,
+		RescanMode:   db.ScanRescanModeDiff,
+		SubPath:      "pkg",
+	}
+	gdb.Create(&scan)
+
+	w := &Worker{DB: gdb, DataDir: t.TempDir(), Log: slog.Default()}
+	workRoot := w.scanWorkRoot(&scan)
+	if err := copyTree(repoDir, filepath.Join(workRoot, "src")); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.prepareDiffRescan(context.Background(), &scan, workRoot, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+
+	patch := readDiffTestFile(t, filepath.Join(workRoot, diffPatchFile))
+	if !strings.Contains(patch, "pkg/app.go") || strings.Contains(patch, "README.md") {
+		t.Fatalf("diff.patch not scoped to subpath:\n%s", patch)
+	}
+	var changed []changedFile
+	readDiffTestJSONFile(t, filepath.Join(workRoot, changedFilesFile), &changed)
+	if len(changed) != 1 || changed[0].Path != "pkg/app.go" {
+		t.Fatalf("changed files = %+v, want only pkg/app.go", changed)
+	}
+}
+
 func TestPrepareDiffRescanFallsBackWithoutBaseline(t *testing.T) {
 	gdb, err := db.Open(filepath.Join(t.TempDir(), "d.db"))
 	if err != nil {
@@ -96,14 +145,20 @@ func TestPrepareDiffRescanFallsBackWithoutBaseline(t *testing.T) {
 	}
 	repo := db.Repository{URL: "file://" + t.TempDir(), Name: "r"}
 	gdb.Create(&repo)
+	missingBaselineID := uint(999)
+	staleThreatModelID := uint(123)
 	scan := db.Scan{
-		RepositoryID: repo.ID,
-		Repository:   repo,
-		Kind:         JobSkill,
-		SkillName:    "security-deep-dive",
-		Status:       db.ScanRunning,
-		Commit:       "abc",
-		RescanMode:   db.ScanRescanModeDiff,
+		RepositoryID:          repo.ID,
+		Repository:            repo,
+		Kind:                  JobSkill,
+		SkillName:             "security-deep-dive",
+		Status:                db.ScanRunning,
+		Commit:                "abc",
+		RescanMode:            db.ScanRescanModeDiff,
+		DiffBaseScanID:        &missingBaselineID,
+		DiffBaseCommit:        "stale",
+		DiffThreatModelScanID: &staleThreatModelID,
+		DiffStats:             `{"stale":true}`,
 	}
 	gdb.Create(&scan)
 
@@ -120,6 +175,25 @@ func TestPrepareDiffRescanFallsBackWithoutBaseline(t *testing.T) {
 	}
 	if cov.RequestedMode != db.ScanRescanModeDiff || cov.ActualMode != db.ScanRescanModeFull || !strings.Contains(cov.FallbackReason, "baseline") {
 		t.Fatalf("coverage = %+v", cov)
+	}
+	var stored db.Scan
+	gdb.First(&stored, scan.ID)
+	if stored.DiffBaseScanID != nil || stored.DiffBaseCommit != "" || stored.DiffThreatModelScanID != nil || stored.DiffStats != "" {
+		t.Fatalf("fallback kept stale diff metadata: baseID=%v base=%q tmID=%v stats=%q",
+			stored.DiffBaseScanID, stored.DiffBaseCommit, stored.DiffThreatModelScanID, stored.DiffStats)
+	}
+}
+
+func TestParseChangedFilesPreservesPathWhitespaceAndSkipsMalformedStatus(t *testing.T) {
+	got := parseChangedFiles("M\tpath/with trailing space \n\tmissing-status\nR100\told name \tnew name \r\n")
+	if len(got) != 2 {
+		t.Fatalf("changed files = %+v, want two valid rows", got)
+	}
+	if got[0].Status != "M" || got[0].Path != "path/with trailing space " {
+		t.Fatalf("first changed file = %+v, want path whitespace preserved", got[0])
+	}
+	if got[1].Status != "R" || got[1].Old != "old name " || got[1].Path != "new name " {
+		t.Fatalf("rename changed file = %+v, want whitespace preserved", got[1])
 	}
 }
 

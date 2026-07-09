@@ -85,7 +85,8 @@ func (w *Worker) prepareDiffRescan(ctx context.Context, scan *db.Scan, workRoot 
 	}
 
 	rangeSpec := baseline.Commit + ".." + scan.Commit
-	nameStatus, err := git(ctx, "", "-C", diffDir, "diff", "--name-status", "--find-renames", rangeSpec)
+	nameStatusArgs := diffGitArgs(diffDir, rangeSpec, scan.SubPath, "--name-status")
+	nameStatus, err := git(ctx, "", nameStatusArgs...)
 	if err != nil {
 		w.fallbackDiffScan(scan, "could not list changed files: "+strings.TrimSpace(nameStatus))
 		return nil
@@ -100,7 +101,8 @@ func (w *Worker) prepareDiffRescan(ctx context.Context, scan *db.Scan, workRoot 
 		return nil
 	}
 
-	patch, err := git(ctx, "", "-C", diffDir, "diff", "--find-renames", rangeSpec)
+	patchArgs := diffGitArgs(diffDir, rangeSpec, scan.SubPath)
+	patch, err := git(ctx, "", patchArgs...)
 	if err != nil {
 		w.fallbackDiffScan(scan, "could not generate diff: "+strings.TrimSpace(patch))
 		return nil
@@ -169,16 +171,42 @@ func (w *Worker) diffBaseline(scan *db.Scan) (db.Scan, bool) {
 	return baseline, true
 }
 
+func diffGitArgs(diffDir, rangeSpec, subPath string, opts ...string) []string {
+	args := []string{"-C", diffDir, "diff"}
+	args = append(args, opts...)
+	args = append(args, "--find-renames", rangeSpec)
+	if pathspec := diffSubPathspec(subPath); pathspec != "" {
+		args = append(args, "--", pathspec)
+	}
+	return args
+}
+
+func diffSubPathspec(subPath string) string {
+	subPath = filepath.ToSlash(filepath.Clean(strings.TrimSpace(subPath)))
+	if subPath == "." || subPath == ".." || strings.HasPrefix(subPath, "../") {
+		return ""
+	}
+	return strings.TrimPrefix(subPath, "/")
+}
+
 func (w *Worker) fallbackDiffScan(scan *db.Scan, reason string) {
 	scan.RescanMode = db.ScanRescanModeFull
+	scan.DiffBaseScanID = nil
+	scan.DiffBaseCommit = ""
+	scan.DiffThreatModelScanID = nil
+	scan.DiffStats = ""
 	scan.Coverage = mustJSON(diffCoverage{
 		RequestedMode:  db.ScanRescanModeDiff,
 		ActualMode:     db.ScanRescanModeFull,
 		FallbackReason: reason,
 	})
 	if err := w.DB.Model(scan).Updates(map[string]any{
-		"rescan_mode": db.ScanRescanModeFull,
-		"coverage":    scan.Coverage,
+		"rescan_mode":               db.ScanRescanModeFull,
+		"diff_base_scan_id":         nil,
+		"diff_base_commit":          "",
+		"diff_threat_model_scan_id": nil,
+		"diff_stats":                "",
+		"coverage":                  scan.Coverage,
 	}).Error; err != nil && w.Log != nil {
 		w.Log.Warn("save diff rescan fallback", "scan", scan.ID, "reason", reason, "err", err)
 	}
@@ -216,7 +244,7 @@ func (w *Worker) stageOldThreatModel(workRoot string, scan *db.Scan) (*uint, err
 func parseChangedFiles(raw string) []changedFile {
 	var out []changedFile
 	for _, line := range strings.Split(raw, "\n") {
-		line = strings.TrimSpace(line)
+		line = strings.TrimSuffix(line, "\r")
 		if line == "" {
 			continue
 		}
@@ -225,6 +253,9 @@ func parseChangedFiles(raw string) []changedFile {
 			continue
 		}
 		status := parts[0]
+		if status == "" {
+			continue
+		}
 		if strings.HasPrefix(status, "R") && len(parts) >= nameStatusRenameCols {
 			out = append(out, changedFile{Status: "R", Old: parts[1], Path: parts[2]})
 			continue

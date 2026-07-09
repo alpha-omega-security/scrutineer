@@ -51,9 +51,9 @@
     <dt class="text-muted-foreground">Ref</dt>
     <dd>{{.Ref}}</dd>
   </div>{{end}}
-  {{if .RescanMode}}<div>
+  {{if eq .RescanMode "diff"}}<div>
     <dt class="text-muted-foreground">Mode</dt>
-    <dd>{{if eq .RescanMode "diff"}}diff rescan{{else}}{{.RescanMode}}{{end}}</dd>
+    <dd>diff rescan</dd>
   </div>{{end}}
   {{if .DiffBaseCommit}}<div>
     <dt class="text-muted-foreground">Diff base</dt>
