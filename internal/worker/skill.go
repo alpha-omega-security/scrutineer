@@ -850,8 +850,20 @@ func applyPathFilters(workRoot string, skill *db.Skill, emit func(Event)) error 
 		}
 		return err
 	}
+	// Unconditional strip of agent-instruction files (CLAUDE.md, AGENTS.md,
+	// .claude/, .cursor/, ...) so a hostile repo cannot inject standing
+	// instructions into the auditing agent. Runs before the paths filter
+	// because scrutineer.paths bypasses BuiltinSkipPaths and must not be
+	// able to opt these back in. See threatmodel.md T5.
+	stripped, err := stripAgentDirectives(src)
+	if err != nil {
+		return fmt.Errorf("strip agent directives: %w", err)
+	}
+	if stripped > 0 {
+		emit(Event{Kind: KindText, Text: fmt.Sprintf("%d agent-directive item(s) stripped from ./src", stripped)})
+	}
 	excluded := 0
-	err := filepath.WalkDir(src, func(p string, d os.DirEntry, err error) error {
+	err = filepath.WalkDir(src, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
