@@ -1,91 +1,17 @@
 package ingest
 
 import (
-	"encoding/json"
 	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/git-pkgs/sarif"
 )
 
-// SARIF 2.1.0 subset. Only the fields scrutineer maps onto a Finding are
-// declared; everything else is dropped by encoding/json. The spec is
-// large and tools populate it inconsistently, so each accessor below
-// tolerates absence rather than assuming a field is set.
-type sarifFile struct {
-	Version string     `json:"version"`
-	Runs    []sarifRun `json:"runs"`
-}
-
-type sarifRun struct {
-	Tool                     sarifTool     `json:"tool"`
-	VersionControlProvenance []sarifVCS    `json:"versionControlProvenance"`
-	Results                  []sarifResult `json:"results"`
-}
-
-type sarifTool struct {
-	Driver sarifDriver `json:"driver"`
-}
-
-type sarifDriver struct {
-	Name  string      `json:"name"`
-	Rules []sarifRule `json:"rules"`
-}
-
-type sarifVCS struct {
-	RepositoryURI string `json:"repositoryUri"`
-	RevisionID    string `json:"revisionId"`
-}
-
-type sarifRule struct {
-	ID               string     `json:"id"`
-	Name             string     `json:"name"`
-	ShortDescription sarifText  `json:"shortDescription"`
-	FullDescription  sarifText  `json:"fullDescription"`
-	Properties       sarifProps `json:"properties"`
-}
-
-type sarifProps struct {
-	Tags             []string `json:"tags"`
-	SecuritySeverity string   `json:"security-severity"`
-	Precision        string   `json:"precision"`
-}
-
-type sarifResult struct {
-	RuleID    string          `json:"ruleId"`
-	RuleIndex *int            `json:"ruleIndex"`
-	Level     string          `json:"level"`
-	Message   sarifText       `json:"message"`
-	Locations []sarifLocation `json:"locations"`
-	Fixes     []sarifFix      `json:"fixes"`
-}
-
-type sarifText struct {
-	Text string `json:"text"`
-}
-
-type sarifLocation struct {
-	PhysicalLocation struct {
-		ArtifactLocation struct {
-			URI string `json:"uri"`
-		} `json:"artifactLocation"`
-		Region struct {
-			StartLine   int `json:"startLine"`
-			StartColumn int `json:"startColumn"`
-		} `json:"region"`
-	} `json:"physicalLocation"`
-}
-
-// sarifFix is the SARIF "fix" object. Real-world emitters rarely
-// populate it, but when present the description is the closest thing to
-// a suggested patch the format carries.
-type sarifFix struct {
-	Description sarifText `json:"description"`
-}
-
 func parseSARIF(data []byte) ([]Result, error) {
-	var f sarifFile
-	if err := json.Unmarshal(data, &f); err != nil {
+	f, err := sarif.Parse(data)
+	if err != nil {
 		return nil, wrapErr(FormatSARIF, err)
 	}
 	if len(f.Runs) == 0 {
@@ -93,12 +19,12 @@ func parseSARIF(data []byte) ([]Result, error) {
 	}
 	out := make([]Result, 0, len(f.Runs))
 	for _, run := range f.Runs {
-		out = append(out, run.result())
+		out = append(out, sarifRunResult(run))
 	}
 	return out, nil
 }
 
-func (r sarifRun) result() Result {
+func sarifRunResult(r sarif.Run) Result {
 	res := Result{Tool: r.Tool.Driver.Name}
 	if res.Tool == "" {
 		res.Tool = "sarif"
@@ -107,16 +33,16 @@ func (r sarifRun) result() Result {
 		res.RepoURL = r.VersionControlProvenance[0].RepositoryURI
 		res.Commit = r.VersionControlProvenance[0].RevisionID
 	}
-	byID := r.ruleIndex()
+	byID := sarifRuleIndex(r)
 	for _, sr := range r.Results {
-		res.Findings = append(res.Findings, sr.finding(byID, r.Tool.Driver.Rules))
+		res.Findings = append(res.Findings, sarifFinding(sr, byID, r.Tool.Driver.Rules))
 	}
 	return res
 }
 
 // ruleIndex builds the id→rule map for the ruleId reference path.
-func (r sarifRun) ruleIndex() map[string]sarifRule {
-	m := make(map[string]sarifRule, len(r.Tool.Driver.Rules))
+func sarifRuleIndex(r sarif.Run) map[string]sarif.ReportingDescriptor {
+	m := make(map[string]sarif.ReportingDescriptor, len(r.Tool.Driver.Rules))
 	for _, rule := range r.Tool.Driver.Rules {
 		m[rule.ID] = rule
 	}
@@ -126,19 +52,19 @@ func (r sarifRun) ruleIndex() map[string]sarifRule {
 // SARIF lets a result reference its rule by ruleId, by ruleIndex into
 // tool.driver.rules, or both. Some emitters set only ruleIndex, so
 // fall back to it when ruleId yields nothing.
-func (sr sarifResult) finding(byID map[string]sarifRule, rules []sarifRule) Finding {
+func sarifFinding(sr sarif.Result, byID map[string]sarif.ReportingDescriptor, rules []sarif.ReportingDescriptor) Finding {
 	rule, ok := byID[sr.RuleID]
-	if !ok && sr.RuleIndex != nil && *sr.RuleIndex >= 0 && *sr.RuleIndex < len(rules) {
-		rule = rules[*sr.RuleIndex]
+	if !ok && sr.RuleIndex >= 0 && sr.RuleIndex < len(rules) {
+		rule = rules[sr.RuleIndex]
 	}
 	f := Finding{
 		RuleID:      sr.RuleID,
 		Title:       firstNonEmpty(rule.ShortDescription.Text, rule.Name, sr.Message.Text, sr.RuleID),
 		Description: firstNonEmpty(sr.Message.Text, rule.FullDescription.Text),
-		Severity:    sarifSeverity(sr.Level, rule.Properties.SecuritySeverity),
-		Confidence:  sarifConfidence(rule.Properties.Precision),
-		CWE:         cweFromTags(rule.Properties.Tags),
-		Location:    sr.location(),
+		Severity:    sarifSeverity(sr.Level, sarifPropertyString(rule.Properties, "security-severity")),
+		Confidence:  sarifConfidence(sarifPropertyString(rule.Properties, "precision")),
+		CWE:         cweFromTags(sarifPropertyStrings(rule.Properties, "tags")),
+		Location:    sarifLocation(sr),
 	}
 	if len(sr.Fixes) > 0 {
 		f.SuggestedFix = sr.Fixes[0].Description.Text
@@ -146,7 +72,7 @@ func (sr sarifResult) finding(byID map[string]sarifRule, rules []sarifRule) Find
 	return f
 }
 
-func (sr sarifResult) location() string {
+func sarifLocation(sr sarif.Result) string {
 	if len(sr.Locations) == 0 {
 		return ""
 	}
@@ -162,6 +88,40 @@ func (sr sarifResult) location() string {
 		}
 	}
 	return loc
+}
+
+func sarifPropertyString(props sarif.PropertyBag, key string) string {
+	switch v := props[key].(type) {
+	case string:
+		return v
+	case fmt.Stringer:
+		return v.String()
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	case int:
+		return strconv.Itoa(v)
+	default:
+		return ""
+	}
+}
+
+func sarifPropertyStrings(props sarif.PropertyBag, key string) []string {
+	switch v := props[key].(type) {
+	case []string:
+		return v
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	case string:
+		return []string{v}
+	default:
+		return nil
+	}
 }
 
 // CVSS v3 qualitative-severity boundaries (FIRST.org spec table 14).

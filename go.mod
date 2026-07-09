@@ -8,6 +8,7 @@ require (
 	filippo.io/age v1.3.1
 	github.com/git-pkgs/pom v0.1.4
 	github.com/git-pkgs/purl v0.1.14
+	github.com/git-pkgs/sarif v0.1.0
 	github.com/git-pkgs/sbom v0.1.3
 	github.com/glebarez/sqlite v1.11.0
 	github.com/google/uuid v1.6.0
