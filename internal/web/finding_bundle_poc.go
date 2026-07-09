@@ -12,7 +12,7 @@ import (
 // reproduction verbatim into a fenced block, so an indented block is
 // almost always output text or a quoted excerpt rather than the runnable
 // artefact.
-var fencedBlock = regexp.MustCompile("(?s)```([a-zA-Z0-9_+.-]*)[^\n]*\n(.*?)```")
+var fencedBlock = regexp.MustCompile("(?s)```[ \t]*([a-zA-Z0-9_+.-]*)[^\n]*\n(.*?)```")
 
 // probeExt maps a fence info string (already lowercased) to the
 // filename its body is written as under poc/. Only explicit shell script
@@ -102,12 +102,13 @@ func bundlePoC(validation string) []bundleEntry {
 		if !ok {
 			name = "probe." + lang
 		}
+		executable := name == "run.sh"
 		seen[name]++
 		if n := seen[name]; n > 1 {
 			name = suffixBeforeExt(name, n)
 		}
 		var mode int64
-		if name == "run.sh" {
+		if executable {
 			haveRunSh = true
 			mode = runShMode
 		}

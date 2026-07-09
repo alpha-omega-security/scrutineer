@@ -73,13 +73,28 @@ func TestBundlePoC_languageProbeGetsGeneratedRunSh(t *testing.T) {
 	}
 }
 
+func TestBundlePoC_languageFenceAllowsLeadingWhitespace(t *testing.T) {
+	validation := "``` python\nprint('x')\n```"
+	got := pocEntries(t, bundlePoC(validation))
+	if _, ok := got["poc/probe.py"]; !ok {
+		t.Fatalf("missing poc/probe.py for spaced info string; have %v", keys(got))
+	}
+	if _, ok := got["poc/transcript.txt"]; ok {
+		t.Fatalf("spaced python fence was treated as transcript; have %v", keys(got))
+	}
+}
+
 func TestBundlePoC_compiledProbeGetsReadmeFallbackRunSh(t *testing.T) {
 	// Go, Rust, C, Java have no one-line runner; the generated run.sh must
 	// exit non-zero pointing at README rather than pretend to know how to
 	// build the probe.
 	validation := "```go\npackage main\nfunc main() { panic(1) }\n```"
 	got := pocEntries(t, bundlePoC(validation))
-	run := string(got["poc/run.sh"].Data)
+	runEntry, ok := got["poc/run.sh"]
+	if !ok {
+		t.Fatalf("missing generated poc/run.sh; have %v", keys(got))
+	}
+	run := string(runEntry.Data)
 	if !strings.Contains(run, "README.md") || !strings.Contains(run, "exit 2") {
 		t.Errorf("compiled-language fallback run.sh should point at README and exit 2: %q", run)
 	}
@@ -113,8 +128,26 @@ func TestBundlePoC_shellBlockWinsOverGeneratedRunSh(t *testing.T) {
 	// the shell block IS run.sh; do not overwrite it with a generated stub.
 	validation := "```python\nprint('x')\n```\n\n```bash\npython3 probe.py --flag\n```"
 	got := pocEntries(t, bundlePoC(validation))
-	if body := string(got["poc/run.sh"].Data); body != "python3 probe.py --flag\n" {
+	run, ok := got["poc/run.sh"]
+	if !ok {
+		t.Fatalf("missing authored poc/run.sh; have %v", keys(got))
+	}
+	if body := string(run.Data); body != "python3 probe.py --flag\n" {
 		t.Errorf("run.sh should be the authored shell block verbatim, got %q", body)
+	}
+}
+
+func TestBundlePoC_duplicateShellBlocksStayExecutable(t *testing.T) {
+	validation := "```sh\necho one\n```\n\n```bash\necho two\n```"
+	got := pocEntries(t, bundlePoC(validation))
+	for _, name := range []string{"poc/run.sh", "poc/run-2.sh"} {
+		entry, ok := got[name]
+		if !ok {
+			t.Fatalf("missing %s; have %v", name, keys(got))
+		}
+		if entry.Mode != runShMode {
+			t.Errorf("%s mode = %#o, want %#o", name, entry.Mode, runShMode)
+		}
 	}
 }
 
@@ -204,7 +237,11 @@ func TestBuildTarGz_honoursEntryMode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	gz, _ := gzip.NewReader(bytes.NewReader(body))
+	gz, err := gzip.NewReader(bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("open gzip: %v", err)
+	}
+	defer func() { _ = gz.Close() }()
 	tr := tar.NewReader(gz)
 	modes := map[string]int64{}
 	for {
