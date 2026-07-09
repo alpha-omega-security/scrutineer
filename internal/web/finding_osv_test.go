@@ -79,7 +79,7 @@ func TestFindingOSV_validatesAgainstOfficialSchema(t *testing.T) {
 }
 
 // A CVSS:3.0 vector must validate under the same CVSS_V3 severity type as a
-// 3.1 vector; this is where any go-cvss / OSV-regex misalignment would surface.
+// 3.1 vector; this is where any CVSS parser / OSV-regex misalignment would surface.
 func TestFindingOSV_cvss30Validates(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

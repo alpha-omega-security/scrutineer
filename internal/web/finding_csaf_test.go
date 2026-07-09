@@ -313,7 +313,7 @@ func TestFindingCSAF_scoreDerivedFromVectorIgnoresStoredScore(t *testing.T) {
 }
 
 // parseCVSSv3Vector tolerates a truncated vector (returns a partial
-// struct) but go-cvss rejects it; the scores block must be omitted
+// struct) but the shared CVSS parser rejects it; the scores block must be omitted
 // rather than emitted with a fabricated baseScore: 0.
 func TestFindingCSAF_partialVectorOmitsScores(t *testing.T) {
 	s, done := newTestServer(t)
@@ -330,7 +330,7 @@ func TestFindingCSAF_partialVectorOmitsScores(t *testing.T) {
 	doc := decodeCSAF(t, w.Body.Bytes())
 	v := doc["vulnerabilities"].([]any)[0].(map[string]any)
 	if _, ok := v["scores"]; ok {
-		t.Errorf("scores must be omitted when vector is unparseable by go-cvss: %+v", v["scores"])
+		t.Errorf("scores must be omitted when vector is unparseable by the shared CVSS parser: %+v", v["scores"])
 	}
 }
 

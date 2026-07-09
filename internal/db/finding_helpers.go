@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/git-pkgs/vulns"
 	"gorm.io/gorm"
 )
 
@@ -147,7 +148,7 @@ func findingTimeFieldAccessor(f *Finding, field string) (current *time.Time, col
 // score is a pure function of it — anything else drifts. An empty or
 // unparseable vector clears the score so stale numbers don't linger.
 func syncCVSSScore(gdb *gorm.DB, f *Finding, vector string, source FindingSource, by string) error {
-	score, _ := BaseScoreFromVector(vector)
+	score, _ := cvssV3ScoreFromVector(vector)
 	if f.CVSSScore == score {
 		return nil
 	}
@@ -169,7 +170,7 @@ func syncCVSSScore(gdb *gorm.DB, f *Finding, vector string, source FindingSource
 // metric set and the base-score formula, so it lives in its own
 // vector/score columns rather than overloading the v3 ones.
 func syncCVSSv4Score(gdb *gorm.DB, f *Finding, vector string, source FindingSource, by string) error {
-	score, _ := ScoreFromV4Vector(vector)
+	score, _ := cvssV4ScoreFromVector(vector)
 	if f.CVSSv4Score == score {
 		return nil
 	}
@@ -185,6 +186,27 @@ func syncCVSSv4Score(gdb *gorm.DB, f *Finding, vector string, source FindingSour
 		By:        by,
 		CreatedAt: time.Now(),
 	}).Error
+}
+
+func cvssV3ScoreFromVector(vector string) (float64, bool) {
+	cvss, err := vulns.ParseCVSS(vector)
+	if err != nil {
+		return 0, false
+	}
+	switch cvss.Version {
+	case "3.0", "3.1":
+		return cvss.Score, true
+	default:
+		return 0, false
+	}
+}
+
+func cvssV4ScoreFromVector(vector string) (float64, bool) {
+	cvss, err := vulns.ParseCVSS(vector)
+	if err != nil || cvss.Version != "4.0" {
+		return 0, false
+	}
+	return cvss.Score, true
 }
 
 // confidenceLevels and SeverityLevels are ordered low to high; the

@@ -533,12 +533,12 @@ func buildScoreMulti(f db.Finding, productIDs []string) *csafScore {
 	if cvss == nil {
 		return nil
 	}
-	score, ok := db.BaseScoreFromVector(f.CVSSVector)
+	parsed, ok := parseCVSSVersion(f.CVSSVector, cvssVersion30, cvssVersion31)
 	if !ok {
 		return nil
 	}
-	cvss.BaseScore = score
-	cvss.BaseSeverity = severityLabel(score)
+	cvss.BaseScore = parsed.Score
+	cvss.BaseSeverity = severityLabel(parsed.Score)
 	cvss.VectorString = f.CVSSVector
 	return &csafScore{Products: productIDs, CVSSv3: cvss}
 }

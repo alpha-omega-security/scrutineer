@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/git-pkgs/purl"
+	"github.com/git-pkgs/vulns"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
 	"scrutineer/internal/db"
@@ -113,76 +114,12 @@ func (s *Server) findingOSV(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(raw)
 }
 
-type osvRecord struct {
-	SchemaVersion    string         `json:"schema_version,omitempty"`
-	ID               string         `json:"id"`
-	Modified         string         `json:"modified"`
-	Published        string         `json:"published,omitempty"`
-	Withdrawn        string         `json:"withdrawn,omitempty"`
-	Aliases          []string       `json:"aliases,omitempty"`
-	Related          []string       `json:"related,omitempty"`
-	Summary          string         `json:"summary,omitempty"`
-	Details          string         `json:"details,omitempty"`
-	Severity         []osvSeverity  `json:"severity,omitempty"`
-	Affected         []osvAffected  `json:"affected,omitempty"`
-	References       []osvReference `json:"references,omitempty"`
-	Credits          []osvCredit    `json:"credits,omitempty"`
-	DatabaseSpecific map[string]any `json:"database_specific,omitempty"`
-}
-
-// osvCredit is the credits entry: who reported the finding (FINDER) and
-// who coordinated disclosure (COORDINATOR). The schema's credit_type
-// enum is broader (FINDER, REPORTER, ANALYST, COORDINATOR, REMEDIATION_*,
-// SPONSOR, OTHER); these two are what scrutineer can fill from the
-// finding row plus the operator configuration.
-type osvCredit struct {
-	Name    string   `json:"name"`
-	Type    string   `json:"type,omitempty"`
-	Contact []string `json:"contact,omitempty"`
-}
-
-type osvSeverity struct {
-	Type  string `json:"type"`
-	Score string `json:"score"`
-}
-
-type osvAffected struct {
-	Package           *osvPackage    `json:"package,omitempty"`
-	Ranges            []osvRange     `json:"ranges,omitempty"`
-	EcosystemSpecific map[string]any `json:"ecosystem_specific,omitempty"`
-	DatabaseSpecific  map[string]any `json:"database_specific,omitempty"`
-}
-
-type osvPackage struct {
-	Ecosystem string `json:"ecosystem"`
-	Name      string `json:"name"`
-	PURL      string `json:"purl,omitempty"`
-}
-
-type osvRange struct {
-	Type   string     `json:"type"`
-	Repo   string     `json:"repo,omitempty"`
-	Events []osvEvent `json:"events"`
-}
-
-// osvEvent carries exactly one of introduced/fixed: the schema's events items
-// are a oneOf of single-key objects, so both fields take omitempty.
-type osvEvent struct {
-	Introduced string `json:"introduced,omitempty"`
-	Fixed      string `json:"fixed,omitempty"`
-}
-
-type osvReference struct {
-	Type string `json:"type"`
-	URL  string `json:"url"`
-}
-
-func buildOSV(f db.Finding, repo db.Repository, refs []db.FindingReference, pkgs []db.Package) osvRecord {
-	modified := time.Now().UTC().Format(time.RFC3339)
+func buildOSV(f db.Finding, repo db.Repository, refs []db.FindingReference, pkgs []db.Package) vulns.Vulnerability {
+	modified := time.Now().UTC()
 	if !f.UpdatedAt.IsZero() {
-		modified = f.UpdatedAt.UTC().Format(time.RFC3339)
+		modified = f.UpdatedAt.UTC()
 	}
-	rec := osvRecord{
+	rec := vulns.Vulnerability{
 		SchemaVersion:    osvSchemaVersion,
 		ID:               osvIDPrefix + strconv.Itoa(int(f.ID)),
 		Modified:         modified,
@@ -197,13 +134,14 @@ func buildOSV(f db.Finding, repo db.Repository, refs []db.FindingReference, pkgs
 		DatabaseSpecific: osvDatabaseSpecific(f),
 	}
 	if !f.CreatedAt.IsZero() {
-		rec.Published = f.CreatedAt.UTC().Format(time.RFC3339)
+		rec.Published = f.CreatedAt.UTC()
 	}
 	// `withdrawn` is set when a finding is rejected: the OSV record
 	// stays available so consumers can see the history, but it carries
 	// the withdrawn timestamp so anyone caching the advisory drops it.
 	if f.Status == db.FindingRejected && !f.UpdatedAt.IsZero() {
-		rec.Withdrawn = f.UpdatedAt.UTC().Format(time.RFC3339)
+		withdrawn := f.UpdatedAt.UTC()
+		rec.Withdrawn = &withdrawn
 	}
 	return rec
 }
@@ -241,12 +179,12 @@ func osvRelated(refs []db.FindingReference) []string {
 // researcher) and the COORDINATOR (scrutineer's host operator).
 // Schema requires `name`; everything else is optional and only set when
 // it can be filled honestly.
-func osvCredits(f db.Finding) []osvCredit {
-	var out []osvCredit
+func osvCredits(f db.Finding) []vulns.Credit {
+	var out []vulns.Credit
 	if name := strings.TrimSpace(f.Assignee); name != "" {
-		out = append(out, osvCredit{Name: name, Type: "ANALYST"})
+		out = append(out, vulns.Credit{Name: name, Type: "ANALYST"})
 	}
-	out = append(out, osvCredit{
+	out = append(out, vulns.Credit{
 		Name: "scrutineer",
 		Type: "COORDINATOR",
 		Contact: []string{
@@ -287,18 +225,36 @@ func osvAliases(f db.Finding, refs []db.FindingReference) []string {
 
 // osvSeverityList emits one CVSS vector entry per version the finding
 // carries (OSV's severity.score is the vector, not a number). Each
-// entry is gated on go-cvss parsing the vector so a malformed value is
-// dropped rather than failing schema validation. When both are
+// entry is gated on vulns.ParseCVSS parsing the vector so a malformed
+// value is dropped rather than failing schema validation. When both are
 // present, v4 comes first (matching the OSS-SIRT advisory template).
-func osvSeverityList(f db.Finding) []osvSeverity {
-	var out []osvSeverity
-	if _, ok := db.ScoreFromV4Vector(f.CVSSv4Vector); ok {
-		out = append(out, osvSeverity{Type: "CVSS_V4", Score: f.CVSSv4Vector})
+func osvSeverityList(f db.Finding) []vulns.Severity {
+	var out []vulns.Severity
+	if cvssVersion(f.CVSSv4Vector, "4.0") {
+		out = append(out, vulns.Severity{Type: "CVSS_V4", Score: f.CVSSv4Vector})
 	}
-	if _, ok := db.BaseScoreFromVector(f.CVSSVector); ok {
-		out = append(out, osvSeverity{Type: "CVSS_V3", Score: f.CVSSVector})
+	if cvssVersion(f.CVSSVector, "3.0", "3.1") {
+		out = append(out, vulns.Severity{Type: "CVSS_V3", Score: f.CVSSVector})
 	}
 	return out
+}
+
+func cvssVersion(vector string, versions ...string) bool {
+	_, ok := parseCVSSVersion(vector, versions...)
+	return ok
+}
+
+func parseCVSSVersion(vector string, versions ...string) (*vulns.CVSS, bool) {
+	cvss, err := vulns.ParseCVSS(vector)
+	if err != nil {
+		return nil, false
+	}
+	for _, version := range versions {
+		if cvss.Version == version {
+			return cvss, true
+		}
+	}
+	return nil, false
 }
 
 // osvSchemaMissing lists OSV ecosystem names purl.PURLTypeToOSV knows but the
@@ -326,15 +282,15 @@ func osvEcosystem(pkg db.Package) (string, bool) {
 // to the source repo via a GIT range. A local (file://) repo has no cloneable
 // URL, so affected is left empty and the code location lives in
 // database_specific instead.
-func osvAffectedList(f db.Finding, repo db.Repository, pkgs []db.Package) []osvAffected {
-	var out []osvAffected
+func osvAffectedList(f db.Finding, repo db.Repository, pkgs []db.Package) []vulns.Affected {
+	var out []vulns.Affected
 	for _, pkg := range pkgs {
 		eco, ok := osvEcosystem(pkg)
 		if !ok {
 			continue
 		}
-		entry := osvAffected{
-			Package: &osvPackage{Ecosystem: eco, Name: firstNonEmpty(pkg.Name, "unknown"), PURL: pkg.PURL},
+		entry := vulns.Affected{
+			Package: vulns.Package{Ecosystem: eco, Name: firstNonEmpty(pkg.Name, "unknown"), PURL: pkg.PURL},
 		}
 		// A package-scoped affected entry pairs with a SEMVER range when
 		// the finding has a fix_version that parses as a single anchor.
@@ -342,7 +298,7 @@ func osvAffectedList(f db.Finding, repo db.Repository, pkgs []db.Package) []osvA
 		// downstream tooling cannot tell which version the consumer
 		// should upgrade to.
 		if r, ok := osvSemverRangeFromFix(f.FixVersion); ok {
-			entry.Ranges = []osvRange{r}
+			entry.Ranges = []vulns.Range{r}
 		}
 		out = append(out, entry)
 	}
@@ -352,12 +308,12 @@ func osvAffectedList(f db.Finding, repo db.Repository, pkgs []db.Package) []osvA
 	if repo.URL == "" || repo.IsLocal() {
 		return nil
 	}
-	events := []osvEvent{{Introduced: "0"}}
+	events := []vulns.Event{{Introduced: "0"}}
 	if gitSHARE.MatchString(f.FixCommit) {
-		events = append(events, osvEvent{Fixed: f.FixCommit})
+		events = append(events, vulns.Event{Fixed: f.FixCommit})
 	}
-	return []osvAffected{{
-		Ranges: []osvRange{{Type: "GIT", Repo: repo.URL, Events: events}},
+	return []vulns.Affected{{
+		Ranges: []vulns.Range{{Type: "GIT", Repo: repo.URL, Events: events}},
 	}}
 }
 
@@ -369,18 +325,18 @@ func osvAffectedList(f db.Finding, repo db.Repository, pkgs []db.Package) []osvA
 // version is unknown. Returns ok=false when fix_version is empty or
 // not a clean dotted version, so the caller can omit the range
 // cleanly rather than emit something that fails schema validation.
-func osvSemverRangeFromFix(fix string) (osvRange, bool) {
+func osvSemverRangeFromFix(fix string) (vulns.Range, bool) {
 	v := strings.TrimSpace(fix)
 	v = strings.TrimPrefix(v, "v")
 	if v == "" {
-		return osvRange{}, false
+		return vulns.Range{}, false
 	}
 	if !semverLooseRE.MatchString(v) {
-		return osvRange{}, false
+		return vulns.Range{}, false
 	}
-	return osvRange{
+	return vulns.Range{
 		Type: "SEMVER",
-		Events: []osvEvent{
+		Events: []vulns.Event{
 			{Introduced: "0"},
 			{Fixed: v},
 		},
@@ -389,16 +345,16 @@ func osvSemverRangeFromFix(fix string) (osvRange, bool) {
 
 var semverLooseRE = regexp.MustCompile(`^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$`)
 
-func osvReferences(f db.Finding, repo db.Repository, refs []db.FindingReference) []osvReference {
-	var out []osvReference
+func osvReferences(f db.Finding, repo db.Repository, refs []db.FindingReference) []vulns.Reference {
+	var out []vulns.Reference
 	for _, r := range refs {
 		if r.URL == "" {
 			continue
 		}
-		out = append(out, osvReference{Type: osvReferenceType(r.Tags), URL: r.URL})
+		out = append(out, vulns.Reference{Type: osvReferenceType(r.Tags), URL: r.URL})
 	}
 	if repo.HTMLURL != "" && f.FixCommit != "" {
-		out = append(out, osvReference{Type: "FIX", URL: strings.TrimSuffix(repo.HTMLURL, "/") + "/commit/" + f.FixCommit})
+		out = append(out, vulns.Reference{Type: "FIX", URL: strings.TrimSuffix(repo.HTMLURL, "/") + "/commit/" + f.FixCommit})
 	}
 	return out
 }
