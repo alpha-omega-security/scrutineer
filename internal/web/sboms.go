@@ -88,7 +88,7 @@ func (s *Server) sbomUpload(w http.ResponseWriter, r *http.Request) {
 		Raw:          data,
 		PackageCount: len(doc.Packages),
 	}
-	scope := classifyScope(doc)
+	scope := doc.ClassifyScope()
 	for _, p := range doc.Packages {
 		up.Packages = append(up.Packages, db.SBOMPackage{
 			Name:      p.Name,
@@ -137,7 +137,7 @@ func (s *Server) sbomShow(w http.ResponseWriter, r *http.Request) {
 
 	scope := r.URL.Query().Get("scope")
 	pkgs := up.Packages
-	if hasScope && (scope == scopeDirect || scope == scopeTransitive) {
+	if hasScope && (scope == sbom.ScopeDirect || scope == sbom.ScopeTransitive) {
 		filtered := make([]db.SBOMPackage, 0, len(up.Packages))
 		for _, p := range up.Packages {
 			if p.Scope == scope {
@@ -291,60 +291,13 @@ func (s *Server) resolveSBOMPackages(uploadID uint) {
 			s.DB.Model(p).Update("resolve_error", err.Error())
 			continue
 		}
-		repo, _, err := s.createOrTriageRepo(ctx, input, "", p.Scope != scopeTransitive)
+		repo, _, err := s.createOrTriageRepo(ctx, input, "", p.Scope != sbom.ScopeTransitive)
 		if err != nil {
 			s.DB.Model(p).Update("resolve_error", err.Error())
 			continue
 		}
 		s.DB.Model(p).Updates(map[string]any{"repository_id": repo.ID, "resolve_error": ""})
 	}
-}
-
-const (
-	scopeDirect     = "direct"
-	scopeTransitive = "transitive"
-)
-
-// classifyScope derives direct-vs-transitive from the SBOM's relationship
-// graph. Roots are nodes that originate DEPENDS_ON edges but are never
-// themselves a DEPENDS_ON target, plus anything pointed at by a DESCRIBES
-// edge (SPDX's document → root-package link). A package is "direct" if a
-// root depends on it, "transitive" if only another package does, and
-// absent from the map (empty Scope) if the graph doesn't mention it.
-func classifyScope(doc *sbom.SBOM) map[string]string {
-	const dependsOn, describes = "DEPENDS_ON", "DESCRIBES"
-	targets := map[string]bool{}
-	sources := map[string]bool{}
-	roots := map[string]bool{}
-	for _, r := range doc.Relationships {
-		switch r.Type {
-		case dependsOn:
-			sources[r.SourceID] = true
-			targets[r.TargetID] = true
-		case describes:
-			roots[r.TargetID] = true
-		}
-	}
-	for id := range sources {
-		if !targets[id] {
-			roots[id] = true
-		}
-	}
-	if len(roots) == 0 {
-		return nil
-	}
-	out := map[string]string{}
-	for _, r := range doc.Relationships {
-		if r.Type != dependsOn {
-			continue
-		}
-		if roots[r.SourceID] {
-			out[r.TargetID] = scopeDirect
-		} else if out[r.TargetID] == "" {
-			out[r.TargetID] = scopeTransitive
-		}
-	}
-	return out
 }
 
 // purlType returns the ecosystem segment of a Package URL (the bit between
