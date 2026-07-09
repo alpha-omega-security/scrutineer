@@ -41,6 +41,3 @@ require (
 	modernc.org/memory v1.11.0 // indirect
 	modernc.org/sqlite v1.50.0 // indirect
 )
-
-// TODO: remove once git-pkgs/purl v0.1.14 is tagged (PR git-pkgs/purl#19).
-replace github.com/git-pkgs/purl => ../../git-pkgs/purl
