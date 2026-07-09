@@ -41,6 +41,3 @@ require (
 	modernc.org/memory v1.11.0 // indirect
 	modernc.org/sqlite v1.50.0 // indirect
 )
-
-// TODO: remove once git-pkgs/sbom v0.1.3 is tagged (PR git-pkgs/sbom#9).
-replace github.com/git-pkgs/sbom => ../../git-pkgs/sbom
