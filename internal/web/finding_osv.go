@@ -301,24 +301,12 @@ func osvSeverityList(f db.Finding) []osvSeverity {
 	return out
 }
 
-// osvEcosystemByPURLType maps a canonical PURL type to its OSV ecosystem name.
-// It mirrors git-pkgs' osvEcosystemNames but (a) carries the ok flag the
-// library's EcosystemToOSV lacks -- that helper returns its input unchanged on
-// a miss, which would then fail the schema's ecosystem pattern -- and (b) omits
-// entries the embedded schema does not list (e.g. cocoapods), so a lookup miss
-// always routes the finding to a GIT range instead of an invalid package.
-var osvEcosystemByPURLType = map[string]string{
-	"gem":           "RubyGems",
-	"npm":           "npm",
-	"pypi":          "PyPI",
-	"cargo":         "crates.io",
-	"golang":        "Go",
-	"maven":         "Maven",
-	"nuget":         "NuGet",
-	"composer":      "Packagist",
-	"hex":           "Hex",
-	"pub":           "Pub",
-	"githubactions": "GitHub Actions",
+// osvSchemaMissing lists OSV ecosystem names purl.PURLTypeToOSV knows but the
+// embedded schema at osv_schemas/ does not accept in its ecosystem pattern.
+// Packages in these ecosystems route to a GIT range instead so the exported
+// record still validates. Re-check when bumping the embedded schema.
+var osvSchemaMissing = map[string]bool{
+	"CocoaPods": true,
 }
 
 func osvEcosystem(pkg db.Package) (string, bool) {
@@ -326,8 +314,11 @@ func osvEcosystem(pkg db.Package) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	eco, ok := osvEcosystemByPURLType[p.Type]
-	return eco, ok
+	eco, ok := purl.PURLTypeToOSV(p.Type)
+	if !ok || osvSchemaMissing[eco] {
+		return "", false
+	}
+	return eco, true
 }
 
 // osvAffectedList anchors the finding. Registry packages whose ecosystem the
