@@ -32,9 +32,19 @@ const (
 const EcosystemsPrefetchTimeout = 5 * time.Minute
 
 const (
+	// EcosystemsLookupTimeout bounds synchronous package URL lookups triggered
+	// by web requests when the caller has no tighter deadline.
+	EcosystemsLookupTimeout = 30 * time.Second
+
+	// maxCachedPackages and maxCachedAdvisories bound cached arrays fetched via
+	// ecosystems-go so large repositories still cache partial data instead of
+	// failing when upstream pagination exceeds the client's page limit.
+	maxCachedPackages   = 2000
+	maxCachedAdvisories = 2000
+
 	// maxDependentPackages caps how many of a repo's published packages we
 	// chase dependents for; maxDependentsPerPackage caps the stored list per
-	// package. Both bound the N+1 fan-out, and truncation is logged.
+	// package. Both bound the N+1 fan-out performed by enrichment.
 	maxDependentPackages    = 25
 	maxDependentsPerPackage = 30
 )
@@ -73,6 +83,9 @@ func ResolvePURLRepositoryURL(ctx context.Context, purl string) string {
 	if purl == "" {
 		return ""
 	}
+	ctx, cancel := context.WithTimeout(ctx, EcosystemsLookupTimeout)
+	defer cancel()
+
 	client, err := ecosystems.NewClient(userAgent)
 	if err != nil {
 		return ""
@@ -125,10 +138,10 @@ func ecosystemsSources() []ecosystemsSource {
 // RefreshEcosystems pre-fetches and caches the ecosyste.ms payloads for one
 // repository. With staleOnly true, only sources past their TTL are
 // re-fetched, so a scan whose cache is current is a no-op; with staleOnly
-// false (the eager on-add path) every source is fetched. Best-effort: a
-// failing source is logged and skipped, never fatal, so a flaky ecosyste.ms
-// neither blocks a scan nor breaks repo creation. Local (file://) repos are
-// skipped since they have no upstream entry.
+// false (the eager on-add path) every source is fetched. Best-effort:
+// upstream client and fetch failures are logged and skipped, never fatal, so a
+// flaky ecosyste.ms neither blocks a scan nor breaks repo creation. Local
+// (file://) repos are skipped since they have no upstream entry.
 func RefreshEcosystems(ctx context.Context, gdb *gorm.DB, repoID uint, staleOnly bool, log *slog.Logger) error {
 	return refreshEcosystems(ctx, gdb, repoID, staleOnly, log, nil)
 }
@@ -153,7 +166,8 @@ func refreshEcosystems(ctx context.Context, gdb *gorm.DB, repoID uint, staleOnly
 			var err error
 			fetcher, err = newProductionEcosystemsFetcher()
 			if err != nil {
-				return fmt.Errorf("create ecosystems client: %w", err)
+				log.Warn("ecosystems client setup failed", "repo", repoID, "err", err)
+				return nil
 			}
 		}
 		body, err := src.fetch(ctx, fetcher, repo.URL)
@@ -214,7 +228,7 @@ func (f *productionEcosystemsFetcher) fetchRepository(ctx context.Context, repoU
 }
 
 func (f *productionEcosystemsFetcher) fetchPackages(ctx context.Context, repoURL string) ([]byte, error) {
-	pkgs, err := f.ecosystems.LookupPackagesByRepositoryURL(ctx, repoURL, 0)
+	pkgs, err := f.ecosystems.LookupPackagesByRepositoryURL(ctx, repoURL, maxCachedPackages)
 	if err != nil {
 		return nil, err
 	}
@@ -222,7 +236,7 @@ func (f *productionEcosystemsFetcher) fetchPackages(ctx context.Context, repoURL
 }
 
 func (f *productionEcosystemsFetcher) fetchAdvisories(ctx context.Context, repoURL string) ([]byte, error) {
-	advs, err := f.ecosystems.GetAdvisoriesByRepoURL(ctx, repoURL, 0)
+	advs, err := f.ecosystems.GetAdvisoriesByRepoURL(ctx, repoURL, maxCachedAdvisories)
 	if err != nil {
 		return nil, err
 	}
