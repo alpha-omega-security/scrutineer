@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -98,6 +99,33 @@ func TestStripAgentDirectives_preservesGitAndBenignNames(t *testing.T) {
 		".llm/prompts/x.txt",
 		"rules.txt",
 	)
+}
+
+func TestStripAgentDirectives_removesDirectiveDirSymlinks(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "target")
+	if err := os.MkdirAll(target, dirPerm); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(root, "nested"), dirPerm); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("target", filepath.Join(root, ".claude")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../target", filepath.Join(root, "nested", ".cursor")); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := stripAgentDirectives(root)
+	if err != nil {
+		t.Fatalf("stripAgentDirectives: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("removed %d items, want 2", n)
+	}
+	assertGone(t, root, ".claude", "nested/.cursor")
+	assertExists(t, root, "target")
 }
 
 func TestStripAgentDirectives_missingRootIsNoop(t *testing.T) {

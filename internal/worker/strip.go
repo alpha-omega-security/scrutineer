@@ -62,12 +62,12 @@ var agentDirectiveFiles = []string{
 	"llms-full.txt",
 }
 
-// stripAgentDirectives walks root and deletes every directory whose
-// basename matches agentDirectiveDirs (recursively) and every file whose
-// basename matches agentDirectiveFiles. Returns the number of items
-// removed (a directory counts as one regardless of its contents). The
-// .git subtree is skipped so refs named after any pattern above survive.
-// Idempotent: a second call over the same tree returns 0, nil.
+// stripAgentDirectives walks root and deletes every directory-like basename
+// that matches agentDirectiveDirs (recursively for directories, link-only for
+// symlinks) and every file whose basename matches agentDirectiveFiles. Returns
+// the number of items removed (a directory counts as one regardless of its
+// contents). The .git subtree is skipped so refs named after any pattern above
+// survive. Idempotent: a second call over the same tree returns 0, nil.
 func stripAgentDirectives(root string) (int, error) {
 	if _, err := os.Stat(root); err != nil {
 		if os.IsNotExist(err) {
@@ -84,17 +84,20 @@ func stripAgentDirectives(root string) (int, error) {
 			return nil
 		}
 		base := strings.ToLower(d.Name())
+		if d.IsDir() && base == ".git" {
+			return filepath.SkipDir
+		}
+		if matchAnyBasename(agentDirectiveDirs, base) {
+			if rmErr := os.RemoveAll(p); rmErr != nil {
+				return rmErr
+			}
+			n++
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
 		if d.IsDir() {
-			if base == ".git" {
-				return filepath.SkipDir
-			}
-			if matchAnyBasename(agentDirectiveDirs, base) {
-				if rmErr := os.RemoveAll(p); rmErr != nil {
-					return rmErr
-				}
-				n++
-				return filepath.SkipDir
-			}
 			return nil
 		}
 		if matchAnyBasename(agentDirectiveFiles, base) {
