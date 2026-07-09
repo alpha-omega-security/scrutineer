@@ -38,13 +38,13 @@ If `SECURITY.md` or an equivalent contains threat-model content (what the projec
 
 Identify the public surface. Look further than exported symbols, HTTP routes, and CLI subcommands; a project's real entry points are wherever data from outside the process arrives, and that is often not a function call:
 
-- Linkage: exported API, ABI, FFI (ctypes, JNI, CGo, N-API, P/Invoke), syscall handlers, plugin/module loaders (`dlopen`, `LoadLibrary`, extension hosts).
+- Linkage: exported API, ABI, FFI (ctypes, JNI, CGo, N-API, P/Invoke), plugin/module loaders (`dlopen`, `LoadLibrary`, extension hosts).
 - In-process messaging: callbacks and delegates, signals/slots, event buses and emitters, actor mailboxes, channels.
-- Local IPC: pipes and named pipes, Unix domain sockets and Windows named pipes, shared memory and mmap, POSIX/SysV message queues, D-Bus, Binder, XPC and Mach ports, COM, clipboard/drag-and-drop.
+- Local IPC: anonymous pipes, Unix domain sockets, Windows named pipes, shared memory and mmap, POSIX/SysV message queues, D-Bus, Binder, XPC and Mach ports, COM, clipboard/drag-and-drop.
 - RPC: gRPC, Thrift, Cap'n Proto, JSON-RPC, XML-RPC, SOAP, REST, GraphQL.
 - Message middleware: AMQP, Kafka, MQTT, NATS, ZeroMQ/nanomsg, JMS, cloud queues (SQS, Pub/Sub, Service Bus).
 - Streaming: raw TCP/UDP with custom framing, WebSockets, SSE, HTTP/2 and QUIC streams, WebRTC data channels.
-- Loose coupling: argv/stdin/stdout, environment variables, config, spool and drop directories (maildir, cron.d), lock and pid files, database-as-queue polling, webhooks.
+- Loose coupling: argv/stdin, environment variables, config, spool and drop directories (maildir, cron.d), lock and pid files, database-as-queue polling, webhooks.
 - File formats consumed and produced.
 
 Serialization formats (Protobuf, Avro, MessagePack, CBOR, JSON, XML, ASN.1) are orthogonal: the wire format, not the channel. Record which one each entry point uses since parser bugs are their own boundary.
