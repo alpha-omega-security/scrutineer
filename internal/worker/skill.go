@@ -921,6 +921,12 @@ func validateSkillPaths(name, outputFile string) error {
 	return nil
 }
 
+// ValidateSkillPaths exposes the same path checks production scans apply before
+// staging a skill. Eval harnesses call this before invoking StageWorkspace.
+func ValidateSkillPaths(name, outputFile string) error {
+	return validateSkillPaths(name, outputFile)
+}
+
 // stageSkill writes the skill's files into dst so claude-code discovers them
 // at ./.claude/skills/{name}. SKILL.md and schema.json are reconstructed from
 // the DB; supplementary files (scripts/, references/, assets/) are copied
@@ -993,7 +999,7 @@ func mirrorScripts(src, workRoot string) error {
 	if err := os.RemoveAll(dst); err != nil {
 		return err
 	}
-	return copyTree(srcScripts, dst)
+	return CopyTree(srcScripts, dst)
 }
 
 // renderSkillMD rebuilds a SKILL.md from the stored fields. The frontmatter
@@ -1112,7 +1118,14 @@ func stageContext(workRoot, apiBase, forkOrg, metadataDir string, scan *db.Scan,
 // threshold; the error wrapping stays here so failures still name the
 // staging step.
 func (w *Worker) stageWorkspace(workRoot, skillDir string, scan *db.Scan, skill *db.Skill) error {
-	if err := stageContext(workRoot, w.APIBase, w.ForkOrg, w.metadataDir(), scan, &scan.Repository); err != nil {
+	return StageWorkspace(workRoot, skillDir, w.APIBase, w.ForkOrg, w.metadataDir(), scan, skill)
+}
+
+// StageWorkspace writes the same workspace side files as a production skill
+// scan: context.json, an optional threat-model override, the rendered skill
+// bundle, and optional import payloads.
+func StageWorkspace(workRoot, skillDir, apiBase, forkOrg, metadataDir string, scan *db.Scan, skill *db.Skill) error {
+	if err := stageContext(workRoot, apiBase, forkOrg, metadataDir, scan, &scan.Repository); err != nil {
 		return fmt.Errorf("stage context: %w", err)
 	}
 	if err := stageThreatModel(workRoot, scan.SubPath, scan.Repository.ThreatModel); err != nil {
@@ -1156,7 +1169,7 @@ func copyAux(src, dst string) error {
 		if name == "SKILL.md" || name == "schema.json" {
 			continue
 		}
-		if err := copyTree(filepath.Join(src, name), filepath.Join(dst, name)); err != nil {
+		if err := CopyTree(filepath.Join(src, name), filepath.Join(dst, name)); err != nil {
 			return err
 		}
 	}

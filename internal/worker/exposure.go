@@ -55,16 +55,16 @@ func (w *Worker) prepareDependentSrc(ctx context.Context, url, ref, workRoot str
 	if err := os.RemoveAll(dst); err != nil {
 		return "", err
 	}
-	if err := copyTree(cacheSrc, dst); err != nil {
+	if err := CopyTree(cacheSrc, dst); err != nil {
 		return "", fmt.Errorf("copy dependent cache: %w", err)
 	}
 	return commit, nil
 }
 
-// copyTree recursively copies src to dst, preserving permissions but not
+// CopyTree recursively copies src to dst, preserving permissions but not
 // ownership or timestamps. Symlinks are recreated; everything else is
 // copied byte-for-byte. Fast enough for git trees up to a few hundred MB.
-func copyTree(src, dst string) error {
+func CopyTree(src, dst string) error {
 	return filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err

@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/findingnorm"
 )
 
 type expectedFindingResponse struct {
@@ -86,7 +87,7 @@ func buildExpectedFinding(repoID uint, file, cwe, cve, note string) (db.Expected
 	row := db.ExpectedFinding{
 		RepositoryID: repoID,
 		File:         cleanFile,
-		CWE:          normalizeCWE(cwe),
+		CWE:          findingnorm.CWE(cwe),
 		CVE:          strings.TrimSpace(cve),
 		Note:         strings.TrimSpace(note),
 	}
@@ -217,12 +218,12 @@ func expectedStatusForFindings(findings []db.Finding, expected []db.ExpectedFind
 }
 
 func findingMatchesExpected(f db.Finding, expected db.ExpectedFinding) bool {
-	if normalizeCWE(f.CWE) != normalizeCWE(expected.CWE) {
+	if findingnorm.CWE(f.CWE) != findingnorm.CWE(expected.CWE) {
 		return false
 	}
-	want := cleanRepoPath(expected.File)
+	want := findingnorm.RepoPath(expected.File)
 	for _, loc := range findingLocations(f) {
-		if normalizeLocationFile(loc) == want {
+		if findingnorm.LocationFile(loc) == want {
 			return true
 		}
 	}
@@ -245,60 +246,12 @@ func cleanExpectedFileInput(file string) (string, error) {
 	if raw == "" {
 		return "", fmt.Errorf("file is required")
 	}
-	if path.IsAbs(raw) || hasParentPathSegment(raw) {
+	if path.IsAbs(raw) || findingnorm.HasParentPathSegment(raw) {
 		return "", fmt.Errorf("file must be relative to the repository root")
 	}
-	clean := cleanRepoPath(raw)
-	if clean == "" || clean == "." || path.IsAbs(clean) || hasParentPathSegment(clean) {
+	clean := findingnorm.RepoPath(raw)
+	if clean == "" || clean == "." || path.IsAbs(clean) || findingnorm.HasParentPathSegment(clean) {
 		return "", fmt.Errorf("file must be relative to the repository root")
 	}
 	return clean, nil
-}
-
-func normalizeCWE(cwe string) string {
-	return strings.ToUpper(strings.TrimSpace(cwe))
-}
-
-func normalizeLocationFile(loc string) string {
-	loc = strings.TrimSpace(strings.Split(strings.TrimSpace(loc), "\n")[0])
-	for {
-		i := strings.LastIndexByte(loc, ':')
-		if i < 0 || !allDigits(loc[i+1:]) {
-			break
-		}
-		loc = loc[:i]
-	}
-	return cleanRepoPath(loc)
-}
-
-func cleanRepoPath(p string) string {
-	p = strings.TrimSpace(strings.ReplaceAll(p, "\\", "/"))
-	for strings.HasPrefix(p, "./") {
-		p = strings.TrimPrefix(p, "./")
-	}
-	if p == "" {
-		return ""
-	}
-	return path.Clean(p)
-}
-
-func hasParentPathSegment(p string) bool {
-	for _, part := range strings.Split(p, "/") {
-		if part == ".." {
-			return true
-		}
-	}
-	return false
-}
-
-func allDigits(s string) bool {
-	if s == "" {
-		return false
-	}
-	for _, r := range s {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return true
 }
