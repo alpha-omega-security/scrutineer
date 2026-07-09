@@ -32,6 +32,18 @@ func seedRunningScan(t *testing.T, s *Server) (db.Repository, db.Scan) {
 	return repo, scan
 }
 
+func runSkillAPIJSON(t *testing.T, s *Server, repo db.Repository, scan db.Scan, skillName, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	path := "/api/repositories/" + strconv.FormatUint(uint64(repo.ID), 10) + "/skills/" + skillName + "/run"
+	r := httptest.NewRequest("POST", path, strings.NewReader(body))
+	r.Host = testHost
+	r.Header.Set("Authorization", "Bearer "+scan.APIToken)
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	return w
+}
+
 func TestAPIListCNAs(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
@@ -421,13 +433,7 @@ func TestAPIRunSkill_rejectsInvalidRescanMode(t *testing.T) {
 	skill := db.Skill{Name: "metadata", Description: "m", Body: "b", OutputFile: "report.json", Version: 1, Active: true, Source: "ui"}
 	s.DB.Create(&skill)
 
-	path := "/api/repositories/" + strconv.FormatUint(uint64(repo.ID), 10) + "/skills/metadata/run"
-	r := httptest.NewRequest("POST", path, strings.NewReader(`{"rescan_mode":"delta"}`))
-	r.Host = testHost
-	r.Header.Set("Authorization", "Bearer "+scan.APIToken)
-	r.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	s.Handler().ServeHTTP(w, r)
+	w := runSkillAPIJSON(t, s, repo, scan, "metadata", `{"rescan_mode":"delta"}`)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status %d, want 400. body=%s", w.Code, w.Body)
 	}
@@ -446,13 +452,7 @@ func TestAPIRunSkill_rejectsMalformedJSON(t *testing.T) {
 	skill := db.Skill{Name: "metadata", Description: "m", Body: "b", OutputFile: "report.json", Version: 1, Active: true, Source: "ui"}
 	s.DB.Create(&skill)
 
-	path := "/api/repositories/" + strconv.FormatUint(uint64(repo.ID), 10) + "/skills/metadata/run"
-	r := httptest.NewRequest("POST", path, strings.NewReader(`{"profile":`))
-	r.Host = testHost
-	r.Header.Set("Authorization", "Bearer "+scan.APIToken)
-	r.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	s.Handler().ServeHTTP(w, r)
+	w := runSkillAPIJSON(t, s, repo, scan, "metadata", `{"profile":`)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("status %d, want 400. body=%s", w.Code, w.Body)
 	}
