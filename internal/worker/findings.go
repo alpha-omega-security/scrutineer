@@ -120,7 +120,8 @@ func (r scanReport) toFindings(scanID, repoID uint, commit, subPath string) []db
 const discoveredViaPrefix = "Discovered via "
 
 func foldDiscoveredVia(via, priorArt string) string {
-	if via == "" {
+	via = strings.TrimSpace(via)
+	if !validDiscoveredVia(via) {
 		return priorArt
 	}
 	head := discoveredViaPrefix + via + "."
@@ -128,6 +129,15 @@ func foldDiscoveredVia(via, priorArt string) string {
 		return head + " " + p
 	}
 	return head
+}
+
+func validDiscoveredVia(via string) bool {
+	switch via {
+	case "source", "issue-tracker", "advisory", "documentation":
+		return true
+	default:
+		return false
+	}
 }
 
 func (f scanFinding) toFinding(scanID, repoID uint, commit, subPath string) db.Finding {

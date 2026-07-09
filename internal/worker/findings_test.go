@@ -38,8 +38,11 @@ func TestFoldDiscoveredVia(t *testing.T) {
 		{"", "existing prose", "existing prose"},
 		{"", "", ""},
 		{"source", "", "Discovered via source."},
+		{" source ", "existing prose", "Discovered via source. existing prose"},
 		{"issue-tracker", "See issue #42.", "Discovered via issue-tracker. See issue #42."},
 		{"advisory", "  GHSA-xxxx cited.  ", "Discovered via advisory. GHSA-xxxx cited."},
+		{"not-an-enum", "existing prose", "existing prose"},
+		{"   ", "existing prose", "existing prose"},
 	}
 	for _, tc := range cases {
 		if got := foldDiscoveredVia(tc.via, tc.priorArt); got != tc.want {
