@@ -36,7 +36,18 @@ Read `README*`, `SECURITY*`, `THREAT*`, anything under `docs/` or `doc/` with se
 
 If `SECURITY.md` or an equivalent contains threat-model content (what the project trusts, what counts as a vulnerability, examples of non-vulnerabilities), lift every such statement directly into the matching report field with a citation. Your output must be a strict superset of what `SECURITY.md` already asserts about scope. If you think an existing claim is wrong, record that in `open_questions`; do not silently override it.
 
-Identify the public surface: exported symbols, CLI subcommands, listening ports, file formats consumed and produced, environment variables read.
+Identify the public surface. Look further than exported symbols, HTTP routes, and CLI subcommands; a project's real entry points are wherever data from outside the process arrives, and that is often not a function call:
+
+- Linkage: exported API, ABI, FFI (ctypes, JNI, CGo, N-API, P/Invoke), syscall handlers, plugin/module loaders (`dlopen`, `LoadLibrary`, extension hosts).
+- In-process messaging: callbacks and delegates, signals/slots, event buses and emitters, actor mailboxes, channels.
+- Local IPC: pipes and named pipes, Unix domain sockets and Windows named pipes, shared memory and mmap, POSIX/SysV message queues, D-Bus, Binder, XPC and Mach ports, COM, clipboard/drag-and-drop.
+- RPC: gRPC, Thrift, Cap'n Proto, JSON-RPC, XML-RPC, SOAP, REST, GraphQL.
+- Message middleware: AMQP, Kafka, MQTT, NATS, ZeroMQ/nanomsg, JMS, cloud queues (SQS, Pub/Sub, Service Bus).
+- Streaming: raw TCP/UDP with custom framing, WebSockets, SSE, HTTP/2 and QUIC streams, WebRTC data channels.
+- Loose coupling: argv/stdin/stdout, environment variables, config, spool and drop directories (maildir, cron.d), lock and pid files, database-as-queue polling, webhooks.
+- File formats consumed and produced.
+
+Serialization formats (Protobuf, Avro, MessagePack, CBOR, JSON, XML, ASN.1) are orthogonal: the wire format, not the channel. Record which one each entry point uses since parser bugs are their own boundary.
 
 Carve the project into component families with distinct trust profiles. A typical library has a pure-computation core, a convenience layer that touches the OS (file helpers, env readers, socket wrappers), and shipped-but-unsupported code (`contrib/`, `examples/`, `test/`, `vendor/`, `third_party/`, `bindings/`, demo apps). A daemon or service usually has client-facing endpoints, an admin or operator surface, and peer-to-peer protocol handling. Model each family at its own trust level; do not average them.
 
