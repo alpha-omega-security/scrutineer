@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/worker"
 )
 
 func TestResumeOpts(t *testing.T) {
@@ -401,5 +402,56 @@ func TestScansCancelAll_requiresRepository(t *testing.T) {
 	s.scansCancelAll(w, localReq("POST", "/scans/cancel-all"))
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", w.Code)
+	}
+}
+
+// Repeated failures of one (repository, skill, sub_path, ref, finding_id)
+// tuple must retry only the newest failed row, and a failure superseded by a
+// newer paused attempt must not retry at all. Suppression by queued/running/
+// done — and cancelled deliberately not suppressing — is covered by
+// TestScansRetryFailed_skipsAlreadyRetried.
+func TestScansRetryFailed_dedupesRepeatedFailures(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/r", Name: "r"}
+	s.DB.Create(&repo)
+	skill := db.Skill{Name: "hello", Description: "d", Body: "b",
+		OutputFile: "report.json", OutputKind: "freeform", Version: 1,
+		Active: true, Source: "ui"}
+	s.DB.Create(&skill)
+
+	mk := func(status db.ScanStatus, subPath string) {
+		sc := db.Scan{RepositoryID: repo.ID, Kind: worker.JobSkill, Status: status,
+			StatusPriority: db.StatusPriorityFor(status),
+			SkillID:        &skill.ID, SkillName: skill.Name, SubPath: subPath}
+		s.DB.Create(&sc)
+	}
+
+	// Three straight failures of the same tuple — only the newest retries.
+	mk(db.ScanFailed, "")
+	mk(db.ScanFailed, "")
+	mk(db.ScanFailed, "")
+
+	// A failure with a newer paused attempt for its tuple — superseded.
+	mk(db.ScanFailed, "parked")
+	mk(db.ScanPaused, "parked")
+
+	var maxID uint
+	s.DB.Model(&db.Scan{}).Select("MAX(id)").Scan(&maxID)
+
+	w := httptest.NewRecorder()
+	s.scansRetryFailed(w, localReq("POST", "/scans/retry-failed"))
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303; body=%s", w.Code, w.Body)
+	}
+
+	var queued []db.Scan
+	s.DB.Where("id > ? AND status = ?", maxID, db.ScanQueued).Find(&queued)
+	if len(queued) != 1 {
+		t.Fatalf("new queued scans = %d, want exactly 1", len(queued))
+	}
+	if queued[0].SubPath != "" {
+		t.Errorf("retried sub_path = %q, want the repeated-failure tuple (parked is superseded)", queued[0].SubPath)
 	}
 }

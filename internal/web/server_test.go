@@ -4149,17 +4149,19 @@ func TestScansRetryFailed_filtersBySkill(t *testing.T) {
 	s.DB.Create(&a)
 	s.DB.Create(&b)
 
-	mk := func(name string, sk uint) {
+	// Distinct sub_paths keep the two alpha failures in separate tuples, so
+	// both are eligible under the newest-failure-per-tuple dedup.
+	mk := func(name string, sk uint, subPath string) {
 		sc := db.Scan{
 			RepositoryID: repo.ID, Kind: "skill", Status: db.ScanFailed,
 			StatusPriority: db.StatusPriorityFor(db.ScanFailed),
-			SkillID:        &sk, SkillName: name,
+			SkillID:        &sk, SkillName: name, SubPath: subPath,
 		}
 		s.DB.Create(&sc)
 	}
-	mk("alpha", a.ID)
-	mk("alpha", a.ID)
-	mk("bravo", b.ID)
+	mk("alpha", a.ID, "one")
+	mk("alpha", a.ID, "two")
+	mk("bravo", b.ID, "")
 
 	req := httptest.NewRequest("POST", "/scans/retry-failed?skill=alpha", nil)
 	req.Host = testHost
@@ -4307,16 +4309,18 @@ func TestScansRetryFailed_repositoryScopeRedirects(t *testing.T) {
 	s.DB.Create(&rB)
 	skill := db.Skill{Name: "deep-dive", Description: "x", Body: "b", Active: true, Source: "ui", Version: 1}
 	s.DB.Create(&skill)
-	mk := func(repoID uint) {
+	// Distinct sub_paths keep rA's two failures in separate tuples, so both
+	// are eligible under the newest-failure-per-tuple dedup.
+	mk := func(repoID uint, subPath string) {
 		s.DB.Create(&db.Scan{
 			RepositoryID: repoID, Kind: "skill", Status: db.ScanFailed,
 			StatusPriority: db.StatusPriorityFor(db.ScanFailed),
-			SkillID:        &skill.ID, SkillName: "deep-dive",
+			SkillID:        &skill.ID, SkillName: "deep-dive", SubPath: subPath,
 		})
 	}
-	mk(rA.ID)
-	mk(rA.ID)
-	mk(rB.ID)
+	mk(rA.ID, "one")
+	mk(rA.ID, "two")
+	mk(rB.ID, "")
 
 	req := httptest.NewRequest("POST",
 		fmt.Sprintf("/scans/retry-failed?repository=%d", rA.ID), nil)

@@ -222,7 +222,10 @@ func (s *Server) scansRetryFailed(w http.ResponseWriter, r *http.Request) {
 
 	// Skip any failed scan that has a later scan with the same
 	// (repository, skill, sub_path, ref, finding_id) tuple already in
-	// queued/running/done.
+	// queued/running/done, or superseded by a newer failed/paused attempt,
+	// so repeated failures retry only the newest row per tuple. Cancelled is
+	// deliberately absent: a user-cancelled newer run shouldn't block
+	// retrying an older genuine failure.
 	var scans []db.Scan
 	err := q.Select("id, repository_id, skill_id, model, effort, finding_id, sub_path, ref, profile, rescan_mode, diff_base_scan_id, scan_group, backend, status, session_id, resumed_from_scan_id, import_payload").
 		Where(`NOT EXISTS (
@@ -234,7 +237,7 @@ func (s *Server) scansRetryFailed(w http.ResponseWriter, r *http.Request) {
 			  AND COALESCE(n.ref, '') = COALESCE(scans.ref, '')
 			  AND COALESCE(n.finding_id, 0) = COALESCE(scans.finding_id, 0)
 			  AND n.status IN ?
-		)`, []db.ScanStatus{db.ScanQueued, db.ScanRunning, db.ScanDone}).
+		)`, []db.ScanStatus{db.ScanQueued, db.ScanRunning, db.ScanDone, db.ScanFailed, db.ScanPaused}).
 		Find(&scans).Error
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
