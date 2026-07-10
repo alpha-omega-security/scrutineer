@@ -1207,7 +1207,11 @@ type SBOMUpload struct {
 	Raw         []byte
 
 	PackageCount int
-	Packages     []SBOMPackage `gorm:"constraint:OnDelete:CASCADE"`
+	// ImportPending is true after a newly parsed upload and until the operator
+	// confirms repository resolution. False preserves the previous behaviour
+	// for uploads created before the confirmation step was introduced.
+	ImportPending bool          `gorm:"not null;default:false"`
+	Packages      []SBOMPackage `gorm:"constraint:OnDelete:CASCADE"`
 
 	CreatedAt time.Time
 	UpdatedAt time.Time

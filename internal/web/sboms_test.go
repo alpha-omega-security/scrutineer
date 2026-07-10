@@ -71,6 +71,15 @@ func TestSBOMUpload_parsesAndStores(t *testing.T) {
 	if up.PackageCount != 2 || len(up.Packages) != 2 {
 		t.Fatalf("packages = %d (%d rows)", up.PackageCount, len(up.Packages))
 	}
+	if !up.ImportPending {
+		t.Error("new upload should wait for import confirmation")
+	}
+	var repos, scans int64
+	s.DB.Model(&db.Repository{}).Count(&repos)
+	s.DB.Model(&db.Scan{}).Count(&scans)
+	if repos != 0 || scans != 0 {
+		t.Errorf("upload created repos=%d scans=%d before confirmation", repos, scans)
+	}
 	var lodash db.SBOMPackage
 	for _, p := range up.Packages {
 		if p.Name == "lodash" {
@@ -140,6 +149,113 @@ func TestSBOMResolveHandler(t *testing.T) {
 	s.Handler().ServeHTTP(w, r)
 	if w.Code != http.StatusNotFound {
 		t.Errorf("missing upload: status = %d, want 404", w.Code)
+	}
+}
+
+func TestSBOMConfirm_resolvesAfterOperatorConfirmation(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	s.resolveSync = true
+	s.resolvePURL = func(_ context.Context, purl string) string {
+		switch {
+		case strings.Contains(purl, "direct"):
+			return "https://github.com/acme/direct"
+		case strings.Contains(purl, "transitive"):
+			return "https://github.com/acme/transitive"
+		default:
+			return ""
+		}
+	}
+	s.DB.Create(&db.Skill{Name: defaultSkillName, Body: "b", Active: true})
+	up := db.SBOMUpload{Name: "pending", ImportPending: true, Packages: []db.SBOMPackage{
+		{Name: "direct", PURL: "pkg:npm/direct@1", Scope: sbom.ScopeDirect},
+		{Name: "transitive", PURL: "pkg:npm/transitive@1", Scope: sbom.ScopeTransitive},
+	}}
+	s.DB.Create(&up)
+
+	req := localReq("POST", fmt.Sprintf("/sboms/%d/resolve", up.ID))
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("unconfirmed resolve status = %d, want 409", w.Code)
+	}
+	var repos, scans int64
+	s.DB.Model(&db.Repository{}).Count(&repos)
+	s.DB.Model(&db.Scan{}).Count(&scans)
+	if repos != 0 || scans != 0 {
+		t.Fatalf("unconfirmed resolve created repos=%d scans=%d", repos, scans)
+	}
+
+	req = localReq("POST", fmt.Sprintf("/sboms/%d/confirm", up.ID))
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	w = httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("confirm status = %d: %s", w.Code, w.Body)
+	}
+	var confirmed db.SBOMUpload
+	if err := s.DB.Preload("Packages").First(&confirmed, up.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if confirmed.ImportPending {
+		t.Fatal("confirmation did not clear ImportPending")
+	}
+	for _, p := range confirmed.Packages {
+		if p.RepositoryID == nil {
+			t.Fatalf("package %s was not resolved", p.Name)
+		}
+		var count int64
+		s.DB.Model(&db.Scan{}).Where("repository_id = ?", *p.RepositoryID).Count(&count)
+		want := int64(0)
+		if p.Scope == sbom.ScopeDirect {
+			want = 1
+		}
+		if count != want {
+			t.Errorf("%s scans = %d, want %d", p.Name, count, want)
+		}
+	}
+
+	// A second confirmation must not enqueue another direct-dependency scan.
+	req = localReq("POST", fmt.Sprintf("/sboms/%d/confirm", up.ID))
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	w = httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("repeat confirm status = %d", w.Code)
+	}
+	s.DB.Model(&db.Scan{}).Count(&scans)
+	if scans != 1 {
+		t.Errorf("repeat confirmation scans = %d, want 1", scans)
+	}
+}
+
+func TestSBOMShow_pendingImportSummary(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	up := db.SBOMUpload{Name: "pending", PackageCount: 3, ImportPending: true, Packages: []db.SBOMPackage{
+		{Name: "direct", Scope: sbom.ScopeDirect},
+		{Name: "transitive", Scope: sbom.ScopeTransitive},
+		{Name: "unknown"},
+	}}
+	s.DB.Create(&up)
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", fmt.Sprintf("/sboms/%d", up.ID)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body)
+	}
+	body := w.Body.String()
+	for _, want := range []string{
+		"Import 3 packages", "This SBOM contains 3 packages", "1 direct dependencies are eligible for triage scans",
+		"1 transitive dependencies will be linked without scans", "Awaiting import confirmation", "awaiting import",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("pending SBOM page missing %q: %s", want, body)
+		}
+	}
+	if strings.Contains(body, "Re-resolve") {
+		t.Error("pending SBOM should not render the re-resolve action")
 	}
 }
 
