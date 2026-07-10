@@ -2,10 +2,14 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
+	"os/exec"
 	"strconv"
+	"strings"
 	"time"
 
 	"filippo.io/age"
@@ -210,8 +214,13 @@ func (s *Server) apiExportRepoBundle(w http.ResponseWriter, r *http.Request, rep
 		return
 	}
 
+	repositoryURL := bundleRepositoryURL(r.Context(), repo)
+	if repo.IsLocal() && repositoryURL == repo.URL && s.Log != nil {
+		s.Log.Warn("bundle export: local repository has no portable origin; recipient must pass ?repo= on import",
+			"repository_id", repo.ID)
+	}
 	bundle := sharingBundle{
-		Repository:  repo.URL,
+		Repository:  repositoryURL,
 		Tool:        "scrutineer",
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
 	}
@@ -265,6 +274,93 @@ func (s *Server) apiExportRepoBundle(w http.ResponseWriter, r *http.Request, rep
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="findings.bundle.age"`)
 	_, _ = w.Write(ct)
+}
+
+// bundleRepositoryURL returns repository provenance that another scrutineer
+// instance can use. A file:// URL only identifies a path on the exporting
+// host, so for local checkouts prefer their validated HTTPS origin. The
+// receiver then creates a remote Repository row and the normal scan path
+// clones it on first use. Repositories without a usable origin retain their
+// file URL so callers can still supply ?repo= explicitly on import.
+func bundleRepositoryURL(ctx context.Context, repo *db.Repository) string {
+	if repo == nil {
+		return ""
+	}
+	if !repo.IsLocal() {
+		return repo.URL
+	}
+
+	cmd := exec.CommandContext(ctx, "git", "-C", repo.LocalPath(),
+		"config", "--local", "--get", "remote.origin.url")
+	out, err := cmd.Output()
+	if err != nil {
+		return repo.URL
+	}
+	origin, ok := portableGitOrigin(strings.TrimSpace(string(out)))
+	if !ok {
+		return repo.URL
+	}
+	return origin
+}
+
+// sshConvertibleForges is deliberately separate from caseInsensitiveForges:
+// path case-folding does not imply that a host safely maps SSH owner/repo
+// remotes onto the same HTTPS path.
+var sshConvertibleForges = map[string]bool{
+	"github.com":    true,
+	"gitlab.com":    true,
+	"bitbucket.org": true,
+	"codeberg.org":  true,
+}
+
+// portableGitOrigin converts a supported git origin into the HTTPS URL the
+// importer and worker accept. HTTPS origins are normalized through the same
+// parser as repository creation. Common SSH forms are converted only for the
+// public forges whose owner/repo URL semantics we already know. Embedded HTTPS
+// credentials are rejected so a local credential never enters a bundle.
+func portableGitOrigin(origin string) (string, bool) {
+	candidate := origin
+	if !strings.Contains(origin, "://") {
+		userHost, repoPath, ok := strings.Cut(origin, ":")
+		if !ok || strings.Contains(userHost, "/") {
+			return "", false
+		}
+		_, host, ok := strings.Cut(userHost, "@")
+		host = strings.ToLower(host)
+		if !ok || !sshConvertibleForges[host] {
+			return "", false
+		}
+		candidate = "https://" + host + "/" + strings.TrimPrefix(repoPath, "/")
+	} else {
+		parsed, err := url.Parse(origin)
+		if err != nil {
+			return "", false
+		}
+		switch parsed.Scheme {
+		case "https":
+			if parsed.User != nil {
+				return "", false
+			}
+		case "ssh":
+			host := strings.ToLower(parsed.Hostname())
+			if !sshConvertibleForges[host] || (parsed.Port() != "" && parsed.Port() != "22") {
+				return "", false
+			}
+			candidate = "https://" + host + "/" + strings.TrimPrefix(parsed.Path, "/")
+		default:
+			return "", false
+		}
+	}
+
+	parsed, err := url.Parse(candidate)
+	if err != nil || parsed.User != nil {
+		return "", false
+	}
+	input, err := ParseRepoInput(candidate)
+	if err != nil || input.Local {
+		return "", false
+	}
+	return input.CloneURL, true
 }
 
 // encryptBundle wraps plaintext in armored age for the given recipients.

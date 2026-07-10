@@ -312,6 +312,80 @@ func TestImportFindings_skipsRevalidateWhenSkillAbsent(t *testing.T) {
 	}
 }
 
+func TestImportFindings_enqueuesOneMetadataOnboardingRunForExistingHollowRepo(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	metadata := db.Skill{Name: metadataSkillName, OutputFile: "report.json",
+		OutputKind: "repo_metadata", Version: 1, Active: true}
+	s.DB.Create(&metadata)
+	repo := db.Repository{URL: "https://github.com/ruby/rdoc", Name: "rdoc"}
+	s.DB.Create(&repo) // imported before onboarding existed: URL + findings only
+
+	res := ingest.Result{RepoURL: repo.URL, Tool: "scrutineer",
+		Findings: []ingest.Finding{{Title: "imported", Severity: "High", Location: "lib/rdoc.rb:1"}}}
+	if _, err := s.importResult(res, "", false); err != nil {
+		t.Fatal(err)
+	}
+	// Reimport while metadata is queued must not pile up another run.
+	if _, err := s.importResult(res, "", false); err != nil {
+		t.Fatal(err)
+	}
+
+	var scans []db.Scan
+	s.DB.Where("skill_name = ?", metadataSkillName).Find(&scans)
+	if len(scans) != 1 {
+		t.Fatalf("metadata scans = %d, want 1", len(scans))
+	}
+	if scans[0].RepositoryID == 0 || scans[0].FindingID != nil || scans[0].Status != db.ScanQueued {
+		t.Errorf("metadata scan = %+v, want queued repository-scoped onboarding", scans[0])
+	}
+}
+
+func TestImportFindings_existingDoneMetadataIsNotDuplicated(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	metadata := db.Skill{Name: metadataSkillName, OutputFile: "report.json",
+		OutputKind: "repo_metadata", Version: 1, Active: true}
+	s.DB.Create(&metadata)
+	repo := db.Repository{URL: "https://github.com/ruby/uri", Name: "uri"}
+	s.DB.Create(&repo)
+	s.DB.Create(&db.Scan{RepositoryID: repo.ID, Kind: "skill", SkillID: &metadata.ID,
+		SkillName: metadataSkillName, Status: db.ScanDone})
+
+	res := ingest.Result{RepoURL: repo.URL, Tool: "scrutineer",
+		Findings: []ingest.Finding{{Title: "imported", Severity: "Medium"}}}
+	if _, err := s.importResult(res, "", false); err != nil {
+		t.Fatal(err)
+	}
+	var count int64
+	s.DB.Model(&db.Scan{}).Where("repository_id = ? AND skill_name = ?", repo.ID, metadataSkillName).Count(&count)
+	if count != 1 {
+		t.Errorf("metadata scans = %d, want existing completed scan only", count)
+	}
+}
+
+func TestImportFindings_localRepoWithValidPathGetsNoMetadataScan(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	metadata := db.Skill{Name: metadataSkillName, OutputFile: "report.json",
+		OutputKind: "repo_metadata", Version: 1, Active: true}
+	s.DB.Create(&metadata)
+
+	// A local checkout that genuinely exists on this host must import
+	// findings without the remote-only clone/metadata onboarding run.
+	dir := t.TempDir()
+	res := ingest.Result{RepoURL: LocalScheme + dir, Tool: "scrutineer",
+		Findings: []ingest.Finding{{Title: "local", Severity: "High", Location: "main.go:1"}}}
+	if _, err := s.importResult(res, "", false); err != nil {
+		t.Fatal(err)
+	}
+	var count int64
+	s.DB.Model(&db.Scan{}).Where("skill_name = ?", metadataSkillName).Count(&count)
+	if count != 0 {
+		t.Errorf("metadata scans = %d, want 0 for a local repository", count)
+	}
+}
+
 func TestAutoEnqueueRevalidate_onlyHighAndCriticalFromLLMAudits(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
