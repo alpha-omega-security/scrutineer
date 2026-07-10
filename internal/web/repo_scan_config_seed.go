@@ -8,11 +8,11 @@ import (
 	"scrutineer/internal/repoconfig"
 )
 
-// autoSeedRepoScanConfig accepts a threat-model or recon proposal only for an
+// autoSeedRepoScanConfig accepts a threat-model proposal only for an
 // unconfigured root/default-branch repository. The conditional update keeps a
 // concurrent analyst edit authoritative.
 func (s *Server) autoSeedRepoScanConfig(scan *db.Scan) {
-	if scan == nil || scan.Status != db.ScanDone || !scanConfigProposer(scan.SkillName) ||
+	if scan == nil || scan.Status != db.ScanDone || scan.SkillName != threatModelSkillName ||
 		scan.SubPath != "" || scan.Ref != "" || strings.TrimSpace(scan.Report) == "" {
 		return
 	}
@@ -35,8 +35,4 @@ func (s *Server) autoSeedRepoScanConfig(scan *db.Scan) {
 		Update("scan_config", config).Error; err != nil {
 		s.Log.Warn("save scan config proposal", "scan", scan.ID, "err", err)
 	}
-}
-
-func scanConfigProposer(skillName string) bool {
-	return skillName == threatModelSkillName || skillName == reconSkillName
 }

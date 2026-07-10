@@ -104,9 +104,9 @@ func TestBundledSchemas_compileAndAcceptSamples(t *testing.T) {
 		},
 		{
 			"../../skills/recon/schema.json",
-			`{"scan_config":{"focus_areas":[{"name":"XML parser",
+			`{"focus_areas":[{"name":"XML parser",
 			  "surface":"External XML documents supplied by library callers.",
-			  "paths":["lib/xmlparse.c","lib/xmlrole.c"]}]},
+			  "paths":["lib/xmlparse.c","lib/xmlrole.c"]}],
 			  "notes":["Examples and vendored code were excluded."]}`,
 		},
 		{
@@ -171,7 +171,7 @@ func TestBundledSchemas_rejectBadShapes(t *testing.T) {
 		{"../../skills/public-issue/schema.json",
 			`{"upstream":"owner/repo","url":"https://github.com/owner/repo/issues/123"}`, "oneOf"},
 		{"../../skills/threat-model/schema.json", `{"spec_version":2}`, "/spec_version"},
-		{"../../skills/recon/schema.json", `{"scan_config":{"focus_areas":[{"name":"parser","surface":"bytes","paths":[]}]},"notes":[]}`, "/scan_config/focus_areas/0/paths"},
+		{"../../skills/recon/schema.json", `{"focus_areas":[{"name":"parser","surface":"bytes","paths":[]}],"notes":[]}`, "/focus_areas/0/paths"},
 		{"../../skills/vuln-scan/schema.json",
 			`{"findings":[{"id":"F001","title":"Bad confidence","severity":"High",
 			  "confidence":"maybe","cwe":"CWE-22","location":"pkg/archive/extract.go:88","reachability":"reachable",

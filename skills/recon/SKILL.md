@@ -1,6 +1,6 @@
 ---
 name: recon
-description: Map distinct externally reachable input-processing subsystems into repository focus areas for later security audits. This is a short, read-only orientation pass, not a vulnerability scan.
+description: Map distinct externally reachable input-processing subsystems into focus areas for the threat-model skill to carry into later security audits. This is a short, read-only orientation pass, not a vulnerability scan.
 license: MIT
 compatibility: Reads ./src and context.json only. Does not execute project code, install dependencies, contact external services, or report vulnerabilities.
 allowed-tools: Read,Write,Grep,Glob
@@ -60,8 +60,7 @@ For each area:
 
 When `context.json` contains `scrutineer.scan_config.focus_areas`, treat those
 as analyst input. Preserve their intent and do not propose a replacement
-scope: the existing configuration is authoritative and the worker will not
-overwrite it with this report.
+scope: the existing configuration is authoritative.
 
 Do not run builds, tests, package managers, or the project itself. Do not make
 network requests. Do not include candidate vulnerabilities, CVEs, severity
@@ -73,25 +72,25 @@ Write `./report.json` matching `./schema.json`:
 
 ```json
 {
-  "scan_config": {
-    "focus_areas": [
-      {
-        "name": "XML parser",
-        "surface": "External XML documents supplied by library callers.",
-        "paths": ["lib/xmlparse.c", "lib/xmlrole.c"]
-      }
-    ]
-  },
+  "focus_areas": [
+    {
+      "name": "XML parser",
+      "surface": "External XML documents supplied by library callers.",
+      "paths": ["lib/xmlparse.c", "lib/xmlrole.c"]
+    }
+  ],
   "notes": [
     "Examples and vendored code were excluded from the focus map."
   ]
 }
 ```
 
-The worker stores a valid `scan_config` proposal only when the repository does
-not already have analyst-authored scan configuration. Later deep-dives receive
-that config through `context.json` and use the focus areas as their audit map.
+The worker stages this report for the prerequisite `threat-model` skill.
+Threat-model is the sole writer of repository `scan_config`: it carries these
+focus areas into its complete proposal alongside known bugs, attack surface,
+and skip patterns. Later deep-dives receive that complete configuration through
+`context.json` and use the focus areas as their audit map.
 
 If the repository has no source code or no externally reachable input surface,
-write `{"scan_config":{"focus_areas":[]},"notes":["reason"]}`. Do not
+write `{"focus_areas":[],"notes":["reason"]}`. Do not
 invent areas merely to avoid an empty list.

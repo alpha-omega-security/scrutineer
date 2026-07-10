@@ -837,12 +837,12 @@ func TestBundledReconPipelineMetadata(t *testing.T) {
 		t.Errorf("recon allowed tools = %q", recon.AllowedTools)
 	}
 
-	deepDive, err := ParseFile(filepath.Join("..", "..", "skills", "security-deep-dive", "SKILL.md"))
+	threatModel, err := ParseFile(filepath.Join("..", "..", "skills", "threat-model", "SKILL.md"))
 	if err != nil {
-		t.Fatalf("parse security-deep-dive: %v", err)
+		t.Fatalf("parse threat-model: %v", err)
 	}
-	if !slices.Contains(deepDive.Requires, "recon") {
-		t.Errorf("security-deep-dive requires = %v, want recon", deepDive.Requires)
+	if !slices.Contains(threatModel.Requires, "recon") {
+		t.Errorf("threat-model requires = %v, want recon", threatModel.Requires)
 	}
 }
 

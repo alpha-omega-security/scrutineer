@@ -9,7 +9,6 @@ metadata:
   scrutineer.max_turns: 120
   scrutineer.model: max
   scrutineer.requires:
-    - recon
     - threat-model
     - semgrep
     - repo-overview
