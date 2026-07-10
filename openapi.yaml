@@ -1207,6 +1207,7 @@ components:
         started_at:    { type: string, format: date-time, nullable: true }
         finished_at:   { type: string, format: date-time, nullable: true }
         max_turns_hit: { type: boolean, description: True when the scan completed with partial output after hitting the Claude max-turns cap; retry resumes the saved session when available. }
+        refusal_audit_warning: { type: boolean, description: True when a security-deep-dive refusal audit reports declined or skipped analysis. }
         error:         { type: string }
 
     ScanDetail:
@@ -1215,6 +1216,7 @@ components:
         - type: object
           properties:
             report: { type: string, description: Raw output report (may be JSON text). }
+            refusal_audit: { type: string, description: Structured post-report security-deep-dive refusal audit. }
             log:    { type: string }
 
     Maintainer:

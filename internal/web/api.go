@@ -265,6 +265,7 @@ func (s *Server) apiGetScan(w http.ResponseWriter, r *http.Request) {
 	}
 	summary := scanSummary(sc)
 	summary["report"] = sc.Report
+	summary["refusal_audit"] = sc.RefusalAudit
 	summary["log"] = sc.Log
 	writeJSON(w, http.StatusOK, summary)
 }
@@ -492,6 +493,7 @@ func scanSummary(sc db.Scan) map[string]any {
 		"max_turns_hit":        sc.MaxTurnsHit,
 		errorKey:               sc.Error,
 	}
+	m["refusal_audit_warning"] = sc.RefusalAuditWarning
 	if sc.Ref != "" {
 		m["ref"] = sc.Ref
 	}

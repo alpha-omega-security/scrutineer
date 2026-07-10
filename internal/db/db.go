@@ -292,8 +292,15 @@ type Scan struct {
 
 	Prompt string
 	Report string
-	Log    string
-	Error  string
+	// RefusalAudit is the structured follow-up from security-deep-dive after
+	// its primary report. It records analysis the agent declined or only
+	// partially completed, without changing the primary report artifact.
+	RefusalAudit string `gorm:"type:text"`
+	// RefusalAuditWarning is denormalized from RefusalAudit so scan lists can
+	// flag incomplete coverage without parsing JSON while rendering.
+	RefusalAuditWarning bool `gorm:"not null;default:false"`
+	Log                 string
+	Error               string
 	// PausedUntil is set for model-account pauses with a known reset time.
 	// Nil means a manual pause or an account pause without a reported reset.
 	PausedUntil *time.Time `gorm:"index"`

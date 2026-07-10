@@ -94,6 +94,8 @@ One row per skill execution or external import. `skill_name` / `skill_version` p
 | max_turns_hit | boolean | True when the scan is `done` with partial output because Claude hit the configured max-turns cap. Such scans keep their session id so Retry can resume. |
 | prompt | text | Activation prompt sent to claude. The skill body lives in the Skill row, not here. |
 | report | text | The skill's primary output. JSON for parsed kinds, freeform for everything else. On a fix-validation anchor (`baseline_scan_id` set) it is replaced, once the scan finalises, by the JSON validation report: the resolved/surviving/new fingerprint diff against the baseline plus the finding-scoped verify verdicts. |
+| refusal_audit | text | Structured post-report `security-deep-dive` follow-up listing analysis the agent declined or skipped. Kept separate from the primary report. |
+| refusal_audit_warning | boolean | Denormalized flag set when `refusal_audit` reports a refusal or one or more skipped paths; used to flag incomplete coverage in scan lists. |
 | log | text | Line-by-line transcript of the scan. Streamed to the UI via SSE. |
 | error | text | Error message if the scan failed. |
 | findings_count | integer | Denormalised count of findings parsed from the report. |

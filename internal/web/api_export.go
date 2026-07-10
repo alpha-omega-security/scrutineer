@@ -548,7 +548,7 @@ func findingExport(f db.Finding) map[string]any {
 // running scan's auth credential and must never leak through an
 // unauthenticated channel.
 func scanExport(sc db.Scan) map[string]any {
-	return map[string]any{
+	out := map[string]any{
 		"id":                 sc.ID,
 		"repository_id":      sc.RepositoryID,
 		"kind":               sc.Kind,
@@ -577,4 +577,7 @@ func scanExport(sc db.Scan) map[string]any {
 		"created_at":         sc.CreatedAt,
 		"updated_at":         sc.UpdatedAt,
 	}
+	out["refusal_audit"] = sc.RefusalAudit
+	out["refusal_audit_warning"] = sc.RefusalAuditWarning
+	return out
 }

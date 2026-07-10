@@ -20,6 +20,9 @@ const (
 	skillSchemaFile           = "schema.json"
 	schemaRepairMaxTurns      = 4
 	schemaRepairReportMaxSize = 4000
+	refusalAuditSkillName     = "security-deep-dive"
+	refusalAuditOutputFile    = "refusal_audit.json"
+	refusalAuditMaxTurns      = 3
 )
 
 // skillContext is the JSON document scrutineer writes to ./context.json in
@@ -204,6 +207,7 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 		if err != nil {
 			return report, err
 		}
+		w.auditSkillRefusals(ctx, &skill, scan, sj, emit)
 	}
 	return report, nil
 }

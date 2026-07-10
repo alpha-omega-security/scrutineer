@@ -10,6 +10,7 @@
     {{if .SkillName}}{{if .SkillID}}<a href="/skills/{{.SkillID}}">{{.SkillName}}</a>{{else}}{{.SkillName}}{{end}}{{else}}{{.Kind}}{{end}} / scan #{{.ID}}
     {{template "status-badge" (status .Status)}}
     {{if .MaxTurnsHit}}<span class="badge-outline"><i data-lucide="timer-off"></i> max turns</span>{{end}}
+    {{if .RefusalAuditWarning}}<span class="badge-outline"><i data-lucide="triangle-alert"></i> analysis incomplete</span>{{end}}
   </h2>
   {{if and (eq .Kind "skill") .SkillID}}
     <div class="flex items-center gap-2">
@@ -129,6 +130,13 @@
   </div>
 {{end}}
 
+{{if .RefusalAuditWarning}}
+  <div class="alert mb-6">
+    <i data-lucide="triangle-alert"></i>
+    <section>The deep-dive reported refused or skipped analysis. Review the refusal audit before treating coverage as complete.</section>
+  </div>
+{{end}}
+
 {{$live := and (not .Status.Terminal) (ne (status .Status) "paused")}}
 {{$default := 1}}{{if $live}}{{$default = 2}}{{end}}
 <div class="tabs w-full" id="scan-tabs">
@@ -191,6 +199,13 @@
   <div role="tabpanel" id="p3" aria-labelledby="t3" hidden>
     <pre class="log" tabindex="0" role="region" aria-label="Scan prompt">{{.Prompt}}</pre>
   </div>
+  {{end}}
+
+  {{if .RefusalAudit}}
+  <details class="mt-4">
+    <summary class="cursor-pointer text-sm text-muted-foreground">Refusal audit</summary>
+    <pre class="log mt-2" tabindex="0" role="region" aria-label="Refusal audit JSON">{{prettyjson .RefusalAudit}}</pre>
+  </details>
   {{end}}
 </div>
 {{end}}
