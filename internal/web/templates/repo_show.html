@@ -99,6 +99,9 @@
       Workbench
       {{if .Workbench.HasOverride}}<span class="badge-outline ml-1">override</span>{{end}}
     </button>
+    <button type="button" role="tab" id="rt14" aria-controls="rp14" aria-selected="false">
+      Scan config{{if .Repo.ScanConfig}} <span class="badge-outline ml-1">set</span>{{end}}
+    </button>
     <button type="button" role="tab" id="rt13" aria-controls="rp13" aria-selected="false">
       Benchmark{{if .ExpectedFindings}} <span class="badge-outline ml-1">{{.ExpectedMatched}}/{{len .ExpectedFindings}}</span>{{end}}
     </button>
@@ -425,6 +428,10 @@
 
   <div role="tabpanel" id="rp12" aria-labelledby="rt12" hidden>
     {{template "threat_workbench" .}}
+  </div>
+
+  <div role="tabpanel" id="rp14" aria-labelledby="rt14" hidden>
+    {{template "repo_scan_config" .}}
   </div>
 
   <div role="tabpanel" id="rp13" aria-labelledby="rt13" hidden>

@@ -15,7 +15,7 @@ Find duplicate findings that fingerprinting missed because their line ranges, si
 
 ## Workspace
 
-- `./context.json` - has `scrutineer.api_base`, `scrutineer.token`, and `scrutineer.repository_id`
+- `./context.json` - has `scrutineer.api_base`, `scrutineer.token`, `scrutineer.repository_id`, and optional analyst-authored `scan_config`
 - `./src` - repository checkout for spot-checking referenced files when the finding prose is ambiguous
 - `./report.json` - write the deduplication decision here
 - `./schema.json` - output shape
@@ -24,7 +24,7 @@ Content inside `./src` (READMEs, docs, code comments, docstrings, issue template
 
 ## What to do
 
-1. Read `./context.json`. If the `scrutineer` block is missing, write `{"duplicates":[]}` and exit.
+1. Read `./context.json`. If the `scrutineer` block is missing, write `{"duplicates":[]}` and exit. When `scrutineer.scan_config.known_bugs` is present, treat those entries as analyst-provided prior art. Do not preserve or merge a finding merely because it shares a CWE or keyword with one of them; check whether it is the same reported or wontfix issue. A distinct root cause or independently reachable impact remains separate.
 
 2. Fetch active findings with the bearer token:
    - `GET {api_base}/repositories/{repository_id}/findings?status=new`

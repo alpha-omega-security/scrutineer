@@ -24,7 +24,7 @@ The audit has two phases. Phase 1 produces an inventory of every sink in the cod
 
 Workspace layout:
 - `./src` — the cloned repository
-- `./context.json` — repo identity plus a `scrutineer` block with `api_base`, `token`, `repository_id`. If `scrutineer.scan_subpath` is set, scope every inventory, trace, and validation step to `./src/{scan_subpath}` only — do not reach outside that sub-folder for code analysis, and treat the sub-folder as the project root for all relative locations in the report. Other repositories' concerns (packages, advisories, maintainers) remain repo-wide. If prior scans or ecosystem prefetches of this repo have run, their results are available at the API documented below; use them instead of re-fetching from upstream.
+- `./context.json` — repo identity plus a `scrutineer` block with `api_base`, `token`, `repository_id`, and optional analyst-authored `scan_config`. If `scrutineer.scan_subpath` is set, scope every inventory, trace, and validation step to `./src/{scan_subpath}` only — do not reach outside that sub-folder for code analysis, and treat the sub-folder as the project root for all relative locations in the report. Other repositories' concerns (packages, advisories, maintainers) remain repo-wide. If prior scans or ecosystem prefetches of this repo have run, their results are available at the API documented below; use them instead of re-fetching from upstream.
 - `./threat_model.json` — optional. When present, an operator-supplied threat model that overrides the API-fetched one (see Phase 1).
 - Diff rescans add `scrutineer.rescan` to `context.json` plus `./diff.patch`, `./changed_files.json`, and, when available, `./old_threat_model.json`.
 - `./report.json` — write your final report here
@@ -53,6 +53,14 @@ Inventory only sinks that are new, modified, or whose reachability/security boun
 Do not mark untouched historical findings as gone just because they are outside the diff. Use `findings: []` only to mean "no new or materially changed findings in this diff." Put ruled-out entries in the report for changed sinks you actually inspected; do not fill the ruled-out list with old inventory from untouched code.
 
 ## Phase 1: Inventory
+
+If `scrutineer.scan_config` is present, use its `attack_surface` as the
+operator's ground truth when naming trust boundaries. Start the inventory with
+each listed `focus_areas` path and surface, then expand only when the code
+reveals a distinct boundary. Treat `known_bugs` as prior art: do not file a
+known, wontfix issue again unless the code demonstrates a distinct root cause
+or an independently reachable impact. The worker has already removed paths in
+`scan_config.skip` from `./src`.
 
 If `./threat_model.json` exists in the workdir, parse it and use it as the threat model; do not fetch one from the API. The operator placed it there to test how this audit behaves under an edited model, so the file takes precedence even if a `threat-model` scan has already run. Otherwise fetch the threat-model scan: `GET {api_base}/repositories/{repository_id}/scans?skill=threat-model&status=done`, take the most recent id, then `GET {api_base}/scans/{id}` and parse the `report` field as JSON. Either way, if you get one it already holds the trust map: `components` and `out_of_scope` say which code is in the model, `adversaries` names the actors, `trust_boundaries` describes the line per component, and `entry_points` is the per-parameter table Step 2 looks up. Fill this report's `boundaries[]` from those fields instead of deriving from scratch — one row per actor (callers and adversaries), with `trusted` set from whether the actor appears in `adversaries.in_scope` and `source` set from the threat model's `provenance`/`source` — then skip to listing sinks. Treat threat-model entries with `provenance: "inferred"` as working hypotheses you may overturn during Phase 2; `"documented"` entries cite a file:line you can re-read. An empty list or a non-200 means the threat-model skill has not run on this repository yet, in which case derive the boundaries yourself as below.
 

@@ -103,6 +103,11 @@ type Repository struct {
 	// workbench tab; empty means no override.
 	ThreatModel string `gorm:"type:text"`
 
+	// ScanConfig is analyst-authored YAML that narrows and explains the
+	// repository's security review. The worker validates and stages it as
+	// scrutineer.scan_config in every skill workspace.
+	ScanConfig string `gorm:"type:text"`
+
 	CreatedAt time.Time
 	UpdatedAt time.Time
 

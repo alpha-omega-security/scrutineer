@@ -303,6 +303,39 @@ func TestStageContext_writesRepoFacts(t *testing.T) {
 	}
 }
 
+func TestStageContext_includesRepositoryScanConfig(t *testing.T) {
+	dir := t.TempDir()
+	repo := &db.Repository{
+		URL:  "https://example.com/config",
+		Name: "config",
+		ScanConfig: `focus_areas:
+  - name: parser
+    paths: [src/parse/**]
+    surface: accepts arbitrary bytes
+known_bugs: [GHSA-xxxx-yyyy]
+attack_surface: stdin is attacker controlled
+skip: [tests/**]`,
+	}
+	scan := &db.Scan{ID: 7, RepositoryID: 3, APIToken: "tok"}
+	if err := stageContext(dir, "http://127.0.0.1:8080/api", "", "", scan, repo); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "context.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got skillContext
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Scrutineer.ScanConfig == nil || got.Scrutineer.ScanConfig.FocusAreas[0].Name != "parser" {
+		t.Fatalf("scan_config = %+v", got.Scrutineer.ScanConfig)
+	}
+	if got.Scrutineer.ScanConfig.Skip[0] != "tests/**" || got.Scrutineer.ScanConfig.KnownBugs[0] != "GHSA-xxxx-yyyy" {
+		t.Fatalf("scan_config = %+v", got.Scrutineer.ScanConfig)
+	}
+}
+
 func TestStageImportPayload(t *testing.T) {
 	dir := t.TempDir()
 	if err := stageImportPayload(dir, []byte("scanner output")); err != nil {
@@ -641,6 +674,22 @@ func TestApplyPathFilters_ignorePathsCumulative(t *testing.T) {
 	}
 	assertExists(t, src, "src/foo.go", "src/bar.go")
 	assertGone(t, src, "src/foo_test.go")
+}
+
+func TestApplyRepositoryPathFilters_layersRepositorySkip(t *testing.T) {
+	work := t.TempDir()
+	src := filepath.Join(work, "src")
+	writeFiles(t, src, map[string]string{
+		"src/main.go":    "x",
+		"tests/main.go":  "x",
+		"docs/readme.md": "x",
+	})
+	skill := &db.Skill{Paths: "src/**\ntests/**\ndocs/**"}
+	if err := applyRepositoryPathFilters(work, skill, "skip: [tests/**]", func(Event) {}); err != nil {
+		t.Fatalf("applyRepositoryPathFilters: %v", err)
+	}
+	assertExists(t, src, "src/main.go", "docs/readme.md")
+	assertGone(t, src, "tests/main.go")
 }
 
 func TestApplyPathFilters_gitPreserved(t *testing.T) {

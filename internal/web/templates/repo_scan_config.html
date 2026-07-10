@@ -1,0 +1,48 @@
+{{define "repo_scan_config"}}
+<p class="text-sm text-muted-foreground mb-4 max-w-3xl">
+  Repository-specific security guidance is staged in every skill workspace as
+  <code>scrutineer.scan_config</code>. <code>skip</code> patterns also remove
+  matching files before a skill runs.
+</p>
+
+<form method="post" action="/repositories/{{.Repo.ID}}/scan-config" class="form grid gap-3 max-w-4xl">
+  <textarea name="scan_config" rows="20" spellcheck="false"
+            class="input w-full font-mono text-xs"
+            placeholder="focus_areas:
+  - name: parser
+    paths: [src/parse/**]
+    surface: accepts arbitrary bytes from the network
+known_bugs:
+  - GHSA-xxxx-yyyy
+attack_surface: |
+  Single-tenant CLI. Config files are operator-trusted.
+skip:
+  - tests/**">{{.Repo.ScanConfig}}</textarea>
+  <div class="flex items-center gap-2">
+    <button type="submit" class="btn"><i data-lucide="save"></i> Save</button>
+    {{if .Repo.ScanConfig}}
+      <button type="submit" class="btn-outline"
+              formaction="/repositories/{{.Repo.ID}}/scan-config/clear"
+              formnovalidate
+              hx-confirm="Clear this repository's scan config? Future skills will no longer receive it.">
+        <i data-lucide="eraser"></i> Clear
+      </button>
+    {{end}}
+  </div>
+</form>
+
+<details class="mt-4 max-w-4xl">
+  <summary class="text-sm text-muted-foreground cursor-pointer hover:underline">Config format</summary>
+  <pre class="text-xs mt-2 overflow-x-auto"><code>focus_areas:
+  - name: parser
+    paths: [src/parse/**]
+    surface: accepts arbitrary bytes from network
+known_bugs:
+  - GHSA-xxxx-yyyy
+  - null deref in foo() with empty input, wontfix per #432
+attack_surface: &gt;
+  Single-tenant CLI tool. Config files are operator-trusted.
+skip:
+  - tests/**</code></pre>
+</details>
+{{end}}

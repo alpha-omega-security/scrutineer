@@ -18,7 +18,7 @@ You are running headless with no maintainer to consult. Every claim you write is
 ## Workspace
 
 - `./src` is the cloned repository.
-- `./context.json` has `repository.url`, `repository.full_name`, and a `scrutineer` block with `api_base`, `token`, `repository_id`. If `scrutineer.scan_subpath` is set, scope the model to that subtree and say so in the header.
+- `./context.json` has `repository.url`, `repository.full_name`, and a `scrutineer` block with `api_base`, `token`, `repository_id`, and optional analyst-authored `scan_config`. If `scrutineer.scan_subpath` is set, scope the model to that subtree and say so in the header.
 - Diff rescans add `scrutineer.rescan` to `context.json` plus `./diff.patch`, `./changed_files.json`, and, when available, `./old_threat_model.json`.
 - `./report.json` is the structured contract; write it to match `./schema.json`. This is the only file the worker keeps.
 
@@ -42,6 +42,17 @@ Diff mode is still a threat-model run, not a vulnerability scan. Do not report c
 ## Orient
 
 Spend minutes, not hours. You are forming hypotheses, not findings.
+
+When `scrutineer.scan_config` is present, its `attack_surface` is operator
+ground truth: preserve it in the model instead of inferring a contradictory
+scope. Use `focus_areas` to seed component families and entry points, record
+`known_bugs` as maintainer-provided prior art or known non-findings when their
+text supports that conclusion, and do not inspect paths removed by `skip`.
+When the block is absent, derive these inputs normally from the repository and
+include a proposed `scan_config` object in `report.json` with the focus areas,
+known bugs, attack-surface statement, and skip paths worth carrying into later
+scans. Scrutineer saves a valid proposal only when the analyst has not already
+configured the repository.
 
 Read `README*`, `SECURITY*`, `THREAT*`, anything under `docs/` or `doc/` with security in the name, header-file commentary, `FAQ`, `NOTES`, `CAVEATS`, `LIMITATIONS`, `CHANGELOG` entries that explain why behaviour is the way it is. Search the issue tracker references in the repo (issue numbers in comments and commit messages) for "wontfix", "by design", "not a bug", "out of scope", "won't fix". These are maintainer positions already on record; they are `documented` sources, the highest authority you have. A claim you find here is not `inferred` even if you would have guessed the same thing.
 

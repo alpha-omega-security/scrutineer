@@ -159,6 +159,7 @@ func parseFindingIDs(r *http.Request) ([]uint, error) {
 // not matter; autoEnqueueFindingDedup already skips anchor scans.
 func (s *Server) onScanFinalized(scan *db.Scan) {
 	s.autoUpdateThreatModel(scan)
+	s.autoSeedRepoScanConfig(scan)
 	s.autoComputeFixValidation(scan)
 	s.autoEnqueueFindingDedup(scan)
 }

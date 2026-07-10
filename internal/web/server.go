@@ -345,6 +345,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /repositories/{id}/threat-model", s.repoThreatModelSave)
 	mux.HandleFunc("POST /repositories/{id}/threat-model/run", s.repoThreatModelRun)
 	mux.HandleFunc("POST /repositories/{id}/threat-model/clear", s.repoThreatModelClear)
+	mux.HandleFunc("POST /repositories/{id}/scan-config", s.repoScanConfigSave)
+	mux.HandleFunc("POST /repositories/{id}/scan-config/clear", s.repoScanConfigClear)
 	mux.HandleFunc("GET /scans", s.jobs)
 	mux.HandleFunc("GET /orgs", s.orgsList)
 	mux.HandleFunc("GET /orgs/{login}", s.orgShow)
