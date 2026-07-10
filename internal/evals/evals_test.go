@@ -38,8 +38,12 @@ fixture: fixtures/x
 skill: security-deep-dive
 should_find:
   - finding: required by default
+    evidence_contains:
+      - buildQuery
   - finding: optional miss
     required: false
+must_not_contain:
+  - Rails::ActiveRecord
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -52,6 +56,12 @@ should_find:
 	}
 	if sc.ShouldFind[1].Required {
 		t.Fatal("explicit required:false should stay optional")
+	}
+	if got := sc.ShouldFind[0].Evidence; len(got) != 1 || got[0] != "buildQuery" {
+		t.Fatalf("evidence_contains = %#v, want [buildQuery]", got)
+	}
+	if got := sc.MustNotContain; len(got) != 1 || got[0] != "Rails::ActiveRecord" {
+		t.Fatalf("must_not_contain = %#v, want [Rails::ActiveRecord]", got)
 	}
 }
 
@@ -116,6 +126,30 @@ func TestScenarioValidate(t *testing.T) {
 				ShouldNotFind: []Assertion{{}},
 			},
 		},
+		{
+			name: "blank evidence term",
+			sc: Scenario{
+				Path:    "case.yaml",
+				Given:   "x",
+				Fixture: "fixtures/x",
+				Skill:   "security-deep-dive",
+				ShouldFind: []Assertion{{
+					Finding:  "x",
+					Evidence: []string{""},
+				}},
+			},
+		},
+		{
+			name: "blank must_not_contain term",
+			sc: Scenario{
+				Path:           "case.yaml",
+				Given:          "x",
+				Fixture:        "fixtures/x",
+				Skill:          "security-deep-dive",
+				ShouldFind:     []Assertion{{Finding: "x"}},
+				MustNotContain: []string{""},
+			},
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -126,6 +160,36 @@ func TestScenarioValidate(t *testing.T) {
 	}
 }
 
+func TestScenarioValidateAllowsMustNotContainOnly(t *testing.T) {
+	sc := Scenario{
+		Path:           "case.yaml",
+		Given:          "x",
+		Fixture:        "fixtures/x",
+		Skill:          "security-deep-dive",
+		MustNotContain: []string{"Rails::ActiveRecord"},
+	}
+	if err := sc.validate(); err != nil {
+		t.Fatalf("validate() = %v, want nil", err)
+	}
+}
+
+func TestScenarioValidateNamesInvalidAssertion(t *testing.T) {
+	sc := Scenario{
+		Path:    "case.yaml",
+		Given:   "x",
+		Fixture: "fixtures/x",
+		Skill:   "security-deep-dive",
+		ShouldFind: []Assertion{{
+			Finding:  "SQL injection",
+			Evidence: []string{""},
+		}},
+	}
+	err := sc.validate()
+	if err == nil || !strings.Contains(err.Error(), "should_find[0] (SQL injection)") {
+		t.Fatalf("validate() = %v, want assertion index and label", err)
+	}
+}
+
 func TestHeuristicJudge(t *testing.T) {
 	sc := Scenario{
 		ShouldFind: []Assertion{{
@@ -133,11 +197,12 @@ func TestHeuristicJudge(t *testing.T) {
 			Severity: "High",
 			CWE:      "CWE-89",
 			Path:     "app.py",
+			Evidence: []string{"buildQuery", "username parameter"},
 			Required: true,
 		}},
 		ShouldNotFind: []Assertion{{Finding: "unused import"}},
 	}
-	report := `{"findings":[{"title":"SQL injection in build_query","severity":"High","cwe":"CWE-89","location":"app.py:8"}]}`
+	report := `{"findings":[{"title":"SQL injection in buildQuery","severity":"High","cwe":"CWE-89","location":"app.py:8","trace":"The username parameter reaches buildQuery."}]}`
 	got, err := (HeuristicJudge{}).Judge(sc, report)
 	if err != nil {
 		t.Fatal(err)
@@ -165,6 +230,9 @@ func TestAssertionMatchesFinding(t *testing.T) {
 		{name: "severity mismatch", a: Assertion{Severity: "Low"}, want: false},
 		{name: "cwe mismatch", a: Assertion{CWE: "CWE-78"}, want: false},
 		{name: "path mismatch", a: Assertion{Path: "other.py"}, want: false},
+		{name: "evidence match", a: Assertion{Evidence: []string{"buildQuery"}}, want: true},
+		{name: "evidence mismatch", a: Assertion{Evidence: []string{"missing function"}}, want: false},
+		{name: "CWE is not evidence", a: Assertion{Evidence: []string{"CWE-89"}}, want: false},
 		{
 			name: "path avoids file prefix false positive",
 			a:    Assertion{Path: "app.py"},
@@ -188,6 +256,27 @@ func TestAssertionMatchesFinding(t *testing.T) {
 				t.Fatalf("assertionMatchesFinding() = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestHeuristicJudgeMustNotContain(t *testing.T) {
+	sc := Scenario{MustNotContain: []string{"Rails::ActiveRecord", "ghost.py"}}
+	passingReport := `{"findings":[{"title":"SQL injection","location":"app.py:7"}]}`
+	got, err := (HeuristicJudge{}).Judge(sc, passingReport)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || !got[0].Matched || !got[1].Matched {
+		t.Fatalf("must_not_contain should pass: %+v", got)
+	}
+
+	failingReport := `{"findings":[],"summary":"Rails::ActiveRecord is in scope"}`
+	got, err = (HeuristicJudge{}).Judge(sc, failingReport)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[0].Matched || !strings.Contains(got[0].Reason, "unexpectedly contains") {
+		t.Fatalf("must_not_contain should fail: %+v", got[0])
 	}
 }
 
@@ -250,6 +339,27 @@ func TestRunnerRejectsSchemaInvalidReport(t *testing.T) {
 	_, err = r.RunScenario(context.Background(), sc)
 	if err == nil || !strings.Contains(err.Error(), "failed schema validation") {
 		t.Fatalf("RunScenario error = %v, want schema validation failure", err)
+	}
+}
+
+func TestRunnerCountsMustNotContainFailure(t *testing.T) {
+	sc, err := LoadScenario("../../evals/security-deep-dive-sqli.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sc.MustNotContain = []string{"username parameter"}
+	r := Runner{
+		Runner:     fakeSkillRunner{report: validDeepDiveReport()},
+		SkillsRoot: "../../skills",
+		EvalsRoot:  "../../evals",
+		WorkRoot:   t.TempDir(),
+	}
+	res, err := r.RunScenario(context.Background(), sc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Unexpected != 1 {
+		t.Fatalf("unexpected = %d, want 1: %+v", res.Unexpected, res.Matches)
 	}
 }
 

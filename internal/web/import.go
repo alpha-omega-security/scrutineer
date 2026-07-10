@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -139,6 +140,7 @@ func (s *Server) importFallback(w http.ResponseWriter, r *http.Request, body []b
 	}
 	s.Log.Info("import: routed unrecognised payload to ingest skill",
 		"repo", repo.URL, "scan", scanID, "bytes", len(body))
+	s.enqueueImportedRepoMetadata(context.Background(), repo)
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"format":        "unrecognised",
 		"repository_id": repo.ID,
@@ -155,6 +157,18 @@ func (s *Server) ensureImportRepo(repoURL string) (db.Repository, error) {
 	input, err := ParseRepoInput(repoURL)
 	if err != nil {
 		return db.Repository{}, fmt.Errorf("repository %q: %w", repoURL, err)
+	}
+	if input.Local {
+		path := strings.TrimPrefix(input.CloneURL, LocalScheme)
+		info, statErr := os.Stat(path)
+		if statErr != nil {
+			return db.Repository{}, fmt.Errorf(
+				"repository %q is a sender-local path unavailable on this host; pass ?repo=https://forge/owner/repo to supply a cloneable repository: %w",
+				repoURL, statErr)
+		}
+		if !info.IsDir() {
+			return db.Repository{}, fmt.Errorf("repository %q local path is not a directory", repoURL)
+		}
 	}
 	repo := db.Repository{
 		URL:     input.CloneURL,
@@ -209,6 +223,7 @@ func (s *Server) importResult(res ingest.Result, repoOverride string, revalidate
 	if err != nil {
 		return nil, err
 	}
+	s.enqueueImportedRepoMetadata(context.Background(), repo)
 	// Imported findings carry an external tool's unvalidated severity
 	// claim, so revalidate runs over every newly-imported finding
 	// regardless of severity (not just High/Critical, as it does for
@@ -241,6 +256,38 @@ func (s *Server) importResult(res ingest.Result, repoOverride string, revalidate
 		"observed":      observed,
 		"finding_ids":   ids,
 	}, nil
+}
+
+const metadataSkillName = "metadata"
+
+// enqueueImportedRepoMetadata gives a repository created by a findings import
+// the same minimum viable onboarding as a repository added through the UI: one
+// repository-scoped metadata run. That run populates the otherwise-empty row
+// and, through the worker's normal remote-source path, creates the clone cache
+// without requiring a manual finding action. Existing hollow rows are repaired
+// on reimport. A completed, queued, running, or paused metadata run suppresses a
+// duplicate; failed and cancelled runs may be retried by reimporting.
+//
+// Metadata is best-effort. A deployment without the skill still imports the
+// findings, and an enqueue failure is logged without rolling back durable data.
+func (s *Server) enqueueImportedRepoMetadata(ctx context.Context, repo db.Repository) {
+	if repo.IsLocal() {
+		return
+	}
+	var skill db.Skill
+	if err := s.DB.Where("name = ? AND active = ?", metadataSkillName, true).First(&skill).Error; err != nil {
+		return
+	}
+	var existing int64
+	if err := s.DB.Model(&db.Scan{}).
+		Where("repository_id = ? AND skill_name = ? AND status IN ?", repo.ID, metadataSkillName,
+			[]db.ScanStatus{db.ScanQueued, db.ScanRunning, db.ScanPaused, db.ScanDone}).
+		Count(&existing).Error; err != nil || existing > 0 {
+		return
+	}
+	if _, err := s.enqueueSkillWith(ctx, repo.ID, skill.ID, ScanOpts{}); err != nil {
+		s.Log.Warn("import: enqueue repository metadata", "repo", repo.ID, "err", err)
+	}
 }
 
 const importBatchSize = 50

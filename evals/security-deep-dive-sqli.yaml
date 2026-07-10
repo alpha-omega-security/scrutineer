@@ -6,7 +6,11 @@ should_find:
     severity: High
     cwe: CWE-89
     path: app.py
+    evidence_contains:
+      - buildQuery
     required: true
 should_not_find:
   - finding: unused import
     path: app.py
+must_not_contain:
+  - Rails::ActiveRecord

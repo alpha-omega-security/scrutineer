@@ -3,10 +3,12 @@ package web
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os/exec"
 	"strconv"
 	"strings"
 	"testing"
@@ -434,6 +436,141 @@ func TestExportRepoFindingsBundle(t *testing.T) {
 	}
 	if len(bundle.Findings) != 2 {
 		t.Fatalf("got %d findings, want 2", len(bundle.Findings))
+	}
+}
+
+func initGitRepoWithOrigin(t *testing.T, origin string) string {
+	t.Helper()
+	dir := t.TempDir()
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	run("init", "--quiet")
+	if origin != "" {
+		run("remote", "add", "origin", origin)
+	}
+	return dir
+}
+
+func TestExportRepoFindingsBundle_localCheckoutUsesHTTPSOrigin(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	dir := initGitRepoWithOrigin(t, "https://github.com/ruby/racc.git")
+	repo := db.Repository{URL: LocalScheme + dir, Name: "racc"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone,
+		SkillName: "security-deep-dive", Commit: "abc123"}
+	s.DB.Create(&scan)
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repo.ID,
+		Title: "local finding", Severity: sevHigh})
+
+	r := httptest.NewRequest("GET", "/api/v1/repositories/"+
+		strconv.FormatUint(uint64(repo.ID), 10)+"/findings?format=bundle", nil)
+	r.Host = testHost
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+
+	var bundle sharingBundle
+	if err := json.Unmarshal(w.Body.Bytes(), &bundle); err != nil {
+		t.Fatal(err)
+	}
+	if bundle.Repository != "https://github.com/ruby/racc" {
+		t.Errorf("repository = %q, want portable HTTPS origin", bundle.Repository)
+	}
+
+	// Importing the bundle must create a remote row. The worker's normal
+	// remote-source path will clone it when verify (or any skill) first runs.
+	importReq := httptest.NewRequest("POST", "/api/v1/import?revalidate=false",
+		strings.NewReader(w.Body.String()))
+	importReq.Host = testHost
+	importW := httptest.NewRecorder()
+	s.Handler().ServeHTTP(importW, importReq)
+	if importW.Code != http.StatusCreated {
+		t.Fatalf("import status %d: %s", importW.Code, importW.Body)
+	}
+	var imported db.Repository
+	if err := s.DB.Where("url = ?", "https://github.com/ruby/racc").First(&imported).Error; err != nil {
+		t.Fatalf("portable repository not created: %v", err)
+	}
+	if imported.IsLocal() {
+		t.Error("imported repository is local; verification would not clone it")
+	}
+}
+
+func TestBundleRepositoryURL_localCheckoutWithoutPortableOriginFallsBack(t *testing.T) {
+	dir := initGitRepoWithOrigin(t, "")
+	repo := db.Repository{URL: LocalScheme + dir, Name: "local"}
+	if got := bundleRepositoryURL(context.Background(), &repo); got != repo.URL {
+		t.Errorf("bundleRepositoryURL = %q, want local fallback %q", got, repo.URL)
+	}
+}
+
+func TestExportRepoFindingsBundle_credentialedOriginDoesNotLeak(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	const secret = "ghp_SECRET"
+	dir := initGitRepoWithOrigin(t, "https://x-access-token:"+secret+"@github.com/o/r.git")
+	repo := db.Repository{URL: LocalScheme + dir, Name: "r"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone,
+		SkillName: "security-deep-dive", Commit: "abc123"}
+	s.DB.Create(&scan)
+	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repo.ID,
+		Title: "credential guard", Severity: sevHigh})
+
+	r := httptest.NewRequest("GET", "/api/v1/repositories/"+
+		strconv.FormatUint(uint64(repo.ID), 10)+"/findings?format=bundle", nil)
+	r.Host = testHost
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	if strings.Contains(w.Body.String(), secret) || strings.Contains(w.Body.String(), "x-access-token") {
+		t.Fatalf("credentialed origin leaked into bundle: %s", w.Body)
+	}
+	var bundle sharingBundle
+	if err := json.Unmarshal(w.Body.Bytes(), &bundle); err != nil {
+		t.Fatal(err)
+	}
+	if bundle.Repository != repo.URL {
+		t.Errorf("repository = %q, want safe fallback %q", bundle.Repository, repo.URL)
+	}
+}
+
+func TestPortableGitOrigin(t *testing.T) {
+	tests := []struct {
+		name   string
+		origin string
+		want   string
+		ok     bool
+	}{
+		{name: "https", origin: "https://github.com/Ruby/Racc.git", want: "https://github.com/ruby/racc", ok: true},
+		{name: "scp ssh", origin: "git@github.com:Ruby/Racc.git", want: "https://github.com/ruby/racc", ok: true},
+		{name: "ssh URL", origin: "ssh://git@codeberg.org/Owner/Repo.git", want: "https://codeberg.org/owner/repo", ok: true},
+		{name: "ssh URL port 22", origin: "ssh://git@gitlab.com:22/Owner/Repo.git", want: "https://gitlab.com/owner/repo", ok: true},
+		{name: "credentialed https", origin: "https://token:secret@github.com/o/r.git"},
+		{name: "unknown ssh forge", origin: "git@git.example.com:o/r.git"},
+		{name: "nonstandard ssh port", origin: "ssh://git@github.com:2222/o/r.git"},
+		{name: "git protocol", origin: "git://github.com/o/r.git"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := portableGitOrigin(tc.origin)
+			if got != tc.want || ok != tc.ok {
+				t.Errorf("portableGitOrigin(%q) = (%q, %v), want (%q, %v)",
+					tc.origin, got, ok, tc.want, tc.ok)
+			}
+		})
 	}
 }
 

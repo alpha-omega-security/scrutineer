@@ -11,8 +11,9 @@ import (
 )
 
 const (
-	assertionShouldFind    = "should_find"
-	assertionShouldNotFind = "should_not_find"
+	assertionShouldFind     = "should_find"
+	assertionShouldNotFind  = "should_not_find"
+	assertionMustNotContain = "must_not_contain"
 )
 
 // Judge scores a skill report against one scenario. Model-backed judges can
@@ -28,7 +29,7 @@ func (HeuristicJudge) Judge(sc Scenario, raw string) ([]AssertionResult, error) 
 	if err != nil {
 		return nil, err
 	}
-	results := make([]AssertionResult, 0, len(sc.ShouldFind)+len(sc.ShouldNotFind))
+	results := make([]AssertionResult, 0, len(sc.ShouldFind)+len(sc.ShouldNotFind)+len(sc.MustNotContain))
 	for _, a := range sc.ShouldFind {
 		match := matchingFinding(a, findings)
 		results = append(results, AssertionResult{
@@ -47,6 +48,15 @@ func (HeuristicJudge) Judge(sc Scenario, raw string) ([]AssertionResult, error) 
 			Matched:   match == nil,
 			Required:  true,
 			Reason:    notFindReason(match),
+		})
+	}
+	for _, term := range sc.MustNotContain {
+		results = append(results, AssertionResult{
+			Assertion: Assertion{Finding: term},
+			Kind:      assertionMustNotContain,
+			Matched:   !containsFold(raw, term),
+			Required:  true,
+			Reason:    mustNotContainReason(raw, term),
 		})
 	}
 	return results, nil
@@ -82,6 +92,26 @@ func assertionMatchesFinding(a Assertion, f Finding) bool {
 	if a.Path != "" && !findingHasPath(f, a.Path) {
 		return false
 	}
+	if !findingHasEvidence(f, a.Evidence) {
+		return false
+	}
+	return true
+}
+
+func findingHasEvidence(f Finding, terms []string) bool {
+	if len(terms) == 0 {
+		return true
+	}
+	evidence := strings.Join([]string{
+		f.Title, f.Location, strings.Join(f.Locations, "\n"),
+		f.Trace, f.Boundary, f.Validation, f.Rating, f.Description,
+		f.Affected, f.PriorArt, f.Reach,
+	}, "\n")
+	for _, term := range terms {
+		if !containsFold(evidence, term) {
+			return false
+		}
+	}
 	return true
 }
 
@@ -112,4 +142,11 @@ func notFindReason(f *Finding) string {
 		return "no matching finding emitted"
 	}
 	return fmt.Sprintf("unexpected finding %q at %s", f.Title, f.Location)
+}
+
+func mustNotContainReason(report, term string) string {
+	if !containsFold(report, term) {
+		return fmt.Sprintf("report does not contain %q", term)
+	}
+	return fmt.Sprintf("report unexpectedly contains %q", term)
 }
