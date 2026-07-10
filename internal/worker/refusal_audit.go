@@ -86,9 +86,38 @@ func parseRefusalAudit(raw string) (refusalAudit, error) {
 		return refusalAudit{}, fmt.Errorf("%s must include a reason when refused is true", refusalAuditOutputFile)
 	}
 	for i, skipped := range audit.Skipped {
-		if strings.TrimSpace(skipped.Path) == "" || strings.TrimSpace(skipped.Reason) == "" {
-			return refusalAudit{}, fmt.Errorf("%s skipped[%d] must include path and reason", refusalAuditOutputFile, i)
+		if !isRepositoryRelativePath(skipped.Path) {
+			return refusalAudit{}, fmt.Errorf("%s skipped[%d] path must be repository-relative", refusalAuditOutputFile, i)
+		}
+		if strings.TrimSpace(skipped.Reason) == "" {
+			return refusalAudit{}, fmt.Errorf("%s skipped[%d] must include a reason", refusalAuditOutputFile, i)
 		}
 	}
 	return audit, nil
+}
+
+// isRepositoryRelativePath accepts slash-separated repository paths without
+// normalising them, so malformed agent output cannot escape or ambiguously
+// describe the repository root.
+func isRepositoryRelativePath(path string) bool {
+	if path == "" || strings.ContainsRune(path, '\\') || strings.ContainsRune(path, 0) || strings.HasPrefix(path, "/") {
+		return false
+	}
+	segments := strings.Split(path, "/")
+	if isWindowsDrivePrefix(segments[0]) {
+		return false
+	}
+	for _, segment := range segments {
+		if segment == "" || segment == "." || segment == ".." {
+			return false
+		}
+	}
+	return true
+}
+
+func isWindowsDrivePrefix(segment string) bool {
+	if len(segment) < 2 || segment[1] != ':' {
+		return false
+	}
+	return (segment[0] >= 'a' && segment[0] <= 'z') || (segment[0] >= 'A' && segment[0] <= 'Z')
 }

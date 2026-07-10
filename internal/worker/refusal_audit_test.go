@@ -29,10 +29,15 @@ func TestParseRefusalAudit(t *testing.T) {
 		want string
 	}{
 		{"refusal without reason", `{"refused":true,"reason":"","skipped":[]}`, "reason"},
-		{"skipped without path", `{"refused":false,"reason":"","skipped":[{"reason":"partial"}]}`, "path"},
+		{"skipped without path", `{"refused":false,"reason":"","skipped":[{"reason":"partial"}]}`, "repository-relative"},
 		{"unknown field", `{"refused":false,"reason":"","skipped":[],"extra":true}`, "valid JSON"},
 		{"null", `null`, "one JSON object"},
 		{"two documents", `{"refused":false,"reason":"","skipped":[]} {}`, "one JSON object"},
+		{"absolute skipped path", `{"refused":false,"reason":null,"skipped":[{"path":"/etc/passwd","reason":"outside repo"}]}`, "repository-relative"},
+		{"backslash skipped path", `{"refused":false,"reason":null,"skipped":[{"path":"src\\parser.c","reason":"outside repo"}]}`, "repository-relative"},
+		{"windows drive skipped path", `{"refused":false,"reason":null,"skipped":[{"path":"C:/temp/file","reason":"outside repo"}]}`, "repository-relative"},
+		{"parent skipped path", `{"refused":false,"reason":null,"skipped":[{"path":"src/../secret","reason":"outside repo"}]}`, "repository-relative"},
+		{"empty skipped segment", `{"refused":false,"reason":null,"skipped":[{"path":"src//parser.c","reason":"outside repo"}]}`, "repository-relative"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if _, err := parseRefusalAudit(tc.raw); err == nil || !strings.Contains(err.Error(), tc.want) {
