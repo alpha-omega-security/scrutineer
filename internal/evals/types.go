@@ -74,6 +74,11 @@ func (a Assertion) label() string {
 			return strings.TrimSpace(v)
 		}
 	}
+	for _, term := range a.Evidence {
+		if strings.TrimSpace(term) != "" {
+			return strings.TrimSpace(term)
+		}
+	}
 	return "<empty assertion>"
 }
 
@@ -91,30 +96,30 @@ func (s Scenario) validate() error {
 	if len(missing) > 0 {
 		return fmt.Errorf("%s missing %s", s.Path, strings.Join(missing, ", "))
 	}
-	if len(s.ShouldFind) == 0 && len(s.ShouldNotFind) == 0 {
+	if len(s.ShouldFind) == 0 && len(s.ShouldNotFind) == 0 && len(s.MustNotContain) == 0 {
 		return fmt.Errorf("%s has no assertions", s.Path)
 	}
-	for _, a := range s.ShouldFind {
-		if a.empty() {
-			return fmt.Errorf("%s has an empty should_find assertion", s.Path)
-		}
+	if err := validateAssertions(s.Path, assertionShouldFind, s.ShouldFind); err != nil {
+		return err
 	}
-	for _, a := range s.ShouldNotFind {
-		if a.empty() {
-			return fmt.Errorf("%s has an empty should_not_find assertion", s.Path)
-		}
-		if err := a.validateEvidence(); err != nil {
-			return fmt.Errorf("%s has invalid should_not_find evidence_contains: %w", s.Path, err)
-		}
+	if err := validateAssertions(s.Path, assertionShouldNotFind, s.ShouldNotFind); err != nil {
+		return err
 	}
-	for _, a := range s.ShouldFind {
-		if err := a.validateEvidence(); err != nil {
-			return fmt.Errorf("%s has invalid should_find evidence_contains: %w", s.Path, err)
-		}
-	}
-	for _, term := range s.MustNotContain {
+	for i, term := range s.MustNotContain {
 		if strings.TrimSpace(term) == "" {
-			return fmt.Errorf("%s has an empty must_not_contain term", s.Path)
+			return fmt.Errorf("%s must_not_contain[%d]: empty term", s.Path, i)
+		}
+	}
+	return nil
+}
+
+func validateAssertions(path, kind string, assertions []Assertion) error {
+	for i, a := range assertions {
+		if a.empty() {
+			return fmt.Errorf("%s %s[%d] (%s): empty assertion", path, kind, i, a.label())
+		}
+		if err := a.validateEvidence(); err != nil {
+			return fmt.Errorf("%s %s[%d] (%s): invalid evidence_contains: %w", path, kind, i, a.label(), err)
 		}
 	}
 	return nil

@@ -103,7 +103,7 @@ func findingHasEvidence(f Finding, terms []string) bool {
 		return true
 	}
 	evidence := strings.Join([]string{
-		f.Title, f.CWE, f.Location, strings.Join(f.Locations, "\n"),
+		f.Title, f.Location, strings.Join(f.Locations, "\n"),
 		f.Trace, f.Boundary, f.Validation, f.Rating, f.Description,
 		f.Affected, f.PriorArt, f.Reach,
 	}, "\n")

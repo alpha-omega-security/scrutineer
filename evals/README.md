@@ -21,10 +21,24 @@ Each scenario YAML names:
 - `skill`: bundled skill to execute.
 - `should_find`: required findings the report must include.
 - `should_not_find`: false positives the report must not include.
-- `evidence_contains`: terms that must appear in the matched finding's title,
-  location, or narrative fields (`trace`, `boundary`, `validation`, `rating`).
 - `must_not_contain`: repo-level terms that must not appear anywhere in the
   report, such as an out-of-scope framework or nonexistent file.
+
+Each `should_find` or `should_not_find` assertion may include
+`evidence_contains`:
+
+```yaml
+should_find:
+  - finding: SQL injection
+    evidence_contains:
+      - buildQuery
+      - request.args
+```
+
+Every evidence term must appear in the matched finding's title, location,
+locations, or narrative fields: `trace`, `boundary`, `validation`, `rating`,
+`description`, `affected`, `prior_art`, or `reach`. CWE values are match
+criteria, not evidence.
 
 The default judge matches findings by title substring plus optional severity,
 CWE, path, and evidence. These assertions define a minimum bar: additional

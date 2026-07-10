@@ -160,6 +160,36 @@ func TestScenarioValidate(t *testing.T) {
 	}
 }
 
+func TestScenarioValidateAllowsMustNotContainOnly(t *testing.T) {
+	sc := Scenario{
+		Path:           "case.yaml",
+		Given:          "x",
+		Fixture:        "fixtures/x",
+		Skill:          "security-deep-dive",
+		MustNotContain: []string{"Rails::ActiveRecord"},
+	}
+	if err := sc.validate(); err != nil {
+		t.Fatalf("validate() = %v, want nil", err)
+	}
+}
+
+func TestScenarioValidateNamesInvalidAssertion(t *testing.T) {
+	sc := Scenario{
+		Path:    "case.yaml",
+		Given:   "x",
+		Fixture: "fixtures/x",
+		Skill:   "security-deep-dive",
+		ShouldFind: []Assertion{{
+			Finding:  "SQL injection",
+			Evidence: []string{""},
+		}},
+	}
+	err := sc.validate()
+	if err == nil || !strings.Contains(err.Error(), "should_find[0] (SQL injection)") {
+		t.Fatalf("validate() = %v, want assertion index and label", err)
+	}
+}
+
 func TestHeuristicJudge(t *testing.T) {
 	sc := Scenario{
 		ShouldFind: []Assertion{{
@@ -202,6 +232,7 @@ func TestAssertionMatchesFinding(t *testing.T) {
 		{name: "path mismatch", a: Assertion{Path: "other.py"}, want: false},
 		{name: "evidence match", a: Assertion{Evidence: []string{"buildQuery"}}, want: true},
 		{name: "evidence mismatch", a: Assertion{Evidence: []string{"missing function"}}, want: false},
+		{name: "CWE is not evidence", a: Assertion{Evidence: []string{"CWE-89"}}, want: false},
 		{
 			name: "path avoids file prefix false positive",
 			a:    Assertion{Path: "app.py"},
