@@ -10,8 +10,6 @@ import (
 	"io"
 	"net/http"
 	"strings"
-
-	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
 const (
@@ -44,9 +42,19 @@ type Usage struct {
 }
 
 type messageRequest struct {
-	Model     string    `json:"model"`
-	MaxTokens int       `json:"max_tokens"`
-	Messages  []message `json:"messages"`
+	Model        string       `json:"model"`
+	MaxTokens    int          `json:"max_tokens"`
+	Messages     []message    `json:"messages"`
+	OutputConfig outputConfig `json:"output_config"`
+}
+
+type outputConfig struct {
+	Format structuredOutputFormat `json:"format"`
+}
+
+type structuredOutputFormat struct {
+	Type   string          `json:"type"`
+	Schema json.RawMessage `json:"schema"`
 }
 
 type message struct {
@@ -71,17 +79,16 @@ type apiError struct {
 	} `json:"error"`
 }
 
-// Call sends prompt as one user turn and asks the API to continue an assistant
-// JSON value. The response is extracted tolerantly, then validated against
-// schema before being returned. Usage is returned even when extraction or
-// schema validation fails, so callers can still record billable requests.
+// Call sends prompt as one user turn and requests a response constrained to
+// schema through Anthropic structured outputs. Usage is returned even when a
+// provider response is malformed, so callers can still record billable
+// requests.
 //
 // POST calls are intentionally not retried: the provider may have accepted a
 // timed-out request, and retrying would risk paying for duplicate inference.
 func Call(ctx context.Context, prompt string, schema json.RawMessage, opts Options) (json.RawMessage, Usage, error) {
-	prefix, err := schemaPrefix(schema)
-	if err != nil {
-		return nil, Usage{}, err
+	if !json.Valid(schema) {
+		return nil, Usage{}, fmt.Errorf("llm: schema is not valid JSON")
 	}
 	if strings.TrimSpace(opts.APIKey) == "" {
 		return nil, Usage{}, fmt.Errorf("llm: API key is required")
@@ -102,8 +109,10 @@ func Call(ctx context.Context, prompt string, schema json.RawMessage, opts Optio
 		MaxTokens: opts.MaxTokens,
 		Messages: []message{
 			{Role: "user", Content: prompt},
-			{Role: "assistant", Content: prefix},
 		},
+		OutputConfig: outputConfig{Format: structuredOutputFormat{
+			Type: "json_schema", Schema: schema,
+		}},
 	})
 	if err != nil {
 		return nil, Usage{}, fmt.Errorf("llm: marshal request: %w", err)
@@ -137,35 +146,11 @@ func Call(ctx context.Context, prompt string, schema json.RawMessage, opts Optio
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		return nil, Usage{}, fmt.Errorf("llm: decode response: %w", err)
 	}
-	text := responseText(decoded.Content)
-	result, err := ExtractJSON(text)
-	if err != nil {
-		result, err = ExtractJSON(prefix + text)
-	}
-	if err != nil {
-		return nil, decoded.Usage, err
-	}
-	if err := validateSchema(schema, result); err != nil {
-		return nil, decoded.Usage, err
+	result := json.RawMessage(strings.TrimSpace(responseText(decoded.Content)))
+	if !json.Valid(result) {
+		return nil, decoded.Usage, fmt.Errorf("llm: structured response is not valid JSON")
 	}
 	return result, decoded.Usage, nil
-}
-
-func schemaPrefix(schema json.RawMessage) (string, error) {
-	var root struct {
-		Type string `json:"type"`
-	}
-	if err := json.Unmarshal(schema, &root); err != nil {
-		return "", fmt.Errorf("llm: schema is not valid JSON: %w", err)
-	}
-	switch root.Type {
-	case "object":
-		return "{", nil
-	case "array":
-		return "[", nil
-	default:
-		return "", fmt.Errorf("llm: schema root type must be object or array, got %q", root.Type)
-	}
 }
 
 func responseText(blocks []contentBlock) string {
@@ -176,45 +161,6 @@ func responseText(blocks []contentBlock) string {
 		}
 	}
 	return text.String()
-}
-
-// ExtractJSON finds the first complete object or array embedded in text. It
-// accepts bare JSON, fenced JSON, and model prose surrounding the value.
-func ExtractJSON(text string) (json.RawMessage, error) {
-	for i := range text {
-		if text[i] != '{' && text[i] != '[' {
-			continue
-		}
-		dec := json.NewDecoder(strings.NewReader(text[i:]))
-		var value json.RawMessage
-		if err := dec.Decode(&value); err == nil {
-			return value, nil
-		}
-	}
-	return nil, fmt.Errorf("llm: response does not contain a JSON object or array")
-}
-
-func validateSchema(schema, value json.RawMessage) error {
-	compiler := jsonschema.NewCompiler()
-	doc, err := jsonschema.UnmarshalJSON(bytes.NewReader(schema))
-	if err != nil {
-		return fmt.Errorf("llm: schema is not valid JSON: %w", err)
-	}
-	if err := compiler.AddResource("schema.json", doc); err != nil {
-		return fmt.Errorf("llm: load schema: %w", err)
-	}
-	compiled, err := compiler.Compile("schema.json")
-	if err != nil {
-		return fmt.Errorf("llm: compile schema: %w", err)
-	}
-	instance, err := jsonschema.UnmarshalJSON(bytes.NewReader(value))
-	if err != nil {
-		return fmt.Errorf("llm: extracted response is not valid JSON: %w", err)
-	}
-	if err := compiled.Validate(instance); err != nil {
-		return fmt.Errorf("llm: response does not match schema: %w", err)
-	}
-	return nil
 }
 
 func responseError(resp *http.Response) error {

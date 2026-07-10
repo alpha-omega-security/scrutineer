@@ -15,7 +15,7 @@ import (
 	"scrutineer/internal/llm"
 )
 
-func TestCallAuxiliary_recordsUsageOnSchemaFailure(t *testing.T) {
+func TestCallAuxiliary_recordsUsageOnMalformedResponse(t *testing.T) {
 	gdb, err := db.Open(filepath.Join(t.TempDir(), "auxiliary.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -29,7 +29,7 @@ func TestCallAuxiliary_recordsUsageOnSchemaFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(w, `{"content":[{"type":"text","text":"\"wrong\":true}"}],"usage":{"input_tokens":100,"output_tokens":10,"cache_read_input_tokens":20,"cache_creation_input_tokens":30}}`)
+		_, _ = io.WriteString(w, `{"content":[{"type":"text","text":"not JSON"}],"usage":{"input_tokens":100,"output_tokens":10,"cache_read_input_tokens":20,"cache_creation_input_tokens":30}}`)
 	}))
 	defer server.Close()
 
@@ -38,17 +38,17 @@ func TestCallAuxiliary_recordsUsageOnSchemaFailure(t *testing.T) {
 		Endpoint: server.URL, APIKey: "key", Model: scan.Model, MaxTokens: 32, HTTPClient: server.Client(),
 	})
 	if err == nil {
-		t.Fatal("CallAuxiliary succeeded, want schema error")
+		t.Fatal("CallAuxiliary succeeded, want malformed-response error")
 	}
 
 	var got db.Scan
 	if err := gdb.First(&got, scan.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if got.InputTokens != 100 || got.OutputTokens != 10 || got.CacheReadTokens != 20 || got.CacheWriteTokens != 30 {
+	if got.InputTokens != 150 || got.OutputTokens != 10 || got.CacheReadTokens != 20 || got.CacheWriteTokens != 30 {
 		t.Errorf("usage = in:%d out:%d read:%d write:%d", got.InputTokens, got.OutputTokens, got.CacheReadTokens, got.CacheWriteTokens)
 	}
-	if want := 0.0005085; math.Abs(got.CostUSD-want) > 1e-12 {
+	if want := 0.0005685; math.Abs(got.CostUSD-want) > 1e-12 {
 		t.Errorf("cost = %.7f, want %.7f", got.CostUSD, want)
 	}
 	if scan.InputTokens != got.InputTokens || scan.CostUSD != got.CostUSD {

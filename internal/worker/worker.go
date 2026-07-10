@@ -440,7 +440,7 @@ func (w *Worker) scanEmitter(scan *db.Scan) func(Event) {
 			// from list prices so /usage and the scan row show a real
 			// figure instead of $0.
 			if e.CostUSD == 0 {
-				e.CostUSD = costFromUsage(scan.Model, e.Usage)
+				e.CostUSD = CostFromUsage(scan.Model, e.Usage)
 			}
 			scan.CostUSD += e.CostUSD
 			scan.Turns += e.Turns

@@ -12,7 +12,7 @@ import (
 
 const objectSchema = `{"type":"object","required":["answer"],"additionalProperties":false,"properties":{"answer":{"type":"string"}}}`
 
-func TestCall_objectContinuationAndUsage(t *testing.T) {
+func TestCall_requestsStructuredOutputAndReturnsUsage(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/messages" {
 			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
@@ -30,10 +30,13 @@ func TestCall_objectContinuationAndUsage(t *testing.T) {
 		if request.Model != "claude-sonnet-4-6" || request.MaxTokens != 64 {
 			t.Errorf("request = %+v", request)
 		}
-		if len(request.Messages) != 2 || request.Messages[1] != (message{Role: "assistant", Content: "{"}) {
+		if len(request.Messages) != 1 || request.Messages[0] != (message{Role: "user", Content: "reply as JSON"}) {
 			t.Errorf("messages = %+v", request.Messages)
 		}
-		_, _ = io.WriteString(w, `{"content":[{"type":"text","text":"\"answer\":\"ok\"}"}],"usage":{"input_tokens":100,"output_tokens":12,"cache_read_input_tokens":30,"cache_creation_input_tokens":7}}`)
+		if request.OutputConfig.Format.Type != "json_schema" || string(request.OutputConfig.Format.Schema) != objectSchema {
+			t.Errorf("output_config = %+v", request.OutputConfig)
+		}
+		_, _ = io.WriteString(w, `{"content":[{"type":"text","text":"{\"answer\":\"ok\"}"}],"usage":{"input_tokens":100,"output_tokens":12,"cache_read_input_tokens":30,"cache_creation_input_tokens":7}}`)
 	}))
 	defer server.Close()
 
@@ -51,9 +54,9 @@ func TestCall_objectContinuationAndUsage(t *testing.T) {
 	}
 }
 
-func TestCall_arrayContinuation(t *testing.T) {
+func TestCall_arrayStructuredOutput(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(w, `{"content":[{"type":"text","text":"1,2]"}],"usage":{}}`)
+		_, _ = io.WriteString(w, `{"content":[{"type":"text","text":"[1,2]"}],"usage":{}}`)
 	}))
 	defer server.Close()
 
@@ -68,35 +71,16 @@ func TestCall_arrayContinuation(t *testing.T) {
 	}
 }
 
-func TestExtractJSON(t *testing.T) {
-	for _, tc := range []struct {
-		text string
-		want string
-	}{
-		{`{"answer":"bare"}`, `{"answer":"bare"}`},
-		{"Here is the result:\n```json\n{\"answer\":\"fenced\"}\n```", `{"answer":"fenced"}`},
-		{"analysis first [1, 2] trailing prose", `[1, 2]`},
-	} {
-		got, err := ExtractJSON(tc.text)
-		if err != nil {
-			t.Fatalf("ExtractJSON(%q): %v", tc.text, err)
-		}
-		if string(got) != tc.want {
-			t.Errorf("ExtractJSON(%q) = %s, want %s", tc.text, got, tc.want)
-		}
-	}
-}
-
-func TestCall_validationFailureStillReturnsUsage(t *testing.T) {
+func TestCall_malformedStructuredResponseStillReturnsUsage(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(w, `{"content":[{"type":"text","text":"\"wrong\":true}"}],"usage":{"input_tokens":9,"output_tokens":3}}`)
+		_, _ = io.WriteString(w, `{"content":[{"type":"text","text":"not JSON"}],"usage":{"input_tokens":9,"output_tokens":3}}`)
 	}))
 	defer server.Close()
 
 	_, usage, err := Call(context.Background(), "object", json.RawMessage(objectSchema), Options{
 		Endpoint: server.URL, APIKey: "key", Model: "claude-sonnet-4-6", MaxTokens: 32, HTTPClient: server.Client(),
 	})
-	if err == nil || !strings.Contains(err.Error(), "does not match schema") {
+	if err == nil || !strings.Contains(err.Error(), "not valid JSON") {
 		t.Fatalf("Call error = %v", err)
 	}
 	if usage.InputTokens != 9 || usage.OutputTokens != 3 {
@@ -120,5 +104,9 @@ func TestCall_rejectsAPIErrorsAndInvalidOptions(t *testing.T) {
 	_, _, err = Call(context.Background(), "object", json.RawMessage(objectSchema), Options{APIKey: "key", Model: "m"})
 	if err == nil || !strings.Contains(err.Error(), "max tokens") {
 		t.Fatalf("option error = %v", err)
+	}
+	_, _, err = Call(context.Background(), "object", json.RawMessage(`{`), Options{APIKey: "key", Model: "m", MaxTokens: 1})
+	if err == nil || !strings.Contains(err.Error(), "schema is not valid JSON") {
+		t.Fatalf("schema error = %v", err)
 	}
 }

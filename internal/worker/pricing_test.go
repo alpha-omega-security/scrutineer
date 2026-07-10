@@ -8,7 +8,7 @@ import (
 // TestPricingCoversEveryDefaultModel is the staleness tripwire: every
 // model any registered harness offers by default must have a price
 // entry, so a new harness (or a new model added to an existing one)
-// fails here until pricing.go is updated. That keeps costFromUsage from
+// fails here until pricing.go is updated. That keeps CostFromUsage from
 // silently returning $0 for a model in the pick list.
 func TestPricingCoversEveryDefaultModel(t *testing.T) {
 	for name, h := range harnesses {
@@ -26,31 +26,43 @@ func TestPricingCoversEveryDefaultModel(t *testing.T) {
 func TestCostFromUsage(t *testing.T) {
 	// gpt-5.4: $2.50 in / $15 out / $0.25 cached, per 1M.
 	// 1M uncached in + 1M cached in + 1M out = 2.50 + 0.25 + 15.00.
-	got := costFromUsage("gpt-5.4", Usage{
+	got := CostFromUsage("gpt-5.4", Usage{
 		InputTokens:     2_000_000, // total, of which 1M cached
 		CacheReadTokens: 1_000_000,
 		OutputTokens:    1_000_000,
 	})
 	if want := 17.75; math.Abs(got-want) > 1e-9 {
-		t.Errorf("costFromUsage = %.4f, want %.4f", got, want)
+		t.Errorf("CostFromUsage = %.4f, want %.4f", got, want)
 	}
 }
 
 func TestCostFromUsage_anthropicCacheWrite(t *testing.T) {
 	// claude-sonnet-4-6: $3 in / $15 out / $0.30 cache read / $3.75 cache write, per 1M.
-	got := costFromUsage("claude-sonnet-4-6", Usage{
-		InputTokens:      2_000_000,
+	got := CostFromUsage("claude-sonnet-4-6", Usage{
+		InputTokens:      3_000_000, // 1M uncached, 1M cache read, 1M cache write
 		CacheReadTokens:  1_000_000,
 		CacheWriteTokens: 1_000_000,
 		OutputTokens:     1_000_000,
 	})
 	if want := 22.05; math.Abs(got-want) > 1e-9 {
-		t.Errorf("costFromUsage = %.4f, want %.4f", got, want)
+		t.Errorf("CostFromUsage = %.4f, want %.4f", got, want)
+	}
+}
+
+func TestCostFromUsage_haiku(t *testing.T) {
+	if got := CostFromUsage("claude-haiku-4-5", Usage{InputTokens: 1_000_000, OutputTokens: 1_000_000}); got != 6 {
+		t.Errorf("CostFromUsage = %.4f, want 6", got)
+	}
+}
+
+func TestCostFromUsage_openAICacheWriteIsOrdinaryInput(t *testing.T) {
+	if got := CostFromUsage("gpt-5.4", Usage{InputTokens: 1_000_000, CacheWriteTokens: 1_000_000}); got != 2.5 {
+		t.Errorf("CostFromUsage = %.4f, want 2.5", got)
 	}
 }
 
 func TestCostFromUsage_unknownModelIsZero(t *testing.T) {
-	if got := costFromUsage("no-such-model", Usage{InputTokens: 1_000_000, OutputTokens: 1_000_000}); got != 0 {
+	if got := CostFromUsage("no-such-model", Usage{InputTokens: 1_000_000, OutputTokens: 1_000_000}); got != 0 {
 		t.Errorf("unknown model cost = %.4f, want 0", got)
 	}
 }
@@ -59,7 +71,7 @@ func TestCostFromUsage_zeroUsageIsZero(t *testing.T) {
 	// A result event with no token usage (e.g. a claude run where the
 	// stream reported CostUSD elsewhere) must not synthesize a nonzero
 	// cost.
-	if got := costFromUsage("gpt-5.4", Usage{}); got != 0 {
+	if got := CostFromUsage("gpt-5.4", Usage{}); got != 0 {
 		t.Errorf("zero-usage cost = %.4f, want 0", got)
 	}
 }

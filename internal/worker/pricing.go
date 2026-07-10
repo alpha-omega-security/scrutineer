@@ -10,7 +10,7 @@ type modelPrice struct {
 }
 
 // modelPricing maps model ids to their per-1M-token USD list prices. It
-// backs costFromUsage, which the event loop consults when a harness's
+// backs CostFromUsage, which the event loop consults when a harness's
 // stream reports token usage but no dollar figure (codex). Claude
 // reports total_cost_usd in-stream so its entries here are not used to
 // compute cost; they exist so the coverage tripwire in pricing_test.go
@@ -28,6 +28,7 @@ var modelPricing = map[string]modelPrice{
 	"claude-opus-4-7":   {In: 5.00, Out: 25.00, CachedIn: 0.50, CacheWrite: 6.25},
 	"claude-opus-4-8":   {In: 5.00, Out: 25.00, CachedIn: 0.50, CacheWrite: 6.25},
 	"claude-sonnet-4-6": {In: 3.00, Out: 15.00, CachedIn: 0.30, CacheWrite: 3.75},
+	"claude-haiku-4-5":  {In: 1.00, Out: 5.00, CachedIn: 0.10, CacheWrite: 1.25},
 	// Sonnet 5 is not on any published price sheet as of 2026-07;
 	// priced at Sonnet 4.6's rate. Claude reports cost in-stream so
 	// this row is only reached by the coverage tripwire, not billing.
@@ -44,26 +45,27 @@ var modelPricing = map[string]modelPrice{
 
 const perMillion = 1e6
 
-// costFromUsage computes the dollar cost of one result event's token
-// usage against the given model's list price. Called by the event loop
+// CostFromUsage computes the dollar cost of one result event's token usage
+// against the given model's list price. Called by the event loop
 // only when the harness's stream event reported Usage but no CostUSD
 // (codex); claude reports CostUSD directly so this is never reached
 // for it. Returns 0 for an unpriced model so an unknown id degrades to
 // "cost not shown" rather than a wrong number.
 //
-// The arithmetic assumes OpenAI usage semantics: InputTokens is the
-// total prompt token count and CacheReadTokens is the cached subset of
-// it, so uncached = InputTokens - CacheReadTokens. That is what codex's
-// turn.completed usage reports. CacheWriteTokens is not billed
-// separately by OpenAI and codex does not report it, so those pricing rows
-// leave CacheWrite at zero. Anthropic's Messages API does bill cache creation,
-// and auxiliary calls report it in CacheWriteTokens.
-func costFromUsage(model string, u Usage) float64 {
+// InputTokens is the total prompt token count. CacheReadTokens is a discounted
+// subset. CacheWriteTokens is a separate subset only for models with a
+// dedicated cache-write rate; on OpenAI rows where CacheWrite is zero, it
+// remains ordinary input. The auxiliary Anthropic path normalizes its separate
+// input counters into this shared representation.
+func CostFromUsage(model string, u Usage) float64 {
 	p, ok := modelPricing[normalizeModelID(model)]
 	if !ok {
 		return 0
 	}
 	uncached := u.InputTokens - u.CacheReadTokens
+	if p.CacheWrite > 0 {
+		uncached -= u.CacheWriteTokens
+	}
 	if uncached < 0 {
 		uncached = 0
 	}
@@ -71,12 +73,6 @@ func costFromUsage(model string, u Usage) float64 {
 		float64(u.CacheReadTokens)*p.CachedIn +
 		float64(u.CacheWriteTokens)*p.CacheWrite +
 		float64(u.OutputTokens)*p.Out) / perMillion
-}
-
-// CostFromUsage exposes the scan pricing calculation to worker helpers that
-// account for direct model calls outside the harness event stream.
-func CostFromUsage(model string, u Usage) float64 {
-	return costFromUsage(model, u)
 }
 
 // normalizeModelID strips a leading provider/ prefix (opencode's

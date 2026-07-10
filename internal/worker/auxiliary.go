@@ -13,8 +13,8 @@ import (
 
 // CallAuxiliary performs a direct structured model call and records its usage
 // on scan. It is for small worker-side decisions that do not need an agent
-// workspace. Usage is persisted even when the provider returned JSON that
-// failed schema validation, because the request was still billable.
+// workspace. Usage is persisted even when the provider response is malformed,
+// because the request was still billable.
 func (w *Worker) CallAuxiliary(ctx context.Context, scan *db.Scan, prompt string, schema json.RawMessage, opts llm.Options) (json.RawMessage, error) {
 	if w == nil || w.DB == nil {
 		return nil, fmt.Errorf("auxiliary model call requires a worker database")
@@ -37,7 +37,10 @@ func recordAuxiliaryUsage(gdb *gorm.DB, scan *db.Scan, model string, usage llm.U
 		return nil
 	}
 	workerUsage := Usage{
-		InputTokens:      usage.InputTokens,
+		// Anthropic reports uncached input separately from cache-read and
+		// cache-write input. Worker Usage records total prompt input, with
+		// the cache values as subsets, matching harness usage semantics.
+		InputTokens:      usage.InputTokens + usage.CacheReadTokens + usage.CacheWriteTokens,
 		OutputTokens:     usage.OutputTokens,
 		CacheReadTokens:  usage.CacheReadTokens,
 		CacheWriteTokens: usage.CacheWriteTokens,
