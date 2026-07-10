@@ -25,6 +25,7 @@ func (s *Server) registerSBOMRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /sboms/new", s.sbomNew)
 	mux.HandleFunc("POST /sboms", s.sbomUpload)
 	mux.HandleFunc("GET /sboms/{id}", s.sbomShow)
+	mux.HandleFunc("POST /sboms/{id}/confirm", s.sbomConfirm)
 	mux.HandleFunc("POST /sboms/{id}/resolve", s.sbomResolve)
 	mux.HandleFunc("POST /sboms/{id}/delete", s.sbomDelete)
 }
@@ -81,12 +82,13 @@ func (s *Server) sbomUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	up := db.SBOMUpload{
-		Name:         firstNonEmpty(doc.Document.Name, header.Filename),
-		Filename:     header.Filename,
-		Format:       string(doc.Type),
-		SpecVersion:  doc.SpecVersion,
-		Raw:          data,
-		PackageCount: len(doc.Packages),
+		Name:          firstNonEmpty(doc.Document.Name, header.Filename),
+		Filename:      header.Filename,
+		Format:        string(doc.Type),
+		SpecVersion:   doc.SpecVersion,
+		Raw:           data,
+		PackageCount:  len(doc.Packages),
+		ImportPending: true,
 	}
 	scope := doc.ClassifyScope()
 	for _, p := range doc.Packages {
@@ -104,9 +106,28 @@ func (s *Server) sbomUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.goResolve(up.ID)
-
 	s.redirect(w, r, fmt.Sprintf("/sboms/%d", up.ID))
+}
+
+type sbomScopeCounts struct {
+	Direct     int
+	Transitive int
+	Unknown    int
+}
+
+func countSBOMScopes(pkgs []db.SBOMPackage) sbomScopeCounts {
+	var counts sbomScopeCounts
+	for _, p := range pkgs {
+		switch p.Scope {
+		case sbom.ScopeDirect:
+			counts.Direct++
+		case sbom.ScopeTransitive:
+			counts.Transitive++
+		default:
+			counts.Unknown++
+		}
+	}
+	return counts
 }
 
 // anyPackageHasScope reports whether at least one package carries a
@@ -134,6 +155,7 @@ func (s *Server) sbomShow(w http.ResponseWriter, r *http.Request) {
 	}
 
 	hasScope := anyPackageHasScope(up.Packages)
+	scopeCounts := countSBOMScopes(up.Packages)
 
 	scope := r.URL.Query().Get("scope")
 	pkgs := up.Packages
@@ -216,13 +238,39 @@ func (s *Server) sbomShow(w http.ResponseWriter, r *http.Request) {
 		"Severity": r.URL.Query().Get("severity"), "Sort": joinSort(sortCol, dir),
 		"Category":   r.URL.Query().Get("category"),
 		"Categories": CWECategories(), "Uncategorized": UncategorizedCWE,
-		"Scope": scope, "HasScope": hasScope,
+		"Scope": scope, "HasScope": hasScope, "ScopeCounts": scopeCounts,
 	})
+}
+
+// sbomConfirm starts repository resolution for a newly parsed SBOM. The
+// conditional update makes a repeated click harmless: only the first request
+// changes the pending state and launches the background resolver.
+func (s *Server) sbomConfirm(w http.ResponseWriter, r *http.Request) {
+	up, ok := loadByID[db.SBOMUpload](s, w, r)
+	if !ok {
+		return
+	}
+	result := s.DB.Model(&db.SBOMUpload{}).
+		Where("id = ? AND import_pending = ?", up.ID, true).
+		Update("import_pending", false)
+	if result.Error != nil {
+		http.Error(w, result.Error.Error(), http.StatusInternalServerError)
+		return
+	}
+	if result.RowsAffected > 0 {
+		s.goResolve(up.ID)
+		setFlash(w, Flash{Category: successKey, Title: fmt.Sprintf("Importing %d SBOM packages", up.PackageCount)})
+	}
+	s.redirect(w, r, fmt.Sprintf("/sboms/%d", up.ID))
 }
 
 func (s *Server) sbomResolve(w http.ResponseWriter, r *http.Request) {
 	up, ok := loadByID[db.SBOMUpload](s, w, r)
 	if !ok {
+		return
+	}
+	if up.ImportPending {
+		http.Error(w, "confirm SBOM import before resolving repositories", http.StatusConflict)
 		return
 	}
 	s.goResolve(up.ID)
@@ -266,7 +314,7 @@ func (s *Server) sbomDelete(w http.ResponseWriter, r *http.Request) {
 // resolveSBOMPackages walks every unresolved package in the upload, looks up
 // its source repository via packages.ecosyste.ms, FirstOrCreates the repo,
 // enqueues the default triage skill if the repo is new, and links the
-// package row. Runs in the background after upload so the page can render
+// package row. Runs in the background after the operator confirms import so the page can render
 // immediately.
 func (s *Server) resolveSBOMPackages(uploadID uint) {
 	ctx, cancel := context.WithTimeout(context.Background(), sbomResolveTimeout)

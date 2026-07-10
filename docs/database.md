@@ -448,6 +448,7 @@ User-uploaded CycloneDX or SPDX documents. Packages are replaced wholesale on re
 | spec_version | text | e.g. `1.5`. |
 | raw | blob | The original document bytes. |
 | package_count | integer | Denormalised count of components. |
+| import_pending | boolean | True for a newly parsed upload until the operator confirms repository resolution. Legacy and confirmed uploads are false. |
 | created_at | datetime | |
 | updated_at | datetime | |
 

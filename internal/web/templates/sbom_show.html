@@ -12,10 +12,17 @@
     </p>
   </div>
   <div class="flex items-center gap-2">
+    {{if .SBOM.ImportPending}}
+    <form method="post" action="/sboms/{{.SBOM.ID}}/confirm"
+          hx-post="/sboms/{{.SBOM.ID}}/confirm" hx-swap="none">
+      <button class="btn" type="submit"><i data-lucide="check"></i> Import {{.SBOM.PackageCount}} packages</button>
+    </form>
+    {{else}}
     <form method="post" action="/sboms/{{.SBOM.ID}}/resolve"
           hx-post="/sboms/{{.SBOM.ID}}/resolve" hx-swap="none">
       <button class="btn-outline" type="submit"><i data-lucide="refresh-cw"></i> Re-resolve</button>
     </form>
+    {{end}}
     <form method="post" action="/sboms/{{.SBOM.ID}}/delete"
           hx-post="/sboms/{{.SBOM.ID}}/delete" hx-swap="none"
           hx-confirm="Delete this SBOM and its package list?">
@@ -23,6 +30,20 @@
     </form>
   </div>
 </div>
+
+{{if .SBOM.ImportPending}}
+  <div class="alert mb-6">
+    <i data-lucide="triangle-alert"></i>
+    <section>
+      This SBOM contains {{.SBOM.PackageCount}} packages. Confirm import to resolve repository rows.
+      {{if .HasScope}}
+        {{.ScopeCounts.Direct}} direct dependencies are eligible for triage scans; {{.ScopeCounts.Transitive}} transitive dependencies will be linked without scans.
+      {{else}}
+        This SBOM has no dependency graph, so all packages are eligible for triage scans.
+      {{end}}
+    </section>
+  </div>
+{{end}}
 
 <div class="tabs w-full" id="sbom-tabs">
   <nav role="tablist" aria-orientation="horizontal">
@@ -44,8 +65,12 @@
   <div role="tabpanel" id="sp1" aria-labelledby="st1">
     <div class="flex items-center justify-between mb-3">
       <p class="text-sm text-muted-foreground">
-        {{.Resolved}} of {{len .Packages}} resolved &middot; {{.WithRepo}} linked to a repository.
-        {{if lt .Resolved (len .Packages)}}Resolution runs in the background; refresh to see progress.{{end}}
+        {{if .SBOM.ImportPending}}
+          Awaiting import confirmation. No repositories have been resolved or scans queued.
+        {{else}}
+          {{.Resolved}} of {{len .Packages}} resolved &middot; {{.WithRepo}} linked to a repository.
+          {{if lt .Resolved (len .Packages)}}Resolution runs in the background; refresh to see progress.{{end}}
+        {{end}}
       </p>
       {{if .HasScope}}
       <div class="dropdown-menu">
@@ -94,6 +119,8 @@
               <a href="/repositories/{{.Repository.ID}}" class="hover:underline">{{.Repository.Name}}</a>
             {{else if .ResolveError}}
               <span class="text-xs text-muted-foreground">{{.ResolveError}}</span>
+            {{else if $.SBOM.ImportPending}}
+              <span class="text-xs text-muted-foreground">awaiting import</span>
             {{else}}
               <span class="text-xs text-muted-foreground">resolving&hellip;</span>
             {{end}}
