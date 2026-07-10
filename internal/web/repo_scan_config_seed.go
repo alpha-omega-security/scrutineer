@@ -31,7 +31,7 @@ func (s *Server) autoSeedRepoScanConfig(scan *db.Scan) {
 		return
 	}
 	if err := s.DB.Model(&db.Repository{}).
-		Where("id = ? AND scan_config = ''", scan.RepositoryID).
+		Where("id = ? AND (scan_config = '' OR scan_config IS NULL)", scan.RepositoryID).
 		Update("scan_config", config).Error; err != nil {
 		s.Log.Warn("save scan config proposal", "scan", scan.ID, "err", err)
 	}

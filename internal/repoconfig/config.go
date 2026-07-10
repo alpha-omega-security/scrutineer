@@ -4,6 +4,7 @@ package repoconfig
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"path"
@@ -44,7 +45,7 @@ func Parse(raw string) (Config, error) {
 		return Config{}, err
 	}
 	var extra any
-	if err := dec.Decode(&extra); err != io.EOF {
+	if err := dec.Decode(&extra); !errors.Is(err, io.EOF) {
 		if err == nil {
 			return Config{}, fmt.Errorf("multiple YAML documents are not supported")
 		}

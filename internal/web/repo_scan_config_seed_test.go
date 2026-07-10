@@ -26,6 +26,28 @@ func TestAutoSeedRepoScanConfig(t *testing.T) {
 	}
 }
 
+func TestAutoSeedRepoScanConfigSeedsLegacyNull(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/seed-null", Name: "seed-null"}
+	s.DB.Create(&repo)
+	if err := s.DB.Model(&db.Repository{}).Where("id = ?", repo.ID).Update("scan_config", nil).Error; err != nil {
+		t.Fatal(err)
+	}
+	scan := &db.Scan{
+		RepositoryID: repo.ID,
+		Status:       db.ScanDone,
+		SkillName:    threatModelSkillName,
+		Report:       `{"scan_config":{"skip":["tests/**"]}}`,
+	}
+	s.autoSeedRepoScanConfig(scan)
+	var got db.Repository
+	s.DB.First(&got, repo.ID)
+	if !strings.Contains(got.ScanConfig, "tests/**") {
+		t.Fatalf("ScanConfig = %q, want seeded value", got.ScanConfig)
+	}
+}
+
 func TestAutoSeedRepoScanConfigPreservesAnalystConfig(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
