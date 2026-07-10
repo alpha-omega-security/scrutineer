@@ -63,7 +63,8 @@
       "uniqueItems": true,
       "minItems": 9, "maxItems": 9
     },
-    "open_questions": { "type": "array", "items": { "$ref": "#/$defs/open_question" } }
+    "open_questions": { "type": "array", "items": { "$ref": "#/$defs/open_question" } },
+    "scan_config": { "$ref": "#/$defs/scan_config" }
   },
 
   "$defs": {
@@ -265,6 +266,29 @@
         "claim":    { "type": "string" },
         "field":    { "type": "string" },
         "proposed": { "type": "string" }
+      }
+    },
+
+    "scan_config": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "focus_areas": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "paths", "surface"],
+            "additionalProperties": false,
+            "properties": {
+              "name": { "type": "string" },
+              "paths": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+              "surface": { "type": "string" }
+            }
+          }
+        },
+        "known_bugs": { "type": "array", "items": { "type": "string" } },
+        "attack_surface": { "type": "string" },
+        "skip": { "type": "array", "items": { "type": "string" } }
       }
     }
   }

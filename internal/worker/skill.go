@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/repoconfig"
 	"scrutineer/internal/skills"
 )
 
@@ -65,6 +66,9 @@ type skillContextScrutineer struct {
 	// Rescan is present for diff-based rescans. It names the baseline and
 	// staged files a diff-aware skill should read.
 	Rescan *skillContextRescan `json:"rescan,omitempty"`
+	// ScanConfig is the operator-authored repository guidance. It is omitted
+	// entirely for repositories without a saved configuration.
+	ScanConfig *repoconfig.Config `json:"scan_config,omitempty"`
 }
 
 type skillContextRescan struct {
@@ -157,7 +161,7 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 	if err := w.prepareDiffRescan(ctx, scan, workRoot, emit); err != nil {
 		return "", err
 	}
-	if err := applyPathFilters(workRoot, &skill, emit); err != nil {
+	if err := applyRepositoryPathFilters(workRoot, &skill, scan.Repository.ScanConfig, emit); err != nil {
 		return "", fmt.Errorf("apply path filters: %w", err)
 	}
 
@@ -863,8 +867,24 @@ func (w *Worker) parseMaintainersOutput(scan *db.Scan, report string, emit func(
 // Emits a one-line scan-log entry with the count when at least one file
 // is removed.
 func applyPathFilters(workRoot string, skill *db.Skill, emit func(Event)) error {
+	return applyPathFiltersWithSkips(workRoot, skill, nil, emit)
+}
+
+// applyRepositoryPathFilters layers the repository's configured skip patterns
+// on top of the skill's filters. A repository cannot use this setting to bring
+// files back that a skill or the builtin skip list has excluded.
+func applyRepositoryPathFilters(workRoot string, skill *db.Skill, rawConfig string, emit func(Event)) error {
+	cfg, err := repoconfig.Parse(rawConfig)
+	if err != nil {
+		return fmt.Errorf("parse repository scan config: %w", err)
+	}
+	return applyPathFiltersWithSkips(workRoot, skill, cfg.Skip, emit)
+}
+
+func applyPathFiltersWithSkips(workRoot string, skill *db.Skill, repositorySkips []string, emit func(Event)) error {
 	paths := skills.SplitPatterns(skill.Paths)
 	ignorePaths := skills.SplitPatterns(skill.IgnorePaths)
+	ignorePaths = append(ignorePaths, repositorySkips...)
 	src := filepath.Join(workRoot, "src")
 	if _, err := os.Stat(src); err != nil {
 		if os.IsNotExist(err) {
@@ -1119,6 +1139,13 @@ func stageContext(workRoot, apiBase, forkOrg, metadataDir string, scan *db.Scan,
 			ForkOrg:     forkOrg,
 			MetadataDir: metadataDir,
 		},
+	}
+	config, err := repoconfig.Parse(repo.ScanConfig)
+	if err != nil {
+		return fmt.Errorf("parse repository scan config: %w", err)
+	}
+	if !config.Empty() {
+		ctx.Scrutineer.ScanConfig = &config
 	}
 	if scan.SkillID != nil {
 		ctx.Scrutineer.SkillID = *scan.SkillID

@@ -20,7 +20,7 @@ The target is first-party source code. Do not report vulnerabilities that exist 
 ## Workspace
 
 - `./src` - cloned repository
-- `./context.json` - repository identity plus a `scrutineer` block with `api_base`, `token`, `repository_id`, and optional `scan_subpath`
+- `./context.json` - repository identity plus a `scrutineer` block with `api_base`, `token`, `repository_id`, optional `scan_subpath`, and optional analyst-authored `scan_config`
 - `./report.json` - write the findings report here
 - `./schema.json` - output schema
 
@@ -41,7 +41,7 @@ This scan is read-only:
 
 First, build a compact map of the target:
 
-1. Read `context.json` and determine the scoped source root.
+1. Read `context.json` and determine the scoped source root. When `scrutineer.scan_config` is present, treat its `attack_surface` as operator ground truth, seed the focus list with every `focus_areas` entry, and treat each `known_bugs` item as prior art rather than a new finding. The worker has already removed `scan_config.skip` paths from `./src`.
 2. List files with `rg --files` or equivalent.
 3. Identify languages, package layout, public entry points, handlers, parsers, CLIs, unsafe/FFI areas, deserializers, archive/file/network operations, authz boundaries, and agent/model/tool integrations.
 4. If available, fetch prior local reports from Scrutineer's API and use them as context:
@@ -53,7 +53,7 @@ If any API request fails or returns no data, continue with source-only review.
 
 ## Focus Areas
 
-Create three to ten focus areas. Prefer focus areas from the threat model if one exists; otherwise derive them from recon. Useful focus areas include:
+Create three to ten focus areas. Start with any `scrutineer.scan_config.focus_areas` entries, preserving their names, paths, and stated surface; add more only where recon finds a distinct security surface. Then prefer focus areas from the threat model if one exists; otherwise derive the remaining areas from recon. Useful focus areas include:
 
 - Memory safety: C/C++, unsafe Rust, raw pointers, unchecked indexes, allocation sizes, integer arithmetic that feeds buffers, FFI, lifetime hazards.
 - Injection and execution: eval, shell/process execution, dynamic imports, templates, SQL/NoSQL/query construction, regex construction, format strings.

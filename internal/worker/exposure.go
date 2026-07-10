@@ -158,7 +158,7 @@ func (w *Worker) doExposure(ctx context.Context, scan *db.Scan, emit func(Event)
 	}
 	scan.Commit = cacheCommit
 
-	if err := applyPathFilters(workRoot, &skill, emit); err != nil {
+	if err := applyRepositoryPathFilters(workRoot, &skill, scan.Repository.ScanConfig, emit); err != nil {
 		return "", fmt.Errorf("apply path filters: %w", err)
 	}
 
