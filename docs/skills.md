@@ -25,6 +25,7 @@ These live in `skills/` and are embedded in the Scrutineer executable. At startu
 | `vuln-scan` | High-recall model-backed static source-code candidate scan adapted from Anthropic's defending-code reference harness. |
 | `zizmor` | Audits GitHub Actions workflows and maps hits into the findings shape. |
 | `ingest` | Normalizes an externally-produced security report in an arbitrary format into findings. Runs when `/v1/import` cannot recognise the payload; the raw report is staged at `import/report`. |
+| `recon` | Maps the repository's distinct externally reachable input-processing subsystems into focus areas that seed later deep-dive audits. |
 | `threat-model` | Derives the project's security contract from source and docs: components, entry-point trust table, claimed and disclaimed properties, and disposition labels. Loaded by `security-deep-dive` so it does not re-derive boundaries per run. |
 | `security-deep-dive` | The model-driven audit. Inventories trust boundaries and sinks, then runs a six-step trace/boundary/validate/prior-art/reach/rate analysis on each. |
 | `advisory-deep-dive` | Re-audits every past GHSA/CVE advisory against its fix commit for three failure modes: a bypass of the fix, an incomplete fix that left a path open, or the same class of bug in sibling code the patch never touched. A `security-deep-dive` scoped exclusively to the advisory space; `requires` the `advisories` cache. |

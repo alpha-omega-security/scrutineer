@@ -1184,7 +1184,10 @@ const (
 	// tab when present; repos that predate it fall back to the boundaries
 	// section of the deep-dive report so older scans keep rendering.
 	threatModelSkillName = "threat-model"
-	zizmorSkillName      = "zizmor"
+	// reconSkillName maps external-input subsystems to repository scan-config
+	// focus areas before the deep-dive runs.
+	reconSkillName  = "recon"
+	zizmorSkillName = "zizmor"
 )
 
 // The Findings-bucket filters are vars rather than consts because they splice
