@@ -250,7 +250,7 @@ const importBatchSize = 50
 // SeenCount on existing rows instead of inserting duplicates. Runs inside
 // the caller's transaction so a mid-import failure leaves no partial state.
 func (s *Server) importFindings(tx *gorm.DB, scan *db.Scan, res ingest.Result) (created []db.Finding, observed int, err error) {
-	incoming, fingerprints := buildImportFindings(scan, res)
+	incoming, relations, fingerprints := buildImportFindings(scan, res)
 	if len(incoming) == 0 {
 		return nil, 0, nil
 	}
@@ -260,9 +260,17 @@ func (s *Server) importFindings(tx *gorm.DB, scan *db.Scan, res ingest.Result) (
 		return nil, 0, fmt.Errorf("lookup existing findings: %w", err)
 	}
 
+	// observedRel pairs an already-present finding with the child records this
+	// re-import carries for it, attached (deduped) after the seen-count bump.
+	type observedRel struct {
+		id   uint
+		rels importFindingRelations
+	}
 	var observedIDs []uint
+	var observedRels []observedRel
 	var history []db.FindingHistory
-	for _, f := range incoming {
+	var createdRels []importFindingRelations
+	for i, f := range incoming {
 		if prev, ok := existing[f.Fingerprint]; ok {
 			observedIDs = append(observedIDs, prev.ID)
 			history = append(history, db.FindingHistory{
@@ -272,14 +280,23 @@ func (s *Server) importFindings(tx *gorm.DB, scan *db.Scan, res ingest.Result) (
 				Source:    db.SourceTool,
 				By:        res.Tool,
 			})
+			observedRels = append(observedRels, observedRel{prev.ID, relations[i]})
 			continue
 		}
 		created = append(created, f)
+		createdRels = append(createdRels, relations[i])
 	}
 
 	if len(created) > 0 {
 		if err := tx.CreateInBatches(&created, importBatchSize).Error; err != nil {
 			return nil, 0, fmt.Errorf("create findings: %w", err)
+		}
+		// Brand-new findings have no prior child rows, so attach without the
+		// dedup lookup.
+		for i := range created {
+			if err := attachFindingRelations(tx, created[i].ID, createdRels[i], false); err != nil {
+				return nil, 0, err
+			}
 		}
 	}
 	if len(observedIDs) > 0 {
@@ -296,15 +313,109 @@ func (s *Server) importFindings(tx *gorm.DB, scan *db.Scan, res ingest.Result) (
 		if err := tx.CreateInBatches(&history, importBatchSize).Error; err != nil {
 			return nil, 0, fmt.Errorf("create finding history: %w", err)
 		}
+		// Re-importing a bundle onto findings this instance already has appends
+		// only the child records it does not already carry, so a repeat import
+		// is idempotent rather than piling up duplicate notes.
+		for _, o := range observedRels {
+			if err := attachFindingRelations(tx, o.id, o.rels, true); err != nil {
+				return nil, 0, err
+			}
+		}
 	}
 	return created, len(observedIDs), nil
 }
 
+// attachFindingRelations writes a finding's carried child records. With dedup
+// set (the finding already existed on this instance) it drops any record whose
+// content already exists on that finding, so re-importing the same bundle does
+// not accumulate duplicate notes/communications/references.
+func attachFindingRelations(tx *gorm.DB, findingID uint, rels importFindingRelations, dedup bool) error {
+	if rels.empty() {
+		return nil
+	}
+	notes, comms, refs := rels.Notes, rels.Communications, rels.References
+	if dedup {
+		var have importFindingRelations
+		if err := tx.Where("finding_id = ?", findingID).Find(&have.Notes).Error; err != nil {
+			return fmt.Errorf("load existing notes: %w", err)
+		}
+		if err := tx.Where("finding_id = ?", findingID).Find(&have.Communications).Error; err != nil {
+			return fmt.Errorf("load existing communications: %w", err)
+		}
+		if err := tx.Where("finding_id = ?", findingID).Find(&have.References).Error; err != nil {
+			return fmt.Errorf("load existing references: %w", err)
+		}
+		notes = dedupBy(notes, have.Notes, noteKey)
+		comms = dedupBy(comms, have.Communications, commKey)
+		refs = dedupBy(refs, have.References, refKey)
+	}
+	for i := range notes {
+		notes[i].ID, notes[i].FindingID = 0, findingID
+	}
+	for i := range comms {
+		comms[i].ID, comms[i].FindingID = 0, findingID
+	}
+	for i := range refs {
+		refs[i].ID, refs[i].FindingID = 0, findingID
+	}
+	if len(notes) > 0 {
+		if err := tx.Create(&notes).Error; err != nil {
+			return fmt.Errorf("create finding notes: %w", err)
+		}
+	}
+	if len(comms) > 0 {
+		if err := tx.Create(&comms).Error; err != nil {
+			return fmt.Errorf("create finding communications: %w", err)
+		}
+	}
+	if len(refs) > 0 {
+		if err := tx.Create(&refs).Error; err != nil {
+			return fmt.Errorf("create finding references: %w", err)
+		}
+	}
+	return nil
+}
+
+// dedupBy returns the members of incoming whose key is not already present in
+// existing, also collapsing duplicates within incoming.
+func dedupBy[T any](incoming, existing []T, key func(T) string) []T {
+	have := make(map[string]bool, len(existing))
+	for _, e := range existing {
+		have[key(e)] = true
+	}
+	var out []T
+	for _, in := range incoming {
+		k := key(in)
+		if have[k] {
+			continue
+		}
+		have[k] = true
+		out = append(out, in)
+	}
+	return out
+}
+
+// noteKey/commKey/refKey identify a child record by its content for idempotent
+// re-import. Timestamps are part of the key: scrutineer's own bundle preserves
+// them across the round-trip, so the same note keys identically on re-import.
+func noteKey(n db.FindingNote) string {
+	return strings.Join([]string{n.Body, n.By, n.CreatedAt.UTC().Format(time.RFC3339Nano)}, "\x00")
+}
+
+func commKey(c db.FindingCommunication) string {
+	return strings.Join([]string{c.Channel, c.Direction, c.Actor, c.Body, c.At.UTC().Format(time.RFC3339Nano)}, "\x00")
+}
+
+func refKey(r db.FindingReference) string {
+	return strings.Join([]string{r.URL, r.Tags, r.Summary}, "\x00")
+}
+
 // buildImportFindings maps ingest.Finding rows onto db.Finding and
 // fingerprints them, dropping in-batch duplicates.
-func buildImportFindings(scan *db.Scan, res ingest.Result) ([]db.Finding, []string) {
+func buildImportFindings(scan *db.Scan, res ingest.Result) ([]db.Finding, []importFindingRelations, []string) {
 	seen := map[string]bool{}
 	incoming := make([]db.Finding, 0, len(res.Findings))
+	relations := make([]importFindingRelations, 0, len(res.Findings))
 	fingerprints := make([]string, 0, len(res.Findings))
 	for _, in := range res.Findings {
 		// A bundle may carry a per-finding commit (findings from scans at
@@ -322,6 +433,7 @@ func buildImportFindings(scan *db.Scan, res ingest.Result) ([]db.Finding, []stri
 			CWE:            in.CWE,
 			Location:       in.Location,
 			Locations:      in.Locations,
+			Sinks:          in.Sinks,
 			VID:            in.VID,
 			Reachability:   in.Reachability,
 			QualityTier:    in.QualityTier,
@@ -336,6 +448,31 @@ func buildImportFindings(scan *db.Scan, res ingest.Result) ([]db.Finding, []stri
 			LastSeenCommit: commit,
 			SeenCount:      1,
 		}
+		// include=all archival fields. Empty for the default bundle and every
+		// other format, so those imports write the same columns they always did.
+		f.Snippet = in.Snippet
+		f.Affected = in.Affected
+		f.FixVersion = in.FixVersion
+		f.CVEID = in.CVEID
+		f.GHSAID = in.GHSAID
+		f.Mitigation = in.Mitigation
+		f.MitigationSemgrep = in.MitigationSemgrep
+		f.BreakingChange = in.BreakingChange
+		f.BreakingChangeRationale = in.BreakingChangeRationale
+		f.DupCheck = in.DupCheck
+		f.DisclosureDraft = in.DisclosureDraft
+		f.ExploitedInWild = in.ExploitedInWild
+		f.ExploitedInWildEvidence = in.ExploitedInWildEvidence
+		// The real upstream fix commit lands in FixCommit; the bundle's legacy
+		// fix_commit (the SuggestedFix base) was already folded into Trace above.
+		f.FixCommit = in.UpstreamFixCommit
+		// CVSS scores are derived, never carried: recompute from the vector so a
+		// hand-edited or stale bundle score cannot stick. An empty/invalid
+		// vector yields a zero score, matching syncCVSSScore.
+		f.CVSSVector = in.CVSSVector
+		f.CVSSScore, _ = db.CVSSV3ScoreFromVector(in.CVSSVector)
+		f.CVSSv4Vector = in.CVSSv4Vector
+		f.CVSSv4Score, _ = db.CVSSV4ScoreFromVector(in.CVSSv4Vector)
 		// Include the sub-path so two findings at the same CWE/location/title
 		// in different monorepo sub-projects do not collide on one fingerprint.
 		// Other formats leave SubPath empty, so their fingerprint is unchanged.
@@ -345,9 +482,53 @@ func buildImportFindings(scan *db.Scan, res ingest.Result) ([]db.Finding, []stri
 		}
 		seen[f.Fingerprint] = true
 		incoming = append(incoming, f)
+		relations = append(relations, importRelationsFrom(in))
 		fingerprints = append(fingerprints, f.Fingerprint)
 	}
-	return incoming, fingerprints
+	return incoming, relations, fingerprints
+}
+
+// importFindingRelations holds the child records an import carries for one
+// finding. Populated only from an include=all bundle; every other format leaves
+// the slices nil, so attachFindingRelations is a no-op there.
+type importFindingRelations struct {
+	Notes          []db.FindingNote
+	Communications []db.FindingCommunication
+	References     []db.FindingReference
+}
+
+func (r importFindingRelations) empty() bool {
+	return len(r.Notes) == 0 && len(r.Communications) == 0 && len(r.References) == 0
+}
+
+// importRelationsFrom maps an ingest finding's carried child records onto their
+// db rows. IDs are left zero (assigned on insert) and FindingID is set later by
+// attachFindingRelations once the parent finding has an id.
+func importRelationsFrom(in ingest.Finding) importFindingRelations {
+	var rel importFindingRelations
+	for _, n := range in.Notes {
+		rel.Notes = append(rel.Notes, db.FindingNote{Body: n.Body, By: n.By, CreatedAt: n.CreatedAt})
+	}
+	for _, c := range in.Communications {
+		rel.Communications = append(rel.Communications, db.FindingCommunication{
+			Channel:     c.Channel,
+			Direction:   c.Direction,
+			Actor:       c.Actor,
+			Body:        c.Body,
+			OfferedHelp: c.OfferedHelp,
+			At:          c.At,
+			CreatedAt:   c.CreatedAt,
+		})
+	}
+	for _, ref := range in.References {
+		rel.References = append(rel.References, db.FindingReference{
+			URL:       ref.URL,
+			Tags:      ref.Tags,
+			Summary:   ref.Summary,
+			CreatedAt: ref.CreatedAt,
+		})
+	}
+	return rel
 }
 
 // existingByFingerprint fetches all findings for the repository whose

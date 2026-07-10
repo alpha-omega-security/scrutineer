@@ -95,6 +95,7 @@ When the containerised runner is active (the default when a container runtime is
 - **JSONL export** -- stream all findings or scans as line-delimited JSON for ingestion elsewhere
 - **Markdown report export** -- download a single consolidated `report.md` per repository or organisation
 - **Disclosure bundle** -- download `bundle.tar.gz` per finding: OSV, CSAF, markdown report, patch.diff, a runnable `poc/` directory extracted from the finding's Validation step, and a manifest naming the contents; ready to hand to a coordinator or attach to a private email when filing outside GitHub PVR
+- **Encrypted sharing / archival bundle** -- export a repository's findings as a self-contained JSON bundle that round-trips through `/api/v1/import`, optionally age-encrypted to your team's keys. The default bundle is share-safe (finding substance only); `include=all` produces a lossless archival superset -- enrichment, disclosure fields, notes, communications, and references -- for backing up or moving a repo's findings between your own instances. See [docs/encrypted-sharing.md](docs/encrypted-sharing.md)
 
 ### Operational
 

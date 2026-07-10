@@ -835,23 +835,84 @@ func TestExportScans_carriesDBFieldsAndHidesAPIToken(t *testing.T) {
 // richFinding seeds one finding with every field the enriched bundle carries,
 // against a fresh repo, and returns the repo. Shared by the bundle-content and
 // round-trip tests.
+// rich-finding CVSS vectors and their canonical base scores, reused by the
+// include=all round-trip test to assert the score is recomputed from the vector.
+const (
+	richCVSSv3Vector = "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+	richCVSSv4Vector = "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N"
+)
+
+// rich-finding note/communication timestamps, kept as fixtures so the round-trip
+// can assert they survive export→import unchanged.
+var (
+	richNote1At = time.Date(2026, 6, 1, 9, 0, 0, 0, time.UTC)
+	richNote2At = time.Date(2026, 6, 2, 10, 30, 0, 0, time.UTC)
+	richCommAt  = time.Date(2026, 6, 3, 12, 0, 0, 0, time.UTC)
+)
+
+// seedRichFinding creates one finding populated across every column and child
+// record the bundle can carry: the default share-safe substance, the
+// include=all enrichment/disclosure fields, and Notes/Communications/References.
+// Tests use it to assert the default bundle stays lean while include=all is a
+// faithful archival superset.
 func seedRichFinding(t *testing.T, s *Server, url string) db.Repository {
 	t.Helper()
 	repo := db.Repository{URL: url, Name: "rich"}
 	s.DB.Create(&repo)
 	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: deepDiveSkillName, Commit: "scan-commit"}
 	s.DB.Create(&scan)
-	s.DB.Create(&db.Finding{
+	f := db.Finding{
 		ScanID: scan.ID, RepositoryID: repo.ID, Commit: "find-commit", SubPath: "services/api",
 		Title: "Path traversal", Severity: sevHigh, Confidence: "high",
 		CWE: "CWE-22", Location: "h/download.go:88",
 		Locations: "h/download.go:88\nh/legacy.go:12",
+		Sinks:     "path.join,os.Open",
 		VID:       "VID-aaaa-bbbb", Reachability: "reachable", QualityTier: "high",
 		Trace:    "User input reaches path.join.",
 		Boundary: "public handler", Validation: "confirmed locally",
 		PriorArt: "CVE-2021-1", Reach: "public entry", Rating: "high impact",
 		SuggestedFix: "--- a/x\n+++ b/x\n", SuggestedFixCommit: "fixbase9",
-	})
+		// include=all archival fields.
+		Snippet:                 "func download(p string) { open(path.Join(base, p)) }",
+		Affected:                ">=1.0.0 <1.4.2",
+		FixVersion:              "1.4.2",
+		CVEID:                   "CVE-2021-9999",
+		GHSAID:                  "GHSA-aaaa-bbbb-cccc",
+		CVSSVector:              richCVSSv3Vector,
+		CVSSScore:               9.8,
+		CVSSv4Vector:            richCVSSv4Vector,
+		Mitigation:              "Set safe_mode=true",
+		MitigationSemgrep:       "rules: []",
+		BreakingChange:          "non_breaking",
+		BreakingChangeRationale: "no public API change",
+		DupCheck:                "distinct from F2: different sink",
+		DisclosureDraft:         "## Advisory\nPath traversal in download()",
+		ExploitedInWild:         "no",
+		ExploitedInWildEvidence: "no reports as of 2026-07",
+		FixCommit:               "upstreamfix123",
+	}
+	if err := s.DB.Create(&f).Error; err != nil {
+		t.Fatalf("seed finding: %v", err)
+	}
+	if err := s.DB.Create(&[]db.FindingNote{
+		{FindingID: f.ID, Body: "Reproduced locally on v1.4.1", By: "alice", CreatedAt: richNote1At},
+		{FindingID: f.ID, Body: "Maintainer acknowledged", CreatedAt: richNote2At},
+	}).Error; err != nil {
+		t.Fatalf("seed notes: %v", err)
+	}
+	if err := s.DB.Create(&db.FindingCommunication{
+		FindingID: f.ID, Channel: "email", Direction: "outbound",
+		Actor: "maintainer@example.com", Body: "Reported privately",
+		OfferedHelp: "pr", At: richCommAt,
+	}).Error; err != nil {
+		t.Fatalf("seed communication: %v", err)
+	}
+	if err := s.DB.Create(&[]db.FindingReference{
+		{FindingID: f.ID, URL: "https://github.com/test/src/issues/1", Tags: "issue", Summary: "upstream issue"},
+		{FindingID: f.ID, URL: "https://nvd.nist.gov/vuln/detail/CVE-2021-9999", Tags: "cve"},
+	}).Error; err != nil {
+		t.Fatalf("seed references: %v", err)
+	}
 	return repo
 }
 
@@ -898,6 +959,10 @@ func TestExportBundle_carriesEnrichedFields(t *testing.T) {
 		{"rating", f.Rating, "high impact"},
 		{"patch", f.Patch, "--- a/x\n+++ b/x\n"},
 		{"fix_commit", f.FixCommit, "fixbase9"},
+		// sinks now rides the default bundle; snippet does not (it would embed
+		// verbatim, possibly private, source into a shareable artifact).
+		{"sinks", f.Sinks, "path.join,os.Open"},
+		{"snippet omitted from default bundle", f.Snippet, ""},
 	}
 	for _, c := range checks {
 		if c.got != c.want {
@@ -971,6 +1036,20 @@ func TestExportBundleRoundTrip_carriesAllFields(t *testing.T) {
 	}
 	if !strings.Contains(got.Trace, "Applies to commit `fixbase9`") {
 		t.Errorf("Trace missing fix-commit note: %q", got.Trace)
+	}
+	// sinks now round-trips through the default bundle; snippet, the archival
+	// scalars, and the child records do not (they require include=all).
+	if got.Sinks != "path.join,os.Open" {
+		t.Errorf("Sinks = %q, want path.join,os.Open", got.Sinks)
+	}
+	if got.Snippet != "" || got.Affected != "" || got.CVEID != "" || got.DisclosureDraft != "" {
+		t.Errorf("default bundle leaked archival fields: snippet=%q affected=%q cve=%q draft=%q",
+			got.Snippet, got.Affected, got.CVEID, got.DisclosureDraft)
+	}
+	var noteCount int64
+	s.DB.Model(&db.FindingNote{}).Where("finding_id = ?", got.ID).Count(&noteCount)
+	if noteCount != 0 {
+		t.Errorf("default bundle created %d notes, want 0", noteCount)
 	}
 }
 
@@ -1058,6 +1137,27 @@ func TestExportBundle_scopeFindingsCuratesScanners(t *testing.T) {
 	}
 }
 
+// assertExportRejects runs each GET path and asserts a 400 whose body mentions
+// keyword. Shared by the scope and include rejection tests, which validate the
+// same "bundle-only query param used elsewhere" guard.
+func assertExportRejects(t *testing.T, s *Server, keyword string, cases []struct{ name, path string }) {
+	t.Helper()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest("GET", tc.path, nil)
+			r.Host = testHost
+			w := httptest.NewRecorder()
+			s.Handler().ServeHTTP(w, r)
+			if w.Code != 400 {
+				t.Fatalf("status %d, want 400; body=%s", w.Code, w.Body)
+			}
+			if !strings.Contains(w.Body.String(), keyword) {
+				t.Errorf("error should mention %s, got: %s", keyword, w.Body)
+			}
+		})
+	}
+}
+
 // TestExportBundle_scopeRejected pins the validation: an unknown scope value, a
 // scope without format=bundle, and scope on the cross-repo endpoints all 400
 // rather than silently returning a wider set than the caller asked for.
@@ -1067,26 +1167,13 @@ func TestExportBundle_scopeRejected(t *testing.T) {
 	repo := seedFindings(t, s)
 	id := strconv.FormatUint(uint64(repo.ID), 10)
 
-	for _, tc := range []struct{ name, path string }{
+	assertExportRejects(t, s, "scope", []struct{ name, path string }{
 		{"unknown scope value", "/api/v1/repositories/" + id + "/findings?format=bundle&scope=bogus"},
 		{"scope without bundle", "/api/v1/repositories/" + id + "/findings?scope=findings"},
 		{"scope on repositories", "/api/v1/repositories?scope=findings"},
 		{"scope on global findings", "/api/v1/findings?scope=findings"},
 		{"scope on global scans", "/api/v1/scans?scope=findings"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			r := httptest.NewRequest("GET", tc.path, nil)
-			r.Host = testHost
-			w := httptest.NewRecorder()
-			s.Handler().ServeHTTP(w, r)
-			if w.Code != 400 {
-				t.Fatalf("status %d, want 400; body=%s", w.Code, w.Body)
-			}
-			if !strings.Contains(w.Body.String(), "scope") {
-				t.Errorf("error should mention scope, got: %s", w.Body)
-			}
-		})
-	}
+	})
 }
 
 // TestExportBundle_scopeFindingsCuratesEncrypted confirms scope curation holds
@@ -1139,5 +1226,326 @@ func TestExportBundle_scopeFindingsCuratesEncrypted(t *testing.T) {
 	}
 	if len(bundle.Findings) != 1 || bundle.Findings[0].Title != "audit finding" {
 		t.Errorf("encrypted scope=findings bundle = %+v, want [audit finding] only (semgrep dropped)", bundle.Findings)
+	}
+}
+
+// TestExportBundle_includeAllCarriesArchival pins the default/archival split:
+// the default bundle carries the share-safe substance (sinks now included) but
+// withholds snippet, the enrichment/disclosure scalars, and the child records;
+// include=all is the faithful superset that carries all of them.
+func TestExportBundle_includeAllCarriesArchival(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := seedRichFinding(t, s, "https://github.com/test/archival")
+	id := strconv.FormatUint(uint64(repo.ID), 10)
+
+	get := func(qs string) sharingFinding {
+		t.Helper()
+		r := httptest.NewRequest("GET", "/api/v1/repositories/"+id+"/findings?format=bundle"+qs, nil)
+		r.Host = testHost
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, r)
+		if w.Code != 200 {
+			t.Fatalf("GET bundle%q: status %d: %s", qs, w.Code, w.Body)
+		}
+		var b struct {
+			Findings []sharingFinding `json:"findings"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &b); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if len(b.Findings) != 1 {
+			t.Fatalf("got %d findings, want 1", len(b.Findings))
+		}
+		return b.Findings[0]
+	}
+
+	// Default bundle: sinks travels, everything archival is withheld.
+	def := get("")
+	if def.Sinks != "path.join,os.Open" {
+		t.Errorf("default sinks = %q, want path.join,os.Open", def.Sinks)
+	}
+	if def.Snippet != "" || def.Affected != "" || def.CVEID != "" || def.CVSSVector != "" ||
+		def.DisclosureDraft != "" || def.ExploitedInWild != "" || def.UpstreamFixCommit != "" {
+		t.Errorf("default bundle carried archival scalars: %+v", def)
+	}
+	if len(def.Notes) != 0 || len(def.Communications) != 0 || len(def.References) != 0 {
+		t.Errorf("default bundle carried child records: notes=%d comms=%d refs=%d",
+			len(def.Notes), len(def.Communications), len(def.References))
+	}
+
+	// include=all: the archival superset.
+	all := get("&include=all")
+	for _, c := range []struct{ name, got, want string }{
+		{"snippet", all.Snippet, "func download(p string) { open(path.Join(base, p)) }"},
+		{"affected", all.Affected, ">=1.0.0 <1.4.2"},
+		{"fix_version", all.FixVersion, "1.4.2"},
+		{"cve_id", all.CVEID, "CVE-2021-9999"},
+		{"ghsa_id", all.GHSAID, "GHSA-aaaa-bbbb-cccc"},
+		{"cvss_vector", all.CVSSVector, richCVSSv3Vector},
+		{"cvss_v4_vector", all.CVSSv4Vector, richCVSSv4Vector},
+		{"mitigation", all.Mitigation, "Set safe_mode=true"},
+		{"mitigation_semgrep", all.MitigationSemgrep, "rules: []"},
+		{"breaking_change", all.BreakingChange, "non_breaking"},
+		{"breaking_change_rationale", all.BreakingChangeRationale, "no public API change"},
+		{"dup_check", all.DupCheck, "distinct from F2: different sink"},
+		{"disclosure_draft", all.DisclosureDraft, "## Advisory\nPath traversal in download()"},
+		{"exploited_in_wild", all.ExploitedInWild, "no"},
+		{"exploited_in_wild_evidence", all.ExploitedInWildEvidence, "no reports as of 2026-07"},
+		// The real upstream fix commit rides the new key; the legacy fix_commit
+		// still carries the SuggestedFix base.
+		{"upstream_fix_commit", all.UpstreamFixCommit, "upstreamfix123"},
+		{"fix_commit (suggested-fix base)", all.FixCommit, "fixbase9"},
+	} {
+		if c.got != c.want {
+			t.Errorf("include=all %s = %q, want %q", c.name, c.got, c.want)
+		}
+	}
+	if len(all.Notes) != 2 || all.Notes[0].Body != "Reproduced locally on v1.4.1" ||
+		all.Notes[0].By != "alice" || !all.Notes[0].CreatedAt.Equal(richNote1At) {
+		t.Errorf("notes mismatch: %+v", all.Notes)
+	}
+	if len(all.Communications) != 1 || all.Communications[0].Channel != "email" ||
+		all.Communications[0].OfferedHelp != "pr" || !all.Communications[0].At.Equal(richCommAt) {
+		t.Errorf("communications mismatch: %+v", all.Communications)
+	}
+	if len(all.References) != 2 || all.References[0].URL != "https://github.com/test/src/issues/1" ||
+		all.References[0].Tags != "issue" {
+		t.Errorf("references mismatch: %+v", all.References)
+	}
+}
+
+// TestExportBundleRoundTrip_includeAll exports the archival superset, imports it
+// into a fresh repo, and asserts every carried column and child record lands —
+// with the CVSS scores recomputed from the vectors rather than trusted.
+func TestExportBundleRoundTrip_includeAll(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	src := seedRichFinding(t, s, "https://github.com/test/src2")
+
+	er := httptest.NewRequest("GET", "/api/v1/repositories/"+strconv.FormatUint(uint64(src.ID), 10)+"/findings?format=bundle&include=all", nil)
+	er.Host = testHost
+	ew := httptest.NewRecorder()
+	s.Handler().ServeHTTP(ew, er)
+	if ew.Code != 200 {
+		t.Fatalf("export status %d: %s", ew.Code, ew.Body)
+	}
+
+	// Import into a *different* repo so the finding lands fresh, not deduped.
+	ir := httptest.NewRequest("POST", "/api/v1/import?repo=https://github.com/test/dest2&revalidate=false", strings.NewReader(ew.Body.String()))
+	ir.Host = testHost
+	iw := httptest.NewRecorder()
+	s.Handler().ServeHTTP(iw, ir)
+	if iw.Code != 201 {
+		t.Fatalf("import status %d: %s", iw.Code, iw.Body)
+	}
+
+	var dest db.Repository
+	if err := s.DB.Where("url = ?", "https://github.com/test/dest2").First(&dest).Error; err != nil {
+		t.Fatalf("dest repo not created: %v", err)
+	}
+	var got db.Finding
+	if err := s.DB.Where("repository_id = ?", dest.ID).First(&got).Error; err != nil {
+		t.Fatalf("imported finding not found: %v", err)
+	}
+
+	for _, c := range []struct{ name, got, want string }{
+		{"sinks", got.Sinks, "path.join,os.Open"},
+		{"snippet", got.Snippet, "func download(p string) { open(path.Join(base, p)) }"},
+		{"affected", got.Affected, ">=1.0.0 <1.4.2"},
+		{"fix_version", got.FixVersion, "1.4.2"},
+		{"cve_id", got.CVEID, "CVE-2021-9999"},
+		{"ghsa_id", got.GHSAID, "GHSA-aaaa-bbbb-cccc"},
+		{"cvss_vector", got.CVSSVector, richCVSSv3Vector},
+		{"cvss_v4_vector", got.CVSSv4Vector, richCVSSv4Vector},
+		{"mitigation", got.Mitigation, "Set safe_mode=true"},
+		{"mitigation_semgrep", got.MitigationSemgrep, "rules: []"},
+		{"breaking_change", got.BreakingChange, "non_breaking"},
+		{"breaking_change_rationale", got.BreakingChangeRationale, "no public API change"},
+		{"dup_check", got.DupCheck, "distinct from F2: different sink"},
+		{"disclosure_draft", got.DisclosureDraft, "## Advisory\nPath traversal in download()"},
+		{"exploited_in_wild", got.ExploitedInWild, "no"},
+		{"exploited_in_wild_evidence", got.ExploitedInWildEvidence, "no reports as of 2026-07"},
+		// The real upstream fix commit lands in FixCommit (the new upstream key);
+		// the SuggestedFix base stays folded into Trace.
+		{"fix_commit (real upstream)", got.FixCommit, "upstreamfix123"},
+	} {
+		if c.got != c.want {
+			t.Errorf("%s = %q, want %q", c.name, c.got, c.want)
+		}
+	}
+
+	// CVSS scores are recomputed from the carried vectors, never trusted.
+	wantV3, _ := db.CVSSV3ScoreFromVector(richCVSSv3Vector)
+	wantV4, _ := db.CVSSV4ScoreFromVector(richCVSSv4Vector)
+	if got.CVSSScore != wantV3 || wantV3 != 9.8 {
+		t.Errorf("CVSSScore = %v, want %v (recomputed from vector)", got.CVSSScore, wantV3)
+	}
+	if got.CVSSv4Score != wantV4 || wantV4 == 0 {
+		t.Errorf("CVSSv4Score = %v, want %v (recomputed from vector)", got.CVSSv4Score, wantV4)
+	}
+
+	// SuggestedFix stays gated and folded into Trace, as for the default bundle.
+	if got.SuggestedFix != "" {
+		t.Errorf("SuggestedFix should stay empty (gated), got %q", got.SuggestedFix)
+	}
+	if !strings.Contains(got.Trace, "## Suggested fix") || !strings.Contains(got.Trace, "Applies to commit `fixbase9`") {
+		t.Errorf("Trace missing folded patch/fix-commit: %q", got.Trace)
+	}
+
+	// Child records round-trip with timestamps preserved.
+	var notes []db.FindingNote
+	s.DB.Where("finding_id = ?", got.ID).Order("created_at asc").Find(&notes)
+	if len(notes) != 2 || notes[0].Body != "Reproduced locally on v1.4.1" || notes[0].By != "alice" ||
+		!notes[0].CreatedAt.Equal(richNote1At) {
+		t.Fatalf("notes mismatch: %+v", notes)
+	}
+	if notes[1].Body != "Maintainer acknowledged" || !notes[1].CreatedAt.Equal(richNote2At) {
+		t.Errorf("note[1] mismatch: %+v", notes[1])
+	}
+	var comms []db.FindingCommunication
+	s.DB.Where("finding_id = ?", got.ID).Find(&comms)
+	if len(comms) != 1 || comms[0].Channel != "email" || comms[0].Actor != "maintainer@example.com" ||
+		comms[0].OfferedHelp != "pr" || !comms[0].At.Equal(richCommAt) {
+		t.Fatalf("communications mismatch: %+v", comms)
+	}
+	var refs []db.FindingReference
+	s.DB.Where("finding_id = ?", got.ID).Order("id asc").Find(&refs)
+	if len(refs) != 2 || refs[0].URL != "https://github.com/test/src/issues/1" ||
+		refs[0].Tags != "issue" || refs[0].Summary != "upstream issue" {
+		t.Fatalf("references mismatch: %+v", refs)
+	}
+}
+
+// TestImportBundle_includeAllIdempotent re-imports the same include=all bundle
+// onto a repo that already has the finding: the second import bumps seen_count
+// and content-dedups the child records rather than duplicating them.
+func TestImportBundle_includeAllIdempotent(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	src := seedRichFinding(t, s, "https://github.com/test/src3")
+
+	er := httptest.NewRequest("GET", "/api/v1/repositories/"+strconv.FormatUint(uint64(src.ID), 10)+"/findings?format=bundle&include=all", nil)
+	er.Host = testHost
+	ew := httptest.NewRecorder()
+	s.Handler().ServeHTTP(ew, er)
+	if ew.Code != 200 {
+		t.Fatalf("export status %d: %s", ew.Code, ew.Body)
+	}
+	body := ew.Body.String()
+
+	imp := func() {
+		t.Helper()
+		r := httptest.NewRequest("POST", "/api/v1/import?repo=https://github.com/test/dest3&revalidate=false", strings.NewReader(body))
+		r.Host = testHost
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, r)
+		if w.Code != 201 {
+			t.Fatalf("import status %d: %s", w.Code, w.Body)
+		}
+	}
+	imp()
+	imp() // re-import the same bundle onto the same repo
+
+	var dest db.Repository
+	if err := s.DB.Where("url = ?", "https://github.com/test/dest3").First(&dest).Error; err != nil {
+		t.Fatalf("dest repo not created: %v", err)
+	}
+	var got db.Finding
+	if err := s.DB.Where("repository_id = ?", dest.ID).First(&got).Error; err != nil {
+		t.Fatalf("imported finding not found: %v", err)
+	}
+	if got.SeenCount != 2 {
+		t.Errorf("SeenCount = %d, want 2 after re-import", got.SeenCount)
+	}
+	var findingCount int64
+	s.DB.Model(&db.Finding{}).Where("repository_id = ?", dest.ID).Count(&findingCount)
+	if findingCount != 1 {
+		t.Errorf("finding count = %d, want 1 (no duplicate row)", findingCount)
+	}
+	var notes, comms, refs int64
+	s.DB.Model(&db.FindingNote{}).Where("finding_id = ?", got.ID).Count(&notes)
+	s.DB.Model(&db.FindingCommunication{}).Where("finding_id = ?", got.ID).Count(&comms)
+	s.DB.Model(&db.FindingReference{}).Where("finding_id = ?", got.ID).Count(&refs)
+	if notes != 2 || comms != 1 || refs != 2 {
+		t.Errorf("after re-import: notes=%d comms=%d refs=%d, want 2/1/2 (content-deduped)", notes, comms, refs)
+	}
+}
+
+// TestExportBundle_includeRejected pins the validation: an unknown include
+// value, include without format=bundle, and include on the cross-repo endpoints
+// all 400 rather than silently returning the lean default.
+func TestExportBundle_includeRejected(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := seedFindings(t, s)
+	id := strconv.FormatUint(uint64(repo.ID), 10)
+
+	assertExportRejects(t, s, "include", []struct{ name, path string }{
+		{"unknown include value", "/api/v1/repositories/" + id + "/findings?format=bundle&include=bogus"},
+		{"include without bundle", "/api/v1/repositories/" + id + "/findings?include=all"},
+		{"include on repositories", "/api/v1/repositories?include=all"},
+		{"include on global findings", "/api/v1/findings?include=all"},
+		{"include on global scans", "/api/v1/scans?include=all"},
+	})
+}
+
+// TestExportBundleEncryptedRoundTrip_includeAll is the shape the batch-archival
+// workflow uses: an encrypted include=all bundle. It confirms the sensitive
+// child records are inside the ciphertext (a note body must not appear in the
+// clear) and survive a server-side decrypt on import.
+func TestExportBundleEncryptedRoundTrip_includeAll(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	id, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.EncRecipients = []age.Recipient{id.Recipient()}
+	s.EncIdentities = []age.Identity{id}
+
+	src := seedRichFinding(t, s, "https://github.com/test/enc-archival")
+
+	r := httptest.NewRequest("GET", "/api/v1/repositories/"+strconv.FormatUint(uint64(src.ID), 10)+"/findings?format=bundle&include=all&encrypt=1", nil)
+	r.Host = testHost
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	body := w.Body.Bytes()
+	if !bytes.HasPrefix(body, []byte("-----BEGIN AGE ENCRYPTED FILE-----")) {
+		t.Fatal("response is not armored age")
+	}
+	// The internal note body must never appear in the clear.
+	if bytes.Contains(body, []byte("Reproduced locally on v1.4.1")) {
+		t.Error("plaintext note body leaked into encrypted output")
+	}
+
+	// Import (server decrypts in place) into a fresh repo.
+	ir := httptest.NewRequest("POST", "/api/v1/import?repo=https://github.com/test/enc-dest&revalidate=false", bytes.NewReader(body))
+	ir.Host = testHost
+	iw := httptest.NewRecorder()
+	s.Handler().ServeHTTP(iw, ir)
+	if iw.Code != 201 {
+		t.Fatalf("import status %d: %s", iw.Code, iw.Body)
+	}
+
+	var dest db.Repository
+	if err := s.DB.Where("url = ?", "https://github.com/test/enc-dest").First(&dest).Error; err != nil {
+		t.Fatalf("dest repo not created: %v", err)
+	}
+	var got db.Finding
+	if err := s.DB.Where("repository_id = ?", dest.ID).First(&got).Error; err != nil {
+		t.Fatalf("imported finding not found: %v", err)
+	}
+	if got.DisclosureDraft == "" || got.CVSSVector != richCVSSv3Vector {
+		t.Errorf("archival scalars did not survive encrypted round-trip: draft=%q cvss=%q", got.DisclosureDraft, got.CVSSVector)
+	}
+	var notes int64
+	s.DB.Model(&db.FindingNote{}).Where("finding_id = ?", got.ID).Count(&notes)
+	if notes != 2 {
+		t.Errorf("notes after encrypted round-trip = %d, want 2", notes)
 	}
 }

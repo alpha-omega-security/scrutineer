@@ -844,7 +844,7 @@ paths:
             application/x-ndjson:
               schema: { $ref: '#/components/schemas/RepositoryExport' }
         '400':
-          description: Unsupported format query value, or `encrypt`/`scope` requested (only valid on per-repository bundle exports).
+          description: Unsupported format query value, or `encrypt`/`scope`/`include` requested (only valid on per-repository bundle exports).
         '403':
           description: Host header is not localhost
 
@@ -856,13 +856,28 @@ paths:
         (`application/x-ndjson`), each a `FindingExport` carrying the full set
         of `db.Finding` columns. With `format=bundle` returns a single
         self-contained JSON document (the minimal ingest shape) that
-        round-trips through `/v1/import`; the bundle carries only finding
-        substance, not analyst-set triage state (status, CVE/GHSA id, affected,
-        fix_version, references). Adding `encrypt=1` (bundle only) wraps the
-        bundle in armored age, encrypted to every configured recipient. Adding
-        `scope=findings` (bundle only) curates the bundle to the Findings bucket
-        (deep-dive and vuln-scan audits plus operator imports), dropping per-repo
-        scanner noise. No bearer token; localhost-only.
+        round-trips through `/v1/import`. The default bundle is share-safe: it
+        carries finding substance (the six-step audit narrative, reachability,
+        sinks, VID, provenance) but not the analyst's private workspace or the
+        recipient's triage — status, assignee, resolution, notes, and
+        communications stay out.
+
+        Adding `include=all` (bundle only) promotes the bundle to an archival
+        superset for round-tripping a repo's findings back into your own
+        instance: on top of the default it carries the enrichment and disclosure
+        work product (snippet, affected, fix_version, CVE/GHSA id, CVSS vectors,
+        mitigation, breaking-change verdict, dup-check, disclosure draft,
+        exploited-in-wild, upstream fix commit) and the notes, communications,
+        and references child records. Instance-local lifecycle (status,
+        resolution, assignee), the change history, release-watch, and labels are
+        never carried. It is opt-in because notes/communications are internal and
+        snippet embeds verbatim source, which a cross-party share must not leak.
+
+        Adding `encrypt=1` (bundle only) wraps the bundle in armored age,
+        encrypted to every configured recipient. Adding `scope=findings` (bundle
+        only) curates the bundle to the Findings bucket (deep-dive and vuln-scan
+        audits plus operator imports), dropping per-repo scanner noise. No bearer
+        token; localhost-only.
       operationId: exportRepositoryFindings
       security: []
       parameters:
@@ -889,6 +904,17 @@ paths:
             or use on the cross-repo `/v1/findings` and `/v1/scans` endpoints,
             gets a 400. Omitted: the bundle carries every finding.
           schema: { type: string, enum: [findings] }
+        - name: include
+          in: query
+          description: |
+            `all` promotes a `format=bundle` export to the archival superset —
+            the operator's enrichment and disclosure work product plus the
+            notes/communications/references child records — for lossless
+            round-trip into your own instance. The default bundle omits them so a
+            cross-party share stays lean and leaks no internal workspace.
+            Requires `format=bundle`; any other value, or use on the cross-repo
+            `/v1/findings` and `/v1/scans` endpoints, gets a 400.
+          schema: { type: string, enum: [all] }
         - name: severity
           in: query
           schema: { type: string, enum: [Critical, High, Medium, Low] }
@@ -913,7 +939,7 @@ paths:
                 type: string
                 description: Armored age ciphertext, starting `-----BEGIN AGE ENCRYPTED FILE-----`.
         '400':
-          description: Unsupported `format`, `encrypt`/`scope` without `format=bundle`, an unknown `scope` value, or encryption requested with no recipients configured.
+          description: Unsupported `format`, `encrypt`/`scope`/`include` without `format=bundle`, an unknown `scope`/`include` value, or encryption requested with no recipients configured.
         '403':
           description: Host header is not localhost
         '404':
@@ -947,7 +973,7 @@ paths:
             application/x-ndjson:
               schema: { $ref: '#/components/schemas/FindingExport' }
         '400':
-          description: Unsupported format query value, or `encrypt` requested (only valid on per-repository bundle exports).
+          description: Unsupported format query value, or `encrypt`/`scope`/`include` requested (only valid on per-repository bundle exports).
         '403':
           description: Host header is not localhost
 
@@ -978,7 +1004,7 @@ paths:
             application/x-ndjson:
               schema: { $ref: '#/components/schemas/ScanExport' }
         '400':
-          description: Unsupported format query value, or `encrypt` requested (only valid on per-repository bundle exports).
+          description: Unsupported format query value, or `encrypt`/`scope`/`include` requested (only valid on per-repository bundle exports).
         '403':
           description: Host header is not localhost
 
@@ -1393,8 +1419,13 @@ components:
 
     ImportMinimal:
       description: |
-        Minimal hand-written ingest shape for findings that came from a
-        pentest writeup or a tool with no SARIF emitter.
+        Minimal hand-written ingest shape for findings from a pentest writeup or
+        a tool with no SARIF emitter. It is also the shape scrutineer's own
+        `format=bundle` export emits and `/v1/import` round-trips: the seven base
+        fields, the extended fields every bundle carries, and the archival fields
+        an `include=all` bundle adds. Everything past the base seven is optional;
+        a hand-written report or a bundle produced before a field existed simply
+        omits it.
       type: object
       required: [findings]
       properties:
@@ -1413,6 +1444,68 @@ components:
               cwe:         { type: string }
               location:    { type: string, description: "path[:line[:col]]" }
               patch:       { type: string, description: "unified diff" }
+              # Extended fields every scrutineer bundle carries (six-step audit
+              # prose, provenance, correlation).
+              commit:       { type: string, description: "Per-finding revision; falls back to the top-level commit." }
+              sub_path:     { type: string }
+              locations:    { type: string, description: "Newline-joined file:line hit set." }
+              sinks:        { type: string, description: "Comma-joined sink ids." }
+              vid:          { type: string }
+              reachability: { type: string, enum: [reachable, harness_only, unclear] }
+              quality_tier: { type: string, enum: [high, low] }
+              boundary:     { type: string }
+              validation:   { type: string }
+              prior_art:    { type: string }
+              reach:        { type: string }
+              rating:       { type: string }
+              fix_commit:   { type: string, description: "Base revision the patch applies to." }
+              # Archival fields, emitted only with include=all: the operator's
+              # enrichment, disclosure work product, and child records.
+              snippet:                    { type: string }
+              affected:                   { type: string, description: "Vulnerable version range." }
+              fix_version:                { type: string }
+              cve_id:                     { type: string }
+              ghsa_id:                    { type: string }
+              cvss_vector:                { type: string, description: "v3.x base vector; score recomputed on import." }
+              cvss_v4_vector:             { type: string, description: "v4.0 base vector; score recomputed on import." }
+              mitigation:                 { type: string }
+              mitigation_semgrep:         { type: string }
+              breaking_change:            { type: string, enum: [breaking, non_breaking, unknown] }
+              breaking_change_rationale:  { type: string }
+              dup_check:                  { type: string }
+              disclosure_draft:           { type: string }
+              exploited_in_wild:          { type: string, enum: [yes, no] }
+              exploited_in_wild_evidence: { type: string }
+              upstream_fix_commit:        { type: string, description: "Real upstream fix commit (distinct from fix_commit)." }
+              notes:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    body:       { type: string }
+                    by:         { type: string }
+                    created_at: { type: string, format: date-time }
+              communications:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    channel:      { type: string, enum: [email, ghsa, issue, pr, direct, registry] }
+                    direction:    { type: string, enum: [outbound, inbound] }
+                    actor:        { type: string }
+                    body:         { type: string }
+                    offered_help: { type: string, enum: [pr, funding, adoption, none] }
+                    at:           { type: string, format: date-time }
+                    created_at:   { type: string, format: date-time }
+              references:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    url:        { type: string, format: uri }
+                    tags:       { type: string, description: "Comma-joined: issue, pr, cve, ghsa, patch, advisory, discussion, article." }
+                    summary:    { type: string }
+                    created_at: { type: string, format: date-time }
 
     ImportResponse:
       type: object

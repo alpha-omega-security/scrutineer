@@ -17,7 +17,7 @@ func TestCVSSV4ScoreFromVector(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, ok := cvssV4ScoreFromVector(tc.vector)
+			got, ok := CVSSV4ScoreFromVector(tc.vector)
 			if ok != tc.ok {
 				t.Fatalf("ok = %v, want %v (score %v)", ok, tc.ok, got)
 			}
@@ -45,7 +45,7 @@ func TestCVSSV3ScoreFromVector(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, ok := cvssV3ScoreFromVector(tc.vector)
+			got, ok := CVSSV3ScoreFromVector(tc.vector)
 			if ok != tc.ok {
 				t.Fatalf("ok = %v, want %v", ok, tc.ok)
 			}

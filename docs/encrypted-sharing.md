@@ -64,9 +64,24 @@ Plaintext bundles work too — drop `&encrypt=1` on export and import accepts th
 
 `generated_at` (RFC3339 UTC) records when the bundle was produced. It lives inside the encrypted JSON — not in cleartext around the armor, which would leak the production time to anyone who intercepts the file — and the importer ignores it; it is provenance for the human recipient. The shareable unit is one repository. Severity and status filters apply: `?format=bundle&severity=High` exports only High findings. By default the bundle carries every finding for the repository, including tool-scanner output; add `&scope=findings` to share only the curated Findings bucket — the deep-dive and vuln-scan audits plus operator imports — dropping per-repo semgrep/zizmor noise.
 
-What travels is the substance of each finding plus the reasoning that justifies it. Alongside title, severity, confidence, CWE, location and the suggested `patch`, the bundle carries the six-step audit narrative (`description` is the trace; `boundary`, `validation`, `prior_art`, `reach` and `rating` are the other five steps), the `reachability` and `quality_tier` verdicts, the cross-party `vid` correlation hash, the patch's base `fix_commit`, and enough provenance — per-finding `commit`, `sub_path` and the full `locations` set — to resolve the location unambiguously on the receiving side. Every field beyond the original seven is emitted only when set, and the importer tolerates bundles produced before they existed, so the shape is backward-compatible in both directions.
+What travels is the substance of each finding plus the reasoning that justifies it. Alongside title, severity, confidence, CWE, location and the suggested `patch`, the bundle carries the six-step audit narrative (`description` is the trace; `boundary`, `validation`, `prior_art`, `reach` and `rating` are the other five steps), the `reachability` and `quality_tier` verdicts, the comma-joined `sinks`, the cross-party `vid` correlation hash, the patch's base `fix_commit`, and enough provenance — per-finding `commit`, `sub_path` and the full `locations` set — to resolve the location unambiguously on the receiving side. Every field beyond the original seven is emitted only when set, and the importer tolerates bundles produced before they existed, so the shape is backward-compatible in both directions.
 
-Two things are deliberately left out. Analyst-set triage state (status, CVE/GHSA id, affected packages, fix version, references, assignee) does not travel — the recipient imports the finding, not your team's triage, and triages it independently on their side (in their case management tool of choice). Source snippets are also omitted: the recipient usually owns the code, and a snippet would embed verbatim source into a shared artifact.
+Several things stay out of the default share bundle. Instance-local lifecycle the recipient owns (status, CVE/GHSA id, affected packages, fix version, references, assignee) does not travel — the recipient imports the finding, not your team's triage, and triages it independently on their side (in their case management tool of choice). Your internal workspace — notes and communications — stays out too, as does the enrichment and disclosure work product (CVSS, mitigation, disclosure draft, exploited-in-wild). And source `snippet`s are omitted: the recipient usually owns the code, and a snippet would embed verbatim (possibly private) source into a shared artifact. When you are archiving your *own* findings rather than sharing them, `include=all` carries all of that back — see below.
+
+## Archival exports (`include=all`)
+
+A bundle has a second audience: yourself. The same `format=bundle` export, with `&include=all`, produces an archival superset that round-trips a repository's findings losslessly back into your own instance — the natural unit for an encrypted, per-repo backup.
+
+    curl -o findings.archive.age \
+      'http://127.0.0.1:8080/api/v1/repositories/1/findings?format=bundle&include=all&encrypt=1'
+
+On top of the default share-safe set it carries the enrichment and disclosure work product — `snippet`, `affected`, `fix_version`, `cve_id`, `ghsa_id`, the `cvss_vector`/`cvss_v4_vector` (scores are recomputed from the vectors on import, never trusted), `mitigation`/`mitigation_semgrep`, the `breaking_change` verdict, `dup_check`, `disclosure_draft`, `exploited_in_wild` — the real `upstream_fix_commit` (kept on its own key because the legacy `fix_commit` already carries the patch's base), and the finding's `notes`, `communications`, and `references` child records with their timestamps.
+
+Re-importing the same archive is idempotent: a finding that already exists bumps its seen-count, and its child records are content-deduped rather than duplicated.
+
+Three things never travel, even under `include=all`. Instance-local lifecycle the receiver owns (status, resolution, assignee) is dropped so imports land fresh — auto-applying a foreign lifecycle state is the real footgun. The per-field change history is provenance of the instance it happened on; the import itself is the new provenance. Release-watch columns and labels are re-derivable or low-value and stay out.
+
+Because `include=all` embeds your notes, communications, and verbatim source, treat an archival bundle as sensitive: encrypt it (`&encrypt=1`) unless it never leaves the host.
 
 ## Key types
 
@@ -141,4 +156,5 @@ No new routes. The existing endpoints gain three optional parameters:
 | `GET /api/v1/repositories/{id}/findings` | `format=bundle` | JSON bundle instead of NDJSON |
 | `GET /api/v1/repositories/{id}/findings` | `encrypt=1` | Wrap bundle in armored age (requires `format=bundle`) |
 | `GET /api/v1/repositories/{id}/findings` | `scope=findings` | Curate the bundle to the Findings bucket, excluding scanner noise (requires `format=bundle`) |
+| `GET /api/v1/repositories/{id}/findings` | `include=all` | Promote the bundle to the archival superset — enrichment, disclosure fields, and notes/communications/references — for lossless round-trip into your own instance (requires `format=bundle`) |
 | `POST /api/v1/import` | *(none)* | Auto-detects age header and decrypts before parsing |
