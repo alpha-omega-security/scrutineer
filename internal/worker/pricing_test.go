@@ -36,6 +36,19 @@ func TestCostFromUsage(t *testing.T) {
 	}
 }
 
+func TestCostFromUsage_anthropicCacheWrite(t *testing.T) {
+	// claude-sonnet-4-6: $3 in / $15 out / $0.30 cache read / $3.75 cache write, per 1M.
+	got := costFromUsage("claude-sonnet-4-6", Usage{
+		InputTokens:      2_000_000,
+		CacheReadTokens:  1_000_000,
+		CacheWriteTokens: 1_000_000,
+		OutputTokens:     1_000_000,
+	})
+	if want := 22.05; math.Abs(got-want) > 1e-9 {
+		t.Errorf("costFromUsage = %.4f, want %.4f", got, want)
+	}
+}
+
 func TestCostFromUsage_unknownModelIsZero(t *testing.T) {
 	if got := costFromUsage("no-such-model", Usage{InputTokens: 1_000_000, OutputTokens: 1_000_000}); got != 0 {
 		t.Errorf("unknown model cost = %.4f, want 0", got)

@@ -4,9 +4,9 @@ import "strings"
 
 // modelPrice is the USD list price per 1M tokens for one model. In is
 // the uncached-input rate, Out the output rate, CachedIn the discounted
-// cache-read rate.
+// cache-read rate, and CacheWrite the cache-creation rate.
 type modelPrice struct {
-	In, Out, CachedIn float64
+	In, Out, CachedIn, CacheWrite float64
 }
 
 // modelPricing maps model ids to their per-1M-token USD list prices. It
@@ -24,15 +24,15 @@ type modelPrice struct {
 //nolint:mnd // a pricing table is a table of numbers; naming each rate would obscure it
 var modelPricing = map[string]modelPrice{
 	// Anthropic
-	"claude-opus-4-6":   {In: 5.00, Out: 25.00, CachedIn: 0.50},
-	"claude-opus-4-7":   {In: 5.00, Out: 25.00, CachedIn: 0.50},
-	"claude-opus-4-8":   {In: 5.00, Out: 25.00, CachedIn: 0.50},
-	"claude-sonnet-4-6": {In: 3.00, Out: 15.00, CachedIn: 0.30},
+	"claude-opus-4-6":   {In: 5.00, Out: 25.00, CachedIn: 0.50, CacheWrite: 6.25},
+	"claude-opus-4-7":   {In: 5.00, Out: 25.00, CachedIn: 0.50, CacheWrite: 6.25},
+	"claude-opus-4-8":   {In: 5.00, Out: 25.00, CachedIn: 0.50, CacheWrite: 6.25},
+	"claude-sonnet-4-6": {In: 3.00, Out: 15.00, CachedIn: 0.30, CacheWrite: 3.75},
 	// Sonnet 5 is not on any published price sheet as of 2026-07;
 	// priced at Sonnet 4.6's rate. Claude reports cost in-stream so
 	// this row is only reached by the coverage tripwire, not billing.
-	"claude-sonnet-5": {In: 3.00, Out: 15.00, CachedIn: 0.30},
-	"claude-fable-5":  {In: 10.00, Out: 50.00, CachedIn: 1.00},
+	"claude-sonnet-5": {In: 3.00, Out: 15.00, CachedIn: 0.30, CacheWrite: 3.75},
+	"claude-fable-5":  {In: 10.00, Out: 50.00, CachedIn: 1.00, CacheWrite: 12.50},
 
 	// OpenAI (codex catalog at the pinned Dockerfile.runner version)
 	"gpt-5.5":       {In: 5.00, Out: 30.00, CachedIn: 0.50},
@@ -55,7 +55,9 @@ const perMillion = 1e6
 // total prompt token count and CacheReadTokens is the cached subset of
 // it, so uncached = InputTokens - CacheReadTokens. That is what codex's
 // turn.completed usage reports. CacheWriteTokens is not billed
-// separately by OpenAI and codex does not report it, so it is ignored.
+// separately by OpenAI and codex does not report it, so those pricing rows
+// leave CacheWrite at zero. Anthropic's Messages API does bill cache creation,
+// and auxiliary calls report it in CacheWriteTokens.
 func costFromUsage(model string, u Usage) float64 {
 	p, ok := modelPricing[normalizeModelID(model)]
 	if !ok {
@@ -67,7 +69,14 @@ func costFromUsage(model string, u Usage) float64 {
 	}
 	return (float64(uncached)*p.In +
 		float64(u.CacheReadTokens)*p.CachedIn +
+		float64(u.CacheWriteTokens)*p.CacheWrite +
 		float64(u.OutputTokens)*p.Out) / perMillion
+}
+
+// CostFromUsage exposes the scan pricing calculation to worker helpers that
+// account for direct model calls outside the harness event stream.
+func CostFromUsage(model string, u Usage) float64 {
+	return costFromUsage(model, u)
 }
 
 // normalizeModelID strips a leading provider/ prefix (opencode's
