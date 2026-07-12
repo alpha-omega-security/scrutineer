@@ -80,9 +80,9 @@ type apiError struct {
 }
 
 // Call sends prompt as one user turn and requests a response constrained to
-// schema through Anthropic structured outputs. Usage is returned even when a
-// provider response is malformed, so callers can still record billable
-// requests.
+// schema through Anthropic structured outputs. Usage is returned when the API
+// response itself is valid but its structured text is malformed, so callers can
+// still record billable requests.
 //
 // POST calls are intentionally not retried: the provider may have accepted a
 // timed-out request, and retrying would risk paying for duplicate inference.
