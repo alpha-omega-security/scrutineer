@@ -1254,37 +1254,57 @@ func (w *Worker) reconContext(scan *db.Scan, skill *db.Skill) (*skillContextReco
 		return nil, nil
 	}
 	var reconScan db.Scan
-	err := w.DB.Select("report").
+	query := w.DB.Select("id, report, skill_id").
 		Where("repository_id = ? AND skill_name = ? AND status = ? AND sub_path = '' AND ref = '' AND report <> ''",
-			scan.RepositoryID, "recon", db.ScanDone).
-		Order("id DESC").First(&reconScan).Error
+			scan.RepositoryID, "recon", db.ScanDone)
+	if scan.ScanGroup != "" {
+		query = query.Where("scan_group = ?", scan.ScanGroup)
+	}
+	err := query.Order("id DESC").First(&reconScan).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("load recon report: %w", err)
 	}
-	var report skillContextRecon
-	if err := json.Unmarshal([]byte(reconScan.Report), &report); err != nil {
-		w.Log.Warn("ignore malformed recon report", "scan", reconScan.ID, "err", err)
+	if reconScan.SkillID == nil {
+		w.Log.Warn("ignore recon report without skill", "scan", reconScan.ID)
 		return nil, nil
 	}
-	if err := validateReconFocusAreas(report.FocusAreas); err != nil {
-		w.Log.Warn("ignore invalid recon focus areas", "scan", reconScan.ID, "err", err)
+	var reconSkill db.Skill
+	if err := w.DB.Select("schema_json").First(&reconSkill, *reconScan.SkillID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			w.Log.Warn("ignore recon report for missing skill", "scan", reconScan.ID, "skill", *reconScan.SkillID)
+			return nil, nil
+		}
+		return nil, fmt.Errorf("load recon schema: %w", err)
+	}
+	report, err := parseReconReport(reconSkill.SchemaJSON, reconScan.Report)
+	if err != nil {
+		w.Log.Warn("ignore invalid recon report", "scan", reconScan.ID, "err", err)
 		return nil, nil
 	}
-	return &report, nil
+	return report, nil
 }
 
-func validateReconFocusAreas(areas []repoconfig.FocusArea) error {
-	raw, err := json.Marshal(struct {
-		FocusAreas []repoconfig.FocusArea `json:"focus_areas"`
-	}{FocusAreas: areas})
-	if err != nil {
-		return err
+func parseReconReport(schema, raw string) (*skillContextRecon, error) {
+	if detail := ValidateReportSchema(schema, raw); detail != "" {
+		return nil, errors.New(detail)
 	}
-	_, _, err = repoconfig.Normalise(string(raw))
-	return err
+	var report skillContextRecon
+	if err := json.Unmarshal([]byte(raw), &report); err != nil {
+		return nil, err
+	}
+	configRaw, err := json.Marshal(repoconfig.Config{FocusAreas: report.FocusAreas})
+	if err != nil {
+		return nil, err
+	}
+	_, config, err := repoconfig.Normalise(string(configRaw))
+	if err != nil {
+		return nil, err
+	}
+	report.FocusAreas = config.FocusAreas
+	return &report, nil
 }
 
 // stageThreatModel writes the repository's operator-edited threat model to

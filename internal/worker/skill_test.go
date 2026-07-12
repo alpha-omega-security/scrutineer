@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -372,32 +373,61 @@ func TestReconContextLoadsOnlyValidReports(t *testing.T) {
 	if err := gdb.Create(&repo).Error; err != nil {
 		t.Fatal(err)
 	}
+	schema, err := os.ReadFile("../../skills/recon/schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reconSkill := db.Skill{Name: "recon", SchemaJSON: string(schema)}
+	if err := gdb.Create(&reconSkill).Error; err != nil {
+		t.Fatal(err)
+	}
+	otherGroup := db.Scan{
+		RepositoryID: repo.ID, SkillID: &reconSkill.ID, SkillName: "recon", Status: db.ScanDone, ScanGroup: "other",
+		Report: `{"focus_areas":[{"name":"wrong group","paths":["wrong/**"],"surface":"should not be staged"}],"notes":[]}`,
+	}
+	if err := gdb.Create(&otherGroup).Error; err != nil {
+		t.Fatal(err)
+	}
 	recon := db.Scan{
-		RepositoryID: repo.ID, SkillName: "recon", Status: db.ScanDone,
-		Report: `{"focus_areas":[{"name":"XML parser","paths":["lib/xml*.c"],"surface":"XML documents from callers"}],"notes":["Examples excluded."]}`,
+		RepositoryID: repo.ID, SkillID: &reconSkill.ID, SkillName: "recon", Status: db.ScanDone, ScanGroup: "batch-a",
+		Report: `{"focus_areas":[{"name":"XML parser","paths":["  lib\\xml*.c  "],"surface":"XML documents from callers"}],"notes":["Examples excluded."]}`,
 	}
 	if err := gdb.Create(&recon).Error; err != nil {
 		t.Fatal(err)
 	}
 	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	threatModel := &db.Skill{Name: "threat-model"}
-	ctx, err := w.reconContext(&db.Scan{RepositoryID: repo.ID}, threatModel)
+	ctx, err := w.reconContext(&db.Scan{RepositoryID: repo.ID, ScanGroup: "batch-a"}, threatModel)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if ctx == nil || len(ctx.FocusAreas) != 1 || ctx.FocusAreas[0].Name != "XML parser" {
 		t.Fatalf("recon context = %+v", ctx)
 	}
+	if got, want := ctx.FocusAreas[0].Paths, []string{"lib/xml*.c"}; !slices.Equal(got, want) {
+		t.Errorf("paths = %q, want %q", got, want)
+	}
 
 	if err := gdb.Model(&recon).Update("report", `{"focus_areas":[{"name":"bad","paths":["../private/**"],"surface":"bad"}],"notes":[]}`).Error; err != nil {
 		t.Fatal(err)
 	}
-	ctx, err = w.reconContext(&db.Scan{RepositoryID: repo.ID}, threatModel)
+	ctx, err = w.reconContext(&db.Scan{RepositoryID: repo.ID, ScanGroup: "batch-a"}, threatModel)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if ctx != nil {
 		t.Fatalf("invalid recon context = %+v", ctx)
+	}
+
+	if err := gdb.Model(&recon).Update("report", `{"focus_areas":[]}`).Error; err != nil {
+		t.Fatal(err)
+	}
+	ctx, err = w.reconContext(&db.Scan{RepositoryID: repo.ID, ScanGroup: "batch-a"}, threatModel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ctx != nil {
+		t.Fatalf("schema-invalid recon context = %+v", ctx)
 	}
 }
 
