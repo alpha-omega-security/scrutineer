@@ -53,6 +53,18 @@
 
     go test ./...
 
+## Releasing
+
+Releases are dispatched manually from `main` through `.github/workflows/release.yml`:
+
+1. Update `VERSION` using CalVer (`YYYY.MM.DD.N`, with `N` starting at 1 for the first release that day) and merge it to `main`.
+2. Wait for the `runner-image` workflow on that commit to publish its multi-platform `sha-<full-commit>` tag. If that run was cancelled or failed, re-run it before dispatching the release.
+3. Dispatch the `Release` workflow from `main`.
+
+Preflight refuses a version tag that points at a different commit, runs the full Go test suite, and resolves the commit-matched runner manifest to an immutable digest. That digest is injected as the released binary's default runner image, keeping the host and the sidecar-capable runner image on the same source revision. Each platform job builds with `CGO_ENABLED=0`, validates the binary, packages it with the license and README, and generates a GitHub build-provenance attestation. The final job creates `SHA256SUMS`, removes any incomplete same-version drafts, creates a fresh draft tied to the current commit, uploads its complete asset set, and only then publishes it. If draft creation, an asset upload, or publication fails, re-run the failed job; the incomplete release remains hidden and the workflow replaces it safely. Re-dispatching an already published version is a no-op after verification.
+
+The release matrix produces Linux and macOS archives for `amd64` and `arm64`. macOS artifacts are intentionally unsigned and unnotarized until the project adopts an organisation-controlled Apple signing identity and release policy.
+
 ## Lint + vuln + deadcode
 
 The full quality sweep:

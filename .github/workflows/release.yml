@@ -1,0 +1,273 @@
+name: Release
+
+on:
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  preflight:
+    name: Preflight
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      runner_image: ${{ steps.runner.outputs.image }}
+    steps:
+      - name: Require main branch
+        env:
+          REF: ${{ github.ref }}
+        run: |
+          if [[ "${REF}" != "refs/heads/main" ]]; then
+            echo "::error::Releases must be dispatched from main, not ${REF}"
+            exit 1
+          fi
+
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Extract version
+        id: version
+        run: |
+          VERSION=$(tr -d '[:space:]' < VERSION)
+          if [[ ! "${VERSION}" =~ ^([0-9]{4})\.(0[1-9]|1[0-2])\.(0[1-9]|[12][0-9]|3[01])\.([1-9][0-9]*)$ ]]; then
+            echo "::error::VERSION must contain CalVer in YYYY.MM.DD.N format, got ${VERSION}"
+            exit 1
+          fi
+          CALENDAR_DATE="${BASH_REMATCH[1]}-${BASH_REMATCH[2]}-${BASH_REMATCH[3]}"
+          if [[ "$(date -u -d "${CALENDAR_DATE}" +%Y.%m.%d 2>/dev/null)" != "${VERSION%.*}" ]]; then
+            echo "::error::VERSION contains an invalid calendar date: ${VERSION}"
+            exit 1
+          fi
+          TODAY=$(date -u +%Y.%m.%d)
+          if [[ "${VERSION%.*}" != "${TODAY}" ]]; then
+            echo "::warning::VERSION date ${VERSION%.*} does not match the current UTC date ${TODAY}"
+          fi
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "tag=v${VERSION}" >> "${GITHUB_OUTPUT}"
+
+      - name: Validate existing tag target
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          COMMIT_SHA: ${{ github.sha }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          TAG_ERROR="${RUNNER_TEMP}/tag-error"
+          if EXISTING_SHA=$(gh api "repos/${REPOSITORY}/git/ref/tags/${TAG}" --jq '.object.sha' 2>"${TAG_ERROR}"); then
+            if [[ "${EXISTING_SHA}" != "${COMMIT_SHA}" ]]; then
+              echo "::error::Tag ${TAG} already points to ${EXISTING_SHA}, not ${COMMIT_SHA}"
+              exit 1
+            fi
+            echo "Tag ${TAG} already points to this commit; continuing recovery run"
+          elif ! grep -q 'HTTP 404' "${TAG_ERROR}"; then
+            cat "${TAG_ERROR}" >&2
+            echo "::error::Unable to check whether tag ${TAG} already exists"
+            exit 1
+          fi
+
+      - name: Test
+        run: go test ./...
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Resolve commit-matched runner image
+        id: runner
+        env:
+          REPOSITORY: ${{ github.repository }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          RUNNER_TAG="ghcr.io/${REPOSITORY}-runner:sha-${COMMIT_SHA}"
+          if ! MANIFEST=$(docker buildx imagetools inspect "${RUNNER_TAG}" --format '{{json .Manifest}}'); then
+            echo "::error::Runner image ${RUNNER_TAG} is unavailable; if its runner-image workflow was cancelled or failed, re-run it, then re-dispatch this release"
+            exit 1
+          fi
+          DIGEST=$(jq -r '.digest // empty' <<< "${MANIFEST}")
+          if [[ ! "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::Could not resolve a manifest digest for ${RUNNER_TAG}"
+            exit 1
+          fi
+          echo "image=ghcr.io/${REPOSITORY}-runner@${DIGEST}" >> "${GITHUB_OUTPUT}"
+
+  build:
+    name: Build (${{ matrix.goos }}-${{ matrix.goarch }})
+    needs: preflight
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            runner: ubuntu-24.04
+            run_binary: true
+          - goos: linux
+            goarch: arm64
+            runner: ubuntu-24.04-arm
+            run_binary: true
+          - goos: darwin
+            goarch: arm64
+            runner: macos-26
+            run_binary: true
+          - goos: darwin
+            goarch: amd64
+            runner: macos-26
+            run_binary: false
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      attestations: write # required to generate build provenance for the release archive
+      id-token: write # required to sign the provenance with GitHub OIDC
+    env:
+      ARTIFACT: scrutineer-${{ needs.preflight.outputs.version }}-${{ matrix.goos }}-${{ matrix.goarch }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          VERSION: ${{ needs.preflight.outputs.version }}
+          RUNNER_IMAGE: ${{ needs.preflight.outputs.runner_image }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          BUILD_DATE=$(git show -s --format=%cI "${COMMIT_SHA}")
+          mkdir -p dist
+          CGO_ENABLED=0 go build -trimpath \
+            -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT_SHA} -X main.buildDate=${BUILD_DATE} -X main.defaultRunnerImage=${RUNNER_IMAGE}" \
+            -o dist/scrutineer ./cmd/scrutineer
+
+      - name: Validate executable
+        if: matrix.run_binary
+        env:
+          VERSION: ${{ needs.preflight.outputs.version }}
+          RUNNER_IMAGE: ${{ needs.preflight.outputs.runner_image }}
+        run: |
+          OUTPUT=$(dist/scrutineer version)
+          grep -F "scrutineer ${VERSION}" <<< "${OUTPUT}"
+          grep -F "runner: ${RUNNER_IMAGE}" <<< "${OUTPUT}"
+
+      - name: Validate binary format
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          file dist/scrutineer
+          if [[ "${GOOS}" == "linux" ]]; then
+            if readelf -l dist/scrutineer | grep -q 'Requesting program interpreter'; then
+              echo "::error::${GOOS}-${GOARCH} binary is dynamically linked"
+              exit 1
+            fi
+          elif [[ "${GOARCH}" == "amd64" ]] && ! file dist/scrutineer | grep -q 'x86_64'; then
+            echo "::error::darwin-amd64 artifact is not an x86_64 Mach-O binary"
+            exit 1
+          fi
+
+      - name: Package
+        run: |
+          mkdir -p package
+          cp dist/scrutineer LICENSE README.md package/
+          TAR_FLAGS=(--no-xattrs)
+          if [[ "${RUNNER_OS}" == "macOS" ]]; then
+            TAR_FLAGS+=(--no-mac-metadata)
+          fi
+          /usr/bin/tar "${TAR_FLAGS[@]}" -czf "${ARTIFACT}.tar.gz" -C package .
+
+      - name: Generate build provenance
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
+        with:
+          subject-path: ${{ env.ARTIFACT }}.tar.gz
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ env.ARTIFACT }}
+          path: ${{ env.ARTIFACT }}.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: Release
+    needs: [preflight, build]
+    runs-on: ubuntu-slim
+    timeout-minutes: 20
+    permissions:
+      contents: write # required to create the version tag and GitHub release
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: artifacts
+          pattern: scrutineer-*
+          merge-multiple: true
+
+      - name: Generate checksums
+        working-directory: artifacts
+        run: sha256sum -- *.tar.gz > SHA256SUMS
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          COMMIT_SHA: ${{ github.sha }}
+          TAG: ${{ needs.preflight.outputs.tag }}
+        run: |
+          RELEASE_ERROR="${RUNNER_TEMP}/release-error"
+          if gh api "repos/${REPOSITORY}/releases/tags/${TAG}" --silent 2>"${RELEASE_ERROR}"; then
+            echo "Release ${TAG} is already published; nothing to recover"
+            exit 0
+          elif grep -q 'HTTP 404' "${RELEASE_ERROR}"; then
+            DRAFTS=$(gh api --paginate "repos/${REPOSITORY}/releases?per_page=100" \
+              --jq '.[] | select(.draft) | [.id, .tag_name] | @tsv')
+            while IFS=$'\t' read -r DRAFT_ID DRAFT_TAG; do
+              if [[ -n "${DRAFT_ID}" && "${DRAFT_TAG}" == "${TAG}" ]]; then
+                echo "Deleting incomplete draft ${DRAFT_ID} for ${TAG}"
+                gh api --method DELETE "repos/${REPOSITORY}/releases/${DRAFT_ID}"
+              fi
+            done <<< "${DRAFTS}"
+
+            gh release create "${TAG}" \
+              --repo "${REPOSITORY}" \
+              --target "${COMMIT_SHA}" \
+              --title "${TAG}" \
+              --generate-notes \
+              --draft
+          else
+            cat "${RELEASE_ERROR}" >&2
+            echo "::error::Unable to check whether release ${TAG} already exists"
+            exit 1
+          fi
+
+          gh release upload "${TAG}" \
+            --repo "${REPOSITORY}" \
+            --clobber \
+            artifacts/*.tar.gz artifacts/SHA256SUMS
+          gh release edit "${TAG}" \
+            --repo "${REPOSITORY}" \
+            --draft=false

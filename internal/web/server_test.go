@@ -4610,7 +4610,7 @@ func TestSettingsShow_rendersThemeOptions(t *testing.T) {
 func TestSettingsShow_rendersAboutAndScannerFindings(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
-	s.Commit = "abcdef1234567890"
+	s.Version = "2026.07.12.1"
 
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, localReq("GET", "/settings"))
@@ -4618,14 +4618,13 @@ func TestSettingsShow_rendersAboutAndScannerFindings(t *testing.T) {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
 	body := w.Body.String()
-	for _, want := range []string{"Scanner findings", "About", "Scrutineer commit", "Backend (claude)", "Semgrep", "Zizmor", "Container runtime"} {
+	for _, want := range []string{"Scanner findings", "About", "Scrutineer version", "Backend (claude)", "Semgrep", "Zizmor", "Container runtime"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("settings page missing %q", want)
 		}
 	}
-	// Commit is rendered short (first 12 chars).
-	if !strings.Contains(body, "abcdef123456") {
-		t.Error("settings page missing shortened commit SHA")
+	if !strings.Contains(body, "2026.07.12.1") {
+		t.Error("settings page missing Scrutineer version")
 	}
 }
 

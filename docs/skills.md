@@ -6,7 +6,7 @@ Adding a scan type is a directory drop. No Go changes are needed unless you want
 
 ## Bundled skills
 
-These ship in `skills/` and are loaded with `-skills ./skills`. The `triage` skill is the entry point: when a repository is added scrutineer enqueues `triage`, which classifies the repo with `brief` and enqueues the rest in parallel.
+These live in `skills/` and are embedded in the Scrutineer executable. At startup the binary materialises them into a content-addressed directory below the data root, preserving the ordinary disk-backed staging path for scripts, references, and schemas without requiring a source checkout. Passing `-skills ./skills` is still supported and overrides same-named bundled skills, which is useful while developing them locally. The `triage` skill is the entry point: when a repository is added scrutineer enqueues `triage`, which classifies the repo with `brief` and enqueues the rest in parallel.
 
 | Skill | What it does |
 |---|---|
@@ -51,7 +51,7 @@ The descriptions above are the first sentence of each skill's frontmatter `descr
       scripts/          optional, helper programs the body invokes
       ...               anything else the body references
 
-The loader walks each `-skills` directory looking for `SKILL.md` files up to six levels deep and skipping `.git`, `node_modules`, `vendor`, `.venv`, and `__pycache__`. Each is parsed and upserted into the database keyed by `name`. A content hash over `SKILL.md` and `schema.json` decides whether the row's version is bumped on restart, so editing a skill's body and restarting is enough to roll out a change.
+The loader first loads configured local and remote overrides, then fills in every name not overridden from the bundled directory. It walks each directory looking for `SKILL.md` files up to six levels deep and skips `.git`, `node_modules`, `vendor`, `.venv`, and `__pycache__`. Each skill is parsed and upserted into the database keyed by `name`. A content hash over `SKILL.md` and `schema.json` decides whether the row's version is bumped on restart, so editing a skill's body and restarting is enough to roll out a change. The content-addressed identity of the complete embedded bundle also covers auxiliary scripts and references, ensuring an updated binary materialises a new immutable tree when any shipped asset changes.
 
 ## Frontmatter
 
