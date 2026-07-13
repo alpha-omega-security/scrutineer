@@ -13,11 +13,17 @@ import (
 	"gorm.io/gorm/clause"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/httpx"
 )
 
 // CNAListURL is the public CVE Program partner list. Served as a static
 // JSON file from the cve.org website repo, so no auth needed.
 const CNAListURL = "https://raw.githubusercontent.com/CVEProject/cve-website/dev/src/assets/data/CNAsList.json"
+
+const (
+	cnaHTTPTimeout     = 30 * time.Second
+	cnaMaxResponseBody = 10 * 1024 * 1024
+)
 
 // SyncCNAs fetches the public CNA partner list and upserts every entry
 // into the cnas table keyed on short_name. Safe to re-run; existing rows
@@ -27,7 +33,7 @@ func SyncCNAs(ctx context.Context, gdb *gorm.DB, url string) (int, error) {
 	if url == "" {
 		url = CNAListURL
 	}
-	ctx, cancel := context.WithTimeout(ctx, httpTimeout)
+	ctx, cancel := context.WithTimeout(ctx, cnaHTTPTimeout)
 	defer cancel()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -35,7 +41,7 @@ func SyncCNAs(ctx context.Context, gdb *gorm.DB, url string) (int, error) {
 		return 0, err
 	}
 	req.Header.Set("User-Agent", userAgent)
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := httpx.DoRetry(req, httpx.RetryOptions{})
 	if err != nil {
 		return 0, err
 	}
@@ -43,7 +49,7 @@ func SyncCNAs(ctx context.Context, gdb *gorm.DB, url string) (int, error) {
 	if resp.StatusCode != http.StatusOK {
 		return 0, fmt.Errorf("fetch CNA list: %s returned %d", url, resp.StatusCode)
 	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBody))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, cnaMaxResponseBody))
 	if err != nil {
 		return 0, err
 	}

@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"strings"
@@ -41,6 +42,35 @@ not json at all
 	wantU := Usage{InputTokens: 10, OutputTokens: 66, CacheReadTokens: 1200, CacheWriteTokens: 34000}
 	if got[4].Usage != wantU {
 		t.Errorf("ev4 usage: %+v", got[4].Usage)
+	}
+}
+
+func TestParseStream_RateLimitEvent(t *testing.T) {
+	// The exact shape claude-code emits on a subscription run.
+	in := `{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1782990000,"rateLimitType":"five_hour","overageStatus":"rejected","isUsingOverage":false}}` + "\n"
+	var got []Event
+	ParseStream(strings.NewReader(in), func(e Event) { got = append(got, e) })
+	if len(got) != 1 {
+		t.Fatalf("want 1 event, got %d: %+v", len(got), got)
+	}
+	rl := got[0].RateLimit
+	if got[0].Kind != KindRateLimit || rl == nil {
+		t.Fatalf("ev0: %+v", got[0])
+	}
+	if rl.Status != "allowed" || rl.OverageStatus != "rejected" || rl.IsUsingOverage || rl.Type != "five_hour" || rl.ResetsAt != 1782990000 {
+		t.Errorf("rate_limit_info = %+v", rl)
+	}
+	if reset := rl.ResetTime(); reset == nil || reset.Unix() != 1782990000 {
+		t.Errorf("ResetTime() = %v", reset)
+	}
+}
+
+func TestRateLimitInfo_ResetTime_Absent(t *testing.T) {
+	if (*RateLimitInfo)(nil).ResetTime() != nil {
+		t.Error("nil receiver should yield nil reset")
+	}
+	if (&RateLimitInfo{ResetsAt: 0}).ResetTime() != nil {
+		t.Error("zero resetsAt should yield nil reset")
 	}
 }
 
@@ -163,5 +193,25 @@ func TestFormatEvent(t *testing.T) {
 	e := Event{Kind: "tool", Tool: "Read", Text: "/tmp/x"}
 	if s := FormatEvent(e); s != "[read] /tmp/x" {
 		t.Errorf("got %q", s)
+	}
+}
+
+func TestSummariseInput_caseInsensitive(t *testing.T) {
+	// claude reports "Bash", codex/opencode report "bash"; both must
+	// summarise to the command string, not the raw JSON.
+	tests := []struct {
+		tool, raw, want string
+	}{
+		{"Bash", `{"command":"ls -la"}`, "ls -la"},
+		{"bash", `{"command":"ls -la"}`, "ls -la"},
+		{"Read", `{"file_path":"/tmp/x"}`, "/tmp/x"},
+		{"read", `{"path":"/tmp/x"}`, "/tmp/x"},
+		{"grep", `{"pattern":"foo"}`, "foo"},
+		{"unknown", `{"x":1}`, `{"x":1}`},
+	}
+	for _, tt := range tests {
+		if got := summariseInput(tt.tool, json.RawMessage(tt.raw)); got != tt.want {
+			t.Errorf("summariseInput(%q, %s) = %q, want %q", tt.tool, tt.raw, got, tt.want)
+		}
 	}
 }

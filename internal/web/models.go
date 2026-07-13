@@ -8,10 +8,15 @@ import (
 	"gorm.io/gorm"
 )
 
-// Model is a display-name → claude model id pair offered in the UI.
+// Model is a display-name → model id pair offered in the UI. Tier
+// optionally tags the entry as the default for one of the mid/high/max
+// model tiers, so operators declaring their own models: list can name
+// which entry each tier resolves to instead of relying on the built-in
+// substring heuristic.
 type Model struct {
 	Name string
 	ID   string
+	Tier string
 }
 
 // ModelTier is an operator-facing role whose concrete model can be swapped
@@ -35,15 +40,11 @@ var ModelTiers = []ModelTier{
 }
 
 // Models is the pick list. The first entry is the default unless the
-// server's runtime override is set; see Server.DefaultModel.
-var Models = []Model{
-	{"Opus 4.6", "claude-opus-4-6"},
-	{"Opus 4.7", "claude-opus-4-7"},
-	{"Opus 4.8", "claude-opus-4-8"},
-	{"Sonnet 4.6", "claude-sonnet-4-6"},
-	{"Sonnet 5.0", "claude-sonnet-5"},
-	{"Fable 5", "claude-fable-5[1m]"},
-}
+// server's runtime override is set; see Server.DefaultModel. Populated
+// at startup by main.go from the active harness's DefaultModels(), or
+// from the operator's models: config; there is no built-in list here
+// so a new backend needs no edit to this file.
+var Models []Model
 
 // SetModels replaces the pick list. Called at startup from config; no-op
 // for an empty list so a config with only default_model set keeps the
@@ -80,6 +81,9 @@ func (s *Server) DefaultModel() string {
 	defer s.defaultsMu.RUnlock()
 	if s.defaultModel != "" {
 		return s.defaultModel
+	}
+	if len(Models) == 0 {
+		return ""
 	}
 	return Models[0].ID
 }
@@ -147,10 +151,18 @@ func ModelTierValues(gdb *gorm.DB, fallback string) map[string]string {
 }
 
 func builtinModelForTier(tier, fallback string) string {
-	// Built-in tiers assume the built-in Anthropic-flavoured model ids and
-	// ordering. If operators replace Models with a multi-vendor list that
-	// lacks "sonnet" or "opus", the tier intentionally falls back to
-	// DefaultModel unless they configure the tier in Settings.
+	// An entry explicitly tagged tier: <mid|high|max> in the models: list
+	// wins — the operator has said which model this tier means, so no
+	// guessing. First match wins if several entries share a tier.
+	for _, m := range Models {
+		if m.Tier == tier {
+			return m.ID
+		}
+	}
+	// Otherwise the substring heuristic keeps older or minimally tagged
+	// model lists usable: Mid → first sonnet, Max → latest opus.
+	// A custom list that neither tags tiers nor matches these needles falls
+	// through to DefaultModel; set the tiers in /settings for that case.
 	switch tier {
 	case ModelTierMid:
 		if id := firstModelContaining("sonnet"); id != "" {
@@ -190,4 +202,23 @@ func resolveModelPreference(gdb *gorm.DB, preference, fallback string) string {
 		return ModelForTier(gdb, preference, fallback)
 	}
 	return ModelForTier(gdb, ModelTierHigh, fallback)
+}
+
+// isDowngradableTier reports whether a model preference is one of the expensive
+// tiers (max/high) or the empty default (which resolves to high), which the
+// overage fallback rewrites to mid. A concrete model id or the mid tier is left
+// as-is, so an explicit per-scan model choice is always honoured.
+func isDowngradableTier(preference string) bool {
+	return preference == "" || preference == ModelTierHigh || preference == ModelTierMax
+}
+
+// applyOverageDowngrade rewrites an expensive tier preference to mid when the
+// overage fallback is active; otherwise it returns the preference unchanged.
+// Kept as a pure function so the (active x preference) matrix is unit-testable
+// without a live worker on overage.
+func applyOverageDowngrade(preference string, active bool) string {
+	if active && isDowngradableTier(preference) {
+		return ModelTierMid
+	}
+	return preference
 }

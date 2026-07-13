@@ -28,19 +28,6 @@ func seedAuditFixture(t *testing.T, s *Server) (db.Finding, string) {
 	return f, auth.APIToken
 }
 
-func auditAPIReq(t *testing.T, s *Server, method, path, token, body string) *httptest.ResponseRecorder {
-	t.Helper()
-	r := httptest.NewRequest(method, path, strings.NewReader(body))
-	r.Host = testHost
-	r.Header.Set("Authorization", "Bearer "+token)
-	if body != "" {
-		r.Header.Set("Content-Type", "application/json")
-	}
-	w := httptest.NewRecorder()
-	s.Handler().ServeHTTP(w, r)
-	return w
-}
-
 // decodeJSON unmarshals a recorded response body into out, failing the test
 // with the body on error so a non-JSON response (e.g. an error page) shows up
 // as the real failure rather than a confusing downstream assertion.
@@ -161,10 +148,10 @@ func TestApiAddFindingReview_validation(t *testing.T) {
 	f, tok := seedAuditFixture(t, s)
 	path := "/api/findings/" + strconv.Itoa(int(f.ID)) + "/reviews"
 
-	if w := auditAPIReq(t, s, "POST", path, tok, `{"verdict":"not-a-verdict"}`); w.Code != http.StatusUnprocessableEntity {
+	if w := apiReq(t, s, "POST", path, tok, `{"verdict":"not-a-verdict"}`); w.Code != http.StatusUnprocessableEntity {
 		t.Errorf("invalid verdict: status = %d, want 422", w.Code)
 	}
-	if w := auditAPIReq(t, s, "POST", path, tok, `not json`); w.Code != http.StatusBadRequest {
+	if w := apiReq(t, s, "POST", path, tok, `not json`); w.Code != http.StatusBadRequest {
 		t.Errorf("bad json: status = %d, want 400", w.Code)
 	}
 
@@ -172,7 +159,7 @@ func TestApiAddFindingReview_validation(t *testing.T) {
 	if _, err := db.AddFindingNote(s.DB, f.ID, "revalidate: false_positive\n\nfixture", "revalidate"); err != nil {
 		t.Fatalf("seed revalidate note: %v", err)
 	}
-	w := auditAPIReq(t, s, "POST", path, tok, `{"verdict":"true_positive","automated_outcome":"uncertain"}`)
+	w := apiReq(t, s, "POST", path, tok, `{"verdict":"true_positive","automated_outcome":"uncertain"}`)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("status = %d; body=%s", w.Code, w.Body)
 	}
@@ -191,7 +178,7 @@ func TestApiListFindingReviews(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	w := auditAPIReq(t, s, "GET", "/api/findings/"+strconv.Itoa(int(f.ID))+"/reviews", tok, "")
+	w := apiReq(t, s, "GET", "/api/findings/"+strconv.Itoa(int(f.ID))+"/reviews", tok, "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d; body=%s", w.Code, w.Body)
 	}
@@ -255,7 +242,7 @@ func TestApiAuditQueue(t *testing.T) {
 		t.Fatalf("seed review: %v", err)
 	}
 
-	w := auditAPIReq(t, s, "GET", "/api/v1/audit/queue", tok, "")
+	w := apiReq(t, s, "GET", "/api/v1/audit/queue", tok, "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("status = %d; body=%s", w.Code, w.Body)
 	}
@@ -276,7 +263,7 @@ func TestApiAuditQueue(t *testing.T) {
 	}
 
 	// limit applies.
-	w = auditAPIReq(t, s, "GET", "/api/v1/audit/queue?limit=1", tok, "")
+	w = apiReq(t, s, "GET", "/api/v1/audit/queue?limit=1", tok, "")
 	if w.Code != http.StatusOK {
 		t.Fatalf("limit=1 status = %d; body=%s", w.Code, w.Body)
 	}
@@ -291,7 +278,7 @@ func TestApiAuditQueue(t *testing.T) {
 	// sub-day cutoffs across timezones are unreliable; use date-level
 	// boundaries here so the comparison holds regardless of encoding.
 	countAt := func(since string) int {
-		w := auditAPIReq(t, s, "GET", "/api/v1/audit/queue?since="+url.QueryEscape(since), tok, "")
+		w := apiReq(t, s, "GET", "/api/v1/audit/queue?since="+url.QueryEscape(since), tok, "")
 		if w.Code != http.StatusOK {
 			t.Fatalf("since=%s status = %d; body=%s", since, w.Code, w.Body)
 		}

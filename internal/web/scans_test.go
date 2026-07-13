@@ -2,11 +2,14 @@ package web
 
 import (
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/worker"
 )
 
 func TestResumeOpts(t *testing.T) {
@@ -50,11 +53,31 @@ func TestResumeOpts(t *testing.T) {
 			name: "cancelled scan retries fresh even with a session",
 			scan: db.Scan{ID: 7, Status: db.ScanCancelled, SessionID: "s1"},
 		},
+		{
+			// A scan that ran under a different -backend than the current
+			// server retries fresh: its session id belongs to another agent
+			// CLI (e.g. a codex thread id passed to claude --resume fails).
+			name: "different backend retries fresh (cross-backend session id)",
+			scan: db.Scan{ID: 7, Status: db.ScanFailed, SessionID: "codex-thr-1", Backend: "codex"},
+		},
+		{
+			name:    "same backend resumes",
+			scan:    db.Scan{ID: 7, Status: db.ScanFailed, SessionID: "s1", Backend: "claude"},
+			wantSID: "s1", wantResume: uintPtr(7),
+		},
+		{
+			// Rows predating the Backend column (empty) are treated as claude,
+			// so under a claude server they resume.
+			name:    "empty backend resumes under claude (pre-column rows)",
+			scan:    db.Scan{ID: 7, Status: db.ScanFailed, SessionID: "s1", Backend: ""},
+			wantSID: "s1", wantResume: uintPtr(7),
+		},
 	}
 
+	s := &Server{Backend: "claude", Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			sid, resume := resumeOpts(tc.scan)
+			sid, resume := s.resumeOpts(tc.scan)
 			if sid != tc.wantSID {
 				t.Errorf("sessionID = %q, want %q", sid, tc.wantSID)
 			}
@@ -67,6 +90,17 @@ func TestResumeOpts(t *testing.T) {
 				t.Errorf("resumeOf = %d, want %d", *resume, *tc.wantResume)
 			}
 		})
+	}
+}
+
+// TestResumeOpts_emptyBackendUnderCodex locks that a pre-column row (empty
+// Backend, so a claude session) retried under a codex server starts fresh
+// rather than passing a claude session id to codex exec resume.
+func TestResumeOpts_emptyBackendUnderCodex(t *testing.T) {
+	s := &Server{Backend: "codex", Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	sid, resume := s.resumeOpts(db.Scan{ID: 7, Status: db.ScanFailed, SessionID: "s1", Backend: ""})
+	if sid != "" || resume != nil {
+		t.Errorf("empty-backend row under codex: sid=%q resume=%v, want fresh", sid, resume)
 	}
 }
 
@@ -208,6 +242,62 @@ func TestScansCancelAll_cancelsRepoQueuedAndRunning(t *testing.T) {
 	}
 	if got := statusOf(otherQueued.ID); got != db.ScanQueued {
 		t.Errorf("other repo queued -> %q, want queued (untouched)", got)
+	}
+	var queuedGot db.Scan
+	s.DB.First(&queuedGot, queued.ID)
+	if queuedGot.Error != "cancelled by user" || queuedGot.FinishedAt == nil {
+		t.Errorf("queued cancel fields: error=%q finished_at=%v", queuedGot.Error, queuedGot.FinishedAt)
+	}
+	if queuedGot.StatusPriority != db.StatusPriorityFor(db.ScanCancelled) {
+		t.Errorf("queued status_priority = %d, want cancelled priority", queuedGot.StatusPriority)
+	}
+}
+
+func TestScansPauseQueued_bulkUpdatesQueuedOnly(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/pause", Name: "pause"}
+	s.DB.Create(&repo)
+
+	mk := func(st db.ScanStatus) db.Scan {
+		sc := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: st, StatusPriority: db.StatusPriorityFor(st)}
+		s.DB.Create(&sc)
+		return sc
+	}
+	q1 := mk(db.ScanQueued)
+	q2 := mk(db.ScanQueued)
+	running := mk(db.ScanRunning)
+	doneScan := mk(db.ScanDone)
+
+	r := localReq("POST", "/scans/pause-queued")
+	r.Header.Set("Sec-Fetch-Site", "same-origin")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303; body=%s", w.Code, w.Body)
+	}
+	if loc := w.Header().Get("Location"); loc != "/scans?status=paused" {
+		t.Errorf("Location = %q, want /scans?status=paused", loc)
+	}
+
+	var q1got, q2got, runningGot, doneGot db.Scan
+	s.DB.First(&q1got, q1.ID)
+	s.DB.First(&q2got, q2.ID)
+	s.DB.First(&runningGot, running.ID)
+	s.DB.First(&doneGot, doneScan.ID)
+	for _, got := range []db.Scan{q1got, q2got} {
+		if got.Status != db.ScanPaused || got.StatusPriority != db.StatusPriorityFor(db.ScanPaused) {
+			t.Errorf("queued scan %d -> status=%s priority=%d, want paused", got.ID, got.Status, got.StatusPriority)
+		}
+		if got.Error != "paused by user" || got.FinishedAt == nil {
+			t.Errorf("queued scan %d pause fields: error=%q finished_at=%v", got.ID, got.Error, got.FinishedAt)
+		}
+	}
+	if runningGot.Status != db.ScanRunning {
+		t.Errorf("running -> %q, want running", runningGot.Status)
+	}
+	if doneGot.Status != db.ScanDone {
+		t.Errorf("done -> %q, want done", doneGot.Status)
 	}
 }
 
@@ -365,5 +455,56 @@ func TestScansCancelAll_requiresRepository(t *testing.T) {
 	s.scansCancelAll(w, localReq("POST", "/scans/cancel-all"))
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status = %d, want 400", w.Code)
+	}
+}
+
+// Repeated failures of one (repository, skill, sub_path, ref, finding_id)
+// tuple must retry only the newest failed row, and a failure superseded by a
+// newer paused attempt must not retry at all. Suppression by queued/running/
+// done — and cancelled deliberately not suppressing — is covered by
+// TestScansRetryFailed_skipsAlreadyRetried.
+func TestScansRetryFailed_dedupesRepeatedFailures(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/r", Name: "r"}
+	s.DB.Create(&repo)
+	skill := db.Skill{Name: "hello", Description: "d", Body: "b",
+		OutputFile: "report.json", OutputKind: "freeform", Version: 1,
+		Active: true, Source: "ui"}
+	s.DB.Create(&skill)
+
+	mk := func(status db.ScanStatus, subPath string) {
+		sc := db.Scan{RepositoryID: repo.ID, Kind: worker.JobSkill, Status: status,
+			StatusPriority: db.StatusPriorityFor(status),
+			SkillID:        &skill.ID, SkillName: skill.Name, SubPath: subPath}
+		s.DB.Create(&sc)
+	}
+
+	// Three straight failures of the same tuple — only the newest retries.
+	mk(db.ScanFailed, "")
+	mk(db.ScanFailed, "")
+	mk(db.ScanFailed, "")
+
+	// A failure with a newer paused attempt for its tuple — superseded.
+	mk(db.ScanFailed, "parked")
+	mk(db.ScanPaused, "parked")
+
+	var maxID uint
+	s.DB.Model(&db.Scan{}).Select("MAX(id)").Scan(&maxID)
+
+	w := httptest.NewRecorder()
+	s.scansRetryFailed(w, localReq("POST", "/scans/retry-failed"))
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303; body=%s", w.Code, w.Body)
+	}
+
+	var queued []db.Scan
+	s.DB.Where("id > ? AND status = ?", maxID, db.ScanQueued).Find(&queued)
+	if len(queued) != 1 {
+		t.Fatalf("new queued scans = %d, want exactly 1", len(queued))
+	}
+	if queued[0].SubPath != "" {
+		t.Errorf("retried sub_path = %q, want the repeated-failure tuple (parked is superseded)", queued[0].SubPath)
 	}
 }

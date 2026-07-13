@@ -544,3 +544,53 @@ func TestDefaultEgressAllowCoversSkillHosts(t *testing.T) {
 		t.Errorf("default allowlist should not match arbitrary hosts")
 	}
 }
+
+func TestFirstIfaceIPv4(t *testing.T) {
+	ipv4 := func(s string) net.Addr { return &net.IPNet{IP: net.ParseIP(s), Mask: net.CIDRMask(24, 32)} }
+	ipv6 := func(s string) net.Addr { return &net.IPNet{IP: net.ParseIP(s), Mask: net.CIDRMask(64, 128)} }
+	lo := ifaceAddrs{flags: net.FlagUp | net.FlagLoopback, addrs: []net.Addr{ipv4("127.0.0.1")}}
+
+	cases := []struct {
+		name    string
+		ifaces  []ifaceAddrs
+		want    string
+		wantErr bool
+	}{
+		{"internal leg only", []ifaceAddrs{lo,
+			{flags: net.FlagUp, addrs: []net.Addr{ipv4("10.89.1.2")}},
+		}, "10.89.1.2", false},
+		// The egress leg may already be connected by the time the sidecar
+		// enumerates; the run-time leg has the lower index and must still win.
+		{"egress leg already connected", []ifaceAddrs{lo,
+			{flags: net.FlagUp, addrs: []net.Addr{ipv4("10.89.1.2")}},
+			{flags: net.FlagUp, addrs: []net.Addr{ipv4("10.88.0.7")}},
+		}, "10.89.1.2", false},
+		{"down interface skipped", []ifaceAddrs{lo,
+			{flags: 0, addrs: []net.Addr{ipv4("10.89.1.2")}},
+			{flags: net.FlagUp, addrs: []net.Addr{ipv4("10.88.0.7")}},
+		}, "10.88.0.7", false},
+		{"ipv6 listed before ipv4 on the same interface", []ifaceAddrs{lo,
+			{flags: net.FlagUp, addrs: []net.Addr{ipv6("fd00::2"), ipv4("10.89.1.2")}},
+		}, "10.89.1.2", false},
+		{"loopback only", []ifaceAddrs{lo}, "", true},
+		{"no interfaces", nil, "", true},
+		// Falling through to a later interface would bind the egress leg and
+		// re-open the listener to the default bridge: fail closed instead.
+		{"first candidate ipv6-only fails closed", []ifaceAddrs{lo,
+			{flags: net.FlagUp, addrs: []net.Addr{ipv6("fd00::2")}},
+			{flags: net.FlagUp, addrs: []net.Addr{ipv4("10.88.0.7")}},
+		}, "", true},
+	}
+	for _, c := range cases {
+		got, err := firstIfaceIPv4(c.ifaces)
+		if c.wantErr {
+			if err == nil {
+				t.Errorf("%s: expected an error, got %q", c.name, got)
+			}
+			continue
+		}
+		if err != nil || got != c.want {
+			t.Errorf("%s: firstIfaceIPv4 = %q, %v, want %q", c.name, got, err, c.want)
+		}
+	}
+}

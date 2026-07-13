@@ -116,6 +116,23 @@ func TestBundledSchemas_compileAndAcceptSamples(t *testing.T) {
 			"../../skills/vuln-scan/schema.json",
 			`{"findings":[]}`,
 		},
+		{
+			"../../skills/advisory-deep-dive/schema.json",
+			`{"findings":[{"id":"F001","title":"Bypass of GHSA-xxxx path-traversal fix",
+			  "severity":"High","confidence":"medium","cwe":"CWE-22","location":"lib/extract.rb:88",
+			  "reachability":"reachable","quality_tier":"high",
+			  "trace":"Percent-encoded separators skip the added guard and reach File.open.",
+			  "boundary":"The public extract API accepts caller-supplied archive entry names.",
+			  "validation":"Repro run against HEAD; the encoded entry escaped the destination root.",
+			  "prior_art":"Descends from GHSA-xxxx-yyyy-zzzz.",
+			  "rating":"High: the shipped fix blocklists literal ../ but not its encodings.",
+			  "references":[{"url":"https://github.com/advisories/GHSA-xxxx-yyyy-zzzz","tags":"advisory"},
+			    {"url":"https://github.com/o/r/commit/deadbeef","tags":"patch"}]}]}`,
+		},
+		{
+			"../../skills/advisory-deep-dive/schema.json",
+			`{"findings":[]}`,
+		},
 	}
 	for _, tc := range cases {
 		schema, err := os.ReadFile(tc.schema)
@@ -157,6 +174,12 @@ func TestBundledSchemas_rejectBadShapes(t *testing.T) {
 			  "cwe":"CWE-22","location":"pkg/archive/extract.go","reachability":"reachable",
 			  "quality_tier":"high","trace":"x","boundary":"x","validation":"x","rating":"x"}]}`,
 			"/findings/0/location"},
+		{"../../skills/advisory-deep-dive/schema.json",
+			`{"findings":[{"id":"F001","title":"String references, not objects","severity":"High",
+			  "confidence":"high","cwe":"CWE-22","location":"lib/extract.rb:88","reachability":"reachable",
+			  "quality_tier":"high","trace":"x","boundary":"x","validation":"x","rating":"x",
+			  "references":["https://github.com/advisories/GHSA-xxxx-yyyy-zzzz"]}]}`,
+			"/findings/0/references/0"},
 		{"../../skills/threat-model/schema.json",
 			`{"spec_version":1,"repository":"https://x","commit":"abc1234","date":"2026-01-01",
 			  "description":"x","components":[{"name":"c","entry_points":[],"touches":[],

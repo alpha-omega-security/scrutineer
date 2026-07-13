@@ -2,11 +2,45 @@ package worker
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"scrutineer/internal/db"
 )
+
+// ErrInvalidFinding marks a streamed finding the caller sent wrong: malformed
+// JSON or missing a required field. Handlers map it to a 4xx rather than 500.
+var ErrInvalidFinding = errors.New("invalid finding")
+
+// PersistStreamedFinding records one finding emitted mid-scan into the
+// concurrent-finding log so sibling scans in the same ScanGroup can read it
+// before this scan completes. It runs the same fingerprint, VID and
+// snippet path as the end-of-scan report ingestion, so the final report.json
+// reconciles against the streamed row instead of duplicating it. raw is a
+// single finding object in the report.json finding shape; the scan's identity
+// (id, repo, commit, sub-path) is stamped from scan, never trusted from raw.
+func (w *Worker) PersistStreamedFinding(scan *db.Scan, raw []byte) (*db.Finding, error) {
+	var sf scanFinding
+	if err := json.Unmarshal(raw, &sf); err != nil {
+		return nil, fmt.Errorf("%w: %v", ErrInvalidFinding, err)
+	}
+	if strings.TrimSpace(sf.Title) == "" || strings.TrimSpace(sf.Severity) == "" || strings.TrimSpace(sf.Location) == "" {
+		return nil, fmt.Errorf("%w: title, severity and location are required", ErrInvalidFinding)
+	}
+	f := sf.toFinding(scan.ID, scan.RepositoryID, scan.Commit, scan.SubPath)
+	f.Fingerprint = db.FingerprintFinding(scan.SkillName, f.SubPath, f.CWE, f.Location, f.Title)
+
+	srcDir := filepath.Join(w.scanWorkRoot(scan), "src")
+	f.VID = w.computeVID(srcDir, f.Locations)
+	f.Snippet = readSnippet(srcDir, f.Location)
+
+	if _, err := w.persistFinding(scan, &f); err != nil {
+		return nil, err
+	}
+	return &f, nil
+}
 
 // scanReport extracts only the findings array from a security-deep-dive
 // report. All other top-level fields (repository, artefact, boundaries,
@@ -35,12 +69,17 @@ type scanFinding struct {
 	References []scanReference `json:"references"`
 
 	// Per-step markdown (security-deep-dive schema)
-	Trace      string `json:"trace"`
-	Boundary   string `json:"boundary"`
-	Validation string `json:"validation"`
-	PriorArt   string `json:"prior_art"`
-	Reach      string `json:"reach"`
-	Rating     string `json:"rating"`
+	Trace         string `json:"trace"`
+	Boundary      string `json:"boundary"`
+	Validation    string `json:"validation"`
+	PriorArt      string `json:"prior_art"`
+	DiscoveredVia string `json:"discovered_via"`
+	Reach         string `json:"reach"`
+	Rating        string `json:"rating"`
+
+	// DupCheck is the agent's one-sentence note on why this finding is
+	// distinct from the siblings already filed under the same scan_group.
+	DupCheck string `json:"dup_check"`
 
 	// Legacy fields (old schema)
 	Summary string `json:"summary"`
@@ -66,32 +105,67 @@ func parseReport(raw []byte) (scanReport, error) {
 func (r scanReport) toFindings(scanID, repoID uint, commit, subPath string) []db.Finding {
 	out := make([]db.Finding, 0, len(r.Findings))
 	for _, f := range r.Findings {
-		out = append(out, db.Finding{
-			ScanID:       scanID,
-			RepositoryID: repoID,
-			Commit:       commit,
-			SubPath:      subPath,
-			FindingID:    f.ID,
-			Sinks:        strings.Join(f.Sinks, ", "),
-			Title:        f.Title,
-			Severity:     f.Severity,
-			Confidence:   strings.ToLower(f.Confidence),
-			CWE:          f.CWE,
-			Location:     f.Location,
-			Locations:    strings.Join(f.Locations, "\n"),
-			Affected:     f.Affected,
-			Reachability: f.Reachability,
-			QualityTier:  f.QualityTier,
-			Trace:        f.Trace,
-			Boundary:     f.Boundary,
-			Validation:   f.Validation,
-			PriorArt:     f.PriorArt,
-			Reach:        f.Reach,
-			Rating:       f.Rating,
-			References:   toReferences(f.References),
-		})
+		out = append(out, f.toFinding(scanID, repoID, commit, subPath))
 	}
 	return out
+}
+
+// discoveredViaPrefix is the fixed opening of a Finding.PriorArt field when
+// the emitting skill set discovered_via. disclose matches on this prefix to
+// vary its Summary opening ("this was surfaced by an open issue" vs "we
+// found this in the code"), so changing it is a coordinated change with
+// skills/disclose/SKILL.md. There is deliberately no db.Finding column for
+// the value: it lives in prose so a later move to a column can backfill by
+// scanning PriorArt for this prefix.
+const discoveredViaPrefix = "Discovered via "
+
+func foldDiscoveredVia(via, priorArt string) string {
+	via = strings.TrimSpace(via)
+	if !validDiscoveredVia(via) {
+		return priorArt
+	}
+	head := discoveredViaPrefix + via + "."
+	if p := strings.TrimSpace(priorArt); p != "" {
+		return head + " " + p
+	}
+	return head
+}
+
+func validDiscoveredVia(via string) bool {
+	switch via {
+	case "source", "issue-tracker", "advisory", "documentation":
+		return true
+	default:
+		return false
+	}
+}
+
+func (f scanFinding) toFinding(scanID, repoID uint, commit, subPath string) db.Finding {
+	return db.Finding{
+		ScanID:       scanID,
+		RepositoryID: repoID,
+		Commit:       commit,
+		SubPath:      subPath,
+		FindingID:    f.ID,
+		Sinks:        strings.Join(f.Sinks, ", "),
+		Title:        f.Title,
+		Severity:     f.Severity,
+		Confidence:   strings.ToLower(f.Confidence),
+		CWE:          f.CWE,
+		Location:     f.Location,
+		Locations:    strings.Join(f.Locations, "\n"),
+		Affected:     f.Affected,
+		Reachability: f.Reachability,
+		QualityTier:  f.QualityTier,
+		Trace:        f.Trace,
+		Boundary:     f.Boundary,
+		Validation:   f.Validation,
+		PriorArt:     foldDiscoveredVia(f.DiscoveredVia, f.PriorArt),
+		Reach:        f.Reach,
+		Rating:       f.Rating,
+		DupCheck:     f.DupCheck,
+		References:   toReferences(f.References),
+	}
 }
 
 func toReferences(refs []scanReference) []db.FindingReference {

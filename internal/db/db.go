@@ -125,11 +125,17 @@ type Repository struct {
 	// workbench tab; empty means no override.
 	ThreatModel string `gorm:"type:text"`
 
+	// ScanConfig is analyst-authored YAML that narrows and explains the
+	// repository's security review. The worker validates and stages it as
+	// scrutineer.scan_config in every skill workspace.
+	ScanConfig string `gorm:"type:text"`
+
 	CreatedAt time.Time
 	UpdatedAt time.Time
 
-	Scans       []Scan       `gorm:"constraint:OnDelete:CASCADE"`
-	Maintainers []Maintainer `gorm:"many2many:repository_maintainers"`
+	Scans            []Scan            `gorm:"constraint:OnDelete:CASCADE"`
+	ExpectedFindings []ExpectedFinding `gorm:"constraint:OnDelete:CASCADE"`
+	Maintainers      []Maintainer      `gorm:"many2many:repository_maintainers"`
 }
 
 // IsLocal reports whether this Repository points at a directory on disk
@@ -158,6 +164,11 @@ const (
 	ScanCancelled ScanStatus = "cancelled"
 )
 
+const (
+	ScanRescanModeFull = "full"
+	ScanRescanModeDiff = "diff"
+)
+
 // Scan is one execution of a job against a repository. Kind names the job
 // ("claude", later "semgrep", "brief", "git-pkgs"). Report holds whatever
 // the job considers its primary artefact; Log holds the streamed transcript
@@ -182,9 +193,10 @@ type Scan struct {
 	// the skill is deleted. APIToken is a random bearer generated per-run
 	// so skills can call back into scrutineer's HTTP API from inside the
 	// workspace; it is cleared when the scan reaches a terminal state.
-	SkillID      *uint `gorm:"index"`
-	SkillVersion int
-	SkillName    string `gorm:"index"`
+	SkillID            *uint `gorm:"index"`
+	SkillVersion       int
+	SkillSchemaVersion int
+	SkillName          string `gorm:"index"`
 	// FindingID is set when a scan is finding-scoped (verify, patch,
 	// disclose). Skills read it from context.json to know which finding
 	// they are acting on.
@@ -227,30 +239,66 @@ type Scan struct {
 	// external APIs (packages/advisories/dependents) ignore it.
 	SubPath string `gorm:"index"`
 
+	// ScanGroup ties together a cohort of deep-dive scans launched as one
+	// parallel batch (Scan-all-subprojects, or a single New-scan run), so an
+	// in-flight audit skill can list its siblings' findings via
+	// /repositories/{id}/findings?scan_group=... and avoid re-filing a bug a
+	// sibling already reported before the dedup judge runs. Empty on
+	// scans that were not launched as part of such a batch.
+	ScanGroup string `gorm:"index"`
+
+	// RescanMode records the actual coverage mode for this scan. Empty and
+	// "full" mean ordinary full coverage. "diff" means the worker staged a
+	// baseline diff and skills should not claim coverage over untouched code.
+	// A requested diff scan can fall back to full coverage; Coverage records
+	// why.
+	RescanMode string `gorm:"index"`
+	// DiffBaseScanID/DiffBaseCommit identify the baseline used for a diff
+	// rescan. The commit is denormalized so the scan remains understandable
+	// even if the baseline scan row is later deleted.
+	DiffBaseScanID *uint `gorm:"index"`
+	DiffBaseCommit string
+	// DiffThreatModelScanID points at the prior threat-model report staged as
+	// old_threat_model.json for a diff threat-model scan, when available.
+	DiffThreatModelScanID *uint `gorm:"index"`
+	// DiffStats and Coverage are JSON blobs. DiffStats describes changed
+	// files/counts; Coverage describes what this scan did or did not cover,
+	// including automatic fallback reasons.
+	DiffStats string `gorm:"type:text"`
+	Coverage  string `gorm:"type:text"`
+
 	// Profile is the runner profile that ran (or was overridden to run)
 	// this scan. Empty means the default runner image; non-empty names
 	// a docker/profiles/<name>/ entry. Persisted so retries reuse the
 	// operator's override and the UI can show the chosen ecosystem.
 	Profile string `gorm:"index"`
 
-	// SessionID is the claude-code session this scan's run belongs to,
-	// captured from the stream-json init/result events. It is written as
-	// soon as the init event arrives (before the run finishes) so it
-	// survives a crash, and cleared once the scan reaches ordinary "done"
-	// so a deliberate re-run from the UI starts a fresh conversation. A
-	// retry of a failed or max-turns-hit scan carries this value forward
-	// so the runner can pass `claude -p --resume <id>` and continue from
-	// where it left off instead of restarting from turn 0.
+	// Backend is the harness (agent CLI) that ran this scan — the -backend
+	// value, e.g. "claude" or "codex". Stamped by the worker so a retry
+	// after switching -backend can drop the recorded SessionID rather than
+	// pass one harness's session/thread id to another's resume command.
+	// Empty on rows that predate the column or never reached the runner.
+	Backend string `gorm:"index"`
+
+	// SessionID is the harness session this scan's run belongs to,
+	// captured from the harness's own event stream. Its meaning depends
+	// on Backend (a claude session id, a codex thread id, ...). It is
+	// written as soon as the session event arrives (before the run
+	// finishes) so it survives a crash, and cleared once the scan reaches
+	// ordinary "done" so a deliberate re-run from the UI starts a fresh
+	// conversation. A retry of a failed or max-turns-hit scan carries
+	// this value forward so the harness can resume the same conversation
+	// instead of restarting from turn 0.
 	SessionID string
 	// MaxTurnsHit marks scans that completed with partial output because
 	// claude-code hit --max-turns. They stay status=done because the
 	// partial report is real output, but keep SessionID so Retry can resume.
 	MaxTurnsHit bool `gorm:"not null;default:false"`
-	// ResumedFromScanID points at the lineage-root scan whose claude session
-	// and workspace a retry reuses. Nil on a fresh scan. claude keys its
-	// session store by working directory, so a resuming run must execute
-	// in the same per-scan workspace path as the original; this pins that
-	// path across the whole retry chain. Always the root of the lineage,
+	// ResumedFromScanID points at the lineage-root scan whose harness
+	// session and workspace a retry reuses. Nil on a fresh scan. Harness
+	// session stores are keyed by working directory, so a resuming run
+	// must execute in the same per-scan workspace path as the original;
+	// this pins that path across the whole retry chain. Always the root of the lineage,
 	// not the immediate parent, so N retries deep still resolve to one
 	// workspace.
 	ResumedFromScanID *uint `gorm:"index"`
@@ -271,8 +319,18 @@ type Scan struct {
 
 	Prompt string
 	Report string
-	Log    string
-	Error  string
+	// RefusalAudit is the structured follow-up from security-deep-dive after
+	// its primary report. It records analysis the agent declined or only
+	// partially completed, without changing the primary report artifact.
+	RefusalAudit string `gorm:"type:text"`
+	// RefusalAuditWarning is denormalized from RefusalAudit so scan lists can
+	// flag incomplete coverage without parsing JSON while rendering.
+	RefusalAuditWarning bool `gorm:"not null;default:false"`
+	Log                 string
+	Error               string
+	// PausedUntil is set for model-account pauses with a known reset time.
+	// Nil means a manual pause or an account pause without a reported reset.
+	PausedUntil *time.Time `gorm:"index"`
 
 	// ImportPayload carries the raw uploaded report for an ingest-skill
 	// run created by the /v1/import fallback. The worker stages it into
@@ -452,6 +510,24 @@ type Dependency struct {
 	ManifestPath          string
 	ManifestKind          string
 	CreatedAt             time.Time
+}
+
+// ExpectedFinding is an operator-supplied benchmark target for a repository.
+// It records a known vulnerable file/CWE pair that model-backed scans should
+// rediscover. Matching intentionally ignores line numbers because they drift
+// between versions.
+type ExpectedFinding struct {
+	ID           uint `gorm:"primarykey"`
+	RepositoryID uint `gorm:"index;not null;uniqueIndex:idx_expected_repo_file_cwe,priority:1"`
+	Repository   Repository
+
+	File string `gorm:"not null;uniqueIndex:idx_expected_repo_file_cwe,priority:2"`
+	CWE  string `gorm:"not null;uniqueIndex:idx_expected_repo_file_cwe,priority:3"`
+	CVE  string
+	Note string `gorm:"type:text"`
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // FindingResolution says how a finding got resolved. Set by the analyst
@@ -653,6 +729,13 @@ type Finding struct {
 	PriorArt   string `gorm:"type:text"`
 	Reach      string `gorm:"type:text"`
 	Rating     string `gorm:"type:text"`
+
+	// DupCheck is the audit agent's one-sentence rationale for why this
+	// finding is distinct from the sibling findings already filed under the
+	// same ScanGroup: which ones it compared against and why this is not a
+	// duplicate. The dedup judge weighs it alongside fingerprint matching.
+	// Empty for findings from skills that do not emit it.
+	DupCheck string `gorm:"type:text"`
 
 	Labels         []FindingLabel         `gorm:"many2many:finding_labels_join"`
 	Notes          []FindingNote          `gorm:"constraint:OnDelete:CASCADE"`
@@ -1123,7 +1206,7 @@ func models() []any {
 		&Repository{}, &Scan{},
 		&Finding{}, &FindingLabel{}, &FindingNote{},
 		&FindingCommunication{}, &FindingReference{}, &FindingHistory{}, &FindingReview{},
-		&Dependency{}, &Package{}, &Dependent{}, &FindingDependent{}, &Advisory{},
+		&Dependency{}, &ExpectedFinding{}, &Package{}, &Dependent{}, &FindingDependent{}, &Advisory{},
 		&Maintainer{}, &Skill{}, &Subproject{},
 		&SBOMUpload{}, &SBOMPackage{}, &CNA{}, &Setting{},
 	}
@@ -1204,7 +1287,11 @@ type SBOMUpload struct {
 	Raw         []byte
 
 	PackageCount int
-	Packages     []SBOMPackage `gorm:"constraint:OnDelete:CASCADE"`
+	// ImportPending is true after a newly parsed upload and until the operator
+	// confirms repository resolution. False preserves the previous behaviour
+	// for uploads created before the confirmation step was introduced.
+	ImportPending bool          `gorm:"not null;default:false"`
+	Packages      []SBOMPackage `gorm:"constraint:OnDelete:CASCADE"`
 
 	CreatedAt time.Time
 	UpdatedAt time.Time

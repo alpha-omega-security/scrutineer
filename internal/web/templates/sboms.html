@@ -29,8 +29,10 @@
 {{if .SBOMs}}
   <table class="table w-full">
     <thead><tr>
-      <th>Name</th><th class="w-28">Format</th><th class="w-24 text-right">Packages</th>
-      <th class="w-40">Uploaded</th>
+      {{template "th-sort" (dict "Sorter" .Sorter "Key" "name" "Def" "asc" "Label" "Name" "Class" "")}}
+      {{template "th-sort" (dict "Sorter" .Sorter "Key" "format" "Def" "asc" "Label" "Format" "Class" "w-28")}}
+      {{template "th-sort" (dict "Sorter" .Sorter "Key" "packages" "Def" "desc" "Label" "Packages" "Class" "w-24 text-right")}}
+      {{template "th-sort" (dict "Sorter" .Sorter "Key" "uploaded" "Def" "desc" "Label" "Uploaded" "Class" "w-40")}}
     </tr></thead>
     <tbody>
     {{range .SBOMs}}

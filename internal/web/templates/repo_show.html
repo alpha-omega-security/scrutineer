@@ -56,6 +56,14 @@
           hx-post="/repositories/{{.Repo.ID}}/scan" hx-swap="none">
       <button class="btn" type="submit"><i data-lucide="play"></i> New scan</button>
     </form>
+    <form method="post" action="/repositories/{{.Repo.ID}}/scan"
+          hx-post="/repositories/{{.Repo.ID}}/scan" hx-swap="none">
+      <input type="hidden" name="rescan_mode" value="diff">
+      <button class="btn-outline" type="submit"
+              data-tooltip="Scan changes since the latest compatible deep-dive baseline; falls back to a full scan when no usable baseline exists.">
+        <i data-lucide="git-compare-arrows"></i> Diff rescan
+      </button>
+    </form>
   </div>
 </div>
 
@@ -90,6 +98,12 @@
     <button type="button" role="tab" id="rt12" aria-controls="rp12" aria-selected="false">
       Workbench
       {{if .Workbench.HasOverride}}<span class="badge-outline ml-1">override</span>{{end}}
+    </button>
+    <button type="button" role="tab" id="rt14" aria-controls="rp14" aria-selected="false">
+      Scan config{{if .Repo.ScanConfig}} <span class="badge-outline ml-1">set</span>{{end}}
+    </button>
+    <button type="button" role="tab" id="rt13" aria-controls="rp13" aria-selected="false">
+      Benchmark{{if .ExpectedFindings}} <span class="badge-outline ml-1">{{.ExpectedMatched}}/{{len .ExpectedFindings}}</span>{{end}}
     </button>
     {{if .Advisories}}
     <button type="button" role="tab" id="rt8" aria-controls="rp8" aria-selected="false">
@@ -211,7 +225,12 @@
             <tr id="finding-{{.ID}}">
               <td>{{template "severity-badge" .Severity}}</td>
               <td class="min-w-0 whitespace-normal"><a href="/findings/{{.ID}}">{{.Title}}</a></td>
-              <td>{{template "finding-status" (fstatus .Status)}}</td>
+              <td>
+                {{template "finding-status" (fstatus .Status)}}
+                {{if $.ExpectedFindings}}
+                  {{if index $.ExpectedFindingStatus .ID}}<span class="badge-outline text-xs mt-1">expected</span>{{else}}<span class="badge-outline text-xs mt-1">unexpected</span>{{end}}
+                {{end}}
+              </td>
               <td class="whitespace-normal">
                 {{template "loc-link" (dict "HTMLURL" $.Repo.HTMLURL "Commit" $.Latest.Commit "Location" .Location "Extra" .ExtraLocationCount)}}
               </td>
@@ -276,6 +295,9 @@
             <div class="flex items-center gap-2">
               {{template "severity-badge" .Severity}}
               {{template "finding-status" (fstatus .Status)}}
+              {{if $.ExpectedFindings}}
+                {{if index $.ExpectedFindingStatus .ID}}<span class="badge-outline text-xs">expected</span>{{else}}<span class="badge-outline text-xs">unexpected</span>{{end}}
+              {{end}}
               <h3><a href="/findings/{{.ID}}">{{.Title}}</a></h3>
               {{if .CWE}}<span class="badge-outline ml-auto" data-tooltip="{{cwename .CWE}}">{{with cwecatid .CWE}}<span class="text-muted-foreground">{{.}} ›</span> {{end}}{{.CWE}}</span>{{end}}
             </div>
@@ -309,6 +331,9 @@
             <div class="flex items-center gap-2">
               {{template "severity-badge" .Severity}}
               {{template "finding-status" (fstatus .Status)}}
+              {{if $.ExpectedFindings}}
+                {{if index $.ExpectedFindingStatus .ID}}<span class="badge-outline text-xs">expected</span>{{else}}<span class="badge-outline text-xs">unexpected</span>{{end}}
+              {{end}}
               <h3><a href="/findings/{{.ID}}">{{.Title}}</a></h3>
               <span class="badge-outline ml-auto">{{index $skills .ScanID}}</span>
               {{if .CWE}}<span class="badge-outline" data-tooltip="{{cwename .CWE}}">{{with cwecatid .CWE}}<span class="text-muted-foreground">{{.}} ›</span> {{end}}{{.CWE}}</span>{{end}}
@@ -403,6 +428,62 @@
 
   <div role="tabpanel" id="rp12" aria-labelledby="rt12" hidden>
     {{template "threat_workbench" .}}
+  </div>
+
+  <div role="tabpanel" id="rp14" aria-labelledby="rt14" hidden>
+    {{template "repo_scan_config" .}}
+  </div>
+
+  <div role="tabpanel" id="rp13" aria-labelledby="rt13" hidden>
+    <div class="grid gap-4">
+      <form method="post" action="/repositories/{{.Repo.ID}}/expected" class="form grid grid-cols-1 md:grid-cols-[1fr_8rem_10rem_1fr_auto] gap-2 items-end">
+        <label class="grid gap-1">
+          <span class="text-xs text-muted-foreground">File</span>
+          <input class="input" name="file" placeholder="src/parser.go" required>
+        </label>
+        <label class="grid gap-1">
+          <span class="text-xs text-muted-foreground">CWE</span>
+          <input class="input" name="cwe" placeholder="CWE-79" required>
+        </label>
+        <label class="grid gap-1">
+          <span class="text-xs text-muted-foreground">CVE</span>
+          <input class="input" name="cve" placeholder="CVE-2026-0001">
+        </label>
+        <label class="grid gap-1">
+          <span class="text-xs text-muted-foreground">Note</span>
+          <input class="input" name="note" placeholder="Known vulnerable sink">
+        </label>
+        <button type="submit" class="btn"><i data-lucide="plus"></i> Add</button>
+      </form>
+      {{if .ExpectedFindings}}
+        <table class="table w-full">
+          <thead><tr>
+            <th class="w-24">Status</th><th>File</th><th class="w-28">CWE</th><th class="w-36">CVE</th><th>Note</th><th class="w-24"></th>
+          </tr></thead>
+          <tbody>
+          {{range .ExpectedFindings}}
+            <tr>
+              <td>
+                {{if .Matched}}<span class="badge-outline">matched</span>{{else}}<span class="badge-destructive">missed</span>{{end}}
+              </td>
+              <td class="whitespace-normal"><code class="text-xs break-all">{{.Expected.File}}</code></td>
+              <td><span class="badge-outline">{{.Expected.CWE}}</span></td>
+              <td class="text-muted-foreground">{{.Expected.CVE}}</td>
+              <td class="whitespace-normal text-sm text-muted-foreground">{{.Expected.Note}}</td>
+              <td class="text-right">
+                {{if .FindingID}}<a href="/findings/{{.FindingID}}" class="btn-sm-ghost" aria-label="View matched finding" data-tooltip="View matched finding"><i data-lucide="external-link"></i></a>{{end}}
+                <form method="post" action="/repositories/{{$.Repo.ID}}/expected/{{.Expected.ID}}/delete" class="inline">
+                  <button type="submit" class="btn-sm-ghost" aria-label="Delete expected finding" data-tooltip="Delete expected finding"><i data-lucide="trash-2"></i></button>
+                </form>
+              </td>
+            </tr>
+          {{end}}
+          </tbody>
+        </table>
+      {{else}}
+        <p class="text-sm text-muted-foreground">No expected findings recorded for this repository.</p>
+      {{end}}
+    </div>
   </div>
 
   {{if .Advisories}}
@@ -543,8 +624,8 @@
 {{define "scan-row"}}{{with .S}}
   <tr id="scan-{{.ID}}"{{if $.OOB}} hx-swap-oob="true"{{end}}>
     <td><a href="/scans/{{.ID}}">{{.ID}}</a></td>
-    <td>{{if .SkillName}}{{.SkillName}}{{else}}{{.Kind}}{{end}} {{template "branch-tag" .Ref}}</td>
-    <td>{{template "status-badge" (status .Status)}} {{if .MaxTurnsHit}}<span class="badge-outline"><i data-lucide="timer-off"></i> max turns</span>{{end}}</td>
+    <td>{{if .SkillName}}{{.SkillName}}{{else}}{{.Kind}}{{end}} {{template "branch-tag" .Ref}}{{if eq .RescanMode "diff"}} <span class="badge-outline text-xs">diff</span>{{end}}</td>
+    <td>{{template "status-badge" (status .Status)}} {{if .MaxTurnsHit}}<span class="badge-outline"><i data-lucide="timer-off"></i> max turns</span>{{end}}{{if .RefusalAuditWarning}} <span class="badge-outline" data-tooltip="The deep-dive reported refused or skipped analysis"><i data-lucide="triangle-alert"></i> analysis incomplete</span>{{end}}</td>
     <td>{{if gt .FindingsCount 0}}{{template "findings-badge" .FindingsCount}}{{end}}</td>
     <td class="text-muted-foreground">{{if .Model}}{{.Model}}{{else}}-{{end}}</td>
     <td class="text-muted-foreground">{{if gt .CostUSD 0.0}}{{usd .CostUSD}}{{else}}-{{end}}</td>

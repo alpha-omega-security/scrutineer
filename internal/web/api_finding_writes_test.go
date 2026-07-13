@@ -98,6 +98,60 @@ func TestAPIPatchFinding(t *testing.T) {
 	}
 }
 
+func TestAPIPatchFindingAtomicRollback(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	f, tok, _ := seedFindingForAPI(t, s)
+	path := fmt.Sprintf("/api/findings/%d", f.ID)
+
+	w := apiReq(t, s, "PATCH", path, tok,
+		`{"fields":{"cve_id":"CVE-2026-12345","ghsa_id":"not-a-ghsa"},"by":"disclose"}`)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body=%s", w.Code, w.Body)
+	}
+
+	var got db.Finding
+	s.DB.First(&got, f.ID)
+	if got.CVEID != "" || got.GHSAID != "" {
+		t.Fatalf("finding fields committed despite failed patch: cve=%q ghsa=%q", got.CVEID, got.GHSAID)
+	}
+	var hist []db.FindingHistory
+	s.DB.Where("finding_id = ?", f.ID).Find(&hist)
+	if len(hist) != 0 {
+		t.Fatalf("history rows = %d, want 0 after rollback: %+v", len(hist), hist)
+	}
+}
+
+func TestAPIPatchFindingCVSSSyncsInsideTransaction(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	f, tok, _ := seedFindingForAPI(t, s)
+	path := fmt.Sprintf("/api/findings/%d", f.ID)
+	const vec = "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+
+	w := apiReq(t, s, "PATCH", path, tok,
+		`{"fields":{"cvss_vector":"`+vec+`","severity":"Critical"},"by":"disclose"}`)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204; body=%s", w.Code, w.Body)
+	}
+
+	var got db.Finding
+	s.DB.First(&got, f.ID)
+	if got.CVSSVector != vec || got.CVSSScore != 9.8 || got.Severity != "Critical" {
+		t.Fatalf("finding after patch: vector=%q score=%v severity=%q", got.CVSSVector, got.CVSSScore, got.Severity)
+	}
+	var hist []db.FindingHistory
+	s.DB.Where("finding_id = ?", f.ID).Order("field").Find(&hist)
+	fields := make([]string, 0, len(hist))
+	for _, h := range hist {
+		fields = append(fields, h.Field)
+	}
+	want := []string{"cvss_score", "cvss_vector", "severity"}
+	if fmt.Sprint(fields) != fmt.Sprint(want) {
+		t.Fatalf("history fields = %v, want %v", fields, want)
+	}
+}
+
 // TestAPIFindingChildCollections covers the POST-then-GET round trip for the
 // three sibling child collections (notes, communications, references). They
 // share findingScoped and the same JSON-body shape, so a table keeps the

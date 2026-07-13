@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -150,6 +151,106 @@ type Worker struct {
 	// a tiny or huge value to assert flush behaviour without sleeping.
 	// Zero falls through to the const default.
 	LogFlushInterval time.Duration
+
+	// AutoResumeBuffer is added to the reset timestamp before the worker
+	// resumes paused scans. Zero falls through to the default buffer.
+	AutoResumeBuffer time.Duration
+	// AutoResumeRetryDelay backs off retry attempts when a due auto-resume
+	// cannot re-enqueue one or more scans. Zero falls through to the default.
+	AutoResumeRetryDelay time.Duration
+	// MaxRateLimitAutoResumeDelay bounds provider reset times accepted for
+	// automatic resume. A reset farther out is treated as unreliable and leaves
+	// the batch paused for manual operator action.
+	MaxRateLimitAutoResumeDelay time.Duration
+	// DowngradeOnOverage falls the model tier back from max/high to the mid tier
+	// for newly enqueued scans while the subscription is past its included quota
+	// (on overage), restoring it when the window resets. Off by default; only a
+	// subscription token reports overage, so it is inert on an API key.
+	DowngradeOnOverage bool
+	// Now overrides time.Now in tests.
+	Now func() time.Time
+
+	autoResumeMu    sync.Mutex
+	autoResumeTimer *time.Timer
+	autoResumeAt    time.Time
+
+	// rlStatus holds the latest in-memory rate_limit_event per window type.
+	rlStatusMu sync.Mutex
+	rlStatus   map[string]RateLimitInfo
+}
+
+// recordRateLimit stores the latest rate-limit status for its window type and,
+// when the overage fallback is enabled, logs the transition into or out of
+// overage so the switch to/from the mid tier is visible in the log.
+func (w *Worker) recordRateLimit(info RateLimitInfo) {
+	if info.Type == "" {
+		return
+	}
+	w.rlStatusMu.Lock()
+	if w.rlStatus == nil {
+		w.rlStatus = map[string]RateLimitInfo{}
+	}
+	before := w.onOverageLocked()
+	w.rlStatus[info.Type] = info
+	after := w.onOverageLocked()
+	w.rlStatusMu.Unlock()
+	if w.DowngradeOnOverage && before != after && w.Log != nil {
+		if after {
+			w.Log.Info("model overage fallback engaged: account on overage, new scans use the mid tier")
+		} else {
+			w.Log.Info("model overage fallback lifted: overage cleared, new scans use the max/high tier again")
+		}
+	}
+}
+
+// RateLimitStatus returns a snapshot of the latest rate-limit status per window,
+// for the usage page. Empty when no subscription rate_limit_event has been seen
+// (fresh process, or an API-key account that does not report them).
+func (w *Worker) RateLimitStatus() []RateLimitInfo {
+	if w == nil {
+		return nil
+	}
+	w.rlStatusMu.Lock()
+	defer w.rlStatusMu.Unlock()
+	out := make([]RateLimitInfo, 0, len(w.rlStatus))
+	for _, v := range w.rlStatus {
+		out = append(out, v)
+	}
+	return out
+}
+
+// onOverageLocked reports whether any tracked window is currently on overage
+// (past the included quota) with an unexpired reset, or with no reset timestamp
+// (unknown reset). Caller holds rlStatusMu.
+func (w *Worker) onOverageLocked() bool {
+	now := w.now().UTC()
+	for _, info := range w.rlStatus {
+		if info.IsUsingOverage {
+			if t := info.ResetTime(); t == nil || t.After(now) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// OnOverage reports whether the Claude account is currently past its included
+// subscription quota (any tracked window isUsingOverage with an unexpired reset
+// or no reset timestamp). An API-key account never reports overage, so this stays false there.
+func (w *Worker) OnOverage() bool {
+	if w == nil {
+		return false
+	}
+	w.rlStatusMu.Lock()
+	defer w.rlStatusMu.Unlock()
+	return w.onOverageLocked()
+}
+
+// ShouldDowngradeModel reports whether the max/high-to-mid overage fallback is
+// both enabled and currently active. The web layer calls it at enqueue to rewrite
+// max/high tier preferences to mid, and to surface the fallback banner.
+func (w *Worker) ShouldDowngradeModel() bool {
+	return w != nil && w.DowngradeOnOverage && w.OnOverage()
 }
 
 func (w *Worker) logFlushInterval() time.Duration {
@@ -157,6 +258,43 @@ func (w *Worker) logFlushInterval() time.Duration {
 		return w.LogFlushInterval
 	}
 	return defaultLogFlushInterval
+}
+
+func (w *Worker) now() time.Time {
+	if w.Now != nil {
+		return w.Now()
+	}
+	return time.Now()
+}
+
+const (
+	defaultAutoResumeBuffer     = 5 * time.Second
+	defaultAutoResumeRetryDelay = 30 * time.Second
+	// defaultMaxRateLimitAutoResumeAge bounds how far out a reported reset can
+	// be before it is treated as unreliable. Anthropic subscription windows are
+	// five-hour and seven-day, so allow a little over a week.
+	defaultMaxRateLimitAutoResumeAge = 8 * 24 * time.Hour
+)
+
+func (w *Worker) autoResumeBuffer() time.Duration {
+	if w.AutoResumeBuffer > 0 {
+		return w.AutoResumeBuffer
+	}
+	return defaultAutoResumeBuffer
+}
+
+func (w *Worker) autoResumeRetryDelay() time.Duration {
+	if w.AutoResumeRetryDelay > 0 {
+		return w.AutoResumeRetryDelay
+	}
+	return defaultAutoResumeRetryDelay
+}
+
+func (w *Worker) maxRateLimitAutoResumeDelay() time.Duration {
+	if w.MaxRateLimitAutoResumeDelay > 0 {
+		return w.MaxRateLimitAutoResumeDelay
+	}
+	return defaultMaxRateLimitAutoResumeAge
 }
 
 // Cancel aborts an in-flight scan. Returns true if a running job was found and
@@ -212,24 +350,35 @@ func (w *Worker) scanWorkRoot(scan *db.Scan) string {
 	return w.workRoot(workspaceScanID(scan))
 }
 
-// claudeConfigDir is the host directory holding the claude session store
-// for this scan's lineage. The container runner mounts it as CLAUDE_CONFIG_DIR
-// so the conversation survives a container exit; it lives outside the
-// per-scan workspace (which is deleted when the scan finishes) and is keyed
-// by the lineage root so a retry finds the original run's session. The
+// harnessStateDir is the host directory holding the active harness's
+// session store for this scan's lineage. The container runner mounts it
+// at /harness-state and points the harness at it via StateEnv, so the
+// conversation survives a container exit; it lives outside the per-scan
+// workspace (which is deleted when the scan finishes) and is keyed by
+// the lineage root so a retry finds the original run's session. The
 // local runner ignores it and uses the host's own ~/.claude.
-func (w *Worker) claudeConfigDir(scan *db.Scan) string {
-	return w.claudeConfigDirID(workspaceScanID(scan))
+func (w *Worker) harnessStateDir(scan *db.Scan) string {
+	return w.harnessStateDirID(workspaceScanID(scan))
 }
 
-func (w *Worker) claudeConfigDirID(scanID uint) string {
-	return filepath.Join(w.DataDir, "claude-config", fmt.Sprintf("scan-%d", scanID))
+const (
+	harnessStateDirName = "harness-state"
+	// legacyHarnessStateDirName is the pre-rename directory name.
+	// migrateLegacyState renames it in place at startup so existing
+	// resume stores survive the rename. Remove once no deployment can
+	// have the old directory (one release after this change ships).
+	legacyHarnessStateDirName = "claude-config"
+)
+
+func (w *Worker) harnessStateDirID(scanID uint) string {
+	return filepath.Join(w.DataDir, harnessStateDirName, fmt.Sprintf("scan-%d", scanID))
 }
 
-// RemoveScanArtifacts deletes the on-disk per-scan workspace and claude
-// session store for scanID. Normal terminal cleanup removes workspaces, while
-// resumable scans (failed or max-turns-hit) keep their session store for
-// --resume; this explicit removal path reclaims both. It is a no-op when the
+// RemoveScanArtifacts deletes the on-disk per-scan workspace and harness
+// state directory for scanID. Normal terminal cleanup removes workspaces,
+// while resumable scans (failed or max-turns-hit) keep their state dir so a
+// retry can resume the session; this explicit removal path reclaims both. It
+// is a no-op when the
 // directories are already gone. Passing every scan id of a repository covers
 // resume lineages too: a retry reuses its root's workspace id, and the root
 // scan is itself in the repo, while the retry's own id maps to a directory
@@ -237,20 +386,22 @@ func (w *Worker) claudeConfigDirID(scanID uint) string {
 func (w *Worker) RemoveScanArtifacts(scanID uint) error {
 	return errors.Join(
 		os.RemoveAll(w.workRoot(scanID)),
-		os.RemoveAll(w.claudeConfigDirID(scanID)),
+		os.RemoveAll(w.harnessStateDirID(scanID)),
 	)
 }
 
 // applyResume fills a SkillJob's session-resume inputs from the scan: the
-// claude session id to --resume (set on a retry that carries one forward
-// from a failed or max-turns-hit run) and the persistent config dir the container
-// runner mounts so the session store survives a container exit. A fresh scan
-// has an empty SessionID, so the runner just starts a new conversation.
+// harness session id to continue (set on a retry that carries one forward
+// from a failed or max-turns-hit run) and the persistent state dir the
+// container runner mounts so the session store survives a container exit.
+// A fresh scan has an empty SessionID, so the harness starts a new
+// conversation. What the id names depends on the harness (a claude session,
+// a codex thread, an opencode session); the runner never interprets it.
 func (w *Worker) applyResume(scan *db.Scan, sj *SkillJob, emit func(Event)) {
-	sj.ClaudeConfigDir = w.claudeConfigDir(scan)
+	sj.StateDir = w.harnessStateDir(scan)
 	if scan.SessionID != "" {
 		sj.ResumeSessionID = scan.SessionID
-		emit(Event{Kind: KindText, Text: "resuming claude session " + scan.SessionID})
+		emit(Event{Kind: KindText, Text: "resuming session " + scan.SessionID})
 	}
 }
 
@@ -274,6 +425,9 @@ func (w *Worker) scanEmitter(scan *db.Scan) func(Event) {
 			}
 			return
 		}
+		if e.Kind == KindRateLimit && e.RateLimit != nil {
+			w.recordRateLimit(*e.RateLimit)
+		}
 		line := FormatEvent(e)
 		scan.Log += line + "\n"
 		if time.Since(lastFlush) >= interval {
@@ -281,6 +435,13 @@ func (w *Worker) scanEmitter(scan *db.Scan) func(Event) {
 			lastFlush = time.Now()
 		}
 		if e.Kind == KindResult {
+			// Claude reports total_cost_usd in its result event; harnesses
+			// that only report token counts (codex) get the cost computed
+			// from list prices so /usage and the scan row show a real
+			// figure instead of $0.
+			if e.CostUSD == 0 {
+				e.CostUSD = costFromUsage(scan.Model, e.Usage)
+			}
 			scan.CostUSD += e.CostUSD
 			scan.Turns += e.Turns
 			scan.InputTokens += e.Usage.InputTokens
@@ -299,15 +460,55 @@ func (w *Worker) scanEmitter(scan *db.Scan) func(Event) {
 // restarting from turn 0.
 func (w *Worker) clearSessionStore(scan *db.Scan) {
 	scan.SessionID = ""
-	if rmErr := os.RemoveAll(w.claudeConfigDir(scan)); rmErr != nil {
+	if rmErr := os.RemoveAll(w.harnessStateDir(scan)); rmErr != nil {
 		w.Log.Warn("session store cleanup failed", "scan", scan.ID, "err", rmErr)
 	}
 }
 
 func (w *Worker) Register(q *queue.Queue) {
 	w.Queue = q
+	w.migrateLegacyState()
 	q.Register(JobSkill, w.wrap(w.doSkill))
 	q.Register(JobExposure, w.wrap(w.doExposure))
+	w.scheduleNextAccountResume()
+}
+
+// migrateLegacyState brings pre-rename on-disk and in-row state forward
+// so a deployment upgraded across the harness-naming rename keeps its
+// resume stores and its account-paused scans keep auto-resuming without
+// every LIKE query having to match two prefixes. Both steps are no-ops
+// on a fresh install.
+func (w *Worker) migrateLegacyState() {
+	// {data}/claude-config -> {data}/harness-state, so existing session
+	// stores survive the harnessStateDir rename. Only when the old
+	// directory exists and the new one does not; anything else is left
+	// alone so a partially-migrated tree is never clobbered.
+	if w.DataDir != "" {
+		oldDir := filepath.Join(w.DataDir, legacyHarnessStateDirName)
+		newDir := filepath.Join(w.DataDir, harnessStateDirName)
+		if _, err := os.Stat(oldDir); err == nil {
+			if _, err := os.Stat(newDir); errors.Is(err, os.ErrNotExist) {
+				if err := os.Rename(oldDir, newDir); err != nil {
+					w.Log.Warn("migrate harness state dir", "from", oldDir, "to", newDir, "err", err)
+				}
+			}
+		}
+	}
+	// Rewrite the pre-rename AccountPausePrefix in scans.error so the
+	// single-pattern LIKE queries (worker.go, web/scans.go) still find
+	// scans that were account-paused before the upgrade. Scoped to
+	// paused rows only, which is a small transient set.
+	if w.DB != nil {
+		res := w.DB.Exec(
+			"UPDATE scans SET error = REPLACE(error, ?, ?) WHERE status = ? AND error LIKE ?",
+			legacyAccountPausePrefix, AccountPausePrefix, db.ScanPaused, legacyAccountPausePrefix+"%",
+		)
+		if res.Error != nil {
+			w.Log.Warn("migrate account-pause prefix", "err", res.Error)
+		} else if res.RowsAffected > 0 {
+			w.Log.Info("migrated account-pause prefix on paused scans", "rows", res.RowsAffected)
+		}
+	}
 }
 
 // handler does the actual work for one job kind. It receives the loaded scan
@@ -367,6 +568,9 @@ func (w *Worker) wrap(h handler) func(context.Context, []byte) error {
 		scan.StartedAt = new(time.Now())
 		scan.Log = ""
 		scan.Error = ""
+		if br, ok := w.Runner.(BackendReporter); ok {
+			scan.Backend = br.Backend()
+		}
 		if err := w.DB.Save(&scan).Error; err != nil {
 			return err
 		}
@@ -399,8 +603,22 @@ func (w *Worker) finalizeScan(ctx context.Context, scan *db.Scan, report string,
 		return saveErr
 	}
 	w.maybeFireScanFinalized(scan, err)
-	if _, isAccountErr := errors.AsType[*ClaudeAccountError](err); isAccountErr && scan.Status == db.ScanPaused {
+	if accErr, isAccountErr := errors.AsType[*AccountError](err); isAccountErr && scan.Status == db.ScanPaused {
 		w.pauseQueuedOnAccountError(scan.ID)
+		if rawReset := w.resolveAccountReset(accErr, emit); rawReset != nil {
+			effective, applyErr := w.applyAccountPauseReset(scan.ID, scan.Error, rawReset)
+			if applyErr != nil {
+				w.Log.Warn("account-pause reset update failed", "scan", scan.ID, "err", applyErr)
+			} else if effective != nil {
+				scan.PausedUntil = effective
+				scan.Error = appendAutoResume(scan.Error, effective)
+				w.scheduleAccountResumeAt(*effective)
+			}
+		}
+		// resolveAccountReset emitted after the Save above; persist that log tail.
+		if logErr := w.DB.Model(&db.Scan{}).Where("id = ?", scan.ID).Update("log", scan.Log).Error; logErr != nil {
+			w.Log.Warn("account-pause log update failed", "scan", scan.ID, "err", logErr)
+		}
 	}
 	// The clone cache may have grown (clone/fetch/unshallow); refresh the
 	// cached size so the repo list reads it from the row instead of walking
@@ -416,6 +634,27 @@ func (w *Worker) finalizeScan(ctx context.Context, scan *db.Scan, report string,
 	w.publish(scan.ID, scan.RepositoryID, "scan-status", string(scan.Status))
 	w.Log.Info("job finished", "scan", scan.ID, "kind", scan.Kind, "status", scan.Status)
 	return nil
+}
+
+// resolveAccountReset accepts only fresh, plausible reset times; nil leaves the
+// batch paused for manual resume.
+func (w *Worker) resolveAccountReset(accErr *AccountError, emit func(Event)) *time.Time {
+	if accErr == nil || accErr.ResetAt == nil {
+		emit(Event{Kind: KindText, Text: "no rate-limit reset reported; leaving paused for manual resume"})
+		return nil
+	}
+	now := w.now().UTC()
+	resetAt := accErr.ResetAt.UTC()
+	if !resetAt.After(now) {
+		emit(Event{Kind: KindText, Text: "rate-limit reset time is already in the past"})
+		return nil
+	}
+	if wait := resetAt.Sub(now); wait > w.maxRateLimitAutoResumeDelay() {
+		emit(Event{Kind: KindText, Text: fmt.Sprintf("rate-limit reset time %s is beyond auto-resume limit %s", resetAt.UTC().Format(time.RFC3339), w.maxRateLimitAutoResumeDelay())})
+		return nil
+	}
+	emit(Event{Kind: KindText, Text: "rate limit reset detected; auto-resume after " + resetAt.UTC().Format(time.RFC3339)})
+	return &resetAt
 }
 
 // maybeFireScanFinalized invokes the OnScanFinalized hook once a scan has
@@ -459,7 +698,7 @@ func finishErroredScan(scan *db.Scan, report string, err error, emit func(Event)
 	_, maxTurns := errors.AsType[*MaxTurnsReachedError](err)
 	_, failOnThreshold := errors.AsType[*FailOnThresholdError](err)
 	_, schemaValidation := errors.AsType[*SchemaValidationError](err)
-	_, accountErr := errors.AsType[*ClaudeAccountError](err)
+	_, accountErr := errors.AsType[*AccountError](err)
 	switch {
 	case maxTurns:
 		scan.Status = db.ScanDone
@@ -473,11 +712,8 @@ func finishErroredScan(scan *db.Scan, report string, err error, emit func(Event)
 	case schemaValidation:
 		scan.Report = report
 	case accountErr:
-		// An account-level problem (usage/credit limit, or access disabled or
-		// revoked) is not this scan's fault and retrying cannot succeed until the
-		// account recovers, so pause rather than fail: the operator resumes the
-		// batch once it does instead of burning a retry per scan. The remaining
-		// queued scans are paused by the worker loop (pauseQueuedOnAccountError).
+		// Account-level Claude failures pause the batch instead of failing scans
+		// one by one.
 		scan.Status = db.ScanPaused
 		emit(Event{Kind: KindError, Text: scan.Error})
 	default:
@@ -485,28 +721,69 @@ func finishErroredScan(scan *db.Scan, report string, err error, emit func(Event)
 	}
 }
 
-// accountPauseReason is recorded on scans auto-paused because another scan hit
-// an account-level Claude problem (a usage/credit limit, or access being
-// disabled or revoked). It shares ClaudeAccountPausePrefix with the triggering
-// scan's error so the scans page matches both and surfaces them together in the
-// account banner.
-const accountPauseReason = ClaudeAccountPausePrefix + " Queued scan held automatically; resume once the account recovers."
+// accountPauseReasonBase shares AccountPausePrefix with trigger rows so
+// the scans page can group the batch together.
+const accountPauseReasonBase = AccountPausePrefix + " Queued scan paused automatically"
 
-// pauseQueuedOnAccountError pauses every still-queued scan after one scan hit an
-// account-level Claude problem (limit, or access disabled/revoked). It is
-// account-wide, so the rest of the queue would only run into the same wall;
-// pausing keeps the batch intact for a later resume instead of failing it scan
-// by scan. The worker loop drops the now-stale queue jobs when they fire (see
-// wrap), exactly as a manual "pause queued" does, so updating the rows here is
-// enough.
+func accountPauseReason(resetAt *time.Time) string {
+	if resetAt == nil || resetAt.IsZero() {
+		return accountPauseReasonBase + "; resume once the account recovers."
+	}
+	return appendAutoResume(accountPauseReasonBase+" until the provider rate limit resets.", resetAt)
+}
+
+func appendAutoResume(msg string, resetAt *time.Time) string {
+	if resetAt == nil || resetAt.IsZero() {
+		return msg
+	}
+	return msg + autoResumeAfterPrefix + resetAt.UTC().Format(time.RFC3339) + "."
+}
+
+// replaceAutoResume swaps the reset suffix without clobbering the row's detail.
+func replaceAutoResume(msg string, resetAt *time.Time) string {
+	return appendAutoResume(stripAutoResume(msg), resetAt)
+}
+
+// stripAutoResume removes existing auto-resume metadata before rewriting it.
+func stripAutoResume(msg string) string {
+	if i := strings.Index(msg, autoResumeAfterPrefix); i >= 0 {
+		return strings.TrimRight(msg[:i], " ")
+	}
+	if i := strings.Index(msg, autoResumeFailurePrefix); i >= 0 {
+		return strings.TrimRight(msg[:i], " ")
+	}
+	return msg
+}
+
+const (
+	autoResumeAfterPrefix   = " Auto-resume after "
+	autoResumeFailurePrefix = " Auto-resume failed: "
+	maxAutoResumeErrorBytes = 600
+)
+
+func appendAutoResumeFailure(msg string, err error) string {
+	if msg == "" {
+		msg = accountPauseReason(nil)
+	}
+	msg = stripAutoResume(msg)
+	detail := err.Error()
+	if len(detail) > maxAutoResumeErrorBytes {
+		detail = detail[:maxAutoResumeErrorBytes] + "..."
+	}
+	return msg + autoResumeFailurePrefix + detail
+}
+
+// pauseQueuedOnAccountError pauses every queued scan behind an account-level
+// Claude failure; queued jobs later drop themselves when wrap sees the DB state.
 func (w *Worker) pauseQueuedOnAccountError(triggerID uint) {
-	now := time.Now()
+	now := w.now().UTC()
+	reason := accountPauseReason(nil)
 	res := w.DB.Model(&db.Scan{}).
 		Where("status = ?", db.ScanQueued).
 		Updates(map[string]any{
 			"status":          db.ScanPaused,
 			"status_priority": db.StatusPriorityFor(db.ScanPaused),
-			"error":           accountPauseReason,
+			"error":           reason,
 			"finished_at":     &now,
 		})
 	if res.Error != nil {
@@ -516,4 +793,205 @@ func (w *Worker) pauseQueuedOnAccountError(triggerID uint) {
 	if res.RowsAffected > 0 {
 		w.Log.Info("paused queued scans after Claude account error", "count", res.RowsAffected, "trigger", triggerID)
 	}
+}
+
+// applyAccountPauseReset moves the trigger and batch to the furthest known
+// reset, returning that effective reset for scheduling.
+func (w *Worker) applyAccountPauseReset(triggerID uint, baseError string, resetAt *time.Time) (*time.Time, error) {
+	if resetAt == nil {
+		return nil, nil
+	}
+	resetAtUTC := resetAt.UTC()
+	resetAt = &resetAtUTC
+	// A concurrent scan may already have found a later binding reset. Ignore any
+	// row already beyond the auto-resume window, so a stale or manually-set
+	// far-future pause cannot drag every subsequent batch out to it.
+	maxAcceptable := w.now().UTC().Add(w.maxRateLimitAutoResumeDelay())
+	var latest db.Scan
+	if err := w.DB.Select("paused_until").
+		Where("id != ? AND status = ? AND error LIKE ? AND paused_until IS NOT NULL AND paused_until <= ?",
+			triggerID, db.ScanPaused, AccountPausePrefix+"%", maxAcceptable).
+		Order("paused_until DESC").Limit(1).Find(&latest).Error; err != nil {
+		return nil, err
+	}
+	effective := resetAt
+	if latest.PausedUntil != nil && latest.PausedUntil.After(*resetAt) {
+		effective = latest.PausedUntil
+	}
+
+	// Update the triggering scan's reset, keeping its Claude detail. Forward-only
+	// so a concurrent finalizer that already pushed this row to a later reset is
+	// not pulled back; if the guard skips it, re-read so the returned effective
+	// reset reflects the row's actual (possibly later) value.
+	trigRes := w.DB.Model(&db.Scan{}).
+		Where("id = ? AND status = ? AND (paused_until IS NULL OR paused_until < ?)", triggerID, db.ScanPaused, effective).
+		Updates(map[string]any{
+			"error":        appendAutoResume(baseError, effective),
+			"paused_until": effective,
+		})
+	if trigRes.Error != nil {
+		return nil, trigRes.Error
+	}
+	if trigRes.RowsAffected == 0 {
+		// The guard skipped the row: it was either extended to a later reset by a
+		// concurrent finalizer, or is no longer account-paused (manually resumed).
+		// Only adopt a later reset while the row is still account-paused; a
+		// resumed/absent row matches nothing here, so we never revive a stale one.
+		var cur db.Scan
+		if err := w.DB.Select("paused_until").
+			Where("id = ? AND status = ? AND error LIKE ? AND paused_until IS NOT NULL",
+				triggerID, db.ScanPaused, AccountPausePrefix+"%").
+			Find(&cur).Error; err != nil {
+			return nil, err
+		}
+		if cur.PausedUntil != nil && cur.PausedUntil.After(*effective) {
+			effective = cur.PausedUntil
+		}
+	}
+	// Shared queued rows carry the same message, so extend them in bulk.
+	if err := w.DB.Model(&db.Scan{}).
+		Where("id != ? AND status = ? AND error LIKE ? AND (paused_until IS NULL OR paused_until < ?)",
+			triggerID, db.ScanPaused, accountPauseReasonBase+"%", effective).
+		Updates(map[string]any{
+			"error":        accountPauseReason(effective),
+			"paused_until": effective,
+		}).Error; err != nil {
+		return nil, err
+	}
+	// Trigger rows carry Claude detail, so rewrite them individually. The
+	// update re-checks the guard to avoid clobbering concurrent changes.
+	var triggers []db.Scan
+	if err := w.DB.Select("id", "error").
+		Where("id != ? AND status = ? AND error LIKE ? AND error NOT LIKE ? AND (paused_until IS NULL OR paused_until < ?)",
+			triggerID, db.ScanPaused, AccountPausePrefix+"%", accountPauseReasonBase+"%", effective).
+		Find(&triggers).Error; err != nil {
+		return nil, err
+	}
+	for _, tr := range triggers {
+		res := w.DB.Model(&db.Scan{}).
+			Where("id = ? AND status = ? AND error LIKE ? AND error NOT LIKE ? AND (paused_until IS NULL OR paused_until < ?)",
+				tr.ID, db.ScanPaused, AccountPausePrefix+"%", accountPauseReasonBase+"%", effective).
+			Updates(map[string]any{
+				"error":        replaceAutoResume(tr.Error, effective),
+				"paused_until": effective,
+			})
+		if res.Error != nil {
+			return nil, res.Error
+		}
+	}
+	return effective, nil
+}
+
+func (w *Worker) scheduleAccountResumeAt(resetAt time.Time) {
+	if resetAt.IsZero() || w.DB == nil || w.Queue == nil {
+		return
+	}
+	when := resetAt.Add(w.autoResumeBuffer())
+	w.scheduleAutoResumeAt(when)
+}
+
+func (w *Worker) scheduleAccountResumeAfter(delay time.Duration) {
+	if w.DB == nil || w.Queue == nil {
+		return
+	}
+	if delay < w.autoResumeRetryDelay() {
+		delay = w.autoResumeRetryDelay()
+	}
+	w.scheduleAutoResumeAt(w.now().UTC().Add(delay))
+}
+
+func (w *Worker) scheduleAutoResumeAt(when time.Time) {
+	delay := when.Sub(w.now().UTC())
+	if delay < 0 {
+		delay = 0
+	}
+
+	w.autoResumeMu.Lock()
+	defer w.autoResumeMu.Unlock()
+	if w.autoResumeTimer != nil && !when.Before(w.autoResumeAt) {
+		return
+	}
+	if w.autoResumeTimer != nil {
+		w.autoResumeTimer.Stop()
+	}
+	w.autoResumeAt = when
+	w.autoResumeTimer = time.AfterFunc(delay, func() {
+		resumed, err := w.resumeAccountPaused(context.Background())
+		w.autoResumeMu.Lock()
+		w.autoResumeTimer = nil
+		w.autoResumeAt = time.Time{}
+		w.autoResumeMu.Unlock()
+		if err != nil {
+			w.Log.Warn("auto-resume account-paused scans failed", "err", err)
+			w.scheduleAccountResumeAfter(w.autoResumeRetryDelay())
+			return
+		} else if resumed > 0 {
+			w.Log.Info("auto-resumed account-paused scans", "count", resumed)
+		}
+		w.scheduleNextAccountResume()
+	})
+}
+
+func (w *Worker) scheduleNextAccountResume() {
+	if w.DB == nil || w.Queue == nil {
+		return
+	}
+	var scan db.Scan
+	err := w.DB.Select("id", "paused_until").
+		Where("status = ? AND error LIKE ? AND paused_until IS NOT NULL", db.ScanPaused, AccountPausePrefix+"%").
+		Order("paused_until ASC").
+		Limit(1).
+		Find(&scan).Error
+	if err != nil || scan.ID == 0 || scan.PausedUntil == nil {
+		return
+	}
+	w.scheduleAccountResumeAt(*scan.PausedUntil)
+}
+
+func (w *Worker) resumeAccountPaused(ctx context.Context) (int, error) {
+	if w.Queue == nil {
+		return 0, errors.New("queue not configured")
+	}
+	var scans []db.Scan
+	if err := w.DB.Select("id", "kind", "finding_id", "error", "paused_until").
+		Where("status = ? AND error LIKE ? AND paused_until IS NOT NULL AND paused_until <= ?",
+			db.ScanPaused, AccountPausePrefix+"%", w.now().UTC()).
+		Order("id").
+		Find(&scans).Error; err != nil {
+		return 0, err
+	}
+	var resumed int
+	for _, sc := range scans {
+		updates := map[string]any{
+			"status":          db.ScanQueued,
+			"status_priority": db.StatusPriorityFor(db.ScanQueued),
+			"error":           "",
+			"finished_at":     nil,
+			"paused_until":    nil,
+		}
+		res := w.DB.Model(&db.Scan{}).Where("id = ? AND status = ?", sc.ID, db.ScanPaused).Updates(updates)
+		if res.Error != nil {
+			return resumed, res.Error
+		}
+		if res.RowsAffected == 0 {
+			continue
+		}
+		priority := PrioScan
+		if sc.FindingID != nil {
+			priority = PrioFinding
+		}
+		if err := w.Queue.Enqueue(ctx, sc.Kind, sc.ID, priority); err != nil {
+			now := w.now().UTC()
+			restoreErr := w.DB.Model(&db.Scan{}).Where("id = ?", sc.ID).Updates(map[string]any{
+				"status":          db.ScanPaused,
+				"status_priority": db.StatusPriorityFor(db.ScanPaused),
+				"error":           appendAutoResumeFailure(sc.Error, err),
+				"finished_at":     &now,
+				"paused_until":    sc.PausedUntil,
+			}).Error
+			return resumed, errors.Join(err, restoreErr)
+		}
+		resumed++
+	}
+	return resumed, nil
 }

@@ -292,7 +292,7 @@ func TestLocalClaude_ResumePromptDoesNotFallbackToFresh(t *testing.T) {
 	}
 }
 
-func TestClaudeAccountErrorText(t *testing.T) {
+func TestAccountErrorText(t *testing.T) {
 	for _, text := range []string{
 		// usage / rate / quota limits
 		"Claude usage limit reached. Your limit will reset later.",

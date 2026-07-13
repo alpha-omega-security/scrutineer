@@ -90,19 +90,27 @@ func RunnerImageRevision(ctx context.Context, rt ContainerRuntime, image string)
 }
 
 // RunnerToolVersions holds the versions of the analysis tools baked into the
-// runner image. Any field is "" when its tool could not be queried.
+// runner image. Any field is "" when its tool could not be queried. Harness
+// is the version of whichever agent CLI -backend selected; the caller passes
+// that binary's name to QueryRunnerToolVersions so adding a harness needs no
+// change here.
 type RunnerToolVersions struct {
 	Zizmor  string
 	Semgrep string
-	Claude  string
+	Harness string
 }
 
-// queryToolsScript prints each tool's version as a key=value line so the
-// output parses unambiguously regardless of each tool's own format. stderr
-// is dropped so update notices and warnings don't pollute the value.
-const queryToolsScript = `echo "zizmor=$(zizmor --version 2>/dev/null)"; ` +
-	`echo "semgrep=$(semgrep --version 2>/dev/null)"; ` +
-	`echo "claude=$(claude --version 2>/dev/null)"`
+// queryToolsScript builds the sh script that prints each tool's version as a
+// key=value line so the output parses unambiguously regardless of each
+// tool's own format. stderr is dropped so update notices and warnings don't
+// pollute the value. harnessBin is the active backend's binary name (e.g.
+// "claude", "codex"); it is a code-supplied constant from Harness.Binary(),
+// never user input, so plain interpolation is fine.
+func queryToolsScript(harnessBin string) string {
+	return `echo "zizmor=$(zizmor --version 2>/dev/null)"; ` +
+		`echo "semgrep=$(semgrep --version 2>/dev/null)"; ` +
+		`echo "harness=$(` + harnessBin + ` --version 2>/dev/null)"`
+}
 
 // QueryRunnerToolVersions starts one short-lived container off the runner
 // image and reads back the versions of the scanner tools it ships. The
@@ -115,7 +123,7 @@ const queryToolsScript = `echo "zizmor=$(zizmor --version 2>/dev/null)"; ` +
 // cache first and only runs the image when it is already present. The caller
 // must pass a context with a timeout to bound a hung daemon. Returns a zero
 // value (all fields "") for an empty image name or any failure.
-func QueryRunnerToolVersions(ctx context.Context, rt ContainerRuntime, image string) RunnerToolVersions {
+func QueryRunnerToolVersions(ctx context.Context, rt ContainerRuntime, image, harnessBin string) RunnerToolVersions {
 	if image == "" {
 		return RunnerToolVersions{}
 	}
@@ -125,7 +133,7 @@ func QueryRunnerToolVersions(ctx context.Context, rt ContainerRuntime, image str
 	} else if !imageExistsLocally(ctx, rt, image) {
 		return RunnerToolVersions{}
 	}
-	args = append(args, "--entrypoint", "sh", "--", image, "-c", queryToolsScript)
+	args = append(args, "--entrypoint", "sh", "--", image, "-c", queryToolsScript(harnessBin))
 	out, err := exec.CommandContext(ctx, rt.bin(), args...).Output()
 	if err != nil {
 		return RunnerToolVersions{}
@@ -150,8 +158,8 @@ func parseToolVersions(out string) RunnerToolVersions {
 			v.Zizmor = val
 		case "semgrep":
 			v.Semgrep = val
-		case "claude":
-			v.Claude = val
+		case "harness":
+			v.Harness = val
 		}
 	}
 	return v

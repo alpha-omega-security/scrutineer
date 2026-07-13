@@ -373,6 +373,15 @@ pre.log { background: var(--muted); padding: 1rem; border-radius: var(--radius);
           max-height: 60vh; overflow: auto; font-size: 0.8rem; white-space: pre-wrap; }
 .lucide:not([class*="size-"]) { width: 1em; height: 1em; vertical-align: -0.15em; }
 .table tbody tr:has(a) { cursor: pointer; }
+.table th a.th-sort { display: inline-flex; align-items: center; gap: 0.15rem;
+                      white-space: nowrap; color: inherit; }
+.table th a.th-sort:hover { color: var(--foreground); text-decoration: underline;
+                            text-underline-offset: 2px; }
+.th-sort-arrow { width: 0.9em; height: 0.9em; }
+/* Idle (unsorted) columns show a faded double chevron as a sort affordance;
+   it firms up on hover. The active column's solid chevron is full-strength. */
+.th-sort-idle { opacity: 0.4; }
+.table th a.th-sort:hover .th-sort-idle { opacity: 0.75; }
 
 /* ── prose (rendered markdown in finding fields) ── */
 .prose { font-size: 0.875rem; line-height: 1.625; max-width: 80ch; }

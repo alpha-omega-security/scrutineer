@@ -30,14 +30,14 @@
     <div class="dropdown-menu">
       <button type="button" class="btn-outline" aria-haspopup="menu" aria-expanded="false">
         <i data-lucide="arrow-down-wide-narrow"></i>
-        {{if eq .Sort "newest"}}Newest{{else if eq .Sort "repository"}}Repository{{else}}Severity{{end}}
+        {{$sk := sortkey .Sort}}{{if eq $sk "newest"}}Newest{{else if eq $sk "repository"}}Repository{{else}}Severity{{end}}
         <i data-lucide="chevron-down"></i>
       </button>
       <div data-popover aria-hidden="true" data-align="end">
         <div role="menu">
           {{range (list "severity" "newest" "repository")}}
             <a role="menuitem" href="/advisories?q={{$.Q}}&severity={{$.Severity}}&sort={{.}}"
-               {{if eq . $.Sort}}aria-current="true"{{end}}>{{.}}</a>
+               {{if eq . (sortkey $.Sort)}}aria-current="true"{{end}}>{{.}}</a>
           {{end}}
         </div>
       </div>
@@ -48,12 +48,12 @@
 {{if .Advisories}}
   <table class="table w-full">
     <thead><tr>
-      <th class="w-24">Severity</th>
+      {{template "th-sort" (dict "Sorter" .Sorter "Key" "severity" "Def" "desc" "Label" "Severity" "Class" "w-24")}}
       <th class="w-16">CVSS</th>
-      <th>Title</th>
-      <th class="w-40">Repository</th>
+      {{template "th-sort" (dict "Sorter" .Sorter "Key" "title" "Def" "asc" "Label" "Title" "Class" "")}}
+      {{template "th-sort" (dict "Sorter" .Sorter "Key" "repository" "Def" "asc" "Label" "Repository" "Class" "w-40")}}
       <th class="w-56">Packages</th>
-      <th class="w-32">Published</th>
+      {{template "th-sort" (dict "Sorter" .Sorter "Key" "newest" "Def" "desc" "Label" "Published" "Class" "w-32")}}
     </tr></thead>
     <tbody>
     {{$repos := .Repos}}

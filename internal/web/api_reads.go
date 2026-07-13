@@ -1,11 +1,14 @@
 package web
 
 import (
+	"errors"
+	"io"
 	"net/http"
 	"strconv"
 	"time"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/worker"
 )
 
 // The read endpoints below expose the structured rows scrutineer already
@@ -246,6 +249,12 @@ func (s *Server) apiListFindings(w http.ResponseWriter, r *http.Request) {
 	if skill := r.URL.Query().Get("skill"); skill != "" {
 		scans = scans.Where("skill_name = ?", skill)
 	}
+	// scan_group narrows to one parallel batch so an in-flight audit skill
+	// reads only its siblings' findings. Kept inside the repo-scoped
+	// subquery so a guessed group can never leak another repo's findings.
+	if sg := r.URL.Query().Get("scan_group"); sg != "" {
+		scans = scans.Where("scan_group = ?", sg)
+	}
 	q := s.DB.Where("scan_id IN (?)", scans).Order("id desc")
 	if sev := r.URL.Query().Get("severity"); sev != "" {
 		q = q.Where("severity = ?", sev)
@@ -260,6 +269,31 @@ func (s *Server) apiListFindings(w http.ResponseWriter, r *http.Request) {
 		out = append(out, findingSummary(f))
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// apiStreamFinding records one finding mid-scan into the concurrent-finding
+// log so siblings in the same scan_group can read it before this scan
+// completes. The body is a single finding in the report.json finding
+// shape; the scan's identity is stamped from the bearer token, not the body.
+func (s *Server) apiStreamFinding(w http.ResponseWriter, r *http.Request) {
+	if _, ok := s.repoScopedID(w, r); !ok {
+		return
+	}
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	f, err := s.Worker.PersistStreamedFinding(scanFromRequest(r), body)
+	if errors.Is(err, worker.ErrInvalidFinding) {
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, findingSummary(*f))
 }
 
 // apiGetFinding returns one finding plus its six-step prose and a link back
@@ -294,6 +328,7 @@ func findingSummary(f db.Finding) map[string]any {
 		"scan_id":       f.ScanID,
 		"repository_id": f.RepositoryID,
 		"finding_id":    f.FindingID,
+		"commit":        f.Commit,
 		"sinks":         f.Sinks,
 		"title":         f.Title,
 		"severity":      f.Severity,
@@ -313,5 +348,6 @@ func findingSummary(f db.Finding) map[string]any {
 		"resolution":    string(f.Resolution),
 		"assignee":      f.Assignee,
 		"missed_count":  f.MissedCount,
+		"dup_check":     f.DupCheck,
 	}
 }

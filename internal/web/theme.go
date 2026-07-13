@@ -139,6 +139,9 @@ func (s *Server) settingsShow(w http.ResponseWriter, r *http.Request) {
 // runtime version and the runner image name itself.
 type toolMetadata struct {
 	worker.RunnerToolVersions
+	// Backend is the active -backend name (e.g. "claude", "codex"), used
+	// as the label for the Harness version row.
+	Backend     string
 	Runtime     string
 	RunnerImage string
 	// Revision is the git commit the runner image was built from (its
@@ -200,7 +203,8 @@ func (s *Server) toolMetadataCached(ctx context.Context) toolMetadata {
 	// cannot starve the fast runtime-version `container --version`.
 	toolsCtx, toolsCancel := context.WithTimeout(ctx, toolMetadataTimeout)
 	defer toolsCancel()
-	tools := worker.QueryRunnerToolVersions(toolsCtx, rt, image)
+	h, _ := worker.HarnessByName(s.Backend)
+	tools := worker.QueryRunnerToolVersions(toolsCtx, rt, image, h.Binary())
 
 	rtCtx, rtCancel := context.WithTimeout(ctx, toolMetadataTimeout)
 	defer rtCancel()
@@ -208,6 +212,7 @@ func (s *Server) toolMetadataCached(ctx context.Context) toolMetadata {
 
 	meta := toolMetadata{
 		RunnerToolVersions: tools,
+		Backend:            s.Backend,
 		Runtime:            runtimeVer,
 		RunnerImage:        image,
 		Revision:           worker.RunnerImageRevision(ctx, rt, image),

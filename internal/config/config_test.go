@@ -50,12 +50,14 @@ default_model: claude-sonnet-4-6
 models:
   - name: Sonnet 4.6
     id:   claude-sonnet-4-6
+    tier: mid
   - name: Opus
     id:   claude-opus-4-6
 skills:
   - ./skills
   - /srv/skills
 skills_repo: https://github.com/org/skills
+backend: codex
 no_container: true
 hardened: true
 runner_image: custom-runner
@@ -76,11 +78,14 @@ metadata_dir: .ossprey/
 	if c.Addr != "0.0.0.0:9000" || c.DefaultModel != "claude-sonnet-4-6" {
 		t.Errorf("flat fields: %+v", c)
 	}
-	if len(c.Models) != 2 || c.Models[0].Name != "Sonnet 4.6" {
+	if len(c.Models) != 2 || c.Models[0].Name != "Sonnet 4.6" || c.Models[0].Tier != "mid" || c.Models[1].Tier != "" {
 		t.Errorf("models: %+v", c.Models)
 	}
 	if len(c.Skills) != 2 {
 		t.Errorf("skills: %+v", c.Skills)
+	}
+	if c.Backend != "codex" {
+		t.Errorf("backend: %q, want codex", c.Backend)
 	}
 	if c.NoContainer == nil || !*c.NoContainer {
 		t.Errorf("no_container: %v", c.NoContainer)
@@ -125,6 +130,26 @@ func TestLoad_noContainerAlias(t *testing.T) {
 	}
 	if both.NoContainer == nil || *both.NoContainer {
 		t.Errorf("no_container should win over no_docker: %v", both.NoContainer)
+	}
+}
+
+func TestLoad_modelBaseURLAlias(t *testing.T) {
+	// anthropic_base_url is the retained pre-rename alias; Load folds it
+	// into ModelBaseURL.
+	aliasOnly, err := Load(write(t, "anthropic_base_url: https://x.test/v1\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if aliasOnly.ModelBaseURL != "https://x.test/v1" {
+		t.Errorf("anthropic_base_url alias did not set ModelBaseURL: %q", aliasOnly.ModelBaseURL)
+	}
+	// model_base_url is canonical and wins when both keys are present.
+	both, err := Load(write(t, "model_base_url: https://new.test/v1\nanthropic_base_url: https://old.test/v1\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if both.ModelBaseURL != "https://new.test/v1" {
+		t.Errorf("model_base_url should win over anthropic_base_url: %q", both.ModelBaseURL)
 	}
 }
 

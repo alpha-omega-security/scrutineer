@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
+	"gorm.io/gorm"
 
 	"scrutineer/internal/db"
 )
@@ -89,6 +90,16 @@ func (s *Server) findingCSAF(w http.ResponseWriter, r *http.Request) {
 	}
 	if f.Status == db.FindingDuplicate {
 		http.Error(w, "finding is a duplicate; export not available", http.StatusGone)
+		return
+	}
+	hasDependents, err := repoHasDependents(s.DB, f.RepositoryID)
+	if err != nil {
+		s.Log.Error("count dependents", "repo", f.RepositoryID, "err", err)
+		http.Error(w, "failed to count repository dependents", http.StatusInternalServerError)
+		return
+	}
+	if !hasDependents {
+		http.Error(w, "CSAF VEX export is unavailable because this repository has no recorded dependents", http.StatusNotFound)
 		return
 	}
 	schema, err := getCSAFSchema()
@@ -293,6 +304,14 @@ func loadFindingDependents(s *Server, rows []db.FindingDependent) map[uint]db.De
 		out[d.ID] = d
 	}
 	return out
+}
+
+func repoHasDependents(gdb *gorm.DB, repoID uint) (bool, error) {
+	var dependentCount int64
+	if err := gdb.Model(&db.Dependent{}).Where("repository_id = ?", repoID).Count(&dependentCount).Error; err != nil {
+		return false, err
+	}
+	return dependentCount > 0, nil
 }
 
 func dependentProductID(d db.Dependent) string {
@@ -510,17 +529,18 @@ func buildProductStatusMulti(f db.Finding, productIDs []string, fdRows []db.Find
 // otherwise emit baseScore: 0 / baseSeverity: NONE next to a populated
 // vector, which is worse than no score at all.
 func buildScoreMulti(f db.Finding, productIDs []string) *csafScore {
-	cvss := parseCVSSv3Vector(f.CVSSVector)
+	vector := strings.TrimSpace(f.CVSSVector)
+	cvss := parseCVSSv3Vector(vector)
 	if cvss == nil {
 		return nil
 	}
-	score, ok := db.BaseScoreFromVector(f.CVSSVector)
+	parsed, ok := parseCVSSVersion(vector, cvssVersion30, cvssVersion31)
 	if !ok {
 		return nil
 	}
-	cvss.BaseScore = score
-	cvss.BaseSeverity = severityLabel(score)
-	cvss.VectorString = f.CVSSVector
+	cvss.BaseScore = parsed.Score
+	cvss.BaseSeverity = severityLabel(parsed.Score)
+	cvss.VectorString = vector
 	return &csafScore{Products: productIDs, CVSSv3: cvss}
 }
 

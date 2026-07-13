@@ -29,6 +29,13 @@ type Config struct {
 	Models       []Model  `yaml:"models"`
 	Skills       []string `yaml:"skills"`
 	SkillsRepo   string   `yaml:"skills_repo"`
+	// Backend selects the agent CLI the container runner execs:
+	// "claude" (default), "codex", or "opencode". Empty leaves the
+	// built-in default (claude). Non-claude backends require the
+	// containerised runner: --no-container with a non-claude backend
+	// is rejected at startup. Validated against worker.HarnessByName
+	// so the set of accepted values stays in one place.
+	Backend string `yaml:"backend"`
 	// NoContainer disables the containerised runner so claude runs directly on
 	// the host (no isolation). NoDocker is the pre-rename alias, still honoured
 	// so existing configs keep working; no_container wins when both are set
@@ -79,11 +86,17 @@ type Config struct {
 	ScanTimeout string `yaml:"scan_timeout"`
 	// MaxTurns is passed as --max-turns to claude-code. 0 means no limit.
 	MaxTurns int `yaml:"max_turns"`
-	// AnthropicBaseURL overrides the default Anthropic API endpoint. When
-	// set, the hostname is automatically added to the egress allowlist and
-	// the value is passed as ANTHROPIC_BASE_URL to the claude-code process.
-	// Falls back to the ANTHROPIC_BASE_URL environment variable if empty.
-	AnthropicBaseURL string `yaml:"anthropic_base_url"`
+	// ModelBaseURL overrides the default model API endpoint for the
+	// active backend. When set, the hostname is automatically added to
+	// the egress allowlist. Each harness applies it its own way (claude:
+	// ANTHROPIC_BASE_URL env; codex: -c openai_base_url=...). For
+	// compatibility, only the claude backend also falls back to the
+	// ANTHROPIC_BASE_URL environment variable when this is unset.
+	ModelBaseURL string `yaml:"model_base_url"`
+	// LegacyAnthropicBaseURL is the former name of ModelBaseURL, kept so
+	// existing configs keep working. Load merges it into ModelBaseURL
+	// when that is unset; remove after one release.
+	LegacyAnthropicBaseURL string `yaml:"anthropic_base_url"`
 	// Theme selects the colour scheme: "claude" (default), "ocean-breeze",
 	// "catppuccin", "sunset-horizon", "midnight-bloom", or "northern-lights".
 	Theme string `yaml:"theme"`
@@ -103,6 +116,12 @@ type Config struct {
 	// emitted to the scan log and the kind-specific parser still runs.
 	// Intended as a development aid while iterating on a skill.
 	SchemaStrict *bool `yaml:"schema_strict"`
+	// DowngradeOnOverage falls the model tier back from max/high to the mid tier
+	// for newly enqueued scans while the Claude subscription is past its included
+	// quota (on overage), restoring it when the window resets. Only a
+	// subscription token reports overage. Off by default; the switch is logged
+	// and shown on the jobs page and /usage.
+	DowngradeOnOverage *bool `yaml:"downgrade_on_overage"`
 	// RecipientsFile is a flat text file of public keys (one per line,
 	// age X25519 or SSH) used to encrypt format=bundle exports. Empty
 	// disables encrypted export.
@@ -200,12 +219,16 @@ func ValidateSELinux(s string) error {
 	}
 }
 
-// Model is a display-name plus the claude model id it resolves to. The
-// shape matches web.Model so main.go can pipe one into the other without
-// the two packages depending on each other.
+// Model is a display-name plus the model id it resolves to. The shape
+// matches web.Model so main.go can pipe one into the other without the
+// two packages depending on each other. Tier optionally tags the entry
+// as the default for one of the mid/high/max model tiers so operators
+// with a non-Anthropic model list get sensible tier defaults without
+// setting each one in /settings.
 type Model struct {
 	Name string `yaml:"name"`
 	ID   string `yaml:"id"`
+	Tier string `yaml:"tier"`
 }
 
 // Themes lists every valid theme name.
@@ -258,6 +281,11 @@ func Load(path string) (*Config, error) {
 	// Fold the alias into NoContainer so the rest of the code reads one field.
 	if c.NoContainer == nil {
 		c.NoContainer = c.NoDocker
+	}
+	// model_base_url replaced anthropic_base_url; fold the old key so
+	// existing configs keep working. Remove after one release.
+	if c.ModelBaseURL == "" && c.LegacyAnthropicBaseURL != "" {
+		c.ModelBaseURL = c.LegacyAnthropicBaseURL
 	}
 	if err := ValidateClone(c.Clone); err != nil {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)

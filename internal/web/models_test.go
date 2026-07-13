@@ -1,6 +1,20 @@
 package web
 
-import "testing"
+import (
+	"testing"
+
+	"scrutineer/internal/worker"
+)
+
+func init() {
+	// Production seeds Models from the active harness in main.go; tests
+	// need a non-empty list too. Use the claude harness's own defaults
+	// so tests that reference concrete ids (efforts_test.go,
+	// settings_handlers_test.go) match without a second hardcoded list.
+	for _, d := range (worker.ClaudeHarness{}).DefaultModels() {
+		Models = append(Models, Model{Name: d.Name, ID: d.ID, Tier: d.Tier})
+	}
+}
 
 func withTestModels(t *testing.T, models []Model) {
 	t.Helper()
@@ -36,9 +50,11 @@ func TestServerDefaultModel(t *testing.T) {
 	}
 }
 
-func TestBuiltInModelsIncludeSonnet5(t *testing.T) {
-	if !ValidModel("claude-sonnet-5") {
-		t.Fatal("built-in model list should include Sonnet 5.0")
+func TestDefaultModel_emptyListReturnsEmpty(t *testing.T) {
+	withTestModels(t, nil)
+	var s Server
+	if got := s.DefaultModel(); got != "" {
+		t.Errorf("DefaultModel() with empty list = %q, want empty", got)
 	}
 }
 
@@ -69,15 +85,51 @@ func TestModelTiers(t *testing.T) {
 }
 
 func TestModelTiersFallbackToDefaultModelWithCustomModelList(t *testing.T) {
+	// A list with no tier: tags and no sonnet/opus needle match: every
+	// tier falls back to the operator's default_model. Set the tiers in
+	// /settings or tag entries with tier: to avoid this.
 	withTestModels(t, []Model{
 		{Name: "Default", ID: "vendor-default"},
 		{Name: "Small", ID: "vendor-small"},
 	})
-
 	for _, tier := range []string{ModelTierMid, ModelTierHigh, ModelTierMax} {
 		if got := builtinModelForTier(tier, "vendor-default"); got != "vendor-default" {
 			t.Errorf("builtinModelForTier(%q) = %q, want vendor-default", tier, got)
 		}
+	}
+}
+
+func TestModelTiers_explicitTierTags(t *testing.T) {
+	// Entries tagged tier: <mid|high|max> in the models: list are the
+	// tier default, no needle matching. This is how a non-Anthropic model
+	// list (e.g. the codex backend's) declares which entry each tier means
+	// so the tiers UI doesn't collapse to default_model in every slot.
+	withTestModels(t, []Model{
+		{Name: "GPT-5.3 Codex", ID: "gpt-5.3-codex", Tier: ModelTierHigh},
+		{Name: "GPT-5.4", ID: "gpt-5.4"},
+		{Name: "GPT-5.4 mini", ID: "gpt-5.4-mini", Tier: ModelTierMid},
+		{Name: "GPT-5.5", ID: "gpt-5.5", Tier: ModelTierMax},
+	})
+	if got := builtinModelForTier(ModelTierMid, "gpt-5.3-codex"); got != "gpt-5.4-mini" {
+		t.Errorf("mid = %q, want gpt-5.4-mini (tier: mid)", got)
+	}
+	if got := builtinModelForTier(ModelTierHigh, "gpt-5.3-codex"); got != "gpt-5.3-codex" {
+		t.Errorf("high = %q, want gpt-5.3-codex (tier: high)", got)
+	}
+	if got := builtinModelForTier(ModelTierMax, "gpt-5.3-codex"); got != "gpt-5.5" {
+		t.Errorf("max = %q, want gpt-5.5 (tier: max)", got)
+	}
+}
+
+func TestModelTiers_explicitTierBeatsNeedle(t *testing.T) {
+	// An explicit tier: tag wins over the substring heuristic even when a
+	// needle would match a different entry.
+	withTestModels(t, []Model{
+		{Name: "Sonnet", ID: "test-sonnet"},
+		{Name: "Mid", ID: "test-explicit-mid", Tier: ModelTierMid},
+	})
+	if got := builtinModelForTier(ModelTierMid, "fallback"); got != "test-explicit-mid" {
+		t.Errorf("mid = %q, want test-explicit-mid (explicit tier: beats sonnet needle)", got)
 	}
 }
 

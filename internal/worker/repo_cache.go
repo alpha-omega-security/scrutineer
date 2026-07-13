@@ -97,7 +97,7 @@ func (w *Worker) prepareRepoSrc(ctx context.Context, url, ref, workRoot string, 
 	if err := os.RemoveAll(dst); err != nil {
 		return "", err
 	}
-	if err := copyTree(cacheSrc, dst); err != nil {
+	if err := CopyTree(cacheSrc, dst); err != nil {
 		return "", fmt.Errorf("copy repo cache: %w", err)
 	}
 	return commit, nil

@@ -14,6 +14,23 @@ import (
 
 const wantAttackVectorNetwork = "NETWORK"
 
+func TestRepoHasDependentsReturnsCountError(t *testing.T) {
+	gdb, err := db.Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sqldb, err := gdb.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sqldb.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repoHasDependents(gdb, 1); err == nil {
+		t.Fatal("expected count error after closing database")
+	}
+}
+
 func seedCSAFFinding(t *testing.T, s *Server, mut func(*db.Finding)) db.Finding {
 	t.Helper()
 	repo := db.Repository{
@@ -42,6 +59,8 @@ func seedCSAFFinding(t *testing.T, s *Server, mut func(*db.Finding)) db.Finding 
 		mut(&f)
 	}
 	s.DB.Create(&f)
+	dep := db.Dependent{RepositoryID: repo.ID, Name: "downstream-app", Ecosystem: "npm", RepositoryURL: "https://github.com/example/downstream-app"}
+	s.DB.Create(&dep)
 	return f
 }
 
@@ -102,6 +121,21 @@ func TestFindingCSAF_validatesAgainstOfficialSchema(t *testing.T) {
 	ps := v["product_status"].(map[string]any)
 	if _, ok := ps["known_affected"]; !ok {
 		t.Errorf("product_status missing known_affected: %+v", ps)
+	}
+}
+
+func TestFindingCSAF_noDependentsReturns404(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	f := seedCSAFFinding(t, s, nil)
+	s.DB.Where("repository_id = ?", f.RepositoryID).Delete(&db.Dependent{})
+	w := getCSAF(t, s, f.ID)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("status %d, want 404: %s", w.Code, w.Body)
+	}
+	if !strings.Contains(w.Body.String(), "no recorded dependents") {
+		t.Errorf("body should explain missing dependents: %s", w.Body)
 	}
 }
 
@@ -279,7 +313,7 @@ func TestFindingCSAF_scoreDerivedFromVectorIgnoresStoredScore(t *testing.T) {
 }
 
 // parseCVSSv3Vector tolerates a truncated vector (returns a partial
-// struct) but go-cvss rejects it; the scores block must be omitted
+// struct) but the shared CVSS parser rejects it; the scores block must be omitted
 // rather than emitted with a fabricated baseScore: 0.
 func TestFindingCSAF_partialVectorOmitsScores(t *testing.T) {
 	s, done := newTestServer(t)
@@ -296,7 +330,7 @@ func TestFindingCSAF_partialVectorOmitsScores(t *testing.T) {
 	doc := decodeCSAF(t, w.Body.Bytes())
 	v := doc["vulnerabilities"].([]any)[0].(map[string]any)
 	if _, ok := v["scores"]; ok {
-		t.Errorf("scores must be omitted when vector is unparseable by go-cvss: %+v", v["scores"])
+		t.Errorf("scores must be omitted when vector is unparseable by the shared CVSS parser: %+v", v["scores"])
 	}
 }
 
@@ -701,5 +735,22 @@ func TestParseCVSSv3Vector(t *testing.T) {
 				tc.checks(t, got)
 			}
 		})
+	}
+}
+
+func TestBuildScoreMulti_trimsCVSSVector(t *testing.T) {
+	// CSAF's embedded CVSS schema anchors vectorString, so a stored value
+	// with surrounding whitespace must be trimmed before emission.
+	const want = "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+	f := db.Finding{CVSSVector: "  " + want + "\n"}
+	got := buildScoreMulti(f, []string{"pkg:npm/example"})
+	if got == nil {
+		t.Fatal("buildScoreMulti = nil for padded valid vector")
+	}
+	if got.CVSSv3.VectorString != want {
+		t.Errorf("VectorString = %q, want %q", got.CVSSv3.VectorString, want)
+	}
+	if got.CVSSv3.BaseScore != 9.8 {
+		t.Errorf("BaseScore = %v, want 9.8", got.CVSSv3.BaseScore)
 	}
 }

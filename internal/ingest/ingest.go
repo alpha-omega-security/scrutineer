@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // severityCanon maps any casing of the four levels onto the title-case
@@ -101,6 +102,65 @@ type Finding struct {
 	Rating     string
 	// FixCommit is the base revision SuggestedFix applies to.
 	FixCommit string
+
+	// Sinks (comma-joined sink ids) rides the default bundle alongside the
+	// six-step prose; it is finding substance, not triage. Snippet and the
+	// fields below it travel ONLY in an include=all archival bundle — the
+	// finding's enrichment and disclosure work product. All empty for other
+	// parsers and for the default share bundle.
+	Sinks string
+
+	Snippet                 string
+	Affected                string
+	FixVersion              string
+	CVEID                   string
+	GHSAID                  string
+	CVSSVector              string
+	CVSSv4Vector            string
+	Mitigation              string
+	MitigationSemgrep       string
+	BreakingChange          string
+	BreakingChangeRationale string
+	DupCheck                string
+	DisclosureDraft         string
+	ExploitedInWild         string
+	ExploitedInWildEvidence string
+	// UpstreamFixCommit is the real upstream fix commit (db.Finding.FixCommit),
+	// kept distinct from FixCommit above (the SuggestedFix base) because the
+	// bundle's legacy `fix_commit` key was already taken by the latter.
+	UpstreamFixCommit string
+
+	// Child records, carried only by an include=all bundle. Nil otherwise.
+	Notes          []Note
+	Communications []Communication
+	References     []Reference
+}
+
+// Note, Communication and Reference mirror the db.Finding child tables of the
+// same name. They are carried only by scrutineer's own include=all archival
+// bundle (see internal/web/api_export.go); every other parser leaves the
+// slices nil, so the import path writes no child rows for them.
+type Note struct {
+	Body      string
+	By        string
+	CreatedAt time.Time
+}
+
+type Communication struct {
+	Channel     string
+	Direction   string
+	Actor       string
+	Body        string
+	OfferedHelp string
+	At          time.Time
+	CreatedAt   time.Time
+}
+
+type Reference struct {
+	URL       string
+	Tags      string
+	Summary   string
+	CreatedAt time.Time
 }
 
 // Format names the detected input encoding. Exposed so callers can log

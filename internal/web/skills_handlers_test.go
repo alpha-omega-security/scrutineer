@@ -1,6 +1,8 @@
 package web
 
 import (
+	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -9,6 +11,7 @@ import (
 	"testing"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/skills"
 	"scrutineer/internal/worker"
 )
 
@@ -235,5 +238,55 @@ func TestSkillRetry_preservesSkillID(t *testing.T) {
 	}
 	if *retried.SkillID != skill.ID {
 		t.Errorf("retried SkillID = %d, want %d", *retried.SkillID, skill.ID)
+	}
+}
+
+// TestSkillsUI_bundledAdvisoryDeepDive loads the real bundled skills and
+// renders the /skills list and the advisory-deep-dive detail page. It guards
+// render paths a UI-created skill (freeform, no schema) never exercises: the
+// schema.json section, which runs the prettyjson filter over a real schema.
+// An unknown id must 404, not 500.
+func TestSkillsUI_bundledAdvisoryDeepDive(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	h := s.Handler()
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	if _, err := skills.LoadDirectory(s.DB, log, "../../skills", "local"); err != nil {
+		t.Fatalf("load bundled skills: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, localReq("GET", "/skills"))
+	if w.Code != 200 {
+		t.Fatalf("list status %d: %s", w.Code, w.Body)
+	}
+	if !strings.Contains(w.Body.String(), "advisory-deep-dive") {
+		t.Error("list page missing advisory-deep-dive row")
+	}
+
+	var row db.Skill
+	if err := s.DB.Where("name = ?", "advisory-deep-dive").First(&row).Error; err != nil {
+		t.Fatalf("advisory-deep-dive not loaded: %v", err)
+	}
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, localReq("GET", "/skills/"+strconv.FormatUint(uint64(row.ID), 10)))
+	if w.Code != 200 {
+		t.Fatalf("show status %d: %s", w.Code, w.Body)
+	}
+	body := w.Body.String()
+	for _, want := range []string{
+		"schema.json",                        // the {{if .SchemaJSON}} section rendered
+		"advisory-deep-dive findings report", // schema title, proving prettyjson ran over it
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("show page missing %q", want)
+		}
+	}
+
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, localReq("GET", "/skills/999999"))
+	if w.Code != http.StatusNotFound {
+		t.Errorf("unknown skill id: status %d, want 404", w.Code)
 	}
 }

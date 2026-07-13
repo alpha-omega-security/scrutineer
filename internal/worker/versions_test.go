@@ -11,7 +11,7 @@ import (
 func TestParseToolVersions(t *testing.T) {
 	out := "zizmor=zizmor 1.26.1\n" +
 		"semgrep=1.167.0\n" +
-		"claude=2.1.123 (Claude Code)\n"
+		"harness=2.1.123 (Claude Code)\n"
 	got := parseToolVersions(out)
 	if got.Zizmor != "1.26.1" {
 		t.Errorf("Zizmor = %q, want 1.26.1", got.Zizmor)
@@ -19,14 +19,26 @@ func TestParseToolVersions(t *testing.T) {
 	if got.Semgrep != "1.167.0" {
 		t.Errorf("Semgrep = %q, want 1.167.0", got.Semgrep)
 	}
-	if got.Claude != "2.1.123" {
-		t.Errorf("Claude = %q, want 2.1.123", got.Claude)
+	if got.Harness != "2.1.123" {
+		t.Errorf("Harness = %q, want 2.1.123", got.Harness)
+	}
+}
+
+func TestQueryToolsScript_usesHarnessBinary(t *testing.T) {
+	// The active backend's binary is interpolated so adding a harness
+	// requires no edit here.
+	s := queryToolsScript("codex")
+	if !strings.Contains(s, "$(codex --version") {
+		t.Errorf("script = %q, want codex --version", s)
+	}
+	if strings.Contains(s, "claude") {
+		t.Errorf("script = %q; must not hardcode a harness name", s)
 	}
 }
 
 func TestParseToolVersions_missingTools(t *testing.T) {
 	// A tool that is absent prints an empty value after the "=".
-	got := parseToolVersions("zizmor=\nsemgrep=\nclaude=\n")
+	got := parseToolVersions("zizmor=\nsemgrep=\nharness=\n")
 	if got != (RunnerToolVersions{}) {
 		t.Errorf("expected zero value for empty versions, got %+v", got)
 	}
@@ -57,7 +69,7 @@ func TestRuntimeServerVersion_Apple(t *testing.T) {
 
 func TestQueryRunnerToolVersions_AppleSkipsMissingImage(t *testing.T) {
 	logPath := fakeContainer(t)
-	got := QueryRunnerToolVersions(context.Background(), ContainerRuntime{Bin: "apple"}, "missing:latest")
+	got := QueryRunnerToolVersions(context.Background(), ContainerRuntime{Bin: "apple"}, "missing:latest", "claude")
 	if got != (RunnerToolVersions{}) {
 		t.Errorf("QueryRunnerToolVersions(missing image) = %+v, want zero value", got)
 	}
@@ -72,8 +84,8 @@ func TestQueryRunnerToolVersions_AppleSkipsMissingImage(t *testing.T) {
 
 func TestQueryRunnerToolVersions_AppleRunsLocalImageWithoutPullNever(t *testing.T) {
 	logPath := fakeContainer(t)
-	got := QueryRunnerToolVersions(context.Background(), ContainerRuntime{Bin: "apple"}, "present:latest")
-	if got.Zizmor != "1.2.3" || got.Semgrep != "4.5.6" || got.Claude != "7.8.9" {
+	got := QueryRunnerToolVersions(context.Background(), ContainerRuntime{Bin: "apple"}, "present:latest", "claude")
+	if got.Zizmor != "1.2.3" || got.Semgrep != "4.5.6" || got.Harness != "7.8.9" {
 		t.Fatalf("QueryRunnerToolVersions(local image) = %+v", got)
 	}
 	log := readFakeContainerLog(t, logPath)
@@ -103,7 +115,7 @@ fi
 if [ "$1" = "run" ]; then
   echo "zizmor=zizmor 1.2.3"
   echo "semgrep=4.5.6"
-  echo "claude=7.8.9 (Claude Code)"
+  echo "harness=some-cli 7.8.9 (build abc)"
   exit 0
 fi
 exit 64

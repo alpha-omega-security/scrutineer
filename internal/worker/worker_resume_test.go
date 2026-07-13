@@ -125,7 +125,7 @@ func TestWorker_ResumeReusesLineageWorkspace(t *testing.T) {
 	if want := w.workRoot(rootID); runner.got.WorkRoot != want {
 		t.Errorf("WorkRoot = %q, want lineage root %q", runner.got.WorkRoot, want)
 	}
-	if want := filepath.Join(w.DataDir, "claude-config", "scan-7"); runner.got.ClaudeConfigDir != want {
-		t.Errorf("ClaudeConfigDir = %q, want %q", runner.got.ClaudeConfigDir, want)
+	if want := w.harnessStateDirID(7); runner.got.StateDir != want {
+		t.Errorf("StateDir = %q, want %q", runner.got.StateDir, want)
 	}
 }

@@ -37,6 +37,15 @@ type SkillRunner interface {
 	SkillDir(workRoot, name string) string
 }
 
+// BackendReporter is an optional SkillRunner extension: a runner that
+// knows which harness it drives reports it here so wrap() can stamp the
+// scan row before RunSkill starts. That closes the window where a server
+// restart mid-run leaves a scan with a session_id but no backend, which
+// resumeOpts then misreads as a claude session and refuses to resume.
+type BackendReporter interface {
+	Backend() string
+}
+
 // SkillJob is a scan driven by an on-disk claude-code skill. The runner
 // clones the repo, stages the skill under .claude/skills/{Name}/ next to
 // the clone, and invokes `claude -p` with a short activation prompt that
@@ -88,11 +97,12 @@ type SkillJob struct {
 	// prompt. It lets callers resume the same conversation with targeted
 	// corrective instructions, such as rewriting an invalid report.json.
 	ResumePrompt string
-	// ClaudeConfigDir is a host directory the container runner mounts as the
-	// container's CLAUDE_CONFIG_DIR so the resumable session store persists
-	// across container restarts. Empty disables the mount (the local runner
-	// ignores it and relies on the host's own ~/.claude).
-	ClaudeConfigDir string
+	// StateDir is a host directory the container runner mounts at
+	// /harness-state and points the harness at via Harness.StateEnv, so
+	// the resumable session store persists across container restarts.
+	// Empty disables the mount (the local runner ignores it and relies on
+	// the host's own ~/.claude).
+	StateDir string
 }
 
 type SkillResult struct {
@@ -102,8 +112,13 @@ type SkillResult struct {
 	// default runner image ran. The worker persists this on the scan
 	// so retries and the UI can show what was picked.
 	Profile string
-	// SessionID is the claude session this run belonged to, as seen in the
-	// stream. The worker already persists it live via the emit callback;
+	// Backend is the harness that ran this scan (HarnessName). Persisted on
+	// the scan so a retry after switching -backend knows the SessionID
+	// belongs to a different agent CLI and starts fresh instead of passing
+	// e.g. a codex thread id to claude --resume.
+	Backend string
+	// SessionID is the harness session this run belonged to, as seen in
+	// the stream. The worker already persists it live via the emit callback;
 	// this is a backstop so the final save reflects the latest value (e.g.
 	// after a resume-fallback started a fresh session).
 	SessionID string
@@ -120,6 +135,8 @@ type LocalClaude struct {
 func (LocalClaude) SkillDir(workRoot, name string) string {
 	return ClaudeHarness{}.SkillDir(workRoot, name)
 }
+
+func (LocalClaude) Backend() string { return HarnessName(ClaudeHarness{}) }
 
 // RunSkill runs claude against a staged skill in a local workspace. The
 // workspace layout is:
@@ -153,9 +170,11 @@ func (l LocalClaude) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)
 
 	emit(Event{Kind: KindText, Text: "$ claude -p <skill:" + sj.Name + ">"})
 	accountErrText := ""
+	var rateLimitReset *RateLimitInfo
 	wrappedEmit := func(e Event) {
-		if accountErrText == "" {
-			accountErrText = claudeAccountErrorText(e.Text)
+		accountErrText = preferAccountErrText(accountErrText, claudeAccountErrorText(e.Text))
+		if e.Kind == KindRateLimit && e.RateLimit != nil {
+			rateLimitReset = preferRateLimitReset(rateLimitReset, e.RateLimit)
 		}
 		emit(e)
 	}
@@ -187,7 +206,7 @@ func (l LocalClaude) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)
 			return res, &MaxTurnsReachedError{}
 		}
 		if accountErrText != "" {
-			return res, &ClaudeAccountError{Detail: accountErrText}
+			return res, &AccountError{Detail: accountErrText, ResetAt: resumableReset(accountErrText, rateLimitReset)}
 		}
 		return res, fmt.Errorf("claude exited: %w", waitErr)
 	}

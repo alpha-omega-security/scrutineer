@@ -2,10 +2,14 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
+	"os/exec"
 	"strconv"
+	"strings"
 	"time"
 
 	"filippo.io/age"
@@ -119,6 +123,20 @@ func (s *Server) apiExportRepoFindings(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "scope requires format=bundle")
 		return
 	}
+	// include=all promotes the bundle to the archival superset (the operator's
+	// enrichment, disclosure work product, and notes/comms/refs child records).
+	// Like encrypt and scope it only applies to the bundle format; reject it
+	// elsewhere rather than silently returning the lean default a caller asked
+	// to widen.
+	include := r.URL.Query().Get("include")
+	if include != "" && include != "all" {
+		writeAPIError(w, http.StatusBadRequest, "unsupported include: all")
+		return
+	}
+	if include != "" && format != "bundle" {
+		writeAPIError(w, http.StatusBadRequest, "include requires format=bundle")
+		return
+	}
 
 	id, _ := strconv.Atoi(r.PathValue("id"))
 	var repo db.Repository
@@ -153,16 +171,33 @@ type sharingBundle struct {
 
 // sharingFinding carries the substance of a finding — what was found and the
 // reasoning that justifies it (the six-step audit checklist, reachability,
-// sink quality, the cross-party VID), plus enough provenance (commit,
-// sub-path, all hit locations) to resolve Location unambiguously on the
-// receiving side. Analyst-set triage state (status, CVE/GHSA id, affected,
-// fix_version, references, assignee) is intentionally dropped: a bundle shares
-// the finding, and the receiving team owns their own triage. Imported findings
-// therefore land fresh and untriaged on the recipient's side.
+// sink quality, the sink ids, the cross-party VID), plus enough provenance
+// (commit, sub-path, all hit locations) to resolve Location unambiguously on
+// the receiving side. This default set is share-safe: it is the finding, not
+// the analyst's private workspace, so a plain bundle can go to another team.
 //
-// All fields after Patch are emitted with omitempty so a finding that lacks
-// them — and a bundle produced before they existed — stays byte-compatible
-// with the original seven-field shape.
+// An include=all export additionally carries the operator's own enrichment and
+// disclosure work product — CVSS vectors, affected/fix_version, CVE/GHSA ids,
+// mitigation, breaking-change verdict, dup-check, disclosure draft,
+// exploited-in-wild, the source Snippet, the real upstream fix commit, and the
+// Notes/Communications/References child records — so a repo's findings can be
+// round-tripped losslessly into the operator's own instance. It is opt-in
+// because notes and communications are internal, and Snippet embeds verbatim
+// (possibly private) source, none of which a cross-party share should leak.
+//
+// Three things never travel, in either mode. Instance-local lifecycle the
+// receiver owns (status, resolution, revalidate verdict, assignee) is dropped
+// so imports land fresh and untriaged; auto-applying a foreign lifecycle state
+// is the real footgun. The change History is provenance of the instance it
+// happened on — the import itself is the new provenance. Release-watch columns
+// and Labels are re-derivable / low-value and stay out.
+//
+// UpstreamFixCommit uses a new upstream_fix_commit key: the legacy fix_commit
+// key already carries the SuggestedFix base (db.Finding.SuggestedFixCommit).
+//
+// Every field after Patch — and every child slice — is emitted with omitempty
+// so a finding that lacks them, and a bundle produced before they existed,
+// stays byte-compatible with the original seven-field shape.
 type sharingFinding struct {
 	Title       string `json:"title"`
 	Description string `json:"description"`
@@ -184,6 +219,59 @@ type sharingFinding struct {
 	Reach        string `json:"reach,omitempty"`
 	Rating       string `json:"rating,omitempty"`
 	FixCommit    string `json:"fix_commit,omitempty"`
+
+	// Sinks rides the default bundle. Everything below it is populated only for
+	// include=all; omitempty keeps a default bundle byte-identical to the
+	// pre-archival shape.
+	Sinks string `json:"sinks,omitempty"`
+
+	Snippet                 string `json:"snippet,omitempty"`
+	Affected                string `json:"affected,omitempty"`
+	FixVersion              string `json:"fix_version,omitempty"`
+	CVEID                   string `json:"cve_id,omitempty"`
+	GHSAID                  string `json:"ghsa_id,omitempty"`
+	CVSSVector              string `json:"cvss_vector,omitempty"`
+	CVSSv4Vector            string `json:"cvss_v4_vector,omitempty"`
+	Mitigation              string `json:"mitigation,omitempty"`
+	MitigationSemgrep       string `json:"mitigation_semgrep,omitempty"`
+	BreakingChange          string `json:"breaking_change,omitempty"`
+	BreakingChangeRationale string `json:"breaking_change_rationale,omitempty"`
+	DupCheck                string `json:"dup_check,omitempty"`
+	DisclosureDraft         string `json:"disclosure_draft,omitempty"`
+	ExploitedInWild         string `json:"exploited_in_wild,omitempty"`
+	ExploitedInWildEvidence string `json:"exploited_in_wild_evidence,omitempty"`
+	UpstreamFixCommit       string `json:"upstream_fix_commit,omitempty"`
+
+	Notes          []sharingNote          `json:"notes,omitempty"`
+	Communications []sharingCommunication `json:"communications,omitempty"`
+	References     []sharingReference     `json:"references,omitempty"`
+}
+
+// sharingNote, sharingCommunication and sharingReference are the wire shapes of
+// a finding's child records in an include=all bundle. They mirror the minimal*
+// structs in internal/ingest/minimal.go field-for-field so the round-trip
+// through ingest.Parse stays byte-compatible.
+type sharingNote struct {
+	Body      string    `json:"body"`
+	By        string    `json:"by,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+type sharingCommunication struct {
+	Channel     string    `json:"channel,omitempty"`
+	Direction   string    `json:"direction,omitempty"`
+	Actor       string    `json:"actor,omitempty"`
+	Body        string    `json:"body,omitempty"`
+	OfferedHelp string    `json:"offered_help,omitempty"`
+	At          time.Time `json:"at"`
+	CreatedAt   time.Time `json:"created_at"`
+}
+
+type sharingReference struct {
+	URL       string    `json:"url,omitempty"`
+	Tags      string    `json:"tags,omitempty"`
+	Summary   string    `json:"summary,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 func (s *Server) apiExportRepoBundle(w http.ResponseWriter, r *http.Request, repo *db.Repository) {
@@ -192,6 +280,8 @@ func (s *Server) apiExportRepoBundle(w http.ResponseWriter, r *http.Request, rep
 		writeAPIError(w, http.StatusBadRequest, "encryption requested but no recipients configured")
 		return
 	}
+
+	includeAll := r.URL.Query().Get("include") == "all"
 
 	var findings []db.Finding
 	q := s.DB.Where("scan_id IN (?)",
@@ -204,14 +294,27 @@ func (s *Server) apiExportRepoBundle(w http.ResponseWriter, r *http.Request, rep
 		// apiExportRepoFindings; the default (no scope) shares every finding.
 		q = q.Where(nonScannerScanFilter)
 	}
+	if includeAll {
+		// Load the child records only for the archival superset. Ordered so the
+		// bundle is deterministic (byte-stable re-exports) and reads in the same
+		// chronological order the finding page shows.
+		q = q.Preload("Notes", func(tx *gorm.DB) *gorm.DB { return tx.Order("created_at asc, id asc") }).
+			Preload("Communications", func(tx *gorm.DB) *gorm.DB { return tx.Order("at asc, id asc") }).
+			Preload("References", func(tx *gorm.DB) *gorm.DB { return tx.Order("id asc") })
+	}
 	q = applyFindingFilters(q, r)
 	if err := q.Find(&findings).Error; err != nil {
 		writeAPIError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
+	repositoryURL := bundleRepositoryURL(r.Context(), repo)
+	if repo.IsLocal() && repositoryURL == repo.URL && s.Log != nil {
+		s.Log.Warn("bundle export: local repository has no portable origin; recipient must pass ?repo= on import",
+			"repository_id", repo.ID)
+	}
 	bundle := sharingBundle{
-		Repository:  repo.URL,
+		Repository:  repositoryURL,
 		Tool:        "scrutineer",
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
 	}
@@ -219,7 +322,7 @@ func (s *Server) apiExportRepoBundle(w http.ResponseWriter, r *http.Request, rep
 		if bundle.Commit == "" {
 			bundle.Commit = f.Commit
 		}
-		bundle.Findings = append(bundle.Findings, sharingFinding{
+		sf := sharingFinding{
 			Title:        f.Title,
 			Description:  f.Trace,
 			Severity:     f.Severity,
@@ -239,7 +342,51 @@ func (s *Server) apiExportRepoBundle(w http.ResponseWriter, r *http.Request, rep
 			Reach:        f.Reach,
 			Rating:       f.Rating,
 			FixCommit:    f.SuggestedFixCommit,
-		})
+			Sinks:        f.Sinks,
+		}
+		if includeAll {
+			sf.Snippet = f.Snippet
+			sf.Affected = f.Affected
+			sf.FixVersion = f.FixVersion
+			sf.CVEID = f.CVEID
+			sf.GHSAID = f.GHSAID
+			sf.CVSSVector = f.CVSSVector
+			sf.CVSSv4Vector = f.CVSSv4Vector
+			sf.Mitigation = f.Mitigation
+			sf.MitigationSemgrep = f.MitigationSemgrep
+			sf.BreakingChange = f.BreakingChange
+			sf.BreakingChangeRationale = f.BreakingChangeRationale
+			sf.DupCheck = f.DupCheck
+			sf.DisclosureDraft = f.DisclosureDraft
+			sf.ExploitedInWild = f.ExploitedInWild
+			sf.ExploitedInWildEvidence = f.ExploitedInWildEvidence
+			// The real upstream fix commit rides the new key; the legacy
+			// fix_commit above carries the SuggestedFix base.
+			sf.UpstreamFixCommit = f.FixCommit
+			for _, n := range f.Notes {
+				sf.Notes = append(sf.Notes, sharingNote{Body: n.Body, By: n.By, CreatedAt: n.CreatedAt})
+			}
+			for _, c := range f.Communications {
+				sf.Communications = append(sf.Communications, sharingCommunication{
+					Channel:     c.Channel,
+					Direction:   c.Direction,
+					Actor:       c.Actor,
+					Body:        c.Body,
+					OfferedHelp: c.OfferedHelp,
+					At:          c.At,
+					CreatedAt:   c.CreatedAt,
+				})
+			}
+			for _, ref := range f.References {
+				sf.References = append(sf.References, sharingReference{
+					URL:       ref.URL,
+					Tags:      ref.Tags,
+					Summary:   ref.Summary,
+					CreatedAt: ref.CreatedAt,
+				})
+			}
+		}
+		bundle.Findings = append(bundle.Findings, sf)
 	}
 
 	data, err := json.Marshal(bundle)
@@ -265,6 +412,93 @@ func (s *Server) apiExportRepoBundle(w http.ResponseWriter, r *http.Request, rep
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="findings.bundle.age"`)
 	_, _ = w.Write(ct)
+}
+
+// bundleRepositoryURL returns repository provenance that another scrutineer
+// instance can use. A file:// URL only identifies a path on the exporting
+// host, so for local checkouts prefer their validated HTTPS origin. The
+// receiver then creates a remote Repository row and the normal scan path
+// clones it on first use. Repositories without a usable origin retain their
+// file URL so callers can still supply ?repo= explicitly on import.
+func bundleRepositoryURL(ctx context.Context, repo *db.Repository) string {
+	if repo == nil {
+		return ""
+	}
+	if !repo.IsLocal() {
+		return repo.URL
+	}
+
+	cmd := exec.CommandContext(ctx, "git", "-C", repo.LocalPath(),
+		"config", "--local", "--get", "remote.origin.url")
+	out, err := cmd.Output()
+	if err != nil {
+		return repo.URL
+	}
+	origin, ok := portableGitOrigin(strings.TrimSpace(string(out)))
+	if !ok {
+		return repo.URL
+	}
+	return origin
+}
+
+// sshConvertibleForges is deliberately separate from caseInsensitiveForges:
+// path case-folding does not imply that a host safely maps SSH owner/repo
+// remotes onto the same HTTPS path.
+var sshConvertibleForges = map[string]bool{
+	"github.com":    true,
+	"gitlab.com":    true,
+	"bitbucket.org": true,
+	"codeberg.org":  true,
+}
+
+// portableGitOrigin converts a supported git origin into the HTTPS URL the
+// importer and worker accept. HTTPS origins are normalized through the same
+// parser as repository creation. Common SSH forms are converted only for the
+// public forges whose owner/repo URL semantics we already know. Embedded HTTPS
+// credentials are rejected so a local credential never enters a bundle.
+func portableGitOrigin(origin string) (string, bool) {
+	candidate := origin
+	if !strings.Contains(origin, "://") {
+		userHost, repoPath, ok := strings.Cut(origin, ":")
+		if !ok || strings.Contains(userHost, "/") {
+			return "", false
+		}
+		_, host, ok := strings.Cut(userHost, "@")
+		host = strings.ToLower(host)
+		if !ok || !sshConvertibleForges[host] {
+			return "", false
+		}
+		candidate = "https://" + host + "/" + strings.TrimPrefix(repoPath, "/")
+	} else {
+		parsed, err := url.Parse(origin)
+		if err != nil {
+			return "", false
+		}
+		switch parsed.Scheme {
+		case "https":
+			if parsed.User != nil {
+				return "", false
+			}
+		case "ssh":
+			host := strings.ToLower(parsed.Hostname())
+			if !sshConvertibleForges[host] || (parsed.Port() != "" && parsed.Port() != "22") {
+				return "", false
+			}
+			candidate = "https://" + host + "/" + strings.TrimPrefix(parsed.Path, "/")
+		default:
+			return "", false
+		}
+	}
+
+	parsed, err := url.Parse(candidate)
+	if err != nil || parsed.User != nil {
+		return "", false
+	}
+	input, err := ParseRepoInput(candidate)
+	if err != nil || input.Local {
+		return "", false
+	}
+	return input.CloneURL, true
 }
 
 // encryptBundle wraps plaintext in armored age for the given recipients.
@@ -362,6 +596,11 @@ func validateExportFormat(w http.ResponseWriter, r *http.Request) bool {
 		writeAPIError(w, http.StatusBadRequest, "scope is only supported on per-repository bundle exports")
 		return false
 	}
+	// include selects the archival bundle superset; likewise bundle-only.
+	if r.URL.Query().Get("include") != "" {
+		writeAPIError(w, http.StatusBadRequest, "include is only supported on per-repository bundle exports")
+		return false
+	}
 	return true
 }
 
@@ -379,12 +618,13 @@ func applyFindingFilters(q *gorm.DB, r *http.Request) *gorm.DB {
 // preloads into memory. The body is partial on mid-stream errors: once
 // we have committed to 200, a truncated stream is the only honest signal.
 func streamJSONL[T any](w http.ResponseWriter, q *gorm.DB, project func(T) map[string]any) {
-	w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
 	rows, err := q.Rows()
 	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	defer func() { _ = rows.Close() }()
+	w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
 	enc := json.NewEncoder(w)
 	flusher, _ := w.(http.Flusher)
 	for rows.Next() {
@@ -451,7 +691,7 @@ func findingExport(f db.Finding) map[string]any {
 // running scan's auth credential and must never leak through an
 // unauthenticated channel.
 func scanExport(sc db.Scan) map[string]any {
-	return map[string]any{
+	out := map[string]any{
 		"id":                 sc.ID,
 		"repository_id":      sc.RepositoryID,
 		"kind":               sc.Kind,
@@ -480,4 +720,7 @@ func scanExport(sc db.Scan) map[string]any {
 		"created_at":         sc.CreatedAt,
 		"updated_at":         sc.UpdatedAt,
 	}
+	out["refusal_audit"] = sc.RefusalAudit
+	out["refusal_audit_warning"] = sc.RefusalAuditWarning
+	return out
 }

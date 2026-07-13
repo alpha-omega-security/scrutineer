@@ -14,19 +14,19 @@ import (
 func TestBuildRunArgs_ClaudeConfigMount(t *testing.T) {
 	d := ContainerRunner{}
 
-	with := d.buildRunArgs("/work/abs", "img:latest", hardenedNet{}, "/data/claude-config/scan-7")
-	if !hasAdjacent(with, "-v", "/data/claude-config/scan-7:/claude-config") {
+	with := d.buildRunArgs("/work/abs", "img:latest", hardenedNet{}, "/data/harness-state/scan-7")
+	if !hasAdjacent(with, "-v", "/data/harness-state/scan-7:/harness-state") {
 		t.Errorf("expected the config dir bind mount in %v", with)
 	}
-	if !hasAdjacent(with, "-e", "CLAUDE_CONFIG_DIR=/claude-config") {
+	if !hasAdjacent(with, "-e", "CLAUDE_CONFIG_DIR=/harness-state") {
 		t.Errorf("expected CLAUDE_CONFIG_DIR env in %v", with)
 	}
 
 	// No config dir → no mount and no env, so default scans are unchanged.
 	without := d.buildRunArgs("/work/abs", "img:latest", hardenedNet{}, "")
 	for _, a := range without {
-		if strings.Contains(a, "/claude-config") || strings.HasPrefix(a, "CLAUDE_CONFIG_DIR=") {
-			t.Errorf("did not expect any claude-config args, got %q in %v", a, without)
+		if strings.Contains(a, "/harness-state") || strings.HasPrefix(a, "CLAUDE_CONFIG_DIR=") {
+			t.Errorf("did not expect any harness-state args, got %q in %v", a, without)
 		}
 	}
 }
@@ -60,8 +60,8 @@ func TestBuildRunArgs_KeepIDGating(t *testing.T) {
 	if !slices.Contains(withCfg, "--userns=keep-id") {
 		t.Errorf("rootless+config: expected --userns=keep-id in %v", withCfg)
 	}
-	if !hasAdjacent(withCfg, "-v", "/data/cfg/scan-1:/claude-config") {
-		t.Errorf("rootless+config: expected claude-config mount in %v", withCfg)
+	if !hasAdjacent(withCfg, "-v", "/data/cfg/scan-1:/harness-state") {
+		t.Errorf("rootless+config: expected harness-state mount in %v", withCfg)
 	}
 }
 
@@ -130,8 +130,8 @@ func TestBuildRunArgs_SELinuxRelabel(t *testing.T) {
 	if !hasAdjacent(got, "-v", "/work/abs:/work:z") {
 		t.Errorf("expected /work mount relabeled with :z in %v", got)
 	}
-	if !hasAdjacent(got, "-v", "/data/cfg/scan-1:/claude-config:z") {
-		t.Errorf("expected /claude-config mount relabeled with :z in %v", got)
+	if !hasAdjacent(got, "-v", "/data/cfg/scan-1:/harness-state:z") {
+		t.Errorf("expected /harness-state mount relabeled with :z in %v", got)
 	}
 
 	// With relabeling off (the zero value / default), mounts are byte-for-byte
@@ -141,8 +141,8 @@ func TestBuildRunArgs_SELinuxRelabel(t *testing.T) {
 	if !hasAdjacent(got, "-v", "/work/abs:/work") {
 		t.Errorf("expected unrelabeled /work mount in %v", got)
 	}
-	if !hasAdjacent(got, "-v", "/data/cfg/scan-1:/claude-config") {
-		t.Errorf("expected unrelabeled /claude-config mount in %v", got)
+	if !hasAdjacent(got, "-v", "/data/cfg/scan-1:/harness-state") {
+		t.Errorf("expected unrelabeled /harness-state mount in %v", got)
 	}
 	for _, a := range got {
 		if strings.HasSuffix(a, ":z") || strings.HasSuffix(a, ",z") {
@@ -483,47 +483,91 @@ func TestRedactURLUserinfo(t *testing.T) {
 }
 
 func TestResolveProfile_SubPath(t *testing.T) {
-	d := ContainerRunner{ProfilesDir: t.TempDir()} // Provide a ProfilesDir so it doesn't short-circuit
-
+	// Detection runs against work/subPath, not work: stub detectProfile to
+	// record the srcDir it was handed and assert the join happened.
 	work := t.TempDir()
-	sub := filepath.Join(work, "nested", "php-ext")
-	if err := os.MkdirAll(sub, 0o700); err != nil {
+	var seenSrc string
+	d := ContainerRunner{
+		ProfilesDir: t.TempDir(), // present so resolveProfile doesn't short-circuit
+		detectProfile: func(_ context.Context, _ ContainerRuntime, _, srcDir string, _ bool) Profile {
+			seenSrc = srcDir
+			return Profile{}
+		},
+	}
+	emit := func(Event) {}
+
+	d.resolveProfile(context.Background(), "", work, "", emit)
+	if seenSrc != work {
+		t.Errorf("no subPath: srcDir = %q, want %q", seenSrc, work)
+	}
+
+	d.resolveProfile(context.Background(), "", work, "nested/php-ext", emit)
+	want := filepath.Join(work, "nested", "php-ext")
+	if seenSrc != want {
+		t.Errorf("with subPath: srcDir = %q, want %q", seenSrc, want)
+	}
+
+	// A requested profile bypasses detection entirely.
+	seenSrc = ""
+	d.resolveProfile(context.Background(), "php-ext", work, "nested", emit)
+	if seenSrc != "" {
+		t.Errorf("requested profile should not call detectProfile, but srcDir = %q", seenSrc)
+	}
+}
+
+// TestResolveProfile_DegradesToFallback exercises the FallbackProfile degrade
+// loop: when a profile's own image can't be built, the scan must continue under
+// its fallback rather than the guide-less default runner. ruby-ext ships no
+// Dockerfile here, so EnsureImage fails the read before it touches the runtime;
+// ruby's Dockerfile is present, and a stub docker whose `image inspect` exits 0
+// lets ruby resolve from cache with no real build. resolveProfile should log the
+// fallback and hand back the ruby profile, not the default.
+func TestResolveProfile_DegradesToFallback(t *testing.T) {
+	// This drives ruby-ext -> ruby specifically; fail loudly if the registry
+	// wiring the test depends on ever changes.
+	if got := ProfileByName("ruby-ext").FallbackProfile; got != "ruby" {
+		t.Fatalf("test assumes ruby-ext falls back to ruby; registry now says %q", got)
+	}
+
+	profiles := t.TempDir()
+	// The fallback (ruby) ships a Dockerfile; the first profile (ruby-ext) does
+	// not, so its EnsureImage fails the read before any runtime call.
+	if err := os.MkdirAll(filepath.Join(profiles, "ruby"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	// The php-ext profile detects config.m4 containing PHP_ARG_
-	if err := os.WriteFile(filepath.Join(sub, "config.m4"), []byte("PHP_ARG_"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(profiles, "ruby", "Dockerfile"), []byte("FROM scratch\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+
+	// Stub docker: `image inspect` exits 0 so ruby resolves from the local cache
+	// (no real build); anything else (e.g. resolveBaseDigest's `buildx`) exits
+	// non-zero, which the callers already treat as a soft miss.
+	binDir := t.TempDir()
+	stub := "#!/bin/sh\n[ \"$1\" = \"image\" ] && exit 0\nexit 1\n"
+	if err := os.WriteFile(filepath.Join(binDir, "docker"), []byte(stub), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	d := ContainerRunner{ProfilesDir: profiles} // default Bin "docker" resolves to the stub
 
 	var events []Event
 	emit := func(e Event) { events = append(events, e) }
 
-	// 1. Root path should NOT match php-ext (will default or fallback)
-	d.resolveProfile(context.Background(), "", work, "", emit)
+	// Request ruby-ext explicitly to skip detection and drive the build directly.
+	name, _ := d.resolveProfile(context.Background(), "ruby-ext", t.TempDir(), "", emit)
 
-	matchedPhpExtAtRoot := false
+	if name != "ruby" {
+		t.Errorf("resolveProfile returned profile %q, want the ruby fallback", name)
+	}
+	var loggedFallback bool
 	for _, e := range events {
-		if strings.Contains(e.Text, "profile: php-ext") {
-			matchedPhpExtAtRoot = true
+		if strings.Contains(e.Text, "falling back to ruby") {
+			loggedFallback = true
 		}
 	}
-	if matchedPhpExtAtRoot {
-		t.Errorf("expected no php-ext profile match at root")
-	}
-
-	events = nil // clear
-
-	// 2. SubPath should match php-ext
-	d.resolveProfile(context.Background(), "", work, "nested/php-ext", emit)
-
-	matchedPhpExtInSubPath := false
-	for _, e := range events {
-		if strings.Contains(e.Text, "profile: php-ext") {
-			matchedPhpExtInSubPath = true
-		}
-	}
-	if !matchedPhpExtInSubPath {
-		t.Errorf("expected php-ext profile match using subPath")
+	if !loggedFallback {
+		t.Errorf("expected a %q log line; got events %v", "falling back to ruby", events)
 	}
 }
 
@@ -559,7 +603,7 @@ func TestProxySidecarRunArgs(t *testing.T) {
 			GatewayIP: "192.0.2.9",
 		},
 	}
-	args := d.proxySidecarRunArgs("scrutineer-proxy-7")
+	args := d.proxySidecarRunArgs("scrutineer-proxy-7", "scrutineer-hardened-7")
 
 	// Detached and locked down -- the sidecar runs scrutineer's own trusted code
 	// but gets the same defense-in-depth as the scan container.
@@ -579,19 +623,24 @@ func TestProxySidecarRunArgs(t *testing.T) {
 	if !hasAdjacent(args, "--add-host", HostGatewayAlias+":192.0.2.9") {
 		t.Errorf("missing host-gateway add-host: %v", args)
 	}
-	// Must start on a connectable bridge, not the rootless default (pasta): the
-	// per-scan --internal network is attached later with `podman network
-	// connect`, which pasta-mode containers reject ("invalid network mode").
-	if !hasAdjacent(args, "--network", "podman") {
-		t.Errorf("sidecar must start on a bridge network so --internal can be connected: %v", args)
+	// Must start on the per-scan --internal network so it is the sidecar's
+	// FIRST interface -- the one the first-iface listen keyword binds to. The
+	// default bridge (egress leg) is connected by startProxySidecar afterwards
+	// and must never appear here, or the listener would face it.
+	if !hasAdjacent(args, "--network", "scrutineer-hardened-7") {
+		t.Errorf("sidecar must start on the per-scan --internal network: %v", args)
 	}
-	// Config via env.
+	if hasAdjacent(args, "--network", "podman") {
+		t.Errorf("the egress leg must be connected after launch, not at run time: %v", args)
+	}
+	// Config via env; the listen host is the keyword the sidecar resolves to its
+	// --internal leg, not an all-interfaces bind.
 	for _, kv := range []string{
 		"SCRUTINEER_PROXY_TOKEN=tok",
 		"SCRUTINEER_PROXY_ALLOW=*.anthropic.com,host.docker.internal",
 		"SCRUTINEER_PROXY_API_HOST=192.0.2.9",
 		"SCRUTINEER_PROXY_API_PORT=8080",
-		"SCRUTINEER_PROXY_LISTEN=:3128",
+		"SCRUTINEER_PROXY_LISTEN=" + SidecarListenFirstIface + ":3128",
 	} {
 		if !hasAdjacent(args, "-e", kv) {
 			t.Errorf("missing env %q in %v", kv, args)

@@ -41,7 +41,7 @@ Three configurations exist, weakest to strongest:
   This is the largest blast-radius reduction.
 - **The workspace stays operator-owned via `--userns=keep-id`.** The container
   process is mapped back to the invoking user's uid, so the `/work` output and
-  the `/claude-config` resume store are owned by the operator — not root, not an
+  the `/harness-state` resume store are owned by the operator — not root, not an
   opaque sub-uid. Without keep-id, rootless bind-mount writes land under a
   remapped sub-uid and break the scan; the runner injects it only for rootless
   podman (docker and rootful podman already run as the host uid).
@@ -161,7 +161,7 @@ need `--internal` and work fine under rootless podman's default network.
 exactly those, independently of `--hardened`:
 
 - `--read-only` on the container rootfs. Writable paths remain `/work`, the
-  `/tmp` tmpfs (with `HOME=/tmp`), and the `/claude-config` bind mount on
+  `/tmp` tmpfs (with `HOME=/tmp`), and the `/harness-state` bind mount on
   resumable runs.
 - `--security-opt no-new-privileges`.
 - The 2 GiB post-clone workspace cap — a host-side size check that refuses
@@ -234,7 +234,7 @@ On hosts with SELinux enabled — the default on Fedora, RHEL, CentOS Stream,
 Rocky and Alma, which is where rootless podman most often runs — the scan
 container runs as the confined type `container_t`, while the host paths
 scrutineer bind-mounts in keep their own labels: `/work` (the clone, staged
-skill, injected `CLAUDE.md` and output), `/claude-config` (the resumable session
+skill, injected `CLAUDE.md` and output), `/harness-state` (the resumable session
 store), and `/src` (profile detection). The base `container-selinux` policy
 denies `container_t` access to those labels, so without intervention the
 container cannot read the clone or write its output and **every scan fails with

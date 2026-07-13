@@ -25,17 +25,35 @@ func (s *Server) registerSBOMRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /sboms/new", s.sbomNew)
 	mux.HandleFunc("POST /sboms", s.sbomUpload)
 	mux.HandleFunc("GET /sboms/{id}", s.sbomShow)
+	mux.HandleFunc("POST /sboms/{id}/confirm", s.sbomConfirm)
 	mux.HandleFunc("POST /sboms/{id}/resolve", s.sbomResolve)
 	mux.HandleFunc("POST /sboms/{id}/delete", s.sbomDelete)
 }
 
 func (s *Server) sbomList(w http.ResponseWriter, r *http.Request) {
+	q := s.DB.Model(&db.SBOMUpload{})
+	sortCol, dir := splitSort(r.URL.Query().Get("sort"))
+	switch sortCol {
+	case "name":
+		q = q.Order(orderByExpr("name", dir, false)).Order("id desc")
+	case "format":
+		q = q.Order(orderByExpr("format", dir, false)).Order("id desc")
+	case "packages":
+		q = q.Order(orderByExpr("package_count", dir, true)).Order("id desc")
+	case "uploaded":
+		q = q.Order(orderByExpr("created_at", dir, true)).Order("id desc")
+	default:
+		sortCol, dir = defaultSort, ""
+		q = q.Order("id desc")
+	}
+	sort := joinSort(sortCol, dir)
+
 	var total int64
-	s.DB.Model(&db.SBOMUpload{}).Count(&total)
+	q.Count(&total)
 	page := paginate(r, total)
 	var rows []db.SBOMUpload
-	s.DB.Order("id desc").Limit(perPage).Offset((page.N - 1) * perPage).Find(&rows)
-	s.render(w, r, "sboms.html", map[string]any{"SBOMs": rows, "Page": page})
+	q.Limit(perPage).Offset((page.N - 1) * perPage).Find(&rows)
+	s.render(w, r, "sboms.html", map[string]any{"SBOMs": rows, "Page": page, "Sort": sort})
 }
 
 func (s *Server) sbomNew(w http.ResponseWriter, r *http.Request) {
@@ -64,14 +82,15 @@ func (s *Server) sbomUpload(w http.ResponseWriter, r *http.Request) {
 	}
 
 	up := db.SBOMUpload{
-		Name:         firstNonEmpty(doc.Document.Name, header.Filename),
-		Filename:     header.Filename,
-		Format:       string(doc.Type),
-		SpecVersion:  doc.SpecVersion,
-		Raw:          data,
-		PackageCount: len(doc.Packages),
+		Name:          firstNonEmpty(doc.Document.Name, header.Filename),
+		Filename:      header.Filename,
+		Format:        string(doc.Type),
+		SpecVersion:   doc.SpecVersion,
+		Raw:           data,
+		PackageCount:  len(doc.Packages),
+		ImportPending: true,
 	}
-	scope := classifyScope(doc)
+	scope := doc.ClassifyScope()
 	for _, p := range doc.Packages {
 		up.Packages = append(up.Packages, db.SBOMPackage{
 			Name:      p.Name,
@@ -87,9 +106,28 @@ func (s *Server) sbomUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.goResolve(up.ID)
-
 	s.redirect(w, r, fmt.Sprintf("/sboms/%d", up.ID))
+}
+
+type sbomScopeCounts struct {
+	Direct     int
+	Transitive int
+	Unknown    int
+}
+
+func countSBOMScopes(pkgs []db.SBOMPackage) sbomScopeCounts {
+	var counts sbomScopeCounts
+	for _, p := range pkgs {
+		switch p.Scope {
+		case sbom.ScopeDirect:
+			counts.Direct++
+		case sbom.ScopeTransitive:
+			counts.Transitive++
+		default:
+			counts.Unknown++
+		}
+	}
+	return counts
 }
 
 // anyPackageHasScope reports whether at least one package carries a
@@ -117,10 +155,11 @@ func (s *Server) sbomShow(w http.ResponseWriter, r *http.Request) {
 	}
 
 	hasScope := anyPackageHasScope(up.Packages)
+	scopeCounts := countSBOMScopes(up.Packages)
 
 	scope := r.URL.Query().Get("scope")
 	pkgs := up.Packages
-	if hasScope && (scope == scopeDirect || scope == scopeTransitive) {
+	if hasScope && (scope == sbom.ScopeDirect || scope == sbom.ScopeTransitive) {
 		filtered := make([]db.SBOMPackage, 0, len(up.Packages))
 		for _, p := range up.Packages {
 			if p.Scope == scope {
@@ -143,7 +182,7 @@ func (s *Server) sbomShow(w http.ResponseWriter, r *http.Request) {
 		repoIDs = append(repoIDs, id)
 	}
 
-	sort := r.URL.Query().Get("sort")
+	sortCol, dir := splitSort(r.URL.Query().Get("sort"))
 	var findings []db.Finding
 	var findingsTotal int64
 	var advisories []db.Advisory
@@ -160,14 +199,16 @@ func (s *Server) sbomShow(w http.ResponseWriter, r *http.Request) {
 		if category := r.URL.Query().Get("category"); category != "" {
 			q = applyCWECategoryFilter(q, category)
 		}
-		switch sort {
+		switch sortCol {
 		case sortSeverity:
-			q = q.Order(severityOrder).Order("id desc")
+			// severityOrder ranks the most severe LOWEST, so the "desc" logical
+			// default is ascending on the expression; !wantDesc flips it.
+			q = q.Order(orderBySuffix("("+severityOrder+")", !wantDesc(dir, true))).Order("findings.id desc")
 		case sortRepository:
 			q = q.Joins("JOIN repositories r ON r.id = findings.repository_id").
-				Order("r.name").Order("findings.id desc")
+				Order(orderByExpr("r.name", dir, false)).Order("findings.id desc")
 		default:
-			sort = defaultSort
+			sortCol, dir = defaultSort, ""
 			q = q.Order("id desc")
 		}
 		q.Model(&db.Finding{}).Count(&findingsTotal)
@@ -194,16 +235,42 @@ func (s *Server) sbomShow(w http.ResponseWriter, r *http.Request) {
 		"Advisories": advisories, "AdvisoriesTotal": advisoriesTotal,
 		"Repos":    reposByID,
 		"Resolved": resolved, "WithRepo": withRepo,
-		"Severity": r.URL.Query().Get("severity"), "Sort": sort,
+		"Severity": r.URL.Query().Get("severity"), "Sort": joinSort(sortCol, dir),
 		"Category":   r.URL.Query().Get("category"),
 		"Categories": CWECategories(), "Uncategorized": UncategorizedCWE,
-		"Scope": scope, "HasScope": hasScope,
+		"Scope": scope, "HasScope": hasScope, "ScopeCounts": scopeCounts,
 	})
+}
+
+// sbomConfirm starts repository resolution for a newly parsed SBOM. The
+// conditional update makes a repeated click harmless: only the first request
+// changes the pending state and launches the background resolver.
+func (s *Server) sbomConfirm(w http.ResponseWriter, r *http.Request) {
+	up, ok := loadByID[db.SBOMUpload](s, w, r)
+	if !ok {
+		return
+	}
+	result := s.DB.Model(&db.SBOMUpload{}).
+		Where("id = ? AND import_pending = ?", up.ID, true).
+		Update("import_pending", false)
+	if result.Error != nil {
+		http.Error(w, result.Error.Error(), http.StatusInternalServerError)
+		return
+	}
+	if result.RowsAffected > 0 {
+		s.goResolve(up.ID)
+		setFlash(w, Flash{Category: successKey, Title: fmt.Sprintf("Importing %d SBOM packages", up.PackageCount)})
+	}
+	s.redirect(w, r, fmt.Sprintf("/sboms/%d", up.ID))
 }
 
 func (s *Server) sbomResolve(w http.ResponseWriter, r *http.Request) {
 	up, ok := loadByID[db.SBOMUpload](s, w, r)
 	if !ok {
+		return
+	}
+	if up.ImportPending {
+		http.Error(w, "confirm SBOM import before resolving repositories", http.StatusConflict)
 		return
 	}
 	s.goResolve(up.ID)
@@ -247,7 +314,7 @@ func (s *Server) sbomDelete(w http.ResponseWriter, r *http.Request) {
 // resolveSBOMPackages walks every unresolved package in the upload, looks up
 // its source repository via packages.ecosyste.ms, FirstOrCreates the repo,
 // enqueues the default triage skill if the repo is new, and links the
-// package row. Runs in the background after upload so the page can render
+// package row. Runs in the background after the operator confirms import so the page can render
 // immediately.
 func (s *Server) resolveSBOMPackages(uploadID uint) {
 	ctx, cancel := context.WithTimeout(context.Background(), sbomResolveTimeout)
@@ -272,60 +339,13 @@ func (s *Server) resolveSBOMPackages(uploadID uint) {
 			s.DB.Model(p).Update("resolve_error", err.Error())
 			continue
 		}
-		repo, _, err := s.createOrTriageRepo(ctx, input, "", p.Scope != scopeTransitive)
+		repo, _, err := s.createOrTriageRepo(ctx, input, "", p.Scope != sbom.ScopeTransitive)
 		if err != nil {
 			s.DB.Model(p).Update("resolve_error", err.Error())
 			continue
 		}
 		s.DB.Model(p).Updates(map[string]any{"repository_id": repo.ID, "resolve_error": ""})
 	}
-}
-
-const (
-	scopeDirect     = "direct"
-	scopeTransitive = "transitive"
-)
-
-// classifyScope derives direct-vs-transitive from the SBOM's relationship
-// graph. Roots are nodes that originate DEPENDS_ON edges but are never
-// themselves a DEPENDS_ON target, plus anything pointed at by a DESCRIBES
-// edge (SPDX's document → root-package link). A package is "direct" if a
-// root depends on it, "transitive" if only another package does, and
-// absent from the map (empty Scope) if the graph doesn't mention it.
-func classifyScope(doc *sbom.SBOM) map[string]string {
-	const dependsOn, describes = "DEPENDS_ON", "DESCRIBES"
-	targets := map[string]bool{}
-	sources := map[string]bool{}
-	roots := map[string]bool{}
-	for _, r := range doc.Relationships {
-		switch r.Type {
-		case dependsOn:
-			sources[r.SourceID] = true
-			targets[r.TargetID] = true
-		case describes:
-			roots[r.TargetID] = true
-		}
-	}
-	for id := range sources {
-		if !targets[id] {
-			roots[id] = true
-		}
-	}
-	if len(roots) == 0 {
-		return nil
-	}
-	out := map[string]string{}
-	for _, r := range doc.Relationships {
-		if r.Type != dependsOn {
-			continue
-		}
-		if roots[r.SourceID] {
-			out[r.TargetID] = scopeDirect
-		} else if out[r.TargetID] == "" {
-			out[r.TargetID] = scopeTransitive
-		}
-	}
-	return out
 }
 
 // purlType returns the ecosystem segment of a Package URL (the bit between

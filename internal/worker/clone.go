@@ -54,7 +54,7 @@ func prepareLocalSrc(localPath, workRoot string, emit func(Event)) error {
 		return err
 	}
 	emit(Event{Kind: KindText, Text: "$ cp -r " + localPath + " ./src"})
-	return copyTree(resolved, dst)
+	return CopyTree(resolved, dst)
 }
 
 // ensureClone returns the path to an up-to-date clone of repo.URL under

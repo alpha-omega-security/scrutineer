@@ -294,7 +294,8 @@ func StartEgressProxy(p *EgressProxy) (int, error) {
 	}
 	srv := &http.Server{Handler: p, ReadHeaderTimeout: egressDialTimeout}
 	// The proxy lives for the process lifetime: it is started once from
-	// main.setupRunner and every container talks through it. There is no
+	// main.setupRunner (skipped under rootless --hardened, where the per-scan
+	// sidecar replaces it) and every container talks through it. There is no
 	// per-scan teardown, so no Shutdown wiring is needed; process exit
 	// closes the listener.
 	go func() { _ = srv.Serve(ln) }()
@@ -375,6 +376,65 @@ func ServeEgressProxy(p *EgressProxy, addr string) error {
 	p.init()
 	srv := &http.Server{Addr: addr, Handler: p, ReadHeaderTimeout: egressDialTimeout}
 	return srv.ListenAndServe()
+}
+
+// SidecarListenFirstIface is the listen-host keyword that makes `scrutineer
+// proxy` bind to the IPv4 of its first non-loopback interface instead of all
+// interfaces. The container runner creates the sidecar attached only to the
+// per-scan --internal network and connects the default (egress) bridge
+// afterwards, so the first interface IS the internal leg -- binding there keeps
+// the listener off the shared default bridge, where other containers of the
+// same rootless user could otherwise probe it.
+const SidecarListenFirstIface = "first-iface"
+
+// ifaceAddrs is the slice of one interface's state firstIfaceIPv4 needs,
+// decoupled from net.Interface so tests can fabricate interface layouts.
+type ifaceAddrs struct {
+	flags net.Flags
+	addrs []net.Addr
+}
+
+// FirstIfaceIPv4 returns the IPv4 of the sidecar's first up, non-loopback
+// interface. The sidecar always runs in a Linux container (rootless podman is
+// the only sidecar runtime), where interface indexes grow with attachment
+// order and net.Interfaces returns the netlink dump in index order -- so this
+// is the leg the container was created with, the per-scan --internal network,
+// even when the egress leg has already been connected by the time it runs.
+func FirstIfaceIPv4() (string, error) {
+	ifs, err := net.Interfaces()
+	if err != nil {
+		return "", err
+	}
+	all := make([]ifaceAddrs, 0, len(ifs))
+	for _, i := range ifs {
+		addrs, err := i.Addrs()
+		if err != nil {
+			return "", fmt.Errorf("addresses of %s: %w", i.Name, err)
+		}
+		all = append(all, ifaceAddrs{flags: i.Flags, addrs: addrs})
+	}
+	return firstIfaceIPv4(all)
+}
+
+// firstIfaceIPv4 picks the IPv4 of the first up, non-loopback interface. It
+// fails when that interface has no IPv4 rather than falling through to a later
+// one: a later interface is the egress leg, and silently binding there would
+// re-open the listener to the shared default bridge.
+func firstIfaceIPv4(ifaces []ifaceAddrs) (string, error) {
+	for _, i := range ifaces {
+		if i.flags&net.FlagLoopback != 0 || i.flags&net.FlagUp == 0 {
+			continue
+		}
+		for _, a := range i.addrs {
+			if ipnet, ok := a.(*net.IPNet); ok {
+				if ip4 := ipnet.IP.To4(); ip4 != nil {
+					return ip4.String(), nil
+				}
+			}
+		}
+		return "", errors.New("first non-loopback interface has no IPv4 address")
+	}
+	return "", errors.New("no non-loopback interface is up")
 }
 
 // dnsCandidates reduces an egress allowlist to resolvable hostnames for the

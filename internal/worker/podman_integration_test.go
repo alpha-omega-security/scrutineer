@@ -302,7 +302,21 @@ func TestIntegration_ProxySidecarEnforcedEgress(t *testing.T) {
 		t.Errorf("non-allowlisted egress via sidecar: got status %q, want 403", denied)
 	}
 
-	// (3) Teardown removes the sidecar and then its network.
+	// (3) The listener faces the --internal leg only: from the shared default
+	// bridge -- where any other container of the same rootless user could probe
+	// it -- the sidecar's egress-leg IP must not answer on the proxy port. Any
+	// HTTP status here (even 407) means something listened.
+	egressIP, err := d.sidecarNetworkIP(proxySidecarName(sj.ScanID), "podman")
+	if err != nil {
+		t.Fatalf("resolve sidecar egress-leg IP: %v", err)
+	}
+	bridgeProbe := containerScriptOutput(t, rt, []string{"--network", "podman"}, image,
+		"curl -s -m 5 -o /dev/null -w '%{http_code}' http://"+egressIP+":"+proxySidecarPort+"/ || true")
+	if bridgeProbe != "000" {
+		t.Errorf("sidecar answered on its egress leg from the default bridge (status %q); it must bind its --internal address only", bridgeProbe)
+	}
+
+	// (4) Teardown removes the sidecar and then its network.
 	cleanup()
 	cleanedUp = true
 	name := proxySidecarName(sj.ScanID)

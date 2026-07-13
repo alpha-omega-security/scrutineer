@@ -20,6 +20,36 @@
   </div>
 </div>
 
+{{if .RateLimit.Rows}}
+<div class="card p-4 mb-6">
+  <div class="flex items-center justify-between gap-4 mb-3">
+    <h3 class="text-sm font-semibold flex items-center gap-2">
+      <i data-lucide="gauge"></i> Claude subscription limits
+    </h3>
+    <span class="text-xs text-muted-foreground">latest per window since restart</span>
+  </div>
+  <table class="table w-full">
+    <thead><tr>
+      <th>Window</th>
+      <th>Status</th>
+      <th class="text-right">Resets</th>
+    </tr></thead>
+    <tbody>
+    {{range .RateLimit.Rows}}
+      <tr>
+        <td class="font-medium">{{.Window}}</td>
+        <td class="text-muted-foreground">{{.Status}}{{if .Overage}} · overage{{end}}</td>
+        <td class="text-right text-muted-foreground">{{if .ResetAt}}{{.ResetAt}}{{else}}—{{end}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{if .RateLimit.Downgrading}}
+    <p class="text-xs mt-3 flex items-center gap-2"><i data-lucide="triangle-alert"></i> Account on overage — new scans use the mid tier until the overage clears.</p>
+  {{end}}
+</div>
+{{end}}
+
 {{if eq .View "day"}}
   {{if .DayRows}}
     <table class="table w-full">

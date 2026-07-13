@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -139,6 +140,7 @@ func (s *Server) importFallback(w http.ResponseWriter, r *http.Request, body []b
 	}
 	s.Log.Info("import: routed unrecognised payload to ingest skill",
 		"repo", repo.URL, "scan", scanID, "bytes", len(body))
+	s.enqueueImportedRepoMetadata(context.Background(), repo)
 	writeJSON(w, http.StatusAccepted, map[string]any{
 		"format":        "unrecognised",
 		"repository_id": repo.ID,
@@ -155,6 +157,18 @@ func (s *Server) ensureImportRepo(repoURL string) (db.Repository, error) {
 	input, err := ParseRepoInput(repoURL)
 	if err != nil {
 		return db.Repository{}, fmt.Errorf("repository %q: %w", repoURL, err)
+	}
+	if input.Local {
+		path := strings.TrimPrefix(input.CloneURL, LocalScheme)
+		info, statErr := os.Stat(path)
+		if statErr != nil {
+			return db.Repository{}, fmt.Errorf(
+				"repository %q is a sender-local path unavailable on this host; pass ?repo=https://forge/owner/repo to supply a cloneable repository: %w",
+				repoURL, statErr)
+		}
+		if !info.IsDir() {
+			return db.Repository{}, fmt.Errorf("repository %q local path is not a directory", repoURL)
+		}
 	}
 	repo := db.Repository{
 		URL:     input.CloneURL,
@@ -196,15 +210,43 @@ func (s *Server) importResult(res ingest.Result, repoOverride string, revalidate
 		FindingsCount: len(res.Findings),
 	}
 	scan.StatusPriority = db.StatusPriorityFor(scan.Status)
-	if err := s.DB.Create(&scan).Error; err != nil {
+
+	var created []db.Finding
+	var observed int
+	err = s.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&scan).Error; err != nil {
+			return err
+		}
+		created, observed, err = s.importFindings(tx, &scan, res)
+		return err
+	})
+	if err != nil {
 		return nil, err
 	}
-
-	created, observed := s.importFindings(&scan, res, revalidate)
+	s.enqueueImportedRepoMetadata(context.Background(), repo)
+	// Imported findings carry an external tool's unvalidated severity
+	// claim, so revalidate runs over every newly-imported finding
+	// regardless of severity (not just High/Critical, as it does for
+	// security-deep-dive output). ?revalidate=false skips this — and the
+	// verify it chains into — for callers importing already-audited
+	// findings such as a trusted sharing bundle. Enqueued after commit so
+	// a rolled-back import never queues work against phantom findings.
+	if revalidate {
+		for i := range created {
+			// Imports have no parent scan and hence no resolved profile to carry;
+			// revalidate detects fresh, and its resolved profile then carries into
+			// the chained verify (autoChainVerifyAfterRevalidate). See #548.
+			s.enqueueRevalidateForFinding(context.Background(), &created[i], "")
+		}
+	}
 	s.Log.Info("import",
 		"repo", repo.URL, "tool", res.Tool, "scan", scan.ID,
 		"created", len(created), "observed", observed)
 
+	ids := make([]uint, len(created))
+	for i, f := range created {
+		ids[i] = f.ID
+	}
 	return map[string]any{
 		"repository_id": repo.ID,
 		"repository":    repo.URL,
@@ -212,15 +254,216 @@ func (s *Server) importResult(res ingest.Result, repoOverride string, revalidate
 		"tool":          res.Tool,
 		"created":       len(created),
 		"observed":      observed,
-		"finding_ids":   created,
+		"finding_ids":   ids,
 	}, nil
 }
 
+const metadataSkillName = "metadata"
+
+// enqueueImportedRepoMetadata gives a repository created by a findings import
+// the same minimum viable onboarding as a repository added through the UI: one
+// repository-scoped metadata run. That run populates the otherwise-empty row
+// and, through the worker's normal remote-source path, creates the clone cache
+// without requiring a manual finding action. Existing hollow rows are repaired
+// on reimport. A completed, queued, running, or paused metadata run suppresses a
+// duplicate; failed and cancelled runs may be retried by reimporting.
+//
+// Metadata is best-effort. A deployment without the skill still imports the
+// findings, and an enqueue failure is logged without rolling back durable data.
+func (s *Server) enqueueImportedRepoMetadata(ctx context.Context, repo db.Repository) {
+	if repo.IsLocal() {
+		return
+	}
+	var skill db.Skill
+	if err := s.DB.Where("name = ? AND active = ?", metadataSkillName, true).First(&skill).Error; err != nil {
+		return
+	}
+	var existing int64
+	if err := s.DB.Model(&db.Scan{}).
+		Where("repository_id = ? AND skill_name = ? AND status IN ?", repo.ID, metadataSkillName,
+			[]db.ScanStatus{db.ScanQueued, db.ScanRunning, db.ScanPaused, db.ScanDone}).
+		Count(&existing).Error; err != nil || existing > 0 {
+		return
+	}
+	if _, err := s.enqueueSkillWith(ctx, repo.ID, skill.ID, ScanOpts{}); err != nil {
+		s.Log.Warn("import: enqueue repository metadata", "repo", repo.ID, "err", err)
+	}
+}
+
+const importBatchSize = 50
+
 // importFindings mirrors the worker's fingerprint-then-upsert loop so an
 // import behaves like a scan: re-importing the same report bumps
-// SeenCount on existing rows instead of inserting duplicates.
-func (s *Server) importFindings(scan *db.Scan, res ingest.Result, revalidate bool) (created []uint, observed int) {
+// SeenCount on existing rows instead of inserting duplicates. Runs inside
+// the caller's transaction so a mid-import failure leaves no partial state.
+func (s *Server) importFindings(tx *gorm.DB, scan *db.Scan, res ingest.Result) (created []db.Finding, observed int, err error) {
+	incoming, relations, fingerprints := buildImportFindings(scan, res)
+	if len(incoming) == 0 {
+		return nil, 0, nil
+	}
+
+	existing, err := existingByFingerprint(tx, scan.RepositoryID, fingerprints)
+	if err != nil {
+		return nil, 0, fmt.Errorf("lookup existing findings: %w", err)
+	}
+
+	// observedRel pairs an already-present finding with the child records this
+	// re-import carries for it, attached (deduped) after the seen-count bump.
+	type observedRel struct {
+		id   uint
+		rels importFindingRelations
+	}
+	var observedIDs []uint
+	var observedRels []observedRel
+	var history []db.FindingHistory
+	var createdRels []importFindingRelations
+	for i, f := range incoming {
+		if prev, ok := existing[f.Fingerprint]; ok {
+			observedIDs = append(observedIDs, prev.ID)
+			history = append(history, db.FindingHistory{
+				FindingID: prev.ID,
+				Field:     "observed",
+				NewValue:  fmt.Sprintf("import scan %d (%s)", scan.ID, res.Tool),
+				Source:    db.SourceTool,
+				By:        res.Tool,
+			})
+			observedRels = append(observedRels, observedRel{prev.ID, relations[i]})
+			continue
+		}
+		created = append(created, f)
+		createdRels = append(createdRels, relations[i])
+	}
+
+	if len(created) > 0 {
+		if err := tx.CreateInBatches(&created, importBatchSize).Error; err != nil {
+			return nil, 0, fmt.Errorf("create findings: %w", err)
+		}
+		// Brand-new findings have no prior child rows, so attach without the
+		// dedup lookup.
+		for i := range created {
+			if err := attachFindingRelations(tx, created[i].ID, createdRels[i], false); err != nil {
+				return nil, 0, err
+			}
+		}
+	}
+	if len(observedIDs) > 0 {
+		err := tx.Model(&db.Finding{}).Where("id IN ?", observedIDs).Updates(map[string]any{
+			"last_seen_scan_id":   scan.ID,
+			"last_seen_commit":    scan.Commit,
+			"seen_count":          gorm.Expr("seen_count + 1"),
+			"missed_count":        0,
+			"last_missed_scan_id": 0,
+		}).Error
+		if err != nil {
+			return nil, 0, fmt.Errorf("update observed findings: %w", err)
+		}
+		if err := tx.CreateInBatches(&history, importBatchSize).Error; err != nil {
+			return nil, 0, fmt.Errorf("create finding history: %w", err)
+		}
+		// Re-importing a bundle onto findings this instance already has appends
+		// only the child records it does not already carry, so a repeat import
+		// is idempotent rather than piling up duplicate notes.
+		for _, o := range observedRels {
+			if err := attachFindingRelations(tx, o.id, o.rels, true); err != nil {
+				return nil, 0, err
+			}
+		}
+	}
+	return created, len(observedIDs), nil
+}
+
+// attachFindingRelations writes a finding's carried child records. With dedup
+// set (the finding already existed on this instance) it drops any record whose
+// content already exists on that finding, so re-importing the same bundle does
+// not accumulate duplicate notes/communications/references.
+func attachFindingRelations(tx *gorm.DB, findingID uint, rels importFindingRelations, dedup bool) error {
+	if rels.empty() {
+		return nil
+	}
+	notes, comms, refs := rels.Notes, rels.Communications, rels.References
+	if dedup {
+		var have importFindingRelations
+		if err := tx.Where("finding_id = ?", findingID).Find(&have.Notes).Error; err != nil {
+			return fmt.Errorf("load existing notes: %w", err)
+		}
+		if err := tx.Where("finding_id = ?", findingID).Find(&have.Communications).Error; err != nil {
+			return fmt.Errorf("load existing communications: %w", err)
+		}
+		if err := tx.Where("finding_id = ?", findingID).Find(&have.References).Error; err != nil {
+			return fmt.Errorf("load existing references: %w", err)
+		}
+		notes = dedupBy(notes, have.Notes, noteKey)
+		comms = dedupBy(comms, have.Communications, commKey)
+		refs = dedupBy(refs, have.References, refKey)
+	}
+	for i := range notes {
+		notes[i].ID, notes[i].FindingID = 0, findingID
+	}
+	for i := range comms {
+		comms[i].ID, comms[i].FindingID = 0, findingID
+	}
+	for i := range refs {
+		refs[i].ID, refs[i].FindingID = 0, findingID
+	}
+	if len(notes) > 0 {
+		if err := tx.Create(&notes).Error; err != nil {
+			return fmt.Errorf("create finding notes: %w", err)
+		}
+	}
+	if len(comms) > 0 {
+		if err := tx.Create(&comms).Error; err != nil {
+			return fmt.Errorf("create finding communications: %w", err)
+		}
+	}
+	if len(refs) > 0 {
+		if err := tx.Create(&refs).Error; err != nil {
+			return fmt.Errorf("create finding references: %w", err)
+		}
+	}
+	return nil
+}
+
+// dedupBy returns the members of incoming whose key is not already present in
+// existing, also collapsing duplicates within incoming.
+func dedupBy[T any](incoming, existing []T, key func(T) string) []T {
+	have := make(map[string]bool, len(existing))
+	for _, e := range existing {
+		have[key(e)] = true
+	}
+	var out []T
+	for _, in := range incoming {
+		k := key(in)
+		if have[k] {
+			continue
+		}
+		have[k] = true
+		out = append(out, in)
+	}
+	return out
+}
+
+// noteKey/commKey/refKey identify a child record by its content for idempotent
+// re-import. Timestamps are part of the key: scrutineer's own bundle preserves
+// them across the round-trip, so the same note keys identically on re-import.
+func noteKey(n db.FindingNote) string {
+	return strings.Join([]string{n.Body, n.By, n.CreatedAt.UTC().Format(time.RFC3339Nano)}, "\x00")
+}
+
+func commKey(c db.FindingCommunication) string {
+	return strings.Join([]string{c.Channel, c.Direction, c.Actor, c.Body, c.At.UTC().Format(time.RFC3339Nano)}, "\x00")
+}
+
+func refKey(r db.FindingReference) string {
+	return strings.Join([]string{r.URL, r.Tags, r.Summary}, "\x00")
+}
+
+// buildImportFindings maps ingest.Finding rows onto db.Finding and
+// fingerprints them, dropping in-batch duplicates.
+func buildImportFindings(scan *db.Scan, res ingest.Result) ([]db.Finding, []importFindingRelations, []string) {
 	seen := map[string]bool{}
+	incoming := make([]db.Finding, 0, len(res.Findings))
+	relations := make([]importFindingRelations, 0, len(res.Findings))
+	fingerprints := make([]string, 0, len(res.Findings))
 	for _, in := range res.Findings {
 		// A bundle may carry a per-finding commit (findings from scans at
 		// different revisions); fall back to the scan/bundle commit, which is
@@ -237,6 +480,7 @@ func (s *Server) importFindings(scan *db.Scan, res ingest.Result, revalidate boo
 			CWE:            in.CWE,
 			Location:       in.Location,
 			Locations:      in.Locations,
+			Sinks:          in.Sinks,
 			VID:            in.VID,
 			Reachability:   in.Reachability,
 			QualityTier:    in.QualityTier,
@@ -251,61 +495,108 @@ func (s *Server) importFindings(scan *db.Scan, res ingest.Result, revalidate boo
 			LastSeenCommit: commit,
 			SeenCount:      1,
 		}
+		// include=all archival fields. Empty for the default bundle and every
+		// other format, so those imports write the same columns they always did.
+		f.Snippet = in.Snippet
+		f.Affected = in.Affected
+		f.FixVersion = in.FixVersion
+		f.CVEID = in.CVEID
+		f.GHSAID = in.GHSAID
+		f.Mitigation = in.Mitigation
+		f.MitigationSemgrep = in.MitigationSemgrep
+		f.BreakingChange = in.BreakingChange
+		f.BreakingChangeRationale = in.BreakingChangeRationale
+		f.DupCheck = in.DupCheck
+		f.DisclosureDraft = in.DisclosureDraft
+		f.ExploitedInWild = in.ExploitedInWild
+		f.ExploitedInWildEvidence = in.ExploitedInWildEvidence
+		// The real upstream fix commit lands in FixCommit; the bundle's legacy
+		// fix_commit (the SuggestedFix base) was already folded into Trace above.
+		f.FixCommit = in.UpstreamFixCommit
+		// CVSS scores are derived, never carried: recompute from the vector so a
+		// hand-edited or stale bundle score cannot stick. An empty/invalid
+		// vector yields a zero score, matching syncCVSSScore.
+		f.CVSSVector = in.CVSSVector
+		f.CVSSScore, _ = db.CVSSV3ScoreFromVector(in.CVSSVector)
+		f.CVSSv4Vector = in.CVSSv4Vector
+		f.CVSSv4Score, _ = db.CVSSV4ScoreFromVector(in.CVSSv4Vector)
 		// Include the sub-path so two findings at the same CWE/location/title
 		// in different monorepo sub-projects do not collide on one fingerprint.
 		// Other formats leave SubPath empty, so their fingerprint is unchanged.
 		f.Fingerprint = db.FingerprintFinding(res.Tool, f.SubPath, f.CWE, f.Location, f.Title)
-
 		if seen[f.Fingerprint] {
 			continue
 		}
 		seen[f.Fingerprint] = true
+		incoming = append(incoming, f)
+		relations = append(relations, importRelationsFrom(in))
+		fingerprints = append(fingerprints, f.Fingerprint)
+	}
+	return incoming, relations, fingerprints
+}
 
-		var existing db.Finding
-		err := s.DB.Where("repository_id = ? AND fingerprint = ?", scan.RepositoryID, f.Fingerprint).
-			Order("id").First(&existing).Error
-		if err == nil {
-			s.DB.Model(&db.Finding{}).Where("id = ?", existing.ID).Updates(map[string]any{
-				"last_seen_scan_id":   scan.ID,
-				"last_seen_commit":    scan.Commit,
-				"seen_count":          existing.SeenCount + 1,
-				"missed_count":        0,
-				"last_missed_scan_id": 0,
-			})
-			s.DB.Create(&db.FindingHistory{
-				FindingID: existing.ID,
-				Field:     "observed",
-				NewValue:  fmt.Sprintf("import scan %d (%s)", scan.ID, res.Tool),
-				Source:    db.SourceTool,
-				By:        res.Tool,
-			})
-			observed++
-			continue
-		}
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			s.Log.Error("import: lookup existing finding", "err", err)
-			continue
-		}
-		if err := s.DB.Create(&f).Error; err != nil {
-			s.Log.Error("import: create finding", "err", err)
-			continue
-		}
-		created = append(created, f.ID)
-		// Imported findings carry an external tool's unvalidated severity
-		// claim, so revalidate runs over every newly-imported finding
-		// regardless of severity (not just High/Critical, as it does for
-		// security-deep-dive output). ?revalidate=false skips this — and the
-		// verify it chains into — for callers importing already-audited
-		// findings such as a trusted sharing bundle.
-		if revalidate {
-			fcopy := f
-			// Imports have no parent scan and hence no resolved profile to carry;
-			// revalidate detects fresh, and its resolved profile then carries into
-			// the chained verify (autoChainVerifyAfterRevalidate). See #548.
-			s.enqueueRevalidateForFinding(context.Background(), &fcopy, "")
+// importFindingRelations holds the child records an import carries for one
+// finding. Populated only from an include=all bundle; every other format leaves
+// the slices nil, so attachFindingRelations is a no-op there.
+type importFindingRelations struct {
+	Notes          []db.FindingNote
+	Communications []db.FindingCommunication
+	References     []db.FindingReference
+}
+
+func (r importFindingRelations) empty() bool {
+	return len(r.Notes) == 0 && len(r.Communications) == 0 && len(r.References) == 0
+}
+
+// importRelationsFrom maps an ingest finding's carried child records onto their
+// db rows. IDs are left zero (assigned on insert) and FindingID is set later by
+// attachFindingRelations once the parent finding has an id.
+func importRelationsFrom(in ingest.Finding) importFindingRelations {
+	var rel importFindingRelations
+	for _, n := range in.Notes {
+		rel.Notes = append(rel.Notes, db.FindingNote{Body: n.Body, By: n.By, CreatedAt: n.CreatedAt})
+	}
+	for _, c := range in.Communications {
+		rel.Communications = append(rel.Communications, db.FindingCommunication{
+			Channel:     c.Channel,
+			Direction:   c.Direction,
+			Actor:       c.Actor,
+			Body:        c.Body,
+			OfferedHelp: c.OfferedHelp,
+			At:          c.At,
+			CreatedAt:   c.CreatedAt,
+		})
+	}
+	for _, ref := range in.References {
+		rel.References = append(rel.References, db.FindingReference{
+			URL:       ref.URL,
+			Tags:      ref.Tags,
+			Summary:   ref.Summary,
+			CreatedAt: ref.CreatedAt,
+		})
+	}
+	return rel
+}
+
+// existingByFingerprint fetches all findings for the repository whose
+// fingerprint is in the incoming set, keyed by fingerprint. When legacy
+// duplicate rows share a fingerprint the lowest-id row wins, matching the
+// previous per-row `Order("id").First` behaviour.
+func existingByFingerprint(tx *gorm.DB, repoID uint, fingerprints []string) (map[string]db.Finding, error) {
+	var rows []db.Finding
+	err := tx.Select("id", "fingerprint").
+		Where("repository_id = ? AND fingerprint IN ?", repoID, fingerprints).
+		Order("id").Find(&rows).Error
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]db.Finding, len(rows))
+	for _, r := range rows {
+		if _, ok := out[r.Fingerprint]; !ok {
+			out[r.Fingerprint] = r
 		}
 	}
-	return created, observed
+	return out, nil
 }
 
 // maybeDecrypt transparently decrypts an age-encrypted body. If the body

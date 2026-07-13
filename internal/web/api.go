@@ -61,6 +61,17 @@ func (s *Server) apiAuth(next http.Handler) http.Handler {
 
 const apiMaxBody = 1 << 20
 
+func decodeOptionalAPIBody(w http.ResponseWriter, r *http.Request, dst any) bool {
+	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
+		if errors.Is(err, io.EOF) {
+			return true
+		}
+		writeAPIError(w, http.StatusBadRequest, "invalid JSON request body")
+		return false
+	}
+	return true
+}
+
 func bearer(h string) string {
 	const prefix = "Bearer "
 	if strings.HasPrefix(h, prefix) {
@@ -94,8 +105,10 @@ func (s *Server) apiHandler() http.Handler {
 	mux.HandleFunc("GET /repositories/{id}/advisories", s.apiListAdvisories)
 	mux.HandleFunc("GET /repositories/{id}/dependents", s.apiListDependents)
 	mux.HandleFunc("GET /repositories/{id}/ecosystems/{source}/raw", s.apiGetEcosystemsRaw)
+	mux.HandleFunc("GET /repositories/{id}/expected", s.apiListExpectedFindings)
 	mux.HandleFunc("GET /repositories/{id}/dependencies", s.apiListDependencies)
 	mux.HandleFunc("GET /repositories/{id}/findings", s.apiListFindings)
+	mux.HandleFunc("POST /repositories/{id}/findings", s.apiStreamFinding)
 	mux.HandleFunc("GET /repositories/{id}/dependency-findings", s.apiListDependencyFindings)
 	mux.HandleFunc("POST /repositories/{id}/skills/{name}/run", s.apiRunSkill)
 	mux.HandleFunc("POST /findings/{id}/skills/{name}/run", s.apiRunFindingSkill)
@@ -252,6 +265,7 @@ func (s *Server) apiGetScan(w http.ResponseWriter, r *http.Request) {
 	}
 	summary := scanSummary(sc)
 	summary["report"] = sc.Report
+	summary["refusal_audit"] = sc.RefusalAudit
 	summary["log"] = sc.Log
 	writeJSON(w, http.StatusOK, summary)
 }
@@ -310,19 +324,25 @@ func (s *Server) apiRunSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Model   string `json:"model"`
-		Ref     string `json:"ref"`
-		Profile string `json:"profile"`
+		Model          string `json:"model"`
+		Ref            string `json:"ref"`
+		Profile        string `json:"profile"`
+		RescanMode     string `json:"rescan_mode"`
+		BaselineScanID *uint  `json:"baseline_scan_id"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	if !decodeOptionalAPIBody(w, r, &body) {
+		return
+	}
 	if body.Profile != "" && !worker.KnownProfile(body.Profile) {
 		writeAPIError(w, http.StatusBadRequest, "unknown profile")
 		return
 	}
 	scanID, err := s.enqueueSkillWith(r.Context(), uint(id), skill.ID, ScanOpts{
-		Model:   body.Model,
-		Ref:     body.Ref,
-		Profile: body.Profile,
+		Model:          body.Model,
+		Ref:            body.Ref,
+		Profile:        body.Profile,
+		RescanMode:     body.RescanMode,
+		DiffBaseScanID: body.BaselineScanID,
 	})
 	if err != nil {
 		if errors.Is(err, ErrSkillRequiresRemote) {
@@ -334,6 +354,10 @@ func (s *Server) apiRunSkill(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if errors.Is(err, ErrInvalidRef) {
+			writeAPIError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if errors.Is(err, ErrInvalidRescanMode) {
 			writeAPIError(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -368,7 +392,9 @@ func (s *Server) apiRunFindingSkill(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Model string `json:"model"`
 	}
-	_ = json.NewDecoder(r.Body).Decode(&body)
+	if !decodeOptionalAPIBody(w, r, &body) {
+		return
+	}
 	scanID, err := s.enqueueSkillScoped(r.Context(), repoID, skill.ID, new(uint(id)), body.Model)
 	if err != nil {
 		if errors.Is(err, ErrSkillRequiresRemote) {
@@ -453,21 +479,41 @@ func (s *Server) apiListSkills(w http.ResponseWriter, r *http.Request) {
 
 func scanSummary(sc db.Scan) map[string]any {
 	m := map[string]any{
-		"id":            sc.ID,
-		"repository_id": sc.RepositoryID,
-		"kind":          sc.Kind,
-		statusKey:       string(sc.Status),
-		"model":         sc.Model,
-		"commit":        sc.Commit,
-		"skill_name":    sc.SkillName,
-		"skill_version": sc.SkillVersion,
-		"started_at":    sc.StartedAt,
-		"finished_at":   sc.FinishedAt,
-		"max_turns_hit": sc.MaxTurnsHit,
-		errorKey:        sc.Error,
+		"id":                   sc.ID,
+		"repository_id":        sc.RepositoryID,
+		"kind":                 sc.Kind,
+		statusKey:              string(sc.Status),
+		"model":                sc.Model,
+		"commit":               sc.Commit,
+		"skill_name":           sc.SkillName,
+		"skill_version":        sc.SkillVersion,
+		"skill_schema_version": sc.SkillSchemaVersion,
+		"started_at":           sc.StartedAt,
+		"finished_at":          sc.FinishedAt,
+		"max_turns_hit":        sc.MaxTurnsHit,
+		errorKey:               sc.Error,
 	}
+	m["refusal_audit_warning"] = sc.RefusalAuditWarning
 	if sc.Ref != "" {
 		m["ref"] = sc.Ref
+	}
+	if sc.RescanMode != "" {
+		m["rescan_mode"] = sc.RescanMode
+	}
+	if sc.DiffBaseScanID != nil {
+		m["diff_base_scan_id"] = *sc.DiffBaseScanID
+	}
+	if sc.DiffBaseCommit != "" {
+		m["diff_base_commit"] = sc.DiffBaseCommit
+	}
+	if sc.DiffThreatModelScanID != nil {
+		m["diff_threat_model_scan_id"] = *sc.DiffThreatModelScanID
+	}
+	if sc.DiffStats != "" {
+		m["diff_stats"] = sc.DiffStats
+	}
+	if sc.Coverage != "" {
+		m["coverage"] = sc.Coverage
 	}
 	return m
 }

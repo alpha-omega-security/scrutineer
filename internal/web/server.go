@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"filippo.io/age"
+	"github.com/google/uuid"
 	"gorm.io/gorm"
 
 	"scrutineer/internal/db"
@@ -46,6 +47,11 @@ var ErrSkillProfileMismatch = errors.New("skill requires a different runner prof
 // API path rejects a bad ref at the boundary (400) instead of enqueueing
 // a scan that will fail later at git-clone time.
 var ErrInvalidRef = errors.New("invalid git ref")
+
+// ErrInvalidRescanMode is returned by enqueueSkillWith when opts.RescanMode is
+// not one of the persisted scan modes. API callers control this value, so the
+// API layer maps it to a 400 instead of reporting an internal server failure.
+var ErrInvalidRescanMode = errors.New("invalid rescan mode")
 
 //go:embed templates/*.html
 var tmplFS embed.FS
@@ -72,6 +78,12 @@ type Server struct {
 	// settings page. Set once by main; empty when the build carries no VCS
 	// stamp (e.g. an ldflags-less build outside a git checkout).
 	Commit string
+
+	// Backend is the canonical -backend value the runner was started with
+	// (worker.HarnessName). Set once by main. resumeOpts compares it to
+	// Scan.Backend so a retry after switching backends starts fresh instead
+	// of passing one harness's session id to another's resume command.
+	Backend string
 
 	// EncRecipients is the parsed recipients file; nil disables encrypted
 	// export. Supports age X25519 and SSH public keys.
@@ -199,8 +211,9 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *work
 			}
 			return m
 		},
-		"list":  func(xs ...string) []string { return xs },
-		"len64": tmplLen64,
+		"list":    func(xs ...string) []string { return xs },
+		"len64":   tmplLen64,
+		"sortkey": sortKey,
 		"cwename": func(id string) string {
 			if _, c, ok := LookupCWE(id); ok {
 				return c.Name
@@ -320,6 +333,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /repositories/bulk", s.repoBulkCreate)
 	mux.HandleFunc("POST /repositories/org", s.repoOrgImport)
 	mux.HandleFunc("GET /repositories/{id}", s.repoShow)
+	mux.HandleFunc("POST /repositories/{id}/expected", s.repoExpectedFindingCreate)
+	mux.HandleFunc("POST /repositories/{id}/expected/{expected_id}/delete", s.repoExpectedFindingDelete)
 	mux.HandleFunc("GET /repositories/{id}/blob/{commit}/{path...}", s.repoBlob)
 	mux.HandleFunc("GET /repositories/{id}/report.md", s.repoReport)
 	mux.HandleFunc("POST /repositories/{id}/scan", s.repoScan)
@@ -330,6 +345,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /repositories/{id}/threat-model", s.repoThreatModelSave)
 	mux.HandleFunc("POST /repositories/{id}/threat-model/run", s.repoThreatModelRun)
 	mux.HandleFunc("POST /repositories/{id}/threat-model/clear", s.repoThreatModelClear)
+	mux.HandleFunc("POST /repositories/{id}/scan-config", s.repoScanConfigSave)
+	mux.HandleFunc("POST /repositories/{id}/scan-config/clear", s.repoScanConfigClear)
 	mux.HandleFunc("GET /scans", s.jobs)
 	mux.HandleFunc("GET /orgs", s.orgsList)
 	mux.HandleFunc("GET /orgs/{login}", s.orgShow)
@@ -339,6 +356,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /maintainers/{id}", s.maintainerShow)
 	mux.HandleFunc("POST /maintainers/{id}/do-not-contact", s.maintainerDoNotContact)
 	mux.HandleFunc("GET /findings", s.findings)
+	mux.HandleFunc("GET /benchmark", s.benchmark)
 	mux.HandleFunc("GET /audit", s.auditPage)
 	mux.HandleFunc("POST /findings/{id}/reviews", s.findingReviewCreate)
 	mux.HandleFunc("GET /findings/{id}", s.findingShow)
@@ -415,6 +433,18 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 	data["Theme"] = resolveTheme(r)
 	data["ColorScheme"] = resolveColorScheme(r)
 	data["Flash"] = popFlash(w, r)
+	// Seed the sorter with the handler's EFFECTIVE sort (data["Sort"]) rather
+	// than the raw ?sort param. That token is already the sanitized, defaulted
+	// sort the ORDER BY actually used, so folding it in makes a default or
+	// sanitized sort mark its column active (aria-sort + arrow) and makes the
+	// first header click flip direction instead of silently repeating the
+	// default. When ?sort is a valid explicit token the two agree, so this is a
+	// no-op there; non-index pages set no "Sort" and keep the raw query.
+	sorterQuery := r.URL.Query()
+	if eff, ok := data["Sort"].(string); ok && eff != "" {
+		sorterQuery.Set("sort", eff)
+	}
+	data["Sorter"] = sortCtx{path: r.URL.Path, query: sorterQuery}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := s.tmpl.ExecuteTemplate(w, name, data); err != nil {
 		s.Log.Error("render", "tmpl", name, "err", err)
@@ -467,7 +497,7 @@ func navKey(path string) string {
 	for _, p := range []struct{ prefix, key string }{
 		{"/settings", "settings"}, {"/usage", "usage"}, {"/skills", "skills"}, {"/maintainers", "maintainers"},
 		{"/orgs", "orgs"}, {"/packages", "packages"}, {"/advisories", "advisories"},
-		{"/findings", "findings"}, {"/scans", "scans"}, {"/sboms", "sboms"}, {"/audit", "audit"},
+		{"/findings", "findings"}, {"/benchmark", "benchmark"}, {"/scans", "scans"}, {"/sboms", "sboms"}, {"/audit", "audit"},
 	} {
 		if strings.HasPrefix(path, p.prefix) {
 			return p.key
@@ -607,26 +637,42 @@ func (s *Server) repoList(w http.ResponseWriter, r *http.Request) {
 			like, like, like, like)
 	}
 
-	sort := r.URL.Query().Get("sort")
+	sortCol, dir := splitSort(r.URL.Query().Get("sort"))
 	const nameSort = "name"
-	switch sort {
+	switch sortCol {
 	case nameSort:
-		q = q.Order(nameSort)
+		q = q.Order(orderByExpr(nameSort, dir, false))
 	case "stars":
-		q = q.Order("stars desc")
+		q = q.Order(orderByExpr("stars", dir, true))
 	case "language":
-		q = q.Order("languages, name")
+		q = q.Order(orderByExpr("languages", dir, false)).Order("name")
+	case "size":
+		q = q.Order(orderByExpr("disk_bytes", dir, true)).Order("updated_at desc")
 	case "findings":
 		// Correlated subquery keeps the existing Count/Find chain intact
 		// (a JOIN+GROUP BY would change what Count(&total) returns). Low-
 		// thousands of repos so the per-row subselect is fine on sqlite.
 		// Scanner-skill findings (zizmor, semgrep, …) are excluded so the
 		// list reflects curated audit output, matching the repo Findings tab.
-		q = q.Order("(" + deepDiveFindingsCountSQL + ") desc, updated_at desc")
+		// orderByExpr keeps the request out of the raw-subquery clause.
+		q = q.Order(orderByExpr("("+deepDiveFindingsCountSQL+")", dir, true)).Order("updated_at desc")
+	case "scanned":
+		// Order by each repo's latest scan id (the row the Last scan column
+		// renders), most-recent first by default; never-scanned repos (NULL)
+		// sort last under DESC. Correlated subquery, like the findings case.
+		q = q.Order(orderByExpr("(SELECT MAX(id) FROM scans WHERE scans.repository_id = repositories.id)", dir, true)).Order("updated_at desc")
+	case statusKey:
+		// Order by the same rank the scans index uses: the denormalised
+		// status_priority column (0=running .. 3=terminal), lowest-first by
+		// default so active repos surface. COALESCE pushes never-scanned repos
+		// last. The Status badge is computed live for display, but sorting can
+		// use the indexed column, exactly as /scans does.
+		q = q.Order(orderByExpr("COALESCE((SELECT MIN(status_priority) FROM scans WHERE scans.repository_id = repositories.id), 99)", dir, false)).Order("updated_at desc")
 	default:
-		sort = defaultSort
+		sortCol, dir = defaultSort, ""
 		q = q.Order("updated_at desc")
 	}
+	sort := joinSort(sortCol, dir)
 
 	var total int64
 	q.Count(&total)
@@ -908,17 +954,31 @@ func (s *Server) findings(w http.ResponseWriter, r *http.Request) {
 	missed := r.URL.Query().Get("missed") == "1"
 	search := strings.TrimSpace(r.URL.Query().Get("q"))
 
-	sort := r.URL.Query().Get("sort")
-	switch sort {
+	sortCol, dir := splitSort(r.URL.Query().Get("sort"))
+	switch sortCol {
 	case sortSeverity:
-		q = q.Order(severityOrder).Order("id desc")
+		// severityOrder ranks the most severe LOWEST, so the intuitive default
+		// (most severe first, shown as "desc") is ascending on the expression;
+		// !wantDesc flips the SQL direction relative to the logical one.
+		q = q.Order(orderBySuffix("("+severityOrder+")", !wantDesc(dir, true))).Order("findings.id desc")
 	case sortRepository:
 		q = q.Joins("JOIN repositories r ON r.id = findings.repository_id").
-			Order("r.name").Order("findings.id desc")
+			Order(orderByExpr("r.name", dir, false)).Order("findings.id desc")
+	case "title":
+		q = q.Order(orderByExpr("findings.title", dir, false)).Order("findings.id desc")
+	case statusKey:
+		q = q.Order(orderByExpr("findings.status", dir, false)).Order("findings.id desc")
+	case "repo_id":
+		q = q.Order(orderByExpr("findings.repository_id", dir, false)).Order("findings.id desc")
+	case "cwe":
+		q = q.Order(orderByExpr("findings.cwe", dir, false)).Order("findings.id desc")
+	case "scan":
+		q = q.Order(orderByExpr("findings.scan_id", dir, true)).Order("findings.id desc")
 	default:
-		sort = defaultSort
+		sortCol, dir = defaultSort, ""
 		q = q.Order("id desc")
 	}
+	sort := joinSort(sortCol, dir)
 
 	var total int64
 	q.Count(&total)
@@ -1061,16 +1121,12 @@ func (s *Server) depScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	repoURL := resolveDepRepoURL(r.Context(), dep)
+	repoURL := resolvePURLRepo(r.Context(), dep.PURL)
 	if repoURL == "" {
 		http.Error(w, "could not resolve repository URL for "+dep.Name, http.StatusUnprocessableEntity)
 		return
 	}
 	s.addRepoAndScan(w, r, repoURL)
-}
-
-func resolveDepRepoURL(ctx context.Context, dep db.Dependency) string {
-	return resolvePURLRepo(ctx, dep.PURL)
 }
 
 // resolvePURLRepo asks packages.ecosyste.ms for the repository_url behind a
@@ -1079,17 +1135,7 @@ func resolvePURLRepo(ctx context.Context, purl string) string {
 	if purl == "" {
 		return ""
 	}
-	_, raw, err := worker.FetchPackagesByPURL(ctx, purl)
-	if err != nil {
-		return ""
-	}
-	var pkgs []struct {
-		RepoURL string `json:"repository_url"`
-	}
-	if json.Unmarshal(raw, &pkgs) == nil && len(pkgs) > 0 && pkgs[0].RepoURL != "" {
-		return pkgs[0].RepoURL
-	}
-	return ""
+	return worker.ResolvePURLRepositoryURL(ctx, purl)
 }
 
 func (s *Server) dependentScan(w http.ResponseWriter, r *http.Request) {
@@ -1109,9 +1155,18 @@ const (
 	// first added. It owns the decision about which other skills to run;
 	// editing that skill changes the default pipeline with no Go changes.
 	defaultSkillName = "triage"
-	// deepDiveSkillName is the skill whose reports feed the Summary, Findings
-	// and Threat Model tabs on the repository page.
+	// deepDiveSkillName is the skill whose structured report feeds the
+	// Summary and Threat Model tabs on the repository page. The Findings tab
+	// and the deep-dive finding counts are broader: they also treat
+	// advisoryDeepDiveSkillName as curated (see nonScannerScanFilter and
+	// findingsScanIDs).
 	deepDiveSkillName = "security-deep-dive"
+	// advisoryDeepDiveSkillName re-audits a repo's past advisories for fix
+	// bypasses, incomplete fixes, and sibling bugs. Its output is curated LLM
+	// audit findings like security-deep-dive and vuln-scan, so it joins them in
+	// the Findings bucket (findingsBucketSkillSQL) and in isLLMAuditSkill rather
+	// than the Scanners tab.
+	advisoryDeepDiveSkillName = "advisory-deep-dive"
 	// vulnScanSkillName is the LLM-driven high-recall candidate scan. Like
 	// security-deep-dive it uses a model to find real vulnerabilities, so its
 	// findings belong in the curated Findings bucket alongside the deep-dive
@@ -1123,14 +1178,15 @@ const (
 	// alias `s` and group findings, so they filter s.skill_name/s.kind directly
 	// rather than threading findings.scan_id through a subquery. A finding
 	// counts when its scan is one of the LLM audits (security-deep-dive,
-	// vuln-scan), a legacy/empty skill_name, or an operator import (kind=import);
-	// the two ?s bind deepDiveSkillName and vulnScanSkillName in that order.
-	// The `s.skill_name IS NULL` arm doubles as the LEFT JOIN "this row has no
-	// findings" guard, so zero-count maintainers/orgs stay in the result with
-	// n=0. Keep it in lockstep with findingsBucketSkillSQL — a copy that lacked
-	// the kind='import' arm is exactly what kept imports out of these totals
-	// after they began showing in the Findings tab.
-	aliasedFindingsScanFilter = "(s.skill_name IN (?, ?) OR s.skill_name = '' OR s.skill_name IS NULL OR s.kind = 'import')"
+	// vuln-scan, advisory-deep-dive), a legacy/empty skill_name, or an operator
+	// import (kind=import); the three ?s bind deepDiveSkillName, vulnScanSkillName
+	// and advisoryDeepDiveSkillName in that order. The `s.skill_name IS NULL` arm
+	// doubles as the LEFT JOIN "this row has no findings" guard, so zero-count
+	// maintainers/orgs stay in the result with n=0. Keep it in lockstep with
+	// findingsBucketSkillSQL — a copy that lacked the kind='import' arm is exactly
+	// what kept imports out of these totals after they began showing in the
+	// Findings tab.
+	aliasedFindingsScanFilter = "(s.skill_name IN (?, ?, ?) OR s.skill_name = '' OR s.skill_name IS NULL OR s.kind = 'import')"
 	// threatModelSkillName is the skill whose report feeds the Threat Model
 	// tab when present; repos that predate it fall back to the boundaries
 	// section of the deep-dive report so older scans keep rendering.
@@ -1144,18 +1200,18 @@ const (
 var (
 	// findingsBucketSkillSQL is the single source of truth for which scans'
 	// findings populate the curated Findings bucket: the LLM audit skills
-	// (security-deep-dive, vuln-scan), legacy claude jobs with an empty or NULL
-	// skill_name, and operator imports (kind='import'). An import is a
-	// deliberate curation act, not noisy auto-scanner output, so it sits with
-	// the audit findings and shows by default rather than behind the Scanners
-	// toggle. The skill names are spliced in as literals rather than bound
+	// (security-deep-dive, vuln-scan, advisory-deep-dive), legacy claude jobs
+	// with an empty or NULL skill_name, and operator imports (kind='import'). An
+	// import is a deliberate curation act, not noisy auto-scanner output, so it
+	// sits with the audit findings and shows by default rather than behind the
+	// Scanners toggle. The skill names are spliced in as literals rather than bound
 	// parameters because this fragment is embedded raw into larger SQL (e.g. an
 	// Order clause) that can't carry args; each is escaped through
 	// db.SQLStringLiteral so a name that ever gained a quote is doubled rather
 	// than able to break out (see TestDeepDiveSkillNameSafeForSplicing).
 	// Parenthesised so it can be embedded in larger expressions without
 	// precedence surprises.
-	findingsBucketSkillSQL = "(skill_name IN (" + db.SQLStringLiteral(deepDiveSkillName) + ", " + db.SQLStringLiteral(vulnScanSkillName) + ") OR skill_name = '' OR skill_name IS NULL OR kind = 'import')"
+	findingsBucketSkillSQL = "(skill_name IN (" + db.SQLStringLiteral(deepDiveSkillName) + ", " + db.SQLStringLiteral(vulnScanSkillName) + ", " + db.SQLStringLiteral(advisoryDeepDiveSkillName) + ") OR skill_name = '' OR skill_name IS NULL OR kind = 'import')"
 	// nonScannerScanFilter selects findings whose parent scan populates the
 	// Findings bucket (findingsBucketSkillSQL) — every finding the UI shows by
 	// default. scannerScanFilter is its structural inverse: the cheap tool
@@ -1172,8 +1228,8 @@ var (
 // findings for the surrounding repositories row. Used in the repos list
 // "findings" sort. Tool-scanner skills are excluded so the ordering matches
 // the counts shown in the Findings column. The LLM audit skills
-// (security-deep-dive, vuln-scan), legacy rows, and operator imports
-// (kind='import') all count via findingsBucketSkillSQL, so the column agrees
+// (security-deep-dive, vuln-scan, advisory-deep-dive), legacy rows, and
+// operator imports (kind='import') all count via findingsBucketSkillSQL, so the column agrees
 // with the Findings tab. The skill names are spliced into findingsBucketSkillSQL
 // as text (this fragment feeds an ORDER BY that can't take a bind parameter);
 // both are trusted compile-time constants kept free of SQL metacharacters by
@@ -1184,22 +1240,23 @@ var deepDiveFindingsCountSQL = `SELECT COUNT(*) FROM findings f
 	      AND f.scan_id IN (SELECT id FROM scans WHERE ` + findingsBucketSkillSQL + `)`
 
 // findingsScanIDs returns a GORM subquery selecting scan IDs that belong to
-// the curated LLM audits (security-deep-dive, vuln-scan), to legacy/empty
-// skill_name rows, or to an operator import (kind='import') — everything in
-// findingsBucketSkillSQL. Use it as a `scan_id IN (?)` filter to keep listings
-// consistent with the repo Findings tab.
+// the curated LLM audits (security-deep-dive, vuln-scan, advisory-deep-dive),
+// to legacy/empty skill_name rows, or to an operator import (kind='import') —
+// everything in findingsBucketSkillSQL. Use it as a `scan_id IN (?)` filter to
+// keep listings consistent with the repo Findings tab.
 func findingsScanIDs(gdb *gorm.DB) *gorm.DB {
 	return gdb.Model(&db.Scan{}).Select("id").Where(findingsBucketSkillSQL)
 }
 
 // isLLMAuditSkill reports whether a finalized scan is one of the curated LLM
-// audits (security-deep-dive, vuln-scan) whose fresh output drives the
-// auto-triage funnels (finding-dedup and the revalidate pre-sort). Unlike
-// findingsBucketSkillSQL this deliberately excludes legacy empty/NULL
+// audits (security-deep-dive, vuln-scan, advisory-deep-dive) whose fresh output
+// drives the auto-triage funnels (finding-dedup and the revalidate pre-sort).
+// Unlike findingsBucketSkillSQL this deliberately excludes legacy empty/NULL
 // skill_name rows and imports: those are inert, not a live scan that just
 // produced new findings worth triaging.
 func isLLMAuditSkill(skillName string) bool {
-	return skillName == deepDiveSkillName || skillName == vulnScanSkillName
+	return skillName == deepDiveSkillName || skillName == vulnScanSkillName ||
+		skillName == advisoryDeepDiveSkillName
 }
 
 func findingSupportsExposure(scan db.Scan) bool {
@@ -1446,20 +1503,25 @@ func (s *Server) packages(w http.ResponseWriter, r *http.Request) {
 		q = q.Where("name LIKE ? OR p_url LIKE ? OR licenses LIKE ?", like, like, like)
 	}
 
-	sort := r.URL.Query().Get("sort")
-	switch sort {
+	sortCol, dir := splitSort(r.URL.Query().Get("sort"))
+	switch sortCol {
 	case "name":
-		q = q.Order("name")
+		q = q.Order(orderByExpr("name", dir, false))
 	case "downloads":
-		q = q.Order("downloads desc")
+		q = q.Order(orderByExpr("downloads", dir, true))
 	case "dependents":
-		q = q.Order("dependent_repos desc")
+		q = q.Order(orderByExpr("dependent_repos", dir, true))
 	case "ecosystem":
-		q = q.Order("ecosystem, name")
+		q = q.Order(orderByExpr("ecosystem", dir, false)).Order("name")
+	case "registry":
+		q = q.Order(orderByExpr("registry_url", dir, false)).Order("name")
+	case "latest":
+		q = q.Order(orderByExpr("latest_release_at", dir, true)).Order("name")
 	default:
-		sort = "name"
+		sortCol, dir = "name", ""
 		q = q.Order("name")
 	}
+	sort := joinSort(sortCol, dir)
 
 	var total int64
 	q.Count(&total)
@@ -1508,17 +1570,22 @@ func (s *Server) advisoriesList(w http.ResponseWriter, r *http.Request) {
 			like, like, like, like)
 	}
 
-	sort := r.URL.Query().Get("sort")
-	switch sort {
+	sortCol, dir := splitSort(r.URL.Query().Get("sort"))
+	switch sortCol {
 	case "newest":
-		q = q.Order("published_at desc, id desc")
+		q = q.Order(orderByExpr("published_at", dir, true)).Order("id desc")
 	case sortRepository:
 		q = q.Joins("JOIN repositories r ON r.id = advisories.repository_id").
-			Order("r.name").Order("advisories.cvss_score desc")
+			Order(orderByExpr("r.name", dir, false)).Order("advisories.cvss_score desc")
+	case "title":
+		q = q.Order(orderByExpr("title", dir, false)).Order("id desc")
+	case sortSeverity:
+		q = q.Order(orderByExpr("cvss_score", dir, true)).Order("id desc")
 	default:
-		sort = "severity"
+		sortCol, dir = sortSeverity, ""
 		q = q.Order("cvss_score desc, id desc")
 	}
+	sort := joinSort(sortCol, dir)
 
 	var total int64
 	q.Count(&total)
@@ -1579,9 +1646,10 @@ func (s *Server) findingShow(w http.ResponseWriter, r *http.Request) {
 		selected[l.Name] = true
 	}
 	_, verifyInFlight := s.openFindingSkillScan(f.ID, verifySkillName)
-	var dependentCount int64
-	s.DB.Model(&db.Dependent{}).Where("repository_id = ?", scan.RepositoryID).Count(&dependentCount)
-	hasDependents := dependentCount > 0
+	hasDependents, err := repoHasDependents(s.DB, scan.RepositoryID)
+	if err != nil {
+		s.Log.Warn("count dependents", "repo", scan.RepositoryID, "err", err)
+	}
 
 	type exposureRow struct {
 		Dep    db.Dependent
@@ -1877,12 +1945,161 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	scans := loadRepoLatestScans(s.DB, repo.ID)
+	latest, tmScan := s.repoPrimaryScans(scans)
+	view := s.loadRepoShowView(repo, scans, latest, tmScan, r.URL.Query())
+	s.render(w, r, "repo_show.html", view.renderData())
+}
+
+type repoShowView struct {
+	Repo            db.Repository
+	Scans           []db.Scan
+	Latest          *db.Scan
+	Findings        repoFindings
+	Expected        repoExpectedView
+	Dependencies    repoDependencyView
+	Inventory       repoInventoryView
+	Subprojects     repoSubprojectView
+	Maintainers     []db.Maintainer
+	Skills          []db.Skill
+	Workbench       Workbench
+	ThreatModel     map[string]any
+	Category        string
+	TMCommit        string
+	NewFindingCount int
+	FailedScans     int
+	ActiveScans     int
+	PausedScans     int
+	TotalCost       float64
+}
+
+func (s *Server) loadRepoShowView(
+	repo db.Repository,
+	scans []db.Scan,
+	latest, tmScan *db.Scan,
+	query url.Values,
+) repoShowView {
+	category := query.Get("category")
+	findings := loadRepoFindings(s.DB, repo.ID, category)
+	deps := s.loadRepoDependencyView(repo.ID, query.Get("deps") == "all")
+	// activeScans drives both the delete-confirm warning (a running scan keeps
+	// writing into the repo's clone/workspace until it returns) and the "Cancel
+	// all" button; pausedScans drives "Resume all". Both are counted over every
+	// scan, not the latest-per-skill set.
+	activeScans, pausedScans := s.repoScanActionCounts(repo.ID)
+	return repoShowView{
+		Repo:            repo,
+		Scans:           scans,
+		Latest:          latest,
+		Findings:        findings,
+		Expected:        loadRepoExpectedView(s.DB, repo.ID, latest, findings),
+		Dependencies:    deps,
+		Inventory:       s.loadRepoInventoryView(repo.ID, deps.Groups),
+		Subprojects:     s.loadRepoSubprojectView(repo.ID),
+		Maintainers:     s.repoMaintainers(repo.ID),
+		Skills:          s.activeRepoSkills(),
+		Workbench:       loadWorkbench(s.DB, &repo, workbenchSeed(tmScan)),
+		ThreatModel:     scanThreatModelReport(tmScan),
+		Category:        category,
+		TMCommit:        scanCommit(tmScan),
+		NewFindingCount: int(repoNewFindingsCount(s.DB, repo.ID, category)),
+		FailedScans:     countFailedScans(scans),
+		ActiveScans:     int(activeScans),
+		PausedScans:     int(pausedScans),
+		TotalCost:       repoTotalCost(s.DB, repo.ID),
+	}
+}
+
+func (v repoShowView) renderData() map[string]any {
+	return map[string]any{
+		"Repo":                  v.Repo,
+		"Scans":                 v.Scans,
+		"Latest":                v.Latest,
+		"Findings":              v.Findings.DeepDive,
+		"FindingsTotal":         v.Findings.DeepDiveTotal,
+		"ScannerFindings":       v.Findings.Scanners,
+		"ScannerFindingsTotal":  v.Findings.ScannersTotal,
+		"ScanSkill":             v.Findings.ScanSkill,
+		"ScanCommit":            v.Findings.ScanCommit,
+		"ExpectedFindings":      v.Expected.Matches.Expected,
+		"ExpectedMatched":       v.Expected.Matches.MatchedTotal,
+		"ExpectedFindingStatus": v.Expected.FindingStatus,
+		"NewFindingCount":       v.NewFindingCount,
+		"FailedScans":           v.FailedScans,
+		"ActiveScans":           v.ActiveScans,
+		"PausedScans":           v.PausedScans,
+		"TotalCost":             v.TotalCost,
+		// Cached on the row, refreshed by the worker after each scan (#126).
+		"DiskBytes":       v.Repo.DiskBytes,
+		"TMCommit":        v.TMCommit,
+		"DepsCommit":      v.Dependencies.Commit,
+		"Deps":            v.Dependencies.Groups,
+		"DepsTotal":       v.Dependencies.Total,
+		"Pkgs":            v.Inventory.Packages,
+		"Dependents":      v.Inventory.Dependents,
+		"DependentsTotal": v.Inventory.DependentsTotal,
+		"Advisories":      v.Inventory.Advisories,
+		"AdvisoriesTotal": v.Inventory.AdvisoriesTotal,
+		"Maintainers":     v.Maintainers,
+		"ThreatModel":     v.ThreatModel,
+		"KnownURLs":       v.Inventory.KnownURLs,
+		"KnownPURLs":      v.Inventory.KnownPURLs,
+		"ShowAllDeps":     v.Dependencies.ShowAll,
+		"HiddenDeps":      v.Dependencies.Hidden,
+		"Skills":          v.Skills,
+		"Subprojects":     v.Subprojects.Rows,
+		"SubScanCount":    v.Subprojects.ScanCount,
+		"Workbench":       v.Workbench,
+		"Category":        v.Category,
+		"Categories":      CWECategories(),
+		"Uncategorized":   UncategorizedCWE,
+		"TabRowCap":       int64(tabRowCap),
+	}
+}
+
+func scanThreatModelReport(scan *db.Scan) map[string]any {
+	if scan == nil {
+		return nil
+	}
+	var report map[string]any
+	_ = json.Unmarshal([]byte(scan.Report), &report)
+	return report
+}
+
+func scanCommit(scan *db.Scan) string {
+	if scan == nil {
+		return ""
+	}
+	return scan.Commit
+}
+
+func repoTotalCost(gdb *gorm.DB, repoID uint) float64 {
+	var total float64
+	gdb.Model(&db.Scan{}).Where("repository_id = ?", repoID).
+		Select("COALESCE(SUM(cost_usd), 0)").Scan(&total)
+	return total
+}
+
+func (s *Server) repoMaintainers(repoID uint) []db.Maintainer {
+	var maintainers []db.Maintainer
+	s.DB.Joins("JOIN repository_maintainers ON repository_maintainers.maintainer_id = maintainers.id").
+		Where("repository_maintainers.repository_id = ?", repoID).Find(&maintainers)
+	return maintainers
+}
+
+func (s *Server) activeRepoSkills() []db.Skill {
+	var skills []db.Skill
+	s.DB.Where("active = ?", true).Order("name").Find(&skills)
+	return skills
+}
+
+func loadRepoLatestScans(gdb *gorm.DB, repoID uint) []db.Scan {
 	var scans []db.Scan
 	// Per (skill_name, sub_path) we want just the latest scan — the repo
 	// page should read like "this is the state of each job on this repo",
 	// not a scroll of every historical attempt. Older runs are still
 	// reachable via /scans/{id} and the global /scans index.
-	s.DB.Raw(`
+	gdb.Raw(`
 		SELECT s.* FROM scans s
 		JOIN (
 			SELECT COALESCE(skill_name, '') AS sn, COALESCE(sub_path, '') AS sp, MAX(id) AS max_id
@@ -1890,14 +2107,17 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 			GROUP BY sn, sp
 		) latest ON latest.max_id = s.id
 		ORDER BY s.id DESC
-	`, repo.ID).Scan(&scans)
+	`, repoID).Scan(&scans)
+	return scans
+}
 
+func (s *Server) repoPrimaryScans(scans []db.Scan) (latest, threatModel *db.Scan) {
 	// The security-deep-dive skill owns the structured audit report; the
 	// Summary and Findings tabs render from its scans. The Threat Model tab
 	// renders the threat-model skill's report when one exists, falling back
 	// to the deep-dive report's boundaries/inventory section so repositories
 	// scanned before the threat-model skill landed keep their tab content.
-	var latest, tmScan, tmFallback *db.Scan
+	var fallback *db.Scan
 	for i := range scans {
 		sc := &scans[i]
 		switch sc.SkillName {
@@ -1906,168 +2126,132 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 				latest = sc
 				s.DB.Where("scan_id = ?", latest.ID).Find(&latest.Findings)
 			}
-			if tmFallback == nil && sc.Status == db.ScanDone && sc.Report != "" {
-				tmFallback = sc
+			if fallback == nil && sc.Status == db.ScanDone && sc.Report != "" {
+				fallback = sc
 			}
 		case threatModelSkillName:
-			if tmScan == nil && sc.Status == db.ScanDone && sc.Report != "" {
-				tmScan = sc
+			if threatModel == nil && sc.Status == db.ScanDone && sc.Report != "" {
+				threatModel = sc
 			}
 		}
-		if latest != nil && tmScan != nil && tmFallback != nil {
+		if latest != nil && threatModel != nil && fallback != nil {
 			break
 		}
 	}
-	if tmScan == nil {
-		tmScan = tmFallback
+	if threatModel == nil {
+		threatModel = fallback
 	}
-	var threatModel map[string]any
-	if tmScan != nil {
-		_ = json.Unmarshal([]byte(tmScan.Report), &threatModel)
-	}
-	wb := loadWorkbench(s.DB, &repo, workbenchSeed(tmScan))
+	return latest, threatModel
+}
 
-	var totalCost float64
-	s.DB.Model(&db.Scan{}).Where("repository_id = ?", repo.ID).
-		Select("COALESCE(SUM(cost_usd), 0)").Scan(&totalCost)
-
-	category := r.URL.Query().Get("category")
-	rf := loadRepoFindings(s.DB, repo.ID, category)
-
+func repoNewFindingsCount(gdb *gorm.DB, repoID uint, category string) int64 {
 	// Count deep-dive findings still awaiting verification, scoped to the
 	// same category filter as the visible list. Drives the "Verify all new"
 	// button on the Findings tab; the bulk handler acts on this exact set.
-	newFindingsQuery := s.DB.Model(&db.Finding{}).
+	q := gdb.Model(&db.Finding{}).
 		Where("repository_id = ? AND status = ? AND scan_id IN (?)",
-			repo.ID, db.FindingNew, findingsScanIDs(s.DB))
+			repoID, db.FindingNew, findingsScanIDs(gdb))
 	if category != "" {
-		newFindingsQuery = applyCWECategoryFilter(newFindingsQuery, category)
+		q = applyCWECategoryFilter(q, category)
 	}
-	var newFindings int64
-	newFindingsQuery.Count(&newFindings)
+	var total int64
+	q.Count(&total)
+	return total
+}
 
-	var maintainers []db.Maintainer
-	s.DB.Joins("JOIN repository_maintainers ON repository_maintainers.maintainer_id = maintainers.id").
-		Where("repository_maintainers.repository_id = ?", repo.ID).Find(&maintainers)
+type repoDependencyView struct {
+	Groups  []DepGroup
+	Total   int64
+	Hidden  int64
+	ShowAll bool
+	Commit  string
+}
 
+func (s *Server) loadRepoDependencyView(repoID uint, showAll bool) repoDependencyView {
 	// Apply the runtime-only filter in SQL before capping, so the first N
 	// rows on the default tab are runtime deps, not whatever sorts first
 	// by name. hiddenDeps and depsTotal both describe the same set the tab
 	// is rendering.
-	showAllDeps := r.URL.Query().Get("deps") == "all"
 	hiddenTypes := []string{db.DependencyDev, db.DependencyTest, db.DependencyBuild}
-	var hiddenDeps int64
+	var hidden int64
 	s.DB.Model(&db.Dependency{}).
-		Where("repository_id = ? AND dependency_type IN ?", repo.ID, hiddenTypes).
-		Count(&hiddenDeps)
-	depQ := s.DB.Model(&db.Dependency{}).Where("repository_id = ?", repo.ID)
-	if !showAllDeps {
-		depQ = depQ.Where("dependency_type NOT IN ?", hiddenTypes)
+		Where("repository_id = ? AND dependency_type IN ?", repoID, hiddenTypes).
+		Count(&hidden)
+	q := s.DB.Model(&db.Dependency{}).Where("repository_id = ?", repoID)
+	if !showAll {
+		q = q.Where("dependency_type NOT IN ?", hiddenTypes)
 	}
-	var depsTotal int64
-	depQ.Count(&depsTotal)
+	var total int64
+	q.Count(&total)
 	var rawDeps []db.Dependency
-	depQ.Order("ecosystem, name, manifest_kind desc").Limit(tabRowCap).Find(&rawDeps)
-	deps := groupDeps(rawDeps)
-
-	var depsCommit string
-	if len(deps) > 0 {
-		depsCommit = s.latestDepsCommit(repo.ID)
+	q.Order("ecosystem, name, manifest_kind desc").Limit(tabRowCap).Find(&rawDeps)
+	groups := groupDeps(rawDeps)
+	commit := ""
+	if len(groups) > 0 {
+		commit = s.latestDepsCommit(repoID)
 	}
+	return repoDependencyView{Groups: groups, Total: total, Hidden: hidden, ShowAll: showAll, Commit: commit}
+}
 
-	var pkgs []db.Package
-	s.DB.Where("repository_id = ?", repo.ID).Order("dependent_repos desc, downloads desc").Find(&pkgs)
+type repoInventoryView struct {
+	Packages        []db.Package
+	Dependents      []db.Dependent
+	DependentsTotal int64
+	Advisories      []db.Advisory
+	AdvisoriesTotal int64
+	KnownPURLs      map[string]uint
+	KnownURLs       map[string]uint
+}
 
-	var dependents []db.Dependent
-	var dependentsTotal int64
-	s.DB.Model(&db.Dependent{}).Where("repository_id = ?", repo.ID).Count(&dependentsTotal)
-	s.DB.Where("repository_id = ?", repo.ID).Order("dependent_repos desc").
-		Limit(tabRowCap).Find(&dependents)
+func (s *Server) loadRepoInventoryView(repoID uint, deps []DepGroup) repoInventoryView {
+	var inv repoInventoryView
+	s.DB.Where("repository_id = ?", repoID).Order("dependent_repos desc, downloads desc").Find(&inv.Packages)
+	s.DB.Model(&db.Dependent{}).Where("repository_id = ?", repoID).Count(&inv.DependentsTotal)
+	s.DB.Where("repository_id = ?", repoID).Order("dependent_repos desc").
+		Limit(tabRowCap).Find(&inv.Dependents)
+	s.DB.Model(&db.Advisory{}).Where("repository_id = ?", repoID).Count(&inv.AdvisoriesTotal)
+	s.DB.Where("repository_id = ?", repoID).Order("cvss_score desc").
+		Limit(tabRowCap).Find(&inv.Advisories)
+	inv.KnownPURLs = s.lookupKnownPURLs(deps)
+	inv.KnownURLs = s.lookupKnownURLs(inv.Dependents)
+	return inv
+}
 
-	var advisories []db.Advisory
-	var advisoriesTotal int64
-	s.DB.Model(&db.Advisory{}).Where("repository_id = ?", repo.ID).Count(&advisoriesTotal)
-	s.DB.Where("repository_id = ?", repo.ID).Order("cvss_score desc").
-		Limit(tabRowCap).Find(&advisories)
+type repoSubprojectView struct {
+	Rows      []db.Subproject
+	ScanCount map[string]int
+}
 
-	knownPURLs := s.lookupKnownPURLs(deps)
-	knownURLs := s.lookupKnownURLs(dependents)
-
-	// Pass repo html_url and commit for location links in threat model
-	tmCommit := ""
-	if tmScan != nil {
-		tmCommit = tmScan.Commit
+func (s *Server) loadRepoSubprojectView(repoID uint) repoSubprojectView {
+	view := repoSubprojectView{ScanCount: map[string]int{}}
+	s.DB.Where("repository_id = ?", repoID).Order("path").Find(&view.Rows)
+	if len(view.Rows) == 0 {
+		return view
 	}
-
-	var activeSkills []db.Skill
-	s.DB.Where("active = ?", true).Order("name").Find(&activeSkills)
-
-	var subprojects []db.Subproject
-	s.DB.Where("repository_id = ?", repo.ID).Order("path").Find(&subprojects)
-	subScanCount := map[string]int{}
-	if len(subprojects) > 0 {
-		rows := make([]struct {
-			SubPath string
-			N       int
-		}, 0)
-		s.DB.Raw(`SELECT sub_path, COUNT(*) AS n FROM scans
-			WHERE repository_id = ? AND sub_path != '' GROUP BY sub_path`,
-			repo.ID).Scan(&rows)
-		for _, r := range rows {
-			subScanCount[r.SubPath] = r.N
-		}
+	rows := make([]struct {
+		SubPath string
+		N       int
+	}, 0)
+	s.DB.Raw(`SELECT sub_path, COUNT(*) AS n FROM scans
+		WHERE repository_id = ? AND sub_path != '' GROUP BY sub_path`,
+		repoID).Scan(&rows)
+	for _, r := range rows {
+		view.ScanCount[r.SubPath] = r.N
 	}
+	return view
+}
 
+func countFailedScans(scans []db.Scan) int {
 	// Count failed scans in the latest-per-skill set: same scope as the
 	// retry-failed handler would act on for this repo. Drives the
 	// "Retry failed" button on the Scans tab.
-	var failedScans int
+	total := 0
 	for _, sc := range scans {
 		if sc.Status == db.ScanFailed {
-			failedScans++
+			total++
 		}
 	}
-
-	// activeScans drives both the delete-confirm warning (a running scan keeps
-	// writing into the repo's clone/workspace until it returns) and the "Cancel
-	// all" button; pausedScans drives "Resume all". Both are counted over every
-	// scan, not the latest-per-skill set.
-	activeScans, pausedScans := s.repoScanActionCounts(repo.ID)
-
-	data := map[string]any{
-		"Repo": repo, "Scans": scans, "Latest": latest,
-		"Findings":             rf.DeepDive,
-		"FindingsTotal":        rf.DeepDiveTotal,
-		"ScannerFindings":      rf.Scanners,
-		"ScannerFindingsTotal": rf.ScannersTotal,
-		"ScanSkill":            rf.ScanSkill,
-		"ScanCommit":           rf.ScanCommit,
-		"NewFindingCount":      int(newFindings),
-		"FailedScans":          failedScans,
-		"ActiveScans":          int(activeScans),
-		"PausedScans":          int(pausedScans),
-		"TotalCost":            totalCost,
-		// Cached on the row, refreshed by the worker after each scan (#126).
-		"DiskBytes":  repo.DiskBytes,
-		"TMCommit":   tmCommit,
-		"DepsCommit": depsCommit,
-		"Deps":       deps, "DepsTotal": depsTotal,
-		"Pkgs":       pkgs,
-		"Dependents": dependents, "DependentsTotal": dependentsTotal,
-		"Advisories": advisories, "AdvisoriesTotal": advisoriesTotal,
-		"Maintainers": maintainers, "ThreatModel": threatModel,
-		"KnownURLs": knownURLs, "KnownPURLs": knownPURLs,
-		"ShowAllDeps": showAllDeps, "HiddenDeps": hiddenDeps,
-		"Skills":        activeSkills,
-		"Subprojects":   subprojects,
-		"SubScanCount":  subScanCount,
-		"Workbench":     wb,
-		"Category":      category,
-		"Categories":    CWECategories(),
-		"Uncategorized": UncategorizedCWE,
-		"TabRowCap":     int64(tabRowCap),
-	}
-	s.render(w, r, "repo_show.html", data)
+	return total
 }
 
 // latestDepsCommit returns the commit of the latest successful dependencies
@@ -2096,6 +2280,10 @@ func (s *Server) repoScan(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if strings.TrimSpace(r.FormValue("rescan_mode")) == db.ScanRescanModeDiff {
+		s.repoDiffScan(w, r, repo)
+		return
+	}
 	// The "New scan" button enqueues the deep-dive skill; everything else is
 	// triggered either by the triage skill or by the explicit Run skill menu.
 	var skill db.Skill
@@ -2104,13 +2292,45 @@ func (s *Server) repoScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := s.enqueueSkillWith(r.Context(), repo.ID, skill.ID, ScanOpts{
-		Model:   r.FormValue("model"),
-		SubPath: strings.TrimSpace(r.FormValue("sub_path")),
+		Model:      r.FormValue("model"),
+		SubPath:    strings.TrimSpace(r.FormValue("sub_path")),
+		RescanMode: strings.TrimSpace(r.FormValue("rescan_mode")),
+		ScanGroup:  uuid.NewString(),
 	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 	s.redirect(w, r, fmt.Sprintf("/repositories/%d", repo.ID))
+}
+
+func (s *Server) repoDiffScan(w http.ResponseWriter, r *http.Request, repo db.Repository) {
+	group := uuid.NewString()
+	model := r.FormValue("model")
+	subPath := strings.TrimSpace(r.FormValue("sub_path"))
+	names := []string{threatModelSkillName, "semgrep", deepDiveSkillName}
+	queued := 0
+	for _, name := range names {
+		var skill db.Skill
+		if err := s.DB.Where("name = ? AND active = ?", name, true).First(&skill).Error; err != nil {
+			if name == deepDiveSkillName {
+				http.Error(w, deepDiveSkillName+" skill is not installed", http.StatusPreconditionFailed)
+				return
+			}
+			continue
+		}
+		if _, err := s.enqueueSkillWith(r.Context(), repo.ID, skill.ID, ScanOpts{
+			Model:      model,
+			SubPath:    subPath,
+			RescanMode: db.ScanRescanModeDiff,
+			ScanGroup:  group,
+		}); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		queued++
+	}
+	setFlash(w, Flash{Category: successKey, Title: fmt.Sprintf("Diff rescan queued %d scan(s)", queued)})
+	s.redirect(w, r, fmt.Sprintf("/repositories/%d#rt3", repo.ID))
 }
 
 // repoScanAll is the bulk equivalent of the per-subproject "Scan" button: it
@@ -2134,6 +2354,10 @@ func (s *Server) repoScanAll(w http.ResponseWriter, r *http.Request) {
 	s.DB.Where("repository_id = ?", repo.ID).Order("path").Find(&subprojects)
 
 	model := r.FormValue("model")
+	// One shared group across the whole fan-out: every subproject deep-dive
+	// enqueued by this click is a sibling, so each can read the others'
+	// findings via ?scan_group= while they run in parallel.
+	group := uuid.NewString()
 	var queued, skipped, errored int
 	for _, sub := range subprojects {
 		var inflight int64
@@ -2146,8 +2370,9 @@ func (s *Server) repoScanAll(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if _, err := s.enqueueSkillWith(r.Context(), repo.ID, skill.ID, ScanOpts{
-			Model:   model,
-			SubPath: sub.Path,
+			Model:     model,
+			SubPath:   sub.Path,
+			ScanGroup: group,
 		}); err != nil {
 			errored++
 			continue
@@ -2303,6 +2528,17 @@ type ScanOpts struct {
 	SubPath        string
 	Ref            string
 	Profile        string
+	// RescanMode requests full or diff coverage. Empty preserves the existing
+	// full-scan behavior. A requested diff scan can fall back to full coverage
+	// once the worker resolves the clone and baseline.
+	RescanMode string
+	// DiffBaseScanID pins the baseline for a diff rescan. Nil asks the worker
+	// to choose the latest compatible same-skill completed scan.
+	DiffBaseScanID *uint
+	// ScanGroup tags this scan as part of a parallel batch so in-flight audit
+	// skills can list sibling findings before re-filing them. Empty
+	// when the scan is not part of a batch.
+	ScanGroup string
 	// SessionID and ResumedFromScanID carry a failed scan's claude session
 	// into its retry so the new run continues the conversation with
 	// `claude -p --resume` instead of restarting from turn 0. Both empty
@@ -2337,12 +2573,19 @@ func (s *Server) enqueueSkillWith(ctx context.Context, repoID, skillID uint, opt
 		return 0, err
 	}
 	var sk db.Skill
-	hasSkill := s.DB.Select("name, requires_remote, requires_profile, model").First(&sk, skillID).Error == nil
+	hasSkill := s.DB.Select("name, version, metadata, requires_remote, requires_profile, model").First(&sk, skillID).Error == nil
 	if repo.IsLocal() && hasSkill && sk.RequiresRemote {
 		return 0, fmt.Errorf("%w: %q", ErrSkillRequiresRemote, sk.Name)
 	}
 	if hasSkill && sk.RequiresProfile != "" && opts.Profile != "" && opts.Profile != sk.RequiresProfile {
 		return 0, fmt.Errorf("%w: %q needs %q, got %q", ErrSkillProfileMismatch, sk.Name, sk.RequiresProfile, opts.Profile)
+	}
+	switch opts.RescanMode {
+	case "", db.ScanRescanModeFull:
+		opts.RescanMode = db.ScanRescanModeFull
+	case db.ScanRescanModeDiff:
+	default:
+		return 0, fmt.Errorf("%w: %q", ErrInvalidRescanMode, opts.RescanMode)
 	}
 	if err := worker.ValidateGitRef(opts.Ref); err != nil {
 		return 0, fmt.Errorf("%w: %v", ErrInvalidRef, err)
@@ -2350,6 +2593,12 @@ func (s *Server) enqueueSkillWith(ctx context.Context, repoID, skillID uint, opt
 	if !ValidModelPreference(opts.Model) && hasSkill {
 		opts.Model = sk.Model
 	}
+	// Overage fallback: while the subscription is past its included quota, rewrite
+	// the expensive tiers (max/high, and the empty default that resolves to high)
+	// to mid (Sonnet), when enabled. An explicit concrete model id is left alone.
+	// The resolved model is snapshotted onto the scan below, so this applies to
+	// scans enqueued from now on (including triage's fan-out), not queued ones.
+	opts.Model = applyOverageDowngrade(opts.Model, s.Worker.ShouldDowngradeModel())
 	opts.Model = resolveModelPreference(s.DB, opts.Model, s.DefaultModel())
 	if !ValidEffort(opts.Effort) {
 		opts.Effort = s.DefaultEffort()
@@ -2359,25 +2608,30 @@ func (s *Server) enqueueSkillWith(ctx context.Context, repoID, skillID uint, opt
 		kind = worker.JobExposure
 	}
 	scan := db.Scan{
-		RepositoryID:      repoID,
-		Kind:              kind,
-		Status:            db.ScanQueued,
-		StatusPriority:    db.StatusPriorityFor(db.ScanQueued),
-		Model:             opts.Model,
-		Effort:            opts.Effort,
-		SkillID:           &skillID,
-		SkillName:         sk.Name,
-		FindingID:         opts.FindingID,
-		DependentID:       opts.DependentID,
-		BaselineScanID:    opts.BaselineScanID,
-		SubPath:           opts.SubPath,
-		Ref:               opts.Ref,
-		Profile:           opts.Profile,
-		SessionID:         opts.SessionID,
-		ResumedFromScanID: opts.ResumedFromScanID,
-		ImportPayload:     opts.ImportPayload,
-		SkillsRepoSHA:     s.SkillsRepoSHA,
-		APIToken:          NewAPIToken(),
+		RepositoryID:       repoID,
+		Kind:               kind,
+		Status:             db.ScanQueued,
+		StatusPriority:     db.StatusPriorityFor(db.ScanQueued),
+		Model:              opts.Model,
+		Effort:             opts.Effort,
+		SkillID:            &skillID,
+		SkillVersion:       sk.Version,
+		SkillSchemaVersion: skillSchemaVersion(sk),
+		SkillName:          sk.Name,
+		FindingID:          opts.FindingID,
+		DependentID:        opts.DependentID,
+		BaselineScanID:     opts.BaselineScanID,
+		SubPath:            opts.SubPath,
+		ScanGroup:          opts.ScanGroup,
+		Ref:                opts.Ref,
+		RescanMode:         opts.RescanMode,
+		DiffBaseScanID:     opts.DiffBaseScanID,
+		Profile:            opts.Profile,
+		SessionID:          opts.SessionID,
+		ResumedFromScanID:  opts.ResumedFromScanID,
+		ImportPayload:      opts.ImportPayload,
+		SkillsRepoSHA:      s.SkillsRepoSHA,
+		APIToken:           NewAPIToken(),
 	}
 	if err := s.DB.Create(&scan).Error; err != nil {
 		return 0, err

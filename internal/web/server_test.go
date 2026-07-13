@@ -33,10 +33,11 @@ func newTestServer(t testing.TB) (*Server, func()) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	s, err := New(gdb, q, log, NewBroker(), &worker.Worker{})
+	s, err := New(gdb, q, log, NewBroker(), &worker.Worker{DB: gdb})
 	if err != nil {
 		t.Fatal(err)
 	}
+	s.Backend = worker.HarnessName(worker.ClaudeHarness{})
 	s.resolvePURL = func(context.Context, string) string { return "" }
 	s.resolveSync = true
 	s.prefetchEcosystems = func(uint) {}
@@ -437,6 +438,7 @@ func TestNavKey(t *testing.T) {
 		"/repositories/7": "repos",
 		"/findings":       "findings",
 		"/findings/42":    "findings",
+		"/benchmark":      "benchmark",
 		"/scans/1":        "scans",
 		"/sboms":          "sboms",
 		"/usage":          "usage",
@@ -1407,12 +1409,13 @@ func TestFindings_scannerToggle(t *testing.T) {
 }
 
 func TestDeepDiveSkillNameSafeForSplicing(t *testing.T) {
-	// deepDiveSkillName and vulnScanSkillName are spliced into
-	// findingsBucketSkillSQL as raw single-quoted literals (it feeds SQL such as
-	// the deepDiveFindingsCountSQL ORDER BY subquery, which cannot take a bind
-	// parameter), so neither may ever carry a SQL metacharacter. This tripwire
-	// fails loudly if a refactor changes a constant or makes a value dynamic.
-	for _, name := range []string{deepDiveSkillName, vulnScanSkillName} {
+	// deepDiveSkillName, vulnScanSkillName and advisoryDeepDiveSkillName are
+	// spliced into findingsBucketSkillSQL as raw single-quoted literals (it feeds
+	// SQL such as the deepDiveFindingsCountSQL ORDER BY subquery, which cannot
+	// take a bind parameter), so none may ever carry a SQL metacharacter. This
+	// tripwire fails loudly if a refactor changes a constant or makes a value
+	// dynamic.
+	for _, name := range []string{deepDiveSkillName, vulnScanSkillName, advisoryDeepDiveSkillName} {
 		if strings.ContainsAny(name, "'\";\\\x00") {
 			t.Errorf("skill name %q must stay free of SQL metacharacters; it is spliced into findingsBucketSkillSQL", name)
 		}
@@ -2429,7 +2432,7 @@ func TestEnqueueSkillWith_effort(t *testing.T) {
 	}
 }
 
-func TestEnqueueSkillWith_stampsSkillsRepoSHA(t *testing.T) {
+func TestEnqueueSkillWith_stampsBenchmarkVersionFields(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
 	s.SkillsRepoSHA = "feedface0123456789abcdef0123456789abcdef"
@@ -2437,7 +2440,7 @@ func TestEnqueueSkillWith_stampsSkillsRepoSHA(t *testing.T) {
 	repo := db.Repository{URL: "https://github.com/foo/bar", Name: "bar"}
 	s.DB.Create(&repo)
 	skill := db.Skill{Name: "lite", Body: "b", OutputFile: "r.json", OutputKind: "freeform",
-		Version: 1, Active: true, Source: "ui"}
+		Version: 7, Metadata: `{"scrutineer.version":1}`, Active: true, Source: "ui"}
 	s.DB.Create(&skill)
 
 	scanID, err := s.enqueueSkillWith(context.Background(), repo.ID, skill.ID, ScanOpts{})
@@ -2448,6 +2451,12 @@ func TestEnqueueSkillWith_stampsSkillsRepoSHA(t *testing.T) {
 	s.DB.First(&sc, scanID)
 	if sc.SkillsRepoSHA != s.SkillsRepoSHA {
 		t.Errorf("scan.SkillsRepoSHA = %q, want %q", sc.SkillsRepoSHA, s.SkillsRepoSHA)
+	}
+	if sc.SkillVersion != skill.Version {
+		t.Errorf("scan.SkillVersion = %d, want %d", sc.SkillVersion, skill.Version)
+	}
+	if sc.SkillSchemaVersion != 1 {
+		t.Errorf("scan.SkillSchemaVersion = %d, want 1", sc.SkillSchemaVersion)
 	}
 }
 
@@ -2719,6 +2728,84 @@ func TestRepoScanAll(t *testing.T) {
 	}
 	if f := flashFrom(t, w); !strings.Contains(f.Title, "2 queued") || !strings.Contains(f.Title, "1 already running") {
 		t.Errorf("flash = %q, want 2 queued / 1 already running", f.Title)
+	}
+	// The cohort shares one non-empty scan_group so each sibling can read the
+	// others' findings via ?scan_group= while they run in parallel.
+	if queued[0].ScanGroup == "" {
+		t.Error("scan-all cohort should carry a scan_group")
+	}
+	if queued[0].ScanGroup != queued[1].ScanGroup {
+		t.Errorf("scan-all scans should share one scan_group, got %q and %q",
+			queued[0].ScanGroup, queued[1].ScanGroup)
+	}
+}
+
+func TestRepoScan_setsScanGroup(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://github.com/foo/bar", Name: "bar"}
+	s.DB.Create(&repo)
+	deepDive := db.Skill{Name: deepDiveSkillName, Body: "b", OutputFile: "r.json",
+		OutputKind: "freeform", Version: 1, Active: true, Source: "ui"}
+	s.DB.Create(&deepDive)
+
+	req := httptest.NewRequest("POST", fmt.Sprintf("/repositories/%d/scan", repo.ID), nil)
+	req.Host = testHost
+	s.Handler().ServeHTTP(httptest.NewRecorder(), req)
+
+	var sc db.Scan
+	if err := s.DB.Where("repository_id = ?", repo.ID).First(&sc).Error; err != nil {
+		t.Fatalf("no scan created: %v", err)
+	}
+	if sc.ScanGroup == "" {
+		t.Error("a single New-scan run should still carry a scan_group")
+	}
+}
+
+func TestRepoScan_diffRescanQueuesGroupedSkills(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://github.com/foo/bar", Name: "bar"}
+	s.DB.Create(&repo)
+	for _, name := range []string{threatModelSkillName, "semgrep", deepDiveSkillName} {
+		s.DB.Create(&db.Skill{Name: name, Body: "b", OutputFile: "r.json",
+			OutputKind: "freeform", Version: 1, Active: true, Source: "ui"})
+	}
+
+	body := strings.NewReader("rescan_mode=diff")
+	req := httptest.NewRequest("POST", fmt.Sprintf("/repositories/%d/scan", repo.ID), body)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Host = testHost
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+
+	var scans []db.Scan
+	if err := s.DB.Where("repository_id = ?", repo.ID).Order("skill_name").Find(&scans).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(scans) != 3 {
+		t.Fatalf("queued scans = %d, want 3", len(scans))
+	}
+	group := scans[0].ScanGroup
+	if group == "" {
+		t.Fatal("diff rescan group is empty")
+	}
+	gotNames := map[string]bool{}
+	for _, sc := range scans {
+		gotNames[sc.SkillName] = true
+		if sc.RescanMode != db.ScanRescanModeDiff {
+			t.Errorf("%s RescanMode = %q, want diff", sc.SkillName, sc.RescanMode)
+		}
+		if sc.ScanGroup != group {
+			t.Errorf("%s ScanGroup = %q, want shared %q", sc.SkillName, sc.ScanGroup, group)
+		}
+	}
+	for _, name := range []string{threatModelSkillName, "semgrep", deepDiveSkillName} {
+		if !gotNames[name] {
+			t.Errorf("missing queued %s scan", name)
+		}
 	}
 }
 
@@ -3704,34 +3791,53 @@ func TestScansIndex_maxTurnsScanShowsBadgeAndRetry(t *testing.T) {
 	}
 }
 
-func TestRetry_preservesSubPath(t *testing.T) {
-	s, done := newTestServer(t)
-	defer done()
-
-	repo := db.Repository{URL: "https://github.com/apache/airflow.git", Name: "airflow"}
-	s.DB.Create(&repo)
-	skill := db.Skill{Name: "security-deep-dive", Description: "x", Body: "b", Active: true, Source: "ui", Version: 1}
-	s.DB.Create(&skill)
-	orig := db.Scan{
-		RepositoryID: repo.ID, Kind: "skill", Status: db.ScanFailed,
-		SkillID: &skill.ID, SkillName: "security-deep-dive",
-		SubPath: "airflow-core", FinishedAt: new(time.Now()),
+func TestRetry_preservesScanFields(t *testing.T) {
+	cases := []struct {
+		name  string
+		set   func(*db.Scan)
+		check func(*testing.T, db.Scan)
+	}{
+		{"sub_path", func(sc *db.Scan) { sc.SubPath = "airflow-core" }, func(t *testing.T, f db.Scan) {
+			if f.SubPath != "airflow-core" {
+				t.Errorf("retry lost sub-path: got %q, want airflow-core", f.SubPath)
+			}
+		}},
+		{"scan_group", func(sc *db.Scan) { sc.ScanGroup = "grp-7" }, func(t *testing.T, f db.Scan) {
+			if f.ScanGroup != "grp-7" {
+				t.Errorf("retry lost scan group: got %q, want grp-7", f.ScanGroup)
+			}
+		}},
 	}
-	s.DB.Create(&orig)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, done := newTestServer(t)
+			defer done()
 
-	req := httptest.NewRequest("POST", fmt.Sprintf("/scans/%d/retry", orig.ID), nil)
-	req.Host = testHost
-	req.Header.Set("Sec-Fetch-Site", "same-origin")
-	w := httptest.NewRecorder()
-	s.Handler().ServeHTTP(w, req)
-	if w.Code != http.StatusSeeOther {
-		t.Fatalf("retry status %d: %s", w.Code, w.Body)
-	}
+			repo := db.Repository{URL: "https://github.com/apache/airflow.git", Name: "airflow"}
+			s.DB.Create(&repo)
+			skill := db.Skill{Name: "security-deep-dive", Description: "x", Body: "b", Active: true, Source: "ui", Version: 1}
+			s.DB.Create(&skill)
+			orig := db.Scan{
+				RepositoryID: repo.ID, Kind: "skill", Status: db.ScanFailed,
+				SkillID: &skill.ID, SkillName: "security-deep-dive",
+				FinishedAt: new(time.Now()),
+			}
+			tc.set(&orig)
+			s.DB.Create(&orig)
 
-	var fresh db.Scan
-	s.DB.Where("id != ?", orig.ID).First(&fresh)
-	if fresh.SubPath != "airflow-core" {
-		t.Errorf("retry lost sub-path: got %q, want airflow-core", fresh.SubPath)
+			req := httptest.NewRequest("POST", fmt.Sprintf("/scans/%d/retry", orig.ID), nil)
+			req.Host = testHost
+			req.Header.Set("Sec-Fetch-Site", "same-origin")
+			w := httptest.NewRecorder()
+			s.Handler().ServeHTTP(w, req)
+			if w.Code != http.StatusSeeOther {
+				t.Fatalf("retry status %d: %s", w.Code, w.Body)
+			}
+
+			var fresh db.Scan
+			s.DB.Where("id != ?", orig.ID).First(&fresh)
+			tc.check(t, fresh)
+		})
 	}
 }
 
@@ -3890,39 +3996,60 @@ func TestScansRetryFailed(t *testing.T) {
 	}
 }
 
-func TestScansRetryFailed_preservesEffort(t *testing.T) {
-	s, done := newTestServer(t)
-	defer done()
-	// Force the runtime default away from the scan's effort so a dropped
-	// `effort` column in the retry Select would surface as "low", not "max".
-	s.SetDefaultEffort("low")
-
-	repo := db.Repository{URL: "https://example.com/x.git", Name: "x"}
-	s.DB.Create(&repo)
-	skill := db.Skill{Name: "deep-dive", Description: "x", Body: "b", Active: true, Source: "ui", Version: 1}
-	s.DB.Create(&skill)
-	orig := db.Scan{
-		RepositoryID: repo.ID, Kind: "skill", Status: db.ScanFailed,
-		StatusPriority: db.StatusPriorityFor(db.ScanFailed),
-		SkillID:        &skill.ID, SkillName: "deep-dive", Effort: "max",
+func TestScansRetryFailed_preservesScanFields(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup func(*Server, *db.Scan)
+		check func(*testing.T, db.Scan)
+	}{
+		{"effort", func(s *Server, sc *db.Scan) {
+			// Force the runtime default away from the scan's effort so a dropped
+			// `effort` column in the retry Select would surface as "low", not "max".
+			s.SetDefaultEffort("low")
+			sc.Effort = "max"
+		}, func(t *testing.T, f db.Scan) {
+			if f.Effort != "max" {
+				t.Errorf("retry lost effort: got %q, want max", f.Effort)
+			}
+		}},
+		{"scan_group", func(_ *Server, sc *db.Scan) { sc.ScanGroup = "grp-7" }, func(t *testing.T, f db.Scan) {
+			if f.ScanGroup != "grp-7" {
+				t.Errorf("retry lost scan group: got %q, want grp-7", f.ScanGroup)
+			}
+		}},
 	}
-	s.DB.Create(&orig)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, done := newTestServer(t)
+			defer done()
 
-	req := httptest.NewRequest("POST", "/scans/retry-failed", nil)
-	req.Host = testHost
-	req.Header.Set("Sec-Fetch-Site", "same-origin")
-	w := httptest.NewRecorder()
-	s.Handler().ServeHTTP(w, req)
-	if w.Code != http.StatusSeeOther {
-		t.Fatalf("status %d: %s", w.Code, w.Body)
-	}
+			repo := db.Repository{URL: "https://example.com/x.git", Name: "x"}
+			s.DB.Create(&repo)
+			skill := db.Skill{Name: "deep-dive", Description: "x", Body: "b", Active: true, Source: "ui", Version: 1}
+			s.DB.Create(&skill)
+			orig := db.Scan{
+				RepositoryID: repo.ID, Kind: "skill", Status: db.ScanFailed,
+				StatusPriority: db.StatusPriorityFor(db.ScanFailed),
+				SkillID:        &skill.ID, SkillName: "deep-dive",
+			}
+			tc.setup(s, &orig)
+			s.DB.Create(&orig)
 
-	var fresh db.Scan
-	if err := s.DB.Where("id != ?", orig.ID).First(&fresh).Error; err != nil {
-		t.Fatal(err)
-	}
-	if fresh.Effort != "max" {
-		t.Errorf("retry lost effort: got %q, want max", fresh.Effort)
+			req := httptest.NewRequest("POST", "/scans/retry-failed", nil)
+			req.Host = testHost
+			req.Header.Set("Sec-Fetch-Site", "same-origin")
+			w := httptest.NewRecorder()
+			s.Handler().ServeHTTP(w, req)
+			if w.Code != http.StatusSeeOther {
+				t.Fatalf("status %d: %s", w.Code, w.Body)
+			}
+
+			var fresh db.Scan
+			if err := s.DB.Where("id != ?", orig.ID).First(&fresh).Error; err != nil {
+				t.Fatal(err)
+			}
+			tc.check(t, fresh)
+		})
 	}
 }
 
@@ -4022,17 +4149,19 @@ func TestScansRetryFailed_filtersBySkill(t *testing.T) {
 	s.DB.Create(&a)
 	s.DB.Create(&b)
 
-	mk := func(name string, sk uint) {
+	// Distinct sub_paths keep the two alpha failures in separate tuples, so
+	// both are eligible under the newest-failure-per-tuple dedup.
+	mk := func(name string, sk uint, subPath string) {
 		sc := db.Scan{
 			RepositoryID: repo.ID, Kind: "skill", Status: db.ScanFailed,
 			StatusPriority: db.StatusPriorityFor(db.ScanFailed),
-			SkillID:        &sk, SkillName: name,
+			SkillID:        &sk, SkillName: name, SubPath: subPath,
 		}
 		s.DB.Create(&sc)
 	}
-	mk("alpha", a.ID)
-	mk("alpha", a.ID)
-	mk("bravo", b.ID)
+	mk("alpha", a.ID, "one")
+	mk("alpha", a.ID, "two")
+	mk("bravo", b.ID, "")
 
 	req := httptest.NewRequest("POST", "/scans/retry-failed?skill=alpha", nil)
 	req.Host = testHost
@@ -4180,16 +4309,18 @@ func TestScansRetryFailed_repositoryScopeRedirects(t *testing.T) {
 	s.DB.Create(&rB)
 	skill := db.Skill{Name: "deep-dive", Description: "x", Body: "b", Active: true, Source: "ui", Version: 1}
 	s.DB.Create(&skill)
-	mk := func(repoID uint) {
+	// Distinct sub_paths keep rA's two failures in separate tuples, so both
+	// are eligible under the newest-failure-per-tuple dedup.
+	mk := func(repoID uint, subPath string) {
 		s.DB.Create(&db.Scan{
 			RepositoryID: repoID, Kind: "skill", Status: db.ScanFailed,
 			StatusPriority: db.StatusPriorityFor(db.ScanFailed),
-			SkillID:        &skill.ID, SkillName: "deep-dive",
+			SkillID:        &skill.ID, SkillName: "deep-dive", SubPath: subPath,
 		})
 	}
-	mk(rA.ID)
-	mk(rA.ID)
-	mk(rB.ID)
+	mk(rA.ID, "one")
+	mk(rA.ID, "two")
+	mk(rB.ID, "")
 
 	req := httptest.NewRequest("POST",
 		fmt.Sprintf("/scans/retry-failed?repository=%d", rA.ID), nil)
@@ -4384,12 +4515,14 @@ func TestJobs_showsAccountPauseResumeActions(t *testing.T) {
 
 	repo := db.Repository{URL: "https://example.com/x.git", Name: "x"}
 	s.DB.Create(&repo)
+	resetAt := time.Date(2026, 7, 1, 12, 30, 0, 0, time.UTC)
 	// A scan auto-paused because the account hit an account-level Claude problem.
 	// The banner should surface it and the Resume-paused action should be offered.
 	s.DB.Create(&db.Scan{
 		RepositoryID: repo.ID, Kind: "skill", Status: db.ScanPaused,
 		StatusPriority: db.StatusPriorityFor(db.ScanPaused),
-		Error:          "Claude account access paused. Queued scan held automatically; resume once the account recovers.",
+		Error:          worker.AccountPausePrefix + " Queued scan paused automatically; resume once the account recovers.",
+		PausedUntil:    &resetAt,
 	})
 
 	w := httptest.NewRecorder()
@@ -4398,7 +4531,7 @@ func TestJobs_showsAccountPauseResumeActions(t *testing.T) {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
 	body := w.Body.String()
-	for _, want := range []string{"Claude account access paused", "/scans/resume-paused"} {
+	for _, want := range []string{worker.AccountPausePrefix, "/scans/resume-paused", "2026-07-01 12:30 UTC"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q in jobs body", want)
 		}
@@ -4485,7 +4618,7 @@ func TestSettingsShow_rendersAboutAndScannerFindings(t *testing.T) {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
 	body := w.Body.String()
-	for _, want := range []string{"Scanner findings", "About", "Scrutineer commit", "Claude Code", "Semgrep", "Zizmor", "Container runtime"} {
+	for _, want := range []string{"Scanner findings", "About", "Scrutineer commit", "Backend (claude)", "Semgrep", "Zizmor", "Container runtime"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("settings page missing %q", want)
 		}
@@ -4534,6 +4667,86 @@ func TestSettingsUpdateTheme_rejectsInvalid(t *testing.T) {
 	s.Handler().ServeHTTP(w, req)
 	if w.Code != http.StatusUnprocessableEntity {
 		t.Errorf("want 422 for invalid theme, got %d", w.Code)
+	}
+}
+
+func TestSettingsUpdateColorScheme_setsCookie(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	form := url.Values{"color_scheme": {"dark"}}
+	req := httptest.NewRequest("POST", "/settings/color-scheme", strings.NewReader(form.Encode()))
+	req.Host = testHost
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+
+	var found bool
+	for _, sc := range w.Header().Values("Set-Cookie") {
+		if strings.HasPrefix(sc, "color_scheme=dark") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("color_scheme cookie not set; cookies: %v", w.Header().Values("Set-Cookie"))
+	}
+}
+
+func TestSettingsUpdateColorScheme_rejectsInvalid(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	form := url.Values{"color_scheme": {"sepia"}}
+	req := httptest.NewRequest("POST", "/settings/color-scheme", strings.NewReader(form.Encode()))
+	req.Host = testHost
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Sec-Fetch-Site", "same-origin")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Errorf("want 422 for invalid color scheme, got %d", w.Code)
+	}
+}
+
+func TestHumanDuration(t *testing.T) {
+	for _, tc := range []struct {
+		d    time.Duration
+		want string
+	}{
+		{0, "0s"},
+		{999 * time.Millisecond, "0s"},
+		{45 * time.Second, "45s"},
+		{3 * time.Minute, "3m"},
+		{2 * time.Hour, "2h"},
+		{2*time.Hour + 30*time.Minute, "2h30m"},
+		{50 * time.Hour, "2d"},
+	} {
+		if got := humanDuration(tc.d); got != tc.want {
+			t.Errorf("humanDuration(%v) = %q, want %q", tc.d, got, tc.want)
+		}
+	}
+}
+
+func TestOrgActivityLess(t *testing.T) {
+	early := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	late := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	a := orgRow{LastActivity: &early}
+	b := orgRow{LastActivity: &late}
+	n := orgRow{LastActivity: nil}
+
+	if !orgActivityLess(a, b) || orgActivityLess(b, a) {
+		t.Errorf("earlier activity should sort before later")
+	}
+	// nil (never active) sorts oldest, so it comes before any real timestamp
+	// under the ascending comparator; dirLess flips this to newest-first.
+	if !orgActivityLess(n, a) || orgActivityLess(a, n) {
+		t.Errorf("nil LastActivity should sort before any real timestamp")
+	}
+	if orgActivityLess(n, orgRow{}) {
+		t.Errorf("nil vs nil should not sort strictly-before")
 	}
 }
 

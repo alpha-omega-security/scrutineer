@@ -3,10 +3,13 @@ package web
 import (
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strconv"
 	"time"
 
 	"scrutineer/internal/db"
+
+	"gorm.io/gorm"
 )
 
 // The handlers below let skills (and the browser UI) mutate a finding:
@@ -34,11 +37,21 @@ func (s *Server) apiPatchFinding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	source := sourceFromRequest(r)
-	for field, value := range body.Fields {
-		if err := db.WriteFindingField(s.DB, uint(id), field, value, source, body.By); err != nil {
-			writeAPIError(w, http.StatusUnprocessableEntity, err.Error())
-			return
+	fields := make([]string, 0, len(body.Fields))
+	for field := range body.Fields {
+		fields = append(fields, field)
+	}
+	sort.Strings(fields)
+	if err := s.DB.Transaction(func(tx *gorm.DB) error {
+		for _, field := range fields {
+			if err := db.WriteFindingField(tx, uint(id), field, body.Fields[field], source, body.By); err != nil {
+				return err
+			}
 		}
+		return nil
+	}); err != nil {
+		writeAPIError(w, http.StatusUnprocessableEntity, err.Error())
+		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }

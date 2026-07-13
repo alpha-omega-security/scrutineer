@@ -34,12 +34,12 @@ type ContainerRunner struct {
 	// claude-code (the historical default), so a bare ContainerRunner{}
 	// keeps working and no caller needs to set it until a second harness
 	// exists.
-	Harness          Harness
-	ProxyURL         string // http://user:token@host-or-gateway:port; "" disables egress
-	FullClone        bool
-	MaxTurns         int
-	AnthropicBaseURL string // passed as ANTHROPIC_BASE_URL env var to the container
-	HostGatewayIP    string // Docker/Podman IPv4 address for --add-host; falls back to "host-gateway"
+	Harness       Harness
+	ProxyURL      string // http://user:token@host-or-gateway:port; "" disables egress
+	FullClone     bool
+	MaxTurns      int
+	ModelBaseURL  string // model-API base URL override; the active harness decides how to pass it
+	HostGatewayIP string // Docker/Podman IPv4 address for --add-host; falls back to "host-gateway"
 	// ProfilesDir is the host directory containing docker/profiles/<name>/
 	// Dockerfile entries. When empty, profile resolution is skipped and
 	// every scan runs in the default Image.
@@ -68,7 +68,7 @@ type ContainerRunner struct {
 	// docker, so a bare ContainerRunner{} keeps shelling out to "docker".
 	Runtime ContainerRuntime
 	// SELinuxRelabel, when true, appends the ":z" relabel option to every host
-	// bind mount (/work, /claude-config, /src) so the container can access them
+	// bind mount (/work, /harness-state, /src) so the container can access them
 	// on an SELinux-enabled host. Without it, container_t is denied the host
 	// labels and every scan fails with EACCES on the clone and output. Resolved
 	// once at startup from the --selinux switch (auto/on/off); see bindMount for
@@ -83,6 +83,9 @@ type ContainerRunner struct {
 	// zero value keeps the host-proxy path (docker, rootful podman, and all
 	// non-hardened scans). See usesEgressSidecar.
 	Egress EgressSidecarConfig
+	// detectProfile lets tests stub profile auto-detection without a container
+	// runtime. nil means DetectProfile.
+	detectProfile func(ctx context.Context, rt ContainerRuntime, runnerImage, srcDir string, relabel bool) Profile
 }
 
 // EgressSidecarConfig carries what setupHardenedNetwork needs to launch the
@@ -122,7 +125,8 @@ func hardenedNetworkName(scanID uint) string {
 const proxySidecarPrefix = "scrutineer-proxy-"
 
 // proxySidecarPort is the fixed port the egress proxy sidecar listens on inside
-// its own network namespace. It does not collide with anything: each sidecar is
+// its own network namespace, bound to its --internal address only (see
+// SidecarListenFirstIface). It does not collide with anything: each sidecar is
 // alone in its container, and the scan reaches it by its --internal IP (e.g.
 // 10.89.1.2:3128), not on a shared host port.
 const proxySidecarPort = "3128"
@@ -229,18 +233,19 @@ func (d ContainerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Ev
 	absWork, _ := filepath.Abs(work)
 
 	profile, image := d.resolveProfile(ctx, sj.Profile, src, sj.SubPath, emit)
+	backend := HarnessName(d.harness())
 	if sj.RequiresProfile != "" && profile != sj.RequiresProfile {
 		got := profile
 		if got == "" {
 			got = "default"
 		}
-		return SkillResult{Commit: commit, Profile: profile}, fmt.Errorf("skill %q requires profile %q, resolved %q", sj.Name, sj.RequiresProfile, got)
+		return SkillResult{Commit: commit, Profile: profile, Backend: backend}, fmt.Errorf("skill %q requires profile %q, resolved %q", sj.Name, sj.RequiresProfile, got)
 	}
 	d.injectProfileGuide(profile, absWork, emit)
 
 	hnet, cleanupNetwork, err := d.setupHardenedNetwork(sj, image)
 	if err != nil {
-		return SkillResult{Commit: commit, Profile: profile}, err
+		return SkillResult{Commit: commit, Profile: profile, Backend: backend}, err
 	}
 	// Capture the sidecar's egress decisions (allowlist denials) into the scan
 	// record before teardown removes the ephemeral sidecar.
@@ -255,25 +260,27 @@ func (d ContainerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Ev
 	// the runtime treats a non-absolute -v source as a named volume (which
 	// rejects '/'), so the config dir must be absolutised like absWork.
 	var absConfig string
-	if sj.ClaudeConfigDir != "" {
-		absConfig, _ = filepath.Abs(sj.ClaudeConfigDir)
+	if sj.StateDir != "" {
+		absConfig, _ = filepath.Abs(sj.StateDir)
 		if err := os.MkdirAll(absConfig, dirPerm); err != nil {
-			return SkillResult{Commit: commit, Profile: profile}, fmt.Errorf("create claude config dir: %w", err)
+			return SkillResult{Commit: commit, Profile: profile, Backend: backend}, fmt.Errorf("create harness state dir: %w", err)
 		}
 	}
 	runBase := d.buildRunArgs(absWork, image, hnet, absConfig)
 
 	logLine := "$ " + d.Runtime.bin() + " run --rm " + image + " <skill:" + sj.Name + ">"
-	if d.AnthropicBaseURL != "" {
-		logLine += " [ANTHROPIC_BASE_URL=" + redactURLUserinfo(d.AnthropicBaseURL) + "]"
+	if d.ModelBaseURL != "" {
+		logLine += " [MODEL_BASE_URL=" + redactURLUserinfo(d.ModelBaseURL) + "]"
 	}
 	emit(Event{Kind: KindText, Text: logLine})
 
 	h := d.harness()
 	accountErrText := ""
+	var rateLimitReset *RateLimitInfo
 	wrappedEmit := func(e Event) {
-		if accountErrText == "" {
-			accountErrText = h.AccountErrorText(e.Text)
+		accountErrText = preferAccountErrText(accountErrText, h.AccountErrorText(e.Text))
+		if e.Kind == KindRateLimit && e.RateLimit != nil {
+			rateLimitReset = preferRateLimitReset(rateLimitReset, e.RateLimit)
 		}
 		emit(e)
 	}
@@ -282,7 +289,7 @@ func (d ContainerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Ev
 	if waitErr != nil && sj.ResumeSessionID != "" && sessionID == "" && accountErrText == "" {
 		if sj.ResumePrompt != "" {
 			emit(Event{Kind: KindText, Text: "resume of session " + sj.ResumeSessionID + " failed; " + resumePromptNoFreshFallbackText})
-			return SkillResult{Commit: commit, Profile: profile}, fmt.Errorf("%s exited: %w", d.Runtime.bin(), waitErr)
+			return SkillResult{Commit: commit, Profile: profile, Backend: backend}, fmt.Errorf("%s exited: %w", d.Runtime.bin(), waitErr)
 		}
 		// The resume produced no session event, so claude could not load the
 		// saved conversation (gone from the mounted store). Restart fresh in
@@ -294,7 +301,7 @@ func (d ContainerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Ev
 		hitMaxTurns, sessionID, waitErr = d.runContainerOnce(ctx, runBase, fresh, wrappedEmit)
 	}
 
-	res := SkillResult{Commit: commit, Profile: profile, SessionID: sessionID}
+	res := SkillResult{Commit: commit, Profile: profile, Backend: backend, SessionID: sessionID}
 	if outPath != "" {
 		res.Report = readCappedReport(outPath, emit)
 	}
@@ -303,7 +310,7 @@ func (d ContainerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Ev
 			return res, &MaxTurnsReachedError{}
 		}
 		if accountErrText != "" {
-			return res, &ClaudeAccountError{Detail: accountErrText}
+			return res, &AccountError{Detail: accountErrText, ResetAt: resumableReset(accountErrText, rateLimitReset)}
 		}
 		return res, fmt.Errorf("%s exited: %w", d.Runtime.bin(), waitErr)
 	}
@@ -317,7 +324,7 @@ func (d ContainerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Ev
 // event arrived, e.g. a --resume that could not find the conversation).
 func (d ContainerRunner) runContainerOnce(ctx context.Context, runBase []string, sj SkillJob, emit func(Event)) (hitMaxTurns bool, sessionID string, waitErr error) {
 	h := d.harness()
-	harnessArgs := append([]string{h.Binary()}, h.Args(sj, d.Effort, d.MaxTurns)...)
+	harnessArgs := append([]string{h.Binary()}, h.Args(sj, d.Effort, d.MaxTurns, d.ModelBaseURL)...)
 	runArgs := append(append([]string{}, runBase...), harnessArgs...)
 
 	cmd := exec.CommandContext(ctx, d.Runtime.bin(), runArgs...)
@@ -355,7 +362,7 @@ func (d ContainerRunner) runContainerOnce(ctx context.Context, runBase []string,
 // the in-container command. Split out of RunSkill to keep its cognitive
 // complexity manageable as new toggles (hardened mode, proxy, profiles)
 // accumulate.
-func (d ContainerRunner) buildRunArgs(absWork, image string, hnet hardenedNet, claudeConfigDir string) []string {
+func (d ContainerRunner) buildRunArgs(absWork, image string, hnet hardenedNet, harnessStateDir string) []string {
 	gwTarget := "host-gateway"
 	if d.Hardened {
 		// setupHardenedNetwork resolved the gateway once against this per-scan
@@ -380,7 +387,7 @@ func (d ContainerRunner) buildRunArgs(absWork, image string, hnet hardenedNet, c
 	)
 	// Harness-specific env: model-API credential, base URL, and the
 	// harness's own telemetry / autoupdate suppressors.
-	for _, e := range d.harness().Env(d.AnthropicBaseURL) {
+	for _, e := range d.harness().Env(d.ModelBaseURL) {
 		args = append(args, "-e", e)
 	}
 	if d.Runtime.supportsHostGatewayAddHost() {
@@ -388,21 +395,20 @@ func (d ContainerRunner) buildRunArgs(absWork, image string, hnet hardenedNet, c
 	}
 	if d.Runtime.needsKeepID() {
 		// Rootless podman remaps --user uid:gid through /etc/subuid, so writes
-		// to the bind mounts (/work output and the /claude-config resume store)
+		// to the bind mounts (/work output and the /harness-state resume store)
 		// would land owned by a subordinate uid. keep-id maps the container
 		// user back to the invoking host uid so output stays host-owned.
 		args = append(args, "--userns=keep-id")
 	}
-	if claudeConfigDir != "" {
+	if harnessStateDir != "" {
 		// Persist the harness's resumable session store outside the
 		// container. Without this it lands in the /tmp tmpfs and dies
 		// with the container, so a retry could not resume the agent
 		// loop. The bind mount stays writable even under hardened
-		// mode's --read-only rootfs. The /claude-config mountpoint name
-		// is historical; only the env var that points the harness at it
-		// varies (CLAUDE_CONFIG_DIR, CODEX_HOME, OPENCODE_CONFIG_DIR).
-		args = append(args, "-v", bindMount(claudeConfigDir, "/claude-config", d.SELinuxRelabel))
-		for _, e := range d.harness().StateEnv("/claude-config") {
+		// mode's --read-only rootfs. The mountpoint is fixed; each
+		// harness points its own state env var(s) at it via StateEnv.
+		args = append(args, "-v", bindMount(harnessStateDir, "/harness-state", d.SELinuxRelabel))
+		for _, e := range d.harness().StateEnv("/harness-state") {
 			args = append(args, "-e", e)
 		}
 	}
@@ -485,12 +491,39 @@ func (d ContainerRunner) resolveProfile(ctx context.Context, requested, src, sub
 		if subPath != "" {
 			srcDir = filepath.Join(src, subPath)
 		}
-		p = DetectProfile(ctx, d.Runtime, defaultImg, srcDir, d.SELinuxRelabel)
+		detect := d.detectProfile
+		if detect == nil {
+			detect = DetectProfile
+		}
+		p = detect(ctx, d.Runtime, defaultImg, srcDir, d.SELinuxRelabel)
 		if p.IsDefault() {
 			return "", defaultImg
 		}
 	}
 	img, err := p.EnsureImage(ctx, d.Runtime, d.ProfilesDir, defaultImg, emit)
+	// On a build failure, degrade along the FallbackProfile chain before giving
+	// up: a native profile that can't be built (runner base unreachable, ASan
+	// compile broke) should still run under its related base profile — whose
+	// PROFILE.md carries the "native extensions — escalate, do not skip" note —
+	// rather than the guide-less default runner, which silently under-covers.
+	// tried makes the loop terminate regardless of the registry data:
+	// TestBuiltinProfiles_registrySanity keeps the chain acyclic, but a repeat
+	// here would otherwise spin forever since every profile in a cycle keeps
+	// failing to build.
+	tried := map[string]bool{p.Name: true}
+	for err != nil && p.FallbackProfile != "" {
+		fb := ProfileByName(p.FallbackProfile)
+		if fb.IsDefault() {
+			break // unknown fallback name; TestBuiltinProfiles_registrySanity guards this
+		}
+		if tried[fb.Name] {
+			break // FallbackProfile cycle; registry-sanity guards this, but never spin
+		}
+		tried[fb.Name] = true
+		emit(Event{Kind: KindText, Text: "profile: " + p.Name + " build failed (" + err.Error() + "), falling back to " + fb.Name})
+		p = fb
+		img, err = p.EnsureImage(ctx, d.Runtime, d.ProfilesDir, defaultImg, emit)
+	}
 	if err != nil {
 		emit(Event{Kind: KindText, Text: "profile: " + p.Name + " build failed, using default: " + err.Error()})
 		return "", defaultImg
@@ -553,6 +586,8 @@ func (d ContainerRunner) injectProfileGuide(profile, absWork string, emit func(E
 func (d ContainerRunner) SkillDir(workRoot, name string) string {
 	return d.harness().SkillDir(workRoot, name)
 }
+
+func (d ContainerRunner) Backend() string { return HarnessName(d.harness()) }
 
 // harness returns the agent CLI to exec inside the container, defaulting
 // to claude-code when none is set so the zero ContainerRunner{} keeps its
@@ -792,12 +827,17 @@ func (d ContainerRunner) setupHardenedNetwork(sj SkillJob, image string) (harden
 }
 
 // startProxySidecar launches the egress proxy as a detached container on the
-// default (egress) network, then connects it to the per-scan --internal network
-// so the scan can reach it. It returns the host:port the scan points HTTPS_PROXY
-// at and a cleanup that force-removes the container. The sidecar self-gates its
-// listener on reaching the host skill API (see runProxy / WaitHostAPIReachable),
-// so a successful proxy-reach probe in verifyHardenedNetwork transitively proves
-// the whole scan -> sidecar -> host-API chain.
+// per-scan --internal network, then connects the default (egress) network as a
+// second leg. Internal-first ordering is load-bearing: it makes the internal
+// leg the sidecar's first interface, which is the one its listener binds to
+// (see SidecarListenFirstIface), keeping the proxy port unreachable from the
+// shared default bridge. The sidecar cannot reach the host skill API until the
+// egress leg attaches; its readiness probe polls through that window. It
+// returns the host:port the scan points HTTPS_PROXY at and a cleanup that
+// force-removes the container. The sidecar self-gates its listener on reaching
+// the host skill API (see runProxy / WaitHostAPIReachable), so a successful
+// proxy-reach probe in verifyHardenedNetwork transitively proves the whole
+// scan -> sidecar -> host-API chain.
 func (d ContainerRunner) startProxySidecar(sj SkillJob, network string) (endpoint string, cleanup func(), err error) {
 	noop := func() {}
 	if d.Egress.GatewayIP == "" {
@@ -811,14 +851,17 @@ func (d ContainerRunner) startProxySidecar(sj SkillJob, network string) (endpoin
 	// and pin the network; remove it first (no-op when absent).
 	rmName()
 
-	if out, e := exec.Command(d.Runtime.bin(), d.proxySidecarRunArgs(name)...).CombinedOutput(); e != nil {
+	if out, e := exec.Command(d.Runtime.bin(), d.proxySidecarRunArgs(name, network)...).CombinedOutput(); e != nil {
 		rmName() // a failed `run -d` can still leave a created container behind
 		return "", noop, fmt.Errorf("%s run sidecar: %w: %s", d.Runtime.bin(), e, strings.TrimSpace(string(out)))
 	}
 
-	if out, e := exec.Command(d.Runtime.bin(), "network", "connect", "--", network, name).CombinedOutput(); e != nil {
+	// The egress leg. `network connect` only works on netavark bridges, so pin
+	// the named default bridge rather than the rootless default (pasta), which
+	// rejects it ("pasta is not supported: invalid network mode").
+	if out, e := exec.Command(d.Runtime.bin(), "network", "connect", "--", "podman", name).CombinedOutput(); e != nil {
 		rmName()
-		return "", noop, fmt.Errorf("%s network connect %s: %w: %s", d.Runtime.bin(), network, e, strings.TrimSpace(string(out)))
+		return "", noop, fmt.Errorf("%s network connect podman: %w: %s", d.Runtime.bin(), e, strings.TrimSpace(string(out)))
 	}
 	// The --internal network runs no DNS, so the scan must reach the sidecar by
 	// its address on that network rather than by name.
@@ -849,31 +892,29 @@ func (d ContainerRunner) sidecarNetworkIP(name, network string) (string, error) 
 
 // proxySidecarRunArgs builds the detached `run` args for the egress proxy
 // sidecar: locked down (cap-drop ALL, read-only rootfs, no-new-privileges, a
-// small noexec /tmp tmpfs), on the default egress network with the host-gateway
-// alias wired to the resolved IPv4 so it reaches the host skill API, running
-// `scrutineer proxy` with its config passed via env. It deliberately runs the
+// small noexec /tmp tmpfs), on the per-scan --internal network with the
+// host-gateway alias wired to the resolved IPv4 so it reaches the host skill
+// API once its egress leg attaches, running `scrutineer proxy` with its config
+// passed via env. The --internal network MUST be the run-time network: that
+// makes it the sidecar's first interface, the one the SidecarListenFirstIface
+// listen keyword binds to; startProxySidecar connects the default (egress)
+// bridge afterwards, so the listener never faces it. It deliberately runs the
 // DEFAULT runner image (d.image()), which is guaranteed to carry the scrutineer
-// binary, not the per-scan profile image. It is NOT attached to the --internal
-// network here; startProxySidecar connects that leg after the container exists.
-// No --rm, so a sidecar that exits on an unreachable host API lingers long
-// enough for verifyHardenedNetwork to capture its logs.
-func (d ContainerRunner) proxySidecarRunArgs(name string) []string {
+// binary, not the per-scan profile image. No --rm, so a sidecar that exits on
+// an unreachable host API lingers long enough for verifyHardenedNetwork to
+// capture its logs.
+func (d ContainerRunner) proxySidecarRunArgs(name, network string) []string {
 	args := []string{
 		"run", "-d",
 		"--name", name,
-		// The sidecar is dual-homed: startProxySidecar attaches the per-scan
-		// --internal network to it after launch with `podman network connect`,
-		// which only works on a netavark bridge. The rootless default (pasta)
-		// rejects it ("pasta is not supported: invalid network mode"), so pin the
-		// default bridge for the egress leg rather than inheriting pasta.
-		"--network", "podman",
+		"--network", network,
 		"--cap-drop", "ALL",
 		"--security-opt", "no-new-privileges",
 		"--read-only",
 		"--tmpfs", "/tmp:rw,noexec,nosuid,size=16m",
 		"--add-host", HostGatewayAlias + ":" + d.Egress.GatewayIP,
 	}
-	for _, e := range EgressSidecarEnv(d.Egress, ":"+proxySidecarPort) {
+	for _, e := range EgressSidecarEnv(d.Egress, SidecarListenFirstIface+":"+proxySidecarPort) {
 		args = append(args, "-e", e)
 	}
 	return append(args, "--", d.image(), "scrutineer", "proxy")
@@ -883,7 +924,10 @@ func (d ContainerRunner) proxySidecarRunArgs(name string) []string {
 // container runner injects into the egress proxy sidecar. It is the single
 // source of truth for the host<->sidecar env contract: the runner sets these
 // (proxySidecarRunArgs) and `scrutineer proxy` reads them back, so both sides
-// must agree on the names. listen is the full listen address (e.g. ":3128").
+// must agree on the names. listen is the full listen address; its host may be
+// the SidecarListenFirstIface keyword, which the sidecar resolves to its own
+// --internal address at startup (the host cannot know it before the container
+// exists).
 func EgressSidecarEnv(cfg EgressSidecarConfig, listen string) []string {
 	return []string{
 		"SCRUTINEER_PROXY_TOKEN=" + cfg.Token,

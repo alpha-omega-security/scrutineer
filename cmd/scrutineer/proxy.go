@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"strings"
 	"time"
@@ -83,6 +84,25 @@ func envOr(getenv func(string) string, key, def string) string {
 	return def
 }
 
+// resolveListen turns the SidecarListenFirstIface keyword in the listen host
+// into the concrete IPv4 of the sidecar's first interface -- its per-scan
+// --internal leg -- so the listener never faces the default bridge the egress
+// leg is attached to. Any other listen value passes through untouched (manual
+// runs; a malformed one fails at bind time). A resolution failure is fatal:
+// falling back to all interfaces would silently re-open the probe surface the
+// keyword exists to remove. firstIfaceIPv4 is injected for tests.
+func resolveListen(listen string, firstIfaceIPv4 func() (string, error)) (string, error) {
+	host, port, err := net.SplitHostPort(listen)
+	if err != nil || host != worker.SidecarListenFirstIface {
+		return listen, nil
+	}
+	ip, err := firstIfaceIPv4()
+	if err != nil {
+		return "", fmt.Errorf("resolve %s listen address: %w", worker.SidecarListenFirstIface, err)
+	}
+	return net.JoinHostPort(ip, port), nil
+}
+
 // runProxy is the entrypoint for `scrutineer proxy`: the egress-proxy sidecar
 // the container runner attaches to a hardened scan's --internal network under
 // rootless podman. The scan container points HTTPS_PROXY at this
@@ -99,6 +119,9 @@ func runProxy(args []string) error {
 			return nil // usage already printed by Parse
 		}
 		return err
+	}
+	if cfg.listen, err = resolveListen(cfg.listen, worker.FirstIfaceIPv4); err != nil {
+		return fmt.Errorf("egress proxy refusing to start: %w", err)
 	}
 
 	if cfg.apiHost != "" && cfg.apiPort != "" {

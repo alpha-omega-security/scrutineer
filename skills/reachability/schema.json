@@ -155,6 +155,7 @@
         "boundary":   { "$ref": "#/$defs/markdown" },
         "validation": { "$ref": "#/$defs/markdown" },
         "prior_art":  { "$ref": "#/$defs/markdown" },
+        "discovered_via": { "type": "string", "enum": ["source", "issue-tracker", "advisory", "documentation"], "description": "How this finding was first identified. Folded into prior_art on ingest." },
         "reach":      { "$ref": "#/$defs/markdown" },
         "rating":     { "$ref": "#/$defs/markdown" }
       }

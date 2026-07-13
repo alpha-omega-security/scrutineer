@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/testutil"
 	"scrutineer/internal/worker"
 )
 
@@ -92,7 +93,7 @@ func seedRepoCache(t *testing.T, dataDir, url string) (commit1, commit2 string) 
 	}
 	run := func(args ...string) string {
 		cmd := exec.Command("git", append([]string{"-C", cacheSrc}, args...)...)
-		cmd.Env = testGitEnv()
+		cmd.Env = testutil.GitEnv()
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
@@ -201,7 +202,7 @@ func TestGitShowBlob_capsAtMaxBrowserBytes(t *testing.T) {
 	dir := t.TempDir()
 	run := func(args ...string) {
 		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-		cmd.Env = testGitEnv()
+		cmd.Env = testutil.GitEnv()
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
@@ -216,7 +217,7 @@ func TestGitShowBlob_capsAtMaxBrowserBytes(t *testing.T) {
 	run("add", "big.txt")
 	run("commit", "--quiet", "-m", "big")
 	cmd := exec.Command("git", "-C", dir, "rev-parse", "HEAD")
-	cmd.Env = testGitEnv()
+	cmd.Env = testutil.GitEnv()
 	headOut, err := cmd.Output()
 	if err != nil {
 		t.Fatal(err)

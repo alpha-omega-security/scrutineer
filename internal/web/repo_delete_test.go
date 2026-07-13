@@ -215,7 +215,7 @@ func TestRepoDelete_removesRepoAndAllLinkedData(t *testing.T) {
 func mkScanDirs(t *testing.T, dataDir string, id uint) (ws, cfg string) {
 	t.Helper()
 	ws = filepath.Join(dataDir, fmt.Sprintf("scan-%d", id))
-	cfg = filepath.Join(dataDir, "claude-config", fmt.Sprintf("scan-%d", id))
+	cfg = filepath.Join(dataDir, "harness-state", fmt.Sprintf("scan-%d", id))
 	if err := os.MkdirAll(ws, 0o755); err != nil {
 		t.Fatal(err)
 	}

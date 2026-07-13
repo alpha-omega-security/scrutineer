@@ -16,8 +16,11 @@ the rootless network backend.
 
 Under rootless podman `--hardened`, the scan container is attached to a per-scan
 `--internal` network with no route out. scrutineer starts a sidecar
-(`scrutineer proxy`, run from the **runner image**) on the default bridge network,
-then connects it to the `--internal` network too. That `--internal` network is
+(`scrutineer proxy`, run from the **runner image**) on that `--internal` network,
+then connects the default bridge network to it as its egress leg. Internal-first
+ordering lets the sidecar bind its listener to its **`--internal` address only**,
+so the proxy port is unreachable from the shared default bridge — other
+containers of the same user can't even probe it. That `--internal` network is
 created with `--disable-dns` — its embedded resolver can't forward external lookups
 and would shadow the sidecar's working one — so the scan resolves no names and
 points `HTTPS_PROXY` at the sidecar's **IP** on the network (`<ip>:3128`), dialing

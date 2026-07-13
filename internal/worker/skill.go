@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/repoconfig"
 	"scrutineer/internal/skills"
 )
 
@@ -19,6 +21,9 @@ const (
 	skillSchemaFile           = "schema.json"
 	schemaRepairMaxTurns      = 4
 	schemaRepairReportMaxSize = 4000
+	refusalAuditSkillName     = "security-deep-dive"
+	refusalAuditOutputFile    = "refusal_audit.json"
+	refusalAuditMaxTurns      = 3
 )
 
 // skillContext is the JSON document scrutineer writes to ./context.json in
@@ -49,6 +54,11 @@ type skillContextScrutineer struct {
 	// support). Empty means the repo root. Skills that walk files honour
 	// this; skills that query external APIs ignore it.
 	ScanSubPath string `json:"scan_subpath,omitempty"`
+	// ScanGroup identifies the parallel batch this scan belongs to. An audit
+	// skill passes it to /repositories/{id}/findings?scan_group=... to read
+	// what its siblings have already filed before reporting its own.
+	// Empty when the scan was not launched as part of a batch.
+	ScanGroup string `json:"scan_group,omitempty"`
 	// ForkOrg is the GitHub organisation the fork skill stages scanned
 	// repositories into. Absent when fork_org is unconfigured.
 	ForkOrg string `json:"fork_org,omitempty"`
@@ -56,6 +66,24 @@ type skillContextScrutineer struct {
 	// metadata lives (`.scrutineer/` by default). Always written so
 	// skills can build paths without re-applying the default.
 	MetadataDir string `json:"metadata_dir"`
+	// Rescan is present for diff-based rescans. It names the baseline and
+	// staged files a diff-aware skill should read.
+	Rescan *skillContextRescan `json:"rescan,omitempty"`
+	// ScanConfig is the operator-authored repository guidance. It is omitted
+	// entirely for repositories without a saved configuration.
+	ScanConfig *repoconfig.Config `json:"scan_config,omitempty"`
+}
+
+type skillContextRescan struct {
+	Mode                string `json:"mode"`
+	BaseScanID          uint   `json:"base_scan_id,omitempty"`
+	BaseCommit          string `json:"base_commit,omitempty"`
+	HeadCommit          string `json:"head_commit,omitempty"`
+	ThreatModelScanID   uint   `json:"threat_model_scan_id,omitempty"`
+	DiffFile            string `json:"diff_file,omitempty"`
+	ChangedFilesFile    string `json:"changed_files_file,omitempty"`
+	OldThreatModelFile  string `json:"old_threat_model_file,omitempty"`
+	CoverageMetadataKey string `json:"coverage_metadata_key,omitempty"`
 }
 
 // DefaultMetadataDir is the value used when scrutineer.yaml does not
@@ -117,6 +145,7 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 		if err := prepareLocalSrc(scan.Repository.LocalPath(), workRoot, emit); err != nil {
 			return "", fmt.Errorf("copy local source: %w", err)
 		}
+		scan.Commit = gitHead(filepath.Join(workRoot, "src"))
 	} else {
 		prepare := w.PrepareRepoSrc
 		if prepare == nil {
@@ -132,7 +161,10 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 		scan.Commit = cacheCommit
 		w.clearCloneError(scan)
 	}
-	if err := applyPathFilters(workRoot, &skill, emit); err != nil {
+	if err := w.prepareDiffRescan(ctx, scan, workRoot, emit); err != nil {
+		return "", err
+	}
+	if err := applyRepositoryPathFilters(workRoot, &skill, scan.Repository.ScanConfig, emit); err != nil {
 		return "", fmt.Errorf("apply path filters: %w", err)
 	}
 
@@ -164,16 +196,7 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 	}
 	w.applyResume(scan, &sj, emit)
 	res, err := w.Runner.RunSkill(ctx, sj, emit)
-	if res.SessionID != "" && res.SessionID != scan.SessionID {
-		scan.SessionID = res.SessionID
-	}
-	if res.Commit != "" {
-		scan.Commit = res.Commit
-	}
-	if res.Profile != "" && res.Profile != scan.Profile {
-		scan.Profile = res.Profile
-		w.DB.Model(scan).Update("profile", res.Profile)
-	}
+	w.applySkillResult(scan, res)
 	if err != nil {
 		if _, ok := errors.AsType[*MaxTurnsReachedError](err); ok && res.Report != "" {
 			w.parsePartialSkillReport(&skill, scan, res.Report, emit)
@@ -188,8 +211,32 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 		if err != nil {
 			return report, err
 		}
+		w.auditSkillRefusals(ctx, &skill, scan, sj, emit)
 	}
 	return report, nil
+}
+
+// applySkillResult writes back the fields RunSkill reports about the run
+// itself (as opposed to the skill's report) onto the scan row: session id
+// and commit onto the in-memory struct (persisted by wrap()'s closing Save),
+// and Profile/Backend to the DB immediately so a retry sees them even if the
+// scan later fails hard. Called from every RunSkill call site so the four
+// fields stay in one place.
+func (w *Worker) applySkillResult(scan *db.Scan, res SkillResult) {
+	if res.SessionID != "" && res.SessionID != scan.SessionID {
+		scan.SessionID = res.SessionID
+	}
+	if res.Commit != "" {
+		scan.Commit = res.Commit
+	}
+	if res.Profile != "" && res.Profile != scan.Profile {
+		scan.Profile = res.Profile
+		w.DB.Model(scan).Update("profile", res.Profile)
+	}
+	if res.Backend != "" && res.Backend != scan.Backend {
+		scan.Backend = res.Backend
+		w.DB.Model(scan).Update("backend", res.Backend)
+	}
 }
 
 // parsePartialSkillReport runs parseSkillOutput against a max-turns
@@ -222,22 +269,13 @@ func (w *Worker) repairSchemaReport(ctx context.Context, skill *db.Skill, scan *
 		return "", false
 	}
 
-	emit(Event{Kind: KindText, Text: fmt.Sprintf("schema: %s failed validation; asking claude to repair it", outputFile)})
+	emit(Event{Kind: KindText, Text: fmt.Sprintf("schema: %s failed validation; asking the agent to repair it", outputFile)})
 	repairJob := sj
 	repairJob.ResumeSessionID = scan.SessionID
 	repairJob.ResumePrompt = buildSchemaRepairPrompt(skill, detail, report)
 	repairJob.MaxTurns = schemaRepairMaxTurns
 	res, err := w.Runner.RunSkill(ctx, repairJob, emit)
-	if res.SessionID != "" && res.SessionID != scan.SessionID {
-		scan.SessionID = res.SessionID
-	}
-	if res.Commit != "" {
-		scan.Commit = res.Commit
-	}
-	if res.Profile != "" && res.Profile != scan.Profile {
-		scan.Profile = res.Profile
-		w.DB.Model(scan).Update("profile", res.Profile)
-	}
+	w.applySkillResult(scan, res)
 	if err != nil {
 		emit(Event{Kind: KindError, Text: fmt.Sprintf("schema: repair attempt for %s failed: %v; parsing original output", outputFile, err)})
 		return "", false
@@ -397,39 +435,64 @@ func (w *Worker) parseFindingsOutput(skill *db.Skill, scan *db.Scan, report stri
 		if db.SeverityAtLeast(f.Severity, worst) || worst == "" {
 			worst = f.Severity
 		}
-		f.LastSeenScanID = scan.ID
-		f.LastSeenCommit = scan.Commit
-		f.SeenCount = 1
 		seenThisScan[f.Fingerprint] = true
 
-		var existing db.Finding
-		err := w.DB.Where("repository_id = ? AND fingerprint = ?", scan.RepositoryID, f.Fingerprint).
-			Order("id").First(&existing).Error
-		if err == nil {
-			if uerr := w.reobserveFinding(&existing, f, scan); uerr != nil {
-				return uerr
-			}
+		wasCreated, perr := w.persistFinding(scan, f)
+		if perr != nil {
+			return perr
+		}
+		if wasCreated {
+			created++
+		} else {
 			observed++
-			continue
-		}
-		if cerr := w.DB.Create(f).Error; cerr != nil {
-			return fmt.Errorf("save finding: %w", cerr)
-		}
-		created++
-		if w.OnFindingCreated != nil {
-			w.OnFindingCreated(scan, f)
 		}
 	}
 
-	missed := w.markNotObserved(scan, seenThisScan)
+	missed := 0
+	if scan.RescanMode != db.ScanRescanModeDiff {
+		missed = w.markNotObserved(scan, seenThisScan)
+	}
+	retracted := w.markRetracted(scan, seenThisScan)
 
-	emit(Event{Kind: KindText, Text: fmt.Sprintf("parsed %d finding(s): %d new, %d re-observed, %d not-observed",
-		len(findings), created, observed, missed)})
+	emit(Event{Kind: KindText, Text: fmt.Sprintf("parsed %d finding(s): %d new, %d re-observed, %d not-observed, %d retracted",
+		len(findings), created, observed, missed, retracted)})
 
 	if db.SeverityAtLeast(worst, skill.FailOn) {
 		return &FailOnThresholdError{Worst: worst, Threshold: skill.FailOn}
 	}
 	return nil
+}
+
+// persistFinding writes one finding into the repository's finding set using
+// fingerprint dedup: a match re-observes the existing row, otherwise a new row
+// is created and OnFindingCreated fires. Shared by the end-of-scan report
+// ingestion and the streamed concurrent-finding log. On the dedup
+// branch f.ID is set to the existing row so callers can report the live id.
+func (w *Worker) persistFinding(scan *db.Scan, f *db.Finding) (created bool, err error) {
+	f.LastSeenScanID = scan.ID
+	f.LastSeenCommit = scan.Commit
+	f.SeenCount = 1
+
+	var existing db.Finding
+	lookup := w.DB.Where("repository_id = ? AND fingerprint = ?", scan.RepositoryID, f.Fingerprint).
+		Order("id").Limit(1).Find(&existing)
+	if lookup.Error != nil {
+		return false, fmt.Errorf("lookup existing finding: %w", lookup.Error)
+	}
+	if lookup.RowsAffected > 0 {
+		if uerr := w.reobserveFinding(&existing, f, scan); uerr != nil {
+			return false, uerr
+		}
+		f.ID = existing.ID
+		return false, nil
+	}
+	if cerr := w.DB.Create(f).Error; cerr != nil {
+		return false, fmt.Errorf("save finding: %w", cerr)
+	}
+	if w.OnFindingCreated != nil {
+		w.OnFindingCreated(scan, f)
+	}
+	return true, nil
 }
 
 // reobserveFinding handles the dedup branch in parseFindingsOutput:
@@ -438,21 +501,61 @@ func (w *Worker) parseFindingsOutput(skill *db.Skill, scan *db.Scan, report stri
 // Reference and history failures are logged but not fatal; the finding
 // row write itself does propagate so a real DB error stops the scan.
 func (w *Worker) reobserveFinding(existing, f *db.Finding, scan *db.Scan) error {
+	// A finding already last-seen in this same scan was streamed into the
+	// concurrent-finding log earlier in this run. Reconciling it from
+	// the final report must be idempotent: do not bump seen_count or write
+	// another observed-history row, or a streamed finding would count as
+	// seen twice by one scan.
+	sameScan := existing.LastSeenScanID == scan.ID
+
+	seenCount := existing.SeenCount + 1
+	if sameScan {
+		seenCount = existing.SeenCount
+	}
 	updates := map[string]any{
 		"last_seen_scan_id":   scan.ID,
 		"last_seen_commit":    scan.Commit,
-		"seen_count":          existing.SeenCount + 1,
+		"seen_count":          seenCount,
 		"missed_count":        0,
 		"last_missed_scan_id": 0,
 		"location":            f.Location,
 		"locations":           f.Locations,
 	}
+	if sameScan {
+		// The existing row is this run's own streamed preview, which may
+		// carry only the minimal fields the POST endpoint requires. The
+		// final report is the authoritative full version of the same
+		// finding, so parser-owned content is refreshed wholesale.
+		// Cross-scan re-observation deliberately keeps existing content
+		// (TestParseFindingsOutput_dedupesAcrossScans locks that in).
+		maps.Copy(updates, map[string]any{
+			"finding_id":   f.FindingID,
+			"sinks":        f.Sinks,
+			"title":        f.Title,
+			"severity":     f.Severity,
+			"confidence":   f.Confidence,
+			"cwe":          f.CWE,
+			"affected":     f.Affected,
+			"reachability": f.Reachability,
+			"quality_tier": f.QualityTier,
+			"trace":        f.Trace,
+			"boundary":     f.Boundary,
+			"validation":   f.Validation,
+			"prior_art":    f.PriorArt,
+			"reach":        f.Reach,
+			"rating":       f.Rating,
+			"dup_check":    f.DupCheck,
+		})
+	}
 
 	var statusRestore string
 	if existing.Status == db.FindingRejected {
 		var lastStatus db.FindingHistory
-		if err := w.DB.Where("finding_id = ? AND field = ?", existing.ID, "status").
-			Order("id desc").First(&lastStatus).Error; err == nil {
+		lastStatusLookup := w.DB.Where("finding_id = ? AND field = ?", existing.ID, "status").
+			Order("id desc").Limit(1).Find(&lastStatus)
+		if lastStatusLookup.Error != nil {
+			w.Log.Warn("lookup finding status history", "finding", existing.ID, "scan", scan.ID, "err", lastStatusLookup.Error)
+		} else if lastStatusLookup.RowsAffected > 0 {
 			if lastStatus.Source == db.SourceSystem {
 				statusRestore = lastStatus.OldValue
 				updates["status"] = statusRestore
@@ -474,6 +577,9 @@ func (w *Worker) reobserveFinding(existing, f *db.Finding, scan *db.Scan) error 
 	}
 	if err := w.upsertFindingReferences(existing.ID, f.References); err != nil {
 		w.Log.Warn("upsert finding references", "finding", existing.ID, "scan", scan.ID, "err", err)
+	}
+	if sameScan {
+		return nil
 	}
 	if err := w.DB.Create(&db.FindingHistory{
 		FindingID: existing.ID,
@@ -662,6 +768,37 @@ func (w *Worker) hasEverBeenReportedOrAcknowledged(findingID uint) bool {
 	return count > 0
 }
 
+// markRetracted flags findings this scan streamed into the concurrent-finding
+// log but then left out of its final report.json. The row is kept — a sibling
+// may have stood down citing it, so deleting would lose the bug from both scans
+// — but a `retracted` history row records that the scan did not confirm it in
+// the end, so it is no longer indistinguishable from a confirmed finding. Only
+// rows this scan both created and last saw are considered; a finding a sibling
+// re-observed since stays live under that sibling.
+func (w *Worker) markRetracted(scan *db.Scan, seen map[string]bool) int {
+	var streamed []db.Finding
+	w.DB.Where("scan_id = ? AND last_seen_scan_id = ?", scan.ID, scan.ID).Find(&streamed)
+
+	retracted := 0
+	for _, f := range streamed {
+		if seen[f.Fingerprint] {
+			continue
+		}
+		if err := w.DB.Create(&db.FindingHistory{
+			FindingID: f.ID,
+			Field:     "retracted",
+			NewValue:  fmt.Sprintf("scan %d @ %s", scan.ID, scan.Commit),
+			Source:    db.SourceTool,
+			By:        scan.SkillName,
+		}).Error; err != nil {
+			w.Log.Error("mark finding retracted", "finding", f.ID, "err", err)
+			continue
+		}
+		retracted++
+	}
+	return retracted
+}
+
 // parseMaintainersOutput upserts Maintainer rows and links them to the
 // scanned repo. Mirrors the legacy doMaintainerAnalysis logic so the
 // maintainers skill and the old Go handler stay interchangeable.
@@ -734,8 +871,24 @@ func (w *Worker) parseMaintainersOutput(scan *db.Scan, report string, emit func(
 // Emits a one-line scan-log entry with the count when at least one file
 // is removed.
 func applyPathFilters(workRoot string, skill *db.Skill, emit func(Event)) error {
+	return applyPathFiltersWithSkips(workRoot, skill, nil, emit)
+}
+
+// applyRepositoryPathFilters layers the repository's configured skip patterns
+// on top of the skill's filters. A repository cannot use this setting to bring
+// files back that a skill or the builtin skip list has excluded.
+func applyRepositoryPathFilters(workRoot string, skill *db.Skill, rawConfig string, emit func(Event)) error {
+	cfg, err := repoconfig.Parse(rawConfig)
+	if err != nil {
+		return fmt.Errorf("parse repository scan config: %w", err)
+	}
+	return applyPathFiltersWithSkips(workRoot, skill, cfg.Skip, emit)
+}
+
+func applyPathFiltersWithSkips(workRoot string, skill *db.Skill, repositorySkips []string, emit func(Event)) error {
 	paths := skills.SplitPatterns(skill.Paths)
 	ignorePaths := skills.SplitPatterns(skill.IgnorePaths)
+	ignorePaths = append(ignorePaths, repositorySkips...)
 	src := filepath.Join(workRoot, "src")
 	if _, err := os.Stat(src); err != nil {
 		if os.IsNotExist(err) {
@@ -743,8 +896,20 @@ func applyPathFilters(workRoot string, skill *db.Skill, emit func(Event)) error 
 		}
 		return err
 	}
+	// Unconditional strip of agent-instruction files (CLAUDE.md, AGENTS.md,
+	// .claude/, .cursor/, ...) so a hostile repo cannot inject standing
+	// instructions into the auditing agent. Runs before the paths filter
+	// because scrutineer.paths bypasses BuiltinSkipPaths and must not be
+	// able to opt these back in. See threatmodel.md T5.
+	stripped, err := stripAgentDirectives(src)
+	if err != nil {
+		return fmt.Errorf("strip agent directives: %w", err)
+	}
+	if stripped > 0 {
+		emit(Event{Kind: KindText, Text: fmt.Sprintf("%d agent-directive item(s) stripped from ./src", stripped)})
+	}
 	excluded := 0
-	err := filepath.WalkDir(src, func(p string, d os.DirEntry, err error) error {
+	err = filepath.WalkDir(src, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -812,6 +977,12 @@ func validateSkillPaths(name, outputFile string) error {
 		return fmt.Errorf("skill output_file %q contains path separators", outputFile)
 	}
 	return nil
+}
+
+// ValidateSkillPaths exposes the same path checks production scans apply before
+// staging a skill. Eval harnesses call this before invoking StageWorkspace.
+func ValidateSkillPaths(name, outputFile string) error {
+	return validateSkillPaths(name, outputFile)
 }
 
 // stageSkill writes the skill's files into dst so claude-code discovers them
@@ -886,7 +1057,7 @@ func mirrorScripts(src, workRoot string) error {
 	if err := os.RemoveAll(dst); err != nil {
 		return err
 	}
-	return copyTree(srcScripts, dst)
+	return CopyTree(srcScripts, dst)
 }
 
 // renderSkillMD rebuilds a SKILL.md from the stored fields. The frontmatter
@@ -973,6 +1144,13 @@ func stageContext(workRoot, apiBase, forkOrg, metadataDir string, scan *db.Scan,
 			MetadataDir: metadataDir,
 		},
 	}
+	config, err := repoconfig.Parse(repo.ScanConfig)
+	if err != nil {
+		return fmt.Errorf("parse repository scan config: %w", err)
+	}
+	if !config.Empty() {
+		ctx.Scrutineer.ScanConfig = &config
+	}
 	if scan.SkillID != nil {
 		ctx.Scrutineer.SkillID = *scan.SkillID
 	}
@@ -988,6 +1166,27 @@ func stageContext(workRoot, apiBase, forkOrg, metadataDir string, scan *db.Scan,
 	if scan.SubPath != "" {
 		ctx.Scrutineer.ScanSubPath = scan.SubPath
 	}
+	if scan.ScanGroup != "" {
+		ctx.Scrutineer.ScanGroup = scan.ScanGroup
+	}
+	if scan.RescanMode == db.ScanRescanModeDiff {
+		rc := &skillContextRescan{
+			Mode:                db.ScanRescanModeDiff,
+			BaseCommit:          scan.DiffBaseCommit,
+			HeadCommit:          scan.Commit,
+			DiffFile:            "diff.patch",
+			ChangedFilesFile:    "changed_files.json",
+			CoverageMetadataKey: "coverage",
+		}
+		if scan.DiffBaseScanID != nil {
+			rc.BaseScanID = *scan.DiffBaseScanID
+		}
+		if scan.DiffThreatModelScanID != nil {
+			rc.ThreatModelScanID = *scan.DiffThreatModelScanID
+			rc.OldThreatModelFile = "old_threat_model.json"
+		}
+		ctx.Scrutineer.Rescan = rc
+	}
 	b, err := json.MarshalIndent(ctx, "", "  ")
 	if err != nil {
 		return err
@@ -1002,7 +1201,14 @@ func stageContext(workRoot, apiBase, forkOrg, metadataDir string, scan *db.Scan,
 // threshold; the error wrapping stays here so failures still name the
 // staging step.
 func (w *Worker) stageWorkspace(workRoot, skillDir string, scan *db.Scan, skill *db.Skill) error {
-	if err := stageContext(workRoot, w.APIBase, w.ForkOrg, w.metadataDir(), scan, &scan.Repository); err != nil {
+	return StageWorkspace(workRoot, skillDir, w.APIBase, w.ForkOrg, w.metadataDir(), scan, skill)
+}
+
+// StageWorkspace writes the same workspace side files as a production skill
+// scan: context.json, an optional threat-model override, the rendered skill
+// bundle, and optional import payloads.
+func StageWorkspace(workRoot, skillDir, apiBase, forkOrg, metadataDir string, scan *db.Scan, skill *db.Skill) error {
+	if err := stageContext(workRoot, apiBase, forkOrg, metadataDir, scan, &scan.Repository); err != nil {
 		return fmt.Errorf("stage context: %w", err)
 	}
 	if err := stageThreatModel(workRoot, scan.SubPath, scan.Repository.ThreatModel); err != nil {
@@ -1046,7 +1252,7 @@ func copyAux(src, dst string) error {
 		if name == "SKILL.md" || name == "schema.json" {
 			continue
 		}
-		if err := copyTree(filepath.Join(src, name), filepath.Join(dst, name)); err != nil {
+		if err := CopyTree(filepath.Join(src, name), filepath.Join(dst, name)); err != nil {
 			return err
 		}
 	}

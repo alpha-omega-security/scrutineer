@@ -27,10 +27,11 @@ These ship in `skills/` and are loaded with `-skills ./skills`. The `triage` ski
 | `ingest` | Normalizes an externally-produced security report in an arbitrary format into findings. Runs when `/v1/import` cannot recognise the payload; the raw report is staged at `import/report`. |
 | `threat-model` | Derives the project's security contract from source and docs: components, entry-point trust table, claimed and disclaimed properties, and disposition labels. Loaded by `security-deep-dive` so it does not re-derive boundaries per run. |
 | `security-deep-dive` | The model-driven audit. Inventories trust boundaries and sinks, then runs a six-step trace/boundary/validate/prior-art/reach/rate analysis on each. |
+| `advisory-deep-dive` | Re-audits every past GHSA/CVE advisory against its fix commit for three failure modes: a bypass of the fix, an incomplete fix that left a path open, or the same class of bug in sibling code the patch never touched. A `security-deep-dive` scoped exclusively to the advisory space; `requires` the `advisories` cache. |
 | `finding-dedup` | Compares open findings in one repository and marks findings that describe the same underlying vulnerability as duplicates. |
 | `reachability` | Traces sinks already found in this app's dependencies through the app's own code to see which are reachable from its trust boundaries. |
 | `exposure` | For one (finding, dependent) pair, decides whether the dependent's published code actually reaches the upstream library finding. Emits one CSAF 2.0 product_status verdict so scrutineer can record affected vs not_affected and stamp the right VEX justification. |
-| `verify` | Re-checks one finding against current HEAD and records reproduces / fixed / cannot-reproduce. |
+| `verify` | Re-checks one finding against current HEAD and records confirmed / fixed / inconclusive / deferred. |
 | `revalidate` | Cheap, read-only classifier. Reads a finding's prose plus `git log` over its location and emits `true_positive`/`false_positive`/`already_fixed`/`uncertain`, with an optional adjusted severity. Auto-enqueued for High/Critical findings from `security-deep-dive` and for every imported finding so the human queue is pre-sorted. A `true_positive` verdict on a High/Critical finding chains automatically to `verify`, completing the triage pipeline for imports and high-severity scan output. |
 | `breaking-change` | Static breaking-change check: reads the finding's suggested-fix diff and the top dependents list, identifies public API surface changes, and records a verdict (`breaking`/`non_breaking`/`unknown`) with a rationale and the list of affected dependents. Read-only; reasons from the diff and dependent metadata. |
 | `release-watch` | After a finding reaches `fixed`, lists the upstream's releases and looks for one that contains `fix_commit` (or whose tag matches `fix_version`). Records the release tag, URL, and timestamp on the finding so the lifecycle visibly ends at a shipped version rather than at the commit landing. The triage skill auto-enqueues this for every `fixed` finding on each repo run. |
@@ -124,7 +125,7 @@ Declaring `scrutineer.paths` replaces this skip list entirely: the skill sees on
 | Kind | Stored as |
 |---|---|
 | `freeform` or empty | Raw text on the scan row. No further parsing. |
-| `findings` | Parsed into Finding rows with fingerprint dedupe against prior scans. |
+| `findings` | Parsed into Finding rows with fingerprint dedupe against prior scans. An optional per-finding `dup_check` sentence (the agent's reasoning on why it is distinct from siblings filed under the same `scan_group`) is carried through for the dedup judge. |
 | `repo_metadata` | Repository row fields (description, languages, license, stars, archived). |
 | `repo_overview` | Brief summary stored for other skills to read. |
 | `packages` | Package rows. |
@@ -156,7 +157,7 @@ When a scan starts, the worker creates `./data/work/scan-{id}/` with:
     ./scripts/                   copy of the skill's scripts/, so `bash scripts/foo.sh` resolves from cwd
     ./report.json                the skill writes its output here
 
-`./src/` is copied from a per-URL persistent clone under `./data/work/repo-cache/<sha256(url)>/src/` so the second scan of the same repository only fetches the delta. The cache is always full-history; the code browser at `/repositories/{id}/blob/{commit}/{path}` resolves historical commits against it via `git show`.
+`./src/` is copied from a per-URL persistent clone under `./data/work/repo-cache/<sha256(url)>/src/` so the second scan of the same repository only fetches the delta. The cache is shallow by default and is deepened on demand when the code browser needs to resolve a historical commit for `/repositories/{id}/blob/{commit}/{path}`.
 
 The worker then runs `claude -p "Use the {name} skill in this workspace"` with the working directory set to the workspace root. Anything the skill writes outside `./report.json` is discarded when the workspace is cleaned. Write intermediate files under `./` rather than `/tmp`; concurrent scans share `/tmp` in the container runner.
 
@@ -185,13 +186,31 @@ The worker then runs `claude -p "Use the {name} skill in this workspace"` with t
     "dependent_id": 11,
     "scan_ref": "release/2.x",
     "scan_subpath": "packages/core",
+    "scan_group": "6b1f…",
+    "rescan": {
+      "mode": "diff",
+      "base_scan_id": 41,
+      "base_commit": "1111111",
+      "head_commit": "abc123",
+      "diff_file": "diff.patch",
+      "changed_files_file": "changed_files.json",
+      "threat_model_scan_id": 40,
+      "old_threat_model_file": "old_threat_model.json",
+      "coverage_metadata_key": "coverage"
+    },
     "fork_org": "your-security-forks",
-    "metadata_dir": ".scrutineer/"
+    "metadata_dir": ".scrutineer/",
+    "scan_config": {
+      "focus_areas": [{"name": "parser", "paths": ["src/parse/**"], "surface": "accepts arbitrary bytes"}],
+      "known_bugs": ["GHSA-xxxx-yyyy"],
+      "attack_surface": "stdin is attacker controlled",
+      "skip": ["tests/**"]
+    }
   }
 }
 ```
 
-`finding_id` is only present for finding-scoped skills (`verify`, `revalidate`, `breaking-change`, `disclose`, `patch`, `mitigate`, `public-issue`, `release-watch`, `exposure`). `dependent_id` is only set on `exposure` runs and points to the dependent whose code is under audit; `./src` is then a copy of that dependent's clone, not of the finding's repository. `scan_ref` is empty when the scan is on the default branch. `scan_subpath` is set when the operator scoped the scan to a monorepo sub-folder; skills that walk source honour it, skills that query external APIs by repository URL ignore it. `fork_org` is absent unless `-fork-org` is configured. `metadata_dir` is the directory inside a staging repo where scrutineer keeps its per-project metadata (`.scrutineer/` by default); operators with a different consortium-flavoured convention set `metadata_dir` in scrutineer.yaml. `packages` is a convenience copy of the package rows when the `packages` skill has already run; otherwise it is omitted.
+`finding_id` is only present for finding-scoped skills (`verify`, `revalidate`, `breaking-change`, `disclose`, `patch`, `mitigate`, `public-issue`, `release-watch`, `exposure`). `dependent_id` is only set on `exposure` runs and points to the dependent whose code is under audit; `./src` is then a copy of that dependent's clone, not of the finding's repository. `scan_ref` is empty when the scan is on the default branch. `scan_subpath` is set when the operator scoped the scan to a monorepo sub-folder; skills that walk source honour it, skills that query external APIs by repository URL ignore it. `scan_group` is set when the scan is one of a parallel batch (Scan-all-subprojects, a single New-scan run, or a Diff rescan group); an audit skill passes it to `/repositories/{id}/findings?scan_group=...` to read what its siblings have already filed before reporting its own, and is absent otherwise. `rescan` is present only for diff rescans; the worker stages `diff.patch`, `changed_files.json`, and, when available, `old_threat_model.json` in the workspace root. `fork_org` is absent unless `-fork-org` is configured. `metadata_dir` is the directory inside a staging repo where scrutineer keeps its per-project metadata (`.scrutineer/` by default); operators with a different consortium-flavoured convention set `metadata_dir` in scrutineer.yaml. `scan_config` is present only when an analyst saved repository guidance; `skip` patterns are already removed from `./src`, and audit skills use its focus areas, known bugs, and attack-surface statement as review context. `packages` is a convenience copy of the package rows when the `packages` skill has already run; otherwise it is omitted.
 
 ## schema.json
 

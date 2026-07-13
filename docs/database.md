@@ -46,6 +46,7 @@ The central entity. One row per git URL.
 | clone_error | text | Last clone/fetch failure message; non-empty means the repo is currently unreachable. Cleared on next successful clone. |
 | disk_bytes | integer | Cached on-disk size of the persistent clone cache, so the repo list renders the disk badge from a column instead of walking each repo's cache per row. Refreshed by the worker after each scan and backfilled once at startup; 0 for local repos and remote repos not scanned since the column was added. |
 | threat_model | text | Operator's working-copy threat-model JSON. When set, the worker writes it to `./threat_model.json` in every skill workspace and `security-deep-dive` loads it instead of fetching the latest `threat-model` scan. Edited via the threat-model workbench tab. Empty = no override. |
+| scan_config | text | Analyst-authored YAML with `focus_areas`, `known_bugs`, `attack_surface`, and `skip` patterns. Validated by the repository editor, staged as `scrutineer.scan_config` in every skill workspace, and its `skip` patterns layer onto each skill's path-filter deny list. Empty = no repository-specific guidance. |
 | created_at | datetime | |
 | updated_at | datetime | |
 
@@ -64,6 +65,7 @@ One row per skill execution or external import. `skill_name` / `skill_version` p
 | effort | text | Claude `--effort` level (`low`–`max`) snapshotted from the runtime setting at enqueue. Empty on legacy rows; the runner falls back to its configured default. |
 | skill_id | integer FK | References `skills.id`. Null for legacy non-skill rows. |
 | skill_version | integer | Version of the skill at run time; the skill row's `version` bumps on every edit so older scans stay readable. |
+| skill_schema_version | integer | Snapshot of the skill frontmatter `metadata.scrutineer.version` at enqueue time. Used by the benchmark page to attribute expected-finding results to the report schema/version the skill was asked to emit. |
 | skill_name | text | Denormalised skill name for UI display. |
 | finding_id | integer FK | Set when the scan is finding-scoped (verify/patch/disclose/exposure). References `findings.id`. |
 | dependent_id | integer FK | Set on `exposure` scans only. References `dependents.id`; identifies which downstream consumer the skill is auditing for reachability of the upstream finding. |
@@ -72,7 +74,15 @@ One row per skill execution or external import. `skill_name` / `skill_version` p
 | ref | text | Git ref to checkout after cloning. Empty means the default branch. |
 | skills_repo_sha | text | Commit of `-skills-repo` resolved at startup and stamped on every skill scan. Empty when `-skills-repo` is unset or for `import` scans. |
 | sub_path | text | Scopes code analysis to a sub-folder of the clone (monorepo packages). Empty means repo root. |
+| rescan_mode | text | `full` for ordinary scans, `diff` for scans that compare the current commit against a baseline. Requested diff scans can fall back to `full` when no baseline exists or the diff is too large. |
+| diff_base_scan_id | integer FK | Baseline scan chosen for a diff rescan, or the caller-pinned baseline. References `scans.id`. Null for full scans and for diff requests that fall back before a baseline is resolved. |
+| diff_base_commit | text | Baseline commit used to generate `diff.patch` and `changed_files.json`. Empty for full scans. |
+| diff_threat_model_scan_id | integer FK | Prior `threat-model` scan staged as `old_threat_model.json` for a diff-aware run, when one is available. |
+| diff_stats | text | JSON metadata for the generated diff: base/head commits, changed-file count, patch size, file statuses, staged file names, and limits. |
+| coverage | text | JSON coverage metadata. Diff scans record requested versus actual mode and fallback reasons; threat-model scans also record whether the repository working model was updated or skipped for a small diff. |
+| scan_group | text | Groups a cohort of scans launched as one batch (Scan-all-subprojects, a single New-scan run, or a Diff rescan group). Each sibling streams a finding to `POST /repositories/{id}/findings` the moment it confirms it and reads `GET /repositories/{id}/findings?scan_group=...` before reporting, so an in-flight skill sees what a sibling has filed so far — not only after that sibling finishes — and can avoid re-filing it. Empty when not part of a batch. |
 | profile | text | Runner profile that ran the scan (e.g. `php`). Empty = the default runner image. Set explicitly via `?profile=` or auto-detected from the clone by `brief` before launch; persisted so retries reuse the choice. |
+| backend | text | Agent CLI (`-backend`) that ran the scan: `claude` or `codex`. Stamped by the worker so a retry after switching `-backend` starts fresh instead of passing one harness's session id to another's resume command. Empty on rows predating the column or that never reached the runner. |
 | commit | text | Git HEAD at scan time. |
 | started_at | datetime | |
 | finished_at | datetime | |
@@ -85,9 +95,26 @@ One row per skill execution or external import. `skill_name` / `skill_version` p
 | max_turns_hit | boolean | True when the scan is `done` with partial output because Claude hit the configured max-turns cap. Such scans keep their session id so Retry can resume. |
 | prompt | text | Activation prompt sent to claude. The skill body lives in the Skill row, not here. |
 | report | text | The skill's primary output. JSON for parsed kinds, freeform for everything else. On a fix-validation anchor (`baseline_scan_id` set) it is replaced, once the scan finalises, by the JSON validation report: the resolved/surviving/new fingerprint diff against the baseline plus the finding-scoped verify verdicts. |
+| refusal_audit | text | Structured post-report `security-deep-dive` follow-up listing analysis the agent declined or skipped. Kept separate from the primary report. |
+| refusal_audit_warning | boolean | Denormalized flag set when `refusal_audit` reports a refusal or one or more skipped paths; used to flag incomplete coverage in scan lists. |
 | log | text | Line-by-line transcript of the scan. Streamed to the UI via SSE. |
 | error | text | Error message if the scan failed. |
 | findings_count | integer | Denormalised count of findings parsed from the report. |
+| created_at | datetime | |
+| updated_at | datetime | |
+
+## expected_findings
+
+Operator-supplied benchmark targets for a repository. Each row is a known file/CWE pair that model-backed scans should rediscover. Matching ignores line numbers, treats CWE case-insensitively, and currently compares Medium+ findings for benchmark metrics.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | integer PK | |
+| repository_id | integer FK | References `repositories.id`. Cascade delete. Part of the unique key with `file` and `cwe`. |
+| file | text | Repository-root-relative path, without line number. Absolute paths and parent-directory traversal are rejected by the write path. Part of the unique key with `repository_id` and `cwe`. |
+| cwe | text | Normalised CWE identifier, e.g. `CWE-79`. Part of the unique key with `repository_id` and `file`. |
+| cve | text | Optional external CVE identifier for operator context. Not used for matching. |
+| note | text | Optional free-text note explaining the expected target. |
 | created_at | datetime | |
 | updated_at | datetime | |
 
@@ -180,6 +207,7 @@ One row per vulnerability. Lifecycle columns are mutated through `db.WriteFindin
 | prior_art | text | Step 4. |
 | reach | text | Step 5: dependent exposure. |
 | rating | text | Step 6: severity justification. |
+| dup_check | text | The audit agent's one-sentence rationale for why this finding is distinct from siblings already filed under the same `scan_group`: which it compared against and why this is not a duplicate. The dedup judge weighs it alongside fingerprint matching. Empty for skills that do not emit it. |
 | created_at | datetime | |
 | updated_at | datetime | |
 
@@ -422,6 +450,7 @@ User-uploaded CycloneDX or SPDX documents. Packages are replaced wholesale on re
 | spec_version | text | e.g. `1.5`. |
 | raw | blob | The original document bytes. |
 | package_count | integer | Denormalised count of components. |
+| import_pending | boolean | True for a newly parsed upload until the operator confirms repository resolution. Legacy and confirmed uploads are false. |
 | created_at | datetime | |
 | updated_at | datetime | |
 

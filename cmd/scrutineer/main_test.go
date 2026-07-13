@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,25 +17,27 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"scrutineer/internal/config"
+	"scrutineer/internal/web"
 	"scrutineer/internal/worker"
 )
 
 func fullConfig() *config.Config {
 	return &config.Config{
-		Addr:             "0.0.0.0:9090",
-		Data:             "/var/lib/scrutineer",
-		Effort:           "medium",
-		NoContainer:      new(true),
-		Hardened:         new(true),
-		RunnerImage:      "custom:v1",
-		SkillsRepo:       "https://example.com/skills.git",
-		Skills:           []string{"/etc/skills"},
-		Concurrency:      8,
-		Clone:            "full",
-		ScanTimeout:      "30m",
-		MaxTurns:         200,
-		AnthropicBaseURL: "https://proxy.corp.com/v1",
-		ForkOrg:          "fork-central",
+		Addr:         "0.0.0.0:9090",
+		Data:         "/var/lib/scrutineer",
+		Effort:       "medium",
+		Backend:      "codex",
+		NoContainer:  new(true),
+		Hardened:     new(true),
+		RunnerImage:  "custom:v1",
+		SkillsRepo:   "https://example.com/skills.git",
+		Skills:       []string{"/etc/skills"},
+		Concurrency:  8,
+		Clone:        "full",
+		ScanTimeout:  "30m",
+		MaxTurns:     200,
+		ModelBaseURL: "https://proxy.corp.com/v1",
+		ForkOrg:      "fork-central",
 	}
 }
 
@@ -50,6 +53,9 @@ func TestFlagsMerge_configFillsUnset(t *testing.T) {
 	}
 	if !f.noContainer {
 		t.Errorf("noContainer not applied")
+	}
+	if f.backend != "codex" {
+		t.Errorf("backend = %q, want codex", f.backend)
 	}
 	if !f.hardened {
 		t.Errorf("hardened not applied")
@@ -69,8 +75,8 @@ func TestFlagsMerge_configFillsUnset(t *testing.T) {
 	if f.maxTurns != 200 {
 		t.Errorf("maxTurns = %d", f.maxTurns)
 	}
-	if f.anthropicBaseURL != cfg.AnthropicBaseURL {
-		t.Errorf("anthropicBaseURL = %q, want %q", f.anthropicBaseURL, cfg.AnthropicBaseURL)
+	if f.modelBaseURL != cfg.ModelBaseURL {
+		t.Errorf("modelBaseURL = %q, want %q", f.modelBaseURL, cfg.ModelBaseURL)
 	}
 	if f.forkOrg != cfg.ForkOrg {
 		t.Errorf("forkOrg = %q, want %q", f.forkOrg, cfg.ForkOrg)
@@ -81,8 +87,11 @@ func TestFlagsMerge_cliFlagWins(t *testing.T) {
 	cfg := fullConfig()
 	f := &flags{
 		addr: "127.0.0.1:8080", cloneMode: "shallow", concurrency: 2,
-		anthropicBaseURL: "https://my-flag.example.com/v1",
-		set:              map[string]bool{"addr": true, "clone": true, "concurrency": true, "anthropic-base-url": true},
+		modelBaseURL: "https://my-flag.example.com/v1",
+		set: map[string]bool{
+			"addr": true, "clone": true, "concurrency": true,
+			"model-base-url": true,
+		},
 	}
 	f.merge(cfg)
 	if f.addr != "127.0.0.1:8080" {
@@ -98,8 +107,8 @@ func TestFlagsMerge_cliFlagWins(t *testing.T) {
 	if f.effort != cfg.Effort {
 		t.Errorf("effort = %q, want %q", f.effort, cfg.Effort)
 	}
-	if f.anthropicBaseURL != "https://my-flag.example.com/v1" {
-		t.Errorf("anthropicBaseURL overridden despite explicit flag: %q", f.anthropicBaseURL)
+	if f.modelBaseURL != "https://my-flag.example.com/v1" {
+		t.Errorf("modelBaseURL overridden despite explicit flag: %q", f.modelBaseURL)
 	}
 }
 
@@ -115,8 +124,36 @@ func TestFlagsMerge_zeroConfigLeavesDefaults(t *testing.T) {
 	if f.scanTimeout != time.Hour {
 		t.Errorf("empty scan_timeout clobbered default: %v", f.scanTimeout)
 	}
-	if f.anthropicBaseURL != "" {
-		t.Errorf("empty config set anthropicBaseURL: %q", f.anthropicBaseURL)
+	if f.modelBaseURL != "" {
+		t.Errorf("empty config set modelBaseURL: %q", f.modelBaseURL)
+	}
+}
+
+func TestFlagsMerge_zeroConfigSeedsModelsFromHarness(t *testing.T) {
+	// run() calls merge with an empty config when no config file exists;
+	// that path must still seed the pick list from the harness defaults so
+	// a fresh install has a working model dropdown.
+	saved := web.Models
+	web.Models = nil
+	t.Cleanup(func() { web.Models = saved })
+
+	f := &flags{set: map[string]bool{}}
+	f.merge(&config.Config{})
+	if len(web.Models) == 0 {
+		t.Fatal("merge with empty config did not seed web.Models from harness defaults")
+	}
+}
+
+func TestFlagsMerge_modelBaseURLAliasCliWins(t *testing.T) {
+	// The deprecated -anthropic-base-url flag must hold against a yaml
+	// model_base_url the same way the canonical flag does.
+	f := &flags{
+		modelBaseURL: "https://cli.example.com/v1",
+		set:          map[string]bool{"anthropic-base-url": true},
+	}
+	f.merge(&config.Config{ModelBaseURL: "https://yaml.example.com/v1"})
+	if f.modelBaseURL != "https://cli.example.com/v1" {
+		t.Errorf("modelBaseURL = %q; deprecated CLI alias lost to yaml", f.modelBaseURL)
 	}
 }
 
@@ -142,6 +179,37 @@ func TestFlagsMerge_legacyNoDockerFlagHonored(t *testing.T) {
 	}
 }
 
+func TestFlagsMerge_backendCLIOverridesConfig(t *testing.T) {
+	cfg := &config.Config{Backend: "codex"}
+	f := &flags{backend: "claude", set: map[string]bool{"backend": true}}
+	f.merge(cfg)
+	if f.backend != "claude" {
+		t.Errorf("CLI -backend was overridden by config: got %q", f.backend)
+	}
+}
+
+func TestSetupRunner_nonClaudeBackendRejectsNoContainer(t *testing.T) {
+	// Non-claude harnesses run only inside the container (their binaries
+	// live in the runner image, not the host), so combining one with
+	// --no-container must fail at startup rather than later when the
+	// binary is missing.
+	f := &flags{backend: "codex", noContainer: true, addr: "127.0.0.1:8080"}
+	_, _, err := setupRunner(f, nil, quietLog())
+	if err == nil || !strings.Contains(err.Error(), "containerised runner") {
+		t.Errorf("codex + --no-container: err = %v, want a container-required error", err)
+	}
+
+	// claude (the default) keeps working under --no-container.
+	f = &flags{backend: "", noContainer: true, addr: "127.0.0.1:8080"}
+	r, _, err := setupRunner(f, nil, quietLog())
+	if err != nil {
+		t.Fatalf("default backend + --no-container: %v", err)
+	}
+	if _, ok := r.(worker.LocalClaude); !ok {
+		t.Errorf("default backend + --no-container returned %T, want LocalClaude", r)
+	}
+}
+
 func TestRegisterFlags_noContainerAliasParsesFromArgv(t *testing.T) {
 	// Both the canonical --no-container and the deprecated --no-docker alias
 	// must parse off the command line and set the same noContainer field, so
@@ -155,6 +223,23 @@ func TestRegisterFlags_noContainerAliasParsesFromArgv(t *testing.T) {
 		}
 		if !f.noContainer {
 			t.Errorf("%s did not set noContainer", name)
+		}
+	}
+}
+
+func TestRegisterFlags_modelBaseURLAliasParsesFromArgv(t *testing.T) {
+	// Both the canonical -model-base-url and the deprecated
+	// -anthropic-base-url alias must parse off the command line and set
+	// the same modelBaseURL field.
+	for _, name := range []string{"-model-base-url", "-anthropic-base-url"} {
+		f := &flags{}
+		fs := flag.NewFlagSet("test", flag.ContinueOnError)
+		registerFlags(fs, f)
+		if err := fs.Parse([]string{name, "https://x.test/v1"}); err != nil {
+			t.Fatalf("Parse(%q): %v", name, err)
+		}
+		if f.modelBaseURL != "https://x.test/v1" {
+			t.Errorf("%s did not set modelBaseURL: got %q", name, f.modelBaseURL)
 		}
 	}
 }
@@ -207,7 +292,7 @@ func TestBuildEgressAllow_defaultIncludesConfigAndAnthropicHost(t *testing.T) {
 		t.Errorf("default mode did not honour egress_allow: %v", allow)
 	}
 	if !slices.Contains(allow, "proxy.corp.com") {
-		t.Errorf("default mode did not auto-add anthropic base URL host: %v", allow)
+		t.Errorf("default mode did not auto-add model base URL host: %v", allow)
 	}
 }
 
@@ -228,7 +313,7 @@ func TestBuildEgressAllow_hardenedDropsConfigKeepsHarness(t *testing.T) {
 		t.Errorf("hardened did not include HardenedEgressAllow entries: %v", allow)
 	}
 	if !slices.Contains(allow, "proxy.corp.com") {
-		t.Errorf("hardened dropped the anthropic base URL host: %v", allow)
+		t.Errorf("hardened dropped the model base URL host: %v", allow)
 	}
 }
 

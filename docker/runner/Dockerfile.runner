@@ -4,13 +4,15 @@
 #   docker build -t scrutineer-runner -f docker/runner/Dockerfile.runner .
 
 ARG CLAUDE_VERSION=2.1.173
+ARG CODEX_VERSION=0.142.5
+ARG OPENCODE_VERSION=1.17.12
 ARG SEMGREP_VERSION=1.167.0
 
-FROM golang:1.26.4-trixie@sha256:76a29248dedcd75870e95cbd90cc8cb356db082404ac7d3a5803f276c3ba79c9 AS go-tools
+FROM golang:1.26.5-trixie@sha256:8d5bf3ef8fd204fea2ea0dea4b46d4ecdabceb88b9b4cb86d2b323425add49c7 AS go-tools
 RUN GOBIN=/out go install github.com/git-pkgs/git-pkgs@v0.15.3 && \
-    GOBIN=/out go install github.com/git-pkgs/brief/cmd/brief@v0.6.0
+    GOBIN=/out go install github.com/git-pkgs/brief/cmd/brief@v0.9.3
 
-FROM rust:1.96-trixie@sha256:6df234c1eb92b0545468fab8c18fc5f9adfb994e7d4f67d81d45fe2fcabf5657 AS zizmor-build
+FROM rust:1.96-trixie@sha256:1f0dbad1df66647807e6952d1db85d0b2bda7606cb2139d82517e4f009967376 AS zizmor-build
 ENV CARGO_HTTP_MULTIPLEXING=false
 RUN cargo install --locked --root /out zizmor@1.26.1
 
@@ -19,7 +21,7 @@ RUN cargo install --locked --root /out zizmor@1.26.1
 # (`scrutineer proxy`) instead of a second published image. Built CGO-free and
 # static like the main server image, so it drops into the slim runtime as a
 # plain copy with no glibc dependency.
-FROM golang:1.26.4-trixie@sha256:76a29248dedcd75870e95cbd90cc8cb356db082404ac7d3a5803f276c3ba79c9 AS scrutineer-build
+FROM golang:1.26.5-trixie@sha256:8d5bf3ef8fd204fea2ea0dea4b46d4ecdabceb88b9b4cb86d2b323425add49c7 AS scrutineer-build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -28,6 +30,8 @@ RUN CGO_ENABLED=0 go build -o /out/scrutineer ./cmd/scrutineer
 
 FROM debian:trixie-slim@sha256:28de0877c2189802884ccd20f15ee41c203573bd87bb6b883f5f46362d24c5c2
 ARG CLAUDE_VERSION
+ARG CODEX_VERSION
+ARG OPENCODE_VERSION
 ARG SEMGREP_VERSION
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -35,6 +39,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl git bash coreutils \
         python3 python3-venv \
+        libstdc++6 ripgrep \
  && install -d -m 0755 /etc/apt/keyrings \
  && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
         -o /etc/apt/keyrings/githubcli-archive-keyring.gpg \
@@ -68,6 +73,38 @@ RUN set -eux; \
       "https://github.com/anthropics/claude-code/releases/download/v${CLAUDE_VERSION}/claude-linux-${arch}.tar.gz"; \
     echo "${sha}  /tmp/claude.tgz" | sha256sum -c -; \
     tar -xzf /tmp/claude.tgz -C /usr/local/bin claude && rm /tmp/claude.tgz
+
+# OpenAI codex CLI (-backend codex). The musl tarball contains a single
+# static binary named codex-${triple}; install it as /usr/local/bin/codex.
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+      amd64) triple=x86_64-unknown-linux-musl;  sha=cb933ec3cb61bf4b5fc88eecf5e6149829faa6172535b6ef0afb0154beb4aab8 ;; \
+      arm64) triple=aarch64-unknown-linux-musl; sha=b18c75c49645918fae23beba0ab41c05f07941601510a2451ba97fe519573c38 ;; \
+      *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /tmp/codex.tgz \
+      "https://github.com/openai/codex/releases/download/rust-v${CODEX_VERSION}/codex-${triple}.tar.gz"; \
+    echo "${sha}  /tmp/codex.tgz" | sha256sum -c -; \
+    tar -xzf /tmp/codex.tgz -C /tmp; \
+    install -m 0755 "/tmp/codex-${triple}" /usr/local/bin/codex; \
+    rm /tmp/codex.tgz "/tmp/codex-${triple}"; \
+    codex --version
+
+# opencode CLI (-backend opencode). The glibc tarball contains a single
+# `opencode` binary; it links libstdc++ dynamically (bun runtime), which
+# is why libstdc++6 is in the apt install list above.
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+      amd64) ocarch=x64;   sha=b41e3ae69b5033f6fba8b9fcf4cb19f0dc8093d449266ef01a5cd142f6f7064d ;; \
+      arm64) ocarch=arm64; sha=b36060c4c5bc8fee8e507a600af0ad8b2aa5e0c451f7f34cc3763a0d557b44d6 ;; \
+      *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /tmp/opencode.tgz \
+      "https://github.com/anomalyco/opencode/releases/download/v${OPENCODE_VERSION}/opencode-linux-${ocarch}.tar.gz"; \
+    echo "${sha}  /tmp/opencode.tgz" | sha256sum -c -; \
+    tar -xzf /tmp/opencode.tgz -C /usr/local/bin opencode; \
+    rm /tmp/opencode.tgz; \
+    opencode --version
 
 COPY --from=go-tools /out/* /usr/local/bin/
 COPY --from=zizmor-build /out/bin/zizmor /usr/local/bin/zizmor
