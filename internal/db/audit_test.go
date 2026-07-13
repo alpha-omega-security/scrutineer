@@ -2,8 +2,11 @@ package db
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 func TestAddFindingReview_rejectsUnknownVerdict(t *testing.T) {
@@ -215,5 +218,28 @@ func TestLatestRevalidateVerdict(t *testing.T) {
 	_, _ = AddFindingNote(gdb, f.ID, "revalidate: true_positive\n\nsink reachable", "revalidate")
 	if got := LatestRevalidateVerdict(gdb, f.ID); got != "true_positive" {
 		t.Errorf("latest: got %q, want true_positive", got)
+	}
+}
+
+// TestReservedWordColumnsUseDialectorQuoting guards against reintroducing
+// hardcoded identifier quoting (#629). Map conditions emit a
+// table-qualified, dialector-quoted column (`finding_notes`.`by` on SQLite,
+// "finding_notes"."by" on Postgres); a raw string with an inline `by` would
+// not be table-qualified and would break under a Postgres dialector.
+func TestReservedWordColumnsUseDialectorQuoting(t *testing.T) {
+	gdb, err := Open(filepath.Join(t.TempDir(), "quote.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dry := gdb.Session(&gorm.Session{DryRun: true})
+
+	stmt := dry.Where(map[string]any{"finding_id": 1, "by": "revalidate"}).Find(&FindingNote{}).Statement
+	if !strings.Contains(stmt.SQL.String(), "`finding_notes`.`by`") {
+		t.Errorf("map condition did not emit dialector-quoted table.column: %s", stmt.SQL.String())
+	}
+
+	stmt = dry.Model(&Scan{}).Not(map[string]any{"commit": ""}).Find(&Scan{}).Statement
+	if !strings.Contains(stmt.SQL.String(), "`scans`.`commit`") {
+		t.Errorf("Not(map) did not emit dialector-quoted table.column: %s", stmt.SQL.String())
 	}
 }

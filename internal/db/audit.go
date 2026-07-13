@@ -161,7 +161,9 @@ func ComputeAuditMetrics(gdb *gorm.DB) (AuditMetrics, error) {
 // after later revalidate runs change the model's mind.
 func LatestRevalidateVerdict(gdb *gorm.DB, findingID uint) string {
 	var note FindingNote
-	if err := gdb.Where("finding_id = ? AND `by` = ?", findingID, "revalidate").
+	// Map condition so GORM's dialector quotes the reserved-word column
+	// (`by` on SQLite, "by" on Postgres) instead of hardcoding one style.
+	if err := gdb.Where(map[string]any{"finding_id": findingID, "by": "revalidate"}).
 		Order("created_at desc").First(&note).Error; err != nil {
 		return ""
 	}
