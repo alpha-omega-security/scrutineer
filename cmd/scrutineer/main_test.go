@@ -17,6 +17,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"scrutineer/internal/config"
+	"scrutineer/internal/db"
 	"scrutineer/internal/web"
 	"scrutineer/internal/worker"
 )
@@ -601,5 +602,199 @@ func TestBaseURLHost(t *testing.T) {
 		if got := baseURLHost(tc.in); got != tc.want {
 			t.Errorf("baseURLHost(%q) = %q, want %q", tc.in, got, tc.want)
 		}
+	}
+}
+
+func TestLoadSkillsLoadsBundledSkillsWithoutLocalDirectory(t *testing.T) {
+	dataDir := t.TempDir()
+	gdb, err := db.Open(filepath.Join(dataDir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	sha, err := loadSkills(log, gdb, dataDir, nil, "", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sha != "" {
+		t.Fatalf("skills repo SHA = %q, want empty", sha)
+	}
+	var count int64
+	if err := gdb.Model(&db.Skill{}).Where("source = ?", "bundled").Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count == 0 {
+		t.Fatal("no bundled skills loaded")
+	}
+	var metadata db.Skill
+	if err := gdb.Where("name = ?", "metadata").First(&metadata).Error; err != nil {
+		t.Fatal(err)
+	}
+	if metadata.Source != "bundled" || !strings.Contains(metadata.SourcePath, "bundled-skills") {
+		t.Fatalf("metadata source = %q path = %q, want materialized bundled source", metadata.Source, metadata.SourcePath)
+	}
+}
+
+func TestLoadSkillsLocalDirectoryOverridesBundledSkill(t *testing.T) {
+	dataDir := t.TempDir()
+	localRoot := filepath.Join(t.TempDir(), "skills")
+	localSkill := filepath.Join(localRoot, "metadata")
+	if err := os.MkdirAll(localSkill, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	const body = "---\nname: metadata\ndescription: Local metadata override.\n---\nlocal override body\n"
+	if err := os.WriteFile(filepath.Join(localSkill, "SKILL.md"), []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	gdb, err := db.Open(filepath.Join(dataDir, "test.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	if _, err := loadSkills(log, gdb, dataDir, skillDirs{localRoot}, "", false); err != nil {
+		t.Fatal(err)
+	}
+	var metadata db.Skill
+	if err := gdb.Where("name = ?", "metadata").First(&metadata).Error; err != nil {
+		t.Fatal(err)
+	}
+	wantPath, err := filepath.Abs(localSkill)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metadata.Source != "local" || metadata.SourcePath != wantPath {
+		t.Fatalf("metadata source = %q path = %q, want local path %q", metadata.Source, metadata.SourcePath, wantPath)
+	}
+	if metadata.Body != "local override body" {
+		t.Fatalf("metadata body = %q, want local override", metadata.Body)
+	}
+	version := metadata.Version
+	if _, err := loadSkills(log, gdb, dataDir, skillDirs{localRoot}, "", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := gdb.Where("name = ?", "metadata").First(&metadata).Error; err != nil {
+		t.Fatal(err)
+	}
+	if metadata.Version != version {
+		t.Fatalf("unchanged local override version = %d, want %d; bundled fallback caused version churn", metadata.Version, version)
+	}
+}
+
+func TestResolveProfilesDirMaterializesBundledProfilesOutsideCheckout(t *testing.T) {
+	t.Chdir(t.TempDir())
+	f := &flags{
+		dataDir:     t.TempDir(),
+		profilesDir: "docker/profiles",
+		set:         map[string]bool{},
+	}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	if err := resolveProfilesDir(f, &config.Config{}, log); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(f.profilesDir, "bundled-profiles") {
+		t.Fatalf("profilesDir = %q, want materialized bundled profiles", f.profilesDir)
+	}
+	if _, err := os.Stat(filepath.Join(f.profilesDir, "ruby", "Dockerfile")); err != nil {
+		t.Fatalf("bundled ruby profile missing: %v", err)
+	}
+}
+
+func TestResolveProfilesDirFallsBackWhenDockerPathIsNotDirectory(t *testing.T) {
+	workDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workDir, "docker"), []byte("not a directory"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(workDir)
+	f := &flags{
+		dataDir:     t.TempDir(),
+		profilesDir: "docker/profiles",
+		set:         map[string]bool{},
+	}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	if err := resolveProfilesDir(f, &config.Config{}, log); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(f.profilesDir, "bundled-profiles") {
+		t.Fatalf("profilesDir = %q, want materialized bundled profiles", f.profilesDir)
+	}
+}
+
+func TestResolveProfilesDirPreservesExplicitSelection(t *testing.T) {
+	explicit := filepath.Join(t.TempDir(), "profiles")
+	f := &flags{
+		dataDir:     t.TempDir(),
+		profilesDir: explicit,
+		set:         map[string]bool{"profiles-dir": true},
+	}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	if err := resolveProfilesDir(f, &config.Config{}, log); err != nil {
+		t.Fatal(err)
+	}
+	if f.profilesDir != explicit {
+		t.Fatalf("profilesDir = %q, want explicit %q", f.profilesDir, explicit)
+	}
+}
+
+func TestResolveProfilesDirPreservesCheckoutDefault(t *testing.T) {
+	checkout := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(checkout, "docker", "profiles"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(checkout)
+	f := &flags{
+		dataDir:     t.TempDir(),
+		profilesDir: "docker/profiles",
+		set:         map[string]bool{},
+	}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	if err := resolveProfilesDir(f, &config.Config{}, log); err != nil {
+		t.Fatal(err)
+	}
+	if f.profilesDir != "docker/profiles" {
+		t.Fatalf("profilesDir = %q, want checkout-relative default", f.profilesDir)
+	}
+}
+
+func TestResolveProfilesDirPreservesExplicitDisable(t *testing.T) {
+	f := &flags{
+		dataDir:     t.TempDir(),
+		profilesDir: "",
+		set:         map[string]bool{"profiles-dir": true},
+	}
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	if err := resolveProfilesDir(f, &config.Config{}, log); err != nil {
+		t.Fatal(err)
+	}
+	if f.profilesDir != "" {
+		t.Fatalf("profilesDir = %q, want explicit disable", f.profilesDir)
+	}
+}
+
+func TestResolveProfilesDirPreservesConfigDisable(t *testing.T) {
+	t.Chdir(t.TempDir())
+	f := &flags{
+		dataDir:     t.TempDir(),
+		profilesDir: "docker/profiles",
+		set:         map[string]bool{},
+	}
+	cfg := &config.Config{ProfilesDir: new("")}
+	f.merge(cfg)
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	if err := resolveProfilesDir(f, cfg, log); err != nil {
+		t.Fatal(err)
+	}
+	if f.profilesDir != "" {
+		t.Fatalf("profilesDir = %q, want config disable", f.profilesDir)
+	}
+	if _, err := os.Stat(filepath.Join(f.dataDir, "bundled-profiles")); !os.IsNotExist(err) {
+		t.Fatalf("bundled profiles were materialized despite config disable: %v", err)
 	}
 }

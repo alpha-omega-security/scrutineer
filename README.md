@@ -4,7 +4,9 @@ A local tool for scanning open source repositories for security vulnerabilities 
 
 ## Quick start
 
-You need [Go 1.26+](https://go.dev/dl/) and [Docker](https://docs.docker.com/get-docker/) running.
+You need one supported container runtime: [Docker](https://docs.docker.com/get-docker/) (the default), rootless Podman, or Apple's `container` CLI. Download the Linux or macOS archive for your architecture from [GitHub Releases](https://github.com/alpha-omega-security/scrutineer/releases), verify it against `SHA256SUMS`, and put `scrutineer` on your `PATH`. The macOS archives are currently unsigned and not notarized, so macOS may present a Gatekeeper warning even after you verify the checksum and GitHub build-provenance attestation.
+
+To build or run from source instead, install [Go 1.26+](https://go.dev/dl/):
 
     git clone https://github.com/alpha-omega-security/scrutineer
     cd scrutineer
@@ -18,15 +20,35 @@ or an Anthropic API key from [console.anthropic.com](https://console.anthropic.c
 
     export ANTHROPIC_API_KEY=sk-ant-api03-...
 
-Then start scrutineer:
+Start a downloaded or installed binary with Docker:
+
+    scrutineer
+
+Select another installed runtime explicitly:
+
+    scrutineer --runtime podman
+    scrutineer --runtime apple
+
+The existing source-checkout command remains supported:
 
     go run ./cmd/scrutineer -skills ./skills
 
-and open http://127.0.0.1:8080. To run under codex or opencode instead, see the [Codex backend](#codex-backend) and [Opencode backend](#opencode-backend) sections; only the credential and `-backend` flag change.
+Then open http://127.0.0.1:8080. The explicit `-skills ./skills` directory makes the checkout command useful while developing skills because it overrides the copies embedded in the binary. It is optional for ordinary use because Scrutineer ships its built-in skills and per-ecosystem runner profiles inside the executable.
+
+You can also build a checkout-independent executable and run it from another directory:
+
+    go build -o scrutineer ./cmd/scrutineer
+    mkdir -p ~/.local/bin
+    install -m 0755 scrutineer ~/.local/bin/scrutineer
+    scrutineer
+
+Precompiled binaries cover Linux and macOS on `amd64` and `arm64`. Run `scrutineer version` to see the application version, source commit, build timestamp, and exact runner-image digest paired with that release.
+
+The executable does not bundle Docker, Podman, or Apple's `container` CLI. Scrutineer remains a host application that asks the selected external runtime to launch an ephemeral runner container for each scan; it materialises the embedded profile Dockerfiles under the data directory when `docker/profiles` is not available from a source checkout. Content-addressed skill and profile bundles from older versions are retained because existing skill records may still reference their auxiliary files; incomplete extraction directories older than 24 hours are removed automatically. To run under codex or opencode instead, see the [Codex backend](#codex-backend) and [Opencode backend](#opencode-backend) sections; only the credential and `-backend` flag change.
 
 Large batches pause automatically at an account-level rate limit or quota wall. When claude-code is running on a subscription token it emits a `rate_limit_event` carrying the reset time, and scrutineer re-queues the paused batch after that reset; API-key accounts and the codex/opencode backends report the error without a reset time, so those batches stay paused for manual resume from the `/usage` page, which also shows the most recent per-window status.
 
-Scrutineer detects Docker and starts using it automatically: each scan runs in an ephemeral container with a read-only source mount and an egress allowlist proxy. The runner image (`ghcr.io/alpha-omega-security/scrutineer-runner`) is pulled on first use, so the first scan is slower while it downloads. If Docker isn't available scans run directly on the host with no isolation; see the Security section before doing that.
+Scrutineer uses Docker by default: each scan runs in an ephemeral container with a read-only source mount and an egress allowlist proxy. The paired runner image (`ghcr.io/alpha-omega-security/scrutineer-runner`) is pulled on first use, so the first scan is slower while it downloads. A host without the selected runtime fails startup rather than silently weakening isolation; `--no-container` is the explicit, Claude-only escape hatch for running directly on a trusted host.
 
 Click **Add repository** in the sidebar, paste a git HTTPS URL, and scrutineer enqueues the `triage` skill. To scan a maintained branch instead of the default, fill the **Branch** field (it suggests the remote's branches as you type and also accepts a tag or commit), or append a `/tree/<branch>` suffix to the URL; the suffix also works one-per-line when bulk-importing. Triage then enqueues the rest of the pipeline in parallel. Metadata and package lookups finish in seconds; the security deep-dive takes a few minutes depending on repo size. Open the repo page and switch to the Scans tab to watch progress, or wait for the Findings tab to fill in.
 
@@ -291,7 +313,7 @@ The `docker build` commands shown for the runner image and profiles can be run a
 | `-addr` | `127.0.0.1:8080` | Listen address |
 | `-data` | `./data` | Data directory for the database and workspaces |
 | `-effort` | `high` | Claude effort level (claude backend only) |
-| `-skills` | - | Local directory to load SKILL.md files from (repeatable) |
+| `-skills` | - | Additional local directory to load SKILL.md files from; same-named skills override the bundled copies (repeatable) |
 | `-skills-repo` | - | `owner/repo[@ref]` or git HTTPS URL `https://host/path[@ref]` to clone skills from on startup; `@ref` pins a branch, tag or commit and the resolved SHA is recorded on every scan |
 | `-backend` | `claude` | Agent CLI the container runner execs: `claude`, `codex`, or `opencode`. Non-claude backends require the containerised runner |
 | `--runtime` | `docker` | Container runtime: `docker`, `podman` (rootless podman supported), or `apple` (Apple, experimental) |
@@ -299,7 +321,7 @@ The `docker build` commands shown for the runner image and profiles can be run a
 | `--no-container` | false | Disable the containerised runner; run claude directly on the host (no isolation). Deprecated alias: `--no-docker` |
 | `--hardened` | false | Strict sandbox: container runtime required, egress restricted to the backend's model API hosts + host skill API, read-only rootfs, internal network |
 | `--hardened-runtime-only` | false | The non-network half of `--hardened` (read-only rootfs + `no-new-privileges` + 2 GiB workspace cap) **without** the per-scan `--internal` network; the rootless fallback for hosts where the `--hardened` egress sidecar can't run (implied by `--hardened`). Deprecated alias: `--hardened-rootless-runtime` |
-| `--runner-image` | `ghcr.io/alpha-omega-security/scrutineer-runner:latest` | Container image for per-scan containers |
+| `--runner-image` | release-matched digest (`ghcr.io/alpha-omega-security/scrutineer-runner:latest` in development builds) | Container image for per-scan containers |
 | `-concurrency` | `4` | Number of scans to run in parallel |
 | `-clone` | `shallow` | Clone depth: `shallow` (`--depth 1`) or `full` |
 | `-scan-timeout` | `1h` | Wall-clock limit per scan; exceeded scans fail |

@@ -24,8 +24,11 @@
 # and are slower for large repos — only flip if a skill needs history.
 # clone: shallow
 
-# Local directories to load SKILL.md files from. Repeatable via -skills
-# on the command line; here you can list them directly.
+# Additional local directories to load SKILL.md files from. Scrutineer's
+# built-in skills are embedded in the binary; a same-named skill from one of
+# these directories overrides its bundled copy. Repeatable via -skills on the
+# command line; here you can list them directly. Keeping ./skills here is useful
+# when developing in a source checkout because edits take effect on restart.
 # skills:
 #   - ./skills
 

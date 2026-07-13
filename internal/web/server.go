@@ -74,10 +74,9 @@ type Server struct {
 	// is not configured.
 	SkillsRepoSHA string
 
-	// Commit is the git SHA scrutineer itself was built from, shown on the
-	// settings page. Set once by main; empty when the build carries no VCS
-	// stamp (e.g. an ldflags-less build outside a git checkout).
-	Commit string
+	// Version is the Scrutineer release version shown on the settings page.
+	// Release builds inject CalVer at link time; development builds use "dev".
+	Version string
 
 	// Backend is the canonical -backend value the runner was started with
 	// (worker.HarnessName). Set once by main. resumeOpts compares it to

@@ -133,6 +133,32 @@ func TestLoad_noContainerAlias(t *testing.T) {
 	}
 }
 
+func TestLoad_profilesDirDistinguishesOmittedAndEmpty(t *testing.T) {
+	omitted, err := Load(write(t, "addr: 127.0.0.1:8080\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if omitted.ProfilesDir != nil {
+		t.Fatalf("omitted profiles_dir = %q, want nil", *omitted.ProfilesDir)
+	}
+
+	disabled, err := Load(write(t, "profiles_dir: \"\"\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if disabled.ProfilesDir == nil || *disabled.ProfilesDir != "" {
+		t.Fatalf("empty profiles_dir = %v, want pointer to empty string", disabled.ProfilesDir)
+	}
+
+	selected, err := Load(write(t, "profiles_dir: /srv/scrutineer/profiles\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if selected.ProfilesDir == nil || *selected.ProfilesDir != "/srv/scrutineer/profiles" {
+		t.Fatalf("selected profiles_dir = %v", selected.ProfilesDir)
+	}
+}
+
 func TestLoad_modelBaseURLAlias(t *testing.T) {
 	// anthropic_base_url is the retained pre-rename alias; Load folds it
 	// into ModelBaseURL.

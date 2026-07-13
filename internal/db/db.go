@@ -993,8 +993,8 @@ type Skill struct {
 	// decisions in triage do not deadlock dependent skills.
 	Requires string `gorm:"type:text"`
 
-	Source     string // "local" | "remote" | "ui"
-	SourcePath string // directory on disk (local/remote) or empty (ui)
+	Source     string // "bundled" | "local" | "remote" | "ui"
+	SourcePath string // directory on disk (bundled/local/remote) or empty (ui)
 	SourceHash string // sha256 of SKILL.md + schema.json contents
 
 	CreatedAt time.Time

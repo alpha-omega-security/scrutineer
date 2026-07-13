@@ -70,7 +70,9 @@ type Config struct {
 	// HardenedRootlessRuntime is the deprecated alias for HardenedRuntimeOnly.
 	HardenedRootlessRuntime *bool  `yaml:"hardened_rootless_runtime"`
 	RunnerImage             string `yaml:"runner_image"`
-	ProfilesDir             string `yaml:"profiles_dir"`
+	// ProfilesDir is a pointer so an omitted value keeps the built-in default
+	// while an explicit empty string disables per-ecosystem runner profiles.
+	ProfilesDir *string `yaml:"profiles_dir"`
 	// EgressAllow extends the container runner's egress proxy allowlist with
 	// extra hostnames. Entries are appended to worker.DefaultEgressAllow,
 	// not replacing it. "*.example.com" matches subdomains.

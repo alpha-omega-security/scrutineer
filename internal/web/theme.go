@@ -121,7 +121,7 @@ func (s *Server) settingsShow(w http.ResponseWriter, r *http.Request) {
 		"DBSize":           dbSizeBytes,
 		"DBPath":           dbPath,
 		"WorkDir":          s.Worker.DataDir,
-		"Commit":           s.Commit,
+		"Version":          s.Version,
 		"Meta":             meta,
 	})
 }

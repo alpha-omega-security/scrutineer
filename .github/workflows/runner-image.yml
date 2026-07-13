@@ -138,13 +138,22 @@ jobs:
           images: ${{ env.IMAGE }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=sha-${{ github.sha }},enable={{is_default_branch}}
             type=sha,prefix=sha-
 
       - name: create manifest list and push
         working-directory: ${{ runner.temp }}/digests
         run: |
-          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            $(printf "$IMAGE@sha256:%s " *)
+          mapfile -t TAGS < <(jq -r '.tags[]' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+          mapfile -t DIGESTS < <(find . -maxdepth 1 -type f -printf '%f\n' | sort)
+          CREATE_ARGS=()
+          for tag in "${TAGS[@]}"; do
+            CREATE_ARGS+=("-t" "${tag}")
+          done
+          for digest in "${DIGESTS[@]}"; do
+            CREATE_ARGS+=("${IMAGE}@sha256:${digest}")
+          done
+          docker buildx imagetools create "${CREATE_ARGS[@]}"
 
       - name: inspect
         env:

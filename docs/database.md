@@ -141,8 +141,8 @@ One row per installed skill. Loaded from `skills/` directories on disk or the UI
 | requires_profile | text | Constrains the skill to a single registered runner profile (e.g. `php`). Empty means no constraint. Set via `scrutineer.requires_profile` in SKILL.md frontmatter. Enqueue returns 400 when the requested profile mismatches; the worker fails the scan when auto-detection resolves to a different profile. |
 | paths | text | Newline-joined shell-glob allow-list from `scrutineer.paths`. When non-empty, the skill sees only matching files inside the workspace `src/` and the builtin skip list is bypassed. |
 | ignore_paths | text | Newline-joined shell-glob deny-list from `scrutineer.ignore_paths`. Always layered on top of the active include set. |
-| source | text | `local`, `remote`, or `ui`. |
-| source_path | text | Directory on disk (for local/remote). Empty for UI-created. |
+| source | text | `bundled`, `local`, `remote`, or `ui`. |
+| source_path | text | Directory on disk (for bundled/local/remote). Empty for UI-created. |
 | source_hash | text | sha256 of SKILL.md + schema.json. Used by the loader to detect changes. |
 | created_at | datetime | |
 | updated_at | datetime | |

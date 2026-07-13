@@ -25,12 +25,15 @@ import (
 	"golang.org/x/term"
 	"gorm.io/gorm"
 
+	bundledprofiles "scrutineer/docker/profiles"
+	"scrutineer/internal/bundledassets"
 	"scrutineer/internal/config"
 	"scrutineer/internal/db"
 	"scrutineer/internal/queue"
 	"scrutineer/internal/skills"
 	"scrutineer/internal/web"
 	"scrutineer/internal/worker"
+	bundledskills "scrutineer/skills"
 )
 
 // commit is the git SHA scrutineer was built from, injected at build time
@@ -147,7 +150,7 @@ func registerFlags(fs *flag.FlagSet, f *flags) {
 	fs.BoolVar(&f.hardened, "hardened", false, "strict sandbox mode: container runtime required (no --no-container fallback), egress restricted to the harness's model API + host skill API, read-only rootfs, internal network")
 	fs.BoolVar(&f.hardenedRuntimeOnly, "hardened-runtime-only", false, "the non-network half of --hardened (read-only rootfs + no-new-privileges + 2 GiB post-clone workspace cap) WITHOUT the per-scan --internal network, so it works under rootless podman where --hardened cannot; --cap-drop ALL + non-root user + tmpfs apply regardless. Implied by --hardened")
 	fs.BoolVar(&f.hardenedRuntimeOnly, "hardened-rootless-runtime", false, "deprecated alias for --hardened-runtime-only")
-	fs.StringVar(&f.runnerImage, "runner-image", worker.DefaultRunnerImage, "container image for per-job containers (a custom image needs curl, and under rootless --hardened the scrutineer binary for the egress sidecar; build from Dockerfile.runner)")
+	fs.StringVar(&f.runnerImage, "runner-image", defaultRunnerImage, "container image for per-job containers (a custom image needs curl, and under rootless --hardened the scrutineer binary for the egress sidecar; build from Dockerfile.runner)")
 	fs.StringVar(&f.profilesDir, "profiles-dir", "docker/profiles", "directory containing per-ecosystem runner profiles (Dockerfile per profile); empty disables profiles")
 	fs.StringVar(&f.skillsRepo, "skills-repo", "", "clone skills on startup; owner/repo[@ref] or https://host/path[@ref]")
 	fs.IntVar(&f.concurrency, "concurrency", queue.DefaultWorkerConcurrency, "number of scans to run in parallel")
@@ -163,7 +166,7 @@ func registerFlags(fs *flag.FlagSet, f *flags) {
 	fs.StringVar(&f.recipientsFile, "recipients-file", "", "age recipients file (public keys) for encrypted export")
 	fs.StringVar(&f.identityFile, "identity-file", "", "age identity file or SSH private key for decrypting imports")
 	fs.IntVar(&f.autoRejectMissedCount, "auto-reject-missed-count", 0, "auto-reject findings after this many consecutive missed rescans (0 disables)")
-	fs.Var(&f.skillLocal, "skills", "directory to load SKILL.md files from (repeatable)")
+	fs.Var(&f.skillLocal, "skills", "additional directory to load SKILL.md files from, overriding bundled skills with the same name (repeatable)")
 }
 
 // merge layers cfg underneath f: a config value applies only when the
@@ -208,8 +211,8 @@ func (f *flags) merge(cfg *config.Config) {
 	if cfg.RunnerImage != "" && !f.set["runner-image"] {
 		f.runnerImage = cfg.RunnerImage
 	}
-	if cfg.ProfilesDir != "" && !f.set["profiles-dir"] {
-		f.profilesDir = cfg.ProfilesDir
+	if cfg.ProfilesDir != nil && !f.set["profiles-dir"] {
+		f.profilesDir = *cfg.ProfilesDir
 	}
 	if cfg.SkillsRepo != "" && !f.set["skills-repo"] {
 		f.skillsRepo = cfg.SkillsRepo
@@ -411,6 +414,9 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	_ = os.Chmod(f.dataDir, dataPermSecure)
+	if err := resolveProfilesDir(f, cfg, log); err != nil {
+		return err
+	}
 	// Module-boundary sentinel so go tooling on the parent repo never
 	// walks into cloned scan workspaces under data/work/.
 	_ = os.WriteFile(filepath.Join(f.dataDir, "go.mod"), []byte("module scrutineer/data\n"), dataPermSecure)
@@ -498,7 +504,7 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	srv.SkillsRepoSHA = skillsRepoSHA
-	srv.Commit = buildCommit()
+	srv.Version = version
 	if h, err := worker.HarnessByName(f.backend); err == nil {
 		srv.Backend = worker.HarnessName(h)
 	}
@@ -577,38 +583,86 @@ func checkRunnerImage(srv *web.Server, runner worker.SkillRunner, log *slog.Logg
 	}
 }
 
-// loadSkills loads local skill directories and, if a remote skills repo is
-// configured, clones/pulls it at the requested ref and loads it too. Returns
-// the resolved commit SHA of the remote repo (empty when no repo is set) so
-// the caller can stamp it on each Scan for reproducibility.
+// loadSkills materialises the skills embedded in the binary, loads configured
+// local directories and an optional remote skills repository, then fills every
+// name they did not override from the bundled tree. This preserves the
+// source-checkout workflow: `-skills ./skills` still points SourcePath at the
+// live checkout without a bundled copy temporarily replacing it and bumping its
+// version on every restart. Returns the resolved commit SHA of the remote repo
+// (empty when no repo is set) so the caller can stamp it on each Scan for
+// reproducibility.
 func loadSkills(log *slog.Logger, gdb *gorm.DB, dataDir string, dirs skillDirs, repoSpec string, fullClone bool) (string, error) {
+	bundleDir, bundleHash, err := bundledassets.Materialize(bundledskills.FS, dataDir, "bundled-skills")
+	if err != nil {
+		return "", fmt.Errorf("materialize bundled skills: %w", err)
+	}
+
+	overrides := make(map[string]bool)
 	for _, d := range dirs {
-		n, err := skills.LoadDirectory(gdb, log, d, "local")
+		result, err := skills.LoadDirectoryExcept(gdb, log, d, "local", nil)
 		if err != nil {
 			return "", fmt.Errorf("load skills from %s: %w", d, err)
 		}
-		log.Info("loaded skills", "source", d, "count", n)
+		for name := range result.Names {
+			overrides[name] = true
+		}
+		log.Info("loaded skills", "source", d, "count", result.Count)
 	}
-	if repoSpec == "" {
-		return "", nil
+
+	var sha string
+	if repoSpec != "" {
+		url, ref, err := skills.ParseRepoSpec(repoSpec)
+		if err != nil {
+			return "", fmt.Errorf("parse skills_repo %q: %w", repoSpec, err)
+		}
+		dst := filepath.Join(dataDir, "skills-cache", hashPath(repoSpec))
+		ctx, cancel := context.WithTimeout(context.Background(), skillsCloneTimeout)
+		defer cancel()
+		sha, err = skills.CloneOrPull(ctx, url, ref, dst, fullClone)
+		if err != nil {
+			return "", fmt.Errorf("clone skills repo: %w", err)
+		}
+		result, err := skills.LoadDirectoryExcept(gdb, log, dst, "remote", nil)
+		if err != nil {
+			return "", fmt.Errorf("load skills from %s: %w", url, err)
+		}
+		for name := range result.Names {
+			overrides[name] = true
+		}
+		log.Info("loaded skills", "source", url, "ref", ref, "sha", sha, "count", result.Count)
 	}
-	url, ref, err := skills.ParseRepoSpec(repoSpec)
+
+	bundled, err := skills.LoadDirectoryExcept(gdb, log, bundleDir, skills.SourceBundled, overrides)
 	if err != nil {
-		return "", fmt.Errorf("parse skills_repo %q: %w", repoSpec, err)
+		return "", fmt.Errorf("load bundled skills: %w", err)
 	}
-	dst := filepath.Join(dataDir, "skills-cache", hashPath(repoSpec))
-	ctx, cancel := context.WithTimeout(context.Background(), skillsCloneTimeout)
-	defer cancel()
-	sha, err := skills.CloneOrPull(ctx, url, ref, dst, fullClone)
-	if err != nil {
-		return "", fmt.Errorf("clone skills repo: %w", err)
-	}
-	n, err := skills.LoadDirectory(gdb, log, dst, "remote")
-	if err != nil {
-		return "", fmt.Errorf("load skills from %s: %w", url, err)
-	}
-	log.Info("loaded skills", "source", url, "ref", ref, "sha", sha, "count", n)
+	log.Info("loaded bundled skills", "source", bundleDir, "bundle", bundleHash, "count", bundled.Count, "overridden", len(overrides))
 	return sha, nil
+}
+
+// resolveProfilesDir preserves every existing profile selection while making
+// the zero-configuration binary independent of the source checkout. An
+// explicit flag or config value always wins, including `-profiles-dir ""` to
+// disable profiles. The historical docker/profiles default is retained when
+// that directory exists (the normal `go run` development workflow); otherwise
+// the profiles embedded in the binary are materialised below the data root.
+func resolveProfilesDir(f *flags, cfg *config.Config, log *slog.Logger) error {
+	const checkoutDefault = "docker/profiles"
+	if f.set["profiles-dir"] || (cfg != nil && cfg.ProfilesDir != nil) || f.profilesDir != checkoutDefault {
+		return nil
+	}
+	if info, err := os.Stat(checkoutDefault); err == nil && info.IsDir() {
+		return nil
+	} else if err != nil && !errors.Is(err, os.ErrNotExist) && !errors.Is(err, syscall.ENOTDIR) {
+		return fmt.Errorf("stat profiles directory: %w", err)
+	}
+	dir, hash, err := bundledassets.Materialize(bundledprofiles.FS, f.dataDir, "bundled-profiles")
+	if err != nil {
+		return fmt.Errorf("materialize bundled profiles: %w", err)
+	}
+	f.profilesDir = dir
+	log.Info("using bundled runner profiles", "source", dir, "bundle", hash)
+	return nil
 }
 
 func addrPort(addr string) string {
