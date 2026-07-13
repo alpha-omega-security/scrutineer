@@ -15,6 +15,7 @@ require (
 	github.com/git-pkgs/vulns v0.2.0
 	github.com/glebarez/sqlite v1.11.0
 	github.com/google/uuid v1.6.0
+	github.com/robfig/cron/v3 v3.0.1
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
 	github.com/yuin/goldmark v1.8.2
 	golang.org/x/crypto v0.53.0

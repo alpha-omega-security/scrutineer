@@ -104,6 +104,7 @@ func (s *Server) settingsShow(w http.ResponseWriter, r *http.Request) {
 	if v := db.SettingInt(s.DB, db.SettingConcurrency); v > 0 {
 		concurrencyInput = v
 	}
+	scanSchedule, _ := db.GetSetting(s.DB, db.SettingScanSchedule)
 
 	s.render(w, r, "settings.html", map[string]any{
 		"Themes":           config.Themes,
@@ -117,6 +118,7 @@ func (s *Server) settingsShow(w http.ResponseWriter, r *http.Request) {
 		"ConcurrencyInput": concurrencyInput,
 		"MaxTurns":         db.SettingInt(s.DB, db.SettingDefaultMaxTurns),
 		"DefaultMaxTurns":  worker.DefaultSkillMaxTurns,
+		"ScanSchedule":     scanSchedule,
 		"Stats":            stats,
 		"DBSize":           dbSizeBytes,
 		"DBPath":           dbPath,
@@ -330,6 +332,36 @@ func (s *Server) settingsRestartRunner(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Queue.Reconfigure(n)
 	setFlash(w, Flash{Category: successKey, Title: "Runner restarted", Description: fmt.Sprintf("Now running %d scans in parallel; in-flight scans were cancelled.", n)})
+	s.redirect(w, r, "/settings")
+}
+
+// settingsUpdateScanSchedule saves the global default scan schedule.
+// "off" normalises to empty: with nothing to inherit from, a disabled
+// global and an unset one are the same thing. Inheriting repositories get
+// their NextScheduledScanAt reset so the next tick recomputes it.
+func (s *Server) settingsUpdateScanSchedule(w http.ResponseWriter, r *http.Request) {
+	schedule := strings.TrimSpace(r.FormValue("scan_schedule"))
+	if schedule == "custom" {
+		schedule = strings.TrimSpace(r.FormValue("scan_schedule_cron"))
+	}
+	if schedule == ScheduleOff {
+		schedule = ""
+	}
+	if schedule != "" {
+		if _, err := ScheduleNext(schedule, time.Now()); err != nil {
+			http.Error(w, "invalid schedule: "+err.Error(), http.StatusUnprocessableEntity)
+			return
+		}
+	}
+	if err := db.SetSetting(s.DB, db.SettingScanSchedule, schedule); err != nil {
+		http.Error(w, "could not save setting", http.StatusInternalServerError)
+		return
+	}
+	if err := s.DB.Model(&db.Repository{}).Where("scan_schedule = '' OR scan_schedule IS NULL").
+		UpdateColumn("next_scheduled_scan_at", nil).Error; err != nil {
+		s.Log.Error("reset inherited schedules", "err", err)
+	}
+	setFlash(w, Flash{Category: successKey, Title: "Default scan schedule updated"})
 	s.redirect(w, r, "/settings")
 }
 

@@ -47,6 +47,9 @@ The central entity. One row per git URL.
 | disk_bytes | integer | Cached on-disk size of the persistent clone cache, so the repo list renders the disk badge from a column instead of walking each repo's cache per row. Refreshed by the worker after each scan and backfilled once at startup; 0 for local repos and remote repos not scanned since the column was added. |
 | threat_model | text | Operator's working-copy threat-model JSON. When set, the worker writes it to `./threat_model.json` in every skill workspace and `security-deep-dive` loads it instead of fetching the latest `threat-model` scan. Edited via the threat-model workbench tab. Empty = no override. |
 | scan_config | text | Analyst-authored YAML with `focus_areas`, `known_bugs`, `attack_surface`, and `skip` patterns. Validated by the repository editor, staged as `scrutineer.scan_config` in every skill workspace, and its `skip` patterns layer onto each skill's path-filter deny list. Empty = no repository-specific guidance. |
+| scan_schedule | text | Recurring-scan schedule: `daily`, `weekly`, or a cron expression. Empty inherits the global `scan_schedule` setting; `off` disables scheduling even when a global default is set. |
+| upstream_url | text | Upstream this repository is a pushed staging copy of (no forge fork relationship). When set, the scheduler fast-forwards the repository from it before the new-commit check. Empty for ordinary repos. |
+| next_scheduled_scan_at | datetime | Scheduler bookkeeping: when the next scheduled run is due. Null means "recompute on the next tick"; schedule edits reset it instead of computing inline. |
 | created_at | datetime | |
 | updated_at | datetime | |
 
@@ -58,8 +61,8 @@ One row per skill execution or external import. `skill_name` / `skill_version` p
 |--------|------|-------|
 | id | integer PK | |
 | repository_id | integer FK | References `repositories.id`. Cascade delete. |
-| kind | text | `skill` for native scans, `import` for findings ingested via `POST /api/v1/import`. |
-| status | text | `queued`, `paused`, `running`, `done`, `failed`, `cancelled`. Stale `running` rows are swept to `failed` on startup. |
+| kind | text | `skill` for native scans, `import` for findings ingested via `POST /api/v1/import`, `schedule` for the scheduler's skipped-run trace rows (never queued). |
+| status | text | `queued`, `paused`, `running`, `done`, `failed`, `skipped`, `cancelled`. Stale `running` rows are swept to `failed` on startup. `skipped` rows are written terminal by the scheduler when a due run decides not to enqueue (remote HEAD unchanged, scan in flight, ...); `error` carries the reason. |
 | status_priority | integer | Denormalised sort key for the scans index: 0 running, 1 queued, 2 paused, 3 terminal. |
 | model | text | Claude model ID resolved from the explicit scan model, skill model preference, or skill default model tier at enqueue time. |
 | effort | text | Claude `--effort` level (`low`–`max`) snapshotted from the runtime setting at enqueue. Empty on legacy rows; the runner falls back to its configured default. |
