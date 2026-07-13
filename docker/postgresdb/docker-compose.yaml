@@ -1,0 +1,34 @@
+# scrutineer backed by the pre-provisioned PostgreSQL image in docker/postgresdb.
+#
+#   docker compose -f docker/docker-compose.postgres.yml up --build
+#
+# The db service comes up with scrutineer's schema already provisioned; the
+# scrutineer service points at it via docker/scrutineer.postgres.yaml.
+name: scrutineer-postgres
+
+services:
+  db:
+    build:
+      context: .
+    ports:
+      - 5432:5432
+    environment:
+      POSTGRES_USER: scrutineer
+      POSTGRES_DB: scrutineer
+      # Dev default. Change this AND the database.dsn in the root scrutineer.yaml
+      # before exposing the stack anywhere real.
+      POSTGRES_PASSWORD: scrutineer
+    volumes:
+      - scrutineer-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # gate scrutineer's start on the server accepting connections; start_period
+      # covers the first-boot initdb (schema load).
+      test: ["CMD-SHELL", "pg_isready -U scrutineer -d scrutineer"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+    restart: unless-stopped
+
+volumes:
+  scrutineer-pgdata:
