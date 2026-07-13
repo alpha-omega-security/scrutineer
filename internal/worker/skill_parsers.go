@@ -788,8 +788,9 @@ func (w *Worker) parseMitigationOutput(scan *db.Scan, report string, emit func(E
 // verify/revalidate/patch entries (#482). The draft itself is on
 // Finding.DisclosureDraft (PATCHed by the skill via the API); this note is
 // the audit trail pointing at it: the GHSA summary, which fields were
-// patched/preserved, references added, and the report's notes prose. An
-// error-only report records why the skill refused to draft.
+// patched/preserved, the suggested recipients, references added, and
+// the report's notes prose. An error-only report records why the skill
+// refused to draft.
 func (w *Worker) parseDiscloseOutput(scan *db.Scan, report string, emit func(Event)) error {
 	if scan.FindingID == nil {
 		return fmt.Errorf("disclose scan has no finding_id")
@@ -798,12 +799,13 @@ func (w *Worker) parseDiscloseOutput(scan *db.Scan, report string, emit func(Eve
 		GHSA struct {
 			Summary string `json:"summary"`
 		} `json:"ghsa"`
-		Patched           []string `json:"patched"`
-		Preserved         []string `json:"preserved"`
-		ReferencesAdded   int      `json:"references_added"`
-		ReferencesSkipped int      `json:"references_skipped"`
-		Notes             string   `json:"notes"`
-		Error             string   `json:"error"`
+		Patched             []string `json:"patched"`
+		Preserved           []string `json:"preserved"`
+		SuggestedRecipients string   `json:"suggested_recipients"`
+		ReferencesAdded     int      `json:"references_added"`
+		ReferencesSkipped   int      `json:"references_skipped"`
+		Notes               string   `json:"notes"`
+		Error               string   `json:"error"`
 	}
 	if err := json.Unmarshal([]byte(report), &result); err != nil {
 		return fmt.Errorf("parse disclose report: %w", err)
@@ -823,6 +825,9 @@ func (w *Worker) parseDiscloseOutput(scan *db.Scan, report string, emit func(Eve
 		}
 		if len(result.Preserved) > 0 {
 			fmt.Fprintf(&b, "Preserved: %s\n", strings.Join(result.Preserved, ", "))
+		}
+		if r := strings.TrimSpace(result.SuggestedRecipients); r != "" {
+			fmt.Fprintf(&b, "Suggested recipients: %s\n", r)
 		}
 		if result.ReferencesAdded > 0 || result.ReferencesSkipped > 0 {
 			fmt.Fprintf(&b, "References: %d added, %d skipped\n",

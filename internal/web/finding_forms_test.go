@@ -29,11 +29,12 @@ func TestFindingFields(t *testing.T) {
 	path := fmt.Sprintf("/findings/%d/fields", f.ID)
 
 	w := postForm(t, s, path, url.Values{
-		"severity":   {"Critical"},
-		"cve_id":     {" CVE-2026-12345 "},
-		"affected":   {">=1.0.0 <2.0.0"},
-		"ignored":    {"x"}, // not in analystFields, dropped
-		"resolution": {""},  // present but unchanged, no-op
+		"severity":             {"Critical"},
+		"cve_id":               {" CVE-2026-12345 "},
+		"affected":             {">=1.0.0 <2.0.0"},
+		"suggested_recipients": {"@alice (CODEOWNERS: crypto/*)"},
+		"ignored":              {"x"}, // not in analystFields, dropped
+		"resolution":           {""},  // present but unchanged, no-op
 	})
 	if w.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, want 303; body=%s", w.Code, w.Body)
@@ -44,13 +45,15 @@ func TestFindingFields(t *testing.T) {
 
 	var got db.Finding
 	s.DB.First(&got, f.ID)
-	if got.Severity != "Critical" || got.CVEID != "CVE-2026-12345" || got.Affected != ">=1.0.0 <2.0.0" {
-		t.Errorf("after edit: severity=%q cve=%q affected=%q", got.Severity, got.CVEID, got.Affected)
+	if got.Severity != "Critical" || got.CVEID != "CVE-2026-12345" || got.Affected != ">=1.0.0 <2.0.0" ||
+		got.SuggestedRecipients != "@alice (CODEOWNERS: crypto/*)" {
+		t.Errorf("after edit: severity=%q cve=%q affected=%q recipients=%q",
+			got.Severity, got.CVEID, got.Affected, got.SuggestedRecipients)
 	}
 	var hist []db.FindingHistory
 	s.DB.Where("finding_id = ?", f.ID).Find(&hist)
-	if len(hist) != 3 {
-		t.Errorf("history rows = %d, want 3 (severity, cve_id, affected)", len(hist))
+	if len(hist) != 4 {
+		t.Errorf("history rows = %d, want 4 (severity, cve_id, affected, suggested_recipients)", len(hist))
 	}
 	for _, h := range hist {
 		if h.Source != db.SourceAnalyst {
@@ -68,8 +71,8 @@ func TestFindingFields(t *testing.T) {
 		t.Errorf("GHSAID = %q, want empty (rejected value should not be stored)", got.GHSAID)
 	}
 	s.DB.Where("finding_id = ?", f.ID).Find(&hist)
-	if len(hist) != 3 {
-		t.Errorf("history rows after rejected write = %d, want still 3", len(hist))
+	if len(hist) != 4 {
+		t.Errorf("history rows after rejected write = %d, want still 4", len(hist))
 	}
 
 	if w := postForm(t, s, "/findings/999999/fields", url.Values{"severity": {"Low"}}); w.Code != http.StatusNotFound {

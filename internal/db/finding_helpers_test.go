@@ -194,6 +194,20 @@ func TestWriteFindingField_concurrentUpdatesKeepHistoryChain(t *testing.T) {
 	}
 }
 
+func TestWriteFindingField_acceptsSuggestedRecipients(t *testing.T) {
+	gdb := newTestDB(t)
+	f := seedFinding(t, gdb)
+
+	if err := WriteFindingField(gdb, f.ID, "suggested_recipients", "@alice (CODEOWNERS: crypto/*)", SourceModel, "disclose"); err != nil {
+		t.Fatal(err)
+	}
+	var refreshed Finding
+	gdb.First(&refreshed, f.ID)
+	if refreshed.SuggestedRecipients != "@alice (CODEOWNERS: crypto/*)" {
+		t.Errorf("suggested_recipients = %q", refreshed.SuggestedRecipients)
+	}
+}
+
 func TestWriteFindingField_rejectsUnknownField(t *testing.T) {
 	gdb := newTestDB(t)
 	f := seedFinding(t, gdb)

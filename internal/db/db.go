@@ -677,7 +677,13 @@ type Finding struct {
 	ReleaseURL      string
 	Resolution      FindingResolution `gorm:"index"`
 	DisclosureDraft string            `gorm:"type:text"`
-	Assignee        string            `gorm:"index"`
+	// SuggestedRecipients routes the disclosure to the file-level owners
+	// of Location (CODEOWNERS entries or, absent those, recent non-bot
+	// committers) because the repo-level maintainers list is too coarse
+	// on large projects. Comma-joined free text with provenance, written
+	// by the disclose skill.
+	SuggestedRecipients string `gorm:"type:text"`
+	Assignee            string `gorm:"index"`
 	// LastRevalidateVerdict caches the latest verdict from the
 	// revalidate skill (true_positive | false_positive | already_fixed
 	// | uncertain; empty when revalidate has not run) so the audit

@@ -96,12 +96,16 @@
     "patched": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "Field names sent in the PATCH /findings/{id} body. Subset of: title, cvss_vector, affected, fix_version, disclosure_draft."
+      "description": "Field names sent in the PATCH /findings/{id} body. Subset of: title, cvss_vector, affected, fix_version, disclosure_draft, suggested_recipients."
     },
     "preserved": {
       "type": "array",
       "items": { "type": "string" },
       "description": "Fields left untouched because the finding already carried an analyst-set value."
+    },
+    "suggested_recipients": {
+      "type": "string",
+      "description": "Comma-joined file-level owners for the finding's location, each with provenance: CODEOWNERS entries (last matching pattern wins) or, absent those, recent non-bot committers from git log. Mirrors the value PATCHed to the finding. Omit when both routes came up dry."
     },
     "references_added": {
       "type": "integer",

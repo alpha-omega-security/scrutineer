@@ -21,7 +21,7 @@ import (
 var analystFields = []string{
 	"title", "severity", "cwe", "location", "affected",
 	"cve_id", "ghsa_id", "cvss_vector", "cvss_v4_vector", "fix_version", "fix_commit",
-	"resolution", "disclosure_draft", "assignee",
+	"resolution", "disclosure_draft", "suggested_recipients", "assignee",
 }
 
 func (s *Server) findingFields(w http.ResponseWriter, r *http.Request) {

@@ -508,6 +508,7 @@ func buildImportFindings(scan *db.Scan, res ingest.Result) ([]db.Finding, []impo
 		f.BreakingChangeRationale = in.BreakingChangeRationale
 		f.DupCheck = in.DupCheck
 		f.DisclosureDraft = in.DisclosureDraft
+		f.SuggestedRecipients = in.SuggestedRecipients
 		f.ExploitedInWild = in.ExploitedInWild
 		f.ExploitedInWildEvidence = in.ExploitedInWildEvidence
 		// The real upstream fix commit lands in FixCommit; the bundle's legacy

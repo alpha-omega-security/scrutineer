@@ -373,6 +373,8 @@ func findingFieldAccessor(f *Finding, field string) (current, column string, err
 		return string(f.Resolution), "resolution", nil
 	case "disclosure_draft":
 		return f.DisclosureDraft, "disclosure_draft", nil
+	case "suggested_recipients":
+		return f.SuggestedRecipients, "suggested_recipients", nil
 	case "assignee":
 		return f.Assignee, "assignee", nil
 	case "suggested_fix":

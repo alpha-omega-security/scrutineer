@@ -1032,8 +1032,9 @@ func TestParseReleaseWatch_rejectsMissingTimestamp(t *testing.T) {
 func TestParseDisclose_postsSummaryNote(t *testing.T) {
 	report := `{
 		"ghsa": {"summary": "Command injection in run()"},
-		"patched": ["cvss_vector", "affected", "disclosure_draft"],
+		"patched": ["cvss_vector", "affected", "disclosure_draft", "suggested_recipients"],
 		"preserved": ["title"],
+		"suggested_recipients": "@alice (CODEOWNERS: crypto/*), @org/crypto-team (CODEOWNERS: crypto/*)",
 		"references_added": 2,
 		"references_skipped": 1,
 		"notes": "Source-only advisory; no published packages."
@@ -1048,14 +1049,29 @@ func TestParseDisclose_postsSummaryNote(t *testing.T) {
 	body := notes[0].Body
 	for _, want := range []string{
 		`disclose: drafted "Command injection in run()"`,
-		"Patched: cvss_vector, affected, disclosure_draft",
+		"Patched: cvss_vector, affected, disclosure_draft, suggested_recipients",
 		"Preserved: title",
+		"Suggested recipients: @alice (CODEOWNERS: crypto/*), @org/crypto-team (CODEOWNERS: crypto/*)",
 		"References: 2 added, 1 skipped",
 		"Source-only advisory; no published packages.",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("note body missing %q:\n%s", want, body)
 		}
+	}
+}
+
+func TestParseDisclose_omitsRecipientsLineWhenEmpty(t *testing.T) {
+	report := `{"ghsa": {"summary": "X"}, "patched": ["disclosure_draft"]}`
+	f, gdb := runSkillWithFinding(t, "disclose", report, db.FindingTriaged)
+
+	var notes []db.FindingNote
+	gdb.Where("finding_id = ? AND `by` = ?", f.ID, "disclose").Find(&notes)
+	if len(notes) != 1 {
+		t.Fatalf("want one disclose note, got %d", len(notes))
+	}
+	if strings.Contains(notes[0].Body, "Suggested recipients") {
+		t.Errorf("note body should not mention recipients when the report has none:\n%s", notes[0].Body)
 	}
 }
 

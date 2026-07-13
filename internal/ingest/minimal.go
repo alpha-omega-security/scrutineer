@@ -61,6 +61,7 @@ type minimalFinding struct {
 	BreakingChangeRationale string `json:"breaking_change_rationale"`
 	DupCheck                string `json:"dup_check"`
 	DisclosureDraft         string `json:"disclosure_draft"`
+	SuggestedRecipients     string `json:"suggested_recipients"`
 	ExploitedInWild         string `json:"exploited_in_wild"`
 	ExploitedInWildEvidence string `json:"exploited_in_wild_evidence"`
 	// UpstreamFixCommit is the real upstream fix commit; a new key because the
@@ -147,6 +148,7 @@ func parseMinimal(data []byte) ([]Result, error) {
 			BreakingChangeRationale: f.BreakingChangeRationale,
 			DupCheck:                f.DupCheck,
 			DisclosureDraft:         f.DisclosureDraft,
+			SuggestedRecipients:     f.SuggestedRecipients,
 			ExploitedInWild:         f.ExploitedInWild,
 			ExploitedInWildEvidence: f.ExploitedInWildEvidence,
 			UpstreamFixCommit:       f.UpstreamFixCommit,

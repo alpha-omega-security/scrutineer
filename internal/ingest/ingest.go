@@ -123,6 +123,7 @@ type Finding struct {
 	BreakingChangeRationale string
 	DupCheck                string
 	DisclosureDraft         string
+	SuggestedRecipients     string
 	ExploitedInWild         string
 	ExploitedInWildEvidence string
 	// UpstreamFixCommit is the real upstream fix commit (db.Finding.FixCommit),

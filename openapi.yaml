@@ -363,7 +363,7 @@ paths:
                     Map of field name to new value. Allowed fields:
                     title, severity, status, cwe, location, affected,
                     cve_id, ghsa_id, cvss_vector, cvss_v4_vector, fix_version, fix_commit,
-                    resolution, disclosure_draft, assignee.
+                    resolution, disclosure_draft, suggested_recipients, assignee.
       responses:
         '204': { description: Updated }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -1444,6 +1444,7 @@ components:
               breaking_change_rationale:  { type: string }
               dup_check:                  { type: string }
               disclosure_draft:           { type: string }
+              suggested_recipients:       { type: string, description: "File-level owners for the finding's location, from CODEOWNERS or recent non-bot committers." }
               exploited_in_wild:          { type: string, enum: [yes, no] }
               exploited_in_wild_evidence: { type: string }
               upstream_fix_commit:        { type: string, description: "Real upstream fix commit (distinct from fix_commit)." }

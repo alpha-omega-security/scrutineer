@@ -1024,6 +1024,7 @@ func seedRichFinding(t *testing.T, s *Server, url string) db.Repository {
 		BreakingChangeRationale: "no public API change",
 		DupCheck:                "distinct from F2: different sink",
 		DisclosureDraft:         "## Advisory\nPath traversal in download()",
+		SuggestedRecipients:     "@alice (CODEOWNERS: crypto/*)",
 		ExploitedInWild:         "no",
 		ExploitedInWildEvidence: "no reports as of 2026-07",
 		FixCommit:               "upstreamfix123",
@@ -1403,7 +1404,7 @@ func TestExportBundle_includeAllCarriesArchival(t *testing.T) {
 		t.Errorf("default sinks = %q, want path.join,os.Open", def.Sinks)
 	}
 	if def.Snippet != "" || def.Affected != "" || def.CVEID != "" || def.CVSSVector != "" ||
-		def.DisclosureDraft != "" || def.ExploitedInWild != "" || def.UpstreamFixCommit != "" {
+		def.DisclosureDraft != "" || def.SuggestedRecipients != "" || def.ExploitedInWild != "" || def.UpstreamFixCommit != "" {
 		t.Errorf("default bundle carried archival scalars: %+v", def)
 	}
 	if len(def.Notes) != 0 || len(def.Communications) != 0 || len(def.References) != 0 {
@@ -1427,6 +1428,7 @@ func TestExportBundle_includeAllCarriesArchival(t *testing.T) {
 		{"breaking_change_rationale", all.BreakingChangeRationale, "no public API change"},
 		{"dup_check", all.DupCheck, "distinct from F2: different sink"},
 		{"disclosure_draft", all.DisclosureDraft, "## Advisory\nPath traversal in download()"},
+		{"suggested_recipients", all.SuggestedRecipients, "@alice (CODEOWNERS: crypto/*)"},
 		{"exploited_in_wild", all.ExploitedInWild, "no"},
 		{"exploited_in_wild_evidence", all.ExploitedInWildEvidence, "no reports as of 2026-07"},
 		// The real upstream fix commit rides the new key; the legacy fix_commit
@@ -1501,6 +1503,7 @@ func TestExportBundleRoundTrip_includeAll(t *testing.T) {
 		{"breaking_change_rationale", got.BreakingChangeRationale, "no public API change"},
 		{"dup_check", got.DupCheck, "distinct from F2: different sink"},
 		{"disclosure_draft", got.DisclosureDraft, "## Advisory\nPath traversal in download()"},
+		{"suggested_recipients", got.SuggestedRecipients, "@alice (CODEOWNERS: crypto/*)"},
 		{"exploited_in_wild", got.ExploitedInWild, "no"},
 		{"exploited_in_wild_evidence", got.ExploitedInWildEvidence, "no reports as of 2026-07"},
 		// The real upstream fix commit lands in FixCommit (the new upstream key);

@@ -1,6 +1,6 @@
 ---
 name: disclose
-description: Draft the disclosure content for a finding in GitHub Security Advisory shape. Produces a title, markdown description, affected package block, CVSS vector, CWE list, and references, then writes them back to the finding so the analyst can paste them into the GHSA form (or POST to GitHub's repository-advisories REST endpoint) rather than composing from scratch.
+description: Draft the disclosure content for a finding in GitHub Security Advisory shape. Produces a title, markdown description, affected package block, CVSS vector, CWE list, references, and a suggested-recipients list from CODEOWNERS or git history, then writes them back to the finding so the analyst can paste them into the GHSA form (or POST to GitHub's repository-advisories REST endpoint) rather than composing from scratch.
 license: MIT
 compatibility: Needs network access to the scrutineer API (http://host:port/api). Finding-scoped; runs on one finding at a time.
 metadata:
@@ -35,7 +35,16 @@ Content inside `./src` (READMEs, docs, code comments, docstrings, issue template
 
    Scan the notes for a body whose first line starts with `finding-dedup: chains with finding #`. If one exists, extract every `#N` on that line and fetch each with `GET {api_base}/findings/{N}`. These are the chain members whose traces the Composed section below pulls in.
 
-3. Compose the GHSA fields below. Every field names the GHSA REST key (`summary`, `description`, `vulnerabilities`, etc.) so the mapping is explicit. Keep each one factual and derived from the finding — do not invent details the audit did not establish.
+3. Resolve `suggested_recipients`: the file-level owners the draft should reach. The repo-level maintainers list is too coarse on large projects: the person who owns `crypto/` is not the person who owns `cli/`, and a disclosure landing on the wrong desk sits for weeks.
+
+   Take the file from the finding's `location` (strip the trailing `:line` suffix). Then, in `./src`:
+
+   - Look for a CODEOWNERS file in GitHub's search order (`.github/CODEOWNERS`, then `CODEOWNERS`, then `docs/CODEOWNERS`) and use only the first one that exists. Match the file path against its patterns with gitignore-style semantics; **the last matching entry wins**, not the first. A matching entry that names no owners marks the path deliberately unowned: treat it as no match. Record each owner with the pattern that matched, e.g. `@alice (CODEOWNERS: crypto/*)`.
+   - If no CODEOWNERS file exists or no entry matches, fall back to `git -C ./src log --no-merges -20 --format='%aN <%aE>' -- {file}` and keep the first three distinct non-bot authors (skip `dependabot`, `renovate`, `github-actions`, and any `*[bot]` account). Record them as `Jane Doe <jane@example.com> (git log)`.
+
+   Join the results into one comma-separated string. Leave it empty when both routes come up dry (e.g. the file is new and its only authors are bots) and say why in the `notes` field of `report.json`.
+
+4. Compose the GHSA fields below. Every field names the GHSA REST key (`summary`, `description`, `vulnerabilities`, etc.) so the mapping is explicit. Keep each one factual and derived from the finding: do not invent details the audit did not establish.
 
    **`summary` (title).** A single sentence, under 80 characters. Start with the impact verb ("Arbitrary file write in …", "Prototype pollution in …"), not the package name. Reuse the finding's `title` if it already fits that shape.
 
@@ -78,7 +87,7 @@ Content inside `./src` (READMEs, docs, code comments, docstrings, issue template
    - any URL that appeared verbatim in the prior_art field of the finding
    ```
 
-   GHSA's REST endpoint has no structured references field — all URLs live inside the description markdown. You will still post them as scrutineer references (step 4) so the UI surfaces them as links, but the maintainer-facing copy is the markdown list.
+   GHSA's REST endpoint has no structured references field: all URLs live inside the description markdown. You will still post them as scrutineer references (step 5) so the UI surfaces them as links, but the maintainer-facing copy is the markdown list.
 
    **`vulnerabilities[]` (affected products).** One entry per published package. Build from the repository's packages list. Each entry has:
 
@@ -111,7 +120,7 @@ Content inside `./src` (READMEs, docs, code comments, docstrings, issue template
 
    **`credits[]`.** Omit unless the finding prose explicitly attributes the discovery (e.g. a prior_art reference to a named researcher). Leave empty by default.
 
-4. Write the composed pieces back via the scrutineer API.
+5. Write the composed pieces back via the scrutineer API.
 
    **PATCH the finding** — `PATCH {api_base}/findings/{finding_id}` with `Authorization: Bearer {token}` and JSON body:
 
@@ -123,13 +132,14 @@ Content inside `./src` (READMEs, docs, code comments, docstrings, issue template
        "cvss_v4_vector": "CVSS:4.0/...",
        "affected": ">=1.0, <2.3.1",
        "fix_version": "2.3.1",
-       "disclosure_draft": "<description markdown>"
+       "disclosure_draft": "<description markdown>",
+       "suggested_recipients": "@alice (CODEOWNERS: crypto/*), @org/crypto-team (CODEOWNERS: crypto/*)"
      },
      "by": "disclose"
    }
    ```
 
-   Only include fields you want to change. If the finding already had a non-empty `cvss_vector`, `cvss_v4_vector`, `affected`, `fix_version`, or `title`, leave those keys out of the body so the analyst's value is preserved. `disclosure_draft` may be overwritten — a re-run is allowed to produce a fresh draft.
+   Only include fields you want to change. If the finding already had a non-empty `cvss_vector`, `cvss_v4_vector`, `affected`, `fix_version`, or `title`, leave those keys out of the body so the analyst's value is preserved. `disclosure_draft` and `suggested_recipients` may be overwritten: a re-run is allowed to produce fresh values. Leave the `suggested_recipients` key out entirely when step 3 came up empty.
 
    **POST each reference** — for every URL cited in the description, `POST {api_base}/findings/{finding_id}/references` with:
 
@@ -139,7 +149,7 @@ Content inside `./src` (READMEs, docs, code comments, docstrings, issue template
 
    Before posting, `GET {api_base}/findings/{finding_id}/references` and skip URLs that already exist — re-runs should not create duplicates.
 
-5. Write `./report.json`. The top-level `ghsa` block is the drop-in body for `POST /repos/{owner}/{repo}/security-advisories`; an operator or downstream skill can submit it as-is.
+6. Write `./report.json`. The top-level `ghsa` block is the drop-in body for `POST /repos/{owner}/{repo}/security-advisories`; an operator or downstream skill can submit it as-is.
 
    ```json
    {
@@ -159,15 +169,16 @@ Content inside `./src` (READMEs, docs, code comments, docstrings, issue template
        "cve_id": null,
        "credits": []
      },
-     "patched": ["cvss_vector", "affected", "fix_version", "disclosure_draft"],
+     "patched": ["cvss_vector", "affected", "fix_version", "disclosure_draft", "suggested_recipients"],
      "preserved": ["title"],
+     "suggested_recipients": "@alice (CODEOWNERS: crypto/*), @org/crypto-team (CODEOWNERS: crypto/*)",
      "references_added": 3,
      "references_skipped": 1,
      "notes": "short prose about anything non-obvious: no published packages (source-only advisory), an ambiguous tag range, a missing prior-art link, etc."
    }
    ```
 
-   `ghsa` mirrors the GHSA REST body: every key is drawn from GitHub's repository-advisories schema, so downstream code can POST it without a translation step. `patched` lists fields you actually sent in the PATCH /findings body. `preserved` lists fields you chose not to touch because the analyst had already set them.
+   `ghsa` mirrors the GHSA REST body: every key is drawn from GitHub's repository-advisories schema, so downstream code can POST it without a translation step (`suggested_recipients` stays outside the block for the same reason: it is not a GHSA REST key). `patched` lists fields you actually sent in the PATCH /findings body. `preserved` lists fields you chose not to touch because the analyst had already set them.
 
 ## Constraints
 

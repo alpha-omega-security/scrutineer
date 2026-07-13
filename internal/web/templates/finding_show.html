@@ -480,6 +480,11 @@ git commit -m "fix: {{$f.Title}}"</pre>
           <input class="input" name="assignee" value="{{$f.Assignee}}">
         </div>
         <div class="grid gap-1 col-span-2">
+          <label class="text-xs text-muted-foreground"
+                 title="File-level owners of the finding's location, from CODEOWNERS or recent non-bot committers">Suggested recipients</label>
+          <input class="input" name="suggested_recipients" value="{{$f.SuggestedRecipients}}">
+        </div>
+        <div class="grid gap-1 col-span-2">
           <label class="text-xs text-muted-foreground">Disclosure draft</label>
           <textarea class="input font-mono text-xs" name="disclosure_draft" rows="6">{{$f.DisclosureDraft}}</textarea>
           {{if $f.DisclosureDraft}}

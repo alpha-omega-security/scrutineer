@@ -238,6 +238,7 @@ type sharingFinding struct {
 	BreakingChangeRationale string `json:"breaking_change_rationale,omitempty"`
 	DupCheck                string `json:"dup_check,omitempty"`
 	DisclosureDraft         string `json:"disclosure_draft,omitempty"`
+	SuggestedRecipients     string `json:"suggested_recipients,omitempty"`
 	ExploitedInWild         string `json:"exploited_in_wild,omitempty"`
 	ExploitedInWildEvidence string `json:"exploited_in_wild_evidence,omitempty"`
 	UpstreamFixCommit       string `json:"upstream_fix_commit,omitempty"`
@@ -358,6 +359,7 @@ func (s *Server) apiExportRepoBundle(w http.ResponseWriter, r *http.Request, rep
 			sf.BreakingChangeRationale = f.BreakingChangeRationale
 			sf.DupCheck = f.DupCheck
 			sf.DisclosureDraft = f.DisclosureDraft
+			sf.SuggestedRecipients = f.SuggestedRecipients
 			sf.ExploitedInWild = f.ExploitedInWild
 			sf.ExploitedInWildEvidence = f.ExploitedInWildEvidence
 			// The real upstream fix commit rides the new key; the legacy
