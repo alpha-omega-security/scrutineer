@@ -33,6 +33,9 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"reflect"
+	"strings"
+	"unicode/utf8"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -149,11 +152,20 @@ func run(sqlitePath, pgDSN string, force bool) error {
 // once (children are copied by their own entry, not cascaded from the parent).
 func copyModel[T any](src, tx *gorm.DB) (string, int64, error) {
 	table := tableName(tx, new(T))
-	var total int64
+	var total, cleaned int64
 	var batch []T
 	res := src.Model(new(T)).FindInBatches(&batch, batchSize, func(_ *gorm.DB, _ int) error {
 		if len(batch) == 0 {
 			return nil
+		}
+		// SQLite stores arbitrary bytes in TEXT columns; PostgreSQL rejects any
+		// row whose text is not valid UTF-8 (or contains a NUL), aborting the
+		// whole load. Scrub each row's string fields first so one corrupt log
+		// or report can't sink the migration.
+		for i := range batch {
+			if sanitizeStrings(&batch[i]) {
+				cleaned++
+			}
 		}
 		if err := tx.Session(&gorm.Session{SkipHooks: true}).
 			Omit(clause.Associations).
@@ -163,7 +175,59 @@ func copyModel[T any](src, tx *gorm.DB) (string, int64, error) {
 		total += int64(len(batch))
 		return nil
 	})
+	if cleaned > 0 {
+		log.Printf("  note: scrubbed invalid UTF-8/NUL bytes in %d %s row(s)", cleaned, table)
+	}
 	return table, total, res.Error
+}
+
+// sanitizeStrings rewrites every string field of the struct pointed at by ptr
+// so it is safe for a PostgreSQL text column: NUL bytes are dropped and any
+// invalid UTF-8 sequence is replaced with U+FFFD. It reports whether anything
+// changed. Only top-level string and *string fields are touched — associations
+// are omitted from the copy, and []byte fields map to bytea, which takes
+// arbitrary bytes untouched. Returns false for non-struct inputs.
+func sanitizeStrings(ptr any) bool {
+	rv := reflect.ValueOf(ptr).Elem()
+	if rv.Kind() != reflect.Struct {
+		return false
+	}
+	changed := false
+	for i := 0; i < rv.NumField(); i++ {
+		f := rv.Field(i)
+		if !f.CanSet() {
+			continue
+		}
+		switch {
+		case f.Kind() == reflect.String:
+			if clean := cleanText(f.String()); clean != f.String() {
+				f.SetString(clean)
+				changed = true
+			}
+		case f.Kind() == reflect.Ptr && !f.IsNil() && f.Elem().Kind() == reflect.String:
+			if clean := cleanText(f.Elem().String()); clean != f.Elem().String() {
+				f.Elem().SetString(clean)
+				changed = true
+			}
+		}
+	}
+	return changed
+}
+
+// cleanText makes s safe for a PostgreSQL text column: strip NUL bytes (valid
+// UTF-8 but forbidden in text), then replace any remaining invalid byte
+// sequence with the Unicode replacement character.
+func cleanText(s string) string {
+	if s == "" {
+		return s
+	}
+	if strings.IndexByte(s, 0) >= 0 {
+		s = strings.ReplaceAll(s, "\x00", "")
+	}
+	if !utf8.ValidString(s) {
+		s = strings.ToValidUTF8(s, "�")
+	}
+	return s
 }
 
 // copyRaw copies a table generically as untyped rows. Used for the many-to-many

@@ -3,7 +3,9 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"scrutineer/internal/db"
 )
@@ -103,6 +105,39 @@ func TestMigrate(t *testing.T) {
 	must(t, dst.Create(&newRepo).Error)
 	if newRepo.ID <= repo.ID {
 		t.Errorf("new repo id %d did not advance past imported max %d (sequence not reset)", newRepo.ID, repo.ID)
+	}
+}
+
+// TestSanitizeStrings covers the UTF-8/NUL scrubbing that lets SQLite text
+// survive a PostgreSQL text column, without needing a live Postgres.
+func TestSanitizeStrings(t *testing.T) {
+	// The reported failure: a mangled em-dash (doubled 0xe2) in a scan's log,
+	// plus a NUL that Postgres text also forbids.
+	scan := db.Scan{
+		Log:    "before \xe2\xe2\x80 after",
+		Report: "has\x00nul",
+		Commit: "clean",
+	}
+	if !sanitizeStrings(&scan) {
+		t.Fatal("sanitizeStrings reported no change on invalid input")
+	}
+	if !utf8.ValidString(scan.Log) {
+		t.Errorf("Log still invalid UTF-8: %q", scan.Log)
+	}
+	if strings.ContainsRune(scan.Report, 0) {
+		t.Errorf("Report still contains NUL: %q", scan.Report)
+	}
+	if scan.Report != "hasnul" {
+		t.Errorf("Report = %q, want NUL stripped to %q", scan.Report, "hasnul")
+	}
+	if scan.Commit != "clean" {
+		t.Errorf("Commit was altered: %q", scan.Commit)
+	}
+
+	// A clean row is left untouched (and reported as unchanged).
+	clean := db.Scan{Log: "plain — text", Commit: "abc"}
+	if sanitizeStrings(&clean) {
+		t.Error("sanitizeStrings reported a change on clean input")
 	}
 }
 
