@@ -253,6 +253,35 @@ func (s *Server) scansPauseQueued(w http.ResponseWriter, r *http.Request) {
 	s.redirect(w, r, "/scans?status=paused")
 }
 
+// scansCancelQueued cancels every queued scan across all repositories, leaving
+// running scans to finish. It is the global, queued-only companion to the
+// per-repo scansCancelAll (which also stops running scans) and the cancel
+// analogue of scansPauseQueued.
+func (s *Server) scansCancelQueued(w http.ResponseWriter, r *http.Request) {
+	var scans []db.Scan
+	if err := s.DB.Where("status = ?", db.ScanQueued).Find(&scans).Error; err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	now := time.Now()
+	var cancelled int
+	for _, sc := range scans {
+		// Gate on status = queued so a scan the worker promoted to running
+		// between the read above and this write is left alone to keep running.
+		res := s.DB.Model(&db.Scan{}).Where("id = ? AND status = ?", sc.ID, db.ScanQueued).Updates(map[string]any{
+			statusKey:         db.ScanCancelled,
+			"status_priority": db.StatusPriorityFor(db.ScanCancelled),
+			errorKey:          "cancelled by user",
+			"finished_at":     &now,
+		})
+		if res.RowsAffected > 0 {
+			cancelled++
+		}
+	}
+	setFlash(w, Flash{Category: successKey, Title: fmt.Sprintf("%d queued scans cancelled", cancelled)})
+	s.redirect(w, r, "/scans?status=cancelled")
+}
+
 func (s *Server) scansResumePaused(w http.ResponseWriter, r *http.Request) {
 	repoID, _ := strconv.Atoi(r.URL.Query().Get("repository"))
 	q := s.DB.Where("status = ?", db.ScanPaused)

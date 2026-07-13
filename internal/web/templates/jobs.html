@@ -11,6 +11,11 @@
             hx-confirm="Pause every queued scan? Running scans will continue.">
         <button type="submit" class="btn-outline"><i data-lucide="pause"></i> Pause queued</button>
       </form>
+      <form method="post" action="/scans/cancel-queued"
+            hx-post="/scans/cancel-queued" hx-swap="none"
+            hx-confirm="Cancel every queued scan? Running scans will continue.">
+        <button type="submit" class="btn-outline"><i data-lucide="x"></i> Cancel queued</button>
+      </form>
     {{end}}
     {{if .PausedCount}}
       <form method="post" action="/scans/resume-paused"
