@@ -87,6 +87,7 @@ func run(sqlitePath, pgDSN string, force bool) error {
 	// keeps the log readable). Each entry resolves its own table name.
 	copiers := []func(src, tx *gorm.DB) (string, int64, error){
 		copyModel[db.Repository], copyModel[db.Scan], copyModel[db.Finding],
+		copyModel[db.ExpectedFinding],
 		copyModel[db.FindingLabel], copyModel[db.FindingNote], copyModel[db.FindingCommunication],
 		copyModel[db.FindingReference], copyModel[db.FindingHistory], copyModel[db.FindingReview],
 		copyModel[db.Dependency], copyModel[db.Package], copyModel[db.Dependent],
@@ -249,6 +250,7 @@ func warnUnhandledTables(src, dst *gorm.DB, copiers []func(src, tx *gorm.DB) (st
 func modelTableNames(g *gorm.DB) []string {
 	models := []any{
 		&db.Repository{}, &db.Scan{}, &db.Finding{},
+		&db.ExpectedFinding{},
 		&db.FindingLabel{}, &db.FindingNote{}, &db.FindingCommunication{},
 		&db.FindingReference{}, &db.FindingHistory{}, &db.FindingReview{},
 		&db.Dependency{}, &db.Package{}, &db.Dependent{},

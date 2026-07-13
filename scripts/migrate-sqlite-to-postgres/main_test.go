@@ -44,6 +44,7 @@ func TestMigrate(t *testing.T) {
 	// Close the scans<->findings cycle: a finding-scoped scan pointing back.
 	fScan := db.Scan{RepositoryID: repo.ID, Status: db.ScanDone, FindingID: &finding.ID}
 	must(t, src.Create(&fScan).Error)
+	must(t, src.Create(&db.ExpectedFinding{RepositoryID: repo.ID, File: "app.rb", CWE: "CWE-89"}).Error)
 	must(t, src.Create(&db.Setting{Key: "concurrency", Value: "4"}).Error)
 
 	// Migrate into the empty Postgres.
@@ -63,6 +64,7 @@ func TestMigrate(t *testing.T) {
 	}{
 		{&db.Repository{}, 1}, {&db.Scan{}, 2}, {&db.Finding{}, 1},
 		{&db.Maintainer{}, 2}, {&db.FindingLabel{}, 1}, {&db.Setting{}, 1},
+		{&db.ExpectedFinding{}, 1},
 	} {
 		var n int64
 		must(t, dst.Model(tc.model).Count(&n).Error)

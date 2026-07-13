@@ -4,8 +4,6 @@
 #
 # The db service comes up with scrutineer's schema already provisioned; the
 # scrutineer service points at it via docker/scrutineer.postgres.yaml.
-name: scrutineer-postgres
-
 services:
   db:
     build:
