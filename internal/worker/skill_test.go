@@ -381,18 +381,27 @@ func TestReconContextLoadsOnlyValidReports(t *testing.T) {
 	if err := gdb.Create(&reconSkill).Error; err != nil {
 		t.Fatal(err)
 	}
-	otherGroup := db.Scan{
-		RepositoryID: repo.ID, SkillID: &reconSkill.ID, SkillName: "recon", Status: db.ScanDone, ScanGroup: "other",
-		Report: `{"focus_areas":[{"name":"wrong group","paths":["wrong/**"],"surface":"should not be staged"}],"notes":[]}`,
-	}
-	if err := gdb.Create(&otherGroup).Error; err != nil {
-		t.Fatal(err)
-	}
 	recon := db.Scan{
 		RepositoryID: repo.ID, SkillID: &reconSkill.ID, SkillName: "recon", Status: db.ScanDone, ScanGroup: "batch-a",
 		Report: `{"focus_areas":[{"name":"XML parser","paths":["  lib\\xml*.c  "],"surface":"XML documents from callers"}],"notes":["Examples excluded."]}`,
 	}
 	if err := gdb.Create(&recon).Error; err != nil {
+		t.Fatal(err)
+	}
+	ungroupedRecon := db.Scan{
+		RepositoryID: repo.ID, SkillID: &reconSkill.ID, SkillName: "recon", Status: db.ScanDone,
+		Report: `{"focus_areas":[{"name":"CLI parser","paths":["cmd/**/*.go"],"surface":"Command-line input from operators"}],"notes":[]}`,
+	}
+	if err := gdb.Create(&ungroupedRecon).Error; err != nil {
+		t.Fatal(err)
+	}
+	// This deliberately newer report must not leak into either batch-a or
+	// ungrouped threat-model staging.
+	otherGroup := db.Scan{
+		RepositoryID: repo.ID, SkillID: &reconSkill.ID, SkillName: "recon", Status: db.ScanDone, ScanGroup: "other",
+		Report: `{"focus_areas":[{"name":"wrong group","paths":["wrong/**"],"surface":"should not be staged"}],"notes":[]}`,
+	}
+	if err := gdb.Create(&otherGroup).Error; err != nil {
 		t.Fatal(err)
 	}
 	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
@@ -406,6 +415,14 @@ func TestReconContextLoadsOnlyValidReports(t *testing.T) {
 	}
 	if got, want := ctx.FocusAreas[0].Paths, []string{"lib/xml*.c"}; !slices.Equal(got, want) {
 		t.Errorf("paths = %q, want %q", got, want)
+	}
+
+	ctx, err = w.reconContext(&db.Scan{RepositoryID: repo.ID}, threatModel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ctx == nil || len(ctx.FocusAreas) != 1 || ctx.FocusAreas[0].Name != "CLI parser" {
+		t.Fatalf("ungrouped recon context = %+v", ctx)
 	}
 
 	if err := gdb.Model(&recon).Update("report", `{"focus_areas":[{"name":"bad","paths":["../private/**"],"surface":"bad"}],"notes":[]}`).Error; err != nil {

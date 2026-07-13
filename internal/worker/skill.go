@@ -1256,10 +1256,8 @@ func (w *Worker) reconContext(scan *db.Scan, skill *db.Skill) (*skillContextReco
 	var reconScan db.Scan
 	query := w.DB.Select("id, report, skill_id").
 		Where("repository_id = ? AND skill_name = ? AND status = ? AND sub_path = '' AND ref = '' AND report <> ''",
-			scan.RepositoryID, "recon", db.ScanDone)
-	if scan.ScanGroup != "" {
-		query = query.Where("scan_group = ?", scan.ScanGroup)
-	}
+			scan.RepositoryID, "recon", db.ScanDone).
+		Where("scan_group = ?", scan.ScanGroup)
 	err := query.Order("id DESC").First(&reconScan).Error
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return nil, nil
