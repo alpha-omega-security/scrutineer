@@ -271,3 +271,97 @@ jobs:
           gh release edit "${TAG}" \
             --repo "${REPOSITORY}" \
             --draft=false
+
+  bump-cask:
+    name: Bump Homebrew cask
+    needs: [preflight, release]
+    runs-on: macos-26
+    timeout-minutes: 60
+    environment:
+      name: release
+      deployment: false
+    permissions: {}
+    env:
+      VERSION: ${{ needs.preflight.outputs.version }}
+    steps:
+      - name: Mint bot token for tap
+        id: tap-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_CLIENT_SECRET }}
+          owner: ${{ github.repository_owner }}
+          repositories: homebrew-tap
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Bump Homebrew cask
+        env:
+          GH_TOKEN: ${{ steps.tap-token.outputs.token }}
+          HOMEBREW_GITHUB_API_TOKEN: ${{ steps.tap-token.outputs.token }}
+          HOMEBREW_NO_AUTO_UPDATE: 1
+          HOMEBREW_NO_ENV_HINTS: 1
+          APP_SLUG: ${{ steps.tap-token.outputs.app-slug }}
+        run: |
+          BOT_USER="${APP_SLUG}[bot]"
+          BOT_ID=$(gh api "/users/${BOT_USER}" --jq .id)
+          export HOMEBREW_GIT_NAME="${BOT_USER}"
+          export HOMEBREW_GIT_EMAIL="${BOT_ID}+${BOT_USER}@users.noreply.github.com"
+          brew tap alpha-omega-security/tap
+          brew trust alpha-omega-security/tap
+
+          BRANCH_VERSION="${VERSION//,/-}"
+          BRANCH_VERSION="${BRANCH_VERSION//:/-}"
+          BRANCH="bump-scrutineer-${BRANCH_VERSION}"
+          PR_NUMBER=$(gh pr list \
+            --repo alpha-omega-security/homebrew-tap \
+            --head "${BRANCH}" \
+            --state open \
+            --json number,headRepositoryOwner \
+            --jq 'map(select(.headRepositoryOwner.login == "alpha-omega-security")) | .[0].number // ""' || true)
+
+          if [ -z "${PR_NUMBER}" ]; then
+            CURRENT_VERSION=$(brew info --cask --json=v2 alpha-omega-security/tap/scrutineer \
+              | jq -r '.casks[0].version')
+            if [[ "${CURRENT_VERSION}" == "${VERSION}" ]]; then
+              echo "Homebrew cask already uses ${VERSION}; nothing to recover"
+              exit 0
+            fi
+
+            brew bump-cask-pr --no-fork --version "${VERSION}" alpha-omega-security/tap/scrutineer
+            PR_NUMBER=$(gh pr list \
+              --repo alpha-omega-security/homebrew-tap \
+              --head "${BRANCH}" \
+              --state open \
+              --json number,headRepositoryOwner \
+              --jq 'map(select(.headRepositoryOwner.login == "alpha-omega-security")) | .[0].number // ""')
+          fi
+
+          if [ -z "${PR_NUMBER}" ]; then
+            echo "::error::could not find open Homebrew cask bump PR for ${BRANCH}"
+            exit 1
+          fi
+
+          for ATTEMPT in 1 2 3 4 5; do
+            if gh pr merge "${PR_NUMBER}" \
+              --repo alpha-omega-security/homebrew-tap \
+              --squash \
+              --delete-branch; then
+              exit 0
+            fi
+
+            STATE=$(gh pr view "${PR_NUMBER}" \
+              --repo alpha-omega-security/homebrew-tap \
+              --json state \
+              --jq .state 2>/dev/null || true)
+            if [[ "${STATE}" == "MERGED" ]]; then
+              exit 0
+            fi
+
+            if [[ "${ATTEMPT}" == 5 ]]; then
+              echo "::error::could not merge alpha-omega-security/homebrew-tap#${PR_NUMBER}"
+              exit 1
+            fi
+            echo "::warning::merge attempt ${ATTEMPT} failed; retrying in 5 seconds"
+            sleep 5
+          done
