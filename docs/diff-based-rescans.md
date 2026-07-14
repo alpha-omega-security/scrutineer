@@ -69,10 +69,12 @@ other files that affect how untrusted input reaches security-sensitive code.
 
 ## Coverage Metadata
 
-Diff scans record structured coverage metadata. The UI and later automation use
-that metadata to explain which changed files were covered, which were skipped,
-and why stale-finding updates were disabled or scoped.
+Diff scans record structured coverage metadata on the scan row. The scan page
+shows the requested and actual mode, the fallback reason when the run degraded
+to a full scan, the changed-file count and patch size, and a collapsible list
+of every changed file linked into the in-app code browser at the head commit.
 
-Deterministic tools that cannot soundly limit themselves to the diff should say
-so in their coverage metadata. They may run as a full scan or skip themselves,
-depending on the tool and repository.
+Per-file covered/skipped reporting depends on skills emitting that detail and
+is not surfaced yet. Deterministic tools that cannot soundly limit themselves
+to the diff should say so in their coverage metadata; they may run as a full
+scan or skip themselves depending on the tool and repository.

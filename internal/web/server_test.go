@@ -4836,6 +4836,118 @@ func TestScanShowSkillLink(t *testing.T) {
 	}
 }
 
+func TestScanShowRendersDiffCoverage(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "u", Name: "n"}
+	s.DB.Create(&repo)
+	scan := db.Scan{
+		RepositoryID:   repo.ID,
+		Kind:           "skill",
+		Status:         db.ScanDone,
+		SkillName:      "security-deep-dive",
+		RescanMode:     db.ScanRescanModeDiff,
+		Commit:         "def456def456def456",
+		DiffBaseCommit: "abc123abc123abc123",
+		Coverage:       `{"requested_mode":"diff","actual_mode":"diff"}`,
+		DiffStats: `{"base_commit":"abc123abc123abc123","head_commit":"def456def456def456","changed_files":3,"patch_bytes":2048,` +
+			`"files":[{"status":"M","path":"lib/xmlparse.c"},{"status":"R100","path":"lib/xmlrole.c","old":"lib/oldrole.c"},{"status":"D","path":"lib/gone.c"}]}`,
+	}
+	s.DB.Create(&scan)
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", fmt.Sprintf("/scans/%d", scan.ID)))
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	body := w.Body.String()
+	for _, want := range []string{
+		"3 files changed",
+		"2.0 KB patch",
+		"modified",
+		"renamed",
+		"deleted",
+		"lib/oldrole.c",
+		fmt.Sprintf("/repositories/%d/blob/def456def456def456/lib/xmlparse.c", repo.ID),
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("scan show diff coverage missing %q", want)
+		}
+	}
+	if strings.Contains(body, fmt.Sprintf("/blob/%s/lib/gone.c", scan.Commit)) {
+		t.Errorf("deleted file should not link to head-commit blob")
+	}
+	if strings.Contains(body, `"requested_mode"`) {
+		t.Errorf("scan show should not dump raw Coverage JSON")
+	}
+}
+
+func TestScanShowRendersDiffFallback(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "u", Name: "n"}
+	s.DB.Create(&repo)
+	scan := db.Scan{
+		RepositoryID: repo.ID,
+		Kind:         "skill",
+		Status:       db.ScanDone,
+		SkillName:    "security-deep-dive",
+		RescanMode:   db.ScanRescanModeFull,
+		Coverage:     `{"requested_mode":"diff","actual_mode":"full","fallback_reason":"no compatible baseline scan with a commit"}`,
+	}
+	s.DB.Create(&scan)
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", fmt.Sprintf("/scans/%d", scan.ID)))
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	body := w.Body.String()
+	for _, want := range []string{
+		"ran as a full scan",
+		"no compatible baseline scan with a commit",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("scan show fallback missing %q", want)
+		}
+	}
+	if strings.Contains(body, "files changed") {
+		t.Errorf("fallback should not render a changed-files header")
+	}
+}
+
+func TestParseScanDiffView(t *testing.T) {
+	if got := parseScanDiffView(db.Scan{}); got != nil {
+		t.Errorf("empty scan = %+v, want nil", got)
+	}
+	v := parseScanDiffView(db.Scan{
+		Coverage:  `{"requested_mode":"diff","actual_mode":"diff"}`,
+		DiffStats: `{"changed_files":1,"patch_bytes":10,"files":[{"status":"A","path":"x"}]}`,
+	})
+	if v == nil || v.ActualMode != "diff" || v.ChangedFiles != 1 || v.PatchBytes != 10 || len(v.Files) != 1 {
+		t.Fatalf("parsed = %+v", v)
+	}
+	if v.Files[0].StatusName() != "added" || !v.Files[0].Linkable() {
+		t.Errorf("added file: name=%q linkable=%v", v.Files[0].StatusName(), v.Files[0].Linkable())
+	}
+	if got := (scanDiffFile{Status: "D"}).Linkable(); got {
+		t.Errorf("deleted file linkable = %v, want false", got)
+	}
+	if got := (scanDiffFile{Status: "R100"}).StatusName(); got != "renamed" {
+		t.Errorf("R100 status name = %q, want renamed", got)
+	}
+	if got := (scanDiffFile{Status: "X"}).StatusName(); got != "X" {
+		t.Errorf("unknown status name = %q, want passthrough", got)
+	}
+	// Malformed JSON in one blob should not lose the other.
+	v = parseScanDiffView(db.Scan{Coverage: `{bad`, DiffStats: `{"changed_files":2}`})
+	if v == nil || v.ChangedFiles != 2 || v.ActualMode != "" {
+		t.Errorf("partial parse = %+v", v)
+	}
+}
+
 func TestScanShowSkillNameWithoutID(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
