@@ -58,10 +58,6 @@ For each area:
   line numbers, test fixtures, vendored dependencies, generated output, or
   build directories.
 
-When `context.json` contains `scrutineer.scan_config.focus_areas`, treat those
-as analyst input. Preserve their intent and do not propose a replacement
-scope: the existing configuration is authoritative.
-
 Do not run builds, tests, package managers, or the project itself. Do not make
 network requests. Do not include candidate vulnerabilities, CVEs, severity
 ratings, exploit ideas, or remediation advice.

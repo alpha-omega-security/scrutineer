@@ -26,6 +26,8 @@ const (
 	refusalAuditSkillName     = "security-deep-dive"
 	refusalAuditOutputFile    = "refusal_audit.json"
 	refusalAuditMaxTurns      = 3
+	threatModelSkillName      = "threat-model"
+	reconSkillName            = "recon"
 )
 
 // skillContext is the JSON document scrutineer writes to ./context.json in
@@ -1250,21 +1252,44 @@ func stageWorkspace(workRoot, skillDir, apiBase, forkOrg, metadataDir string, sc
 }
 
 func (w *Worker) reconContext(scan *db.Scan, skill *db.Skill) (*skillContextRecon, error) {
-	if skill.Name != "threat-model" || scan.SubPath != "" || scan.Ref != "" {
+	if skill.Name != threatModelSkillName {
 		return nil, nil
 	}
-	var reconScan db.Scan
-	query := w.DB.Select("id, report, skill_id").
-		Where("repository_id = ? AND skill_name = ? AND status = ? AND sub_path = '' AND ref = '' AND report <> ''",
-			scan.RepositoryID, "recon", db.ScanDone).
-		Where("scan_group = ?", scan.ScanGroup)
-	err := query.Order("id DESC").First(&reconScan).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return nil, nil
+	if scan.ScanGroup != "" {
+		reconScan, found, err := latestReconScan(w.reconScanQuery(scan).Where("scan_group = ?", scan.ScanGroup))
+		if err != nil {
+			return nil, fmt.Errorf("load grouped recon report: %w", err)
+		}
+		if found {
+			return w.parseReconContext(reconScan)
+		}
 	}
+	reconScan, found, err := latestReconScan(w.reconScanQuery(scan))
 	if err != nil {
 		return nil, fmt.Errorf("load recon report: %w", err)
 	}
+	if !found {
+		return nil, nil
+	}
+	return w.parseReconContext(reconScan)
+}
+
+func (w *Worker) reconScanQuery(scan *db.Scan) *gorm.DB {
+	return w.DB.Select("id, report, skill_id").
+		Where("repository_id = ? AND skill_name = ? AND status = ? AND sub_path = ? AND ref = ? AND report <> ''",
+			scan.RepositoryID, reconSkillName, db.ScanDone, scan.SubPath, scan.Ref)
+}
+
+func latestReconScan(query *gorm.DB) (db.Scan, bool, error) {
+	var scan db.Scan
+	err := query.Order("id DESC").First(&scan).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return db.Scan{}, false, nil
+	}
+	return scan, err == nil, err
+}
+
+func (w *Worker) parseReconContext(reconScan db.Scan) (*skillContextRecon, error) {
 	if reconScan.SkillID == nil {
 		w.Log.Warn("ignore recon report without skill", "scan", reconScan.ID)
 		return nil, nil

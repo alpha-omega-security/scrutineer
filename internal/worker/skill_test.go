@@ -364,7 +364,15 @@ func TestStageContext_includesReconFocusAreas(t *testing.T) {
 	}
 }
 
-func TestReconContextLoadsOnlyValidReports(t *testing.T) {
+type reconContextFixture struct {
+	worker      *Worker
+	repository  db.Repository
+	reconSkill  db.Skill
+	threatModel db.Skill
+}
+
+func newReconContextFixture(t *testing.T) reconContextFixture {
+	t.Helper()
 	gdb, err := db.Open(filepath.Join(t.TempDir(), "recon.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -381,69 +389,82 @@ func TestReconContextLoadsOnlyValidReports(t *testing.T) {
 	if err := gdb.Create(&reconSkill).Error; err != nil {
 		t.Fatal(err)
 	}
-	recon := db.Scan{
-		RepositoryID: repo.ID, SkillID: &reconSkill.ID, SkillName: "recon", Status: db.ScanDone, ScanGroup: "batch-a",
-		Report: `{"focus_areas":[{"name":"XML parser","paths":["  lib\\xml*.c  "],"surface":"XML documents from callers"}],"notes":["Examples excluded."]}`,
+	return reconContextFixture{
+		worker:      &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))},
+		repository:  repo,
+		reconSkill:  reconSkill,
+		threatModel: db.Skill{Name: threatModelSkillName},
 	}
-	if err := gdb.Create(&recon).Error; err != nil {
+}
+
+func (f reconContextFixture) seedReconScan(t *testing.T, scan db.Scan) db.Scan {
+	t.Helper()
+	scan.RepositoryID = f.repository.ID
+	scan.SkillID = &f.reconSkill.ID
+	scan.SkillName = reconSkillName
+	scan.Status = db.ScanDone
+	if err := f.worker.DB.Create(&scan).Error; err != nil {
 		t.Fatal(err)
 	}
-	ungroupedRecon := db.Scan{
-		RepositoryID: repo.ID, SkillID: &reconSkill.ID, SkillName: "recon", Status: db.ScanDone,
-		Report: `{"focus_areas":[{"name":"CLI parser","paths":["cmd/**/*.go"],"surface":"Command-line input from operators"}],"notes":[]}`,
-	}
-	if err := gdb.Create(&ungroupedRecon).Error; err != nil {
-		t.Fatal(err)
-	}
-	// This deliberately newer report must not leak into either batch-a or
-	// ungrouped threat-model staging.
-	otherGroup := db.Scan{
-		RepositoryID: repo.ID, SkillID: &reconSkill.ID, SkillName: "recon", Status: db.ScanDone, ScanGroup: "other",
-		Report: `{"focus_areas":[{"name":"wrong group","paths":["wrong/**"],"surface":"should not be staged"}],"notes":[]}`,
-	}
-	if err := gdb.Create(&otherGroup).Error; err != nil {
-		t.Fatal(err)
-	}
-	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
-	threatModel := &db.Skill{Name: "threat-model"}
-	ctx, err := w.reconContext(&db.Scan{RepositoryID: repo.ID, ScanGroup: "batch-a"}, threatModel)
+	return scan
+}
+
+func (f reconContextFixture) context(t *testing.T, scan db.Scan) *skillContextRecon {
+	t.Helper()
+	scan.RepositoryID = f.repository.ID
+	ctx, err := f.worker.reconContext(&scan, &f.threatModel)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ctx == nil || len(ctx.FocusAreas) != 1 || ctx.FocusAreas[0].Name != "XML parser" {
-		t.Fatalf("recon context = %+v", ctx)
+	return ctx
+}
+
+func requireReconArea(t *testing.T, ctx *skillContextRecon, name string) {
+	t.Helper()
+	if ctx == nil || len(ctx.FocusAreas) != 1 || ctx.FocusAreas[0].Name != name {
+		t.Fatalf("recon context = %+v, want %q", ctx, name)
 	}
-	if got, want := ctx.FocusAreas[0].Paths, []string{"lib/xml*.c"}; !slices.Equal(got, want) {
+}
+
+func TestReconContextPrefersGroupAndFallsBack(t *testing.T) {
+	f := newReconContextFixture(t)
+	f.seedReconScan(t, db.Scan{ScanGroup: "batch-a", Report: `{"focus_areas":[{"name":"XML parser","paths":["  lib\\xml*.c  "],"surface":"XML documents from callers"}],"notes":["Examples excluded."]}`})
+	f.seedReconScan(t, db.Scan{Report: `{"focus_areas":[{"name":"CLI parser","paths":["cmd/**/*.go"],"surface":"Command-line input from operators"}],"notes":[]}`})
+	// This newer report is the repo-wide fallback but must not replace a
+	// same-group result.
+	f.seedReconScan(t, db.Scan{ScanGroup: "other", Report: `{"focus_areas":[{"name":"fallback parser","paths":["fallback/**"],"surface":"latest compatible recon report"}],"notes":[]}`})
+
+	grouped := f.context(t, db.Scan{ScanGroup: "batch-a"})
+	requireReconArea(t, grouped, "XML parser")
+	if got, want := grouped.FocusAreas[0].Paths, []string{"lib/xml*.c"}; !slices.Equal(got, want) {
 		t.Errorf("paths = %q, want %q", got, want)
 	}
+	requireReconArea(t, f.context(t, db.Scan{}), "fallback parser")
+	requireReconArea(t, f.context(t, db.Scan{ScanGroup: "batch-b"}), "fallback parser")
+}
 
-	ctx, err = w.reconContext(&db.Scan{RepositoryID: repo.ID}, threatModel)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ctx == nil || len(ctx.FocusAreas) != 1 || ctx.FocusAreas[0].Name != "CLI parser" {
-		t.Fatalf("ungrouped recon context = %+v", ctx)
-	}
+func TestReconContextFallbackMatchesRefAndSubPath(t *testing.T) {
+	f := newReconContextFixture(t)
+	f.seedReconScan(t, db.Scan{Ref: "topic", Report: `{"focus_areas":[{"name":"topic parser","paths":["topic/**"],"surface":"topic branch input"}],"notes":[]}`})
+	f.seedReconScan(t, db.Scan{SubPath: "cmd", Report: `{"focus_areas":[{"name":"CLI parser","paths":["cmd/**/*.go"],"surface":"command-line input"}],"notes":[]}`})
 
-	if err := gdb.Model(&recon).Update("report", `{"focus_areas":[{"name":"bad","paths":["../private/**"],"surface":"bad"}],"notes":[]}`).Error; err != nil {
+	requireReconArea(t, f.context(t, db.Scan{Ref: "topic"}), "topic parser")
+	requireReconArea(t, f.context(t, db.Scan{SubPath: "cmd"}), "CLI parser")
+}
+
+func TestReconContextRejectsInvalidReports(t *testing.T) {
+	f := newReconContextFixture(t)
+	recon := f.seedReconScan(t, db.Scan{ScanGroup: "batch-a", Report: `{"focus_areas":[{"name":"XML parser","paths":["lib/xml*.c"],"surface":"XML documents from callers"}],"notes":[]}`})
+	if err := f.worker.DB.Model(&recon).Update("report", `{"focus_areas":[{"name":"bad","paths":["../private/**"],"surface":"bad"}],"notes":[]}`).Error; err != nil {
 		t.Fatal(err)
 	}
-	ctx, err = w.reconContext(&db.Scan{RepositoryID: repo.ID, ScanGroup: "batch-a"}, threatModel)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ctx != nil {
+	if ctx := f.context(t, db.Scan{ScanGroup: "batch-a"}); ctx != nil {
 		t.Fatalf("invalid recon context = %+v", ctx)
 	}
-
-	if err := gdb.Model(&recon).Update("report", `{"focus_areas":[]}`).Error; err != nil {
+	if err := f.worker.DB.Model(&recon).Update("report", `{"focus_areas":[]}`).Error; err != nil {
 		t.Fatal(err)
 	}
-	ctx, err = w.reconContext(&db.Scan{RepositoryID: repo.ID, ScanGroup: "batch-a"}, threatModel)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if ctx != nil {
+	if ctx := f.context(t, db.Scan{ScanGroup: "batch-a"}); ctx != nil {
 		t.Fatalf("schema-invalid recon context = %+v", ctx)
 	}
 }
