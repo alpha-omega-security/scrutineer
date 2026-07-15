@@ -1009,7 +1009,7 @@ func TestParseReleaseWatch_notReleasedAddsNote(t *testing.T) {
 		t.Errorf("ReleaseTag should remain empty: %q", f.ReleaseTag)
 	}
 	var notes []db.FindingNote
-	gdb.Where("finding_id = ? AND `by` = ?", f.ID, "release-watch").Find(&notes)
+	gdb.Where(map[string]any{"finding_id": f.ID, "by": "release-watch"}).Find(&notes)
 	if len(notes) != 1 || !strings.Contains(notes[0].Body, "not released") {
 		t.Errorf("notes = %+v, want one release-watch note", notes)
 	}
@@ -1041,7 +1041,7 @@ func TestParseDisclose_postsSummaryNote(t *testing.T) {
 	f, gdb := runSkillWithFinding(t, "disclose", report, db.FindingTriaged)
 
 	var notes []db.FindingNote
-	gdb.Where("finding_id = ? AND `by` = ?", f.ID, "disclose").Find(&notes)
+	gdb.Where(map[string]any{"finding_id": f.ID, "by": "disclose"}).Find(&notes)
 	if len(notes) != 1 {
 		t.Fatalf("want one disclose note, got %d: %+v", len(notes), notes)
 	}
@@ -1064,7 +1064,7 @@ func TestParseDisclose_errorReportRecordsRefusal(t *testing.T) {
 	f, gdb := runSkillWithFinding(t, "disclose", report, db.FindingNew)
 
 	var notes []db.FindingNote
-	gdb.Where("finding_id = ? AND `by` = ?", f.ID, "disclose").Find(&notes)
+	gdb.Where(map[string]any{"finding_id": f.ID, "by": "disclose"}).Find(&notes)
 	if len(notes) != 1 {
 		t.Fatalf("want one disclose note, got %d", len(notes))
 	}
