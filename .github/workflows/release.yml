@@ -170,7 +170,7 @@ jobs:
           VERSION: ${{ needs.preflight.outputs.version }}
           RUNNER_IMAGE: ${{ needs.preflight.outputs.runner_image }}
         run: |
-          OUTPUT=$(dist/scrutineer version)
+          OUTPUT=$(dist/scrutineer --version)
           grep -F "scrutineer ${VERSION}" <<< "${OUTPUT}"
           grep -F "runner: ${RUNNER_IMAGE}" <<< "${OUTPUT}"
 

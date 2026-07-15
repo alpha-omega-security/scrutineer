@@ -17,23 +17,27 @@ func TestDispatchVersion(t *testing.T) {
 		version, commit, buildDate, defaultRunnerImage = oldVersion, oldCommit, oldBuildDate, oldRunner
 	})
 
-	var out bytes.Buffer
-	handled, err := dispatch([]string{"version"}, &out)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !handled {
-		t.Fatal("version command was not handled")
-	}
-	for _, want := range []string{
-		"scrutineer 2026.07.12.1",
-		"commit: 0123456789abcdef",
-		"built: 2026-07-11T20:00:00Z",
-		"runner: ghcr.io/example/runner@sha256:abc",
-	} {
-		if !strings.Contains(out.String(), want) {
-			t.Errorf("version output %q missing %q", out.String(), want)
-		}
+	for _, arg := range []string{"version", "--version", "-version"} {
+		t.Run(arg, func(t *testing.T) {
+			var out bytes.Buffer
+			handled, err := dispatch([]string{arg}, &out)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !handled {
+				t.Fatalf("%s was not handled", arg)
+			}
+			for _, want := range []string{
+				"scrutineer 2026.07.12.1",
+				"commit: 0123456789abcdef",
+				"built: 2026-07-11T20:00:00Z",
+				"runner: ghcr.io/example/runner@sha256:abc",
+			} {
+				if !strings.Contains(out.String(), want) {
+					t.Errorf("version output %q missing %q", out.String(), want)
+				}
+			}
+		})
 	}
 }
 

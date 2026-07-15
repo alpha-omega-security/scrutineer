@@ -42,7 +42,7 @@ You can also build a checkout-independent executable and run it from another dir
     install -m 0755 scrutineer ~/.local/bin/scrutineer
     scrutineer
 
-Precompiled binaries cover Linux and macOS on `amd64` and `arm64`. Run `scrutineer version` to see the application version, source commit, build timestamp, and exact runner-image digest paired with that release.
+Precompiled binaries cover Linux and macOS on `amd64` and `arm64`. Run `scrutineer --version` (or `scrutineer version`) to see the application version, source commit, build timestamp, and exact runner-image digest paired with that release.
 
 The executable does not bundle Docker, Podman, or Apple's `container` CLI. Scrutineer remains a host application that asks the selected external runtime to launch an ephemeral runner container for each scan; it materialises the embedded profile Dockerfiles under the data directory when `docker/profiles` is not available from a source checkout. Content-addressed skill and profile bundles from older versions are retained because existing skill records may still reference their auxiliary files; incomplete extraction directories older than 24 hours are removed automatically. To run under codex or opencode instead, see the [Codex backend](#codex-backend) and [Opencode backend](#opencode-backend) sections; only the credential and `-backend` flag change.
 

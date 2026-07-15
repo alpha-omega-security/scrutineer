@@ -23,9 +23,10 @@ const (
 )
 
 // dispatch routes a subcommand when args[0] names one, returning handled=true.
-// Server flags start with "-" and an empty argv both fall through with
-// handled=false, so scrutineer's default behaviour (boot the server) is
-// preserved for everything that is not a known subcommand.
+// Server flags and an empty argv fall through with handled=false, except for
+// the conventional --version/-version aliases. This preserves scrutineer's
+// default behaviour (boot the server) for everything that is not a known
+// command.
 func dispatch(args []string, out io.Writer) (handled bool, err error) {
 	if len(args) == 0 {
 		return false, nil
@@ -37,7 +38,7 @@ func dispatch(args []string, out io.Writer) (handled bool, err error) {
 		return true, runRestore(args[1:], out)
 	case "proxy":
 		return true, runProxy(args[1:])
-	case "version":
+	case "version", "--version", "-version":
 		return true, runVersion(out)
 	default:
 		return false, nil
