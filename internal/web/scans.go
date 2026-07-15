@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -132,7 +133,93 @@ func (s *Server) scanShow(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	s.render(w, r, "scan_show.html", map[string]any{"Scan": scan})
+	s.render(w, r, "scan_show.html", map[string]any{
+		"Scan": scan,
+		"Diff": parseScanDiffView(scan),
+	})
+}
+
+// scanDiffView is the parsed diff-rescan metadata for the scan page,
+// merged from the two JSON blobs the worker writes: Coverage (requested vs
+// actual mode plus a fallback reason) and DiffStats (changed-file list and
+// patch size). Nil when the scan carried neither.
+type scanDiffView struct {
+	RequestedMode  string
+	ActualMode     string
+	FallbackReason string
+	ChangedFiles   int
+	PatchBytes     int64
+	Files          []scanDiffFile
+}
+
+type scanDiffFile struct {
+	Status string `json:"status"`
+	Path   string `json:"path"`
+	Old    string `json:"old"`
+}
+
+// StatusName expands the git --name-status letter to a word so the
+// changed-files table reads without a legend. Rename/copy carry a
+// similarity score suffix (R100, C075) which is dropped here; the
+// old→new path already conveys the rename.
+func (f scanDiffFile) StatusName() string {
+	if f.Status == "" {
+		return ""
+	}
+	switch f.Status[0] {
+	case 'A':
+		return "added"
+	case 'M':
+		return "modified"
+	case 'D':
+		return "deleted"
+	case 'R':
+		return "renamed"
+	case 'C':
+		return "copied"
+	case 'T':
+		return "type change"
+	}
+	return f.Status
+}
+
+// Linkable reports whether the file exists at the head commit and so can
+// be linked through the in-app blob route. Deleted files only existed at
+// the base commit.
+func (f scanDiffFile) Linkable() bool {
+	return f.Status != "" && f.Status[0] != 'D'
+}
+
+func parseScanDiffView(scan db.Scan) *scanDiffView {
+	if scan.Coverage == "" && scan.DiffStats == "" {
+		return nil
+	}
+	var v scanDiffView
+	if scan.Coverage != "" {
+		var cov struct {
+			RequestedMode  string `json:"requested_mode"`
+			ActualMode     string `json:"actual_mode"`
+			FallbackReason string `json:"fallback_reason"`
+		}
+		if json.Unmarshal([]byte(scan.Coverage), &cov) == nil {
+			v.RequestedMode = cov.RequestedMode
+			v.ActualMode = cov.ActualMode
+			v.FallbackReason = cov.FallbackReason
+		}
+	}
+	if scan.DiffStats != "" {
+		var stats struct {
+			ChangedFiles int            `json:"changed_files"`
+			PatchBytes   int64          `json:"patch_bytes"`
+			Files        []scanDiffFile `json:"files"`
+		}
+		if json.Unmarshal([]byte(scan.DiffStats), &stats) == nil {
+			v.ChangedFiles = stats.ChangedFiles
+			v.PatchBytes = stats.PatchBytes
+			v.Files = stats.Files
+		}
+	}
+	return &v
 }
 
 func (s *Server) scanRetry(w http.ResponseWriter, r *http.Request) {

@@ -116,11 +116,44 @@
   </div>
 {{end}}
 
-{{if .Coverage}}
-  <details class="mb-6">
-    <summary class="text-sm text-muted-foreground cursor-pointer hover:underline">Coverage metadata</summary>
-    <pre class="mt-2 overflow-auto rounded border bg-muted/40 p-3 text-xs">{{.Coverage}}</pre>
-  </details>
+{{with $.Diff}}
+  {{if .FallbackReason}}
+    <div class="alert mb-6">
+      <i data-lucide="info"></i>
+      <section>Diff rescan requested; ran as a full scan. {{.FallbackReason}}.</section>
+    </div>
+  {{else if eq .ActualMode "diff"}}
+    {{$scan := $.Scan}}
+    <div class="mb-6 rounded border">
+      <div class="flex items-center justify-between gap-4 px-3 py-2 text-sm">
+        <div class="flex items-center gap-2">
+          <i data-lucide="diff"></i>
+          <span>Diff rescan · {{.ChangedFiles}} file{{if ne .ChangedFiles 1}}s{{end}} changed · {{bytes .PatchBytes}} patch</span>
+        </div>
+        <span class="text-muted-foreground text-xs">
+          <code>{{short $scan.DiffBaseCommit}}</code> → <code>{{short $scan.Commit}}</code>
+        </span>
+      </div>
+      {{if .Files}}
+        <details>
+          <summary class="cursor-pointer px-3 py-2 text-xs text-muted-foreground hover:underline border-t">Changed files</summary>
+          <table class="table w-full text-xs">
+            <tbody>
+              {{range .Files}}
+                <tr>
+                  <td class="text-muted-foreground w-24">{{.StatusName}}</td>
+                  <td class="font-mono">
+                    {{if .Old}}<span class="text-muted-foreground">{{.Old}} → </span>{{end}}
+                    {{if and .Linkable $scan.Commit}}<a class="hover:underline" href="/repositories/{{$scan.RepositoryID}}/blob/{{$scan.Commit}}/{{.Path}}">{{.Path}}</a>{{else}}{{.Path}}{{end}}
+                  </td>
+                </tr>
+              {{end}}
+            </tbody>
+          </table>
+        </details>
+      {{end}}
+    </div>
+  {{end}}
 {{end}}
 
 {{if .MaxTurnsHit}}
