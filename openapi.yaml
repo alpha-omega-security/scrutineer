@@ -337,6 +337,17 @@ paths:
         in: path
         required: true
         schema: { type: integer, format: int64 }
+    get:
+      summary: Fetch one finding with its six-step prose
+      operationId: getFinding
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FindingDetail' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
     patch:
       summary: Update mutable fields on a finding
       operationId: patchFinding
@@ -361,9 +372,12 @@ paths:
                   additionalProperties: { type: string }
                   description: |
                     Map of field name to new value. Allowed fields:
-                    title, severity, status, cwe, location, affected,
+                    title, severity, status, cwe, location, affected, reachability, quality_tier,
                     cve_id, ghsa_id, cvss_vector, cvss_v4_vector, fix_version, fix_commit,
-                    resolution, disclosure_draft, suggested_recipients, assignee.
+                    resolution, disclosure_draft, suggested_recipients, assignee,
+                    suggested_fix, suggested_fix_commit, breaking_change, breaking_change_rationale,
+                    exploited_in_wild, exploited_in_wild_evidence, mitigation, mitigation_semgrep,
+                    release_tag, release_url, last_revalidate_verdict.
       responses:
         '204': { description: Updated }
         '403': { $ref: '#/components/responses/Forbidden' }
@@ -721,24 +735,6 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
-
-  /findings/{id}:
-    get:
-      summary: Fetch one finding with its six-step prose
-      operationId: getFinding
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: integer, format: int64 }
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/FindingDetail' }
-        '403': { $ref: '#/components/responses/Forbidden' }
-        '404': { $ref: '#/components/responses/NotFound' }
 
   /skills:
     get:
