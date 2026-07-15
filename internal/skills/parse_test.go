@@ -825,6 +825,27 @@ body
 	}
 }
 
+func TestBundledReconPipelineMetadata(t *testing.T) {
+	recon, err := ParseFile(filepath.Join("..", "..", "skills", "recon", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("parse recon: %v", err)
+	}
+	if recon.OutputKind != "freeform" || recon.MaxTurns != 12 || recon.Model != "mid" {
+		t.Errorf("recon metadata = kind %q, turns %d, model %q", recon.OutputKind, recon.MaxTurns, recon.Model)
+	}
+	if !strings.Contains(recon.AllowedTools, "Write") || !strings.Contains(recon.AllowedTools, "Grep") {
+		t.Errorf("recon allowed tools = %q", recon.AllowedTools)
+	}
+
+	threatModel, err := ParseFile(filepath.Join("..", "..", "skills", "threat-model", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("parse threat-model: %v", err)
+	}
+	if !slices.Contains(threatModel.Requires, "recon") {
+		t.Errorf("threat-model requires = %v, want recon", threatModel.Requires)
+	}
+}
+
 func TestParseFile_requiresWrongType(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSkill(t, dir, "bad-req", `---

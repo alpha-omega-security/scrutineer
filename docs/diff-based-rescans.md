@@ -12,10 +12,10 @@ tooling.
 
 ## Starting One
 
-From a repository page, click **Diff rescan**. Scrutineer queues the
+From a repository page, click **Diff rescan**. Scrutineer queues recon,
 diff-aware threat-model, semgrep, and security-deep-dive scans as one group.
-The deep-dive waits for the sibling threat-model and semgrep scans in that
-group before it runs.
+Threat-model consumes the sibling recon report, and deep-dive waits for the
+sibling threat-model and semgrep scans before it runs.
 
 API callers can request diff mode when enqueueing a skill:
 

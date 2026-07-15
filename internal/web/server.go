@@ -1184,6 +1184,7 @@ const (
 	// tab when present; repos that predate it fall back to the boundaries
 	// section of the deep-dive report so older scans keep rendering.
 	threatModelSkillName = "threat-model"
+	reconSkillName       = "recon"
 	zizmorSkillName      = "zizmor"
 )
 
@@ -2300,7 +2301,7 @@ func (s *Server) repoDiffScan(w http.ResponseWriter, r *http.Request, repo db.Re
 	group := uuid.NewString()
 	model := r.FormValue("model")
 	subPath := strings.TrimSpace(r.FormValue("sub_path"))
-	names := []string{threatModelSkillName, "semgrep", deepDiveSkillName}
+	names := []string{reconSkillName, threatModelSkillName, "semgrep", deepDiveSkillName}
 	queued := 0
 	for _, name := range names {
 		var skill db.Skill

@@ -26,6 +26,42 @@ func TestAutoSeedRepoScanConfig(t *testing.T) {
 	}
 }
 
+func TestAutoSeedRepoScanConfigIgnoresReconThenAcceptsThreatModel(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/recon", Name: "recon"}
+	s.DB.Create(&repo)
+	recon := &db.Scan{
+		RepositoryID: repo.ID,
+		Status:       db.ScanDone,
+		SkillName:    "recon",
+		Report:       `{"focus_areas":[{"name":"XML parser","paths":["lib/xml*.c"],"surface":"XML documents supplied by library callers"}],"notes":[]}`,
+	}
+	s.autoSeedRepoScanConfig(recon)
+	var got db.Repository
+	s.DB.First(&got, repo.ID)
+	if got.ScanConfig != "" {
+		t.Fatalf("recon seeded ScanConfig = %q", got.ScanConfig)
+	}
+
+	threatModel := &db.Scan{
+		RepositoryID: repo.ID,
+		Status:       db.ScanDone,
+		SkillName:    threatModelSkillName,
+		Report:       `{"scan_config":{"focus_areas":[{"name":"XML parser","paths":["lib/xml*.c"],"surface":"XML documents supplied by library callers"}],"known_bugs":["GHSA-xxxx-yyyy"],"attack_surface":"XML documents from callers","skip":["tests/**"]}}`,
+	}
+	s.autoSeedRepoScanConfig(threatModel)
+	s.DB.First(&got, repo.ID)
+	for _, want := range []string{"XML parser", "lib/xml*.c", "GHSA-xxxx-yyyy", "XML documents from callers", "tests/**"} {
+		if !strings.Contains(got.ScanConfig, want) {
+			t.Fatalf("ScanConfig = %q, missing %q", got.ScanConfig, want)
+		}
+	}
+	if strings.Contains(got.ScanConfig, "notes") {
+		t.Fatalf("ScanConfig = %q", got.ScanConfig)
+	}
+}
+
 func TestAutoSeedRepoScanConfigSeedsLegacyNull(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

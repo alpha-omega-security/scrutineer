@@ -2769,7 +2769,7 @@ func TestRepoScan_diffRescanQueuesGroupedSkills(t *testing.T) {
 
 	repo := db.Repository{URL: "https://github.com/foo/bar", Name: "bar"}
 	s.DB.Create(&repo)
-	for _, name := range []string{threatModelSkillName, "semgrep", deepDiveSkillName} {
+	for _, name := range []string{reconSkillName, threatModelSkillName, "semgrep", deepDiveSkillName} {
 		s.DB.Create(&db.Skill{Name: name, Body: "b", OutputFile: "r.json",
 			OutputKind: "freeform", Version: 1, Active: true, Source: "ui"})
 	}
@@ -2785,8 +2785,8 @@ func TestRepoScan_diffRescanQueuesGroupedSkills(t *testing.T) {
 	if err := s.DB.Where("repository_id = ?", repo.ID).Order("skill_name").Find(&scans).Error; err != nil {
 		t.Fatal(err)
 	}
-	if len(scans) != 3 {
-		t.Fatalf("queued scans = %d, want 3", len(scans))
+	if len(scans) != 4 {
+		t.Fatalf("queued scans = %d, want 4", len(scans))
 	}
 	group := scans[0].ScanGroup
 	if group == "" {
@@ -2802,7 +2802,7 @@ func TestRepoScan_diffRescanQueuesGroupedSkills(t *testing.T) {
 			t.Errorf("%s ScanGroup = %q, want shared %q", sc.SkillName, sc.ScanGroup, group)
 		}
 	}
-	for _, name := range []string{threatModelSkillName, "semgrep", deepDiveSkillName} {
+	for _, name := range []string{reconSkillName, threatModelSkillName, "semgrep", deepDiveSkillName} {
 		if !gotNames[name] {
 			t.Errorf("missing queued %s scan", name)
 		}

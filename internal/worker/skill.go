@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 
+	"gorm.io/gorm"
+
 	"scrutineer/internal/db"
 	"scrutineer/internal/repoconfig"
 	"scrutineer/internal/skills"
@@ -24,6 +26,8 @@ const (
 	refusalAuditSkillName     = "security-deep-dive"
 	refusalAuditOutputFile    = "refusal_audit.json"
 	refusalAuditMaxTurns      = 3
+	threatModelSkillName      = "threat-model"
+	reconSkillName            = "recon"
 )
 
 // skillContext is the JSON document scrutineer writes to ./context.json in
@@ -72,6 +76,15 @@ type skillContextScrutineer struct {
 	// ScanConfig is the operator-authored repository guidance. It is omitted
 	// entirely for repositories without a saved configuration.
 	ScanConfig *repoconfig.Config `json:"scan_config,omitempty"`
+	// Recon is the latest completed focus-area map. It is staged only for the
+	// threat-model skill, which incorporates it into a complete scan-config
+	// proposal without letting recon overwrite analyst configuration directly.
+	Recon *skillContextRecon `json:"recon,omitempty"`
+}
+
+type skillContextRecon struct {
+	FocusAreas []repoconfig.FocusArea `json:"focus_areas"`
+	Notes      []string               `json:"notes"`
 }
 
 type skillContextRescan struct {
@@ -1124,6 +1137,10 @@ func (w *Worker) metadataDir() string {
 }
 
 func stageContext(workRoot, apiBase, forkOrg, metadataDir string, scan *db.Scan, repo *db.Repository) error {
+	return stageContextWithRecon(workRoot, apiBase, forkOrg, metadataDir, scan, repo, nil)
+}
+
+func stageContextWithRecon(workRoot, apiBase, forkOrg, metadataDir string, scan *db.Scan, repo *db.Repository, recon *skillContextRecon) error {
 	if err := os.MkdirAll(workRoot, dirPerm); err != nil {
 		return err
 	}
@@ -1151,6 +1168,7 @@ func stageContext(workRoot, apiBase, forkOrg, metadataDir string, scan *db.Scan,
 	if !config.Empty() {
 		ctx.Scrutineer.ScanConfig = &config
 	}
+	ctx.Scrutineer.Recon = recon
 	if scan.SkillID != nil {
 		ctx.Scrutineer.SkillID = *scan.SkillID
 	}
@@ -1195,20 +1213,30 @@ func stageContext(workRoot, apiBase, forkOrg, metadataDir string, scan *db.Scan,
 }
 
 // stageWorkspace writes everything other than ./src into the scan
-// workspace: context.json, the operator's threat-model override, the
-// skill bundle under .claude/skills/{name}/, and any import payload.
+// workspace: context.json, an optional recon context for threat-model, the
+// operator's threat-model override, the skill bundle under .claude/skills/{name}/,
+// and any import payload.
 // Pulled out of doSkill to keep that function under the gocognit
 // threshold; the error wrapping stays here so failures still name the
 // staging step.
 func (w *Worker) stageWorkspace(workRoot, skillDir string, scan *db.Scan, skill *db.Skill) error {
-	return StageWorkspace(workRoot, skillDir, w.APIBase, w.ForkOrg, w.metadataDir(), scan, skill)
+	recon, err := w.reconContext(scan, skill)
+	if err != nil {
+		return err
+	}
+	return stageWorkspace(workRoot, skillDir, w.APIBase, w.ForkOrg, w.metadataDir(), scan, skill, recon)
 }
 
-// StageWorkspace writes the same workspace side files as a production skill
-// scan: context.json, an optional threat-model override, the rendered skill
-// bundle, and optional import payloads.
+// StageWorkspace writes the workspace side files shared by production skill
+// scans and evals: context.json, an optional threat-model override, the
+// rendered skill bundle, and optional import payloads. Production adds recon
+// context for threat-model in Worker.stageWorkspace.
 func StageWorkspace(workRoot, skillDir, apiBase, forkOrg, metadataDir string, scan *db.Scan, skill *db.Skill) error {
-	if err := stageContext(workRoot, apiBase, forkOrg, metadataDir, scan, &scan.Repository); err != nil {
+	return stageWorkspace(workRoot, skillDir, apiBase, forkOrg, metadataDir, scan, skill, nil)
+}
+
+func stageWorkspace(workRoot, skillDir, apiBase, forkOrg, metadataDir string, scan *db.Scan, skill *db.Skill, recon *skillContextRecon) error {
+	if err := stageContextWithRecon(workRoot, apiBase, forkOrg, metadataDir, scan, &scan.Repository, recon); err != nil {
 		return fmt.Errorf("stage context: %w", err)
 	}
 	if err := stageThreatModel(workRoot, scan.SubPath, scan.Repository.ThreatModel); err != nil {
@@ -1221,6 +1249,85 @@ func StageWorkspace(workRoot, skillDir, apiBase, forkOrg, metadataDir string, sc
 		return fmt.Errorf("stage import payload: %w", err)
 	}
 	return nil
+}
+
+func (w *Worker) reconContext(scan *db.Scan, skill *db.Skill) (*skillContextRecon, error) {
+	if skill.Name != threatModelSkillName {
+		return nil, nil
+	}
+	if scan.ScanGroup != "" {
+		reconScan, found, err := latestReconScan(w.reconScanQuery(scan).Where("scan_group = ?", scan.ScanGroup))
+		if err != nil {
+			return nil, fmt.Errorf("load grouped recon report: %w", err)
+		}
+		if found {
+			return w.parseReconContext(reconScan)
+		}
+	}
+	reconScan, found, err := latestReconScan(w.reconScanQuery(scan))
+	if err != nil {
+		return nil, fmt.Errorf("load recon report: %w", err)
+	}
+	if !found {
+		return nil, nil
+	}
+	return w.parseReconContext(reconScan)
+}
+
+func (w *Worker) reconScanQuery(scan *db.Scan) *gorm.DB {
+	return w.DB.Select("id, report, skill_id").
+		Where("repository_id = ? AND skill_name = ? AND status = ? AND sub_path = ? AND ref = ? AND report <> ''",
+			scan.RepositoryID, reconSkillName, db.ScanDone, scan.SubPath, scan.Ref)
+}
+
+func latestReconScan(query *gorm.DB) (db.Scan, bool, error) {
+	var scan db.Scan
+	err := query.Order("id DESC").First(&scan).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return db.Scan{}, false, nil
+	}
+	return scan, err == nil, err
+}
+
+func (w *Worker) parseReconContext(reconScan db.Scan) (*skillContextRecon, error) {
+	if reconScan.SkillID == nil {
+		w.Log.Warn("ignore recon report without skill", "scan", reconScan.ID)
+		return nil, nil
+	}
+	var reconSkill db.Skill
+	if err := w.DB.Select("schema_json").First(&reconSkill, *reconScan.SkillID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			w.Log.Warn("ignore recon report for missing skill", "scan", reconScan.ID, "skill", *reconScan.SkillID)
+			return nil, nil
+		}
+		return nil, fmt.Errorf("load recon schema: %w", err)
+	}
+	report, err := parseReconReport(reconSkill.SchemaJSON, reconScan.Report)
+	if err != nil {
+		w.Log.Warn("ignore invalid recon report", "scan", reconScan.ID, "err", err)
+		return nil, nil
+	}
+	return report, nil
+}
+
+func parseReconReport(schema, raw string) (*skillContextRecon, error) {
+	if detail := ValidateReportSchema(schema, raw); detail != "" {
+		return nil, errors.New(detail)
+	}
+	var report skillContextRecon
+	if err := json.Unmarshal([]byte(raw), &report); err != nil {
+		return nil, err
+	}
+	configRaw, err := json.Marshal(repoconfig.Config{FocusAreas: report.FocusAreas})
+	if err != nil {
+		return nil, err
+	}
+	_, config, err := repoconfig.Normalise(string(configRaw))
+	if err != nil {
+		return nil, err
+	}
+	report.FocusAreas = config.FocusAreas
+	return &report, nil
 }
 
 // stageThreatModel writes the repository's operator-edited threat model to
