@@ -29,9 +29,7 @@ var modelPricing = map[string]modelPrice{
 	"claude-opus-4-8":   {In: 5.00, Out: 25.00, CachedIn: 0.50, CacheWrite: 6.25},
 	"claude-sonnet-4-6": {In: 3.00, Out: 15.00, CachedIn: 0.30, CacheWrite: 3.75},
 	"claude-haiku-4-5":  {In: 1.00, Out: 5.00, CachedIn: 0.10, CacheWrite: 1.25},
-	// Sonnet 5 is not on any published price sheet as of 2026-07;
-	// priced at Sonnet 4.6's rate. Claude reports cost in-stream so
-	// this row is only reached by the coverage tripwire, not billing.
+	// Sonnet 5 list rate (intro $2/$10 through 2026-08-31).
 	"claude-sonnet-5": {In: 3.00, Out: 15.00, CachedIn: 0.30, CacheWrite: 3.75},
 	"claude-fable-5":  {In: 10.00, Out: 50.00, CachedIn: 1.00, CacheWrite: 12.50},
 
