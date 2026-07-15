@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -68,11 +69,36 @@ func TestSyncUpstream(t *testing.T) {
 	testGit(t, upstream, "commit", "-q", "--allow-empty", "-m", "new work")
 	want := testGit(t, upstream, "rev-parse", "HEAD")
 
-	if err := SyncUpstream(context.Background(), staging, upstream); err != nil {
+	w := &Worker{DataDir: t.TempDir()}
+	if err := w.SyncUpstream(context.Background(), staging, upstream); err != nil {
 		t.Fatalf("SyncUpstream: %v", err)
 	}
 	if got := testGit(t, staging, "rev-parse", "HEAD"); got != want {
 		t.Fatalf("staging HEAD = %q, want upstream HEAD %q", got, want)
+	}
+}
+
+func TestSyncUpstream_reusesMirrorAcrossSyncs(t *testing.T) {
+	upstream := t.TempDir()
+	initTestRepo(t, upstream)
+
+	staging := filepath.Join(t.TempDir(), "staging.git")
+	testGit(t, "", "clone", "-q", "--bare", upstream, staging)
+
+	w := &Worker{DataDir: t.TempDir()}
+	for i, msg := range []string{"first upstream move", "second upstream move"} {
+		testGit(t, upstream, "commit", "-q", "--allow-empty", "-m", msg)
+		want := testGit(t, upstream, "rev-parse", "HEAD")
+		if err := w.SyncUpstream(context.Background(), staging, upstream); err != nil {
+			t.Fatalf("sync %d: %v", i, err)
+		}
+		if got := testGit(t, staging, "rev-parse", "HEAD"); got != want {
+			t.Fatalf("sync %d: staging HEAD = %q, want %q", i, got, want)
+		}
+	}
+	mirror := filepath.Join(RepoCacheRoot(w.DataDir, staging), "upstream-sync.git")
+	if _, err := os.Stat(mirror); err != nil {
+		t.Fatalf("mirror should persist for reuse: %v", err)
 	}
 }
 
@@ -83,7 +109,8 @@ func TestSyncUpstream_noopWhenAlreadyInSync(t *testing.T) {
 	staging := filepath.Join(t.TempDir(), "staging.git")
 	testGit(t, "", "clone", "-q", "--bare", upstream, staging)
 
-	if err := SyncUpstream(context.Background(), staging, upstream); err != nil {
+	w := &Worker{DataDir: t.TempDir()}
+	if err := w.SyncUpstream(context.Background(), staging, upstream); err != nil {
 		t.Fatalf("SyncUpstream: %v", err)
 	}
 	if got := testGit(t, staging, "rev-parse", "HEAD"); got != want {
@@ -102,7 +129,8 @@ func TestSyncUpstream_overwritesRewrittenHistory(t *testing.T) {
 	testGit(t, upstream, "commit", "-q", "--amend", "--allow-empty", "-m", "rewritten")
 	want := testGit(t, upstream, "rev-parse", "HEAD")
 
-	if err := SyncUpstream(context.Background(), staging, upstream); err != nil {
+	w := &Worker{DataDir: t.TempDir()}
+	if err := w.SyncUpstream(context.Background(), staging, upstream); err != nil {
 		t.Fatalf("SyncUpstream: %v", err)
 	}
 	if got := testGit(t, staging, "rev-parse", "HEAD"); got != want {
@@ -114,7 +142,8 @@ func TestSyncUpstream_missingUpstream(t *testing.T) {
 	staging := t.TempDir()
 	initTestRepo(t, staging)
 
-	if err := SyncUpstream(context.Background(), staging, filepath.Join(t.TempDir(), "nope")); err == nil {
+	w := &Worker{DataDir: t.TempDir()}
+	if err := w.SyncUpstream(context.Background(), staging, filepath.Join(t.TempDir(), "nope")); err == nil {
 		t.Fatal("expected error for missing upstream")
 	}
 }

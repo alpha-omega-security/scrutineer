@@ -203,7 +203,7 @@
           <input class="input text-xs col-span-2" id="upstream_url" type="text" name="upstream_url"
                  value="{{.Repo.UpstreamURL}}" placeholder="https://... (staging copies only: synced before each scheduled check)">
         </form>
-        <p class="text-xs text-muted-foreground mt-1">Scheduled runs compare the remote HEAD against the last completed scan and enqueue a diff rescan when new commits landed; otherwise they log a skipped entry. Set Upstream when this repository is a pushed staging copy so it is fast-forwarded first.</p>
+        <p class="text-xs text-muted-foreground mt-1">Scheduled runs compare the remote HEAD against the last completed scan and enqueue a diff rescan when new commits landed; otherwise they log a skipped entry. Set Upstream when this repository is a pushed staging copy so it is force-synced from upstream first (a mirror push; local-only commits are overwritten).</p>
       </details>
     </div>
 

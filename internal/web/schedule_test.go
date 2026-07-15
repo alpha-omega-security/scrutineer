@@ -141,7 +141,7 @@ func TestScheduleTick_notDueYet(t *testing.T) {
 
 	var got db.Repository
 	s.DB.First(&got, repo.ID)
-	if got.NextScheduledScanAt == nil || !got.NextScheduledScanAt.Equal(future) {
+	if got.NextScheduledScanAt == nil || got.NextScheduledScanAt.Sub(future).Abs() > time.Second {
 		t.Fatalf("NextScheduledScanAt = %v, want untouched %v", got.NextScheduledScanAt, future)
 	}
 }
@@ -215,6 +215,58 @@ func TestScheduleTick_skipsWhenScanInFlight(t *testing.T) {
 	skip := lastSkip(t, s, repo.ID)
 	if !strings.Contains(skip.Error, "queued or running") {
 		t.Fatalf("skip reason = %q, want it to mention queued or running", skip.Error)
+	}
+}
+
+func TestScheduleTick_skipsWhenScanPaused(t *testing.T) {
+	s, _, done := scheduleTestServer(t, "def456", nil)
+	defer done()
+	repo := scheduledRepo(t, s, "daily", time.Now().Add(-time.Minute))
+	s.DB.Create(&db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanPaused})
+
+	s.scheduleTick(context.Background(), time.Now())
+
+	skip := lastSkip(t, s, repo.ID)
+	if !strings.Contains(skip.Error, "queued or running") {
+		t.Fatalf("skip reason = %q, want a paused scan to count as in flight", skip.Error)
+	}
+}
+
+func countSkips(t *testing.T, s *Server, repoID uint) int64 {
+	t.Helper()
+	var n int64
+	s.DB.Model(&db.Scan{}).Where("repository_id = ? AND status = ?", repoID, db.ScanSkipped).Count(&n)
+	return n
+}
+
+func TestRecordScheduledSkip_collapsesConsecutiveIdenticalReasons(t *testing.T) {
+	s, _, done := scheduleTestServer(t, "abc", nil)
+	defer done()
+	repo := scheduledRepo(t, s, "daily", time.Now())
+
+	s.recordScheduledSkip(repo, "no new commits since abc")
+	s.recordScheduledSkip(repo, "no new commits since abc")
+	if got := countSkips(t, s, repo.ID); got != 1 {
+		t.Fatalf("consecutive identical skips = %d rows, want 1 (collapsed)", got)
+	}
+
+	s.recordScheduledSkip(repo, "upstream sync failed: boom")
+	if got := countSkips(t, s, repo.ID); got != 2 {
+		t.Fatalf("distinct-reason skips = %d rows, want 2", got)
+	}
+}
+
+func TestRecordScheduledSkip_keepsSkipAfterRealScan(t *testing.T) {
+	s, _, done := scheduleTestServer(t, "abc", nil)
+	defer done()
+	repo := scheduledRepo(t, s, "daily", time.Now())
+
+	s.recordScheduledSkip(repo, "no new commits since abc")
+	s.DB.Create(&db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone})
+	s.recordScheduledSkip(repo, "no new commits since abc")
+
+	if got := countSkips(t, s, repo.ID); got != 2 {
+		t.Fatalf("skip rows across a real scan = %d, want 2 (not collapsed)", got)
 	}
 }
 

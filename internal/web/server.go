@@ -112,7 +112,7 @@ type Server struct {
 	// worker call so tests can stub the network lookup.
 	resolveRemoteHead func(ctx context.Context, repo db.Repository) (string, error)
 
-	// syncUpstream fast-forwards a staging repository from its configured
+	// syncUpstream force-syncs a staging repository from its configured
 	// upstream before the scheduler's new-commit check. Field rather than
 	// a direct worker call so tests can stub the git traffic.
 	syncUpstream func(ctx context.Context, repoURL, upstreamURL string) error
@@ -187,26 +187,54 @@ func displaySeverity(s string) string {
 	return s
 }
 
+// tmplSince renders a timestamp as "<duration> ago", accepting a time.Time
+// or *time.Time and yielding "" for nil/zero values.
+func tmplSince(v any) string {
+	var t time.Time
+	switch x := v.(type) {
+	case time.Time:
+		t = x
+	case *time.Time:
+		if x == nil {
+			return ""
+		}
+		t = *x
+	default:
+		return ""
+	}
+	if t.IsZero() {
+		return ""
+	}
+	return humanDuration(time.Since(t)) + " ago"
+}
+
+// tmplBytes renders a byte count with a binary unit suffix (B, KB, MB, ...).
+func tmplBytes(b int64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
+}
+
+// defaultResolveRemoteHead is the production resolveRemoteHead: it resolves a
+// repository's remote HEAD, using the local path for file-backed repos.
+func defaultResolveRemoteHead(ctx context.Context, repo db.Repository) (string, error) {
+	url := repo.URL
+	if repo.IsLocal() {
+		url = repo.LocalPath()
+	}
+	return worker.ResolveRemoteHead(ctx, url)
+}
+
 func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *worker.Worker) (*Server, error) {
 	funcs := template.FuncMap{
-		"since": func(v any) string {
-			var t time.Time
-			switch x := v.(type) {
-			case time.Time:
-				t = x
-			case *time.Time:
-				if x == nil {
-					return ""
-				}
-				t = *x
-			default:
-				return ""
-			}
-			if t.IsZero() {
-				return ""
-			}
-			return humanDuration(time.Since(t)) + " ago"
-		},
+		"since": tmplSince,
 		"until": func(t *time.Time) string {
 			if t == nil || t.IsZero() {
 				return ""
@@ -294,18 +322,7 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *work
 			}
 			return s
 		},
-		"bytes": func(b int64) string {
-			const unit = 1024
-			if b < unit {
-				return fmt.Sprintf("%d B", b)
-			}
-			div, exp := int64(unit), 0
-			for n := b / unit; n >= unit; n /= unit {
-				div *= unit
-				exp++
-			}
-			return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
-		},
+		"bytes": tmplBytes,
 	}
 	t, err := template.New("").Funcs(funcs).ParseFS(tmplFS, "templates/*.html")
 	if err != nil {
@@ -316,15 +333,9 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *work
 	}
 	s := &Server{DB: gdb, Queue: q, Log: log, Broker: broker, Worker: w, tmpl: t,
 		resolvePURL: resolvePURLRepo, listBranches: worker.ListRemoteBranches,
-		fetchOrgRepos: fetchGitHubOrgRepos,
-		resolveRemoteHead: func(ctx context.Context, repo db.Repository) (string, error) {
-			url := repo.URL
-			if repo.IsLocal() {
-				url = repo.LocalPath()
-			}
-			return worker.ResolveRemoteHead(ctx, url)
-		},
-		syncUpstream: worker.SyncUpstream}
+		fetchOrgRepos:     fetchGitHubOrgRepos,
+		resolveRemoteHead: defaultResolveRemoteHead,
+		syncUpstream:      w.SyncUpstream}
 	s.prefetchEcosystems = s.ecosystemsPrefetch
 	if w != nil {
 		w.OnFindingCreated = s.autoEnqueueRevalidate

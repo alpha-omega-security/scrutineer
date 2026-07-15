@@ -41,15 +41,19 @@ func ResolveRemoteHead(ctx context.Context, cloneURL string) (string, error) {
 	return "", fmt.Errorf("no HEAD in ls-remote output for %q", cloneURL)
 }
 
-// SyncUpstream fast-forwards a staging repository (a pushed clone with no
+// SyncUpstream force-syncs a staging repository (a pushed clone with no
 // forge fork relationship) from its upstream: fetch the upstream's HEAD into
-// a temporary bare clone of the staging repo, then force-push it onto the
+// a persistent bare mirror of the staging repo, then force-push it onto the
 // staging repo's default branch. The push is forced because the staging copy
 // mirrors the upstream: a rebase there must win. No-op when both HEADs
-// already match, so the scheduler doesn't pay a clone per tick. Pushing uses
-// the ambient git credentials (credential helper, gh auth); only the
-// terminal prompt is disabled so a missing credential fails fast.
-func SyncUpstream(ctx context.Context, repoURL, upstreamURL string) error {
+// already match, so the scheduler doesn't pay a fetch per tick. The mirror
+// lives under the per-URL clone cache and is reused across syncs, so a moved
+// upstream costs a delta fetch rather than a full re-clone of large repos;
+// the per-URL lock serialises it against the scan cache's clone/fetch on the
+// same repository. Pushing uses the ambient git credentials (credential
+// helper, gh auth); only the terminal prompt is disabled so a missing
+// credential fails fast.
+func (w *Worker) SyncUpstream(ctx context.Context, repoURL, upstreamURL string) error {
 	if err := validateScheduleURL(repoURL); err != nil {
 		return fmt.Errorf("repo: %w", err)
 	}
@@ -68,26 +72,29 @@ func SyncUpstream(ctx context.Context, repoURL, upstreamURL string) error {
 		return nil
 	}
 
-	tmp, err := os.MkdirTemp("", "scrutineer-upstream-sync-")
-	if err != nil {
-		return err
-	}
-	defer func() { _ = os.RemoveAll(tmp) }()
-	dst := filepath.Join(tmp, "repo.git")
+	mu := w.cacheMutex(repoURL)
+	mu.Lock()
+	defer mu.Unlock()
 
+	mirror := filepath.Join(RepoCacheRoot(w.DataDir, repoURL), "upstream-sync.git")
 	env := []string{"GIT_TERMINAL_PROMPT=0"}
-	if out, err := gitWithEnv(ctx, "", env, "clone", "--quiet", "--bare", "--", repoURL, dst); err != nil {
-		return fmt.Errorf("clone staging repo: %s: %w", strings.TrimSpace(out), err)
+	if _, err := os.Stat(mirror); err != nil {
+		if err := os.MkdirAll(filepath.Dir(mirror), dirPerm); err != nil {
+			return err
+		}
+		if out, err := gitWithEnv(ctx, "", env, "clone", "--quiet", "--bare", "--", repoURL, mirror); err != nil {
+			return fmt.Errorf("clone staging repo: %s: %w", strings.TrimSpace(out), err)
+		}
 	}
-	branch, err := gitWithEnv(ctx, dst, env, "symbolic-ref", "--short", "HEAD")
+	branch, err := gitWithEnv(ctx, mirror, env, "symbolic-ref", "--short", "HEAD")
 	if err != nil {
 		return fmt.Errorf("resolve default branch: %s: %w", strings.TrimSpace(branch), err)
 	}
 	branch = strings.TrimSpace(branch)
-	if out, err := gitWithEnv(ctx, dst, env, "fetch", "--quiet", "--", upstreamURL, "HEAD"); err != nil {
+	if out, err := gitWithEnv(ctx, mirror, env, "fetch", "--quiet", "--", upstreamURL, "HEAD"); err != nil {
 		return fmt.Errorf("fetch upstream: %s: %w", strings.TrimSpace(out), err)
 	}
-	if out, err := gitWithEnv(ctx, dst, env, "push", "--quiet", "--force", "origin", "FETCH_HEAD:refs/heads/"+branch); err != nil {
+	if out, err := gitWithEnv(ctx, mirror, env, "push", "--quiet", "--force", "origin", "FETCH_HEAD:refs/heads/"+branch); err != nil {
 		return fmt.Errorf("push to staging repo: %s: %w", strings.TrimSpace(out), err)
 	}
 	return nil

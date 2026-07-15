@@ -48,7 +48,7 @@ The central entity. One row per git URL.
 | threat_model | text | Operator's working-copy threat-model JSON. When set, the worker writes it to `./threat_model.json` in every skill workspace and `security-deep-dive` loads it instead of fetching the latest `threat-model` scan. Edited via the threat-model workbench tab. Empty = no override. |
 | scan_config | text | Analyst-authored YAML with `focus_areas`, `known_bugs`, `attack_surface`, and `skip` patterns. Validated by the repository editor, staged as `scrutineer.scan_config` in every skill workspace, and its `skip` patterns layer onto each skill's path-filter deny list. Empty = no repository-specific guidance. |
 | scan_schedule | text | Recurring-scan schedule: `daily`, `weekly`, or a cron expression. Empty inherits the global `scan_schedule` setting; `off` disables scheduling even when a global default is set. |
-| upstream_url | text | Upstream this repository is a pushed staging copy of (no forge fork relationship). When set, the scheduler fast-forwards the repository from it before the new-commit check. Empty for ordinary repos. |
+| upstream_url | text | Upstream this repository is a pushed staging copy of (no forge fork relationship). When set, the scheduler force-syncs the repository from it (a mirror push that overwrites local-only commits) before the new-commit check. Empty for ordinary repos. |
 | next_scheduled_scan_at | datetime | Scheduler bookkeeping: when the next scheduled run is due. Null means "recompute on the next tick"; schedule edits reset it instead of computing inline. |
 | created_at | datetime | |
 | updated_at | datetime | |

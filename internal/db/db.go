@@ -114,7 +114,8 @@ type Repository struct {
 	ScanSchedule string
 	// UpstreamURL, when set, names the upstream this repository is a
 	// pushed staging copy of (no forge fork relationship). The scheduler
-	// fast-forwards the repository from it before the new-commit check.
+	// force-syncs the repository from it (a mirror push that overwrites
+	// local-only commits) before the new-commit check.
 	UpstreamURL string
 	// NextScheduledScanAt is scheduler bookkeeping: when the next
 	// scheduled run is due. Null means "recompute on the next tick";
