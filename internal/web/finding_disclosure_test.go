@@ -65,6 +65,46 @@ func TestFindingDisclosureHTML_inlineStyles(t *testing.T) {
 	if !strings.Contains(body, "command injection") {
 		t.Errorf("draft body missing from page:\n%s", body)
 	}
+	// This finding has no suggested recipients, so no To: line is prepended.
+	if strings.Contains(body, "To:</strong>") {
+		t.Errorf("unexpected To: line for finding without suggested recipients:\n%s", body)
+	}
+}
+
+// TestFindingDisclosureHTML_suggestedRecipients checks that suggested recipients
+// ride above the draft as a To: line (the PVR-less fallback where the draft goes
+// out as an email) and that the free-text value is HTML-escaped, not injected raw.
+func TestFindingDisclosureHTML_suggestedRecipients(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{Name: "acme/thing", FullName: "acme/thing"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Status: db.ScanDone}
+	s.DB.Create(&scan)
+	f := db.Finding{
+		ScanID: scan.ID, RepositoryID: repo.ID, FindingID: "F1", Title: "Command injection",
+		DisclosureDraft:     "## GHSA draft\n\nbody.\n",
+		SuggestedRecipients: "@alice <alice@x.com> (CODEOWNERS: crypto/*)",
+	}
+	s.DB.Create(&f)
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/findings/"+strconv.FormatUint(uint64(f.ID), 10)+"/disclosure.html"))
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+
+	body := w.Body.String()
+	if !strings.Contains(body, "To:</strong>") {
+		t.Errorf("body missing To: line:\n%s", body)
+	}
+	if !strings.Contains(body, "@alice &lt;alice@x.com&gt; (CODEOWNERS: crypto/*)") {
+		t.Errorf("recipients not escaped into To: line:\n%s", body)
+	}
+	if strings.Contains(body, "<alice@x.com>") {
+		t.Errorf("raw recipient markup leaked into page:\n%s", body)
+	}
 }
 
 func TestFindingDisclosureHTML_emptyDraftNotFound(t *testing.T) {

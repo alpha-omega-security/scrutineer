@@ -212,7 +212,7 @@ One row per vulnerability. Lifecycle columns are mutated through `db.WriteFindin
 | released_at | datetime | When the release was published upstream. Together with `release_tag` and `release_url`, these close the gap between fix-landed and fix-shipped for the metrics in dora-metrics. |
 | resolution | text | `fix`, `migrate`, `workaround`, `adopt`, `wontfix`. |
 | disclosure_draft | text | Draft advisory text. |
-| suggested_recipients | text | File-level owners for the finding's `location`, written by the `disclose` skill: CODEOWNERS entries or, absent those, recent non-bot committers. Comma-joined free text with provenance. Empty when disclose has not run. |
+| suggested_recipients | text | File-level owners for the finding's `location`: CODEOWNERS entries or, absent those, recent non-bot committers. Comma-joined free text with provenance. Usually produced by the `disclose` skill, but also editable via the finding form and the PATCH API. |
 | assignee | text | Free-text. |
 | suggested_fix | text | Unified diff from the `patch` skill that passed the applicability gate. Empty when no patch run or the gate rejected it. |
 | suggested_fix_commit | text | Sha the suggested_fix applies cleanly against. |

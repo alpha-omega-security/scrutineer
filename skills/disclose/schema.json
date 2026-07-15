@@ -96,7 +96,7 @@
     "patched": {
       "type": "array",
       "items": { "type": "string" },
-      "description": "Field names sent in the PATCH /findings/{id} body. Subset of: title, cvss_vector, affected, fix_version, disclosure_draft, suggested_recipients."
+      "description": "Field names sent in the PATCH /findings/{id} body. Subset of: title, cvss_vector, cvss_v4_vector, affected, fix_version, disclosure_draft, suggested_recipients."
     },
     "preserved": {
       "type": "array",

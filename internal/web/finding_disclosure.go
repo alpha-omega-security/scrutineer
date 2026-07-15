@@ -76,6 +76,13 @@ func (s *Server) findingDisclosureHTML(w http.ResponseWriter, r *http.Request) {
 	}
 
 	body := inlineGmailStyles(string(renderMarkdown(draft)))
+	// Prepend a To: line from the suggested recipients: this page is the
+	// PVR-less fallback where the draft goes out as a plain email, so the
+	// analyst needs to see who to send it to right above the body.
+	if rec := strings.TrimSpace(f.SuggestedRecipients); rec != "" {
+		body = fmt.Sprintf(`<p style="margin:0 0 16px"><strong style="%s">To:</strong> %s</p>`,
+			styleStrong, template.HTMLEscapeString(rec)) + body
+	}
 	title := template.HTMLEscapeString(fmt.Sprintf("Disclosure draft — finding #%d: %s", f.ID, f.Title))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = fmt.Fprintf(w, disclosureHTMLPage, title, body)

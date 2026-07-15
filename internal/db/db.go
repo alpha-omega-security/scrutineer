@@ -680,8 +680,9 @@ type Finding struct {
 	// SuggestedRecipients routes the disclosure to the file-level owners
 	// of Location (CODEOWNERS entries or, absent those, recent non-bot
 	// committers) because the repo-level maintainers list is too coarse
-	// on large projects. Comma-joined free text with provenance, written
-	// by the disclose skill.
+	// on large projects. Comma-joined free text with provenance, usually
+	// produced by the disclose skill but also editable via the finding
+	// form and the PATCH API.
 	SuggestedRecipients string `gorm:"type:text"`
 	Assignee            string `gorm:"index"`
 	// LastRevalidateVerdict caches the latest verdict from the

@@ -260,7 +260,7 @@ func TestAPIFindingReadsAndFilters(t *testing.T) {
 	// Simulate a prior deep-dive scan with a couple of findings attached.
 	prior := db.Scan{RepositoryID: repo.ID, Kind: worker.JobSkill, Status: db.ScanDone, SkillName: "security-deep-dive"}
 	s.DB.Create(&prior)
-	s.DB.Create(&db.Finding{ScanID: prior.ID, RepositoryID: repo.ID, FindingID: "F1", Title: "a", Severity: "High", Location: "a.go:1", Commit: "abc123", Trace: "trace a"})
+	s.DB.Create(&db.Finding{ScanID: prior.ID, RepositoryID: repo.ID, FindingID: "F1", Title: "a", Severity: "High", Location: "a.go:1", Commit: "abc123", Trace: "trace a", SuggestedRecipients: "@owner (CODEOWNERS: a.go)"})
 	s.DB.Create(&db.Finding{ScanID: prior.ID, RepositoryID: repo.ID, FindingID: "F2", Title: "b", Severity: "Low", Location: "b.go:1", Trace: "trace b"})
 
 	// Unfiltered list
@@ -307,6 +307,9 @@ func TestAPIFindingReadsAndFilters(t *testing.T) {
 	}
 	if detail["commit"] != "abc123" {
 		t.Errorf("finding detail missing commit: %+v", detail)
+	}
+	if detail["suggested_recipients"] != "@owner (CODEOWNERS: a.go)" {
+		t.Errorf("finding detail missing suggested_recipients: %+v", detail)
 	}
 }
 

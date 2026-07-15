@@ -913,7 +913,7 @@ func TestExportFindings_carriesDBFields(t *testing.T) {
 		"finding_id", "sinks", "title", "severity", "status", "cwe", "location", "affected",
 		"reachability", "quality_tier",
 		"cve_id", "cvss_vector", "cvss_score", "fix_version", "fix_commit",
-		"resolution", "disclosure_draft", "assignee",
+		"resolution", "disclosure_draft", "suggested_recipients", "assignee",
 		"trace", "boundary", "validation", "prior_art", "reach", "rating",
 		"created_at", "updated_at",
 	}
