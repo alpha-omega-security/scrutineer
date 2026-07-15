@@ -1,0 +1,84 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "forensics report",
+  "description": "Read-only compromise investigation evidence bundle. An error-only report means no investigation result was produced.",
+  "type": "object",
+  "additionalProperties": false,
+  "oneOf": [
+    {
+      "required": ["repository", "scope", "finding_id", "head", "window", "timeline", "artifacts", "indicators", "assessment", "gaps", "notes"],
+      "properties": {"error": {"type": "null"}}
+    },
+    {
+      "required": ["error"],
+      "properties": {"error": {"type": "string", "minLength": 1}}
+    }
+  ],
+  "properties": {
+    "repository": {"type": "string", "format": "uri"},
+    "scope": {"type": "string", "enum": ["repository", "finding"]},
+    "finding_id": {"type": ["integer", "null"], "minimum": 1},
+    "head": {"type": ["string", "null"], "pattern": "^[0-9a-f]{7,64}$"},
+    "window": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["from", "to"],
+      "properties": {
+        "from": {"type": ["string", "null"], "format": "date-time"},
+        "to": {"type": ["string", "null"], "format": "date-time"}
+      }
+    },
+    "timeline": {"type": "array", "items": {"$ref": "#/$defs/timeline_entry"}},
+    "artifacts": {"type": "array", "items": {"$ref": "#/$defs/artifact"}},
+    "indicators": {"type": "array", "items": {"$ref": "#/$defs/indicator"}},
+    "assessment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "summary"],
+      "properties": {
+        "status": {"type": "string", "enum": ["confirmed", "suspected", "not_observed", "inconclusive"]},
+        "summary": {"type": "string", "minLength": 1}
+      }
+    },
+    "gaps": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "notes": {"type": "array", "items": {"type": "string", "minLength": 1}},
+    "error": {"type": ["string", "null"]}
+  },
+  "$defs": {
+    "timeline_entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["time", "source", "kind", "summary", "evidence", "url"],
+      "properties": {
+        "time": {"type": ["string", "null"], "format": "date-time"},
+        "source": {"type": "string", "enum": ["local_git", "github", "wayback", "gharchive"]},
+        "kind": {"type": "string", "enum": ["commit", "push", "tag", "release", "account", "archive", "other"]},
+        "summary": {"type": "string", "minLength": 1},
+        "evidence": {"type": "string", "minLength": 1},
+        "url": {"type": ["string", "null"], "format": "uri"}
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "identifier", "summary", "url"],
+      "properties": {
+        "kind": {"type": "string", "enum": ["commit", "tag", "release", "asset", "archive", "event", "other"]},
+        "identifier": {"type": "string", "minLength": 1},
+        "summary": {"type": "string", "minLength": 1},
+        "url": {"type": ["string", "null"], "format": "uri"}
+      }
+    },
+    "indicator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "value", "context", "source"],
+      "properties": {
+        "type": {"type": "string", "enum": ["commit", "tag", "release_asset", "account", "domain", "url", "other"]},
+        "value": {"type": "string", "minLength": 1},
+        "context": {"type": "string", "minLength": 1},
+        "source": {"type": "string", "minLength": 1}
+      }
+    }
+  }
+}
