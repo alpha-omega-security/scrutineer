@@ -54,13 +54,15 @@ error-only report permitted by the schema. Do not guess missing evidence.
 
 ## Evidence collection
 
-Start with local Git. Record the exact commands and object IDs that support a
-claim, not just conclusions:
+Start with local Git. Choose a UTC investigation window before collecting
+history: use dates named by the finding or a known artifact; otherwise start
+with the most recent 30 days and record that default in `gaps`. Record the
+exact commands and object IDs that support a claim, not just conclusions:
 
 ```sh
 git -C ./src rev-parse HEAD
 git -C ./src remote -v
-git -C ./src log --all --decorate --date=iso-strict --format='%H%x09%aI%x09%an%x09%D%x09%s'
+git -C ./src log --all --since="$FROM" --until="$TO" --max-count=500 --decorate --date=iso-strict --format='%H%x09%aI%x09%an%x09%D%x09%s'
 git -C ./src for-each-ref --format='%(refname)%09%(objectname)%09%(creatordate:iso-strict)'
 git -C ./src fsck --no-reflogs --unreachable
 git -C ./src tag --list --format='%(refname:short)%09%(objectname)%09%(creatordate:iso-strict)'
@@ -69,7 +71,9 @@ git -C ./src tag --list --format='%(refname:short)%09%(objectname)%09%(creatorda
 Treat shallow-clone limits, missing reflogs, and unreachable objects as limits
 on the available evidence. `git fsck` output alone does not prove a malicious
 or deleted commit was previously reachable; report it as an artifact and say
-why it matters.
+why it matters. Expand the window only when returned evidence makes a specific
+earlier or later event relevant; make each expansion bounded and record it in
+the report. Never dump the repository's full commit history.
 
 For github.com upstreams, use read-only `gh api` calls. Prefer concrete,
 bounded queries based on the suspected date range or object IDs:
