@@ -1,0 +1,75 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "enabledManagers": [
+    "gomod",
+    "github-actions",
+    "dockerfile",
+    "custom.regex"
+  ],
+  "dependencyDashboard": true,
+  "automerge": false,
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Update Claude Code release assets and SHA-256 pins",
+      "managerFilePatterns": ["/^Dockerfile\\.runner$/"],
+      "matchStrings": [
+        "ARG CLAUDE_(?:AMD64|ARM64)_LOCK=(?<currentValue>v\\d+\\.\\d+\\.\\d+)@sha256:(?<currentDigest>[a-f0-9]{64})"
+      ],
+      "packageNameTemplate": "anthropics/claude-code",
+      "depNameTemplate": "anthropics/claude-code",
+      "datasourceTemplate": "github-release-attachments",
+      "versioningTemplate": "semver-coerced"
+    },
+    {
+      "customType": "regex",
+      "description": "Update Claude Code image and documented versions from GitHub releases",
+      "managerFilePatterns": [
+        "/^Dockerfile$/",
+        "/^threatmodel\\.md$/"
+      ],
+      "matchStrings": [
+        "(?:@anthropic-ai/claude-code@|`claude-code@)(?<currentValue>\\d+\\.\\d+\\.\\d+)"
+      ],
+      "packageNameTemplate": "anthropics/claude-code",
+      "depNameTemplate": "anthropics/claude-code",
+      "datasourceTemplate": "github-release-attachments",
+      "versioningTemplate": "semver-coerced",
+      "extractVersionTemplate": "^v(?<version>.+)$"
+    }
+  ],
+  "packageRules": [
+    {
+      "matchManagers": ["gomod"],
+      "groupName": "Go modules",
+      "minimumReleaseAge": "7 days"
+    },
+    {
+      "matchManagers": ["gomod"],
+      "matchDepTypes": ["indirect"],
+      "enabled": true
+    },
+    {
+      "matchManagers": ["github-actions"],
+      "groupName": "GitHub Actions",
+      "minimumReleaseAge": "7 days"
+    },
+    {
+      "matchManagers": ["dockerfile"],
+      "groupName": "Docker images",
+      "minimumReleaseAge": "7 days"
+    },
+    {
+      "description": "Keep all four Claude Code pins on one GitHub release; do not approve a partial group in the Dependency Dashboard",
+      "matchPackageNames": ["anthropics/claude-code"],
+      "groupName": "Claude Code",
+      "minimumGroupSize": 4,
+      "minimumReleaseAge": "7 days"
+    }
+  ],
+  "vulnerabilityAlerts": {
+    "enabled": true,
+    "automerge": false
+  }
+}
