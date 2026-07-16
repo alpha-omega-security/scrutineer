@@ -3,7 +3,12 @@
 # works -- substitute the binary):
 #   docker build -t scrutineer-runner -f Dockerfile.runner .
 
-ARG CLAUDE_VERSION=2.1.173
+# Keep each release tag beside its architecture-specific digest so Renovate can
+# update the selected asset and checksum atomically. A mismatched tag/digest in
+# a Renovate PR fails sha256sum below and usually means asset identification
+# failed upstream.
+ARG CLAUDE_AMD64_LOCK=v2.1.210@sha256:3db32c13a1e16b2d867d096a9808f42d8678c5597d10799a1904fd897e043beb
+ARG CLAUDE_ARM64_LOCK=v2.1.210@sha256:83c01a39c3f785c6ae43c8923d5596e3246e7b87782b4cacc34259fbee5821d8
 ARG CODEX_VERSION=0.142.5
 ARG OPENCODE_VERSION=1.17.12
 ARG SEMGREP_VERSION=1.167.0
@@ -29,7 +34,8 @@ COPY . .
 RUN CGO_ENABLED=0 go build -o /out/scrutineer ./cmd/scrutineer
 
 FROM debian:trixie-slim@sha256:28de0877c2189802884ccd20f15ee41c203573bd87bb6b883f5f46362d24c5c2
-ARG CLAUDE_VERSION
+ARG CLAUDE_AMD64_LOCK
+ARG CLAUDE_ARM64_LOCK
 ARG CODEX_VERSION
 ARG OPENCODE_VERSION
 ARG SEMGREP_VERSION
@@ -65,12 +71,14 @@ RUN python3 -m venv /opt/semgrep && \
 ARG TARGETARCH
 RUN set -eux; \
     case "${TARGETARCH}" in \
-      amd64) arch=x64;   sha=b3d1afba5c02fa0fed43150e9470e556cf0cfc3a5c27d836a199d54051c96390 ;; \
-      arm64) arch=arm64; sha=2f0038e9f7b3ee049e7db202b4f10af7d2e62af542b7fd7d1f542ea04166a4fe ;; \
+      amd64) arch=x64;   lock="${CLAUDE_AMD64_LOCK}" ;; \
+      arm64) arch=arm64; lock="${CLAUDE_ARM64_LOCK}" ;; \
       *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
     esac; \
+    tag="${lock%@*}"; \
+    sha="${lock#*@sha256:}"; \
     curl -fsSL -o /tmp/claude.tgz \
-      "https://github.com/anthropics/claude-code/releases/download/v${CLAUDE_VERSION}/claude-linux-${arch}.tar.gz"; \
+      "https://github.com/anthropics/claude-code/releases/download/${tag}/claude-linux-${arch}.tar.gz"; \
     echo "${sha}  /tmp/claude.tgz" | sha256sum -c -; \
     tar -xzf /tmp/claude.tgz -C /usr/local/bin claude && rm /tmp/claude.tgz
 
