@@ -1,12 +1,15 @@
 package web
 
 import (
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"slices"
 	"strconv"
 	"strings"
 	"testing"
+
+	"gorm.io/gorm"
 
 	"scrutineer/internal/db"
 )
@@ -442,6 +445,36 @@ func TestFindingOSV_404ForMissingFinding(t *testing.T) {
 	w := getOSV(t, s, 99999)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("status %d, want 404", w.Code)
+	}
+}
+
+func TestFindingOSV_handlesRepositoryLookupErrors(t *testing.T) {
+	for _, tt := range []struct {
+		name       string
+		err        error
+		wantStatus int
+	}{
+		{name: "missing", err: gorm.ErrRecordNotFound, wantStatus: http.StatusNotFound},
+		{name: "database failure", err: errors.New("database unavailable"), wantStatus: http.StatusInternalServerError},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			s, done := newTestServer(t)
+			defer done()
+
+			f := seedCSAFFinding(t, s, nil)
+			if err := s.DB.Callback().Query().Before("gorm:query").Register("test:fail_repository_lookup", func(tx *gorm.DB) {
+				if tx.Statement.Table == "repositories" {
+					_ = tx.AddError(tt.err)
+				}
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			w := getOSV(t, s, f.ID)
+			if w.Code != tt.wantStatus {
+				t.Errorf("status = %d, want %d; body=%s", w.Code, tt.wantStatus, w.Body)
+			}
+		})
 	}
 }
 

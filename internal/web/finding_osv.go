@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
@@ -15,6 +16,7 @@ import (
 	"github.com/git-pkgs/purl"
 	"github.com/git-pkgs/vulns"
 	"github.com/santhosh-tekuri/jsonschema/v6"
+	"gorm.io/gorm"
 
 	"scrutineer/internal/db"
 )
@@ -84,7 +86,15 @@ func (s *Server) findingOSV(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var repo db.Repository
-	s.DB.First(&repo, f.RepositoryID)
+	if err := s.DB.First(&repo, f.RepositoryID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		s.Log.Error("osv repository", "finding", f.ID, "repository", f.RepositoryID, "err", err)
+		http.Error(w, "failed to load repository", http.StatusInternalServerError)
+		return
+	}
 	var refs []db.FindingReference
 	s.DB.Where("finding_id = ?", f.ID).Order("id desc").Find(&refs)
 	var pkgs []db.Package
