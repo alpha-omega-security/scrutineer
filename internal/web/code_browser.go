@@ -201,6 +201,8 @@ func highlightLang(p string) string {
 		return "kotlin"
 	case ".rs":
 		return "rust"
+	case ".swift":
+		return "swift"
 	case ".php":
 		return "php"
 	case ".c", ".h":

@@ -19,6 +19,7 @@ var BuiltinSkipPaths = []string{
 	"**/Gemfile.lock",
 	"**/poetry.lock",
 	"**/composer.lock",
+	"**/Package.resolved",
 	"**/*.min.js",
 	"**/*.min.css",
 	"**/dist/**",

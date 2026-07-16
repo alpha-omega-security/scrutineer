@@ -142,6 +142,17 @@ var builtinProfiles = []Profile{
 	{Name: "beam", Detect: pm("Mix", "rebar3")},
 	{Name: "rust", Detect: pm("Cargo")},
 	{
+		// Before c-cpp: a Swift package that vendors C sources or a Makefile
+		// still routes here on the SwiftPM manifest. The language match is a
+		// belt-and-braces for a repo with only *.swift and no Package.swift
+		// (a script or an Xcode-project-only checkout).
+		Name: "swift",
+		Detect: []BriefMatch{
+			{briefPackageManager, []string{"Swift Package Manager"}},
+			{briefLanguage, []string{"Swift"}},
+		},
+	},
+	{
 		// Before c-cpp so a CPAN dist that also commits a generated Makefile,
 		// or whose Makefile.PL has already been run, routes here rather than
 		// to the native toolchain. brief reports cpanm in package_managers
