@@ -10,13 +10,12 @@ import (
 	"scrutineer/internal/repoconfig"
 )
 
-// autoEnqueueFocusAreaDeepDives turns a completed root threat-model into one
+// autoEnqueueFocusAreaDeepDives turns a completed threat-model into one
 // security-deep-dive per configured input-processing subsystem. The complete,
 // normalized focus area is snapshotted on every child scan so later edits to
 // scan_config cannot change already queued work.
 func (s *Server) autoEnqueueFocusAreaDeepDives(scan *db.Scan) {
-	if scan == nil || scan.Status != db.ScanDone || scan.SkillName != threatModelSkillName ||
-		scan.SubPath != "" || scan.Ref != "" {
+	if scan == nil || scan.Status != db.ScanDone || scan.SkillName != threatModelSkillName {
 		return
 	}
 
@@ -61,8 +60,8 @@ func (s *Server) autoEnqueueFocusAreaDeepDives(scan *db.Scan) {
 func (s *Server) enqueueFocusAreaDeepDive(parent *db.Scan, skillID uint, group, focusArea string) {
 	var existing int64
 	if err := s.DB.Model(&db.Scan{}).
-		Where("repository_id = ? AND skill_id = ? AND scan_group = ? AND focus_area = ? AND status IN ?",
-			parent.RepositoryID, skillID, group, focusArea,
+		Where("repository_id = ? AND skill_id = ? AND scan_group = ? AND sub_path = ? AND ref = ? AND focus_area = ? AND status IN ?",
+			parent.RepositoryID, skillID, group, parent.SubPath, parent.Ref, focusArea,
 			[]db.ScanStatus{db.ScanQueued, db.ScanRunning, db.ScanDone}).
 		Count(&existing).Error; err != nil {
 		s.Log.Warn("focus-area deep dives: check existing", "scan", parent.ID, "err", err)
@@ -75,6 +74,8 @@ func (s *Server) enqueueFocusAreaDeepDive(parent *db.Scan, skillID uint, group, 
 		Model:      parent.Model,
 		Effort:     parent.Effort,
 		Profile:    parent.Profile,
+		SubPath:    parent.SubPath,
+		Ref:        parent.Ref,
 		RescanMode: parent.RescanMode,
 		ScanGroup:  group,
 		FocusArea:  focusArea,

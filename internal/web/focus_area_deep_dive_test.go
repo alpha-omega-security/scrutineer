@@ -72,3 +72,50 @@ func TestAutoEnqueueFocusAreaDeepDivesSeedsThenFansOut(t *testing.T) {
 		t.Fatalf("deep dives = %+v", deepDives)
 	}
 }
+
+func TestAutoEnqueueFocusAreaDeepDivesPreservesScope(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{
+		URL: "https://example.com/scoped-focus", Name: "scoped-focus", ScanConfig: `focus_areas:
+  - name: API parser
+    paths: [internal/api/**]
+    surface: API requests
+`,
+	}
+	s.DB.Create(&repo)
+	deepDive := db.Skill{Name: deepDiveSkillName, Body: "b", OutputFile: "r.json", OutputKind: "findings", Active: true, Source: "ui"}
+	s.DB.Create(&deepDive)
+	focusArea, err := repoconfig.EncodeFocusAreaJSON(repoconfig.FocusArea{
+		Name: "API parser", Paths: []string{"internal/api/**"}, Surface: "API requests",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := db.Scan{
+		RepositoryID: repo.ID,
+		Status:       db.ScanDone,
+		SkillName:    threatModelSkillName,
+		ScanGroup:    "diff-1",
+		SubPath:      "services/api",
+		Ref:          "release/v1",
+	}
+	s.DB.Create(&parent)
+	// A same-group scan for another ref/subpath must not suppress this fan-out.
+	s.DB.Create(&db.Scan{
+		RepositoryID: repo.ID, SkillID: &deepDive.ID, SkillName: deepDiveSkillName,
+		Status: db.ScanDone, ScanGroup: parent.ScanGroup, SubPath: "services/other",
+		Ref: "main", FocusArea: focusArea,
+	})
+
+	s.autoEnqueueFocusAreaDeepDives(&parent)
+
+	var child db.Scan
+	if err := s.DB.Where("repository_id = ? AND skill_id = ? AND sub_path = ? AND ref = ?", repo.ID, deepDive.ID, parent.SubPath, parent.Ref).First(&child).Error; err != nil {
+		t.Fatal(err)
+	}
+	if child.SubPath != parent.SubPath || child.Ref != parent.Ref || child.ScanGroup != parent.ScanGroup {
+		t.Errorf("child scope = (%q, %q, %q), want (%q, %q, %q)",
+			child.SubPath, child.Ref, child.ScanGroup, parent.SubPath, parent.Ref, parent.ScanGroup)
+	}
+}
