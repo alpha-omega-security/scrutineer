@@ -160,6 +160,7 @@ func parseFindingIDs(r *http.Request) ([]uint, error) {
 func (s *Server) onScanFinalized(scan *db.Scan) {
 	s.autoUpdateThreatModel(scan)
 	s.autoSeedRepoScanConfig(scan)
+	s.autoEnqueueFocusAreaDeepDives(scan)
 	s.autoComputeFixValidation(scan)
 	s.autoEnqueueFindingDedup(scan)
 }

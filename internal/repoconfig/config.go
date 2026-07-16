@@ -4,6 +4,7 @@ package repoconfig
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -30,6 +31,42 @@ type FocusArea struct {
 	Name    string   `yaml:"name" json:"name"`
 	Paths   []string `yaml:"paths" json:"paths"`
 	Surface string   `yaml:"surface" json:"surface"`
+}
+
+// EncodeFocusAreaJSON validates a focus area and returns the stable payload
+// stored on an individual scan. Keeping the complete area on the scan means a
+// queued audit cannot silently change scope after an analyst edits the repo
+// configuration.
+func EncodeFocusAreaJSON(area FocusArea) (string, error) {
+	normalised, err := NormaliseFocusArea(area)
+	if err != nil {
+		return "", err
+	}
+	b, err := json.Marshal(normalised)
+	if err != nil {
+		return "", err
+	}
+	return string(b), nil
+}
+
+// DecodeFocusAreaJSON validates the focus area persisted on an individual
+// scan. Empty is handled by callers as an unscoped scan.
+func DecodeFocusAreaJSON(raw string) (FocusArea, error) {
+	var area FocusArea
+	if err := json.Unmarshal([]byte(raw), &area); err != nil {
+		return FocusArea{}, err
+	}
+	return NormaliseFocusArea(area)
+}
+
+// NormaliseFocusArea applies the same validation and path normalisation used
+// by repository scan_config to one focus area.
+func NormaliseFocusArea(area FocusArea) (FocusArea, error) {
+	cfg := Config{FocusAreas: []FocusArea{area}}
+	if err := cfg.validate(); err != nil {
+		return FocusArea{}, err
+	}
+	return cfg.FocusAreas[0], nil
 }
 
 // Parse decodes and validates the YAML stored on a repository. Empty input is

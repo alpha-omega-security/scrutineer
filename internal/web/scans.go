@@ -242,6 +242,7 @@ func (s *Server) scanRetry(w http.ResponseWriter, r *http.Request) {
 		RescanMode:        scan.RescanMode,
 		DiffBaseScanID:    scan.DiffBaseScanID,
 		ScanGroup:         scan.ScanGroup,
+		FocusArea:         scan.FocusArea,
 		SessionID:         sessionID,
 		ResumedFromScanID: resumeOf,
 		// An ingest scan's input is the uploaded payload, not ./src;
@@ -344,6 +345,7 @@ func (s *Server) scansRetryFailed(w http.ResponseWriter, r *http.Request) {
 			RescanMode:        sc.RescanMode,
 			DiffBaseScanID:    sc.DiffBaseScanID,
 			ScanGroup:         sc.ScanGroup,
+			FocusArea:         sc.FocusArea,
 			SessionID:         sessionID,
 			ResumedFromScanID: resumeOf,
 			ImportPayload:     sc.ImportPayload,

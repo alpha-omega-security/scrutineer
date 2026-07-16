@@ -72,7 +72,11 @@ Only when `has_code`:
 - `recon`
 - `threat-model`
 - `semgrep`
-- `security-deep-dive`
+
+After `threat-model` finishes, Scrutineer reads its durable `scan_config` and
+enqueues one `security-deep-dive` per focus area. Do not enqueue
+`security-deep-dive` here: starting it before the threat model is complete
+would create an unscoped repository-wide audit and defeat the partition.
 
 If a skill name comes back `404 skill not found or inactive`, skip it and note which one in your report; the operator may have disabled it on purpose.
 

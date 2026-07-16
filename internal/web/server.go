@@ -27,6 +27,7 @@ import (
 
 	"scrutineer/internal/db"
 	"scrutineer/internal/queue"
+	"scrutineer/internal/repoconfig"
 	"scrutineer/internal/worker"
 )
 
@@ -2366,11 +2367,11 @@ func (s *Server) repoDiffScan(w http.ResponseWriter, r *http.Request, repo db.Re
 
 var errDeepDiveMissing = errors.New(deepDiveSkillName + " skill is not installed")
 
-// enqueueDiffRescanGroup enqueues the diff-rescan skills (recon,
-// threat-model, semgrep, deep-dive) as one scan group. Missing auxiliary
-// skills are tolerated; a missing deep-dive is errDeepDiveMissing, checked
-// before the first enqueue so the group is all-or-nothing. Shared by the
-// "Diff rescan" button and the scheduler.
+// enqueueDiffRescanGroup enqueues recon, threat-model, and semgrep as one
+// diff-rescan group. A completed threat-model fans out the deep-dive scans.
+// Missing auxiliary skills are tolerated; a missing deep-dive is
+// errDeepDiveMissing, checked before the first enqueue so the group is
+// all-or-nothing. Shared by the "Diff rescan" button and the scheduler.
 func (s *Server) enqueueDiffRescanGroup(ctx context.Context, repoID uint, model, subPath string) (int, error) {
 	var deepDive db.Skill
 	if err := s.DB.Where("name = ? AND active = ?", deepDiveSkillName, true).First(&deepDive).Error; err != nil {
@@ -2378,11 +2379,9 @@ func (s *Server) enqueueDiffRescanGroup(ctx context.Context, repoID uint, model,
 	}
 	group := uuid.NewString()
 	queued := 0
-	for _, name := range []string{reconSkillName, threatModelSkillName, "semgrep", deepDiveSkillName} {
+	for _, name := range []string{reconSkillName, threatModelSkillName, "semgrep"} {
 		var skill db.Skill
-		if name == deepDiveSkillName {
-			skill = deepDive
-		} else if err := s.DB.Where("name = ? AND active = ?", name, true).First(&skill).Error; err != nil {
+		if err := s.DB.Where("name = ? AND active = ?", name, true).First(&skill).Error; err != nil {
 			continue
 		}
 		if _, err := s.enqueueSkillWith(ctx, repoID, skill.ID, ScanOpts{
@@ -2641,6 +2640,9 @@ type ScanOpts struct {
 	// skills can list sibling findings before re-filing them. Empty
 	// when the scan is not part of a batch.
 	ScanGroup string
+	// FocusArea is the complete audit focus serialized as JSON. It is an
+	// internal orchestration input, not an operator-supplied API field.
+	FocusArea string
 	// SessionID and ResumedFromScanID carry a failed scan's claude session
 	// into its retry so the new run continues the conversation with
 	// `claude -p --resume` instead of restarting from turn 0. Both empty
@@ -2692,6 +2694,16 @@ func (s *Server) enqueueSkillWith(ctx context.Context, repoID, skillID uint, opt
 	if err := worker.ValidateGitRef(opts.Ref); err != nil {
 		return 0, fmt.Errorf("%w: %v", ErrInvalidRef, err)
 	}
+	if strings.TrimSpace(opts.FocusArea) != "" {
+		area, err := repoconfig.DecodeFocusAreaJSON(opts.FocusArea)
+		if err != nil {
+			return 0, fmt.Errorf("invalid scan focus area: %w", err)
+		}
+		opts.FocusArea, err = repoconfig.EncodeFocusAreaJSON(area)
+		if err != nil {
+			return 0, fmt.Errorf("encode scan focus area: %w", err)
+		}
+	}
 	if !ValidModelPreference(opts.Model) && hasSkill {
 		opts.Model = sk.Model
 	}
@@ -2725,6 +2737,7 @@ func (s *Server) enqueueSkillWith(ctx context.Context, repoID, skillID uint, opt
 		BaselineScanID:     opts.BaselineScanID,
 		SubPath:            opts.SubPath,
 		ScanGroup:          opts.ScanGroup,
+		FocusArea:          opts.FocusArea,
 		Ref:                opts.Ref,
 		RescanMode:         opts.RescanMode,
 		DiffBaseScanID:     opts.DiffBaseScanID,

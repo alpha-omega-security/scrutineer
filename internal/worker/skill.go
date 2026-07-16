@@ -76,6 +76,9 @@ type skillContextScrutineer struct {
 	// ScanConfig is the operator-authored repository guidance. It is omitted
 	// entirely for repositories without a saved configuration.
 	ScanConfig *repoconfig.Config `json:"scan_config,omitempty"`
+	// FocusArea narrows a fan-out security-deep-dive scan to one named
+	// input-processing subsystem from scan_config. Empty means normal scope.
+	FocusArea *repoconfig.FocusArea `json:"focus_area,omitempty"`
 	// Recon is the latest completed focus-area map. It is staged only for the
 	// threat-model skill, which incorporates it into a complete scan-config
 	// proposal without letting recon overwrite analyst configuration directly.
@@ -177,8 +180,17 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 	if err := w.prepareDiffRescan(ctx, scan, workRoot, emit); err != nil {
 		return "", err
 	}
+	focusArea, err := scanFocusArea(scan)
+	if err != nil {
+		return "", err
+	}
 	if err := applyRepositoryPathFilters(workRoot, &skill, scan.Repository.ScanConfig, emit); err != nil {
 		return "", fmt.Errorf("apply path filters: %w", err)
+	}
+	if focusArea != nil {
+		if err := applyFocusAreaPathFilter(workRoot, *focusArea, emit); err != nil {
+			return "", fmt.Errorf("apply focus-area path filter: %w", err)
+		}
 	}
 
 	skillDir := w.Runner.SkillDir(workRoot, skill.Name)
@@ -898,10 +910,24 @@ func applyRepositoryPathFilters(workRoot string, skill *db.Skill, rawConfig stri
 	return applyPathFiltersWithSkips(workRoot, skill, cfg.Skip, emit)
 }
 
+// applyFocusAreaPathFilter narrows a fan-out audit to the paths belonging to
+// its persisted focus area. Repository skip rules have already been applied;
+// this only removes files outside the area and does not reintroduce anything.
+func applyFocusAreaPathFilter(workRoot string, area repoconfig.FocusArea, emit func(Event)) error {
+	return applyPathFiltersWithPatterns(workRoot, area.Paths, nil, emit)
+}
+
 func applyPathFiltersWithSkips(workRoot string, skill *db.Skill, repositorySkips []string, emit func(Event)) error {
 	paths := skills.SplitPatterns(skill.Paths)
 	ignorePaths := skills.SplitPatterns(skill.IgnorePaths)
 	ignorePaths = append(ignorePaths, repositorySkips...)
+	if err := stripWorkspaceAgentDirectives(workRoot, emit); err != nil {
+		return err
+	}
+	return applyPathFiltersWithPatterns(workRoot, paths, ignorePaths, emit)
+}
+
+func stripWorkspaceAgentDirectives(workRoot string, emit func(Event)) error {
 	src := filepath.Join(workRoot, "src")
 	if _, err := os.Stat(src); err != nil {
 		if os.IsNotExist(err) {
@@ -921,8 +947,19 @@ func applyPathFiltersWithSkips(workRoot string, skill *db.Skill, repositorySkips
 	if stripped > 0 {
 		emit(Event{Kind: KindText, Text: fmt.Sprintf("%d agent-directive item(s) stripped from ./src", stripped)})
 	}
+	return nil
+}
+
+func applyPathFiltersWithPatterns(workRoot string, paths, ignorePaths []string, emit func(Event)) error {
+	src := filepath.Join(workRoot, "src")
+	if _, err := os.Stat(src); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
 	excluded := 0
-	err = filepath.WalkDir(src, func(p string, d os.DirEntry, err error) error {
+	err := filepath.WalkDir(src, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -963,6 +1000,17 @@ func applyPathFiltersWithSkips(workRoot string, skill *db.Skill, repositorySkips
 		emit(Event{Kind: KindText, Text: fmt.Sprintf("%d file(s) excluded by path filters", excluded)})
 	}
 	return nil
+}
+
+func scanFocusArea(scan *db.Scan) (*repoconfig.FocusArea, error) {
+	if strings.TrimSpace(scan.FocusArea) == "" {
+		return nil, nil
+	}
+	area, err := repoconfig.DecodeFocusAreaJSON(scan.FocusArea)
+	if err != nil {
+		return nil, fmt.Errorf("parse scan focus area: %w", err)
+	}
+	return &area, nil
 }
 
 func removeSubtree(root string) (int, error) {
@@ -1168,6 +1216,11 @@ func stageContextWithRecon(workRoot, apiBase, forkOrg, metadataDir string, scan 
 	if !config.Empty() {
 		ctx.Scrutineer.ScanConfig = &config
 	}
+	focusArea, err := scanFocusArea(scan)
+	if err != nil {
+		return fmt.Errorf("parse scan focus area: %w", err)
+	}
+	ctx.Scrutineer.FocusArea = focusArea
 	ctx.Scrutineer.Recon = recon
 	if scan.SkillID != nil {
 		ctx.Scrutineer.SkillID = *scan.SkillID

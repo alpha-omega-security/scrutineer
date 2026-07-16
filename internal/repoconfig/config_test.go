@@ -1,6 +1,7 @@
 package repoconfig
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -24,6 +25,25 @@ skip: [tests/**]
 	}
 	if cfg.Skip[0] != "tests/**" || cfg.AttackSurface == "" || cfg.KnownBugs[0] != "GHSA-xxxx-yyyy" {
 		t.Fatalf("config=%+v", cfg)
+	}
+}
+
+func TestFocusAreaJSONRoundTrip(t *testing.T) {
+	raw, err := EncodeFocusAreaJSON(FocusArea{
+		Name: "XML parser", Paths: []string{"  lib\\xml*.c  "}, Surface: "untrusted XML",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	area, err := DecodeFocusAreaJSON(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := area.Paths, []string{"lib/xml*.c"}; !slices.Equal(got, want) {
+		t.Errorf("paths = %q, want %q", got, want)
+	}
+	if _, err := DecodeFocusAreaJSON(`{"name":"bad","paths":["../private/**"],"surface":"bad"}`); err == nil {
+		t.Error("invalid focus area was accepted")
 	}
 }
 

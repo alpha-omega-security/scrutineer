@@ -2812,8 +2812,8 @@ func TestRepoScan_diffRescanQueuesGroupedSkills(t *testing.T) {
 	if err := s.DB.Where("repository_id = ?", repo.ID).Order("skill_name").Find(&scans).Error; err != nil {
 		t.Fatal(err)
 	}
-	if len(scans) != 4 {
-		t.Fatalf("queued scans = %d, want 4", len(scans))
+	if len(scans) != 3 {
+		t.Fatalf("queued scans = %d, want 3", len(scans))
 	}
 	group := scans[0].ScanGroup
 	if group == "" {
@@ -2829,10 +2829,13 @@ func TestRepoScan_diffRescanQueuesGroupedSkills(t *testing.T) {
 			t.Errorf("%s ScanGroup = %q, want shared %q", sc.SkillName, sc.ScanGroup, group)
 		}
 	}
-	for _, name := range []string{reconSkillName, threatModelSkillName, "semgrep", deepDiveSkillName} {
+	for _, name := range []string{reconSkillName, threatModelSkillName, "semgrep"} {
 		if !gotNames[name] {
 			t.Errorf("missing queued %s scan", name)
 		}
+	}
+	if gotNames[deepDiveSkillName] {
+		t.Error("diff rescan should wait for threat-model to fan out deep dives")
 	}
 }
 
@@ -3832,6 +3835,11 @@ func TestRetry_preservesScanFields(t *testing.T) {
 		{"scan_group", func(sc *db.Scan) { sc.ScanGroup = "grp-7" }, func(t *testing.T, f db.Scan) {
 			if f.ScanGroup != "grp-7" {
 				t.Errorf("retry lost scan group: got %q, want grp-7", f.ScanGroup)
+			}
+		}},
+		{"focus_area", func(sc *db.Scan) { sc.FocusArea = `{"name":"parser","paths":["src/**"],"surface":"request bytes"}` }, func(t *testing.T, f db.Scan) {
+			if f.FocusArea == "" || !strings.Contains(f.FocusArea, `"name":"parser"`) {
+				t.Errorf("retry lost focus area: %q", f.FocusArea)
 			}
 		}},
 	}

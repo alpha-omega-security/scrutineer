@@ -364,6 +364,32 @@ func TestStageContext_includesReconFocusAreas(t *testing.T) {
 	}
 }
 
+func TestStageContext_includesFocusArea(t *testing.T) {
+	dir := t.TempDir()
+	repo := &db.Repository{URL: "https://example.com/focus", Name: "focus"}
+	raw, err := repoconfig.EncodeFocusAreaJSON(repoconfig.FocusArea{
+		Name: "XML parser", Paths: []string{"lib/xml*.c"}, Surface: "untrusted XML",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scan := &db.Scan{ID: 7, RepositoryID: 3, APIToken: "tok", FocusArea: raw}
+	if err := stageContext(dir, "http://127.0.0.1:8080/api", "", "", scan, repo); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "context.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got skillContext
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Scrutineer.FocusArea == nil || got.Scrutineer.FocusArea.Name != "XML parser" {
+		t.Fatalf("focus_area = %+v", got.Scrutineer.FocusArea)
+	}
+}
+
 type reconContextFixture struct {
 	worker      *Worker
 	repository  db.Repository
@@ -823,6 +849,23 @@ func TestApplyRepositoryPathFilters_layersRepositorySkip(t *testing.T) {
 	}
 	assertExists(t, src, "src/main.go", "docs/readme.md")
 	assertGone(t, src, "tests/main.go")
+}
+
+func TestApplyFocusAreaPathFilter(t *testing.T) {
+	work := t.TempDir()
+	src := filepath.Join(work, "src")
+	writeFiles(t, src, map[string]string{
+		"lib/xmlparse.c": "x",
+		"lib/xmlrole.c":  "x",
+		"cmd/tool.c":     "x",
+		".git/HEAD":      "ref: refs/heads/main",
+	})
+	area := repoconfig.FocusArea{Name: "XML parser", Paths: []string{"lib/xml*.c"}, Surface: "untrusted XML"}
+	if err := applyFocusAreaPathFilter(work, area, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	assertExists(t, src, "lib/xmlparse.c", "lib/xmlrole.c", ".git/HEAD")
+	assertGone(t, src, "cmd/tool.c")
 }
 
 func TestApplyPathFilters_gitPreserved(t *testing.T) {

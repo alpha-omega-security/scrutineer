@@ -54,13 +54,18 @@ Do not mark untouched historical findings as gone just because they are outside 
 
 ## Phase 1: Inventory
 
+If `scrutineer.focus_area` is present, this is one member of a parallel audit
+batch. Audit only that area's named paths and attack surface; do not expand
+into another configured focus area. The worker has removed files outside the
+area from `./src`, so report no coverage claim beyond it.
+
 If `scrutineer.scan_config` is present, use its `attack_surface` as the
-operator's ground truth when naming trust boundaries. Start the inventory with
-each listed `focus_areas` path and surface, then expand only when the code
-reveals a distinct boundary. Treat `known_bugs` as prior art: do not file a
-known, wontfix issue again unless the code demonstrates a distinct root cause
-or an independently reachable impact. The worker has already removed paths in
-`scan_config.skip` from `./src`.
+operator's ground truth when naming trust boundaries. For an unscoped run,
+start the inventory with each listed `focus_areas` path and surface, then
+expand only when the code reveals a distinct boundary. Treat `known_bugs` as
+prior art: do not file a known, wontfix issue again unless the code
+demonstrates a distinct root cause or an independently reachable impact. The
+worker has already removed paths in `scan_config.skip` from `./src`.
 
 If `./threat_model.json` exists in the workdir, parse it and use it as the threat model; do not fetch one from the API. The operator placed it there to test how this audit behaves under an edited model, so the file takes precedence even if a `threat-model` scan has already run. Otherwise fetch the threat-model scan: `GET {api_base}/repositories/{repository_id}/scans?skill=threat-model&status=done`, take the most recent id, then `GET {api_base}/scans/{id}` and parse the `report` field as JSON. Either way, if you get one it already holds the trust map: `components` and `out_of_scope` say which code is in the model, `adversaries` names the actors, `trust_boundaries` describes the line per component, and `entry_points` is the per-parameter table Step 2 looks up. Fill this report's `boundaries[]` from those fields instead of deriving from scratch — one row per actor (callers and adversaries), with `trusted` set from whether the actor appears in `adversaries.in_scope` and `source` set from the threat model's `provenance`/`source` — then skip to listing sinks. Treat threat-model entries with `provenance: "inferred"` as working hypotheses you may overturn during Phase 2; `"documented"` entries cite a file:line you can re-read. An empty list or a non-200 means the threat-model skill has not run on this repository yet, in which case derive the boundaries yourself as below.
 

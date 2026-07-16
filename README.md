@@ -143,7 +143,7 @@ Adding a repo enqueues the `triage` skill, whose SKILL.md lists the further skil
 | `maintainers` | Model-backed analysis identifying real maintainers and contact routes |
 | `repo-overview` | Runs `brief --json` for a structured project summary |
 | `subprojects` | Enumerates monorepo packages/workspaces so deep-dives can be scoped to a sub-path |
-| `recon` | Maps distinct externally reachable input-processing subsystems into focus areas for threat-model to carry into later audits |
+| `recon` | Maps distinct externally reachable input-processing subsystems into focus areas; after threat-model completes, those areas fan out into parallel deep-dive audits |
 | `threat-model` | Derives the project's security contract (components, entry-point trust table, claimed and disclaimed properties) for the deep-dive to load |
 | `semgrep` | Static analysis mapped into findings shape |
 | `vuln-scan` | High-recall model-backed static candidate scan adapted from Anthropic's defending-code reference harness |

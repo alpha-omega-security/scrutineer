@@ -89,6 +89,29 @@ func TestPrepareDiffRescanStagesDiffInputs(t *testing.T) {
 	}
 }
 
+func TestDiffBaselineMatchesFocusArea(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "d.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "file:///tmp/focus", Name: "focus"}
+	if err := gdb.Create(&repo).Error; err != nil {
+		t.Fatal(err)
+	}
+	focus := `{"name":"parser","paths":["src/**"],"surface":"request bytes"}`
+	matching := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "security-deep-dive", Status: db.ScanDone, Commit: "base-focus", FocusArea: focus}
+	newerOther := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "security-deep-dive", Status: db.ScanDone, Commit: "base-whole"}
+	gdb.Create(&matching)
+	gdb.Create(&newerOther)
+
+	w := &Worker{DB: gdb}
+	scan := &db.Scan{RepositoryID: repo.ID, SkillName: "security-deep-dive", FocusArea: focus}
+	baseline, ok := w.diffBaseline(scan)
+	if !ok || baseline.ID != matching.ID {
+		t.Fatalf("baseline = %+v ok=%v, want focus scan %d", baseline, ok, matching.ID)
+	}
+}
+
 func TestPrepareDiffRescanScopesDiffToSubPath(t *testing.T) {
 	gdb, err := db.Open(filepath.Join(t.TempDir(), "d.db"))
 	if err != nil {

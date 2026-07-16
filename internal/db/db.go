@@ -244,6 +244,12 @@ type Scan struct {
 	// scans that were not launched as part of such a batch.
 	ScanGroup string `gorm:"index"`
 
+	// FocusArea is the normalized JSON focus-area payload for an audit split
+	// out of a repository scan configuration. Empty means the scan covers its
+	// normal repository or subproject scope. It is stored on the scan so queued
+	// work remains reproducible if the repository configuration changes.
+	FocusArea string `gorm:"type:text"`
+
 	// RescanMode records the actual coverage mode for this scan. Empty and
 	// "full" mean ordinary full coverage. "diff" means the worker staged a
 	// baseline diff and skills should not claim coverage over untouched code.
