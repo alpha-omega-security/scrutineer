@@ -86,6 +86,24 @@ func TestRepoShow_threatModelTab_deepDiveOnly(t *testing.T) {
 	}
 }
 
+func TestRepoShow_threatModelTab_legacyInventoryOmitsBoundary(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/legacy", Name: "legacy"}
+	s.DB.Create(&repo)
+	legacyReport := strings.Replace(deepDiveReport, `,"boundary":"library caller"`, "", 1)
+	s.DB.Create(&db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone,
+		SkillName: deepDiveSkillName, Commit: "deadbee", Report: legacyReport})
+
+	body := getRepoPage(t, s, repo.ID)
+	if strings.Contains(body, "no value") {
+		t.Errorf("legacy inventory rendered missing boundary marker: %s", body)
+	}
+	if !strings.Contains(body, "lib/x.rb:7") {
+		t.Errorf("legacy inventory row missing location: %s", body)
+	}
+}
+
 func TestRepoShow_threatModelTab_prefersThreatModelSkill(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

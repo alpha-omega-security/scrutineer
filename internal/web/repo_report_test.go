@@ -173,6 +173,30 @@ func TestRepoReport_includesEverySection(t *testing.T) {
 	}
 }
 
+func TestWriteInventoryMethod_escapesExcludedHitLabelsOnce(t *testing.T) {
+	var b strings.Builder
+	writeInventoryMethod(&b, map[string]any{
+		"method": map[string]any{
+			"scope": "./src",
+			"grep_patterns": []any{map[string]any{
+				"class": "Command execution", "primitive": "exec", "command": "grep exec",
+				"hit_count": 1,
+				"excluded_hits": []any{map[string]any{
+					"location": "cmd|tool.go:1", "category": "test|fixture", "reason": "not|reachable",
+				}},
+			}},
+		},
+	})
+
+	got := b.String()
+	if !strings.Contains(got, `cmd\|tool.go:1 (test\|fixture: not\|reachable)`) {
+		t.Errorf("excluded hit label = %q", got)
+	}
+	if strings.Contains(got, `\\|`) {
+		t.Errorf("excluded hit label was double escaped: %q", got)
+	}
+}
+
 func TestRepoReport_upstreamAudienceTrimsToMaintainerView(t *testing.T) {
 	// ?audience=upstream drops the analyst's internal workspace (notes,
 	// communications, labels, disclosure draft) and the repo-wide inventory

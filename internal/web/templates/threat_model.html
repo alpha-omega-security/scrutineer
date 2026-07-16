@@ -80,7 +80,7 @@
         {{range index $tm "trust_boundaries"}}
           <tr>
             <td class="font-medium whitespace-normal">{{index . "component"}}</td>
-            <td class="whitespace-normal text-sm">{{index . "boundary"}}</td>
+            <td class="whitespace-normal text-sm">{{with index . "boundary"}}{{.}}{{end}}</td>
             <td class="whitespace-normal text-muted-foreground text-sm">{{index . "reachability_precondition"}}</td>
             <td class="text-xs text-muted-foreground">{{template "tm-prov" .}}</td>
           </tr>

@@ -395,7 +395,7 @@ func writeInventoryMethod(b *strings.Builder, tm map[string]any) {
 			fmt.Fprintf(b, "| %s | %s | `%s` | %v | %s | %s |\n",
 				mdCell(m, "class"), mdCell(m, "primitive"), mdCell(m, "command"), m["hit_count"],
 				escapeMD(strings.Join(stringSlice(m["inventory_sinks"]), ", ")),
-				escapeMD(strings.Join(excludedHitLabels(m), ", ")))
+				strings.Join(excludedHitLabels(m), ", "))
 		}
 		b.WriteString("\n")
 	}
