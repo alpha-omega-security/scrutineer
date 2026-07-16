@@ -2637,7 +2637,17 @@ func (s *Server) enqueueSkillWith(ctx context.Context, repoID, skillID uint, opt
 		prio = worker.PrioFinding
 	}
 	if err := s.Queue.Enqueue(ctx, kind, scan.ID, prio); err != nil {
-		return 0, err
+		enqueueErr := fmt.Errorf("enqueue scan %d: %w", scan.ID, err)
+		now := time.Now()
+		if markErr := s.DB.Model(&db.Scan{}).Where("id = ?", scan.ID).Updates(map[string]any{
+			"status":          db.ScanFailed,
+			"status_priority": db.StatusPriorityFor(db.ScanFailed),
+			"error":           enqueueErr.Error(),
+			"finished_at":     &now,
+		}).Error; markErr != nil {
+			return 0, errors.Join(enqueueErr, fmt.Errorf("mark scan failed: %w", markErr))
+		}
+		return 0, enqueueErr
 	}
 	s.DB.Model(&db.Repository{}).Where("id = ?", repoID).Update("updated_at", time.Now())
 	return scan.ID, nil

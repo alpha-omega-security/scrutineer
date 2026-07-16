@@ -2535,6 +2535,33 @@ func TestEnqueueSkillWith_profileMismatch(t *testing.T) {
 	}
 }
 
+func TestEnqueueSkillWith_queueFailureMarksScanFailed(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://github.com/foo/bar", Name: "bar"}
+	s.DB.Create(&repo)
+	skill := db.Skill{Name: "audit", Body: "b", OutputFile: "r.json", OutputKind: "freeform", Version: 1, Active: true, Source: "ui"}
+	s.DB.Create(&skill)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	if _, err := s.enqueueSkillWith(ctx, repo.ID, skill.ID, ScanOpts{}); !errors.Is(err, context.Canceled) {
+		t.Fatalf("enqueue error = %v, want context canceled", err)
+	}
+
+	var scan db.Scan
+	if err := s.DB.Where("repository_id = ? AND skill_id = ?", repo.ID, skill.ID).First(&scan).Error; err != nil {
+		t.Fatal(err)
+	}
+	if scan.Status != db.ScanFailed || scan.StatusPriority != db.StatusPriorityFor(db.ScanFailed) {
+		t.Errorf("scan status = %q priority = %d, want failed/%d", scan.Status, scan.StatusPriority, db.StatusPriorityFor(db.ScanFailed))
+	}
+	if scan.FinishedAt == nil || !strings.Contains(scan.Error, "context canceled") {
+		t.Errorf("scan failure fields = %+v", scan)
+	}
+}
+
 func TestEnqueueSkillWith_findingScopedJumpsQueue(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
