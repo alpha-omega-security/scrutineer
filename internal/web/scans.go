@@ -297,7 +297,6 @@ func (s *Server) scansPauseQueued(w http.ResponseWriter, r *http.Request) {
 	s.redirect(w, r, "/scans?status=paused")
 }
 
-<<<<<<< HEAD
 // scansCancelQueued cancels every queued scan across all repositories, leaving
 // running scans to finish. It is the global, queued-only companion to the
 // per-repo scansCancelAll (which also stops running scans) and the cancel
@@ -325,7 +324,8 @@ func (s *Server) scansCancelQueued(w http.ResponseWriter, r *http.Request) {
 	}
 	setFlash(w, Flash{Category: successKey, Title: fmt.Sprintf("%d queued scans cancelled", cancelled)})
 	s.redirect(w, r, "/scans?status=cancelled")
-=======
+}
+
 func scanStatusUpdates(status db.ScanStatus, msg string, finishedAt *time.Time, pausedUntil *time.Time) map[string]any {
 	return map[string]any{
 		statusKey:         status,
@@ -377,7 +377,6 @@ func (s *Server) enqueueResumedScan(ctx context.Context, scan db.Scan) error {
 		return errors.Join(err, s.restorePausedAfterResumeEnqueueFailure(scan, err))
 	}
 	return nil
->>>>>>> main
 }
 
 func (s *Server) scansResumePaused(w http.ResponseWriter, r *http.Request) {
