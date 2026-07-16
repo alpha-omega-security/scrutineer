@@ -28,7 +28,7 @@ ARG RUNNER_IMAGE=ghcr.io/alpha-omega-security/scrutineer-runner:latest
 ARG PHP_GIT_URL=https://github.com/php/php-src.git
 ARG PHP_GIT_REF=php-8.5.6
 
-FROM composer:2.9.8 AS composer
+FROM composer:2.10.2 AS composer
 
 FROM ${RUNNER_IMAGE}
 ARG PHP_GIT_URL

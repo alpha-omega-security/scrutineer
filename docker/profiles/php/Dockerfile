@@ -23,7 +23,7 @@
 
 ARG RUNNER_IMAGE=ghcr.io/alpha-omega-security/scrutineer-runner:latest
 
-FROM composer:2.10.1 AS composer
+FROM composer:2.10.2 AS composer
 
 FROM ${RUNNER_IMAGE}
 
