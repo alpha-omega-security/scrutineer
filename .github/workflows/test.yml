@@ -33,6 +33,8 @@ jobs:
           key: ${{ runner.os }}-go-${{ github.job }}-${{ hashFiles('go.sum') }}
           restore-keys: |
             ${{ runner.os }}-go-${{ github.job }}-
+      - name: Verify Go modules are tidy
+        run: go mod tidy -diff
       - run: go vet ./...
       - run: go test -race ./...
       # The podman integration tests are behind //go:build podman and are not
