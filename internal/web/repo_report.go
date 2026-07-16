@@ -338,18 +338,20 @@ func writeReportThreatModel(b *strings.Builder, scan *db.Scan, tm map[string]any
 
 	if inventory := listSlice(tm, "inventory"); len(inventory) > 0 {
 		fmt.Fprintf(b, "### Sink inventory\n\n")
-		fmt.Fprintf(b, "| # | Class | Primitive | Location | Consumes | Disposition |\n|---|---|---|---|---|---|\n")
+		fmt.Fprintf(b, "| # | Boundary | Class | Primitive | Location | Consumes | Disposition |\n|---|---|---|---|---|---|---|\n")
 		for _, x := range inventory {
 			if m, ok := x.(map[string]any); ok {
 				id, _ := m["id"].(string)
-				fmt.Fprintf(b, "| %s | %s | %s | `%s` | %s | %s |\n",
-					escapeMD(id), mdCell(m, "class"), mdCell(m, "primitive"),
+				fmt.Fprintf(b, "| %s | %s | %s | %s | `%s` | %s | %s |\n",
+					escapeMD(id), mdCell(m, "boundary"), mdCell(m, "class"), mdCell(m, "primitive"),
 					mdCell(m, "location"), mdCell(m, "consumes"),
 					escapeMD(disp[id].cell()))
 			}
 		}
 		b.WriteString("\n")
 	}
+
+	writeInventoryMethod(b, tm)
 
 	if ruledOut := listSlice(tm, "ruled_out"); len(ruledOut) > 0 {
 		fmt.Fprintf(b, "### Ruled out\n\n")
@@ -372,6 +374,47 @@ func writeReportThreatModel(b *strings.Builder, scan *db.Scan, tm map[string]any
 	if reach, _ := tm["reach"].(string); reach != "" {
 		fmt.Fprintf(b, "### Reach (report-level)\n\n%s\n\n", strings.TrimSpace(reach))
 	}
+}
+
+func writeInventoryMethod(b *strings.Builder, tm map[string]any) {
+	method, ok := tm["method"].(map[string]any)
+	if !ok {
+		return
+	}
+	fmt.Fprintf(b, "### Inventory method\n\n")
+	fmt.Fprintf(b, "- Scope: %s\n", mdCell(method, "scope"))
+	fmt.Fprintf(b, "- Counts: %v inventory, %v ruled out, %v unresolved\n\n",
+		method["inventory_count"], method["ruled_out_count"], method["unresolved_count"])
+	if patterns := listSlice(method, "grep_patterns"); len(patterns) > 0 {
+		fmt.Fprintf(b, "| Class | Primitive | Command | Hits | Inventory sinks | Excluded hits |\n|---|---|---|---|---|---|\n")
+		for _, x := range patterns {
+			m, ok := x.(map[string]any)
+			if !ok {
+				continue
+			}
+			fmt.Fprintf(b, "| %s | %s | `%s` | %v | %s | %s |\n",
+				mdCell(m, "class"), mdCell(m, "primitive"), mdCell(m, "command"), m["hit_count"],
+				escapeMD(strings.Join(stringSlice(m["inventory_sinks"]), ", ")),
+				escapeMD(strings.Join(excludedHitLabels(m), ", ")))
+		}
+		b.WriteString("\n")
+	}
+	if notes := stringSlice(method["notes"]); len(notes) > 0 {
+		for _, note := range notes {
+			fmt.Fprintf(b, "- Note: %s\n", escapeMD(note))
+		}
+		b.WriteString("\n")
+	}
+}
+
+func excludedHitLabels(pattern map[string]any) []string {
+	labels := make([]string, 0)
+	for _, hit := range listSlice(pattern, "excluded_hits") {
+		if h, ok := hit.(map[string]any); ok {
+			labels = append(labels, fmt.Sprintf("%s (%s: %s)", mdCell(h, "location"), mdCell(h, "category"), mdCell(h, "reason")))
+		}
+	}
+	return labels
 }
 
 func writeReportFindings(b *strings.Builder, gdb *gorm.DB, findings []db.Finding, latest *db.Scan, audience reportAudience) {

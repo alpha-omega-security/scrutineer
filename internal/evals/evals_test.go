@@ -440,7 +440,7 @@ func validDeepDiveReport() string {
 	return `{
   "repository": "https://example.com/eval",
   "commit": "abcdef1",
-  "spec_version": 1,
+  "spec_version": 13,
   "model": "test-model",
   "date": "2026-07-09",
   "languages": ["Python"],
@@ -450,10 +450,19 @@ func validDeepDiveReport() string {
     "controls": "No input validation before query construction",
     "source": "app.py"
   }],
+  "method": {
+    "scope": "./src",
+    "grep_patterns": [],
+    "inventory_count": 1,
+    "ruled_out_count": 0,
+    "unresolved_count": 0,
+    "notes": ["Python fixture: no memory-unsafe primitives to enumerate."]
+  },
   "inventory": [{
     "id": "S1",
     "location": "app.py:7",
     "class": "Validation",
+    "boundary": "HTTP client",
     "consumes": "username query parameter"
   }],
   "findings": [{
@@ -470,11 +479,7 @@ func validDeepDiveReport() string {
     "validation": "Manual review of app.py shows string concatenation in buildQuery.",
     "rating": "High impact and directly reachable."
   }],
-  "ruled_out": [{
-    "sinks": ["S1"],
-    "step": 6,
-    "reason": "No additional sinks were present in the fixture."
-  }]
+  "ruled_out": []
 }`
 }
 

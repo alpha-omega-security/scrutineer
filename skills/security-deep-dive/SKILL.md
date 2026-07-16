@@ -66,6 +66,13 @@ If `./threat_model.json` exists in the workdir, parse it and use it as the threa
 
 Before listing sinks, name the trust boundaries this codebase has. For a small library this is one or two lines: who calls it, what they pass, where external data enters. For something larger — a package manager, a server, a build tool — it is a table: each actor, what they control, whether they are trusted, and where you found that documented. Write it down once. The per-sink boundary checks in Phase 2 reference what you wrote here; they do not re-derive it per sink.
 
+Partition the inventory by those boundaries. Every inventory entry has a
+`boundary` label that names the trust boundary it sits behind, and entries for
+one boundary are contiguous before entries for the next. Do not use a catch-all
+"application" or "various" label when the code has distinct library, CLI,
+service, plugin, or filesystem boundaries. The same primitive behind two
+boundaries is two entries: its reachable input and impact may differ.
+
 The boundaries you name should account for every public entry point. A library mostly called one way but with a documented secondary API has two boundaries, not one. A file the library writes and reads back is one boundary; the same file accepted as an argument from a public API is a second. List both. Entry points are wherever data from outside the process arrives, which is often not an exported function or HTTP route: exported API/ABI/FFI and plugin loaders; callbacks, event buses, actor mailboxes, and channels; anonymous pipes, Unix domain sockets, Windows named pipes, shared memory, D-Bus, Binder, XPC, COM; gRPC, Thrift, Cap'n Proto, JSON-RPC, XML-RPC, SOAP, REST, GraphQL; message-queue consumers (AMQP, Kafka, MQTT, NATS, ZeroMQ, cloud queues); raw TCP/UDP, WebSockets, SSE, HTTP/2 and QUIC streams, WebRTC data channels; argv/stdin, env, config, spool and drop directories, lock and pid files, database-as-queue pollers, webhooks; file formats consumed and produced. Serialization formats such as Protobuf, Avro, MessagePack, CBOR, JSON, XML, and ASN.1 are the wire format, not the channel; note them with the boundary they ride on. Step 2 checks each sink against this list; a missing boundary means a misjudged sink.
 
 Then list every sink. Do not judge any of them yet. A sink is any place where the code does something that would be dangerous if the input were hostile, regardless of whether you currently think the input is hostile.
@@ -77,6 +84,7 @@ Sink classes to enumerate. The classes are conceptual; the language you are audi
 - Code execution: anything that treats data as code. String eval, dynamic method dispatch on a computed name, reflection that resolves a name to a callable, code loaded from a computed path, regex engines with embedded-code constructs.
 - Command execution: anything that hands a string to a shell or spawns a process where arguments are built by concatenation rather than passed as an array.
 - File operations: open, read, write, delete, chmod, link, where the path is computed. Includes the language's module/import mechanism if it accepts dynamic paths.
+- Temporary files: predictable names, creation in world-writable directories, missing `O_EXCL` or `O_NOFOLLOW`, cleanup and reuse across privilege boundaries. Treat temporary-file creation and later use as an explicit sink class, not an implicit footnote under file operations or concurrency.
 - Path handling: join, normalise, canonicalise, where the result is used for access decisions. Traversal, symlink following, case-fold confusion on case-insensitive filesystems.
 - Archive extraction: any unpack of tar, zip, or similar where entry names become filesystem paths.
 - Deserialisation: any format that can instantiate types or call constructors during parse. The safe-parse vs unsafe-load distinction exists in most languages; find which is which here.
@@ -97,6 +105,20 @@ Sink classes to enumerate. The classes are conceptual; the language you are audi
 Before grepping, fetch `GET {api_base}/repositories/{repository_id}/findings?skill=semgrep`. If a semgrep scan has already run on this repository each entry has `location` (file:line), `cwe`, and `title` (the semgrep rule id). Use these as anchors: open each location, confirm the line is a sink and not a comment or test fixture, and add it to the inventory under the matching sink class. They are starting points, not the inventory; semgrep's rule packs miss whole classes (parsing/format readers, round-trip integrity, agentic, validation, shared mutable state) and produce false positives, so your own grep sweep below still runs in full. An empty list means semgrep has not run yet or found nothing; carry on without it.
 
 Read the entire source tree. Grep exhaustively — every code-exec primitive this language has, every shell-out, every file-open, every parser or format-reader entry point, every unsafe block. The grep finds them; you confirm each is a real sink and not a comment, test fixture, or third-party code vendored into this repo unmodified from upstream. Modified vendored code is first-party. (The note in the introduction about findings following vendored copies is the other direction: this repo's own code copied outward into forks or downstream vendors.)
+
+For C and C++, make completeness auditable. First list this repository's
+primitive names and wrappers, then run a literal `grep -rn` command for each
+memory primitive: at minimum `malloc`, `calloc`, `realloc`, `free`, `memcpy`,
+`memmove`, `strcpy`, `strncpy`, `sprintf`, `snprintf`, and the project-specific
+allocation or copy wrappers you found. Record every command, its literal hit
+count, and every hit in `method.grep_patterns`. Each code hit becomes an
+inventory sink ID or an excluded hit with its location and reason (`comment`,
+`test`, `vendored`, `generated`, or `other`); the hit count must equal those two
+sets combined. Do not silently skip an uninteresting `realloc` or collapse
+several call sites into one sink. For other memory-unsafe languages, use the
+equivalent primitive list and record it the same way. When no memory-unsafe
+language is present, leave `grep_patterns` empty and explain why in
+`method.notes`.
 
 ## Phase 2: Per-sink checklist
 
@@ -208,4 +230,11 @@ On every finding you report, set `dup_check`: one sentence naming which existing
 
 ## Output
 
-Write your report to `./report.json` to match `./schema.json`. You are the only agent that writes this file; if you fanned out, consolidate every subagent's scratch file into it first (see Fan-out above). The consolidation is a union, not a copy of the last slice: every sink any subagent found must survive into the merged report. Union the inventories, dedupe by file, line, and sink class — a sink two subagents each reported once is one entry — and then place each entry by its disposition. A sink no subagent decided is a gap to resolve before you write, not an entry to drop. Every inventory sink must appear either in `findings[].sinks` or in `ruled_out[].sinks`. When a threat-model report was loaded, each `ruled_out[].reason` opens with one of its disposition labels (`out_of_model_trusted_input`, `out_of_model_adversary`, `out_of_model_unsupported_component`, `out_of_model_non_default_build`, `by_design_disclaimed`, `known_non_finding`, `model_gap`) followed by the citation into the model that backs it; without a loaded model, free-text reasons are fine. Use `findings: []` for a clean report. Set `repository` to the URL string from `context.json`'s `repository.url` (a string, not the object), `commit` to the HEAD sha of `./src`, and `artefact` to the package coordinate string (purl or `name@version`) you verified against in step 4. Set `spec_version` to `12`. Use today's date for the `date` field.
+Write your report to `./report.json` to match `./schema.json`. You are the only agent that writes this file; if you fanned out, consolidate every subagent's scratch file into it first (see Fan-out above). The consolidation is a union, not a copy of the last slice: every sink any subagent found must survive into the merged report. Union the inventories, dedupe by file, line, and sink class — a sink two subagents each reported once is one entry — and then place each entry by its disposition. A sink no subagent decided is a gap to resolve before you write, not an entry to drop. Every inventory sink must appear either in `findings[].sinks` or in `ruled_out[].sinks`. When a threat-model report was loaded, each `ruled_out[].reason` opens with one of its disposition labels (`out_of_model_trusted_input`, `out_of_model_adversary`, `out_of_model_unsupported_component`, `out_of_model_non_default_build`, `by_design_disclaimed`, `known_non_finding`, `model_gap`) followed by the citation into the model that backs it; without a loaded model, free-text reasons are fine. Use `findings: []` for a clean report. Set `repository` to the URL string from `context.json`'s `repository.url` (a string, not the object), `commit` to the HEAD sha of `./src`, and `artefact` to the package coordinate string (purl or `name@version`) you verified against in step 4. Set `spec_version` to `13`. Use today's date for the `date` field.
+
+`method` is mandatory. State the source-tree scope, each primitive search
+command, its hit count, the sink IDs produced from those hits, and every
+excluded hit with its exact location and reason. Its inventory, ruled-out, and
+unresolved counts must agree with the report. This is the evidence that the
+inventory is complete enough to review, not a claim that a broad grep alone
+proves security.

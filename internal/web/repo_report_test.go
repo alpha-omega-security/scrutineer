@@ -30,7 +30,8 @@ func seedRepoWithReport(t *testing.T, s *Server) db.Repository {
 		"repository":"https://github.com/acme/thing","commit":"abcdef1234","spec_version":10,
 		"model":"t","date":"2026-04-20","languages":["Go"],
 		"boundaries":[{"actor":"caller","trusted":"yes","controls":"arg","source":"README"}],
-		"inventory":[{"id":"S1","class":"Command execution","location":"main.go:12","consumes":"arg","primitive":"os.Exec"}],
+		"method":{"scope":"./src","grep_patterns":[{"class":"Command execution","primitive":"exec.Command","command":"grep -rn 'exec.Command' ./src","hit_count":1,"inventory_sinks":["S1"],"excluded_hits":[]}],"inventory_count":1,"ruled_out_count":0,"unresolved_count":0},
+		"inventory":[{"id":"S1","class":"Command execution","boundary":"caller","location":"main.go:12","consumes":"arg","primitive":"os.Exec"}],
 		"ruled_out":[{"sinks":["S2"],"step":2,"reason":"internal path, no caller provides"}],
 		"prior_art":"Searched issues. Nothing.",
 		"reach":"No dependents yet.",
@@ -126,6 +127,9 @@ func TestRepoReport_includesEverySection(t *testing.T) {
 		"### Trust boundaries",
 		"| caller | yes | arg | README |",
 		"### Sink inventory",
+		"### Inventory method",
+		"grep -rn 'exec.Command' ./src",
+		"| S1 | caller | Command execution | os.Exec | `main.go:12` | arg |",
 		"Disposition",
 		"Command execution",
 		"→ Finding #",
@@ -413,7 +417,7 @@ func TestRepoReport_summaryAndSinkDisposition(t *testing.T) {
 	}
 
 	// Disposition column on the inventory table.
-	if !strings.Contains(body, "| # | Class | Primitive | Location | Consumes | Disposition |") {
+	if !strings.Contains(body, "| # | Boundary | Class | Primitive | Location | Consumes | Disposition |") {
 		t.Error("inventory header missing Disposition column")
 	}
 	for _, want := range []string{

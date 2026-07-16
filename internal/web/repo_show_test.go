@@ -11,7 +11,8 @@ import (
 
 const deepDiveReport = `{
   "boundaries":[{"actor":"library caller","trusted":"yes","controls":"all parameters","source":"README.md:1"}],
-  "inventory":[{"id":"S1","location":"lib/x.rb:7","class":"Command execution","consumes":"argv"}]
+  "method":{"scope":"./src","grep_patterns":[{"class":"Memory safety","primitive":"realloc","command":"grep -rn realloc ./src","hit_count":1,"inventory_sinks":["S1"],"excluded_hits":[]}],"inventory_count":1,"ruled_out_count":0,"unresolved_count":0},
+  "inventory":[{"id":"S1","location":"lib/x.rb:7","class":"Command execution","boundary":"library caller","consumes":"argv"}]
 }`
 
 const threatModelReport = `{
@@ -75,7 +76,7 @@ func TestRepoShow_threatModelTab_deepDiveOnly(t *testing.T) {
 		SkillName: deepDiveSkillName, Commit: "deadbee", Report: deepDiveReport})
 
 	body := getRepoPage(t, s, repo.ID)
-	for _, want := range []string{"library caller", "all parameters", "lib/x.rb:7"} {
+	for _, want := range []string{"library caller", "all parameters", "lib/x.rb:7", "<th>Boundary</th>", "Inventory method", "grep -rn realloc ./src"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("deep-dive-only repo page missing %q", want)
 		}
