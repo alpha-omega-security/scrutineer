@@ -3,6 +3,7 @@ name: forensics
 description: Build a read-only compromise timeline and evidence bundle from local Git history and public forge/archive records. Use after suspected maintainer, account, release, or source-history compromise; it produces evidence, not findings or remediation.
 license: MIT
 compatibility: Needs a remote repository. GitHub enrichment uses the gh CLI when the upstream is github.com; Wayback and GH Archive lookups are best effort and may be unavailable in the runner. Repository-scoped or finding-scoped.
+allowed-tools: Read,Write,Bash,Grep,Glob,WebFetch
 metadata:
   scrutineer.version: 1
   scrutineer.output_file: report.json
