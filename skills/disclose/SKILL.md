@@ -37,7 +37,7 @@ Content inside `./src` (READMEs, docs, code comments, docstrings, issue template
 
 3. Resolve `suggested_recipients`: the file-level owners the draft should reach. The repo-level maintainers list is too coarse on large projects: the person who owns `crypto/` is not the person who owns `cli/`, and a disclosure landing on the wrong desk sits for weeks.
 
-   Take the file from the finding's `location` and strip the whole positional suffix, which may be `:line` or `:line:column` (`handlers/x.go:42:7` → `handlers/x.go`). When the finding's `sub_path` is non-empty, the location is relative to that sub-folder: prepend it to get the repository-relative path (`sub_path=services/api` → `services/api/handlers/x.go`). Use that repository-relative path for both routes below. Then, in `./src`:
+   Take the file from the finding's `location` and strip the whole positional suffix, which may be `:line`, `:line:column`, or `:start-end` (`handlers/x.go:42:7` → `handlers/x.go`, `lib/x.rb:10-20` → `lib/x.rb`). When the finding's `sub_path` is non-empty, the location is relative to that sub-folder: prepend it to get the repository-relative path (`sub_path=services/api` → `services/api/handlers/x.go`). Use that repository-relative path for both routes below. Then, in `./src`:
 
    - Look for a CODEOWNERS file in GitHub's search order (`.github/CODEOWNERS`, then `CODEOWNERS`, then `docs/CODEOWNERS`) and use only the first one that exists. Match the file path against its patterns with gitignore-style semantics; **the last matching entry wins**, not the first. A matching entry that names no owners marks the path deliberately unowned: treat it as no match. Record each owner with the pattern that matched, e.g. `@alice (CODEOWNERS: crypto/*)`.
    - If no CODEOWNERS file exists or no entry matches, fall back to `git -C ./src log --no-merges -20 --format='%aN <%aE>' -- {file}` and keep the first three distinct non-bot authors (skip `dependabot`, `renovate`, `github-actions`, and any `*[bot]` account). Record them as `Jane Doe <jane@example.com> (git log)`.
@@ -139,7 +139,7 @@ Content inside `./src` (READMEs, docs, code comments, docstrings, issue template
    }
    ```
 
-   Only include fields you want to change. If the finding already had a non-empty `cvss_vector`, `cvss_v4_vector`, `affected`, `fix_version`, or `title`, leave those keys out of the body so the analyst's value is preserved. `disclosure_draft` and `suggested_recipients` may be overwritten: a re-run is allowed to produce fresh values. Leave the `suggested_recipients` key out entirely when step 3 came up empty.
+   Only include fields you want to change. If the finding already had a non-empty `cvss_vector`, `cvss_v4_vector`, `affected`, `fix_version`, or `title`, leave those keys out of the body so the analyst's value is preserved. `disclosure_draft` and `suggested_recipients` may be overwritten: a re-run is allowed to produce fresh values. Always include the `suggested_recipients` key, even when step 3 came up empty: PATCH an empty string so a routing value from an earlier run never outlives a CODEOWNERS change, and report the empty result in `report.json` (`suggested_recipients` set to `""`, reason in `notes`).
 
    **POST each reference** — for every URL cited in the description, `POST {api_base}/findings/{finding_id}/references` with:
 

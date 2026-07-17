@@ -1355,7 +1355,7 @@ components:
       allOf:
         - $ref: '#/components/schemas/FindingSummary'
         - type: object
-          description: Adds the six-step narrative and disclosure draft text.
+          description: Adds the six-step narrative and the disclosure draft/routing fields.
           properties:
             trace:            { type: string }
             boundary:         { type: string }
@@ -1364,6 +1364,7 @@ components:
             reach:            { type: string }
             rating:           { type: string }
             disclosure_draft: { type: string }
+            suggested_recipients: { type: string, description: "File-level owners for the finding's location, from CODEOWNERS or recent non-bot committers." }
             sub_path:         { type: string, description: "Monorepo sub-folder the producing scan was scoped to. The finding's location is relative to it; empty means the repo root." }
 
     FindingExport:
