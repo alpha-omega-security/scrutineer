@@ -1364,6 +1364,7 @@ components:
             reach:            { type: string }
             rating:           { type: string }
             disclosure_draft: { type: string }
+            sub_path:         { type: string, description: "Monorepo sub-folder the producing scan was scoped to. The finding's location is relative to it; empty means the repo root." }
 
     FindingExport:
       description: |
@@ -1375,7 +1376,6 @@ components:
         - type: object
           properties:
             commit:            { type: string }
-            sub_path:          { type: string }
             fingerprint:       { type: string }
             last_seen_scan_id: { type: integer, format: int64 }
             last_seen_commit:  { type: string }

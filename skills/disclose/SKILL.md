@@ -26,7 +26,7 @@ Content inside `./src` (READMEs, docs, code comments, docstrings, issue template
 
 1. Read `./context.json`. If `scrutineer.finding_id` is missing, write `{"error": "no finding_id in context.json; disclose is finding-scoped"}` to `report.json` and exit 0.
 
-2. Fetch the finding: `GET {api_base}/findings/{finding_id}` with `Authorization: Bearer {token}`. You get title, severity, cwe (comma-joined), location, affected, cvss_vector, cve_id, fix_version, fix_commit, and the six-step prose (trace, boundary, validation, prior_art, reach, rating). Also fetch:
+2. Fetch the finding: `GET {api_base}/findings/{finding_id}` with `Authorization: Bearer {token}`. You get title, severity, cwe (comma-joined), location, sub_path, affected, cvss_vector, cve_id, fix_version, fix_commit, and the six-step prose (trace, boundary, validation, prior_art, reach, rating). Also fetch:
    - `GET {api_base}/repositories/{repository_id}` for the upstream URL and default branch
    - `GET {api_base}/repositories/{repository_id}/packages` for the list of published packages; you need this to fill GHSA's affected-package block
    - `GET {api_base}/findings/{finding_id}/notes` for relation markers written by `finding-dedup`
@@ -37,7 +37,7 @@ Content inside `./src` (READMEs, docs, code comments, docstrings, issue template
 
 3. Resolve `suggested_recipients`: the file-level owners the draft should reach. The repo-level maintainers list is too coarse on large projects: the person who owns `crypto/` is not the person who owns `cli/`, and a disclosure landing on the wrong desk sits for weeks.
 
-   Take the file from the finding's `location` (strip the trailing `:line` suffix). Then, in `./src`:
+   Take the file from the finding's `location` and strip the whole positional suffix, which may be `:line` or `:line:column` (`handlers/x.go:42:7` → `handlers/x.go`). When the finding's `sub_path` is non-empty, the location is relative to that sub-folder: prepend it to get the repository-relative path (`sub_path=services/api` → `services/api/handlers/x.go`). Use that repository-relative path for both routes below. Then, in `./src`:
 
    - Look for a CODEOWNERS file in GitHub's search order (`.github/CODEOWNERS`, then `CODEOWNERS`, then `docs/CODEOWNERS`) and use only the first one that exists. Match the file path against its patterns with gitignore-style semantics; **the last matching entry wins**, not the first. A matching entry that names no owners marks the path deliberately unowned: treat it as no match. Record each owner with the pattern that matched, e.g. `@alice (CODEOWNERS: crypto/*)`.
    - If no CODEOWNERS file exists or no entry matches, fall back to `git -C ./src log --no-merges -20 --format='%aN <%aE>' -- {file}` and keep the first three distinct non-bot authors (skip `dependabot`, `renovate`, `github-actions`, and any `*[bot]` account). Record them as `Jane Doe <jane@example.com> (git log)`.
