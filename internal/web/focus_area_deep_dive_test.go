@@ -53,6 +53,45 @@ func TestAutoEnqueueFocusAreaDeepDives(t *testing.T) {
 	}
 }
 
+func TestAutoEnqueueFocusAreaDeepDivesFallsBackToUnscoped(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/unscoped-focus", Name: "unscoped-focus"}
+	if err := s.DB.Create(&repo).Error; err != nil {
+		t.Fatal(err)
+	}
+	deepDive := db.Skill{Name: deepDiveSkillName, Body: "b", OutputFile: "r.json", OutputKind: "findings", Active: true, Source: "ui"}
+	if err := s.DB.Create(&deepDive).Error; err != nil {
+		t.Fatal(err)
+	}
+	parent := db.Scan{
+		RepositoryID: repo.ID,
+		Status:       db.ScanDone,
+		SkillName:    threatModelSkillName,
+		ScanGroup:    "triage-1",
+	}
+	if err := s.DB.Create(&parent).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	s.autoEnqueueFocusAreaDeepDives(&parent)
+	s.autoEnqueueFocusAreaDeepDives(&parent) // completion delivery is idempotent.
+
+	var scans []db.Scan
+	if err := s.DB.Where("repository_id = ? AND skill_id = ?", repo.ID, deepDive.ID).Find(&scans).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(scans) != 1 {
+		t.Fatalf("deep-dive scans = %d, want 1", len(scans))
+	}
+	if scans[0].FocusArea != "" {
+		t.Errorf("focus_area = %q, want empty unscoped fallback", scans[0].FocusArea)
+	}
+	if scans[0].ScanGroup != parent.ScanGroup {
+		t.Errorf("scan_group = %q, want %q", scans[0].ScanGroup, parent.ScanGroup)
+	}
+}
+
 func TestAutoEnqueueFocusAreaDeepDivesSeedsThenFansOut(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
