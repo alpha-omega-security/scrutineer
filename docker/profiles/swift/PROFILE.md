@@ -18,7 +18,8 @@ The repository under `./src` is a Swift package (SwiftPM). The job is to find **
   print statements, sanitizer reports, or `swift-backtrace` output rather than an interactive debugger.
 
 SwiftPM's `.build/` directory sits under the package root inside `/work/src`, which is exec-capable, so tests and
-executables run in place. `SWIFTLY_HOME_DIR` is under `/opt` for the same reason (`$HOME=/tmp` is noexec).
+executables run in place. `TMPDIR=/work` keeps SwiftPM's compiled package manifests off the noexec `/tmp` mount, and
+`SWIFTLY_HOME_DIR` is under `/opt` so swiftly-managed toolchains are executable too.
 
 ## Operating procedure
 
@@ -80,9 +81,9 @@ inventing one.
 - **Test target (preferred):** add a file under `Tests/<ExistingTestTarget>/PocTests.swift` (Swift Testing's `@Test`
   or XCTest's `XCTestCase`) and run `swift test --filter Poc`. If the package has no test target, add a `.testTarget`
   to `Package.swift`. The test output is the evidence.
-- **Standalone package:** `swift package init --type executable --name poc` in `/tmp/poc`, add
+- **Standalone package:** `swift package init --type executable --name poc` in `/work/poc`, add
   `.package(path: "/work/src")` and the product under `dependencies:` in its `Package.swift`, write the trigger in
-  `Sources/poc/main.swift`, and `swift run --package-path /tmp/poc`.
+  `Sources/poc/main.swift`, and `swift run --package-path /work/poc`.
 - **Memory corruption in `Unsafe*` / C interop:** reproduce under `--sanitize=address` and quote the report.
 - Drive the vulnerable function directly with the malicious input rather than booting the whole executable — it keeps
   the reproducer minimal and the evidence trivial to verify.

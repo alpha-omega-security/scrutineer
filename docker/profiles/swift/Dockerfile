@@ -54,12 +54,15 @@ USER root
 # toolchain, invoke it explicitly: `swiftly run +<version> swift build`.
 # SWIFTLY_HOME_DIR lives under /opt (a real image dir, exec-capable) rather
 # than $HOME=/tmp, which the worker mounts noexec -- a swiftly-fetched
-# toolchain's compiler must be executable. Same known limitation as the
-# other profiles: hardened mode mounts the rootfs read-only, so /opt is not
-# writable there and a swiftly install would fail.
+# toolchain's compiler must be executable. SwiftPM also compiles Package.swift
+# into TMPDIR and executes the resulting manifest, so point TMPDIR at the
+# worker's writable, exec-capable /work bind mount. Same known limitation as
+# the other profiles: hardened mode mounts the rootfs read-only, so /opt is
+# not writable there and a swiftly install would fail.
 ENV SWIFTLY_HOME_DIR=/opt/swiftly \
     SWIFTLY_BIN_DIR=/opt/swiftly/bin \
     SWIFTLY_TOOLCHAINS_DIR=/opt/swiftly/toolchains \
+    TMPDIR=/work \
     PATH=/opt/swift/usr/bin:/opt/swiftly/bin:$PATH
 
 # Runtime deps are the swift.org Debian list minus binutils-gold (dropped
@@ -103,6 +106,9 @@ RUN apt-get update \
  && install -d -m 1777 /opt/swiftly /opt/swiftly/bin /opt/swiftly/toolchains \
  && tar -xzf /tmp/swiftly.tar.gz -C /opt/swiftly/bin swiftly \
  && rm /tmp/swiftly.tar.gz \
+ # TMPDIR is already /work during the image build, so create it before
+ # swiftly init or any SwiftPM command needs temporary storage.
+ && install -d -m 1777 /work \
  # --skip-install: the pinned tarball above is the default toolchain, so
  # swiftly only needs its config.json written, not a second download.
  && /opt/swiftly/bin/swiftly init --assume-yes --skip-install --no-modify-profile \
@@ -110,10 +116,12 @@ RUN apt-get update \
  && chmod -R a+w /opt/swiftly \
  && swift --version \
  && swiftly --version \
- && mkdir /tmp/smoke && cd /tmp/smoke \
+ # Match the runtime TMPDIR/workspace layout so the smoke test exercises
+ # SwiftPM's manifest compilation on the exec-capable path used by scans.
+ && mkdir /work/smoke && cd /work/smoke \
  && swift package init --type executable --name smoke \
  && swift build \
  && swift run smoke \
- && cd / && rm -rf /tmp/smoke
+ && cd / && rm -rf /work/smoke
 
 USER runner
