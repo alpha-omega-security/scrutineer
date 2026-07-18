@@ -2,6 +2,8 @@ name: Release
 
 on:
   workflow_dispatch:
+  schedule:
+    - cron: "17 17 * * *"
 
 defaults:
   run:
@@ -19,8 +21,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
+      actions: read # required to derive a stable version date across reruns
       contents: read
     outputs:
+      release_due: ${{ steps.due.outputs.release_due }}
       version: ${{ steps.version.outputs.version }}
       tag: ${{ steps.version.outputs.tag }}
       runner_image: ${{ steps.runner.outputs.image }}
@@ -30,7 +34,7 @@ jobs:
           REF: ${{ github.ref }}
         run: |
           if [[ "${REF}" != "refs/heads/main" ]]; then
-            echo "::error::Releases must be dispatched from main, not ${REF}"
+            echo "::error::Releases must run from main, not ${REF}"
             exit 1
           fi
 
@@ -38,33 +42,88 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Determine whether a release is due
+        id: due
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          CREATED_AT=$(gh api "repos/${REPOSITORY}/actions/runs/${RUN_ID}" --jq '.created_at')
+          PUBLISHED_AT=""
+          RELEASE_ERROR="${RUNNER_TEMP}/release-error"
+          if [[ "${EVENT_NAME}" == "schedule" ]]; then
+            if ! PUBLISHED_AT=$(gh api "repos/${REPOSITORY}/releases/latest" \
+              --jq '.published_at' 2>"${RELEASE_ERROR}"); then
+              if grep -q 'HTTP 404' "${RELEASE_ERROR}"; then
+                echo "No published release exists; creating the first one"
+                PUBLISHED_AT=""
+              else
+                cat "${RELEASE_ERROR}" >&2
+                echo "::error::Unable to determine the latest published release"
+                exit 1
+              fi
+            fi
+          fi
+
+          scripts/release-resolver.sh cadence \
+            "${EVENT_NAME}" "${CREATED_AT}" "${PUBLISHED_AT}" >> "${GITHUB_OUTPUT}"
+
       - name: Set up Go
+        if: steps.due.outputs.release_due == 'true'
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version-file: go.mod
           cache: false
 
-      - name: Extract version
+      - name: Determine version
+        if: steps.due.outputs.release_due == 'true'
         id: version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPOSITORY: ${{ github.repository }}
+          COMMIT_SHA: ${{ github.sha }}
+          VERSION_DATE: ${{ steps.due.outputs.version_date }}
         run: |
-          VERSION=$(tr -d '[:space:]' < VERSION)
-          if [[ ! "${VERSION}" =~ ^([0-9]{4})\.(0[1-9]|1[0-2])\.(0[1-9]|[12][0-9]|3[01])\.([1-9][0-9]*)$ ]]; then
-            echo "::error::VERSION must contain CalVer in YYYY.MM.DD.N format, got ${VERSION}"
-            exit 1
-          fi
-          CALENDAR_DATE="${BASH_REMATCH[1]}-${BASH_REMATCH[2]}-${BASH_REMATCH[3]}"
-          if [[ "$(date -u -d "${CALENDAR_DATE}" +%Y.%m.%d 2>/dev/null)" != "${VERSION%.*}" ]]; then
-            echo "::error::VERSION contains an invalid calendar date: ${VERSION}"
-            exit 1
-          fi
-          TODAY=$(date -u +%Y.%m.%d)
-          if [[ "${VERSION%.*}" != "${TODAY}" ]]; then
-            echo "::warning::VERSION date ${VERSION%.*} does not match the current UTC date ${TODAY}"
-          fi
-          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
-          echo "tag=v${VERSION}" >> "${GITHUB_OUTPUT}"
+          TAG_INPUT="${RUNNER_TEMP}/release-tags.tsv"
+          gh api --paginate \
+            "repos/${REPOSITORY}/git/matching-refs/tags/v" \
+            --jq '.[] | [.ref, .object.sha, .object.type] | @tsv' > "${TAG_INPUT}.raw"
+          : > "${TAG_INPUT}"
+          while IFS=$'\t' read -r REF OBJECT_SHA OBJECT_TYPE; do
+            TAG="${REF#refs/tags/}"
+            # Lightweight tags point straight at a commit; annotated tags point at
+            # a tag object, so peel those to the underlying commit before comparing.
+            if [[ "${OBJECT_TYPE}" == "tag" ]]; then
+              TAG_SHA=$(gh api "repos/${REPOSITORY}/git/tags/${OBJECT_SHA}" --jq '.object.sha')
+            else
+              TAG_SHA="${OBJECT_SHA}"
+            fi
+            RELEASE_STATE=unknown
+            if [[ "${TAG_SHA}" == "${COMMIT_SHA}" ]] \
+              && [[ "${TAG}" =~ ^v[0-9]{4}\.(0[1-9]|1[0-2])\.(0[1-9]|[12][0-9]|3[01])\.[1-9][0-9]*$ ]] \
+              && [[ "${TAG}" != "v${VERSION_DATE}."* ]]; then
+              RELEASE_ERROR="${RUNNER_TEMP}/release-error-${TAG}"
+              if gh api "repos/${REPOSITORY}/releases/tags/${TAG}" --silent 2>"${RELEASE_ERROR}"; then
+                RELEASE_STATE=published
+              elif grep -q 'HTTP 404' "${RELEASE_ERROR}"; then
+                RELEASE_STATE=unpublished
+              else
+                cat "${RELEASE_ERROR}" >&2
+                echo "::error::Unable to determine whether ${TAG} is published"
+                exit 1
+              fi
+            fi
+            printf '%s\t%s\t%s\t%s\t%s\n' \
+              "${REF}" "${OBJECT_SHA}" "${OBJECT_TYPE}" "${TAG_SHA}" "${RELEASE_STATE}" >> "${TAG_INPUT}"
+          done < "${TAG_INPUT}.raw"
+
+          scripts/release-resolver.sh version \
+            "${VERSION_DATE}" "${COMMIT_SHA}" < "${TAG_INPUT}" >> "${GITHUB_OUTPUT}"
 
       - name: Validate existing tag target
+        if: steps.due.outputs.release_due == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPOSITORY: ${{ github.repository }}
@@ -72,11 +131,13 @@ jobs:
           TAG: ${{ steps.version.outputs.tag }}
         run: |
           TAG_ERROR="${RUNNER_TEMP}/tag-error"
-          if EXISTING_SHA=$(gh api "repos/${REPOSITORY}/git/ref/tags/${TAG}" --jq '.object.sha' 2>"${TAG_ERROR}"); then
-            if [[ "${EXISTING_SHA}" != "${COMMIT_SHA}" ]]; then
-              echo "::error::Tag ${TAG} already points to ${EXISTING_SHA}, not ${COMMIT_SHA}"
-              exit 1
+          if EXISTING=$(gh api "repos/${REPOSITORY}/git/ref/tags/${TAG}" --jq '[.object.sha, .object.type] | @tsv' 2>"${TAG_ERROR}"); then
+            IFS=$'\t' read -r EXISTING_SHA EXISTING_TYPE <<< "${EXISTING}"
+            # Peel an annotated tag to the commit it references before comparing.
+            if [[ "${EXISTING_TYPE}" == "tag" ]]; then
+              EXISTING_SHA=$(gh api "repos/${REPOSITORY}/git/tags/${EXISTING_SHA}" --jq '.object.sha')
             fi
+            scripts/release-resolver.sh validate-tag "${TAG}" "${COMMIT_SHA}" "${EXISTING_SHA}"
             echo "Tag ${TAG} already points to this commit; continuing recovery run"
           elif ! grep -q 'HTTP 404' "${TAG_ERROR}"; then
             cat "${TAG_ERROR}" >&2
@@ -85,12 +146,15 @@ jobs:
           fi
 
       - name: Test
+        if: steps.due.outputs.release_due == 'true'
         run: go test ./...
 
       - name: Set up Docker Buildx
+        if: steps.due.outputs.release_due == 'true'
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
       - name: Resolve commit-matched runner image
+        if: steps.due.outputs.release_due == 'true'
         id: runner
         env:
           REPOSITORY: ${{ github.repository }}
@@ -111,6 +175,7 @@ jobs:
   build:
     name: Build (${{ matrix.goos }}-${{ matrix.goarch }})
     needs: preflight
+    if: needs.preflight.outputs.release_due == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -215,6 +280,7 @@ jobs:
   release:
     name: Release
     needs: [preflight, build]
+    if: needs.preflight.outputs.release_due == 'true'
     runs-on: ubuntu-slim
     timeout-minutes: 20
     permissions:
@@ -271,97 +337,3 @@ jobs:
           gh release edit "${TAG}" \
             --repo "${REPOSITORY}" \
             --draft=false
-
-  bump-cask:
-    name: Bump Homebrew cask
-    needs: [preflight, release]
-    runs-on: macos-26
-    timeout-minutes: 60
-    environment:
-      name: release
-      deployment: false
-    permissions: {}
-    env:
-      VERSION: ${{ needs.preflight.outputs.version }}
-    steps:
-      - name: Mint bot token for tap
-        id: tap-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          client-id: ${{ secrets.APP_CLIENT_ID }}
-          private-key: ${{ secrets.APP_CLIENT_SECRET }}
-          owner: ${{ github.repository_owner }}
-          repositories: homebrew-tap
-          permission-contents: write
-          permission-pull-requests: write
-
-      - name: Bump Homebrew cask
-        env:
-          GH_TOKEN: ${{ steps.tap-token.outputs.token }}
-          HOMEBREW_GITHUB_API_TOKEN: ${{ steps.tap-token.outputs.token }}
-          HOMEBREW_NO_AUTO_UPDATE: 1
-          HOMEBREW_NO_ENV_HINTS: 1
-          APP_SLUG: ${{ steps.tap-token.outputs.app-slug }}
-        run: |
-          BOT_USER="${APP_SLUG}[bot]"
-          BOT_ID=$(gh api "/users/${BOT_USER}" --jq .id)
-          export HOMEBREW_GIT_NAME="${BOT_USER}"
-          export HOMEBREW_GIT_EMAIL="${BOT_ID}+${BOT_USER}@users.noreply.github.com"
-          brew tap alpha-omega-security/tap
-          brew trust alpha-omega-security/tap
-
-          BRANCH_VERSION="${VERSION//,/-}"
-          BRANCH_VERSION="${BRANCH_VERSION//:/-}"
-          BRANCH="bump-scrutineer-${BRANCH_VERSION}"
-          PR_NUMBER=$(gh pr list \
-            --repo alpha-omega-security/homebrew-tap \
-            --head "${BRANCH}" \
-            --state open \
-            --json number,headRepositoryOwner \
-            --jq 'map(select(.headRepositoryOwner.login == "alpha-omega-security")) | .[0].number // ""' || true)
-
-          if [ -z "${PR_NUMBER}" ]; then
-            CURRENT_VERSION=$(brew info --cask --json=v2 alpha-omega-security/tap/scrutineer \
-              | jq -r '.casks[0].version')
-            if [[ "${CURRENT_VERSION}" == "${VERSION}" ]]; then
-              echo "Homebrew cask already uses ${VERSION}; nothing to recover"
-              exit 0
-            fi
-
-            brew bump-cask-pr --no-fork --version "${VERSION}" alpha-omega-security/tap/scrutineer
-            PR_NUMBER=$(gh pr list \
-              --repo alpha-omega-security/homebrew-tap \
-              --head "${BRANCH}" \
-              --state open \
-              --json number,headRepositoryOwner \
-              --jq 'map(select(.headRepositoryOwner.login == "alpha-omega-security")) | .[0].number // ""')
-          fi
-
-          if [ -z "${PR_NUMBER}" ]; then
-            echo "::error::could not find open Homebrew cask bump PR for ${BRANCH}"
-            exit 1
-          fi
-
-          for ATTEMPT in 1 2 3 4 5; do
-            if gh pr merge "${PR_NUMBER}" \
-              --repo alpha-omega-security/homebrew-tap \
-              --squash \
-              --delete-branch; then
-              exit 0
-            fi
-
-            STATE=$(gh pr view "${PR_NUMBER}" \
-              --repo alpha-omega-security/homebrew-tap \
-              --json state \
-              --jq .state 2>/dev/null || true)
-            if [[ "${STATE}" == "MERGED" ]]; then
-              exit 0
-            fi
-
-            if [[ "${ATTEMPT}" == 5 ]]; then
-              echo "::error::could not merge alpha-omega-security/homebrew-tap#${PR_NUMBER}"
-              exit 1
-            fi
-            echo "::warning::merge attempt ${ATTEMPT} failed; retrying in 5 seconds"
-            sleep 5
-          done
