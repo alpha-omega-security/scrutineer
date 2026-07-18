@@ -111,14 +111,21 @@ primitive names and wrappers, then run a literal `grep -rn` command for each
 memory primitive: at minimum `malloc`, `calloc`, `realloc`, `free`, `memcpy`,
 `memmove`, `strcpy`, `strncpy`, `sprintf`, `snprintf`, and the project-specific
 allocation or copy wrappers you found. Record every command, its literal hit
-count, and every hit in `method.grep_patterns`. Each code hit becomes an
-inventory sink ID or an excluded hit with its location and reason (`comment`,
-`test`, `vendored`, `generated`, or `other`); the hit count must equal those two
-sets combined. Do not silently skip an uninteresting `realloc` or collapse
-several call sites into one sink. For other memory-unsafe languages, use the
-equivalent primitive list and record it the same way. When no memory-unsafe
-language is present, leave `grep_patterns` empty and explain why in
-`method.notes`.
+count, and every raw source hit in `method.grep_patterns`. `hit_count` is the
+number of unique source hits (the distinct locations returned by the command),
+not the number of inventory IDs. A source hit that is reachable through more
+than one trust boundary produces one boundary-specific inventory ID per
+boundary. List all of those IDs in `inventory_sinks`; map each ID back to its
+raw hit through the matching `inventory[].location`, which must be the exact
+source location from grep. Every unique source hit is represented either by an
+excluded hit at that location with a reason (`comment`, `test`, `vendored`,
+`generated`, or `other`), or by one or more inventory entries at that location.
+Therefore `hit_count` equals the number of unique represented source locations
+across those two sets, not `len(inventory_sinks) + len(excluded_hits)`. Do not
+silently skip an uninteresting `realloc` or collapse several call sites into
+one sink. For other memory-unsafe languages, use the equivalent primitive list
+and record it the same way. When no memory-unsafe language is present, leave
+`grep_patterns` empty and explain why in `method.notes`.
 
 ## Phase 2: Per-sink checklist
 
@@ -230,11 +237,13 @@ On every finding you report, set `dup_check`: one sentence naming which existing
 
 ## Output
 
-Write your report to `./report.json` to match `./schema.json`. You are the only agent that writes this file; if you fanned out, consolidate every subagent's scratch file into it first (see Fan-out above). The consolidation is a union, not a copy of the last slice: every sink any subagent found must survive into the merged report. Union the inventories, dedupe by file, line, and sink class — a sink two subagents each reported once is one entry — and then place each entry by its disposition. A sink no subagent decided is a gap to resolve before you write, not an entry to drop. Every inventory sink must appear either in `findings[].sinks` or in `ruled_out[].sinks`. When a threat-model report was loaded, each `ruled_out[].reason` opens with one of its disposition labels (`out_of_model_trusted_input`, `out_of_model_adversary`, `out_of_model_unsupported_component`, `out_of_model_non_default_build`, `by_design_disclaimed`, `known_non_finding`, `model_gap`) followed by the citation into the model that backs it; without a loaded model, free-text reasons are fine. Use `findings: []` for a clean report. Set `repository` to the URL string from `context.json`'s `repository.url` (a string, not the object), `commit` to the HEAD sha of `./src`, and `artefact` to the package coordinate string (purl or `name@version`) you verified against in step 4. Set `spec_version` to `13`. Use today's date for the `date` field.
+Write your report to `./report.json` to match `./schema.json`. You are the only agent that writes this file; if you fanned out, consolidate every subagent's scratch file into it first (see Fan-out above). The consolidation is a union, not a copy of the last slice: every sink any subagent found must survive into the merged report. Union the inventories, dedupe by file, line, sink class, and boundary — a sink two subagents each reported once under the same boundary is one entry. The same source sink reached through different boundaries is deliberately more than one entry and must survive consolidation. Then place each entry by its disposition. A sink no subagent decided is a gap to resolve before you write, not an entry to drop. Every inventory sink must appear either in `findings[].sinks` or in `ruled_out[].sinks`. When a threat-model report was loaded, each `ruled_out[].reason` opens with one of its disposition labels (`out_of_model_trusted_input`, `out_of_model_adversary`, `out_of_model_unsupported_component`, `out_of_model_non_default_build`, `by_design_disclaimed`, `known_non_finding`, `model_gap`) followed by the citation into the model that backs it; without a loaded model, free-text reasons are fine. Use `findings: []` for a clean report. Set `repository` to the URL string from `context.json`'s `repository.url` (a string, not the object), `commit` to the HEAD sha of `./src`, and `artefact` to the package coordinate string (purl or `name@version`) you verified against in step 4. Set `spec_version` to `13`. Use today's date for the `date` field.
 
 `method` is mandatory. State the source-tree scope, each primitive search
-command, its hit count, the sink IDs produced from those hits, and every
-excluded hit with its exact location and reason. Its inventory, ruled-out, and
-unresolved counts must agree with the report. This is the evidence that the
-inventory is complete enough to review, not a claim that a broad grep alone
-proves security.
+command, its unique-source-hit count, the sink IDs produced from those hits,
+and every excluded hit with its exact location and reason. `inventory_sinks`
+can contain multiple IDs for one source hit when the same location has multiple
+boundary labels; each ID maps back through its inventory entry's `location`.
+Its inventory, ruled-out, and unresolved counts must agree with the report.
+This is the evidence that the inventory is complete enough to review, not a
+claim that a broad grep alone proves security.

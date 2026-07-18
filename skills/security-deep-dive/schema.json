@@ -146,8 +146,8 @@
         "class": { "$ref": "#/$defs/sink_class" },
         "primitive": { "type": "string", "minLength": 1 },
         "command": { "type": "string", "minLength": 1 },
-        "hit_count": { "type": "integer", "minimum": 0 },
-        "inventory_sinks": { "type": "array", "items": { "$ref": "#/$defs/sink_id" }, "uniqueItems": true },
+        "hit_count": { "type": "integer", "minimum": 0, "description": "Number of unique source-hit locations returned by command. A single source hit is counted once even when it produces multiple boundary-specific inventory sink IDs." },
+        "inventory_sinks": { "type": "array", "items": { "$ref": "#/$defs/sink_id" }, "uniqueItems": true, "description": "All inventory IDs produced by this command. Multiple IDs may refer to one raw source hit when its inventory entries share a location but have different boundary labels; map each ID to the hit through inventory[].location." },
         "excluded_hits": { "type": "array", "items": { "$ref": "#/$defs/excluded_hit" } }
       }
     },
