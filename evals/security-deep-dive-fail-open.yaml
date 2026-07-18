@@ -1,0 +1,17 @@
+given: a Flask admin endpoint runs its API-key comparison only when the header is present, so a missing credential fails open
+fixture: fixtures/fail-open-missing-apikey
+skill: security-deep-dive
+should_find:
+  - finding: authentication bypass
+    severity: High
+    cwe: CWE-287
+    path: app.py
+    evidence_contains:
+      - X-API-Key
+      - EXPECTED_KEY
+    required: true
+should_not_find:
+  - finding: SQL injection
+    path: app.py
+must_not_contain:
+  - Rails::ActiveRecord

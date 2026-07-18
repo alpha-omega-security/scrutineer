@@ -1,0 +1,8 @@
+given: a Flask profile endpoint requires a session user_id and rejects requests when it is missing, so the check fails closed
+fixture: fixtures/fail-closed-missing-session
+skill: security-deep-dive
+should_not_find:
+  - finding: authentication bypass
+    path: app.py
+must_not_contain:
+  - Rails::ActiveRecord
