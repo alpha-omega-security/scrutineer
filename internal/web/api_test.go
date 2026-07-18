@@ -492,6 +492,59 @@ func TestAPIRunSkill_emptyBodyStillEnqueues(t *testing.T) {
 	}
 }
 
+func TestAPIRunSkill_deduplicatesEquivalentOpenScan(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo, scan := seedRunningScan(t, s)
+
+	skill := db.Skill{Name: "metadata", Description: "m", Body: "b", OutputFile: "report.json", Version: 1, Active: true, Source: "ui"}
+	s.DB.Create(&skill)
+
+	if w := runSkillAPIJSON(t, s, repo, scan, skill.Name, `{}`); w.Code != http.StatusCreated {
+		t.Fatalf("first status %d, want 201: %s", w.Code, w.Body)
+	}
+	if w := runSkillAPIJSON(t, s, repo, scan, skill.Name, `{}`); w.Code != http.StatusConflict {
+		t.Fatalf("duplicate status %d, want 409: %s", w.Code, w.Body)
+	}
+	var count int64
+	s.DB.Model(&db.Scan{}).Where("skill_id = ?", skill.ID).Count(&count)
+	if count != 1 {
+		t.Errorf("equivalent scans = %d, want 1", count)
+	}
+}
+
+func TestAPIRunSkill_enforcesRepositoryOpenScanLimit(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo, scan := seedRunningScan(t, s)
+
+	// The authenticated parent is already one open scan. Fill the remaining
+	// slots with different work so the target request reaches the repo cap,
+	// not the equivalent-scan guard.
+	for i := 1; i < maxAgentAPIOpenScansPerRepository; i++ {
+		s.DB.Create(&db.Scan{RepositoryID: repo.ID, Kind: worker.JobSkill, Status: db.ScanQueued})
+	}
+	skill := db.Skill{Name: "metadata", Description: "m", Body: "b", OutputFile: "report.json", Version: 1, Active: true, Source: "ui"}
+	s.DB.Create(&skill)
+
+	w := runSkillAPIJSON(t, s, repo, scan, skill.Name, `{}`)
+	if w.Code != http.StatusTooManyRequests {
+		t.Fatalf("status %d, want 429: %s", w.Code, w.Body)
+	}
+	var open int64
+	s.DB.Model(&db.Scan{}).
+		Where("repository_id = ? AND status IN ?", repo.ID, []db.ScanStatus{db.ScanQueued, db.ScanRunning}).
+		Count(&open)
+	if open != maxAgentAPIOpenScansPerRepository {
+		t.Errorf("open scans = %d, want capped at %d", open, maxAgentAPIOpenScansPerRepository)
+	}
+	var targetCount int64
+	s.DB.Model(&db.Scan{}).Where("skill_id = ?", skill.ID).Count(&targetCount)
+	if targetCount != 0 {
+		t.Errorf("over-cap request created %d target scans, want 0", targetCount)
+	}
+}
+
 func TestAPIRunSkill_unknownProfileRejected(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
@@ -601,6 +654,21 @@ func TestAPIRunFindingSkill_scopesFindingID(t *testing.T) {
 	}
 	if row.APIToken == "" {
 		t.Error("enqueued scan missing api token")
+	}
+
+	r = httptest.NewRequest("POST", path, strings.NewReader("{}"))
+	r.Host = testHost
+	r.Header.Set("Authorization", "Bearer "+scan.APIToken)
+	r.Header.Set("Content-Type", "application/json")
+	w = httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("duplicate status %d, want 409: %s", w.Code, w.Body)
+	}
+	var count int64
+	s.DB.Model(&db.Scan{}).Where("skill_id = ?", verify.ID).Count(&count)
+	if count != 1 {
+		t.Errorf("equivalent finding scans = %d, want 1", count)
 	}
 }
 

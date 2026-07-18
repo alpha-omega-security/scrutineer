@@ -134,6 +134,10 @@ type Server struct {
 	toolMetaCache toolMetadata
 	toolMetaTTL   time.Time
 
+	// agentEnqueueMu makes the scan-token API's deduplication and repository
+	// capacity checks atomic within this server process.
+	agentEnqueueMu sync.Mutex
+
 	// runnerStatus is the result of the boot-time runner-image staleness check
 	// (issue #337), set once by main shortly after startup and read by the
 	// settings page to render the stale-image banner. The zero value renders

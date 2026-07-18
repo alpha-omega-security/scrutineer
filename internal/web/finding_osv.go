@@ -96,9 +96,17 @@ func (s *Server) findingOSV(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var refs []db.FindingReference
-	s.DB.Where("finding_id = ?", f.ID).Order("id desc").Find(&refs)
+	if err := s.DB.Where("finding_id = ?", f.ID).Order("id desc").Find(&refs).Error; err != nil {
+		s.Log.Error("osv references", "finding", f.ID, "err", err)
+		http.Error(w, "failed to load finding references", http.StatusInternalServerError)
+		return
+	}
 	var pkgs []db.Package
-	s.DB.Select("name, ecosystem, p_url").Where("repository_id = ?", f.RepositoryID).Find(&pkgs)
+	if err := s.DB.Select("name, ecosystem, p_url").Where("repository_id = ?", f.RepositoryID).Find(&pkgs).Error; err != nil {
+		s.Log.Error("osv packages", "finding", f.ID, "repository", f.RepositoryID, "err", err)
+		http.Error(w, "failed to load repository packages", http.StatusInternalServerError)
+		return
+	}
 
 	raw, err := json.MarshalIndent(buildOSV(f, repo, refs, pkgs), "", "  ")
 	if err != nil {

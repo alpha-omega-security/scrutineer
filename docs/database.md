@@ -240,7 +240,8 @@ Timestamped internal notes on a finding. Replaced the old `findings.notes` colum
 
 Structured human verdicts on a finding, mirroring the revalidate skill's
 enum so reviewer agreement with the model is computable. Populated by the
-`/audit` page and `POST /findings/{id}/reviews`. The audit queue excludes
+`/audit` page and its browser-only `POST /findings/{id}/reviews` form. The
+scan-token API can list reviews but cannot create them. The audit queue excludes
 findings that already have a row here.
 
 | Column | Type | Notes |

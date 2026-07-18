@@ -451,38 +451,6 @@ paths:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/FindingReview' }
-    post:
-      summary: Record one structured human verdict on a finding
-      description: |
-        Verdicts mirror the revalidate skill's enum so reviewer agreement
-        with the model is computed by direct string comparison. When
-        automated_outcome is omitted the server snapshots the latest
-        revalidate verdict from the finding's notes; explicit values
-        win to support older notes the operator wants to re-pin.
-      operationId: addFindingReview
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [verdict]
-              properties:
-                verdict:
-                  type: string
-                  enum: [true_positive, false_positive, already_fixed, uncertain]
-                reason: { type: string }
-                reviewer: { type: string }
-                automated_outcome:
-                  type: string
-                  description: Optional override for the automation outcome the human is judging. When empty the server pulls it from the finding's latest revalidate note.
-      responses:
-        '201':
-          description: Created
-          content:
-            application/json:
-              schema: { $ref: '#/components/schemas/FindingReview' }
-
   /v1/audit/queue:
     get:
       summary: Sample of recently auto-bucketed findings without a recorded review
