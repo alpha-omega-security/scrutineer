@@ -570,15 +570,7 @@ func (w *Worker) wrap(h handler) func(context.Context, []byte) error {
 			w.mu.Unlock()
 		}()
 
-		scan.Status = db.ScanRunning
-		scan.StatusPriority = db.StatusPriorityFor(db.ScanRunning)
-		scan.StartedAt = new(time.Now())
-		scan.Log = ""
-		scan.Error = ""
-		if br, ok := w.Runner.(BackendReporter); ok {
-			scan.Backend = br.Backend()
-		}
-		if err := w.DB.Save(&scan).Error; err != nil {
+		if err := w.startScan(&scan); err != nil {
 			return err
 		}
 
@@ -595,6 +587,26 @@ func (w *Worker) wrap(h handler) func(context.Context, []byte) error {
 	}
 }
 
+// startScan records the running state and its audit event in one transaction
+// so a scan never appears to have started without a corresponding timeline
+// entry.
+func (w *Worker) startScan(scan *db.Scan) error {
+	scan.Status = db.ScanRunning
+	scan.StatusPriority = db.StatusPriorityFor(db.ScanRunning)
+	scan.StartedAt = new(time.Now())
+	scan.Log = ""
+	scan.Error = ""
+	if br, ok := w.Runner.(BackendReporter); ok {
+		scan.Backend = br.Backend()
+	}
+	return w.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Save(scan).Error; err != nil {
+			return err
+		}
+		return db.LogScanEvent(tx, db.AuditEventScanStarted, scan)
+	})
+}
+
 // finalizeScan persists the terminal/paused scan state, fires
 // post-completion hooks, bulk-pauses the rest of the queue when this scan
 // hit an account-level Claude problem, cleans up the workspace, and publishes
@@ -607,7 +619,16 @@ func (w *Worker) finalizeScan(ctx context.Context, scan *db.Scan, report string,
 		w.clearSessionStore(scan)
 	}
 	scan.StatusPriority = db.StatusPriorityFor(scan.Status)
-	if saveErr := w.DB.Save(scan).Error; saveErr != nil {
+	if eventKind, ok := db.ScanLifecycleEventKind(scan.Status); ok {
+		if saveErr := w.DB.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Save(scan).Error; err != nil {
+				return err
+			}
+			return db.LogScanEvent(tx, eventKind, scan)
+		}); saveErr != nil {
+			return saveErr
+		}
+	} else if saveErr := w.DB.Save(scan).Error; saveErr != nil {
 		return saveErr
 	}
 	w.maybeFireScanFinalized(scan, err)

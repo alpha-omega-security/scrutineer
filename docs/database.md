@@ -50,6 +50,23 @@ The central entity. One row per git URL.
 | created_at | datetime | |
 | updated_at | datetime | |
 
+## audit_events
+
+Append-only audit trail for lifecycle and future operator/system actions. It
+coexists with `finding_histories`, which remains the specialised per-field
+change history for findings. `payload` is JSON stored portably as text.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | integer PK | |
+| kind | text | Event name, for example `scan.started`, `scan.finished`, `scan.failed`, `scan.cancelled`, or `scan.paused`. Indexed with `created_at` for chronological dashboards. |
+| subject_type | text | Polymorphic subject type, currently `scan`. Part of the timeline index with `subject_id`. |
+| subject_id | integer | ID of the subject row, for example `scans.id`. |
+| actor | text | Skill name when available, otherwise the scan kind. |
+| source | text | Existing provenance enum, currently `system` for worker lifecycle events. |
+| payload | text | JSON metadata. Scan events include stable execution metadata and terminal metrics, without duplicating reports or logs. |
+| created_at | datetime | |
+
 ## scans
 
 One row per skill execution or external import. `skill_name` / `skill_version` pin which skill ran; for imports `skill_name` records the originating tool.

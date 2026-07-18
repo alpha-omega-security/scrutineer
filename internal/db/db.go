@@ -899,6 +899,24 @@ type FindingHistory struct {
 	CreatedAt time.Time
 }
 
+// AuditEvent records an append-only event for any auditable entity. It sits
+// alongside FindingHistory, which remains the specialised field-level record
+// for findings. Payload is JSON stored as text so the schema stays portable
+// between SQLite and PostgreSQL.
+type AuditEvent struct {
+	ID uint `gorm:"primarykey"`
+	// Kind identifies the action, for example scan.started or scan.failed.
+	Kind string `gorm:"not null;index:idx_audit_events_kind_created_at,priority:1"`
+	// SubjectType and SubjectID form a polymorphic reference to the entity the
+	// event describes, for example scan/42 or finding/17.
+	SubjectType string `gorm:"not null;index:idx_audit_events_subject,priority:1"`
+	SubjectID   uint   `gorm:"not null;index:idx_audit_events_subject,priority:2"`
+	Actor       string
+	Source      FindingSource `gorm:"not null;index"`
+	Payload     string        `gorm:"type:text;not null"`
+	CreatedAt   time.Time     `gorm:"index:idx_audit_events_kind_created_at,priority:2"`
+}
+
 // FindingReview is a structured human verdict against an automation
 // outcome. Verdict mirrors the revalidate skill's enum so reviewer
 // agreement with the model can be measured directly. AutomatedOutcome
@@ -1147,7 +1165,7 @@ func Open(dsn string) (*gorm.DB, error) {
 	if err := gdb.AutoMigrate(
 		&Repository{}, &Scan{},
 		&Finding{}, &FindingLabel{}, &FindingNote{},
-		&FindingCommunication{}, &FindingReference{}, &FindingHistory{}, &FindingReview{},
+		&FindingCommunication{}, &FindingReference{}, &FindingHistory{}, &FindingReview{}, &AuditEvent{},
 		&Dependency{}, &ExpectedFinding{}, &Package{}, &Dependent{}, &FindingDependent{}, &Advisory{},
 		&Maintainer{}, &Skill{}, &Subproject{},
 		&SBOMUpload{}, &SBOMPackage{}, &CNA{}, &Setting{},
