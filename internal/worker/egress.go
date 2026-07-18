@@ -11,8 +11,10 @@ import (
 	"maps"
 	"net"
 	"net/http"
+	"net/netip"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -164,7 +166,7 @@ const (
 func (p *EgressProxy) init() {
 	p.once.Do(func() {
 		p.transport = &http.Transport{
-			DialContext:         (&net.Dialer{Timeout: egressDialTimeout}).DialContext,
+			DialContext:         p.dialContext,
 			ForceAttemptHTTP2:   false,
 			MaxIdleConnsPerHost: egressIdlePerHost,
 		}
@@ -205,13 +207,17 @@ func (p *EgressProxy) serveConnect(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "egress to "+host+" is not on the allowlist", http.StatusForbidden)
 		return
 	}
-	if p.isAPIHost(host) && p.APIPort != "" && port != p.APIPort {
+	apiHost := p.isAPIHost(host)
+	if apiHost && p.APIPort != "" && port != p.APIPort {
 		p.Log.Warn("egress denied", "method", "CONNECT", "host", host, "port", port, "allowed_port", p.APIPort)
 		http.Error(w, "egress to "+host+" is only allowed on port "+p.APIPort, http.StatusForbidden)
 		return
 	}
-	upstream, err := net.DialTimeout("tcp", p.dialTarget(host, port), egressDialTimeout)
+	upstream, err := dialEgress(r.Context(), "tcp", p.dialTarget(host, port), apiHost)
 	if err != nil {
+		if p.writeIPDenied(w, "CONNECT", host, err) {
+			return
+		}
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
@@ -242,7 +248,8 @@ func (p *EgressProxy) serveForward(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "egress to "+host+" is not on the allowlist", http.StatusForbidden)
 		return
 	}
-	if p.isAPIHost(host) && p.APIPort != "" && port != p.APIPort {
+	apiHost := p.isAPIHost(host)
+	if apiHost && p.APIPort != "" && port != p.APIPort {
 		p.Log.Warn("egress denied", "method", r.Method, "host", host, "port", port, "allowed_port", p.APIPort)
 		http.Error(w, "egress to "+host+" is only allowed on port "+p.APIPort, http.StatusForbidden)
 		return
@@ -250,10 +257,16 @@ func (p *EgressProxy) serveForward(w http.ResponseWriter, r *http.Request) {
 	out := r.Clone(r.Context())
 	out.RequestURI = ""
 	out.URL.Host = p.dialTarget(host, port)
+	if apiHost {
+		out = out.WithContext(context.WithValue(out.Context(), apiGatewayDialKey{}, true))
+	}
 	out.Header.Del("Proxy-Authorization")
 	out.Header.Del("Proxy-Connection")
 	resp, err := p.transport.RoundTrip(out)
 	if err != nil {
+		if p.writeIPDenied(w, r.Method, host, err) {
+			return
+		}
 		http.Error(w, err.Error(), http.StatusBadGateway)
 		return
 	}
@@ -261,6 +274,77 @@ func (p *EgressProxy) serveForward(w http.ResponseWriter, r *http.Request) {
 	maps.Copy(w.Header(), resp.Header)
 	w.WriteHeader(resp.StatusCode)
 	_, _ = io.Copy(w, resp.Body)
+}
+
+// apiGatewayDialKey marks the one intentionally non-public dial path: a request
+// whose original host matched APIHosts and was rewritten by dialTarget to the
+// host API gateway. The private type prevents callers from granting themselves
+// the exemption through an incoming request context.
+type apiGatewayDialKey struct{}
+
+// dialContext is the transport dial hook for forward requests. Ordinary
+// requests resolve and connect with the non-public IP guard enabled. Only the
+// APIHosts path marked by serveForward may dial GatewayDialHost/127.0.0.1.
+func (p *EgressProxy) dialContext(ctx context.Context, network, address string) (net.Conn, error) {
+	apiGateway, _ := ctx.Value(apiGatewayDialKey{}).(bool)
+	return dialEgress(ctx, network, address, apiGateway)
+}
+
+func dialEgress(ctx context.Context, network, address string, apiGateway bool) (net.Conn, error) {
+	dialer := &net.Dialer{
+		Timeout: egressDialTimeout,
+		Control: egressIPControl(apiGateway),
+	}
+	return dialer.DialContext(ctx, network, address)
+}
+
+// cgnatPrefix is RFC 6598 shared address space (100.64.0.0/10). netip.Addr's
+// IsPrivate reports false for it, but carrier-grade NAT and overlay networks
+// such as Tailscale and ZeroTier route it, so a rebind into that range must be
+// denied alongside RFC1918.
+var cgnatPrefix = netip.MustParsePrefix("100.64.0.0/10")
+
+// egressIPControl checks the address selected by net.Dialer after name
+// resolution and immediately before connect. This closes the DNS rebinding
+// window without changing HostAllowed's hostname semantics or pinning a
+// separately resolved address.
+func egressIPControl(apiGateway bool) func(string, string, syscall.RawConn) error {
+	return func(_ string, address string, _ syscall.RawConn) error {
+		if apiGateway {
+			return nil
+		}
+		host, _, err := net.SplitHostPort(address)
+		if err != nil {
+			return &egressIPDeniedError{address: address}
+		}
+		ip, err := netip.ParseAddr(host)
+		if err != nil {
+			return &egressIPDeniedError{address: address}
+		}
+		ip = ip.Unmap()
+		if ip.IsLoopback() || ip.IsPrivate() || cgnatPrefix.Contains(ip) || ip.IsLinkLocalUnicast() || ip.IsUnspecified() || ip.IsMulticast() {
+			return &egressIPDeniedError{address: ip.String()}
+		}
+		return nil
+	}
+}
+
+type egressIPDeniedError struct {
+	address string
+}
+
+func (e *egressIPDeniedError) Error() string {
+	return "egress destination resolved to non-public address " + e.address
+}
+
+func (p *EgressProxy) writeIPDenied(w http.ResponseWriter, method, host string, err error) bool {
+	var denied *egressIPDeniedError
+	if !errors.As(err, &denied) {
+		return false
+	}
+	p.Log.Warn("egress denied", "method", method, "host", host, "remote_ip", denied.address)
+	http.Error(w, "egress to "+host+" is not on the allowlist", http.StatusForbidden)
+	return true
 }
 
 // HostAllowed reports whether host matches any entry in allow. Matching is

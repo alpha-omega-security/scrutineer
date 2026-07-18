@@ -164,7 +164,32 @@ func TestEgressProxy_ForwardDenied(t *testing.T) {
 	}
 }
 
-func TestEgressProxy_ForwardAllowedRewritesGateway(t *testing.T) {
+func TestEgressProxy_DeniesNonPublicResolvedIP(t *testing.T) {
+	for _, host := range []string{"127.0.0.1", "10.0.0.1"} {
+		for _, method := range []string{http.MethodConnect, http.MethodGet} {
+			t.Run(host+"/"+method, func(t *testing.T) {
+				p := &EgressProxy{Allow: []string{host}, Log: quietLog()}
+				target := net.JoinHostPort(host, "8080")
+				var r *http.Request
+				if method == http.MethodConnect {
+					r = httptest.NewRequest(method, target, nil)
+				} else {
+					r = httptest.NewRequest(method, "http://"+target+"/private", nil)
+				}
+				w := httptest.NewRecorder()
+				p.ServeHTTP(w, r)
+				if w.Code != http.StatusForbidden {
+					t.Fatalf("got %d: %s, want 403", w.Code, w.Body)
+				}
+				if got, want := strings.TrimSpace(w.Body.String()), "egress to "+host+" is not on the allowlist"; got != want {
+					t.Fatalf("body = %q, want %q", got, want)
+				}
+			})
+		}
+	}
+}
+
+func TestEgressProxy_APIHostGatewayExemptionStillConnects(t *testing.T) {
 	// Upstream stands in for the local scrutineer API on 127.0.0.1.
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Upstream", "yes")
@@ -173,7 +198,7 @@ func TestEgressProxy_ForwardAllowedRewritesGateway(t *testing.T) {
 	defer upstream.Close()
 	_, port, _ := net.SplitHostPort(upstream.Listener.Addr().String())
 
-	p := &EgressProxy{Allow: []string{HostGatewayAlias}, Log: quietLog()}
+	p := &EgressProxy{Allow: []string{HostGatewayAlias}, APIPort: port, Log: quietLog()}
 	target := "http://" + net.JoinHostPort(HostGatewayAlias, port) + "/api/ping"
 	r := httptest.NewRequest("GET", target, nil)
 	w := httptest.NewRecorder()
@@ -379,16 +404,17 @@ func TestWaitHostAPIReachable_FailsClosed(t *testing.T) {
 
 // TestEgressProxy_ConnectEndToEnd exercises the full path the container
 // runner uses: a real listener, Proxy-Authorization in the proxy URL,
-// CONNECT tunnel, then a TLS request over it. The upstream is a local
-// httptest TLS server allowlisted as 127.0.0.1.
+// CONNECT tunnel, then a TLS request over it. The API alias is rewritten to
+// the local httptest TLS server, exercising the intentional gateway exemption.
 func TestEgressProxy_ConnectEndToEnd(t *testing.T) {
 	upstream := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		_, _ = io.WriteString(w, "tunnelled")
 	}))
 	defer upstream.Close()
+	_, upstreamPort, _ := net.SplitHostPort(upstream.Listener.Addr().String())
 
 	token := "tok"
-	p := &EgressProxy{Allow: []string{"127.0.0.1"}, Token: token, Log: quietLog()}
+	p := &EgressProxy{Allow: []string{HostGatewayAlias}, Token: token, APIPort: upstreamPort, Log: quietLog()}
 	proxySrv := httptest.NewServer(p)
 	defer proxySrv.Close()
 
@@ -400,7 +426,8 @@ func TestEgressProxy_ConnectEndToEnd(t *testing.T) {
 	}
 	client := &http.Client{Transport: tr}
 
-	resp, err := client.Get(upstream.URL)
+	target := "https://" + net.JoinHostPort(HostGatewayAlias, upstreamPort)
+	resp, err := client.Get(target)
 	if err != nil {
 		t.Fatalf("get via proxy: %v", err)
 	}
@@ -415,7 +442,7 @@ func TestEgressProxy_ConnectEndToEnd(t *testing.T) {
 	// transport actually re-CONNECTs.
 	tr.CloseIdleConnections()
 	p.Allow = []string{"somewhere.else"}
-	_, err = client.Get(upstream.URL)
+	_, err = client.Get(target)
 	if err == nil {
 		t.Fatalf("expected CONNECT to be refused for non-allowlisted host")
 	}
@@ -454,23 +481,37 @@ func TestEgressProxy_DeniesGatewayOnWrongPort(t *testing.T) {
 	}
 }
 
-func TestEgressProxy_NoPortRestrictionForOtherHosts(t *testing.T) {
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = io.WriteString(w, "ok")
-	}))
-	defer upstream.Close()
-	_, port, _ := net.SplitHostPort(upstream.Listener.Addr().String())
-
-	p := &EgressProxy{
-		Allow:   []string{"127.0.0.1"},
-		APIPort: "8080",
-		Log:     quietLog(),
+func TestEgressIPControl_AllowsPublicIPOnNonstandardPort(t *testing.T) {
+	control := egressIPControl(false)
+	for _, host := range []string{"8.8.8.8", "2001:4860:4860::8888"} {
+		if err := control("tcp", net.JoinHostPort(host, "8443"), nil); err != nil {
+			t.Fatalf("public IP %s on a non-standard port denied: %v", host, err)
+		}
 	}
-	r := httptest.NewRequest("GET", "http://127.0.0.1:"+port+"/foo", nil)
-	w := httptest.NewRecorder()
-	p.ServeHTTP(w, r)
-	if w.Code != http.StatusOK {
-		t.Fatalf("non-gateway host on any port should be allowed: got %d", w.Code)
+}
+
+func TestEgressIPControl_DeniesNonPublicRanges(t *testing.T) {
+	control := egressIPControl(false)
+	for _, host := range []string{
+		"127.0.0.1",
+		"::1",
+		"10.0.0.1",
+		"172.16.0.1",
+		"192.168.0.1",
+		"100.64.0.1",
+		"fd00::1",
+		"169.254.1.1",
+		"fe80::1",
+		"0.0.0.0",
+		"::",
+		"224.0.0.1",
+		"ff02::1",
+	} {
+		t.Run(host, func(t *testing.T) {
+			if err := control("tcp", net.JoinHostPort(host, "443"), nil); err == nil {
+				t.Fatalf("non-public IP %s was allowed", host)
+			}
+		})
 	}
 }
 
