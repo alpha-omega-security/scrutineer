@@ -307,7 +307,7 @@ func (s *Server) apiValidateReport(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusRequestEntityTooLarge, "could not read body (max 1 MB)")
 		return
 	}
-	if detail := worker.ValidateReportSchema(skill.SchemaJSON, string(body)); detail != "" {
+	if detail := worker.ValidateSkillReport(skill.Name, skill.SchemaJSON, string(body)); detail != "" {
 		writeJSON(w, http.StatusOK, map[string]any{"valid": false, "errors": detail})
 		return
 	}
