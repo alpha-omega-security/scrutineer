@@ -245,6 +245,42 @@ func TestRegisterFlags_modelBaseURLAliasParsesFromArgv(t *testing.T) {
 	}
 }
 
+func TestValidateFlags_modelBaseURLRequiresHTTPS(t *testing.T) {
+	tests := []struct {
+		name    string
+		baseURL string
+		wantErr bool
+	}{
+		{"empty", "", false},
+		{"https", "https://models.example.com/v1", false},
+		{"loopback IPv4 development", "http://127.0.0.1:11434/v1", false},
+		{"loopback IPv6 development", "http://[::1]:11434/v1", false},
+		{"localhost development", "http://localhost:11434/v1", false},
+		{"container host development", "http://host.docker.internal:11434/v1", false},
+		{"remote http", "http://models.example.com/v1", true},
+		{"non-http scheme", "ftp://models.example.com/v1", true},
+		{"relative URL", "models.example.com/v1", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateFlags(&flags{modelBaseURL: tt.baseURL})
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateFlags(%q) error = %v, wantErr %v", tt.baseURL, err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateFlags_rejectsInsecureEnvironmentBaseURL(t *testing.T) {
+	t.Setenv("ANTHROPIC_BASE_URL", "http://models.example.com/v1")
+	f := &flags{}
+	configureBackendEnvironment(f, quietLog())
+	err := validateFlags(f)
+	if err == nil || !strings.Contains(err.Error(), "must use https") {
+		t.Fatalf("resolved environment base URL error = %v", err)
+	}
+}
+
 func TestRegisterFlags_hardenedRuntimeOnlyAliasParsesFromArgv(t *testing.T) {
 	// Both the canonical --hardened-runtime-only and the deprecated
 	// --hardened-rootless-runtime alias must parse off the command line and set

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -51,6 +52,68 @@ func TestCall_requestsStructuredOutputAndReturnsUsage(t *testing.T) {
 	}
 	if usage != (Usage{InputTokens: 100, OutputTokens: 12, CacheReadTokens: 30, CacheWriteTokens: 7}) {
 		t.Errorf("usage = %+v", usage)
+	}
+}
+
+func TestCall_crossOriginRedirectDropsAPIKey(t *testing.T) {
+	var targetAPIKey string
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		targetAPIKey = r.Header.Get("x-api-key")
+		_, _ = io.WriteString(w, `{"content":[{"type":"text","text":"{\"answer\":\"ok\"}"}],"usage":{}}`)
+	}))
+	defer target.Close()
+
+	var sourceAPIKey string
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sourceAPIKey = r.Header.Get("x-api-key")
+		http.Redirect(w, r, target.URL+"/v1/messages", http.StatusTemporaryRedirect)
+	}))
+	defer source.Close()
+
+	client := source.Client()
+	if client.CheckRedirect != nil {
+		t.Fatal("test client unexpectedly has a redirect policy")
+	}
+	_, _, err := Call(context.Background(), "reply as JSON", json.RawMessage(objectSchema), Options{
+		Endpoint: source.URL + "/v1/messages", APIKey: "secret", Model: "claude-sonnet-4-6", MaxTokens: 64, HTTPClient: client,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sourceAPIKey != "secret" {
+		t.Errorf("source x-api-key = %q, want credential on the original request", sourceAPIKey)
+	}
+	if targetAPIKey != "" {
+		t.Errorf("redirect target received x-api-key = %q", targetAPIKey)
+	}
+	if client.CheckRedirect != nil {
+		t.Error("Call mutated the caller-provided HTTP client's redirect policy")
+	}
+}
+
+func TestSameOrigin(t *testing.T) {
+	for _, tt := range []struct {
+		a, b string
+		want bool
+	}{
+		{"https://api.example.com/v1", "https://api.example.com/v2", true},
+		{"https://api.example.com", "https://api.example.com:443/x", true},
+		{"http://host:80", "http://host/y", true},
+		{"https://api.example.com", "https://api.example.com:8443", false},
+		{"https://api.example.com", "http://api.example.com", false},
+		{"https://api.example.com", "https://evil.example.com", false},
+	} {
+		a, err := url.Parse(tt.a)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := url.Parse(tt.b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := sameOrigin(a, b); got != tt.want {
+			t.Errorf("sameOrigin(%q, %q) = %v, want %v", tt.a, tt.b, got, tt.want)
+		}
 	}
 }
 
@@ -108,5 +171,11 @@ func TestCall_rejectsAPIErrorsAndInvalidOptions(t *testing.T) {
 	_, _, err = Call(context.Background(), "object", json.RawMessage(`{`), Options{APIKey: "key", Model: "m", MaxTokens: 1})
 	if err == nil || !strings.Contains(err.Error(), "schema is not valid JSON") {
 		t.Fatalf("schema error = %v", err)
+	}
+	_, _, err = Call(context.Background(), "object", json.RawMessage(objectSchema), Options{
+		Endpoint: "http://models.example.com/v1/messages", APIKey: "key", Model: "m", MaxTokens: 1,
+	})
+	if err == nil || !strings.Contains(err.Error(), "endpoint must use https") {
+		t.Fatalf("insecure endpoint error = %v", err)
 	}
 }

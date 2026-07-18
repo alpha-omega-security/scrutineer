@@ -8,21 +8,26 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 )
 
 const (
 	DefaultEndpoint = "https://api.anthropic.com/v1/messages"
 	apiVersion      = "2023-06-01"
+	apiKeyHeader    = "x-api-key"
+	maxRedirects    = 10
 	maxResponseSize = 10 << 20
 	maxErrorSize    = 32 << 10
 )
 
 // Options configures one Anthropic Messages API request. Endpoint is the full
-// Messages endpoint, which lets deployments use a compatible proxy. APIKey,
-// Model, and MaxTokens are required so each call's billing and output budget
-// are explicit at the call site.
+// Messages endpoint, which lets deployments use a compatible proxy. Remote
+// endpoints must use HTTPS; HTTP is retained for local development endpoints.
+// APIKey, Model, and MaxTokens are required so each call's billing and output
+// budget are explicit at the call site.
 type Options struct {
 	Endpoint   string
 	APIKey     string
@@ -104,6 +109,9 @@ func Call(ctx context.Context, prompt string, schema json.RawMessage, opts Optio
 	if endpoint == "" {
 		endpoint = DefaultEndpoint
 	}
+	if err := validateEndpoint(endpoint); err != nil {
+		return nil, Usage{}, err
+	}
 	body, err := json.Marshal(messageRequest{
 		Model:     opts.Model,
 		MaxTokens: opts.MaxTokens,
@@ -122,13 +130,10 @@ func Call(ctx context.Context, prompt string, schema json.RawMessage, opts Optio
 		return nil, Usage{}, fmt.Errorf("llm: create request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("x-api-key", opts.APIKey)
+	req.Header.Set(apiKeyHeader, opts.APIKey)
 	req.Header.Set("anthropic-version", apiVersion)
 
-	client := opts.HTTPClient
-	if client == nil {
-		client = http.DefaultClient
-	}
+	client := redirectSafeClient(opts.HTTPClient)
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, Usage{}, fmt.Errorf("llm: messages request: %w", err)
@@ -151,6 +156,80 @@ func Call(ctx context.Context, prompt string, schema json.RawMessage, opts Optio
 		return nil, decoded.Usage, fmt.Errorf("llm: structured response is not valid JSON")
 	}
 	return result, decoded.Usage, nil
+}
+
+// redirectSafeClient copies the selected client so this request can enforce
+// its credential policy without mutating a caller-owned client or
+// http.DefaultClient. The caller's redirect policy still runs, but cannot
+// restore the API key on a cross-origin request.
+func redirectSafeClient(base *http.Client) *http.Client {
+	if base == nil {
+		base = http.DefaultClient
+	}
+	client := *base
+	previous := base.CheckRedirect
+	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		crossOrigin := len(via) > 0 && !sameOrigin(via[0].URL, req.URL)
+		if crossOrigin {
+			req.Header.Del(apiKeyHeader)
+		}
+		if previous != nil {
+			err := previous(req, via)
+			if crossOrigin {
+				req.Header.Del(apiKeyHeader)
+			}
+			return err
+		}
+		if len(via) >= maxRedirects {
+			return fmt.Errorf("llm: stopped after %d redirects", maxRedirects)
+		}
+		return nil
+	}
+	return &client
+}
+
+// sameOrigin compares scheme, hostname, and effective port so a redirect that
+// only makes the default port explicit (host vs host:443) is not treated as
+// cross-origin, while a genuinely different port still is.
+func sameOrigin(a, b *url.URL) bool {
+	return strings.EqualFold(a.Scheme, b.Scheme) &&
+		strings.EqualFold(a.Hostname(), b.Hostname()) &&
+		originPort(a) == originPort(b)
+}
+
+func originPort(u *url.URL) string {
+	if p := u.Port(); p != "" {
+		return p
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "https":
+		return "443"
+	case "http":
+		return "80"
+	default:
+		return ""
+	}
+}
+
+func validateEndpoint(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || !u.IsAbs() || u.Host == "" {
+		return fmt.Errorf("llm: endpoint must be an absolute URL")
+	}
+	if strings.EqualFold(u.Scheme, "https") ||
+		(strings.EqualFold(u.Scheme, "http") && localModelHost(u.Hostname())) {
+		return nil
+	}
+	return fmt.Errorf("llm: endpoint must use https (http is allowed only for local development)")
+}
+
+func localModelHost(host string) bool {
+	host = strings.TrimSuffix(host, ".")
+	if strings.EqualFold(host, "localhost") || strings.EqualFold(host, "host.docker.internal") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func responseText(blocks []contentBlock) string {

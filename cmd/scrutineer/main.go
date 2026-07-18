@@ -158,7 +158,7 @@ func registerFlags(fs *flag.FlagSet, f *flags) {
 	fs.DurationVar(&f.scanTimeout, "scan-timeout", worker.DefaultScanTimeout, "wall-clock limit per scan")
 	fs.DurationVar(&f.smokeTimeout, "runtime-smoke-timeout", defaultRuntimeSmokeTimeout, "timeout for each rootless-podman startup container check (keep-id image remap, SELinux mount probe); raise if first-run image remapping is slow, lower if the image is pre-warmed")
 	fs.IntVar(&f.maxTurns, "max-turns", 0, "claude --max-turns limit (0 = unlimited)")
-	fs.StringVar(&f.modelBaseURL, "model-base-url", "", "custom model API base URL for the active backend (env fallback: ANTHROPIC_BASE_URL for claude)")
+	fs.StringVar(&f.modelBaseURL, "model-base-url", "", "custom HTTPS model API base URL for the active backend (HTTP allowed for local development; env fallback: ANTHROPIC_BASE_URL for claude)")
 	fs.StringVar(&f.modelBaseURL, "anthropic-base-url", "", "deprecated alias for -model-base-url")
 	fs.StringVar(&f.forkOrg, "fork-org", "", "GitHub org the fork skill forks into and files draft advisories against")
 	fs.BoolVar(&f.schemaStrict, "schema-strict", false, "fail scans whose report.json does not validate against the skill's schema (default: warn and continue)")
@@ -342,7 +342,10 @@ func validateFlags(f *flags) error {
 	if err := config.ValidateRuntime(f.runtime); err != nil {
 		return err
 	}
-	return config.ValidateSELinux(f.selinux)
+	if err := config.ValidateSELinux(f.selinux); err != nil {
+		return err
+	}
+	return validateModelBaseURL(f.modelBaseURL)
 }
 
 func configureBackendEnvironment(f *flags, log *slog.Logger) {
@@ -398,6 +401,9 @@ func run(log *slog.Logger) error {
 	if err := f.normalizePaths(); err != nil {
 		return err
 	}
+	// Resolve the Claude environment fallback before validation so flags,
+	// config, and ANTHROPIC_BASE_URL all pass through the same URL policy.
+	configureBackendEnvironment(f, log)
 	if err := validateFlags(f); err != nil {
 		return err
 	}
@@ -408,8 +414,6 @@ func run(log *slog.Logger) error {
 	if f.set["selinux"] {
 		log.Info("selinux", "flag", f.selinux, "state", worker.HostSELinuxState())
 	}
-	configureBackendEnvironment(f, log)
-
 	if err := os.MkdirAll(f.dataDir, dataPermSecure); err != nil {
 		return err
 	}
@@ -943,6 +947,33 @@ func baseURLHost(raw string) string {
 		return ""
 	}
 	return u.Hostname()
+}
+
+// validateModelBaseURL requires transport encryption for remote model APIs.
+// Loopback and the container host-gateway alias remain available over HTTP for
+// local model/proxy development.
+func validateModelBaseURL(raw string) error {
+	if raw == "" {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	if err != nil || !u.IsAbs() || u.Host == "" {
+		return fmt.Errorf("model base URL must be an absolute URL")
+	}
+	if strings.EqualFold(u.Scheme, "https") ||
+		(strings.EqualFold(u.Scheme, "http") && localModelHost(u.Hostname())) {
+		return nil
+	}
+	return fmt.Errorf("model base URL must use https (http is allowed only for local development)")
+}
+
+func localModelHost(host string) bool {
+	host = strings.TrimSuffix(host, ".")
+	if strings.EqualFold(host, "localhost") || strings.EqualFold(host, worker.HostGatewayAlias) {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // cfgPath returns the path the loader actually used for logging.
