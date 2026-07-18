@@ -32,7 +32,7 @@ require (
 	github.com/git-pkgs/packageurl-go v0.3.1 // indirect
 	github.com/git-pkgs/registries v0.6.2 // indirect
 	github.com/git-pkgs/spdx v0.1.4 // indirect
-	github.com/git-pkgs/vers v0.2.6 // indirect
+	github.com/git-pkgs/vers v0.3.0 // indirect
 	github.com/github/go-spdx/v2 v2.7.0 // indirect
 	github.com/glebarez/go-sqlite v1.22.0 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
