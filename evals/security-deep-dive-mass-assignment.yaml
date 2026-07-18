@@ -1,0 +1,20 @@
+given: a member endpoint bulk-copies a JSON body containing server-owned fields into an account
+fixture: fixtures/mass-assignment-basic
+skill: security-deep-dive
+should_find:
+  - finding: mass assignment
+    cwe: CWE-915
+    path: app.py
+    evidence_contains:
+      - request.get_json()
+      - account.update(body)
+      - role
+    required: true
+should_not_find:
+  - finding: mass assignment
+    cwe: CWE-915
+    path: app.py
+    evidence_contains:
+      - update_profile
+      - account.update(editable)
+      - owner_id

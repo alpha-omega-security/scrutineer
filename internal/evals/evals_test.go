@@ -342,6 +342,42 @@ func TestRunnerRejectsSchemaInvalidReport(t *testing.T) {
 	}
 }
 
+func TestMassAssignmentScenario(t *testing.T) {
+	sc := mustLoadScenario(t, "../../evals/security-deep-dive-mass-assignment.yaml")
+	report := `{"findings":[{
+  "title":"Mass assignment in update_account",
+  "cwe":"CWE-915",
+  "location":"app.py:27",
+  "trace":"request.get_json() supplies body, and account.update(body) copies role without an allow-list."
+}]}`
+	got, err := (HeuristicJudge{}).Judge(sc, report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("results = %d, want 2", len(got))
+	}
+	for _, result := range got {
+		if !result.Matched {
+			t.Fatalf("mass-assignment assertion did not pass: %+v", result)
+		}
+	}
+
+	safeReport := `{"findings":[{
+  "title":"Mass assignment in update_profile",
+  "cwe":"CWE-915",
+  "location":"app.py:42",
+  "trace":"update_profile uses account.update(editable) and overwrites owner_id."
+}]}`
+	got, err = (HeuristicJudge{}).Judge(sc, safeReport)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[1].Matched {
+		t.Fatalf("allow-listed endpoint unexpectedly passed should_not_find: %+v", got[1])
+	}
+}
+
 func TestRunnerCountsMustNotContainFailure(t *testing.T) {
 	sc, err := LoadScenario("../../evals/security-deep-dive-sqli.yaml")
 	if err != nil {
