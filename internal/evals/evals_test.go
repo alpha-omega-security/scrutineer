@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -27,6 +28,27 @@ func TestLoadScenarios(t *testing.T) {
 		if _, err := os.Stat(filepath.Join("../../evals", sc.Fixture)); err != nil {
 			t.Fatalf("%s fixture %q missing: %v", sc.Path, sc.Fixture, err)
 		}
+	}
+}
+
+func TestAuthOmissionScenario(t *testing.T) {
+	sc, err := LoadScenario("../../evals/security-deep-dive-auth-omission.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sc.Skill != "security-deep-dive" || sc.Fixture != "fixtures/auth-omission" {
+		t.Fatalf("scenario = %+v", sc)
+	}
+	if len(sc.ShouldFind) != 1 || len(sc.ShouldNotFind) != 1 {
+		t.Fatalf("assertions = %+v, want one positive and one negative", sc)
+	}
+	positive := sc.ShouldFind[0]
+	if !positive.Required || positive.CWE != "CWE-306" || positive.Path != "app.py" || !slices.Equal(positive.Evidence, []string{"session_cookie", "serve_account_data"}) {
+		t.Errorf("positive assertion = %+v", positive)
+	}
+	negative := sc.ShouldNotFind[0]
+	if negative.CWE != "CWE-306" || negative.Path != "app.py" || !slices.Equal(negative.Evidence, []string{"safe_account", "abort(401)"}) {
+		t.Errorf("negative assertion = %+v", negative)
 	}
 }
 

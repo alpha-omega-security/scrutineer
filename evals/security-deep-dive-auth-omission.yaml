@@ -1,0 +1,18 @@
+given: an optional session cookie skips validation while an account endpoint still returns protected data
+fixture: fixtures/auth-omission
+skill: security-deep-dive
+should_find:
+  - finding: session
+    cwe: CWE-306
+    path: app.py
+    evidence_contains:
+      - session_cookie
+      - serve_account_data
+    required: true
+should_not_find:
+  - finding: session
+    cwe: CWE-306
+    path: app.py
+    evidence_contains:
+      - safe_account
+      - abort(401)

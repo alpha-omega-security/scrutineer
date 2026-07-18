@@ -130,6 +130,29 @@ Even where the input is attacker-controlled, check whether the project has alrea
 
 Even where the input is attacker-controlled, check the precondition does not subsume the conclusion. If reaching the sink requires the attacker to already hold a capability equal to or stronger than what the sink grants — write access to a directory documented as holding executable hooks, MITM position on a connection the finding claims to let them influence — the finding is circular. The attack path's first step already arrives at its last. Write "precondition subsumes conclusion" and move to the next sink.
 
+### Security-decision omission checks
+
+For authentication, authorization, session validation, CSRF, rate-limit or
+lockout, and credential-validation code already under review, identify every
+input whose presence controls whether a security check runs: cookies, headers,
+tokens, request fields, credentials, and equivalent optional values. For each
+one, inspect the absent, null, and empty-value branches. Ask: **if this input
+is absent, null, or empty, does the control fail closed, or is the protected
+operation still reachable?**
+
+Report a candidate when omitting the input skips its security check while the
+protected operation remains reachable without an equivalent guard. When two
+inputs participate in the same decision, also test whether omitting one causes
+the other to be accepted without its normal validation. Record both the
+conditional check and the protected operation in the trace and validation.
+
+An explicit deny, error, redirect-to-login, or equivalent rejection branch for
+the missing value is fail-closed: rule it out and cite the branch. Keep the
+existing threat-model discipline unchanged: dev-only paths, trusted-only entry
+points, and preconditions that already subsume the impact are not findings.
+This is a mandatory question for existing security-decision code, not a second
+whole-repository input inventory.
+
 ### Step 3: Validate
 
 Write a reproduction script and run it. The script demonstrates that the sink does what you traced — hostile input in, dangerous behaviour out. Into the finding's `validation` field, paste the script verbatim — its full contents, not a description of it — followed by the output of running it. A `validation` that shows output but not the script that produced it is useless: a later verify run, or an analyst, cannot tell what was executed or re-run it. Include enough to re-run: the language/runner, the exact input, the command line. If the reproduction is a shell session rather than a file, paste the commands and their output.
