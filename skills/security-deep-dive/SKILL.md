@@ -130,7 +130,7 @@ Even where the input is attacker-controlled, check whether the project has alrea
 
 Even where the input is attacker-controlled, check the precondition does not subsume the conclusion. If reaching the sink requires the attacker to already hold a capability equal to or stronger than what the sink grants — write access to a directory documented as holding executable hooks, MITM position on a connection the finding claims to let them influence — the finding is circular. The attack path's first step already arrives at its last. Write "precondition subsumes conclusion" and move to the next sink.
 
-### Security-decision omission checks
+### Step 2a: Security-decision omission checks
 
 For authentication, authorization, session validation, CSRF, rate-limit or
 lockout, and credential-validation code already under review, identify every

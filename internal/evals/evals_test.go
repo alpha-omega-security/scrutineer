@@ -43,13 +43,25 @@ func TestAuthOmissionScenario(t *testing.T) {
 		t.Fatalf("assertions = %+v, want one positive and one negative", sc)
 	}
 	positive := sc.ShouldFind[0]
-	if !positive.Required || positive.CWE != "CWE-306" || positive.Path != "app.py" || !slices.Equal(positive.Evidence, []string{"session_cookie", "serve_account_data"}) {
+	if !positive.Required || positive.CWE != "CWE-306" || positive.Path != "app.py" || !hasEvidenceTerms(positive.Evidence, "session_cookie", "serve_account_data") {
 		t.Errorf("positive assertion = %+v", positive)
 	}
 	negative := sc.ShouldNotFind[0]
-	if negative.CWE != "CWE-306" || negative.Path != "app.py" || !slices.Equal(negative.Evidence, []string{"safe_account", "abort(401)"}) {
+	if negative.CWE != "CWE-306" || negative.Path != "app.py" || !hasEvidenceTerms(negative.Evidence, "safe_account", "abort(401)") {
 		t.Errorf("negative assertion = %+v", negative)
 	}
+}
+
+func hasEvidenceTerms(evidence []string, terms ...string) bool {
+	if len(evidence) != len(terms) {
+		return false
+	}
+	for _, term := range terms {
+		if !slices.Contains(evidence, term) {
+			return false
+		}
+	}
+	return true
 }
 
 func TestLoadScenarioDefaultsRequiredButAllowsOptional(t *testing.T) {
