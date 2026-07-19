@@ -591,9 +591,10 @@ func (w *Worker) wrap(h handler) func(context.Context, []byte) error {
 // so a scan never appears to have started without a corresponding timeline
 // entry.
 func (w *Worker) startScan(scan *db.Scan) error {
+	now := time.Now()
 	scan.Status = db.ScanRunning
 	scan.StatusPriority = db.StatusPriorityFor(db.ScanRunning)
-	scan.StartedAt = new(time.Now())
+	scan.StartedAt = &now
 	scan.Log = ""
 	scan.Error = ""
 	if br, ok := w.Runner.(BackendReporter); ok {

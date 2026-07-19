@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"testing"
+	"time"
 
 	"scrutineer/internal/db"
 	"scrutineer/internal/queue"
@@ -128,6 +129,46 @@ func TestWorkerRollsBackRunningStateWhenAuditEventWriteFails(t *testing.T) {
 	}
 	if events != 0 {
 		t.Errorf("event count = %d, want 0 after rollback", events)
+	}
+}
+
+func TestWorkerRollsBackTerminalStateWhenAuditEventWriteFails(t *testing.T) {
+	w, skill, repoID := newResumeTestWorker(t, &recordingRunner{})
+	scan := db.Scan{RepositoryID: repoID, Kind: JobSkill, Status: db.ScanQueued, SkillID: &skill.ID, SkillName: skill.Name}
+	if err := w.DB.Create(&scan).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := w.startScan(&scan); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.DB.Callback().Create().Before("gorm:create").Register("test:fail_terminal_audit_event", func(tx *gorm.DB) {
+		if tx.Statement.Schema != nil && tx.Statement.Schema.Name == "AuditEvent" {
+			if err := tx.AddError(errors.New("terminal audit event write failed")); err == nil {
+				panic("AddError returned nil")
+			}
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	err := w.finalizeScan(context.Background(), &scan, "", errors.New("runner failed"), time.Minute, func(Event) {}, func() {})
+	if err == nil {
+		t.Fatal("finalizeScan succeeded despite terminal audit event write failure")
+	}
+
+	var got db.Scan
+	if err := w.DB.First(&got, scan.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != db.ScanRunning {
+		t.Errorf("status = %q, want running after rollback", got.Status)
+	}
+	var events []db.AuditEvent
+	if err := w.DB.Where("subject_type = ? AND subject_id = ?", db.AuditSubjectScan, scan.ID).Find(&events).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(events) != 1 || events[0].Kind != db.AuditEventScanStarted {
+		t.Errorf("events = %#v, want only scan.started", events)
 	}
 }
 
