@@ -92,6 +92,9 @@ func assertionMatchesFinding(a Assertion, f Finding) bool {
 	if a.Path != "" && !findingHasPath(f, a.Path) {
 		return false
 	}
+	if a.Location != "" && !findingHasLocation(f, a.Location) {
+		return false
+	}
 	if !findingHasEvidence(f, a.Evidence) {
 		return false
 	}
@@ -124,6 +127,22 @@ func findingHasPath(f Finding, want string) bool {
 		}
 	}
 	return false
+}
+
+func findingHasLocation(f Finding, want string) bool {
+	want = normalizeLocation(want)
+	for _, got := range append([]string{f.Location}, f.Locations...) {
+		if normalizeLocation(got) == want {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeLocation(loc string) string {
+	loc = strings.TrimSpace(strings.Split(loc, "\n")[0])
+	loc = strings.ReplaceAll(loc, "\\", "/")
+	return strings.TrimPrefix(loc, "./")
 }
 
 func containsFold(haystack, needle string) bool {

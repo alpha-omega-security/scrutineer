@@ -14,6 +14,7 @@ should_not_find:
   - finding: mass assignment
     cwe: CWE-915
     path: app.py
+    location: app.py:42
     evidence_contains:
       - update_profile
       - account.update(editable)
