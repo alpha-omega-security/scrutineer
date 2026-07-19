@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"scrutineer/internal/db"
+
+	"gorm.io/gorm"
 )
 
 // The browser-form handlers write finding mutations with
@@ -31,15 +33,20 @@ func (s *Server) findingFields(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	for _, field := range analystFields {
-		value, ok := r.Form[field]
-		if !ok {
-			continue
+	if err := s.DB.Transaction(func(tx *gorm.DB) error {
+		for _, field := range analystFields {
+			value, ok := r.Form[field]
+			if !ok {
+				continue
+			}
+			if err := db.WriteFindingField(tx, f.ID, field, strings.TrimSpace(value[0]), db.SourceAnalyst, ""); err != nil {
+				return err
+			}
 		}
-		if err := db.WriteFindingField(s.DB, f.ID, field, strings.TrimSpace(value[0]), db.SourceAnalyst, ""); err != nil {
-			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
-			return
-		}
+		return nil
+	}); err != nil {
+		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+		return
 	}
 	s.redirect(w, r, fmt.Sprintf("/findings/%d", f.ID))
 }
