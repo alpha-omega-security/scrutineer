@@ -325,7 +325,7 @@ func buildSchemaRepairPrompt(skill *db.Skill, detail, report string) string {
 Validation errors:
 %s
 
-Rewrite only ./%s with JSON that validates against ./%s. Preserve the facts from the previous run, do not restart the analysis, and do not write prose outside the JSON file.
+Rewrite only ./%s with JSON that satisfies every validation requirement above: it must validate against ./%s and comply with any skill-specific report rules. Preserve the facts from the previous run, do not restart the analysis, and do not write prose outside the JSON file.
 
 Previous invalid ./%s:
 %s`, skill.Name, outputFile, skillSchemaFile, detail, outputFile, skillSchemaFile, outputFile, truncateSchemaRepairReport(report))

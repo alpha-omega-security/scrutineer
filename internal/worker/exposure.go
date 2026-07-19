@@ -228,7 +228,7 @@ func (w *Worker) recordExposureResult(skill *db.Skill, scan *db.Scan, depID uint
 func (w *Worker) parseExposureOutput(skill *db.Skill, scan *db.Scan, depID uint, report string, emit func(Event)) error {
 	if skill.SchemaJSON != "" {
 		if detail := ValidateSkillReport(skill.Name, skill.SchemaJSON, report); detail != "" {
-			emit(Event{Kind: KindError, Text: "schema: report.json does not validate against schema.json:\n" + detail})
+			emit(reportValidationEvent(skill, detail))
 			if w.SchemaStrict {
 				return &SchemaValidationError{Skill: skill.Name, Detail: detail}
 			}

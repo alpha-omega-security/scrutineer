@@ -117,8 +117,8 @@ func TestRepairSchemaReportRepairsSemanticFailure(t *testing.T) {
 	if len(runner.jobs) != 1 {
 		t.Fatalf("RunSkill calls = %d, want 1", len(runner.jobs))
 	}
-	if prompt := runner.jobs[0].ResumePrompt; !strings.Contains(prompt, "inventory sink S1 has no disposition") {
-		t.Fatalf("repair prompt missing semantic failure: %q", prompt)
+	if prompt := runner.jobs[0].ResumePrompt; !strings.Contains(prompt, "inventory sink S1 has no disposition") || !strings.Contains(prompt, "comply with any skill-specific report rules") {
+		t.Fatalf("repair prompt does not require semantic repair: %q", prompt)
 	}
 	for _, event := range events {
 		if strings.Contains(event.Text, "still does not validate") {

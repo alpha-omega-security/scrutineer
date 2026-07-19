@@ -3,6 +3,7 @@ package worker
 import (
 	"log/slog"
 	"os"
+	"strings"
 	"testing"
 
 	"scrutineer/internal/db"
@@ -105,6 +106,24 @@ func TestParseExposureOutput_invalidJSON(t *testing.T) {
 	if err := w.parseExposureOutput(&skill, &scan, dep.ID, "not-json", func(Event) {}); err == nil {
 		t.Fatal("expected error on invalid JSON")
 	}
+}
+
+func TestParseExposureOutputReportsGenericValidationFailure(t *testing.T) {
+	w := newExposureWorker(t)
+	scan, skill, dep := seedExposureFixtures(t, w)
+	skill.SchemaJSON = `{"type":"object","required":["status"]}`
+	var events []Event
+	if err := w.parseExposureOutput(&skill, &scan, dep.ID, `{}`, func(event Event) {
+		events = append(events, event)
+	}); err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	for _, event := range events {
+		if strings.Contains(event.Text, "validation: report.json does not pass Scrutineer report validation") {
+			return
+		}
+	}
+	t.Fatalf("validation event missing from %#v", events)
 }
 
 func TestParseExposureOutput_upsertsExistingRow(t *testing.T) {
