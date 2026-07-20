@@ -2,10 +2,12 @@ package web
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/robfig/cron/v3"
+	"gorm.io/gorm"
 
 	"scrutineer/internal/db"
 )
@@ -137,10 +139,17 @@ func (s *Server) runScheduledScan(ctx context.Context, repo db.Repository) {
 		return
 	}
 	var last db.Scan
-	found := s.DB.Select("id, `commit`").
+	err = s.DB.Select("id, `commit`").
 		Where("repository_id = ? AND status = ? AND `commit` <> ''", repo.ID, db.ScanDone).
-		Order("id desc").First(&last).Error == nil
-	if found && last.Commit == head {
+		Order("id desc").First(&last).Error
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		// Only a confirmed empty history may fall through to the rescan:
+		// treating a lock or connection failure as "never scanned" would
+		// fire a full rescan off a transient error.
+		s.Log.Error("scheduler: look up last completed scan", "repo", repo.Name, "err", err)
+		return
+	}
+	if err == nil && last.Commit == head {
 		s.recordScheduledSkip(repo, fmt.Sprintf("no new commits since %.12s", head))
 		return
 	}

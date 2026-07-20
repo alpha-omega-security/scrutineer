@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"gorm.io/gorm"
+
 	"scrutineer/internal/db"
 )
 
@@ -417,5 +419,55 @@ func TestScheduleTick_skipsWhenDeepDiveMissing(t *testing.T) {
 	skip := lastSkip(t, s, repo.ID)
 	if !strings.Contains(skip.Error, "enqueue failed") {
 		t.Fatalf("skip reason = %q, want it to mention the enqueue failure", skip.Error)
+	}
+}
+
+func TestScheduleTick_deepDiveMissingQueuesNoAuxiliaries(t *testing.T) {
+	s, _, done := scheduleTestServer(t, "def456", nil)
+	defer done()
+	s.DB.Create(&db.Skill{Name: "semgrep", Description: "d", Body: "b", OutputFile: "report.json", Version: 1, Active: true, Source: "ui"})
+	repo := scheduledRepo(t, s, "daily", time.Now().Add(-time.Minute))
+
+	s.scheduleTick(context.Background(), time.Now())
+
+	skip := lastSkip(t, s, repo.ID)
+	if !strings.Contains(skip.Error, "enqueue failed") {
+		t.Fatalf("skip reason = %q, want it to mention the enqueue failure", skip.Error)
+	}
+	var queued int64
+	s.DB.Model(&db.Scan{}).Where("repository_id = ? AND status = ?", repo.ID, db.ScanQueued).Count(&queued)
+	if queued != 0 {
+		t.Fatalf("queued %d auxiliary scan(s) despite the missing deep-dive, want 0 (group must be all-or-nothing)", queued)
+	}
+}
+
+func TestScheduleTick_baselineLookupErrorAbortsRun(t *testing.T) {
+	s, _, done := scheduleTestServer(t, "def456", nil)
+	defer done()
+	s.DB.Create(&db.Skill{Name: deepDiveSkillName, Description: "d", Body: "b", OutputFile: "report.json", Version: 1, Active: true, Source: "ui"})
+	repo := scheduledRepo(t, s, "daily", time.Now().Add(-time.Minute))
+
+	// Fail only the baseline lookup (the sole query selecting the commit
+	// column) to simulate a transient database error mid-run.
+	const name = "test:fail_baseline_lookup"
+	if err := s.DB.Callback().Query().Before("gorm:query").Register(name, func(d *gorm.DB) {
+		if strings.Contains(strings.Join(d.Statement.Selects, ","), "`commit`") {
+			_ = d.AddError(errors.New("injected lookup failure"))
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := s.DB.Callback().Query().Remove(name); err != nil {
+			t.Fatal(err)
+		}
+	}()
+
+	s.scheduleTick(context.Background(), time.Now())
+
+	var scans int64
+	s.DB.Model(&db.Scan{}).Where("repository_id = ?", repo.ID).Count(&scans)
+	if scans != 0 {
+		t.Fatalf("wrote %d scan row(s) after a baseline lookup failure, want 0 (no rescan, no skip)", scans)
 	}
 }
