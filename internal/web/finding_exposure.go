@@ -3,6 +3,7 @@ package web
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	"scrutineer/internal/db"
 )
@@ -48,13 +49,15 @@ func (s *Server) findingExposureRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	model := r.FormValue("model")
+	var queued, skipped, errored int
 	for i := range deps {
 		dep := deps[i]
 		if dep.RepositoryURL == "" {
 			if err := s.recordSkippedExposure(f.ID, dep.ID); err != nil {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
+				errored++
+				continue
 			}
+			skipped++
 			continue
 		}
 		if _, err := s.enqueueSkillWith(r.Context(), scan.RepositoryID, skill.ID, ScanOpts{
@@ -62,11 +65,31 @@ func (s *Server) findingExposureRun(w http.ResponseWriter, r *http.Request) {
 			FindingID:   &f.ID,
 			DependentID: &dep.ID,
 		}); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+			errored++
+			continue
 		}
+		queued++
 	}
+	setFlash(w, exposureRunToast(queued, skipped, errored))
 	s.redirect(w, r, fmt.Sprintf("/findings/%d", f.ID))
+}
+
+func exposureRunToast(queued, skipped, errored int) Flash {
+	parts := []string{fmt.Sprintf("%d queued", queued)}
+	if skipped > 0 {
+		parts = append(parts, fmt.Sprintf("%d skipped (no repository URL)", skipped))
+	}
+	if errored > 0 {
+		parts = append(parts, fmt.Sprintf("%d errored", errored))
+	}
+	category := successKey
+	switch {
+	case errored > 0:
+		category = errorKey
+	case queued == 0:
+		category = warningKey
+	}
+	return Flash{Category: category, Title: "Exposure: " + strings.Join(parts, ", ")}
 }
 
 // recordSkippedExposure writes an under_investigation row for a
