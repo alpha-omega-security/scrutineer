@@ -80,7 +80,7 @@
         {{range index $tm "trust_boundaries"}}
           <tr>
             <td class="font-medium whitespace-normal">{{index . "component"}}</td>
-            <td class="whitespace-normal text-sm">{{index . "boundary"}}</td>
+            <td class="whitespace-normal text-sm">{{with index . "boundary"}}{{.}}{{end}}</td>
             <td class="whitespace-normal text-muted-foreground text-sm">{{index . "reachability_precondition"}}</td>
             <td class="text-xs text-muted-foreground">{{template "tm-prov" .}}</td>
           </tr>
@@ -258,11 +258,12 @@
     </summary>
     <section class="pb-4">
       <table class="table w-full">
-        <thead><tr><th class="w-16">ID</th><th>Location</th><th>Class</th><th>Primitive</th><th>Consumes</th></tr></thead>
+        <thead><tr><th class="w-16">ID</th><th>Boundary</th><th>Location</th><th>Class</th><th>Primitive</th><th>Consumes</th></tr></thead>
         <tbody>
         {{range index $tm "inventory"}}
           <tr>
             <td><code>{{index . "id"}}</code></td>
+            <td class="whitespace-normal text-sm">{{index . "boundary"}}</td>
             {{$loc := index . "location"}}
             <td class="whitespace-normal">{{template "loc-link" (dict "RepoID" $repoID "Commit" $commit "Location" $loc)}}</td>
             <td class="whitespace-normal"><span class="badge-outline">{{index . "class"}}</span></td>
@@ -275,6 +276,45 @@
       {{if index $tm "inventory_notes"}}
         <pre class="log mt-4">{{index $tm "inventory_notes"}}</pre>
       {{end}}
+    </section>
+  </details>
+  {{end}}
+
+  {{if index $tm "method"}}
+  {{$method := index $tm "method"}}
+  <details class="group border-b">
+    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
+        Inventory method
+        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
+      </h3>
+    </summary>
+    <section class="pb-4">
+      <dl class="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-2 text-sm mb-4">
+        <dt class="text-muted-foreground">Scope</dt><dd>{{index $method "scope"}}</dd>
+        <dt class="text-muted-foreground">Inventory</dt><dd>{{index $method "inventory_count"}} entries</dd>
+        <dt class="text-muted-foreground">Ruled out</dt><dd>{{index $method "ruled_out_count"}} entries</dd>
+        <dt class="text-muted-foreground">Unresolved</dt><dd>{{index $method "unresolved_count"}} entries</dd>
+      </dl>
+      {{if index $method "grep_patterns"}}
+      <table class="table w-full">
+        <thead><tr><th>Class</th><th>Primitive</th><th>Command</th><th>Hits</th><th>Inventory sinks</th><th>Excluded hits</th></tr></thead>
+        <tbody>
+        {{range index $method "grep_patterns"}}
+          <tr>
+            <td class="whitespace-normal"><span class="badge-outline">{{index . "class"}}</span></td>
+            <td class="whitespace-normal"><code>{{index . "primitive"}}</code></td>
+            <td class="whitespace-normal text-xs"><code>{{index . "command"}}</code></td>
+            <td>{{index . "hit_count"}}</td>
+            <td class="whitespace-normal text-sm">{{range $i, $sink := index . "inventory_sinks"}}{{if $i}}, {{end}}<code>{{$sink}}</code>{{end}}</td>
+            <td class="whitespace-normal text-sm">{{range $i, $hit := index . "excluded_hits"}}{{if $i}}; {{end}}<code>{{index $hit "location"}}</code> ({{index $hit "category"}}: {{index $hit "reason"}}){{end}}</td>
+          </tr>
+        {{end}}
+        </tbody>
+      </table>
+      {{end}}
+      {{if index $method "notes"}}<pre class="log mt-4">{{range index $method "notes"}}{{.}}
+{{end}}</pre>{{end}}
     </section>
   </details>
   {{end}}

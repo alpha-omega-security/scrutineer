@@ -11,7 +11,8 @@ import (
 
 const deepDiveReport = `{
   "boundaries":[{"actor":"library caller","trusted":"yes","controls":"all parameters","source":"README.md:1"}],
-  "inventory":[{"id":"S1","location":"lib/x.rb:7","class":"Command execution","consumes":"argv"}]
+  "method":{"scope":"./src","grep_patterns":[{"class":"Memory safety","primitive":"realloc","command":"grep -rn realloc ./src","hit_count":1,"inventory_sinks":["S1"],"excluded_hits":[]}],"inventory_count":1,"ruled_out_count":0,"unresolved_count":0},
+  "inventory":[{"id":"S1","location":"lib/x.rb:7","class":"Command execution","boundary":"library caller","consumes":"argv"}]
 }`
 
 const threatModelReport = `{
@@ -75,13 +76,31 @@ func TestRepoShow_threatModelTab_deepDiveOnly(t *testing.T) {
 		SkillName: deepDiveSkillName, Commit: "deadbee", Report: deepDiveReport})
 
 	body := getRepoPage(t, s, repo.ID)
-	for _, want := range []string{"library caller", "all parameters", "lib/x.rb:7"} {
+	for _, want := range []string{"library caller", "all parameters", "lib/x.rb:7", "<th>Boundary</th>", "Inventory method", "grep -rn realloc ./src"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("deep-dive-only repo page missing %q", want)
 		}
 	}
 	if strings.Contains(body, "Entry-point trust table") {
 		t.Errorf("deep-dive-only repo page rendered threat-model-skill section")
+	}
+}
+
+func TestRepoShow_threatModelTab_legacyInventoryOmitsBoundary(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/legacy", Name: "legacy"}
+	s.DB.Create(&repo)
+	legacyReport := strings.Replace(deepDiveReport, `,"boundary":"library caller"`, "", 1)
+	s.DB.Create(&db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone,
+		SkillName: deepDiveSkillName, Commit: "deadbee", Report: legacyReport})
+
+	body := getRepoPage(t, s, repo.ID)
+	if strings.Contains(body, "no value") {
+		t.Errorf("legacy inventory rendered missing boundary marker: %s", body)
+	}
+	if !strings.Contains(body, "lib/x.rb:7") {
+		t.Errorf("legacy inventory row missing location: %s", body)
 	}
 }
 

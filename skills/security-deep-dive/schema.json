@@ -11,6 +11,7 @@
     "date",
     "languages",
     "boundaries",
+    "method",
     "inventory",
     "findings",
     "ruled_out"
@@ -34,6 +35,7 @@
       "propertyNames": { "$ref": "#/$defs/sink_class" },
       "additionalProperties": { "type": "array", "items": { "type": "string" } }
     },
+    "method": { "$ref": "#/$defs/inventory_method" },
     "inventory":        { "type": "array", "items": { "$ref": "#/$defs/sink" } },
     "inventory_notes":  { "$ref": "#/$defs/markdown" },
 
@@ -66,7 +68,8 @@
         "Path handling",
         "Archive extraction",
         "Deserialisation",
-        "Template",
+        "Parsing / format readers",
+        "Template or interpolation",
         "Network",
         "Validation",
         "Cryptography",
@@ -74,8 +77,10 @@
         "Shared mutable state",
         "Concurrency",
         "Resource consumption",
-        "Reflection",
+        "Reflection or metaprogramming",
         "Round-trip integrity",
+        "Authorization and access control",
+        "Temporary files",
         "Agentic"
       ]
     },
@@ -107,14 +112,54 @@
 
     "sink": {
       "type": "object",
-      "required": ["id", "location", "class", "consumes"],
+      "required": ["id", "location", "class", "boundary", "consumes"],
       "additionalProperties": false,
       "properties": {
         "id":        { "$ref": "#/$defs/sink_id" },
         "location":  { "type": "string" },
         "class":     { "$ref": "#/$defs/sink_class" },
+        "boundary":  { "type": "string", "minLength": 1, "description": "Trust-boundary label from the report's boundaries array." },
         "primitive": { "type": "string" },
         "consumes":  { "type": "string" }
+      }
+    },
+
+    "inventory_method": {
+      "type": "object",
+      "required": ["scope", "grep_patterns", "inventory_count", "ruled_out_count", "unresolved_count"],
+      "additionalProperties": false,
+      "properties": {
+        "scope": { "type": "string", "minLength": 1, "description": "Source-tree scope searched for this inventory." },
+        "grep_patterns": { "type": "array", "items": { "$ref": "#/$defs/grep_pattern" } },
+        "inventory_count": { "type": "integer", "minimum": 0 },
+        "ruled_out_count": { "type": "integer", "minimum": 0 },
+        "unresolved_count": { "type": "integer", "minimum": 0 },
+        "notes": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+
+    "grep_pattern": {
+      "type": "object",
+      "required": ["class", "primitive", "command", "hit_count", "inventory_sinks", "excluded_hits"],
+      "additionalProperties": false,
+      "properties": {
+        "class": { "$ref": "#/$defs/sink_class" },
+        "primitive": { "type": "string", "minLength": 1 },
+        "command": { "type": "string", "minLength": 1 },
+        "hit_count": { "type": "integer", "minimum": 0, "description": "Number of unique source-hit locations returned by command. A single source hit is counted once even when it produces multiple boundary-specific inventory sink IDs." },
+        "inventory_sinks": { "type": "array", "items": { "$ref": "#/$defs/sink_id" }, "uniqueItems": true, "description": "All inventory IDs produced by this command. Multiple IDs may refer to one raw source hit when its inventory entries share a location but have different boundary labels; map each ID to the hit through inventory[].location." },
+        "excluded_hits": { "type": "array", "items": { "$ref": "#/$defs/excluded_hit" } }
+      }
+    },
+
+    "excluded_hit": {
+      "type": "object",
+      "required": ["location", "category", "reason"],
+      "additionalProperties": false,
+      "properties": {
+        "location": { "type": "string", "minLength": 1 },
+        "category": { "type": "string", "enum": ["comment", "test", "vendored", "generated", "other"] },
+        "reason": { "type": "string", "minLength": 1 }
       }
     },
 
