@@ -49,7 +49,7 @@ paths:
           in: query
           schema:
             type: string
-            enum: [queued, running, done, failed]
+            enum: [queued, running, paused, done, failed, skipped, cancelled]
         - name: skill
           in: query
           schema: { type: string }
@@ -961,7 +961,7 @@ paths:
           schema: { type: string, enum: [jsonl] }
         - name: status
           in: query
-          schema: { type: string, enum: [queued, running, done, failed] }
+          schema: { type: string, enum: [queued, running, paused, done, failed, skipped, cancelled] }
         - name: skill
           in: query
           schema: { type: string }
@@ -1145,7 +1145,7 @@ components:
           properties:
             id:          { type: integer, format: int64 }
             kind:        { type: string }
-            status:      { type: string, enum: [queued, running, paused, done, failed, cancelled] }
+            status:      { type: string, enum: [queued, running, paused, done, failed, skipped, cancelled] }
             skill_name:  { type: string }
             commit:      { type: string }
             created_at:  { type: string, format: date-time, nullable: true }
@@ -1169,7 +1169,7 @@ components:
         id:            { type: integer, format: int64 }
         repository_id: { type: integer, format: int64 }
         kind:          { type: string }
-        status:        { type: string, enum: [queued, running, paused, done, failed, cancelled] }
+        status:        { type: string, enum: [queued, running, paused, done, failed, skipped, cancelled] }
         model:         { type: string }
         commit:        { type: string }
         rescan_mode:

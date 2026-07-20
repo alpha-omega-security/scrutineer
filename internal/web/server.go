@@ -107,6 +107,16 @@ type Server struct {
 	// the network lookup, mirroring resolvePURL and listBranches.
 	fetchOrgRepos func(ctx context.Context, org string) ([]OrgRepo, error)
 
+	// resolveRemoteHead returns the commit SHA a repository's HEAD points
+	// at, for the scheduler's new-commit check. Field rather than a direct
+	// worker call so tests can stub the network lookup.
+	resolveRemoteHead func(ctx context.Context, repo db.Repository) (string, error)
+
+	// syncUpstream force-syncs a staging repository from its configured
+	// upstream before the scheduler's new-commit check. Field rather than
+	// a direct worker call so tests can stub the git traffic.
+	syncUpstream func(ctx context.Context, repoURL, upstreamURL string) error
+
 	// prefetchEcosystems warms the per-repository ecosyste.ms cache
 	// when a new repo is added, in parallel with the triage enqueue. Field
 	// rather than a direct call so tests can stub the network fan-out,
@@ -181,25 +191,62 @@ func displaySeverity(s string) string {
 	return s
 }
 
+// tmplSince renders a timestamp as "<duration> ago", accepting a time.Time
+// or *time.Time and yielding "" for nil/zero values.
+func tmplSince(v any) string {
+	var t time.Time
+	switch x := v.(type) {
+	case time.Time:
+		t = x
+	case *time.Time:
+		if x == nil {
+			return ""
+		}
+		t = *x
+	default:
+		return ""
+	}
+	if t.IsZero() {
+		return ""
+	}
+	return humanDuration(time.Since(t)) + " ago"
+}
+
+// tmplBytes renders a byte count with a binary unit suffix (B, KB, MB, ...).
+func tmplBytes(b int64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
+}
+
+// defaultResolveRemoteHead is the production resolveRemoteHead: it resolves a
+// repository's remote HEAD, using the local path for file-backed repos.
+func defaultResolveRemoteHead(ctx context.Context, repo db.Repository) (string, error) {
+	url := repo.URL
+	if repo.IsLocal() {
+		url = repo.LocalPath()
+	}
+	return worker.ResolveRemoteHead(ctx, url)
+}
+
 func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *worker.Worker) (*Server, error) {
 	funcs := template.FuncMap{
-		"since": func(v any) string {
-			var t time.Time
-			switch x := v.(type) {
-			case time.Time:
-				t = x
-			case *time.Time:
-				if x == nil {
-					return ""
-				}
-				t = *x
-			default:
+		"since": tmplSince,
+		"until": func(t *time.Time) string {
+			if t == nil || t.IsZero() {
 				return ""
 			}
-			if t.IsZero() {
-				return ""
+			if d := time.Until(*t); d > 0 {
+				return "in " + humanDuration(d)
 			}
-			return humanDuration(time.Since(t)) + " ago"
+			return "due"
 		},
 		"dur":      humanDuration,
 		"usd":      formatUSD,
@@ -279,18 +326,7 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *work
 			}
 			return s
 		},
-		"bytes": func(b int64) string {
-			const unit = 1024
-			if b < unit {
-				return fmt.Sprintf("%d B", b)
-			}
-			div, exp := int64(unit), 0
-			for n := b / unit; n >= unit; n /= unit {
-				div *= unit
-				exp++
-			}
-			return fmt.Sprintf("%.1f %cB", float64(b)/float64(div), "KMGTPE"[exp])
-		},
+		"bytes": tmplBytes,
 	}
 	t, err := template.New("").Funcs(funcs).ParseFS(tmplFS, "templates/*.html")
 	if err != nil {
@@ -301,7 +337,9 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *work
 	}
 	s := &Server{DB: gdb, Queue: q, Log: log, Broker: broker, Worker: w, tmpl: t,
 		resolvePURL: resolvePURLRepo, listBranches: worker.ListRemoteBranches,
-		fetchOrgRepos: fetchGitHubOrgRepos}
+		fetchOrgRepos:     fetchGitHubOrgRepos,
+		resolveRemoteHead: defaultResolveRemoteHead,
+		syncUpstream:      w.SyncUpstream}
 	s.prefetchEcosystems = s.ecosystemsPrefetch
 	if w != nil {
 		w.OnFindingCreated = s.autoEnqueueRevalidate
@@ -345,6 +383,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /repositories/{id}/validate-fix", s.validateFix)
 	mux.HandleFunc("POST /repositories/{id}/delete", s.repoDelete)
 	mux.HandleFunc("POST /repositories/{id}/disclosure-channel", s.repoDisclosureChannel)
+	mux.HandleFunc("POST /repositories/{id}/schedule", s.repoScheduleUpdate)
 	mux.HandleFunc("POST /repositories/{id}/threat-model", s.repoThreatModelSave)
 	mux.HandleFunc("POST /repositories/{id}/threat-model/run", s.repoThreatModelRun)
 	mux.HandleFunc("POST /repositories/{id}/threat-model/clear", s.repoThreatModelClear)
@@ -415,6 +454,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /settings/concurrency", s.settingsUpdateConcurrency)
 	mux.HandleFunc("POST /settings/runner/restart", s.settingsRestartRunner)
 	mux.HandleFunc("POST /settings/max-turns", s.settingsUpdateMaxTurns)
+	mux.HandleFunc("POST /settings/scan-schedule", s.settingsUpdateScanSchedule)
 
 	// API routes get bearer-auth middleware and skip the browser CSRF checks;
 	// skills call these from inside a scan workspace, not from a browser.
@@ -1968,6 +2008,9 @@ type repoShowView struct {
 	ActiveScans     int
 	PausedScans     int
 	TotalCost       float64
+	// GlobalScanSchedule is the settings-level default schedule, shown on
+	// the repo page so "inherit" spells out what it inherits.
+	GlobalScanSchedule string
 }
 
 func (s *Server) loadRepoShowView(
@@ -1984,26 +2027,28 @@ func (s *Server) loadRepoShowView(
 	// all" button; pausedScans drives "Resume all". Both are counted over every
 	// scan, not the latest-per-skill set.
 	activeScans, pausedScans := s.repoScanActionCounts(repo.ID)
+	globalSchedule, _ := db.GetSetting(s.DB, db.SettingScanSchedule)
 	return repoShowView{
-		Repo:            repo,
-		Scans:           scans,
-		Latest:          latest,
-		Findings:        findings,
-		Expected:        loadRepoExpectedView(s.DB, repo.ID, latest, findings),
-		Dependencies:    deps,
-		Inventory:       s.loadRepoInventoryView(repo.ID, deps.Groups),
-		Subprojects:     s.loadRepoSubprojectView(repo.ID),
-		Maintainers:     s.repoMaintainers(repo.ID),
-		Skills:          s.activeRepoSkills(),
-		Workbench:       loadWorkbench(s.DB, &repo, workbenchSeed(tmScan)),
-		ThreatModel:     scanThreatModelReport(tmScan),
-		Category:        category,
-		TMCommit:        scanCommit(tmScan),
-		NewFindingCount: int(repoNewFindingsCount(s.DB, repo.ID, category)),
-		FailedScans:     countFailedScans(scans),
-		ActiveScans:     int(activeScans),
-		PausedScans:     int(pausedScans),
-		TotalCost:       repoTotalCost(s.DB, repo.ID),
+		Repo:               repo,
+		Scans:              scans,
+		Latest:             latest,
+		Findings:           findings,
+		Expected:           loadRepoExpectedView(s.DB, repo.ID, latest, findings),
+		Dependencies:       deps,
+		Inventory:          s.loadRepoInventoryView(repo.ID, deps.Groups),
+		Subprojects:        s.loadRepoSubprojectView(repo.ID),
+		Maintainers:        s.repoMaintainers(repo.ID),
+		Skills:             s.activeRepoSkills(),
+		Workbench:          loadWorkbench(s.DB, &repo, workbenchSeed(tmScan)),
+		ThreatModel:        scanThreatModelReport(tmScan),
+		Category:           category,
+		TMCommit:           scanCommit(tmScan),
+		NewFindingCount:    int(repoNewFindingsCount(s.DB, repo.ID, category)),
+		FailedScans:        countFailedScans(scans),
+		ActiveScans:        int(activeScans),
+		PausedScans:        int(pausedScans),
+		TotalCost:          repoTotalCost(s.DB, repo.ID),
+		GlobalScanSchedule: globalSchedule,
 	}
 }
 
@@ -2027,30 +2072,31 @@ func (v repoShowView) renderData() map[string]any {
 		"PausedScans":           v.PausedScans,
 		"TotalCost":             v.TotalCost,
 		// Cached on the row, refreshed by the worker after each scan (#126).
-		"DiskBytes":       v.Repo.DiskBytes,
-		"TMCommit":        v.TMCommit,
-		"DepsCommit":      v.Dependencies.Commit,
-		"Deps":            v.Dependencies.Groups,
-		"DepsTotal":       v.Dependencies.Total,
-		"Pkgs":            v.Inventory.Packages,
-		"Dependents":      v.Inventory.Dependents,
-		"DependentsTotal": v.Inventory.DependentsTotal,
-		"Advisories":      v.Inventory.Advisories,
-		"AdvisoriesTotal": v.Inventory.AdvisoriesTotal,
-		"Maintainers":     v.Maintainers,
-		"ThreatModel":     v.ThreatModel,
-		"KnownURLs":       v.Inventory.KnownURLs,
-		"KnownPURLs":      v.Inventory.KnownPURLs,
-		"ShowAllDeps":     v.Dependencies.ShowAll,
-		"HiddenDeps":      v.Dependencies.Hidden,
-		"Skills":          v.Skills,
-		"Subprojects":     v.Subprojects.Rows,
-		"SubScanCount":    v.Subprojects.ScanCount,
-		"Workbench":       v.Workbench,
-		"Category":        v.Category,
-		"Categories":      CWECategories(),
-		"Uncategorized":   UncategorizedCWE,
-		"TabRowCap":       int64(tabRowCap),
+		"DiskBytes":          v.Repo.DiskBytes,
+		"TMCommit":           v.TMCommit,
+		"DepsCommit":         v.Dependencies.Commit,
+		"Deps":               v.Dependencies.Groups,
+		"DepsTotal":          v.Dependencies.Total,
+		"Pkgs":               v.Inventory.Packages,
+		"Dependents":         v.Inventory.Dependents,
+		"DependentsTotal":    v.Inventory.DependentsTotal,
+		"Advisories":         v.Inventory.Advisories,
+		"AdvisoriesTotal":    v.Inventory.AdvisoriesTotal,
+		"Maintainers":        v.Maintainers,
+		"ThreatModel":        v.ThreatModel,
+		"KnownURLs":          v.Inventory.KnownURLs,
+		"KnownPURLs":         v.Inventory.KnownPURLs,
+		"ShowAllDeps":        v.Dependencies.ShowAll,
+		"HiddenDeps":         v.Dependencies.Hidden,
+		"Skills":             v.Skills,
+		"Subprojects":        v.Subprojects.Rows,
+		"SubScanCount":       v.Subprojects.ScanCount,
+		"Workbench":          v.Workbench,
+		"Category":           v.Category,
+		"Categories":         CWECategories(),
+		"Uncategorized":      UncategorizedCWE,
+		"TabRowCap":          int64(tabRowCap),
+		"GlobalScanSchedule": v.GlobalScanSchedule,
 	}
 }
 
@@ -2304,33 +2350,52 @@ func (s *Server) repoScan(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) repoDiffScan(w http.ResponseWriter, r *http.Request, repo db.Repository) {
+	queued, err := s.enqueueDiffRescanGroup(r.Context(), repo.ID,
+		r.FormValue("model"), strings.TrimSpace(r.FormValue("sub_path")))
+	if err != nil {
+		if errors.Is(err, errDeepDiveMissing) {
+			http.Error(w, err.Error(), http.StatusPreconditionFailed)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	setFlash(w, Flash{Category: successKey, Title: fmt.Sprintf("Diff rescan queued %d scan(s)", queued)})
+	s.redirect(w, r, fmt.Sprintf("/repositories/%d#rt3", repo.ID))
+}
+
+var errDeepDiveMissing = errors.New(deepDiveSkillName + " skill is not installed")
+
+// enqueueDiffRescanGroup enqueues the diff-rescan skills (recon,
+// threat-model, semgrep, deep-dive) as one scan group. Missing auxiliary
+// skills are tolerated; a missing deep-dive is errDeepDiveMissing, checked
+// before the first enqueue so the group is all-or-nothing. Shared by the
+// "Diff rescan" button and the scheduler.
+func (s *Server) enqueueDiffRescanGroup(ctx context.Context, repoID uint, model, subPath string) (int, error) {
+	var deepDive db.Skill
+	if err := s.DB.Where("name = ? AND active = ?", deepDiveSkillName, true).First(&deepDive).Error; err != nil {
+		return 0, errDeepDiveMissing
+	}
 	group := uuid.NewString()
-	model := r.FormValue("model")
-	subPath := strings.TrimSpace(r.FormValue("sub_path"))
-	names := []string{reconSkillName, threatModelSkillName, "semgrep", deepDiveSkillName}
 	queued := 0
-	for _, name := range names {
+	for _, name := range []string{reconSkillName, threatModelSkillName, "semgrep", deepDiveSkillName} {
 		var skill db.Skill
-		if err := s.DB.Where("name = ? AND active = ?", name, true).First(&skill).Error; err != nil {
-			if name == deepDiveSkillName {
-				http.Error(w, deepDiveSkillName+" skill is not installed", http.StatusPreconditionFailed)
-				return
-			}
+		if name == deepDiveSkillName {
+			skill = deepDive
+		} else if err := s.DB.Where("name = ? AND active = ?", name, true).First(&skill).Error; err != nil {
 			continue
 		}
-		if _, err := s.enqueueSkillWith(r.Context(), repo.ID, skill.ID, ScanOpts{
+		if _, err := s.enqueueSkillWith(ctx, repoID, skill.ID, ScanOpts{
 			Model:      model,
 			SubPath:    subPath,
 			RescanMode: db.ScanRescanModeDiff,
 			ScanGroup:  group,
 		}); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+			return queued, err
 		}
 		queued++
 	}
-	setFlash(w, Flash{Category: successKey, Title: fmt.Sprintf("Diff rescan queued %d scan(s)", queued)})
-	s.redirect(w, r, fmt.Sprintf("/repositories/%d#rt3", repo.ID))
+	return queued, nil
 }
 
 // repoScanAll is the bulk equivalent of the per-subproject "Scan" button: it
@@ -2511,6 +2576,43 @@ func (s *Server) repoDisclosureChannel(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	s.redirect(w, r, fmt.Sprintf("/repositories/%d", repo.ID))
+}
+
+// repoScheduleUpdate saves a repository's recurring-scan settings:
+// its schedule (empty = inherit the global default, "off" = disabled,
+// "daily"/"weekly"/cron otherwise) and optional upstream URL for staging
+// copies. NextScheduledScanAt resets to null so the next scheduler tick
+// recomputes it from the new schedule.
+func (s *Server) repoScheduleUpdate(w http.ResponseWriter, r *http.Request) {
+	repo, ok := loadByID[db.Repository](s, w, r)
+	if !ok {
+		return
+	}
+	schedule := strings.TrimSpace(r.FormValue("scan_schedule"))
+	if schedule == "custom" {
+		schedule = strings.TrimSpace(r.FormValue("scan_schedule_cron"))
+	}
+	if schedule != "" && schedule != ScheduleOff {
+		if _, err := ScheduleNext(schedule, time.Now()); err != nil {
+			http.Error(w, "invalid schedule: "+err.Error(), http.StatusUnprocessableEntity)
+			return
+		}
+	}
+	upstream := strings.TrimSpace(r.FormValue("upstream_url"))
+	if upstream != "" && !strings.HasPrefix(upstream, "https://") {
+		http.Error(w, "upstream URL must start with https://", http.StatusUnprocessableEntity)
+		return
+	}
+	if err := s.DB.Model(&db.Repository{}).Where("id = ?", repo.ID).Updates(map[string]any{
+		"scan_schedule":          schedule,
+		"upstream_url":           upstream,
+		"next_scheduled_scan_at": nil,
+	}).Error; err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	setFlash(w, Flash{Category: successKey, Title: "Scan schedule updated"})
 	s.redirect(w, r, fmt.Sprintf("/repositories/%d", repo.ID))
 }
 

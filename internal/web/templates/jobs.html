@@ -51,7 +51,7 @@
       <div data-popover aria-hidden="true" data-align="end">
         <div role="menu">
           <a role="menuitem" href="/scans?skill={{.Skill}}&sort={{.Sort}}">All statuses</a>
-          {{range (list "queued" "paused" "running" "done" "failed" "cancelled")}}
+          {{range (list "queued" "paused" "running" "done" "failed" "skipped" "cancelled")}}
             <a role="menuitem" href="/scans?skill={{$.Skill}}&status={{.}}&sort={{$.Sort}}"
                {{if eq . $.Status}}aria-current="true"{{end}}>{{.}}</a>
           {{end}}

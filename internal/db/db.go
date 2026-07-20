@@ -108,6 +108,20 @@ type Repository struct {
 	// scrutineer.scan_config in every skill workspace.
 	ScanConfig string `gorm:"type:text"`
 
+	// ScanSchedule drives recurring scans: "daily", "weekly", or a
+	// cron expression. Empty inherits the global scan_schedule setting;
+	// "off" disables scheduling even when a global default is set.
+	ScanSchedule string
+	// UpstreamURL, when set, names the upstream this repository is a
+	// pushed staging copy of (no forge fork relationship). The scheduler
+	// force-syncs the repository from it (a mirror push that overwrites
+	// local-only commits) before the new-commit check.
+	UpstreamURL string
+	// NextScheduledScanAt is scheduler bookkeeping: when the next
+	// scheduled run is due. Null means "recompute on the next tick";
+	// schedule edits reset it rather than computing inline.
+	NextScheduledScanAt *time.Time `gorm:"index"`
+
 	CreatedAt time.Time
 	UpdatedAt time.Time
 
@@ -134,11 +148,16 @@ func (r Repository) LocalPath() string {
 type ScanStatus string
 
 const (
-	ScanQueued    ScanStatus = "queued"
-	ScanRunning   ScanStatus = "running"
-	ScanPaused    ScanStatus = "paused"
-	ScanDone      ScanStatus = "done"
-	ScanFailed    ScanStatus = "failed"
+	ScanQueued  ScanStatus = "queued"
+	ScanRunning ScanStatus = "running"
+	ScanPaused  ScanStatus = "paused"
+	ScanDone    ScanStatus = "done"
+	ScanFailed  ScanStatus = "failed"
+	// ScanSkipped records a scheduled scan the scheduler decided not to run
+	// (remote HEAD unchanged, a scan already in flight, ...). The row never
+	// enters the queue; Error carries the reason so the scans list shows
+	// why nothing ran.
+	ScanSkipped   ScanStatus = "skipped"
 	ScanCancelled ScanStatus = "cancelled"
 )
 
@@ -1110,7 +1129,7 @@ func isEmptyJSONValue(v any) bool {
 }
 
 func (s ScanStatus) Terminal() bool {
-	return s == ScanDone || s == ScanFailed || s == ScanCancelled
+	return s == ScanDone || s == ScanFailed || s == ScanCancelled || s == ScanSkipped
 }
 
 const (

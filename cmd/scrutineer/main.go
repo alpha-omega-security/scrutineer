@@ -556,6 +556,7 @@ func run(log *slog.Logger) error {
 	defer stop()
 
 	go q.Start(ctx)
+	go srv.StartScheduler(ctx)
 
 	httpSrv := &http.Server{Addr: f.addr, Handler: srv.Handler(), ReadHeaderTimeout: shutdownTimeout}
 	go func() {

@@ -124,6 +124,22 @@
         </div>
         <p class="text-xs text-muted-foreground">Turn cap for skills that set none. Applies to the next scan.</p>
       </form>
+      {{$sched := .ScanSchedule}}
+      {{$isCron := and $sched (ne $sched "daily") (ne $sched "weekly")}}
+      <form method="post" action="/settings/scan-schedule" hx-post="/settings/scan-schedule" hx-swap="none" class="grid gap-2">
+        <label for="scan_schedule">Default scan schedule</label>
+        <div class="flex gap-2">
+          <select id="scan_schedule" class="select" name="scan_schedule">
+            <option value="off" {{if not $sched}}selected{{end}}>Off</option>
+            <option value="daily" {{if eq $sched "daily"}}selected{{end}}>Daily</option>
+            <option value="weekly" {{if eq $sched "weekly"}}selected{{end}}>Weekly</option>
+            <option value="custom" {{if $isCron}}selected{{end}}>Custom cron</option>
+          </select>
+          <input class="input" type="text" name="scan_schedule_cron" value="{{if $isCron}}{{$sched}}{{end}}" placeholder="cron, e.g. 0 3 * * 1">
+          <button type="submit" class="btn">Save</button>
+        </div>
+        <p class="text-xs text-muted-foreground">Recurring scans for every repository without its own schedule. Runs skip when the remote HEAD is unchanged since the last completed scan.</p>
+      </form>
     </div>
     <div id="concurrency-confirm"></div>
   </section>

@@ -170,6 +170,43 @@
       </details>
     </div>
 
+    <div class="mb-4 max-w-3xl">
+      <h3 class="text-sm font-medium flex items-center gap-2">
+        <i data-lucide="calendar-clock"></i>
+        Scheduled scans
+      </h3>
+      {{$sched := .Repo.ScanSchedule}}
+      {{$effective := $sched}}{{if not $effective}}{{$effective = .GlobalScanSchedule}}{{end}}
+      {{if and $effective (ne $effective "off")}}
+        <p class="text-sm mt-2">
+          <code>{{$effective}}</code>{{if not $sched}} <span class="text-muted-foreground">(global default)</span>{{end}}
+          {{if .Repo.NextScheduledScanAt}}<span class="text-muted-foreground"> · next run {{until .Repo.NextScheduledScanAt}}</span>{{end}}
+        </p>
+      {{else}}
+        <p class="text-sm mt-2 italic text-muted-foreground">not scheduled</p>
+      {{end}}
+      <details class="mt-2">
+        <summary class="text-xs text-muted-foreground cursor-pointer hover:underline">Edit</summary>
+        {{$isCron := and $sched (ne $sched "off") (ne $sched "daily") (ne $sched "weekly")}}
+        <form method="post" action="/repositories/{{.Repo.ID}}/schedule" class="form grid grid-cols-[auto_1fr_auto] gap-2 mt-2 items-center">
+          <select class="select text-xs" name="scan_schedule">
+            <option value="" {{if not $sched}}selected{{end}}>Global default{{if .GlobalScanSchedule}} ({{.GlobalScanSchedule}}){{else}} (off){{end}}</option>
+            <option value="off" {{if eq $sched "off"}}selected{{end}}>Off</option>
+            <option value="daily" {{if eq $sched "daily"}}selected{{end}}>Daily</option>
+            <option value="weekly" {{if eq $sched "weekly"}}selected{{end}}>Weekly</option>
+            <option value="custom" {{if $isCron}}selected{{end}}>Custom cron</option>
+          </select>
+          <input class="input text-xs" type="text" name="scan_schedule_cron"
+                 value="{{if $isCron}}{{$sched}}{{end}}" placeholder="cron, e.g. 0 3 * * 1 (used when Custom cron is selected)">
+          <button class="btn-sm" type="submit">Save</button>
+          <label class="text-xs text-muted-foreground" for="upstream_url">Upstream</label>
+          <input class="input text-xs col-span-2" id="upstream_url" type="text" name="upstream_url"
+                 value="{{.Repo.UpstreamURL}}" placeholder="https://... (staging copies only: synced before each scheduled check)">
+        </form>
+        <p class="text-xs text-muted-foreground mt-1">Scheduled runs compare the remote HEAD against the last completed scan and enqueue a diff rescan when new commits landed; otherwise they log a skipped entry. Set Upstream when this repository is a pushed staging copy so it is force-synced from upstream first (a mirror push; local-only commits are overwritten).</p>
+      </details>
+    </div>
+
     {{if .Subprojects}}
       <div class="flex items-center justify-between gap-2 mb-2">
         <h3 class="font-medium">Subprojects <span class="text-muted-foreground text-xs">({{len .Subprojects}})</span></h3>

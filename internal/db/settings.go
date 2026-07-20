@@ -22,6 +22,10 @@ const (
 	SettingModelTierMid    = "model_tier_mid"
 	SettingModelTierHigh   = "model_tier_high"
 	SettingModelTierMax    = "model_tier_max"
+	// SettingScanSchedule is the global default scan schedule ("daily",
+	// "weekly", or a cron expression) applied to every repository whose
+	// own ScanSchedule is empty. Empty means no global schedule.
+	SettingScanSchedule = "scan_schedule"
 )
 
 // GetSetting returns the stored value for key and whether a row exists. It
