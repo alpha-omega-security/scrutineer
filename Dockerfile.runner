@@ -13,7 +13,7 @@ ARG CODEX_VERSION=0.142.5
 ARG OPENCODE_VERSION=1.17.12
 ARG SEMGREP_VERSION=1.167.0
 
-FROM golang:1.26.5-trixie@sha256:117e07f49461abb984fc8aef661432461ff43d06faa22c3b73af6a49ce325cb9 AS go-tools
+FROM golang:1.26.5-trixie@sha256:4ee9ffa999b4583ce281939cdff828763083610292f252279a0cee77473bd9a7 AS go-tools
 RUN GOBIN=/out go install github.com/git-pkgs/git-pkgs@v0.15.3 && \
     GOBIN=/out go install github.com/git-pkgs/brief/cmd/brief@v0.9.3
 
@@ -26,7 +26,7 @@ RUN cargo install --locked --root /out zizmor@1.26.1
 # (`scrutineer proxy`) instead of a second published image. Built CGO-free and
 # static like the main server image, so it drops into the slim runtime as a
 # plain copy with no glibc dependency.
-FROM golang:1.26.5-trixie@sha256:117e07f49461abb984fc8aef661432461ff43d06faa22c3b73af6a49ce325cb9 AS scrutineer-build
+FROM golang:1.26.5-trixie@sha256:4ee9ffa999b4583ce281939cdff828763083610292f252279a0cee77473bd9a7 AS scrutineer-build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
