@@ -3,7 +3,6 @@ package worker
 import (
 	"encoding/json"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
@@ -198,7 +197,6 @@ func formatSemanticValidationErrors(errs []string) string {
 	if len(errs) == 0 {
 		return ""
 	}
-	sort.Strings(errs)
 	if len(errs) <= maxSchemaErrors {
 		return strings.Join(errs, "\n")
 	}

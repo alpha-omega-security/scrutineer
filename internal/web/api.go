@@ -277,7 +277,7 @@ func (s *Server) apiGetScan(w http.ResponseWriter, r *http.Request) {
 // its skill's schema without installing a JSON Schema library inside the runner
 // container. The request body is the candidate report; the response is
 // {"valid":true} or {"valid":false,"errors":"..."} using the exact same
-// validator (worker.ValidateReportSchema) the harness runs after the scan, so
+// validator (worker.ValidateSkillReport) the harness runs after the scan, so
 // an in-container pass guarantees the harness will not send a repair prompt.
 //
 // The body is already capped at apiMaxBody (1 MB) by apiAuth's MaxBytesReader;

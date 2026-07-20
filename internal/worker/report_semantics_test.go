@@ -93,6 +93,18 @@ func TestValidateSkillReportAppliesSemanticsOnlyToDeepDive(t *testing.T) {
 	}
 }
 
+func TestValidateReportSemanticsKeepsCausalErrorOrder(t *testing.T) {
+	report := `{"inventory":[{"id":"S1"},{"id":"S1"}],"findings":[{"id":"F1","sinks":["S99"]}],"ruled_out":[]}`
+	want := strings.Join([]string{
+		"inventory sink S1 is duplicated",
+		"finding F1 references unknown sink S99",
+		"inventory sink S1 has no disposition",
+	}, "\n")
+	if got := ValidateReportSemantics(deepDiveSkillName, report); got != want {
+		t.Fatalf("ValidateReportSemantics() = %q, want %q", got, want)
+	}
+}
+
 func TestRepairSchemaReportRepairsSemanticFailure(t *testing.T) {
 	incomplete := `{"inventory":[{"id":"S1"}],"findings":[],"ruled_out":[]}`
 	repaired := `{"inventory":[{"id":"S1"}],"findings":[{"id":"F1","sinks":["S1"]}],"ruled_out":[]}`
