@@ -178,7 +178,7 @@ func TestParseSkillOutput_schemaWarnAndContinue(t *testing.T) {
 
 	var sawSchemaErr, sawParserSuccess bool
 	for _, e := range events {
-		if e.Kind == KindError && strings.Contains(e.Text, "schema:") {
+		if e.Kind == KindError && strings.Contains(e.Text, "validation:") {
 			sawSchemaErr = true
 		}
 		if strings.Contains(e.Text, "posture: ready") {
@@ -288,14 +288,14 @@ func TestDoSkill_schemaRepairStillInvalidFailsStrict(t *testing.T) {
 	if got.Report != `{"tier":{"x":1}}` {
 		t.Errorf("Report = %q, want original report after invalid repair", got.Report)
 	}
-	if !strings.Contains(got.Error, "schema validation") {
-		t.Errorf("Error = %q, want schema validation error", got.Error)
+	if !strings.Contains(got.Error, "report validation") {
+		t.Errorf("Error = %q, want report validation error", got.Error)
 	}
 	if len(runner.jobs) != 2 {
 		t.Errorf("RunSkill calls = %d, want 2", len(runner.jobs))
 	}
-	if count := strings.Count(got.Log, "does not validate against schema.json"); count != 1 {
-		t.Errorf("schema validation detail logged %d times, want 1; log:\n%s", count, got.Log)
+	if count := strings.Count(got.Log, "does not pass Scrutineer report validation"); count != 1 {
+		t.Errorf("report validation detail logged %d times, want 1; log:\n%s", count, got.Log)
 	}
 }
 
@@ -325,8 +325,8 @@ func TestDoSkill_schemaRepairErrorFallsBackInWarnMode(t *testing.T) {
 	if !strings.Contains(got.Log, "repair attempt for report.json failed: cli flake; parsing original output") {
 		t.Errorf("Log should mention best-effort repair failure, got %q", got.Log)
 	}
-	if count := strings.Count(got.Log, "does not validate against schema.json"); count != 1 {
-		t.Errorf("schema validation detail logged %d times, want 1; log:\n%s", count, got.Log)
+	if count := strings.Count(got.Log, "does not pass Scrutineer report validation"); count != 1 {
+		t.Errorf("report validation detail logged %d times, want 1; log:\n%s", count, got.Log)
 	}
 
 	var repo db.Repository
@@ -371,8 +371,8 @@ func TestParseSkillOutput_schemaMessageUsesOutputFile(t *testing.T) {
 		t.Fatalf("warn mode should not fail on schema mismatch: %v", err)
 	}
 	for _, e := range events {
-		if e.Kind == KindError && strings.Contains(e.Text, "schema:") {
-			if !strings.Contains(e.Text, "custom-output.json does not validate against schema.json") {
+		if e.Kind == KindError && strings.Contains(e.Text, "validation:") {
+			if !strings.Contains(e.Text, "custom-output.json does not pass Scrutineer report validation") {
 				t.Errorf("schema message should use output file, got %q", e.Text)
 			}
 			return
@@ -433,8 +433,8 @@ func TestWrap_schemaStrictKeepsReportOnFailure(t *testing.T) {
 	if got.Report != report {
 		t.Errorf("Report = %q, want preserved %q", got.Report, report)
 	}
-	if !strings.Contains(got.Error, "schema validation") {
-		t.Errorf("Error = %q, want mention of schema validation", got.Error)
+	if !strings.Contains(got.Error, "report validation") {
+		t.Errorf("Error = %q, want mention of report validation", got.Error)
 	}
 }
 

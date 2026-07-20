@@ -352,8 +352,25 @@ func TestRunnerRejectsSchemaInvalidReport(t *testing.T) {
 		WorkRoot:   t.TempDir(),
 	}
 	_, err = r.RunScenario(context.Background(), sc)
-	if err == nil || !strings.Contains(err.Error(), "failed schema validation") {
-		t.Fatalf("RunScenario error = %v, want schema validation failure", err)
+	if err == nil || !strings.Contains(err.Error(), "failed report validation") {
+		t.Fatalf("RunScenario error = %v, want report validation failure", err)
+	}
+}
+
+func TestRunnerRejectsIncompleteDeepDiveInventory(t *testing.T) {
+	sc, err := LoadScenario("../../evals/security-deep-dive-sqli.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := Runner{
+		Runner:     fakeSkillRunner{report: incompleteDeepDiveReport()},
+		SkillsRoot: "../../skills",
+		EvalsRoot:  "../../evals",
+		WorkRoot:   t.TempDir(),
+	}
+	_, err = r.RunScenario(context.Background(), sc)
+	if err == nil || !strings.Contains(err.Error(), "inventory sink S1 has no disposition") {
+		t.Fatalf("RunScenario error = %v, want unresolved inventory failure", err)
 	}
 }
 
@@ -510,8 +527,8 @@ func validDeepDiveReport() string {
   "method": {
     "scope": "./src",
     "grep_patterns": [],
-    "inventory_count": 1,
-    "ruled_out_count": 0,
+    "inventory_count": 2,
+    "ruled_out_count": 1,
     "unresolved_count": 0,
     "notes": ["Python fixture: no memory-unsafe primitives to enumerate."]
   },
@@ -521,6 +538,12 @@ func validDeepDiveReport() string {
     "class": "Validation",
     "boundary": "HTTP client",
     "consumes": "username query parameter"
+  }, {
+    "id": "S2",
+    "location": "app.py:1",
+    "class": "Validation",
+    "boundary": "HTTP client",
+    "consumes": "unused import"
   }],
   "findings": [{
     "id": "F1",
@@ -536,6 +559,44 @@ func validDeepDiveReport() string {
     "validation": "Manual review of app.py shows string concatenation in buildQuery.",
     "rating": "High impact and directly reachable."
   }],
+  "ruled_out": [{
+    "sinks": ["S2"],
+    "step": 6,
+    "reason": "No additional sinks were present in the fixture."
+  }]
+}`
+}
+
+func incompleteDeepDiveReport() string {
+	return `{
+  "repository": "https://example.com/eval",
+  "commit": "abcdef1",
+  "spec_version": 13,
+  "model": "test-model",
+  "date": "2026-07-09",
+  "languages": ["Python"],
+  "boundaries": [{
+    "actor": "HTTP client",
+    "trusted": "no",
+    "controls": "No input validation before query construction",
+    "source": "app.py"
+  }],
+  "method": {
+    "scope": "./src",
+    "grep_patterns": [],
+    "inventory_count": 1,
+    "ruled_out_count": 0,
+    "unresolved_count": 0,
+    "notes": ["Python fixture: no memory-unsafe primitives to enumerate."]
+  },
+  "inventory": [{
+    "id": "S1",
+    "location": "app.py:7",
+    "class": "Validation",
+    "boundary": "HTTP client",
+    "consumes": "username query parameter"
+  }],
+  "findings": [],
   "ruled_out": []
 }`
 }

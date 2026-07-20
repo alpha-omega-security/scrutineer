@@ -277,7 +277,7 @@ func (s *Server) apiGetScan(w http.ResponseWriter, r *http.Request) {
 // its skill's schema without installing a JSON Schema library inside the runner
 // container. The request body is the candidate report; the response is
 // {"valid":true} or {"valid":false,"errors":"..."} using the exact same
-// validator (worker.ValidateReportSchema) the harness runs after the scan, so
+// validator (worker.ValidateSkillReport) the harness runs after the scan, so
 // an in-container pass guarantees the harness will not send a repair prompt.
 //
 // The body is already capped at apiMaxBody (1 MB) by apiAuth's MaxBytesReader;
@@ -307,7 +307,7 @@ func (s *Server) apiValidateReport(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusRequestEntityTooLarge, "could not read body (max 1 MB)")
 		return
 	}
-	if detail := worker.ValidateReportSchema(skill.SchemaJSON, string(body)); detail != "" {
+	if detail := worker.ValidateSkillReport(skill.Name, skill.SchemaJSON, string(body)); detail != "" {
 		writeJSON(w, http.StatusOK, map[string]any{"valid": false, "errors": detail})
 		return
 	}
