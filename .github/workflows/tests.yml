@@ -6,6 +6,10 @@ on:
       - main
   pull_request:
 
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+
 permissions: {}
 
 concurrency:
@@ -16,6 +20,7 @@ jobs:
   release-logic:
     name: release logic
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -30,9 +35,11 @@ jobs:
   tests:
     name: tests (${{ matrix.platform }})
     strategy:
+      fail-fast: false
       matrix:
         platform: ["ubuntu-24.04", "macos-26"]
     runs-on: ${{ matrix.platform }}
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -67,13 +74,17 @@ jobs:
       - name: Verify Go modules are tidy
         run: go mod tidy -diff
 
-      - run: go vet ./...
-      - run: go test -race ./...
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test -race ./...
 
       # The podman integration tests are behind //go:build podman and are not
       # built by the steps above; vet them under the tag so they can't silently
       # rot (podman itself is not needed -- the tests skip at run time without it).
-      - run: go vet -tags podman ./...
+      - name: Vet podman integration tests
+        run: go vet -tags podman ./...
 
       - name: Save Go caches
         if: github.event_name == 'push' && steps.go-cache.outputs.cache-hit != 'true'
@@ -88,6 +99,7 @@ jobs:
   lint:
     name: lint
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -113,7 +125,8 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-go-${{ github.job }}-
 
-      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
 
       - name: Save Go caches
         if: github.event_name == 'push' && steps.go-cache.outputs.cache-hit != 'true'
@@ -127,6 +140,7 @@ jobs:
   vuln:
     name: vuln
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: read
     steps:
@@ -152,8 +166,11 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-go-${{ github.job }}-
 
-      - run: go install golang.org/x/vuln/cmd/govulncheck@latest
-      - run: govulncheck ./...
+      - name: Install govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@v1.6.0
+
+      - name: Scan for known vulnerabilities
+        run: govulncheck ./...
 
       - name: Save Go caches
         if: github.event_name == 'push' && steps.go-cache.outputs.cache-hit != 'true'
@@ -164,11 +181,33 @@ jobs:
             ~/go/pkg/mod
           key: ${{ steps.go-cache.outputs.cache-primary-key }}
 
+  zizmor:
+    name: zizmor
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Set up Git repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Install zizmor
+        run: pipx install zizmor==1.26.1
+
+      - name: Audit GitHub Actions
+        run: zizmor --persona auditor .github/
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   conclusion:
     name: conclusion
-    needs: [release-logic, tests, lint, vuln]
+    needs: [release-logic, tests, lint, vuln, zizmor]
     if: always()
     runs-on: ubuntu-slim
+    timeout-minutes: 15
+    permissions: {}
     steps:
       - name: Result
         env:
@@ -176,8 +215,10 @@ jobs:
           TESTS_RESULT: ${{ needs.tests.result }}
           LINT_RESULT: ${{ needs.lint.result }}
           VULN_RESULT: ${{ needs.vuln.result }}
+          ZIZMOR_RESULT: ${{ needs.zizmor.result }}
         run: |
           [[ "${RELEASE_LOGIC_RESULT}" == success ]]
           [[ "${TESTS_RESULT}" == success ]]
           [[ "${LINT_RESULT}" == success ]]
           [[ "${VULN_RESULT}" == success ]]
+          [[ "${ZIZMOR_RESULT}" == success ]]

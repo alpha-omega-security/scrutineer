@@ -9,15 +9,15 @@ defaults:
   run:
     shell: bash -euo pipefail {0}
 
+permissions: {}
+
 concurrency:
   group: release
   cancel-in-progress: false
 
-permissions: {}
-
 jobs:
   preflight:
-    name: Preflight
+    name: preflight
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -38,7 +38,8 @@ jobs:
             exit 1
           fi
 
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Set up Git repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -78,8 +79,8 @@ jobs:
           cache: false
 
       - name: Determine version
-        if: steps.due.outputs.release_due == 'true'
         id: version
+        if: steps.due.outputs.release_due == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPOSITORY: ${{ github.repository }}
@@ -154,8 +155,8 @@ jobs:
         uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
       - name: Resolve commit-matched runner image
-        if: steps.due.outputs.release_due == 'true'
         id: runner
+        if: steps.due.outputs.release_due == 'true'
         env:
           REPOSITORY: ${{ github.repository }}
           COMMIT_SHA: ${{ github.sha }}
@@ -173,7 +174,7 @@ jobs:
           echo "image=ghcr.io/${REPOSITORY}-runner@${DIGEST}" >> "${GITHUB_OUTPUT}"
 
   build:
-    name: Build (${{ matrix.goos }}-${{ matrix.goarch }})
+    name: build (${{ matrix.goos }}-${{ matrix.goarch }})
     needs: preflight
     if: needs.preflight.outputs.release_due == 'true'
     strategy:
@@ -205,7 +206,8 @@ jobs:
     env:
       ARTIFACT: scrutineer-${{ needs.preflight.outputs.version }}-${{ matrix.goos }}-${{ matrix.goarch }}
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Set up Git repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
@@ -278,7 +280,7 @@ jobs:
           if-no-files-found: error
 
   release:
-    name: Release
+    name: release
     needs: [preflight, build]
     if: needs.preflight.outputs.release_due == 'true'
     runs-on: ubuntu-slim

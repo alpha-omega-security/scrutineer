@@ -1,4 +1,4 @@
-name: runner-image
+name: Runner Image
 
 on:
   push:
@@ -7,11 +7,17 @@ on:
   schedule:
     - cron: "30 6 * * *"
 
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+
 permissions: {}
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Superseded pull-request validations can be cancelled, but each main-branch
+  # commit must finish publishing the SHA-tagged image consumed by releases.
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   REGISTRY: ghcr.io
@@ -20,38 +26,43 @@ env:
 jobs:
   build:
     name: build (${{ matrix.arch }})
-    runs-on: ${{ matrix.runner }}
-    permissions:
-      contents: read
-      packages: write # push runner image by digest to ghcr.io
     strategy:
       fail-fast: false
       matrix:
         include:
           - platform: linux/amd64
             arch: amd64
-            runner: ubuntu-latest
+            runner: ubuntu-24.04
           - platform: linux/arm64
             arch: arm64
             runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write # push runner image by digest to ghcr.io
     steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+      - name: Set up Git repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
           persist-credentials: false
 
-      - name: verify Claude Code version pins
+      - name: Verify Claude Code version pins
         run: scripts/check-claude-version-pins.sh
 
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
-      - uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+      - name: Generate image metadata
         id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ env.IMAGE }}
 
       # Build the native platform locally and smoke-test it before any push, so
       # arm64 binaries are exercised on real arm64 hardware rather than emulated.
-      - uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+      - name: Build smoke-test image
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
           file: Dockerfile.runner
@@ -61,9 +72,8 @@ jobs:
           tags: scrutineer-runner:ci
           labels: ${{ steps.meta.outputs.labels }}
 
-      - name: smoke test
+      - name: Smoke test image
         run: |
-          set -euxo pipefail
           docker run --rm scrutineer-runner:ci claude --version
           docker run --rm scrutineer-runner:ci curl --version
           docker run --rm scrutineer-runner:ci semgrep --version
@@ -74,8 +84,9 @@ jobs:
           # egress-proxy sidecar mode ships in this image
           docker run --rm scrutineer-runner:ci scrutineer proxy -h
 
-      - uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+      - name: Log in to GHCR
         if: github.event_name == 'push'
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -83,9 +94,10 @@ jobs:
 
       # Push by digest only; the merge job assembles the tagged multi-arch
       # manifest. Reuses the buildx cache from the smoke build above.
-      - uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+      - name: Push image by digest
         id: push
         if: github.event_name == 'push'
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
           file: Dockerfile.runner
@@ -94,7 +106,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           outputs: type=image,push-by-digest=true,name-canonical=true,push=true
 
-      - name: export digest
+      - name: Export digest
         if: github.event_name == 'push'
         env:
           DIGEST: ${{ steps.push.outputs.digest }}
@@ -102,7 +114,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/digests"
           touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
 
-      - name: upload digest
+      - name: Upload digest
         if: github.event_name == 'push'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -113,30 +125,34 @@ jobs:
 
   merge:
     name: merge manifest
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push'
     needs: build
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: read
       packages: write # push the multi-arch manifest list to ghcr.io
     steps:
-      - name: download digests
+      - name: Download digests
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           path: ${{ runner.temp }}/digests
           pattern: digests-*
           merge-multiple: true
 
-      - uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
+      - name: Log in to GHCR
+        uses: docker/login-action@af1e73f918a031802d376d3c8bbc3fe56130a9b0 # v4.4.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
 
-      - uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+      - name: Generate manifest metadata
         id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ${{ env.IMAGE }}
           tags: |
@@ -144,7 +160,7 @@ jobs:
             type=raw,value=sha-${{ github.sha }},enable={{is_default_branch}}
             type=sha,prefix=sha-
 
-      - name: create manifest list and push
+      - name: Create and push manifest list
         working-directory: ${{ runner.temp }}/digests
         run: |
           mapfile -t TAGS < <(jq -r '.tags[]' <<< "$DOCKER_METADATA_OUTPUT_JSON")
@@ -158,7 +174,7 @@ jobs:
           done
           docker buildx imagetools create "${CREATE_ARGS[@]}"
 
-      - name: inspect
+      - name: Inspect manifest
         env:
           VERSION: ${{ steps.meta.outputs.version }}
         run: docker buildx imagetools inspect "$IMAGE:$VERSION"

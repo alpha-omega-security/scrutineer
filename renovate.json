@@ -38,6 +38,45 @@
       "datasourceTemplate": "github-release-attachments",
       "versioningTemplate": "semver-coerced",
       "extractVersionTemplate": "^v(?<version>.+)$"
+    },
+    {
+      "customType": "regex",
+      "description": "Update the govulncheck workflow pin",
+      "managerFilePatterns": ["/^\\.github/workflows/tests\\.yml$/"],
+      "matchStrings": [
+        "go install golang\\.org/x/vuln/cmd/govulncheck@(?<currentValue>v\\d+\\.\\d+\\.\\d+)"
+      ],
+      "packageNameTemplate": "golang.org/x/vuln",
+      "depNameTemplate": "govulncheck",
+      "datasourceTemplate": "go",
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "description": "Update the zizmor workflow pin",
+      "managerFilePatterns": ["/^\\.github/workflows/tests\\.yml$/"],
+      "matchStrings": [
+        "pipx install zizmor==(?<currentValue>\\d+\\.\\d+\\.\\d+)"
+      ],
+      "packageNameTemplate": "zizmor",
+      "depNameTemplate": "zizmor",
+      "datasourceTemplate": "pypi",
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "description": "Update the zizmor container-image pins",
+      "managerFilePatterns": [
+        "/^Dockerfile$/",
+        "/^Dockerfile\\.runner$/"
+      ],
+      "matchStrings": [
+        "cargo install --locked --root /out zizmor@(?<currentValue>\\d+\\.\\d+\\.\\d+)"
+      ],
+      "packageNameTemplate": "zizmor",
+      "depNameTemplate": "zizmor",
+      "datasourceTemplate": "crate",
+      "versioningTemplate": "semver"
     }
   ],
   "packageRules": [
@@ -74,6 +113,16 @@
       "matchManagers": ["dockerfile"],
       "groupName": "Docker images",
       "minimumReleaseAge": "7 days"
+    },
+    {
+      "matchManagers": ["custom.regex"],
+      "minimumReleaseAge": "7 days"
+    },
+    {
+      "description": "Keep the workflow and container-image zizmor pins synchronized",
+      "matchPackageNames": ["zizmor"],
+      "groupName": "zizmor",
+      "minimumGroupSize": 3
     },
     {
       "description": "Keep all four Claude Code pins on one GitHub release; do not approve a partial group in the Dependency Dashboard",
