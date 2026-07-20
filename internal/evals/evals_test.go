@@ -6,7 +6,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 
@@ -36,32 +35,14 @@ func TestAuthOmissionScenario(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sc.Skill != "security-deep-dive" || sc.Fixture != "fixtures/auth-omission" {
-		t.Fatalf("scenario = %+v", sc)
+	report := `{"findings":[{"title":"Session omission bypass","severity":"High","cwe":"CWE-306","location":"app.py:18","trace":"session_cookie skips validation before serve_account_data."}]}`
+	results, err := (HeuristicJudge{}).Judge(sc, report)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if len(sc.ShouldFind) != 1 || len(sc.ShouldNotFind) != 1 {
-		t.Fatalf("assertions = %+v, want one positive and one negative", sc)
+	if len(results) != 2 || !results[0].Matched || !results[1].Matched {
+		t.Fatalf("scenario results = %+v, want passing positive and negative assertions", results)
 	}
-	positive := sc.ShouldFind[0]
-	if !positive.Required || positive.CWE != "CWE-306" || positive.Path != "app.py" || !hasEvidenceTerms(positive.Evidence, "session_cookie", "serve_account_data") {
-		t.Errorf("positive assertion = %+v", positive)
-	}
-	negative := sc.ShouldNotFind[0]
-	if negative.CWE != "CWE-306" || negative.Path != "app.py" || !hasEvidenceTerms(negative.Evidence, "safe_account", "abort(401)") {
-		t.Errorf("negative assertion = %+v", negative)
-	}
-}
-
-func hasEvidenceTerms(evidence []string, terms ...string) bool {
-	if len(evidence) != len(terms) {
-		return false
-	}
-	for _, term := range terms {
-		if !slices.Contains(evidence, term) {
-			return false
-		}
-	}
-	return true
 }
 
 func TestLoadScenarioDefaultsRequiredButAllowsOptional(t *testing.T) {

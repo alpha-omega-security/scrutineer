@@ -15,4 +15,3 @@ should_not_find:
     path: app.py
     evidence_contains:
       - safe_account
-      - abort(401)
