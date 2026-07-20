@@ -10,7 +10,7 @@ require (
 	github.com/git-pkgs/enrichment v0.6.0
 	github.com/git-pkgs/pom v0.1.5
 	github.com/git-pkgs/purl v0.1.14
-	github.com/git-pkgs/sarif v0.1.0
+	github.com/git-pkgs/sarif v0.1.1
 	github.com/git-pkgs/sbom v0.1.3
 	github.com/git-pkgs/vulns v0.2.0
 	github.com/glebarez/sqlite v1.11.0
@@ -41,7 +41,7 @@ require (
 	github.com/kr/text v0.2.0 // indirect
 	github.com/mattn/go-isatty v0.0.22 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
-	github.com/oapi-codegen/runtime v1.4.2 // indirect
+	github.com/oapi-codegen/runtime v1.5.0 // indirect
 	github.com/package-url/packageurl-go v0.1.6 // indirect
 	github.com/pandatix/go-cvss v0.6.2 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
