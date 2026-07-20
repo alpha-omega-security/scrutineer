@@ -1,7 +1,6 @@
 package web
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
 	"time"
@@ -12,40 +11,6 @@ import (
 // auditMaxLimit caps the audit queue payload. Spot-checking is the use
 // case here; a TOC asking for 10,000 rows is almost certainly a slip.
 const auditMaxLimit = 500
-
-// apiAddFindingReview records one structured human verdict against the
-// automation's outcome on a finding. The automated_outcome field is
-// snapshot from the latest revalidate note at write time so the
-// agreement metric does not bend later when revalidate runs again. The
-// reviewer field is optional free text; scrutineer is single-operator,
-// so populating it is the operator's choice (a GitHub handle, an
-// initials marker, or empty).
-func (s *Server) apiAddFindingReview(w http.ResponseWriter, r *http.Request) {
-	id, ok := s.findingScoped(w, r)
-	if !ok {
-		return
-	}
-	var body struct {
-		Verdict          string `json:"verdict"`
-		Reason           string `json:"reason"`
-		Reviewer         string `json:"reviewer"`
-		AutomatedOutcome string `json:"automated_outcome"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeAPIError(w, http.StatusBadRequest, "body must be JSON")
-		return
-	}
-	automated := body.AutomatedOutcome
-	if automated == "" {
-		automated = db.LatestRevalidateVerdict(s.DB, id)
-	}
-	rev, err := db.AddFindingReview(s.DB, id, body.Verdict, body.Reason, automated, body.Reviewer)
-	if err != nil {
-		writeAPIError(w, http.StatusUnprocessableEntity, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusCreated, rev)
-}
 
 // apiListFindingReviews returns reviews on one finding, newest first.
 // The finding page renders the same data.

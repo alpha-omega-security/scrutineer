@@ -348,6 +348,25 @@ func validateFlags(f *flags) error {
 	return validateModelBaseURL(f.modelBaseURL)
 }
 
+func isLoopbackListenAddr(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
+	}
+	host = strings.Trim(host, "[]")
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func warnIfNonLoopbackListenAddr(log *slog.Logger, addr string) {
+	if !isLoopbackListenAddr(addr) {
+		log.Warn("scrutineer has no authentication; a non-loopback bind exposes the UI and API to the network", "addr", addr)
+	}
+}
+
 func configureBackendEnvironment(f *flags, log *slog.Logger) {
 	if key := os.Getenv("ANTHROPIC_API_KEY"); strings.HasPrefix(key, "sk-ant-oat") {
 		log.Warn("ANTHROPIC_API_KEY looks like an OAuth token from `claude setup-token`; set it as CLAUDE_CODE_OAUTH_TOKEN instead")
@@ -407,6 +426,7 @@ func run(log *slog.Logger) error {
 	if err := validateFlags(f); err != nil {
 		return err
 	}
+	warnIfNonLoopbackListenAddr(log, f.addr)
 	// When --selinux is given explicitly, surface the host's SELinux mode at
 	// startup so the operator can confirm what scrutineer detected (e.g. that an
 	// enforcing host will get the :z relabel, or that --selinux=off on an

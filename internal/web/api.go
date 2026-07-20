@@ -24,6 +24,10 @@ import (
 
 const apiPrefix = "/api"
 
+// maxAgentAPIOpenScansPerRepository bounds model-backed work a compromised
+// scan token can enqueue. Normal orchestration stays well below this ceiling.
+const maxAgentAPIOpenScansPerRepository = 16
+
 // NewAPIToken returns a 32-byte hex token suitable for bearer auth.
 func NewAPIToken() string {
 	var b [32]byte
@@ -119,7 +123,6 @@ func (s *Server) apiHandler() http.Handler {
 	mux.HandleFunc("GET /findings/{id}/notes", s.apiListFindingNotes)
 	mux.HandleFunc("POST /findings/{id}/notes", s.apiAddFindingNote)
 	mux.HandleFunc("GET /findings/{id}/reviews", s.apiListFindingReviews)
-	mux.HandleFunc("POST /findings/{id}/reviews", s.apiAddFindingReview)
 	// /audit/queue and /audit/metrics are intentionally on the host-only
 	// /api/v1 export mux, not here: they return findings across every
 	// repository on the instance, so a scan token issued for one repo
@@ -337,6 +340,15 @@ func (s *Server) apiRunSkill(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "unknown profile")
 		return
 	}
+	s.agentEnqueueMu.Lock()
+	defer s.agentEnqueueMu.Unlock()
+	if s.hasOpenRepoScopedScan(uint(id), skill.ID) {
+		writeAPIError(w, http.StatusConflict, "equivalent scan already queued or running")
+		return
+	}
+	if !s.agentAPIRepoHasCapacity(w, uint(id)) {
+		return
+	}
 	scanID, err := s.enqueueSkillWith(r.Context(), uint(id), skill.ID, ScanOpts{
 		Model:          body.Model,
 		Ref:            body.Ref,
@@ -395,6 +407,15 @@ func (s *Server) apiRunFindingSkill(w http.ResponseWriter, r *http.Request) {
 	if !decodeOptionalAPIBody(w, r, &body) {
 		return
 	}
+	s.agentEnqueueMu.Lock()
+	defer s.agentEnqueueMu.Unlock()
+	if s.hasOpenFindingScopedScan(uint(id), skill.ID) {
+		writeAPIError(w, http.StatusConflict, "equivalent scan already queued or running")
+		return
+	}
+	if !s.agentAPIRepoHasCapacity(w, repoID) {
+		return
+	}
 	scanID, err := s.enqueueSkillScoped(r.Context(), repoID, skill.ID, new(uint(id)), body.Model)
 	if err != nil {
 		if errors.Is(err, ErrSkillRequiresRemote) {
@@ -407,6 +428,23 @@ func (s *Server) apiRunFindingSkill(w http.ResponseWriter, r *http.Request) {
 	var sc db.Scan
 	s.DB.First(&sc, scanID)
 	writeJSON(w, http.StatusCreated, scanSummary(sc))
+}
+
+// agentAPIRepoHasCapacity rejects scan-token enqueue requests once the target
+// repository already has the maximum number of queued or running scans.
+func (s *Server) agentAPIRepoHasCapacity(w http.ResponseWriter, repoID uint) bool {
+	var open int64
+	if err := s.DB.Model(&db.Scan{}).
+		Where("repository_id = ? AND status IN ?", repoID, []db.ScanStatus{db.ScanQueued, db.ScanRunning}).
+		Count(&open).Error; err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return false
+	}
+	if open >= maxAgentAPIOpenScansPerRepository {
+		writeAPIError(w, http.StatusTooManyRequests, "repository has too many queued or running scans")
+		return false
+	}
+	return true
 }
 
 // findingRepoID reads the denormalized Finding.RepositoryID column. Used

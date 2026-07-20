@@ -478,6 +478,29 @@ func TestFindingOSV_handlesRepositoryLookupErrors(t *testing.T) {
 	}
 }
 
+func TestFindingOSV_handlesChildLookupErrors(t *testing.T) {
+	for _, table := range []string{"finding_references", "packages"} {
+		t.Run(table, func(t *testing.T) {
+			s, done := newTestServer(t)
+			defer done()
+
+			f := seedCSAFFinding(t, s, nil)
+			if err := s.DB.Callback().Query().Before("gorm:query").Register("test:fail_osv_child_lookup", func(tx *gorm.DB) {
+				if tx.Statement.Table == table {
+					_ = tx.AddError(errors.New("database unavailable"))
+				}
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			w := getOSV(t, s, f.ID)
+			if w.Code != http.StatusInternalServerError {
+				t.Errorf("status = %d, want 500; body=%s", w.Code, w.Body)
+			}
+		})
+	}
+}
+
 func TestOSVReferenceType(t *testing.T) {
 	cases := []struct {
 		tags string

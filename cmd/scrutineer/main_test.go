@@ -130,6 +130,25 @@ func TestFlagsMerge_zeroConfigLeavesDefaults(t *testing.T) {
 	}
 }
 
+func TestIsLoopbackListenAddr(t *testing.T) {
+	for _, tt := range []struct {
+		addr string
+		want bool
+	}{
+		{addr: "localhost:8080", want: true},
+		{addr: "127.0.0.1:8080", want: true},
+		{addr: "127.23.45.67:8080", want: true},
+		{addr: "[::1]:8080", want: true},
+		{addr: "0.0.0.0:8080", want: false},
+		{addr: "203.0.113.10:8080", want: false},
+		{addr: "scanner.example.com:8080", want: false},
+	} {
+		if got := isLoopbackListenAddr(tt.addr); got != tt.want {
+			t.Errorf("isLoopbackListenAddr(%q) = %v, want %v", tt.addr, got, tt.want)
+		}
+	}
+}
+
 func TestFlagsMerge_zeroConfigSeedsModelsFromHarness(t *testing.T) {
 	// run() calls merge with an empty config when no config file exists;
 	// that path must still seed the pick list from the harness defaults so
