@@ -97,7 +97,11 @@ type Worker struct {
 	// dedup run sees the full finding set, and the worker has no queue access
 	// of its own so this callback is the seam.
 	OnScanFinalized func(scan *db.Scan)
-	ScanTimeout     time.Duration
+	// OnScanFailed, when non-nil, is called after a terminal failed scan has
+	// been persisted. Unlike OnScanFinalized it covers runner errors and
+	// timeouts, which do not have a committed analysis result.
+	OnScanFailed func(scan *db.Scan)
+	ScanTimeout  time.Duration
 	// AutoRejectMissedCount is the threshold of consecutive missed rescans at
 	// which an open finding is automatically transitioned to 'rejected'.
 	// 0 means disabled.
@@ -633,6 +637,7 @@ func (w *Worker) finalizeScan(ctx context.Context, scan *db.Scan, report string,
 		return saveErr
 	}
 	w.maybeFireScanFinalized(scan, err)
+	w.maybeFireScanFailed(scan)
 	if accErr, isAccountErr := errors.AsType[*AccountError](err); isAccountErr && scan.Status == db.ScanPaused {
 		w.pauseQueuedOnAccountError(scan.ID)
 		if rawReset := w.resolveAccountReset(accErr, emit); rawReset != nil {
@@ -700,6 +705,12 @@ func (w *Worker) maybeFireScanFinalized(scan *db.Scan, runErr error) {
 	_, failOnThreshold := errors.AsType[*FailOnThresholdError](runErr)
 	if scan.Status == db.ScanDone || failOnThreshold {
 		w.OnScanFinalized(scan)
+	}
+}
+
+func (w *Worker) maybeFireScanFailed(scan *db.Scan) {
+	if w.OnScanFailed != nil && scan.Status == db.ScanFailed {
+		w.OnScanFailed(scan)
 	}
 }
 

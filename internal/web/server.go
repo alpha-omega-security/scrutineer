@@ -145,8 +145,8 @@ type Server struct {
 	toolMetaCache toolMetadata
 	toolMetaTTL   time.Time
 
-	// agentEnqueueMu makes the scan-token API's deduplication and repository
-	// capacity checks atomic within this server process.
+	// agentEnqueueMu makes check-then-enqueue flows atomic within this server
+	// process, including scan-token API deduplication and automatic fan-out.
 	agentEnqueueMu sync.Mutex
 
 	// runnerStatus is the result of the boot-time runner-image staleness check
@@ -346,6 +346,7 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *work
 		w.OnFindingCreated = s.autoEnqueueRevalidate
 		w.OnRevalidateVerdict = s.autoChainVerifyAfterRevalidate
 		w.OnScanFinalized = s.onScanFinalized
+		w.OnScanFailed = s.autoEnqueueFocusAreaDeepDives
 	}
 	return s, nil
 }

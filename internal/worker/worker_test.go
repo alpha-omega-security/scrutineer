@@ -18,6 +18,21 @@ import (
 	"scrutineer/internal/queue"
 )
 
+func TestMaybeFireScanFailed(t *testing.T) {
+	var calls int
+	w := &Worker{OnScanFailed: func(scan *db.Scan) {
+		if scan.Status != db.ScanFailed {
+			t.Errorf("status = %q, want failed", scan.Status)
+		}
+		calls++
+	}}
+	w.maybeFireScanFailed(&db.Scan{Status: db.ScanDone})
+	w.maybeFireScanFailed(&db.Scan{Status: db.ScanFailed})
+	if calls != 1 {
+		t.Fatalf("failure callbacks = %d, want 1", calls)
+	}
+}
+
 func TestMigrateLegacyState_renamesStateDir(t *testing.T) {
 	dataDir := t.TempDir()
 	oldDir := filepath.Join(dataDir, legacyHarnessStateDirName, "scan-7")

@@ -175,6 +175,7 @@ func TestScheduleTick_enqueuesDiffRescanWhenHeadChanged(t *testing.T) {
 	s, _, done := scheduleTestServer(t, "def456", nil)
 	defer done()
 	s.DB.Create(&db.Skill{Name: deepDiveSkillName, Description: "d", Body: "b", OutputFile: "report.json", Version: 1, Active: true, Source: "ui"})
+	s.DB.Create(&db.Skill{Name: threatModelSkillName, Description: "t", Body: "b", OutputFile: "report.json", Version: 1, Active: true, Source: "ui"})
 	repo := scheduledRepo(t, s, "daily", time.Now().Add(-time.Minute))
 	now := time.Now()
 	s.DB.Create(&db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, Commit: "abc123", FinishedAt: &now})
@@ -184,10 +185,10 @@ func TestScheduleTick_enqueuesDiffRescanWhenHeadChanged(t *testing.T) {
 	var queued []db.Scan
 	s.DB.Where("repository_id = ? AND status = ?", repo.ID, db.ScanQueued).Find(&queued)
 	if len(queued) != 1 {
-		t.Fatalf("queued %d scan(s), want 1 (deep-dive only, aux skills not installed)", len(queued))
+		t.Fatalf("queued %d scan(s), want 1 (threat-model only, aux skills not installed)", len(queued))
 	}
-	if queued[0].SkillName != deepDiveSkillName || queued[0].RescanMode != db.ScanRescanModeDiff {
-		t.Fatalf("queued scan = %q mode %q, want %q in diff mode", queued[0].SkillName, queued[0].RescanMode, deepDiveSkillName)
+	if queued[0].SkillName != threatModelSkillName || queued[0].RescanMode != db.ScanRescanModeDiff {
+		t.Fatalf("queued scan = %q mode %q, want %q in diff mode", queued[0].SkillName, queued[0].RescanMode, threatModelSkillName)
 	}
 }
 
@@ -195,6 +196,7 @@ func TestScheduleTick_firesWhenRepoNeverScanned(t *testing.T) {
 	s, _, done := scheduleTestServer(t, "def456", nil)
 	defer done()
 	s.DB.Create(&db.Skill{Name: deepDiveSkillName, Description: "d", Body: "b", OutputFile: "report.json", Version: 1, Active: true, Source: "ui"})
+	s.DB.Create(&db.Skill{Name: threatModelSkillName, Description: "t", Body: "b", OutputFile: "report.json", Version: 1, Active: true, Source: "ui"})
 	repo := scheduledRepo(t, s, "daily", time.Now().Add(-time.Minute))
 
 	s.scheduleTick(context.Background(), time.Now())
