@@ -2,17 +2,34 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"scrutineer/internal/db"
 )
 
 const dirPerm = 0o755
+
+// The add-repo branch picker's share of the remote-git retry policy. It is
+// smaller than a scan's because it sits in front of a person: worst case one
+// extra ls-remote and a fifth of a second, well inside the caller's request
+// deadline.
+const (
+	branchPickerAttempts = 2
+	branchPickerDelay    = 200 * time.Millisecond
+)
+
+// gitWaitDelay bounds how long a git invocation may sit in Wait after the
+// process has exited or been cancelled while a transport grandchild still
+// holds its output pipe. A package var so a test can shrink it; large enough
+// in production never to clip a healthy command's final flush.
+var gitWaitDelay = 10 * time.Second
 
 // RepoUnreachableError is returned when git clone/fetch fails because the
 // remote is unreachable (deleted, private, wrong URL, network error).
@@ -69,7 +86,14 @@ func ensureClone(ctx context.Context, repo db.Repository, work string, fullClone
 	if err := os.MkdirAll(work, dirPerm); err != nil {
 		return "", err
 	}
-	if err := cloneOrFetch(ctx, repo.URL, src, fullClone, ref, emit); err != nil {
+	if err := cloneOrFetch(ctx, gitRetry{}, repo.URL, src, fullClone, ref, emit); err != nil {
+		// A cancelled or timed-out scan is not evidence about the repository:
+		// flagging it unreachable would record a spurious clone_error and
+		// hand the caller a fake "repository unreachable" report. Propagate
+		// the cancellation instead so the worker treats it as one.
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return "", err
+		}
 		return "", &RepoUnreachableError{URL: repo.URL, Err: err}
 	}
 	return src, nil
@@ -116,7 +140,7 @@ func ValidateGitRef(ref string) error {
 	return nil
 }
 
-func cloneOrFetch(ctx context.Context, url, dst string, fullClone bool, ref string, emit func(Event)) error {
+func cloneOrFetch(ctx context.Context, retry gitRetry, url, dst string, fullClone bool, ref string, emit func(Event)) error {
 	if err := validateGitURL(url); err != nil {
 		return err
 	}
@@ -124,7 +148,7 @@ func cloneOrFetch(ctx context.Context, url, dst string, fullClone bool, ref stri
 		return err
 	}
 	if _, err := os.Stat(filepath.Join(dst, ".git")); err == nil {
-		return fetchRef(ctx, dst, ref, fullClone, emit)
+		return fetchRef(ctx, retry, dst, ref, fullClone, emit)
 	}
 	args := []string{"clone", "--quiet"}
 	msg := "$ git clone " + url
@@ -134,7 +158,12 @@ func cloneOrFetch(ctx context.Context, url, dst string, fullClone bool, ref stri
 	}
 	args = append(args, "--", url, dst)
 	emit(Event{Kind: KindText, Text: msg})
-	out, err := gitWithEnv(ctx, "", []string{"GIT_PROTOCOL_FROM_USER=0"}, args...)
+	out, err := retry.do(ctx, gitCommand{
+		label: "clone",
+		env:   []string{"GIT_PROTOCOL_FROM_USER=0"},
+		args:  args,
+		reset: cloneDestReset(dst),
+	}, emit)
 	if err != nil {
 		return fmt.Errorf("%s: %w", out, err)
 	}
@@ -143,9 +172,31 @@ func cloneOrFetch(ctx context.Context, url, dst string, fullClone bool, ref stri
 	// in the branch field would fail the first scan yet work on every later
 	// one. Going through fetchRef makes both paths pin a ref identically.
 	if ref != "" {
-		return fetchRef(ctx, dst, ref, fullClone, emit)
+		return fetchRef(ctx, retry, dst, ref, fullClone, emit)
 	}
 	return nil
+}
+
+// cloneDestReset returns the cleanup to run before each clone retry, or nil
+// when there is nothing safe to clean. A clone that dies partway can leave
+// the destination behind, and `git clone` refuses a non-empty target, so
+// without this the retry would fail for a reason unrelated to the original
+// failure.
+//
+// Removal is offered only when dst is absent or empty at this point.
+// cloneOrFetch reaches the clone path exactly when dst holds no .git, so an
+// absent or empty dst can only ever gain content this call put there. A
+// non-empty one belongs to the caller, and git would reject it as a
+// permanent error that is never retried anyway.
+func cloneDestReset(dst string) func() error {
+	entries, err := os.ReadDir(dst)
+	if err != nil && !os.IsNotExist(err) {
+		return nil
+	}
+	if len(entries) > 0 {
+		return nil
+	}
+	return func() error { return os.RemoveAll(dst) }
 }
 
 // fetchRef updates an existing cache checkout to ref, or to the remote's
@@ -155,7 +206,7 @@ func cloneOrFetch(ctx context.Context, url, dst string, fullClone bool, ref stri
 // first cloned at. A different ref — another maintained release branch, a
 // tag, or a commit — is in no remote-tracking ref, but fetching it by name
 // always lands it in FETCH_HEAD.
-func fetchRef(ctx context.Context, dst, ref string, fullClone bool, emit func(Event)) error {
+func fetchRef(ctx context.Context, retry gitRetry, dst, ref string, fullClone bool, emit func(Event)) error {
 	target := ref
 	if target == "" {
 		target = "HEAD"
@@ -174,9 +225,11 @@ func fetchRef(ctx context.Context, dst, ref string, fullClone bool, emit func(Ev
 	// and ls-remote paths. Valid refs never start with "-" so this is safe.
 	fetchArgs = append(fetchArgs, "--", "origin", target)
 	emit(Event{Kind: KindText, Text: fetchMsg})
-	if out, err := git(ctx, "", fetchArgs...); err != nil {
+	if out, err := retry.do(ctx, gitCommand{label: "fetch", args: fetchArgs}, emit); err != nil {
 		return fmt.Errorf("%s: %w", out, err)
 	}
+	// The reset is local: it can only fail for a reason a retry cannot fix,
+	// so it stays outside the network retry policy.
 	if out, err := git(ctx, "", "-C", dst, "reset", "--quiet", "--hard", "FETCH_HEAD"); err != nil {
 		return fmt.Errorf("%s: %w", out, err)
 	}
@@ -188,12 +241,27 @@ func fetchRef(ctx context.Context, dst, ref string, fullClone bool, emit func(Ev
 // best-effort: callers treat any error as "no suggestions" and fall back to
 // free-text entry. GIT_TERMINAL_PROMPT=0 and an empty credential helper make
 // a private repo fail fast instead of blocking on a credential prompt.
+//
+// A transient failure is retried, but on a deliberately tighter budget than
+// a scan's: this runs inside a short request deadline, and the failure a
+// user actually hits here is a mistyped host, which resolves to a transient
+// marker. One extra attempt after ~200ms absorbs a genuine blip while
+// keeping a typo's feedback prompt. An auth or not-found answer stays
+// permanent and is never retried at all.
 func ListRemoteBranches(ctx context.Context, cloneURL string) ([]string, error) {
 	if err := validateGitURL(cloneURL); err != nil {
 		return nil, err
 	}
-	out, err := gitWithEnv(ctx, "", []string{"GIT_TERMINAL_PROMPT=0"},
-		"-c", "credential.helper=", "ls-remote", "--heads", "--", cloneURL)
+	picker := gitRetry{
+		attempts:  branchPickerAttempts,
+		baseDelay: branchPickerDelay,
+		maxDelay:  branchPickerDelay,
+	}
+	out, err := picker.do(ctx, gitCommand{
+		label: "ls-remote",
+		env:   []string{"GIT_TERMINAL_PROMPT=0"},
+		args:  []string{"-c", "credential.helper=", "ls-remote", "--heads", "--", cloneURL},
+	}, nil)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", strings.TrimSpace(out), err)
 	}
@@ -238,6 +306,14 @@ func git(ctx context.Context, dir string, args ...string) (string, error) {
 
 func gitWithEnv(ctx context.Context, dir string, env []string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
+	// CommandContext kills git when ctx ends, but git's transport child
+	// (git-remote-https) inherits the output pipe, so CombinedOutput can block
+	// on that grandchild long after git is gone -- turning "stop immediately
+	// on cancellation" into an unbounded wait. WaitDelay bounds it: once git
+	// has exited or been cancelled, Wait waits at most this long for the pipe
+	// to close, then closes it and returns. It never truncates a normally
+	// completing command, whose pipe closes at once.
+	cmd.WaitDelay = gitWaitDelay
 	if dir != "" {
 		cmd.Dir = dir
 	}

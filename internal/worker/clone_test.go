@@ -149,7 +149,7 @@ func TestFetchRefChecksOutRequestedRef(t *testing.T) {
 		{"", mainSHA},           // empty ref -> default branch
 	}
 	for _, c := range cases {
-		if err := fetchRef(ctx, cache, c.ref, false, noop); err != nil {
+		if err := fetchRef(ctx, gitRetry{}, cache, c.ref, false, noop); err != nil {
 			t.Fatalf("fetchRef(%q): %v", c.ref, err)
 		}
 		if got := git(cache, "rev-parse", "HEAD"); got != c.want {
@@ -157,7 +157,7 @@ func TestFetchRefChecksOutRequestedRef(t *testing.T) {
 		}
 	}
 
-	if err := fetchRef(ctx, cache, "does-not-exist", false, noop); err == nil {
+	if err := fetchRef(ctx, gitRetry{}, cache, "does-not-exist", false, noop); err == nil {
 		t.Error("fetchRef on a nonexistent ref should error")
 	}
 }
@@ -255,7 +255,7 @@ func TestValidateGitRef(t *testing.T) {
 // fall through to `git clone` and try to reach example.invalid.
 func TestCloneOrFetchRejectsBadRefBeforeNetwork(t *testing.T) {
 	dst := t.TempDir()
-	err := cloneOrFetch(context.Background(), "https://example.invalid/repo", dst, false, "--upload-pack=/bin/sh", func(Event) {
+	err := cloneOrFetch(context.Background(), gitRetry{}, "https://example.invalid/repo", dst, false, "--upload-pack=/bin/sh", func(Event) {
 		t.Errorf("emit must not be called when validation rejects the ref")
 	})
 	if err == nil {
@@ -270,7 +270,7 @@ func TestCloneOrFetchRejectsBadRefBeforeNetwork(t *testing.T) {
 // same entry point so a future refactor that re-orders the validators
 // trips this test rather than silently changing the order users see.
 func TestCloneOrFetchRejectsBadURL(t *testing.T) {
-	err := cloneOrFetch(context.Background(), "ssh://git@example.invalid/repo", t.TempDir(), false, "main", func(Event) {})
+	err := cloneOrFetch(context.Background(), gitRetry{}, "ssh://git@example.invalid/repo", t.TempDir(), false, "main", func(Event) {})
 	if err == nil {
 		t.Fatal("expected error for non-https URL")
 	}
