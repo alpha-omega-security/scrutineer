@@ -112,6 +112,7 @@ func TestMatchProfile(t *testing.T) {
 		{"rebar3 matches beam", briefJSON("package_manager:rebar3"), "beam"},
 		{"mix case-insensitive", briefJSON("package_manager:mix"), "beam"},
 		{"cargo matches rust", briefJSON("package_manager:Cargo"), "rust"},
+		{"SwiftPM matches swift", briefJSON("package_manager:Swift Package Manager"), "swift"},
 		{"cpanm matches perl", briefJSON("package_manager:cpanm"), "perl"},
 
 		// registry order: first match in builtinProfiles wins, not brief order
@@ -153,6 +154,14 @@ func TestMatchProfile(t *testing.T) {
 		{"Perl language matches perl (belt-and-braces for a *.pl-only dist)", briefJSON("language:Perl"), "perl"},
 		{"C language matches c-cpp", briefJSON("language:C"), "c-cpp"},
 		{"C++ language matches c-cpp", briefJSON("language:C++"), "c-cpp"},
+		{"Swift language matches swift (Xcode-project-only checkout)", briefJSON("language:Swift"), "swift"},
+		{
+			// A Swift package that vendors C sources or a Makefile must
+			// still route to swift, not c-cpp.
+			"SwiftPM + Make + C picks swift over c-cpp",
+			briefJSON("package_manager:Swift Package Manager", "build:Make", "language:C"),
+			"swift",
+		},
 		{
 			// A CPAN dist that also commits a generated Makefile must still
 			// route to perl, not c-cpp: registry order and the cpanm/Perl

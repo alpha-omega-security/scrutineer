@@ -101,6 +101,12 @@ var DefaultEgressAllow = []string{
 	// CocoaPods (Swift / Objective-C)
 	"cocoapods.org",
 	"trunk.cocoapods.org",
+	// SwiftPM -- packages resolve directly from the git forges above; the
+	// index is metadata-only; swiftly reads the toolchain catalogue from
+	// www.swift.org and fetches the selected archive from download.swift.org.
+	"swiftpackageindex.com",
+	"www.swift.org",
+	"download.swift.org",
 	// CPAN (Perl) -- metacpan/fastapi for the index and API, www.cpan.org
 	// and cpan.metacpan.org for the tarballs cpanm actually fetches.
 	"metacpan.org",

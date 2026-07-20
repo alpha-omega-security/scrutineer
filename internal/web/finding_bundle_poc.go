@@ -40,6 +40,7 @@ var probeExt = map[string]string{
 	"golang":       "probe.go",
 	"rust":         "probe.rs",
 	"rs":           "probe.rs",
+	"swift":        "probe.swift",
 	"c":            "probe.c",
 	"cpp":          "probe.cpp",
 	"c++":          "probe.cpp",
