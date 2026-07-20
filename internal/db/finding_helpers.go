@@ -1,6 +1,7 @@
 package db
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strconv"
@@ -20,6 +21,13 @@ import (
 const GHSAIDPattern = `(?i)GHSA(-[0-9a-z]{4}){3}`
 
 var ghsaIDRE = regexp.MustCompile("^" + GHSAIDPattern + "$")
+
+const (
+	findingWriteMaxAttempts = 5
+	sqliteBusyCode          = 5
+)
+
+var errFindingWriteConflict = errors.New("finding changed concurrently")
 
 // validateFindingField rejects values that must follow a fixed format
 // before they reach the column. Most fields are free text and pass
@@ -43,26 +51,26 @@ func validateFindingField(field, value string) error {
 // No-op when the new value equals the current stored value; the history
 // row is only written on an actual change.
 func WriteFindingField(gdb *gorm.DB, findingID uint, field, newValue string, source FindingSource, by string) error {
-	var f Finding
-	if err := gdb.First(&f, findingID).Error; err != nil {
-		return fmt.Errorf("load finding %d: %w", findingID, err)
-	}
-	old, colName, err := findingFieldAccessor(&f, field)
-	if err != nil {
-		return err
-	}
-	if old == newValue {
-		return nil
-	}
-	if err := validateFindingField(field, newValue); err != nil {
-		return err
-	}
 	// The column update, its history row, and any dependent CVSS-score
 	// sync must commit together: a failure between them would change the
 	// stored value with no matching history row (breaking the audit
 	// trail) or leave cvss_score inconsistent with cvss_vector.
-	return gdb.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&Finding{}).Where("id = ?", f.ID).Update(colName, newValue).Error; err != nil {
+	return retryFindingWrite(gdb, findingID, func(tx *gorm.DB) error {
+		var f Finding
+		if err := tx.First(&f, findingID).Error; err != nil {
+			return fmt.Errorf("load finding %d: %w", findingID, err)
+		}
+		old, colName, err := findingFieldAccessor(&f, field)
+		if err != nil {
+			return err
+		}
+		if old == newValue {
+			return nil
+		}
+		if err := validateFindingField(field, newValue); err != nil {
+			return err
+		}
+		if err := conditionalFindingUpdate(tx, f.ID, colName, old, newValue); err != nil {
 			return fmt.Errorf("update %s: %w", colName, err)
 		}
 		if err := tx.Create(&FindingHistory{
@@ -121,26 +129,26 @@ func EnsureFindingDependent(gdb *gorm.DB, row FindingDependent) error {
 // reports the same release timestamp does not log a redundant history
 // row).
 func WriteFindingTimeField(gdb *gorm.DB, findingID uint, field string, newValue time.Time, source FindingSource, by string) error {
-	var f Finding
-	if err := gdb.First(&f, findingID).Error; err != nil {
-		return fmt.Errorf("load finding %d: %w", findingID, err)
-	}
-	old, colName, err := findingTimeFieldAccessor(&f, field)
-	if err != nil {
-		return err
-	}
 	newUTC := newValue.UTC()
-	if old != nil && old.Equal(newUTC) {
-		return nil
-	}
-	oldStr := ""
-	if old != nil {
-		oldStr = old.UTC().Format(time.RFC3339)
-	}
 	// Column update and history row must commit together so the audit
 	// trail can't lose a row on a mid-write failure.
-	return gdb.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Model(&Finding{}).Where("id = ?", f.ID).Update(colName, newUTC).Error; err != nil {
+	return retryFindingWrite(gdb, findingID, func(tx *gorm.DB) error {
+		var f Finding
+		if err := tx.First(&f, findingID).Error; err != nil {
+			return fmt.Errorf("load finding %d: %w", findingID, err)
+		}
+		old, colName, err := findingTimeFieldAccessor(&f, field)
+		if err != nil {
+			return err
+		}
+		if old != nil && old.Equal(newUTC) {
+			return nil
+		}
+		oldStr := ""
+		if old != nil {
+			oldStr = old.UTC().Format(time.RFC3339)
+		}
+		if err := conditionalFindingUpdate(tx, f.ID, colName, old, newUTC); err != nil {
 			return fmt.Errorf("update %s: %w", colName, err)
 		}
 		return tx.Create(&FindingHistory{
@@ -153,6 +161,58 @@ func WriteFindingTimeField(gdb *gorm.DB, findingID uint, field string, newValue 
 			CreatedAt: time.Now(),
 		}).Error
 	})
+}
+
+// retryFindingWrite owns and retries transactions created for raw database
+// handles. A caller-owned transaction cannot be restarted here, so it gets
+// one conditional attempt and returns any conflict to its caller for rollback.
+func retryFindingWrite(gdb *gorm.DB, findingID uint, write func(*gorm.DB) error) error {
+	if _, inTransaction := gdb.Statement.ConnPool.(gorm.TxCommitter); inTransaction {
+		// Keep the helper atomic with a single GORM savepoint, but leave any
+		// outer transaction retry to its owner because its earlier work and
+		// read snapshot cannot be safely reconstructed here.
+		return gdb.Transaction(write)
+	}
+
+	var err error
+	for attempt := 1; attempt <= findingWriteMaxAttempts; attempt++ {
+		err = gdb.Transaction(write)
+		if err == nil {
+			return nil
+		}
+		if !errors.Is(err, errFindingWriteConflict) && !isSQLiteBusy(err) {
+			return err
+		}
+		if attempt < findingWriteMaxAttempts {
+			time.Sleep(time.Millisecond << (attempt - 1))
+		}
+	}
+	return fmt.Errorf("write finding %d failed after %d attempts: %w", findingID, findingWriteMaxAttempts, err)
+}
+
+// conditionalFindingUpdate is the optimistic compare-and-swap shared by
+// string, timestamp, and derived-score writes. clause.Eq renders nil as IS
+// NULL, which is required for an unset ReleasedAt value.
+func conditionalFindingUpdate(gdb *gorm.DB, findingID uint, column string, oldValue, newValue any) error {
+	result := gdb.Model(&Finding{}).
+		Where("id = ?", findingID).
+		Where(clause.Eq{Column: clause.Column{Name: column}, Value: oldValue}).
+		Update(column, newValue)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return errFindingWriteConflict
+	}
+	return nil
+}
+
+// SQLite reports a stale WAL read transaction as SQLITE_BUSY_SNAPSHOT (an
+// extended SQLITE_BUSY code) instead of returning zero rows from the compare-
+// and-swap. The whole owned transaction must be restarted to get a new snapshot.
+func isSQLiteBusy(err error) bool {
+	var sqliteErr interface{ Code() int }
+	return errors.As(err, &sqliteErr) && sqliteErr.Code()&0xff == sqliteBusyCode
 }
 
 // findingTimeFieldAccessor mirrors findingFieldAccessor for timestamp
@@ -173,11 +233,11 @@ func findingTimeFieldAccessor(f *Finding, field string) (current *time.Time, col
 // unparseable vector clears the score so stale numbers don't linger.
 func syncCVSSScore(gdb *gorm.DB, f *Finding, vector string, source FindingSource, by string) error {
 	score, _ := CVSSV3ScoreFromVector(vector)
+	if err := conditionalFindingUpdate(gdb, f.ID, "cvss_score", f.CVSSScore, score); err != nil {
+		return fmt.Errorf("update cvss_score: %w", err)
+	}
 	if f.CVSSScore == score {
 		return nil
-	}
-	if err := gdb.Model(&Finding{}).Where("id = ?", f.ID).Update("cvss_score", score).Error; err != nil {
-		return fmt.Errorf("update cvss_score: %w", err)
 	}
 	return gdb.Create(&FindingHistory{
 		FindingID: f.ID,
@@ -195,11 +255,11 @@ func syncCVSSScore(gdb *gorm.DB, f *Finding, vector string, source FindingSource
 // vector/score columns rather than overloading the v3 ones.
 func syncCVSSv4Score(gdb *gorm.DB, f *Finding, vector string, source FindingSource, by string) error {
 	score, _ := CVSSV4ScoreFromVector(vector)
+	if err := conditionalFindingUpdate(gdb, f.ID, "cvss_v4_score", f.CVSSv4Score, score); err != nil {
+		return fmt.Errorf("update cvss_v4_score: %w", err)
+	}
 	if f.CVSSv4Score == score {
 		return nil
-	}
-	if err := gdb.Model(&Finding{}).Where("id = ?", f.ID).Update("cvss_v4_score", score).Error; err != nil {
-		return fmt.Errorf("update cvss_v4_score: %w", err)
 	}
 	return gdb.Create(&FindingHistory{
 		FindingID: f.ID,
