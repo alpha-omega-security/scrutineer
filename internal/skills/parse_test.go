@@ -846,6 +846,17 @@ func TestBundledReconPipelineMetadata(t *testing.T) {
 	}
 }
 
+func TestBundledForensicsToolPolicy(t *testing.T) {
+	forensics, err := ParseFile(filepath.Join("..", "..", "skills", "forensics", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("parse forensics: %v", err)
+	}
+	const want = "Read,Write,Bash,Grep,Glob,WebFetch"
+	if forensics.AllowedTools != want {
+		t.Errorf("forensics allowed tools = %q, want %q", forensics.AllowedTools, want)
+	}
+}
+
 func TestParseFile_requiresWrongType(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSkill(t, dir, "bad-req", `---
