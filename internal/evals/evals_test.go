@@ -527,8 +527,8 @@ func validDeepDiveReport() string {
   "method": {
     "scope": "./src",
     "grep_patterns": [],
-    "inventory_count": 1,
-    "ruled_out_count": 0,
+    "inventory_count": 2,
+    "ruled_out_count": 1,
     "unresolved_count": 0,
     "notes": ["Python fixture: no memory-unsafe primitives to enumerate."]
   },
@@ -542,6 +542,7 @@ func validDeepDiveReport() string {
     "id": "S2",
     "location": "app.py:1",
     "class": "Validation",
+    "boundary": "HTTP client",
     "consumes": "unused import"
   }],
   "findings": [{
@@ -570,7 +571,7 @@ func incompleteDeepDiveReport() string {
 	return `{
   "repository": "https://example.com/eval",
   "commit": "abcdef1",
-  "spec_version": 1,
+  "spec_version": 13,
   "model": "test-model",
   "date": "2026-07-09",
   "languages": ["Python"],
@@ -580,10 +581,19 @@ func incompleteDeepDiveReport() string {
     "controls": "No input validation before query construction",
     "source": "app.py"
   }],
+  "method": {
+    "scope": "./src",
+    "grep_patterns": [],
+    "inventory_count": 1,
+    "ruled_out_count": 0,
+    "unresolved_count": 0,
+    "notes": ["Python fixture: no memory-unsafe primitives to enumerate."]
+  },
   "inventory": [{
     "id": "S1",
     "location": "app.py:7",
     "class": "Validation",
+    "boundary": "HTTP client",
     "consumes": "username query parameter"
   }],
   "findings": [],
