@@ -230,8 +230,6 @@ func TestAssertionMatchesFinding(t *testing.T) {
 		{name: "severity mismatch", a: Assertion{Severity: "Low"}, want: false},
 		{name: "cwe mismatch", a: Assertion{CWE: "CWE-78"}, want: false},
 		{name: "path mismatch", a: Assertion{Path: "other.py"}, want: false},
-		{name: "exact location match", a: Assertion{Location: "app.py:12:3"}, want: true},
-		{name: "exact location mismatch", a: Assertion{Location: "app.py:13"}, want: false},
 		{name: "evidence match", a: Assertion{Evidence: []string{"buildQuery"}}, want: true},
 		{name: "evidence mismatch", a: Assertion{Evidence: []string{"missing function"}}, want: false},
 		{name: "CWE is not evidence", a: Assertion{Evidence: []string{"CWE-89"}}, want: false},
@@ -349,8 +347,8 @@ func TestMassAssignmentScenario(t *testing.T) {
 	report := `{"findings":[{
   "title":"Mass assignment in update_account",
   "cwe":"CWE-915",
-  "location":"app.py:27",
-  "trace":"request.get_json() supplies body, and account.update(body) copies role without an allow-list. Unlike update_profile, it does not use account.update(editable) or overwrite owner_id."
+  "location":"account.py:10",
+  "trace":"request.get_json() supplies body, and account.update(body) copies role without an allow-list."
 }]}`
 	got, err := (HeuristicJudge{}).Judge(sc, report)
 	if err != nil {
@@ -368,7 +366,7 @@ func TestMassAssignmentScenario(t *testing.T) {
 	safeReport := `{"findings":[{
   "title":"Mass assignment in update_profile",
   "cwe":"CWE-915",
-  "location":"app.py:42",
+  "location":"profile.py:14",
   "trace":"update_profile uses account.update(editable) and overwrites owner_id."
 }]}`
 	got, err = (HeuristicJudge{}).Judge(sc, safeReport)

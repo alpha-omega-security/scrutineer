@@ -4,7 +4,7 @@ skill: security-deep-dive
 should_find:
   - finding: mass assignment
     cwe: CWE-915
-    path: app.py
+    path: account.py
     evidence_contains:
       - request.get_json()
       - account.update(body)
@@ -13,8 +13,7 @@ should_find:
 should_not_find:
   - finding: mass assignment
     cwe: CWE-915
-    path: app.py
-    location: app.py:42
+    path: profile.py
     evidence_contains:
       - update_profile
       - account.update(editable)

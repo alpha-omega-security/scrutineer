@@ -1,4 +1,4 @@
-from flask import Flask, abort, jsonify, request
+from flask import Flask, abort
 
 app = Flask(__name__)
 
@@ -23,26 +23,8 @@ def validate_profile(body):
         abort(400)
 
 
-@app.patch("/account")
-def update_account():
-    actor = current_member()
-    body = request.get_json()
-    validate_profile(body)
-    account = ACCOUNTS[actor["id"]]
-    account.update(body)
-    return jsonify(account)
+from account import register_account_routes
+from profile import register_profile_routes
 
-
-@app.patch("/profile")
-def update_profile():
-    actor = current_member()
-    body = request.get_json()
-    validate_profile(body)
-    editable = {
-        "display_name": body.get("display_name", ""),
-        "bio": body.get("bio", ""),
-    }
-    account = ACCOUNTS[actor["id"]]
-    account.update(editable)
-    account["owner_id"] = actor["id"]
-    return jsonify(account)
+register_account_routes(app, ACCOUNTS, current_member, validate_profile)
+register_profile_routes(app, ACCOUNTS, current_member, validate_profile)

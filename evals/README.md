@@ -41,7 +41,7 @@ locations, or narrative fields: `trace`, `boundary`, `validation`, `rating`,
 criteria, not evidence.
 
 The default judge matches findings by title substring plus optional severity,
-CWE, path, exact `location` (including line numbers), and evidence. These
-assertions define a minimum bar: additional findings do not fail an eval unless
-they match `should_not_find` or the report contains a `must_not_contain` term.
-Model-backed judging can be plugged in by implementing `evals.Judge`.
+CWE, path, and evidence. These assertions define a minimum bar: additional
+findings do not fail an eval unless they match `should_not_find` or the report
+contains a `must_not_contain` term. Model-backed judging can be plugged in by
+implementing `evals.Judge`.

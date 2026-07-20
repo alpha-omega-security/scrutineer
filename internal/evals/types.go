@@ -28,7 +28,6 @@ type Assertion struct {
 	Severity    string   `yaml:"severity"`
 	CWE         string   `yaml:"cwe"`
 	Path        string   `yaml:"path"`
-	Location    string   `yaml:"location"`
 	Evidence    []string `yaml:"evidence_contains"`
 	Required    bool     `yaml:"required"`
 	requiredSet bool
@@ -41,7 +40,7 @@ func (a *Assertion) UnmarshalYAML(value *yaml.Node) error {
 	}
 	for i := 0; i+1 < len(value.Content); i += 2 {
 		switch value.Content[i].Value {
-		case "finding", "severity", "cwe", "path", "location", "evidence_contains", "required":
+		case "finding", "severity", "cwe", "path", "evidence_contains", "required":
 		default:
 			return fmt.Errorf("unknown assertion field %q", value.Content[i].Value)
 		}
@@ -51,7 +50,6 @@ func (a *Assertion) UnmarshalYAML(value *yaml.Node) error {
 		Severity string   `yaml:"severity"`
 		CWE      string   `yaml:"cwe"`
 		Path     string   `yaml:"path"`
-		Location string   `yaml:"location"`
 		Evidence []string `yaml:"evidence_contains"`
 		Required *bool    `yaml:"required"`
 	}
@@ -62,7 +60,6 @@ func (a *Assertion) UnmarshalYAML(value *yaml.Node) error {
 	a.Severity = out.Severity
 	a.CWE = out.CWE
 	a.Path = out.Path
-	a.Location = out.Location
 	a.Evidence = out.Evidence
 	if out.Required != nil {
 		a.Required = *out.Required
@@ -72,7 +69,7 @@ func (a *Assertion) UnmarshalYAML(value *yaml.Node) error {
 }
 
 func (a Assertion) label() string {
-	for _, v := range []string{a.Finding, a.CWE, a.Path, a.Location, a.Severity} {
+	for _, v := range []string{a.Finding, a.CWE, a.Path, a.Severity} {
 		if strings.TrimSpace(v) != "" {
 			return strings.TrimSpace(v)
 		}
@@ -133,7 +130,6 @@ func (a Assertion) empty() bool {
 		strings.TrimSpace(a.Severity) == "" &&
 		strings.TrimSpace(a.CWE) == "" &&
 		strings.TrimSpace(a.Path) == "" &&
-		strings.TrimSpace(a.Location) == "" &&
 		len(a.Evidence) == 0
 }
 
