@@ -857,6 +857,20 @@ func TestBundledForensicsToolPolicy(t *testing.T) {
 	}
 }
 
+func TestBundledVariantsMetadata(t *testing.T) {
+	variants, err := ParseFile(filepath.Join("..", "..", "skills", "variants", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("parse variants: %v", err)
+	}
+	if variants.OutputKind != "findings" || variants.MaxTurns != 32 || variants.Model != "high" || variants.MinConfidence != "high" {
+		t.Errorf("variants metadata = kind %q, turns %d, model %q, confidence %q", variants.OutputKind, variants.MaxTurns, variants.Model, variants.MinConfidence)
+	}
+	const want = "Read,Write,Bash,Grep,Glob"
+	if variants.AllowedTools != want {
+		t.Errorf("variants allowed tools = %q, want %q", variants.AllowedTools, want)
+	}
+}
+
 func TestParseFile_requiresWrongType(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSkill(t, dir, "bad-req", `---

@@ -164,6 +164,7 @@ Adding a repo enqueues the `triage` skill, whose SKILL.md lists the further skil
 | `cna-match` | Matches a repository to its CVE Numbering Authority so disclosures route to the right contact |
 | `posture` | Records the repo's security posture (reporting policy, response history, hardening) on the Repository row |
 | `forensics` | Read-only compromise timeline and evidence bundle from local Git history and public forge/archive records |
+| `variants` | Starting from one confirmed finding, searches the current repository for distinct, high-confidence sibling instances of the same root cause |
 
 Edit `skills/triage/SKILL.md` to change what gets run by default. Drop new skill directories in `skills/` to add scan types; no code changes needed. See [docs/skills.md](docs/skills.md) for the frontmatter reference, the `scrutineer.*` metadata keys, the `context.json` shape, output kinds, schema validation, and the skill-facing HTTP API.
 
