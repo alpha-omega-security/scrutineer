@@ -298,7 +298,7 @@ func TestBundledSchemas_rejectBadShapes(t *testing.T) {
 			  "confidence":"high","cwe":"CWE-78","location":"internal/hooks/run.go:88",
 			  "reachability":"reachable","quality_tier":"high","trace":"x","boundary":"x",
 			  "validation":"x","rating":"x"}]}`,
-			"discovered_via"},
+			"/findings/0"},
 		{"../../skills/variants/schema.json",
 			`{"findings":[{"id":"F1","title":"Variant of finding #42: weak confidence","severity":"High",
 			  "confidence":"maybe","cwe":"CWE-22","location":"pkg/archive/legacy.go:88",
