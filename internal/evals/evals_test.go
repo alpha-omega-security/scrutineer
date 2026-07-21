@@ -397,7 +397,12 @@ func TestModelJudgeReturnsOrderedVerdictsAndUsage(t *testing.T) {
 func TestModelJudgeRejectsIncompleteVerdicts(t *testing.T) {
 	server := modelJudgeServer(t, `{"verdicts":[{"index":0,"passed":true,"reason":"one"}]}`)
 	defer server.Close()
-	judge := ModelJudge{Options: llm.Options{Endpoint: server.URL, APIKey: "test-key", Model: "claude-haiku-4-5", MaxTokens: 64}}
+	judge := ModelJudge{Options: llm.Options{
+		Endpoint:  server.URL + "/v1/messages",
+		APIKey:    "test-key",
+		Model:     "claude-haiku-4-5",
+		MaxTokens: 64,
+	}}
 	_, _, err := judge.JudgeWithUsage(context.Background(), Scenario{
 		Given:         "test",
 		Skill:         "security-deep-dive",
@@ -561,8 +566,8 @@ func (j usageJudgeStub) JudgeWithUsage(context.Context, Scenario, string) ([]Ass
 func modelJudgeServer(t *testing.T, verdicts string) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			t.Fatalf("method = %s, want POST", r.Method)
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/messages" {
+			t.Fatalf("request = %s %s, want POST /v1/messages", r.Method, r.URL.Path)
 		}
 		var request struct {
 			OutputConfig struct {
