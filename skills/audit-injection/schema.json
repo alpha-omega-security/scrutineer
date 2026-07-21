@@ -21,7 +21,7 @@
     },
     "cwe": {
       "type": "string",
-      "pattern": "^(CWE-[0-9]+)?$"
+      "pattern": "^CWE-[1-9][0-9]*$"
     },
     "reachability": {
       "type": "string",
@@ -34,7 +34,7 @@
     "location": {
       "type": "string",
       "minLength": 1,
-      "pattern": "^[^:]+:[0-9]+$"
+      "pattern": "^[^:]+:[1-9][0-9]*$"
     },
     "markdown": {
       "type": "string",
@@ -55,6 +55,7 @@
         "trace",
         "boundary",
         "validation",
+        "discovered_via",
         "rating"
       ],
       "additionalProperties": false,
@@ -85,7 +86,7 @@
         "prior_art": {"$ref": "#/$defs/markdown"},
         "discovered_via": {
           "type": "string",
-          "enum": ["source", "issue-tracker", "advisory", "documentation"]
+          "enum": ["source"]
         },
         "reach": {"$ref": "#/$defs/markdown"},
         "rating": {"$ref": "#/$defs/markdown"}
