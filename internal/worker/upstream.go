@@ -24,11 +24,18 @@ func validateScheduleURL(u string) error {
 // also schedulable; only the terminal prompt is disabled so a missing
 // credential fails fast instead of hanging the scheduler.
 func ResolveRemoteHead(ctx context.Context, cloneURL string) (string, error) {
+	return resolveRemoteHead(ctx, branchPickerRetry(gitRetry{}), cloneURL)
+}
+
+func resolveRemoteHead(ctx context.Context, retry gitRetry, cloneURL string) (string, error) {
 	if err := validateScheduleURL(cloneURL); err != nil {
 		return "", err
 	}
-	out, err := gitWithEnv(ctx, "", []string{"GIT_TERMINAL_PROMPT=0"},
-		"ls-remote", "--", cloneURL, "HEAD")
+	out, err := retry.do(ctx, gitCommand{
+		label: "ls-remote",
+		env:   []string{"GIT_TERMINAL_PROMPT=0"},
+		args:  []string{"ls-remote", "--", cloneURL, "HEAD"},
+	}, nil)
 	if err != nil {
 		return "", fmt.Errorf("%s: %w", strings.TrimSpace(out), err)
 	}
@@ -54,17 +61,22 @@ func ResolveRemoteHead(ctx context.Context, cloneURL string) (string, error) {
 // helper, gh auth); only the terminal prompt is disabled so a missing
 // credential fails fast.
 func (w *Worker) SyncUpstream(ctx context.Context, repoURL, upstreamURL string) error {
+	return w.syncUpstream(ctx, gitRetry{}, repoURL, upstreamURL)
+}
+
+func (w *Worker) syncUpstream(ctx context.Context, retry gitRetry, repoURL, upstreamURL string) error {
 	if err := validateScheduleURL(repoURL); err != nil {
 		return fmt.Errorf("repo: %w", err)
 	}
 	if err := validateScheduleURL(upstreamURL); err != nil {
 		return fmt.Errorf("upstream: %w", err)
 	}
-	repoHead, err := ResolveRemoteHead(ctx, repoURL)
+	policy := retry.resolved()
+	repoHead, err := resolveRemoteHead(ctx, branchPickerRetry(policy), repoURL)
 	if err != nil {
 		return fmt.Errorf("resolve repo HEAD: %w", err)
 	}
-	upstreamHead, err := ResolveRemoteHead(ctx, upstreamURL)
+	upstreamHead, err := resolveRemoteHead(ctx, branchPickerRetry(policy), upstreamURL)
 	if err != nil {
 		return fmt.Errorf("resolve upstream HEAD: %w", err)
 	}
@@ -82,20 +94,60 @@ func (w *Worker) SyncUpstream(ctx context.Context, repoURL, upstreamURL string) 
 		if err := os.MkdirAll(filepath.Dir(mirror), dirPerm); err != nil {
 			return err
 		}
-		if out, err := gitWithEnv(ctx, "", env, "clone", "--quiet", "--bare", "--", repoURL, mirror); err != nil {
+		if out, err := policy.do(ctx, gitCommand{
+			label: "clone",
+			env:   env,
+			args:  []string{"clone", "--quiet", "--bare", "--", repoURL, mirror},
+			reset: cloneDestReset(mirror),
+		}, nil); err != nil {
 			return fmt.Errorf("clone staging repo: %s: %w", strings.TrimSpace(out), err)
 		}
 	}
-	branch, err := gitWithEnv(ctx, mirror, env, "symbolic-ref", "--short", "HEAD")
+	branch, err := policy.run(ctx, mirror, env, "symbolic-ref", "--short", "HEAD")
 	if err != nil {
 		return fmt.Errorf("resolve default branch: %s: %w", strings.TrimSpace(branch), err)
 	}
 	branch = strings.TrimSpace(branch)
-	if out, err := gitWithEnv(ctx, mirror, env, "fetch", "--quiet", "--", upstreamURL, "HEAD"); err != nil {
+	if out, err := policy.do(ctx, gitCommand{
+		label: "fetch",
+		dir:   mirror,
+		env:   env,
+		args:  []string{"fetch", "--quiet", "--", upstreamURL, "HEAD"},
+	}, nil); err != nil {
 		return fmt.Errorf("fetch upstream: %s: %w", strings.TrimSpace(out), err)
 	}
-	if out, err := gitWithEnv(ctx, mirror, env, "push", "--quiet", "--force", "origin", "FETCH_HEAD:refs/heads/"+branch); err != nil {
+	desiredHead, err := policy.run(ctx, mirror, env, "rev-parse", "FETCH_HEAD")
+	if err != nil {
+		return fmt.Errorf("resolve fetched HEAD: %s: %w", strings.TrimSpace(desiredHead), err)
+	}
+	desiredHead = strings.TrimSpace(desiredHead)
+	if out, err := policy.do(ctx, gitCommand{
+		label: "push",
+		dir:   mirror,
+		env:   env,
+		args:  []string{"push", "--quiet", "--force", "origin", "FETCH_HEAD:refs/heads/" + branch},
+		confirm: func(ctx context.Context) (bool, error) {
+			return remoteRefMatches(ctx, policy.run, env, repoURL, "refs/heads/"+branch, desiredHead)
+		},
+	}, nil); err != nil {
 		return fmt.Errorf("push to staging repo: %s: %w", strings.TrimSpace(out), err)
 	}
 	return nil
+}
+
+// remoteRefMatches checks whether an ambiguous push already installed the
+// desired object. It intentionally makes one direct attempt: failure to
+// confirm falls back to the push's own bounded retry budget.
+func remoteRefMatches(ctx context.Context, run gitRunner, env []string, repoURL, ref, wantSHA string) (bool, error) {
+	out, err := run(ctx, "", env, "ls-remote", "--refs", "--", repoURL, ref)
+	if err != nil {
+		return false, err
+	}
+	for line := range strings.SplitSeq(out, "\n") {
+		sha, gotRef, ok := strings.Cut(line, "\t")
+		if ok && strings.TrimSpace(gotRef) == ref {
+			return strings.TrimSpace(sha) == wantSHA, nil
+		}
+	}
+	return false, nil
 }
