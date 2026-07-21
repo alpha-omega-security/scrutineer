@@ -105,10 +105,11 @@ func (r Runner) RunScenario(ctx context.Context, sc Scenario) (Result, error) {
 	if detail := worker.ValidateSkillReport(skill.Name, skill.SchemaJSON, res.Report); detail != "" {
 		return Result{}, fmt.Errorf("%s: %s failed report validation: %s", sc.Path, skill.OutputFile, detail)
 	}
-	matches, err := judge.Judge(sc, res.Report)
+	matches, judgeCost, err := judgeScenario(ctx, judge, sc, res.Report)
 	if err != nil {
 		return Result{}, fmt.Errorf("%s: judge: %w", sc.Path, err)
 	}
+	addCost(&cost, judgeCost)
 	result := Result{
 		Scenario:       sc,
 		Commit:         res.Commit,
@@ -128,6 +129,23 @@ func (r Runner) RunScenario(ctx context.Context, sc Scenario) (Result, error) {
 		}
 	}
 	return result, nil
+}
+
+func judgeScenario(ctx context.Context, judge Judge, sc Scenario, report string) ([]AssertionResult, Cost, error) {
+	if usageJudge, ok := judge.(UsageJudge); ok {
+		return usageJudge.JudgeWithUsage(ctx, sc, report)
+	}
+	matches, err := judge.Judge(sc, report)
+	return matches, Cost{}, err
+}
+
+func addCost(total *Cost, add Cost) {
+	total.USD += add.USD
+	total.Turns += add.Turns
+	total.InputTokens += add.InputTokens
+	total.OutputTokens += add.OutputTokens
+	total.CacheReadTokens += add.CacheReadTokens
+	total.CacheWriteTokens += add.CacheWriteTokens
 }
 
 func (r Runner) loadSkill(name string) (*db.Skill, error) {

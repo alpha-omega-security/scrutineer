@@ -4,11 +4,16 @@ package evals
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"scrutineer/internal/llm"
 	"scrutineer/internal/worker"
 )
 
@@ -340,6 +345,70 @@ func TestRunnerStagesSkillAndScoresReport(t *testing.T) {
 	}
 }
 
+func TestRunnerAddsUsageJudgeCost(t *testing.T) {
+	sc := mustLoadScenario(t, "../../evals/security-deep-dive-sqli.yaml")
+	r := Runner{
+		Runner:     fakeSkillRunner{report: validDeepDiveReport()},
+		SkillsRoot: "../../skills",
+		EvalsRoot:  "../../evals",
+		WorkRoot:   t.TempDir(),
+		Judge: usageJudgeStub{
+			matches: []AssertionResult{{Kind: assertionShouldFind, Matched: true, Required: true}},
+			cost:    Cost{USD: 0.02, Turns: 1, InputTokens: 20, OutputTokens: 5},
+		},
+	}
+	res, err := r.RunScenario(context.Background(), sc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Cost.USD != 0.03 || res.Cost.Turns != 2 || res.Cost.InputTokens != 30 || res.Cost.OutputTokens != 7 {
+		t.Fatalf("cost = %+v, want skill and judge usage combined", res.Cost)
+	}
+}
+
+func TestModelJudgeReturnsOrderedVerdictsAndUsage(t *testing.T) {
+	server := modelJudgeServer(t, `{"verdicts":[{"index":1,"passed":false,"reason":"prohibited finding is present"},{"index":0,"passed":true,"reason":"finding has the required evidence"}]}`)
+	defer server.Close()
+
+	judge := ModelJudge{Options: llm.Options{
+		Endpoint:  server.URL + "/v1/messages",
+		APIKey:    "test-key",
+		Model:     "claude-haiku-4-5",
+		MaxTokens: 64,
+	}}
+	sc := Scenario{
+		Given:         "a test scenario",
+		Skill:         "security-deep-dive",
+		ShouldFind:    []Assertion{{Finding: "SQL injection", Required: true}},
+		ShouldNotFind: []Assertion{{Finding: "debug endpoint"}},
+	}
+	matches, cost, err := judge.JudgeWithUsage(context.Background(), sc, `{"findings":[]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(matches) != 2 || !matches[0].Matched || matches[1].Matched {
+		t.Fatalf("matches = %+v, want ordered model verdicts", matches)
+	}
+	if cost.Turns != 1 || cost.InputTokens != 10 || cost.OutputTokens != 4 || cost.CacheReadTokens != 3 || cost.CacheWriteTokens != 2 || cost.USD <= 0 {
+		t.Fatalf("cost = %+v, want model usage and priced cost", cost)
+	}
+}
+
+func TestModelJudgeRejectsIncompleteVerdicts(t *testing.T) {
+	server := modelJudgeServer(t, `{"verdicts":[{"index":0,"passed":true,"reason":"one"}]}`)
+	defer server.Close()
+	judge := ModelJudge{Options: llm.Options{Endpoint: server.URL, APIKey: "test-key", Model: "claude-haiku-4-5", MaxTokens: 64}}
+	_, _, err := judge.JudgeWithUsage(context.Background(), Scenario{
+		Given:         "test",
+		Skill:         "security-deep-dive",
+		ShouldFind:    []Assertion{{Finding: "one"}},
+		ShouldNotFind: []Assertion{{Finding: "two"}},
+	}, `{"findings":[]}`)
+	if err == nil || !strings.Contains(err.Error(), "verdicts, want 2") {
+		t.Fatalf("JudgeWithUsage() error = %v, want incomplete-verdict error", err)
+	}
+}
+
 func TestRunnerRejectsSchemaInvalidReport(t *testing.T) {
 	sc, err := LoadScenario("../../evals/security-deep-dive-sqli.yaml")
 	if err != nil {
@@ -452,6 +521,17 @@ func TestRunFixtures(t *testing.T) {
 		WorkRoot:   t.TempDir(),
 		Model:      os.Getenv("SCRUTINEER_EVAL_MODEL"),
 	}
+	if os.Getenv("SCRUTINEER_EVAL_JUDGE") == "model" {
+		judgeModel := os.Getenv("SCRUTINEER_EVAL_JUDGE_MODEL")
+		if judgeModel == "" {
+			judgeModel = r.Model
+		}
+		r.Judge = ModelJudge{Options: llm.Options{
+			APIKey:    os.Getenv("ANTHROPIC_API_KEY"),
+			Model:     judgeModel,
+			MaxTokens: modelJudgeMaxTokens,
+		}}
+	}
 	results, err := r.RunAll(context.Background(), scenarios)
 	if err != nil {
 		t.Fatal(err)
@@ -463,6 +543,44 @@ func TestRunFixtures(t *testing.T) {
 			t.Fail()
 		}
 	}
+}
+
+type usageJudgeStub struct {
+	matches []AssertionResult
+	cost    Cost
+}
+
+func (j usageJudgeStub) Judge(Scenario, string) ([]AssertionResult, error) {
+	return j.matches, nil
+}
+
+func (j usageJudgeStub) JudgeWithUsage(context.Context, Scenario, string) ([]AssertionResult, Cost, error) {
+	return j.matches, j.cost, nil
+}
+
+func modelJudgeServer(t *testing.T, verdicts string) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Fatalf("method = %s, want POST", r.Method)
+		}
+		var request struct {
+			OutputConfig struct {
+				Format struct {
+					Type   string          `json:"type"`
+					Schema json.RawMessage `json:"schema"`
+				} `json:"format"`
+			} `json:"output_config"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Fatal(err)
+		}
+		if request.OutputConfig.Format.Type != "json_schema" || !json.Valid(request.OutputConfig.Format.Schema) {
+			t.Fatalf("structured output = %+v, want valid JSON schema", request.OutputConfig.Format)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = fmt.Fprintf(w, `{"content":[{"type":"text","text":%q}],"usage":{"input_tokens":10,"output_tokens":4,"cache_read_input_tokens":3,"cache_creation_input_tokens":2}}`, verdicts)
+	}))
 }
 
 func TestRunnerRejectsFixtureTraversal(t *testing.T) {

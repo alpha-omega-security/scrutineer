@@ -186,7 +186,7 @@ type AssertionResult struct {
 	Reason    string
 }
 
-// Cost captures the model usage emitted by the skill runner.
+// Cost captures the combined usage of the skill runner and optional judge.
 type Cost struct {
 	USD              float64
 	Turns            int

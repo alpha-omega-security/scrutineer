@@ -43,5 +43,20 @@ criteria, not evidence.
 The default judge matches findings by title substring plus optional severity,
 CWE, path, and evidence. These assertions define a minimum bar: additional
 findings do not fail an eval unless they match `should_not_find` or the report
-contains a `must_not_contain` term. Model-backed judging can be plugged in by
-implementing `evals.Judge`.
+contains a `must_not_contain` term.
+
+For a semantic, model-backed verdict during a live run, opt in explicitly. The
+judge uses the Anthropic Messages API and its cost is included in each
+scenario's reported cost:
+
+```sh
+SCRUTINEER_RUN_EVALS=1 \
+  SCRUTINEER_EVAL_MODEL=claude-sonnet-5 \
+  SCRUTINEER_EVAL_JUDGE=model \
+  SCRUTINEER_EVAL_JUDGE_MODEL=claude-haiku-4-5 \
+  ANTHROPIC_API_KEY=sk-ant-... \
+  go test -tags evals ./internal/evals/... -run TestRunFixtures -v
+```
+
+`SCRUTINEER_EVAL_JUDGE` is unset by default, so ordinary local and CI checks
+continue to use the deterministic judge without an API call.
