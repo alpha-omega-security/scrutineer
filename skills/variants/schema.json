@@ -1,0 +1,112 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "variants findings report",
+  "description": "Distinct, high-confidence sibling vulnerabilities found from one finding-scoped variant analysis.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["findings"],
+  "properties": {
+    "findings": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/finding"}
+    }
+  },
+  "$defs": {
+    "markdown": {
+      "type": "string",
+      "minLength": 1
+    },
+    "location": {
+      "type": "string",
+      "pattern": "^[^:]+:[1-9][0-9]*$"
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "title",
+        "severity",
+        "confidence",
+        "cwe",
+        "location",
+        "reachability",
+        "quality_tier",
+        "trace",
+        "boundary",
+        "validation",
+        "prior_art",
+        "discovered_via",
+        "rating"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^F[0-9]+$"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^Variant of finding #[0-9]+:"
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["Critical", "High", "Medium", "Low"]
+        },
+        "confidence": {
+          "type": "string",
+          "enum": ["high", "medium", "low"]
+        },
+        "cwe": {
+          "type": "string",
+          "pattern": "^CWE-[1-9][0-9]*$"
+        },
+        "location": {
+          "$ref": "#/$defs/location"
+        },
+        "locations": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/location"}
+        },
+        "affected": {
+          "type": "string",
+          "minLength": 1
+        },
+        "reachability": {
+          "type": "string",
+          "enum": ["reachable"]
+        },
+        "quality_tier": {
+          "type": "string",
+          "enum": ["high", "medium", "low"]
+        },
+        "trace": {
+          "$ref": "#/$defs/markdown"
+        },
+        "boundary": {
+          "$ref": "#/$defs/markdown"
+        },
+        "validation": {
+          "$ref": "#/$defs/markdown"
+        },
+        "prior_art": {
+          "allOf": [
+            {"$ref": "#/$defs/markdown"},
+            {"pattern": "[Vv]ariant analysis of finding #[0-9]+"}
+          ]
+        },
+        "discovered_via": {
+          "type": "string",
+          "enum": ["source"]
+        },
+        "reach": {
+          "$ref": "#/$defs/markdown"
+        },
+        "rating": {
+          "$ref": "#/$defs/markdown"
+        }
+      }
+    }
+  }
+}
