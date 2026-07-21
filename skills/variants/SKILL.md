@@ -42,8 +42,9 @@ Then fetch the repository's existing findings:
     GET {api_base}/repositories/{repository_id}/findings
     Authorization: Bearer {token}
 
-If either request fails, write an empty report rather than guessing. Do not
-analyse a source finding that is rejected, duplicate, fixed, or published.
+If either request fails, write an empty report rather than guessing. If the
+source finding is rejected, duplicate, fixed, or published, write
+{"findings":[]} and exit successfully.
 
 ## Define the variant hypothesis
 

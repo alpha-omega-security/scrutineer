@@ -55,7 +55,7 @@
         },
         "confidence": {
           "type": "string",
-          "enum": ["high"]
+          "enum": ["high", "medium", "low"]
         },
         "cwe": {
           "type": "string",
@@ -75,7 +75,7 @@
         },
         "reachability": {
           "type": "string",
-          "enum": ["reachable", "conditional", "unknown"]
+          "enum": ["reachable"]
         },
         "quality_tier": {
           "type": "string",
