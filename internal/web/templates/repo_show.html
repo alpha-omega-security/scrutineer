@@ -140,6 +140,7 @@
           {{if .Repo.Stars}}<span class="badge-outline"><i data-lucide="star"></i><span class="sr-only">Stars: </span>{{bignum .Repo.Stars}}</span>{{end}}
           {{if .Repo.License}}<span class="badge-outline"><i data-lucide="scale"></i><span class="sr-only">License: </span>{{.Repo.License}}</span>{{end}}
           {{if .Repo.PushedAt}}<span class="badge-outline"><i data-lucide="clock"></i>pushed {{since .Repo.PushedAt}}</span>{{end}}
+          {{if .Repo.Health}}<span class="badge-outline" data-tooltip="{{.Repo.HealthSummary}}"><i data-lucide="heart-pulse"></i>{{.Repo.Health}} health ({{.Repo.HealthScore}}/100)<span class="sr-only">: {{.Repo.HealthSummary}}</span></span>{{end}}
           {{if gt .TotalCost 0.0}}<span class="badge-outline" data-tooltip="Total scan spend on this repository"><i data-lucide="coins"></i><span class="sr-only">Total scan spend: </span>{{usd .TotalCost}}</span>{{end}}
           {{if .Repo.Archived}}<span class="badge-destructive"><i data-lucide="archive"></i>archived</span>{{end}}
           {{if .Repo.CloneError}}<span class="badge-destructive" data-tooltip="{{.Repo.CloneError}}"><i data-lucide="wifi-off"></i>unreachable<span class="sr-only">: {{.Repo.CloneError}}</span></span>{{end}}

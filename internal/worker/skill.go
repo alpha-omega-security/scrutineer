@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -880,6 +881,9 @@ func (w *Worker) parseMaintainersOutput(scan *db.Scan, report string, emit func(
 	}
 	if len(linked) > 0 {
 		_ = w.DB.Model(&repo).Association("Maintainers").Replace(linked)
+	}
+	if _, err := db.RefreshRepositoryHealth(w.DB, scan.RepositoryID, time.Now()); err != nil {
+		return err
 	}
 	emit(Event{Kind: KindText, Text: fmt.Sprintf("identified %d maintainer(s)", len(result.Maintainers))})
 	return nil

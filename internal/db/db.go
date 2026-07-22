@@ -75,6 +75,15 @@ type Repository struct {
 	Posture        string `gorm:"index"`
 	PostureSummary string
 
+	// Health is the evidence-based maintenance classification: active, stale,
+	// abandoned, or zombie. It is refreshed when repository metadata, package
+	// inventory, or maintainer activity changes. Empty means there is not yet
+	// enough evidence to make a classification.
+	Health          RepositoryHealth `gorm:"index"`
+	HealthScore     int
+	HealthSummary   string
+	HealthCheckedAt *time.Time
+
 	// Fork is the full_name (owner/name) of this repository's private
 	// staging repo inside the configured fork_org. Written by the fork
 	// skill so later runs and the UI can find it without re-resolving the

@@ -46,6 +46,7 @@
         {{template "th-sort" (dict "Sorter" .Sorter "Key" "language" "Def" "asc" "Label" "Language" "Class" "")}}
         {{template "th-sort" (dict "Sorter" .Sorter "Key" "scanned" "Def" "desc" "Label" "Last scan" "Class" "")}}
         {{template "th-sort" (dict "Sorter" .Sorter "Key" "status" "Def" "asc" "Label" "Status" "Class" "")}}
+        <th>Health</th>
         {{template "th-sort" (dict "Sorter" .Sorter "Key" "findings" "Def" "desc" "Label" "Findings" "Class" "")}}
         {{template "th-sort" (dict "Sorter" .Sorter "Key" "size" "Def" "desc" "Label" "Size" "Class" "")}}
         <th></th>
@@ -62,6 +63,7 @@
         <td class="text-muted-foreground">{{if .Languages}}{{.Languages}}{{else}}-{{end}}</td>
         <td>{{if .LastScan}}<span title="{{.LastScan.CreatedAt.Format "2006-01-02 15:04:05 MST"}}">{{.LastScan.CreatedAt.Format "2006-01-02 15:04"}}</span>{{else}}never{{end}}</td>
         <td>{{if .StatusScan}}{{template "status-badge" (status .StatusScan.Status)}}{{end}}</td>
+        <td>{{if .Health}}<span class="badge-outline" data-tooltip="{{.HealthSummary}}">{{.Health}}</span>{{else}}-{{end}}</td>
         <td>{{template "findings-badge" .FindingsTotal}}</td>
         <td class="text-muted-foreground">{{if .DiskBytes}}{{bytes .DiskBytes}}{{else}}-{{end}}</td>
         <td>

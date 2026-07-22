@@ -79,6 +79,9 @@ func (w *Worker) parseRepoMetadataOutput(scan *db.Scan, report string, emit func
 	if err := w.DB.Model(&db.Repository{}).Where("id = ?", scan.RepositoryID).Updates(updates).Error; err != nil {
 		return fmt.Errorf("update repository: %w", err)
 	}
+	if _, err := db.RefreshRepositoryHealth(w.DB, scan.RepositoryID, time.Now()); err != nil {
+		return err
+	}
 	emit(Event{Kind: KindText, Text: "updated repository metadata"})
 	return nil
 }
@@ -161,6 +164,9 @@ func (w *Worker) parsePackagesOutput(scan *db.Scan, report string, emit func(Eve
 		}
 		return nil
 	}); err != nil {
+		return err
+	}
+	if _, err := db.RefreshRepositoryHealth(w.DB, scan.RepositoryID, time.Now()); err != nil {
 		return err
 	}
 	emit(Event{Kind: KindText, Text: fmt.Sprintf("saved %d package(s)", len(rows))})

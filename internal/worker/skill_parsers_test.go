@@ -206,6 +206,9 @@ func TestParseRepoMetadata_updatesRepository(t *testing.T) {
 	if refreshed.Metadata == "" {
 		t.Error("raw metadata not stored")
 	}
+	if refreshed.Health != db.RepositoryHealthStale || refreshed.HealthCheckedAt == nil {
+		t.Errorf("metadata refresh should update health, got health=%q checked=%v", refreshed.Health, refreshed.HealthCheckedAt)
+	}
 }
 
 func TestSafeURL(t *testing.T) {
@@ -267,6 +270,11 @@ func TestParsePackages_replacesPackageRows(t *testing.T) {
 	}
 	if rows[0].Metadata == "" {
 		t.Error("package metadata blob not stored")
+	}
+	var refreshed db.Repository
+	gdb.First(&refreshed, repo.ID)
+	if refreshed.HealthCheckedAt == nil {
+		t.Error("package refresh should update repository health")
 	}
 }
 
@@ -340,6 +348,9 @@ func TestParseMaintainers_persistsDisclosureChannel(t *testing.T) {
 	gdb.Where("login = ?", "alice").First(&m)
 	if m.Login != "alice" {
 		t.Error("maintainer not upserted")
+	}
+	if got.Health != db.RepositoryHealthStale || got.HealthCheckedAt == nil {
+		t.Errorf("maintainer refresh should update health, got health=%q checked=%v", got.Health, got.HealthCheckedAt)
 	}
 }
 
