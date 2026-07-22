@@ -17,34 +17,29 @@ func TestAssessRepositoryHealth(t *testing.T) {
 		packages []Package
 		people   []Maintainer
 		want     RepositoryHealth
-		minScore int
 	}{
 		{
-			name:     "recent push with active maintainer is active",
-			repo:     Repository{PushedAt: ptrTime(now.Add(-30 * 24 * time.Hour))},
-			people:   []Maintainer{active},
-			want:     RepositoryHealthActive,
-			minScore: 0,
+			name:   "recent push with active maintainer is active",
+			repo:   Repository{PushedAt: ptrTime(now.Add(-30 * 24 * time.Hour))},
+			people: []Maintainer{active},
+			want:   RepositoryHealthActive,
 		},
 		{
-			name:     "old push remains stale without maintainer evidence",
-			repo:     Repository{PushedAt: ptrTime(now.Add(-3 * 365 * 24 * time.Hour))},
-			want:     RepositoryHealthStale,
-			minScore: 60,
+			name: "old push remains stale without maintainer evidence",
+			repo: Repository{PushedAt: ptrTime(now.Add(-3 * 365 * 24 * time.Hour))},
+			want: RepositoryHealthStale,
 		},
 		{
-			name:     "legacy empty maintainer status does not imply abandonment",
-			repo:     Repository{PushedAt: ptrTime(now.Add(-3 * 365 * 24 * time.Hour))},
-			people:   []Maintainer{{}},
-			want:     RepositoryHealthStale,
-			minScore: 60,
+			name:   "legacy empty maintainer status does not imply abandonment",
+			repo:   Repository{PushedAt: ptrTime(now.Add(-3 * 365 * 24 * time.Hour))},
+			people: []Maintainer{{}},
+			want:   RepositoryHealthStale,
 		},
 		{
-			name:     "old push and inactive maintainers is abandoned",
-			repo:     Repository{PushedAt: ptrTime(now.Add(-3 * 365 * 24 * time.Hour))},
-			people:   []Maintainer{inactive},
-			want:     RepositoryHealthAbandoned,
-			minScore: 80,
+			name:   "old push and inactive maintainers is abandoned",
+			repo:   Repository{PushedAt: ptrTime(now.Add(-3 * 365 * 24 * time.Hour))},
+			people: []Maintainer{inactive},
+			want:   RepositoryHealthAbandoned,
 		},
 		{
 			name:     "highly used abandoned package is zombie",
@@ -52,14 +47,12 @@ func TestAssessRepositoryHealth(t *testing.T) {
 			packages: []Package{{DependentRepos: healthZombieDependents - 1}, {DependentRepos: healthZombieDependents}},
 			people:   []Maintainer{inactive},
 			want:     RepositoryHealthZombie,
-			minScore: 90,
 		},
 		{
 			name:     "archived package is zombie with downstream use",
 			repo:     Repository{Archived: true},
 			packages: []Package{{DependentRepos: healthZombieDependents}},
 			want:     RepositoryHealthZombie,
-			minScore: 70,
 		},
 		{
 			name: "missing evidence is unassessed",
@@ -73,9 +66,6 @@ func TestAssessRepositoryHealth(t *testing.T) {
 			got := AssessRepositoryHealth(tt.repo, tt.packages, tt.people, now)
 			if got.Health != tt.want {
 				t.Errorf("health = %q, want %q (%+v)", got.Health, tt.want, got)
-			}
-			if got.Score < tt.minScore {
-				t.Errorf("score = %d, want >= %d", got.Score, tt.minScore)
 			}
 			if tt.want != "" && got.Summary == "" {
 				t.Error("classified health should explain its evidence")
@@ -116,11 +106,11 @@ func TestRefreshRepositoryHealth_persistsProjection(t *testing.T) {
 	if err := gdb.First(&got, repo.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if got.Health != RepositoryHealthZombie || got.HealthScore != assessment.Score || got.HealthCheckedAt == nil {
+	if got.Health != RepositoryHealthZombie {
 		t.Errorf("stored health = %+v, assessment = %+v", got, assessment)
 	}
-	if !strings.Contains(got.HealthSummary, "no active maintainers") || !strings.Contains(got.HealthSummary, "dependent repos") {
-		t.Errorf("summary = %q", got.HealthSummary)
+	if !strings.Contains(assessment.Summary, "no active maintainers") || !strings.Contains(assessment.Summary, "dependent repos") {
+		t.Errorf("summary = %q", assessment.Summary)
 	}
 }
 

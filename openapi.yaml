@@ -1122,9 +1122,6 @@ components:
         posture:        { type: string, enum: [ready, partial, unprepared], description: 'Disclosure-readiness tier from the posture skill. Empty when posture has not run.' }
         posture_summary: { type: string }
         health:            { type: string, enum: [active, stale, abandoned, zombie], description: 'Evidence-based maintenance classification. Empty when evidence is incomplete.' }
-        health_score:      { type: integer, minimum: 0, maximum: 100, description: 'Maintenance-concern score, not a vulnerability severity.' }
-        health_summary:    { type: string }
-        health_checked_at: { type: string, format: date-time, nullable: true }
 
     RepositoryExport:
       description: |

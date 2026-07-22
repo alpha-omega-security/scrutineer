@@ -43,9 +43,6 @@ The central entity. One row per git URL.
 | posture | text | Disclosure-readiness tier from the `posture` skill: `ready`, `partial`, `unprepared`. |
 | posture_summary | text | One-line explanation that goes with `posture`. |
 | health | text | Evidence-based maintenance classification: `active`, `stale`, `abandoned`, or `zombie`. Empty until metadata or maintainer evidence is available. |
-| health_score | integer | 0-100 maintenance-concern score derived from archived state, last push, maintainer activity, and the largest published-package dependent-repository count. It is not a vulnerability severity. |
-| health_summary | text | Human-readable inputs behind the current health classification. |
-| health_checked_at | datetime | When the health projection was last refreshed. |
 | fork | text | `owner/name` of the staging fork inside `-fork-org`. Written by the `fork` skill. |
 | clone_error | text | Last clone/fetch failure message; non-empty means the repo is currently unreachable. Cleared on next successful clone. |
 | disk_bytes | integer | Cached on-disk size of the persistent clone cache, so the repo list renders the disk badge from a column instead of walking each repo's cache per row. Refreshed by the worker after each scan and backfilled once at startup; 0 for local repos and remote repos not scanned since the column was added. |

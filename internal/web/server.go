@@ -2000,6 +2000,7 @@ type repoShowView struct {
 	Inventory       repoInventoryView
 	Subprojects     repoSubprojectView
 	Maintainers     []db.Maintainer
+	HealthSummary   string
 	Skills          []db.Skill
 	Workbench       Workbench
 	ThreatModel     map[string]any
@@ -2024,6 +2025,9 @@ func (s *Server) loadRepoShowView(
 	category := query.Get("category")
 	findings := loadRepoFindings(s.DB, repo.ID, category)
 	deps := s.loadRepoDependencyView(repo.ID, query.Get("deps") == "all")
+	inventory := s.loadRepoInventoryView(repo.ID, deps.Groups)
+	maintainers := s.repoMaintainers(repo.ID)
+	health := db.AssessRepositoryHealth(repo, inventory.Packages, maintainers, time.Now())
 	// activeScans drives both the delete-confirm warning (a running scan keeps
 	// writing into the repo's clone/workspace until it returns) and the "Cancel
 	// all" button; pausedScans drives "Resume all". Both are counted over every
@@ -2037,9 +2041,10 @@ func (s *Server) loadRepoShowView(
 		Findings:           findings,
 		Expected:           loadRepoExpectedView(s.DB, repo.ID, latest, findings),
 		Dependencies:       deps,
-		Inventory:          s.loadRepoInventoryView(repo.ID, deps.Groups),
+		Inventory:          inventory,
 		Subprojects:        s.loadRepoSubprojectView(repo.ID),
-		Maintainers:        s.repoMaintainers(repo.ID),
+		Maintainers:        maintainers,
+		HealthSummary:      health.Summary,
 		Skills:             s.activeRepoSkills(),
 		Workbench:          loadWorkbench(s.DB, &repo, workbenchSeed(tmScan)),
 		ThreatModel:        scanThreatModelReport(tmScan),
@@ -2073,6 +2078,7 @@ func (v repoShowView) renderData() map[string]any {
 		"ActiveScans":           v.ActiveScans,
 		"PausedScans":           v.PausedScans,
 		"TotalCost":             v.TotalCost,
+		"HealthSummary":         v.HealthSummary,
 		// Cached on the row, refreshed by the worker after each scan (#126).
 		"DiskBytes":          v.Repo.DiskBytes,
 		"TMCommit":           v.TMCommit,

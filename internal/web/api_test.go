@@ -121,8 +121,6 @@ func TestAPIGetRepository_includesPostureFields(t *testing.T) {
 		"posture":         "partial",
 		"posture_summary": "SECURITY.md present, PVR disabled",
 		"health":          db.RepositoryHealthZombie,
-		"health_score":    95,
-		"health_summary":  "repository is archived; up to 200 dependent repos",
 	})
 
 	r := httptest.NewRequest("GET", "/api/repositories/"+strconv.FormatUint(uint64(repo.ID), 10), nil)
@@ -143,11 +141,8 @@ func TestAPIGetRepository_includesPostureFields(t *testing.T) {
 	if body["posture_summary"] != "SECURITY.md present, PVR disabled" {
 		t.Errorf("posture_summary = %v", body["posture_summary"])
 	}
-	if body["health"] != "zombie" || body["health_score"] != float64(95) {
-		t.Errorf("health fields = health:%v score:%v", body["health"], body["health_score"])
-	}
-	if body["health_summary"] != "repository is archived; up to 200 dependent repos" {
-		t.Errorf("health_summary = %v", body["health_summary"])
+	if body["health"] != "zombie" {
+		t.Errorf("health = %v, want zombie", body["health"])
 	}
 }
 

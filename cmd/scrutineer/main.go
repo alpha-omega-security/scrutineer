@@ -557,6 +557,7 @@ func run(log *slog.Logger) error {
 
 	go q.Start(ctx)
 	go srv.StartScheduler(ctx)
+	go srv.StartRepositoryHealthScorer(ctx)
 
 	httpSrv := &http.Server{Addr: f.addr, Handler: srv.Handler(), ReadHeaderTimeout: shutdownTimeout}
 	go func() {

@@ -21,18 +21,14 @@ const (
 
 	healthActiveWindow     = 365 * 24 * time.Hour
 	healthAbandonedWindow  = 2 * 365 * 24 * time.Hour
-	healthMaxScore         = 100
 	healthZombieDependents = 100
-	healthManyDependents   = 1000
-	healthSomeDependents   = 10
 )
 
 // RepositoryHealthAssessment is the durable classification plus the evidence
-// used to reach it. Score is a 0-100 concern score; it is intentionally not a
-// security severity score.
+// used to reach it. Summary is derived at read time for detailed views; only
+// Health is stored on the repository row.
 type RepositoryHealthAssessment struct {
 	Health            RepositoryHealth
-	Score             int
 	Summary           string
 	DependentRepos    int
 	ActiveMaintainers int
@@ -70,8 +66,6 @@ func AssessRepositoryHealth(repo Repository, packages []Package, maintainers []M
 		age = now.Sub(*repo.PushedAt)
 	}
 
-	score := healthScore(repo.Archived, repo.PushedAt != nil, age, assessment)
-	assessment.Score = score
 	assessment.Health = repositoryHealth(repo.Archived, repo.PushedAt != nil, age, assessment)
 	assessment.Summary = healthSummary(repo.Archived, repo.PushedAt, age, assessment)
 	return assessment
@@ -89,38 +83,6 @@ func repositoryHealth(archived, hasPush bool, age time.Duration, assessment Repo
 		return RepositoryHealthActive
 	}
 	return RepositoryHealthStale
-}
-
-func healthScore(archived, hasPush bool, age time.Duration, assessment RepositoryHealthAssessment) int {
-	score := 0
-	switch {
-	case archived:
-		score += 60
-	case !hasPush:
-		score += 20
-	case age >= 3*healthActiveWindow:
-		score += 60
-	case age >= healthAbandonedWindow:
-		score += 40
-	case age >= healthActiveWindow:
-		score += 20
-	}
-	if assessment.KnownMaintainers > 0 {
-		if assessment.ActiveMaintainers == 0 {
-			score += 25
-		} else {
-			score -= 15
-		}
-	}
-	switch {
-	case assessment.DependentRepos >= healthManyDependents:
-		score += 15
-	case assessment.DependentRepos >= healthZombieDependents:
-		score += 10
-	case assessment.DependentRepos >= healthSomeDependents:
-		score += 3
-	}
-	return min(healthMaxScore, max(0, score))
 }
 
 func healthSummary(archived bool, pushedAt *time.Time, age time.Duration, assessment RepositoryHealthAssessment) string {
@@ -162,10 +124,9 @@ func healthAge(age time.Duration) string {
 	return "less than a month"
 }
 
-// RefreshRepositoryHealth recalculates and persists the health projection
-// after one of its source projections changes. It does not manufacture a
-// status when the evidence is incomplete; legacy rows therefore remain empty
-// until a relevant source has run.
+// RefreshRepositoryHealth recalculates and persists the health classification.
+// It does not manufacture a status when the evidence is incomplete; legacy
+// rows therefore remain empty until enough source data exists.
 func RefreshRepositoryHealth(gdb *gorm.DB, repositoryID uint, now time.Time) (RepositoryHealthAssessment, error) {
 	var repo Repository
 	if err := gdb.First(&repo, repositoryID).Error; err != nil {
@@ -182,13 +143,8 @@ func RefreshRepositoryHealth(gdb *gorm.DB, repositoryID uint, now time.Time) (Re
 	}
 
 	assessment := AssessRepositoryHealth(repo, packages, maintainers, now)
-	updates := map[string]any{
-		"health":            assessment.Health,
-		"health_score":      assessment.Score,
-		"health_summary":    assessment.Summary,
-		"health_checked_at": now,
-	}
-	if err := gdb.Model(&Repository{}).Where("id = ?", repositoryID).Updates(updates).Error; err != nil {
+	if err := gdb.Model(&Repository{}).Where("id = ?", repositoryID).
+		Update("health", assessment.Health).Error; err != nil {
 		return RepositoryHealthAssessment{}, fmt.Errorf("save repository health: %w", err)
 	}
 	return assessment, nil
