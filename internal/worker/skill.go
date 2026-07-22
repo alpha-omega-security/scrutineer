@@ -1403,22 +1403,22 @@ func (w *Worker) capslockContext(scan *db.Scan, skill *db.Skill) (*skillContextC
 		return nil, nil
 	}
 	if scan.ScanGroup != "" {
-		capslockScan, found, err := latestCapslockScan(w.capslockScanQuery(scan).Where("scan_group = ?", scan.ScanGroup))
+		capslock, found, err := w.firstValidCapslockContext(w.capslockScanQuery(scan).Where("scan_group = ?", scan.ScanGroup))
 		if err != nil {
 			return nil, fmt.Errorf("load grouped capslock report: %w", err)
 		}
 		if found {
-			return w.parseCapslockContext(capslockScan)
+			return capslock, nil
 		}
 	}
-	capslockScan, found, err := latestCapslockScan(w.capslockScanQuery(scan))
+	capslock, found, err := w.firstValidCapslockContext(w.capslockScanQuery(scan))
 	if err != nil {
 		return nil, fmt.Errorf("load capslock report: %w", err)
 	}
 	if !found {
 		return nil, nil
 	}
-	return w.parseCapslockContext(capslockScan)
+	return capslock, nil
 }
 
 func (w *Worker) capslockScanQuery(scan *db.Scan) *gorm.DB {
@@ -1427,29 +1427,40 @@ func (w *Worker) capslockScanQuery(scan *db.Scan) *gorm.DB {
 			scan.RepositoryID, capslockSkillName, db.ScanDone, scan.SubPath, scan.Ref)
 }
 
-func latestCapslockScan(query *gorm.DB) (db.Scan, bool, error) {
-	var scan db.Scan
-	err := query.Order("id DESC").First(&scan).Error
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return db.Scan{}, false, nil
+func (w *Worker) firstValidCapslockContext(query *gorm.DB) (*skillContextCapslock, bool, error) {
+	var scans []db.Scan
+	if err := query.Order("id DESC").Find(&scans).Error; err != nil {
+		return nil, false, err
 	}
-	return scan, err == nil, err
+	for _, scan := range scans {
+		capslock, usable, err := w.parseCapslockContext(scan)
+		if err != nil {
+			return nil, false, err
+		}
+		if usable {
+			return capslock, true, nil
+		}
+	}
+	return nil, false, nil
 }
 
-func (w *Worker) parseCapslockContext(capslockScan db.Scan) (*skillContextCapslock, error) {
+func (w *Worker) parseCapslockContext(capslockScan db.Scan) (*skillContextCapslock, bool, error) {
 	skillName, schema, found, err := w.completedSkillReportSchema(capslockScan, capslockSkillName)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if !found {
-		return nil, nil
+		return nil, false, nil
 	}
 	report, err := parseCapslockReport(skillName, schema, capslockScan.Report)
 	if err != nil {
 		w.Log.Warn("ignore invalid capslock report", "scan", capslockScan.ID, "err", err)
-		return nil, nil
+		return nil, false, nil
 	}
-	return report, nil
+	if report == nil {
+		return nil, false, nil
+	}
+	return report, true, nil
 }
 
 func parseCapslockReport(skillName, schema, raw string) (*skillContextCapslock, error) {

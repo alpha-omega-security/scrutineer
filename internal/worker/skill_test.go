@@ -615,6 +615,27 @@ func TestCapslockContextRejectsInvalidReportsAndToolErrors(t *testing.T) {
 	}
 }
 
+func TestCapslockContextSkipsUnusableGroupedReports(t *testing.T) {
+	f := newCapslockContextFixture(t)
+	f.seedCapslockScan(t, db.Scan{ScanGroup: "batch-a", Report: `{"capabilities":{"example.com/group":["CAPABILITY_NETWORK"]}}`})
+	f.seedCapslockScan(t, db.Scan{ScanGroup: "batch-a", Report: `{"capabilities":{"example.com/bad":"not-a-list"}}`})
+	f.seedCapslockScan(t, db.Scan{ScanGroup: "batch-a", Report: `{"capabilities":{},"error":"capslock analysis failed"}`})
+
+	requireCapslockPackage(t, f.context(t, db.Scan{ScanGroup: "batch-a"}), "example.com/group")
+}
+
+func TestCapslockContextSkipsUnusableFallbackReports(t *testing.T) {
+	f := newCapslockContextFixture(t)
+	f.seedCapslockScan(t, db.Scan{Report: `{"capabilities":{"example.com/fallback":["CAPABILITY_NETWORK"]}}`})
+	f.seedCapslockScan(t, db.Scan{Report: `{"capabilities":{},"error":"capslock analysis failed"}`})
+	missingSkill := f.seedCapslockScan(t, db.Scan{Report: `{"capabilities":{"example.com/missing":["CAPABILITY_NETWORK"]}}`})
+	if err := f.worker.DB.Model(&missingSkill).Update("skill_id", nil).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	requireCapslockPackage(t, f.context(t, db.Scan{ScanGroup: "batch-b"}), "example.com/fallback")
+}
+
 func TestStageImportPayload(t *testing.T) {
 	dir := t.TempDir()
 	if err := stageImportPayload(dir, []byte("scanner output")); err != nil {
