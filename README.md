@@ -4,7 +4,13 @@ A local tool for scanning open source repositories for security vulnerabilities 
 
 ## Quick start
 
-You need one supported container runtime: [Docker](https://docs.docker.com/get-docker/) (the default), rootless Podman, or Apple's `container` CLI. Download the Linux or macOS archive for your architecture from [GitHub Releases](https://github.com/alpha-omega-security/scrutineer/releases), verify it against `SHA256SUMS`, and put `scrutineer` on your `PATH`. The macOS archives are currently unsigned and not notarized, so macOS may present a Gatekeeper warning even after you verify the checksum and GitHub build-provenance attestation.
+You need one supported container runtime: [Docker](https://docs.docker.com/get-docker/) (the default), rootless Podman, or Apple's `container` CLI.
+
+Install Scrutineer from [Homebrew](https://brew.sh) on macOS or Linux:
+
+    brew install scrutineer
+
+Alternatively, download the Linux or macOS archive for your architecture from [GitHub Releases](https://github.com/alpha-omega-security/scrutineer/releases), verify it against `SHA256SUMS`, and put `scrutineer` on your `PATH`. The macOS archives are currently unsigned and not notarized, so macOS may present a Gatekeeper warning even after you verify the checksum and GitHub build-provenance attestation.
 
 To build or run from source instead, install [Go 1.26+](https://go.dev/dl/):
 
