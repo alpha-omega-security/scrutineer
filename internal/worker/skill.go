@@ -29,6 +29,8 @@ const (
 	refusalAuditMaxTurns      = 3
 	threatModelSkillName      = "threat-model"
 	reconSkillName            = "recon"
+	reachabilitySkillName     = "reachability"
+	capslockSkillName         = "capslock"
 )
 
 // skillContext is the JSON document scrutineer writes to ./context.json in
@@ -84,11 +86,19 @@ type skillContextScrutineer struct {
 	// threat-model skill, which incorporates it into a complete scan-config
 	// proposal without letting recon overwrite analyst configuration directly.
 	Recon *skillContextRecon `json:"recon,omitempty"`
+	// Capslock is the latest successful capability map for a Go repository.
+	// It is staged only for reachability, where it narrows call-graph review
+	// without treating an absent capability as proof of safety.
+	Capslock *skillContextCapslock `json:"capslock,omitempty"`
 }
 
 type skillContextRecon struct {
 	FocusAreas []repoconfig.FocusArea `json:"focus_areas"`
 	Notes      []string               `json:"notes"`
+}
+
+type skillContextCapslock struct {
+	Capabilities map[string][]string `json:"capabilities"`
 }
 
 type skillContextRescan struct {
@@ -1186,10 +1196,14 @@ func (w *Worker) metadataDir() string {
 }
 
 func stageContext(workRoot, apiBase, forkOrg, metadataDir string, scan *db.Scan, repo *db.Repository) error {
-	return stageContextWithRecon(workRoot, apiBase, forkOrg, metadataDir, scan, repo, nil)
+	return stageContextWithAnalysis(workRoot, apiBase, forkOrg, metadataDir, scan, repo, nil, nil)
 }
 
 func stageContextWithRecon(workRoot, apiBase, forkOrg, metadataDir string, scan *db.Scan, repo *db.Repository, recon *skillContextRecon) error {
+	return stageContextWithAnalysis(workRoot, apiBase, forkOrg, metadataDir, scan, repo, recon, nil)
+}
+
+func stageContextWithAnalysis(workRoot, apiBase, forkOrg, metadataDir string, scan *db.Scan, repo *db.Repository, recon *skillContextRecon, capslock *skillContextCapslock) error {
 	if err := os.MkdirAll(workRoot, dirPerm); err != nil {
 		return err
 	}
@@ -1223,6 +1237,7 @@ func stageContextWithRecon(workRoot, apiBase, forkOrg, metadataDir string, scan 
 	}
 	ctx.Scrutineer.FocusArea = focusArea
 	ctx.Scrutineer.Recon = recon
+	ctx.Scrutineer.Capslock = capslock
 	if scan.SkillID != nil {
 		ctx.Scrutineer.SkillID = *scan.SkillID
 	}
@@ -1278,7 +1293,11 @@ func (w *Worker) stageWorkspace(workRoot, skillDir string, scan *db.Scan, skill 
 	if err != nil {
 		return err
 	}
-	return stageWorkspace(workRoot, skillDir, w.APIBase, w.ForkOrg, w.metadataDir(), scan, skill, recon)
+	capslock, err := w.capslockContext(scan, skill)
+	if err != nil {
+		return err
+	}
+	return stageWorkspace(workRoot, skillDir, w.APIBase, w.ForkOrg, w.metadataDir(), scan, skill, recon, capslock)
 }
 
 // StageWorkspace writes the workspace side files shared by production skill
@@ -1286,11 +1305,11 @@ func (w *Worker) stageWorkspace(workRoot, skillDir string, scan *db.Scan, skill 
 // rendered skill bundle, and optional import payloads. Production adds recon
 // context for threat-model in Worker.stageWorkspace.
 func StageWorkspace(workRoot, skillDir, apiBase, forkOrg, metadataDir string, scan *db.Scan, skill *db.Skill) error {
-	return stageWorkspace(workRoot, skillDir, apiBase, forkOrg, metadataDir, scan, skill, nil)
+	return stageWorkspace(workRoot, skillDir, apiBase, forkOrg, metadataDir, scan, skill, nil, nil)
 }
 
-func stageWorkspace(workRoot, skillDir, apiBase, forkOrg, metadataDir string, scan *db.Scan, skill *db.Skill, recon *skillContextRecon) error {
-	if err := stageContextWithRecon(workRoot, apiBase, forkOrg, metadataDir, scan, &scan.Repository, recon); err != nil {
+func stageWorkspace(workRoot, skillDir, apiBase, forkOrg, metadataDir string, scan *db.Scan, skill *db.Skill, recon *skillContextRecon, capslock *skillContextCapslock) error {
+	if err := stageContextWithAnalysis(workRoot, apiBase, forkOrg, metadataDir, scan, &scan.Repository, recon, capslock); err != nil {
 		return fmt.Errorf("stage context: %w", err)
 	}
 	if err := stageThreatModel(workRoot, scan.SubPath, scan.Repository.ThreatModel); err != nil {
@@ -1344,19 +1363,14 @@ func latestReconScan(query *gorm.DB) (db.Scan, bool, error) {
 }
 
 func (w *Worker) parseReconContext(reconScan db.Scan) (*skillContextRecon, error) {
-	if reconScan.SkillID == nil {
-		w.Log.Warn("ignore recon report without skill", "scan", reconScan.ID)
+	skillName, schema, found, err := w.completedSkillReportSchema(reconScan, reconSkillName)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
 		return nil, nil
 	}
-	var reconSkill db.Skill
-	if err := w.DB.Select("schema_json").First(&reconSkill, *reconScan.SkillID).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			w.Log.Warn("ignore recon report for missing skill", "scan", reconScan.ID, "skill", *reconScan.SkillID)
-			return nil, nil
-		}
-		return nil, fmt.Errorf("load recon schema: %w", err)
-	}
-	report, err := parseReconReport(reconSkill.Name, reconSkill.SchemaJSON, reconScan.Report)
+	report, err := parseReconReport(skillName, schema, reconScan.Report)
 	if err != nil {
 		w.Log.Warn("ignore invalid recon report", "scan", reconScan.ID, "err", err)
 		return nil, nil
@@ -1382,6 +1396,96 @@ func parseReconReport(skillName, schema, raw string) (*skillContextRecon, error)
 	}
 	report.FocusAreas = config.FocusAreas
 	return &report, nil
+}
+
+func (w *Worker) capslockContext(scan *db.Scan, skill *db.Skill) (*skillContextCapslock, error) {
+	if skill.Name != reachabilitySkillName {
+		return nil, nil
+	}
+	if scan.ScanGroup != "" {
+		capslockScan, found, err := latestCapslockScan(w.capslockScanQuery(scan).Where("scan_group = ?", scan.ScanGroup))
+		if err != nil {
+			return nil, fmt.Errorf("load grouped capslock report: %w", err)
+		}
+		if found {
+			return w.parseCapslockContext(capslockScan)
+		}
+	}
+	capslockScan, found, err := latestCapslockScan(w.capslockScanQuery(scan))
+	if err != nil {
+		return nil, fmt.Errorf("load capslock report: %w", err)
+	}
+	if !found {
+		return nil, nil
+	}
+	return w.parseCapslockContext(capslockScan)
+}
+
+func (w *Worker) capslockScanQuery(scan *db.Scan) *gorm.DB {
+	return w.DB.Select("id, report, skill_id").
+		Where("repository_id = ? AND skill_name = ? AND status = ? AND sub_path = ? AND ref = ? AND report <> ''",
+			scan.RepositoryID, capslockSkillName, db.ScanDone, scan.SubPath, scan.Ref)
+}
+
+func latestCapslockScan(query *gorm.DB) (db.Scan, bool, error) {
+	var scan db.Scan
+	err := query.Order("id DESC").First(&scan).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return db.Scan{}, false, nil
+	}
+	return scan, err == nil, err
+}
+
+func (w *Worker) parseCapslockContext(capslockScan db.Scan) (*skillContextCapslock, error) {
+	skillName, schema, found, err := w.completedSkillReportSchema(capslockScan, capslockSkillName)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, nil
+	}
+	report, err := parseCapslockReport(skillName, schema, capslockScan.Report)
+	if err != nil {
+		w.Log.Warn("ignore invalid capslock report", "scan", capslockScan.ID, "err", err)
+		return nil, nil
+	}
+	return report, nil
+}
+
+func parseCapslockReport(skillName, schema, raw string) (*skillContextCapslock, error) {
+	if detail := ValidateSkillReport(skillName, schema, raw); detail != "" {
+		return nil, errors.New(detail)
+	}
+	var report struct {
+		Capabilities map[string][]string `json:"capabilities"`
+		Error        string              `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(raw), &report); err != nil {
+		return nil, err
+	}
+	if report.Error != "" {
+		return nil, nil
+	}
+	return &skillContextCapslock{Capabilities: report.Capabilities}, nil
+}
+
+// completedSkillReportSchema loads the producing skill's schema for a report
+// staged from a prior completed scan. A missing skill is non-fatal: the report
+// cannot be trusted without its schema, so callers leave it out of context.
+func (w *Worker) completedSkillReportSchema(scan db.Scan, kind string) (string, string, bool, error) {
+	if scan.SkillID == nil {
+		w.Log.Warn("ignore "+kind+" report without skill", "scan", scan.ID)
+		return "", "", false, nil
+	}
+	var skill db.Skill
+	if err := w.DB.Select("schema_json").First(&skill, *scan.SkillID).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			w.Log.Warn("ignore "+kind+" report for missing skill", "scan", scan.ID, "skill", *scan.SkillID)
+			return "", "", false, nil
+		}
+		return "", "", false, fmt.Errorf("load %s schema: %w", kind, err)
+	}
+	return skill.Name, skill.SchemaJSON, true, nil
 }
 
 // stageThreatModel writes the repository's operator-edited threat model to

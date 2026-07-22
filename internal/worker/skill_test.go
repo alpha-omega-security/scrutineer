@@ -364,6 +364,29 @@ func TestStageContext_includesReconFocusAreas(t *testing.T) {
 	}
 }
 
+func TestStageContext_includesCapslockCapabilities(t *testing.T) {
+	dir := t.TempDir()
+	repo := &db.Repository{URL: "https://example.com/capslock", Name: "capslock"}
+	scan := &db.Scan{ID: 7, RepositoryID: 3, APIToken: "tok"}
+	capslock := &skillContextCapslock{Capabilities: map[string][]string{
+		"example.com/app/internal/http": {"CAPABILITY_NETWORK", "CAPABILITY_READ"},
+	}}
+	if err := stageContextWithAnalysis(dir, "http://127.0.0.1:8080/api", "", "", scan, repo, nil, capslock); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(filepath.Join(dir, "context.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got skillContext
+	if err := json.Unmarshal(b, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Scrutineer.Capslock == nil || !slices.Equal(got.Scrutineer.Capslock.Capabilities["example.com/app/internal/http"], []string{"CAPABILITY_NETWORK", "CAPABILITY_READ"}) {
+		t.Fatalf("capslock = %+v", got.Scrutineer.Capslock)
+	}
+}
+
 func TestStageContext_includesFocusArea(t *testing.T) {
 	dir := t.TempDir()
 	repo := &db.Repository{URL: "https://example.com/focus", Name: "focus"}
@@ -492,6 +515,103 @@ func TestReconContextRejectsInvalidReports(t *testing.T) {
 	}
 	if ctx := f.context(t, db.Scan{ScanGroup: "batch-a"}); ctx != nil {
 		t.Fatalf("schema-invalid recon context = %+v", ctx)
+	}
+}
+
+type capslockContextFixture struct {
+	worker        *Worker
+	repository    db.Repository
+	capslockSkill db.Skill
+	reachability  db.Skill
+}
+
+func newCapslockContextFixture(t *testing.T) capslockContextFixture {
+	t.Helper()
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "capslock.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://example.com/capslock", Name: "capslock"}
+	if err := gdb.Create(&repo).Error; err != nil {
+		t.Fatal(err)
+	}
+	schema, err := os.ReadFile("../../skills/capslock/schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	capslockSkill := db.Skill{Name: capslockSkillName, SchemaJSON: string(schema)}
+	if err := gdb.Create(&capslockSkill).Error; err != nil {
+		t.Fatal(err)
+	}
+	return capslockContextFixture{
+		worker:        &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))},
+		repository:    repo,
+		capslockSkill: capslockSkill,
+		reachability:  db.Skill{Name: reachabilitySkillName},
+	}
+}
+
+func (f capslockContextFixture) seedCapslockScan(t *testing.T, scan db.Scan) db.Scan {
+	t.Helper()
+	scan.RepositoryID = f.repository.ID
+	scan.SkillID = &f.capslockSkill.ID
+	scan.SkillName = capslockSkillName
+	scan.Status = db.ScanDone
+	if err := f.worker.DB.Create(&scan).Error; err != nil {
+		t.Fatal(err)
+	}
+	return scan
+}
+
+func (f capslockContextFixture) context(t *testing.T, scan db.Scan) *skillContextCapslock {
+	t.Helper()
+	scan.RepositoryID = f.repository.ID
+	ctx, err := f.worker.capslockContext(&scan, &f.reachability)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return ctx
+}
+
+func requireCapslockPackage(t *testing.T, ctx *skillContextCapslock, pkg string) {
+	t.Helper()
+	if ctx == nil || !slices.Equal(ctx.Capabilities[pkg], []string{"CAPABILITY_NETWORK"}) {
+		t.Fatalf("capslock context = %+v, want package %q", ctx, pkg)
+	}
+}
+
+func TestCapslockContextPrefersGroupAndFallsBack(t *testing.T) {
+	f := newCapslockContextFixture(t)
+	f.seedCapslockScan(t, db.Scan{ScanGroup: "batch-a", Report: `{"capabilities":{"example.com/group":["CAPABILITY_NETWORK"]}}`})
+	f.seedCapslockScan(t, db.Scan{Report: `{"capabilities":{"example.com/fallback":["CAPABILITY_NETWORK"]}}`})
+	// Newer than both earlier scans: grouped lookup must still select batch-a.
+	f.seedCapslockScan(t, db.Scan{ScanGroup: "other", Report: `{"capabilities":{"example.com/other":["CAPABILITY_NETWORK"]}}`})
+
+	requireCapslockPackage(t, f.context(t, db.Scan{ScanGroup: "batch-a"}), "example.com/group")
+	requireCapslockPackage(t, f.context(t, db.Scan{}), "example.com/other")
+	requireCapslockPackage(t, f.context(t, db.Scan{ScanGroup: "batch-b"}), "example.com/other")
+}
+
+func TestCapslockContextFallbackMatchesRefAndSubPath(t *testing.T) {
+	f := newCapslockContextFixture(t)
+	f.seedCapslockScan(t, db.Scan{Ref: "topic", Report: `{"capabilities":{"example.com/topic":["CAPABILITY_NETWORK"]}}`})
+	f.seedCapslockScan(t, db.Scan{SubPath: "cmd", Report: `{"capabilities":{"example.com/cmd":["CAPABILITY_NETWORK"]}}`})
+
+	requireCapslockPackage(t, f.context(t, db.Scan{Ref: "topic"}), "example.com/topic")
+	requireCapslockPackage(t, f.context(t, db.Scan{SubPath: "cmd"}), "example.com/cmd")
+}
+
+func TestCapslockContextRejectsInvalidReportsAndToolErrors(t *testing.T) {
+	f := newCapslockContextFixture(t)
+	bad := f.seedCapslockScan(t, db.Scan{ScanGroup: "batch-a", Report: `{"capabilities":{"example.com/app":"not-a-list"}}`})
+	if ctx := f.context(t, db.Scan{ScanGroup: "batch-a"}); ctx != nil {
+		t.Fatalf("schema-invalid capslock context = %+v", ctx)
+	}
+	if err := f.worker.DB.Model(&bad).Update("report", `{"capabilities":{},"error":"analysis failed"}`).Error; err != nil {
+		t.Fatal(err)
+	}
+	if ctx := f.context(t, db.Scan{ScanGroup: "batch-a"}); ctx != nil {
+		t.Fatalf("failed capslock context = %+v", ctx)
 	}
 }
 

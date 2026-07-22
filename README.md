@@ -161,6 +161,7 @@ Adding a repo enqueues the `triage` skill, whose SKILL.md lists the further skil
 | `report-upstream` | Files one finding on the upstream repository via GitHub PVR with the proposed patch attached; the action that moves a finding to `reported` |
 | `public-issue` | Files a low-severity finding as an ordinary public GitHub issue after analyst confirmation |
 | `reachability` | Traces dependency sinks through application code to determine which are reachable from trust boundaries |
+| `capslock` | Deterministically maps privileged Go capability paths to focus later reachability review |
 | `cna-match` | Matches a repository to its CVE Numbering Authority so disclosures route to the right contact |
 | `posture` | Records the repo's security posture (reporting policy, response history, hardening) on the Repository row |
 | `forensics` | Read-only compromise timeline and evidence bundle from local Git history and public forge/archive records |

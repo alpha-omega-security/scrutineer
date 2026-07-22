@@ -7,6 +7,7 @@
   "properties": {
     "has_code":      { "type": "boolean" },
     "has_packages":  { "type": "boolean" },
+    "has_go":        { "type": "boolean" },
     "has_workflows": { "type": "boolean" },
     "brief": {
       "type": "object",

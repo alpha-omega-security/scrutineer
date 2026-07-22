@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "capslock capability report",
+  "description": "Deterministic Google Capslock output, grouped by non-standard Go package path. A report with error records that local analysis did not complete and is not staged for reachability.",
+  "type": "object",
+  "required": ["capabilities"],
+  "additionalProperties": false,
+  "properties": {
+    "capabilities": {
+      "type": "object",
+      "maxProperties": 10000,
+      "propertyNames": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 500
+      },
+      "additionalProperties": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 100,
+        "items": {
+          "type": "string",
+          "pattern": "^CAPABILITY_[A-Z0-9_]+$"
+        }
+      }
+    },
+    "error": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500
+    }
+  }
+}

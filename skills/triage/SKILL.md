@@ -29,6 +29,7 @@ From those, set two flags:
 
 - `has_packages` = `package_managers` is present and non-empty
 - `has_code` = `languages` is present and non-empty
+- `has_go` = `./src/go.mod` exists as a regular file
 
 A docs repo (markdown only) has neither. Anything with detected source gets the code scans, whether it is an application, a library, infra scripts, or a flat-layout package. The cost of running semgrep on a stray shell script is far lower than missing a real library because brief failed to populate `layout.source_dirs`. Do not gate on `layout.source_dirs`; it is a heuristic and routinely empty for legitimate codebases. If `brief` is not on PATH or exits non-zero, set both flags true and carry on.
 
@@ -64,6 +65,15 @@ Only when `has_packages`:
 - `dependencies`
 - `sbom`
 
+Only when `has_go`:
+
+- `capslock`
+
+`capslock` runs deterministic local Go capability analysis in the Go runner
+profile. It is not a vulnerability scan; a later `reachability` scan uses its
+result to focus call-graph review. Do not enqueue it for repositories without
+a repository-root `go.mod`.
+
 `packages` and `advisories` query ecosyste.ms by repository URL rather than reading local manifests, so they run unconditionally even though they sound package-related.
 
 Only when `has_code`:
@@ -98,6 +108,7 @@ Write `./report.json` as:
 {
   "has_code": true,
   "has_packages": true,
+  "has_go": false,
   "has_workflows": false,
   "brief": {"languages": ["Ruby"], "package_managers": ["Bundler"]},
   "triggered": ["packages", "advisories", ...],

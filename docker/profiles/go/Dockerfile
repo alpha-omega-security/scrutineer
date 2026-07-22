@@ -40,6 +40,10 @@ ARG GO_SHA256_ARM64=ef758ae7c6cf9267c9c0ef080b8965f453d89ab2d25d9eb22de440592523
 # govulncheck reports known vulns in the project's module graph and (with
 # source) which are actually reachable. Pinned; built from source below.
 ARG GOVULNCHECK_VERSION=v1.4.0
+# Capslock reports the privileged standard-library capabilities reachable from
+# Go packages. Keep it pinned like govulncheck so capability reports are
+# reproducible across runner-image rebuilds.
+ARG CAPSLOCK_VERSION=v0.3.2
 
 USER root
 
@@ -79,9 +83,12 @@ RUN apt-get update \
  && rm /tmp/go.tar.gz \
  && install -d -m 1777 /opt/go/path /opt/go/cache /opt/go/tmp \
  && go install "golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}" \
+ && go install "github.com/google/capslock/cmd/capslock@${CAPSLOCK_VERSION}" \
  && install -m 0755 /opt/go/path/bin/govulncheck /usr/local/bin/govulncheck \
+ && install -m 0755 /opt/go/path/bin/capslock /usr/local/bin/capslock \
  && go version \
  && govulncheck -version \
+ && capslock -version \
  && printf 'package main\nimport "fmt"\nfunc main(){fmt.Println("go run ok")}\n' > /tmp/smoke.go \
  && go run /tmp/smoke.go \
  && rm /tmp/smoke.go \

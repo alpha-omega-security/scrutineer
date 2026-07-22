@@ -110,6 +110,14 @@ func TestBundledSchemas_compileAndAcceptSamples(t *testing.T) {
 			  "notes":["Examples and vendored code were excluded."]}`,
 		},
 		{
+			"../../skills/capslock/schema.json",
+			`{"capabilities":{"example.com/app/internal/http":["CAPABILITY_NETWORK","CAPABILITY_READ"]}}`,
+		},
+		{
+			"../../skills/capslock/schema.json",
+			`{"capabilities":{},"error":"capslock analysis failed; inspect scan log"}`,
+		},
+		{
 			"../../skills/security-deep-dive/schema.json",
 			`{"repository":"https://github.com/o/r","commit":"abc1234","spec_version":13,
 			  "model":"claude","date":"2026-07-16","languages":["C"],
@@ -229,6 +237,7 @@ func TestBundledSchemas_rejectBadShapes(t *testing.T) {
 			`{"upstream":"owner/repo","url":"https://github.com/owner/repo/issues/123"}`, "oneOf"},
 		{"../../skills/threat-model/schema.json", `{"spec_version":2}`, "/spec_version"},
 		{"../../skills/recon/schema.json", `{"focus_areas":[{"name":"parser","surface":"bytes","paths":[]}],"notes":[]}`, "/focus_areas/0/paths"},
+		{"../../skills/capslock/schema.json", `{"capabilities":{"example.com/app":"not-a-list"}}`, "/capabilities/example.com~1app"},
 		{"../../skills/security-deep-dive/schema.json",
 			`{"repository":"https://github.com/o/r","commit":"abc1234","spec_version":13,
 			  "model":"claude","date":"2026-07-16","languages":["C"],"boundaries":[],

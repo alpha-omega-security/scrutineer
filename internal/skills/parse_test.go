@@ -846,6 +846,19 @@ func TestBundledReconPipelineMetadata(t *testing.T) {
 	}
 }
 
+func TestBundledCapslockMetadata(t *testing.T) {
+	capslock, err := ParseFile(filepath.Join("..", "..", "skills", "capslock", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("parse capslock: %v", err)
+	}
+	if capslock.OutputKind != "freeform" || capslock.MaxTurns != 4 || capslock.Model != "mid" || capslock.RequiresProfile != "go" {
+		t.Errorf("capslock metadata = kind %q, turns %d, model %q, profile %q", capslock.OutputKind, capslock.MaxTurns, capslock.Model, capslock.RequiresProfile)
+	}
+	if capslock.AllowedTools != "Read,Write,Bash" {
+		t.Errorf("capslock allowed tools = %q", capslock.AllowedTools)
+	}
+}
+
 func TestBundledForensicsToolPolicy(t *testing.T) {
 	forensics, err := ParseFile(filepath.Join("..", "..", "skills", "forensics", "SKILL.md"))
 	if err != nil {

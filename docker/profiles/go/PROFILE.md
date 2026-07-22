@@ -6,6 +6,7 @@ The repository under `./src` is a Go module.
 
 - **Go 1.26** — `go`. `GOTOOLCHAIN=local`, so the installed toolchain is used as-is rather than downloading another one mid-scan.
 - **`govulncheck`** on PATH — reports known vulnerabilities in the module graph and, with source, which are actually reachable.
+- **`capslock`** on PATH — maps Go packages to privileged standard-library capabilities reachable through their call graphs.
 - C toolchain (`build-essential`) for cgo, so a project that imports `"C"` builds, tests, and reproduces.
 
 The Go module cache, build cache, and tmp dir live under `/opt/go` (an exec-capable path), because `HOME` is a noexec
@@ -30,6 +31,10 @@ vulnerability database) you had to skip.
 
 `govulncheck ./...` from the module root reports known-vulnerable symbols the code actually calls, which is stronger
 evidence than a version-only advisory match. Quote its output when a finding rests on it.
+
+`capslock -force_local_module -output package -packages ./...` reports the privileged capabilities reachable from each non-standard
+package without falling back to a temporary module or fetching packages outside the repository. It is a deterministic
+triage aid: use it to focus call-graph review, not as proof that an unlisted package is safe.
 
 ### Creating reproducers
 
