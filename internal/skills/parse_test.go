@@ -884,7 +884,7 @@ func TestBundledAuditInjectionMetadata(t *testing.T) {
 	if auditInjection.AllowedTools != want {
 		t.Errorf("audit-injection allowed tools = %q, want %q", auditInjection.AllowedTools, want)
 	}
-	for _, name := range []string{"execution.md", "deserialization.md", "templates.md"} {
+	for _, name := range []string{"python.md", "node.md", "ruby.md", "java-jvm.md", "go.md", "php.md"} {
 		data, err := os.ReadFile(filepath.Join(dir, "references", name))
 		if err != nil {
 			t.Errorf("read audit-injection reference %s: %v", name, err)

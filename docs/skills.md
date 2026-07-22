@@ -22,7 +22,7 @@ These live in `skills/` and are embedded in the Scrutineer executable. At startu
 | `posture` | Scores readiness to receive a vulnerability report: SECURITY.md, private vulnerability reporting, prior advisories, scanning workflows. |
 | `forensics` | Builds a read-only compromise timeline and evidence bundle from local Git history and public forge/archive records. Run on demand after suspected maintainer, account, release, or source-history compromise. |
 | `variants` | Starting from one confirmed finding, searches the current repository for distinct, high-confidence sibling instances of the same root cause. Run on demand; it does not scan dependents. |
-| `audit-injection` | Focused static audit for attacker-controlled data reaching command execution, dynamic evaluation, unsafe deserialization, or server-side template execution. Uses bundled review references and runs on demand. |
+| `audit-injection` | Focused static audit for attacker-controlled data reaching command execution, dynamic evaluation, unsafe deserialization, or server-side template execution. Uses ecosystem-specific reference notes and runs on demand. |
 | `cna-match` | Matches the repository to its CVE Numbering Authority so disclosures route to the right contact. |
 | `semgrep` | Runs semgrep with the `p/security-audit` and `p/secrets` rulesets and maps hits into the findings shape. |
 | `vuln-scan` | High-recall model-backed static source-code candidate scan adapted from Anthropic's defending-code reference harness. |
