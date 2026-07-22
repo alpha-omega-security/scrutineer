@@ -135,6 +135,57 @@ func TestParseFindingsOutput_referencesCreatedOnNewAndUpsertedOnReobserve(t *tes
 	}
 }
 
+func TestParseFindingsOutput_auditInjectionSchemaReferencesIngest(t *testing.T) {
+	schema, err := os.ReadFile("../../skills/audit-injection/schema.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	report := `{"findings":[{
+		"id":"F001",
+		"title":"Webhook branch name reaches a shell command",
+		"severity":"High",
+		"confidence":"high",
+		"cwe":"CWE-78",
+		"location":"internal/hooks/run.go:88",
+		"reachability":"reachable",
+		"quality_tier":"high",
+		"trace":"The webhook branch parameter is concatenated into sh -c before the deployment command runs.",
+		"boundary":"An authenticated repository webhook supplies the branch name.",
+		"validation":"Static review confirmed the shell wrapper receives one command string and found no allowlist or argv conversion.",
+		"discovered_via":"source",
+		"rating":"High because an attacker controlling the webhook value can execute commands as the deployment worker.",
+		"references":[{"url":"https://example.com/advisory","summary":"Related advisory","tags":"advisory,audit-injection"}]
+	}]}`
+	if got := ValidateReportSchema(string(schema), report); got != "" {
+		t.Fatalf("schema rejected parser fixture: %s", got)
+	}
+
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://x/r", Name: "r"}
+	gdb.Create(&repo)
+	scan := &db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "audit-injection", Status: db.ScanDone, Commit: "aaa"}
+	gdb.Create(scan)
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	if err := w.parseFindingsOutput(&db.Skill{}, scan, report, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+
+	var refs []db.FindingReference
+	if err := gdb.Find(&refs).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(refs) != 1 {
+		t.Fatalf("references = %d, want 1", len(refs))
+	}
+	if refs[0].URL != "https://example.com/advisory" || refs[0].Summary != "Related advisory" || refs[0].Tags != "advisory,audit-injection" {
+		t.Errorf("reference = %+v", refs[0])
+	}
+}
+
 func TestParseFindingsOutput_minConfidenceDropsBelowThreshold(t *testing.T) {
 	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
 	if err != nil {

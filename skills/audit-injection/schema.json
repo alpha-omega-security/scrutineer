@@ -25,11 +25,21 @@
     },
     "reachability": {
       "type": "string",
-      "enum": ["reachable", "harness_only", "unclear"]
+      "enum": ["reachable"]
     },
     "quality_tier": {
       "type": "string",
-      "enum": ["high", "low"]
+      "enum": ["high"]
+    },
+    "reference": {
+      "type": "object",
+      "required": ["url"],
+      "additionalProperties": false,
+      "properties": {
+        "url": {"type": "string", "minLength": 1},
+        "summary": {"type": "string"},
+        "tags": {"type": "string"}
+      }
     },
     "location": {
       "type": "string",
@@ -78,7 +88,7 @@
         "reach_exposed": {"type": "integer", "minimum": 0},
         "references": {
           "type": "array",
-          "items": {"type": "string", "minLength": 1}
+          "items": {"$ref": "#/$defs/reference"}
         },
         "trace": {"$ref": "#/$defs/markdown"},
         "boundary": {"$ref": "#/$defs/markdown"},
