@@ -390,6 +390,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /repositories/{id}/threat-model/run", s.repoThreatModelRun)
 	mux.HandleFunc("POST /repositories/{id}/threat-model/clear", s.repoThreatModelClear)
 	mux.HandleFunc("POST /repositories/{id}/scan-config", s.repoScanConfigSave)
+	mux.HandleFunc("POST /repositories/{id}/scan-config/ignored-paths", s.repoIgnoredPathAdd)
+	mux.HandleFunc("POST /repositories/{id}/scan-config/ignored-paths/delete", s.repoIgnoredPathDelete)
 	mux.HandleFunc("POST /repositories/{id}/scan-config/clear", s.repoScanConfigClear)
 	mux.HandleFunc("GET /scans", s.jobs)
 	mux.HandleFunc("GET /orgs", s.orgsList)
@@ -2002,6 +2004,7 @@ type repoShowView struct {
 	Inventory       repoInventoryView
 	Subprojects     repoSubprojectView
 	Maintainers     []db.Maintainer
+	IgnoredPaths    []string
 	HealthSummary   string
 	Skills          []db.Skill
 	Workbench       Workbench
@@ -2030,6 +2033,7 @@ func (s *Server) loadRepoShowView(
 	inventory := s.loadRepoInventoryView(repo.ID, deps.Groups)
 	maintainers := s.repoMaintainers(repo.ID)
 	health := db.AssessRepositoryHealth(repo, inventory.Packages, maintainers, time.Now())
+	ignoredPaths := repoIgnoredPaths(repo)
 	// activeScans drives both the delete-confirm warning (a running scan keeps
 	// writing into the repo's clone/workspace until it returns) and the "Cancel
 	// all" button; pausedScans drives "Resume all". Both are counted over every
@@ -2046,6 +2050,7 @@ func (s *Server) loadRepoShowView(
 		Inventory:          inventory,
 		Subprojects:        s.loadRepoSubprojectView(repo.ID),
 		Maintainers:        maintainers,
+		IgnoredPaths:       ignoredPaths,
 		HealthSummary:      health.Summary,
 		Skills:             s.activeRepoSkills(),
 		Workbench:          loadWorkbench(s.DB, &repo, workbenchSeed(tmScan)),
@@ -2094,6 +2099,7 @@ func (v repoShowView) renderData() map[string]any {
 		"AdvisoriesTotal":    v.Inventory.AdvisoriesTotal,
 		"AdvisoryAudits":     v.Inventory.AdvisoryAudits,
 		"Maintainers":        v.Maintainers,
+		"IgnoredPaths":       v.IgnoredPaths,
 		"ThreatModel":        v.ThreatModel,
 		"KnownURLs":          v.Inventory.KnownURLs,
 		"KnownPURLs":         v.Inventory.KnownPURLs,
