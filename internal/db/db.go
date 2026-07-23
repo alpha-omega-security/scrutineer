@@ -376,6 +376,30 @@ type Package struct {
 	CreatedAt time.Time
 }
 
+type PackageAlternativeKind string
+
+const (
+	PackageAlternativeFork       PackageAlternativeKind = "fork"
+	PackageAlternativeSuccessor  PackageAlternativeKind = "successor"
+	PackageAlternativeEquivalent PackageAlternativeKind = "equivalent"
+)
+
+// PackageAlternative records a migration target for a repository's package.
+// It is operator-curated: the source repo may be abandoned or zombie, while
+// the alternative PURL points at a maintained fork, successor, or equivalent.
+type PackageAlternative struct {
+	ID           uint `gorm:"primarykey"`
+	RepositoryID uint `gorm:"index;not null;uniqueIndex:idx_repo_alt_purl_kind"`
+	Repository   Repository
+
+	PURL string                 `gorm:"not null;uniqueIndex:idx_repo_alt_purl_kind"`
+	Kind PackageAlternativeKind `gorm:"index;not null;uniqueIndex:idx_repo_alt_purl_kind"`
+	Note string
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
 type MaintainerStatus string
 
 const (
@@ -1233,7 +1257,7 @@ func Open(dsn string) (*gorm.DB, error) {
 		&Repository{}, &Scan{},
 		&Finding{}, &FindingLabel{}, &FindingNote{},
 		&FindingCommunication{}, &FindingReference{}, &FindingHistory{}, &FindingReview{}, &AuditEvent{},
-		&Dependency{}, &ExpectedFinding{}, &Package{}, &Dependent{}, &FindingDependent{}, &Advisory{}, &AdvisoryAudit{},
+		&Dependency{}, &ExpectedFinding{}, &Package{}, &PackageAlternative{}, &Dependent{}, &FindingDependent{}, &Advisory{}, &AdvisoryAudit{},
 		&Maintainer{}, &Skill{}, &Subproject{},
 		&SBOMUpload{}, &SBOMPackage{}, &CNA{}, &Setting{},
 	); err != nil {

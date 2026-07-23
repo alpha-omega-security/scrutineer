@@ -96,6 +96,22 @@ paths:
                 items: { $ref: '#/components/schemas/Package' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  /repositories/{id}/alternatives:
+    get:
+      summary: List operator-curated package migration alternatives
+      operationId: listRepositoryAlternatives
+      parameters:
+        - $ref: '#/components/parameters/RepositoryID'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/PackageAlternative' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
   /repositories/{id}/advisories:
     get:
       summary: List published advisories affecting this repository's packages
@@ -1264,6 +1280,16 @@ components:
         dependent_repos: { type: integer }
         registry_url:    { type: string }
         latest_version:  { type: string }
+
+    PackageAlternative:
+      type: object
+      required: [id, repository_id, purl, kind]
+      properties:
+        id:            { type: integer, format: int64 }
+        repository_id: { type: integer, format: int64 }
+        purl:          { type: string }
+        kind:          { type: string, enum: [fork, successor, equivalent] }
+        note:          { type: string }
 
     Dependency:
       type: object

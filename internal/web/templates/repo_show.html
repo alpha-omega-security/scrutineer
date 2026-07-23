@@ -85,6 +85,11 @@
       Packages
     </button>
     {{end}}
+    {{if .ShowAlternatives}}
+    <button type="button" role="tab" id="rt15" aria-controls="rp15" aria-selected="false">
+      Alternatives{{if .Alternatives}} <span class="badge-outline ml-1">{{len .Alternatives}}</span>{{end}}
+    </button>
+    {{end}}
     {{if or .Deps .HiddenDeps}}
       <button type="button" role="tab" id="rt5" aria-controls="rp5" aria-selected="false">
         Dependencies
@@ -412,6 +417,69 @@
       {{end}}
       </tbody>
     </table>
+  </div>
+  {{end}}
+
+  {{if .ShowAlternatives}}
+  <div role="tabpanel" id="rp15" aria-labelledby="rt15" hidden>
+    <div class="grid gap-4">
+      <section>
+        <h3 class="text-sm font-medium mb-2">Migration alternatives</h3>
+        <p class="text-sm text-muted-foreground mb-4">
+          Operator-curated forks, successors, or equivalent packages for consumers moving away from this repository.
+        </p>
+        {{if .Alternatives}}
+        <table class="table w-full">
+          <thead><tr><th>PURL</th><th>Kind</th><th>Note</th><th class="w-16"></th></tr></thead>
+          <tbody>
+          {{range .Alternatives}}
+            <tr>
+              <td class="whitespace-normal"><code class="text-sm break-all">{{.PURL}}</code></td>
+              <td><span class="badge-outline">{{.Kind}}</span></td>
+              <td class="text-muted-foreground whitespace-normal">{{.Note}}</td>
+              <td>
+                <form method="post" action="/repositories/{{$.Repo.ID}}/alternatives/{{.ID}}/delete"
+                      hx-post="/repositories/{{$.Repo.ID}}/alternatives/{{.ID}}/delete" hx-swap="none"
+                      hx-confirm="Delete this package alternative?">
+                  <button class="btn-sm-ghost" type="submit" aria-label="Delete alternative" data-tooltip="Delete alternative">
+                    <i data-lucide="trash-2"></i>
+                  </button>
+                </form>
+              </td>
+            </tr>
+          {{end}}
+          </tbody>
+        </table>
+        {{else}}
+          <p class="text-muted-foreground text-sm">No alternatives recorded yet.</p>
+        {{end}}
+      </section>
+
+      <section class="card">
+        <h3 class="text-sm font-medium mb-3">Add alternative</h3>
+        <form method="post" action="/repositories/{{.Repo.ID}}/alternatives" class="form grid md:grid-cols-[1fr_12rem] gap-3">
+          <label>
+            <span>PURL</span>
+            <input class="input" type="text" name="purl" placeholder="pkg:npm/example" required>
+          </label>
+          <label>
+            <span>Kind</span>
+            <select class="select" name="kind" required>
+              <option value="fork">Fork</option>
+              <option value="successor">Successor</option>
+              <option value="equivalent">Equivalent</option>
+            </select>
+          </label>
+          <label class="md:col-span-2">
+            <span>Note</span>
+            <input class="input" type="text" name="note" placeholder="Why this is a credible migration target">
+          </label>
+          <div class="md:col-span-2">
+            <button class="btn-sm" type="submit">Save alternative</button>
+          </div>
+        </form>
+      </section>
+    </div>
   </div>
   {{end}}
 

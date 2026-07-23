@@ -376,6 +376,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /repositories/bulk", s.repoBulkCreate)
 	mux.HandleFunc("POST /repositories/org", s.repoOrgImport)
 	mux.HandleFunc("GET /repositories/{id}", s.repoShow)
+	mux.HandleFunc("POST /repositories/{id}/alternatives", s.repoPackageAlternativeCreate)
+	mux.HandleFunc("POST /repositories/{id}/alternatives/{alternative_id}/delete", s.repoPackageAlternativeDelete)
 	mux.HandleFunc("POST /repositories/{id}/expected", s.repoExpectedFindingCreate)
 	mux.HandleFunc("POST /repositories/{id}/expected/{expected_id}/delete", s.repoExpectedFindingDelete)
 	mux.HandleFunc("GET /repositories/{id}/blob/{commit}/{path...}", s.repoBlob)
@@ -1993,26 +1995,28 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 }
 
 type repoShowView struct {
-	Repo            db.Repository
-	Scans           []db.Scan
-	Latest          *db.Scan
-	Findings        repoFindings
-	Expected        repoExpectedView
-	Dependencies    repoDependencyView
-	Inventory       repoInventoryView
-	Subprojects     repoSubprojectView
-	Maintainers     []db.Maintainer
-	HealthSummary   string
-	Skills          []db.Skill
-	Workbench       Workbench
-	ThreatModel     map[string]any
-	Category        string
-	TMCommit        string
-	NewFindingCount int
-	FailedScans     int
-	ActiveScans     int
-	PausedScans     int
-	TotalCost       float64
+	Repo             db.Repository
+	Scans            []db.Scan
+	Latest           *db.Scan
+	Findings         repoFindings
+	Expected         repoExpectedView
+	Dependencies     repoDependencyView
+	Inventory        repoInventoryView
+	Subprojects      repoSubprojectView
+	Maintainers      []db.Maintainer
+	Alternatives     []db.PackageAlternative
+	ShowAlternatives bool
+	HealthSummary    string
+	Skills           []db.Skill
+	Workbench        Workbench
+	ThreatModel      map[string]any
+	Category         string
+	TMCommit         string
+	NewFindingCount  int
+	FailedScans      int
+	ActiveScans      int
+	PausedScans      int
+	TotalCost        float64
 	// GlobalScanSchedule is the settings-level default schedule, shown on
 	// the repo page so "inherit" spells out what it inherits.
 	GlobalScanSchedule string
@@ -2030,6 +2034,10 @@ func (s *Server) loadRepoShowView(
 	inventory := s.loadRepoInventoryView(repo.ID, deps.Groups)
 	maintainers := s.repoMaintainers(repo.ID)
 	health := db.AssessRepositoryHealth(repo, inventory.Packages, maintainers, time.Now())
+	alternatives, err := loadPackageAlternatives(s.DB, repo.ID)
+	if err != nil {
+		s.Log.Error("load package alternatives", "repo", repo.ID, "err", err)
+	}
 	// activeScans drives both the delete-confirm warning (a running scan keeps
 	// writing into the repo's clone/workspace until it returns) and the "Cancel
 	// all" button; pausedScans drives "Resume all". Both are counted over every
@@ -2046,6 +2054,8 @@ func (s *Server) loadRepoShowView(
 		Inventory:          inventory,
 		Subprojects:        s.loadRepoSubprojectView(repo.ID),
 		Maintainers:        maintainers,
+		Alternatives:       alternatives,
+		ShowAlternatives:   showPackageAlternatives(repo, alternatives),
 		HealthSummary:      health.Summary,
 		Skills:             s.activeRepoSkills(),
 		Workbench:          loadWorkbench(s.DB, &repo, workbenchSeed(tmScan)),
@@ -2094,6 +2104,8 @@ func (v repoShowView) renderData() map[string]any {
 		"AdvisoriesTotal":    v.Inventory.AdvisoriesTotal,
 		"AdvisoryAudits":     v.Inventory.AdvisoryAudits,
 		"Maintainers":        v.Maintainers,
+		"Alternatives":       v.Alternatives,
+		"ShowAlternatives":   v.ShowAlternatives,
 		"ThreatModel":        v.ThreatModel,
 		"KnownURLs":          v.Inventory.KnownURLs,
 		"KnownPURLs":         v.Inventory.KnownPURLs,

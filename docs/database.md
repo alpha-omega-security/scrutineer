@@ -71,6 +71,22 @@ change history for findings. `payload` is JSON stored portably as text.
 | payload | text | JSON metadata. Scan events include stable execution metadata and terminal metrics, without duplicating reports or logs. |
 | created_at | datetime | |
 
+## package_alternatives
+
+Operator-curated migration targets for repositories classified as abandoned or
+zombie. Later #12 migration-guide and campaign tracking work can join on this
+table instead of reparsing notes or reports.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | integer PK | |
+| repository_id | integer FK | Source repository this alternative applies to. |
+| p_url | text | Package URL of the fork, successor, or equivalent package. Unique with `repository_id` and `kind`. |
+| kind | text | One of `fork`, `successor`, or `equivalent`. |
+| note | text | Operator note explaining why this is a credible migration target. |
+| created_at | datetime | |
+| updated_at | datetime | |
+
 ## scans
 
 One row per skill execution or external import. `skill_name` / `skill_version` pin which skill ran; for imports `skill_name` records the originating tool.
