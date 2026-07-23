@@ -7,7 +7,9 @@ helpers, metaprogramming dispatch, and dynamic constant loading.
 
 - Ruby Psych 4.0 changed `YAML.load` defaults toward safe loading. Ruby 3.1
   ships Psych 4. For older Psych/Ruby stacks, `YAML.load` can instantiate Ruby
-  objects; `YAML.safe_load` is the untrusted-input-safe choice.
+  objects; `YAML.safe_load` is the untrusted-input-safe choice. Sources:
+  https://bugs.ruby-lang.org/issues/17866 and
+  https://ruby-doc.org/stdlib-3.1.0/libdoc/psych/rdoc/Psych.html
 - `Marshal.load` is unsafe for untrusted bytes in every Ruby version because
   object hooks and gadget classes can execute behavior during load.
 - Rails signed/encrypted cookies are not attacker-writable without the secret

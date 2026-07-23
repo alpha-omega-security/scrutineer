@@ -7,16 +7,20 @@ source is attacker-controlled and current production code reaches the sink.
 ## Version facts to check
 
 - PyYAML `yaml.load(x)` without an explicit `Loader` is unsafe before 5.1.
-  PyYAML 5.1 through 5.4 defaulted toward `FullLoader`; `FullLoader` before
-  5.3.1 still allowed Python object construction gadgets. Treat
-  `yaml.safe_load` and `yaml.load(..., Loader=yaml.SafeLoader)` as safe for
-  untrusted YAML.
+  PyYAML 5.1 introduced `FullLoader` and warning behavior, but `FullLoader`
+  remained exploitable through CVE-2020-14343 until 5.4. Treat `safe_load` and
+  `yaml.load(..., Loader=yaml.SafeLoader)` as the untrusted-input-safe forms.
+  Sources: https://github.com/yaml/pyyaml/wiki/PyYAML-yaml.load%28input%29-Deprecation,
+  https://pyyaml.org/wiki/PyYAML, and
+  https://nvd.nist.gov/vuln/detail/CVE-2020-14343
 - `pickle`, `cloudpickle`, `dill`, `joblib`, `pandas.read_pickle`, and
   `torch.load` remain unsafe for untrusted bytes in all versions because load
   can invoke importable callables.
 - Django defaults to JSON session serialization since 1.6. A project setting
   `SESSION_SERIALIZER = "django.contrib.sessions.serializers.PickleSerializer"`
-  reintroduces pickle risk.
+  reintroduces pickle risk; `PickleSerializer` was removed in Django 5.0.
+  Sources: https://docs.djangoproject.com/en/2.2/releases/1.6/ and
+  https://docs.djangoproject.com/en/dev/releases/5.0/
 - Jinja2 sandbox escapes have had bypasses, but `render_template("file.html",
   data)` with a literal trusted file is not SSTI. `Template(user_text)` and
   Flask `render_template_string(user_text)` are the relevant template-source

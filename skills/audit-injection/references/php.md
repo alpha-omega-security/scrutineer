@@ -5,15 +5,23 @@ process helpers, `eval`/`assert`, and `unserialize`.
 
 ## Version facts to check
 
-- `assert($string)` evaluated strings as PHP code before PHP 7.2. On PHP 7.2+
-  string assertions no longer evaluate code in the same way; still check
-  explicit `eval`.
+- `assert($string)` evaluated strings as PHP code through `eval()` before PHP
+  8.0. The string form was deprecated in 7.2 but still dangerous in 7.2-7.4
+  when enabled; it was removed in 8.0. Source:
+  https://www.php.net/manual/en/function.assert.php
 - `unserialize($user)` remains unsafe on untrusted input in all PHP versions
   when gadget classes with `__wakeup`, `__destruct`, `__toString`, or similar
   magic methods are available. `allowed_classes=false` materially changes risk.
+  Source: https://www.php.net/function.unserialize.php
 - PHAR metadata deserialization bugs were reduced in PHP 8.0 by stopping
   automatic metadata unserialization in many file operations, but explicit
-  PHAR metadata reads and older PHP versions remain risky.
+  PHAR metadata reads and older PHP versions remain risky. Sources:
+  https://wiki.php.net/rfc/phar_stop_autoloading_metadata and
+  https://www.php.net/manual/en/phar.getmetadata.php
+- `preg_replace` with the `/e` modifier evaluates replacement text as PHP
+  code. It was deprecated in PHP 5.5 and removed in PHP 7.0, so only report it
+  for legacy PHP runtimes where the modifier is still supported. Source:
+  https://wiki.php.net/rfc/remove_deprecated_functionality_in_php7
 - Twig autoescaping protects output data, not attacker-controlled template
   source. `createTemplate(userText)` or `template_from_string` are SSTI sinks.
 - Laravel Blade compiles trusted server templates to PHP. A user-controlled
@@ -25,7 +33,7 @@ process helpers, `eval`/`assert`, and `unserialize`.
   backticks, Symfony Process built from one shell string, and shell wrappers
   containing request data.
 - Dynamic code and includes: `eval`, `assert` string evaluation on old PHP,
-  `preg_replace` with `/e` on PHP before 7, `include`/`require` on
+  legacy `preg_replace` with `/e`, `include`/`require` on
   attacker-controlled paths, `call_user_func` over an untrusted callable, and
   dynamic class names reaching privileged constructors.
 - Deserialization: `unserialize`, `Phar` metadata reads on attacker-controlled
