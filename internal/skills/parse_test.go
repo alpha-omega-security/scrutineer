@@ -871,6 +871,31 @@ func TestBundledVariantsMetadata(t *testing.T) {
 	}
 }
 
+func TestBundledAuditInjectionMetadata(t *testing.T) {
+	dir := filepath.Join("..", "..", "skills", "audit-injection")
+	auditInjection, err := ParseFile(filepath.Join(dir, "SKILL.md"))
+	if err != nil {
+		t.Fatalf("parse audit-injection: %v", err)
+	}
+	if auditInjection.OutputKind != "findings" || auditInjection.MaxTurns != 48 || auditInjection.Model != "high" || auditInjection.MinConfidence != "high" {
+		t.Errorf("audit-injection metadata = kind %q, turns %d, model %q, confidence %q", auditInjection.OutputKind, auditInjection.MaxTurns, auditInjection.Model, auditInjection.MinConfidence)
+	}
+	const want = "Read,Write,Bash,Grep,Glob"
+	if auditInjection.AllowedTools != want {
+		t.Errorf("audit-injection allowed tools = %q, want %q", auditInjection.AllowedTools, want)
+	}
+	for _, name := range []string{"python.md", "node.md", "ruby.md", "java-jvm.md", "go.md", "php.md"} {
+		data, err := os.ReadFile(filepath.Join(dir, "references", name))
+		if err != nil {
+			t.Errorf("read audit-injection reference %s: %v", name, err)
+			continue
+		}
+		if !strings.HasPrefix(string(data), "# ") {
+			t.Errorf("audit-injection reference %s has no heading", name)
+		}
+	}
+}
+
 func TestParseFile_requiresWrongType(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSkill(t, dir, "bad-req", `---

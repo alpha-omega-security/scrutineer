@@ -171,6 +171,7 @@ Adding a repo enqueues the `triage` skill, whose SKILL.md lists the further skil
 | `posture` | Records the repo's security posture (reporting policy, response history, hardening) on the Repository row |
 | `forensics` | Read-only compromise timeline and evidence bundle from local Git history and public forge/archive records |
 | `variants` | Starting from one confirmed finding, searches the current repository for distinct, high-confidence sibling instances of the same root cause |
+| `audit-injection` | Opt-in static audit for command/code execution, unsafe deserialization, and server-side template injection with ecosystem-specific references |
 
 Edit `skills/triage/SKILL.md` to change what gets run by default. Drop new skill directories in `skills/` to add scan types; no code changes needed. See [docs/skills.md](docs/skills.md) for the frontmatter reference, the `scrutineer.*` metadata keys, the `context.json` shape, output kinds, schema validation, and the skill-facing HTTP API.
 
