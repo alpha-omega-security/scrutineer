@@ -28,7 +28,7 @@ FROM golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149a
 RUN apk add --no-cache build-base git
 RUN GOBIN=/out CGO_ENABLED=1 go install github.com/andrew/VID/cmd/vid@v0.1.0
 
-FROM rust:1.96-alpine@sha256:a41f7740f8b45d45795624eec13a8b42263cc700f19f7e4e86e04d3dda08a479 AS zizmor-build
+FROM rust:1.97-alpine@sha256:3c38f3f82c2f3d73da3b38e18d279393a04cb43ddded0e35088a8c3324d40900 AS zizmor-build
 RUN apk add --no-cache build-base linux-headers
 RUN cargo install --locked --root /out zizmor@1.26.1
 
