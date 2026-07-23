@@ -3,9 +3,11 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -224,6 +226,84 @@ func (w *Worker) parseAdvisoriesOutput(scan *db.Scan, report string, emit func(E
 	}
 	emit(Event{Kind: KindText, Text: fmt.Sprintf("saved %d advisor(ies)", len(rows))})
 	return nil
+}
+
+// parseAdvisoryAuditOutput ingests an advisory-deep-dive report: the findings
+// pass first, with the exact semantics of output_kind=findings, then one
+// AdvisoryAudit row per per-advisory verdict, resolving report-local finding
+// ids ("F001") to the created or re-observed Finding rows. Ids dropped by the
+// min_confidence/report_on filters resolve to nothing and are skipped, so an
+// audit keeps its verdict even when its supporting finding was filtered.
+func (w *Worker) parseAdvisoryAuditOutput(skill *db.Skill, scan *db.Scan, report string, emit func(Event)) error {
+	var result struct {
+		Audits []struct {
+			AdvisoryUUID string   `json:"advisory_uuid"`
+			Status       string   `json:"status"`
+			Evidence     string   `json:"evidence"`
+			FindingIDs   []string `json:"finding_ids"`
+		} `json:"audits"`
+	}
+	if err := json.Unmarshal([]byte(report), &result); err != nil {
+		return fmt.Errorf("parse advisory audits: %w", err)
+	}
+	seen := make(map[string]bool, len(result.Audits))
+	for _, a := range result.Audits {
+		uuid := strings.TrimSpace(a.AdvisoryUUID)
+		if uuid == "" {
+			return fmt.Errorf("advisory audit with empty advisory_uuid")
+		}
+		if !db.AdvisoryAuditStatuses[a.Status] {
+			return fmt.Errorf("unknown advisory audit status %q for %s", a.Status, a.AdvisoryUUID)
+		}
+		// Downstream readers keep the newest row per advisory, so a report
+		// carrying two verdicts for one advisory would silently pick one.
+		if seen[uuid] {
+			return fmt.Errorf("duplicate advisory audit for %s", uuid)
+		}
+		seen[uuid] = true
+	}
+
+	// ingestFindings persists the findings before reporting fail_on, and the
+	// pipeline treats that error as "finalized with findings committed" (see
+	// maybeFireScanFinalized). The audit rows must land on that path too,
+	// otherwise exactly the runs that find a threshold-severity bypass lose
+	// their verdicts.
+	findings, ingestErr := w.ingestFindings(skill, scan, report, emit)
+	if ingestErr != nil {
+		if _, failOn := errors.AsType[*FailOnThresholdError](ingestErr); !failOn {
+			return ingestErr
+		}
+	}
+	idByReportID := make(map[string]uint, len(findings))
+	for _, f := range findings {
+		idByReportID[f.FindingID] = f.ID
+	}
+
+	rows := make([]db.AdvisoryAudit, 0, len(result.Audits))
+	for _, a := range result.Audits {
+		var ids []string
+		for _, rid := range a.FindingIDs {
+			if dbID, ok := idByReportID[rid]; ok {
+				ids = append(ids, strconv.FormatUint(uint64(dbID), 10))
+			}
+		}
+		rows = append(rows, db.AdvisoryAudit{
+			RepositoryID: scan.RepositoryID,
+			ScanID:       scan.ID,
+			AdvisoryUUID: strings.TrimSpace(a.AdvisoryUUID),
+			Status:       a.Status,
+			Evidence:     a.Evidence,
+			FindingIDs:   strings.Join(ids, ","),
+			Commit:       scan.Commit,
+		})
+	}
+	if len(rows) > 0 {
+		if err := w.DB.CreateInBatches(&rows, insertBatchSize).Error; err != nil {
+			return fmt.Errorf("save advisory audits: %w", err)
+		}
+	}
+	emit(Event{Kind: KindText, Text: fmt.Sprintf("recorded %d advisory audit verdict(s)", len(rows))})
+	return ingestErr
 }
 
 // parseDependenciesOutput replaces Dependency rows for the scan's repository.

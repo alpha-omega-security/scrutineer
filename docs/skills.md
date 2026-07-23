@@ -30,7 +30,7 @@ These live in `skills/` and are embedded in the Scrutineer executable. At startu
 | `recon` | Maps the repository's distinct externally reachable input-processing subsystems into focus areas that threat-model carries into later deep-dive audits. |
 | `threat-model` | Derives the project's security contract from source and docs: components, entry-point trust table, claimed and disclaimed properties, and disposition labels. Loaded by `security-deep-dive` so it does not re-derive boundaries per run. |
 | `security-deep-dive` | The model-driven audit. Inventories trust boundaries and sinks, then runs a six-step trace/boundary/validate/prior-art/reach/rate analysis on each. After threat-model completes, Scrutineer fans configured focus areas out into parallel deep-dive scans. |
-| `advisory-deep-dive` | Re-audits every past GHSA/CVE advisory against its fix commit for three failure modes: a bypass of the fix, an incomplete fix that left a path open, or the same class of bug in sibling code the patch never touched. A `security-deep-dive` scoped exclusively to the advisory space; `requires` the `advisories` cache. |
+| `advisory-deep-dive` | Re-audits every past GHSA/CVE advisory against its fix commit for four failure modes: a regression that reopened the original bug, a bypass of the fix, an incomplete fix that left a path open, or the same class of bug in sibling code the patch never touched. Records one verdict per advisory (`fixed`/`bypass`/`variant`/`regressed`) in `advisory_audits`, opens findings for anything that did not hold, and lets a `fixed` verdict back a public fix-audit certificate. A `security-deep-dive` scoped exclusively to the advisory space; `requires` the `advisories` cache and is re-enqueued automatically when a newer upstream release ships (regression watch). |
 | `finding-dedup` | Compares open findings in one repository and marks findings that describe the same underlying vulnerability as duplicates. |
 | `reachability` | Traces sinks already found in this app's dependencies through the app's own code to see which are reachable from its trust boundaries. |
 | `exposure` | For one (finding, dependent) pair, decides whether the dependent's published code actually reaches the upstream library finding. Emits one CSAF 2.0 product_status verdict so scrutineer can record affected vs not_affected and stamp the right VEX justification. |
@@ -133,6 +133,7 @@ Declaring `scrutineer.paths` replaces this skip list entirely: the skill sees on
 | `repo_overview` | Brief summary stored for other skills to read. |
 | `packages` | Package rows. |
 | `advisories` | Advisory rows. |
+| `advisory_audit` | Findings (as `findings` above) plus one `advisory_audits` verdict per advisory, mapping each verdict's report-local finding ids to the persisted rows. |
 | `dependencies` | Dependency rows. |
 | `finding_dedup` | Duplicate decisions applied to existing Finding rows through status history and notes. |
 | `maintainers` | Maintainer rows. |

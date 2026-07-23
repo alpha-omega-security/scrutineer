@@ -68,7 +68,10 @@ func renderScanReport(gdb *gorm.DB, scan *db.Scan, skill *db.Skill) string {
 		kind = skill.OutputKind
 	}
 	switch kind {
-	case "findings":
+	case "findings", "advisory_audit":
+		// advisory_audit persists ordinary Finding rows alongside its
+		// per-advisory verdicts, so its report.md keeps the same curated
+		// per-finding prose as a findings-kind scan.
 		writeScanReportFindings(&b, gdb, scan)
 	default:
 		writeScanReportFreeform(&b, scan, kind)

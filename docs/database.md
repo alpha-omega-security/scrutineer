@@ -419,6 +419,22 @@ Known security advisories from the `advisories` skill. Replaced each run.
 | withdrawn_at | datetime | Non-null if the advisory was withdrawn. |
 | created_at | datetime | |
 
+## advisory_audits
+
+Fix-audit verdicts from the `advisory-deep-dive` skill: for each published advisory, whether its advertised fix still holds at the audited commit. One row per advisory per run; the newest row per `(repository_id, advisory_uuid)` is authoritative. Keyed by advisory UUID rather than `advisories.id` because the `advisories` skill replaces its rows wholesale each run, which would orphan a foreign key.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | integer PK | |
+| repository_id | integer FK | |
+| scan_id | integer FK | The `advisory-deep-dive` scan that produced the verdict. |
+| advisory_uuid | text | The audited advisory's `advisories.uuid`. |
+| status | text | `fixed`, `bypass`, `variant`, or `regressed`. `fixed` backs a public certificate; the others each open one or more findings. |
+| evidence | text | Standalone prose describing what was reproduced (or failed to reproduce) and at which commit. Published verbatim in the certificate for `fixed`. |
+| finding_ids | text | Comma-joined `findings.id` values this verdict opened. Empty for `fixed`. |
+| commit | text | The audited commit, denormalized from the scan. |
+| created_at | datetime | |
+
 ## maintainers
 
 People who maintain repositories. Populated by the `maintainers` skill. Many-to-many with repositories via `repository_maintainers`.

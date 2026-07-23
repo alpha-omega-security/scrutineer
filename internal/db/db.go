@@ -477,6 +477,36 @@ type Advisory struct {
 	CreatedAt time.Time
 }
 
+// AdvisoryAuditStatuses is the set of verdicts an advisory fix audit may
+// record: the advertised fix held (fixed), can be circumvented (bypass),
+// left the same bug class open elsewhere (variant), or the original
+// reproduction fires again at the audited commit (regressed).
+var AdvisoryAuditStatuses = map[string]bool{
+	"fixed": true, "bypass": true, "variant": true, "regressed": true,
+}
+
+// AdvisoryAudit is one fix-audit verdict for a published advisory, written by
+// the advisory-deep-dive skill. One row per advisory per run; the newest row
+// per (repository, advisory) is authoritative. Keyed by advisory UUID rather
+// than Advisory.ID because the advisories skill replaces Advisory rows
+// wholesale on each run.
+type AdvisoryAudit struct {
+	ID           uint `gorm:"primarykey"`
+	RepositoryID uint `gorm:"index;not null"`
+	ScanID       uint `gorm:"index"`
+
+	AdvisoryUUID string `gorm:"index"`
+	Status       string // one of AdvisoryAuditStatuses
+	Evidence     string
+	// FindingIDs is the comma-joined list of Finding row ids this audit
+	// opened. Empty when Status is fixed.
+	FindingIDs string
+	// Commit is the audited commit, denormalized from the scan.
+	Commit string
+
+	CreatedAt time.Time
+}
+
 // Dependent is a package that depends on one of this repo's packages.
 // Populated by the ecosystems dependents prefetch from packages.ecosyste.ms.
 type Dependent struct {
@@ -1198,7 +1228,7 @@ func Open(dsn string) (*gorm.DB, error) {
 		&Repository{}, &Scan{},
 		&Finding{}, &FindingLabel{}, &FindingNote{},
 		&FindingCommunication{}, &FindingReference{}, &FindingHistory{}, &FindingReview{}, &AuditEvent{},
-		&Dependency{}, &ExpectedFinding{}, &Package{}, &Dependent{}, &FindingDependent{}, &Advisory{},
+		&Dependency{}, &ExpectedFinding{}, &Package{}, &Dependent{}, &FindingDependent{}, &Advisory{}, &AdvisoryAudit{},
 		&Maintainer{}, &Skill{}, &Subproject{},
 		&SBOMUpload{}, &SBOMPackage{}, &CNA{}, &Setting{},
 	); err != nil {

@@ -370,6 +370,8 @@ func (w *Worker) parseSkillOutput(skill *db.Skill, scan *db.Scan, report string,
 		return w.parsePackagesOutput(scan, report, emit)
 	case "advisories":
 		return w.parseAdvisoriesOutput(scan, report, emit)
+	case "advisory_audit":
+		return w.parseAdvisoryAuditOutput(skill, scan, report, emit)
 	case "dependencies":
 		return w.parseDependenciesOutput(scan, report, emit)
 	case "finding_dedup":
@@ -423,9 +425,17 @@ func (w *Worker) clearCloneError(scan *db.Scan) {
 // fingerprint: a match bumps last-seen on the existing row instead of
 // creating a duplicate, so analyst triage state survives a rescan (#75).
 func (w *Worker) parseFindingsOutput(skill *db.Skill, scan *db.Scan, report string, emit func(Event)) error {
+	_, err := w.ingestFindings(skill, scan, report, emit)
+	return err
+}
+
+// ingestFindings is the body of parseFindingsOutput, returning the persisted
+// findings with their database IDs set (dedup resolves to the existing row)
+// so callers like parseAdvisoryAuditOutput can map report-local ids to rows.
+func (w *Worker) ingestFindings(skill *db.Skill, scan *db.Scan, report string, emit func(Event)) ([]db.Finding, error) {
 	rep, err := parseReport([]byte(report))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	findings := rep.toFindings(scan.ID, scan.RepositoryID, scan.Commit, scan.SubPath)
 	findings = groupByFingerprint(findings, scan.SkillName)
@@ -465,7 +475,7 @@ func (w *Worker) parseFindingsOutput(skill *db.Skill, scan *db.Scan, report stri
 
 		wasCreated, perr := w.persistFinding(scan, f)
 		if perr != nil {
-			return perr
+			return nil, perr
 		}
 		if wasCreated {
 			created++
@@ -484,9 +494,9 @@ func (w *Worker) parseFindingsOutput(skill *db.Skill, scan *db.Scan, report stri
 		len(findings), created, observed, missed, retracted)})
 
 	if db.SeverityAtLeast(worst, skill.FailOn) {
-		return &FailOnThresholdError{Worst: worst, Threshold: skill.FailOn}
+		return findings, &FailOnThresholdError{Worst: worst, Threshold: skill.FailOn}
 	}
-	return nil
+	return findings, nil
 }
 
 // persistFinding writes one finding into the repository's finding set using
