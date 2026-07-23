@@ -59,6 +59,64 @@ func TestRepoScanConfigClear(t *testing.T) {
 	}
 }
 
+func TestRepoIgnoredPathAddPreservesScanConfig(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/config-ignore", Name: "config-ignore", ScanConfig: `focus_areas:
+  - name: parser
+    paths: [src/parse/**]
+    surface: accepts bytes
+known_bugs:
+  - GHSA-xxxx-yyyy
+skip:
+  - tests/**
+`}
+	s.DB.Create(&repo)
+
+	w := postForm(t, s, fmt.Sprintf("/repositories/%d/scan-config/ignored-paths", repo.ID), url.Values{"pattern": {"spec/**"}})
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("code = %d body=%s", w.Code, w.Body.String())
+	}
+
+	var got db.Repository
+	s.DB.First(&got, repo.ID)
+	for _, want := range []string{"focus_areas:", "known_bugs:", "tests/**", "spec/**"} {
+		if !strings.Contains(got.ScanConfig, want) {
+			t.Fatalf("ScanConfig = %q, want %q", got.ScanConfig, want)
+		}
+	}
+}
+
+func TestRepoIgnoredPathAddRejectsInvalidPattern(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/config-ignore-invalid", Name: "config-ignore-invalid"}
+	s.DB.Create(&repo)
+
+	w := postForm(t, s, fmt.Sprintf("/repositories/%d/scan-config/ignored-paths", repo.ID), url.Values{"pattern": {"../private/**"}})
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "relative") {
+		t.Fatalf("code=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestRepoIgnoredPathDelete(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/config-ignore-delete", Name: "config-ignore-delete", ScanConfig: "skip:\n  - tests/**\n  - spec/**\n"}
+	s.DB.Create(&repo)
+
+	w := postForm(t, s, fmt.Sprintf("/repositories/%d/scan-config/ignored-paths/delete", repo.ID), url.Values{"pattern": {"tests/**"}})
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("code = %d body=%s", w.Code, w.Body.String())
+	}
+
+	var got db.Repository
+	s.DB.First(&got, repo.ID)
+	if strings.Contains(got.ScanConfig, "tests/**") || !strings.Contains(got.ScanConfig, "spec/**") {
+		t.Fatalf("ScanConfig = %q", got.ScanConfig)
+	}
+}
+
 func TestRepoShowScanConfigTab(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
@@ -70,7 +128,7 @@ func TestRepoShowScanConfigTab(t *testing.T) {
 		t.Fatalf("code=%d body=%s", rw.Code, rw.Body.String())
 	}
 	body := rw.Body.String()
-	for _, want := range []string{"Scan config", "scan-config", "scrutineer.scan_config", "tests/**"} {
+	for _, want := range []string{"Scan config", "scan-config", "scrutineer.scan_config", "Ignored paths", "Path pattern", "tests/**"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("repo page missing %q", want)
 		}

@@ -101,14 +101,24 @@ func Normalise(raw string) (string, Config, error) {
 	if err != nil {
 		return "", Config{}, err
 	}
+	normalised, err := NormaliseConfig(cfg)
+	return normalised, cfg, err
+}
+
+// NormaliseConfig validates a parsed config and returns its stable, readable
+// YAML representation. An empty config clears the durable scan configuration.
+func NormaliseConfig(cfg Config) (string, error) {
+	if err := cfg.validate(); err != nil {
+		return "", err
+	}
 	if cfg.Empty() {
-		return "", cfg, nil
+		return "", nil
 	}
 	b, err := yaml.Marshal(cfg)
 	if err != nil {
-		return "", Config{}, err
+		return "", err
 	}
-	return string(b), cfg, nil
+	return string(b), nil
 }
 
 // Empty reports whether no repository-specific scan guidance is configured.
