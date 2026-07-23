@@ -4,18 +4,17 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"math/rand/v2"
 	"net/http"
 	"strconv"
 	"time"
+
+	retryx "scrutineer/internal/retry"
 )
 
 const (
 	defaultAttempts  = 3
 	defaultBaseDelay = 200 * time.Millisecond
 	defaultMaxDelay  = 2 * time.Second
-	backoffFactor    = 2
-	jitterDivisor    = 4
 )
 
 // RetryOptions configures DoRetry. Zero values use small bounded defaults.
@@ -38,7 +37,7 @@ func DoRetry(req *http.Request, opts RetryOptions) (*http.Response, error) {
 	maxDelay := defaultedDuration(opts.MaxDelay, defaultMaxDelay)
 	sleep := opts.Sleep
 	if sleep == nil {
-		sleep = sleepContext
+		sleep = retryx.Sleep
 	}
 
 	var lastErr error
@@ -60,7 +59,7 @@ func DoRetry(req *http.Request, opts RetryOptions) (*http.Response, error) {
 			return resp, nil
 		}
 
-		delay := backoffDelay(attempt, baseDelay, maxDelay)
+		delay := retryx.BackoffDelay(attempt, baseDelay, maxDelay)
 		if err != nil {
 			lastErr = err
 		} else {
@@ -120,40 +119,4 @@ func capDelay(delay, maxDelay time.Duration) time.Duration {
 		return maxDelay
 	}
 	return delay
-}
-
-func backoffDelay(attempt int, baseDelay, maxDelay time.Duration) time.Duration {
-	delay := baseDelay
-	for range attempt - 1 {
-		delay *= backoffFactor
-		if delay >= maxDelay {
-			return jitter(maxDelay)
-		}
-	}
-	return jitter(delay)
-}
-
-func jitter(delay time.Duration) time.Duration {
-	if delay <= 0 {
-		return 0
-	}
-	spread := delay / jitterDivisor
-	if spread <= 0 {
-		return delay
-	}
-	return delay + time.Duration(rand.Int64N(int64(spread)))
-}
-
-func sleepContext(ctx context.Context, delay time.Duration) error {
-	if delay <= 0 {
-		return ctx.Err()
-	}
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
 }

@@ -4,9 +4,10 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"scrutineer/internal/gitx"
 )
 
 const dirPerm = 0o755
@@ -68,15 +69,20 @@ func CloneOrPull(ctx context.Context, url, ref, dst string, fullClone bool) (str
 }
 
 func cloneOrPull(ctx context.Context, url, ref, dst string, fullClone bool) (string, error) {
+	return cloneOrPullWithRetry(ctx, gitx.Retry{}, url, ref, dst, fullClone)
+}
+
+func cloneOrPullWithRetry(ctx context.Context, retry gitx.Retry, url, ref, dst string, fullClone bool) (string, error) {
+	policy := retry.Resolved()
 	if _, err := os.Stat(filepath.Join(dst, ".git")); err == nil {
 		fetchArgs := []string{"fetch", "--quiet", "origin"}
 		if fullClone {
-			out, _ := git(ctx, dst, "rev-parse", "--is-shallow-repository")
+			out, _ := policy.Run(ctx, dst, nil, "rev-parse", "--is-shallow-repository")
 			if strings.TrimSpace(out) == "true" {
 				fetchArgs = []string{"fetch", "--unshallow", "--quiet", "origin"}
 			}
 		}
-		if out, err := git(ctx, dst, fetchArgs...); err != nil {
+		if out, err := policy.Do(ctx, gitx.Command{Label: "fetch", Dir: dst, Args: fetchArgs}); err != nil {
 			return "", fmt.Errorf("fetch %s: %s: %w", url, out, err)
 		}
 	} else {
@@ -88,32 +94,32 @@ func cloneOrPull(ctx context.Context, url, ref, dst string, fullClone bool) (str
 			args = []string{"clone", "--depth", "1", "--quiet"}
 		}
 		args = append(args, "--", url, dst)
-		cmd := exec.CommandContext(ctx, "git", args...)
-		cmd.Env = append(os.Environ(), "GIT_PROTOCOL_FROM_USER=0")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return "", fmt.Errorf("clone %s: %s: %w", url, string(out), err)
+		if out, err := policy.Do(ctx, gitx.Command{
+			Label: "clone",
+			Env:   []string{"GIT_PROTOCOL_FROM_USER=0"},
+			Args:  args,
+			Reset: gitx.CloneDestReset(dst),
+		}); err != nil {
+			return "", fmt.Errorf("clone %s: %s: %w", url, out, err)
 		}
 	}
 	target := "origin/HEAD"
 	if ref != "" {
-		if out, err := git(ctx, dst, "fetch", "--quiet", "origin", "--end-of-options", ref); err != nil {
+		if out, err := policy.Do(ctx, gitx.Command{
+			Label: "fetch",
+			Dir:   dst,
+			Args:  []string{"fetch", "--quiet", "origin", "--end-of-options", ref},
+		}); err != nil {
 			return "", fmt.Errorf("fetch ref %s: %s: %w", ref, out, err)
 		}
 		target = "FETCH_HEAD"
 	}
-	if out, err := git(ctx, dst, "reset", "--quiet", "--hard", target); err != nil {
+	if out, err := policy.Run(ctx, dst, nil, "reset", "--quiet", "--hard", target); err != nil {
 		return "", fmt.Errorf("reset to %s: %s: %w", target, out, err)
 	}
-	out, err := git(ctx, dst, "rev-parse", "HEAD")
+	out, err := policy.Run(ctx, dst, nil, "rev-parse", "HEAD")
 	if err != nil {
 		return "", fmt.Errorf("rev-parse: %s: %w", out, err)
 	}
 	return strings.TrimSpace(out), nil
-}
-
-func git(ctx context.Context, dir string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
-	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
-	return string(out), err
 }

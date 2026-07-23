@@ -5,13 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/gitx"
 )
 
 const dirPerm = 0o755
@@ -29,7 +29,7 @@ const (
 // process has exited or been cancelled while a transport grandchild still
 // holds its output pipe. A package var so a test can shrink it; large enough
 // in production never to clip a healthy command's final flush.
-var gitWaitDelay = 10 * time.Second
+var gitWaitDelay = gitx.DefaultWaitDelay
 
 // RepoUnreachableError is returned when git clone/fetch fails because the
 // remote is unreachable (deleted, private, wrong URL, network error).
@@ -177,28 +177,6 @@ func cloneOrFetch(ctx context.Context, retry gitRetry, url, dst string, fullClon
 	return nil
 }
 
-// cloneDestReset returns the cleanup to run before each clone retry, or nil
-// when there is nothing safe to clean. A clone that dies partway can leave
-// the destination behind, and `git clone` refuses a non-empty target, so
-// without this the retry would fail for a reason unrelated to the original
-// failure.
-//
-// Removal is offered only when dst is absent or empty at this point.
-// cloneOrFetch reaches the clone path exactly when dst holds no .git, so an
-// absent or empty dst can only ever gain content this call put there. A
-// non-empty one belongs to the caller, and git would reject it as a
-// permanent error that is never retried anyway.
-func cloneDestReset(dst string) func() error {
-	entries, err := os.ReadDir(dst)
-	if err != nil && !os.IsNotExist(err) {
-		return nil
-	}
-	if len(entries) > 0 {
-		return nil
-	}
-	return func() error { return os.RemoveAll(dst) }
-}
-
 // fetchRef updates an existing cache checkout to ref, or to the remote's
 // default branch when ref is empty. It fetches the ref by name and resets
 // to FETCH_HEAD rather than to origin/<ref>: the cache is a single-branch
@@ -252,11 +230,7 @@ func ListRemoteBranches(ctx context.Context, cloneURL string) ([]string, error) 
 	if err := validateGitURL(cloneURL); err != nil {
 		return nil, err
 	}
-	picker := gitRetry{
-		attempts:  branchPickerAttempts,
-		baseDelay: branchPickerDelay,
-		maxDelay:  branchPickerDelay,
-	}
+	picker := branchPickerRetry(gitRetry{})
 	out, err := picker.do(ctx, gitCommand{
 		label: "ls-remote",
 		env:   []string{"GIT_TERMINAL_PROMPT=0"},
@@ -305,21 +279,5 @@ func git(ctx context.Context, dir string, args ...string) (string, error) {
 }
 
 func gitWithEnv(ctx context.Context, dir string, env []string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
-	// CommandContext kills git when ctx ends, but git's transport child
-	// (git-remote-https) inherits the output pipe, so CombinedOutput can block
-	// on that grandchild long after git is gone -- turning "stop immediately
-	// on cancellation" into an unbounded wait. WaitDelay bounds it: once git
-	// has exited or been cancelled, Wait waits at most this long for the pipe
-	// to close, then closes it and returns. It never truncates a normally
-	// completing command, whose pipe closes at once.
-	cmd.WaitDelay = gitWaitDelay
-	if dir != "" {
-		cmd.Dir = dir
-	}
-	if len(env) > 0 {
-		cmd.Env = append(os.Environ(), env...)
-	}
-	out, err := cmd.CombinedOutput()
-	return string(out), err
+	return gitx.RunnerWithWaitDelay(gitWaitDelay)(ctx, dir, env, args...)
 }

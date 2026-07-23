@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	retryx "scrutineer/internal/retry"
 )
 
 var errGitExit = errors.New("exit status 128")
@@ -152,9 +154,10 @@ func TestGitRetryStopsWhenContextEnds(t *testing.T) {
 	})
 }
 
-// TestGitRetryResetRunsBeforeEachRetry pins when the cleanup hook fires: not
-// before the first attempt, and once before every retry.
-func TestGitRetryResetRunsBeforeEachRetry(t *testing.T) {
+// TestGitRetryResetRunsAfterEachFailedAttempt pins when the cleanup hook
+// fires: never before the first attempt, and once after every failure,
+// including the terminal one.
+func TestGitRetryResetRunsAfterEachFailedAttempt(t *testing.T) {
 	git := &scriptedGit{outcomes: []gitOutcome{transientOutcome()}}
 	var resetsBeforeCall []int
 	retry := gitRetry{run: git.run, sleep: (&recordedSleep{}).sleep}
@@ -170,8 +173,8 @@ func TestGitRetryResetRunsBeforeEachRetry(t *testing.T) {
 	if _, err := retry.do(context.Background(), cmd, func(Event) {}); err == nil {
 		t.Fatal("expected the exhausted budget to fail")
 	}
-	// One reset after attempt 1 and one after attempt 2; none before attempt 1.
-	want := []int{1, 2}
+	// One reset after every failed attempt; none before attempt 1.
+	want := []int{1, 2, 3}
 	if len(resetsBeforeCall) != len(want) {
 		t.Fatalf("reset ran %d times (after attempts %v), want %d", len(resetsBeforeCall), resetsBeforeCall, len(want))
 	}
@@ -255,145 +258,6 @@ func TestGitRetryToleratesNilEmit(t *testing.T) {
 	}
 }
 
-func TestTransientGitFailure(t *testing.T) {
-	transient := []string{
-		"fatal: unable to access 'https://h/r/': Could not resolve host: h",
-		"ssh: Could not resolve hostname h: Temporary failure in name resolution",
-		"fatal: unable to access 'https://h/r/': Could not resolve proxy: proxy.invalid",
-		"fatal: unable to access 'https://h/r/': Failed to connect to h port 443: Connection refused",
-		"fatal: unable to access 'https://h/r/': Recv failure: Connection reset by peer",
-		"fatal: unable to access 'https://h/r/': Operation timed out after 30000 milliseconds",
-		"error: RPC failed; curl 92 HTTP/2 stream 5 was not closed cleanly\nfatal: early EOF",
-		"fatal: the remote end hung up unexpectedly",
-		"error: RPC failed; curl 56 GnuTLS recv error (-54): Error in the pull function.",
-		"fetch-pack: unexpected disconnect while reading sideband packet",
-		"fatal: unable to access 'https://h/r/': The requested URL returned error: 503",
-		"fatal: unable to access 'https://h/r/': The requested URL returned error: 429",
-		"remote: Internal Server Error",
-		"error: RPC failed; HTTP 502 curl 22 The requested URL returned error: 502 Bad Gateway",
-		// nginx phrases 503 as "Service Temporarily Unavailable".
-		"error: RPC failed; HTTP 503 curl 22 The requested URL returned error: 503 Service Temporarily Unavailable",
-		// Cloudflare origin-side timeouts, which the base gave up on after one try.
-		"fatal: unable to access 'https://h/r/': The requested URL returned error: 522",
-		"fatal: unable to access 'https://h/r/': The requested URL returned error: 524",
-	}
-	for _, out := range transient {
-		if !transientGitFailure(out) {
-			t.Errorf("transientGitFailure(%q) = false, want true", out)
-		}
-	}
-
-	permanent := []string{
-		"",
-		"remote: Repository not found.\nfatal: repository 'https://h/r/' not found",
-		"remote: HTTP Basic: Access denied\nfatal: Authentication failed for 'https://h/r/'",
-		"fatal: could not read Username for 'https://h': terminal prompts disabled",
-		"fatal: couldn't find remote ref does-not-exist",
-		"fatal: 'https://h/r' does not appear to be a git repository",
-		"fatal: destination path 'src' already exists and is not an empty directory.",
-		"fatal: unable to access 'https://h/r/': The requested URL returned error: 404",
-		"fatal: could not create work tree dir 'src': Permission denied",
-		// A local EAGAIN reported as "Resource temporarily unavailable": no
-		// amount of retrying frees a thread, and re-cloning wastes a full
-		// download onto a machine that is already out of headroom.
-		"fatal: unable to create thread: Resource temporarily unavailable",
-		// A push rejected for size, in git's older result=/HTTP-code phrasing.
-		"error: RPC failed; HTTP 413 curl 22 The requested URL returned error: 413",
-		"fatal: a failure message nobody has classified yet",
-	}
-	for _, out := range permanent {
-		if transientGitFailure(out) {
-			t.Errorf("transientGitFailure(%q) = true, want false", out)
-		}
-	}
-}
-
-// TestTransientGitFailureMixedOutput covers the cases the ordering exists
-// for: git reports a settled answer *wrapped in* transport noise, so reading
-// only the noise would spend the whole budget re-asking a question that is
-// already answered -- or, worse, re-downloading a pack onto a full disk.
-func TestTransientGitFailureMixedOutput(t *testing.T) {
-	settled := []struct{ name, out string }{
-		{"repository is gone", "" +
-			"fatal: unable to access 'https://h/r/': Connection reset by peer\n" +
-			"remote: Repository not found."},
-		{"disk is full", "" +
-			"fatal: write error: No space left on device\n" +
-			"fatal: the remote end hung up unexpectedly\n" +
-			"fatal: index-pack failed"},
-		{"quota is exhausted", "" +
-			"error: RPC failed; curl 18 transfer closed with outstanding read data remaining\n" +
-			"fatal: write error: Disk quota exceeded"},
-		{"credentials rejected, older git phrasing", "" +
-			"error: RPC failed; result=22, HTTP code = 401\n" +
-			"fatal: The remote end hung up unexpectedly"},
-		{"repository missing, older git phrasing", "" +
-			"error: RPC failed; result=22, HTTP code = 404\n" +
-			"fatal: The remote end hung up unexpectedly"},
-		{"server-side size limit", "" +
-			"remote: fatal: pack exceeds maximum allowed size (2.00 GiB)\n" +
-			"fatal: the remote end hung up unexpectedly"},
-	}
-	for _, c := range settled {
-		if transientGitFailure(c.out) {
-			t.Errorf("%s: classified transient, want permanent", c.name)
-		}
-	}
-
-	// The mirror image: a connect(2) refusal reported as EACCES by a
-	// firewall is a network condition that can clear, so the permanent
-	// markers must be narrow enough not to swallow it.
-	blocked := "fatal: unable to access 'https://h/r/': Failed to connect to h port 443: Permission denied"
-	if !transientGitFailure(blocked) {
-		t.Error("a firewall-refused connection should stay retryable")
-	}
-}
-
-// TestGitBackoffDelayBounds pins the shape of the wait: each step at least
-// the geometric delay and never past the cap plus its jitter.
-func TestGitBackoffDelayBounds(t *testing.T) {
-	const (
-		base    = 100 * time.Millisecond
-		ceiling = 400 * time.Millisecond
-	)
-	want := []time.Duration{base, 2 * base, ceiling, ceiling, ceiling}
-	for attempt, floor := range want {
-		got := gitBackoffDelay(attempt+1, base, ceiling)
-		limit := floor + floor/gitRetryJitterDivisor
-		if got < floor || got >= limit {
-			t.Errorf("gitBackoffDelay(%d) = %v, want [%v, %v)", attempt+1, got, floor, limit)
-		}
-	}
-}
-
-// TestGitBackoffDelayIsJittered is what actually keeps the jitter alive:
-// bounds alone are satisfied by a constant delay, which is exactly the
-// lockstep behaviour the spread exists to prevent when several workers fail
-// against one forge at the same moment.
-func TestGitBackoffDelayIsJittered(t *testing.T) {
-	const (
-		base    = 100 * time.Millisecond
-		ceiling = time.Second
-		samples = 200
-	)
-	lowest, highest := time.Duration(1<<62), time.Duration(0)
-	for range samples {
-		delay := gitBackoffDelay(1, base, ceiling)
-		if delay < base || delay >= base+base/gitRetryJitterDivisor {
-			t.Fatalf("jittered delay %v outside [%v, %v)", delay, base, base+base/gitRetryJitterDivisor)
-		}
-		lowest = min(lowest, delay)
-		highest = max(highest, delay)
-	}
-	// A token spread would satisfy "not constant" while still sending every
-	// worker back at effectively the same moment, so require the observed
-	// range to be a real fraction of the delay.
-	if spread := highest - lowest; spread < base/20 {
-		t.Errorf("%d samples spanned only %v (%v..%v); the backoff is effectively unjittered",
-			samples, spread, lowest, highest)
-	}
-}
-
 // TestRetryBudgetsStaySmall guards the production constants themselves. The
 // policy's value depends on staying far below the deadlines it runs inside:
 // a scan's worker slot, and -- for the branch picker -- the request timeout
@@ -407,7 +271,7 @@ func TestRetryBudgetsStaySmall(t *testing.T) {
 
 	// A zero base delay would retry with no backoff at all -- the lockstep
 	// hammering the policy exists to avoid -- and nothing else notices,
-	// because gitBackoffDelay(_, 0, _) is a valid (if pointless) zero.
+	// because retry.BackoffDelay(_, 0, _) is a valid (if pointless) zero.
 	if gitRetryBaseDelay <= 0 {
 		t.Errorf("gitRetryBaseDelay = %v, want a positive backoff", gitRetryBaseDelay)
 	}
@@ -426,7 +290,7 @@ func TestRetryBudgetsStaySmall(t *testing.T) {
 
 	var scanWorst time.Duration
 	for attempt := 1; attempt < gitRetryAttempts; attempt++ {
-		scanWorst += gitBackoffDelay(attempt, gitRetryBaseDelay, gitRetryMaxDelay)
+		scanWorst += retryx.BackoffDelay(attempt, gitRetryBaseDelay, gitRetryMaxDelay)
 	}
 	if scanWorst > scanBudget {
 		t.Errorf("scan retries can wait %v in total, want at most %v", scanWorst, scanBudget)
@@ -434,7 +298,7 @@ func TestRetryBudgetsStaySmall(t *testing.T) {
 
 	var pickerWorst time.Duration
 	for attempt := 1; attempt < branchPickerAttempts; attempt++ {
-		pickerWorst += gitBackoffDelay(attempt, branchPickerDelay, branchPickerDelay)
+		pickerWorst += retryx.BackoffDelay(attempt, branchPickerDelay, branchPickerDelay)
 	}
 	if pickerWorst > pickerBudget {
 		t.Errorf("branch-picker retries can wait %v in total, want at most %v", pickerWorst, pickerBudget)
@@ -445,16 +309,5 @@ func TestRetryBudgetsStaySmall(t *testing.T) {
 	// minutes-long wait.
 	if gitRetryMaxDelay > capBudget {
 		t.Errorf("gitRetryMaxDelay = %v, want at most %v", gitRetryMaxDelay, capBudget)
-	}
-}
-
-func TestGitSleepReturnsOnContextEnd(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	if err := gitSleep(ctx, time.Hour); !errors.Is(err, context.Canceled) {
-		t.Errorf("gitSleep on a cancelled context = %v, want context.Canceled", err)
-	}
-	if err := gitSleep(context.Background(), time.Nanosecond); err != nil {
-		t.Errorf("gitSleep for a tiny delay = %v, want nil", err)
 	}
 }

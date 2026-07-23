@@ -2,12 +2,16 @@ package skills
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"scrutineer/internal/gitx"
 	"scrutineer/internal/testutil"
 )
 
@@ -159,5 +163,159 @@ func TestCloneOrPull_rejectsNonHTTPS(t *testing.T) {
 	_, err := CloneOrPull(context.Background(), "git://host/path", "", t.TempDir(), false)
 	if err == nil || !strings.Contains(err.Error(), "https://") {
 		t.Fatalf("expected https rejection, got %v", err)
+	}
+}
+
+func TestCloneOrPull_retriesTransientCloneAndResetsDestination(t *testing.T) {
+	dst := filepath.Join(t.TempDir(), "dst")
+	cloneCalls := 0
+	var cloneEnvs [][]string
+	run := func(_ context.Context, _ string, env []string, args ...string) (string, error) {
+		switch args[0] {
+		case "clone":
+			cloneCalls++
+			cloneEnvs = append(cloneEnvs, append([]string(nil), env...))
+			if cloneCalls == 1 {
+				if err := os.MkdirAll(dst, dirPerm); err != nil {
+					return "", err
+				}
+				if err := os.WriteFile(filepath.Join(dst, "partial"), []byte("partial clone"), 0o644); err != nil {
+					return "", err
+				}
+				return "fatal: the remote end hung up unexpectedly", errors.New("exit status 128")
+			}
+			return "", nil
+		case "reset":
+			return "", nil
+		case "rev-parse":
+			return "deadbeef\n", nil
+		default:
+			return "", errors.New("unexpected git command: " + strings.Join(args, " "))
+		}
+	}
+
+	got, err := cloneOrPullWithRetry(context.Background(), fastSkillsRetry(run),
+		"https://example.invalid/skills", "", dst, false)
+	if err != nil {
+		t.Fatalf("cloneOrPullWithRetry: %v", err)
+	}
+	if got != "deadbeef" {
+		t.Fatalf("SHA = %q, want deadbeef", got)
+	}
+	if cloneCalls != 2 {
+		t.Fatalf("clone calls = %d, want 2", cloneCalls)
+	}
+	if _, err := os.Stat(filepath.Join(dst, "partial")); !os.IsNotExist(err) {
+		t.Fatalf("partial clone survived reset: %v", err)
+	}
+	for i, env := range cloneEnvs {
+		if !slices.Contains(env, "GIT_PROTOCOL_FROM_USER=0") {
+			t.Errorf("clone attempt %d env = %v, want protocol hardening", i+1, env)
+		}
+	}
+}
+
+func TestCloneOrPull_exhaustedCloneCleansDestinationForNextInvocation(t *testing.T) {
+	dst := filepath.Join(t.TempDir(), "skills-cache", "repo")
+	failingRun := func(_ context.Context, _ string, _ []string, args ...string) (string, error) {
+		if args[0] != "clone" {
+			return "", errors.New("unexpected git command: " + strings.Join(args, " "))
+		}
+		if err := os.MkdirAll(dst, dirPerm); err != nil {
+			return "", err
+		}
+		if err := os.WriteFile(filepath.Join(dst, "partial"), []byte("partial clone"), 0o644); err != nil {
+			return "", err
+		}
+		return "fatal: the remote end hung up unexpectedly", errors.New("exit status 128")
+	}
+	retry := fastSkillsRetry(failingRun)
+	retry.Attempts = 2
+	if _, err := cloneOrPullWithRetry(context.Background(), retry,
+		"https://example.invalid/skills", "", dst, false); err == nil {
+		t.Fatal("expected exhausted clone retries to fail")
+	}
+	if _, err := os.Stat(dst); !os.IsNotExist(err) {
+		t.Fatalf("terminal clone failure left destination behind: %v", err)
+	}
+
+	freshClone := 0
+	successfulRun := func(_ context.Context, _ string, _ []string, args ...string) (string, error) {
+		switch args[0] {
+		case "clone":
+			freshClone++
+			if _, err := os.Stat(dst); !os.IsNotExist(err) {
+				return "", errors.New("fresh clone destination is not clean")
+			}
+			return "", os.MkdirAll(filepath.Join(dst, ".git"), dirPerm)
+		case "reset":
+			return "", nil
+		case "rev-parse":
+			return "deadbeef\n", nil
+		default:
+			return "", errors.New("unexpected git command: " + strings.Join(args, " "))
+		}
+	}
+	got, err := cloneOrPullWithRetry(context.Background(), fastSkillsRetry(successfulRun),
+		"https://example.invalid/skills", "", dst, false)
+	if err != nil {
+		t.Fatalf("fresh clone after exhausted retries: %v", err)
+	}
+	if got != "deadbeef" || freshClone != 1 {
+		t.Fatalf("fresh clone returned %q after %d clone calls, want deadbeef after 1", got, freshClone)
+	}
+}
+
+func TestCloneOrPull_retriesEveryRemoteFetch(t *testing.T) {
+	for _, tc := range []struct {
+		name, ref string
+		failAt    int
+		wantCalls int
+	}{
+		{name: "cached repository update", failAt: 1, wantCalls: 2},
+		{name: "explicit ref", ref: "v1.2.3", failAt: 2, wantCalls: 3},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dst := t.TempDir()
+			if err := os.Mkdir(filepath.Join(dst, ".git"), dirPerm); err != nil {
+				t.Fatal(err)
+			}
+			fetchCalls := 0
+			run := func(_ context.Context, _ string, _ []string, args ...string) (string, error) {
+				switch args[0] {
+				case "fetch":
+					fetchCalls++
+					if fetchCalls == tc.failAt {
+						return "fatal: unable to access remote: Connection reset by peer", errors.New("exit status 128")
+					}
+					return "", nil
+				case "reset":
+					return "", nil
+				case "rev-parse":
+					return "cafebabe\n", nil
+				default:
+					return "", errors.New("unexpected git command: " + strings.Join(args, " "))
+				}
+			}
+
+			got, err := cloneOrPullWithRetry(context.Background(), fastSkillsRetry(run),
+				"https://example.invalid/skills", tc.ref, dst, false)
+			if err != nil {
+				t.Fatalf("cloneOrPullWithRetry: %v", err)
+			}
+			if got != "cafebabe" {
+				t.Fatalf("SHA = %q, want cafebabe", got)
+			}
+			if fetchCalls != tc.wantCalls {
+				t.Fatalf("fetch calls = %d, want %d", fetchCalls, tc.wantCalls)
+			}
+		})
+	}
+}
+
+func fastSkillsRetry(run gitx.Runner) gitx.Retry {
+	return gitx.Retry{
+		Run:   run,
+		Sleep: func(context.Context, time.Duration) error { return nil },
 	}
 }
