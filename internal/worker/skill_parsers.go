@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -245,18 +246,33 @@ func (w *Worker) parseAdvisoryAuditOutput(skill *db.Skill, scan *db.Scan, report
 	if err := json.Unmarshal([]byte(report), &result); err != nil {
 		return fmt.Errorf("parse advisory audits: %w", err)
 	}
+	seen := make(map[string]bool, len(result.Audits))
 	for _, a := range result.Audits {
-		if strings.TrimSpace(a.AdvisoryUUID) == "" {
+		uuid := strings.TrimSpace(a.AdvisoryUUID)
+		if uuid == "" {
 			return fmt.Errorf("advisory audit with empty advisory_uuid")
 		}
 		if !db.AdvisoryAuditStatuses[a.Status] {
 			return fmt.Errorf("unknown advisory audit status %q for %s", a.Status, a.AdvisoryUUID)
 		}
+		// Downstream readers keep the newest row per advisory, so a report
+		// carrying two verdicts for one advisory would silently pick one.
+		if seen[uuid] {
+			return fmt.Errorf("duplicate advisory audit for %s", uuid)
+		}
+		seen[uuid] = true
 	}
 
-	findings, err := w.ingestFindings(skill, scan, report, emit)
-	if err != nil {
-		return err
+	// ingestFindings persists the findings before reporting fail_on, and the
+	// pipeline treats that error as "finalized with findings committed" (see
+	// maybeFireScanFinalized). The audit rows must land on that path too,
+	// otherwise exactly the runs that find a threshold-severity bypass lose
+	// their verdicts.
+	findings, ingestErr := w.ingestFindings(skill, scan, report, emit)
+	if ingestErr != nil {
+		if _, failOn := errors.AsType[*FailOnThresholdError](ingestErr); !failOn {
+			return ingestErr
+		}
 	}
 	idByReportID := make(map[string]uint, len(findings))
 	for _, f := range findings {
@@ -287,7 +303,7 @@ func (w *Worker) parseAdvisoryAuditOutput(skill *db.Skill, scan *db.Scan, report
 		}
 	}
 	emit(Event{Kind: KindText, Text: fmt.Sprintf("recorded %d advisory audit verdict(s)", len(rows))})
-	return nil
+	return ingestErr
 }
 
 // parseDependenciesOutput replaces Dependency rows for the scan's repository.

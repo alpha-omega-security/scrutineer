@@ -118,10 +118,15 @@ func (s *Server) latestAdvisoryAuditStatuses(advisories []db.Advisory) map[uint]
 		repoIDs = append(repoIDs, a.RepositoryID)
 		uuids = append(uuids, a.UUID)
 	}
+	// Audits are append-only, one row per re-run: read only the newest row
+	// per (repository, uuid) pair instead of the whole history of the page's
+	// advisories.
+	newest := s.DB.Model(&db.AdvisoryAudit{}).Select("MAX(id)").
+		Where("repository_id IN ? AND advisory_uuid IN ?", repoIDs, uuids).
+		Group("repository_id, advisory_uuid")
 	var audits []db.AdvisoryAudit
 	if err := s.DB.Select("repository_id, advisory_uuid, status").
-		Where("repository_id IN ? AND advisory_uuid IN ?", repoIDs, uuids).
-		Order("id asc").Find(&audits).Error; err != nil {
+		Where("id IN (?)", newest).Find(&audits).Error; err != nil {
 		s.Log.Warn("advisory audit statuses", "err", err)
 		return nil
 	}

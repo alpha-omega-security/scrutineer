@@ -94,13 +94,25 @@ func TestLatestAdvisoryAuditStatuses_newestWinsPerAdvisory(t *testing.T) {
 	repo := db.Repository{URL: "https://example.com/r", Name: "r"}
 	s.DB.Create(&repo)
 	adv := seedAdvisory(t, s, repo.ID)
+	other := db.Advisory{RepositoryID: repo.ID, UUID: "GHSA-other", URL: "https://y", Title: "quiet"}
+	s.DB.Create(&other)
+	unaudited := db.Advisory{RepositoryID: repo.ID, UUID: "GHSA-none", URL: "https://z", Title: "new"}
+	s.DB.Create(&unaudited)
 	// Two runs for the same advisory: the older said fixed, the newer bypass.
+	// The other advisory has a single older verdict of its own.
 	s.DB.Create(&db.AdvisoryAudit{RepositoryID: repo.ID, AdvisoryUUID: adv.UUID, Status: "fixed", Evidence: "held"})
+	s.DB.Create(&db.AdvisoryAudit{RepositoryID: repo.ID, AdvisoryUUID: other.UUID, Status: "fixed", Evidence: "ok"})
 	s.DB.Create(&db.AdvisoryAudit{RepositoryID: repo.ID, AdvisoryUUID: adv.UUID, Status: "bypass", Evidence: "broke"})
 
-	got := s.latestAdvisoryAuditStatuses([]db.Advisory{adv})
+	got := s.latestAdvisoryAuditStatuses([]db.Advisory{adv, other, unaudited})
 	if got[adv.ID] != "bypass" {
 		t.Errorf("badge status = %q, want bypass (newest verdict wins)", got[adv.ID])
+	}
+	if got[other.ID] != "fixed" {
+		t.Errorf("other badge = %q, want fixed (newest is per advisory, not global)", got[other.ID])
+	}
+	if st, ok := got[unaudited.ID]; ok {
+		t.Errorf("never-audited advisory got badge %q, want absent", st)
 	}
 }
 

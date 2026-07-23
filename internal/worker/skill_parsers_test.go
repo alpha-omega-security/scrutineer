@@ -410,6 +410,77 @@ func TestParseAdvisoryAudit_rejectsUnknownStatusBeforeWriting(t *testing.T) {
 	}
 }
 
+func TestParseAdvisoryAudit_failOnStillWritesVerdicts(t *testing.T) {
+	// fail_on reports an error only after ingestFindings persisted the
+	// findings, and the pipeline treats that error as "finalized with
+	// findings committed" (see maybeFireScanFinalized). The verdicts must
+	// land on that path too: it is exactly the run that found a
+	// threshold-severity bypass.
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "a.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
+	gdb.Create(&repo)
+	skill := db.Skill{Name: "k", Description: "d", Body: "b", OutputFile: "report.json", OutputKind: "advisory_audit", Version: 1, Active: true, Source: "ui", FailOn: "High"}
+	gdb.Create(&skill)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanQueued, SkillID: &skill.ID}
+	gdb.Create(&scan)
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	report := `{"audits":[{"advisory_uuid":"GHSA-bad","status":"bypass","evidence":"Repro fires at HEAD.","finding_ids":["F001"]}],
+		"findings":[{"id":"F001","title":"Bypass of GHSA-bad","severity":"High","cwe":"CWE-22","location":"lib/x.rb:10"}]}`
+	err = w.parseAdvisoryAuditOutput(&skill, &scan, report, func(Event) {})
+	if _, ok := errors.AsType[*FailOnThresholdError](err); !ok {
+		t.Fatalf("expected FailOnThresholdError, got %v", err)
+	}
+
+	var finding db.Finding
+	if err := gdb.Where("repository_id = ?", repo.ID).First(&finding).Error; err != nil {
+		t.Fatalf("finding not persisted on fail_on path: %v", err)
+	}
+	var audit db.AdvisoryAudit
+	if err := gdb.Where("repository_id = ?", repo.ID).First(&audit).Error; err != nil {
+		t.Fatalf("audit verdict not persisted on fail_on path: %v", err)
+	}
+	if audit.AdvisoryUUID != "GHSA-bad" || audit.Status != "bypass" {
+		t.Errorf("audit = %+v, want GHSA-bad/bypass", audit)
+	}
+	if want := strconv.FormatUint(uint64(finding.ID), 10); audit.FindingIDs != want {
+		t.Errorf("FindingIDs = %q, want %q (mapped db id)", audit.FindingIDs, want)
+	}
+}
+
+func TestParseAdvisoryAudit_rejectsDuplicateAdvisoryBeforeWriting(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "a.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
+	gdb.Create(&repo)
+	skill := db.Skill{Name: "k", Description: "d", Body: "b", OutputFile: "report.json", OutputKind: "advisory_audit", Version: 1, Active: true, Source: "ui"}
+	gdb.Create(&skill)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanQueued, SkillID: &skill.ID}
+	gdb.Create(&scan)
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	// The second entry repeats the first advisory modulo whitespace; readers
+	// keep one row per advisory, so accepting both would drop a verdict.
+	report := `{"audits":[
+		{"advisory_uuid":"GHSA-x","status":"fixed","evidence":"held"},
+		{"advisory_uuid":" GHSA-x ","status":"bypass","evidence":"broke"}],
+		"findings":[{"id":"F001","title":"t","severity":"Low","cwe":"","location":"a.rb:1"}]}`
+	if err := w.parseAdvisoryAuditOutput(&skill, &scan, report, func(Event) {}); err == nil || !strings.Contains(err.Error(), "duplicate advisory audit for GHSA-x") {
+		t.Fatalf("expected duplicate-advisory error, got %v", err)
+	}
+	var audits, findings int64
+	gdb.Model(&db.AdvisoryAudit{}).Count(&audits)
+	gdb.Model(&db.Finding{}).Count(&findings)
+	if audits != 0 || findings != 0 {
+		t.Errorf("rows written despite rejected report: audits=%d findings=%d", audits, findings)
+	}
+}
+
 func TestParseMaintainers_persistsDisclosureChannel(t *testing.T) {
 	report := `{
 		"maintainers": [
