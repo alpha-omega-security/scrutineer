@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"gorm.io/gorm"
 )
 
 func TestAssessRepositoryHealth(t *testing.T) {
@@ -111,6 +113,55 @@ func TestRefreshRepositoryHealth_persistsProjection(t *testing.T) {
 	}
 	if !strings.Contains(assessment.Summary, "no active maintainers") || !strings.Contains(assessment.Summary, "dependent repos") {
 		t.Errorf("summary = %q", assessment.Summary)
+	}
+}
+
+func TestRefreshRepositoryHealthSkipsUnchangedProjection(t *testing.T) {
+	gdb, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	updates := 0
+	callbackName := "test:count_repository_health_updates"
+	if err := gdb.Callback().Update().Before("gorm:update").Register(callbackName, func(tx *gorm.DB) {
+		if tx.Statement.Table == "repositories" {
+			updates++
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = gdb.Callback().Update().Remove(callbackName)
+	}()
+
+	now := time.Date(2026, 7, 22, 12, 0, 0, 0, time.UTC)
+	repo := Repository{
+		URL:      "https://example.com/active",
+		Name:     "active",
+		Health:   RepositoryHealthActive,
+		PushedAt: ptrTime(now.Add(-30 * 24 * time.Hour)),
+	}
+	if err := gdb.Create(&repo).Error; err != nil {
+		t.Fatal(err)
+	}
+	maintainer := Maintainer{Login: "current", Status: MaintainerActive}
+	if err := gdb.Create(&maintainer).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := gdb.Model(&repo).Association("Maintainers").Append(&maintainer); err != nil {
+		t.Fatal(err)
+	}
+	updates = 0
+
+	assessment, err := RefreshRepositoryHealth(gdb, repo.ID, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if assessment.Health != RepositoryHealthActive {
+		t.Fatalf("assessment = %+v, want active", assessment)
+	}
+	if updates != 0 {
+		t.Fatalf("repository updates = %d, want 0", updates)
 	}
 }
 

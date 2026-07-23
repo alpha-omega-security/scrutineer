@@ -143,6 +143,9 @@ func RefreshRepositoryHealth(gdb *gorm.DB, repositoryID uint, now time.Time) (Re
 	}
 
 	assessment := AssessRepositoryHealth(repo, packages, maintainers, now)
+	if repo.Health == assessment.Health {
+		return assessment, nil
+	}
 	if err := gdb.Model(&Repository{}).Where("id = ?", repositoryID).
 		Update("health", assessment.Health).Error; err != nil {
 		return RepositoryHealthAssessment{}, fmt.Errorf("save repository health: %w", err)

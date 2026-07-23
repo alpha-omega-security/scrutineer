@@ -7,13 +7,13 @@ import (
 	"scrutineer/internal/db"
 )
 
-const repositoryHealthTick = time.Hour
+const repositoryHealthInterval = time.Hour
 
 // StartRepositoryHealthScorer keeps Repository.Health fresh as time-dependent
 // inputs such as pushed_at age. It runs once at startup, then periodically.
 func (s *Server) StartRepositoryHealthScorer(ctx context.Context) {
 	s.repositoryHealthTick(time.Now())
-	t := time.NewTicker(repositoryHealthTick)
+	t := time.NewTicker(repositoryHealthInterval)
 	defer t.Stop()
 	for {
 		select {
