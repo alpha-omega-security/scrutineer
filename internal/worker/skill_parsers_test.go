@@ -322,6 +322,94 @@ func TestParseAdvisories_replacesAdvisoryRows(t *testing.T) {
 	}
 }
 
+func TestParseAdvisoryAudit_recordsVerdictsAndMapsFindings(t *testing.T) {
+	report := `{
+		"audits":[
+			{"advisory_uuid":"GHSA-fix","status":"fixed","evidence":"Repro fails at HEAD."},
+			{"advisory_uuid":"GHSA-bad","status":"bypass","evidence":"Repro fires at HEAD.","finding_ids":["F001"]}
+		],
+		"findings":[
+			{"id":"F001","title":"Bypass of GHSA-bad","severity":"High","confidence":"high","cwe":"CWE-22",
+			 "location":"lib/x.rb:10","reachability":"reachable","quality_tier":"high",
+			 "trace":"x","boundary":"x","validation":"x","rating":"x",
+			 "references":[{"url":"https://github.com/advisories/GHSA-bad","tags":"advisory"}]}
+		]
+	}`
+	repo, gdb := runSkillWithReport(t, "advisory_audit", report)
+
+	var finding db.Finding
+	if err := gdb.Where("repository_id = ? AND finding_id = ?", repo.ID, "F001").First(&finding).Error; err != nil {
+		t.Fatalf("finding F001 not persisted: %v", err)
+	}
+
+	var audits []db.AdvisoryAudit
+	gdb.Where("repository_id = ?", repo.ID).Order("advisory_uuid").Find(&audits)
+	if len(audits) != 2 {
+		t.Fatalf("audits = %d, want 2", len(audits))
+	}
+	// Ordered by advisory_uuid: GHSA-bad, GHSA-fix.
+	if audits[0].AdvisoryUUID != "GHSA-bad" || audits[0].Status != "bypass" {
+		t.Errorf("audit[0] = %+v, want GHSA-bad/bypass", audits[0])
+	}
+	if want := strconv.FormatUint(uint64(finding.ID), 10); audits[0].FindingIDs != want {
+		t.Errorf("audit[0].FindingIDs = %q, want %q (mapped db id)", audits[0].FindingIDs, want)
+	}
+	if audits[1].AdvisoryUUID != "GHSA-fix" || audits[1].Status != "fixed" || audits[1].FindingIDs != "" {
+		t.Errorf("audit[1] = %+v, want GHSA-fix/fixed with no findings", audits[1])
+	}
+}
+
+func TestParseAdvisoryAudit_unknownFindingIDDropped(t *testing.T) {
+	// A verdict naming a finding the report never emitted must not carry a
+	// dangling id: unresolved report-local ids are dropped, not stored raw.
+	report := `{
+		"audits":[{"advisory_uuid":"GHSA-x","status":"variant","evidence":"e","finding_ids":["F001","F999"]}],
+		"findings":[
+			{"id":"F001","title":"t","severity":"Low","confidence":"high","cwe":"",
+			 "location":"a.rb:1","reachability":"unclear","quality_tier":"low",
+			 "trace":"x","boundary":"x","validation":"x","rating":"x"}
+		]
+	}`
+	repo, gdb := runSkillWithReport(t, "advisory_audit", report)
+
+	var finding db.Finding
+	gdb.Where("repository_id = ?", repo.ID).First(&finding)
+	var audit db.AdvisoryAudit
+	gdb.Where("repository_id = ?", repo.ID).First(&audit)
+	if want := strconv.FormatUint(uint64(finding.ID), 10); audit.FindingIDs != want {
+		t.Errorf("FindingIDs = %q, want %q (F999 dropped)", audit.FindingIDs, want)
+	}
+}
+
+func TestParseAdvisoryAudit_rejectsUnknownStatusBeforeWriting(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "a.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
+	gdb.Create(&repo)
+	skill := db.Skill{Name: "k", Description: "d", Body: "b", OutputFile: "report.json", OutputKind: "advisory_audit", Version: 1, Active: true, Source: "ui"}
+	gdb.Create(&skill)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanQueued, SkillID: &skill.ID}
+	gdb.Create(&scan)
+
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	report := `{"audits":[{"advisory_uuid":"u1","status":"held","evidence":"e"}],
+		"findings":[{"id":"F001","title":"t","severity":"Low","confidence":"high","cwe":"",
+		  "location":"a.rb:1","reachability":"unclear","quality_tier":"low",
+		  "trace":"x","boundary":"x","validation":"x","rating":"x"}]}`
+	if err := w.parseAdvisoryAuditOutput(&skill, &scan, report, func(Event) {}); err == nil || !strings.Contains(err.Error(), "held") {
+		t.Fatalf("expected unknown-status error, got %v", err)
+	}
+	// The status gate runs before any write, so neither audits nor findings landed.
+	var audits, findings int64
+	gdb.Model(&db.AdvisoryAudit{}).Count(&audits)
+	gdb.Model(&db.Finding{}).Count(&findings)
+	if audits != 0 || findings != 0 {
+		t.Errorf("rows written despite rejected report: audits=%d findings=%d", audits, findings)
+	}
+}
+
 func TestParseMaintainers_persistsDisclosureChannel(t *testing.T) {
 	report := `{
 		"maintainers": [

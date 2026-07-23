@@ -537,6 +537,11 @@
           <td class="whitespace-normal">
             <div class="font-medium">{{.Title}}</div>
             {{if .WithdrawnAt}}<span class="badge-outline text-xs">withdrawn</span>{{end}}
+            {{$a := .}}{{with index $.AdvisoryAudits .ID}}
+              {{if eq . "fixed"}}<a href="/advisories/{{$a.ID}}/certificate.json" class="badge-outline text-xs hover:underline"
+                  data-tooltip="Download fix-audit certificate">fix audit: fixed</a>
+              {{else}}<span class="badge-outline text-xs">fix audit: {{.}}</span>{{end}}
+            {{end}}
           </td>
           <td class="whitespace-normal text-muted-foreground text-xs">{{.Packages}}</td>
           <td class="text-muted-foreground">{{if .PublishedAt}}{{since .PublishedAt}}{{end}}</td>

@@ -276,8 +276,8 @@ func TestSkillsUI_bundledAdvisoryDeepDive(t *testing.T) {
 	}
 	body := w.Body.String()
 	for _, want := range []string{
-		"schema.json",                        // the {{if .SchemaJSON}} section rendered
-		"advisory-deep-dive findings report", // schema title, proving prettyjson ran over it
+		"schema.json",                     // the {{if .SchemaJSON}} section rendered
+		"advisory-deep-dive audit report", // schema title, proving prettyjson ran over it
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("show page missing %q", want)

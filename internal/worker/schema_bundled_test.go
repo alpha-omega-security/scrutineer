@@ -182,7 +182,9 @@ func TestBundledSchemas_compileAndAcceptSamples(t *testing.T) {
 		},
 		{
 			"../../skills/advisory-deep-dive/schema.json",
-			`{"findings":[{"id":"F001","title":"Bypass of GHSA-xxxx path-traversal fix",
+			`{"audits":[{"advisory_uuid":"GHSA-xxxx-yyyy-zzzz","status":"bypass",
+			  "evidence":"Repro fired at HEAD via percent-encoded separators.","finding_ids":["F001"]}],
+			  "findings":[{"id":"F001","title":"Bypass of GHSA-xxxx path-traversal fix",
 			  "severity":"High","confidence":"medium","cwe":"CWE-22","location":"lib/extract.rb:88",
 			  "reachability":"reachable","quality_tier":"high",
 			  "trace":"Percent-encoded separators skip the added guard and reach File.open.",
@@ -195,7 +197,12 @@ func TestBundledSchemas_compileAndAcceptSamples(t *testing.T) {
 		},
 		{
 			"../../skills/advisory-deep-dive/schema.json",
-			`{"findings":[]}`,
+			`{"audits":[{"advisory_uuid":"GHSA-aaaa-bbbb-cccc","status":"fixed",
+			  "evidence":"Original repro fails at HEAD; no bypass or sibling survived."}],"findings":[]}`,
+		},
+		{
+			"../../skills/advisory-deep-dive/schema.json",
+			`{"audits":[],"findings":[]}`,
 		},
 	}
 	for _, tc := range cases {
@@ -274,11 +281,14 @@ func TestBundledSchemas_rejectBadShapes(t *testing.T) {
 			  "quality_tier":"high","trace":"x","boundary":"x","validation":"x","rating":"x"}]}`,
 			"/findings/0/location"},
 		{"../../skills/advisory-deep-dive/schema.json",
-			`{"findings":[{"id":"F001","title":"String references, not objects","severity":"High",
+			`{"audits":[],"findings":[{"id":"F001","title":"String references, not objects","severity":"High",
 			  "confidence":"high","cwe":"CWE-22","location":"lib/extract.rb:88","reachability":"reachable",
 			  "quality_tier":"high","trace":"x","boundary":"x","validation":"x","rating":"x",
 			  "references":["https://github.com/advisories/GHSA-xxxx-yyyy-zzzz"]}]}`,
 			"/findings/0/references/0"},
+		{"../../skills/advisory-deep-dive/schema.json",
+			`{"audits":[{"advisory_uuid":"u1","status":"held","evidence":"x"}],"findings":[]}`,
+			"/audits/0/status"},
 		{"../../skills/threat-model/schema.json",
 			`{"spec_version":1,"repository":"https://x","commit":"abc1234","date":"2026-01-01",
 			  "description":"x","components":[{"name":"c","entry_points":[],"touches":[],

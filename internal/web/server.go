@@ -429,6 +429,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /packages", s.packages)
 	mux.HandleFunc("GET /packages/{id}", s.packageShow)
 	mux.HandleFunc("GET /advisories", s.advisoriesList)
+	mux.HandleFunc("GET /advisories/{id}/certificate.json", s.advisoryCertificateDownload)
 	mux.HandleFunc("GET /scans/{id}", s.scanShow)
 	mux.HandleFunc("GET /scans/{id}/report.md", s.scanReport)
 	mux.HandleFunc("POST /scans/{id}/retry", s.scanRetry)
@@ -1641,6 +1642,7 @@ func (s *Server) advisoriesList(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "advisories.html", map[string]any{
 		"Advisories": rows, "Page": page, "Severity": sev, "Sort": sort,
 		"Severities": severities, "Repos": reposByID, "Q": search,
+		"AuditStatuses": s.latestAdvisoryAuditStatuses(rows),
 	})
 }
 
@@ -2084,6 +2086,7 @@ func (v repoShowView) renderData() map[string]any {
 		"DependentsTotal":    v.Inventory.DependentsTotal,
 		"Advisories":         v.Inventory.Advisories,
 		"AdvisoriesTotal":    v.Inventory.AdvisoriesTotal,
+		"AdvisoryAudits":     v.Inventory.AdvisoryAudits,
 		"Maintainers":        v.Maintainers,
 		"ThreatModel":        v.ThreatModel,
 		"KnownURLs":          v.Inventory.KnownURLs,
@@ -2244,6 +2247,7 @@ type repoInventoryView struct {
 	DependentsTotal int64
 	Advisories      []db.Advisory
 	AdvisoriesTotal int64
+	AdvisoryAudits  map[uint]string
 	KnownPURLs      map[string]uint
 	KnownURLs       map[string]uint
 }
@@ -2257,6 +2261,7 @@ func (s *Server) loadRepoInventoryView(repoID uint, deps []DepGroup) repoInvento
 	s.DB.Model(&db.Advisory{}).Where("repository_id = ?", repoID).Count(&inv.AdvisoriesTotal)
 	s.DB.Where("repository_id = ?", repoID).Order("cvss_score desc").
 		Limit(tabRowCap).Find(&inv.Advisories)
+	inv.AdvisoryAudits = s.latestAdvisoryAuditStatuses(inv.Advisories)
 	inv.KnownPURLs = s.lookupKnownPURLs(deps)
 	inv.KnownURLs = s.lookupKnownURLs(inv.Dependents)
 	return inv

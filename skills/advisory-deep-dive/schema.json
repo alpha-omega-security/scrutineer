@@ -1,17 +1,35 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "advisory-deep-dive findings report",
-  "description": "Findings from re-auditing a repository's past advisories for fix bypasses, incomplete fixes, and sibling vulnerabilities of the same class. Same finding shape as vuln-scan and security-deep-dive; each finding cites the advisory it descends from under references.",
+  "title": "advisory-deep-dive audit report",
+  "description": "One verdict per re-audited advisory (fixed, bypass, variant, regressed) plus any findings the non-fixed verdicts opened. Findings share the vuln-scan and security-deep-dive shape and each cites the advisory it descends from under references.",
   "type": "object",
-  "required": ["findings"],
+  "required": ["audits", "findings"],
   "additionalProperties": false,
   "properties": {
+    "audits": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/audit" }
+    },
     "findings": {
       "type": "array",
       "items": { "$ref": "#/$defs/finding" }
     }
   },
   "$defs": {
+    "audit": {
+      "type": "object",
+      "required": ["advisory_uuid", "status", "evidence"],
+      "additionalProperties": false,
+      "properties": {
+        "advisory_uuid": { "type": "string", "minLength": 1 },
+        "status": { "type": "string", "enum": ["fixed", "bypass", "variant", "regressed"] },
+        "evidence": { "type": "string", "minLength": 1 },
+        "finding_ids": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^F[0-9]+$" }
+        }
+      }
+    },
     "severity": {
       "type": "string",
       "enum": ["Critical", "High", "Medium", "Low"]
