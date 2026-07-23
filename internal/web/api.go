@@ -106,6 +106,7 @@ func (s *Server) apiHandler() http.Handler {
 	mux.HandleFunc("GET /repositories/{id}/scans", s.apiListScans)
 	mux.HandleFunc("GET /repositories/{id}/maintainers", s.apiListMaintainers)
 	mux.HandleFunc("GET /repositories/{id}/packages", s.apiListPackages)
+	mux.HandleFunc("GET /repositories/{id}/alternatives", s.apiListPackageAlternatives)
 	mux.HandleFunc("GET /repositories/{id}/advisories", s.apiListAdvisories)
 	mux.HandleFunc("GET /repositories/{id}/dependents", s.apiListDependents)
 	mux.HandleFunc("GET /repositories/{id}/ecosystems/{source}/raw", s.apiGetEcosystemsRaw)

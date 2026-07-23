@@ -153,6 +153,7 @@ func TestAPIListsTypedReads(t *testing.T) {
 
 	// Seed one row in each typed table.
 	s.DB.Create(&db.Package{RepositoryID: repo.ID, Name: "foo", Ecosystem: "rubygems", PURL: "pkg:gem/foo"})
+	s.DB.Create(&db.PackageAlternative{RepositoryID: repo.ID, PURL: "pkg:gem/bar", Kind: db.PackageAlternativeEquivalent})
 	s.DB.Create(&db.Dependent{RepositoryID: repo.ID, Name: "bar", Ecosystem: "rubygems"})
 	s.DB.Create(&db.Advisory{RepositoryID: repo.ID, UUID: "u1", Severity: "HIGH", CVSSScore: 7.5})
 	s.DB.Create(&db.Dependency{RepositoryID: repo.ID, Name: "dep", Ecosystem: "rubygems", ManifestPath: "Gemfile"})
@@ -164,6 +165,7 @@ func TestAPIListsTypedReads(t *testing.T) {
 
 	cases := map[string]int{
 		"/api/repositories/%d/packages":     1,
+		"/api/repositories/%d/alternatives": 1,
 		"/api/repositories/%d/dependents":   1,
 		"/api/repositories/%d/advisories":   1,
 		"/api/repositories/%d/dependencies": 1,
