@@ -14,9 +14,15 @@ serialization packages.
   only at or above the July 2024 fixed lines. Sources:
   https://nodejs.org/en/blog/vulnerability/april-2024-security-releases-2 and
   https://nodejs.org/en/blog/vulnerability/july-2024-security-releases
-- `vm2` is abandoned and should be treated as unsafe in every version; the
-  maintainer stopped maintaining it in 2023 after repeated sandbox escape CVEs.
-  Source: https://github.com/patriksimek/vm2/issues/533
+- `vm2` had a discontinued/unmaintained period in 2023 after repeated sandbox
+  escape CVEs, but development resumed and the current README says it is
+  actively maintained, with 3.11.x releases in 2026. Do not report current
+  `vm2` presence by itself. Report only when the project is pinned to the
+  historical discontinued/vulnerable line, is missing current security fixes,
+  runs fully untrusted code without defense-in-depth, or exposes a traced escape
+  path. Sources: https://github.com/patriksimek/vm2/issues/533,
+  https://github.com/patriksimek/vm2#readme, and
+  https://github.com/patriksimek/vm2/releases
 - `node-serialize` `unserialize` is unsafe in every version on untrusted input
   because function markers can execute code; the known package advisory affects
   all published versions through 0.0.4 and has no patched version. Source:
@@ -44,7 +50,9 @@ serialization packages.
   interpolated command string.
 - Dynamic execution: `eval`, `new Function`, `AsyncFunction`, string-form
   `setTimeout`/`setInterval`, `vm.runInThisContext`, `vm.runInNewContext`,
-  `vm2`, and framework expression engines evaluating request data.
+  `vm2` use that is pinned to a vulnerable line or lacks defense-in-depth for
+  fully untrusted code, and framework expression engines evaluating request
+  data.
 - Templates: `Handlebars.compile(user_source)`, `pug.compile(user_source)`,
   `ejs.render(user_template)`, `nunjucks.renderString`, `liquidjs.parseAndRender`
   on tenant-supplied source, and request-controlled `res.render(viewName)`.
