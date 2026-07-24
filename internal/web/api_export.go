@@ -150,7 +150,7 @@ func (s *Server) apiExportRepoFindings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := s.DB.Model(&db.Finding{}).
-		Where("scan_id IN (?)", s.DB.Model(&db.Scan{}).Select("id").Where("repository_id = ?", id)).
+		Where("repository_id = ?", id).
 		Order("id desc")
 	q = applyFindingFilters(q, r)
 	streamJSONL(w, q, findingExport)
@@ -285,8 +285,7 @@ func (s *Server) apiExportRepoBundle(w http.ResponseWriter, r *http.Request, rep
 	includeAll := r.URL.Query().Get("include") == "all"
 
 	var findings []db.Finding
-	q := s.DB.Where("scan_id IN (?)",
-		s.DB.Model(&db.Scan{}).Select("id").Where("repository_id = ?", repo.ID)).
+	q := s.DB.Where("repository_id = ?", repo.ID).
 		Order("id desc")
 	if r.URL.Query().Get("scope") == "findings" {
 		// Curate to the Findings bucket — drop semgrep/zizmor scanner noise,
