@@ -71,7 +71,8 @@ func (ClaudeHarness) DefaultModels() []ModelDefault {
 	return []ModelDefault{
 		{Name: "Opus 4.6", ID: "claude-opus-4-6", Tier: "high"},
 		{Name: "Opus 4.7", ID: "claude-opus-4-7"},
-		{Name: "Opus 4.8", ID: "claude-opus-4-8", Tier: "max"},
+		{Name: "Opus 4.8", ID: "claude-opus-4-8"},
+		{Name: "Opus 5.0", ID: "claude-opus-5", Tier: "max"},
 		{Name: "Sonnet 4.6", ID: "claude-sonnet-4-6", Tier: "mid"},
 		{Name: "Sonnet 5.0", ID: "claude-sonnet-5"},
 		{Name: "Fable 5", ID: "claude-fable-5[1m]"},
