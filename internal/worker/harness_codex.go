@@ -37,7 +37,9 @@ func (CodexHarness) Args(sj SkillJob, _ string, _ int, baseURL string) []string 
 		// seccomp anyway (bwrap needs unprivileged userns). Scrutineer's
 		// container already drops all caps, runs non-root, mounts /work,
 		// and gates egress through the proxy -- that IS the sandbox --
-		// so disable codex's own layer rather than fight it.
+		// so disable codex's own layer rather than fight it. A job that
+		// only reads (chat) is therefore held to its prompt, not to a
+		// codex sandbox mode; see docs/codex.md.
 		"--sandbox", "danger-full-access",
 		"--skip-git-repo-check",
 	)

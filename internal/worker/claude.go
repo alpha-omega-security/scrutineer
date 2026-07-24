@@ -62,8 +62,14 @@ type SkillJob struct {
 	// runner is hardened: it disambiguates the per-scan network so
 	// concurrent scans can never share one. A zero value collapses
 	// distinct scans onto a single network and defeats the isolation, so
-	// the container runner refuses to start hardened with ScanID == 0.
-	ScanID       uint
+	// the container runner refuses to start hardened unless ScanID or
+	// IsolationKey is set.
+	ScanID uint
+	// IsolationKey overrides ScanID when naming the hardened network and
+	// egress sidecar. A job with no scan row (a chat turn) sets it to its own
+	// namespaced id so it neither lands on the shared "0" namespace nor
+	// collides with the scan whose id happens to match.
+	IsolationKey string
 	WorkRoot     string
 	SubPath      string
 	Model        string
@@ -73,7 +79,11 @@ type SkillJob struct {
 	Ref          string // git ref to checkout; empty = default branch
 	MaxTurns     int    // per-skill cap; 0 = use runner default
 	Effort       string // per-scan claude --effort; "" = use runner default
-	AllowedTools string // comma-separated; "" = full tool set under bypassPermissions
+	// AllowedTools is comma-separated; "" = full tool set under
+	// bypassPermissions. claude-only: the other harnesses have no equivalent
+	// switch, so a tool restriction is enforced there by the container and the
+	// prompt, not by the agent CLI.
+	AllowedTools string
 	// SrcReady declares that WorkRoot/src is already populated by the
 	// caller (e.g. by the exposure handler copying from a dependent
 	// cache). When true the runner skips its own clone and reads HEAD
@@ -97,12 +107,29 @@ type SkillJob struct {
 	// prompt. It lets callers resume the same conversation with targeted
 	// corrective instructions, such as rewriting an invalid report.json.
 	ResumePrompt string
+	// Prompt, when non-empty, replaces the default skill-activation prompt on
+	// a fresh (non-resume) run, letting a caller drive the agent with an
+	// arbitrary instruction instead of "use the <skill> skill": the chat
+	// runner passes the user's message and the conversation framing here.
+	// Unused on a resume, where ResumePrompt applies, except as the fallback
+	// when that resume finds no session: a caller that sets both gets a fresh
+	// restart in place instead of a hard failure.
+	Prompt string
 	// StateDir is a host directory the container runner mounts at
 	// /harness-state and points the harness at via Harness.StateEnv, so
 	// the resumable session store persists across container restarts.
 	// Empty disables the mount (the local runner ignores it and relies on
 	// the host's own ~/.claude).
 	StateDir string
+}
+
+// isolationKey names this job's hardened network and egress sidecar. Scans key
+// on their scan id; a job without one supplies IsolationKey instead.
+func (sj SkillJob) isolationKey() string {
+	if sj.IsolationKey != "" {
+		return sj.IsolationKey
+	}
+	return strconv.FormatUint(uint64(sj.ScanID), 10)
 }
 
 type SkillResult struct {
@@ -182,7 +209,10 @@ func (l LocalClaude) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)
 	hitMaxTurns, sessionID, waitErr := l.runClaudeOnce(ctx, args, work, wrappedEmit)
 
 	if waitErr != nil && sj.ResumeSessionID != "" && sessionID == "" && accountErrText == "" {
-		if sj.ResumePrompt != "" {
+		if sj.ResumePrompt != "" && sj.Prompt == "" {
+			// A bare resume prompt is a corrective nudge ("rewrite the invalid
+			// report.json") that means nothing to a fresh agent, and there is
+			// no fresh framing to fall back on.
 			emit(Event{Kind: KindText, Text: "resume of session " + sj.ResumeSessionID + " failed; " + resumePromptNoFreshFallbackText})
 			return SkillResult{Commit: commit}, fmt.Errorf("claude exited: %w", waitErr)
 		}
@@ -294,7 +324,7 @@ func buildClaudeArgs(sj SkillJob, effort string, globalMaxTurns int) []string {
 	}
 	if sj.AllowedTools != "" {
 		args = append(args,
-			"--permission-mode", "acceptEdits",
+			"--permission-mode", claudePermissionMode(sj),
 			"--allowedTools", sj.AllowedTools+",Skill",
 		)
 	} else {
@@ -307,16 +337,30 @@ func buildClaudeArgs(sj SkillJob, effort string, globalMaxTurns int) []string {
 		args = append(args, "--resume", sj.ResumeSessionID)
 	}
 	args = append(args, "--max-turns", strconv.Itoa(effectiveMaxTurns(sj.MaxTurns, globalMaxTurns)))
-	if sj.ResumeSessionID != "" {
-		if sj.ResumePrompt != "" {
-			args = append(args, sj.ResumePrompt)
-		} else {
-			args = append(args, buildResumePrompt(sj.Name, sj.OutputFile))
-		}
-	} else {
+	switch {
+	case sj.ResumeSessionID != "" && sj.ResumePrompt != "":
+		args = append(args, sj.ResumePrompt)
+	case sj.ResumeSessionID != "":
+		args = append(args, buildResumePrompt(sj.Name, sj.OutputFile))
+	case sj.Prompt != "":
+		args = append(args, sj.Prompt)
+	default:
 		args = append(args, buildSkillPrompt(sj.Name, sj.OutputFile))
 	}
 	return args
+}
+
+// claudePermissionMode picks the permission mode for a job that declares an
+// allowed-tools list. acceptEdits is what lets a skill write its report.json
+// without a prompt, but it auto-approves *any* edit, including ones the
+// allow-list deliberately omits. A job with no output file has nothing
+// legitimate to write, so it gets the plain mode instead: the read-only tool
+// set is then the actual boundary rather than a claim the flags contradict.
+func claudePermissionMode(sj SkillJob) string {
+	if sj.OutputFile == "" {
+		return "default"
+	}
+	return "acceptEdits"
 }
 
 // effectiveMaxTurns resolves the turn cap: per-skill wins, then global, then

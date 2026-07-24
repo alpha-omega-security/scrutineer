@@ -164,6 +164,25 @@ type Server struct {
 	// nothing, so reads before the check completes are safe.
 	runnerStatusMu sync.Mutex
 	runnerStatus   worker.RunnerImageStatus
+
+	// chatRunner executes one chat turn. Constructed in New from the worker's
+	// runner; nil when no runner is configured, in which case the
+	// chat handlers refuse gracefully. Tests substitute a stub.
+	chatRunner chatTurnRunner
+	// chatActive guards against two concurrent turns on the same conversation:
+	// each would --resume the same session at once and interleave replies. A
+	// conversation id is present while its turn runs.
+	chatMu     sync.Mutex
+	chatActive map[uint]struct{}
+	// chatSlots bounds concurrent chat turns across all conversations: each
+	// spawns its own agent container, and the per-conversation lock alone
+	// would let one analyst's open tabs outnumber the whole scan pipeline.
+	// Sized from the queue's concurrency at construction, like the runner's
+	// own limit.
+	chatSlots chan struct{}
+	// spawnTurn runs a chat turn in the background. Field rather than a direct
+	// `go s.runChatTurn(...)` so tests can run it synchronously.
+	spawnTurn func(convID uint, message string)
 }
 
 // SetRunnerImageStatus records the boot-time runner-image staleness result so
@@ -351,11 +370,17 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *work
 		resolveRemoteHead: defaultResolveRemoteHead,
 		syncUpstream:      w.SyncUpstream}
 	s.prefetchEcosystems = s.ecosystemsPrefetch
+	s.chatActive = map[uint]struct{}{}
+	s.chatSlots = make(chan struct{}, chatTurnSlots(q))
+	s.spawnTurn = func(convID uint, message string) { go s.runChatTurn(convID, message) }
 	if w != nil {
 		w.OnFindingCreated = s.autoEnqueueRevalidate
 		w.OnRevalidateVerdict = s.autoChainVerifyAfterRevalidate
 		w.OnScanFinalized = s.onScanFinalized
 		w.OnScanFailed = s.autoEnqueueFocusAreaDeepDives
+		if w.Runner != nil {
+			s.chatRunner = &worker.ChatRunner{Runner: w.Runner, DB: gdb, DataDir: w.DataDir, PrepareSrc: w.PrepareSrc}
+		}
 	}
 	return s, nil
 }
@@ -439,6 +464,11 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /findings/{id}/labels", s.findingLabels)
 	mux.HandleFunc("POST /dependencies/{id}/scan", s.depScan)
 	mux.HandleFunc("POST /dependents/{id}/scan", s.dependentScan)
+
+	mux.HandleFunc("POST /repositories/{id}/conversations", s.conversationCreateRepo)
+	mux.HandleFunc("POST /findings/{id}/conversations", s.conversationCreateFinding)
+	mux.HandleFunc("GET /conversations/{id}", s.conversationShow)
+	mux.HandleFunc("POST /conversations/{id}/messages", s.conversationMessage)
 	mux.HandleFunc("GET /packages", s.packages)
 	mux.HandleFunc("GET /packages/{id}", s.packageShow)
 	mux.HandleFunc("GET /advisories", s.advisoriesList)
@@ -893,15 +923,7 @@ func advisoryRepoID(a db.Advisory) uint { return a.RepositoryID }
 // severityOrder is a SQL CASE expression that ranks db.SeverityLevels
 // highest-first with unknown values last, derived from the same slice
 // SeverityAtLeast uses so the two never disagree.
-var severityOrder = func() string {
-	var b strings.Builder
-	b.WriteString("CASE severity")
-	for i, s := range db.SeverityLevels {
-		fmt.Fprintf(&b, " WHEN '%s' THEN %d", s, len(db.SeverityLevels)-1-i)
-	}
-	fmt.Fprintf(&b, " ELSE %d END", len(db.SeverityLevels))
-	return b.String()
-}()
+var severityOrder = db.SeverityOrderSQL()
 
 // loadByID loads the row whose primary key matches the request's {id}
 // path parameter, writing a 404 and returning ok=false when it does
@@ -1770,6 +1792,11 @@ func (s *Server) findingShow(w http.ResponseWriter, r *http.Request) {
 		data["PatchScan"] = patchScan
 		data["Patch"] = patchRep
 	}
+	if convs, err := db.ConversationsFor(s.DB, repo.ID, &f.ID); err != nil {
+		s.Log.Warn("load finding conversations", "finding", f.ID, "err", err)
+	} else {
+		data["Conversations"] = convs
+	}
 	s.render(w, r, "finding_show.html", data)
 }
 
@@ -2006,7 +2033,13 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 	scans := loadRepoLatestScans(s.DB, repo.ID)
 	latest, tmScan := s.repoPrimaryScans(scans)
 	view := s.loadRepoShowView(repo, scans, latest, tmScan, r.URL.Query())
-	s.render(w, r, "repo_show.html", view.renderData())
+	data := view.renderData()
+	if convs, err := db.ConversationsFor(s.DB, repo.ID, nil); err != nil {
+		s.Log.Warn("load repo conversations", "repo", repo.ID, "err", err)
+	} else {
+		data["Conversations"] = convs
+	}
+	s.render(w, r, "repo_show.html", data)
 }
 
 type repoShowView struct {
@@ -2540,6 +2573,11 @@ func (s *Server) repoDelete(w http.ResponseWriter, r *http.Request) {
 	// after the commit.
 	var scanIDs []uint
 	s.DB.Model(&db.Scan{}).Where("repository_id = ?", repo.ID).Pluck("id", &scanIDs)
+	// Chat conversation workspaces are reclaimed after the commit, same as
+	// scan workspaces. Finding-scoped conversations carry the finding's
+	// repository_id, so this covers them too.
+	var convIDs []uint
+	s.DB.Model(&db.Conversation{}).Where("repository_id = ?", repo.ID).Pluck("id", &convIDs)
 
 	err := s.DB.Transaction(func(tx *gorm.DB) error {
 		// Match scans by the *finding's* repo, not the scan's own: a finding-
@@ -2581,6 +2619,9 @@ func (s *Server) repoDelete(w http.ResponseWriter, r *http.Request) {
 		if err := tx.Exec("DELETE FROM repository_maintainers WHERE repository_id = ?", repo.ID).Error; err != nil {
 			return err
 		}
+		if err := deleteRepoConversations(tx, repo.ID); err != nil {
+			return err
+		}
 		return tx.Delete(&repo).Error
 	})
 	if err != nil {
@@ -2596,10 +2637,25 @@ func (s *Server) repoDelete(w http.ResponseWriter, r *http.Request) {
 			s.Log.Error("repoDelete: remove scan workspace", "scan", id, "err", err)
 		}
 	}
+	for _, id := range convIDs {
+		if err := s.Worker.RemoveChatArtifacts(id); err != nil {
+			s.Log.Error("repoDelete: remove chat workspace", "conv", id, "err", err)
+		}
+	}
 
 	setFlash(w, Flash{Category: "success", Title: "Repository deleted",
 		Description: repo.Name + " and all its scans, findings and cached clone were removed."})
 	s.redirect(w, r, "/")
+}
+
+// deleteRepoConversations removes a repository's chat conversations and their
+// messages. Finding-scoped conversations carry the finding's repository_id, so
+// matching on it covers them too.
+func deleteRepoConversations(tx *gorm.DB, repoID uint) error {
+	if err := tx.Exec("DELETE FROM chat_messages WHERE conversation_id IN (SELECT id FROM conversations WHERE repository_id = ?)", repoID).Error; err != nil {
+		return err
+	}
+	return tx.Where("repository_id = ?", repoID).Delete(&db.Conversation{}).Error
 }
 
 // repoDisclosureChannel lets the analyst overwrite (or clear) the

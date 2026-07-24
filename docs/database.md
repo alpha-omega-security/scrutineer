@@ -551,6 +551,34 @@ CVE Numbering Authorities from the public cve.org partner list. Used by the `cna
 | created_at | datetime | |
 | updated_at | datetime | |
 
+## conversations
+
+Persisted chat sessions. Each is a conversation with the agent about a repository or, when `finding_id` is set, one of its findings. The agent runs against a copy of the clone (taken from the shared per-URL cache on the first turn and reused afterwards, so the whole conversation reasons about one revision) plus a snapshot of the repository's findings. It is told to only read and search; on the claude harness that is also enforced with `--allowedTools Read,Grep,Glob`, on codex and opencode the container is the enforcement boundary, exactly as for scans. `session_id`/`backend` let a follow-up turn resume the harness conversation with full history via `--resume`; when that session is gone the turn restarts fresh with the transcript replayed into the prompt. Browser-only surface (chat tabs on the repository and finding pages); not exposed on the scan-token or `/v1` API.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | integer PK | |
+| repository_id | integer FK | A finding-scoped conversation still carries the finding's repository so repo cleanup reaches it; the repository-delete handler removes the rows explicitly. |
+| finding_id | integer, nullable | Set for a per-finding chat; null for a repo-wide chat. No FK: the row is reached through `repository_id` on cleanup. |
+| title | text | One-line label derived from the first user message. |
+| model | text | Model the turns run under, snapshotted at creation. |
+| backend | text | Harness that owns `session_id` (e.g. `claude`); a turn only reuses the id while the running harness matches. |
+| session_id | text | Harness session the last turn belonged to; the next turn resumes it. Empty until the first turn completes. |
+| created_at | datetime | |
+| updated_at | datetime | Bumped on each new message so recency ordering reflects the latest turn. |
+
+## chat_messages
+
+One turn in a `conversations` row: a user prompt or the assistant's reply.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | integer PK | |
+| conversation_id | integer FK | Cascade delete. |
+| role | text | `user` or `assistant`. |
+| content | text | Rendered message text; for an assistant message, the accumulated streamed response. |
+| created_at | datetime | |
+
 ## goqite
 
 Job queue managed by the goqite library. Not accessed directly by application code except through the queue package.

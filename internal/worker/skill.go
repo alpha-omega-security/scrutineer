@@ -164,11 +164,7 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 		}
 		scan.Commit = gitHead(filepath.Join(workRoot, "src"))
 	} else {
-		prepare := w.PrepareRepoSrc
-		if prepare == nil {
-			prepare = w.prepareRepoSrc
-		}
-		cacheCommit, err := prepare(ctx, scan.Repository.URL, scan.Ref, workRoot, emit)
+		cacheCommit, err := w.PrepareSrc(ctx, scan.Repository.URL, scan.Ref, workRoot, emit)
 		if err != nil {
 			if report, ok := w.handleCloneError(scan, err, emit); ok {
 				return report, nil

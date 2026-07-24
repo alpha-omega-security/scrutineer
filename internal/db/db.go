@@ -1260,6 +1260,7 @@ func Open(dsn string) (*gorm.DB, error) {
 		&Dependency{}, &ExpectedFinding{}, &Package{}, &PackageAlternative{}, &Dependent{}, &FindingDependent{}, &Advisory{}, &AdvisoryAudit{},
 		&Maintainer{}, &Skill{}, &Subproject{},
 		&SBOMUpload{}, &SBOMPackage{}, &CNA{}, &Setting{},
+		&Conversation{}, &ChatMessage{},
 	); err != nil {
 		return nil, fmt.Errorf("automigrate: %w", err)
 	}

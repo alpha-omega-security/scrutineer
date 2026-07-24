@@ -173,6 +173,64 @@ func TestBuildClaudeArgs_CustomResumePrompt(t *testing.T) {
 	}
 }
 
+func TestBuildClaudeArgs_FreshPromptOverride(t *testing.T) {
+	sj := SkillJob{
+		Name:   "chat",
+		Model:  "claude-opus-4-8",
+		Prompt: "Analyst: how does auth work?",
+	}
+	args := buildClaudeArgs(sj, "", 0)
+
+	if got := args[len(args)-1]; got != sj.Prompt {
+		t.Errorf("final arg = %q, want the fresh-run Prompt override", got)
+	}
+}
+
+func TestBuildClaudeArgs_ResumeIgnoresFreshPrompt(t *testing.T) {
+	sj := SkillJob{
+		Name:            "chat",
+		Model:           "claude-opus-4-8",
+		ResumeSessionID: "abc-123",
+		ResumePrompt:    "follow up",
+		Prompt:          "should be ignored on resume",
+	}
+	args := buildClaudeArgs(sj, "", 0)
+
+	if got := args[len(args)-1]; got != sj.ResumePrompt {
+		t.Errorf("final arg = %q, want ResumePrompt to win on a resume", got)
+	}
+}
+
+// acceptEdits auto-approves file writes, which is how a skill's report.json
+// lands without a prompt. A job with no output file has nothing to write, so it
+// must not get that mode: otherwise a read-only allow-list (a chat turn's
+// Read,Grep,Glob) still lets the agent edit the clone.
+func TestBuildClaudeArgs_PermissionModeFollowsOutputFile(t *testing.T) {
+	mode := func(args []string) string {
+		for i, a := range args {
+			if a == "--permission-mode" && i+1 < len(args) {
+				return args[i+1]
+			}
+		}
+		return ""
+	}
+
+	readOnly := buildClaudeArgs(SkillJob{Name: "chat", Model: "m", AllowedTools: "Read,Grep,Glob"}, "", 0)
+	if got := mode(readOnly); got != "default" {
+		t.Errorf("read-only job permission mode = %q, want %q", got, "default")
+	}
+
+	writer := buildClaudeArgs(SkillJob{Name: "recon", Model: "m", AllowedTools: "Read,Write,Grep,Glob", OutputFile: "report.json"}, "", 0)
+	if got := mode(writer); got != "acceptEdits" {
+		t.Errorf("report-writing skill permission mode = %q, want %q", got, "acceptEdits")
+	}
+
+	unrestricted := buildClaudeArgs(SkillJob{Name: "triage", Model: "m", OutputFile: "report.json"}, "", 0)
+	if got := mode(unrestricted); got != "bypassPermissions" {
+		t.Errorf("skill with no allow-list = %q, want %q", got, "bypassPermissions")
+	}
+}
+
 func TestBuildClaudeArgs_NoResumeWhenUnset(t *testing.T) {
 	sj := SkillJob{Name: "metadata", Model: "claude-opus-4-8", OutputFile: "report.json"}
 	args := buildClaudeArgs(sj, "", 0)
@@ -234,6 +292,56 @@ func TestLocalClaude_ResumeFallsBackToFresh(t *testing.T) {
 	}
 	if res.Report != `{"done":true}` {
 		t.Errorf("Report = %q, want the fresh run's output", res.Report)
+	}
+}
+
+// A caller that supplies both a resume prompt and fresh framing (the chat
+// runner) gets the fresh restart: without it a conversation whose harness
+// session is gone would fail identically on every later turn, forever.
+func TestLocalClaude_ResumePromptWithFreshPromptRestarts(t *testing.T) {
+	bin := t.TempDir()
+	script := "#!/bin/sh\n" +
+		"for a in \"$@\"; do\n" +
+		"  if [ \"$a\" = \"--resume\" ]; then\n" +
+		"    echo 'No conversation found with session ID: x'\n" +
+		"    exit 1\n" +
+		"  fi\n" +
+		"done\n" +
+		"echo \"$@\" >> argv.txt\n" +
+		"echo '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"fresh-sess\"}'\n" +
+		"echo '{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"ok\",\"num_turns\":1}'\n" +
+		"exit 0\n"
+	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	work := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(work, "src"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sj := SkillJob{
+		Name:            "chat",
+		Model:           "m",
+		WorkRoot:        work,
+		SrcReady:        true,
+		ResumeSessionID: "dead-session",
+		ResumePrompt:    "and the second one?",
+		Prompt:          "Conversation framing. Analyst: and the second one?",
+	}
+	res, err := LocalClaude{}.RunSkill(context.Background(), sj, func(Event) {})
+	if err != nil {
+		t.Fatalf("RunSkill: %v", err)
+	}
+	if res.SessionID != "fresh-sess" {
+		t.Errorf("SessionID = %q, want the fresh run's id", res.SessionID)
+	}
+	argv, err := os.ReadFile(filepath.Join(work, "argv.txt"))
+	if err != nil {
+		t.Fatalf("fresh run never happened: %v", err)
+	}
+	if !strings.Contains(string(argv), "Conversation framing") {
+		t.Errorf("fresh run did not use Prompt: %s", argv)
 	}
 }
 

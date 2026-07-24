@@ -301,10 +301,24 @@ func CVSSV4ScoreFromVector(vector string) (float64, bool) {
 // confidenceLevels and SeverityLevels are ordered low to high; the
 // index is the rank used for threshold comparisons. An empty or
 // unknown value ranks below everything. SeverityLevels is exported so
-// the web layer can derive its ORDER BY CASE clause from the same
-// list rather than hard-coding the four labels twice.
+// callers can derive an ORDER BY clause from the same list (see
+// SeverityOrderSQL) rather than hard-coding the four labels twice.
 var confidenceLevels = []string{"low", "medium", "high"}
 var SeverityLevels = []string{"Low", "Medium", "High", "Critical"}
+
+// SeverityOrderSQL is a SQL CASE expression ranking the severity column
+// highest-first (Critical before Low) with unknown values last, derived from
+// SeverityLevels so an ORDER BY never disagrees with SeverityAtLeast. Shared by
+// the web finding lists and the chat snapshot.
+func SeverityOrderSQL() string {
+	var b strings.Builder
+	b.WriteString("CASE severity")
+	for i, s := range SeverityLevels {
+		fmt.Fprintf(&b, " WHEN '%s' THEN %d", s, len(SeverityLevels)-1-i)
+	}
+	fmt.Fprintf(&b, " ELSE %d END", len(SeverityLevels))
+	return b.String()
+}
 
 func rank(levels []string, v string) int {
 	for i, l := range levels {

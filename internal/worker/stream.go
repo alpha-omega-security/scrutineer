@@ -16,6 +16,11 @@ const (
 	KindError     = "error"
 	KindSession   = "session"
 	KindRateLimit = "rate_limit"
+	// KindEgress is scrutineer's own commentary, not the agent's: the egress
+	// sidecar's log lines, forwarded after the harness has already exited.
+	// Distinct from KindText so a consumer reading the agent's last words
+	// (the chat runner) cannot mistake them for the model speaking.
+	KindEgress = "egress"
 
 	lineLimit = 300
 )

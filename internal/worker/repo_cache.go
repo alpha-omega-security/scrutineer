@@ -75,6 +75,17 @@ func BackfillRepoDiskUsage(gdb *gorm.DB, dataDir string) {
 	}
 }
 
+// PrepareSrc populates workRoot/src from the shared per-URL clone cache and
+// returns the cache HEAD commit. It is the exported entry point for callers
+// outside the scan pipeline (the chat runner), and honours the PrepareRepoSrc
+// test override so they stay hermetic too.
+func (w *Worker) PrepareSrc(ctx context.Context, url, ref, workRoot string, emit func(Event)) (string, error) {
+	if w.PrepareRepoSrc != nil {
+		return w.PrepareRepoSrc(ctx, url, ref, workRoot, emit)
+	}
+	return w.prepareRepoSrc(ctx, url, ref, workRoot, emit)
+}
+
 // prepareRepoSrc updates the per-URL cache under a lock, copies the
 // tree into workRoot/src, and returns the cache HEAD commit. Shallow
 // by default; the code browser unshallows on demand when a historical

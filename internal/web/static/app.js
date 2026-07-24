@@ -32,10 +32,18 @@
     });
   }
 
+  // The message list is the only thing that scrolls on a conversation page, so
+  // it opens on the newest message rather than on the start of the transcript.
+  function chatToBottom() {
+    var list = document.querySelector('.chat-messages');
+    if (list) list.scrollTop = list.scrollHeight;
+  }
+
   function init() {
     icons();
     highlight();
     restoreTab();
+    chatToBottom();
   }
 
   if (document.readyState === 'loading') {

@@ -306,7 +306,7 @@ func TestIntegration_ProxySidecarEnforcedEgress(t *testing.T) {
 	// bridge -- where any other container of the same rootless user could probe
 	// it -- the sidecar's egress-leg IP must not answer on the proxy port. Any
 	// HTTP status here (even 407) means something listened.
-	egressIP, err := d.sidecarNetworkIP(proxySidecarName(sj.ScanID), "podman")
+	egressIP, err := d.sidecarNetworkIP(proxySidecarName(sj.isolationKey()), "podman")
 	if err != nil {
 		t.Fatalf("resolve sidecar egress-leg IP: %v", err)
 	}
@@ -319,7 +319,7 @@ func TestIntegration_ProxySidecarEnforcedEgress(t *testing.T) {
 	// (4) Teardown removes the sidecar and then its network.
 	cleanup()
 	cleanedUp = true
-	name := proxySidecarName(sj.ScanID)
+	name := proxySidecarName(sj.isolationKey())
 	if err := exec.Command(rt.bin(), "inspect", "--", name).Run(); err == nil {
 		t.Errorf("sidecar %q still present after cleanup", name)
 	}

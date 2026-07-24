@@ -194,6 +194,9 @@ func explicitSkillPrompt(sj SkillJob, skillPath string) string {
 	if resume && sj.ResumePrompt != "" {
 		return sj.ResumePrompt
 	}
+	if !resume && sj.Prompt != "" {
+		return sj.Prompt
+	}
 	verb := "Follow"
 	if resume {
 		verb = "Continue following"

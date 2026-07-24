@@ -394,6 +394,31 @@ func (w *Worker) RemoveScanArtifacts(scanID uint) error {
 	)
 }
 
+// chatWorkRoot returns the conversation-stable workspace directory for a chat.
+// Unlike scans, chat turns must reuse one directory across turns:
+// the harness keys its resumable session store by cwd, so a per-turn path would
+// break `--resume`.
+func chatWorkRoot(dataDir string, convID uint) string {
+	return filepath.Join(dataDir, fmt.Sprintf("chat-%d", convID))
+}
+
+// chatHarnessStateDir is the conversation-stable harness state directory the
+// container runner mounts at /harness-state so the session store survives a
+// container exit between turns.
+func chatHarnessStateDir(dataDir string, convID uint) string {
+	return filepath.Join(dataDir, harnessStateDirName, fmt.Sprintf("chat-%d", convID))
+}
+
+// RemoveChatArtifacts deletes a conversation's on-disk workspace and harness
+// state directory. Called when the owning repository is deleted; a no-op when
+// the directories are already gone.
+func (w *Worker) RemoveChatArtifacts(convID uint) error {
+	return errors.Join(
+		os.RemoveAll(chatWorkRoot(w.DataDir, convID)),
+		os.RemoveAll(chatHarnessStateDir(w.DataDir, convID)),
+	)
+}
+
 // applyResume fills a SkillJob's session-resume inputs from the scan: the
 // harness session id to continue (set on a retry that carries one forward
 // from a failed or max-turns-hit run) and the persistent state dir the

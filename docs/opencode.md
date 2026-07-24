@@ -56,7 +56,9 @@ explicitly (opencode discovers but does not auto-invoke skills in headless
 up to the project root.
 
 `--auto` suppresses opencode's interactive permission prompts; the container
-is the sandbox. `OPENCODE_DISABLE_MODELS_FETCH=1` stops opencode fetching
+is the sandbox. A chat turn is therefore held to its prompt
+instruction and that container boundary, not to a permission mode: only claude
+takes the `--allowedTools Read,Grep,Glob` list scrutineer asks for. `OPENCODE_DISABLE_MODELS_FETCH=1` stops opencode fetching
 `models.dev` at
 startup (the host is still on the egress allowlist for runs that do need it).
 

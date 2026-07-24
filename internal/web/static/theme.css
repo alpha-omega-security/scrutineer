@@ -417,6 +417,23 @@ pre.skill-src { background: var(--muted); padding: 0.75rem; border-radius: var(-
                 overflow-x: auto; }
 pre.skill-src code { background: none; padding: 0; }
 
+/* ── chat ── */
+/* The conversation page fits the viewport instead of growing with the
+   transcript: only the message list scrolls, so the composer stays put rather
+   than being pushed below the fold. The subtracted heights mirror the layout
+   wrapper's own padding (p-4 md:p-6 xl:p-12) so the column ends exactly at the
+   viewport edge and the page itself never scrolls. */
+.chat-page { display: flex; flex-direction: column; height: calc(100dvh - 2rem); }
+/* Only the message list absorbs the leftover space; the crumbs, the heading,
+   the live activity and the composer keep their natural height. */
+.chat-page > :not(.chat-messages) { flex: none; }
+.chat-messages { flex: 1; min-height: 0; overflow-y: auto; }
+/* The activity pane shares that fixed part of the column, so it cannot claim
+   the 60vh pre.log takes elsewhere. */
+.chat-page pre.log { max-height: 10rem; }
+@media (min-width: 48rem) { .chat-page { height: calc(100dvh - 3rem); } }
+@media (min-width: 80rem) { .chat-page { height: calc(100dvh - 6rem); } }
+
 /* ── code browser ── */
 #blob { display: block; padding: 0.5rem 0; tab-size: 4; }
 .hl-line { padding-left: 3.5rem; position: relative; }

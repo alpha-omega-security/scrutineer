@@ -20,6 +20,8 @@ func (OpencodeHarness) Binary() string { return "opencode" }
 // SKILL.md but does not auto-invoke it, so the prompt points at it
 // explicitly. --auto suppresses interactive permission prompts (the
 // container is the sandbox); --format json yields a JSONL event stream.
+// A job that only reads (chat) is therefore held to its prompt, not to an
+// opencode permission mode; see docs/opencode.md.
 func (OpencodeHarness) Args(sj SkillJob, _ string, _ int, _ string) []string {
 	args := []string{
 		"run",

@@ -437,6 +437,11 @@ func TestExplicitSkillPrompt(t *testing.T) {
 	if strings.Contains(noOut, "structured output") || strings.Contains(noOut, "validate-report") {
 		t.Errorf("no-output-file prompt should not mention output/validation: %q", noOut)
 	}
+
+	freshOverride := explicitSkillPrompt(SkillJob{Name: "chat", Prompt: "Analyst: hi"}, "./skills/chat")
+	if freshOverride != "Analyst: hi" {
+		t.Errorf("fresh Prompt override not returned verbatim: %q", freshOverride)
+	}
 }
 
 func TestMatchAccountPhrase(t *testing.T) {
