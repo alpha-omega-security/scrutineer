@@ -185,3 +185,16 @@
 # supported (prompted on stdin at startup). Mode 0600 recommended. Empty
 # disables encrypted import.
 # identity_file: ~/.ssh/id_ed25519
+
+# Secret shared out of band between federation members, mixed into
+# interchange finding hashes so members derive matching hashes without
+# publishing anything enumerable (see docs/interchange.md). Config-file
+# only on purpose: a CLI flag would leak the secret into argv. Empty
+# disables federation and the POST /claim-check endpoint. Requires
+# federation_contact.
+# federation_salt: ""
+
+# Contact returned to federation peers by POST /claim-check on a
+# finding-hash match, so they can coordinate before reporting the same
+# finding upstream. Required when federation_salt is set.
+# federation_contact: security@example.com

@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/alpha-omega-security/scrutineer/interchange/v1/interchange.schema.json",
+  "title": "Scrutineer federation interchange record",
+  "description": "One federation record wrapped in an in-toto Statement v1 envelope. Record kinds are identified by predicateType. Predicate schemas are closed (additionalProperties: false) so records never carry finding bodies, severity, CVSS, or health scores; the envelope itself tolerates spec-legal in-toto extensions. A claim's subject digest is the salted finding hash: sha256 over shared_salt, canonical repository URL (lowercased, trailing slashes and .git stripped), canonical repo-root-relative location (first line, positional suffix stripped, lowercased), and the canonical CWE list (elements trimmed, uppercased, empties dropped, sorted, comma-joined), all joined with NUL (0x00) bytes, hex-encoded.",
+  "type": "object",
+  "required": ["_type", "subject", "predicateType", "predicate"],
+  "properties": {
+    "_type": { "const": "https://in-toto.io/Statement/v1" },
+    "subject": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/resourceDescriptor" }
+    },
+    "predicateType": {
+      "enum": [
+        "https://github.com/alpha-omega-security/scrutineer/interchange/certificate/v1",
+        "https://github.com/alpha-omega-security/scrutineer/interchange/claim/v1",
+        "https://github.com/alpha-omega-security/scrutineer/interchange/optout/v1",
+        "https://github.com/alpha-omega-security/scrutineer/interchange/route/v1"
+      ]
+    },
+    "predicate": { "type": "object" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "predicateType": { "const": "https://github.com/alpha-omega-security/scrutineer/interchange/certificate/v1" } }, "required": ["predicateType"] },
+      "then": { "properties": { "predicate": { "$ref": "#/$defs/certificate" } } }
+    },
+    {
+      "if": { "properties": { "predicateType": { "const": "https://github.com/alpha-omega-security/scrutineer/interchange/claim/v1" } }, "required": ["predicateType"] },
+      "then": { "properties": { "predicate": { "$ref": "#/$defs/claim" } } }
+    },
+    {
+      "if": { "properties": { "predicateType": { "const": "https://github.com/alpha-omega-security/scrutineer/interchange/optout/v1" } }, "required": ["predicateType"] },
+      "then": { "properties": { "predicate": { "$ref": "#/$defs/optout" } } }
+    },
+    {
+      "if": { "properties": { "predicateType": { "const": "https://github.com/alpha-omega-security/scrutineer/interchange/route/v1" } }, "required": ["predicateType"] },
+      "then": { "properties": { "predicate": { "$ref": "#/$defs/route" } } }
+    }
+  ],
+  "$defs": {
+    "resourceDescriptor": {
+      "description": "Open on purpose: producers using standard in-toto libraries may add uri, mediaType, or extra digest algorithms; only name and a sha256 digest are required here.",
+      "type": "object",
+      "required": ["name", "digest"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "digest": {
+          "type": "object",
+          "required": ["sha256"],
+          "properties": {
+            "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+          }
+        }
+      }
+    },
+    "certificate": {
+      "description": "An advisory's advertised fix was re-audited on the named repository and held. Everything else about the advisory is public under its id.",
+      "type": "object",
+      "required": ["repository", "advisory", "status", "audited_at"],
+      "additionalProperties": false,
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "advisory": { "type": "string", "minLength": 1 },
+        "advisory_url": { "type": "string" },
+        "status": { "const": "fixed" },
+        "commit": { "type": "string" },
+        "audited_at": { "type": "string", "format": "date-time" }
+      }
+    },
+    "claim": {
+      "description": "The publishing instance holds a finding whose salted hash is the subject digest. Contact is how to reach it to coordinate before reporting the same finding upstream.",
+      "type": "object",
+      "required": ["contact"],
+      "additionalProperties": false,
+      "properties": {
+        "contact": { "type": "string", "minLength": 1 }
+      }
+    },
+    "optout": {
+      "description": "The repository's maintainer asked federated instances to neither scan the repository nor contact them about it.",
+      "type": "object",
+      "required": ["repository", "requested_at"],
+      "additionalProperties": false,
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "requested_at": { "type": "string", "format": "date-time" },
+        "reason": { "type": "string" }
+      }
+    },
+    "route": {
+      "description": "The validated disclosure route for a repository: an email, GHSA URL, registry owner handle, or SECURITY.md URL.",
+      "type": "object",
+      "required": ["repository", "channel", "verified_at"],
+      "additionalProperties": false,
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "channel": { "type": "string", "minLength": 1 },
+        "verified_at": { "type": "string", "format": "date-time" }
+      }
+    }
+  }
+}
