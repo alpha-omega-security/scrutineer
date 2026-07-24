@@ -30,6 +30,7 @@ func TestFindingHashNormalisation(t *testing.T) {
 	}{
 		{"repo case", "https://github.com/ACME/Lib", "", "src/parse.go", "CWE-79"},
 		{"repo trailing slash", "https://github.com/acme/lib/", "", "src/parse.go", "CWE-79"},
+		{"repo double trailing slash", "https://github.com/acme/lib//", "", "src/parse.go", "CWE-79"},
 		{"repo .git suffix", "https://github.com/acme/lib.git", "", "src/parse.go", "CWE-79"},
 		{"line suffix", "https://github.com/acme/lib", "", "src/parse.go:42", "CWE-79"},
 		{"line:col suffix", "https://github.com/acme/lib", "", "src/parse.go:42:7", "CWE-79"},
@@ -46,6 +47,23 @@ func TestFindingHashNormalisation(t *testing.T) {
 		if got := FindingHash("s", c.repo, c.subPath, c.location, c.cwe); got != base {
 			t.Errorf("%s: expected canonical hash %s, got %s", c.name, base, got)
 		}
+	}
+}
+
+func TestFindingHashCWEList(t *testing.T) {
+	base := FindingHash("s", "https://github.com/acme/lib", "", "src/parse.go", "CWE-79,CWE-89")
+	for name, cwe := range map[string]string{
+		"spacing":        " CWE-79 , CWE-89 ",
+		"order":          "CWE-89,CWE-79",
+		"case":           "cwe-89,cwe-79",
+		"empty elements": "CWE-79,,CWE-89,",
+	} {
+		if got := FindingHash("s", "https://github.com/acme/lib", "", "src/parse.go", cwe); got != base {
+			t.Errorf("%s: CWE list %q must hash like the canonical list", name, cwe)
+		}
+	}
+	if FindingHash("s", "https://github.com/acme/lib", "", "src/parse.go", "CWE-79") == base {
+		t.Error("a shorter CWE list must not collide with the full list")
 	}
 }
 
@@ -126,6 +144,32 @@ func TestStatementShape(t *testing.T) {
 	if pred.Repository != "https://github.com/acme/lib" {
 		t.Fatalf("constructor must canonicalise the repository URL, got %q", pred.Repository)
 	}
+	variant := NewCertificate(CertificatePredicate{
+		Repository: "https://github.com/acme/lib",
+		Advisory:   " ghsa-xxxx-yyyy-zzzz ",
+		Status:     "fixed",
+		AuditedAt:  time.Now().UTC(),
+	})
+	if cert.Subject[0].Digest["sha256"] != variant.Subject[0].Digest["sha256"] {
+		t.Fatal("advisory id case and padding must not change the certificate subject digest")
+	}
+}
+
+func TestValidateAcceptsForeignSubjectFields(t *testing.T) {
+	raw := []byte(`{
+		"_type": "https://in-toto.io/Statement/v1",
+		"subject": [{
+			"name": "finding",
+			"uri": "https://example.com/finding",
+			"mediaType": "application/json",
+			"digest": {"sha256": "` + strings.Repeat("ab", 32) + `", "sha512": "beef"}
+		}],
+		"predicateType": "https://github.com/alpha-omega-security/scrutineer/interchange/claim/v1",
+		"predicate": {"contact": "security@example.com"}
+	}`)
+	if err := Validate(raw); err != nil {
+		t.Fatalf("spec-legal in-toto subject extensions must validate, got %v", err)
+	}
 }
 
 func TestValidateRejects(t *testing.T) {
@@ -168,6 +212,12 @@ func TestValidateRejects(t *testing.T) {
 		})},
 		{"certificate not fixed", mutate(t, valid["certificate"], func(m map[string]any) {
 			m["predicate"].(map[string]any)["status"] = "vulnerable"
+		})},
+		{"certificate bad timestamp", mutate(t, valid["certificate"], func(m map[string]any) {
+			m["predicate"].(map[string]any)["audited_at"] = "yesterday"
+		})},
+		{"optout bad timestamp", mutate(t, valid["optout"], func(m map[string]any) {
+			m["predicate"].(map[string]any)["requested_at"] = "2026-13-45"
 		})},
 		{"optout without repository", mutate(t, valid["optout"], func(m map[string]any) {
 			delete(m["predicate"].(map[string]any), "repository")

@@ -94,9 +94,12 @@ type Server struct {
 
 	// FederationSalt is the shared federation secret mixed into
 	// interchange finding hashes; empty disables the claim-check
-	// endpoint. FederationContact is returned by claim-check on a match.
+	// endpoint. FederationContact is returned by claim-check on a match;
+	// startup refuses a salt without a contact. claimIndex caches the
+	// salted hash set claim-check consults; see claimHashSet.
 	FederationSalt    string
 	FederationContact string
+	claimIndex        claimCheckIndex
 
 	// resolvePURL maps a Package URL to its source repository URL via
 	// packages.ecosyste.ms. Field rather than direct call so tests can
@@ -436,7 +439,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /packages/{id}", s.packageShow)
 	mux.HandleFunc("GET /advisories", s.advisoriesList)
 	mux.HandleFunc("GET /advisories/{id}/certificate.json", s.advisoryCertificateDownload)
-	mux.HandleFunc("POST /claim-check", s.claimCheck)
+	// No method in the pattern: the handler 404s non-POST itself so a
+	// federation-capable build cannot be fingerprinted by the 405 the
+	// mux would otherwise answer.
+	mux.HandleFunc("/claim-check", s.claimCheck)
 	mux.HandleFunc("GET /scans/{id}", s.scanShow)
 	mux.HandleFunc("GET /scans/{id}/report.md", s.scanReport)
 	mux.HandleFunc("POST /scans/{id}/retry", s.scanRetry)

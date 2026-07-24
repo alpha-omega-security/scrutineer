@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"path"
+	"slices"
 	"strings"
 )
 
@@ -21,18 +22,32 @@ func FindingHash(salt, repoURL, subPath, location, cwe string) string {
 		salt,
 		CanonicalRepo(repoURL),
 		canonicalLocation(subPath, location),
-		strings.ToUpper(strings.TrimSpace(cwe)),
+		canonicalCWE(cwe),
 	}, "\x00")))
 	return hex.EncodeToString(h[:])
 }
 
-// CanonicalRepo lowercases the repository URL and strips the trailing
-// slash and ".git" suffix so checkout-style and web-style URLs of the
-// same repository hash identically.
+// CanonicalRepo lowercases the repository URL and strips trailing
+// slashes and the ".git" suffix so checkout-style and web-style URLs of
+// the same repository hash identically.
 func CanonicalRepo(url string) string {
 	u := strings.ToLower(strings.TrimSpace(url))
-	u = strings.TrimSuffix(u, "/")
+	u = strings.TrimRight(u, "/")
 	return strings.TrimSuffix(u, ".git")
+}
+
+// canonicalCWE normalises the comma-joined CWE list findings carry:
+// elements trimmed, uppercased, empties dropped, sorted, joined with a
+// bare comma, so spacing and recording order never change the hash.
+func canonicalCWE(cwe string) string {
+	var ids []string
+	for _, id := range strings.Split(cwe, ",") {
+		if id = strings.ToUpper(strings.TrimSpace(id)); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	slices.Sort(ids)
+	return strings.Join(ids, ",")
 }
 
 // canonicalLocation reduces a finding location to a lowercased,

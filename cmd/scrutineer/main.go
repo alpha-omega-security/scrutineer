@@ -126,6 +126,16 @@ type flags struct {
 	set map[string]bool
 }
 
+// validateFederation refuses a federation salt without a contact:
+// claim-check would confirm matches while giving peers no way to
+// coordinate, which is the endpoint's whole purpose.
+func validateFederation(salt, contact string) error {
+	if salt != "" && contact == "" {
+		return errors.New("federation: federation_contact is required when federation_salt is set")
+	}
+	return nil
+}
+
 func parseFlags() *flags {
 	f := &flags{}
 	registerFlags(flag.CommandLine, f)
@@ -168,7 +178,8 @@ func registerFlags(fs *flag.FlagSet, f *flags) {
 	fs.StringVar(&f.recipientsFile, "recipients-file", "", "age recipients file (public keys) for encrypted export")
 	fs.StringVar(&f.identityFile, "identity-file", "", "age identity file or SSH private key for decrypting imports")
 	fs.IntVar(&f.autoRejectMissedCount, "auto-reject-missed-count", 0, "auto-reject findings after this many consecutive missed rescans (0 disables)")
-	fs.StringVar(&f.federationSalt, "federation-salt", "", "shared federation secret mixed into interchange finding hashes; empty disables the claim-check endpoint")
+	// federation_salt has no flag on purpose: a secret in argv leaks via
+	// ps and shell history, so it is config-file only.
 	fs.StringVar(&f.federationContact, "federation-contact", "", "contact returned by the claim-check endpoint on a finding-hash match")
 	fs.Var(&f.skillLocal, "skills", "additional directory to load SKILL.md files from, overriding bundled skills with the same name (repeatable)")
 }
@@ -260,7 +271,7 @@ func (f *flags) merge(cfg *config.Config) {
 	if cfg.AutoRejectMissedCount > 0 && !f.set["auto-reject-missed-count"] {
 		f.autoRejectMissedCount = cfg.AutoRejectMissedCount
 	}
-	if cfg.FederationSalt != "" && !f.set["federation-salt"] {
+	if cfg.FederationSalt != "" {
 		f.federationSalt = cfg.FederationSalt
 	}
 	if cfg.FederationContact != "" && !f.set["federation-contact"] {
@@ -353,6 +364,9 @@ func validateFlags(f *flags) error {
 		return err
 	}
 	if err := config.ValidateSELinux(f.selinux); err != nil {
+		return err
+	}
+	if err := validateFederation(f.federationSalt, f.federationContact); err != nil {
 		return err
 	}
 	return validateModelBaseURL(f.modelBaseURL)

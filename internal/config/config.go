@@ -138,11 +138,13 @@ type Config struct {
 	// FederationSalt is the secret shared out of band between federation
 	// members and mixed into interchange finding hashes, so members derive
 	// matching hashes without publishing anything enumerable by outsiders.
-	// Empty disables federation: POST /claim-check answers 404.
+	// Empty disables federation: POST /claim-check answers 404. On purpose
+	// it has no CLI flag: a secret in argv leaks via ps and shell history.
 	FederationSalt string `yaml:"federation_salt"`
 	// FederationContact is how peers reach this instance's operator to
 	// coordinate on a shared finding; returned by POST /claim-check on a
-	// hash match.
+	// hash match. Required when FederationSalt is set: startup refuses a
+	// salt without a contact.
 	FederationContact string `yaml:"federation_contact"`
 }
 

@@ -2,10 +2,9 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/alpha-omega-security/scrutineer/interchange/v1/interchange.schema.json",
   "title": "Scrutineer federation interchange record",
-  "description": "One federation record wrapped in an in-toto Statement v1 envelope. Record kinds are identified by predicateType. Records never carry finding bodies, severity, CVSS, or health scores. A claim's subject digest is the salted finding hash: sha256 over shared_salt, canonical repository URL (lowercased, trailing slash and .git stripped), canonical repo-root-relative location (first line, positional suffix stripped, lowercased), and uppercased CWE, joined with NUL (0x00) bytes, hex-encoded.",
+  "description": "One federation record wrapped in an in-toto Statement v1 envelope. Record kinds are identified by predicateType. Predicate schemas are closed (additionalProperties: false) so records never carry finding bodies, severity, CVSS, or health scores; the envelope itself tolerates spec-legal in-toto extensions. A claim's subject digest is the salted finding hash: sha256 over shared_salt, canonical repository URL (lowercased, trailing slashes and .git stripped), canonical repo-root-relative location (first line, positional suffix stripped, lowercased), and the canonical CWE list (elements trimmed, uppercased, empties dropped, sorted, comma-joined), all joined with NUL (0x00) bytes, hex-encoded.",
   "type": "object",
   "required": ["_type", "subject", "predicateType", "predicate"],
-  "additionalProperties": false,
   "properties": {
     "_type": { "const": "https://in-toto.io/Statement/v1" },
     "subject": {
@@ -43,15 +42,14 @@
   ],
   "$defs": {
     "resourceDescriptor": {
+      "description": "Open on purpose: producers using standard in-toto libraries may add uri, mediaType, or extra digest algorithms; only name and a sha256 digest are required here.",
       "type": "object",
       "required": ["name", "digest"],
-      "additionalProperties": false,
       "properties": {
         "name": { "type": "string", "minLength": 1 },
         "digest": {
           "type": "object",
           "required": ["sha256"],
-          "additionalProperties": false,
           "properties": {
             "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
           }

@@ -13,6 +13,7 @@ import (
 	_ "embed"
 	"encoding/hex"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -90,13 +91,15 @@ type RoutePredicate struct {
 
 // NewCertificate wraps a certificate predicate in its envelope. The
 // subject names the advisory and digests the canonical repository URL
-// plus advisory id, so the same certificate from two instances shares a
-// subject.
+// plus the uppercased advisory id, so the same certificate from two
+// instances shares a subject whatever case or padding each stored the
+// id with.
 func NewCertificate(p CertificatePredicate) Statement {
 	p.Repository = CanonicalRepo(p.Repository)
+	p.Advisory = strings.TrimSpace(p.Advisory)
 	return Statement{
 		Type:          StatementType,
-		Subject:       []ResourceDescriptor{{Name: p.Advisory, Digest: sha256Digest(p.Repository + "\x00" + p.Advisory)}},
+		Subject:       []ResourceDescriptor{{Name: p.Advisory, Digest: sha256Digest(p.Repository + "\x00" + strings.ToUpper(p.Advisory))}},
 		PredicateType: PredicateTypeCertificate,
 		Predicate:     p,
 	}
@@ -157,6 +160,9 @@ func getSchema() (*jsonschema.Schema, error) {
 			return
 		}
 		c := jsonschema.NewCompiler()
+		// Draft 2020-12 treats "format" as annotation-only by default;
+		// without this the schema's date-time constraints are dead.
+		c.AssertFormat()
 		if err := c.AddResource("interchange.schema.json", doc); err != nil {
 			schemaErr = fmt.Errorf("add interchange.schema.json: %w", err)
 			return

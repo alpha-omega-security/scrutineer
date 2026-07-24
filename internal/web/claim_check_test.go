@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"scrutineer/internal/db"
 	"scrutineer/internal/interchange"
@@ -101,6 +102,42 @@ func TestClaimCheck_disabledWithoutSalt(t *testing.T) {
 
 	if w := postClaimCheck(t, s, `{"hash":"`+hash+`"}`); w.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 when federation_salt is unset, got %d: %s", w.Code, w.Body)
+	}
+}
+
+func TestClaimCheck_nonPostIs404(t *testing.T) {
+	for _, salt := range []string{"", "s3cret"} {
+		s, done := newTestServer(t)
+		s.FederationSalt = salt
+
+		r := httptest.NewRequest("GET", "/claim-check", nil)
+		r.Host = testHost
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, r)
+		if w.Code != http.StatusNotFound {
+			t.Errorf("salt %q: GET must answer 404, not %d, or federation-capable builds are fingerprintable", salt, w.Code)
+		}
+		done()
+	}
+}
+
+func TestClaimCheck_hashSetCachedForTTL(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	s.FederationSalt = "s3cret"
+	s.FederationContact = "security@example.com"
+
+	miss := interchange.FindingHash(s.FederationSalt, "https://example.com/acme/lib", "backend", "src/db.go:42", "CWE-89")
+	if w := postClaimCheck(t, s, `{"hash":"`+miss+`"}`); !strings.Contains(w.Body.String(), `"match":false`) {
+		t.Fatalf("expected no match before the finding exists, got %s", w.Body)
+	}
+	hash := seedClaimCheckFinding(t, s, db.FindingTriaged)
+	if w := postClaimCheck(t, s, `{"hash":"`+hash+`"}`); !strings.Contains(w.Body.String(), `"match":false`) {
+		t.Fatalf("a finding created inside the TTL window must not be visible yet, got %s", w.Body)
+	}
+	s.claimIndex.expires = time.Time{}
+	if w := postClaimCheck(t, s, `{"hash":"`+hash+`"}`); !strings.Contains(w.Body.String(), `"match":true`) {
+		t.Fatalf("expected a match after the cache expires, got %s", w.Body)
 	}
 }
 
