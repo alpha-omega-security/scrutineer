@@ -92,6 +92,12 @@ type Server struct {
 	// key rotation (old + new). nil disables encrypted import.
 	EncIdentities []age.Identity
 
+	// FederationSalt is the shared federation secret mixed into
+	// interchange finding hashes; empty disables the claim-check
+	// endpoint. FederationContact is returned by claim-check on a match.
+	FederationSalt    string
+	FederationContact string
+
 	// resolvePURL maps a Package URL to its source repository URL via
 	// packages.ecosyste.ms. Field rather than direct call so tests can
 	// stub the network lookup.
@@ -430,6 +436,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /packages/{id}", s.packageShow)
 	mux.HandleFunc("GET /advisories", s.advisoriesList)
 	mux.HandleFunc("GET /advisories/{id}/certificate.json", s.advisoryCertificateDownload)
+	mux.HandleFunc("POST /claim-check", s.claimCheck)
 	mux.HandleFunc("GET /scans/{id}", s.scanShow)
 	mux.HandleFunc("GET /scans/{id}/report.md", s.scanReport)
 	mux.HandleFunc("POST /scans/{id}/retry", s.scanRetry)

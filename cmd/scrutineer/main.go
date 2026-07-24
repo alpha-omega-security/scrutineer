@@ -117,6 +117,8 @@ type flags struct {
 	recipientsFile        string
 	identityFile          string
 	autoRejectMissedCount int
+	federationSalt        string
+	federationContact     string
 	skillLocal            skillDirs
 
 	// set records which flags were passed on the command line so merge
@@ -166,6 +168,8 @@ func registerFlags(fs *flag.FlagSet, f *flags) {
 	fs.StringVar(&f.recipientsFile, "recipients-file", "", "age recipients file (public keys) for encrypted export")
 	fs.StringVar(&f.identityFile, "identity-file", "", "age identity file or SSH private key for decrypting imports")
 	fs.IntVar(&f.autoRejectMissedCount, "auto-reject-missed-count", 0, "auto-reject findings after this many consecutive missed rescans (0 disables)")
+	fs.StringVar(&f.federationSalt, "federation-salt", "", "shared federation secret mixed into interchange finding hashes; empty disables the claim-check endpoint")
+	fs.StringVar(&f.federationContact, "federation-contact", "", "contact returned by the claim-check endpoint on a finding-hash match")
 	fs.Var(&f.skillLocal, "skills", "additional directory to load SKILL.md files from, overriding bundled skills with the same name (repeatable)")
 }
 
@@ -255,6 +259,12 @@ func (f *flags) merge(cfg *config.Config) {
 	}
 	if cfg.AutoRejectMissedCount > 0 && !f.set["auto-reject-missed-count"] {
 		f.autoRejectMissedCount = cfg.AutoRejectMissedCount
+	}
+	if cfg.FederationSalt != "" && !f.set["federation-salt"] {
+		f.federationSalt = cfg.FederationSalt
+	}
+	if cfg.FederationContact != "" && !f.set["federation-contact"] {
+		f.federationContact = cfg.FederationContact
 	}
 
 	// Seed the model pick list from the active harness's own defaults,
@@ -534,6 +544,8 @@ func run(log *slog.Logger) error {
 	}
 	srv.SetDefaultModel(f.defaultModel)
 	srv.SetDefaultEffort(f.effort)
+	srv.FederationSalt = f.federationSalt
+	srv.FederationContact = f.federationContact
 
 	if f.recipientsFile != "" {
 		recs, err := loadRecipients(f.recipientsFile)

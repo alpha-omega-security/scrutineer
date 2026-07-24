@@ -39,6 +39,9 @@ func fullConfig() *config.Config {
 		MaxTurns:     200,
 		ModelBaseURL: "https://proxy.corp.com/v1",
 		ForkOrg:      "fork-central",
+
+		FederationSalt:    "s3cret",
+		FederationContact: "security@corp.com",
 	}
 }
 
@@ -82,16 +85,23 @@ func TestFlagsMerge_configFillsUnset(t *testing.T) {
 	if f.forkOrg != cfg.ForkOrg {
 		t.Errorf("forkOrg = %q, want %q", f.forkOrg, cfg.ForkOrg)
 	}
+	if f.federationSalt != cfg.FederationSalt {
+		t.Errorf("federationSalt = %q, want %q", f.federationSalt, cfg.FederationSalt)
+	}
+	if f.federationContact != cfg.FederationContact {
+		t.Errorf("federationContact = %q, want %q", f.federationContact, cfg.FederationContact)
+	}
 }
 
 func TestFlagsMerge_cliFlagWins(t *testing.T) {
 	cfg := fullConfig()
 	f := &flags{
 		addr: "127.0.0.1:8080", cloneMode: "shallow", concurrency: 2,
-		modelBaseURL: "https://my-flag.example.com/v1",
+		modelBaseURL:   "https://my-flag.example.com/v1",
+		federationSalt: "flag-salt",
 		set: map[string]bool{
 			"addr": true, "clone": true, "concurrency": true,
-			"model-base-url": true,
+			"model-base-url": true, "federation-salt": true,
 		},
 	}
 	f.merge(cfg)
@@ -110,6 +120,13 @@ func TestFlagsMerge_cliFlagWins(t *testing.T) {
 	}
 	if f.modelBaseURL != "https://my-flag.example.com/v1" {
 		t.Errorf("modelBaseURL overridden despite explicit flag: %q", f.modelBaseURL)
+	}
+	if f.federationSalt != "flag-salt" {
+		t.Errorf("federationSalt overridden despite explicit flag: %q", f.federationSalt)
+	}
+	// federation-contact wasn't in set, so config still applies
+	if f.federationContact != cfg.FederationContact {
+		t.Errorf("federationContact = %q, want %q", f.federationContact, cfg.FederationContact)
 	}
 }
 
