@@ -27,6 +27,7 @@ var modelPricing = map[string]modelPrice{
 	"claude-opus-4-6":   {In: 5.00, Out: 25.00, CachedIn: 0.50, CacheWrite: 6.25},
 	"claude-opus-4-7":   {In: 5.00, Out: 25.00, CachedIn: 0.50, CacheWrite: 6.25},
 	"claude-opus-4-8":   {In: 5.00, Out: 25.00, CachedIn: 0.50, CacheWrite: 6.25},
+	"claude-opus-5":     {In: 5.00, Out: 25.00, CachedIn: 0.50, CacheWrite: 6.25},
 	"claude-sonnet-4-6": {In: 3.00, Out: 15.00, CachedIn: 0.30, CacheWrite: 3.75},
 	"claude-haiku-4-5":  {In: 1.00, Out: 5.00, CachedIn: 0.10, CacheWrite: 1.25},
 	// Sonnet 5 list rate (intro $2/$10 through 2026-08-31).
