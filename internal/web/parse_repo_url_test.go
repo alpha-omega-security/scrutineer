@@ -155,6 +155,16 @@ func TestParseRepoInput(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name:    "userinfo user:token rejected",
+			input:   "https://user:token@github.com/owner/repo",
+			wantErr: true,
+		},
+		{
+			name:    "userinfo bare username rejected",
+			input:   "https://ghp_aaaa@github.com/owner/repo",
+			wantErr: true,
+		},
+		{
 			name:    "empty rejected",
 			input:   "   ",
 			wantErr: true,
