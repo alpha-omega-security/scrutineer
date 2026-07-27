@@ -12,7 +12,7 @@ func TestSecurityHeadersRejectsBadHost(t *testing.T) {
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	h := securityHeaders(inner)
+	h := securityHeaders(false, inner)
 
 	r := httptest.NewRequest("GET", "/", nil)
 	r.Host = "evil.example:8080"
@@ -27,7 +27,7 @@ func TestSecurityHeadersAllowsLocalhost(t *testing.T) {
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	h := securityHeaders(inner)
+	h := securityHeaders(false, inner)
 
 	for _, host := range []string{
 		"127.0.0.1:8080", "localhost:8080", "[::1]:8080",
@@ -43,11 +43,37 @@ func TestSecurityHeadersAllowsLocalhost(t *testing.T) {
 	}
 }
 
+func TestSecurityHeadersAllowRemoteBypassesHostCheck(t *testing.T) {
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	h := securityHeaders(true, inner)
+
+	// With the toggle on, a non-localhost Host is served instead of rejected.
+	r := httptest.NewRequest("GET", "/", nil)
+	r.Host = "scrutineer.example:8080"
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Errorf("allowRemote: got %d, want 200", w.Code)
+	}
+
+	// The CSRF check is independent of the host toggle and still fires.
+	r = httptest.NewRequest("POST", "/repositories", nil)
+	r.Host = "scrutineer.example:8080"
+	r.Header.Set("Sec-Fetch-Site", "cross-site")
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("allowRemote cross-site POST: got %d, want 403", w.Code)
+	}
+}
+
 func TestSecurityHeadersRejectsCrossSitePost(t *testing.T) {
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	h := securityHeaders(inner)
+	h := securityHeaders(false, inner)
 
 	r := httptest.NewRequest("POST", "/repositories", nil)
 	r.Host = testHost
@@ -63,7 +89,7 @@ func TestSecurityHeadersAllowsSameOriginPost(t *testing.T) {
 	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	h := securityHeaders(inner)
+	h := securityHeaders(false, inner)
 
 	r := httptest.NewRequest("POST", "/repositories", nil)
 	r.Host = testHost
