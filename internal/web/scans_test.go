@@ -455,3 +455,40 @@ func TestScansRetryFailed_dedupesRepeatedFailures(t *testing.T) {
 		t.Errorf("retried sub_path = %q, want the repeated-failure tuple (parked is superseded)", queued[0].SubPath)
 	}
 }
+
+func TestScansRetryFailed_preservesFocusArea(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/r", Name: "r"}
+	s.DB.Create(&repo)
+	skill := db.Skill{Name: "security-deep-dive", Description: "d", Body: "b",
+		OutputFile: "report.json", OutputKind: "findings", Version: 1,
+		Active: true, Source: "ui"}
+	s.DB.Create(&skill)
+	focusArea := `{"name":"request parser","paths":["internal/parser/**"],"surface":"untrusted requests"}`
+	failed := db.Scan{
+		RepositoryID:   repo.ID,
+		Kind:           worker.JobSkill,
+		Status:         db.ScanFailed,
+		StatusPriority: db.StatusPriorityFor(db.ScanFailed),
+		SkillID:        &skill.ID,
+		SkillName:      skill.Name,
+		FocusArea:      focusArea,
+	}
+	s.DB.Create(&failed)
+
+	w := httptest.NewRecorder()
+	s.scansRetryFailed(w, localReq("POST", "/scans/retry-failed"))
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303; body=%s", w.Code, w.Body)
+	}
+
+	var retried db.Scan
+	if err := s.DB.Where("id > ? AND status = ?", failed.ID, db.ScanQueued).First(&retried).Error; err != nil {
+		t.Fatalf("load retried scan: %v", err)
+	}
+	if retried.FocusArea != focusArea {
+		t.Errorf("retried focus_area = %q, want %q", retried.FocusArea, focusArea)
+	}
+}
