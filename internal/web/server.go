@@ -2704,10 +2704,12 @@ func (s *Server) repoScheduleUpdate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if upstream != "" {
-		if _, err := ParseRepoInput(upstream); err != nil {
-			http.Error(w, "invalid upstream URL: "+err.Error(), http.StatusUnprocessableEntity)
+		input, err := ParseRepoInput(upstream)
+		if err != nil {
+			http.Error(w, strings.Replace(err.Error(), "repository URL", "upstream URL", 1), http.StatusUnprocessableEntity)
 			return
 		}
+		upstream = input.CloneURL
 	}
 	if err := s.DB.Model(&db.Repository{}).Where("id = ?", repo.ID).Updates(map[string]any{
 		"scan_schedule":          schedule,
