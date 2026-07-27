@@ -2,6 +2,7 @@ package web
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -15,6 +16,9 @@ func importSingleResult(s *Server, res ingest.Result, revalidate bool) (map[stri
 	out, err := s.importResults([]ingest.Result{res}, "", revalidate)
 	if err != nil {
 		return nil, err
+	}
+	if len(out) != 1 {
+		return nil, fmt.Errorf("import results = %d, want 1", len(out))
 	}
 	return out[0], nil
 }

@@ -100,14 +100,18 @@ func TestHandleImportSARIF(t *testing.T) {
 func TestHandleImport_multiResultFailureRollsBackAllRows(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
-	s.DB.Create(&db.Skill{
+	if err := s.DB.Create(&db.Skill{
 		Name: metadataSkillName, OutputFile: "report.json",
 		OutputKind: "repo_metadata", Version: 1, Active: true,
-	})
-	s.DB.Create(&db.Skill{
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DB.Create(&db.Skill{
 		Name: revalidateSkillName, OutputFile: "report.json",
 		OutputKind: "revalidate", Version: 1, Active: true,
-	})
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
 
 	body := `{
 		"version": "2.1.0",
