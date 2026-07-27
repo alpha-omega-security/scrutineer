@@ -9,7 +9,7 @@ require (
 	github.com/ecosyste-ms/ecosystems-go v0.3.0
 	github.com/git-pkgs/enrichment v0.6.0
 	github.com/git-pkgs/pom v0.1.5
-	github.com/git-pkgs/purl v0.1.14
+	github.com/git-pkgs/purl v0.1.15
 	github.com/git-pkgs/sarif v0.1.1
 	github.com/git-pkgs/sbom v0.1.3
 	github.com/git-pkgs/vulns v0.2.0
