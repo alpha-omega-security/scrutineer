@@ -37,8 +37,9 @@ func CanonicalRepo(url string) string {
 }
 
 // canonicalCWE normalises the comma-joined CWE list findings carry:
-// elements trimmed, uppercased, empties dropped, sorted, joined with a
-// bare comma, so spacing and recording order never change the hash.
+// elements trimmed, uppercased, empties dropped, sorted, deduplicated,
+// joined with a bare comma, so spacing, recording order and a repeated
+// id never change the hash.
 func canonicalCWE(cwe string) string {
 	var ids []string
 	for _, id := range strings.Split(cwe, ",") {
@@ -47,7 +48,7 @@ func canonicalCWE(cwe string) string {
 		}
 	}
 	slices.Sort(ids)
-	return strings.Join(ids, ",")
+	return strings.Join(slices.Compact(ids), ",")
 }
 
 // canonicalLocation reduces a finding location to a lowercased,

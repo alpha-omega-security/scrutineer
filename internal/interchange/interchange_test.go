@@ -57,6 +57,7 @@ func TestFindingHashCWEList(t *testing.T) {
 		"order":          "CWE-89,CWE-79",
 		"case":           "cwe-89,cwe-79",
 		"empty elements": "CWE-79,,CWE-89,",
+		"duplicates":     "CWE-79,CWE-89,CWE-79",
 	} {
 		if got := FindingHash("s", "https://github.com/acme/lib", "", "src/parse.go", cwe); got != base {
 			t.Errorf("%s: CWE list %q must hash like the canonical list", name, cwe)

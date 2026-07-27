@@ -47,8 +47,8 @@ joined with NUL (`0x00`) bytes, where:
   suffix stripped (`:42`, `:42:7`, and the `:10-20` range form), backslashes
   normalised to `/`, the scan `sub_path` prepended, lowercased;
 - `cwe` is the finding's comma-joined CWE list canonicalised: elements
-  trimmed, uppercased, empties dropped, sorted, joined with a bare comma
-  (empty stays empty).
+  trimmed, uppercased, empties dropped, sorted, deduplicated, joined with a
+  bare comma (empty stays empty).
 
 Two instances holding the same vulnerability derive the same hash without
 coordinating; without the salt the hash reveals nothing enumerable. The

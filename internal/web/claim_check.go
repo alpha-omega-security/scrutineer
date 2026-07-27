@@ -79,6 +79,12 @@ func (s *Server) claimCheck(w http.ResponseWriter, r *http.Request) {
 // rebuilding the cached set at most once per claimCheckTTL. Rejected
 // findings are ones this instance decided are not real, and a duplicate
 // is covered by its canonical sibling; neither is ours to claim.
+//
+// The rebuild scans the whole findings table and hashes every row while
+// holding the index lock, so the strategy assumes a bounded table: past
+// the point where scan plus SHA256 per row stops being cheap, the first
+// request after each expiry stalls every concurrent claim-check and this
+// needs an incremental index maintained on finding writes instead.
 func (s *Server) claimHashSet() (map[string]struct{}, error) {
 	s.claimIndex.mu.Lock()
 	defer s.claimIndex.mu.Unlock()
