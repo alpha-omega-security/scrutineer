@@ -70,14 +70,10 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	repoOverride := r.URL.Query().Get("repo")
-	out := make([]map[string]any, 0, len(results))
-	for _, res := range results {
-		summary, err := s.importResult(res, repoOverride, revalidate)
-		if err != nil {
-			writeAPIError(w, http.StatusUnprocessableEntity, err.Error())
-			return
-		}
-		out = append(out, summary)
+	out, err := s.importResults(results, repoOverride, revalidate)
+	if err != nil {
+		writeAPIError(w, http.StatusUnprocessableEntity, err.Error())
+		return
 	}
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"format":  string(format),
@@ -154,6 +150,10 @@ func (s *Server) importFallback(w http.ResponseWriter, r *http.Request, body []b
 // ensureImportRepo resolves a repository URL from an import request to a
 // Repository row, creating it on first sight.
 func (s *Server) ensureImportRepo(repoURL string) (db.Repository, error) {
+	return ensureImportRepoWith(s.DB, repoURL)
+}
+
+func ensureImportRepoWith(database *gorm.DB, repoURL string) (db.Repository, error) {
 	input, err := ParseRepoInput(repoURL)
 	if err != nil {
 		return db.Repository{}, fmt.Errorf("repository %q: %w", repoURL, err)
@@ -179,23 +179,86 @@ func (s *Server) ensureImportRepo(repoURL string) (db.Repository, error) {
 	if input.Owner != "" {
 		repo.FullName = input.Owner + "/" + input.Name
 	}
-	if err := s.DB.Where(db.Repository{URL: input.CloneURL}).FirstOrCreate(&repo).Error; err != nil {
+	if err := database.Where(db.Repository{URL: input.CloneURL}).FirstOrCreate(&repo).Error; err != nil {
 		return db.Repository{}, err
 	}
 	return repo, nil
 }
 
-func (s *Server) importResult(res ingest.Result, repoOverride string, revalidate bool) (map[string]any, error) {
+type importedResult struct {
+	repo     db.Repository
+	scan     db.Scan
+	tool     string
+	created  []db.Finding
+	observed int
+}
+
+func (s *Server) importResults(results []ingest.Result, repoOverride string, revalidate bool) ([]map[string]any, error) {
+	imported := make([]importedResult, 0, len(results))
+	err := s.DB.Transaction(func(tx *gorm.DB) error {
+		for _, res := range results {
+			outcome, err := s.importResultWith(tx, res, repoOverride)
+			if err != nil {
+				return err
+			}
+			imported = append(imported, outcome)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	out := make([]map[string]any, 0, len(imported))
+	for _, result := range imported {
+		s.enqueueImportedRepoMetadata(context.Background(), result.repo)
+		// Imported findings carry an external tool's unvalidated severity
+		// claim, so revalidate runs over every newly-imported finding
+		// regardless of severity (not just High/Critical, as it does for
+		// security-deep-dive output). ?revalidate=false skips this — and the
+		// verify it chains into — for callers importing already-audited
+		// findings such as a trusted sharing bundle. Enqueued after commit so
+		// a rolled-back import never queues work against phantom findings.
+		if revalidate {
+			for i := range result.created {
+				// Imports have no parent scan and hence no resolved profile to carry;
+				// revalidate detects fresh, and its resolved profile then carries into
+				// the chained verify (autoChainVerifyAfterRevalidate). See #548.
+				s.enqueueRevalidateForFinding(context.Background(), &result.created[i], "")
+			}
+		}
+		s.Log.Info("import",
+			"repo", result.repo.URL, "tool", result.tool, "scan", result.scan.ID,
+			"created", len(result.created), "observed", result.observed)
+
+		ids := make([]uint, len(result.created))
+		for i, finding := range result.created {
+			ids[i] = finding.ID
+		}
+		out = append(out, map[string]any{
+			"repository_id": result.repo.ID,
+			"repository":    result.repo.URL,
+			"scan_id":       result.scan.ID,
+			"tool":          result.tool,
+			"created":       len(result.created),
+			"observed":      result.observed,
+			"finding_ids":   ids,
+		})
+	}
+	return out, nil
+}
+
+func (s *Server) importResultWith(tx *gorm.DB, res ingest.Result, repoOverride string) (importedResult, error) {
 	repoURL := res.RepoURL
 	if repoOverride != "" {
 		repoURL = repoOverride
 	}
 	if repoURL == "" {
-		return nil, fmt.Errorf("repository unknown: report has no provenance and no ?repo= supplied")
+		return importedResult{}, fmt.Errorf("repository unknown: report has no provenance and no ?repo= supplied")
 	}
-	repo, err := s.ensureImportRepo(repoURL)
+	repo, err := ensureImportRepoWith(tx, repoURL)
 	if err != nil {
-		return nil, err
+		return importedResult{}, err
 	}
 
 	now := time.Now()
@@ -211,50 +274,19 @@ func (s *Server) importResult(res ingest.Result, repoOverride string, revalidate
 	}
 	scan.StatusPriority = db.StatusPriorityFor(scan.Status)
 
-	var created []db.Finding
-	var observed int
-	err = s.DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Create(&scan).Error; err != nil {
-			return err
-		}
-		created, observed, err = s.importFindings(tx, &scan, res)
-		return err
-	})
+	if err := tx.Create(&scan).Error; err != nil {
+		return importedResult{}, err
+	}
+	created, observed, err := s.importFindings(tx, &scan, res)
 	if err != nil {
-		return nil, err
+		return importedResult{}, err
 	}
-	s.enqueueImportedRepoMetadata(context.Background(), repo)
-	// Imported findings carry an external tool's unvalidated severity
-	// claim, so revalidate runs over every newly-imported finding
-	// regardless of severity (not just High/Critical, as it does for
-	// security-deep-dive output). ?revalidate=false skips this — and the
-	// verify it chains into — for callers importing already-audited
-	// findings such as a trusted sharing bundle. Enqueued after commit so
-	// a rolled-back import never queues work against phantom findings.
-	if revalidate {
-		for i := range created {
-			// Imports have no parent scan and hence no resolved profile to carry;
-			// revalidate detects fresh, and its resolved profile then carries into
-			// the chained verify (autoChainVerifyAfterRevalidate). See #548.
-			s.enqueueRevalidateForFinding(context.Background(), &created[i], "")
-		}
-	}
-	s.Log.Info("import",
-		"repo", repo.URL, "tool", res.Tool, "scan", scan.ID,
-		"created", len(created), "observed", observed)
-
-	ids := make([]uint, len(created))
-	for i, f := range created {
-		ids[i] = f.ID
-	}
-	return map[string]any{
-		"repository_id": repo.ID,
-		"repository":    repo.URL,
-		"scan_id":       scan.ID,
-		"tool":          res.Tool,
-		"created":       len(created),
-		"observed":      observed,
-		"finding_ids":   ids,
+	return importedResult{
+		repo:     repo,
+		scan:     scan,
+		tool:     res.Tool,
+		created:  created,
+		observed: observed,
 	}, nil
 }
 
