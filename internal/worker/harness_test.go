@@ -116,14 +116,17 @@ type stubHarness struct {
 	acctErr string
 }
 
-func (s stubHarness) Binary() string                              { return s.bin }
-func (s stubHarness) Args(SkillJob, string, int, string) []string { return []string{"--stub"} }
-func (s stubHarness) ParseStream(io.Reader, func(Event))          {}
-func (s stubHarness) SkillDir(wr, n string) string                { return filepath.Join(wr, "stub-skills", n) }
-func (s stubHarness) GuideFilename() string                       { return s.guide }
-func (s stubHarness) EgressHosts() []string                       { return s.egress }
-func (s stubHarness) Env(string) []string                         { return s.env }
-func (s stubHarness) StateEnv(string) []string                    { return s.state }
+func (s stubHarness) Binary() string { return s.bin }
+func (s stubHarness) Args(sj SkillJob, _ string, _ int, _ string) []string {
+	return []string{s.Prompt(sj)}
+}
+func (stubHarness) Prompt(SkillJob) string               { return "--stub" }
+func (s stubHarness) ParseStream(io.Reader, func(Event)) {}
+func (s stubHarness) SkillDir(wr, n string) string       { return filepath.Join(wr, "stub-skills", n) }
+func (s stubHarness) GuideFilename() string              { return s.guide }
+func (s stubHarness) EgressHosts() []string              { return s.egress }
+func (s stubHarness) Env(string) []string                { return s.env }
+func (s stubHarness) StateEnv(string) []string           { return s.state }
 func (s stubHarness) AccountErrorText(t string) string {
 	if s.acctErr != "" && strings.Contains(t, s.acctErr) {
 		return t
@@ -131,6 +134,21 @@ func (s stubHarness) AccountErrorText(t string) string {
 	return ""
 }
 func (s stubHarness) DefaultModels() []ModelDefault { return nil }
+
+func TestHarnessArgs_endWithHarnessPrompt(t *testing.T) {
+	sj := SkillJob{Name: "deep-dive", OutputFile: "report.json"}
+	for name, harness := range harnesses {
+		if name == "" {
+			continue
+		}
+		t.Run(name, func(t *testing.T) {
+			args := harness.Args(sj, "", 0, "")
+			if got, want := args[len(args)-1], harness.Prompt(sj); got != want {
+				t.Errorf("final arg = %q, want prompt %q", got, want)
+			}
+		})
+	}
+}
 
 func TestHarnessDefaultModels_registryEntriesAreComplete(t *testing.T) {
 	// Every registered harness must supply a non-empty default model

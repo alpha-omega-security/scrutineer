@@ -49,7 +49,11 @@ func (CodexHarness) Args(sj SkillJob, _ string, _ int, baseURL string) []string 
 	if sj.ResumeSessionID != "" {
 		args = append(args, "resume", sj.ResumeSessionID)
 	}
-	return append(args, explicitSkillPrompt(sj, "./skills/"+sj.Name))
+	return append(args, CodexHarness{}.Prompt(sj))
+}
+
+func (CodexHarness) Prompt(sj SkillJob) string {
+	return explicitSkillPrompt(sj, "./skills/"+sj.Name)
 }
 
 // ParseStream reads `codex exec --json` JSONL output. The event shapes

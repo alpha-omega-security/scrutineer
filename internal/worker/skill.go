@@ -195,7 +195,7 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 		return "", err
 	}
 
-	prompt := buildLoggedPrompt(&skill)
+	prompt := buildLoggedPrompt(&skill, scan.Backend)
 	scan.Prompt = prompt
 	w.DB.Model(scan).Update("prompt", prompt)
 

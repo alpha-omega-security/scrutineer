@@ -337,17 +337,7 @@ func buildClaudeArgs(sj SkillJob, effort string, globalMaxTurns int) []string {
 		args = append(args, "--resume", sj.ResumeSessionID)
 	}
 	args = append(args, "--max-turns", strconv.Itoa(effectiveMaxTurns(sj.MaxTurns, globalMaxTurns)))
-	switch {
-	case sj.ResumeSessionID != "" && sj.ResumePrompt != "":
-		args = append(args, sj.ResumePrompt)
-	case sj.ResumeSessionID != "":
-		args = append(args, buildResumePrompt(sj.Name, sj.OutputFile))
-	case sj.Prompt != "":
-		args = append(args, sj.Prompt)
-	default:
-		args = append(args, buildSkillPrompt(sj.Name, sj.OutputFile))
-	}
-	return args
+	return append(args, ClaudeHarness{}.Prompt(sj))
 }
 
 // claudePermissionMode picks the permission mode for a job that declares an
@@ -411,11 +401,16 @@ func schemaValidationHint(outputFile string) string {
 }
 
 // buildLoggedPrompt is what scrutineer records on scan.Prompt for the UI. It
-// pairs the activation invocation with the rendered SKILL.md so the Prompt
-// tab shows the actual instructions Claude executed (#308), not just the
-// "use the X skill" wrapper.
-func buildLoggedPrompt(skill *db.Skill) string {
-	return buildSkillPrompt(skill.Name, skill.OutputFile) +
+// pairs the selected harness's activation invocation with the rendered
+// SKILL.md so the Prompt tab shows the instructions the agent received (#308),
+// not just an activation wrapper.
+func buildLoggedPrompt(skill *db.Skill, backend string) string {
+	harness, err := HarnessByName(backend)
+	if err != nil {
+		harness = ClaudeHarness{}
+	}
+	prompt := harness.Prompt(SkillJob{Name: skill.Name, OutputFile: skill.OutputFile})
+	return prompt +
 		"\n\n--- SKILL.md ---\n\n" + renderSkillMD(skill)
 }
 
@@ -427,6 +422,7 @@ func buildResumePrompt(name, outputFile string) string {
 	p := fmt.Sprintf("Continue the %q skill on the repository at ./src from where you left off.", name)
 	if outputFile != "" {
 		p += fmt.Sprintf(" Write your structured output to ./%s as the skill specifies.", outputFile)
+		p += schemaValidationHint(outputFile)
 	}
 	return p
 }

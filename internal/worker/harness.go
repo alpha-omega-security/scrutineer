@@ -88,6 +88,10 @@ type Harness interface {
 	// the operator's model-API base URL override; harnesses that do not
 	// pass it as an env var can translate it into CLI/config arguments.
 	Args(sj SkillJob, effort string, globalMaxTurns int, baseURL string) []string
+	// Prompt is the final user prompt Args passes to the harness. Keeping
+	// prompt construction on the harness lets scan.Prompt record the same
+	// activation wording the selected backend receives.
+	Prompt(sj SkillJob) string
 	// ParseStream reads the harness's combined stdout/stderr and emits one
 	// Event per logical line. The Event vocabulary (KindText, KindTool,
 	// KindSession, KindError, ...) is harness-neutral; this method maps

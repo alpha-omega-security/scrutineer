@@ -34,7 +34,11 @@ func (OpencodeHarness) Args(sj SkillJob, _ string, _ int, _ string) []string {
 	if sj.ResumeSessionID != "" {
 		args = append(args, "--session", sj.ResumeSessionID)
 	}
-	return append(args, explicitSkillPrompt(sj, "./.opencode/skill/"+sj.Name))
+	return append(args, OpencodeHarness{}.Prompt(sj))
+}
+
+func (OpencodeHarness) Prompt(sj SkillJob) string {
+	return explicitSkillPrompt(sj, "./.opencode/skill/"+sj.Name)
 }
 
 func (OpencodeHarness) ParseStream(r io.Reader, emit func(Event)) {

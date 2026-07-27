@@ -19,6 +19,19 @@ func (ClaudeHarness) Args(sj SkillJob, effort string, globalMaxTurns int, _ stri
 	return buildClaudeArgs(sj, effort, globalMaxTurns)
 }
 
+func (ClaudeHarness) Prompt(sj SkillJob) string {
+	switch {
+	case sj.ResumeSessionID != "" && sj.ResumePrompt != "":
+		return sj.ResumePrompt
+	case sj.ResumeSessionID != "":
+		return buildResumePrompt(sj.Name, sj.OutputFile)
+	case sj.Prompt != "":
+		return sj.Prompt
+	default:
+		return buildSkillPrompt(sj.Name, sj.OutputFile)
+	}
+}
+
 func (ClaudeHarness) ParseStream(r io.Reader, emit func(Event)) {
 	ParseStream(r, emit)
 }
