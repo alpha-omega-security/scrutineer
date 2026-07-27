@@ -2,6 +2,7 @@ package web
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -12,6 +13,8 @@ import (
 
 	"scrutineer/internal/db"
 	"scrutineer/internal/worker"
+
+	"gorm.io/gorm"
 )
 
 func TestResumeOpts(t *testing.T) {
@@ -390,6 +393,78 @@ func TestEnqueueResumedScan_restoresPausedUntilOnEnqueueFailure(t *testing.T) {
 	}
 	if got.PausedUntil == nil || !got.PausedUntil.Equal(pausedUntil) {
 		t.Errorf("paused_until = %v, want %v", got.PausedUntil, pausedUntil)
+	}
+}
+
+func TestBulkResumePaused_usesSetBasedUpdate(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/r", Name: "r"}
+	s.DB.Create(&repo)
+	for range 2 {
+		s.DB.Create(&db.Scan{
+			RepositoryID: repo.ID,
+			Kind:         worker.JobSkill,
+			Status:       db.ScanPaused,
+		})
+	}
+
+	updates := 0
+	const callback = "test:count-bulk-resume-updates"
+	if err := s.DB.Callback().Update().Before("gorm:update").Register(callback, func(*gorm.DB) {
+		updates++
+	}); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = s.DB.Callback().Update().Remove(callback)
+	}()
+
+	scans, err := s.bulkResumePaused(s.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scans) != 2 {
+		t.Fatalf("resumed scans = %d, want 2", len(scans))
+	}
+	if updates != 1 {
+		t.Fatalf("update statements = %d, want 1", updates)
+	}
+}
+
+func TestBulkResumePaused_usesCallerTransaction(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/r", Name: "r"}
+	s.DB.Create(&repo)
+	scan := db.Scan{
+		RepositoryID: repo.ID,
+		Kind:         worker.JobSkill,
+		Status:       db.ScanPaused,
+	}
+	s.DB.Create(&scan)
+
+	rollback := errors.New("roll back test")
+	err := s.DB.Transaction(func(tx *gorm.DB) error {
+		scans, err := s.bulkResumePaused(tx)
+		if err != nil {
+			return err
+		}
+		if len(scans) != 1 {
+			t.Fatalf("resumed scans = %d, want 1", len(scans))
+		}
+		return rollback
+	})
+	if !errors.Is(err, rollback) {
+		t.Fatalf("transaction error = %v, want %v", err, rollback)
+	}
+
+	var got db.Scan
+	s.DB.First(&got, scan.ID)
+	if got.Status != db.ScanPaused {
+		t.Fatalf("status after caller rollback = %q, want paused", got.Status)
 	}
 }
 
