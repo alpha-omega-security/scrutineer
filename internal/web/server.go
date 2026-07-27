@@ -2703,6 +2703,12 @@ func (s *Server) repoScheduleUpdate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "upstream URL must start with https://", http.StatusUnprocessableEntity)
 		return
 	}
+	if upstream != "" {
+		if _, err := ParseRepoInput(upstream); err != nil {
+			http.Error(w, "invalid upstream URL: "+err.Error(), http.StatusUnprocessableEntity)
+			return
+		}
+	}
 	if err := s.DB.Model(&db.Repository{}).Where("id = ?", repo.ID).Updates(map[string]any{
 		"scan_schedule":          schedule,
 		"upstream_url":           upstream,

@@ -355,6 +355,29 @@ func TestRepoScheduleUpdate_rejectsNonHTTPSUpstream(t *testing.T) {
 	}
 }
 
+func TestRepoScheduleUpdate_rejectsCredentialedUpstream(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := scheduledRepo(t, s, "", time.Now())
+
+	w := postForm(t, s, "/repositories/"+strconv.FormatUint(uint64(repo.ID), 10)+"/schedule", url.Values{
+		"scan_schedule": {"daily"},
+		"upstream_url":  {"https://token@example.com/upstream"},
+	})
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status %d, want 422", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "must not contain credentials") {
+		t.Fatalf("body = %q, want credential rejection", w.Body.String())
+	}
+
+	var got db.Repository
+	s.DB.First(&got, repo.ID)
+	if got.UpstreamURL != "" || got.ScanSchedule != "" {
+		t.Fatalf("rejected update changed schedule: upstream = %q schedule = %q", got.UpstreamURL, got.ScanSchedule)
+	}
+}
+
 func TestSettingsUpdateScanSchedule_savesAndResetsInheritingRepos(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
