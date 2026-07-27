@@ -102,10 +102,10 @@ type Server struct {
 	claimIndex        claimCheckIndex
 
 	// AllowRemote, when true, permits remote access by disabling
-	// securityHeaders' localhost-only host-header check, so the UI/API can be
-	// served for any Host (e.g. behind a reverse proxy or over a LAN). Defaults
-	// to false, which keeps the DNS-rebinding protection. Set from
-	// config.AllowRemote.
+	// securityHeaders' localhost-only host-header check, so the UI and
+	// unauthenticated /api/v1 export endpoints can be served for any Host (e.g.
+	// behind a reverse proxy or over a LAN). Defaults to false, which keeps the
+	// DNS-rebinding protection. Set from config.AllowRemote.
 	AllowRemote bool
 
 	// resolvePURL maps a Package URL to its source repository URL via
