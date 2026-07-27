@@ -212,6 +212,35 @@ func TestImportFindings_rollbackLeavesNoScanOrFindings(t *testing.T) {
 	}
 }
 
+func TestExistingByFingerprint_chunksLargeInput(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	const sqliteMaxVariables = 32766
+	fingerprints := make([]string, sqliteMaxVariables)
+	for i := range fingerprints {
+		fingerprints[i] = "missing"
+	}
+	if _, err := existingByFingerprint(s.DB, 1, fingerprints); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUpdateObservedFindings_chunksLargeInput(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	const sqliteMaxVariables = 32766
+	ids := make([]uint, sqliteMaxVariables)
+	for i := range ids {
+		ids[i] = uint(i + 1)
+	}
+	scan := db.Scan{Model: "test", Commit: "abc123"}
+	if err := updateObservedFindings(s.DB, &scan, ids); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestImportFindings_keepsSuggestedFixGated(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

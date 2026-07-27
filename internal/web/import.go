@@ -347,14 +347,7 @@ func (s *Server) importFindings(tx *gorm.DB, scan *db.Scan, res ingest.Result) (
 		}
 	}
 	if len(observedIDs) > 0 {
-		err := tx.Model(&db.Finding{}).Where("id IN ?", observedIDs).Updates(map[string]any{
-			"last_seen_scan_id":   scan.ID,
-			"last_seen_commit":    scan.Commit,
-			"seen_count":          gorm.Expr("seen_count + 1"),
-			"missed_count":        0,
-			"last_missed_scan_id": 0,
-		}).Error
-		if err != nil {
+		if err := updateObservedFindings(tx, scan, observedIDs); err != nil {
 			return nil, 0, fmt.Errorf("update observed findings: %w", err)
 		}
 		if err := tx.CreateInBatches(&history, importBatchSize).Error; err != nil {
@@ -370,6 +363,23 @@ func (s *Server) importFindings(tx *gorm.DB, scan *db.Scan, res ingest.Result) (
 		}
 	}
 	return created, len(observedIDs), nil
+}
+
+func updateObservedFindings(tx *gorm.DB, scan *db.Scan, observedIDs []uint) error {
+	for start := 0; start < len(observedIDs); start += importBatchSize {
+		end := min(start+importBatchSize, len(observedIDs))
+		err := tx.Model(&db.Finding{}).Where("id IN ?", observedIDs[start:end]).Updates(map[string]any{
+			"last_seen_scan_id":   scan.ID,
+			"last_seen_commit":    scan.Commit,
+			"seen_count":          gorm.Expr("seen_count + 1"),
+			"missed_count":        0,
+			"last_missed_scan_id": 0,
+		}).Error
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // attachFindingRelations writes a finding's carried child records. With dedup
@@ -584,17 +594,20 @@ func importRelationsFrom(in ingest.Finding) importFindingRelations {
 // duplicate rows share a fingerprint the lowest-id row wins, matching the
 // previous per-row `Order("id").First` behaviour.
 func existingByFingerprint(tx *gorm.DB, repoID uint, fingerprints []string) (map[string]db.Finding, error) {
-	var rows []db.Finding
-	err := tx.Select("id", "fingerprint").
-		Where("repository_id = ? AND fingerprint IN ?", repoID, fingerprints).
-		Order("id").Find(&rows).Error
-	if err != nil {
-		return nil, err
-	}
-	out := make(map[string]db.Finding, len(rows))
-	for _, r := range rows {
-		if _, ok := out[r.Fingerprint]; !ok {
-			out[r.Fingerprint] = r
+	out := make(map[string]db.Finding)
+	for start := 0; start < len(fingerprints); start += importBatchSize {
+		end := min(start+importBatchSize, len(fingerprints))
+		var rows []db.Finding
+		err := tx.Select("id", "fingerprint").
+			Where("repository_id = ? AND fingerprint IN ?", repoID, fingerprints[start:end]).
+			Order("id").Find(&rows).Error
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range rows {
+			if _, ok := out[r.Fingerprint]; !ok {
+				out[r.Fingerprint] = r
+			}
 		}
 	}
 	return out, nil
