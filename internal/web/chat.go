@@ -24,15 +24,22 @@ type chatTurnRunner interface {
 // pin a workspace forever.
 const chatTurnTimeout = 15 * time.Minute
 
-// chatTurnSlots sizes the concurrent-chat-turn pool from the queue's own
-// concurrency, so chat and scans compete for the host on the same terms. A
-// server built without a queue still gets one slot, since a zero-capacity
-// channel would block every turn forever.
+// chatSlotsPerScanSlot divides the queue's concurrency to size the chat pool.
+// The pool is separate from the queue's, so chat turns add to the scan ceiling
+// instead of competing for it: at full concurrency the host runs N scan
+// containers plus this many chat containers, and halving keeps that total at
+// 1.5N rather than 2N.
+const chatSlotsPerScanSlot = 2
+
+// chatTurnSlots sizes the concurrent-chat-turn pool from the queue's
+// concurrency. A server built without a queue, or one reporting no concurrency
+// at all, still gets one slot, since a zero-capacity channel would block every
+// turn forever.
 func chatTurnSlots(q *queue.Queue) int {
-	if q == nil || q.Concurrency() < 1 {
+	if q == nil {
 		return 1
 	}
-	return q.Concurrency()
+	return max(1, q.Concurrency()/chatSlotsPerScanSlot)
 }
 
 // conversationCreateRepo starts a repo-wide chat from the repository page.
@@ -155,6 +162,39 @@ func (s *Server) conversationMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	s.spawnTurn(conv.ID, message)
 	s.redirect(w, r, dest)
+}
+
+// conversationDelete drops a conversation, its messages and its on-disk
+// workspace, which is a full clone plus the harness state dir and is otherwise
+// only reclaimed when the whole repository is deleted. Refused while a turn is
+// in flight: the agent is still reading the clone this would remove under it.
+func (s *Server) conversationDelete(w http.ResponseWriter, r *http.Request) {
+	conv, ok := loadByID[db.Conversation](s, w, r)
+	if !ok {
+		return
+	}
+	// Claiming the slot rather than just reading it, so no turn can start
+	// between the check and the removal either.
+	if !s.beginChatTurn(conv.ID) {
+		setFlash(w, Flash{Category: errorKey, Title: "Still thinking",
+			Description: "Wait for the current reply before deleting this conversation."})
+		s.redirect(w, r, fmt.Sprintf("/conversations/%d", conv.ID))
+		return
+	}
+	defer s.endChatTurn(conv.ID)
+	if err := db.DeleteConversation(s.DB, conv.ID); err != nil {
+		s.Log.Error("chat: delete conversation", "conv", conv.ID, "err", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// After the commit, so a failed transaction never strands a live
+	// conversation whose workspace is already gone.
+	if err := s.Worker.RemoveChatArtifacts(conv.ID); err != nil {
+		s.Log.Error("chat: remove chat workspace", "conv", conv.ID, "err", err)
+	}
+	setFlash(w, Flash{Category: "success", Title: "Conversation deleted",
+		Description: "The transcript and its working copy of the clone were removed."})
+	s.redirect(w, r, conversationBackHref(&conv))
 }
 
 // runChatTurn executes one turn in the background: it streams activity to the

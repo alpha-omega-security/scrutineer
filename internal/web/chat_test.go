@@ -469,6 +469,75 @@ func TestRepoDeleteRemovesConversations(t *testing.T) {
 	}
 }
 
+func TestConversationDelete(t *testing.T) {
+	s, done, _ := chatServer(t)
+	defer done()
+	repo := seedRepo(t, s)
+	conv, err := db.CreateConversation(s.DB, repo.ID, nil, "m", "hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.AddChatMessage(s.DB, conv.ID, db.ChatRoleUser, "hello"); err != nil {
+		t.Fatal(err)
+	}
+
+	w := postForm(t, s, fmt.Sprintf("/conversations/%d/delete", conv.ID), url.Values{})
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303; body=%s", w.Code, w.Body)
+	}
+	if got, want := w.Header().Get("Location"), fmt.Sprintf("/repositories/%d", repo.ID); got != want {
+		t.Errorf("redirected to %q, want %q", got, want)
+	}
+	var convN, msgN int64
+	s.DB.Model(&db.Conversation{}).Count(&convN)
+	s.DB.Model(&db.ChatMessage{}).Count(&msgN)
+	if convN != 0 || msgN != 0 {
+		t.Errorf("after delete: %d conversations, %d messages, want 0/0", convN, msgN)
+	}
+}
+
+func TestConversationDeleteRefusedWhileTurnRuns(t *testing.T) {
+	s, done, _ := chatServer(t)
+	defer done()
+	repo := seedRepo(t, s)
+	conv, err := db.CreateConversation(s.DB, repo.ID, nil, "m", "hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.beginChatTurn(conv.ID)
+	defer s.endChatTurn(conv.ID)
+
+	w := postForm(t, s, fmt.Sprintf("/conversations/%d/delete", conv.ID), url.Values{})
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303 (busy redirect); body=%s", w.Code, w.Body)
+	}
+	if _, err := db.LoadConversation(s.DB, conv.ID); err != nil {
+		t.Errorf("conversation must survive a delete refused mid-turn: %v", err)
+	}
+}
+
+func TestConversationDeleteNotFound(t *testing.T) {
+	s, done, _ := chatServer(t)
+	defer done()
+	if w := postForm(t, s, "/conversations/9999/delete", url.Values{}); w.Code != http.StatusNotFound {
+		t.Errorf("missing conversation: status = %d, want 404", w.Code)
+	}
+}
+
+func TestChatTurnSlotsHalvesQueueConcurrency(t *testing.T) {
+	if got := chatTurnSlots(nil); got != 1 {
+		t.Errorf("without a queue: %d slots, want 1", got)
+	}
+	s, done := newTestServer(t)
+	defer done()
+	for _, tc := range []struct{ concurrency, want int }{{1, 1}, {2, 1}, {4, 2}, {7, 3}} {
+		s.Queue.Reconfigure(tc.concurrency)
+		if got := chatTurnSlots(s.Queue); got != tc.want {
+			t.Errorf("concurrency %d: %d slots, want %d", tc.concurrency, got, tc.want)
+		}
+	}
+}
+
 func TestBrokerConversationScope(t *testing.T) {
 	b := NewBroker()
 	c := b.Subscribe(0, 0, 1) // subscribe to conversation 1 only

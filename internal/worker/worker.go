@@ -410,8 +410,8 @@ func chatHarnessStateDir(dataDir string, convID uint) string {
 }
 
 // RemoveChatArtifacts deletes a conversation's on-disk workspace and harness
-// state directory. Called when the owning repository is deleted; a no-op when
-// the directories are already gone.
+// state directory. Called when the conversation itself or its owning repository
+// is deleted; a no-op when the directories are already gone.
 func (w *Worker) RemoveChatArtifacts(convID uint) error {
 	return errors.Join(
 		os.RemoveAll(chatWorkRoot(w.DataDir, convID)),

@@ -135,6 +135,19 @@ func SetConversationSession(gdb *gorm.DB, convID uint, sessionID, backend string
 		Updates(map[string]any{"session_id": sessionID, "backend": backend}).Error
 }
 
+// DeleteConversation drops a conversation and its messages. The messages go
+// explicitly rather than through ON DELETE CASCADE: sqlite's foreign_keys
+// pragma is per-connection and set on only one pooled connection, so the
+// cascade may not fire on the connection serving this delete.
+func DeleteConversation(gdb *gorm.DB, id uint) error {
+	return gdb.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("conversation_id = ?", id).Delete(&ChatMessage{}).Error; err != nil {
+			return err
+		}
+		return tx.Delete(&Conversation{}, id).Error
+	})
+}
+
 // LoadConversation returns a conversation with its messages in chronological
 // order and its repository preloaded.
 func LoadConversation(gdb *gorm.DB, id uint) (*Conversation, error) {

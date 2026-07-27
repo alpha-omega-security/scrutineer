@@ -177,8 +177,8 @@ type Server struct {
 	// chatSlots bounds concurrent chat turns across all conversations: each
 	// spawns its own agent container, and the per-conversation lock alone
 	// would let one analyst's open tabs outnumber the whole scan pipeline.
-	// Sized from the queue's concurrency at construction, like the runner's
-	// own limit.
+	// Sized at construction from half the queue's concurrency, so a later
+	// Reconfigure does not move the chat ceiling.
 	chatSlots chan struct{}
 	// spawnTurn runs a chat turn in the background. Field rather than a direct
 	// `go s.runChatTurn(...)` so tests can run it synchronously.
@@ -469,6 +469,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /findings/{id}/conversations", s.conversationCreateFinding)
 	mux.HandleFunc("GET /conversations/{id}", s.conversationShow)
 	mux.HandleFunc("POST /conversations/{id}/messages", s.conversationMessage)
+	mux.HandleFunc("POST /conversations/{id}/delete", s.conversationDelete)
 	mux.HandleFunc("GET /packages", s.packages)
 	mux.HandleFunc("GET /packages/{id}", s.packageShow)
 	mux.HandleFunc("GET /advisories", s.advisoriesList)

@@ -1,10 +1,13 @@
 package db
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	"gorm.io/gorm"
 )
 
 func TestChatTitle(t *testing.T) {
@@ -135,6 +138,65 @@ func TestSetConversationSession(t *testing.T) {
 	}
 	if reloaded.SessionID != "sess-123" || reloaded.Backend != "claude" {
 		t.Errorf("session/backend not persisted: %q / %q", reloaded.SessionID, reloaded.Backend)
+	}
+}
+
+func TestDeleteConversation(t *testing.T) {
+	gdb := newTestDB(t)
+	f := seedFinding(t, gdb)
+	doomed, err := CreateConversation(gdb, f.RepositoryID, nil, "m", "doomed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept, err := CreateConversation(gdb, f.RepositoryID, nil, "m", "kept")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, convID := range []uint{doomed.ID, kept.ID} {
+		if _, err := AddChatMessage(gdb, convID, ChatRoleUser, "hello"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := DeleteConversation(gdb, doomed.ID); err != nil {
+		t.Fatalf("DeleteConversation: %v", err)
+	}
+	if _, err := LoadConversation(gdb, doomed.ID); !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Errorf("deleted conversation still loads: err = %v", err)
+	}
+	var orphans int64
+	gdb.Model(&ChatMessage{}).Where("conversation_id = ?", doomed.ID).Count(&orphans)
+	if orphans != 0 {
+		t.Errorf("got %d orphaned messages, want 0", orphans)
+	}
+	survivor, err := LoadConversation(gdb, kept.ID)
+	if err != nil {
+		t.Fatalf("the other conversation must survive: %v", err)
+	}
+	if len(survivor.Messages) != 1 {
+		t.Errorf("survivor has %d messages, want 1", len(survivor.Messages))
+	}
+}
+
+func TestDeleteConversationMissingIDKeepsOthers(t *testing.T) {
+	gdb := newTestDB(t)
+	f := seedFinding(t, gdb)
+	conv, err := CreateConversation(gdb, f.RepositoryID, nil, "m", "hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := AddChatMessage(gdb, conv.ID, ChatRoleUser, "hello"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := DeleteConversation(gdb, conv.ID+1000); err != nil {
+		t.Fatalf("deleting a missing conversation: %v", err)
+	}
+	var convN, msgN int64
+	gdb.Model(&Conversation{}).Count(&convN)
+	gdb.Model(&ChatMessage{}).Count(&msgN)
+	if convN != 1 || msgN != 1 {
+		t.Errorf("got %d conversations / %d messages, want 1/1", convN, msgN)
 	}
 }
 

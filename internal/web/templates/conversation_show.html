@@ -20,7 +20,14 @@
     <i data-lucide="messages-square"></i>
     {{if .Title}}{{.Title}}{{else}}Chat{{end}}
   </h2>
-  <a href="{{$.BackHref}}" class="btn-outline"><i data-lucide="arrow-left"></i> Back</a>
+  <div class="flex items-center gap-2 shrink-0">
+    <form method="post" action="/conversations/{{.ID}}/delete"
+          hx-post="/conversations/{{.ID}}/delete" hx-swap="none"
+          hx-confirm="{{if $.Active}}A reply is still in flight; deleting is refused until it finishes. {{end}}Permanently delete this conversation? This removes the transcript and the working copy of the clone it reasons about. This cannot be undone.">
+      <button class="btn-destructive" type="submit"><i data-lucide="trash-2"></i> Delete</button>
+    </form>
+    <a href="{{$.BackHref}}" class="btn-outline"><i data-lucide="arrow-left"></i> Back</a>
+  </div>
 </div>
 
 <div class="chat-messages flex flex-col gap-3 max-w-3xl pb-2">

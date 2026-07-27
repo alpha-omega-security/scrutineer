@@ -555,6 +555,8 @@ CVE Numbering Authorities from the public cve.org partner list. Used by the `cna
 
 Persisted chat sessions. Each is a conversation with the agent about a repository or, when `finding_id` is set, one of its findings. The agent runs against a copy of the clone (taken from the shared per-URL cache on the first turn and reused afterwards, so the whole conversation reasons about one revision) plus a snapshot of the repository's findings. It is told to only read and search; on the claude harness that is also enforced with `--allowedTools Read,Grep,Glob`, on codex and opencode the container is the enforcement boundary, exactly as for scans. `session_id`/`backend` let a follow-up turn resume the harness conversation with full history via `--resume`; when that session is gone the turn restarts fresh with the transcript replayed into the prompt. Browser-only surface (chat tabs on the repository and finding pages); not exposed on the scan-token or `/v1` API.
 
+A conversation is deleted from its own page (`POST /conversations/{id}/delete`) or with its repository. Either path drops the `chat_messages` rows explicitly and reclaims the on-disk workspace (the clone copy plus the harness state dir) after the commit. The per-conversation delete is refused while a turn is in flight, since the agent is still reading the clone it would remove.
+
 | Column | Type | Notes |
 |--------|------|-------|
 | id | integer PK | |
