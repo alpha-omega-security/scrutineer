@@ -13,6 +13,7 @@ func TestParseStream(t *testing.T) {
 	in := `
 {"type":"assistant","message":{"content":[{"type":"thinking","thinking":"hmm"}]}}
 {"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"ls -la"}}]}}
+{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"x","content":"file contents"}]}}
 {"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}}
 not json at all
 {"type":"result","result":"ok","total_cost_usd":0.42,"num_turns":7,"duration_ms":1000,"usage":{"input_tokens":10,"output_tokens":66,"cache_read_input_tokens":1200,"cache_creation_input_tokens":34000}}
@@ -21,6 +22,7 @@ not json at all
 	var got []Event
 	ParseStream(strings.NewReader(in), func(e Event) { got = append(got, e) })
 
+	// The user/tool_result line is dropped, not passed through as text.
 	if len(got) != 5 {
 		t.Fatalf("want 5 events, got %d: %+v", len(got), got)
 	}

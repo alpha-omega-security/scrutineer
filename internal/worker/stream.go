@@ -157,6 +157,11 @@ func parseStreamLine(raw []byte, emit func(Event)) {
 		if msg.RateLimitInfo != nil {
 			emit(Event{Kind: KindRateLimit, RateLimit: msg.RateLimitInfo})
 		}
+	case "user":
+		// tool_result echoes: full file reads and command output. Dropped
+		// so the transcript stays readable and chat.go's KindText answer
+		// collector does not swallow raw JSON. The tool_use side is
+		// already recorded via the assistant message.
 	default:
 		emit(Event{Kind: KindText, Text: line})
 	}
