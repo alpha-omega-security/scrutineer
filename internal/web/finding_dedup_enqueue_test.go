@@ -1,6 +1,7 @@
 package web
 
 import (
+	"sync"
 	"testing"
 
 	"scrutineer/internal/db"
@@ -161,17 +162,31 @@ func TestAutoEnqueueFindingDedup_conditions(t *testing.T) {
 	}
 }
 
-func TestAutoEnqueueFindingDedup_doesNotDoubleQueue(t *testing.T) {
+func TestAutoEnqueueFindingDedup_doesNotDoubleQueueConcurrently(t *testing.T) {
 	s, done, repoID, dedupID := dedupTestSetup(t)
 	defer done()
 
 	prior := newScan(t, s, repoID, "security-deep-dive")
 	newFindingUnder(t, s, repoID, prior.ID, db.FindingNew)
-	scan := newScan(t, s, repoID, "security-deep-dive")
-	newFindingUnder(t, s, repoID, scan.ID, db.FindingNew)
 
-	s.autoEnqueueFindingDedup(scan)
-	s.autoEnqueueFindingDedup(scan)
+	const finalizers = 16
+	scans := make([]*db.Scan, finalizers)
+	for i := range scans {
+		scans[i] = newScan(t, s, repoID, "security-deep-dive")
+		newFindingUnder(t, s, repoID, scans[i].ID, db.FindingNew)
+	}
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for _, scan := range scans {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			s.autoEnqueueFindingDedup(scan)
+		}()
+	}
+	close(start)
+	wg.Wait()
 
 	if n := dedupQueued(s, repoID, dedupID); n != 1 {
 		t.Errorf("queued = %d, want 1 (re-queue guard)", n)

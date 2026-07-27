@@ -88,13 +88,20 @@ func (s *Server) enqueueFindingDedupForRepo(ctx context.Context, repoID uint) {
 	if err := s.DB.Where("name = ? AND active = ?", findingDedupSkillName, true).First(&skill).Error; err != nil {
 		return
 	}
-	if s.hasOpenRepoScopedScan(repoID, skill.ID) {
-		return
-	}
-	if _, err := s.enqueueSkillWith(ctx, repoID, skill.ID, ScanOpts{}); err != nil {
+	if err := s.enqueueRepoScopedSkillIfIdle(ctx, repoID, skill.ID); err != nil {
 		s.Log.Warn("auto-enqueue finding-dedup",
 			"repo", repoID, "skill", findingDedupSkillName, "err", err)
 	}
+}
+
+func (s *Server) enqueueRepoScopedSkillIfIdle(ctx context.Context, repoID, skillID uint) error {
+	s.agentEnqueueMu.Lock()
+	defer s.agentEnqueueMu.Unlock()
+	if s.hasOpenRepoScopedScan(repoID, skillID) {
+		return nil
+	}
+	_, err := s.enqueueSkillWith(ctx, repoID, skillID, ScanOpts{})
+	return err
 }
 
 // hasOpenRepoScopedScan returns true when a queued or running repository-scoped

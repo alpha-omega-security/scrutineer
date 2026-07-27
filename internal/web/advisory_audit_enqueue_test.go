@@ -1,6 +1,7 @@
 package web
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -119,5 +120,37 @@ func TestAutoEnqueueAdvisoryAudit_skipsWhenAlreadyInFlight(t *testing.T) {
 
 	if got := advisoryAuditQueued(s, repoID, skillID); got != 1 {
 		t.Fatalf("queued audits = %d, want 1 (no duplicate enqueue)", got)
+	}
+}
+
+func TestAutoEnqueueAdvisoryAudit_doesNotDoubleQueueConcurrently(t *testing.T) {
+	s, done, repoID, skillID := advisoryAuditSetup(t)
+	defer done()
+
+	auditedAt := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	released := auditedAt.Add(48 * time.Hour)
+	seedDoneAudit(s, repoID, auditedAt)
+	seedPackage(s, repoID, &released)
+
+	const finalizers = 16
+	scans := make([]*db.Scan, finalizers)
+	for i := range scans {
+		scans[i] = newScan(t, s, repoID, packagesSkillName)
+	}
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for _, scan := range scans {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			s.autoEnqueueAdvisoryAudit(scan)
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	if got := advisoryAuditQueued(s, repoID, skillID); got != 1 {
+		t.Fatalf("queued audits = %d, want 1", got)
 	}
 }

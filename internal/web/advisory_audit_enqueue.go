@@ -66,10 +66,7 @@ func (s *Server) autoEnqueueAdvisoryAudit(scan *db.Scan) {
 		}
 		return
 	}
-	if s.hasOpenRepoScopedScan(scan.RepositoryID, skill.ID) {
-		return
-	}
-	if _, err := s.enqueueSkillWith(context.Background(), scan.RepositoryID, skill.ID, ScanOpts{}); err != nil {
+	if err := s.enqueueRepoScopedSkillIfIdle(context.Background(), scan.RepositoryID, skill.ID); err != nil {
 		s.Log.Warn("advisory regression watch: enqueue",
 			"repo", scan.RepositoryID, "skill", advisoryDeepDiveSkillName, "err", err)
 	}
