@@ -1,12 +1,14 @@
 package web
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"scrutineer/internal/db"
 	"scrutineer/internal/worker"
@@ -347,6 +349,47 @@ func TestScansResumePaused(t *testing.T) {
 	s.DB.First(&p1got, p1.ID)
 	if p1got.StatusPriority != db.StatusPriorityFor(db.ScanQueued) {
 		t.Errorf("status_priority = %d, want queued priority", p1got.StatusPriority)
+	}
+}
+
+func TestEnqueueResumedScan_restoresPausedUntilOnEnqueueFailure(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/r", Name: "r"}
+	s.DB.Create(&repo)
+	pausedUntil := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
+	scan := db.Scan{
+		RepositoryID:   repo.ID,
+		Kind:           worker.JobSkill,
+		Status:         db.ScanPaused,
+		StatusPriority: db.StatusPriorityFor(db.ScanPaused),
+		Error:          worker.AccountPausePrefix + "reset pending",
+		PausedUntil:    &pausedUntil,
+	}
+	s.DB.Create(&scan)
+
+	scans, err := s.bulkResumePaused(s.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scans) != 1 {
+		t.Fatalf("resumed scans = %d, want 1", len(scans))
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := s.enqueueResumedScan(ctx, scans[0]); err == nil {
+		t.Fatal("enqueue with cancelled context succeeded")
+	}
+
+	var got db.Scan
+	s.DB.First(&got, scan.ID)
+	if got.Status != db.ScanPaused {
+		t.Fatalf("status = %q, want paused", got.Status)
+	}
+	if got.PausedUntil == nil || !got.PausedUntil.Equal(pausedUntil) {
+		t.Errorf("paused_until = %v, want %v", got.PausedUntil, pausedUntil)
 	}
 }
 

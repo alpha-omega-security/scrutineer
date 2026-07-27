@@ -15,7 +15,6 @@ import (
 	"scrutineer/internal/worker"
 
 	"gorm.io/gorm"
-	"gorm.io/gorm/clause"
 )
 
 func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
@@ -398,24 +397,30 @@ func scanStatusUpdates(status db.ScanStatus, msg string, finishedAt *time.Time, 
 
 func (s *Server) bulkResumePaused(base *gorm.DB) ([]db.Scan, error) {
 	var scans []db.Scan
-	res := base.Model(&scans).Clauses(clause.Returning{
-		Columns: []clause.Column{
-			{Name: "id"},
-			{Name: "kind"},
-			{Name: "finding_id"},
-			{Name: "error"},
-			{Name: "paused_until"},
-		},
-	}).Where("status = ?", db.ScanPaused).Updates(scanStatusUpdates(
-		db.ScanQueued,
-		"",
-		nil,
-		nil,
-	))
-	if res.Error != nil {
-		return nil, res.Error
+	if err := base.Select("id", "kind", "finding_id", "error", "paused_until").
+		Where("status = ?", db.ScanPaused).
+		Find(&scans).Error; err != nil {
+		return nil, err
 	}
-	return scans, nil
+	resumed := make([]db.Scan, 0, len(scans))
+	err := s.DB.Transaction(func(tx *gorm.DB) error {
+		for _, scan := range scans {
+			res := tx.Model(&db.Scan{}).
+				Where("id = ? AND status = ?", scan.ID, db.ScanPaused).
+				Updates(scanStatusUpdates(db.ScanQueued, "", nil, nil))
+			if res.Error != nil {
+				return res.Error
+			}
+			if res.RowsAffected > 0 {
+				resumed = append(resumed, scan)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resumed, nil
 }
 
 func (s *Server) restorePausedAfterResumeEnqueueFailure(scan db.Scan, err error) error {
