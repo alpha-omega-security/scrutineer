@@ -45,6 +45,19 @@ not json at all
 	}
 }
 
+func TestParseStream_UnknownEventPassedThrough(t *testing.T) {
+	in := `{"type":"future_event","payload":{"value":1}}`
+	var got []Event
+	ParseStream(strings.NewReader(in), func(e Event) { got = append(got, e) })
+
+	if len(got) != 1 {
+		t.Fatalf("want 1 event, got %d: %+v", len(got), got)
+	}
+	if got[0].Kind != KindText || got[0].Text != in {
+		t.Errorf("unknown event = %+v, want raw text", got[0])
+	}
+}
+
 func TestParseStream_RateLimitEvent(t *testing.T) {
 	// The exact shape claude-code emits on a subscription run.
 	in := `{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","resetsAt":1782990000,"rateLimitType":"five_hour","overageStatus":"rejected","isUsingOverage":false}}` + "\n"

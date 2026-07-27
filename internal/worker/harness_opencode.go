@@ -102,6 +102,8 @@ func parseOpencodeLine(raw []byte, emit func(Event)) {
 		emit(Event{Kind: KindTool, Tool: name, Text: summariseInput(name, ev.Part.State.Input)})
 	case ev.Type == "error" || len(ev.Error) > 0:
 		emit(Event{Kind: KindError, Text: opencodeErrorText(ev.Error, line)})
+	case isOpencodeReasoningEvent(ev):
+		emit(Event{Kind: KindThinking, Text: ev.Part.Text})
 	case isOpencodeTextEvent(ev):
 		emit(Event{Kind: KindText, Text: ev.Part.Text})
 	case ev.Type == "step_finish" && ev.Part != nil:
@@ -135,11 +137,18 @@ func isOpencodeToolEvent(ev opencodeLine) bool {
 	return ev.Type == "tool" || ev.Part.Type == "tool" || ev.Part.Tool != "" || ev.Part.Name != ""
 }
 
+func isOpencodeReasoningEvent(ev opencodeLine) bool {
+	if ev.Part == nil || ev.Part.Text == "" {
+		return false
+	}
+	return ev.Type == "reasoning" || ev.Part.Type == "reasoning"
+}
+
 func isOpencodeTextEvent(ev opencodeLine) bool {
 	if ev.Part == nil || ev.Part.Text == "" {
 		return false
 	}
-	return ev.Type == "text" || ev.Type == "reasoning" || ev.Part.Type == "text" || ev.Part.Type == "reasoning"
+	return ev.Type == "text" || ev.Part.Type == "text"
 }
 
 func opencodeErrorText(raw json.RawMessage, fallback string) string {

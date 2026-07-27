@@ -157,6 +157,8 @@ func parseStreamLine(raw []byte, emit func(Event)) {
 		if msg.RateLimitInfo != nil {
 			emit(Event{Kind: KindRateLimit, RateLimit: msg.RateLimitInfo})
 		}
+	default:
+		emit(Event{Kind: KindText, Text: line})
 	}
 }
 

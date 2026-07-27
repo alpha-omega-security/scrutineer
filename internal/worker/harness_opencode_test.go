@@ -141,13 +141,15 @@ not json
 	var got []Event
 	OpencodeHarness{}.ParseStream(strings.NewReader(in), func(e Event) { got = append(got, e) })
 
-	var sessions, texts, tools, errs, results int
+	var sessions, texts, thinking, tools, errs, results int
 	for _, e := range got {
 		switch e.Kind {
 		case KindSession:
 			sessions++
 		case KindText:
 			texts++
+		case KindThinking:
+			thinking++
 		case KindTool:
 			tools++
 		case KindError:
@@ -175,9 +177,12 @@ not json
 	if got[5].Usage != wantUsage {
 		t.Errorf("Usage = %+v, want %+v (reasoning folded into output)", got[5].Usage, wantUsage)
 	}
-	// "hello", "thinking", and the non-JSON line.
-	if texts != 3 || got[1].Text != "hello" || got[2].Text != "thinking" {
-		t.Errorf("text events = %d, want 3: %v", texts, got)
+	// "hello" and the non-JSON line are text; reasoning is thinking.
+	if texts != 2 || got[1].Text != "hello" {
+		t.Errorf("text events = %d, want 2: %v", texts, got)
+	}
+	if thinking != 1 || got[2].Kind != KindThinking || got[2].Text != "thinking" {
+		t.Errorf("thinking event not mapped: %v", got)
 	}
 }
 
