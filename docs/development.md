@@ -42,7 +42,7 @@
 | `internal/web/parse_repo_url.go` | git URL to forge web URL conversion |
 | `internal/web/api_export.go` | bulk JSON export endpoints |
 | `internal/web/sse.go` | SSE broker, splits data lines per spec |
-| `internal/web/cwe.go` + `cwe.json` | embedded MITRE CWE catalogue (944 entries) |
+| `internal/web/cwe.go` | View-1400 category filter over `github.com/git-pkgs/cwe` |
 | `internal/web/models.go` | model pick list, swappable from config |
 | `internal/web/location.go` | forge URL builder for source links |
 | `internal/web/jsontree.go` | JSON-to-HTML renderer for the Data tab |
@@ -77,46 +77,6 @@ Scans are claude-code skills on disk; adding one is a directory drop, no Go chan
 
 - **New output kind**: add the kind to `OutputKinds` in `internal/skills/parse.go`, add a `parseXOutput` method in `internal/worker/skill_parsers.go`, and add a case to the switch in `internal/worker/skill.go`. Without the `OutputKinds` entry the bundled-skills test rejects the SKILL.md at startup.
 - **New API surface** for skills to read: add a handler in `internal/web/api_reads.go` and a route in `internal/web/api.go`, then document it in `openapi.yaml`.
-
-## Regenerating cwe.json
-
-The CWE catalogue is distilled from MITRE's XML download so each entry can
-carry both the human-readable name/description and its View-1400
-("Comprehensive Categorization for Software Assurance Trends") bucket — the
-22-way classification the findings UI groups by. Deprecated weaknesses are
-dropped to match the existing key set.
-
-    curl -sS -o /tmp/cwec.xml.zip https://cwe.mitre.org/data/xml/cwec_latest.xml.zip
-    unzip -p /tmp/cwec.xml.zip > /tmp/cwec.xml
-    python3 - <<'PY' > internal/web/cwe.json
-    import xml.etree.ElementTree as ET, json, re, sys
-    data = re.sub(r' xmlns="[^"]+"', '', open('/tmp/cwec.xml').read(), count=1)
-    root = ET.fromstring(data)
-    cat_of = {}
-    for cat in root.iter('Category'):
-        name = cat.get('Name', '')
-        if not name.startswith('Comprehensive Categorization:'):
-            continue
-        label = name.split(':', 1)[1].strip()
-        rels = cat.find('Relationships')
-        if rels is None:
-            continue
-        for hm in rels.findall('Has_Member'):
-            if hm.get('View_ID') == '1400':
-                cat_of['CWE-' + hm.get('CWE_ID')] = label
-    out = {}
-    for w in root.iter('Weakness'):
-        if w.get('Status') == 'Deprecated':
-            continue
-        cid = 'CWE-' + w.get('ID')
-        desc_el = w.find('Description')
-        desc = re.sub(r'\s+', ' ', (desc_el.text or '').strip()) if desc_el is not None else ''
-        entry = {'name': w.get('Name', ''), 'description': desc}
-        if cid in cat_of:
-            entry['category'] = cat_of[cid]
-        out[cid] = entry
-    sys.stdout.write(json.dumps(out, separators=(',', ':'), sort_keys=True))
-    PY
 
 ## Frontend assets
 

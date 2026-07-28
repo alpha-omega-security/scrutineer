@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"filippo.io/age"
+	"github.com/git-pkgs/cwe"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
@@ -1155,12 +1156,13 @@ func findingIndexWhereSQL(r *http.Request, includeScanners, includeMissed bool) 
 		args = append(args, status)
 	}
 	if category := r.URL.Query().Get("category"); category != "" {
+		catalogued := cwe.CategorizedIDs()
 		switch {
-		case category == UncategorizedCWE && len(categorizedIDs) == 0:
+		case category == UncategorizedCWE && len(catalogued) == 0:
 			where = append(where, "cwe = ''")
 		case category == UncategorizedCWE:
 			where = append(where, "(cwe = '' OR cwe NOT IN ?)")
-			args = append(args, categorizedIDs)
+			args = append(args, catalogued)
 		case len(CWEsInCategory(category)) == 0:
 			where = append(where, "1 = 0")
 		default:
