@@ -1,9 +1,8 @@
 package web
 
 import (
-	"gorm.io/gorm"
-
 	"github.com/git-pkgs/cwe"
+	"gorm.io/gorm"
 )
 
 // CWE aliases the catalogue entry so templates that already say .Name and
