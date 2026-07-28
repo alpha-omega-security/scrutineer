@@ -4,51 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 
+	harnessskills "github.com/alpha-omega-security/harness/skills"
 	"github.com/git-pkgs/clone"
 )
 
-// ParseRepoSpec splits a skills_repo spec into a clone URL and an optional
-// git ref. Two forms are accepted:
-//
-//	owner/repo[@ref]                — shorthand expanded to https://github.com/owner/repo
-//	https://host/path/to/repo[@ref] — full URL with an optional trailing ref
-//
-// ref is empty when none is given, meaning "use the repo's default branch".
-// In the URL form, only an `@` that appears after the last `/` is treated as
-// a ref separator, so token-in-URL credentials (https://<token>@host/...)
-// pass through untouched. As a consequence, slash-bearing refs after `@` are
-// not supported; use the short form (`main` instead of `refs/heads/main`).
-func ParseRepoSpec(raw string) (url, ref string, err error) {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return "", "", fmt.Errorf("empty skills_repo spec")
-	}
-	if i := strings.Index(raw, "://"); i >= 0 {
-		scheme := raw[:i+3]
-		rest := raw[len(scheme):]
-		if at := strings.LastIndex(rest, "@"); at > strings.LastIndex(rest, "/") {
-			ref = rest[at+1:]
-			rest = rest[:at]
-		}
-		url = scheme + rest
-	} else {
-		if at := strings.Index(raw, "@"); at >= 0 {
-			ref = raw[at+1:]
-			raw = raw[:at]
-		}
-		parts := strings.Split(raw, "/")
-		if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
-			return "", "", fmt.Errorf("expected owner/repo or https URL, got %q", raw)
-		}
-		url = "https://github.com/" + raw
-	}
-	if !strings.HasPrefix(url, "https://") {
-		return "", "", fmt.Errorf("skills repo must use https://, got %q", url)
-	}
-	return url, ref, nil
-}
+// ParseRepoSpec splits a skills_repo spec (owner/repo[@ref] or a full https
+// URL) into a clone URL and optional ref. See harness/skills.ParseRepoSpec.
+var ParseRepoSpec = harnessskills.ParseRepoSpec
 
 // CloneOrPull prepares a local copy of a git repo at dst. On first call it
 // clones; on subsequent calls it fetches and resets to the requested ref so

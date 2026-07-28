@@ -1,9 +1,10 @@
 package skills
 
 import (
-	"path"
 	"slices"
 	"strings"
+
+	harnessskills "github.com/alpha-omega-security/harness/skills"
 )
 
 // BuiltinSkipPaths is the default skip list applied when a skill does not
@@ -27,6 +28,15 @@ var BuiltinSkipPaths = []string{
 	"**/generated/**",
 	"**/__generated__/**",
 }
+
+// The glob matcher and pattern round-tripping live in
+// github.com/alpha-omega-security/harness/skills.
+var (
+	Match         = harnessskills.Match
+	ValidateGlob  = harnessskills.ValidateGlob
+	SplitPatterns = harnessskills.SplitPatterns
+	JoinPatterns  = harnessskills.JoinPatterns
+)
 
 // DirAllExcluded reports whether every file under directory rel is
 // excluded by the configured filters — i.e. the workspace pruner can
@@ -85,78 +95,4 @@ func PathIncluded(rel string, paths, ignorePaths []string) bool {
 
 func matchAny(patterns []string, name string) bool {
 	return slices.ContainsFunc(patterns, func(p string) bool { return Match(p, name) })
-}
-
-// ValidateGlob returns path.ErrBadPattern when pattern contains a
-// segment that path.Match cannot parse (e.g. `[unclosed`). matchSegments
-// silently treats such patterns as "never matches" at runtime; calling
-// this at parse time turns a skill author's typo into a hard error
-// rather than a silent empty workspace.
-func ValidateGlob(pattern string) error {
-	for seg := range strings.SplitSeq(pattern, "/") {
-		if _, err := path.Match(seg, "x"); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// Match reports whether name matches the shell glob pattern. Supports
-// `*` (any chars except `/`), `?` (one char except `/`) and the
-// doublestar `**` (any chars including `/`). Both pattern and name are
-// forward-slash separated.
-func Match(pattern, name string) bool {
-	if pattern == "" || name == "" {
-		return pattern == name
-	}
-	return matchSegments(strings.Split(pattern, "/"), strings.Split(name, "/"))
-}
-
-func matchSegments(pat, name []string) bool {
-	for len(pat) > 0 {
-		if pat[0] == "**" {
-			rest := pat[1:]
-			if len(rest) == 0 {
-				return true
-			}
-			for i := 0; i <= len(name); i++ {
-				if matchSegments(rest, name[i:]) {
-					return true
-				}
-			}
-			return false
-		}
-		if len(name) == 0 {
-			return false
-		}
-		ok, _ := path.Match(pat[0], name[0])
-		if !ok {
-			return false
-		}
-		pat = pat[1:]
-		name = name[1:]
-	}
-	return len(name) == 0
-}
-
-// SplitPatterns parses the newline-separated form stored in
-// db.Skill.Paths / db.Skill.IgnorePaths into a clean slice, trimming
-// whitespace and dropping empty lines.
-func SplitPatterns(s string) []string {
-	if s == "" {
-		return nil
-	}
-	var out []string
-	for line := range strings.SplitSeq(s, "\n") {
-		if t := strings.TrimSpace(line); t != "" {
-			out = append(out, t)
-		}
-	}
-	return out
-}
-
-// JoinPatterns serialises a slice of patterns into the newline form
-// stored on db.Skill.
-func JoinPatterns(p []string) string {
-	return strings.Join(p, "\n")
 }
