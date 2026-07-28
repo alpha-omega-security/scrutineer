@@ -94,16 +94,6 @@ func (s *Server) enqueueFindingDedupForRepo(ctx context.Context, repoID uint) {
 	}
 }
 
-func (s *Server) enqueueRepoScopedSkillIfIdle(ctx context.Context, repoID, skillID uint) error {
-	s.agentEnqueueMu.Lock()
-	defer s.agentEnqueueMu.Unlock()
-	if s.hasOpenRepoScopedScan(repoID, skillID) {
-		return nil
-	}
-	_, err := s.enqueueSkillWith(ctx, repoID, skillID, ScanOpts{})
-	return err
-}
-
 // hasOpenRepoScopedScan returns true when a queued or running repository-scoped
 // scan (no finding attached) of the given skill already exists for the repo.
 // Mirrors hasOpenFindingScopedScan for repo-wide passes like finding-dedup.

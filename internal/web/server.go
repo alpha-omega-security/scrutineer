@@ -2773,6 +2773,36 @@ func (s *Server) enqueueSkillScoped(ctx context.Context, repoID, skillID uint, f
 	return s.enqueueSkillWith(ctx, repoID, skillID, ScanOpts{Model: model, FindingID: findingID})
 }
 
+// enqueueRepoScopedSkillIfIdle serializes the open-scan check and enqueue for
+// repo-scoped auto-enqueue paths (advisory audit, finding-dedup) under
+// agentEnqueueMu so concurrent scan finalizers cannot both pass the check.
+func (s *Server) enqueueRepoScopedSkillIfIdle(ctx context.Context, repoID, skillID uint) error {
+	s.agentEnqueueMu.Lock()
+	defer s.agentEnqueueMu.Unlock()
+	if s.hasOpenRepoScopedScan(repoID, skillID) {
+		return nil
+	}
+	_, err := s.enqueueSkillWith(ctx, repoID, skillID, ScanOpts{})
+	return err
+}
+
+// enqueueFindingScopedSkillIfIdle serializes the open-scan check and enqueue
+// for finding-scoped auto-enqueue paths (revalidate, verify) under
+// agentEnqueueMu. Avoids piling duplicate work onto the queue when the same
+// finding is observed by both an import and a rescan, or when two findings
+// parsers race. opts.FindingID is set from findingID; callers pass only the
+// extra opts they need (Profile).
+func (s *Server) enqueueFindingScopedSkillIfIdle(ctx context.Context, repoID, findingID, skillID uint, opts ScanOpts) error {
+	s.agentEnqueueMu.Lock()
+	defer s.agentEnqueueMu.Unlock()
+	if s.hasOpenFindingScopedScan(findingID, skillID) {
+		return nil
+	}
+	opts.FindingID = &findingID
+	_, err := s.enqueueSkillWith(ctx, repoID, skillID, opts)
+	return err
+}
+
 // enqueueSkillWith creates a skill scan using the given ScanOpts. Empty
 // fields default cleanly: unset FindingID means not-finding-scoped, empty
 // SubPath means root-scoped. Model precedence is: explicit opts.Model >
