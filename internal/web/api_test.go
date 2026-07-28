@@ -258,6 +258,29 @@ func TestAPIPatchRepositoryRejectsEmptyBody(t *testing.T) {
 	}
 }
 
+func TestAPIPatchRepositoryRejectsInvalidJSON(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo, scan := seedRunningScan(t, s)
+
+	r := httptest.NewRequest("PATCH", "/api/repositories/"+strconv.FormatUint(uint64(repo.ID), 10),
+		strings.NewReader(`not json`))
+	r.Host = testHost
+	r.Header.Set("Authorization", "Bearer "+scan.APIToken)
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status %d, want 400", w.Code)
+	}
+	var body map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	if body[errorKey] != "body must be JSON" {
+		t.Fatalf("error = %q, want body must be JSON", body[errorKey])
+	}
+}
+
 func TestAPIFindingReadsAndFilters(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

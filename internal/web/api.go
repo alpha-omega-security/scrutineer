@@ -66,6 +66,15 @@ func (s *Server) apiAuth(next http.Handler) http.Handler {
 
 const apiMaxBody = 1 << 20
 
+func decodeAPIBody[T any](w http.ResponseWriter, r *http.Request, errorMessage string) (T, bool) {
+	var body T
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeAPIError(w, http.StatusBadRequest, errorMessage)
+		return body, false
+	}
+	return body, true
+}
+
 func decodeOptionalAPIBody(w http.ResponseWriter, r *http.Request, dst any) bool {
 	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
 		if errors.Is(err, io.EOF) {
@@ -218,11 +227,10 @@ func (s *Server) apiPatchRepository(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusForbidden, "scan may only edit its own repository")
 		return
 	}
-	var body struct {
+	body, ok := decodeAPIBody[struct {
 		Fork *string `json:"fork"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeAPIError(w, http.StatusBadRequest, "body must be JSON")
+	}](w, r, "body must be JSON")
+	if !ok {
 		return
 	}
 	if body.Fork == nil {
