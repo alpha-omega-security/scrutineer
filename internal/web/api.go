@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -495,7 +496,14 @@ func (s *Server) apiListCNAs(w http.ResponseWriter, r *http.Request) {
 func (s *Server) apiListSkills(w http.ResponseWriter, r *http.Request) {
 	q := s.DB.Order("name")
 	if v := r.URL.Query().Get("active"); v != "" {
-		active, _ := strconv.ParseBool(v)
+		// A malformed value is a 400 rather than a silent fall-back to false,
+		// so ?active=yes never quietly returns the inactive skills instead.
+		active, err := strconv.ParseBool(v)
+		if err != nil {
+			writeAPIError(w, http.StatusBadRequest,
+				fmt.Sprintf("active: must be true or false, got %q", v))
+			return
+		}
 		q = q.Where("active = ?", active)
 	}
 	var rows []db.Skill
