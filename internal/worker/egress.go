@@ -29,7 +29,6 @@ func ServeEgressProxy(p *EgressProxy, addr string) error  { return egress.Serve(
 func NewProxyToken() string                               { return egress.NewToken() }
 func ProxyURLForHost(token, host string, port int) string { return egress.ProxyURL(token, host, port) }
 func ProxyURLForEndpoint(token, endpoint string) string   { return egress.EndpointURL(token, endpoint) }
-func HostAllowed(allow []string, host string) bool        { return egress.HostAllowed(allow, host) }
 func FirstIfaceIPv4() (string, error)                     { return egress.FirstIfaceIPv4() }
 
 func WaitHostAPIReachable(ctx context.Context, host, port string) error {
