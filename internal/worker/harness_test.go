@@ -1,70 +1,79 @@
 package worker
 
 import (
-	"errors"
 	"io"
 	"os"
 	"path/filepath"
 	"reflect"
-	"slices"
 	"strings"
 	"testing"
-	"testing/iotest"
+
+	"github.com/alpha-omega-security/harness"
 )
 
-func TestClaudeHarness_argsMatchBuildClaudeArgs(t *testing.T) {
-	// ClaudeHarness.Args must be byte-for-byte identical to the function
-	// it wraps so introducing the seam is a no-behaviour-change refactor.
-	// The buildClaudeArgs table tests in claude_test.go cover the argv
-	// shape; this just proves the harness delegates to them.
-	for _, sj := range []SkillJob{
-		{Name: "deep-dive", Model: "m"},
-		{Name: "deep-dive", Model: "m", AllowedTools: "Read,Write", Effort: "low", MaxTurns: 7},
-		{Name: "deep-dive", Model: "m", ResumeSessionID: "sess-1", OutputFile: "report.json"},
-	} {
-		got := ClaudeHarness{}.Args(sj, "high", 30, "https://proxy.corp.com/v1")
-		want := buildClaudeArgs(sj, "high", 30)
-		if !reflect.DeepEqual(got, want) {
-			t.Errorf("ClaudeHarness.Args(%+v) = %v, want %v", sj, got, want)
+// TestSkillJobToJob_PromptBytesUnchanged pins the one thing this refactor
+// must not change: the prompt each harness hands the CLI is byte-identical to
+// what scrutineer produced before the interface moved to the module. If this
+// test starts failing after a harness-module bump, the module's default prompt
+// has drifted and either scrutineer or the module needs adjusting before
+// operators see different agent behaviour.
+func TestSkillJobToJob_PromptBytesUnchanged(t *testing.T) {
+	sj := SkillJob{Name: "audit", OutputFile: "report.json"}
+	j := sj.toJob("", 0, "")
+	const hint = ` To check ./report.json against ./schema.json, POST it to {scrutineer.api_base}/scans/{scrutineer.scan_id}/validate-report (header "Authorization: Bearer {scrutineer.token}", values in ./context.json); {"valid":true} means it conforms. Don't install a schema validator.`
+	cases := []struct {
+		name string
+		h    Harness
+		want string
+	}{
+		{"claude", ClaudeHarness{}, `Use the "audit" skill on the repository cloned at ./src. Write your structured output to ./report.json as the skill specifies.` + hint},
+		{"codex", CodexHarness{}, `Follow the instructions in ./skills/audit/SKILL.md against the repository cloned at ./src. Write your structured output to ./report.json as the skill specifies.` + hint},
+		{"opencode", OpencodeHarness{}, `Follow the instructions in ./.opencode/skill/audit/SKILL.md against the repository cloned at ./src. Write your structured output to ./report.json as the skill specifies.` + hint},
+	}
+	for _, c := range cases {
+		if got := c.h.Prompt(j); got != c.want {
+			t.Errorf("%s Prompt() =\n  %q\nwant\n  %q", c.name, got, c.want)
 		}
+	}
+
+	resume := SkillJob{Name: "audit", OutputFile: "report.json", ResumeSessionID: "s1"}.toJob("", 0, "")
+	wantResume := `Continue the "audit" skill on the repository at ./src from where you left off. Write your structured output to ./report.json as the skill specifies.` + hint
+	if got := (ClaudeHarness{}).Prompt(resume); got != wantResume {
+		t.Errorf("claude resume Prompt() =\n  %q\nwant\n  %q", got, wantResume)
 	}
 }
 
-func TestClaudeHarness_parseStreamMatchesParseStream(t *testing.T) {
-	// Same delegation guarantee for the stream parser: the harness
-	// method must emit exactly what the package function does, so the
-	// scan log, session capture and max-turns signal are unchanged.
-	in := `{"type":"system","subtype":"init","session_id":"sess-1"}
-{"type":"assistant","message":{"content":[{"type":"text","text":"hello"}]}}
-not json
-`
-	var viaHarness, viaFunc []Event
-	ClaudeHarness{}.ParseStream(strings.NewReader(in), func(e Event) { viaHarness = append(viaHarness, e) })
-	ParseStream(strings.NewReader(in), func(e Event) { viaFunc = append(viaFunc, e) })
-	if !reflect.DeepEqual(viaHarness, viaFunc) {
-		t.Errorf("ClaudeHarness.ParseStream emitted %v, want %v", viaHarness, viaFunc)
+// TestSkillJobToJob_resolvesDefaults checks the runner-default resolution
+// that used to sit in buildClaudeArgs' effectiveEffort/effectiveMaxTurns.
+func TestSkillJobToJob_resolvesDefaults(t *testing.T) {
+	j := SkillJob{Name: "s"}.toJob("high", 40, "https://proxy/v1")
+	if j.Effort != "high" || j.MaxTurns != 40 || j.BaseURL != "https://proxy/v1" {
+		t.Errorf("runner defaults not applied: %+v", j)
+	}
+	// Per-job values win over runner defaults.
+	j = SkillJob{Name: "s", Effort: "low", MaxTurns: 5}.toJob("high", 40, "")
+	if j.Effort != "low" || j.MaxTurns != 5 {
+		t.Errorf("per-job overrides not applied: %+v", j)
+	}
+	// Built-in default when neither is set.
+	j = SkillJob{Name: "s"}.toJob("", 0, "")
+	if j.MaxTurns != DefaultSkillMaxTurns {
+		t.Errorf("MaxTurns = %d, want DefaultSkillMaxTurns", j.MaxTurns)
 	}
 }
 
 func TestClaudeHarness_SkillDir(t *testing.T) {
-	// claude-code discovers skills at ./.claude/skills/{name}; this is
-	// the path stageSkill has always written to, so the seam preserves
-	// it exactly.
 	got := ClaudeHarness{}.SkillDir("/work/scan-7", "deep-dive")
 	want := filepath.Join("/work/scan-7", ".claude", "skills", "deep-dive")
 	if got != want {
 		t.Errorf("ClaudeHarness.SkillDir = %q, want %q", got, want)
 	}
-	// LocalClaude is claude-only and must agree.
 	if lc := (LocalClaude{}).SkillDir("/work/scan-7", "deep-dive"); lc != want {
 		t.Errorf("LocalClaude.SkillDir = %q, want %q", lc, want)
 	}
 }
 
 func TestContainerRunner_SkillDirDelegatesToHarness(t *testing.T) {
-	// The runner exposes SkillDir on SkillRunner so the worker can stage
-	// SKILL.md before calling RunSkill; it must delegate to whatever
-	// harness is configured and default to claude when none is.
 	claudePath := ClaudeHarness{}.SkillDir("/w", "s")
 	if got := (ContainerRunner{}).SkillDir("/w", "s"); got != claudePath {
 		t.Errorf("default ContainerRunner.SkillDir = %q, want claude path %q", got, claudePath)
@@ -76,23 +85,7 @@ func TestContainerRunner_SkillDirDelegatesToHarness(t *testing.T) {
 	}
 }
 
-func TestClaudeHarness_binaryGuideEgress(t *testing.T) {
-	h := ClaudeHarness{}
-	if h.Binary() != "claude" {
-		t.Errorf("Binary() = %q, want claude", h.Binary())
-	}
-	if h.GuideFilename() != "CLAUDE.md" {
-		t.Errorf("GuideFilename() = %q, want CLAUDE.md", h.GuideFilename())
-	}
-	want := []string{"*.anthropic.com"}
-	if got := h.EgressHosts(); !reflect.DeepEqual(got, want) {
-		t.Errorf("EgressHosts() = %v, want %v", got, want)
-	}
-}
-
 func TestContainerRunner_harnessDefaultsToClaude(t *testing.T) {
-	// The zero ContainerRunner{} must keep exec'ing claude so no caller
-	// needs to set the field until a second harness exists.
 	var d ContainerRunner
 	if _, ok := d.harness().(ClaudeHarness); !ok {
 		t.Errorf("zero ContainerRunner harness = %T, want ClaudeHarness", d.harness())
@@ -104,9 +97,8 @@ func TestContainerRunner_harnessDefaultsToClaude(t *testing.T) {
 	}
 }
 
-// stubHarness is a test-only Harness for exercising the seam without a
-// real second implementation. The set of harnesses is open-ended; this
-// stands in for any of them.
+// stubHarness is a test-only Harness for exercising the container runner
+// without a real backend.
 type stubHarness struct {
 	bin     string
 	guide   string
@@ -116,14 +108,13 @@ type stubHarness struct {
 	acctErr string
 }
 
-func (s stubHarness) Binary() string { return s.bin }
-func (s stubHarness) Args(sj SkillJob, _ string, _ int, _ string) []string {
-	return []string{s.Prompt(sj)}
-}
-func (stubHarness) Prompt(SkillJob) string               { return "--stub" }
+func (s stubHarness) Binary() string                     { return s.bin }
+func (s stubHarness) Args(j harness.Job) []string        { return []string{s.Prompt(j)} }
+func (stubHarness) Prompt(harness.Job) string            { return "--stub" }
 func (s stubHarness) ParseStream(io.Reader, func(Event)) {}
 func (s stubHarness) SkillDir(wr, n string) string       { return filepath.Join(wr, "stub-skills", n) }
 func (s stubHarness) GuideFilename() string              { return s.guide }
+func (s stubHarness) SystemPromptViaArgs() bool          { return false }
 func (s stubHarness) EgressHosts() []string              { return s.egress }
 func (s stubHarness) Env(string) []string                { return s.env }
 func (s stubHarness) StateEnv(string) []string           { return s.state }
@@ -135,30 +126,15 @@ func (s stubHarness) AccountErrorText(t string) string {
 }
 func (s stubHarness) DefaultModels() []ModelDefault { return nil }
 
-func TestHarnessArgs_endWithHarnessPrompt(t *testing.T) {
-	sj := SkillJob{Name: "deep-dive", OutputFile: "report.json"}
-	for name, harness := range harnesses {
-		if name == "" {
-			continue
-		}
-		t.Run(name, func(t *testing.T) {
-			args := harness.Args(sj, "", 0, "")
-			if got, want := args[len(args)-1], harness.Prompt(sj); got != want {
-				t.Errorf("final arg = %q, want prompt %q", got, want)
-			}
-		})
-	}
-}
-
 func TestHarnessDefaultModels_registryEntriesAreComplete(t *testing.T) {
-	// Every registered harness must supply a non-empty default model
-	// list with all three tiers tagged, so a fresh install of any
-	// backend has a working pick list and tier resolution without the
-	// operator setting models: in config.
-	for name, h := range harnesses {
-		if name == "" {
-			continue
-		}
+	// Every registered backend must supply a non-empty default model list
+	// with all three tiers tagged, so a fresh install of any backend has a
+	// working pick list and tier resolution without the operator setting
+	// models: in config. This tripwire lives here (not upstream) because
+	// scrutineer's UI depends on it; the module has its own priced-models
+	// tripwire.
+	for _, name := range strings.Split(HarnessNames(), ", ") {
+		h, _ := HarnessByName(name)
 		defs := h.DefaultModels()
 		if len(defs) == 0 {
 			t.Errorf("%s: DefaultModels() is empty", name)
@@ -181,34 +157,7 @@ func TestHarnessDefaultModels_registryEntriesAreComplete(t *testing.T) {
 	}
 }
 
-func TestClaudeHarness_StateEnv(t *testing.T) {
-	got := ClaudeHarness{}.StateEnv("/harness-state")
-	want := []string{"CLAUDE_CONFIG_DIR=/harness-state"}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("StateEnv(/harness-state) = %v, want %v", got, want)
-	}
-}
-
-func TestClaudeHarness_AccountErrorTextDelegates(t *testing.T) {
-	// The harness method must classify exactly as the package function
-	// does so the queue-pause behaviour is unchanged.
-	for _, s := range []string{
-		"Error: Claude usage limit reached",
-		"429 too many requests",
-		"this is fine",
-		"",
-	} {
-		if got, want := (ClaudeHarness{}).AccountErrorText(s), claudeAccountErrorText(s); got != want {
-			t.Errorf("AccountErrorText(%q) = %q, want %q", s, got, want)
-		}
-	}
-}
-
 func TestBuildRunArgs_stateEnvFromHarness(t *testing.T) {
-	// With a config dir, the runner bind-mounts it and asks the harness
-	// for the env entries that point at the mount. A non-claude harness
-	// must NOT get CLAUDE_CONFIG_DIR; it gets only what its StateEnv
-	// returns.
 	d := ContainerRunner{Harness: stubHarness{state: []string{"CODEX_HOME=/harness-state", "CODEX_SQLITE_HOME=/harness-state"}}}
 	got := d.buildRunArgs("/work/abs", "img:latest", hardenedNet{}, "/data/cfg/scan-7")
 
@@ -218,7 +167,6 @@ func TestBuildRunArgs_stateEnvFromHarness(t *testing.T) {
 	if containsEnvFlag(got, "CLAUDE_CONFIG_DIR=/harness-state") {
 		t.Errorf("non-claude harness leaked CLAUDE_CONFIG_DIR: %v", got)
 	}
-	// The bind mount itself is harness-neutral and must still be present.
 	mounted := false
 	for i := 0; i+1 < len(got); i++ {
 		if got[i] == "-v" && strings.HasPrefix(got[i+1], "/data/cfg/scan-7:/harness-state") {
@@ -229,63 +177,13 @@ func TestBuildRunArgs_stateEnvFromHarness(t *testing.T) {
 		t.Errorf("state dir bind mount missing: %v", got)
 	}
 
-	// Default harness keeps the historical env var.
 	def := ContainerRunner{}.buildRunArgs("/work/abs", "img:latest", hardenedNet{}, "/data/cfg/scan-7")
 	if !containsEnvFlag(def, "CLAUDE_CONFIG_DIR=/harness-state") {
 		t.Errorf("default harness dropped CLAUDE_CONFIG_DIR: %v", def)
 	}
 }
 
-func TestClaudeHarness_Env(t *testing.T) {
-	// With both credentials set on the host and a base URL, Env must
-	// pass both through (bare KEY) and set the base URL explicitly,
-	// alongside the fixed telemetry suppressors.
-	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test")
-	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "oat-test")
-	got := ClaudeHarness{}.Env("https://proxy.corp.com/v1")
-	for _, want := range []string{
-		"CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1",
-		"OTEL_SDK_DISABLED=true",
-		"DISABLE_TELEMETRY=1",
-		"DISABLE_ERROR_REPORTING=1",
-		"DISABLE_BUG_COMMAND=1",
-		"DISABLE_AUTOUPDATER=1",
-		"DISABLE_NON_ESSENTIAL_MODEL_CALLS=1",
-		"ANTHROPIC_API_KEY",
-		"CLAUDE_CODE_OAUTH_TOKEN",
-		"ANTHROPIC_BASE_URL=https://proxy.corp.com/v1",
-	} {
-		if !slices.Contains(got, want) {
-			t.Errorf("Env() missing %q: %v", want, got)
-		}
-	}
-}
-
-func TestClaudeHarness_EnvOmitsUnsetCredentials(t *testing.T) {
-	// docker -e KEY (bare) reads the host value at run time; when the
-	// host has none, passing the bare key would clear an inherited value
-	// and is just noise. Env must omit credentials the host does not set,
-	// and omit the base URL when none is configured.
-	t.Setenv("ANTHROPIC_API_KEY", "")
-	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "")
-	got := ClaudeHarness{}.Env("")
-	for _, absent := range []string{"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"} {
-		if slices.Contains(got, absent) {
-			t.Errorf("Env() included unset credential %q: %v", absent, got)
-		}
-	}
-	for _, e := range got {
-		if strings.HasPrefix(e, "ANTHROPIC_BASE_URL=") {
-			t.Errorf("Env() set base URL with none configured: %v", got)
-		}
-	}
-}
-
 func TestBuildRunArgs_includesHarnessEnv(t *testing.T) {
-	// The harness's Env() entries land on the container command line
-	// each as its own `-e <entry>` pair, and a non-claude harness
-	// contributes only its own keys -- nothing claude-specific leaks
-	// from buildRunArgs itself.
 	d := ContainerRunner{Harness: stubHarness{env: []string{"CODEX_API_KEY", "STUB_OPT=1"}}}
 	got := d.buildRunArgs("/work/abs", "img:latest", hardenedNet{}, "")
 
@@ -300,16 +198,12 @@ func TestBuildRunArgs_includesHarnessEnv(t *testing.T) {
 			t.Errorf("non-claude harness leaked claude env %q: %v", leaked, got)
 		}
 	}
-	// Harness-neutral env stays put regardless of harness.
 	if !containsEnvFlag(got, "HOME=/tmp") || !containsEnvFlag(got, "SEMGREP_SEND_METRICS=off") {
 		t.Errorf("harness-neutral env dropped: %v", got)
 	}
 }
 
 func TestBuildRunArgs_defaultHarnessKeepsClaudeEnv(t *testing.T) {
-	// The zero ContainerRunner{} (no Harness set) must keep producing
-	// the claude env it always has, so this refactor is no behaviour
-	// change for existing deployments.
 	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test")
 	d := ContainerRunner{ModelBaseURL: "https://proxy.corp.com/v1"}
 	got := d.buildRunArgs("/work/abs", "img:latest", hardenedNet{}, "")
@@ -325,8 +219,6 @@ func TestBuildRunArgs_defaultHarnessKeepsClaudeEnv(t *testing.T) {
 	}
 }
 
-// containsEnvFlag reports whether the docker/podman argv s carries the
-// pair `-e entry`. Adjacency matters: `-e A -e B` must not match `-e B A`.
 func containsEnvFlag(s []string, entry string) bool {
 	for i := 0; i+1 < len(s); i++ {
 		if s[i] == "-e" && s[i+1] == entry {
@@ -346,8 +238,6 @@ func TestInjectProfileGuide_writesHarnessFilename(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Default harness: PROFILE.md lands at CLAUDE.md, the historical
-	// behaviour this refactor must preserve.
 	work := t.TempDir()
 	d := ContainerRunner{ProfilesDir: profilesDir}
 	d.injectProfileGuide("ruby", work, func(Event) {})
@@ -355,8 +245,6 @@ func TestInjectProfileGuide_writesHarnessFilename(t *testing.T) {
 		t.Errorf("default harness wrote %q to CLAUDE.md, want %q", got, body)
 	}
 
-	// Non-claude harness: same PROFILE.md, different target filename, so
-	// codex/opencode (which read AGENTS.md) get the same orientation.
 	work = t.TempDir()
 	d = ContainerRunner{ProfilesDir: profilesDir, Harness: stubHarness{guide: "AGENTS.md"}}
 	d.injectProfileGuide("ruby", work, func(Event) {})
@@ -378,109 +266,17 @@ func TestInjectProfileGuide_noopWithoutProfile(t *testing.T) {
 	}
 }
 
-// TestParseStream_readErrorEmittedForAllHarnesses proves every registered
-// harness's ParseStream goes through the shared scanJSONL loop: a mid-stream
-// read error must surface as a KindError event, and the line before it must
-// still be delivered. stream_test.go covers the oversized-line and
-// no-trailing-newline cases against scanJSONL directly (via ParseStream); this
-// pins each harness to that shared implementation.
-func TestParseStream_readErrorEmittedForAllHarnesses(t *testing.T) {
-	for name, h := range harnesses {
-		if name == "" {
-			continue
-		}
-		t.Run(name, func(t *testing.T) {
-			r := io.MultiReader(
-				strings.NewReader("plain-text-before-error\n"),
-				iotest.ErrReader(errors.New("pipe broke")),
-			)
-			var got []Event
-			h.ParseStream(r, func(e Event) { got = append(got, e) })
-			if len(got) != 2 {
-				t.Fatalf("%s: events = %+v, want [text, error]", name, got)
-			}
-			if got[0].Kind != KindText || got[0].Text != "plain-text-before-error" {
-				t.Errorf("%s: first event = %+v, want text before error", name, got[0])
-			}
-			if got[1].Kind != KindError || !strings.Contains(got[1].Text, "pipe broke") {
-				t.Errorf("%s: last event = %+v, want KindError mentioning read error", name, got[1])
-			}
-		})
+// TestScrutineerValidationHint pins the exact API-endpoint text so a
+// wording change is deliberate.
+func TestScrutineerValidationHint(t *testing.T) {
+	got := scrutineerValidationHint("report.json")
+	if !strings.Contains(got, "{scrutineer.api_base}/scans/{scrutineer.scan_id}/validate-report") {
+		t.Errorf("hint missing endpoint: %q", got)
 	}
-}
-
-func TestPassthroughEnv(t *testing.T) {
-	t.Setenv("SCRUTINEER_TEST_PASSTHROUGH_SET", "value")
-	t.Setenv("SCRUTINEER_TEST_PASSTHROUGH_UNSET", "")
-	got := passthroughEnv(
-		"SCRUTINEER_TEST_PASSTHROUGH_SET",
-		"SCRUTINEER_TEST_PASSTHROUGH_UNSET",
-		"SCRUTINEER_TEST_PASSTHROUGH_NEVER_SET",
-	)
-	want := []string{"SCRUTINEER_TEST_PASSTHROUGH_SET"}
-	if !slices.Equal(got, want) {
-		t.Errorf("passthroughEnv = %v, want %v", got, want)
+	if !strings.Contains(got, "Don't install a schema validator") {
+		t.Errorf("hint missing no-install instruction: %q", got)
 	}
-	if got := passthroughEnv(); got != nil {
-		t.Errorf("passthroughEnv() = %v, want nil", got)
-	}
-}
-
-func TestExplicitSkillPrompt(t *testing.T) {
-	fresh := explicitSkillPrompt(
-		SkillJob{Name: "deep-dive", OutputFile: "report.json"}, "./skills/deep-dive")
-	if !strings.HasPrefix(fresh, "Follow the instructions in ./skills/deep-dive/SKILL.md") {
-		t.Errorf("fresh prompt does not point at skill: %q", fresh)
-	}
-	if !strings.Contains(fresh, "./report.json") {
-		t.Errorf("fresh prompt does not name output file: %q", fresh)
-	}
-	if !strings.Contains(fresh, "validate-report") {
-		t.Errorf("JSON output should carry the schema-validation hint: %q", fresh)
-	}
-
-	resume := explicitSkillPrompt(
-		SkillJob{Name: "deep-dive", OutputFile: "report.json", ResumeSessionID: "s1"}, "./skills/deep-dive")
-	if !strings.HasPrefix(resume, "Continue following") {
-		t.Errorf("resume prompt should say continue: %q", resume)
-	}
-
-	override := explicitSkillPrompt(
-		SkillJob{Name: "deep-dive", ResumeSessionID: "s1", ResumePrompt: "fix the report"}, "./skills/deep-dive")
-	if override != "fix the report" {
-		t.Errorf("explicit ResumePrompt not returned verbatim: %q", override)
-	}
-
-	noOut := explicitSkillPrompt(SkillJob{Name: "posture"}, "./skills/posture")
-	if strings.Contains(noOut, "structured output") || strings.Contains(noOut, "validate-report") {
-		t.Errorf("no-output-file prompt should not mention output/validation: %q", noOut)
-	}
-
-	freshOverride := explicitSkillPrompt(SkillJob{Name: "chat", Prompt: "Analyst: hi"}, "./skills/chat")
-	if freshOverride != "Analyst: hi" {
-		t.Errorf("fresh Prompt override not returned verbatim: %q", freshOverride)
-	}
-}
-
-func TestMatchAccountPhrase(t *testing.T) {
-	listA := []string{"rate limit", "429"}
-	listB := []string{"revoked"}
-	for _, tc := range []struct {
-		s    string
-		want string
-	}{
-		{"  Error: Rate Limit exceeded  ", "Error: Rate Limit exceeded"},
-		{"HTTP 429 Too Many Requests", "HTTP 429 Too Many Requests"},
-		{"access REVOKED for org", "access REVOKED for org"},
-		{"unrelated failure", ""},
-		{"   ", ""},
-		{"", ""},
-	} {
-		if got := matchAccountPhrase(tc.s, listA, listB); got != tc.want {
-			t.Errorf("matchAccountPhrase(%q) = %q, want %q", tc.s, got, tc.want)
-		}
-	}
-	if got := matchAccountPhrase("rate limit"); got != "" {
-		t.Errorf("no lists: got %q, want empty", got)
+	if scrutineerValidationHint("") != "" {
+		t.Error("empty output file should give empty hint")
 	}
 }

@@ -11,6 +11,27 @@ import (
 	"scrutineer/internal/db"
 )
 
+// These test-only shims keep the pre-extraction argv assertions below working
+// as integration tests over SkillJob.toJob() + the module's Args()/Prompt().
+// They exist so a harness-module bump that changes argv shape or prompt bytes
+// fails an existing test rather than silently changing what operators see.
+//
+//nolint:unparam // maxTurns is always 0 in these tests; kept for signature parity
+func buildClaudeArgs(sj SkillJob, effort string, maxTurns int) []string {
+	return ClaudeHarness{}.Args(sj.toJob(effort, maxTurns, ""))
+}
+
+func buildSkillPrompt(name, outputFile string) string {
+	return ClaudeHarness{}.Prompt(SkillJob{Name: name, OutputFile: outputFile}.toJob("", 0, ""))
+}
+
+func buildResumePrompt(name, outputFile string) string {
+	sj := SkillJob{Name: name, OutputFile: outputFile, ResumeSessionID: "x"}
+	return ClaudeHarness{}.Prompt(sj.toJob("", 0, ""))
+}
+
+func claudeAccountErrorText(s string) string { return ClaudeHarness{}.AccountErrorText(s) }
+
 func TestBuildLoggedPrompt_includesActivationAndRenderedSkill(t *testing.T) {
 	skill := &db.Skill{
 		Name:        "metadata",

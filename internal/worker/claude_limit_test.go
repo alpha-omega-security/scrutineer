@@ -47,7 +47,7 @@ func TestPreferAccountErrText(t *testing.T) {
 	// Fold over a run that prints transient then access: not resumable.
 	got := ""
 	for _, line := range []string{"working", transient, "more output", access} {
-		got = preferAccountErrText(got, claudeAccountErrorText(line))
+		got = preferAccountErrText(got, ClaudeHarness{}.AccountErrorText(line))
 	}
 	if accountErrorResumable(got) {
 		t.Errorf("run ending access-revoked classified resumable via %q", got)

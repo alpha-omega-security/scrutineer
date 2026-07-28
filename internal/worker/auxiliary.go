@@ -43,14 +43,10 @@ func recordAuxiliaryUsage(gdb *gorm.DB, scan *db.Scan, model string, usage llm.U
 	if usage == (llm.Usage{}) {
 		return nil
 	}
-	storedUsage := Usage{
-		// Anthropic's input_tokens is fresh input. Scan stores that separately
-		// from cache categories so TotalInputTokens can add each exactly once.
-		InputTokens:      usage.InputTokens,
-		OutputTokens:     usage.OutputTokens,
-		CacheReadTokens:  usage.CacheReadTokens,
-		CacheWriteTokens: usage.CacheWriteTokens,
-	}
+	// llm.Usage and worker.Usage are both aliases of harness.Usage.
+	// Anthropic's input_tokens is fresh input; Scan stores that separately
+	// from cache categories so TotalInputTokens can add each exactly once.
+	storedUsage := Usage(usage)
 	pricingUsage := storedUsage
 	// CostFromUsage takes the harness representation, where input_tokens is
 	// the total prompt size and cache categories are subsets of that total.

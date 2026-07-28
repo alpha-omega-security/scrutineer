@@ -327,7 +327,7 @@ func (d ContainerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Ev
 // event arrived, e.g. a --resume that could not find the conversation).
 func (d ContainerRunner) runContainerOnce(ctx context.Context, runBase []string, sj SkillJob, emit func(Event)) (hitMaxTurns bool, sessionID string, waitErr error) {
 	h := d.harness()
-	harnessArgs := append([]string{h.Binary()}, h.Args(sj, d.Effort, d.MaxTurns, d.ModelBaseURL)...)
+	harnessArgs := append([]string{h.Binary()}, h.Args(sj.toJob(d.Effort, d.MaxTurns, d.ModelBaseURL))...)
 	runArgs := append(append([]string{}, runBase...), harnessArgs...)
 
 	cmd := exec.CommandContext(ctx, d.Runtime.bin(), runArgs...)
