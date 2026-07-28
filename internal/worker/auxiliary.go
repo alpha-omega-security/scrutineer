@@ -8,7 +8,8 @@ import (
 	"gorm.io/gorm"
 
 	"scrutineer/internal/db"
-	"scrutineer/internal/llm"
+
+	"github.com/alpha-omega-security/harness/llm"
 )
 
 // CallAuxiliary performs a direct structured model call and records its usage

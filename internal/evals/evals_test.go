@@ -13,8 +13,9 @@ import (
 	"strings"
 	"testing"
 
-	"scrutineer/internal/llm"
 	"scrutineer/internal/worker"
+
+	"github.com/alpha-omega-security/harness/llm"
 )
 
 func TestLoadScenarios(t *testing.T) {

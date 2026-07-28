@@ -14,7 +14,8 @@ import (
 	"gorm.io/gorm"
 
 	"scrutineer/internal/db"
-	"scrutineer/internal/llm"
+
+	"github.com/alpha-omega-security/harness/llm"
 )
 
 func TestCallAuxiliary_recordsUsageOnMalformedResponse(t *testing.T) {

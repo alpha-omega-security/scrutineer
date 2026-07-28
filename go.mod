@@ -6,6 +6,7 @@ toolchain go1.26.5
 
 require (
 	filippo.io/age v1.3.1
+	github.com/alpha-omega-security/harness v0.1.0
 	github.com/ecosyste-ms/ecosystems-go v0.3.0
 	github.com/git-pkgs/enrichment v0.6.0
 	github.com/git-pkgs/pom v0.1.5

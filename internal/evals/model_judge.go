@@ -8,8 +8,9 @@ import (
 	"fmt"
 	"strings"
 
-	"scrutineer/internal/llm"
 	"scrutineer/internal/worker"
+
+	"github.com/alpha-omega-security/harness/llm"
 )
 
 const modelJudgeMaxTokens = 2048
