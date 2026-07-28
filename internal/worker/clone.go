@@ -6,12 +6,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
-	"strings"
 	"time"
 
+	"github.com/git-pkgs/clone"
+
 	"scrutineer/internal/db"
-	"scrutineer/internal/gitx"
 )
 
 const dirPerm = 0o755
@@ -29,20 +28,11 @@ const (
 // process has exited or been cancelled while a transport grandchild still
 // holds its output pipe. A package var so a test can shrink it; large enough
 // in production never to clip a healthy command's final flush.
-var gitWaitDelay = gitx.DefaultWaitDelay
+var gitWaitDelay = clone.DefaultWaitDelay
 
 // RepoUnreachableError is returned when git clone/fetch fails because the
 // remote is unreachable (deleted, private, wrong URL, network error).
-type RepoUnreachableError struct {
-	URL string
-	Err error
-}
-
-func (e *RepoUnreachableError) Error() string {
-	return fmt.Sprintf("repository unreachable %s: %s", e.URL, e.Err)
-}
-
-func (e *RepoUnreachableError) Unwrap() error { return e.Err }
+type RepoUnreachableError = clone.UnreachableError
 
 // prepareLocalSrc populates workRoot/src by copying the user's local
 // directory. Mirrors prepareDependentSrc's "copy into per-scan src"
@@ -101,117 +91,55 @@ func ensureClone(ctx context.Context, repo db.Repository, work string, fullClone
 
 // validateGitURL rejects anything that isn't https:// to prevent SSRF,
 // local file reads, and git option injection (T2, T4).
-func validateGitURL(u string) error {
-	if !strings.HasPrefix(u, "https://") {
-		return fmt.Errorf("only https:// URLs are allowed, got %q", u)
-	}
-	return nil
-}
+func validateGitURL(u string) error { return clone.ValidateURL(u) }
 
 // ValidateGitRef restricts refs to a conservative branch/tag-name charset
-// before they flow into the fetchRef path. The clone code already passes
-// ref after a `--` argv stopper, which blocks `-`-prefixed option-shaped
-// values; this validator adds the rest: `..` rejected so git's refspec
-// resolver cannot treat the value as a range, plus a strict allow-list
-// for the body so spaces, control characters, and shell metacharacters
-// cannot reach git as an "exotic but legal" ref. Exported so the web
-// layer can reject bad input at the API boundary rather than letting a
-// scan get enqueued and then fail at clone time.
-func ValidateGitRef(ref string) error {
-	if ref == "" {
-		return nil
-	}
-	if strings.HasPrefix(ref, "-") {
-		return fmt.Errorf("invalid ref %q: must not start with -", ref)
-	}
-	if strings.Contains(ref, "..") {
-		return fmt.Errorf(`invalid ref %q: must not contain ".."`, ref)
-	}
-	for _, r := range ref {
-		switch {
-		case r >= 'a' && r <= 'z',
-			r >= 'A' && r <= 'Z',
-			r >= '0' && r <= '9',
-			r == '.', r == '_', r == '/', r == '-':
-		default:
-			return fmt.Errorf("invalid ref %q: contains disallowed character %q", ref, r)
-		}
-	}
-	return nil
-}
+// before they flow into the fetchRef path. Exported so the web layer can
+// reject bad input at the API boundary rather than letting a scan get
+// enqueued and then fail at clone time.
+func ValidateGitRef(ref string) error { return clone.ValidateRef(ref) }
 
 func cloneOrFetch(ctx context.Context, retry gitRetry, url, dst string, fullClone bool, ref string, emit func(Event)) error {
-	if err := validateGitURL(url); err != nil {
+	// Validate before emitting so a bad URL or ref does not log a
+	// "$ git clone" line for a command that will never run.
+	if err := clone.ValidateURL(url); err != nil {
 		return err
 	}
-	if err := ValidateGitRef(ref); err != nil {
+	if err := clone.ValidateRef(ref); err != nil {
 		return err
 	}
 	if _, err := os.Stat(filepath.Join(dst, ".git")); err == nil {
-		return fetchRef(ctx, retry, dst, ref, fullClone, emit)
+		emit(Event{Kind: KindText, Text: "$ git fetch origin " + fetchTarget(ref) + " && reset"})
+	} else {
+		msg := "$ git clone " + url
+		if !fullClone {
+			msg += " (shallow)"
+		}
+		emit(Event{Kind: KindText, Text: msg})
 	}
-	args := []string{"clone", "--quiet"}
-	msg := "$ git clone " + url
-	if !fullClone {
-		args = append(args, "--depth", "1")
-		msg += " (shallow)"
+	r := retry.resolved().toClone()
+	r.Notify = func(n clone.Notice) {
+		emit(Event{Kind: KindText, Text: fmt.Sprintf(
+			"git %s failed with a transient error (attempt %d/%d), retrying in %s",
+			n.Label, n.Attempt, n.Attempts, n.Delay.Round(time.Millisecond))})
 	}
-	args = append(args, "--", url, dst)
-	emit(Event{Kind: KindText, Text: msg})
-	out, err := retry.do(ctx, gitCommand{
-		label: "clone",
-		env:   []string{"GIT_PROTOCOL_FROM_USER=0"},
-		args:  args,
-		reset: cloneDestReset(dst),
-	}, emit)
-	if err != nil {
-		return fmt.Errorf("%s: %w", out, err)
-	}
-	// Resolve ref through the same fetchRef the cache-reuse path uses, rather
-	// than `git clone --branch <ref>`: --branch rejects a commit SHA, so a SHA
-	// in the branch field would fail the first scan yet work on every later
-	// one. Going through fetchRef makes both paths pin a ref identically.
-	if ref != "" {
-		return fetchRef(ctx, retry, dst, ref, fullClone, emit)
+	if err := clone.Ensure(ctx, r, url, dst, ref, fullClone); err != nil {
+		// Unwrap so ensureClone's own UnreachableError wrap does not
+		// double-prefix; the scan log records the git output verbatim.
+		var ue *clone.UnreachableError
+		if errors.As(err, &ue) {
+			return ue.Err
+		}
+		return err
 	}
 	return nil
 }
 
-// fetchRef updates an existing cache checkout to ref, or to the remote's
-// default branch when ref is empty. It fetches the ref by name and resets
-// to FETCH_HEAD rather than to origin/<ref>: the cache is a single-branch
-// shallow clone, so origin/<ref> only resolves for the one branch it was
-// first cloned at. A different ref — another maintained release branch, a
-// tag, or a commit — is in no remote-tracking ref, but fetching it by name
-// always lands it in FETCH_HEAD.
-func fetchRef(ctx context.Context, retry gitRetry, dst, ref string, fullClone bool, emit func(Event)) error {
-	target := ref
-	if target == "" {
-		target = "HEAD"
+func fetchTarget(ref string) string {
+	if ref == "" {
+		return "HEAD"
 	}
-	fetchArgs := []string{"-C", dst, "fetch", "--quiet"}
-	fetchMsg := "$ git fetch origin " + target + " && reset"
-	if fullClone {
-		out, _ := git(ctx, "", "-C", dst, "rev-parse", "--is-shallow-repository")
-		if strings.TrimSpace(out) == "true" {
-			fetchArgs = append(fetchArgs, "--unshallow")
-			fetchMsg = "$ git fetch --unshallow origin " + target + " && reset"
-		}
-	}
-	// "--" stops a ref like "--upload-pack=..." (from the branch field or a
-	// /tree/<branch> URL) being parsed as a git option, matching the clone
-	// and ls-remote paths. Valid refs never start with "-" so this is safe.
-	fetchArgs = append(fetchArgs, "--", "origin", target)
-	emit(Event{Kind: KindText, Text: fetchMsg})
-	if out, err := retry.do(ctx, gitCommand{label: "fetch", args: fetchArgs}, emit); err != nil {
-		return fmt.Errorf("%s: %w", out, err)
-	}
-	// The reset is local: it can only fail for a reason a retry cannot fix,
-	// so it stays outside the network retry policy.
-	if out, err := git(ctx, "", "-C", dst, "reset", "--quiet", "--hard", "FETCH_HEAD"); err != nil {
-		return fmt.Errorf("%s: %w", out, err)
-	}
-	return nil
+	return ref
 }
 
 // ListRemoteBranches returns the branch names a remote advertises, for the
@@ -227,57 +155,19 @@ func fetchRef(ctx context.Context, retry gitRetry, dst, ref string, fullClone bo
 // keeping a typo's feedback prompt. An auth or not-found answer stays
 // permanent and is never retried at all.
 func ListRemoteBranches(ctx context.Context, cloneURL string) ([]string, error) {
-	if err := validateGitURL(cloneURL); err != nil {
-		return nil, err
-	}
-	picker := branchPickerRetry(gitRetry{})
-	out, err := picker.do(ctx, gitCommand{
-		label: "ls-remote",
-		env:   []string{"GIT_TERMINAL_PROMPT=0"},
-		args:  []string{"-c", "credential.helper=", "ls-remote", "--heads", "--", cloneURL},
-	}, nil)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", strings.TrimSpace(out), err)
-	}
-	return parseRemoteHeads(out), nil
+	return clone.RemoteBranches(ctx, branchPickerRetry(gitRetry{}).resolved().toClone(), cloneURL)
 }
 
-// parseRemoteHeads extracts branch names from `git ls-remote --heads`
-// output (lines of "<sha>\trefs/heads/<name>"), sorted and de-duplicated.
-func parseRemoteHeads(out string) []string {
-	seen := map[string]bool{}
-	var names []string
-	for _, line := range strings.Split(out, "\n") {
-		_, ref, ok := strings.Cut(line, "\t")
-		if !ok {
-			continue
-		}
-		name, ok := strings.CutPrefix(strings.TrimSpace(ref), "refs/heads/")
-		if !ok || name == "" || seen[name] {
-			continue
-		}
-		seen[name] = true
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
-}
+// gitHead returns HEAD in dir, or "" when dir is not a git repository (e.g.
+// a local-directory scan with no .git). Scan.Commit stays empty so
+// downstream consumers know we have no reproducible pin, rather than
+// receiving stderr as a fake SHA.
+func gitHead(dir string) string { return clone.Head(context.Background(), dir) }
 
-func gitHead(dir string) string {
-	out, err := git(context.Background(), dir, "rev-parse", "HEAD")
-	if err != nil {
-		// Not a git repository (e.g. a local-directory scan with no .git).
-		// Scan.Commit stays empty so downstream consumers know we have no
-		// reproducible pin, rather than receiving stderr as a fake SHA.
-		return ""
-	}
-	return strings.TrimSpace(out)
-}
-
-func git(ctx context.Context, dir string, args ...string) (string, error) {
-	return gitWithEnv(ctx, dir, nil, args...)
+func git(ctx context.Context, args ...string) (string, error) {
+	return gitWithEnv(ctx, "", nil, args...)
 }
 
 func gitWithEnv(ctx context.Context, dir string, env []string, args ...string) (string, error) {
-	return gitx.RunnerWithWaitDelay(gitWaitDelay)(ctx, dir, env, args...)
+	return clone.RunnerWithWaitDelay(gitWaitDelay)(ctx, dir, env, args...)
 }

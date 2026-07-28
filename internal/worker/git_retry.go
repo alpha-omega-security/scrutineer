@@ -5,20 +5,19 @@ import (
 	"fmt"
 	"time"
 
-	"scrutineer/internal/gitx"
-	retryx "scrutineer/internal/retry"
+	"github.com/git-pkgs/clone"
 )
 
 const (
-	gitRetryAttempts  = gitx.DefaultAttempts
-	gitRetryBaseDelay = gitx.DefaultBaseDelay
-	gitRetryMaxDelay  = gitx.DefaultMaxDelay
+	gitRetryAttempts  = clone.DefaultAttempts
+	gitRetryBaseDelay = clone.DefaultBaseDelay
+	gitRetryMaxDelay  = clone.DefaultMaxDelay
 )
 
-type gitRunner = gitx.Runner
+type gitRunner = clone.Runner
 
 // gitCommand is the worker-facing form of a remote Git invocation. The
-// adapter keeps worker events out of the reusable gitx package.
+// adapter keeps worker events out of the reusable clone package.
 type gitCommand struct {
 	label   string
 	dir     string
@@ -29,7 +28,7 @@ type gitCommand struct {
 }
 
 // gitRetry retains the worker's compact, zero-value policy while delegating
-// classification, retry execution, and timing to reusable internal packages.
+// classification, retry execution, and timing to github.com/git-pkgs/clone.
 type gitRetry struct {
 	attempts  int
 	baseDelay time.Duration
@@ -39,22 +38,29 @@ type gitRetry struct {
 }
 
 func (r gitRetry) resolved() gitRetry {
-	if r.attempts <= 0 {
-		r.attempts = gitRetryAttempts
-	}
-	if r.baseDelay <= 0 {
-		r.baseDelay = gitRetryBaseDelay
-	}
-	if r.maxDelay <= 0 {
-		r.maxDelay = gitRetryMaxDelay
-	}
+	c := r.toClone().Resolved()
+	// Prefer this package's git wrapper (honours the gitWaitDelay var)
+	// over clone.Run's fixed default.
 	if r.run == nil {
-		r.run = gitWithEnv
+		c.Run = gitWithEnv
 	}
-	if r.sleep == nil {
-		r.sleep = retryx.Sleep
+	return gitRetry{
+		attempts:  c.Attempts,
+		baseDelay: c.BaseDelay,
+		maxDelay:  c.MaxDelay,
+		run:       c.Run,
+		sleep:     c.Sleep,
 	}
-	return r
+}
+
+func (r gitRetry) toClone() clone.Retry {
+	return clone.Retry{
+		Attempts:  r.attempts,
+		BaseDelay: r.baseDelay,
+		MaxDelay:  r.maxDelay,
+		Run:       r.run,
+		Sleep:     r.sleep,
+	}
 }
 
 func branchPickerRetry(r gitRetry) gitRetry {
@@ -65,22 +71,15 @@ func branchPickerRetry(r gitRetry) gitRetry {
 }
 
 func (r gitRetry) do(ctx context.Context, cmd gitCommand, emit func(Event)) (string, error) {
-	p := r.resolved()
-	retry := gitx.Retry{
-		Attempts:  p.attempts,
-		BaseDelay: p.baseDelay,
-		MaxDelay:  p.maxDelay,
-		Run:       p.run,
-		Sleep:     p.sleep,
-	}
+	retry := r.resolved().toClone()
 	if emit != nil {
-		retry.Notify = func(n gitx.Notice) {
+		retry.Notify = func(n clone.Notice) {
 			emit(Event{Kind: KindText, Text: fmt.Sprintf(
 				"git %s failed with a transient error (attempt %d/%d), retrying in %s",
 				n.Label, n.Attempt, n.Attempts, n.Delay.Round(time.Millisecond))})
 		}
 	}
-	return retry.Do(ctx, gitx.Command{
+	return retry.Do(ctx, clone.Command{
 		Label:   cmd.label,
 		Dir:     cmd.dir,
 		Env:     cmd.env,
@@ -91,5 +90,5 @@ func (r gitRetry) do(ctx context.Context, cmd gitCommand, emit func(Event)) (str
 }
 
 func cloneDestReset(dst string) func() error {
-	return gitx.CloneDestReset(dst)
+	return clone.DestReset(dst)
 }

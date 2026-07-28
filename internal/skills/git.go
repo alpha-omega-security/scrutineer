@@ -2,15 +2,12 @@ package skills
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 
-	"scrutineer/internal/gitx"
+	"github.com/git-pkgs/clone"
 )
-
-const dirPerm = 0o755
 
 // ParseRepoSpec splits a skills_repo spec into a clone URL and an optional
 // git ref. Two forms are accepted:
@@ -56,70 +53,26 @@ func ParseRepoSpec(raw string) (url, ref string, err error) {
 // CloneOrPull prepares a local copy of a git repo at dst. On first call it
 // clones; on subsequent calls it fetches and resets to the requested ref so
 // skill updates propagate without needing to wipe the cache. When ref is
-// empty the default branch (origin/HEAD) is used. fullClone toggles between
-// --depth 1 and full history, and unshallows an existing shallow clone when
-// flipped to true. Returns the resolved commit SHA so callers can record
-// exactly which version of the skills produced each scan. https-only, same
-// rationale as internal/worker/clone.go (T2/T4).
+// empty the default branch is used. fullClone toggles between --depth 1 and
+// full history, and unshallows an existing shallow clone when flipped to
+// true. Returns the resolved commit SHA so callers can record exactly which
+// version of the skills produced each scan. https-only, same rationale as
+// internal/worker/clone.go (T2/T4).
 func CloneOrPull(ctx context.Context, url, ref, dst string, fullClone bool) (string, error) {
-	if !strings.HasPrefix(url, "https://") {
-		return "", fmt.Errorf("skills repo must be https://, got %q", url)
-	}
-	return cloneOrPull(ctx, url, ref, dst, fullClone)
+	return cloneOrPullWithRetry(ctx, clone.Retry{}, url, ref, dst, fullClone)
 }
 
-func cloneOrPull(ctx context.Context, url, ref, dst string, fullClone bool) (string, error) {
-	return cloneOrPullWithRetry(ctx, gitx.Retry{}, url, ref, dst, fullClone)
-}
-
-func cloneOrPullWithRetry(ctx context.Context, retry gitx.Retry, url, ref, dst string, fullClone bool) (string, error) {
-	policy := retry.Resolved()
-	if _, err := os.Stat(filepath.Join(dst, ".git")); err == nil {
-		fetchArgs := []string{"fetch", "--quiet", "origin"}
-		if fullClone {
-			out, _ := policy.Run(ctx, dst, nil, "rev-parse", "--is-shallow-repository")
-			if strings.TrimSpace(out) == "true" {
-				fetchArgs = []string{"fetch", "--unshallow", "--quiet", "origin"}
-			}
+func cloneOrPullWithRetry(ctx context.Context, retry clone.Retry, url, ref, dst string, fullClone bool) (string, error) {
+	if err := clone.Ensure(ctx, retry, url, dst, ref, fullClone); err != nil {
+		var ue *clone.UnreachableError
+		if errors.As(err, &ue) {
+			return "", fmt.Errorf("skills repo %s: %w", url, ue.Err)
 		}
-		if out, err := policy.Do(ctx, gitx.Command{Label: "fetch", Dir: dst, Args: fetchArgs}); err != nil {
-			return "", fmt.Errorf("fetch %s: %s: %w", url, out, err)
-		}
-	} else {
-		if err := os.MkdirAll(filepath.Dir(dst), dirPerm); err != nil {
-			return "", err
-		}
-		args := []string{"clone", "--quiet"}
-		if !fullClone {
-			args = []string{"clone", "--depth", "1", "--quiet"}
-		}
-		args = append(args, "--", url, dst)
-		if out, err := policy.Do(ctx, gitx.Command{
-			Label: "clone",
-			Env:   []string{"GIT_PROTOCOL_FROM_USER=0"},
-			Args:  args,
-			Reset: gitx.CloneDestReset(dst),
-		}); err != nil {
-			return "", fmt.Errorf("clone %s: %s: %w", url, out, err)
-		}
+		return "", err
 	}
-	target := "origin/HEAD"
-	if ref != "" {
-		if out, err := policy.Do(ctx, gitx.Command{
-			Label: "fetch",
-			Dir:   dst,
-			Args:  []string{"fetch", "--quiet", "origin", "--end-of-options", ref},
-		}); err != nil {
-			return "", fmt.Errorf("fetch ref %s: %s: %w", ref, out, err)
-		}
-		target = "FETCH_HEAD"
+	sha := clone.Head(ctx, dst)
+	if sha == "" {
+		return "", fmt.Errorf("skills repo %s: rev-parse HEAD failed", url)
 	}
-	if out, err := policy.Run(ctx, dst, nil, "reset", "--quiet", "--hard", target); err != nil {
-		return "", fmt.Errorf("reset to %s: %s: %w", target, out, err)
-	}
-	out, err := policy.Run(ctx, dst, nil, "rev-parse", "HEAD")
-	if err != nil {
-		return "", fmt.Errorf("rev-parse: %s: %w", out, err)
-	}
-	return strings.TrimSpace(out), nil
+	return sha, nil
 }

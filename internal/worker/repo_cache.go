@@ -130,11 +130,11 @@ func (w *Worker) EnsureCommit(ctx context.Context, url, commit string) error {
 	if commitReachable(ctx, cacheSrc, commit) {
 		return nil
 	}
-	out, _ := git(ctx, "", "-C", cacheSrc, "rev-parse", "--is-shallow-repository")
+	out, _ := git(ctx, "-C", cacheSrc, "rev-parse", "--is-shallow-repository")
 	if strings.TrimSpace(out) != "true" {
 		return nil
 	}
-	if out, err := git(ctx, "", "-C", cacheSrc, "fetch", "--unshallow", "--quiet", "origin"); err != nil {
+	if out, err := git(ctx, "-C", cacheSrc, "fetch", "--unshallow", "--quiet", "origin"); err != nil {
 		return fmt.Errorf("unshallow %s: %s: %w", url, strings.TrimSpace(out), err)
 	}
 	return nil

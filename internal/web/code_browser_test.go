@@ -14,6 +14,8 @@ import (
 	"scrutineer/internal/db"
 	"scrutineer/internal/testutil"
 	"scrutineer/internal/worker"
+
+	"github.com/git-pkgs/clone"
 )
 
 func TestCommitRE(t *testing.T) {
@@ -31,8 +33,8 @@ func TestCommitRE(t *testing.T) {
 		{"", false},
 	}
 	for _, tc := range cases {
-		if got := commitRE.MatchString(tc.in); got != tc.want {
-			t.Errorf("commitRE(%q) = %v, want %v", tc.in, got, tc.want)
+		if got := clone.ValidCommit(tc.in); got != tc.want {
+			t.Errorf("ValidCommit(%q) = %v, want %v", tc.in, got, tc.want)
 		}
 	}
 }

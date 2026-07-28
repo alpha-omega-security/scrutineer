@@ -20,6 +20,8 @@ github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkp
 github.com/dustin/go-humanize v1.0.1/go.mod h1:Mu1zIs6XwVuF/gI1OepvI0qD18qycQx+mFykh5fBlto=
 github.com/ecosyste-ms/ecosystems-go v0.3.0 h1:eVTNKQ3PyVNkSAnk1934958Vg4rR7ho5B5MWEQaMLi4=
 github.com/ecosyste-ms/ecosystems-go v0.3.0/go.mod h1:bkjiI8WoTFB1Jw0M3h8yn3KXCD/+LdETsQ3m2BNLMHQ=
+github.com/git-pkgs/clone v0.1.2 h1:1BT+/+ZoCQqIj7feMFfkFhZG1B20Kaq0XHBeHsnMxUI=
+github.com/git-pkgs/clone v0.1.2/go.mod h1:1xNuHmJs5bOoFRXqydrd2guhg6BxwgHlvbMfkIAq3AM=
 github.com/git-pkgs/cwe v0.1.0 h1:DjE/Ixfvv/OIxtofF5vwumn01qbcXOHf17mUH2lri/g=
 github.com/git-pkgs/cwe v0.1.0/go.mod h1:6yUxEoA+3rI4W3ftqb7PZP1Z7zZFmV4/wfr7P46HtHU=
 github.com/git-pkgs/enrichment v0.6.0 h1:npV6N+eFZnI64uw/B0s+WJPn6Fu6Be08bexAViZFjMg=

@@ -1,19 +1,14 @@
 package web
 
 import (
-	"bytes"
 	"context"
-	"errors"
-	"io"
 	"net/http"
 	"os"
-	"os/exec"
-	"path"
 	"path/filepath"
-	"regexp"
-	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/git-pkgs/clone"
 
 	"scrutineer/internal/db"
 	"scrutineer/internal/worker"
@@ -22,12 +17,6 @@ import (
 // maxBrowserBytes caps the size of a single file rendered in the code
 // browser; larger files render as a "too large" notice.
 const maxBrowserBytes = 2 << 20
-
-// commitRE accepts abbreviated SHAs (down to 4 hex chars) because the code
-// browser is fed user-clicked links that often carry the short form, and up
-// to 64 for SHA-256 object-format repos. Contrast gitSHARE in finding_osv.go,
-// which requires a full 40/64-char hash because the OSV GIT range schema does.
-var commitRE = regexp.MustCompile(`^[0-9a-f]{4,64}$`)
 
 // repoBlob reads one file via `git show <commit>:<path>` from the worker's
 // repo-cache, so historical commits resolve even after rescans move HEAD.
@@ -38,7 +27,11 @@ func (s *Server) repoBlob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	commit := r.PathValue("commit")
-	if !commitRE.MatchString(commit) {
+	// clone.ValidCommit accepts abbreviated SHAs (down to 4 hex chars)
+	// because the code browser is fed user-clicked links that often carry
+	// the short form. Contrast gitSHARE in finding_osv.go, which requires
+	// a full 40/64-char hash because the OSV GIT range schema does.
+	if !clone.ValidCommit(commit) {
 		http.Error(w, "bad commit", http.StatusBadRequest)
 		return
 	}
@@ -104,60 +97,13 @@ func (s *Server) repoBlob(w http.ResponseWriter, r *http.Request) {
 
 // sanitizeBlobPath rejects absolute paths, traversal segments and NUL bytes,
 // and returns the slash-form path safe to feed `git show <commit>:<path>`.
-func sanitizeBlobPath(p string) (string, bool) {
-	if p == "" || strings.ContainsRune(p, 0) || strings.HasPrefix(p, "/") {
-		return "", false
-	}
-	p = strings.TrimPrefix(p, "./")
-	if slices.Contains(strings.Split(p, "/"), "..") {
-		return "", false
-	}
-	clean := path.Clean(p)
-	if clean == "." || clean == "" {
-		return "", false
-	}
-	return clean, true
-}
+// Also used by forge_link.go for its own path checks.
+func sanitizeBlobPath(p string) (string, bool) { return clone.SanitizePath(p) }
 
-// gitShowBlob runs `git show <commit>:<path>` and returns
-// (content, isBinary, truncated, err). The read is capped at
-// maxBrowserBytes+1 so the extra byte distinguishes "at the cap"
-// from "truncated".
+// gitShowBlob wraps clone.Blob at the code browser's fixed byte cap.
 func gitShowBlob(ctx context.Context, repoDir, commit, blobPath string) (string, bool, bool, error) {
-	cmd := exec.CommandContext(ctx, "git", "-C", repoDir, "show", commit+":"+blobPath)
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return "", false, false, err
-	}
-	var errBuf bytes.Buffer
-	cmd.Stderr = &errBuf
-	if err := cmd.Start(); err != nil {
-		return "", false, false, err
-	}
-	raw, readErr := io.ReadAll(io.LimitReader(stdout, maxBrowserBytes+1))
-	if len(raw) > maxBrowserBytes {
-		// Drain so git doesn't block on a full pipe before Wait.
-		_, _ = io.Copy(io.Discard, stdout)
-	}
-	if waitErr := cmd.Wait(); waitErr != nil {
-		msg := strings.TrimSpace(errBuf.String())
-		if msg == "" {
-			msg = waitErr.Error()
-		}
-		return "", false, false, errors.New(msg)
-	}
-	if readErr != nil {
-		return "", false, false, readErr
-	}
-	truncated := false
-	if len(raw) > maxBrowserBytes {
-		raw = raw[:maxBrowserBytes]
-		truncated = true
-	}
-	if bytes.IndexByte(raw, 0) != -1 {
-		return "", true, truncated, nil
-	}
-	return string(raw), false, truncated, nil
+	raw, binary, truncated, err := clone.Blob(ctx, repoDir, commit, blobPath, maxBrowserBytes)
+	return string(raw), binary, truncated, err
 }
 
 // parseHighlight decodes `line=N` or `line=N-M` into an inclusive range.
