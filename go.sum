@@ -7,8 +7,8 @@ filippo.io/edwards25519 v1.2.0/go.mod h1:xzAOLCNug/yB62zG1bQ8uziwrIqIuxhctzJT18Q
 filippo.io/hpke v0.4.0 h1:p575VVQ6ted4pL+it6M00V/f2qTZITO0zgmdKCkd5+A=
 filippo.io/hpke v0.4.0/go.mod h1:EmAN849/P3qdeK+PCMkDpDm83vRHM5cDipBJ8xbQLVY=
 github.com/RaveNoX/go-jsoncommentstrip v1.0.0/go.mod h1:78ihd09MekBnJnxpICcwzCMzGrKSKYe4AqU6PDYYpjk=
-github.com/alpha-omega-security/harness v0.1.0 h1:x3xvVrU5gKAzD/myhGMORTUxCGzvYWJBSeJiZg60gvI=
-github.com/alpha-omega-security/harness v0.1.0/go.mod h1:/nym/38ro7lLq4jVmQhYqblV+0uMo3YpeueqaXNMpOs=
+github.com/alpha-omega-security/harness v0.1.1 h1:EFNnTVe4DzaefrC8TdhnEbEPwIoKTQcXttCyCI8zzX8=
+github.com/alpha-omega-security/harness v0.1.1/go.mod h1:/nym/38ro7lLq4jVmQhYqblV+0uMo3YpeueqaXNMpOs=
 github.com/apapsch/go-jsonmerge/v2 v2.0.0 h1:axGnT1gRIfimI7gJifB699GoE/oq+F2MU7Dml6nw9rQ=
 github.com/apapsch/go-jsonmerge/v2 v2.0.0/go.mod h1:lvDnEdqiQrp0O42VQGgmlKpxL1AP2+08jFMw88y4klk=
 github.com/bmatcuk/doublestar v1.1.1/go.mod h1:UD6OnuiIn0yFxxA2le/rnRU1G4RaI4UvFv1sNto9p6w=
