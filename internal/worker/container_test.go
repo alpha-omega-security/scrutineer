@@ -786,7 +786,10 @@ func TestBuildRunArgs_SidecarProxyURL(t *testing.T) {
 	hn := hardenedNet{name: "scrutineer-hardened-7", proxyEndpoint: "10.89.1.2:3128", proxyName: "scrutineer-proxy-7"}
 	args := d.buildRunArgs("/work/abs", "img:latest", hn, "")
 
-	const want = "http://scrutineer:tok@10.89.1.2:3128"
+	// The sidecar path regenerates the proxy URL via ProxyURLForEndpoint
+	// against the sidecar's own IP:port; it does not carry the host-proxy
+	// URL through. The basic-auth username is harness/egress's constant.
+	want := ProxyURLForEndpoint("tok", "10.89.1.2:3128")
 	for _, env := range []string{"HTTPS_PROXY=" + want, "HTTP_PROXY=" + want, "ALL_PROXY=" + want} {
 		if !hasAdjacent(args, "-e", env) {
 			t.Errorf("expected sidecar %s in %v", env, args)
