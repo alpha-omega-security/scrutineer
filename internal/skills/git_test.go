@@ -80,6 +80,9 @@ func initOrigin(t *testing.T) (origin, taggedSHA, headSHA, tag string) {
 	t.Setenv("GIT_CONFIG_VALUE_0", origin)
 	t.Setenv("GIT_CONFIG_KEY_1", "protocol.file.allow")
 	t.Setenv("GIT_CONFIG_VALUE_1", "always")
+	// clone v0.1.1 sets GIT_ALLOW_PROTOCOL=https on every remote op unless
+	// the caller has already set it; the fixture routes through file://.
+	t.Setenv("GIT_ALLOW_PROTOCOL", "https:file")
 	return origin, taggedSHA, headSHA, "v0.3.1"
 }
 
