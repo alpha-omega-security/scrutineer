@@ -102,7 +102,7 @@ func ValidateGitRef(ref string) error { return clone.ValidateRef(ref) }
 func cloneOrFetch(ctx context.Context, retry gitRetry, url, dst string, fullClone bool, ref string, emit func(Event)) error {
 	// Validate before emitting so a bad URL or ref does not log a
 	// "$ git clone" line for a command that will never run.
-	if err := clone.ValidateURL(url); err != nil {
+	if err := validateGitURL(url); err != nil {
 		return err
 	}
 	if err := clone.ValidateRef(ref); err != nil {

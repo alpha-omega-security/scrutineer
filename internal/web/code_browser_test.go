@@ -11,14 +11,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/git-pkgs/clone"
+
 	"scrutineer/internal/db"
 	"scrutineer/internal/testutil"
 	"scrutineer/internal/worker"
-
-	"github.com/git-pkgs/clone"
 )
 
-func TestCommitRE(t *testing.T) {
+func TestValidCommit(t *testing.T) {
 	cases := []struct {
 		in   string
 		want bool
