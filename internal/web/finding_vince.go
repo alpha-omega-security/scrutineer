@@ -603,7 +603,7 @@ func (s *Server) vinceAttachment(
 			Data:        body,
 		}, contents, nil
 	case vinceAttachmentReport:
-		report := renderFindingReport(s.DB, &ctx.Finding, &ctx.Scan, &ctx.Repository)
+		report := renderFindingReportAt(s.DB, &ctx.Finding, &ctx.Scan, &ctx.Repository, generatedAt)
 		return &vince.Attachment{
 			Name:        fmt.Sprintf("scrutineer-finding-%d-report.md", ctx.Finding.ID),
 			ContentType: "text/markdown; charset=utf-8",

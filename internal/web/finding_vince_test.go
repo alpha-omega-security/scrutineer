@@ -411,7 +411,7 @@ func TestFindingVINCEPersistenceFailureShowsVRFID(t *testing.T) {
 	}
 }
 
-func TestVINCEAttachmentPreviewIsStableAndListsSensitiveContents(t *testing.T) {
+func TestVINCEAttachmentPreviewUsesTimestampAndListsSensitiveContents(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
 	ctx := seedVINCEFinding(t, s)
@@ -432,9 +432,22 @@ func TestVINCEAttachmentPreviewIsStableAndListsSensitiveContents(t *testing.T) {
 	if attachmentHash(first) != attachmentHash(second) {
 		t.Error("same finding and preview timestamp produced different attachment hashes")
 	}
+	const wantGeneratedAt = "at 2026-07-29 12:00 UTC."
+	archive := readArchive(t, first.Data)
+	if !strings.Contains(string(archive["report.md"]), wantGeneratedAt) {
+		t.Errorf("bundle report does not use preview timestamp: %s", archive["report.md"])
+	}
 	for _, want := range []string{"manifest.json", "report.md", "patch.diff", "poc/run.sh"} {
 		if !slices.Contains(contents, want) {
 			t.Errorf("bundle contents missing %q: %#v", want, contents)
 		}
+	}
+
+	report, _, err := s.vinceAttachment(ctx, vinceAttachmentReport, generatedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(report.Data), wantGeneratedAt) {
+		t.Errorf("report attachment does not use preview timestamp: %s", report.Data)
 	}
 }

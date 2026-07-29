@@ -157,7 +157,7 @@ func (s *Server) bundleEntriesAt(f *db.Finding, repo *db.Repository, generatedAt
 		contents["csaf.json"] = "CSAF 2.0 document (with VEX product_status for dependents)"
 	}
 
-	report := renderFindingReport(s.DB, f, &scan, repo)
+	report := renderFindingReportAt(s.DB, f, &scan, repo, generatedAt)
 	entries = append(entries, bundleEntry{Name: "report.md", Data: []byte(report)})
 	contents["report.md"] = "Human-readable markdown report for the recipient"
 
