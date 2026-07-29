@@ -157,8 +157,9 @@ func ParseFile(path string) (*Parsed, error) {
 }
 
 // validateMetadata checks the scrutineer.* keys strictly. agentskills.io
-// spec violations stay as warnings (see validate); scrutineer-specific
-// keys are a closed set under our control so typos are hard errors.
+// spec violations stay as warnings (attached by harness/skills.Parse);
+// scrutineer-specific keys are a closed set under our control so typos are
+// hard errors.
 func (p *Parsed) validateMetadata() error {
 	if err := harnessskills.ValidateNamespace(p.Metadata, "scrutineer.", scrutineerKeys); err != nil {
 		return err
