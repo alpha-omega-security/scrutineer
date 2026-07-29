@@ -1,0 +1,37 @@
+# Local PostgreSQL for scrutineer's postgres backend. This brings up only the
+# database service; scrutineer itself runs separately (go run ./cmd/scrutineer
+# or the container image) and is pointed at this server via the database block
+# in scrutineer.yaml. The schema is created automatically by scrutineer on
+# first connect (GORM AutoMigrate) — nothing is pre-provisioned here.
+#
+#   docker compose up -d
+#   # then, in scrutineer.yaml:
+#   #   database:
+#   #     driver: postgres
+#   #     dsn: postgres://scrutineer:scrutineer@127.0.0.1:5432/scrutineer?sslmode=disable
+name: scrutineer-postgres
+
+services:
+  db:
+    image: postgres:16-alpine
+    # Bound to loopback so the database is not reachable from other hosts with
+    # its dev-default password. Override POSTGRES_PASSWORD (and this binding)
+    # before exposing the stack anywhere real.
+    ports:
+      - "127.0.0.1:5432:5432"
+    environment:
+      POSTGRES_USER: scrutineer
+      POSTGRES_DB: scrutineer
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-scrutineer}
+    volumes:
+      - scrutineer-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U scrutineer -d scrutineer"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+volumes:
+  scrutineer-pgdata:

@@ -26,7 +26,7 @@ func newPreflightWorker(t *testing.T) *Worker {
 		t.Fatal(err)
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
-	q, err := queue.New(sqldb, log, 1)
+	q, err := queue.New(sqldb, log, 1, queue.SQLite)
 	if err != nil {
 		t.Fatal(err)
 	}

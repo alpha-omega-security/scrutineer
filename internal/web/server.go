@@ -1011,11 +1011,17 @@ func loadRepoFindings(gdb *gorm.DB, repoID uint, category string) repoFindings {
 			scanIDs = append(scanIDs, f.ScanID)
 		}
 	}
-	// Typed Find so GORM's dialector quotes the reserved-word column
-	// (`commit` on SQLite, "commit" on Postgres) and coerces NULL text to
-	// the Go zero value, replacing the previous Raw + COALESCE.
-	var rows []db.Scan
-	gdb.Select("id", "skill_name", "commit").Where("id IN ?", scanIDs).Find(&rows)
+	var rows []struct {
+		ID        uint
+		SkillName string
+		Commit    string
+	}
+	// "commit" is quoted because it is a reserved word; double quotes are the
+	// SQL-standard identifier quote both SQLite and PostgreSQL accept (and the
+	// input resolves to the column, not a string literal, because the column
+	// exists). The output alias stays "commit" so GORM maps it onto the
+	// struct's Commit field.
+	gdb.Raw(`SELECT id, COALESCE(skill_name, '') AS skill_name, COALESCE("commit", '') AS "commit" FROM scans WHERE id IN ?`, scanIDs).Scan(&rows)
 	for _, row := range rows {
 		rf.ScanSkill[row.ID] = row.SkillName
 		rf.ScanCommit[row.ID] = row.Commit
@@ -2401,14 +2407,14 @@ func (s *Server) latestDepsCommit(repoID uint) string {
 	var commits []string
 	s.DB.Model(&db.Scan{}).
 		Joins("JOIN skills ON skills.id = scans.skill_id").
-		Where("scans.repository_id = ? AND skills.output_kind = ? AND scans.status = ?",
+		Where(`scans.repository_id = ? AND skills.output_kind = ? AND scans.status = ? AND scans."commit" <> ''`,
 			repoID, "dependencies", db.ScanDone).
 		// Not(map) lets GORM's dialector quote the reserved-word column
 		// against the model's table instead of hardcoding scans.`commit`.
 		Not(map[string]any{"commit": ""}).
 		Order("scans.id DESC").
 		Limit(1).
-		Pluck("scans.commit", &commits)
+		Pluck(`scans."commit"`, &commits)
 	if len(commits) > 0 {
 		return commits[0]
 	}

@@ -118,9 +118,16 @@ type flags struct {
 	recipientsFile        string
 	identityFile          string
 	autoRejectMissedCount int
-	federationSalt        string
-	federationContact     string
-	skillLocal            skillDirs
+	// dbDriver selects the database backend ("" or "sqlite" for the embedded
+	// file, "postgres" for an external server). dbDSN is the connection
+	// string for postgres; sqlite ignores it and uses dataDir/scrutineer.db.
+	// These are config-only (no CLI flag) — a DSN on the command line would
+	// land in shell history and process listings.
+	dbDriver          string
+	dbDSN             string
+	federationSalt    string
+	federationContact string
+	skillLocal        skillDirs
 
 	// set records which flags were passed on the command line so merge
 	// knows not to let the config file override them.
@@ -272,6 +279,10 @@ func (f *flags) merge(cfg *config.Config) {
 	if cfg.AutoRejectMissedCount > 0 && !f.set["auto-reject-missed-count"] {
 		f.autoRejectMissedCount = cfg.AutoRejectMissedCount
 	}
+	// Database backend is config-only, so no f.set guard.
+	f.dbDriver = cfg.Database.Driver
+	f.dbDSN = cfg.Database.DSN
+
 	if cfg.FederationSalt != "" {
 		f.federationSalt = cfg.FederationSalt
 	}
@@ -305,6 +316,26 @@ func (f *flags) merge(cfg *config.Config) {
 	if cfg.Theme != "" {
 		web.SetTheme(cfg.Theme)
 	}
+}
+
+// databaseOptions maps the merged config onto db.OpenBackend's Options. For
+// postgres the DSN comes from config verbatim; for sqlite (the default) the
+// DSN is the database file inside the data directory, matching the historical
+// db.Open(dataDir/scrutineer.db) call.
+func (f *flags) databaseOptions() db.Options {
+	if f.dbDriver == "postgres" {
+		return db.Options{Dialect: db.DialectPostgres, DSN: f.dbDSN}
+	}
+	return db.Options{Dialect: db.DialectSQLite, DSN: filepath.Join(f.dataDir, dbFileName)}
+}
+
+// queueDialect selects the goqite backend to match databaseOptions so the
+// queue table lives in the same database as everything else.
+func (f *flags) queueDialect() queue.Dialect {
+	if f.dbDriver == "postgres" {
+		return queue.Postgres
+	}
+	return queue.SQLite
 }
 
 func (f *flags) fullClone() bool { return f.cloneMode == "full" }
@@ -470,7 +501,7 @@ func run(log *slog.Logger) error {
 	// walks into cloned scan workspaces under data/work/.
 	_ = os.WriteFile(filepath.Join(f.dataDir, "go.mod"), []byte("module scrutineer/data\n"), dataPermSecure)
 
-	gdb, err := db.Open(filepath.Join(f.dataDir, "scrutineer.db"))
+	gdb, err := db.OpenBackend(f.databaseOptions())
 	if err != nil {
 		return fmt.Errorf("open db: %w", err)
 	}
@@ -499,7 +530,7 @@ func run(log *slog.Logger) error {
 		}
 	}
 
-	q, err := queue.New(sqldb, log, f.concurrency)
+	q, err := queue.New(sqldb, log, f.concurrency, f.queueDialect())
 	if err != nil {
 		return fmt.Errorf("queue: %w", err)
 	}

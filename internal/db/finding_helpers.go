@@ -180,7 +180,7 @@ func retryFindingWrite(gdb *gorm.DB, findingID uint, write func(*gorm.DB) error)
 		if err == nil {
 			return nil
 		}
-		if !errors.Is(err, errFindingWriteConflict) && !isSQLiteBusy(err) {
+		if !errors.Is(err, errFindingWriteConflict) && !isSQLiteBusy(err) && !isPostgresSerializationFailure(err) {
 			return err
 		}
 		if attempt < findingWriteMaxAttempts {
@@ -213,6 +213,25 @@ func conditionalFindingUpdate(gdb *gorm.DB, findingID uint, column string, oldVa
 func isSQLiteBusy(err error) bool {
 	var sqliteErr interface{ Code() int }
 	return errors.As(err, &sqliteErr) && sqliteErr.Code()&0xff == sqliteBusyCode
+}
+
+// isPostgresSerializationFailure is the Postgres analogue of isSQLiteBusy: pgx
+// reports a serialization_failure (SQLSTATE 40001) or deadlock_detected (40P01)
+// when a concurrent transaction wins the compare-and-swap. Like the SQLite
+// case, the owned transaction must be restarted against a fresh snapshot. The
+// SQLState() method is matched structurally so the db package keeps no direct
+// pgconn dependency.
+func isPostgresSerializationFailure(err error) bool {
+	var pgErr interface{ SQLState() string }
+	if !errors.As(err, &pgErr) {
+		return false
+	}
+	switch pgErr.SQLState() {
+	case "40001", "40P01":
+		return true
+	default:
+		return false
+	}
 }
 
 // findingTimeFieldAccessor mirrors findingFieldAccessor for timestamp
