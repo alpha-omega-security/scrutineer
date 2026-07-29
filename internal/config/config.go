@@ -135,6 +135,11 @@ type Config struct {
 	// which an open finding is automatically transitioned to 'rejected'.
 	// 0 (the default) means this feature is disabled.
 	AutoRejectMissedCount int `yaml:"auto_reject_missed_count"`
+	// Database selects the persistence backend. When omitted, scrutineer
+	// keeps an embedded SQLite database file inside the data directory (the
+	// historical behaviour). Set driver: postgres with a dsn to point at an
+	// external PostgreSQL server instead.
+	Database DatabaseConfig `yaml:"database"`
 	// FederationSalt is the secret shared out of band between federation
 	// members and mixed into interchange finding hashes, so members derive
 	// matching hashes without publishing anything enumerable by outsiders.
@@ -146,6 +151,16 @@ type Config struct {
 	// hash match. Required when FederationSalt is set: startup refuses a
 	// salt without a contact.
 	FederationContact string `yaml:"federation_contact"`
+}
+
+// DatabaseConfig selects and locates the database backend. Driver is
+// "sqlite" (default when empty) or "postgres". DSN is required for
+// postgres (a libpq/pgx connection string or URL, e.g.
+// "postgres://user:pass@host:5432/scrutineer?sslmode=disable"); for sqlite
+// it is ignored and the file lives under the data directory as before.
+type DatabaseConfig struct {
+	Driver string `yaml:"driver"`
+	DSN    string `yaml:"dsn"`
 }
 
 // ParseScanTimeout validates and parses a scan_timeout string. Empty
@@ -173,6 +188,24 @@ func ValidateClone(s string) error {
 		return nil
 	default:
 		return fmt.Errorf("clone: must be \"shallow\" or \"full\", got %q", s)
+	}
+}
+
+// ValidateDatabase checks the database block. The driver must be empty,
+// "sqlite", or "postgres", and postgres requires a dsn (sqlite derives its
+// path from the data directory). Exposed so callers can validate the same
+// rule the loader applies.
+func ValidateDatabase(d DatabaseConfig) error {
+	switch d.Driver {
+	case "", "sqlite":
+		return nil
+	case "postgres":
+		if d.DSN == "" {
+			return errors.New("database: driver \"postgres\" requires a dsn")
+		}
+		return nil
+	default:
+		return fmt.Errorf("database: driver must be \"sqlite\" or \"postgres\", got %q", d.Driver)
 	}
 }
 
@@ -283,6 +316,9 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
 	}
 	if err := ValidateEffort(c.Effort); err != nil {
+		return nil, fmt.Errorf("parse config %s: %w", path, err)
+	}
+	if err := ValidateDatabase(c.Database); err != nil {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
 	}
 	return &c, nil
