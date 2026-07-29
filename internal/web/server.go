@@ -528,6 +528,9 @@ func (s *Server) Handler() http.Handler {
 	// browser's host-only boundary; see threatmodel.md.
 	root := http.NewServeMux()
 	root.Handle("/api/v1/", securityHeaders(http.StripPrefix(exportPrefix, s.exportHandler())))
+	// More specific than "/api/", so it wins the mux match and stays outside
+	// the scan-token auth apiHandler applies; see openAPISpec.
+	root.Handle("GET /api/openapi.yaml", securityHeaders(http.HandlerFunc(s.openAPISpec)))
 	root.Handle("/api/", s.apiHandler())
 	root.Handle("/", securityHeaders(mux))
 	return logRequests(s.Log, root)

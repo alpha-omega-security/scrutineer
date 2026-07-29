@@ -196,6 +196,9 @@ func registeredOpenAPIRoutes(t *testing.T) []registeredAPIRoute {
 	// claim-check is documented in openapi.yaml but registered on the root
 	// browser mux, outside apiHandler/exportHandler.
 	routes = append(routes, registeredAPIRoute{Method: "POST", Path: "/claim-check"})
+	// GET /api/openapi.yaml is likewise registered on the root mux, so that
+	// serving the spec does not sit behind the scan-token auth.
+	routes = append(routes, registeredAPIRoute{Method: "GET", Path: "/openapi.yaml"})
 	sort.Slice(routes, func(i, j int) bool {
 		if routes[i].Path == routes[j].Path {
 			return routes[i].Method < routes[j].Method
