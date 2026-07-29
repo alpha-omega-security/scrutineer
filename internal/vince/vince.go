@@ -169,6 +169,8 @@ func (r Report) Validate() error {
 		validateAnswer(errs, field, value)
 	}
 
+	// CaseRequestForm declares wider contact_phone and exploit_references
+	// limits than VTCaseRequest's PostgreSQL columns can store.
 	lengths := map[string]struct {
 		value string
 		max   int
@@ -177,7 +179,7 @@ func (r Report) Validate() error {
 		"contact_org":          {r.ContactOrganization, 100},
 		"contact_email":        {r.ContactEmail, 254},
 		"reporter_pgp":         {r.ReporterPGP, 100000000},
-		"contact_phone":        {r.ContactPhone, 60},
+		"contact_phone":        {r.ContactPhone, 20},
 		"please_explain":       {r.PleaseExplain, 20000},
 		"vendor_name":          {r.VendorName, 100},
 		"other_vendors":        {r.OtherVendors, 1000},
@@ -189,7 +191,7 @@ func (r Report) Validate() error {
 		"vul_impact":           {r.VulnerabilityImpact, 20000},
 		"vul_discovery":        {r.VulnerabilityDiscovery, 20000},
 		"public_references":    {r.PublicReferences, 1000},
-		"exploit_references":   {r.ExploitReferences, 20000},
+		"exploit_references":   {r.ExploitReferences, 1000},
 		"disclosure_plans":     {r.DisclosurePlans, 1000},
 		"tracking":             {r.Tracking, 100},
 		"comments":             {r.Comments, 1000},

@@ -108,7 +108,7 @@
       </div>
       <div class="grid gap-1">
         <label for="contact_phone" class="text-xs text-muted-foreground">Phone</label>
-        <input id="contact_phone" class="input" name="contact_phone" maxlength="60" value="{{$r.ContactPhone}}">
+        <input id="contact_phone" class="input" name="contact_phone" maxlength="20" value="{{$r.ContactPhone}}">
         {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "contact_phone")}}
       </div>
       <div class="grid gap-1 sm:col-span-2">
@@ -298,7 +298,7 @@
       </div>
       <div class="grid gap-1">
         <label for="exploit_references" class="text-xs text-muted-foreground">Exploitation evidence and references</label>
-        <textarea id="exploit_references" class="input" name="exploit_references" rows="5" maxlength="20000">{{$r.ExploitReferences}}</textarea>
+        <textarea id="exploit_references" class="input" name="exploit_references" rows="5" maxlength="1000">{{$r.ExploitReferences}}</textarea>
         {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "exploit_references")}}
       </div>
     </div>

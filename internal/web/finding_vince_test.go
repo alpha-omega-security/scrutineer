@@ -259,6 +259,8 @@ func TestFindingVINCEPreviewAndDisabledAction(t *testing.T) {
 		ctx.References[0].URL,
 		"Do not include sensitive details",
 		"runnable proof of concept",
+		`name="contact_phone" maxlength="20"`,
+		`name="exploit_references" rows="5" maxlength="1000"`,
 		`name="confirm_manual_review"`,
 	} {
 		if !strings.Contains(body, want) {

@@ -263,6 +263,28 @@ func TestReportValidationRequiresResolvedChoicesAndHonorsLengths(t *testing.T) {
 	}
 }
 
+func TestReportValidationUsesVINCEStorageLimits(t *testing.T) {
+	report := validReport()
+	report.ContactPhone = strings.Repeat("1", 20)
+	report.ExploitReferences = strings.Repeat("x", 1000)
+	if err := report.Validate(); err != nil {
+		t.Fatalf("values at VINCE storage limits: %v", err)
+	}
+
+	report.ContactPhone += "1"
+	report.ExploitReferences += "x"
+	err := report.Validate()
+	var validation ValidationErrors
+	if !errors.As(err, &validation) {
+		t.Fatalf("error = %T %v, want ValidationErrors", err, err)
+	}
+	for _, field := range []string{"contact_phone", "exploit_references"} {
+		if len(validation[field]) == 0 {
+			t.Errorf("missing %s error in %#v", field, validation)
+		}
+	}
+}
+
 func TestClientSubmitAttachmentSizeBoundary(t *testing.T) {
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
