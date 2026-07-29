@@ -134,6 +134,7 @@ paths:
       operationId: listRepositoryDependents
       parameters:
         - $ref: '#/components/parameters/RepositoryID'
+        - $ref: '#/components/parameters/RepositoryReadLimit'
       responses:
         '200':
           description: OK
@@ -142,6 +143,7 @@ paths:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/Dependent' }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
   /repositories/{id}/ecosystems/{source}/raw:
@@ -191,6 +193,7 @@ paths:
       operationId: listRepositoryDependencies
       parameters:
         - $ref: '#/components/parameters/RepositoryID'
+        - $ref: '#/components/parameters/RepositoryReadLimit'
       responses:
         '200':
           description: OK
@@ -199,6 +202,7 @@ paths:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/Dependency' }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
   /repositories/{id}/findings:
@@ -1104,6 +1108,11 @@ components:
       in: path
       required: true
       schema: { type: integer, format: int64 }
+    RepositoryReadLimit:
+      name: limit
+      in: query
+      description: Maximum number of rows to return; defaults to 200 and is capped at 1000.
+      schema: { type: integer, minimum: 0, maximum: 1000, default: 200 }
 
   responses:
     NotFound:
@@ -1117,7 +1126,7 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
     BadRequest:
-      description: Malformed request body or a missing required field
+      description: Malformed query or request body, or a missing required field
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }

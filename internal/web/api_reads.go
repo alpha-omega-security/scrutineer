@@ -11,10 +11,31 @@ import (
 	"scrutineer/internal/worker"
 )
 
+const (
+	repositoryReadDefaultLimit = 200
+	repositoryReadMaxLimit     = 1000
+)
+
 // The read endpoints below expose the structured rows scrutineer already
 // populates from prior skill scans. Skills that need context for a repo
 // (verify/patch/disclose, security-deep-dive's reach and prior-art steps)
 // call these instead of re-parsing the original scan reports.
+
+func parseLimit(r *http.Request, defaultN, maxN int) (int, error) {
+	query := r.URL.Query()
+	if !query.Has("limit") {
+		return defaultN, nil
+	}
+	raw := query.Get("limit")
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		return 0, errors.New("limit must be a non-negative integer")
+	}
+	if n > maxN {
+		n = maxN
+	}
+	return n, nil
+}
 
 // repoScopedID parses the path id and enforces the scan-owns-repo auth
 // rule for the apiList* handlers. Returns false when the response has
@@ -153,8 +174,13 @@ func (s *Server) apiListDependents(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	limit, err := parseLimit(r, repositoryReadDefaultLimit, repositoryReadMaxLimit)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	var rows []db.Dependent
-	s.DB.Where("repository_id = ?", id).Order("dependent_repos desc").Find(&rows)
+	s.DB.Where("repository_id = ?", id).Order("dependent_repos desc").Limit(limit).Find(&rows)
 	out := make([]dependentResponse, 0, len(rows))
 	for _, d := range rows {
 		out = append(out, dependentResponse{
@@ -190,8 +216,13 @@ func (s *Server) apiListDependencies(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	limit, err := parseLimit(r, repositoryReadDefaultLimit, repositoryReadMaxLimit)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	var rows []db.Dependency
-	s.DB.Where("repository_id = ?", id).Order("ecosystem, name").Find(&rows)
+	s.DB.Where("repository_id = ?", id).Order("ecosystem, name").Limit(limit).Find(&rows)
 	out := make([]dependencyResponse, 0, len(rows))
 	for _, d := range rows {
 		out = append(out, dependencyResponse{
