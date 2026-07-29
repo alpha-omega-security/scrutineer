@@ -561,6 +561,7 @@ func run(log *slog.Logger) error {
 	srv.SetDefaultEffort(f.effort)
 	srv.FederationSalt = f.federationSalt
 	srv.FederationContact = f.federationContact
+	srv.VINCE = cfg.VINCE
 
 	if f.recipientsFile != "" {
 		recs, err := loadRecipients(f.recipientsFile)

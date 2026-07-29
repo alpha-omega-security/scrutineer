@@ -70,6 +70,15 @@ scan_timeout: 30m
 max_turns: 200
 fork_org: fork-central
 metadata_dir: .ossprey/
+vince:
+  base_url: https://kb.cert.example
+  api_key: secret-token
+  reporter:
+    name: Alice Researcher
+    organization: Example Security
+    email: alice@example.com
+    phone: "+44 20 7946 0958"
+    pgp_key: https://example.com/alice.asc
 `)
 	c, err := Load(path)
 	if err != nil {
@@ -110,6 +119,16 @@ metadata_dir: .ossprey/
 	}
 	if c.MetadataDir != ".ossprey/" {
 		t.Errorf("metadata_dir=%q, want .ossprey/", c.MetadataDir)
+	}
+	if c.VINCE.BaseURL != "https://kb.cert.example" || c.VINCE.APIKey != "secret-token" {
+		t.Errorf("vince endpoint config: %+v", c.VINCE)
+	}
+	if c.VINCE.Reporter.Name != "Alice Researcher" ||
+		c.VINCE.Reporter.Organization != "Example Security" ||
+		c.VINCE.Reporter.Email != "alice@example.com" ||
+		c.VINCE.Reporter.Phone != "+44 20 7946 0958" ||
+		c.VINCE.Reporter.PGPKey != "https://example.com/alice.asc" {
+		t.Errorf("vince reporter config: %+v", c.VINCE.Reporter)
 	}
 }
 
@@ -233,6 +252,13 @@ func TestLoad_rejectsUnparseable(t *testing.T) {
 	path := write(t, "addr: [this is not valid yaml: for a string")
 	if _, err := Load(path); err == nil {
 		t.Error("expected parse error")
+	}
+}
+
+func TestLoad_rejectsInsecureVINCEBaseURL(t *testing.T) {
+	path := write(t, "vince:\n  base_url: http://vince.example\n  api_key: secret\n")
+	if _, err := Load(path); err == nil {
+		t.Error("expected error for non-HTTPS VINCE base URL")
 	}
 }
 

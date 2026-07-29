@@ -25,6 +25,40 @@ When `cna-match` returns a CNA with a contact, send the disclosure there first. 
 
 If the CNA wants the report submitted through a GitHub PVR on a different repo (some CNAs run intake repos), `report-upstream` can target that repo with `?repo=` once the analyst confirms which one.
 
+### Submit to CERT/CC VINCE
+
+Scrutineer can submit a reviewed finding to CERT/CC through VINCE's authenticated vulnerability-report endpoint. Add the API key and reporter defaults to `scrutineer.yaml`:
+
+```yaml
+vince:
+  base_url: https://kb.cert.org
+  api_key: "your VINCE API key"
+  reporter:
+    name: "Alice Researcher"
+    organization: "Example Security"
+    email: "alice@example.com"
+    phone: "+44 20 7946 0958"
+    pgp_key: "https://example.com/alice.asc"
+```
+
+The integration follows the `CaseRequestForm` and authenticated submission view in [VINCE 3.0.43 at `fcbfbc7`](https://github.com/CERTCC/VINCE/tree/fcbfbc732a248972a634e3831ead0108c0494efe). The route is not included in the published VINCE API guide. Confirm that the target deployment exposes and supports it before enabling submissions.
+
+The key is a long-lived credential. Keep `scrutineer.yaml` out of source control and backups, then restrict it to the account running Scrutineer:
+
+```sh
+chmod 600 scrutineer.yaml
+```
+
+The finding page enables **Submit to VINCE** only when `vince.api_key` is set. A finding must have a non-empty disclosure draft and must not be rejected, duplicated, subsumed, already reported, or linked to an earlier VINCE submission.
+
+The submission page maps the package or repository name, affected range, tested commit, disclosure text, validation, impact, producing skill, previous communications, exploitation evidence, and selected public references. Every VINCE field remains editable. Unknown yes/no answers stay blank until the analyst resolves them. The analyst must confirm the recipient, reporter details, policy choices, attachment, and manual review before the request is sent.
+
+The attachment can be the disclosure bundle, `report.md`, or nothing. The page lists the bundle contents because it may contain a runnable proof of concept and proposed patch. Attachments over VINCE's 10 MiB limit are refused locally.
+
+Scrutineer sends one request and does not retry it. VINCE has no idempotency key or pending-report lookup, so a timeout or server error leaves an uncertain result. Check [My Vulnerability Reports](https://kb.cert.org/vince/comm/reports/) before submitting again.
+
+When VINCE returns HTTP 201 with a VRF ID, Scrutineer adds a `vince,coordinator` reference, records an outbound communication with the attachment name, and moves the finding to `reported`. If VINCE accepts the report but local bookkeeping fails, the error page shows the VRF ID for manual reconciliation.
+
 ## GitHub upstream without PVR
 
 The upstream is reachable but the maintainer has not turned PVR on. Two paths, depending on the project's apparent readiness signals from `posture`:

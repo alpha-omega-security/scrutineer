@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -29,6 +30,7 @@ import (
 	"scrutineer/internal/db"
 	"scrutineer/internal/queue"
 	"scrutineer/internal/repoconfig"
+	"scrutineer/internal/vince"
 	"scrutineer/internal/worker"
 )
 
@@ -107,6 +109,13 @@ type Server struct {
 	FederationSalt    string
 	FederationContact string
 	claimIndex        claimCheckIndex
+
+	// VINCE holds the config-file-only API credential and reporter defaults
+	// for native CERT/CC submissions. vinceHTTPClient is injectable so tests
+	// can use httptest without changing the credential-bearing config shape.
+	VINCE           vince.Config
+	vinceHTTPClient *http.Client
+	vinceSubmitMu   sync.Mutex
 
 	// resolvePURL maps a Package URL to its source repository URL via
 	// packages.ecosyste.ms. Field rather than direct call so tests can
@@ -304,9 +313,10 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *work
 			}
 			return m
 		},
-		"list":    func(xs ...string) []string { return xs },
-		"len64":   tmplLen64,
-		"sortkey": sortKey,
+		"list":     func(xs ...string) []string { return xs },
+		"contains": slices.Contains[[]string, string],
+		"len64":    tmplLen64,
+		"sortkey":  sortKey,
 		"cwename": func(id string) string {
 			if _, c, ok := LookupCWE(id); ok {
 				return c.Name
@@ -461,6 +471,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /findings/{id}/csaf.json", s.findingCSAF)
 	mux.HandleFunc("GET /findings/{id}/osv.json", s.findingOSV)
 	mux.HandleFunc("GET /findings/{id}/disclosure.html", s.findingDisclosureHTML)
+	mux.HandleFunc("GET /findings/{id}/vince", s.findingVINCEPreview)
+	mux.HandleFunc("POST /findings/{id}/vince", s.findingVINCESubmit)
 	mux.HandleFunc("POST /findings/{id}/status", s.findingStatus)
 	mux.HandleFunc("POST /findings/{id}/exploited-in-wild", s.findingExploitedInWild)
 	mux.HandleFunc("POST /findings/{id}/verify", s.findingVerify)
@@ -1802,6 +1814,18 @@ func (s *Server) findingShow(w http.ResponseWriter, r *http.Request) {
 		"HasDependents": hasDependents,
 		"ShowExposure":  findingSupportsExposure(scan) && hasDependents,
 	}
+	vinceReason := "VINCE API key is not configured"
+	vinceReady := false
+	if s.VINCE.Enabled() {
+		if err := vinceEligibility(f, notes, refs); err != nil {
+			vinceReason = err.Error()
+		} else {
+			vinceReady = true
+			vinceReason = ""
+		}
+	}
+	data["VINCEReady"] = vinceReady
+	data["VINCEReason"] = vinceReason
 	if id, c, ok := LookupCWE(f.CWE); ok {
 		data["CWE"] = map[string]any{"ID": id, "Name": c.Name, "Description": c.Description}
 	}

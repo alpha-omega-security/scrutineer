@@ -186,6 +186,20 @@
 # disables encrypted import.
 # identity_file: ~/.ssh/id_ed25519
 
+# Submit reviewed findings to CERT/CC VINCE. The action is disabled when
+# api_key is empty. Reporter values prefill the editable submission page.
+# scrutineer.yaml contains the long-lived key, so keep the file owner-only
+# (`chmod 600 scrutineer.yaml`) and exclude it from backups and source control.
+# vince:
+#   base_url: https://kb.cert.org
+#   api_key: ""
+#   reporter:
+#     name: ""
+#     organization: ""
+#     email: ""
+#     phone: ""
+#     pgp_key: ""
+
 # Secret shared out of band between federation members, mixed into
 # interchange finding hashes so members derive matching hashes without
 # publishing anything enumerable (see docs/interchange.md). Config-file

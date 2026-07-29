@@ -123,6 +123,7 @@ When the containerised runner is active (the default when a container runtime is
 - **JSONL export** -- stream all findings or scans as line-delimited JSON for ingestion elsewhere
 - **Markdown report export** -- download a single consolidated `report.md` per repository or organisation
 - **Disclosure bundle** -- download `bundle.tar.gz` per finding: OSV, CSAF, markdown report, patch.diff, a runnable `poc/` directory extracted from the finding's Validation step, and a manifest naming the contents; ready to hand to a coordinator or attach to a private email when filing outside GitHub PVR
+- **CERT/CC VINCE submission** -- map a reviewed disclosure into VINCE's authenticated vulnerability-report form, review every field and attachment, then send one multipart request and record the returned VRF ID. The action requires a config-file API key; see [docs/disclosure-fallback.md](docs/disclosure-fallback.md#submit-to-certcc-vince)
 - **Encrypted sharing / archival bundle** -- export a repository's findings as a self-contained JSON bundle that round-trips through `/api/v1/import`, optionally age-encrypted to your team's keys. The default bundle is share-safe (finding substance only); `include=all` produces a lossless archival superset -- enrichment, disclosure fields, notes, communications, and references -- for backing up or moving a repo's findings between your own instances. See [docs/encrypted-sharing.md](docs/encrypted-sharing.md)
 
 ### Operational
@@ -346,6 +347,8 @@ The `docker build` commands shown for the runner image and profiles can be run a
 ## Config file
 
 Every flag above can be set in a YAML config file instead, loaded from `./scrutineer.yaml` by default (override with `-config path/to/file`; command-line flags always take precedence). See [scrutineer.sample.yaml](scrutineer.sample.yaml) for the full shape.
+
+`scrutineer.yaml` may contain long-lived credentials such as the VINCE API key and federation salt. Keep it out of source control and backups, and set owner-only permissions with `chmod 600 scrutineer.yaml`.
 
 The config file can also replace the model pick list and pin the fallback default model used by the high tier:
 

@@ -15,6 +15,15 @@
     {{template "finding-status" (fstatus $f.Status)}}
   </h2>
   <div class="flex gap-2 shrink-0">
+    {{if .VINCEReady}}
+    <a href="/findings/{{$f.ID}}/vince" class="btn-outline">
+      <i data-lucide="send"></i> Submit to VINCE
+    </a>
+    {{else}}
+    <button type="button" class="btn-outline" disabled title="{{.VINCEReason}}">
+      <i data-lucide="send"></i> Submit to VINCE
+    </button>
+    {{end}}
     <a href="/findings/{{$f.ID}}/report.md" class="btn-outline" download>
       <i data-lucide="download"></i> Export report
     </a>

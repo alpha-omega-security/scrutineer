@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"gopkg.in/yaml.v3"
+
+	"scrutineer/internal/vince"
 )
 
 // DefaultPath is the path scrutineer checks for when -config is not set.
@@ -146,6 +148,10 @@ type Config struct {
 	// hash match. Required when FederationSalt is set: startup refuses a
 	// salt without a contact.
 	FederationContact string `yaml:"federation_contact"`
+	// VINCE configures the native CERT/CC vulnerability-report submission
+	// action. The API key is config-file only so it does not leak through
+	// process arguments.
+	VINCE vince.Config `yaml:"vince"`
 }
 
 // ParseScanTimeout validates and parses a scan_timeout string. Empty
@@ -284,6 +290,11 @@ func Load(path string) (*Config, error) {
 	}
 	if err := ValidateEffort(c.Effort); err != nil {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
+	}
+	if c.VINCE.Enabled() {
+		if _, err := c.VINCE.Endpoint(); err != nil {
+			return nil, fmt.Errorf("parse config %s: %w", path, err)
+		}
 	}
 	return &c, nil
 }
