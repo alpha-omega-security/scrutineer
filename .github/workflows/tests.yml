@@ -32,6 +32,9 @@ jobs:
       - name: Test release resolver
         run: scripts/release-resolver_test.sh
 
+      - name: Test runner image resolver
+        run: scripts/wait-for-runner-image_test.sh
+
   tests:
     name: tests (${{ matrix.platform }})
     strategy:

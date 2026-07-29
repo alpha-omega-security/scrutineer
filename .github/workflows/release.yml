@@ -19,9 +19,9 @@ jobs:
   preflight:
     name: preflight
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     permissions:
-      actions: read # required to derive a stable version date across reruns
+      actions: read # required for stable version dates and Runner Image status
       contents: read
     outputs:
       release_due: ${{ steps.due.outputs.release_due }}
@@ -158,20 +158,13 @@ jobs:
         id: runner
         if: steps.due.outputs.release_due == 'true'
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPOSITORY: ${{ github.repository }}
           COMMIT_SHA: ${{ github.sha }}
         run: |
-          RUNNER_TAG="ghcr.io/${REPOSITORY}-runner:sha-${COMMIT_SHA}"
-          if ! MANIFEST=$(docker buildx imagetools inspect "${RUNNER_TAG}" --format '{{json .Manifest}}'); then
-            echo "::error::Runner image ${RUNNER_TAG} is unavailable; if its runner-image workflow was cancelled or failed, re-run it, then re-dispatch this release"
-            exit 1
-          fi
-          DIGEST=$(jq -r '.digest // empty' <<< "${MANIFEST}")
-          if [[ ! "${DIGEST}" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-            echo "::error::Could not resolve a manifest digest for ${RUNNER_TAG}"
-            exit 1
-          fi
-          echo "image=ghcr.io/${REPOSITORY}-runner@${DIGEST}" >> "${GITHUB_OUTPUT}"
+          RUNNER_IMAGE=$(scripts/wait-for-runner-image.sh \
+            "${REPOSITORY}" "${COMMIT_SHA}" 900 15)
+          echo "image=${RUNNER_IMAGE}" >> "${GITHUB_OUTPUT}"
 
   build:
     name: build (${{ matrix.goos }}-${{ matrix.goarch }})
