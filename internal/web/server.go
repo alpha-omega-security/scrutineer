@@ -528,9 +528,10 @@ func (s *Server) Handler() http.Handler {
 	// browser's host-only boundary; see threatmodel.md.
 	root := http.NewServeMux()
 	root.Handle("/api/v1/", securityHeaders(http.StripPrefix(exportPrefix, s.exportHandler())))
-	// More specific than "/api/", so it wins the mux match and stays outside
-	// the scan-token auth apiHandler applies; see openAPISpec.
-	root.Handle("GET /api/openapi.yaml", securityHeaders(http.HandlerFunc(s.openAPISpec)))
+	// More specific than "/api/", so it wins the mux match and gets its own
+	// access rule rather than the scan-token auth apiHandler applies; see
+	// openAPISpecHandler.
+	root.Handle("GET /api/openapi.yaml", s.openAPISpecHandler())
 	root.Handle("/api/", s.apiHandler())
 	root.Handle("/", securityHeaders(mux))
 	return logRequests(s.Log, root)
@@ -3228,18 +3229,26 @@ const cspPolicy = "default-src 'self'; " +
 	"frame-ancestors 'none'; " +
 	"object-src 'none'"
 
+// localHost reports whether the request Host is the loopback name or address
+// the web server is bound to. Extracted from securityHeaders so a route can
+// distinguish "a caller on the host, no credential needed" from "a caller that
+// cannot satisfy the host check and must authenticate instead"; see
+// openAPISpecHandler.
+func localHost(host string) bool {
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.Trim(host, "[]")
+	return host == "127.0.0.1" || host == "localhost" || host == "::1"
+}
+
 // securityHeaders enforces T3 mitigations: host header check to prevent DNS
 // rebinding, Sec-Fetch-Site check on POST to prevent cross-origin CSRF, and
 // a CSP that prevents stored XSS in any rendered content from executing JS.
 func securityHeaders(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Security-Policy", cspPolicy)
-		host := r.Host
-		if h, _, err := net.SplitHostPort(host); err == nil {
-			host = h
-		}
-		host = strings.Trim(host, "[]")
-		if host != "127.0.0.1" && host != "localhost" && host != "::1" {
+		if !localHost(r.Host) {
 			http.Error(w, "forbidden: invalid host", http.StatusForbidden)
 			return
 		}

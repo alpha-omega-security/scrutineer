@@ -30,11 +30,19 @@ paths:
       description: |
         Returns the embedded copy of `openapi.yaml`, so a skill or an external
         tool can read the API surface from a running server without a checkout.
-        Unauthenticated: a caller discovering the API has no running scan to
-        take a bearer token from. The same localhost-only host check as the
-        browser UI still applies; see threatmodel.md.
+
+        Two ways in. From localhost it is unauthenticated, because a caller
+        discovering the API has no running scan to take a bearer token from;
+        the host check is the boundary, as on the browser UI. A skill inside
+        the runner container cannot pass that check -- it reaches the server
+        through the egress proxy on the host endpoint `api_base` advertises,
+        which forwards the original `Host` -- so it authenticates with the
+        per-scan bearer token it already holds for the rest of this API.
+        See threatmodel.md.
       operationId: getOpenAPISpec
-      security: []
+      security:
+        - {}
+        - bearerAuth: []
       responses:
         "200":
           description: The OpenAPI document
@@ -42,8 +50,10 @@ paths:
             application/yaml:
               schema:
                 type: string
-        "403":
-          description: Request did not come from localhost
+        "401":
+          description: |
+            Request came from a non-local host without a bearer token
+            belonging to a currently running scan
   /claim-check:
     servers:
       - url: http://127.0.0.1:8080
