@@ -718,9 +718,18 @@ paths:
                 labels:
                   type: array
                   items: { type: string }
-                  description: Label names. Missing labels are created on demand.
+                  description: |
+                    Label names, replacing the finding's current set. Missing
+                    labels are created on demand. Send `[]` to clear every
+                    label; the field is required, so omitting it or sending
+                    null is rejected rather than treated as a clear-all.
       responses:
         '204': { description: Updated }
+        '400':
+          description: Body is not valid JSON, or has no labels array
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /findings/{id}/history:
     get:

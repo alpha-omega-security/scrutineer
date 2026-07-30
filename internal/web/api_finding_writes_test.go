@@ -263,6 +263,43 @@ func TestAPISetFindingLabels(t *testing.T) {
 	}
 }
 
+// A body that omits labels, or sends null, must not be read as "replace with
+// the empty set": that let a malformed request silently wipe analyst-set
+// labels and still answer 204 (#710). Only an explicit [] clears.
+func TestAPISetFindingLabels_rejectsMissingLabelsArray(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	f, tok, _ := seedFindingForAPI(t, s)
+	path := fmt.Sprintf("/api/findings/%d/labels", f.ID)
+
+	if w := apiReq(t, s, "PUT", path, tok, `{"labels":["wontfix","needs-info"]}`); w.Code != http.StatusNoContent {
+		t.Fatalf("seed labels: status = %d, want 204; body=%s", w.Code, w.Body)
+	}
+
+	for _, body := range []string{`{}`, `{"labels":null}`, `{"other":"field"}`} {
+		w := apiReq(t, s, "PUT", path, tok, body)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("PUT %s: status = %d, want 400", body, w.Code)
+		}
+		var got db.Finding
+		s.DB.Preload("Labels").First(&got, f.ID)
+		if len(got.Labels) != 2 {
+			t.Errorf("PUT %s cleared labels: have %d, want the 2 already set", body, len(got.Labels))
+		}
+	}
+
+	// The explicit clear-all still works, so the fix does not cost the caller
+	// the one way it had to empty the set.
+	if w := apiReq(t, s, "PUT", path, tok, `{"labels":[]}`); w.Code != http.StatusNoContent {
+		t.Fatalf("explicit clear: status = %d, want 204; body=%s", w.Code, w.Body)
+	}
+	var got db.Finding
+	s.DB.Preload("Labels").First(&got, f.ID)
+	if len(got.Labels) != 0 {
+		t.Errorf("labels after explicit clear = %+v, want 0", got.Labels)
+	}
+}
+
 func TestAPIListFindingHistory(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

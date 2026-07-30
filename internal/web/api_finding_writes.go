@@ -160,6 +160,14 @@ func (s *Server) apiSetFindingLabels(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// {} and {"labels": null} both decode to a nil slice, which
+	// SetFindingLabels would apply as an intentional replacement with the
+	// empty set: a malformed body would silently wipe analyst-set labels and
+	// still answer 204. An explicit [] stays the way to clear (#710).
+	if body.Labels == nil {
+		writeAPIError(w, http.StatusBadRequest, "body must be JSON with a labels array")
+		return
+	}
 	if err := db.SetFindingLabels(s.DB, id, body.Labels); err != nil {
 		writeAPIError(w, http.StatusInternalServerError, err.Error())
 		return
