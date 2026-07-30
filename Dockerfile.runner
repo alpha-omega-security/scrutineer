@@ -19,7 +19,7 @@ RUN GOBIN=/out go install github.com/git-pkgs/git-pkgs@v0.15.3 && \
 
 FROM rust:1.97-trixie@sha256:1bcff4befb740599103a2c7cb51058e14479b2e35e3a34a3f0dc4ede09927488 AS zizmor-build
 ENV CARGO_HTTP_MULTIPLEXING=false
-RUN cargo install --locked --root /out zizmor@1.26.1
+RUN cargo install --locked --root /out zizmor@1.28.0
 
 # The scrutineer binary is baked in only for its `proxy` subcommand: under
 # rootless podman --hardened the egress proxy runs as a sidecar from THIS image

@@ -197,7 +197,7 @@ jobs:
           persist-credentials: false
 
       - name: Install zizmor
-        run: pipx install zizmor==1.26.1
+        run: pipx install zizmor==1.28.0
 
       - name: Audit GitHub Actions
         run: zizmor --persona auditor .github/
