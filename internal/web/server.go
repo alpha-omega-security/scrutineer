@@ -108,6 +108,13 @@ type Server struct {
 	FederationContact string
 	claimIndex        claimCheckIndex
 
+	// AllowRemote, when true, permits remote access by disabling
+	// securityHeaders' localhost-only host-header check, so the UI and
+	// unauthenticated /api/v1 export endpoints can be served for any Host (e.g.
+	// behind a reverse proxy or over a LAN). Defaults to false, which keeps the
+	// DNS-rebinding protection. Set from config.AllowRemote.
+	AllowRemote bool
+
 	// resolvePURL maps a Package URL to its source repository URL via
 	// packages.ecosyste.ms. Field rather than direct call so tests can
 	// stub the network lookup.
@@ -527,9 +534,9 @@ func (s *Server) Handler() http.Handler {
 	// /api/v1/* are unauthenticated JSONL export endpoints sharing the
 	// browser's host-only boundary; see threatmodel.md.
 	root := http.NewServeMux()
-	root.Handle("/api/v1/", securityHeaders(http.StripPrefix(exportPrefix, s.exportHandler())))
+	root.Handle("/api/v1/", securityHeaders(s.AllowRemote, http.StripPrefix(exportPrefix, s.exportHandler())))
 	root.Handle("/api/", s.apiHandler())
-	root.Handle("/", securityHeaders(mux))
+	root.Handle("/", securityHeaders(s.AllowRemote, mux))
 	return logRequests(s.Log, root)
 }
 
@@ -3234,7 +3241,12 @@ const cspPolicy = "default-src 'self'; " +
 // securityHeaders enforces T3 mitigations: host header check to prevent DNS
 // rebinding, Sec-Fetch-Site check on POST to prevent cross-origin CSRF, and
 // a CSP that prevents stored XSS in any rendered content from executing JS.
-func securityHeaders(h http.Handler) http.Handler {
+//
+// allowRemote=false (the default) keeps the localhost-only host check;
+// allowRemote=true skips it so the server can be reached for any Host, for
+// deployments that front scrutineer with a trusted reverse proxy or serve it on
+// a LAN. See config.AllowRemote.
+func securityHeaders(allowRemote bool, h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Security-Policy", cspPolicy)
 		host := r.Host
@@ -3242,7 +3254,7 @@ func securityHeaders(h http.Handler) http.Handler {
 			host = h
 		}
 		host = strings.Trim(host, "[]")
-		if host != "127.0.0.1" && host != "localhost" && host != "::1" {
+		if !allowRemote && host != "127.0.0.1" && host != "localhost" && host != "::1" {
 			http.Error(w, "forbidden: invalid host", http.StatusForbidden)
 			return
 		}

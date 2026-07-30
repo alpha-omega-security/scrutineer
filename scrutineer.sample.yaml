@@ -12,6 +12,13 @@
 # Listen address for the web UI + skill API.
 # addr: 127.0.0.1:8080
 
+# Allow remote (non-localhost) access to the web UI + skill API. Default false
+# keeps the localhost-only host-header check (the DNS-rebinding protection):
+# requests are served only when the Host is 127.0.0.1, localhost, or ::1. Set
+# true to also accept any other Host — needed behind a reverse proxy or on a
+# LAN. Only enable it when a trusted front end already restricts who can connect.
+# allow_remote: false
+
 # Where scan workspaces and the sqlite DB live.
 # data: ./data
 
