@@ -7,10 +7,10 @@ toolchain go1.26.5
 require (
 	filippo.io/age v1.3.1
 	github.com/alpha-omega-security/harness v0.1.2
-	github.com/ecosyste-ms/ecosystems-go v0.3.0
+	github.com/ecosyste-ms/ecosystems-go v0.4.0
 	github.com/git-pkgs/clone v0.1.2
 	github.com/git-pkgs/cwe v0.1.0
-	github.com/git-pkgs/enrichment v0.6.1
+	github.com/git-pkgs/enrichment v0.6.4
 	github.com/git-pkgs/pom v0.1.5
 	github.com/git-pkgs/purl v0.1.15
 	github.com/git-pkgs/sarif v0.1.1
@@ -34,7 +34,7 @@ require (
 	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/git-pkgs/packageurl-go v0.3.1 // indirect
-	github.com/git-pkgs/registries v0.6.2 // indirect
+	github.com/git-pkgs/registries v0.6.4 // indirect
 	github.com/git-pkgs/spdx v0.1.4 // indirect
 	github.com/git-pkgs/vers v0.3.0 // indirect
 	github.com/github/go-spdx/v2 v2.7.0 // indirect
@@ -44,14 +44,15 @@ require (
 	github.com/kr/text v0.2.0 // indirect
 	github.com/mattn/go-isatty v0.0.23 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
+	github.com/oapi-codegen/nullable v1.1.0 // indirect
 	github.com/oapi-codegen/runtime v1.6.0 // indirect
 	github.com/package-url/packageurl-go v0.1.6 // indirect
 	github.com/pandatix/go-cvss v0.6.2 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.40.0 // indirect
-	modernc.org/libc v1.74.3 // indirect
+	modernc.org/libc v1.74.4 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
-	modernc.org/sqlite v1.54.0 // indirect
+	modernc.org/sqlite v1.55.0 // indirect
 )

@@ -95,8 +95,8 @@ func ResolvePURLRepositoryURL(ctx context.Context, purl string) string {
 		return ""
 	}
 	for _, pkg := range pkgs {
-		if pkg.RepositoryUrl != nil && *pkg.RepositoryUrl != "" {
-			return *pkg.RepositoryUrl
+		if u, _ := pkg.RepositoryURL.Get(); u != "" {
+			return u
 		}
 	}
 	return ""
