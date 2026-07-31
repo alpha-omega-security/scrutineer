@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"embed"
 	"encoding/base64"
@@ -565,12 +566,44 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 		sorterQuery.Set("sort", eff)
 	}
 	data["Sorter"] = sortCtx{path: r.URL.Path, query: sorterQuery}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.tmpl.ExecuteTemplate(w, name, data); err != nil {
+	// Render into a buffer first. ExecuteTemplate writes incrementally, so
+	// executing straight into the ResponseWriter commits a 200 and part of the
+	// page before a mid-template error is known; the http.Error below then
+	// cannot change the status and only appends plain text to half-rendered
+	// HTML. Buffering keeps the failure path able to send a clean 500.
+	buf := renderBufPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	defer func() {
+		// One outsized page (a long findings list) would otherwise pin its
+		// capacity in the pool for the process lifetime, so oversized buffers
+		// are dropped instead of recycled.
+		if buf.Cap() <= maxPooledRenderBuf {
+			renderBufPool.Put(buf)
+		}
+	}()
+
+	if err := s.tmpl.ExecuteTemplate(buf, name, data); err != nil {
 		s.Log.Error("render", "tmpl", name, "err", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Length", strconv.Itoa(buf.Len()))
+	if _, err := buf.WriteTo(w); err != nil {
+		// Headers and status are already sent, so this can only be logged:
+		// the client hung up or the connection broke mid-write.
+		s.Log.Error("render write", "tmpl", name, "err", err)
 	}
 }
+
+// render() runs on every page load, so the buffers are pooled rather than
+// allocated per request.
+var renderBufPool = sync.Pool{
+	New: func() any { return new(bytes.Buffer) },
+}
+
+// Buffers larger than this are dropped rather than returned to the pool.
+const maxPooledRenderBuf = 1 << 20
 
 // Flash is a one-shot message carried across a redirect via the "flash"
 // cookie and rendered server-side into #toaster on the next page load.
