@@ -3,8 +3,10 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"time"
 
 	ecosystems "github.com/ecosyste-ms/ecosystems-go"
@@ -140,8 +142,9 @@ func ecosystemsSources() []ecosystemsSource {
 // re-fetched, so a scan whose cache is current is a no-op; with staleOnly
 // false (the eager on-add path) every source is fetched. Best-effort:
 // upstream client and fetch failures are logged and skipped, never fatal, so a
-// flaky ecosyste.ms neither blocks a scan nor breaks repo creation. Local
-// (file://) repos are skipped since they have no upstream entry.
+// flaky ecosyste.ms neither blocks a scan nor breaks repo creation, and a
+// transport-level failure abandons the remaining sources (see unreachable).
+// Local (file://) repos are skipped since they have no upstream entry.
 func RefreshEcosystems(ctx context.Context, gdb *gorm.DB, repoID uint, staleOnly bool, log *slog.Logger) error {
 	return refreshEcosystems(ctx, gdb, repoID, staleOnly, log, nil)
 }
@@ -172,6 +175,10 @@ func refreshEcosystems(ctx context.Context, gdb *gorm.DB, repoID uint, staleOnly
 		}
 		body, err := src.fetch(ctx, fetcher, repo.URL)
 		if err != nil {
+			if unreachable(err) {
+				log.Warn("ecosystems unreachable, skipping enrichment", "repo", repoID, "source", src.key, "err", err)
+				return nil
+			}
 			log.Warn("ecosystems fetch failed", "repo", repoID, "source", src.key, "err", err)
 			continue
 		}
@@ -189,6 +196,25 @@ func refreshEcosystems(ctx context.Context, gdb *gorm.DB, repoID uint, staleOnly
 		}
 	}
 	return nil
+}
+
+// unreachable reports whether err is a transport-level failure (DNS, dial,
+// TLS, timeout) rather than upstream answering "nothing recorded for this
+// repository". A blocked domain fails every source the same way, so the pass
+// stops after the first instead of paying one timeout per source on every
+// scan; a plain 404 stays per-source since the next one may well have data.
+func unreachable(err error) bool {
+	var dnsErr *net.DNSError
+	var opErr *net.OpError
+	var netErr net.Error
+	switch {
+	case errors.As(err, &dnsErr), errors.As(err, &opErr):
+		return true
+	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
+		return true
+	default:
+		return errors.As(err, &netErr) && netErr.Timeout()
+	}
 }
 
 // stale reports whether the source's cached payload is missing or older than

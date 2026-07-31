@@ -317,6 +317,11 @@ func (s *Server) sbomDelete(w http.ResponseWriter, r *http.Request) {
 // package row. Runs in the background after the operator confirms import so the page can render
 // immediately.
 func (s *Server) resolveSBOMPackages(uploadID uint) {
+	if !s.EcosystemsEnrichment {
+		s.DB.Model(&db.SBOMPackage{}).Where("sbom_upload_id = ? AND repository_id IS NULL", uploadID).
+			Update("resolve_error", ecosystemsDisabled)
+		return
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), sbomResolveTimeout)
 	defer cancel()
 

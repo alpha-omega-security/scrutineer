@@ -364,9 +364,48 @@ func TestFlagsMerge_hardenedRuntimeOnlyConfigAlias(t *testing.T) {
 	}
 }
 
+func TestFlagsMerge_ecosystemsEnrichment(t *testing.T) {
+	// The flag defaults to true, so an omitted config key must leave it on and
+	// an explicit false must reach the flag.
+	omitted := &flags{ecosystemsEnrichment: true}
+	omitted.merge(&config.Config{})
+	if !omitted.ecosystemsEnrichment {
+		t.Error("omitted ecosystems_enrichment turned enrichment off")
+	}
+	off := &flags{ecosystemsEnrichment: true}
+	off.merge(&config.Config{EcosystemsEnrichment: new(false)})
+	if off.ecosystemsEnrichment {
+		t.Error("ecosystems_enrichment: false was ignored")
+	}
+	// An explicit command-line value wins over the config file.
+	cli := &flags{ecosystemsEnrichment: true, set: map[string]bool{"ecosystems-enrichment": true}}
+	cli.merge(&config.Config{EcosystemsEnrichment: new(false)})
+	if !cli.ecosystemsEnrichment {
+		t.Error("config overrode an explicit -ecosystems-enrichment flag")
+	}
+}
+
+func TestRegisterFlags_ecosystemsEnrichmentDefaultsOn(t *testing.T) {
+	f := &flags{}
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	registerFlags(fs, f)
+	if err := fs.Parse(nil); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if !f.ecosystemsEnrichment {
+		t.Error("enrichment is off by default, want on")
+	}
+	if err := fs.Parse([]string{"-ecosystems-enrichment=false"}); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if f.ecosystemsEnrichment {
+		t.Error("-ecosystems-enrichment=false did not turn enrichment off")
+	}
+}
+
 func TestBuildEgressAllow_defaultIncludesConfigAndAnthropicHost(t *testing.T) {
 	cfg := &config.Config{EgressAllow: []string{"artifactory.internal", "*.mycorp.net"}}
-	allow := buildEgressAllow(worker.ClaudeHarness{}.EgressHosts(), false, cfg, "https://proxy.corp.com/v1", quietLog())
+	allow := buildEgressAllow(worker.ClaudeHarness{}.EgressHosts(), false, true, cfg, "https://proxy.corp.com/v1", quietLog())
 
 	if !slices.Contains(allow, "*.anthropic.com") {
 		t.Errorf("default mode dropped harness egress hosts: %v", allow)
@@ -382,9 +421,36 @@ func TestBuildEgressAllow_defaultIncludesConfigAndAnthropicHost(t *testing.T) {
 	}
 }
 
+func TestBuildEgressAllow_enrichmentDisabledDropsEcosystems(t *testing.T) {
+	allow := buildEgressAllow(worker.ClaudeHarness{}.EgressHosts(), false, false, nil, "", quietLog())
+
+	if slices.Contains(allow, "*.ecosyste.ms") {
+		t.Errorf("enrichment off still allowed ecosyste.ms: %v", allow)
+	}
+	if !slices.Contains(allow, "*.anthropic.com") {
+		t.Errorf("enrichment off dropped harness egress hosts: %v", allow)
+	}
+	if len(allow) != len(worker.ClaudeHarness{}.EgressHosts())+len(worker.DefaultEgressAllow)-1 {
+		t.Errorf("enrichment off dropped more than the ecosyste.ms entry: %v", allow)
+	}
+	// The built-in list is package state shared with every other caller.
+	if !slices.Contains(worker.DefaultEgressAllow, "*.ecosyste.ms") {
+		t.Error("buildEgressAllow mutated worker.DefaultEgressAllow in place")
+	}
+}
+
+func TestBuildEgressAllow_egressAllowStillWidensBackToEcosystems(t *testing.T) {
+	cfg := &config.Config{EgressAllow: []string{"*.ecosyste.ms"}}
+	allow := buildEgressAllow(worker.ClaudeHarness{}.EgressHosts(), false, false, cfg, "", quietLog())
+
+	if !slices.Contains(allow, "*.ecosyste.ms") {
+		t.Errorf("explicit egress_allow entry did not win: %v", allow)
+	}
+}
+
 func TestBuildEgressAllow_hardenedDropsConfigKeepsHarness(t *testing.T) {
 	cfg := &config.Config{EgressAllow: []string{"artifactory.internal"}}
-	allow := buildEgressAllow(worker.ClaudeHarness{}.EgressHosts(), true, cfg, "https://proxy.corp.com/v1", quietLog())
+	allow := buildEgressAllow(worker.ClaudeHarness{}.EgressHosts(), true, true, cfg, "https://proxy.corp.com/v1", quietLog())
 
 	if slices.Contains(allow, "*.ecosyste.ms") {
 		t.Errorf("hardened leaked DefaultEgressAllow entries: %v", allow)
@@ -405,7 +471,7 @@ func TestBuildEgressAllow_hardenedDropsConfigKeepsHarness(t *testing.T) {
 
 func TestBuildEgressAllow_hardenedNilConfig(t *testing.T) {
 	harnessHosts := worker.ClaudeHarness{}.EgressHosts()
-	allow := buildEgressAllow(harnessHosts, true, nil, "", quietLog())
+	allow := buildEgressAllow(harnessHosts, true, true, nil, "", quietLog())
 	if len(allow) != len(harnessHosts)+len(worker.HardenedEgressAllow) {
 		t.Errorf("hardened minimal allow = %v, want exactly harness hosts + HardenedEgressAllow", allow)
 	}
@@ -414,7 +480,7 @@ func TestBuildEgressAllow_hardenedNilConfig(t *testing.T) {
 func TestBuildEgressAllow_nonClaudeHarnessExcludesAnthropic(t *testing.T) {
 	// A non-claude harness must not inherit *.anthropic.com from the
 	// static lists; only the hosts it declares are added.
-	allow := buildEgressAllow([]string{"api.openai.com"}, true, nil, "", quietLog())
+	allow := buildEgressAllow([]string{"api.openai.com"}, true, true, nil, "", quietLog())
 	if slices.Contains(allow, "*.anthropic.com") {
 		t.Errorf("non-claude harness allowlist still contains anthropic: %v", allow)
 	}

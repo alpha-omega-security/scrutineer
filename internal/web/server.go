@@ -149,6 +149,12 @@ type Server struct {
 	// mirroring resolvePURL and friends.
 	prefetchEcosystems func(repoID uint)
 
+	// EcosystemsEnrichment gates every outbound ecosyste.ms lookup this layer
+	// makes: the on-add cache warm and the PURL to repository resolution
+	// behind SBOM and dependency import. New defaults it on; main turns it
+	// off for `ecosystems_enrichment: false`.
+	EcosystemsEnrichment bool
+
 	// Runtime defaults a new scan inherits when the caller pins none.
 	// Both are seeded at startup from config/flags and mutable via the
 	// settings page, so a request can write while another reads. One
@@ -394,6 +400,7 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *work
 		resolveRemoteHead: defaultResolveRemoteHead,
 		syncUpstream:      w.SyncUpstream}
 	s.prefetchEcosystems = s.ecosystemsPrefetch
+	s.EcosystemsEnrichment = true
 	s.chatActive = map[uint]struct{}{}
 	s.chatSlots = make(chan struct{}, chatTurnSlots(q))
 	s.spawnTurn = func(convID uint, message string) { go s.runChatTurn(convID, message) }
@@ -1228,13 +1235,22 @@ func (s *Server) depScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	repoURL := resolvePURLRepo(r.Context(), dep.PURL)
+	if !s.EcosystemsEnrichment {
+		http.Error(w, "cannot resolve "+dep.Name+": "+ecosystemsDisabled, http.StatusServiceUnavailable)
+		return
+	}
+	repoURL := s.resolvePURL(r.Context(), dep.PURL)
 	if repoURL == "" {
 		http.Error(w, "could not resolve repository URL for "+dep.Name, http.StatusUnprocessableEntity)
 		return
 	}
 	s.addRepoAndScan(w, r, repoURL)
 }
+
+// ecosystemsDisabled is what the import paths report when the operator turned
+// ecosyste.ms enrichment off: the resolution is the only way to get from a
+// PURL to a clone URL, so the action cannot run rather than silently no-op.
+const ecosystemsDisabled = "packages.ecosyste.ms enrichment is disabled"
 
 // resolvePURLRepo asks packages.ecosyste.ms for the repository_url behind a
 // PURL. Returns empty string if the lookup fails or no repo is recorded.
@@ -2001,7 +2017,7 @@ func (s *Server) createOrTriageRepo(ctx context.Context, input RepoInput, model 
 	// Eagerly warm the ecosyste.ms cache for a freshly added remote repo, in
 	// parallel with the triage enqueue below. Local repos have no
 	// upstream entry; the goroutine is best-effort and detached from ctx.
-	if isNew && !repo.IsLocal() && s.prefetchEcosystems != nil {
+	if isNew && !repo.IsLocal() && s.EcosystemsEnrichment && s.prefetchEcosystems != nil {
 		s.prefetchEcosystems(repo.ID)
 	}
 	if !triage {

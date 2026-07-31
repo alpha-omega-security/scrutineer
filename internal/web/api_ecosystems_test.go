@@ -2,6 +2,8 @@ package web
 
 import (
 	"context"
+	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
@@ -109,6 +111,53 @@ func TestCreateOrTriageRepo_skipsPrefetchForLocalRepo(t *testing.T) {
 	}
 	if called {
 		t.Error("prefetch fired for a local repo, want skipped")
+	}
+}
+
+func TestCreateOrTriageRepo_skipsPrefetchWhenEnrichmentDisabled(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	s.EcosystemsEnrichment = false
+	called := false
+	s.prefetchEcosystems = func(uint) { called = true }
+
+	if _, _, err := s.createOrTriageRepo(context.Background(), RepoInput{
+		CloneURL: "https://github.com/acme/widget", Owner: "acme", Name: "widget",
+	}, "", true); err != nil {
+		t.Fatalf("createOrTriageRepo: %v", err)
+	}
+	if called {
+		t.Error("prefetch fired with enrichment disabled, want skipped")
+	}
+}
+
+func TestDepScan_refusesWhenEnrichmentDisabled(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	s.EcosystemsEnrichment = false
+	resolved := false
+	s.resolvePURL = func(context.Context, string) string {
+		resolved = true
+		return "https://github.com/acme/widget"
+	}
+	repo := db.Repository{URL: "https://github.com/acme/app", Name: "app"}
+	s.DB.Create(&repo)
+	dep := db.Dependency{RepositoryID: repo.ID, Name: "widget", Ecosystem: "npm", PURL: "pkg:npm/widget"}
+	s.DB.Create(&dep)
+
+	r := localReq("POST", fmt.Sprintf("/dependencies/%d/scan", dep.ID))
+	r.Header.Set("Sec-Fetch-Site", "same-origin")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+
+	if w.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503; body=%s", w.Code, w.Body)
+	}
+	if !strings.Contains(w.Body.String(), ecosystemsDisabled) {
+		t.Errorf("body = %q, want the disabled-enrichment reason", w.Body)
+	}
+	if resolved {
+		t.Error("import still called the PURL lookup with enrichment disabled")
 	}
 }
 

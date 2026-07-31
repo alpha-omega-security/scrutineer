@@ -137,6 +137,14 @@ type Config struct {
 	// which an open finding is automatically transitioned to 'rejected'.
 	// 0 (the default) means this feature is disabled.
 	AutoRejectMissedCount int `yaml:"auto_reject_missed_count"`
+	// EcosystemsEnrichment gates every ecosyste.ms lookup: the per-repository
+	// cache the worker refreshes before a scan, the eager warm on repo add,
+	// and the PURL to repository resolution behind SBOM and dependency
+	// import. False also drops *.ecosyste.ms from the container egress
+	// allowlist, so an operator declines third-party enrichment in one place
+	// and can then deny the domain at the network layer without noise.
+	// Nil (the default) leaves enrichment on.
+	EcosystemsEnrichment *bool `yaml:"ecosystems_enrichment"`
 	// FederationSalt is the secret shared out of band between federation
 	// members and mixed into interchange finding hashes, so members derive
 	// matching hashes without publishing anything enumerable by outsiders.

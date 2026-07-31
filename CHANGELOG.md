@@ -5,6 +5,7 @@ Entries are grouped by release, newest first. Each entry is a summary written fo
 ## Unreleased
 
 - A repository whose maintainer asks not to be scanned can now be marked as such: work already under way stops, and no scan runs against it again, neither a manual run, nor the scheduler, nor an automatic follow-up. ([#753](https://github.com/alpha-omega-security/scrutineer/pull/753), [@alexandre-daubois](https://github.com/alexandre-daubois))
+- Operators running on a restricted network can now turn off the third-party enrichment scrutineer fetches from ecosyste.ms in a single setting, which also stops the scanner containers reaching that service; when the service is simply unreachable, scans now give up on it quickly and carry on instead of waiting on it repeatedly. ([#790](https://github.com/alpha-omega-security/scrutineer/pull/790), [@alexandre-daubois](https://github.com/alexandre-daubois))
 
 ## 2026-07-28
 

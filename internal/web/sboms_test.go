@@ -152,6 +152,43 @@ func TestSBOMResolveHandler(t *testing.T) {
 	}
 }
 
+func TestSBOMResolve_recordsReasonWhenEnrichmentDisabled(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	s.resolveSync = true
+	s.EcosystemsEnrichment = false
+	looked := false
+	s.resolvePURL = func(context.Context, string) string {
+		looked = true
+		return "https://github.com/lodash/lodash"
+	}
+	s.DB.Create(&db.Skill{Name: defaultSkillName, Body: "b", Active: true})
+	up := db.SBOMUpload{Name: "demo", Packages: []db.SBOMPackage{
+		{Name: "lodash", PURL: "pkg:npm/lodash@4.17.21"},
+	}}
+	s.DB.Create(&up)
+
+	r := localReq("POST", fmt.Sprintf("/sboms/%d/resolve", up.ID))
+	r.Header.Set("Sec-Fetch-Site", "same-origin")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303; body=%s", w.Code, w.Body)
+	}
+
+	var pkg db.SBOMPackage
+	s.DB.Where("sbom_upload_id = ?", up.ID).First(&pkg)
+	if pkg.RepositoryID != nil {
+		t.Errorf("package linked with enrichment disabled: %+v", pkg)
+	}
+	if pkg.ResolveError != ecosystemsDisabled {
+		t.Errorf("resolve_error = %q, want %q", pkg.ResolveError, ecosystemsDisabled)
+	}
+	if looked {
+		t.Error("resolve still called the PURL lookup with enrichment disabled")
+	}
+}
+
 func TestSBOMConfirm_resolvesAfterOperatorConfirmation(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

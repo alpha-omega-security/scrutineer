@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
+	"net"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -208,6 +211,83 @@ func TestRefreshEcosystems_fetchErrorIsNonFatal(t *testing.T) {
 	}
 	if got.EcosystemsRepoData == "" {
 		t.Errorf("sibling source should still be populated despite one failure")
+	}
+}
+
+// A denied domain fails identically on every source, so the first transport
+// error abandons the pass instead of paying one timeout per source.
+func TestRefreshEcosystems_transportErrorStopsThePass(t *testing.T) {
+	fetcher := newFakeEcosystemsFetcher()
+	fetcher.errs["repo"] = &net.DNSError{Err: "no such host", Name: "packages.ecosyste.ms", IsNotFound: true}
+	gdb := openEcosystemsTestDB(t)
+	repo := db.Repository{URL: "https://github.com/a/b", Name: "b"}
+	gdb.Create(&repo)
+
+	if err := refreshEcosystems(context.Background(), gdb, repo.ID, false, slog.Default(), fetcher); err != nil {
+		t.Fatalf("refresh returned error, want nil (best-effort): %v", err)
+	}
+
+	if fetcher.hits["repo"] != 1 {
+		t.Errorf("repo fetches = %d, want 1", fetcher.hits["repo"])
+	}
+	for _, key := range []string{"packages", "advisories", "commits", "issues", "dependents"} {
+		if fetcher.hits[key] != 0 {
+			t.Errorf("%s fetches = %d after an unreachable upstream, want 0", key, fetcher.hits[key])
+		}
+	}
+	var got db.Repository
+	gdb.First(&got, repo.ID)
+	if got.EcosystemsPackagesData != "" {
+		t.Errorf("abandoned pass still cached packages: %q", got.EcosystemsPackagesData)
+	}
+}
+
+// An upstream that answers "nothing recorded for this repository" says nothing
+// about the next source, so that one stays per-source.
+func TestRefreshEcosystems_upstreamMissErrorKeepsGoing(t *testing.T) {
+	fetcher := newFakeEcosystemsFetcher()
+	fetcher.errs["repo"] = errors.New("repository not found")
+	gdb := openEcosystemsTestDB(t)
+	repo := db.Repository{URL: "https://github.com/a/b", Name: "b"}
+	gdb.Create(&repo)
+
+	if err := refreshEcosystems(context.Background(), gdb, repo.ID, false, slog.Default(), fetcher); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+
+	for _, key := range []string{"packages", "advisories", "commits", "issues", "dependents"} {
+		if fetcher.hits[key] != 1 {
+			t.Errorf("%s fetches = %d after a per-source miss, want 1", key, fetcher.hits[key])
+		}
+	}
+	var got db.Repository
+	gdb.First(&got, repo.ID)
+	if got.EcosystemsPackagesData == "" {
+		t.Error("sibling source should still be cached after a per-source miss")
+	}
+}
+
+func TestUnreachable(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"dns failure", &net.DNSError{Err: "no such host", IsNotFound: true}, true},
+		{"dial refused", &net.OpError{Op: "dial", Err: errors.New("connection refused")}, true},
+		{"wrapped dial", fmt.Errorf("fetch packages: %w", &net.OpError{Op: "dial", Err: errors.New("i/o timeout")}), true},
+		{"client timeout", &url.Error{Op: "Get", URL: "https://packages.ecosyste.ms", Err: context.DeadlineExceeded}, true},
+		{"deadline exceeded", context.DeadlineExceeded, true},
+		{"cancelled", context.Canceled, true},
+		{"upstream miss", errors.New("repository not found"), false},
+		{"http status", errors.New("unexpected status 404"), false},
+		{"nil", nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := unreachable(tc.err); got != tc.want {
+				t.Errorf("unreachable(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
 	}
 }
 

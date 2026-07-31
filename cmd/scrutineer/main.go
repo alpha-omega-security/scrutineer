@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -118,6 +119,7 @@ type flags struct {
 	recipientsFile        string
 	identityFile          string
 	autoRejectMissedCount int
+	ecosystemsEnrichment  bool
 	federationSalt        string
 	federationContact     string
 	skillLocal            skillDirs
@@ -179,6 +181,7 @@ func registerFlags(fs *flag.FlagSet, f *flags) {
 	fs.StringVar(&f.recipientsFile, "recipients-file", "", "age recipients file (public keys) for encrypted export")
 	fs.StringVar(&f.identityFile, "identity-file", "", "age identity file or SSH private key for decrypting imports")
 	fs.IntVar(&f.autoRejectMissedCount, "auto-reject-missed-count", 0, "auto-reject findings after this many consecutive missed rescans (0 disables)")
+	fs.BoolVar(&f.ecosystemsEnrichment, "ecosystems-enrichment", true, "enrich repositories from packages.ecosyste.ms; =false stops every outbound lookup and drops *.ecosyste.ms from the container egress allowlist")
 	// federation_salt has no flag on purpose: a secret in argv leaks via
 	// ps and shell history, so it is config-file only.
 	fs.StringVar(&f.federationContact, "federation-contact", "", "contact returned by the claim-check endpoint on a finding-hash match")
@@ -271,6 +274,9 @@ func (f *flags) merge(cfg *config.Config) {
 	}
 	if cfg.AutoRejectMissedCount > 0 && !f.set["auto-reject-missed-count"] {
 		f.autoRejectMissedCount = cfg.AutoRejectMissedCount
+	}
+	if cfg.EcosystemsEnrichment != nil && !f.set["ecosystems-enrichment"] {
+		f.ecosystemsEnrichment = *cfg.EcosystemsEnrichment
 	}
 	if cfg.FederationSalt != "" {
 		f.federationSalt = cfg.FederationSalt
@@ -543,8 +549,12 @@ func run(log *slog.Logger) error {
 			broker.Publish(web.Event{Name: name, Data: data, ScanID: scanID, RepoID: repoID})
 		},
 	}
-	w.RefreshEcosystemsCache = func(ctx context.Context, repoID uint) error {
-		return worker.RefreshEcosystems(ctx, gdb, repoID, true, log)
+	// Left nil when enrichment is off so a scan makes no ecosyste.ms call at
+	// all, rather than one that fails against a denied domain.
+	if f.ecosystemsEnrichment {
+		w.RefreshEcosystemsCache = func(ctx context.Context, repoID uint) error {
+			return worker.RefreshEcosystems(ctx, gdb, repoID, true, log)
+		}
 	}
 	w.Register(q)
 
@@ -554,6 +564,7 @@ func run(log *slog.Logger) error {
 	}
 	srv.SkillsRepoSHA = skillsRepoSHA
 	srv.Version = version
+	srv.EcosystemsEnrichment = f.ecosystemsEnrichment
 	if h, err := worker.HarnessByName(f.backend); err == nil {
 		srv.Backend = worker.HarnessName(h)
 	}
@@ -823,7 +834,7 @@ func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRu
 		return nil, "", err
 	}
 	var egress worker.EgressSidecarConfig
-	allow := buildEgressAllow(h.EgressHosts(), f.hardened, cfg, f.modelBaseURL, log)
+	allow := buildEgressAllow(h.EgressHosts(), f.hardened, f.ecosystemsEnrichment, cfg, f.modelBaseURL, log)
 	if apiHost != worker.HostGatewayAlias {
 		allow = append(allow, apiHost)
 	}
@@ -963,12 +974,19 @@ func resolveEgressSidecar(rt worker.ContainerRuntime, f *flags, allow []string, 
 	return worker.EgressSidecarConfig{Token: token, Allow: allow, APIPort: addrPort(f.addr), GatewayIP: egressGwIP}, nil
 }
 
+// ecosystemsEgressHost is the built-in allowlist entry that lets a skill
+// reach ecosyste.ms from inside the runner. It is dropped when enrichment is
+// off so the operator's "no third-party enrichment" covers the container too,
+// not just the host process; an explicit egress_allow entry still wins, which
+// is the documented way to widen the list back.
+const ecosystemsEgressHost = "*.ecosyste.ms"
+
 // buildEgressAllow assembles the proxy allowlist: the harness's
 // model-API hosts first, then the harness-neutral base. Hardened mode
 // starts from HardenedEgressAllow and ignores cfg.EgressAllow (the
 // operator must drop --hardened to widen). The model base URL host is
 // still auto-added in both modes since it routes the same model API.
-func buildEgressAllow(harnessHosts []string, hardened bool, cfg *config.Config, modelBaseURL string, log *slog.Logger) []string {
+func buildEgressAllow(harnessHosts []string, hardened, ecosystems bool, cfg *config.Config, modelBaseURL string, log *slog.Logger) []string {
 	allow := append([]string{}, harnessHosts...)
 	if hardened {
 		allow = append(allow, worker.HardenedEgressAllow...)
@@ -976,7 +994,12 @@ func buildEgressAllow(harnessHosts []string, hardened bool, cfg *config.Config, 
 			log.Warn("ignoring egress_allow config entries under --hardened", "count", len(cfg.EgressAllow))
 		}
 	} else {
-		allow = append(allow, worker.DefaultEgressAllow...)
+		base := worker.DefaultEgressAllow
+		if !ecosystems {
+			base = slices.DeleteFunc(slices.Clone(base), func(h string) bool { return h == ecosystemsEgressHost })
+			log.Info("ecosyste.ms enrichment disabled, dropped from egress allowlist", "host", ecosystemsEgressHost)
+		}
+		allow = append(allow, base...)
 		if cfg != nil {
 			allow = append(allow, cfg.EgressAllow...)
 		}

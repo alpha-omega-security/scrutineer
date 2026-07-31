@@ -102,7 +102,7 @@ The two `html/template` XSS vulnerabilities (`GO-2026-4865`, `GO-2026-4603`) are
 
 ecosyste.ms fetches go through the generated `ecosystems-go` client rather than local raw response readers. `HTMLURL` and `IconURL` are scheme-validated by `safeURL()` in `parseRepoMetadataOutput` before storage, so only http/https values reach the database and the templates that render them.
 
-Residual: no certificate pinning for ecosyste.ms. A MITM'd response could still return a hostile `repository_url` that passes the `https://` check, leading to cloning an attacker repo. Accepted risk given HTTPS + public CA is the standard trust model.
+Residual: no certificate pinning for ecosyste.ms. A MITM'd response could still return a hostile `repository_url` that passes the `https://` check, leading to cloning an attacker repo. Accepted risk given HTTPS + public CA is the standard trust model. `ecosystems_enrichment: false` removes the residual outright: the host process makes no ecosyste.ms call, the PURL-driven import paths refuse instead of cloning a resolved URL, and `*.ecosyste.ms` leaves the container egress allowlist.
 
 ### T8: Disclosure of findings database (mitigated)
 

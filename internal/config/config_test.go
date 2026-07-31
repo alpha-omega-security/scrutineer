@@ -178,6 +178,24 @@ func TestLoad_profilesDirDistinguishesOmittedAndEmpty(t *testing.T) {
 	}
 }
 
+func TestLoad_ecosystemsEnrichmentDistinguishesOmittedAndFalse(t *testing.T) {
+	omitted, err := Load(write(t, "addr: 127.0.0.1:8080\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if omitted.EcosystemsEnrichment != nil {
+		t.Fatalf("omitted ecosystems_enrichment = %v, want nil so the flag default stands", *omitted.EcosystemsEnrichment)
+	}
+
+	off, err := Load(write(t, "ecosystems_enrichment: false\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if off.EcosystemsEnrichment == nil || *off.EcosystemsEnrichment {
+		t.Fatalf("ecosystems_enrichment: false = %v, want pointer to false", off.EcosystemsEnrichment)
+	}
+}
+
 func TestLoad_modelBaseURLAlias(t *testing.T) {
 	// anthropic_base_url is the retained pre-rename alias; Load folds it
 	// into ModelBaseURL.
