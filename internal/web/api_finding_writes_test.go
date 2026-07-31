@@ -265,7 +265,7 @@ func TestAPISetFindingLabels(t *testing.T) {
 
 // A body that omits labels, or sends null, must not be read as "replace with
 // the empty set": that let a malformed request silently wipe analyst-set
-// labels and still answer 204 (#710). Only an explicit [] clears.
+// labels and still answer 204 (#710). A present array still clears.
 func TestAPISetFindingLabels_rejectsMissingLabelsArray(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
@@ -297,6 +297,51 @@ func TestAPISetFindingLabels_rejectsMissingLabelsArray(t *testing.T) {
 	s.DB.Preload("Labels").First(&got, f.ID)
 	if len(got.Labels) != 0 {
 		t.Errorf("labels after explicit clear = %+v, want 0", got.Labels)
+	}
+}
+
+// Blank and whitespace-only names are trimmed and skipped by
+// db.SetFindingLabels, so an array of nothing but blanks reaches the
+// association layer as the empty set and clears the finding. That is existing
+// behaviour and #710 deliberately leaves it alone; it is pinned here so the
+// handler comment and the OpenAPI description cannot drift away from what the
+// code actually does.
+func TestAPISetFindingLabels_blankNamesAreIgnored(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	f, tok, _ := seedFindingForAPI(t, s)
+	path := fmt.Sprintf("/api/findings/%d/labels", f.ID)
+
+	seed := func(t *testing.T) {
+		t.Helper()
+		if w := apiReq(t, s, "PUT", path, tok, `{"labels":["wontfix","needs-info"]}`); w.Code != http.StatusNoContent {
+			t.Fatalf("seed labels: status = %d, want 204; body=%s", w.Code, w.Body)
+		}
+	}
+
+	for _, body := range []string{`{"labels":[""]}`, `{"labels":[" "]}`, `{"labels":["  ","\t"]}`} {
+		seed(t)
+		w := apiReq(t, s, "PUT", path, tok, body)
+		if w.Code != http.StatusNoContent {
+			t.Errorf("PUT %s: status = %d, want 204", body, w.Code)
+		}
+		var got db.Finding
+		s.DB.Preload("Labels").First(&got, f.ID)
+		if len(got.Labels) != 0 {
+			t.Errorf("PUT %s: labels = %+v, want the blank names ignored and the set cleared", body, got.Labels)
+		}
+	}
+
+	// A blank name alongside a real one is dropped without taking the real
+	// one with it, so this is a trim-and-skip rule and not "any blank clears".
+	seed(t)
+	if w := apiReq(t, s, "PUT", path, tok, `{"labels":[" ","triage"]}`); w.Code != http.StatusNoContent {
+		t.Fatalf("mixed blank and real: status = %d, want 204; body=%s", w.Code, w.Body)
+	}
+	var got db.Finding
+	s.DB.Preload("Labels").First(&got, f.ID)
+	if len(got.Labels) != 1 || got.Labels[0].Name != "triage" {
+		t.Errorf("labels = %+v, want only triage", got.Labels)
 	}
 }
 

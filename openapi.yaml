@@ -720,9 +720,11 @@ paths:
                   items: { type: string }
                   description: |
                     Label names, replacing the finding's current set. Missing
-                    labels are created on demand. Send `[]` to clear every
-                    label; the field is required, so omitting it or sending
-                    null is rejected rather than treated as a clear-all.
+                    labels are created on demand. Blank and whitespace-only
+                    names are trimmed and ignored, so a request whose names are
+                    all blank clears every label just as `[]` does. The field
+                    itself is required: omitting it or sending null is rejected
+                    rather than treated as a clear-all.
       responses:
         '204': { description: Updated }
         '400':
