@@ -269,10 +269,16 @@ func TestRefreshEcosystems_upstreamMissErrorKeepsGoing(t *testing.T) {
 }
 
 // A cancelled scan abandons the pass too, but as the caller giving up rather
-// than upstream being unreachable.
+// than upstream being unreachable. The fetch error is deliberately one that
+// unreachable() rejects, so only the ctx.Err() branch can stop the pass: with
+// that branch removed the loop falls through to `continue` and the assertion
+// below fails.
 func TestRefreshEcosystems_cancelledContextStopsThePass(t *testing.T) {
 	fetcher := newFakeEcosystemsFetcher()
-	fetcher.errs["repo"] = context.Canceled
+	fetcher.errs["repo"] = errors.New("repository not found")
+	if unreachable(fetcher.errs["repo"]) {
+		t.Fatal("the seeded error must not be unreachable, or the test proves nothing")
+	}
 	gdb := openEcosystemsTestDB(t)
 	repo := db.Repository{URL: "https://github.com/a/b", Name: "b"}
 	gdb.Create(&repo)
@@ -288,6 +294,40 @@ func TestRefreshEcosystems_cancelledContextStopsThePass(t *testing.T) {
 	}
 }
 
+// The six sources span five hosts, so one host answering slowly must not
+// abandon the others: a failed fetch never writes its fetched_at, so a pass
+// that gave up here would restart at the same source on every later scan and
+// the ones after it would never refresh again.
+func TestRefreshEcosystems_slowHostDoesNotStarveLaterSources(t *testing.T) {
+	fetcher := newFakeEcosystemsFetcher()
+	fetcher.errs["advisories"] = &url.Error{
+		Op:  "Get",
+		URL: "https://advisories.ecosyste.ms",
+		Err: context.DeadlineExceeded,
+	}
+	gdb := openEcosystemsTestDB(t)
+	repo := db.Repository{URL: "https://github.com/a/b", Name: "b"}
+	gdb.Create(&repo)
+
+	if err := refreshEcosystems(context.Background(), gdb, repo.ID, false, slog.Default(), fetcher); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+
+	for _, key := range []string{"commits", "issues", "dependents"} {
+		if fetcher.hits[key] != 1 {
+			t.Errorf("%s fetches = %d after a slow sibling host, want 1", key, fetcher.hits[key])
+		}
+	}
+	var got db.Repository
+	gdb.First(&got, repo.ID)
+	if got.EcosystemsDependentsData == "" {
+		t.Error("a slow advisories host stopped dependents from ever being cached")
+	}
+	if got.EcosystemsAdvisoriesFetchedAt != nil {
+		t.Error("the timed-out source must stay unstamped so the TTL retries it")
+	}
+}
+
 func TestUnreachable(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -297,11 +337,13 @@ func TestUnreachable(t *testing.T) {
 		{"dns failure", &net.DNSError{Err: "no such host", IsNotFound: true}, true},
 		{"dial refused", &net.OpError{Op: "dial", Err: errors.New("connection refused")}, true},
 		{"wrapped dial", fmt.Errorf("fetch packages: %w", &net.OpError{Op: "dial", Err: errors.New("i/o timeout")}), true},
-		{"client timeout", &url.Error{Op: "Get", URL: "https://packages.ecosyste.ms", Err: context.DeadlineExceeded}, true},
 		{"tls interception", &url.Error{Op: "Get", URL: "https://packages.ecosyste.ms", Err: &tls.CertificateVerificationError{Err: errors.New("x509: certificate signed by unknown authority")}}, true},
 		{"not a tls server", tls.RecordHeaderError{Msg: "first record does not look like a TLS handshake"}, true},
-		{"deadline exceeded", context.DeadlineExceeded, true},
-		{"cancelled", context.Canceled, true},
+		// One host answering slowly says nothing about the other four, so a
+		// response-level timeout stays a per-source failure.
+		{"slow response", &url.Error{Op: "Get", URL: "https://packages.ecosyste.ms", Err: context.DeadlineExceeded}, false},
+		{"deadline exceeded", context.DeadlineExceeded, false},
+		{"cancelled", context.Canceled, false},
 		{"upstream miss", errors.New("repository not found"), false},
 		{"http status", errors.New("unexpected status 404"), false},
 		{"nil", nil, false},

@@ -206,29 +206,28 @@ func refreshEcosystems(ctx context.Context, gdb *gorm.DB, repoID uint, staleOnly
 	return nil
 }
 
-// unreachable reports whether err is a transport-level failure (DNS, dial,
-// TLS, timeout) rather than upstream answering "nothing recorded for this
-// repository". A blocked domain fails every source the same way, so the pass
-// stops after the first instead of paying one timeout per source on every
-// scan; a plain 404 stays per-source since the next one may well have data.
+// unreachable reports whether err means the host could not be reached at all:
+// name resolution, the dial itself, or the TLS handshake. Those are the shapes
+// a denied domain produces, and it produces them for every ecosyste.ms host
+// alike, so the pass stops after the first instead of paying one timeout per
+// source on every scan.
+//
+// Deliberately NOT included: a response that is merely slow or absent. The six
+// sources span five hosts (repos, packages, advisories, commits, issues), each
+// with its own 30s client timeout, so treating one host's response timeout as
+// "everything is down" would let a single degraded host permanently starve the
+// sources ordered after it: a failed fetch never writes its `fetched_at`, so
+// the staleOnly pass restarts at the same one every scan. A slow host, like a
+// plain 404, stays per-source.
 func unreachable(err error) bool {
 	var dnsErr *net.DNSError
 	var opErr *net.OpError
 	var certErr *tls.CertificateVerificationError
 	var recordErr tls.RecordHeaderError
-	var netErr net.Error
-	switch {
-	case errors.As(err, &dnsErr), errors.As(err, &opErr):
-		return true
-	// A TLS-intercepting proxy or a captive portal answering the domain
-	// fails the handshake, not the dial, so neither is a net.OpError.
-	case errors.As(err, &certErr), errors.As(err, &recordErr):
-		return true
-	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
-		return true
-	default:
-		return errors.As(err, &netErr) && netErr.Timeout()
-	}
+	// A TLS-intercepting proxy or a captive portal answering the domain fails
+	// the handshake, not the dial, so neither is a net.OpError.
+	return errors.As(err, &dnsErr) || errors.As(err, &opErr) ||
+		errors.As(err, &certErr) || errors.As(err, &recordErr)
 }
 
 // stale reports whether the source's cached payload is missing or older than

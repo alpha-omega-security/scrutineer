@@ -236,7 +236,9 @@ paths:
       description: >
         Returns the raw upstream payload pre-fetched and cached server-side.
         A 404 signals nothing is cached, in which case the caller falls
-        back to a direct WebFetch.
+        back to a direct WebFetch. When the operator sets
+        ecosystems_enrichment false, no source is ever cached, so every
+        request answers 404 and the fallback is the only path.
       operationId: getRepositoryEcosystemsRaw
       parameters:
         - $ref: '#/components/parameters/RepositoryID'

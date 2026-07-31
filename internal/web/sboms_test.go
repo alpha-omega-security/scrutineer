@@ -156,7 +156,7 @@ func TestSBOMResolve_recordsReasonWhenEnrichmentDisabled(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
 	s.resolveSync = true
-	s.EcosystemsEnrichment = false
+	s.DisableEcosystems()
 	looked := false
 	s.resolvePURL = func(context.Context, string) string {
 		looked = true
@@ -165,6 +165,8 @@ func TestSBOMResolve_recordsReasonWhenEnrichmentDisabled(t *testing.T) {
 	up := db.SBOMUpload{Name: "demo", Packages: []db.SBOMPackage{
 		{Name: "lodash", PURL: "pkg:npm/lodash@4.17.21"},
 		{Name: "mystery"},
+		// Concluded by an earlier run while enrichment was on.
+		{Name: "orphan", PURL: "pkg:npm/orphan@1", ResolveError: "no repository_url for purl"},
 	}}
 	s.DB.Create(&up)
 
@@ -176,21 +178,30 @@ func TestSBOMResolve_recordsReasonWhenEnrichmentDisabled(t *testing.T) {
 		t.Fatalf("status = %d, want 303; body=%s", w.Code, w.Body)
 	}
 
+	byName := map[string]db.SBOMPackage{}
 	var pkgs []db.SBOMPackage
-	s.DB.Where("sbom_upload_id = ?", up.ID).Order("name").Find(&pkgs)
-	if len(pkgs) != 2 {
-		t.Fatalf("packages = %d, want 2", len(pkgs))
+	s.DB.Where("sbom_upload_id = ?", up.ID).Find(&pkgs)
+	for _, p := range pkgs {
+		byName[p.Name] = p
 	}
-	if pkgs[0].RepositoryID != nil {
-		t.Errorf("package linked with enrichment disabled: %+v", pkgs[0])
+	if len(byName) != 3 {
+		t.Fatalf("packages = %d, want 3", len(byName))
 	}
-	if pkgs[0].ResolveError != ecosystemsDisabled {
-		t.Errorf("resolve_error = %q, want %q", pkgs[0].ResolveError, ecosystemsDisabled)
+	if byName["lodash"].RepositoryID != nil {
+		t.Errorf("package linked with enrichment disabled: %+v", byName["lodash"])
+	}
+	if got := byName["lodash"].ResolveError; got != ecosystemsDisabled {
+		t.Errorf("resolve_error = %q, want %q", got, ecosystemsDisabled)
 	}
 	// A package with no PURL was unresolvable regardless of the setting, so
 	// blaming enrichment for it would be wrong.
-	if pkgs[1].ResolveError != noPURLError {
-		t.Errorf("no-purl resolve_error = %q, want %q", pkgs[1].ResolveError, noPURLError)
+	if got := byName["mystery"].ResolveError; got != noPURLError {
+		t.Errorf("no-purl resolve_error = %q, want %q", got, noPURLError)
+	}
+	// Nor may a re-resolve with the setting flipped destroy the more precise
+	// reason an earlier enabled run recorded.
+	if got := byName["orphan"].ResolveError; got != "no repository_url for purl" {
+		t.Errorf("earlier reason overwritten: resolve_error = %q", got)
 	}
 	if looked {
 		t.Error("resolve still called the PURL lookup with enrichment disabled")

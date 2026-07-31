@@ -317,15 +317,6 @@ func (s *Server) sbomDelete(w http.ResponseWriter, r *http.Request) {
 // package row. Runs in the background after the operator confirms import so the page can render
 // immediately.
 func (s *Server) resolveSBOMPackages(uploadID uint) {
-	if !s.EcosystemsEnrichment {
-		// A package with no PURL was never resolvable in the first place, so
-		// it keeps the reason the enabled path below would have given it.
-		s.DB.Model(&db.SBOMPackage{}).Where("sbom_upload_id = ? AND repository_id IS NULL AND p_url = ''", uploadID).
-			Update("resolve_error", noPURLError)
-		s.DB.Model(&db.SBOMPackage{}).Where("sbom_upload_id = ? AND repository_id IS NULL AND p_url <> ''", uploadID).
-			Update("resolve_error", ecosystemsDisabled)
-		return
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), sbomResolveTimeout)
 	defer cancel()
 
@@ -336,6 +327,15 @@ func (s *Server) resolveSBOMPackages(uploadID uint) {
 		p := &pkgs[i]
 		if p.PURL == "" {
 			s.DB.Model(p).Update("resolve_error", noPURLError)
+			continue
+		}
+		if !s.ecosystemsEnrichment {
+			// Whatever an earlier enabled run concluded is more precise than
+			// "the operator turned enrichment off", so a re-resolve with the
+			// setting flipped keeps it instead of overwriting it.
+			if p.ResolveError == "" {
+				s.DB.Model(p).Update("resolve_error", ecosystemsDisabled)
+			}
 			continue
 		}
 		repoURL := s.resolvePURL(ctx, p.PURL)

@@ -114,27 +114,42 @@ func TestCreateOrTriageRepo_skipsPrefetchForLocalRepo(t *testing.T) {
 	}
 }
 
+// The guarantee is structural: DisableEcosystems neuters the two seams that
+// reach the network, so a caller that forgets the handler-level check still
+// cannot make a request. Asserting on a stub installed afterwards would only
+// pin the caller-side check and miss exactly that.
+func TestDisableEcosystems_neutersTheNetworkSeams(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	s.DisableEcosystems()
+
+	if s.prefetchEcosystems != nil {
+		t.Error("prefetch seam still wired after DisableEcosystems")
+	}
+	if got := s.resolvePURL(context.Background(), "pkg:npm/widget"); got != "" {
+		t.Errorf("resolvePURL seam returned %q after DisableEcosystems, want empty", got)
+	}
+	if s.ecosystemsEnrichment {
+		t.Error("ecosystemsEnrichment still true after DisableEcosystems")
+	}
+}
+
 func TestCreateOrTriageRepo_skipsPrefetchWhenEnrichmentDisabled(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
-	s.EcosystemsEnrichment = false
-	called := false
-	s.prefetchEcosystems = func(uint) { called = true }
+	s.DisableEcosystems()
 
 	if _, _, err := s.createOrTriageRepo(context.Background(), RepoInput{
 		CloneURL: "https://github.com/acme/widget", Owner: "acme", Name: "widget",
 	}, "", true); err != nil {
-		t.Fatalf("createOrTriageRepo: %v", err)
-	}
-	if called {
-		t.Error("prefetch fired with enrichment disabled, want skipped")
+		t.Fatalf("createOrTriageRepo with the prefetch seam removed: %v", err)
 	}
 }
 
 func TestDepScan_refusesWhenEnrichmentDisabled(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
-	s.EcosystemsEnrichment = false
+	s.DisableEcosystems()
 	resolved := false
 	s.resolvePURL = func(context.Context, string) string {
 		resolved = true
@@ -158,6 +173,56 @@ func TestDepScan_refusesWhenEnrichmentDisabled(t *testing.T) {
 	}
 	if resolved {
 		t.Error("import still called the PURL lookup with enrichment disabled")
+	}
+}
+
+func seedDependency(t *testing.T, s *Server, purl string) db.Dependency {
+	t.Helper()
+	repo := db.Repository{URL: "https://github.com/acme/app", Name: "app"}
+	s.DB.Create(&repo)
+	dep := db.Dependency{RepositoryID: repo.ID, Name: "widget", Ecosystem: "npm", PURL: purl}
+	s.DB.Create(&dep)
+	return dep
+}
+
+func depScanReq(t *testing.T, s *Server, depID uint) *httptest.ResponseRecorder {
+	t.Helper()
+	r := localReq("POST", fmt.Sprintf("/dependencies/%d/scan", depID))
+	r.Header.Set("Sec-Fetch-Site", "same-origin")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	return w
+}
+
+func TestDepScan_importsResolvedRepository(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	s.resolvePURL = func(context.Context, string) string { return "https://github.com/acme/widget" }
+	dep := seedDependency(t, s, "pkg:npm/widget")
+
+	if code := depScanReq(t, s, dep.ID).Code; code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303", code)
+	}
+	var imported db.Repository
+	if err := s.DB.Where("url = ?", "https://github.com/acme/widget").First(&imported).Error; err != nil {
+		t.Fatalf("resolved repository was not created: %v", err)
+	}
+}
+
+// A dependency carrying no PURL was unresolvable either way, so flipping the
+// setting must not change the reason it gets.
+func TestDepScan_noPURLKeeps422WhenEnrichmentDisabled(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	s.DisableEcosystems()
+	dep := seedDependency(t, s, "")
+
+	w := depScanReq(t, s, dep.ID)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422 (not the enrichment 503); body=%s", w.Code, w.Body)
+	}
+	if strings.Contains(w.Body.String(), ecosystemsDisabled) {
+		t.Errorf("body = %q, want the unresolvable reason, not the setting", w.Body)
 	}
 }
 

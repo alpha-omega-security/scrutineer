@@ -403,9 +403,29 @@ func TestRegisterFlags_ecosystemsEnrichmentDefaultsOn(t *testing.T) {
 	}
 }
 
+// Go's flag package does not accept the space-separated form for a boolean:
+// it leaves the flag at its default and parks the operand in Args(). This is
+// the first flag here defaulting to true, so that silently reads as the
+// opposite of what was typed. parseFlags exits on a leftover argument; this
+// pins the signal it keys on.
+func TestRegisterFlags_booleanSpaceFormLeavesAStrayArgument(t *testing.T) {
+	f := &flags{}
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	registerFlags(fs, f)
+	if err := fs.Parse([]string{"-ecosystems-enrichment", "false"}); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if !f.ecosystemsEnrichment {
+		t.Fatal("the space form now applies; the guard in parseFlags is no longer needed")
+	}
+	if fs.NArg() != 1 || fs.Arg(0) != "false" {
+		t.Fatalf("leftover args = %v, want [false] so parseFlags can refuse it", fs.Args())
+	}
+}
+
 func TestBuildEgressAllow_defaultIncludesConfigAndAnthropicHost(t *testing.T) {
 	cfg := &config.Config{EgressAllow: []string{"artifactory.internal", "*.mycorp.net"}}
-	allow := buildEgressAllow(worker.ClaudeHarness{}.EgressHosts(), false, true, cfg, "https://proxy.corp.com/v1", quietLog())
+	allow := buildEgressAllow(worker.ClaudeHarness{}.EgressHosts(), false, cfg, "https://proxy.corp.com/v1", quietLog())
 
 	if !slices.Contains(allow, "*.anthropic.com") {
 		t.Errorf("default mode dropped harness egress hosts: %v", allow)
@@ -421,36 +441,9 @@ func TestBuildEgressAllow_defaultIncludesConfigAndAnthropicHost(t *testing.T) {
 	}
 }
 
-func TestBuildEgressAllow_enrichmentDisabledDropsEcosystems(t *testing.T) {
-	allow := buildEgressAllow(worker.ClaudeHarness{}.EgressHosts(), false, false, nil, "", quietLog())
-
-	if slices.Contains(allow, "*.ecosyste.ms") {
-		t.Errorf("enrichment off still allowed ecosyste.ms: %v", allow)
-	}
-	if !slices.Contains(allow, "*.anthropic.com") {
-		t.Errorf("enrichment off dropped harness egress hosts: %v", allow)
-	}
-	if len(allow) != len(worker.ClaudeHarness{}.EgressHosts())+len(worker.DefaultEgressAllow)-1 {
-		t.Errorf("enrichment off dropped more than the ecosyste.ms entry: %v", allow)
-	}
-	// The built-in list is package state shared with every other caller.
-	if !slices.Contains(worker.DefaultEgressAllow, "*.ecosyste.ms") {
-		t.Error("buildEgressAllow mutated worker.DefaultEgressAllow in place")
-	}
-}
-
-func TestBuildEgressAllow_egressAllowStillWidensBackToEcosystems(t *testing.T) {
-	cfg := &config.Config{EgressAllow: []string{"*.ecosyste.ms"}}
-	allow := buildEgressAllow(worker.ClaudeHarness{}.EgressHosts(), false, false, cfg, "", quietLog())
-
-	if !slices.Contains(allow, "*.ecosyste.ms") {
-		t.Errorf("explicit egress_allow entry did not win: %v", allow)
-	}
-}
-
 func TestBuildEgressAllow_hardenedDropsConfigKeepsHarness(t *testing.T) {
 	cfg := &config.Config{EgressAllow: []string{"artifactory.internal"}}
-	allow := buildEgressAllow(worker.ClaudeHarness{}.EgressHosts(), true, true, cfg, "https://proxy.corp.com/v1", quietLog())
+	allow := buildEgressAllow(worker.ClaudeHarness{}.EgressHosts(), true, cfg, "https://proxy.corp.com/v1", quietLog())
 
 	if slices.Contains(allow, "*.ecosyste.ms") {
 		t.Errorf("hardened leaked DefaultEgressAllow entries: %v", allow)
@@ -471,7 +464,7 @@ func TestBuildEgressAllow_hardenedDropsConfigKeepsHarness(t *testing.T) {
 
 func TestBuildEgressAllow_hardenedNilConfig(t *testing.T) {
 	harnessHosts := worker.ClaudeHarness{}.EgressHosts()
-	allow := buildEgressAllow(harnessHosts, true, true, nil, "", quietLog())
+	allow := buildEgressAllow(harnessHosts, true, nil, "", quietLog())
 	if len(allow) != len(harnessHosts)+len(worker.HardenedEgressAllow) {
 		t.Errorf("hardened minimal allow = %v, want exactly harness hosts + HardenedEgressAllow", allow)
 	}
@@ -480,7 +473,7 @@ func TestBuildEgressAllow_hardenedNilConfig(t *testing.T) {
 func TestBuildEgressAllow_nonClaudeHarnessExcludesAnthropic(t *testing.T) {
 	// A non-claude harness must not inherit *.anthropic.com from the
 	// static lists; only the hosts it declares are added.
-	allow := buildEgressAllow([]string{"api.openai.com"}, true, true, nil, "", quietLog())
+	allow := buildEgressAllow([]string{"api.openai.com"}, true, nil, "", quietLog())
 	if slices.Contains(allow, "*.anthropic.com") {
 		t.Errorf("non-claude harness allowlist still contains anthropic: %v", allow)
 	}
