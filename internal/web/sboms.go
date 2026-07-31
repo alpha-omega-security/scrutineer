@@ -318,7 +318,11 @@ func (s *Server) sbomDelete(w http.ResponseWriter, r *http.Request) {
 // immediately.
 func (s *Server) resolveSBOMPackages(uploadID uint) {
 	if !s.EcosystemsEnrichment {
-		s.DB.Model(&db.SBOMPackage{}).Where("sbom_upload_id = ? AND repository_id IS NULL", uploadID).
+		// A package with no PURL was never resolvable in the first place, so
+		// it keeps the reason the enabled path below would have given it.
+		s.DB.Model(&db.SBOMPackage{}).Where("sbom_upload_id = ? AND repository_id IS NULL AND p_url = ''", uploadID).
+			Update("resolve_error", noPURLError)
+		s.DB.Model(&db.SBOMPackage{}).Where("sbom_upload_id = ? AND repository_id IS NULL AND p_url <> ''", uploadID).
 			Update("resolve_error", ecosystemsDisabled)
 		return
 	}
@@ -331,7 +335,7 @@ func (s *Server) resolveSBOMPackages(uploadID uint) {
 	for i := range pkgs {
 		p := &pkgs[i]
 		if p.PURL == "" {
-			s.DB.Model(p).Update("resolve_error", "no purl")
+			s.DB.Model(p).Update("resolve_error", noPURLError)
 			continue
 		}
 		repoURL := s.resolvePURL(ctx, p.PURL)

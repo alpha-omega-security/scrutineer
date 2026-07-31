@@ -104,10 +104,12 @@
 # Enrich repositories from ecosyste.ms: the per-repository cache refreshed
 # before each scan, the eager warm when a repository is added, and the PURL to
 # repository resolution behind SBOM and dependency import. false stops every
-# outbound lookup and also drops *.ecosyste.ms from the egress allowlist above,
-# so a restricted-egress host can deny the domain without partial state or
-# proxy noise. An explicit *.ecosyste.ms in egress_allow still wins if you only
-# want the host process to stop. Flag: -ecosystems-enrichment.
+# lookup scrutineer's own process makes and also drops *.ecosyste.ms from the
+# egress allowlist above, so a restricted-egress host can deny the domain
+# without partial state or proxy noise. An explicit *.ecosyste.ms in
+# egress_allow still wins if you only want the host process to stop, except
+# under hardened mode, which ignores egress_allow entirely.
+# Flag: -ecosystems-enrichment.
 # ecosystems_enrichment: true
 
 # How many scans run in parallel. Default is 4; raise on bigger hosts,

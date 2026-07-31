@@ -1252,6 +1252,10 @@ func (s *Server) depScan(w http.ResponseWriter, r *http.Request) {
 // PURL to a clone URL, so the action cannot run rather than silently no-op.
 const ecosystemsDisabled = "packages.ecosyste.ms enrichment is disabled"
 
+// noPURLError is what an SBOM package with no Package URL records: nothing to
+// look up, whether or not enrichment is on.
+const noPURLError = "no purl"
+
 // resolvePURLRepo asks packages.ecosyste.ms for the repository_url behind a
 // PURL. Returns empty string if the lookup fails or no repo is recorded.
 func resolvePURLRepo(ctx context.Context, purl string) string {

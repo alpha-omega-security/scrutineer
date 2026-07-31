@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -175,6 +176,13 @@ func refreshEcosystems(ctx context.Context, gdb *gorm.DB, repoID uint, staleOnly
 		}
 		body, err := src.fetch(ctx, fetcher, repo.URL)
 		if err != nil {
+			// A cancelled scan or an expired deadline is the caller giving
+			// up, not upstream being down; reported separately so the
+			// unreachable warning stays a signal about ecosyste.ms.
+			if ctx.Err() != nil {
+				log.Warn("ecosystems enrichment cancelled", "repo", repoID, "source", src.key, "err", err)
+				return nil
+			}
 			if unreachable(err) {
 				log.Warn("ecosystems unreachable, skipping enrichment", "repo", repoID, "source", src.key, "err", err)
 				return nil
@@ -206,9 +214,15 @@ func refreshEcosystems(ctx context.Context, gdb *gorm.DB, repoID uint, staleOnly
 func unreachable(err error) bool {
 	var dnsErr *net.DNSError
 	var opErr *net.OpError
+	var certErr *tls.CertificateVerificationError
+	var recordErr tls.RecordHeaderError
 	var netErr net.Error
 	switch {
 	case errors.As(err, &dnsErr), errors.As(err, &opErr):
+		return true
+	// A TLS-intercepting proxy or a captive portal answering the domain
+	// fails the handshake, not the dial, so neither is a net.OpError.
+	case errors.As(err, &certErr), errors.As(err, &recordErr):
 		return true
 	case errors.Is(err, context.DeadlineExceeded), errors.Is(err, context.Canceled):
 		return true

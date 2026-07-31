@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -267,6 +268,26 @@ func TestRefreshEcosystems_upstreamMissErrorKeepsGoing(t *testing.T) {
 	}
 }
 
+// A cancelled scan abandons the pass too, but as the caller giving up rather
+// than upstream being unreachable.
+func TestRefreshEcosystems_cancelledContextStopsThePass(t *testing.T) {
+	fetcher := newFakeEcosystemsFetcher()
+	fetcher.errs["repo"] = context.Canceled
+	gdb := openEcosystemsTestDB(t)
+	repo := db.Repository{URL: "https://github.com/a/b", Name: "b"}
+	gdb.Create(&repo)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := refreshEcosystems(ctx, gdb, repo.ID, false, slog.Default(), fetcher); err != nil {
+		t.Fatalf("refresh returned error, want nil (best-effort): %v", err)
+	}
+
+	if fetcher.hits["packages"] != 0 {
+		t.Errorf("packages fetches = %d after a cancelled context, want 0", fetcher.hits["packages"])
+	}
+}
+
 func TestUnreachable(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -277,6 +298,8 @@ func TestUnreachable(t *testing.T) {
 		{"dial refused", &net.OpError{Op: "dial", Err: errors.New("connection refused")}, true},
 		{"wrapped dial", fmt.Errorf("fetch packages: %w", &net.OpError{Op: "dial", Err: errors.New("i/o timeout")}), true},
 		{"client timeout", &url.Error{Op: "Get", URL: "https://packages.ecosyste.ms", Err: context.DeadlineExceeded}, true},
+		{"tls interception", &url.Error{Op: "Get", URL: "https://packages.ecosyste.ms", Err: &tls.CertificateVerificationError{Err: errors.New("x509: certificate signed by unknown authority")}}, true},
+		{"not a tls server", tls.RecordHeaderError{Msg: "first record does not look like a TLS handshake"}, true},
 		{"deadline exceeded", context.DeadlineExceeded, true},
 		{"cancelled", context.Canceled, true},
 		{"upstream miss", errors.New("repository not found"), false},

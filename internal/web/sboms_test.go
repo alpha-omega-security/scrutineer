@@ -162,9 +162,9 @@ func TestSBOMResolve_recordsReasonWhenEnrichmentDisabled(t *testing.T) {
 		looked = true
 		return "https://github.com/lodash/lodash"
 	}
-	s.DB.Create(&db.Skill{Name: defaultSkillName, Body: "b", Active: true})
 	up := db.SBOMUpload{Name: "demo", Packages: []db.SBOMPackage{
 		{Name: "lodash", PURL: "pkg:npm/lodash@4.17.21"},
+		{Name: "mystery"},
 	}}
 	s.DB.Create(&up)
 
@@ -176,13 +176,21 @@ func TestSBOMResolve_recordsReasonWhenEnrichmentDisabled(t *testing.T) {
 		t.Fatalf("status = %d, want 303; body=%s", w.Code, w.Body)
 	}
 
-	var pkg db.SBOMPackage
-	s.DB.Where("sbom_upload_id = ?", up.ID).First(&pkg)
-	if pkg.RepositoryID != nil {
-		t.Errorf("package linked with enrichment disabled: %+v", pkg)
+	var pkgs []db.SBOMPackage
+	s.DB.Where("sbom_upload_id = ?", up.ID).Order("name").Find(&pkgs)
+	if len(pkgs) != 2 {
+		t.Fatalf("packages = %d, want 2", len(pkgs))
 	}
-	if pkg.ResolveError != ecosystemsDisabled {
-		t.Errorf("resolve_error = %q, want %q", pkg.ResolveError, ecosystemsDisabled)
+	if pkgs[0].RepositoryID != nil {
+		t.Errorf("package linked with enrichment disabled: %+v", pkgs[0])
+	}
+	if pkgs[0].ResolveError != ecosystemsDisabled {
+		t.Errorf("resolve_error = %q, want %q", pkgs[0].ResolveError, ecosystemsDisabled)
+	}
+	// A package with no PURL was unresolvable regardless of the setting, so
+	// blaming enrichment for it would be wrong.
+	if pkgs[1].ResolveError != noPURLError {
+		t.Errorf("no-purl resolve_error = %q, want %q", pkgs[1].ResolveError, noPURLError)
 	}
 	if looked {
 		t.Error("resolve still called the PURL lookup with enrichment disabled")
