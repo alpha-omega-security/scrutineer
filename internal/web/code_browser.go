@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/git-pkgs/clone"
+	"github.com/git-pkgs/magic"
 
 	"scrutineer/internal/db"
 	"scrutineer/internal/worker"
@@ -71,7 +72,7 @@ func (s *Server) repoBlob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	content, binary, truncated, err := gitShowBlob(r.Context(), cacheSrc, commit, cleanPath)
+	blob, err := gitShowBlob(r.Context(), cacheSrc, commit, cleanPath)
 	if err != nil {
 		s.render(w, r, "code_browser.html", map[string]any{
 			"Repo":      repo,
@@ -82,16 +83,21 @@ func (s *Server) repoBlob(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	renderable := renderableBlob(blob.Detection)
+	content := ""
+	if renderable {
+		content = string(blob.Content)
+	}
 
 	s.render(w, r, "code_browser.html", map[string]any{
-		"Repo":      repo,
-		"Commit":    commit,
-		"Path":      cleanPath,
-		"Highlight": parseHighlight(r.URL.Query().Get("line")),
-		"Binary":    binary,
-		"Truncated": truncated,
-		"Content":   content,
-		"Language":  highlightLang(cleanPath),
+		"Repo":        repo,
+		"Commit":      commit,
+		"Path":        cleanPath,
+		"Highlight":   parseHighlight(r.URL.Query().Get("line")),
+		"Unsupported": !renderable,
+		"Truncated":   blob.Truncated,
+		"Content":     content,
+		"Language":    highlightLang(cleanPath),
 	})
 }
 
@@ -100,10 +106,13 @@ func (s *Server) repoBlob(w http.ResponseWriter, r *http.Request) {
 // Also used by forge_link.go for its own path checks.
 func sanitizeBlobPath(p string) (string, bool) { return clone.SanitizePath(p) }
 
-// gitShowBlob wraps clone.Blob at the code browser's fixed byte cap.
-func gitShowBlob(ctx context.Context, repoDir, commit, blobPath string) (string, bool, bool, error) {
-	raw, binary, truncated, err := clone.Blob(ctx, repoDir, commit, blobPath, maxBrowserBytes)
-	return string(raw), binary, truncated, err
+// gitShowBlob wraps clone.InspectBlob at the code browser's fixed byte cap.
+func gitShowBlob(ctx context.Context, repoDir, commit, blobPath string) (clone.BlobResult, error) {
+	return clone.InspectBlob(ctx, repoDir, commit, blobPath, maxBrowserBytes)
+}
+
+func renderableBlob(result magic.Result) bool {
+	return result.Kind == magic.KindText && (result.Encoding == "" || result.Encoding == "utf-8")
 }
 
 // parseHighlight decodes `line=N` or `line=N-M` into an inclusive range.
