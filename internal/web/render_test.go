@@ -23,11 +23,7 @@ func TestRenderTemplateErrorAfterPartialOutput(t *testing.T) {
 		Funcs(map[string]any{
 			"boom": func() (string, error) { return "", errors.New("boom") },
 		}).
-		// The padding matters: bufio in net/http only flushes to the recorder
-		// once enough bytes accumulate, so a short prefix could pass by luck
-		// rather than because the fix works.
-		Parse(`<!doctype html><title>t</title><div>` + marker +
-			strings.Repeat("x", 8<<10) + `</div>{{ boom }}`)
+		Parse(`<!doctype html><title>t</title><div>` + marker + `</div>{{ boom }}`)
 	if err != nil {
 		t.Fatalf("parse test template: %v", err)
 	}
@@ -74,25 +70,39 @@ func TestRenderSuccessSetsHTMLHeaders(t *testing.T) {
 	}
 }
 
-// Buffers are pooled and reused, so a large page must not leave its bytes
-// visible to the next render.
-func TestRenderPooledBufferDoesNotLeakBetweenPages(t *testing.T) {
+// Buffers are pooled and a failed render hands its buffer back with the
+// partial page still in it, so the reset in render() is what stops that page
+// reaching the next request. Success alone cannot show this: WriteTo drains
+// the buffer on its way out, so a success-then-success pair leaves nothing to
+// leak either way.
+func TestRenderPooledBufferDoesNotLeakFailedPageIntoNextRender(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
 
-	const leak = "LEAK-FROM-FIRST-PAGE"
-	if _, err := s.tmpl.New("big_test.html").Parse(leak + strings.Repeat("y", 4<<10)); err != nil {
-		t.Fatalf("parse big template: %v", err)
+	const leak = "LEAK-FROM-FAILED-PAGE"
+	if _, err := s.tmpl.New("leak_boom_test.html").
+		Funcs(map[string]any{
+			"boom": func() (string, error) { return "", errors.New("boom") },
+		}).
+		Parse(leak + strings.Repeat("y", 4<<10) + `{{ boom }}`); err != nil {
+		t.Fatalf("parse failing template: %v", err)
 	}
-	if _, err := s.tmpl.New("small_test.html").Parse("small"); err != nil {
+	if _, err := s.tmpl.New("leak_small_test.html").Parse("small"); err != nil {
 		t.Fatalf("parse small template: %v", err)
 	}
 
-	s.render(httptest.NewRecorder(), localReq("GET", "/"), "big_test.html", nil)
+	s.render(httptest.NewRecorder(), localReq("GET", "/"), "leak_boom_test.html", nil)
 
 	w := httptest.NewRecorder()
-	s.render(w, localReq("GET", "/"), "small_test.html", nil)
+	s.render(w, localReq("GET", "/"), "leak_small_test.html", nil)
+
 	if got := w.Body.String(); got != "small" {
-		t.Errorf("body = %q, want %q — pooled buffer was not reset", got, "small")
+		t.Errorf("body = %q, want %q — the failed render's buffer reached the next request",
+			got[:min(len(got), 80)], "small")
+	}
+	// The leak is served as a well-formed response rather than a truncated
+	// one, so nothing downstream would flag it.
+	if cl := w.Header().Get("Content-Length"); cl != strconv.Itoa(len("small")) {
+		t.Errorf("Content-Length = %q, want %d", cl, len("small"))
 	}
 }
