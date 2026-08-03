@@ -5,6 +5,40 @@
   matching files before a skill runs.
 </p>
 
+<section class="mb-6 max-w-4xl">
+  <h3 class="text-sm font-medium mb-2">Ignored paths</h3>
+  <p class="text-sm text-muted-foreground mb-3">
+    Use repository-relative shell globs for files that are out of scope for new scans.
+    Examples: <code>ext/**</code>, <code>spec/**</code>, <code>tool/**</code>, <code>misc/**</code>.
+  </p>
+
+  {{if .IgnoredPaths}}
+  <div class="grid gap-2 mb-4">
+    {{range .IgnoredPaths}}
+    <div class="flex items-center justify-between gap-3 rounded-md border border-border bg-card px-3 py-2">
+      <code class="text-sm break-all">{{.}}</code>
+      <form method="post" action="/repositories/{{$.Repo.ID}}/scan-config/ignored-paths/delete">
+        <input type="hidden" name="pattern" value="{{.}}">
+        <button class="btn-sm-ghost" type="submit" aria-label="Remove ignored path" data-tooltip="Remove ignored path">
+          <i data-lucide="trash-2"></i>
+        </button>
+      </form>
+    </div>
+    {{end}}
+  </div>
+  {{else}}
+  <p class="text-sm text-muted-foreground mb-4">No ignored paths configured.</p>
+  {{end}}
+
+  <form method="post" action="/repositories/{{.Repo.ID}}/scan-config/ignored-paths" class="form grid gap-2 sm:grid-cols-[1fr_auto] items-end">
+    <label>
+      <span>Path pattern</span>
+      <input class="input" type="text" name="pattern" placeholder="spec/**" required>
+    </label>
+    <button type="submit" class="btn-sm"><i data-lucide="plus"></i> Add ignored path</button>
+  </form>
+</section>
+
 <form method="post" action="/repositories/{{.Repo.ID}}/scan-config" class="form grid gap-3 max-w-4xl">
   <textarea name="scan_config" rows="20" spellcheck="false"
             class="input w-full font-mono text-xs"

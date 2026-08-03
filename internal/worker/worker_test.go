@@ -172,7 +172,7 @@ func TestWorker_CancelStopsRunningScan(t *testing.T) {
 	if midRun.Backend != "codex" {
 		t.Errorf("scan.Backend = %q while RunSkill in flight, want codex", midRun.Backend)
 	}
-	if !w.Cancel(scan.ID) {
+	if !w.Cancel(scan.ID, "") {
 		t.Fatal("Cancel reported scan not running")
 	}
 	select {
@@ -189,7 +189,10 @@ func TestWorker_CancelStopsRunningScan(t *testing.T) {
 	if got.Status != db.ScanCancelled {
 		t.Errorf("status = %s, want cancelled (err=%q)", got.Status, got.Error)
 	}
-	if w.Cancel(scan.ID) {
+	if got.Error != CancelledByUser {
+		t.Errorf("error = %q, want the default cancel reason %q", got.Error, CancelledByUser)
+	}
+	if w.Cancel(scan.ID, "") {
 		t.Error("Cancel returned true after job finished")
 	}
 }

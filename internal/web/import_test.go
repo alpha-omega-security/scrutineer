@@ -2,6 +2,7 @@ package web
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -10,6 +11,17 @@ import (
 	"scrutineer/internal/db"
 	"scrutineer/internal/ingest"
 )
+
+func importSingleResult(s *Server, res ingest.Result, revalidate bool) (map[string]any, error) {
+	out, err := s.importResults([]ingest.Result{res}, "", revalidate)
+	if err != nil {
+		return nil, err
+	}
+	if len(out) != 1 {
+		return nil, fmt.Errorf("import results = %d, want 1", len(out))
+	}
+	return out[0], nil
+}
 
 func TestKnownPURLsMatchWithAndWithoutQualifiers(t *testing.T) {
 	gdb, err := db.Open("file::memory:?cache=shared")
@@ -126,7 +138,7 @@ func TestImportFindings_reimportBumpsSeenCount(t *testing.T) {
 			{Title: "two", Severity: "Low", Location: "b.go:1", CWE: "CWE-89"},
 		},
 	}
-	first, err := s.importResult(res, "", false)
+	first, err := importSingleResult(s, res, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +152,7 @@ func TestImportFindings_reimportBumpsSeenCount(t *testing.T) {
 		{Title: "one", Severity: "High", Location: "a.go:1", CWE: "CWE-79"},
 		{Title: "three", Severity: "Medium", Location: "c.go:1", CWE: "CWE-22"},
 	}
-	second, err := s.importResult(res, "", false)
+	second, err := importSingleResult(s, res, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,6 +224,35 @@ func TestImportFindings_rollbackLeavesNoScanOrFindings(t *testing.T) {
 	}
 }
 
+func TestExistingByFingerprint_chunksLargeInput(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	const sqliteMaxVariables = 32766
+	fingerprints := make([]string, sqliteMaxVariables)
+	for i := range fingerprints {
+		fingerprints[i] = "missing"
+	}
+	if _, err := existingByFingerprint(s.DB, 1, fingerprints); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUpdateObservedFindings_chunksLargeInput(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	const sqliteMaxVariables = 32766
+	ids := make([]uint, sqliteMaxVariables)
+	for i := range ids {
+		ids[i] = uint(i + 1)
+	}
+	scan := db.Scan{Model: "test", Commit: "abc123"}
+	if err := updateObservedFindings(s.DB, &scan, ids); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestImportFindings_keepsSuggestedFixGated(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
@@ -280,7 +321,7 @@ func TestImportFindings_revalidateToggle(t *testing.T) {
 					{Title: "low", Severity: "Low", Location: "b.go:1"},
 				},
 			}
-			out, err := s.importResult(res, "", tc.revalidate)
+			out, err := importSingleResult(s, res, tc.revalidate)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -303,7 +344,7 @@ func TestImportFindings_skipsRevalidateWhenSkillAbsent(t *testing.T) {
 	defer done()
 	// No revalidate skill registered. Import must still succeed.
 	res := ingest.Result{RepoURL: "https://example.com/r", Tool: "x", Findings: []ingest.Finding{{Title: "t", Severity: "High", Location: "a.go:1"}}}
-	out, err := s.importResult(res, "", true)
+	out, err := importSingleResult(s, res, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -323,11 +364,11 @@ func TestImportFindings_enqueuesOneMetadataOnboardingRunForExistingHollowRepo(t 
 
 	res := ingest.Result{RepoURL: repo.URL, Tool: "scrutineer",
 		Findings: []ingest.Finding{{Title: "imported", Severity: "High", Location: "lib/rdoc.rb:1"}}}
-	if _, err := s.importResult(res, "", false); err != nil {
+	if _, err := importSingleResult(s, res, false); err != nil {
 		t.Fatal(err)
 	}
 	// Reimport while metadata is queued must not pile up another run.
-	if _, err := s.importResult(res, "", false); err != nil {
+	if _, err := importSingleResult(s, res, false); err != nil {
 		t.Fatal(err)
 	}
 
@@ -354,7 +395,7 @@ func TestImportFindings_existingDoneMetadataIsNotDuplicated(t *testing.T) {
 
 	res := ingest.Result{RepoURL: repo.URL, Tool: "scrutineer",
 		Findings: []ingest.Finding{{Title: "imported", Severity: "Medium"}}}
-	if _, err := s.importResult(res, "", false); err != nil {
+	if _, err := importSingleResult(s, res, false); err != nil {
 		t.Fatal(err)
 	}
 	var count int64
@@ -376,7 +417,7 @@ func TestImportFindings_localRepoWithValidPathGetsNoMetadataScan(t *testing.T) {
 	dir := t.TempDir()
 	res := ingest.Result{RepoURL: LocalScheme + dir, Tool: "scrutineer",
 		Findings: []ingest.Finding{{Title: "local", Severity: "High", Location: "main.go:1"}}}
-	if _, err := s.importResult(res, "", false); err != nil {
+	if _, err := importSingleResult(s, res, false); err != nil {
 		t.Fatal(err)
 	}
 	var count int64

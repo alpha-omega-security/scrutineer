@@ -11,10 +11,31 @@ import (
 	"scrutineer/internal/worker"
 )
 
+const (
+	repositoryReadDefaultLimit = 200
+	repositoryReadMaxLimit     = 1000
+)
+
 // The read endpoints below expose the structured rows scrutineer already
 // populates from prior skill scans. Skills that need context for a repo
 // (verify/patch/disclose, security-deep-dive's reach and prior-art steps)
 // call these instead of re-parsing the original scan reports.
+
+func parseLimit(r *http.Request, defaultN, maxN int) (int, error) {
+	query := r.URL.Query()
+	if !query.Has("limit") {
+		return defaultN, nil
+	}
+	raw := query.Get("limit")
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 0 {
+		return 0, errors.New("limit must be a non-negative integer")
+	}
+	if n > maxN {
+		n = maxN
+	}
+	return n, nil
+}
 
 // repoScopedID parses the path id and enforces the scan-owns-repo auth
 // rule for the apiList* handlers. Returns false when the response has
@@ -153,8 +174,13 @@ func (s *Server) apiListDependents(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	limit, err := parseLimit(r, repositoryReadDefaultLimit, repositoryReadMaxLimit)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	var rows []db.Dependent
-	s.DB.Where("repository_id = ?", id).Order("dependent_repos desc").Find(&rows)
+	s.DB.Where("repository_id = ?", id).Order("dependent_repos desc").Limit(limit).Find(&rows)
 	out := make([]dependentResponse, 0, len(rows))
 	for _, d := range rows {
 		out = append(out, dependentResponse{
@@ -190,8 +216,13 @@ func (s *Server) apiListDependencies(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	limit, err := parseLimit(r, repositoryReadDefaultLimit, repositoryReadMaxLimit)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	var rows []db.Dependency
-	s.DB.Where("repository_id = ?", id).Order("ecosystem, name").Find(&rows)
+	s.DB.Where("repository_id = ?", id).Order("ecosystem, name").Limit(limit).Find(&rows)
 	out := make([]dependencyResponse, 0, len(rows))
 	for _, d := range rows {
 		out = append(out, dependencyResponse{
@@ -243,19 +274,22 @@ func (s *Server) apiListFindings(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// Direct subquery; GORM's Joins("Scan") aliasing doesn't round-trip on
-	// sqlite when the joined struct has its own relations.
-	scans := s.DB.Model(&db.Scan{}).Select("id").Where("repository_id = ?", id)
-	if skill := r.URL.Query().Get("skill"); skill != "" {
-		scans = scans.Where("skill_name = ?", skill)
+	skill := r.URL.Query().Get("skill")
+	sg := r.URL.Query().Get("scan_group")
+	q := s.DB.Where("repository_id = ?", id)
+	if skill != "" || sg != "" {
+		// skill_name and scan_group live on scans, but keep repository_id
+		// inside the subquery so a guessed group never leaks another repo's findings.
+		scans := s.DB.Model(&db.Scan{}).Select("id").Where("repository_id = ?", id)
+		if skill != "" {
+			scans = scans.Where("skill_name = ?", skill)
+		}
+		if sg != "" {
+			scans = scans.Where("scan_group = ?", sg)
+		}
+		q = s.DB.Where("scan_id IN (?)", scans)
 	}
-	// scan_group narrows to one parallel batch so an in-flight audit skill
-	// reads only its siblings' findings. Kept inside the repo-scoped
-	// subquery so a guessed group can never leak another repo's findings.
-	if sg := r.URL.Query().Get("scan_group"); sg != "" {
-		scans = scans.Where("scan_group = ?", sg)
-	}
-	q := s.DB.Where("scan_id IN (?)", scans).Order("id desc")
+	q = q.Order("id desc")
 	if sev := r.URL.Query().Get("severity"); sev != "" {
 		q = q.Where("severity = ?", sev)
 	}
@@ -328,30 +362,33 @@ func (s *Server) apiGetFinding(w http.ResponseWriter, r *http.Request) {
 
 func findingSummary(f db.Finding) map[string]any {
 	return map[string]any{
-		"id":            f.ID,
-		"scan_id":       f.ScanID,
-		"repository_id": f.RepositoryID,
-		"finding_id":    f.FindingID,
-		"commit":        f.Commit,
-		"sinks":         f.Sinks,
-		"title":         f.Title,
-		"severity":      f.Severity,
-		statusKey:       string(f.Status),
-		"cwe":           f.CWE,
-		"location":      f.Location,
-		"vid":           f.VID,
-		"affected":      f.Affected,
-		"reachability":  f.Reachability,
-		"quality_tier":  f.QualityTier,
-		"cve_id":        f.CVEID,
-		"ghsa_id":       f.GHSAID,
-		"cvss_vector":   f.CVSSVector,
-		"cvss_score":    f.CVSSScore,
-		"fix_version":   f.FixVersion,
-		"fix_commit":    f.FixCommit,
-		"resolution":    string(f.Resolution),
-		"assignee":      f.Assignee,
-		"missed_count":  f.MissedCount,
-		"dup_check":     f.DupCheck,
+		"id":                     f.ID,
+		"scan_id":                f.ScanID,
+		"repository_id":          f.RepositoryID,
+		"finding_id":             f.FindingID,
+		"commit":                 f.Commit,
+		"sinks":                  f.Sinks,
+		"title":                  f.Title,
+		"severity":               f.Severity,
+		statusKey:                string(f.Status),
+		"cwe":                    f.CWE,
+		"location":               f.Location,
+		"vid":                    f.VID,
+		"affected":               f.Affected,
+		"reachability":           f.Reachability,
+		"quality_tier":           f.QualityTier,
+		"cve_id":                 f.CVEID,
+		"ghsa_id":                f.GHSAID,
+		"cvss_vector":            f.CVSSVector,
+		"cvss_score":             f.CVSSScore,
+		"fix_version":            f.FixVersion,
+		"fix_commit":             f.FixCommit,
+		"resolution":             string(f.Resolution),
+		"assignee":               f.Assignee,
+		"missed_count":           f.MissedCount,
+		"dup_check":              f.DupCheck,
+		"novelty":                string(f.Novelty),
+		"novelty_checked_commit": f.NoveltyCheckedCommit,
+		"novelty_checked_at":     f.NoveltyCheckedAt,
 	}
 }

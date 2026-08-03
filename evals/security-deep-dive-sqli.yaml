@@ -1,6 +1,8 @@
 given: a Flask handler concatenates user input into a SQL string
 fixture: fixtures/sqli-basic
 skill: security-deep-dive
+experiment: security-deep-dive-prompt
+variant: production
 should_find:
   - finding: SQL injection in buildQuery
     severity: High

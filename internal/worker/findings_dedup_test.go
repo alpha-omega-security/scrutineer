@@ -135,6 +135,120 @@ func TestParseFindingsOutput_referencesCreatedOnNewAndUpsertedOnReobserve(t *tes
 	}
 }
 
+func TestParseFindingsOutput_auditSchemasReferencesIngest(t *testing.T) {
+	cases := []struct {
+		skillName string
+		report    string
+		wantTags  string
+	}{
+		{
+			skillName: "audit-injection",
+			report: `{"findings":[{
+				"id":"F001",
+				"title":"Webhook branch name reaches a shell command",
+				"severity":"High",
+				"confidence":"high",
+				"cwe":"CWE-78",
+				"location":"internal/hooks/run.go:88",
+				"reachability":"reachable",
+				"quality_tier":"high",
+				"trace":"The webhook branch parameter is concatenated into sh -c before the deployment command runs.",
+				"boundary":"An authenticated repository webhook supplies the branch name.",
+				"validation":"Static review confirmed the shell wrapper receives one command string and found no allowlist or argv conversion.",
+				"discovered_via":"source",
+				"rating":"High because an attacker controlling the webhook value can execute commands as the deployment worker.",
+				"references":[{"url":"https://example.com/advisory","summary":"Related advisory","tags":"advisory,audit-injection"}]
+			}]}`,
+			wantTags: "advisory,audit-injection",
+		},
+		{
+			skillName: "audit-exfil",
+			report: `{"findings":[{
+				"id":"F001",
+				"title":"Webhook URL fetch can reach internal metadata service",
+				"severity":"High",
+				"confidence":"high",
+				"cwe":"CWE-918",
+				"location":"internal/webhooks/route:v2/fetch.go:91",
+				"reachability":"reachable",
+				"quality_tier":"high",
+				"trace":"The webhook endpoint stores a caller-provided callback URL and later passes it to http.Client.Do.",
+				"boundary":"An authenticated project member controls the callback URL, while the worker can reach internal services.",
+				"validation":"Static review confirmed the request follows redirects and found no host, scheme, or private-IP allowlist.",
+				"discovered_via":"source",
+				"rating":"High because a project member can make the server disclose cloud metadata or internal service responses.",
+				"references":[{"url":"https://example.com/advisory","summary":"Related advisory","tags":"advisory,audit-exfil"}]
+			}]}`,
+			wantTags: "advisory,audit-exfil",
+		},
+		{
+			skillName: "audit-authz",
+			report: `{"findings":[{
+				"id":"F001",
+				"title":"Invoice lookup omits tenant ownership",
+				"severity":"High",
+				"confidence":"high",
+				"cwe":"CWE-639",
+				"location":"internal/invoices/show.go:74",
+				"reachability":"reachable",
+				"quality_tier":"high",
+				"trace":"The authenticated endpoint passes the caller-controlled invoice ID to a global lookup and returns the row.",
+				"boundary":"A tenant member may supply another tenant's invoice ID.",
+				"validation":"Static review resolved the route middleware and repository helper, then confirmed neither checks invoice tenant membership.",
+				"discovered_via":"source",
+				"rating":"High because any authenticated tenant member can read another tenant's billing record.",
+				"references":[{"url":"https://example.com/advisory","summary":"Related advisory","tags":"advisory,audit-authz"}]
+			}]}`,
+			wantTags: "advisory,audit-authz",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.skillName, func(t *testing.T) {
+			schema, err := os.ReadFile(filepath.Join("../../skills", tc.skillName, "schema.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := ValidateReportSchema(string(schema), tc.report); got != "" {
+				t.Fatalf("schema rejected parser fixture: %s", got)
+			}
+
+			gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			repo := db.Repository{URL: "https://x/r", Name: "r"}
+			gdb.Create(&repo)
+			scan := &db.Scan{
+				RepositoryID: repo.ID,
+				Kind:         JobSkill,
+				SkillName:    tc.skillName,
+				Status:       db.ScanDone,
+				Commit:       "aaa",
+			}
+			gdb.Create(scan)
+			w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+			if err := w.parseFindingsOutput(&db.Skill{}, scan, tc.report, func(Event) {}); err != nil {
+				t.Fatal(err)
+			}
+
+			var refs []db.FindingReference
+			if err := gdb.Find(&refs).Error; err != nil {
+				t.Fatal(err)
+			}
+			if len(refs) != 1 {
+				t.Fatalf("references = %d, want 1", len(refs))
+			}
+			if refs[0].URL != "https://example.com/advisory" ||
+				refs[0].Summary != "Related advisory" ||
+				refs[0].Tags != tc.wantTags {
+				t.Errorf("reference = %+v", refs[0])
+			}
+		})
+	}
+}
+
 func TestParseFindingsOutput_minConfidenceDropsBelowThreshold(t *testing.T) {
 	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
 	if err != nil {

@@ -1,6 +1,7 @@
 package web
 
 import (
+	"sync"
 	"testing"
 
 	"scrutineer/internal/db"
@@ -75,5 +76,68 @@ func TestAutoChainVerify_nilScanDetectsFresh(t *testing.T) {
 	}
 	if derived.Profile != "" {
 		t.Errorf("derived Profile = %q, want empty (detect fresh)", derived.Profile)
+	}
+}
+
+func TestAutoChainVerify_doesNotDoubleQueueConcurrently(t *testing.T) {
+	s, done, verify, newFinding := chainTestSetup(t)
+	defer done()
+	f := newFinding("High")
+
+	const callers = 16
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for range callers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			s.autoChainVerifyAfterRevalidate(nil, f, "true_positive", "High")
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	var queued int64
+	s.DB.Model(&db.Scan{}).
+		Where("finding_id = ? AND skill_id = ? AND status = ?", f.ID, verify.ID, db.ScanQueued).
+		Count(&queued)
+	if queued != 1 {
+		t.Fatalf("queued verify scans = %d, want 1", queued)
+	}
+}
+
+func TestAutoEnqueueRevalidate_doesNotDoubleQueueConcurrently(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/r", Name: "r"}
+	s.DB.Create(&repo)
+	revalidate := db.Skill{Name: "revalidate", OutputFile: "report.json", OutputKind: "revalidate", Version: 1, Active: true}
+	s.DB.Create(&revalidate)
+	scan := db.Scan{RepositoryID: repo.ID, Status: db.ScanDone, SkillName: "security-deep-dive"}
+	s.DB.Create(&scan)
+	f := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "t", Severity: "High"}
+	s.DB.Create(&f)
+
+	const callers = 16
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for range callers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			s.autoEnqueueRevalidate(&scan, &f)
+		}()
+	}
+	close(start)
+	wg.Wait()
+
+	var queued int64
+	s.DB.Model(&db.Scan{}).
+		Where("finding_id = ? AND skill_id = ? AND status = ?", f.ID, revalidate.ID, db.ScanQueued).
+		Count(&queued)
+	if queued != 1 {
+		t.Fatalf("queued revalidate scans = %d, want 1", queued)
 	}
 }

@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"context"
 	"embed"
 	"encoding/base64"
@@ -15,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -22,12 +24,14 @@ import (
 	"time"
 
 	"filippo.io/age"
+	"github.com/git-pkgs/cwe"
 	"github.com/google/uuid"
 	"gorm.io/gorm"
 
 	"scrutineer/internal/db"
 	"scrutineer/internal/queue"
 	"scrutineer/internal/repoconfig"
+	"scrutineer/internal/vince"
 	"scrutineer/internal/worker"
 )
 
@@ -42,6 +46,13 @@ var ErrSkillRequiresRemote = errors.New("skill requires a remote repository")
 // The API layer maps it to 400 so the operator gets immediate feedback
 // instead of a ghost scan failing on the worker.
 var ErrSkillProfileMismatch = errors.New("skill requires a different runner profile")
+
+// ErrRepoFederationOptOut is returned by enqueueSkillWith for a repository
+// whose maintainer asked federated instances not to scan it. The gate sits
+// on the single enqueue choke point rather than on each caller, so an
+// opt-out imported from a peer feed also stops the scheduler, triage
+// fan-out and every button on the repo page.
+var ErrRepoFederationOptOut = errors.New("repository maintainer opted out of federated scanning")
 
 // ErrInvalidRef is returned by enqueueSkillWith when opts.Ref fails the
 // shared ref-charset validation. Mirrors ErrSkillProfileMismatch so the
@@ -92,6 +103,29 @@ type Server struct {
 	// key rotation (old + new). nil disables encrypted import.
 	EncIdentities []age.Identity
 
+	// FederationSalt is the shared federation secret mixed into
+	// interchange finding hashes; empty disables the claim-check
+	// endpoint. FederationContact is returned by claim-check on a match;
+	// startup refuses a salt without a contact. claimIndex caches the
+	// salted hash set claim-check consults; see claimHashSet.
+	FederationSalt    string
+	FederationContact string
+	claimIndex        claimCheckIndex
+
+	// VINCE holds the config-file-only API credential and reporter defaults
+	// for native CERT/CC submissions. vinceHTTPClient is injectable so tests
+	// can use httptest without changing the credential-bearing config shape.
+	VINCE           vince.Config
+	vinceHTTPClient *http.Client
+	vinceSubmitMu   sync.Mutex
+	// FederationPublicFeed and FederationMembersFeed are the git remotes
+	// the export job pushes each tier to; FederationImportFeeds are the
+	// peer remotes the import job pulls. All three empty leaves the
+	// federation job dormant. See docs/interchange.md.
+	FederationPublicFeed  string
+	FederationMembersFeed string
+	FederationImportFeeds []string
+
 	// resolvePURL maps a Package URL to its source repository URL via
 	// packages.ecosyste.ms. Field rather than direct call so tests can
 	// stub the network lookup.
@@ -124,6 +158,12 @@ type Server struct {
 	// mirroring resolvePURL and friends.
 	prefetchEcosystems func(repoID uint)
 
+	// ecosystemsEnrichment reports whether outbound ecosyste.ms lookups are
+	// allowed, so the handlers can say why an import refused. New defaults it
+	// on; DisableEcosystems is the only writer. Immutable once serving starts,
+	// unlike the settings-page defaults above, so it needs no lock.
+	ecosystemsEnrichment bool
+
 	// Runtime defaults a new scan inherits when the caller pins none.
 	// Both are seeded at startup from config/flags and mutable via the
 	// settings page, so a request can write while another reads. One
@@ -149,12 +189,38 @@ type Server struct {
 	// process, including scan-token API deduplication and automatic fan-out.
 	agentEnqueueMu sync.Mutex
 
+	// repoFederationLocks serialises, per repository, recording a federation
+	// opt-out against the scheduler firing that repository. See
+	// lockRepoFederation. repoFederationMu guards the map itself, not the
+	// sections.
+	repoFederationMu    sync.Mutex
+	repoFederationLocks map[uint]*sync.Mutex
+
 	// runnerStatus is the result of the boot-time runner-image staleness check
 	// (issue #337), set once by main shortly after startup and read by the
 	// settings page to render the stale-image banner. The zero value renders
 	// nothing, so reads before the check completes are safe.
 	runnerStatusMu sync.Mutex
 	runnerStatus   worker.RunnerImageStatus
+
+	// chatRunner executes one chat turn. Constructed in New from the worker's
+	// runner; nil when no runner is configured, in which case the
+	// chat handlers refuse gracefully. Tests substitute a stub.
+	chatRunner chatTurnRunner
+	// chatActive guards against two concurrent turns on the same conversation:
+	// each would --resume the same session at once and interleave replies. A
+	// conversation id is present while its turn runs.
+	chatMu     sync.Mutex
+	chatActive map[uint]struct{}
+	// chatSlots bounds concurrent chat turns across all conversations: each
+	// spawns its own agent container, and the per-conversation lock alone
+	// would let one analyst's open tabs outnumber the whole scan pipeline.
+	// Sized at construction from half the queue's concurrency, so a later
+	// Reconfigure does not move the chat ceiling.
+	chatSlots chan struct{}
+	// spawnTurn runs a chat turn in the background. Field rather than a direct
+	// `go s.runChatTurn(...)` so tests can run it synchronously.
+	spawnTurn func(convID uint, message string)
 }
 
 // SetRunnerImageStatus records the boot-time runner-image staleness result so
@@ -262,9 +328,10 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *work
 			}
 			return m
 		},
-		"list":    func(xs ...string) []string { return xs },
-		"len64":   tmplLen64,
-		"sortkey": sortKey,
+		"list":     func(xs ...string) []string { return xs },
+		"contains": slices.Contains[[]string, string],
+		"len64":    tmplLen64,
+		"sortkey":  sortKey,
 		"cwename": func(id string) string {
 			if _, c, ok := LookupCWE(id); ok {
 				return c.Name
@@ -351,13 +418,31 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *work
 		resolveRemoteHead: defaultResolveRemoteHead,
 		syncUpstream:      w.SyncUpstream}
 	s.prefetchEcosystems = s.ecosystemsPrefetch
+	s.ecosystemsEnrichment = true
+	s.chatActive = map[uint]struct{}{}
+	s.chatSlots = make(chan struct{}, chatTurnSlots(q))
+	s.spawnTurn = func(convID uint, message string) { go s.runChatTurn(convID, message) }
 	if w != nil {
 		w.OnFindingCreated = s.autoEnqueueRevalidate
 		w.OnRevalidateVerdict = s.autoChainVerifyAfterRevalidate
 		w.OnScanFinalized = s.onScanFinalized
 		w.OnScanFailed = s.autoEnqueueFocusAreaDeepDives
+		if w.Runner != nil {
+			s.chatRunner = &worker.ChatRunner{Runner: w.Runner, DB: gdb, DataDir: w.DataDir, PrepareSrc: w.PrepareSrc}
+		}
 	}
 	return s, nil
+}
+
+// DisableEcosystems turns off every outbound ecosyste.ms lookup this layer
+// makes. It neuters the two seams that reach the network as well as recording
+// the flag the handlers report on, so a future caller that reaches a seam
+// without repeating the handler-level check still cannot make a request the
+// operator opted out of.
+func (s *Server) DisableEcosystems() {
+	s.ecosystemsEnrichment = false
+	s.prefetchEcosystems = nil
+	s.resolvePURL = func(context.Context, string) string { return "" }
 }
 
 // ecosystemsPrefetch warms the ecosyste.ms cache for a freshly added repo in a
@@ -385,6 +470,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /repositories/bulk", s.repoBulkCreate)
 	mux.HandleFunc("POST /repositories/org", s.repoOrgImport)
 	mux.HandleFunc("GET /repositories/{id}", s.repoShow)
+	mux.HandleFunc("POST /repositories/{id}/alternatives", s.repoPackageAlternativeCreate)
+	mux.HandleFunc("POST /repositories/{id}/alternatives/{alternative_id}/delete", s.repoPackageAlternativeDelete)
 	mux.HandleFunc("POST /repositories/{id}/expected", s.repoExpectedFindingCreate)
 	mux.HandleFunc("POST /repositories/{id}/expected/{expected_id}/delete", s.repoExpectedFindingDelete)
 	mux.HandleFunc("GET /repositories/{id}/blob/{commit}/{path...}", s.repoBlob)
@@ -394,11 +481,14 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /repositories/{id}/validate-fix", s.validateFix)
 	mux.HandleFunc("POST /repositories/{id}/delete", s.repoDelete)
 	mux.HandleFunc("POST /repositories/{id}/disclosure-channel", s.repoDisclosureChannel)
+	mux.HandleFunc("POST /repositories/{id}/federation-opt-out", s.repoFederationOptOut)
 	mux.HandleFunc("POST /repositories/{id}/schedule", s.repoScheduleUpdate)
 	mux.HandleFunc("POST /repositories/{id}/threat-model", s.repoThreatModelSave)
 	mux.HandleFunc("POST /repositories/{id}/threat-model/run", s.repoThreatModelRun)
 	mux.HandleFunc("POST /repositories/{id}/threat-model/clear", s.repoThreatModelClear)
 	mux.HandleFunc("POST /repositories/{id}/scan-config", s.repoScanConfigSave)
+	mux.HandleFunc("POST /repositories/{id}/scan-config/ignored-paths", s.repoIgnoredPathAdd)
+	mux.HandleFunc("POST /repositories/{id}/scan-config/ignored-paths/delete", s.repoIgnoredPathDelete)
 	mux.HandleFunc("POST /repositories/{id}/scan-config/clear", s.repoScanConfigClear)
 	mux.HandleFunc("GET /scans", s.jobs)
 	mux.HandleFunc("GET /orgs", s.orgsList)
@@ -417,6 +507,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /findings/{id}/csaf.json", s.findingCSAF)
 	mux.HandleFunc("GET /findings/{id}/osv.json", s.findingOSV)
 	mux.HandleFunc("GET /findings/{id}/disclosure.html", s.findingDisclosureHTML)
+	mux.HandleFunc("GET /findings/{id}/vince", s.findingVINCEPreview)
+	mux.HandleFunc("POST /findings/{id}/vince", s.findingVINCESubmit)
 	mux.HandleFunc("POST /findings/{id}/status", s.findingStatus)
 	mux.HandleFunc("POST /findings/{id}/exploited-in-wild", s.findingExploitedInWild)
 	mux.HandleFunc("POST /findings/{id}/verify", s.findingVerify)
@@ -435,9 +527,20 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /findings/{id}/labels", s.findingLabels)
 	mux.HandleFunc("POST /dependencies/{id}/scan", s.depScan)
 	mux.HandleFunc("POST /dependents/{id}/scan", s.dependentScan)
+
+	mux.HandleFunc("POST /repositories/{id}/conversations", s.conversationCreateRepo)
+	mux.HandleFunc("POST /findings/{id}/conversations", s.conversationCreateFinding)
+	mux.HandleFunc("GET /conversations/{id}", s.conversationShow)
+	mux.HandleFunc("POST /conversations/{id}/messages", s.conversationMessage)
+	mux.HandleFunc("POST /conversations/{id}/delete", s.conversationDelete)
 	mux.HandleFunc("GET /packages", s.packages)
 	mux.HandleFunc("GET /packages/{id}", s.packageShow)
 	mux.HandleFunc("GET /advisories", s.advisoriesList)
+	mux.HandleFunc("GET /advisories/{id}/certificate.json", s.advisoryCertificateDownload)
+	// No method in the pattern: the handler 404s non-POST itself so a
+	// federation-capable build cannot be fingerprinted by the 405 the
+	// mux would otherwise answer.
+	mux.HandleFunc("/claim-check", s.claimCheck)
 	mux.HandleFunc("GET /scans/{id}", s.scanShow)
 	mux.HandleFunc("GET /scans/{id}/report.md", s.scanReport)
 	mux.HandleFunc("POST /scans/{id}/retry", s.scanRetry)
@@ -473,6 +576,10 @@ func (s *Server) Handler() http.Handler {
 	// browser's host-only boundary; see threatmodel.md.
 	root := http.NewServeMux()
 	root.Handle("/api/v1/", securityHeaders(http.StripPrefix(exportPrefix, s.exportHandler())))
+	// More specific than "/api/", so it wins the mux match and gets its own
+	// access rule rather than the scan-token auth apiHandler applies; see
+	// openAPISpecHandler.
+	root.Handle("GET /api/openapi.yaml", s.openAPISpecHandler())
 	root.Handle("/api/", s.apiHandler())
 	root.Handle("/", securityHeaders(mux))
 	return logRequests(s.Log, root)
@@ -498,12 +605,44 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 		sorterQuery.Set("sort", eff)
 	}
 	data["Sorter"] = sortCtx{path: r.URL.Path, query: sorterQuery}
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := s.tmpl.ExecuteTemplate(w, name, data); err != nil {
+	// Render into a buffer first. ExecuteTemplate writes incrementally, so
+	// executing straight into the ResponseWriter commits a 200 and part of the
+	// page before a mid-template error is known; the http.Error below then
+	// cannot change the status and only appends plain text to half-rendered
+	// HTML. Buffering keeps the failure path able to send a clean 500.
+	buf := renderBufPool.Get().(*bytes.Buffer)
+	buf.Reset()
+	defer func() {
+		// One outsized page (a long findings list) would otherwise pin its
+		// capacity in the pool for the process lifetime, so oversized buffers
+		// are dropped instead of recycled.
+		if buf.Cap() <= maxPooledRenderBuf {
+			renderBufPool.Put(buf)
+		}
+	}()
+
+	if err := s.tmpl.ExecuteTemplate(buf, name, data); err != nil {
 		s.Log.Error("render", "tmpl", name, "err", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Length", strconv.Itoa(buf.Len()))
+	if _, err := buf.WriteTo(w); err != nil {
+		// Headers and status are already sent, so this can only be logged:
+		// the client hung up or the connection broke mid-write.
+		s.Log.Error("render write", "tmpl", name, "err", err)
 	}
 }
+
+// render() runs on every page load, so the buffers are pooled rather than
+// allocated per request.
+var renderBufPool = sync.Pool{
+	New: func() any { return new(bytes.Buffer) },
+}
+
+// Buffers larger than this are dropped rather than returned to the pool.
+const maxPooledRenderBuf = 1 << 20
 
 // Flash is a one-shot message carried across a redirect via the "flash"
 // cookie and rendered server-side into #toaster on the next page load.
@@ -884,15 +1023,7 @@ func advisoryRepoID(a db.Advisory) uint { return a.RepositoryID }
 // severityOrder is a SQL CASE expression that ranks db.SeverityLevels
 // highest-first with unknown values last, derived from the same slice
 // SeverityAtLeast uses so the two never disagree.
-var severityOrder = func() string {
-	var b strings.Builder
-	b.WriteString("CASE severity")
-	for i, s := range db.SeverityLevels {
-		fmt.Fprintf(&b, " WHEN '%s' THEN %d", s, len(db.SeverityLevels)-1-i)
-	}
-	fmt.Fprintf(&b, " ELSE %d END", len(db.SeverityLevels))
-	return b.String()
-}()
+var severityOrder = db.SeverityOrderSQL()
 
 // loadByID loads the row whose primary key matches the request's {id}
 // path parameter, writing a 404 and returning ok=false when it does
@@ -1123,12 +1254,13 @@ func findingIndexWhereSQL(r *http.Request, includeScanners, includeMissed bool) 
 		args = append(args, status)
 	}
 	if category := r.URL.Query().Get("category"); category != "" {
+		catalogued := cwe.CategorizedIDs()
 		switch {
-		case category == UncategorizedCWE && len(categorizedIDs) == 0:
+		case category == UncategorizedCWE && len(catalogued) == 0:
 			where = append(where, "cwe = ''")
 		case category == UncategorizedCWE:
 			where = append(where, "(cwe = '' OR cwe NOT IN ?)")
-			args = append(args, categorizedIDs)
+			args = append(args, catalogued)
 		case len(CWEsInCategory(category)) == 0:
 			where = append(where, "1 = 0")
 		default:
@@ -1168,13 +1300,29 @@ func (s *Server) depScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	repoURL := resolvePURLRepo(r.Context(), dep.PURL)
+	// Order matters: a dependency carrying no PURL was never resolvable, so it
+	// keeps the 422 it would have got either way rather than being blamed on
+	// the operator's setting.
+	if dep.PURL != "" && !s.ecosystemsEnrichment {
+		http.Error(w, "cannot resolve "+dep.Name+": "+ecosystemsDisabled, http.StatusServiceUnavailable)
+		return
+	}
+	repoURL := s.resolvePURL(r.Context(), dep.PURL)
 	if repoURL == "" {
 		http.Error(w, "could not resolve repository URL for "+dep.Name, http.StatusUnprocessableEntity)
 		return
 	}
 	s.addRepoAndScan(w, r, repoURL)
 }
+
+// ecosystemsDisabled is what the import paths report when the operator turned
+// ecosyste.ms enrichment off: the resolution is the only way to get from a
+// PURL to a clone URL, so the action cannot run rather than silently no-op.
+const ecosystemsDisabled = "packages.ecosyste.ms enrichment is disabled"
+
+// noPURLError is what an SBOM package with no Package URL records: nothing to
+// look up, whether or not enrichment is on.
+const noPURLError = "no purl"
 
 // resolvePURLRepo asks packages.ecosyste.ms for the repository_url behind a
 // PURL. Returns empty string if the lookup fails or no repo is recorded.
@@ -1219,21 +1367,6 @@ const (
 	// findings belong in the curated Findings bucket alongside the deep-dive
 	// audit rather than the Scanners tab full of cheap tool output (#458).
 	vulnScanSkillName = "vuln-scan"
-	// aliasedFindingsScanFilter is the same Findings-tab predicate as
-	// nonScannerScanFilter, written for the raw aggregate counts on the
-	// maintainers and orgs indexes. Those queries LEFT JOIN scans under the
-	// alias `s` and group findings, so they filter s.skill_name/s.kind directly
-	// rather than threading findings.scan_id through a subquery. A finding
-	// counts when its scan is one of the LLM audits (security-deep-dive,
-	// vuln-scan, advisory-deep-dive), a legacy/empty skill_name, or an operator
-	// import (kind=import); the three ?s bind deepDiveSkillName, vulnScanSkillName
-	// and advisoryDeepDiveSkillName in that order. The `s.skill_name IS NULL` arm
-	// doubles as the LEFT JOIN "this row has no findings" guard, so zero-count
-	// maintainers/orgs stay in the result with n=0. Keep it in lockstep with
-	// findingsBucketSkillSQL — a copy that lacked the kind='import' arm is exactly
-	// what kept imports out of these totals after they began showing in the
-	// Findings tab.
-	aliasedFindingsScanFilter = "(s.skill_name IN (?, ?, ?) OR s.skill_name = '' OR s.skill_name IS NULL OR s.kind = 'import')"
 	// threatModelSkillName is the skill whose report feeds the Threat Model
 	// tab when present; repos that predate it fall back to the boundaries
 	// section of the deep-dive report so older scans keep rendering.
@@ -1246,6 +1379,12 @@ const (
 // the skill names through db.SQLStringLiteral for defense-in-depth quote
 // escaping — a function call, which a Go const initializer cannot contain.
 var (
+	// aliasedFindingsScanFilter is the Findings-bucket predicate for aggregate
+	// queries that join scans as `s`. It uses escaped literals because the
+	// maintainer index also embeds it in a correlated ORDER BY subquery, where
+	// GORM cannot bind values. The `s.skill_name IS NULL` arm also keeps empty
+	// LEFT JOIN groups at zero. Keep this in lockstep with findingsBucketSkillSQL.
+	aliasedFindingsScanFilter = "(s.skill_name IN (" + db.SQLStringLiteral(deepDiveSkillName) + ", " + db.SQLStringLiteral(vulnScanSkillName) + ", " + db.SQLStringLiteral(advisoryDeepDiveSkillName) + ") OR s.skill_name = '' OR s.skill_name IS NULL OR s.kind = 'import')"
 	// findingsBucketSkillSQL is the single source of truth for which scans'
 	// findings populate the curated Findings bucket: the LLM audit skills
 	// (security-deep-dive, vuln-scan, advisory-deep-dive), legacy claude jobs
@@ -1650,6 +1789,7 @@ func (s *Server) advisoriesList(w http.ResponseWriter, r *http.Request) {
 	s.render(w, r, "advisories.html", map[string]any{
 		"Advisories": rows, "Page": page, "Severity": sev, "Sort": sort,
 		"Severities": severities, "Repos": reposByID, "Q": search,
+		"AuditStatuses": s.latestAdvisoryAuditStatuses(rows),
 	})
 }
 
@@ -1709,6 +1849,7 @@ func (s *Server) findingShow(w http.ResponseWriter, r *http.Request) {
 	var fdRows []db.FindingDependent
 	s.DB.Where("finding_id = ?", f.ID).Find(&fdRows)
 	exposures := make([]exposureRow, 0, len(fdRows))
+	dependentsByID := make(map[uint]db.Dependent)
 	if len(fdRows) > 0 {
 		depIDs := make([]uint, len(fdRows))
 		for i, r := range fdRows {
@@ -1716,13 +1857,13 @@ func (s *Server) findingShow(w http.ResponseWriter, r *http.Request) {
 		}
 		var depRows []db.Dependent
 		s.DB.Where("id IN ?", depIDs).Find(&depRows)
-		byID := make(map[uint]db.Dependent, len(depRows))
+		dependentsByID = make(map[uint]db.Dependent, len(depRows))
 		for _, d := range depRows {
-			byID[d.ID] = d
+			dependentsByID[d.ID] = d
 		}
 		for _, r := range fdRows {
 			exposures = append(exposures, exposureRow{
-				Dep:    byID[r.DependentID],
+				Dep:    dependentsByID[r.DependentID],
 				Status: r.Status,
 				Justif: r.Justification,
 				Why:    r.Rationale,
@@ -1753,12 +1894,34 @@ func (s *Server) findingShow(w http.ResponseWriter, r *http.Request) {
 		"HasDependents": hasDependents,
 		"ShowExposure":  findingSupportsExposure(scan) && hasDependents,
 	}
+	vinceReason := "VINCE API key is not configured"
+	vinceReady := false
+	if s.VINCE.Enabled() {
+		if err := vinceEligibility(f, notes, refs); err != nil {
+			vinceReason = err.Error()
+		} else {
+			vinceReady = true
+			vinceReason = ""
+		}
+	}
+	data["VINCEReady"] = vinceReady
+	data["VINCEReason"] = vinceReason
 	if id, c, ok := LookupCWE(f.CWE); ok {
 		data["CWE"] = map[string]any{"ID": id, "Name": c.Name, "Description": c.Description}
+	}
+	if guide, err := loadFindingMigrationGuide(s.DB, repo, fdRows, dependentsByID); err != nil {
+		s.Log.Warn("load finding migration guide", "finding", f.ID, "err", err)
+	} else if guide != nil {
+		data["MigrationGuide"] = guide
 	}
 	if patchScan, patchRep, _ := s.latestPatchScan(f.ID); patchRep != nil {
 		data["PatchScan"] = patchScan
 		data["Patch"] = patchRep
+	}
+	if convs, err := db.ConversationsFor(s.DB, repo.ID, &f.ID); err != nil {
+		s.Log.Warn("load finding conversations", "finding", f.ID, "err", err)
+	} else {
+		data["Conversations"] = convs
 	}
 	s.render(w, r, "finding_show.html", data)
 }
@@ -1996,29 +2159,39 @@ func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 	scans := loadRepoLatestScans(s.DB, repo.ID)
 	latest, tmScan := s.repoPrimaryScans(scans)
 	view := s.loadRepoShowView(repo, scans, latest, tmScan, r.URL.Query())
-	s.render(w, r, "repo_show.html", view.renderData())
+	data := view.renderData()
+	if convs, err := db.ConversationsFor(s.DB, repo.ID, nil); err != nil {
+		s.Log.Warn("load repo conversations", "repo", repo.ID, "err", err)
+	} else {
+		data["Conversations"] = convs
+	}
+	s.render(w, r, "repo_show.html", data)
 }
 
 type repoShowView struct {
-	Repo            db.Repository
-	Scans           []db.Scan
-	Latest          *db.Scan
-	Findings        repoFindings
-	Expected        repoExpectedView
-	Dependencies    repoDependencyView
-	Inventory       repoInventoryView
-	Subprojects     repoSubprojectView
-	Maintainers     []db.Maintainer
-	Skills          []db.Skill
-	Workbench       Workbench
-	ThreatModel     map[string]any
-	Category        string
-	TMCommit        string
-	NewFindingCount int
-	FailedScans     int
-	ActiveScans     int
-	PausedScans     int
-	TotalCost       float64
+	Repo             db.Repository
+	Scans            []db.Scan
+	Latest           *db.Scan
+	Findings         repoFindings
+	Expected         repoExpectedView
+	Dependencies     repoDependencyView
+	Inventory        repoInventoryView
+	Subprojects      repoSubprojectView
+	Maintainers      []db.Maintainer
+	Alternatives     []db.PackageAlternative
+	ShowAlternatives bool
+	IgnoredPaths     []string
+	HealthSummary    string
+	Skills           []db.Skill
+	Workbench        Workbench
+	ThreatModel      map[string]any
+	Category         string
+	TMCommit         string
+	NewFindingCount  int
+	FailedScans      int
+	ActiveScans      int
+	PausedScans      int
+	TotalCost        float64
 	// GlobalScanSchedule is the settings-level default schedule, shown on
 	// the repo page so "inherit" spells out what it inherits.
 	GlobalScanSchedule string
@@ -2033,6 +2206,14 @@ func (s *Server) loadRepoShowView(
 	category := query.Get("category")
 	findings := loadRepoFindings(s.DB, repo.ID, category)
 	deps := s.loadRepoDependencyView(repo.ID, query.Get("deps") == "all")
+	inventory := s.loadRepoInventoryView(repo.ID, deps.Groups)
+	maintainers := s.repoMaintainers(repo.ID)
+	health := db.AssessRepositoryHealth(repo, inventory.Packages, maintainers, time.Now())
+	alternatives, err := loadPackageAlternatives(s.DB, repo.ID)
+	if err != nil {
+		s.Log.Error("load package alternatives", "repo", repo.ID, "err", err)
+	}
+	ignoredPaths := repoIgnoredPaths(repo)
 	// activeScans drives both the delete-confirm warning (a running scan keeps
 	// writing into the repo's clone/workspace until it returns) and the "Cancel
 	// all" button; pausedScans drives "Resume all". Both are counted over every
@@ -2046,9 +2227,13 @@ func (s *Server) loadRepoShowView(
 		Findings:           findings,
 		Expected:           loadRepoExpectedView(s.DB, repo.ID, latest, findings),
 		Dependencies:       deps,
-		Inventory:          s.loadRepoInventoryView(repo.ID, deps.Groups),
+		Inventory:          inventory,
 		Subprojects:        s.loadRepoSubprojectView(repo.ID),
-		Maintainers:        s.repoMaintainers(repo.ID),
+		Maintainers:        maintainers,
+		Alternatives:       alternatives,
+		ShowAlternatives:   showPackageAlternatives(repo, alternatives),
+		IgnoredPaths:       ignoredPaths,
+		HealthSummary:      health.Summary,
 		Skills:             s.activeRepoSkills(),
 		Workbench:          loadWorkbench(s.DB, &repo, workbenchSeed(tmScan)),
 		ThreatModel:        scanThreatModelReport(tmScan),
@@ -2082,6 +2267,7 @@ func (v repoShowView) renderData() map[string]any {
 		"ActiveScans":           v.ActiveScans,
 		"PausedScans":           v.PausedScans,
 		"TotalCost":             v.TotalCost,
+		"HealthSummary":         v.HealthSummary,
 		// Cached on the row, refreshed by the worker after each scan (#126).
 		"DiskBytes":          v.Repo.DiskBytes,
 		"TMCommit":           v.TMCommit,
@@ -2093,7 +2279,11 @@ func (v repoShowView) renderData() map[string]any {
 		"DependentsTotal":    v.Inventory.DependentsTotal,
 		"Advisories":         v.Inventory.Advisories,
 		"AdvisoriesTotal":    v.Inventory.AdvisoriesTotal,
+		"AdvisoryAudits":     v.Inventory.AdvisoryAudits,
 		"Maintainers":        v.Maintainers,
+		"Alternatives":       v.Alternatives,
+		"ShowAlternatives":   v.ShowAlternatives,
+		"IgnoredPaths":       v.IgnoredPaths,
 		"ThreatModel":        v.ThreatModel,
 		"KnownURLs":          v.Inventory.KnownURLs,
 		"KnownPURLs":         v.Inventory.KnownPURLs,
@@ -2253,6 +2443,7 @@ type repoInventoryView struct {
 	DependentsTotal int64
 	Advisories      []db.Advisory
 	AdvisoriesTotal int64
+	AdvisoryAudits  map[uint]string
 	KnownPURLs      map[string]uint
 	KnownURLs       map[string]uint
 }
@@ -2266,6 +2457,7 @@ func (s *Server) loadRepoInventoryView(repoID uint, deps []DepGroup) repoInvento
 	s.DB.Model(&db.Advisory{}).Where("repository_id = ?", repoID).Count(&inv.AdvisoriesTotal)
 	s.DB.Where("repository_id = ?", repoID).Order("cvss_score desc").
 		Limit(tabRowCap).Find(&inv.Advisories)
+	inv.AdvisoryAudits = s.latestAdvisoryAuditStatuses(inv.Advisories)
 	inv.KnownPURLs = s.lookupKnownPURLs(deps)
 	inv.KnownURLs = s.lookupKnownURLs(inv.Dependents)
 	return inv
@@ -2502,36 +2694,65 @@ func (s *Server) repoDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Collected before the transaction deletes the scan rows: each scan's
-	// per-scan workspace and claude session store under DataDir are reclaimed
-	// after the commit.
-	var scanIDs []uint
-	s.DB.Model(&db.Scan{}).Where("repository_id = ?", repo.ID).Pluck("id", &scanIDs)
+	deleted, err := s.deleteRepository(repo)
+	if err != nil {
+		if errors.Is(err, errRepositoryDeleteInFlight) {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.removeRepositoryArtifacts(deleted)
+
+	setFlash(w, Flash{Category: "success", Title: "Repository deleted",
+		Description: repo.Name + " and all its scans, findings and cached clone were removed."})
+	s.redirect(w, r, "/")
+}
+
+type deletedRepository struct {
+	Repo            db.Repository
+	ScanIDs         []uint
+	ConversationIDs []uint
+}
+
+var errRepositoryDeleteInFlight = errors.New("repository has queued, running, or paused scans")
+
+func (s *Server) deleteRepository(repo db.Repository) (deletedRepository, error) {
+	deleted := deletedRepository{Repo: repo}
 
 	err := s.DB.Transaction(func(tx *gorm.DB) error {
 		// Match scans by the *finding's* repo, not the scan's own: a finding-
 		// scoped scan can in principle live on a different repository_id than
 		// the finding it points at, and any scan referencing a doomed finding
-		// must have its NO ACTION link cleared or the finding delete 787s. The
-		// subquery also avoids materialising a (possibly >999) id list.
-		const findingsOfRepo = "finding_id IN (SELECT id FROM findings WHERE repository_id = ?)"
+		// must have its NO ACTION link cleared or the finding delete 787s.
+		var inFlight int64
+		if err := tx.Model(&db.Scan{}).
+			Where("(repository_id = ? OR "+findingsOfRepo+") AND status IN ?", repo.ID, repo.ID, inFlightScanStatuses()).
+			Count(&inFlight).Error; err != nil {
+			return err
+		}
+		if inFlight > 0 {
+			return fmt.Errorf("%w; cancel or wait for %d linked scan(s) before deleting", errRepositoryDeleteInFlight, inFlight)
+		}
+		// Collected before the transaction deletes the scan rows: each scan's
+		// per-scan workspace and claude session store under DataDir are reclaimed
+		// after the commit.
+		if err := tx.Model(&db.Scan{}).Where("repository_id = ?", repo.ID).Pluck("id", &deleted.ScanIDs).Error; err != nil {
+			return err
+		}
+		// Chat conversation workspaces are reclaimed after the commit, same as
+		// scan workspaces. Finding-scoped conversations carry the finding's
+		// repository_id, so this covers them too.
+		if err := tx.Model(&db.Conversation{}).Where("repository_id = ?", repo.ID).Pluck("id", &deleted.ConversationIDs).Error; err != nil {
+			return err
+		}
 		if err := tx.Model(&db.Scan{}).Where(findingsOfRepo, repo.ID).
 			Update("finding_id", nil).Error; err != nil {
 			return err
 		}
-		// Finding children. notes/comms/refs/history cascade from a finding
-		// delete, but are removed here too so the cleanup stays correct even
-		// when foreign_keys happens to be off on the serving connection.
-		if err := tx.Exec("DELETE FROM finding_labels_join WHERE "+findingsOfRepo, repo.ID).Error; err != nil {
+		if err := deleteFindingChildren(tx, repo.ID); err != nil {
 			return err
-		}
-		for _, child := range []any{
-			&db.FindingNote{}, &db.FindingCommunication{}, &db.FindingReference{},
-			&db.FindingHistory{}, &db.FindingDependent{},
-		} {
-			if err := tx.Where(findingsOfRepo, repo.ID).Delete(child).Error; err != nil {
-				return err
-			}
 		}
 		for _, child := range []any{
 			&db.Finding{}, &db.Scan{}, &db.Subproject{}, &db.Dependency{},
@@ -2548,25 +2769,145 @@ func (s *Server) repoDelete(w http.ResponseWriter, r *http.Request) {
 		if err := tx.Exec("DELETE FROM repository_maintainers WHERE repository_id = ?", repo.ID).Error; err != nil {
 			return err
 		}
+		if err := deleteRepoConversations(tx, repo.ID); err != nil {
+			return err
+		}
+		if err := reopenRepoInterchangeRecords(tx, repo.ID); err != nil {
+			return err
+		}
 		return tx.Delete(&repo).Error
 	})
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
+		return deletedRepository{}, err
 	}
+	return deleted, nil
+}
 
-	if err := os.RemoveAll(worker.RepoCacheRoot(s.Worker.DataDir, repo.URL)); err != nil {
-		s.Log.Error("repoDelete: remove clone cache", "repo", repo.ID, "err", err)
+func (s *Server) removeRepositoryArtifacts(deleted deletedRepository) {
+	if err := os.RemoveAll(worker.RepoCacheRoot(s.Worker.DataDir, deleted.Repo.URL)); err != nil {
+		s.Log.Error("repoDelete: remove clone cache", "repo", deleted.Repo.ID, "err", err)
 	}
-	for _, id := range scanIDs {
+	for _, id := range deleted.ScanIDs {
 		if err := s.Worker.RemoveScanArtifacts(id); err != nil {
 			s.Log.Error("repoDelete: remove scan workspace", "scan", id, "err", err)
 		}
 	}
+	for _, id := range deleted.ConversationIDs {
+		if err := s.Worker.RemoveChatArtifacts(id); err != nil {
+			s.Log.Error("repoDelete: remove chat workspace", "conv", id, "err", err)
+		}
+	}
+}
 
-	setFlash(w, Flash{Category: "success", Title: "Repository deleted",
-		Description: repo.Name + " and all its scans, findings and cached clone were removed."})
-	s.redirect(w, r, "/")
+type deletedFinding struct {
+	ConversationIDs []uint
+}
+
+var errFindingDeleteInFlight = errors.New("finding has queued, running, or paused scans")
+
+func (s *Server) deleteFinding(finding db.Finding) (deletedFinding, error) {
+	var deleted deletedFinding
+	err := s.DB.Transaction(func(tx *gorm.DB) error {
+		var inFlight int64
+		if err := tx.Model(&db.Scan{}).
+			Where("finding_id = ? AND status IN ?", finding.ID, inFlightScanStatuses()).
+			Count(&inFlight).Error; err != nil {
+			return err
+		}
+		if inFlight > 0 {
+			return fmt.Errorf("%w; cancel or wait for %d linked scan(s) before deleting", errFindingDeleteInFlight, inFlight)
+		}
+		if err := tx.Model(&db.Conversation{}).Where("finding_id = ?", finding.ID).
+			Pluck("id", &deleted.ConversationIDs).Error; err != nil {
+			return err
+		}
+		if err := tx.Model(&db.Scan{}).Where("finding_id = ?", finding.ID).
+			Update("finding_id", nil).Error; err != nil {
+			return err
+		}
+		if err := tx.Exec("DELETE FROM finding_labels_join WHERE finding_id = ?", finding.ID).Error; err != nil {
+			return err
+		}
+		for _, child := range []any{
+			&db.FindingNote{}, &db.FindingCommunication{}, &db.FindingReference{},
+			&db.FindingHistory{}, &db.FindingDependent{}, &db.FindingReview{},
+		} {
+			if err := tx.Where("finding_id = ?", finding.ID).Delete(child).Error; err != nil {
+				return err
+			}
+		}
+		if err := deleteFindingConversations(tx, finding.ID); err != nil {
+			return err
+		}
+		return tx.Delete(&finding).Error
+	})
+	if err != nil {
+		return deletedFinding{}, err
+	}
+	return deleted, nil
+}
+
+func inFlightScanStatuses() []db.ScanStatus {
+	return []db.ScanStatus{db.ScanQueued, db.ScanRunning, db.ScanPaused}
+}
+
+func (s *Server) removeFindingArtifacts(deleted deletedFinding) {
+	for _, id := range deleted.ConversationIDs {
+		if err := s.Worker.RemoveChatArtifacts(id); err != nil {
+			s.Log.Error("deleteFinding: remove chat workspace", "conv", id, "err", err)
+		}
+	}
+}
+
+// findingsOfRepo matches the rows linked to a repository's findings. Written
+// as a subquery rather than a materialised id list, which could exceed
+// sqlite's variable limit on a repository with many findings.
+const findingsOfRepo = "finding_id IN (SELECT id FROM findings WHERE repository_id = ?)"
+
+// deleteFindingChildren removes the rows hanging off a repository's findings.
+// notes/comms/refs/history cascade from the finding delete, but are removed
+// explicitly too so the cleanup stays correct even when foreign_keys happens
+// to be off on the connection serving the delete.
+func deleteFindingChildren(tx *gorm.DB, repoID uint) error {
+	if err := tx.Exec("DELETE FROM finding_labels_join WHERE "+findingsOfRepo, repoID).Error; err != nil {
+		return err
+	}
+	for _, child := range []any{
+		&db.FindingNote{}, &db.FindingCommunication{}, &db.FindingReference{},
+		&db.FindingHistory{}, &db.FindingDependent{}, &db.FindingReview{},
+	} {
+		if err := tx.Where(findingsOfRepo, repoID).Delete(child).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// deleteRepoConversations removes a repository's chat conversations and their
+// messages. Finding-scoped conversations carry the finding's repository_id, so
+// matching on it covers them too.
+func deleteRepoConversations(tx *gorm.DB, repoID uint) error {
+	if err := tx.Exec("DELETE FROM chat_messages WHERE conversation_id IN (SELECT id FROM conversations WHERE repository_id = ?)", repoID).Error; err != nil {
+		return err
+	}
+	return tx.Where("repository_id = ?", repoID).Delete(&db.Conversation{}).Error
+}
+
+// reopenRepoInterchangeRecords re-opens the peer records already applied to a
+// repository that is being deleted. The records themselves are not children
+// of it and stay: their stamp only ever meant "that row carries it", and
+// leaving it set would keep the next import pass from re-applying a
+// still-standing opt-out to the row a re-added repository gets.
+func reopenRepoInterchangeRecords(tx *gorm.DB, repoID uint) error {
+	return tx.Model(&db.InterchangeRecord{}).Where("applied_repository_id = ?", repoID).
+		Updates(map[string]any{"applied_at": nil, "applied_repository_id": 0}).Error
+}
+
+func deleteFindingConversations(tx *gorm.DB, findingID uint) error {
+	if err := tx.Exec("DELETE FROM chat_messages WHERE conversation_id IN (SELECT id FROM conversations WHERE finding_id = ?)", findingID).Error; err != nil {
+		return err
+	}
+	return tx.Where("finding_id = ?", findingID).Delete(&db.Conversation{}).Error
 }
 
 // repoDisclosureChannel lets the analyst overwrite (or clear) the
@@ -2579,9 +2920,10 @@ func (s *Server) repoDisclosureChannel(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	value := strings.TrimSpace(r.FormValue("disclosure_channel"))
-	if err := s.DB.Model(&db.Repository{}).Where("id = ?", repo.ID).
-		Update("disclosure_channel", value).Error; err != nil {
+	// Not trimmed here: SetDisclosureChannel trims, and it has to, since the
+	// comparison that decides whether to re-stamp the route record's
+	// verified_at is made against the trimmed value.
+	if err := db.SetDisclosureChannel(s.DB, repo.ID, r.FormValue("disclosure_channel")); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -2612,6 +2954,14 @@ func (s *Server) repoScheduleUpdate(w http.ResponseWriter, r *http.Request) {
 	if upstream != "" && !strings.HasPrefix(upstream, "https://") {
 		http.Error(w, "upstream URL must start with https://", http.StatusUnprocessableEntity)
 		return
+	}
+	if upstream != "" {
+		input, err := ParseRepoInput(upstream)
+		if err != nil {
+			http.Error(w, strings.Replace(err.Error(), "repository URL", "upstream URL", 1), http.StatusUnprocessableEntity)
+			return
+		}
+		upstream = input.CloneURL
 	}
 	if err := s.DB.Model(&db.Repository{}).Where("id = ?", repo.ID).Updates(map[string]any{
 		"scan_schedule":          schedule,
@@ -2675,6 +3025,36 @@ func (s *Server) enqueueSkillScoped(ctx context.Context, repoID, skillID uint, f
 	return s.enqueueSkillWith(ctx, repoID, skillID, ScanOpts{Model: model, FindingID: findingID})
 }
 
+// enqueueRepoScopedSkillIfIdle serializes the open-scan check and enqueue for
+// repo-scoped auto-enqueue paths (advisory audit, finding-dedup) under
+// agentEnqueueMu so concurrent scan finalizers cannot both pass the check.
+func (s *Server) enqueueRepoScopedSkillIfIdle(ctx context.Context, repoID, skillID uint) error {
+	s.agentEnqueueMu.Lock()
+	defer s.agentEnqueueMu.Unlock()
+	if s.hasOpenRepoScopedScan(repoID, skillID) {
+		return nil
+	}
+	_, err := s.enqueueSkillWith(ctx, repoID, skillID, ScanOpts{})
+	return err
+}
+
+// enqueueFindingScopedSkillIfIdle serializes the open-scan check and enqueue
+// for finding-scoped auto-enqueue paths (revalidate, verify) under
+// agentEnqueueMu. Avoids piling duplicate work onto the queue when the same
+// finding is observed by both an import and a rescan, or when two findings
+// parsers race. opts.FindingID is set from findingID; callers pass only the
+// extra opts they need (Profile).
+func (s *Server) enqueueFindingScopedSkillIfIdle(ctx context.Context, repoID, findingID, skillID uint, opts ScanOpts) error {
+	s.agentEnqueueMu.Lock()
+	defer s.agentEnqueueMu.Unlock()
+	if s.hasOpenFindingScopedScan(findingID, skillID) {
+		return nil
+	}
+	opts.FindingID = &findingID
+	_, err := s.enqueueSkillWith(ctx, repoID, skillID, opts)
+	return err
+}
+
 // enqueueSkillWith creates a skill scan using the given ScanOpts. Empty
 // fields default cleanly: unset FindingID means not-finding-scoped, empty
 // SubPath means root-scoped. Model precedence is: explicit opts.Model >
@@ -2683,8 +3063,11 @@ func (s *Server) enqueueSkillScoped(ctx context.Context, repoID, skillID uint, f
 // explicit opts.Effort > the runtime default effort.
 func (s *Server) enqueueSkillWith(ctx context.Context, repoID, skillID uint, opts ScanOpts) (uint, error) {
 	var repo db.Repository
-	if err := s.DB.Select("id, url").First(&repo, repoID).Error; err != nil {
+	if err := s.DB.Select("id, url, federation_opt_out_at").First(&repo, repoID).Error; err != nil {
 		return 0, err
+	}
+	if repo.FederationOptedOut() {
+		return 0, ErrRepoFederationOptOut
 	}
 	var sk db.Skill
 	hasSkill := s.DB.Select("name, version, metadata, requires_remote, requires_profile, model").First(&sk, skillID).Error == nil
@@ -2758,7 +3141,26 @@ func (s *Server) enqueueSkillWith(ctx context.Context, repoID, skillID uint, opt
 		SkillsRepoSHA:      s.SkillsRepoSHA,
 		APIToken:           NewAPIToken(),
 	}
-	if err := s.DB.Create(&scan).Error; err != nil {
+	// The opt-out check at the top of this function ran before every field above
+	// was resolved, so re-check it inside the creating transaction: the row is
+	// write-locked from the INSERT until commit, which leaves an opt-out only two
+	// places to land. Before the INSERT, and the read below sees it and rolls the
+	// scan back; after the commit, and the sweep that follows recording it finds a
+	// queued row to cancel. Reading before the INSERT instead would put the window
+	// back where it was, just narrower.
+	if err := s.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(&scan).Error; err != nil {
+			return err
+		}
+		var live db.Repository
+		if err := tx.Select("id, federation_opt_out_at").First(&live, repoID).Error; err != nil {
+			return err
+		}
+		if live.FederationOptedOut() {
+			return ErrRepoFederationOptOut
+		}
+		return nil
+	}); err != nil {
 		return 0, err
 	}
 	prio := worker.PrioScan
@@ -2957,18 +3359,26 @@ const cspPolicy = "default-src 'self'; " +
 	"frame-ancestors 'none'; " +
 	"object-src 'none'"
 
+// localHost reports whether the request Host is the loopback name or address
+// the web server is bound to. Extracted from securityHeaders so a route can
+// distinguish "a caller on the host, no credential needed" from "a caller that
+// cannot satisfy the host check and must authenticate instead"; see
+// openAPISpecHandler.
+func localHost(host string) bool {
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.Trim(host, "[]")
+	return host == "127.0.0.1" || host == "localhost" || host == "::1"
+}
+
 // securityHeaders enforces T3 mitigations: host header check to prevent DNS
 // rebinding, Sec-Fetch-Site check on POST to prevent cross-origin CSRF, and
 // a CSP that prevents stored XSS in any rendered content from executing JS.
 func securityHeaders(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Security-Policy", cspPolicy)
-		host := r.Host
-		if h, _, err := net.SplitHostPort(host); err == nil {
-			host = h
-		}
-		host = strings.Trim(host, "[]")
-		if host != "127.0.0.1" && host != "localhost" && host != "::1" {
+		if !localHost(r.Host) {
 			http.Error(w, "forbidden: invalid host", http.StatusForbidden)
 			return
 		}

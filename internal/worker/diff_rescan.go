@@ -86,7 +86,7 @@ func (w *Worker) prepareDiffRescan(ctx context.Context, scan *db.Scan, workRoot 
 
 	rangeSpec := baseline.Commit + ".." + scan.Commit
 	nameStatusArgs := diffGitArgs(diffDir, rangeSpec, scan.SubPath, "--name-status")
-	nameStatus, err := git(ctx, "", nameStatusArgs...)
+	nameStatus, err := git(ctx, nameStatusArgs...)
 	if err != nil {
 		w.fallbackDiffScan(scan, "could not list changed files: "+strings.TrimSpace(nameStatus))
 		return nil
@@ -102,7 +102,7 @@ func (w *Worker) prepareDiffRescan(ctx context.Context, scan *db.Scan, workRoot 
 	}
 
 	patchArgs := diffGitArgs(diffDir, rangeSpec, scan.SubPath)
-	patch, err := git(ctx, "", patchArgs...)
+	patch, err := git(ctx, patchArgs...)
 	if err != nil {
 		w.fallbackDiffScan(scan, "could not generate diff: "+strings.TrimSpace(patch))
 		return nil

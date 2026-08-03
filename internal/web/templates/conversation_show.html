@@ -1,0 +1,99 @@
+{{template "head" .}}
+{{$findingID := .FindingID}}
+{{with .Conv}}
+<div class="chat-page">
+{{if $findingID}}
+{{template "crumbs" (crumbs
+  "Repositories" "/"
+  .Repository.Name (printf "/repositories/%d" .RepositoryID)
+  (printf "finding #%d" $findingID) (printf "/findings/%d" $findingID)
+  "chat" "")}}
+{{else}}
+{{template "crumbs" (crumbs
+  "Repositories" "/"
+  .Repository.Name (printf "/repositories/%d" .RepositoryID)
+  "chat" "")}}
+{{end}}
+
+<div class="flex items-start justify-between gap-4 mb-6">
+  <h2 class="text-2xl font-semibold flex items-center gap-3">
+    <i data-lucide="messages-square"></i>
+    {{if .Title}}{{.Title}}{{else}}Chat{{end}}
+  </h2>
+  <div class="flex items-center gap-2 shrink-0">
+    <form method="post" action="/conversations/{{.ID}}/delete"
+          hx-post="/conversations/{{.ID}}/delete" hx-swap="none"
+          hx-confirm="{{if $.Active}}A reply is still in flight; deleting is refused until it finishes. {{end}}Permanently delete this conversation? This removes the transcript and the working copy of the clone it reasons about. This cannot be undone.">
+      <button class="btn-destructive" type="submit"><i data-lucide="trash-2"></i> Delete</button>
+    </form>
+    <a href="{{$.BackHref}}" class="btn-outline"><i data-lucide="arrow-left"></i> Back</a>
+  </div>
+</div>
+
+<div class="chat-messages flex flex-col gap-3 max-w-3xl pb-2">
+  {{range .Messages}}
+    {{if eq .Role "user"}}
+      <div class="flex justify-end">
+        <div class="rounded-lg bg-primary text-primary-foreground px-4 py-2 max-w-[85%] whitespace-pre-wrap">{{.Content}}</div>
+      </div>
+    {{else}}
+      <div class="flex justify-start">
+        <div class="rounded-lg bg-muted px-4 py-2 max-w-[85%] prose">{{md .Content}}</div>
+      </div>
+    {{end}}
+  {{end}}
+</div>
+
+{{if $.Active}}
+  <div class="mt-4 max-w-3xl" hx-ext="sse" sse-connect="/events?conv={{.ID}}"
+       sse-swap="chat-done" hx-swap="none" hx-disinherit="*"
+       data-reload-on-sse="chat-done">
+    <div class="flex items-center gap-2 text-sm text-muted-foreground">
+      <i data-lucide="loader-circle" class="animate-spin size-4"></i> the assistant is working...
+    </div>
+    <pre class="log mt-2" tabindex="0" role="region" aria-label="Assistant activity"
+         sse-swap="chat-activity" hx-swap="beforeend scroll:bottom"></pre>
+  </div>
+{{end}}
+
+<form method="post" action="/conversations/{{.ID}}/messages" class="form grid gap-2 mt-4 max-w-3xl">
+  <textarea class="input" name="message" rows="3" required
+            placeholder="Ask about the code or findings..."
+            {{if $.Active}}disabled{{end}}></textarea>
+  <div class="flex justify-end">
+    <button type="submit" class="btn" {{if $.Active}}disabled{{end}}>
+      <i data-lucide="send"></i> Send
+    </button>
+  </div>
+</form>
+</div>
+{{end}}
+{{template "foot" .}}
+
+{{define "chat-panel"}}
+<div class="grid gap-4 max-w-2xl">
+  <p class="text-sm text-muted-foreground">
+    Chat with the agent. It answers from a copy of the clone and a snapshot of the repository's findings, and is instructed not to change anything.
+  </p>
+  <form method="post" action="{{.Action}}" class="form grid gap-2">
+    <textarea class="input" name="message" rows="3" required placeholder="{{.Placeholder}}"></textarea>
+    <div class="flex justify-end">
+      <button type="submit" class="btn"><i data-lucide="message-square-plus"></i> Start chat</button>
+    </div>
+  </form>
+  {{if .Conversations}}
+    <ul class="grid gap-2">
+      {{range .Conversations}}
+        <li>
+          <a href="/conversations/{{.ID}}" class="flex items-center justify-between gap-3 rounded-lg border p-3 hover:bg-muted">
+            <span class="flex items-center gap-2 truncate"><i data-lucide="messages-square" class="size-4"></i>{{if .Title}}{{.Title}}{{else}}Untitled chat{{end}}</span>
+            <span class="text-xs text-muted-foreground shrink-0">{{since .UpdatedAt}}</span>
+          </a>
+        </li>
+      {{end}}
+    </ul>
+  {{else}}
+    <p class="text-sm text-muted-foreground">No conversations yet. Start one above.</p>
+  {{end}}
+</div>
+{{end}}

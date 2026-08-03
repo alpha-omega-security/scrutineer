@@ -28,6 +28,8 @@ func ResolveRemoteHead(ctx context.Context, cloneURL string) (string, error) {
 }
 
 func resolveRemoteHead(ctx context.Context, retry gitRetry, cloneURL string) (string, error) {
+	// Not clone.RemoteHead: that validates https-only, but scheduled
+	// checks also run against file:// and absolute-path repos.
 	if err := validateScheduleURL(cloneURL); err != nil {
 		return "", err
 	}

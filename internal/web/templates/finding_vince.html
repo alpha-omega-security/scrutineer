@@ -1,0 +1,404 @@
+{{define "vince-field-errors"}}
+  {{with index .Errors .Field}}
+  <ul class="text-xs text-destructive grid gap-1">
+    {{range .}}<li>{{.}}</li>{{end}}
+  </ul>
+  {{end}}
+{{end}}
+
+{{template "head" .}}
+{{$v := .VINCE}}
+{{$r := $v.Report}}
+
+{{template "crumbs" (crumbs
+  "Findings" "/findings"
+  $v.Repository.Name (printf "/repositories/%d" $v.Repository.ID)
+  (printf "finding #%d" $v.Finding.ID) (printf "/findings/%d" $v.Finding.ID)
+  "Submit to VINCE" "")}}
+
+<div class="flex items-start justify-between gap-4 mt-1 mb-4">
+  <div>
+    <h2 class="text-2xl font-semibold">Submit to CERT/CC VINCE</h2>
+    <p class="text-sm text-muted-foreground mt-1">
+      Review every field below. Submission sends one request to <code>{{$v.Recipient}}</code>.
+    </p>
+  </div>
+  <a href="/findings/{{$v.Finding.ID}}" class="btn-outline">Back to finding</a>
+</div>
+
+{{if $v.Error}}
+<div class="alert-destructive mb-4">
+  <div>
+    <div class="font-medium">{{$v.Error}}</div>
+    {{if $v.Ambiguous}}
+    <p class="text-sm mt-1">
+      Check <a href="{{$v.ReportsURL}}" target="_blank" rel="noopener" class="underline">VINCE reports</a>
+      before trying again. A retry could create a duplicate report.
+    </p>
+    {{end}}
+    {{if $v.ReconciliationVRFID}}
+    <p class="text-sm mt-1">VRF ID: <code>{{$v.ReconciliationVRFID}}</code></p>
+    {{end}}
+  </div>
+</div>
+{{end}}
+
+<section class="border rounded-md p-4 mb-5 grid gap-3">
+  <div>
+    <h3 class="font-medium">Choose source records</h3>
+    <p class="text-xs text-muted-foreground">
+      Apply these selections to rebuild the initial product and public-reference fields. You can still edit the resulting VINCE fields.
+    </p>
+  </div>
+  <form method="get" action="/findings/{{$v.Finding.ID}}/vince" class="form grid gap-3">
+    <div class="grid gap-1">
+      <label for="package_id" class="text-xs text-muted-foreground">Product source</label>
+      <select id="package_id" name="package_id" class="input">
+        <option value="0"{{if eq $v.SelectedPackageID 0}} selected{{end}}>Repository: {{$v.Repository.Name}}</option>
+        {{range $v.Packages}}
+        <option value="{{.ID}}"{{if eq $v.SelectedPackageID .ID}} selected{{end}}>Package: {{.Name}} ({{.Ecosystem}})</option>
+        {{end}}
+      </select>
+    </div>
+    {{if $v.References}}
+    <fieldset class="grid gap-2">
+      <legend class="text-xs text-muted-foreground">Public references to prefill</legend>
+      {{range $v.References}}
+      <label class="flex gap-2 items-start text-sm">
+        <input type="checkbox" name="reference_id" value="{{.ID}}"{{if index $v.SelectedReferences .ID}} checked{{end}}>
+        <span><code>{{.URL}}</code>{{if .Tags}} <span class="text-xs text-muted-foreground">({{.Tags}})</span>{{end}}</span>
+      </label>
+      {{end}}
+    </fieldset>
+    {{end}}
+    <div>
+      <button type="submit" class="btn-sm-outline">Apply selections</button>
+    </div>
+  </form>
+</section>
+
+<form method="post" action="/findings/{{$v.Finding.ID}}/vince" class="form grid gap-6">
+  <input type="hidden" name="package_id" value="{{$v.SelectedPackageID}}">
+  {{range $id, $selected := $v.SelectedReferences}}{{if $selected}}
+  <input type="hidden" name="reference_id" value="{{$id}}">
+  {{end}}{{end}}
+  <input type="hidden" name="attachment_generated_at" value="{{$v.AttachmentGeneratedAt}}">
+  <input type="hidden" name="attachment_sha256" value="{{$v.AttachmentSHA256}}">
+
+  <section class="border rounded-md p-4 grid gap-4">
+    <div>
+      <h3 class="font-medium">Reporter</h3>
+      <p class="text-xs text-muted-foreground">Defaults come from <code>vince.reporter</code>. Confirm the exact identity below before submitting.</p>
+    </div>
+    <div class="grid sm:grid-cols-2 gap-3">
+      <div class="grid gap-1">
+        <label for="contact_name" class="text-xs text-muted-foreground">Name</label>
+        <input id="contact_name" class="input" name="contact_name" maxlength="100" value="{{$r.ContactName}}">
+        {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "contact_name")}}
+      </div>
+      <div class="grid gap-1">
+        <label for="contact_org" class="text-xs text-muted-foreground">Organization</label>
+        <input id="contact_org" class="input" name="contact_org" maxlength="100" value="{{$r.ContactOrganization}}">
+        {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "contact_org")}}
+      </div>
+      <div class="grid gap-1">
+        <label for="contact_email" class="text-xs text-muted-foreground">Email</label>
+        <input id="contact_email" class="input" type="email" name="contact_email" maxlength="254" value="{{$r.ContactEmail}}">
+        {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "contact_email")}}
+      </div>
+      <div class="grid gap-1">
+        <label for="contact_phone" class="text-xs text-muted-foreground">Phone</label>
+        <input id="contact_phone" class="input" name="contact_phone" maxlength="20" value="{{$r.ContactPhone}}">
+        {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "contact_phone")}}
+      </div>
+      <div class="grid gap-1 sm:col-span-2">
+        <label for="reporter_pgp" class="text-xs text-muted-foreground">Public PGP key or URL</label>
+        <textarea id="reporter_pgp" class="input font-mono text-xs" name="reporter_pgp" rows="4">{{$r.ReporterPGP}}</textarea>
+        {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "reporter_pgp")}}
+      </div>
+    </div>
+  </section>
+
+  <section class="border rounded-md p-4 grid gap-4">
+    <div>
+      <h3 class="font-medium">Sharing and prior coordination</h3>
+      <p class="text-xs text-muted-foreground">Unknown answers remain unresolved and block submission.</p>
+    </div>
+    <div class="grid sm:grid-cols-2 gap-3">
+      <div class="grid gap-1">
+        <label for="share_release" class="text-xs text-muted-foreground">Share reporter contact with vendors?</label>
+        <select id="share_release" class="input" name="share_release" required>
+          <option value=""{{if eq $r.ShareRelease ""}} selected{{end}}>Choose...</option>
+          <option value="True"{{if eq $r.ShareRelease "True"}} selected{{end}}>Yes</option>
+          <option value="False"{{if eq $r.ShareRelease "False"}} selected{{end}}>No</option>
+        </select>
+        {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "share_release")}}
+      </div>
+      <div class="grid gap-1">
+        <label for="credit_release" class="text-xs text-muted-foreground">Credit reporter in published material?</label>
+        <select id="credit_release" class="input" name="credit_release" required>
+          <option value=""{{if eq $r.CreditRelease ""}} selected{{end}}>Choose...</option>
+          <option value="True"{{if eq $r.CreditRelease "True"}} selected{{end}}>Yes</option>
+          <option value="False"{{if eq $r.CreditRelease "False"}} selected{{end}}>No</option>
+        </select>
+        {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "credit_release")}}
+      </div>
+      <div class="grid gap-1">
+        <label for="comm_attempt" class="text-xs text-muted-foreground">Vendor contacted?</label>
+        <select id="comm_attempt" class="input" name="comm_attempt" required>
+          <option value=""{{if eq $r.CommunicationAttempt ""}} selected{{end}}>Choose...</option>
+          <option value="True"{{if eq $r.CommunicationAttempt "True"}} selected{{end}}>Yes</option>
+          <option value="False"{{if eq $r.CommunicationAttempt "False"}} selected{{end}}>No</option>
+        </select>
+        {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "comm_attempt")}}
+      </div>
+      <div class="grid gap-1">
+        <label for="first_contact" class="text-xs text-muted-foreground">Date of first contact attempt</label>
+        <input id="first_contact" class="input" type="date" name="first_contact" value="{{$r.FirstContact}}">
+        {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "first_contact")}}
+      </div>
+      <div class="grid gap-1">
+        <label for="why_no_attempt" class="text-xs text-muted-foreground">If not contacted, why?</label>
+        <select id="why_no_attempt" class="input" name="why_no_attempt">
+          <option value=""{{if eq $r.WhyNoAttempt ""}} selected{{end}}>-</option>
+          <option value="1"{{if eq $r.WhyNoAttempt "1"}} selected{{end}}>Not attempted</option>
+          <option value="2"{{if eq $r.WhyNoAttempt "2"}} selected{{end}}>Could not find contact information</option>
+          <option value="3"{{if eq $r.WhyNoAttempt "3"}} selected{{end}}>Other</option>
+        </select>
+        {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "why_no_attempt")}}
+      </div>
+      <div class="grid gap-1">
+        <label for="please_explain" class="text-xs text-muted-foreground">Coordination explanation</label>
+        <textarea id="please_explain" class="input" name="please_explain" rows="3" maxlength="20000">{{$r.PleaseExplain}}</textarea>
+        {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "please_explain")}}
+      </div>
+      <fieldset class="grid gap-2 sm:col-span-2">
+        <legend class="text-xs text-muted-foreground">Coordination actions taken</legend>
+        {{$coord := $r.CoordinationStatus}}
+        <label class="flex gap-2 items-center text-sm"><input type="checkbox" name="coord_status" value="1"{{if contains $coord "1"}} checked{{end}}>I have not attempted to contact any vendors</label>
+        <label class="flex gap-2 items-center text-sm"><input type="checkbox" name="coord_status" value="2"{{if contains $coord "2"}} checked{{end}}>I have been unable to find contact information for a vendor</label>
+        <label class="flex gap-2 items-center text-sm"><input type="checkbox" name="coord_status" value="3"{{if contains $coord "3"}} checked{{end}}>I have contacted vendors but not sent them details</label>
+        <label class="flex gap-2 items-center text-sm"><input type="checkbox" name="coord_status" value="4"{{if contains $coord "4"}} checked{{end}}>I have sent details to vendors</label>
+        <label class="flex gap-2 items-center text-sm"><input type="checkbox" name="coord_status" value="5"{{if contains $coord "5"}} checked{{end}}>None of these apply</label>
+        {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "coord_status")}}
+      </fieldset>
+      <div class="grid gap-1 sm:col-span-2">
+        <label for="vendor_communication" class="text-xs text-muted-foreground">Previous vendor communications</label>
+        <textarea id="vendor_communication" class="input" name="vendor_communication" rows="5" maxlength="20000">{{$r.VendorCommunication}}</textarea>
+        {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "vendor_communication")}}
+      </div>
+    </div>
+  </section>
+
+  <section class="border rounded-md p-4 grid gap-4">
+    <h3 class="font-medium">Product and vendor</h3>
+    <div class="grid sm:grid-cols-2 gap-3">
+      <div class="grid gap-1">
+        <label for="vendor_name" class="text-xs text-muted-foreground">Vendor name</label>
+        <input id="vendor_name" class="input" name="vendor_name" maxlength="100" value="{{$r.VendorName}}">
+        {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "vendor_name")}}
+      </div>
+      <div class="grid gap-1">
+        <label for="multiplevendors" class="text-xs text-muted-foreground">Multiple vendors affected?</label>
+        <select id="multiplevendors" class="input" name="multiplevendors" required>
+          <option value=""{{if eq $r.MultipleVendors ""}} selected{{end}}>Choose...</option>
+          <option value="True"{{if eq $r.MultipleVendors "True"}} selected{{end}}>Yes</option>
+          <option value="False"{{if eq $r.MultipleVendors "False"}} selected{{end}}>No</option>
+        </select>
+        {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "multiplevendors")}}
+      </div>
+      <div class="grid gap-1 sm:col-span-2">
+        <label for="other_vendors" class="text-xs text-muted-foreground">Other vendors, one per line</label>
+        <textarea id="other_vendors" class="input" name="other_vendors" rows="3" maxlength="1000">{{$r.OtherVendors}}</textarea>
+        {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "other_vendors")}}
+      </div>
+      <div class="grid gap-1">
+        <label for="product_name" class="text-xs text-muted-foreground">Product name</label>
+        <input id="product_name" class="input" name="product_name" maxlength="200" required value="{{$r.ProductName}}">
+        <p class="text-xs text-warning">VINCE uses this in acknowledgement email. Do not include sensitive details.</p>
+        {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "product_name")}}
+      </div>
+      <div class="grid gap-1">
+        <label for="product_version" class="text-xs text-muted-foreground">Affected version or tested commit</label>
+        <input id="product_version" class="input" name="product_version" maxlength="100" required value="{{$r.ProductVersion}}">
+        {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "product_version")}}
+      </div>
+      <div class="grid gap-1">
+        <label for="ics_impact" class="text-xs text-muted-foreground">Significant ICS/OT impact?</label>
+        <select id="ics_impact" class="input" name="ics_impact" required>
+          <option value=""{{if eq $r.ICSImpact ""}} selected{{end}}>Choose...</option>
+          <option value="True"{{if eq $r.ICSImpact "True"}} selected{{end}}>Yes</option>
+          <option value="False"{{if eq $r.ICSImpact "False"}} selected{{end}}>No</option>
+        </select>
+        {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "ics_impact")}}
+      </div>
+      <div class="grid gap-1">
+        <label for="ai_ml_system" class="text-xs text-muted-foreground">Related to AI/ML systems?</label>
+        <select id="ai_ml_system" class="input" name="ai_ml_system" required>
+          <option value=""{{if eq $r.AIMLSystem ""}} selected{{end}}>Choose...</option>
+          <option value="True"{{if eq $r.AIMLSystem "True"}} selected{{end}}>Yes</option>
+          <option value="False"{{if eq $r.AIMLSystem "False"}} selected{{end}}>No</option>
+        </select>
+        {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "ai_ml_system")}}
+      </div>
+    </div>
+  </section>
+
+  <section class="border rounded-md p-4 grid gap-4">
+    <h3 class="font-medium">Vulnerability</h3>
+    <div class="grid gap-3">
+      <div class="grid gap-1">
+        <label for="vul_description" class="text-xs text-muted-foreground">Description</label>
+        <textarea id="vul_description" class="input font-mono text-xs" name="vul_description" rows="12" maxlength="20000" required>{{$r.VulnerabilityDescription}}</textarea>
+        {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "vul_description")}}
+      </div>
+      <div class="grid gap-1">
+        <label for="vul_exploit" class="text-xs text-muted-foreground">Exploit conditions</label>
+        <textarea id="vul_exploit" class="input" name="vul_exploit" rows="7" maxlength="20000" required>{{$r.VulnerabilityExploit}}</textarea>
+        {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "vul_exploit")}}
+      </div>
+      <div class="grid gap-1">
+        <label for="vul_impact" class="text-xs text-muted-foreground">Impact</label>
+        <textarea id="vul_impact" class="input" name="vul_impact" rows="7" maxlength="20000" required>{{$r.VulnerabilityImpact}}</textarea>
+        {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "vul_impact")}}
+      </div>
+      <div class="grid gap-1">
+        <label for="vul_discovery" class="text-xs text-muted-foreground">Discovery</label>
+        <textarea id="vul_discovery" class="input" name="vul_discovery" rows="5" maxlength="20000" required>{{$r.VulnerabilityDiscovery}}</textarea>
+        {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "vul_discovery")}}
+      </div>
+    </div>
+  </section>
+
+  <section class="border rounded-md p-4 grid gap-4">
+    <h3 class="font-medium">Public knowledge and exploitation</h3>
+    <div class="grid sm:grid-cols-2 gap-3">
+      <div class="grid gap-1">
+        <label for="vul_public" class="text-xs text-muted-foreground">Publicly known?</label>
+        <select id="vul_public" class="input" name="vul_public" required>
+          <option value=""{{if eq $r.VulnerabilityPublic ""}} selected{{end}}>Choose...</option>
+          <option value="True"{{if eq $r.VulnerabilityPublic "True"}} selected{{end}}>Yes</option>
+          <option value="False"{{if eq $r.VulnerabilityPublic "False"}} selected{{end}}>No</option>
+        </select>
+        {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "vul_public")}}
+      </div>
+      <div class="grid gap-1">
+        <label for="vul_exploited" class="text-xs text-muted-foreground">Actively exploited?</label>
+        <select id="vul_exploited" class="input" name="vul_exploited" required>
+          <option value=""{{if eq $r.VulnerabilityExploited ""}} selected{{end}}>Choose...</option>
+          <option value="True"{{if eq $r.VulnerabilityExploited "True"}} selected{{end}}>Yes</option>
+          <option value="False"{{if eq $r.VulnerabilityExploited "False"}} selected{{end}}>No</option>
+        </select>
+        {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "vul_exploited")}}
+      </div>
+      <div class="grid gap-1">
+        <label for="public_references" class="text-xs text-muted-foreground">Public references</label>
+        <textarea id="public_references" class="input font-mono text-xs" name="public_references" rows="5" maxlength="1000">{{$r.PublicReferences}}</textarea>
+        {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "public_references")}}
+      </div>
+      <div class="grid gap-1">
+        <label for="exploit_references" class="text-xs text-muted-foreground">Exploitation evidence and references</label>
+        <textarea id="exploit_references" class="input" name="exploit_references" rows="5" maxlength="1000">{{$r.ExploitReferences}}</textarea>
+        {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "exploit_references")}}
+      </div>
+    </div>
+  </section>
+
+  <section class="border rounded-md p-4 grid gap-4">
+    <h3 class="font-medium">Disclosure and coordination choices</h3>
+    <div class="grid sm:grid-cols-2 gap-3">
+      <div class="grid gap-1">
+        <label for="vul_disclose" class="text-xs text-muted-foreground">Plan to disclose publicly?</label>
+        <select id="vul_disclose" class="input" name="vul_disclose" required>
+          <option value=""{{if eq $r.VulnerabilityDisclose ""}} selected{{end}}>Choose...</option>
+          <option value="True"{{if eq $r.VulnerabilityDisclose "True"}} selected{{end}}>Yes</option>
+          <option value="False"{{if eq $r.VulnerabilityDisclose "False"}} selected{{end}}>No</option>
+        </select>
+        {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "vul_disclose")}}
+      </div>
+      <div class="grid gap-1">
+        <label for="cisa_please" class="text-xs text-muted-foreground">Request CISA coordination?</label>
+        <select id="cisa_please" class="input" name="cisa_please" required>
+          <option value=""{{if eq $r.CISACoordination ""}} selected{{end}}>Choose...</option>
+          <option value="True"{{if eq $r.CISACoordination "True"}} selected{{end}}>Yes</option>
+          <option value="False"{{if eq $r.CISACoordination "False"}} selected{{end}}>No</option>
+        </select>
+        {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "cisa_please")}}
+      </div>
+      <div class="grid gap-1 sm:col-span-2">
+        <label for="disclosure_plans" class="text-xs text-muted-foreground">Disclosure plans</label>
+        <textarea id="disclosure_plans" class="input" name="disclosure_plans" rows="4" maxlength="1000">{{$r.DisclosurePlans}}</textarea>
+        {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "disclosure_plans")}}
+      </div>
+      <div class="grid gap-1">
+        <label for="tracking" class="text-xs text-muted-foreground">Existing VINCE tracking IDs</label>
+        <input id="tracking" class="input" name="tracking" maxlength="100" value="{{$r.Tracking}}">
+        {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "tracking")}}
+      </div>
+      <div class="grid gap-1">
+        <label for="comments" class="text-xs text-muted-foreground">Private comments for CERT/CC</label>
+        <textarea id="comments" class="input" name="comments" rows="4" maxlength="1000">{{$r.Comments}}</textarea>
+        {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "comments")}}
+      </div>
+    </div>
+  </section>
+
+  <section class="border rounded-md p-4 grid gap-4">
+    <div>
+      <h3 class="font-medium">Attachment</h3>
+      <p class="text-xs text-muted-foreground">
+        The disclosure bundle can contain a runnable proof of concept and proposed patch. VINCE accepts one file up to 10 MiB.
+      </p>
+    </div>
+    <fieldset class="grid gap-3">
+      {{range $v.AttachmentOptions}}
+      <label class="border rounded p-3 flex gap-3 items-start{{if .TooLarge}} opacity-60{{end}}">
+        <input type="radio" name="attachment" value="{{.Value}}"{{if eq $v.Attachment .Value}} checked{{end}}{{if .TooLarge}} disabled{{end}}>
+        <span class="grid gap-1">
+          <span class="font-medium text-sm">{{.Label}}</span>
+          {{if .Name}}<span class="text-xs text-muted-foreground"><code>{{.Name}}</code>, {{bytes .Size}}{{if .TooLarge}}: too large{{end}}</span>{{end}}
+          {{if .Contents}}<span class="text-xs text-muted-foreground">Contains: {{range $i, $name := .Contents}}{{if $i}}, {{end}}<code>{{$name}}</code>{{end}}</span>{{end}}
+        </span>
+      </label>
+      {{end}}
+    </fieldset>
+    {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "user_file")}}
+  </section>
+
+  <section class="border rounded-md p-4 grid gap-3">
+    <h3 class="font-medium">Final confirmation</h3>
+    <label class="flex gap-2 items-start text-sm">
+      <input type="checkbox" name="confirm_recipient" value="yes"{{if index $v.Confirmations "confirm_recipient"}} checked{{end}} required>
+      <span>I confirm the recipient is <code>{{$v.Recipient}}</code>.</span>
+    </label>
+    {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "confirm_recipient")}}
+    <label class="flex gap-2 items-start text-sm">
+      <input type="checkbox" name="confirm_reporter" value="yes"{{if index $v.Confirmations "confirm_reporter"}} checked{{end}} required>
+      <span>I confirm the reporter identity and contact details shown above.</span>
+    </label>
+    {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "confirm_reporter")}}
+    <label class="flex gap-2 items-start text-sm">
+      <input type="checkbox" name="confirm_choices" value="yes"{{if index $v.Confirmations "confirm_choices"}} checked{{end}} required>
+      <span>I confirm the contact sharing, credit, vendor contact, multi-vendor, ICS/OT, AI/ML, public knowledge, exploitation, disclosure, and CISA coordination choices.</span>
+    </label>
+    {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "confirm_choices")}}
+    <label class="flex gap-2 items-start text-sm">
+      <input type="checkbox" name="confirm_attachment" value="yes"{{if index $v.Confirmations "confirm_attachment"}} checked{{end}} required>
+      <span>I reviewed the selected attachment and its listed contents.</span>
+    </label>
+    {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "confirm_attachment")}}
+    <label class="flex gap-2 items-start text-sm">
+      <input type="checkbox" name="confirm_manual_review" value="yes"{{if index $v.Confirmations "confirm_manual_review"}} checked{{end}} required>
+      <span>I manually reviewed this finding and its reproduction.</span>
+    </label>
+    {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "confirm_manual_review")}}
+  </section>
+
+  {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "selection")}}
+  <div class="flex justify-end gap-2">
+    <a href="/findings/{{$v.Finding.ID}}" class="btn-outline">Cancel</a>
+    <button type="submit" class="btn-destructive">Submit once to VINCE</button>
+  </div>
+</form>
+
+{{template "foot" .}}

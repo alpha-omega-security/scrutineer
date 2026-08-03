@@ -11,10 +11,10 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/alpha-omega-security/harness/llm"
 	"gorm.io/gorm"
 
 	"scrutineer/internal/db"
-	"scrutineer/internal/llm"
 )
 
 func TestCallAuxiliary_recordsUsageOnMalformedResponse(t *testing.T) {

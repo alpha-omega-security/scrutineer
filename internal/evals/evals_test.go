@@ -13,7 +13,8 @@ import (
 	"strings"
 	"testing"
 
-	"scrutineer/internal/llm"
+	"github.com/alpha-omega-security/harness/llm"
+
 	"scrutineer/internal/worker"
 )
 
@@ -56,6 +57,7 @@ func TestLoadScenarioDefaultsRequiredButAllowsOptional(t *testing.T) {
 	if err := os.WriteFile(path, []byte(`given: optional case
 fixture: fixtures/x
 skill: security-deep-dive
+schema_skill: security-deep-dive
 should_find:
   - finding: required by default
     evidence_contains:
@@ -83,6 +85,9 @@ must_not_contain:
 	if got := sc.MustNotContain; len(got) != 1 || got[0] != "Rails::ActiveRecord" {
 		t.Fatalf("must_not_contain = %#v, want [Rails::ActiveRecord]", got)
 	}
+	if sc.SchemaSkill != "security-deep-dive" {
+		t.Fatalf("schema_skill = %q, want security-deep-dive", sc.SchemaSkill)
+	}
 }
 
 func TestLoadScenarioRejectsUnknownAssertionField(t *testing.T) {
@@ -100,6 +105,125 @@ should_find:
 	_, err := LoadScenario(path)
 	if err == nil || !strings.Contains(err.Error(), "severty") {
 		t.Fatalf("LoadScenario error = %v, want unknown severty field", err)
+	}
+}
+
+func TestValidateExperimentPairs(t *testing.T) {
+	paired := []Scenario{
+		{
+			Path:       "a.yaml",
+			Given:      "same fixture and rubric",
+			Fixture:    "fixtures/a",
+			Experiment: "prompt",
+			Variant:    "production",
+			ShouldFind: []Assertion{
+				{Finding: "SQL injection", Required: true},
+				{Finding: "command injection", Required: true},
+			},
+			ShouldNotFind: []Assertion{
+				{Finding: "unused import"},
+				{Finding: "dead code"},
+			},
+		},
+		{
+			Path:       "a-short.yaml",
+			Given:      "same fixture and rubric",
+			Fixture:    "fixtures/a",
+			Experiment: "prompt",
+			Variant:    "candidate",
+			ShouldFind: []Assertion{
+				{Finding: "command injection", Required: true, requiredSet: true},
+				{Finding: "SQL injection", Required: true, requiredSet: true},
+			},
+			ShouldNotFind: []Assertion{
+				{Finding: "dead code"},
+				{Finding: "unused import"},
+			},
+		},
+	}
+	if err := validateExperimentPairs(paired); err != nil {
+		t.Fatalf("validateExperimentPairs() = %v, want nil", err)
+	}
+
+	tests := []struct {
+		name      string
+		scenarios []Scenario
+		want      string
+	}{
+		{
+			name: "one variant",
+			scenarios: []Scenario{
+				{Path: "a.yaml", Fixture: "fixtures/a", Experiment: "prompt", Variant: "production"},
+			},
+			want: "at least 2",
+		},
+		{
+			name: "different fixtures",
+			scenarios: []Scenario{
+				{Path: "a.yaml", Fixture: "fixtures/a", Experiment: "prompt", Variant: "production"},
+				{Path: "b.yaml", Fixture: "fixtures/b", Experiment: "prompt", Variant: "candidate"},
+			},
+			want: "different fixtures",
+		},
+		{
+			name: "duplicate fixture",
+			scenarios: []Scenario{
+				{Path: "a.yaml", Fixture: "fixtures/a", Experiment: "prompt", Variant: "production"},
+				{Path: "again.yaml", Fixture: "fixtures/a", Experiment: "prompt", Variant: "production"},
+				{Path: "candidate.yaml", Fixture: "fixtures/a", Experiment: "prompt", Variant: "candidate"},
+			},
+			want: "repeats fixture",
+		},
+		{
+			name: "different given",
+			scenarios: []Scenario{
+				{
+					Path:       "a.yaml",
+					Given:      "SQL injection reaches the database",
+					Fixture:    "fixtures/a",
+					Experiment: "prompt",
+					Variant:    "production",
+					ShouldFind: []Assertion{{Finding: "SQL injection"}},
+				},
+				{
+					Path:       "candidate.yaml",
+					Given:      "An injection reaches the database",
+					Fixture:    "fixtures/a",
+					Experiment: "prompt",
+					Variant:    "candidate",
+					ShouldFind: []Assertion{{Finding: "SQL injection"}},
+				},
+			},
+			want: "different given text",
+		},
+		{
+			name: "different assertions",
+			scenarios: []Scenario{
+				{
+					Path:       "a.yaml",
+					Fixture:    "fixtures/a",
+					Experiment: "prompt",
+					Variant:    "production",
+					ShouldFind: []Assertion{{Finding: "SQL injection"}},
+				},
+				{
+					Path:       "candidate.yaml",
+					Fixture:    "fixtures/a",
+					Experiment: "prompt",
+					Variant:    "candidate",
+					ShouldFind: []Assertion{{Finding: "command injection"}},
+				},
+			},
+			want: "different assertions",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateExperimentPairs(tc.scenarios)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("validateExperimentPairs() = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 
@@ -168,6 +292,74 @@ func TestScenarioValidate(t *testing.T) {
 				Skill:          "security-deep-dive",
 				ShouldFind:     []Assertion{{Finding: "x"}},
 				MustNotContain: []string{""},
+			},
+		},
+		{
+			name: "invalid skill path",
+			sc: Scenario{
+				Path:       "case.yaml",
+				Given:      "x",
+				Fixture:    "fixtures/x",
+				Skill:      "../security-deep-dive",
+				ShouldFind: []Assertion{{Finding: "x"}},
+			},
+		},
+		{
+			name: "invalid schema skill path",
+			sc: Scenario{
+				Path:        "case.yaml",
+				Given:       "x",
+				Fixture:     "fixtures/x",
+				Skill:       "security-deep-dive",
+				SchemaSkill: "/security-deep-dive",
+				ShouldFind:  []Assertion{{Finding: "x"}},
+			},
+		},
+		{
+			name: "experiment without variant",
+			sc: Scenario{
+				Path:       "case.yaml",
+				Given:      "x",
+				Fixture:    "fixtures/x",
+				Skill:      "security-deep-dive",
+				Experiment: "prompt-test",
+				ShouldFind: []Assertion{{Finding: "x"}},
+			},
+		},
+		{
+			name: "invalid variant identifier",
+			sc: Scenario{
+				Path:       "case.yaml",
+				Given:      "x",
+				Fixture:    "fixtures/x",
+				Skill:      "security-deep-dive",
+				Experiment: "prompt-test",
+				Variant:    "candidate/one",
+				ShouldFind: []Assertion{{Finding: "x"}},
+			},
+		},
+		{
+			name: "experiment surrounding whitespace",
+			sc: Scenario{
+				Path:       "case.yaml",
+				Given:      "x",
+				Fixture:    "fixtures/x",
+				Skill:      "security-deep-dive",
+				Experiment: " prompt-test",
+				Variant:    "candidate",
+				ShouldFind: []Assertion{{Finding: "x"}},
+			},
+		},
+		{
+			name: "variant surrounding whitespace",
+			sc: Scenario{
+				Path:       "case.yaml",
+				Given:      "x",
+				Fixture:    "fixtures/x",
+				Skill:      "security-deep-dive",
+				Experiment: "prompt-test",
+				Variant:    "candidate ",
+				ShouldFind: []Assertion{{Finding: "x"}},
 			},
 		},
 	}
@@ -318,6 +510,108 @@ func TestHeuristicJudgeFailures(t *testing.T) {
 	}
 	if got[1].Matched {
 		t.Fatalf("should_not_find hit should fail the assertion: %+v", got[1])
+	}
+}
+
+func TestRunnerLoadsEvalSkillWithProductionSchema(t *testing.T) {
+	sc := mustLoadScenario(t, "../../evals/security-deep-dive-short-sqli.yaml")
+	r := Runner{
+		Runner:     fakeSkillRunner{report: validDeepDiveReport()},
+		SkillsRoot: "../../skills",
+		EvalsRoot:  "../../evals",
+		WorkRoot:   t.TempDir(),
+		Model:      "test-model",
+	}
+	skill, err := r.loadSkill(sc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if skill.Name != "security-deep-dive-short" {
+		t.Fatalf("skill name = %q, want security-deep-dive-short", skill.Name)
+	}
+	if skill.SchemaJSON == "" {
+		t.Fatal("eval skill did not inherit production schema")
+	}
+	res, err := r.RunScenario(context.Background(), sc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.FailedRequired != 0 || res.Unexpected != 0 {
+		t.Fatalf("unexpected failures: %+v", res)
+	}
+}
+
+func TestRunnerStagesEvalSkillReferences(t *testing.T) {
+	sc := mustLoadScenario(t, "../../evals/security-deep-dive-short-sqli.yaml")
+	inspected := false
+	r := Runner{
+		Runner: fakeSkillRunner{
+			report: validDeepDiveReport(),
+			inspect: func(sj worker.SkillJob) error {
+				inspected = true
+				for _, name := range []string{"sink-taxonomy.md", "report-contract.md"} {
+					if _, err := os.Stat(filepath.Join(sj.SkillDir, "references", name)); err != nil {
+						return fmt.Errorf("staged reference %s: %w", name, err)
+					}
+				}
+				return nil
+			},
+		},
+		SkillsRoot: "../../skills",
+		EvalsRoot:  "../../evals",
+		WorkRoot:   t.TempDir(),
+	}
+	if _, err := r.RunScenario(context.Background(), sc); err != nil {
+		t.Fatal(err)
+	}
+	if !inspected {
+		t.Fatal("skill runner did not inspect staged references")
+	}
+}
+
+func TestRunnerEvalSkillFileOnlyFallsBackWhenAbsent(t *testing.T) {
+	evalsRoot := t.TempDir()
+	productionRoot := t.TempDir()
+	evalSkill := filepath.Join(evalsRoot, "skills", "variant", "SKILL.md")
+	if err := os.MkdirAll(filepath.Dir(evalSkill), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(evalsRoot, "missing.md"), evalSkill); err != nil {
+		t.Fatal(err)
+	}
+	writeProductionSkill(t, productionRoot, "variant", "variant")
+
+	r := Runner{EvalsRoot: evalsRoot, SkillsRoot: productionRoot}
+	if got := r.skillFile("variant"); got != evalSkill {
+		t.Fatalf("skillFile = %q, want broken eval skill path %q", got, evalSkill)
+	}
+	_, err := r.loadSkill(Scenario{Path: "case.yaml", Skill: "variant"})
+	if err == nil {
+		t.Fatal("loadSkill succeeded through production fallback, want eval skill parse error")
+	}
+}
+
+func TestRunnerRejectsSkillNameMismatch(t *testing.T) {
+	evalsRoot := t.TempDir()
+	writeEvalSkill(t, evalsRoot, "expected", "actual")
+
+	r := Runner{EvalsRoot: evalsRoot, SkillsRoot: t.TempDir()}
+	_, err := r.loadSkill(Scenario{Path: "case.yaml", Skill: "expected"})
+	if err == nil || !strings.Contains(err.Error(), `skill "expected" loaded SKILL.md with name "actual"`) {
+		t.Fatalf("loadSkill error = %v, want skill name mismatch", err)
+	}
+}
+
+func TestRunnerRejectsSchemaSkillNameMismatch(t *testing.T) {
+	evalsRoot := t.TempDir()
+	skillsRoot := t.TempDir()
+	writeEvalSkill(t, evalsRoot, "variant", "variant")
+	writeProductionSkill(t, skillsRoot, "schema-source", "wrong-schema")
+
+	r := Runner{EvalsRoot: evalsRoot, SkillsRoot: skillsRoot}
+	_, err := r.loadSkill(Scenario{Path: "case.yaml", Skill: "variant", SchemaSkill: "schema-source"})
+	if err == nil || !strings.Contains(err.Error(), `schema_skill "schema-source" loaded SKILL.md with name "wrong-schema"`) {
+		t.Fatalf("loadSkill error = %v, want schema skill name mismatch", err)
 	}
 }
 
@@ -538,15 +832,22 @@ func TestRunFixtures(t *testing.T) {
 		}}
 	}
 	results, err := r.RunAll(context.Background(), scenarios)
-	if err != nil {
-		t.Fatal(err)
-	}
 	for _, res := range results {
 		t.Logf("%s: assertions=%d required_misses=%d optional_misses=%d unexpected=%d cost=$%.4f turns=%d",
 			res.Scenario.Path, res.AssertionTotal, res.FailedRequired, res.OptionalMisses, res.Unexpected, res.Cost.USD, res.Cost.Turns)
 		if res.FailedRequired > 0 || res.Unexpected > 0 {
 			t.Fail()
 		}
+	}
+	for _, summary := range SummarizeExperiments(results) {
+		t.Logf("experiment=%s variant=%s scenarios=%d passed=%d errors=%d assertions=%d required_misses=%d optional_misses=%d unexpected=%d cost=$%.4f turns=%d input_tokens=%d output_tokens=%d cache_read_tokens=%d cache_write_tokens=%d",
+			summary.Experiment, summary.Variant, summary.ScenarioTotal, summary.Passed, summary.Errors,
+			summary.AssertionTotal, summary.FailedRequired, summary.OptionalMisses, summary.Unexpected,
+			summary.Cost.USD, summary.Cost.Turns, summary.Cost.InputTokens, summary.Cost.OutputTokens,
+			summary.Cost.CacheReadTokens, summary.Cost.CacheWriteTokens)
+	}
+	if err != nil {
+		t.Errorf("run scenarios: %v", err)
 	}
 }
 
@@ -624,6 +925,48 @@ func TestRunAllContinuesAfterScenarioError(t *testing.T) {
 	}
 }
 
+func TestSummarizeExperiments(t *testing.T) {
+	results := []Result{
+		{
+			Scenario:       Scenario{Experiment: "prompt", Variant: "production"},
+			AssertionTotal: 2,
+			Cost:           Cost{USD: 0.03, Turns: 2, InputTokens: 30},
+		},
+		{
+			Scenario:       Scenario{Experiment: "prompt", Variant: "production"},
+			AssertionTotal: 3,
+			FailedRequired: 1,
+			OptionalMisses: 1,
+			Cost:           Cost{USD: 0.04, Turns: 3, InputTokens: 40},
+		},
+		{
+			Scenario:       Scenario{Experiment: "prompt", Variant: "reference-driven"},
+			AssertionTotal: 2,
+			Unexpected:     1,
+			Cost:           Cost{USD: 0.02, Turns: 1, InputTokens: 20},
+		},
+		{
+			Scenario: Scenario{Experiment: "prompt", Variant: "reference-driven"},
+			Error:    "runner failed",
+		},
+		{Scenario: Scenario{Skill: "unpaired"}, AssertionTotal: 99},
+	}
+
+	got := SummarizeExperiments(results)
+	if len(got) != 2 {
+		t.Fatalf("summaries = %d, want 2: %+v", len(got), got)
+	}
+	if got[0].Variant != "production" || got[0].ScenarioTotal != 2 || got[0].Passed != 1 ||
+		got[0].AssertionTotal != 5 || got[0].FailedRequired != 1 || got[0].OptionalMisses != 1 ||
+		got[0].Cost.USD < 0.0699 || got[0].Cost.USD > 0.0701 || got[0].Cost.Turns != 5 || got[0].Cost.InputTokens != 70 {
+		t.Fatalf("production summary = %+v", got[0])
+	}
+	if got[1].Variant != "reference-driven" || got[1].ScenarioTotal != 2 || got[1].Passed != 0 ||
+		got[1].Errors != 1 || got[1].Unexpected != 1 || got[1].AssertionTotal != 2 {
+		t.Fatalf("reference-driven summary = %+v", got[1])
+	}
+}
+
 func mustLoadScenario(t *testing.T, path string) Scenario {
 	t.Helper()
 	sc, err := LoadScenario(path)
@@ -631,6 +974,39 @@ func mustLoadScenario(t *testing.T, path string) Scenario {
 		t.Fatal(err)
 	}
 	return sc
+}
+
+func writeEvalSkill(t *testing.T, root, dirName, skillName string) {
+	t.Helper()
+	writeSkillFile(t, filepath.Join(root, "skills", dirName), skillName)
+}
+
+func writeProductionSkill(t *testing.T, root, dirName, skillName string) {
+	t.Helper()
+	writeSkillFile(t, filepath.Join(root, dirName), skillName)
+}
+
+func writeSkillFile(t *testing.T, dir, skillName string) {
+	t.Helper()
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := fmt.Sprintf(`---
+name: %s
+description: eval test skill
+license: MIT
+metadata:
+  scrutineer.output_file: report.json
+  scrutineer.output_kind: freeform
+---
+
+# %s
+
+Write report.json.
+`, skillName, skillName)
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func validDeepDiveReport() string {
@@ -725,13 +1101,19 @@ func incompleteDeepDiveReport() string {
 }
 
 type fakeSkillRunner struct {
-	report string
-	err    error
+	report  string
+	err     error
+	inspect func(worker.SkillJob) error
 }
 
 func (f fakeSkillRunner) RunSkill(ctx context.Context, sj worker.SkillJob, emit func(worker.Event)) (worker.SkillResult, error) {
 	if f.err != nil {
 		return worker.SkillResult{}, f.err
+	}
+	if f.inspect != nil {
+		if err := f.inspect(sj); err != nil {
+			return worker.SkillResult{}, err
+		}
 	}
 	if sj.Name == "" || sj.SkillDir == "" || sj.OutputFile == "" {
 		return worker.SkillResult{}, os.ErrInvalid

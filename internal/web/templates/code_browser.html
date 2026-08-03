@@ -29,9 +29,9 @@
     <p class="font-medium mb-1">Could not load this file at <code>{{short .Commit}}</code>.</p>
     <pre class="whitespace-pre-wrap text-xs">{{.Error}}</pre>
   </div>
-{{else if .Binary}}
+{{else if .Unsupported}}
   <div class="rounded border border-dashed p-6 text-sm text-muted-foreground">
-    Binary file — not rendered.
+    This file is not UTF-8 text and cannot be rendered.
   </div>
 {{else}}
   {{if .Truncated}}

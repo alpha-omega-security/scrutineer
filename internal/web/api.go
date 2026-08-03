@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
@@ -65,6 +66,16 @@ func (s *Server) apiAuth(next http.Handler) http.Handler {
 
 const apiMaxBody = 1 << 20
 
+//nolint:ireturn // T is a concrete struct at every call site, not an interface
+func decodeAPIBody[T any](w http.ResponseWriter, r *http.Request, errorMessage string) (T, bool) {
+	var body T
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		writeAPIError(w, http.StatusBadRequest, errorMessage)
+		return body, false
+	}
+	return body, true
+}
+
 func decodeOptionalAPIBody(w http.ResponseWriter, r *http.Request, dst any) bool {
 	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
 		if errors.Is(err, io.EOF) {
@@ -106,6 +117,7 @@ func (s *Server) apiHandler() http.Handler {
 	mux.HandleFunc("GET /repositories/{id}/scans", s.apiListScans)
 	mux.HandleFunc("GET /repositories/{id}/maintainers", s.apiListMaintainers)
 	mux.HandleFunc("GET /repositories/{id}/packages", s.apiListPackages)
+	mux.HandleFunc("GET /repositories/{id}/alternatives", s.apiListPackageAlternatives)
 	mux.HandleFunc("GET /repositories/{id}/advisories", s.apiListAdvisories)
 	mux.HandleFunc("GET /repositories/{id}/dependents", s.apiListDependents)
 	mux.HandleFunc("GET /repositories/{id}/ecosystems/{source}/raw", s.apiGetEcosystemsRaw)
@@ -164,6 +176,7 @@ func (s *Server) apiGetRepository(w http.ResponseWriter, r *http.Request) {
 		"fork":            repo.Fork,
 		"posture":         repo.Posture,
 		"posture_summary": repo.PostureSummary,
+		"health":          repo.Health,
 	})
 }
 
@@ -181,7 +194,9 @@ var ecosystemsRawColumns = map[string]string{
 // apiGetEcosystemsRaw returns the verbatim cached ecosyste.ms payload for one
 // source: an operator/debug escape hatch, and a skill fallback when a
 // digested endpoint does not cover an edge case. 404 when nothing is cached
-// (the skill then falls back to WebFetch); 400 for an unknown source.
+// (the skill then falls back to WebFetch, which is also the steady state under
+// `ecosystems_enrichment: false`, where no source is ever cached); 400 for an
+// unknown source.
 func (s *Server) apiGetEcosystemsRaw(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(r.PathValue("id"))
 	if !s.scanOwnsRepo(r, uint(id)) {
@@ -215,11 +230,10 @@ func (s *Server) apiPatchRepository(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusForbidden, "scan may only edit its own repository")
 		return
 	}
-	var body struct {
+	body, ok := decodeAPIBody[struct {
 		Fork *string `json:"fork"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		writeAPIError(w, http.StatusBadRequest, "body must be JSON")
+	}](w, r, "body must be JSON")
+	if !ok {
 		return
 	}
 	if body.Fork == nil {
@@ -361,6 +375,10 @@ func (s *Server) apiRunSkill(w http.ResponseWriter, r *http.Request) {
 			writeAPIError(w, http.StatusNotFound, err.Error())
 			return
 		}
+		if errors.Is(err, ErrRepoFederationOptOut) {
+			writeAPIError(w, http.StatusConflict, err.Error())
+			return
+		}
 		if errors.Is(err, ErrSkillProfileMismatch) {
 			writeAPIError(w, http.StatusBadRequest, err.Error())
 			return
@@ -420,6 +438,10 @@ func (s *Server) apiRunFindingSkill(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		if errors.Is(err, ErrSkillRequiresRemote) {
 			writeAPIError(w, http.StatusNotFound, err.Error())
+			return
+		}
+		if errors.Is(err, ErrRepoFederationOptOut) {
+			writeAPIError(w, http.StatusConflict, err.Error())
 			return
 		}
 		writeAPIError(w, http.StatusInternalServerError, err.Error())
@@ -493,7 +515,14 @@ func (s *Server) apiListCNAs(w http.ResponseWriter, r *http.Request) {
 func (s *Server) apiListSkills(w http.ResponseWriter, r *http.Request) {
 	q := s.DB.Order("name")
 	if v := r.URL.Query().Get("active"); v != "" {
-		active, _ := strconv.ParseBool(v)
+		// A malformed value is a 400 rather than a silent fall-back to false,
+		// so ?active=yes never quietly returns the inactive skills instead.
+		active, err := strconv.ParseBool(v)
+		if err != nil {
+			writeAPIError(w, http.StatusBadRequest,
+				fmt.Sprintf("active: must be true or false, got %q", v))
+			return
+		}
 		q = q.Where("active = ?", active)
 	}
 	var rows []db.Skill

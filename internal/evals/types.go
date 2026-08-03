@@ -4,10 +4,13 @@ package evals
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"gopkg.in/yaml.v3"
 )
+
+var scenarioIdentifierRE = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 
 // Scenario is one YAML eval file under evals/. It points at a fixture
 // repository and names the skill whose output should be judged.
@@ -16,6 +19,9 @@ type Scenario struct {
 	Given          string      `yaml:"given"`
 	Fixture        string      `yaml:"fixture"`
 	Skill          string      `yaml:"skill"`
+	SchemaSkill    string      `yaml:"schema_skill"`
+	Experiment     string      `yaml:"experiment"`
+	Variant        string      `yaml:"variant"`
 	ShouldFind     []Assertion `yaml:"should_find"`
 	ShouldNotFind  []Assertion `yaml:"should_not_find"`
 	MustNotContain []string    `yaml:"must_not_contain"`
@@ -96,6 +102,15 @@ func (s Scenario) validate() error {
 	if len(missing) > 0 {
 		return fmt.Errorf("%s missing %s", s.Path, strings.Join(missing, ", "))
 	}
+	if !scenarioIdentifierRE.MatchString(s.Skill) {
+		return fmt.Errorf("%s skill %q is not a valid skill name", s.Path, s.Skill)
+	}
+	if s.SchemaSkill != "" && !scenarioIdentifierRE.MatchString(s.SchemaSkill) {
+		return fmt.Errorf("%s schema_skill %q is not a valid skill name", s.Path, s.SchemaSkill)
+	}
+	if err := s.validateExperiment(); err != nil {
+		return err
+	}
 	if len(s.ShouldFind) == 0 && len(s.ShouldNotFind) == 0 && len(s.MustNotContain) == 0 {
 		return fmt.Errorf("%s has no assertions", s.Path)
 	}
@@ -109,6 +124,27 @@ func (s Scenario) validate() error {
 		if strings.TrimSpace(term) == "" {
 			return fmt.Errorf("%s must_not_contain[%d]: empty term", s.Path, i)
 		}
+	}
+	return nil
+}
+
+func (s Scenario) validateExperiment() error {
+	experiment := strings.TrimSpace(s.Experiment)
+	variant := strings.TrimSpace(s.Variant)
+	if (experiment == "") != (variant == "") {
+		return fmt.Errorf("%s experiment and variant must be set together", s.Path)
+	}
+	if s.Experiment != experiment {
+		return fmt.Errorf("%s experiment %q has surrounding whitespace", s.Path, s.Experiment)
+	}
+	if s.Variant != variant {
+		return fmt.Errorf("%s variant %q has surrounding whitespace", s.Path, s.Variant)
+	}
+	if experiment != "" && !scenarioIdentifierRE.MatchString(experiment) {
+		return fmt.Errorf("%s experiment %q is not a valid identifier", s.Path, s.Experiment)
+	}
+	if variant != "" && !scenarioIdentifierRE.MatchString(variant) {
+		return fmt.Errorf("%s variant %q is not a valid identifier", s.Path, s.Variant)
 	}
 	return nil
 }

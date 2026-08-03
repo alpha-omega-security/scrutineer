@@ -81,6 +81,19 @@ func TestParseNormalisesBackslashPatterns(t *testing.T) {
 	}
 }
 
+func TestNormaliseSkipPattern(t *testing.T) {
+	got, err := NormaliseSkipPattern(` tests\** `)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != "tests/**" {
+		t.Fatalf("pattern = %q, want tests/**", got)
+	}
+	if _, err := NormaliseSkipPattern("../private/**"); err == nil || !strings.Contains(err.Error(), "relative") {
+		t.Fatalf("NormaliseSkipPattern invalid error = %v, want relative", err)
+	}
+}
+
 func TestParseEmpty(t *testing.T) {
 	cfg, err := Parse(" \n")
 	if err != nil || !cfg.Empty() {

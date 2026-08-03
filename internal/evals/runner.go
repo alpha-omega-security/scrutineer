@@ -58,7 +58,7 @@ func (r Runner) RunScenario(ctx context.Context, sc Scenario) (Result, error) {
 	}
 	defer func() { _ = os.RemoveAll(work) }()
 
-	skill, err := r.loadSkill(sc.Skill)
+	skill, err := r.loadSkill(sc)
 	if err != nil {
 		return Result{}, err
 	}
@@ -148,12 +148,8 @@ func addCost(total *Cost, add Cost) {
 	total.CacheWriteTokens += add.CacheWriteTokens
 }
 
-func (r Runner) loadSkill(name string) (*db.Skill, error) {
-	root := r.SkillsRoot
-	if root == "" {
-		root = "skills"
-	}
-	parsed, err := skills.ParseFile(filepath.Join(root, name, "SKILL.md"))
+func (r Runner) loadSkill(sc Scenario) (*db.Skill, error) {
+	parsed, err := skills.ParseFile(r.skillFile(sc.Skill))
 	if err != nil {
 		return nil, err
 	}
@@ -161,12 +157,47 @@ func (r Runner) loadSkill(name string) (*db.Skill, error) {
 	if err != nil {
 		return nil, err
 	}
+	if model.Name != sc.Skill {
+		return nil, fmt.Errorf("%s: skill %q loaded SKILL.md with name %q", sc.Path, sc.Skill, model.Name)
+	}
+	if sc.SchemaSkill != "" {
+		schemaSkill, err := skills.ParseFile(r.productionSkillFile(sc.SchemaSkill))
+		if err != nil {
+			return nil, err
+		}
+		schemaModel, err := schemaSkill.ToModel("eval")
+		if err != nil {
+			return nil, err
+		}
+		if schemaModel.Name != sc.SchemaSkill {
+			return nil, fmt.Errorf("%s: schema_skill %q loaded SKILL.md with name %q", sc.Path, sc.SchemaSkill, schemaModel.Name)
+		}
+		model.SchemaJSON = schemaModel.SchemaJSON
+	}
 	model.Active = true
 	model.Version = 1
 	if err := worker.ValidateSkillPaths(model.Name, model.OutputFile); err != nil {
 		return nil, err
 	}
 	return model, nil
+}
+
+func (r Runner) skillFile(name string) string {
+	if r.EvalsRoot != "" {
+		evalSkill := filepath.Join(r.EvalsRoot, "skills", name, "SKILL.md")
+		if _, err := os.Lstat(evalSkill); err == nil || !os.IsNotExist(err) {
+			return evalSkill
+		}
+	}
+	return r.productionSkillFile(name)
+}
+
+func (r Runner) productionSkillFile(name string) string {
+	root := r.SkillsRoot
+	if root == "" {
+		root = "skills"
+	}
+	return filepath.Join(root, name, "SKILL.md")
 }
 
 func (r Runner) fixturePath(sc Scenario) (string, error) {

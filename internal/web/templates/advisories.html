@@ -65,6 +65,11 @@
         <td class="min-w-0 whitespace-normal">
           {{if .URL}}<a href="{{.URL}}" target="_blank" rel="noopener" class="font-medium hover:underline">{{.Title}}</a>
           {{else}}<span class="font-medium">{{.Title}}</span>{{end}}
+          {{$a := .}}{{with index $.AuditStatuses .ID}}
+            {{if eq . "fixed"}}<a href="/advisories/{{$a.ID}}/certificate.json" class="badge-outline text-xs hover:underline"
+                data-tooltip="Download fix-audit certificate">fix audit: fixed</a>
+            {{else}}<span class="badge-outline text-xs">fix audit: {{.}}</span>{{end}}
+          {{end}}
           {{if .Classification}}<div class="text-xs text-muted-foreground">{{.Classification}}</div>{{end}}
         </td>
         <td class="truncate">

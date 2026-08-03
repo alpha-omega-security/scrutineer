@@ -175,7 +175,7 @@ func (w *Worker) doExposure(ctx context.Context, scan *db.Scan, emit func(Event)
 	}
 
 	depRepo := db.Repository{URL: dep.RepositoryURL, Name: dep.Name}
-	prompt := buildLoggedPrompt(&skill)
+	prompt := buildLoggedPrompt(&skill, scan.Backend)
 	scan.Prompt = prompt
 	w.DB.Model(scan).Update("prompt", prompt)
 

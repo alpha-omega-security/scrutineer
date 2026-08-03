@@ -97,6 +97,70 @@ func TestHandleImportSARIF(t *testing.T) {
 	}
 }
 
+func TestHandleImport_multiResultFailureRollsBackAllRows(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	if err := s.DB.Create(&db.Skill{
+		Name: metadataSkillName, OutputFile: "report.json",
+		OutputKind: "repo_metadata", Version: 1, Active: true,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DB.Create(&db.Skill{
+		Name: revalidateSkillName, OutputFile: "report.json",
+		OutputKind: "revalidate", Version: 1, Active: true,
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	body := `{
+		"version": "2.1.0",
+		"runs": [
+			{
+				"tool": {"driver": {"name": "first"}},
+				"versionControlProvenance": [{
+					"repositoryUri": "https://example.com/first",
+					"revisionId": "abc123"
+				}],
+				"results": [{
+					"ruleId": "rule-1",
+					"level": "error",
+					"message": {"text": "first finding"}
+				}]
+			},
+			{
+				"tool": {"driver": {"name": "second"}},
+				"results": [{
+					"ruleId": "rule-2",
+					"level": "warning",
+					"message": {"text": "second finding"}
+				}]
+			}
+		]
+	}`
+	w := postImport(t, s, "/api/v1/import", body)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422; body=%s", w.Code, w.Body)
+	}
+	if !strings.Contains(w.Body.String(), "repository unknown") {
+		t.Fatalf("body = %q, want repository error", w.Body.String())
+	}
+
+	for name, model := range map[string]any{
+		"repositories": &db.Repository{},
+		"scans":        &db.Scan{},
+		"findings":     &db.Finding{},
+	} {
+		var count int64
+		if err := s.DB.Model(model).Count(&count).Error; err != nil {
+			t.Fatalf("count %s: %v", name, err)
+		}
+		if count != 0 {
+			t.Errorf("%s rows = %d, want 0 after rollback", name, count)
+		}
+	}
+}
+
 func TestHandleImportDedupesOnReimport(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

@@ -63,6 +63,7 @@ func TestRepoDelete_removesRepoAndAllLinkedData(t *testing.T) {
 	s.DB.Create(&db.FindingCommunication{FindingID: finding.ID, Channel: "email", Direction: "outbound"})
 	s.DB.Create(&db.FindingReference{FindingID: finding.ID, URL: "https://x/ref"})
 	s.DB.Create(&db.FindingHistory{FindingID: finding.ID, Field: "status", NewValue: "new"})
+	s.DB.Create(&db.FindingReview{FindingID: finding.ID, Verdict: "true_positive", Reviewer: "analyst"})
 
 	dependent := db.Dependent{RepositoryID: repo.ID, Name: "downstream", Ecosystem: "npm"}
 	s.DB.Create(&dependent)
@@ -139,6 +140,7 @@ func TestRepoDelete_removesRepoAndAllLinkedData(t *testing.T) {
 		"comms":        count(&db.FindingCommunication{}, "finding_id = ?", finding.ID),
 		"refs":         count(&db.FindingReference{}, "finding_id = ?", finding.ID),
 		"history":      count(&db.FindingHistory{}, "finding_id = ?", finding.ID),
+		"reviews":      count(&db.FindingReview{}, "finding_id = ?", finding.ID),
 		"findingdep":   count(&db.FindingDependent{}, "finding_id = ?", finding.ID),
 	} {
 		if n != 0 {

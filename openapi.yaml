@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Scrutineer Skill API
-  version: 0.3.0
+  version: 0.4.0
   description: |
     A narrow HTTP surface that claude-code skills use while they run. The
     goal is enough to let a skill orchestrate other skills and read prior
@@ -24,6 +24,81 @@ security:
   - bearerAuth: []
 
 paths:
+  /openapi.yaml:
+    get:
+      summary: Fetch this OpenAPI document
+      description: |
+        Returns the embedded copy of `openapi.yaml`, so a skill or an external
+        tool can read the API surface from a running server without a checkout.
+
+        Two ways in. From localhost it is unauthenticated, because a caller
+        discovering the API has no running scan to take a bearer token from;
+        the host check is the boundary, as on the browser UI. A skill inside
+        the runner container cannot pass that check -- it reaches the server
+        through the egress proxy on the host endpoint `api_base` advertises,
+        which forwards the original `Host` -- so it authenticates with the
+        per-scan bearer token it already holds for the rest of this API.
+        See threatmodel.md.
+      operationId: getOpenAPISpec
+      security:
+        - {}
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The OpenAPI document
+          content:
+            application/yaml:
+              schema:
+                type: string
+        "401":
+          description: |
+            Request came from a non-local host without a bearer token
+            belonging to a currently running scan
+  /claim-check:
+    servers:
+      - url: http://127.0.0.1:8080
+        description: Local scrutineer server root
+    post:
+      summary: Check whether this instance already holds a federated finding claim
+      description: |
+        Accepts a salted finding hash from a federation peer and returns whether
+        this instance already has a claimable matching finding. The request does
+        not reveal the finding; a match discloses only the configured operator
+        contact. Disabled instances, non-POST requests, and instances without a
+        federation salt answer 404 so federation support is not fingerprintable.
+      operationId: claimCheck
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [hash]
+              properties:
+                hash:
+                  type: string
+                  pattern: '^[0-9a-f]{64}$'
+      responses:
+        '200':
+          description: Claim-check result
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [match]
+                properties:
+                  match: { type: boolean }
+                  contact:
+                    type: string
+                    description: Present only when match is true and federation contact is configured.
+        '400':
+          description: Invalid JSON body or hash value
+        '404':
+          description: Claim check disabled or unsupported method
+        '500':
+          description: Failed to load local findings
+
   /repositories/{id}:
     get:
       summary: Fetch a repository summary
@@ -38,6 +113,45 @@ paths:
               schema: { $ref: '#/components/schemas/Repository' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      summary: Update skill-writable repository fields
+      description: |
+        Allows the authenticated scan to write repository fields that are
+        produced by skills rather than owned by metadata refreshes. Currently
+        only `fork` is accepted.
+      operationId: patchRepository
+      parameters:
+        - $ref: '#/components/parameters/RepositoryID'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fork]
+              properties:
+                fork:
+                  type: string
+                  description: Owner/name of the staging fork prepared for patch work.
+      responses:
+        '204':
+          description: Repository updated
+        '400':
+          description: Body is not valid JSON
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422':
+          description: No writable fields were supplied
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '500':
+          description: Database update failed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /repositories/{id}/scans:
     get:
@@ -96,6 +210,22 @@ paths:
                 items: { $ref: '#/components/schemas/Package' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  /repositories/{id}/alternatives:
+    get:
+      summary: List operator-curated package migration alternatives
+      operationId: listRepositoryAlternatives
+      parameters:
+        - $ref: '#/components/parameters/RepositoryID'
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/PackageAlternative' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
   /repositories/{id}/advisories:
     get:
       summary: List published advisories affecting this repository's packages
@@ -118,6 +248,7 @@ paths:
       operationId: listRepositoryDependents
       parameters:
         - $ref: '#/components/parameters/RepositoryID'
+        - $ref: '#/components/parameters/RepositoryReadLimit'
       responses:
         '200':
           description: OK
@@ -126,6 +257,7 @@ paths:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/Dependent' }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
   /repositories/{id}/ecosystems/{source}/raw:
@@ -134,7 +266,9 @@ paths:
       description: >
         Returns the raw upstream payload pre-fetched and cached server-side.
         A 404 signals nothing is cached, in which case the caller falls
-        back to a direct WebFetch.
+        back to a direct WebFetch. When the operator sets
+        ecosystems_enrichment false, no source is ever cached, so every
+        request answers 404 and the fallback is the only path.
       operationId: getRepositoryEcosystemsRaw
       parameters:
         - $ref: '#/components/parameters/RepositoryID'
@@ -175,6 +309,7 @@ paths:
       operationId: listRepositoryDependencies
       parameters:
         - $ref: '#/components/parameters/RepositoryID'
+        - $ref: '#/components/parameters/RepositoryReadLimit'
       responses:
         '200':
           description: OK
@@ -183,6 +318,7 @@ paths:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/Dependency' }
+        '400': { $ref: '#/components/responses/BadRequest' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
   /repositories/{id}/findings:
@@ -312,7 +448,9 @@ paths:
                 baseline_scan_id:
                   type: integer
                   format: int64
-                  description: Optional baseline scan to use for `rescan_mode: diff`; omitted lets Scrutineer choose the latest compatible completed scan.
+                  description: |
+                    Optional baseline scan to use for `rescan_mode: diff`; omitted lets Scrutineer
+                    choose the latest compatible completed scan.
       responses:
         '201':
           description: Scan enqueued
@@ -327,6 +465,11 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404':
           description: Skill or repository not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: 'The repository maintainer opted out of federated scanning, so no scan may be enqueued for it.'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -607,9 +750,20 @@ paths:
                 labels:
                   type: array
                   items: { type: string }
-                  description: Label names. Missing labels are created on demand.
+                  description: |
+                    Label names, replacing the finding's current set. Missing
+                    labels are created on demand. Blank and whitespace-only
+                    names are trimmed and ignored, so a request whose names are
+                    all blank clears every label just as `[]` does. The field
+                    itself is required: omitting it or sending null is rejected
+                    rather than treated as a clear-all.
       responses:
         '204': { description: Updated }
+        '400':
+          description: Body is not valid JSON, or has no labels array
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /findings/{id}/history:
     get:
@@ -667,6 +821,11 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404':
           description: Finding or skill not found
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: 'The repository maintainer opted out of federated scanning, so no scan may be enqueued for it.'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -744,6 +903,9 @@ paths:
         - name: active
           in: query
           schema: { type: boolean }
+          description: >
+            Filter by active state. An empty value applies no filter; a value
+            that is not a boolean returns 400.
       responses:
         '200':
           description: OK
@@ -752,6 +914,7 @@ paths:
               schema:
                 type: array
                 items: { $ref: '#/components/schemas/SkillSummary' }
+        '400': { $ref: '#/components/responses/BadRequest' }
 
   /cnas:
     get:
@@ -811,6 +974,27 @@ paths:
           description: Unsupported format query value, or `encrypt`/`scope`/`include` requested (only valid on per-repository bundle exports).
         '403':
           description: Host header is not localhost
+
+  /v1/repositories/{id}:
+    delete:
+      summary: Delete a repository and its linked data
+      description: |
+        Host-only operator endpoint for local automation. Removes the
+        repository, its scans, findings, repository-scoped rows, chat
+        conversations, and cached clone/workspace artifacts using the same
+        cleanup path as the browser delete action. Not reachable with a
+        per-scan bearer token.
+      operationId: deleteRepository
+      security: []
+      parameters:
+        - $ref: '#/components/parameters/RepositoryID'
+      responses:
+        '204': { description: Repository deleted }
+        '400': { description: Invalid repository id }
+        '403': { description: Host header is not localhost }
+        '404': { description: Repository not found }
+        '409': { description: Repository has queued, running, or paused scans }
+        '500': { description: Delete failed }
 
   /v1/repositories/{id}/findings:
     get:
@@ -940,6 +1124,30 @@ paths:
           description: Unsupported format query value, or `encrypt`/`scope`/`include` requested (only valid on per-repository bundle exports).
         '403':
           description: Host header is not localhost
+
+  /v1/findings/{id}:
+    delete:
+      summary: Delete one finding and its linked data
+      description: |
+        Host-only operator endpoint for local automation. Removes the finding,
+        labels join rows, notes, communications, references, history, reviews,
+        exposure rows, and finding-scoped chat conversations. Scans that
+        pointed at the finding are preserved with `finding_id` cleared. Not
+        reachable with a per-scan bearer token.
+      operationId: deleteFinding
+      security: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        '204': { description: Finding deleted }
+        '400': { description: Invalid finding id }
+        '403': { description: Host header is not localhost }
+        '404': { description: Finding not found }
+        '409': { description: Finding has queued, running, or paused scans }
+        '500': { description: Delete failed }
 
   /v1/scans:
     get:
@@ -1074,6 +1282,11 @@ components:
       in: path
       required: true
       schema: { type: integer, format: int64 }
+    RepositoryReadLimit:
+      name: limit
+      in: query
+      description: Maximum number of rows to return; defaults to 200 and is capped at 1000.
+      schema: { type: integer, minimum: 0, maximum: 1000, default: 200 }
 
   responses:
     NotFound:
@@ -1087,7 +1300,7 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
     BadRequest:
-      description: Malformed request body or a missing required field
+      description: Malformed query or request body, or a missing required field
       content:
         application/json:
           schema: { $ref: '#/components/schemas/Error' }
@@ -1117,6 +1330,7 @@ components:
         fork:           { type: string, description: 'owner/name of the staging fork in fork_org, when one exists.' }
         posture:        { type: string, enum: [ready, partial, unprepared], description: 'Disclosure-readiness tier from the posture skill. Empty when posture has not run.' }
         posture_summary: { type: string }
+        health:            { type: string, enum: [active, stale, abandoned, zombie], description: 'Evidence-based maintenance classification. Empty when evidence is incomplete.' }
 
     RepositoryExport:
       description: |
@@ -1264,6 +1478,16 @@ components:
         registry_url:    { type: string }
         latest_version:  { type: string }
 
+    PackageAlternative:
+      type: object
+      required: [id, repository_id, purl, kind]
+      properties:
+        id:            { type: integer, format: int64 }
+        repository_id: { type: integer, format: int64 }
+        purl:          { type: string }
+        kind:          { type: string, enum: [fork, successor, equivalent] }
+        note:          { type: string }
+
     Dependency:
       type: object
       required: [id, name, ecosystem]
@@ -1350,6 +1574,9 @@ components:
         mitigation:    { type: string, description: "Markdown body of operational mitigation guidance from the mitigate skill: workarounds, detection, optionally a semgrep rule (see mitigation_semgrep)." }
         mitigation_semgrep: { type: string, description: "Optional YAML semgrep rule from the mitigate skill. Empty when no rule was warranted." }
         dup_check:     { type: string, description: "Audit agent's one-sentence rationale for why this finding is distinct from the siblings already filed under the same scan_group. Empty for findings from skills that do not emit it." }
+        novelty:       { type: string, enum: [unfixed, fixed, unclear, not_checked, ""], description: "Latest upstream novelty state. A touched file remains unclear until revalidate classifies the staged history." }
+        novelty_checked_commit: { type: string, description: "Repository HEAD compared with the finding's scanned commit for novelty." }
+        novelty_checked_at: { type: string, format: date-time, nullable: true }
 
     FindingDetail:
       allOf:

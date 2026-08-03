@@ -123,6 +123,7 @@ When the containerised runner is active (the default when a container runtime is
 - **JSONL export** -- stream all findings or scans as line-delimited JSON for ingestion elsewhere
 - **Markdown report export** -- download a single consolidated `report.md` per repository or organisation
 - **Disclosure bundle** -- download `bundle.tar.gz` per finding: OSV, CSAF, markdown report, patch.diff, a runnable `poc/` directory extracted from the finding's Validation step, and a manifest naming the contents; ready to hand to a coordinator or attach to a private email when filing outside GitHub PVR
+- **CERT/CC VINCE submission** -- map a reviewed disclosure into VINCE's authenticated vulnerability-report form, review every field and attachment, then send one multipart request and record the returned VRF ID. The action requires a config-file API key; see [docs/disclosure-fallback.md](docs/disclosure-fallback.md#submit-to-certcc-vince)
 - **Encrypted sharing / archival bundle** -- export a repository's findings as a self-contained JSON bundle that round-trips through `/api/v1/import`, optionally age-encrypted to your team's keys. The default bundle is share-safe (finding substance only); `include=all` produces a lossless archival superset -- enrichment, disclosure fields, notes, communications, and references -- for backing up or moving a repo's findings between your own instances. See [docs/encrypted-sharing.md](docs/encrypted-sharing.md)
 
 ### Operational
@@ -171,6 +172,9 @@ Adding a repo enqueues the `triage` skill, whose SKILL.md lists the further skil
 | `posture` | Records the repo's security posture (reporting policy, response history, hardening) on the Repository row |
 | `forensics` | Read-only compromise timeline and evidence bundle from local Git history and public forge/archive records |
 | `variants` | Starting from one confirmed finding, searches the current repository for distinct, high-confidence sibling instances of the same root cause |
+| `audit-injection` | Opt-in static audit for command/code execution, unsafe deserialization, and server-side template injection with ecosystem-specific references |
+| `audit-exfil` | Opt-in static audit for SSRF, path traversal, XXE, and response or diagnostic leakage with ecosystem-specific references |
+| `audit-authz` | Opt-in static audit for IDOR, tenant isolation, fail-open guards, privilege escalation, and authorization decisions based on unverified claims |
 
 Edit `skills/triage/SKILL.md` to change what gets run by default. Drop new skill directories in `skills/` to add scan types; no code changes needed. See [docs/skills.md](docs/skills.md) for the frontmatter reference, the `scrutineer.*` metadata keys, the `context.json` shape, output kinds, schema validation, and the skill-facing HTTP API.
 
@@ -188,7 +192,7 @@ SARIF 2.1.0, CSV, markdown, and a minimal JSON shape are all accepted; the forma
 
 Every index page has a search box plus filter and sort dropdowns; the specifics vary by page. The sidebar sections:
 
-- **Repositories** -- your scanned repos with language, last-scan status, and finding counts. Click into one for tabs covering Summary, Findings, Threat Model, Packages, Dependencies, Dependents, Advisories, Maintainers, Data, and Scans, plus an "Export report" button for a markdown rollup.
+- **Repositories** -- your scanned repos with language, last-scan status, and finding counts. Click into one for tabs covering Summary, Findings, Threat Model, Packages, Dependencies, Dependents, Advisories, Maintainers, Data, Scans, and Chat, plus an "Export report" button for a markdown rollup.
 - **Organizations** -- repos, findings, and maintainers grouped by owning org, with per-org markdown exports.
 - **Findings** -- every vulnerability across all repos. A finding page shows the six-step analysis (trace, boundary, validation, prior art, reach, rating), scoring fields, notes, communications log, references, labels, and a change history.
 - **Packages** -- registry entries discovered across all repos.
@@ -199,7 +203,7 @@ Every index page has a search box plus filter and sort dropdowns; the specifics 
 - **Scans** -- every scan that has run. Queued scans can be paused/resumed, running or queued scans can be cancelled and failed ones retried.
 - **Skills** -- installed skills from disk and from the UI; view, edit, or run any of them.
 - **Usage** -- token and cost totals across all scans, broken down by skill.
-- **Settings** -- theme, colour scheme, model tiers, runner concurrency (restarts the runner to apply, cancelling in-flight scans) and default turn cap (applied to the next scan), plus system stats (record counts, DB size, paths).
+- **Settings** -- theme, colour scheme, model tiers, runner concurrency (restarts the runner to apply, cancelling in-flight scans) and default turn cap (applied to the next scan), plus system stats (record counts, DB size, paths). The chat pool is sized at half the concurrency the server started with and is not resized here, so a change only takes effect for chat after a restart.
 
 ## Finding workflow
 
@@ -215,6 +219,10 @@ Each finding from the `security-deep-dive` skill starts at **new** and moves thr
 8. **published** -- done
 
 Each finding page has a notes section for recording triage reasoning and communication history.
+
+The repository page carries a Federation opt-out control: recording one cancels the repository's queued, running and paused scans, then refuses every new scan on it, including scheduled runs and automatic follow-ups. It also withdraws the repository from the interchange feeds, and, when the public feed is configured, publishes the request so other federated instances honour it too; an opt-out arriving on a peer feed sets it here the same way. See [docs/interchange.md](docs/interchange.md).
+
+The Chat tab on a repository or a finding opens a read-only conversation with the agent about that code: it works from a copy of the clone plus a snapshot of the findings, and is restricted to reading and searching, so it can explain and cross-check but never modify anything. Each conversation keeps its own working copy on disk, so delete the ones you are done with from the conversation page to reclaim the space.
 
 A `patch` run whose diff survives the applicability gate (the diff parses, targets files that exist, touches the flagged file, and passes `git apply --check`) is stored on the finding as `suggested_fix` with its base commit, downloadable from the finding page as a `.patch` file and included in markdown report exports. To revise a fix, push your edits to a branch, scan that branch (the Branch field, or a `/tree/<branch>` URL suffix), and run `patch` against the new scan: the diff is proposed against that ref's tree, so each round of edit, push, and rescan gets a fresh proposal on top of your work.
 
@@ -331,16 +339,19 @@ The `docker build` commands shown for the runner image and profiles can be run a
 | `--hardened` | false | Strict sandbox: container runtime required, egress restricted to the backend's model API hosts + host skill API, read-only rootfs, internal network |
 | `--hardened-runtime-only` | false | The non-network half of `--hardened` (read-only rootfs + `no-new-privileges` + 2 GiB workspace cap) **without** the per-scan `--internal` network; the rootless fallback for hosts where the `--hardened` egress sidecar can't run (implied by `--hardened`). Deprecated alias: `--hardened-rootless-runtime` |
 | `--runner-image` | release-matched digest (`ghcr.io/alpha-omega-security/scrutineer-runner:latest` in development builds) | Container image for per-scan containers |
-| `-concurrency` | `4` | Number of scans to run in parallel |
+| `-concurrency` | `4` | Number of scans to run in parallel. Chat turns run from a separate pool sized at half this value, so a busy host can reach 1.5x this many agent containers |
 | `-clone` | `shallow` | Clone depth: `shallow` (`--depth 1`) or `full` |
 | `-scan-timeout` | `1h` | Wall-clock limit per scan; exceeded scans fail |
 | `-max-turns` | `0` | Per-scan turn cap (0 = unlimited); claude backend only, codex and opencode have no turn cap |
 | `-schema-strict` | `false` | Fail a scan when its `report.json` does not validate against the skill's `schema.json` (default: warn in the scan log and parse anyway) |
 | `-model-base-url` | - | Custom model API base URL for the active backend (env fallback: `ANTHROPIC_BASE_URL` for claude). `-anthropic-base-url` is a deprecated alias. |
+| `-ecosystems-enrichment` | `true` | Enrich repositories from ecosyste.ms: the per-repository cache, the warm on repo add, and the PURL-to-repository resolution behind SBOM and dependency import. `=false` stops every lookup scrutineer's own process makes, leaves `egress_allow` untouched (the bundled skills still fetch ecosyste.ms themselves), and leaves the Dependents tab and dependent-exposure analysis with no data |
 
 ## Config file
 
 Every flag above can be set in a YAML config file instead, loaded from `./scrutineer.yaml` by default (override with `-config path/to/file`; command-line flags always take precedence). See [scrutineer.sample.yaml](scrutineer.sample.yaml) for the full shape.
+
+`scrutineer.yaml` may contain long-lived credentials such as the VINCE API key and federation salt. Keep it out of source control and backups, and set owner-only permissions with `chmod 600 scrutineer.yaml`.
 
 The config file can also replace the model pick list and pin the fallback default model used by the high tier:
 
@@ -396,6 +407,7 @@ See [SECURITY.md](SECURITY.md) for the reporting policy and [threatmodel.md](thr
 - [docs/backup.md](docs/backup.md) -- backing up and restoring the database (built-in `scrutineer backup`/`restore`, `sqlite3`, Litestream)
 - [docs/development.md](docs/development.md) -- project layout, regenerating embedded data, running tests
 - [docs/encrypted-sharing.md](docs/encrypted-sharing.md) -- encrypted findings sharing between contributors (age + SSH keys, team keyring management)
+- [docs/interchange.md](docs/interchange.md) -- federation interchange format: in-toto record envelope, salted finding hashes, the claim-check endpoint, the public and members-only feeds with their export/import jobs (threat surface: T14 in [threatmodel.md](threatmodel.md))
 - [docs/codex.md](docs/codex.md) -- the codex backend: what differs from claude, sandbox interaction, adding another harness
 - [docs/opencode.md](docs/opencode.md) -- the opencode backend: provider-agnostic credentials and egress
 - [docs/podman.md](docs/podman.md) -- security model and known gaps for the podman / rootless runtime (sandbox isolation, hardened-mode verification)

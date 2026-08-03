@@ -1,6 +1,7 @@
 package web
 
 import (
+	"encoding/json"
 	"net/http"
 	"path/filepath"
 	"regexp"
@@ -71,35 +72,14 @@ func (s *Server) skillCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	skill := db.Skill{
-		Name:        strings.TrimSpace(r.FormValue("name")),
-		Description: strings.TrimSpace(r.FormValue("description")),
-		Body:        r.FormValue("body"),
-		OutputFile:  strings.TrimSpace(r.FormValue("output_file")),
-		OutputKind:  strings.TrimSpace(r.FormValue("output_kind")),
-		MaxTurns:    parseMaxTurns(r.FormValue("max_turns")),
-		Model:       parseSkillModel(r.FormValue("model")),
-		SchemaJSON:  r.FormValue("schema_json"),
-		Source:      "ui",
-		Active:      true,
-		Version:     1,
-	}
-	if skill.Name == "" || skill.Description == "" {
-		http.Error(w, "name and description are required", http.StatusBadRequest)
+	form := readSkillForm(r)
+	if msg := validateSkillForm(form); msg != "" {
+		http.Error(w, msg, http.StatusBadRequest)
 		return
 	}
-	if !validateSkillName(skill.Name) {
-		http.Error(w, "name must be lowercase alphanumeric with hyphens (e.g. my-skill-1)", http.StatusBadRequest)
-		return
-	}
-	if !validateOutputFile(skill.OutputFile) {
-		http.Error(w, "output_file must be a plain filename with no path separators", http.StatusBadRequest)
-		return
-	}
-	if !skills.OutputKinds[skill.OutputKind] {
-		http.Error(w, "output_kind is not a recognised parser", http.StatusBadRequest)
-		return
-	}
+	skill := db.Skill{Source: "ui", Active: true, Version: 1}
+	form.apply(&skill)
+	skill.Active = true
 	if err := s.DB.Create(&skill).Error; err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -118,33 +98,73 @@ func (s *Server) skillUpdate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	skill.Name = strings.TrimSpace(r.FormValue("name"))
-	skill.Description = strings.TrimSpace(r.FormValue("description"))
-	skill.Body = r.FormValue("body")
-	skill.OutputFile = strings.TrimSpace(r.FormValue("output_file"))
-	skill.OutputKind = strings.TrimSpace(r.FormValue("output_kind"))
-	skill.MaxTurns = parseMaxTurns(r.FormValue("max_turns"))
-	skill.Model = parseSkillModel(r.FormValue("model"))
-	skill.SchemaJSON = r.FormValue("schema_json")
-	skill.Active = r.FormValue("active") == "on"
-	if !validateSkillName(skill.Name) {
-		http.Error(w, "name must be lowercase alphanumeric with hyphens (e.g. my-skill-1)", http.StatusBadRequest)
+	form := readSkillForm(r)
+	if msg := validateSkillForm(form); msg != "" {
+		http.Error(w, msg, http.StatusBadRequest)
 		return
 	}
-	if !validateOutputFile(skill.OutputFile) {
-		http.Error(w, "output_file must be a plain filename with no path separators", http.StatusBadRequest)
-		return
-	}
-	if !skills.OutputKinds[skill.OutputKind] {
-		http.Error(w, "output_kind is not a recognised parser", http.StatusBadRequest)
-		return
-	}
+	form.apply(&skill)
 	skill.Version++
 	if err := s.DB.Save(&skill).Error; err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	http.Redirect(w, r, "/skills/"+strconv.Itoa(int(skill.ID)), http.StatusSeeOther)
+}
+
+type skillFormValues struct {
+	Name        string
+	Description string
+	Body        string
+	OutputFile  string
+	OutputKind  string
+	MaxTurns    int
+	Model       string
+	SchemaJSON  string
+	Active      bool
+}
+
+func readSkillForm(r *http.Request) skillFormValues {
+	return skillFormValues{
+		Name:        strings.TrimSpace(r.FormValue("name")),
+		Description: strings.TrimSpace(r.FormValue("description")),
+		Body:        r.FormValue("body"),
+		OutputFile:  strings.TrimSpace(r.FormValue("output_file")),
+		OutputKind:  strings.TrimSpace(r.FormValue("output_kind")),
+		MaxTurns:    parseMaxTurns(r.FormValue("max_turns")),
+		Model:       parseSkillModel(r.FormValue("model")),
+		SchemaJSON:  strings.TrimSpace(r.FormValue("schema_json")),
+		Active:      r.FormValue("active") == "on",
+	}
+}
+
+func validateSkillForm(form skillFormValues) string {
+	switch {
+	case form.Name == "" || form.Description == "":
+		return "name and description are required"
+	case !validateSkillName(form.Name):
+		return "name must be lowercase alphanumeric with hyphens (e.g. my-skill-1)"
+	case !validateOutputFile(form.OutputFile):
+		return "output_file must be a plain filename with no path separators"
+	case !skills.OutputKinds[form.OutputKind]:
+		return "output_kind is not a recognised parser"
+	case form.SchemaJSON != "" && !json.Valid([]byte(form.SchemaJSON)):
+		return "schema_json must be valid JSON"
+	default:
+		return ""
+	}
+}
+
+func (form skillFormValues) apply(skill *db.Skill) {
+	skill.Name = form.Name
+	skill.Description = form.Description
+	skill.Body = form.Body
+	skill.OutputFile = form.OutputFile
+	skill.OutputKind = form.OutputKind
+	skill.MaxTurns = form.MaxTurns
+	skill.Model = form.Model
+	skill.SchemaJSON = form.SchemaJSON
+	skill.Active = form.Active
 }
 
 func parseMaxTurns(s string) int {

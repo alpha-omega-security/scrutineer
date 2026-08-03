@@ -348,7 +348,9 @@ func TestStageContext_includesReconFocusAreas(t *testing.T) {
 		}},
 		Notes: []string{"Examples excluded."},
 	}
-	if err := stageContextWithRecon(dir, "http://127.0.0.1:8080/api", "", "", scan, repo, recon); err != nil {
+	if err := stageContextWithInputs(
+		dir, "http://127.0.0.1:8080/api", "", "", scan, repo, recon, nil,
+	); err != nil {
 		t.Fatal(err)
 	}
 	b, err := os.ReadFile(filepath.Join(dir, "context.json"))

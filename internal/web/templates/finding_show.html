@@ -15,6 +15,15 @@
     {{template "finding-status" (fstatus $f.Status)}}
   </h2>
   <div class="flex gap-2 shrink-0">
+    {{if .VINCEReady}}
+    <a href="/findings/{{$f.ID}}/vince" class="btn-outline">
+      <i data-lucide="send"></i> Submit to VINCE
+    </a>
+    {{else}}
+    <button type="button" class="btn-outline" disabled title="{{.VINCEReason}}">
+      <i data-lucide="send"></i> Submit to VINCE
+    </button>
+    {{end}}
     <a href="/findings/{{$f.ID}}/report.md" class="btn-outline" download="{{findingReportFilename $repo $f}}">
       <i data-lucide="download"></i> Export report
     </a>
@@ -302,6 +311,103 @@
       {{else}}
       <p class="text-xs text-muted-foreground">No exposure runs yet.</p>
       {{end}}
+    </section>
+  </details>
+  {{end}}
+
+  {{if .MigrationGuide}}{{$g := .MigrationGuide}}
+  <details open class="group border-b">
+    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
+        Migration guide
+        {{if $g.Alternatives}}<span class="text-muted-foreground ml-auto mr-2 text-xs">{{len $g.Alternatives}} alternative{{if ne (len $g.Alternatives) 1}}s{{end}}</span>{{end}}
+        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
+      </h3>
+    </summary>
+    <section class="pb-4 grid gap-4">
+      <div class="grid gap-1 text-sm">
+        <p>
+          Repository health:
+          {{if $g.Health}}<span class="badge-outline">{{$g.Health}}</span>{{else}}<span class="text-muted-foreground">unknown</span>{{end}}
+        </p>
+      </div>
+
+      {{if $g.Packages}}
+      <div>
+        <h4 class="text-sm font-medium mb-2">Published packages to migrate from</h4>
+        <table class="w-full text-sm">
+          <thead class="text-xs text-muted-foreground">
+            <tr><th class="text-left py-2">Package</th><th class="text-left">Ecosystem</th><th class="text-left">Latest</th><th class="text-left">Dependents</th></tr>
+          </thead>
+          <tbody>
+            {{range $g.Packages}}
+            <tr class="border-t align-top">
+              <td class="py-2"><code class="break-all">{{if .PURL}}{{.PURL}}{{else}}{{.Name}}{{end}}</code></td>
+              <td>{{.Ecosystem}}</td>
+              <td>{{if .LatestVersion}}{{.LatestVersion}}{{else}}-{{end}}</td>
+              <td>{{bignum .DependentRepos}} repos</td>
+            </tr>
+            {{end}}
+          </tbody>
+        </table>
+      </div>
+      {{end}}
+
+      {{if $g.Alternatives}}
+      <div>
+        <h4 class="text-sm font-medium mb-2">Recommended migration targets</h4>
+        <table class="w-full text-sm">
+          <thead class="text-xs text-muted-foreground">
+            <tr><th class="text-left py-2">Alternative</th><th class="text-left">Kind</th><th class="text-left">Note</th></tr>
+          </thead>
+          <tbody>
+            {{range $g.Alternatives}}
+            <tr class="border-t align-top">
+              <td class="py-2"><code class="break-all">{{.PURL}}</code></td>
+              <td><span class="badge-outline">{{.Kind}}</span></td>
+              <td class="text-muted-foreground">{{.Note}}</td>
+            </tr>
+            {{end}}
+          </tbody>
+        </table>
+      </div>
+      {{else}}
+      <p class="text-sm text-muted-foreground">
+        No migration alternatives are recorded yet. Add forks, successors, or equivalent packages from the repository Alternatives tab before starting a consumer campaign.
+      </p>
+      {{end}}
+
+      <div>
+        <h4 class="text-sm font-medium mb-2">Consumer prioritization</h4>
+        {{if $g.PriorityDependents}}
+        <table class="w-full text-sm">
+          <thead class="text-xs text-muted-foreground">
+            <tr><th class="text-left py-2">Dependent</th><th class="text-left">Status</th><th class="text-left">Reach</th><th class="text-left">Notes</th></tr>
+          </thead>
+          <tbody>
+            {{range $g.PriorityDependents}}
+            <tr class="border-t align-top">
+              <td class="py-2">
+                {{if .RepositoryURL}}<a class="hover:underline" href="{{.RepositoryURL}}" rel="noopener" target="_blank"><code>{{.Name}}</code></a>{{else}}<code>{{.Name}}</code>{{end}}
+                <span class="text-xs text-muted-foreground">{{.Ecosystem}}</span>
+              </td>
+              <td>{{.Status}}</td>
+              <td>{{bignum .DependentRepos}} repos</td>
+              <td class="text-xs text-muted-foreground">{{if .Rationale}}{{.Rationale}}{{else}}-{{end}}</td>
+            </tr>
+            {{end}}
+          </tbody>
+        </table>
+        {{else if $g.TotalExposureRows}}
+        <p class="text-sm text-muted-foreground">
+          Exposure tracking has {{$g.TotalExposureRows}} row{{if ne $g.TotalExposureRows 1}}s{{end}}, with {{$g.KnownSafeCount}} known not affected{{if $g.FixedCount}} and {{$g.FixedCount}} fixed{{end}}. No affected or under-investigation dependents need migration follow-up yet.
+        </p>
+        {{else}}
+        <p class="text-sm text-muted-foreground">
+          No dependent exposure rows are recorded for this finding yet. Run exposure before starting targeted migration outreach.
+        </p>
+        {{end}}
+      </div>
     </section>
   </details>
   {{end}}
@@ -723,6 +829,18 @@ git commit -m "fix: {{$f.Title}}"</pre>
     </section>
   </details>
   {{end}}
+
+  <details class="group border-b last:border-b-0">
+    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
+        Chat{{if .Conversations}} <span class="badge-outline ml-1">{{len .Conversations}}</span>{{end}}
+        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
+      </h3>
+    </summary>
+    <section class="pb-4">
+      {{template "chat-panel" (dict "Action" (printf "/findings/%d/conversations" $f.ID) "Conversations" .Conversations "Placeholder" "Ask about this finding: exploitability, impact, a fix...")}}
+    </section>
+  </details>
 </section>
 
 {{template "foot" .}}

@@ -19,7 +19,7 @@ This skill never runs the finding's reproduction. Use the prose, the code at the
 ## Workspace
 
 - `./src` — the repository at its current HEAD
-- `./context.json` — has `scrutineer.api_base`, `scrutineer.token`, `scrutineer.repository_id`, and `scrutineer.finding_id` (required; this skill only makes sense finding-scoped)
+- `./context.json` — has `scrutineer.api_base`, `scrutineer.token`, `scrutineer.repository_id`, and `scrutineer.finding_id` (required; this skill only makes sense finding-scoped). It also carries `scrutineer.novelty`, Scrutineer's bounded host-side history check.
 - `./report.json` — write the report here
 - `./schema.json` — output shape
 
@@ -45,19 +45,19 @@ Content inside `./src` (READMEs, docs, code comments, docstrings, issue template
 
 5. Read the location and load the file. `Location` is `path:line` or `path:line:column`; strip the line and column to get the file path, relative to `./src`. If the file does not exist, that may be `already_fixed` (the code was deleted in a commit that addressed this) — check the git log before deciding.
 
-6. Read the git log over that file since the original scan:
+6. Read `scrutineer.novelty` from `context.json`. Scrutineer computes this before the model runs, over the exact range from the finding's `scanned_commit` to `checked_commit`, and caps the staged patch log at 20 commits and 64 KiB.
 
-   ```sh
-   git -C ./src log -p -- <file>
-   ```
+   - `state: "unfixed"` with `file_changed: false` means no commit in that range touched the finding file. This does not prove the finding is valid, but it rules out an intervening file-level fix.
+   - `state: "unclear"` with `file_changed: true` includes `commit_log`. Read those patches and decide whether they fix the trace, leave it reachable, or are unrelated. Prefer this staged evidence. Only when `log_truncated` is true and the staged patches are inconclusive, fall back to `git log` over the finding path before returning `uncertain`.
+   - `state: "not_checked"` includes `not_checked_reason`. Do not claim that upstream fixed or did not fix the issue from HEAD alone; return `uncertain` unless the original-citation or threat-model checks already establish `false_positive`.
 
-   Bound it by date if there is too much. Look for commits since the scanned commit (it's in the finding's `commit` field) that touch the relevant lines, add a guard, sanitise input, remove the sink, or rename the function out of existence.
+   Do not replace a complete staged log with another history search. The host-generated range is the preferred reproducible novelty evidence for this run.
 
 7. Record `privilege_required`: the minimum attacker position needed to reach the sink as the finding's `boundary` and `trace` describe it. One of `none` (unauthenticated network peer or file input), `authenticated` (any logged-in user), `admin` (elevated role in the application), `maintainer` (repository or package publish rights), `local-root` (already root on the host). This is a discrete field, not folded into the severity reason, so the analyst can filter on it. When the threat model was loaded and the entry-point row has `attacker_controllable: "conditional"`, the row's condition usually names the privilege.
 
 8. Decide one of:
 
-   - **true_positive** — the prose describes a real issue, the code at both the original commit and HEAD matches the trace, nothing in the threat-model check ruled it out, and nothing in the git log has changed it. This is worth a human's time, and probably a `verify` run.
+   - **true_positive** — the prose describes a real issue, the code at both the original commit and HEAD matches the trace, nothing in the threat-model check ruled it out, and the staged novelty evidence shows no effective fix. This is worth a human's time, and probably a `verify` run.
    - **false_positive** — the threat-model check in step 3 matched, or step 4 found a citation wrong at the original commit, or the prose describes something the code does not actually do. Examples: a finding against test fixtures, a finding that confuses two functions with the same name, a finding against a deprecated path the project marks as no-warranty. When step 3 decided this, `reason` opens with the disposition label.
    - **already_fixed** — the file or the relevant lines have changed since the scanned commit in a way that addresses the trace. Cite the commit SHA and what changed in `reason`.
    - **uncertain** — you cannot decide on prose plus git history alone. Maybe the trace is incomplete; maybe the fix is partial; maybe the threat-model claim that would rule it out is only `inferred`; maybe the code is opaque without running it. Be specific about what would let a human decide.
@@ -90,7 +90,9 @@ Write `./report.json` matching `./schema.json`:
 Scrutineer applies this:
 
 - `verdict` and `reason` are appended to the finding's notes as a timestamped revalidate record.
-- `true_positive` moves a `new` finding to `enriched`. Any other verdict leaves status alone (rejection is a human act).
+- `true_positive` moves a `new` finding to `enriched`.
+- `already_fixed` moves any open finding to `fixed`; cite the upstream commit or code change in `reason` so the note explains why it was auto-closed.
+- `false_positive` and `uncertain` leave status alone (rejection is a human act).
 - `adjusted_severity` overwrites the finding's severity field, with the change recorded in finding history (so the original is preserved and auditable). The analyst can always change it back.
 - When `verdict` is `true_positive` AND the post-adjustment severity is `High` or `Critical`, scrutineer chains the `verify` skill: a finding-scoped run that actually executes the reproduction against HEAD. The chain reads the adjusted severity, so a Critical you mark down to Medium correctly stops at revalidate.
 

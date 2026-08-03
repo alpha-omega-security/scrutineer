@@ -744,7 +744,7 @@ func TestBuildScoreMulti_trimsCVSSVector(t *testing.T) {
 	const want = "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
 	f := db.Finding{CVSSVector: "  " + want + "\n"}
 	got := buildScoreMulti(f, []string{"pkg:npm/example"})
-	if got == nil {
+	if got == nil || got.CVSSv3 == nil {
 		t.Fatal("buildScoreMulti = nil for padded valid vector")
 	}
 	if got.CVSSv3.VectorString != want {

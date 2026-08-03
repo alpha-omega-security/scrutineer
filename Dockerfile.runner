@@ -7,8 +7,8 @@
 # update the selected asset and checksum atomically. A mismatched tag/digest in
 # a Renovate PR fails sha256sum below and usually means asset identification
 # failed upstream.
-ARG CLAUDE_AMD64_LOCK=v2.1.212@sha256:c80c34f0b45e820db7202417deb855b4b2fdfb03ae3cecd118aa5517f15e7e41
-ARG CLAUDE_ARM64_LOCK=v2.1.212@sha256:a0a28aaa9ecb96f55ffefd3b30a131d02034fef94fbc542a668e02732d92ee6b
+ARG CLAUDE_AMD64_LOCK=v2.1.220@sha256:e69e7f72d784c243bcc377a578ad9ff8e65ae14da672fbbf9f2ba7bf47eca7ec
+ARG CLAUDE_ARM64_LOCK=v2.1.220@sha256:a4f2e93621b1521731d1f132c83f8266384403ab29e14986d67e3b4a805bf454
 ARG CODEX_VERSION=0.142.5
 ARG OPENCODE_VERSION=1.17.12
 ARG SEMGREP_VERSION=1.167.0
@@ -17,9 +17,9 @@ FROM golang:1.26.5-trixie@sha256:4ee9ffa999b4583ce281939cdff828763083610292f2522
 RUN GOBIN=/out go install github.com/git-pkgs/git-pkgs@v0.15.3 && \
     GOBIN=/out go install github.com/git-pkgs/brief/cmd/brief@v0.9.3
 
-FROM rust:1.96-trixie@sha256:1f0dbad1df66647807e6952d1db85d0b2bda7606cb2139d82517e4f009967376 AS zizmor-build
+FROM rust:1.97-trixie@sha256:1bcff4befb740599103a2c7cb51058e14479b2e35e3a34a3f0dc4ede09927488 AS zizmor-build
 ENV CARGO_HTTP_MULTIPLEXING=false
-RUN cargo install --locked --root /out zizmor@1.26.1
+RUN cargo install --locked --root /out zizmor@1.28.0
 
 # The scrutineer binary is baked in only for its `proxy` subcommand: under
 # rootless podman --hardened the egress proxy runs as a sidecar from THIS image

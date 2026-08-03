@@ -116,6 +116,28 @@ func (s *Server) scheduleTick(ctx context.Context, now time.Time) {
 // diff-rescan group (which falls back to full coverage when no baseline
 // exists, e.g. on a never-scanned repository).
 func (s *Server) runScheduledScan(ctx context.Context, repo db.Repository) {
+	// Held for the whole firing, so the opt-out cannot commit between the check
+	// below and the network calls it gates: recording one waits here, then sweeps
+	// whatever this firing enqueued. See lockRepoFederation.
+	unlock := s.lockRepoFederation(repo.ID)
+	defer unlock()
+	// Checked before any network call: enqueueSkillWith would refuse an
+	// opted-out repository anyway, but only after the upstream mirror push
+	// and the remote HEAD lookup have already contacted their host, which is
+	// the other half of what the opt-out asks us not to do. Read live rather
+	// than off the tick's snapshot: the tick loads every due repository up
+	// front and then fires them one at a time, each doing its own network I/O,
+	// so an opt-out recorded mid-tick has to be seen by the repositories still
+	// waiting their turn.
+	optedOut, err := s.repoFederationOptedOut(repo.ID)
+	if err != nil {
+		s.Log.Error("scheduler: read federation opt-out", "repo", repo.Name, "err", err)
+		return
+	}
+	if optedOut {
+		s.recordScheduledSkip(repo, "maintainer opted out of federated scanning")
+		return
+	}
 	var inflight int64
 	if err := s.DB.Model(&db.Scan{}).
 		Where("repository_id = ? AND status IN ?", repo.ID, []db.ScanStatus{db.ScanQueued, db.ScanRunning, db.ScanPaused}).

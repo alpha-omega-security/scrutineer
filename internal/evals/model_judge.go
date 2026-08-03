@@ -8,7 +8,8 @@ import (
 	"fmt"
 	"strings"
 
-	"scrutineer/internal/llm"
+	"github.com/alpha-omega-security/harness/llm"
+
 	"scrutineer/internal/worker"
 )
 

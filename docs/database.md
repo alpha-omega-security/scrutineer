@@ -39,9 +39,13 @@ The central entity. One row per git URL.
 | ecosystems_issues_fetched_at | datetime | When `ecosystems_issues_data` was last refreshed. TTL 7 days. |
 | ecosystems_dependents_data | text | Cached dependents, chained off the packages lookup (per-package top dependents, capped). |
 | ecosystems_dependents_fetched_at | datetime | When `ecosystems_dependents_data` was last refreshed. TTL 30 days. |
-| disclosure_channel | text | Preferred reporting vector (email, GHSA URL, registry owner handle, SECURITY.md URL). Written by `maintainers`/`cna-match`; analyst-editable. |
+| disclosure_channel | text | Preferred reporting vector (email, GHSA URL, registry owner handle, SECURITY.md URL). Written by `maintainers`/`cna-match`, or by the interchange import job from a peer's `route` record when this instance has none of its own, or when the value stored is that same feed's own unstamped hint and the peer has corrected it (suffixed with the peer feed so the provenance is visible, the way `cna-match` appends the CNA name); analyst-editable. |
+| disclosure_channel_at | datetime | When `disclosure_channel` last changed, and the `verified_at` of the interchange `route` record. Only moves on a real change, so an unchanged `maintainers` re-run does not republish the record. Null for channels written before this column existed, which keeps them off the feed rather than stamping an invented timestamp. |
+| federation_opt_out_at | datetime | Non-null means the maintainer asked federated instances neither to scan this repository nor to contact them. Blocks every scan enqueue, refuses the job at worker dispatch and on the resume paths, stops the scheduler before it makes any network call (no upstream mirror push, no remote HEAD lookup), withdraws the repository from the `route` and `certificate` feed records, and publishes an `optout` record on the public feed. Recording it also cancels the repository's queued, running and paused scans. Set from the repo page or by an `optout` record imported from a peer feed. |
+| federation_opt_out_reason | text | Optional reason the maintainer gave; it travels with the `optout` record. |
 | posture | text | Disclosure-readiness tier from the `posture` skill: `ready`, `partial`, `unprepared`. |
 | posture_summary | text | One-line explanation that goes with `posture`. |
+| health | text | Evidence-based maintenance classification: `active`, `stale`, `abandoned`, or `zombie`. Empty until metadata or maintainer evidence is available. |
 | fork | text | `owner/name` of the staging fork inside `-fork-org`. Written by the `fork` skill. |
 | clone_error | text | Last clone/fetch failure message; non-empty means the repo is currently unreachable. Cleared on next successful clone. |
 | disk_bytes | integer | Cached on-disk size of the persistent clone cache, so the repo list renders the disk badge from a column instead of walking each repo's cache per row. Refreshed by the worker after each scan and backfilled once at startup; 0 for local repos and remote repos not scanned since the column was added. |
@@ -69,6 +73,22 @@ change history for findings. `payload` is JSON stored portably as text.
 | source | text | Existing provenance enum, currently `system` for worker lifecycle events. |
 | payload | text | JSON metadata. Scan events include stable execution metadata and terminal metrics, without duplicating reports or logs. |
 | created_at | datetime | |
+
+## package_alternatives
+
+Operator-curated migration targets for repositories classified as abandoned or
+zombie. Later #12 migration-guide and campaign tracking work can join on this
+table instead of reparsing notes or reports.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | integer PK | |
+| repository_id | integer FK | Source repository this alternative applies to. |
+| p_url | text | Package URL of the fork, successor, or equivalent package. Unique with `repository_id` and `kind`. |
+| kind | text | One of `fork`, `successor`, or `equivalent`. |
+| note | text | Operator note explaining why this is a credible migration target. |
+| created_at | datetime | |
+| updated_at | datetime | |
 
 ## scans
 
@@ -223,6 +243,9 @@ One row per vulnerability. Lifecycle columns are mutated through `db.WriteFindin
 | mitigation | text | Markdown body from the `mitigate` skill: workarounds consumers can apply before the fix ships, plus detection guidance. |
 | mitigation_semgrep | text | Optional YAML semgrep rule from the same skill that flags the vulnerable pattern. Empty when no rule was warranted. |
 | last_revalidate_verdict | text | Cached latest verdict from the `revalidate` skill (`true_positive`, `false_positive`, `already_fixed`, `uncertain`). Indexed so the audit queue can filter without scanning `finding_notes`. Empty when revalidate has not run on this finding. |
+| novelty | text | Upstream novelty state from the bounded host-side history check and revalidate classification: `unfixed`, `fixed`, `unclear`, or `not_checked`. Indexed; empty before a novelty check has run. |
+| novelty_checked_commit | text | Repository HEAD compared with the finding's scanned commit by the latest novelty check. |
+| novelty_checked_at | datetime | When the latest novelty check ran. Null before the first check. |
 | trace | text | Step 1 prose. Markdown. |
 | boundary | text | Step 2. |
 | validation | text | Step 3: reproduction. |
@@ -419,6 +442,22 @@ Known security advisories from the `advisories` skill. Replaced each run.
 | withdrawn_at | datetime | Non-null if the advisory was withdrawn. |
 | created_at | datetime | |
 
+## advisory_audits
+
+Fix-audit verdicts from the `advisory-deep-dive` skill: for each published advisory, whether its advertised fix still holds at the audited commit. One row per advisory per run; the newest row per `(repository_id, advisory_uuid)` is authoritative. Keyed by advisory UUID rather than `advisories.id` because the `advisories` skill replaces its rows wholesale each run, which would orphan a foreign key.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | integer PK | |
+| repository_id | integer FK | |
+| scan_id | integer FK | The `advisory-deep-dive` scan that produced the verdict. |
+| advisory_uuid | text | The audited advisory's `advisories.uuid`. |
+| status | text | `fixed`, `bypass`, `variant`, or `regressed`. `fixed` backs a public certificate; the others each open one or more findings. |
+| evidence | text | Standalone prose describing what was reproduced (or failed to reproduce) and at which commit. Published verbatim in the certificate for `fixed`. |
+| finding_ids | text | Comma-joined `findings.id` values this verdict opened. Empty for `fixed`. |
+| commit | text | The audited commit, denormalized from the scan. |
+| created_at | datetime | |
+
 ## maintainers
 
 People who maintain repositories. Populated by the `maintainers` skill. Many-to-many with repositories via `repository_maintainers`.
@@ -517,6 +556,51 @@ CVE Numbering Authorities from the public cve.org partner list. Used by the `cna
 | fetched_at | datetime | When the CNA list was last refreshed. |
 | created_at | datetime | |
 | updated_at | datetime | |
+
+## conversations
+
+Persisted chat sessions. Each is a conversation with the agent about a repository or, when `finding_id` is set, one of its findings. The agent runs against a copy of the clone (taken from the shared per-URL cache on the first turn and reused afterwards, so the whole conversation reasons about one revision) plus a snapshot of the repository's findings. It is told to only read and search; on the claude harness that is also enforced with `--allowedTools Read,Grep,Glob`, on codex and opencode the container is the enforcement boundary, exactly as for scans. `session_id`/`backend` let a follow-up turn resume the harness conversation with full history via `--resume`; when that session is gone the turn restarts fresh with the transcript replayed into the prompt. Browser-only surface (chat tabs on the repository and finding pages); not exposed on the scan-token or `/v1` API.
+
+A conversation is deleted from its own page (`POST /conversations/{id}/delete`) or with its repository. Either path drops the `chat_messages` rows explicitly and reclaims the on-disk workspace (the clone copy plus the harness state dir) after the commit. The per-conversation delete is refused while a turn is in flight, since the agent is still reading the clone it would remove.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | integer PK | |
+| repository_id | integer FK | A finding-scoped conversation still carries the finding's repository so repo cleanup reaches it; the repository-delete handler removes the rows explicitly. |
+| finding_id | integer, nullable | Set for a per-finding chat; null for a repo-wide chat. No FK: the row is reached through `repository_id` on cleanup. |
+| title | text | One-line label derived from the first user message. |
+| model | text | Model the turns run under, snapshotted at creation. |
+| backend | text | Harness that owns `session_id` (e.g. `claude`); a turn only reuses the id while the running harness matches. |
+| session_id | text | Harness session the last turn belonged to; the next turn resumes it. Empty until the first turn completes. |
+| created_at | datetime | |
+| updated_at | datetime | Bumped on each new message so recency ordering reflects the latest turn. |
+
+## chat_messages
+
+One turn in a `conversations` row: a user prompt or the assistant's reply.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | integer PK | |
+| conversation_id | integer FK | Cascade delete. |
+| role | text | `user` or `assistant`. |
+| content | text | Rendered message text; for an assistant message, the accumulated streamed response. |
+| created_at | datetime | |
+
+## interchange_records
+
+Federation records imported from peer feeds by the import job, stored verbatim so re-validating or re-applying one never depends on how the running version of scrutineer happened to interpret it. Unique per `(feed, predicate_type, subject_digest)`: a peer refreshing a record replaces its own row, while two peers publishing conflicting verdicts for the same subject each keep theirs instead of one silently winning. Nothing this instance publishes is stored here; the export job derives every outgoing record from `repositories` and `advisory_audits` on each run. See [interchange.md](interchange.md).
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | integer PK | |
+| feed | text | The peer feed's git remote, part of the unique key. |
+| predicate_type | text | The record's in-toto `predicateType`, e.g. `.../interchange/optout/v1`. |
+| subject_digest | text | The record's subject sha256: the salted finding hash for a `claim`, sha256 of the canonical repository URL for an `optout` or `route`, sha256 of repository plus advisory id for a `certificate`. |
+| record | text | The raw in-toto statement as published. |
+| applied_at | datetime | When the import last acted on this record, or established there was nothing local to act on. Null re-opens it on the next pass, and a changed `record` clears it, so a peer's correction is re-applied and an `optout` published before its repository was imported here still lands once that repository exists. An unchanged record keeps its stamp, which is what stops the hourly pass reinstating what an operator deliberately cleared. |
+| applied_repository_id | integer | The `repositories` row `applied_at` was written against, 0 for the kinds that act on nothing local (`certificate`, `claim`). Deleting that repository clears both columns, so a still-standing `optout` lands again on the row a re-added repository gets instead of staying closed against a row that no longer exists. |
+| received_at | datetime | When the import job last read this record. |
 
 ## goqite
 

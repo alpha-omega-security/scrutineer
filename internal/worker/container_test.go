@@ -279,20 +279,37 @@ func TestDirSize_ErrorsOnMissingRoot(t *testing.T) {
 
 func TestHardenedNetworkName_UniquePerScanID(t *testing.T) {
 	tests := []struct {
-		id   uint
+		job  SkillJob
 		want string
 	}{
-		{1, "scrutineer-hardened-1"},
-		{42, "scrutineer-hardened-42"},
-		{4294967295, "scrutineer-hardened-4294967295"},
+		{SkillJob{ScanID: 1}, "scrutineer-hardened-1"},
+		{SkillJob{ScanID: 42}, "scrutineer-hardened-42"},
+		{SkillJob{ScanID: 4294967295}, "scrutineer-hardened-4294967295"},
+		// A job with no scan row keys on its own namespace, so a chat turn
+		// never lands on the network of the scan whose id happens to match.
+		{SkillJob{IsolationKey: "chat-42"}, "scrutineer-hardened-chat-42"},
 	}
 	for _, tc := range tests {
-		if got := hardenedNetworkName(tc.id); got != tc.want {
-			t.Errorf("hardenedNetworkName(%d) = %q, want %q", tc.id, got, tc.want)
+		if got := hardenedNetworkName(tc.job.isolationKey()); got != tc.want {
+			t.Errorf("hardenedNetworkName(%+v) = %q, want %q", tc.job, got, tc.want)
 		}
 	}
-	if !strings.HasPrefix(hardenedNetworkName(7), hardenedNetworkPrefix) {
+	if !strings.HasPrefix(hardenedNetworkName(SkillJob{ScanID: 7}.isolationKey()), hardenedNetworkPrefix) {
 		t.Errorf("hardenedNetworkName must start with %q to be sweepable", hardenedNetworkPrefix)
+	}
+}
+
+func TestSetupHardenedNetwork_RefusesJobWithNoKey(t *testing.T) {
+	// Neither key: refuse rather than collapse every such job onto network 0.
+	// The guard runs before any runtime call, so this stays hermetic.
+	d := ContainerRunner{Hardened: true}
+	if _, _, err := d.setupHardenedNetwork(SkillJob{}, "img"); err == nil {
+		t.Error("hardened run with no ScanID and no IsolationKey was accepted")
+	}
+	// A job carrying only IsolationKey (a chat turn) resolves to its own
+	// network name rather than the shared "0"; the guard must let it through.
+	if key := (SkillJob{IsolationKey: "chat-1"}).isolationKey(); key == "0" {
+		t.Errorf("IsolationKey job resolved to the shared key %q", key)
 	}
 }
 
@@ -691,7 +708,10 @@ func TestEmitProxyLogLines(t *testing.T) {
 
 	var got []string
 	emitProxyLogLines(out, func(e Event) {
-		if e.Kind != KindText {
+		// KindEgress, not KindText: these are scrutineer's lines, emitted after
+		// the harness exited, and a consumer reading the agent's last words
+		// must be able to tell them apart.
+		if e.Kind != KindEgress {
 			t.Errorf("unexpected event kind %v", e.Kind)
 		}
 		got = append(got, e.Text)
@@ -766,7 +786,10 @@ func TestBuildRunArgs_SidecarProxyURL(t *testing.T) {
 	hn := hardenedNet{name: "scrutineer-hardened-7", proxyEndpoint: "10.89.1.2:3128", proxyName: "scrutineer-proxy-7"}
 	args := d.buildRunArgs("/work/abs", "img:latest", hn, "")
 
-	const want = "http://scrutineer:tok@10.89.1.2:3128"
+	// The sidecar path regenerates the proxy URL via ProxyURLForEndpoint
+	// against the sidecar's own IP:port; it does not carry the host-proxy
+	// URL through. The basic-auth username is harness/egress's constant.
+	want := ProxyURLForEndpoint("tok", "10.89.1.2:3128")
 	for _, env := range []string{"HTTPS_PROXY=" + want, "HTTP_PROXY=" + want, "ALL_PROXY=" + want} {
 		if !hasAdjacent(args, "-e", env) {
 			t.Errorf("expected sidecar %s in %v", env, args)
@@ -811,11 +834,14 @@ func TestHardenedNetworkCreateArgs(t *testing.T) {
 }
 
 func TestProxySidecarName_UniquePerScanID(t *testing.T) {
-	if a, b := proxySidecarName(1), proxySidecarName(2); a == b {
+	if a, b := proxySidecarName("1"), proxySidecarName("2"); a == b {
 		t.Errorf("names collided: %q == %q", a, b)
 	}
-	if got := proxySidecarName(7); got != "scrutineer-proxy-7" {
-		t.Errorf("proxySidecarName(7) = %q, want scrutineer-proxy-7", got)
+	if got := proxySidecarName(SkillJob{ScanID: 7}.isolationKey()); got != "scrutineer-proxy-7" {
+		t.Errorf("proxySidecarName(scan 7) = %q, want scrutineer-proxy-7", got)
+	}
+	if got := proxySidecarName(SkillJob{IsolationKey: "chat-7"}.isolationKey()); got != "scrutineer-proxy-chat-7" {
+		t.Errorf("proxySidecarName(chat 7) = %q, want scrutineer-proxy-chat-7", got)
 	}
 }
 

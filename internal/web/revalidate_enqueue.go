@@ -63,22 +63,10 @@ func (s *Server) enqueueRevalidateForFinding(ctx context.Context, f *db.Finding,
 	if err := s.DB.Where("name = ? AND active = ?", revalidateSkillName, true).First(&skill).Error; err != nil {
 		return
 	}
-	if s.hasOpenRevalidate(f.ID, skill.ID) {
-		return
-	}
-	fid := f.ID
-	if _, err := s.enqueueSkillWith(ctx, f.RepositoryID, skill.ID, ScanOpts{FindingID: &fid, Profile: profile}); err != nil {
+	if err := s.enqueueFindingScopedSkillIfIdle(ctx, f.RepositoryID, f.ID, skill.ID, ScanOpts{Profile: profile}); err != nil {
 		s.Log.Warn("auto-enqueue revalidate",
 			"finding", f.ID, "repo", f.RepositoryID, "skill", revalidateSkillName, "err", err)
 	}
-}
-
-// hasOpenRevalidate returns true when a queued or running revalidate scan
-// already exists for the finding. Avoids piling duplicate work onto the
-// queue when the same finding is observed by both an import and a rescan,
-// or when two findings parsers race in tests.
-func (s *Server) hasOpenRevalidate(findingID, skillID uint) bool {
-	return s.hasOpenFindingScopedScan(findingID, skillID)
 }
 
 func (s *Server) hasOpenFindingScopedScan(findingID, skillID uint) bool {
@@ -141,11 +129,7 @@ func (s *Server) enqueueVerifyForFinding(ctx context.Context, f *db.Finding, pro
 	if err := s.DB.Where("name = ? AND active = ?", verifySkillName, true).First(&skill).Error; err != nil {
 		return
 	}
-	if s.hasOpenFindingScopedScan(f.ID, skill.ID) {
-		return
-	}
-	fid := f.ID
-	if _, err := s.enqueueSkillWith(ctx, f.RepositoryID, skill.ID, ScanOpts{FindingID: &fid, Profile: profile}); err != nil {
+	if err := s.enqueueFindingScopedSkillIfIdle(ctx, f.RepositoryID, f.ID, skill.ID, ScanOpts{Profile: profile}); err != nil {
 		s.Log.Warn("auto-chain verify after revalidate",
 			"finding", f.ID, "repo", f.RepositoryID, "skill", verifySkillName, "err", err)
 	}

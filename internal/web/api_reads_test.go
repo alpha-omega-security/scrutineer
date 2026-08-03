@@ -10,6 +10,141 @@ import (
 	"scrutineer/internal/worker"
 )
 
+func TestParseLimit(t *testing.T) {
+	tests := []struct {
+		query   string
+		want    int
+		wantErr bool
+	}{
+		{"", 200, false},
+		{"?limit=25", 25, false},
+		{"?limit=1001", 1000, false},
+		{"?limit=0", 0, false},
+		{"?limit=", 0, true},
+		{"?limit", 0, true},
+		{"?limit=-1", 0, true},
+		{"?limit=nope", 0, true},
+	}
+	for _, tc := range tests {
+		r := httptest.NewRequest("GET", "/api/repositories/1/dependencies"+tc.query, nil)
+		got, err := parseLimit(r, 200, 1000)
+		if (err != nil) != tc.wantErr {
+			t.Errorf("%q: error = %v, wantErr %v", tc.query, err, tc.wantErr)
+		}
+		if got != tc.want {
+			t.Errorf("%q: limit = %d, want %d", tc.query, got, tc.want)
+		}
+	}
+}
+
+func TestAPIListDependents_limit(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo, scan := seedRunningScan(t, s)
+
+	rows := make([]db.Dependent, 0, 201)
+	for i := range 201 {
+		rows = append(rows, db.Dependent{
+			RepositoryID:   repo.ID,
+			Name:           fmt.Sprintf("dependent-%03d", i),
+			DependentRepos: i,
+		})
+	}
+	if err := s.DB.Create(&rows).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	get := func(query string) []dependentResponse {
+		t.Helper()
+		path := fmt.Sprintf("/api/repositories/%d/dependents%s", repo.ID, query)
+		w := apiReq(t, s, "GET", path, scan.APIToken, "")
+		if w.Code != 200 {
+			t.Fatalf("%s: status = %d, want 200; body=%s", query, w.Code, w.Body)
+		}
+		var got []dependentResponse
+		if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+
+	got := get("")
+	if len(got) != 200 {
+		t.Fatalf("default dependents = %d, want 200", len(got))
+	}
+	if got[0].Name != "dependent-200" || got[199].Name != "dependent-001" {
+		t.Errorf("default dependents range = %q..%q, want dependent-200..dependent-001", got[0].Name, got[199].Name)
+	}
+
+	got = get("?limit=2")
+	if len(got) != 2 {
+		t.Fatalf("dependents = %d, want 2", len(got))
+	}
+	if got[0].Name != "dependent-200" || got[1].Name != "dependent-199" {
+		t.Errorf("dependents = %+v, want dependent-200 then dependent-199", got)
+	}
+
+	path := fmt.Sprintf("/api/repositories/%d/dependents?limit=", repo.ID)
+	w := apiReq(t, s, "GET", path, scan.APIToken, "")
+	if w.Code != 400 {
+		t.Errorf("empty limit status = %d, want 400; body=%s", w.Code, w.Body)
+	}
+}
+
+func TestAPIListDependencies_limit(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo, scan := seedRunningScan(t, s)
+
+	rows := make([]db.Dependency, 0, 201)
+	for i := range 201 {
+		rows = append(rows, db.Dependency{
+			RepositoryID: repo.ID,
+			Name:         fmt.Sprintf("dependency-%03d", i),
+			Ecosystem:    "npm",
+		})
+	}
+	if err := s.DB.Create(&rows).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	get := func(query string) []dependencyResponse {
+		t.Helper()
+		path := fmt.Sprintf("/api/repositories/%d/dependencies%s", repo.ID, query)
+		w := apiReq(t, s, "GET", path, scan.APIToken, "")
+		if w.Code != 200 {
+			t.Fatalf("%s: status = %d, want 200; body=%s", query, w.Code, w.Body)
+		}
+		var got []dependencyResponse
+		if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+			t.Fatal(err)
+		}
+		return got
+	}
+
+	got := get("")
+	if len(got) != 200 {
+		t.Fatalf("default dependencies = %d, want 200", len(got))
+	}
+	if got[0].Name != "dependency-000" || got[199].Name != "dependency-199" {
+		t.Errorf("default dependencies range = %q..%q, want dependency-000..dependency-199", got[0].Name, got[199].Name)
+	}
+
+	got = get("?limit=2")
+	if len(got) != 2 {
+		t.Fatalf("dependencies = %d, want 2", len(got))
+	}
+	if got[0].Name != "dependency-000" || got[1].Name != "dependency-001" {
+		t.Errorf("dependencies = %+v, want dependency-000 then dependency-001", got)
+	}
+
+	path := fmt.Sprintf("/api/repositories/%d/dependencies?limit=", repo.ID)
+	w := apiReq(t, s, "GET", path, scan.APIToken, "")
+	if w.Code != 400 {
+		t.Errorf("empty limit status = %d, want 400; body=%s", w.Code, w.Body)
+	}
+}
+
 func TestAPIListFindings_filtersBySkill(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

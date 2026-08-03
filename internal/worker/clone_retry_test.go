@@ -96,49 +96,6 @@ exit 0
 	}
 }
 
-// TestFetchRefRetriesTransientFetchFailure covers the cache-reuse path, and
-// pins that the local reset still runs once the fetch succeeds.
-func TestFetchRefRetriesTransientFetchFailure(t *testing.T) {
-	git := fakeGitOnPath(t, `if [ "$n" = "1" ]; then
-  echo "fatal: the remote end hung up unexpectedly" >&2
-  exit 128
-fi
-exit 0
-`)
-
-	err := fetchRef(context.Background(), fastRetry(), t.TempDir(), "main", false, func(Event) {})
-	if err != nil {
-		t.Errorf("fetchRef after one transient failure: %v", err)
-	}
-	calls := git.calls()
-	if len(calls) != 3 {
-		t.Fatalf("git invocations = %d (%v), want 3: fetch, fetch retry, reset", len(calls), calls)
-	}
-	if !strings.Contains(calls[2], "reset") {
-		t.Errorf("third invocation = %q, want the local reset", calls[2])
-	}
-}
-
-// TestFetchRefDoesNotRetryLocalReset keeps the network policy off local
-// work: repeating `git reset --hard` cannot fix whatever made it fail.
-func TestFetchRefDoesNotRetryLocalReset(t *testing.T) {
-	git := fakeGitOnPath(t, `case "$*" in
-*reset*)
-  echo "fatal: unable to access: Connection reset by peer" >&2
-  exit 128
-  ;;
-esac
-exit 0
-`)
-
-	if err := fetchRef(context.Background(), fastRetry(), t.TempDir(), "main", false, func(Event) {}); err == nil {
-		t.Error("expected the failing reset to surface")
-	}
-	if calls := git.calls(); len(calls) != 2 {
-		t.Errorf("git invocations = %d (%v), want 2: fetch then a single reset", len(calls), calls)
-	}
-}
-
 // TestCloneOrFetchDoesNotRetryPermanentFailure guards the other side of the
 // policy: a settled answer about the repository costs exactly one attempt,
 // as it did before.

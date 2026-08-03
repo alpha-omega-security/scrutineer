@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os/exec"
@@ -23,8 +25,10 @@ const exportPrefix = "/api/v1"
 
 func (s *Server) exportHandler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("DELETE /repositories/{id}", s.apiDeleteRepository)
 	mux.HandleFunc("GET /repositories/{id}/findings", s.apiExportRepoFindings)
 	mux.HandleFunc("GET /repositories", s.apiExportRepositories)
+	mux.HandleFunc("DELETE /findings/{id}", s.apiDeleteFinding)
 	mux.HandleFunc("GET /findings", s.apiExportFindings)
 	mux.HandleFunc("GET /scans", s.apiExportScans)
 	mux.HandleFunc("POST /import", s.handleImport)
@@ -34,6 +38,85 @@ func (s *Server) exportHandler() http.Handler {
 	mux.HandleFunc("GET /audit/queue", s.apiAuditQueue)
 	mux.HandleFunc("GET /audit/metrics", s.apiAuditMetrics)
 	return mux
+}
+
+func (s *Server) apiDeleteRepository(w http.ResponseWriter, r *http.Request) {
+	repo, ok := s.loadExportRepositoryByID(w, r)
+	if !ok {
+		return
+	}
+	deleted, err := s.deleteRepository(repo)
+	if err != nil {
+		if errors.Is(err, errRepositoryDeleteInFlight) {
+			writeAPIError(w, http.StatusConflict, err.Error())
+			return
+		}
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.removeRepositoryArtifacts(deleted)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) apiDeleteFinding(w http.ResponseWriter, r *http.Request) {
+	finding, ok := s.loadExportFindingByID(w, r)
+	if !ok {
+		return
+	}
+	deleted, err := s.deleteFinding(finding)
+	if err != nil {
+		if errors.Is(err, errFindingDeleteInFlight) {
+			writeAPIError(w, http.StatusConflict, err.Error())
+			return
+		}
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.removeFindingArtifacts(deleted)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) loadExportRepositoryByID(w http.ResponseWriter, r *http.Request) (db.Repository, bool) {
+	var repo db.Repository
+	id, ok := exportPathID(w, r, "repository")
+	if !ok {
+		return repo, false
+	}
+	if err := s.DB.First(&repo, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			writeAPIError(w, http.StatusNotFound, "repository not found")
+			return repo, false
+		}
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return repo, false
+	}
+	return repo, true
+}
+
+func (s *Server) loadExportFindingByID(w http.ResponseWriter, r *http.Request) (db.Finding, bool) {
+	var finding db.Finding
+	id, ok := exportPathID(w, r, "finding")
+	if !ok {
+		return finding, false
+	}
+	if err := s.DB.First(&finding, id).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			writeAPIError(w, http.StatusNotFound, "finding not found")
+			return finding, false
+		}
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return finding, false
+	}
+	return finding, true
+}
+
+func exportPathID(w http.ResponseWriter, r *http.Request, name string) (int, bool) {
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil || id <= 0 {
+		writeAPIError(w, http.StatusBadRequest, "invalid "+name+" id")
+		return 0, false
+	}
+	return id, true
 }
 
 // repositoryExportRow is the selected Repositories-tab projection used by the
@@ -93,7 +176,7 @@ func (s *Server) apiExportRepositories(w http.ResponseWriter, r *http.Request) {
 			LIMIT 1
 		)`).
 		Order("repositories.updated_at desc")
-	streamJSONL(w, q, repositoryExport)
+	streamJSONL(w, q, s.Log, repositoryExport)
 }
 
 func (s *Server) apiExportRepoFindings(w http.ResponseWriter, r *http.Request) {
@@ -150,10 +233,10 @@ func (s *Server) apiExportRepoFindings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := s.DB.Model(&db.Finding{}).
-		Where("scan_id IN (?)", s.DB.Model(&db.Scan{}).Select("id").Where("repository_id = ?", id)).
+		Where("repository_id = ?", id).
 		Order("id desc")
 	q = applyFindingFilters(q, r)
-	streamJSONL(w, q, findingExport)
+	streamJSONL(w, q, s.Log, findingExport)
 }
 
 // sharingBundle is the self-contained sharing format that round-trips
@@ -285,8 +368,7 @@ func (s *Server) apiExportRepoBundle(w http.ResponseWriter, r *http.Request, rep
 	includeAll := r.URL.Query().Get("include") == "all"
 
 	var findings []db.Finding
-	q := s.DB.Where("scan_id IN (?)",
-		s.DB.Model(&db.Scan{}).Select("id").Where("repository_id = ?", repo.ID)).
+	q := s.DB.Where("repository_id = ?", repo.ID).
 		Order("id desc")
 	if r.URL.Query().Get("scope") == "findings" {
 		// Curate to the Findings bucket — drop semgrep/zizmor scanner noise,
@@ -532,7 +614,7 @@ func (s *Server) apiExportFindings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := applyFindingFilters(s.DB.Model(&db.Finding{}).Order("id desc"), r)
-	streamJSONL(w, q, findingExport)
+	streamJSONL(w, q, s.Log, findingExport)
 }
 
 func (s *Server) apiExportScans(w http.ResponseWriter, r *http.Request) {
@@ -546,7 +628,7 @@ func (s *Server) apiExportScans(w http.ResponseWriter, r *http.Request) {
 	if v := r.URL.Query().Get("skill"); v != "" {
 		q = q.Where("skill_name = ?", v)
 	}
-	streamJSONL(w, q, scanExport)
+	streamJSONL(w, q, s.Log, scanExport)
 }
 
 // repositoryExport maps a repositoryExportRow to the public JSON object. Repos
@@ -617,9 +699,10 @@ func applyFindingFilters(q *gorm.DB, r *http.Request) *gorm.DB {
 }
 
 // streamJSONL iterates rows incrementally so a million-row export never
-// preloads into memory. The body is partial on mid-stream errors: once
-// we have committed to 200, a truncated stream is the only honest signal.
-func streamJSONL[T any](w http.ResponseWriter, q *gorm.DB, project func(T) map[string]any) {
+// preloads into memory. Before the first row, errors can still return a normal
+// 500; after the stream is committed, errors abort the connection so clients do
+// not mistake a truncated export for a clean EOF.
+func streamJSONL[T any](w http.ResponseWriter, q *gorm.DB, log *slog.Logger, project func(T) map[string]any) {
 	rows, err := q.Rows()
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, err.Error())
@@ -627,20 +710,46 @@ func streamJSONL[T any](w http.ResponseWriter, q *gorm.DB, project func(T) map[s
 	}
 	defer func() { _ = rows.Close() }()
 	w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
-	enc := json.NewEncoder(w)
+	cw := &commitTrackingResponseWriter{ResponseWriter: w}
+	enc := json.NewEncoder(cw)
 	flusher, _ := w.(http.Flusher)
 	for rows.Next() {
 		var item T
 		if err := q.ScanRows(rows, &item); err != nil {
+			handleJSONLStreamError(w, log, err, cw.committed)
 			return
 		}
 		if err := enc.Encode(project(item)); err != nil {
+			handleJSONLStreamError(w, log, err, cw.committed)
 			return
 		}
 		if flusher != nil {
 			flusher.Flush()
 		}
 	}
+	if err := rows.Err(); err != nil {
+		handleJSONLStreamError(w, log, err, cw.committed)
+	}
+}
+
+type commitTrackingResponseWriter struct {
+	http.ResponseWriter
+	committed bool
+}
+
+func (w *commitTrackingResponseWriter) Write(p []byte) (int, error) {
+	w.committed = true
+	n, err := w.ResponseWriter.Write(p)
+	return n, err
+}
+
+func handleJSONLStreamError(w http.ResponseWriter, log *slog.Logger, err error, committed bool) {
+	if !committed {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	log.Error("jsonl export stream failed", "err", err)
+	panic(http.ErrAbortHandler)
 }
 
 // findingExport mirrors every db.Finding column. Relations (labels, notes,

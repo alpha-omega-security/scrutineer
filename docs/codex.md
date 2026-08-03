@@ -114,6 +114,11 @@ the sandbox, so scrutineer runs codex with `--sandbox danger-full-access` and
 `--hardened` the read-only rootfs and per-scan `--internal` network apply
 exactly as for claude.
 
+The same applies to chat: claude holds a chat turn to
+`--allowedTools Read,Grep,Glob`, codex has no equivalent switch here, so its
+read-only posture is a prompt instruction and the container boundary, the
+same posture every scan already runs under.
+
 The threat-model T1 residual (the model-API credential is readable by
 in-container code) applies the same: `CODEX_API_KEY` is passed as a container
 env var.

@@ -68,6 +68,15 @@ func ParseRepoInput(raw string) (RepoInput, error) {
 	if err != nil {
 		return RepoInput{}, fmt.Errorf("parse url: %w", err)
 	}
+	// Reject credentials embedded in the URL. Repository.URL is stored,
+	// logged, exported, and staged into the model workspace via
+	// context.json; a token pasted here would cross the container boundary
+	// the README documents as isolated. Redacting is not enough because
+	// tokens are commonly supplied as the username, so refuse the input
+	// and point at the credential-helper flow instead.
+	if u.User != nil {
+		return RepoInput{}, fmt.Errorf("repository URL must not contain credentials; configure a git credential helper on the host instead (see README)")
+	}
 	u.Host = strings.ToLower(u.Host)
 	u.RawQuery = ""
 

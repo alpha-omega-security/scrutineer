@@ -355,6 +355,52 @@ func TestRepoScheduleUpdate_rejectsNonHTTPSUpstream(t *testing.T) {
 	}
 }
 
+func TestRepoScheduleUpdate_rejectsCredentialedUpstream(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := scheduledRepo(t, s, "weekly", time.Now())
+	if err := s.DB.Model(&repo).Update("upstream_url", "https://example.com/original").Error; err != nil {
+		t.Fatal(err)
+	}
+
+	w := postForm(t, s, "/repositories/"+strconv.FormatUint(uint64(repo.ID), 10)+"/schedule", url.Values{
+		"scan_schedule": {"daily"},
+		"upstream_url":  {"https://token@example.com/upstream"},
+	})
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status %d, want 422", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "must not contain credentials") {
+		t.Fatalf("body = %q, want credential rejection", w.Body.String())
+	}
+
+	var got db.Repository
+	s.DB.First(&got, repo.ID)
+	if got.UpstreamURL != "https://example.com/original" || got.ScanSchedule != "weekly" {
+		t.Fatalf("rejected update changed schedule: upstream = %q schedule = %q", got.UpstreamURL, got.ScanSchedule)
+	}
+}
+
+func TestRepoScheduleUpdate_normalisesUpstreamURL(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := scheduledRepo(t, s, "", time.Now())
+
+	w := postForm(t, s, "/repositories/"+strconv.FormatUint(uint64(repo.ID), 10)+"/schedule", url.Values{
+		"scan_schedule": {"daily"},
+		"upstream_url":  {"https://GitHub.com/Acme/Upstream.git?access_token=secret#src"},
+	})
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+
+	var got db.Repository
+	s.DB.First(&got, repo.ID)
+	if got.UpstreamURL != "https://github.com/acme/upstream" {
+		t.Fatalf("upstream = %q, want normalized clone URL", got.UpstreamURL)
+	}
+}
+
 func TestSettingsUpdateScanSchedule_savesAndResetsInheritingRepos(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

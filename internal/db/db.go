@@ -67,6 +67,19 @@ type Repository struct {
 	// SECURITY.md / CODEOWNERS / registry data; the analyst can overwrite
 	// it from the repo page.
 	DisclosureChannel string
+	// DisclosureChannelAt is when DisclosureChannel last changed. It is the
+	// verified_at of the interchange route record, so it only moves on a
+	// real change: bumping it on every maintainers re-run would rewrite the
+	// record and churn the public feed with no new information.
+	DisclosureChannelAt *time.Time
+
+	// FederationOptOutAt records that this repository's maintainer asked
+	// federated instances to neither scan it nor contact them about it.
+	// Non-null blocks new scans, keeps the repository out of every other
+	// feed record, and publishes an optout record on the public feed.
+	// FederationOptOutReason is the optional reason that travels with it.
+	FederationOptOutAt     *time.Time
+	FederationOptOutReason string
 
 	// Posture is the disclosure-readiness tier assigned by the posture
 	// skill: "ready", "partial", or "unprepared". PostureSummary is the
@@ -74,6 +87,11 @@ type Repository struct {
 	// are overwritten on each posture run.
 	Posture        string `gorm:"index"`
 	PostureSummary string
+
+	// Health is the evidence-based maintenance classification: active, stale,
+	// abandoned, or zombie. Empty means there is not yet enough evidence to
+	// make a classification.
+	Health RepositoryHealth `gorm:"index"`
 
 	// Fork is the full_name (owner/name) of this repository's private
 	// staging repo inside the configured fork_org. Written by the fork
@@ -371,6 +389,30 @@ type Package struct {
 	CreatedAt time.Time
 }
 
+type PackageAlternativeKind string
+
+const (
+	PackageAlternativeFork       PackageAlternativeKind = "fork"
+	PackageAlternativeSuccessor  PackageAlternativeKind = "successor"
+	PackageAlternativeEquivalent PackageAlternativeKind = "equivalent"
+)
+
+// PackageAlternative records a migration target for a repository's package.
+// It is operator-curated: the source repo may be abandoned or zombie, while
+// the alternative PURL points at a maintained fork, successor, or equivalent.
+type PackageAlternative struct {
+	ID           uint `gorm:"primarykey"`
+	RepositoryID uint `gorm:"index;not null;uniqueIndex:idx_repo_alt_purl_kind"`
+	Repository   Repository
+
+	PURL string                 `gorm:"not null;uniqueIndex:idx_repo_alt_purl_kind"`
+	Kind PackageAlternativeKind `gorm:"index;not null;uniqueIndex:idx_repo_alt_purl_kind"`
+	Note string
+
+	CreatedAt time.Time
+	UpdatedAt time.Time
+}
+
 type MaintainerStatus string
 
 const (
@@ -418,6 +460,15 @@ const (
 	FindingPublished    FindingLifecycle = "published"
 	FindingRejected     FindingLifecycle = "rejected"
 	FindingDuplicate    FindingLifecycle = "duplicate"
+)
+
+type FindingNovelty string
+
+const (
+	FindingNoveltyUnfixed    FindingNovelty = "unfixed"
+	FindingNoveltyFixed      FindingNovelty = "fixed"
+	FindingNoveltyUnclear    FindingNovelty = "unclear"
+	FindingNoveltyNotChecked FindingNovelty = "not_checked"
 )
 
 // FindingLifecycles lists every finding status in workflow order. Used to
@@ -475,6 +526,73 @@ type Advisory struct {
 	WithdrawnAt    *time.Time
 
 	CreatedAt time.Time
+}
+
+// AdvisoryAuditStatuses is the set of verdicts an advisory fix audit may
+// record: the advertised fix held (fixed), can be circumvented (bypass),
+// left the same bug class open elsewhere (variant), or the original
+// reproduction fires again at the audited commit (regressed).
+var AdvisoryAuditStatuses = map[string]bool{
+	"fixed": true, "bypass": true, "variant": true, "regressed": true,
+}
+
+// AdvisoryAudit is one fix-audit verdict for a published advisory, written by
+// the advisory-deep-dive skill. One row per advisory per run; the newest row
+// per (repository, advisory) is authoritative. Keyed by advisory UUID rather
+// than Advisory.ID because the advisories skill replaces Advisory rows
+// wholesale on each run.
+type AdvisoryAudit struct {
+	ID           uint `gorm:"primarykey"`
+	RepositoryID uint `gorm:"index;not null"`
+	ScanID       uint `gorm:"index"`
+
+	AdvisoryUUID string `gorm:"index"`
+	Status       string // one of AdvisoryAuditStatuses
+	Evidence     string
+	// FindingIDs is the comma-joined list of Finding row ids this audit
+	// opened. Empty when Status is fixed.
+	FindingIDs string
+	// Commit is the audited commit, denormalized from the scan.
+	Commit string
+
+	CreatedAt time.Time
+}
+
+// InterchangeRecord is one federation record imported from a peer feed,
+// stored verbatim so re-validating or re-applying it never depends on how
+// the running version of scrutineer happened to interpret it. Unique per
+// (feed, predicate_type, subject_digest): a peer refreshing a record
+// replaces its own row, while two peers publishing conflicting verdicts
+// for the same subject each keep theirs instead of one silently winning.
+type InterchangeRecord struct {
+	ID uint `gorm:"primarykey"`
+
+	// Feed is the peer feed's git remote, part of the unique key.
+	Feed          string `gorm:"uniqueIndex:idx_interchange_record,priority:1"`
+	PredicateType string `gorm:"uniqueIndex:idx_interchange_record,priority:2"`
+	// SubjectDigest is the record's subject sha256: the salted finding hash
+	// for a claim, sha256 of the canonical repository URL for an opt-out or
+	// route, sha256 of repository plus advisory id for a certificate.
+	SubjectDigest string `gorm:"uniqueIndex:idx_interchange_record,priority:3"`
+	// Record is the raw in-toto statement as published.
+	Record string `gorm:"type:text"`
+	// AppliedAt is when the import last acted on this record, or established
+	// there was nothing local to act on. Null re-opens it on the next pass,
+	// and a changed Record clears it, so a peer's correction is re-applied
+	// and an opt-out published before its repository was imported here still
+	// lands once the repository exists. An unchanged record keeps its stamp,
+	// which is what stops the hourly pass from reinstating what an operator
+	// deliberately cleared.
+	AppliedAt *time.Time
+	// AppliedRepositoryID is the repository row the stamp above was written
+	// against, zero for the kinds that act on nothing local. Deleting that
+	// repository re-opens the record, since the stamp only ever meant "this
+	// row already carries it": without that, an opt-out applied before a
+	// repository was deleted and re-added would leave the new row scannable
+	// while the peer's request is still standing.
+	AppliedRepositoryID uint `gorm:"index"`
+
+	ReceivedAt time.Time
 }
 
 // Dependent is a package that depends on one of this repo's packages.
@@ -691,6 +809,12 @@ type Finding struct {
 	// queue can filter on an indexed column rather than LIKE-scanning
 	// finding_notes for the revalidate header.
 	LastRevalidateVerdict string `gorm:"index"`
+	// Novelty records whether the finding's source location changed between
+	// the scanned commit and the HEAD inspected by revalidate. A touched file
+	// starts as unclear until revalidate classifies the staged diff.
+	Novelty              FindingNovelty `gorm:"index"`
+	NoveltyCheckedCommit string
+	NoveltyCheckedAt     *time.Time
 	// SuggestedFix is a unified diff from the patch skill that has passed
 	// the applicability gate (parses, targets real files, touches a file
 	// named in Location, git apply --check clean). Empty when no patch has
@@ -1198,9 +1322,10 @@ func Open(dsn string) (*gorm.DB, error) {
 		&Repository{}, &Scan{},
 		&Finding{}, &FindingLabel{}, &FindingNote{},
 		&FindingCommunication{}, &FindingReference{}, &FindingHistory{}, &FindingReview{}, &AuditEvent{},
-		&Dependency{}, &ExpectedFinding{}, &Package{}, &Dependent{}, &FindingDependent{}, &Advisory{},
+		&Dependency{}, &ExpectedFinding{}, &Package{}, &PackageAlternative{}, &Dependent{}, &FindingDependent{}, &Advisory{}, &AdvisoryAudit{},
 		&Maintainer{}, &Skill{}, &Subproject{},
 		&SBOMUpload{}, &SBOMPackage{}, &CNA{}, &Setting{},
+		&Conversation{}, &ChatMessage{}, &InterchangeRecord{},
 	); err != nil {
 		return nil, fmt.Errorf("automigrate: %w", err)
 	}

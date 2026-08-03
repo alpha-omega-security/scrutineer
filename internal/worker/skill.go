@@ -84,6 +84,9 @@ type skillContextScrutineer struct {
 	// threat-model skill, which incorporates it into a complete scan-config
 	// proposal without letting recon overwrite analyst configuration directly.
 	Recon *skillContextRecon `json:"recon,omitempty"`
+	// Novelty is a bounded host-side git history check staged for revalidate.
+	// It keeps deterministic evidence separate from the model's verdict.
+	Novelty *skillContextNovelty `json:"novelty,omitempty"`
 }
 
 type skillContextRecon struct {
@@ -164,11 +167,8 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 		}
 		scan.Commit = gitHead(filepath.Join(workRoot, "src"))
 	} else {
-		prepare := w.PrepareRepoSrc
-		if prepare == nil {
-			prepare = w.prepareRepoSrc
-		}
-		cacheCommit, err := prepare(ctx, scan.Repository.URL, scan.Ref, workRoot, emit)
+		w.prepareNoveltyHistory(ctx, scan, &skill)
+		cacheCommit, err := w.PrepareSrc(ctx, scan.Repository.URL, scan.Ref, workRoot, emit)
 		if err != nil {
 			if report, ok := w.handleCloneError(scan, err, emit); ok {
 				return report, nil
@@ -195,11 +195,11 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 	}
 
 	skillDir := w.Runner.SkillDir(workRoot, skill.Name)
-	if err := w.stageWorkspace(workRoot, skillDir, scan, &skill); err != nil {
+	if err := w.stageWorkspace(ctx, workRoot, skillDir, scan, &skill); err != nil {
 		return "", err
 	}
 
-	prompt := buildLoggedPrompt(&skill)
+	prompt := buildLoggedPrompt(&skill, scan.Backend)
 	scan.Prompt = prompt
 	w.DB.Model(scan).Update("prompt", prompt)
 
@@ -370,6 +370,8 @@ func (w *Worker) parseSkillOutput(skill *db.Skill, scan *db.Scan, report string,
 		return w.parsePackagesOutput(scan, report, emit)
 	case "advisories":
 		return w.parseAdvisoriesOutput(scan, report, emit)
+	case "advisory_audit":
+		return w.parseAdvisoryAuditOutput(skill, scan, report, emit)
 	case "dependencies":
 		return w.parseDependenciesOutput(scan, report, emit)
 	case "finding_dedup":
@@ -423,9 +425,17 @@ func (w *Worker) clearCloneError(scan *db.Scan) {
 // fingerprint: a match bumps last-seen on the existing row instead of
 // creating a duplicate, so analyst triage state survives a rescan (#75).
 func (w *Worker) parseFindingsOutput(skill *db.Skill, scan *db.Scan, report string, emit func(Event)) error {
+	_, err := w.ingestFindings(skill, scan, report, emit)
+	return err
+}
+
+// ingestFindings is the body of parseFindingsOutput, returning the persisted
+// findings with their database IDs set (dedup resolves to the existing row)
+// so callers like parseAdvisoryAuditOutput can map report-local ids to rows.
+func (w *Worker) ingestFindings(skill *db.Skill, scan *db.Scan, report string, emit func(Event)) ([]db.Finding, error) {
 	rep, err := parseReport([]byte(report))
 	if err != nil {
-		return err
+		return nil, err
 	}
 	findings := rep.toFindings(scan.ID, scan.RepositoryID, scan.Commit, scan.SubPath)
 	findings = groupByFingerprint(findings, scan.SkillName)
@@ -465,7 +475,7 @@ func (w *Worker) parseFindingsOutput(skill *db.Skill, scan *db.Scan, report stri
 
 		wasCreated, perr := w.persistFinding(scan, f)
 		if perr != nil {
-			return perr
+			return nil, perr
 		}
 		if wasCreated {
 			created++
@@ -484,9 +494,9 @@ func (w *Worker) parseFindingsOutput(skill *db.Skill, scan *db.Scan, report stri
 		len(findings), created, observed, missed, retracted)})
 
 	if db.SeverityAtLeast(worst, skill.FailOn) {
-		return &FailOnThresholdError{Worst: worst, Threshold: skill.FailOn}
+		return findings, &FailOnThresholdError{Worst: worst, Threshold: skill.FailOn}
 	}
-	return nil
+	return findings, nil
 }
 
 // persistFinding writes one finding into the repository's finding set using
@@ -848,8 +858,7 @@ func (w *Worker) parseMaintainersOutput(scan *db.Scan, report string, emit func(
 		return err
 	}
 	if strings.TrimSpace(result.DisclosureChannel) != "" {
-		if err := w.DB.Model(&db.Repository{}).Where("id = ?", repo.ID).
-			Update("disclosure_channel", result.DisclosureChannel).Error; err != nil {
+		if err := db.SetDisclosureChannel(w.DB, repo.ID, result.DisclosureChannel); err != nil {
 			return fmt.Errorf("update disclosure channel: %w", err)
 		}
 	}
@@ -1186,10 +1195,16 @@ func (w *Worker) metadataDir() string {
 }
 
 func stageContext(workRoot, apiBase, forkOrg, metadataDir string, scan *db.Scan, repo *db.Repository) error {
-	return stageContextWithRecon(workRoot, apiBase, forkOrg, metadataDir, scan, repo, nil)
+	return stageContextWithInputs(workRoot, apiBase, forkOrg, metadataDir, scan, repo, nil, nil)
 }
 
-func stageContextWithRecon(workRoot, apiBase, forkOrg, metadataDir string, scan *db.Scan, repo *db.Repository, recon *skillContextRecon) error {
+func stageContextWithInputs(
+	workRoot, apiBase, forkOrg, metadataDir string,
+	scan *db.Scan,
+	repo *db.Repository,
+	recon *skillContextRecon,
+	novelty *skillContextNovelty,
+) error {
 	if err := os.MkdirAll(workRoot, dirPerm); err != nil {
 		return err
 	}
@@ -1223,6 +1238,7 @@ func stageContextWithRecon(workRoot, apiBase, forkOrg, metadataDir string, scan 
 	}
 	ctx.Scrutineer.FocusArea = focusArea
 	ctx.Scrutineer.Recon = recon
+	ctx.Scrutineer.Novelty = novelty
 	if scan.SkillID != nil {
 		ctx.Scrutineer.SkillID = *scan.SkillID
 	}
@@ -1273,12 +1289,18 @@ func stageContextWithRecon(workRoot, apiBase, forkOrg, metadataDir string, scan 
 // Pulled out of doSkill to keep that function under the gocognit
 // threshold; the error wrapping stays here so failures still name the
 // staging step.
-func (w *Worker) stageWorkspace(workRoot, skillDir string, scan *db.Scan, skill *db.Skill) error {
+func (w *Worker) stageWorkspace(ctx context.Context, workRoot, skillDir string, scan *db.Scan, skill *db.Skill) error {
 	recon, err := w.reconContext(scan, skill)
 	if err != nil {
 		return err
 	}
-	return stageWorkspace(workRoot, skillDir, w.APIBase, w.ForkOrg, w.metadataDir(), scan, skill, recon)
+	novelty, err := w.noveltyContext(ctx, workRoot, scan, skill)
+	if err != nil {
+		return err
+	}
+	return stageWorkspaceWithInputs(
+		workRoot, skillDir, w.APIBase, w.ForkOrg, w.metadataDir(), scan, skill, recon, novelty,
+	)
 }
 
 // StageWorkspace writes the workspace side files shared by production skill
@@ -1286,11 +1308,19 @@ func (w *Worker) stageWorkspace(workRoot, skillDir string, scan *db.Scan, skill 
 // rendered skill bundle, and optional import payloads. Production adds recon
 // context for threat-model in Worker.stageWorkspace.
 func StageWorkspace(workRoot, skillDir, apiBase, forkOrg, metadataDir string, scan *db.Scan, skill *db.Skill) error {
-	return stageWorkspace(workRoot, skillDir, apiBase, forkOrg, metadataDir, scan, skill, nil)
+	return stageWorkspaceWithInputs(workRoot, skillDir, apiBase, forkOrg, metadataDir, scan, skill, nil, nil)
 }
 
-func stageWorkspace(workRoot, skillDir, apiBase, forkOrg, metadataDir string, scan *db.Scan, skill *db.Skill, recon *skillContextRecon) error {
-	if err := stageContextWithRecon(workRoot, apiBase, forkOrg, metadataDir, scan, &scan.Repository, recon); err != nil {
+func stageWorkspaceWithInputs(
+	workRoot, skillDir, apiBase, forkOrg, metadataDir string,
+	scan *db.Scan,
+	skill *db.Skill,
+	recon *skillContextRecon,
+	novelty *skillContextNovelty,
+) error {
+	if err := stageContextWithInputs(
+		workRoot, apiBase, forkOrg, metadataDir, scan, &scan.Repository, recon, novelty,
+	); err != nil {
 		return fmt.Errorf("stage context: %w", err)
 	}
 	if err := stageThreatModel(workRoot, scan.SubPath, scan.Repository.ThreatModel); err != nil {

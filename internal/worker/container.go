@@ -113,10 +113,10 @@ type EgressSidecarConfig struct {
 const hardenedNetworkPrefix = "scrutineer-hardened-"
 
 // hardenedNetworkName returns the network name dedicated to a
-// single hardened scan. Uniqueness per scan is the whole isolation
-// property: two scans must never produce the same name.
-func hardenedNetworkName(scanID uint) string {
-	return fmt.Sprintf("%s%d", hardenedNetworkPrefix, scanID)
+// single hardened job. Uniqueness per job is the whole isolation
+// property: two jobs must never produce the same name.
+func hardenedNetworkName(key string) string {
+	return hardenedNetworkPrefix + key
 }
 
 // proxySidecarPrefix names the per-scan egress proxy sidecar containers.
@@ -141,11 +141,11 @@ const proxySidecarReadyTimeout = 30 * time.Second
 // waiting for it to come up.
 const proxySidecarReadyPoll = 1 * time.Second
 
-// proxySidecarName returns the container name for a single hardened scan's
-// egress proxy sidecar. Uniqueness per scan keeps concurrent scans' sidecars and
+// proxySidecarName returns the container name for a single hardened job's
+// egress proxy sidecar. Uniqueness per job keeps concurrent jobs' sidecars and
 // the networks they pin from colliding.
-func proxySidecarName(scanID uint) string {
-	return fmt.Sprintf("%s%d", proxySidecarPrefix, scanID)
+func proxySidecarName(key string) string {
+	return proxySidecarPrefix + key
 }
 
 // usesEgressSidecar reports whether this scan routes egress through a proxy
@@ -287,7 +287,10 @@ func (d ContainerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Ev
 	hitMaxTurns, sessionID, waitErr := d.runContainerOnce(ctx, runBase, sj, wrappedEmit)
 
 	if waitErr != nil && sj.ResumeSessionID != "" && sessionID == "" && accountErrText == "" {
-		if sj.ResumePrompt != "" {
+		if sj.ResumePrompt != "" && sj.Prompt == "" {
+			// A bare resume prompt is a corrective nudge ("rewrite the invalid
+			// report.json") that means nothing to a fresh agent, and there is
+			// no fresh framing to fall back on.
 			emit(Event{Kind: KindText, Text: "resume of session " + sj.ResumeSessionID + " failed; " + resumePromptNoFreshFallbackText})
 			return SkillResult{Commit: commit, Profile: profile, Backend: backend}, fmt.Errorf("%s exited: %w", d.Runtime.bin(), waitErr)
 		}
@@ -324,7 +327,7 @@ func (d ContainerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Ev
 // event arrived, e.g. a --resume that could not find the conversation).
 func (d ContainerRunner) runContainerOnce(ctx context.Context, runBase []string, sj SkillJob, emit func(Event)) (hitMaxTurns bool, sessionID string, waitErr error) {
 	h := d.harness()
-	harnessArgs := append([]string{h.Binary()}, h.Args(sj, d.Effort, d.MaxTurns, d.ModelBaseURL)...)
+	harnessArgs := append([]string{h.Binary()}, h.Args(sj.toJob(d.Effort, d.MaxTurns, d.ModelBaseURL))...)
 	runArgs := append(append([]string{}, runBase...), harnessArgs...)
 
 	cmd := exec.CommandContext(ctx, d.Runtime.bin(), runArgs...)
@@ -773,10 +776,10 @@ func (d ContainerRunner) setupHardenedNetwork(sj SkillJob, image string) (harden
 	if !d.Hardened {
 		return hardenedNet{}, noop, nil
 	}
-	if sj.ScanID == 0 {
-		return hardenedNet{}, noop, fmt.Errorf("hardened mode requires SkillJob.ScanID; refusing to share %s0 across scans", hardenedNetworkPrefix)
+	if sj.ScanID == 0 && sj.IsolationKey == "" {
+		return hardenedNet{}, noop, fmt.Errorf("hardened mode requires SkillJob.ScanID or SkillJob.IsolationKey; refusing to share %s0 across jobs", hardenedNetworkPrefix)
 	}
-	network := hardenedNetworkName(sj.ScanID)
+	network := hardenedNetworkName(sj.isolationKey())
 	if err := EnsureHardenedNetwork(d.Runtime, network); err != nil {
 		return hardenedNet{}, noop, fmt.Errorf("create hardened network: %w", err)
 	}
@@ -811,7 +814,7 @@ func (d ContainerRunner) setupHardenedNetwork(sj SkillJob, image string) (harden
 			netCleanup()
 		}
 		hn.proxyEndpoint = endpoint
-		hn.proxyName = proxySidecarName(sj.ScanID)
+		hn.proxyName = proxySidecarName(sj.isolationKey())
 	}
 
 	// docker's bridge --internal is trusted, and so is rootful podman's (netavark
@@ -845,7 +848,7 @@ func (d ContainerRunner) startProxySidecar(sj SkillJob, network string) (endpoin
 		// API; refuse rather than start a sidecar that would 502 every API call.
 		return "", noop, fmt.Errorf("no host-gateway IPv4 resolved for the egress sidecar (podman >= 4.7 and a working rootless network backend are required)")
 	}
-	name := proxySidecarName(sj.ScanID)
+	name := proxySidecarName(sj.isolationKey())
 	rmName := func() { _ = exec.Command(d.Runtime.bin(), "rm", "-f", "--", name).Run() }
 	// A residual sidecar from a crashed scan with this id would clash on the name
 	// and pin the network; remove it first (no-op when absent).
@@ -946,7 +949,7 @@ func EgressSidecarEnv(cfg EgressSidecarConfig, listen string) []string {
 // runs cleanupNetwork.
 func (d ContainerRunner) teardownHardenedScan(sj SkillJob, hnet hardenedNet, cleanupNetwork func(), emit func(Event)) {
 	if hnet.proxyEndpoint != "" {
-		d.emitSidecarLogs(proxySidecarName(sj.ScanID), emit)
+		d.emitSidecarLogs(proxySidecarName(sj.isolationKey()), emit)
 	}
 	cleanupNetwork()
 }
@@ -970,7 +973,7 @@ func (d ContainerRunner) emitSidecarLogs(name string, emit func(Event)) {
 func emitProxyLogLines(out []byte, emit func(Event)) {
 	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
 		if line = strings.TrimSpace(line); line != "" && noteworthyProxyLogLine(line) {
-			emit(Event{Kind: KindText, Text: "egress-proxy: " + line})
+			emit(Event{Kind: KindEgress, Text: "egress-proxy: " + line})
 		}
 	}
 }

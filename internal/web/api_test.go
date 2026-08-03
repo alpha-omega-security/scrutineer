@@ -120,6 +120,7 @@ func TestAPIGetRepository_includesPostureFields(t *testing.T) {
 	s.DB.Model(&repo).Updates(map[string]any{
 		"posture":         "partial",
 		"posture_summary": "SECURITY.md present, PVR disabled",
+		"health":          db.RepositoryHealthZombie,
 	})
 
 	r := httptest.NewRequest("GET", "/api/repositories/"+strconv.FormatUint(uint64(repo.ID), 10), nil)
@@ -140,6 +141,9 @@ func TestAPIGetRepository_includesPostureFields(t *testing.T) {
 	if body["posture_summary"] != "SECURITY.md present, PVR disabled" {
 		t.Errorf("posture_summary = %v", body["posture_summary"])
 	}
+	if body["health"] != "zombie" {
+		t.Errorf("health = %v, want zombie", body["health"])
+	}
 }
 
 func TestAPIListsTypedReads(t *testing.T) {
@@ -149,6 +153,7 @@ func TestAPIListsTypedReads(t *testing.T) {
 
 	// Seed one row in each typed table.
 	s.DB.Create(&db.Package{RepositoryID: repo.ID, Name: "foo", Ecosystem: "rubygems", PURL: "pkg:gem/foo"})
+	s.DB.Create(&db.PackageAlternative{RepositoryID: repo.ID, PURL: "pkg:gem/bar", Kind: db.PackageAlternativeEquivalent})
 	s.DB.Create(&db.Dependent{RepositoryID: repo.ID, Name: "bar", Ecosystem: "rubygems"})
 	s.DB.Create(&db.Advisory{RepositoryID: repo.ID, UUID: "u1", Severity: "HIGH", CVSSScore: 7.5})
 	s.DB.Create(&db.Dependency{RepositoryID: repo.ID, Name: "dep", Ecosystem: "rubygems", ManifestPath: "Gemfile"})
@@ -160,6 +165,7 @@ func TestAPIListsTypedReads(t *testing.T) {
 
 	cases := map[string]int{
 		"/api/repositories/%d/packages":     1,
+		"/api/repositories/%d/alternatives": 1,
 		"/api/repositories/%d/dependents":   1,
 		"/api/repositories/%d/advisories":   1,
 		"/api/repositories/%d/dependencies": 1,
@@ -252,56 +258,127 @@ func TestAPIPatchRepositoryRejectsEmptyBody(t *testing.T) {
 	}
 }
 
-func TestAPIFindingReadsAndFilters(t *testing.T) {
+func TestAPIPatchRepositoryRejectsInvalidJSON(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
 	repo, scan := seedRunningScan(t, s)
 
-	// Simulate a prior deep-dive scan with a couple of findings attached.
-	prior := db.Scan{RepositoryID: repo.ID, Kind: worker.JobSkill, Status: db.ScanDone, SkillName: "security-deep-dive"}
-	s.DB.Create(&prior)
-	s.DB.Create(&db.Finding{ScanID: prior.ID, RepositoryID: repo.ID, FindingID: "F1", Title: "a", Severity: "High", Location: "a.go:1", Commit: "abc123", SubPath: "services/api", Trace: "trace a", SuggestedRecipients: "@owner (CODEOWNERS: a.go)"})
-	s.DB.Create(&db.Finding{ScanID: prior.ID, RepositoryID: repo.ID, FindingID: "F2", Title: "b", Severity: "Low", Location: "b.go:1", Trace: "trace b"})
+	r := httptest.NewRequest("PATCH", "/api/repositories/"+strconv.FormatUint(uint64(repo.ID), 10),
+		strings.NewReader(`not json`))
+	r.Host = testHost
+	r.Header.Set("Authorization", "Bearer "+scan.APIToken)
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status %d, want 400", w.Code)
+	}
+	var body map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode error response: %v", err)
+	}
+	if body[errorKey] != "body must be JSON" {
+		t.Fatalf("error = %q, want body must be JSON", body[errorKey])
+	}
+}
 
-	// Unfiltered list
-	r := httptest.NewRequest("GET", "/api/repositories/"+strconv.FormatUint(uint64(repo.ID), 10)+"/findings", nil)
+func TestAPIFindingReadsAndFilters(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo, scan := seedRunningScan(t, s)
+	get := func(q string) []map[string]any {
+		r := httptest.NewRequest("GET", fmt.Sprintf("/api/repositories/%d/findings%s", repo.ID, q), nil)
+		r.Host = testHost
+		r.Header.Set("Authorization", "Bearer "+scan.APIToken)
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, r)
+		if w.Code != 200 {
+			t.Fatalf("%s: status %d: %s", q, w.Code, w.Body.String())
+		}
+		var rows []map[string]any
+		if err := json.NewDecoder(w.Body).Decode(&rows); err != nil {
+			t.Fatalf("%s: decode response: %v: %s", q, err, w.Body.String())
+		}
+		return rows
+	}
+
+	// Simulate a prior deep-dive scan with a couple of findings attached.
+	prior := db.Scan{RepositoryID: repo.ID, Kind: worker.JobSkill, Status: db.ScanDone, SkillName: "security-deep-dive", ScanGroup: "grp1"}
+	s.DB.Create(&prior)
+	s.DB.Create(&db.Finding{ScanID: prior.ID, RepositoryID: repo.ID, FindingID: "F1", Title: "a", Severity: "High", Status: db.FindingNew, Location: "a.go:1", Commit: "abc123", SubPath: "services/api", Trace: "trace a", SuggestedRecipients: "@owner (CODEOWNERS: a.go)"})
+	s.DB.Create(&db.Finding{ScanID: prior.ID, RepositoryID: repo.ID, FindingID: "F2", Title: "b", Severity: "Low", Status: db.FindingFixed, Location: "b.go:1", Trace: "trace b"})
+
+	// Another scan on same repo with different skill and scan_group
+	otherScan := db.Scan{RepositoryID: repo.ID, Kind: worker.JobSkill, Status: db.ScanDone, SkillName: "vuln-scan", ScanGroup: "grp2"}
+	s.DB.Create(&otherScan)
+	s.DB.Create(&db.Finding{ScanID: otherScan.ID, RepositoryID: repo.ID, FindingID: "F3", Title: "c", Severity: "High", Status: db.FindingNew, Location: "c.go:1", Trace: "trace c"})
+
+	// Finding on a different repository
+	otherRepo := db.Repository{URL: "https://example.com/other", Name: "other"}
+	s.DB.Create(&otherRepo)
+	otherRepoScan := db.Scan{RepositoryID: otherRepo.ID, Kind: worker.JobSkill, Status: db.ScanDone, SkillName: "security-deep-dive"}
+	s.DB.Create(&otherRepoScan)
+	s.DB.Create(&db.Finding{ScanID: otherRepoScan.ID, RepositoryID: otherRepo.ID, FindingID: "F4", Title: "d", Severity: "High", Location: "d.go:1"})
+
+	// Unfiltered list (should return all 3 findings for repo, omitting otherRepo finding)
+	findings := get("")
+	if len(findings) != 3 {
+		t.Fatalf("findings len=%d want=3", len(findings))
+	}
+
+	// Skill filter
+	findings = get("?skill=vuln-scan")
+	if len(findings) != 1 || findings[0]["finding_id"] != "F3" {
+		t.Errorf("skill filter: %+v", findings)
+	}
+
+	// Scan group filter
+	findings = get("?scan_group=grp1")
+	if len(findings) != 2 {
+		t.Errorf("scan_group filter: %+v", findings)
+	}
+
+	// Severity filter on direct query path
+	findings = get("?severity=Low")
+	if len(findings) != 1 || findings[0]["severity"] != "Low" {
+		t.Errorf("severity filter: %+v", findings)
+	}
+
+	// Severity and skill filter composed
+	findings = get("?skill=security-deep-dive&severity=High")
+	if len(findings) != 1 || findings[0]["finding_id"] != "F1" {
+		t.Errorf("skill and severity filter composed: %+v", findings)
+	}
+
+	// Status filter on direct query path
+	findings = get("?status=fixed")
+	if len(findings) != 1 || findings[0]["finding_id"] != "F2" {
+		t.Errorf("status filter: %+v", findings)
+	}
+
+	// Get one finding; should include trace prose.
+	findings = get("?severity=High")
+	var fid any
+	for _, f := range findings {
+		if f["finding_id"] == "F1" {
+			fid = f["id"]
+			break
+		}
+	}
+	if fid == nil {
+		t.Fatalf("severity=High response did not include F1: %+v", findings)
+	}
+	r := httptest.NewRequest("GET", "/api/findings/"+toString(fid), nil)
 	r.Host = testHost
 	r.Header.Set("Authorization", "Bearer "+scan.APIToken)
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, r)
 	if w.Code != 200 {
-		t.Fatalf("findings list status %d: %s", w.Code, w.Body)
-	}
-	var findings []map[string]any
-	_ = json.NewDecoder(w.Body).Decode(&findings)
-	if len(findings) != 2 {
-		t.Fatalf("findings len=%d want=2", len(findings))
-	}
-
-	// Severity filter
-	r = httptest.NewRequest("GET",
-		"/api/repositories/"+strconv.FormatUint(uint64(repo.ID), 10)+"/findings?severity=High", nil)
-	r.Host = testHost
-	r.Header.Set("Authorization", "Bearer "+scan.APIToken)
-	w = httptest.NewRecorder()
-	s.Handler().ServeHTTP(w, r)
-	_ = json.NewDecoder(w.Body).Decode(&findings)
-	if len(findings) != 1 || findings[0]["severity"] != "High" {
-		t.Errorf("severity filter: %+v", findings)
-	}
-
-	// Get one finding; should include trace prose.
-	fid := findings[0]["id"]
-	r = httptest.NewRequest("GET", "/api/findings/"+toString(fid), nil)
-	r.Host = testHost
-	r.Header.Set("Authorization", "Bearer "+scan.APIToken)
-	w = httptest.NewRecorder()
-	s.Handler().ServeHTTP(w, r)
-	if w.Code != 200 {
-		t.Fatalf("get finding status %d: %s", w.Code, w.Body)
+		t.Fatalf("get finding status %d: %s", w.Code, w.Body.String())
 	}
 	var detail map[string]any
-	_ = json.NewDecoder(w.Body).Decode(&detail)
+	if err := json.NewDecoder(w.Body).Decode(&detail); err != nil {
+		t.Fatalf("decode finding detail: %v: %s", err, w.Body.String())
+	}
 	if detail["trace"] != "trace a" {
 		t.Errorf("finding detail missing trace: %+v", detail)
 	}

@@ -17,10 +17,11 @@ import (
 type Event struct {
 	Name string // e.g. "scan-log", "scan-status"
 	Data string
-	// Scoping: which scan/repo this event is for. Clients subscribe by
-	// scan or repo; the broker filters.
+	// Scoping: which scan/repo/conversation this event is for. Clients
+	// subscribe by scan, repo, or conversation; the broker filters.
 	ScanID uint
 	RepoID uint
+	ConvID uint
 }
 
 const sseBuf = 64
@@ -29,6 +30,7 @@ type client struct {
 	ch     chan Event
 	scanID uint // 0 = all scans
 	repoID uint // 0 = all repos
+	convID uint // 0 = all conversations
 }
 
 // Broker fans SSE events from the worker to connected HTTP clients.
@@ -41,11 +43,12 @@ func NewBroker() *Broker {
 	return &Broker{clients: make(map[*client]struct{})}
 }
 
-func (b *Broker) Subscribe(scanID, repoID uint) *client {
+func (b *Broker) Subscribe(scanID, repoID, convID uint) *client {
 	c := &client{
 		ch:     make(chan Event, sseBuf),
 		scanID: scanID,
 		repoID: repoID,
+		convID: convID,
 	}
 	b.mu.Lock()
 	b.clients[c] = struct{}{}
@@ -71,6 +74,9 @@ func (b *Broker) Publish(e Event) {
 		if c.repoID != 0 && c.repoID != e.RepoID {
 			continue
 		}
+		if c.convID != 0 && c.convID != e.ConvID {
+			continue
+		}
 		select {
 		case c.ch <- e:
 		default:
@@ -88,14 +94,25 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 
 	scanID, _ := strconv.ParseUint(r.URL.Query().Get("scan"), 10, 64)
 	repoID, _ := strconv.ParseUint(r.URL.Query().Get("repo"), 10, 64)
+	convID, _ := strconv.ParseUint(r.URL.Query().Get("conv"), 10, 64)
 
-	c := s.Broker.Subscribe(uint(scanID), uint(repoID))
+	c := s.Broker.Subscribe(uint(scanID), uint(repoID), uint(convID))
 	defer s.Broker.Unsubscribe(c)
 
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	flusher.Flush()
+
+	// Publish only reaches subscribers that already exist, so a chat turn
+	// finishing between the page render and this connection would leave the
+	// page spinning on a chat-done that is already gone. Re-check the live
+	// state now that we are subscribed: the page reloads and picks up the
+	// reply it missed.
+	if convID != 0 && !s.chatTurnActive(uint(convID)) {
+		writeSSEEvent(w, "chat-done", "")
+		flusher.Flush()
+	}
 
 	ctx := r.Context()
 	for {

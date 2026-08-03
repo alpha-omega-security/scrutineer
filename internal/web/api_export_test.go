@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -95,7 +96,7 @@ func TestStreamJSONLRowsErrorReturns500(t *testing.T) {
 	defer done()
 
 	w := httptest.NewRecorder()
-	streamJSONL[db.Finding](w, s.DB.Raw("SELECT * FROM missing_export_table"), findingExport)
+	streamJSONL[db.Finding](w, s.DB.Raw("SELECT * FROM missing_export_table"), s.Log, findingExport)
 
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("status %d, want 500. body=%s", w.Code, w.Body)
@@ -110,6 +111,105 @@ func TestStreamJSONLRowsErrorReturns500(t *testing.T) {
 	if body[errorKey] == "" {
 		t.Fatalf("error response missing %q: %+v", errorKey, body)
 	}
+}
+
+func TestStreamJSONLRowsErrAbortsPartialResponse(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	type exportRow struct {
+		Value string
+	}
+	w := httptest.NewRecorder()
+	defer func() {
+		if got := recover(); got != http.ErrAbortHandler {
+			t.Fatalf("recover() = %v, want http.ErrAbortHandler", got)
+		}
+		rows := readJSONL(t, w.Body.String())
+		if len(rows) != 1 || rows[0]["value"] != "ok" {
+			t.Fatalf("streamed rows = %#v, want one successful row before abort", rows)
+		}
+	}()
+
+	q := s.DB.Raw(`WITH rows(value) AS (
+		VALUES ('ok'), (json_extract('not-json', '$'))
+	) SELECT value FROM rows`)
+	streamJSONL[exportRow](w, q, s.Log, func(row exportRow) map[string]any {
+		return map[string]any{"value": row.Value}
+	})
+}
+
+func TestStreamJSONLWriteErrorAfterPartialWriteAborts(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	type exportRow struct {
+		Value string
+	}
+	w := &failResponseWriter{writeBytes: 1}
+	defer func() {
+		if got := recover(); got != http.ErrAbortHandler {
+			t.Fatalf("recover() = %v, want http.ErrAbortHandler", got)
+		}
+		if strings.Contains(w.body.String(), errorKey) {
+			t.Fatalf("partial stream appended API error: %q", w.body.String())
+		}
+	}()
+
+	q := s.DB.Raw(`SELECT 'ok' AS value`)
+	streamJSONL[exportRow](w, q, s.Log, func(row exportRow) map[string]any {
+		return map[string]any{"value": row.Value}
+	})
+}
+
+func TestStreamJSONLWriteErrorAfterZeroByteWriteAborts(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	type exportRow struct {
+		Value string
+	}
+	w := &failResponseWriter{}
+	defer func() {
+		if got := recover(); got != http.ErrAbortHandler {
+			t.Fatalf("recover() = %v, want http.ErrAbortHandler", got)
+		}
+		if w.body.Len() != 0 {
+			t.Fatalf("zero-byte write unexpectedly wrote body: %q", w.body.String())
+		}
+	}()
+
+	q := s.DB.Raw(`SELECT 'ok' AS value`)
+	streamJSONL[exportRow](w, q, s.Log, func(row exportRow) map[string]any {
+		return map[string]any{"value": row.Value}
+	})
+}
+
+type failResponseWriter struct {
+	header     http.Header
+	body       bytes.Buffer
+	status     int
+	writeBytes int
+}
+
+func (w *failResponseWriter) Header() http.Header {
+	if w.header == nil {
+		w.header = make(http.Header)
+	}
+	return w.header
+}
+
+func (w *failResponseWriter) Write(p []byte) (int, error) {
+	n := w.writeBytes
+	if n > len(p) {
+		n = len(p)
+	}
+	w.body.Write(p[:n])
+	return n, errors.New("write failed")
+}
+
+func (w *failResponseWriter) WriteHeader(status int) {
+	w.status = status
 }
 
 func TestExportRepoFindings_severityFilter(t *testing.T) {
@@ -143,6 +243,251 @@ func TestExportRepoFindings_unknownRepo(t *testing.T) {
 	if w.Code != 404 {
 		t.Fatalf("status %d, want 404", w.Code)
 	}
+}
+
+func TestAPIv1DeleteRepository(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	s.Worker.DataDir = t.TempDir()
+
+	repo := db.Repository{URL: "https://github.com/acme/delete-me", Name: "delete-me"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: deepDiveSkillName}
+	s.DB.Create(&scan)
+	finding := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "doomed", Severity: sevHigh}
+	s.DB.Create(&finding)
+	s.DB.Create(&db.FindingReview{FindingID: finding.ID, Verdict: "true_positive", Reviewer: "analyst"})
+	s.DB.Create(&db.FindingNote{FindingID: finding.ID, Body: "note"})
+
+	r := httptest.NewRequest("DELETE", "/api/v1/repositories/"+strconv.FormatUint(uint64(repo.ID), 10), nil)
+	r.Host = testHost
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status %d, want 204. body=%s", w.Code, w.Body)
+	}
+	for name, n := range map[string]int64{
+		"repositories": countRows(t, s, &db.Repository{}, "id = ?", repo.ID),
+		"scans":        countRows(t, s, &db.Scan{}, "repository_id = ?", repo.ID),
+		"findings":     countRows(t, s, &db.Finding{}, "repository_id = ?", repo.ID),
+		"reviews":      countRows(t, s, &db.FindingReview{}, "finding_id = ?", finding.ID),
+		"notes":        countRows(t, s, &db.FindingNote{}, "finding_id = ?", finding.ID),
+	} {
+		if n != 0 {
+			t.Fatalf("%s rows survived repository delete: %d", name, n)
+		}
+	}
+}
+
+func TestAPIv1DeleteRepositoryRejectsInFlightScans(t *testing.T) {
+	for _, status := range []db.ScanStatus{db.ScanQueued, db.ScanRunning} {
+		t.Run(string(status), func(t *testing.T) {
+			s, done := newTestServer(t)
+			defer done()
+
+			repo := db.Repository{URL: "https://github.com/acme/busy-repo", Name: "busy-repo"}
+			if err := s.DB.Create(&repo).Error; err != nil {
+				t.Fatal(err)
+			}
+			scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: status, SkillName: deepDiveSkillName}
+			if err := s.DB.Create(&scan).Error; err != nil {
+				t.Fatal(err)
+			}
+
+			r := httptest.NewRequest("DELETE", "/api/v1/repositories/"+strconv.FormatUint(uint64(repo.ID), 10), nil)
+			r.Host = testHost
+			w := httptest.NewRecorder()
+			s.Handler().ServeHTTP(w, r)
+
+			if w.Code != http.StatusConflict {
+				t.Fatalf("status %d, want 409. body=%s", w.Code, w.Body)
+			}
+			if !strings.Contains(w.Body.String(), "queued, running, or paused scans") {
+				t.Fatalf("body %q missing in-flight scan explanation", w.Body.String())
+			}
+			if n := countRows(t, s, &db.Repository{}, "id = ?", repo.ID); n != 1 {
+				t.Fatalf("repository count = %d, want 1 after rejected delete", n)
+			}
+			if n := countRows(t, s, &db.Scan{}, "id = ?", scan.ID); n != 1 {
+				t.Fatalf("scan count = %d, want 1 after rejected delete", n)
+			}
+		})
+	}
+}
+
+func TestAPIv1DeleteRepositoryRejectsInFlightFindingScopedScans(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://github.com/acme/busy-finding-repo", Name: "busy-finding-repo"}
+	if err := s.DB.Create(&repo).Error; err != nil {
+		t.Fatal(err)
+	}
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: deepDiveSkillName}
+	if err := s.DB.Create(&scan).Error; err != nil {
+		t.Fatal(err)
+	}
+	finding := db.Finding{RepositoryID: repo.ID, ScanID: scan.ID, Title: "busy finding", Severity: sevHigh}
+	if err := s.DB.Create(&finding).Error; err != nil {
+		t.Fatal(err)
+	}
+	otherRepo := db.Repository{URL: "https://github.com/acme/worker-repo", Name: "worker-repo"}
+	if err := s.DB.Create(&otherRepo).Error; err != nil {
+		t.Fatal(err)
+	}
+	linked := db.Scan{RepositoryID: otherRepo.ID, FindingID: &finding.ID, Kind: "skill", Status: db.ScanPaused, SkillName: "verify"}
+	if err := s.DB.Create(&linked).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	r := httptest.NewRequest("DELETE", "/api/v1/repositories/"+strconv.FormatUint(uint64(repo.ID), 10), nil)
+	r.Host = testHost
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status %d, want 409. body=%s", w.Code, w.Body)
+	}
+	if n := countRows(t, s, &db.Repository{}, "id = ?", repo.ID); n != 1 {
+		t.Fatalf("repository count = %d, want 1 after rejected delete", n)
+	}
+	if n := countRows(t, s, &db.Scan{}, "id = ?", linked.ID); n != 1 {
+		t.Fatalf("finding-scoped scan count = %d, want 1 after rejected delete", n)
+	}
+}
+
+func TestAPIv1DeleteFinding(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	s.Worker.DataDir = t.TempDir()
+
+	repo := db.Repository{URL: "https://github.com/acme/keep-repo", Name: "keep-repo"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: deepDiveSkillName}
+	s.DB.Create(&scan)
+	finding := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "delete finding", Severity: sevHigh}
+	s.DB.Create(&finding)
+	other := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "keep finding", Severity: "Low"}
+	s.DB.Create(&other)
+	findingScopedScan := db.Scan{RepositoryID: repo.ID, FindingID: &finding.ID, Kind: "skill", Status: db.ScanDone, SkillName: "verify"}
+	s.DB.Create(&findingScopedScan)
+
+	s.DB.Create(&db.FindingNote{FindingID: finding.ID, Body: "note"})
+	s.DB.Create(&db.FindingCommunication{FindingID: finding.ID, Channel: "email", Direction: "outbound"})
+	s.DB.Create(&db.FindingReference{FindingID: finding.ID, URL: "https://example.com/ref"})
+	s.DB.Create(&db.FindingHistory{FindingID: finding.ID, Field: "status", NewValue: "new"})
+	s.DB.Create(&db.FindingReview{FindingID: finding.ID, Verdict: "true_positive", Reviewer: "analyst"})
+	dependent := db.Dependent{RepositoryID: repo.ID, Name: "downstream", Ecosystem: "npm"}
+	s.DB.Create(&dependent)
+	s.DB.Create(&db.FindingDependent{FindingID: finding.ID, DependentID: dependent.ID, Status: db.ExposureKnownAffected})
+	label := db.FindingLabel{Name: "delete-me"}
+	s.DB.Create(&label)
+	if err := s.DB.Model(&finding).Association("Labels").Append(&label); err != nil {
+		t.Fatal(err)
+	}
+	conv := db.Conversation{RepositoryID: repo.ID, FindingID: &finding.ID, Title: "finding chat"}
+	s.DB.Create(&conv)
+	s.DB.Create(&db.ChatMessage{ConversationID: conv.ID, Role: db.ChatRoleUser, Content: "hello"})
+
+	r := httptest.NewRequest("DELETE", "/api/v1/findings/"+strconv.FormatUint(uint64(finding.ID), 10), nil)
+	r.Host = testHost
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status %d, want 204. body=%s", w.Code, w.Body)
+	}
+	for name, n := range map[string]int64{
+		"finding":      countRows(t, s, &db.Finding{}, "id = ?", finding.ID),
+		"notes":        countRows(t, s, &db.FindingNote{}, "finding_id = ?", finding.ID),
+		"comms":        countRows(t, s, &db.FindingCommunication{}, "finding_id = ?", finding.ID),
+		"refs":         countRows(t, s, &db.FindingReference{}, "finding_id = ?", finding.ID),
+		"history":      countRows(t, s, &db.FindingHistory{}, "finding_id = ?", finding.ID),
+		"reviews":      countRows(t, s, &db.FindingReview{}, "finding_id = ?", finding.ID),
+		"exposure":     countRows(t, s, &db.FindingDependent{}, "finding_id = ?", finding.ID),
+		"conversation": countRows(t, s, &db.Conversation{}, "finding_id = ?", finding.ID),
+		"messages":     countRows(t, s, &db.ChatMessage{}, "conversation_id = ?", conv.ID),
+	} {
+		if n != 0 {
+			t.Fatalf("%s rows survived finding delete: %d", name, n)
+		}
+	}
+	var labelLinks int64
+	s.DB.Raw("SELECT COUNT(*) FROM finding_labels_join WHERE finding_id = ?", finding.ID).Scan(&labelLinks)
+	if labelLinks != 0 {
+		t.Fatalf("label join rows survived finding delete: %d", labelLinks)
+	}
+	if n := countRows(t, s, &db.Repository{}, "id = ?", repo.ID); n != 1 {
+		t.Fatalf("repository count = %d, want 1", n)
+	}
+	if n := countRows(t, s, &db.Finding{}, "id = ?", other.ID); n != 1 {
+		t.Fatalf("unrelated finding count = %d, want 1", n)
+	}
+	var survivingScan db.Scan
+	if err := s.DB.First(&survivingScan, findingScopedScan.ID).Error; err != nil {
+		t.Fatalf("finding-scoped scan should survive: %v", err)
+	}
+	if survivingScan.FindingID != nil {
+		t.Fatalf("finding-scoped scan finding_id = %v, want nil", *survivingScan.FindingID)
+	}
+}
+
+func TestAPIv1DeleteFindingRejectsInFlightScans(t *testing.T) {
+	for _, status := range []db.ScanStatus{db.ScanQueued, db.ScanRunning} {
+		t.Run(string(status), func(t *testing.T) {
+			s, done := newTestServer(t)
+			defer done()
+
+			repo := db.Repository{URL: "https://github.com/acme/busy", Name: "busy"}
+			if err := s.DB.Create(&repo).Error; err != nil {
+				t.Fatal(err)
+			}
+			scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: deepDiveSkillName}
+			if err := s.DB.Create(&scan).Error; err != nil {
+				t.Fatal(err)
+			}
+			finding := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "busy finding", Severity: sevHigh}
+			if err := s.DB.Create(&finding).Error; err != nil {
+				t.Fatal(err)
+			}
+			linked := db.Scan{RepositoryID: repo.ID, FindingID: &finding.ID, Kind: "skill", Status: status, SkillName: "verify"}
+			if err := s.DB.Create(&linked).Error; err != nil {
+				t.Fatal(err)
+			}
+
+			r := httptest.NewRequest("DELETE", "/api/v1/findings/"+strconv.FormatUint(uint64(finding.ID), 10), nil)
+			r.Host = testHost
+			w := httptest.NewRecorder()
+			s.Handler().ServeHTTP(w, r)
+
+			if w.Code != http.StatusConflict {
+				t.Fatalf("status %d, want 409. body=%s", w.Code, w.Body)
+			}
+			if !strings.Contains(w.Body.String(), "queued, running, or paused scans") {
+				t.Fatalf("body %q missing in-flight scan explanation", w.Body.String())
+			}
+			if n := countRows(t, s, &db.Finding{}, "id = ?", finding.ID); n != 1 {
+				t.Fatalf("finding count = %d, want 1 after rejected delete", n)
+			}
+			var got db.Scan
+			if err := s.DB.First(&got, linked.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+			if got.FindingID == nil || *got.FindingID != finding.ID {
+				t.Fatalf("linked scan finding_id = %v, want %d", got.FindingID, finding.ID)
+			}
+		})
+	}
+}
+
+func countRows(t *testing.T, s *Server, model any, where string, args ...any) int64 {
+	t.Helper()
+	var n int64
+	if err := s.DB.Model(model).Where(where, args...).Count(&n).Error; err != nil {
+		t.Fatal(err)
+	}
+	return n
 }
 
 func TestExportFindings_acrossRepos(t *testing.T) {

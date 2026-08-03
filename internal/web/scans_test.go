@@ -1,15 +1,20 @@
 package web
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"scrutineer/internal/db"
 	"scrutineer/internal/worker"
+
+	"gorm.io/gorm"
 )
 
 func TestResumeOpts(t *testing.T) {
@@ -350,6 +355,309 @@ func TestScansResumePaused(t *testing.T) {
 	}
 }
 
+func TestEnqueueResumedScan_usesFindingPriority(t *testing.T) {
+	findingID := uint(1)
+	tests := []struct {
+		name     string
+		scan     db.Scan
+		priority int
+	}{
+		{name: "repository scan", scan: db.Scan{ID: 1, Kind: worker.JobSkill}, priority: worker.PrioScan},
+		{name: "finding scan", scan: db.Scan{ID: 2, Kind: worker.JobSkill, FindingID: &findingID}, priority: worker.PrioFinding},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s, done := newTestServer(t)
+			defer done()
+
+			if err := s.enqueueResumedScan(t.Context(), tt.scan); err != nil {
+				t.Fatal(err)
+			}
+			sqldb, err := s.DB.DB()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var priority int
+			if err := sqldb.QueryRow("SELECT priority FROM goqite").Scan(&priority); err != nil {
+				t.Fatal(err)
+			}
+			if priority != tt.priority {
+				t.Errorf("resume queue priority = %d, want %d", priority, tt.priority)
+			}
+		})
+	}
+}
+
+func TestResumeScan_enqueueFailureLeavesScanPaused(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/r", Name: "r"}
+	if err := s.DB.Create(&repo).Error; err != nil {
+		t.Fatal(err)
+	}
+	pausedUntil := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
+	scan := db.Scan{
+		RepositoryID:   repo.ID,
+		Kind:           worker.JobSkill,
+		Status:         db.ScanPaused,
+		StatusPriority: db.StatusPriorityFor(db.ScanPaused),
+		Error:          "paused by operator",
+		PausedUntil:    &pausedUntil,
+	}
+	if err := s.DB.Create(&scan).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	resumeErr := s.resumeScan(ctx, &scan)
+	if !errors.Is(resumeErr, context.Canceled) {
+		t.Fatalf("resume error = %v, want context canceled", resumeErr)
+	}
+
+	var got db.Scan
+	if err := s.DB.First(&got, scan.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != db.ScanPaused || got.StatusPriority != db.StatusPriorityFor(db.ScanPaused) {
+		t.Errorf("status = %q priority = %d, want paused/%d",
+			got.Status, got.StatusPriority, db.StatusPriorityFor(db.ScanPaused))
+	}
+	wantError := "resume failed: " + resumeErr.Error()
+	if got.Error != wantError {
+		t.Errorf("error = %q, want %q", got.Error, wantError)
+	}
+	if got.PausedUntil == nil || !got.PausedUntil.Equal(pausedUntil) {
+		t.Errorf("paused_until = %v, want %v", got.PausedUntil, pausedUntil)
+	}
+	if got.FinishedAt == nil {
+		t.Error("finished_at = nil, want rollback timestamp")
+	}
+	assertQueuedJobCount(t, s, 0)
+}
+
+func TestResumeScan_updateFailureLeavesPausedScanWithoutJob(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/r", Name: "r"}
+	if err := s.DB.Create(&repo).Error; err != nil {
+		t.Fatal(err)
+	}
+	scan := db.Scan{
+		RepositoryID:   repo.ID,
+		Kind:           worker.JobSkill,
+		Status:         db.ScanPaused,
+		StatusPriority: db.StatusPriorityFor(db.ScanPaused),
+		Error:          "paused by operator",
+	}
+	if err := s.DB.Create(&scan).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	updateErr := errors.New("injected resume update failure")
+	const callback = "test:fail-single-resume-update"
+	if err := s.DB.Callback().Update().Before("gorm:update").Register(callback, func(tx *gorm.DB) {
+		if tx.Statement.Table == "scans" {
+			_ = tx.AddError(updateErr)
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = s.DB.Callback().Update().Remove(callback)
+	}()
+
+	if err := s.resumeScan(t.Context(), &scan); !errors.Is(err, updateErr) {
+		t.Fatalf("resume error = %v, want %v", err, updateErr)
+	}
+
+	var got db.Scan
+	if err := s.DB.First(&got, scan.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != db.ScanPaused || got.StatusPriority != db.StatusPriorityFor(db.ScanPaused) {
+		t.Errorf("status = %q priority = %d, want paused/%d",
+			got.Status, got.StatusPriority, db.StatusPriorityFor(db.ScanPaused))
+	}
+	if got.Error != scan.Error {
+		t.Errorf("error = %q, want %q", got.Error, scan.Error)
+	}
+	assertQueuedJobCount(t, s, 0)
+}
+
+func TestResumeScan_noLongerPausedDoesNotEnqueue(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/r", Name: "r"}
+	if err := s.DB.Create(&repo).Error; err != nil {
+		t.Fatal(err)
+	}
+	scan := db.Scan{
+		RepositoryID:   repo.ID,
+		Kind:           worker.JobSkill,
+		Status:         db.ScanPaused,
+		StatusPriority: db.StatusPriorityFor(db.ScanPaused),
+	}
+	if err := s.DB.Create(&scan).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	var loaded db.Scan
+	if err := s.DB.First(&loaded, scan.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DB.Model(&db.Scan{}).Where("id = ?", scan.ID).
+		Updates(scanStatusUpdates(db.ScanQueued, "", nil, nil)).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	wantErr := fmt.Sprintf("scan %d is no longer paused", scan.ID)
+	if err := s.resumeScan(t.Context(), &loaded); err == nil || err.Error() != wantErr {
+		t.Fatalf("resume error = %v, want %q", err, wantErr)
+	}
+
+	var got db.Scan
+	if err := s.DB.First(&got, scan.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != db.ScanQueued || got.StatusPriority != db.StatusPriorityFor(db.ScanQueued) {
+		t.Errorf("status = %q priority = %d, want queued/%d",
+			got.Status, got.StatusPriority, db.StatusPriorityFor(db.ScanQueued))
+	}
+	assertQueuedJobCount(t, s, 0)
+}
+
+func assertQueuedJobCount(t *testing.T, s *Server, want int) {
+	t.Helper()
+	sqldb, err := s.DB.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var jobs int
+	if err := sqldb.QueryRow("SELECT COUNT(*) FROM goqite").Scan(&jobs); err != nil {
+		t.Fatal(err)
+	}
+	if jobs != want {
+		t.Errorf("queued jobs = %d, want %d", jobs, want)
+	}
+}
+
+func TestEnqueueResumedScan_restoresPausedUntilOnEnqueueFailure(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/r", Name: "r"}
+	s.DB.Create(&repo)
+	pausedUntil := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
+	scan := db.Scan{
+		RepositoryID:   repo.ID,
+		Kind:           worker.JobSkill,
+		Status:         db.ScanPaused,
+		StatusPriority: db.StatusPriorityFor(db.ScanPaused),
+		Error:          worker.AccountPausePrefix + "reset pending",
+		PausedUntil:    &pausedUntil,
+	}
+	s.DB.Create(&scan)
+
+	scans, err := s.bulkResumePaused(s.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scans) != 1 {
+		t.Fatalf("resumed scans = %d, want 1", len(scans))
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := s.enqueueResumedScan(ctx, scans[0]); err == nil {
+		t.Fatal("enqueue with cancelled context succeeded")
+	}
+
+	var got db.Scan
+	s.DB.First(&got, scan.ID)
+	if got.Status != db.ScanPaused {
+		t.Fatalf("status = %q, want paused", got.Status)
+	}
+	if got.PausedUntil == nil || !got.PausedUntil.Equal(pausedUntil) {
+		t.Errorf("paused_until = %v, want %v", got.PausedUntil, pausedUntil)
+	}
+}
+
+func TestBulkResumePaused_usesSetBasedUpdate(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/r", Name: "r"}
+	s.DB.Create(&repo)
+	for range 2 {
+		s.DB.Create(&db.Scan{
+			RepositoryID: repo.ID,
+			Kind:         worker.JobSkill,
+			Status:       db.ScanPaused,
+		})
+	}
+
+	updates := 0
+	const callback = "test:count-bulk-resume-updates"
+	if err := s.DB.Callback().Update().Before("gorm:update").Register(callback, func(*gorm.DB) {
+		updates++
+	}); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		_ = s.DB.Callback().Update().Remove(callback)
+	}()
+
+	scans, err := s.bulkResumePaused(s.DB)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(scans) != 2 {
+		t.Fatalf("resumed scans = %d, want 2", len(scans))
+	}
+	if updates != 1 {
+		t.Fatalf("update statements = %d, want 1", updates)
+	}
+}
+
+func TestBulkResumePaused_usesCallerTransaction(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/r", Name: "r"}
+	s.DB.Create(&repo)
+	scan := db.Scan{
+		RepositoryID: repo.ID,
+		Kind:         worker.JobSkill,
+		Status:       db.ScanPaused,
+	}
+	s.DB.Create(&scan)
+
+	rollback := errors.New("roll back test")
+	err := s.DB.Transaction(func(tx *gorm.DB) error {
+		scans, err := s.bulkResumePaused(tx)
+		if err != nil {
+			return err
+		}
+		if len(scans) != 1 {
+			t.Fatalf("resumed scans = %d, want 1", len(scans))
+		}
+		return rollback
+	})
+	if !errors.Is(err, rollback) {
+		t.Fatalf("transaction error = %v, want %v", err, rollback)
+	}
+
+	var got db.Scan
+	s.DB.First(&got, scan.ID)
+	if got.Status != db.ScanPaused {
+		t.Fatalf("status after caller rollback = %q, want paused", got.Status)
+	}
+}
+
 func TestScansResumePaused_scopedToRepo(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
@@ -453,5 +761,42 @@ func TestScansRetryFailed_dedupesRepeatedFailures(t *testing.T) {
 	}
 	if queued[0].SubPath != "" {
 		t.Errorf("retried sub_path = %q, want the repeated-failure tuple (parked is superseded)", queued[0].SubPath)
+	}
+}
+
+func TestScansRetryFailed_preservesFocusArea(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/r", Name: "r"}
+	s.DB.Create(&repo)
+	skill := db.Skill{Name: "security-deep-dive", Description: "d", Body: "b",
+		OutputFile: "report.json", OutputKind: "findings", Version: 1,
+		Active: true, Source: "ui"}
+	s.DB.Create(&skill)
+	focusArea := `{"name":"request parser","paths":["internal/parser/**"],"surface":"untrusted requests"}`
+	failed := db.Scan{
+		RepositoryID:   repo.ID,
+		Kind:           worker.JobSkill,
+		Status:         db.ScanFailed,
+		StatusPriority: db.StatusPriorityFor(db.ScanFailed),
+		SkillID:        &skill.ID,
+		SkillName:      skill.Name,
+		FocusArea:      focusArea,
+	}
+	s.DB.Create(&failed)
+
+	w := httptest.NewRecorder()
+	s.scansRetryFailed(w, localReq("POST", "/scans/retry-failed"))
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303; body=%s", w.Code, w.Body)
+	}
+
+	var retried db.Scan
+	if err := s.DB.Where("id > ? AND status = ?", failed.ID, db.ScanQueued).First(&retried).Error; err != nil {
+		t.Fatalf("load retried scan: %v", err)
+	}
+	if retried.FocusArea != focusArea {
+		t.Errorf("retried focus_area = %q, want %q", retried.FocusArea, focusArea)
 	}
 }

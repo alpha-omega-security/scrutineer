@@ -1,6 +1,8 @@
 given: an optional session cookie skips validation while an account endpoint still returns protected data
 fixture: fixtures/auth-omission
 skill: security-deep-dive
+experiment: security-deep-dive-prompt
+variant: production
 should_find:
   - finding: session
     cwe: CWE-306

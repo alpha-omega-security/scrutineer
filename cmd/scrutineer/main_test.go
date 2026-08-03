@@ -18,6 +18,7 @@ import (
 
 	"scrutineer/internal/config"
 	"scrutineer/internal/db"
+	"scrutineer/internal/interchange"
 	"scrutineer/internal/web"
 	"scrutineer/internal/worker"
 )
@@ -39,6 +40,9 @@ func fullConfig() *config.Config {
 		MaxTurns:     200,
 		ModelBaseURL: "https://proxy.corp.com/v1",
 		ForkOrg:      "fork-central",
+
+		FederationSalt:    "s3cret",
+		FederationContact: "security@corp.com",
 	}
 }
 
@@ -82,16 +86,23 @@ func TestFlagsMerge_configFillsUnset(t *testing.T) {
 	if f.forkOrg != cfg.ForkOrg {
 		t.Errorf("forkOrg = %q, want %q", f.forkOrg, cfg.ForkOrg)
 	}
+	if f.federationSalt != cfg.FederationSalt {
+		t.Errorf("federationSalt = %q, want %q", f.federationSalt, cfg.FederationSalt)
+	}
+	if f.federationContact != cfg.FederationContact {
+		t.Errorf("federationContact = %q, want %q", f.federationContact, cfg.FederationContact)
+	}
 }
 
 func TestFlagsMerge_cliFlagWins(t *testing.T) {
 	cfg := fullConfig()
 	f := &flags{
 		addr: "127.0.0.1:8080", cloneMode: "shallow", concurrency: 2,
-		modelBaseURL: "https://my-flag.example.com/v1",
+		modelBaseURL:      "https://my-flag.example.com/v1",
+		federationContact: "flag-contact@example.com",
 		set: map[string]bool{
 			"addr": true, "clone": true, "concurrency": true,
-			"model-base-url": true,
+			"model-base-url": true, "federation-contact": true,
 		},
 	}
 	f.merge(cfg)
@@ -110,6 +121,66 @@ func TestFlagsMerge_cliFlagWins(t *testing.T) {
 	}
 	if f.modelBaseURL != "https://my-flag.example.com/v1" {
 		t.Errorf("modelBaseURL overridden despite explicit flag: %q", f.modelBaseURL)
+	}
+	if f.federationContact != "flag-contact@example.com" {
+		t.Errorf("federationContact overridden despite explicit flag: %q", f.federationContact)
+	}
+	// federation_salt has no flag, so config always applies
+	if f.federationSalt != cfg.FederationSalt {
+		t.Errorf("federationSalt = %q, want %q", f.federationSalt, cfg.FederationSalt)
+	}
+}
+
+func TestValidateFederation(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		f    flags
+		want bool
+	}{
+		{"salt with contact", flags{federationSalt: "s3cret", federationContact: "security@example.com"}, true},
+		{"federation disabled", flags{}, true},
+		{"salt without contact", flags{federationSalt: "s3cret"}, false},
+		{"members feed with recipients and identity", flags{federationMembersFeed: "git@host:o/f.git", recipientsFile: "./recipients.txt", identityFile: "~/.ssh/id_ed25519"}, true},
+		{"members feed without recipients", flags{federationMembersFeed: "git@host:o/f.git", identityFile: "~/.ssh/id_ed25519"}, false},
+		{"members feed without identity", flags{federationMembersFeed: "git@host:o/f.git", recipientsFile: "./recipients.txt"}, false},
+		{"public feed needs nothing else", flags{federationPublicFeed: "git@host:o/f.git"}, true},
+		{"credentialed public feed", flags{federationPublicFeed: "https://u:tok@host/o/f.git"}, false},
+		{"credentialed import feed", flags{federationImportFeeds: []string{"https://u:tok@host/o/f.git"}}, false},
+		{"both tiers on one remote", flags{
+			federationPublicFeed: "git@host:o/f.git", federationMembersFeed: "git@host:o/f.git",
+			recipientsFile: "./recipients.txt", identityFile: "~/.ssh/id_ed25519",
+		}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateFederation(&tc.f)
+			if tc.want && err != nil {
+				t.Errorf("must be accepted: %v", err)
+			}
+			if !tc.want && err == nil {
+				t.Error("must be refused")
+			}
+		})
+	}
+}
+
+// A whitespace-only remote must come out of validation as no remote at all.
+// ValidateFeedRemote trims its own copy and so reports it as fine, and every
+// != "" test downstream, StartFederation's included, would then read it as
+// configured and run an hourly clone job against a remote git cannot resolve.
+func TestValidateFederation_dropsBlankRemotes(t *testing.T) {
+	f := flags{
+		federationPublicFeed:  "  ",
+		federationMembersFeed: "\t",
+		federationImportFeeds: []string{" ", "  git@host:o/f.git  ", ""},
+	}
+	if err := validateFederation(&f); err != nil {
+		t.Fatalf("blank remotes are no configuration, not a bad one: %v", err)
+	}
+	if f.federationPublicFeed != "" || f.federationMembersFeed != "" {
+		t.Errorf("blank feeds left configured: public %q, members %q", f.federationPublicFeed, f.federationMembersFeed)
+	}
+	if !slices.Equal(f.federationImportFeeds, []string{"git@host:o/f.git"}) {
+		t.Errorf("import feeds = %#v, want only the real remote, trimmed", f.federationImportFeeds)
 	}
 }
 
@@ -334,6 +405,65 @@ func TestFlagsMerge_hardenedRuntimeOnlyConfigAlias(t *testing.T) {
 	}
 }
 
+func TestFlagsMerge_ecosystemsEnrichment(t *testing.T) {
+	// The flag defaults to true, so an omitted config key must leave it on and
+	// an explicit false must reach the flag.
+	omitted := &flags{ecosystemsEnrichment: true}
+	omitted.merge(&config.Config{})
+	if !omitted.ecosystemsEnrichment {
+		t.Error("omitted ecosystems_enrichment turned enrichment off")
+	}
+	off := &flags{ecosystemsEnrichment: true}
+	off.merge(&config.Config{EcosystemsEnrichment: new(false)})
+	if off.ecosystemsEnrichment {
+		t.Error("ecosystems_enrichment: false was ignored")
+	}
+	// An explicit command-line value wins over the config file.
+	cli := &flags{ecosystemsEnrichment: true, set: map[string]bool{"ecosystems-enrichment": true}}
+	cli.merge(&config.Config{EcosystemsEnrichment: new(false)})
+	if !cli.ecosystemsEnrichment {
+		t.Error("config overrode an explicit -ecosystems-enrichment flag")
+	}
+}
+
+func TestRegisterFlags_ecosystemsEnrichmentDefaultsOn(t *testing.T) {
+	f := &flags{}
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	registerFlags(fs, f)
+	if err := fs.Parse(nil); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if !f.ecosystemsEnrichment {
+		t.Error("enrichment is off by default, want on")
+	}
+	if err := fs.Parse([]string{"-ecosystems-enrichment=false"}); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if f.ecosystemsEnrichment {
+		t.Error("-ecosystems-enrichment=false did not turn enrichment off")
+	}
+}
+
+// Go's flag package does not accept the space-separated form for a boolean:
+// it leaves the flag at its default and parks the operand in Args(). This is
+// the first flag here defaulting to true, so that silently reads as the
+// opposite of what was typed. parseFlags exits on a leftover argument; this
+// pins the signal it keys on.
+func TestRegisterFlags_booleanSpaceFormLeavesAStrayArgument(t *testing.T) {
+	f := &flags{}
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	registerFlags(fs, f)
+	if err := fs.Parse([]string{"-ecosystems-enrichment", "false"}); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if !f.ecosystemsEnrichment {
+		t.Fatal("the space form now applies; the guard in parseFlags is no longer needed")
+	}
+	if fs.NArg() != 1 || fs.Arg(0) != "false" {
+		t.Fatalf("leftover args = %v, want [false] so parseFlags can refuse it", fs.Args())
+	}
+}
+
 func TestBuildEgressAllow_defaultIncludesConfigAndAnthropicHost(t *testing.T) {
 	cfg := &config.Config{EgressAllow: []string{"artifactory.internal", "*.mycorp.net"}}
 	allow := buildEgressAllow(worker.ClaudeHarness{}.EgressHosts(), false, cfg, "https://proxy.corp.com/v1", quietLog())
@@ -544,6 +674,33 @@ func TestLoadRecipients_mixedKeyTypes(t *testing.T) {
 	}
 	if len(recs) != 2 {
 		t.Fatalf("got %d recipients, want 2 (one SSH, one age)", len(recs))
+	}
+}
+
+// A feed fingerprints its recipients by their public key to notice a
+// membership change, and an agessh recipient cannot render its own, so the
+// loader has to carry it. The authorized_keys comment is not part of the key:
+// two lines differing only by it are the same member and must digest the same,
+// or editing a comment re-encrypts the whole feed.
+func TestLoadRecipients_sshKeysCarryTheirKey(t *testing.T) {
+	_, sshPub := genSSHKey(t)
+	recs, err := loadRecipients(writeTestKey(t, []byte(sshPub)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bare, ok := recs[0].(interchange.Recipient)
+	if !ok {
+		t.Fatalf("an SSH recipient must carry its key, got %T", recs[0])
+	}
+	if bare.Key == "" {
+		t.Fatal("an SSH recipient with no key cannot be fingerprinted")
+	}
+	commented, err := loadRecipients(writeTestKey(t, []byte(strings.TrimRight(sshPub, "\n")+" alex@example.com\n")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := commented[0].(interchange.Recipient).Key; got != bare.Key {
+		t.Fatalf("the authorized_keys comment must not change the key, got %q want %q", got, bare.Key)
 	}
 }
 

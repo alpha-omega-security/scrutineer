@@ -1,10 +1,44 @@
 package worker
 
 import (
+	"encoding/json"
 	"os"
 	"strings"
 	"testing"
 )
+
+func TestAuditFindingSchemasStayAligned(t *testing.T) {
+	paths := []string{
+		"../../skills/audit-injection/schema.json",
+		"../../skills/audit-exfil/schema.json",
+		"../../skills/audit-authz/schema.json",
+	}
+
+	var baseline string
+	for _, path := range paths {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		var schema map[string]any
+		if err := json.Unmarshal(raw, &schema); err != nil {
+			t.Fatalf("decode %s: %v", path, err)
+		}
+		delete(schema, "title")
+		normalized, err := json.MarshalIndent(schema, "", "  ")
+		if err != nil {
+			t.Fatalf("normalize %s: %v", path, err)
+		}
+		if baseline == "" {
+			baseline = string(normalized)
+			continue
+		}
+		if got := string(normalized); got != baseline {
+			t.Errorf("%s differs from %s beyond title\n%s:\n%s\n%s:\n%s",
+				path, paths[0], paths[0], baseline, path, got)
+		}
+	}
+}
 
 // TestBundledSchemas_compileAndAcceptSamples checks that the three schemas
 // added for #182 compile and accept a representative report. repo-overview
@@ -141,6 +175,57 @@ func TestBundledSchemas_compileAndAcceptSamples(t *testing.T) {
 			`{"error":"repository URL is unavailable"}`,
 		},
 		{
+			"../../skills/audit-injection/schema.json",
+			`{"findings":[{"id":"F001","title":"Webhook branch name reaches a shell command",
+			  "severity":"High","confidence":"high","cwe":"CWE-78","location":"internal/hooks/run.go:88",
+			  "reachability":"reachable","quality_tier":"high",
+			  "trace":"The webhook branch parameter is concatenated into sh -c before the deployment command runs.",
+			  "boundary":"An authenticated repository webhook supplies the branch name.",
+			  "validation":"Static review confirmed the shell wrapper receives one command string and found no allowlist or argv conversion.",
+			  "discovered_via":"source",
+			  "rating":"High because an attacker controlling the webhook value can execute commands as the deployment worker.",
+			  "references":[{"url":"https://github.com/owner/repo/security/advisories/GHSA-xxxx-yyyy-zzzz",
+			    "summary":"Related advisory","tags":"advisory"}]}]}`,
+		},
+		{
+			"../../skills/audit-injection/schema.json",
+			`{"findings":[]}`,
+		},
+		{
+			"../../skills/audit-exfil/schema.json",
+			`{"findings":[{"id":"F001","title":"Webhook URL fetch can reach internal metadata service",
+			  "severity":"High","confidence":"high","cwe":"CWE-918","location":"internal/webhooks/route:v2/fetch.go:91",
+			  "reachability":"reachable","quality_tier":"high",
+			  "trace":"The webhook endpoint stores a caller-provided callback URL and later passes it to http.Client.Do.",
+			  "boundary":"An authenticated project member controls the callback URL, while the worker can reach internal services.",
+			  "validation":"Static review confirmed the request follows redirects and found no host, scheme, or private-IP allowlist.",
+			  "discovered_via":"source",
+			  "rating":"High because a project member can make the server disclose cloud metadata or internal service responses.",
+			  "references":[{"url":"https://owasp.org/www-community/attacks/Server_Side_Request_Forgery",
+			    "summary":"SSRF overview","tags":"ssrf"}]}]}`,
+		},
+		{
+			"../../skills/audit-exfil/schema.json",
+			`{"findings":[]}`,
+		},
+		{
+			"../../skills/audit-authz/schema.json",
+			`{"findings":[{"id":"F001","title":"Invoice lookup omits tenant ownership",
+			  "severity":"High","confidence":"high","cwe":"CWE-639","location":"internal/invoices/show.go:74",
+			  "reachability":"reachable","quality_tier":"high",
+			  "trace":"The authenticated endpoint passes the caller-controlled invoice ID to a global lookup and returns the row.",
+			  "boundary":"A tenant member may supply another tenant's invoice ID.",
+			  "validation":"Static review resolved the route middleware and repository helper, then confirmed neither checks invoice tenant membership.",
+			  "discovered_via":"source",
+			  "rating":"High because any authenticated tenant member can read another tenant's billing record.",
+			  "references":[{"url":"https://owasp.org/API-Security/editions/2023/en/0xa1-broken-object-level-authorization/",
+			    "summary":"OWASP API1:2023 Broken Object Level Authorization","tags":"authorization,idor"}]}]}`,
+		},
+		{
+			"../../skills/audit-authz/schema.json",
+			`{"findings":[]}`,
+		},
+		{
 			"../../skills/variants/schema.json",
 			`{"findings":[{"id":"F1","title":"Variant of finding #42: archive extraction escapes destination",
 			  "severity":"High","confidence":"high","cwe":"CWE-22","location":"pkg/archive/legacy.go:88",
@@ -182,7 +267,9 @@ func TestBundledSchemas_compileAndAcceptSamples(t *testing.T) {
 		},
 		{
 			"../../skills/advisory-deep-dive/schema.json",
-			`{"findings":[{"id":"F001","title":"Bypass of GHSA-xxxx path-traversal fix",
+			`{"audits":[{"advisory_uuid":"GHSA-xxxx-yyyy-zzzz","status":"bypass",
+			  "evidence":"Repro fired at HEAD via percent-encoded separators.","finding_ids":["F001"]}],
+			  "findings":[{"id":"F001","title":"Bypass of GHSA-xxxx path-traversal fix",
 			  "severity":"High","confidence":"medium","cwe":"CWE-22","location":"lib/extract.rb:88",
 			  "reachability":"reachable","quality_tier":"high",
 			  "trace":"Percent-encoded separators skip the added guard and reach File.open.",
@@ -195,7 +282,12 @@ func TestBundledSchemas_compileAndAcceptSamples(t *testing.T) {
 		},
 		{
 			"../../skills/advisory-deep-dive/schema.json",
-			`{"findings":[]}`,
+			`{"audits":[{"advisory_uuid":"GHSA-aaaa-bbbb-cccc","status":"fixed",
+			  "evidence":"Original repro fails at HEAD; no bypass or sibling survived."}],"findings":[]}`,
+		},
+		{
+			"../../skills/advisory-deep-dive/schema.json",
+			`{"audits":[],"findings":[]}`,
 		},
 	}
 	for _, tc := range cases {
@@ -242,6 +334,123 @@ func TestBundledSchemas_rejectBadShapes(t *testing.T) {
 		{"../../skills/forensics/schema.json",
 			`{"error":"repository URL is unavailable","repository":"https://github.com/o/r"}`,
 			"oneOf"},
+		{"../../skills/audit-injection/schema.json",
+			`{"findings":[{"id":"F001","title":"Bad injection confidence","severity":"High",
+			  "confidence":"maybe","cwe":"CWE-78","location":"internal/hooks/run.go:88",
+			  "reachability":"reachable","quality_tier":"high","trace":"x","boundary":"x",
+			  "validation":"x","discovered_via":"source","rating":"x"}]}`,
+			"/findings/0/confidence"},
+		{"../../skills/audit-injection/schema.json",
+			`{"findings":[{"id":"F001","title":"Bad injection location","severity":"High",
+			  "confidence":"high","cwe":"CWE-78","location":"internal/hooks/run.go",
+			  "reachability":"reachable","quality_tier":"high","trace":"x","boundary":"x",
+			  "validation":"x","discovered_via":"source","rating":"x"}]}`,
+			"/findings/0/location"},
+		{"../../skills/audit-injection/schema.json",
+			`{"findings":[{"id":"F001","title":"Missing CWE","severity":"High",
+			  "confidence":"high","cwe":"","location":"internal/hooks/run.go:88",
+			  "reachability":"reachable","quality_tier":"high","trace":"x","boundary":"x",
+			  "validation":"x","discovered_via":"source","rating":"x"}]}`,
+			"/findings/0/cwe"},
+		{"../../skills/audit-injection/schema.json",
+			`{"findings":[{"id":"F001","title":"Zero line number","severity":"High",
+			  "confidence":"high","cwe":"CWE-78","location":"internal/hooks/run.go:0",
+			  "reachability":"reachable","quality_tier":"high","trace":"x","boundary":"x",
+			  "validation":"x","discovered_via":"source","rating":"x"}]}`,
+			"/findings/0/location"},
+		{"../../skills/audit-injection/schema.json",
+			`{"findings":[{"id":"F001","title":"Leading-zero line number","severity":"High",
+			  "confidence":"high","cwe":"CWE-78","location":"internal/hooks/run.go:08",
+			  "reachability":"reachable","quality_tier":"high","trace":"x","boundary":"x",
+			  "validation":"x","discovered_via":"source","rating":"x"}]}`,
+			"/findings/0/location"},
+		{"../../skills/audit-injection/schema.json",
+			`{"findings":[{"id":"F001","title":"Wrong provenance","severity":"High",
+			  "confidence":"high","cwe":"CWE-78","location":"internal/hooks/run.go:88",
+			  "reachability":"reachable","quality_tier":"high","trace":"x","boundary":"x",
+			  "validation":"x","discovered_via":"documentation","rating":"x"}]}`,
+			"/findings/0/discovered_via"},
+		{"../../skills/audit-injection/schema.json",
+			`{"findings":[{"id":"F001","title":"Missing provenance","severity":"High",
+			  "confidence":"high","cwe":"CWE-78","location":"internal/hooks/run.go:88",
+			  "reachability":"reachable","quality_tier":"high","trace":"x","boundary":"x",
+			  "validation":"x","rating":"x"}]}`,
+			"/findings/0"},
+		{"../../skills/audit-injection/schema.json",
+			`{"findings":[{"id":"F001","title":"Harness-only injection","severity":"High",
+			  "confidence":"high","cwe":"CWE-78","location":"internal/hooks/run.go:88",
+			  "reachability":"harness_only","quality_tier":"high","trace":"x","boundary":"x",
+			  "validation":"x","discovered_via":"source","rating":"x"}]}`,
+			"/findings/0/reachability"},
+		{"../../skills/audit-injection/schema.json",
+			`{"findings":[{"id":"F001","title":"Low-quality injection","severity":"High",
+			  "confidence":"high","cwe":"CWE-78","location":"internal/hooks/run.go:88",
+			  "reachability":"reachable","quality_tier":"low","trace":"x","boundary":"x",
+			  "validation":"x","discovered_via":"source","rating":"x"}]}`,
+			"/findings/0/quality_tier"},
+		{"../../skills/audit-injection/schema.json",
+			`{"findings":[{"id":"F001","title":"String references","severity":"High",
+			  "confidence":"high","cwe":"CWE-78","location":"internal/hooks/run.go:88",
+			  "reachability":"reachable","quality_tier":"high","trace":"x","boundary":"x",
+			  "validation":"x","discovered_via":"source","rating":"x",
+			  "references":["https://example.com/advisory"]}]}`,
+			"/findings/0/references/0"},
+		{"../../skills/audit-exfil/schema.json",
+			`{"findings":[{"id":"F001","title":"Harness-only SSRF","severity":"High",
+			  "confidence":"high","cwe":"CWE-918","location":"internal/webhooks/fetch.go:91",
+			  "reachability":"harness_only","quality_tier":"high","trace":"x","boundary":"x",
+			  "validation":"x","discovered_via":"source","rating":"x"}]}`,
+			"/findings/0/reachability"},
+		{"../../skills/audit-exfil/schema.json",
+			`{"findings":[{"id":"F001","title":"Low-quality file read","severity":"High",
+			  "confidence":"high","cwe":"CWE-22","location":"internal/files/read.go:24",
+			  "reachability":"reachable","quality_tier":"low","trace":"x","boundary":"x",
+			  "validation":"x","discovered_via":"source","rating":"x"}]}`,
+			"/findings/0/quality_tier"},
+		{"../../skills/audit-exfil/schema.json",
+			`{"findings":[{"id":"F001","title":"String references","severity":"High",
+			  "confidence":"high","cwe":"CWE-918","location":"internal/webhooks/fetch.go:91",
+			  "reachability":"reachable","quality_tier":"high","trace":"x","boundary":"x",
+			  "validation":"x","discovered_via":"source","rating":"x",
+			  "references":["https://example.com/advisory"]}]}`,
+			"/findings/0/references/0"},
+		{"../../skills/audit-authz/schema.json",
+			`{"findings":[{"id":"F001","title":"Harness-only IDOR","severity":"High",
+			  "confidence":"high","cwe":"CWE-639","location":"internal/invoices/show.go:74",
+			  "reachability":"harness_only","quality_tier":"high","trace":"x","boundary":"x",
+			  "validation":"x","discovered_via":"source","rating":"x"}]}`,
+			"/findings/0/reachability"},
+		{"../../skills/audit-authz/schema.json",
+			`{"findings":[{"id":"F001","title":"Low-quality tenant bypass","severity":"High",
+			  "confidence":"high","cwe":"CWE-863","location":"internal/invoices/show.go:74",
+			  "reachability":"reachable","quality_tier":"low","trace":"x","boundary":"x",
+			  "validation":"x","discovered_via":"source","rating":"x"}]}`,
+			"/findings/0/quality_tier"},
+		{"../../skills/audit-authz/schema.json",
+			`{"findings":[{"id":"F001","title":"Wrong provenance","severity":"High",
+			  "confidence":"high","cwe":"CWE-862","location":"internal/admin/delete.go:51",
+			  "reachability":"reachable","quality_tier":"high","trace":"x","boundary":"x",
+			  "validation":"x","discovered_via":"documentation","rating":"x"}]}`,
+			"/findings/0/discovered_via"},
+		{"../../skills/audit-authz/schema.json",
+			`{"findings":[{"id":"F001","title":"String references","severity":"High",
+			  "confidence":"high","cwe":"CWE-639","location":"internal/invoices/show.go:74",
+			  "reachability":"reachable","quality_tier":"high","trace":"x","boundary":"x",
+			  "validation":"x","discovered_via":"source","rating":"x",
+			  "references":["https://example.com/advisory"]}]}`,
+			"/findings/0/references/0"},
+		{"../../skills/audit-authz/schema.json",
+			`{"findings":[{"id":"F001","title":"Invalid confidence","severity":"High",
+			  "confidence":"certain","cwe":"CWE-639","location":"internal/invoices/show.go:74",
+			  "reachability":"reachable","quality_tier":"high","trace":"x","boundary":"x",
+			  "validation":"x","discovered_via":"source","rating":"x"}]}`,
+			"/findings/0/confidence"},
+		{"../../skills/audit-authz/schema.json",
+			`{"findings":[{"id":"F001","title":"Location without line","severity":"High",
+			  "confidence":"high","cwe":"CWE-639","location":"internal/invoices/show.go",
+			  "reachability":"reachable","quality_tier":"high","trace":"x","boundary":"x",
+			  "validation":"x","discovered_via":"source","rating":"x"}]}`,
+			"/findings/0/location"},
 		{"../../skills/variants/schema.json",
 			`{"findings":[{"id":"F1","title":"Variant of finding #42: weak confidence","severity":"High",
 			  "confidence":"maybe","cwe":"CWE-22","location":"pkg/archive/legacy.go:88",
@@ -274,11 +483,14 @@ func TestBundledSchemas_rejectBadShapes(t *testing.T) {
 			  "quality_tier":"high","trace":"x","boundary":"x","validation":"x","rating":"x"}]}`,
 			"/findings/0/location"},
 		{"../../skills/advisory-deep-dive/schema.json",
-			`{"findings":[{"id":"F001","title":"String references, not objects","severity":"High",
+			`{"audits":[],"findings":[{"id":"F001","title":"String references, not objects","severity":"High",
 			  "confidence":"high","cwe":"CWE-22","location":"lib/extract.rb:88","reachability":"reachable",
 			  "quality_tier":"high","trace":"x","boundary":"x","validation":"x","rating":"x",
 			  "references":["https://github.com/advisories/GHSA-xxxx-yyyy-zzzz"]}]}`,
 			"/findings/0/references/0"},
+		{"../../skills/advisory-deep-dive/schema.json",
+			`{"audits":[{"advisory_uuid":"u1","status":"held","evidence":"x"}],"findings":[]}`,
+			"/audits/0/status"},
 		{"../../skills/threat-model/schema.json",
 			`{"spec_version":1,"repository":"https://x","commit":"abc1234","date":"2026-01-01",
 			  "description":"x","components":[{"name":"c","entry_points":[],"touches":[],

@@ -101,14 +101,34 @@ func Normalise(raw string) (string, Config, error) {
 	if err != nil {
 		return "", Config{}, err
 	}
+	normalised, err := NormaliseConfig(cfg)
+	return normalised, cfg, err
+}
+
+// NormaliseConfig validates a parsed config and returns its stable, readable
+// YAML representation. An empty config clears the durable scan configuration.
+func NormaliseConfig(cfg Config) (string, error) {
+	if err := cfg.validate(); err != nil {
+		return "", err
+	}
 	if cfg.Empty() {
-		return "", cfg, nil
+		return "", nil
 	}
 	b, err := yaml.Marshal(cfg)
 	if err != nil {
-		return "", Config{}, err
+		return "", err
 	}
-	return string(b), cfg, nil
+	return string(b), nil
+}
+
+// NormaliseSkipPattern applies the same validation and path normalisation used
+// for scan_config.skip entries to a single user-provided pattern.
+func NormaliseSkipPattern(pattern string) (string, error) {
+	patterns := []string{pattern}
+	if err := validatePatterns("skip", patterns); err != nil {
+		return "", err
+	}
+	return patterns[0], nil
 }
 
 // Empty reports whether no repository-specific scan guidance is configured.
