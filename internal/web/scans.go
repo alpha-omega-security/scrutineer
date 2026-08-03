@@ -85,7 +85,11 @@ type scanListStats struct {
 
 func (s *Server) scanListStats() scanListStats {
 	var stats scanListStats
+	// All three counts are over queued+paused rows only, so bound the
+	// aggregate to those two statuses and let the status index skip the
+	// terminal history (#694).
 	s.DB.Model(&db.Scan{}).
+		Where("status IN (?, ?)", db.ScanQueued, db.ScanPaused).
 		Select(
 			"COUNT(CASE WHEN status = ? THEN 1 END) AS queued_count, "+
 				"COUNT(CASE WHEN status = ? THEN 1 END) AS paused_count, "+
