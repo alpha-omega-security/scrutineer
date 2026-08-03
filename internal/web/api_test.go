@@ -192,6 +192,39 @@ func TestAPIListsTypedReads(t *testing.T) {
 	}
 }
 
+func TestAPIListPackages_subPathAttribution(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo, scan := seedRunningScan(t, s)
+	sub := db.Subproject{RepositoryID: repo.ID, Path: "activesupport", Name: "activesupport"}
+	s.DB.Create(&sub)
+	s.DB.Create(&db.Package{RepositoryID: repo.ID, Name: "activesupport", Ecosystem: "rubygems", SubprojectID: &sub.ID})
+	s.DB.Create(&db.Package{RepositoryID: repo.ID, Name: "railties", Ecosystem: "rubygems"}) // repo-level, unlinked
+
+	r := httptest.NewRequest("GET", "/api/repositories/"+strconv.FormatUint(uint64(repo.ID), 10)+"/packages", nil)
+	r.Host = testHost
+	r.Header.Set("Authorization", "Bearer "+scan.APIToken)
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	var got []map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	subByName := map[string]any{}
+	for _, p := range got {
+		subByName[p["name"].(string)] = p["sub_path"]
+	}
+	if subByName["activesupport"] != "activesupport" {
+		t.Errorf("activesupport package sub_path = %v, want activesupport", subByName["activesupport"])
+	}
+	if v := subByName["railties"]; v != nil && v != "" {
+		t.Errorf("repo-level package should have no sub_path, got %v", v)
+	}
+}
+
 func TestAPIPatchRepositoryFork(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

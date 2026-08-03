@@ -92,6 +92,11 @@ type packageResponse struct {
 	DependentRepos    int        `json:"dependent_repos"`
 	RegistryURL       string     `json:"registry_url"`
 	LatestReleaseAt   *time.Time `json:"latest_release_at"`
+	// SubPath is the monorepo sub-package this package is attributed to (its
+	// Subproject's path), when monorepo attribution linked it. Empty for a
+	// repo-level package. Lets an API consumer group a monorepo's packages by
+	// sub-package without a second lookup.
+	SubPath string `json:"sub_path,omitempty"`
 }
 
 func (s *Server) apiListPackages(w http.ResponseWriter, r *http.Request) {
@@ -101,9 +106,17 @@ func (s *Server) apiListPackages(w http.ResponseWriter, r *http.Request) {
 	}
 	var rows []db.Package
 	s.DB.Where("repository_id = ?", id).Order("dependent_repos desc, downloads desc").Find(&rows)
+	// Resolve each linked package's sub-package path in one query rather than
+	// per row.
+	subPaths := map[uint]string{}
+	var subs []db.Subproject
+	s.DB.Select("id", "path").Where("repository_id = ?", id).Find(&subs)
+	for _, sp := range subs {
+		subPaths[sp.ID] = sp.Path
+	}
 	out := make([]packageResponse, 0, len(rows))
 	for _, p := range rows {
-		out = append(out, packageResponse{
+		resp := packageResponse{
 			ID:                p.ID,
 			Name:              p.Name,
 			Ecosystem:         p.Ecosystem,
@@ -114,7 +127,11 @@ func (s *Server) apiListPackages(w http.ResponseWriter, r *http.Request) {
 			DependentRepos:    p.DependentRepos,
 			RegistryURL:       p.RegistryURL,
 			LatestReleaseAt:   p.LatestReleaseAt,
-		})
+		}
+		if p.SubprojectID != nil {
+			resp.SubPath = subPaths[*p.SubprojectID]
+		}
+		out = append(out, resp)
 	}
 	writeJSON(w, http.StatusOK, out)
 }

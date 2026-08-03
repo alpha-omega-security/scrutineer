@@ -3412,6 +3412,42 @@ func TestBulkImport_skipsDuplicates(t *testing.T) {
 	}
 }
 
+func TestBulkImport_subPathQueuesOnExistingRepo(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	triage := db.Skill{Name: "triage", Description: "o", Body: "b", Active: true, Source: "ui", Version: 1}
+	s.DB.Create(&triage)
+	repo := db.Repository{URL: "https://github.com/rails/rails", Name: "rails"}
+	s.DB.Create(&repo)
+
+	// The repo already exists, but this line names a sub-package, so it queues
+	// a scoped scan rather than being a no-op re-add.
+	form := url.Values{"urls": {"https://github.com/rails/rails#activesupport"}}
+	req := httptest.NewRequest("POST", "/repositories/bulk", strings.NewReader(form.Encode()))
+	req.Host = testHost
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	f := flashFrom(t, w)
+	if !strings.Contains(f.Title, "queued") || strings.Contains(f.Title, "already present") {
+		t.Errorf("existing-repo sub-path add should report queued, not already present: %+v", f)
+	}
+	var scans []db.Scan
+	s.DB.Where("skill_id = ? AND sub_path = ?", triage.ID, "activesupport").Find(&scans)
+	if len(scans) != 1 {
+		t.Errorf("want 1 activesupport-scoped scan, got %d", len(scans))
+	}
+	var n int64
+	s.DB.Model(&db.Subproject{}).Where("repository_id = ? AND path = ?", repo.ID, "activesupport").Count(&n)
+	if n != 1 {
+		t.Errorf("want the submitted subproject recorded, got %d", n)
+	}
+}
+
 func TestBulkImport_rejectsNonHTTPS(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

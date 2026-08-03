@@ -1937,7 +1937,7 @@ func (s *Server) repoBranches(w http.ResponseWriter, r *http.Request) {
 func (s *Server) repoBulkCreate(w http.ResponseWriter, r *http.Request) {
 	raw := r.FormValue("urls")
 	lines := strings.Split(raw, "\n")
-	var created, skipped int
+	var created, queued, skipped int
 	var invalid []string
 	for _, line := range lines {
 		line = strings.TrimSpace(line)
@@ -1954,19 +1954,25 @@ func (s *Server) repoBulkCreate(w http.ResponseWriter, r *http.Request) {
 			invalid = append(invalid, line)
 			continue
 		}
-		if isNew {
+		switch {
+		case isNew:
 			created++
-		} else {
+		case input.SubPath != "" || input.Branch != "":
+			// The repo already existed, but a sub-package or branch scan was
+			// still enqueued (createOrTriageRepo only no-ops a bare re-add), so
+			// this line did do something — don't report it as "already present".
+			queued++
+		default:
 			skipped++
 		}
 	}
-	if created == 0 && skipped == 0 && len(invalid) == 0 {
+	if created == 0 && queued == 0 && skipped == 0 && len(invalid) == 0 {
 		http.Error(w, "no URLs supplied", http.StatusUnprocessableEntity)
 		return
 	}
 	setFlash(w, Flash{
-		Category:    bulkToastCategory(created, invalid),
-		Title:       bulkToastTitle(created, skipped, len(invalid)),
+		Category:    bulkToastCategory(created, queued, invalid),
+		Title:       bulkToastTitle(created, queued, skipped, len(invalid)),
 		Description: bulkToastDescription(invalid),
 	})
 	s.redirect(w, r, "/")
@@ -2055,18 +2061,21 @@ func (s *Server) createOrTriageRepo(ctx context.Context, input RepoInput, model 
 	return repo, isNew, nil
 }
 
-func bulkToastCategory(created int, invalid []string) string {
-	if created > 0 && len(invalid) == 0 {
+func bulkToastCategory(created, queued int, invalid []string) string {
+	if created+queued > 0 && len(invalid) == 0 {
 		return successKey
 	}
-	if created == 0 && len(invalid) > 0 {
+	if created+queued == 0 && len(invalid) > 0 {
 		return errorKey
 	}
 	return warningKey
 }
 
-func bulkToastTitle(created, skipped, invalid int) string {
+func bulkToastTitle(created, queued, skipped, invalid int) string {
 	parts := []string{fmt.Sprintf("%d added", created)}
+	if queued > 0 {
+		parts = append(parts, fmt.Sprintf("%d scan(s) queued", queued))
+	}
 	if skipped > 0 {
 		parts = append(parts, fmt.Sprintf("%d already present", skipped))
 	}

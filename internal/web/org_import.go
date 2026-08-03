@@ -238,7 +238,7 @@ func (s *Server) repoOrgImport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	setFlash(w, Flash{
-		Category:    bulkToastCategory(created, invalid),
+		Category:    bulkToastCategory(created, 0, invalid),
 		Title:       orgImportToastTitle(org, created, skipped, filtered, len(invalid)),
 		Description: bulkToastDescription(invalid),
 	})

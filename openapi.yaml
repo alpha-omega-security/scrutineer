@@ -1415,6 +1415,7 @@ components:
         dependent_repos:    { type: integer }
         registry_url:       { type: string }
         latest_release_at:  { type: string, format: date-time, nullable: true }
+        sub_path:           { type: string, description: "Monorepo sub-package this package is attributed to (its subproject path). Omitted for a repo-level package." }
 
     Advisory:
       type: object
