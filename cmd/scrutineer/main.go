@@ -149,7 +149,7 @@ func parseFlags() *flags {
 	// that defaults to true that reads as the exact opposite of what was typed.
 	if flag.NArg() > 0 {
 		fmt.Fprintf(os.Stderr, "unexpected argument %q (booleans take the -flag=false form)\n", flag.Arg(0))
-		os.Exit(2)
+		os.Exit(2) //nolint:mnd // matches flag.ExitOnError's usage-error exit code
 	}
 
 	f.set = make(map[string]bool)
@@ -557,13 +557,6 @@ func run(log *slog.Logger) error {
 			broker.Publish(web.Event{Name: name, Data: data, ScanID: scanID, RepoID: repoID})
 		},
 	}
-	// Left nil when enrichment is off so a scan makes no ecosyste.ms call at
-	// all, rather than one that fails against a denied domain.
-	if f.ecosystemsEnrichment {
-		w.RefreshEcosystemsCache = func(ctx context.Context, repoID uint) error {
-			return worker.RefreshEcosystems(ctx, gdb, repoID, true, log)
-		}
-	}
 	w.Register(q)
 
 	srv, err := web.New(gdb, q, log, broker, w)
@@ -572,9 +565,7 @@ func run(log *slog.Logger) error {
 	}
 	srv.SkillsRepoSHA = skillsRepoSHA
 	srv.Version = version
-	if !f.ecosystemsEnrichment {
-		srv.DisableEcosystems()
-	}
+	wireEcosystems(f.ecosystemsEnrichment, w, srv, gdb, log)
 	if h, err := worker.HarnessByName(f.backend); err == nil {
 		srv.Backend = worker.HarnessName(h)
 	}
@@ -627,6 +618,22 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	return nil
+}
+
+// wireEcosystems configures the worker's per-scan cache refresh and the
+// server's PURL/prefetch seams from a single enrichment setting. When off,
+// RefreshEcosystemsCache is left nil so a scan makes no ecosyste.ms call at
+// all rather than one that fails against a denied domain, and the server's
+// seams are neutered via DisableEcosystems. Called after both are constructed
+// but before q.Start, so nothing reads the field before it is set.
+func wireEcosystems(enabled bool, w *worker.Worker, srv *web.Server, gdb *gorm.DB, log *slog.Logger) {
+	if !enabled {
+		srv.DisableEcosystems()
+		return
+	}
+	w.RefreshEcosystemsCache = func(ctx context.Context, repoID uint) error {
+		return worker.RefreshEcosystems(ctx, gdb, repoID, true, log)
+	}
 }
 
 func retireRemovedSkills(log *slog.Logger, gdb *gorm.DB) {
