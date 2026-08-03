@@ -274,6 +274,85 @@ func TestOpenAndMigrate(t *testing.T) {
 	}
 }
 
+func TestPreMigrate_renamesSBOMPackageRepositoryID(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "old.db")
+	// Simulate a database written before the rename: sbom_packages has a
+	// repository_id column with data in it. Open must rename the column
+	// before AutoMigrate would otherwise add source_repository_id alongside
+	// it and strand the old values.
+	raw, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stmts := []string{
+		`CREATE TABLE repositories (id INTEGER PRIMARY KEY, url TEXT, name TEXT)`,
+		`INSERT INTO repositories (id, url, name) VALUES (42, 'https://example.com/r', 'r')`,
+		`CREATE TABLE sbom_uploads (id INTEGER PRIMARY KEY, name TEXT)`,
+		`INSERT INTO sbom_uploads (id, name) VALUES (1, 'old')`,
+		`CREATE TABLE sbom_packages (id INTEGER PRIMARY KEY, sbom_upload_id INTEGER, repository_id INTEGER)`,
+		`INSERT INTO sbom_packages (id, sbom_upload_id, repository_id) VALUES (1, 1, 42)`,
+	}
+	for _, s := range stmts {
+		if _, err := raw.Exec(s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_ = raw.Close()
+
+	gdb, err := Open(path)
+	if err != nil {
+		t.Fatalf("open with old schema: %v", err)
+	}
+	if gdb.Migrator().HasColumn(&SBOMPackage{}, "repository_id") {
+		t.Error("repository_id column should have been renamed, still present")
+	}
+	var pkg SBOMPackage
+	if err := gdb.First(&pkg, 1).Error; err != nil {
+		t.Fatalf("read migrated row: %v", err)
+	}
+	if pkg.SourceRepositoryID == nil || *pkg.SourceRepositoryID != 42 {
+		t.Errorf("SourceRepositoryID = %v, want 42", pkg.SourceRepositoryID)
+	}
+
+	// Idempotent: a second Open on the already-migrated file must not fail.
+	if _, err := Open(path); err != nil {
+		t.Fatalf("second open: %v", err)
+	}
+}
+
+func TestSBOMUpload_originAndCurrent(t *testing.T) {
+	gdb, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := Repository{URL: "https://example.com/r", Name: "r"}
+	gdb.Create(&repo)
+	// A row that omits Origin lands as "uploaded" via the column default,
+	// matching rows written before the column existed.
+	up := SBOMUpload{Name: "x"}
+	if err := gdb.Create(&up).Error; err != nil {
+		t.Fatal(err)
+	}
+	var got SBOMUpload
+	gdb.First(&got, up.ID)
+	if got.Origin != SBOMOriginUploaded {
+		t.Errorf("default Origin = %q, want %q", got.Origin, SBOMOriginUploaded)
+	}
+	if got.Current {
+		t.Error("uploaded SBOM should not be Current")
+	}
+
+	gen := SBOMUpload{Name: "g", Origin: SBOMOriginGenerated, RepositoryID: &repo.ID, Commit: "abc", Current: true}
+	if err := gdb.Create(&gen).Error; err != nil {
+		t.Fatal(err)
+	}
+	var current []SBOMUpload
+	gdb.Where("repository_id = ? AND current = ?", repo.ID, true).Find(&current)
+	if len(current) != 1 || current[0].ID != gen.ID {
+		t.Errorf("current lookup = %+v, want [%d]", current, gen.ID)
+	}
+}
+
 func TestWithPragmas_joinsOnExistingQuery(t *testing.T) {
 	cases := map[string]string{
 		"data/scrutineer.db":         "data/scrutineer.db?" + connectionPragmas,

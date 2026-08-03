@@ -1,6 +1,6 @@
 ---
 name: dependencies
-description: Index the repository's dependencies via `git-pkgs list`, recording manifest path, ecosystem, and requirement per entry.
+description: Run git-pkgs list, sbom, licenses, vulns, outdated, and deprecated against the repository and emit one envelope with per-section status.
 license: MIT
 compatibility: Requires `git-pkgs` (https://github.com/git-pkgs/git-pkgs) and `python3` on PATH.
 metadata:
@@ -20,7 +20,7 @@ metadata:
 
 # dependencies
 
-Wrap `git-pkgs list --format json` so scrutineer can read the result as a dependencies report. Preserve dependency phase/type fields from git-pkgs; scrutineer normalizes common aliases to `runtime`, `dev`, `test`, or `build`. Scrutineer's worker resolves Maven requirements from local `pom.xml` files with `git-pkgs/pom`, fills `requirement_resolution`, and marks unresolved placeholders with `requirement_unresolved`.
+Run six git-pkgs analyses after one `git-pkgs init` and assemble the results into a versioned envelope. `analyses.inventory` is the manifest occurrence list from `git-pkgs list`; `analyses.sbom` is the CycloneDX document from `git-pkgs sbom`; `licenses`, `vulnerabilities`, `outdated`, and `deprecated` carry the per-dependency rows from the matching commands. Each section has its own `status` so a failed registry lookup does not discard a valid inventory. Scrutineer's worker resolves Maven requirements from local `pom.xml` files with `git-pkgs/pom`, fills `requirement_resolution`, and marks unresolved placeholders with `requirement_unresolved`.
 
 ## Workspace
 
@@ -31,7 +31,7 @@ Wrap `git-pkgs list --format json` so scrutineer can read the result as a depend
 
 ## Available scripts
 
-- `scripts/index.sh` — runs `git-pkgs init` then `git-pkgs list --format json` inside `./src`, normalises empty or `null` output to an empty array, and writes `{"dependencies": [...]}`.
+- `scripts/index.sh` — runs `git-pkgs init` inside `./src`, then `list`, `sbom`, `licenses`, `vulns`, `outdated`, and `deprecated` in turn, capturing stdout, stderr, and exit code per command, and writes the assembled envelope to stdout.
 
 ## What to do
 
@@ -41,8 +41,6 @@ Run the script and capture its stdout as the report:
 bash scripts/index.sh > ./report.json
 ```
 
-If the script exits non-zero, read its stderr, then write a short `{"dependencies": [], "error": "..."}` document to `./report.json` so the caller sees why no dependencies were indexed.
+If the script exits non-zero, read its stderr, then write `{"schema_version": 1, "analyses": {}, "error": "..."}` to `./report.json` so the caller sees why nothing was collected.
 
-The wrapper already emits the exact schema the parser expects — no post-processing needed. Do not merge test, build, development, and runtime dependencies together; keep the phase/type field on each row when git-pkgs reports one.
-
-Do not inspect manifests yourself, infer dependencies from files that `git-pkgs` did not report, or hand-author dependency rows. If the wrapper returns `{"dependencies":[]}`, write that exact report and stop. Missing coverage in `git-pkgs` should produce an empty dependency report, not model-authored package data.
+The wrapper already emits the exact schema the parser expects, including per-section `status: "error"` for a failed command. Do not post-process, merge sections, or hand-author dependency rows. Do not inspect manifests yourself or infer dependencies from files that `git-pkgs` did not report. An empty `analyses.inventory.result` means git-pkgs found no manifests; write that report and stop.

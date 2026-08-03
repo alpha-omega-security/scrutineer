@@ -87,6 +87,7 @@ func (s *Server) sbomUpload(w http.ResponseWriter, r *http.Request) {
 		Format:        string(doc.Type),
 		SpecVersion:   doc.SpecVersion,
 		Raw:           data,
+		Origin:        db.SBOMOriginUploaded,
 		PackageCount:  len(doc.Packages),
 		ImportPending: true,
 	}
@@ -149,7 +150,7 @@ func (s *Server) sbomShow(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	if err := s.DB.Preload("Packages.Repository").First(&up, id).Error; err != nil {
+	if err := s.DB.Preload("Packages.SourceRepository").First(&up, id).Error; err != nil {
 		http.NotFound(w, r)
 		return
 	}
@@ -173,8 +174,8 @@ func (s *Server) sbomShow(w http.ResponseWriter, r *http.Request) {
 
 	reposByID := make(map[uint]db.Repository)
 	for _, p := range pkgs {
-		if p.Repository != nil {
-			reposByID[p.Repository.ID] = *p.Repository
+		if p.SourceRepository != nil {
+			reposByID[p.SourceRepository.ID] = *p.SourceRepository
 		}
 	}
 	repoIDs := make([]uint, 0, len(reposByID))
@@ -221,10 +222,10 @@ func (s *Server) sbomShow(w http.ResponseWriter, r *http.Request) {
 
 	resolved, withRepo := 0, 0
 	for _, p := range pkgs {
-		if p.RepositoryID != nil || p.ResolveError != "" {
+		if p.SourceRepositoryID != nil || p.ResolveError != "" {
 			resolved++
 		}
-		if p.RepositoryID != nil {
+		if p.SourceRepositoryID != nil {
 			withRepo++
 		}
 	}
@@ -321,7 +322,7 @@ func (s *Server) resolveSBOMPackages(uploadID uint) {
 	defer cancel()
 
 	var pkgs []db.SBOMPackage
-	s.DB.Where("sbom_upload_id = ? AND repository_id IS NULL", uploadID).Find(&pkgs)
+	s.DB.Where("sbom_upload_id = ? AND source_repository_id IS NULL", uploadID).Find(&pkgs)
 
 	for i := range pkgs {
 		p := &pkgs[i]
@@ -353,7 +354,7 @@ func (s *Server) resolveSBOMPackages(uploadID uint) {
 			s.DB.Model(p).Update("resolve_error", err.Error())
 			continue
 		}
-		s.DB.Model(p).Updates(map[string]any{"repository_id": repo.ID, "resolve_error": ""})
+		s.DB.Model(p).Updates(map[string]any{"source_repository_id": repo.ID, "resolve_error": ""})
 	}
 }
 

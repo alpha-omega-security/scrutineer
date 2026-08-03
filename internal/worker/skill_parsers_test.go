@@ -1655,14 +1655,29 @@ func TestParseFindingDedup_skipsClosedAndCrossRepoFindings(t *testing.T) {
 	}
 }
 
+// depEnvelope wraps a JSON fragment of inventory rows and an optional
+// CycloneDX document in the versioned envelope the dependencies parser
+// expects, filling the remaining sections as empty ok results.
+func depEnvelope(inventory, sbom string) string {
+	if sbom == "" {
+		sbom = "{}"
+	}
+	empty := `{"status":"ok","result":[],"sources":[]}`
+	return `{"schema_version":1,"commit":"cafef00d","analyses":{` +
+		`"inventory":{"status":"ok","result":` + inventory + `},` +
+		`"sbom":{"status":"ok","result":` + sbom + `},` +
+		`"licenses":` + empty + `,"vulnerabilities":` + empty + `,` +
+		`"outdated":` + empty + `,"deprecated":` + empty + `}}`
+}
+
 func TestParseDependencies_acceptsTypeOrDependencyType(t *testing.T) {
-	report := `{"dependencies":[
+	report := depEnvelope(`[
 		{"name":"a","ecosystem":"npm","type":"runtime","manifest_path":"package.json"},
 		{"name":"b","ecosystem":"npm","dependency_type":"development","manifest_path":"package.json"},
 		{"name":"c","ecosystem":"cpan","dependency_type":"test_requires","manifest_path":"META.json"},
 		{"name":"d","ecosystem":"cpan","dependency_type":"configure_requires","manifest_path":"META.json"},
 		{"name":"m","ecosystem":"maven","requirement":"${missing.version}","requirement_unresolved":true,"manifest_path":"pom.xml"}
-	]}`
+	]`, "")
 	repo, gdb := runSkillWithReport(t, "dependencies", report)
 	var rows []db.Dependency
 	gdb.Where("repository_id = ?", repo.ID).Find(&rows)
@@ -1691,11 +1706,11 @@ func TestParseDependencies_resolvesMavenRequirementsWithPOM(t *testing.T) {
 	src := filepath.Join(w.scanWorkRoot(scan), "src")
 	writeMavenResolverFixture(t, src)
 
-	report := `{"dependencies":[
+	report := depEnvelope(`[
 		{"name":"org.openjdk.jmh:jmh-core","ecosystem":"maven","requirement":"${jmh.version}","manifest_path":"pom.xml"},
 		{"name":"org.example:child-dep","ecosystem":"maven","requirement":"${project.version}","manifest_path":"module/pom.xml"},
 		{"name":"org.example:missing","ecosystem":"maven","requirement":"${missing.version}","manifest_path":"pom.xml"}
-	]}`
+	]`, "")
 	if err := w.parseDependenciesOutput(scan, report, func(Event) {}); err != nil {
 		t.Fatal(err)
 	}
@@ -1727,9 +1742,9 @@ func TestParseDependencies_skipsMavenParentOutsideSrc(t *testing.T) {
 	w, scan, gdb, repo := newDependencyParser(t)
 	writeEscapingMavenResolverFixture(t, w.scanWorkRoot(scan))
 
-	report := `{"dependencies":[
+	report := depEnvelope(`[
 		{"name":"org.example:escape","ecosystem":"maven","requirement":"${secret.version}","manifest_path":"escape/pom.xml"}
-	]}`
+	]`, "")
 	if err := w.parseDependenciesOutput(scan, report, func(Event) {}); err != nil {
 		t.Fatal(err)
 	}
@@ -1760,12 +1775,159 @@ func TestParseDependencies_largeBatchExceedsSQLiteVariableLimit(t *testing.T) {
 			"manifest_path": "package.json",
 		}
 	}
-	b, _ := json.Marshal(map[string]any{"dependencies": deps})
-	repo, gdb := runSkillWithReport(t, "dependencies", string(b))
+	b, _ := json.Marshal(deps)
+	repo, gdb := runSkillWithReport(t, "dependencies", depEnvelope(string(b), ""))
 	var count int64
 	gdb.Model(&db.Dependency{}).Where("repository_id = ?", repo.ID).Count(&count)
 	if count != n {
 		t.Fatalf("count = %d, want %d", count, n)
+	}
+}
+
+const cdxEnvelopeFixture = `{
+  "bomFormat":"CycloneDX","specVersion":"1.5",
+  "metadata":{"component":{"type":"application","name":"demo","version":"1.0.0"}},
+  "components":[
+    {"type":"library","name":"lodash","version":"4.17.21","purl":"pkg:npm/lodash@4.17.21",
+     "licenses":[{"license":{"id":"MIT"}}]}
+  ]
+}`
+
+func TestParseDependencies_createsGeneratedSBOM(t *testing.T) {
+	w, scan, gdb, repo := newDependencyParser(t)
+
+	report := depEnvelope(
+		`[{"name":"lodash","ecosystem":"npm","requirement":"^4.17.0","manifest_path":"package.json"}]`,
+		cdxEnvelopeFixture)
+	if err := w.parseDependenciesOutput(scan, report, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+
+	var deps []db.Dependency
+	gdb.Where("repository_id = ?", repo.ID).Find(&deps)
+	if len(deps) != 1 || deps[0].Name != "lodash" {
+		t.Fatalf("dependencies = %+v", deps)
+	}
+
+	var up db.SBOMUpload
+	if err := gdb.Preload("Packages").
+		Where("repository_id = ? AND origin = ?", repo.ID, db.SBOMOriginGenerated).
+		First(&up).Error; err != nil {
+		t.Fatalf("generated snapshot not created: %v", err)
+	}
+	if up.Commit != "cafef00d" {
+		t.Errorf("Commit = %q, want cafef00d from envelope", up.Commit)
+	}
+	if !up.Current {
+		t.Error("first generated snapshot should be Current")
+	}
+	if up.ScanID == nil || *up.ScanID != scan.ID {
+		t.Errorf("ScanID = %v, want %d", up.ScanID, scan.ID)
+	}
+	if up.Raw != nil {
+		t.Errorf("generated snapshot stored Raw (%d bytes)", len(up.Raw))
+	}
+	if up.PackageCount != 1 || len(up.Packages) != 1 {
+		t.Fatalf("packages = %d (%d rows)", up.PackageCount, len(up.Packages))
+	}
+	pkg := up.Packages[0]
+	if pkg.PURL != "pkg:npm/lodash@4.17.21" || pkg.Ecosystem != "npm" || pkg.License != "MIT" {
+		t.Errorf("package = %+v", pkg)
+	}
+
+	// A second scan writes a new snapshot and moves Current in the same
+	// transaction so at most one row per repository has Current=true.
+	scan2 := db.Scan{RepositoryID: repo.ID}
+	gdb.Create(&scan2)
+	if err := w.parseDependenciesOutput(&scan2, report, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	var uploads []db.SBOMUpload
+	gdb.Where("repository_id = ? AND origin = ?", repo.ID, db.SBOMOriginGenerated).
+		Order("id").Find(&uploads)
+	if len(uploads) != 2 {
+		t.Fatalf("uploads = %d, want 2 (history retained)", len(uploads))
+	}
+	if uploads[0].Current {
+		t.Error("prior snapshot still Current after second scan")
+	}
+	if !uploads[1].Current {
+		t.Error("newest snapshot should be Current")
+	}
+	var currentCount int64
+	gdb.Model(&db.SBOMUpload{}).Where("repository_id = ? AND current = ?", repo.ID, true).Count(&currentCount)
+	if currentCount != 1 {
+		t.Errorf("current snapshots for repo = %d, want 1", currentCount)
+	}
+
+	// A generated snapshot for one repository must not touch another
+	// repository's Current flag.
+	other := db.Repository{URL: "https://example.com/y", Name: "y"}
+	gdb.Create(&other)
+	gdb.Create(&db.SBOMUpload{Origin: db.SBOMOriginGenerated, RepositoryID: &other.ID, Current: true})
+	if err := w.parseDependenciesOutput(&scan2, report, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	var otherCurrent int64
+	gdb.Model(&db.SBOMUpload{}).Where("repository_id = ? AND current = ?", other.ID, true).Count(&otherCurrent)
+	if otherCurrent != 1 {
+		t.Errorf("unrelated repo current = %d, want 1", otherCurrent)
+	}
+}
+
+func TestParseDependencies_sbomSectionErrorKeepsInventory(t *testing.T) {
+	w, scan, gdb, repo := newDependencyParser(t)
+
+	report := `{"schema_version":1,"analyses":{
+		"inventory":{"status":"ok","result":[{"name":"x","ecosystem":"npm"}]},
+		"sbom":{"status":"error","error":"boom"},
+		"licenses":{"status":"error","error":"unreachable"},
+		"vulnerabilities":{"status":"ok","result":[{"id":"GHSA-x"}],"sources":[]},
+		"outdated":{"status":"ok","result":[],"sources":[]},
+		"deprecated":{"status":"ok","result":[],"sources":[]}
+	}}`
+	var events []Event
+	if err := w.parseDependenciesOutput(scan, report, func(e Event) { events = append(events, e) }); err != nil {
+		t.Fatalf("errored sbom section should not fail parse: %v", err)
+	}
+
+	var deps int64
+	gdb.Model(&db.Dependency{}).Where("repository_id = ?", repo.ID).Count(&deps)
+	if deps != 1 {
+		t.Errorf("inventory rows = %d, want 1", deps)
+	}
+	var uploads int64
+	gdb.Model(&db.SBOMUpload{}).Where("repository_id = ?", repo.ID).Count(&uploads)
+	if uploads != 0 {
+		t.Errorf("errored sbom section should not create a snapshot, got %d", uploads)
+	}
+	joined := ""
+	for _, e := range events {
+		joined += e.Text + "\n"
+	}
+	for _, want := range []string{"sbom section skipped: boom", "licenses failed: unreachable", "vulnerabilities: 1 row(s)"} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("events missing %q:\n%s", want, joined)
+		}
+	}
+}
+
+func TestParseDependencies_malformedSBOMKeepsInventory(t *testing.T) {
+	w, scan, gdb, repo := newDependencyParser(t)
+
+	report := depEnvelope(`[{"name":"x","ecosystem":"npm"}]`, `{"bomFormat":"garbage"}`)
+	if err := w.parseDependenciesOutput(scan, report, func(Event) {}); err != nil {
+		t.Fatalf("malformed sbom document should not fail parse: %v", err)
+	}
+	var deps int64
+	gdb.Model(&db.Dependency{}).Where("repository_id = ?", repo.ID).Count(&deps)
+	if deps != 1 {
+		t.Errorf("inventory rows = %d, want 1", deps)
+	}
+	var uploads int64
+	gdb.Model(&db.SBOMUpload{}).Count(&uploads)
+	if uploads != 0 {
+		t.Errorf("malformed sbom should not create a snapshot, got %d", uploads)
 	}
 }
 

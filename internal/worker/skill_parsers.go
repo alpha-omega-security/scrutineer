@@ -12,6 +12,7 @@ import (
 	"time"
 
 	mavenpom "github.com/git-pkgs/pom"
+	"github.com/git-pkgs/sbom"
 	"gorm.io/gorm"
 
 	"scrutineer/internal/db"
@@ -308,19 +309,24 @@ func (w *Worker) parseAdvisoryAuditOutput(skill *db.Skill, scan *db.Scan, report
 	return ingestErr
 }
 
-// parseDependenciesOutput replaces Dependency rows for the scan's repository.
-// Dependencies come from a git-pkgs-style manifest scan: one row per
-// (name, ecosystem, manifest_path) tuple.
+// parseDependenciesOutput consumes the versioned envelope emitted by
+// skills/dependencies/scripts/index.sh. The inventory section replaces
+// Dependency rows for the scan's repository; the sbom section becomes a
+// generated SBOMUpload snapshot with Current moved to it. Remaining sections
+// are decoded and reported but not yet persisted.
 func (w *Worker) parseDependenciesOutput(scan *db.Scan, report string, emit func(Event)) error {
-	var result struct {
-		Dependencies []dependencyReportRow `json:"dependencies"`
-	}
-	if err := json.Unmarshal([]byte(report), &result); err != nil {
+	var env dependencyEnvelope
+	if err := json.Unmarshal([]byte(report), &env); err != nil {
 		return fmt.Errorf("parse dependencies: %w", err)
 	}
-	w.resolveMavenDependencyRequirements(scan, result.Dependencies, emit)
-	rows := make([]db.Dependency, 0, len(result.Dependencies))
-	for _, d := range result.Dependencies {
+
+	inv := env.Analyses.Inventory
+	if inv.Status == analysisError {
+		emit(Event{Kind: KindText, Text: "inventory failed: " + inv.Error})
+	}
+	w.resolveMavenDependencyRequirements(scan, inv.Result, emit)
+	rows := make([]db.Dependency, 0, len(inv.Result))
+	for _, d := range inv.Result {
 		depType := d.Type
 		if depType == "" {
 			depType = d.DependencyType
@@ -339,16 +345,21 @@ func (w *Worker) parseDependenciesOutput(scan *db.Scan, report string, emit func
 			ManifestKind:          d.ManifestKind,
 		})
 	}
-	// Replace the prior row set atomically so a failed insert can't leave
-	// the repository with zero dependencies. This delete-and-replace assumes a
-	// whole-repository view: Dependency rows are repo-level (no SubprojectID), so
-	// a sub-path-scoped run that saw only one sub-package's manifests would wipe
+
+	up, sbomErr := buildGeneratedSBOM(scan, env)
+	if sbomErr != nil {
+		// A malformed sbom section should not discard a valid inventory.
+		emit(Event{Kind: KindText, Text: "sbom section skipped: " + sbomErr.Error()})
+	}
+
+	// Replace the prior row set and move the Current flag atomically so a
+	// failed insert can't leave the repository with zero dependencies or
+	// two current snapshots. This delete-and-replace assumes a whole-repository
+	// view: Dependency rows are repo-level (no SubprojectID), so a
+	// sub-path-scoped run that saw only one sub-package's manifests would wipe
 	// every sibling's rows. That view holds today because scanScopeHard keeps
 	// this skill whole-tree (repoWideProjectionKinds) and the git-pkgs script
-	// enumerates all of ./src rather than honouring scan_subpath. If this skill
-	// is ever made sub-path-aware, it must gain a per-subproject partition (or a
-	// scoped-run guard like parseMaintainersOutput's) before it can run scoped —
-	// otherwise a scoped run silently deletes the rest of the repo's dependencies.
+	// enumerates all of ./src rather than honouring scan_subpath.
 	if err := w.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Where("repository_id = ?", scan.RepositoryID).Delete(&db.Dependency{}).Error; err != nil {
 			return fmt.Errorf("delete old dependencies: %w", err)
@@ -358,12 +369,154 @@ func (w *Worker) parseDependenciesOutput(scan *db.Scan, report string, emit func
 				return fmt.Errorf("save dependencies: %w", err)
 			}
 		}
+		if up != nil {
+			if err := tx.Model(&db.SBOMUpload{}).
+				Where("repository_id = ? AND origin = ? AND current = ?",
+					scan.RepositoryID, db.SBOMOriginGenerated, true).
+				Update("current", false).Error; err != nil {
+				return fmt.Errorf("clear current snapshot: %w", err)
+			}
+			if err := tx.Create(up).Error; err != nil {
+				return fmt.Errorf("save generated sbom: %w", err)
+			}
+		}
 		return nil
 	}); err != nil {
 		return err
 	}
-	emit(Event{Kind: KindText, Text: fmt.Sprintf("saved %d dependenc(ies)", len(rows))})
+
+	summary := fmt.Sprintf("saved %d dependenc(ies)", len(rows))
+	if up != nil {
+		summary += fmt.Sprintf(", %d resolved component(s) at %s", up.PackageCount, shortCommit(up.Commit))
+	}
+	emit(Event{Kind: KindText, Text: summary})
+	env.reportDeferredSections(emit)
 	return nil
+}
+
+const (
+	analysisOK    = "ok"
+	analysisError = "error"
+)
+
+type dependencyEnvelope struct {
+	SchemaVersion  int    `json:"schema_version"`
+	Commit         string `json:"commit"`
+	GeneratedAt    string `json:"generated_at"`
+	GitPkgsVersion string `json:"git_pkgs_version"`
+	Analyses       struct {
+		Inventory struct {
+			analysisSection
+			Result []dependencyReportRow `json:"result"`
+		} `json:"inventory"`
+		SBOM struct {
+			analysisSection
+			Result json.RawMessage `json:"result"`
+		} `json:"sbom"`
+		Licenses        rawAnalysisSection `json:"licenses"`
+		Vulnerabilities rawAnalysisSection `json:"vulnerabilities"`
+		Outdated        rawAnalysisSection `json:"outdated"`
+		Deprecated      rawAnalysisSection `json:"deprecated"`
+	} `json:"analyses"`
+}
+
+type analysisSection struct {
+	Status   string   `json:"status"`
+	Error    string   `json:"error"`
+	Warnings []string `json:"warnings"`
+}
+
+// rawAnalysisSection covers licenses/vulnerabilities/outdated/deprecated:
+// decoded so section status and row counts can be surfaced now, with the row
+// bodies left opaque until the persistence step lands.
+type rawAnalysisSection struct {
+	analysisSection
+	Result  []json.RawMessage `json:"result"`
+	Sources []json.RawMessage `json:"sources"`
+}
+
+// reportDeferredSections emits a one-line status for each analysis whose rows
+// are not yet persisted so an operator can see they ran and whether the
+// upstream returned anything, without having to read the raw report.
+func (e *dependencyEnvelope) reportDeferredSections(emit func(Event)) {
+	deferred := []struct {
+		name string
+		sec  rawAnalysisSection
+	}{
+		{"licenses", e.Analyses.Licenses},
+		{"vulnerabilities", e.Analyses.Vulnerabilities},
+		{"outdated", e.Analyses.Outdated},
+		{"deprecated", e.Analyses.Deprecated},
+	}
+	for _, d := range deferred {
+		switch d.sec.Status {
+		case analysisOK:
+			emit(Event{Kind: KindText, Text: fmt.Sprintf("%s: %d row(s), not yet persisted", d.name, len(d.sec.Result))})
+		case analysisError:
+			emit(Event{Kind: KindText, Text: fmt.Sprintf("%s failed: %s", d.name, d.sec.Error)})
+		}
+	}
+}
+
+// buildGeneratedSBOM parses the envelope's sbom section into an SBOMUpload
+// snapshot for the scan's repository. A missing or errored section returns
+// (nil, nil) so the caller writes inventory rows without a snapshot; a
+// present but unparseable document returns an error for the caller to log.
+func buildGeneratedSBOM(scan *db.Scan, env dependencyEnvelope) (*db.SBOMUpload, error) {
+	sec := env.Analyses.SBOM
+	if sec.Status != analysisOK {
+		if sec.Error != "" {
+			return nil, errors.New(sec.Error)
+		}
+		return nil, nil
+	}
+	if len(sec.Result) == 0 || string(sec.Result) == "{}" || string(sec.Result) == "null" {
+		return nil, nil
+	}
+	doc, err := sbom.Parse(sec.Result)
+	if err != nil {
+		return nil, fmt.Errorf("parse cyclonedx: %w", err)
+	}
+	commit := env.Commit
+	if commit == "" {
+		commit = scan.Commit
+	}
+	up := db.SBOMUpload{
+		Name:         doc.Document.Name,
+		Format:       string(doc.Type),
+		SpecVersion:  doc.SpecVersion,
+		Origin:       db.SBOMOriginGenerated,
+		RepositoryID: &scan.RepositoryID,
+		ScanID:       &scan.ID,
+		Commit:       commit,
+		Current:      true,
+		PackageCount: len(doc.Packages),
+	}
+	scope := doc.ClassifyScope()
+	for _, p := range doc.Packages {
+		purl := p.PURL()
+		lic := p.LicenseDeclared
+		if lic == "" {
+			lic = p.LicenseConcluded
+		}
+		up.Packages = append(up.Packages, db.SBOMPackage{
+			Name:      p.Name,
+			Version:   p.Version,
+			PURL:      purl,
+			Ecosystem: db.EcosystemType(purl, ""),
+			License:   lic,
+			Scope:     scope[p.ID],
+		})
+	}
+	return &up, nil
+}
+
+func shortCommit(s string) string {
+	const n = 12
+	if len(s) > n {
+		return s[:n]
+	}
+	return s
 }
 
 type dependencyReportRow struct {

@@ -2792,14 +2792,17 @@ func (s *Server) deleteRepository(repo db.Repository) (deletedRepository, error)
 		}
 		for _, child := range []any{
 			&db.Finding{}, &db.Scan{}, &db.Subproject{}, &db.Dependency{},
-			&db.Dependent{}, &db.Package{}, &db.Advisory{},
+			&db.Dependent{}, &db.Package{}, &db.Advisory{}, &db.SBOMUpload{},
 		} {
 			if err := tx.Where("repository_id = ?", repo.ID).Delete(child).Error; err != nil {
 				return err
 			}
 		}
-		if err := tx.Model(&db.SBOMPackage{}).Where("repository_id = ?", repo.ID).
-			Update("repository_id", nil).Error; err != nil {
+		// Generated snapshots for the deleted repo were removed above via
+		// repository_id; packages in other uploads that resolved to this repo
+		// as their source keep their row but drop the pointer.
+		if err := tx.Model(&db.SBOMPackage{}).Where("source_repository_id = ?", repo.ID).
+			Update("source_repository_id", nil).Error; err != nil {
 			return err
 		}
 		if err := tx.Exec("DELETE FROM repository_maintainers WHERE repository_id = ?", repo.ID).Error; err != nil {

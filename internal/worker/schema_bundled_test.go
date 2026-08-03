@@ -97,11 +97,21 @@ func TestBundledSchemas_compileAndAcceptSamples(t *testing.T) {
 		},
 		{
 			"../../skills/dependencies/schema.json",
-			`{"dependencies":[]}`,
+			depEnvelope(`[]`, ""),
 		},
 		{
 			"../../skills/dependencies/schema.json",
-			`{"dependencies":[],"error":"git-pkgs not found on PATH"}`,
+			depEnvelope(`[{"name":"x","ecosystem":"npm","type":"runtime"}]`, cdxEnvelopeFixture),
+		},
+		{
+			"../../skills/dependencies/schema.json",
+			`{"schema_version":1,"analyses":{
+				"inventory":{"status":"error","error":"git-pkgs: exit 1"},
+				"sbom":{"status":"error","error":"git-pkgs: exit 1"},
+				"licenses":{"status":"error","error":"x"},
+				"vulnerabilities":{"status":"error","error":"x"},
+				"outdated":{"status":"error","error":"x"},
+				"deprecated":{"status":"error","error":"x"}}}`,
 		},
 		{
 			"../../skills/public-issue/schema.json",
@@ -334,7 +344,10 @@ func TestBundledSchemas_rejectBadShapes(t *testing.T) {
 		{"../../skills/sbom/schema.json", `{"bomFormat":"SPDX","specVersion":"1.5"}`, "/bomFormat"},
 		{"../../skills/sbom/schema.json", `{"specVersion":"1.5"}`, "bomFormat"},
 		{"../../skills/sbom/schema.json", `{}`, "oneOf"},
-		{"../../skills/dependencies/schema.json", `{"dependencies":null}`, "/dependencies"},
+		{"../../skills/dependencies/schema.json", `{"schema_version":1}`, "analyses"},
+		{"../../skills/dependencies/schema.json",
+			`{"schema_version":1,"analyses":{"inventory":{"status":"maybe"}}}`,
+			"/analyses"},
 		{"../../skills/advisories/schema.json",
 			`{"advisories":[{"uuid":"u1","severity":"HIGHISH"}]}`,
 			"/advisories/0/severity"},

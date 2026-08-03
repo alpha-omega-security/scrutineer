@@ -139,7 +139,7 @@ func TestSBOMResolveHandler(t *testing.T) {
 
 	var pkg db.SBOMPackage
 	s.DB.Where("sbom_upload_id = ?", up.ID).First(&pkg)
-	if pkg.RepositoryID == nil {
+	if pkg.SourceRepositoryID == nil {
 		t.Errorf("package not linked after resolve handler: %+v", pkg)
 	}
 
@@ -187,7 +187,7 @@ func TestSBOMResolve_recordsReasonWhenEnrichmentDisabled(t *testing.T) {
 	if len(byName) != 3 {
 		t.Fatalf("packages = %d, want 3", len(byName))
 	}
-	if byName["lodash"].RepositoryID != nil {
+	if byName["lodash"].SourceRepositoryID != nil {
 		t.Errorf("package linked with enrichment disabled: %+v", byName["lodash"])
 	}
 	if got := byName["lodash"].ResolveError; got != ecosystemsDisabled {
@@ -258,11 +258,11 @@ func TestSBOMConfirm_resolvesAfterOperatorConfirmation(t *testing.T) {
 		t.Fatal("confirmation did not clear ImportPending")
 	}
 	for _, p := range confirmed.Packages {
-		if p.RepositoryID == nil {
+		if p.SourceRepositoryID == nil {
 			t.Fatalf("package %s was not resolved", p.Name)
 		}
 		var count int64
-		s.DB.Model(&db.Scan{}).Where("repository_id = ?", *p.RepositoryID).Count(&count)
+		s.DB.Model(&db.Scan{}).Where("repository_id = ?", *p.SourceRepositoryID).Count(&count)
 		want := int64(0)
 		if p.Scope == sbom.ScopeDirect {
 			want = 1
@@ -420,11 +420,11 @@ func TestSBOMResolve_linksRepoAndEnqueuesTriage(t *testing.T) {
 	var pkgs []db.SBOMPackage
 	s.DB.Where("sbom_upload_id = ?", up.ID).Order("id").Find(&pkgs)
 
-	if pkgs[0].RepositoryID == nil {
+	if pkgs[0].SourceRepositoryID == nil {
 		t.Fatalf("lodash not linked: %+v", pkgs[0])
 	}
 	var repo db.Repository
-	s.DB.First(&repo, *pkgs[0].RepositoryID)
+	s.DB.First(&repo, *pkgs[0].SourceRepositoryID)
 	if repo.URL != "https://github.com/lodash/lodash" {
 		t.Errorf("repo url = %q", repo.URL)
 	}
@@ -434,18 +434,18 @@ func TestSBOMResolve_linksRepoAndEnqueuesTriage(t *testing.T) {
 		t.Errorf("triage scan not enqueued for direct dependency, scans = %d", scans)
 	}
 
-	if pkgs[1].RepositoryID == nil {
+	if pkgs[1].SourceRepositoryID == nil {
 		t.Fatalf("flat-scope package not linked: %+v", pkgs[1])
 	}
-	s.DB.Model(&db.Scan{}).Where("repository_id = ?", *pkgs[1].RepositoryID).Count(&scans)
+	s.DB.Model(&db.Scan{}).Where("repository_id = ?", *pkgs[1].SourceRepositoryID).Count(&scans)
 	if scans != 1 {
 		t.Errorf("triage scan not enqueued for flat-scope dependency, scans = %d", scans)
 	}
 
-	if pkgs[2].RepositoryID == nil {
+	if pkgs[2].SourceRepositoryID == nil {
 		t.Fatalf("transitive not linked: %+v", pkgs[2])
 	}
-	s.DB.Model(&db.Scan{}).Where("repository_id = ?", *pkgs[2].RepositoryID).Count(&scans)
+	s.DB.Model(&db.Scan{}).Where("repository_id = ?", *pkgs[2].SourceRepositoryID).Count(&scans)
 	if scans != 0 {
 		t.Errorf("triage scan enqueued for transitive dependency, scans = %d", scans)
 	}
@@ -477,7 +477,7 @@ func TestSBOMShow_aggregatesFindings(t *testing.T) {
 	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: other.ID, Title: "unrelated", Severity: "High"})
 
 	up := db.SBOMUpload{Name: "demo", PackageCount: 1, Packages: []db.SBOMPackage{
-		{Name: "r-pkg", PURL: "pkg:npm/r", RepositoryID: &repo.ID},
+		{Name: "r-pkg", PURL: "pkg:npm/r", SourceRepositoryID: &repo.ID},
 	}}
 	s.DB.Create(&up)
 
@@ -516,7 +516,7 @@ func TestSBOMShow_findingsSort(t *testing.T) {
 	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "new-low", Severity: "Low"})
 
 	up := db.SBOMUpload{Name: "demo", PackageCount: 1, Packages: []db.SBOMPackage{
-		{Name: "p", RepositoryID: &repo.ID},
+		{Name: "p", SourceRepositoryID: &repo.ID},
 	}}
 	s.DB.Create(&up)
 
@@ -552,7 +552,7 @@ func TestSBOMShow_listsAdvisories(t *testing.T) {
 	s.DB.Create(&db.Advisory{RepositoryID: repo.ID, Title: "withdrawn-one", WithdrawnAt: new(time.Now())})
 
 	up := db.SBOMUpload{Name: "demo", PackageCount: 1, Packages: []db.SBOMPackage{
-		{Name: "adv-pkg", PURL: "pkg:npm/adv", RepositoryID: &repo.ID},
+		{Name: "adv-pkg", PURL: "pkg:npm/adv", SourceRepositoryID: &repo.ID},
 	}}
 	s.DB.Create(&up)
 
@@ -600,8 +600,8 @@ func TestSBOMShow_scopeFilter(t *testing.T) {
 	s.DB.Create(&db.Finding{ScanID: scan.ID, RepositoryID: repoB.ID, Title: "trans-dep-finding", Severity: "High"})
 
 	up := db.SBOMUpload{Name: "demo", PackageCount: 2, Packages: []db.SBOMPackage{
-		{Name: "pkg-direct", Scope: sbom.ScopeDirect, RepositoryID: &repoA.ID},
-		{Name: "pkg-trans", Scope: sbom.ScopeTransitive, RepositoryID: &repoB.ID},
+		{Name: "pkg-direct", Scope: sbom.ScopeDirect, SourceRepositoryID: &repoA.ID},
+		{Name: "pkg-trans", Scope: sbom.ScopeTransitive, SourceRepositoryID: &repoB.ID},
 	}}
 	s.DB.Create(&up)
 

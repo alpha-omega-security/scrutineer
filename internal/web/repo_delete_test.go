@@ -87,9 +87,14 @@ func TestRepoDelete_removesRepoAndAllLinkedData(t *testing.T) {
 	}
 
 	upload := db.SBOMUpload{Name: "bom", Packages: []db.SBOMPackage{
-		{Name: "acme-pkg", PURL: "pkg:npm/acme-pkg", RepositoryID: &repo.ID},
+		{Name: "acme-pkg", PURL: "pkg:npm/acme-pkg", SourceRepositoryID: &repo.ID},
 	}}
 	s.DB.Create(&upload)
+	generated := db.SBOMUpload{
+		Name: "gen", Origin: db.SBOMOriginGenerated, RepositoryID: &repo.ID, Current: true,
+		Packages: []db.SBOMPackage{{Name: "left-pad", PURL: "pkg:npm/left-pad@1.3.0"}},
+	}
+	s.DB.Create(&generated)
 
 	// On-disk clone cache for the doomed repo.
 	cacheDir := worker.RepoCacheRoot(dataDir, repo.URL)
@@ -177,8 +182,14 @@ func TestRepoDelete_removesRepoAndAllLinkedData(t *testing.T) {
 	}
 	var pkg db.SBOMPackage
 	s.DB.First(&pkg, upload.Packages[0].ID)
-	if pkg.RepositoryID != nil {
-		t.Errorf("sbom package repository_id should be nulled, got %v", *pkg.RepositoryID)
+	if pkg.SourceRepositoryID != nil {
+		t.Errorf("sbom package source_repository_id should be nulled, got %v", *pkg.SourceRepositoryID)
+	}
+	if n := count(&db.SBOMUpload{}, "id = ?", generated.ID); n != 0 {
+		t.Errorf("generated snapshot for deleted repo should be removed, got %d", n)
+	}
+	if n := count(&db.SBOMPackage{}, "sbom_upload_id = ?", generated.ID); n != 0 {
+		t.Errorf("generated snapshot packages should cascade, got %d", n)
 	}
 
 	// The unrelated repo is untouched.

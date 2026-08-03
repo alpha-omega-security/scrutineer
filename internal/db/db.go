@@ -1378,6 +1378,7 @@ func Open(dsn string) (*gorm.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
+	preMigrate(gdb)
 	if err := gdb.AutoMigrate(
 		&Repository{}, &Scan{},
 		&Finding{}, &FindingLabel{}, &FindingNote{},
@@ -1404,6 +1405,21 @@ func Open(dsn string) (*gorm.DB, error) {
 		gdb.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_subprojects_repo_path ON subprojects (repository_id, path)`)
 	}
 	return gdb, nil
+}
+
+// preMigrate applies structural changes AutoMigrate cannot express, chiefly
+// column renames. It must run before AutoMigrate so a renamed column is not
+// re-added under its new name alongside the old one. Each step is guarded so
+// a fresh database and an already-migrated database are both no-ops.
+func preMigrate(gdb *gorm.DB) {
+	m := gdb.Migrator()
+	// SBOMPackage.RepositoryID became SourceRepositoryID when SBOMUpload
+	// gained its own RepositoryID pointing at the scanned repository; the
+	// package-level field points at the repository that publishes the
+	// package, which is the opposite direction.
+	if m.HasTable(&SBOMPackage{}) && m.HasColumn(&SBOMPackage{}, "repository_id") {
+		_ = m.RenameColumn(&SBOMPackage{}, "repository_id", "source_repository_id")
+	}
 }
 
 // Snapshot writes a consistent copy of the SQLite database at src to dest
@@ -1449,9 +1465,16 @@ func Snapshot(src, dest string) error {
 	return nil
 }
 
-// SBOMUpload is one CycloneDX or SPDX document a user uploaded. Packages
-// are replaced wholesale on re-upload (cascade delete) but the resolved
-// Repository rows survive so prior scan results stay attached.
+const (
+	SBOMOriginUploaded  = "uploaded"
+	SBOMOriginGenerated = "generated"
+)
+
+// SBOMUpload is one CycloneDX or SPDX document. Origin distinguishes a
+// document a user uploaded from one the dependencies scan generated for a
+// repository at a specific commit. Packages are replaced wholesale on
+// re-upload (cascade delete) but the resolved Repository rows survive so
+// prior scan results stay attached.
 type SBOMUpload struct {
 	ID uint `gorm:"primarykey"`
 
@@ -1459,7 +1482,26 @@ type SBOMUpload struct {
 	Filename    string
 	Format      string
 	SpecVersion string
-	Raw         []byte
+	// Raw holds the document bytes for uploaded origin so the operator can
+	// re-download exactly what was submitted. Generated snapshots leave it
+	// nil since retaining every historical CycloneDX document per repository
+	// is not worth the storage.
+	Raw []byte
+
+	// Origin is SBOMOriginUploaded or SBOMOriginGenerated. The default keeps
+	// rows created before the column existed classified as uploads.
+	Origin string `gorm:"index;not null;default:uploaded"`
+	// RepositoryID and Commit identify the scanned repository and revision
+	// for a generated snapshot. Nil for uploads.
+	RepositoryID *uint `gorm:"index:idx_sbom_uploads_repo_current"`
+	Repository   *Repository
+	ScanID       *uint `gorm:"index"`
+	Commit       string
+	// Current marks the newest successful generated snapshot for
+	// RepositoryID. Portfolio queries filter on it so they read one row per
+	// repository without a per-repo subquery. The dependencies parser moves
+	// the flag inside the same transaction that writes the new snapshot.
+	Current bool `gorm:"index:idx_sbom_uploads_repo_current"`
 
 	PackageCount int
 	// ImportPending is true after a newly parsed upload and until the operator
@@ -1472,9 +1514,11 @@ type SBOMUpload struct {
 	UpdatedAt time.Time
 }
 
-// SBOMPackage is one component listed in an upload. RepositoryID is set
-// asynchronously once the PURL has been resolved to a source repo and the
-// triage scan enqueued; until then it is nil.
+// SBOMPackage is one component listed in an upload. SourceRepositoryID is set
+// asynchronously once the PURL has been resolved to the repository that
+// publishes the package and a triage scan enqueued; until then it is nil.
+// It is distinct from SBOMUpload.RepositoryID, which for a generated
+// snapshot points at the repository whose dependencies were scanned.
 type SBOMPackage struct {
 	ID           uint `gorm:"primarykey"`
 	SBOMUploadID uint `gorm:"index;not null"`
@@ -1490,9 +1534,9 @@ type SBOMPackage struct {
 	// dependency graph to derive it from.
 	Scope string `gorm:"index"`
 
-	RepositoryID *uint `gorm:"index"`
-	Repository   *Repository
-	ResolveError string
+	SourceRepositoryID *uint `gorm:"index"`
+	SourceRepository   *Repository
+	ResolveError       string
 
 	CreatedAt time.Time
 }

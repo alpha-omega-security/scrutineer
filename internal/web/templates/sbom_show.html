@@ -115,8 +115,8 @@
           <td class="text-muted-foreground text-xs">{{.Version}}</td>
           <td class="text-muted-foreground text-xs">{{.License}}</td>
           <td class="whitespace-normal">
-            {{if .Repository}}
-              <a href="/repositories/{{.Repository.ID}}" class="hover:underline">{{.Repository.Name}}</a>
+            {{if .SourceRepository}}
+              <a href="/repositories/{{.SourceRepository.ID}}" class="hover:underline">{{.SourceRepository.Name}}</a>
             {{else if .ResolveError}}
               <span class="text-xs text-muted-foreground">{{.ResolveError}}</span>
             {{else if $.SBOM.ImportPending}}
