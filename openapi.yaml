@@ -311,6 +311,10 @@ paths:
           in: query
           description: Only return findings from scans in this parallel batch, so an in-flight audit skill reads only its siblings' findings.
           schema: { type: string }
+        - name: sub_path
+          in: query
+          description: Only return findings for this monorepo sub-package (e.g. `activesupport`), so a repository can be exported or bundled one sub-package at a time.
+          schema: { type: string }
       responses:
         '200':
           description: OK
@@ -399,6 +403,12 @@ paths:
                 ref:
                   type: string
                   description: Git ref to checkout; empty means the repository's default branch.
+                sub_path:
+                  type: string
+                  description: |
+                    Scope this run to a monorepo sub-package (a relative sub-folder, e.g. `activesupport`).
+                    The `triage` skill forwards it to every pipeline child so the whole scan set stays
+                    scoped to the same sub-package. Empty means the whole repository. A `..` segment is rejected.
                 profile:
                   type: string
                   description: |

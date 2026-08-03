@@ -343,6 +343,7 @@ func (s *Server) apiRunSkill(w http.ResponseWriter, r *http.Request) {
 		Ref            string `json:"ref"`
 		Profile        string `json:"profile"`
 		RescanMode     string `json:"rescan_mode"`
+		SubPath        string `json:"sub_path"`
 		BaselineScanID *uint  `json:"baseline_scan_id"`
 	}
 	if !decodeOptionalAPIBody(w, r, &body) {
@@ -352,9 +353,17 @@ func (s *Server) apiRunSkill(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "unknown profile")
 		return
 	}
+	// sub_path scopes this run to a monorepo sub-package; triage forwards it to
+	// each pipeline child so the whole scan set stays scoped. Validated here so
+	// a traversal attempt is rejected before it can reach workspace staging.
+	subPath, err := worker.CleanSubPath(body.SubPath)
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 	s.agentEnqueueMu.Lock()
 	defer s.agentEnqueueMu.Unlock()
-	if s.hasOpenRepoScopedScan(uint(id), skill.ID) {
+	if s.hasOpenRepoScopedScan(uint(id), skill.ID, subPath) {
 		writeAPIError(w, http.StatusConflict, "equivalent scan already queued or running")
 		return
 	}
@@ -366,6 +375,7 @@ func (s *Server) apiRunSkill(w http.ResponseWriter, r *http.Request) {
 		Ref:            body.Ref,
 		Profile:        body.Profile,
 		RescanMode:     body.RescanMode,
+		SubPath:        subPath,
 		DiffBaseScanID: body.BaselineScanID,
 	})
 	if err != nil {

@@ -46,7 +46,7 @@ Get the commit you are running at: `git -C ./src rev-parse HEAD`. Then fetch `GE
 
 Classify each skill in the list below into exactly one bucket, checking in this order and stopping at the first match: `gated` (its `has_code`/`has_packages`/`has_workflows` flag is false), `already_done` (it is in the skip set), `triggered` (enqueue it). Enqueue with `POST {api_base}/repositories/{id}/skills/{name}/run` and an `Authorization: Bearer {token}` header. Order does not matter; the scrutineer worker runs them as they come in. A 404 response moves the skill from `triggered` to `skipped`.
 
-If `scrutineer.scan_ref` is set in `context.json`, include it in the POST body as `{"ref": "<value>"}` so child scans clone the same branch. If it is empty, send an empty JSON body or omit the body. Verify runs (below) always send `{}`; they are finding-scoped and do not take a ref.
+If `scrutineer.scan_ref` is set in `context.json`, include it in the POST body as `{"ref": "<value>"}` so child scans clone the same branch. If `scrutineer.scan_subpath` is set, also include `"sub_path": "<value>"` in the same body so every child stays scoped to the same monorepo sub-package — a scan submitted as `repo#sub/dir` (or a `/tree/<branch>/<sub/dir>` URL) sets this, and without forwarding it the pipeline would silently widen back to the whole repository. Combine them when both are present, e.g. `{"ref": "main", "sub_path": "activesupport"}`. When both are empty, send an empty JSON body or omit it. Verify runs (below) always send `{}`; they are finding-scoped and take neither.
 
 Always:
 

@@ -54,6 +54,56 @@ func TestParseSubprojectsOutput(t *testing.T) {
 	}
 }
 
+func TestParseSubprojectsOutput_stableIDsAcrossReruns(t *testing.T) {
+	report := `{"subprojects":[
+		{"path":"a","name":"a","kind":"go-module"},
+		{"path":"b","name":"b","kind":"npm-package"}
+	]}`
+	repo, gdb := runSkillWithReport(t, "subprojects", report)
+
+	var a db.Subproject
+	gdb.Where("repository_id = ? AND path = ?", repo.ID, "a").First(&a)
+	if a.ID == 0 {
+		t.Fatal("subproject a not created")
+	}
+	// A disclosure channel written by the attribution reconcile must survive a
+	// subprojects re-run (the parser owns name/kind/description, not this).
+	gdb.Model(&a).Update("disclosure_channel", "security@a.example")
+
+	// Re-run: keep a (renamed), drop b, add c.
+	scan := db.Scan{RepositoryID: repo.ID}
+	gdb.Create(&scan)
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	rerun := `{"subprojects":[
+		{"path":"a","name":"a-renamed","kind":"go-module"},
+		{"path":"c","name":"c","kind":"rust-crate"}
+	]}`
+	if err := w.parseSubprojectsOutput(&scan, rerun, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+
+	var a2 db.Subproject
+	gdb.Where("repository_id = ? AND path = ?", repo.ID, "a").First(&a2)
+	if a2.ID != a.ID {
+		t.Errorf("subproject a id churned across re-run: was %d, now %d (breaks Package/Advisory.SubprojectID refs)", a.ID, a2.ID)
+	}
+	if a2.Name != "a-renamed" {
+		t.Errorf("subproject a name not updated on re-run: %q", a2.Name)
+	}
+	if a2.DisclosureChannel != "security@a.example" {
+		t.Errorf("disclosure channel clobbered on re-run: %q", a2.DisclosureChannel)
+	}
+	var b db.Subproject
+	if err := gdb.Where("repository_id = ? AND path = ?", repo.ID, "b").First(&b).Error; !errors.Is(err, gorm.ErrRecordNotFound) {
+		t.Errorf("subproject b should be pruned, got %+v (err %v)", b, err)
+	}
+	var count int64
+	gdb.Model(&db.Subproject{}).Where("repository_id = ?", repo.ID).Count(&count)
+	if count != 2 {
+		t.Errorf("subproject count = %d, want 2 (a,c)", count)
+	}
+}
+
 func TestParseSubprojectsOutput_invalidJSON(t *testing.T) {
 	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
 	if err != nil {
@@ -464,6 +514,49 @@ func TestParseAdvisoryAudit_rejectsDuplicateAdvisoryBeforeWriting(t *testing.T) 
 	gdb.Model(&db.Finding{}).Count(&findings)
 	if audits != 0 || findings != 0 {
 		t.Errorf("rows written despite rejected report: audits=%d findings=%d", audits, findings)
+	}
+}
+
+func TestParseMaintainers_perSubprojectDisclosureChannel(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "m.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://github.com/rails/rails", Name: "rails"}
+	gdb.Create(&repo)
+	sub := db.Subproject{RepositoryID: repo.ID, Path: "activesupport", Name: "activesupport"}
+	gdb.Create(&sub)
+	scan := db.Scan{RepositoryID: repo.ID}
+	gdb.Create(&scan)
+
+	// Attribution on: the per-subproject channel lands on the subproject, the
+	// repo-wide channel on the repo.
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), MonorepoAttribution: true}
+	report := `{"maintainers":[],"disclosure_channel":"repo@example.org","subprojects":[{"path":"activesupport","disclosure_channel":"as@example.org"}]}`
+	if err := w.parseMaintainersOutput(&scan, report, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	var got db.Subproject
+	gdb.First(&got, sub.ID)
+	if got.DisclosureChannel != "as@example.org" {
+		t.Errorf("subproject channel = %q, want as@example.org", got.DisclosureChannel)
+	}
+	var r db.Repository
+	gdb.First(&r, repo.ID)
+	if r.DisclosureChannel != "repo@example.org" {
+		t.Errorf("repo channel = %q, want repo@example.org", r.DisclosureChannel)
+	}
+
+	// Attribution off: the subproject block is ignored.
+	gdb.Model(&db.Subproject{}).Where("id = ?", sub.ID).Update("disclosure_channel", "")
+	w2 := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), MonorepoAttribution: false}
+	report2 := `{"maintainers":[],"subprojects":[{"path":"activesupport","disclosure_channel":"as2@example.org"}]}`
+	if err := w2.parseMaintainersOutput(&scan, report2, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	gdb.First(&got, sub.ID)
+	if got.DisclosureChannel != "" {
+		t.Errorf("attribution off must not write subproject channel, got %q", got.DisclosureChannel)
 	}
 }
 

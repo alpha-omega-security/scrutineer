@@ -148,6 +148,22 @@ type Config struct {
 	// hash match. Required when FederationSalt is set: startup refuses a
 	// salt without a contact.
 	FederationContact string `yaml:"federation_contact"`
+	// SubprojectScope selects how a subproject-scoped scan stages its
+	// workspace: "hard" (default when empty) copies only the sub-folder into
+	// the scan workspace so the agent, its build, and its findings are
+	// confined to that sub-package; "soft" stages the whole clone and treats
+	// the sub-path as an advisory focus hint (the pre-monorepo behaviour). A
+	// hard-scoped scan whose isolated dependency resolution fails falls back
+	// to a whole-tree (soft) stage for that run. Per-scan overrides ride on
+	// Scan.ScopeMode. Validated by ValidateSubprojectScope.
+	SubprojectScope string `yaml:"subproject_scope"`
+	// MonorepoAttribution turns on per-subproject attribution of registry
+	// data: published packages, advisories, maintainers, and the disclosure
+	// channel are linked to the sub-package they belong to (matched by
+	// manifest name) instead of rolling up flat under the repository. A
+	// pointer so an omitted key keeps the built-in default (on); set false to
+	// keep the pre-monorepo repo-wide behaviour.
+	MonorepoAttribution *bool `yaml:"monorepo_attribution"`
 	// VINCE configures the native CERT/CC vulnerability-report submission
 	// action. The API key is config-file only so it does not leak through
 	// process arguments.
@@ -202,6 +218,17 @@ func ValidateSELinux(s string) error {
 		return nil
 	default:
 		return fmt.Errorf("selinux: must be \"auto\", \"on\", or \"off\", got %q", s)
+	}
+}
+
+// ValidateSubprojectScope returns an error when s is neither empty, "hard",
+// nor "soft". Exposed so the CLI flag can use the same rule as the YAML field.
+func ValidateSubprojectScope(s string) error {
+	switch s {
+	case "", "hard", "soft":
+		return nil
+	default:
+		return fmt.Errorf("subproject_scope: must be \"hard\" or \"soft\", got %q", s)
 	}
 }
 
@@ -289,6 +316,9 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
 	}
 	if err := ValidateEffort(c.Effort); err != nil {
+		return nil, fmt.Errorf("parse config %s: %w", path, err)
+	}
+	if err := ValidateSubprojectScope(c.SubprojectScope); err != nil {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
 	}
 	if c.VINCE.Enabled() {

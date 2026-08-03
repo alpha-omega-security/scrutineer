@@ -62,6 +62,8 @@ Pick the best one, based on what you found in `summary.json`:
 
 Put the concrete channel name or URL in `disclosure_channel`. Leave empty if nothing reliable was found.
 
+If this repository is a monorepo — check `GET {api_base}/repositories/{repository_id}/subprojects` — a sub-package may have its own reporting channel distinct from the repo-wide one (its own registry owner, its own `SECURITY.md`, or a package-specific advisory address). When that is the case, add an entry to the optional `subprojects` array with the subproject `path` and its `disclosure_channel`. Only include a sub-package whose channel genuinely differs from the repo-wide `disclosure_channel`; omit the array entirely for a single-package repository. Scrutineer routes a report against a sub-package to its channel when one is recorded, falling back to the repo-wide channel otherwise.
+
 ## Output
 
 Write `./report.json` conforming to `./schema.json`. Include every human you classified, not just the top few; bots stay out of the list (per the filter above) but mention in `notes` how many were dropped. Use `notes` for anything a reviewer would want to know that does not fit the schema — bus factor, recent turnover, maintainer handoff, corporate sponsorship.

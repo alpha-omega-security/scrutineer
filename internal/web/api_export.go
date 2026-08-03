@@ -695,6 +695,12 @@ func applyFindingFilters(q *gorm.DB, r *http.Request) *gorm.DB {
 	if v := r.URL.Query().Get(statusKey); v != "" {
 		q = q.Where("status = ?", v)
 	}
+	// sub_path narrows an export to a single monorepo sub-package, so a repo
+	// like rails/rails can be exported (or bundled/encrypted) one gem at a
+	// time. Empty means the whole repository, as before.
+	if v := strings.TrimSpace(r.URL.Query().Get("sub_path")); v != "" {
+		q = q.Where("sub_path = ?", v)
+	}
 	return q
 }
 

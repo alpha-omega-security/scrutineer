@@ -237,6 +237,7 @@ func (s *Server) scanRetry(w http.ResponseWriter, r *http.Request) {
 		Effort:            scan.Effort,
 		FindingID:         scan.FindingID,
 		SubPath:           scan.SubPath,
+		ScopeMode:         scan.ScopeMode,
 		Ref:               scan.Ref,
 		Profile:           scan.Profile,
 		RescanMode:        scan.RescanMode,
@@ -315,7 +316,7 @@ func (s *Server) scansRetryFailed(w http.ResponseWriter, r *http.Request) {
 	// deliberately absent: a user-cancelled newer run shouldn't block
 	// retrying an older genuine failure.
 	var scans []db.Scan
-	err := q.Select("id, repository_id, skill_id, model, effort, finding_id, sub_path, ref, profile, rescan_mode, diff_base_scan_id, scan_group, focus_area, backend, status, session_id, resumed_from_scan_id, import_payload").
+	err := q.Select("id, repository_id, skill_id, model, effort, finding_id, sub_path, scope_mode, ref, profile, rescan_mode, diff_base_scan_id, scan_group, focus_area, backend, status, session_id, resumed_from_scan_id, import_payload").
 		Where(`NOT EXISTS (
 			SELECT 1 FROM scans n
 			WHERE n.id > scans.id
@@ -340,6 +341,7 @@ func (s *Server) scansRetryFailed(w http.ResponseWriter, r *http.Request) {
 			Effort:            sc.Effort,
 			FindingID:         sc.FindingID,
 			SubPath:           sc.SubPath,
+			ScopeMode:         sc.ScopeMode,
 			Ref:               sc.Ref,
 			Profile:           sc.Profile,
 			RescanMode:        sc.RescanMode,

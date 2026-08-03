@@ -108,6 +108,17 @@ type Worker struct {
 	// 0 means disabled.
 	AutoRejectMissedCount int
 
+	// SubprojectScope is the instance-default workspace-staging mode for a
+	// subproject-scoped scan: "hard"/"" stages only the sub-folder, "soft"
+	// stages the whole clone with the sub-path as an advisory hint. A scan's
+	// own Scan.ScopeMode overrides it. See config.SubprojectScope.
+	SubprojectScope string
+	// MonorepoAttribution enables per-subproject attribution of registry data
+	// (packages, advisories, maintainers, disclosure channel) matched by
+	// manifest name. Off keeps the pre-monorepo repo-wide behaviour. See
+	// config.MonorepoAttribution.
+	MonorepoAttribution bool
+
 	// Queue is the queue this worker is registered on. Required for the
 	// prereq gate to re-enqueue a scan whose upstream skills have not yet
 	// completed. Register() sets it from its argument so callers do not

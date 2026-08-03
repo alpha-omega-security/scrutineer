@@ -166,6 +166,7 @@ func (w *Worker) parsePackagesOutput(scan *db.Scan, report string, emit func(Eve
 		return err
 	}
 	emit(Event{Kind: KindText, Text: fmt.Sprintf("saved %d package(s)", len(rows))})
+	w.reconcileSubprojectLinksIfEnabled(scan.RepositoryID)
 	return nil
 }
 
@@ -225,6 +226,7 @@ func (w *Worker) parseAdvisoriesOutput(scan *db.Scan, report string, emit func(E
 		return err
 	}
 	emit(Event{Kind: KindText, Text: fmt.Sprintf("saved %d advisor(ies)", len(rows))})
+	w.reconcileSubprojectLinksIfEnabled(scan.RepositoryID)
 	return nil
 }
 
@@ -560,22 +562,51 @@ func (w *Worker) parseSubprojectsOutput(scan *db.Scan, report string, emit func(
 			Description:  sp.Description,
 		})
 	}
-	// Replace the prior row set atomically so a failed insert can't leave
-	// the repository with zero subprojects.
+	// Upsert keyed on (repository_id, path) so a surviving subproject keeps
+	// its id across re-runs — Package/Advisory.SubprojectID reference it, and
+	// a re-pointed link is cheaper to keep than to rebuild. Rows for paths the
+	// skill no longer reports are pruned; a later attribution reconcile moves
+	// any package/advisory that pointed at a pruned row back to repo-level.
+	// The whole set is rewritten in one transaction so a mid-way failure can't
+	// leave a half-updated projection.
 	if err := w.DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("repository_id = ?", scan.RepositoryID).Delete(&db.Subproject{}).Error; err != nil {
-			return fmt.Errorf("delete old subprojects: %w", err)
-		}
-		if len(rows) > 0 {
-			if err := tx.CreateInBatches(&rows, insertBatchSize).Error; err != nil {
-				return fmt.Errorf("save subprojects: %w", err)
+		keep := make([]string, 0, len(rows))
+		for i := range rows {
+			row := rows[i]
+			keep = append(keep, row.Path)
+			var existing db.Subproject
+			err := tx.Where("repository_id = ? AND path = ?", row.RepositoryID, row.Path).First(&existing).Error
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				if err := tx.Create(&row).Error; err != nil {
+					return fmt.Errorf("create subproject: %w", err)
+				}
+				continue
 			}
+			if err != nil {
+				return fmt.Errorf("load subproject: %w", err)
+			}
+			// Update the skill-owned fields only; leave DisclosureChannel,
+			// which the attribution reconcile / maintainers skill owns.
+			existing.Name = row.Name
+			existing.Kind = row.Kind
+			existing.Description = row.Description
+			if err := tx.Save(&existing).Error; err != nil {
+				return fmt.Errorf("update subproject: %w", err)
+			}
+		}
+		prune := tx.Where("repository_id = ?", scan.RepositoryID)
+		if len(keep) > 0 {
+			prune = prune.Where("path NOT IN ?", keep)
+		}
+		if err := prune.Delete(&db.Subproject{}).Error; err != nil {
+			return fmt.Errorf("prune subprojects: %w", err)
 		}
 		return nil
 	}); err != nil {
 		return err
 	}
 	emit(Event{Kind: KindText, Text: fmt.Sprintf("saved %d subproject(s)", len(rows))})
+	w.reconcileSubprojectLinksIfEnabled(scan.RepositoryID)
 	return nil
 }
 

@@ -174,6 +174,16 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 		scan.Commit = cacheCommit
 		w.clearCloneError(scan)
 	}
+	// Hard scope: prune the workspace down to the sub-package so the agent, its
+	// build, and its findings can't reach into sibling packages. Kept out of
+	// PrepareSrc so it applies to both a real clone and a local-dir copy, and so
+	// the automatic soft fallback below can re-widen by re-staging the tree.
+	hardScope := w.scanScopeHard(scan)
+	if hardScope {
+		if err := pruneToSubPath(filepath.Join(workRoot, "src"), scan.SubPath); err != nil {
+			return "", fmt.Errorf("hard-scope sub_path: %w", err)
+		}
+	}
 	if err := w.prepareDiffRescan(ctx, scan, workRoot, emit); err != nil {
 		return "", err
 	}
@@ -218,6 +228,22 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 	}
 	w.applyResume(scan, &sj, emit)
 	res, err := w.Runner.RunSkill(ctx, sj, emit)
+	// Automatic soft fallback: a hard-scoped sub-package that could not resolve
+	// its dependencies in isolation — it needs a sibling package that is
+	// unpublished or version-skewed — is re-staged against the whole repository
+	// and re-run once. Only a dependency-resolution signature triggers this; an
+	// ordinary build or analysis failure is left to stand as a real result.
+	if hardScope && scan.ScopeMode != "soft" &&
+		(isDependencyResolutionFailure(res.Report) || (err != nil && isDependencyResolutionFailure(err.Error()))) {
+		emit(Event{Kind: KindText, Text: "hard-scope dependency resolution failed; widening to the whole repository (soft) and retrying"})
+		w.DB.Model(scan).Update("scope_mode", "soft")
+		scan.ScopeMode = "soft"
+		if wErr := w.reStageWholeTree(ctx, scan, &skill, workRoot, emit); wErr != nil {
+			w.Log.Warn("re-stage whole tree for soft fallback", "scan", scan.ID, "err", wErr)
+		} else {
+			res, err = w.Runner.RunSkill(ctx, sj, emit)
+		}
+	}
 	w.applySkillResult(scan, res)
 	if err != nil {
 		if _, ok := errors.AsType[*MaxTurnsReachedError](err); ok && res.Report != "" {
@@ -845,6 +871,14 @@ func (w *Worker) parseMaintainersOutput(scan *db.Scan, report string, emit func(
 			Evidence string `json:"evidence"`
 		} `json:"maintainers"`
 		DisclosureChannel string `json:"disclosure_channel"`
+		// Subprojects optionally carries a per-sub-package disclosure channel
+		// for a monorepo, so a report against one gem in rails/rails routes to
+		// that gem's maintainers rather than the repo-wide channel. Additive:
+		// a report that omits it keeps the pre-monorepo repo-only behaviour.
+		Subprojects []struct {
+			Path              string `json:"path"`
+			DisclosureChannel string `json:"disclosure_channel"`
+		} `json:"subprojects"`
 	}
 	if err := json.Unmarshal([]byte(report), &result); err != nil {
 		return fmt.Errorf("parse maintainers report: %w", err)
@@ -857,6 +891,20 @@ func (w *Worker) parseMaintainersOutput(scan *db.Scan, report string, emit func(
 		if err := w.DB.Model(&db.Repository{}).Where("id = ?", repo.ID).
 			Update("disclosure_channel", result.DisclosureChannel).Error; err != nil {
 			return fmt.Errorf("update disclosure channel: %w", err)
+		}
+	}
+	if w.MonorepoAttribution {
+		for _, sp := range result.Subprojects {
+			path := strings.Trim(sp.Path, "/ \t\n")
+			ch := strings.TrimSpace(sp.DisclosureChannel)
+			if path == "" || ch == "" {
+				continue
+			}
+			// Best-effort: only touches an existing subproject row, and only
+			// the reconcile/skill-owned channel field.
+			w.DB.Model(&db.Subproject{}).
+				Where("repository_id = ? AND path = ?", scan.RepositoryID, path).
+				Update("disclosure_channel", ch)
 		}
 	}
 	var linked []db.Maintainer

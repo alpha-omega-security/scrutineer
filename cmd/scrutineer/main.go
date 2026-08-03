@@ -120,6 +120,8 @@ type flags struct {
 	autoRejectMissedCount int
 	federationSalt        string
 	federationContact     string
+	subprojectScope       string
+	monorepoAttribution   bool
 	skillLocal            skillDirs
 
 	// set records which flags were passed on the command line so merge
@@ -174,6 +176,8 @@ func registerFlags(fs *flag.FlagSet, f *flags) {
 	fs.StringVar(&f.modelBaseURL, "model-base-url", "", "custom HTTPS model API base URL for the active backend (HTTP allowed for local development; env fallback: ANTHROPIC_BASE_URL for claude)")
 	fs.StringVar(&f.modelBaseURL, "anthropic-base-url", "", "deprecated alias for -model-base-url")
 	fs.StringVar(&f.forkOrg, "fork-org", "", "GitHub org the fork skill forks into and files draft advisories against")
+	fs.StringVar(&f.subprojectScope, "subproject-scope", "hard", "how a subproject-scoped scan stages its workspace: \"hard\" (copy only the sub-folder so build+findings are confined to the sub-package) or \"soft\" (stage the whole clone, sub-path is an advisory hint)")
+	fs.BoolVar(&f.monorepoAttribution, "monorepo-attribution", true, "link packages, advisories, maintainers and disclosure channel to the sub-package they belong to (matched by manifest name) instead of rolling up flat under the repository")
 	fs.BoolVar(&f.schemaStrict, "schema-strict", false, "fail scans whose report.json does not validate against the skill's schema (default: warn and continue)")
 	fs.BoolVar(&f.downgradeOnOverage, "downgrade-on-overage", false, "on a subscription token, fall the model tier back from max/high to the mid tier for new scans while the account is on overage; restores when the window resets")
 	fs.StringVar(&f.recipientsFile, "recipients-file", "", "age recipients file (public keys) for encrypted export")
@@ -253,6 +257,12 @@ func (f *flags) merge(cfg *config.Config) {
 	}
 	if cfg.ForkOrg != "" && !f.set["fork-org"] {
 		f.forkOrg = cfg.ForkOrg
+	}
+	if cfg.SubprojectScope != "" && !f.set["subproject-scope"] {
+		f.subprojectScope = cfg.SubprojectScope
+	}
+	if cfg.MonorepoAttribution != nil && !f.set["monorepo-attribution"] {
+		f.monorepoAttribution = *cfg.MonorepoAttribution
 	}
 	if cfg.MetadataDir != "" {
 		f.metadataDir = cfg.MetadataDir
@@ -365,6 +375,9 @@ func validateFlags(f *flags) error {
 		return err
 	}
 	if err := config.ValidateSELinux(f.selinux); err != nil {
+		return err
+	}
+	if err := config.ValidateSubprojectScope(f.subprojectScope); err != nil {
 		return err
 	}
 	if err := validateFederation(f.federationSalt, f.federationContact); err != nil {
@@ -539,6 +552,8 @@ func run(log *slog.Logger) error {
 		SchemaStrict:          f.schemaStrict,
 		DowngradeOnOverage:    f.downgradeOnOverage,
 		AutoRejectMissedCount: f.autoRejectMissedCount,
+		SubprojectScope:       f.subprojectScope,
+		MonorepoAttribution:   f.monorepoAttribution,
 		OnEvent: func(scanID, repoID uint, name, data string) {
 			broker.Publish(web.Event{Name: name, Data: data, ScanID: scanID, RepoID: repoID})
 		},
@@ -561,6 +576,7 @@ func run(log *slog.Logger) error {
 	srv.SetDefaultEffort(f.effort)
 	srv.FederationSalt = f.federationSalt
 	srv.FederationContact = f.federationContact
+	srv.MonorepoAttribution = f.monorepoAttribution
 	srv.VINCE = cfg.VINCE
 
 	if f.recipientsFile != "" {

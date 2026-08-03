@@ -83,6 +83,7 @@ func (s *Server) validateFix(w http.ResponseWriter, r *http.Request) {
 		Model:          model,
 		Ref:            ref,
 		SubPath:        baseline.SubPath,
+		ScopeMode:      baseline.ScopeMode, // match the baseline's scope so the fix comparison is apples-to-apples
 		BaselineScanID: &baselineScanID,
 	})
 	if err != nil {

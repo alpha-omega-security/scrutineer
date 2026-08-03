@@ -4,6 +4,7 @@ Entries are grouped by release, newest first. Each entry is a summary written fo
 
 ## Unreleased
 
+- Monorepos can now be scanned one sub-package at a time. Add a repository as `owner/repo#sub/dir` (or paste a `.../tree/<branch>/<sub/dir>` URL) to scope the whole scan pipeline to that sub-folder, and each detected sub-package gets its own page with its own findings, published packages, advisories, disclosure channel, and export — so a monorepo like `rails/rails` no longer rolls every gem up under one entry. By default a sub-package scan is confined to its own sub-folder for cleaner, cheaper, correctly-attributed results, widening to the whole repository automatically if the sub-package cannot resolve its dependencies in isolation. Both behaviours are configurable (`subproject_scope`, `monorepo_attribution`).
 - A repository whose maintainer asks not to be scanned can now be marked as such: work already under way stops, and no scan runs against it again, neither a manual run, nor the scheduler, nor an automatic follow-up. ([#753](https://github.com/alpha-omega-security/scrutineer/pull/753), [@alexandre-daubois](https://github.com/alexandre-daubois))
 
 ## 2026-07-28

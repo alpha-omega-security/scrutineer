@@ -270,7 +270,7 @@
         {{$counts := .SubScanCount}}
         {{range .Subprojects}}
           <tr>
-            <td><code class="text-xs">{{.Path}}</code>{{if and .Name (ne .Name .Path)}}<div class="text-xs text-muted-foreground">{{.Name}}</div>{{end}}</td>
+            <td><a class="hover:underline" href="/repositories/{{$repoID}}/subprojects/{{.ID}}"><code class="text-xs">{{.Path}}</code></a>{{if and .Name (ne .Name .Path)}}<div class="text-xs text-muted-foreground">{{.Name}}</div>{{end}}</td>
             <td>{{if .Kind}}<span class="badge-outline text-xs">{{.Kind}}</span>{{end}}</td>
             <td class="whitespace-normal text-sm text-muted-foreground">{{.Description}}</td>
             <td class="text-right text-sm text-muted-foreground">{{index $counts .Path}}</td>

@@ -88,6 +88,12 @@ type Server struct {
 	// Release builds inject CalVer at link time; development builds use "dev".
 	Version string
 
+	// MonorepoAttribution mirrors worker.Worker.MonorepoAttribution on the
+	// web side so handlers can gate per-subproject attribution (packages,
+	// advisories, maintainers, disclosure channel) without reaching through
+	// a possibly-nil Worker. Set once by main; default off in tests.
+	MonorepoAttribution bool
+
 	// Backend is the canonical -backend value the runner was started with
 	// (worker.HarnessName). Set once by main. resumeOpts compares it to
 	// Scan.Backend so a retry after switching backends starts fresh instead
@@ -445,6 +451,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /repositories/{id}/validate-fix", s.validateFix)
 	mux.HandleFunc("POST /repositories/{id}/delete", s.repoDelete)
 	mux.HandleFunc("POST /repositories/{id}/disclosure-channel", s.repoDisclosureChannel)
+	mux.HandleFunc("GET /repositories/{id}/subprojects/{sub}", s.subprojectShow)
+	mux.HandleFunc("POST /repositories/{id}/subprojects/{sub}/disclosure-channel", s.subprojectDisclosureChannel)
 	mux.HandleFunc("POST /repositories/{id}/federation-opt-out", s.repoFederationOptOut)
 	mux.HandleFunc("POST /repositories/{id}/schedule", s.repoScheduleUpdate)
 	mux.HandleFunc("POST /repositories/{id}/threat-model", s.repoThreatModelSave)
@@ -1979,6 +1987,14 @@ func (s *Server) createOrTriageRepo(ctx context.Context, input RepoInput, model 
 			return db.Repository{}, false, fmt.Errorf("local path %s is not a directory", path)
 		}
 	}
+	// Reject a traversal attempt in a submitted sub-path (repo#../x) before it
+	// is stored on a Subproject or a scan, and normalise it so equivalent forms
+	// dedupe.
+	cleanedSub, err := worker.CleanSubPath(input.SubPath)
+	if err != nil {
+		return db.Repository{}, false, err
+	}
+	input.SubPath = cleanedSub
 	existing := int64(0)
 	s.DB.Model(&db.Repository{}).Where("url = ?", input.CloneURL).Count(&existing)
 	// Owner, FullName, and HTMLURL seed from ParseRepoInput so the orgs
@@ -2003,6 +2019,16 @@ func (s *Server) createOrTriageRepo(ctx context.Context, input RepoInput, model 
 	// upstream entry; the goroutine is best-effort and detached from ctx.
 	if isNew && !repo.IsLocal() && s.prefetchEcosystems != nil {
 		s.prefetchEcosystems(repo.ID)
+	}
+	// A repo#sub/dir (or /tree/<branch>/<path>) submission names a specific
+	// sub-package. Record it as a first-class Subproject now so it is navigable
+	// immediately, without waiting for the subprojects skill to rediscover it;
+	// the skill's later upsert (keyed on repo+path) adopts and enriches this
+	// row rather than duplicating it.
+	if input.SubPath != "" {
+		if err := db.EnsureSubproject(s.DB, repo.ID, input.SubPath); err != nil {
+			s.Log.Warn("ensure submitted subproject", "repo", repo.ID, "path", input.SubPath, "err", err)
+		}
 	}
 	if !triage {
 		return repo, isNew, nil
@@ -2883,8 +2909,13 @@ type ScanOpts struct {
 	// scan it diffs against. See validate_fix.go.
 	BaselineScanID *uint
 	SubPath        string
-	Ref            string
-	Profile        string
+	// ScopeMode overrides the instance-default subproject staging mode
+	// ("hard"|"soft") for this scan. Empty inherits config.SubprojectScope.
+	// Carried on retry/resume so a run reproduces the mode it actually used,
+	// including one the automatic soft fallback widened to.
+	ScopeMode string
+	Ref       string
+	Profile   string
 	// RescanMode requests full or diff coverage. Empty preserves the existing
 	// full-scan behavior. A requested diff scan can fall back to full coverage
 	// once the worker resolves the clone and baseline.
@@ -2927,7 +2958,9 @@ func (s *Server) enqueueSkillScoped(ctx context.Context, repoID, skillID uint, f
 func (s *Server) enqueueRepoScopedSkillIfIdle(ctx context.Context, repoID, skillID uint) error {
 	s.agentEnqueueMu.Lock()
 	defer s.agentEnqueueMu.Unlock()
-	if s.hasOpenRepoScopedScan(repoID, skillID) {
+	// These auto-enqueue paths (advisory audit, finding-dedup) are repo-root
+	// scoped, never sub-path scoped.
+	if s.hasOpenRepoScopedScan(repoID, skillID, "") {
 		return nil
 	}
 	_, err := s.enqueueSkillWith(ctx, repoID, skillID, ScanOpts{})
@@ -3025,6 +3058,7 @@ func (s *Server) enqueueSkillWith(ctx context.Context, repoID, skillID uint, opt
 		DependentID:        opts.DependentID,
 		BaselineScanID:     opts.BaselineScanID,
 		SubPath:            opts.SubPath,
+		ScopeMode:          opts.ScopeMode,
 		ScanGroup:          opts.ScanGroup,
 		FocusArea:          opts.FocusArea,
 		Ref:                opts.Ref,

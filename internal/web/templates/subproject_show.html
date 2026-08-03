@@ -1,0 +1,111 @@
+{{template "head" .}}
+
+<div class="mb-6">
+  {{template "crumbs" (crumbs "Repositories" "/" .Repo.Name (printf "/repositories/%d" .Repo.ID) .Sub.Name "")}}
+  <h2 class="text-2xl font-semibold mt-1 flex items-center gap-2">
+    <i data-lucide="package"></i> {{.Sub.Name}}
+    <span class="text-muted-foreground font-normal text-lg">{{.Repo.Name}} / <code>{{.Sub.Path}}</code></span>
+  </h2>
+  <div class="flex items-center gap-2 mt-1">
+    {{if .Sub.Kind}}<span class="badge-outline text-xs">{{.Sub.Kind}}</span>{{end}}
+    <a class="text-xs text-muted-foreground hover:underline" href="/repositories/{{.Repo.ID}}">&larr; back to {{.Repo.Name}}</a>
+  </div>
+  {{if .Sub.Description}}<p class="text-sm text-muted-foreground mt-2 max-w-3xl">{{.Sub.Description}}</p>{{end}}
+</div>
+
+<div class="flex flex-wrap gap-2 mb-6">
+  <form method="post" action="/repositories/{{.Repo.ID}}/scan" hx-post="/repositories/{{.Repo.ID}}/scan" hx-swap="none">
+    <input type="hidden" name="sub_path" value="{{.Sub.Path}}">
+    <button type="submit" class="btn-sm-outline"><i data-lucide="play"></i> Scan this sub-package</button>
+  </form>
+  <a class="btn-sm-outline" href="/api/repositories/{{.Repo.ID}}/findings?sub_path={{.Sub.Path}}"><i data-lucide="download"></i> Export findings</a>
+</div>
+
+<div class="mb-6 max-w-3xl">
+  <h3 class="text-sm font-medium flex items-center gap-2">
+    <i data-lucide="send"></i> Disclosure channel
+  </h3>
+  {{if .DisclosureChannel}}
+    <p class="text-sm mt-2 whitespace-pre-wrap">{{.DisclosureChannel}}{{if not .OwnChannel}} <span class="text-muted-foreground text-xs">(inherited from repository)</span>{{end}}</p>
+  {{else}}
+    <p class="text-sm mt-2 italic text-muted-foreground">not set</p>
+  {{end}}
+  <details class="mt-2">
+    <summary class="text-xs text-muted-foreground cursor-pointer hover:underline">Edit this sub-package's channel</summary>
+    <form method="post" action="/repositories/{{.Repo.ID}}/subprojects/{{.Sub.ID}}/disclosure-channel" class="form grid grid-cols-[1fr_auto] gap-2 mt-2">
+      <input class="input text-xs" type="text" name="disclosure_channel"
+             value="{{.OwnChannel}}"
+             placeholder="security@example.org, https://…/security/advisories, …">
+      <button class="btn-sm" type="submit">Save</button>
+    </form>
+    <p class="text-xs text-muted-foreground mt-1">A per-sub-package channel routes reports about this gem to its own maintainers. Leave empty to fall back to the repository channel.</p>
+  </details>
+</div>
+
+<h3 class="font-medium mb-2">Findings <span class="text-muted-foreground text-xs">({{len .Findings}})</span></h3>
+{{if .Findings}}
+  <table class="table w-full mb-6">
+    <thead><tr>
+      <th class="w-24">Severity</th>
+      <th>Title</th>
+      <th class="w-64">Location</th>
+      <th class="w-28">Status</th>
+    </tr></thead>
+    <tbody>
+    {{range .Findings}}
+      <tr>
+        <td>{{.Severity}}</td>
+        <td><a class="hover:underline" href="/findings/{{.ID}}">{{.Title}}</a></td>
+        <td class="text-xs text-muted-foreground"><code>{{.Location}}</code></td>
+        <td class="text-xs text-muted-foreground">{{.Status}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+{{else}}
+  <p class="text-sm text-muted-foreground mb-6">No findings for this sub-package yet. Scan it to populate this list.</p>
+{{end}}
+
+{{if and .Attribution .Packages}}
+  <h3 class="font-medium mb-2">Packages <span class="text-muted-foreground text-xs">({{len .Packages}})</span></h3>
+  <table class="table w-full mb-6">
+    <thead><tr>
+      <th>Name</th>
+      <th class="w-32">Ecosystem</th>
+      <th class="w-32">Latest</th>
+      <th class="w-32 text-right">Downloads</th>
+    </tr></thead>
+    <tbody>
+    {{range .Packages}}
+      <tr>
+        <td>{{if .RegistryURL}}<a class="hover:underline" href="{{.RegistryURL}}">{{.Name}}</a>{{else}}{{.Name}}{{end}}</td>
+        <td class="text-xs text-muted-foreground">{{.Ecosystem}}</td>
+        <td class="text-xs text-muted-foreground">{{.LatestVersion}}</td>
+        <td class="text-right text-xs text-muted-foreground">{{.Downloads}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+{{end}}
+
+{{if and .Attribution .Advisories}}
+  <h3 class="font-medium mb-2">Advisories <span class="text-muted-foreground text-xs">({{len .Advisories}})</span></h3>
+  <table class="table w-full mb-6">
+    <thead><tr>
+      <th class="w-24">Severity</th>
+      <th>Title</th>
+      <th class="w-64">Affected packages</th>
+    </tr></thead>
+    <tbody>
+    {{range .Advisories}}
+      <tr>
+        <td>{{.Severity}}</td>
+        <td>{{if .URL}}<a class="hover:underline" href="{{.URL}}">{{.Title}}</a>{{else}}{{.Title}}{{end}}</td>
+        <td class="text-xs text-muted-foreground">{{.Packages}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+{{end}}
+
+{{template "foot" .}}

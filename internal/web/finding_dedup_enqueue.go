@@ -95,8 +95,11 @@ func (s *Server) enqueueFindingDedupForRepo(ctx context.Context, repoID uint) {
 }
 
 // hasOpenRepoScopedScan returns true when a queued or running repository-scoped
-// scan (no finding attached) of the given skill already exists for the repo.
-// Mirrors hasOpenFindingScopedScan for repo-wide passes like finding-dedup.
-func (s *Server) hasOpenRepoScopedScan(repoID, skillID uint) bool {
-	return s.hasOpenScan("repository_id = ? AND skill_id = ? AND finding_id IS NULL", repoID, skillID)
+// scan (no finding attached) of the given skill already exists for the repo at
+// the same sub-path. Mirrors hasOpenFindingScopedScan for repo-wide passes like
+// finding-dedup. The sub_path term keeps two different monorepo sub-packages
+// from colliding on one skill's conflict check: activesupport and actionpack
+// can each run the same skill concurrently. Pass "" for a repo-root scan.
+func (s *Server) hasOpenRepoScopedScan(repoID, skillID uint, subPath string) bool {
+	return s.hasOpenScan("repository_id = ? AND skill_id = ? AND finding_id IS NULL AND COALESCE(sub_path, '') = ?", repoID, skillID, subPath)
 }

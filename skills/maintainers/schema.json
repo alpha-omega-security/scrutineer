@@ -26,6 +26,19 @@
       "type": "string",
       "description": "Best channel for reporting a vulnerability. Empty if no clear channel found."
     },
+    "subprojects": {
+      "type": "array",
+      "description": "Optional per-sub-package disclosure channels for a monorepo. Emit one entry only for a subproject whose reporting channel differs from the repo-wide disclosure_channel above; scrutineer routes a report against that sub-package to this channel. Omit entirely for a single-package repository.",
+      "items": {
+        "type": "object",
+        "required": ["path", "disclosure_channel"],
+        "additionalProperties": false,
+        "properties": {
+          "path":               { "type": "string", "description": "Sub-folder of the repo relative to root, matching a subprojects-skill path (e.g. \"activesupport\")." },
+          "disclosure_channel": { "type": "string", "description": "Best channel for reporting a vulnerability in this specific sub-package." }
+        }
+      }
+    },
     "notes": {
       "type": "string",
       "description": "Anything notable: bus factor, recent turnover, corporate backing."
