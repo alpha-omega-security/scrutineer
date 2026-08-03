@@ -49,7 +49,7 @@ func TestNoveltyContextStagesBoundedChangedFileEvidence(t *testing.T) {
 
 	scan := fixture.scan(head)
 	if err := stageContextWithInputs(
-		fixture.workRoot, "http://127.0.0.1:8080/api", "", DefaultMetadataDir,
+		fixture.workRoot, "", "http://127.0.0.1:8080/api", "", DefaultMetadataDir,
 		scan, &fixture.repo, nil, got,
 	); err != nil {
 		t.Fatal(err)
