@@ -15,12 +15,14 @@ import (
 // to a single sub-package. Only a sub-path scan is ever hard — a root scan has
 // nothing to prune. Finding-scoped runs (verify/patch/disclose) stay soft
 // because they need the whole checkout and its .git to diff, apply, and
-// validate a fix. Otherwise the per-scan ScopeMode wins, falling back to the
-// instance default (Worker.SubprojectScope); an unset default is soft, so a
+// validate a fix; diff rescans stay soft too, since pruning the siblings would
+// make them show up as deletions against the full-tree baseline and poison the
+// diff. Otherwise the per-scan ScopeMode wins, falling back to the instance
+// default (Worker.SubprojectScope); an unset default is soft, so a
 // programmatically-constructed worker keeps the pre-monorepo whole-tree
 // behaviour until the operator opts into hard scoping.
 func (w *Worker) scanScopeHard(scan *db.Scan) bool {
-	if scan.SubPath == "" || scan.FindingID != nil {
+	if scan.SubPath == "" || scan.FindingID != nil || scan.RescanMode == "diff" {
 		return false
 	}
 	mode := scan.ScopeMode

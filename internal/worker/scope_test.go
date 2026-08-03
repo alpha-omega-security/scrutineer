@@ -91,6 +91,7 @@ func TestScanScopeHard(t *testing.T) {
 		{"override soft beats hard default", hard, db.Scan{SubPath: "as", ScopeMode: "soft"}, false},
 		{"override hard beats soft default", soft, db.Scan{SubPath: "as", ScopeMode: "hard"}, true},
 		{"finding-scoped stays soft", hard, db.Scan{SubPath: "as", FindingID: &fid}, false},
+		{"diff rescan stays soft", hard, db.Scan{SubPath: "as", RescanMode: "diff"}, false},
 	}
 	for _, tc := range cases {
 		if got := tc.w.scanScopeHard(&tc.scan); got != tc.want {

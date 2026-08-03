@@ -28,12 +28,16 @@
 # GitHub `.../tree/<branch>/<sub/dir>` URL) scans just that sub-package.
 #
 # subproject_scope controls how such a scan stages its workspace:
-#   "hard" (default) copies only the sub-folder into the scan workspace, so
-#     the agent, its build, and its findings are confined to the sub-package;
-#     a hard scan whose isolated dependency resolution fails falls back to a
-#     whole-tree stage for that run.
+#   "hard" (default) prunes sibling packages from the workspace, leaving just the
+#     sub-folder (and .git), so the agent, its build, and its findings are
+#     confined to the sub-package. If the sub-package cannot resolve its
+#     dependencies in isolation, the scan widens to the whole tree and re-runs.
 #   "soft" stages the whole clone and treats the sub-path as an advisory focus
 #     hint (the pre-monorepo behaviour).
+# Pick "hard" for independently-published packages (each builds on its own).
+# Pick "soft" for tightly-coupled monorepos (e.g. Rails-style) whose sub-packages
+# depend on unreleased sibling versions and cannot build in isolation — otherwise
+# most sub-package scans just fail the isolated build and fall back to soft anyway.
 # A per-scan override is stored on the scan, so retries reproduce the mode.
 # subproject_scope: hard
 #

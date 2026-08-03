@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 
 	"gorm.io/gorm"
 
@@ -227,14 +228,28 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 		RequiresProfile: skill.RequiresProfile,
 	}
 	w.applyResume(scan, &sj, emit)
-	res, err := w.Runner.RunSkill(ctx, sj, emit)
+	// Watch the run's streamed output for a dependency-resolution failure. A
+	// hard-scoped build surfaces it in the agent's narration/tool output during
+	// the run, not in the final report.json (which stays valid findings), so
+	// classifying res.Report alone would miss it. Set-once; the check stops
+	// after the first hit. Guarded because the runner may emit from more than
+	// one goroutine (e.g. the egress sidecar drain).
+	var depResolveFail atomic.Bool
+	capture := func(e Event) {
+		if e.Text != "" && !depResolveFail.Load() && isDependencyResolutionFailure(e.Text) {
+			depResolveFail.Store(true)
+		}
+		emit(e)
+	}
+	res, err := w.Runner.RunSkill(ctx, sj, capture)
 	// Automatic soft fallback: a hard-scoped sub-package that could not resolve
 	// its dependencies in isolation — it needs a sibling package that is
 	// unpublished or version-skewed — is re-staged against the whole repository
 	// and re-run once. Only a dependency-resolution signature triggers this; an
 	// ordinary build or analysis failure is left to stand as a real result.
 	if hardScope && scan.ScopeMode != "soft" &&
-		(isDependencyResolutionFailure(res.Report) || (err != nil && isDependencyResolutionFailure(err.Error()))) {
+		(depResolveFail.Load() || isDependencyResolutionFailure(res.Report) ||
+			(err != nil && isDependencyResolutionFailure(err.Error()))) {
 		emit(Event{Kind: KindText, Text: "hard-scope dependency resolution failed; widening to the whole repository (soft) and retrying"})
 		w.DB.Model(scan).Update("scope_mode", "soft")
 		scan.ScopeMode = "soft"

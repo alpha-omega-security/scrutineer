@@ -13,18 +13,23 @@ import (
 	"scrutineer/internal/queue"
 )
 
-// twoPhaseRunner returns a dependency-resolution failure on its first RunSkill
-// and a clean report on the second, so a test can observe the hard→soft
-// fallback re-run.
+// twoPhaseRunner fails the first RunSkill and succeeds the second, so a test
+// can observe the hard→soft fallback re-run. firstEmit, when set, is streamed as
+// a KindText event on the first call to simulate the agent narrating a build
+// failure (which is where a real resolver error surfaces — not in the report).
 type twoPhaseRunner struct {
-	calls  int
-	first  SkillResult
-	second SkillResult
+	calls     int
+	firstEmit string
+	first     SkillResult
+	second    SkillResult
 }
 
 func (r *twoPhaseRunner) RunSkill(_ context.Context, sj SkillJob, emit func(Event)) (SkillResult, error) {
 	r.calls++
 	if r.calls == 1 {
+		if r.firstEmit != "" {
+			emit(Event{Kind: KindText, Text: r.firstEmit})
+		}
 		return r.first, nil
 	}
 	return r.second, nil
@@ -74,6 +79,44 @@ func TestDoSkill_hardScopeSoftFallback(t *testing.T) {
 	gdb.First(&got, scan.ID)
 	if got.ScopeMode != "soft" {
 		t.Errorf("scope_mode = %q, want soft (fallback recorded)", got.ScopeMode)
+	}
+}
+
+func TestDoSkill_hardScopeFallbackFromStreamedOutput(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://github.com/rails/rails", Name: "rails"}
+	gdb.Create(&repo)
+	skill := db.Skill{Name: "subprojects", OutputFile: "report.json", OutputKind: "subprojects", Version: 1, Active: true, Source: "ui"}
+	gdb.Create(&skill)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanQueued, Model: "fake", SkillID: &skill.ID, SubPath: "actionpack"}
+	gdb.Create(&scan)
+
+	// The report is clean; the resolver failure appears only in the streamed
+	// narration — the realistic case (an agent describes a failed bundle install
+	// in its output, not in report.json).
+	runner := &twoPhaseRunner{
+		firstEmit: `I ran bundle install and it failed: Bundler could not find compatible versions for gem "activesupport".`,
+		first:     SkillResult{Commit: "abc", Report: `{"subprojects":[]}`},
+		second:    SkillResult{Commit: "abc", Report: `{"subprojects":[]}`},
+	}
+	w := &Worker{
+		DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DataDir: t.TempDir(),
+		SubprojectScope: "hard", Runner: runner, PrepareRepoSrc: stubWholeTreePrep,
+	}
+	body, _ := json.Marshal(queue.Payload{ScanID: scan.ID})
+	if err := w.wrap(w.doSkill)(context.Background(), body); err != nil {
+		t.Fatalf("doSkill: %v", err)
+	}
+	if runner.calls != 2 {
+		t.Errorf("runner called %d times, want 2 (fallback triggered by streamed resolver error)", runner.calls)
+	}
+	var got db.Scan
+	gdb.First(&got, scan.ID)
+	if got.ScopeMode != "soft" {
+		t.Errorf("scope_mode = %q, want soft", got.ScopeMode)
 	}
 }
 
