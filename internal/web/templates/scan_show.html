@@ -15,7 +15,7 @@
   {{if and (eq .Kind "skill") .SkillID}}
     <div class="flex items-center gap-2">
       {{if .HasExportableReport}}
-      <a href="/scans/{{.ID}}/report.md" class="btn-outline" download>
+      <a href="/scans/{{.ID}}/report.md" class="btn-outline" download="{{scanReportFilename .}}">
         <i data-lucide="download"></i> Export as markdown
       </a>
       {{end}}
@@ -37,7 +37,7 @@
       {{end}}
     </div>
   {{else if .HasExportableReport}}
-    <a href="/scans/{{.ID}}/report.md" class="btn-outline" download>
+    <a href="/scans/{{.ID}}/report.md" class="btn-outline" download="{{scanReportFilename .}}">
       <i data-lucide="download"></i> Export as markdown
     </a>
   {{end}}

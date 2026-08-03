@@ -328,6 +328,15 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *work
 			return s
 		},
 		"bytes": tmplBytes,
+		"repoReportFilename": func(repo db.Repository, upstream bool) string {
+			return repoReportFilename(&repo, upstream)
+		},
+		"scanReportFilename": func(scan db.Scan) string {
+			return scanReportFilename(&scan)
+		},
+		"findingReportFilename": func(repo db.Repository, f db.Finding) string {
+			return findingReportFilename(&repo, &f)
+		},
 	}
 	t, err := template.New("").Funcs(funcs).ParseFS(tmplFS, "templates/*.html")
 	if err != nil {

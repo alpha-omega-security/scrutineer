@@ -15,7 +15,7 @@
     {{template "finding-status" (fstatus $f.Status)}}
   </h2>
   <div class="flex gap-2 shrink-0">
-    <a href="/findings/{{$f.ID}}/report.md" class="btn-outline" download>
+    <a href="/findings/{{$f.ID}}/report.md" class="btn-outline" download="{{findingReportFilename $repo $f}}">
       <i data-lucide="download"></i> Export report
     </a>
     <a href="/findings/{{$f.ID}}/bundle.tar.gz" class="btn-outline"

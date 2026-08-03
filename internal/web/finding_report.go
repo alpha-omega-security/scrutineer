@@ -40,13 +40,16 @@ func (s *Server) findingReport(w http.ResponseWriter, r *http.Request) {
 
 	body := renderFindingReport(s.DB, &f, &scan, &repo)
 
-	filename := fmt.Sprintf("scrutineer-%s-finding-%d-%s.md",
+	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+findingReportFilename(&repo, &f)+`"`)
+	_, _ = w.Write([]byte(body))
+}
+
+func findingReportFilename(repo *db.Repository, f *db.Finding) string {
+	return fmt.Sprintf("scrutineer-%s-finding-%d-%s.md",
 		sanitiseFilename(repo.Name),
 		f.ID,
 		time.Now().UTC().Format("20060102"))
-	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
-	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
-	_, _ = w.Write([]byte(body))
 }
 
 func renderFindingReport(gdb *gorm.DB, f *db.Finding, scan *db.Scan, repo *db.Repository) string {

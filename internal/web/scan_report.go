@@ -48,14 +48,17 @@ func (s *Server) scanReport(w http.ResponseWriter, r *http.Request) {
 
 	body := renderScanReport(s.DB, &scan, skill)
 
-	filename := fmt.Sprintf("scrutineer-%s-scan-%d-%s-%s.md",
+	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+scanReportFilename(&scan)+`"`)
+	_, _ = w.Write([]byte(body))
+}
+
+func scanReportFilename(scan *db.Scan) string {
+	return fmt.Sprintf("scrutineer-%s-scan-%d-%s-%s.md",
 		sanitiseFilename(scan.Repository.Name),
 		scan.ID,
 		sanitiseFilename(firstNonEmpty(scan.SkillName, scan.Kind, "scan")),
 		time.Now().UTC().Format("20060102"))
-	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
-	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
-	_, _ = w.Write([]byte(body))
 }
 
 func renderScanReport(gdb *gorm.DB, scan *db.Scan, skill *db.Skill) string {

@@ -41,20 +41,26 @@ func (s *Server) repoReport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	audience := audienceAnalyst
-	suffix := ""
-	if r.URL.Query().Get("audience") == "upstream" {
+	upstream := r.URL.Query().Get("audience") == "upstream"
+	if upstream {
 		audience = audienceUpstream
-		suffix = "-upstream"
 	}
 
 	body := renderRepoReport(s.DB, &repo, audience)
 
-	filename := fmt.Sprintf("scrutineer-%s-%s%s.md",
+	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+repoReportFilename(&repo, upstream)+`"`)
+	_, _ = w.Write([]byte(body))
+}
+
+func repoReportFilename(repo *db.Repository, upstream bool) string {
+	suffix := ""
+	if upstream {
+		suffix = "-upstream"
+	}
+	return fmt.Sprintf("scrutineer-%s-%s%s.md",
 		sanitiseFilename(repo.Name),
 		time.Now().UTC().Format("20060102"), suffix)
-	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
-	w.Header().Set("Content-Disposition", `attachment; filename="`+filename+`"`)
-	_, _ = w.Write([]byte(body))
 }
 
 func renderRepoReport(gdb *gorm.DB, repo *db.Repository, audience reportAudience) string {

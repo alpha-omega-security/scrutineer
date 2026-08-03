@@ -40,10 +40,10 @@
       </div>
     </form>
     {{end}}
-    <a href="/repositories/{{.Repo.ID}}/report.md" class="btn-outline" download>
+    <a href="/repositories/{{.Repo.ID}}/report.md" class="btn-outline" download="{{repoReportFilename .Repo false}}">
       <i data-lucide="download"></i> Export report
     </a>
-    <a href="/repositories/{{.Repo.ID}}/report.md?audience=upstream" class="btn-outline" download
+    <a href="/repositories/{{.Repo.ID}}/report.md?audience=upstream" class="btn-outline" download="{{repoReportFilename .Repo true}}"
        data-tooltip="Trimmed report for an upstream maintainer: summary, threat model, findings and fixes only — no internal notes, communications, labels, or repo-wide inventory.">
       <i data-lucide="share-2"></i> Export for upstream
     </a>
