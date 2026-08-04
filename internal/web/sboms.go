@@ -31,7 +31,10 @@ func (s *Server) registerSBOMRoutes(mux *http.ServeMux) {
 }
 
 func (s *Server) sbomList(w http.ResponseWriter, r *http.Request) {
-	q := s.DB.Model(&db.SBOMUpload{})
+	// Generated per-repository snapshots share this table but are one row per
+	// dependencies scan; listing them here would bury the operator's uploads.
+	// They surface via the repository and portfolio views instead.
+	q := s.DB.Model(&db.SBOMUpload{}).Where("origin = ?", db.SBOMOriginUploaded)
 	sortCol, dir := splitSort(r.URL.Query().Get("sort"))
 	switch sortCol {
 	case "name":

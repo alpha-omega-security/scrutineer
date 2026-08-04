@@ -1378,7 +1378,9 @@ func Open(dsn string) (*gorm.DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
-	preMigrate(gdb)
+	if err := preMigrate(gdb); err != nil {
+		return nil, fmt.Errorf("premigrate: %w", err)
+	}
 	if err := gdb.AutoMigrate(
 		&Repository{}, &Scan{},
 		&Finding{}, &FindingLabel{}, &FindingNote{},
@@ -1410,16 +1412,21 @@ func Open(dsn string) (*gorm.DB, error) {
 // preMigrate applies structural changes AutoMigrate cannot express, chiefly
 // column renames. It must run before AutoMigrate so a renamed column is not
 // re-added under its new name alongside the old one. Each step is guarded so
-// a fresh database and an already-migrated database are both no-ops.
-func preMigrate(gdb *gorm.DB) {
+// a fresh database and an already-migrated database are both no-ops. A failed
+// rename is fatal: proceeding to AutoMigrate would add the new column
+// alongside the old one and strand its data.
+func preMigrate(gdb *gorm.DB) error {
 	m := gdb.Migrator()
 	// SBOMPackage.RepositoryID became SourceRepositoryID when SBOMUpload
 	// gained its own RepositoryID pointing at the scanned repository; the
 	// package-level field points at the repository that publishes the
 	// package, which is the opposite direction.
 	if m.HasTable(&SBOMPackage{}) && m.HasColumn(&SBOMPackage{}, "repository_id") {
-		_ = m.RenameColumn(&SBOMPackage{}, "repository_id", "source_repository_id")
+		if err := m.RenameColumn(&SBOMPackage{}, "repository_id", "source_repository_id"); err != nil {
+			return fmt.Errorf("rename sbom_packages.repository_id: %w", err)
+		}
 	}
+	return nil
 }
 
 // Snapshot writes a consistent copy of the SQLite database at src to dest

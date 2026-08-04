@@ -586,6 +586,35 @@ func TestSBOMList_renders(t *testing.T) {
 	}
 }
 
+func TestSBOMList_excludesGeneratedSnapshots(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/r", Name: "r"}
+	s.DB.Create(&repo)
+	s.DB.Create(&db.SBOMUpload{Name: "user.cdx", Format: "cyclonedx", Origin: db.SBOMOriginUploaded})
+	s.DB.Create(&db.SBOMUpload{
+		Name: "generated-snapshot", Format: "cyclonedx",
+		Origin: db.SBOMOriginGenerated, RepositoryID: &repo.ID, Current: true,
+	})
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/sboms"))
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	body := w.Body.String()
+	if !strings.Contains(body, "user.cdx") {
+		t.Errorf("uploaded SBOM not listed")
+	}
+	if strings.Contains(body, "generated-snapshot") {
+		t.Errorf("generated snapshot listed on /sboms")
+	}
+	if n := strings.Count(body, `<tr id="sbom-`); n != 1 {
+		t.Errorf("rows = %d, want 1", n)
+	}
+}
+
 func TestSBOMShow_scopeFilter(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
