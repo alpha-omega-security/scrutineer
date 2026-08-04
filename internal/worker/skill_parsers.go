@@ -322,9 +322,25 @@ func (w *Worker) parseDependenciesOutput(scan *db.Scan, report string, emit func
 		return fmt.Errorf("parse dependencies: %w", err)
 	}
 
+	// Dependency rows and the Current snapshot are whole-repo projections; a
+	// sub-path-scoped scan sees only one sub-package's manifests and would
+	// otherwise wipe the full-repo set and mark a partial SBOM as current.
+	// Per-sub-package snapshots are deferred until SBOMUpload/Dependency are
+	// keyed on sub-path.
+	if scan.SubPath != "" {
+		emit(Event{Kind: KindText, Text: "sub-path scan: repo-level dependency rows and SBOM snapshot unchanged"})
+		return nil
+	}
+
 	inv := env.Analyses.Inventory
-	if inv.Status == analysisError {
-		emit(Event{Kind: KindText, Text: "inventory failed: " + inv.Error})
+	replaceInventory := inv.Status != analysisError
+	if !replaceInventory {
+		// The prior row set stays: an errored git-pkgs run says nothing about
+		// what the repository depends on, so replacing it with an empty set
+		// would be data loss. Mirrors the sbom section, where up == nil
+		// leaves the previous Current snapshot in place. The sbom section is
+		// still applied below since it reports its own status independently.
+		emit(Event{Kind: KindText, Text: "inventory failed, prior dependency rows kept: " + inv.Error})
 	}
 	w.resolveMavenDependencyRequirements(scan, inv.Result, emit)
 	rows := make([]db.Dependency, 0, len(inv.Result))
@@ -363,12 +379,14 @@ func (w *Worker) parseDependenciesOutput(scan *db.Scan, report string, emit func
 	// this skill whole-tree (repoWideProjectionKinds) and the git-pkgs script
 	// enumerates all of ./src rather than honouring scan_subpath.
 	if err := w.DB.Transaction(func(tx *gorm.DB) error {
-		if err := tx.Where("repository_id = ?", scan.RepositoryID).Delete(&db.Dependency{}).Error; err != nil {
-			return fmt.Errorf("delete old dependencies: %w", err)
-		}
-		if len(rows) > 0 {
-			if err := tx.CreateInBatches(&rows, insertBatchSize).Error; err != nil {
-				return fmt.Errorf("save dependencies: %w", err)
+		if replaceInventory {
+			if err := tx.Where("repository_id = ?", scan.RepositoryID).Delete(&db.Dependency{}).Error; err != nil {
+				return fmt.Errorf("delete old dependencies: %w", err)
+			}
+			if len(rows) > 0 {
+				if err := tx.CreateInBatches(&rows, insertBatchSize).Error; err != nil {
+					return fmt.Errorf("save dependencies: %w", err)
+				}
 			}
 		}
 		if up != nil {
@@ -387,7 +405,10 @@ func (w *Worker) parseDependenciesOutput(scan *db.Scan, report string, emit func
 		return err
 	}
 
-	summary := fmt.Sprintf("saved %d dependenc(ies)", len(rows))
+	summary := "prior dependency rows kept"
+	if replaceInventory {
+		summary = fmt.Sprintf("saved %d dependenc(ies)", len(rows))
+	}
 	if up != nil {
 		summary += fmt.Sprintf(", %d resolved component(s) at %s", up.PackageCount, shortCommit(up.Commit))
 	}

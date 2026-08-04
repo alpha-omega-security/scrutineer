@@ -1903,6 +1903,91 @@ func TestParseDependencies_sbomSectionErrorKeepsInventory(t *testing.T) {
 	}
 }
 
+func TestParseDependencies_inventoryErrorKeepsPriorRows(t *testing.T) {
+	w, scan, gdb, repo := newDependencyParser(t)
+
+	// Seed a prior successful run so there is something to lose.
+	if err := w.parseDependenciesOutput(scan,
+		depEnvelope(`[{"name":"prior","ecosystem":"npm"}]`, cdxEnvelopeFixture),
+		func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A run where git-pkgs list failed but sbom succeeded: prior Dependency
+	// rows must survive, and the sbom section is still applied independently.
+	report := `{"schema_version":1,"commit":"deadbeef","analyses":{
+		"inventory":{"status":"error","error":"git-pkgs list: exit 1"},
+		"sbom":{"status":"ok","result":` + cdxEnvelopeFixture + `}
+	}}`
+	var events []Event
+	if err := w.parseDependenciesOutput(scan, report, func(e Event) { events = append(events, e) }); err != nil {
+		t.Fatalf("errored inventory section should not fail parse: %v", err)
+	}
+
+	var deps []db.Dependency
+	gdb.Where("repository_id = ?", repo.ID).Find(&deps)
+	if len(deps) != 1 || deps[0].Name != "prior" {
+		t.Errorf("prior dependency rows should survive an errored inventory, got %+v", deps)
+	}
+	var current db.SBOMUpload
+	if err := gdb.Where("repository_id = ? AND current = ?", repo.ID, true).First(&current).Error; err != nil {
+		t.Fatalf("current snapshot: %v", err)
+	}
+	if current.Commit != "deadbeef" {
+		t.Errorf("sbom section not applied independently: current commit = %q", current.Commit)
+	}
+	joined := ""
+	for _, e := range events {
+		joined += e.Text + "\n"
+	}
+	if !strings.Contains(joined, "inventory failed, prior dependency rows kept") {
+		t.Errorf("events missing inventory-kept message:\n%s", joined)
+	}
+}
+
+func TestParseDependencies_subPathScanLeavesRepoLevelRows(t *testing.T) {
+	w, scan, gdb, repo := newDependencyParser(t)
+
+	// Seed the whole-repo state.
+	if err := w.parseDependenciesOutput(scan,
+		depEnvelope(`[{"name":"full-repo","ecosystem":"npm"}]`, cdxEnvelopeFixture),
+		func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	var seeded db.SBOMUpload
+	gdb.Where("repository_id = ? AND current = ?", repo.ID, true).First(&seeded)
+
+	// A sub-path-scoped scan sees only one sub-package's manifests; it must
+	// not replace the full-repo Dependency set nor demote its Current
+	// snapshot with a partial one.
+	scoped := db.Scan{RepositoryID: repo.ID, SubPath: "packages/foo"}
+	gdb.Create(&scoped)
+	var events []Event
+	if err := w.parseDependenciesOutput(&scoped,
+		depEnvelope(`[{"name":"partial","ecosystem":"npm"}]`, cdxEnvelopeFixture),
+		func(e Event) { events = append(events, e) }); err != nil {
+		t.Fatal(err)
+	}
+
+	var deps []db.Dependency
+	gdb.Where("repository_id = ?", repo.ID).Find(&deps)
+	if len(deps) != 1 || deps[0].Name != "full-repo" {
+		t.Errorf("sub-path scan replaced repo-level dependency rows: %+v", deps)
+	}
+	var uploads []db.SBOMUpload
+	gdb.Where("repository_id = ?", repo.ID).Find(&uploads)
+	if len(uploads) != 1 || uploads[0].ID != seeded.ID || !uploads[0].Current {
+		t.Errorf("sub-path scan touched repo-level snapshot: %+v", uploads)
+	}
+	joined := ""
+	for _, e := range events {
+		joined += e.Text + "\n"
+	}
+	if !strings.Contains(joined, "sub-path scan") {
+		t.Errorf("events missing sub-path skip message:\n%s", joined)
+	}
+}
+
 func TestParseDependencies_malformedSBOMKeepsInventory(t *testing.T) {
 	w, scan, gdb, repo := newDependencyParser(t)
 
