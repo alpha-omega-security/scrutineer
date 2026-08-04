@@ -38,8 +38,9 @@ func (w *Worker) reconcileSubprojectLinks(repoID uint) error {
 	}
 	// Index by manifest name first; add a directory-basename fallback only
 	// where a manifest name did not already claim the key, so an explicit name
-	// always wins over a coincidental directory match.
-	byName := make(map[string]uint, len(subs)*2)
+	// always wins over a coincidental directory match. Size for both keys.
+	const keysPerSubproject = 2
+	byName := make(map[string]uint, len(subs)*keysPerSubproject)
 	for _, s := range subs {
 		if s.Name != "" {
 			byName[normalizePkgName(s.Name)] = s.ID

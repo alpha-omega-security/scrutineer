@@ -232,37 +232,7 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 		RequiresProfile: skill.RequiresProfile,
 	}
 	w.applyResume(scan, &sj, emit)
-	// Watch the run's streamed output for a dependency-resolution failure. A
-	// hard-scoped build surfaces it in the agent's narration/tool output during
-	// the run, not in the final report.json (which stays valid findings), so
-	// classifying res.Report alone would miss it. Set-once; the check stops
-	// after the first hit. Guarded because the runner may emit from more than
-	// one goroutine (e.g. the egress sidecar drain).
-	var depResolveFail atomic.Bool
-	capture := func(e Event) {
-		if e.Text != "" && !depResolveFail.Load() && isDependencyResolutionFailure(e.Text) {
-			depResolveFail.Store(true)
-		}
-		emit(e)
-	}
-	res, err := w.Runner.RunSkill(ctx, sj, capture)
-	// Automatic soft fallback: a hard-scoped sub-package that could not resolve
-	// its dependencies in isolation — it needs a sibling package that is
-	// unpublished or version-skewed — is re-staged against the whole repository
-	// and re-run once. Only a dependency-resolution signature triggers this; an
-	// ordinary build or analysis failure is left to stand as a real result.
-	if hardScope && scan.ScopeMode != "soft" &&
-		(depResolveFail.Load() || isDependencyResolutionFailure(res.Report) ||
-			(err != nil && isDependencyResolutionFailure(err.Error()))) {
-		emit(Event{Kind: KindText, Text: "hard-scope dependency resolution failed; widening to the whole repository (soft) and retrying"})
-		w.DB.Model(scan).Update("scope_mode", "soft")
-		scan.ScopeMode = "soft"
-		if wErr := w.reStageWholeTree(ctx, scan, &skill, workRoot, emit); wErr != nil {
-			w.Log.Warn("re-stage whole tree for soft fallback", "scan", scan.ID, "err", wErr)
-		} else {
-			res, err = w.Runner.RunSkill(ctx, sj, emit)
-		}
-	}
+	res, err := w.runSkillWithFallback(ctx, scan, &skill, sj, workRoot, hardScope, emit)
 	w.applySkillResult(scan, res)
 	if err != nil {
 		if _, ok := errors.AsType[*MaxTurnsReachedError](err); ok && res.Report != "" {
@@ -281,6 +251,50 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 		w.auditSkillRefusals(ctx, &skill, scan, sj, emit)
 	}
 	return report, nil
+}
+
+// runSkillWithFallback runs the skill once and, when a hard-scoped sub-package
+// could not resolve its dependencies in isolation — it needs a sibling package
+// that is unpublished or version-skewed — re-stages the whole repository (soft)
+// and runs it again. Only a dependency-resolution signature triggers the retry;
+// an ordinary build or analysis failure is left to stand as a real result. That
+// failure usually surfaces in the agent's streamed narration during the run
+// rather than in the final report.json (which stays valid findings), so the
+// first run watches the emit stream for it as well as the returned report/error.
+func (w *Worker) runSkillWithFallback(ctx context.Context, scan *db.Scan, skill *db.Skill, sj SkillJob, workRoot string, hardScope bool, emit func(Event)) (SkillResult, error) {
+	// Set-once flag; the check stops after the first hit. Guarded because the
+	// runner may emit from more than one goroutine (e.g. the egress sidecar
+	// drain).
+	var depResolveFail atomic.Bool
+	capture := func(e Event) {
+		if e.Text != "" && !depResolveFail.Load() && isDependencyResolutionFailure(e.Text) {
+			depResolveFail.Store(true)
+		}
+		emit(e)
+	}
+	res, err := w.Runner.RunSkill(ctx, sj, capture)
+	if !hardScope || scan.ScopeMode == "soft" || !dependencyResolutionFailed(depResolveFail.Load(), res, err) {
+		return res, err
+	}
+	emit(Event{Kind: KindText, Text: "hard-scope dependency resolution failed; widening to the whole repository (soft) and retrying"})
+	w.DB.Model(scan).Update("scope_mode", "soft")
+	scan.ScopeMode = "soft"
+	if wErr := w.reStageWholeTree(ctx, scan, skill, workRoot, emit); wErr != nil {
+		w.Log.Warn("re-stage whole tree for soft fallback", "scan", scan.ID, "err", wErr)
+		return res, err
+	}
+	return w.Runner.RunSkill(ctx, sj, emit)
+}
+
+// dependencyResolutionFailed reports whether a run failed specifically because
+// its dependencies could not be resolved — detected from the streamed narration
+// (streamed), the final report, or the returned error. It is the one condition
+// the automatic whole-repository retry is meant to rescue.
+func dependencyResolutionFailed(streamed bool, res SkillResult, err error) bool {
+	if streamed || isDependencyResolutionFailure(res.Report) {
+		return true
+	}
+	return err != nil && isDependencyResolutionFailure(err.Error())
 }
 
 // applySkillResult writes back the fields RunSkill reports about the run
