@@ -194,7 +194,9 @@ var ecosystemsRawColumns = map[string]string{
 // apiGetEcosystemsRaw returns the verbatim cached ecosyste.ms payload for one
 // source: an operator/debug escape hatch, and a skill fallback when a
 // digested endpoint does not cover an edge case. 404 when nothing is cached
-// (the skill then falls back to WebFetch); 400 for an unknown source.
+// (the skill then falls back to WebFetch, which is also the steady state under
+// `ecosystems_enrichment: false`, where no source is ever cached); 400 for an
+// unknown source.
 func (s *Server) apiGetEcosystemsRaw(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(r.PathValue("id"))
 	if !s.scanOwnsRepo(r, uint(id)) {

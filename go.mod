@@ -8,9 +8,10 @@ require (
 	filippo.io/age v1.3.1
 	github.com/alpha-omega-security/harness v0.1.2
 	github.com/ecosyste-ms/ecosystems-go v0.4.0
-	github.com/git-pkgs/clone v0.1.2
+	github.com/git-pkgs/clone v0.2.0
 	github.com/git-pkgs/cwe v0.1.0
 	github.com/git-pkgs/enrichment v0.6.4
+	github.com/git-pkgs/magic v0.1.0
 	github.com/git-pkgs/pom v0.1.5
 	github.com/git-pkgs/purl v0.1.15
 	github.com/git-pkgs/sarif v0.1.1
@@ -20,7 +21,7 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
-	github.com/yuin/goldmark v1.8.4
+	github.com/yuin/goldmark v1.8.5
 	golang.org/x/crypto v0.54.0
 	golang.org/x/term v0.45.0
 	gopkg.in/yaml.v3 v3.0.1

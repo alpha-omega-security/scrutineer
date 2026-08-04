@@ -137,6 +137,15 @@ type Config struct {
 	// which an open finding is automatically transitioned to 'rejected'.
 	// 0 (the default) means this feature is disabled.
 	AutoRejectMissedCount int `yaml:"auto_reject_missed_count"`
+	// EcosystemsEnrichment gates every ecosyste.ms lookup scrutineer's own
+	// process makes: the per-repository cache the worker refreshes before a
+	// scan, the eager warm on repo add, and the PURL to repository resolution
+	// behind SBOM and dependency import. It leaves the container egress
+	// allowlist alone, since the bundled metadata / packages / advisories
+	// skills fetch ecosyste.ms themselves and replace the repository's whole
+	// row set from the result, so denying them the domain would let an empty
+	// answer wipe rows already recorded. Nil (the default) leaves enrichment on.
+	EcosystemsEnrichment *bool `yaml:"ecosystems_enrichment"`
 	// FederationSalt is the secret shared out of band between federation
 	// members and mixed into interchange finding hashes, so members derive
 	// matching hashes without publishing anything enumerable by outsiders.
@@ -168,6 +177,19 @@ type Config struct {
 	// action. The API key is config-file only so it does not leak through
 	// process arguments.
 	VINCE vince.Config `yaml:"vince"`
+	// FederationPublicFeed is the git remote the public interchange feed is
+	// pushed to: opt-outs, disclosure routes and clean certificates, in the
+	// clear, for anyone to clone. Empty disables the public export.
+	FederationPublicFeed string `yaml:"federation_public_feed"`
+	// FederationMembersFeed is the git remote the members-only feed is
+	// pushed to: the non-clean certificates, each naming a repository whose
+	// advertised fix does not hold, age-encrypted to recipients_file.
+	// Empty disables the members export; a value without recipients_file is
+	// refused at startup rather than pushing those records in the clear.
+	FederationMembersFeed string `yaml:"federation_members_feed"`
+	// FederationImportFeeds are peer feed git remotes cloned read-only and
+	// ingested by the import job.
+	FederationImportFeeds []string `yaml:"federation_import_feeds"`
 }
 
 // ParseScanTimeout validates and parses a scan_timeout string. Empty

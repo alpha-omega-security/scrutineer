@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"path/filepath"
+	"strings"
 
 	"gorm.io/gorm"
 
@@ -64,7 +65,7 @@ func LoadDirectoryExcept(gdb *gorm.DB, log *slog.Logger, root, source string, sk
 		if d.Name() != skillFile {
 			return nil
 		}
-		p, perr := ParseFile(path)
+		p, perr := parseFileWithin(path, abs)
 		if perr != nil {
 			return perr
 		}
@@ -110,6 +111,9 @@ func splitSep(p string) []string {
 }
 
 func shouldSkipDir(name string) bool {
+	if strings.HasPrefix(name, "_") {
+		return true
+	}
 	switch name {
 	case ".git", "node_modules", ".venv", "__pycache__", "vendor":
 		return true

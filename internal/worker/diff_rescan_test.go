@@ -76,7 +76,7 @@ func TestPrepareDiffRescanStagesDiffInputs(t *testing.T) {
 		t.Fatalf("threat model scan id = %v, want %d", stored.DiffThreatModelScanID, tm.ID)
 	}
 
-	if err := stageContext(workRoot, "http://api", "", DefaultMetadataDir, &stored, &repo); err != nil {
+	if err := stageContext(workRoot, "", "http://api", "", DefaultMetadataDir, &stored, &repo); err != nil {
 		t.Fatal(err)
 	}
 	var ctx skillContext

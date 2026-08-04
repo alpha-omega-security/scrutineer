@@ -22,12 +22,14 @@ github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkp
 github.com/dustin/go-humanize v1.0.1/go.mod h1:Mu1zIs6XwVuF/gI1OepvI0qD18qycQx+mFykh5fBlto=
 github.com/ecosyste-ms/ecosystems-go v0.4.0 h1:5A+zF+XWT8sYYYjlc2/tI1SmiDGzbHLyT9CapVc5dGA=
 github.com/ecosyste-ms/ecosystems-go v0.4.0/go.mod h1:FVswCrp3DQkur1HjVqfDF/gYrDSEmiFflntcB1G0DbA=
-github.com/git-pkgs/clone v0.1.2 h1:1BT+/+ZoCQqIj7feMFfkFhZG1B20Kaq0XHBeHsnMxUI=
-github.com/git-pkgs/clone v0.1.2/go.mod h1:1xNuHmJs5bOoFRXqydrd2guhg6BxwgHlvbMfkIAq3AM=
+github.com/git-pkgs/clone v0.2.0 h1:tejeYhmwSPPaymhHqoT90WrwrfdtadqrCUUzJCR8Q10=
+github.com/git-pkgs/clone v0.2.0/go.mod h1:lgbobKgJ6XbPZPsbn4iK0fVskYpFr4stjKKCeG9RsRc=
 github.com/git-pkgs/cwe v0.1.0 h1:DjE/Ixfvv/OIxtofF5vwumn01qbcXOHf17mUH2lri/g=
 github.com/git-pkgs/cwe v0.1.0/go.mod h1:6yUxEoA+3rI4W3ftqb7PZP1Z7zZFmV4/wfr7P46HtHU=
 github.com/git-pkgs/enrichment v0.6.4 h1:mGrfenttwmcUfPXRkWpB0wBJiiGj55ltniUh66Pq4bU=
 github.com/git-pkgs/enrichment v0.6.4/go.mod h1:zz1vPUak/w8Jhajll0KDRN2MjKaEYeCzQTxumWnVhqY=
+github.com/git-pkgs/magic v0.1.0 h1:xLrqq7CMXB9g5bJnmJyKw17Rvlh0GFiEmO6e5RFsoeY=
+github.com/git-pkgs/magic v0.1.0/go.mod h1:3ndidt+yvFaI1M0aEkkzkOlFnLPkeVQASIUojazcxCI=
 github.com/git-pkgs/packageurl-go v0.3.1 h1:WM3RBABQZLaRBxgKyYughc3cVBE8KyQxbSC6Jt5ak7M=
 github.com/git-pkgs/packageurl-go v0.3.1/go.mod h1:rcIxiG37BlQLB6FZfgdj9Fm7yjhRQd3l+5o7J0QPAk4=
 github.com/git-pkgs/pom v0.1.5 h1:TGT8Az2OMxGWsXnSagtUMGzZm7Oax8HrSCteA+mi0qY=
@@ -104,8 +106,8 @@ github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+
 github.com/stretchr/testify v1.3.0/go.mod h1:M5WIy9Dh21IEIfnGCwXGc5bZfKNJtfHm1UVUgZn+9EI=
 github.com/stretchr/testify v1.11.1 h1:7s2iGBzp5EwR7/aIZr8ao5+dra3wiQyKjjFuvgVKu7U=
 github.com/stretchr/testify v1.11.1/go.mod h1:wZwfW3scLgRK+23gO65QZefKpKQRnfz6sD981Nm4B6U=
-github.com/yuin/goldmark v1.8.4 h1:oat/nd3U6NeQqFEL3xpEJq7d7c86NI+DbSNGAs4xnjA=
-github.com/yuin/goldmark v1.8.4/go.mod h1:ip/1k0VRfGynBgxOz0yCqHrbZXhcjxyuS66Brc7iBKg=
+github.com/yuin/goldmark v1.8.5 h1:r6N5afV5qj/5S4UTch8agZHJ8UxNCMwX7WjkkJam2NA=
+github.com/yuin/goldmark v1.8.5/go.mod h1:ip/1k0VRfGynBgxOz0yCqHrbZXhcjxyuS66Brc7iBKg=
 golang.org/x/crypto v0.54.0 h1:YLIA59K4fiNzHzjnZt2tUJQjQtUWfWbeHBqKtk3eScw=
 golang.org/x/crypto v0.54.0/go.mod h1:KWL8ny2AZdGR2cWmzeHrp2azQPGogOv+HeQaVEXC2dk=
 golang.org/x/mod v0.37.0 h1:vF1DjpVEshcIqoEaauuHebaLk1O1forxjxBaVn884JQ=

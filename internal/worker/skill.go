@@ -85,6 +85,9 @@ type skillContextScrutineer struct {
 	// threat-model skill, which incorporates it into a complete scan-config
 	// proposal without letting recon overwrite analyst configuration directly.
 	Recon *skillContextRecon `json:"recon,omitempty"`
+	// Novelty is a bounded host-side git history check staged for revalidate.
+	// It keeps deterministic evidence separate from the model's verdict.
+	Novelty *skillContextNovelty `json:"novelty,omitempty"`
 }
 
 type skillContextRecon struct {
@@ -165,6 +168,7 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 		}
 		scan.Commit = gitHead(filepath.Join(workRoot, "src"))
 	} else {
+		w.prepareNoveltyHistory(ctx, scan, &skill)
 		cacheCommit, err := w.PrepareSrc(ctx, scan.Repository.URL, scan.Ref, workRoot, emit)
 		if err != nil {
 			if report, ok := w.handleCloneError(scan, err, emit); ok {
@@ -202,7 +206,7 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 	}
 
 	skillDir := w.Runner.SkillDir(workRoot, skill.Name)
-	if err := w.stageWorkspace(workRoot, skillDir, scan, &skill); err != nil {
+	if err := w.stageWorkspace(ctx, workRoot, skillDir, scan, &skill); err != nil {
 		return "", err
 	}
 
@@ -903,8 +907,7 @@ func (w *Worker) parseMaintainersOutput(scan *db.Scan, report string, emit func(
 		return err
 	}
 	if strings.TrimSpace(result.DisclosureChannel) != "" {
-		if err := w.DB.Model(&db.Repository{}).Where("id = ?", repo.ID).
-			Update("disclosure_channel", result.DisclosureChannel).Error; err != nil {
+		if err := db.SetDisclosureChannel(w.DB, repo.ID, result.DisclosureChannel); err != nil {
 			return fmt.Errorf("update disclosure channel: %w", err)
 		}
 	}
@@ -1123,9 +1126,10 @@ func ValidateSkillPaths(name, outputFile string) error {
 //
 // schema.json is also written to workRoot so the `./schema.json` path every
 // SKILL.md references resolves without the model having to glob for it (#221).
-// context.json is mirrored from workRoot into dst so `./context.json` resolves
-// from the skill directory as well as the workspace root; that read means
-// stageSkill must run after stageContext, which is what produces the file.
+//
+// stageSkill owns dst: it clears the directory before writing, so it must run
+// BEFORE stageContext, which writes context.json into dst as well as workRoot
+// (#499). Running it after would delete that copy.
 func stageSkill(skill *db.Skill, workRoot, dst string) error {
 	if err := os.RemoveAll(dst); err != nil {
 		return err
@@ -1143,16 +1147,6 @@ func stageSkill(skill *db.Skill, workRoot, dst string) error {
 		}
 		if err := os.WriteFile(filepath.Join(workRoot, "schema.json"), []byte(skill.SchemaJSON), filePerm); err != nil {
 			return err
-		}
-	}
-	switch data, err := os.ReadFile(filepath.Join(workRoot, "context.json")); {
-	case errors.Is(err, os.ErrNotExist):
-		// stageContext hasn't run (or this caller doesn't use one); no mirror.
-	case err != nil:
-		return fmt.Errorf("read context.json: %w", err)
-	default:
-		if werr := os.WriteFile(filepath.Join(dst, "context.json"), data, filePerm); werr != nil {
-			return werr
 		}
 	}
 	if skill.SourcePath != "" && skill.Source != "ui" {
@@ -1254,11 +1248,17 @@ func (w *Worker) metadataDir() string {
 	return w.MetadataDir
 }
 
-func stageContext(workRoot, apiBase, forkOrg, metadataDir string, scan *db.Scan, repo *db.Repository) error {
-	return stageContextWithRecon(workRoot, apiBase, forkOrg, metadataDir, scan, repo, nil)
+func stageContext(workRoot, skillDir, apiBase, forkOrg, metadataDir string, scan *db.Scan, repo *db.Repository) error {
+	return stageContextWithInputs(workRoot, skillDir, apiBase, forkOrg, metadataDir, scan, repo, nil, nil)
 }
 
-func stageContextWithRecon(workRoot, apiBase, forkOrg, metadataDir string, scan *db.Scan, repo *db.Repository, recon *skillContextRecon) error {
+func stageContextWithInputs(
+	workRoot, skillDir, apiBase, forkOrg, metadataDir string,
+	scan *db.Scan,
+	repo *db.Repository,
+	recon *skillContextRecon,
+	novelty *skillContextNovelty,
+) error {
 	if err := os.MkdirAll(workRoot, dirPerm); err != nil {
 		return err
 	}
@@ -1292,6 +1292,7 @@ func stageContextWithRecon(workRoot, apiBase, forkOrg, metadataDir string, scan 
 	}
 	ctx.Scrutineer.FocusArea = focusArea
 	ctx.Scrutineer.Recon = recon
+	ctx.Scrutineer.Novelty = novelty
 	if scan.SkillID != nil {
 		ctx.Scrutineer.SkillID = *scan.SkillID
 	}
@@ -1332,7 +1333,22 @@ func stageContextWithRecon(workRoot, apiBase, forkOrg, metadataDir string, scan 
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(workRoot, "context.json"), b, filePerm)
+	// stageContext owns context.json, so it writes every copy: workRoot for
+	// the workspace-relative path, and the skill directory so ./context.json
+	// resolves from there too. Writing both here is what removes stageSkill's
+	// read-back of workRoot/context.json (#499).
+	for _, dir := range []string{workRoot, skillDir} {
+		if dir == "" {
+			continue
+		}
+		if err := os.MkdirAll(dir, dirPerm); err != nil {
+			return err
+		}
+		if err := os.WriteFile(filepath.Join(dir, "context.json"), b, filePerm); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // stageWorkspace writes everything other than ./src into the scan
@@ -1342,12 +1358,18 @@ func stageContextWithRecon(workRoot, apiBase, forkOrg, metadataDir string, scan 
 // Pulled out of doSkill to keep that function under the gocognit
 // threshold; the error wrapping stays here so failures still name the
 // staging step.
-func (w *Worker) stageWorkspace(workRoot, skillDir string, scan *db.Scan, skill *db.Skill) error {
+func (w *Worker) stageWorkspace(ctx context.Context, workRoot, skillDir string, scan *db.Scan, skill *db.Skill) error {
 	recon, err := w.reconContext(scan, skill)
 	if err != nil {
 		return err
 	}
-	return stageWorkspace(workRoot, skillDir, w.APIBase, w.ForkOrg, w.metadataDir(), scan, skill, recon)
+	novelty, err := w.noveltyContext(ctx, workRoot, scan, skill)
+	if err != nil {
+		return err
+	}
+	return stageWorkspaceWithInputs(
+		workRoot, skillDir, w.APIBase, w.ForkOrg, w.metadataDir(), scan, skill, recon, novelty,
+	)
 }
 
 // StageWorkspace writes the workspace side files shared by production skill
@@ -1355,18 +1377,28 @@ func (w *Worker) stageWorkspace(workRoot, skillDir string, scan *db.Scan, skill 
 // rendered skill bundle, and optional import payloads. Production adds recon
 // context for threat-model in Worker.stageWorkspace.
 func StageWorkspace(workRoot, skillDir, apiBase, forkOrg, metadataDir string, scan *db.Scan, skill *db.Skill) error {
-	return stageWorkspace(workRoot, skillDir, apiBase, forkOrg, metadataDir, scan, skill, nil)
+	return stageWorkspaceWithInputs(workRoot, skillDir, apiBase, forkOrg, metadataDir, scan, skill, nil, nil)
 }
 
-func stageWorkspace(workRoot, skillDir, apiBase, forkOrg, metadataDir string, scan *db.Scan, skill *db.Skill, recon *skillContextRecon) error {
-	if err := stageContextWithRecon(workRoot, apiBase, forkOrg, metadataDir, scan, &scan.Repository, recon); err != nil {
+func stageWorkspaceWithInputs(
+	workRoot, skillDir, apiBase, forkOrg, metadataDir string,
+	scan *db.Scan,
+	skill *db.Skill,
+	recon *skillContextRecon,
+	novelty *skillContextNovelty,
+) error {
+	// stageSkill clears skillDir, so it runs before stageContext, which
+	// writes context.json into that directory (#499).
+	if err := stageSkill(skill, workRoot, skillDir); err != nil {
+		return fmt.Errorf("stage skill: %w", err)
+	}
+	if err := stageContextWithInputs(
+		workRoot, skillDir, apiBase, forkOrg, metadataDir, scan, &scan.Repository, recon, novelty,
+	); err != nil {
 		return fmt.Errorf("stage context: %w", err)
 	}
 	if err := stageThreatModel(workRoot, scan.SubPath, scan.Repository.ThreatModel); err != nil {
 		return fmt.Errorf("stage threat model: %w", err)
-	}
-	if err := stageSkill(skill, workRoot, skillDir); err != nil {
-		return fmt.Errorf("stage skill: %w", err)
 	}
 	if err := stageImportPayload(workRoot, scan.ImportPayload); err != nil {
 		return fmt.Errorf("stage import payload: %w", err)

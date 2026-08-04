@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -286,7 +287,7 @@ func TestStageContext_writesRepoFacts(t *testing.T) {
 		DefaultBranch: "main",
 	}
 	scan := &db.Scan{ID: 7, RepositoryID: 3, APIToken: "tok"}
-	if err := stageContext(dir, "http://127.0.0.1:8080/api", "", "", scan, repo); err != nil {
+	if err := stageContext(dir, "", "http://127.0.0.1:8080/api", "", "", scan, repo); err != nil {
 		t.Fatal(err)
 	}
 	b, err := os.ReadFile(filepath.Join(dir, "context.json"))
@@ -319,7 +320,7 @@ attack_surface: stdin is attacker controlled
 skip: [tests/**]`,
 	}
 	scan := &db.Scan{ID: 7, RepositoryID: 3, APIToken: "tok"}
-	if err := stageContext(dir, "http://127.0.0.1:8080/api", "", "", scan, repo); err != nil {
+	if err := stageContext(dir, "", "http://127.0.0.1:8080/api", "", "", scan, repo); err != nil {
 		t.Fatal(err)
 	}
 	b, err := os.ReadFile(filepath.Join(dir, "context.json"))
@@ -348,7 +349,9 @@ func TestStageContext_includesReconFocusAreas(t *testing.T) {
 		}},
 		Notes: []string{"Examples excluded."},
 	}
-	if err := stageContextWithRecon(dir, "http://127.0.0.1:8080/api", "", "", scan, repo, recon); err != nil {
+	if err := stageContextWithInputs(
+		dir, "", "http://127.0.0.1:8080/api", "", "", scan, repo, recon, nil,
+	); err != nil {
 		t.Fatal(err)
 	}
 	b, err := os.ReadFile(filepath.Join(dir, "context.json"))
@@ -374,7 +377,7 @@ func TestStageContext_includesFocusArea(t *testing.T) {
 		t.Fatal(err)
 	}
 	scan := &db.Scan{ID: 7, RepositoryID: 3, APIToken: "tok", FocusArea: raw}
-	if err := stageContext(dir, "http://127.0.0.1:8080/api", "", "", scan, repo); err != nil {
+	if err := stageContext(dir, "", "http://127.0.0.1:8080/api", "", "", scan, repo); err != nil {
 		t.Fatal(err)
 	}
 	b, err := os.ReadFile(filepath.Join(dir, "context.json"))
@@ -666,25 +669,84 @@ func TestStageSkill_noScriptsDirIsNoop(t *testing.T) {
 	}
 }
 
-func TestStageSkill_mirrorsContextJSONToSkillDir(t *testing.T) {
-	// stageContext writes context.json to workRoot; stageSkill must copy it
-	// into the skill directory so ./context.json resolves from the skill dir.
+func TestStageContext_writesToWorkRootAndSkillDir(t *testing.T) {
+	// stageContext owns context.json, so it writes both copies itself: the
+	// workspace root and the skill directory, where ./context.json must also
+	// resolve. Byte-identical, so the two can never disagree (#499).
 	work := t.TempDir()
-	ctx := `{"repository":{"url":"https://example.com/r"}}`
-	if err := os.WriteFile(filepath.Join(work, "context.json"), []byte(ctx), 0o644); err != nil {
+	skillDir := filepath.Join(work, ".claude", "skills", "s")
+	repo := &db.Repository{URL: "https://example.com/r", Name: "r"}
+	scan := &db.Scan{ID: 7, RepositoryID: 1, APIToken: "t"}
+	if err := stageContext(work, skillDir, "http://127.0.0.1:8080/api", "", "", scan, repo); err != nil {
 		t.Fatal(err)
 	}
-	skill := &db.Skill{Name: "s", Description: "d", Body: "body", Source: "ui"}
-	dst := filepath.Join(work, ".claude", "skills", "s")
-	if err := stageSkill(skill, work, dst); err != nil {
-		t.Fatal(err)
-	}
-	got, err := os.ReadFile(filepath.Join(dst, "context.json"))
+	atRoot, err := os.ReadFile(filepath.Join(work, "context.json"))
 	if err != nil {
-		t.Fatalf("context.json not mirrored into skill dir: %v", err)
+		t.Fatalf("context.json missing from workRoot: %v", err)
 	}
-	if string(got) != ctx {
-		t.Errorf("mirrored context.json = %q, want %q", string(got), ctx)
+	atSkill, err := os.ReadFile(filepath.Join(skillDir, "context.json"))
+	if err != nil {
+		t.Fatalf("context.json missing from skill dir: %v", err)
+	}
+	if !bytes.Equal(atRoot, atSkill) {
+		t.Errorf("copies differ:\nworkRoot: %s\nskillDir: %s", atRoot, atSkill)
+	}
+	var got skillContext
+	if err := json.Unmarshal(atSkill, &got); err != nil {
+		t.Fatalf("skill dir copy is not valid context.json: %v", err)
+	}
+	if got.Scrutineer.ScanID != 7 {
+		t.Errorf("scan_id = %d, want 7", got.Scrutineer.ScanID)
+	}
+}
+
+func TestStageContext_emptySkillDirWritesWorkRootOnly(t *testing.T) {
+	// Callers that stage no skill (diff rescan, evals) pass an empty skillDir
+	// and must keep the previous single-file behaviour.
+	work := t.TempDir()
+	repo := &db.Repository{URL: "https://example.com/r", Name: "r"}
+	scan := &db.Scan{ID: 1, RepositoryID: 1, APIToken: "t"}
+	if err := stageContext(work, "", "http://127.0.0.1:8080/api", "", "", scan, repo); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(work, "context.json")); err != nil {
+		t.Fatalf("context.json missing from workRoot: %v", err)
+	}
+	entries, err := os.ReadDir(work)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 1 {
+		t.Errorf("empty skillDir should write one file, got %d entries", len(entries))
+	}
+}
+
+func TestStageWorkspace_skillStagingDoesNotEatContextJSON(t *testing.T) {
+	// The ordering hazard #499 is about, pinned from the outside. stageSkill
+	// clears skillDir before writing, so staging the skill AFTER the context
+	// deletes the skill-dir copy and ./context.json stops resolving -- with no
+	// error anywhere. Assert through the wrapper so a future reorder fails here
+	// instead of silently in production.
+	work := t.TempDir()
+	skillDir := filepath.Join(work, ".claude", "skills", "s")
+	skill := &db.Skill{Name: "s", Description: "d", Body: "body", Source: "ui"}
+	scan := &db.Scan{
+		ID:           3,
+		RepositoryID: 1,
+		APIToken:     "t",
+		Repository:   db.Repository{URL: "https://example.com/r", Name: "r"},
+	}
+	if err := StageWorkspace(work, skillDir, "http://127.0.0.1:8080/api", "", "", scan, skill); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(skillDir, "context.json")); err != nil {
+		t.Fatalf("./context.json does not resolve from the skill dir: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(skillDir, "SKILL.md")); err != nil {
+		t.Fatalf("SKILL.md missing, skill bundle was not staged: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(work, "context.json")); err != nil {
+		t.Fatalf("context.json missing from workRoot: %v", err)
 	}
 }
 
@@ -692,7 +754,7 @@ func TestStageContext_includesRef(t *testing.T) {
 	dir := t.TempDir()
 	repo := &db.Repository{URL: "https://example.com/x", Name: "x"}
 	scan := &db.Scan{ID: 1, RepositoryID: 1, APIToken: "t", Ref: "2.4.x"}
-	if err := stageContext(dir, "http://127.0.0.1:8080/api", "", "", scan, repo); err != nil {
+	if err := stageContext(dir, "", "http://127.0.0.1:8080/api", "", "", scan, repo); err != nil {
 		t.Fatal(err)
 	}
 	b, err := os.ReadFile(filepath.Join(dir, "context.json"))
@@ -712,7 +774,7 @@ func TestStageContext_omitsRefWhenEmpty(t *testing.T) {
 	dir := t.TempDir()
 	repo := &db.Repository{URL: "https://example.com/x", Name: "x"}
 	scan := &db.Scan{ID: 1, RepositoryID: 1, APIToken: "t"}
-	if err := stageContext(dir, "http://127.0.0.1:8080/api", "", "", scan, repo); err != nil {
+	if err := stageContext(dir, "", "http://127.0.0.1:8080/api", "", "", scan, repo); err != nil {
 		t.Fatal(err)
 	}
 	b, err := os.ReadFile(filepath.Join(dir, "context.json"))
@@ -731,7 +793,7 @@ func TestStageContext_includesForkOrg(t *testing.T) {
 	dir := t.TempDir()
 	repo := &db.Repository{URL: "https://github.com/o/r", Name: "r"}
 	scan := &db.Scan{ID: 1, RepositoryID: 1, APIToken: "t"}
-	if err := stageContext(dir, "http://127.0.0.1:8080/api", "fork-central", "", scan, repo); err != nil {
+	if err := stageContext(dir, "", "http://127.0.0.1:8080/api", "fork-central", "", scan, repo); err != nil {
 		t.Fatal(err)
 	}
 	b, err := os.ReadFile(filepath.Join(dir, "context.json"))
@@ -751,7 +813,7 @@ func TestStageContext_includesMetadataDir(t *testing.T) {
 	dir := t.TempDir()
 	repo := &db.Repository{URL: "https://github.com/o/r", Name: "r"}
 	scan := &db.Scan{ID: 1, RepositoryID: 1, APIToken: "t"}
-	if err := stageContext(dir, "http://127.0.0.1:8080/api", "", ".ossprey/", scan, repo); err != nil {
+	if err := stageContext(dir, "", "http://127.0.0.1:8080/api", "", ".ossprey/", scan, repo); err != nil {
 		t.Fatal(err)
 	}
 	b, err := os.ReadFile(filepath.Join(dir, "context.json"))

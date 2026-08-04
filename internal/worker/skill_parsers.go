@@ -1093,6 +1093,12 @@ func (w *Worker) parseRevalidateOutput(scan *db.Scan, report string, emit func(E
 	if err := db.WriteFindingField(w.DB, f.ID, "last_revalidate_verdict", result.Verdict, db.SourceModel, "revalidate"); err != nil {
 		return fmt.Errorf("update last_revalidate_verdict: %w", err)
 	}
+	if novelty, ok := revalidateNovelty(f.Novelty, result.Verdict); ok {
+		if err := w.DB.Model(&db.Finding{}).Where("id = ?", f.ID).
+			Update("novelty", novelty).Error; err != nil {
+			return fmt.Errorf("update novelty: %w", err)
+		}
+	}
 
 	// Status transitions: true_positive promotes new -> enriched;
 	// already_fixed auto-closes active findings because the cheap git-history
@@ -1156,6 +1162,22 @@ func (w *Worker) parseRevalidateOutput(scan *db.Scan, report string, emit func(E
 		w.OnRevalidateVerdict(scan, &f, result.Verdict, finalSeverity)
 	}
 	return nil
+}
+
+func revalidateNovelty(current db.FindingNovelty, verdict string) (db.FindingNovelty, bool) {
+	// A failed deterministic check remains not_checked. The model is told to
+	// return uncertain in this case; it cannot manufacture missing history.
+	if current == "" || current == db.FindingNoveltyNotChecked {
+		return "", false
+	}
+	switch verdict {
+	case "true_positive":
+		return db.FindingNoveltyUnfixed, current != db.FindingNoveltyUnfixed
+	case "already_fixed":
+		return db.FindingNoveltyFixed, current != db.FindingNoveltyFixed
+	default:
+		return "", false
+	}
 }
 
 // dedupGroup is one head-plus-members relation from a finding-dedup report.

@@ -124,6 +124,23 @@
 #   - artifactory.internal
 #   - "*.mycorp.net"
 
+# Enrich repositories from ecosyste.ms: the per-repository cache refreshed
+# before each scan, the eager warm when a repository is added, and the PURL to
+# repository resolution behind SBOM and dependency import. false stops every
+# lookup scrutineer's own process makes, so a restricted-egress host produces
+# no partial state and no failed outbound calls of its own.
+#
+# It does NOT touch egress_allow above: the bundled metadata, packages and
+# advisories skills fetch ecosyste.ms themselves and replace the repository's
+# whole row set from what they return, so denying them the domain would let an
+# empty result wipe packages and advisories already recorded. Denying the
+# runner is your network policy to write.
+#
+# The per-repository dependents cache is filled only by this enrichment, so
+# false also leaves the Dependents tab empty and dependent-exposure analysis
+# with nothing to run against. Flag: -ecosystems-enrichment.
+# ecosystems_enrichment: true
+
 # How many scans run in parallel. Default is 4; raise on bigger hosts,
 # lower if you want model calls serialised.
 # concurrency: 4
@@ -235,3 +252,22 @@
 # finding-hash match, so they can coordinate before reporting the same
 # finding upstream. Required when federation_salt is set.
 # federation_contact: security@example.com
+
+# Git remote the public interchange feed is pushed to hourly: opt-outs,
+# disclosure routes and clean fix-audit certificates, in the clear, for
+# anyone to clone. Empty disables the public export.
+# federation_public_feed: "git@github.com:example/scrutineer-public-feed.git"
+
+# Git remote the members-only feed is pushed to: the non-clean fix-audit
+# certificates, each naming a repository whose advertised fix does not
+# hold, so every record is age-encrypted to recipients_file. Requires both
+# recipients_file (or it would push them in the clear) and identity_file
+# (or it could not read back what it published, and would re-encrypt the
+# whole feed on every tick). Empty disables the members export.
+# federation_members_feed: "git@github.com:example/scrutineer-members-feed.git"
+
+# Peer feed git remotes cloned read-only and ingested hourly. An imported
+# opt-out stops this instance scanning that repository; an imported route
+# fills a disclosure channel this instance does not have.
+# federation_import_feeds:
+#   - "https://github.com/peer/scrutineer-public-feed.git"

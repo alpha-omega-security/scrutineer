@@ -2,9 +2,12 @@ package worker
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"time"
 
 	ecosystems "github.com/ecosyste-ms/ecosystems-go"
@@ -140,8 +143,9 @@ func ecosystemsSources() []ecosystemsSource {
 // re-fetched, so a scan whose cache is current is a no-op; with staleOnly
 // false (the eager on-add path) every source is fetched. Best-effort:
 // upstream client and fetch failures are logged and skipped, never fatal, so a
-// flaky ecosyste.ms neither blocks a scan nor breaks repo creation. Local
-// (file://) repos are skipped since they have no upstream entry.
+// flaky ecosyste.ms neither blocks a scan nor breaks repo creation, and a
+// transport-level failure abandons the remaining sources (see unreachable).
+// Local (file://) repos are skipped since they have no upstream entry.
 func RefreshEcosystems(ctx context.Context, gdb *gorm.DB, repoID uint, staleOnly bool, log *slog.Logger) error {
 	return refreshEcosystems(ctx, gdb, repoID, staleOnly, log, nil)
 }
@@ -172,6 +176,17 @@ func refreshEcosystems(ctx context.Context, gdb *gorm.DB, repoID uint, staleOnly
 		}
 		body, err := src.fetch(ctx, fetcher, repo.URL)
 		if err != nil {
+			// A cancelled scan or an expired deadline is the caller giving
+			// up, not upstream being down; reported separately so the
+			// unreachable warning stays a signal about ecosyste.ms.
+			if ctx.Err() != nil {
+				log.Warn("ecosystems enrichment cancelled", "repo", repoID, "source", src.key, "err", err)
+				return nil
+			}
+			if unreachable(err) {
+				log.Warn("ecosystems unreachable, skipping enrichment", "repo", repoID, "source", src.key, "err", err)
+				return nil
+			}
 			log.Warn("ecosystems fetch failed", "repo", repoID, "source", src.key, "err", err)
 			continue
 		}
@@ -189,6 +204,30 @@ func refreshEcosystems(ctx context.Context, gdb *gorm.DB, repoID uint, staleOnly
 		}
 	}
 	return nil
+}
+
+// unreachable reports whether err means the host could not be reached at all:
+// name resolution, the dial itself, or the TLS handshake. Those are the shapes
+// a denied domain produces, and it produces them for every ecosyste.ms host
+// alike, so the pass stops after the first instead of paying one timeout per
+// source on every scan.
+//
+// Deliberately NOT included: a response that is merely slow or absent. The six
+// sources span five hosts (repos, packages, advisories, commits, issues), each
+// with its own 30s client timeout, so treating one host's response timeout as
+// "everything is down" would let a single degraded host permanently starve the
+// sources ordered after it: a failed fetch never writes its `fetched_at`, so
+// the staleOnly pass restarts at the same one every scan. A slow host, like a
+// plain 404, stays per-source.
+func unreachable(err error) bool {
+	var dnsErr *net.DNSError
+	var opErr *net.OpError
+	var certErr *tls.CertificateVerificationError
+	var recordErr tls.RecordHeaderError
+	// A TLS-intercepting proxy or a captive portal answering the domain fails
+	// the handshake, not the dial, so neither is a net.OpError.
+	return errors.As(err, &dnsErr) || errors.As(err, &opErr) ||
+		errors.As(err, &certErr) || errors.As(err, &recordErr)
 }
 
 // stale reports whether the source's cached payload is missing or older than

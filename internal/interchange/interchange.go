@@ -14,6 +14,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -52,10 +53,14 @@ const CertificateStatusFixed = "fixed"
 // from it has stable text. A verdict outside this set and
 // CertificateStatusFixed is not publishable at all: exporters filter on it
 // rather than handing the schema a record it will reject, since a single
-// unpublishable row would otherwise fail the whole export. Unexported until
-// something outside this package needs it, so nothing can mutate the set the
-// schema is the contract for.
+// unpublishable row would otherwise fail the whole export.
 var certificateStatusesV2 = []string{"bypass", "regressed", "variant"}
+
+// CertificateStatusesV2 returns those verdicts for the export query that
+// filters on them. A copy per call rather than the slice itself: the set is
+// the schema's contract, and an exported variable could be reordered or
+// extended by any consumer.
+func CertificateStatusesV2() []string { return slices.Clone(certificateStatusesV2) }
 
 // recordKinds names the feed subdirectory each predicate type is filed
 // under. Both certificate revisions share one directory: they are the same

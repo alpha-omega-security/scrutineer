@@ -31,29 +31,14 @@ If an API call fails or returns no useful data, continue from local code.
 ## Method
 
 1. Identify trust boundaries. Prefer `./threat_model.json` when present. Otherwise use the latest threat-model scan. Copy its components, adversaries, trust boundaries, entry points, provenance, and sources into your reasoning. Treat `provenance: "documented"` as a cited fact and `provenance: "inferred"` as a hypothesis to verify. If no threat model exists, derive boundaries from public inputs: APIs, CLIs, file formats, IPC, network listeners, webhooks, plugins, package consumers, configuration, environment, queues, schedulers, and generated or user-supplied artifacts.
-2. Inventory dangerous sinks before judging them. Include code execution, command execution, deserialization, parser and decoder entry points, archive extraction, filesystem writes, path resolution, network SSRF targets, templating, SQL and query construction, authz/authn decisions, cryptography, secrets handling, logging, update/install flows, CI/workflow execution, and parser/resource-exhaustion surfaces.
+2. Inventory dangerous sinks before judging them. Derive language-specific primitives first. Consult `references/sink-taxonomy.md` when planning that sweep or when a candidate does not fit an obvious class; do not turn the taxonomy into a pattern-matching checklist.
 3. For every sink, trace attacker-controlled data from the named boundary to the sink. A library sink can be reachable through documented public API use, CLI input, plugin loading, file-format parsing, or an installed downstream gadget; it does not need a hosted service.
 4. Decide whether existing validation, escaping, allow-lists, sandboxing, capability checks, or type constraints remove exploitability. Do not assume safety from comments alone.
 5. Check prior art and reach. Use existing advisories, packages, dependents, and local documentation to distinguish new findings from known issues and to rate real exposure.
 6. Report only high-confidence reachable findings. Consolidate the same root cause at the same sink and boundary into one finding. If the same sink is reachable through materially different boundaries or impacts, split it.
 
-## Report Contract
+## Finish
 
-`boundaries[]` should name each actor/boundary, whether it is trusted, the controls relied on, and the source. If a threat-model report exists, fill these from that report rather than inventing new labels.
+Before writing the final report, read `references/report-contract.md`. Build the report from the completed inventory and dispositions, not from whichever candidates were most memorable. Every inventory id must resolve to a finding or ruled-out entry, and the method counts must agree with those arrays.
 
-`inventory[]` is part of the result, not scratch. Each entry needs a stable `id`, `location` as `path:line` when possible, a sink `class`, the `boundary`, and what it consumes.
-
-For each real finding:
-
-- Use `reachability: "reachable"` and `quality_tier: "high"` only when the trace is concrete.
-- Include `sinks` pointing to inventory ids.
-- Use `location` as `path:line` and keep paths repository-relative.
-- In `trace`, name the source, data path, sink, and missing control.
-- In `boundary`, state which trust boundary is crossed.
-- In `validation`, cite the code or behaviour that proves exploitability.
-- In `rating`, explain severity and preconditions.
-- Use `artifacts` as short evidence strings like `path:line command/result`.
-
-For rejected candidates, add `ruled_out[]` entries with `sinks`, `step`, and a disposition-style `reason`: `not_reachable`, `validated`, `out_of_scope`, `duplicate`, `dependency_only`, `known_wontfix`, `insufficient_evidence`, or `expected_safe_behavior`. This vocabulary is consumed by the threat workbench.
-
-If nothing is found, still include the boundaries, inventory, method counts, and ruled-out entries for the sinks inspected. Do not omit required schema fields.
+Write `./report.json`, then use the validation endpoint described in the activation prompt. Repair every schema or reconciliation error before finishing. A clean audit still includes boundaries, inventory, method counts, and ruled-out dispositions; only `findings` is empty.

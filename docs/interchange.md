@@ -2,11 +2,11 @@
 
 Scrutineer instances (and non-scrutineer tools) can exchange a small set of
 federation records without ever exchanging finding bodies. This page documents
-the interchange format foundations: the record envelope, the shipped JSON
-schema, the on-disk record layout, the salted finding hash, and the
-claim-check endpoint. The feeds themselves (public and members-only git
-repositories), the export/import jobs, and Sigstore signing are future work
-and not described here.
+the record envelope, the shipped JSON schema, the on-disk record layout, the
+salted finding hash, the claim-check endpoint, and the two feed tiers with the
+export and import jobs that keep them in sync. Asking peers before reporting,
+and Sigstore signing for the public tier, are future work and not described
+here.
 
 ## Records
 
@@ -141,17 +141,136 @@ The hash set is cached for up to a minute so request floods cost map lookups
 rather than a findings-table scan each time; a match may therefore lag a
 freshly written finding by that long.
 
+## Feeds
+
+Each tier is a git remote serving one record set in the layout above:
+
+| Tier | Remote | Carries |
+|------|--------|---------|
+| public | `federation_public_feed`, plain git, anyone may clone | `optout`, `route`, and clean `certificate/v1` |
+| members | `federation_members_feed`, every record age-encrypted to `recipients_file` | `certificate/v2` only |
+
+The split is about what a record discloses. An opt-out, a disclosure route
+and a clean certificate say nothing about a live weakness. A `certificate/v2`
+says an advisory's advertised fix does not hold on a named repository, which
+is exploitable information, so those records are encrypted with the same age
+recipients as [encrypted sharing](encrypted-sharing.md).
+
+Two exclusions apply to every record: an opted-out repository is withdrawn
+from the `route` and `certificate` records as well as from scanning, since
+republishing a maintainer's disclosure route works against the request not to
+contact them, and a local (`file://`) repository is never published at all,
+because its URL is a path on the operator's own filesystem. A disclosure
+channel with no `disclosure_channel_at` is skipped too: `verified_at` has to
+be a timestamp that only moves when the channel does, or every export would
+rewrite the whole feed.
+
+### Export and import jobs
+
+Both run hourly from one goroutine, starting with an immediate pass so a
+freshly configured feed populates without waiting out a tick. The job is
+dormant when no feed is configured. The import runs first: an opt-out landing
+this pass withdraws its repository from the `route` and `certificate` records,
+and exporting first would keep publishing the disclosure route of a repository
+a peer has just said not to contact for another whole tick.
+
+The export syncs each tier's working clone under `<data>/work/feeds/<tier>`,
+re-pointing `origin` when the configured remote changed so editing a feed
+remote does not keep publishing to the old one, hard-resetting to the branch's remote-tracking ref so local commits that
+never landed are discarded rather than accumulating into a permanent push
+conflict, rewrites the clone to exactly the records this instance currently
+stands behind, and commits and pushes only if that changed something. An
+unchanged feed costs a fetch. A clone that died partway leaves a destination
+git refuses, so the leftovers are cleared before a re-clone rather than
+wedging every later tick.
+
+The import clones each remote in `federation_import_feeds` read-only under
+`<data>/work/feeds/import/<digest>` and archives every record into
+`interchange_records` exactly as the peer published it, keyed by
+`(feed, predicate_type, subject_digest)` so two peers disagreeing about the
+same subject each keep their row. A record that fails to decrypt, validate
+or decode is logged and skipped: one bad file from a peer must not cost the
+rest of the feed.
+
+Two kinds also apply locally. A record is applied once and then stamped
+`applied_at`, which is what stops the hourly pass from reinstating what an
+operator deliberately cleared. The stamp is written only after the record has
+actually been acted on, so a record whose apply failed, or one naming a
+repository this instance does not track yet, stays open and is retried on a
+later pass: a peer publishing an opt-out before this operator imports the
+repository would otherwise have it archived and never honoured. Bytes that
+differ from the archived ones clear the stamp, so a peer's correction is
+applied too. The stamp records which repository row it was written against,
+and deleting that repository clears it: a repository removed and re-added
+gets the peer's still-standing opt-out again rather than staying scannable
+behind a stamp naming a row that is gone.
+
+- an `optout` sets `federation_opt_out_at` on the matching repository
+  whichever peer sent it, since refusing to scan is the conservative
+  direction, and then cancels that repository's queued, running and paused
+  scans exactly as the repository page does: it is the same maintainer's
+  request, so it stops the work already under way rather than only refusing
+  the next one;
+- a `route` fills `disclosure_channel` only when this instance has none and
+  the repository has not opted out, suffixed with the peer feed so an analyst
+  can tell a peer's hint from an address the `maintainers` skill read out of
+  a verified SECURITY.md. The one channel it also overwrites is the unstamped
+  hint this same feed left on an earlier pass, which is what makes a peer
+  correcting its own route take effect instead of being archived next to the
+  address it replaces; a stamped channel or another feed's hint is left
+  alone. It leaves `disclosure_channel_at` unset, which
+  keeps the imported string off this instance's own export: republishing it
+  would present a hint nobody here validated as a confirmed route, carry the
+  peer feed remote into a public record, and make one peer's claim look like
+  two independent ones. An analyst editing the channel stamps it and puts it
+  on the feed.
+
+The repository row behind each decision is re-read per record rather than
+taken from the index, and held under that repository's federation lock while
+the record is applied: opt-outs sort before routes, so an opt-out applied
+earlier in the same pass has already changed what the route decision turns
+on, and the lock is the one the repository page takes to record an opt-out
+and the scheduler takes before its network calls, so an opt-out committed
+elsewhere cannot land between the read and the write. Repositories are
+matched by the same canonical URL the records carry (lowercased, trailing `/`
+and `.git` stripped), which is why the lookup is a map built in Go rather
+than a SQL join.
+
 ## Configuration
 
 ```yaml
 federation_salt: "shared secret distributed out of band"
 federation_contact: "security@example.com"
+federation_public_feed: "git@github.com:example/scrutineer-public-feed.git"
+federation_members_feed: "git@github.com:example/scrutineer-members-feed.git"
+federation_import_feeds:
+  - "https://github.com/peer/scrutineer-public-feed.git"
 ```
 
-Both default to empty; an empty salt disables federation, and startup
-refuses a salt without a contact. The salt is deliberately config-file only
-(no CLI flag): a secret in argv leaks via `ps` and shell history. The
-contact may also be set with `-federation-contact`.
+Everything defaults to empty, and each part switches on independently: an
+empty salt disables the claim-check endpoint, while the feeds are driven by
+their own remotes and run without a salt, since no feed record carries a
+finding hash. Startup refuses a salt without a contact. The salt is
+deliberately config-file only (no CLI flag): a secret in argv leaks via `ps`
+and shell history. The contact may also be set with `-federation-contact`,
+and the two feed remotes with `-federation-public-feed` /
+`-federation-members-feed`. The import list is config-file only: a
+repeatable flag would duplicate what a YAML sequence already expresses.
+
+Startup also refuses `federation_members_feed` without both
+`recipients_file` and `identity_file`, the two tiers sharing one git remote
+(each would prune what the other publishes), and any feed remote carrying
+credentials: the remote reaches the job's error messages and log fields, so
+a token in one would end up in the logs. Configure a git credential helper
+on the host instead. The refusal itself names the remote with its userinfo
+replaced, since that message is what the startup logger prints.
+
+Feed remotes are pushed with the ambient git credentials and
+`GIT_TERMINAL_PROMPT=0`, so a remote whose credentials are missing fails the
+job fast instead of blocking it on a prompt nobody can answer, and under
+`GIT_ALLOW_PROTOCOL=https:ssh:file`, so an ambient `url.<base>.insteadOf` on
+the host cannot rewrite a validated feed remote onto a transport (`ext::`,
+which hands git a shell command) that startup never approved.
 
 Like the rest of the web surface, `/claim-check` sits behind the loopback
 Host check (see [threatmodel.md](../threatmodel.md)). Exposing it to peers is

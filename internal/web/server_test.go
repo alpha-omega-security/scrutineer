@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -2102,6 +2103,142 @@ func TestMaintainersSortOptions(t *testing.T) {
 	newestOrder := orderBy("/maintainers?sort=newest")
 	if newestOrder[0] != charlie {
 		t.Errorf("sort=newest expected charlie first, got %v", newestOrder)
+	}
+}
+
+func TestMaintainersSortByRepositoryAndFindingCounts(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	maintainers := []db.Maintainer{
+		{Login: "none", Name: "A None"},
+		{Login: "one", Name: "B One"},
+		{Login: "many", Name: "C Many"},
+		{Login: "noisy", Name: "D Noisy"},
+	}
+	for i := range maintainers {
+		if err := s.DB.Create(&maintainers[i]).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	type repoSeed struct {
+		name       string
+		maintainer int
+		skill      string
+		findings   int
+	}
+	seeds := []repoSeed{
+		{name: "one", maintainer: 1, skill: deepDiveSkillName, findings: 1},
+		{name: "many-a", maintainer: 2, skill: deepDiveSkillName, findings: 1},
+		{name: "many-b", maintainer: 2, skill: "trivy", findings: 1},
+		{name: "noisy", maintainer: 3, skill: "semgrep", findings: 5},
+	}
+	for _, seed := range seeds {
+		repo := db.Repository{URL: "https://github.com/example/" + seed.name, Name: seed.name}
+		if err := s.DB.Create(&repo).Error; err != nil {
+			t.Fatal(err)
+		}
+		if err := s.DB.Model(&repo).Association("Maintainers").Append(&maintainers[seed.maintainer]); err != nil {
+			t.Fatal(err)
+		}
+		kind := "skill"
+		if seed.skill == "trivy" {
+			kind = "import"
+		}
+		scan := db.Scan{RepositoryID: repo.ID, Kind: kind, Status: db.ScanDone, SkillName: seed.skill}
+		if err := s.DB.Create(&scan).Error; err != nil {
+			t.Fatal(err)
+		}
+		for i := range seed.findings {
+			finding := db.Finding{
+				ScanID: scan.ID, RepositoryID: repo.ID,
+				Title: fmt.Sprintf("%s-%d", seed.name, i), Severity: "High",
+			}
+			if err := s.DB.Create(&finding).Error; err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	order := func(path string) []string {
+		t.Helper()
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, localReq("GET", path))
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s status %d: %s", path, w.Code, w.Body.String())
+		}
+		body := w.Body.String()
+		logins := []string{"none", "one", "many", "noisy"}
+		positions := make(map[string]int, len(logins))
+		for _, login := range logins {
+			positions[login] = strings.Index(body, ">"+login+"</td>")
+			if positions[login] < 0 {
+				t.Fatalf("%s missing maintainer %q", path, login)
+			}
+		}
+		sort.Slice(logins, func(i, j int) bool {
+			return positions[logins[i]] < positions[logins[j]]
+		})
+		return logins
+	}
+
+	assertOrder := func(path string, want []string) {
+		t.Helper()
+		if got := order(path); !slices.Equal(got, want) {
+			t.Errorf("%s order = %v, want %v", path, got, want)
+		}
+	}
+	assertOrder("/maintainers?sort=findings", []string{"many", "one", "none", "noisy"})
+	assertOrder("/maintainers?sort=findings.asc", []string{"none", "noisy", "one", "many"})
+	assertOrder("/maintainers?sort=repos", []string{"many", "one", "noisy", "none"})
+	assertOrder("/maintainers?sort=repos.asc", []string{"none", "one", "noisy", "many"})
+}
+
+func TestMaintainersCountSortRunsBeforePagination(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	for i := range perPage {
+		m := db.Maintainer{Login: fmt.Sprintf("filler-%02d", i), Name: fmt.Sprintf("A Filler %02d", i)}
+		if err := s.DB.Create(&m).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	priority := db.Maintainer{Login: "priority", Name: "Z Priority"}
+	if err := s.DB.Create(&priority).Error; err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://github.com/example/priority", Name: "priority"}
+	if err := s.DB.Create(&repo).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DB.Model(&repo).Association("Maintainers").Append(&priority); err != nil {
+		t.Fatal(err)
+	}
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: deepDiveSkillName}
+	if err := s.DB.Create(&scan).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DB.Create(&db.Finding{
+		ScanID: scan.ID, RepositoryID: repo.ID, Title: "priority finding", Severity: "High",
+	}).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	for _, key := range []string{"repos", "findings"} {
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, localReq("GET", "/maintainers?sort="+key))
+		if w.Code != http.StatusOK {
+			t.Fatalf("sort=%s status %d: %s", key, w.Code, w.Body.String())
+		}
+		body := w.Body.String()
+		if !strings.Contains(body, ">priority</td>") {
+			t.Errorf("sort=%s omitted high-count maintainer from page one", key)
+		}
+		if got := strings.Count(body, `<tr id="maintainer-`); got != perPage {
+			t.Errorf("sort=%s rendered %d rows, want %d", key, got, perPage)
+		}
 	}
 }
 

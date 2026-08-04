@@ -132,14 +132,55 @@ func TestFlagsMerge_cliFlagWins(t *testing.T) {
 }
 
 func TestValidateFederation(t *testing.T) {
-	if err := validateFederation("s3cret", "security@example.com"); err != nil {
-		t.Errorf("salt with contact must be accepted: %v", err)
+	for _, tc := range []struct {
+		name string
+		f    flags
+		want bool
+	}{
+		{"salt with contact", flags{federationSalt: "s3cret", federationContact: "security@example.com"}, true},
+		{"federation disabled", flags{}, true},
+		{"salt without contact", flags{federationSalt: "s3cret"}, false},
+		{"members feed with recipients and identity", flags{federationMembersFeed: "git@host:o/f.git", recipientsFile: "./recipients.txt", identityFile: "~/.ssh/id_ed25519"}, true},
+		{"members feed without recipients", flags{federationMembersFeed: "git@host:o/f.git", identityFile: "~/.ssh/id_ed25519"}, false},
+		{"members feed without identity", flags{federationMembersFeed: "git@host:o/f.git", recipientsFile: "./recipients.txt"}, false},
+		{"public feed needs nothing else", flags{federationPublicFeed: "git@host:o/f.git"}, true},
+		{"credentialed public feed", flags{federationPublicFeed: "https://u:tok@host/o/f.git"}, false},
+		{"credentialed import feed", flags{federationImportFeeds: []string{"https://u:tok@host/o/f.git"}}, false},
+		{"both tiers on one remote", flags{
+			federationPublicFeed: "git@host:o/f.git", federationMembersFeed: "git@host:o/f.git",
+			recipientsFile: "./recipients.txt", identityFile: "~/.ssh/id_ed25519",
+		}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateFederation(&tc.f)
+			if tc.want && err != nil {
+				t.Errorf("must be accepted: %v", err)
+			}
+			if !tc.want && err == nil {
+				t.Error("must be refused")
+			}
+		})
 	}
-	if err := validateFederation("", ""); err != nil {
-		t.Errorf("federation disabled must be accepted: %v", err)
+}
+
+// A whitespace-only remote must come out of validation as no remote at all.
+// ValidateFeedRemote trims its own copy and so reports it as fine, and every
+// != "" test downstream, StartFederation's included, would then read it as
+// configured and run an hourly clone job against a remote git cannot resolve.
+func TestValidateFederation_dropsBlankRemotes(t *testing.T) {
+	f := flags{
+		federationPublicFeed:  "  ",
+		federationMembersFeed: "\t",
+		federationImportFeeds: []string{" ", "  git@host:o/f.git  ", ""},
 	}
-	if err := validateFederation("s3cret", ""); err == nil {
-		t.Error("salt without contact must be refused")
+	if err := validateFederation(&f); err != nil {
+		t.Fatalf("blank remotes are no configuration, not a bad one: %v", err)
+	}
+	if f.federationPublicFeed != "" || f.federationMembersFeed != "" {
+		t.Errorf("blank feeds left configured: public %q, members %q", f.federationPublicFeed, f.federationMembersFeed)
+	}
+	if !slices.Equal(f.federationImportFeeds, []string{"git@host:o/f.git"}) {
+		t.Errorf("import feeds = %#v, want only the real remote, trimmed", f.federationImportFeeds)
 	}
 }
 
@@ -361,6 +402,65 @@ func TestFlagsMerge_hardenedRuntimeOnlyConfigAlias(t *testing.T) {
 	both.merge(&config.Config{HardenedRuntimeOnly: new(false), HardenedRootlessRuntime: new(true)})
 	if both.hardenedRuntimeOnly {
 		t.Error("hardened_runtime_only should take precedence over hardened_rootless_runtime")
+	}
+}
+
+func TestFlagsMerge_ecosystemsEnrichment(t *testing.T) {
+	// The flag defaults to true, so an omitted config key must leave it on and
+	// an explicit false must reach the flag.
+	omitted := &flags{ecosystemsEnrichment: true}
+	omitted.merge(&config.Config{})
+	if !omitted.ecosystemsEnrichment {
+		t.Error("omitted ecosystems_enrichment turned enrichment off")
+	}
+	off := &flags{ecosystemsEnrichment: true}
+	off.merge(&config.Config{EcosystemsEnrichment: new(false)})
+	if off.ecosystemsEnrichment {
+		t.Error("ecosystems_enrichment: false was ignored")
+	}
+	// An explicit command-line value wins over the config file.
+	cli := &flags{ecosystemsEnrichment: true, set: map[string]bool{"ecosystems-enrichment": true}}
+	cli.merge(&config.Config{EcosystemsEnrichment: new(false)})
+	if !cli.ecosystemsEnrichment {
+		t.Error("config overrode an explicit -ecosystems-enrichment flag")
+	}
+}
+
+func TestRegisterFlags_ecosystemsEnrichmentDefaultsOn(t *testing.T) {
+	f := &flags{}
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	registerFlags(fs, f)
+	if err := fs.Parse(nil); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if !f.ecosystemsEnrichment {
+		t.Error("enrichment is off by default, want on")
+	}
+	if err := fs.Parse([]string{"-ecosystems-enrichment=false"}); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if f.ecosystemsEnrichment {
+		t.Error("-ecosystems-enrichment=false did not turn enrichment off")
+	}
+}
+
+// Go's flag package does not accept the space-separated form for a boolean:
+// it leaves the flag at its default and parks the operand in Args(). This is
+// the first flag here defaulting to true, so that silently reads as the
+// opposite of what was typed. parseFlags exits on a leftover argument; this
+// pins the signal it keys on.
+func TestRegisterFlags_booleanSpaceFormLeavesAStrayArgument(t *testing.T) {
+	f := &flags{}
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	registerFlags(fs, f)
+	if err := fs.Parse([]string{"-ecosystems-enrichment", "false"}); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if !f.ecosystemsEnrichment {
+		t.Fatal("the space form now applies; the guard in parseFlags is no longer needed")
+	}
+	if fs.NArg() != 1 || fs.Arg(0) != "false" {
+		t.Fatalf("leftover args = %v, want [false] so parseFlags can refuse it", fs.Args())
 	}
 }
 

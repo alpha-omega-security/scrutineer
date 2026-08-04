@@ -1,10 +1,51 @@
 package worker
 
 import (
+	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"scrutineer/internal/skills"
 )
+
+const sharedAuditSchemaRef = "../_shared/audit-findings.schema.json"
+
+func TestAuditFindingSchemasReferenceSharedContract(t *testing.T) {
+	paths := []string{
+		"../../skills/audit-injection/schema.json",
+		"../../skills/audit-exfil/schema.json",
+		"../../skills/audit-authz/schema.json",
+	}
+	for _, path := range paths {
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		var wrapper map[string]any
+		if err := json.Unmarshal(raw, &wrapper); err != nil {
+			t.Fatalf("decode %s: %v", path, err)
+		}
+		if got := wrapper["$ref"]; got != sharedAuditSchemaRef {
+			t.Errorf("%s $ref = %v, want %q", path, got, sharedAuditSchemaRef)
+		}
+		for _, keyword := range []string{"type", "properties", "$defs"} {
+			if _, ok := wrapper[keyword]; ok {
+				t.Errorf("%s defines validation keyword %q instead of using the shared contract", path, keyword)
+			}
+		}
+	}
+}
+
+func loadBundledSchema(t *testing.T, schemaPath string) string {
+	t.Helper()
+	parsed, err := skills.ParseFile(filepath.Join(filepath.Dir(schemaPath), "SKILL.md"))
+	if err != nil {
+		t.Fatalf("load schema for %s: %v", schemaPath, err)
+	}
+	return parsed.SchemaJSON
+}
 
 // TestBundledSchemas_compileAndAcceptSamples checks that the three schemas
 // added for #182 compile and accept a representative report. repo-overview
@@ -175,6 +216,23 @@ func TestBundledSchemas_compileAndAcceptSamples(t *testing.T) {
 			`{"findings":[]}`,
 		},
 		{
+			"../../skills/audit-authz/schema.json",
+			`{"findings":[{"id":"F001","title":"Invoice lookup omits tenant ownership",
+			  "severity":"High","confidence":"high","cwe":"CWE-639","location":"internal/invoices/show.go:74",
+			  "reachability":"reachable","quality_tier":"high",
+			  "trace":"The authenticated endpoint passes the caller-controlled invoice ID to a global lookup and returns the row.",
+			  "boundary":"A tenant member may supply another tenant's invoice ID.",
+			  "validation":"Static review resolved the route middleware and repository helper, then confirmed neither checks invoice tenant membership.",
+			  "discovered_via":"source",
+			  "rating":"High because any authenticated tenant member can read another tenant's billing record.",
+			  "references":[{"url":"https://owasp.org/API-Security/editions/2023/en/0xa1-broken-object-level-authorization/",
+			    "summary":"OWASP API1:2023 Broken Object Level Authorization","tags":"authorization,idor"}]}]}`,
+		},
+		{
+			"../../skills/audit-authz/schema.json",
+			`{"findings":[]}`,
+		},
+		{
 			"../../skills/variants/schema.json",
 			`{"findings":[{"id":"F1","title":"Variant of finding #42: archive extraction escapes destination",
 			  "severity":"High","confidence":"high","cwe":"CWE-22","location":"pkg/archive/legacy.go:88",
@@ -240,11 +298,8 @@ func TestBundledSchemas_compileAndAcceptSamples(t *testing.T) {
 		},
 	}
 	for _, tc := range cases {
-		schema, err := os.ReadFile(tc.schema)
-		if err != nil {
-			t.Fatalf("read %s: %v", tc.schema, err)
-		}
-		if got := ValidateReportSchema(string(schema), tc.report); got != "" {
+		schema := loadBundledSchema(t, tc.schema)
+		if got := ValidateReportSchema(schema, tc.report); got != "" {
 			t.Errorf("%s rejected sample: %s\nreport: %s", tc.schema, got, tc.report)
 		}
 	}
@@ -363,6 +418,43 @@ func TestBundledSchemas_rejectBadShapes(t *testing.T) {
 			  "validation":"x","discovered_via":"source","rating":"x",
 			  "references":["https://example.com/advisory"]}]}`,
 			"/findings/0/references/0"},
+		{"../../skills/audit-authz/schema.json",
+			`{"findings":[{"id":"F001","title":"Harness-only IDOR","severity":"High",
+			  "confidence":"high","cwe":"CWE-639","location":"internal/invoices/show.go:74",
+			  "reachability":"harness_only","quality_tier":"high","trace":"x","boundary":"x",
+			  "validation":"x","discovered_via":"source","rating":"x"}]}`,
+			"/findings/0/reachability"},
+		{"../../skills/audit-authz/schema.json",
+			`{"findings":[{"id":"F001","title":"Low-quality tenant bypass","severity":"High",
+			  "confidence":"high","cwe":"CWE-863","location":"internal/invoices/show.go:74",
+			  "reachability":"reachable","quality_tier":"low","trace":"x","boundary":"x",
+			  "validation":"x","discovered_via":"source","rating":"x"}]}`,
+			"/findings/0/quality_tier"},
+		{"../../skills/audit-authz/schema.json",
+			`{"findings":[{"id":"F001","title":"Wrong provenance","severity":"High",
+			  "confidence":"high","cwe":"CWE-862","location":"internal/admin/delete.go:51",
+			  "reachability":"reachable","quality_tier":"high","trace":"x","boundary":"x",
+			  "validation":"x","discovered_via":"documentation","rating":"x"}]}`,
+			"/findings/0/discovered_via"},
+		{"../../skills/audit-authz/schema.json",
+			`{"findings":[{"id":"F001","title":"String references","severity":"High",
+			  "confidence":"high","cwe":"CWE-639","location":"internal/invoices/show.go:74",
+			  "reachability":"reachable","quality_tier":"high","trace":"x","boundary":"x",
+			  "validation":"x","discovered_via":"source","rating":"x",
+			  "references":["https://example.com/advisory"]}]}`,
+			"/findings/0/references/0"},
+		{"../../skills/audit-authz/schema.json",
+			`{"findings":[{"id":"F001","title":"Invalid confidence","severity":"High",
+			  "confidence":"certain","cwe":"CWE-639","location":"internal/invoices/show.go:74",
+			  "reachability":"reachable","quality_tier":"high","trace":"x","boundary":"x",
+			  "validation":"x","discovered_via":"source","rating":"x"}]}`,
+			"/findings/0/confidence"},
+		{"../../skills/audit-authz/schema.json",
+			`{"findings":[{"id":"F001","title":"Location without line","severity":"High",
+			  "confidence":"high","cwe":"CWE-639","location":"internal/invoices/show.go",
+			  "reachability":"reachable","quality_tier":"high","trace":"x","boundary":"x",
+			  "validation":"x","discovered_via":"source","rating":"x"}]}`,
+			"/findings/0/location"},
 		{"../../skills/variants/schema.json",
 			`{"findings":[{"id":"F1","title":"Variant of finding #42: weak confidence","severity":"High",
 			  "confidence":"maybe","cwe":"CWE-22","location":"pkg/archive/legacy.go:88",
@@ -419,11 +511,8 @@ func TestBundledSchemas_rejectBadShapes(t *testing.T) {
 			"/components/0/provenance"},
 	}
 	for _, tc := range cases {
-		schema, err := os.ReadFile(tc.schema)
-		if err != nil {
-			t.Fatalf("read %s: %v", tc.schema, err)
-		}
-		got := ValidateReportSchema(string(schema), tc.report)
+		schema := loadBundledSchema(t, tc.schema)
+		got := ValidateReportSchema(schema, tc.report)
 		if got == "" {
 			t.Errorf("%s accepted bad report %s", tc.schema, tc.report)
 			continue

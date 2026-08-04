@@ -326,7 +326,16 @@ func (s *Server) resolveSBOMPackages(uploadID uint) {
 	for i := range pkgs {
 		p := &pkgs[i]
 		if p.PURL == "" {
-			s.DB.Model(p).Update("resolve_error", "no purl")
+			s.DB.Model(p).Update("resolve_error", noPURLError)
+			continue
+		}
+		if !s.ecosystemsEnrichment {
+			// Whatever an earlier enabled run concluded is more precise than
+			// "the operator turned enrichment off", so a re-resolve with the
+			// setting flipped keeps it instead of overwriting it.
+			if p.ResolveError == "" {
+				s.DB.Model(p).Update("resolve_error", ecosystemsDisabled)
+			}
 			continue
 		}
 		repoURL := s.resolvePURL(ctx, p.PURL)

@@ -118,8 +118,12 @@ type flags struct {
 	recipientsFile        string
 	identityFile          string
 	autoRejectMissedCount int
+	ecosystemsEnrichment  bool
 	federationSalt        string
 	federationContact     string
+	federationPublicFeed  string
+	federationMembersFeed string
+	federationImportFeeds []string
 	subprojectScope       string
 	monorepoAttribution   bool
 	skillLocal            skillDirs
@@ -131,18 +135,78 @@ type flags struct {
 
 // validateFederation refuses a federation salt without a contact:
 // claim-check would confirm matches while giving peers no way to
-// coordinate, which is the endpoint's whole purpose.
-func validateFederation(salt, contact string) error {
-	if salt != "" && contact == "" {
+// coordinate, which is the endpoint's whole purpose. It also refuses the
+// configurations that would leak or misfire: a members feed without age
+// recipients would push non-clean certificates in the clear, and one without
+// an identity could not read back what it published and so would re-encrypt
+// the whole feed on every tick. It trims the feed remotes in f on the way
+// through, so a blank one reads as no feed everywhere downstream.
+func validateFederation(f *flags) error {
+	// Trimmed and emptied out here rather than only inside ValidateFeedRemote,
+	// which trims its own copy: a whitespace-only remote otherwise reads as
+	// configured for every != "" test below and for StartFederation, which
+	// would then clone a remote git cannot resolve, every tick.
+	f.federationPublicFeed = strings.TrimSpace(f.federationPublicFeed)
+	f.federationMembersFeed = strings.TrimSpace(f.federationMembersFeed)
+	var imports []string
+	for _, remote := range f.federationImportFeeds {
+		if remote = strings.TrimSpace(remote); remote != "" {
+			imports = append(imports, remote)
+		}
+	}
+	f.federationImportFeeds = imports
+	if f.federationSalt != "" && f.federationContact == "" {
 		return errors.New("federation: federation_contact is required when federation_salt is set")
 	}
+	if f.federationMembersFeed != "" && (f.recipientsFile == "" || f.identityFile == "") {
+		return errors.New("federation: recipients_file and identity_file are both required when federation_members_feed is set")
+	}
+	if f.federationPublicFeed != "" && f.federationPublicFeed == f.federationMembersFeed {
+		return errors.New("federation: the public and members feeds must not share a git remote; each tier prunes the records the other publishes")
+	}
+	for _, remote := range append([]string{f.federationPublicFeed, f.federationMembersFeed}, f.federationImportFeeds...) {
+		if remote == "" {
+			continue
+		}
+		if err := web.ValidateFeedRemote(remote); err != nil {
+			return err
+		}
+	}
 	return nil
+}
+
+// mergeFederation layers the federation block of the config file under the
+// flags, same precedence as merge itself. federation_salt has no flag so
+// config always applies, and the two remote lists are config-file only.
+func (f *flags) mergeFederation(cfg *config.Config) {
+	if cfg.FederationSalt != "" {
+		f.federationSalt = cfg.FederationSalt
+	}
+	if cfg.FederationContact != "" && !f.set["federation-contact"] {
+		f.federationContact = cfg.FederationContact
+	}
+	if cfg.FederationPublicFeed != "" && !f.set["federation-public-feed"] {
+		f.federationPublicFeed = cfg.FederationPublicFeed
+	}
+	if cfg.FederationMembersFeed != "" && !f.set["federation-members-feed"] {
+		f.federationMembersFeed = cfg.FederationMembersFeed
+	}
+	f.federationImportFeeds = cfg.FederationImportFeeds
 }
 
 func parseFlags() *flags {
 	f := &flags{}
 	registerFlags(flag.CommandLine, f)
 	flag.Parse()
+	// Subcommands are consumed by dispatch() before we get here, so anything
+	// left is a stray argument. Refusing it catches the space-separated form
+	// of a boolean flag, which the flag package silently drops: `-flag false`
+	// leaves the flag at its default and parks "false" here, and for a flag
+	// that defaults to true that reads as the exact opposite of what was typed.
+	if flag.NArg() > 0 {
+		fmt.Fprintf(os.Stderr, "unexpected argument %q (booleans take the -flag=false form)\n", flag.Arg(0))
+		os.Exit(2) //nolint:mnd // matches flag.ExitOnError's usage-error exit code
+	}
 
 	f.set = make(map[string]bool)
 	flag.Visit(func(fl *flag.Flag) { f.set[fl.Name] = true })
@@ -183,9 +247,15 @@ func registerFlags(fs *flag.FlagSet, f *flags) {
 	fs.StringVar(&f.recipientsFile, "recipients-file", "", "age recipients file (public keys) for encrypted export")
 	fs.StringVar(&f.identityFile, "identity-file", "", "age identity file or SSH private key for decrypting imports")
 	fs.IntVar(&f.autoRejectMissedCount, "auto-reject-missed-count", 0, "auto-reject findings after this many consecutive missed rescans (0 disables)")
+	fs.BoolVar(&f.ecosystemsEnrichment, "ecosystems-enrichment", true, "enrich repositories from ecosyste.ms (per-repository cache, warm on repo add, PURL-to-repository resolution); =false stops every lookup scrutineer's own process makes and leaves the dependents cache empty. Takes the -flag=false form")
 	// federation_salt has no flag on purpose: a secret in argv leaks via
 	// ps and shell history, so it is config-file only.
 	fs.StringVar(&f.federationContact, "federation-contact", "", "contact returned by the claim-check endpoint on a finding-hash match")
+	fs.StringVar(&f.federationPublicFeed, "federation-public-feed", "", "git remote the public interchange feed is pushed to")
+	fs.StringVar(&f.federationMembersFeed, "federation-members-feed", "", "git remote the age-encrypted members interchange feed is pushed to")
+	// federation_import_feeds is a list of remotes and is config-file only:
+	// a repeatable flag would duplicate what the config file already
+	// expresses as a YAML sequence.
 	fs.Var(&f.skillLocal, "skills", "additional directory to load SKILL.md files from, overriding bundled skills with the same name (repeatable)")
 }
 
@@ -282,12 +352,10 @@ func (f *flags) merge(cfg *config.Config) {
 	if cfg.AutoRejectMissedCount > 0 && !f.set["auto-reject-missed-count"] {
 		f.autoRejectMissedCount = cfg.AutoRejectMissedCount
 	}
-	if cfg.FederationSalt != "" {
-		f.federationSalt = cfg.FederationSalt
+	if cfg.EcosystemsEnrichment != nil && !f.set["ecosystems-enrichment"] {
+		f.ecosystemsEnrichment = *cfg.EcosystemsEnrichment
 	}
-	if cfg.FederationContact != "" && !f.set["federation-contact"] {
-		f.federationContact = cfg.FederationContact
-	}
+	f.mergeFederation(cfg)
 
 	// Seed the model pick list from the active harness's own defaults,
 	// so a fresh install of any backend has a working list with correct
@@ -380,7 +448,7 @@ func validateFlags(f *flags) error {
 	if err := config.ValidateSubprojectScope(f.subprojectScope); err != nil {
 		return err
 	}
-	if err := validateFederation(f.federationSalt, f.federationContact); err != nil {
+	if err := validateFederation(f); err != nil {
 		return err
 	}
 	return validateModelBaseURL(f.modelBaseURL)
@@ -558,9 +626,6 @@ func run(log *slog.Logger) error {
 			broker.Publish(web.Event{Name: name, Data: data, ScanID: scanID, RepoID: repoID})
 		},
 	}
-	w.RefreshEcosystemsCache = func(ctx context.Context, repoID uint) error {
-		return worker.RefreshEcosystems(ctx, gdb, repoID, true, log)
-	}
 	w.Register(q)
 
 	srv, err := web.New(gdb, q, log, broker, w)
@@ -569,6 +634,7 @@ func run(log *slog.Logger) error {
 	}
 	srv.SkillsRepoSHA = skillsRepoSHA
 	srv.Version = version
+	wireEcosystems(f.ecosystemsEnrichment, w, srv, gdb, log)
 	if h, err := worker.HarnessByName(f.backend); err == nil {
 		srv.Backend = worker.HarnessName(h)
 	}
@@ -578,6 +644,9 @@ func run(log *slog.Logger) error {
 	srv.FederationContact = f.federationContact
 	srv.MonorepoAttribution = f.monorepoAttribution
 	srv.VINCE = cfg.VINCE
+	srv.FederationPublicFeed = f.federationPublicFeed
+	srv.FederationMembersFeed = f.federationMembersFeed
+	srv.FederationImportFeeds = f.federationImportFeeds
 
 	if f.recipientsFile != "" {
 		recs, err := loadRecipients(f.recipientsFile)
@@ -602,6 +671,7 @@ func run(log *slog.Logger) error {
 	go q.Start(ctx)
 	go srv.StartScheduler(ctx)
 	go srv.StartRepositoryHealthScorer(ctx)
+	go srv.StartFederation(ctx)
 
 	httpSrv := &http.Server{Addr: f.addr, Handler: srv.Handler(), ReadHeaderTimeout: shutdownTimeout}
 	go func() {
@@ -622,6 +692,22 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	return nil
+}
+
+// wireEcosystems configures the worker's per-scan cache refresh and the
+// server's PURL/prefetch seams from a single enrichment setting. When off,
+// RefreshEcosystemsCache is left nil so a scan makes no ecosyste.ms call at
+// all rather than one that fails against a denied domain, and the server's
+// seams are neutered via DisableEcosystems. Called after both are constructed
+// but before q.Start, so nothing reads the field before it is set.
+func wireEcosystems(enabled bool, w *worker.Worker, srv *web.Server, gdb *gorm.DB, log *slog.Logger) {
+	if !enabled {
+		srv.DisableEcosystems()
+		return
+	}
+	w.RefreshEcosystemsCache = func(ctx context.Context, repoID uint) error {
+		return worker.RefreshEcosystems(ctx, gdb, repoID, true, log)
+	}
 }
 
 func retireRemovedSkills(log *slog.Logger, gdb *gorm.DB) {
@@ -984,6 +1070,14 @@ func resolveEgressSidecar(rt worker.ContainerRuntime, f *flags, allow []string, 
 // starts from HardenedEgressAllow and ignores cfg.EgressAllow (the
 // operator must drop --hardened to widen). The model base URL host is
 // still auto-added in both modes since it routes the same model API.
+//
+// ecosystems_enrichment deliberately does NOT filter *.ecosyste.ms out of
+// this list. Dropping it would 403 the metadata, packages and advisories
+// skills, which triage runs unconditionally, and their parsers replace the
+// repository's whole row set: a blessed empty report would wipe the packages
+// and advisories already recorded. The setting stops the enrichment
+// scrutineer's own process performs; denying the domain to the runner is the
+// operator's network policy to write.
 func buildEgressAllow(harnessHosts []string, hardened bool, cfg *config.Config, modelBaseURL string, log *slog.Logger) []string {
 	allow := append([]string{}, harnessHosts...)
 	if hardened {

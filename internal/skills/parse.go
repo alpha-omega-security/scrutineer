@@ -12,6 +12,7 @@
 package skills
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
@@ -131,12 +132,32 @@ type Parsed struct {
 }
 
 // ParseFile reads a single SKILL.md (with its sibling schema.json if any)
-// and returns a Parsed. Errors here are hard failures: unparseable YAML,
-// missing description, or IO trouble. Softer issues land in p.Warnings.
+// and returns a Parsed. Relative schema references are bundled so the DB row
+// and staged workspace remain self-contained. Errors here are hard failures:
+// unparseable YAML, missing description, or IO trouble. Softer issues land in
+// p.Warnings.
 func ParseFile(path string) (*Parsed, error) {
+	return parseFileWithin(path, "")
+}
+
+func parseFileWithin(path, collectionRoot string) (*Parsed, error) {
 	base, err := harnessskills.Parse(path)
 	if err != nil {
 		return nil, err
+	}
+	if base.SchemaJSON != "" {
+		if collectionRoot == "" {
+			collectionRoot = filepath.Dir(base.SourcePath)
+		}
+		schemaPath := filepath.Join(base.SourcePath, "schema.json")
+		bundled, err := bundleLocalSchemaRefs(schemaPath, collectionRoot, base.SchemaJSON)
+		if err != nil {
+			return nil, fmt.Errorf("%s: bundle schema.json: %w", path, err)
+		}
+		if bundled != base.SchemaJSON {
+			base.SchemaJSON = bundled
+			base.SourceHash = hashBundledSchema(base.SourceHash, bundled)
+		}
 	}
 	// The module treats a missing description as a warning; scrutineer treats
 	// it as a hard error so a bundled skill without one fails startup.
@@ -154,6 +175,10 @@ func ParseFile(path string) (*Parsed, error) {
 	}
 	p.extractMetadataKeys()
 	return p, nil
+}
+
+func hashBundledSchema(sourceHash, schema string) string {
+	return fmt.Sprintf("%x", sha256.Sum256([]byte(sourceHash+"\x00"+schema)))
 }
 
 // validateMetadata checks the scrutineer.* keys strictly. agentskills.io

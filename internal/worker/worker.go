@@ -151,8 +151,10 @@ type Worker struct {
 
 	// RefreshEcosystemsCache, when non-nil, runs the stale-only ecosyste.ms
 	// cache refresh at scan start so rescans see fresh-enough data.
-	// main wires it to RefreshEcosystems; tests leave it nil so scans stay
-	// hermetic. Best-effort: errors are logged, never fail the scan.
+	// main wires it to RefreshEcosystems, and leaves it nil under
+	// `ecosystems_enrichment: false` so a scan makes no ecosyste.ms call at
+	// all; tests leave it nil so scans stay hermetic. Best-effort: errors are
+	// logged, never fail the scan.
 	RefreshEcosystemsCache func(ctx context.Context, repoID uint) error
 
 	// VIDCommand overrides the vid binary name for computeVID. Tests

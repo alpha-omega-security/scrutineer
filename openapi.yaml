@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Scrutineer Skill API
-  version: 0.3.0
+  version: 0.4.0
   description: |
     A narrow HTTP surface that claude-code skills use while they run. The
     goal is enough to let a skill orchestrate other skills and read prior
@@ -24,6 +24,36 @@ security:
   - bearerAuth: []
 
 paths:
+  /openapi.yaml:
+    get:
+      summary: Fetch this OpenAPI document
+      description: |
+        Returns the embedded copy of `openapi.yaml`, so a skill or an external
+        tool can read the API surface from a running server without a checkout.
+
+        Two ways in. From localhost it is unauthenticated, because a caller
+        discovering the API has no running scan to take a bearer token from;
+        the host check is the boundary, as on the browser UI. A skill inside
+        the runner container cannot pass that check -- it reaches the server
+        through the egress proxy on the host endpoint `api_base` advertises,
+        which forwards the original `Host` -- so it authenticates with the
+        per-scan bearer token it already holds for the rest of this API.
+        See threatmodel.md.
+      operationId: getOpenAPISpec
+      security:
+        - {}
+        - bearerAuth: []
+      responses:
+        "200":
+          description: The OpenAPI document
+          content:
+            application/yaml:
+              schema:
+                type: string
+        "401":
+          description: |
+            Request came from a non-local host without a bearer token
+            belonging to a currently running scan
   /claim-check:
     servers:
       - url: http://127.0.0.1:8080
@@ -236,7 +266,9 @@ paths:
       description: >
         Returns the raw upstream payload pre-fetched and cached server-side.
         A 404 signals nothing is cached, in which case the caller falls
-        back to a direct WebFetch.
+        back to a direct WebFetch. When the operator sets
+        ecosystems_enrichment false, no source is ever cached, so every
+        request answers 404 and the fallback is the only path.
       operationId: getRepositoryEcosystemsRaw
       parameters:
         - $ref: '#/components/parameters/RepositoryID'
@@ -728,9 +760,20 @@ paths:
                 labels:
                   type: array
                   items: { type: string }
-                  description: Label names. Missing labels are created on demand.
+                  description: |
+                    Label names, replacing the finding's current set. Missing
+                    labels are created on demand. Blank and whitespace-only
+                    names are trimmed and ignored, so a request whose names are
+                    all blank clears every label just as `[]` does. The field
+                    itself is required: omitting it or sending null is rejected
+                    rather than treated as a clear-all.
       responses:
         '204': { description: Updated }
+        '400':
+          description: Body is not valid JSON, or has no labels array
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
 
   /findings/{id}/history:
     get:
@@ -1542,6 +1585,9 @@ components:
         mitigation:    { type: string, description: "Markdown body of operational mitigation guidance from the mitigate skill: workarounds, detection, optionally a semgrep rule (see mitigation_semgrep)." }
         mitigation_semgrep: { type: string, description: "Optional YAML semgrep rule from the mitigate skill. Empty when no rule was warranted." }
         dup_check:     { type: string, description: "Audit agent's one-sentence rationale for why this finding is distinct from the siblings already filed under the same scan_group. Empty for findings from skills that do not emit it." }
+        novelty:       { type: string, enum: [unfixed, fixed, unclear, not_checked, ""], description: "Latest upstream novelty state. A touched file remains unclear until revalidate classifies the staged history." }
+        novelty_checked_commit: { type: string, description: "Repository HEAD compared with the finding's scanned commit for novelty." }
+        novelty_checked_at: { type: string, format: date-time, nullable: true }
 
     FindingDetail:
       allOf:

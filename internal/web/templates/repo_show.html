@@ -185,7 +185,7 @@
         Federation opt-out
       </h3>
       {{if .Repo.FederationOptOutAt}}
-        <p class="text-sm mt-2">Requested {{since .Repo.FederationOptOutAt}}. Scans in flight were stopped and new ones are refused, including scheduled runs.</p>
+        <p class="text-sm mt-2">Requested {{since .Repo.FederationOptOutAt}}. Scans in flight were stopped and new ones are refused, including scheduled runs, and this repository is withdrawn from the interchange feeds.</p>
         {{if .Repo.FederationOptOutReason}}
           <p class="text-sm mt-1 whitespace-pre-wrap">{{.Repo.FederationOptOutReason}}</p>
         {{end}}
@@ -202,11 +202,11 @@
           <div class="grid grid-cols-[1fr_auto] gap-2 mt-2">
             <input class="input text-xs" type="text" name="reason"
                    value="{{.Repo.FederationOptOutReason}}"
-                   placeholder="reason (optional)">
+                   placeholder="reason (optional, published with the opt-out)">
             <button class="btn-sm" type="submit">Save</button>
           </div>
         </form>
-        <p class="text-xs text-muted-foreground mt-1">Cancels the scans queued, running and paused on this repository, then refuses every new one: a manual run, a scheduled one, and any automatic follow-up.</p>
+        <p class="text-xs text-muted-foreground mt-1">Cancels the scans queued, running and paused on this repository, then refuses every new one: a manual run, a scheduled one, and any automatic follow-up. Published on the public interchange feed, if this instance is configured with one, so other federated instances honour it too, and set here automatically when a peer feed carries an opt-out for this repository. See <code>docs/interchange.md</code>.</p>
       </details>
     </div>
 

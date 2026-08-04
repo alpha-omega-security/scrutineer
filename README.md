@@ -176,6 +176,7 @@ Adding a repo enqueues the `triage` skill, whose SKILL.md lists the further skil
 | `variants` | Starting from one confirmed finding, searches the current repository for distinct, high-confidence sibling instances of the same root cause |
 | `audit-injection` | Opt-in static audit for command/code execution, unsafe deserialization, and server-side template injection with ecosystem-specific references |
 | `audit-exfil` | Opt-in static audit for SSRF, path traversal, XXE, and response or diagnostic leakage with ecosystem-specific references |
+| `audit-authz` | Opt-in static audit for IDOR, tenant isolation, fail-open guards, privilege escalation, and authorization decisions based on unverified claims |
 
 Edit `skills/triage/SKILL.md` to change what gets run by default. Drop new skill directories in `skills/` to add scan types; no code changes needed. See [docs/skills.md](docs/skills.md) for the frontmatter reference, the `scrutineer.*` metadata keys, the `context.json` shape, output kinds, schema validation, and the skill-facing HTTP API.
 
@@ -221,7 +222,7 @@ Each finding from the `security-deep-dive` skill starts at **new** and moves thr
 
 Each finding page has a notes section for recording triage reasoning and communication history.
 
-The repository page carries a Federation opt-out control: recording one cancels the repository's queued, running and paused scans, then refuses every new scan on it, including scheduled runs and automatic follow-ups.
+The repository page carries a Federation opt-out control: recording one cancels the repository's queued, running and paused scans, then refuses every new scan on it, including scheduled runs and automatic follow-ups. It also withdraws the repository from the interchange feeds, and, when the public feed is configured, publishes the request so other federated instances honour it too; an opt-out arriving on a peer feed sets it here the same way. See [docs/interchange.md](docs/interchange.md).
 
 The Chat tab on a repository or a finding opens a read-only conversation with the agent about that code: it works from a copy of the clone plus a snapshot of the findings, and is restricted to reading and searching, so it can explain and cross-check but never modify anything. Each conversation keeps its own working copy on disk, so delete the ones you are done with from the conversation page to reclaim the space.
 
@@ -346,6 +347,7 @@ The `docker build` commands shown for the runner image and profiles can be run a
 | `-max-turns` | `0` | Per-scan turn cap (0 = unlimited); claude backend only, codex and opencode have no turn cap |
 | `-schema-strict` | `false` | Fail a scan when its `report.json` does not validate against the skill's `schema.json` (default: warn in the scan log and parse anyway) |
 | `-model-base-url` | - | Custom model API base URL for the active backend (env fallback: `ANTHROPIC_BASE_URL` for claude). `-anthropic-base-url` is a deprecated alias. |
+| `-ecosystems-enrichment` | `true` | Enrich repositories from ecosyste.ms: the per-repository cache, the warm on repo add, and the PURL-to-repository resolution behind SBOM and dependency import. `=false` stops every lookup scrutineer's own process makes, leaves `egress_allow` untouched (the bundled skills still fetch ecosyste.ms themselves), and leaves the Dependents tab and dependent-exposure analysis with no data |
 
 ## Config file
 
@@ -407,7 +409,7 @@ See [SECURITY.md](SECURITY.md) for the reporting policy and [threatmodel.md](thr
 - [docs/backup.md](docs/backup.md) -- backing up and restoring the database (built-in `scrutineer backup`/`restore`, `sqlite3`, Litestream)
 - [docs/development.md](docs/development.md) -- project layout, regenerating embedded data, running tests
 - [docs/encrypted-sharing.md](docs/encrypted-sharing.md) -- encrypted findings sharing between contributors (age + SSH keys, team keyring management)
-- [docs/interchange.md](docs/interchange.md) -- federation interchange format: in-toto record envelope, salted finding hashes, the claim-check endpoint
+- [docs/interchange.md](docs/interchange.md) -- federation interchange format: in-toto record envelope, salted finding hashes, the claim-check endpoint, the public and members-only feeds with their export/import jobs (threat surface: T14 in [threatmodel.md](threatmodel.md))
 - [docs/codex.md](docs/codex.md) -- the codex backend: what differs from claude, sandbox interaction, adding another harness
 - [docs/opencode.md](docs/opencode.md) -- the opencode backend: provider-agnostic credentials and egress
 - [docs/podman.md](docs/podman.md) -- security model and known gaps for the podman / rootless runtime (sandbox isolation, hardened-mode verification)

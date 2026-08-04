@@ -67,12 +67,17 @@ type Repository struct {
 	// SECURITY.md / CODEOWNERS / registry data; the analyst can overwrite
 	// it from the repo page.
 	DisclosureChannel string
+	// DisclosureChannelAt is when DisclosureChannel last changed. It is the
+	// verified_at of the interchange route record, so it only moves on a
+	// real change: bumping it on every maintainers re-run would rewrite the
+	// record and churn the public feed with no new information.
+	DisclosureChannelAt *time.Time
 
 	// FederationOptOutAt records that this repository's maintainer asked
-	// federated instances neither to scan it nor to contact them about it.
-	// Non-null blocks every scan enqueue and stops the scheduler before it
-	// makes any network call. FederationOptOutReason is the optional reason
-	// the maintainer gave.
+	// federated instances to neither scan it nor contact them about it.
+	// Non-null blocks new scans, keeps the repository out of every other
+	// feed record, and publishes an optout record on the public feed.
+	// FederationOptOutReason is the optional reason that travels with it.
 	FederationOptOutAt     *time.Time
 	FederationOptOutReason string
 
@@ -476,6 +481,15 @@ const (
 	FindingDuplicate    FindingLifecycle = "duplicate"
 )
 
+type FindingNovelty string
+
+const (
+	FindingNoveltyUnfixed    FindingNovelty = "unfixed"
+	FindingNoveltyFixed      FindingNovelty = "fixed"
+	FindingNoveltyUnclear    FindingNovelty = "unclear"
+	FindingNoveltyNotChecked FindingNovelty = "not_checked"
+)
+
 // FindingLifecycles lists every finding status in workflow order. Used to
 // render the Status filter on the findings index.
 var FindingLifecycles = []FindingLifecycle{
@@ -567,6 +581,43 @@ type AdvisoryAudit struct {
 	Commit string
 
 	CreatedAt time.Time
+}
+
+// InterchangeRecord is one federation record imported from a peer feed,
+// stored verbatim so re-validating or re-applying it never depends on how
+// the running version of scrutineer happened to interpret it. Unique per
+// (feed, predicate_type, subject_digest): a peer refreshing a record
+// replaces its own row, while two peers publishing conflicting verdicts
+// for the same subject each keep theirs instead of one silently winning.
+type InterchangeRecord struct {
+	ID uint `gorm:"primarykey"`
+
+	// Feed is the peer feed's git remote, part of the unique key.
+	Feed          string `gorm:"uniqueIndex:idx_interchange_record,priority:1"`
+	PredicateType string `gorm:"uniqueIndex:idx_interchange_record,priority:2"`
+	// SubjectDigest is the record's subject sha256: the salted finding hash
+	// for a claim, sha256 of the canonical repository URL for an opt-out or
+	// route, sha256 of repository plus advisory id for a certificate.
+	SubjectDigest string `gorm:"uniqueIndex:idx_interchange_record,priority:3"`
+	// Record is the raw in-toto statement as published.
+	Record string `gorm:"type:text"`
+	// AppliedAt is when the import last acted on this record, or established
+	// there was nothing local to act on. Null re-opens it on the next pass,
+	// and a changed Record clears it, so a peer's correction is re-applied
+	// and an opt-out published before its repository was imported here still
+	// lands once the repository exists. An unchanged record keeps its stamp,
+	// which is what stops the hourly pass from reinstating what an operator
+	// deliberately cleared.
+	AppliedAt *time.Time
+	// AppliedRepositoryID is the repository row the stamp above was written
+	// against, zero for the kinds that act on nothing local. Deleting that
+	// repository re-opens the record, since the stamp only ever meant "this
+	// row already carries it": without that, an opt-out applied before a
+	// repository was deleted and re-added would leave the new row scannable
+	// while the peer's request is still standing.
+	AppliedRepositoryID uint `gorm:"index"`
+
+	ReceivedAt time.Time
 }
 
 // Dependent is a package that depends on one of this repo's packages.
@@ -783,6 +834,12 @@ type Finding struct {
 	// queue can filter on an indexed column rather than LIKE-scanning
 	// finding_notes for the revalidate header.
 	LastRevalidateVerdict string `gorm:"index"`
+	// Novelty records whether the finding's source location changed between
+	// the scanned commit and the HEAD inspected by revalidate. A touched file
+	// starts as unclear until revalidate classifies the staged diff.
+	Novelty              FindingNovelty `gorm:"index"`
+	NoveltyCheckedCommit string
+	NoveltyCheckedAt     *time.Time
 	// SuggestedFix is a unified diff from the patch skill that has passed
 	// the applicability gate (parses, targets real files, touches a file
 	// named in Location, git apply --check clean). Empty when no patch has
@@ -1293,7 +1350,7 @@ func Open(dsn string) (*gorm.DB, error) {
 		&Dependency{}, &ExpectedFinding{}, &Package{}, &PackageAlternative{}, &Dependent{}, &FindingDependent{}, &Advisory{}, &AdvisoryAudit{},
 		&Maintainer{}, &Skill{}, &Subproject{},
 		&SBOMUpload{}, &SBOMPackage{}, &CNA{}, &Setting{},
-		&Conversation{}, &ChatMessage{},
+		&Conversation{}, &ChatMessage{}, &InterchangeRecord{},
 	); err != nil {
 		return nil, fmt.Errorf("automigrate: %w", err)
 	}

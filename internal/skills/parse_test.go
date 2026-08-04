@@ -410,6 +410,105 @@ body`)
 	}
 }
 
+func TestParseFile_bundlesLocalSchemaReferences(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSkill(t, dir, "s", `---
+name: s
+description: d
+---
+body`)
+	sharedDir := filepath.Join(dir, "_shared")
+	if err := os.MkdirAll(sharedDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sharedPath := filepath.Join(sharedDir, "shared.schema.json")
+	shared := `{
+  "type":"object",
+  "required":["value"],
+  "properties":{"value":{"$ref":"#/$defs/value"}},
+  "$defs":{"value":{"type":"string","minLength":1}}
+}`
+	if err := os.WriteFile(sharedPath, []byte(shared), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	wrapper := `{"title":"test","$ref":"../_shared/shared.schema.json"}`
+	if err := os.WriteFile(filepath.Join(dir, "s", "schema.json"), []byte(wrapper), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	parsed, err := ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(parsed.SchemaJSON, "../_shared") {
+		t.Errorf("bundled schema retained file reference:\n%s", parsed.SchemaJSON)
+	}
+	for _, want := range []string{`"$ref": "#/$defs/shared"`, `"$ref": "#/$defs/shared/$defs/value"`} {
+		if !strings.Contains(parsed.SchemaJSON, want) {
+			t.Errorf("bundled schema missing %s:\n%s", want, parsed.SchemaJSON)
+		}
+	}
+	firstHash := parsed.SourceHash
+
+	changed := strings.Replace(shared, `"minLength":1`, `"minLength":2`, 1)
+	if err := os.WriteFile(sharedPath, []byte(changed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	parsed, err = ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.SourceHash == firstHash {
+		t.Fatal("source hash did not change after referenced schema edit")
+	}
+}
+
+func TestParseFile_rejectsSchemaReferenceOutsideCollection(t *testing.T) {
+	parent := t.TempDir()
+	dir := filepath.Join(parent, "collection")
+	path := writeSkill(t, dir, "s", `---
+name: s
+description: d
+---
+body`)
+	if err := os.WriteFile(filepath.Join(parent, "outside.json"), []byte(`{"type":"object"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "s", "schema.json"), []byte(`{"$ref":"../../outside.json"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseFile(path); err == nil || !strings.Contains(err.Error(), "escapes the skill collection") {
+		t.Fatalf("ParseFile error = %v, want collection containment error", err)
+	}
+}
+
+func TestParseFile_rejectsSchemaReferenceSymlinkOutsideCollection(t *testing.T) {
+	parent := t.TempDir()
+	dir := filepath.Join(parent, "collection")
+	path := writeSkill(t, dir, "s", `---
+name: s
+description: d
+---
+body`)
+	sharedDir := filepath.Join(dir, "_shared")
+	if err := os.MkdirAll(sharedDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(parent, "outside.json")
+	if err := os.WriteFile(outside, []byte(`{"type":"object"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(sharedDir, "outside.json")); err != nil {
+		t.Skipf("symlink unavailable: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "s", "schema.json"), []byte(`{"$ref":"../_shared/outside.json"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ParseFile(path); err == nil || !strings.Contains(err.Error(), "escapes the skill collection") {
+		t.Fatalf("ParseFile error = %v, want symlink containment error", err)
+	}
+}
+
 func TestParseFile_missingFrontmatter(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSkill(t, dir, "broken", "just a body, no frontmatter\n")
@@ -612,6 +711,40 @@ body`)
 	_, err = LoadDirectory(gdb, log, root, "local")
 	if err == nil {
 		t.Error("expected LoadDirectory to fail on invalid skill")
+	}
+}
+
+func TestLoadDirectory_skipsUnderscoreDirectories(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "t.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := t.TempDir()
+	writeSkill(t, root, "regular", `---
+name: regular
+description: Loaded skill.
+---
+body`)
+	writeSkill(t, root, "_shared", `---
+name: shared-helper
+description: Schema helper that must not become a skill.
+---
+body`)
+
+	log := slog.New(slog.NewTextHandler(io.Discard, nil))
+	n, err := LoadDirectory(gdb, log, root, "local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("loaded skills = %d, want 1", n)
+	}
+	var names []string
+	if err := gdb.Model(&db.Skill{}).Pluck("name", &names).Error; err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(names, []string{"regular"}) {
+		t.Fatalf("loaded skill names = %v, want [regular]", names)
 	}
 }
 
@@ -978,6 +1111,103 @@ func TestBundledAuditExfilMetadata(t *testing.T) {
 		for _, text := range required {
 			if !strings.Contains(string(data), text) {
 				t.Errorf("audit-exfil reference %s missing %q", name, text)
+			}
+		}
+	}
+}
+
+func TestBundledAuditAuthzMetadata(t *testing.T) {
+	dir := filepath.Join("..", "..", "skills", "audit-authz")
+	auditAuthz, err := ParseFile(filepath.Join(dir, "SKILL.md"))
+	if err != nil {
+		t.Fatalf("parse audit-authz: %v", err)
+	}
+	if auditAuthz.OutputKind != "findings" || auditAuthz.MaxTurns != 48 ||
+		auditAuthz.Model != "high" || auditAuthz.MinConfidence != "high" {
+		t.Errorf("audit-authz metadata = kind %q, turns %d, model %q, confidence %q",
+			auditAuthz.OutputKind, auditAuthz.MaxTurns, auditAuthz.Model, auditAuthz.MinConfidence)
+	}
+	if !strings.Contains(auditAuthz.Compatibility, "external network") ||
+		!strings.Contains(auditAuthz.Compatibility, "api_base is allowed") {
+		t.Errorf("audit-authz compatibility does not distinguish external network from api_base: %q",
+			auditAuthz.Compatibility)
+	}
+	if !strings.Contains(auditAuthz.Body, "external network access") ||
+		!strings.Contains(auditAuthz.Body, "api_base is allowed") {
+		t.Error("audit-authz body does not distinguish external network from api_base")
+	}
+	if !slices.Equal(auditAuthz.Paths, []string{"**"}) {
+		t.Errorf("audit-authz paths = %v, want [**]", auditAuthz.Paths)
+	}
+	wantIgnores := []string{
+		"**/node_modules/**",
+		"**/dist/**",
+		"**/generated/**",
+		"**/__generated__/**",
+		"**/*.min.js",
+		"**/*.min.css",
+	}
+	if !slices.Equal(auditAuthz.IgnorePaths, wantIgnores) {
+		t.Errorf("audit-authz ignore paths = %v, want %v", auditAuthz.IgnorePaths, wantIgnores)
+	}
+	for _, name := range []string{
+		"pnpm-lock.yaml",
+		"package-lock.json",
+		"yarn.lock",
+		"Cargo.lock",
+		"go.sum",
+		"Gemfile.lock",
+		"poetry.lock",
+		"composer.lock",
+		"Package.resolved",
+	} {
+		if !PathIncluded(name, auditAuthz.Paths, auditAuthz.IgnorePaths) {
+			t.Errorf("audit-authz path filters exclude lockfile %q", name)
+		}
+	}
+	for _, name := range []string{"node_modules/pkg/index.js", "dist/app.js", "app.min.js"} {
+		if PathIncluded(name, auditAuthz.Paths, auditAuthz.IgnorePaths) {
+			t.Errorf("audit-authz path filters include ignored path %q", name)
+		}
+	}
+	const wantTools = "Read,Write,Bash,Grep,Glob"
+	if auditAuthz.AllowedTools != wantTools {
+		t.Errorf("audit-authz allowed tools = %q, want %q", auditAuthz.AllowedTools, wantTools)
+	}
+	for _, name := range []string{
+		"python.md",
+		"node.md",
+		"ruby.md",
+		"java-jvm.md",
+		"go.md",
+		"php.md",
+		"graphql.md",
+		"jwt.md",
+	} {
+		data, err := os.ReadFile(filepath.Join(dir, "references", name))
+		if err != nil {
+			t.Errorf("read audit-authz reference %s: %v", name, err)
+			continue
+		}
+		if !strings.HasPrefix(string(data), "# ") {
+			t.Errorf("audit-authz reference %s has no heading", name)
+		}
+	}
+	requiredReferenceGuidance := map[string][]string{
+		"python.md":  {"Django 5.1", "opt out", "check_object_permissions", "get_queryset"},
+		"node.md":    {"registration order", "Server Actions", "APP_GUARD"},
+		"graphql.md": {"global IDs", "subscriptions", "runtime code", "each request"},
+		"jwt.md":     {"before 9.0.0", "before 2.4.0", "through 4.5.0", "4.5.1"},
+	}
+	for name, required := range requiredReferenceGuidance {
+		data, err := os.ReadFile(filepath.Join(dir, "references", name))
+		if err != nil {
+			t.Errorf("read audit-authz reference %s: %v", name, err)
+			continue
+		}
+		for _, text := range required {
+			if !strings.Contains(string(data), text) {
+				t.Errorf("audit-authz reference %s missing %q", name, text)
 			}
 		}
 	}

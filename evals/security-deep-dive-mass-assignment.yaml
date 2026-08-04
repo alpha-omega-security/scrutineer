@@ -1,6 +1,8 @@
 given: a member endpoint bulk-copies a JSON body containing server-owned fields into an account
 fixture: fixtures/mass-assignment-basic
 skill: security-deep-dive
+experiment: security-deep-dive-prompt
+variant: production
 should_find:
   - finding: mass assignment
     cwe: CWE-915

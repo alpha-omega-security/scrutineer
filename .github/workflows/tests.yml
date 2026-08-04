@@ -83,6 +83,14 @@ jobs:
       - name: Test
         run: go test -race ./...
 
+      # The deterministic eval harness is behind //go:build evals. Live model
+      # runs remain disabled unless SCRUTINEER_RUN_EVALS is explicitly set.
+      - name: Vet skill eval harness
+        run: go vet -tags evals ./internal/evals/...
+
+      - name: Test skill eval harness
+        run: go test -race -tags evals ./internal/evals/...
+
       # The podman integration tests are behind //go:build podman and are not
       # built by the steps above; vet them under the tag so they can't silently
       # rot (podman itself is not needed -- the tests skip at run time without it).

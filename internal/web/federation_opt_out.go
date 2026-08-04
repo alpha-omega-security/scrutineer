@@ -123,5 +123,5 @@ func (s *Server) repoFederationOptedOut(repoID uint) (bool, error) {
 // own. Built fresh per use rather than shared, since a GORM statement carries
 // state once it has been consumed.
 func (s *Server) optedOutRepoIDs() *gorm.DB {
-	return s.DB.Model(&db.Repository{}).Select("id").Where("federation_opt_out_at IS NOT NULL")
+	return s.DB.Model(&db.Repository{}).Select("id").Where(db.FederationHasOptedOut)
 }
