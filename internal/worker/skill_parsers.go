@@ -459,9 +459,10 @@ func (e *dependencyEnvelope) reportDeferredSections(emit func(Event)) {
 }
 
 // buildGeneratedSBOM parses the envelope's sbom section into an SBOMUpload
-// snapshot for the scan's repository. A missing or errored section returns
-// (nil, nil) so the caller writes inventory rows without a snapshot; a
-// present but unparseable document returns an error for the caller to log.
+// snapshot for the scan's repository. A missing or empty section returns
+// (nil, nil); a section that reported an error, or a document that fails to
+// parse, returns that error for the caller to log. Either way the caller
+// writes inventory rows without a snapshot.
 func buildGeneratedSBOM(scan *db.Scan, env dependencyEnvelope) (*db.SBOMUpload, error) {
 	sec := env.Analyses.SBOM
 	if sec.Status != analysisOK {
