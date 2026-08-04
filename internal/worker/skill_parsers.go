@@ -312,8 +312,10 @@ func (w *Worker) parseAdvisoryAuditOutput(skill *db.Skill, scan *db.Scan, report
 // parseDependenciesOutput consumes the versioned envelope emitted by
 // skills/dependencies/scripts/index.sh. The inventory section replaces
 // Dependency rows for the scan's repository; the sbom section becomes a
-// generated SBOMUpload snapshot with Current moved to it. Remaining sections
-// are decoded and reported but not yet persisted.
+// generated SBOMUpload snapshot with Current moved to it. Per-package
+// registry lookups (licences, vulnerabilities, latest-version, deprecation)
+// are not part of the envelope; scrutineer performs those once per package
+// outside the scan.
 func (w *Worker) parseDependenciesOutput(scan *db.Scan, report string, emit func(Event)) error {
 	var env dependencyEnvelope
 	if err := json.Unmarshal([]byte(report), &env); err != nil {
@@ -390,7 +392,6 @@ func (w *Worker) parseDependenciesOutput(scan *db.Scan, report string, emit func
 		summary += fmt.Sprintf(", %d resolved component(s) at %s", up.PackageCount, shortCommit(up.Commit))
 	}
 	emit(Event{Kind: KindText, Text: summary})
-	env.reportDeferredSections(emit)
 	return nil
 }
 
@@ -413,10 +414,6 @@ type dependencyEnvelope struct {
 			analysisSection
 			Result json.RawMessage `json:"result"`
 		} `json:"sbom"`
-		Licenses        rawAnalysisSection `json:"licenses"`
-		Vulnerabilities rawAnalysisSection `json:"vulnerabilities"`
-		Outdated        rawAnalysisSection `json:"outdated"`
-		Deprecated      rawAnalysisSection `json:"deprecated"`
 	} `json:"analyses"`
 }
 
@@ -424,38 +421,6 @@ type analysisSection struct {
 	Status   string   `json:"status"`
 	Error    string   `json:"error"`
 	Warnings []string `json:"warnings"`
-}
-
-// rawAnalysisSection covers licenses/vulnerabilities/outdated/deprecated:
-// decoded so section status and row counts can be surfaced now, with the row
-// bodies left opaque until the persistence step lands.
-type rawAnalysisSection struct {
-	analysisSection
-	Result  []json.RawMessage `json:"result"`
-	Sources []json.RawMessage `json:"sources"`
-}
-
-// reportDeferredSections emits a one-line status for each analysis whose rows
-// are not yet persisted so an operator can see they ran and whether the
-// upstream returned anything, without having to read the raw report.
-func (e *dependencyEnvelope) reportDeferredSections(emit func(Event)) {
-	deferred := []struct {
-		name string
-		sec  rawAnalysisSection
-	}{
-		{"licenses", e.Analyses.Licenses},
-		{"vulnerabilities", e.Analyses.Vulnerabilities},
-		{"outdated", e.Analyses.Outdated},
-		{"deprecated", e.Analyses.Deprecated},
-	}
-	for _, d := range deferred {
-		switch d.sec.Status {
-		case analysisOK:
-			emit(Event{Kind: KindText, Text: fmt.Sprintf("%s: %d row(s), not yet persisted", d.name, len(d.sec.Result))})
-		case analysisError:
-			emit(Event{Kind: KindText, Text: fmt.Sprintf("%s failed: %s", d.name, d.sec.Error)})
-		}
-	}
 }
 
 // buildGeneratedSBOM parses the envelope's sbom section into an SBOMUpload

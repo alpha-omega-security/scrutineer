@@ -107,11 +107,14 @@ func TestBundledSchemas_compileAndAcceptSamples(t *testing.T) {
 			"../../skills/dependencies/schema.json",
 			`{"schema_version":1,"analyses":{
 				"inventory":{"status":"error","error":"git-pkgs: exit 1"},
-				"sbom":{"status":"error","error":"git-pkgs: exit 1"},
-				"licenses":{"status":"error","error":"x"},
-				"vulnerabilities":{"status":"error","error":"x"},
-				"outdated":{"status":"error","error":"x"},
-				"deprecated":{"status":"error","error":"x"}}}`,
+				"sbom":{"status":"error","error":"git-pkgs: exit 1"}}}`,
+		},
+		{
+			// The SKILL.md fallback shape for a wholesale script failure:
+			// analyses is present but empty. Sections are not required so
+			// schema validation still surfaces the top-level error.
+			"../../skills/dependencies/schema.json",
+			`{"schema_version":1,"analyses":{},"error":"git-pkgs init failed"}`,
 		},
 		{
 			"../../skills/public-issue/schema.json",
@@ -347,6 +350,9 @@ func TestBundledSchemas_rejectBadShapes(t *testing.T) {
 		{"../../skills/dependencies/schema.json", `{"schema_version":1}`, "analyses"},
 		{"../../skills/dependencies/schema.json",
 			`{"schema_version":1,"analyses":{"inventory":{"status":"maybe"}}}`,
+			"/analyses/inventory"},
+		{"../../skills/dependencies/schema.json",
+			`{"schema_version":1,"analyses":{"inventory":{"status":"ok"},"licenses":{"status":"ok"}}}`,
 			"/analyses"},
 		{"../../skills/advisories/schema.json",
 			`{"advisories":[{"uuid":"u1","severity":"HIGHISH"}]}`,

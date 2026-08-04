@@ -1,6 +1,6 @@
 ---
 name: dependencies
-description: Run git-pkgs list, sbom, licenses, vulns, outdated, and deprecated against the repository and emit one envelope with per-section status.
+description: Run git-pkgs list and sbom against the repository and emit one envelope with per-section status.
 license: MIT
 compatibility: Requires `git-pkgs` (https://github.com/git-pkgs/git-pkgs) and `python3` on PATH.
 metadata:
@@ -20,7 +20,7 @@ metadata:
 
 # dependencies
 
-Run six git-pkgs analyses after one `git-pkgs init` and assemble the results into a versioned envelope. `analyses.inventory` is the manifest occurrence list from `git-pkgs list`; `analyses.sbom` is the CycloneDX document from `git-pkgs sbom`; `licenses`, `vulnerabilities`, `outdated`, and `deprecated` carry the per-dependency rows from the matching commands. Each section has its own `status` so a failed registry lookup does not discard a valid inventory. Scrutineer's worker resolves Maven requirements from local `pom.xml` files with `git-pkgs/pom`, fills `requirement_resolution`, and marks unresolved placeholders with `requirement_unresolved`.
+Run the two per-repository git-pkgs analyses after one `git-pkgs init` and assemble the results into a versioned envelope. `analyses.inventory` is the manifest occurrence list from `git-pkgs list`; `analyses.sbom` is the CycloneDX document from `git-pkgs sbom --skip-enrichment`. Each section has its own `status` so a failure in one does not discard the other. Per-package registry lookups (licences, vulnerabilities, latest-version, deprecation) are not run here; scrutineer performs those once per package outside the scan. Scrutineer's worker resolves Maven requirements from local `pom.xml` files with `git-pkgs/pom`, fills `requirement_resolution`, and marks unresolved placeholders with `requirement_unresolved`.
 
 ## Workspace
 
@@ -31,7 +31,7 @@ Run six git-pkgs analyses after one `git-pkgs init` and assemble the results int
 
 ## Available scripts
 
-- `scripts/index.sh` — runs `git-pkgs init` inside `./src`, then `list`, `sbom`, `licenses`, `vulns`, `outdated`, and `deprecated` in turn, capturing stdout, stderr, and exit code per command, and writes the assembled envelope to stdout.
+- `scripts/index.sh` — runs `git-pkgs init` inside `./src`, then `list` and `sbom --skip-enrichment`, capturing stdout, stderr, and exit code per command, and writes the assembled envelope to stdout.
 
 ## What to do
 

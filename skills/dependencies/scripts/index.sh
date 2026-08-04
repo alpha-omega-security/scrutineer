@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Run the git-pkgs dependency analyses against the clone and emit a single
-# versioned envelope on stdout. Each analysis has its own status so a
-# registry timeout in one does not discard a valid inventory from another.
+# Run the two per-repository git-pkgs analyses against the clone and emit a
+# versioned envelope on stdout. Each analysis has its own status so a failure
+# in one does not discard a valid result from the other. Per-package registry
+# lookups (licences, vulnerabilities, latest-version, deprecation) are not run
+# here; scrutineer performs those once per package outside the scan.
 set -euo pipefail
 
 if ! command -v git-pkgs >/dev/null 2>&1; then
@@ -24,14 +26,11 @@ trap 'rm -rf "$work"' EXIT
 
 # One line per section: <name> <command> [args...]. Each command's stdout,
 # stderr, and exit code are captured independently so the assembler can
-# report partial failure.
+# report partial failure. sbom runs with --skip-enrichment so no registry is
+# contacted from inside the scan; scrutineer fills licence data per package.
 sections=(
-  "inventory       list       --format json"
-  "sbom            sbom       --format json"
-  "licenses        licenses   --format json"
-  "vulnerabilities vulns      --format json"
-  "outdated        outdated   --format json"
-  "deprecated      deprecated --format json"
+  "inventory list --format json"
+  "sbom      sbom --format json --skip-enrichment"
 )
 
 for spec in "${sections[@]}"; do
@@ -48,11 +47,7 @@ WORK="$work" COMMIT="$commit" GP_VERSION="$gp_version" python3 - <<'PY'
 import json, os, sys, datetime
 
 work = os.environ["WORK"]
-sections = ["inventory", "sbom", "licenses", "vulnerabilities", "outdated", "deprecated"]
-# licenses/vulns/outdated/deprecated currently emit a bare array; once
-# git-pkgs/git-pkgs#306 lands they emit {"results": [...], "sources": [...]}.
-# Normalise both so this script keeps working across the transition.
-shimmed = {"licenses", "vulnerabilities", "outdated", "deprecated"}
+sections = ["inventory", "sbom"]
 
 def load(name):
     with open(os.path.join(work, name + ".exit")) as f:
@@ -69,18 +64,7 @@ def load(name):
             result = json.loads(raw)
         except ValueError as e:
             return {"status": "error", "error": f"parse output: {e}"}
-    section = {"status": "ok"}
-    if name in shimmed:
-        if isinstance(result, dict) and "results" in result:
-            section["result"] = result.get("results") or []
-            section["sources"] = result.get("sources") or []
-        elif isinstance(result, list):
-            section["result"] = result
-            section["sources"] = []
-        else:
-            return {"status": "error", "error": f"unexpected {type(result).__name__} output"}
-    else:
-        section["result"] = result
+    section = {"status": "ok", "result": result}
     if err:
         section["warnings"] = [err]
     return section

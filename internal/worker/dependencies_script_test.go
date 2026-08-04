@@ -9,10 +9,9 @@ import (
 )
 
 type scriptSection struct {
-	Status  string            `json:"status"`
-	Error   string            `json:"error"`
-	Result  json.RawMessage   `json:"result"`
-	Sources []json.RawMessage `json:"sources"`
+	Status string          `json:"status"`
+	Error  string          `json:"error"`
+	Result json.RawMessage `json:"result"`
 }
 
 type scriptEnvelope struct {
@@ -53,7 +52,13 @@ func TestDependenciesScript_ok(t *testing.T) {
 	if env.GitPkgsVersion != "git-pkgs 0.0.0-test" {
 		t.Errorf("git_pkgs_version = %q", env.GitPkgsVersion)
 	}
-	for _, name := range []string{"inventory", "sbom", "licenses", "vulnerabilities", "outdated", "deprecated"} {
+	// Only the two per-repo analyses run; the schema's additionalProperties:false
+	// on the analyses object rejects anything else, so a stray section would
+	// have failed the schema check above.
+	if len(env.Analyses) != 2 {
+		t.Errorf("analyses = %v, want inventory+sbom", env.Analyses)
+	}
+	for _, name := range []string{"inventory", "sbom"} {
 		if env.Analyses[name].Status != "ok" {
 			t.Errorf("%s status = %q: %s", name, env.Analyses[name].Status, env.Analyses[name].Error)
 		}
@@ -66,13 +71,10 @@ func TestDependenciesScript_ok(t *testing.T) {
 	if err := json.Unmarshal(env.Analyses["sbom"].Result, &bom); err != nil || bom["bomFormat"] != "CycloneDX" {
 		t.Errorf("sbom result = %s", env.Analyses["sbom"].Result)
 	}
-	// Bare-array output from vulns is normalised to result+sources.
-	var vulns []map[string]any
-	if err := json.Unmarshal(env.Analyses["vulnerabilities"].Result, &vulns); err != nil || len(vulns) != 1 {
-		t.Errorf("vulnerabilities result = %s", env.Analyses["vulnerabilities"].Result)
-	}
-	if env.Analyses["vulnerabilities"].Sources == nil {
-		t.Error("vulnerabilities sources missing")
+	// The stub records --skip-enrichment reaching the sbom command so no
+	// registry is contacted from inside the scan.
+	if got := bom["_saw_skip_enrichment"]; got != true {
+		t.Errorf("sbom command not passed --skip-enrichment: %v", bom)
 	}
 }
 
@@ -84,27 +86,12 @@ func TestDependenciesScript_listNull(t *testing.T) {
 }
 
 func TestDependenciesScript_sectionFailure(t *testing.T) {
-	env := runAndDecodeDependenciesScript(t, "vulns-fail")
-	if s := env.Analyses["vulnerabilities"]; s.Status != "error" || s.Error == "" {
-		t.Errorf("vulns exit 1 should be status=error: %+v", s)
+	env := runAndDecodeDependenciesScript(t, "sbom-fail")
+	if s := env.Analyses["sbom"]; s.Status != "error" || s.Error == "" {
+		t.Errorf("sbom exit 1 should be status=error: %+v", s)
 	}
 	if env.Analyses["inventory"].Status != "ok" {
-		t.Error("failed vulns must not fail inventory")
-	}
-}
-
-func TestDependenciesScript_post306Object(t *testing.T) {
-	env := runAndDecodeDependenciesScript(t, "post306")
-	out := env.Analyses["outdated"]
-	if out.Status != "ok" {
-		t.Fatalf("status = %q: %s", out.Status, out.Error)
-	}
-	var res []map[string]any
-	if err := json.Unmarshal(out.Result, &res); err != nil || len(res) != 1 || res[0]["name"] != "lodash" {
-		t.Errorf("object-form results not passed through: %s", out.Result)
-	}
-	if len(out.Sources) != 1 {
-		t.Errorf("object-form sources not passed through: %v", out.Sources)
+		t.Error("failed sbom must not fail inventory")
 	}
 }
 
@@ -139,7 +126,8 @@ func runDependenciesScript(t *testing.T, mode string) (string, error) {
 
 // fakeGitPkgsScript stands in for the git-pkgs CLI. GP_MODE selects a
 // scenario; every command not overridden by the scenario emits a minimal
-// representative payload so the envelope assembler sees all six sections.
+// representative payload. The default arm rejects any command index.sh should
+// no longer be running (licenses, vulns, outdated, deprecated).
 const fakeGitPkgsScript = `#!/usr/bin/env bash
 set -euo pipefail
 mode="${GP_MODE:-ok}"
@@ -151,24 +139,10 @@ case "$1" in
     printf '[{"name":"left-pad","ecosystem":"npm","manifest_path":"package.json"}]\n'
     ;;
   sbom)
-    printf '{"bomFormat":"CycloneDX","specVersion":"1.5","components":[]}\n'
-    ;;
-  licenses)
-    printf '[]\n'
-    ;;
-  vulns)
-    if [ "$mode" = "vulns-fail" ]; then echo "osv.dev unreachable" >&2; exit 1; fi
-    printf '[{"id":"GHSA-xxxx","package":"left-pad"}]\n'
-    ;;
-  outdated)
-    if [ "$mode" = "post306" ]; then
-      printf '{"results":[{"name":"lodash"}],"sources":[{"ecosystem":"npm","status":"ok"}]}\n'
-      exit 0
-    fi
-    printf '[]\n'
-    ;;
-  deprecated)
-    printf '[]\n'
+    if [ "$mode" = "sbom-fail" ]; then echo "sbom failed" >&2; exit 1; fi
+    skip=false
+    for a in "$@"; do [ "$a" = "--skip-enrichment" ] && skip=true; done
+    printf '{"bomFormat":"CycloneDX","specVersion":"1.5","components":[],"_saw_skip_enrichment":%s}\n' "$skip"
     ;;
   *)
     echo "unexpected git-pkgs command: $*" >&2

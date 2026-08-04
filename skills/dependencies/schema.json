@@ -12,7 +12,6 @@
     "error":            { "type": "string" },
     "analyses": {
       "type": "object",
-      "required": ["inventory", "sbom", "licenses", "vulnerabilities", "outdated", "deprecated"],
       "additionalProperties": false,
       "properties": {
         "inventory": {
@@ -29,11 +28,7 @@
               "description": "CycloneDX JSON document as emitted by git-pkgs sbom."
             }
           }
-        },
-        "licenses":        { "$ref": "#/$defs/shimmedSection" },
-        "vulnerabilities": { "$ref": "#/$defs/shimmedSection" },
-        "outdated":        { "$ref": "#/$defs/shimmedSection" },
-        "deprecated":      { "$ref": "#/$defs/shimmedSection" }
+        }
       }
     }
   },
@@ -45,13 +40,6 @@
         "status":   { "enum": ["ok", "error"] },
         "error":    { "type": "string" },
         "warnings": { "type": "array", "items": { "type": "string" } }
-      }
-    },
-    "shimmedSection": {
-      "allOf": [{ "$ref": "#/$defs/section" }],
-      "properties": {
-        "result":  { "type": "array", "items": { "type": "object" } },
-        "sources": { "type": "array", "items": { "type": "object" } }
       }
     },
     "dependency": {

@@ -1657,17 +1657,14 @@ func TestParseFindingDedup_skipsClosedAndCrossRepoFindings(t *testing.T) {
 
 // depEnvelope wraps a JSON fragment of inventory rows and an optional
 // CycloneDX document in the versioned envelope the dependencies parser
-// expects, filling the remaining sections as empty ok results.
+// expects.
 func depEnvelope(inventory, sbom string) string {
 	if sbom == "" {
 		sbom = "{}"
 	}
-	empty := `{"status":"ok","result":[],"sources":[]}`
 	return `{"schema_version":1,"commit":"cafef00d","analyses":{` +
 		`"inventory":{"status":"ok","result":` + inventory + `},` +
-		`"sbom":{"status":"ok","result":` + sbom + `},` +
-		`"licenses":` + empty + `,"vulnerabilities":` + empty + `,` +
-		`"outdated":` + empty + `,"deprecated":` + empty + `}}`
+		`"sbom":{"status":"ok","result":` + sbom + `}}}`
 }
 
 func TestParseDependencies_acceptsTypeOrDependencyType(t *testing.T) {
@@ -1880,11 +1877,7 @@ func TestParseDependencies_sbomSectionErrorKeepsInventory(t *testing.T) {
 
 	report := `{"schema_version":1,"analyses":{
 		"inventory":{"status":"ok","result":[{"name":"x","ecosystem":"npm"}]},
-		"sbom":{"status":"error","error":"boom"},
-		"licenses":{"status":"error","error":"unreachable"},
-		"vulnerabilities":{"status":"ok","result":[{"id":"GHSA-x"}],"sources":[]},
-		"outdated":{"status":"ok","result":[],"sources":[]},
-		"deprecated":{"status":"ok","result":[],"sources":[]}
+		"sbom":{"status":"error","error":"boom"}
 	}}`
 	var events []Event
 	if err := w.parseDependenciesOutput(scan, report, func(e Event) { events = append(events, e) }); err != nil {
@@ -1905,10 +1898,8 @@ func TestParseDependencies_sbomSectionErrorKeepsInventory(t *testing.T) {
 	for _, e := range events {
 		joined += e.Text + "\n"
 	}
-	for _, want := range []string{"sbom section skipped: boom", "licenses failed: unreachable", "vulnerabilities: 1 row(s)"} {
-		if !strings.Contains(joined, want) {
-			t.Errorf("events missing %q:\n%s", want, joined)
-		}
+	if !strings.Contains(joined, "sbom section skipped: boom") {
+		t.Errorf("events missing sbom skip message:\n%s", joined)
 	}
 }
 
