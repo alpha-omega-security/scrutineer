@@ -1945,6 +1945,43 @@ func TestParseDependencies_inventoryErrorKeepsPriorRows(t *testing.T) {
 	}
 }
 
+func TestParseDependencies_scriptFallbackKeepsPriorRows(t *testing.T) {
+	w, scan, gdb, repo := newDependencyParser(t)
+
+	if err := w.parseDependenciesOutput(scan,
+		depEnvelope(`[{"name":"prior","ecosystem":"npm"}]`, ""),
+		func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The SKILL.md fallback for a wholesale script failure has an empty
+	// analyses object. Status is "" for both sections; that must be treated
+	// as failure, not as an ok run that found nothing.
+	report := `{"schema_version":1,"analyses":{},"error":"git-pkgs init: exit 1"}`
+	var events []Event
+	if err := w.parseDependenciesOutput(scan, report, func(e Event) { events = append(events, e) }); err != nil {
+		t.Fatalf("script fallback should not fail parse: %v", err)
+	}
+
+	var deps []db.Dependency
+	gdb.Where("repository_id = ?", repo.ID).Find(&deps)
+	if len(deps) != 1 || deps[0].Name != "prior" {
+		t.Errorf("script fallback wiped prior dependency rows: %+v", deps)
+	}
+	var uploads int64
+	gdb.Model(&db.SBOMUpload{}).Where("repository_id = ?", repo.ID).Count(&uploads)
+	if uploads != 0 {
+		t.Errorf("script fallback should not create a snapshot, got %d", uploads)
+	}
+	joined := ""
+	for _, e := range events {
+		joined += e.Text + "\n"
+	}
+	if !strings.Contains(joined, "no inventory section in report") {
+		t.Errorf("events missing missing-section reason:\n%s", joined)
+	}
+}
+
 func TestParseDependencies_subPathScanLeavesRepoLevelRows(t *testing.T) {
 	w, scan, gdb, repo := newDependencyParser(t)
 

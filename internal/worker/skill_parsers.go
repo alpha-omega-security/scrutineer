@@ -333,14 +333,21 @@ func (w *Worker) parseDependenciesOutput(scan *db.Scan, report string, emit func
 	}
 
 	inv := env.Analyses.Inventory
-	replaceInventory := inv.Status != analysisError
+	replaceInventory := inv.Status == analysisOK
 	if !replaceInventory {
-		// The prior row set stays: an errored git-pkgs run says nothing about
-		// what the repository depends on, so replacing it with an empty set
-		// would be data loss. Mirrors the sbom section, where up == nil
-		// leaves the previous Current snapshot in place. The sbom section is
-		// still applied below since it reports its own status independently.
-		emit(Event{Kind: KindText, Text: "inventory failed, prior dependency rows kept: " + inv.Error})
+		// The prior row set stays: an errored, or entirely missing, inventory
+		// section says nothing about what the repository depends on, so
+		// replacing it with an empty set would be data loss. Missing arises
+		// from the SKILL.md fallback shape for a wholesale script failure,
+		// {"schema_version":1,"analyses":{},"error":...}. Mirrors the sbom
+		// section, where up == nil leaves the previous Current snapshot in
+		// place. The sbom section is still applied below since it reports
+		// its own status independently.
+		reason := inv.Error
+		if inv.Status == "" {
+			reason = "no inventory section in report"
+		}
+		emit(Event{Kind: KindText, Text: "inventory failed, prior dependency rows kept: " + reason})
 	}
 	w.resolveMavenDependencyRequirements(scan, inv.Result, emit)
 	rows := make([]db.Dependency, 0, len(inv.Result))
