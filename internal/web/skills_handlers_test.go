@@ -195,7 +195,7 @@ func TestSkillUpdate_appliesValidForm(t *testing.T) {
 		"output_file": {"report.json"},
 		"output_kind": {"findings"},
 		"max_turns":   {"42"},
-		"model":       {"claude-sonnet-4-6"},
+		"model":       {"claude-sonnet-5"},
 		"schema_json": {`  {"type":"array"}  `},
 	})
 	if w.Code != http.StatusSeeOther {
@@ -209,7 +209,7 @@ func TestSkillUpdate_appliesValidForm(t *testing.T) {
 	if got.Name != "hello-updated" || got.Description != "new description" ||
 		got.Body != "new body" || got.OutputFile != "report.json" ||
 		got.OutputKind != "findings" || got.MaxTurns != 42 ||
-		got.Model != "claude-sonnet-4-6" || got.SchemaJSON != `{"type":"array"}` ||
+		got.Model != "claude-sonnet-5" || got.SchemaJSON != `{"type":"array"}` ||
 		got.Active || got.Version != 2 || got.Source != "ui" {
 		t.Fatalf("updated skill = %+v", got)
 	}
@@ -313,8 +313,8 @@ func TestParseSkillModel(t *testing.T) {
 		{"   ", ""},
 		{"garbage", ""},
 		{ModelTierHigh, ModelTierHigh},
-		{"claude-sonnet-4-6", "claude-sonnet-4-6"},
-		{" claude-opus-4-7 ", "claude-opus-4-7"},
+		{"claude-sonnet-5", "claude-sonnet-5"},
+		{" claude-opus-4-8 ", "claude-opus-4-8"},
 	}
 	for _, tc := range tests {
 		got := parseSkillModel(tc.input)

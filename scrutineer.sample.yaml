@@ -181,18 +181,18 @@
 # downgrade_on_overage: false
 
 # The model picker in the UI. Replacing this list replaces the built-in
-# set (Opus, Sonnet, Fable). Leave it out to keep the built-in list. tier:
-# names which entry the mid/high/max model tier defaults to (see Settings);
-# with the built-in list the tiers are inferred (Sonnet = mid, latest Opus =
-# max).
+# set (Opus, Sonnet, Fable), which comes from the active backend minus the
+# models Anthropic has retired; an entry listed here is never filtered, so
+# this is also how you pin an older model. Leave it out to keep the built-in
+# list. tier: names which entry the mid/high/max model tier defaults to (see
+# Settings); untagged, mid infers the first sonnet, max the latest opus, and
+# high falls through to default_model below.
 # models:
-#   - name: Sonnet 4.6
-#     id:   claude-sonnet-4-6
-#     tier: mid
 #   - name: Sonnet 5.0
 #     id:   claude-sonnet-5
+#     tier: mid
 #   - name: Opus
-#     id:   claude-opus-4-7
+#     id:   claude-opus-5
 #     tier: max
 
 # Pin the default model id. When set, this wins over the "first entry
@@ -200,7 +200,7 @@
 # each tier (mid, high, max) to a configured model. A skill can declare
 # scrutineer.model in SKILL.md metadata as either a tier or exact model,
 # and an explicit per-scan model wins over the skill preference.
-# default_model: claude-sonnet-4-6
+# default_model: claude-sonnet-5
 
 # GitHub organisation the fork skill stages scanned repositories into as
 # private repos. Empty disables the fork skill. Also exposed as

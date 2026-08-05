@@ -12,7 +12,7 @@ func TestIsDowngradableTier(t *testing.T) {
 	}
 	// A concrete model id or the mid tier is left alone, so an explicit choice
 	// (or an already-cheap tier) is never touched.
-	for _, p := range []string{ModelTierMid, "claude-opus-4-8", "claude-sonnet-4-6", "garbage"} {
+	for _, p := range []string{ModelTierMid, "claude-opus-4-8", "claude-sonnet-5", "garbage"} {
 		if isDowngradableTier(p) {
 			t.Errorf("isDowngradableTier(%q) = true, want false", p)
 		}
@@ -32,7 +32,7 @@ func TestApplyOverageDowngrade(t *testing.T) {
 		// active but mid or a concrete id -> left alone (explicit choice honoured)
 		{ModelTierMid, true, ModelTierMid},
 		{"claude-opus-4-8", true, "claude-opus-4-8"},
-		{"claude-sonnet-4-6", true, "claude-sonnet-4-6"},
+		{"claude-sonnet-5", true, "claude-sonnet-5"},
 		// inactive -> everything unchanged
 		{"", false, ""},
 		{ModelTierMax, false, ModelTierMax},

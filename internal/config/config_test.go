@@ -46,13 +46,13 @@ func TestLoad_parsesFields(t *testing.T) {
 addr: 0.0.0.0:9000
 data: /var/lib/scrutineer
 effort: medium
-default_model: claude-sonnet-4-6
+default_model: claude-sonnet-5
 models:
-  - name: Sonnet 4.6
-    id:   claude-sonnet-4-6
+  - name: Sonnet 5
+    id:   claude-sonnet-5
     tier: mid
   - name: Opus
-    id:   claude-opus-4-6
+    id:   claude-opus-4-8
 skills:
   - ./skills
   - /srv/skills
@@ -84,10 +84,10 @@ vince:
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Addr != "0.0.0.0:9000" || c.DefaultModel != "claude-sonnet-4-6" {
+	if c.Addr != "0.0.0.0:9000" || c.DefaultModel != "claude-sonnet-5" {
 		t.Errorf("flat fields: %+v", c)
 	}
-	if len(c.Models) != 2 || c.Models[0].Name != "Sonnet 4.6" || c.Models[0].Tier != "mid" || c.Models[1].Tier != "" {
+	if len(c.Models) != 2 || c.Models[0].Name != "Sonnet 5" || c.Models[0].Tier != "mid" || c.Models[1].Tier != "" {
 		t.Errorf("models: %+v", c.Models)
 	}
 	if len(c.Skills) != 2 {

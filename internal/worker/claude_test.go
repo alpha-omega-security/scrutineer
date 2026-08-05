@@ -97,7 +97,7 @@ func TestLocalClaude_RunSkill_rejectsProfileRequiringSkill(t *testing.T) {
 }
 
 func TestBuildClaudeArgs_NoAllowedTools(t *testing.T) {
-	sj := SkillJob{Name: "metadata", Model: "claude-opus-4-7", OutputFile: "report.json"}
+	sj := SkillJob{Name: "metadata", Model: "claude-opus-4-8", OutputFile: "report.json"}
 	args := buildClaudeArgs(sj, "", 0)
 
 	if got := flagValue(args, "--permission-mode"); got != "bypassPermissions" {
@@ -117,7 +117,7 @@ func TestBuildClaudeArgs_NoAllowedTools(t *testing.T) {
 func TestBuildClaudeArgs_AllowedTools(t *testing.T) {
 	sj := SkillJob{
 		Name:         "metadata",
-		Model:        "claude-sonnet-4-6",
+		Model:        "claude-sonnet-5",
 		OutputFile:   "report.json",
 		AllowedTools: "Read,Write,WebFetch",
 		MaxTurns:     50,
@@ -130,7 +130,7 @@ func TestBuildClaudeArgs_AllowedTools(t *testing.T) {
 	if got := flagValue(args, "--allowedTools"); got != "Read,Write,WebFetch,Skill" {
 		t.Errorf("allowedTools = %q, want Read,Write,WebFetch,Skill", got)
 	}
-	if got := flagValue(args, "--model"); got != "claude-sonnet-4-6" {
+	if got := flagValue(args, "--model"); got != "claude-sonnet-5" {
 		t.Errorf("model = %q", got)
 	}
 	if got := flagValue(args, "--effort"); got != "high" {

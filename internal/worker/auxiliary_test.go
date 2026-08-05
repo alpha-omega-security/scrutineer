@@ -26,7 +26,7 @@ func TestCallAuxiliary_recordsUsageOnMalformedResponse(t *testing.T) {
 	if err := gdb.Create(&repo).Error; err != nil {
 		t.Fatal(err)
 	}
-	scan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanRunning, Model: "claude-sonnet-4-6"}
+	scan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanRunning, Model: "claude-sonnet-5"}
 	if err := gdb.Create(&scan).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -70,9 +70,9 @@ func TestCallAuxiliary_recordsUsageOnMalformedResponse(t *testing.T) {
 func TestCallAuxiliary_rejectsDifferentModel(t *testing.T) {
 	w := &Worker{DB: &gorm.DB{}}
 	_, err := w.CallAuxiliary(context.Background(), &db.Scan{ID: 1, Model: "claude-haiku-4-5"}, "answer", json.RawMessage(`{"type":"object"}`), llm.Options{
-		Model: "claude-sonnet-4-6",
+		Model: "claude-sonnet-5",
 	})
-	if err == nil || err.Error() != `auxiliary model "claude-sonnet-4-6" does not match scan model "claude-haiku-4-5"` {
+	if err == nil || err.Error() != `auxiliary model "claude-sonnet-5" does not match scan model "claude-haiku-4-5"` {
 		t.Fatalf("CallAuxiliary() error = %v", err)
 	}
 }
@@ -82,7 +82,7 @@ func TestRecordAuxiliaryUsage_rejectsMissingScan(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = recordAuxiliaryUsage(gdb, &db.Scan{ID: 999}, "claude-sonnet-4-6", llm.Usage{InputTokens: 1})
+	err = recordAuxiliaryUsage(gdb, &db.Scan{ID: 999}, "claude-sonnet-5", llm.Usage{InputTokens: 1})
 	if err == nil || err.Error() != "scan 999 no longer exists" {
 		t.Fatalf("recordAuxiliaryUsage() error = %v", err)
 	}

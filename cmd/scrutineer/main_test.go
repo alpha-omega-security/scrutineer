@@ -233,6 +233,54 @@ func TestFlagsMerge_zeroConfigSeedsModelsFromHarness(t *testing.T) {
 	if len(web.Models) == 0 {
 		t.Fatal("merge with empty config did not seed web.Models from harness defaults")
 	}
+	// The harness still declares models Anthropic has retired, so the seeding
+	// this test covers is also where they are dropped.
+	for _, m := range web.Models {
+		if m.ID == "claude-sonnet-4-6" || m.ID == "claude-opus-4-6" || m.ID == "claude-opus-4-7" {
+			t.Errorf("seeded pick list offers retired model %q", m.ID)
+		}
+	}
+}
+
+func TestApplyServerDefaults_warnsOnModelOutsidePickList(t *testing.T) {
+	saved := web.Models
+	t.Cleanup(func() { web.Models = saved })
+	web.SetModels([]web.Model{{Name: "Opus 5.0", ID: "claude-opus-5"}})
+
+	for _, tc := range []struct {
+		name         string
+		defaultModel string
+		wantWarn     bool
+	}{
+		// A retirement takes an id that was valid on the previous release out
+		// of the pick list, so the operator hears about it.
+		{"retired id", "claude-opus-4-7", true},
+		{"id in pick list", "claude-opus-5", false},
+		{"no default configured", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var out strings.Builder
+			log := slog.New(slog.NewTextHandler(&out, nil))
+			applyServerDefaults(&web.Server{}, &flags{defaultModel: tc.defaultModel, effort: "high"}, log)
+			if got := strings.Contains(out.String(), "not in the pick list"); got != tc.wantWarn {
+				t.Errorf("warned = %v, want %v; log=%q", got, tc.wantWarn, out.String())
+			}
+		})
+	}
+}
+
+func TestFlagsMerge_operatorModelListKeepsRetiredEntries(t *testing.T) {
+	// An explicit models: entry stays the operator's call: only the harness's
+	// own defaults are filtered, so a pinned older model remains selectable.
+	saved := web.Models
+	web.Models = nil
+	t.Cleanup(func() { web.Models = saved })
+
+	f := &flags{set: map[string]bool{}}
+	f.merge(&config.Config{Models: []config.Model{{Name: "Opus 4.7", ID: "claude-opus-4-7"}}})
+	if len(web.Models) != 1 || web.Models[0].ID != "claude-opus-4-7" {
+		t.Errorf("pick list = %+v, want the configured claude-opus-4-7", web.Models)
+	}
 }
 
 func TestFlagsMerge_modelBaseURLAliasCliWins(t *testing.T) {
