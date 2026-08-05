@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/skills"
 )
 
 func writeScopeFile(t *testing.T, root, rel string) {
@@ -105,6 +106,40 @@ func TestScanScopeHard(t *testing.T) {
 	for _, tc := range cases {
 		if got := tc.w.scanScopeHard(&tc.scan, tc.outputKind); got != tc.want {
 			t.Errorf("%s: got %v want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// TestRepoWideProjectionKinds_everyOutputKindClassified forces a deliberate
+// choice for every recognised output kind: it is either a repo-wide projection
+// (repoWideProjectionKinds, opts out of hard scope) or a per-scope kind that may
+// hard-scope. A new kind added to skills.OutputKinds without a home in exactly
+// one of these fails here rather than silently defaulting to hard-scopable —
+// which for a repo-wide, wholesale-replace parser would let a scoped run wipe
+// sibling rows. If this fails, classify the new kind, do not just add it below.
+func TestRepoWideProjectionKinds_everyOutputKindClassified(t *testing.T) {
+	// Kinds that describe one scope (a finding, a dependent, or a sub-folder of
+	// code) and so may legitimately hard-scope, plus the no-parser kinds.
+	perScopeKinds := map[string]bool{
+		"":                true, // stored verbatim, no parser
+		"freeform":        true, // stored verbatim, no parser
+		"findings":        true, // code audits: security-deep-dive, semgrep, ...
+		"advisory_audit":  true, // per-advisory code reproduction
+		"threat_model":    true, // per-subproject threat model
+		"exposure":        true, // per-dependent reachability
+		"verify":          true, // finding-scoped
+		"revalidate":      true, // finding-scoped
+		"breaking_change": true, // finding-scoped
+		"mitigation":      true, // finding-scoped
+		"disclose":        true, // finding-scoped
+		"release_watch":   true, // finding-scoped
+		"patch":           true, // finding-scoped
+	}
+	for kind := range skills.OutputKinds {
+		repoWide := repoWideProjectionKinds[kind]
+		perScope := perScopeKinds[kind]
+		if repoWide == perScope {
+			t.Errorf("output kind %q must be classified in exactly one of repoWideProjectionKinds or the per-scope set (repoWide=%v perScope=%v)", kind, repoWide, perScope)
 		}
 	}
 }

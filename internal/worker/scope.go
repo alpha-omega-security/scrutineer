@@ -22,6 +22,18 @@ import (
 // repository's maintainer associations — so a single scoped run would wipe every
 // sibling's rows. These skills also read local files or query by repository URL
 // rather than building anything, so hard scope's isolation buys them nothing.
+//
+// Any new output kind whose parser writes repository-level rows must be added
+// here; TestRepoWideProjectionKinds_everyOutputKindClassified fails if a kind in
+// skills.OutputKinds is left unclassified, so a new repo-wide parser cannot
+// silently default to hard-scopable. The opt-out is the primary guard;
+// parseSubprojectsOutput and parseMaintainersOutput add a second, write-side
+// guard that no-ops a scoped run. parseDependenciesOutput is deliberately
+// opt-out only — Dependency has no per-subproject partition, so a blunt
+// scoped-skip would also drop legitimate whole-tree refreshes — so if the
+// dependencies skill is ever made sub-path-aware it must gain that partition
+// (or a write-side guard) first, or a scoped run will wipe the repo's other
+// dependencies; see the note on parseDependenciesOutput.
 var repoWideProjectionKinds = map[string]bool{
 	"subprojects":   true,
 	"dependencies":  true,
