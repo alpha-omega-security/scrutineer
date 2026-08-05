@@ -35,7 +35,7 @@ func TestEventsStream_filteredWireFormat(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if ct := resp.Header.Get("Content-Type"); ct != "text/event-stream" {
 		t.Fatalf("Content-Type = %q, want text/event-stream", ct)
 	}
@@ -108,7 +108,7 @@ func TestEventsStream_eventListToleratesSpaces(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	s.Broker.Publish(Event{Name: "scan-log", Data: "a log line", ScanID: 5})
 
