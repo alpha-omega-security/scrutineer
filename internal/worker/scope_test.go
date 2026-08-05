@@ -79,22 +79,31 @@ func TestScanScopeHard(t *testing.T) {
 	unset := &Worker{}
 	fid := uint(5)
 	cases := []struct {
-		name string
-		w    *Worker
-		scan db.Scan
-		want bool
+		name       string
+		w          *Worker
+		scan       db.Scan
+		outputKind string
+		want       bool
 	}{
-		{"root scan never hard", hard, db.Scan{SubPath: ""}, false},
-		{"subpath + hard default", hard, db.Scan{SubPath: "as"}, true},
-		{"subpath + soft default", soft, db.Scan{SubPath: "as"}, false},
-		{"subpath + unset default is soft", unset, db.Scan{SubPath: "as"}, false},
-		{"override soft beats hard default", hard, db.Scan{SubPath: "as", ScopeMode: "soft"}, false},
-		{"override hard beats soft default", soft, db.Scan{SubPath: "as", ScopeMode: "hard"}, true},
-		{"finding-scoped stays soft", hard, db.Scan{SubPath: "as", FindingID: &fid}, false},
-		{"diff rescan stays soft", hard, db.Scan{SubPath: "as", RescanMode: "diff"}, false},
+		{"root scan never hard", hard, db.Scan{SubPath: ""}, "findings", false},
+		{"subpath + hard default", hard, db.Scan{SubPath: "as"}, "findings", true},
+		{"subpath + soft default", soft, db.Scan{SubPath: "as"}, "findings", false},
+		{"subpath + unset default is soft", unset, db.Scan{SubPath: "as"}, "findings", false},
+		{"override soft beats hard default", hard, db.Scan{SubPath: "as", ScopeMode: "soft"}, "findings", false},
+		{"override hard beats soft default", soft, db.Scan{SubPath: "as", ScopeMode: "hard"}, "findings", true},
+		{"finding-scoped stays soft", hard, db.Scan{SubPath: "as", FindingID: &fid}, "findings", false},
+		{"diff rescan stays soft", hard, db.Scan{SubPath: "as", RescanMode: "diff"}, "findings", false},
+		// Repo-wide projection kinds never hard-scope even under a hard default
+		// with an explicit hard override — pruning would let their parser wipe
+		// the other sub-packages' rows.
+		{"subprojects opts out", hard, db.Scan{SubPath: "as"}, "subprojects", false},
+		{"dependencies opts out", hard, db.Scan{SubPath: "as"}, "dependencies", false},
+		{"maintainers opts out", hard, db.Scan{SubPath: "as"}, "maintainers", false},
+		{"repo-wide beats explicit hard override", hard, db.Scan{SubPath: "as", ScopeMode: "hard"}, "subprojects", false},
+		{"code audit still hard under hard default", hard, db.Scan{SubPath: "as"}, "threat_model", true},
 	}
 	for _, tc := range cases {
-		if got := tc.w.scanScopeHard(&tc.scan); got != tc.want {
+		if got := tc.w.scanScopeHard(&tc.scan, tc.outputKind); got != tc.want {
 			t.Errorf("%s: got %v want %v", tc.name, got, tc.want)
 		}
 	}

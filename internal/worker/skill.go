@@ -57,8 +57,13 @@ type skillContextScrutineer struct {
 	// Empty means the repository's default branch.
 	ScanRef string `json:"scan_ref,omitempty"`
 	// ScanSubPath scopes code analysis to a sub-folder of ./src (monorepo
-	// support). Empty means the repo root. Skills that walk files honour
-	// this; skills that query external APIs ignore it.
+	// support). Empty means the repo root. Finding-producing / code-analysis
+	// skills honour it, scoping their reads and reported locations to the
+	// sub-folder. Repo-wide projection skills — those whose parser writes
+	// repository-level rows (see worker.repoWideProjectionKinds) — ignore it and
+	// always describe the whole repository; scoping one would overwrite or wipe
+	// repo-level data from a single sub-package's view (that is why repo-overview
+	// runs brief against ./src, not ./src/<subpath>).
 	ScanSubPath string `json:"scan_subpath,omitempty"`
 	// ScanGroup identifies the parallel batch this scan belongs to. An audit
 	// skill passes it to /repositories/{id}/findings?scan_group=... to read
@@ -183,7 +188,7 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 	// build, and its findings can't reach into sibling packages. Kept out of
 	// PrepareSrc so it applies to both a real clone and a local-dir copy, and so
 	// the automatic soft fallback below can re-widen by re-staging the tree.
-	hardScope := w.scanScopeHard(scan)
+	hardScope := w.scanScopeHard(scan, skill.OutputKind)
 	if hardScope {
 		if err := pruneToSubPath(filepath.Join(workRoot, "src"), scan.SubPath); err != nil {
 			return "", fmt.Errorf("hard-scope sub_path: %w", err)
@@ -920,7 +925,18 @@ func (w *Worker) parseMaintainersOutput(scan *db.Scan, report string, emit func(
 	if err := w.DB.First(&repo, scan.RepositoryID).Error; err != nil {
 		return err
 	}
-	if strings.TrimSpace(result.DisclosureChannel) != "" {
+	// A sub-path-scoped run describes one sub-package, so it must never rewrite
+	// repository-wide state: the top-level disclosure channel or the whole
+	// maintainer association set. Today the skill reads repo-root files and
+	// reports the whole repository even when scoped, so this changes nothing —
+	// the guard is what keeps that safe if the skill is ever made sub-path-aware
+	// (the scan_subpath contract at skillContextScrutineer.ScanSubPath invites
+	// it), when a fragmentary report would otherwise clobber every sibling's
+	// attribution through the wholesale Association.Replace below. A scoped run
+	// still records its own sub-package's disclosure channel — that is the point
+	// of running it.
+	repoWide := scan.SubPath == ""
+	if repoWide && strings.TrimSpace(result.DisclosureChannel) != "" {
 		if err := db.SetDisclosureChannel(w.DB, repo.ID, result.DisclosureChannel); err != nil {
 			return fmt.Errorf("update disclosure channel: %w", err)
 		}
@@ -964,7 +980,7 @@ func (w *Worker) parseMaintainersOutput(scan *db.Scan, report string, emit func(
 		w.DB.Save(&m)
 		linked = append(linked, m)
 	}
-	if len(linked) > 0 {
+	if repoWide && len(linked) > 0 {
 		_ = w.DB.Model(&repo).Association("Maintainers").Replace(linked)
 	}
 	emit(Event{Kind: KindText, Text: fmt.Sprintf("identified %d maintainer(s)", len(result.Maintainers))})

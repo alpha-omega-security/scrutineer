@@ -249,9 +249,11 @@ type Scan struct {
 
 	// SubPath scopes the scan's code analysis to a sub-folder within the
 	// clone (e.g. airflow-core inside apache/airflow). Empty means the
-	// repo root. Skills that walk files honour this through
-	// scrutineer.scan_subpath in context.json; skills that consult
-	// external APIs (packages/advisories/dependents) ignore it.
+	// repo root. Finding-producing / code-analysis skills honour this through
+	// scrutineer.scan_subpath in context.json; repo-wide projection skills
+	// (those whose output populates repository-level rows, e.g.
+	// packages/advisories/dependencies/maintainers/repo-overview) ignore it and
+	// always describe the whole repository.
 	SubPath string `gorm:"index"`
 
 	// ScopeMode overrides the instance-default subproject staging mode for
@@ -1360,9 +1362,14 @@ func Open(dsn string) (*gorm.DB, error) {
 	// re-runs (Package/Advisory.SubprojectID reference them). Collapse any
 	// duplicate rows left by the pre-upsert wholesale-replace path — keeping
 	// the lowest id — before adding the unique index so its creation can't
-	// fail on historic data.
-	gdb.Exec(`DELETE FROM subprojects WHERE id NOT IN (SELECT MIN(id) FROM subprojects GROUP BY repository_id, path)`)
-	gdb.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_subprojects_repo_path ON subprojects (repository_id, path)`)
+	// fail on historic data. Gated on the index's absence so this is a true
+	// one-shot migration: once the index exists there can be no duplicates,
+	// and re-running the full-table dedup scan on every boot would be wasted
+	// work.
+	if !gdb.Migrator().HasIndex(&Subproject{}, "idx_subprojects_repo_path") {
+		gdb.Exec(`DELETE FROM subprojects WHERE id NOT IN (SELECT MIN(id) FROM subprojects GROUP BY repository_id, path)`)
+		gdb.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_subprojects_repo_path ON subprojects (repository_id, path)`)
+	}
 	return gdb, nil
 }
 

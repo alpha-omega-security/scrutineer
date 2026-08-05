@@ -55,14 +55,14 @@ func TestDoSkill_hardScopeSoftFallback(t *testing.T) {
 	}
 	repo := db.Repository{URL: "https://github.com/rails/rails", Name: "rails"}
 	gdb.Create(&repo)
-	skill := db.Skill{Name: "subprojects", OutputFile: "report.json", OutputKind: "subprojects", Version: 1, Active: true, Source: "ui"}
+	skill := db.Skill{Name: "vuln-scan", OutputFile: "report.json", OutputKind: "findings", Version: 1, Active: true, Source: "ui"}
 	gdb.Create(&skill)
 	scan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanQueued, Model: "fake", SkillID: &skill.ID, SubPath: "activesupport"}
 	gdb.Create(&scan)
 
 	runner := &twoPhaseRunner{
 		first:  SkillResult{Commit: "abc", Report: `Bundler could not find compatible versions for gem "activesupport"`},
-		second: SkillResult{Commit: "abc", Report: `{"subprojects":[]}`},
+		second: SkillResult{Commit: "abc", Report: `{"findings":[]}`},
 	}
 	w := &Worker{
 		DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DataDir: t.TempDir(),
@@ -89,7 +89,7 @@ func TestDoSkill_hardScopeFallbackFromStreamedOutput(t *testing.T) {
 	}
 	repo := db.Repository{URL: "https://github.com/rails/rails", Name: "rails"}
 	gdb.Create(&repo)
-	skill := db.Skill{Name: "subprojects", OutputFile: "report.json", OutputKind: "subprojects", Version: 1, Active: true, Source: "ui"}
+	skill := db.Skill{Name: "vuln-scan", OutputFile: "report.json", OutputKind: "findings", Version: 1, Active: true, Source: "ui"}
 	gdb.Create(&skill)
 	scan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanQueued, Model: "fake", SkillID: &skill.ID, SubPath: "actionpack"}
 	gdb.Create(&scan)
@@ -99,8 +99,8 @@ func TestDoSkill_hardScopeFallbackFromStreamedOutput(t *testing.T) {
 	// in its output, not in report.json).
 	runner := &twoPhaseRunner{
 		firstEmit: `I ran bundle install and it failed: Bundler could not find compatible versions for gem "activesupport".`,
-		first:     SkillResult{Commit: "abc", Report: `{"subprojects":[]}`},
-		second:    SkillResult{Commit: "abc", Report: `{"subprojects":[]}`},
+		first:     SkillResult{Commit: "abc", Report: `{"findings":[]}`},
+		second:    SkillResult{Commit: "abc", Report: `{"findings":[]}`},
 	}
 	w := &Worker{
 		DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DataDir: t.TempDir(),
@@ -127,15 +127,15 @@ func TestDoSkill_hardScopeNoFallbackOnOrdinaryFailure(t *testing.T) {
 	}
 	repo := db.Repository{URL: "https://github.com/rails/rails", Name: "rails"}
 	gdb.Create(&repo)
-	skill := db.Skill{Name: "subprojects", OutputFile: "report.json", OutputKind: "subprojects", Version: 1, Active: true, Source: "ui"}
+	skill := db.Skill{Name: "vuln-scan", OutputFile: "report.json", OutputKind: "findings", Version: 1, Active: true, Source: "ui"}
 	gdb.Create(&skill)
 	scan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanQueued, Model: "fake", SkillID: &skill.ID, SubPath: "activesupport"}
 	gdb.Create(&scan)
 
 	// A clean report with no resolver signature: the hard scan stands, no retry.
 	runner := &twoPhaseRunner{
-		first:  SkillResult{Commit: "abc", Report: `{"subprojects":[]}`},
-		second: SkillResult{Commit: "abc", Report: `{"subprojects":[]}`},
+		first:  SkillResult{Commit: "abc", Report: `{"findings":[]}`},
+		second: SkillResult{Commit: "abc", Report: `{"findings":[]}`},
 	}
 	w := &Worker{
 		DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DataDir: t.TempDir(),

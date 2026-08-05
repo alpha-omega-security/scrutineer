@@ -104,6 +104,40 @@ func TestParseSubprojectsOutput_stableIDsAcrossReruns(t *testing.T) {
 	}
 }
 
+func TestParseSubprojectsOutput_scopedRunDoesNotPrune(t *testing.T) {
+	// Seed the full set from a whole-repository run.
+	report := `{"subprojects":[
+		{"path":"activesupport","name":"activesupport"},
+		{"path":"actionpack","name":"actionpack"}
+	]}`
+	repo, gdb := runSkillWithReport(t, "subprojects", report)
+
+	// A sub-path-scoped run only saw its own folder, so it reports just
+	// activesupport. It must upsert what it saw without pruning actionpack —
+	// the backstop that keeps a mis-scoped run from wiping the repo's table.
+	scan := db.Scan{RepositoryID: repo.ID, SubPath: "activesupport"}
+	gdb.Create(&scan)
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	if err := w.parseSubprojectsOutput(&scan, `{"subprojects":[{"path":"activesupport","name":"activesupport-scoped"}]}`, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+
+	var count int64
+	gdb.Model(&db.Subproject{}).Where("repository_id = ?", repo.ID).Count(&count)
+	if count != 2 {
+		t.Errorf("subproject count = %d, want 2 (a scoped run must not prune siblings)", count)
+	}
+	var ap db.Subproject
+	if err := gdb.Where("repository_id = ? AND path = ?", repo.ID, "actionpack").First(&ap).Error; err != nil {
+		t.Errorf("actionpack pruned by a scoped run: %v", err)
+	}
+	var as db.Subproject
+	gdb.Where("repository_id = ? AND path = ?", repo.ID, "activesupport").First(&as)
+	if as.Name != "activesupport-scoped" {
+		t.Errorf("activesupport not upserted by scoped run: name = %q", as.Name)
+	}
+}
+
 func TestParseSubprojectsOutput_invalidJSON(t *testing.T) {
 	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
 	if err != nil {
@@ -557,6 +591,51 @@ func TestParseMaintainers_perSubprojectDisclosureChannel(t *testing.T) {
 	gdb.First(&got, sub.ID)
 	if got.DisclosureChannel != "" {
 		t.Errorf("attribution off must not write subproject channel, got %q", got.DisclosureChannel)
+	}
+}
+
+func TestParseMaintainers_scopedRunLeavesRepoWideAlone(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "m.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://github.com/rails/rails", Name: "rails"}
+	gdb.Create(&repo)
+	sub := db.Subproject{RepositoryID: repo.ID, Path: "activesupport", Name: "activesupport"}
+	gdb.Create(&sub)
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), MonorepoAttribution: true}
+
+	// Seed repo-wide state from a normal repo-root run: two maintainers and a
+	// repository disclosure channel.
+	root := db.Scan{RepositoryID: repo.ID}
+	gdb.Create(&root)
+	seed := `{"maintainers":[{"login":"alice","role":"lead","status":"active"},{"login":"bob","role":"dev","status":"active"}],"disclosure_channel":"repo@example.org"}`
+	if err := w.parseMaintainersOutput(&root, seed, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A sub-path-scoped run reports a fragment (only alice) and a different
+	// top-level channel. It must not clobber the repo-wide maintainer list or
+	// channel, but must still record the sub-package's own channel.
+	scoped := db.Scan{RepositoryID: repo.ID, SubPath: "activesupport"}
+	gdb.Create(&scoped)
+	report := `{"maintainers":[{"login":"alice","role":"lead","status":"active"}],"disclosure_channel":"WRONG@example.org","subprojects":[{"path":"activesupport","disclosure_channel":"as@example.org"}]}`
+	if err := w.parseMaintainersOutput(&scoped, report, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+
+	var r db.Repository
+	gdb.First(&r, repo.ID)
+	if r.DisclosureChannel != "repo@example.org" {
+		t.Errorf("scoped run clobbered repo channel: %q, want repo@example.org", r.DisclosureChannel)
+	}
+	if n := gdb.Model(&repo).Association("Maintainers").Count(); n != 2 {
+		t.Errorf("scoped run changed repo maintainer set: %d associations, want 2 (alice,bob)", n)
+	}
+	var gotSub db.Subproject
+	gdb.First(&gotSub, sub.ID)
+	if gotSub.DisclosureChannel != "as@example.org" {
+		t.Errorf("scoped run should still record the sub-package channel: %q", gotSub.DisclosureChannel)
 	}
 }
 

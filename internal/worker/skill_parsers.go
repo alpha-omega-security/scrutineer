@@ -340,7 +340,15 @@ func (w *Worker) parseDependenciesOutput(scan *db.Scan, report string, emit func
 		})
 	}
 	// Replace the prior row set atomically so a failed insert can't leave
-	// the repository with zero dependencies.
+	// the repository with zero dependencies. This delete-and-replace assumes a
+	// whole-repository view: Dependency rows are repo-level (no SubprojectID), so
+	// a sub-path-scoped run that saw only one sub-package's manifests would wipe
+	// every sibling's rows. That view holds today because scanScopeHard keeps
+	// this skill whole-tree (repoWideProjectionKinds) and the git-pkgs script
+	// enumerates all of ./src rather than honouring scan_subpath. If this skill
+	// is ever made sub-path-aware, it must gain a per-subproject partition (or a
+	// scoped-run guard like parseMaintainersOutput's) before it can run scoped —
+	// otherwise a scoped run silently deletes the rest of the repo's dependencies.
 	if err := w.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Where("repository_id = ?", scan.RepositoryID).Delete(&db.Dependency{}).Error; err != nil {
 			return fmt.Errorf("delete old dependencies: %w", err)
@@ -594,12 +602,21 @@ func (w *Worker) parseSubprojectsOutput(scan *db.Scan, report string, emit func(
 				return fmt.Errorf("update subproject: %w", err)
 			}
 		}
-		prune := tx.Where("repository_id = ?", scan.RepositoryID)
-		if len(keep) > 0 {
-			prune = prune.Where("path NOT IN ?", keep)
-		}
-		if err := prune.Delete(&db.Subproject{}).Error; err != nil {
-			return fmt.Errorf("prune subprojects: %w", err)
+		// Only a whole-repository run may prune. A sub-path-scoped run saw at
+		// most a fragment of the tree (a slipped hard scope, or a soft run the
+		// agent nonetheless narrowed), so its enumeration is not authoritative
+		// for the repo; pruning against it would delete every sibling's row.
+		// scanScopeHard already keeps subprojects whole-tree, so a scoped run
+		// reaching here means it was mis-scoped some other way — this backstop
+		// turns that into a harmless upsert-only pass instead of a table wipe.
+		if scan.SubPath == "" {
+			prune := tx.Where("repository_id = ?", scan.RepositoryID)
+			if len(keep) > 0 {
+				prune = prune.Where("path NOT IN ?", keep)
+			}
+			if err := prune.Delete(&db.Subproject{}).Error; err != nil {
+				return fmt.Errorf("prune subprojects: %w", err)
+			}
 		}
 		return nil
 	}); err != nil {

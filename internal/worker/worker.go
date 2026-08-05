@@ -109,9 +109,11 @@ type Worker struct {
 	AutoRejectMissedCount int
 
 	// SubprojectScope is the instance-default workspace-staging mode for a
-	// subproject-scoped scan: "hard"/"" stages only the sub-folder, "soft"
+	// subproject-scoped scan: "hard" stages only the sub-folder; "soft"/""
 	// stages the whole clone with the sub-path as an advisory hint. A scan's
-	// own Scan.ScopeMode overrides it. See config.SubprojectScope.
+	// own Scan.ScopeMode overrides it. See config.SubprojectScope. (The CLI's
+	// -subproject-scope flag defaults this to "hard"; the empty field here is
+	// soft, which only a programmatically-constructed worker sees.)
 	SubprojectScope string
 	// MonorepoAttribution enables per-subproject attribution of registry data
 	// (packages, advisories, maintainers, disclosure channel) matched by

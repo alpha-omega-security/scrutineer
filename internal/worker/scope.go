@@ -10,6 +10,30 @@ import (
 	"scrutineer/internal/db"
 )
 
+// repoWideProjectionKinds are skill output kinds whose result describes the
+// whole repository regardless of which sub-folder was requested: the sub-project
+// map itself, registry data (packages, advisories, dependencies), repository
+// metadata, disclosure maintainers, posture, and the repo-scoped finding dedup.
+// A sub-path scan of one of these must never hard-scope. Pruning the workspace
+// to the sub-folder would make the skill re-project the whole repository from a
+// partial view, and the matching parser then replaces the repo-level set with
+// that fragment — parseSubprojectsOutput and parseDependenciesOutput
+// delete-and-replace per repository, and parseMaintainersOutput replaces the
+// repository's maintainer associations — so a single scoped run would wipe every
+// sibling's rows. These skills also read local files or query by repository URL
+// rather than building anything, so hard scope's isolation buys them nothing.
+var repoWideProjectionKinds = map[string]bool{
+	"subprojects":   true,
+	"dependencies":  true,
+	"packages":      true,
+	"advisories":    true,
+	"maintainers":   true,
+	"repo_metadata": true,
+	"repo_overview": true,
+	"posture":       true,
+	"finding_dedup": true,
+}
+
 // scanScopeHard reports whether this scan should be hard-scoped: its workspace
 // pruned down to SubPath so the agent, its build, and its findings are confined
 // to a single sub-package. Only a sub-path scan is ever hard — a root scan has
@@ -17,12 +41,15 @@ import (
 // because they need the whole checkout and its .git to diff, apply, and
 // validate a fix; diff rescans stay soft too, since pruning the siblings would
 // make them show up as deletions against the full-tree baseline and poison the
-// diff. Otherwise the per-scan ScopeMode wins, falling back to the instance
-// default (Worker.SubprojectScope); an unset default is soft, so a
-// programmatically-constructed worker keeps the pre-monorepo whole-tree
-// behaviour until the operator opts into hard scoping.
-func (w *Worker) scanScopeHard(scan *db.Scan) bool {
-	if scan.SubPath == "" || scan.FindingID != nil || scan.RescanMode == "diff" {
+// diff. Repo-wide projection skills (repoWideProjectionKinds) stay soft as well:
+// their result covers the whole repository irrespective of the requested
+// sub-folder, and hard-scoping one would let its wholesale-replace parser
+// destroy every other sub-package's rows. Otherwise the per-scan ScopeMode wins,
+// falling back to the instance default (Worker.SubprojectScope); an unset
+// default is soft, so a programmatically-constructed worker keeps the
+// pre-monorepo whole-tree behaviour until the operator opts into hard scoping.
+func (w *Worker) scanScopeHard(scan *db.Scan, outputKind string) bool {
+	if scan.SubPath == "" || scan.FindingID != nil || scan.RescanMode == "diff" || repoWideProjectionKinds[outputKind] {
 		return false
 	}
 	mode := scan.ScopeMode
@@ -128,6 +155,16 @@ func (w *Worker) reStageWholeTree(ctx context.Context, scan *db.Scan, skill *db.
 // scan should widen to the whole tree. Deliberately narrow: an ordinary
 // compile/build/test error is a real finding, not a scoping artifact, and must
 // not trigger the fallback.
+//
+// This is a substring match over the agent's streamed narration by necessity,
+// not laziness: the harness discards raw tool results (see harness claude.go's
+// "user" role case), so a package manager's stderr only reaches us if the model
+// re-narrates it. The known cost: an audit whose own source quotes one of these
+// markers (a package manager, or error-handling that mirrors these strings)
+// could trip a spurious whole-tree re-run. That is cost-only and confined to
+// hard-scoped sub-package scans, so it is accepted rather than papered over with
+// a heuristic that risks missing a real resolver failure — the false negative is
+// worse than the redundant run.
 func isDependencyResolutionFailure(text string) bool {
 	if text == "" {
 		return false
