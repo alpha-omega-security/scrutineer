@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1130,5 +1131,57 @@ func TestWorker_maxTurnsParseFailureLogged(t *testing.T) {
 	}
 	if !strings.Contains(logBuf.String(), "parse partial skill output after max turns") {
 		t.Errorf("expected warn log about partial parse, got: %s", logBuf.String())
+	}
+}
+
+// Nothing publishes between the claim and finalizeScan, which is minutes away
+// for a real skill, so without a push here the list pages show a scan as queued
+// for its entire run.
+func TestWrap_publishesRunningOnClaim(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "start.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
+	gdb.Create(&repo)
+	skill := db.Skill{Name: "metadata", Description: "x", Body: "b", Active: true, Source: "ui", Version: 1}
+	gdb.Create(&skill)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanQueued, SkillID: &skill.ID}
+	gdb.Create(&scan)
+
+	var mu sync.Mutex
+	var statuses []string
+	w := &Worker{
+		DB:             gdb,
+		Log:            slog.New(slog.NewTextHandler(io.Discard, nil)),
+		DataDir:        t.TempDir(),
+		Runner:         fakeRunner{skillRes: SkillResult{Report: `{}`}},
+		PrepareRepoSrc: stubPrepareRepoSrc,
+		OnEvent: func(scanID, repoID uint, name, data string) {
+			if name != "scan-status" {
+				return
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if scanID != scan.ID || repoID != repo.ID {
+				t.Errorf("scan-status for scan=%d repo=%d, want scan=%d repo=%d",
+					scanID, repoID, scan.ID, repo.ID)
+			}
+			statuses = append(statuses, data)
+		},
+	}
+
+	body, _ := json.Marshal(queue.Payload{ScanID: scan.ID})
+	if err := w.wrap(w.doSkill)(context.Background(), body); err != nil {
+		t.Fatalf("wrap: %v", err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(statuses) < 2 || statuses[0] != string(db.ScanRunning) {
+		t.Fatalf("published statuses = %v, want running first then the outcome", statuses)
+	}
+	if last := statuses[len(statuses)-1]; last == string(db.ScanRunning) {
+		t.Errorf("published statuses = %v, want a terminal status last", statuses)
 	}
 }

@@ -31,6 +31,10 @@ type client struct {
 	scanID uint // 0 = all scans
 	repoID uint // 0 = all repos
 	convID uint // 0 = all conversations
+	// names restricts delivery to these event names; nil = every name. A list
+	// page only reacts to scan-status, and without this filter it would be sent
+	// every log line of every running scan and the whole chat activity stream.
+	names map[string]bool
 }
 
 // Broker fans SSE events from the worker to connected HTTP clients.
@@ -43,12 +47,18 @@ func NewBroker() *Broker {
 	return &Broker{clients: make(map[*client]struct{})}
 }
 
-func (b *Broker) Subscribe(scanID, repoID, convID uint) *client {
+func (b *Broker) Subscribe(scanID, repoID, convID uint, names ...string) *client {
 	c := &client{
 		ch:     make(chan Event, sseBuf),
 		scanID: scanID,
 		repoID: repoID,
 		convID: convID,
+	}
+	if len(names) > 0 {
+		c.names = make(map[string]bool, len(names))
+		for _, n := range names {
+			c.names[n] = true
+		}
 	}
 	b.mu.Lock()
 	b.clients[c] = struct{}{}
@@ -68,6 +78,9 @@ func (b *Broker) Publish(e Event) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	for c := range b.clients {
+		if c.names != nil && !c.names[e.Name] {
+			continue
+		}
 		if c.scanID != 0 && c.scanID != e.ScanID {
 			continue
 		}
@@ -96,7 +109,14 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	repoID, _ := strconv.ParseUint(r.URL.Query().Get("repo"), 10, 64)
 	convID, _ := strconv.ParseUint(r.URL.Query().Get("conv"), 10, 64)
 
-	c := s.Broker.Subscribe(uint(scanID), uint(repoID), uint(convID))
+	var names []string
+	for name := range strings.SplitSeq(r.URL.Query().Get("events"), ",") {
+		if name = strings.TrimSpace(name); name != "" {
+			names = append(names, name)
+		}
+	}
+
+	c := s.Broker.Subscribe(uint(scanID), uint(repoID), uint(convID), names...)
 	defer s.Broker.Unsubscribe(c)
 
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -121,11 +141,14 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 			return
 		case e := <-c.ch:
 			var data string
-			switch e.Name {
-			case "scan-status":
-				data = s.renderScanStatus(e.ScanID)
-			default:
+			// A scan-status with no scan ID comes from a bulk action or an
+			// enqueue, which name no row to swap: it carries no payload and
+			// only tells the list pages to re-fetch their table.
+			switch {
+			case e.Name != "scan-status":
 				data = html.EscapeString(e.Data)
+			case e.ScanID != 0:
+				data = s.renderScanStatus(e.ScanID)
 			}
 			writeSSEEvent(w, e.Name, data)
 			flusher.Flush()
@@ -133,8 +156,25 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// renderScanStatus loads a scan and renders the OOB row + toast fragment
-// pushed to repo_show via the scan-status SSE event.
+// publishScanRow announces a change to a scan that open pages already hold a
+// row for, so the payload can swap that row in place (and toast it once the scan
+// finished). Anything that has no single row to point at goes through
+// publishScanList instead.
+func (s *Server) publishScanRow(scan *db.Scan) {
+	s.Broker.Publish(Event{Name: "scan-status", ScanID: scan.ID, RepoID: scan.RepositoryID})
+}
+
+// publishScanList tells the list pages that scan rows changed without naming
+// one: a bulk action flips many rows at once, and an enqueue adds a row no open
+// page has yet, so there is nothing for an OOB row swap to land on. repoID is 0
+// for an instance-wide action, which still reaches the unscoped list
+// subscribers and deliberately not the per-repository ones.
+func (s *Server) publishScanList(repoID uint) {
+	s.Broker.Publish(Event{Name: "scan-status", RepoID: repoID})
+}
+
+// renderScanStatus loads a scan and renders the OOB row (plus a toast once it
+// finished) pushed to repo_show via the scan-status SSE event.
 func (s *Server) renderScanStatus(scanID uint) string {
 	var scan db.Scan
 	if err := s.DB.Preload("Repository").First(&scan, scanID).Error; err != nil {
@@ -144,21 +184,25 @@ func (s *Server) renderScanStatus(scanID uint) string {
 	s.DB.Model(&db.Finding{}).Where("scan_id = ?", scan.ID).Count(&n)
 	scan.FindingsCount = int(n)
 
-	cat := successKey
-	if scan.Status != db.ScanDone {
-		cat = errorKey
-	}
-	flash := Flash{
-		Category:    cat,
-		Title:       fmt.Sprintf("%s %s", scan.SkillName, scan.Status),
-		Description: scan.Repository.Name,
-		Href:        fmt.Sprintf("/scans/%d", scan.ID),
-		Label:       "View",
+	data := map[string]any{"Scan": scan}
+	// Only an outcome is worth a toast. A scan reaching `running` pushes a row
+	// update like any other status, but announcing every start would spam the
+	// toaster, and the category below would paint it as an error.
+	if scan.Status.Terminal() {
+		cat := successKey
+		if scan.Status != db.ScanDone {
+			cat = errorKey
+		}
+		data["Flash"] = Flash{
+			Category:    cat,
+			Title:       fmt.Sprintf("%s %s", scan.SkillName, scan.Status),
+			Description: scan.Repository.Name,
+			Href:        fmt.Sprintf("/scans/%d", scan.ID),
+			Label:       "View",
+		}
 	}
 	var buf strings.Builder
-	if err := s.tmpl.ExecuteTemplate(&buf, "scan-status-sse", map[string]any{
-		"Scan": scan, "Flash": flash,
-	}); err != nil {
+	if err := s.tmpl.ExecuteTemplate(&buf, "scan-status-sse", data); err != nil {
 		s.Log.Error("render scan-status-sse", "scan", scanID, "err", err)
 		return ""
 	}

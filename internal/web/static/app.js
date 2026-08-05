@@ -39,11 +39,40 @@
     if (list) list.scrollTop = list.scrollHeight;
   }
 
+  // Mirrors humanDuration in server.go: seconds under a minute, then minutes,
+  // then hours (with minutes when non-zero), then days. Keep the two in step,
+  // or a row's elapsed time jumps the moment the server re-renders it.
+  function humanDuration(ms) {
+    var s = Math.floor(ms / 1000);
+    if (s < 1) return '0s';
+    if (s < 60) return s + 's';
+    var m = Math.floor(s / 60);
+    if (m < 60) return m + 'm';
+    var h = Math.floor(m / 60);
+    if (h < 24) return m % 60 === 0 ? h + 'h' : h + 'h' + (m % 60) + 'm';
+    return Math.floor(h / 24) + 'd';
+  }
+
+  // Elapsed times are rendered server-side, so a scan in flight would keep
+  // reading "0s ago" until something else refreshed the row. Recounting from
+  // the instant in <time datetime> keeps them climbing with no request. Keyed
+  // on data-elapsed, which the `since` helper sets: a <time> holding anything
+  // other than a "this long ago" value must not be rewritten as one.
+  function elapsed() {
+    var now = Date.now();
+    document.querySelectorAll('time[data-elapsed][datetime]').forEach(function (el) {
+      var t = Date.parse(el.getAttribute('datetime'));
+      if (isNaN(t)) return;
+      el.textContent = humanDuration(Math.max(0, now - t)) + ' ago';
+    });
+  }
+
   function init() {
     icons();
     highlight();
     restoreTab();
     chatToBottom();
+    elapsed();
   }
 
   if (document.readyState === 'loading') {
@@ -53,9 +82,11 @@
     init();
   }
 
-  document.addEventListener('htmx:afterSwap', function () { icons(); highlight(); });
+  setInterval(elapsed, 1000);
+
+  document.addEventListener('htmx:afterSwap', function () { icons(); highlight(); elapsed(); });
   document.addEventListener('htmx:historyRestore', init);
-  document.addEventListener('htmx:oobAfterSwap', function () { icons(); highlight(); });
+  document.addEventListener('htmx:oobAfterSwap', function () { icons(); highlight(); elapsed(); });
 
   document.body.addEventListener('htmx:sseMessage', function (e) {
     var el = e.target.closest('[data-reload-on-sse]');

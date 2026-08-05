@@ -2,12 +2,15 @@ package web
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -838,5 +841,134 @@ func TestScansRetryFailed_preservesScopeMode(t *testing.T) {
 	}
 	if retried.SubPath != "activesupport" {
 		t.Errorf("retried sub_path = %q, want activesupport", retried.SubPath)
+	}
+}
+
+// The page's SSE listener re-requests /scans to refresh its table, so an htmx
+// request must return the table alone: the full page would nest a second
+// layout inside the swapped element and kill the EventSource with it.
+func TestJobs_htmxServesTableFragment(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/frag", Name: "frag"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", SkillName: "audit", Status: db.ScanRunning,
+		StatusPriority: db.StatusPriorityFor(db.ScanRunning)}
+	s.DB.Create(&scan)
+
+	r := localReq("GET", "/scans")
+	r.Header.Set("HX-Request", "true")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	frag := w.Body.String()
+	if !strings.Contains(frag, `id="jobs"`) {
+		t.Errorf("fragment missing the swap target: %s", frag)
+	}
+	if strings.Contains(frag, "<html") {
+		t.Error("htmx request got a full page instead of the table fragment")
+	}
+	if strings.Contains(frag, "sse-connect") {
+		t.Error("fragment must not carry the SSE listener; swapping it would drop the connection")
+	}
+
+	full := httptest.NewRecorder()
+	s.Handler().ServeHTTP(full, localReq("GET", "/scans"))
+	body := full.Body.String()
+	if !strings.Contains(body, `sse-connect="/events?events=scan-status"`) {
+		t.Error("page does not subscribe to scan status events")
+	}
+	if !strings.Contains(body, `hx-target="#jobs"`) {
+		t.Errorf("page does not aim its refresh at the table: %s", body)
+	}
+}
+
+// The refresh replays the current request URI, so a filtered view must stay
+// filtered rather than silently widening to every scan.
+func TestJobs_htmxFragmentKeepsStatusFilter(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/filter", Name: "filter"}
+	s.DB.Create(&repo)
+	mk := func(st db.ScanStatus) db.Scan {
+		sc := db.Scan{RepositoryID: repo.ID, Kind: "skill", SkillName: "audit", Status: st,
+			StatusPriority: db.StatusPriorityFor(st)}
+		s.DB.Create(&sc)
+		return sc
+	}
+	running, finished := mk(db.ScanRunning), mk(db.ScanDone)
+
+	r := localReq("GET", "/scans?status=running")
+	r.Header.Set("HX-Request", "true")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+
+	frag := w.Body.String()
+	if !strings.Contains(frag, fmt.Sprintf(`/scans/%d"`, running.ID)) {
+		t.Errorf("running scan missing from the filtered fragment: %s", frag)
+	}
+	if strings.Contains(frag, fmt.Sprintf(`/scans/%d"`, finished.ID)) {
+		t.Error("fragment leaked a scan the status filter excludes")
+	}
+}
+
+// A fragment carries no #toaster, so popping the flash there would swallow the
+// message the full render a POST is redirecting to is about to display.
+// Started is an elapsed time baked in at render time, so the row would read
+// "0s ago" for the scan's whole run. app.js recounts it every second from the
+// instant in the datetime attribute, which is the only reason it climbs.
+func TestJobs_startedCarriesTheInstantForTheClientToRecount(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/ticker", Name: "ticker"}
+	s.DB.Create(&repo)
+	startedAt := time.Now().Add(-90 * time.Second)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", SkillName: "audit", Status: db.ScanRunning,
+		StatusPriority: db.StatusPriorityFor(db.ScanRunning), StartedAt: &startedAt}
+	s.DB.Create(&scan)
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/scans"))
+	body := w.Body.String()
+
+	want := fmt.Sprintf(`<time datetime="%s" data-elapsed>1m ago</time>`, startedAt.UTC().Format(time.RFC3339))
+	if !strings.Contains(body, want) {
+		t.Errorf("Started cell cannot be recounted client-side; want %s in:\n%s", want, body)
+	}
+}
+
+func TestJobs_htmxFragmentLeavesFlashForTheNextPage(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	withFlash := func(path string, hx bool) *httptest.ResponseRecorder {
+		raw, _ := json.Marshal(Flash{Category: successKey, Title: "3 queued scans paused"})
+		r := localReq("GET", path)
+		r.AddCookie(&http.Cookie{Name: "flash", Value: base64.RawURLEncoding.EncodeToString(raw)})
+		if hx {
+			r.Header.Set("HX-Request", "true")
+		}
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, r)
+		return w
+	}
+
+	if got := withFlash("/scans", true).Header().Values("Set-Cookie"); len(got) != 0 {
+		t.Errorf("fragment consumed the flash: %v", got)
+	}
+
+	// The full page does show it, and clearing the cookie there is what keeps
+	// the toast from reappearing on every later render.
+	full := withFlash("/scans", false)
+	if !strings.Contains(full.Body.String(), "3 queued scans paused") {
+		t.Error("full page did not render the pending flash")
+	}
+	if !strings.Contains(strings.Join(full.Header().Values("Set-Cookie"), " "), "flash=;") {
+		t.Errorf("full page did not clear the flash cookie: %v", full.Header().Values("Set-Cookie"))
 	}
 }

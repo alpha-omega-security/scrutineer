@@ -86,12 +86,19 @@ Tailwind, basecoat, htmx, lucide and highlight.js are vendored under `internal/w
 
 ## SSE architecture
 
-The `Broker` in `sse.go` fans events from the worker to connected browsers. Clients subscribe via `GET /events?scan={id}&repo={id}` (both optional). The worker publishes two event types:
+The `Broker` in `sse.go` fans events from the worker and from the web handlers to connected browsers. Clients subscribe via `GET /events?scan={id}&repo={id}&conv={id}&events={names}` (all optional). The scope parameters filter by subject; `events` is a comma-separated list of event names, so a page that only reacts to job status is not sent the log line of every running scan on the instance. The event types are:
 
 - `scan-log`: each line from a running job, pushed immediately
-- `scan-status`: fires when a job finishes (done/failed)
+- `scan-status`: a job left `queued` for `running`, reached a terminal state, or was changed by an operator action (cancel, pause, resume, retry, enqueue)
+- `chat-activity` / `chat-done`: a conversation turn's progress and its completion
 
-Templates use `hx-ext="sse"` with `sse-connect` and `sse-swap` to append log lines and trigger page reloads on completion. Embedded newlines in log lines are emitted as multiple `data:` lines so the browser's EventSource parser reconstructs the original text.
+A `scan-status` carrying a scan ID renders the `scan-status-sse` fragment: an OOB row for the repo Scans tab, plus a toast once the scan finished. A bulk action or a fresh enqueue has no single row to swap, so it publishes the event with a zero scan ID and no payload — the list pages treat it as "re-fetch your table".
+
+Templates use `hx-ext="sse"` with `sse-connect` plus either `sse-swap` (append log lines, swap a row) or `hx-trigger="sse:scan-status"` with `hx-get`. Three tables use the second form and re-request a fragment of themselves, which keeps the operator's scroll, filters and sort: `/scans` swaps `#jobs`, `/` swaps `#repos` (both replay the current request URI, exposed as `.SelfURL`), and a repository's Scans tab swaps `#repo-scans` from `GET /repositories/{id}/scans`. That last one has its own route rather than an `isHX` branch on `repoShow`, which would re-run the findings, dependency, inventory and threat-model loads the table never reads. On `repo_show` the listener keeps its `sse-swap` as well, so a row already on screen still updates instantly and raises its toast; the fragment request is what shows a scan queued after the page was rendered and moves the Cancel/Resume/Retry counts. It is a child of the `sse-connect` element so it can declare its own `hx-swap`, the same shape `scan_show.html` uses for its log pane.
+
+A status event cannot keep an elapsed time honest, since it ages between two events. `since` therefore renders `<time datetime="…" data-elapsed>3m ago</time>` and `static/app.js` recounts every `time[data-elapsed]` once a second, so the value climbs with no request at all. The marker attribute is what keeps the recount off any other `<time>` — a future absolute date, or the `until` helper's "in 3h" — which it would otherwise rewrite as "3h ago". The JS mirrors `humanDuration`; keep the two in step or a value jumps whenever the server re-renders it.
+
+The Scans tab fragment reads a narrowed projection (`scanRowColumns`) rather than whole scan rows: it re-renders on every status event, and a scan's `log` and `report` are megabytes the table never shows. `TestRepoScansFragment_rowMatchesTheFullPage` compares one row rendered through both paths, so a column the projection forgets fails the build instead of silently rendering blank on refresh. Handlers serve those fragments on any htmx request, and deliberately leave the flash cookie alone there since a fragment carries no `#toaster`. Embedded newlines in log lines are emitted as multiple `data:` lines so the browser's EventSource parser reconstructs the original text.
 
 ## Skill HTTP API
 

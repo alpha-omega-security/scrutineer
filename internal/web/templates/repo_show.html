@@ -715,51 +715,22 @@
   </div>
 
   <div role="tabpanel" id="rp3" aria-labelledby="rt3" hidden>
-    {{if or (gt .ActiveScans 0) (gt .PausedScans 0) (gt .FailedScans 0)}}
-      <div class="flex justify-end gap-2 mb-2">
-        {{if gt .ActiveScans 0}}
-        <form method="post" action="/scans/cancel-all?repository={{.Repo.ID}}"
-              hx-post="/scans/cancel-all?repository={{.Repo.ID}}" hx-swap="none"
-              hx-confirm="Cancel all {{.ActiveScans}} running or queued scan(s) on {{.Repo.Name}}? Any work in progress is discarded.">
-          <button type="submit" class="btn-outline">
-            <i data-lucide="x"></i> Cancel all ({{.ActiveScans}})
-          </button>
-        </form>
-        {{end}}
-        {{if gt .PausedScans 0}}
-        <form method="post" action="/scans/resume-paused?repository={{.Repo.ID}}"
-              hx-post="/scans/resume-paused?repository={{.Repo.ID}}" hx-swap="none"
-              hx-confirm="Resume all {{.PausedScans}} paused scan(s) on {{.Repo.Name}}?">
-          <button type="submit" class="btn-outline">
-            <i data-lucide="play"></i> Resume all ({{.PausedScans}})
-          </button>
-        </form>
-        {{end}}
-        {{if gt .FailedScans 0}}
-        <form method="post" action="/scans/retry-failed?repository={{.Repo.ID}}"
-              hx-post="/scans/retry-failed?repository={{.Repo.ID}}" hx-swap="none"
-              hx-confirm="Re-enqueue every failed scan on this repository?">
-          <button type="submit" class="btn-outline">
-            <i data-lucide="refresh-cw"></i> Retry failed ({{.FailedScans}})
-          </button>
-        </form>
-        {{end}}
-      </div>
-    {{end}}
-    <table class="table">
-      <thead>
-        <tr><th>#</th><th>Skill</th><th>Status</th><th>Findings</th><th>Model</th><th>Cost</th><th>Commit</th><th>Started</th><th>Duration</th><th class="w-12"></th></tr>
-      </thead>
-      {{template "scan_rows" .}}
-    </table>
+    {{template "repo_scans.html" .}}
   </div>
 
   <div role="tabpanel" id="rp15" aria-labelledby="rt15" hidden>
     {{template "chat-panel" (dict "Action" (printf "/repositories/%d/conversations" .Repo.ID) "Conversations" .Conversations "Placeholder" "Ask about this repository's code or findings...")}}
   </div>
 
-  <div hx-ext="sse" sse-connect="/events?repo={{.Repo.ID}}"
-       sse-swap="scan-status" hx-swap="none" hx-disinherit="*" hidden></div>
+  <div hx-ext="sse" sse-connect="/events?repo={{.Repo.ID}}&events=scan-status"
+       sse-swap="scan-status" hx-swap="none" hx-disinherit="*" hidden>
+    {{/* The payload above swaps the row of a scan already on screen and raises
+         its toast. That cannot show a scan queued after this page was rendered,
+         nor move the Cancel/Resume/Retry counts, so the same event also
+         re-requests the tab's own table. */}}
+    <div hx-get="/repositories/{{.Repo.ID}}/scans" hx-trigger="sse:scan-status delay:300ms"
+         hx-target="#repo-scans" hx-swap="outerHTML"></div>
+  </div>
 </div>
 
 {{template "foot" .}}
@@ -787,5 +758,5 @@
 
 {{define "scan-status-sse"}}
 {{template "scan-row" (dict "S" .Scan "OOB" true)}}
-<div hx-swap-oob="afterbegin:#toaster">{{template "toast" .Flash}}</div>
+{{if .Flash}}<div hx-swap-oob="afterbegin:#toaster">{{template "toast" .Flash}}</div>{{end}}
 {{end}}

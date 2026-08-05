@@ -66,14 +66,22 @@ func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-	s.render(w, r, "jobs.html", map[string]any{
+	data := map[string]any{
 		"Scans": scans, "Page": page,
 		"Skill": skillName, "Status": status, "Sort": sort, "Skills": skillNames,
 		"AnySubPath": anySubPath, "QueuedCount": stats.QueuedCount, "PausedCount": stats.PausedCount,
 		"AccountPausedCount": stats.AccountPausedCount,
 		"NextAccountResume":  stats.NextAccountResume,
 		"ModelDowngraded":    s.Worker.ShouldDowngradeModel(),
-	})
+	}
+	// The page's own SSE listener re-requests this URL when a scan changes, so
+	// an htmx request gets the table alone and keeps the operator's scroll,
+	// filters and sort instead of reloading the whole page.
+	if isHX(r) {
+		s.render(w, r, "job_list.html", data)
+		return
+	}
+	s.render(w, r, "jobs.html", data)
 }
 
 type scanListStats struct {
@@ -378,6 +386,16 @@ func (s *Server) scansRetryFailed(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) scansPauseQueued(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
+	// Read the owning repositories before the update, while the rows are still
+	// queued: a page scoped to a repository filters on the event's RepoID, so an
+	// instance-wide push alone would leave its Scans tab reading "queued". A
+	// failure here only costs liveness, so it is logged and falls back to the
+	// unscoped push below rather than aborting the pause.
+	var repoIDs []uint
+	if err := s.DB.Model(&db.Scan{}).Where("status = ?", db.ScanQueued).
+		Distinct().Pluck("repository_id", &repoIDs).Error; err != nil {
+		s.Log.Warn("pause-queued: list affected repositories", "err", err)
+	}
 	res := s.DB.Model(&db.Scan{}).Where("status = ?", db.ScanQueued).Updates(scanStatusUpdates(
 		db.ScanPaused,
 		"paused by user",
@@ -387,6 +405,17 @@ func (s *Server) scansPauseQueued(w http.ResponseWriter, r *http.Request) {
 	if res.Error != nil {
 		http.Error(w, res.Error.Error(), http.StatusInternalServerError)
 		return
+	}
+	if res.RowsAffected > 0 {
+		// A repository-scoped event still reaches the unscoped list pages (they
+		// filter on nothing), so publishing per repository covers both and the
+		// instance-wide push is only the fallback for an unknown repository set.
+		if len(repoIDs) == 0 {
+			s.publishScanList(0)
+		}
+		for _, id := range repoIDs {
+			s.publishScanList(id)
+		}
 	}
 	setFlash(w, Flash{Category: successKey, Title: fmt.Sprintf("%d queued scans paused", res.RowsAffected)})
 	s.redirect(w, r, "/scans?status=paused")
@@ -409,7 +438,7 @@ func (s *Server) bulkResumePaused(base *gorm.DB) ([]db.Scan, error) {
 		// Opted-out repositories are excluded from both the read and the claim:
 		// recording an opt-out cancels the paused scans it finds, but a scan the
 		// worker pauses while that sweep runs would otherwise stay resumable.
-		if err := tx.Select("id", "kind", "finding_id", "error", "paused_until").
+		if err := tx.Select("id", "repository_id", "kind", "finding_id", "error", "paused_until").
 			Where("status = ?", db.ScanPaused).
 			Where("repository_id NOT IN (?)", s.optedOutRepoIDs()).
 			Find(&paused).Error; err != nil {
@@ -462,6 +491,7 @@ func (s *Server) enqueueResumedScan(ctx context.Context, scan db.Scan) error {
 	if err := s.Queue.Enqueue(ctx, scan.Kind, scan.ID, priority); err != nil {
 		return errors.Join(err, s.restorePausedAfterResumeEnqueueFailure(scan, err))
 	}
+	s.publishScanRow(&scan)
 	return nil
 }
 
@@ -577,7 +607,7 @@ func (s *Server) scanCancel(w http.ResponseWriter, r *http.Request) {
 		// A queued scan isn't in flight, so the worker never publishes a
 		// scan-status event for it; push one ourselves so the repo Scans tab
 		// and the scan page reflect the cancellation live.
-		s.Broker.Publish(Event{Name: "scan-status", ScanID: scan.ID, RepoID: scan.RepositoryID})
+		s.publishScanRow(&scan)
 	}
 	// Deliberately no redirect: cancelling from a list (repo Scans tab, jobs)
 	// should leave the operator on that list so they can cancel the next one,
@@ -668,9 +698,13 @@ func (s *Server) scansCancelAll(w http.ResponseWriter, r *http.Request) {
 		s.cancelScan(&scans[i], worker.CancelledByUser)
 		cancelled++
 	}
+	if cancelled > 0 {
+		s.publishScanList(uint(repoID))
+	}
 	setFlash(w, Flash{Category: successKey, Title: fmt.Sprintf("%d scan(s) cancelled", cancelled)})
 	// Back to the Scans tab: the redirect re-renders the table with fresh DB
 	// state, so every flipped row shows "cancelled" without per-scan SSE pushes.
+	// The push above is for the other pages left open on those rows.
 	s.redirect(w, r, fmt.Sprintf("/repositories/%d#rt3", repoID))
 }
 
