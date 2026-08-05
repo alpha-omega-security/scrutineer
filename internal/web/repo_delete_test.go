@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"scrutineer/internal/db"
 	"scrutineer/internal/worker"
@@ -78,6 +79,7 @@ func TestRepoDelete_removesRepoAndAllLinkedData(t *testing.T) {
 	s.DB.Create(&db.Subproject{RepositoryID: repo.ID, Path: "cli"})
 	s.DB.Create(&db.Dependency{RepositoryID: repo.ID, Name: "left-pad", Ecosystem: "npm"})
 	s.DB.Create(&db.Package{RepositoryID: repo.ID, Name: "acme-pkg", Ecosystem: "npm"})
+	s.DB.Create(&db.DependentCountSnapshot{RepositoryID: repo.ID, DependentRepos: 42, ObservedAt: time.Now()})
 	s.DB.Create(&db.Advisory{RepositoryID: repo.ID, Title: "CVE-2026-0001"})
 
 	maintainer := db.Maintainer{Login: "alice", Name: "Alice", Status: db.MaintainerActive}
@@ -140,6 +142,7 @@ func TestRepoDelete_removesRepoAndAllLinkedData(t *testing.T) {
 		"dependencies": count(&db.Dependency{}, "repository_id = ?", repo.ID),
 		"dependents":   count(&db.Dependent{}, "repository_id = ?", repo.ID),
 		"packages":     count(&db.Package{}, "repository_id = ?", repo.ID),
+		"dep-history":  count(&db.DependentCountSnapshot{}, "repository_id = ?", repo.ID),
 		"advisories":   count(&db.Advisory{}, "repository_id = ?", repo.ID),
 		"notes":        count(&db.FindingNote{}, "finding_id = ?", finding.ID),
 		"comms":        count(&db.FindingCommunication{}, "finding_id = ?", finding.ID),

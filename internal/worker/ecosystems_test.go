@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -20,23 +21,37 @@ import (
 )
 
 type fakeEcosystemsFetcher struct {
-	payloads map[string][]byte
-	errs     map[string]error
-	hits     map[string]int
+	payloads  map[string][]byte
+	errs      map[string]error
+	hits      map[string]int
+	completed map[string]time.Time
+}
+
+type gatedPackagesFetcher struct {
+	*fakeEcosystemsFetcher
+	ready   chan<- struct{}
+	release <-chan struct{}
+}
+
+func (f *gatedPackagesFetcher) fetchPackages(context.Context, string) ([]byte, error) {
+	f.ready <- struct{}{}
+	<-f.release
+	return f.fetch("packages")
 }
 
 func newFakeEcosystemsFetcher() *fakeEcosystemsFetcher {
 	return &fakeEcosystemsFetcher{
 		payloads: map[string][]byte{
 			"repo":       []byte(`{"full_name":"acme/widget","stars":10}`),
-			"packages":   []byte(`[{"name":"widget","ecosystem":"npm"},{"name":"acme","ecosystem":"npm"}]`),
+			"packages":   []byte(`[{"name":"widget","ecosystem":"npm","dependent_repos_count":12},{"name":"acme","ecosystem":"npm","dependent_repos_count":34}]`),
 			"advisories": []byte(`[{"id":"GHSA-1"},{"id":"GHSA-2"}]`),
 			"commits":    []byte(`{"commits":[{"login":"alice"}]}`),
 			"issues":     []byte(`{"issues":[{"login":"bob"}]}`),
 			"dependents": mustDependentsPayloadForTest(),
 		},
-		errs: map[string]error{},
-		hits: map[string]int{},
+		errs:      map[string]error{},
+		hits:      map[string]int{},
+		completed: map[string]time.Time{},
 	}
 }
 
@@ -66,6 +81,7 @@ func (f *fakeEcosystemsFetcher) fetchDependents(context.Context, string) ([]byte
 
 func (f *fakeEcosystemsFetcher) fetch(key string) ([]byte, error) {
 	f.hits[key]++
+	defer func() { f.completed[key] = time.Now() }()
 	if err := f.errs[key]; err != nil {
 		return nil, err
 	}
@@ -140,6 +156,8 @@ func TestRefreshEcosystems_populatesAllSources(t *testing.T) {
 		}
 		if c.at == nil {
 			t.Errorf("%s fetched_at is nil, want set", c.name)
+		} else if c.at.Before(fetcher.completed[c.name]) {
+			t.Errorf("%s fetched_at = %v, before fetch completed at %v", c.name, c.at, fetcher.completed[c.name])
 		}
 		if fetcher.hits[c.name] != 1 {
 			t.Errorf("%s fetches = %d, want 1", c.name, fetcher.hits[c.name])
@@ -150,6 +168,128 @@ func TestRefreshEcosystems_populatesAllSources(t *testing.T) {
 	gdb.Where("repository_id = ?", repo.ID).Order("name").Find(&rows)
 	if len(rows) != 3 {
 		t.Fatalf("dependent rows = %+v, want 3", rows)
+	}
+	var snapshots []db.DependentCountSnapshot
+	gdb.Where("repository_id = ?", repo.ID).Find(&snapshots)
+	if len(snapshots) != 1 || snapshots[0].DependentRepos != 34 {
+		t.Fatalf("dependent count snapshots = %+v, want one snapshot with count 34", snapshots)
+	}
+	if got.EcosystemsPackagesFetchedAt == nil || !snapshots[0].ObservedAt.Equal(*got.EcosystemsPackagesFetchedAt) {
+		t.Errorf("snapshot observed_at = %v, packages fetched_at = %v", snapshots[0].ObservedAt, got.EcosystemsPackagesFetchedAt)
+	}
+}
+
+func TestRefreshEcosystems_recordsCountsOnlyWhenPackagesAreRefetched(t *testing.T) {
+	fetcher := newFakeEcosystemsFetcher()
+	gdb := openEcosystemsTestDB(t)
+	repo := db.Repository{URL: "https://github.com/acme/widget", Name: "widget"}
+	if err := gdb.Create(&repo).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := refreshEcosystems(context.Background(), gdb, repo.ID, false, slog.Default(), fetcher); err != nil {
+		t.Fatalf("initial refresh: %v", err)
+	}
+	if err := refreshEcosystems(context.Background(), gdb, repo.ID, true, slog.Default(), fetcher); err != nil {
+		t.Fatalf("fresh-cache pass: %v", err)
+	}
+	var snapshots []db.DependentCountSnapshot
+	if err := gdb.Where("repository_id = ?", repo.ID).Order("observed_at").Find(&snapshots).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshots) != 1 {
+		t.Fatalf("snapshots after fresh-cache pass = %+v, want one", snapshots)
+	}
+	if fetcher.hits["packages"] != 1 {
+		t.Fatalf("package fetches after fresh-cache pass = %d, want 1", fetcher.hits["packages"])
+	}
+
+	stale := time.Now().Add(-ttlPackages - time.Hour)
+	if err := gdb.Model(&db.Repository{}).Where("id = ?", repo.ID).
+		Update("ecosystems_packages_fetched_at", stale).Error; err != nil {
+		t.Fatal(err)
+	}
+	fetcher.payloads["packages"] = []byte(`[{"name":"widget","dependent_repos_count":55},{"name":"acme","dependent_repos_count":21}]`)
+	if err := refreshEcosystems(context.Background(), gdb, repo.ID, true, slog.Default(), fetcher); err != nil {
+		t.Fatalf("stale-cache pass: %v", err)
+	}
+	if err := gdb.Where("repository_id = ?", repo.ID).Order("observed_at").Find(&snapshots).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshots) != 2 || snapshots[0].DependentRepos != 34 || snapshots[1].DependentRepos != 55 {
+		t.Fatalf("snapshots after stale refresh = %+v, want counts [34 55]", snapshots)
+	}
+	if fetcher.hits["packages"] != 2 {
+		t.Errorf("package fetches after stale refresh = %d, want 2", fetcher.hits["packages"])
+	}
+}
+
+func TestRefreshEcosystems_concurrentPackagesRefreshRecordsOneSnapshot(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "ecosystems.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://github.com/acme/widget", Name: "widget"}
+	if err := gdb.Create(&repo).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	ready := make(chan struct{}, 2)
+	release := make(chan struct{})
+	errs := make(chan error, 2)
+	for range 2 {
+		fetcher := &gatedPackagesFetcher{
+			fakeEcosystemsFetcher: newFakeEcosystemsFetcher(),
+			ready:                 ready,
+			release:               release,
+		}
+		go func() {
+			errs <- refreshEcosystems(context.Background(), gdb, repo.ID, true, slog.Default(), fetcher)
+		}()
+	}
+	<-ready
+	<-ready
+	close(release)
+	for range 2 {
+		if err := <-errs; err != nil {
+			t.Fatalf("concurrent refresh: %v", err)
+		}
+	}
+
+	var snapshots []db.DependentCountSnapshot
+	if err := gdb.Where("repository_id = ?", repo.ID).Find(&snapshots).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshots) != 1 || snapshots[0].DependentRepos != 34 {
+		t.Fatalf("concurrent snapshots = %+v, want one snapshot with count 34", snapshots)
+	}
+}
+
+func TestRefreshEcosystems_doesNotCacheMalformedPackageCounts(t *testing.T) {
+	fetcher := newFakeEcosystemsFetcher()
+	fetcher.payloads["packages"] = []byte(`{"not":"an array"}`)
+	gdb := openEcosystemsTestDB(t)
+	repo := db.Repository{URL: "https://github.com/acme/widget", Name: "widget"}
+	if err := gdb.Create(&repo).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	if err := refreshEcosystems(context.Background(), gdb, repo.ID, false, slog.Default(), fetcher); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+	var got db.Repository
+	if err := gdb.First(&got, repo.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.EcosystemsPackagesData != "" || got.EcosystemsPackagesFetchedAt != nil {
+		t.Errorf("malformed packages payload was cached: data=%q fetched_at=%v", got.EcosystemsPackagesData, got.EcosystemsPackagesFetchedAt)
+	}
+	var count int64
+	if err := gdb.Model(&db.DependentCountSnapshot{}).Where("repository_id = ?", repo.ID).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Errorf("malformed packages payload recorded %d snapshots, want 0", count)
 	}
 }
 

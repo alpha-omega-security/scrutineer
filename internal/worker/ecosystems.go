@@ -190,10 +190,8 @@ func refreshEcosystems(ctx context.Context, gdb *gorm.DB, repoID uint, staleOnly
 			log.Warn("ecosystems fetch failed", "repo", repoID, "source", src.key, "err", err)
 			continue
 		}
-		if err := gdb.Model(&db.Repository{}).Where("id = ?", repoID).Updates(map[string]any{
-			src.dataColumn: string(body),
-			src.fetchedCol: now,
-		}).Error; err != nil {
+		fetchedAt := time.Now()
+		if err := cacheEcosystemsSource(gdb, repoID, src, body, fetchedAt, ecosystemsFetchedAt(repo, src.key)); err != nil {
 			log.Warn("ecosystems cache write failed", "repo", repoID, "source", src.key, "err", err)
 			continue
 		}
@@ -204,6 +202,69 @@ func refreshEcosystems(ctx context.Context, gdb *gorm.DB, repoID uint, staleOnly
 		}
 	}
 	return nil
+}
+
+func cacheEcosystemsSource(
+	gdb *gorm.DB,
+	repoID uint,
+	src ecosystemsSource,
+	body []byte,
+	observedAt time.Time,
+	expectedFetchedAt *time.Time,
+) error {
+	writeCache := func(tx *gorm.DB) (bool, error) {
+		query := tx.Model(&db.Repository{}).Where("id = ?", repoID)
+		if expectedFetchedAt == nil {
+			query = query.Where(src.fetchedCol + " IS NULL")
+		} else {
+			query = query.Where(src.fetchedCol+" = ?", *expectedFetchedAt)
+		}
+		result := query.Updates(map[string]any{
+			src.dataColumn: string(body),
+			src.fetchedCol: observedAt,
+		})
+		return result.RowsAffected > 0, result.Error
+	}
+	if src.key != "packages" {
+		_, err := writeCache(gdb)
+		return err
+	}
+
+	dependentRepos, err := maxPackageDependentRepos(body)
+	if err != nil {
+		return err
+	}
+	return gdb.Transaction(func(tx *gorm.DB) error {
+		updated, err := writeCache(tx)
+		if err != nil {
+			return err
+		}
+		if !updated {
+			return nil
+		}
+		return tx.Create(&db.DependentCountSnapshot{
+			RepositoryID:   repoID,
+			DependentRepos: dependentRepos,
+			ObservedAt:     observedAt,
+		}).Error
+	})
+}
+
+func maxPackageDependentRepos(body []byte) (int, error) {
+	var packages []struct {
+		DependentRepos int `json:"dependent_repos_count"`
+	}
+	if err := json.Unmarshal(body, &packages); err != nil {
+		return 0, fmt.Errorf("parse packages dependent counts: %w", err)
+	}
+	maxCount := 0
+	for _, pkg := range packages {
+		if pkg.DependentRepos < 0 {
+			return 0, fmt.Errorf("parse packages dependent counts: negative dependent_repos_count %d", pkg.DependentRepos)
+		}
+		maxCount = max(maxCount, pkg.DependentRepos)
+	}
+	return maxCount, nil
 }
 
 // unreachable reports whether err means the host could not be reached at all:

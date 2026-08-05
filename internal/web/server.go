@@ -2792,7 +2792,7 @@ func (s *Server) deleteRepository(repo db.Repository) (deletedRepository, error)
 		}
 		for _, child := range []any{
 			&db.Finding{}, &db.Scan{}, &db.Subproject{}, &db.Dependency{},
-			&db.Dependent{}, &db.Package{}, &db.Advisory{}, &db.SBOMUpload{},
+			&db.Dependent{}, &db.Package{}, &db.DependentCountSnapshot{}, &db.Advisory{}, &db.SBOMUpload{},
 		} {
 			if err := tx.Where("repository_id = ?", repo.ID).Delete(child).Error; err != nil {
 				return err

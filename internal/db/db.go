@@ -410,6 +410,20 @@ type Package struct {
 	CreatedAt time.Time
 }
 
+// DependentCountSnapshot records the maximum dependent-repository count
+// across a repository's published packages at one successful ecosyste.ms
+// refresh. Package dependent sets can overlap, so the maximum matches the
+// conservative signal used by repository health scoring rather than summing
+// counts that may describe the same downstream repositories.
+type DependentCountSnapshot struct {
+	ID           uint `gorm:"primarykey"`
+	RepositoryID uint `gorm:"not null;index:idx_dependent_count_repo_observed,priority:1"`
+	Repository   Repository
+
+	DependentRepos int
+	ObservedAt     time.Time `gorm:"not null;index:idx_dependent_count_repo_observed,priority:2"`
+}
+
 type PackageAlternativeKind string
 
 const (
@@ -1385,7 +1399,7 @@ func Open(dsn string) (*gorm.DB, error) {
 		&Repository{}, &Scan{},
 		&Finding{}, &FindingLabel{}, &FindingNote{},
 		&FindingCommunication{}, &FindingReference{}, &FindingHistory{}, &FindingReview{}, &AuditEvent{},
-		&Dependency{}, &ExpectedFinding{}, &Package{}, &PackageAlternative{}, &Dependent{}, &FindingDependent{}, &Advisory{}, &AdvisoryAudit{},
+		&Dependency{}, &ExpectedFinding{}, &Package{}, &DependentCountSnapshot{}, &PackageAlternative{}, &Dependent{}, &FindingDependent{}, &Advisory{}, &AdvisoryAudit{},
 		&Maintainer{}, &Skill{}, &Subproject{},
 		&SBOMUpload{}, &SBOMPackage{}, &CNA{}, &Setting{},
 		&Conversation{}, &ChatMessage{}, &InterchangeRecord{},

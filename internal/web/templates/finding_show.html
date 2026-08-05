@@ -353,6 +353,42 @@
       </div>
       {{end}}
 
+      {{with $g.DependentTrend}}
+      <div>
+        <div class="flex flex-wrap items-baseline justify-between gap-2 mb-2">
+          <h4 class="text-sm font-medium">Dependent reach over time</h4>
+          <span class="text-xs text-muted-foreground">
+            Latest: {{bignum .Latest}} repos
+            {{if gt .SampleSize 1}}&middot; Change: {{if gt .Change 0}}+{{end}}{{bignum .Change}}{{end}}
+          </span>
+        </div>
+        <p class="text-xs text-muted-foreground mb-2">
+          Maximum dependent repositories reported for any published package at each ecosyste.ms refresh.
+        </p>
+        <div class="rounded-md border border-border p-2">
+          <svg viewBox="0 0 600 120" class="w-full h-32 text-primary" role="img" aria-labelledby="dependent-count-title dependent-count-desc">
+            <title id="dependent-count-title">Dependent repository count history</title>
+            <desc id="dependent-count-desc">{{.SampleSize}} {{if eq .SampleSize 1}}observation{{else}}observations{{end}} from {{.FirstAt.Format "2006-01-02"}} to {{.LatestAt.Format "2006-01-02"}}; latest count {{.Latest}}{{if gt .SampleSize 1}}, change {{.Change}}{{end}}.</desc>
+            <line x1="12" y1="108" x2="588" y2="108" class="stroke-border" vector-effect="non-scaling-stroke"></line>
+            <line x1="12" y1="12" x2="588" y2="12" class="stroke-border" vector-effect="non-scaling-stroke"></line>
+            {{range .Segments}}
+            <line x1="{{.X1}}" y1="{{.Y1}}" x2="{{.X2}}" y2="{{.Y2}}" class="stroke-current" stroke-width="2" vector-effect="non-scaling-stroke"></line>
+            {{end}}
+            {{range .Points}}
+            <circle cx="{{.X}}" cy="{{.Y}}" r="4" class="fill-current stroke-background" stroke-width="2" vector-effect="non-scaling-stroke">
+              <title>{{bignum .DependentRepos}} dependent repositories on {{.ObservedAt.Format "2006-01-02"}}</title>
+            </circle>
+            {{end}}
+          </svg>
+          <div class="flex justify-between gap-4 text-xs text-muted-foreground">
+            <span>{{.FirstAt.Format "2006-01-02"}}</span>
+            <span>Peak {{bignum .Maximum}}</span>
+            <span>{{.LatestAt.Format "2006-01-02"}}</span>
+          </div>
+        </div>
+      </div>
+      {{end}}
+
       {{if $g.Alternatives}}
       <div>
         <h4 class="text-sm font-medium mb-2">Recommended migration targets</h4>

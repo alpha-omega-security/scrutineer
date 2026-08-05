@@ -11,17 +11,51 @@ import (
 
 const migrationGuideRowLimit = 10
 
+const (
+	dependentCountHistoryLimit = 24
+	dependentCountPlotWidth    = 600
+	dependentCountPlotHeight   = 120
+	dependentCountPlotPadding  = 12
+	dependentCountPlotSides    = 2
+)
+
 type findingMigrationGuide struct {
 	Health db.RepositoryHealth
 
 	Packages         []db.Package
 	Alternatives     []db.PackageAlternative
 	CampaignStatuses []db.DependentCampaignStatus
+	DependentTrend   *dependentCountTrend
 
 	PriorityDependents []migrationDependentRow
 	KnownSafeCount     int
 	FixedCount         int
 	TotalExposureRows  int
+}
+
+type dependentCountTrend struct {
+	Points     []dependentCountPlotPoint
+	Segments   []dependentCountPlotSegment
+	Latest     int
+	Change     int
+	Maximum    int
+	FirstAt    time.Time
+	LatestAt   time.Time
+	SampleSize int
+}
+
+type dependentCountPlotPoint struct {
+	X              int
+	Y              int
+	DependentRepos int
+	ObservedAt     time.Time
+}
+
+type dependentCountPlotSegment struct {
+	X1 int
+	Y1 int
+	X2 int
+	Y2 int
 }
 
 type migrationDependentRow struct {
@@ -59,15 +93,79 @@ func loadFindingMigrationGuide(
 		Find(&packages).Error; err != nil {
 		return nil, err
 	}
+	trend, err := loadDependentCountTrend(gdb, repo.ID)
+	if err != nil {
+		return nil, err
+	}
 
 	guide := findingMigrationGuide{
 		Health:           repo.Health,
 		Packages:         packages,
 		Alternatives:     alternatives,
 		CampaignStatuses: db.DependentCampaignStatuses,
+		DependentTrend:   trend,
 	}
 	loadMigrationGuideDependents(exposureRows, dependentsByID, &guide)
 	return &guide, nil
+}
+
+func loadDependentCountTrend(gdb *gorm.DB, repoID uint) (*dependentCountTrend, error) {
+	var snapshots []db.DependentCountSnapshot
+	if err := gdb.Where("repository_id = ?", repoID).
+		Order("observed_at desc, id desc").
+		Limit(dependentCountHistoryLimit).
+		Find(&snapshots).Error; err != nil {
+		return nil, err
+	}
+	if len(snapshots) == 0 {
+		return nil, nil
+	}
+	for left, right := 0, len(snapshots)-1; left < right; left, right = left+1, right-1 {
+		snapshots[left], snapshots[right] = snapshots[right], snapshots[left]
+	}
+	return buildDependentCountTrend(snapshots), nil
+}
+
+func buildDependentCountTrend(snapshots []db.DependentCountSnapshot) *dependentCountTrend {
+	if len(snapshots) == 0 {
+		return nil
+	}
+	trend := &dependentCountTrend{
+		Maximum:    snapshots[0].DependentRepos,
+		FirstAt:    snapshots[0].ObservedAt,
+		LatestAt:   snapshots[len(snapshots)-1].ObservedAt,
+		Latest:     snapshots[len(snapshots)-1].DependentRepos,
+		Change:     snapshots[len(snapshots)-1].DependentRepos - snapshots[0].DependentRepos,
+		SampleSize: len(snapshots),
+		Points:     make([]dependentCountPlotPoint, 0, len(snapshots)),
+	}
+	for _, snapshot := range snapshots {
+		trend.Maximum = max(trend.Maximum, snapshot.DependentRepos)
+	}
+	scaleMax := max(trend.Maximum, 1)
+	plotWidth := dependentCountPlotWidth - dependentCountPlotSides*dependentCountPlotPadding
+	plotHeight := dependentCountPlotHeight - dependentCountPlotSides*dependentCountPlotPadding
+	for i, snapshot := range snapshots {
+		x := dependentCountPlotWidth / dependentCountPlotSides
+		if len(snapshots) > 1 {
+			x = dependentCountPlotPadding + i*plotWidth/(len(snapshots)-1)
+		}
+		y := dependentCountPlotHeight - dependentCountPlotPadding - snapshot.DependentRepos*plotHeight/scaleMax
+		trend.Points = append(trend.Points, dependentCountPlotPoint{
+			X:              x,
+			Y:              y,
+			DependentRepos: snapshot.DependentRepos,
+			ObservedAt:     snapshot.ObservedAt,
+		})
+	}
+	trend.Segments = make([]dependentCountPlotSegment, 0, len(trend.Points)-1)
+	for i := 1; i < len(trend.Points); i++ {
+		previous, current := trend.Points[i-1], trend.Points[i]
+		trend.Segments = append(trend.Segments, dependentCountPlotSegment{
+			X1: previous.X, Y1: previous.Y, X2: current.X, Y2: current.Y,
+		})
+	}
+	return trend
 }
 
 func loadMigrationGuideDependents(

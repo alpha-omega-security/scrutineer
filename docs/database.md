@@ -405,6 +405,21 @@ Top runtime dependents of this repository's packages. Populated by the ecosystem
 | latest_version | text | |
 | created_at | datetime | |
 
+## dependent_count_snapshots
+
+Append-only history of a repository's downstream reach. One row is recorded
+after each successful refresh of the cached packages.ecosyste.ms payload. The
+count is the maximum `dependent_repos_count` across the repository's published
+packages, matching the conservative signal used by repository health scoring;
+package dependent sets may overlap and therefore are not summed.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | integer PK | |
+| repository_id | integer FK | Repository whose published-package counts were observed. Indexed with `observed_at`. |
+| dependent_repos | integer | Maximum dependent-repository count across published packages; zero when the upstream lookup returned no packages or no dependents. |
+| observed_at | datetime | Time the packages payload was fetched from ecosyste.ms. |
+
 ## finding_dependents
 
 One row per (finding, dependent) pair the `exposure` skill has audited. Status mirrors the CSAF 2.0 product_status buckets so the VEX export streams the value through unchanged. Upserted on each rerun; the unique index on `(finding_id, dependent_id)` prevents duplicates.
