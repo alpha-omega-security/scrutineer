@@ -325,6 +325,9 @@ func (w *Worker) parseDependenciesOutput(scan *db.Scan, report string, emit func
 	// Dependency rows and the Current snapshot are whole-repo projections; a
 	// sub-path-scoped scan sees only one sub-package's manifests and would
 	// otherwise wipe the full-repo set and mark a partial SBOM as current.
+	// scanScopeHard keeps this skill whole-tree (repoWideProjectionKinds) so
+	// SubPath is normally empty here; this guard is the parseMaintainersOutput-
+	// style belt-and-braces for a scan that reaches the parser scoped anyway.
 	// Per-sub-package snapshots are deferred until SBOMUpload/Dependency are
 	// keyed on sub-path.
 	if scan.SubPath != "" {
@@ -350,26 +353,7 @@ func (w *Worker) parseDependenciesOutput(scan *db.Scan, report string, emit func
 		emit(Event{Kind: KindText, Text: "inventory failed, prior dependency rows kept: " + reason})
 	}
 	w.resolveMavenDependencyRequirements(scan, inv.Result, emit)
-	rows := make([]db.Dependency, 0, len(inv.Result))
-	for _, d := range inv.Result {
-		depType := d.Type
-		if depType == "" {
-			depType = d.DependencyType
-		}
-		depType = db.NormalizeDependencyType(depType)
-		rows = append(rows, db.Dependency{
-			RepositoryID:          scan.RepositoryID,
-			Name:                  d.Name,
-			Ecosystem:             db.EcosystemType(d.PURL, d.Ecosystem),
-			PURL:                  d.PURL,
-			Requirement:           d.Requirement,
-			RequirementUnresolved: d.RequirementUnresolved,
-			RequirementResolution: d.RequirementResolution,
-			DependencyType:        depType,
-			ManifestPath:          d.ManifestPath,
-			ManifestKind:          d.ManifestKind,
-		})
-	}
+	rows := dependencyRows(scan.RepositoryID, inv.Result)
 
 	up, sbomErr := buildGeneratedSBOM(scan, env)
 	if sbomErr != nil {
@@ -379,12 +363,7 @@ func (w *Worker) parseDependenciesOutput(scan *db.Scan, report string, emit func
 
 	// Replace the prior row set and move the Current flag atomically so a
 	// failed insert can't leave the repository with zero dependencies or
-	// two current snapshots. This delete-and-replace assumes a whole-repository
-	// view: Dependency rows are repo-level (no SubprojectID), so a
-	// sub-path-scoped run that saw only one sub-package's manifests would wipe
-	// every sibling's rows. That view holds today because scanScopeHard keeps
-	// this skill whole-tree (repoWideProjectionKinds) and the git-pkgs script
-	// enumerates all of ./src rather than honouring scan_subpath.
+	// two current snapshots.
 	if err := w.DB.Transaction(func(tx *gorm.DB) error {
 		if replaceInventory {
 			if err := tx.Where("repository_id = ?", scan.RepositoryID).Delete(&db.Dependency{}).Error; err != nil {
@@ -421,6 +400,32 @@ func (w *Worker) parseDependenciesOutput(scan *db.Scan, report string, emit func
 	}
 	emit(Event{Kind: KindText, Text: summary})
 	return nil
+}
+
+// dependencyRows maps the inventory section's report rows to Dependency
+// records for repoID, folding the type/dependency_type alias and normalising
+// the phase.
+func dependencyRows(repoID uint, in []dependencyReportRow) []db.Dependency {
+	rows := make([]db.Dependency, 0, len(in))
+	for _, d := range in {
+		depType := d.Type
+		if depType == "" {
+			depType = d.DependencyType
+		}
+		rows = append(rows, db.Dependency{
+			RepositoryID:          repoID,
+			Name:                  d.Name,
+			Ecosystem:             db.EcosystemType(d.PURL, d.Ecosystem),
+			PURL:                  d.PURL,
+			Requirement:           d.Requirement,
+			RequirementUnresolved: d.RequirementUnresolved,
+			RequirementResolution: d.RequirementResolution,
+			DependencyType:        db.NormalizeDependencyType(depType),
+			ManifestPath:          d.ManifestPath,
+			ManifestKind:          d.ManifestKind,
+		})
+	}
+	return rows
 }
 
 const (
