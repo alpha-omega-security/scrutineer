@@ -27,6 +27,19 @@ Or in `scrutineer.yaml`:
     recipients_file: ./recipients.txt
     identity_file: ~/.ssh/id_ed25519
 
+An age identity plugin can replace or accompany the identity file. For
+example, to let `age-plugin-1p` locate the matching SSH key in 1Password:
+
+    recipients_file: /path/to/recipients.txt
+    identity_plugins:
+      - 1p
+
+The equivalent CLI option is repeatable:
+
+    go run ./cmd/scrutineer -skills ./skills \
+      -recipients-file /path/to/recipients.txt \
+      -identity-plugin 1p
+
 Export a repo's findings as an encrypted bundle:
 
     curl -o findings.bundle.age \
@@ -100,11 +113,79 @@ Both types can be mixed in a single recipients file. The format is auto-detected
 
 Passphrase-protected SSH keys are supported. When scrutineer detects an encrypted key at startup, it prompts on stderr and reads the passphrase from stdin (echo disabled). The passphrase is validated immediately — a wrong passphrase fails startup, not the first import. If stdin is not a terminal (e.g. systemd, a container), the startup fails with a clear message; use an unencrypted key or an age-native key in headless deployments.
 
+### Age identity plugins
+
+`identity_plugins` is a list of provider-neutral age plugin names using the
+data-less identity contract, equivalent to age's `-j NAME` option. The
+repeatable CLI equivalent is `-identity-plugin NAME`. Each name is validated
+at startup using the age plugin API, passed through verbatim, and maps to an
+`age-plugin-NAME` executable. There is no provider-specific SDK, `op`
+integration, shell command, or private-key output path in Scrutineer.
+
+Scrutineer does not launch the executable or trigger authentication until
+decryption needs it. HTTP imports invoke it on demand. Federation performs one
+pass immediately at startup and then hourly, so an encrypted members export or
+import can invoke an interactive plugin during those passes. Plugin interactions
+are serialized so concurrent requests cannot overlap terminal prompts. The
+selected plugin owns prompt duration, authentication, hardware-touch, and
+noninteractive behavior; headless deployments must use authentication that the
+plugin itself supports. An unanswered prompt holds that serialized interaction
+and delays other plugin-backed decryptions until the plugin returns. A missing
+executable is reported at the decrypting operation with the plugin name and
+expected binary.
+
+Scrutineer refuses `AGEDEBUG=plugin` with configured identity plugins because
+age's raw protocol trace can include values entered at secret prompts.
+Plugin-supplied operational error text is likewise kept out of both HTTP
+responses and logs because an error stanza is not a trusted secret-free
+boundary; use the selected plugin's own safe diagnostic workflow when the
+provider-neutral `configured identity plugin ... failed` message is not enough.
+
+Identity files and plugins are additive and are supplied to age together, which
+supports migration between local key files and plugin-owned keys. Age continues
+to another identity only when the prior one reports `ErrIncorrectIdentity`; a
+plugin launch, authentication, or protocol failure aborts that decrypt instead
+of silently falling through.
+
+This interface intentionally covers plugins that support age's data-less `-j`
+mode. Serialized `AGE-PLUGIN-*` identity payloads are not accepted through
+`identity_file` today, so a plugin that requires serialized identity data is
+outside this interface.
+
+For the 1Password example, install both
+[`age-plugin-1p`](https://github.com/Enzime/age-plugin-1p) and the 1Password
+`op` CLI separately and make both available through `PATH`. The plugin locates
+the SSH key and performs the age identity operation; Scrutineer itself never
+receives or writes the SSH private key. Authentication prompts, Touch ID, and
+session handling belong to the plugin and 1Password.
+
+If `op` is signed in to more than one account, set `OP_ACCOUNT` in the
+environment Scrutineer is launched from so the plugin's `op` calls resolve to
+the right one. It accepts an account shorthand, sign-in address, account ID,
+or user ID; `op account list` shows the available values:
+
+    OP_ACCOUNT=my.1password.com scrutineer \
+      -recipients-file /path/to/recipients.txt \
+      -identity-plugin 1p
+
+Keep it in the service or launcher environment rather than `scrutineer.yaml`:
+it is a 1Password setting the plugin's own `op` invocation reads, and
+Scrutineer's configuration stays provider-neutral.
+
+`age-plugin-1p` can decrypt files encrypted to ordinary `ssh-ed25519` or
+`ssh-rsa` recipients, so existing recipients files and ciphertext bundles do
+not need to be converted or re-encrypted. Headless operation depends on the
+selected plugin's own noninteractive authentication support; Scrutineer does
+not add a separate credential or command-execution mechanism.
+
 ### Unsupported: FIDO2 / ed25519-sk keys
 
 `sk-ssh-ed25519@openssh.com` keys (YubiKey FIDO2, Windows Hello) **cannot** be used with age encryption. Age decrypts via X25519 key agreement, which requires the raw private key; FIDO2 devices only expose signing and never export key material. This is a fundamental protocol mismatch — the age CLI has the same limitation.
 
-**YubiKey users who want hardware-backed decryption** can use `age-plugin-yubikey`, which talks to the YubiKey's PIV applet (a separate applet from FIDO2 on the same device). This produces `age1yubikey1...` recipients and requires physical touch per decrypt. See [github.com/str4d/age-plugin-yubikey](https://github.com/str4d/age-plugin-yubikey). Note that PIV-based decrypt requires someone physically present at the server for each encrypted import, so it is impractical for headless deployments.
+`age-plugin-yubikey` uses the YubiKey PIV applet and serialized plugin identity
+data rather than the data-less `-j` contract. Scrutineer's current
+`identity_plugins` interface therefore does not support it. This is separate
+from the fundamental FIDO2 limitation above.
 
 For headless servers, a dedicated unpassworded ed25519 key with restrictive file permissions is the standard approach:
 
@@ -147,9 +228,10 @@ For age-native identities, the identity file can hold multiple keys (one per lin
 | Flag | Config | Description |
 |------|--------|-------------|
 | `-recipients-file` | `recipients_file` | Public keys for encrypted export |
-| `-identity-file` | `identity_file` | Private key for decrypting imports |
+| `-identity-file` | `identity_file` | Private key for decrypting imports and encrypted federation feeds |
+| `-identity-plugin NAME` (repeatable) | `identity_plugins` | Data-less age identity plugins (`age -j`) for decrypting imports and encrypted federation feeds |
 
-Both are optional. When absent the feature is fully disabled and all endpoints behave exactly as before.
+All are optional. When absent the feature is fully disabled and all endpoints behave exactly as before.
 
 ## Endpoints
 

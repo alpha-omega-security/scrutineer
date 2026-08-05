@@ -349,12 +349,33 @@ The `docker build` commands shown for the runner image and profiles can be run a
 | `-schema-strict` | `false` | Fail a scan when its `report.json` does not validate against the skill's `schema.json` (default: warn in the scan log and parse anyway) |
 | `-model-base-url` | - | Custom model API base URL for the active backend (env fallback: `ANTHROPIC_BASE_URL` for claude). `-anthropic-base-url` is a deprecated alias. |
 | `-ecosystems-enrichment` | `true` | Enrich repositories from ecosyste.ms: the per-repository cache, the warm on repo add, and the PURL-to-repository resolution behind SBOM and dependency import. `=false` stops every lookup scrutineer's own process makes, leaves `egress_allow` untouched (the bundled skills still fetch ecosyste.ms themselves), and leaves the Dependents tab and dependent-exposure analysis with no data |
+| `-recipients-file` | - | Age recipients file (public keys) for encrypted export |
+| `-identity-file` | - | Age identity file or SSH private key for decrypting imports and encrypted federation feeds |
+| `-identity-plugin` | - | Data-less age identity plugin name (`age -j`) for decrypting imports and encrypted federation feeds (repeatable; replaces `identity_plugins` from config when set) |
 
 ## Config file
 
 Every flag above can be set in a YAML config file instead, loaded from `./scrutineer.yaml` by default (override with `-config path/to/file`; command-line flags always take precedence). See [scrutineer.sample.yaml](scrutineer.sample.yaml) for the full shape.
 
 `scrutineer.yaml` may contain long-lived credentials such as `skills_repo_token`, the VINCE API key and federation salt. Keep it out of source control and backups, and set owner-only permissions with `chmod 600 scrutineer.yaml`. A private `skills_repo` must use a credential-free HTTPS URL; Scrutineer passes `skills_repo_token` to Git through `GIT_ASKPASS`, and intentionally provides no token command-line flag.
+
+Identity files and age identity plugins can be used together. The interface is
+provider-neutral: any plugin implementing age's data-less identity (`age -j`)
+contract can be named. Scrutineer delegates only through age's official plugin
+protocol, with no provider-specific SDK or command parsing. For example,
+`age-plugin-1p` can find an SSH key in 1Password while the existing recipients
+file continues to contain ordinary SSH public keys:
+
+    recipients_file: /path/to/recipients.txt
+    identity_plugins:
+      - 1p
+
+`age-plugin-1p` and the 1Password `op` CLI must be installed separately and
+available through `PATH`. Scrutineer uses age's plugin protocol and never
+receives or writes the SSH private key; authentication and Touch ID remain the
+plugin's and 1Password's responsibility. See
+[docs/encrypted-sharing.md](docs/encrypted-sharing.md#age-identity-plugins) for
+interactive and headless-use details.
 
 The config file can also replace the model pick list and pin the fallback default model used by the high tier:
 

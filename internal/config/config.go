@@ -135,8 +135,15 @@ type Config struct {
 	// disables encrypted export.
 	RecipientsFile string `yaml:"recipients_file"`
 	// IdentityFile is an age identity file or SSH private key used to
-	// decrypt encrypted imports. Empty disables encrypted import.
+	// decrypt encrypted imports and encrypted federation members feeds.
+	// Can be combined with IdentityPlugins; decryption is disabled only
+	// when both are empty.
 	IdentityFile string `yaml:"identity_file"`
+	// IdentityPlugins names data-less age identity plugins (the age -j
+	// contract) used to decrypt encrypted imports and encrypted federation
+	// members feeds through the age plugin protocol. Can be combined with
+	// IdentityFile; decryption is disabled only when both are empty.
+	IdentityPlugins []string `yaml:"identity_plugins"`
 	// AutoRejectMissedCount is the threshold of consecutive missed rescans at
 	// which an open finding is automatically transitioned to 'rejected'.
 	// 0 (the default) means this feature is disabled.

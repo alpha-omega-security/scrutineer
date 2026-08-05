@@ -11,8 +11,15 @@ import (
 
 	"filippo.io/age"
 	"filippo.io/age/agessh"
+	"filippo.io/age/plugin"
 	"golang.org/x/crypto/ssh"
 )
+
+type rejectingIdentity struct{}
+
+func (*rejectingIdentity) Unwrap([]*age.Stanza) ([]byte, error) {
+	return nil, age.ErrIncorrectIdentity
+}
 
 func certificate(t *testing.T, status string) Statement {
 	t.Helper()
@@ -237,6 +244,64 @@ func TestWriteFeedReEncryptsOnRecipientChange(t *testing.T) {
 	}
 	if records, _ = ReadFeed(dir, []age.Identity{first}); records[0].Err != nil {
 		t.Fatalf("the remaining recipient must still read the feed: %v", records[0].Err)
+	}
+}
+
+func TestWriteFeedPluginFailureDoesNotRewriteExistingRecord(t *testing.T) {
+	dir := t.TempDir()
+	id := testIdentity(t)
+	rec := certificate(t, "bypass")
+	keys := FeedKeys{
+		Recipients: []age.Recipient{id.Recipient()},
+		Identities: []age.Identity{id},
+	}
+	if err := WriteFeed(dir, TierMembers, []Statement{rec}, keys); err != nil {
+		t.Fatal(err)
+	}
+	names, err := recordFiles(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(dir, names[0])
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const name = "scrutineer-missing-test"
+	pluginID, err := plugin.NewIdentityWithoutData(name, &plugin.ClientUI{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", t.TempDir())
+	keys.Identities = []age.Identity{pluginID}
+	if err := WriteFeed(dir, TierMembers, []Statement{rec}, keys); err == nil {
+		t.Fatal("missing plugin must fail instead of replacing the existing ciphertext")
+	} else if !strings.Contains(err.Error(), "age-plugin-"+name) {
+		t.Fatalf("error does not identify the missing plugin executable: %v", err)
+	}
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(before, after) {
+		t.Fatal("a failed identity plugin rewrote the existing ciphertext")
+	}
+}
+
+func TestDecryptRecordDoesNotReorderIdentities(t *testing.T) {
+	id := testIdentity(t)
+	raw, err := encryptRecord([]byte("record"), []age.Recipient{id.Recipient()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reject := &rejectingIdentity{}
+	identities := []age.Identity{reject, id}
+	if _, err := decryptRecord(raw, identities); err != nil {
+		t.Fatal(err)
+	}
+	if identities[0] != reject || identities[1] != id {
+		t.Fatalf("decryptRecord reordered the caller's identities: %T, %T", identities[0], identities[1])
 	}
 }
 

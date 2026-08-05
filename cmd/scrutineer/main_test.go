@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"encoding/pem"
+	"errors"
 	"flag"
 	"io"
 	"log/slog"
@@ -10,10 +12,13 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"filippo.io/age"
+	"filippo.io/age/plugin"
 	"golang.org/x/crypto/ssh"
 
 	"scrutineer/internal/config"
@@ -22,6 +27,12 @@ import (
 	"scrutineer/internal/web"
 	"scrutineer/internal/worker"
 )
+
+type identityFunc func([]*age.Stanza) ([]byte, error)
+
+func (f identityFunc) Unwrap(stanzas []*age.Stanza) ([]byte, error) {
+	return f(stanzas)
+}
 
 func fullConfig() *config.Config {
 	return &config.Config{
@@ -319,6 +330,21 @@ func TestRegisterFlags_noContainerAliasParsesFromArgv(t *testing.T) {
 		if !f.noContainer {
 			t.Errorf("%s did not set noContainer", name)
 		}
+	}
+}
+
+func TestRegisterFlags_identityPluginIsRepeatable(t *testing.T) {
+	f := &flags{}
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	registerFlags(fs, f)
+	if err := fs.Parse([]string{
+		"-identity-plugin", "1p",
+		"-identity-plugin", "provider-b",
+	}); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if !slices.Equal([]string(f.identityPlugins), []string{"1p", "provider-b"}) {
+		t.Errorf("identity plugins = %v, want [1p provider-b]", f.identityPlugins)
 	}
 }
 
@@ -667,6 +693,210 @@ func TestLoadIdentities_ageNative(t *testing.T) {
 	}
 }
 
+func TestLoadIdentityPlugins_validAndMultiple(t *testing.T) {
+	ids, err := loadIdentityPlugins([]string{"1p", "provider-b"}, &plugin.ClientUI{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ids) != 2 {
+		t.Fatalf("got %d identities, want 2", len(ids))
+	}
+	for i, want := range []string{"1p", "provider-b"} {
+		id, ok := ids[i].(*serializedPluginIdentity)
+		if !ok {
+			t.Fatalf("identity %d has type %T, want *serializedPluginIdentity", i, ids[i])
+		}
+		if id.Name() != want {
+			t.Errorf("identity %d name = %q, want %q", i, id.Name(), want)
+		}
+	}
+}
+
+func TestConfigureEncryptionCombinesSources(t *testing.T) {
+	id, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := &flags{
+		recipientsFile:  writeTestKey(t, []byte(id.Recipient().String()+"\n")),
+		identityFile:    writeTestKey(t, []byte(id.String()+"\n")),
+		identityPlugins: pluginNames{"provider-a", "provider-b"},
+	}
+	srv := &web.Server{}
+	if err := configureEncryption(srv, f, quietLog()); err != nil {
+		t.Fatal(err)
+	}
+	if len(srv.EncRecipients) != 1 {
+		t.Fatalf("recipients = %d, want 1", len(srv.EncRecipients))
+	}
+	if len(srv.EncIdentities) != 3 {
+		t.Fatalf("identities = %d, want one file identity and two plugin identities", len(srv.EncIdentities))
+	}
+	// Order is load-bearing: age ties a non-native file identity with the
+	// plugin identities, so insertion order is the only thing that keeps a
+	// local key from being tried after a plugin prompts.
+	if _, isPlugin := srv.EncIdentities[0].(*serializedPluginIdentity); isPlugin {
+		t.Error("a plugin identity precedes the identity file")
+	}
+	for i, want := range []string{"provider-a", "provider-b"} {
+		got, ok := srv.EncIdentities[i+1].(*serializedPluginIdentity)
+		if !ok {
+			t.Errorf("identity %d has type %T, want *serializedPluginIdentity", i+1, srv.EncIdentities[i+1])
+			continue
+		}
+		if got.Name() != want {
+			t.Errorf("identity %d name = %q, want %q", i+1, got.Name(), want)
+		}
+	}
+}
+
+func TestPluginIdentitiesSerializeInteractions(t *testing.T) {
+	var active atomic.Int32
+	var overlapped atomic.Bool
+	underlying := identityFunc(func([]*age.Stanza) ([]byte, error) {
+		if active.Add(1) > 1 {
+			overlapped.Store(true)
+		}
+		time.Sleep(25 * time.Millisecond)
+		active.Add(-1)
+		return nil, age.ErrIncorrectIdentity
+	})
+	mutex := new(sync.Mutex)
+	identities := []*serializedPluginIdentity{
+		{name: "provider-a", identity: underlying, mutex: mutex},
+		{name: "provider-b", identity: underlying, mutex: mutex},
+	}
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for _, id := range identities {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			_, _ = id.Unwrap(nil)
+		}()
+	}
+	close(start)
+	wg.Wait()
+	if overlapped.Load() {
+		t.Fatal("identity plugin interactions overlapped")
+	}
+}
+
+func TestPluginIdentityNonMatchIsNotReportedAsPluginFailure(t *testing.T) {
+	recipientIdentity, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ciphertext bytes.Buffer
+	w, err := age.Encrypt(&ciphertext, recipientIdentity.Recipient())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write([]byte("not for this plugin")); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	id := &serializedPluginIdentity{
+		name: "provider-a",
+		identity: identityFunc(func([]*age.Stanza) ([]byte, error) {
+			return nil, age.ErrIncorrectIdentity
+		}),
+		mutex: new(sync.Mutex),
+	}
+	if _, err := id.Unwrap(nil); err != age.ErrIncorrectIdentity {
+		t.Fatalf("Unwrap error = %v, want canonical age.ErrIncorrectIdentity", err)
+	}
+	_, err = age.Decrypt(bytes.NewReader(ciphertext.Bytes()), id)
+	if err == nil {
+		t.Fatal("expected identity non-match")
+	}
+	if !strings.Contains(err.Error(), "identity did not match any of the recipients") {
+		t.Fatalf("error does not describe an ordinary non-match: %v", err)
+	}
+	if strings.Contains(err.Error(), `configured identity plugin "provider-a" failed`) {
+		t.Fatalf("ordinary non-match was reported as a plugin failure: %v", err)
+	}
+}
+
+func TestPluginIdentityErrorsDoNotExposePluginText(t *testing.T) {
+	secret := errors.New("op://vault/item/private-key")
+	id := &serializedPluginIdentity{
+		name: "provider-a",
+		identity: identityFunc(func([]*age.Stanza) ([]byte, error) {
+			return nil, secret
+		}),
+		mutex: new(sync.Mutex),
+	}
+	_, err := id.Unwrap(nil)
+	if err == nil {
+		t.Fatal("expected plugin failure")
+	}
+	if strings.Contains(err.Error(), "op://") {
+		t.Fatalf("plugin error text escaped the safe boundary: %v", err)
+	}
+	if !errors.Is(err, secret) {
+		t.Fatalf("wrapped error no longer preserves its cause: %v", err)
+	}
+}
+
+func TestPluginIdentityMissingExecutableErrorIsSafeAndSpecific(t *testing.T) {
+	underlying := &plugin.NotFoundError{
+		Name: "provider-a",
+		Err:  errors.New("private process detail"),
+	}
+	id := &serializedPluginIdentity{
+		name: "provider-a",
+		identity: identityFunc(func([]*age.Stanza) ([]byte, error) {
+			return nil, underlying
+		}),
+		mutex: new(sync.Mutex),
+	}
+	_, err := id.Unwrap(nil)
+	if err == nil {
+		t.Fatal("expected missing plugin failure")
+	}
+	if got := err.Error(); got != `configured identity plugin "provider-a" is unavailable; expected age-plugin-provider-a in PATH` {
+		t.Fatalf("error = %q", got)
+	}
+	if !errors.Is(err, underlying) {
+		t.Fatalf("wrapped error no longer preserves its cause: %v", err)
+	}
+}
+
+func TestLoadIdentityPlugins_invalidName(t *testing.T) {
+	_, err := loadIdentityPlugins([]string{"1p", "bad/name"}, &plugin.ClientUI{})
+	if err == nil {
+		t.Fatal("expected invalid plugin name error")
+	}
+	if !strings.Contains(err.Error(), `identity plugin "bad/name"`) ||
+		!strings.Contains(err.Error(), "invalid plugin name") {
+		t.Fatalf("error = %v, want the invalid plugin name and source", err)
+	}
+}
+
+func TestValidateFlags_identityPluginNames(t *testing.T) {
+	if err := validateFlags(&flags{identityPlugins: pluginNames{"1p", "test-plugin_2"}}); err != nil {
+		t.Fatalf("valid plugin names rejected: %v", err)
+	}
+	err := validateFlags(&flags{identityPlugins: pluginNames{"bad/name"}})
+	if err == nil || !strings.Contains(err.Error(), `identity plugin "bad/name"`) {
+		t.Fatalf("invalid plugin name error = %v", err)
+	}
+}
+
+func TestValidateFlags_identityPluginsRejectProtocolDebugLogging(t *testing.T) {
+	t.Setenv("AGEDEBUG", "plugin")
+	err := validateFlags(&flags{identityPlugins: pluginNames{"1p"}})
+	if err == nil || !strings.Contains(err.Error(), "raw plugin protocol traffic") ||
+		!strings.Contains(err.Error(), "entered secrets") {
+		t.Fatalf("AGEDEBUG=plugin error = %v", err)
+	}
+}
+
 func TestLoadRecipients_mixedKeyTypes(t *testing.T) {
 	_, sshPub := genSSHKey(t)
 	ageID, _ := age.GenerateX25519Identity()
@@ -800,6 +1030,73 @@ func TestFlagsMerge_recipientsCliFlagWins(t *testing.T) {
 	f.merge(cfg)
 	if f.recipientsFile != "/from/cli" {
 		t.Errorf("CLI flag should win, got %q", f.recipientsFile)
+	}
+}
+
+func TestFlagsMerge_identityPluginPrecedenceAndIdentityFileCombination(t *testing.T) {
+	cfg := &config.Config{
+		IdentityFile:    "/from/config.key",
+		IdentityPlugins: []string{"config-a", "config-b"},
+	}
+
+	fromConfig := &flags{set: map[string]bool{}}
+	fromConfig.merge(cfg)
+	if fromConfig.identityFile != cfg.IdentityFile ||
+		!slices.Equal([]string(fromConfig.identityPlugins), cfg.IdentityPlugins) {
+		t.Errorf("config identities not combined: file=%q plugins=%v", fromConfig.identityFile, fromConfig.identityPlugins)
+	}
+
+	pluginCLI := &flags{
+		identityPlugins: pluginNames{"cli-a", "cli-b"},
+		set:             map[string]bool{"identity-plugin": true},
+	}
+	pluginCLI.merge(cfg)
+	if !slices.Equal([]string(pluginCLI.identityPlugins), []string{"cli-a", "cli-b"}) {
+		t.Errorf("config overrode CLI plugins: %v", pluginCLI.identityPlugins)
+	}
+	if pluginCLI.identityFile != cfg.IdentityFile {
+		t.Errorf("config identity file was not combined with CLI plugins: %q", pluginCLI.identityFile)
+	}
+
+	fileCLI := &flags{
+		identityFile: "/from/cli.key",
+		set:          map[string]bool{"identity-file": true},
+	}
+	fileCLI.merge(cfg)
+	if fileCLI.identityFile != "/from/cli.key" {
+		t.Errorf("config overrode CLI identity file: %q", fileCLI.identityFile)
+	}
+	if !slices.Equal([]string(fileCLI.identityPlugins), cfg.IdentityPlugins) {
+		t.Errorf("config plugins were not combined with CLI identity file: %v", fileCLI.identityPlugins)
+	}
+}
+
+func TestValidateFederation_identitySources(t *testing.T) {
+	for _, tc := range []struct {
+		name            string
+		recipientsFile  string
+		identityFile    string
+		identityPlugins pluginNames
+		wantErr         bool
+	}{
+		{name: "file only", recipientsFile: "./recipients.txt", identityFile: "./identity.key"},
+		{name: "plugin only", recipientsFile: "./recipients.txt", identityPlugins: pluginNames{"1p"}},
+		{name: "both", recipientsFile: "./recipients.txt", identityFile: "./identity.key", identityPlugins: pluginNames{"1p"}},
+		{name: "neither", recipientsFile: "./recipients.txt", wantErr: true},
+		{name: "plugin without recipients", identityPlugins: pluginNames{"1p"}, wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := flags{
+				federationMembersFeed: "git@host:o/f.git",
+				recipientsFile:        tc.recipientsFile,
+				identityFile:          tc.identityFile,
+				identityPlugins:       tc.identityPlugins,
+			}
+			err := validateFederation(&f)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("validateFederation error = %v, wantErr %v", err, tc.wantErr)
+			}
+		})
 	}
 }
 

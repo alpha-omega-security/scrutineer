@@ -17,6 +17,7 @@ import (
 
 	"filippo.io/age"
 	"filippo.io/age/armor"
+	"filippo.io/age/plugin"
 
 	"scrutineer/internal/db"
 )
@@ -190,6 +191,12 @@ type failResponseWriter struct {
 	body       bytes.Buffer
 	status     int
 	writeBytes int
+}
+
+type rejectingImportIdentity struct{}
+
+func (*rejectingImportIdentity) Unwrap([]*age.Stanza) ([]byte, error) {
+	return nil, age.ErrIncorrectIdentity
 }
 
 func (w *failResponseWriter) Header() http.Header {
@@ -1134,6 +1141,94 @@ func TestImportEncryptedNoIdentity(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "no identity configured") {
 		t.Errorf("unexpected error: %s", w.Body)
+	}
+}
+
+func TestImportEncryptedMissingIdentityPlugin(t *testing.T) {
+	id, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain := []byte(`{"repository":"https://example.com/x","tool":"test","findings":[{"title":"t","severity":"High"}]}`)
+	ct, err := encryptBundle(plain, []age.Recipient{id.Recipient()})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const name = "scrutineer-missing-test"
+	pluginID, err := plugin.NewIdentityWithoutData(name, &plugin.ClientUI{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", t.TempDir())
+
+	s, done := newTestServer(t)
+	defer done()
+	s.EncIdentities = []age.Identity{pluginID}
+
+	r := httptest.NewRequest("POST", "/api/v1/import", bytes.NewReader(ct))
+	r.Host = testHost
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+
+	if w.Code != 422 {
+		t.Fatalf("status %d, want 422: %s", w.Code, w.Body)
+	}
+	if !strings.Contains(w.Body.String(), "age-plugin-"+name) ||
+		!strings.Contains(w.Body.String(), "unavailable") {
+		t.Fatalf("error does not identify the missing plugin executable: %s", w.Body)
+	}
+}
+
+func TestImportEncryptedIdentityNonMatchIsNotAPluginFailure(t *testing.T) {
+	id, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	plain := []byte(`{"repository":"https://example.com/x","tool":"test","findings":[{"title":"t","severity":"High"}]}`)
+	ct, err := encryptBundle(plain, []age.Recipient{id.Recipient()})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	s, done := newTestServer(t)
+	defer done()
+	s.EncIdentities = []age.Identity{&rejectingImportIdentity{}}
+
+	r := httptest.NewRequest("POST", "/api/v1/import", bytes.NewReader(ct))
+	r.Host = testHost
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status %d, want 422: %s", w.Code, w.Body)
+	}
+	if !strings.Contains(w.Body.String(), "identity did not match any of the recipients") {
+		t.Fatalf("error does not describe an ordinary identity non-match: %s", w.Body)
+	}
+	if strings.Contains(w.Body.String(), "plugin") && strings.Contains(w.Body.String(), "failed") {
+		t.Fatalf("ordinary identity non-match was reported as a plugin failure: %s", w.Body)
+	}
+}
+
+func TestMaybeDecryptDoesNotReorderConfiguredIdentities(t *testing.T) {
+	id, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ct, err := encryptBundle([]byte(`{"repository":"https://example.com/x"}`), []age.Recipient{id.Recipient()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, done := newTestServer(t)
+	defer done()
+	reject := &rejectingImportIdentity{}
+	s.EncIdentities = []age.Identity{reject, id}
+	if _, err := s.maybeDecrypt(ct); err != nil {
+		t.Fatal(err)
+	}
+	if s.EncIdentities[0] != reject || s.EncIdentities[1] != id {
+		t.Fatalf("maybeDecrypt reordered the configured identities: %T, %T", s.EncIdentities[0], s.EncIdentities[1])
 	}
 }
 

@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 )
@@ -38,6 +39,21 @@ func TestLoad_absentDefaultPathIsNoError(t *testing.T) {
 func TestLoad_explicitMissingPathIsError(t *testing.T) {
 	if _, err := Load(filepath.Join(t.TempDir(), "nope.yaml")); err == nil {
 		t.Error("expected error for explicit missing path")
+	}
+}
+
+func TestLoad_identityPlugins(t *testing.T) {
+	c, err := Load(write(t, `
+identity_plugins:
+  - 1p
+  - provider-b
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"1p", "provider-b"}
+	if !slices.Equal(c.IdentityPlugins, want) {
+		t.Errorf("identity_plugins = %v, want %v", c.IdentityPlugins, want)
 	}
 }
 
