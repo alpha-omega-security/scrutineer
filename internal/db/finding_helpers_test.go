@@ -628,7 +628,7 @@ var editableFindingFields = []string{
 	"title", "severity", "status", "cwe", "location", "affected",
 	"reachability", "quality_tier", "cve_id", "ghsa_id",
 	"cvss_vector", "cvss_v4_vector", "fix_version", "fix_commit",
-	"resolution", "disclosure_draft", "assignee",
+	"resolution", "disclosure_draft", "disclosure_title", "assignee",
 	"suggested_fix", "suggested_fix_commit",
 	"breaking_change", "breaking_change_rationale",
 	"exploited_in_wild", "exploited_in_wild_evidence",

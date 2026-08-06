@@ -526,7 +526,7 @@ paths:
                     Map of field name to new value. Allowed fields:
                     title, severity, status, cwe, location, affected, reachability, quality_tier,
                     cve_id, ghsa_id, cvss_vector, cvss_v4_vector, fix_version, fix_commit,
-                    resolution, disclosure_draft, suggested_recipients, assignee,
+                    resolution, disclosure_draft, disclosure_title, suggested_recipients, assignee,
                     suggested_fix, suggested_fix_commit, breaking_change, breaking_change_rationale,
                     exploited_in_wild, exploited_in_wild_evidence, mitigation, mitigation_semgrep,
                     release_tag, release_url, last_revalidate_verdict.
@@ -1624,6 +1624,7 @@ components:
             reach:            { type: string }
             rating:           { type: string }
             disclosure_draft: { type: string }
+            disclosure_title: { type: string, description: "The disclose skill's drafted GHSA summary; may differ from the finding's own title." }
             suggested_recipients: { type: string, description: "File-level owners for the finding's location, from CODEOWNERS or recent non-bot committers." }
             sub_path:         { type: string, description: "Monorepo sub-folder the producing scan was scoped to. The finding's location is relative to it; empty means the repo root." }
             verification:
@@ -1839,6 +1840,7 @@ components:
               breaking_change_rationale:  { type: string }
               dup_check:                  { type: string }
               disclosure_draft:           { type: string }
+              disclosure_title:           { type: string, description: "The disclose skill's drafted GHSA summary; may differ from the finding's own title." }
               suggested_recipients:       { type: string, description: "File-level owners for the finding's location, from CODEOWNERS or recent non-bot committers." }
               exploited_in_wild:          { type: string, enum: [yes, no] }
               exploited_in_wild_evidence: { type: string }

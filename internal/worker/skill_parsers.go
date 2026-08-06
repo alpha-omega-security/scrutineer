@@ -1299,14 +1299,18 @@ func (w *Worker) parseMitigationOutput(scan *db.Scan, report string, emit func(E
 	return nil
 }
 
-// parseDiscloseOutput posts a FindingNote summarising a disclose run so the
-// finding's Notes panel records that a draft was prepared, alongside the
-// verify/revalidate/patch entries (#482). The draft itself is on
-// Finding.DisclosureDraft (PATCHed by the skill via the API); this note is
-// the audit trail pointing at it: the GHSA summary, which fields were
-// patched/preserved, the suggested recipients, references added, and
-// the report's notes prose. An error-only report records why the skill
-// refused to draft.
+// parseDiscloseOutput records the drafted GHSA summary on
+// Finding.DisclosureTitle and posts a FindingNote summarising the run so
+// the finding's Notes panel records that a draft was prepared, alongside
+// the verify/revalidate/patch entries (#482). DisclosureTitle is distinct
+// from Finding.Title: the skill's own PATCH only touches Title when it
+// was empty, so a re-run against a finding with an existing title would
+// otherwise lose the freshly drafted summary entirely. The disclosure
+// draft body itself is on Finding.DisclosureDraft (PATCHed by the skill
+// via the API); this note is the audit trail pointing at it: the GHSA
+// summary, which fields were patched/preserved, the suggested
+// recipients, references added, and the report's notes prose. An
+// error-only report records why the skill refused to draft.
 func (w *Worker) parseDiscloseOutput(scan *db.Scan, report string, emit func(Event)) error {
 	if scan.FindingID == nil {
 		return fmt.Errorf("disclose scan has no finding_id")
@@ -1331,6 +1335,11 @@ func (w *Worker) parseDiscloseOutput(scan *db.Scan, report string, emit func(Eve
 	if result.Error != "" {
 		fmt.Fprintf(&b, "disclose: refused\n\n%s\n", strings.TrimSpace(result.Error))
 	} else {
+		if summary := strings.TrimSpace(result.GHSA.Summary); summary != "" {
+			if err := db.WriteFindingField(w.DB, *scan.FindingID, "disclosure_title", summary, db.SourceModel, "disclose"); err != nil {
+				return fmt.Errorf("update disclosure_title: %w", err)
+			}
+		}
 		b.WriteString("disclose: drafted")
 		if result.GHSA.Summary != "" {
 			fmt.Fprintf(&b, " %q", result.GHSA.Summary)
