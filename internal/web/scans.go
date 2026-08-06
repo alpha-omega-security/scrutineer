@@ -250,6 +250,7 @@ func (s *Server) scanRetry(w http.ResponseWriter, r *http.Request) {
 		FocusArea:         scan.FocusArea,
 		SessionID:         sessionID,
 		ResumedFromScanID: resumeOf,
+		ParentScanID:      &scan.ID,
 		// An ingest scan's input is the uploaded payload, not ./src;
 		// without it the retry stages no import/report and the model
 		// runs against a missing file.
@@ -340,6 +341,7 @@ func (s *Server) scansRetryFailed(w http.ResponseWriter, r *http.Request) {
 	var retried, errored int
 	for _, sc := range scans {
 		sessionID, resumeOf := s.resumeOpts(sc)
+		parent := sc.ID
 		if _, err := s.enqueueSkillWith(r.Context(), sc.RepositoryID, *sc.SkillID, ScanOpts{
 			Model:             sc.Model,
 			Effort:            sc.Effort,
@@ -354,6 +356,7 @@ func (s *Server) scansRetryFailed(w http.ResponseWriter, r *http.Request) {
 			FocusArea:         sc.FocusArea,
 			SessionID:         sessionID,
 			ResumedFromScanID: resumeOf,
+			ParentScanID:      &parent,
 			ImportPayload:     sc.ImportPayload,
 		}); err != nil {
 			errored++

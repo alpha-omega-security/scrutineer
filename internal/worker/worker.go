@@ -759,11 +759,35 @@ func (w *Worker) startScan(scan *db.Scan) error {
 			return errScanClaimLost
 		}
 		var repo db.Repository
-		if err := tx.Select("id, federation_opt_out_at").First(&repo, scan.RepositoryID).Error; err != nil {
+		if err := tx.Select("id, federation_opt_out_at, threat_model, scan_config").First(&repo, scan.RepositoryID).Error; err != nil {
 			return err
 		}
 		if repo.FederationOptedOut() {
 			return errRepoOptedOut
+		}
+		// Snapshot the inputs this run was handed, including digests of the
+		// repository threat model and scan config as they stand inside this
+		// transaction. Guarded on emptiness in SQL rather than on the
+		// in-memory value: the claim above can run more than once per row,
+		// because resuming a paused scan puts it back to `queued` instead of
+		// creating a new one, and rewriting the recipe then would replace the
+		// state at first pickup with the state at the latest resume — losing
+		// exactly the provenance the column exists to keep. `backend` is a
+		// standing example: it is re-resolved on every claim, so a scan
+		// paused before a -backend switch and resumed after would have its
+		// recipe silently restamped with the new one.
+		recipe, err := buildScanRecipe(scan, backend, repo.ThreatModel, repo.ScanConfig)
+		if err != nil {
+			return err
+		}
+		sealed := tx.Model(&db.Scan{}).
+			Where("id = ? AND (recipe IS NULL OR recipe = '')", scan.ID).
+			Update("recipe", recipe)
+		if sealed.Error != nil {
+			return sealed.Error
+		}
+		if sealed.RowsAffected > 0 {
+			scan.Recipe = recipe
 		}
 		scan.Status = db.ScanRunning
 		scan.StatusPriority = db.StatusPriorityFor(db.ScanRunning)

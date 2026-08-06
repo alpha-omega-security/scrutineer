@@ -337,6 +337,30 @@ type Scan struct {
 	// workspace.
 	ResumedFromScanID *uint `gorm:"index"`
 
+	// ParentScanID points at the scan this one was enqueued as a rerun of:
+	// the *immediate* parent, so a chain of reruns can be walked one hop at
+	// a time and each hop's Recipe diffed against its parent's. Nil on a
+	// fresh scan. Deliberately separate from ResumedFromScanID, which is
+	// pinned to the lineage root because it addresses a workspace, and
+	// which is only set when the retry actually resumes a harness session
+	// — a retry of a done or cancelled scan has a parent but no session.
+	ParentScanID *uint `gorm:"index"`
+
+	// Recipe is an immutable JSON snapshot (worker.ScanRecipe) of the
+	// inputs the worker was handed, written once inside the transaction
+	// that claims the scan and never updated. The columns it duplicates are
+	// mutable and some are backfilled later, so they record what the row
+	// looks like now rather than what the worker started from; the recipe
+	// also digests the Repository threat model and scan config in effect at
+	// claim time, which nothing else records. Empty on rows claimed before
+	// the column existed.
+	//
+	// The write-once guarantee is enforced in SQL, not just by writing it
+	// at claim: a paused scan returns to `queued` on the same row (operator
+	// resume, bulk resume, and the account-pause auto-resume), so the claim
+	// itself can run more than once per row.
+	Recipe string `gorm:"type:text"`
+
 	Commit     string
 	StartedAt  *time.Time
 	FinishedAt *time.Time
