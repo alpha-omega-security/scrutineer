@@ -26,6 +26,7 @@ These live in `skills/` and are embedded in the Scrutineer executable. At startu
 | `audit-exfil` | Focused static audit for attacker-controlled reads, requests, parsers, or error paths that can disclose files, metadata, secrets, or internal responses. Uses ecosystem-specific reference notes and runs on demand. |
 | `audit-authz` | Focused static audit for IDOR, tenant-isolation failures, missing or fail-open guards, privilege escalation, and unverified claims used for authorization. Uses ecosystem and GraphQL reference notes and runs on demand. |
 | `audit-pii` | Focused static audit for real personal or customer-identifying data committed to source or exposed through logs, URLs, telemetry, exports, and responses. Distinguishes concrete exposure from synthetic examples, reserved addresses, and public author metadata; runs on demand. |
+| `audit-memory` | Focused static audit for reachable memory corruption in first-party C, C++, unsafe Rust, native extensions, and FFI boundaries. Requires complete primitive-hit accounting and keeps library, CLI, parser, and foreign-runtime boundaries separate; runs on demand. |
 | `cna-match` | Matches the repository to its CVE Numbering Authority so disclosures route to the right contact. |
 | `semgrep` | Runs semgrep with the `p/security-audit` and `p/secrets` rulesets and maps hits into the findings shape. |
 | `vuln-scan` | High-recall model-backed static source-code candidate scan adapted from Anthropic's defending-code reference harness. |

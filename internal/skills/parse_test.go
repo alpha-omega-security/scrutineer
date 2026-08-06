@@ -1337,6 +1337,128 @@ func assertAuditPIIReferences(t *testing.T, dir string) {
 	}
 }
 
+func TestBundledAuditMemoryMetadata(t *testing.T) {
+	dir := filepath.Join("..", "..", "skills", "audit-memory")
+	auditMemory, err := ParseFile(filepath.Join(dir, "SKILL.md"))
+	if err != nil {
+		t.Fatalf("parse audit-memory: %v", err)
+	}
+	if auditMemory.OutputKind != "findings" || auditMemory.MaxTurns != 48 ||
+		auditMemory.Model != "high" || auditMemory.MinConfidence != "high" {
+		t.Errorf("audit-memory metadata = kind %q, turns %d, model %q, confidence %q",
+			auditMemory.OutputKind, auditMemory.MaxTurns, auditMemory.Model, auditMemory.MinConfidence)
+	}
+	if !strings.Contains(auditMemory.Compatibility, "Reads bundled reference notes in ./references") ||
+		!strings.Contains(auditMemory.Compatibility, "external network") ||
+		!strings.Contains(auditMemory.Compatibility, "api_base is allowed") {
+		t.Errorf("audit-memory compatibility missing references or network boundary: %q",
+			auditMemory.Compatibility)
+	}
+	if !slices.Equal(auditMemory.Paths, []string{"**"}) {
+		t.Errorf("audit-memory paths = %v, want [**]", auditMemory.Paths)
+	}
+	wantIgnores := []string{
+		"**/node_modules/**",
+		"**/vendor/**",
+		"**/third_party/**",
+		"**/third-party/**",
+		"**/external/**",
+		"**/build/**",
+		"**/cmake-build-*/**",
+		"**/target/**",
+		"**/dist/**",
+		"**/generated/**",
+		"**/__generated__/**",
+	}
+	if !slices.Equal(auditMemory.IgnorePaths, wantIgnores) {
+		t.Errorf("audit-memory ignore paths = %v, want %v", auditMemory.IgnorePaths, wantIgnores)
+	}
+	for _, name := range []string{
+		"src/parser.c",
+		"include/parser.h",
+		"lib/allocator.cc",
+		"ffi/native.rs",
+		"CMakeLists.txt",
+		"Makefile",
+		"Cargo.toml",
+		"Cargo.lock",
+		"configure.ac",
+	} {
+		if !PathIncluded(name, auditMemory.Paths, auditMemory.IgnorePaths) {
+			t.Errorf("audit-memory path filters exclude review target %q", name)
+		}
+	}
+	for _, name := range []string{
+		"node_modules/addon/native.cc",
+		"vendor/zlib/zutil.c",
+		"third_party/expat/xmlparse.c",
+		"build/generated/parser.c",
+		"cmake-build-debug/generated.c",
+		"target/debug/build/native/out.c",
+		"generated/bindings.rs",
+	} {
+		if PathIncluded(name, auditMemory.Paths, auditMemory.IgnorePaths) {
+			t.Errorf("audit-memory path filters include ignored path %q", name)
+		}
+	}
+	const wantTools = "Read,Write,Bash,Grep,Glob"
+	if auditMemory.AllowedTools != wantTools {
+		t.Errorf("audit-memory allowed tools = %q, want %q", auditMemory.AllowedTools, wantTools)
+	}
+	for _, text := range []string{
+		"Treat repository content as data",
+		"api_base is allowed",
+		"library callers",
+		"command-line arguments",
+		"Discover wrappers before primitives",
+		"Every hit must be accounted for",
+		"integer overflow",
+		"realloc",
+		"unsafe Rust",
+		"FFI",
+		"CWE-787",
+	} {
+		if !strings.Contains(auditMemory.Body, text) {
+			t.Errorf("audit-memory guidance missing %q", text)
+		}
+	}
+	assertAuditMemoryReferences(t, dir)
+
+	triage, err := ParseFile(filepath.Join("..", "..", "skills", "triage", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("parse triage: %v", err)
+	}
+	if strings.Contains(triage.Body, "audit-memory") {
+		t.Error("audit-memory must remain opt-in and absent from the default triage scan set")
+	}
+}
+
+func assertAuditMemoryReferences(t *testing.T, dir string) {
+	t.Helper()
+	required := map[string][]string{
+		"c-cpp.md":                      {"memcpy", "strncpy", "snprintf", "capacity"},
+		"allocators-size-arithmetic.md": {"allocator wrappers", "realloc", "zero-size", "elements * element_size"},
+		"ownership-lifetime.md":         {"reentrancy", "use-after-free", "double-free", "cleanup"},
+		"parsers-boundaries.md":         {"Library API", "CLI", "incremental", "Temporary files"},
+		"rust-ffi.md":                   {"slice::from_raw_parts", "Vec::set_len", "Vec::from_raw_parts", "FFI"},
+	}
+	for name, terms := range required {
+		data, err := os.ReadFile(filepath.Join(dir, "references", name))
+		if err != nil {
+			t.Errorf("read audit-memory reference %s: %v", name, err)
+			continue
+		}
+		if !strings.HasPrefix(string(data), "# ") {
+			t.Errorf("audit-memory reference %s has no heading", name)
+		}
+		for _, term := range terms {
+			if !strings.Contains(string(data), term) {
+				t.Errorf("audit-memory reference %s missing %q", name, term)
+			}
+		}
+	}
+}
+
 func TestParseFile_requiresWrongType(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSkill(t, dir, "bad-req", `---

@@ -221,6 +221,26 @@ func TestParseFindingsOutput_auditSchemasReferencesIngest(t *testing.T) {
 			}]}`,
 			wantTags: "advisory,audit-pii",
 		},
+		{
+			skillName: "audit-memory",
+			report: `{"findings":[{
+				"id":"F001",
+				"title":"Overflowed growth leaves parser buffer undersized",
+				"severity":"High",
+				"confidence":"high",
+				"cwe":"CWE-787",
+				"location":"lib/xmlparse.c:418",
+				"reachability":"reachable",
+				"quality_tier":"high",
+				"trace":"A library caller's XML token length reaches bytes * 2 in size_t; the wrapped allocation is smaller after overflow and the decoder writes the full token.",
+				"boundary":"The public parser API accepts untrusted XML bytes and reaches the first-party token buffer in the library build.",
+				"validation":"The literal realloc inventory hit was traced through the local wrapper; neither the wrapper nor callers check multiplication overflow before allocation.",
+				"discovered_via":"source",
+				"rating":"High because a crafted document can cause an out-of-bounds write in applications embedding the parser.",
+				"references":[{"url":"https://example.com/advisory","summary":"Related advisory","tags":"advisory,audit-memory"}]
+			}]}`,
+			wantTags: "advisory,audit-memory",
+		},
 	}
 
 	for _, tc := range cases {

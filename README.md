@@ -178,6 +178,7 @@ Adding a repo enqueues the `triage` skill, whose SKILL.md lists the further skil
 | `audit-exfil` | Opt-in static audit for SSRF, path traversal, XXE, and response or diagnostic leakage with ecosystem-specific references |
 | `audit-authz` | Opt-in static audit for IDOR, tenant isolation, fail-open guards, privilege escalation, and authorization decisions based on unverified claims |
 | `audit-pii` | Opt-in static audit for real personal or customer-identifying data committed to source or exposed through logs, URLs, telemetry, exports, and responses |
+| `audit-memory` | Opt-in static audit for reachable memory corruption in first-party C, C++, unsafe Rust, native extensions, and FFI boundaries |
 
 Edit `skills/triage/SKILL.md` to change what gets run by default. Drop new skill directories in `skills/` to add scan types; no code changes needed. See [docs/skills.md](docs/skills.md) for the frontmatter reference, the `scrutineer.*` metadata keys, the `context.json` shape, output kinds, schema validation, and the skill-facing HTTP API.
 
