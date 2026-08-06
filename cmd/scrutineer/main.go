@@ -16,11 +16,13 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
 	"filippo.io/age"
 	"filippo.io/age/agessh"
+	"filippo.io/age/plugin"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/term"
 	"gorm.io/gorm"
@@ -65,6 +67,12 @@ type skillDirs []string
 
 func (s *skillDirs) String() string     { return strings.Join(*s, ",") }
 func (s *skillDirs) Set(v string) error { *s = append(*s, v); return nil }
+
+// pluginNames collects repeated -identity-plugin flags.
+type pluginNames []string
+
+func (p *pluginNames) String() string     { return strings.Join(*p, ",") }
+func (p *pluginNames) Set(v string) error { *p = append(*p, v); return nil }
 
 const (
 	dataPermSecure     = 0o700
@@ -118,6 +126,7 @@ type flags struct {
 	downgradeOnOverage    bool
 	recipientsFile        string
 	identityFile          string
+	identityPlugins       pluginNames
 	autoRejectMissedCount int
 	ecosystemsEnrichment  bool
 	federationSalt        string
@@ -159,8 +168,9 @@ func validateFederation(f *flags) error {
 	if f.federationSalt != "" && f.federationContact == "" {
 		return errors.New("federation: federation_contact is required when federation_salt is set")
 	}
-	if f.federationMembersFeed != "" && (f.recipientsFile == "" || f.identityFile == "") {
-		return errors.New("federation: recipients_file and identity_file are both required when federation_members_feed is set")
+	if f.federationMembersFeed != "" &&
+		(f.recipientsFile == "" || (f.identityFile == "" && len(f.identityPlugins) == 0)) {
+		return errors.New("federation: recipients_file and either identity_file or identity_plugins are required when federation_members_feed is set")
 	}
 	if f.federationPublicFeed != "" && f.federationPublicFeed == f.federationMembersFeed {
 		return errors.New("federation: the public and members feeds must not share a git remote; each tier prunes the records the other publishes")
@@ -246,7 +256,8 @@ func registerFlags(fs *flag.FlagSet, f *flags) {
 	fs.BoolVar(&f.schemaStrict, "schema-strict", false, "fail scans whose report.json does not validate against the skill's schema (default: warn and continue)")
 	fs.BoolVar(&f.downgradeOnOverage, "downgrade-on-overage", false, "on a subscription token, fall the model tier back from max/high to the mid tier for new scans while the account is on overage; restores when the window resets")
 	fs.StringVar(&f.recipientsFile, "recipients-file", "", "age recipients file (public keys) for encrypted export")
-	fs.StringVar(&f.identityFile, "identity-file", "", "age identity file or SSH private key for decrypting imports")
+	fs.StringVar(&f.identityFile, "identity-file", "", "age identity file or SSH private key for decrypting imports and federation feeds")
+	fs.Var(&f.identityPlugins, "identity-plugin", "data-less age identity plugin name for decrypting imports and federation feeds (repeatable)")
 	fs.IntVar(&f.autoRejectMissedCount, "auto-reject-missed-count", 0, "auto-reject findings after this many consecutive missed rescans (0 disables)")
 	fs.BoolVar(&f.ecosystemsEnrichment, "ecosystems-enrichment", true, "enrich repositories from ecosyste.ms (per-repository cache, warm on repo add, PURL-to-repository resolution); =false stops every lookup scrutineer's own process makes and leaves the dependents cache empty. Takes the -flag=false form")
 	// federation_salt has no flag on purpose: a secret in argv leaks via
@@ -354,6 +365,9 @@ func (f *flags) merge(cfg *config.Config) {
 	if cfg.IdentityFile != "" && !f.set["identity-file"] {
 		f.identityFile = cfg.IdentityFile
 	}
+	if len(cfg.IdentityPlugins) > 0 && !f.set["identity-plugin"] {
+		f.identityPlugins = append(pluginNames(nil), cfg.IdentityPlugins...)
+	}
 	if cfg.AutoRejectMissedCount > 0 && !f.set["auto-reject-missed-count"] {
 		f.autoRejectMissedCount = cfg.AutoRejectMissedCount
 	}
@@ -452,6 +466,12 @@ func validateFlags(f *flags) error {
 	}
 	if err := config.ValidateSubprojectScope(f.subprojectScope); err != nil {
 		return err
+	}
+	if _, err := loadIdentityPlugins(f.identityPlugins, &plugin.ClientUI{}); err != nil {
+		return err
+	}
+	if len(f.identityPlugins) > 0 && os.Getenv("AGEDEBUG") == "plugin" {
+		return errors.New("identity plugins: AGEDEBUG=plugin is unsafe because it exposes raw plugin protocol traffic and may expose entered secrets")
 	}
 	if err := validateFederation(f); err != nil {
 		return err
@@ -653,21 +673,8 @@ func run(log *slog.Logger) error {
 	srv.FederationMembersFeed = f.federationMembersFeed
 	srv.FederationImportFeeds = f.federationImportFeeds
 
-	if f.recipientsFile != "" {
-		recs, err := loadRecipients(f.recipientsFile)
-		if err != nil {
-			return fmt.Errorf("recipients: %w", err)
-		}
-		srv.EncRecipients = recs
-		log.Info("loaded recipients", "file", f.recipientsFile, "count", len(recs))
-	}
-	if f.identityFile != "" {
-		ids, err := loadIdentities(f.identityFile)
-		if err != nil {
-			return fmt.Errorf("identity: %w", err)
-		}
-		srv.EncIdentities = ids
-		log.Info("loaded identities", "file", f.identityFile, "count", len(ids))
+	if err := configureEncryption(srv, f, log); err != nil {
+		return err
 	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -695,6 +702,34 @@ func run(log *slog.Logger) error {
 	log.Info("listening", "addr", "http://"+f.addr)
 	if err := httpSrv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		return err
+	}
+	return nil
+}
+
+func configureEncryption(srv *web.Server, f *flags, log *slog.Logger) error {
+	if f.recipientsFile != "" {
+		recs, err := loadRecipients(f.recipientsFile)
+		if err != nil {
+			return fmt.Errorf("recipients: %w", err)
+		}
+		srv.EncRecipients = recs
+		log.Info("loaded recipients", "file", f.recipientsFile, "count", len(recs))
+	}
+	if f.identityFile != "" {
+		ids, err := loadIdentities(f.identityFile)
+		if err != nil {
+			return fmt.Errorf("identity: %w", err)
+		}
+		srv.EncIdentities = append(srv.EncIdentities, ids...)
+		log.Info("loaded identities", "file", f.identityFile, "count", len(ids))
+	}
+	if len(f.identityPlugins) > 0 {
+		ids, err := loadIdentityPlugins(f.identityPlugins, newIdentityPluginUI(log))
+		if err != nil {
+			return err
+		}
+		srv.EncIdentities = append(srv.EncIdentities, ids...)
+		log.Info("loaded identity plugins", "count", len(ids))
 	}
 	return nil
 }
@@ -1251,6 +1286,92 @@ func loadIdentities(path string) ([]age.Identity, error) {
 		return nil, fmt.Errorf("parse age identity: %w", err)
 	}
 	return ids, nil
+}
+
+// serializedPluginIdentity keeps terminal-backed plugin interactions from
+// overlapping across concurrent imports and federation passes. It also keeps
+// plugin-supplied error text behind a stable, provider-neutral boundary while
+// preserving the underlying error for errors.Is/errors.As and age's identity
+// fallback behavior.
+type serializedPluginIdentity struct {
+	name     string
+	identity age.Identity
+	mutex    *sync.Mutex
+}
+
+func (i *serializedPluginIdentity) Name() string { return i.name }
+
+func (i *serializedPluginIdentity) Unwrap(stanzas []*age.Stanza) ([]byte, error) {
+	i.mutex.Lock()
+	defer i.mutex.Unlock()
+
+	fileKey, err := i.identity.Unwrap(stanzas)
+	if err != nil {
+		// A non-match is normal age control flow, not a plugin malfunction.
+		// Canonicalize it to age's own sentinel so NoIdentityMatchError stays
+		// accurate without carrying any plugin-controlled error text.
+		if errors.Is(err, age.ErrIncorrectIdentity) {
+			return nil, age.ErrIncorrectIdentity
+		}
+		return nil, &pluginIdentityError{name: i.name, err: err}
+	}
+	return fileKey, nil
+}
+
+type pluginIdentityError struct {
+	name string
+	// err is retained only for errors.Is/errors.As. It can contain
+	// plugin-controlled protocol text and must not be logged or returned
+	// directly to a user.
+	err error
+}
+
+func (e *pluginIdentityError) Error() string {
+	var notFound *plugin.NotFoundError
+	if errors.As(e.err, &notFound) {
+		return fmt.Sprintf(
+			"configured identity plugin %q is unavailable; expected age-plugin-%s in PATH",
+			e.name, e.name)
+	}
+	return fmt.Sprintf("configured identity plugin %q failed", e.name)
+}
+
+func (e *pluginIdentityError) Unwrap() error { return e.err }
+
+// loadIdentityPlugins constructs data-less age plugin identities, equivalent
+// to age's -j option. Construction validates names but does not start plugin
+// executables or trigger authentication; that is deferred until decryption
+// needs an identity.
+func loadIdentityPlugins(names []string, ui *plugin.ClientUI) ([]age.Identity, error) {
+	identities := make([]age.Identity, 0, len(names))
+	mutex := new(sync.Mutex)
+	for _, name := range names {
+		identity, err := plugin.NewIdentityWithoutData(name, ui)
+		if err != nil {
+			return nil, fmt.Errorf("identity plugin %q: %w", name, err)
+		}
+		identities = append(identities, &serializedPluginIdentity{
+			name:     name,
+			identity: identity,
+			mutex:    mutex,
+		})
+	}
+	return identities, nil
+}
+
+// newIdentityPluginUI uses age's terminal UI so plugins can request public or
+// secret input directly from the controlling terminal. Only display messages
+// and UI errors reach structured logs; values entered by the user and raw age
+// plugin protocol traffic do not.
+func newIdentityPluginUI(log *slog.Logger) *plugin.ClientUI {
+	return plugin.NewTerminalUI(
+		func(format string, args ...any) {
+			log.Info("age identity plugin", "message", fmt.Sprintf(format, args...))
+		},
+		func(format string, args ...any) {
+			log.Warn("age identity plugin", "message", fmt.Sprintf(format, args...))
+		},
+	)
 }
 
 // promptPassphrase is the function called when an encrypted SSH key needs

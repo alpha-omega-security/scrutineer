@@ -230,6 +230,15 @@
 # disables encrypted import.
 # identity_file: ~/.ssh/id_ed25519
 
+# Provider-neutral, data-less age identity plugins (the `age -j` contract)
+# used to decrypt imports and encrypted federation feeds. Each name resolves
+# to age-plugin-NAME through PATH. Plugins may be combined with identity_file
+# and are launched only when decryption needs them. For example,
+# age-plugin-1p and the 1Password op CLI must both be installed separately for
+# this configuration; Scrutineer never receives or writes the SSH private key.
+# identity_plugins:
+#   - 1p
+
 # Submit reviewed findings to CERT/CC VINCE. The action is disabled when
 # api_key is empty. Reporter values prefill the editable submission page.
 # scrutineer.yaml contains the long-lived key, so keep the file owner-only
@@ -264,10 +273,11 @@
 
 # Git remote the members-only feed is pushed to: the non-clean fix-audit
 # certificates, each naming a repository whose advertised fix does not
-# hold, so every record is age-encrypted to recipients_file. Requires both
-# recipients_file (or it would push them in the clear) and identity_file
-# (or it could not read back what it published, and would re-encrypt the
-# whole feed on every tick). Empty disables the members export.
+# hold, so every record is age-encrypted to recipients_file. Requires
+# recipients_file (or it would push them in the clear) and at least one
+# decryption source from identity_file or identity_plugins (or it could not
+# read back what it published, and would re-encrypt the whole feed on every
+# tick). Empty disables the members export.
 # federation_members_feed: "git@github.com:example/scrutineer-members-feed.git"
 
 # Peer feed git remotes cloned read-only and ingested hourly. An imported

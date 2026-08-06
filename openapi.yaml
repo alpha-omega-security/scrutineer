@@ -1206,8 +1206,9 @@ paths:
         routed to the `ingest` skill instead when `?repo=` is supplied:
         the raw payload is staged into the skill workspace and a scan is
         queued, returning 202 with the scan id. Age-encrypted bodies (armored
-        or binary) are transparently decrypted first when an identity is
-        configured (`-identity-file`); plaintext bodies pass through untouched.
+        or binary) are transparently decrypted first when an identity file or
+        plugin is configured (`-identity-file` or `-identity-plugin`); plaintext
+        bodies pass through untouched.
         No bearer token; localhost-only. See docs/import.md for the per-format
         field mapping.
       operationId: importFindings

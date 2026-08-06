@@ -105,8 +105,8 @@ type Server struct {
 	// EncRecipients is the parsed recipients file; nil disables encrypted
 	// export. Supports age X25519 and SSH public keys.
 	EncRecipients []age.Recipient
-	// EncIdentities decrypts encrypted imports. Multiple entries support
-	// key rotation (old + new). nil disables encrypted import.
+	// EncIdentities decrypts encrypted imports and federation members feeds.
+	// Multiple entries support migration and fallback. nil disables decryption.
 	EncIdentities []age.Identity
 
 	// FederationSalt is the shared federation secret mixed into

@@ -257,13 +257,22 @@ and the two feed remotes with `-federation-public-feed` /
 `-federation-members-feed`. The import list is config-file only: a
 repeatable flag would duplicate what a YAML sequence already expresses.
 
-Startup also refuses `federation_members_feed` without both
-`recipients_file` and `identity_file`, the two tiers sharing one git remote
-(each would prune what the other publishes), and any feed remote carrying
-credentials: the remote reaches the job's error messages and log fields, so
-a token in one would end up in the logs. Configure a git credential helper
-on the host instead. The refusal itself names the remote with its userinfo
-replaced, since that message is what the startup logger prints.
+Startup also refuses `federation_members_feed` without `recipients_file` and
+at least one decryption source from `identity_file` or `identity_plugins`, the
+two tiers sharing one git remote (each would prune what the other publishes),
+and any feed remote carrying credentials: the remote reaches the job's error
+messages and log fields, so a token in one would end up in the logs. Configure
+a git credential helper on the host instead. The refusal itself names the
+remote with its userinfo replaced, since that message is what the startup
+logger prints.
+
+Federation runs once immediately at startup and then hourly. When an encrypted
+members feed uses `identity_plugins`, either the read-back check for an export
+or an encrypted imported record can invoke the selected plugin during those
+passes. Interactive authentication and hardware-touch requirements belong to
+the plugin; headless deployments need the plugin's own noninteractive support.
+If an unchanged encrypted export record cannot be decrypted, the pass fails and
+leaves its existing ciphertext untouched rather than silently replacing it.
 
 Feed remotes are pushed with the ambient git credentials and
 `GIT_TERMINAL_PROMPT=0`, so a remote whose credentials are missing fails the

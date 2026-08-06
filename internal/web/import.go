@@ -8,12 +8,14 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"filippo.io/age"
 	"filippo.io/age/armor"
+	"filippo.io/age/plugin"
 	"gorm.io/gorm"
 
 	"scrutineer/internal/db"
@@ -670,10 +672,16 @@ func (s *Server) maybeDecrypt(body []byte) ([]byte, error) {
 		return body, nil // not encrypted — pass straight through
 	}
 	if len(s.EncIdentities) == 0 {
-		return nil, errors.New("encrypted import received but no identity configured (-identity-file)")
+		return nil, errors.New("encrypted import received but no identity configured (-identity-file or -identity-plugin)")
 	}
-	r, err := age.Decrypt(src, s.EncIdentities...)
+	r, err := age.Decrypt(src, slices.Clone(s.EncIdentities)...)
 	if err != nil {
+		var notFound *plugin.NotFoundError
+		if errors.As(err, &notFound) {
+			return nil, fmt.Errorf(
+				"decrypt: configured identity plugin %q is unavailable; expected age-plugin-%s in PATH",
+				notFound.Name, notFound.Name)
+		}
 		return nil, fmt.Errorf("decrypt: %w", err)
 	}
 	return io.ReadAll(r)

@@ -248,7 +248,11 @@ func writeRecord(path string, raw []byte, encrypted, rotate bool, keys FeedKeys)
 		return writeFile(path, body)
 	}
 	if readErr == nil && !rotate {
-		if plain, err := decryptRecord(existing, keys.Identities); err == nil && bytes.Equal(plain, raw) {
+		plain, err := decryptRecord(existing, keys.Identities)
+		if err != nil {
+			return fmt.Errorf("decrypt existing record: %w", err)
+		}
+		if bytes.Equal(plain, raw) {
 			return nil
 		}
 	}
@@ -400,7 +404,7 @@ func encryptRecord(raw []byte, recipients []age.Recipient) ([]byte, error) {
 }
 
 func decryptRecord(raw []byte, identities []age.Identity) ([]byte, error) {
-	r, err := age.Decrypt(armor.NewReader(bytes.NewReader(raw)), identities...)
+	r, err := age.Decrypt(armor.NewReader(bytes.NewReader(raw)), slices.Clone(identities)...)
 	if err != nil {
 		return nil, err
 	}
