@@ -546,8 +546,9 @@ git commit -m "fix: {{$f.Title}}"</pre>
     <section class="pb-4">
       <form method="post" action="/findings/{{$f.ID}}/fields" class="form grid grid-cols-2 gap-3">
         <div class="grid gap-1 col-span-2">
-          <label class="text-xs text-muted-foreground">Title</label>
-          <input class="input" name="title" value="{{$f.Title}}">
+          <label class="text-xs text-muted-foreground"
+                 title="The disclose skill's drafted GHSA summary. May differ from the finding's own title above, which is set at audit time and left untouched by disclose re-runs.">Disclosure title</label>
+          <input class="input" name="disclosure_title" value="{{$f.DisclosureTitle}}">
         </div>
         <div class="grid gap-1">
           <label class="text-xs text-muted-foreground">Severity</label>
