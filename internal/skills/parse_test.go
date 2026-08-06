@@ -273,14 +273,14 @@ body
 func TestParseFile_model(t *testing.T) {
 	old := ModelValidator
 	t.Cleanup(func() { ModelValidator = old })
-	ModelValidator = func(s string) bool { return s == "claude-sonnet-4-6" }
+	ModelValidator = func(s string) bool { return s == "claude-sonnet-5" }
 
 	dir := t.TempDir()
 	path := writeSkill(t, dir, "lite", `---
 name: lite
 description: Sonnet-friendly skill.
 metadata:
-  scrutineer.model: claude-sonnet-4-6
+  scrutineer.model: claude-sonnet-5
 ---
 
 body
@@ -289,8 +289,8 @@ body
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p.Model != "claude-sonnet-4-6" {
-		t.Errorf("model = %q, want claude-sonnet-4-6", p.Model)
+	if p.Model != "claude-sonnet-5" {
+		t.Errorf("model = %q, want claude-sonnet-5", p.Model)
 	}
 	for _, w := range p.Warnings {
 		if strings.Contains(w, "model") {
@@ -302,8 +302,8 @@ body
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m.Model != "claude-sonnet-4-6" {
-		t.Errorf("db.Skill.Model = %q, want claude-sonnet-4-6", m.Model)
+	if m.Model != "claude-sonnet-5" {
+		t.Errorf("db.Skill.Model = %q, want claude-sonnet-5", m.Model)
 	}
 }
 
@@ -342,7 +342,7 @@ body
 func TestParseFile_modelInvalidIgnoredWithWarning(t *testing.T) {
 	old := ModelValidator
 	t.Cleanup(func() { ModelValidator = old })
-	ModelValidator = func(s string) bool { return s == "claude-sonnet-4-6" }
+	ModelValidator = func(s string) bool { return s == "claude-sonnet-5" }
 
 	dir := t.TempDir()
 	path := writeSkill(t, dir, "typo", `---

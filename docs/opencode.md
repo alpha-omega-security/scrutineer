@@ -20,10 +20,10 @@ the host so the common cases work without extra setup:
 or in `scrutineer.yaml`:
 
     backend: opencode
-    default_model: anthropic/claude-sonnet-4-6
+    default_model: anthropic/claude-sonnet-5
     models:
       - name: Sonnet (via opencode)
-        id:   anthropic/claude-sonnet-4-6
+        id:   anthropic/claude-sonnet-5
       - name: GPT-5 (via opencode)
         id:   openai/gpt-5
 

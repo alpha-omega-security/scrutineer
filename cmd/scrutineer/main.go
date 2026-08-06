@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"syscall"
 	"time"
@@ -362,19 +363,7 @@ func (f *flags) merge(cfg *config.Config) {
 	}
 	f.mergeFederation(cfg)
 
-	// Seed the model pick list from the active harness's own defaults,
-	// so a fresh install of any backend has a working list with correct
-	// tier tags and no operator config. The operator's models: block
-	// then overrides. An invalid backend name is caught later by
-	// validateFlags; until then, HarnessByName("") gives claude.
-	if h, err := worker.HarnessByName(f.backend); err == nil {
-		defs := h.DefaultModels()
-		models := make([]web.Model, 0, len(defs))
-		for _, d := range defs {
-			models = append(models, web.Model{Name: d.Name, ID: d.ID, Tier: d.Tier})
-		}
-		web.SetModels(models)
-	}
+	seedHarnessModels(f.backend)
 	if len(cfg.Models) > 0 {
 		models := make([]web.Model, 0, len(cfg.Models))
 		for _, m := range cfg.Models {
@@ -388,6 +377,57 @@ func (f *flags) merge(cfg *config.Config) {
 	if cfg.Theme != "" {
 		web.SetTheme(cfg.Theme)
 	}
+}
+
+// retiredModels are ids the harness module still declares that Anthropic has
+// retired, in the claude and the prefixed opencode spelling. Copilot's dotted
+// catalogue (claude-opus-4.6) is GitHub's own and stays: dropping its Claude
+// entries would take the only ones tagged high and max with them and leave
+// every tier of that backend on Haiku. Delete this list once the harness
+// module stops shipping them.
+var retiredModels = []string{
+	"claude-sonnet-4-6",
+	"claude-opus-4-6",
+	"claude-opus-4-7",
+	"anthropic/claude-sonnet-4-6",
+	"anthropic/claude-opus-4-6",
+	"anthropic/claude-opus-4-7",
+}
+
+// seedHarnessModels seeds the model pick list from the active harness's
+// own defaults, so a fresh install of any backend has a working list with
+// correct tier tags and no operator config. The operator's models: block then
+// overrides, and is deliberately not filtered: an explicit entry there stays
+// their call. An invalid backend name is caught later by validateFlags;
+// until then, HarnessByName("") gives claude.
+func seedHarnessModels(backend string) {
+	h, err := worker.HarnessByName(backend)
+	if err != nil {
+		return
+	}
+	defs := h.DefaultModels()
+	models := make([]web.Model, 0, len(defs))
+	for _, d := range defs {
+		if slices.Contains(retiredModels, d.ID) {
+			continue
+		}
+		models = append(models, web.Model{Name: d.Name, ID: d.ID, Tier: d.Tier})
+	}
+	web.SetModels(models)
+}
+
+// applyServerDefaults installs the runtime default model and effort. It warns
+// when a configured default_model is not in the pick list: SetDefaultModel
+// ignores such an id silently, and a retirement can take one that was valid on
+// the previous release out of the list, so the default would otherwise become
+// the first pick-list entry with nothing said about it.
+func applyServerDefaults(srv *web.Server, f *flags, log *slog.Logger) {
+	if f.defaultModel != "" && !web.ValidModel(f.defaultModel) {
+		log.Warn("configured default model is not in the pick list; falling back to the first entry",
+			"default_model", f.defaultModel, "model", srv.DefaultModel())
+	}
+	srv.SetDefaultModel(f.defaultModel)
+	srv.SetDefaultEffort(f.effort)
 }
 
 func (f *flags) fullClone() bool { return f.cloneMode == "full" }
@@ -643,8 +683,7 @@ func run(log *slog.Logger) error {
 	if h, err := worker.HarnessByName(f.backend); err == nil {
 		srv.Backend = worker.HarnessName(h)
 	}
-	srv.SetDefaultModel(f.defaultModel)
-	srv.SetDefaultEffort(f.effort)
+	applyServerDefaults(srv, f, log)
 	srv.FederationSalt = f.federationSalt
 	srv.FederationContact = f.federationContact
 	srv.MonorepoAttribution = f.monorepoAttribution

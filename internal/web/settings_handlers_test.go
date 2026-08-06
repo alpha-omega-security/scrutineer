@@ -96,17 +96,17 @@ func TestSettingsUpdateModelTier(t *testing.T) {
 
 	w := postForm(t, s, "/settings/model", url.Values{
 		"tier":  {ModelTierMid},
-		"model": {"claude-sonnet-4-6"},
+		"model": {"claude-sonnet-5"},
 	})
 	if w.Code != http.StatusSeeOther {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
-	if got := ModelForTier(s.DB, ModelTierMid, s.DefaultModel()); got != "claude-sonnet-4-6" {
-		t.Errorf("mid tier model = %q, want claude-sonnet-4-6", got)
+	if got := ModelForTier(s.DB, ModelTierMid, s.DefaultModel()); got != "claude-sonnet-5" {
+		t.Errorf("mid tier model = %q, want claude-sonnet-5", got)
 	}
 
 	for _, form := range []url.Values{
-		{"tier": {"unknown"}, "model": {"claude-sonnet-4-6"}},
+		{"tier": {"unknown"}, "model": {"claude-sonnet-5"}},
 		{"tier": {ModelTierMid}, "model": {"not-a-model"}},
 	} {
 		w := postForm(t, s, "/settings/model", form)
@@ -114,7 +114,7 @@ func TestSettingsUpdateModelTier(t *testing.T) {
 			t.Errorf("form=%v: status %d, want 422", form, w.Code)
 		}
 	}
-	if got := ModelForTier(s.DB, ModelTierMid, s.DefaultModel()); got != "claude-sonnet-4-6" {
+	if got := ModelForTier(s.DB, ModelTierMid, s.DefaultModel()); got != "claude-sonnet-5" {
 		t.Errorf("invalid update clobbered mid tier = %q", got)
 	}
 }

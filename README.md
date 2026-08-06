@@ -358,14 +358,14 @@ Every flag above can be set in a YAML config file instead, loaded from `./scruti
 
 The config file can also replace the model pick list and pin the fallback default model used by the high tier:
 
-    default_model: claude-sonnet-4-6
+    default_model: claude-sonnet-5
     models:
-      - name: Sonnet 4.6
-        id:   claude-sonnet-4-6
       - name: Sonnet 5.0
         id:   claude-sonnet-5
       - name: Opus
-        id:   claude-opus-4-7
+        id:   claude-opus-5
+
+The built-in pick list comes from the active backend's own catalogue with the models Anthropic has retired (Sonnet 4.x, Opus 4.6, Opus 4.7) dropped. A `models:` entry is never filtered, so listing one is how you keep an older model selectable.
 
 Skills resolve to a model through a tier: `high` by default, unless the skill's `SKILL.md` metadata pins `scrutineer.model` to another tier or an exact model id (bundled lightweight skills such as `metadata` use `mid`, `security-deep-dive` uses `max`). The Settings page maps each tier to any configured model.
 
@@ -385,7 +385,7 @@ See [docs/codex.md](docs/codex.md) for what differs from claude (argv, skill sta
 [opencode](https://opencode.ai) is provider-agnostic, so `-backend opencode` runs whichever model you configure (Anthropic, OpenAI, or anything opencode supports). The runner image bundles the `opencode` binary; set the credential for your provider and the model id in `provider/model` form:
 
     backend: opencode
-    default_model: anthropic/claude-sonnet-4-6
+    default_model: anthropic/claude-sonnet-5
 
 The egress allowlist covers `models.dev` plus the Anthropic and OpenAI API hosts; other providers go in `egress_allow:`. Like codex, the opencode backend requires the containerised runner. See [docs/opencode.md](docs/opencode.md) for provider-credential handling and what differs from claude.
 

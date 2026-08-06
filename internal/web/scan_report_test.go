@@ -32,7 +32,7 @@ func seedScanWithFindings(t *testing.T, s *Server) (db.Repository, db.Scan) {
 	scan := db.Scan{
 		RepositoryID: repo.ID, Kind: worker.JobSkill, Status: db.ScanDone,
 		SkillID: &skill.ID, SkillName: skill.Name, Commit: "deadbeef1234567",
-		Model: "claude-opus-4-6", CostUSD: 0.15, Turns: 9, FindingsCount: 2,
+		Model: "claude-opus-4-8", CostUSD: 0.15, Turns: 9, FindingsCount: 2,
 		StartedAt: &started, FinishedAt: &now, CreatedAt: started,
 		Report: `{"findings":[]}`,
 	}
