@@ -3053,6 +3053,11 @@ type ScanOpts struct {
 	// on a normal (non-resuming) enqueue. See scanRetry.
 	SessionID         string
 	ResumedFromScanID *uint
+	// ParentScanID records the scan this enqueue is a rerun of. Unlike
+	// ResumedFromScanID it is the immediate parent and is set on every
+	// retry, including retries that start a fresh harness session, so the
+	// rerun chain stays walkable hop by hop. Nil on a first-time enqueue.
+	ParentScanID *uint
 	// ImportPayload is the raw uploaded report for an ingest-skill run
 	// created by the /v1/import fallback; the worker stages it into the
 	// workspace at import/report. Empty for every other enqueue.
@@ -3184,6 +3189,7 @@ func (s *Server) enqueueSkillWith(ctx context.Context, repoID, skillID uint, opt
 		Profile:            opts.Profile,
 		SessionID:          opts.SessionID,
 		ResumedFromScanID:  opts.ResumedFromScanID,
+		ParentScanID:       opts.ParentScanID,
 		ImportPayload:      opts.ImportPayload,
 		SkillsRepoSHA:      s.SkillsRepoSHA,
 		APIToken:           NewAPIToken(),
