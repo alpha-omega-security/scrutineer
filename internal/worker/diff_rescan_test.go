@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"scrutineer/internal/coverage"
 	"scrutineer/internal/db"
 	"scrutineer/internal/testutil"
 )
@@ -192,12 +193,20 @@ func TestPrepareDiffRescanFallsBackWithoutBaseline(t *testing.T) {
 	if scan.RescanMode != db.ScanRescanModeFull {
 		t.Fatalf("mode = %q, want full fallback", scan.RescanMode)
 	}
-	var cov diffCoverage
-	if err := json.Unmarshal([]byte(scan.Coverage), &cov); err != nil {
-		t.Fatal(err)
+	cov, ok := coverage.Parse(scan.Coverage)
+	if !ok {
+		t.Fatalf("coverage = %q, want a record", scan.Coverage)
 	}
 	if cov.RequestedMode != db.ScanRescanModeDiff || cov.ActualMode != db.ScanRescanModeFull || !strings.Contains(cov.FallbackReason, "baseline") {
 		t.Fatalf("coverage = %+v", cov)
+	}
+	// A fallback ran as a full scan, which has no enumerable scope, so it
+	// must not inherit a completeness claim from the diff it replaced.
+	if cov.Completeness != coverage.CompletenessUnknown {
+		t.Fatalf("completeness = %q, want %q", cov.Completeness, coverage.CompletenessUnknown)
+	}
+	if scan.Completeness != cov.Completeness {
+		t.Fatalf("column = %q, record = %q; the two must agree", scan.Completeness, cov.Completeness)
 	}
 	var stored db.Scan
 	gdb.First(&stored, scan.ID)

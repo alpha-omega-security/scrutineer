@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"scrutineer/internal/coverage"
 	"scrutineer/internal/db"
 	"scrutineer/internal/worker"
 
@@ -151,9 +152,13 @@ type scanDiffView struct {
 	RequestedMode  string
 	ActualMode     string
 	FallbackReason string
-	ChangedFiles   int
-	PatchBytes     int64
-	Files          []scanDiffFile
+	// Completeness and CompletenessReason come from the same coverage
+	// record and say how much of the intended scope the scan reached.
+	Completeness       string
+	CompletenessReason string
+	ChangedFiles       int
+	PatchBytes         int64
+	Files              []scanDiffFile
 }
 
 type scanDiffFile struct {
@@ -199,17 +204,12 @@ func parseScanDiffView(scan db.Scan) *scanDiffView {
 		return nil
 	}
 	var v scanDiffView
-	if scan.Coverage != "" {
-		var cov struct {
-			RequestedMode  string `json:"requested_mode"`
-			ActualMode     string `json:"actual_mode"`
-			FallbackReason string `json:"fallback_reason"`
-		}
-		if json.Unmarshal([]byte(scan.Coverage), &cov) == nil {
-			v.RequestedMode = cov.RequestedMode
-			v.ActualMode = cov.ActualMode
-			v.FallbackReason = cov.FallbackReason
-		}
+	if rec, ok := coverage.Parse(scan.Coverage); ok {
+		v.RequestedMode = rec.RequestedMode
+		v.ActualMode = rec.ActualMode
+		v.FallbackReason = rec.FallbackReason
+		v.Completeness = rec.Completeness
+		v.CompletenessReason = rec.Reason
 	}
 	if scan.DiffStats != "" {
 		var stats struct {
