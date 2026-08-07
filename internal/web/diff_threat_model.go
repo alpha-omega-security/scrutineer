@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"scrutineer/internal/coverage"
 	"scrutineer/internal/db"
 )
 
@@ -99,23 +100,23 @@ func materialThreatModelPath(paths ...string) (string, bool) {
 	return "", false
 }
 
+// markThreatModelUpdate records why the repository threat model was or was
+// not refreshed from this scan. It is a completeness statement about the
+// scan, so it lands inside the coverage record rather than beside it; a scan
+// staged by the worker already has a record here, and this merges into it
+// without disturbing the worker's own verdict.
 func (s *Server) markThreatModelUpdate(scan *db.Scan, state string, material bool, reason string) {
-	var coverage map[string]any
-	if err := json.Unmarshal([]byte(scan.Coverage), &coverage); err != nil || coverage == nil {
-		coverage = map[string]any{}
-	}
-	coverage["threat_model_update"] = state
-	coverage["threat_model_material"] = material
-	if reason != "" {
-		coverage["threat_model_update_reason"] = reason
-	}
-	b, err := json.Marshal(coverage)
+	rec, _ := coverage.Parse(scan.Coverage)
+	rec.ThreatModel = &coverage.ThreatModelState{Update: state, Material: material, Reason: reason}
+	raw, err := coverage.Marshal(rec)
 	if err != nil {
 		s.Log.Warn("threat-model update: marshal coverage", "scan", scan.ID, "err", err)
 		return
 	}
-	scan.Coverage = string(b)
-	if err := s.DB.Model(&db.Scan{}).Where("id = ?", scan.ID).Update("coverage", scan.Coverage).Error; err != nil {
+	scan.Coverage = raw
+	scan.Completeness = rec.Completeness
+	if err := s.DB.Model(&db.Scan{}).Where("id = ?", scan.ID).
+		Updates(map[string]any{"coverage": scan.Coverage, "completeness": scan.Completeness}).Error; err != nil {
 		s.Log.Warn("threat-model update: save coverage", "scan", scan.ID, "err", err)
 	}
 }

@@ -296,10 +296,16 @@ type Scan struct {
 	// old_threat_model.json for a diff threat-model scan, when available.
 	DiffThreatModelScanID *uint `gorm:"index"`
 	// DiffStats and Coverage are JSON blobs. DiffStats describes changed
-	// files/counts; Coverage describes what this scan did or did not cover,
-	// including automatic fallback reasons.
+	// files/counts; Coverage is the internal/coverage.Record describing what
+	// this scan did or did not reach, including automatic fallback reasons.
 	DiffStats string `gorm:"type:text"`
 	Coverage  string `gorm:"type:text"`
+	// Completeness is Coverage's completeness verdict lifted out into its own
+	// indexed column so the scans list can filter on it without decoding the
+	// record. "complete" / "partial" / "unknown"; empty on rows written
+	// before the typed contract. It is derived by the worker from receipt
+	// reconciliation, never copied from a skill's own claim.
+	Completeness string `gorm:"index"`
 
 	// Profile is the runner profile that ran (or was overridden to run)
 	// this scan. Empty means the default runner image; non-empty names

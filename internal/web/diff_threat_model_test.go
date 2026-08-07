@@ -1,10 +1,10 @@
 package web
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
 
+	"scrutineer/internal/coverage"
 	"scrutineer/internal/db"
 )
 
@@ -69,12 +69,12 @@ func TestAutoUpdateThreatModelSmallDiffSkips(t *testing.T) {
 	if err := s.DB.First(&gotScan, scan.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	var coverage map[string]any
-	if err := json.Unmarshal([]byte(gotScan.Coverage), &coverage); err != nil {
-		t.Fatal(err)
+	rec, ok := coverage.Parse(gotScan.Coverage)
+	if !ok || rec.ThreatModel == nil {
+		t.Fatalf("coverage = %q, want a threat-model state", gotScan.Coverage)
 	}
-	if coverage["threat_model_update"] != "skipped_small_diff" || coverage["threat_model_material"] != false {
-		t.Fatalf("coverage = %#v, want skipped non-material diff", coverage)
+	if rec.ThreatModel.Update != "skipped_small_diff" || rec.ThreatModel.Material {
+		t.Fatalf("threat model = %+v, want skipped non-material diff", *rec.ThreatModel)
 	}
 }
 
@@ -111,11 +111,11 @@ func TestAutoUpdateThreatModelMaterialDiffUpdates(t *testing.T) {
 	if err := s.DB.First(&gotScan, scan.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	var coverage map[string]any
-	if err := json.Unmarshal([]byte(gotScan.Coverage), &coverage); err != nil {
-		t.Fatal(err)
+	rec, ok := coverage.Parse(gotScan.Coverage)
+	if !ok || rec.ThreatModel == nil {
+		t.Fatalf("coverage = %q, want a threat-model state", gotScan.Coverage)
 	}
-	if coverage["threat_model_update"] != "updated" || coverage["threat_model_material"] != true {
-		t.Fatalf("coverage = %#v, want updated material diff", coverage)
+	if rec.ThreatModel.Update != "updated" || !rec.ThreatModel.Material {
+		t.Fatalf("threat model = %+v, want updated material diff", *rec.ThreatModel)
 	}
 }

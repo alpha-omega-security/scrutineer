@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"scrutineer/internal/coverage"
 	"scrutineer/internal/db"
 )
 
@@ -20,12 +21,6 @@ const (
 	nameStatusMinColumns   = 2
 	nameStatusRenameCols   = 3
 )
-
-type diffCoverage struct {
-	RequestedMode  string `json:"requested_mode"`
-	ActualMode     string `json:"actual_mode"`
-	FallbackReason string `json:"fallback_reason,omitempty"`
-}
 
 type diffStats struct {
 	BaseCommit        string         `json:"base_commit"`
@@ -135,7 +130,17 @@ func (w *Worker) prepareDiffRescan(ctx context.Context, scan *db.Scan, workRoot 
 			"changed_files": maxDiffChangedFileRows,
 		},
 	})
-	scan.Coverage = mustJSON(diffCoverage{RequestedMode: db.ScanRescanModeDiff, ActualMode: db.ScanRescanModeDiff})
+	// The changed-file list the worker staged itself is the only scope it
+	// knows independently of the skill, so it is the only scope a
+	// completeness verdict can honestly be reconciled against. No receipts
+	// exist yet at staging time, so this starts partial and names why.
+	setCoverage(scan, coverage.Record{
+		RequestedMode: db.ScanRescanModeDiff,
+		ActualMode:    db.ScanRescanModeDiff,
+		Completeness:  coverage.CompletenessPartial,
+		Reason:        "scan has not reported receipts for the staged changed files",
+		IncludedPaths: changedPaths(changed),
+	})
 	if err := w.DB.Model(scan).Updates(map[string]any{
 		"rescan_mode":               scan.RescanMode,
 		"diff_base_scan_id":         scan.DiffBaseScanID,
@@ -143,6 +148,7 @@ func (w *Worker) prepareDiffRescan(ctx context.Context, scan *db.Scan, workRoot 
 		"diff_threat_model_scan_id": scan.DiffThreatModelScanID,
 		"diff_stats":                scan.DiffStats,
 		"coverage":                  scan.Coverage,
+		"completeness":              scan.Completeness,
 	}).Error; err != nil {
 		return fmt.Errorf("save diff rescan metadata: %w", err)
 	}
@@ -198,10 +204,15 @@ func (w *Worker) fallbackDiffScan(scan *db.Scan, reason string) {
 	scan.DiffBaseCommit = ""
 	scan.DiffThreatModelScanID = nil
 	scan.DiffStats = ""
-	scan.Coverage = mustJSON(diffCoverage{
+	// A fallback ran as a full scan, and a full scan has no enumerable
+	// scope until #20's work manifest exists, so the honest verdict is
+	// unknown rather than complete.
+	setCoverage(scan, coverage.Record{
 		RequestedMode:  db.ScanRescanModeDiff,
 		ActualMode:     db.ScanRescanModeFull,
 		FallbackReason: reason,
+		Completeness:   coverage.CompletenessUnknown,
+		Reason:         "no enumerable scope for a full scan",
 	})
 	if err := w.DB.Model(scan).Updates(map[string]any{
 		"rescan_mode":               db.ScanRescanModeFull,
@@ -210,6 +221,7 @@ func (w *Worker) fallbackDiffScan(scan *db.Scan, reason string) {
 		"diff_threat_model_scan_id": nil,
 		"diff_stats":                "",
 		"coverage":                  scan.Coverage,
+		"completeness":              scan.Completeness,
 	}).Error; err != nil && w.Log != nil {
 		w.Log.Warn("save diff rescan fallback", "scan", scan.ID, "reason", reason, "err", err)
 	}
@@ -289,4 +301,34 @@ func uintValue(v *uint) uint {
 		return 0
 	}
 	return *v
+}
+
+// setCoverage renders a coverage record onto the scan and keeps the indexed
+// Completeness column in step with it, so the two can never disagree.
+func setCoverage(scan *db.Scan, rec coverage.Record) {
+	raw, err := coverage.Marshal(rec)
+	if err != nil {
+		return
+	}
+	scan.Coverage = raw
+	scan.Completeness = rec.Completeness
+	if scan.Completeness == "" {
+		scan.Completeness = coverage.CompletenessUnknown
+	}
+}
+
+// changedPaths is the staged diff's file set as a plain path list, which is
+// what a receipt reconciliation matches against. Renames are recorded under
+// their new path, matching how the skill sees the tree at the head commit.
+func changedPaths(changed []changedFile) []string {
+	if len(changed) == 0 {
+		return nil
+	}
+	paths := make([]string, 0, len(changed))
+	for _, f := range changed {
+		if f.Path != "" {
+			paths = append(paths, f.Path)
+		}
+	}
+	return paths
 }
