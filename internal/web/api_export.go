@@ -792,6 +792,7 @@ func findingExport(f db.Finding) map[string]any {
 		"fix_commit":           f.FixCommit,
 		"resolution":           string(f.Resolution),
 		"disclosure_draft":     f.DisclosureDraft,
+		"disclosure_title":     f.DisclosureTitle,
 		"suggested_recipients": f.SuggestedRecipients,
 		"assignee":             f.Assignee,
 		"trace":                f.Trace,

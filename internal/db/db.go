@@ -822,6 +822,13 @@ type Finding struct {
 	ReleaseURL      string
 	Resolution      FindingResolution `gorm:"index"`
 	DisclosureDraft string            `gorm:"type:text"`
+	// DisclosureTitle is the disclose skill's drafted GHSA summary
+	// (report.json's ghsa.summary), which may differ from Finding.Title:
+	// the finding's own title is set at audit time and preserved across
+	// disclose re-runs, while this is the disclosure-specific headline
+	// meant for the GHSA/VINCE form. Analyst-editable like the rest of
+	// this block.
+	DisclosureTitle string `gorm:"type:text"`
 	// SuggestedRecipients routes the disclosure to the file-level owners
 	// of Location (CODEOWNERS entries or, absent those, recent non-bot
 	// committers) because the repo-level maintainers list is too coarse
