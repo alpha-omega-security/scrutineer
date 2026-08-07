@@ -266,7 +266,13 @@ func displaySeverity(s string) string {
 
 // tmplSince renders a timestamp as "<duration> ago", accepting a time.Time
 // or *time.Time and yielding "" for nil/zero values.
-func tmplSince(v any) string {
+//
+// The elapsed time is baked in at render time, so a running scan's row would
+// otherwise read "0s ago" for its whole run. Carrying the instant itself in a
+// <time datetime> lets static/app.js recount it every second, which is what
+// makes the value climb without a request. Both halves are generated (RFC 3339
+// and humanDuration's digits), so neither can inject markup.
+func tmplSince(v any) template.HTML {
 	var t time.Time
 	switch x := v.(type) {
 	case time.Time:
@@ -282,7 +288,10 @@ func tmplSince(v any) string {
 	if t.IsZero() {
 		return ""
 	}
-	return humanDuration(time.Since(t)) + " ago"
+	// data-elapsed is what app.js keys on, so it only ever recounts values that
+	// mean "this long ago" and leaves any other <time> alone.
+	return template.HTML(fmt.Sprintf(`<time datetime="%s" data-elapsed>%s ago</time>`,
+		t.UTC().Format(time.RFC3339), humanDuration(time.Since(t))))
 }
 
 // tmplBytes renders a byte count with a binary unit suffix (B, KB, MB, ...).
@@ -476,6 +485,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /repositories/bulk", s.repoBulkCreate)
 	mux.HandleFunc("POST /repositories/org", s.repoOrgImport)
 	mux.HandleFunc("GET /repositories/{id}", s.repoShow)
+	mux.HandleFunc("GET /repositories/{id}/scans", s.repoScansFragment)
 	mux.HandleFunc("POST /repositories/{id}/alternatives", s.repoPackageAlternativeCreate)
 	mux.HandleFunc("POST /repositories/{id}/alternatives/{alternative_id}/delete", s.repoPackageAlternativeDelete)
 	mux.HandleFunc("POST /repositories/{id}/expected", s.repoExpectedFindingCreate)
@@ -601,7 +611,15 @@ func (s *Server) render(w http.ResponseWriter, r *http.Request, name string, dat
 	data["Nav"] = navKey(r.URL.Path)
 	data["Theme"] = resolveTheme(r)
 	data["ColorScheme"] = resolveColorScheme(r)
-	data["Flash"] = popFlash(w, r)
+	// The request URI a live page re-requests to refresh its own list fragment,
+	// filters, sort and page included.
+	data["SelfURL"] = r.URL.RequestURI()
+	// Only a full page render pops the flash. The list fragments served to htmx
+	// carry no #toaster, so consuming it there would swallow the message the
+	// full render that a POST is redirecting to is about to show.
+	if !isHX(r) {
+		data["Flash"] = popFlash(w, r)
+	}
 	// Seed the sorter with the handler's EFFECTIVE sort (data["Sort"]) rather
 	// than the raw ?sort param. That token is already the sanitized, defaulted
 	// sort the ORDER BY actually used, so folding it in makes a default or
@@ -2187,6 +2205,31 @@ func (s *Server) repoScanActionCounts(repoID uint) (active, paused int64) {
 	return active, paused
 }
 
+// repoScansFragment re-renders just the Scans tab's table, which the tab's SSE
+// listener requests when a scan on this repository changes. It deliberately
+// skips loadRepoShowView: that pulls findings, dependencies, the inventory, the
+// threat model and more, none of which this table reads.
+func (s *Server) repoScansFragment(w http.ResponseWriter, r *http.Request) {
+	repo, ok := loadByID[db.Repository](s, w, r)
+	if !ok {
+		return
+	}
+	// Only htmx has any use for a layout-less table. Sending anyone else to the
+	// tab itself also keeps a stray visit from popping the flash cookie into a
+	// fragment that has no #toaster to show it in.
+	if !isHX(r) {
+		http.Redirect(w, r, fmt.Sprintf("/repositories/%d#rt3", repo.ID), http.StatusSeeOther)
+		return
+	}
+	scans := loadRepoLatestScanRows(s.DB, repo.ID)
+	active, paused := s.repoScanActionCounts(repo.ID)
+	s.render(w, r, "repo_scans.html", map[string]any{
+		"Repo": repo, "Scans": scans,
+		"ActiveScans": int(active), "PausedScans": int(paused),
+		"FailedScans": countFailedScans(scans),
+	})
+}
+
 func (s *Server) repoShow(w http.ResponseWriter, r *http.Request) {
 	repo, ok := loadByID[db.Repository](s, w, r)
 	if !ok {
@@ -2374,13 +2417,34 @@ func (s *Server) activeRepoSkills() []db.Skill {
 }
 
 func loadRepoLatestScans(gdb *gorm.DB, repoID uint) []db.Scan {
+	return loadRepoLatestScansSelect(gdb, repoID, "s.*")
+}
+
+// scanRowColumns is everything the Scans table renders — every field scan-row
+// and scan-actions read — and none of the large text columns (log, report,
+// prompt) they don't. TestRepoScansFragment_rowMatchesTheFullPage fails if this
+// projection ever falls behind the template.
+const scanRowColumns = `s.id, s.repository_id, s.skill_id, s.skill_name, s.kind, s.ref,
+	s.sub_path, s.rescan_mode, s.status, s.max_turns_hit, s.refusal_audit_warning,
+	s.findings_count, s.model, s.cost_usd, s."commit", s.started_at, s.finished_at`
+
+// loadRepoLatestScanRows is loadRepoLatestScans projected down to what the Scans
+// table renders. The repo page itself still needs whole rows (repoPrimaryScans
+// reads Report to pick the deep-dive and threat-model scans), but the table
+// re-renders on every scan-status event, and pulling each scan's full log and
+// report per refresh is megabytes of text nothing on screen reads.
+func loadRepoLatestScanRows(gdb *gorm.DB, repoID uint) []db.Scan {
+	return loadRepoLatestScansSelect(gdb, repoID, scanRowColumns)
+}
+
+func loadRepoLatestScansSelect(gdb *gorm.DB, repoID uint, columns string) []db.Scan {
 	var scans []db.Scan
 	// Per (skill_name, sub_path) we want just the latest scan — the repo
 	// page should read like "this is the state of each job on this repo",
 	// not a scroll of every historical attempt. Older runs are still
 	// reachable via /scans/{id} and the global /scans index.
 	gdb.Raw(`
-		SELECT s.* FROM scans s
+		SELECT `+columns+` FROM scans s
 		JOIN (
 			SELECT COALESCE(skill_name, '') AS sn, COALESCE(sub_path, '') AS sp, MAX(id) AS max_id
 			FROM scans WHERE repository_id = ?
@@ -3228,6 +3292,10 @@ func (s *Server) enqueueSkillWith(ctx context.Context, repoID, skillID uint, opt
 		return 0, enqueueErr
 	}
 	s.DB.Model(&db.Repository{}).Where("id = ?", repoID).Update("updated_at", time.Now())
+	// Published without the scan ID on purpose: no open page holds a row for a
+	// scan that did not exist a moment ago, so the lists re-fetch their table
+	// rather than trying to swap a row that is not there.
+	s.publishScanList(repoID)
 	return scan.ID, nil
 }
 

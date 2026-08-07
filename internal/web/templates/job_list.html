@@ -1,0 +1,138 @@
+<div id="jobs">
+<div class="flex items-center justify-between gap-4 mb-6">
+  <h2 class="text-2xl font-semibold flex items-center gap-2">
+    <i data-lucide="list-checks"></i> Scans
+  </h2>
+  <div class="flex items-center gap-2">
+    {{if .QueuedCount}}
+      <form method="post" action="/scans/pause-queued"
+            hx-post="/scans/pause-queued" hx-swap="none"
+            hx-confirm="Pause every queued scan? Running scans will continue.">
+        <button type="submit" class="btn-outline"><i data-lucide="pause"></i> Pause queued</button>
+      </form>
+    {{end}}
+    {{if .PausedCount}}
+      <form method="post" action="/scans/resume-paused"
+            hx-post="/scans/resume-paused" hx-swap="none"
+            hx-confirm="Resume every paused scan?">
+        <button type="submit" class="btn-outline"><i data-lucide="play"></i> Resume paused</button>
+      </form>
+    {{end}}
+    {{if and (eq .Status "failed") .Page.Total}}
+      <form method="post" action="/scans/retry-failed?skill={{.Skill}}"
+            hx-post="/scans/retry-failed?skill={{.Skill}}" hx-swap="none"
+            hx-confirm="Re-enqueue every failed{{if .Skill}} {{.Skill}}{{end}} scan?">
+        <button type="submit" class="btn-outline"><i data-lucide="refresh-cw"></i> Retry all failed</button>
+      </form>
+    {{end}}
+    <div class="dropdown-menu">
+      <button type="button" class="btn-outline" aria-haspopup="menu" aria-expanded="false">
+        <i data-lucide="filter"></i>
+        {{if .Skill}}{{.Skill}}{{else}}Skill{{end}}
+        <i data-lucide="chevron-down"></i>
+      </button>
+      <div data-popover aria-hidden="true" data-align="end">
+        <div role="menu">
+          <a role="menuitem" href="/scans?status={{.Status}}&sort={{.Sort}}">All skills</a>
+          {{range .Skills}}
+            <a role="menuitem" href="/scans?skill={{.}}&status={{$.Status}}&sort={{$.Sort}}"
+               {{if eq . $.Skill}}aria-current="true"{{end}}>{{.}}</a>
+          {{end}}
+        </div>
+      </div>
+    </div>
+    <div class="dropdown-menu">
+      <button type="button" class="btn-outline" aria-haspopup="menu" aria-expanded="false">
+        <i data-lucide="filter"></i>
+        {{if .Status}}{{.Status}}{{else}}Status{{end}}
+        <i data-lucide="chevron-down"></i>
+      </button>
+      <div data-popover aria-hidden="true" data-align="end">
+        <div role="menu">
+          <a role="menuitem" href="/scans?skill={{.Skill}}&sort={{.Sort}}">All statuses</a>
+          {{range (list "queued" "paused" "running" "done" "failed" "skipped" "cancelled")}}
+            <a role="menuitem" href="/scans?skill={{$.Skill}}&status={{.}}&sort={{$.Sort}}"
+               {{if eq . $.Status}}aria-current="true"{{end}}>{{.}}</a>
+          {{end}}
+        </div>
+      </div>
+    </div>
+    <div class="dropdown-menu">
+      <button type="button" class="btn-outline" aria-haspopup="menu" aria-expanded="false">
+        <i data-lucide="arrow-down-wide-narrow"></i>
+        {{$sk := sortkey .Sort}}{{if eq $sk "skill"}}Skill{{else if eq $sk "status"}}Status{{else if eq $sk "repository"}}Repository{{else}}Newest{{end}}
+        <i data-lucide="chevron-down"></i>
+      </button>
+      <div data-popover aria-hidden="true" data-align="end">
+        <div role="menu">
+          {{range (list "newest" "skill" "status" "repository")}}
+            <a role="menuitem" href="/scans?skill={{$.Skill}}&status={{$.Status}}&sort={{.}}"
+               {{if eq . (sortkey $.Sort)}}aria-current="true"{{end}}>{{.}}</a>
+          {{end}}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+{{if .AccountPausedCount}}
+  <div class="alert-destructive mb-6">
+    <i data-lucide="triangle-alert"></i>
+    <section>
+      <strong>Model API account paused.</strong>
+      Queued scans were paused automatically.
+      {{if .NextAccountResume}}Scrutineer will resume them after {{.NextAccountResume.UTC.Format "2006-01-02 15:04 UTC"}}.{{else}}Resume them once the account recovers.{{end}}
+    </section>
+  </div>
+{{end}}
+
+{{if .ModelDowngraded}}
+  <div class="alert-warning mb-6">
+    <i data-lucide="triangle-alert"></i>
+    <section>
+      <strong>Model fallback active.</strong>
+      The account is on overage, so new scans run on the mid tier instead of max/high. Restores automatically when overage clears.
+    </section>
+  </div>
+{{end}}
+
+{{if .Scans}}
+  <table class="table">
+    <thead>
+      <tr>
+        {{template "th-sort" (dict "Sorter" .Sorter "Key" "id" "Def" "desc" "Label" "#" "Class" "")}}
+        {{template "th-sort" (dict "Sorter" .Sorter "Key" "repository" "Def" "asc" "Label" "Repository" "Class" "")}}
+        {{if .AnySubPath}}<th>Sub-path</th>{{end}}
+        {{template "th-sort" (dict "Sorter" .Sorter "Key" "skill" "Def" "asc" "Label" "Skill" "Class" "")}}
+        {{template "th-sort" (dict "Sorter" .Sorter "Key" "status" "Def" "asc" "Label" "Status" "Class" "")}}
+        {{template "th-sort" (dict "Sorter" .Sorter "Key" "findings" "Def" "desc" "Label" "Findings" "Class" "")}}
+        <th>Model</th><th>Cost</th><th>Started</th><th>Duration</th><th class="w-12"></th>
+      </tr>
+    </thead>
+    <tbody>
+    {{$showSub := .AnySubPath}}
+    {{range .Scans}}
+      <tr id="scan-{{.ID}}">
+        <td><a href="/scans/{{.ID}}">{{.ID}}</a></td>
+        <td>{{.Repository.Name}}</td>
+        {{if $showSub}}
+          <td class="text-xs text-muted-foreground">{{if .SubPath}}<code>{{.SubPath}}</code>{{else}}<span>root</span>{{end}}</td>
+        {{end}}
+        <td>{{if .SkillName}}{{.SkillName}}{{else}}{{.Kind}}{{end}} {{template "branch-tag" .Ref}}</td>
+        <td>{{template "status-badge" (status .Status)}} {{if .MaxTurnsHit}}<span class="badge-outline"><i data-lucide="timer-off"></i> max turns</span>{{end}}</td>
+        <td>{{if gt .FindingsCount 0}}{{template "findings-badge" .FindingsCount}}{{end}}</td>
+        <td class="text-muted-foreground">{{if .Model}}{{.Model}}{{else}}-{{end}}</td>
+        <td class="text-muted-foreground">{{if gt .CostUSD 0.0}}{{usd .CostUSD}}{{else}}-{{end}}</td>
+        <td>{{if .StartedAt}}{{since .StartedAt}}{{end}}</td>
+        <td>{{if .FinishedAt}}{{dur .Duration}}{{end}}</td>
+        <td>{{template "scan-actions" .}}</td>
+      </tr>
+    {{end}}
+    </tbody>
+  </table>
+  {{template "pagination" .Page}}
+{{else}}
+  {{template "empty" (dict "Icon" "list-checks" "Title" "No jobs yet" "Body" "Jobs appear here once a repository has been queued.")}}
+{{end}}
+
+</div>

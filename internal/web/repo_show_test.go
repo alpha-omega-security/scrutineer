@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"scrutineer/internal/db"
 )
@@ -238,5 +239,168 @@ func TestRepoShow_threatModelTab_fallsBackWhenSkillScanRunning(t *testing.T) {
 	body := getRepoPage(t, s, repo.ID)
 	if !strings.Contains(body, "library caller") {
 		t.Errorf("expected fallback to deep-dive boundaries while threat-model scan is running")
+	}
+}
+
+// The row swap the SSE payload carries can only update a scan already on
+// screen: a scan queued after the page was rendered has no row, and the
+// Cancel/Resume/Retry counts sit outside the table. The tab therefore
+// re-requests its own table on the same event.
+func TestRepoShow_scansTabRefreshesItsTable(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/tab", Name: "tab"}
+	s.DB.Create(&repo)
+
+	body := getRepoPage(t, s, repo.ID)
+	if !strings.Contains(body, fmt.Sprintf(`hx-get="/repositories/%d/scans"`, repo.ID)) {
+		t.Errorf("Scans tab does not re-request its table on a status event:\n%s", body)
+	}
+	if !strings.Contains(body, `hx-target="#repo-scans"`) {
+		t.Error("refresh is not aimed at the Scans tab table")
+	}
+	// The listener has to sit outside the swapped table, or the swap drops the
+	// EventSource it relies on. Both markers are located first: a missing one
+	// yields -1, which would satisfy the ordering check on its own.
+	table, listener := strings.Index(body, `id="repo-scans"`), strings.Index(body, "sse-connect")
+	if table < 0 || listener < 0 {
+		t.Fatalf("expected both the table and the SSE listener; table=%d listener=%d", table, listener)
+	}
+	if table > listener {
+		t.Error("the SSE listener must be declared after (outside) the table it replaces")
+	}
+}
+
+func TestRepoScansFragment(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/frag", Name: "frag"}
+	s.DB.Create(&repo)
+	running := db.Scan{RepositoryID: repo.ID, Kind: "skill", SkillName: "audit",
+		Status: db.ScanRunning, StatusPriority: db.StatusPriorityFor(db.ScanRunning)}
+	s.DB.Create(&running)
+	failed := db.Scan{RepositoryID: repo.ID, Kind: "skill", SkillName: "triage",
+		Status: db.ScanFailed, StatusPriority: db.StatusPriorityFor(db.ScanFailed)}
+	s.DB.Create(&failed)
+
+	r := localReq("GET", fmt.Sprintf("/repositories/%d/scans", repo.ID))
+	r.Header.Set("HX-Request", "true")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	body := w.Body.String()
+
+	if !strings.Contains(body, `id="repo-scans"`) {
+		t.Errorf("fragment missing its swap target:\n%s", body)
+	}
+	if strings.Contains(body, "<html") || strings.Contains(body, "sse-connect") {
+		t.Error("the fragment must be the table alone, not the repo page")
+	}
+	for _, id := range []uint{running.ID, failed.ID} {
+		if !strings.Contains(body, fmt.Sprintf(`id="scan-%d"`, id)) {
+			t.Errorf("scan %d missing from the fragment", id)
+		}
+	}
+	// The counts live outside the rows, which is why a row swap alone cannot
+	// keep this tab honest.
+	if !strings.Contains(body, "Cancel all (1)") {
+		t.Errorf("running scan not reflected in the Cancel all count:\n%s", body)
+	}
+	if !strings.Contains(body, "Retry failed (1)") {
+		t.Errorf("failed scan not reflected in the Retry failed count:\n%s", body)
+	}
+}
+
+// The fragment reads a narrowed projection (scanRowColumns) while the page reads
+// whole rows, so a column the projection forgets renders blank on refresh and
+// correct on load. Comparing the same row from both paths is what catches it.
+func TestRepoScansFragment_rowMatchesTheFullPage(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/parity", Name: "parity"}
+	s.DB.Create(&repo)
+
+	startedAt := time.Now().Add(-5 * time.Minute)
+	finishedAt := startedAt.Add(2 * time.Minute)
+	// Every field scan-row and scan-actions read is populated, so a dropped
+	// column shows up as a difference rather than as two identical blanks.
+	scan := db.Scan{
+		RepositoryID: repo.ID, Kind: "skill", SkillName: "audit", SubPath: "pkg/api",
+		Status: db.ScanFailed, StatusPriority: db.StatusPriorityFor(db.ScanFailed),
+		Ref: "release-1.2", RescanMode: "diff", MaxTurnsHit: true, RefusalAuditWarning: true,
+		FindingsCount: 3, Model: "claude-opus-5", CostUSD: 1.25, Commit: "deadbeefcafe",
+		StartedAt: &startedAt, FinishedAt: &finishedAt,
+		Log: strings.Repeat("log line\n", 100), Report: `{"big":"report"}`,
+	}
+	s.DB.Create(&scan)
+	skill := db.Skill{Name: "audit", Body: "b", Active: true, Source: "ui", Version: 1}
+	s.DB.Create(&skill)
+	s.DB.Model(&db.Scan{}).Where("id = ?", scan.ID).Update("skill_id", skill.ID)
+
+	r := localReq("GET", fmt.Sprintf("/repositories/%d/scans", repo.ID))
+	r.Header.Set("HX-Request", "true")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+
+	marker := fmt.Sprintf(`<tr id="scan-%d"`, scan.ID)
+	fromFragment := scanRow(t, w.Body.String(), marker)
+	fromPage := scanRow(t, getRepoPage(t, s, repo.ID), marker)
+	if fromFragment != fromPage {
+		t.Errorf("the narrowed projection drops a column the table renders\nfragment: %s\npage:     %s",
+			fromFragment, fromPage)
+	}
+	// The point of the projection: the table never reads these.
+	if strings.Contains(w.Body.String(), "log line") || strings.Contains(w.Body.String(), "big") {
+		t.Error("fragment leaked a large text column into the response")
+	}
+}
+
+func scanRow(t *testing.T, body, marker string) string {
+	t.Helper()
+	start := strings.Index(body, marker)
+	if start < 0 {
+		t.Fatalf("row %q not found in:\n%s", marker, body)
+	}
+	end := strings.Index(body[start:], "</tr>")
+	if end < 0 {
+		t.Fatalf("row %q is unterminated", marker)
+	}
+	return body[start : start+end]
+}
+
+func TestRepoScansFragment_unknownRepository(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	r := localReq("GET", "/repositories/4242/scans")
+	r.Header.Set("HX-Request", "true")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != 404 {
+		t.Errorf("status = %d, want 404", w.Code)
+	}
+}
+
+// Only htmx wants a layout-less table. A stray visit is sent to the tab itself
+// rather than being served bare markup, which also keeps it from popping the
+// flash cookie into a fragment that cannot display it.
+func TestRepoScansFragment_plainVisitRedirectsToTheTab(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/plain", Name: "plain"}
+	s.DB.Create(&repo)
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", fmt.Sprintf("/repositories/%d/scans", repo.ID)))
+
+	if w.Code != 303 {
+		t.Fatalf("status = %d, want 303; body=%s", w.Code, w.Body)
+	}
+	if got, want := w.Header().Get("Location"), fmt.Sprintf("/repositories/%d#rt3", repo.ID); got != want {
+		t.Errorf("Location = %q, want %q", got, want)
+	}
+	if cookies := w.Header().Values("Set-Cookie"); len(cookies) != 0 {
+		t.Errorf("a redirect must not touch the flash cookie: %v", cookies)
 	}
 }

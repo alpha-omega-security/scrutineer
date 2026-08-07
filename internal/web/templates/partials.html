@@ -73,3 +73,14 @@
   </header>
 </div>
 {{end}}
+
+{{/* live-table subscribes to scan status events and re-requests URL to replace
+     the one element named by Target, which keeps the reader's scroll, filters
+     and sort. Render it OUTSIDE that element: the swap replaces the target, and
+     this element owns the EventSource driving it. The delay debounces the burst
+     a finishing scan group produces into a single request. */}}
+{{define "live-table"}}
+<div hx-ext="sse" sse-connect="/events?events=scan-status"
+     hx-get="{{.URL}}" hx-trigger="sse:scan-status delay:300ms"
+     hx-target="{{.Target}}" hx-swap="outerHTML" hidden></div>
+{{end}}

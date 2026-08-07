@@ -658,6 +658,10 @@ func (w *Worker) wrap(h handler) func(context.Context, []byte) error {
 		if err := w.startScan(&scan); err != nil {
 			return w.dropUnclaimedScan(&scan, err)
 		}
+		// The claim is the only moment a row leaves `queued`, and finalizeScan
+		// is minutes away: without this the list pages keep showing the scan as
+		// queued for its whole run.
+		w.publish(scan.ID, scan.RepositoryID, "scan-status", string(scan.Status))
 
 		if w.RefreshEcosystemsCache != nil && !scan.Repository.IsLocal() {
 			if err := w.RefreshEcosystemsCache(ctx, scan.RepositoryID); err != nil {
