@@ -27,7 +27,7 @@ func TestScheduleNext(t *testing.T) {
 			t.Errorf("ScheduleNext(%q) = %v, want a time after %v", expr, next, now)
 		}
 	}
-	for _, expr := range []string{"", "yearly-ish", "* * *", "61 * * * *"} {
+	for _, expr := range []string{"", "yearly-ish", "* * *", "61 * * * *", "0 0 31 2 *"} {
 		if _, err := ScheduleNext(expr, now); err == nil {
 			t.Errorf("ScheduleNext(%q) = nil error, want error", expr)
 		}
@@ -145,6 +145,38 @@ func TestScheduleTick_notDueYet(t *testing.T) {
 	s.DB.First(&got, repo.ID)
 	if got.NextScheduledScanAt == nil || got.NextScheduledScanAt.Sub(future).Abs() > time.Second {
 		t.Fatalf("NextScheduledScanAt = %v, want untouched %v", got.NextScheduledScanAt, future)
+	}
+}
+
+func TestScheduleTick_invalidScheduleDoesNotFireOrStoreZero(t *testing.T) {
+	s, synced, done := scheduleTestServer(t, "abc", nil)
+	defer done()
+	due := time.Now().Add(-time.Minute)
+	repo := scheduledRepo(t, s, "0 0 31 2 *", due)
+	if err := s.DB.Model(&db.Repository{}).Where("id = ?", repo.ID).
+		Update("upstream_url", "https://example.com/upstream").Error; err != nil {
+		t.Fatal(err)
+	}
+
+	s.scheduleTick(context.Background(), time.Now())
+
+	if len(*synced) != 0 {
+		t.Fatalf("syncUpstream calls = %v, want none for an invalid schedule", *synced)
+	}
+	var got db.Repository
+	if err := s.DB.First(&got, repo.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.NextScheduledScanAt == nil || got.NextScheduledScanAt.IsZero() ||
+		got.NextScheduledScanAt.Sub(due).Abs() > time.Second {
+		t.Fatalf("NextScheduledScanAt = %v, want original non-zero due time %v", got.NextScheduledScanAt, due)
+	}
+	var scans int64
+	if err := s.DB.Model(&db.Scan{}).Where("repository_id = ?", repo.ID).Count(&scans).Error; err != nil {
+		t.Fatal(err)
+	}
+	if scans != 0 {
+		t.Fatalf("invalid schedule created %d scan(s), want 0", scans)
 	}
 }
 
@@ -332,12 +364,14 @@ func TestRepoScheduleUpdate_rejectsInvalidCron(t *testing.T) {
 	defer done()
 	repo := scheduledRepo(t, s, "", time.Now())
 
-	w := postForm(t, s, "/repositories/"+strconv.FormatUint(uint64(repo.ID), 10)+"/schedule", url.Values{
-		"scan_schedule":      {"custom"},
-		"scan_schedule_cron": {"not a cron"},
-	})
-	if w.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("status %d, want 422", w.Code)
+	for _, expr := range []string{"not a cron", "0 0 31 2 *"} {
+		w := postForm(t, s, "/repositories/"+strconv.FormatUint(uint64(repo.ID), 10)+"/schedule", url.Values{
+			"scan_schedule":      {"custom"},
+			"scan_schedule_cron": {expr},
+		})
+		if w.Code != http.StatusUnprocessableEntity {
+			t.Errorf("schedule %q: status %d, want 422", expr, w.Code)
+		}
 	}
 }
 
@@ -448,12 +482,14 @@ func TestSettingsUpdateScanSchedule_rejectsInvalidCron(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
 
-	w := postForm(t, s, "/settings/scan-schedule", url.Values{
-		"scan_schedule":      {"custom"},
-		"scan_schedule_cron": {"every other tuesday"},
-	})
-	if w.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("status %d, want 422", w.Code)
+	for _, expr := range []string{"every other tuesday", "0 0 31 2 *"} {
+		w := postForm(t, s, "/settings/scan-schedule", url.Values{
+			"scan_schedule":      {"custom"},
+			"scan_schedule_cron": {expr},
+		})
+		if w.Code != http.StatusUnprocessableEntity {
+			t.Errorf("schedule %q: status %d, want 422", expr, w.Code)
+		}
 	}
 }
 

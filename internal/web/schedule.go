@@ -43,7 +43,11 @@ func ScheduleNext(expr string, after time.Time) (time.Time, error) {
 	if err != nil {
 		return time.Time{}, err
 	}
-	return sched.Next(after), nil
+	next := sched.Next(after)
+	if next.IsZero() {
+		return time.Time{}, errors.New("schedule has no future occurrence")
+	}
+	return next, nil
 }
 
 // StartScheduler runs the recurring-scan loop until ctx is cancelled.
