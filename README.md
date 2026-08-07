@@ -131,7 +131,7 @@ When the containerised runner is active (the default when a container runtime is
 ### Operational
 
 - **Containerised runner** -- optional per-scan container isolation with read-only source mounts, dropped capabilities, and an authenticated egress allowlist proxy
-- **Skill HTTP API** -- running skills can call back into scrutineer to list prior scans and enqueue further skills; surface documented in `openapi.yaml`
+- **Skill HTTP API** -- running skills can call back into scrutineer to list prior scans and enqueue further skills; see the [HTTP API overview](docs/api.md) for authentication boundaries and [openapi.yaml](openapi.yaml) for the full route specification
 - **Live updates** -- SSE streaming of scan logs and status changes, no polling
 - **Organisation rollup** -- repos, findings, and maintainers grouped by owning org, with per-org markdown exports
 - **Usage tracking** -- per-scan token and cost figures plus a `/usage` page totalling spend per skill; on a Claude subscription token, a rate-limit wall auto-pauses the batch and resumes it after the reported reset, with per-window status shown on `/usage`. Optionally (`downgrade_on_overage`), once the account crosses into overage the model tier falls back from max/high to the mid tier for new scans until overage clears (typically when the window resets) -- announced in the log, on the jobs page, and on `/usage`
@@ -405,7 +405,7 @@ See [SECURITY.md](SECURITY.md) for the reporting policy and [threatmodel.md](thr
 
 - [docs/skills.md](docs/skills.md) -- bundled skills, writing your own, frontmatter and output-kind reference
 - [docs/import.md](docs/import.md) -- importing findings from other tools (SARIF, CSV, markdown, minimal JSON) and adding new formats
-- [openapi.yaml](openapi.yaml) -- the skill-facing HTTP API
+- [docs/api.md](docs/api.md) -- HTTP API surfaces, callers, authentication boundaries, and links to the full [OpenAPI specification](openapi.yaml)
 - [docs/database.md](docs/database.md) -- full database schema reference
 - [docs/backup.md](docs/backup.md) -- backing up and restoring the database (built-in `scrutineer backup`/`restore`, `sqlite3`, Litestream)
 - [docs/development.md](docs/development.md) -- project layout, regenerating embedded data, running tests
