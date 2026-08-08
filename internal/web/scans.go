@@ -19,11 +19,9 @@ import (
 )
 
 func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
-	q := s.DB.Model(&db.Scan{})
-	skillName := r.URL.Query().Get("skill")
-	if skillName != "" {
-		q = q.Where("skill_name = ?", skillName)
-	}
+	skillFilter := parseScanSkillFilter(r.URL.Query().Get("skill"))
+	r = requestWithScanSkillFilter(r, skillFilter.value())
+	q := skillFilter.apply(s.DB.Model(&db.Scan{}))
 	status := r.URL.Query().Get(statusKey)
 	if status != "" {
 		q = q.Where("status = ?", status)
@@ -68,12 +66,75 @@ func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 	}
 	s.render(w, r, "jobs.html", map[string]any{
 		"Scans": scans, "Page": page,
-		"Skill": skillName, "Status": status, "Sort": sort, "Skills": skillNames,
+		"Skill": skillFilter.value(), "SkillLabel": skillFilter.label(),
+		"Status": status, "Sort": sort, "Skills": skillNames,
 		"AnySubPath": anySubPath, "QueuedCount": stats.QueuedCount, "PausedCount": stats.PausedCount,
 		"AccountPausedCount": stats.AccountPausedCount,
 		"NextAccountResume":  stats.NextAccountResume,
 		"ModelDowngraded":    s.Worker.ShouldDowngradeModel(),
 	})
+}
+
+type scanSkillFilter struct {
+	names []string
+}
+
+func parseScanSkillFilter(raw string) scanSkillFilter {
+	seen := make(map[string]struct{})
+	names := make([]string, 0)
+	for _, name := range strings.Split(raw, ",") {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		names = append(names, name)
+	}
+	return scanSkillFilter{names: names}
+}
+
+func (f scanSkillFilter) apply(q *gorm.DB) *gorm.DB {
+	switch len(f.names) {
+	case 0:
+		return q
+	case 1:
+		return q.Where("skill_name = ?", f.names[0])
+	default:
+		return q.Where("skill_name IN ?", f.names)
+	}
+}
+
+func (f scanSkillFilter) value() string {
+	return strings.Join(f.names, ",")
+}
+
+func (f scanSkillFilter) label() string {
+	if len(f.names) == 1 {
+		return f.names[0]
+	}
+	if len(f.names) > 1 {
+		return fmt.Sprintf("%d skills", len(f.names))
+	}
+	return ""
+}
+
+// requestWithScanSkillFilter gives pagination and sortable headers the same
+// canonical filter used by the SQL query. Clone before rewriting RawQuery so
+// middleware and callers retaining the original request do not observe a
+// handler-local normalization.
+func requestWithScanSkillFilter(r *http.Request, value string) *http.Request {
+	r = r.Clone(r.Context())
+	query := r.URL.Query()
+	if value == "" {
+		query.Del("skill")
+	} else {
+		query.Set("skill", value)
+	}
+	r.URL.RawQuery = query.Encode()
+	return r
 }
 
 type scanListStats struct {
@@ -299,13 +360,10 @@ func (s *Server) resumeOpts(scan db.Scan) (sessionID string, resumeOf *uint) {
 }
 
 func (s *Server) scansRetryFailed(w http.ResponseWriter, r *http.Request) {
-	skillName := r.URL.Query().Get("skill")
+	skillFilter := parseScanSkillFilter(r.URL.Query().Get("skill"))
 	repoID, _ := strconv.Atoi(r.URL.Query().Get("repository"))
-	q := s.DB.Model(&db.Scan{}).
-		Where("status = ? AND kind = ? AND skill_id IS NOT NULL", db.ScanFailed, worker.JobSkill)
-	if skillName != "" {
-		q = q.Where("skill_name = ?", skillName)
-	}
+	q := skillFilter.apply(s.DB.Model(&db.Scan{}).
+		Where("status = ? AND kind = ? AND skill_id IS NOT NULL", db.ScanFailed, worker.JobSkill))
 	if repoID > 0 {
 		q = q.Where("repository_id = ?", repoID)
 	}
@@ -370,8 +428,8 @@ func (s *Server) scansRetryFailed(w http.ResponseWriter, r *http.Request) {
 	target := "/scans?status=failed"
 	if repoID > 0 {
 		target = fmt.Sprintf("/repositories/%d#rt3", repoID)
-	} else if skillName != "" {
-		target += "&skill=" + url.QueryEscape(skillName)
+	} else if skillFilter.value() != "" {
+		target += "&skill=" + url.QueryEscape(skillFilter.value())
 	}
 	s.redirect(w, r, target)
 }
