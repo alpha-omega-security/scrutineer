@@ -56,6 +56,7 @@
     "downstream_responsibilities": { "type": "array", "items": { "type": "string" } },
     "known_misuse":      { "$ref": "#/$defs/misuse_or_na" },
     "known_non_findings": { "type": "array", "items": { "$ref": "#/$defs/non_finding" } },
+    "controls":          { "type": "array", "items": { "$ref": "#/$defs/control" } },
 
     "dispositions": {
       "type": "array",
@@ -255,6 +256,49 @@
         "why_safe":    { "type": "string" },
         "cites":       { "type": "string", "description": "JSON pointer-ish reference into this report, e.g. out_of_scope[0]" },
         "suppression": { "type": "string" }
+      }
+    },
+
+    "control": {
+      "type": "object",
+      "description": "A design-level mitigation the model claims is in force over some code or entry point: an authenticated router, a sandbox, CSRF middleware. A claim, not a proof — downstream a matched control has to be bypassed or explained away, not treated as making a finding safe.",
+      "required": ["id", "kind", "protects", "provenance"],
+      "additionalProperties": false,
+      "properties": {
+        "id":   { "type": "string", "description": "unique within this report; downstream records cite it" },
+        "kind": { "type": "string", "minLength": 1, "description": "open enum: authorization, sandbox, input-validation, csrf, rate-limit, other — a kind not listed here is allowed and means the effect is unknown to consumers" },
+        "protects": { "$ref": "#/$defs/control_scope" },
+        "assumptions": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "conditions under which the control actually holds, e.g. 'requests reach this package only through the authenticated router'"
+        },
+        "provenance": { "$ref": "#/$defs/provenance" },
+        "source":     { "$ref": "#/$defs/source" }
+      }
+    },
+    "control_scope": {
+      "type": "object",
+      "description": "What the control sits in front of. At least one of paths or entry_points is required: a control scoped to nothing cannot be matched, and is an authoring error rather than a control over everything.",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "anyOf": [
+        { "required": ["paths"] },
+        { "required": ["entry_points"] }
+      ],
+      "properties": {
+        "paths": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1,
+          "description": "globs matched against a finding's file, repository-root-relative, in the same dialect as scan_config.focus_areas[].paths"
+        },
+        "entry_points": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1,
+          "description": "names from this report's entry_points[].entry_point"
+        }
       }
     },
 

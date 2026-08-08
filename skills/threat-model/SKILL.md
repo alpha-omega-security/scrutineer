@@ -131,6 +131,14 @@ What the caller (for a library) or operator (for a service) must do for the assu
 
 Ways the API permits being called that violate the assumptions. Passing untrusted data to a trusted-only parameter, using the project as a security boundary it is not, exceeding documented limits, mixing modes that are not synchronised. For each: what it looks like, why it is unsafe, what to do instead.
 
+### Controls
+
+Optional. Design-level mitigations that sit in front of code: an authenticated router ahead of an admin package, a sandbox around a parser, CSRF middleware on all mutating routes. Today these appear only as prose on trust boundaries, which means nothing downstream can tell which mitigation applies to a given finding's file.
+
+For each: an `id` unique in this report, a `kind` (`authorization`, `sandbox`, `input-validation`, `csrf`, `rate-limit`, `other` — an open enum, use a better word if you have one), what it `protects` (repository-root-relative path globs, entry-point names from your own table, or both — at least one), the `assumptions` under which it actually holds, and the usual `provenance`/`source`.
+
+The assumptions matter more than the control. "Requests reach this package only through the authenticated router" is the sentence a reviewer attacks; a control with no stated assumption cannot be argued with. Record a control only where you can point at the mechanism in code or docs — an aspiration ("the service should require auth") is an open question, not a control. Record it as `inferred` when you read it out of the code rather than out of documentation.
+
 ### Known non-findings
 
 Patterns that scanners, fuzzers, or reviewers repeatedly flag against this project that are not bugs given the model. For each: what the tool reports (function, file, message pattern), why it is safe (cite the entry-point row or property that discharges it), and where applicable a suppression hint. Sources: comments in the code that say "this is safe because", `// nolint` / `# noqa` / `// NOSONAR` annotations with reasons, closed issues where a maintainer explained why a scanner hit is not a bug, prior advisories that were rejected. This list is fed back to semgrep and deep-dive as a negative filter; populate it even if short.
