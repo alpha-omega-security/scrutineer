@@ -104,7 +104,7 @@ func TestAPIGetRepository_omitsBlobsKeepsSummary(t *testing.T) {
 	}
 }
 
-// scanSummary still reads diff_stats, coverage, and error past the projection.
+// scanSummary reads many non-blob columns; apiListScans must omit only the large blobs without dropping any scanSummary fields.
 func TestAPIListScans_omitsBlobsKeepsSummary(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
