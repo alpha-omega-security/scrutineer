@@ -350,7 +350,7 @@ func TestStageContext_includesReconFocusAreas(t *testing.T) {
 		Notes: []string{"Examples excluded."},
 	}
 	if err := stageContextWithInputs(
-		dir, "", "http://127.0.0.1:8080/api", "", "", scan, repo, recon, nil,
+		dir, "", "http://127.0.0.1:8080/api", "", "", scan, repo, recon, nil, nil,
 	); err != nil {
 		t.Fatal(err)
 	}

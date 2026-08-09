@@ -16,7 +16,7 @@ Take an existing finding produced by a prior audit skill and independently grade
 ## Workspace and provenance
 
 - `./src` is a fresh per-scan checkout at the requested ref. It is not the originating audit's workspace and must remain the only target code you execute.
-- `./context.json` has `scrutineer.api_base`, `scrutineer.token`, `scrutineer.repository_id`, and `scrutineer.finding_id`.
+- `./context.json` has `scrutineer.api_base`, `scrutineer.token`, `scrutineer.repository_id`, and `scrutineer.finding_id`. It also has `scrutineer.controls` when the repository's threat model declares controls covering this finding (see [Declared controls](#declared-controls)).
 - `./report.json` is the structured verification record.
 - `./schema.json` is the required output shape.
 
@@ -90,6 +90,36 @@ Every criterion records `verdict`, `method`, `evidence`, `counterevidence`, `pro
 - `deferred`: preflight found external reach or credential access, so execution was intentionally skipped.
 
 For resource-exhaustion findings, a timeout or memory limit is confirmation only when that is the claimed class and the evidence ties it to the expected first-party path. An unrelated setup hang, compiler OOM, or test-runner timeout is not confirmation.
+
+## Declared controls
+
+`scrutineer.controls` in `./context.json` lists the threat-model controls whose `protects.paths` cover this finding's file. The host resolved the match before the container started — the globs are repository-root-relative and a subpath-scoped scan reports locations relative to its sub-folder, so re-deriving the match here would get it wrong. Match the ids, do not recompute them.
+
+```json
+"controls": {
+  "finding_file": "internal/web/server.go",
+  "matched": [
+    {
+      "id": "web-authz",
+      "kind": "authorization",
+      "protects": {"paths": ["internal/web/**"]},
+      "assumptions": ["requests reach these handlers only through the authenticated router"],
+      "provenance": "documented",
+      "source": "internal/web/server.go:120"
+    }
+  ],
+  "ids": ["web-authz"]
+}
+```
+
+A control is a **claim by the threat model's author**, not a proof and not a verdict. It never changes what you run — the reproduction is still the reproduction. It changes what you have to say about the outcome:
+
+- **The reproduction still triggers** (`confirmed`) and a control claims to protect the file: the control did not hold. Say so in `notes`, citing the id, and name whichever of its `assumptions` your reproduction violated — that is the finding's most useful sentence for the analyst, because it points at a design claim that needs revisiting rather than only at a line of code.
+- **The reproduction does not trigger** and a control claims to protect the file: the control is a *candidate* explanation, not the answer. `fixed` still requires citing the guard you actually found in the code (step 6). "Control `web-authz` covers this path" is not a citation; `internal/web/server.go:214 rejects the unauthenticated case` is. If the control is the only thing you can point at, that is `inconclusive`.
+- **`matched` is empty**: the model declares controls but none claims this file. Worth one line in `notes` — an unprotected path is a weaker prior for `fixed`.
+- **`unavailable_reason` is set**: the model could not be read (or the finding has no usable path). Treat it as no information at all, not as "nothing protects this", and pass the reason through to `notes` so the operator can fix the model.
+
+The block is absent entirely when the repository declares no controls. That is the normal case; do not mention it.
 
 ## Output
 

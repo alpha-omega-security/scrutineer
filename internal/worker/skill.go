@@ -93,6 +93,10 @@ type skillContextScrutineer struct {
 	// Novelty is a bounded host-side git history check staged for revalidate.
 	// It keeps deterministic evidence separate from the model's verdict.
 	Novelty *skillContextNovelty `json:"novelty,omitempty"`
+	// Controls are the threat-model controls that claim to protect the
+	// finding's file, resolved host-side and staged for verify. Absent when
+	// the repository's threat model declares no controls.
+	Controls *skillContextControls `json:"controls,omitempty"`
 }
 
 type skillContextRecon struct {
@@ -1290,7 +1294,7 @@ func (w *Worker) metadataDir() string {
 }
 
 func stageContext(workRoot, skillDir, apiBase, forkOrg, metadataDir string, scan *db.Scan, repo *db.Repository) error {
-	return stageContextWithInputs(workRoot, skillDir, apiBase, forkOrg, metadataDir, scan, repo, nil, nil)
+	return stageContextWithInputs(workRoot, skillDir, apiBase, forkOrg, metadataDir, scan, repo, nil, nil, nil)
 }
 
 func stageContextWithInputs(
@@ -1299,6 +1303,7 @@ func stageContextWithInputs(
 	repo *db.Repository,
 	recon *skillContextRecon,
 	novelty *skillContextNovelty,
+	controls *skillContextControls,
 ) error {
 	if err := os.MkdirAll(workRoot, dirPerm); err != nil {
 		return err
@@ -1334,6 +1339,7 @@ func stageContextWithInputs(
 	ctx.Scrutineer.FocusArea = focusArea
 	ctx.Scrutineer.Recon = recon
 	ctx.Scrutineer.Novelty = novelty
+	ctx.Scrutineer.Controls = controls
 	if scan.SkillID != nil {
 		ctx.Scrutineer.SkillID = *scan.SkillID
 	}
@@ -1408,8 +1414,12 @@ func (w *Worker) stageWorkspace(ctx context.Context, workRoot, skillDir string, 
 	if err != nil {
 		return err
 	}
+	controls, err := w.controlsContext(scan, skill)
+	if err != nil {
+		return err
+	}
 	return stageWorkspaceWithInputs(
-		workRoot, skillDir, w.APIBase, w.ForkOrg, w.metadataDir(), scan, skill, recon, novelty,
+		workRoot, skillDir, w.APIBase, w.ForkOrg, w.metadataDir(), scan, skill, recon, novelty, controls,
 	)
 }
 
@@ -1418,7 +1428,7 @@ func (w *Worker) stageWorkspace(ctx context.Context, workRoot, skillDir string, 
 // rendered skill bundle, and optional import payloads. Production adds recon
 // context for threat-model in Worker.stageWorkspace.
 func StageWorkspace(workRoot, skillDir, apiBase, forkOrg, metadataDir string, scan *db.Scan, skill *db.Skill) error {
-	return stageWorkspaceWithInputs(workRoot, skillDir, apiBase, forkOrg, metadataDir, scan, skill, nil, nil)
+	return stageWorkspaceWithInputs(workRoot, skillDir, apiBase, forkOrg, metadataDir, scan, skill, nil, nil, nil)
 }
 
 func stageWorkspaceWithInputs(
@@ -1427,6 +1437,7 @@ func stageWorkspaceWithInputs(
 	skill *db.Skill,
 	recon *skillContextRecon,
 	novelty *skillContextNovelty,
+	controls *skillContextControls,
 ) error {
 	// stageSkill clears skillDir, so it runs before stageContext, which
 	// writes context.json into that directory (#499).
@@ -1434,7 +1445,7 @@ func stageWorkspaceWithInputs(
 		return fmt.Errorf("stage skill: %w", err)
 	}
 	if err := stageContextWithInputs(
-		workRoot, skillDir, apiBase, forkOrg, metadataDir, scan, &scan.Repository, recon, novelty,
+		workRoot, skillDir, apiBase, forkOrg, metadataDir, scan, &scan.Repository, recon, novelty, controls,
 	); err != nil {
 		return fmt.Errorf("stage context: %w", err)
 	}
