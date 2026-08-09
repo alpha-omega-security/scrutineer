@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -38,6 +39,24 @@ func NewAPIToken() string {
 
 type apiCtxKey struct{}
 
+// scanBlobColumns are the wide columns on a scan row. A running scan's log
+// grows for the length of the run, so endpoints serving only a scan's identity
+// or summary omit them; apiGetScan, which returns the report and log, does not.
+var scanBlobColumns = []string{"Log", "Prompt", "Report", "RefusalAudit", "ImportPayload"}
+
+// authScanOmitColumns additionally drops the scoping blobs, which nothing
+// reachable from scanFromRequest reads.
+var authScanOmitColumns = slices.Concat(scanBlobColumns,
+	[]string{"FocusArea", "DiffStats", "Coverage"})
+
+// repositoryBlobColumns are the wide columns on a repository row, dominated by
+// the cached ecosyste.ms payloads.
+var repositoryBlobColumns = []string{
+	"Metadata", "ThreatModel", "ScanConfig",
+	"EcosystemsRepoData", "EcosystemsPackagesData", "EcosystemsAdvisoriesData",
+	"EcosystemsCommitsData", "EcosystemsIssuesData", "EcosystemsDependentsData",
+}
+
 // apiAuth validates bearer tokens against the currently running scan rows
 // and puts the scan on the request context so handlers can apply the
 // "skills only touch their own repo" rule.
@@ -49,7 +68,8 @@ func (s *Server) apiAuth(next http.Handler) http.Handler {
 			return
 		}
 		var scan db.Scan
-		if err := s.DB.Where("api_token = ? AND status = ?", token, db.ScanRunning).
+		if err := s.DB.Omit(authScanOmitColumns...).
+			Where("api_token = ? AND status = ?", token, db.ScanRunning).
 			First(&scan).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				writeAPIError(w, http.StatusUnauthorized, "token invalid or scan not running")
@@ -157,7 +177,7 @@ func (s *Server) apiGetRepository(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var repo db.Repository
-	if err := s.DB.First(&repo, id).Error; err != nil {
+	if err := s.DB.Omit(repositoryBlobColumns...).First(&repo, id).Error; err != nil {
 		writeAPIError(w, http.StatusNotFound, "repository not found")
 		return
 	}
@@ -261,7 +281,7 @@ func (s *Server) apiListScans(w http.ResponseWriter, r *http.Request) {
 		q = q.Where("skill_name = ?", skill)
 	}
 	var rows []db.Scan
-	q.Find(&rows)
+	q.Omit(scanBlobColumns...).Find(&rows)
 	out := make([]map[string]any, 0, len(rows))
 	for _, sc := range rows {
 		out = append(out, scanSummary(sc))

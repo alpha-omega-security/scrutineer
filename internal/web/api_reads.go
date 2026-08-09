@@ -314,7 +314,7 @@ func (s *Server) apiListFindings(w http.ResponseWriter, r *http.Request) {
 		q = q.Where("status = ?", status)
 	}
 	var rows []db.Finding
-	q.Find(&rows)
+	q.Select(findingSummaryColumns).Find(&rows)
 	out := make([]map[string]any, 0, len(rows))
 	for _, f := range rows {
 		out = append(out, findingSummary(f))
@@ -375,6 +375,16 @@ func (s *Server) apiGetFinding(w http.ResponseWriter, r *http.Request) {
 	summary["suggested_fix"] = f.SuggestedFix
 	summary["suggested_fix_commit"] = f.SuggestedFixCommit
 	writeJSON(w, http.StatusOK, summary)
+}
+
+// findingSummaryColumns lists what findingSummary reads, leaving out the prose
+// blobs it never emits. Keep in sync with findingSummary.
+var findingSummaryColumns = []string{
+	"id", "scan_id", "repository_id", "finding_id", "commit", "sinks", "title",
+	"severity", "status", "cwe", "location", "vid", "affected", "reachability",
+	"quality_tier", "cve_id", "ghsa_id", "cvss_vector", "cvss_score",
+	"fix_version", "fix_commit", "resolution", "assignee", "missed_count",
+	"dup_check", "novelty", "novelty_checked_commit", "novelty_checked_at",
 }
 
 func findingSummary(f db.Finding) map[string]any {
