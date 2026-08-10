@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"github.com/alpha-omega-security/harness"
 	"gorm.io/gorm"
 
 	"scrutineer/internal/db"
@@ -1054,7 +1055,7 @@ func stripWorkspaceAgentDirectives(workRoot string, emit func(Event)) error {
 	// instructions into the auditing agent. Runs before the paths filter
 	// because scrutineer.paths bypasses BuiltinSkipPaths and must not be
 	// able to opt these back in. See threatmodel.md T5.
-	stripped, err := stripAgentDirectives(src)
+	stripped, err := harness.StripDirectives(src)
 	if err != nil {
 		return fmt.Errorf("strip agent directives: %w", err)
 	}
