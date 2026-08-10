@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/git-pkgs/clone"
+
 	"scrutineer/internal/db"
 )
 
@@ -163,11 +165,12 @@ func TestParseExposureOutput_upsertsExistingRow(t *testing.T) {
 }
 
 func TestDependentCacheRoot_keyedByURL(t *testing.T) {
+	cache := clone.Cache{Root: "/data/dependent-cache"}
 	a := dependentCacheRoot("/data", "https://github.com/a/b")
-	b := dependentCacheRoot("/data", "https://github.com/a/b")
+	b := cache.Dir("https://github.com/a/b")
 	c := dependentCacheRoot("/data", "https://github.com/c/d")
 	if a != b {
-		t.Errorf("same URL must yield same path: %s vs %s", a, b)
+		t.Errorf("dependent cache path %q does not match clone cache path %q", a, b)
 	}
 	if a == c {
 		t.Errorf("different URLs must yield different paths")
