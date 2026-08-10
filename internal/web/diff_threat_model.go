@@ -108,6 +108,12 @@ func materialThreatModelPath(paths ...string) (string, bool) {
 func (s *Server) markThreatModelUpdate(scan *db.Scan, state string, material bool, reason string) {
 	rec, _ := coverage.Parse(scan.Coverage)
 	rec.ThreatModel = &coverage.ThreatModelState{Update: state, Material: material, Reason: reason}
+	// Marshal defaults Completeness on its own copy, so a scan with no prior
+	// coverage would store "unknown" in the blob and leave the column empty.
+	// Default here instead, and both come from this one value.
+	if rec.Completeness == "" {
+		rec.Completeness = coverage.CompletenessUnknown
+	}
 	raw, err := coverage.Marshal(rec)
 	if err != nil {
 		s.Log.Warn("threat-model update: marshal coverage", "scan", scan.ID, "err", err)
