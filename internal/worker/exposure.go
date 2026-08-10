@@ -2,8 +2,6 @@ package worker
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,18 +10,10 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/git-pkgs/clone"
+
 	"scrutineer/internal/db"
 )
-
-// dependentCacheRoot returns the shared on-disk path scrutineer reuses
-// across exposure scans of the same dependent URL. Keyed by sha256 of the
-// URL so different URLs cannot collide and the path is filesystem-safe.
-// The directory survives wrap()'s per-scan workspace cleanup, so the
-// second exposure scan on the same dependent only fetches the delta.
-func dependentCacheRoot(dataDir, url string) string {
-	sum := sha256.Sum256([]byte(url))
-	return filepath.Join(dataDir, "dependent-cache", hex.EncodeToString(sum[:]))
-}
 
 // cacheMutex returns the per-URL mutex used to serialise fetch+copy on
 // the dependent cache. Lazily created on first use.
@@ -42,23 +32,16 @@ func (w *Worker) prepareDependentSrc(ctx context.Context, url, ref, workRoot str
 	mu.Lock()
 	defer mu.Unlock()
 
-	cacheRoot := dependentCacheRoot(w.DataDir, url)
-	if err := os.MkdirAll(cacheRoot, dirPerm); err != nil {
-		return "", err
+	cache := clone.Cache{
+		Root:  filepath.Join(w.DataDir, "dependent-cache"),
+		Retry: gitRetry{}.toCloneWithNotify(emit),
 	}
-	cacheSrc, err := ensureClone(ctx, db.Repository{URL: url}, cacheRoot, false, ref, emit)
-	if err != nil {
-		return "", err
+	if _, err := os.Stat(filepath.Join(cache.Dir(url), "src", ".git")); err == nil {
+		emit(Event{Kind: KindText, Text: "$ git fetch origin " + fetchTarget(ref) + " && reset"})
+	} else {
+		emit(Event{Kind: KindText, Text: "$ git clone " + url + " (shallow)"})
 	}
-	commit := gitHead(cacheSrc)
-	dst := filepath.Join(workRoot, "src")
-	if err := os.RemoveAll(dst); err != nil {
-		return "", err
-	}
-	if err := CopyTree(cacheSrc, dst); err != nil {
-		return "", fmt.Errorf("copy dependent cache: %w", err)
-	}
-	return commit, nil
+	return cache.Prepare(ctx, url, ref, filepath.Join(workRoot, "src"))
 }
 
 // CopyTree recursively copies src to dst, preserving permissions but not

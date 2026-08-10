@@ -161,15 +161,3 @@ func TestParseExposureOutput_upsertsExistingRow(t *testing.T) {
 		t.Errorf("scan fields = %+v", row)
 	}
 }
-
-func TestDependentCacheRoot_keyedByURL(t *testing.T) {
-	a := dependentCacheRoot("/data", "https://github.com/a/b")
-	b := dependentCacheRoot("/data", "https://github.com/a/b")
-	c := dependentCacheRoot("/data", "https://github.com/c/d")
-	if a != b {
-		t.Errorf("same URL must yield same path: %s vs %s", a, b)
-	}
-	if a == c {
-		t.Errorf("different URLs must yield different paths")
-	}
-}

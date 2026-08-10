@@ -142,12 +142,7 @@ func cloneOrFetch(
 	if recurseSubmodules {
 		emit(Event{Kind: KindText, Text: "$ git submodule update --init --recursive --depth 1 (best effort)"})
 	}
-	r := retry.resolved().toClone()
-	r.Notify = func(n clone.Notice) {
-		emit(Event{Kind: KindText, Text: fmt.Sprintf(
-			"git %s failed with a transient error (attempt %d/%d), retrying in %s",
-			n.Label, n.Attempt, n.Attempts, n.Delay.Round(time.Millisecond))})
-	}
+	r := retry.toCloneWithNotify(emit)
 	options := clone.EnsureOptions{Full: fullClone, RecurseSubmodules: recurseSubmodules}
 	if err := clone.EnsureWithOptions(ctx, r, url, dst, ref, options); err != nil {
 		// Unwrap so ensureClone's own UnreachableError wrap does not

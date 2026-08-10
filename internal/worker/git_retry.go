@@ -63,14 +63,7 @@ func (r gitRetry) toClone() clone.Retry {
 	}
 }
 
-func branchPickerRetry(r gitRetry) gitRetry {
-	r.attempts = branchPickerAttempts
-	r.baseDelay = branchPickerDelay
-	r.maxDelay = branchPickerDelay
-	return r
-}
-
-func (r gitRetry) do(ctx context.Context, cmd gitCommand, emit func(Event)) (string, error) {
+func (r gitRetry) toCloneWithNotify(emit func(Event)) clone.Retry {
 	retry := r.resolved().toClone()
 	if emit != nil {
 		retry.Notify = func(n clone.Notice) {
@@ -79,7 +72,18 @@ func (r gitRetry) do(ctx context.Context, cmd gitCommand, emit func(Event)) (str
 				n.Label, n.Attempt, n.Attempts, n.Delay.Round(time.Millisecond))})
 		}
 	}
-	return retry.Do(ctx, clone.Command{
+	return retry
+}
+
+func branchPickerRetry(r gitRetry) gitRetry {
+	r.attempts = branchPickerAttempts
+	r.baseDelay = branchPickerDelay
+	r.maxDelay = branchPickerDelay
+	return r
+}
+
+func (r gitRetry) do(ctx context.Context, cmd gitCommand, emit func(Event)) (string, error) {
+	return r.toCloneWithNotify(emit).Do(ctx, clone.Command{
 		Label:   cmd.label,
 		Dir:     cmd.dir,
 		Env:     cmd.env,
