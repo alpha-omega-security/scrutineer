@@ -51,6 +51,25 @@ func (s *Server) findingFields(w http.ResponseWriter, r *http.Request) {
 	s.redirect(w, r, fmt.Sprintf("/findings/%d", f.ID))
 }
 
+// findingDisclosureDraftSave persists edits from the disclosure editor.
+func (s *Server) findingDisclosureDraftSave(w http.ResponseWriter, r *http.Request) {
+	f, ok := loadByID[db.Finding](s, w, r)
+	if !ok {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	draft := strings.TrimSpace(strings.ReplaceAll(r.FormValue("disclosure_draft"), "\r\n", "\n"))
+	if err := db.WriteFindingField(s.DB, f.ID, "disclosure_draft", draft, db.SourceAnalyst, ""); err != nil {
+		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
+	setFlash(w, Flash{Category: successKey, Title: "Disclosure draft saved"})
+	s.redirect(w, r, fmt.Sprintf("/findings/%d#disclosure", f.ID))
+}
+
 func (s *Server) findingCommunications(w http.ResponseWriter, r *http.Request) {
 	f, ok := loadByID[db.Finding](s, w, r)
 	if !ok {

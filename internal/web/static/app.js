@@ -93,7 +93,59 @@
     if (el && e.detail.type === el.getAttribute('data-reload-on-sse')) location.reload();
   });
 
+  function activateDisclosureMode(button, focusEditor) {
+    var disclosure = button.closest('[data-disclosure-editor]');
+    if (!disclosure) return;
+    var editing = button.getAttribute('data-disclosure-mode') === 'edit';
+    var preview = disclosure.querySelector('[data-disclosure-preview]');
+    var editor = disclosure.querySelector('[data-disclosure-form]');
+    var textarea = editor && editor.querySelector('textarea');
+    var stale = preview && preview.querySelector('[data-disclosure-preview-stale]');
+    if (preview) preview.hidden = editing;
+    if (editor) editor.hidden = !editing;
+    if (stale && !editing) stale.hidden = !textarea || textarea.value === textarea.defaultValue;
+    disclosure.querySelectorAll('[data-disclosure-mode]').forEach(function (candidate) {
+      var selected = candidate === button;
+      candidate.setAttribute('aria-selected', selected ? 'true' : 'false');
+      candidate.setAttribute('tabindex', selected ? '0' : '-1');
+      candidate.className = selected ? 'btn-sm' : 'btn-sm-outline';
+    });
+    if (editing && focusEditor && textarea) textarea.focus();
+  }
+
+  document.addEventListener('keydown', function (e) {
+    var tab = e.target.closest('[data-disclosure-mode][role="tab"]');
+    if (!tab || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(e.key)) return;
+    var tabs = Array.from(tab.closest('[role="tablist"]').querySelectorAll('[role="tab"]'));
+    var index = tabs.indexOf(tab);
+    if (e.key === 'Home') index = 0;
+    else if (e.key === 'End') index = tabs.length - 1;
+    else index = (index + (e.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length;
+    e.preventDefault();
+    activateDisclosureMode(tabs[index], false);
+    tabs[index].focus();
+  });
+
   document.addEventListener('click', function (e) {
+    var disclosureMode = e.target.closest('[data-disclosure-mode]');
+    if (disclosureMode) {
+      e.preventDefault();
+      activateDisclosureMode(disclosureMode, true);
+      return;
+    }
+
+    var disclosureCancel = e.target.closest('[data-disclosure-cancel]');
+    if (disclosureCancel) {
+      var disclosureForm = disclosureCancel.closest('form');
+      var disclosureRoot = disclosureCancel.closest('[data-disclosure-editor]');
+      if (disclosureForm) disclosureForm.reset();
+      if (disclosureRoot) {
+        var previewButton = disclosureRoot.querySelector('[data-disclosure-mode="preview"]');
+        if (previewButton) previewButton.click();
+      }
+      return;
+    }
+
     var copyBtn = e.target.closest('[data-copy]');
     if (copyBtn && navigator.clipboard) {
       e.preventDefault();

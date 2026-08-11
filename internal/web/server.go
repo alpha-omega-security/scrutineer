@@ -419,6 +419,9 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *work
 		"findingReportFilename": func(repo db.Repository, f db.Finding) string {
 			return findingReportFilename(&repo, &f)
 		},
+		"findingDisclosureMarkdownFilename": func(repo db.Repository, f db.Finding) string {
+			return findingDisclosureMarkdownFilename(&repo, &f)
+		},
 	}
 	t, err := template.New("").Funcs(funcs).ParseFS(tmplFS, "templates/*.html")
 	if err != nil {
@@ -522,6 +525,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /findings/{id}/reviews", s.findingReviewCreate)
 	mux.HandleFunc("GET /findings/{id}", s.findingShow)
 	mux.HandleFunc("GET /findings/{id}/report.md", s.findingReport)
+	mux.HandleFunc("GET /findings/{id}/disclosure.md", s.findingDisclosureMarkdown)
 	mux.HandleFunc("GET /findings/{id}/csaf.json", s.findingCSAF)
 	mux.HandleFunc("GET /findings/{id}/osv.json", s.findingOSV)
 	mux.HandleFunc("GET /findings/{id}/disclosure.html", s.findingDisclosureHTML)
@@ -541,6 +545,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /findings/{id}/bundle.tar.gz", s.findingBundleDownload)
 	mux.HandleFunc("POST /findings/{id}/notes", s.findingNotes)
 	mux.HandleFunc("POST /findings/{id}/fields", s.findingFields)
+	mux.HandleFunc("POST /findings/{id}/disclosure-draft", s.findingDisclosureDraftSave)
 	mux.HandleFunc("POST /findings/{id}/communications", s.findingCommunications)
 	mux.HandleFunc("POST /findings/{id}/references", s.findingReferences)
 	mux.HandleFunc("POST /findings/{id}/labels", s.findingLabels)
@@ -1497,6 +1502,10 @@ func (s *Server) findingStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	status := db.FindingLifecycle(r.FormValue(statusKey))
+	if status == db.FindingReady && strings.TrimSpace(f.DisclosureDraft) == "" {
+		http.Error(w, "a saved disclosure draft is required before marking ready", http.StatusUnprocessableEntity)
+		return
+	}
 	switch status {
 	case db.FindingNew, db.FindingEnriched, db.FindingTriaged, db.FindingReady,
 		db.FindingReported, db.FindingAcknowledged, db.FindingFixed, db.FindingPublished,
@@ -1563,7 +1572,7 @@ func (s *Server) findingVerify(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) findingDisclose(w http.ResponseWriter, r *http.Request) {
-	s.runFindingSkill(w, r, discloseSkillName, false)
+	s.runFindingSkill(w, r, discloseSkillName, true)
 }
 
 func (s *Server) findingPublicIssue(w http.ResponseWriter, r *http.Request) {
@@ -1822,8 +1831,10 @@ func (s *Server) advisoriesList(w http.ResponseWriter, r *http.Request) {
 
 type findingWorkflowData struct {
 	db.Finding
-	VerifyInFlight bool
-	HasDependents  bool
+	VerifyInFlight     bool
+	DiscloseInFlight   bool
+	HasDependents      bool
+	HasDisclosureDraft bool
 }
 
 func (s *Server) findingShow(w http.ResponseWriter, r *http.Request) {
@@ -1865,6 +1876,7 @@ func (s *Server) findingShow(w http.ResponseWriter, r *http.Request) {
 		selected[l.Name] = true
 	}
 	_, verifyInFlight := s.openFindingSkillScan(f.ID, verifySkillName)
+	_, discloseInFlight := s.openFindingSkillScan(f.ID, discloseSkillName)
 	hasDependents, err := repoHasDependents(s.DB, scan.RepositoryID)
 	if err != nil {
 		s.Log.Warn("count dependents", "repo", scan.RepositoryID, "err", err)
@@ -1904,23 +1916,26 @@ func (s *Server) findingShow(w http.ResponseWriter, r *http.Request) {
 	}
 
 	data := map[string]any{
-		"F":                f,
-		"Scan":             scan,
-		"Repo":             repo,
-		"Notes":            notes,
-		"Communications":   comms,
-		"References":       refs,
-		"History":          history,
-		"HistoryTotal":     historyTotal,
-		"Reviews":          reviews,
-		"Verifications":    verifications,
-		"LatestRevalidate": latestRevalidate,
-		"AllLabels":        labels,
-		"Selected":         selected,
+		"F":                  f,
+		"HasDisclosureDraft": strings.TrimSpace(f.DisclosureDraft) != "",
+		"Scan":               scan,
+		"Repo":               repo,
+		"Notes":              notes,
+		"Communications":     comms,
+		"References":         refs,
+		"History":            history,
+		"HistoryTotal":       historyTotal,
+		"Reviews":            reviews,
+		"Verifications":      verifications,
+		"LatestRevalidate":   latestRevalidate,
+		"AllLabels":          labels,
+		"Selected":           selected,
 		"Workflow": findingWorkflowData{
-			Finding:        f,
-			VerifyInFlight: verifyInFlight,
-			HasDependents:  hasDependents,
+			Finding:            f,
+			VerifyInFlight:     verifyInFlight,
+			DiscloseInFlight:   discloseInFlight,
+			HasDependents:      hasDependents,
+			HasDisclosureDraft: strings.TrimSpace(f.DisclosureDraft) != "",
 		},
 		"Exposures":     exposures,
 		"HasDependents": hasDependents,

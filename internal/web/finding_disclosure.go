@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"scrutineer/internal/db"
 )
@@ -86,4 +87,49 @@ func (s *Server) findingDisclosureHTML(w http.ResponseWriter, r *http.Request) {
 	title := template.HTMLEscapeString(fmt.Sprintf("Disclosure draft — finding #%d: %s", f.ID, f.Title))
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	_, _ = fmt.Fprintf(w, disclosureHTMLPage, title, body)
+}
+
+// findingDisclosureMarkdown exports the current saved draft.
+func (s *Server) findingDisclosureMarkdown(w http.ResponseWriter, r *http.Request) {
+	var f db.Finding
+	id, err := strconv.Atoi(r.PathValue("id"))
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	if err := s.DB.First(&f, id).Error; err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	body := renderFindingDisclosureMarkdown(&f)
+	if body == "" {
+		http.Error(w, "no disclosure draft stored for this finding", http.StatusNotFound)
+		return
+	}
+	var repo db.Repository
+	s.DB.First(&repo, f.RepositoryID)
+	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+findingDisclosureMarkdownFilename(&repo, &f)+`"`)
+	_, _ = w.Write([]byte(body))
+}
+
+func findingDisclosureMarkdownFilename(repo *db.Repository, f *db.Finding) string {
+	return fmt.Sprintf("scrutineer-%s-finding-%d-disclosure-%s.md",
+		sanitiseFilename(repo.Name),
+		f.ID,
+		time.Now().UTC().Format("20060102"))
+}
+
+func renderFindingDisclosureMarkdown(f *db.Finding) string {
+	draft := strings.TrimSpace(f.DisclosureDraft)
+	if draft == "" {
+		return ""
+	}
+	var b strings.Builder
+	if title := strings.TrimSpace(escapeMD(f.Title)); title != "" {
+		fmt.Fprintf(&b, "# %s\n\n", title)
+	}
+	b.WriteString(draft)
+	b.WriteString("\n")
+	return b.String()
 }

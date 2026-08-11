@@ -80,6 +80,72 @@ func TestFindingFields(t *testing.T) {
 	}
 }
 
+func TestFindingDisclosureDraftSavePersistsEditedMarkdown(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	f := seedFindingForForm(t, s)
+	const draft = "## Summary\n\nEdited text with `inline code`.\n\n- one\n  - two\n\n```ruby\nputs :ok\n```"
+
+	w := postForm(t, s, fmt.Sprintf("/findings/%d/disclosure-draft", f.ID), url.Values{
+		"disclosure_draft": {draft},
+	})
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303; body=%s", w.Code, w.Body)
+	}
+	if got := w.Header().Get("Location"); got != fmt.Sprintf("/findings/%d#disclosure", f.ID) {
+		t.Errorf("Location = %q, want disclosure anchor", got)
+	}
+
+	var got db.Finding
+	s.DB.First(&got, f.ID)
+	if got.DisclosureDraft != draft {
+		t.Errorf("saved disclosure draft changed\nwant:\n%s\ngot:\n%s", draft, got.DisclosureDraft)
+	}
+	var history db.FindingHistory
+	if err := s.DB.Where("finding_id = ? AND field = ?", f.ID, "disclosure_draft").First(&history).Error; err != nil {
+		t.Fatalf("load disclosure history: %v", err)
+	}
+	if history.Source != db.SourceAnalyst || history.NewValue != draft {
+		t.Errorf("history = %+v, want analyst edit with saved markdown", history)
+	}
+
+	if w := postForm(t, s, "/findings/999999/disclosure-draft", url.Values{
+		"disclosure_draft": {draft},
+	}); w.Code != http.StatusNotFound {
+		t.Errorf("missing finding status = %d, want 404", w.Code)
+	}
+}
+
+func TestFindingDisclosureDraftSaveNormalizesBrowserNewlines(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	f := seedFindingForForm(t, s)
+	const saved = "first line\nsecond line"
+	if err := s.DB.Model(&f).Update("disclosure_draft", saved).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	w := postForm(t, s, fmt.Sprintf("/findings/%d/disclosure-draft", f.ID), url.Values{
+		"disclosure_draft": {"first line\r\nsecond line"},
+	})
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303; body=%s", w.Code, w.Body)
+	}
+
+	var got db.Finding
+	s.DB.First(&got, f.ID)
+	if got.DisclosureDraft != saved {
+		t.Errorf("saved disclosure newlines = %q, want %q", got.DisclosureDraft, saved)
+	}
+	var historyCount int64
+	s.DB.Model(&db.FindingHistory{}).
+		Where("finding_id = ? AND field = ?", f.ID, "disclosure_draft").
+		Count(&historyCount)
+	if historyCount != 0 {
+		t.Errorf("history rows = %d, want 0 for an unchanged browser submission", historyCount)
+	}
+}
+
 func TestFindingFieldsAtomicRollback(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

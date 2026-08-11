@@ -13,6 +13,7 @@ import (
 	"os"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1809,7 +1810,7 @@ func TestFindingShow_dependentWorkflowWhenDependentsExist(t *testing.T) {
 	s.DB.Create(&scan)
 	s.DB.Create(&db.Dependent{RepositoryID: repo.ID, Name: "downstream", Ecosystem: "npm"})
 	f := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "ready finding",
-		Severity: "High", Status: db.FindingReady}
+		Severity: "High", Status: db.FindingReady, DisclosureDraft: "## Summary\n\nReviewed draft."}
 	s.DB.Create(&f)
 
 	w := httptest.NewRecorder()
@@ -1827,6 +1828,199 @@ func TestFindingShow_dependentWorkflowWhenDependentsExist(t *testing.T) {
 		if strings.Contains(body, gone) {
 			t.Errorf("dependent workflow should not render no-dependent text %q", gone)
 		}
+	}
+}
+
+func TestFindingShow_disclosureWorkflowStates(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://github.com/foo/lib", Name: "lib"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: deepDiveSkillName}
+	s.DB.Create(&scan)
+	s.DB.Create(&db.Dependent{RepositoryID: repo.ID, Name: "downstream", Ecosystem: "npm"})
+
+	noDraft := db.Finding{
+		ScanID: scan.ID, RepositoryID: repo.ID, Title: "awaiting draft",
+		Severity: "High", Status: db.FindingTriaged,
+	}
+	withDraft := db.Finding{
+		ScanID: scan.ID, RepositoryID: repo.ID, Title: "drafted finding",
+		Severity: "High", Status: db.FindingTriaged,
+		DisclosureDraft: "## Summary\n\nA saved **disclosure** with `inline code`.\n",
+	}
+	s.DB.Create(&noDraft)
+	s.DB.Create(&withDraft)
+
+	renderFinding := func(id uint) string {
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, localReq("GET", fmt.Sprintf("/findings/%d", id)))
+		if w.Code != http.StatusOK {
+			t.Fatalf("finding %d status %d: %s", id, w.Code, w.Body)
+		}
+		return w.Body.String()
+	}
+
+	before := renderFinding(noDraft.ID)
+	if !strings.Contains(before, "Draft disclosure") {
+		t.Errorf("finding without a draft is missing the generation action:\n%s", before)
+	}
+	if !strings.Contains(before, "Export report") || strings.Contains(before, "Export disclosure") {
+		t.Errorf("finding without a draft should retain the generic report export:\n%s", before)
+	}
+	for _, want := range []string{
+		`id="disclosure"`,
+		`data-disclosure-editor`,
+		`action="/findings/` + strconv.FormatUint(uint64(noDraft.ID), 10) + `/disclosure-draft"`,
+		`name="disclosure_draft"`,
+		`data-disclosure-form>`,
+		`data-disclosure-preview hidden>`,
+		`<div id="disclosure-edit-panel-`,
+		`role="tab"`,
+		`role="tabpanel"`,
+		`data-disclosure-preview-stale`,
+		"Nothing saved yet. Save your draft to preview it.",
+		"Write or paste a disclosure draft below",
+	} {
+		if !strings.Contains(before, want) {
+			t.Errorf("finding without a draft is missing manual editor state %q:\n%s", want, before)
+		}
+	}
+	if strings.Contains(before, "Review disclosure") || strings.Contains(before, "Needs review") {
+		t.Errorf("finding without a draft rendered generated-draft affordances:\n%s", before)
+	}
+	if strings.Contains(before, "Showing the saved draft. Save your edits to update this preview.") {
+		t.Errorf("finding without a draft claims it is previewing saved text:\n%s", before)
+	}
+	if strings.Contains(before, `<form id="disclosure-edit-panel-`) {
+		t.Errorf("edit form must not override its native ARIA role:\n%s", before)
+	}
+	if !strings.Contains(before, `disabled title="A saved disclosure draft is required before marking ready"`) {
+		t.Errorf("finding without a draft does not visibly gate Mark ready:\n%s", before)
+	}
+
+	after := renderFinding(withDraft.ID)
+	for _, want := range []string{
+		"Draft generated",
+		"Needs review",
+		"Export disclosure",
+		`href="#disclosure"`,
+		"Review disclosure",
+		"Regenerate draft",
+		`hx-confirm="Regenerating may overwrite the latest saved disclosure edits. Continue?"`,
+		`id="disclosure"`,
+		`data-disclosure-preview`,
+		`data-disclosure-preview-stale`,
+		`data-disclosure-editor`,
+		`data-disclosure-form hidden>`,
+		`role="tab"`,
+		`role="tabpanel"`,
+		"Showing the saved draft. Save your edits to update this preview.",
+		`action="/findings/` + strconv.FormatUint(uint64(withDraft.ID), 10) + `/disclosure-draft"`,
+		`name="disclosure_draft"`,
+		">Preview<",
+		">Edit<",
+		">Save<",
+		">Cancel<",
+		`href="/findings/` + strconv.FormatUint(uint64(withDraft.ID), 10) + `/disclosure.md"`,
+		`href="/findings/` + strconv.FormatUint(uint64(withDraft.ID), 10) + `/report.md"`,
+		"Export finding report",
+	} {
+		if !strings.Contains(after, want) {
+			t.Errorf("finding with a draft is missing %q:\n%s", want, after)
+		}
+	}
+	if strings.Count(after, `name="disclosure_draft"`) != 1 {
+		t.Errorf("disclosure draft should have one obvious editor, got %d:\n%s",
+			strings.Count(after, `name="disclosure_draft"`), after)
+	}
+	if strings.Contains(after, "Nothing saved yet. Save your draft to preview it.") {
+		t.Errorf("finding with a draft rendered empty-draft preview copy:\n%s", after)
+	}
+
+	queued := db.Scan{
+		RepositoryID: repo.ID, Kind: worker.JobSkill, SkillName: discloseSkillName,
+		FindingID: &noDraft.ID, Status: db.ScanQueued, StatusPriority: db.StatusPriorityFor(db.ScanQueued),
+	}
+	s.DB.Create(&queued)
+	drafting := renderFinding(noDraft.ID)
+	if !strings.Contains(drafting, "Drafting disclosure") || strings.Contains(drafting, `hx-post="/findings/`+strconv.FormatUint(uint64(noDraft.ID), 10)+`/disclose"`) {
+		t.Errorf("queued first draft did not disable disclosure enqueue: %s", drafting)
+	}
+
+	running := db.Scan{
+		RepositoryID: repo.ID, Kind: worker.JobSkill, SkillName: discloseSkillName,
+		FindingID: &withDraft.ID, Status: db.ScanRunning, StatusPriority: db.StatusPriorityFor(db.ScanRunning),
+	}
+	s.DB.Create(&running)
+	regenerating := renderFinding(withDraft.ID)
+	if !strings.Contains(regenerating, "Regeneration in progress") || !strings.Contains(regenerating, "Review disclosure") ||
+		strings.Contains(regenerating, `hx-post="/findings/`+strconv.FormatUint(uint64(withDraft.ID), 10)+`/disclose"`) {
+		t.Errorf("running regeneration did not preserve review and disable enqueue: %s", regenerating)
+	}
+}
+
+func TestFindingShow_readyWithoutDraftOffersEditor(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://github.com/foo/lib", Name: "lib"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: deepDiveSkillName}
+	s.DB.Create(&scan)
+	s.DB.Create(&db.Dependent{RepositoryID: repo.ID, Name: "downstream", Ecosystem: "npm"})
+	finding := db.Finding{
+		ScanID: scan.ID, RepositoryID: repo.ID, Title: "historical ready finding",
+		Severity: "High", Status: db.FindingReady,
+	}
+	s.DB.Create(&finding)
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", fmt.Sprintf("/findings/%d", finding.ID)))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	body := w.Body.String()
+	for _, want := range []string{`id="disclosure"`, `data-disclosure-form>`, "No saved disclosure draft", "Write or paste a disclosure draft below"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("historical ready finding missing %q: %s", want, body)
+		}
+	}
+	if strings.Contains(body, "The saved draft is prepared") || strings.Contains(body, "Review disclosure") {
+		t.Errorf("historical ready finding claims a saved draft exists: %s", body)
+	}
+}
+
+func TestFindingStatus_readyRequiresDisclosureDraft(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	f := seedFindingForForm(t, s)
+	if err := s.DB.Model(&f).Update("status", db.FindingTriaged).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	path := fmt.Sprintf("/findings/%d/status", f.ID)
+	w := postForm(t, s, path, url.Values{"status": {string(db.FindingReady)}})
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status without draft = %d, want 422; body=%s", w.Code, w.Body)
+	}
+	var got db.Finding
+	s.DB.First(&got, f.ID)
+	if got.Status != db.FindingTriaged {
+		t.Errorf("status changed without a draft: %q", got.Status)
+	}
+
+	if err := db.WriteFindingField(s.DB, f.ID, "disclosure_draft", "## Reviewed draft", db.SourceAnalyst, ""); err != nil {
+		t.Fatal(err)
+	}
+	w = postForm(t, s, path, url.Values{"status": {string(db.FindingReady)}})
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status with draft = %d, want 303; body=%s", w.Code, w.Body)
+	}
+	s.DB.First(&got, f.ID)
+	if got.Status != db.FindingReady {
+		t.Errorf("status = %q, want ready", got.Status)
 	}
 }
 
@@ -2383,7 +2577,8 @@ func TestFindingDiscloseEnqueuesDiscloseSkill(t *testing.T) {
 	if w.Code != http.StatusSeeOther {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
-	if !strings.HasPrefix(w.Header().Get("Location"), "/scans/") {
+	firstLocation := w.Header().Get("Location")
+	if !strings.HasPrefix(firstLocation, "/scans/") {
 		t.Errorf("expected redirect to scan, got %q", w.Header().Get("Location"))
 	}
 
@@ -2394,6 +2589,17 @@ func TestFindingDiscloseEnqueuesDiscloseSkill(t *testing.T) {
 	}
 	if row.APIToken == "" {
 		t.Error("scan missing api token")
+	}
+
+	w = httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, req.Clone(req.Context()))
+	if w.Code != http.StatusSeeOther || w.Header().Get("Location") != firstLocation {
+		t.Errorf("duplicate disclose = %d redirect %q, want existing scan %q", w.Code, w.Header().Get("Location"), firstLocation)
+	}
+	var count int64
+	s.DB.Model(&db.Scan{}).Where("finding_id = ? AND skill_name = ?", finding.ID, discloseSkillName).Count(&count)
+	if count != 1 {
+		t.Errorf("disclose scans = %d, want one in-flight scan", count)
 	}
 }
 
@@ -4826,6 +5032,54 @@ func TestScanShowRenders(t *testing.T) {
 	}
 	if !strings.Contains(body, "triaged") {
 		t.Errorf("finding status not rendered in scan results table")
+	}
+}
+
+func TestScanShow_discloseCompletionLinksToSavedDraft(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "u", Name: "n"}
+	s.DB.Create(&repo)
+	origin := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: deepDiveSkillName}
+	s.DB.Create(&origin)
+	finding := db.Finding{
+		ScanID: origin.ID, RepositoryID: repo.ID, Title: "drafted", Status: db.FindingTriaged,
+		DisclosureDraft: "## Summary\n\nSaved draft.",
+	}
+	s.DB.Create(&finding)
+	scan := db.Scan{
+		RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: discloseSkillName,
+		FindingID: &finding.ID,
+		Report:    `{"ghsa":{"summary":"Drafted","description":"## Summary\n\nSaved draft."}}`,
+	}
+	s.DB.Create(&scan)
+
+	render := func() string {
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, localReq("GET", fmt.Sprintf("/scans/%d", scan.ID)))
+		if w.Code != http.StatusOK {
+			t.Fatalf("status %d: %s", w.Code, w.Body)
+		}
+		return w.Body.String()
+	}
+
+	body := render()
+	for _, want := range []string{
+		"Disclosure draft generated",
+		"The saved draft is ready for analyst review and editing.",
+		fmt.Sprintf(`/findings/%d#disclosure`, finding.ID),
+		"Review disclosure",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("completed disclose scan missing %q: %s", want, body)
+		}
+	}
+
+	scan.Report = `{"error":"insufficient prose"}`
+	s.DB.Save(&scan)
+	if body = render(); strings.Contains(body, "Disclosure draft generated") {
+		t.Errorf("refused disclose scan rendered a generation success message: %s", body)
 	}
 }
 

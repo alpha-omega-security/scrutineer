@@ -154,6 +154,49 @@ func TestRenderScanStatus_runningPushesRowWithoutToast(t *testing.T) {
 	}
 }
 
+func TestRenderScanStatus_discloseDoneLinksToSavedDraft(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/disclosure", Name: "disclosure"}
+	s.DB.Create(&repo)
+	origin := db.Scan{RepositoryID: repo.ID, Kind: "skill", SkillName: deepDiveSkillName, Status: db.ScanDone}
+	s.DB.Create(&origin)
+	f := db.Finding{
+		ScanID: origin.ID, RepositoryID: repo.ID, Title: "drafted", Status: db.FindingTriaged,
+		DisclosureDraft: "## Summary\n\nSaved draft.",
+	}
+	s.DB.Create(&f)
+	scan := db.Scan{
+		RepositoryID: repo.ID, Kind: "skill", SkillName: discloseSkillName, Status: db.ScanDone,
+		FindingID: &f.ID,
+		Report:    `{"ghsa":{"summary":"Drafted","description":"## Summary\n\nSaved draft."}}`,
+	}
+	s.DB.Create(&scan)
+
+	out := s.renderScanStatus(scan.ID)
+	for _, want := range []string{
+		"Disclosure draft generated",
+		fmt.Sprintf(`/findings/%d#disclosure`, f.ID),
+		"Review disclosure",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("disclose completion toast missing %q: %s", want, out)
+		}
+	}
+	if strings.Contains(out, fmt.Sprintf(`/scans/%d`, scan.ID)) && strings.Contains(out, ">View<") {
+		t.Errorf("successful disclose toast still points only at the scan: %s", out)
+	}
+
+	// A refused rerun must not claim it generated the older saved draft.
+	scan.Report = `{"error":"insufficient prose"}`
+	s.DB.Save(&scan)
+	out = s.renderScanStatus(scan.ID)
+	if strings.Contains(out, "Disclosure draft generated") {
+		t.Errorf("refused disclose rerun reported success: %s", out)
+	}
+}
+
 // The list pages refresh off scan-status, so every action that changes a scan
 // row has to publish one or the tables stay stale in any tab that did not
 // trigger the action.

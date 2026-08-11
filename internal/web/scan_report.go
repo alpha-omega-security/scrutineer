@@ -34,10 +34,8 @@ func (s *Server) scanReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Skill is looked up separately rather than via Preload because Scan.SkillID
-	// is nullable and Preload on a nullable FK is fiddly across GORM versions;
-	// a missing skill row (e.g. skill deleted after the scan ran) is non-fatal
-	// here, we just lose the OutputKind dispatch and fall back to raw.
+	// SkillID is nullable, so load the skill separately rather than with Preload.
+	// Missing rows are non-fatal; disclose scans can still dispatch by name.
 	var skill *db.Skill
 	if scan.SkillID != nil {
 		var sk db.Skill
@@ -46,7 +44,16 @@ func (s *Server) scanReport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	body := renderScanReport(s.DB, &scan, skill)
+	var body string
+	if isDiscloseScanReport(&scan, skill) {
+		body = renderSavedDisclosureScanReport(s.DB, &scan)
+		if body == "" {
+			http.Error(w, "no saved disclosure draft to export", http.StatusNotFound)
+			return
+		}
+	} else {
+		body = renderScanReport(s.DB, &scan, skill)
+	}
 
 	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="`+scanReportFilename(&scan)+`"`)
@@ -62,14 +69,13 @@ func scanReportFilename(scan *db.Scan) string {
 }
 
 func renderScanReport(gdb *gorm.DB, scan *db.Scan, skill *db.Skill) string {
-	var b strings.Builder
-	writeScanReportHeader(&b, scan)
-	writeScanReportMetadata(&b, scan, skill)
-
 	kind := ""
 	if skill != nil {
 		kind = skill.OutputKind
 	}
+	var b strings.Builder
+	writeScanReportHeader(&b, scan)
+	writeScanReportMetadata(&b, scan, skill)
 	switch kind {
 	case "findings", "advisory_audit":
 		// advisory_audit persists ordinary Finding rows alongside its
@@ -80,6 +86,24 @@ func renderScanReport(gdb *gorm.DB, scan *db.Scan, skill *db.Skill) string {
 		writeScanReportFreeform(&b, scan, kind)
 	}
 	return b.String()
+}
+
+func isDiscloseScanReport(scan *db.Scan, skill *db.Skill) bool {
+	if skill != nil {
+		return skill.OutputKind == "disclose"
+	}
+	return scan.SkillName == discloseSkillName
+}
+
+func renderSavedDisclosureScanReport(gdb *gorm.DB, scan *db.Scan) string {
+	if gdb == nil || scan.FindingID == nil {
+		return ""
+	}
+	var finding db.Finding
+	if err := gdb.First(&finding, *scan.FindingID).Error; err != nil {
+		return ""
+	}
+	return renderFindingDisclosureMarkdown(&finding)
 }
 
 func writeScanReportHeader(b *strings.Builder, scan *db.Scan) {

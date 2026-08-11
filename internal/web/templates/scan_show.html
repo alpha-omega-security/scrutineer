@@ -170,6 +170,17 @@
   </div>
 {{end}}
 
+{{with $.DisclosureReviewID}}
+  <div class="alert mb-6">
+    <i data-lucide="circle-check"></i>
+    <section>
+      <strong>Disclosure draft generated</strong>
+      <p>The saved draft is ready for analyst review and editing.</p>
+      <a href="/findings/{{.}}#disclosure" class="btn-sm mt-1">Review disclosure</a>
+    </section>
+  </div>
+{{end}}
+
 {{$live := and (not .Status.Terminal) (ne (status .Status) "paused")}}
 {{$default := 1}}{{if $live}}{{$default = 2}}{{end}}
 <div class="tabs w-full" id="scan-tabs">

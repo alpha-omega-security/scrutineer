@@ -1,6 +1,7 @@
 package web
 
 import (
+	"encoding/json"
 	"fmt"
 	"html"
 	"io"
@@ -193,13 +194,19 @@ func (s *Server) renderScanStatus(scanID uint) string {
 		if scan.Status != db.ScanDone {
 			cat = errorKey
 		}
-		data["Flash"] = Flash{
+		flash := Flash{
 			Category:    cat,
 			Title:       fmt.Sprintf("%s %s", scan.SkillName, scan.Status),
 			Description: scan.Repository.Name,
 			Href:        fmt.Sprintf("/scans/%d", scan.ID),
 			Label:       "View",
 		}
+		if findingID := s.disclosureReviewFindingID(scan); findingID != 0 {
+			flash.Title = "Disclosure draft generated"
+			flash.Href = fmt.Sprintf("/findings/%d#disclosure", findingID)
+			flash.Label = "Review disclosure"
+		}
+		data["Flash"] = flash
 	}
 	var buf strings.Builder
 	if err := s.tmpl.ExecuteTemplate(&buf, "scan-status-sse", data); err != nil {
@@ -207,6 +214,23 @@ func (s *Server) renderScanStatus(scanID uint) string {
 		return ""
 	}
 	return buf.String()
+}
+
+// discloseScanGeneratedDraft excludes refused or malformed runs.
+func discloseScanGeneratedDraft(scan db.Scan) bool {
+	if scan.SkillName != discloseSkillName || scan.FindingID == nil {
+		return false
+	}
+	var result struct {
+		GHSA struct {
+			Description string `json:"description"`
+		} `json:"ghsa"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(scan.Report), &result); err != nil {
+		return false
+	}
+	return strings.TrimSpace(result.Error) == "" && strings.TrimSpace(result.GHSA.Description) != ""
 }
 
 // writeSSEEvent emits one SSE event per the spec. Embedded newlines in data

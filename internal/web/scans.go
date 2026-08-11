@@ -207,9 +207,21 @@ func (s *Server) scanShow(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.render(w, r, "scan_show.html", map[string]any{
-		"Scan": scan,
-		"Diff": parseScanDiffView(scan),
+		"Scan":               scan,
+		"Diff":               parseScanDiffView(scan),
+		"DisclosureReviewID": s.disclosureReviewFindingID(scan),
 	})
+}
+
+func (s *Server) disclosureReviewFindingID(scan db.Scan) uint {
+	if scan.Status != db.ScanDone || !discloseScanGeneratedDraft(scan) {
+		return 0
+	}
+	var finding db.Finding
+	if err := s.DB.Select("id", "disclosure_draft").First(&finding, *scan.FindingID).Error; err != nil || strings.TrimSpace(finding.DisclosureDraft) == "" {
+		return 0
+	}
+	return finding.ID
 }
 
 // scanDiffView is the parsed diff-rescan metadata for the scan page,
