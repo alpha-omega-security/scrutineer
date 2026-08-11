@@ -3,7 +3,6 @@ package worker
 import (
 	"context"
 	"fmt"
-	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -93,7 +92,7 @@ func checkFindingNovelty(
 		ScannedCommit: strings.TrimSpace(finding.Commit),
 		CheckedCommit: strings.TrimSpace(headCommit),
 	}
-	result.FindingFile = noveltyFindingPath(finding.SubPath, finding.Location)
+	result.FindingFile = findingnorm.FindingPath(finding.SubPath, finding.Location)
 	if result.FindingFile == "" {
 		result.NotCheckedWhy = "finding location is not a repository-relative file"
 		return result
@@ -145,19 +144,6 @@ func checkFindingNovelty(
 	result.CommitLog, bytesTruncated = truncateNoveltyLog(logOutput)
 	result.LogTruncated = bytesTruncated || commitCount > noveltyLogMaxCommits
 	return result
-}
-
-func noveltyFindingPath(subPath, location string) string {
-	file := findingnorm.LocationFile(location)
-	subPath = findingnorm.RepoPath(subPath)
-	if !validNoveltyPath(file) || (subPath != "" && !validNoveltyPath(subPath)) {
-		return ""
-	}
-	return path.Join(subPath, file)
-}
-
-func validNoveltyPath(p string) bool {
-	return p != "" && p != "." && !strings.HasPrefix(p, "/") && !findingnorm.HasParentPathSegment(p)
 }
 
 func validGitOID(value string) bool {

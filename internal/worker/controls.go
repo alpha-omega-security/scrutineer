@@ -2,7 +2,6 @@ package worker
 
 import (
 	"fmt"
-	"path"
 
 	"scrutineer/internal/db"
 	"scrutineer/internal/findingnorm"
@@ -70,11 +69,14 @@ func (w *Worker) controlsContext(scan *db.Scan, skill *db.Skill) (*skillContextC
 	}
 
 	var finding db.Finding
-	if err := w.DB.Select("location").First(&finding, *scan.FindingID).Error; err != nil {
+	if err := w.DB.Select("location", "sub_path").First(&finding, *scan.FindingID).Error; err != nil {
 		return nil, fmt.Errorf("load finding for controls match: %w", err)
 	}
 
-	file := controlsFindingPath(scan.SubPath, finding.Location)
+	// The subpath comes from the finding, never from this scan: a verify scan
+	// is enqueued with no SubPath of its own, while the finding's Location is
+	// relative to the audit scan that produced it, denormalised onto the row.
+	file := findingnorm.FindingPath(finding.SubPath, finding.Location)
 	if file == "" {
 		return &skillContextControls{UnavailableWhy: controlsNoLocation}, nil
 	}
@@ -85,28 +87,4 @@ func (w *Worker) controlsContext(scan *db.Scan, skill *db.Skill) (*skillContextC
 		Matched:     matched,
 		IDs:         threatmodel.IDs(matched),
 	}, nil
-}
-
-// controlsFindingPath rebases a finding's location into the namespace the
-// control globs are authored in.
-//
-// Control paths are repository-root-relative, because the threat model is a
-// single document for the whole repository. A finding from a subpath-scoped
-// scan reports its location relative to the sub-folder (the skill treats it
-// as project root; see pruneToSubPath), so matching it against root-relative
-// globs without the subpath prefix silently matches nothing. That is why the
-// rebase happens here and not in threatmodel.MatchPath, which is handed a
-// path and cannot tell the two namespaces apart.
-//
-// This is the same normalisation noveltyFindingPath performs for the same
-// reason; both reject absolute paths and parent-segment escapes rather than
-// cleaning them, so a malformed location produces no match instead of a match
-// against the wrong file.
-func controlsFindingPath(subPath, location string) string {
-	file := findingnorm.LocationFile(location)
-	subPath = findingnorm.RepoPath(subPath)
-	if !validNoveltyPath(file) || (subPath != "" && !validNoveltyPath(subPath)) {
-		return ""
-	}
-	return path.Join(subPath, file)
 }

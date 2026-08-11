@@ -40,6 +40,15 @@ type controlsFixture struct {
 
 func newControlsFixture(t *testing.T, model, location string) controlsFixture {
 	t.Helper()
+	return newControlsFixtureInSubPath(t, model, location, "")
+}
+
+// newControlsFixtureInSubPath builds the finding the way a subpath-scoped
+// audit does: the originating scan carries the sub-folder and the finding row
+// denormalises it (db.Finding.SubPath, "set at finding-create time and never
+// changed"). The verify scan that later reads it has no SubPath of its own.
+func newControlsFixtureInSubPath(t *testing.T, model, location, subPath string) controlsFixture {
+	t.Helper()
 	gdb, err := db.Open(filepath.Join(t.TempDir(), "controls.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -48,13 +57,14 @@ func newControlsFixture(t *testing.T, model, location string) controlsFixture {
 	if err := gdb.Create(&repo).Error; err != nil {
 		t.Fatal(err)
 	}
-	scan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanDone}
+	scan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanDone, SubPath: subPath}
 	if err := gdb.Create(&scan).Error; err != nil {
 		t.Fatal(err)
 	}
 	finding := db.Finding{
 		ScanID: scan.ID, RepositoryID: repo.ID, Title: "handler issue",
 		Severity: "High", Status: db.FindingNew, Location: location,
+		SubPath: subPath,
 	}
 	if err := gdb.Create(&finding).Error; err != nil {
 		t.Fatal(err)
@@ -62,14 +72,18 @@ func newControlsFixture(t *testing.T, model, location string) controlsFixture {
 	return controlsFixture{gdb: gdb, repo: repo, finding: finding}
 }
 
-func (f controlsFixture) resolve(t *testing.T, skillName, subPath string) *skillContextControls {
+// resolve runs controlsContext against the scan production actually enqueues:
+// finding-scoped, and with SubPath unset. Neither
+// enqueueFindingScopedSkillIfIdle nor enqueueValidateFixVerify sets one, so a
+// verify scan can never carry the sub-folder its finding was audited under --
+// the finding row is the only source of it.
+func (f controlsFixture) resolve(t *testing.T, skillName string) *skillContextControls {
 	t.Helper()
 	fid := f.finding.ID
 	scan := &db.Scan{
 		RepositoryID: f.repo.ID,
 		Repository:   f.repo,
 		FindingID:    &fid,
-		SubPath:      subPath,
 	}
 	got, err := (&Worker{DB: f.gdb}).controlsContext(scan, &db.Skill{Name: skillName})
 	if err != nil {
@@ -81,7 +95,7 @@ func (f controlsFixture) resolve(t *testing.T, skillName, subPath string) *skill
 func TestControlsContextMatchesFindingFile(t *testing.T) {
 	fixture := newControlsFixture(t, controlsModel, "internal/web/server.go:120")
 
-	got := fixture.resolve(t, verifySkillName, "")
+	got := fixture.resolve(t, verifySkillName)
 	if got == nil {
 		t.Fatal("controls = nil, want a resolved block")
 	}
@@ -107,7 +121,7 @@ func TestControlsContextMatchesFindingFile(t *testing.T) {
 func TestControlsContextReportsAnUnprotectedFile(t *testing.T) {
 	fixture := newControlsFixture(t, controlsModel, "internal/worker/skill.go:42")
 
-	got := fixture.resolve(t, verifySkillName, "")
+	got := fixture.resolve(t, verifySkillName)
 	if got == nil {
 		t.Fatal("controls = nil, want a block recording that nothing matched")
 	}
@@ -123,9 +137,9 @@ func TestControlsContextReportsAnUnprotectedFile(t *testing.T) {
 // control globs are authored against the repository root. The rebase is what
 // makes the two meet; this test fails without it, which is the point.
 func TestControlsContextRebasesSubpathLocation(t *testing.T) {
-	fixture := newControlsFixture(t, controlsModel, "web/server.go:120")
+	fixture := newControlsFixtureInSubPath(t, controlsModel, "web/server.go:120", "internal")
 
-	got := fixture.resolve(t, verifySkillName, "internal")
+	got := fixture.resolve(t, verifySkillName)
 	if got == nil {
 		t.Fatal("controls = nil, want a resolved block")
 	}
@@ -150,7 +164,7 @@ func TestControlsContextRebasesSubpathLocation(t *testing.T) {
 func TestControlsContextRejectsEscapingLocation(t *testing.T) {
 	fixture := newControlsFixture(t, controlsModel, "../../etc/passwd:1")
 
-	got := fixture.resolve(t, verifySkillName, "")
+	got := fixture.resolve(t, verifySkillName)
 	if got == nil || got.UnavailableWhy != controlsNoLocation {
 		t.Fatalf("controls = %+v, want the no-location reason for a parent-escaping path", got)
 	}
@@ -162,7 +176,7 @@ func TestControlsContextRejectsEscapingLocation(t *testing.T) {
 func TestControlsContextSkipsSkillsThatAreNotVerify(t *testing.T) {
 	fixture := newControlsFixture(t, controlsModel, "internal/web/server.go:120")
 
-	if got := fixture.resolve(t, "revalidate", ""); got != nil {
+	if got := fixture.resolve(t, "revalidate"); got != nil {
 		t.Fatalf("controls = %+v for revalidate, want nil", got)
 	}
 }
@@ -170,7 +184,7 @@ func TestControlsContextSkipsSkillsThatAreNotVerify(t *testing.T) {
 func TestControlsContextSkipsModelWithoutControls(t *testing.T) {
 	fixture := newControlsFixture(t, `{"entry_points": [{"name": "http"}]}`, "internal/web/server.go:120")
 
-	if got := fixture.resolve(t, verifySkillName, ""); got != nil {
+	if got := fixture.resolve(t, verifySkillName); got != nil {
 		t.Fatalf("controls = %+v for a model with no controls, want nil", got)
 	}
 }
@@ -185,7 +199,7 @@ func TestControlsContextDegradesOnMalformedModel(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			fixture := newControlsFixture(t, model, "internal/web/server.go:120")
-			got := fixture.resolve(t, verifySkillName, "")
+			got := fixture.resolve(t, verifySkillName)
 			if got == nil || got.UnavailableWhy == "" {
 				t.Fatalf("controls = %+v, want a reported unavailable reason", got)
 			}
@@ -198,7 +212,7 @@ func TestControlsContextDegradesOnMalformedModel(t *testing.T) {
 
 func TestControlsContextStagesIntoContextJSON(t *testing.T) {
 	fixture := newControlsFixture(t, controlsModel, "internal/web/server.go:120")
-	got := fixture.resolve(t, verifySkillName, "")
+	got := fixture.resolve(t, verifySkillName)
 
 	dir := t.TempDir()
 	scan := &db.Scan{ID: 11, RepositoryID: fixture.repo.ID, APIToken: "tok"}
