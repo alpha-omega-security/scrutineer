@@ -140,8 +140,16 @@
       var disclosureRoot = disclosureCancel.closest('[data-disclosure-editor]');
       if (disclosureForm) disclosureForm.reset();
       if (disclosureRoot) {
-        var previewButton = disclosureRoot.querySelector('[data-disclosure-mode="preview"]');
-        if (previewButton) previewButton.click();
+        // Cancel returns to the saved draft, so with nothing saved the editor
+        // stays open rather than dropping the analyst on an empty preview.
+        // Focus follows the tab, which the panel it came from just hid.
+        var draft = disclosureRoot.querySelector('[data-disclosure-form] textarea');
+        var saved = draft && draft.defaultValue.trim() !== '';
+        var target = disclosureRoot.querySelector('[data-disclosure-mode="' + (saved ? 'preview' : 'edit') + '"]');
+        if (target) {
+          activateDisclosureMode(target, false);
+          target.focus();
+        }
       }
       return;
     }
