@@ -1315,24 +1315,11 @@ func (s Scan) CacheHitRatio() float64 {
 	return float64(s.CacheReadTokens) / float64(total)
 }
 
-// HasExportableReport tells the UI whether to offer a "download as
-// markdown" button for this scan. A scan that has produced findings is
-// always worth exporting. Otherwise we parse the report and look for any
-// substantive content: at least one top-level value that isn't an empty
-// string, empty array, empty object, or null. That lets through real
-// reports of any size — a single-package result is just as worth
-// exporting as a 10K-line SBOM — while filtering out structurally
-// empty scans like {"subprojects": []} or {"packages": [], "advisories":
-// []}. For non-JSON-object reports (bare array, plain text, malformed
-// JSON) we accept anything past a small trimmed length so freeform skills
-// emitting non-object output aren't accidentally hidden. The
-// /scans/{id}/report.md route is unaffected and remains reachable by
-// URL regardless of this signal.
+// HasExportableReport reports whether a scan's own result has substantive
+// content for generic Markdown export. Disclosure availability is checked
+// separately against the saved finding draft.
 func (s Scan) HasExportableReport() bool {
-	// nonObjectReportMinLen is the trimmed-length floor below which a
-	// non-JSON-object report (bare array, plain text, malformed JSON) is
-	// treated as too thin to bother exporting. JSON-object reports get
-	// the structural check instead and ignore this.
+	// Non-object reports use a size floor; JSON objects are checked structurally.
 	const nonObjectReportMinLen = 20
 	if s.FindingsCount > 0 {
 		return true

@@ -34,15 +34,7 @@ func (s *Server) scanReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// SkillID is nullable, so load the skill separately rather than with Preload.
-	// Missing rows are non-fatal; disclose scans can still dispatch by name.
-	var skill *db.Skill
-	if scan.SkillID != nil {
-		var sk db.Skill
-		if err := s.DB.First(&sk, *scan.SkillID).Error; err == nil {
-			skill = &sk
-		}
-	}
+	skill := loadScanReportSkill(s.DB, &scan)
 
 	var body string
 	if isDiscloseScanReport(&scan, skill) {
@@ -66,6 +58,24 @@ func scanReportFilename(scan *db.Scan) string {
 		scan.ID,
 		sanitiseFilename(firstNonEmpty(scan.SkillName, scan.Kind, "scan")),
 		time.Now().UTC().Format("20060102"))
+}
+
+func loadScanReportSkill(gdb *gorm.DB, scan *db.Scan) *db.Skill {
+	if scan.SkillID == nil {
+		return nil
+	}
+	var skill db.Skill
+	if err := gdb.Select("id", "output_kind").First(&skill, *scan.SkillID).Error; err != nil {
+		return nil
+	}
+	return &skill
+}
+
+func hasExportableScanReport(gdb *gorm.DB, scan *db.Scan, skill *db.Skill) bool {
+	if isDiscloseScanReport(scan, skill) {
+		return renderSavedDisclosureScanReport(gdb, scan) != ""
+	}
+	return scan.HasExportableReport()
 }
 
 func renderScanReport(gdb *gorm.DB, scan *db.Scan, skill *db.Skill) string {
@@ -100,7 +110,7 @@ func renderSavedDisclosureScanReport(gdb *gorm.DB, scan *db.Scan) string {
 		return ""
 	}
 	var finding db.Finding
-	if err := gdb.First(&finding, *scan.FindingID).Error; err != nil {
+	if err := gdb.Select("id", "title", "disclosure_draft").First(&finding, *scan.FindingID).Error; err != nil {
 		return ""
 	}
 	return renderFindingDisclosureMarkdown(&finding)

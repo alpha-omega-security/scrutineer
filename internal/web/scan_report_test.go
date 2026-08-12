@@ -202,9 +202,13 @@ func TestScanReport_discloseWithoutSavedDraftReturnsNotFound(t *testing.T) {
 	for _, tc := range []struct {
 		name          string
 		createFinding bool
+		draft         string
+		omitSkillID   bool
 	}{
 		{name: "finding association missing"},
 		{name: "draft empty", createFinding: true},
+		{name: "draft whitespace only", createFinding: true, draft: "  \n\t"},
+		{name: "skill name fallback", createFinding: true, omitSkillID: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s, done := newTestServer(t)
@@ -217,13 +221,21 @@ func TestScanReport_discloseWithoutSavedDraftReturnsNotFound(t *testing.T) {
 			if tc.createFinding {
 				origin := db.Scan{RepositoryID: repo.ID, Kind: worker.JobSkill, Status: db.ScanDone}
 				s.DB.Create(&origin)
-				finding := db.Finding{ScanID: origin.ID, RepositoryID: repo.ID, Title: "No draft"}
+				finding := db.Finding{
+					ScanID: origin.ID, RepositoryID: repo.ID, Title: "No draft",
+					DisclosureDraft: tc.draft,
+				}
 				s.DB.Create(&finding)
 				findingID = &finding.ID
 			}
+			var skillID *uint
+			if !tc.omitSkillID {
+				skillID = &skill.ID
+			}
 			scan := db.Scan{
 				RepositoryID: repo.ID, Kind: worker.JobSkill, Status: db.ScanDone,
-				SkillID: &skill.ID, SkillName: skill.Name, FindingID: findingID,
+				SkillID: skillID, SkillName: skill.Name, FindingID: findingID,
+				Report: `{"ghsa":{"summary":"stale generated output"}}`,
 			}
 			s.DB.Create(&scan)
 
@@ -234,6 +246,88 @@ func TestScanReport_discloseWithoutSavedDraftReturnsNotFound(t *testing.T) {
 			}
 			if got := w.Header().Get("Content-Disposition"); got != "" {
 				t.Errorf("missing draft should not download an attachment: %q", got)
+			}
+			if strings.Contains(w.Body.String(), "Scan metadata") {
+				t.Errorf("missing draft fell back to generic scan export: %s", w.Body)
+			}
+		})
+	}
+}
+
+func TestScanShow_disclosureExportVisibility(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://github.com/acme/thing", Name: "thing"}
+	s.DB.Create(&repo)
+	discloseSkill := db.Skill{Name: discloseSkillName, OutputKind: "disclose", Active: true, Version: 1, Source: "ui"}
+	s.DB.Create(&discloseSkill)
+	genericSkill := db.Skill{Name: "maintainers", OutputKind: "maintainers", Active: true, Version: 1, Source: "ui"}
+	s.DB.Create(&genericSkill)
+
+	origin := db.Scan{RepositoryID: repo.ID, Kind: worker.JobSkill, Status: db.ScanDone}
+	s.DB.Create(&origin)
+	withoutDraft := db.Finding{
+		ScanID: origin.ID, RepositoryID: repo.ID, Title: "No draft",
+		DisclosureDraft: "  \n\t",
+	}
+	s.DB.Create(&withoutDraft)
+	withDraft := db.Finding{
+		ScanID: origin.ID, RepositoryID: repo.ID, Title: "Saved draft",
+		DisclosureDraft: "## Summary\n\nSaved disclosure.",
+	}
+	s.DB.Create(&withDraft)
+
+	draftlessScan := db.Scan{
+		RepositoryID: repo.ID, Kind: worker.JobSkill, Status: db.ScanDone,
+		SkillID: &discloseSkill.ID, SkillName: discloseSkill.Name, FindingID: &withoutDraft.ID,
+		Report: `{"refused":true,"reason":"analysis unavailable"}`,
+	}
+	s.DB.Create(&draftlessScan)
+	nameFallbackScan := db.Scan{
+		RepositoryID: repo.ID, Kind: worker.JobSkill, Status: db.ScanDone,
+		SkillName: discloseSkill.Name, FindingID: &withoutDraft.ID,
+		Report: `{"ghsa":{"summary":"stale generated output"}}`,
+	}
+	s.DB.Create(&nameFallbackScan)
+	savedDraftScan := db.Scan{
+		RepositoryID: repo.ID, Kind: worker.JobSkill, Status: db.ScanDone,
+		SkillID: &discloseSkill.ID, SkillName: discloseSkill.Name, FindingID: &withDraft.ID,
+	}
+	s.DB.Create(&savedDraftScan)
+	genericScan := db.Scan{
+		RepositoryID: repo.ID, Kind: worker.JobSkill, Status: db.ScanDone,
+		SkillID: &genericSkill.ID, SkillName: genericSkill.Name,
+		Report: `{"maintainers":[{"login":"alice"}]}`,
+	}
+	s.DB.Create(&genericScan)
+	emptyGenericScan := db.Scan{
+		RepositoryID: repo.ID, Kind: worker.JobSkill, Status: db.ScanDone,
+		SkillID: &genericSkill.ID, SkillName: genericSkill.Name,
+		Report: `{"maintainers":[]}`,
+	}
+	s.DB.Create(&emptyGenericScan)
+
+	for _, tc := range []struct {
+		name       string
+		scan       db.Scan
+		wantExport bool
+	}{
+		{name: "disclose scan without saved draft", scan: draftlessScan},
+		{name: "disclose scan using skill name fallback", scan: nameFallbackScan},
+		{name: "disclose scan with saved draft", scan: savedDraftScan, wantExport: true},
+		{name: "non-disclose scan with report", scan: genericScan, wantExport: true},
+		{name: "non-disclose scan with structurally empty report", scan: emptyGenericScan},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			s.Handler().ServeHTTP(w, localReq("GET", "/scans/"+strconv.FormatUint(uint64(tc.scan.ID), 10)))
+			if w.Code != http.StatusOK {
+				t.Fatalf("status %d: %s", w.Code, w.Body)
+			}
+			href := "/scans/" + strconv.FormatUint(uint64(tc.scan.ID), 10) + "/report.md"
+			if got := strings.Contains(w.Body.String(), href); got != tc.wantExport {
+				t.Errorf("export link present = %v, want %v", got, tc.wantExport)
 			}
 		})
 	}
