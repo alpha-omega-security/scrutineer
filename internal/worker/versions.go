@@ -109,8 +109,10 @@ type RunnerToolVersions struct {
 // never user input, so plain interpolation is fine.
 func queryToolsScript(harnessBin string) string {
 	// poutine has no --version flag; `poutine version` prints a three-line
-	// block whose first dotted-numeric token is the version, which is what
-	// versionRe picks out once the subshell has flattened the newlines.
+	// block ("Version:", "Commit:", "Built At:"). Command substitution strips
+	// only the trailing newline, so the two extra lines reach parseToolVersions
+	// on their own -- neither carries an "=", so both are skipped, and the
+	// version rides the first line where versionRe finds it.
 	return `echo "zizmor=$(zizmor --version 2>/dev/null)"; ` +
 		`echo "poutine=$(poutine version 2>/dev/null)"; ` +
 		`echo "semgrep=$(semgrep --version 2>/dev/null)"; ` +

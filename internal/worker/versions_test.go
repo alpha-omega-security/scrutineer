@@ -36,6 +36,30 @@ func TestQueryToolsScript_usesHarnessBinary(t *testing.T) {
 	}
 }
 
+func TestParseToolVersions_poutineVersionBlock(t *testing.T) {
+	// Unlike every other tool here, `poutine version` prints three lines, and
+	// the substitution in queryToolsScript does not flatten them. The two
+	// trailing lines therefore arrive as their own lines; they carry no "="
+	// and are skipped, and the version rides the first one. The poutine value
+	// below is verbatim output from poutine v1.1.6.
+	out := "zizmor=zizmor 1.26.1\n" +
+		"poutine=Version: 1.1.6\nCommit: none\nBuilt At: unknown\n" +
+		"semgrep=1.167.0\n" +
+		"harness=2.1.123 (Claude Code)\n"
+	got := parseToolVersions(out)
+	if got.Poutine != "1.1.6" {
+		t.Errorf("Poutine = %q, want 1.1.6", got.Poutine)
+	}
+	// The point of the case: poutine's extra lines must not swallow the keys
+	// echoed after it.
+	if got.Semgrep != "1.167.0" {
+		t.Errorf("Semgrep = %q, want 1.167.0", got.Semgrep)
+	}
+	if got.Harness != "2.1.123" {
+		t.Errorf("Harness = %q, want 2.1.123", got.Harness)
+	}
+}
+
 func TestParseToolVersions_missingTools(t *testing.T) {
 	// A tool that is absent prints an empty value after the "=".
 	got := parseToolVersions("zizmor=\nsemgrep=\nharness=\n")
