@@ -5,6 +5,7 @@ Entries are grouped by release, newest first. Each entry is a summary written fo
 ## Unreleased
 
 - A `default_model` pinned in the config file but missing from the model pick list is now reported at startup instead of being silently ignored, and the documentation and sample configuration now use current-generation model ids. ([#816](https://github.com/alpha-omega-security/scrutineer/pull/816), [@alexandre-daubois](https://github.com/alexandre-daubois))
+- Added a `poutine` scanner skill, so pipeline supply-chain weaknesses — untrusted-checkout code execution, injection, secrets exposed to a whole job — are reported alongside the existing zizmor workflow lint, and GitLab CI, Azure Pipelines and Tekton repositories get pipeline coverage for the first time. ([#593](https://github.com/alpha-omega-security/scrutineer/issues/593))
 
 ## 2026-08-11
 

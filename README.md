@@ -64,7 +64,7 @@ To onboard a whole GitHub org at once, open **Add multiple** → **Import a whol
 
 You can also scan a directory on disk, useful before pushing, or for code not hosted on a git forge. Paste an absolute path (`/path/to/project`) in the same **Add repository** field. Scrutineer copies the directory into a per-scan workspace and runs the default skill set; skills that need a forge URL or ecosyste.ms enrichment (`advisories`, `exposure`, `fork`, `maintainers`, `metadata`, `packages`, `public-issue`, `report-upstream`) are skipped automatically. Symlinks are recreated as-is rather than dereferenced during the copy; in container mode their targets then resolve inside the container, so host files reached only through such a link are not visible to skills. Under `--no-container` the kernel dereferences them normally, so only point scrutineer at trees you trust.
 
-The optional analysis tools (semgrep, zizmor, git-pkgs, brief) are bundled in the runner image, so you don't need them installed locally when the container runner is in use.
+The optional analysis tools (semgrep, zizmor, poutine, git-pkgs, brief) are bundled in the runner image, so you don't need them installed locally when the container runner is in use.
 
 ## Git authentication
 
@@ -157,6 +157,7 @@ Adding a repo enqueues the `triage` skill, whose SKILL.md lists the further skil
 | `semgrep` | Static analysis mapped into findings shape |
 | `vuln-scan` | High-recall model-backed static candidate scan adapted from Anthropic's defending-code reference harness |
 | `zizmor` | GitHub Actions workflow audit mapped into findings shape |
+| `poutine` | CI/CD pipeline supply-chain audit (GitHub Actions, GitLab CI, Azure Pipelines, Tekton) mapped into findings shape |
 | `ingest` | Normalizes external reports in arbitrary formats into findings when `/v1/import` cannot recognise the payload |
 | `security-deep-dive` | The model-backed audit producing structured findings |
 | `advisory-deep-dive` | Re-audits every past advisory against its fix commit for a fix bypass, an incomplete fix, or the same bug class in sibling code the patch never touched; the deep-dive scoped to the advisory space |

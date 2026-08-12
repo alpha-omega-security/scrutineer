@@ -78,6 +78,7 @@ jobs:
           docker run --rm scrutineer-runner:ci curl --version
           docker run --rm scrutineer-runner:ci semgrep --version
           docker run --rm scrutineer-runner:ci zizmor --version
+          docker run --rm scrutineer-runner:ci poutine version
           docker run --rm scrutineer-runner:ci git-pkgs --version
           docker run --rm scrutineer-runner:ci brief --version
           docker run --rm scrutineer-runner:ci git --version

@@ -96,6 +96,7 @@ func RunnerImageRevision(ctx context.Context, rt ContainerRuntime, image string)
 // change here.
 type RunnerToolVersions struct {
 	Zizmor  string
+	Poutine string
 	Semgrep string
 	Harness string
 }
@@ -107,7 +108,11 @@ type RunnerToolVersions struct {
 // "claude", "codex"); it is a code-supplied constant from Harness.Binary(),
 // never user input, so plain interpolation is fine.
 func queryToolsScript(harnessBin string) string {
+	// poutine has no --version flag; `poutine version` prints a three-line
+	// block whose first dotted-numeric token is the version, which is what
+	// versionRe picks out once the subshell has flattened the newlines.
 	return `echo "zizmor=$(zizmor --version 2>/dev/null)"; ` +
+		`echo "poutine=$(poutine version 2>/dev/null)"; ` +
 		`echo "semgrep=$(semgrep --version 2>/dev/null)"; ` +
 		`echo "harness=$(` + harnessBin + ` --version 2>/dev/null)"`
 }
@@ -156,6 +161,8 @@ func parseToolVersions(out string) RunnerToolVersions {
 		switch key {
 		case "zizmor":
 			v.Zizmor = val
+		case "poutine":
+			v.Poutine = val
 		case "semgrep":
 			v.Semgrep = val
 		case "harness":

@@ -77,6 +77,22 @@
       "depNameTemplate": "zizmor",
       "datasourceTemplate": "crate",
       "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "description": "Update the poutine container-image pins. Both halves of the install line carry the version — the module pin and the -ldflags stamp — so both are matched and move together.",
+      "managerFilePatterns": [
+        "/^Dockerfile$/",
+        "/^Dockerfile\\.runner$/"
+      ],
+      "matchStrings": [
+        "-X main\\.version=(?<currentValue>\\d+\\.\\d+\\.\\d+)",
+        "github\\.com/boostsecurityio/poutine@v(?<currentValue>\\d+\\.\\d+\\.\\d+)"
+      ],
+      "packageNameTemplate": "github.com/boostsecurityio/poutine",
+      "depNameTemplate": "poutine",
+      "datasourceTemplate": "go",
+      "versioningTemplate": "semver"
     }
   ],
   "packageRules": [
@@ -123,6 +139,12 @@
       "matchPackageNames": ["zizmor"],
       "groupName": "zizmor",
       "minimumGroupSize": 3
+    },
+    {
+      "description": "Keep the poutine container-image pins synchronized: two per Dockerfile, the module pin and the -ldflags stamp",
+      "matchPackageNames": ["github.com/boostsecurityio/poutine"],
+      "groupName": "poutine",
+      "minimumGroupSize": 4
     },
     {
       "description": "Keep all four Claude Code pins on one GitHub release; do not approve a partial group in the Dependency Dashboard",

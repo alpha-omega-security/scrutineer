@@ -16,6 +16,10 @@ ARG SEMGREP_VERSION=1.167.0
 FROM golang:1.26.5-trixie@sha256:4ee9ffa999b4583ce281939cdff828763083610292f252279a0cee77473bd9a7 AS go-tools
 RUN GOBIN=/out go install github.com/git-pkgs/git-pkgs@v0.15.3 && \
     GOBIN=/out go install github.com/git-pkgs/brief/cmd/brief@v0.9.3
+# poutine stamps its version through -ldflags, so a plain `go install` would
+# leave `poutine version` reporting "development" and the settings page blank.
+RUN GOBIN=/out go install -ldflags "-X main.version=1.1.6" \
+    github.com/boostsecurityio/poutine@v1.1.6
 
 FROM rust:1.97-trixie@sha256:1bcff4befb740599103a2c7cb51058e14479b2e35e3a34a3f0dc4ede09927488 AS zizmor-build
 ENV CARGO_HTTP_MULTIPLEXING=false

@@ -1405,6 +1405,7 @@ const (
 	threatModelSkillName = "threat-model"
 	reconSkillName       = "recon"
 	zizmorSkillName      = "zizmor"
+	poutineSkillName     = "poutine"
 )
 
 // The Findings-bucket filters are vars rather than consts because they splice
@@ -1478,8 +1479,12 @@ func isLLMAuditSkill(skillName string) bool {
 		skillName == advisoryDeepDiveSkillName
 }
 
+// Exposure asks whether a finding is reachable from outside; a workflow-level
+// finding has no such answer, so the pipeline scanners are excluded. poutine
+// joins zizmor here for that reason rather than because of anything specific
+// to either tool.
 func findingSupportsExposure(scan db.Scan) bool {
-	return scan.SkillName != zizmorSkillName
+	return scan.SkillName != zizmorSkillName && scan.SkillName != poutineSkillName
 }
 
 func (s *Server) addRepoAndScan(w http.ResponseWriter, r *http.Request, repoURL string) {

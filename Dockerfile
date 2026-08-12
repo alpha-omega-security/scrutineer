@@ -20,6 +20,10 @@ FROM golang:1.26.5-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149a
 RUN apk add --no-cache git
 RUN GOBIN=/out go install github.com/git-pkgs/git-pkgs@v0.15.3 && \
     GOBIN=/out go install github.com/git-pkgs/brief/cmd/brief@v0.9.3
+# poutine stamps its version through -ldflags, so a plain `go install` would
+# leave `poutine version` reporting "development" and the settings page blank.
+RUN GOBIN=/out go install -ldflags "-X main.version=1.1.6" \
+    github.com/boostsecurityio/poutine@v1.1.6
 
 # vid links tree-sitter grammars (C), so unlike the main binary it needs
 # cgo; build-base provides gcc and musl headers, matching the musl-based
