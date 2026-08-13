@@ -868,3 +868,87 @@ func TestParseFindingsOutput_notObservedSkipsClosedFindings(t *testing.T) {
 		t.Errorf("closed finding should not accrue missed count: missed=%d", f.MissedCount)
 	}
 }
+
+func TestParseFindingsOutput_focusAreaScanDoesNotMarkOtherAreasMissed(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://x/r", Name: "r"}
+	gdb.Create(&repo)
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	emit := func(Event) {}
+
+	// Focus-area deep-dive on auth finds F1.
+	s1 := &db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "security-deep-dive",
+		SubPath: "", FocusArea: `{"name":"auth"}`, Status: db.ScanDone, Commit: "abc"}
+	gdb.Create(s1)
+	if err := w.parseFindingsOutput(&db.Skill{}, s1,
+		`{"findings":[{"id":"F1","title":"x","severity":"High","cwe":"CWE-89","location":"a.rb:1"}]}`, emit); err != nil {
+		t.Fatal(err)
+	}
+
+	// A sibling focus area finds its own finding and nothing from auth. It
+	// was never in scope to re-observe F1, so it must not count as a miss.
+	s2 := &db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "security-deep-dive",
+		SubPath: "", FocusArea: `{"name":"deserialization"}`, Status: db.ScanDone, Commit: "abc"}
+	gdb.Create(s2)
+	if err := w.parseFindingsOutput(&db.Skill{}, s2,
+		`{"findings":[{"id":"F2","title":"y","severity":"High","cwe":"CWE-502","location":"b.rb:2"}]}`, emit); err != nil {
+		t.Fatal(err)
+	}
+
+	var f1 db.Finding
+	gdb.Where("title = ?", "x").First(&f1)
+	if f1.MissedCount != 0 {
+		t.Errorf("sibling focus-area scan marked F1 missed: missed=%d last_missed=%d",
+			f1.MissedCount, f1.LastMissedScanID)
+	}
+
+	// A full-repo rescan of the same skill IS in scope for everything, so it
+	// still counts as a miss. Guards against disabling the signal outright.
+	s3 := &db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "security-deep-dive",
+		SubPath: "", Status: db.ScanDone, Commit: "def"}
+	gdb.Create(s3)
+	if err := w.parseFindingsOutput(&db.Skill{}, s3, `{"findings":[]}`, emit); err != nil {
+		t.Fatal(err)
+	}
+
+	gdb.Where("title = ?", "x").First(&f1)
+	if f1.MissedCount != 1 || f1.LastMissedScanID != s3.ID {
+		t.Errorf("full-repo rescan should mark F1 missed: missed=%d last_missed=%d",
+			f1.MissedCount, f1.LastMissedScanID)
+	}
+}
+
+func TestParseFindingsOutput_focusAreaScanDoesNotAutoReject(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://x/r", Name: "r"}
+	gdb.Create(&repo)
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), AutoRejectMissedCount: 1}
+	emit := func(Event) {}
+
+	s1 := &db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "security-deep-dive",
+		SubPath: "", FocusArea: `{"name":"auth"}`, Status: db.ScanDone, Commit: "abc"}
+	gdb.Create(s1)
+	if err := w.parseFindingsOutput(&db.Skill{}, s1,
+		`{"findings":[{"id":"F1","title":"x","severity":"High","cwe":"CWE-89","location":"a.rb:1"}]}`, emit); err != nil {
+		t.Fatal(err)
+	}
+
+	s2 := &db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "security-deep-dive",
+		SubPath: "", FocusArea: `{"name":"ssrf"}`, Status: db.ScanDone, Commit: "abc"}
+	gdb.Create(s2)
+	if err := w.parseFindingsOutput(&db.Skill{}, s2, `{"findings":[]}`, emit); err != nil {
+		t.Fatal(err)
+	}
+
+	var f1 db.Finding
+	gdb.Where("title = ?", "x").First(&f1)
+	if f1.Status == db.FindingRejected {
+		t.Errorf("sibling focus-area scan auto-rejected a valid finding (missed=%d)", f1.MissedCount)
+	}
+}

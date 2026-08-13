@@ -810,7 +810,21 @@ func (e *FailOnThresholdError) Error() string {
 // fingerprint did not appear in the scan output. Closed findings (fixed,
 // published, rejected, duplicate) are left alone. Returns the number of
 // rows touched so the scan log can report it.
+//
+// A focus-area scan only looks at its own slice of the repo, so it is not
+// in scope to re-observe findings from sibling areas and never counts as a
+// miss: with N parallel focus-area deep-dives each one would otherwise bump
+// MissedCount on every open finding from the other N-1, which also drives
+// AutoRejectMissedCount below and would auto-reject valid findings. Only
+// full-repo rescans count. Finding denormalizes RepositoryID/Commit/SubPath
+// from Scan but not FocusArea, and a finding can legitimately be observed
+// under more than one area, so scoping the query by focus area instead is
+// not available without joining back through a scan.
 func (w *Worker) markNotObserved(scan *db.Scan, seen map[string]bool) int {
+	if scan.FocusArea != "" {
+		return 0
+	}
+
 	sameSkill := w.DB.Model(&db.Scan{}).Select("id").
 		Where("repository_id = ? AND skill_name = ?", scan.RepositoryID, scan.SkillName)
 	var prior []db.Finding
