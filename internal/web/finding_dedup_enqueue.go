@@ -74,7 +74,38 @@ func (s *Server) autoEnqueueFindingDedup(scan *db.Scan) {
 		return
 	}
 
+	// 3. Every other scan in this scan's batch has finished. See
+	//    hasOutstandingBatchSiblings.
+	if s.hasOutstandingBatchSiblings(scan) {
+		return
+	}
+
 	s.enqueueFindingDedupForRepo(context.Background(), scan.RepositoryID)
+}
+
+// hasOutstandingBatchSiblings reports whether any other scan in this scan's
+// ScanGroup is still queued or running. A batch of focus-area deep dives is
+// launched as one cohort (focus_area_deep_dive.go), and dedup compares the
+// repository's open findings pairwise, so running it per sibling completion
+// spends a model pass on a working set that is still filling up.
+//
+// The in-flight guard in enqueueRepoScopedSkillIfIdle does not cover this on
+// its own: it only suppresses while a dedup is queued or running, so the
+// moment one completes between two sibling completions the gate reopens and
+// the next sibling enqueues another. That it usually collapses to a single
+// pass today is incidental — it depends on the dedup still sitting behind the
+// batch in the queue, i.e. on worker saturation rather than on the batch being
+// finished.
+//
+// The scan being finalized is excluded by id: its own terminal status may not
+// be committed yet when the completion hook runs, and counting itself would
+// stall the batch forever. Scans with no ScanGroup were not launched as a
+// batch and keep the previous behaviour.
+func (s *Server) hasOutstandingBatchSiblings(scan *db.Scan) bool {
+	if scan.ScanGroup == "" {
+		return false
+	}
+	return s.hasOpenScan("scan_group = ? AND id <> ?", scan.ScanGroup, scan.ID)
 }
 
 // enqueueFindingDedupForRepo looks up the active finding-dedup skill and

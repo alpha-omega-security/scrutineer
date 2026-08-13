@@ -212,3 +212,64 @@ func TestAutoEnqueueFindingDedup_nilScan(t *testing.T) {
 	defer done()
 	s.autoEnqueueFindingDedup(nil) // must not panic
 }
+
+// newGroupScan creates a focus-area scan belonging to a batch cohort.
+func newGroupScan(t *testing.T, s *Server, repoID uint, group, focus string, status db.ScanStatus) *db.Scan {
+	t.Helper()
+	scan := db.Scan{RepositoryID: repoID, Status: status, SkillName: "security-deep-dive",
+		ScanGroup: group, FocusArea: focus}
+	s.DB.Create(&scan)
+	return &scan
+}
+
+// A batch of focus-area deep dives finishing one at a time must produce one
+// dedup pass, not one per sibling. The in-flight guard alone does not give
+// that: it only suppresses while a dedup is queued or running, so as soon as
+// one completes between two sibling completions the gate reopens.
+func TestAutoEnqueueFindingDedup_waitsForBatchSiblings(t *testing.T) {
+	s, done, repoID, dedupID := dedupTestSetup(t)
+	defer done()
+
+	const group = "batch-1"
+	first := newGroupScan(t, s, repoID, group, `{"name":"auth"}`, db.ScanDone)
+	second := newGroupScan(t, s, repoID, group, `{"name":"ssrf"}`, db.ScanRunning)
+	third := newGroupScan(t, s, repoID, group, `{"name":"deser"}`, db.ScanQueued)
+	for _, sc := range []*db.Scan{first, second, third} {
+		newFindingUnder(t, s, repoID, sc.ID, db.FindingNew)
+	}
+
+	s.autoEnqueueFindingDedup(first)
+	if n := dedupQueued(s, repoID, dedupID); n != 0 {
+		t.Errorf("queued = %d, want 0 while %d batch siblings are still outstanding", n, 2)
+	}
+
+	// Second finishes; the last sibling is still queued, so still too early.
+	s.DB.Model(second).Update("status", db.ScanDone)
+	s.autoEnqueueFindingDedup(second)
+	if n := dedupQueued(s, repoID, dedupID); n != 0 {
+		t.Errorf("queued = %d, want 0 while 1 batch sibling is still outstanding", n)
+	}
+
+	// Last one home enqueues exactly one pass for the whole batch.
+	s.DB.Model(third).Update("status", db.ScanDone)
+	s.autoEnqueueFindingDedup(third)
+	if n := dedupQueued(s, repoID, dedupID); n != 1 {
+		t.Errorf("queued = %d, want 1 once the batch has drained", n)
+	}
+}
+
+// An ungrouped scan keeps the old behaviour: nothing to wait for.
+func TestAutoEnqueueFindingDedup_ungroupedScanEnqueuesImmediately(t *testing.T) {
+	s, done, repoID, dedupID := dedupTestSetup(t)
+	defer done()
+
+	prior := newScan(t, s, repoID, "security-deep-dive")
+	newFindingUnder(t, s, repoID, prior.ID, db.FindingNew)
+	scan := newScan(t, s, repoID, "security-deep-dive")
+	newFindingUnder(t, s, repoID, scan.ID, db.FindingNew)
+
+	s.autoEnqueueFindingDedup(scan)
+	if n := dedupQueued(s, repoID, dedupID); n != 1 {
+		t.Errorf("queued = %d, want 1 for an ungrouped scan", n)
+	}
+}
