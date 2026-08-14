@@ -12,11 +12,11 @@ require (
 	github.com/git-pkgs/cwe v0.1.0
 	github.com/git-pkgs/enrichment v0.6.5
 	github.com/git-pkgs/magic v0.2.0
-	github.com/git-pkgs/pom v0.1.5
-	github.com/git-pkgs/purl v0.1.15
-	github.com/git-pkgs/sarif v0.1.1
-	github.com/git-pkgs/sbom v0.1.4
-	github.com/git-pkgs/vulns v0.2.1
+	github.com/git-pkgs/pom v0.1.6
+	github.com/git-pkgs/purl v0.1.16
+	github.com/git-pkgs/sarif v0.1.2
+	github.com/git-pkgs/sbom v0.1.5
+	github.com/git-pkgs/vulns v0.2.2
 	github.com/glebarez/sqlite v1.11.0
 	github.com/google/uuid v1.6.0
 	github.com/robfig/cron/v3 v3.0.1
@@ -35,9 +35,9 @@ require (
 	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/git-pkgs/packageurl-go v0.3.1 // indirect
-	github.com/git-pkgs/registries v0.6.4 // indirect
-	github.com/git-pkgs/spdx v0.3.0 // indirect
-	github.com/git-pkgs/vers v0.3.0 // indirect
+	github.com/git-pkgs/registries v0.7.0 // indirect
+	github.com/git-pkgs/spdx v0.3.1 // indirect
+	github.com/git-pkgs/vers v0.3.1 // indirect
 	github.com/github/go-spdx/v2 v2.7.0 // indirect
 	github.com/glebarez/go-sqlite v1.23.0 // indirect
 	github.com/jinzhu/inflection v1.0.0 // indirect
