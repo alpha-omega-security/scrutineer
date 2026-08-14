@@ -213,19 +213,23 @@ func TestAutoEnqueueFindingDedup_nilScan(t *testing.T) {
 	s.autoEnqueueFindingDedup(nil) // must not panic
 }
 
+// testScanGroup is the cohort id the batch tests launch their scans under.
+// Production uses uuid.NewString(); the value only has to be shared.
+const testScanGroup = "batch-1"
+
 // newGroupScan creates a focus-area deep dive belonging to a batch cohort.
-func newGroupScan(t *testing.T, s *Server, repoID uint, group, focus string, status db.ScanStatus) *db.Scan {
+func newGroupScan(t *testing.T, s *Server, repoID uint, focus string, status db.ScanStatus) *db.Scan {
 	t.Helper()
-	return newGroupScanOfSkill(t, s, repoID, group, focus, "security-deep-dive", status)
+	return newGroupScanOfSkill(t, s, repoID, focus, "security-deep-dive", status)
 }
 
 // newGroupScanOfSkill is newGroupScan for the cohort members that are not
 // deep dives: enqueueDiffRescanGroup puts recon, threat-model and semgrep in
 // the same scan_group as the fanned-out deep dives.
-func newGroupScanOfSkill(t *testing.T, s *Server, repoID uint, group, focus, skillName string, status db.ScanStatus) *db.Scan {
+func newGroupScanOfSkill(t *testing.T, s *Server, repoID uint, focus, skillName string, status db.ScanStatus) *db.Scan {
 	t.Helper()
 	scan := db.Scan{RepositoryID: repoID, Status: status, SkillName: skillName,
-		ScanGroup: group, FocusArea: focus}
+		ScanGroup: testScanGroup, FocusArea: focus}
 	s.DB.Create(&scan)
 	return &scan
 }
@@ -238,10 +242,9 @@ func TestAutoEnqueueFindingDedup_waitsForBatchSiblings(t *testing.T) {
 	s, done, repoID, dedupID := dedupTestSetup(t)
 	defer done()
 
-	const group = "batch-1"
-	first := newGroupScan(t, s, repoID, group, `{"name":"auth"}`, db.ScanDone)
-	second := newGroupScan(t, s, repoID, group, `{"name":"ssrf"}`, db.ScanRunning)
-	third := newGroupScan(t, s, repoID, group, `{"name":"deser"}`, db.ScanQueued)
+	first := newGroupScan(t, s, repoID, `{"name":"auth"}`, db.ScanDone)
+	second := newGroupScan(t, s, repoID, `{"name":"ssrf"}`, db.ScanRunning)
+	third := newGroupScan(t, s, repoID, `{"name":"deser"}`, db.ScanQueued)
 	for _, sc := range []*db.Scan{first, second, third} {
 		newFindingUnder(t, s, repoID, sc.ID, db.FindingNew)
 	}
@@ -289,19 +292,18 @@ func TestAutoEnqueueFindingDedup_lastSiblingNeedNotQualify(t *testing.T) {
 			s, done, repoID, dedupID := dedupTestSetup(t)
 			defer done()
 
-			const group = "batch-1"
 			// The whole cohort exists up front, as it does in production:
 			// the batch is launched as one unit and its members finish one
 			// at a time.
 			var earlier []*db.Scan
 			for _, focus := range []string{`{"name":"auth"}`, `{"name":"ssrf"}`} {
-				sibling := newGroupScan(t, s, repoID, group, focus, db.ScanDone)
+				sibling := newGroupScan(t, s, repoID, focus, db.ScanDone)
 				// Both found something, so the cohort has new findings and
 				// the repo ends up with a pair to compare.
 				newFindingUnder(t, s, repoID, sibling.ID, db.FindingNew)
 				earlier = append(earlier, sibling)
 			}
-			last := newGroupScanOfSkill(t, s, repoID, group, `{"name":"deser"}`, tc.skill, db.ScanRunning)
+			last := newGroupScanOfSkill(t, s, repoID, `{"name":"deser"}`, tc.skill, db.ScanRunning)
 			if tc.findings {
 				newFindingUnder(t, s, repoID, last.ID, db.FindingNew)
 			}
@@ -329,12 +331,11 @@ func TestAutoEnqueueFindingDedup_pausedSiblingIsOutstanding(t *testing.T) {
 	s, done, repoID, dedupID := dedupTestSetup(t)
 	defer done()
 
-	const group = "batch-1"
-	first := newGroupScan(t, s, repoID, group, `{"name":"auth"}`, db.ScanDone)
+	first := newGroupScan(t, s, repoID, `{"name":"auth"}`, db.ScanDone)
 	newFindingUnder(t, s, repoID, first.ID, db.FindingNew)
-	second := newGroupScan(t, s, repoID, group, `{"name":"ssrf"}`, db.ScanDone)
+	second := newGroupScan(t, s, repoID, `{"name":"ssrf"}`, db.ScanDone)
 	newFindingUnder(t, s, repoID, second.ID, db.FindingNew)
-	newGroupScan(t, s, repoID, group, `{"name":"deser"}`, db.ScanPaused)
+	newGroupScan(t, s, repoID, `{"name":"deser"}`, db.ScanPaused)
 
 	s.autoEnqueueFindingDedup(first)
 	s.autoEnqueueFindingDedup(second)
@@ -349,13 +350,12 @@ func TestAutoEnqueueFindingDedup_emptyBatchEnqueuesNothing(t *testing.T) {
 	s, done, repoID, dedupID := dedupTestSetup(t)
 	defer done()
 
-	const group = "batch-1"
 	prior := newScan(t, s, repoID, "security-deep-dive")
 	newFindingUnder(t, s, repoID, prior.ID, db.FindingNew)
 	newFindingUnder(t, s, repoID, prior.ID, db.FindingNew)
 
-	first := newGroupScan(t, s, repoID, group, `{"name":"auth"}`, db.ScanDone)
-	last := newGroupScan(t, s, repoID, group, `{"name":"ssrf"}`, db.ScanDone)
+	first := newGroupScan(t, s, repoID, `{"name":"auth"}`, db.ScanDone)
+	last := newGroupScan(t, s, repoID, `{"name":"ssrf"}`, db.ScanDone)
 	s.autoEnqueueFindingDedup(first)
 	s.autoEnqueueFindingDedup(last)
 
