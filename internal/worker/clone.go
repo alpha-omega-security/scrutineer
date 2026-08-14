@@ -117,12 +117,7 @@ func cloneOrFetch(ctx context.Context, retry gitRetry, url, dst string, fullClon
 		}
 		emit(Event{Kind: KindText, Text: msg})
 	}
-	r := retry.resolved().toClone()
-	r.Notify = func(n clone.Notice) {
-		emit(Event{Kind: KindText, Text: fmt.Sprintf(
-			"git %s failed with a transient error (attempt %d/%d), retrying in %s",
-			n.Label, n.Attempt, n.Attempts, n.Delay.Round(time.Millisecond))})
-	}
+	r := retry.toCloneWithNotify(emit)
 	if err := clone.Ensure(ctx, r, url, dst, ref, fullClone); err != nil {
 		// Unwrap so ensureClone's own UnreachableError wrap does not
 		// double-prefix; the scan log records the git output verbatim.

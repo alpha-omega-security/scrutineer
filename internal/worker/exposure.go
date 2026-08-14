@@ -12,6 +12,9 @@ import (
 	"path/filepath"
 	"sync"
 
+	"github.com/git-pkgs/clone"
+	"github.com/git-pkgs/dependents"
+
 	"scrutineer/internal/db"
 )
 
@@ -42,23 +45,17 @@ func (w *Worker) prepareDependentSrc(ctx context.Context, url, ref, workRoot str
 	mu.Lock()
 	defer mu.Unlock()
 
-	cacheRoot := dependentCacheRoot(w.DataDir, url)
-	if err := os.MkdirAll(cacheRoot, dirPerm); err != nil {
-		return "", err
+	cache := clone.Cache{
+		Root:  filepath.Join(w.DataDir, "dependent-cache"),
+		Retry: gitRetry{}.toCloneWithNotify(emit),
 	}
-	cacheSrc, err := ensureClone(ctx, db.Repository{URL: url}, cacheRoot, false, ref, emit)
-	if err != nil {
-		return "", err
+	if _, err := os.Stat(filepath.Join(cache.Dir(url), "src", ".git")); err == nil {
+		emit(Event{Kind: KindText, Text: "$ git fetch origin " + fetchTarget(ref) + " && reset"})
+	} else {
+		emit(Event{Kind: KindText, Text: "$ git clone " + url + " (shallow)"})
 	}
-	commit := gitHead(cacheSrc)
-	dst := filepath.Join(workRoot, "src")
-	if err := os.RemoveAll(dst); err != nil {
-		return "", err
-	}
-	if err := CopyTree(cacheSrc, dst); err != nil {
-		return "", fmt.Errorf("copy dependent cache: %w", err)
-	}
-	return commit, nil
+	checkout := dependents.CacheCheckout{Cache: &cache, Ref: ref}
+	return checkout.Prepare(ctx, url, filepath.Join(workRoot, "src"))
 }
 
 // CopyTree recursively copies src to dst, preserving permissions but not
