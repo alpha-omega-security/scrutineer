@@ -73,14 +73,15 @@ func (s *Server) hasOpenFindingScopedScan(findingID, skillID uint) bool {
 	return s.hasOpenScan("finding_id = ? AND skill_id = ?", findingID, skillID)
 }
 
-// hasOpenScan reports whether a queued or running scan matching the given
-// scope predicate already exists. Shared by the finding-scoped and
-// repo-scoped open-scan guards so the "open" definition (queued or running)
-// lives in one place.
+// hasOpenScan reports whether an in-flight scan matching the given scope
+// predicate already exists. Shared by the finding-scoped, repo-scoped and
+// batch-cohort guards so the "open" definition lives in one place, and it is
+// inFlightScanStatuses(): a paused scan has not finished and will resume, so
+// every one of these guards wants to treat it as still open.
 func (s *Server) hasOpenScan(scope string, args ...any) bool {
 	var n int64
 	if err := s.DB.Model(&db.Scan{}).
-		Where("status IN ?", []db.ScanStatus{db.ScanQueued, db.ScanRunning}).
+		Where("status IN ?", inFlightScanStatuses()).
 		Where(scope, args...).
 		Count(&n).Error; err != nil {
 		return false

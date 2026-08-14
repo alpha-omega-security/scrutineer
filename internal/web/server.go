@@ -444,6 +444,11 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *work
 		w.OnFindingCreated = s.autoEnqueueRevalidate
 		w.OnRevalidateVerdict = s.autoChainVerifyAfterRevalidate
 		w.OnScanFinalized = s.onScanFinalized
+		// Only the dedup pass, not the whole onScanFinalized fan-out: a scan
+		// that timed out or was cancelled has no committed analysis to update
+		// a threat model or seed a config from. Dedup is the one consumer
+		// that cares purely about the cohort having drained.
+		w.OnScanGroupSettled = s.autoEnqueueFindingDedup
 		w.OnScanFailed = s.autoEnqueueFocusAreaDeepDives
 		if w.Runner != nil {
 			s.chatRunner = &worker.ChatRunner{Runner: w.Runner, DB: gdb, DataDir: w.DataDir, PrepareSrc: w.PrepareSrc}
@@ -1473,9 +1478,14 @@ func findingsScanIDs(gdb *gorm.DB) *gorm.DB {
 // Unlike findingsBucketSkillSQL this deliberately excludes legacy empty/NULL
 // skill_name rows and imports: those are inert, not a live scan that just
 // produced new findings worth triaging.
+// llmAuditSkillNames are the curated model-driven audits: the skills whose
+// findings are a repository's working set rather than scanner output.
+func llmAuditSkillNames() []string {
+	return []string{deepDiveSkillName, vulnScanSkillName, advisoryDeepDiveSkillName}
+}
+
 func isLLMAuditSkill(skillName string) bool {
-	return skillName == deepDiveSkillName || skillName == vulnScanSkillName ||
-		skillName == advisoryDeepDiveSkillName
+	return slices.Contains(llmAuditSkillNames(), skillName)
 }
 
 func findingSupportsExposure(scan db.Scan) bool {

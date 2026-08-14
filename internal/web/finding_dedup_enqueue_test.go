@@ -213,10 +213,18 @@ func TestAutoEnqueueFindingDedup_nilScan(t *testing.T) {
 	s.autoEnqueueFindingDedup(nil) // must not panic
 }
 
-// newGroupScan creates a focus-area scan belonging to a batch cohort.
+// newGroupScan creates a focus-area deep dive belonging to a batch cohort.
 func newGroupScan(t *testing.T, s *Server, repoID uint, group, focus string, status db.ScanStatus) *db.Scan {
 	t.Helper()
-	scan := db.Scan{RepositoryID: repoID, Status: status, SkillName: "security-deep-dive",
+	return newGroupScanOfSkill(t, s, repoID, group, focus, "security-deep-dive", status)
+}
+
+// newGroupScanOfSkill is newGroupScan for the cohort members that are not
+// deep dives: enqueueDiffRescanGroup puts recon, threat-model and semgrep in
+// the same scan_group as the fanned-out deep dives.
+func newGroupScanOfSkill(t *testing.T, s *Server, repoID uint, group, focus, skillName string, status db.ScanStatus) *db.Scan {
+	t.Helper()
+	scan := db.Scan{RepositoryID: repoID, Status: status, SkillName: skillName,
 		ScanGroup: group, FocusArea: focus}
 	s.DB.Create(&scan)
 	return &scan
@@ -255,6 +263,104 @@ func TestAutoEnqueueFindingDedup_waitsForBatchSiblings(t *testing.T) {
 	s.autoEnqueueFindingDedup(third)
 	if n := dedupQueued(s, repoID, dedupID); n != 1 {
 		t.Errorf("queued = %d, want 1 once the batch has drained", n)
+	}
+}
+
+// The sibling that arrives last is arbitrary, so the batch's pass cannot
+// depend on that sibling qualifying on its own. Each case here is one where
+// main runs a pass and gating on the finalizing scan would run none: the last
+// one home produced nothing, is not an LLM audit at all, or ended failed or
+// cancelled rather than done.
+func TestAutoEnqueueFindingDedup_lastSiblingNeedNotQualify(t *testing.T) {
+	cases := []struct {
+		name     string
+		skill    string
+		status   db.ScanStatus
+		findings bool
+	}{
+		{name: "no new findings", skill: "security-deep-dive", status: db.ScanDone},
+		{name: "not an LLM audit", skill: "semgrep", status: db.ScanDone},
+		{name: "failed", skill: "security-deep-dive", status: db.ScanFailed},
+		{name: "cancelled", skill: "security-deep-dive", status: db.ScanCancelled},
+		{name: "qualifies itself", skill: "security-deep-dive", status: db.ScanDone, findings: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, done, repoID, dedupID := dedupTestSetup(t)
+			defer done()
+
+			const group = "batch-1"
+			// The whole cohort exists up front, as it does in production:
+			// the batch is launched as one unit and its members finish one
+			// at a time.
+			var earlier []*db.Scan
+			for _, focus := range []string{`{"name":"auth"}`, `{"name":"ssrf"}`} {
+				sibling := newGroupScan(t, s, repoID, group, focus, db.ScanDone)
+				// Both found something, so the cohort has new findings and
+				// the repo ends up with a pair to compare.
+				newFindingUnder(t, s, repoID, sibling.ID, db.FindingNew)
+				earlier = append(earlier, sibling)
+			}
+			last := newGroupScanOfSkill(t, s, repoID, group, `{"name":"deser"}`, tc.skill, db.ScanRunning)
+			if tc.findings {
+				newFindingUnder(t, s, repoID, last.ID, db.FindingNew)
+			}
+
+			for _, sibling := range earlier {
+				s.autoEnqueueFindingDedup(sibling)
+			}
+			if n := dedupQueued(s, repoID, dedupID); n != 0 {
+				t.Fatalf("queued = %d, want 0 while the last sibling is outstanding", n)
+			}
+
+			s.DB.Model(last).Update("status", tc.status)
+			s.autoEnqueueFindingDedup(last)
+			if n := dedupQueued(s, repoID, dedupID); n != 1 {
+				t.Errorf("queued = %d, want 1: the batch produced findings and has drained", n)
+			}
+		})
+	}
+}
+
+// A sibling paused on a rate limit will resume and file more findings, so the
+// cohort has not drained and the pass must not fire against a half-filled
+// working set.
+func TestAutoEnqueueFindingDedup_pausedSiblingIsOutstanding(t *testing.T) {
+	s, done, repoID, dedupID := dedupTestSetup(t)
+	defer done()
+
+	const group = "batch-1"
+	first := newGroupScan(t, s, repoID, group, `{"name":"auth"}`, db.ScanDone)
+	newFindingUnder(t, s, repoID, first.ID, db.FindingNew)
+	second := newGroupScan(t, s, repoID, group, `{"name":"ssrf"}`, db.ScanDone)
+	newFindingUnder(t, s, repoID, second.ID, db.FindingNew)
+	newGroupScan(t, s, repoID, group, `{"name":"deser"}`, db.ScanPaused)
+
+	s.autoEnqueueFindingDedup(first)
+	s.autoEnqueueFindingDedup(second)
+	if n := dedupQueued(s, repoID, dedupID); n != 0 {
+		t.Errorf("queued = %d, want 0 while a sibling is paused on a rate limit", n)
+	}
+}
+
+// A cohort that produced no new findings at all still gets no pass: the batch
+// gate widens which scan may trigger the work, not whether there is any.
+func TestAutoEnqueueFindingDedup_emptyBatchEnqueuesNothing(t *testing.T) {
+	s, done, repoID, dedupID := dedupTestSetup(t)
+	defer done()
+
+	const group = "batch-1"
+	prior := newScan(t, s, repoID, "security-deep-dive")
+	newFindingUnder(t, s, repoID, prior.ID, db.FindingNew)
+	newFindingUnder(t, s, repoID, prior.ID, db.FindingNew)
+
+	first := newGroupScan(t, s, repoID, group, `{"name":"auth"}`, db.ScanDone)
+	last := newGroupScan(t, s, repoID, group, `{"name":"ssrf"}`, db.ScanDone)
+	s.autoEnqueueFindingDedup(first)
+	s.autoEnqueueFindingDedup(last)
+
+	if n := dedupQueued(s, repoID, dedupID); n != 0 {
+		t.Errorf("queued = %d, want 0: the batch found nothing new", n)
 	}
 }
 

@@ -34,6 +34,55 @@ func TestMaybeFireScanFailed(t *testing.T) {
 	}
 }
 
+// Exactly one of the two hooks fires per scan. A batched scan that ends in a
+// state the finalized hook does not cover still has to reach a consumer
+// waiting for its cohort to drain, and one that does finalize must not be
+// announced twice.
+func TestMaybeFireScanFinalizedAndGroupSettled(t *testing.T) {
+	failOn := &FailOnThresholdError{}
+	cases := []struct {
+		name     string
+		scan     db.Scan
+		runErr   error
+		finalize bool
+		settle   bool
+	}{
+		{name: "done ungrouped", scan: db.Scan{Status: db.ScanDone}, finalize: true},
+		{name: "done batched", scan: db.Scan{Status: db.ScanDone, ScanGroup: "g"}, finalize: true},
+		{name: "fail_on batched", scan: db.Scan{Status: db.ScanFailed, ScanGroup: "g"}, runErr: failOn, finalize: true},
+		{name: "failed batched", scan: db.Scan{Status: db.ScanFailed, ScanGroup: "g"}, settle: true},
+		{name: "cancelled batched", scan: db.Scan{Status: db.ScanCancelled, ScanGroup: "g"}, settle: true},
+		{name: "failed ungrouped", scan: db.Scan{Status: db.ScanFailed}},
+		{name: "paused batched", scan: db.Scan{Status: db.ScanPaused, ScanGroup: "g"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var finalized, settled int
+			w := &Worker{
+				OnScanFinalized:    func(*db.Scan) { finalized++ },
+				OnScanGroupSettled: func(*db.Scan) { settled++ },
+			}
+			scan := tc.scan
+			if !w.maybeFireScanFinalized(&scan, tc.runErr) {
+				w.maybeFireScanGroupSettled(&scan)
+			}
+			if want := btoi(tc.finalize); finalized != want {
+				t.Errorf("finalized = %d, want %d", finalized, want)
+			}
+			if want := btoi(tc.settle); settled != want {
+				t.Errorf("settled = %d, want %d", settled, want)
+			}
+		})
+	}
+}
+
+func btoi(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
 func TestMigrateLegacyState_renamesStateDir(t *testing.T) {
 	dataDir := t.TempDir()
 	oldDir := filepath.Join(dataDir, legacyHarnessStateDirName, "scan-7")

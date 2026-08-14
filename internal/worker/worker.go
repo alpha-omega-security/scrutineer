@@ -98,6 +98,15 @@ type Worker struct {
 	// dedup run sees the full finding set, and the worker has no queue access
 	// of its own so this callback is the seam.
 	OnScanFinalized func(scan *db.Scan)
+	// OnScanGroupSettled, when non-nil, is called for a scan launched as part
+	// of a batch (non-empty ScanGroup) that reached a terminal state without
+	// OnScanFinalized firing — a timeout, a cancel or a runner error. It
+	// exists so a consumer that waits for a whole cohort to drain still hears
+	// about the siblings that produced nothing: the last scan home decides
+	// for the batch, and which one that is has nothing to do with whether it
+	// succeeded. Exactly one of OnScanFinalized and OnScanGroupSettled fires
+	// per scan, so a consumer wired to both is not called twice.
+	OnScanGroupSettled func(scan *db.Scan)
 	// OnScanFailed, when non-nil, is called after a terminal failed scan has
 	// been persisted. Unlike OnScanFinalized it covers runner errors and
 	// timeouts, which do not have a committed analysis result.
@@ -829,7 +838,9 @@ func (w *Worker) finalizeScan(ctx context.Context, scan *db.Scan, report string,
 	} else if saveErr := w.DB.Save(scan).Error; saveErr != nil {
 		return saveErr
 	}
-	w.maybeFireScanFinalized(scan, err)
+	if !w.maybeFireScanFinalized(scan, err) {
+		w.maybeFireScanGroupSettled(scan)
+	}
 	w.maybeFireScanFailed(scan)
 	if accErr, isAccountErr := errors.AsType[*AccountError](err); isAccountErr && scan.Status == db.ScanPaused {
 		w.pauseQueuedOnAccountError(scan.ID)
@@ -887,18 +898,37 @@ func (w *Worker) resolveAccountReset(accErr *AccountError, emit func(Event)) *ti
 }
 
 // maybeFireScanFinalized invokes the OnScanFinalized hook once a scan has
-// finished its analysis with findings committed. A fail_on threshold leaves
-// Status=ScanFailed but the findings are already persisted (see
-// finishErroredScan), so a deep-dive that trips fail_on must still trigger
-// downstream dedup — exactly the high-severity case we most want deduped.
-func (w *Worker) maybeFireScanFinalized(scan *db.Scan, runErr error) {
-	if w.OnScanFinalized == nil {
-		return
-	}
+// finished its analysis with findings committed, and reports whether the scan
+// reached that state. A fail_on threshold leaves Status=ScanFailed but the
+// findings are already persisted (see finishErroredScan), so a deep-dive that
+// trips fail_on must still trigger downstream dedup — exactly the
+// high-severity case we most want deduped.
+//
+// The return value is about the scan, not about the hook: it says the scan
+// finalized, whether or not a hook was installed to hear it. That keeps
+// maybeFireScanGroupSettled the exact complement of this call.
+func (w *Worker) maybeFireScanFinalized(scan *db.Scan, runErr error) bool {
 	_, failOnThreshold := errors.AsType[*FailOnThresholdError](runErr)
-	if scan.Status == db.ScanDone || failOnThreshold {
+	if scan.Status != db.ScanDone && !failOnThreshold {
+		return false
+	}
+	if w.OnScanFinalized != nil {
 		w.OnScanFinalized(scan)
 	}
+	return true
+}
+
+// maybeFireScanGroupSettled invokes the OnScanGroupSettled hook for a batched
+// scan that reached a terminal state the finalized hook does not cover: a
+// timeout, a cancel or a runner error. A consumer waiting for the cohort to
+// drain has to hear these. Without it, the batch whose last sibling fails
+// leaves every earlier sibling already suppressed on its account and nothing
+// left to re-trigger the work — the cohort silently gets no pass at all.
+func (w *Worker) maybeFireScanGroupSettled(scan *db.Scan) {
+	if w.OnScanGroupSettled == nil || scan.ScanGroup == "" || !scan.Status.Terminal() {
+		return
+	}
+	w.OnScanGroupSettled(scan)
 }
 
 func (w *Worker) maybeFireScanFailed(scan *db.Scan) {
