@@ -203,7 +203,7 @@ One row per vulnerability. Lifecycle columns are mutated through `db.WriteFindin
 | last_seen_scan_id | integer | Most recent scan that re-observed this fingerprint. |
 | last_seen_commit | text | Commit at re-observation. |
 | seen_count | integer | Total times re-observed across rescans. |
-| missed_count | integer | Consecutive same-skill rescans where the fingerprint did not reappear; reset on next re-observation. Non-zero is a hint the issue may be fixed upstream. |
+| missed_count | integer | Consecutive same-skill full-repo rescans where the fingerprint did not reappear; reset on next re-observation. Focus-area scans never increment it — they only look at their own slice, so a miss there is not evidence of anything. Non-zero is a hint the issue may be fixed upstream. |
 | last_missed_scan_id | integer | Scan where it most recently went missing. |
 | finding_id | text | ID within the originating report, e.g. `F1`. |
 | sinks | text | Comma-joined sink IDs. Links to the threat model tab. |

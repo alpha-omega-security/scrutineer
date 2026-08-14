@@ -140,7 +140,7 @@
           <a href="/findings/{{.ID}}" class="font-medium">{{.Title}}</a>
           {{if gt .MissedCount 0}}
             <span class="badge-outline text-xs"
-                  data-tooltip="Not observed in the last {{.MissedCount}} rescan(s) of this repository">
+                  data-tooltip="Not observed in the last {{.MissedCount}} full-repo rescan(s) of this repository">
               not seen {{.MissedCount}}x
             </span>
           {{end}}

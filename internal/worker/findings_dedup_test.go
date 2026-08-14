@@ -899,7 +899,9 @@ func TestParseFindingsOutput_focusAreaScanDoesNotMarkOtherAreasMissed(t *testing
 	}
 
 	var f1 db.Finding
-	gdb.Where("title = ?", "x").First(&f1)
+	if err := gdb.Where("title = ?", "x").First(&f1).Error; err != nil {
+		t.Fatal(err)
+	}
 	if f1.MissedCount != 0 {
 		t.Errorf("sibling focus-area scan marked F1 missed: missed=%d last_missed=%d",
 			f1.MissedCount, f1.LastMissedScanID)
@@ -914,7 +916,9 @@ func TestParseFindingsOutput_focusAreaScanDoesNotMarkOtherAreasMissed(t *testing
 		t.Fatal(err)
 	}
 
-	gdb.Where("title = ?", "x").First(&f1)
+	if err := gdb.Where("title = ?", "x").First(&f1).Error; err != nil {
+		t.Fatal(err)
+	}
 	if f1.MissedCount != 1 || f1.LastMissedScanID != s3.ID {
 		t.Errorf("full-repo rescan should mark F1 missed: missed=%d last_missed=%d",
 			f1.MissedCount, f1.LastMissedScanID)
@@ -947,8 +951,13 @@ func TestParseFindingsOutput_focusAreaScanDoesNotAutoReject(t *testing.T) {
 	}
 
 	var f1 db.Finding
-	gdb.Where("title = ?", "x").First(&f1)
+	if err := gdb.Where("title = ?", "x").First(&f1).Error; err != nil {
+		t.Fatal(err)
+	}
 	if f1.Status == db.FindingRejected {
 		t.Errorf("sibling focus-area scan auto-rejected a valid finding (missed=%d)", f1.MissedCount)
+	}
+	if f1.MissedCount != 0 {
+		t.Errorf("sibling focus-area scan marked F1 missed: missed=%d", f1.MissedCount)
 	}
 }

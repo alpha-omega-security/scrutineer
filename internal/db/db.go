@@ -761,10 +761,13 @@ type Finding struct {
 	LastSeenCommit string
 	SeenCount      int
 	// MissedCount/LastMissedScanID track the inverse: consecutive
-	// same-skill rescans of this repo+subpath where the fingerprint did
-	// NOT reappear. Reset to zero on the next re-observation. A non-zero
-	// MissedCount is a hint the finding may have been fixed upstream; it
-	// is not proof since model-driven audits are nondeterministic.
+	// same-skill full-repo rescans of this repo+subpath where the
+	// fingerprint did NOT reappear. Reset to zero on the next
+	// re-observation. Focus-area scans never increment it: they are only
+	// in scope for their own slice, so a miss there says nothing. A
+	// non-zero MissedCount is a hint the finding may have been fixed
+	// upstream; it is not proof since model-driven audits are
+	// nondeterministic.
 	MissedCount      int
 	LastMissedScanID uint
 
