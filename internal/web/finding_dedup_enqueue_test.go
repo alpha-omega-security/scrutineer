@@ -379,3 +379,95 @@ func TestAutoEnqueueFindingDedup_ungroupedScanEnqueuesImmediately(t *testing.T) 
 		t.Errorf("queued = %d, want 1 for an ungrouped scan", n)
 	}
 }
+
+// A queued sibling can be cancelled without ever reaching the worker:
+// scanCancel and scansCancelAll flip the row in place, and a federation
+// opt-out sweeps queued and paused rows in bulk. Each is a queued-to-terminal
+// transition the worker never observes, so the cohort hook has to be fired by
+// the path that made the transition. Without that, the earlier siblings have
+// all suppressed on the cancelled one's account and the batch gets no pass at
+// all — andrew's repro on #855: a completed sibling holding two findings,
+// followed by cancellation of its queued sibling, left the dedup queue empty.
+func TestCancelledQueuedSiblingSettlesBatch(t *testing.T) {
+	cases := []struct {
+		name   string
+		cancel func(s *Server, repoID uint, queued *db.Scan)
+	}{{
+		name: "per-row cancel",
+		cancel: func(s *Server, _ uint, queued *db.Scan) {
+			s.cancelScan(queued, "cancelled by user")
+		},
+	}, {
+		name: "federation opt-out sweep",
+		cancel: func(s *Server, repoID uint, _ *db.Scan) {
+			if err := s.stopScansForOptOut(repoID); err != nil {
+				t.Fatalf("stopScansForOptOut: %v", err)
+			}
+		},
+	}}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, done, repoID, dedupID := dedupTestSetup(t)
+			defer done()
+
+			// The cohort exists in full before any member settles, as it does
+			// in production: a done sibling carrying the batch's findings, and
+			// one still queued that the earlier one is waiting on.
+			finished := newGroupScan(t, s, repoID, `{"name":"auth"}`, db.ScanDone)
+			queued := newGroupScan(t, s, repoID, `{"name":"ssrf"}`, db.ScanQueued)
+			newFindingUnder(t, s, repoID, finished.ID, db.FindingNew)
+			newFindingUnder(t, s, repoID, finished.ID, db.FindingNew)
+
+			s.autoEnqueueFindingDedup(finished)
+			if n := dedupQueued(s, repoID, dedupID); n != 0 {
+				t.Fatalf("queued = %d, want 0 while the sibling is still queued", n)
+			}
+
+			tc.cancel(s, repoID, queued)
+
+			if n := dedupQueued(s, repoID, dedupID); n != 1 {
+				t.Errorf("queued = %d, want 1 after the last outstanding sibling was cancelled", n)
+			}
+		})
+	}
+}
+
+// A bulk cancel settles each cohort once rather than once per row: the handler
+// answers for the whole batch, so firing per sibling would be redundant work
+// on a path that can flip an entire repository's queue in one click.
+func TestCancelledQueuedSiblingsSettleGroupOnce(t *testing.T) {
+	s, done, repoID, dedupID := dedupTestSetup(t)
+	defer done()
+
+	finished := newGroupScan(t, s, repoID, `{"name":"auth"}`, db.ScanDone)
+	newGroupScan(t, s, repoID, `{"name":"ssrf"}`, db.ScanQueued)
+	newGroupScan(t, s, repoID, `{"name":"deser"}`, db.ScanQueued)
+	newFindingUnder(t, s, repoID, finished.ID, db.FindingNew)
+	newFindingUnder(t, s, repoID, finished.ID, db.FindingNew)
+
+	if err := s.stopScansForOptOut(repoID); err != nil {
+		t.Fatalf("stopScansForOptOut: %v", err)
+	}
+	if n := dedupQueued(s, repoID, dedupID); n != 1 {
+		t.Errorf("queued = %d, want 1 for the cohort", n)
+	}
+}
+
+// A scan the worker claimed between the caller's read and its write keeps
+// running, so the row is not flipped and its cohort has not drained. The
+// settle pass must re-read the status rather than assume the update landed.
+func TestSettleCancelledScanGroupsIgnoresUnflippedRows(t *testing.T) {
+	s, done, repoID, dedupID := dedupTestSetup(t)
+	defer done()
+
+	finished := newGroupScan(t, s, repoID, `{"name":"auth"}`, db.ScanDone)
+	running := newGroupScan(t, s, repoID, `{"name":"ssrf"}`, db.ScanRunning)
+	newFindingUnder(t, s, repoID, finished.ID, db.FindingNew)
+	newFindingUnder(t, s, repoID, finished.ID, db.FindingNew)
+
+	s.settleCancelledScanGroups(running.ID)
+	if n := dedupQueued(s, repoID, dedupID); n != 0 {
+		t.Errorf("queued = %d, want 0 while the sibling is still running", n)
+	}
+}

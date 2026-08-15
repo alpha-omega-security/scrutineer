@@ -742,7 +742,58 @@ func (s *Server) cancelScan(scan *db.Scan, reason string) (flippedQueued bool) {
 			errorKey:          reason,
 			"finished_at":     &now,
 		})
+	if res.RowsAffected > 0 {
+		s.settleCancelledScanGroups(scan.ID)
+	}
 	return res.RowsAffected > 0
+}
+
+// settleCancelledScanGroups fires the worker's cohort-settled hook for scans
+// this package flipped straight to a terminal state. A queued scan is not in
+// flight, so cancelling it never reaches Worker.finalizeScan and the hook that
+// tells a batch it has drained would never fire: a cohort whose last
+// outstanding sibling is cancelled this way leaves every earlier sibling
+// already suppressed on its account and nothing left to trigger the work.
+//
+// Only rows this call actually flipped are settled — the status is re-read
+// rather than assumed, so a scan the worker claimed between the caller's read
+// and its write is left to the worker. One member per scan_group is enough:
+// the handler answers for the whole cohort, not for the sibling that happened
+// to arrive last.
+func (s *Server) settleCancelledScanGroups(ids ...uint) {
+	if len(ids) == 0 || s.Worker == nil {
+		return
+	}
+	var settled []db.Scan
+	if err := s.DB.
+		Where("id IN ? AND status = ? AND scan_group <> ''", ids, db.ScanCancelled).
+		Find(&settled).Error; err != nil {
+		s.Log.Warn("settle cancelled scan groups", "err", err)
+		return
+	}
+	seen := make(map[string]bool, len(settled))
+	for i := range settled {
+		if seen[settled[i].ScanGroup] {
+			continue
+		}
+		seen[settled[i].ScanGroup] = true
+		s.Worker.SettleScanGroup(&settled[i])
+	}
+}
+
+// groupedScanIDs returns the ids of the scans matching a condition that were
+// launched as part of a batch. Ungrouped scans are dropped here rather than
+// downstream so a bulk cancel of ordinary scans costs no extra work.
+func (s *Server) groupedScanIDs(query string, args ...any) []uint {
+	var ids []uint
+	if err := s.DB.Model(&db.Scan{}).
+		Where(query, args...).
+		Where("scan_group <> ''").
+		Pluck("id", &ids).Error; err != nil {
+		s.Log.Warn("collect grouped scan ids", "err", err)
+		return nil
+	}
+	return ids
 }
 
 // scansCancelAll cancels every queued or running scan on a repository — the
@@ -755,6 +806,10 @@ func (s *Server) scansCancelAll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now()
+	// Read the batched queued rows before the bulk flip: afterwards their
+	// status no longer identifies them, and they are the ones whose cohort has
+	// to be told the sibling is gone.
+	grouped := s.groupedScanIDs("repository_id = ? AND status = ?", repoID, db.ScanQueued)
 	queued := s.DB.Model(&db.Scan{}).
 		Where("repository_id = ? AND status = ?", repoID, db.ScanQueued).
 		Updates(scanStatusUpdates(db.ScanCancelled, worker.CancelledByUser, &now, nil))
@@ -762,6 +817,7 @@ func (s *Server) scansCancelAll(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, queued.Error.Error(), http.StatusInternalServerError)
 		return
 	}
+	s.settleCancelledScanGroups(grouped...)
 	var scans []db.Scan
 	if err := s.DB.Where("repository_id = ? AND status IN ?",
 		repoID, []db.ScanStatus{db.ScanRunning}).Find(&scans).Error; err != nil {

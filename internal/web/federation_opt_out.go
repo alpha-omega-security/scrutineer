@@ -63,11 +63,14 @@ func (s *Server) repoFederationOptOut(w http.ResponseWriter, r *http.Request) {
 // re-render from the database rather than over per-scan SSE pushes.
 func (s *Server) stopScansForOptOut(repoID uint) error {
 	now := time.Now()
+	grouped := s.groupedScanIDs("repository_id = ? AND status IN ?",
+		repoID, []db.ScanStatus{db.ScanQueued, db.ScanPaused})
 	if err := s.DB.Model(&db.Scan{}).
 		Where("repository_id = ? AND status IN ?", repoID, []db.ScanStatus{db.ScanQueued, db.ScanPaused}).
 		Updates(scanStatusUpdates(db.ScanCancelled, worker.OptOutCancelReason, &now, nil)).Error; err != nil {
 		return err
 	}
+	s.settleCancelledScanGroups(grouped...)
 	var running []db.Scan
 	if err := s.DB.Select("id, repository_id").
 		Where("repository_id = ? AND status = ?", repoID, db.ScanRunning).

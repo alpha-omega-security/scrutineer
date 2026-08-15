@@ -931,6 +931,19 @@ func (w *Worker) maybeFireScanGroupSettled(scan *db.Scan) {
 	w.OnScanGroupSettled(scan)
 }
 
+// SettleScanGroup reports a scan that reached a terminal state without
+// passing through finalizeScan, so the cohort hook still fires. Cancellation
+// from the web layer flips a queued row in place (scanCancel, scansCancelAll,
+// federation opt-out) — the worker never sees it, so a batch whose last
+// outstanding sibling is cancelled that way would leave every earlier sibling
+// already suppressed and nothing left to trigger the pass.
+//
+// The hook's own preconditions still apply, so a caller may hand over any
+// terminal scan without checking whether it was grouped.
+func (w *Worker) SettleScanGroup(scan *db.Scan) {
+	w.maybeFireScanGroupSettled(scan)
+}
+
 func (w *Worker) maybeFireScanFailed(scan *db.Scan) {
 	if w.OnScanFailed != nil && scan.Status == db.ScanFailed {
 		w.OnScanFailed(scan)
