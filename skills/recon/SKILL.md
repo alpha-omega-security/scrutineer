@@ -8,7 +8,7 @@ metadata:
   scrutineer.version: 1
   scrutineer.output_file: report.json
   scrutineer.output_kind: freeform
-  scrutineer.max_turns: 12
+  scrutineer.max_turns: 30
   scrutineer.model: mid
 ---
 

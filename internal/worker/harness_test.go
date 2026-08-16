@@ -269,14 +269,78 @@ func TestInjectProfileGuide_noopWithoutProfile(t *testing.T) {
 // TestScrutineerValidationHint pins the exact API-endpoint text so a
 // wording change is deliberate.
 func TestScrutineerValidationHint(t *testing.T) {
-	got := scrutineerValidationHint("report.json")
+	got := scrutineerValidationHint("report.json", "")
 	if !strings.Contains(got, "{scrutineer.api_base}/scans/{scrutineer.scan_id}/validate-report") {
 		t.Errorf("hint missing endpoint: %q", got)
 	}
 	if !strings.Contains(got, "Don't install a schema validator") {
 		t.Errorf("hint missing no-install instruction: %q", got)
 	}
-	if scrutineerValidationHint("") != "" {
+	if scrutineerValidationHint("", "") != "" {
 		t.Error("empty output file should give empty hint")
+	}
+}
+
+// TestScrutineerValidationHintWithoutShell covers #834: recon declares
+// allowed-tools without Bash, so the POST route it was being handed is
+// unexecutable and it burned its turn budget failing at it. The hint must stay
+// NON-EMPTY -- an empty ValidationHint makes the harness module substitute its
+// own generic "Validate ./report.json against ./schema.json before finishing"
+// for any .json output, which is the same impossible instruction with the
+// don't-install guard dropped.
+func TestScrutineerValidationHintWithoutShell(t *testing.T) {
+	got := scrutineerValidationHint("report.json", "Read,Write,Grep,Glob")
+	if got == "" {
+		t.Fatal("empty hint lets the harness substitute its generic one")
+	}
+	if strings.Contains(got, "POST") || strings.Contains(got, "validate-report") {
+		t.Errorf("shell-less skill still told to POST: %q", got)
+	}
+	if !strings.Contains(got, "schema.json") {
+		t.Errorf("hint should still name the schema: %q", got)
+	}
+	if !strings.Contains(got, "don't install a schema validator") {
+		t.Errorf("hint missing no-install instruction: %q", got)
+	}
+}
+
+func TestToolsAllowShell(t *testing.T) {
+	cases := []struct {
+		tools string
+		want  bool
+	}{
+		{"", true},                          // unrestricted
+		{"   ", true},                       // unrestricted
+		{"Read,Write,Bash,Grep,Glob", true}, // every bundled skill but recon
+		{"Read,Write,Grep,Glob", false},     // recon
+		{" read , bash ", true},             // spacing and case
+		{"Read,Bash(git:*)", true},          // scoped entry
+		{"Read,BashOutput", false},          // prefix must not match
+	}
+	for _, tc := range cases {
+		if got := toolsAllowShell(tc.tools); got != tc.want {
+			t.Errorf("toolsAllowShell(%q) = %v, want %v", tc.tools, got, tc.want)
+		}
+	}
+}
+
+// TestSkillJobPromptHonoursToolSet is the wiring half: the two tests above
+// exercise the helper directly and so cannot catch a call site that never
+// passes AllowedTools through. This one goes SkillJob -> toJob -> the real
+// harness prompt, which is the path the agent actually receives.
+func TestSkillJobPromptHonoursToolSet(t *testing.T) {
+	recon := SkillJob{Name: "recon", OutputFile: "report.json", AllowedTools: "Read,Write,Grep,Glob"}
+	prompt := ClaudeHarness{}.Prompt(recon.toJob("", 0, ""))
+	if strings.Contains(prompt, "validate-report") {
+		t.Errorf("recon prompt still carries the POST route:\n%s", prompt)
+	}
+	if strings.Contains(prompt, "Validate ./report.json against ./schema.json before finishing") {
+		t.Errorf("recon prompt fell back to the harness generic hint:\n%s", prompt)
+	}
+
+	audit := SkillJob{Name: "audit-authz", OutputFile: "report.json", AllowedTools: "Read,Write,Bash,Grep,Glob"}
+	auditPrompt := ClaudeHarness{}.Prompt(audit.toJob("", 0, ""))
+	if !strings.Contains(auditPrompt, "validate-report") {
+		t.Errorf("shell-capable skill lost the API route:\n%s", auditPrompt)
 	}
 }

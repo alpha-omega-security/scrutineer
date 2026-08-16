@@ -963,7 +963,7 @@ func TestBundledReconPipelineMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse recon: %v", err)
 	}
-	if recon.OutputKind != "freeform" || recon.MaxTurns != 12 || recon.Model != "mid" {
+	if recon.OutputKind != "freeform" || recon.MaxTurns != 30 || recon.Model != "mid" {
 		t.Errorf("recon metadata = kind %q, turns %d, model %q", recon.OutputKind, recon.MaxTurns, recon.Model)
 	}
 	if !strings.Contains(recon.AllowedTools, "Write") || !strings.Contains(recon.AllowedTools, "Grep") {
