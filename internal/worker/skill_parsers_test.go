@@ -2410,3 +2410,98 @@ func writeFile(t *testing.T, path, body string) {
 		t.Fatal(err)
 	}
 }
+
+// A failed maintainer lookup must skip the record, not fall through into the
+// Save below. FirstOrCreate leaves the destination zero on a query error, so
+// saving it inserts a second maintainer row with an empty login and hands the
+// repository's association to that row instead of the real one.
+func TestParseMaintainers_lookupFailureSkipsRecord(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "m.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://github.com/rails/rails", Name: "rails"}
+	gdb.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID}
+	gdb.Create(&scan)
+
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	seed := `{"maintainers":[{"login":"alice","name":"Real Alice","role":"lead","status":"active"}]}`
+	if err := w.parseMaintainersOutput(&scan, seed, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Fail only the first lookup, the way a timeout or a dropped connection
+	// would: the writes that follow still succeed.
+	fired := false
+	const name = "test:fail_maintainer_lookup"
+	if err := gdb.Callback().Query().Before("gorm:query").Register(name, func(d *gorm.DB) {
+		if d.Statement.Table == "maintainers" && !fired {
+			fired = true
+			_ = d.AddError(errors.New("injected lookup failure"))
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	report := `{"maintainers":[{"login":"alice","name":"Alice","role":"lead","status":"active","evidence":"commits"}]}`
+	if err := w.parseMaintainersOutput(&scan, report, func(Event) {}); err != nil {
+		t.Fatalf("a per-maintainer failure must not fail the whole report: %v", err)
+	}
+	if err := gdb.Callback().Query().Remove(name); err != nil {
+		t.Fatal(err)
+	}
+
+	var blank int64
+	gdb.Model(&db.Maintainer{}).Where("login = ?", "").Count(&blank)
+	if blank != 0 {
+		t.Errorf("failed lookup inserted %d blank-login maintainer row(s), want 0", blank)
+	}
+	var linked []db.Maintainer
+	if err := gdb.Model(&repo).Association("Maintainers").Find(&linked); err != nil {
+		t.Fatal(err)
+	}
+	if len(linked) != 1 || linked[0].Login != "alice" {
+		t.Errorf("repository maintainers = %+v, want the real alice still linked", linked)
+	}
+}
+
+// The opposite case, and the reason the failed Save is NOT skipped: the row
+// exists and is correctly identified, only its field refresh was lost. Dropping
+// it from linked would unlink a real maintainer through the wholesale
+// Association.Replace, which loses more than a stale name does.
+func TestParseMaintainers_saveFailureKeepsMaintainerLinked(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "m.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://github.com/rails/rails", Name: "rails"}
+	gdb.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID}
+	gdb.Create(&scan)
+	gdb.Create(&db.Maintainer{Login: "alice", Name: "Real Alice"})
+
+	const name = "test:fail_maintainer_save"
+	if err := gdb.Callback().Update().Before("gorm:update").Register(name, func(d *gorm.DB) {
+		if d.Statement.Table == "maintainers" {
+			_ = d.AddError(errors.New("injected save failure"))
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	report := `{"maintainers":[{"login":"alice","name":"Updated Alice","role":"lead","status":"active"}]}`
+	if err := w.parseMaintainersOutput(&scan, report, func(Event) {}); err != nil {
+		t.Fatalf("a failed save must not fail the whole report: %v", err)
+	}
+	if err := gdb.Callback().Update().Remove(name); err != nil {
+		t.Fatal(err)
+	}
+
+	var linked []db.Maintainer
+	if err := gdb.Model(&repo).Association("Maintainers").Find(&linked); err != nil {
+		t.Fatal(err)
+	}
+	if len(linked) != 1 || linked[0].Login != "alice" {
+		t.Errorf("repository maintainers = %+v, want alice linked despite the failed save", linked)
+	}
+}
