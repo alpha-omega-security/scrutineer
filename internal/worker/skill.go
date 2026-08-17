@@ -933,20 +933,44 @@ func (w *Worker) markRetracted(scan *db.Scan, seen map[string]bool) int {
 	return retracted
 }
 
+// reportedMaintainer is one entry of a maintainers skill report.
+type reportedMaintainer struct {
+	Login    string `json:"login"`
+	Name     string `json:"name"`
+	Email    string `json:"email"`
+	Role     string `json:"role"`
+	Status   string `json:"status"`
+	Evidence string `json:"evidence"`
+}
+
+// applyTo copies the fields this report entry refreshes onto the stored row.
+// An absent or unrecognised field leaves the stored value alone, so a partial
+// report never blanks what an earlier scan established.
+func (rm reportedMaintainer) applyTo(m *db.Maintainer) {
+	if rm.Name != "" {
+		m.Name = rm.Name
+	}
+	if validEmail(rm.Email) {
+		m.Email = rm.Email
+	}
+	switch rm.Status {
+	case "active":
+		m.Status = db.MaintainerActive
+	case "inactive":
+		m.Status = db.MaintainerInactive
+	}
+	if rm.Evidence != "" {
+		m.Notes = rm.Role + ": " + rm.Evidence
+	}
+}
+
 // parseMaintainersOutput upserts Maintainer rows and links them to the
 // scanned repo. Mirrors the legacy doMaintainerAnalysis logic so the
 // maintainers skill and the old Go handler stay interchangeable.
 func (w *Worker) parseMaintainersOutput(scan *db.Scan, report string, emit func(Event)) error {
 	var result struct {
-		Maintainers []struct {
-			Login    string `json:"login"`
-			Name     string `json:"name"`
-			Email    string `json:"email"`
-			Role     string `json:"role"`
-			Status   string `json:"status"`
-			Evidence string `json:"evidence"`
-		} `json:"maintainers"`
-		DisclosureChannel string `json:"disclosure_channel"`
+		Maintainers       []reportedMaintainer `json:"maintainers"`
+		DisclosureChannel string               `json:"disclosure_channel"`
 		// Subprojects optionally carries a per-sub-package disclosure channel
 		// for a monorepo, so a report against one gem in rails/rails routes to
 		// that gem's maintainers rather than the repo-wide channel. Additive:
@@ -1007,21 +1031,7 @@ func (w *Worker) parseMaintainersOutput(scan *db.Scan, report string, emit func(
 			w.Log.Warn("upsert maintainer", "scan", scan.ID, "login", rm.Login, "err", err)
 			continue
 		}
-		if rm.Name != "" {
-			m.Name = rm.Name
-		}
-		if validEmail(rm.Email) {
-			m.Email = rm.Email
-		}
-		switch rm.Status {
-		case "active":
-			m.Status = db.MaintainerActive
-		case "inactive":
-			m.Status = db.MaintainerInactive
-		}
-		if rm.Evidence != "" {
-			m.Notes = rm.Role + ": " + rm.Evidence
-		}
+		rm.applyTo(&m)
 		if err := w.DB.Save(&m).Error; err != nil {
 			// Only the field refresh was lost; m still identifies a row that
 			// exists, so it stays in linked. Dropping it would remove a real
