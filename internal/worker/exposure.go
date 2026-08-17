@@ -137,10 +137,15 @@ func (w *Worker) doExposure(ctx context.Context, scan *db.Scan, emit func(Event)
 	}
 	scan.SkillName = skill.Name
 	scan.SkillVersion = skill.Version
-	w.DB.Model(scan).Updates(map[string]any{
+	// Non-fatal: the in-memory scan already carries both fields and finalizeScan
+	// saves the whole row at the end, so a failure here only leaves the columns
+	// stale for readers watching the table while the scan runs.
+	if err := w.DB.Model(scan).Updates(map[string]any{
 		"skill_name":    skill.Name,
 		"skill_version": skill.Version,
-	})
+	}).Error; err != nil {
+		w.Log.Warn("update scan skill metadata", "scan", scan.ID, "skill", skill.Name, "err", err)
+	}
 
 	workRoot := w.scanWorkRoot(scan)
 	if err := validateSkillPaths(skill.Name, skill.OutputFile); err != nil {
