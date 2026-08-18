@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/git-pkgs/clone"
+	"github.com/git-pkgs/clone/gogit"
 	"github.com/git-pkgs/magic"
 
 	"scrutineer/internal/db"
@@ -106,9 +107,9 @@ func (s *Server) repoBlob(w http.ResponseWriter, r *http.Request) {
 // Also used by forge_link.go for its own path checks.
 func sanitizeBlobPath(p string) (string, bool) { return clone.SanitizePath(p) }
 
-// gitShowBlob wraps clone.InspectBlob at the code browser's fixed byte cap.
+// gitShowBlob reads through go-git at the code browser's fixed byte cap.
 func gitShowBlob(ctx context.Context, repoDir, commit, blobPath string) (clone.BlobResult, error) {
-	return clone.InspectBlob(ctx, repoDir, commit, blobPath, maxBrowserBytes)
+	return gogit.InspectBlob(ctx, repoDir, commit, blobPath, maxBrowserBytes)
 }
 
 func renderableBlob(result magic.Result) bool {

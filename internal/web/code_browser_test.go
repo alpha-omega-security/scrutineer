@@ -279,6 +279,24 @@ func TestGitShowBlob_capsAtMaxBrowserBytes(t *testing.T) {
 	}
 }
 
+func TestGitShowBlob_readsWithoutGitOnPath(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	dir := t.TempDir()
+	commitBlob(t, dir, "fixture", []byte("content"))
+	commit := headCommit(t, dir)
+	t.Setenv("PATH", t.TempDir())
+
+	blob, err := gitShowBlob(context.Background(), dir, commit, "fixture")
+	if err != nil {
+		t.Fatalf("gitShowBlob: %v", err)
+	}
+	if string(blob.Content) != "content" || blob.Truncated {
+		t.Errorf("blob = (%q, truncated %v), want complete content", blob.Content, blob.Truncated)
+	}
+}
+
 func TestGitShowBlob_classifiesContent(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
