@@ -12,7 +12,7 @@ The runner image bundles the `copilot` binary (a glibc build, sha256-pinned
 in `Dockerfile.runner`), so there's nothing to install. Authenticate with a
 GitHub token that has Copilot access and start scrutineer:
 
-    export GH_TOKEN=github_pat_...
+    export GH_TOKEN=$(gh auth token)
     go run ./cmd/scrutineer -skills ./skills -backend copilot
 
 or in `scrutineer.yaml`:
@@ -42,13 +42,19 @@ backends.
 
 Any of `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, or `GITHUB_TOKEN` on the host is
 passed through to the container as a credential; Copilot CLI accepts the
-first one it finds. Copilot CLI does not accept classic personal access
-tokens (`ghp_...`): use a fine-grained PAT with the Copilot Requests
-permission, or export the OAuth token from an existing `gh` login with
-`export GH_TOKEN=$(gh auth token)`. Only the environment variables above
-reach the container -- the host's `~/.config/gh` is not mounted -- so the
-token must be exported explicitly. Whichever token you export is the one
-billed against your Copilot entitlement.
+first one it finds. There is no separate API-key concept here: whichever
+token you export is the one billed against your Copilot entitlement.
+
+Copilot CLI rejects **classic personal access tokens** (`ghp_...`) outright
+with "Classic Personal Access Tokens (ghp_) are not supported by Copilot",
+before any network call. Use one of:
+
+- the OAuth token `gh auth login` already stores -- `export GH_TOKEN=$(gh auth token)`
+- a fine-grained PAT (`github_pat_...`) on an account with Copilot access
+
+The token is validated against the GitHub API on startup, so an expired or
+insufficiently scoped token fails the scan with "Authentication token found
+but could not be validated" rather than hanging.
 
 The copilot backend requires the containerised runner. `--no-container` with
 `-backend copilot` is rejected at startup: the `copilot` binary is in the
@@ -83,6 +89,44 @@ discovers skills but does not auto-invoke them in headless `-p` mode.
 `-model-base-url` maps to `COPILOT_PROVIDER_BASE_URL`; there is no
 `-effort` equivalent, and it is ignored for this backend, same as codex and
 opencode.
+
+## The package cache and the noexec /tmp
+
+The `copilot` binary is a self-extracting bundle: on first run it unpacks a
+package containing a native addon (`runtime.node`) into a cache directory and
+`dlopen()`s it. Its default cache location is `$XDG_CACHE_HOME/copilot`, or
+`$HOME/.cache/copilot` when that is unset.
+
+That default does not work inside a scan container. The container runner sets
+`HOME=/tmp` and mounts `/tmp` as a `noexec` tmpfs
+(`--tmpfs /tmp:rw,noexec,nosuid,size=256m`, `internal/worker/container.go`),
+so the extracted addon lands on a filesystem the kernel refuses to map
+executable and the CLI dies before doing any work:
+
+    Failed to load package index: /tmp/.cache/copilot/pkg/linux-x64/1.0.80/index.js
+    Error: Native addon "runtime" not found for linux-x64. Tried:
+      .../prebuilds/linux-x64/runtime.node: failed to map segment from shared object
+
+`Dockerfile.runner` avoids this by unpacking the package at **build** time
+into `/usr/local/lib/copilot` and setting `COPILOT_PKG_CACHE_HOME` to that
+path. It is the first entry in copilot's package search order (ahead of
+`COPILOT_CACHE_HOME`, `$XDG_CACHE_HOME/copilot`, `COPILOT_HOME`, and
+`~/.copilot`), so the runtime lookup resolves on the exec-capable rootfs and
+never touches the tmpfs. The build asserts the package actually materialised
+(`test -d $COPILOT_PKG_CACHE_HOME/pkg`) so a future CLI release that changes
+this layout fails the image build rather than every scan.
+
+A read-only rootfs (`--hardened`) is compatible: the package is already
+unpacked, and the harness passes `--no-auto-update` (plus
+`COPILOT_AUTO_UPDATE=false`), so copilot never tries to fetch or write a
+newer one. Profile images inherit both the directory and the environment
+variable because they are built `FROM ${RUNNER_IMAGE}`.
+
+Keep this in mind when bumping `COPILOT_VERSION`: the version is part of the
+cache path, so the build-time unpack and the runtime lookup have to come from
+the same image layer -- which they do, but a hand-copied `copilot` binary
+dropped into a derived image without re-running the unpack step would fall
+back to the noexec default and fail.
 
 ## Egress
 

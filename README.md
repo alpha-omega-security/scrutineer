@@ -252,7 +252,7 @@ Or with a Claude Code OAuth token instead of an API key:
       -e CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-... \
       scrutineer
 
-For codex or opencode, pass `-e CODEX_API_KEY=...` / `-e OPENAI_API_KEY=...` (or `ANTHROPIC_API_KEY` for opencode with an Anthropic model) and add `-backend codex` / `-backend opencode` to the command. For copilot, pass `-e GH_TOKEN=...` and add `-backend copilot`.
+For codex or opencode, pass `-e CODEX_API_KEY=...` / `-e OPENAI_API_KEY=...` (or `ANTHROPIC_API_KEY` for opencode with an Anthropic model) and add `-backend codex` / `-backend opencode` to the command. For copilot, pass `-e GH_TOKEN=...` (a fine-grained PAT or `gh auth token` value; classic `ghp_` PATs are rejected by Copilot CLI) and add `-backend copilot`.
 
 Always bind to `127.0.0.1`: the UI has no authentication, so binding to `0.0.0.0` exposes your findings database to anyone on the network.
 
@@ -413,9 +413,9 @@ The egress allowlist covers `models.dev` plus the Anthropic and OpenAI API hosts
 
 ## Copilot backend
 
-Scrutineer can drive [GitHub Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli) instead of claude-code. The runner image bundles the `copilot` binary, so switching is the flag (or `backend: copilot` in `scrutineer.yaml`) plus a credential -- a GitHub token with Copilot access:
+Scrutineer can drive [GitHub Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli) instead of claude-code. The runner image bundles the `copilot` binary, so switching is the flag (or `backend: copilot` in `scrutineer.yaml`) plus a credential -- a GitHub token with Copilot access. Copilot CLI rejects classic (`ghp_`) PATs, so use a fine-grained PAT or the OAuth token `gh auth login` already stored:
 
-    export GH_TOKEN=github_pat_...
+    export GH_TOKEN=$(gh auth token)
     go run ./cmd/scrutineer -skills ./skills -backend copilot
 
 The container, egress proxy, language profiles and skill staging stay the same; only the agent CLI inside the container changes. The default egress allowlist is entirely GitHub infrastructure (`github.com`, `api.github.com`, `api.mcp.github.com`, `*.githubcopilot.com`), since Copilot CLI proxies every model through GitHub's own API; setting `-model-base-url` overrides that endpoint and adds the override host to the allowlist. The model pick list defaults to Copilot's own catalog (Claude and GPT models) with tier tags already set; override with `models:` in the config for a different set. Unlike codex and opencode, `-max-turns` is honoured by this backend. The copilot backend requires the containerised runner; `--no-container` with `-backend copilot` is rejected at startup. See [docs/copilot.md](docs/copilot.md) for the full credential and event-mapping details.

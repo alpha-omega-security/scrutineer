@@ -119,6 +119,18 @@ RUN set -eux; \
 # GitHub Copilot CLI (-backend copilot). The glibc tarball contains a single
 # `copilot` binary; it links libstdc++ dynamically (same as opencode's bun
 # runtime), which is why libstdc++6 is already in the apt install list above.
+#
+# The binary is a self-extracting bundle: on first run it unpacks a package
+# containing a native addon (runtime.node) into a cache dir and dlopen()s it.
+# The default cache dir is $XDG_CACHE_HOME/copilot or $HOME/.cache/copilot,
+# and the runner sets HOME=/tmp where /tmp is a noexec tmpfs, so that dlopen
+# fails with "failed to map segment from shared object". Unpacking here at
+# build time into an exec-capable rootfs path and pointing
+# COPILOT_PKG_CACHE_HOME (first entry in copilot's package search order) at it
+# keeps the runtime lookup off the noexec tmpfs. A read-only rootfs is fine:
+# the package is already unpacked, and the harness passes --no-auto-update so
+# copilot never tries to write a newer one.
+ENV COPILOT_PKG_CACHE_HOME=/usr/local/lib/copilot
 RUN set -eux; \
     case "${TARGETARCH}" in \
       amd64) cparch=x64;   sha=039933c9247686131c4406abb1d439bdbf68103edc1ff585bd70d5b0dc940f72 ;; \
@@ -130,7 +142,10 @@ RUN set -eux; \
     echo "${sha}  /tmp/copilot.tgz" | sha256sum -c -; \
     tar -xzf /tmp/copilot.tgz -C /usr/local/bin copilot; \
     rm /tmp/copilot.tgz; \
-    copilot --version
+    mkdir -p "${COPILOT_PKG_CACHE_HOME}"; \
+    copilot --version; \
+    test -d "${COPILOT_PKG_CACHE_HOME}/pkg"; \
+    chmod -R a+rX "${COPILOT_PKG_CACHE_HOME}"
 
 COPY --from=go-tools /out/* /usr/local/bin/
 COPY --from=zizmor-build /out/bin/zizmor /usr/local/bin/zizmor
