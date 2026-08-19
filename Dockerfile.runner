@@ -11,6 +11,7 @@ ARG CLAUDE_AMD64_LOCK=v2.1.223@sha256:0b516307190edfb776501e5c12a32d7d0c0b01d111
 ARG CLAUDE_ARM64_LOCK=v2.1.223@sha256:e6a7ce80f57317c9121d429fe2bcc7b5b82cd901863c3f33754589dcc99d0460
 ARG CODEX_VERSION=0.142.5
 ARG OPENCODE_VERSION=1.17.12
+ARG COPILOT_VERSION=1.0.80
 ARG SEMGREP_VERSION=1.167.0
 
 FROM golang:1.26.5-trixie@sha256:4ee9ffa999b4583ce281939cdff828763083610292f252279a0cee77473bd9a7 AS go-tools
@@ -38,6 +39,7 @@ ARG CLAUDE_AMD64_LOCK
 ARG CLAUDE_ARM64_LOCK
 ARG CODEX_VERSION
 ARG OPENCODE_VERSION
+ARG COPILOT_VERSION
 ARG SEMGREP_VERSION
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -113,6 +115,22 @@ RUN set -eux; \
     tar -xzf /tmp/opencode.tgz -C /usr/local/bin opencode; \
     rm /tmp/opencode.tgz; \
     opencode --version
+
+# GitHub Copilot CLI (-backend copilot). The glibc tarball contains a single
+# `copilot` binary; it links libstdc++ dynamically (same as opencode's bun
+# runtime), which is why libstdc++6 is already in the apt install list above.
+RUN set -eux; \
+    case "${TARGETARCH}" in \
+      amd64) cparch=x64;   sha=039933c9247686131c4406abb1d439bdbf68103edc1ff585bd70d5b0dc940f72 ;; \
+      arm64) cparch=arm64; sha=3ed85e711955e13be523bf492bc6c93b40b69925bcb7f817c9d08abf4839cf89 ;; \
+      *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac; \
+    curl -fsSL -o /tmp/copilot.tgz \
+      "https://github.com/github/copilot-cli/releases/download/v${COPILOT_VERSION}/copilot-linux-${cparch}.tar.gz"; \
+    echo "${sha}  /tmp/copilot.tgz" | sha256sum -c -; \
+    tar -xzf /tmp/copilot.tgz -C /usr/local/bin copilot; \
+    rm /tmp/copilot.tgz; \
+    copilot --version
 
 COPY --from=go-tools /out/* /usr/local/bin/
 COPY --from=zizmor-build /out/bin/zizmor /usr/local/bin/zizmor

@@ -1,6 +1,6 @@
 # scrutineer
 
-A local tool for scanning open source repositories for security vulnerabilities and managing the disclosure process. You add a repo by URL, scrutineer runs a pipeline of [agent skills](https://agentskills.io) against it inside a container, and presents the results in a web UI where you can triage findings, identify maintainers, and track disclosures. The agent CLI is pluggable: [claude-code](https://claude.com/code) by default, or [codex](https://github.com/openai/codex) or [opencode](https://opencode.ai) with `-backend`.
+A local tool for scanning open source repositories for security vulnerabilities and managing the disclosure process. You add a repo by URL, scrutineer runs a pipeline of [agent skills](https://agentskills.io) against it inside a container, and presents the results in a web UI where you can triage findings, identify maintainers, and track disclosures. The agent CLI is pluggable: [claude-code](https://claude.com/code) by default, or [codex](https://github.com/openai/codex), [opencode](https://opencode.ai), or [GitHub Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli) with `-backend`.
 
 ## Quick start
 
@@ -50,9 +50,9 @@ You can also build a checkout-independent executable and run it from another dir
 
 Precompiled binaries cover Linux and macOS on `amd64` and `arm64`. Run `scrutineer --version` (or `scrutineer version`) to see the application version, source commit, build timestamp, and exact runner-image digest paired with that release.
 
-The executable does not bundle Docker, Podman, or Apple's `container` CLI. Scrutineer remains a host application that asks the selected external runtime to launch an ephemeral runner container for each scan; it materialises the embedded profile Dockerfiles under the data directory when `docker/profiles` is not available from a source checkout. Content-addressed skill and profile bundles from older versions are retained because existing skill records may still reference their auxiliary files; incomplete extraction directories older than 24 hours are removed automatically. To run under codex or opencode instead, see the [Codex backend](#codex-backend) and [Opencode backend](#opencode-backend) sections; only the credential and `-backend` flag change.
+The executable does not bundle Docker, Podman, or Apple's `container` CLI. Scrutineer remains a host application that asks the selected external runtime to launch an ephemeral runner container for each scan; it materialises the embedded profile Dockerfiles under the data directory when `docker/profiles` is not available from a source checkout. Content-addressed skill and profile bundles from older versions are retained because existing skill records may still reference their auxiliary files; incomplete extraction directories older than 24 hours are removed automatically. To run under codex, opencode, or copilot instead, see the [Codex backend](#codex-backend), [Opencode backend](#opencode-backend), and [Copilot backend](#copilot-backend) sections; only the credential and `-backend` flag change.
 
-Large batches pause automatically at an account-level rate limit or quota wall. When claude-code is running on a subscription token it emits a `rate_limit_event` carrying the reset time, and scrutineer re-queues the paused batch after that reset; API-key accounts and the codex/opencode backends report the error without a reset time, so those batches stay paused for manual resume from the `/usage` page, which also shows the most recent per-window status.
+Large batches pause automatically at an account-level rate limit or quota wall. When claude-code is running on a subscription token it emits a `rate_limit_event` carrying the reset time, and scrutineer re-queues the paused batch after that reset; API-key accounts and the codex/opencode/copilot backends report the error without a reset time, so those batches stay paused for manual resume from the `/usage` page, which also shows the most recent per-window status.
 
 Scrutineer uses Docker by default: each scan runs in an ephemeral container with a read-only source mount and an egress allowlist proxy. The paired runner image (`ghcr.io/alpha-omega-security/scrutineer-runner`) is pulled on first use, so the first scan is slower while it downloads. A host without the selected runtime fails startup rather than silently weakening isolation; `--no-container` is the explicit, Claude-only escape hatch for running directly on a trusted host.
 
@@ -252,7 +252,7 @@ Or with a Claude Code OAuth token instead of an API key:
       -e CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-... \
       scrutineer
 
-For codex or opencode, pass `-e CODEX_API_KEY=...` / `-e OPENAI_API_KEY=...` (or `ANTHROPIC_API_KEY` for opencode with an Anthropic model) and add `-backend codex` / `-backend opencode` to the command.
+For codex or opencode, pass `-e CODEX_API_KEY=...` / `-e OPENAI_API_KEY=...` (or `ANTHROPIC_API_KEY` for opencode with an Anthropic model) and add `-backend codex` / `-backend opencode` to the command. For copilot, pass `-e GH_TOKEN=...` and add `-backend copilot`.
 
 Always bind to `127.0.0.1`: the UI has no authentication, so binding to `0.0.0.0` exposes your findings database to anyone on the network.
 
@@ -338,7 +338,7 @@ The `docker build` commands shown for the runner image and profiles can be run a
 | `-effort` | `high` | Claude effort level (claude backend only) |
 | `-skills` | - | Additional local directory to load SKILL.md files from; same-named skills override the bundled copies (repeatable) |
 | `-skills-repo` | - | `owner/repo[@ref]` or credential-free git HTTPS URL `https://host/path[@ref]` to clone skills from on startup; `@ref` pins a branch, tag or commit and the resolved SHA is recorded on every scan; private repositories use config-file-only `skills_repo_token` |
-| `-backend` | `claude` | Agent CLI the container runner execs: `claude`, `codex`, or `opencode`. Non-claude backends require the containerised runner |
+| `-backend` | `claude` | Agent CLI the container runner execs: `claude`, `codex`, `opencode`, or `copilot`. Non-claude backends require the containerised runner |
 | `--runtime` | `docker` | Container runtime: `docker`, `podman` (rootless podman supported), or `apple` (Apple, experimental) |
 | `--selinux` | `auto` | Bind-mount SELinux relabeling: `auto` (relabel when SELinux is detected), `on`, or `off` |
 | `--no-container` | false | Disable the containerised runner; run claude directly on the host (no isolation). Deprecated alias: `--no-docker` |
@@ -348,7 +348,7 @@ The `docker build` commands shown for the runner image and profiles can be run a
 | `-concurrency` | `4` | Number of scans to run in parallel. Chat turns run from a separate pool sized at half this value, so a busy host can reach 1.5x this many agent containers |
 | `-clone` | `shallow` | Clone depth: `shallow` (`--depth 1`) or `full` |
 | `-scan-timeout` | `1h` | Wall-clock limit per scan; exceeded scans fail |
-| `-max-turns` | `0` | Per-scan turn cap (0 = unlimited); claude backend only, codex and opencode have no turn cap |
+| `-max-turns` | `0` | Per-scan turn cap (0 = unlimited); claude and copilot backends only, codex and opencode have no turn cap |
 | `-schema-strict` | `false` | Fail a scan when its `report.json` does not validate against the skill's `schema.json` (default: warn in the scan log and parse anyway) |
 | `-model-base-url` | - | Custom model API base URL for the active backend (env fallback: `ANTHROPIC_BASE_URL` for claude). `-anthropic-base-url` is a deprecated alias. |
 | `-ecosystems-enrichment` | `true` | Enrich repositories from ecosyste.ms: the per-repository cache, the warm on repo add, and the PURL-to-repository resolution behind SBOM and dependency import. `=false` stops every lookup scrutineer's own process makes, leaves `egress_allow` untouched (the bundled skills still fetch ecosyste.ms themselves), and leaves the Dependents tab and dependent-exposure analysis with no data |
@@ -411,6 +411,15 @@ See [docs/codex.md](docs/codex.md) for what differs from claude (argv, skill sta
 
 The egress allowlist covers `models.dev` plus the Anthropic and OpenAI API hosts; other providers go in `egress_allow:`. Like codex, the opencode backend requires the containerised runner. See [docs/opencode.md](docs/opencode.md) for provider-credential handling and what differs from claude.
 
+## Copilot backend
+
+Scrutineer can drive [GitHub Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli) instead of claude-code. The runner image bundles the `copilot` binary, so switching is the flag (or `backend: copilot` in `scrutineer.yaml`) plus a credential -- a GitHub token with Copilot access:
+
+    export GH_TOKEN=ghp_...
+    go run ./cmd/scrutineer -skills ./skills -backend copilot
+
+The container, egress proxy, language profiles and skill staging stay the same; only the agent CLI inside the container changes. The egress allowlist is entirely GitHub infrastructure (`github.com`, `api.github.com`, `api.mcp.github.com`, `*.githubcopilot.com`) -- no third-party model provider host is contacted directly, since Copilot CLI proxies every model through GitHub's own API. The model pick list defaults to Copilot's own catalog (Claude and GPT models) with tier tags already set; override with `models:` in the config for a different set. Unlike codex and opencode, `-max-turns` is honoured by this backend. The copilot backend requires the containerised runner; `--no-container` with `-backend copilot` is rejected at startup. See [docs/copilot.md](docs/copilot.md) for the full credential and event-mapping details.
+
 ## Sandboxed Claude Code configs
 
 In `--no-container` mode the `claude` subprocess inherits your `~/.claude/settings.json`, so [sandbox settings](https://code.claude.com/docs/en/sandboxing) that restrict network or filesystem access there will fail skills that need them. Point `claude` at a separate config directory just for scrutineer runs:
@@ -435,6 +444,7 @@ See [SECURITY.md](SECURITY.md) for the reporting policy and [threatmodel.md](thr
 - [docs/interchange.md](docs/interchange.md) -- federation interchange format: in-toto record envelope, salted finding hashes, the claim-check endpoint, the public and members-only feeds with their export/import jobs (threat surface: T14 in [threatmodel.md](threatmodel.md))
 - [docs/codex.md](docs/codex.md) -- the codex backend: what differs from claude, sandbox interaction, adding another harness
 - [docs/opencode.md](docs/opencode.md) -- the opencode backend: provider-agnostic credentials and egress
+- [docs/copilot.md](docs/copilot.md) -- the copilot backend: GitHub token credential handling and egress
 - [docs/podman.md](docs/podman.md) -- security model and known gaps for the podman / rootless runtime (sandbox isolation, hardened-mode verification)
 - [docs/egress-sidecar.md](docs/egress-sidecar.md) -- operator validation checklist for the rootless `--hardened` egress proxy sidecar
 
