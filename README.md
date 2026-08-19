@@ -404,12 +404,12 @@ See [docs/codex.md](docs/codex.md) for what differs from claude (argv, skill sta
 
 ## Opencode backend
 
-[opencode](https://opencode.ai) is provider-agnostic, so `-backend opencode` runs whichever model you configure (Anthropic, OpenAI, or anything opencode supports). The runner image bundles the `opencode` binary; set the credential for your provider and the model id in `provider/model` form:
+[OpenCode](https://opencode.ai) can run models from several providers. The stock runner includes OpenCode and its common built-in adapters; select it with `-backend opencode` and use a model id in `provider/model` form:
 
     backend: opencode
     default_model: anthropic/claude-sonnet-5
 
-The egress allowlist covers `models.dev` plus the Anthropic and OpenAI API hosts; other providers go in `egress_allow:`. Like codex, the opencode backend requires the containerised runner. See [docs/opencode.md](docs/opencode.md) for provider-credential handling and what differs from claude.
+Anthropic and OpenAI keep their existing setup. Other providers can use `opencode.providers` to select provider-only credentials, hardened-mode egress hosts, stored OAuth state, OpenCode config, and a derived runner image. Scrutineer checks that the selected model exists in that image before starting the skill, then records the provider image and digest on the scan. Like codex, the OpenCode backend requires the container runner. See [docs/opencode.md](docs/opencode.md) for configuration and image requirements.
 
 ## Copilot backend
 
@@ -443,7 +443,7 @@ See [SECURITY.md](SECURITY.md) for the reporting policy and [threatmodel.md](thr
 - [docs/encrypted-sharing.md](docs/encrypted-sharing.md) -- encrypted findings sharing between contributors (age + SSH keys, team keyring management)
 - [docs/interchange.md](docs/interchange.md) -- federation interchange format: in-toto record envelope, salted finding hashes, the claim-check endpoint, the public and members-only feeds with their export/import jobs (threat surface: T14 in [threatmodel.md](threatmodel.md))
 - [docs/codex.md](docs/codex.md) -- the codex backend: what differs from claude, sandbox interaction, adding another harness
-- [docs/opencode.md](docs/opencode.md) -- the opencode backend: provider-agnostic credentials and egress
+- [docs/opencode.md](docs/opencode.md) -- OpenCode provider credentials, images, auth state, readiness, and egress
 - [docs/copilot.md](docs/copilot.md) -- the copilot backend: GitHub token credential handling and egress
 - [docs/podman.md](docs/podman.md) -- security model and known gaps for the podman / rootless runtime (sandbox isolation, hardened-mode verification)
 - [docs/egress-sidecar.md](docs/egress-sidecar.md) -- operator validation checklist for the rootless `--hardened` egress proxy sidecar

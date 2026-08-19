@@ -979,7 +979,17 @@ func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRu
 		return nil, "", err
 	}
 	var egress worker.EgressSidecarConfig
-	allow := buildEgressAllow(h.EgressHosts(), f.hardened, cfg, f.modelBaseURL, log)
+	var configuredProviders map[string]config.OpencodeProvider
+	if cfg != nil {
+		configuredProviders = cfg.Opencode.Providers
+	}
+	opencodeProviders, err := loadOpencodeProviders(h, configuredProviders, cfgPath(f.configPath))
+	if err != nil {
+		return nil, "", err
+	}
+	harnessHosts := append([]string{}, h.EgressHosts()...)
+	harnessHosts = append(harnessHosts, worker.OpencodeProviderEgress(opencodeProviders)...)
+	allow := buildEgressAllow(harnessHosts, f.hardened, cfg, f.modelBaseURL, log)
 	if apiHost != worker.HostGatewayAlias {
 		allow = append(allow, apiHost)
 	}
@@ -1035,7 +1045,64 @@ func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRu
 		Runtime:             rt,
 		SELinuxRelabel:      relabel,
 		Egress:              egress,
+		OpencodeProviders:   opencodeProviders,
+		OpencodeReadiness:   worker.NewOpencodeReadinessCache(),
 	}, apiBase, nil
+}
+
+func loadOpencodeProviders(h worker.Harness, providers map[string]config.OpencodeProvider, configPath string) (map[string]worker.OpencodeProviderConfig, error) {
+	if worker.HarnessName(h) != "opencode" || len(providers) == 0 {
+		return nil, nil
+	}
+	absConfig, err := filepath.Abs(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("resolve OpenCode config path: %w", err)
+	}
+	baseDir := filepath.Dir(absConfig)
+	result := make(map[string]worker.OpencodeProviderConfig, len(providers))
+	for id, provider := range providers {
+		configFile, err := resolveOpencodeHostPath(baseDir, provider.ConfigFile)
+		if err != nil {
+			return nil, fmt.Errorf("opencode.providers.%s.config_file: %w", id, err)
+		}
+		stateDir, err := resolveOpencodeHostPath(baseDir, provider.StateDir)
+		if err != nil {
+			return nil, fmt.Errorf("opencode.providers.%s.state_dir: %w", id, err)
+		}
+		var configContent string
+		if configFile != "" {
+			content, err := os.ReadFile(configFile)
+			if err != nil {
+				return nil, fmt.Errorf("read opencode.providers.%s.config_file: %w", id, err)
+			}
+			configContent = string(content)
+		}
+		result[id] = worker.OpencodeProviderConfig{
+			RunnerImage:      provider.RunnerImage,
+			ConfigContent:    configContent,
+			APIKeyEnv:        provider.APIKeyEnv,
+			AuthMetadata:     provider.AuthMetadata,
+			PassEnv:          append([]string(nil), provider.PassEnv...),
+			RequiredBinaries: append([]string(nil), provider.RequiredBinaries...),
+			EgressHosts:      append([]string(nil), provider.EgressAllow...),
+			StateDir:         stateDir,
+		}
+	}
+	return result, nil
+}
+
+func resolveOpencodeHostPath(baseDir, path string) (string, error) {
+	if path == "" {
+		return "", nil
+	}
+	expanded, err := expandHome(path)
+	if err != nil {
+		return "", err
+	}
+	if !filepath.IsAbs(expanded) {
+		expanded = filepath.Join(baseDir, expanded)
+	}
+	return filepath.Clean(expanded), nil
 }
 
 // resolveScanNetworking prepares per-scan networking before the egress proxy

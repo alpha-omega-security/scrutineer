@@ -341,6 +341,57 @@ func TestSetupRunner_nonClaudeBackendRejectsNoContainer(t *testing.T) {
 	}
 }
 
+func TestLoadOpencodeProvidersResolvesConfigRelativePaths(t *testing.T) {
+	dir := t.TempDir()
+	providerDir := filepath.Join(dir, "providers")
+	if err := os.MkdirAll(providerDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(providerDir, "kiro.json"), []byte(`{"plugin":["kiro"]}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h, err := worker.HarnessByName("opencode")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := loadOpencodeProviders(h, map[string]config.OpencodeProvider{
+		"kiro": {
+			RunnerImage:      "registry.example/kiro:1",
+			ConfigFile:       "providers/kiro.json",
+			PassEnv:          []string{"KIRO_API_KEY"},
+			RequiredBinaries: []string{"kiro-cli"},
+			EgressAllow:      []string{"q.us-east-1.amazonaws.com"},
+			StateDir:         "state/kiro",
+		},
+	}, filepath.Join(dir, "scrutineer.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := got["kiro"]
+	if provider.ConfigContent != `{"plugin":["kiro"]}` || provider.StateDir != filepath.Join(dir, "state", "kiro") {
+		t.Errorf("loaded provider = %+v", provider)
+	}
+	if !slices.Equal(provider.EgressHosts, []string{"q.us-east-1.amazonaws.com"}) {
+		t.Errorf("egress hosts = %v", provider.EgressHosts)
+	}
+	if !slices.Equal(provider.RequiredBinaries, []string{"kiro-cli"}) {
+		t.Errorf("required binaries = %v", provider.RequiredBinaries)
+	}
+}
+
+func TestLoadOpencodeProvidersIgnoredForOtherHarness(t *testing.T) {
+	h, err := worker.HarnessByName("claude")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := loadOpencodeProviders(h, map[string]config.OpencodeProvider{
+		"kiro": {ConfigFile: "does-not-exist.json"},
+	}, filepath.Join(t.TempDir(), "scrutineer.yaml"))
+	if err != nil || got != nil {
+		t.Fatalf("non-OpenCode provider load = %v, %v", got, err)
+	}
+}
+
 func TestRegisterFlags_noContainerAliasParsesFromArgv(t *testing.T) {
 	// Both the canonical --no-container and the deprecated --no-docker alias
 	// must parse off the command line and set the same noContainer field, so

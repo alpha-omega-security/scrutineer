@@ -168,6 +168,12 @@ type SkillResult struct {
 	// belongs to a different agent CLI and starts fresh instead of passing
 	// e.g. a codex thread id to claude --resume.
 	Backend string
+	// Provider is the provider prefix selected from an OpenCode model id.
+	// RunnerImage and RunnerImageDigest identify the provider base image before
+	// any repository language profile is layered on it.
+	Provider          string
+	RunnerImage       string
+	RunnerImageDigest string
 	// SessionID is the harness session this run belonged to, as seen in
 	// the stream. The worker already persists it live via the emit callback;
 	// this is a backstop so the final save reflects the latest value (e.g.

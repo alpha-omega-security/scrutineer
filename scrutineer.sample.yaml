@@ -112,6 +112,39 @@
 # Container image used for per-scan containers.
 # runner_image: ghcr.io/alpha-omega-security/scrutineer-runner:latest
 
+# Provider-scoped OpenCode settings. The key matches the provider prefix in a
+# model id. api_key_env is read from Scrutineer's host environment and converted
+# to provider-only OpenCode auth. pass_env names native provider variables
+# instead. A derived runner_image can add a pinned adapter or supporting binary;
+# it must be based on the Scrutineer runner so language profiles still compose.
+# config_file and state_dir are host paths; relative paths start beside this
+# config file. Every configured provider must declare its API/auth hostnames.
+# These provider hosts remain allowed under hardened mode.
+# opencode:
+#   providers:
+#     groq:
+#       api_key_env: GROQ_API_KEY
+#       egress_allow:
+#         - api.groq.com
+#     kiro:
+#       runner_image: registry.example/scrutineer-opencode-kiro@sha256:...
+#       config_file: ./opencode/kiro.json
+#       pass_env:
+#         - KIRO_API_KEY
+#       required_binaries:
+#         - kiro-cli
+#       egress_allow:
+#         - q.us-east-1.amazonaws.com
+#         - runtime.us-east-1.kiro.dev
+#         - management.us-east-1.kiro.dev
+#         - prod.us-east-1.auth.desktop.kiro.dev
+#     github-copilot:
+#       state_dir: ~/.local/share/scrutineer/opencode/github-copilot
+#       egress_allow:
+#         - github.com
+#         - api.github.com
+#         - "*.githubcopilot.com"
+
 # Directory containing per-ecosystem runner profiles. Each profile is a
 # Dockerfile under <dir>/<name>/Dockerfile; the worker auto-detects the
 # right profile from the cloned source via `brief` and builds the image

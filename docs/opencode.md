@@ -1,104 +1,187 @@
-# Opencode backend
+# OpenCode backend
 
-Scrutineer can drive [opencode](https://opencode.ai) instead of claude-code,
-selected with `-backend opencode` (or `backend: opencode` in
-`scrutineer.yaml`). Unlike claude and codex, opencode is provider-agnostic:
-the model you configure determines which API it talks to, so credential and
-egress handling are looser than for the single-provider backends.
+Scrutineer can run [OpenCode](https://opencode.ai) instead of claude-code. Set
+`-backend opencode`, or use `backend: opencode` in `scrutineer.yaml`. Model ids
+use OpenCode's `provider/model` form, and this backend requires the container
+runner. Scrutineer rejects `--no-container` when it is selected.
 
-## Setup
-
-The runner image bundles the `opencode` binary, so there's nothing to install.
-opencode reads provider credentials from its auth config or from the
-provider's own env var; the harness passes through `ANTHROPIC_API_KEY`,
-`OPENAI_API_KEY`, `OPENCODE_CONFIG_CONTENT` and `OPENCODE_AUTH_CONTENT` from
-the host so the common cases work without extra setup:
+The stock runner contains OpenCode and its common built-in providers. Existing
+Anthropic and OpenAI installations can keep using host credentials without a
+provider block:
 
     export ANTHROPIC_API_KEY=sk-ant-...
     go run ./cmd/scrutineer -skills ./skills -backend opencode
 
-or in `scrutineer.yaml`:
-
     backend: opencode
     default_model: anthropic/claude-sonnet-5
     models:
-      - name: Sonnet (via opencode)
-        id:   anthropic/claude-sonnet-5
-      - name: GPT-5 (via opencode)
-        id:   openai/gpt-5
+      - name: Sonnet via OpenCode
+        id: anthropic/claude-sonnet-5
 
-Model ids are in opencode's `provider/model` form. For providers other than
-Anthropic and OpenAI, set `OPENCODE_CONFIG_CONTENT` (an inline JSON config
-opencode reads at startup) with the provider block, and add the provider's
-API host to `egress_allow:` so the proxy lets it through.
+## Provider configuration
 
-The opencode backend requires the containerised runner. `--no-container` with
-`-backend opencode` is rejected at startup.
+Add an `opencode.providers` entry when a provider needs different credentials,
+egress, config, stored auth, or a derived runner image. The map key must match
+the provider prefix in the model id.
 
-## How the harness maps
+    backend: opencode
+    default_model: groq/llama-3.3-70b-versatile
+    models:
+      - name: Llama 3.3 70B via Groq
+        id: groq/llama-3.3-70b-versatile
 
-| Aspect | claude | opencode |
-| --- | --- | --- |
-| Binary | `claude` | `opencode` |
-| Argv | `claude -p --output-format stream-json ...` | `opencode run --format json --auto ...` |
-| Skill staging | `./.claude/skills/{name}/SKILL.md` | `./.opencode/skill/{name}/SKILL.md` |
-| Project memory | `CLAUDE.md` | `AGENTS.md` |
-| Egress hosts | `*.anthropic.com` | `models.dev`, `api.openai.com`, `*.anthropic.com` |
-| Credential env | `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, `OPENCODE_CONFIG_CONTENT`, `OPENCODE_AUTH_CONTENT` |
-| State dir env | `CLAUDE_CONFIG_DIR` | `OPENCODE_CONFIG_DIR`, `OPENCODE_DB` |
-| Account-error phrases | claude usage/plan/access messages | union of common provider rate-limit / quota / invalid-key messages |
+    opencode:
+      providers:
+        groq:
+          api_key_env: GROQ_API_KEY
+          egress_allow:
+            - api.groq.com
 
-opencode globs `./.opencode/{skill,skills}/**/SKILL.md` with symlinks enabled,
-so `stageSkill` writes the same files it always has into
-`./.opencode/skill/{name}/`. The activation prompt points at that path
-explicitly (opencode discovers but does not auto-invoke skills in headless
-`run` mode). `PROFILE.md` lands at `AGENTS.md`, which opencode walks from cwd
-up to the project root.
+`api_key_env` names a variable in Scrutineer's host environment. For each
+scan, Scrutineer generates `OPENCODE_AUTH_CONTENT` containing only the selected
+provider and gives the container the variable name rather than putting its
+value in the runtime argv. A configured provider does not inherit
+`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or a host-wide OpenCode auth document.
 
-`--auto` suppresses opencode's interactive permission prompts; the container
-is the sandbox. A chat turn is therefore held to its prompt
-instruction and that container boundary, not to a permission mode: only claude
-takes the `--allowedTools Read,Grep,Glob` list scrutineer asks for. `OPENCODE_DISABLE_MODELS_FETCH=1` stops opencode fetching
-`models.dev` at
-startup (the host is still on the egress allowlist for runs that do need it).
+Use `auth_metadata` for provider auth fields that accompany an API key:
 
-The session store (`OPENCODE_DB`, a SQLite file) and config
-(`OPENCODE_CONFIG_DIR`) are bind-mounted the same way claude's session store
-is, so a retried scan continues with `--session <id>`.
+    opencode:
+      providers:
+        example:
+          api_key_env: EXAMPLE_API_KEY
+          auth_metadata:
+            accountId: team-1
+          egress_allow:
+            - api.example.com
 
-## Egress
+Some providers use several native environment variables instead of an
+OpenCode API-key record. Name each one under `pass_env`; Scrutineer refuses the
+scan if any named value is absent. Variables such as `GITHUB_TOKEN` are never
+forwarded unless they appear here, which avoids confusing a repository token
+with a Copilot credential.
 
-Because opencode can talk to any provider, the harness's `EgressHosts()`
-returns the two common ones plus opencode's own model registry. That covers
-Anthropic and OpenAI out of the box; anything else (Bedrock, Azure, Ollama on
-another host, Cloudflare Workers AI) needs an `egress_allow:` entry. Under
-`--hardened` only the harness's hosts plus the host skill API are permitted,
-so a third-party provider under hardened mode is a deliberate widening.
+    opencode:
+      providers:
+        amazon-bedrock:
+          pass_env:
+            - AWS_ACCESS_KEY_ID
+            - AWS_SECRET_ACCESS_KEY
+            - AWS_REGION
+          egress_allow:
+            - bedrock-runtime.us-east-1.amazonaws.com
 
-The threat-model T1 residual applies the same: whichever provider credential
-is set passes into the container as an env var and is readable by
-in-container code.
+Credential files are not mounted automatically. Bedrock, Vertex, and similar
+providers need narrowly scoped mounts before file-based host credential chains
+can be supported. Prefer short-lived environment credentials for now.
 
-## Known gaps
+Every configured provider needs at least one `egress_allow` hostname. These
+hosts are added to the resolved OpenCode allowlist, including under
+`--hardened`. The top-level `egress_allow` remains ignored in hardened mode.
+Use hostnames without a scheme, path, or port. Region- and resource-specific
+providers should list the endpoints for the configured region or resource.
 
-opencode has no per-turn cap in `run` mode, so `-max-turns` is ignored. The
-`-scan-timeout` wall-clock limit still applies.
+Local providers such as Ollama are not covered by this option yet. The egress
+proxy permits only Scrutineer's API port on the container host, so allowing a
+hostname does not expose Ollama's port 11434.
 
-Claude's `-effort` setting has no opencode equivalent and is ignored.
+## Provider images and config
 
-`-model-base-url` is accepted for interface symmetry but ignored: opencode
-has no single base-URL override; per-provider endpoints go in
-`OPENCODE_CONFIG_CONTENT`.
+`runner_image` selects a provider base image before Scrutineer resolves the
+repository language profile:
 
-The stream parser (`OpencodeHarness.ParseStream`) maps `step_start`
-(session id), `tool`, `text`/`reasoning`, and `error` events from
-`opencode run --format json` onto the scan log; `step_finish` carries
-per-step cost and token counts and is emitted as a result event so the
-scan row records usage. Unknown event types pass through as raw text.
+    Scrutineer runner -> OpenCode provider image -> language profile
+
+Build provider images from the Scrutineer runner. They must retain `opencode`,
+`brief`, and the `scrutineer` binary, then add any pinned plugin, adapter,
+provider package, or supporting executable. Pin the configured image by digest
+when practical. Scrutineer records both the configured image reference and its
+locally resolved digest or image id on the scan. Readiness checks `brief` and
+`scrutineer` automatically when `runner_image` is set.
+
+List supporting executables under `required_binaries`. The readiness check
+looks them up inside the selected image and names a missing executable in the
+scan error.
+
+`config_file` points to an OpenCode JSON or JSONC config on the host. Relative
+paths are resolved from `scrutineer.yaml`; the file is read at startup and sent
+as `OPENCODE_CONFIG_CONTENT`. Restart Scrutineer after changing it. Keep the
+file limited to the selected provider and do not store credentials in it; code
+inside the scan container can read the resulting environment variable.
+
+    opencode:
+      providers:
+        kiro:
+          runner_image: registry.example/scrutineer-opencode-kiro@sha256:...
+          config_file: ./opencode/kiro.json
+          pass_env:
+            - KIRO_API_KEY
+          required_binaries:
+            - kiro-cli
+          egress_allow:
+            - q.us-east-1.amazonaws.com
+            - runtime.us-east-1.kiro.dev
+            - management.us-east-1.kiro.dev
+            - prod.us-east-1.auth.desktop.kiro.dev
+
+Kiro is an operator-managed image case. The stock OpenCode catalog no longer
+contains `kiro/auto`, so the image and config must supply a pinned adapter and
+`kiro-cli`. The exact config and host list must match the adapter version in
+that image.
+
+Before running the skill, Scrutineer runs `opencode models <provider>` from
+`/tmp` in the selected language-profile image. This keeps repository OpenCode
+files out of the check. The selected `provider/model` must appear exactly in
+the output. Missing OpenCode binaries, adapter packages, supporting binaries,
+and catalog models produce separate errors; other OpenCode startup output is
+kept in the scan error.
+
+## Stored auth
+
+OAuth providers can use `state_dir` instead of `api_key_env`. Scrutineer mounts
+that host directory as OpenCode's XDG data directory, allowing refreshed auth
+to survive separate scans.
+
+    opencode:
+      providers:
+        github-copilot:
+          state_dir: ~/.local/share/scrutineer/opencode/github-copilot
+          egress_allow:
+            - github.com
+            - api.github.com
+            - "*.githubcopilot.com"
+
+The corresponding auth file is
+`<state_dir>/opencode/auth.json`. It may contain only the provider named by the
+configuration block. Scrutineer checks this before mounting it and refuses to
+expose a directory containing another provider's credential. The state
+directory must have owner-only permissions such as `0700`. When `state_dir` is
+the only credential source, its auth file must already contain the selected
+provider. A provider using `pass_env` may initialise the file on first use.
+`state_dir` and `api_key_env` cannot be combined because
+`OPENCODE_AUTH_CONTENT` would override the rotating file.
+
+Without `state_dir`, OpenCode's auth data stays with the scan's retry state and
+is deleted after that scan lineage completes. Session data continues to use
+`OPENCODE_CONFIG_DIR` and `OPENCODE_DB` under the ordinary harness-state mount.
+
+## Harness behaviour
+
+OpenCode receives `opencode run --format json --auto --model
+provider/model`. Skills are staged at `./.opencode/skill/{name}/SKILL.md`, and a
+language profile's project guide is written as `AGENTS.md`. `--auto` suppresses
+interactive permission prompts; the container remains the security boundary.
+
+OpenCode has no `run` option matching Scrutineer's `-max-turns`, and Claude's
+`-effort` setting has no OpenCode equivalent. The wall-clock `-scan-timeout`
+still applies. `-model-base-url` is also ignored because OpenCode endpoints are
+configured per provider.
+
+The stream parser maps OpenCode session, tool, text, reasoning, error, cost,
+and usage events into the scan log and metrics. Unknown event types remain
+visible as raw text.
 
 ## See also
 
-- `docs/codex.md`: the codex backend, including the "Adding another harness"
-  section that opencode follows.
-- `internal/worker/harness_opencode.go`: the `OpencodeHarness` implementation.
-- #211: tracking issue for alternative harnesses.
+- [Runner setup](../README.md#setup)
+- [Hardened egress](egress-sidecar.md)
+- [Codex backend](codex.md)

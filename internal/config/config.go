@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"regexp"
 	"slices"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -42,6 +44,11 @@ type Config struct {
 	// is rejected at startup. Validated against worker.HarnessByName
 	// so the set of accepted values stays in one place.
 	Backend string `yaml:"backend"`
+	// Opencode holds provider-specific runner settings. The map key is the
+	// provider prefix from an OpenCode model id (for example, "groq" in
+	// "groq/llama-3.3-70b-versatile"). It is config-file-only because it can
+	// name credential environment variables and host paths.
+	Opencode Opencode `yaml:"opencode"`
 	// NoContainer disables the containerised runner so claude runs directly on
 	// the host (no isolation). NoDocker is the pre-rename alias, still honoured
 	// so existing configs keep working; no_container wins when both are set
@@ -203,6 +210,124 @@ type Config struct {
 	FederationImportFeeds []string `yaml:"federation_import_feeds"`
 }
 
+// Opencode groups settings that apply only to the OpenCode backend.
+type Opencode struct {
+	Providers map[string]OpencodeProvider `yaml:"providers"`
+}
+
+// OpencodeProvider describes what one OpenCode provider needs in addition to
+// the stock harness. RunnerImage is optional: built-in providers keep the
+// global runner, while plugin or binary-backed providers can select a derived
+// image. APIKeyEnv names a host environment variable whose value is converted
+// to a provider-only OPENCODE_AUTH_CONTENT document. PassEnv is for providers
+// that require their native multi-variable credential chain instead.
+type OpencodeProvider struct {
+	RunnerImage      string            `yaml:"runner_image"`
+	ConfigFile       string            `yaml:"config_file"`
+	APIKeyEnv        string            `yaml:"api_key_env"`
+	AuthMetadata     map[string]string `yaml:"auth_metadata"`
+	PassEnv          []string          `yaml:"pass_env"`
+	RequiredBinaries []string          `yaml:"required_binaries"`
+	EgressAllow      []string          `yaml:"egress_allow"`
+	// StateDir is a provider-specific host directory mounted as OpenCode's
+	// XDG data directory. It keeps rotating OAuth credentials between scans
+	// without exposing another provider's auth.json.
+	StateDir string `yaml:"state_dir"`
+}
+
+var (
+	opencodeProviderID = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
+	environmentName    = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	binaryName         = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._+-]*$`)
+)
+
+var reservedOpencodePassEnv = map[string]bool{
+	"ALL_PROXY":               true,
+	"HOME":                    true,
+	"HTTP_PROXY":              true,
+	"HTTPS_PROXY":             true,
+	"NO_PROXY":                true,
+	"OPENCODE_AUTH_CONTENT":   true,
+	"OPENCODE_CONFIG_CONTENT": true,
+	"OPENCODE_CONFIG_DIR":     true,
+	"OPENCODE_DB":             true,
+	"XDG_DATA_HOME":           true,
+}
+
+// ValidateOpencode checks the provider map before any scan can use it. The
+// fields are later copied into container arguments, so provider ids and env
+// names stay within the formats their consumers accept and network/state
+// variables owned by the sandbox cannot be overridden through pass_env.
+func ValidateOpencode(c Opencode) error {
+	for id, provider := range c.Providers {
+		if err := validateOpencodeProvider(id, provider); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateOpencodeProvider(id string, provider OpencodeProvider) error {
+	if !opencodeProviderID.MatchString(id) {
+		return fmt.Errorf("opencode.providers: invalid provider id %q", id)
+	}
+	if provider.APIKeyEnv != "" && !environmentName.MatchString(provider.APIKeyEnv) {
+		return fmt.Errorf("opencode.providers.%s.api_key_env: invalid environment variable %q", id, provider.APIKeyEnv)
+	}
+	if provider.StateDir != "" && provider.APIKeyEnv != "" {
+		return fmt.Errorf("opencode.providers.%s: state_dir and api_key_env cannot be combined", id)
+	}
+	if len(provider.AuthMetadata) > 0 && provider.APIKeyEnv == "" {
+		return fmt.Errorf("opencode.providers.%s.auth_metadata requires api_key_env", id)
+	}
+	if err := validateOpencodePassEnv(id, provider.PassEnv); err != nil {
+		return err
+	}
+	if err := validateOpencodeBinaries(id, provider.RequiredBinaries); err != nil {
+		return err
+	}
+	if len(provider.EgressAllow) == 0 {
+		return fmt.Errorf("opencode.providers.%s.egress_allow: at least one provider hostname is required", id)
+	}
+	for _, host := range provider.EgressAllow {
+		if strings.TrimSpace(host) != host || host == "" || strings.Contains(host, "://") || strings.ContainsAny(host, "/:") {
+			return fmt.Errorf("opencode.providers.%s.egress_allow: %q must be a hostname without a scheme, path, or port", id, host)
+		}
+	}
+	return nil
+}
+
+func validateOpencodePassEnv(id string, names []string) error {
+	seen := map[string]bool{}
+	for _, name := range names {
+		if !environmentName.MatchString(name) {
+			return fmt.Errorf("opencode.providers.%s.pass_env: invalid environment variable %q", id, name)
+		}
+		if reservedOpencodePassEnv[name] {
+			return fmt.Errorf("opencode.providers.%s.pass_env: %s is managed by scrutineer", id, name)
+		}
+		if seen[name] {
+			return fmt.Errorf("opencode.providers.%s.pass_env: duplicate environment variable %q", id, name)
+		}
+		seen[name] = true
+	}
+	return nil
+}
+
+func validateOpencodeBinaries(id string, names []string) error {
+	seen := map[string]bool{}
+	for _, name := range names {
+		if !binaryName.MatchString(name) {
+			return fmt.Errorf("opencode.providers.%s.required_binaries: invalid executable name %q", id, name)
+		}
+		if seen[name] {
+			return fmt.Errorf("opencode.providers.%s.required_binaries: duplicate executable name %q", id, name)
+		}
+		seen[name] = true
+	}
+	return nil
+}
+
 // ParseScanTimeout validates and parses a scan_timeout string. Empty
 // returns 0 (caller keeps its default); anything else must be a positive
 // time.Duration.
@@ -352,6 +477,9 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
 	}
 	if err := ValidateSubprojectScope(c.SubprojectScope); err != nil {
+		return nil, fmt.Errorf("parse config %s: %w", path, err)
+	}
+	if err := ValidateOpencode(c.Opencode); err != nil {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
 	}
 	if c.VINCE.Enabled() {

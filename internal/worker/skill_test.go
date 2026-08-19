@@ -47,6 +47,35 @@ func TestStageThreatModel(t *testing.T) {
 	}
 }
 
+func TestApplySkillResultPersistsProviderImageProvenance(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "provider.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://example.com/provider", Name: "provider"}
+	if err := gdb.Create(&repo).Error; err != nil {
+		t.Fatal(err)
+	}
+	scan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanRunning}
+	if err := gdb.Create(&scan).Error; err != nil {
+		t.Fatal(err)
+	}
+	w := Worker{DB: gdb}
+	w.applySkillResult(&scan, SkillResult{
+		Backend:           "opencode",
+		Provider:          "kiro",
+		RunnerImage:       "registry.example/kiro:1",
+		RunnerImageDigest: "sha256:abc",
+	})
+	var got db.Scan
+	if err := gdb.First(&got, scan.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.Provider != "kiro" || got.RunnerImage != "registry.example/kiro:1" || got.RunnerImageDigest != "sha256:abc" {
+		t.Errorf("persisted provider provenance = %+v", got)
+	}
+}
+
 const maintainersReport = `{"maintainers":[
   {"login":"alice","name":"Alice","email":"alice@example.com","role":"lead","status":"active","evidence":"80% of past-year commits"},
   {"login":"bob","role":"contributor","status":"inactive","evidence":"last commit 2022"}

@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -83,6 +84,11 @@ type ContainerRunner struct {
 	// zero value keeps the host-proxy path (docker, rootful podman, and all
 	// non-hardened scans). See usesEgressSidecar.
 	Egress EgressSidecarConfig
+	// OpencodeProviders contains provider-scoped images, credentials, state,
+	// config, and egress resolved from the operator's YAML configuration.
+	OpencodeProviders map[string]OpencodeProviderConfig
+	// OpencodeReadiness caches successful provider/model catalog probes.
+	OpencodeReadiness *OpencodeReadinessCache
 	// detectProfile lets tests stub profile auto-detection without a container
 	// runtime. nil means DetectProfile.
 	detectProfile func(ctx context.Context, rt ContainerRuntime, runnerImage, srcDir string, relabel bool) Profile
@@ -215,6 +221,11 @@ const HardenedWorkspaceCapBytes int64 = 2 << 30
 // Egress is routed through scrutineer's allowlisting proxy on the host;
 // see EgressProxy. tmpfs/cap-drop rules mirror the local runner's intent.
 func (d ContainerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)) (SkillResult, error) {
+	d, provider, result, err := d.prepareOpencodeRun(ctx, sj.Model)
+	if err != nil {
+		return result, err
+	}
+
 	var src string
 	if sj.SrcReady {
 		src = filepath.Join(sj.WorkRoot, "src")
@@ -222,30 +233,31 @@ func (d ContainerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Ev
 		var err error
 		src, err = ensureClone(ctx, sj.Repo, sj.WorkRoot, d.FullClone, sj.Ref, emit)
 		if err != nil {
-			return SkillResult{}, err
+			return result, err
 		}
 	}
 	if err := d.checkHardenedWorkspace(sj.WorkRoot); err != nil {
-		return SkillResult{}, err
+		return result, err
 	}
 	commit := gitHead(src)
+	result.Commit = commit
 	work := sj.WorkRoot
 	absWork, _ := filepath.Abs(work)
 
 	profile, image := d.resolveProfile(ctx, sj.Profile, src, sj.SubPath, emit)
-	backend := HarnessName(d.harness())
+	result.Profile = profile
 	if sj.RequiresProfile != "" && profile != sj.RequiresProfile {
 		got := profile
 		if got == "" {
 			got = "default"
 		}
-		return SkillResult{Commit: commit, Profile: profile, Backend: backend}, fmt.Errorf("skill %q requires profile %q, resolved %q", sj.Name, sj.RequiresProfile, got)
+		return result, fmt.Errorf("skill %q requires profile %q, resolved %q", sj.Name, sj.RequiresProfile, got)
 	}
 	d.injectProfileGuide(profile, absWork, emit)
 
 	hnet, cleanupNetwork, err := d.setupHardenedNetwork(sj, image)
 	if err != nil {
-		return SkillResult{Commit: commit, Profile: profile, Backend: backend}, err
+		return result, err
 	}
 	// Capture the sidecar's egress decisions (allowlist denials) into the scan
 	// record before teardown removes the ephemeral sidecar.
@@ -263,10 +275,15 @@ func (d ContainerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Ev
 	if sj.StateDir != "" {
 		absConfig, _ = filepath.Abs(sj.StateDir)
 		if err := os.MkdirAll(absConfig, dirPerm); err != nil {
-			return SkillResult{Commit: commit, Profile: profile, Backend: backend}, fmt.Errorf("create harness state dir: %w", err)
+			return result, fmt.Errorf("create harness state dir: %w", err)
 		}
 	}
-	runBase := d.buildRunArgs(absWork, image, hnet, absConfig)
+	readinessErr := d.checkOpencodeReadiness(ctx, provider, absWork, image, hnet, absConfig)
+	result.RunnerImageDigest = d.opencodeRunnerImageDigest(ctx, d.image())
+	if readinessErr != nil {
+		return result, readinessErr
+	}
+	runBase := d.buildSkillRunArgs(absWork, image, hnet, absConfig, provider)
 
 	logLine := "$ " + d.Runtime.bin() + " run --rm " + image + " <skill:" + sj.Name + ">"
 	if d.ModelBaseURL != "" {
@@ -284,7 +301,7 @@ func (d ContainerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Ev
 		}
 		emit(e)
 	}
-	hitMaxTurns, sessionID, waitErr := d.runContainerOnce(ctx, runBase, sj, wrappedEmit)
+	hitMaxTurns, sessionID, waitErr := d.runContainerOnce(ctx, runBase, sj, provider.Env, wrappedEmit)
 
 	if waitErr != nil && sj.ResumeSessionID != "" && sessionID == "" && accountErrText == "" {
 		if sj.ResumePrompt != "" && sj.Prompt == "" {
@@ -292,7 +309,7 @@ func (d ContainerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Ev
 			// report.json") that means nothing to a fresh agent, and there is
 			// no fresh framing to fall back on.
 			emit(Event{Kind: KindText, Text: "resume of session " + sj.ResumeSessionID + " failed; " + resumePromptNoFreshFallbackText})
-			return SkillResult{Commit: commit, Profile: profile, Backend: backend}, fmt.Errorf("%s exited: %w", d.Runtime.bin(), waitErr)
+			return result, fmt.Errorf("%s exited: %w", d.Runtime.bin(), waitErr)
 		}
 		// The resume produced no session event, so claude could not load the
 		// saved conversation (gone from the mounted store). Restart fresh in
@@ -301,10 +318,11 @@ func (d ContainerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Ev
 		emit(Event{Kind: KindText, Text: "resume of session " + sj.ResumeSessionID + " failed; restarting fresh"})
 		fresh := sj
 		fresh.ResumeSessionID = ""
-		hitMaxTurns, sessionID, waitErr = d.runContainerOnce(ctx, runBase, fresh, wrappedEmit)
+		hitMaxTurns, sessionID, waitErr = d.runContainerOnce(ctx, runBase, fresh, provider.Env, wrappedEmit)
 	}
 
-	res := SkillResult{Commit: commit, Profile: profile, Backend: backend, SessionID: sessionID}
+	res := result
+	res.SessionID = sessionID
 	if outPath != "" {
 		res.Report = readCappedReport(outPath, emit)
 	}
@@ -325,14 +343,14 @@ func (d ContainerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Ev
 // through emit, and reporting the wait error, whether the run hit the
 // max-turns cap, and the session id from the init event (empty when no init
 // event arrived, e.g. a --resume that could not find the conversation).
-func (d ContainerRunner) runContainerOnce(ctx context.Context, runBase []string, sj SkillJob, emit func(Event)) (hitMaxTurns bool, sessionID string, waitErr error) {
+func (d ContainerRunner) runContainerOnce(ctx context.Context, runBase []string, sj SkillJob, processEnv map[string]string, emit func(Event)) (hitMaxTurns bool, sessionID string, waitErr error) {
 	h := d.harness()
 	harnessArgs := append([]string{h.Binary()}, h.Args(sj.toJob(d.Effort, d.MaxTurns, d.ModelBaseURL))...)
 	runArgs := append(append([]string{}, runBase...), harnessArgs...)
 
 	cmd := exec.CommandContext(ctx, d.Runtime.bin(), runArgs...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Env = os.Environ()
+	cmd.Env = environmentWith(os.Environ(), processEnv)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -366,6 +384,17 @@ func (d ContainerRunner) runContainerOnce(ctx context.Context, runBase []string,
 // complexity manageable as new toggles (hardened mode, proxy, profiles)
 // accumulate.
 func (d ContainerRunner) buildRunArgs(absWork, image string, hnet hardenedNet, harnessStateDir string) []string {
+	return d.buildRunArgsForProvider(absWork, image, hnet, harnessStateDir, opencodeProvider{}, "/work")
+}
+
+func (d ContainerRunner) buildSkillRunArgs(absWork, image string, hnet hardenedNet, harnessStateDir string, provider opencodeProvider) []string {
+	if !provider.Configured {
+		return d.buildRunArgs(absWork, image, hnet, harnessStateDir)
+	}
+	return d.buildRunArgsForProvider(absWork, image, hnet, harnessStateDir, provider, "/work")
+}
+
+func (d ContainerRunner) buildRunArgsForProvider(absWork, image string, hnet hardenedNet, harnessStateDir string, provider opencodeProvider, workdir string) []string {
 	gwTarget := "host-gateway"
 	if d.Hardened {
 		// setupHardenedNetwork resolved the gateway once against this per-scan
@@ -386,12 +415,23 @@ func (d ContainerRunner) buildRunArgs(absWork, image string, hnet hardenedNet, h
 		"-e", "SEMGREP_SEND_METRICS=off",
 		"--tmpfs", "/tmp:rw,noexec,nosuid,size=256m",
 		"-v", bindMount(absWork, "/work", d.SELinuxRelabel),
-		"-w", "/work",
+		"-w", workdir,
 	)
 	// Harness-specific env: model-API credential, base URL, and the
 	// harness's own telemetry / autoupdate suppressors.
 	for _, e := range d.harness().Env(d.ModelBaseURL) {
+		if provider.Configured && opencodeInheritedCredential(e) {
+			continue
+		}
 		args = append(args, "-e", e)
+	}
+	keys := make([]string, 0, len(provider.Env))
+	for key := range provider.Env {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		args = append(args, "-e", key)
 	}
 	if d.Runtime.supportsHostGatewayAddHost() {
 		args = append(args, "--add-host", HostGatewayAlias+":"+gwTarget)
@@ -413,6 +453,19 @@ func (d ContainerRunner) buildRunArgs(absWork, image string, hnet hardenedNet, h
 		args = append(args, "-v", bindMount(harnessStateDir, "/harness-state", d.SELinuxRelabel))
 		for _, e := range d.harness().StateEnv("/harness-state") {
 			args = append(args, "-e", e)
+		}
+	}
+	if HarnessName(d.harness()) == "opencode" {
+		if provider.StateDir != "" {
+			args = append(args,
+				"-v", bindMount(provider.StateDir, "/opencode-provider-state", d.SELinuxRelabel),
+				"-e", "XDG_DATA_HOME=/opencode-provider-state",
+			)
+		} else if harnessStateDir != "" {
+			// Keep OpenCode's auth state alongside the retry session while this
+			// scan lineage is alive. A configured state_dir above extends that
+			// lifetime across independent scans.
+			args = append(args, "-e", "XDG_DATA_HOME=/harness-state/data")
 		}
 	}
 	if d.Hardened || d.HardenedRuntimeOnly {
@@ -467,6 +520,16 @@ func (d ContainerRunner) buildRunArgs(absWork, image string, hnet hardenedNet, h
 		args = append(args, "--network", "none")
 	}
 	return append(args, "--", image)
+}
+
+func opencodeInheritedCredential(env string) bool {
+	key, _, _ := strings.Cut(env, "=")
+	switch key {
+	case "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "OPENCODE_CONFIG_CONTENT", "OPENCODE_AUTH_CONTENT":
+		return true
+	default:
+		return false
+	}
 }
 
 // resolveProfile picks the runner image for this scan. When requested

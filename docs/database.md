@@ -124,7 +124,10 @@ One row per skill execution or external import. `skill_name` / `skill_version` p
 | scan_group | text | Groups a cohort of scans launched as one batch (Scan-all-subprojects, a single New-scan run, or a Diff rescan group). Each sibling streams a finding to `POST /repositories/{id}/findings` the moment it confirms it and reads `GET /repositories/{id}/findings?scan_group=...` before reporting, so an in-flight skill sees what a sibling has filed so far — not only after that sibling finishes — and can avoid re-filing it. Empty when not part of a batch. |
 | focus_area | text | Normalized JSON snapshot of the input-processing focus area assigned to a split `security-deep-dive`. It keeps queued work reproducible if repository `scan_config` changes. Empty means the scan is unscoped and covers its normal repository or subproject scope. |
 | profile | text | Runner profile that ran the scan (e.g. `php`). Empty = the default runner image. Set explicitly via `?profile=` or auto-detected from the clone by `brief` before launch; persisted so retries reuse the choice. |
-| backend | text | Agent CLI (`-backend`) that ran the scan: `claude` or `codex`. Stamped by the worker so a retry after switching `-backend` starts fresh instead of passing one harness's session id to another's resume command. Empty on rows predating the column or that never reached the runner. |
+| backend | text | Agent CLI (`-backend`) that ran the scan: `claude`, `codex`, `opencode`, or `copilot`. Stamped by the worker so a retry after switching `-backend` starts fresh instead of passing one harness's session id to another's resume command. Empty on rows predating the column or that never reached the runner. |
+| provider | text | Provider prefix selected from an OpenCode model id, such as `groq` or `kiro`. Empty for other backends. |
+| runner_image | text | Provider base image selected for the scan, before the language profile is layered on it. |
+| runner_image_digest | text | Locally resolved registry digest, or immutable local image id when the provider image has no registry digest. |
 | commit | text | Git HEAD at scan time. |
 | started_at | datetime | |
 | finished_at | datetime | |

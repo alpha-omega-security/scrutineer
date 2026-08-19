@@ -290,8 +290,9 @@ func dependencyResolutionFailed(streamed bool, res SkillResult, err error) bool 
 // itself (as opposed to the skill's report) onto the scan row: session id
 // and commit onto the in-memory struct (persisted by wrap()'s closing Save),
 // and Profile/Backend to the DB immediately so a retry sees them even if the
-// scan later fails hard. Called from every RunSkill call site so the four
-// fields stay in one place.
+// scan later fails hard. Provider and runner image provenance use the same
+// immediate path. Called from every RunSkill call site so the fields stay in
+// one place.
 func (w *Worker) applySkillResult(scan *db.Scan, res SkillResult) {
 	if res.SessionID != "" && res.SessionID != scan.SessionID {
 		scan.SessionID = res.SessionID
@@ -306,6 +307,18 @@ func (w *Worker) applySkillResult(scan *db.Scan, res SkillResult) {
 	if res.Backend != "" && res.Backend != scan.Backend {
 		scan.Backend = res.Backend
 		w.DB.Model(scan).Update("backend", res.Backend)
+	}
+	if res.Provider != "" && res.Provider != scan.Provider {
+		scan.Provider = res.Provider
+		w.DB.Model(scan).Update("provider", res.Provider)
+	}
+	if res.RunnerImage != "" && res.RunnerImage != scan.RunnerImage {
+		scan.RunnerImage = res.RunnerImage
+		w.DB.Model(scan).Update("runner_image", res.RunnerImage)
+	}
+	if res.RunnerImageDigest != "" && res.RunnerImageDigest != scan.RunnerImageDigest {
+		scan.RunnerImageDigest = res.RunnerImageDigest
+		w.DB.Model(scan).Update("runner_image_digest", res.RunnerImageDigest)
 	}
 }
 

@@ -323,6 +323,12 @@ type Scan struct {
 	// pass one harness's session/thread id to another's resume command.
 	// Empty on rows that predate the column or never reached the runner.
 	Backend string `gorm:"index"`
+	// Provider is the model id prefix selected by OpenCode. RunnerImage is the
+	// provider base image, and RunnerImageDigest is its resolved content digest
+	// or local image id. They make runs reproducible when an image tag moves.
+	Provider          string `gorm:"index"`
+	RunnerImage       string
+	RunnerImageDigest string
 
 	// SessionID is the harness session this scan's run belongs to,
 	// captured from the harness's own event stream. Its meaning depends

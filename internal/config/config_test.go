@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 )
@@ -145,6 +146,88 @@ vince:
 		c.VINCE.Reporter.Phone != "+44 20 7946 0958" ||
 		c.VINCE.Reporter.PGPKey != "https://example.com/alice.asc" {
 		t.Errorf("vince reporter config: %+v", c.VINCE.Reporter)
+	}
+}
+
+func TestLoad_parsesOpencodeProviders(t *testing.T) {
+	c, err := Load(write(t, `
+opencode:
+  providers:
+    groq:
+      api_key_env: GROQ_API_KEY
+      egress_allow:
+        - api.groq.com
+    kiro:
+      runner_image: registry.example/kiro@sha256:abc
+      config_file: ./opencode/kiro.json
+      pass_env:
+        - KIRO_API_KEY
+      required_binaries:
+        - kiro-cli
+      egress_allow:
+        - q.us-east-1.amazonaws.com
+      state_dir: /var/lib/scrutineer/opencode/kiro
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Opencode.Providers["groq"]; got.APIKeyEnv != "GROQ_API_KEY" || !slices.Equal(got.EgressAllow, []string{"api.groq.com"}) {
+		t.Errorf("opencode groq provider: %+v", got)
+	}
+	if got := c.Opencode.Providers["kiro"]; got.RunnerImage == "" || got.ConfigFile != "./opencode/kiro.json" ||
+		!slices.Equal(got.PassEnv, []string{"KIRO_API_KEY"}) || !slices.Equal(got.RequiredBinaries, []string{"kiro-cli"}) || got.StateDir == "" {
+		t.Errorf("opencode kiro provider: %+v", got)
+	}
+}
+
+func TestLoad_rejectsInvalidOpencodeProviders(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		yaml string
+		want string
+	}{
+		{
+			name: "provider id",
+			yaml: "opencode:\n  providers:\n    'bad/provider': {}\n",
+			want: "invalid provider id",
+		},
+		{
+			name: "api key env",
+			yaml: "opencode:\n  providers:\n    groq:\n      api_key_env: 'BAD=VALUE'\n",
+			want: "invalid environment variable",
+		},
+		{
+			name: "reserved env",
+			yaml: "opencode:\n  providers:\n    groq:\n      pass_env: [HTTPS_PROXY]\n",
+			want: "managed by scrutineer",
+		},
+		{
+			name: "state and inline key",
+			yaml: "opencode:\n  providers:\n    xai:\n      api_key_env: XAI_API_KEY\n      state_dir: ./xai-state\n",
+			want: "cannot be combined",
+		},
+		{
+			name: "egress url",
+			yaml: "opencode:\n  providers:\n    groq:\n      egress_allow: [https://api.groq.com]\n",
+			want: "must be a hostname",
+		},
+		{
+			name: "missing egress",
+			yaml: "opencode:\n  providers:\n    groq:\n      api_key_env: GROQ_API_KEY\n",
+			want: "at least one provider hostname",
+		},
+		{
+			name: "binary path",
+			yaml: "opencode:\n  providers:\n    kiro:\n      required_binaries: [/usr/bin/kiro-cli]\n      egress_allow: [api.example.com]\n",
+			want: "invalid executable name",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Load(write(t, tc.yaml))
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Load error = %v, want text %q", err, tc.want)
+			}
+		})
 	}
 }
 
