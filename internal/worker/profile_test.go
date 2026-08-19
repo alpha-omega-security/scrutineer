@@ -171,6 +171,30 @@ func TestMatchProfile(t *testing.T) {
 			"perl",
 		},
 		{
+			// Regression for #884: curl is ~85% C but ships hundreds of
+			// tests/*.pl. brief sorts languages by byte share, so only the
+			// dominant language may participate in matching; the perl
+			// language selector must not fire on a secondary language.
+			"C-dominant repo with Perl test harness picks c-cpp (#884)",
+			`{"languages":[{"name":"C","category":"language"},{"name":"Perl","category":"language"}],"tools":{"build":[{"name":"Autotools"}]}}`,
+			"c-cpp",
+		},
+		{
+			// Same repo shape after a focus-area prune that dropped
+			// configure.ac/CMakeLists.txt: no build tool, but C is still
+			// the dominant language and must still win.
+			"C-dominant repo without build tool still picks c-cpp (#884)",
+			`{"languages":[{"name":"C","category":"language"},{"name":"Perl","category":"language"}]}`,
+			"c-cpp",
+		},
+		{
+			// Data/markup/prose entries in brief's languages array are
+			// skipped; the first *programming* language is the dominant one.
+			"non-language category is skipped when picking dominant language",
+			`{"languages":[{"name":"YAML","category":"data"},{"name":"Perl","category":"language"}]}`,
+			"perl",
+		},
+		{
 			// A Bundler repo that also has a Makefile (common for gem
 			// build tasks) must not fall through to c-cpp.
 			"bundler + Make picks ruby over c-cpp",
