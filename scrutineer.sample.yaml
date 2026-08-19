@@ -119,7 +119,8 @@
 # it must be based on the Scrutineer runner so language profiles still compose.
 # config_file and state_dir are host paths; relative paths start beside this
 # config file. Every configured provider must declare its API/auth hostnames.
-# These provider hosts remain allowed under hardened mode.
+# Only the selected provider's hosts are added to a scan, including in hardened
+# mode.
 # opencode:
 #   providers:
 #     groq:

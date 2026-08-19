@@ -8,6 +8,10 @@ package worker
 
 import (
 	"context"
+	"errors"
+	"net"
+	"net/http"
+	"time"
 
 	"github.com/alpha-omega-security/harness/egress"
 )
@@ -24,6 +28,8 @@ var (
 
 type EgressProxy = egress.Proxy
 
+const scopedEgressReadHeaderTimeout = 10 * time.Second
+
 func StartEgressProxy(p *EgressProxy) (int, error)        { return egress.Start(p) }
 func ServeEgressProxy(p *EgressProxy, addr string) error  { return egress.Serve(p, addr) }
 func NewProxyToken() string                               { return egress.NewToken() }
@@ -37,4 +43,25 @@ func WaitHostAPIReachable(ctx context.Context, host, port string) error {
 
 func VerifyUpstreamDNS(ctx context.Context, allow []string) error {
 	return egress.VerifyUpstreamDNS(ctx, allow)
+}
+
+// StartScopedEgressProxy starts a host proxy whose lifetime is one scan. The
+// harness package's process-wide starter intentionally has no close hook, so
+// provider-specific allowlists use this variant to avoid leaking listeners.
+func StartScopedEgressProxy(p *EgressProxy) (int, func(), error) {
+	noop := func() {}
+	if p == nil {
+		return 0, noop, errors.New("egress: proxy is required")
+	}
+	if p.Token == "" {
+		return 0, noop, errors.New("egress: Token is required")
+	}
+	ln, err := net.Listen("tcp", ":0")
+	if err != nil {
+		return 0, noop, err
+	}
+	srv := &http.Server{Handler: p, ReadHeaderTimeout: scopedEgressReadHeaderTimeout}
+	go func() { _ = srv.Serve(ln) }()
+	closeProxy := func() { _ = srv.Close() }
+	return ln.Addr().(*net.TCPAddr).Port, closeProxy, nil
 }

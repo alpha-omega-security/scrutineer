@@ -202,6 +202,11 @@ func TestLoad_rejectsInvalidOpencodeProviders(t *testing.T) {
 			want: "managed by scrutineer",
 		},
 		{
+			name: "harness safety env",
+			yaml: "opencode:\n  providers:\n    groq:\n      pass_env: [OPENCODE_DISABLE_AUTOUPDATE]\n",
+			want: "managed by scrutineer",
+		},
+		{
 			name: "state and inline key",
 			yaml: "opencode:\n  providers:\n    xai:\n      api_key_env: XAI_API_KEY\n      state_dir: ./xai-state\n",
 			want: "cannot be combined",
@@ -226,6 +231,23 @@ func TestLoad_rejectsInvalidOpencodeProviders(t *testing.T) {
 			_, err := Load(write(t, tc.yaml))
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("Load error = %v, want text %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestValidateOpencodeRejectsHarnessSafetyEnvironment(t *testing.T) {
+	for _, name := range []string{
+		"OPENCODE_DISABLE_AUTOUPDATE",
+		"OPENCODE_DISABLE_MODELS_FETCH",
+		"OPENCODE_DISABLE_SHARE",
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := ValidateOpencode(Opencode{Providers: map[string]OpencodeProvider{
+				"groq": {PassEnv: []string{name}, EgressAllow: []string{"api.groq.com"}},
+			}})
+			if err == nil || !strings.Contains(err.Error(), "managed by scrutineer") {
+				t.Fatalf("ValidateOpencode error = %v", err)
 			}
 		})
 	}

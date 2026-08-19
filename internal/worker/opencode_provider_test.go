@@ -22,6 +22,7 @@ func TestResolveOpencodeProviderBuildsScopedAuth(t *testing.T) {
 				ConfigContent: `{"provider":{}}`,
 				APIKeyEnv:     "GROQ_API_KEY",
 				AuthMetadata:  map[string]string{"accountId": "team-1"},
+				EgressHosts:   []string{"api.groq.com"},
 			},
 		},
 	}
@@ -46,6 +47,9 @@ func TestResolveOpencodeProviderBuildsScopedAuth(t *testing.T) {
 	}
 	if provider.Env["OPENCODE_CONFIG_CONTENT"] != `{"provider":{}}` {
 		t.Errorf("config content = %q", provider.Env["OPENCODE_CONFIG_CONTENT"])
+	}
+	if !slices.Equal(provider.EgressHosts, []string{"api.groq.com"}) {
+		t.Errorf("provider egress = %v", provider.EgressHosts)
 	}
 }
 
@@ -102,11 +106,16 @@ func TestBuildRunArgsForProviderScopesEnvironmentAndState(t *testing.T) {
 			t.Errorf("container args inherited unrelated key %s: %v", key, args)
 		}
 	}
-	if !hasAdjacent(args, "-v", "/state/kiro:/opencode-provider-state:z") {
-		t.Errorf("provider state mount missing: %v", args)
+	if !hasAdjacent(args, "-v", "/state/kiro/opencode/auth.json:/harness-state/data/opencode/auth.json:z") {
+		t.Errorf("provider auth mount missing: %v", args)
 	}
-	if !hasAdjacent(args, "-e", "XDG_DATA_HOME=/opencode-provider-state") {
-		t.Errorf("provider state XDG path missing: %v", args)
+	if !hasAdjacent(args, "-e", "XDG_DATA_HOME=/harness-state/data") {
+		t.Errorf("per-scan OpenCode data path missing: %v", args)
+	}
+	for _, arg := range args {
+		if strings.Contains(arg, "/opencode-provider-state") || arg == "/state/kiro:/opencode-provider-state:z" {
+			t.Errorf("whole provider state directory is exposed: %v", args)
+		}
 	}
 	if !hasAdjacent(args, "-w", "/tmp") {
 		t.Errorf("readiness working directory is not neutral: %v", args)
@@ -162,16 +171,71 @@ func TestEnsureOpencodeProviderStateRequiresStoredCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatalf("external credential should be allowed to initialise state: %v", err)
 	}
+	data, err := os.ReadFile(opencodeProviderAuthPath(state))
+	if err != nil || strings.TrimSpace(string(data)) != "{}" {
+		t.Fatalf("initial auth state = %q, %v", data, err)
+	}
 }
 
-func TestOpencodeProviderEgressStableAndUnique(t *testing.T) {
-	providers := map[string]OpencodeProviderConfig{
-		"groq": {EgressHosts: []string{"api.groq.com", "auth.example.com"}},
-		"kiro": {EgressHosts: []string{"q.us-east-1.amazonaws.com", "auth.example.com"}},
+func TestConfigureOpencodeProviderEgressScopesHostProxyToSelectedProvider(t *testing.T) {
+	d := ContainerRunner{
+		Harness: OpencodeHarness{},
+		OpencodeProviders: map[string]OpencodeProviderConfig{
+			"groq": {EgressHosts: []string{"api.groq.com", "auth.example.com"}},
+			"kiro": {EgressHosts: []string{"q.us-east-1.amazonaws.com"}},
+		},
+		Egress: EgressSidecarConfig{Allow: []string{"models.dev"}},
+		ProviderProxy: ScopedEgressProxyConfig{
+			Allow:         []string{"models.dev"},
+			APIPort:       "8080",
+			APIHosts:      []string{HostGatewayAlias},
+			ContainerHost: HostGatewayAlias,
+		},
 	}
-	want := []string{"api.groq.com", "auth.example.com", "q.us-east-1.amazonaws.com"}
-	if got := OpencodeProviderEgress(providers); !slices.Equal(got, want) {
-		t.Errorf("egress hosts = %v, want %v", got, want)
+	provider, err := d.resolveOpencodeProvider("groq/model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, cleanup, err := d.configureOpencodeProviderEgress(provider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	for _, allow := range [][]string{got.Egress.Allow, got.ProviderProxy.Allow} {
+		if !slices.Contains(allow, "api.groq.com") || !slices.Contains(allow, "auth.example.com") {
+			t.Errorf("selected provider hosts missing from %v", allow)
+		}
+		if slices.Contains(allow, "q.us-east-1.amazonaws.com") {
+			t.Errorf("unselected provider host leaked into %v", allow)
+		}
+	}
+	if got.ProxyURL == "" || got.ProxyURL == d.ProxyURL {
+		t.Errorf("provider-scoped proxy URL = %q", got.ProxyURL)
+	}
+}
+
+func TestConfigureOpencodeProviderEgressScopesSidecarToSelectedProvider(t *testing.T) {
+	d := ContainerRunner{
+		Harness:  OpencodeHarness{},
+		Hardened: true,
+		Runtime:  ContainerRuntime{Bin: "podman", Rootless: true},
+		Egress:   EgressSidecarConfig{Allow: []string{"models.dev"}},
+	}
+	provider := opencodeProvider{
+		ID:          "kiro",
+		Configured:  true,
+		EgressHosts: []string{"runtime.us-east-1.kiro.dev"},
+	}
+	got, cleanup, err := d.configureOpencodeProviderEgress(provider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	if !slices.Equal(got.Egress.Allow, []string{"models.dev", "runtime.us-east-1.kiro.dev"}) {
+		t.Errorf("sidecar allowlist = %v", got.Egress.Allow)
+	}
+	if got.ProxyURL != d.ProxyURL {
+		t.Errorf("sidecar configuration unexpectedly started a host proxy: %q", got.ProxyURL)
 	}
 }
 
@@ -194,7 +258,7 @@ func TestOpencodeProviderImageFeedsLanguageProfileDetection(t *testing.T) {
 
 func TestCheckOpencodeReadinessFindsExactModel(t *testing.T) {
 	runtime := filepath.Join(t.TempDir(), "fake-runtime")
-	if err := os.WriteFile(runtime, []byte("#!/bin/sh\nprintf 'groq/model-a\\ngroq/model-b\\n'\n"), 0o700); err != nil {
+	if err := os.WriteFile(runtime, []byte("#!/bin/sh\ncase \" $* \" in *\" curl \"*) exit 0;; esac\nprintf 'groq/model-a\\ngroq/model-b\\n'\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	d := ContainerRunner{
@@ -202,7 +266,7 @@ func TestCheckOpencodeReadinessFindsExactModel(t *testing.T) {
 		Runtime:           ContainerRuntime{Bin: runtime},
 		OpencodeReadiness: NewOpencodeReadinessCache(),
 	}
-	provider := opencodeProvider{ID: "groq", Model: "groq/model-b", RunnerImage: "stock:1", Env: map[string]string{}, Configured: true}
+	provider := opencodeProvider{ID: "groq", Model: "groq/model-b", RunnerImage: "stock:1", Env: map[string]string{}, EgressHosts: []string{"api.groq.com"}, Configured: true}
 	if err := d.checkOpencodeReadiness(t.Context(), provider, t.TempDir(), "stock:1", hardenedNet{}, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -210,6 +274,19 @@ func TestCheckOpencodeReadinessFindsExactModel(t *testing.T) {
 	err := d.checkOpencodeReadiness(t.Context(), provider, t.TempDir(), "stock:1", hardenedNet{}, "")
 	if err == nil || !strings.Contains(err.Error(), "unavailable in the selected image catalog") {
 		t.Fatalf("missing model error = %v", err)
+	}
+}
+
+func TestCheckOpencodeReadinessReportsBlockedProviderEgress(t *testing.T) {
+	runtime := filepath.Join(t.TempDir(), "fake-runtime")
+	if err := os.WriteFile(runtime, []byte("#!/bin/sh\ncase \" $* \" in *\" curl \"*) echo 'CONNECT tunnel failed, response 403'; exit 1;; esac\nprintf 'groq/model-a\\n'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	d := ContainerRunner{Harness: OpencodeHarness{}, Runtime: ContainerRuntime{Bin: runtime}}
+	provider := opencodeProvider{ID: "groq", Model: "groq/model-a", Env: map[string]string{}, EgressHosts: []string{"api.groq.com"}, Configured: true}
+	err := d.checkOpencodeReadiness(t.Context(), provider, t.TempDir(), "stock:1", hardenedNet{}, "")
+	if err == nil || !strings.Contains(err.Error(), `configured egress host "api.groq.com"`) {
+		t.Fatalf("blocked egress error = %v", err)
 	}
 }
 
@@ -247,6 +324,14 @@ func TestClassifyOpencodeReadinessErrors(t *testing.T) {
 		if got := classifyOpencodeReadinessError(provider, tc.output, runErr); !strings.Contains(got.Error(), tc.want) {
 			t.Errorf("classify %q = %v, want %q", tc.output, got, tc.want)
 		}
+	}
+}
+
+func TestClassifyOpencodeProviderRunErrorPreservesUnderlyingMessage(t *testing.T) {
+	provider := opencodeProvider{ID: "kiro"}
+	err := classifyOpencodeProviderRunError(provider, "proxy CONNECT failed for runtime.us-east-1.kiro.dev", errors.New("exit status 1"))
+	if !strings.Contains(err.Error(), "configured egress hosts") || !strings.Contains(err.Error(), "runtime.us-east-1.kiro.dev") {
+		t.Fatalf("provider run error = %v", err)
 	}
 }
 

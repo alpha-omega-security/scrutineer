@@ -58,7 +58,8 @@ Some providers use several native environment variables instead of an
 OpenCode API-key record. Name each one under `pass_env`; Scrutineer refuses the
 scan if any named value is absent. Variables such as `GITHUB_TOKEN` are never
 forwarded unless they appear here, which avoids confusing a repository token
-with a Copilot credential.
+with a Copilot credential. Proxy, state, config, update, model-fetch, and share
+controls owned by Scrutineer cannot be named under `pass_env`.
 
     opencode:
       providers:
@@ -75,10 +76,10 @@ providers need narrowly scoped mounts before file-based host credential chains
 can be supported. Prefer short-lived environment credentials for now.
 
 Every configured provider needs at least one `egress_allow` hostname. These
-hosts are added to the resolved OpenCode allowlist, including under
-`--hardened`. The top-level `egress_allow` remains ignored in hardened mode.
-Use hostnames without a scheme, path, or port. Region- and resource-specific
-providers should list the endpoints for the configured region or resource.
+hosts are added only to scans using that provider, including under `--hardened`.
+The top-level `egress_allow` remains ignored in hardened mode. Use hostnames
+without a scheme, path, or port. Region- and resource-specific providers should
+list the endpoints for the configured region or resource.
 
 Local providers such as Ollama are not covered by this option yet. The egress
 proxy permits only Scrutineer's API port on the container host, so allowing a
@@ -128,18 +129,20 @@ contains `kiro/auto`, so the image and config must supply a pinned adapter and
 `kiro-cli`. The exact config and host list must match the adapter version in
 that image.
 
-Before running the skill, Scrutineer runs `opencode models <provider>` from
-`/tmp` in the selected language-profile image. This keeps repository OpenCode
-files out of the check. The selected `provider/model` must appear exactly in
-the output. Missing OpenCode binaries, adapter packages, supporting binaries,
-and catalog models produce separate errors; other OpenCode startup output is
-kept in the scan error.
+Before running the skill, Scrutineer checks each concrete provider egress host,
+then runs `opencode models <provider>` from `/tmp` in the selected
+language-profile image. This keeps repository OpenCode files out of the check.
+The selected `provider/model` must appear exactly in the output. Missing
+OpenCode binaries, adapter packages, supporting binaries, egress, and catalog
+models produce separate errors. OpenCode errors from the skill run are also
+kept in the scan error instead of being replaced by the container exit status.
 
 ## Stored auth
 
 OAuth providers can use `state_dir` instead of `api_key_env`. Scrutineer mounts
-that host directory as OpenCode's XDG data directory, allowing refreshed auth
-to survive separate scans.
+only its `auth.json` into the scan's OpenCode data directory, allowing refreshed
+auth to survive separate scans without exposing logs or repository data from a
+previous scan.
 
     opencode:
       providers:
@@ -153,16 +156,17 @@ to survive separate scans.
 The corresponding auth file is
 `<state_dir>/opencode/auth.json`. It may contain only the provider named by the
 configuration block. Scrutineer checks this before mounting it and refuses to
-expose a directory containing another provider's credential. The state
-directory must have owner-only permissions such as `0700`. When `state_dir` is
-the only credential source, its auth file must already contain the selected
-provider. A provider using `pass_env` may initialise the file on first use.
+expose a file containing another provider's credential. The state directory
+must have owner-only permissions such as `0700`. When `state_dir` is the only
+credential source, its auth file must already contain the selected provider. A
+provider using `pass_env` may initialise the file on first use.
 `state_dir` and `api_key_env` cannot be combined because
 `OPENCODE_AUTH_CONTENT` would override the rotating file.
 
 Without `state_dir`, OpenCode's auth data stays with the scan's retry state and
-is deleted after that scan lineage completes. Session data continues to use
-`OPENCODE_CONFIG_DIR` and `OPENCODE_DB` under the ordinary harness-state mount.
+is deleted after that scan lineage completes. Logs, repository data, and
+session data remain under the ordinary per-scan harness-state mount in both
+cases.
 
 ## Harness behaviour
 

@@ -242,16 +242,19 @@ var (
 )
 
 var reservedOpencodePassEnv = map[string]bool{
-	"ALL_PROXY":               true,
-	"HOME":                    true,
-	"HTTP_PROXY":              true,
-	"HTTPS_PROXY":             true,
-	"NO_PROXY":                true,
-	"OPENCODE_AUTH_CONTENT":   true,
-	"OPENCODE_CONFIG_CONTENT": true,
-	"OPENCODE_CONFIG_DIR":     true,
-	"OPENCODE_DB":             true,
-	"XDG_DATA_HOME":           true,
+	"ALL_PROXY":                     true,
+	"HOME":                          true,
+	"HTTP_PROXY":                    true,
+	"HTTPS_PROXY":                   true,
+	"NO_PROXY":                      true,
+	"OPENCODE_AUTH_CONTENT":         true,
+	"OPENCODE_CONFIG_CONTENT":       true,
+	"OPENCODE_CONFIG_DIR":           true,
+	"OPENCODE_DB":                   true,
+	"OPENCODE_DISABLE_AUTOUPDATE":   true,
+	"OPENCODE_DISABLE_MODELS_FETCH": true,
+	"OPENCODE_DISABLE_SHARE":        true,
+	"XDG_DATA_HOME":                 true,
 }
 
 // ValidateOpencode checks the provider map before any scan can use it. The

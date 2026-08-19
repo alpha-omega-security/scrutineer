@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 )
@@ -38,6 +37,7 @@ type opencodeProvider struct {
 	StateDir            string
 	Env                 map[string]string
 	RequiredBinaries    []string
+	EgressHosts         []string
 	ExternalCredentials bool
 	Configured          bool
 }
@@ -48,7 +48,10 @@ type opencodeAuthEntry struct {
 	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
-const opencodeProviderStatePerm = 0o700
+const (
+	opencodeProviderStatePerm = 0o700
+	opencodeAuthFilePerm      = 0o600
+)
 
 // OpencodeReadinessCache avoids launching the same catalog probe before every
 // scan. Only successful probes are cached; a repaired image or credential can
@@ -71,24 +74,6 @@ func OpencodeProviderID(model string) string {
 	return id
 }
 
-// OpencodeProviderEgress returns a stable, de-duplicated union of the hosts
-// needed by configured providers. The proxy is process-wide, while credentials
-// remain selected per scan.
-func OpencodeProviderEgress(providers map[string]OpencodeProviderConfig) []string {
-	seen := make(map[string]bool)
-	var hosts []string
-	for _, provider := range providers {
-		for _, host := range provider.EgressHosts {
-			if !seen[host] {
-				seen[host] = true
-				hosts = append(hosts, host)
-			}
-		}
-	}
-	sort.Strings(hosts)
-	return hosts
-}
-
 func (d ContainerRunner) resolveOpencodeProvider(model string) (opencodeProvider, error) {
 	resolved := opencodeProvider{
 		Model:       model,
@@ -109,6 +94,7 @@ func (d ContainerRunner) resolveOpencodeProvider(model string) (opencodeProvider
 	resolved.Configured = true
 	resolved.StateDir = cfg.StateDir
 	resolved.RequiredBinaries = append([]string(nil), cfg.RequiredBinaries...)
+	resolved.EgressHosts = append([]string(nil), cfg.EgressHosts...)
 	if cfg.RunnerImage != "" {
 		resolved.RunnerImage = cfg.RunnerImage
 		resolved.RequiredBinaries = appendMissing(resolved.RequiredBinaries, "brief", "scrutineer")
@@ -139,6 +125,96 @@ func (d ContainerRunner) resolveOpencodeProvider(model string) (opencodeProvider
 		resolved.ExternalCredentials = true
 	}
 	return resolved, nil
+}
+
+func (d ContainerRunner) configureOpencodeProviderEgress(provider opencodeProvider) (ContainerRunner, func(), error) {
+	noop := func() {}
+	if !provider.Configured {
+		return d, noop, nil
+	}
+	d.Egress.Allow = appendUniqueStrings(d.Egress.Allow, provider.EgressHosts...)
+	d.ProviderProxy.Allow = appendUniqueStrings(d.ProviderProxy.Allow, provider.EgressHosts...)
+	if d.usesEgressSidecar() {
+		return d, noop, nil
+	}
+	if d.ProviderProxy.ContainerHost == "" {
+		return d, noop, fmt.Errorf("OpenCode provider %q cannot configure scoped egress because the container host endpoint is unavailable", provider.ID)
+	}
+	token := NewProxyToken()
+	port, cleanup, err := StartScopedEgressProxy(&EgressProxy{
+		Allow:    d.ProviderProxy.Allow,
+		Token:    token,
+		APIPort:  d.ProviderProxy.APIPort,
+		APIHosts: d.ProviderProxy.APIHosts,
+		Log:      d.ProviderProxy.Log,
+	})
+	if err != nil {
+		return d, noop, fmt.Errorf("start OpenCode provider %q egress proxy: %w", provider.ID, err)
+	}
+	d.ProxyURL = ProxyURLForHost(token, d.ProviderProxy.ContainerHost, port)
+	return d, cleanup, nil
+}
+
+func (d ContainerRunner) prepareOpencodeExecution(ctx context.Context, model string) (ContainerRunner, opencodeProvider, SkillResult, func(), error) {
+	noop := func() {}
+	d, provider, result, err := d.prepareOpencodeRun(ctx, model)
+	if err != nil {
+		return d, provider, result, noop, err
+	}
+	d, cleanup, err := d.configureOpencodeProviderEgress(provider)
+	if err != nil {
+		return d, provider, result, noop, err
+	}
+	return d, provider, result, cleanup, nil
+}
+
+func (d ContainerRunner) prepareHarnessState(ctx context.Context, stateDir string, provider opencodeProvider, absWork, image string, hnet hardenedNet) (string, string, error) {
+	// A non-absolute bind source is a runtime-managed volume, so resolve the
+	// scan state path the same way as the workspace before building arguments.
+	var absState string
+	if stateDir != "" {
+		absState, _ = filepath.Abs(stateDir)
+		if err := os.MkdirAll(absState, dirPerm); err != nil {
+			return "", "", fmt.Errorf("create harness state dir: %w", err)
+		}
+	}
+	if err := prepareOpencodeScanState(provider, absState); err != nil {
+		return "", "", err
+	}
+	readinessErr := d.checkOpencodeReadiness(ctx, provider, absWork, image, hnet, absState)
+	digest := d.opencodeRunnerImageDigest(ctx, d.image())
+	return absState, digest, readinessErr
+}
+
+func (d ContainerRunner) appendOpencodeStateArgs(args []string, harnessStateDir string, provider opencodeProvider) []string {
+	if harnessStateDir != "" {
+		// Logs, repository metadata, and all other OpenCode data stay scoped to
+		// this scan lineage. A configured provider mounts only auth.json below.
+		args = append(args, "-e", "XDG_DATA_HOME=/harness-state/data")
+	}
+	if provider.StateDir != "" && harnessStateDir != "" {
+		args = append(args, "-v", bindMount(
+			opencodeProviderAuthPath(provider.StateDir),
+			"/harness-state/data/opencode/auth.json",
+			d.SELinuxRelabel,
+		))
+	}
+	return args
+}
+
+func appendUniqueStrings(values []string, additions ...string) []string {
+	out := append([]string(nil), values...)
+	seen := make(map[string]bool, len(out)+len(additions))
+	for _, value := range out {
+		seen[value] = true
+	}
+	for _, addition := range additions {
+		if !seen[addition] {
+			out = append(out, addition)
+			seen[addition] = true
+		}
+	}
+	return out
 }
 
 func appendMissing(values []string, additions ...string) []string {
@@ -201,13 +277,30 @@ func ensureOpencodeProviderState(provider opencodeProvider) error {
 	if info.Mode().Perm()&0o077 != 0 {
 		return fmt.Errorf("OpenCode provider %q state directory permissions %04o expose credentials; require 0700 or stricter", provider.ID, info.Mode().Perm())
 	}
-	authPath := filepath.Join(provider.StateDir, "opencode", "auth.json")
+	authPath := opencodeProviderAuthPath(provider.StateDir)
 	data, err := os.ReadFile(authPath)
 	if os.IsNotExist(err) {
 		if !provider.ExternalCredentials {
 			return fmt.Errorf("OpenCode provider %q is missing stored credentials at %s", provider.ID, authPath)
 		}
-		return nil
+		if err := os.MkdirAll(filepath.Dir(authPath), opencodeProviderStatePerm); err != nil {
+			return fmt.Errorf("create OpenCode provider %q auth directory: %w", provider.ID, err)
+		}
+		file, createErr := os.OpenFile(authPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, opencodeAuthFilePerm)
+		if createErr != nil && !os.IsExist(createErr) {
+			return fmt.Errorf("create OpenCode provider %q auth state: %w", provider.ID, createErr)
+		}
+		if createErr == nil {
+			if _, writeErr := file.WriteString("{}\n"); writeErr != nil {
+				_ = file.Close()
+				return fmt.Errorf("initialise OpenCode provider %q auth state: %w", provider.ID, writeErr)
+			}
+			if closeErr := file.Close(); closeErr != nil {
+				return fmt.Errorf("initialise OpenCode provider %q auth state: %w", provider.ID, closeErr)
+			}
+			return nil
+		}
+		data, err = os.ReadFile(authPath)
 	}
 	if err != nil {
 		return fmt.Errorf("read OpenCode provider %q auth state: %w", provider.ID, err)
@@ -227,11 +320,36 @@ func ensureOpencodeProviderState(provider opencodeProvider) error {
 	return nil
 }
 
+func opencodeProviderAuthPath(stateDir string) string {
+	return filepath.Join(stateDir, "opencode", "auth.json")
+}
+
+func prepareOpencodeScanState(provider opencodeProvider, harnessStateDir string) error {
+	if provider.StateDir == "" {
+		return nil
+	}
+	if harnessStateDir == "" {
+		return fmt.Errorf("OpenCode provider %q stored auth requires a per-scan harness state directory", provider.ID)
+	}
+	target := filepath.Join(harnessStateDir, "data", "opencode", "auth.json")
+	if err := os.MkdirAll(filepath.Dir(target), opencodeProviderStatePerm); err != nil {
+		return fmt.Errorf("prepare OpenCode provider %q scan auth directory: %w", provider.ID, err)
+	}
+	file, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE, opencodeAuthFilePerm)
+	if err != nil {
+		return fmt.Errorf("prepare OpenCode provider %q scan auth mountpoint: %w", provider.ID, err)
+	}
+	if err := file.Close(); err != nil {
+		return fmt.Errorf("prepare OpenCode provider %q scan auth mountpoint: %w", provider.ID, err)
+	}
+	return nil
+}
+
 func (d ContainerRunner) checkOpencodeReadiness(ctx context.Context, provider opencodeProvider, absWork, image string, hnet hardenedNet, harnessStateDir string) error {
 	if !provider.Configured {
 		return nil
 	}
-	cacheKey := image + "\x00" + provider.Model + "\x00" + provider.Env["OPENCODE_CONFIG_CONTENT"] + "\x00" + provider.StateDir + "\x00" + strings.Join(provider.RequiredBinaries, "\x00")
+	cacheKey := image + "\x00" + provider.Model + "\x00" + provider.Env["OPENCODE_CONFIG_CONTENT"] + "\x00" + provider.StateDir + "\x00" + strings.Join(provider.RequiredBinaries, "\x00") + "\x00" + strings.Join(provider.EgressHosts, "\x00")
 	if d.OpencodeReadiness != nil {
 		d.OpencodeReadiness.mu.Lock()
 		ready := d.OpencodeReadiness.ready[cacheKey]
@@ -248,6 +366,19 @@ func (d ContainerRunner) checkOpencodeReadiness(ctx context.Context, provider op
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			return fmt.Errorf("OpenCode provider %q readiness failed because supporting binary %q is missing: %w: %s", provider.ID, binary, err, cappedProviderOutput(out))
+		}
+	}
+	for _, host := range provider.EgressHosts {
+		if strings.HasPrefix(host, "*.") {
+			continue
+		}
+		args := d.buildRunArgsForProvider(absWork, image, hnet, harnessStateDir, provider, "/tmp")
+		args = append(args, "curl", "--silent", "--show-error", "--output", "/dev/null", "--connect-timeout", "5", "--max-time", "10", "--", "https://"+host+"/")
+		cmd := exec.CommandContext(ctx, d.Runtime.bin(), args...)
+		cmd.Env = environmentWith(os.Environ(), provider.Env)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("OpenCode provider %q readiness failed while reaching configured egress host %q: %w: %s", provider.ID, host, err, cappedProviderOutput(out))
 		}
 	}
 	args := d.buildRunArgsForProvider(absWork, image, hnet, harnessStateDir, provider, "/tmp")
@@ -271,6 +402,14 @@ func (d ContainerRunner) checkOpencodeReadiness(ctx context.Context, provider op
 		d.OpencodeReadiness.mu.Unlock()
 	}
 	return nil
+}
+
+func classifyOpencodeProviderRunError(provider opencodeProvider, output string, runErr error) error {
+	lower := strings.ToLower(output)
+	if strings.Contains(lower, "network") || strings.Contains(lower, "connect") || strings.Contains(lower, "econn") || strings.Contains(lower, "timeout") || strings.Contains(lower, "certificate") || strings.Contains(lower, "proxy") {
+		return fmt.Errorf("OpenCode provider %q failed while reaching its configured egress hosts: %w: %s", provider.ID, runErr, cappedProviderOutput([]byte(output)))
+	}
+	return fmt.Errorf("OpenCode provider %q failed: %w: %s", provider.ID, runErr, cappedProviderOutput([]byte(output)))
 }
 
 func classifyOpencodeReadinessError(provider opencodeProvider, output string, runErr error) error {

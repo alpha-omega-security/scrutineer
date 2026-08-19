@@ -987,9 +987,7 @@ func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRu
 	if err != nil {
 		return nil, "", err
 	}
-	harnessHosts := append([]string{}, h.EgressHosts()...)
-	harnessHosts = append(harnessHosts, worker.OpencodeProviderEgress(opencodeProviders)...)
-	allow := buildEgressAllow(harnessHosts, f.hardened, cfg, f.modelBaseURL, log)
+	allow := buildEgressAllow(h.EgressHosts(), f.hardened, cfg, f.modelBaseURL, log)
 	if apiHost != worker.HostGatewayAlias {
 		allow = append(allow, apiHost)
 	}
@@ -1045,8 +1043,15 @@ func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRu
 		Runtime:             rt,
 		SELinuxRelabel:      relabel,
 		Egress:              egress,
-		OpencodeProviders:   opencodeProviders,
-		OpencodeReadiness:   worker.NewOpencodeReadinessCache(),
+		ProviderProxy: worker.ScopedEgressProxyConfig{
+			Allow:         allow,
+			APIPort:       addrPort(f.addr),
+			APIHosts:      []string{apiHost},
+			ContainerHost: apiHost,
+			Log:           log,
+		},
+		OpencodeProviders: opencodeProviders,
+		OpencodeReadiness: worker.NewOpencodeReadinessCache(),
 	}, apiBase, nil
 }
 
