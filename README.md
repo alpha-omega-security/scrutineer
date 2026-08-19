@@ -415,10 +415,10 @@ The egress allowlist covers `models.dev` plus the Anthropic and OpenAI API hosts
 
 Scrutineer can drive [GitHub Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli) instead of claude-code. The runner image bundles the `copilot` binary, so switching is the flag (or `backend: copilot` in `scrutineer.yaml`) plus a credential -- a GitHub token with Copilot access:
 
-    export GH_TOKEN=ghp_...
+    export GH_TOKEN=github_pat_...
     go run ./cmd/scrutineer -skills ./skills -backend copilot
 
-The container, egress proxy, language profiles and skill staging stay the same; only the agent CLI inside the container changes. The egress allowlist is entirely GitHub infrastructure (`github.com`, `api.github.com`, `api.mcp.github.com`, `*.githubcopilot.com`) -- no third-party model provider host is contacted directly, since Copilot CLI proxies every model through GitHub's own API. The model pick list defaults to Copilot's own catalog (Claude and GPT models) with tier tags already set; override with `models:` in the config for a different set. Unlike codex and opencode, `-max-turns` is honoured by this backend. The copilot backend requires the containerised runner; `--no-container` with `-backend copilot` is rejected at startup. See [docs/copilot.md](docs/copilot.md) for the full credential and event-mapping details.
+The container, egress proxy, language profiles and skill staging stay the same; only the agent CLI inside the container changes. The default egress allowlist is entirely GitHub infrastructure (`github.com`, `api.github.com`, `api.mcp.github.com`, `*.githubcopilot.com`), since Copilot CLI proxies every model through GitHub's own API; setting `-model-base-url` overrides that endpoint and adds the override host to the allowlist. The model pick list defaults to Copilot's own catalog (Claude and GPT models) with tier tags already set; override with `models:` in the config for a different set. Unlike codex and opencode, `-max-turns` is honoured by this backend. The copilot backend requires the containerised runner; `--no-container` with `-backend copilot` is rejected at startup. See [docs/copilot.md](docs/copilot.md) for the full credential and event-mapping details.
 
 ## Sandboxed Claude Code configs
 

@@ -12,7 +12,7 @@ The runner image bundles the `copilot` binary (a glibc build, sha256-pinned
 in `Dockerfile.runner`), so there's nothing to install. Authenticate with a
 GitHub token that has Copilot access and start scrutineer:
 
-    export GH_TOKEN=ghp_...
+    export GH_TOKEN=github_pat_...
     go run ./cmd/scrutineer -skills ./skills -backend copilot
 
 or in `scrutineer.yaml`:
@@ -42,13 +42,16 @@ backends.
 
 Any of `COPILOT_GITHUB_TOKEN`, `GH_TOKEN`, or `GITHUB_TOKEN` on the host is
 passed through to the container as a credential; Copilot CLI accepts the
-first one it finds. A token from `gh auth login` (or a fine-grained PAT with
-Copilot access) works the same way `gh` itself authenticates. There is no
-separate API-key concept here: whichever token you export is the one billed
-against your Copilot entitlement.
+first one it finds. Copilot CLI does not accept classic personal access
+tokens (`ghp_...`): use a fine-grained PAT with the Copilot Requests
+permission, or export the OAuth token from an existing `gh` login with
+`export GH_TOKEN=$(gh auth token)`. Only the environment variables above
+reach the container -- the host's `~/.config/gh` is not mounted -- so the
+token must be exported explicitly. Whichever token you export is the one
+billed against your Copilot entitlement.
 
 The copilot backend requires the containerised runner. `--no-container` with
-`-backend copilot` is rejected at startup: the `copilot` binary lives in the
+`-backend copilot` is rejected at startup: the `copilot` binary is in the
 runner image, not on the host, and the local fallback (`LocalClaude`) is
 claude-only.
 
@@ -67,10 +70,11 @@ claude-only.
 
 `--allow-all` grants the CLI every tool it exposes without interactive
 confirmation; the container is the sandbox, the same posture codex and
-opencode run under. `--no-ask-user` stops copilot from blocking on a prompt
-scrutineer can't answer. `-resume=<id>` is appended when a scan is retried, so
-the session store (bind-mounted at `/harness-state`, `COPILOT_HOME`) picks up
-where a previous attempt left off, the same as the other backends.
+opencode run under. `--no-ask-user` stops copilot from blocking on an
+interactive prompt (scrutineer runs it headless). `--resume=<id>` is appended
+when a scan is retried, so the session store (bind-mounted at
+`/harness-state`, `COPILOT_HOME`) resumes the previous attempt, the same as
+the other backends.
 
 The activation prompt points explicitly at
 `./.github/skills/{name}/SKILL.md`: like codex and opencode, copilot
@@ -82,28 +86,22 @@ opencode.
 
 ## Egress
 
-Copilot CLI talks to GitHub for authentication, MCP, and the model API
-itself (`githubcopilot.com`), so the egress allowlist is entirely GitHub
-infrastructure -- no third-party model provider host is ever contacted
-directly. Under `--hardened` only these hosts plus the host skill API are
-permitted.
+Copilot CLI connects to GitHub for authentication, MCP, and the model API
+itself (`githubcopilot.com`), so the default egress allowlist is entirely
+GitHub infrastructure. Under `--hardened` only these hosts plus the host
+skill API are permitted. The exception is `-model-base-url`: Copilot CLI
+contacts that provider host directly, and scrutineer adds it to the
+allowlist in both normal and `--hardened` modes.
 
 The threat-model T1 residual applies the same: whichever GitHub token is set
-passes into the container as an env var and is readable by in-container code.
-Scope the token narrowly (a fine-grained PAT rather than a broad classic
-token) if that residual matters for your deployment.
+passes into the container as an env var and is readable by in-container
+code. Scope the token to the minimum (fine-grained PAT with only the Copilot
+Requests permission) if that residual matters for your deployment.
 
 ## Known gaps
 
-Copilot CLI has no per-turn cap distinct from `--max-autopilot-continues`
-(mapped from `-max-turns`, defaulting to `DefaultMaxTurns` when unset), so
-unlike codex and opencode this backend does honour `-max-turns`. The
-`-scan-timeout` wall-clock limit still applies regardless.
-
-Claude's `-effort` setting has no copilot equivalent and is ignored.
-
 The stream parser (`CopilotHarness.ParseStream`) maps Copilot CLI's
-`--output-format json` events onto the scan log, based on CLI 1.0.75:
+`--output-format json` events onto the scan log:
 `assistant.message` and `assistant.reasoning` become text/thinking events,
 `tool.execution_start` becomes a tool call, `assistant.usage` and
 `assistant.turn_end` are combined into a single result event emitted after
@@ -118,6 +116,6 @@ pass through as raw text so a CLI update remains visible.
   section that copilot follows.
 - `docs/opencode.md`: the opencode backend.
 - `internal/worker/harness.go`: the `Harness` interface aliases; the
-  concrete `CopilotHarness` implementation lives in the
+  concrete `CopilotHarness` implementation is in the
   `github.com/alpha-omega-security/harness` module (`copilot.go`).
 - #211: tracking issue for alternative harnesses.
