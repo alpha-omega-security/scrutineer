@@ -1,0 +1,22 @@
+internal/web/focus_area_deep_dive.go
+  s_0119a5929c427a::t_fbb0df47ee23e5 85-90
+internal/web/focus_area_deep_dive_test.go
+  s_0119a5929c427a::t_2866a1ac7f1fa9 12-15,18-20,32,34-37
+  s_0119a5929c427a::t_28e8a22948a7e4 60-62
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "6ef4df97f6d8336802f765c32e77185ade12245f",
+  "prompts": {},
+  "sessions": {
+    "s_0119a5929c427a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0b7aa841-789e-4447-a152-509496277875",
+        "model": "claude-mythos-preview"
+      },
+      "human_author": "Mirko Swillus <mechko@mk0.eu>"
+    }
+  }
+}
