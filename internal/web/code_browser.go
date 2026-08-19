@@ -20,8 +20,8 @@ import (
 // browser; larger files render as a "too large" notice.
 const maxBrowserBytes = 2 << 20
 
-// repoBlob reads one file via `git show <commit>:<path>` from the worker's
-// repo-cache, so historical commits resolve even after rescans move HEAD.
+// repoBlob reads one file at <commit>:<path> from the worker's repo-cache,
+// so historical commits resolve even after rescans move HEAD.
 func (s *Server) repoBlob(w http.ResponseWriter, r *http.Request) {
 	id64, err := strconv.ParseUint(r.PathValue("id"), 10, 64)
 	if err != nil {
@@ -103,11 +103,12 @@ func (s *Server) repoBlob(w http.ResponseWriter, r *http.Request) {
 }
 
 // sanitizeBlobPath rejects absolute paths, traversal segments and NUL bytes,
-// and returns the slash-form path safe to feed `git show <commit>:<path>`.
-// Also used by forge_link.go for its own path checks.
+// and returns the slash-form path safe to pass as a blob path to either
+// reader. Also used by forge_link.go for its own path checks.
 func sanitizeBlobPath(p string) (string, bool) { return clone.SanitizePath(p) }
 
-// gitShowBlob reads through go-git at the code browser's fixed byte cap.
+// gitShowBlob reads through go-git (with a git-CLI fallback) at the code
+// browser's fixed byte cap.
 func gitShowBlob(ctx context.Context, repoDir, commit, blobPath string) (clone.BlobResult, error) {
 	return gogit.InspectBlob(ctx, repoDir, commit, blobPath, maxBrowserBytes)
 }
