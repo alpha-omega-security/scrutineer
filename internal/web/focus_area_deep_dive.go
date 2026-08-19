@@ -82,7 +82,12 @@ func (s *Server) enqueueFocusAreaDeepDive(parent *db.Scan, skillID uint, group, 
 		return
 	}
 	if _, err := s.enqueueSkillWith(context.Background(), parent.RepositoryID, skillID, ScanOpts{
-		Model:          parent.Model,
+		// Model is intentionally not inherited: parent.Model is the
+		// threat-model scan's already-resolved concrete id (high tier
+		// by default), and passing it would win precedence over the
+		// deep-dive skill's own scrutineer.model: max declaration.
+		// Leaving it empty lets enqueueSkillWith fall through to the
+		// skill's tier so focus-area deep-dives run on max as intended.
 		Effort:         parent.Effort,
 		Profile:        parent.Profile,
 		SubPath:        parent.SubPath,

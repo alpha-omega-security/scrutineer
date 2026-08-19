@@ -9,8 +9,15 @@ import (
 )
 
 func TestAutoEnqueueFocusAreaDeepDives(t *testing.T) {
+	withTestModels(t, []Model{
+		{Name: "Test High", ID: "test-high"},
+		{Name: "Test Max", ID: "test-max"},
+	})
 	s, done := newTestServer(t)
 	defer done()
+	if err := db.SetSetting(s.DB, db.SettingModelTierMax, "test-max"); err != nil {
+		t.Fatal(err)
+	}
 	repo := db.Repository{
 		URL: "https://example.com/focus", Name: "focus", ScanConfig: `focus_areas:
   - name: XML parser
@@ -22,9 +29,12 @@ func TestAutoEnqueueFocusAreaDeepDives(t *testing.T) {
 `,
 	}
 	s.DB.Create(&repo)
-	deepDive := db.Skill{Name: deepDiveSkillName, Body: "b", OutputFile: "r.json", OutputKind: "findings", Active: true, Source: "ui"}
+	deepDive := db.Skill{Name: deepDiveSkillName, Body: "b", OutputFile: "r.json", OutputKind: "findings", Active: true, Source: "ui", Model: ModelTierMax}
 	s.DB.Create(&deepDive)
-	parent := db.Scan{RepositoryID: repo.ID, Status: db.ScanDone, SkillName: threatModelSkillName, ScanGroup: "triage-1", Effort: "high"}
+	// The parent threat-model scan stores a resolved concrete model id (high
+	// tier). The fan-out must not inherit it — the deep-dive skill declares
+	// max, and that is what focus-area scans should run on. #879.
+	parent := db.Scan{RepositoryID: repo.ID, Status: db.ScanDone, SkillName: threatModelSkillName, ScanGroup: "triage-1", Effort: "high", Model: "test-high"}
 	s.DB.Create(&parent)
 
 	s.autoEnqueueFocusAreaDeepDives(&parent)
@@ -46,6 +56,9 @@ func TestAutoEnqueueFocusAreaDeepDives(t *testing.T) {
 		got[area.Name] = scan
 		if scan.ScanGroup != parent.ScanGroup || scan.Effort != parent.Effort {
 			t.Errorf("scan = %+v, want parent effort and group", scan)
+		}
+		if scan.Model != "test-max" {
+			t.Errorf("scan.Model = %q, want deep-dive skill's max tier (test-max), not parent's %q", scan.Model, parent.Model)
 		}
 	}
 	if got["XML parser"].FocusArea == "" || got["CLI parser"].FocusArea == "" {
