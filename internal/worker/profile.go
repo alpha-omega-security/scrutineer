@@ -218,12 +218,12 @@ func IsNamedProfile(name string) bool {
 // briefDetections flattens brief's JSON output into category -> lower(name)
 // -> true. package_managers becomes the briefPackageManager category; every
 // key under tools becomes its own category. Only the dominant programming
-// language enters briefLanguage: brief emits languages sorted by byte share
-// descending, so a repo's test harness (Perl in curl, Python in many C
-// projects) can't outvote the actual codebase via registry order. Unknown
-// JSON is tolerated: an unmarshal error or an absent field yields an empty
-// (never nil) map so profile matching degrades to "no match" rather than
-// failing the scan.
+// language enters briefLanguage: brief emits languages sorted by source-file
+// count descending, so a repo's test harness (Perl in curl, Python in many C
+// projects) can't outvote the actual codebase via registry order. Unknown JSON
+// is tolerated: an unmarshal error or an absent field yields an empty (never
+// nil) map so profile matching degrades to "no match" rather than failing the
+// scan.
 func briefDetections(out []byte) map[string]map[string]bool {
 	type detection struct {
 		Name     string `json:"name"`
@@ -252,7 +252,7 @@ func briefDetections(out []byte) map[string]map[string]bool {
 		// Skip data/markup/prose entries the same way parseRepoOverviewOutput
 		// does; an absent category means brief predates the field, so treat
 		// it as a programming language for compatibility.
-		if d.Category != "" && d.Category != "language" {
+		if d.Name == "" || (d.Category != "" && d.Category != "language") {
 			continue
 		}
 		add(briefLanguage, d.Name)

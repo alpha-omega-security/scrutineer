@@ -98,6 +98,7 @@ func TestControlsContextMatchesFindingFile(t *testing.T) {
 	got := fixture.resolve(t, verifySkillName)
 	if got == nil {
 		t.Fatal("controls = nil, want a resolved block")
+		return
 	}
 	if got.UnavailableWhy != "" {
 		t.Fatalf("unavailable_reason = %q, want empty", got.UnavailableWhy)
@@ -124,6 +125,7 @@ func TestControlsContextReportsAnUnprotectedFile(t *testing.T) {
 	got := fixture.resolve(t, verifySkillName)
 	if got == nil {
 		t.Fatal("controls = nil, want a block recording that nothing matched")
+		return
 	}
 	if len(got.Matched) != 0 || len(got.IDs) != 0 {
 		t.Fatalf("matched = %+v, want empty for a file no control claims", got.Matched)
@@ -142,6 +144,7 @@ func TestControlsContextRebasesSubpathLocation(t *testing.T) {
 	got := fixture.resolve(t, verifySkillName)
 	if got == nil {
 		t.Fatal("controls = nil, want a resolved block")
+		return
 	}
 	if got.FindingFile != "internal/web/server.go" {
 		t.Fatalf("finding_file = %q, want the subpath-rebased root-relative path", got.FindingFile)

@@ -172,7 +172,7 @@ func TestMatchProfile(t *testing.T) {
 		},
 		{
 			// Regression for #884: curl is ~85% C but ships hundreds of
-			// tests/*.pl. brief sorts languages by byte share, so only the
+			// tests/*.pl. brief sorts languages by source-file count, so only the
 			// dominant language may participate in matching; the perl
 			// language selector must not fire on a secondary language.
 			"C-dominant repo with Perl test harness picks c-cpp (#884)",
@@ -193,6 +193,11 @@ func TestMatchProfile(t *testing.T) {
 			"non-language category is skipped when picking dominant language",
 			`{"languages":[{"name":"YAML","category":"data"},{"name":"Perl","category":"language"}]}`,
 			"perl",
+		},
+		{
+			"empty language name is skipped when picking dominant language",
+			`{"languages":[{"name":"","category":"language"},{"name":"C","category":"language"}]}`,
+			"c-cpp",
 		},
 		{
 			// A Bundler repo that also has a Makefile (common for gem
