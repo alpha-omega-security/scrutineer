@@ -75,6 +75,13 @@ jobs:
       - name: Smoke test image
         run: |
           docker run --rm scrutineer-runner:ci claude --version
+          docker run --rm \
+            --read-only \
+            --cap-drop ALL \
+            --user 12345:12345 \
+            -e HOME=/tmp \
+            --tmpfs /tmp:rw,noexec,nosuid,size=256m \
+            scrutineer-runner:ci copilot --version
           docker run --rm scrutineer-runner:ci curl --version
           docker run --rm scrutineer-runner:ci semgrep --version
           docker run --rm scrutineer-runner:ci zizmor --version
