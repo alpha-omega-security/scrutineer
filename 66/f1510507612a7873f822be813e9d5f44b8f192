@@ -1,0 +1,21 @@
+internal/worker/profile.go
+  s_efa0fd87d9cea7::t_533202f9885aa0 219-226,229-230,252-257,259
+internal/worker/profile_test.go
+  s_efa0fd87d9cea7::t_489adca4020f1f 173-196
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "66f1510507612a7873f822be813e9d5f44b8f192",
+  "prompts": {},
+  "sessions": {
+    "s_efa0fd87d9cea7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ca64aedc-ebbb-4620-8ad8-fc23318b9ac9",
+        "model": "claude-mythos-preview"
+      },
+      "human_author": "Mirko Swillus <mechko@mk0.eu>"
+    }
+  }
+}
