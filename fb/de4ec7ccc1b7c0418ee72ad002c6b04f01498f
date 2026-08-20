@@ -1,0 +1,25 @@
+internal/web/federation_test.go
+  s_7831e0c69fbbb7::t_e61cf9a6cab699 20,24-37
+  s_7831e0c69fbbb7::t_9e50d336a79266 505-506
+  s_7831e0c69fbbb7::t_e8fe0bd1ea0d29 520
+  s_7831e0c69fbbb7::t_6ac76caccdae24 390
+  s_7831e0c69fbbb7::t_b5569e562202ee 348,354
+  s_7831e0c69fbbb7::t_ad74406167258e 89,95-99
+  s_7831e0c69fbbb7::t_29552ee330c637 38
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "fbde4ec7ccc1b7c0418ee72ad002c6b04f01498f",
+  "prompts": {},
+  "sessions": {
+    "s_7831e0c69fbbb7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "feefeeb9-08de-42c2-9b24-03d375ad3890",
+        "model": "claude-mythos-preview"
+      },
+      "human_author": "Mirko Swillus <mechko@mk0.eu>"
+    }
+  }
+}
