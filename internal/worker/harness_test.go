@@ -159,7 +159,7 @@ func TestHarnessDefaultModels_registryEntriesAreComplete(t *testing.T) {
 
 func TestBuildRunArgs_stateEnvFromHarness(t *testing.T) {
 	d := ContainerRunner{Harness: stubHarness{state: []string{"CODEX_HOME=/harness-state", "CODEX_SQLITE_HOME=/harness-state"}}}
-	got := d.buildRunArgs("/work/abs", "img:latest", hardenedNet{}, "/data/cfg/scan-7")
+	got := d.buildRunArgs("img:latest", hardenedNet{}, "/data/cfg/scan-7")
 
 	if !containsEnvFlag(got, "CODEX_HOME=/harness-state") || !containsEnvFlag(got, "CODEX_SQLITE_HOME=/harness-state") {
 		t.Errorf("harness StateEnv not wired: %v", got)
@@ -177,7 +177,7 @@ func TestBuildRunArgs_stateEnvFromHarness(t *testing.T) {
 		t.Errorf("state dir bind mount missing: %v", got)
 	}
 
-	def := ContainerRunner{}.buildRunArgs("/work/abs", "img:latest", hardenedNet{}, "/data/cfg/scan-7")
+	def := ContainerRunner{}.buildRunArgs("img:latest", hardenedNet{}, "/data/cfg/scan-7")
 	if !containsEnvFlag(def, "CLAUDE_CONFIG_DIR=/harness-state") {
 		t.Errorf("default harness dropped CLAUDE_CONFIG_DIR: %v", def)
 	}
@@ -185,7 +185,7 @@ func TestBuildRunArgs_stateEnvFromHarness(t *testing.T) {
 
 func TestBuildRunArgs_includesHarnessEnv(t *testing.T) {
 	d := ContainerRunner{Harness: stubHarness{env: []string{"CODEX_API_KEY", "STUB_OPT=1"}}}
-	got := d.buildRunArgs("/work/abs", "img:latest", hardenedNet{}, "")
+	got := d.buildRunArgs("img:latest", hardenedNet{}, "")
 
 	if !containsEnvFlag(got, "CODEX_API_KEY") || !containsEnvFlag(got, "STUB_OPT=1") {
 		t.Errorf("harness env not wired into run args: %v", got)
@@ -206,7 +206,7 @@ func TestBuildRunArgs_includesHarnessEnv(t *testing.T) {
 func TestBuildRunArgs_defaultHarnessKeepsClaudeEnv(t *testing.T) {
 	t.Setenv("ANTHROPIC_API_KEY", "sk-ant-test")
 	d := ContainerRunner{ModelBaseURL: "https://proxy.corp.com/v1"}
-	got := d.buildRunArgs("/work/abs", "img:latest", hardenedNet{}, "")
+	got := d.buildRunArgs("img:latest", hardenedNet{}, "")
 	for _, want := range []string{
 		"ANTHROPIC_API_KEY",
 		"ANTHROPIC_BASE_URL=https://proxy.corp.com/v1",

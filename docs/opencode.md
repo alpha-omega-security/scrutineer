@@ -161,7 +161,10 @@ must have owner-only permissions such as `0700`. When `state_dir` is the only
 credential source, its auth file must already contain the selected provider. A
 provider using `pass_env` may initialise the file on first use.
 `state_dir` and `api_key_env` cannot be combined because
-`OPENCODE_AUTH_CONTENT` would override the rotating file.
+`OPENCODE_AUTH_CONTENT` would override the rotating file. Scans that share a
+`state_dir` run one at a time so a token refresh from one scan is never
+overwritten by another; use `api_key_env` or `pass_env` for providers where
+concurrent scans matter more than persisted OAuth.
 
 Without `state_dir`, OpenCode's auth data stays with the scan's retry state and
 is deleted after that scan lineage completes. Logs, repository data, and

@@ -11,10 +11,17 @@ import (
 	"testing"
 )
 
+// buildRunArgs is the no-provider shorthand tests use so they don't all repeat
+// opencodeProvider{}/"/work". Production code calls buildRunArgsForProvider
+// directly with the resolved provider.
+func (d ContainerRunner) buildRunArgs(image string, hnet hardenedNet, harnessStateDir string) []string {
+	return d.buildRunArgsForProvider("/work/abs", image, hnet, harnessStateDir, opencodeProvider{}, "/work")
+}
+
 func TestBuildRunArgs_ClaudeConfigMount(t *testing.T) {
 	d := ContainerRunner{}
 
-	with := d.buildRunArgs("/work/abs", "img:latest", hardenedNet{}, "/data/harness-state/scan-7")
+	with := d.buildRunArgs("img:latest", hardenedNet{}, "/data/harness-state/scan-7")
 	if !hasAdjacent(with, "-v", "/data/harness-state/scan-7:/harness-state") {
 		t.Errorf("expected the config dir bind mount in %v", with)
 	}
@@ -23,7 +30,7 @@ func TestBuildRunArgs_ClaudeConfigMount(t *testing.T) {
 	}
 
 	// No config dir → no mount and no env, so default scans are unchanged.
-	without := d.buildRunArgs("/work/abs", "img:latest", hardenedNet{}, "")
+	without := d.buildRunArgs("img:latest", hardenedNet{}, "")
 	for _, a := range without {
 		if strings.Contains(a, "/harness-state") || strings.HasPrefix(a, "CLAUDE_CONFIG_DIR=") {
 			t.Errorf("did not expect any harness-state args, got %q in %v", a, without)
@@ -37,7 +44,7 @@ func TestBuildRunArgs_KeepIDGating(t *testing.T) {
 	// byte as before (no --userns token at all), so this also guards against a
 	// regression that would silently alter the container arg vector.
 	rootless := ContainerRunner{Runtime: ContainerRuntime{Bin: "podman", Rootless: true}}
-	if got := rootless.buildRunArgs("/work/abs", "img:latest", hardenedNet{}, ""); !slices.Contains(got, "--userns=keep-id") {
+	if got := rootless.buildRunArgs("img:latest", hardenedNet{}, ""); !slices.Contains(got, "--userns=keep-id") {
 		t.Errorf("rootless podman: expected --userns=keep-id in %v", got)
 	}
 
@@ -46,7 +53,7 @@ func TestBuildRunArgs_KeepIDGating(t *testing.T) {
 		{Runtime: ContainerRuntime{Bin: "docker"}},
 		{Runtime: ContainerRuntime{Bin: "podman"}}, // rootful podman
 	} {
-		got := d.buildRunArgs("/work/abs", "img:latest", hardenedNet{}, "")
+		got := d.buildRunArgs("img:latest", hardenedNet{}, "")
 		for _, a := range got {
 			if strings.HasPrefix(a, "--userns") {
 				t.Errorf("runtime %+v: unexpected %q in %v", d.Runtime, a, got)
@@ -56,7 +63,7 @@ func TestBuildRunArgs_KeepIDGating(t *testing.T) {
 
 	// Rootless podman with a resume config dir keeps BOTH the mount and keep-id
 	// so the persisted session store stays host-owned across container restarts.
-	withCfg := rootless.buildRunArgs("/work/abs", "img:latest", hardenedNet{}, "/data/cfg/scan-1")
+	withCfg := rootless.buildRunArgs("img:latest", hardenedNet{}, "/data/cfg/scan-1")
 	if !slices.Contains(withCfg, "--userns=keep-id") {
 		t.Errorf("rootless+config: expected --userns=keep-id in %v", withCfg)
 	}
@@ -70,7 +77,7 @@ func TestBuildRunArgs_AppleOmitsDockerOnlyFlags(t *testing.T) {
 		Runtime:             ContainerRuntime{Bin: "apple"},
 		HardenedRuntimeOnly: true,
 	}
-	got := d.buildRunArgs("/work/abs", "img:latest", hardenedNet{}, "")
+	got := d.buildRunArgs("img:latest", hardenedNet{}, "")
 	for _, a := range got {
 		if a == "--add-host" {
 			t.Errorf("apple runtime must not receive Docker/Podman --add-host: %v", got)
@@ -100,7 +107,7 @@ func TestBuildRunArgs_AppleHardenedProxyTargetsScanGateway(t *testing.T) {
 		ProxyURL: "http://scrutineer:tok@192.168.64.1:45000", // startup default-network gateway
 	}
 	hnet := hardenedNet{name: "scrutineer-hardened-9", gatewayIP: "192.168.128.1"}
-	got := d.buildRunArgs("/work/abs", "img:latest", hnet, "")
+	got := d.buildRunArgs("img:latest", hnet, "")
 	joined := strings.Join(got, " ")
 
 	if !strings.Contains(joined, "HTTPS_PROXY=http://scrutineer:tok@192.168.128.1:45000") {
@@ -126,7 +133,7 @@ func TestBuildRunArgs_SELinuxRelabel(t *testing.T) {
 	// With relabeling on, every host bind mount must carry the ":z" shared
 	// relabel so the container can access it on an SELinux host.
 	on := ContainerRunner{SELinuxRelabel: true}
-	got := on.buildRunArgs("/work/abs", "img:latest", hardenedNet{}, "/data/cfg/scan-1")
+	got := on.buildRunArgs("img:latest", hardenedNet{}, "/data/cfg/scan-1")
 	if !hasAdjacent(got, "-v", "/work/abs:/work:z") {
 		t.Errorf("expected /work mount relabeled with :z in %v", got)
 	}
@@ -137,7 +144,7 @@ func TestBuildRunArgs_SELinuxRelabel(t *testing.T) {
 	// With relabeling off (the zero value / default), mounts are byte-for-byte
 	// unchanged -- no :z anywhere -- so non-SELinux hosts are unaffected.
 	off := ContainerRunner{}
-	got = off.buildRunArgs("/work/abs", "img:latest", hardenedNet{}, "/data/cfg/scan-1")
+	got = off.buildRunArgs("img:latest", hardenedNet{}, "/data/cfg/scan-1")
 	if !hasAdjacent(got, "-v", "/work/abs:/work") {
 		t.Errorf("expected unrelabeled /work mount in %v", got)
 	}
@@ -161,7 +168,7 @@ func TestBuildRunArgs_ContainerHardening(t *testing.T) {
 	// --hardened-runtime-only: read-only + no-new-privileges, but NOT the
 	// per-scan --internal network -- that network is the part rootless podman
 	// can't route to the host proxy, and is the whole reason this flag exists.
-	roR := ContainerRunner{HardenedRuntimeOnly: true}.buildRunArgs("/work/abs", "img:latest", hardenedNet{name: net}, "")
+	roR := ContainerRunner{HardenedRuntimeOnly: true}.buildRunArgs("img:latest", hardenedNet{name: net}, "")
 	if !slices.Contains(roR, "--read-only") || !hasNoNewPrivs(roR) {
 		t.Errorf("hardened-rootless-runtime: expected --read-only + no-new-privileges in %v", roR)
 	}
@@ -170,7 +177,7 @@ func TestBuildRunArgs_ContainerHardening(t *testing.T) {
 	}
 
 	// --hardened: the container hardening AND the per-scan network.
-	h := ContainerRunner{Hardened: true}.buildRunArgs("/work/abs", "img:latest", hardenedNet{name: net}, "")
+	h := ContainerRunner{Hardened: true}.buildRunArgs("img:latest", hardenedNet{name: net}, "")
 	if !slices.Contains(h, "--read-only") || !hasNoNewPrivs(h) {
 		t.Errorf("hardened: expected --read-only + no-new-privileges in %v", h)
 	}
@@ -188,7 +195,7 @@ func TestBuildRunArgs_ContainerHardening(t *testing.T) {
 	}
 
 	// Default mode: neither container-hardening option (byte-for-byte unchanged).
-	def := ContainerRunner{}.buildRunArgs("/work/abs", "img:latest", hardenedNet{}, "")
+	def := ContainerRunner{}.buildRunArgs("img:latest", hardenedNet{}, "")
 	if slices.Contains(def, "--read-only") || hasNoNewPrivs(def) {
 		t.Errorf("default mode must set neither --read-only nor no-new-privileges: %v", def)
 	}
@@ -196,7 +203,7 @@ func TestBuildRunArgs_ContainerHardening(t *testing.T) {
 	// The baseline -- --cap-drop ALL, non-root --user, the /tmp tmpfs -- is
 	// present in EVERY mode; the new flag must not disturb that invariant.
 	for _, mode := range []ContainerRunner{{}, {HardenedRuntimeOnly: true}, {Hardened: true}} {
-		args := mode.buildRunArgs("/work/abs", "img:latest", hardenedNet{name: net}, "")
+		args := mode.buildRunArgs("img:latest", hardenedNet{name: net}, "")
 		if !hasAdjacent(args, "--cap-drop", "ALL") {
 			t.Errorf("%+v: missing --cap-drop ALL: %v", mode, args)
 		}
@@ -784,7 +791,7 @@ func TestBuildRunArgs_SidecarProxyURL(t *testing.T) {
 		Egress:   EgressSidecarConfig{Token: "tok"},
 	}
 	hn := hardenedNet{name: "scrutineer-hardened-7", proxyEndpoint: "10.89.1.2:3128", proxyName: "scrutineer-proxy-7"}
-	args := d.buildRunArgs("/work/abs", "img:latest", hn, "")
+	args := d.buildRunArgs("img:latest", hn, "")
 
 	// The sidecar path regenerates the proxy URL via ProxyURLForEndpoint
 	// against the sidecar's own IP:port; it does not carry the host-proxy
@@ -810,7 +817,7 @@ func TestBuildRunArgs_HostProxyURLWhenNoSidecar(t *testing.T) {
 	// With no sidecar endpoint the scan uses the process-wide host proxy URL,
 	// exactly as docker/rootful hardened and non-hardened scans do today.
 	d := ContainerRunner{ProxyURL: "http://scrutineer:tok@host.docker.internal:55000"}
-	args := d.buildRunArgs("/work/abs", "img:latest", hardenedNet{}, "")
+	args := d.buildRunArgs("img:latest", hardenedNet{}, "")
 	if !hasAdjacent(args, "-e", "HTTPS_PROXY=http://scrutineer:tok@host.docker.internal:55000") {
 		t.Errorf("expected the host proxy URL in %v", args)
 	}

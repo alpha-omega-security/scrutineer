@@ -53,16 +53,39 @@ const (
 	opencodeAuthFilePerm      = 0o600
 )
 
-// OpencodeReadinessCache avoids launching the same catalog probe before every
-// scan. Only successful probes are cached; a repaired image or credential can
-// therefore be retried without restarting Scrutineer.
+// OpencodeReadinessCache holds the OpenCode runtime state that must be shared
+// across concurrent scans: cached successful catalog probes (so a repaired
+// image or credential can be retried without restarting Scrutineer, but a good
+// one is not re-proven before every scan) and per-state_dir locks (so two scans
+// never mount the same rotating auth.json read-write at once).
 type OpencodeReadinessCache struct {
-	mu    sync.Mutex
-	ready map[string]bool
+	mu         sync.Mutex
+	ready      map[string]bool
+	stateLocks map[string]*sync.Mutex
 }
 
 func NewOpencodeReadinessCache() *OpencodeReadinessCache {
-	return &OpencodeReadinessCache{ready: make(map[string]bool)}
+	return &OpencodeReadinessCache{ready: make(map[string]bool), stateLocks: make(map[string]*sync.Mutex)}
+}
+
+// lockState serialises scans that share one provider state_dir. OpenCode can
+// refresh OAuth credentials and rewrite auth.json without cross-process
+// locking, so a second concurrent mount can lose a rotated refresh token. The
+// lock is held for the whole scan (readiness through skill exit) and released
+// by the returned func.
+func (c *OpencodeReadinessCache) lockState(dir string) func() {
+	if c == nil || dir == "" {
+		return func() {}
+	}
+	c.mu.Lock()
+	m, ok := c.stateLocks[dir]
+	if !ok {
+		m = &sync.Mutex{}
+		c.stateLocks[dir] = m
+	}
+	c.mu.Unlock()
+	m.Lock()
+	return m.Unlock
 }
 
 // OpencodeProviderID returns the provider prefix of an OpenCode model id.
@@ -97,7 +120,7 @@ func (d ContainerRunner) resolveOpencodeProvider(model string) (opencodeProvider
 	resolved.EgressHosts = append([]string(nil), cfg.EgressHosts...)
 	if cfg.RunnerImage != "" {
 		resolved.RunnerImage = cfg.RunnerImage
-		resolved.RequiredBinaries = appendMissing(resolved.RequiredBinaries, "brief", "scrutineer")
+		resolved.RequiredBinaries = appendUniqueStrings(resolved.RequiredBinaries, "brief", "scrutineer")
 	}
 	if cfg.ConfigContent != "" {
 		resolved.Env["OPENCODE_CONFIG_CONTENT"] = cfg.ConfigContent
@@ -157,15 +180,36 @@ func (d ContainerRunner) configureOpencodeProviderEgress(provider opencodeProvid
 
 func (d ContainerRunner) prepareOpencodeExecution(ctx context.Context, model string) (ContainerRunner, opencodeProvider, SkillResult, func(), error) {
 	noop := func() {}
-	d, provider, result, err := d.prepareOpencodeRun(ctx, model)
+	provider, err := d.resolveOpencodeProvider(model)
+	result := SkillResult{Backend: HarnessName(d.harness())}
+	if result.Backend == "opencode" {
+		result.Provider = provider.ID
+		result.RunnerImage = provider.RunnerImage
+	}
 	if err != nil {
+		result.RunnerImageDigest = d.opencodeRunnerImageDigest(ctx, provider.RunnerImage)
 		return d, provider, result, noop, err
 	}
-	d, cleanup, err := d.configureOpencodeProviderEgress(provider)
-	if err != nil {
+	if provider.StateDir != "" {
+		provider.StateDir, _ = filepath.Abs(provider.StateDir)
+	}
+	// Lock before ensureOpencodeProviderState so a queued scan never reads
+	// auth.json while a running scan's OpenCode is rewriting it mid-refresh.
+	unlock := d.OpencodeReadiness.lockState(provider.StateDir)
+	if err := ensureOpencodeProviderState(provider); err != nil {
+		unlock()
+		result.RunnerImageDigest = d.opencodeRunnerImageDigest(ctx, provider.RunnerImage)
 		return d, provider, result, noop, err
 	}
-	return d, provider, result, cleanup, nil
+	// Provider images are bases for the existing language profiles, so replace
+	// the copied runner's default image before profile resolution.
+	d.Image = provider.RunnerImage
+	d, closeProxy, err := d.configureOpencodeProviderEgress(provider)
+	if err != nil {
+		unlock()
+		return d, provider, result, noop, err
+	}
+	return d, provider, result, func() { closeProxy(); unlock() }, nil
 }
 
 func (d ContainerRunner) prepareHarnessState(ctx context.Context, stateDir string, provider opencodeProvider, absWork, image string, hnet hardenedNet) (string, string, error) {
@@ -215,42 +259,6 @@ func appendUniqueStrings(values []string, additions ...string) []string {
 		}
 	}
 	return out
-}
-
-func appendMissing(values []string, additions ...string) []string {
-	for _, addition := range additions {
-		if !slices.Contains(values, addition) {
-			values = append(values, addition)
-		}
-	}
-	return values
-}
-
-func (d ContainerRunner) prepareOpencodeRun(ctx context.Context, model string) (ContainerRunner, opencodeProvider, SkillResult, error) {
-	provider, err := d.resolveOpencodeProvider(model)
-	result := SkillResult{Backend: HarnessName(d.harness())}
-	if result.Backend == "opencode" {
-		result.Provider = provider.ID
-		result.RunnerImage = provider.RunnerImage
-	}
-	if err != nil {
-		result.RunnerImageDigest = d.opencodeRunnerImageDigest(ctx, provider.RunnerImage)
-		return d, provider, result, err
-	}
-	if provider.StateDir != "" {
-		provider.StateDir, _ = filepath.Abs(provider.StateDir)
-		if err := ensureOpencodeProviderState(provider); err != nil {
-			result.RunnerImageDigest = d.opencodeRunnerImageDigest(ctx, provider.RunnerImage)
-			return d, provider, result, err
-		}
-	}
-	// Provider images are bases for the existing language profiles, so replace
-	// the copied runner's default image before profile resolution.
-	d.Image = provider.RunnerImage
-	if result.Backend == "opencode" {
-		result.RunnerImage = d.image()
-	}
-	return d, provider, result, nil
 }
 
 func (d ContainerRunner) opencodeRunnerImageDigest(ctx context.Context, image string) string {
@@ -358,36 +366,27 @@ func (d ContainerRunner) checkOpencodeReadiness(ctx context.Context, provider op
 			return nil
 		}
 	}
-	for _, binary := range provider.RequiredBinaries {
+	probe := func(argv ...string) ([]byte, error) {
 		args := d.buildRunArgsForProvider(absWork, image, hnet, harnessStateDir, provider, "/tmp")
-		args = append(args, "sh", "-c", `command -v "$1" >/dev/null`, "provider-readiness", binary)
-		cmd := exec.CommandContext(ctx, d.Runtime.bin(), args...)
+		cmd := exec.CommandContext(ctx, d.Runtime.bin(), append(args, argv...)...)
 		cmd.Env = environmentWith(os.Environ(), provider.Env)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("OpenCode provider %q readiness failed because supporting binary %q is missing: %w: %s", provider.ID, binary, err, cappedProviderOutput(out))
+		return cmd.CombinedOutput()
+	}
+	if len(provider.RequiredBinaries) > 0 {
+		argv := append([]string{"sh", "-c", `for b in "$@"; do command -v "$b" >/dev/null || { echo "scrutineer-readiness-fail: $b"; exit 1; }; done`, "provider-readiness"}, provider.RequiredBinaries...)
+		if out, err := probe(argv...); err != nil {
+			return fmt.Errorf("OpenCode provider %q readiness failed because supporting binary %q is missing: %w: %s", provider.ID, readinessFailTarget(out), err, cappedProviderOutput(out))
 		}
 	}
-	for _, host := range provider.EgressHosts {
-		if strings.HasPrefix(host, "*.") {
-			continue
-		}
-		args := d.buildRunArgsForProvider(absWork, image, hnet, harnessStateDir, provider, "/tmp")
-		args = append(args, "curl", "--silent", "--show-error", "--output", "/dev/null", "--connect-timeout", "5", "--max-time", "10", "--", "https://"+host+"/")
-		cmd := exec.CommandContext(ctx, d.Runtime.bin(), args...)
-		cmd.Env = environmentWith(os.Environ(), provider.Env)
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("OpenCode provider %q readiness failed while reaching configured egress host %q: %w: %s", provider.ID, host, err, cappedProviderOutput(out))
+	if hosts := concreteEgressHosts(provider.EgressHosts); len(hosts) > 0 {
+		argv := append([]string{"sh", "-c", `for h in "$@"; do curl --silent --show-error --output /dev/null --connect-timeout 5 --max-time 10 -- "https://$h/" || { echo "scrutineer-readiness-fail: $h"; exit 1; }; done`, "provider-readiness"}, hosts...)
+		if out, err := probe(argv...); err != nil {
+			return fmt.Errorf("OpenCode provider %q readiness failed while reaching configured egress host %q: %w: %s", provider.ID, readinessFailTarget(out), err, cappedProviderOutput(out))
 		}
 	}
-	args := d.buildRunArgsForProvider(absWork, image, hnet, harnessStateDir, provider, "/tmp")
-	args = append(args, "opencode", "models", provider.ID)
-	cmd := exec.CommandContext(ctx, d.Runtime.bin(), args...)
-	cmd.Env = environmentWith(os.Environ(), provider.Env)
-	out, err := cmd.CombinedOutput()
+	out, err := probe("opencode", "models", provider.ID)
 	if err != nil {
-		return classifyOpencodeReadinessError(provider, strings.TrimSpace(string(out)), err)
+		return classifyOpencodeReadinessError(provider, cappedProviderOutput(out), err)
 	}
 	models := strings.Fields(string(out))
 	if !slices.Contains(models, provider.Model) {
@@ -428,6 +427,28 @@ func classifyOpencodeReadinessError(provider opencodeProvider, output string, ru
 	}
 }
 
+func concreteEgressHosts(hosts []string) []string {
+	out := make([]string, 0, len(hosts))
+	for _, h := range hosts {
+		if !strings.HasPrefix(h, "*.") {
+			out = append(out, h)
+		}
+	}
+	return out
+}
+
+// readinessFailTarget extracts the binary or host name a readiness probe
+// script tagged as the failure. The marker is on its own stdout line, so it
+// survives runtime warnings and curl stderr in CombinedOutput.
+func readinessFailTarget(out []byte) string {
+	for line := range strings.SplitSeq(string(out), "\n") {
+		if target, ok := strings.CutPrefix(strings.TrimSpace(line), "scrutineer-readiness-fail: "); ok {
+			return target
+		}
+	}
+	return ""
+}
+
 func cappedProviderOutput(out []byte) string {
 	const max = 2048
 	text := strings.TrimSpace(string(out))
@@ -458,8 +479,13 @@ func environmentWith(base []string, overrides map[string]string) []string {
 
 // runnerImageContentDigest records the locally resolved content identity of
 // the provider base. Registry-backed images use RepoDigests; locally built
-// operator images fall back to their immutable image ID.
+// operator images fall back to their immutable image ID. Apple's container CLI
+// has no --format flag on `image inspect`, so its JSON output is parsed for
+// the equivalent descriptor digest.
 func runnerImageContentDigest(ctx context.Context, rt ContainerRuntime, image string) string {
+	if rt.Bin == runtimeApple {
+		return appleImageContentDigest(ctx, image)
+	}
 	const format = `{{if .RepoDigests}}{{index .RepoDigests 0}}{{else}}{{.Id}}{{end}}`
 	out, err := exec.CommandContext(ctx, rt.bin(), "image", "inspect", "--format", format, "--", image).Output()
 	if err != nil {
@@ -470,4 +496,26 @@ func runnerImageContentDigest(ctx context.Context, rt ContainerRuntime, image st
 		return digest
 	}
 	return value
+}
+
+func appleImageContentDigest(ctx context.Context, image string) string {
+	out, err := exec.CommandContext(ctx, "container", "image", "inspect", image).Output()
+	if err != nil {
+		return ""
+	}
+	var records []struct {
+		ID            string `json:"id"`
+		Configuration struct {
+			Descriptor struct {
+				Digest string `json:"digest"`
+			} `json:"descriptor"`
+		} `json:"configuration"`
+	}
+	if err := json.Unmarshal(out, &records); err != nil || len(records) == 0 {
+		return ""
+	}
+	if d := records[0].Configuration.Descriptor.Digest; d != "" {
+		return d
+	}
+	return records[0].ID
 }

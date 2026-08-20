@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 func TestResolveOpencodeProviderBuildsScopedAuth(t *testing.T) {
@@ -124,7 +126,7 @@ func TestBuildRunArgsForProviderScopesEnvironmentAndState(t *testing.T) {
 
 func TestBuildRunArgsForOpencodeKeepsPerScanAuthState(t *testing.T) {
 	d := ContainerRunner{Harness: OpencodeHarness{}}
-	args := d.buildRunArgs("/work/abs", "stock:1", hardenedNet{}, "/state/scan-1")
+	args := d.buildRunArgs("stock:1", hardenedNet{}, "/state/scan-1")
 	if !hasAdjacent(args, "-e", "XDG_DATA_HOME=/harness-state/data") {
 		t.Errorf("per-scan OpenCode auth state missing: %v", args)
 	}
@@ -257,10 +259,7 @@ func TestOpencodeProviderImageFeedsLanguageProfileDetection(t *testing.T) {
 }
 
 func TestCheckOpencodeReadinessFindsExactModel(t *testing.T) {
-	runtime := filepath.Join(t.TempDir(), "fake-runtime")
-	if err := os.WriteFile(runtime, []byte("#!/bin/sh\ncase \" $* \" in *\" curl \"*) exit 0;; esac\nprintf 'groq/model-a\\ngroq/model-b\\n'\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	runtime := writeFakeRuntime(t, "#!/bin/sh\ncase \" $* \" in *provider-readiness*) exit 0;; esac\nprintf 'groq/model-a\\ngroq/model-b\\n'\n")
 	d := ContainerRunner{
 		Harness:           OpencodeHarness{},
 		Runtime:           ContainerRuntime{Bin: runtime},
@@ -278,36 +277,104 @@ func TestCheckOpencodeReadinessFindsExactModel(t *testing.T) {
 }
 
 func TestCheckOpencodeReadinessReportsBlockedProviderEgress(t *testing.T) {
-	runtime := filepath.Join(t.TempDir(), "fake-runtime")
-	if err := os.WriteFile(runtime, []byte("#!/bin/sh\ncase \" $* \" in *\" curl \"*) echo 'CONNECT tunnel failed, response 403'; exit 1;; esac\nprintf 'groq/model-a\\n'\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	runtime := writeFakeRuntime(t, "#!/bin/sh\ncase \"$*\" in\n"+
+		"*curl*) echo 'warning: platform mismatch' >&2; echo 'curl: (28) Connection timed out' >&2; echo 'scrutineer-readiness-fail: auth.groq.com'; exit 1;;\n"+
+		"*) printf 'groq/model-a\\n';;\nesac\n")
 	d := ContainerRunner{Harness: OpencodeHarness{}, Runtime: ContainerRuntime{Bin: runtime}}
-	provider := opencodeProvider{ID: "groq", Model: "groq/model-a", Env: map[string]string{}, EgressHosts: []string{"api.groq.com"}, Configured: true}
+	provider := opencodeProvider{ID: "groq", Model: "groq/model-a", Env: map[string]string{}, EgressHosts: []string{"api.groq.com", "auth.groq.com", "*.groq.net"}, Configured: true}
 	err := d.checkOpencodeReadiness(t.Context(), provider, t.TempDir(), "stock:1", hardenedNet{}, "")
-	if err == nil || !strings.Contains(err.Error(), `configured egress host "api.groq.com"`) {
+	if err == nil || !strings.Contains(err.Error(), `configured egress host "auth.groq.com"`) {
 		t.Fatalf("blocked egress error = %v", err)
 	}
 }
 
 func TestCheckOpencodeReadinessReportsMissingSupportingBinary(t *testing.T) {
-	runtime := filepath.Join(t.TempDir(), "fake-runtime")
-	if err := os.WriteFile(runtime, []byte("#!/bin/sh\nexit 1\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	runtime := writeFakeRuntime(t, "#!/bin/sh\necho 'scrutineer-readiness-fail: kiro-cli'; exit 1\n")
 	d := ContainerRunner{Harness: OpencodeHarness{}, Runtime: ContainerRuntime{Bin: runtime}}
 	provider := opencodeProvider{
 		ID:               "kiro",
 		Model:            "kiro/auto",
 		RunnerImage:      "kiro:1",
 		Env:              map[string]string{},
-		RequiredBinaries: []string{"kiro-cli"},
+		RequiredBinaries: []string{"brief", "kiro-cli"},
 		Configured:       true,
 	}
 	err := d.checkOpencodeReadiness(t.Context(), provider, t.TempDir(), "kiro:1", hardenedNet{}, "")
 	if err == nil || !strings.Contains(err.Error(), `supporting binary "kiro-cli" is missing`) {
 		t.Fatalf("missing binary error = %v", err)
 	}
+}
+
+func TestCheckOpencodeReadinessProbesOncePerCheck(t *testing.T) {
+	log := filepath.Join(t.TempDir(), "invocations")
+	runtime := writeFakeRuntime(t, "#!/bin/sh\necho x >> "+log+"\ncase \"$*\" in *provider-readiness*) exit 0;; esac\nprintf 'kiro/auto\\n'\n")
+	d := ContainerRunner{Harness: OpencodeHarness{}, Runtime: ContainerRuntime{Bin: runtime}}
+	provider := opencodeProvider{
+		ID:               "kiro",
+		Model:            "kiro/auto",
+		Env:              map[string]string{},
+		RequiredBinaries: []string{"brief", "scrutineer", "kiro-cli"},
+		EgressHosts:      []string{"a.example", "b.example", "*.c.example"},
+		Configured:       true,
+	}
+	if err := d.checkOpencodeReadiness(t.Context(), provider, t.TempDir(), "kiro:1", hardenedNet{}, ""); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(log)
+	if n := strings.Count(string(data), "x"); n != 3 {
+		t.Errorf("readiness launched %d containers, want 3 (binaries, hosts, catalog)", n)
+	}
+}
+
+func TestCheckOpencodeReadinessCapsCatalogFailureOutput(t *testing.T) {
+	runtime := writeFakeRuntime(t, "#!/bin/sh\nyes 'Cannot find package kiro-adapter' | head -c 5000; exit 1\n")
+	d := ContainerRunner{Harness: OpencodeHarness{}, Runtime: ContainerRuntime{Bin: runtime}}
+	provider := opencodeProvider{ID: "kiro", Model: "kiro/auto", Env: map[string]string{}, Configured: true}
+	err := d.checkOpencodeReadiness(t.Context(), provider, t.TempDir(), "kiro:1", hardenedNet{}, "")
+	if err == nil || !strings.Contains(err.Error(), "adapter or plugin is missing") {
+		t.Fatalf("catalog failure error = %v", err)
+	}
+	if len(err.Error()) > 3000 {
+		t.Errorf("catalog failure output not capped: %d bytes", len(err.Error()))
+	}
+}
+
+func TestOpencodeStateLockSerialisesSharedStateDir(t *testing.T) {
+	c := NewOpencodeReadinessCache()
+	dir := t.TempDir()
+	held := false
+	overlap := false
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Go(func() {
+			unlock := c.lockState(dir)
+			if held {
+				overlap = true
+			}
+			held = true
+			time.Sleep(5 * time.Millisecond)
+			held = false
+			unlock()
+		})
+	}
+	wg.Wait()
+	if overlap {
+		t.Error("two callers held the same state_dir lock at once")
+	}
+	// A distinct state_dir must not contend with the first, and empty is a
+	// no-op so a nil cache or a provider without state never blocks.
+	other := c.lockState(t.TempDir())
+	other()
+	(*OpencodeReadinessCache)(nil).lockState("")()
+}
+
+func writeFakeRuntime(t *testing.T, script string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "fake-runtime")
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 func TestClassifyOpencodeReadinessErrors(t *testing.T) {
@@ -324,6 +391,23 @@ func TestClassifyOpencodeReadinessErrors(t *testing.T) {
 		if got := classifyOpencodeReadinessError(provider, tc.output, runErr); !strings.Contains(got.Error(), tc.want) {
 			t.Errorf("classify %q = %v, want %q", tc.output, got, tc.want)
 		}
+	}
+}
+
+func TestContainerRunErrorStateResumeRetryIgnoresProviderErrors(t *testing.T) {
+	h := stubHarness{acctErr: "invalid_api_key"}
+	s := containerRunErrorState{}
+	s.observe(Event{Kind: KindError, Text: "session abc not found"}, h, true)
+	if !s.resumeRetryable() {
+		t.Error("provider error event blocked the fresh-restart resume fallback")
+	}
+	err := s.failure(opencodeProvider{ID: "kiro"}, "docker", errors.New("exit 1"))
+	if !strings.Contains(err.Error(), "session abc not found") {
+		t.Errorf("provider error text lost from failure: %v", err)
+	}
+	s.observe(Event{Kind: KindError, Text: "invalid_api_key: revoked"}, h, true)
+	if s.resumeRetryable() {
+		t.Error("account error event did not block the resume fallback")
 	}
 }
 
@@ -345,11 +429,25 @@ func TestEnvironmentWithReplacesAndAdds(t *testing.T) {
 }
 
 func TestRunnerImageContentDigestPrefersRegistryDigest(t *testing.T) {
-	runtime := filepath.Join(t.TempDir(), "fake-runtime")
-	if err := os.WriteFile(runtime, []byte("#!/bin/sh\nprintf 'registry.example/provider@sha256:abc\\n'\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	runtime := writeFakeRuntime(t, "#!/bin/sh\nprintf 'registry.example/provider@sha256:abc\\n'\n")
 	if got := runnerImageContentDigest(t.Context(), ContainerRuntime{Bin: runtime}, "provider:1"); got != "sha256:abc" {
 		t.Errorf("runner image digest = %q, want sha256:abc", got)
+	}
+}
+
+func TestRunnerImageContentDigestParsesAppleInspectJSON(t *testing.T) {
+	// container image inspect emits a JSON array with no --format support, so
+	// the digest is read from configuration.descriptor.digest with id as the
+	// fallback for locally built images.
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "container"), []byte("#!/bin/sh\ncase \"$*\" in *no-descriptor*) printf '[{\"id\":\"sha256:localid\"}]';; *) printf '[{\"id\":\"sha256:localid\",\"configuration\":{\"descriptor\":{\"digest\":\"sha256:def\"}}}]';; esac\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	if got := runnerImageContentDigest(t.Context(), ContainerRuntime{Bin: runtimeApple}, "provider:1"); got != "sha256:def" {
+		t.Errorf("apple runner image digest = %q, want sha256:def", got)
+	}
+	if got := runnerImageContentDigest(t.Context(), ContainerRuntime{Bin: runtimeApple}, "no-descriptor:1"); got != "sha256:localid" {
+		t.Errorf("apple runner image id fallback = %q, want sha256:localid", got)
 	}
 }

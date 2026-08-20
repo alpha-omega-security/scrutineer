@@ -247,8 +247,12 @@ func (s *containerRunErrorState) observe(event Event, h Harness, configuredProvi
 	}
 }
 
+// resumeRetryable gates the "session gone, restart fresh" fallback. Only an
+// account error (auth/quota) blocks it: a configured-provider error event may
+// be the harness reporting the missing session itself, which is exactly the
+// condition the fallback exists for.
 func (s containerRunErrorState) resumeRetryable() bool {
-	return s.accountText == "" && s.providerText == ""
+	return s.accountText == ""
 }
 
 func (s containerRunErrorState) failure(provider opencodeProvider, runtimeName string, waitErr error) error {
@@ -321,7 +325,7 @@ func (d ContainerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Ev
 	if err != nil {
 		return result, err
 	}
-	runBase := d.buildSkillRunArgs(absWork, image, hnet, absConfig, provider)
+	runBase := d.buildRunArgsForProvider(absWork, image, hnet, absConfig, provider, "/work")
 
 	logLine := "$ " + d.Runtime.bin() + " run --rm " + image + " <skill:" + sj.Name + ">"
 	if d.ModelBaseURL != "" {
@@ -409,22 +413,11 @@ func (d ContainerRunner) runContainerOnce(ctx context.Context, runBase []string,
 	return hitMaxTurns, sessionID, waitErr
 }
 
-// buildRunArgs assembles the container run flags for a skill invocation.
+// buildRunArgsForProvider assembles the container run flags for a skill invocation.
 // Returns the args up to and including the image name; the caller appends
 // the in-container command. Split out of RunSkill to keep its cognitive
 // complexity manageable as new toggles (hardened mode, proxy, profiles)
 // accumulate.
-func (d ContainerRunner) buildRunArgs(absWork, image string, hnet hardenedNet, harnessStateDir string) []string {
-	return d.buildRunArgsForProvider(absWork, image, hnet, harnessStateDir, opencodeProvider{}, "/work")
-}
-
-func (d ContainerRunner) buildSkillRunArgs(absWork, image string, hnet hardenedNet, harnessStateDir string, provider opencodeProvider) []string {
-	if !provider.Configured {
-		return d.buildRunArgs(absWork, image, hnet, harnessStateDir)
-	}
-	return d.buildRunArgsForProvider(absWork, image, hnet, harnessStateDir, provider, "/work")
-}
-
 func (d ContainerRunner) buildRunArgsForProvider(absWork, image string, hnet hardenedNet, harnessStateDir string, provider opencodeProvider, workdir string) []string {
 	gwTarget := "host-gateway"
 	if d.Hardened {
@@ -831,7 +824,7 @@ func EnsureHardenedNetwork(rt ContainerRuntime, name string) error {
 
 // hardenedNet bundles a per-scan --internal network name with the host-gateway
 // IPv4 resolved against it. setupHardenedNetwork resolves the gateway once and
-// threads it through both verifyHardenedNetwork and buildRunArgs, so a
+// threads it through both verifyHardenedNetwork and buildRunArgsForProvider, so a
 // hardened scan probes for it a single time instead of once per consumer. The
 // zero value (both fields "") is the non-hardened case.
 type hardenedNet struct {
@@ -1218,7 +1211,7 @@ curl -s -m 5 -o /dev/null http://1.1.1.1 && echo REACHED || echo BLOCKED`
 // (the proxy answers, e.g. 407 without auth) means the TCP path to the host is
 // open. docker/podman wire the host-gateway alias with --add-host exactly as the
 // real run does; Apple's CLI has no --add-host, so the probe targets the
-// resolved gateway IP directly -- the same address buildRunArgs points the proxy
+// resolved gateway IP directly -- the same address buildRunArgsForProvider points the proxy
 // env at for an Apple hardened scan.
 func (rt ContainerRuntime) hardenedProxyReachArgs(network, gatewayIP, proxyPort, image string) []string {
 	args := rt.runArgs("--rm", "--cap-drop", "ALL", "--network", network)
