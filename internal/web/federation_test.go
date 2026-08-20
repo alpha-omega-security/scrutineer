@@ -345,7 +345,10 @@ func TestExportFeed_picksUpAThirdPartyCommit(t *testing.T) {
 
 	// A third party adds a README to the feed repository.
 	work := t.TempDir()
-	run := func(args ...string) { testGit(t, append([]string{"-C", work}, args...)...) }
+	run := func(args ...string) {
+		t.Helper()
+		testGit(t, append([]string{"-C", work}, args...)...)
+	}
 	run("clone", "--quiet", remote, ".")
 	if err := os.WriteFile(filepath.Join(work, "README.md"), []byte("peer feed\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -503,7 +506,10 @@ func pushPeerFeed(t *testing.T, remote string, recs []interchange.Statement, raw
 	t.Helper()
 	work := t.TempDir()
 	testGit(t, "clone", "--quiet", remote, work)
-	run := func(args ...string) { testGit(t, append([]string{"-C", work}, args...)...) }
+	run := func(args ...string) {
+		t.Helper()
+		testGit(t, append([]string{"-C", work}, args...)...)
+	}
 	if err := interchange.WriteFeed(work, interchange.TierPublic, recs, interchange.FeedKeys{}); err != nil {
 		t.Fatal(err)
 	}
