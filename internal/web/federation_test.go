@@ -17,8 +17,24 @@ import (
 
 	"scrutineer/internal/db"
 	"scrutineer/internal/interchange"
+	"scrutineer/internal/testutil"
 	"scrutineer/internal/worker"
 )
+
+// testGit runs git under testutil.GitEnv so the host's global git config
+// cannot leak into the temp repositories these tests create. A trace2
+// listener that writes refs/notes/* into observed repos, or a global
+// commit.gpgsign, otherwise changes commit counts and breaks peer commits.
+func testGit(t *testing.T, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Env = testutil.GitEnv()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+	return string(out)
+}
 
 func feedTime(t *testing.T) time.Time {
 	t.Helper()
@@ -70,20 +86,17 @@ func recordKindCounts(recs []interchange.Statement) map[string]int {
 func initBareRemote(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	cmd := exec.Command("git", "init", "--quiet", "--bare", dir)
-	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("git init --bare: %v\n%s", err, out)
-	}
+	testGit(t, "init", "--quiet", "--bare", dir)
 	return dir
 }
 
 func remoteCommitCount(t *testing.T, remote string) int {
 	t.Helper()
-	out, err := exec.Command("git", "-C", remote, "rev-list", "--count", "--all").CombinedOutput()
-	if err != nil {
-		t.Fatalf("git rev-list: %v\n%s", err, out)
-	}
-	n, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	// --branches, not --all: --all counts refs/notes/* and refs/tags/* too, so
+	// anything that adds a stray ref to the bare remote would inflate the
+	// count these tests assert on.
+	out := testGit(t, "-C", remote, "rev-list", "--count", "--branches")
+	n, err := strconv.Atoi(strings.TrimSpace(out))
 	if err != nil {
 		t.Fatalf("unexpected rev-list output %q: %v", out, err)
 	}
@@ -332,18 +345,13 @@ func TestExportFeed_picksUpAThirdPartyCommit(t *testing.T) {
 
 	// A third party adds a README to the feed repository.
 	work := t.TempDir()
-	run := func(args ...string) {
-		t.Helper()
-		if out, err := exec.Command("git", append([]string{"-C", work}, args...)...).CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
+	run := func(args ...string) { testGit(t, append([]string{"-C", work}, args...)...) }
 	run("clone", "--quiet", remote, ".")
 	if err := os.WriteFile(filepath.Join(work, "README.md"), []byte("peer feed\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	run("add", "README.md")
-	run("-c", "user.name=peer", "-c", "user.email=peer@localhost", "commit", "--quiet", "-m", "readme")
+	run("commit", "--quiet", "-m", "readme")
 	run("push", "--quiet", "origin", "HEAD")
 
 	if err := s.exportFeed(context.Background(), interchange.TierPublic, remote); err != nil {
@@ -379,9 +387,7 @@ func TestExportFeed_republishesOntoARecreatedRemote(t *testing.T) {
 	if err := os.RemoveAll(remote); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := exec.Command("git", "init", "--quiet", "--bare", remote).CombinedOutput(); err != nil {
-		t.Fatalf("git init --bare: %v\n%s", err, out)
-	}
+	testGit(t, "init", "--quiet", "--bare", remote)
 
 	if err := s.exportFeed(context.Background(), interchange.TierPublic, remote); err != nil {
 		t.Fatal(err)
@@ -496,15 +502,8 @@ func publishPeerFeedWithRaw(t *testing.T, recs []interchange.Statement, raw map[
 func pushPeerFeed(t *testing.T, remote string, recs []interchange.Statement, raw map[string]string) {
 	t.Helper()
 	work := t.TempDir()
-	if out, err := exec.Command("git", "clone", "--quiet", remote, work).CombinedOutput(); err != nil {
-		t.Fatalf("git clone: %v\n%s", err, out)
-	}
-	run := func(args ...string) {
-		t.Helper()
-		if out, err := exec.Command("git", append([]string{"-C", work}, args...)...).CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
+	testGit(t, "clone", "--quiet", remote, work)
+	run := func(args ...string) { testGit(t, append([]string{"-C", work}, args...)...) }
 	if err := interchange.WriteFeed(work, interchange.TierPublic, recs, interchange.FeedKeys{}); err != nil {
 		t.Fatal(err)
 	}
@@ -518,7 +517,7 @@ func pushPeerFeed(t *testing.T, remote string, recs []interchange.Statement, raw
 		}
 	}
 	run("add", "--all", ".")
-	run("-c", "user.name=peer", "-c", "user.email=peer@localhost", "commit", "--quiet", "-m", "feed")
+	run("commit", "--quiet", "-m", "feed")
 	run("push", "--quiet", "origin", "HEAD")
 }
 
