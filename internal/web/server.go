@@ -2359,7 +2359,11 @@ func (s *Server) loadRepoShowView(
 	deps := s.loadRepoDependencyView(repo.ID, query.Get("deps") == "all")
 	inventory := s.loadRepoInventoryView(repo.ID, deps.Groups)
 	maintainers := s.repoMaintainers(repo.ID)
-	health := db.AssessRepositoryHealth(repo, inventory.Packages, maintainers, time.Now())
+	evidenceComplete, err := db.RepositoryHealthEvidenceComplete(s.DB, repo.ID)
+	if err != nil {
+		s.Log.Error("repository health evidence", "repo", repo.ID, "err", err)
+	}
+	health := db.AssessRepositoryHealth(repo, inventory.Packages, maintainers, evidenceComplete, time.Now())
 	alternatives, err := loadPackageAlternatives(s.DB, repo.ID)
 	if err != nil {
 		s.Log.Error("load package alternatives", "repo", repo.ID, "err", err)

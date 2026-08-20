@@ -26,6 +26,13 @@ const (
 	healthZombieDependents   = 100
 )
 
+// repositoryHealthSkills are the skills whose output the classification reads.
+// A repository is left unassessed until every one of them has a completed run,
+// so a partial pipeline (metadata done, maintainers still manual) cannot stamp
+// a misleading verdict. packages is deliberately absent: its absence softens
+// the verdict (no zombie/stale-release signal) but never inverts it.
+var repositoryHealthSkills = []string{"metadata", "maintainers"}
+
 // RepositoryHealthAssessment is the durable classification plus the evidence
 // used to reach it. Summary is derived at read time for detailed views; only
 // Health is stored on the repository row.
@@ -52,11 +59,17 @@ type RepositoryHealthAssessment struct {
 }
 
 // AssessRepositoryHealth classifies a repository from persisted evidence.
+// evidenceComplete reports whether every skill in repositoryHealthSkills has a
+// finished run for this repository; when it is false the assessment carries the
+// evidence collected so far (counts, flags) but leaves Health empty so the
+// table shows nothing rather than a fall-through "stale". Archived is the one
+// exception: it is a definitive upstream signal that needs no corroboration.
+//
 // An old push alone can make a repository stale, but abandonment additionally
 // requires an explicit archived flag or maintainer evidence showing no active
 // owner. That avoids treating repositories which have not yet run maintainers
 // as abandoned.
-func AssessRepositoryHealth(repo Repository, packages []Package, maintainers []Maintainer, now time.Time) RepositoryHealthAssessment {
+func AssessRepositoryHealth(repo Repository, packages []Package, maintainers []Maintainer, evidenceComplete bool, now time.Time) RepositoryHealthAssessment {
 	assessment := RepositoryHealthAssessment{}
 	var flags []string
 	for _, pkg := range packages {
@@ -89,7 +102,7 @@ func AssessRepositoryHealth(repo Repository, packages []Package, maintainers []M
 		staleRelease = releaseAge >= healthStaleReleaseWindow
 	}
 
-	if !repo.Archived && repo.PushedAt == nil && assessment.KnownMaintainers == 0 {
+	if !repo.Archived && !evidenceComplete {
 		return assessment
 	}
 
@@ -170,6 +183,20 @@ func healthAge(age time.Duration) string {
 	return "less than a month"
 }
 
+// RepositoryHealthEvidenceComplete reports whether every skill the health
+// classification depends on has at least one finished run for the repository.
+// It answers "did the skill run", not "did it produce rows", so a maintainers
+// scan that legitimately found nobody still counts as complete.
+func RepositoryHealthEvidenceComplete(gdb *gorm.DB, repositoryID uint) (bool, error) {
+	var done []string
+	if err := gdb.Model(&Scan{}).
+		Where("repository_id = ? AND status = ? AND skill_name IN ?", repositoryID, ScanDone, repositoryHealthSkills).
+		Distinct("skill_name").Pluck("skill_name", &done).Error; err != nil {
+		return false, err
+	}
+	return len(done) == len(repositoryHealthSkills), nil
+}
+
 // RefreshRepositoryHealth recalculates and persists the health classification.
 // It does not manufacture a status when the evidence is incomplete; legacy
 // rows therefore remain empty until enough source data exists.
@@ -187,8 +214,12 @@ func RefreshRepositoryHealth(gdb *gorm.DB, repositoryID uint, now time.Time) (Re
 		Where("repository_maintainers.repository_id = ?", repositoryID).Find(&maintainers).Error; err != nil {
 		return RepositoryHealthAssessment{}, fmt.Errorf("load maintainers for repository health: %w", err)
 	}
+	complete, err := RepositoryHealthEvidenceComplete(gdb, repositoryID)
+	if err != nil {
+		return RepositoryHealthAssessment{}, fmt.Errorf("load repository health scan evidence: %w", err)
+	}
 
-	assessment := AssessRepositoryHealth(repo, packages, maintainers, now)
+	assessment := AssessRepositoryHealth(repo, packages, maintainers, complete, now)
 	if repo.Health == assessment.Health {
 		return assessment, nil
 	}
