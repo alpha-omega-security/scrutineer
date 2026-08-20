@@ -73,7 +73,19 @@ controls owned by Scrutineer cannot be named under `pass_env`.
 
 Credential files are not mounted automatically. Bedrock, Vertex, and similar
 providers need narrowly scoped mounts before file-based host credential chains
-can be supported. Prefer short-lived environment credentials for now.
+can be supported.
+
+Whichever of `api_key_env`, `pass_env`, or `state_dir` supplies the credential,
+its value passes into the scan container so opencode can authenticate and is
+readable by any code the scanned repository causes to run there (the T1
+residual in `threatmodel.md`). `pass_env` extends that to whatever native
+chain the provider requires, and the `state_dir` auth file described below is
+mounted read-write so refreshed tokens persist, which also lets in-container
+code overwrite it. Prefer short-lived or narrowly scoped credentials (an
+`AWS_SECRET_ACCESS_KEY` limited to Bedrock model invocation, a per-install
+OAuth app for Copilot) so an exfiltrated value has bounded reach; under
+`--hardened` the provider's `egress_allow` hosts and the skill API are the
+only destinations it can be sent to.
 
 Every configured provider needs at least one `egress_allow` hostname. These
 hosts are added only to scans using that provider, including under `--hardened`.
