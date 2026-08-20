@@ -1,0 +1,19 @@
+internal/web/federation_test.go
+  s_7831e0c69fbbb7::t_f05b894cb950af 348-351,509-512
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "eae42043ce1ae800e5ab1614a69257f09a26a32b",
+  "prompts": {},
+  "sessions": {
+    "s_7831e0c69fbbb7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "feefeeb9-08de-42c2-9b24-03d375ad3890",
+        "model": "claude-mythos-preview"
+      },
+      "human_author": "Mirko Swillus <mechko@mk0.eu>"
+    }
+  }
+}
