@@ -93,12 +93,50 @@ The top-level `egress_allow` remains ignored in hardened mode. Use hostnames
 without a scheme, path, or port. Region- and resource-specific providers should
 list the endpoints for the configured region or resource.
 
-Local providers such as Ollama and LM Studio are not covered by this option
-yet. The egress proxy permits only Scrutineer's API port on the container host,
-so allowing a hostname does not expose a host-local model server's port.
-
 A model whose provider prefix is neither `anthropic`, `openai`, nor a key under
 `opencode.providers` is refused before the container starts.
+
+## Host-local providers
+
+For a model server running on the host machine's loopback (Ollama, LM Studio,
+llama.cpp, or another OpenAI-compatible endpoint), set `host_port` instead of
+`egress_allow`. The egress proxy opens exactly that port on
+`host.docker.internal` and rewrites it to the host loopback, so the scan
+container reaches only the named port and nothing else on the host. The
+`config_file` must point OpenCode's `options.baseURL` at
+`http://host.docker.internal:<port>`, not `127.0.0.1`, because the request
+originates inside the container.
+
+    opencode:
+      providers:
+        ollama:
+          config_file: ./opencode/ollama.json
+          host_port: 11434
+
+    # ./opencode/ollama.json
+    {
+      "provider": {
+        "ollama": {
+          "npm": "@ai-sdk/openai-compatible",
+          "options": { "baseURL": "http://host.docker.internal:11434/v1" },
+          "models": { "llama3.3": {} }
+        }
+      }
+    }
+
+The readiness check probes `http://host.docker.internal:<port>/` from inside
+the container before the skill runs, so a stopped model server or a wrong port
+fails the scan with a clear error rather than an OpenCode server exception.
+`host_port` and `egress_allow` may be combined when a provider needs both a
+host-local endpoint and external hostnames. `host_port` requires the docker or
+podman runtime; Apple's container runtime has no `host.docker.internal` alias
+and is not supported for this option.
+
+Under the sidecar egress path (rootless podman with `--hardened`) the request
+goes container → sidecar → host gateway → host loopback, which requires the
+rootless network backend to forward the host gateway to the host loopback. The
+sidecar already refuses to start when that forwarding is unavailable for the
+skill API port; the same check applies here.
 
 ## Provider images and config
 

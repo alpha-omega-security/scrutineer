@@ -103,6 +103,7 @@ func TestEgressSidecarEnvContract(t *testing.T) {
 		Token:     "tok",
 		Allow:     []string{"*.anthropic.com", "host.docker.internal"},
 		APIPort:   "8080",
+		HostPorts: []string{"11434"},
 		GatewayIP: "192.0.2.9",
 	}
 	env := map[string]string{}
@@ -123,6 +124,9 @@ func TestEgressSidecarEnvContract(t *testing.T) {
 	}
 	if got.apiPort != cfg.APIPort {
 		t.Errorf("api port: host set %q, sidecar read %q", cfg.APIPort, got.apiPort)
+	}
+	if !reflect.DeepEqual(got.hostPorts, cfg.HostPorts) {
+		t.Errorf("host ports: host set %v, sidecar read %v", cfg.HostPorts, got.hostPorts)
 	}
 	if got.listen != worker.SidecarListenFirstIface+":3128" {
 		t.Errorf("listen: sidecar read %q, want %s:3128", got.listen, worker.SidecarListenFirstIface)

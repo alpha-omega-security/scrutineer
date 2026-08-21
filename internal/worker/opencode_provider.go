@@ -23,6 +23,7 @@ type OpencodeProviderConfig struct {
 	PassEnv          []string
 	RequiredBinaries []string
 	EgressHosts      []string
+	HostPort         string
 	StateDir         string
 }
 
@@ -38,6 +39,7 @@ type opencodeProvider struct {
 	Env                 map[string]string
 	RequiredBinaries    []string
 	EgressHosts         []string
+	HostPort            string
 	ExternalCredentials bool
 	Configured          bool
 }
@@ -130,6 +132,7 @@ func (d ContainerRunner) resolveOpencodeProvider(model string) (opencodeProvider
 	}
 	resolved.Configured = true
 	resolved.StateDir = cfg.StateDir
+	resolved.HostPort = cfg.HostPort
 	resolved.RequiredBinaries = append([]string(nil), cfg.RequiredBinaries...)
 	resolved.EgressHosts = append([]string(nil), cfg.EgressHosts...)
 	if cfg.RunnerImage != "" {
@@ -171,6 +174,11 @@ func (d ContainerRunner) configureOpencodeProviderEgress(provider opencodeProvid
 	}
 	d.Egress.Allow = appendUniqueStrings(d.Egress.Allow, provider.EgressHosts...)
 	d.ProviderProxy.Allow = appendUniqueStrings(d.ProviderProxy.Allow, provider.EgressHosts...)
+	var hostPorts []string
+	if provider.HostPort != "" {
+		hostPorts = []string{provider.HostPort}
+		d.Egress.HostPorts = appendUniqueStrings(d.Egress.HostPorts, provider.HostPort)
+	}
 	if d.usesEgressSidecar() {
 		return d, noop, nil
 	}
@@ -179,11 +187,12 @@ func (d ContainerRunner) configureOpencodeProviderEgress(provider opencodeProvid
 	}
 	token := NewProxyToken()
 	port, cleanup, err := StartScopedEgressProxy(&EgressProxy{
-		Allow:    d.ProviderProxy.Allow,
-		Token:    token,
-		APIPort:  d.ProviderProxy.APIPort,
-		APIHosts: d.ProviderProxy.APIHosts,
-		Log:      d.ProviderProxy.Log,
+		Allow:     d.ProviderProxy.Allow,
+		Token:     token,
+		APIPort:   d.ProviderProxy.APIPort,
+		APIHosts:  d.ProviderProxy.APIHosts,
+		HostPorts: hostPorts,
+		Log:       d.ProviderProxy.Log,
 	})
 	if err != nil {
 		return d, noop, fmt.Errorf("start OpenCode provider %q egress proxy: %w", provider.ID, err)
@@ -371,7 +380,7 @@ func (d ContainerRunner) checkOpencodeReadiness(ctx context.Context, provider op
 	if !provider.Configured {
 		return nil
 	}
-	cacheKey := image + "\x00" + provider.Model + "\x00" + provider.Env["OPENCODE_CONFIG_CONTENT"] + "\x00" + provider.StateDir + "\x00" + strings.Join(provider.RequiredBinaries, "\x00") + "\x00" + strings.Join(provider.EgressHosts, "\x00")
+	cacheKey := image + "\x00" + provider.Model + "\x00" + provider.Env["OPENCODE_CONFIG_CONTENT"] + "\x00" + provider.StateDir + "\x00" + provider.HostPort + "\x00" + strings.Join(provider.RequiredBinaries, "\x00") + "\x00" + strings.Join(provider.EgressHosts, "\x00")
 	if d.OpencodeReadiness != nil {
 		d.OpencodeReadiness.mu.Lock()
 		ready := d.OpencodeReadiness.ready[cacheKey]
@@ -396,6 +405,17 @@ func (d ContainerRunner) checkOpencodeReadiness(ctx context.Context, provider op
 		argv := append([]string{"sh", "-c", `for h in "$@"; do curl --silent --show-error --output /dev/null --connect-timeout 5 --max-time 10 -- "https://$h/" || { echo "scrutineer-readiness-fail: $h"; exit 1; }; done`, "provider-readiness"}, hosts...)
 		if out, err := probe(argv...); err != nil {
 			return fmt.Errorf("OpenCode provider %q readiness failed while reaching configured egress host %q: %w: %s", provider.ID, readinessFailTarget(out), err, cappedProviderOutput(out))
+		}
+	}
+	if provider.HostPort != "" {
+		// The proxy rewrites HostGatewayAlias:<HostPort> to the host loopback,
+		// so a container-side curl proves both the proxy grant and the model
+		// server listening. Any HTTP status is fine; only a connect failure
+		// indicates the port is closed or the proxy denied it.
+		target := "http://" + HostGatewayAlias + ":" + provider.HostPort + "/"
+		argv := []string{"curl", "--silent", "--show-error", "--output", "/dev/null", "--connect-timeout", "5", "--max-time", "10", "--", target}
+		if out, err := probe(argv...); err != nil {
+			return fmt.Errorf("OpenCode provider %q readiness failed reaching the host-local model server on port %s: %w: %s", provider.ID, provider.HostPort, err, cappedProviderOutput(out))
 		}
 	}
 	out, err := probe("opencode", "models", provider.ID)

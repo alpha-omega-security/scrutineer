@@ -363,6 +363,7 @@ func TestLoadOpencodeProvidersResolvesConfigRelativePaths(t *testing.T) {
 			EgressAllow:      []string{"q.us-east-1.amazonaws.com"},
 			StateDir:         "state/kiro",
 		},
+		"ollama": {HostPort: 11434},
 	}, filepath.Join(dir, "scrutineer.yaml"))
 	if err != nil {
 		t.Fatal(err)
@@ -376,6 +377,9 @@ func TestLoadOpencodeProvidersResolvesConfigRelativePaths(t *testing.T) {
 	}
 	if !slices.Equal(provider.RequiredBinaries, []string{"kiro-cli"}) {
 		t.Errorf("required binaries = %v", provider.RequiredBinaries)
+	}
+	if got["ollama"].HostPort != "11434" || got["kiro"].HostPort != "" {
+		t.Errorf("host ports = kiro:%q ollama:%q", got["kiro"].HostPort, got["ollama"].HostPort)
 	}
 }
 

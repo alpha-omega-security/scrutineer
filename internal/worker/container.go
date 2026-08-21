@@ -112,6 +112,10 @@ type EgressSidecarConfig struct {
 	// APIPort is the host skill API port; the sidecar restricts the host alias
 	// to it, matching the host proxy's APIPort.
 	APIPort string
+	// HostPorts are additional ports on the host alias the sidecar permits.
+	// configureOpencodeProviderEgress fills it from a provider's host_port so
+	// a host-local model server on the host loopback is reachable.
+	HostPorts []string
 	// GatewayIP is the default-network host-gateway IPv4 the sidecar dials to
 	// reach the host skill API. Required: an empty value means the sidecar
 	// cannot reach the host, so setupHardenedNetwork fails the scan closed.
@@ -1014,6 +1018,7 @@ func EgressSidecarEnv(cfg EgressSidecarConfig, listen string) []string {
 		"SCRUTINEER_PROXY_ALLOW=" + strings.Join(cfg.Allow, ","),
 		"SCRUTINEER_PROXY_API_HOST=" + cfg.GatewayIP,
 		"SCRUTINEER_PROXY_API_PORT=" + cfg.APIPort,
+		"SCRUTINEER_PROXY_HOST_PORTS=" + strings.Join(cfg.HostPorts, ","),
 		"SCRUTINEER_PROXY_LISTEN=" + listen,
 	}
 }

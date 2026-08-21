@@ -118,15 +118,19 @@
 # instead. A derived runner_image can add a pinned adapter or supporting binary;
 # it must be based on the Scrutineer runner so language profiles still compose.
 # config_file and state_dir are host paths; relative paths start beside this
-# config file. Every configured provider must declare its API/auth hostnames.
-# Only the selected provider's hosts are added to a scan, including in hardened
-# mode.
+# config file. Every configured provider must declare its API/auth hostnames
+# under egress_allow, or a host_port for a model server on the host loopback
+# (Ollama, LM Studio). Only the selected provider's hosts and port are added
+# to a scan, including in hardened mode.
 # opencode:
 #   providers:
 #     groq:
 #       api_key_env: GROQ_API_KEY
 #       egress_allow:
 #         - api.groq.com
+#     ollama:
+#       config_file: ./opencode/ollama.json
+#       host_port: 11434
 #     kiro:
 #       runner_image: registry.example/scrutineer-opencode-kiro@sha256:...
 #       config_file: ./opencode/kiro.json
