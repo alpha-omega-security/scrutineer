@@ -23,6 +23,7 @@ type OpencodeProviderConfig struct {
 	PassEnv          []string
 	RequiredBinaries []string
 	EgressHosts      []string
+	HostPort         string
 	StateDir         string
 }
 
@@ -38,6 +39,7 @@ type opencodeProvider struct {
 	Env                 map[string]string
 	RequiredBinaries    []string
 	EgressHosts         []string
+	HostPort            string
 	ExternalCredentials bool
 	Configured          bool
 }
@@ -130,6 +132,7 @@ func (d ContainerRunner) resolveOpencodeProvider(model string) (opencodeProvider
 	}
 	resolved.Configured = true
 	resolved.StateDir = cfg.StateDir
+	resolved.HostPort = cfg.HostPort
 	resolved.RequiredBinaries = append([]string(nil), cfg.RequiredBinaries...)
 	resolved.EgressHosts = append([]string(nil), cfg.EgressHosts...)
 	if cfg.RunnerImage != "" {
@@ -171,6 +174,11 @@ func (d ContainerRunner) configureOpencodeProviderEgress(provider opencodeProvid
 	}
 	d.Egress.Allow = appendUniqueStrings(d.Egress.Allow, provider.EgressHosts...)
 	d.ProviderProxy.Allow = appendUniqueStrings(d.ProviderProxy.Allow, provider.EgressHosts...)
+	var hostPorts []string
+	if provider.HostPort != "" {
+		hostPorts = []string{provider.HostPort}
+		d.Egress.HostPorts = appendUniqueStrings(d.Egress.HostPorts, provider.HostPort)
+	}
 	if d.usesEgressSidecar() {
 		return d, noop, nil
 	}
@@ -179,11 +187,12 @@ func (d ContainerRunner) configureOpencodeProviderEgress(provider opencodeProvid
 	}
 	token := NewProxyToken()
 	port, cleanup, err := StartScopedEgressProxy(&EgressProxy{
-		Allow:    d.ProviderProxy.Allow,
-		Token:    token,
-		APIPort:  d.ProviderProxy.APIPort,
-		APIHosts: d.ProviderProxy.APIHosts,
-		Log:      d.ProviderProxy.Log,
+		Allow:     d.ProviderProxy.Allow,
+		Token:     token,
+		APIPort:   d.ProviderProxy.APIPort,
+		APIHosts:  d.ProviderProxy.APIHosts,
+		HostPorts: hostPorts,
+		Log:       d.ProviderProxy.Log,
 	})
 	if err != nil {
 		return d, noop, fmt.Errorf("start OpenCode provider %q egress proxy: %w", provider.ID, err)
@@ -371,20 +380,20 @@ func (d ContainerRunner) checkOpencodeReadiness(ctx context.Context, provider op
 	if !provider.Configured {
 		return nil
 	}
-	cacheKey := image + "\x00" + provider.Model + "\x00" + provider.Env["OPENCODE_CONFIG_CONTENT"] + "\x00" + provider.StateDir + "\x00" + strings.Join(provider.RequiredBinaries, "\x00") + "\x00" + strings.Join(provider.EgressHosts, "\x00")
-	if d.OpencodeReadiness != nil {
-		d.OpencodeReadiness.mu.Lock()
-		ready := d.OpencodeReadiness.ready[cacheKey]
-		d.OpencodeReadiness.mu.Unlock()
-		if ready {
-			return nil
-		}
-	}
 	probe := func(argv ...string) ([]byte, error) {
 		args := d.buildRunArgsForProvider(absWork, image, hnet, harnessStateDir, provider, "/tmp")
 		cmd := exec.CommandContext(ctx, d.Runtime.bin(), append(args, argv...)...)
 		cmd.Env = environmentWith(os.Environ(), provider.Env)
 		return cmd.CombinedOutput()
+	}
+	cacheKey := image + "\x00" + provider.Model + "\x00" + provider.Env["OPENCODE_CONFIG_CONTENT"] + "\x00" + provider.StateDir + "\x00" + provider.HostPort + "\x00" + strings.Join(provider.RequiredBinaries, "\x00") + "\x00" + strings.Join(provider.EgressHosts, "\x00")
+	if d.OpencodeReadiness != nil {
+		d.OpencodeReadiness.mu.Lock()
+		ready := d.OpencodeReadiness.ready[cacheKey]
+		d.OpencodeReadiness.mu.Unlock()
+		if ready {
+			return d.checkOpencodeHostPort(provider, probe)
+		}
 	}
 	if len(provider.RequiredBinaries) > 0 {
 		argv := append([]string{"sh", "-c", `for b in "$@"; do command -v "$b" >/dev/null || { echo "scrutineer-readiness-fail: $b"; exit 1; }; done`, "provider-readiness"}, provider.RequiredBinaries...)
@@ -413,6 +422,26 @@ func (d ContainerRunner) checkOpencodeReadiness(ctx context.Context, provider op
 		}
 		d.OpencodeReadiness.ready[cacheKey] = true
 		d.OpencodeReadiness.mu.Unlock()
+	}
+	return d.checkOpencodeHostPort(provider, probe)
+}
+
+// checkOpencodeHostPort probes the provider's host-local model server from
+// inside the container. It runs on every scan (outside the readiness cache)
+// because a host-local server can be stopped or restarted between scans while
+// the image, catalog, and egress hosts the cache covers stay unchanged.
+// --proxytunnel forces CONNECT for the plain-http target so a proxy 403/502
+// (port denied or nothing listening on the host loopback) is a curl exit
+// error; once the tunnel is up, any origin status counts as reachable.
+func (d ContainerRunner) checkOpencodeHostPort(provider opencodeProvider, probe func(...string) ([]byte, error)) error {
+	if provider.HostPort == "" {
+		return nil
+	}
+	target := "http://" + HostGatewayAlias + ":" + provider.HostPort + "/"
+	argv := []string{"curl", "--silent", "--show-error", "--proxytunnel", "--output", "/dev/null", "--connect-timeout", "5", "--max-time", "10", "--", target}
+	out, err := probe(argv...)
+	if err != nil {
+		return fmt.Errorf("OpenCode provider %q readiness failed reaching the host-local model server on port %s: %w: %s", provider.ID, provider.HostPort, err, cappedProviderOutput(out))
 	}
 	return nil
 }

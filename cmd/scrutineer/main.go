@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -1082,6 +1083,10 @@ func loadOpencodeProviders(h worker.Harness, providers map[string]config.Opencod
 			}
 			configContent = string(content)
 		}
+		var hostPort string
+		if provider.HostPort > 0 {
+			hostPort = strconv.Itoa(provider.HostPort)
+		}
 		result[id] = worker.OpencodeProviderConfig{
 			RunnerImage:      provider.RunnerImage,
 			ConfigContent:    configContent,
@@ -1090,6 +1095,7 @@ func loadOpencodeProviders(h worker.Harness, providers map[string]config.Opencod
 			PassEnv:          append([]string(nil), provider.PassEnv...),
 			RequiredBinaries: append([]string(nil), provider.RequiredBinaries...),
 			EgressHosts:      append([]string(nil), provider.EgressAllow...),
+			HostPort:         hostPort,
 			StateDir:         stateDir,
 		}
 	}

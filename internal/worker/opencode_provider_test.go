@@ -4,7 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -235,6 +240,72 @@ func TestConfigureOpencodeProviderEgressScopesHostProxyToSelectedProvider(t *tes
 	}
 }
 
+func TestConfigureOpencodeProviderEgressOpensHostPort(t *testing.T) {
+	// An ephemeral loopback server stands in for a host-local model server so
+	// the test does not depend on whatever occupies a well-known port.
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+	_, hostPort, _ := net.SplitHostPort(upstream.Listener.Addr().String())
+	deniedLn, _ := net.Listen("tcp", "127.0.0.1:0")
+	defer func() { _ = deniedLn.Close() }()
+	_, deniedPort, _ := net.SplitHostPort(deniedLn.Addr().String())
+
+	d := ContainerRunner{
+		Harness: OpencodeHarness{},
+		OpencodeProviders: map[string]OpencodeProviderConfig{
+			"ollama": {HostPort: hostPort},
+		},
+		Egress: EgressSidecarConfig{Allow: []string{HostGatewayAlias}},
+		ProviderProxy: ScopedEgressProxyConfig{
+			Allow:         []string{HostGatewayAlias},
+			APIPort:       "8080",
+			APIHosts:      []string{HostGatewayAlias},
+			ContainerHost: HostGatewayAlias,
+		},
+	}
+	provider, err := d.resolveOpencodeProvider("ollama/llama3.3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if provider.HostPort != hostPort || !provider.Configured {
+		t.Fatalf("resolved provider = %+v", provider)
+	}
+	got, cleanup, err := d.configureOpencodeProviderEgress(provider)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+	// Sidecar path picks the port up from the mutated Egress config.
+	if !slices.Equal(got.Egress.HostPorts, []string{hostPort}) {
+		t.Errorf("sidecar host ports = %v", got.Egress.HostPorts)
+	}
+	// Host-proxy path: the scoped listener must accept the gateway alias on
+	// the provider's host port (rewritten to 127.0.0.1 -> upstream) and refuse
+	// an unlisted port at the gate before dialing.
+	pu, _ := url.Parse(got.ProxyURL)
+	pu.Host = "127.0.0.1:" + pu.Port()
+	tr := &http.Transport{Proxy: http.ProxyURL(pu)}
+	client := &http.Client{Transport: tr, Timeout: time.Second}
+	resp, err := client.Get("http://" + HostGatewayAlias + ":" + hostPort + "/")
+	if err != nil {
+		t.Fatalf("host port via scoped proxy: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Errorf("scoped proxy did not reach host-local server on provider port: %d", resp.StatusCode)
+	}
+	resp, err = client.Get("http://" + HostGatewayAlias + ":" + deniedPort + "/")
+	if err != nil {
+		t.Fatalf("unlisted port via scoped proxy: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("scoped proxy allowed unlisted host port: %d", resp.StatusCode)
+	}
+}
+
 func TestConfigureOpencodeProviderEgressScopesSidecarToSelectedProvider(t *testing.T) {
 	d := ContainerRunner{
 		Harness:  OpencodeHarness{},
@@ -292,6 +363,47 @@ func TestCheckOpencodeReadinessFindsExactModel(t *testing.T) {
 	err := d.checkOpencodeReadiness(t.Context(), provider, t.TempDir(), "stock:1", hardenedNet{}, "")
 	if err == nil || !strings.Contains(err.Error(), "unavailable in the selected image catalog") {
 		t.Fatalf("missing model error = %v", err)
+	}
+}
+
+func TestCheckOpencodeReadinessProbesHostPort(t *testing.T) {
+	log := filepath.Join(t.TempDir(), "invocations")
+	runtime := writeFakeRuntime(t, "#!/bin/sh\necho \"$*\" >> "+log+"\ncase \"$*\" in *host.docker.internal:11434*) exit 0;; *' opencode models '*) printf 'ollama/llama3.3\\n';; esac\n")
+	d := ContainerRunner{
+		Harness:           OpencodeHarness{},
+		Runtime:           ContainerRuntime{Bin: runtime},
+		OpencodeReadiness: NewOpencodeReadinessCache(),
+	}
+	provider := opencodeProvider{ID: "ollama", Model: "ollama/llama3.3", Env: map[string]string{}, HostPort: "11434", Configured: true}
+	if err := d.checkOpencodeReadiness(t.Context(), provider, t.TempDir(), "stock:1", hardenedNet{}, ""); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := os.ReadFile(log)
+	if !strings.Contains(string(data), "--proxytunnel") || !strings.Contains(string(data), "http://"+HostGatewayAlias+":11434/") {
+		t.Errorf("readiness did not force a CONNECT tunnel to the host port: %s", data)
+	}
+	// A second call hits the readiness cache for the static checks but must
+	// still probe the host port, since a local model server can stop between
+	// scans while the image and catalog stay unchanged.
+	_ = os.Remove(log)
+	if err := d.checkOpencodeReadiness(t.Context(), provider, t.TempDir(), "stock:1", hardenedNet{}, ""); err != nil {
+		t.Fatal(err)
+	}
+	data, _ = os.ReadFile(log)
+	if strings.Contains(string(data), "opencode models") {
+		t.Errorf("cached call re-ran the catalog probe: %s", data)
+	}
+	if !strings.Contains(string(data), "http://"+HostGatewayAlias+":11434/") {
+		t.Errorf("cached call skipped the host-port probe: %s", data)
+	}
+
+	runtime = writeFakeRuntime(t, "#!/bin/sh\necho 'curl: (56) CONNECT tunnel failed, response 502' >&2; exit 56\n")
+	d = ContainerRunner{Harness: OpencodeHarness{}, Runtime: ContainerRuntime{Bin: runtime}}
+	err := d.checkOpencodeHostPort(provider, func(argv ...string) ([]byte, error) {
+		return exec.Command(runtime, argv...).CombinedOutput()
+	})
+	if err == nil || !strings.Contains(err.Error(), "host-local model server on port 11434") {
+		t.Fatalf("host port readiness error = %v", err)
 	}
 }
 

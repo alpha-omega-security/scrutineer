@@ -157,6 +157,9 @@ opencode:
       api_key_env: GROQ_API_KEY
       egress_allow:
         - api.groq.com
+    ollama:
+      config_file: ./opencode/ollama.json
+      host_port: 11434
     kiro:
       runner_image: registry.example/kiro@sha256:abc
       config_file: ./opencode/kiro.json
@@ -173,6 +176,9 @@ opencode:
 	}
 	if got := c.Opencode.Providers["groq"]; got.APIKeyEnv != "GROQ_API_KEY" || !slices.Equal(got.EgressAllow, []string{"api.groq.com"}) {
 		t.Errorf("opencode groq provider: %+v", got)
+	}
+	if got := c.Opencode.Providers["ollama"]; got.HostPort != 11434 || len(got.EgressAllow) != 0 {
+		t.Errorf("opencode ollama provider: %+v", got)
 	}
 	if got := c.Opencode.Providers["kiro"]; got.RunnerImage == "" || got.ConfigFile != "./opencode/kiro.json" ||
 		!slices.Equal(got.PassEnv, []string{"KIRO_API_KEY"}) || !slices.Equal(got.RequiredBinaries, []string{"kiro-cli"}) || got.StateDir == "" {
@@ -219,7 +225,12 @@ func TestLoad_rejectsInvalidOpencodeProviders(t *testing.T) {
 		{
 			name: "missing egress",
 			yaml: "opencode:\n  providers:\n    groq:\n      api_key_env: GROQ_API_KEY\n",
-			want: "at least one provider hostname",
+			want: "egress_allow or host_port is required",
+		},
+		{
+			name: "host port range",
+			yaml: "opencode:\n  providers:\n    ollama:\n      host_port: 99999\n",
+			want: "out of range",
 		},
 		{
 			name: "binary path",

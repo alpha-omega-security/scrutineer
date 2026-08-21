@@ -229,11 +229,19 @@ type OpencodeProvider struct {
 	PassEnv          []string          `yaml:"pass_env"`
 	RequiredBinaries []string          `yaml:"required_binaries"`
 	EgressAllow      []string          `yaml:"egress_allow"`
+	// HostPort is a TCP port on the host machine's loopback the scan
+	// container may reach through the egress proxy at
+	// host.docker.internal:<port>. Use it for a host-local model server
+	// (Ollama, LM Studio, llama.cpp) instead of egress_allow. A provider
+	// with only host_port needs no egress_allow entry.
+	HostPort int `yaml:"host_port"`
 	// StateDir is a provider-specific host directory mounted as OpenCode's
 	// XDG data directory. It keeps rotating OAuth credentials between scans
 	// without exposing another provider's auth.json.
 	StateDir string `yaml:"state_dir"`
 }
+
+const maxTCPPort = 65535
 
 var (
 	opencodeProviderID = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
@@ -291,8 +299,11 @@ func validateOpencodeProvider(id string, provider OpencodeProvider) error {
 	if err := validateOpencodeBinaries(id, provider.RequiredBinaries); err != nil {
 		return err
 	}
-	if len(provider.EgressAllow) == 0 {
-		return fmt.Errorf("opencode.providers.%s.egress_allow: at least one provider hostname is required", id)
+	if provider.HostPort < 0 || provider.HostPort > maxTCPPort {
+		return fmt.Errorf("opencode.providers.%s.host_port: %d is out of range", id, provider.HostPort)
+	}
+	if len(provider.EgressAllow) == 0 && provider.HostPort == 0 {
+		return fmt.Errorf("opencode.providers.%s: egress_allow or host_port is required", id)
 	}
 	for _, host := range provider.EgressAllow {
 		if strings.TrimSpace(host) != host || host == "" || strings.Contains(host, "://") || strings.ContainsAny(host, "/:") {
