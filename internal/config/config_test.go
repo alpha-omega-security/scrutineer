@@ -241,6 +241,8 @@ func TestValidateOpencodeRejectsHarnessSafetyEnvironment(t *testing.T) {
 		"OPENCODE_DISABLE_AUTOUPDATE",
 		"OPENCODE_DISABLE_MODELS_FETCH",
 		"OPENCODE_DISABLE_SHARE",
+		"OPENCODE_PRINT_LOGS",
+		"OPENCODE_LOG_LEVEL",
 	} {
 		t.Run(name, func(t *testing.T) {
 			err := ValidateOpencode(Opencode{Providers: map[string]OpencodeProvider{

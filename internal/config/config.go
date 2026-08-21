@@ -254,6 +254,8 @@ var reservedOpencodePassEnv = map[string]bool{
 	"OPENCODE_DISABLE_AUTOUPDATE":   true,
 	"OPENCODE_DISABLE_MODELS_FETCH": true,
 	"OPENCODE_DISABLE_SHARE":        true,
+	"OPENCODE_LOG_LEVEL":            true,
+	"OPENCODE_PRINT_LOGS":           true,
 	"XDG_DATA_HOME":                 true,
 }
 
