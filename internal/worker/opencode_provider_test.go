@@ -78,6 +78,25 @@ func TestResolveOpencodeProviderDoesNotLabelOtherHarnesses(t *testing.T) {
 	}
 }
 
+func TestResolveOpencodeProviderRejectsUnconfiguredNonStockProvider(t *testing.T) {
+	d := ContainerRunner{
+		Harness: OpencodeHarness{},
+		OpencodeProviders: map[string]OpencodeProviderConfig{
+			"kiro": {EgressHosts: []string{"runtime.kiro.dev"}},
+		},
+	}
+	_, err := d.resolveOpencodeProvider("lmstudio/qwen/qwen3.5-9b")
+	if err == nil || !strings.Contains(err.Error(), "opencode.providers.lmstudio") {
+		t.Fatalf("unconfigured provider error = %v, want opencode.providers.lmstudio", err)
+	}
+	for _, model := range []string{"anthropic/claude-sonnet-5", "openai/gpt-6"} {
+		provider, err := d.resolveOpencodeProvider(model)
+		if err != nil || provider.Configured || provider.ID != OpencodeProviderID(model) {
+			t.Errorf("stock model %q: provider=%+v err=%v, want unconfigured pass-through", model, provider, err)
+		}
+	}
+}
+
 func TestBuildRunArgsForProviderScopesEnvironmentAndState(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "unrelated-openai-secret")
 	t.Setenv("ANTHROPIC_API_KEY", "unrelated-anthropic-secret")
@@ -397,7 +416,7 @@ func TestClassifyOpencodeReadinessErrors(t *testing.T) {
 func TestContainerRunErrorStateResumeRetryIgnoresProviderErrors(t *testing.T) {
 	h := stubHarness{acctErr: "invalid_api_key"}
 	s := containerRunErrorState{}
-	s.observe(Event{Kind: KindError, Text: "session abc not found"}, h, true)
+	s.observe(Event{Kind: KindError, Text: "session abc not found"}, h, "kiro")
 	if !s.resumeRetryable() {
 		t.Error("provider error event blocked the fresh-restart resume fallback")
 	}
@@ -405,9 +424,27 @@ func TestContainerRunErrorStateResumeRetryIgnoresProviderErrors(t *testing.T) {
 	if !strings.Contains(err.Error(), "session abc not found") {
 		t.Errorf("provider error text lost from failure: %v", err)
 	}
-	s.observe(Event{Kind: KindError, Text: "invalid_api_key: revoked"}, h, true)
+	s.observe(Event{Kind: KindError, Text: "invalid_api_key: revoked"}, h, "kiro")
 	if s.resumeRetryable() {
 		t.Error("account error event did not block the resume fallback")
+	}
+}
+
+func TestContainerRunErrorStateKeepsStockProviderErrorText(t *testing.T) {
+	// A stock (unconfigured) OpenCode provider still has an ID, so its error
+	// event should reach the scan failure instead of the bare exit status.
+	s := containerRunErrorState{}
+	s.observe(Event{Kind: KindError, Text: "Unexpected server error. Check server logs for details."}, stubHarness{}, "anthropic")
+	err := s.failure(opencodeProvider{ID: "anthropic"}, "docker", errors.New("exit status 1"))
+	if !strings.Contains(err.Error(), "Unexpected server error") || !strings.Contains(err.Error(), `"anthropic"`) {
+		t.Errorf("stock provider failure = %v, want OpenCode provider error text", err)
+	}
+	// A non-opencode backend has no provider ID and keeps the plain exit error.
+	s = containerRunErrorState{}
+	s.observe(Event{Kind: KindError, Text: "some claude error"}, stubHarness{}, "")
+	err = s.failure(opencodeProvider{}, "docker", errors.New("exit status 1"))
+	if strings.Contains(err.Error(), "OpenCode provider") {
+		t.Errorf("non-opencode failure wrapped as provider error: %v", err)
 	}
 }
 

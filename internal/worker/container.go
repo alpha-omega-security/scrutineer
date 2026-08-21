@@ -237,9 +237,9 @@ type containerRunErrorState struct {
 	rateLimit    *RateLimitInfo
 }
 
-func (s *containerRunErrorState) observe(event Event, h Harness, configuredProvider bool) {
+func (s *containerRunErrorState) observe(event Event, h Harness, opencodeProviderID string) {
 	s.accountText = preferAccountErrText(s.accountText, h.AccountErrorText(event.Text))
-	if configuredProvider && event.Kind == KindError && event.Text != "hit max turns" {
+	if opencodeProviderID != "" && event.Kind == KindError && event.Text != "hit max turns" {
 		s.providerText = event.Text
 	}
 	if event.Kind == KindRateLimit && event.RateLimit != nil {
@@ -336,7 +336,7 @@ func (d ContainerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Ev
 	h := d.harness()
 	runErrors := containerRunErrorState{}
 	wrappedEmit := func(e Event) {
-		runErrors.observe(e, h, provider.Configured)
+		runErrors.observe(e, h, provider.ID)
 		emit(e)
 	}
 	hitMaxTurns, sessionID, waitErr := d.runContainerOnce(ctx, runBase, sj, provider.Env, wrappedEmit)

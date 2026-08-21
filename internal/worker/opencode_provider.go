@@ -97,6 +97,17 @@ func OpencodeProviderID(model string) string {
 	return id
 }
 
+// opencodeStockProviders are the OpenCode provider ids that work in the stock
+// runner without an opencode.providers block: OpencodeHarness.Env passes their
+// API-key variables through and OpencodeHarness.EgressHosts already allows
+// their endpoints. Any other prefix needs an explicit provider block so it
+// gets config, credentials, and egress; without one OpenCode fails inside its
+// server with a generic message and no readiness check runs.
+var opencodeStockProviders = map[string]bool{
+	"anthropic": true,
+	"openai":    true,
+}
+
 func (d ContainerRunner) resolveOpencodeProvider(model string) (opencodeProvider, error) {
 	resolved := opencodeProvider{
 		Model:       model,
@@ -112,7 +123,10 @@ func (d ContainerRunner) resolveOpencodeProvider(model string) (opencodeProvider
 	}
 	cfg, ok := d.OpencodeProviders[resolved.ID]
 	if !ok {
-		return resolved, nil
+		if opencodeStockProviders[resolved.ID] {
+			return resolved, nil
+		}
+		return resolved, fmt.Errorf("OpenCode model %q uses provider %q, which has no opencode.providers.%s entry; see docs/opencode.md", model, resolved.ID, resolved.ID)
 	}
 	resolved.Configured = true
 	resolved.StateDir = cfg.StateDir

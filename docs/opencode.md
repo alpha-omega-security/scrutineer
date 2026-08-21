@@ -93,9 +93,12 @@ The top-level `egress_allow` remains ignored in hardened mode. Use hostnames
 without a scheme, path, or port. Region- and resource-specific providers should
 list the endpoints for the configured region or resource.
 
-Local providers such as Ollama are not covered by this option yet. The egress
-proxy permits only Scrutineer's API port on the container host, so allowing a
-hostname does not expose Ollama's port 11434.
+Local providers such as Ollama and LM Studio are not covered by this option
+yet. The egress proxy permits only Scrutineer's API port on the container host,
+so allowing a hostname does not expose a host-local model server's port.
+
+A model whose provider prefix is neither `anthropic`, `openai`, nor a key under
+`opencode.providers` is refused before the container starts.
 
 ## Provider images and config
 
