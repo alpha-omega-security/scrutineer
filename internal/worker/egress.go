@@ -62,6 +62,11 @@ func StartScopedEgressProxy(p *EgressProxy) (int, func(), error) {
 	}
 	srv := &http.Server{Handler: p, ReadHeaderTimeout: scopedEgressReadHeaderTimeout}
 	go func() { _ = srv.Serve(ln) }()
-	closeProxy := func() { _ = srv.Close() }
+	// srv.Close only closes listeners Serve has already tracked; if the Serve
+	// goroutine has not been scheduled yet, srv.listeners is empty and ln stays
+	// open until Serve eventually runs. Closing ln directly makes the returned
+	// cleanup synchronous regardless of goroutine scheduling; the second close
+	// on an already-closed listener is a discarded error.
+	closeProxy := func() { _ = srv.Close(); _ = ln.Close() }
 	return ln.Addr().(*net.TCPAddr).Port, closeProxy, nil
 }
