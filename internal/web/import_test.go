@@ -13,7 +13,13 @@ import (
 )
 
 func importSingleResult(s *Server, res ingest.Result, revalidate bool) (map[string]any, error) {
-	out, err := s.importResults([]ingest.Result{res}, "", revalidate)
+	return importSingleResultAs(s, ingest.FormatMinimal, res, revalidate)
+}
+
+// importSingleResultAs imports one result under a named format, which decides
+// whether the scanner caps apply (see import_cap.go).
+func importSingleResultAs(s *Server, format ingest.Format, res ingest.Result, revalidate bool) (map[string]any, error) {
+	out, err := s.importResults([]ingest.Result{res}, format, "", revalidate)
 	if err != nil {
 		return nil, err
 	}

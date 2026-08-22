@@ -1209,7 +1209,12 @@ paths:
         field, the CSV `Repository` column, the markdown location link);
         when absent the caller must pass `?repo=`. Re-importing the same
         report dedupes by fingerprint and bumps `seen_count` rather than
-        inserting duplicates. A body matching no supported format is
+        inserting duplicates. The scanner exports (SARIF, CSV, markdown)
+        are raw rule output and are bounded on the way in: at most 5
+        findings per rule and 50 per result are imported, in input order,
+        with the drop counts reported in the response. Curated input
+        imports whole.
+        A body matching no supported format is
         routed to the `ingest` skill instead when `?repo=` is supplied:
         the raw payload is staged into the skill workspace and a scan is
         queued, returning 202 with the scan id. Age-encrypted bodies (armored
@@ -1815,6 +1820,25 @@ components:
               tool:          { type: string }
               created:       { type: integer }
               observed:      { type: integer }
+              received:
+                type: integer
+                description: Findings the parser produced for this result, before the scanner caps.
+              accepted:
+                type: integer
+                description: |
+                  Findings that survived the scanner caps and were imported.
+                  Equal to `received` for the curated formats. A scanner
+                  export (SARIF, CSV, markdown) is capped at 5 findings per
+                  rule and 50 per result.
+              dropped_per_rule:
+                type: integer
+                description: Findings rejected by the per-rule cap.
+              dropped_total_cap:
+                type: integer
+                description: |
+                  Findings rejected by the per-result cap. A finding both caps
+                  would reject counts against `dropped_per_rule` only, so the
+                  two drop counts sum to `received` minus `accepted`.
               finding_ids:
                 type: array
                 items: { type: integer, format: int64 }

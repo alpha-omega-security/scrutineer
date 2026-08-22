@@ -14,18 +14,24 @@ The request body is the report itself, up to 16 MiB. The response is JSON:
       "format": "sarif",
       "results": [
         {
-          "repository_id": 42,
-          "repository":    "https://github.com/example/widget",
-          "scan_id":       1024,
-          "tool":          "CodeQL",
-          "created":       5,
-          "observed":      2,
-          "finding_ids":   [301, 302, 303, 304, 305]
+          "repository_id":     42,
+          "repository":        "https://github.com/example/widget",
+          "scan_id":           1024,
+          "tool":              "CodeQL",
+          "created":           5,
+          "observed":          2,
+          "received":          7,
+          "accepted":          7,
+          "dropped_per_rule":  0,
+          "dropped_total_cap": 0,
+          "finding_ids":       [301, 302, 303, 304, 305]
         }
       ]
     }
 
 `created` counts findings inserted on this call; `observed` counts findings that already existed with the same fingerprint and had their `seen_count` bumped. A SARIF file with several runs, or a CSV grouping rows under several `Repository` slugs, returns one result per repository.
+
+`received` counts the findings the parser produced, `accepted` counts those that survived the scanner caps described below, while `dropped_per_rule` plus `dropped_total_cap` say how many each cap rejected. Only the scanner-export formats are capped, so a curated format reports `received` equal to `accepted` with both drop counts zero. `created` plus `observed` can still be lower than `accepted` because identical findings within one report collapse onto a single fingerprint before anything is written.
 
 When the report carries no repository (most pentest writeups, the minimal-JSON shape with `repository: ""`), pass `?repo=<https-url>`:
 
@@ -36,6 +42,27 @@ When the report carries no repository (most pentest writeups, the minimal-JSON s
 Each import becomes one `Scan` row per repository with `kind = import` and `skill_name` set to the producing tool's name, so imported findings show up in the scans list alongside native runs and link back to a parent the UI can render. The scan row's `started_at` and `finished_at` are both set to upload time; `status` is `done` immediately.
 
 Re-importing the same report against the same repository upserts: findings with a matching fingerprint update `last_seen_scan_id`, bump `seen_count`, and clear the missed-count counter. Nothing is duplicated and nothing is deleted. Findings that were imported once and not present in a later import simply do not get observed; the existing miss-count machinery is the right tool for "the upstream scanner no longer flags this" and it is left to the operator to run `verify` if they want to confirm.
+
+## Bounded scanner imports
+
+A scanner export is raw scanner output, which is unbounded. One over-eager CodeQL or Semgrep rule can fire thousands of times against a single repository, so without a limit every one of those hits becomes a `Finding` row plus a `revalidate` job that chains into `verify`. Two caps bound that:
+
+| Cap | Value | Meaning |
+|---|---|---|
+| Per rule | 5 | The most findings one `rule_id` may contribute to one result. |
+| Per result | 50 | The most findings one result may contribute in total, whatever the spread of rules. |
+
+Both are per result, which is one repository's findings from one tool: a multi-run SARIF file is capped per run while a multi-repo CSV is capped per repository, so one upload's ceiling is the per-result cap times the number of results it parses to. The budget is deliberately not shared across the upload, since one repository's noise would otherwise starve another repository's findings out of the same file.
+
+The caps apply to the formats carrying raw scanner output: SARIF plus the code-scanning CSV export and the hosted-scanner markdown export. Every other format is somebody's considered list of findings rather than raw rule output: a hand-written minimal-JSON report and scrutineer's own [sharing bundle](encrypted-sharing.md) both import whole. The `ingest` skill fallback for unrecognised payloads is likewise uncapped, since its output is a model-normalised report rather than a rule dump.
+
+Selection is by input order: the first five hits of a rule and the first fifty findings of a result are the ones kept. The same report therefore always truncates the same way, so re-uploading it after a fix changes nothing about which findings you see while an operator can say exactly which hits were dropped by reading the report top to bottom. A SARIF result that carries no `ruleId` is grouped by its title instead, which is the rule's short description whenever the parser could resolve a rule for it; the per-result cap backstops the case where it could not. A CSV export carries the per-alert Finding URL in `rule_id`, which is unique per row, so it is ignored as a grouping key for the same reason and the alert's `Name` or `Category` column stands in; keying on the URL straight would put every row in its own bucket and leave the per-rule cap inert for that whole format. A row that fills neither column falls back to the URL after all, since an empty key is shared: it would group alerts that have nothing to do with each other and drop everything past the fifth, where the URL merely leaves the per-result cap as their only bound.
+
+A finding both caps would reject is counted against the per-rule cap only, so `dropped_per_rule` plus `dropped_total_cap` equals `received` minus `accepted` rather than double-counting. When either count is non-zero the server logs one warning line per bounded result, carrying the same counters and the cap values in force; it never logs a line per dropped finding.
+
+Accepted findings are imported exactly as they always were. There is no privileged verdict and no lifecycle shortcut for surviving the cap: the fingerprint upsert, the revalidation funnel below, and `verify` all treat a bounded import identically to an unbounded one. Dropped findings are never written, so they queue no work either.
+
+The caps are deliberately blunt. Their job is to keep one noisy rule from burying the findings list and burning model spend before anybody has looked at the first five hits. When a rule's first five hits turn out to be real, the answer is to fix them and re-import, not to raise the cap.
 
 ## Revalidation on import
 
@@ -95,6 +122,8 @@ Per-result mapping:
 
 Severity defaulting in SARIF is deliberately conservative: when the producer left both fields empty, scrutineer stores an empty severity and the UI shows it as such rather than guessing.
 
+The import caps apply to SARIF; see [Bounded scanner imports](#bounded-scanner-imports) above for what a run contributes at most and how the truncation is reported.
+
 ### Minimal JSON
 
 A small shape for hand-written pentest reports and tools with no SARIF emitter.
@@ -134,6 +163,8 @@ Rows whose `Status` column is anything other than `Open` (case-insensitive) are 
 
 `Repository` is read as either a full URL or a `owner/repo` slug; bare slugs are expanded to `https://github.com/<slug>` since the producer of this export shape is GitHub-only. The tool name is the host of the `Finding URL` column; an export that omits it falls back to the literal string `csv`.
 
+The import caps apply to this format; see [Bounded scanner imports](#bounded-scanner-imports) above. Each `Repository` group is one result, so each carries its own budget.
+
 ### Findings markdown
 
 The export shape some hosted scanners produce, with one finding per H1 heading followed by an H2 section per fact:
@@ -166,17 +197,20 @@ The export shape some hosted scanners produce, with one finding per H1 heading f
 
 The tool name for markdown imports is the literal string `markdown` since the export format carries no producer field.
 
+The import caps apply to this format; see [Bounded scanner imports](#bounded-scanner-imports) above.
+
 ## What happens after the upload
 
 The flow is the same regardless of format:
 
 1. **Detect and parse.** `ingest.Parse` sniffs the body, picks a parser, and returns `[]Result`. Each `Result` is one batch of findings against one repository.
-2. **Resolve the repository.** `?repo=` if present, otherwise `Result.RepoURL`. The URL is normalised through `ParseRepoInput` (the same path the UI uses) and a `Repository` row is created on first sight.
-3. **Create the scan row.** One per `Result`, with `kind = import`, `status = done`, `skill_name = <tool>`, `findings_count = len(findings)`. The scan's `commit` is `Result.Commit` when the format carried one (SARIF `versionControlProvenance`, minimal-JSON `commit`).
-4. **Upsert findings.** Each parsed finding is fingerprinted with the tool name in the skill-name slot and its sub-path (`db.FingerprintFinding(tool, sub_path, cwe, location, title)`), then matched against existing rows by `(repository_id, fingerprint)`. The sub-path is empty for every format except scrutineer's own bundle, so their fingerprints are unchanged; carrying it keeps two findings at the same location in different monorepo sub-projects from collapsing onto one fingerprint. Match found: `last_seen_scan_id`, `last_seen_commit`, `seen_count` are updated and a `FindingHistory` row is written. No match: a new `Finding` row is created with `imported_from = <tool>`. Whatever fix an ingest carries — the `suggested_fix` a parser extracted from a SARIF/markdown report, or the minimal/bundle `patch` — is folded into the finding's trace prose, not written to the `suggested_fix` column, which is reserved for diffs a `patch` run has put through the applicability gate. An `include=all` bundle also carries `notes`, `communications` and `references`; these are attached to the finding after it is created (or, on a re-import onto an existing finding, appended only where an identical record does not already exist). References are matched on their URL alone rather than on their whole content, because `(finding_id, url)` is unique: a bundle naming a URL the finding already carries leaves the stored row alone whatever tags or summary it puts on it, and a bundle naming one URL twice writes it once.
-5. **Prime the funnel.** Each newly-created finding is enqueued for `revalidate` (which chains into `verify` on a confirmed High/Critical), unless `?revalidate=false` was passed. See [Revalidation on import](#revalidation-on-import) above.
+2. **Bound raw scanner output.** A result parsed from a raw scanner format (SARIF, the code-scanning CSV export or the hosted-scanner markdown export) is trimmed to the per-rule and per-result caps before anything is written; every other format passes through whole. See [Bounded scanner imports](#bounded-scanner-imports) above.
+3. **Resolve the repository.** `?repo=` if present, otherwise `Result.RepoURL`. The URL is normalised through `ParseRepoInput` (the same path the UI uses) and a `Repository` row is created on first sight.
+4. **Create the scan row.** One per `Result`, with `kind = import`, `status = done`, `skill_name = <tool>`, `findings_count = len(findings)` (the accepted findings, after any capping). The scan's `commit` is `Result.Commit` when the format carried one (SARIF `versionControlProvenance`, minimal-JSON `commit`).
+5. **Upsert findings.** Each parsed finding is fingerprinted with the tool name in the skill-name slot and its sub-path (`db.FingerprintFinding(tool, sub_path, cwe, location, title)`), then matched against existing rows by `(repository_id, fingerprint)`. The sub-path is empty for every format except scrutineer's own bundle, so their fingerprints are unchanged; carrying it keeps two findings at the same location in different monorepo sub-projects from collapsing onto one fingerprint. Match found: `last_seen_scan_id`, `last_seen_commit`, `seen_count` are updated and a `FindingHistory` row is written. No match: a new `Finding` row is created with `imported_from = <tool>`. Whatever fix an ingest carries — the `suggested_fix` a parser extracted from a SARIF/markdown report, or the minimal/bundle `patch` — is folded into the finding's trace prose, not written to the `suggested_fix` column, which is reserved for diffs a `patch` run has put through the applicability gate. An `include=all` bundle also carries `notes`, `communications` and `references`; these are attached to the finding after it is created (or, on a re-import onto an existing finding, appended only where an identical record does not already exist). References are matched on their URL alone rather than on their whole content, because `(finding_id, url)` is unique: a bundle naming a URL the finding already carries leaves the stored row alone whatever tags or summary it puts on it, and a bundle naming one URL twice writes it once.
+6. **Prime the funnel.** Each newly-created finding is enqueued for `revalidate` (which chains into `verify` on a confirmed High/Critical), unless `?revalidate=false` was passed. See [Revalidation on import](#revalidation-on-import) above.
 
-The full column set is in [database.md](database.md); the `Finding.ImportedFrom` field is what distinguishes imported findings from native ones. The scans index filters on `kind = import` to show only imports, and imported findings appear in the main Findings list by default, alongside audit findings — an import is curated data, not noisy auto-scanner output, so it is not hidden behind the scanners toggle.
+The full column set is in [database.md](database.md); the `Finding.ImportedFrom` field is what distinguishes imported findings from native ones. The scans index filters on `kind = import` to show only imports, and imported findings appear in the main Findings list by default, alongside audit findings. An import is operator-submitted rather than a scanner this instance runs on its own schedule, so it is not hidden behind the scanners toggle. A raw scanner export is bounded before it gets there: SARIF, the code-scanning CSV and the hosted-scanner markdown are trimmed to the per-rule and per-result caps ([Bounded scanner imports](#bounded-scanner-imports)) before anything is written, so the list shows a rule's first few hits rather than every hit it produced.
 
 ## Adding support for a new format
 

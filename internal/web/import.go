@@ -72,7 +72,7 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	repoOverride := r.URL.Query().Get("repo")
-	out, err := s.importResults(results, repoOverride, revalidate)
+	out, err := s.importResults(results, format, repoOverride, revalidate)
 	if err != nil {
 		writeAPIError(w, http.StatusUnprocessableEntity, err.Error())
 		return
@@ -193,16 +193,22 @@ type importedResult struct {
 	tool     string
 	created  []db.Finding
 	observed int
+	caps     importCapStats
 }
 
-func (s *Server) importResults(results []ingest.Result, repoOverride string, revalidate bool) ([]map[string]any, error) {
+func (s *Server) importResults(results []ingest.Result, format ingest.Format, repoOverride string, revalidate bool) ([]map[string]any, error) {
 	imported := make([]importedResult, 0, len(results))
 	err := s.DB.Transaction(func(tx *gorm.DB) error {
 		for _, res := range results {
-			outcome, err := s.importResultWith(tx, res, repoOverride)
+			bounded, caps := res, uncappedImportStats(res)
+			if capsApplyTo(format) {
+				bounded, caps = capScannerResult(res)
+			}
+			outcome, err := s.importResultWith(tx, bounded, repoOverride)
 			if err != nil {
 				return err
 			}
+			outcome.caps = caps
 			imported = append(imported, outcome)
 		}
 		return nil
@@ -232,19 +238,31 @@ func (s *Server) importResults(results []ingest.Result, repoOverride string, rev
 		s.Log.Info("import",
 			"repo", result.repo.URL, "tool", result.tool, "scan", result.scan.ID,
 			"created", len(result.created), "observed", result.observed)
+		if result.caps.truncated() {
+			s.Log.Warn("import: scanner result truncated by import caps",
+				"repo", result.repo.URL, "tool", result.tool, "scan", result.scan.ID,
+				"received", result.caps.Received, "accepted", result.caps.Accepted,
+				"dropped_per_rule", result.caps.DroppedPerRule,
+				"dropped_total_cap", result.caps.DroppedTotal,
+				"per_rule_cap", importPerRuleCap, "result_cap", importResultCap)
+		}
 
 		ids := make([]uint, len(result.created))
 		for i, finding := range result.created {
 			ids[i] = finding.ID
 		}
 		out = append(out, map[string]any{
-			"repository_id": result.repo.ID,
-			"repository":    result.repo.URL,
-			"scan_id":       result.scan.ID,
-			"tool":          result.tool,
-			"created":       len(result.created),
-			"observed":      result.observed,
-			"finding_ids":   ids,
+			"repository_id":     result.repo.ID,
+			"repository":        result.repo.URL,
+			"scan_id":           result.scan.ID,
+			"tool":              result.tool,
+			"created":           len(result.created),
+			"observed":          result.observed,
+			"received":          result.caps.Received,
+			"accepted":          result.caps.Accepted,
+			"dropped_per_rule":  result.caps.DroppedPerRule,
+			"dropped_total_cap": result.caps.DroppedTotal,
+			"finding_ids":       ids,
 		})
 	}
 	return out, nil

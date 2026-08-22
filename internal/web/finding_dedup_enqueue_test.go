@@ -111,9 +111,10 @@ func TestAutoEnqueueFindingDedup_conditions(t *testing.T) {
 			wantQueued: false,
 		},
 		{
-			// An import (kind=import) is curated data, not noisy scanner
-			// output: it shows in the Findings list by default and so counts
-			// toward the dedup-pass threshold, unlike a tool-scanner skill.
+			// An import (kind=import) is operator-submitted, with a raw
+			// scanner export capped before it is written: it shows in the
+			// Findings list by default and so counts toward the dedup-pass
+			// threshold, unlike a tool-scanner skill.
 			name:        "prior import finding now counts (kind=import)",
 			scanSkill:   "security-deep-dive",
 			newFindings: 1, hasPrior: true, priorSkill: "CodeQL", priorKind: "import", priorStatus: db.FindingNew,
