@@ -1,0 +1,21 @@
+given: one search handler interpolates a request parameter into SQL while eight report helpers use the same idiom with module constants
+fixture: fixtures/convention-prevalence
+skill: security-deep-dive-short
+schema_skill: security-deep-dive
+experiment: security-deep-dive-prompt
+variant: reference-driven
+should_find:
+  - finding: SQL injection
+    cwe: CWE-89
+    path: search.py
+    evidence_contains:
+      - request.args
+      - SELECT id FROM items
+      - grep -rn
+      - 'query("SELECT'
+      - 9 hits
+    required: true
+should_not_find:
+  - finding: SQL injection
+    cwe: CWE-89
+    path: reports.py

@@ -68,10 +68,30 @@ locations, or narrative fields: `trace`, `boundary`, `validation`, `rating`,
 `description`, `affected`, `prior_art`, or `reach`. CWE values are match
 criteria, not evidence.
 
+Those fields are folded into one string and each term is matched against it as
+a case-insensitive substring, so keep a term specific enough that only the
+thing it tests can satisfy it. A bare number is a poor term: `rating` carries a
+CVSS score while every location carries a line number, so `9` passes on either
+without the finding having recorded anything. Write `9 hits` instead.
+
+An assertion may also key on how the run classified the sink behind a finding:
+
+```yaml
+should_find:
+  - path: client.py
+    sink_class: API misuse
+```
+
+`sink_class` resolves each id in the finding's `sinks` against `inventory[].id`
+then compares the class the report assigned there, so it asserts what the run
+decided the sink is rather than what the write-up happened to call it. An id
+the inventory does not hold carries no class, so it never satisfies the
+assertion.
+
 The default judge matches findings by title substring plus optional severity,
-CWE, path, and evidence. These assertions define a minimum bar: additional
-findings do not fail an eval unless they match `should_not_find` or the report
-contains a `must_not_contain` term.
+CWE, path, sink class and evidence. These assertions define a minimum bar:
+additional findings do not fail an eval unless they match `should_not_find` or
+the report contains a `must_not_contain` term.
 
 For a semantic, model-backed verdict during a live run, opt in explicitly. The
 judge uses the Anthropic Messages API and its cost is included in each

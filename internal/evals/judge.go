@@ -25,13 +25,15 @@ type Judge interface {
 type HeuristicJudge struct{}
 
 func (HeuristicJudge) Judge(sc Scenario, raw string) ([]AssertionResult, error) {
-	findings, err := parseFindings(raw)
+	parsed, err := parseReport(raw)
 	if err != nil {
 		return nil, err
 	}
+	findings := parsed.Findings
+	classes := sinkClasses(parsed.Inventory)
 	results := make([]AssertionResult, 0, len(sc.ShouldFind)+len(sc.ShouldNotFind)+len(sc.MustNotContain))
 	for _, a := range sc.ShouldFind {
-		match := matchingFinding(a, findings)
+		match := matchingFinding(a, findings, classes)
 		results = append(results, AssertionResult{
 			Assertion: a,
 			Kind:      assertionShouldFind,
@@ -41,7 +43,7 @@ func (HeuristicJudge) Judge(sc Scenario, raw string) ([]AssertionResult, error) 
 		})
 	}
 	for _, a := range sc.ShouldNotFind {
-		match := matchingFinding(a, findings)
+		match := matchingFinding(a, findings, classes)
 		results = append(results, AssertionResult{
 			Assertion: a,
 			Kind:      assertionShouldNotFind,
@@ -62,24 +64,34 @@ func (HeuristicJudge) Judge(sc Scenario, raw string) ([]AssertionResult, error) 
 	return results, nil
 }
 
-func parseFindings(raw string) ([]Finding, error) {
+func parseReport(raw string) (report, error) {
 	var r report
 	if err := json.Unmarshal([]byte(raw), &r); err != nil {
-		return nil, fmt.Errorf("parse report.json: %w", err)
+		return report{}, fmt.Errorf("parse report.json: %w", err)
 	}
-	return r.Findings, nil
+	return r, nil
 }
 
-func matchingFinding(a Assertion, findings []Finding) *Finding {
+// sinkClasses indexes the inventory by id so an assertion can ask what class a
+// finding put on the sinks it cites.
+func sinkClasses(inventory []inventorySink) map[string]string {
+	classes := make(map[string]string, len(inventory))
+	for _, sink := range inventory {
+		classes[strings.TrimSpace(sink.ID)] = sink.Class
+	}
+	return classes
+}
+
+func matchingFinding(a Assertion, findings []Finding, classes map[string]string) *Finding {
 	for i := range findings {
-		if assertionMatchesFinding(a, findings[i]) {
+		if assertionMatchesFinding(a, findings[i], classes) {
 			return &findings[i]
 		}
 	}
 	return nil
 }
 
-func assertionMatchesFinding(a Assertion, f Finding) bool {
+func assertionMatchesFinding(a Assertion, f Finding, classes map[string]string) bool {
 	if a.Finding != "" && !containsFold(f.Title, a.Finding) {
 		return false
 	}
@@ -90,6 +102,9 @@ func assertionMatchesFinding(a Assertion, f Finding) bool {
 		return false
 	}
 	if a.Path != "" && !findingHasPath(f, a.Path) {
+		return false
+	}
+	if a.SinkClass != "" && !findingHasSinkClass(f, classes, a.SinkClass) {
 		return false
 	}
 	if !findingHasEvidence(f, a.Evidence) {
@@ -113,6 +128,19 @@ func findingHasEvidence(f Finding, terms []string) bool {
 		}
 	}
 	return true
+}
+
+// findingHasSinkClass reports whether the finding cites an inventory sink the
+// run classified as want. An id the inventory does not hold resolves to no
+// class, so a finding citing one never satisfies the assertion.
+func findingHasSinkClass(f Finding, classes map[string]string, want string) bool {
+	want = strings.TrimSpace(want)
+	for _, id := range f.Sinks {
+		if strings.EqualFold(strings.TrimSpace(classes[strings.TrimSpace(id)]), want) {
+			return true
+		}
+	}
+	return false
 }
 
 func findingHasPath(f Finding, want string) bool {

@@ -158,6 +158,7 @@ func sameAssertion(a, b Assertion) bool {
 		a.Severity == b.Severity &&
 		a.CWE == b.CWE &&
 		a.Path == b.Path &&
+		a.SinkClass == b.SinkClass &&
 		a.Required == b.Required &&
 		slices.Equal(a.Evidence, b.Evidence)
 }

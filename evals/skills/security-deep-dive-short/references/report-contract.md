@@ -4,7 +4,7 @@
 
 ## Identity and scope
 
-- Set `repository` from `context.json`'s repository URL, `commit` from `git -C ./src rev-parse HEAD`, `spec_version` to `13`, and `date` to today.
+- Set `repository` from `context.json`'s repository URL, `commit` from `git -C ./src rev-parse HEAD`, `spec_version` to `14`, and `date` to today.
 - Keep every location repository-relative, or relative to `scan_subpath` when one is set. Use `path:line` when a line is known.
 - Describe the actual source-tree or diff scope in `method.scope`. Do not claim coverage outside a focus area, scan subpath, or diff rescan.
 - Populate `boundaries` from the supplied threat model when available. Preserve its labels, provenance, and source instead of inventing replacements.
@@ -27,6 +27,7 @@ Report only concrete, high-signal vulnerabilities:
 - `boundary` names the crossed trust boundary.
 - `validation` contains reproducible evidence, including commands or scripts and their output when execution is practical.
 - `rating` explains severity, impact, and preconditions.
+- `prior_art` carries the repository's own prevalence alongside any advisory: the literal grep command that counted the pattern across the tree plus its hit count written as `<n> hits`, so a reader can tell a slip from a house idiom without re-running the sweep.
 - `dup_check` states which existing or sibling findings were compared.
 - `discovered_via` records the first useful source: `source`, `issue-tracker`, `advisory`, or `documentation`.
 - `artifacts` contains short evidence strings such as `path:line command/result`.
@@ -35,6 +36,6 @@ Consolidate one root cause at one sink and boundary into one finding. Split only
 
 ## Ruled out
 
-Each rejected candidate identifies its sink ids, the audit step that rejected it, and a specific reason with code or threat-model evidence. Prefer the vocabulary consumed by the threat workbench: `not_reachable`, `validated`, `out_of_scope`, `duplicate`, `dependency_only`, `known_wontfix`, `insufficient_evidence`, or `expected_safe_behavior`. When a loaded threat model supplies a more specific disposition label, preserve that label and cite its source.
+Each rejected candidate identifies its sink ids, the audit step that rejected it, and a specific reason with code or threat-model evidence. A candidate the project repeats deliberately across the tree cites the literal grep command and its `<n> hits` count in `reason`, so the next run inherits the count instead of re-deriving it. Prefer the vocabulary consumed by the threat workbench: `not_reachable`, `validated`, `out_of_scope`, `duplicate`, `dependency_only`, `known_wontfix`, `insufficient_evidence`, or `expected_safe_behavior`. When a loaded threat model supplies a more specific disposition label, preserve that label and cite its source.
 
 A clean audit uses `findings: []`; it does not omit boundaries, inventory, method evidence, or ruled-out entries.

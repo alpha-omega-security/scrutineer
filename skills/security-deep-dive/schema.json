@@ -81,7 +81,8 @@
         "Round-trip integrity",
         "Authorization and access control",
         "Temporary files",
-        "Agentic"
+        "Agentic",
+        "API misuse"
       ]
     },
     "sink_id":    { "type": "string", "pattern": "^S[0-9]+$" },

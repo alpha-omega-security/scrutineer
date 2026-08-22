@@ -1,0 +1,17 @@
+given: a fetch helper defaults TLS certificate verification off while its paired helper defaults it on
+fixture: fixtures/api-misuse-default
+skill: security-deep-dive
+experiment: security-deep-dive-prompt
+variant: production
+should_find:
+  - path: client.py
+    sink_class: API misuse
+    evidence_contains:
+      - verify=False
+      - CERT_NONE
+    required: true
+  - finding: default
+    path: client.py
+    required: false
+should_not_find:
+  - path: pinned_client.py

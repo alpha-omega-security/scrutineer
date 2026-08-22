@@ -34,6 +34,7 @@ type Assertion struct {
 	Severity    string   `yaml:"severity"`
 	CWE         string   `yaml:"cwe"`
 	Path        string   `yaml:"path"`
+	SinkClass   string   `yaml:"sink_class"`
 	Evidence    []string `yaml:"evidence_contains"`
 	Required    bool     `yaml:"required"`
 	requiredSet bool
@@ -46,18 +47,19 @@ func (a *Assertion) UnmarshalYAML(value *yaml.Node) error {
 	}
 	for i := 0; i+1 < len(value.Content); i += 2 {
 		switch value.Content[i].Value {
-		case "finding", "severity", "cwe", "path", "evidence_contains", "required":
+		case "finding", "severity", "cwe", "path", "sink_class", "evidence_contains", "required":
 		default:
 			return fmt.Errorf("unknown assertion field %q", value.Content[i].Value)
 		}
 	}
 	var out struct {
-		Finding  string   `yaml:"finding"`
-		Severity string   `yaml:"severity"`
-		CWE      string   `yaml:"cwe"`
-		Path     string   `yaml:"path"`
-		Evidence []string `yaml:"evidence_contains"`
-		Required *bool    `yaml:"required"`
+		Finding   string   `yaml:"finding"`
+		Severity  string   `yaml:"severity"`
+		CWE       string   `yaml:"cwe"`
+		Path      string   `yaml:"path"`
+		SinkClass string   `yaml:"sink_class"`
+		Evidence  []string `yaml:"evidence_contains"`
+		Required  *bool    `yaml:"required"`
 	}
 	if err := value.Decode(&out); err != nil {
 		return err
@@ -66,6 +68,7 @@ func (a *Assertion) UnmarshalYAML(value *yaml.Node) error {
 	a.Severity = out.Severity
 	a.CWE = out.CWE
 	a.Path = out.Path
+	a.SinkClass = out.SinkClass
 	a.Evidence = out.Evidence
 	if out.Required != nil {
 		a.Required = *out.Required
@@ -75,7 +78,7 @@ func (a *Assertion) UnmarshalYAML(value *yaml.Node) error {
 }
 
 func (a Assertion) label() string {
-	for _, v := range []string{a.Finding, a.CWE, a.Path, a.Severity} {
+	for _, v := range []string{a.Finding, a.CWE, a.Path, a.Severity, a.SinkClass} {
 		if strings.TrimSpace(v) != "" {
 			return strings.TrimSpace(v)
 		}
@@ -166,6 +169,7 @@ func (a Assertion) empty() bool {
 		strings.TrimSpace(a.Severity) == "" &&
 		strings.TrimSpace(a.CWE) == "" &&
 		strings.TrimSpace(a.Path) == "" &&
+		strings.TrimSpace(a.SinkClass) == "" &&
 		len(a.Evidence) == 0
 }
 
@@ -180,6 +184,7 @@ func (a Assertion) validateEvidence() error {
 
 // Finding is the subset of report.json finding fields the eval judge needs.
 type Finding struct {
+	Sinks       []string `json:"sinks"`
 	Title       string   `json:"title"`
 	Severity    string   `json:"severity"`
 	CWE         string   `json:"cwe"`
@@ -196,7 +201,15 @@ type Finding struct {
 }
 
 type report struct {
-	Findings []Finding `json:"findings"`
+	Inventory []inventorySink `json:"inventory"`
+	Findings  []Finding       `json:"findings"`
+}
+
+// inventorySink is the subset of an inventory entry the judge needs to resolve
+// the sink ids a finding cites to the class the run assigned them.
+type inventorySink struct {
+	ID    string `json:"id"`
+	Class string `json:"class"`
 }
 
 // Result is the per-scenario output from Runner.
