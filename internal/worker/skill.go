@@ -152,10 +152,15 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 	}
 	scan.SkillName = skill.Name
 	scan.SkillVersion = skill.Version
-	w.DB.Model(scan).Updates(map[string]any{
+	// Non-fatal: the in-memory scan already carries both fields and finalizeScan
+	// saves the whole row at the end, so a failure here only leaves the columns
+	// stale for readers watching the table while the scan runs.
+	if err := w.DB.Model(scan).Updates(map[string]any{
 		"skill_name":    skill.Name,
 		"skill_version": skill.Version,
-	})
+	}).Error; err != nil {
+		w.Log.Warn("update scan skill metadata", "scan", scan.ID, "skill", skill.Name, "err", err)
+	}
 
 	// Per-scan workspace keeps concurrent skills on the same repo from
 	// clobbering each other's src/ and report.json. wrap() removes it on
@@ -903,20 +908,44 @@ func (w *Worker) markRetracted(scan *db.Scan, seen map[string]bool) int {
 	return retracted
 }
 
+// reportedMaintainer is one entry of a maintainers skill report.
+type reportedMaintainer struct {
+	Login    string `json:"login"`
+	Name     string `json:"name"`
+	Email    string `json:"email"`
+	Role     string `json:"role"`
+	Status   string `json:"status"`
+	Evidence string `json:"evidence"`
+}
+
+// applyTo copies the fields this report entry refreshes onto the stored row.
+// An absent or unrecognised field leaves the stored value alone, so a partial
+// report never blanks what an earlier scan established.
+func (rm reportedMaintainer) applyTo(m *db.Maintainer) {
+	if rm.Name != "" {
+		m.Name = rm.Name
+	}
+	if validEmail(rm.Email) {
+		m.Email = rm.Email
+	}
+	switch rm.Status {
+	case "active":
+		m.Status = db.MaintainerActive
+	case "inactive":
+		m.Status = db.MaintainerInactive
+	}
+	if rm.Evidence != "" {
+		m.Notes = rm.Role + ": " + rm.Evidence
+	}
+}
+
 // parseMaintainersOutput upserts Maintainer rows and links them to the
 // scanned repo. Mirrors the legacy doMaintainerAnalysis logic so the
 // maintainers skill and the old Go handler stay interchangeable.
 func (w *Worker) parseMaintainersOutput(scan *db.Scan, report string, emit func(Event)) error {
 	var result struct {
-		Maintainers []struct {
-			Login    string `json:"login"`
-			Name     string `json:"name"`
-			Email    string `json:"email"`
-			Role     string `json:"role"`
-			Status   string `json:"status"`
-			Evidence string `json:"evidence"`
-		} `json:"maintainers"`
-		DisclosureChannel string `json:"disclosure_channel"`
+		Maintainers       []reportedMaintainer `json:"maintainers"`
+		DisclosureChannel string               `json:"disclosure_channel"`
 		// Subprojects optionally carries a per-sub-package disclosure channel
 		// for a monorepo, so a report against one gem in rails/rails routes to
 		// that gem's maintainers rather than the repo-wide channel. Additive:
@@ -969,27 +998,28 @@ func (w *Worker) parseMaintainersOutput(scan *db.Scan, report string, emit func(
 			continue
 		}
 		var m db.Maintainer
-		w.DB.Where(db.Maintainer{Login: rm.Login}).FirstOrCreate(&m)
-		if rm.Name != "" {
-			m.Name = rm.Name
+		if err := w.DB.Where(db.Maintainer{Login: rm.Login}).FirstOrCreate(&m).Error; err != nil {
+			// m is a zero value here: nothing was found and nothing was
+			// created. Falling through would Save() a record with no primary
+			// key and an empty Login, inserting a second, blank maintainer row
+			// and linking the repository to that instead of the real one.
+			w.Log.Warn("upsert maintainer", "scan", scan.ID, "login", rm.Login, "err", err)
+			continue
 		}
-		if validEmail(rm.Email) {
-			m.Email = rm.Email
+		rm.applyTo(&m)
+		if err := w.DB.Save(&m).Error; err != nil {
+			// Only the field refresh was lost; m still identifies a row that
+			// exists, so it stays in linked. Dropping it would remove a real
+			// maintainer from the repository via the Replace below, which is a
+			// larger loss than a stale name or note.
+			w.Log.Warn("save maintainer", "scan", scan.ID, "login", rm.Login, "err", err)
 		}
-		switch rm.Status {
-		case "active":
-			m.Status = db.MaintainerActive
-		case "inactive":
-			m.Status = db.MaintainerInactive
-		}
-		if rm.Evidence != "" {
-			m.Notes = rm.Role + ": " + rm.Evidence
-		}
-		w.DB.Save(&m)
 		linked = append(linked, m)
 	}
 	if repoWide && len(linked) > 0 {
-		_ = w.DB.Model(&repo).Association("Maintainers").Replace(linked)
+		if err := w.DB.Model(&repo).Association("Maintainers").Replace(linked); err != nil {
+			w.Log.Warn("replace repository maintainers", "scan", scan.ID, "repository", repo.ID, "err", err)
+		}
 	}
 	emit(Event{Kind: KindText, Text: fmt.Sprintf("identified %d maintainer(s)", len(result.Maintainers))})
 	return nil
