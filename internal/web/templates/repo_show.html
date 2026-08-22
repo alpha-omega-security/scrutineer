@@ -67,68 +67,82 @@
   </div>
 </div>
 
+{{/* The supply-chain sections share one tab; its first available sub-tab opens
+     with it, since any of the four can be missing for a given repository. */}}
+{{$supply := or .Pkgs .Deps .HiddenDeps .Dependents .ShowAlternatives}}
+{{$sub := ""}}
+{{if .Pkgs}}{{$sub = "rt6"}}{{else if or .Deps .HiddenDeps}}{{$sub = "rt5"}}{{else if .Dependents}}{{$sub = "rt7"}}{{else if .ShowAlternatives}}{{$sub = "rt15"}}{{end}}
+
 <div class="tabs w-full" id="repo-tabs">
-  <nav role="tablist" aria-orientation="horizontal">
-    <button type="button" role="tab" id="rt1" aria-controls="rp1" aria-selected="true">Summary</button>
-    {{if or .Findings .Category}}
-      <button type="button" role="tab" id="rt4" aria-controls="rp4" aria-selected="false">
-        Findings <span class="badge-destructive ml-1">{{len .Findings}}</span>
+  {{/* The everyday sections stay in the tab bar and the long tail moves into
+       the "More" menu, which sits beside the tablist rather than inside it
+       because role="tablist" admits only tabs. app.js drives both. */}}
+  <div class="tab-bar">
+    <nav role="tablist" aria-orientation="horizontal" aria-label="Repository sections">
+      <button type="button" role="tab" id="rt1" aria-controls="rp1" aria-selected="true">Summary</button>
+      {{if or .Findings .Category}}
+        <button type="button" role="tab" id="rt4" aria-controls="rp4" aria-selected="false">
+          Findings <span class="badge-destructive ml-1">{{len .Findings}}</span>
+        </button>
+      {{end}}
+      {{if .ScannerFindings}}
+        <button type="button" role="tab" id="rt11" aria-controls="rp11" aria-selected="false">
+          Scanners <span class="badge-outline ml-1">{{len .ScannerFindings}}</span>
+        </button>
+      {{end}}
+      {{if $supply}}
+        <button type="button" role="tab" id="rt17" aria-controls="rp17" aria-selected="false">
+          Supply chain
+        </button>
+      {{end}}
+      <button type="button" role="tab" id="rt3" aria-controls="rp3" aria-selected="false">Scans</button>
+      <button type="button" role="tab" id="rt16" aria-controls="rp16" aria-selected="false">
+        Chat{{if .Conversations}} <span class="badge-outline ml-1">{{len .Conversations}}</span>{{end}}
       </button>
-    {{end}}
-    {{if .ScannerFindings}}
-      <button type="button" role="tab" id="rt11" aria-controls="rp11" aria-selected="false">
-        Scanners <span class="badge-outline ml-1">{{len .ScannerFindings}}</span>
+    </nav>
+
+    <div class="dropdown-menu">
+      <button type="button" class="tab-more" aria-haspopup="menu" aria-expanded="false"
+              aria-controls="repo-more-menu">
+        More <i data-lucide="chevron-down"></i>
       </button>
-    {{end}}
-    {{if .Pkgs}}
-    <button type="button" role="tab" id="rt6" aria-controls="rp6" aria-selected="false">
-      Packages
-    </button>
-    {{end}}
-    {{if .ShowAlternatives}}
-    <button type="button" role="tab" id="rt15" aria-controls="rp15" aria-selected="false">
-      Alternatives{{if .Alternatives}} <span class="badge-outline ml-1">{{len .Alternatives}}</span>{{end}}
-    </button>
-    {{end}}
-    {{if or .Deps .HiddenDeps}}
-      <button type="button" role="tab" id="rt5" aria-controls="rp5" aria-selected="false">
-        Dependencies
-      </button>
-    {{end}}
-    {{if .ThreatModel}}
-    <button type="button" role="tab" id="rt10" aria-controls="rp10" aria-selected="false">
-      Threat Model
-    </button>
-    {{end}}
-    <button type="button" role="tab" id="rt12" aria-controls="rp12" aria-selected="false">
-      Workbench
-      {{if .Workbench.HasOverride}}<span class="badge-outline ml-1">override</span>{{end}}
-    </button>
-    <button type="button" role="tab" id="rt14" aria-controls="rp14" aria-selected="false">
-      Scan config{{if .Repo.ScanConfig}} <span class="badge-outline ml-1">set</span>{{end}}
-    </button>
-    <button type="button" role="tab" id="rt13" aria-controls="rp13" aria-selected="false">
-      Benchmark{{if .ExpectedFindings}} <span class="badge-outline ml-1">{{.ExpectedMatched}}/{{len .ExpectedFindings}}</span>{{end}}
-    </button>
-    {{if .Advisories}}
-    <button type="button" role="tab" id="rt8" aria-controls="rp8" aria-selected="false">
-      Advisories
-    </button>
-    {{end}}
-    {{if .Dependents}}
-    <button type="button" role="tab" id="rt7" aria-controls="rp7" aria-selected="false">
-      Dependents
-    </button>
-    {{end}}
-    <button type="button" role="tab" id="rt9" aria-controls="rp9" aria-selected="false">
-      Maintainers
-    </button>
-    <button type="button" role="tab" id="rt2" aria-controls="rp2" aria-selected="false">Data</button>
-    <button type="button" role="tab" id="rt3" aria-controls="rp3" aria-selected="false">Scans</button>
-    <button type="button" role="tab" id="rt15" aria-controls="rp15" aria-selected="false">
-      Chat{{if .Conversations}} <span class="badge-outline ml-1">{{len .Conversations}}</span>{{end}}
-    </button>
-  </nav>
+      <div data-popover aria-hidden="true">
+        <div role="menu" id="repo-more-menu">
+          <div role="group" aria-label="Analysis">
+            <div role="heading" aria-level="3" class="text-muted-foreground text-xs">Analysis</div>
+            {{if .ThreatModel}}
+            <button type="button" role="menuitem" id="rt10" aria-controls="rp10">Threat model</button>
+            {{end}}
+            <button type="button" role="menuitem" id="rt12" aria-controls="rp12">
+              Workbench
+              {{if .Workbench.HasOverride}}<span class="text-muted-foreground text-xs">override</span>{{end}}
+            </button>
+            <button type="button" role="menuitem" id="rt13" aria-controls="rp13">
+              Benchmark
+              {{if .ExpectedFindings}}<span class="text-muted-foreground text-xs">{{.ExpectedMatched}}/{{len .ExpectedFindings}}</span>{{end}}
+            </button>
+          </div>
+          <hr role="separator">
+          <div role="group" aria-label="Disclosure">
+            <div role="heading" aria-level="3" class="text-muted-foreground text-xs">Disclosure</div>
+            <button type="button" role="menuitem" id="rt9" aria-controls="rp9">Maintainers</button>
+            {{if .Advisories}}
+            <button type="button" role="menuitem" id="rt8" aria-controls="rp8">Advisories</button>
+            {{end}}
+          </div>
+          <hr role="separator">
+          <div role="group" aria-label="Config">
+            <div role="heading" aria-level="3" class="text-muted-foreground text-xs">Config</div>
+            <button type="button" role="menuitem" id="rt14" aria-controls="rp14">
+              Scan config
+              {{if .Repo.ScanConfig}}<span class="text-muted-foreground text-xs">set</span>{{end}}
+            </button>
+            <button type="button" role="menuitem" id="rt2" aria-controls="rp2">Data</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <div role="tabpanel" id="rp1" aria-labelledby="rt1">
     {{if .Repo.FetchedAt}}
@@ -430,8 +444,36 @@
   </div>
   {{end}}
 
+  {{/* The four panels below belong to this nested tab bar; they keep the outer
+       indentation so the move stays reviewable. It closes after Alternatives. */}}
+  {{if $supply}}
+  <div role="tabpanel" id="rp17" aria-labelledby="rt17" hidden>
+  <div class="tabs w-full">
+    <nav role="tablist" aria-orientation="horizontal" aria-label="Supply chain sections">
+      {{if .Pkgs}}
+      <button type="button" role="tab" id="rt6" aria-controls="rp6" aria-selected="{{eq $sub "rt6"}}">
+        Packages
+      </button>
+      {{end}}
+      {{if or .Deps .HiddenDeps}}
+      <button type="button" role="tab" id="rt5" aria-controls="rp5" aria-selected="{{eq $sub "rt5"}}">
+        Dependencies
+      </button>
+      {{end}}
+      {{if .Dependents}}
+      <button type="button" role="tab" id="rt7" aria-controls="rp7" aria-selected="{{eq $sub "rt7"}}">
+        Dependents
+      </button>
+      {{end}}
+      {{if .ShowAlternatives}}
+      <button type="button" role="tab" id="rt15" aria-controls="rp15" aria-selected="{{eq $sub "rt15"}}">
+        Alternatives{{if .Alternatives}} <span class="badge-outline ml-1">{{len .Alternatives}}</span>{{end}}
+      </button>
+      {{end}}
+    </nav>
+
   {{if .Pkgs}}
-  <div role="tabpanel" id="rp6" aria-labelledby="rt6" hidden>
+  <div role="tabpanel" id="rp6" aria-labelledby="rt6"{{if ne $sub "rt6"}} hidden{{end}}>
     <table class="table w-full">
       <thead><tr>
         <th>Name</th><th>Ecosystem</th><th>Registry</th>
@@ -454,8 +496,75 @@
   </div>
   {{end}}
 
+  {{if or .Deps .HiddenDeps}}
+  <div role="tabpanel" id="rp5" aria-labelledby="rt5"{{if ne $sub "rt5"}} hidden{{end}}>
+    <div class="flex items-center justify-between gap-3 mb-3">
+      <p class="text-sm text-muted-foreground">
+        {{if .ShowAllDeps}}Showing all dependency phases.{{else}}Showing runtime dependencies.{{end}}
+        {{if .HiddenDeps}}{{.HiddenDeps}} test/build/dev row(s) hidden.{{end}}
+      </p>
+      {{if .ShowAllDeps}}
+        <a class="btn-sm-outline" href="/repositories/{{.Repo.ID}}#rt5">Runtime only</a>
+      {{else if .HiddenDeps}}
+        <a class="btn-sm-outline" href="/repositories/{{.Repo.ID}}?deps=all#rt5">Include test/build/dev</a>
+      {{end}}
+    </div>
+    {{if .Deps}}
+      <table class="table w-full">
+        <thead><tr>
+          <th>Name</th><th>Ecosystem</th>
+          <th>Version</th><th>Type</th><th>Manifests</th><th class="w-16"></th>
+        </tr></thead>
+        <tbody>
+        {{range .Deps}}
+          <tr>
+            <td class="whitespace-normal font-medium"><code class="text-sm break-all">{{.Name}}</code></td>
+            <td><span class="badge-outline">{{.Ecosystem}}</span></td>
+            <td class="text-muted-foreground whitespace-normal break-all">{{if .Requirement}}{{.Requirement}}{{else}}-{{end}}{{if .RequirementUnresolved}} <span class="badge-outline" data-tooltip="{{if .RequirementResolution}}{{.RequirementResolution}}{{else}}Requirement contains an unresolved manifest expression{{end}}">unresolved</span>{{end}}</td>
+            <td class="text-muted-foreground">{{.DependencyType}}</td>
+            <td class="whitespace-normal text-muted-foreground text-xs">{{range $i, $m := .Manifests}}{{if $i}}, {{end}}{{$u := locurl $.Repo.ID $.DepsCommit $m}}{{if $u}}<a href="{{$u}}" class="hover:underline break-all">{{$m}}</a>{{else}}{{$m}}{{end}}{{end}}</td>
+            <td>{{if .PURL}}{{$rid := lookup $.KnownPURLs .PURL}}{{if $rid}}<a href="/repositories/{{$rid}}" class="btn-sm-ghost" aria-label="View repository" data-tooltip="View repository"><i data-lucide="external-link"></i></a>{{else}}<form method="post" action="/dependencies/{{.ID}}/scan" hx-post="/dependencies/{{.ID}}/scan" hx-swap="none"><button type="submit" class="btn-sm-ghost" aria-label="Import repository" data-tooltip="Import repository"><i data-lucide="import"></i></button></form>{{end}}{{end}}</td>
+          </tr>
+        {{end}}
+        </tbody>
+      </table>
+      {{if gt .DepsTotal .TabRowCap}}
+      <p class="text-sm text-muted-foreground mt-3">
+        Dependency list capped at the first {{.TabRowCap}} of {{.DepsTotal}} rows.
+      </p>
+      {{end}}
+    {{else if .HiddenDeps}}
+      <p class="text-muted-foreground text-sm p-4">No runtime dependencies in the default view.</p>
+    {{end}}
+  </div>
+  {{end}}
+
+  {{if .Dependents}}
+  <div role="tabpanel" id="rp7" aria-labelledby="rt7"{{if ne $sub "rt7"}} hidden{{end}}>
+    <table class="table w-full">
+      <thead><tr>
+        <th>Name</th><th>Ecosystem</th><th>Latest</th>
+        <th>Downloads</th><th>Dependents</th><th class="w-16"></th>
+      </tr></thead>
+      <tbody>
+      {{range .Dependents}}
+        <tr>
+          <td class="whitespace-normal font-medium">{{.Name}}</td>
+          <td><span class="badge-outline">{{.Ecosystem}}</span></td>
+          <td class="text-muted-foreground">{{.LatestVersion}}</td>
+          <td class="text-muted-foreground">{{bignum .Downloads}}</td>
+          <td class="text-muted-foreground">{{bignum .DependentRepos}} repos</td>
+          <td>{{if .RepositoryURL}}{{$rid := lookup $.KnownURLs .RepositoryURL}}{{if $rid}}<a href="/repositories/{{$rid}}" class="btn-sm-ghost" aria-label="View repository" data-tooltip="View repository"><i data-lucide="external-link"></i></a>{{else}}<form method="post" action="/dependents/{{.ID}}/scan" hx-post="/dependents/{{.ID}}/scan" hx-swap="none"><button type="submit" class="btn-sm-ghost" aria-label="Import repository" data-tooltip="Import repository"><i data-lucide="import"></i></button></form>{{end}}{{end}}</td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
+    {{- template "row-cap" (dict "Shown" .Dependents "Total" .DependentsTotal)}}
+  </div>
+  {{end}}
+
   {{if .ShowAlternatives}}
-  <div role="tabpanel" id="rp15" aria-labelledby="rt15" hidden>
+  <div role="tabpanel" id="rp15" aria-labelledby="rt15"{{if ne $sub "rt15"}} hidden{{end}}>
     <div class="grid gap-4">
       <section>
         <h3 class="text-sm font-medium mb-2">Migration alternatives</h3>
@@ -516,48 +625,8 @@
     </div>
   </div>
   {{end}}
-
-  {{if or .Deps .HiddenDeps}}
-  <div role="tabpanel" id="rp5" aria-labelledby="rt5" hidden>
-    <div class="flex items-center justify-between gap-3 mb-3">
-      <p class="text-sm text-muted-foreground">
-        {{if .ShowAllDeps}}Showing all dependency phases.{{else}}Showing runtime dependencies.{{end}}
-        {{if .HiddenDeps}}{{.HiddenDeps}} test/build/dev row(s) hidden.{{end}}
-      </p>
-      {{if .ShowAllDeps}}
-        <a class="btn-sm-outline" href="/repositories/{{.Repo.ID}}#rt5">Runtime only</a>
-      {{else if .HiddenDeps}}
-        <a class="btn-sm-outline" href="/repositories/{{.Repo.ID}}?deps=all#rt5">Include test/build/dev</a>
-      {{end}}
-    </div>
-    {{if .Deps}}
-      <table class="table w-full">
-        <thead><tr>
-          <th>Name</th><th>Ecosystem</th>
-          <th>Version</th><th>Type</th><th>Manifests</th><th class="w-16"></th>
-        </tr></thead>
-        <tbody>
-        {{range .Deps}}
-          <tr>
-            <td class="whitespace-normal font-medium"><code class="text-sm break-all">{{.Name}}</code></td>
-            <td><span class="badge-outline">{{.Ecosystem}}</span></td>
-            <td class="text-muted-foreground whitespace-normal break-all">{{if .Requirement}}{{.Requirement}}{{else}}-{{end}}{{if .RequirementUnresolved}} <span class="badge-outline" data-tooltip="{{if .RequirementResolution}}{{.RequirementResolution}}{{else}}Requirement contains an unresolved manifest expression{{end}}">unresolved</span>{{end}}</td>
-            <td class="text-muted-foreground">{{.DependencyType}}</td>
-            <td class="whitespace-normal text-muted-foreground text-xs">{{range $i, $m := .Manifests}}{{if $i}}, {{end}}{{$u := locurl $.Repo.ID $.DepsCommit $m}}{{if $u}}<a href="{{$u}}" class="hover:underline break-all">{{$m}}</a>{{else}}{{$m}}{{end}}{{end}}</td>
-            <td>{{if .PURL}}{{$rid := lookup $.KnownPURLs .PURL}}{{if $rid}}<a href="/repositories/{{$rid}}" class="btn-sm-ghost" aria-label="View repository" data-tooltip="View repository"><i data-lucide="external-link"></i></a>{{else}}<form method="post" action="/dependencies/{{.ID}}/scan" hx-post="/dependencies/{{.ID}}/scan" hx-swap="none"><button type="submit" class="btn-sm-ghost" aria-label="Import repository" data-tooltip="Import repository"><i data-lucide="import"></i></button></form>{{end}}{{end}}</td>
-          </tr>
-        {{end}}
-        </tbody>
-      </table>
-      {{if gt .DepsTotal .TabRowCap}}
-      <p class="text-sm text-muted-foreground mt-3">
-        Dependency list capped at the first {{.TabRowCap}} of {{.DepsTotal}} rows.
-      </p>
-      {{end}}
-    {{else if .HiddenDeps}}
-      <p class="text-muted-foreground text-sm p-4">No runtime dependencies in the default view.</p>
-    {{end}}
-  </div>
+  </div>{{/* .tabs */}}
+  </div>{{/* #rp17 */}}
   {{end}}
 
   {{if .ThreatModel}}
@@ -658,30 +727,6 @@
   </div>
   {{end}}
 
-  {{if .Dependents}}
-  <div role="tabpanel" id="rp7" aria-labelledby="rt7" hidden>
-    <table class="table w-full">
-      <thead><tr>
-        <th>Name</th><th>Ecosystem</th><th>Latest</th>
-        <th>Downloads</th><th>Dependents</th><th class="w-16"></th>
-      </tr></thead>
-      <tbody>
-      {{range .Dependents}}
-        <tr>
-          <td class="whitespace-normal font-medium">{{.Name}}</td>
-          <td><span class="badge-outline">{{.Ecosystem}}</span></td>
-          <td class="text-muted-foreground">{{.LatestVersion}}</td>
-          <td class="text-muted-foreground">{{bignum .Downloads}}</td>
-          <td class="text-muted-foreground">{{bignum .DependentRepos}} repos</td>
-          <td>{{if .RepositoryURL}}{{$rid := lookup $.KnownURLs .RepositoryURL}}{{if $rid}}<a href="/repositories/{{$rid}}" class="btn-sm-ghost" aria-label="View repository" data-tooltip="View repository"><i data-lucide="external-link"></i></a>{{else}}<form method="post" action="/dependents/{{.ID}}/scan" hx-post="/dependents/{{.ID}}/scan" hx-swap="none"><button type="submit" class="btn-sm-ghost" aria-label="Import repository" data-tooltip="Import repository"><i data-lucide="import"></i></button></form>{{end}}{{end}}</td>
-        </tr>
-      {{end}}
-      </tbody>
-    </table>
-    {{- template "row-cap" (dict "Shown" .Dependents "Total" .DependentsTotal)}}
-  </div>
-  {{end}}
-
   <div role="tabpanel" id="rp9" aria-labelledby="rt9" hidden>
     {{if .Maintainers}}
     <table class="table w-full">
@@ -718,7 +763,7 @@
     {{template "repo_scans.html" .}}
   </div>
 
-  <div role="tabpanel" id="rp15" aria-labelledby="rt15" hidden>
+  <div role="tabpanel" id="rp16" aria-labelledby="rt16" hidden>
     {{template "chat-panel" (dict "Action" (printf "/repositories/%d/conversations" .Repo.ID) "Conversations" .Conversations "Placeholder" "Ask about this repository's code or findings...")}}
   </div>
 
