@@ -409,7 +409,7 @@ See [docs/codex.md](docs/codex.md) for what differs from claude (argv, skill sta
     backend: opencode
     default_model: anthropic/claude-sonnet-5
 
-Anthropic and OpenAI keep their existing setup. Other providers can use `opencode.providers` to select provider-only credentials, hardened-mode egress hosts, stored OAuth state, OpenCode config, and a derived runner image. Scrutineer checks that the selected model exists in that image before starting the skill, then records the provider image and digest on the scan. Like codex, the OpenCode backend requires the container runner. See [docs/opencode.md](docs/opencode.md) for configuration and image requirements.
+Anthropic and OpenAI keep their existing setup. Other providers can use `opencode.providers` to select provider-only credentials, hardened-mode egress hosts, a host-local model server port, stored OAuth state, OpenCode config, and a derived runner image. Scrutineer checks that the selected model exists in that image before starting the skill, then records the provider image and digest on the scan. Like codex, the OpenCode backend requires the container runner. See [docs/opencode.md](docs/opencode.md) for configuration and image requirements.
 
 ## Copilot backend
 

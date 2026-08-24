@@ -84,14 +84,15 @@ mounted read-write so refreshed tokens persist, which also lets in-container
 code overwrite it. Prefer short-lived or narrowly scoped credentials (an
 `AWS_SECRET_ACCESS_KEY` limited to Bedrock model invocation, a per-install
 OAuth app for Copilot) so an exfiltrated value has bounded reach; under
-`--hardened` the provider's `egress_allow` hosts and the skill API are the
-only destinations it can be sent to.
+`--hardened` the provider's `egress_allow` hosts, its `host_port` when set,
+and the skill API are the only destinations it can be sent to.
 
-Every configured provider needs at least one `egress_allow` hostname. These
-hosts are added only to scans using that provider, including under `--hardened`.
-The top-level `egress_allow` remains ignored in hardened mode. Use hostnames
-without a scheme, path, or port. Region- and resource-specific providers should
-list the endpoints for the configured region or resource.
+Every configured provider needs at least one `egress_allow` hostname or a
+`host_port`. `egress_allow` hosts are added only to scans using that provider,
+including under `--hardened`. The top-level `egress_allow` remains ignored in
+hardened mode. Use hostnames without a scheme, path, or port. Region- and
+resource-specific providers should list the endpoints for the configured region
+or resource.
 
 A model whose provider prefix is neither `anthropic`, `openai`, nor a key under
 `opencode.providers` is refused before the container starts.
@@ -101,11 +102,12 @@ A model whose provider prefix is neither `anthropic`, `openai`, nor a key under
 For a model server running on the host machine's loopback (Ollama, LM Studio,
 llama.cpp, or another OpenAI-compatible endpoint), set `host_port` instead of
 `egress_allow`. The egress proxy opens exactly that port on
-`host.docker.internal` and rewrites it to the host loopback, so the scan
-container reaches only the named port and nothing else on the host. The
-`config_file` must point OpenCode's `options.baseURL` at
+`host.docker.internal` and rewrites it to the host loopback, alongside the
+skill API port every scan already reaches; no other host loopback service is
+reachable. The `config_file` must point OpenCode's `options.baseURL` at
 `http://host.docker.internal:<port>`, not `127.0.0.1`, because the request
-originates inside the container.
+originates inside the container. Scrutineer refuses a `host_port` provider at
+startup when the loaded `config_file` does not name that address.
 
     opencode:
       providers:
@@ -128,15 +130,16 @@ The readiness check probes `http://host.docker.internal:<port>/` from inside
 the container before the skill runs, so a stopped model server or a wrong port
 fails the scan with a clear error rather than an OpenCode server exception.
 `host_port` and `egress_allow` may be combined when a provider needs both a
-host-local endpoint and external hostnames. `host_port` requires the docker or
-podman runtime; Apple's container runtime has no `host.docker.internal` alias
-and is not supported for this option.
+host-local endpoint and external hostnames.
 
 Under the sidecar egress path (rootless podman with `--hardened`) the request
 goes container → sidecar → host gateway → host loopback, which requires the
 rootless network backend to forward the host gateway to the host loopback. The
 sidecar already refuses to start when that forwarding is unavailable for the
-skill API port; the same check applies here.
+skill API port on the default `-addr 127.0.0.1:8080`; the same check applies
+here. A non-loopback `-addr` makes the sidecar's startup gate reach the API
+without host-loopback forwarding, so that check no longer proves a
+loopback-bound model server is reachable.
 
 ## Provider images and config
 
