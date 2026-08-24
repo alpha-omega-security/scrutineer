@@ -174,10 +174,12 @@ func (d ContainerRunner) configureOpencodeProviderEgress(provider opencodeProvid
 	}
 	d.Egress.Allow = appendUniqueStrings(d.Egress.Allow, provider.EgressHosts...)
 	d.ProviderProxy.Allow = appendUniqueStrings(d.ProviderProxy.Allow, provider.EgressHosts...)
-	var hostPorts []string
 	if provider.HostPort != "" {
-		hostPorts = []string{provider.HostPort}
 		d.Egress.HostPorts = appendUniqueStrings(d.Egress.HostPorts, provider.HostPort)
+		if d.ProviderProxy.Log != nil {
+			d.ProviderProxy.Log.Info("host-local provider port granted on host loopback",
+				"provider", provider.ID, "port", provider.HostPort)
+		}
 	}
 	if d.usesEgressSidecar() {
 		return d, noop, nil
@@ -191,7 +193,7 @@ func (d ContainerRunner) configureOpencodeProviderEgress(provider opencodeProvid
 		Token:     token,
 		APIPort:   d.ProviderProxy.APIPort,
 		APIHosts:  d.ProviderProxy.APIHosts,
-		HostPorts: hostPorts,
+		HostPorts: d.Egress.HostPorts,
 		Log:       d.ProviderProxy.Log,
 	})
 	if err != nil {
@@ -392,7 +394,7 @@ func (d ContainerRunner) checkOpencodeReadiness(ctx context.Context, provider op
 		ready := d.OpencodeReadiness.ready[cacheKey]
 		d.OpencodeReadiness.mu.Unlock()
 		if ready {
-			return d.checkOpencodeHostPort(provider, probe)
+			return checkOpencodeHostPort(provider, probe)
 		}
 	}
 	if len(provider.RequiredBinaries) > 0 {
@@ -423,7 +425,7 @@ func (d ContainerRunner) checkOpencodeReadiness(ctx context.Context, provider op
 		d.OpencodeReadiness.ready[cacheKey] = true
 		d.OpencodeReadiness.mu.Unlock()
 	}
-	return d.checkOpencodeHostPort(provider, probe)
+	return checkOpencodeHostPort(provider, probe)
 }
 
 // checkOpencodeHostPort probes the provider's host-local model server from
@@ -433,7 +435,7 @@ func (d ContainerRunner) checkOpencodeReadiness(ctx context.Context, provider op
 // --proxytunnel forces CONNECT for the plain-http target so a proxy 403/502
 // (port denied or nothing listening on the host loopback) is a curl exit
 // error; once the tunnel is up, any origin status counts as reachable.
-func (d ContainerRunner) checkOpencodeHostPort(provider opencodeProvider, probe func(...string) ([]byte, error)) error {
+func checkOpencodeHostPort(provider opencodeProvider, probe func(...string) ([]byte, error)) error {
 	if provider.HostPort == "" {
 		return nil
 	}

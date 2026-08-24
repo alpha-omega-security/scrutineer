@@ -9,7 +9,6 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -397,10 +396,8 @@ func TestCheckOpencodeReadinessProbesHostPort(t *testing.T) {
 		t.Errorf("cached call skipped the host-port probe: %s", data)
 	}
 
-	runtime = writeFakeRuntime(t, "#!/bin/sh\necho 'curl: (56) CONNECT tunnel failed, response 502' >&2; exit 56\n")
-	d = ContainerRunner{Harness: OpencodeHarness{}, Runtime: ContainerRuntime{Bin: runtime}}
-	err := d.checkOpencodeHostPort(provider, func(argv ...string) ([]byte, error) {
-		return exec.Command(runtime, argv...).CombinedOutput()
+	err := checkOpencodeHostPort(provider, func(...string) ([]byte, error) {
+		return []byte("curl: (56) CONNECT tunnel failed, response 502"), errors.New("exit status 56")
 	})
 	if err == nil || !strings.Contains(err.Error(), "host-local model server on port 11434") {
 		t.Fatalf("host port readiness error = %v", err)
