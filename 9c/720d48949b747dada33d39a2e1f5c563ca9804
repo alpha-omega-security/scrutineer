@@ -1,0 +1,33 @@
+internal/web/server.go
+  s_3ab2fe722f9104::t_d11f12520a5dec 2364-2368
+internal/db/repository_health.go
+  s_3ab2fe722f9104::t_10814b1cfc60f4 29-35
+  s_3ab2fe722f9104::t_1ccb20a0af88b2 62-67,72
+  s_3ab2fe722f9104::t_52e546b315edfa 105
+  s_3ab2fe722f9104::t_fc3c42868df405 186-199
+  s_3ab2fe722f9104::t_f8292c99d13399 217-220,222
+internal/db/repository_health_test.go
+  s_3ab2fe722f9104::t_811ccdf624d7bc 22,26-30,33-36,39-43,46-50,57,64,72,82-84,91,94-103,113
+  s_3ab2fe722f9104::t_51a83b2bf6d1a9 133
+  s_3ab2fe722f9104::t_979ed06d98c504 162,165
+  s_3ab2fe722f9104::t_a5535bf3efe637 249
+  s_3ab2fe722f9104::t_20c5571bae1c50 193
+  s_3ab2fe722f9104::t_38b9b9b6e37305 264-309
+  s_3ab2fe722f9104::t_07ab814fcdec75 150
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "9c720d48949b747dada33d39a2e1f5c563ca9804",
+  "prompts": {},
+  "sessions": {
+    "s_3ab2fe722f9104": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1bcb9e6b-229f-471e-8ace-056352ab7469",
+        "model": "claude-mythos-preview"
+      },
+      "human_author": "Mirko Swillus <mechko@mk0.eu>"
+    }
+  }
+}
