@@ -152,6 +152,7 @@ func TestIsDependencyResolutionFailure(t *testing.T) {
 		"ERROR: Could not find a version that satisfies the requirement foo",
 		"error: failed to select a version for `foo`",
 		"go: no required module provides package example.com/x",
+		"[ERROR] No solution found, exiting",
 		"Your requirements could not be resolved to an installable set of packages.",
 	}
 	neg := []string{

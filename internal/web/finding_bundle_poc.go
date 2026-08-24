@@ -47,6 +47,7 @@ var probeExt = map[string]string{
 	"java":         "Probe.java",
 	"php":          "probe.php",
 	"perl":         "probe.pl",
+	"ocaml":        "probe.ml",
 	"json":         "input.json",
 	"xml":          "input.xml",
 	"yaml":         "input.yaml",

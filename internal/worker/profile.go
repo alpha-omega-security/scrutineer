@@ -142,6 +142,16 @@ var builtinProfiles = []Profile{
 	{Name: "beam", Detect: pm("Mix", "rebar3")},
 	{Name: "rust", Detect: pm("Cargo")},
 	{
+		// Before c-cpp so an opam package that also ships a compat Makefile
+		// (most do; it just calls dune) still routes here.
+		Name: "ocaml",
+		Detect: []BriefMatch{
+			{briefPackageManager, []string{"opam"}},
+			{briefBuild, []string{"Dune"}},
+			{briefLanguage, []string{"OCaml"}},
+		},
+	},
+	{
 		// Before c-cpp: a Swift package that vendors C sources or a Makefile
 		// still routes here on the SwiftPM manifest. The language match is a
 		// belt-and-braces for a repo with only *.swift and no Package.swift

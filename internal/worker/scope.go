@@ -173,6 +173,10 @@ var depResolutionMarkers = []string{
 	// go modules
 	"no required module provides package",
 	"missing go.sum entry",
+	// opam / dune
+	"no solution found, exiting",
+	"the following dependencies couldn't be met",
+	"is not a valid versioned package name",
 	// composer / maven / generic
 	"your requirements could not be resolved",
 	"could not resolve dependencies",

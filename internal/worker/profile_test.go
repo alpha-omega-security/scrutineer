@@ -113,6 +113,7 @@ func TestMatchProfile(t *testing.T) {
 		{"mix case-insensitive", briefJSON("package_manager:mix"), "beam"},
 		{"cargo matches rust", briefJSON("package_manager:Cargo"), "rust"},
 		{"SwiftPM matches swift", briefJSON("package_manager:Swift Package Manager"), "swift"},
+		{"opam matches ocaml", briefJSON("package_manager:opam"), "ocaml"},
 		{"cpanm matches perl", briefJSON("package_manager:cpanm"), "perl"},
 
 		// registry order: first match in builtinProfiles wins, not brief order
@@ -145,6 +146,7 @@ func TestMatchProfile(t *testing.T) {
 			"ruby-ext",
 		},
 		{"Rake alone does not select ruby-rails", briefJSON("package_manager:Bundler", "build:Rake"), "ruby"},
+		{"Dune selects ocaml", briefJSON("build:Dune"), "ocaml"},
 		{"CMake selects c-cpp", briefJSON("build:CMake"), "c-cpp"},
 		{"Make selects c-cpp", briefJSON("build:Make"), "c-cpp"},
 		{"Autotools selects c-cpp", briefJSON("build:Autotools"), "c-cpp"},
@@ -155,6 +157,14 @@ func TestMatchProfile(t *testing.T) {
 		{"C language matches c-cpp", briefJSON("language:C"), "c-cpp"},
 		{"C++ language matches c-cpp", briefJSON("language:C++"), "c-cpp"},
 		{"Swift language matches swift (Xcode-project-only checkout)", briefJSON("language:Swift"), "swift"},
+		{"OCaml language matches ocaml (belt-and-braces for a *.ml-only checkout)", briefJSON("language:OCaml"), "ocaml"},
+		{
+			// An opam package that ships a compat Makefile (many do; it just
+			// calls dune) must not fall through to c-cpp.
+			"opam + Make picks ocaml over c-cpp (registry order)",
+			briefJSON("package_manager:opam", "build:Make", "build:Dune", "language:OCaml"),
+			"ocaml",
+		},
 		{
 			// A Swift package that vendors C sources or a Makefile must
 			// still route to swift, not c-cpp.
