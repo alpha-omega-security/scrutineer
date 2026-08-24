@@ -1,0 +1,21 @@
+internal/web/repository_health_test.go
+  s_7cd4dd531f256a::t_5c5231dc077bd4 79-91
+  s_7cd4dd531f256a::t_322c89c0150e16 60
+  s_7cd4dd531f256a::t_feed6a796120d0 30
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.23",
+  "base_commit_sha": "71b63458c8c2f2440b28112163cecfc204b4d13e",
+  "prompts": {},
+  "sessions": {
+    "s_7cd4dd531f256a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8407ea64-8337-4033-a323-d5c8261b840e",
+        "model": "claude-mythos-preview"
+      },
+      "human_author": "Mirko Swillus <mechko@mk0.eu>"
+    }
+  }
+}
