@@ -27,6 +27,7 @@ func TestRepositoryHealthTickRefreshesStoredHealth(t *testing.T) {
 	if err := s.DB.Model(&repo).Association("Maintainers").Append(&maintainer); err != nil {
 		t.Fatal(err)
 	}
+	seedHealthScans(t, s, repo.ID)
 
 	s.repositoryHealthTick(now)
 
@@ -56,6 +57,7 @@ func TestRepositoryHealthTickAgesRepositoriesWithoutParserRuns(t *testing.T) {
 	if err := s.DB.Model(&repo).Association("Maintainers").Append(&maintainer); err != nil {
 		t.Fatal(err)
 	}
+	seedHealthScans(t, s, repo.ID)
 
 	s.repositoryHealthTick(now)
 	var got db.Repository
@@ -72,5 +74,18 @@ func TestRepositoryHealthTickAgesRepositoriesWithoutParserRuns(t *testing.T) {
 	}
 	if got.Health != db.RepositoryHealthStale {
 		t.Fatalf("aged health = %q, want %q", got.Health, db.RepositoryHealthStale)
+	}
+}
+
+// seedHealthScans creates finished metadata + maintainers scan rows so
+// RepositoryHealthEvidenceComplete reports true and the tick under test can
+// reach a verdict. The db package keeps the authoritative skill list; these
+// tests only exercise the tick loop, so hard-coding the two names is fine.
+func seedHealthScans(t *testing.T, s *Server, repoID uint) {
+	t.Helper()
+	for _, name := range []string{"metadata", "maintainers"} {
+		if err := s.DB.Create(&db.Scan{RepositoryID: repoID, Kind: "skill", SkillName: name, Status: db.ScanDone}).Error; err != nil {
+			t.Fatal(err)
+		}
 	}
 }
