@@ -93,16 +93,23 @@ func ecosystemKey(purlStr, ecosystem, name string) (eco, namespace, pkg string) 
 		return canonicalType(p.Type), p.Namespace, p.Name
 	}
 	built := purl.MakePURL(reconcileEcosystem(ecosystem), name, "")
-	if p, err := purl.Parse(built.String()); err == nil {
-		return canonicalType(p.Type), p.Namespace, p.Name
+	if built != nil {
+		if p, err := purl.Parse(built.String()); err == nil {
+			return canonicalType(p.Type), p.Namespace, p.Name
+		}
 	}
-	// MakePURL produced an invalid PURL: a namespace-required type whose
-	// path-like name it does not split (swift). Split on the last separator the
-	// way purl.Parse splits a path namespace; if there is none, keep it whole.
+	// MakePURL rejected the identifier or produced an invalid PURL: a
+	// namespace-required type whose path-like name it cannot represent (swift).
+	// Split on the last separator the way purl.Parse splits a path namespace; if
+	// there is none, keep it whole.
+	eco = canonicalType(ecosystem)
 	if i := strings.LastIndex(name, "/"); i > 0 {
-		return canonicalType(built.Type), name[:i], name[i+1:]
+		return eco, name[:i], name[i+1:]
 	}
-	return canonicalType(built.Type), built.Namespace, built.Name
+	if built == nil {
+		return eco, "", name
+	}
+	return eco, built.Namespace, built.Name
 }
 
 // EcosystemType returns the canonical PURL-type ecosystem to store on Package
