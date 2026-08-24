@@ -989,8 +989,15 @@ func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRu
 		return nil, "", err
 	}
 	allow := buildEgressAllow(h.EgressHosts(), f.hardened, cfg, f.modelBaseURL, log)
+	// The host-gateway alias is always an API host so a container that CONNECTs
+	// to host.docker.internal:<port> gets the port gate and loopback rewrite on
+	// every runtime, including Apple where the container reaches the proxy via
+	// the resolved gateway IP instead. Without the alias here, a HostPorts grant
+	// on Apple falls through to a plain hostname dial that cannot resolve.
+	apiHosts := []string{worker.HostGatewayAlias}
 	if apiHost != worker.HostGatewayAlias {
 		allow = append(allow, apiHost)
+		apiHosts = append(apiHosts, apiHost)
 	}
 	token := worker.NewProxyToken()
 	// Rootless --hardened runs the egress proxy as a per-scan sidecar reusing
@@ -1012,7 +1019,7 @@ func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRu
 			Allow:    allow,
 			Token:    token,
 			APIPort:  addrPort(f.addr),
-			APIHosts: []string{apiHost},
+			APIHosts: apiHosts,
 			Log:      log,
 		})
 		if err != nil {
@@ -1047,7 +1054,7 @@ func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRu
 		ProviderProxy: worker.ScopedEgressProxyConfig{
 			Allow:         allow,
 			APIPort:       addrPort(f.addr),
-			APIHosts:      []string{apiHost},
+			APIHosts:      apiHosts,
 			ContainerHost: apiHost,
 			Log:           log,
 		},
@@ -1086,6 +1093,16 @@ func loadOpencodeProviders(h worker.Harness, providers map[string]config.Opencod
 		var hostPort string
 		if provider.HostPort > 0 {
 			hostPort = strconv.Itoa(provider.HostPort)
+			// The readiness probe checks host.docker.internal:<host_port> is
+			// reachable, not that OpenCode is configured to send requests there.
+			// A config_file whose baseURL points at 127.0.0.1 or a different
+			// port passes readiness and then fails inside the OpenCode server.
+			// A substring check catches that at startup without depending on
+			// the config's exact JSON shape.
+			target := worker.HostGatewayAlias + ":" + hostPort
+			if !strings.Contains(configContent, target) {
+				return nil, fmt.Errorf("opencode.providers.%s: host_port %d is set but config_file does not point options.baseURL at http://%s", id, provider.HostPort, target)
+			}
 		}
 		result[id] = worker.OpencodeProviderConfig{
 			RunnerImage:      provider.RunnerImage,

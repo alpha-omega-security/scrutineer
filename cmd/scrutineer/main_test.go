@@ -350,6 +350,10 @@ func TestLoadOpencodeProvidersResolvesConfigRelativePaths(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(providerDir, "kiro.json"), []byte(`{"plugin":["kiro"]}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	ollamaConfig := `{"provider":{"ollama":{"npm":"@ai-sdk/openai-compatible","options":{"baseURL":"http://host.docker.internal:11434/v1"}}}}`
+	if err := os.WriteFile(filepath.Join(providerDir, "ollama.json"), []byte(ollamaConfig), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	h, err := worker.HarnessByName("opencode")
 	if err != nil {
 		t.Fatal(err)
@@ -363,7 +367,7 @@ func TestLoadOpencodeProvidersResolvesConfigRelativePaths(t *testing.T) {
 			EgressAllow:      []string{"q.us-east-1.amazonaws.com"},
 			StateDir:         "state/kiro",
 		},
-		"ollama": {HostPort: 11434},
+		"ollama": {ConfigFile: "providers/ollama.json", HostPort: 11434},
 	}, filepath.Join(dir, "scrutineer.yaml"))
 	if err != nil {
 		t.Fatal(err)
@@ -380,6 +384,37 @@ func TestLoadOpencodeProvidersResolvesConfigRelativePaths(t *testing.T) {
 	}
 	if got["ollama"].HostPort != "11434" || got["kiro"].HostPort != "" {
 		t.Errorf("host ports = kiro:%q ollama:%q", got["kiro"].HostPort, got["ollama"].HostPort)
+	}
+}
+
+func TestLoadOpencodeProvidersRefusesHostPortWithoutMatchingBaseURL(t *testing.T) {
+	dir := t.TempDir()
+	h, err := worker.HarnessByName("opencode")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range map[string]string{
+		"no config_file": "",
+		// The container's own loopback, not the host's. This is the mistake the
+		// check exists for: readiness at host.docker.internal:11434 passes and
+		// then OpenCode dials 127.0.0.1:11434 inside the container.
+		"127.0.0.1":  `{"provider":{"ollama":{"options":{"baseURL":"http://127.0.0.1:11434/v1"}}}}`,
+		"wrong port": `{"provider":{"ollama":{"options":{"baseURL":"http://host.docker.internal:1234/v1"}}}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			provider := config.OpencodeProvider{HostPort: 11434}
+			if content != "" {
+				path := filepath.Join(dir, strings.ReplaceAll(name, " ", "-")+".json")
+				if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				provider.ConfigFile = path
+			}
+			_, err := loadOpencodeProviders(h, map[string]config.OpencodeProvider{"ollama": provider}, filepath.Join(dir, "scrutineer.yaml"))
+			if err == nil || !strings.Contains(err.Error(), "http://host.docker.internal:11434") {
+				t.Fatalf("error = %v, want config_file/baseURL refusal", err)
+			}
+		})
 	}
 }
 
