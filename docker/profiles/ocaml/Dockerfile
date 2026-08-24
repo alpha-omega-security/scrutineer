@@ -57,7 +57,7 @@ RUN apt-get update \
  # host regardless of where a package's primary URL points.
  && opam init --disable-sandboxing --bare --no-setup \
  && opam switch create default "${OCAML_VERSION}" \
- && opam install dune ocamlfind \
+ && opam install dune ocamlfind ocaml-lsp-server odoc merlin \
  # a+rwX: the worker runs the container as the host uid (--user), not runner.
  && opam clean -acrs \
  && chmod -R a+rwX /opt/opam \
