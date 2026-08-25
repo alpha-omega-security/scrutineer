@@ -253,6 +253,53 @@ func TestEmbeddedNativeBriefSeesPreparedSubmodule(t *testing.T) {
 	}
 }
 
+func TestEmbeddedNativeBriefFailureWritesErrorReport(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	if err := os.Mkdir(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(root, "bin")
+	if err := os.Mkdir(bin, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fakeBrief := filepath.Join(bin, "brief")
+	if err := os.WriteFile(fakeBrief, []byte("#!/usr/bin/env bash\necho 'brief failed' >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	script, err := filepath.Abs("../../skills/embedded-native/scripts/scan.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reportPath := filepath.Join(root, "report.json")
+	cmd := exec.Command("bash", script, src, reportPath)
+	cmd.Env = append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("embedded-native scan: %v\n%s", err, out)
+	}
+	reportJSON, err := os.ReadFile(reportPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ValidateReportSchema(loadBundledSchema(t, "../../skills/embedded-native/schema.json"), string(reportJSON)); got != "" {
+		t.Fatalf("schema: %s\n%s", got, reportJSON)
+	}
+	var report struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(reportJSON, &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Error != "brief root scan failed" {
+		t.Errorf("error = %q, want brief root scan failed", report.Error)
+	}
+	if !strings.Contains(string(out), "brief failed") {
+		t.Errorf("stderr = %q, want Brief failure", out)
+	}
+}
+
 func TestEnsureCommit_noCacheIsNoOp(t *testing.T) {
 	w := &Worker{DataDir: t.TempDir()}
 	if err := w.EnsureCommit(context.Background(), "https://example.com/x", "deadbeef"); err != nil {
