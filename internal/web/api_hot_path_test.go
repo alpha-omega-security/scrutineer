@@ -112,6 +112,7 @@ func TestAPIListScans_omitsBlobsKeepsSummary(t *testing.T) {
 	prior := db.Scan{
 		RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone,
 		SkillName: deepDiveSkillName, Commit: "abcdef1", Model: "fake",
+		Ref: "release/2.x", SubPath: "packages/core",
 		RescanMode: "diff", DiffBaseCommit: "0000001",
 		DiffStats: `{"files":3}`, Coverage: `{"mode":"diff"}`, Error: "none",
 		Log:    strings.Repeat("x", 1<<16),
@@ -154,8 +155,8 @@ func TestAPIGetScan_stillServesReportAndLog(t *testing.T) {
 	repo, auth := seedRunningScan(t, s)
 	prior := db.Scan{
 		RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone,
-		SkillName: deepDiveSkillName,
-		Report:    `{"findings":[]}`, Log: "line one\nline two",
+		SkillName: deepDiveSkillName, Ref: "release/2.x", SubPath: "packages/core",
+		Report: `{"findings":[]}`, Log: "line one\nline two",
 	}
 	if err := s.DB.Create(&prior).Error; err != nil {
 		t.Fatal(err)
@@ -171,6 +172,9 @@ func TestAPIGetScan_stillServesReportAndLog(t *testing.T) {
 	}
 	if got["report"] != `{"findings":[]}` || got["log"] != "line one\nline two" {
 		t.Errorf("report = %v, log = %v", got["report"], got["log"])
+	}
+	if got["ref"] != "release/2.x" || got["sub_path"] != "packages/core" {
+		t.Errorf("ref = %v, sub_path = %v", got["ref"], got["sub_path"])
 	}
 }
 

@@ -1405,6 +1405,8 @@ components:
         status:        { type: string, enum: [queued, running, paused, done, failed, skipped, cancelled] }
         model:         { type: string }
         commit:        { type: string }
+        ref:           { type: string, description: Branch, tag, or commit requested for this scan. Omitted for the repository default branch. }
+        sub_path:      { type: string, description: Monorepo sub-folder this scan was scoped to. Omitted for a repository-root scan. }
         rescan_mode:
           type: string
           enum: [full, diff]

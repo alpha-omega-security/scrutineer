@@ -606,6 +606,9 @@ func scanSummary(sc db.Scan) map[string]any {
 	if sc.Ref != "" {
 		m["ref"] = sc.Ref
 	}
+	if sc.SubPath != "" {
+		m["sub_path"] = sc.SubPath
+	}
 	if sc.RescanMode != "" {
 		m["rescan_mode"] = sc.RescanMode
 	}
