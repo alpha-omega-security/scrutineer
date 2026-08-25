@@ -11,10 +11,10 @@ require (
 	github.com/git-pkgs/clone v0.5.0
 	github.com/git-pkgs/clone/gogit v0.1.0
 	github.com/git-pkgs/cwe v0.1.1
-	github.com/git-pkgs/enrichment v0.6.5
+	github.com/git-pkgs/enrichment v0.7.0
 	github.com/git-pkgs/magic v0.2.0
 	github.com/git-pkgs/pom v0.1.7
-	github.com/git-pkgs/purl v0.1.16
+	github.com/git-pkgs/purl v0.1.17
 	github.com/git-pkgs/sarif v0.1.2
 	github.com/git-pkgs/sbom v0.1.5
 	github.com/git-pkgs/vulns v0.2.2
@@ -37,9 +37,9 @@ require (
 	github.com/cyphar/filepath-securejoin v0.7.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/git-pkgs/packageurl-go v0.3.1 // indirect
-	github.com/git-pkgs/registries v0.7.0 // indirect
+	github.com/git-pkgs/registries v0.8.0 // indirect
 	github.com/git-pkgs/spdx v0.3.1 // indirect
-	github.com/git-pkgs/vers v0.3.1 // indirect
+	github.com/git-pkgs/vers v0.5.0 // indirect
 	github.com/github/go-spdx/v2 v2.7.0 // indirect
 	github.com/glebarez/go-sqlite v1.23.0 // indirect
 	github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 // indirect
@@ -52,7 +52,7 @@ require (
 	github.com/mattn/go-isatty v0.0.24 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/oapi-codegen/nullable v1.2.0 // indirect
-	github.com/oapi-codegen/runtime v1.6.0 // indirect
+	github.com/oapi-codegen/runtime v1.7.0 // indirect
 	github.com/package-url/packageurl-go v0.1.6 // indirect
 	github.com/pandatix/go-cvss v0.6.2 // indirect
 	github.com/pjbgf/sha1cd v0.6.0 // indirect
