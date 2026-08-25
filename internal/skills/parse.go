@@ -24,20 +24,21 @@ import (
 )
 
 const (
-	skillFile           = "SKILL.md"
-	metaOutputFile      = "scrutineer.output_file"
-	metaOutputKind      = "scrutineer.output_kind"
-	metaMaxTurns        = "scrutineer.max_turns"
-	metaModel           = "scrutineer.model"
-	metaVersion         = "scrutineer.version"
-	metaMinConfidence   = "scrutineer.min_confidence"
-	metaReportOn        = "scrutineer.report_on"
-	metaFailOn          = "scrutineer.fail_on"
-	metaRequiresRemote  = "scrutineer.requires_remote"
-	metaRequiresProfile = "scrutineer.requires_profile"
-	metaPaths           = "scrutineer.paths"
-	metaIgnorePaths     = "scrutineer.ignore_paths"
-	metaRequires        = "scrutineer.requires"
+	skillFile             = "SKILL.md"
+	metaOutputFile        = "scrutineer.output_file"
+	metaOutputKind        = "scrutineer.output_kind"
+	metaMaxTurns          = "scrutineer.max_turns"
+	metaModel             = "scrutineer.model"
+	metaVersion           = "scrutineer.version"
+	metaMinConfidence     = "scrutineer.min_confidence"
+	metaReportOn          = "scrutineer.report_on"
+	metaFailOn            = "scrutineer.fail_on"
+	metaRequiresRemote    = "scrutineer.requires_remote"
+	metaRecurseSubmodules = "scrutineer.recurse_submodules"
+	metaRequiresProfile   = "scrutineer.requires_profile"
+	metaPaths             = "scrutineer.paths"
+	metaIgnorePaths       = "scrutineer.ignore_paths"
+	metaRequires          = "scrutineer.requires"
 
 	// SchemaVersion is the only scrutineer.version this build accepts.
 	// Skills omitting the key are treated as version 1. Bump when the
@@ -51,19 +52,20 @@ const (
 // parse time so a typo like scrutineer.outputkind surfaces immediately
 // rather than after a worker falls through to freeform.
 var scrutineerKeys = map[string]bool{
-	metaOutputFile:      true,
-	metaOutputKind:      true,
-	metaMaxTurns:        true,
-	metaModel:           true,
-	metaVersion:         true,
-	metaMinConfidence:   true,
-	metaReportOn:        true,
-	metaFailOn:          true,
-	metaRequiresRemote:  true,
-	metaRequiresProfile: true,
-	metaPaths:           true,
-	metaIgnorePaths:     true,
-	metaRequires:        true,
+	metaOutputFile:        true,
+	metaOutputKind:        true,
+	metaMaxTurns:          true,
+	metaModel:             true,
+	metaVersion:           true,
+	metaMinConfidence:     true,
+	metaReportOn:          true,
+	metaFailOn:            true,
+	metaRequiresRemote:    true,
+	metaRecurseSubmodules: true,
+	metaRequiresProfile:   true,
+	metaPaths:             true,
+	metaIgnorePaths:       true,
+	metaRequires:          true,
 }
 
 var confidenceLevels = map[string]bool{"low": true, "medium": true, "high": true}
@@ -118,18 +120,19 @@ var ProfileValidator func(string) bool
 type Parsed struct {
 	harnessskills.Skill
 
-	OutputFile      string
-	OutputKind      string
-	MaxTurns        int
-	Model           string
-	MinConfidence   string
-	ReportOn        string
-	FailOn          string
-	RequiresRemote  bool
-	RequiresProfile string
-	Paths           []string
-	IgnorePaths     []string
-	Requires        []string
+	OutputFile        string
+	OutputKind        string
+	MaxTurns          int
+	Model             string
+	MinConfidence     string
+	ReportOn          string
+	FailOn            string
+	RequiresRemote    bool
+	RecurseSubmodules bool
+	RequiresProfile   string
+	Paths             []string
+	IgnorePaths       []string
+	Requires          []string
 }
 
 // ParseFile reads a single SKILL.md (with its sibling schema.json if any)
@@ -216,6 +219,11 @@ func (p *Parsed) validateMetadata() error {
 	if v, ok := p.Metadata[metaRequiresRemote]; ok {
 		if _, ok := v.(bool); !ok {
 			return fmt.Errorf("%s must be a boolean, got %T", metaRequiresRemote, v)
+		}
+	}
+	if v, ok := p.Metadata[metaRecurseSubmodules]; ok {
+		if _, ok := v.(bool); !ok {
+			return fmt.Errorf("%s must be a boolean, got %T", metaRecurseSubmodules, v)
 		}
 	}
 	if err := checkRequiresProfile(p.Metadata); err != nil {
@@ -350,6 +358,9 @@ func (p *Parsed) extractMetadataKeys() {
 	if v, ok := p.Metadata[metaRequiresRemote].(bool); ok {
 		p.RequiresRemote = v
 	}
+	if v, ok := p.Metadata[metaRecurseSubmodules].(bool); ok {
+		p.RecurseSubmodules = v
+	}
 	if v, ok := p.Metadata[metaRequiresProfile].(string); ok {
 		p.RequiresProfile = strings.TrimSpace(v)
 	}
@@ -389,29 +400,30 @@ func (p *Parsed) ToModel(source string) (*db.Skill, error) {
 		meta = string(b)
 	}
 	return &db.Skill{
-		Name:            p.Name,
-		Description:     p.Description,
-		License:         p.License,
-		Compatibility:   p.Compatibility,
-		AllowedTools:    p.AllowedTools,
-		Metadata:        meta,
-		Body:            p.Body,
-		SchemaJSON:      p.SchemaJSON,
-		OutputFile:      p.OutputFile,
-		OutputKind:      p.OutputKind,
-		MaxTurns:        p.MaxTurns,
-		Model:           p.Model,
-		MinConfidence:   p.MinConfidence,
-		ReportOn:        p.ReportOn,
-		FailOn:          p.FailOn,
-		RequiresRemote:  p.RequiresRemote,
-		RequiresProfile: p.RequiresProfile,
-		Paths:           JoinPatterns(p.Paths),
-		IgnorePaths:     JoinPatterns(p.IgnorePaths),
-		Requires:        JoinPatterns(p.Requires),
-		Active:          true,
-		Source:          source,
-		SourcePath:      p.SourcePath,
-		SourceHash:      p.SourceHash,
+		Name:              p.Name,
+		Description:       p.Description,
+		License:           p.License,
+		Compatibility:     p.Compatibility,
+		AllowedTools:      p.AllowedTools,
+		Metadata:          meta,
+		Body:              p.Body,
+		SchemaJSON:        p.SchemaJSON,
+		OutputFile:        p.OutputFile,
+		OutputKind:        p.OutputKind,
+		MaxTurns:          p.MaxTurns,
+		Model:             p.Model,
+		MinConfidence:     p.MinConfidence,
+		ReportOn:          p.ReportOn,
+		FailOn:            p.FailOn,
+		RequiresRemote:    p.RequiresRemote,
+		RecurseSubmodules: p.RecurseSubmodules,
+		RequiresProfile:   p.RequiresProfile,
+		Paths:             JoinPatterns(p.Paths),
+		IgnorePaths:       JoinPatterns(p.IgnorePaths),
+		Requires:          JoinPatterns(p.Requires),
+		Active:            true,
+		Source:            source,
+		SourcePath:        p.SourcePath,
+		SourceHash:        p.SourceHash,
 	}, nil
 }

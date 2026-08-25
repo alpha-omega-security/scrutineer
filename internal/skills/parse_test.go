@@ -170,6 +170,49 @@ body
 	}
 }
 
+func TestParseFile_recurseSubmodules(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSkill(t, dir, "native", `---
+name: native
+description: Inspect embedded native code.
+metadata:
+  scrutineer.recurse_submodules: true
+---
+
+body
+`)
+	p, err := ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.RecurseSubmodules {
+		t.Error("recurse_submodules = false, want true")
+	}
+	m, err := p.ToModel("local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !m.RecurseSubmodules {
+		t.Error("model RecurseSubmodules = false, want true")
+	}
+}
+
+func TestParseFile_recurseSubmodulesWrongType(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSkill(t, dir, "bad", `---
+name: bad
+description: Skill with bad recurse_submodules.
+metadata:
+  scrutineer.recurse_submodules: "yes"
+---
+
+body
+`)
+	if _, err := ParseFile(path); err == nil {
+		t.Fatal("expected error on non-boolean recurse_submodules")
+	}
+}
+
 func TestParseFile_requiresProfile(t *testing.T) {
 	old := ProfileValidator
 	t.Cleanup(func() { ProfileValidator = old })
@@ -1009,6 +1052,30 @@ func TestBundledHistoryMetadata(t *testing.T) {
 		}
 		if !slices.Equal(consumer.Requires, wantRequires) {
 			t.Errorf("%s requires = %v, want %v (history is best-effort)", name, consumer.Requires, wantRequires)
+		}
+	}
+}
+
+func TestBundledEmbeddedNativeMetadata(t *testing.T) {
+	native, err := ParseFile(filepath.Join("..", "..", "skills", "embedded-native", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("parse embedded-native: %v", err)
+	}
+	if native.OutputKind != "freeform" || native.Model != "mid" || !native.RecurseSubmodules {
+		t.Errorf("embedded-native metadata = kind %q, model %q, recurse %t",
+			native.OutputKind, native.Model, native.RecurseSubmodules)
+	}
+	if !slices.Equal(native.Paths, []string{"**"}) {
+		t.Errorf("embedded-native paths = %v, want [**]", native.Paths)
+	}
+
+	triage, err := ParseFile(filepath.Join("..", "..", "skills", "triage", "SKILL.md"))
+	if err != nil {
+		t.Fatalf("parse triage: %v", err)
+	}
+	for _, signal := range []string{"embedded-native", "Git Submodules", "Fortran", "Rust", "Go"} {
+		if !strings.Contains(triage.Body, signal) {
+			t.Errorf("triage native gate missing %q", signal)
 		}
 	}
 }

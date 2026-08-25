@@ -158,7 +158,13 @@ type Worker struct {
 	// PrepareRepoSrc overrides the default per-URL repo-cache populate
 	// step in doSkill. Tests set it to skip the network; production
 	// leaves it nil and falls through to prepareRepoSrc.
-	PrepareRepoSrc func(ctx context.Context, url, ref, workRoot string, emit func(Event)) (string, error)
+	PrepareRepoSrc            func(ctx context.Context, url, ref, workRoot string, emit func(Event)) (string, error)
+	PrepareRepoSrcWithOptions func(
+		ctx context.Context,
+		url, ref, workRoot string,
+		recurseSubmodules bool,
+		emit func(Event),
+	) (string, error)
 
 	// RefreshEcosystemsCache, when non-nil, runs the stale-only ecosyste.ms
 	// cache refresh at scan start so rescans see fresh-enough data.

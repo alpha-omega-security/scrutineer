@@ -1316,6 +1316,8 @@ type Skill struct {
 	// Default false so newly added skills work on local scans unless they
 	// declare otherwise.
 	RequiresRemote bool
+	// RecurseSubmodules initializes shallow Git submodules before the skill runs.
+	RecurseSubmodules bool
 
 	// RequiresProfile constrains the skill to a single registered runner
 	// profile (e.g. "php"). Set via `scrutineer.requires_profile` in the

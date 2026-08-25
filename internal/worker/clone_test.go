@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -167,7 +168,7 @@ func TestValidateGitRef(t *testing.T) {
 // fall through to `git clone` and try to reach example.invalid.
 func TestCloneOrFetchRejectsBadRefBeforeNetwork(t *testing.T) {
 	dst := t.TempDir()
-	err := cloneOrFetch(context.Background(), gitRetry{}, "https://example.invalid/repo", dst, false, "--upload-pack=/bin/sh", func(Event) {
+	err := cloneOrFetch(context.Background(), gitRetry{}, "https://example.invalid/repo", dst, false, "--upload-pack=/bin/sh", false, func(Event) {
 		t.Errorf("emit must not be called when validation rejects the ref")
 	})
 	if err == nil {
@@ -182,12 +183,47 @@ func TestCloneOrFetchRejectsBadRefBeforeNetwork(t *testing.T) {
 // same entry point so a future refactor that re-orders the validators
 // trips this test rather than silently changing the order users see.
 func TestCloneOrFetchRejectsBadURL(t *testing.T) {
-	err := cloneOrFetch(context.Background(), gitRetry{}, "ssh://git@example.invalid/repo", t.TempDir(), false, "main", func(Event) {})
+	err := cloneOrFetch(context.Background(), gitRetry{}, "ssh://git@example.invalid/repo", t.TempDir(), false, "main", false, func(Event) {})
 	if err == nil {
 		t.Fatal("expected error for non-https URL")
 	}
 	if !strings.Contains(err.Error(), "https://") {
 		t.Errorf("error %q should mention https requirement", err)
+	}
+}
+
+func TestCloneOrFetchWithOptionsUpdatesShallowSubmodules(t *testing.T) {
+	dst := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dst, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	var submoduleArgs []string
+	var events []Event
+	retry := gitRetry{
+		attempts: 1,
+		run: func(_ context.Context, _ string, _ []string, args ...string) (string, error) {
+			if len(args) > 0 && args[0] == "submodule" {
+				submoduleArgs = append([]string(nil), args...)
+			}
+			return "", nil
+		},
+	}
+	err := cloneOrFetch(
+		context.Background(), retry, "https://example.invalid/repo", dst, false, "", true,
+		func(event Event) { events = append(events, event) },
+	)
+	if err != nil {
+		t.Fatalf("cloneOrFetchWithOptions: %v", err)
+	}
+	want := []string{"submodule", "update", "--init", "--recursive", "--depth", "1"}
+	if !slices.Equal(submoduleArgs, want) {
+		t.Errorf("submodule args = %v, want %v", submoduleArgs, want)
+	}
+	if !slices.ContainsFunc(events, func(event Event) bool {
+		return strings.Contains(event.Text, "submodule update --init --recursive --depth 1")
+	}) {
+		t.Errorf("events = %v, want submodule update command", events)
 	}
 }
 

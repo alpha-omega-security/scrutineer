@@ -147,6 +147,70 @@ func TestDoSkill_findingsKind(t *testing.T) {
 	}
 }
 
+func TestDoSkill_passesSubmoduleOptionFromSkill(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "submodules.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://example.com/native", Name: "native"}
+	if err := gdb.Create(&repo).Error; err != nil {
+		t.Fatal(err)
+	}
+	skill := db.Skill{
+		Name: "embedded-native", Description: "Map embedded native code", Body: "Run brief.",
+		OutputFile: "report.json", OutputKind: "freeform", RecurseSubmodules: true,
+		Version: 1, Active: true, Source: "test",
+	}
+	if err := gdb.Create(&skill).Error; err != nil {
+		t.Fatal(err)
+	}
+	scan := db.Scan{
+		RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanQueued,
+		Model: "fake", SkillID: &skill.ID,
+	}
+	if err := gdb.Create(&scan).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	var recurseSubmodules bool
+	w := &Worker{
+		DB:      gdb,
+		Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+		DataDir: t.TempDir(),
+		Runner: fakeRunner{skillRes: SkillResult{
+			Commit: "abc",
+			Report: `{"languages":[{"name":"Rust"},{"name":"C"}]}`,
+		}},
+		PrepareRepoSrcWithOptions: func(
+			_ context.Context,
+			_, _, workRoot string,
+			recurse bool,
+			_ func(Event),
+		) (string, error) {
+			recurseSubmodules = recurse
+			return "abc", os.MkdirAll(filepath.Join(workRoot, "src"), 0o755)
+		},
+	}
+
+	body, err := json.Marshal(queue.Payload{ScanID: scan.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.wrap(w.doSkill)(context.Background(), body); err != nil {
+		t.Fatal(err)
+	}
+	if !recurseSubmodules {
+		t.Error("doSkill did not request recursive submodule preparation")
+	}
+	var got db.Scan
+	if err := gdb.First(&got, scan.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != db.ScanDone || !strings.Contains(got.Report, `"name":"Rust"`) {
+		t.Errorf("scan = status %s report %q", got.Status, got.Report)
+	}
+}
+
 func TestDoSkill_maintainersKind(t *testing.T) {
 	gdb, err := db.Open(filepath.Join(t.TempDir(), "m.db"))
 	if err != nil {

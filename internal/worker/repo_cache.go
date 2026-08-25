@@ -91,15 +91,29 @@ func (w *Worker) PrepareSrc(ctx context.Context, url, ref, workRoot string, emit
 // by default; the code browser unshallows on demand when a historical
 // commit is requested.
 func (w *Worker) prepareRepoSrc(ctx context.Context, url, ref, workRoot string, emit func(Event)) (string, error) {
+	return w.prepareRepoSrcWithOptions(ctx, url, ref, workRoot, false, emit)
+}
+
+func (w *Worker) prepareRepoSrcWithOptions(
+	ctx context.Context,
+	url, ref, workRoot string,
+	recurseSubmodules bool,
+	emit func(Event),
+) (string, error) {
 	mu := w.cacheMutex(url)
 	mu.Lock()
 	defer mu.Unlock()
 
 	cacheRoot := RepoCacheRoot(w.DataDir, url)
+	if recurseSubmodules {
+		cacheRoot = filepath.Join(cacheRoot, "with-submodules")
+	}
 	if err := os.MkdirAll(cacheRoot, dirPerm); err != nil {
 		return "", err
 	}
-	cacheSrc, err := ensureClone(ctx, db.Repository{URL: url}, cacheRoot, false, ref, emit)
+	cacheSrc, err := ensureCloneWithOptions(
+		ctx, db.Repository{URL: url}, cacheRoot, false, ref, recurseSubmodules, emit,
+	)
 	if err != nil {
 		return "", err
 	}
@@ -112,6 +126,21 @@ func (w *Worker) prepareRepoSrc(ctx context.Context, url, ref, workRoot string, 
 		return "", fmt.Errorf("copy repo cache: %w", err)
 	}
 	return commit, nil
+}
+
+func (w *Worker) prepareSkillRepoSrc(
+	ctx context.Context,
+	url, ref, workRoot string,
+	recurseSubmodules bool,
+	emit func(Event),
+) (string, error) {
+	if w.PrepareRepoSrcWithOptions != nil {
+		return w.PrepareRepoSrcWithOptions(ctx, url, ref, workRoot, recurseSubmodules, emit)
+	}
+	if w.PrepareRepoSrc != nil {
+		return w.PrepareRepoSrc(ctx, url, ref, workRoot, emit)
+	}
+	return w.prepareRepoSrcWithOptions(ctx, url, ref, workRoot, recurseSubmodules, emit)
 }
 
 // EnsureCommit deepens the per-URL cache so commit becomes reachable.

@@ -72,11 +72,25 @@ func prepareLocalSrc(localPath, workRoot string, emit func(Event)) error {
 // removing a class of races where skill A's output gets clobbered by
 // skill B removing report.json before A finishes reading it.
 func ensureClone(ctx context.Context, repo db.Repository, work string, fullClone bool, ref string, emit func(Event)) (string, error) {
+	return ensureCloneWithOptions(ctx, repo, work, fullClone, ref, false, emit)
+}
+
+func ensureCloneWithOptions(
+	ctx context.Context,
+	repo db.Repository,
+	work string,
+	fullClone bool,
+	ref string,
+	recurseSubmodules bool,
+	emit func(Event),
+) (string, error) {
 	src := filepath.Join(work, "src")
 	if err := os.MkdirAll(work, dirPerm); err != nil {
 		return "", err
 	}
-	if err := cloneOrFetch(ctx, gitRetry{}, repo.URL, src, fullClone, ref, emit); err != nil {
+	if err := cloneOrFetch(
+		ctx, gitRetry{}, repo.URL, src, fullClone, ref, recurseSubmodules, emit,
+	); err != nil {
 		// A cancelled or timed-out scan is not evidence about the repository:
 		// flagging it unreachable would record a spurious clone_error and
 		// hand the caller a fake "repository unreachable" report. Propagate
@@ -99,7 +113,15 @@ func validateGitURL(u string) error { return clone.ValidateURL(u) }
 // enqueued and then fail at clone time.
 func ValidateGitRef(ref string) error { return clone.ValidateRef(ref) }
 
-func cloneOrFetch(ctx context.Context, retry gitRetry, url, dst string, fullClone bool, ref string, emit func(Event)) error {
+func cloneOrFetch(
+	ctx context.Context,
+	retry gitRetry,
+	url, dst string,
+	fullClone bool,
+	ref string,
+	recurseSubmodules bool,
+	emit func(Event),
+) error {
 	// Validate before emitting so a bad URL or ref does not log a
 	// "$ git clone" line for a command that will never run.
 	if err := validateGitURL(url); err != nil {
@@ -117,13 +139,17 @@ func cloneOrFetch(ctx context.Context, retry gitRetry, url, dst string, fullClon
 		}
 		emit(Event{Kind: KindText, Text: msg})
 	}
+	if recurseSubmodules {
+		emit(Event{Kind: KindText, Text: "$ git submodule update --init --recursive --depth 1 (best effort)"})
+	}
 	r := retry.resolved().toClone()
 	r.Notify = func(n clone.Notice) {
 		emit(Event{Kind: KindText, Text: fmt.Sprintf(
 			"git %s failed with a transient error (attempt %d/%d), retrying in %s",
 			n.Label, n.Attempt, n.Attempts, n.Delay.Round(time.Millisecond))})
 	}
-	if err := clone.Ensure(ctx, r, url, dst, ref, fullClone); err != nil {
+	options := clone.EnsureOptions{Full: fullClone, RecurseSubmodules: recurseSubmodules}
+	if err := clone.EnsureWithOptions(ctx, r, url, dst, ref, options); err != nil {
 		// Unwrap so ensureClone's own UnreachableError wrap does not
 		// double-prefix; the scan log records the git output verbatim.
 		var ue *clone.UnreachableError

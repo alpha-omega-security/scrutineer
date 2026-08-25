@@ -151,6 +151,7 @@ Adding a repo enqueues the `triage` skill, whose SKILL.md lists the further skil
 | `sbom` | Runs `git-pkgs sbom` for a CycloneDX SBOM |
 | `maintainers` | Model-backed analysis identifying real maintainers and contact routes |
 | `repo-overview` | Runs `brief --json` for a structured project summary |
+| `embedded-native` | Runs `brief --json` at the repository root and each initialized shallow submodule to map native languages, extension bridges, build tools, manifests, and dependencies |
 | `subprojects` | Enumerates monorepo packages/workspaces so deep-dives can be scoped to a sub-path |
 | `recon` | Maps distinct externally reachable input-processing subsystems into focus areas; after threat-model completes, those areas fan out into parallel deep-dive audits |
 | `history` | Mines Git history for security fixes that never received an advisory, with ancestry-checked incremental caching and explicit partial-history reporting |

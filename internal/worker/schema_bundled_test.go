@@ -60,8 +60,9 @@ func TestBundledSchemas_compileAndAcceptSamples(t *testing.T) {
 	}{
 		{
 			"../../skills/triage/schema.json",
-			`{"has_code":true,"has_packages":true,
-			  "brief":{"languages":["Go"],"package_managers":["Go Modules"]},
+			`{"has_code":true,"has_packages":true,"has_embedded_native":true,
+			  "brief":{"languages":["Go","C"],"package_managers":["Go Modules"],
+			    "native_signals":["language:Go","language:C"]},
 			  "triggered":["packages","advisories","security-deep-dive"],
 			  "skipped":["semgrep"],"gated":[],"already_done":["metadata"],
 			  "verify":[12,34],"errors":[]}`,
@@ -79,6 +80,16 @@ func TestBundledSchemas_compileAndAcceptSamples(t *testing.T) {
 			  "resources":{"license_type":"MIT","readme":"README.md"},
 			  "tools":{},"lines":{"total_files":1},"dependencies":[],
 			  "stats":{"duration_ms":1.2},"unknown_future_key":42}`,
+		},
+		{
+			"../../skills/embedded-native/schema.json",
+			`{"schema_version":1,
+			  "root":{"languages":[{"name":"Python"}],"tools":{"dependency_bot":[{"name":"Git Submodules"}]}},
+			  "submodules":[{"path":"/work/src/vendor/native","languages":[{"name":"C"}]}]}`,
+		},
+		{
+			"../../skills/embedded-native/schema.json",
+			`{"error":"brief not found on PATH"}`,
 		},
 		{
 			"../../skills/repo-overview/schema.json",

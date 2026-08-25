@@ -87,7 +87,7 @@ exit 0
 `)
 	dst := filepath.Join(t.TempDir(), "src")
 
-	err := cloneOrFetch(context.Background(), fastRetry(), "https://example.invalid/repo", dst, false, "", func(Event) {})
+	err := cloneOrFetch(context.Background(), fastRetry(), "https://example.invalid/repo", dst, false, "", false, func(Event) {})
 	if err != nil {
 		t.Errorf("cloneOrFetch after one transient failure: %v", err)
 	}
@@ -106,7 +106,7 @@ exit 128
 `)
 	dst := filepath.Join(t.TempDir(), "src")
 
-	err := cloneOrFetch(context.Background(), fastRetry(), "https://example.invalid/repo", dst, false, "", func(Event) {})
+	err := cloneOrFetch(context.Background(), fastRetry(), "https://example.invalid/repo", dst, false, "", false, func(Event) {})
 	if err == nil {
 		t.Error("cloneOrFetch on a missing repository should fail")
 	}
@@ -134,7 +134,7 @@ exit 0
 `)
 	dst := filepath.Join(t.TempDir(), "src")
 
-	err := cloneOrFetch(context.Background(), fastRetry(), "https://example.invalid/repo", dst, false, "", func(Event) {})
+	err := cloneOrFetch(context.Background(), fastRetry(), "https://example.invalid/repo", dst, false, "", false, func(Event) {})
 	if err != nil {
 		t.Errorf("cloneOrFetch should clear the partial clone and retry cleanly: %v", err)
 	}
@@ -164,7 +164,7 @@ fi
 exit 0
 `)
 		dst := filepath.Join(t.TempDir(), "src")
-		if err := cloneOrFetch(context.Background(), fastRetry(), "https://example.invalid/repo", dst, false, "", func(Event) {}); err != nil {
+		if err := cloneOrFetch(context.Background(), fastRetry(), "https://example.invalid/repo", dst, false, "", false, func(Event) {}); err != nil {
 			t.Fatalf("cloneOrFetch: %v", err)
 		}
 		env := git.env()

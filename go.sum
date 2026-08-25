@@ -33,8 +33,8 @@ github.com/ecosyste-ms/ecosystems-go v0.4.0 h1:5A+zF+XWT8sYYYjlc2/tI1SmiDGzbHLyT
 github.com/ecosyste-ms/ecosystems-go v0.4.0/go.mod h1:FVswCrp3DQkur1HjVqfDF/gYrDSEmiFflntcB1G0DbA=
 github.com/emirpasic/gods v1.18.1 h1:FXtiHYKDGKCW2KzwZKx0iC0PQmdlorYgdFG9jPXJ1Bc=
 github.com/emirpasic/gods v1.18.1/go.mod h1:8tpGGwCnJ5H4r6BWwaV6OrWmMoPhUl5jm/FMNAnJvWQ=
-github.com/git-pkgs/clone v0.5.0 h1:0cYpr8PQpylqtvA9v1NBE9JXJeLLlrspJbvl2JYVLxU=
-github.com/git-pkgs/clone v0.5.0/go.mod h1:nixjE44maKRXbu/dEiunJmHApWgLYp0IR7J2yWaYHv8=
+github.com/git-pkgs/clone v0.6.0 h1:UsjHaoZBZsaLLCLLnnNNRmkSdhzsUyDLJTvUo3uulpY=
+github.com/git-pkgs/clone v0.6.0/go.mod h1:nixjE44maKRXbu/dEiunJmHApWgLYp0IR7J2yWaYHv8=
 github.com/git-pkgs/clone/gogit v0.1.0 h1:yjmmCQ4OMX/g8uGbqW3FWXQd7yum6pInxVNOGH67jOc=
 github.com/git-pkgs/clone/gogit v0.1.0/go.mod h1:HALvdsCueTH4qMgKPH23HXNkc16vNd6YVnKk7cNtg7Q=
 github.com/git-pkgs/cwe v0.1.1 h1:FTdif2t/pQCd8IFxJUt3fy4khoQ93djiw2sukqE8KiQ=
