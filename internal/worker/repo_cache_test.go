@@ -139,17 +139,19 @@ func newEmbeddedNativeOrigin(t *testing.T) string {
 	}
 	testGit(t, originDir, "add", "host.py")
 	testGit(t, originDir, "commit", "--quiet", "-m", "host source")
-	testGit(t, originDir, "-c", "protocol.file.allow=always", "submodule", "add", "--quiet",
-		"file://"+submoduleDir, "vendor/native")
-	testGit(t, originDir, "commit", "--quiet", "-m", "native submodule")
-
 	url := "https://clone.test/embedded-native"
-	t.Setenv("GIT_CONFIG_COUNT", "2")
+	submoduleURL := "https://github.com/example/native.git"
+	t.Setenv("GIT_CONFIG_COUNT", "3")
 	t.Setenv("GIT_CONFIG_KEY_0", "url.file://"+originDir+".insteadOf")
 	t.Setenv("GIT_CONFIG_VALUE_0", url)
-	t.Setenv("GIT_CONFIG_KEY_1", "protocol.file.allow")
-	t.Setenv("GIT_CONFIG_VALUE_1", "always")
+	t.Setenv("GIT_CONFIG_KEY_1", "url.file://"+submoduleDir+".insteadOf")
+	t.Setenv("GIT_CONFIG_VALUE_1", submoduleURL)
+	t.Setenv("GIT_CONFIG_KEY_2", "protocol.file.allow")
+	t.Setenv("GIT_CONFIG_VALUE_2", "always")
 	t.Setenv("GIT_ALLOW_PROTOCOL", "https:file")
+	testGit(t, originDir, "-c", "protocol.file.allow=always", "submodule", "add", "--quiet",
+		submoduleURL, "vendor/native")
+	testGit(t, originDir, "commit", "--quiet", "-m", "native submodule")
 	return url
 }
 
@@ -191,6 +193,9 @@ func TestEmbeddedNativeBriefSeesPreparedSubmodule(t *testing.T) {
 	); err != nil {
 		t.Fatal(err)
 	}
+	if err := stageEmbeddedNativeComponents(context.Background(), workRoot, ""); err != nil {
+		t.Fatal(err)
+	}
 
 	script, err := filepath.Abs("../../skills/embedded-native/scripts/scan.sh")
 	if err != nil {
@@ -198,6 +203,7 @@ func TestEmbeddedNativeBriefSeesPreparedSubmodule(t *testing.T) {
 	}
 	reportPath := filepath.Join(workRoot, "report.json")
 	cmd := exec.Command("bash", script, filepath.Join(workRoot, "src"), reportPath)
+	cmd.Dir = workRoot
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("embedded-native scan: %v\n%s", err, out)
@@ -218,15 +224,26 @@ func TestEmbeddedNativeBriefSeesPreparedSubmodule(t *testing.T) {
 		} `json:"tools"`
 	}
 	var report struct {
-		SchemaVersion int           `json:"schema_version"`
-		Root          briefReport   `json:"root"`
-		Submodules    []briefReport `json:"submodules"`
+		SchemaVersion int                       `json:"schema_version"`
+		Root          briefReport               `json:"root"`
+		Components    []embeddedNativeComponent `json:"components"`
+		Submodules    []briefReport             `json:"submodules"`
 	}
 	if err := json.Unmarshal(reportJSON, &report); err != nil {
 		t.Fatalf("decode embedded-native report: %v\n%s", err, reportJSON)
 	}
 	if report.SchemaVersion != 1 || len(report.Submodules) != 1 {
 		t.Fatalf("report version = %d, submodules = %d", report.SchemaVersion, len(report.Submodules))
+	}
+	if len(report.Components) != 1 {
+		t.Fatalf("components = %+v, want one", report.Components)
+	}
+	component := report.Components[0]
+	wantCommit := testGit(t, filepath.Join(workRoot, "src", "vendor", "native"), "rev-parse", "HEAD")
+	if component.Path != "vendor/native" || component.URL != "https://github.com/example/native.git" ||
+		component.Commit != wantCommit || component.PURL != "pkg:github/example/native@"+wantCommit ||
+		!component.Initialized || component.Status != "initialized" || component.Error != "" {
+		t.Errorf("component = %+v", component)
 	}
 	for name, languages := range map[string][]struct {
 		Name string `json:"name"`
@@ -250,6 +267,26 @@ func TestEmbeddedNativeBriefSeesPreparedSubmodule(t *testing.T) {
 	}
 	if !foundSubmodules {
 		t.Errorf("root Brief dependency_bot tools = %v, missing Git Submodules", report.Root.Tools["dependency_bot"])
+	}
+}
+
+func TestEmbeddedNativeComponentInScope(t *testing.T) {
+	for _, tt := range []struct {
+		name          string
+		componentPath string
+		subPath       string
+		want          bool
+	}{
+		{name: "root", componentPath: "vendor/native", want: true},
+		{name: "inside scope", componentPath: "packages/app/vendor/native", subPath: "packages/app", want: true},
+		{name: "contains scope", componentPath: "vendor/native", subPath: "vendor/native/src", want: true},
+		{name: "sibling", componentPath: "packages/other/vendor/native", subPath: "packages/app", want: false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := embeddedNativeComponentInScope(tt.componentPath, tt.subPath); got != tt.want {
+				t.Errorf("embeddedNativeComponentInScope(%q, %q) = %t, want %t", tt.componentPath, tt.subPath, got, tt.want)
+			}
+		})
 	}
 }
 

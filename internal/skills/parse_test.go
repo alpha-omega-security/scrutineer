@@ -1071,7 +1071,7 @@ func TestBundledEmbeddedNativeConsumers(t *testing.T) {
 		if !consumer.RecurseSubmodules {
 			t.Errorf("%s should receive initialized submodules", name)
 		}
-		for _, text := range []string{"scans?skill=embedded-native", "third-party", "reachab"} {
+		for _, text := range []string{"scans?skill=embedded-native", "third-party", "reachab", "purl"} {
 			if !strings.Contains(consumer.Body, text) {
 				t.Errorf("%s guidance missing %q", name, text)
 			}
@@ -1090,6 +1090,11 @@ func TestBundledEmbeddedNativeMetadata(t *testing.T) {
 	}
 	if !slices.Equal(native.Paths, []string{"**"}) {
 		t.Errorf("embedded-native paths = %v, want [**]", native.Paths)
+	}
+	for _, text := range []string{"components", "purl", "gitlink commit"} {
+		if !strings.Contains(native.Body, text) {
+			t.Errorf("embedded-native guidance missing %q", text)
+		}
 	}
 
 	triage, err := ParseFile(filepath.Join("..", "..", "skills", "triage", "SKILL.md"))

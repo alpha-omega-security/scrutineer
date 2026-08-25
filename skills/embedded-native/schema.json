@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "embedded-native report",
-  "description": "Brief reports for the repository root and each initialized Git submodule.",
+  "description": "Brief reports and Git submodule identities for embedded native analysis.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -9,6 +9,23 @@
     "root": {
       "type": "object",
       "additionalProperties": true
+    },
+    "components": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "path": { "type": "string", "minLength": 1 },
+          "url": { "type": "string" },
+          "commit": { "type": "string" },
+          "purl": { "type": "string" },
+          "initialized": { "type": "boolean" },
+          "status": { "enum": ["initialized", "unavailable"] },
+          "error": { "type": "string" }
+        },
+        "required": ["path", "url", "commit", "purl", "initialized", "status", "error"]
+      }
     },
     "submodules": {
       "type": "array",
@@ -20,7 +37,7 @@
     "error": { "type": "string" }
   },
   "oneOf": [
-    { "required": ["schema_version", "root", "submodules"] },
+    { "required": ["schema_version", "root", "components", "submodules"] },
     { "required": ["error"] }
   ]
 }

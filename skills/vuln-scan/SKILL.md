@@ -57,7 +57,11 @@ If any API request fails or returns no data, continue with source-only review.
 
 Use the embedded-native root and submodule Brief reports to account for native
 languages, extension bridges, FFI boundaries, build tools, manifests, and
-dependencies. Confirm how each native component is enabled and reached through
+dependencies. Join each submodule report to `components[]` by its path relative
+to the root report path, and use the pinned `purl` and resolved `url` for
+dependency identity and attribution. Leave identity unresolved when an older
+report omits `components`, and treat unavailable components or identity errors
+as coverage gaps. Confirm how each native component is enabled and reached through
 host build files, feature flags, bindings, wrappers, and public entry points.
 Add reachable same-project native code as a focus area. Keep an unmodified
 third-party component distinct and inspect only enough of its public native

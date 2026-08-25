@@ -3,12 +3,18 @@ set -euo pipefail
 
 src="${1:-./src}"
 report="${2:-./report.json}"
+components="${3:-./embedded-native-components.json}"
 
 src="$(cd "$src" && pwd -P)"
 report_dir="$(cd "$(dirname "$report")" && pwd -P)"
 report="$report_dir/$(basename "$report")"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
+
+if [[ ! -f "$components" ]]; then
+  printf '[]\n' > "$work/components.json"
+  components="$work/components.json"
+fi
 
 write_error() {
   printf '{"error":"%s"}\n' "$1" > "$work/report.json"
@@ -44,6 +50,8 @@ fi
 {
   printf '{"schema_version":1,"root":'
   cat "$work/root.json"
+  printf ',"components":'
+  cat "$components"
   printf ',"submodules":['
   separator=""
   for submodule_report in "${submodule_reports[@]}"; do

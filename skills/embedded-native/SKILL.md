@@ -23,6 +23,6 @@ Run:
 bash ./scripts/scan.sh ./src ./report.json
 ```
 
-The report contains `schema_version`, the root Brief report under `root`, and an array of Brief reports under `submodules`. Each submodule report's `path` identifies its checkout. Do not summarize, filter, merge, or infer components from these results.
+The report contains `schema_version`, the root Brief report under `root`, Git submodule identities under `components`, and Brief reports under `submodules`. Scrutineer supplies `components` with each checkout-relative path, resolved source URL, exact gitlink commit, pinned package URL under `purl`, initialization status, and any identity error. Join a submodule Brief report to a component by resolving the report path relative to the root report path. Do not edit `embedded-native-components.json`, summarize, filter, merge, or infer components from the Brief results.
 
 If Brief exits non-zero, read stderr and write `{"error":"brief: ..."}` to `./report.json`. Do not install or modify Brief.

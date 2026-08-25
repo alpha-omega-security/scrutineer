@@ -85,6 +85,9 @@ func TestBundledSchemas_compileAndAcceptSamples(t *testing.T) {
 			"../../skills/embedded-native/schema.json",
 			`{"schema_version":1,
 			  "root":{"languages":[{"name":"Python"}],"tools":{"dependency_bot":[{"name":"Git Submodules"}]}},
+			  "components":[{"path":"vendor/native","url":"https://github.com/example/native.git",
+			    "commit":"abc123","purl":"pkg:github/example/native@abc123","initialized":true,
+			    "status":"initialized","error":""}],
 			  "submodules":[{"path":"/work/src/vendor/native","languages":[{"name":"C"}]}]}`,
 		},
 		{

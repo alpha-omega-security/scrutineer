@@ -75,8 +75,12 @@ Also fetch the latest compatible native source map:
 Fetch the selected scan by id and parse its `report`. Match the current scan
 ref and subpath. Use the root and submodule Brief reports to identify native
 languages, extension bridges, FFI boundaries, build tools, manifests, and
-dependencies before enumerating primitives. Treat an error-only report as a
-coverage gap and continue from the checkout.
+dependencies before enumerating primitives. Join each submodule report to
+`components[]` by its path relative to the root report path, and use the pinned
+`purl` and resolved `url` for dependency identity and attribution. Leave
+identity unresolved when an older report omits `components`. Treat unavailable
+components, identity errors, and an error-only report as coverage gaps and
+continue from the checkout.
 
 ## Reference routing
 

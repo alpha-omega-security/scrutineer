@@ -81,6 +81,20 @@ const maintainersReport = `{"maintainers":[
   {"login":"bob","role":"contributor","status":"inactive","evidence":"last commit 2022"}
 ],"disclosure_channel":"SECURITY.md","notes":""}`
 
+type embeddedNativeCaptureRunner struct {
+	components []byte
+}
+
+func (r *embeddedNativeCaptureRunner) RunSkill(_ context.Context, sj SkillJob, _ func(Event)) (SkillResult, error) {
+	var err error
+	r.components, err = os.ReadFile(filepath.Join(sj.WorkRoot, embeddedNativeComponentsFile))
+	return SkillResult{Commit: "abc", Report: `{"ok":true}`}, err
+}
+
+func (*embeddedNativeCaptureRunner) SkillDir(workRoot, name string) string {
+	return ClaudeHarness{}.SkillDir(workRoot, name)
+}
+
 func TestDoSkill_findingsKind(t *testing.T) {
 	gdb, err := db.Open(filepath.Join(t.TempDir(), "s.db"))
 	if err != nil {
@@ -208,6 +222,59 @@ func TestDoSkill_passesSubmoduleOptionFromSkill(t *testing.T) {
 	}
 	if got.Status != db.ScanDone || !strings.Contains(got.Report, `"name":"Rust"`) {
 		t.Errorf("scan = status %s report %q", got.Status, got.Report)
+	}
+}
+
+func TestDoSkillStagesEmbeddedNativeComponentIdentity(t *testing.T) {
+	url := newEmbeddedNativeOrigin(t)
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "embedded-native-components.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: url, Name: "native"}
+	if err := gdb.Create(&repo).Error; err != nil {
+		t.Fatal(err)
+	}
+	skill := db.Skill{
+		Name: "embedded-native", Description: "Map embedded native code", Body: "Run brief.",
+		OutputFile: "report.json", OutputKind: "freeform", RecurseSubmodules: true,
+		Version: 1, Active: true, Source: "test",
+	}
+	if err := gdb.Create(&skill).Error; err != nil {
+		t.Fatal(err)
+	}
+	scan := db.Scan{
+		RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanQueued,
+		Model: "fake", SkillID: &skill.ID,
+	}
+	if err := gdb.Create(&scan).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	runner := &embeddedNativeCaptureRunner{}
+	w := &Worker{
+		DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		DataDir: t.TempDir(), Runner: runner,
+	}
+	body, err := json.Marshal(queue.Payload{ScanID: scan.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.wrap(w.doSkill)(context.Background(), body); err != nil {
+		t.Fatal(err)
+	}
+
+	var components []embeddedNativeComponent
+	if err := json.Unmarshal(runner.components, &components); err != nil {
+		t.Fatalf("decode components: %v\n%s", err, runner.components)
+	}
+	if len(components) != 1 {
+		t.Fatalf("components = %+v, want one", components)
+	}
+	component := components[0]
+	if component.Path != "vendor/native" || component.URL != "https://github.com/example/native.git" ||
+		component.PURL == "" || component.Commit == "" || !component.Initialized || component.Status != "initialized" {
+		t.Errorf("component = %+v", component)
 	}
 }
 
