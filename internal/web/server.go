@@ -2743,8 +2743,9 @@ func (s *Server) repoDiffScan(w http.ResponseWriter, r *http.Request, repo db.Re
 
 var errDeepDiveMissing = errors.New(deepDiveSkillName + " skill is not installed")
 
-// enqueueDiffRescanGroup enqueues recon, history, threat-model, and semgrep as one
-// diff-rescan group. A completed threat-model fans out the deep-dive scans.
+// enqueueDiffRescanGroup enqueues recon, history, embedded-native, threat-model,
+// and semgrep as one diff-rescan group. A completed threat-model fans out the
+// deep-dive scans.
 // Missing auxiliary skills are tolerated; a missing deep-dive is
 // errDeepDiveMissing, checked before the first enqueue so the group is
 // all-or-nothing. Shared by the "Diff rescan" button and the scheduler.
@@ -2755,7 +2756,7 @@ func (s *Server) enqueueDiffRescanGroup(ctx context.Context, repoID uint, model,
 	}
 	group := uuid.NewString()
 	queued := 0
-	for _, name := range []string{reconSkillName, historySkillName, threatModelSkillName, "semgrep"} {
+	for _, name := range []string{reconSkillName, historySkillName, "embedded-native", threatModelSkillName, "semgrep"} {
 		var skill db.Skill
 		if err := s.DB.Where("name = ? AND active = ?", name, true).First(&skill).Error; err != nil {
 			continue

@@ -8,8 +8,10 @@ metadata:
   scrutineer.output_kind: findings
   scrutineer.max_turns: 120
   scrutineer.model: max
+  scrutineer.recurse_submodules: true
   scrutineer.requires:
     - threat-model
+    - embedded-native
     - semgrep
     - repo-overview
     - advisories
@@ -38,6 +40,7 @@ Scrutineer API (call with `Authorization: Bearer {token}`):
 - `GET {api_base}/repositories/{repository_id}/advisories` — existing CVE/GHSA records (prior art)
 - `GET {api_base}/repositories/{repository_id}/dependents` — top dependents with download counts (reach)
 - `GET {api_base}/repositories/{repository_id}/scans?skill=threat-model&status=done` — then `GET /scans/{id}` and read `report` for the structured threat model, if one ran (Phase 1 boundaries)
+- `GET {api_base}/repositories/{repository_id}/scans?skill=embedded-native&status=done` — then `GET /scans/{id}` and read `report` for the latest native source map matching the current `scan_ref` and `scan_subpath` (Phase 1 completeness and linkage)
 - `GET {api_base}/repositories/{repository_id}/findings?skill=semgrep` — static-analysis hits from a prior semgrep scan, if one ran (Phase 1 seeds)
 - `GET {api_base}/repositories/{repository_id}/findings?scan_group={scan_group}` — findings a sibling deep-dive in the same parallel batch has already filed (Concurrent findings below)
 - `GET {api_base}/repositories/{repository_id}/scans?skill=repo-overview&status=done` — then `GET /scans/{id}` for the brief summary
@@ -68,6 +71,10 @@ demonstrates a distinct root cause or an independently reachable impact. The
 worker has already removed paths in `scan_config.skip` from `./src`.
 
 If `./threat_model.json` exists in the workdir, parse it and use it as the threat model; do not fetch one from the API. The operator placed it there to test how this audit behaves under an edited model, so the file takes precedence even if a `threat-model` scan has already run. Otherwise fetch the threat-model scan: `GET {api_base}/repositories/{repository_id}/scans?skill=threat-model&status=done`, take the most recent id, then `GET {api_base}/scans/{id}` and parse the `report` field as JSON. Either way, if you get one it already holds the trust map: `components` and `out_of_scope` say which code is in the model, `adversaries` names the actors, `trust_boundaries` describes the line per component, and `entry_points` is the per-parameter table Step 2 looks up. Fill this report's `boundaries[]` from those fields instead of deriving from scratch — one row per actor (callers and adversaries), with `trusted` set from whether the actor appears in `adversaries.in_scope` and `source` set from the threat model's `provenance`/`source` — then skip to listing sinks. Treat threat-model entries with `provenance: "inferred"` as working hypotheses you may overturn during Phase 2; `"documented"` entries cite a file:line you can re-read. An empty list or a non-200 means the threat-model skill has not run on this repository yet, in which case derive the boundaries yourself as below.
+
+Fetch the latest compatible `embedded-native` report before building the inventory. Use its root and submodule Brief reports to account for every detected native language, extension bridge, build tool, manifest, and dependency. Resolve submodule paths relative to the root report path and verify their role through `.gitmodules`, build files, feature flags, bindings, and callers. An error-only report limits this inventory; state that in `inventory_notes` and continue from the checkout.
+
+Classify each native component before auditing it. Same-project submodule code and vendored code modified by this repository are first-party and receive the normal sink inventory. Unmodified third-party submodules remain dependency code: inspect enough of their public native entry points to trace the host bridge and its reachable input shape, but do not file their internal defects or CVEs as original findings against the host repository. A defect whose primary operation exists inside a separate Git submodule belongs to that submodule's repository even when both repositories share an owner; keep the sink and host reachability trace in the inventory, rule it out as `model_gap` or `out_of_model_unsupported_component` as appropriate, and do not emit a host finding with a location that exists only behind a gitlink. Record the dependency boundary and reachability evidence in `inventory_notes`, and use a known upstream finding only as prior art. The host's own bridge, unsafe wrapper, size conversion, ownership transfer, feature selection, or missing guard remains first-party and can produce a finding. Do not exclude a native component solely because its path is named `vendor/`, `third_party/`, or similar.
 
 Before listing sinks, name the trust boundaries this codebase has. For a small library this is one or two lines: who calls it, what they pass, where external data enters. For something larger — a package manager, a server, a build tool — it is a table: each actor, what they control, whether they are trusted, and where you found that documented. Write it down once. The per-sink boundary checks in Phase 2 reference what you wrote here; they do not re-derive it per sink.
 
@@ -111,7 +118,7 @@ Sink classes to enumerate. The classes are conceptual; the language you are audi
 
 Before grepping, fetch `GET {api_base}/repositories/{repository_id}/findings?skill=semgrep`. If a semgrep scan has already run on this repository each entry has `location` (file:line), `cwe`, and `title` (the semgrep rule id). Use these as anchors: open each location, confirm the line is a sink and not a comment or test fixture, and add it to the inventory under the matching sink class. They are starting points, not the inventory; semgrep's rule packs miss whole classes (parsing/format readers, round-trip integrity, agentic, validation, shared mutable state) and produce false positives, so your own grep sweep below still runs in full. An empty list means semgrep has not run yet or found nothing; carry on without it.
 
-Read the entire source tree. Grep exhaustively — every code-exec primitive this language has, every shell-out, every file-open, every parser or format-reader entry point, every unsafe block. The grep finds them; you confirm each is a real sink and not a comment, test fixture, or third-party code vendored into this repo unmodified from upstream. Modified vendored code is first-party. (The note in the introduction about findings following vendored copies is the other direction: this repo's own code copied outward into forks or downstream vendors.)
+Read the entire in-scope source tree, including reachable same-project native submodules and host-side bridges identified by the embedded-native report. Grep exhaustively — every code-exec primitive this language has, every shell-out, every file-open, every parser or format-reader entry point, every unsafe block. The grep finds them; you confirm each is a real sink and not a comment, test fixture, or third-party code vendored into this repo unmodified from upstream. Modified vendored code is first-party. (The note in the introduction about findings following vendored copies is the other direction: this repo's own code copied outward into forks or downstream vendors.)
 
 For C and C++, make completeness auditable. First list this repository's
 primitive names and wrappers, then run a literal `grep -rn` command for each

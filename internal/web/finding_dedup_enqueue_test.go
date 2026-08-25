@@ -225,8 +225,8 @@ func newGroupScan(t *testing.T, s *Server, repoID uint, focus string, status db.
 }
 
 // newGroupScanOfSkill is newGroupScan for the cohort members that are not
-// deep dives: enqueueDiffRescanGroup puts recon, threat-model and semgrep in
-// the same scan_group as the fanned-out deep dives.
+// deep dives: enqueueDiffRescanGroup puts recon, embedded-native, threat-model,
+// and semgrep in the same scan_group as the fanned-out deep dives.
 func newGroupScanOfSkill(t *testing.T, s *Server, repoID uint, focus, skillName string, status db.ScanStatus) *db.Scan {
 	t.Helper()
 	scan := db.Scan{RepositoryID: repoID, Status: status, SkillName: skillName,

@@ -1017,8 +1017,11 @@ func TestBundledReconPipelineMetadata(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse threat-model: %v", err)
 	}
-	if !slices.Equal(threatModel.Requires, []string{"recon"}) {
-		t.Errorf("threat-model requires = %v, want [recon]", threatModel.Requires)
+	if !slices.Equal(threatModel.Requires, []string{"recon", "embedded-native"}) {
+		t.Errorf("threat-model requires = %v, want [recon embedded-native]", threatModel.Requires)
+	}
+	if !threatModel.RecurseSubmodules {
+		t.Error("threat-model should receive initialized submodules")
 	}
 }
 
@@ -1042,7 +1045,7 @@ func TestBundledHistoryMetadata(t *testing.T) {
 	}
 
 	consumers := map[string][]string{
-		"threat-model":       {"recon"},
+		"threat-model":       {"recon", "embedded-native"},
 		"advisory-deep-dive": {"advisories"},
 	}
 	for name, wantRequires := range consumers {
@@ -1052,6 +1055,26 @@ func TestBundledHistoryMetadata(t *testing.T) {
 		}
 		if !slices.Equal(consumer.Requires, wantRequires) {
 			t.Errorf("%s requires = %v, want %v (history is best-effort)", name, consumer.Requires, wantRequires)
+		}
+	}
+}
+
+func TestBundledEmbeddedNativeConsumers(t *testing.T) {
+	for _, name := range []string{"threat-model", "security-deep-dive", "vuln-scan", "audit-memory"} {
+		consumer, err := ParseFile(filepath.Join("..", "..", "skills", name, "SKILL.md"))
+		if err != nil {
+			t.Fatalf("parse %s: %v", name, err)
+		}
+		if !slices.Contains(consumer.Requires, "embedded-native") {
+			t.Errorf("%s requires = %v, missing embedded-native", name, consumer.Requires)
+		}
+		if !consumer.RecurseSubmodules {
+			t.Errorf("%s should receive initialized submodules", name)
+		}
+		for _, text := range []string{"scans?skill=embedded-native", "third-party", "reachab"} {
+			if !strings.Contains(consumer.Body, text) {
+				t.Errorf("%s guidance missing %q", name, text)
+			}
 		}
 	}
 }
@@ -1551,10 +1574,6 @@ func TestBundledAuditMemoryMetadata(t *testing.T) {
 	}
 	wantIgnores := []string{
 		"**/node_modules/**",
-		"**/vendor/**",
-		"**/third_party/**",
-		"**/third-party/**",
-		"**/external/**",
 		"**/build/**",
 		"**/cmake-build-*/**",
 		"**/target/**",
@@ -1575,6 +1594,8 @@ func TestBundledAuditMemoryMetadata(t *testing.T) {
 		"Cargo.toml",
 		"Cargo.lock",
 		"configure.ac",
+		"vendor/zlib/zutil.c",
+		"third_party/expat/xmlparse.c",
 	} {
 		if !PathIncluded(name, auditMemory.Paths, auditMemory.IgnorePaths) {
 			t.Errorf("audit-memory path filters exclude review target %q", name)
@@ -1582,8 +1603,6 @@ func TestBundledAuditMemoryMetadata(t *testing.T) {
 	}
 	for _, name := range []string{
 		"node_modules/addon/native.cc",
-		"vendor/zlib/zutil.c",
-		"third_party/expat/xmlparse.c",
 		"build/generated/parser.c",
 		"cmake-build-debug/generated.c",
 		"target/debug/build/native/out.c",

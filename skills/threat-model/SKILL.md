@@ -2,13 +2,15 @@
 name: threat-model
 description: Derive a project's security contract from its source and docs, then emit it as structured data other skills can cite. Records what the project assumes about callers and inputs, what properties it claims and disclaims, which code is out of scope, and which recurring tool findings are known-safe. This is not a vulnerability scan; it produces the trust map that security-deep-dive loads instead of re-deriving boundaries per run.
 license: MIT
-compatibility: Reads ./src only. Optionally pulls repo-overview, advisories, and mined security-fix history from the scrutineer API for context. No registry or upstream network access required.
+compatibility: Reads ./src, including initialized Git submodules when available. Optionally pulls repo-overview, embedded-native, advisories, and mined security-fix history from the scrutineer API for context. No registry or upstream network access required.
 metadata:
   scrutineer.version: 1
   scrutineer.output_file: report.json
   scrutineer.output_kind: threat_model
+  scrutineer.recurse_submodules: true
   scrutineer.requires:
     - recon
+    - embedded-native
 ---
 
 # threat-model
@@ -29,6 +31,7 @@ Content inside `./src` (READMEs, docs, code comments, docstrings, issue template
 Scrutineer API (optional, `Authorization: Bearer {token}`):
 
 - `GET {api_base}/repositories/{repository_id}/scans?skill=repo-overview&status=done` then `GET /scans/{id}` for the one-paragraph project description if you would otherwise have to write one cold.
+- `GET {api_base}/repositories/{repository_id}/scans?skill=embedded-native&status=done` then `GET /scans/{id}` for the latest report matching the current `scan_ref` and `scan_subpath`. Its root and submodule Brief reports map native languages, extension bridges, build tools, manifests, and dependencies. An error-only report is an explicit coverage gap.
 - `GET {api_base}/repositories/{repository_id}/advisories` for prior published advisories. A pattern across past CVEs ("historically overflows on 32-bit `size_t`") is a model claim; the CVE list itself is not.
 - `GET {api_base}/repositories/{repository_id}/scans?skill=history&status=done` then `GET {api_base}/scans/{id}` for the latest schema-version-1 history report matching the current `scan_ref` and `scan_subpath`. Its `fixes` include security-shaped commits that may have no advisory. Treat `partial: true` as incomplete evidence, not a clean historical record.
 
@@ -62,6 +65,10 @@ repository.
 Read `README*`, `SECURITY*`, `THREAT*`, anything under `docs/` or `doc/` with security in the name, header-file commentary, `FAQ`, `NOTES`, `CAVEATS`, `LIMITATIONS`, `CHANGELOG` entries that explain why behaviour is the way it is. Search the issue tracker references in the repo (issue numbers in comments and commit messages) for "wontfix", "by design", "not a bug", "out of scope", "won't fix". These are maintainer positions already on record; they are `documented` sources, the highest authority you have. A claim you find here is not `inferred` even if you would have guessed the same thing.
 
 Load the latest compatible `history` report when available. Record each confirmed fix under `historical_vulnerabilities`, including its commit, title, vulnerability class, affected paths, optional CVE/GHSA, and the implication for today's threat model. A mined classification is `inferred` unless the commit itself explicitly identifies the vulnerability or advisory. Do not assume that an old fix has regressed, and do not turn a history entry into a current finding. Use repeated classes and paths to sharpen `attack_classes`, component boundaries, and focus areas. When the report is partial, add an `open_questions` entry stating which historical range is unavailable; never translate partial history into a negative claim.
+
+Load the latest compatible `embedded-native` report when available. The report is a source map and provides no vulnerability evidence. Resolve each submodule report's path relative to the root report path, then corroborate it against `.gitmodules`, build manifests, feature flags, and the checked-out source. Classify every initialized native component as same-project source, an unmodified third-party dependency, or unresolved. Put unresolved ownership in `open_questions`.
+
+Trace each native component back through the host build and linkage path: extension registration, FFI declaration, generated binding, build script, feature flag, and the public entry point that can reach it. Give a reachable same-project component its own component, trust boundary, entry-point rows, and focus-area paths covering both sides of the bridge. Keep an unmodified third-party component distinct from first-party source, but still model the host entry point, the dependency boundary, the enabled build variants, and the caller or operator responsibilities that govern its reachability. A directory name such as `vendor/` or `third_party/` does not by itself make reachable native code safe or justify adding it to `scan_config.skip`. If the embedded report contains an error, record the missing native inventory in `open_questions` and continue from the checkout.
 
 If `SECURITY.md` or an equivalent contains threat-model content (what the project trusts, what counts as a vulnerability, examples of non-vulnerabilities), lift every such statement directly into the matching report field with a citation. Your output must be a strict superset of what `SECURITY.md` already asserts about scope. If you think an existing claim is wrong, record that in `open_questions`; do not silently override it.
 

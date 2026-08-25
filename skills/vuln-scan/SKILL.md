@@ -2,13 +2,16 @@
 name: vuln-scan
 description: High-recall static source-code vulnerability scan adapted from Anthropic's defending-code reference harness. Fans out by focus area, ranks candidates by confidence, and emits Scrutineer findings for later verification.
 license: MIT
-compatibility: Static and read-only. Needs source in ./src and may use Claude subagents. Does not build, run, install dependencies, or use network.
+compatibility: Static and read-only. Needs source in ./src, including initialized Git submodules when available, and may use Claude subagents. Does not build, run, install dependencies, or use network beyond the worker-provided Scrutineer API.
 metadata:
   scrutineer.version: 1
   scrutineer.output_file: report.json
   scrutineer.output_kind: findings
   scrutineer.max_turns: 90
   scrutineer.model: max
+  scrutineer.recurse_submodules: true
+  scrutineer.requires:
+    - embedded-native
 ---
 
 # vuln-scan
@@ -47,9 +50,21 @@ First, build a compact map of the target:
 4. If available, fetch prior local reports from Scrutineer's API and use them as context:
    - `GET {api_base}/repositories/{repository_id}/scans?skill=threat-model&status=done`, then `GET {api_base}/scans/{id}` for trust boundaries
    - `GET {api_base}/repositories/{repository_id}/scans?skill=repo-overview&status=done`, then `GET {api_base}/scans/{id}` for project shape
+   - `GET {api_base}/repositories/{repository_id}/scans?skill=embedded-native&status=done`, then `GET {api_base}/scans/{id}` for the latest native source map matching the current scan ref and subpath
    - `GET {api_base}/repositories/{repository_id}/findings?skill=semgrep` for static-analysis anchors
 
 If any API request fails or returns no data, continue with source-only review.
+
+Use the embedded-native root and submodule Brief reports to account for native
+languages, extension bridges, FFI boundaries, build tools, manifests, and
+dependencies. Confirm how each native component is enabled and reached through
+host build files, feature flags, bindings, wrappers, and public entry points.
+Add reachable same-project native code as a focus area. Keep an unmodified
+third-party component distinct and inspect only enough of its public native
+surface to trace the host boundary. Do not report its internal defects against
+the host repository. Directory names such as `vendor/` and `third_party/` do
+not establish ownership. Treat an error-only embedded-native report as a
+coverage gap and continue from the checkout.
 
 ## Focus Areas
 

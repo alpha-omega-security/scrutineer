@@ -41,8 +41,9 @@ const dedupMinFindings = 2
 // to arrive last. Which sibling that is carries no meaning, and gating the
 // batch on it turns "run fewer times" into "sometimes never run": it may have
 // produced no new findings, it may not be an LLM audit at all
-// (enqueueDiffRescanGroup puts recon, threat-model and semgrep in the same
-// scan_group as the fanned-out deep dives), or it may have failed or been
+// (enqueueDiffRescanGroup puts recon, embedded-native, threat-model and
+// semgrep in the same scan_group as the fanned-out deep dives), or it may
+// have failed or been
 // cancelled. In each case every earlier sibling has already suppressed, so
 // skipping here would drop a pass that main would have run.
 //
