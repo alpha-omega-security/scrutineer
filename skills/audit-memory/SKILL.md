@@ -53,9 +53,11 @@ Scrutineer API at api_base is allowed when present.
 
 If scan_subpath is set, audit only ./src/{scan_subpath} and report locations
 relative to that scoped root. The worker has already removed scan_config.skip
-paths and this skill's ignored generated or vendored trees from the staged
-source. Read first-party tests, build files, headers, manifests, and docs when
-they define ownership, supported configurations, or trust boundaries.
+paths and this skill's ignored build-output and dependency-cache trees from the
+staged source; vendored, third-party, and submodule trees are staged for
+classification below. Read first-party tests, build files, headers, manifests,
+and docs when they define ownership, supported configurations, or trust
+boundaries.
 
 ## Existing findings
 
