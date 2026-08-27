@@ -1463,6 +1463,11 @@ func StatusPriorityFor(s ScanStatus) int {
 // stick after one Exec, but setting it here keeps all three together.
 const connectionPragmas = "_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
 
+// databaseSchemaVersion stops guarded older binaries before AutoMigrate can
+// change a schema written by a newer build. Bump it with incompatible schema
+// changes.
+const databaseSchemaVersion = 1
+
 // withPragmas appends connectionPragmas to dsn, joining with ? or &
 // depending on whether dsn already carries a query string (the in-memory
 // test DSNs do).
@@ -1481,6 +1486,10 @@ func Open(dsn string) (*gorm.DB, error) {
 	gdb, err := gorm.Open(sqlite.Open(withPragmas(dsn)), cfg)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
+	}
+	foundSchemaVersion, err := checkDatabaseSchemaVersion(gdb)
+	if err != nil {
+		return nil, err
 	}
 	if err := preMigrate(gdb); err != nil {
 		return nil, fmt.Errorf("premigrate: %w", err)
@@ -1511,7 +1520,23 @@ func Open(dsn string) (*gorm.DB, error) {
 		gdb.Exec(`DELETE FROM subprojects WHERE id NOT IN (SELECT MIN(id) FROM subprojects GROUP BY repository_id, path)`)
 		gdb.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_subprojects_repo_path ON subprojects (repository_id, path)`)
 	}
+	if foundSchemaVersion < databaseSchemaVersion {
+		if err := gdb.Exec(fmt.Sprintf("PRAGMA user_version = %d", databaseSchemaVersion)).Error; err != nil {
+			return nil, fmt.Errorf("record database schema version: %w", err)
+		}
+	}
 	return gdb, nil
+}
+
+func checkDatabaseSchemaVersion(gdb *gorm.DB) (int, error) {
+	var found int
+	if err := gdb.Raw("PRAGMA user_version").Scan(&found).Error; err != nil {
+		return 0, fmt.Errorf("read database schema version: %w", err)
+	}
+	if found > databaseSchemaVersion {
+		return 0, fmt.Errorf("database schema version %d is newer than this build supports (%d)", found, databaseSchemaVersion)
+	}
+	return found, nil
 }
 
 // preMigrate applies structural changes AutoMigrate cannot express, chiefly
@@ -1523,16 +1548,10 @@ func Open(dsn string) (*gorm.DB, error) {
 // fatal: proceeding would add a new column alongside the old one and strand its
 // data, or leave AutoMigrate to fail on the index it cannot build.
 func preMigrate(gdb *gorm.DB) error {
-	m := gdb.Migrator()
-	// SBOMPackage.RepositoryID became SourceRepositoryID when SBOMUpload
-	// gained its own RepositoryID pointing at the scanned repository; the
-	// package-level field points at the repository that publishes the
-	// package, which is the opposite direction.
-	if m.HasTable(&SBOMPackage{}) && m.HasColumn(&SBOMPackage{}, "repository_id") {
-		if err := m.RenameColumn(&SBOMPackage{}, "repository_id", "source_repository_id"); err != nil {
-			return fmt.Errorf("rename sbom_packages.repository_id: %w", err)
-		}
+	if err := migrateSBOMPackageRepositoryColumn(gdb); err != nil {
+		return err
 	}
+	m := gdb.Migrator()
 	// FindingReference gained a unique (finding_id, url) index. Databases
 	// written before AddFindingReference deduplicated (#519, #865) can hold
 	// several rows for one URL, so the duplicates are collapsed and the index
@@ -1546,6 +1565,41 @@ func preMigrate(gdb *gorm.DB) error {
 		}
 	}
 	return nil
+}
+
+// SBOMPackage.RepositoryID became SourceRepositoryID when SBOMUpload gained
+// its own RepositoryID pointing in the opposite direction.
+func migrateSBOMPackageRepositoryColumn(gdb *gorm.DB) error {
+	m := gdb.Migrator()
+	if !m.HasTable(&SBOMPackage{}) || !m.HasColumn(&SBOMPackage{}, "repository_id") {
+		return nil
+	}
+	if !m.HasColumn(&SBOMPackage{}, "source_repository_id") {
+		if err := m.RenameColumn(&SBOMPackage{}, "repository_id", "source_repository_id"); err != nil {
+			return fmt.Errorf("rename sbom_packages.repository_id: %w", err)
+		}
+		return nil
+	}
+	return gdb.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec(`UPDATE sbom_packages SET source_repository_id = repository_id WHERE repository_id IS NOT NULL`).Error; err != nil {
+			return fmt.Errorf("merge sbom package repository ids: %w", err)
+		}
+		m := tx.Migrator()
+		if m.HasConstraint(&SBOMPackage{}, "fk_sbom_packages_repository") {
+			if err := m.DropConstraint(&SBOMPackage{}, "fk_sbom_packages_repository"); err != nil {
+				return fmt.Errorf("drop sbom package repository constraint: %w", err)
+			}
+		}
+		if m.HasIndex(&SBOMPackage{}, "idx_sbom_packages_repository_id") {
+			if err := m.DropIndex(&SBOMPackage{}, "idx_sbom_packages_repository_id"); err != nil {
+				return fmt.Errorf("drop sbom package repository index: %w", err)
+			}
+		}
+		if err := m.DropColumn(&SBOMPackage{}, "repository_id"); err != nil {
+			return fmt.Errorf("drop sbom_packages.repository_id: %w", err)
+		}
+		return nil
+	})
 }
 
 // findingRefURLIndex is the unique (finding_id, url) index declared on
