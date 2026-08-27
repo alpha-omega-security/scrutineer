@@ -2,7 +2,7 @@
 name: embedded-native
 description: Map native languages, extension bridges, build tools, manifests, and dependencies after shallow Git submodules have been initialized. Runs when triage finds native-extension, submodule, or mixed native-language signals.
 license: MIT
-compatibility: Requires `brief` v0.12.0 or later on PATH. Shallow submodule initialization is available for remote repository scans.
+compatibility: Requires the `brief` CLI (https://github.com/git-pkgs/brief) on PATH. Shallow submodule initialization is available for remote repository scans.
 metadata:
   scrutineer.model: mid
   scrutineer.version: 1
@@ -15,7 +15,7 @@ metadata:
 
 # embedded-native
 
-Run Brief after Scrutineer has prepared the repository with recursive, depth-one Git submodules. Brief v0.12 does not include every initialized submodule consistently in a root scan, so the bundled script runs it separately at each submodule root and keeps every Brief report unchanged inside one envelope.
+Run Brief after Scrutineer has prepared the repository with recursive, depth-one Git submodules. A root Brief scan can omit files inside initialized submodules, so the bundled script runs Brief separately at each submodule root and keeps every report unchanged inside one envelope.
 
 Run:
 

@@ -25,7 +25,7 @@ if ! brief --json "$src" > "$work/root.json"; then
   write_error "brief root scan failed"
 fi
 
-# Brief 0.12.0 can omit native files in submodules, including submodules under
+# Brief can omit native files in submodules, including submodules under
 # ignored directories such as vendor. Remove this loop when
 # https://github.com/git-pkgs/brief/issues/158 adds an include-submodules scan.
 submodule_reports=()
