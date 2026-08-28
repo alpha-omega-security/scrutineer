@@ -53,7 +53,7 @@ require (
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/oapi-codegen/nullable v1.2.0 // indirect
 	github.com/oapi-codegen/runtime v1.7.0 // indirect
-	github.com/package-url/packageurl-go v0.1.6 // indirect
+	github.com/package-url/packageurl-go v0.1.7 // indirect
 	github.com/pandatix/go-cvss v0.6.4 // indirect
 	github.com/pjbgf/sha1cd v0.6.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect

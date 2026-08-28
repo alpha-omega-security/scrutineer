@@ -120,8 +120,8 @@ github.com/oapi-codegen/runtime v1.7.0 h1:t7358VYPvNbWJ9gdAkIK/smVeHpBf6yp8VTsaZ
 github.com/oapi-codegen/runtime v1.7.0/go.mod h1:GwV7hC2hviaMzj+ITfHVRESK5J2W/GefVwIND/bMGvU=
 github.com/onsi/gomega v1.34.1 h1:EUMJIKUjM8sKjYbtxQI9A4z2o+rruxnzNvpknOXie6k=
 github.com/onsi/gomega v1.34.1/go.mod h1:kU1QgUvBDLXBJq618Xvm2LUX6rSAfRaFRTcdOeDLwwY=
-github.com/package-url/packageurl-go v0.1.6 h1:YO3p6u1XmCUliivUg/qWphaY8vI6hxSnnPv7Bfg3m5M=
-github.com/package-url/packageurl-go v0.1.6/go.mod h1:nKAWB8E6uk1MHqiS/lQb9pYBGH2+mdJ2PJc2s50dQY0=
+github.com/package-url/packageurl-go v0.1.7 h1:iFWg6tzAjLA6F/qX3M5nZaiMHJgc+p2zxVyr/fY+sZY=
+github.com/package-url/packageurl-go v0.1.7/go.mod h1:nKAWB8E6uk1MHqiS/lQb9pYBGH2+mdJ2PJc2s50dQY0=
 github.com/pandatix/go-cvss v0.6.4 h1:9w2RCO/Q4UTiJyEgpCHRiVc6CfrsFEnkoX+OtATqKio=
 github.com/pandatix/go-cvss v0.6.4/go.mod h1:/ukvQnYlrKl3o/DVp7/GO2UZyZheuo/maOK0U1nBEhQ=
 github.com/pjbgf/sha1cd v0.6.0 h1:3WJ8Wz8gvDz29quX1OcEmkAlUg9diU4GxJHqs0/XiwU=
