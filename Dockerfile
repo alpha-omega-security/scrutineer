@@ -18,7 +18,7 @@ RUN pip install --no-cache-dir semgrep==1.167.0 "setuptools<81"
 
 FROM golang:1.27.0-alpine@sha256:4c9fe60190a2a3350ddc51de80d0224b8a6698d12bdfc999fee45ea9d6c46dbc AS go-tools
 RUN apk add --no-cache git
-RUN GOBIN=/out go install github.com/git-pkgs/git-pkgs@v0.15.3 && \
+RUN GOBIN=/out go install github.com/git-pkgs/git-pkgs@v0.19.0 && \
     GOBIN=/out go install github.com/git-pkgs/brief/cmd/brief@v0.12.0
 
 # vid links tree-sitter grammars (C), so unlike the main binary it needs
