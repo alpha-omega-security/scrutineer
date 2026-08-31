@@ -1012,12 +1012,15 @@ func (w *Worker) parseMaintainersOutput(scan *db.Scan, report string, emit func(
 			}
 			// Best-effort: only touches an existing subproject row, and only
 			// the reconcile/skill-owned channel field.
-			w.DB.Model(&db.Subproject{}).
+			if err := w.DB.Model(&db.Subproject{}).
 				Where("repository_id = ? AND path = ?", scan.RepositoryID, path).
-				Update("disclosure_channel", ch)
+				Update("disclosure_channel", ch).Error; err != nil {
+				w.Log.Warn("update subproject disclosure channel", "scan", scan.ID, "path", path, "err", err)
+			}
 		}
 	}
 	var linked []db.Maintainer
+	partial := false
 	for _, rm := range result.Maintainers {
 		if rm.Login == "" {
 			continue
@@ -1029,6 +1032,7 @@ func (w *Worker) parseMaintainersOutput(scan *db.Scan, report string, emit func(
 			// key and an empty Login, inserting a second, blank maintainer row
 			// and linking the repository to that instead of the real one.
 			w.Log.Warn("upsert maintainer", "scan", scan.ID, "login", rm.Login, "err", err)
+			partial = true
 			continue
 		}
 		rm.applyTo(&m)
@@ -1041,7 +1045,15 @@ func (w *Worker) parseMaintainersOutput(scan *db.Scan, report string, emit func(
 		}
 		linked = append(linked, m)
 	}
-	if repoWide && len(linked) > 0 {
+	switch {
+	case !repoWide:
+	case partial:
+		// Replace(linked) with a partial set would unlink every maintainer whose
+		// lookup transiently failed. Leave the association as it was; the next
+		// successful run rewrites it.
+		w.Log.Warn("skipping maintainer association replace: set is partial after lookup failure",
+			"scan", scan.ID, "repository", repo.ID, "resolved", len(linked))
+	case len(linked) > 0:
 		if err := w.DB.Model(&repo).Association("Maintainers").Replace(linked); err != nil {
 			w.Log.Warn("replace repository maintainers", "scan", scan.ID, "repository", repo.ID, "err", err)
 		}

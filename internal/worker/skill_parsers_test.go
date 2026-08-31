@@ -2750,7 +2750,9 @@ func TestParseMaintainers_lookupFailureSkipsRecord(t *testing.T) {
 	}
 
 	// Fail only the first lookup, the way a timeout or a dropped connection
-	// would: the writes that follow still succeed.
+	// would: the writes that follow still succeed. A two-maintainer report
+	// exercises the Replace path — with a one-maintainer report the sole
+	// failure leaves linked empty and Replace is never reached.
 	fired := false
 	const name = "test:fail_maintainer_lookup"
 	if err := gdb.Callback().Query().Before("gorm:query").Register(name, func(d *gorm.DB) {
@@ -2761,7 +2763,7 @@ func TestParseMaintainers_lookupFailureSkipsRecord(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	report := `{"maintainers":[{"login":"alice","name":"Alice","role":"lead","status":"active","evidence":"commits"}]}`
+	report := `{"maintainers":[{"login":"alice","status":"active"},{"login":"bob","status":"active"}]}`
 	if err := w.parseMaintainersOutput(&scan, report, func(Event) {}); err != nil {
 		t.Fatalf("a per-maintainer failure must not fail the whole report: %v", err)
 	}
@@ -2778,8 +2780,11 @@ func TestParseMaintainers_lookupFailureSkipsRecord(t *testing.T) {
 	if err := gdb.Model(&repo).Association("Maintainers").Find(&linked); err != nil {
 		t.Fatal(err)
 	}
+	// alice's lookup failed and bob's succeeded, so linked=[bob]. Replacing
+	// with a partial set would unlink alice; the guard skips Replace instead
+	// and leaves the seeded association untouched.
 	if len(linked) != 1 || linked[0].Login != "alice" {
-		t.Errorf("repository maintainers = %+v, want the real alice still linked", linked)
+		t.Errorf("repository maintainers = %+v, want alice still linked (Replace skipped on partial set)", linked)
 	}
 }
 
