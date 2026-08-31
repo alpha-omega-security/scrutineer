@@ -123,6 +123,7 @@ type Finding struct {
 	BreakingChangeRationale string
 	DupCheck                string
 	DisclosureDraft         string
+	DisclosureTitle         string
 	SuggestedRecipients     string
 	ExploitedInWild         string
 	ExploitedInWildEvidence string

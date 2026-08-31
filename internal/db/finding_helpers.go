@@ -429,74 +429,48 @@ func SeverityAtLeast(got, threshold string) bool {
 	return rank(SeverityLevels, got) >= rank(SeverityLevels, threshold)
 }
 
-// findingFieldAccessor maps the API-facing field name to the current
-// value and the DB column name. It is the single list of mutable fields;
-// adding a new editable field means adding it here.
+// findingFieldAccessors maps every API-facing editable field name to a getter
+// on Finding. It is the single list of mutable fields; adding a new editable
+// field means adding it here. The DB column name is always the API field name.
+var findingFieldAccessors = map[string]func(*Finding) string{
+	"title":                      func(f *Finding) string { return f.Title },
+	"severity":                   func(f *Finding) string { return f.Severity },
+	"status":                     func(f *Finding) string { return string(f.Status) },
+	"cwe":                        func(f *Finding) string { return f.CWE },
+	"location":                   func(f *Finding) string { return f.Location },
+	"affected":                   func(f *Finding) string { return f.Affected },
+	"reachability":               func(f *Finding) string { return f.Reachability },
+	"quality_tier":               func(f *Finding) string { return f.QualityTier },
+	"cve_id":                     func(f *Finding) string { return f.CVEID },
+	"ghsa_id":                    func(f *Finding) string { return f.GHSAID },
+	"cvss_vector":                func(f *Finding) string { return f.CVSSVector },
+	"cvss_v4_vector":             func(f *Finding) string { return f.CVSSv4Vector },
+	"fix_version":                func(f *Finding) string { return f.FixVersion },
+	"fix_commit":                 func(f *Finding) string { return f.FixCommit },
+	"resolution":                 func(f *Finding) string { return string(f.Resolution) },
+	"disclosure_draft":           func(f *Finding) string { return f.DisclosureDraft },
+	"disclosure_title":           func(f *Finding) string { return f.DisclosureTitle },
+	"suggested_recipients":       func(f *Finding) string { return f.SuggestedRecipients },
+	"assignee":                   func(f *Finding) string { return f.Assignee },
+	"suggested_fix":              func(f *Finding) string { return f.SuggestedFix },
+	"suggested_fix_commit":       func(f *Finding) string { return f.SuggestedFixCommit },
+	"breaking_change":            func(f *Finding) string { return f.BreakingChange },
+	"breaking_change_rationale":  func(f *Finding) string { return f.BreakingChangeRationale },
+	"exploited_in_wild":          func(f *Finding) string { return f.ExploitedInWild },
+	"exploited_in_wild_evidence": func(f *Finding) string { return f.ExploitedInWildEvidence },
+	"mitigation":                 func(f *Finding) string { return f.Mitigation },
+	"mitigation_semgrep":         func(f *Finding) string { return f.MitigationSemgrep },
+	"release_tag":                func(f *Finding) string { return f.ReleaseTag },
+	"release_url":                func(f *Finding) string { return f.ReleaseURL },
+	"last_revalidate_verdict":    func(f *Finding) string { return f.LastRevalidateVerdict },
+}
+
 func findingFieldAccessor(f *Finding, field string) (current, column string, err error) {
-	switch field {
-	case "title":
-		return f.Title, "title", nil
-	case "severity":
-		return f.Severity, "severity", nil
-	case "status":
-		return string(f.Status), "status", nil
-	case "cwe":
-		return f.CWE, "cwe", nil
-	case "location":
-		return f.Location, "location", nil
-	case "affected":
-		return f.Affected, "affected", nil
-	case "reachability":
-		return f.Reachability, "reachability", nil
-	case "quality_tier":
-		return f.QualityTier, "quality_tier", nil
-	case "cve_id":
-		return f.CVEID, "cve_id", nil
-	case "ghsa_id":
-		return f.GHSAID, "ghsa_id", nil
-	case "cvss_vector":
-		return f.CVSSVector, "cvss_vector", nil
-	case "cvss_v4_vector":
-		return f.CVSSv4Vector, "cvss_v4_vector", nil
-	case "fix_version":
-		return f.FixVersion, "fix_version", nil
-	case "fix_commit":
-		return f.FixCommit, "fix_commit", nil
-	case "resolution":
-		return string(f.Resolution), "resolution", nil
-	case "disclosure_draft":
-		return f.DisclosureDraft, "disclosure_draft", nil
-	case "disclosure_title":
-		return f.DisclosureTitle, "disclosure_title", nil
-	case "suggested_recipients":
-		return f.SuggestedRecipients, "suggested_recipients", nil
-	case "assignee":
-		return f.Assignee, "assignee", nil
-	case "suggested_fix":
-		return f.SuggestedFix, "suggested_fix", nil
-	case "suggested_fix_commit":
-		return f.SuggestedFixCommit, "suggested_fix_commit", nil
-	case "breaking_change":
-		return f.BreakingChange, "breaking_change", nil
-	case "breaking_change_rationale":
-		return f.BreakingChangeRationale, "breaking_change_rationale", nil
-	case "exploited_in_wild":
-		return f.ExploitedInWild, "exploited_in_wild", nil
-	case "exploited_in_wild_evidence":
-		return f.ExploitedInWildEvidence, "exploited_in_wild_evidence", nil
-	case "mitigation":
-		return f.Mitigation, "mitigation", nil
-	case "mitigation_semgrep":
-		return f.MitigationSemgrep, "mitigation_semgrep", nil
-	case "release_tag":
-		return f.ReleaseTag, "release_tag", nil
-	case "release_url":
-		return f.ReleaseURL, "release_url", nil
-	case "last_revalidate_verdict":
-		return f.LastRevalidateVerdict, "last_revalidate_verdict", nil
-	default:
+	get, ok := findingFieldAccessors[field]
+	if !ok {
 		return "", "", fmt.Errorf("field %q is not editable", field)
 	}
+	return get(f), field, nil
 }
 
 // AddFindingNote appends a timestamped note.

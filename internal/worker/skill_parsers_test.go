@@ -1951,6 +1951,19 @@ func TestParseDisclose_postsSummaryNote(t *testing.T) {
 	}`
 	f, gdb := runSkillWithFinding(t, "disclose", report, db.FindingTriaged)
 
+	var stored db.Finding
+	gdb.First(&stored, f.ID)
+	if stored.DisclosureTitle != "Command injection in run()" {
+		t.Errorf("DisclosureTitle = %q, want the ghsa.summary", stored.DisclosureTitle)
+	}
+	var hist db.FindingHistory
+	if err := gdb.Where("finding_id = ? AND field = ?", f.ID, "disclosure_title").First(&hist).Error; err != nil {
+		t.Fatalf("missing disclosure_title history: %v", err)
+	}
+	if hist.Source != db.SourceModel || hist.By != "disclose" {
+		t.Errorf("disclosure_title history source/by = %q/%q, want model/disclose", hist.Source, hist.By)
+	}
+
 	var notes []db.FindingNote
 	gdb.Where(map[string]any{"finding_id": f.ID, "by": "disclose"}).Find(&notes)
 	if len(notes) != 1 {

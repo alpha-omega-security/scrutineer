@@ -61,6 +61,7 @@ type minimalFinding struct {
 	BreakingChangeRationale string `json:"breaking_change_rationale"`
 	DupCheck                string `json:"dup_check"`
 	DisclosureDraft         string `json:"disclosure_draft"`
+	DisclosureTitle         string `json:"disclosure_title"`
 	SuggestedRecipients     string `json:"suggested_recipients"`
 	ExploitedInWild         string `json:"exploited_in_wild"`
 	ExploitedInWildEvidence string `json:"exploited_in_wild_evidence"`
@@ -148,6 +149,7 @@ func parseMinimal(data []byte) ([]Result, error) {
 			BreakingChangeRationale: f.BreakingChangeRationale,
 			DupCheck:                f.DupCheck,
 			DisclosureDraft:         f.DisclosureDraft,
+			DisclosureTitle:         f.DisclosureTitle,
 			SuggestedRecipients:     f.SuggestedRecipients,
 			ExploitedInWild:         f.ExploitedInWild,
 			ExploitedInWildEvidence: f.ExploitedInWildEvidence,

@@ -1353,7 +1353,7 @@ func TestExportFindings_carriesDBFields(t *testing.T) {
 		"finding_id", "sinks", "title", "severity", "status", "cwe", "location", "affected",
 		"reachability", "quality_tier",
 		"cve_id", "cvss_vector", "cvss_score", "fix_version", "fix_commit",
-		"resolution", "disclosure_draft", "suggested_recipients", "assignee",
+		"resolution", "disclosure_draft", "disclosure_title", "suggested_recipients", "assignee",
 		"trace", "boundary", "validation", "prior_art", "reach", "rating",
 		"created_at", "updated_at",
 	}
@@ -1464,6 +1464,7 @@ func seedRichFinding(t *testing.T, s *Server, url string) db.Repository {
 		BreakingChangeRationale: "no public API change",
 		DupCheck:                "distinct from F2: different sink",
 		DisclosureDraft:         "## Advisory\nPath traversal in download()",
+		DisclosureTitle:         "Path traversal in download()",
 		SuggestedRecipients:     "@alice (CODEOWNERS: crypto/*)",
 		ExploitedInWild:         "no",
 		ExploitedInWildEvidence: "no reports as of 2026-07",
@@ -1844,7 +1845,8 @@ func TestExportBundle_includeAllCarriesArchival(t *testing.T) {
 		t.Errorf("default sinks = %q, want path.join,os.Open", def.Sinks)
 	}
 	if def.Snippet != "" || def.Affected != "" || def.CVEID != "" || def.CVSSVector != "" ||
-		def.DisclosureDraft != "" || def.SuggestedRecipients != "" || def.ExploitedInWild != "" || def.UpstreamFixCommit != "" {
+		def.DisclosureDraft != "" || def.DisclosureTitle != "" || def.SuggestedRecipients != "" ||
+		def.ExploitedInWild != "" || def.UpstreamFixCommit != "" {
 		t.Errorf("default bundle carried archival scalars: %+v", def)
 	}
 	if len(def.Notes) != 0 || len(def.Communications) != 0 || len(def.References) != 0 {
@@ -1868,6 +1870,7 @@ func TestExportBundle_includeAllCarriesArchival(t *testing.T) {
 		{"breaking_change_rationale", all.BreakingChangeRationale, "no public API change"},
 		{"dup_check", all.DupCheck, "distinct from F2: different sink"},
 		{"disclosure_draft", all.DisclosureDraft, "## Advisory\nPath traversal in download()"},
+		{"disclosure_title", all.DisclosureTitle, "Path traversal in download()"},
 		{"suggested_recipients", all.SuggestedRecipients, "@alice (CODEOWNERS: crypto/*)"},
 		{"exploited_in_wild", all.ExploitedInWild, "no"},
 		{"exploited_in_wild_evidence", all.ExploitedInWildEvidence, "no reports as of 2026-07"},
@@ -1943,6 +1946,7 @@ func TestExportBundleRoundTrip_includeAll(t *testing.T) {
 		{"breaking_change_rationale", got.BreakingChangeRationale, "no public API change"},
 		{"dup_check", got.DupCheck, "distinct from F2: different sink"},
 		{"disclosure_draft", got.DisclosureDraft, "## Advisory\nPath traversal in download()"},
+		{"disclosure_title", got.DisclosureTitle, "Path traversal in download()"},
 		{"suggested_recipients", got.SuggestedRecipients, "@alice (CODEOWNERS: crypto/*)"},
 		{"exploited_in_wild", got.ExploitedInWild, "no"},
 		{"exploited_in_wild_evidence", got.ExploitedInWildEvidence, "no reports as of 2026-07"},
