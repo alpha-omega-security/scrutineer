@@ -190,7 +190,8 @@ func healthAge(age time.Duration) string {
 func RepositoryHealthEvidenceComplete(gdb *gorm.DB, repositoryID uint) (bool, error) {
 	var done []string
 	if err := gdb.Model(&Scan{}).
-		Where("repository_id = ? AND status = ? AND skill_name IN ?", repositoryID, ScanDone, repositoryHealthSkills).
+		Where("repository_id = ? AND kind = ? AND status = ? AND skill_name IN ?",
+			repositoryID, "skill", ScanDone, repositoryHealthSkills).
 		Distinct("skill_name").Pluck("skill_name", &done).Error; err != nil {
 		return false, err
 	}

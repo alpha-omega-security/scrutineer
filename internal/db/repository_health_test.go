@@ -298,6 +298,40 @@ func TestRefreshRepositoryHealth_leavesHealthEmptyWithoutRequiredScans(t *testin
 	}
 }
 
+func TestRepositoryHealthEvidenceComplete_ignoresImportScans(t *testing.T) {
+	gdb, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := Repository{URL: "https://example.com/r", Name: "r"}
+	if err := gdb.Create(&repo).Error; err != nil {
+		t.Fatal(err)
+	}
+	// An import row copies the uploaded tool name into skill_name; it must not
+	// satisfy the gate for the same-named skill.
+	for _, name := range repositoryHealthSkills {
+		if err := gdb.Create(&Scan{RepositoryID: repo.ID, Kind: "import", SkillName: name, Status: ScanDone}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	complete, err := RepositoryHealthEvidenceComplete(gdb, repo.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if complete {
+		t.Fatal("import-kind scans satisfied the health-evidence gate")
+	}
+
+	seedHealthScans(t, gdb, repo.ID)
+	complete, err = RepositoryHealthEvidenceComplete(gdb, repo.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !complete {
+		t.Fatal("skill-kind scans did not satisfy the health-evidence gate")
+	}
+}
+
 func seedHealthScans(t *testing.T, gdb *gorm.DB, repoID uint) {
 	t.Helper()
 	for _, name := range repositoryHealthSkills {
