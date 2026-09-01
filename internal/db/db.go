@@ -1551,13 +1551,23 @@ func withPragmas(dsn string) string {
 	return dsn + sep + connectionPragmas
 }
 
-func Open(dsn string) (*gorm.DB, error) {
+// Connect opens dsn with the standard pragmas and logger but performs no
+// migration. Open is Connect plus the full migration path.
+func Connect(dsn string) (*gorm.DB, error) {
 	cfg := &gorm.Config{
 		Logger: logger.Default.LogMode(logger.Warn),
 	}
 	gdb, err := gorm.Open(sqlite.Open(withPragmas(dsn)), cfg)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
+	}
+	return gdb, nil
+}
+
+func Open(dsn string) (*gorm.DB, error) {
+	gdb, err := Connect(dsn)
+	if err != nil {
+		return nil, err
 	}
 	foundSchemaVersion, err := checkDatabaseSchemaVersion(gdb)
 	if err != nil {

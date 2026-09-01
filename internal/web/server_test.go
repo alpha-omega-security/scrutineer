@@ -19,16 +19,14 @@ import (
 	"time"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/db/dbtest"
 	"scrutineer/internal/queue"
 	"scrutineer/internal/worker"
 )
 
 func newTestServer(t testing.TB) (*Server, func()) {
 	t.Helper()
-	gdb, err := db.Open("file::memory:?cache=shared")
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	sqldb, _ := gdb.DB()
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	q, err := queue.New(sqldb, log, 0)
