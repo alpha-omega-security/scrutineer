@@ -35,7 +35,9 @@ var schema = sync.OnceValue(func() string {
 	}()
 	var stmts []string
 	if err := gdb.Raw(
-		"SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'",
+		"SELECT sql FROM sqlite_schema" +
+			" WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%'" +
+			" ORDER BY CASE type WHEN 'table' THEN 0 ELSE 1 END, rowid",
 	).Scan(&stmts).Error; err != nil {
 		panic("dbtest: read schema: " + err.Error())
 	}
