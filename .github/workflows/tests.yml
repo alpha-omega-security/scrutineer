@@ -80,8 +80,13 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      # modernc.org/sqlite is machine-transpiled C and does unsafe.Pointer
+      # arithmetic on every VDBE step; -race enables checkptr, and validating
+      # those conversions dominates the DB-heavy packages' runtime. Disabling
+      # checkptr for that tree keeps TSAN's data-race detection while dropping
+      # the per-op pointer validation the transpiler already guarantees.
       - name: Test
-        run: go test -race ./...
+        run: go test -race -gcflags='modernc.org/...=-d=checkptr=0' ./...
 
       # The deterministic eval harness is behind //go:build evals. Live model
       # runs remain disabled unless SCRUTINEER_RUN_EVALS is explicitly set.
