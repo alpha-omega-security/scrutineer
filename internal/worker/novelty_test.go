@@ -150,6 +150,10 @@ func TestPrepareNoveltyHistoryDeepensSharedCache(t *testing.T) {
 	scan := fixture.scan(head)
 	scan.Repository.URL = repoURL
 	w := &Worker{DB: fixture.gdb, DataDir: dataDir}
+	// clone.Cache.EnsureCommit hardens fetch to https-only unless the
+	// caller's env already sets GIT_ALLOW_PROTOCOL; this test's cache
+	// origin is a file:// path.
+	t.Setenv("GIT_ALLOW_PROTOCOL", "file")
 	w.prepareNoveltyHistory(context.Background(), scan, &db.Skill{Name: revalidateSkillName})
 
 	if !commitReachable(context.Background(), cacheSrc, fixture.base) {

@@ -377,6 +377,9 @@ func TestEnsureCommit_reachableCommitIsNoOp(t *testing.T) {
 	if err := w.EnsureCommit(context.Background(), url, head); err != nil {
 		t.Errorf("EnsureCommit with reachable commit: %v", err)
 	}
+	if err := w.EnsureCommit(context.Background(), url, strings.ToUpper(head)); err != nil {
+		t.Errorf("EnsureCommit with uppercase commit: %v", err)
+	}
 }
 
 func TestEnsureCommit_unreachableNonShallowIsNoOp(t *testing.T) {

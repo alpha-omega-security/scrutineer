@@ -2,26 +2,28 @@ package worker
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 
+	"github.com/git-pkgs/clone"
 	"gorm.io/gorm"
 
 	"scrutineer/internal/db"
 )
+
+func repoCache(dataDir string) *clone.Cache {
+	return &clone.Cache{Root: filepath.Join(dataDir, "repo-cache")}
+}
 
 // RepoCacheRoot returns the persistent per-URL clone directory under
 // dataDir. The cache survives scan cleanup so subsequent scans only
 // fetch the delta; EnsureCommit deepens it on demand when the code
 // browser asks for a commit that the shallow clone doesn't have.
 func RepoCacheRoot(dataDir, url string) string {
-	sum := sha256.Sum256([]byte(url))
-	return filepath.Join(dataDir, "repo-cache", hex.EncodeToString(sum[:]))
+	return repoCache(dataDir).Dir(url)
 }
 
 // RepoDiskUsage returns the on-disk size in bytes of the persistent
@@ -32,8 +34,7 @@ func RepoDiskUsage(dataDir string, repo db.Repository) int64 {
 	if repo.IsLocal() {
 		return 0
 	}
-	n, _ := dirSize(RepoCacheRoot(dataDir, repo.URL))
-	return n
+	return repoCache(dataDir).DiskBytes(repo.URL)
 }
 
 // refreshRepoDiskUsage recomputes the clone-cache size for one repository
@@ -151,22 +152,7 @@ func (w *Worker) EnsureCommit(ctx context.Context, url, commit string) error {
 	mu := w.cacheMutex(url)
 	mu.Lock()
 	defer mu.Unlock()
-
-	cacheSrc := filepath.Join(RepoCacheRoot(w.DataDir, url), "src")
-	if _, err := os.Stat(filepath.Join(cacheSrc, ".git")); err != nil {
-		return nil
-	}
-	if commitReachable(ctx, cacheSrc, commit) {
-		return nil
-	}
-	out, _ := git(ctx, "-C", cacheSrc, "rev-parse", "--is-shallow-repository")
-	if strings.TrimSpace(out) != "true" {
-		return nil
-	}
-	if out, err := git(ctx, "-C", cacheSrc, "fetch", "--unshallow", "--quiet", "origin"); err != nil {
-		return fmt.Errorf("unshallow %s: %s: %w", url, strings.TrimSpace(out), err)
-	}
-	return nil
+	return repoCache(w.DataDir).EnsureCommit(ctx, url, strings.ToLower(commit))
 }
 
 func commitReachable(ctx context.Context, dir, commit string) bool {
