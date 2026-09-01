@@ -1,6 +1,7 @@
 /data/
 /data-*/
 /scrutineer
+*.test
 *.db
 *.db-shm
 *.db-wal
