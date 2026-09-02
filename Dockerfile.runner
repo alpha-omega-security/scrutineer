@@ -7,8 +7,8 @@
 # update the selected asset and checksum atomically. A mismatched tag/digest in
 # a Renovate PR fails sha256sum below and usually means asset identification
 # failed upstream.
-ARG CLAUDE_AMD64_LOCK=v2.1.246@sha256:45debae066f0eb96cd1c29536855294d4f1baf2eb55b147089724423a611a5df
-ARG CLAUDE_ARM64_LOCK=v2.1.246@sha256:baeb4f7d0f459e1d1f11f2f7ff90efd666a0764188921385294c73753345ec08
+ARG CLAUDE_AMD64_LOCK=v2.1.258@sha256:4dcbd239217dd01a5cf73002eea8f85e945170830d66891948426a09c99f3292
+ARG CLAUDE_ARM64_LOCK=v2.1.258@sha256:d9d18e4f10efc7521212b1adb34f0a4f4698ebc80be017a371f59c3d206d399a
 ARG CODEX_VERSION=0.142.5
 ARG OPENCODE_VERSION=1.17.12
 ARG COPILOT_VERSION=1.0.80
@@ -23,17 +23,16 @@ FROM rust:1.97-trixie@sha256:3382bd20aa942806c533e9a73cd000474fb3ef173f71e684cc9
 ENV CARGO_HTTP_MULTIPLEXING=false
 RUN cargo install --locked --root /out zizmor@1.29.0
 
-# The scrutineer binary is baked in only for its `proxy` subcommand: under
-# rootless podman --hardened the egress proxy runs as a sidecar from THIS image
-# (`scrutineer proxy`) instead of a second published image. Built CGO-free and
-# static like the main server image, so it drops into the slim runtime as a
-# plain copy with no glibc dependency.
+# The runner image carries the proxy commands used by Scrutineer and by
+# harness/container consumers. Both are built CGO-free so they can be copied
+# into the slim runtime without a glibc dependency.
 FROM golang:1.26.6-trixie@sha256:b75d466dd608587fd66cca705a307ba65b889827d06ad61d6a75f0482b51b7c7 AS scrutineer-build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -o /out/scrutineer ./cmd/scrutineer
+RUN CGO_ENABLED=0 go build -o /out/scrutineer ./cmd/scrutineer && \
+    CGO_ENABLED=0 go build -o /out/harness-proxy github.com/alpha-omega-security/harness/cmd/harness-proxy
 
 FROM debian:trixie-slim@sha256:020c0d20b9880058cbe785a9db107156c3c75c2ac944a6aa7ab59f2add76a7bd
 ARG CLAUDE_AMD64_LOCK
@@ -159,6 +158,7 @@ RUN set -eux; \
 COPY --from=go-tools /out/* /usr/local/bin/
 COPY --from=zizmor-build /out/bin/zizmor /usr/local/bin/zizmor
 COPY --from=scrutineer-build /out/scrutineer /usr/local/bin/scrutineer
+COPY --from=scrutineer-build /out/harness-proxy /usr/local/bin/harness-proxy
 
 RUN useradd -ms /bin/bash runner
 USER runner

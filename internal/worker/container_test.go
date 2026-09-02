@@ -762,10 +762,57 @@ func TestStartProxySidecar_RequiresGatewayIP(t *testing.T) {
 	}
 }
 
+func TestStartProxySidecar_ConnectsRuntimeBridge(t *testing.T) {
+	tests := []struct {
+		name    string
+		runtime ContainerRuntime
+		bridge  string
+	}{
+		{"docker desktop", ContainerRuntime{Bin: "docker", DockerDesktop: true}, "bridge"},
+		{"rootless podman", ContainerRuntime{Bin: "podman", Rootless: true}, "podman"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			binDir := t.TempDir()
+			logPath := filepath.Join(t.TempDir(), "runtime.log")
+			script := fmt.Sprintf(`#!/bin/sh
+printf '%%s\n' "$*" >> %q
+if [ "$1" = inspect ]; then printf '192.0.2.10\n'; fi
+`, logPath)
+			if err := os.WriteFile(filepath.Join(binDir, tc.runtime.Bin), []byte(script), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+			d := ContainerRunner{
+				Runtime:  tc.runtime,
+				Hardened: true,
+				Egress: EgressSidecarConfig{
+					Token: "t", Allow: []string{"example.com"}, APIPort: "8080", GatewayIP: "192.0.2.1",
+				},
+			}
+			endpoint, cleanup, err := d.startProxySidecar(SkillJob{ScanID: 7}, "scrutineer-hardened-7")
+			if err != nil {
+				t.Fatal(err)
+			}
+			cleanup()
+			if endpoint != "192.0.2.10:3128" {
+				t.Fatalf("endpoint = %q", endpoint)
+			}
+			log, err := os.ReadFile(logPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := "network connect -- " + tc.bridge + " scrutineer-proxy-7"
+			if !strings.Contains(string(log), want) {
+				t.Fatalf("runtime log missing %q:\n%s", want, log)
+			}
+		})
+	}
+}
+
 func TestSidecarReachArgs(t *testing.T) {
 	// Probe (b), sidecar variant: curl the sidecar by IP:port on the --internal
-	// network (that network is --disable-dns, so the scan reaches it by IP, not by
-	// name); no --add-host.
+	// network without relying on its DNS; no --add-host.
 	args := sidecarReachArgs("scrutineer-hardened-7", "10.89.1.2:3128", "img:latest")
 	if !hasAdjacent(args, "--network", "scrutineer-hardened-7") {
 		t.Errorf("missing --network: %v", args)
@@ -827,19 +874,29 @@ func TestBuildRunArgs_HostProxyURLWhenNoSidecar(t *testing.T) {
 }
 
 func TestHardenedNetworkCreateArgs(t *testing.T) {
-	args := hardenedNetworkCreateArgs("scrutineer-hardened-9")
-	// --internal isolates egress; --disable-dns keeps the network's non-forwarding
-	// resolver out of any connected sidecar (it would NXDOMAIN external lookups and
-	// shadow the sidecar's working bridge resolver).
-	if !slices.Contains(args, "--internal") {
-		t.Errorf("missing --internal: %v", args)
+	tests := []struct {
+		name           string
+		runtime        ContainerRuntime
+		wantDisableDNS bool
+	}{
+		{"docker desktop", ContainerRuntime{Bin: "docker", DockerDesktop: true}, false},
+		{"docker engine", ContainerRuntime{Bin: "docker"}, false},
+		{"rootful podman", ContainerRuntime{Bin: "podman"}, false},
+		{"rootless podman", ContainerRuntime{Bin: "podman", Rootless: true}, true},
 	}
-	if !slices.Contains(args, "--disable-dns") {
-		t.Errorf("missing --disable-dns: %v", args)
-	}
-	// The name comes last, after "--", so it can never be read as a flag.
-	if tail := args[len(args)-2:]; tail[0] != "--" || tail[1] != "scrutineer-hardened-9" {
-		t.Errorf("name must be the final arg after --: %v", args)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			args := hardenedNetworkCreateArgs(tc.runtime, "scrutineer-hardened-9")
+			if !slices.Contains(args, "--internal") {
+				t.Errorf("missing --internal: %v", args)
+			}
+			if got := slices.Contains(args, "--disable-dns"); got != tc.wantDisableDNS {
+				t.Errorf("--disable-dns present = %v, want %v: %v", got, tc.wantDisableDNS, args)
+			}
+			if tail := args[len(args)-2:]; tail[0] != "--" || tail[1] != "scrutineer-hardened-9" {
+				t.Errorf("name must be the final arg after --: %v", args)
+			}
+		})
 	}
 }
 

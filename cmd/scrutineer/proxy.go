@@ -107,9 +107,9 @@ func resolveListen(listen string, firstIfaceIPv4 func() (string, error)) (string
 }
 
 // runProxy is the entrypoint for `scrutineer proxy`: the egress-proxy sidecar
-// the container runner attaches to a hardened scan's --internal network under
-// rootless podman. The scan container points HTTPS_PROXY at this
-// process; it enforces the same allowlist as the in-process host proxy and
+// attached to a hardened scan's --internal network under Docker Desktop or
+// rootless Podman. The scan container points HTTPS_PROXY at this process,
+// which enforces the same allowlist as the in-process host proxy and
 // forwards out its egress leg. It refuses to start serving until it has
 // confirmed it can reach the host skill API, so a network backend that cannot
 // forward host-gateway to the host loopback fails the scan closed instead of

@@ -24,6 +24,39 @@ func TestRuntimeBin(t *testing.T) {
 	}
 }
 
+func TestSidecarEgressNetwork(t *testing.T) {
+	tests := []struct {
+		rt   ContainerRuntime
+		want string
+	}{
+		{ContainerRuntime{}, "bridge"},
+		{ContainerRuntime{Bin: "docker", DockerDesktop: true}, "bridge"},
+		{ContainerRuntime{Bin: "podman", Rootless: true}, "podman"},
+	}
+	for _, tc := range tests {
+		if got := sidecarEgressNetwork(tc.rt); got != tc.want {
+			t.Errorf("sidecarEgressNetwork(%+v) = %q, want %q", tc.rt, got, tc.want)
+		}
+	}
+}
+
+func TestHostGatewayProbeNetwork(t *testing.T) {
+	tests := []struct {
+		rt   ContainerRuntime
+		want string
+	}{
+		{ContainerRuntime{Bin: "docker", Version: "24.0.7"}, "hardened"},
+		{ContainerRuntime{Bin: "docker", DockerDesktop: true, Version: "24.0.7"}, ""},
+		{ContainerRuntime{Bin: "podman", Rootless: true}, "hardened"},
+		{ContainerRuntime{Bin: "apple"}, "hardened"},
+	}
+	for _, tc := range tests {
+		if got := hostGatewayProbeNetwork(tc.rt, "hardened"); got != tc.want {
+			t.Errorf("hostGatewayProbeNetwork(%+v) = %q, want %q", tc.rt, got, tc.want)
+		}
+	}
+}
+
 // TestContainerRuntimeEnginePredicates pins the keep-id, hardened-network and
 // egress-sidecar matrix the scan argv branches on. The predicates live in the
 // dependency now, and the last two are security boundaries, so a bump that

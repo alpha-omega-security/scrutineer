@@ -77,8 +77,8 @@ type Config struct {
 	Hardened *bool `yaml:"hardened"`
 	// HardenedRuntimeOnly applies the non-network half of hardened mode
 	// (read-only rootfs + no-new-privileges + the 2 GiB post-clone workspace cap)
-	// without the per-scan --internal network, so it works under rootless podman
-	// where full --hardened does not. See docs/podman.md.
+	// without the per-scan --internal network. It is the fallback when the
+	// verified sidecar path is unavailable. See docs/podman.md.
 	HardenedRuntimeOnly *bool `yaml:"hardened_runtime_only"`
 	// HardenedRootlessRuntime is the deprecated alias for HardenedRuntimeOnly.
 	HardenedRootlessRuntime *bool  `yaml:"hardened_rootless_runtime"`

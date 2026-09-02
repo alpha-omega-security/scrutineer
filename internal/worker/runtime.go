@@ -64,6 +64,23 @@ func supportsPullNever(rt ContainerRuntime) bool { return rt.Bin != runtimeApple
 // `--security-opt no-new-privileges` hardening flag.
 func supportsNoNewPrivileges(rt ContainerRuntime) bool { return rt.Bin != runtimeApple }
 
+// sidecarEgressNetwork returns the runtime's named default bridge.
+func sidecarEgressNetwork(rt ContainerRuntime) string {
+	if rt.Bin == runtimePodman {
+		return "podman"
+	}
+	return "bridge"
+}
+
+// hostGatewayProbeNetwork returns the network used to resolve host-gateway.
+// Docker Desktop's sidecar reaches the host through its default bridge leg.
+func hostGatewayProbeNetwork(rt ContainerRuntime, network string) string {
+	if rt.NeedsEgressSidecar() && runtimeBin(rt) == "docker" {
+		return ""
+	}
+	return network
+}
+
 // bindMount builds a `-v` value "src:dst[:opts]" for a runner bind mount,
 // appending the SELinux relabel option "z" when relabel is true. opts carries
 // any non-SELinux options (e.g. "ro"); "z" joins that comma-separated group, so
