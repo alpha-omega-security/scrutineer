@@ -239,7 +239,7 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 	w.applySkillResult(scan, res)
 	if err != nil {
 		if _, ok := errors.AsType[*MaxTurnsReachedError](err); ok && res.Report != "" {
-			w.parsePartialSkillReport(&skill, scan, res.Report, emit)
+			w.parsePartialSkillReport(ctx, &skill, scan, res.Report, emit)
 		}
 		return res.Report, err
 	}
@@ -340,8 +340,8 @@ func (w *Worker) applySkillResult(scan *db.Scan, res SkillResult) {
 // partial and logs on failure. The scan is already returning a
 // MaxTurnsReachedError so the parse error has nowhere useful to
 // propagate; logging keeps a silently-malformed partial from vanishing.
-func (w *Worker) parsePartialSkillReport(skill *db.Skill, scan *db.Scan, report string, emit func(Event)) {
-	if err := w.parseSkillOutput(skill, scan, report, emit); err != nil {
+func (w *Worker) parsePartialSkillReport(ctx context.Context, skill *db.Skill, scan *db.Scan, report string, emit func(Event)) {
+	if err := w.parseSkillOutput(ctx, skill, scan, report, emit); err != nil {
 		w.Log.Warn("parse partial skill output after max turns", "scan", scan.ID, "skill", skill.Name, "err", err)
 	}
 }
@@ -354,7 +354,7 @@ func (w *Worker) repairAndParseSkillOutput(ctx context.Context, skill *db.Skill,
 			}
 		}
 	}
-	if err := w.parseSkillOutput(skill, scan, report, emit); err != nil {
+	if err := w.parseSkillOutput(ctx, skill, scan, report, emit); err != nil {
 		return report, err
 	}
 	return report, nil
@@ -421,7 +421,7 @@ func truncateSchemaRepairReport(report string) string {
 	return report[:schemaRepairReportMaxSize] + "\n... truncated ..."
 }
 
-func (w *Worker) parseSkillOutput(skill *db.Skill, scan *db.Scan, report string, emit func(Event)) error {
+func (w *Worker) parseSkillOutput(ctx context.Context, skill *db.Skill, scan *db.Scan, report string, emit func(Event)) error {
 	if skill.SchemaJSON != "" {
 		if detail, recoverable := reportValidationForParsing(skill, report); detail != "" {
 			emit(reportValidationEvent(skill, detail))
@@ -430,7 +430,7 @@ func (w *Worker) parseSkillOutput(skill *db.Skill, scan *db.Scan, report string,
 			}
 		}
 	}
-	if err := w.parseSkillOutputKind(skill, scan, report, emit); err != nil {
+	if err := w.parseSkillOutputKind(ctx, skill, scan, report, emit); err != nil {
 		return err
 	}
 	if scan.RescanMode != db.ScanRescanModeDiff {
@@ -443,7 +443,7 @@ func (w *Worker) parseSkillOutput(skill *db.Skill, scan *db.Scan, report string,
 	return applySkillCoverageClaim(scan, claim)
 }
 
-func (w *Worker) parseSkillOutputKind(skill *db.Skill, scan *db.Scan, report string, emit func(Event)) error {
+func (w *Worker) parseSkillOutputKind(ctx context.Context, skill *db.Skill, scan *db.Scan, report string, emit func(Event)) error {
 	switch skill.OutputKind {
 	case "findings":
 		return w.parseFindingsOutput(skill, scan, report, emit)
@@ -482,7 +482,7 @@ func (w *Worker) parseSkillOutputKind(skill *db.Skill, scan *db.Scan, report str
 	case "posture":
 		return w.parsePostureOutput(scan, report, emit)
 	case "patch":
-		return w.parsePatchOutput(scan, report, emit)
+		return w.parsePatchOutput(ctx, scan, report, emit)
 	case "reattack":
 		return w.parseReattackOutput(scan, report, emit)
 	}

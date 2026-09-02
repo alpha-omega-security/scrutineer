@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"context"
 	"strings"
 	"testing"
 
@@ -27,7 +28,7 @@ func TestParseSkillOutputIngestsCoverageClaim(t *testing.T) {
 		"surfaces":[{"name":"parser","disposition":"reviewed_findings","evidence_ref":"b.go:12"}],
 		"open_questions":[],"dropped_findings":[]}}`
 	w := &Worker{}
-	if err := w.parseSkillOutput(&db.Skill{}, &scan, report, func(Event) {}); err != nil {
+	if err := w.parseSkillOutput(context.Background(), &db.Skill{}, &scan, report, func(Event) {}); err != nil {
 		t.Fatal(err)
 	}
 	rec, ok := coverage.Parse(scan.Coverage)
@@ -56,7 +57,7 @@ func TestParseSkillOutputKeepsDiffPartialWhenReceiptIsMissing(t *testing.T) {
 	}
 	scan := db.Scan{RescanMode: db.ScanRescanModeDiff, Coverage: initial}
 	report := `{"coverage":{"receipts":[{"path":"a.go","disposition":"reviewed_clean"}]}}`
-	if err := (&Worker{}).parseSkillOutput(&db.Skill{}, &scan, report, func(Event) {}); err != nil {
+	if err := (&Worker{}).parseSkillOutput(context.Background(), &db.Skill{}, &scan, report, func(Event) {}); err != nil {
 		t.Fatal(err)
 	}
 	rec, ok := coverage.Parse(scan.Coverage)
@@ -90,7 +91,7 @@ func TestParseSkillOutputPersistsFindingsBeforeRejectingInvalidCoverage(t *testi
 	w.DB.Create(&scan)
 	report := `{"findings":[{"id":"F1","title":"finding survives","severity":"High","location":"a.go:1"}],` +
 		`"coverage":{"receipts":[{"path":"./a.go","disposition":"reviewed_findings"}]}}`
-	err = w.parseSkillOutput(&db.Skill{OutputKind: "findings"}, &scan, report, func(Event) {})
+	err = w.parseSkillOutput(context.Background(), &db.Skill{OutputKind: "findings"}, &scan, report, func(Event) {})
 	if err == nil || !strings.Contains(err.Error(), "repository-relative") {
 		t.Fatalf("error = %v, want repository-relative validation", err)
 	}
@@ -108,7 +109,7 @@ func TestParseSkillOutputReportsStoredCoverageCorruption(t *testing.T) {
 	const corrupted = `{"version":"invalid"}`
 	scan := db.Scan{RescanMode: db.ScanRescanModeDiff, Coverage: corrupted, Completeness: coverage.CompletenessPartial}
 	report := `{"coverage":{"receipts":[]}}`
-	err := (&Worker{}).parseSkillOutput(&db.Skill{}, &scan, report, func(Event) {})
+	err := (&Worker{}).parseSkillOutput(context.Background(), &db.Skill{}, &scan, report, func(Event) {})
 	if err == nil || !strings.Contains(err.Error(), "stored coverage record") {
 		t.Fatalf("error = %v, want stored coverage corruption detail", err)
 	}
@@ -120,7 +121,7 @@ func TestParseSkillOutputReportsStoredCoverageCorruption(t *testing.T) {
 func TestParseSkillOutputNeverClaimsCompleteWithoutWorkerScope(t *testing.T) {
 	scan := db.Scan{RescanMode: db.ScanRescanModeDiff}
 	report := `{"coverage":{"receipts":[{"path":"a.go","disposition":"reviewed_clean"}]}}`
-	if err := (&Worker{}).parseSkillOutput(&db.Skill{}, &scan, report, func(Event) {}); err != nil {
+	if err := (&Worker{}).parseSkillOutput(context.Background(), &db.Skill{}, &scan, report, func(Event) {}); err != nil {
 		t.Fatal(err)
 	}
 	rec, ok := coverage.Parse(scan.Coverage)
@@ -136,7 +137,7 @@ func TestParseSkillOutputIgnoresCoverageOutsideDiffRescan(t *testing.T) {
 	const initial = `{"producer":"other-skill"}`
 	scan := db.Scan{Coverage: initial, Completeness: coverage.CompletenessUnknown}
 	report := `{"coverage":{"format":"skill-specific"}}`
-	if err := (&Worker{}).parseSkillOutput(&db.Skill{}, &scan, report, func(Event) {}); err != nil {
+	if err := (&Worker{}).parseSkillOutput(context.Background(), &db.Skill{}, &scan, report, func(Event) {}); err != nil {
 		t.Fatal(err)
 	}
 	if scan.Coverage != initial || scan.Completeness != coverage.CompletenessUnknown {
@@ -146,7 +147,7 @@ func TestParseSkillOutputIgnoresCoverageOutsideDiffRescan(t *testing.T) {
 
 func TestParseSkillOutputLeavesMalformedCoverageEnvelopeToKindParser(t *testing.T) {
 	scan := db.Scan{RescanMode: db.ScanRescanModeDiff}
-	err := (&Worker{}).parseSkillOutput(&db.Skill{OutputKind: "maintainers"}, &scan, `{"coverage":`, func(Event) {})
+	err := (&Worker{}).parseSkillOutput(context.Background(), &db.Skill{OutputKind: "maintainers"}, &scan, `{"coverage":`, func(Event) {})
 	if err == nil || !strings.Contains(err.Error(), "parse maintainers report") {
 		t.Fatalf("error = %v, want maintainers parser error", err)
 	}

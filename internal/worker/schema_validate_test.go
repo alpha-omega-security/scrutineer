@@ -171,7 +171,7 @@ func TestParseSkillOutput_schemaWarnAndContinue(t *testing.T) {
 	// posture parser only decodes tier+summary and ignores unknown keys.
 	report := `{"tier":"ready","summary":"ok","extra":1}`
 	var events []Event
-	err := w.parseSkillOutput(skill, scan, report, func(e Event) { events = append(events, e) })
+	err := w.parseSkillOutput(context.Background(), skill, scan, report, func(e Event) { events = append(events, e) })
 	if err != nil {
 		t.Fatalf("warn mode should not return error: %v", err)
 	}
@@ -341,7 +341,7 @@ func TestParseSkillOutput_schemaStrictFails(t *testing.T) {
 
 	report := `{"tier":{"x":1}}`
 	var events []Event
-	err := w.parseSkillOutput(skill, scan, report, func(e Event) { events = append(events, e) })
+	err := w.parseSkillOutput(context.Background(), skill, scan, report, func(e Event) { events = append(events, e) })
 
 	var sve *SchemaValidationError
 	if !errors.As(err, &sve) {
@@ -366,7 +366,7 @@ func TestParseSkillOutput_schemaMessageUsesOutputFile(t *testing.T) {
 	skill.OutputFile = "custom-output.json"
 
 	var events []Event
-	err := w.parseSkillOutput(skill, scan, `{"tier":"ready","summary":"ok","extra":1}`, func(e Event) { events = append(events, e) })
+	err := w.parseSkillOutput(context.Background(), skill, scan, `{"tier":"ready","summary":"ok","extra":1}`, func(e Event) { events = append(events, e) })
 	if err != nil {
 		t.Fatalf("warn mode should not fail on schema mismatch: %v", err)
 	}
@@ -385,7 +385,7 @@ func TestParseSkillOutput_schemaStrictPassesThrough(t *testing.T) {
 	w, skill, scan := newSchemaTestWorker(t, true)
 
 	report := `{"tier":"partial","summary":"ok"}`
-	if err := w.parseSkillOutput(skill, scan, report, func(Event) {}); err != nil {
+	if err := w.parseSkillOutput(context.Background(), skill, scan, report, func(Event) {}); err != nil {
 		t.Fatalf("valid report should not error in strict mode: %v", err)
 	}
 	var repo db.Repository
@@ -442,7 +442,7 @@ func TestParseSkillOutput_noSchemaSkipsValidation(t *testing.T) {
 	w, skill, scan := newSchemaTestWorker(t, true)
 	skill.SchemaJSON = ""
 
-	if err := w.parseSkillOutput(skill, scan, `{"tier":"ready"}`, func(Event) {}); err != nil {
+	if err := w.parseSkillOutput(context.Background(), skill, scan, `{"tier":"ready"}`, func(Event) {}); err != nil {
 		t.Fatalf("no schema should skip validation: %v", err)
 	}
 }
