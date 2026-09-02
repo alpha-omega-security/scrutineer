@@ -441,6 +441,26 @@ func TestWriteFindingField_rejectsUnknownField(t *testing.T) {
 	}
 }
 
+func TestWriteFindingField_rejectsUnknownStatus(t *testing.T) {
+	gdb := newTestDB(t)
+	f := seedFinding(t, gdb)
+	for _, bad := range []string{"Rejected", "closed", "REPORTED"} {
+		if err := WriteFindingField(gdb, f.ID, "status", bad, SourceAnalyst, ""); err == nil {
+			t.Errorf("status %q: expected error", bad)
+		}
+	}
+	var got Finding
+	gdb.First(&got, f.ID)
+	if got.Status != FindingNew {
+		t.Errorf("status = %q, want unchanged", got.Status)
+	}
+	for _, ok := range FindingLifecycles {
+		if err := WriteFindingField(gdb, f.ID, "status", string(ok), SourceAnalyst, ""); err != nil {
+			t.Errorf("status %q: %v", ok, err)
+		}
+	}
+}
+
 func TestWriteFindingField_cvssVectorSyncsScore(t *testing.T) {
 	gdb := newTestDB(t)
 	f := seedFinding(t, gdb)
@@ -750,6 +770,8 @@ func fieldTestValue(field string) string {
 	switch field {
 	case "ghsa_id":
 		return "GHSA-aaaa-bbbb-cccc"
+	case "status":
+		return string(FindingTriaged)
 	case "cvss_vector":
 		return "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
 	case "cvss_v4_vector":

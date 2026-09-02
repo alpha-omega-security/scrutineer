@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -43,6 +44,9 @@ func validateFindingField(field, value string) error {
 	}
 	if field == "ghsa_id" && !ghsaIDRE.MatchString(value) {
 		return fmt.Errorf("ghsa_id %q is not a valid GHSA id (expected GHSA-xxxx-xxxx-xxxx)", value)
+	}
+	if field == "status" && !slices.Contains(FindingLifecycles, FindingLifecycle(value)) {
+		return fmt.Errorf("status %q is not a valid finding lifecycle", value)
 	}
 	return nil
 }
