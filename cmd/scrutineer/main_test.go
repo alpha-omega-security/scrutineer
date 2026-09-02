@@ -270,6 +270,11 @@ func TestFlagsMerge_zeroConfigSeedsModelsFromHarness(t *testing.T) {
 	if len(web.Models) == 0 {
 		t.Fatal("merge with empty config did not seed web.Models from harness defaults")
 	}
+	for _, id := range []string{"claude-fable-5[1m]", "claude-fable-5-1[1m]"} {
+		if !web.ValidModel(id) {
+			t.Errorf("merge with empty config did not seed Fable model %q", id)
+		}
+	}
 }
 
 func TestApplyServerDefaults_warnsOnModelOutsidePickList(t *testing.T) {
@@ -690,17 +695,14 @@ func TestBuildEgressAllow_nonClaudeHarnessExcludesAnthropic(t *testing.T) {
 	}
 }
 
-func TestResolveEgressSidecar_NoSidecarForNonRootless(t *testing.T) {
-	// docker, rootful podman, and the zero (docker) runtime keep the in-process
-	// host proxy: resolveEgressSidecar returns the zero config (no sidecar), and
-	// without probing for a gateway. Only rootless podman gets a sidecar, which
-	// is covered end to end by the podman integration test.
+func TestResolveEgressSidecar_HostProxyRuntimes(t *testing.T) {
+	// Docker Engine, rootful podman, and Apple keep the in-process host proxy:
+	// resolveEgressSidecar returns the zero config without probing a gateway.
 	f := &flags{addr: "127.0.0.1:8080", runnerImage: "img"}
 	for _, rt := range []worker.ContainerRuntime{
-		{Bin: "docker"},
+		{Bin: "docker", Version: "24.0.7"},
 		{Bin: "podman"}, // rootful
 		{Bin: "apple"},  // apple -- hardened, but uses the host proxy, not a sidecar
-		{},              // zero value = docker
 	} {
 		got, err := resolveEgressSidecar(rt, f, []string{"x"}, "tok", quietLog())
 		if err != nil {

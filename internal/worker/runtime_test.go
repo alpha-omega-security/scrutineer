@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"runtime"
 	"slices"
 	"testing"
 )
@@ -28,6 +29,7 @@ func TestRuntimeBin(t *testing.T) {
 // dependency now, and the last two are security boundaries, so a bump that
 // widens or drops one has to fail here.
 func TestContainerRuntimeEnginePredicates(t *testing.T) {
+	wantUnknownDockerSidecar := runtime.GOOS != "linux"
 	tests := []struct {
 		name          string
 		rt            ContainerRuntime
@@ -35,9 +37,10 @@ func TestContainerRuntimeEnginePredicates(t *testing.T) {
 		wantNetVerify bool
 		wantSidecar   bool
 	}{
-		{"docker zero value", ContainerRuntime{}, false, false, false},
-		{"docker explicit", ContainerRuntime{Bin: "docker"}, false, false, false},
-		{"docker rootless flag ignored", ContainerRuntime{Bin: "docker", Rootless: true}, false, false, false},
+		{"docker zero value", ContainerRuntime{}, false, wantUnknownDockerSidecar, wantUnknownDockerSidecar},
+		{"docker engine", ContainerRuntime{Bin: "docker", Version: "24.0.7"}, false, false, false},
+		{"docker desktop", ContainerRuntime{Bin: "docker", DockerDesktop: true, Version: "24.0.7"}, false, true, true},
+		{"docker rootless flag ignored", ContainerRuntime{Bin: "docker", Rootless: true, Version: "24.0.7"}, false, false, false},
 		{"rootful podman", ContainerRuntime{Bin: "podman"}, false, false, false},
 		{"rootless podman", ContainerRuntime{Bin: "podman", Rootless: true}, true, true, true},
 		// Apple has no podman subuid remap and keeps the in-process host

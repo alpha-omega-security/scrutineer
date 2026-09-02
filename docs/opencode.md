@@ -132,14 +132,13 @@ fails the scan with a clear error rather than an OpenCode server exception.
 `host_port` and `egress_allow` may be combined when a provider needs both a
 host-local endpoint and external hostnames.
 
-Under the sidecar egress path (rootless podman with `--hardened`) the request
-goes container → sidecar → host gateway → host loopback, which requires the
-rootless network backend to forward the host gateway to the host loopback. The
-sidecar already refuses to start when that forwarding is unavailable for the
-skill API port on the default `-addr 127.0.0.1:8080`; the same check applies
-here. A non-loopback `-addr` makes the sidecar's startup gate reach the API
-without host-loopback forwarding, so that check no longer proves a
-loopback-bound model server is reachable.
+Under the sidecar egress path (Docker Desktop or rootless podman with `--hardened`) the request
+goes container → sidecar → host gateway → host loopback. Rootless podman needs
+its network backend to forward the host gateway to the host loopback. The
+sidecar refuses to start when the skill API port is unavailable on the default
+`-addr 127.0.0.1:8080`; the same check applies here. A non-loopback `-addr`
+makes the sidecar's startup gate reach the API without host-loopback forwarding,
+so that check no longer proves a loopback-bound model server is reachable.
 
 ## Provider images and config
 

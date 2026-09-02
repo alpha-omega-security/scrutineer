@@ -596,19 +596,22 @@ func TestResolveProfile_DegradesToFallback(t *testing.T) {
 }
 
 func TestUsesEgressSidecar(t *testing.T) {
-	// The egress proxy sidecar is for exactly one configuration: rootless podman
-	// under --hardened, where the --internal network can't reach the host proxy.
-	// Everything else keeps the host-proxy path.
+	// Rootless podman and Docker Desktop need a sidecar under --hardened because
+	// their internal networks cannot reach the host proxy.
 	rootlessHardened := ContainerRunner{Hardened: true, Runtime: ContainerRuntime{Bin: "podman", Rootless: true}}
 	if !rootlessHardened.usesEgressSidecar() {
 		t.Error("rootless podman + --hardened must use the egress sidecar")
 	}
+	desktopHardened := ContainerRunner{Hardened: true, Runtime: ContainerRuntime{Bin: "docker", DockerDesktop: true, Version: "24.0.7"}}
+	if !desktopHardened.usesEgressSidecar() {
+		t.Error("Docker Desktop + --hardened must use the egress sidecar")
+	}
 	for _, d := range []ContainerRunner{
-		{Hardened: true}, // docker hardened -> host proxy
-		{Hardened: true, Runtime: ContainerRuntime{Bin: "podman"}},     // rootful podman hardened
-		{Hardened: true, Runtime: ContainerRuntime{Bin: runtimeApple}}, // apple hardened -> host proxy, NOT a sidecar
-		{Runtime: ContainerRuntime{Bin: "podman", Rootless: true}},     // rootless but not hardened
-		{Runtime: ContainerRuntime{Bin: "docker"}},                     // docker, not hardened
+		{Hardened: true, Runtime: ContainerRuntime{Bin: "docker", Version: "24.0.7"}},      // Docker Engine hardened
+		{Hardened: true, Runtime: ContainerRuntime{Bin: "podman"}},                         // rootful podman hardened
+		{Hardened: true, Runtime: ContainerRuntime{Bin: runtimeApple}},                     // apple hardened -> host proxy, NOT a sidecar
+		{Runtime: ContainerRuntime{Bin: "podman", Rootless: true}},                         // rootless but not hardened
+		{Runtime: ContainerRuntime{Bin: "docker", DockerDesktop: true, Version: "24.0.7"}}, // Desktop without hardened
 	} {
 		if d.usesEgressSidecar() {
 			t.Errorf("did not expect a sidecar for %+v", d)

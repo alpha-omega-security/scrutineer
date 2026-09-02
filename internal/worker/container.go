@@ -79,11 +79,8 @@ type ContainerRunner struct {
 	// byte-for-byte unchanged.
 	SELinuxRelabel bool
 	// Egress, when set, routes a hardened scan's egress through a proxy sidecar
-	// container instead of the in-process host proxy. setupRunner populates it
-	// only for rootless podman under --hardened -- the one configuration where
-	// the host proxy is unreachable across the per-scan --internal network. The
-	// zero value keeps the host-proxy path (docker, rootful podman, and all
-	// non-hardened scans). See usesEgressSidecar.
+	// container instead of the in-process host proxy. The zero value keeps the
+	// host-proxy path. See usesEgressSidecar.
 	Egress EgressSidecarConfig
 	// ProviderProxy contains the base allowlist and host endpoint used to start
 	// a short-lived in-process proxy for one configured OpenCode provider. The
@@ -100,8 +97,7 @@ type ContainerRunner struct {
 }
 
 // EgressSidecarConfig carries what setupHardenedNetwork needs to launch the
-// egress proxy as a sidecar container under rootless --hardened. The zero value
-// disables the sidecar.
+// egress proxy as a sidecar container. The zero value disables the sidecar.
 type EgressSidecarConfig struct {
 	// Token is the Proxy-Authorization secret; the same value is embedded in the
 	// scan's HTTPS_PROXY URL so the scan can authenticate to the sidecar.
@@ -175,15 +171,10 @@ func proxySidecarName(key string) string {
 }
 
 // usesEgressSidecar reports whether this scan routes egress through a proxy
-// sidecar container instead of the in-process host proxy. True only for rootless
-// podman under --hardened: there the per-scan --internal network cannot reach
-// the host proxy across the pasta/slirp4netns boundary (see docs/podman.md), so
-// the proxy must live on the network with the scan. docker and
-// rootful podman keep the host-proxy path unchanged, and so does Apple's
-// container -- its CLI has neither `--network podman` nor `network connect`, so it
-// must not take the sidecar path even though it still needs the per-scan
-// --internal verification (see Runtime.NeedsEgressSidecar vs
-// Runtime.NeedsHardenedNetVerify).
+// sidecar container instead of the in-process host proxy. Docker Desktop and
+// rootless podman cannot reach the host proxy across an internal network, so
+// the proxy must run on the scan's network. Docker Engine, rootful podman, and
+// Apple keep the host-proxy path.
 func (d ContainerRunner) usesEgressSidecar() bool {
 	return d.Hardened && d.Runtime.NeedsEgressSidecar()
 }
@@ -888,10 +879,8 @@ func (d ContainerRunner) setupHardenedNetwork(sj SkillJob, image string) (harden
 		return hardenedNet{}, noop, fmt.Errorf("hardened mode: could not resolve the Apple --internal network gateway for %q; cannot route to the egress proxy", network)
 	}
 
-	// Under rootless podman the scan cannot reach the host proxy across the
-	// --internal boundary, so the proxy runs as a sidecar on this network. Start
-	// it before verification; the sidecar must be torn down before the network
-	// (a network with an attached container will not delete).
+	// Start the sidecar before verification. It must be torn down before the
+	// network because an attached container prevents network deletion.
 	if d.usesEgressSidecar() {
 		endpoint, sidecarCleanup, err := d.startProxySidecar(sj, network)
 		if err != nil {
@@ -907,9 +896,9 @@ func (d ContainerRunner) setupHardenedNetwork(sj SkillJob, image string) (harden
 		hn.proxyName = proxySidecarName(sj.isolationKey())
 	}
 
-	// docker's bridge --internal is trusted, and so is rootful podman's (netavark
-	// + a bridge in the host netns, gateway on the host -- docker's model).
-	// Rootless podman and Apple need per-scan proof; see NeedsHardenedNetVerify.
+	// Docker Engine's bridge --internal is trusted, as is rootful podman's bridge
+	// in the host network namespace. Docker Desktop, rootless podman, and Apple
+	// need per-scan proof; see NeedsHardenedNetVerify.
 	if d.Runtime.NeedsHardenedNetVerify() {
 		if err := d.verifyHardenedNetwork(hn, image); err != nil {
 			cleanup()
@@ -936,7 +925,7 @@ func (d ContainerRunner) startProxySidecar(sj SkillJob, network string) (endpoin
 	if d.Egress.GatewayIP == "" {
 		// Without the host-gateway IPv4 the sidecar cannot reach the host skill
 		// API; refuse rather than start a sidecar that would 502 every API call.
-		return "", noop, fmt.Errorf("no host-gateway IPv4 resolved for the egress sidecar (podman >= 4.7 and a working rootless network backend are required)")
+		return "", noop, fmt.Errorf("no host-gateway IPv4 resolved for the %s egress sidecar", runtimeBin(d.Runtime))
 	}
 	name := proxySidecarName(sj.isolationKey())
 	rmName := func() { _ = exec.Command(runtimeBin(d.Runtime), "rm", "-f", "--", name).Run() }
@@ -1078,12 +1067,12 @@ func noteworthyProxyLogLine(line string) bool {
 // VerifyProxyBinary smoke-tests that the runner image carries the scrutineer
 // binary the egress proxy sidecar runs (`scrutineer proxy`). A runner image
 // without it -- an old cached image, or a custom --runner-image not built from
-// Dockerfile.runner -- would otherwise make every rootless --hardened scan fail
+// Dockerfile.runner -- would otherwise make every sidecar-backed scan fail
 // with a cryptic per-scan exec error; this turns that into one clear startup
 // failure. It is a no-op when the image is not present locally yet (the first
 // scan pulls it and would surface the same issue then), matching
 // container.VerifyKeepID.
-// Only meaningful on the sidecar path; the caller gates on rootless --hardened.
+// Only meaningful on the sidecar path; the caller checks the runtime trait.
 func VerifyProxyBinary(ctx context.Context, rt ContainerRuntime, image string) error {
 	if image == "" || !imageExistsLocally(ctx, rt, image) {
 		return nil
@@ -1092,7 +1081,7 @@ func VerifyProxyBinary(ctx context.Context, rt ContainerRuntime, image string) e
 		"--", image, "scrutineer", "proxy", "-h").CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("runner image %q is missing the scrutineer binary required for the "+
-			"rootless --hardened egress proxy sidecar (rebuild it from Dockerfile.runner): %w: %s",
+			"hardened egress proxy sidecar (rebuild it from Dockerfile.runner): %w: %s",
 			image, err, strings.TrimSpace(string(out)))
 	}
 	return nil
@@ -1136,9 +1125,8 @@ func (d ContainerRunner) verifyHardenedNetwork(hn hardenedNet, image string) err
 
 // verifyHostProxyReachable runs probe (b) for the host-proxy path: a throwaway
 // container on the --internal network, wiring the gateway alias exactly as the
-// real run does, must reach the host egress proxy. This is the path docker and
-// rootful podman use; under rootless --hardened the sidecar path is used instead
-// (verifyProxySidecarReachable).
+// real run does, must reach the host egress proxy. Docker Engine, rootful podman,
+// and Apple use this path; other hardened runtimes use the sidecar path.
 func (d ContainerRunner) verifyHostProxyReachable(hn hardenedNet, image string) error {
 	gwTarget := "host-gateway"
 	if hn.gatewayIP != "" {
