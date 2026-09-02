@@ -7,7 +7,7 @@ name: Profile Images
 on:
   pull_request:
     paths:
-      - docker/profiles/**
+      - docker/profiles/*/**
       - .github/workflows/profile-images.yml
 
 defaults:
@@ -71,7 +71,7 @@ jobs:
           RUNNER_IMAGE: ghcr.io/${{ github.repository }}-runner:latest
         run: |
           dir="docker/profiles/$PROFILE"
-          test -f "$dir/Dockerfile" || { echo "no Dockerfile for $PROFILE"; exit 0; }
+          test -f "$dir/Dockerfile" || { echo "no Dockerfile at $dir/Dockerfile"; exit 1; }
           base_image="$RUNNER_IMAGE"
           # ruby-rails is the one chained profile: it builds FROM the ruby
           # profile via BASE_IMAGE, not the runner via RUNNER_IMAGE.
