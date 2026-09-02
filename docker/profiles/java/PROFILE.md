@@ -4,7 +4,7 @@ The repository under `./src` is a JVM project, built with Maven or Gradle.
 
 ## Runtime
 
-- **Temurin JDK 21** — `java`, `javac`. `JAVA_HOME=/opt/java`.
+- **Temurin JDK 25** — `java`, `javac`. `JAVA_HOME=/opt/java`.
 - **`mvn`** (Maven 3.9) on PATH for `pom.xml` projects.
 - **`gradle`** (Gradle 9) on PATH for `build.gradle` / `build.gradle.kts` projects.
 

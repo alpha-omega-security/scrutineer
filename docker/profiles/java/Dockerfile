@@ -31,12 +31,12 @@ ARG RUNNER_IMAGE=ghcr.io/alpha-omega-security/scrutineer-runner:latest
 
 FROM ${RUNNER_IMAGE}
 
-# Temurin 21 LTS, the current long-term-support JDK. Both arches are listed
+# Temurin 25 LTS, the current long-term-support JDK. Both arches are listed
 # because the worker may build this on an amd64 or arm64 host.
-ARG JDK_VERSION=21.0.11_10
-ARG JDK_PATH_VERSION=jdk-21.0.11%2B10
-ARG JDK_SHA256_X64=4b2220e232a97997b436ca6ab15cbf70171ecff52958a46159dfa5a8c44ca4de
-ARG JDK_SHA256_ARM64=8d498ec88e1c1989fab95c6784240ab92d011e29c54d20a3f9c324b13476f9ad
+ARG JDK_VERSION=25.0.4.1_1
+ARG JDK_PATH_VERSION=jdk-25.0.4.1%2B1
+ARG JDK_SHA256_X64=dbb698396d478e7fa2b1e50f4103324b2a99b90569ee27c33f2261f9215cf41e
+ARG JDK_SHA256_ARM64=69df11a02cfa3ef7d7ca645e03edce6778ec090e100f6ae2b42097865730ac52
 # Maven publishes a sha512 alongside each binary; Gradle a sha256.
 ARG MAVEN_VERSION=3.9.16
 ARG MAVEN_SHA512=831a8591fe20c8243b1dbe7d71e3244f31d1665b0804b2e825e38cbbe5ce0cafb8338851f90780735568773e0a6cd07bbec107cda0b896b008b861075358b6f6
@@ -72,7 +72,7 @@ RUN apt-get update \
     esac \
  # JDK
  && curl -fsSL -o /tmp/jdk.tar.gz \
-        "https://github.com/adoptium/temurin21-binaries/releases/download/${JDK_PATH_VERSION}/OpenJDK21U-jdk_${jdkarch}_linux_hotspot_${JDK_VERSION}.tar.gz" \
+        "https://github.com/adoptium/temurin25-binaries/releases/download/${JDK_PATH_VERSION}/OpenJDK25U-jdk_${jdkarch}_linux_hotspot_${JDK_VERSION}.tar.gz" \
  && echo "${jdksha}  /tmp/jdk.tar.gz" | sha256sum -c - \
  && mkdir -p /opt/java \
  && tar -xzf /tmp/jdk.tar.gz -C /opt/java --strip-components=1 \
