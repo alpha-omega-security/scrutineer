@@ -102,6 +102,7 @@ func TestMatchProfile(t *testing.T) {
 		{"setuptools matches python", briefJSON("package_manager:setuptools"), "python"},
 		{"go modules matches go", briefJSON("package_manager:Go Modules"), "go"},
 		{"go modules case-insensitive", briefJSON("package_manager:go modules"), "go"},
+		{"sbt matches scala", briefJSON("package_manager:sbt"), "scala"},
 		{"maven matches java", briefJSON("package_manager:Maven"), "java"},
 		{"gradle matches java", briefJSON("package_manager:Gradle"), "java"},
 		{"gradle case-insensitive", briefJSON("package_manager:gradle"), "java"},
@@ -153,6 +154,7 @@ func TestMatchProfile(t *testing.T) {
 		{"Meson selects c-cpp", briefJSON("build:Meson"), "c-cpp"},
 
 		// language fallbacks
+		{"Scala language matches scala (belt-and-braces for a *.scala-only checkout)", briefJSON("language:Scala"), "scala"},
 		{"Perl language matches perl (belt-and-braces for a *.pl-only dist)", briefJSON("language:Perl"), "perl"},
 		{"C language matches c-cpp", briefJSON("language:C"), "c-cpp"},
 		{"C++ language matches c-cpp", briefJSON("language:C++"), "c-cpp"},
@@ -215,6 +217,22 @@ func TestMatchProfile(t *testing.T) {
 			"bundler + Make picks ruby over c-cpp",
 			briefJSON("package_manager:Bundler", "build:Make", "language:Ruby"),
 			"ruby",
+		},
+		{
+			// An sbt repo that also ships a Makefile (many do; it just
+			// wraps `sbt compile`) must not fall through to c-cpp.
+			"sbt + Make picks scala over c-cpp (registry order)",
+			briefJSON("package_manager:sbt", "build:Make", "language:Scala"),
+			"scala",
+		},
+		{
+			// A Scala-on-Gradle build reports both Gradle and Scala. scala
+			// is a superset of java (BaseProfile), so the Scala language
+			// selector routing here loses nothing and gains the sbt
+			// launcher plus Scala-specific reproducer guidance.
+			"Gradle + Scala language picks scala over java",
+			briefJSON("package_manager:Gradle", "language:Scala"),
+			"scala",
 		},
 
 		// no-match cases
@@ -552,6 +570,46 @@ func TestBrakemanVersionParity(t *testing.T) {
 	}
 	if rails != ext {
 		t.Errorf("BRAKEMAN_VERSION drift: ruby-rails=%q ruby-ext=%q (keep them in lockstep)", rails, ext)
+	}
+}
+
+// TestChainedProfilesInCIWorkflow keeps .github/workflows/profile-images.yml
+// in sync with builtinProfiles' BaseProfile entries. That workflow special-
+// cases chained profiles (it must build the base image first and pass it as
+// BASE_IMAGE); a new BaseProfile entry that is not listed there would build
+// FROM the runner in CI and pass, then fail at the worker's on-demand build
+// because the Dockerfile's ARG BASE_IMAGE never resolved to a java/ruby image.
+func TestChainedProfilesInCIWorkflow(t *testing.T) {
+	wd, _ := os.Getwd()
+	wf := filepath.Join(wd, "..", "..", ".github", "workflows", "profile-images.yml")
+	b, err := os.ReadFile(wf)
+	if err != nil {
+		t.Fatalf("read workflow: %v", err)
+	}
+	// Match `<profile>) base=<base> ;;` lines inside the case block.
+	re := regexp.MustCompile(`(?m)^\s+(\S+)\)\s+base=(\S+)\s+;;`)
+	got := map[string]string{}
+	for _, m := range re.FindAllStringSubmatch(string(b), -1) {
+		if m[1] != "*" {
+			got[m[1]] = m[2]
+		}
+	}
+	want := map[string]string{}
+	for _, p := range builtinProfiles {
+		if p.BaseProfile != "" {
+			want[p.Name] = p.BaseProfile
+		}
+	}
+	for name, base := range want {
+		if got[name] != base {
+			t.Errorf("workflow case for %q maps to base %q, want %q (add `%s) base=%s ;;` to %s)",
+				name, got[name], base, name, base, wf)
+		}
+	}
+	for name := range got {
+		if _, ok := want[name]; !ok {
+			t.Errorf("workflow case for %q has no matching BaseProfile in builtinProfiles (stale entry?)", name)
+		}
 	}
 }
 

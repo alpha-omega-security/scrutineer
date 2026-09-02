@@ -73,13 +73,18 @@ jobs:
           dir="docker/profiles/$PROFILE"
           test -f "$dir/Dockerfile" || { echo "no Dockerfile at $dir/Dockerfile"; exit 1; }
           base_image="$RUNNER_IMAGE"
-          # ruby-rails is the one chained profile: it builds FROM the ruby
-          # profile via BASE_IMAGE, not the runner via RUNNER_IMAGE.
-          if [[ "$PROFILE" == "ruby-rails" ]]; then
-            docker build -t scrutineer-profile-ruby:ci \
+          # Chained profiles build FROM another profile via BASE_IMAGE, not
+          # the runner via RUNNER_IMAGE. Build the base first.
+          case "$PROFILE" in
+            ruby-rails) base=ruby ;;
+            scala)      base=java ;;
+            *)          base= ;;
+          esac
+          if [[ -n "$base" ]]; then
+            docker build -t "scrutineer-profile-$base:ci" \
               --build-arg "RUNNER_IMAGE=$RUNNER_IMAGE" \
-              -f docker/profiles/ruby/Dockerfile docker/profiles/ruby
-            base_image=scrutineer-profile-ruby:ci
+              -f "docker/profiles/$base/Dockerfile" "docker/profiles/$base"
+            base_image="scrutineer-profile-$base:ci"
           fi
           docker build -t "scrutineer-profile-$PROFILE:ci" \
             --build-arg "RUNNER_IMAGE=$RUNNER_IMAGE" \

@@ -137,6 +137,20 @@ var builtinProfiles = []Profile{
 	},
 	{Name: "python", Detect: pm("pip", "Pipenv", "Poetry", "uv", "PDM", "setuptools")},
 	{Name: "go", Detect: pm("Go Modules")},
+	{
+		// Before java: an sbt project also matches nothing under java (Maven/
+		// Gradle), but a Scala-on-Gradle build reports both Gradle and Scala,
+		// and the scala profile is a superset of java (BaseProfile) that adds
+		// sbt plus Scala-specific reproducer guidance. The language selector is
+		// a belt-and-braces for a *.scala-only checkout with no build.sbt.
+		Name:            "scala",
+		BaseProfile:     "java",
+		FallbackProfile: "java",
+		Detect: []BriefMatch{
+			{briefPackageManager, []string{"sbt"}},
+			{briefLanguage, []string{"Scala"}},
+		},
+	},
 	{Name: "java", Detect: pm("Maven", "Gradle")},
 	{Name: "dotnet", Detect: pm("NuGet", "dotnet CLI")},
 	{Name: "beam", Detect: pm("Mix", "rebar3")},

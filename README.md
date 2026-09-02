@@ -291,10 +291,13 @@ When the container runner is active, scrutineer auto-detects a per-ecosystem **p
 | `ruby-rails` | `tools.build:Rails` | A superset of `ruby` plus **Brakeman**, Rails-specific SAST |
 | `node` | npm/pnpm/Yarn/Bun | Node.js |
 | `go` | Go Modules | Go toolchain |
+| `scala` | sbt or Scala language detection | A superset of `java` plus **sbt** and Scala-specific reproducer guidance |
 | `java` | Maven/Gradle | JDK |
 | `dotnet` | NuGet/dotnet CLI | .NET SDK |
 | `beam` | Mix/rebar3 | Erlang/Elixir |
 | `rust` | Cargo | Rust stable + nightly, Miri, sanitizers |
+| `ocaml` | opam, `tools.build:Dune`, or OCaml language detection | opam + a compiled OCaml 5.x switch + dune |
+| `swift` | Swift Package Manager or Swift language detection | Swift toolchain + swiftly |
 | `perl` | cpanm or Perl language detection | Perl toolchain |
 | `c-cpp` | `tools.build:CMake` / `Make` / `Autotools` / `Meson`, or C/C++ language detection, after language ecosystems have had a chance to match | C/C++ build toolchain |
 
