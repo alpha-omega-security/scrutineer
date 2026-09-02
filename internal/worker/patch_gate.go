@@ -58,12 +58,18 @@ func (w *Worker) parsePatchOutput(scan *db.Scan, report string, emit func(Event)
 		return fmt.Errorf("load finding %d: %w", *scan.FindingID, err)
 	}
 
-	srcDir := filepath.Join(w.scanWorkRoot(scan), "src")
-	if reason := gatePatch(srcDir, f.Location, rep.Patch); reason != "" {
+	repo := scan.Repository
+	if repo.ID == 0 {
+		if err := w.DB.First(&repo, scan.RepositoryID).Error; err != nil {
+			return fmt.Errorf("load repository %d: %w", scan.RepositoryID, err)
+		}
+	}
+	head, reason := w.gatePatch(repo, f.Location, rep.Patch)
+	if reason != "" {
 		emit(Event{Kind: KindText, Text: "patch: gate rejected: " + reason})
 		return nil
 	}
-	if head := gitHead(srcDir); head == "" || strings.TrimSpace(rep.BaseCommit) != head {
+	if head == "" || strings.TrimSpace(rep.BaseCommit) != head {
 		emit(Event{Kind: KindText, Text: fmt.Sprintf(
 			"patch: gate rejected: base_commit %q does not match staged HEAD %q", rep.BaseCommit, head)})
 		return nil
@@ -122,10 +128,72 @@ func (w *Worker) recordRemediationAttempt(scan *db.Scan, findingID uint, rep pat
 	return attempt, err
 }
 
-// gatePatch returns "" when the diff is acceptable, otherwise a one-line
-// reason. Checks: diff parses; every target file exists under srcDir; the
-// diff touches a file named in location; git apply --check accepts it.
-func gatePatch(srcDir, location, diff string) string {
+// stagePatchGateSrc creates a host-owned copy that has never been exposed to
+// the scan runner. Git must not inspect the runner's checkout after a skill
+// returns because the runner can rewrite .git/config and make Git execute a
+// filter, hook, or monitor as the host user. Remote repositories come from the
+// persistent clone cache under its per-URL lock; local repositories are cloned
+// with independent Git metadata so linked-worktree pointers cannot lead back to
+// the operator's real index.
+func (w *Worker) stagePatchGateSrc(repo db.Repository) (string, func(), error) {
+	tmp, err := os.MkdirTemp("", "scrutineer-gate-")
+	if err != nil {
+		return "", nil, err
+	}
+	cleanup := func() { _ = os.RemoveAll(tmp) }
+	if repo.IsLocal() {
+		if err := cloneLocalPatchGateSrc(repo.LocalPath(), filepath.Join(tmp, "src")); err != nil {
+			cleanup()
+			return "", nil, err
+		}
+	} else {
+		mu := w.cacheMutex(repo.URL)
+		mu.Lock()
+		err = CopyTree(
+			filepath.Join(RepoCacheRoot(w.DataDir, repo.URL), "src"),
+			filepath.Join(tmp, "src"),
+		)
+		mu.Unlock()
+		if err != nil {
+			cleanup()
+			return "", nil, fmt.Errorf("copy repository cache: %w", err)
+		}
+	}
+	return filepath.Join(tmp, "src"), cleanup, nil
+}
+
+// cloneLocalPatchGateSrc uses the normal Git transport instead of the local
+// hard-link optimization. Besides avoiding shared objects, this dereferences a
+// linked worktree's .git file into independent metadata under dst.
+func cloneLocalPatchGateSrc(localPath, dst string) error {
+	cmd := exec.Command("git", "clone", "--quiet", "--no-local", "--", localPath, dst)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("clone local source: %w: %s", err, firstLine(string(out)))
+	}
+	return nil
+}
+
+// gatePatch validates a diff only against a fresh checkout the runner never
+// touched. It returns that checkout's HEAD for the base-commit comparison and
+// a one-line rejection reason, if any.
+func (w *Worker) gatePatch(repo db.Repository, location, diff string) (string, string) {
+	srcDir, cleanup, err := w.stagePatchGateSrc(repo)
+	if err != nil {
+		return "", "stage pristine checkout: " + firstLine(err.Error())
+	}
+	defer cleanup()
+	if reason := gatePatchTree(srcDir, location, diff); reason != "" {
+		return "", reason
+	}
+	return gitHead(srcDir), ""
+}
+
+// gatePatchTree returns "" when the diff is acceptable, otherwise a one-line
+// reason. The caller must supply a host-owned tree. Checks: diff parses; every
+// target file exists; the diff touches a file named in location; git
+// apply --check accepts it.
+func gatePatchTree(srcDir, location, diff string) string {
 	files, err := parseUnifiedDiff(diff)
 	if err != nil {
 		return "diff does not parse: " + err.Error()
@@ -254,11 +322,9 @@ func locationPaths(location string) []string {
 }
 
 func gitApplyCheck(srcDir, diff string) (string, error) {
-	// The patch skill captures its diff with `git diff HEAD` and leaves the
-	// edits applied in srcDir; it never reverts. Re-applying an already-applied
-	// diff always fails, so reset the per-scan copy to HEAD first. reset --hard
-	// clears the skill's `git add -N` index entries; clean -fd drops any new
-	// files it created so a /dev/null hunk can recreate them.
+	// The caller supplies a fresh host-owned copy. Keep reset and clean so every
+	// applicability check starts from HEAD even if staging copied local changes
+	// or cache bookkeeping; neither command runs in the runner's checkout.
 	for _, args := range [][]string{{"reset", "-q", "--hard", "HEAD"}, {"clean", "-qfd"}} {
 		if out, err := exec.Command("git", append([]string{"-C", srcDir}, args...)...).CombinedOutput(); err != nil {
 			return string(out), err

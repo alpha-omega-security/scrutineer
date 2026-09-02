@@ -176,35 +176,66 @@ func gateRepo(t *testing.T, dir string) (relPath, diff string) {
 	return relPath, diff
 }
 
+func findingRepoForPatch(t *testing.T, w *Worker, finding db.Finding) db.Repository {
+	t.Helper()
+	var repo db.Repository
+	if err := w.DB.First(&repo, finding.RepositoryID).Error; err != nil {
+		t.Fatal(err)
+	}
+	return repo
+}
+
+func seedPatchCache(t *testing.T, w *Worker, repo db.Repository) (string, string) {
+	t.Helper()
+	cacheSrc := filepath.Join(RepoCacheRoot(w.DataDir, repo.URL), "src")
+	_, diff := gateRepo(t, cacheSrc)
+	return diff, gitHead(cacheSrc)
+}
+
+func stagePatchSkillEdits(t *testing.T, w *Worker, scan *db.Scan, repo db.Repository, diff string) {
+	t.Helper()
+	cacheSrc := filepath.Join(RepoCacheRoot(w.DataDir, repo.URL), "src")
+	workSrc := filepath.Join(w.scanWorkRoot(scan), "src")
+	if err := CopyTree(cacheSrc, workSrc); err != nil {
+		t.Fatal(err)
+	}
+	apply := exec.Command("git", "-C", workSrc, "apply", "-")
+	apply.Env = testutil.GitEnv()
+	apply.Stdin = strings.NewReader(diff)
+	if out, err := apply.CombinedOutput(); err != nil {
+		t.Fatalf("seed skill edits: %v: %s", err, out)
+	}
+}
+
 func TestGatePatch(t *testing.T) {
 	src := t.TempDir()
 	rel, diff := gateRepo(t, src)
 
-	if r := gatePatch(src, rel+":12", diff); r != "" {
+	if r := gatePatchTree(src, rel+":12", diff); r != "" {
 		t.Errorf("pass case rejected: %q", r)
 	}
 	// File-level match: a fix to pkg/foo.go passes even when the flagged line
 	// (:3) sits far from the hunk (line 12). This is the choke-point case the
 	// old line-overlap gate wrongly rejected.
-	if r := gatePatch(src, rel+":3", diff); r != "" {
+	if r := gatePatchTree(src, rel+":3", diff); r != "" {
 		t.Errorf("file-level pass case rejected: %q", r)
 	}
-	if r := gatePatch(src, "pkg/unrelated.go:12", diff); !strings.Contains(r, "no patched file matches location") {
+	if r := gatePatchTree(src, "pkg/unrelated.go:12", diff); !strings.Contains(r, "no patched file matches location") {
 		t.Errorf("expected unrelated-location rejection, got %q", r)
 	}
-	if r := gatePatch(src, "pkg/missing.go:12",
+	if r := gatePatchTree(src, "pkg/missing.go:12",
 		"--- a/pkg/missing.go\n+++ b/pkg/missing.go\n@@ -1 +1 @@\n-x\n+y\n"); !strings.Contains(r, "missing file") {
 		t.Errorf("expected missing-file rejection, got %q", r)
 	}
-	if r := gatePatch(src, rel+":12", "not a diff"); !strings.Contains(r, "no file headers") {
+	if r := gatePatchTree(src, rel+":12", "not a diff"); !strings.Contains(r, "no file headers") {
 		t.Errorf("expected no-file-headers rejection, got %q", r)
 	}
 	bad := strings.Replace(diff, "-line 12", "-WRONG", 1)
-	if r := gatePatch(src, rel+":12", bad); !strings.Contains(r, "git apply --check") {
+	if r := gatePatchTree(src, rel+":12", bad); !strings.Contains(r, "git apply --check") {
 		t.Errorf("expected git apply rejection, got %q", r)
 	}
 	newFileDiff := "--- /dev/null\n+++ b/pkg/foo_test.go\n@@ -0,0 +1 @@\n+test\n" + diff
-	if r := gatePatch(src, rel+":12", newFileDiff); r != "" {
+	if r := gatePatchTree(src, rel+":12", newFileDiff); r != "" {
 		t.Errorf("new-file alongside fix rejected: %q", r)
 	}
 }
@@ -223,8 +254,145 @@ func TestGatePatch_dirtyWorkspaceFromSkill(t *testing.T) {
 	if out, err := apply.CombinedOutput(); err != nil {
 		t.Fatalf("seed dirty workspace: %v: %s", err, out)
 	}
-	if r := gatePatch(src, rel+":12", diff); r != "" {
+	if r := gatePatchTree(src, rel+":12", diff); r != "" {
 		t.Errorf("gate rejected a valid patch against a skill-dirtied workspace: %q", r)
+	}
+}
+
+func TestGitApplyCheck_ignoresRunnerInstalledFilter(t *testing.T) {
+	w, finding := newPatchOutputFixture(t)
+	repo := findingRepoForPatch(t, w, finding)
+	scan := db.Scan{RepositoryID: repo.ID, Repository: repo, Kind: JobSkill,
+		Status: db.ScanRunning, FindingID: &finding.ID}
+	if err := w.DB.Create(&scan).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	runGit := func(dir string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = testutil.GitEnv()
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+		return string(out)
+	}
+
+	cacheSrc := filepath.Join(RepoCacheRoot(w.DataDir, repo.URL), "src")
+	rel, diff := gateRepo(t, cacheSrc)
+	if err := os.WriteFile(filepath.Join(cacheSrc, ".gitattributes"),
+		[]byte(rel+" filter=pwn\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(cacheSrc, "add", ".gitattributes")
+	runGit(cacheSrc, "commit", "-q", "-m", "add filter attribute")
+
+	workSrc := filepath.Join(w.scanWorkRoot(&scan), "src")
+	if err := CopyTree(cacheSrc, workSrc); err != nil {
+		t.Fatal(err)
+	}
+	apply := exec.Command("git", "-C", workSrc, "apply", "-")
+	apply.Env = testutil.GitEnv()
+	apply.Stdin = strings.NewReader(diff)
+	if out, err := apply.CombinedOutput(); err != nil {
+		t.Fatalf("seed skill edits: %v: %s", err, out)
+	}
+
+	marker := filepath.Join(t.TempDir(), "filter-ran")
+	config, err := os.OpenFile(filepath.Join(workSrc, ".git", "config"), os.O_WRONLY|os.O_APPEND, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fmt.Fprintf(config,
+		"\n[filter \"pwn\"]\n\tsmudge = sh -c \"id > %s 2>&1; cat\"\n", marker); err != nil {
+		_ = config.Close()
+		t.Fatal(err)
+	}
+	if err := config.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if got := runGit(workSrc, "config", "--local", "--get", "filter.pwn.smudge"); !strings.Contains(got, marker) {
+		t.Fatalf("filter command = %q, want marker path %q", got, marker)
+	}
+
+	report := fmt.Sprintf(`{"patch":%q,"base_commit":%q}`, diff, gitHead(cacheSrc))
+	if err := w.parsePatchOutput(&scan, report, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("runner-installed smudge filter executed in the host patch gate")
+	} else if !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	var got db.Finding
+	if err := w.DB.First(&got, finding.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.SuggestedFix != diff {
+		t.Fatalf("valid patch was not recorded; got %q", got.SuggestedFix)
+	}
+}
+
+func TestPatchGate_stagesLocalRepositoryWithoutMutatingIt(t *testing.T) {
+	src := t.TempDir()
+	rel, diff := gateRepo(t, src)
+	head := gitHead(src)
+	apply := exec.Command("git", "-C", src, "apply", "-")
+	apply.Env = testutil.GitEnv()
+	apply.Stdin = strings.NewReader(diff)
+	if out, err := apply.CombinedOutput(); err != nil {
+		t.Fatalf("seed local edits: %v: %s", err, out)
+	}
+
+	w := &Worker{}
+	gotHead, reason := w.gatePatch(db.Repository{URL: "file://" + src}, rel+":12", diff)
+	if reason != "" {
+		t.Fatalf("local patch rejected: %s", reason)
+	}
+	if gotHead != head {
+		t.Fatalf("staged HEAD = %q, want %q", gotHead, head)
+	}
+	local, err := os.ReadFile(filepath.Join(src, rel))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(local), "patched 12") {
+		t.Fatal("patch gate mutated the operator's local repository")
+	}
+}
+
+func TestPatchGate_stagesLinkedWorktreeWithoutMutatingIndex(t *testing.T) {
+	main := t.TempDir()
+	rel, diff := gateRepo(t, main)
+	linked := filepath.Join(t.TempDir(), "linked")
+	runGit := func(dir string, args ...string) string {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+		cmd.Env = testutil.GitEnv()
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+		return string(out)
+	}
+	runGit(main, "worktree", "add", "-q", "--detach", linked, "HEAD")
+	tracked := filepath.Join(linked, rel)
+	if err := os.WriteFile(tracked, []byte("operator staged change\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	runGit(linked, "add", rel)
+	before := runGit(linked, "diff", "--cached", "--binary")
+	if before == "" {
+		t.Fatal("test precondition: linked worktree has no staged change")
+	}
+
+	w := &Worker{}
+	if _, reason := w.gatePatch(db.Repository{URL: "file://" + linked}, rel+":12", diff); reason != "" {
+		t.Fatalf("linked-worktree patch rejected: %s", reason)
+	}
+	if after := runGit(linked, "diff", "--cached", "--binary"); after != before {
+		t.Fatalf("patch gate mutated linked-worktree index\nbefore:\n%s\nafter:\n%s", before, after)
 	}
 }
 
@@ -253,13 +421,14 @@ func newPatchOutputFixture(t *testing.T) (*Worker, db.Finding) {
 
 func TestParsePatchOutput_passWritesColumnsAndHistory(t *testing.T) {
 	w, finding := newPatchOutputFixture(t)
-	sc := db.Scan{RepositoryID: finding.RepositoryID, Kind: JobSkill, Status: db.ScanRunning, FindingID: &finding.ID}
+	repo := findingRepoForPatch(t, w, finding)
+	sc := db.Scan{RepositoryID: finding.RepositoryID, Repository: repo,
+		Kind: JobSkill, Status: db.ScanRunning, FindingID: &finding.ID}
 	if err := w.DB.Create(&sc).Error; err != nil {
 		t.Fatal(err)
 	}
-	src := filepath.Join(w.workRoot(sc.ID), "src")
-	_, diff := gateRepo(t, src)
-	head := gitHead(src)
+	diff, head := seedPatchCache(t, w, repo)
+	stagePatchSkillEdits(t, w, &sc, repo, diff)
 	report := fmt.Sprintf(`{"patch":%q,"base_commit":%q}`, diff, head)
 
 	var events []string
@@ -298,14 +467,16 @@ func TestParsePatchOutput_passWritesColumnsAndHistory(t *testing.T) {
 
 func TestParsePatchOutput_newScanCreatesNextImmutableAttempt(t *testing.T) {
 	w, finding := newPatchOutputFixture(t)
+	repo := findingRepoForPatch(t, w, finding)
+	diff, head := seedPatchCache(t, w, repo)
 	for want := 1; want <= 2; want++ {
-		scan := db.Scan{RepositoryID: finding.RepositoryID, Kind: JobSkill, Status: db.ScanRunning, FindingID: &finding.ID}
+		scan := db.Scan{RepositoryID: finding.RepositoryID, Repository: repo,
+			Kind: JobSkill, Status: db.ScanRunning, FindingID: &finding.ID}
 		if err := w.DB.Create(&scan).Error; err != nil {
 			t.Fatal(err)
 		}
-		src := filepath.Join(w.workRoot(scan.ID), "src")
-		_, diff := gateRepo(t, src)
-		report := fmt.Sprintf(`{"patch":%q,"base_commit":%q}`, diff, gitHead(src))
+		stagePatchSkillEdits(t, w, &scan, repo, diff)
+		report := fmt.Sprintf(`{"patch":%q,"base_commit":%q}`, diff, head)
 		if err := w.parsePatchOutput(&scan, report, func(Event) {}); err != nil {
 			t.Fatal(err)
 		}
@@ -318,29 +489,27 @@ func TestParsePatchOutput_newScanCreatesNextImmutableAttempt(t *testing.T) {
 }
 
 func TestParsePatchOutput_resumedScanUsesLineageWorkspace(t *testing.T) {
-	// A patch run that resumes a session (ResumedFromScanID set) stages its
-	// src tree under the lineage-root workspace, not scan-<retryID>/src. The
-	// gate must resolve through scanWorkRoot like every other stage; using
-	// workRoot(scan.ID) here stat'd a directory that was never created and
-	// rejected every valid diff with "diff targets missing file".
+	// A resumed patch run stages its skill edits under the lineage-root
+	// workspace. The gate no longer trusts either workspace path, but the diff
+	// produced there must still validate against the pristine cache copy.
 	w, finding := newPatchOutputFixture(t)
+	repo := findingRepoForPatch(t, w, finding)
 	root := db.Scan{RepositoryID: finding.RepositoryID, Kind: JobSkill, Status: db.ScanDone}
 	if err := w.DB.Create(&root).Error; err != nil {
 		t.Fatal(err)
 	}
-	resumed := db.Scan{RepositoryID: finding.RepositoryID, Kind: JobSkill,
+	resumed := db.Scan{RepositoryID: finding.RepositoryID, Repository: repo, Kind: JobSkill,
 		Status: db.ScanRunning, FindingID: &finding.ID, ResumedFromScanID: &root.ID}
 	if err := w.DB.Create(&resumed).Error; err != nil {
 		t.Fatal(err)
 	}
-	// Stage where the workspace actually lives (lineage root), and confirm the
-	// retry's own id resolves to a different, nonexistent dir.
-	src := filepath.Join(w.scanWorkRoot(&resumed), "src")
+	// Confirm the retry's own id resolves to a different, nonexistent dir.
 	if got := w.scanWorkRoot(&resumed); got == w.workRoot(resumed.ID) {
 		t.Fatalf("test precondition broken: lineage workspace %q equals retry workspace", got)
 	}
-	_, diff := gateRepo(t, src)
-	report := fmt.Sprintf(`{"patch":%q,"base_commit":%q}`, diff, gitHead(src))
+	diff, head := seedPatchCache(t, w, repo)
+	stagePatchSkillEdits(t, w, &resumed, repo, diff)
+	report := fmt.Sprintf(`{"patch":%q,"base_commit":%q}`, diff, head)
 
 	var events []string
 	if err := w.parsePatchOutput(&resumed, report, func(e Event) { events = append(events, e.Text) }); err != nil {
@@ -358,12 +527,13 @@ func TestParsePatchOutput_resumedScanUsesLineageWorkspace(t *testing.T) {
 
 func TestParsePatchOutput_gateRejectLeavesColumnsEmpty(t *testing.T) {
 	w, finding := newPatchOutputFixture(t)
-	sc := db.Scan{RepositoryID: finding.RepositoryID, Kind: JobSkill, Status: db.ScanRunning, FindingID: &finding.ID}
+	repo := findingRepoForPatch(t, w, finding)
+	sc := db.Scan{RepositoryID: finding.RepositoryID, Repository: repo,
+		Kind: JobSkill, Status: db.ScanRunning, FindingID: &finding.ID}
 	if err := w.DB.Create(&sc).Error; err != nil {
 		t.Fatal(err)
 	}
-	src := filepath.Join(w.workRoot(sc.ID), "src")
-	gateRepo(t, src)
+	seedPatchCache(t, w, repo)
 	report := `{"patch":"--- a/pkg/missing.go\n+++ b/pkg/missing.go\n@@ -1 +1 @@\n-x\n+y\n","base_commit":"abc"}`
 
 	var events []string
@@ -375,8 +545,8 @@ func TestParsePatchOutput_gateRejectLeavesColumnsEmpty(t *testing.T) {
 	if f.SuggestedFix != "" || f.SuggestedFixCommit != "" {
 		t.Errorf("columns should be empty after gate reject: fix=%q commit=%q", f.SuggestedFix, f.SuggestedFixCommit)
 	}
-	if !containsSubstr(events, "gate rejected") {
-		t.Errorf("events = %v, want gate-rejected message", events)
+	if !containsSubstr(events, "diff targets missing file") {
+		t.Errorf("events = %v, want missing-file gate rejection", events)
 	}
 	var count int64
 	w.DB.Model(&db.RemediationAttempt{}).Where("finding_id = ?", finding.ID).Count(&count)
