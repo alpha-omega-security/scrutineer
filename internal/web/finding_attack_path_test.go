@@ -97,6 +97,10 @@ func TestAPINonViableFindingCannotEnterReportingStates(t *testing.T) {
 	defer done()
 	f, token, _ := seedFindingForAPI(t, s)
 	s.DB.Model(&f).Update("production_viability", db.ProductionViabilityNonViable)
+	if err := s.DB.Model(&db.Scan{}).Where("api_token = ?", token).
+		Update("finding_id", f.ID).Error; err != nil {
+		t.Fatal(err)
+	}
 	for _, status := range []db.FindingLifecycle{db.FindingReady, db.FindingReported} {
 		t.Run(string(status), func(t *testing.T) {
 			body := fmt.Sprintf(`{"fields":{"status":%q},"by":"report-upstream"}`, status)

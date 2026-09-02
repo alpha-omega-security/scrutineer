@@ -145,7 +145,7 @@ func TestDependencyFindingsPURLJoin(t *testing.T) {
 
 	scan := Scan{RepositoryID: lib.ID, Kind: "skill", Status: ScanDone}
 	gdb.Create(&scan)
-	gdb.Create(&Finding{ScanID: scan.ID, RepositoryID: lib.ID, Title: "path traversal", Severity: "High", Status: FindingNew})
+	gdb.Create(&Finding{ScanID: scan.ID, RepositoryID: lib.ID, Title: "path traversal", Severity: "High", Status: FindingReported})
 
 	rows, err := DependencyFindings(gdb, app.ID)
 	if err != nil {
@@ -177,7 +177,7 @@ func TestDependencyFindingsIncludesNonRuntimeDependencies(t *testing.T) {
 
 	scan := Scan{RepositoryID: lib.ID, Kind: "skill", Status: ScanDone}
 	gdb.Create(&scan)
-	gdb.Create(&Finding{ScanID: scan.ID, RepositoryID: lib.ID, Title: "dev-only bug", Severity: "High", Status: FindingNew})
+	gdb.Create(&Finding{ScanID: scan.ID, RepositoryID: lib.ID, Title: "dev-only bug", Severity: "High", Status: FindingReported})
 
 	rows, err := DependencyFindings(gdb, app.ID)
 	if err != nil {
@@ -268,7 +268,7 @@ func TestDependencyFindingsMixedPURL(t *testing.T) {
 
 		scan := Scan{RepositoryID: lib.ID, Kind: "skill", Status: ScanDone}
 		gdb.Create(&scan)
-		gdb.Create(&Finding{ScanID: scan.ID, RepositoryID: lib.ID, Title: "x", Severity: "High", Status: FindingNew})
+		gdb.Create(&Finding{ScanID: scan.ID, RepositoryID: lib.ID, Title: "x", Severity: "High", Status: FindingReported})
 
 		rows, err := DependencyFindings(gdb, app.ID)
 		if err != nil {

@@ -246,9 +246,9 @@ Bundled skills with typed output kinds carry a schema; skills with `output_kind:
 
 ## Calling scrutineer from a skill
 
-`context.json` carries `scrutineer.api_base` and a per-scan bearer `scrutineer.token`. With those a skill can read prior scan results for the same repository, enqueue further scans, fetch maintainers, packages, advisories, dependents, and findings, and write notes and field updates back to a finding. The full surface is documented in [openapi.yaml](../openapi.yaml) at the repository root. The `triage` skill is the reference example for enqueueing; `disclose` and `patch` are the reference examples for finding writes.
+`context.json` carries `scrutineer.api_base` and a per-scan bearer `scrutineer.token`. With those a skill can read prior scan results for the same repository, enqueue further scans, fetch maintainers, packages, advisories, dependents, and findings, and write notes back to findings. A finding-scoped skill can also update mutable fields on the finding named by `finding_id`. The full surface is documented in [openapi.yaml](../openapi.yaml) at the repository root. The `triage` skill is the reference example for enqueueing; `disclose` and `patch` are the reference examples for finding writes.
 
-The token is scoped to the scan's own repository: a skill cannot read or write rows belonging to other repositories.
+The token is scoped to the scan's own repository: a skill cannot read or write rows belonging to other repositories. Direct field updates are narrower and require the scan's `finding_id` to match the target finding. Notes, communications, references, and labels retain repository scope so repository-wide skills can manage associated context across findings.
 
 ## Loading skills
 

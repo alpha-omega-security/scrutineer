@@ -104,7 +104,7 @@ The Scans tab fragment reads a narrowed projection (`scanRowColumns`) rather tha
 
 ## Skill HTTP API
 
-`/api` is a bearer-authenticated surface that running skills call back into. Each scan gets a random token on enqueue; the worker writes it into the workspace's `context.json`. Middleware (`apiAuth`) validates the token against the active scan row and enforces that a scan only touches resources on its own repository.
+`/api` is a bearer-authenticated surface that running skills call back into. Each scan gets a random token on enqueue; the worker writes it into the workspace's `context.json`. Middleware (`apiAuth`) validates the token against the active scan row and enforces that a scan only touches resources on its own repository. Direct finding-field PATCHes additionally require the scan's `FindingID` to match the target; finding child records remain repository-scoped for repository-wide skills.
 
 See `openapi.yaml` at the repo root for the full surface. The `triage` bundled skill is the reference example.
 

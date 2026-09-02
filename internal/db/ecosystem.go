@@ -143,14 +143,25 @@ type DependencyFinding struct {
 	Boundary   string           `json:"boundary"`
 }
 
+// dependencyFindingVisibleLifecycles are at or past maintainer notification
+// in the finding workflow. A positive allowlist keeps unpublished, rejected,
+// unknown, and future lifecycle values from crossing repository boundaries.
+var dependencyFindingVisibleLifecycles = []FindingLifecycle{
+	FindingReported,
+	FindingAcknowledged,
+	FindingFixed,
+	FindingPublished,
+}
+
 // DependencyFindings joins an application repository's Dependency rows
 // against every Package row in the database (any repository) and returns
-// the live Findings on the matched library repositories. The join key is the
-// parsed PURL (type, namespace, name) on both sides, so the two sources agree
-// without a write-time alias map. Self-matches and findings already marked
-// fixed/rejected/duplicate are excluded. Dependency phase is returned to the
-// caller but does not filter reachability: build dependencies can still be
-// supply-chain edges, and the UI layer owns phase filtering for display.
+// only notified or published Findings on the matched library repositories.
+// The join key is the parsed PURL (type, namespace, name) on both sides, so the
+// two sources agree without a write-time alias map. Self-matches, unpublished
+// findings, and rejected/duplicate findings are excluded. Dependency phase is
+// returned to the caller but does not filter reachability: build dependencies
+// can still be supply-chain edges, and the UI layer owns phase filtering for
+// display.
 func DependencyFindings(g *gorm.DB, appRepoID uint) ([]DependencyFinding, error) {
 	var deps []Dependency
 	if err := g.Where("repository_id = ?", appRepoID).Find(&deps).Error; err != nil {
@@ -213,7 +224,7 @@ func DependencyFindings(g *gorm.DB, appRepoID uint) ([]DependencyFinding, error)
 	}
 	var findings []Finding
 	if err := g.Where("repository_id IN ?", libIDs).
-		Where("status NOT IN ?", ClosedFindingLifecycles).
+		Where("status IN ?", dependencyFindingVisibleLifecycles).
 		Order("CASE severity WHEN 'Critical' THEN 0 WHEN 'High' THEN 1 WHEN 'Medium' THEN 2 ELSE 3 END, repository_id").
 		Find(&findings).Error; err != nil {
 		return nil, err

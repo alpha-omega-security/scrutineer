@@ -12,10 +12,10 @@ import (
 	"gorm.io/gorm"
 )
 
-// The handlers below let skills (and the browser UI) mutate a finding:
-// edit scoring fields, append notes, log communications, add references,
-// set labels, and read the full change history. Auth scoping holds: the
-// authenticated scan's repository must own the finding.
+// The handlers below let authenticated skills mutate a finding. Direct field
+// edits require the scan's finding scope; notes, communications, references,
+// labels, and history remain repository-scoped. Browser form edits use
+// separate routes.
 
 func (s *Server) apiPatchFinding(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(r.PathValue("id"))
@@ -33,6 +33,20 @@ func (s *Server) apiPatchFinding(w http.ResponseWriter, r *http.Request) {
 		By     string            `json:"by"`
 	}](w, r, "body must be JSON with a fields map")
 	if !ok {
+		return
+	}
+	if status, changesStatus := body.Fields["status"]; changesStatus {
+		switch db.FindingLifecycle(status) {
+		case db.FindingRejected, db.FindingDuplicate:
+			writeAPIError(w, http.StatusForbidden,
+				"scan tokens may not set finding status to rejected or duplicate")
+			return
+		}
+	}
+	scan := scanFromRequest(r)
+	if scan == nil || scan.FindingID == nil || *scan.FindingID != uint(id) {
+		writeAPIError(w, http.StatusForbidden,
+			"scan may only edit its scoped finding")
 		return
 	}
 	source := sourceFromRequest(r)

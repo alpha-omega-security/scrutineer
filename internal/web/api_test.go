@@ -463,9 +463,9 @@ func TestAPIListDependencyFindings(t *testing.T) {
 	s.DB.Create(&db.Package{RepositoryID: lib.ID, Name: "roo", Ecosystem: "rubygems"})
 	libScan := db.Scan{RepositoryID: lib.ID, Kind: worker.JobSkill, Status: db.ScanDone}
 	s.DB.Create(&libScan)
-	s.DB.Create(&db.Finding{ScanID: libScan.ID, RepositoryID: lib.ID, Title: "xlsx bomb", Severity: sevHigh, CWE: "CWE-770", Location: "lib/roo/excelx.rb:42", Status: db.FindingNew, Trace: "t", Boundary: "b"})
-	s.DB.Create(&db.Finding{ScanID: libScan.ID, RepositoryID: lib.ID, Title: "ods bomb", Severity: "Medium", CWE: "CWE-770", Status: db.FindingNew})
-	s.DB.Create(&db.Finding{ScanID: libScan.ID, RepositoryID: lib.ID, Title: "old", Severity: sevHigh, Status: db.FindingFixed})
+	s.DB.Create(&db.Finding{ScanID: libScan.ID, RepositoryID: lib.ID, Title: "xlsx bomb", Severity: sevHigh, CWE: "CWE-770", Location: "lib/roo/excelx.rb:42", Status: db.FindingReported, Trace: "t", Boundary: "b"})
+	s.DB.Create(&db.Finding{ScanID: libScan.ID, RepositoryID: lib.ID, Title: "ods bomb", Severity: "Medium", CWE: "CWE-770", Status: db.FindingAcknowledged})
+	s.DB.Create(&db.Finding{ScanID: libScan.ID, RepositoryID: lib.ID, Title: "rejected", Severity: sevHigh, Status: db.FindingRejected})
 
 	// Self-published package on the app repo must not match its own findings.
 	s.DB.Create(&db.Package{RepositoryID: app.ID, Name: "leftpad", Ecosystem: "npm"})
@@ -484,7 +484,7 @@ func TestAPIListDependencyFindings(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(rows) != 2 {
-		t.Fatalf("rows=%d want=2 (live roo findings only): %+v", len(rows), rows)
+		t.Fatalf("rows=%d want=2 (notified roo findings only): %+v", len(rows), rows)
 	}
 	if rows[0].Severity != sevHigh || rows[0].Package != "roo" {
 		t.Errorf("first row should be the High roo finding, got %+v", rows[0])
@@ -506,6 +506,76 @@ func TestAPIListDependencyFindings(t *testing.T) {
 	_ = json.NewDecoder(w.Body).Decode(&rows)
 	if len(rows) != 1 || rows[0].Title != "xlsx bomb" {
 		t.Errorf("severity filter: %+v", rows)
+	}
+}
+
+func TestDependencyFindings_excludesUnpublishedCrossRepo(t *testing.T) {
+	cases := []struct {
+		status db.FindingLifecycle
+		want   bool
+	}{
+		{db.FindingNew, false},
+		{db.FindingEnriched, false},
+		{db.FindingTriaged, false},
+		{db.FindingReady, false},
+		{db.FindingReported, true},
+		{db.FindingAcknowledged, true},
+		{db.FindingFixed, true},
+		{db.FindingPublished, true},
+		{db.FindingRejected, false},
+		{db.FindingDuplicate, false},
+	}
+	for _, tc := range cases {
+		t.Run(string(tc.status), func(t *testing.T) {
+			s, done := newTestServer(t)
+			defer done()
+			app, scan := seedRunningScan(t, s)
+			pkg := "library-" + string(tc.status)
+			s.DB.Create(&db.Dependency{RepositoryID: app.ID, Name: pkg,
+				Ecosystem: "npm", ManifestPath: "package.json"})
+
+			libURL := "https://example.com/" + pkg
+			lib := db.Repository{URL: libURL, Name: pkg}
+			s.DB.Create(&lib)
+			s.DB.Create(&db.Package{RepositoryID: lib.ID, Name: pkg, Ecosystem: "npm"})
+			libScan := db.Scan{RepositoryID: lib.ID, Kind: worker.JobSkill, Status: db.ScanDone}
+			s.DB.Create(&libScan)
+			title := "cross-repository-" + string(tc.status)
+			f := db.Finding{ScanID: libScan.ID, RepositoryID: lib.ID, Title: title,
+				Severity: sevHigh, Status: tc.status, Trace: "private trace",
+				Boundary: "private boundary"}
+			s.DB.Create(&f)
+
+			path := "/api/repositories/" + strconv.FormatUint(uint64(app.ID), 10) +
+				"/dependency-findings"
+			r := httptest.NewRequest(http.MethodGet, path, nil)
+			r.Host = testHost
+			r.Header.Set("Authorization", "Bearer "+scan.APIToken)
+			w := httptest.NewRecorder()
+			s.Handler().ServeHTTP(w, r)
+			if w.Code != http.StatusOK {
+				t.Fatalf("status %d: %s", w.Code, w.Body)
+			}
+			body := w.Body.String()
+			var rows []db.DependencyFinding
+			if err := json.NewDecoder(strings.NewReader(body)).Decode(&rows); err != nil {
+				t.Fatal(err)
+			}
+			if tc.want {
+				if len(rows) != 1 || rows[0].FindingID != f.ID || rows[0].Status != tc.status {
+					t.Fatalf("rows = %+v, want the %s finding", rows, tc.status)
+				}
+				return
+			}
+			if len(rows) != 0 {
+				t.Fatalf("rows = %+v, want no cross-repository data for %s", rows, tc.status)
+			}
+			for _, secret := range []string{title, libURL, "private trace", "private boundary"} {
+				if strings.Contains(body, secret) {
+					t.Errorf("response disclosed %q for %s: %s", secret, tc.status, body)
+				}
+			}
+		})
 	}
 }
 

@@ -504,10 +504,11 @@ paths:
       summary: Update mutable fields on a finding
       operationId: patchFinding
       description: |
+        The authenticated scan must be finding-scoped to this finding ID.
         Each field value is written through the history-tracked path.
-        Skills write with source=model_suggested; the browser UI (behind
-        its own session) writes with source=analyst. Unknown field names
-        are rejected.
+        Finding-scoped skills write with source=model_suggested; browser
+        form edits use separate routes and write with source=analyst.
+        Unknown field names are rejected.
       requestBody:
         required: true
         content:

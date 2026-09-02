@@ -262,10 +262,10 @@ func (s *Server) apiListDependencies(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// apiListDependencyFindings returns findings on any library repository whose
-// published package appears in this repository's dependency list. The skill
-// token still only authorises the caller's own repo; the cross-repo read is
-// derived from that repo's dependencies, not chosen by the caller.
+// apiListDependencyFindings returns notified or published findings on any
+// library repository whose published package appears in this repository's
+// dependency list. The caller's dependency rows select candidate libraries,
+// but unpublished findings never cross the repository boundary.
 func (s *Server) apiListDependencyFindings(w http.ResponseWriter, r *http.Request) {
 	id, ok := s.repoScopedID(w, r)
 	if !ok {
