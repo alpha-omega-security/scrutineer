@@ -8,7 +8,7 @@ The repository under `./src` is a JVM project, built with Maven or Gradle.
 - **`mvn`** (Maven 3.9) on PATH for `pom.xml` projects.
 - **`gradle`** (Gradle 9) on PATH for `build.gradle` / `build.gradle.kts` projects.
 
-The Maven local repository (`/opt/m2/repo`) and Gradle home (`/opt/gradle-home`) live on an exec-capable path rather
+The Maven local repository (`/opt/m2/repo`) and Gradle home (`/opt/gradle-home`) are on an exec-capable path rather
 than under `HOME`, which is a small noexec mount. `mvn` and `gradle` already run with `java.io.tmpdir=/opt/java-tmp` so
 JVM libraries that unpack native `.so` files can load them; a standalone `java` reproducer that loads a native library
 should pass `-Djava.io.tmpdir=/opt/java-tmp` too.

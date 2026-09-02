@@ -5,7 +5,7 @@ The repository under `./src` is a .NET project (C#, F#, or VB), built with NuGet
 ## Runtime
 
 - **.NET SDK 10** — `dotnet`. Covers restore, build, test, and run.
-- The NuGet package cache (`/opt/nuget`) and CLI home (`/opt/dotnet-home`) live on an exec-capable path rather than under `HOME`, which is a small noexec mount. Telemetry and the first-run banner are off.
+- The NuGet package cache (`/opt/nuget`) and CLI home (`/opt/dotnet-home`) are on an exec-capable path rather than under `HOME`, which is a small noexec mount. Telemetry and the first-run banner are off.
 
 ## Operating procedure
 

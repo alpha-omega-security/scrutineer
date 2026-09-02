@@ -7,7 +7,7 @@ The repository under `./src` is an Erlang or Elixir project, built with rebar3 o
 - **Erlang/OTP 27** — `erl`, `erlc`, `escript`.
 - **Elixir 1.20** — `elixir`, `iex`, `mix` (for `mix.exs` projects).
 - **`rebar3`** on PATH for Erlang (`rebar.config`) projects.
-- **Hex** is installed; the package cache (`/opt/hex`) and Mix archives (`/opt/mix`) live on an exec-capable path rather than under `HOME`, which is a small noexec mount.
+- **Hex** is installed; the package cache (`/opt/hex`) and Mix archives (`/opt/mix`) are on an exec-capable path rather than under `HOME`, which is a small noexec mount.
 
 ## Operating procedure
 

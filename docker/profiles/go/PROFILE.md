@@ -8,7 +8,7 @@ The repository under `./src` is a Go module.
 - **`govulncheck`** on PATH — reports known vulnerabilities in the module graph and, with source, which are actually reachable.
 - C toolchain (`build-essential`) for cgo, so a project that imports `"C"` builds, tests, and reproduces.
 
-The Go module cache, build cache, and tmp dir live under `/opt/go` (an exec-capable path), because `HOME` is a noexec
+The Go module cache, build cache, and tmp dir are under `/opt/go` (an exec-capable path), because `HOME` is a noexec
 mount and `go run`/`go test` execute the binaries they build.
 
 ## Operating procedure
