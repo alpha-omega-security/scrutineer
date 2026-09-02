@@ -22,6 +22,7 @@ concurrency:
 
 jobs:
   changed:
+    name: list changed profiles
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
