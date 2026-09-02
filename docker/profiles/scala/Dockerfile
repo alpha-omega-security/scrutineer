@@ -52,7 +52,11 @@ RUN curl -fsSL -o /tmp/sbt.tgz \
         "https://github.com/sbt/sbt/releases/download/v${SBT_VERSION}/sbt-${SBT_VERSION}.tgz" \
  && echo "${SBT_SHA256}  /tmp/sbt.tgz" | sha256sum -c - \
  && tar -xzf /tmp/sbt.tgz -C /opt \
- && rm /tmp/sbt.tgz /opt/sbt/bin/sbtn-* \
+ && rm /tmp/sbt.tgz \
+ # sbtn-* are per-arch native thin clients for the sbt server; scans are
+ # one-shot so they are unused. -f so a future sbt tgz that drops them still
+ # builds instead of failing on an unexpanded glob.
+ && rm -f /opt/sbt/bin/sbtn-* \
  && install -d -m 1777 /opt/sbt-home /opt/sbt-home/boot /opt/ivy2 /opt/coursier \
  # Smoke-test with throwaway home/boot/cache dirs so the build does not seed
  # /opt/{sbt-home,ivy2,coursier} with root-owned files the scan uid could not
