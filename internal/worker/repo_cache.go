@@ -15,7 +15,14 @@ import (
 )
 
 func repoCache(dataDir string) *clone.Cache {
-	return &clone.Cache{Root: filepath.Join(dataDir, "repo-cache")}
+	// One attempt via gitWithEnv, matching the pre-delegation git() call.
+	// The default clone.Retry policy is 3 attempts with backoff, which would
+	// hold w.cacheMutex(url) inside the code-browser HTTP handler for the
+	// whole retry budget while a scan on the same repo waits.
+	return &clone.Cache{
+		Root:  filepath.Join(dataDir, "repo-cache"),
+		Retry: gitRetry{attempts: 1}.toCloneWithNotify(nil),
+	}
 }
 
 // RepoCacheRoot returns the persistent per-URL clone directory under

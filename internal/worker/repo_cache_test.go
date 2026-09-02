@@ -113,8 +113,14 @@ func TestRepoCacheRoot(t *testing.T) {
 	if a == c {
 		t.Errorf("different URLs should produce different paths, both %q", a)
 	}
-	if !strings.HasPrefix(a, filepath.Join("/data", "repo-cache")+string(filepath.Separator)) {
-		t.Errorf("path %q not under /data/repo-cache/", a)
+	// Pin the sha256(url) layout so a clone.Cache release that changes Dir()
+	// fails here rather than silently re-keying every existing cache dir on
+	// disk (docs/skills.md documents this layout, and RemoveAll on the old
+	// path would leave orphans).
+	want := filepath.Join("/data", "repo-cache",
+		"426415da6467c87a94a513112f24b70d4b6adf406b39e4b9e74ac984d9221813")
+	if a != want {
+		t.Errorf("path %q, want %q", a, want)
 	}
 }
 
