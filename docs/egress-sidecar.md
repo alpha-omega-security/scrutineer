@@ -1,10 +1,12 @@
 # Egress proxy sidecar — operator validation (rootless podman)
 
-scrutineer makes `--hardened` work under **rootless podman** by running its
-egress allowlist proxy as a **per-scan sidecar container** instead of a host
-process. This page is the checklist for validating it on a real rootless podman
-host — the parts that can't be unit-tested because they depend on the kernel and
-the rootless network backend.
+scrutineer makes `--hardened` work under **rootless podman** and **Docker
+Desktop** by running its egress allowlist proxy as a **per-scan sidecar
+container** instead of a host process. Docker Desktop needs no host setup: its
+default bridge already reaches the host, so the per-scan verification is the
+only check. This page is the checklist for validating the sidecar on a real
+rootless podman host — the parts that can't be unit-tested because they depend
+on the kernel and the rootless network backend.
 
 > **TL;DR of what to verify:** (1) your rootless backend forwards `host-gateway`
 > to the host **loopback**; (2) a real `--hardened` scan runs and its egress is
