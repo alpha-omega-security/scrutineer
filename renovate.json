@@ -100,7 +100,7 @@
       "matchManagers": ["gomod"],
       "groupName": "Go modules",
       "minimumReleaseAge": "7 days",
-      "postUpdateOptions": ["gomodTidy"]
+      "postUpdateOptions": ["gomodTidy", "gomodUpdateImportPaths"]
     },
     {
       "matchManagers": ["gomod"],
