@@ -1,6 +1,6 @@
 module scrutineer
 
-go 1.26
+go 1.26.0
 
 toolchain go1.27.0
 
@@ -14,7 +14,7 @@ require (
 	github.com/git-pkgs/enrichment v0.7.0
 	github.com/git-pkgs/magic v0.2.0
 	github.com/git-pkgs/pom v0.1.7
-	github.com/git-pkgs/purl v0.1.17
+	github.com/git-pkgs/purl v0.1.18
 	github.com/git-pkgs/sarif v0.1.2
 	github.com/git-pkgs/sbom v0.1.5
 	github.com/git-pkgs/vulns v0.2.2
