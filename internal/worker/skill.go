@@ -165,10 +165,12 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 	}
 
 	// Per-scan workspace keeps concurrent skills on the same repo from
-	// clobbering each other's src/ and report.json. wrap() removes it on
-	// successful completion; failed/cancelled dirs are left so the
-	// operator can inspect what the skill saw. The clone itself lives in
-	// the persistent repo-cache and is copied in by prepareRepoSrc.
+	// clobbering each other's src/ and report.json. wrap() removes it once
+	// the scan reaches a terminal status. A paused scan keeps it and comes
+	// back through here on resume, after the agent has had the run of it, so
+	// staging always starts from an empty directory rather than writing into
+	// one the agent shaped (see resetWorkspace). The clone itself lives in the
+	// persistent repo-cache and is copied in by prepareRepoSrc.
 	workRoot := w.scanWorkRoot(scan)
 	if err := validateSkillPaths(skill.Name, skill.OutputFile); err != nil {
 		return "", err
@@ -176,8 +178,8 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 	if scan.Repository.IsLocal() && skill.RequiresRemote {
 		return "", fmt.Errorf("skill %q requires a remote repository; cannot run on local directory", skill.Name)
 	}
-	if err := os.MkdirAll(workRoot, dirPerm); err != nil {
-		return "", fmt.Errorf("mkdir work: %w", err)
+	if err := resetWorkspace(workRoot); err != nil {
+		return "", fmt.Errorf("reset work: %w", err)
 	}
 	if scan.Repository.IsLocal() {
 		if err := prepareLocalSrc(scan.Repository.LocalPath(), workRoot, emit); err != nil {

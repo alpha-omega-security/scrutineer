@@ -364,11 +364,29 @@ func prepareOpencodeScanState(provider opencodeProvider, harnessStateDir string)
 	if harnessStateDir == "" {
 		return fmt.Errorf("OpenCode provider %q stored auth requires a per-scan harness state directory", provider.ID)
 	}
-	target := filepath.Join(harnessStateDir, "data", "opencode", "auth.json")
-	if err := os.MkdirAll(filepath.Dir(target), opencodeProviderStatePerm); err != nil {
+	// The state directory is mounted read-write at /harness-state and
+	// XDG_DATA_HOME points the agent at data/ below it, so after the first
+	// invocation everything under data/ is the agent's. The placeholder the
+	// auth.json bind mount lands on is therefore created through a root
+	// opened at the state directory: a link the agent left at the path, or at
+	// data/ or data/opencode/, cannot carry the create outside the directory,
+	// and anything there that is not already a regular file is replaced.
+	root, err := os.OpenRoot(harnessStateDir)
+	if err != nil {
 		return fmt.Errorf("prepare OpenCode provider %q scan auth directory: %w", provider.ID, err)
 	}
-	file, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE, opencodeAuthFilePerm)
+	defer func() { _ = root.Close() }()
+	rel := filepath.Join("data", "opencode", "auth.json")
+	if err := root.MkdirAll(filepath.Dir(rel), opencodeProviderStatePerm); err != nil {
+		return fmt.Errorf("prepare OpenCode provider %q scan auth directory: %w", provider.ID, err)
+	}
+	if info, err := root.Lstat(rel); err == nil && info.Mode().IsRegular() {
+		return nil
+	}
+	if err := root.RemoveAll(rel); err != nil {
+		return fmt.Errorf("prepare OpenCode provider %q scan auth mountpoint: %w", provider.ID, err)
+	}
+	file, err := root.OpenFile(rel, os.O_WRONLY|os.O_CREATE|os.O_EXCL, opencodeAuthFilePerm)
 	if err != nil {
 		return fmt.Errorf("prepare OpenCode provider %q scan auth mountpoint: %w", provider.ID, err)
 	}

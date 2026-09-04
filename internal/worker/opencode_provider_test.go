@@ -607,3 +607,64 @@ func TestRunnerImageContentDigestParsesAppleInspectJSON(t *testing.T) {
 		t.Errorf("apple runner image id fallback = %q, want sha256:localid", got)
 	}
 }
+
+func TestPrepareOpencodeScanStateRefusesSymlinkedMountpoint(t *testing.T) {
+	provider := opencodeProvider{ID: "kiro", StateDir: t.TempDir()}
+	parent := t.TempDir()
+	state := filepath.Join(parent, "state")
+	if err := os.MkdirAll(filepath.Join(state, "data", "opencode"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// The agent owns data/ (its XDG_DATA_HOME) and left the mountpoint name
+	// as a link to a host path outside the state directory.
+	victim := filepath.Join(parent, "victim")
+	mountpoint := filepath.Join(state, "data", "opencode", "auth.json")
+	if err := os.Symlink("../../../victim", mountpoint); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareOpencodeScanState(provider, state); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(victim); !os.IsNotExist(err) {
+		t.Errorf("mountpoint create followed the link onto the host: lstat err = %v", err)
+	}
+	if info, err := os.Lstat(mountpoint); err != nil || !info.Mode().IsRegular() {
+		t.Errorf("mountpoint = %v, %v; want a regular file", info, err)
+	}
+
+	// A link to an existing host file is replaced without touching the target.
+	original := []byte("keep\n")
+	if err := os.WriteFile(victim, original, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(mountpoint); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../../../victim", mountpoint); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareOpencodeScanState(provider, state); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := os.ReadFile(victim); err != nil || string(got) != string(original) {
+		t.Errorf("host file changed: %q, %v", got, err)
+	}
+	if info, err := os.Lstat(mountpoint); err != nil || !info.Mode().IsRegular() {
+		t.Errorf("mountpoint = %v, %v; want a regular file", info, err)
+	}
+
+	// A data/ that leaves the state directory fails the scan instead of being
+	// followed, and creates nothing outside it.
+	if err := os.RemoveAll(filepath.Join(state, "data")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("..", filepath.Join(state, "data")); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepareOpencodeScanState(provider, state); err == nil {
+		t.Error("expected a linked data directory to be refused")
+	}
+	if _, err := os.Lstat(filepath.Join(parent, "opencode")); !os.IsNotExist(err) {
+		t.Errorf("directory created outside the state directory: lstat err = %v", err)
+	}
+}

@@ -56,3 +56,40 @@ func TestReadCappedReport_missingFileIsEmpty(t *testing.T) {
 		t.Errorf("missing file should return empty, got %q", got)
 	}
 }
+
+func TestReadCappedReport_refusesSymlink(t *testing.T) {
+	const secret = `{"host_secret":"do-not-emit"}`
+	target := filepath.Join(t.TempDir(), "host-secret.json")
+	if err := os.WriteFile(target, []byte(secret), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	report := filepath.Join(t.TempDir(), "report.json")
+	if err := os.Symlink(target, report); err != nil {
+		t.Fatal(err)
+	}
+
+	var events []Event
+	if got := readCappedReport(report, func(e Event) { events = append(events, e) }); got != "" {
+		t.Errorf("symlinked report returned target contents %q, want empty", got)
+	}
+	for _, event := range events {
+		if strings.Contains(event.Text, secret) {
+			t.Errorf("symlinked report leaked target contents in event %q", event.Text)
+		}
+	}
+}
+
+func TestReadCappedReport_refusesLinkToWorkspaceFile(t *testing.T) {
+	work := t.TempDir()
+	const token = `{"scrutineer":{"token":"secret-token"}}`
+	if err := os.WriteFile(filepath.Join(work, "context.json"), []byte(token), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	report := filepath.Join(work, "report.json")
+	if err := os.Symlink("context.json", report); err != nil {
+		t.Fatal(err)
+	}
+	if got := readCappedReport(report, func(Event) {}); got != "" {
+		t.Errorf("report linked to context.json returned %q, want empty", got)
+	}
+}

@@ -267,6 +267,53 @@ func TestInjectProfileGuide_noopWithoutProfile(t *testing.T) {
 	}
 }
 
+func TestInjectProfileGuide_replacesSymlinkTarget(t *testing.T) {
+	profilesDir := t.TempDir()
+	profileDir := filepath.Join(profilesDir, "ruby")
+	if err := os.MkdirAll(profileDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	guide := []byte("# Ruby scanning container\n")
+	if err := os.WriteFile(filepath.Join(profileDir, "PROFILE.md"), guide, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	parent := t.TempDir()
+	victim := filepath.Join(parent, "host-file")
+	original := []byte("do not overwrite\n")
+	if err := os.WriteFile(victim, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	work := filepath.Join(parent, "work")
+	if err := os.Mkdir(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(work, "CLAUDE.md")
+	if err := os.Symlink("../host-file", target); err != nil {
+		t.Fatal(err)
+	}
+
+	ContainerRunner{ProfilesDir: profilesDir}.injectProfileGuide("ruby", work, func(Event) {})
+
+	if got, err := os.ReadFile(victim); err != nil {
+		t.Fatal(err)
+	} else if string(got) != string(original) {
+		t.Errorf("profile guide overwrote symlink target: got %q, want %q", got, original)
+	}
+	info, err := os.Lstat(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		t.Fatal("profile guide remained a symlink")
+	}
+	if got, err := os.ReadFile(target); err != nil {
+		t.Fatal(err)
+	} else if string(got) != string(guide) {
+		t.Errorf("profile guide = %q, want %q", got, guide)
+	}
+}
+
 // TestScrutineerValidationHint pins the exact API-endpoint text so a
 // wording change is deliberate.
 func TestScrutineerValidationHint(t *testing.T) {
@@ -390,5 +437,52 @@ func TestCopilotArgsNeverCarryMaxEffort(t *testing.T) {
 	}
 	if slices.Contains(args, "max") {
 		t.Errorf("copilot argv still carries scrutineer's max: %v", args)
+	}
+}
+
+func TestInjectProfileGuide_nestedGuideStaysInsideWorkspace(t *testing.T) {
+	profilesDir := t.TempDir()
+	profileDir := filepath.Join(profilesDir, "ruby")
+	if err := os.MkdirAll(profileDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	guide := []byte("# Ruby scanning container\n")
+	if err := os.WriteFile(filepath.Join(profileDir, "PROFILE.md"), guide, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const nested = ".github/copilot-instructions.md"
+	d := ContainerRunner{ProfilesDir: profilesDir, Harness: stubHarness{guide: nested}}
+
+	// A fresh workspace gets the guide's directory created for it.
+	work := t.TempDir()
+	d.injectProfileGuide("ruby", work, func(Event) {})
+	if got, err := os.ReadFile(filepath.Join(work, nested)); err != nil || string(got) != string(guide) {
+		t.Errorf("nested guide = %q, %v; want %q", got, err, guide)
+	}
+
+	// An agent that turned the guide's directory into a link out of the
+	// workspace gets no guide, and the host directory stays untouched.
+	parent := t.TempDir()
+	hostDir := filepath.Join(parent, "host-dir")
+	if err := os.Mkdir(hostDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	work = filepath.Join(parent, "work")
+	if err := os.Mkdir(work, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../host-dir", filepath.Join(work, ".github")); err != nil {
+		t.Fatal(err)
+	}
+	var events []string
+	d.injectProfileGuide("ruby", work, func(e Event) { events = append(events, e.Text) })
+	if _, err := os.Lstat(filepath.Join(hostDir, "copilot-instructions.md")); !os.IsNotExist(err) {
+		t.Errorf("guide escaped through the linked directory: lstat err = %v", err)
+	}
+	if info, err := os.Lstat(filepath.Join(work, ".github")); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("linked guide directory was disturbed: %v, %v", info, err)
+	}
+	if len(events) != 1 || !strings.Contains(events[0], "profile guide: write") {
+		t.Errorf("expected the refused write to be reported, got %q", events)
 	}
 }

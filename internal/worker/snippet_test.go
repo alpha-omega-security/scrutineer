@@ -98,3 +98,27 @@ func TestReadSnippet(t *testing.T) {
 		}
 	})
 }
+
+func TestReadSnippet_allowsContainedSymlink(t *testing.T) {
+	srcDir := t.TempDir()
+	writeNumberedFile(t, srcDir, "a.go", 20)
+	if err := os.Symlink("a.go", filepath.Join(srcDir, "alias.go")); err != nil {
+		t.Fatal(err)
+	}
+	if got := readSnippet(srcDir, "alias.go:10"); !strings.Contains(got, "line 10") {
+		t.Errorf("readSnippet via contained symlink = %q, want line 10", got)
+	}
+}
+
+func TestReadSnippet_refusesSymlinkedRoot(t *testing.T) {
+	realRoot := t.TempDir()
+	writeNumberedFile(t, realRoot, "host-secret.go", 2)
+	srcDir := filepath.Join(t.TempDir(), "src")
+	if err := os.Symlink(realRoot, srcDir); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := readSnippet(srcDir, "host-secret.go:1"); got != "" {
+		t.Errorf("readSnippet through symlinked root = %q, want empty", got)
+	}
+}

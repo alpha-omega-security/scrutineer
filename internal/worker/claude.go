@@ -320,14 +320,32 @@ const maxReportBytes = 50 << 20
 // at path, or an empty string if the file doesn't exist. Oversize files
 // are truncated and a log line is emitted to the scan so the operator
 // knows the report was clipped.
+//
+// The report is whatever the agent left under that name in a workspace it
+// controls, so the read goes through a root opened at the parent directory
+// and accepts only a regular file: a link to a host file, or to the
+// context.json beside it, yields no report rather than that file's contents.
+// The parent is the workspace root itself — validateSkillPaths keeps
+// output_file to a bare name — which the agent cannot replace from inside its
+// bind mount.
 func readCappedReport(path string, emit func(Event)) string {
-	f, err := os.Open(path)
+	root, err := os.OpenRoot(filepath.Dir(path))
+	if err != nil {
+		return ""
+	}
+	defer func() { _ = root.Close() }()
+	name := filepath.Base(path)
+	entryInfo, err := root.Lstat(name)
+	if err != nil || !entryInfo.Mode().IsRegular() {
+		return ""
+	}
+	f, err := root.Open(name)
 	if err != nil {
 		return ""
 	}
 	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
-	if err != nil {
+	if err != nil || !info.Mode().IsRegular() || !os.SameFile(entryInfo, info) {
 		return ""
 	}
 	if info.Size() > maxReportBytes {

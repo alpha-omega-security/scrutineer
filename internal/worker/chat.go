@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path"
-	"path/filepath"
 	"strings"
 	"unicode/utf8"
 
@@ -112,7 +111,7 @@ func (c *ChatRunner) RunTurn(ctx context.Context, conv *db.Conversation, userMes
 	if err != nil {
 		return ChatTurnResult{}, err
 	}
-	if err := os.WriteFile(filepath.Join(workRoot, chatSnapshotFile), []byte(snapshot), filePerm); err != nil {
+	if err := replaceWorkspaceFile(workRoot, chatSnapshotFile, []byte(snapshot)); err != nil {
 		return ChatTurnResult{}, fmt.Errorf("stage snapshot: %w", err)
 	}
 
@@ -213,8 +212,7 @@ func (c *ChatRunner) RunTurn(ctx context.Context, conv *db.Conversation, userMes
 // scan does. Later turns reuse the tree, so the whole conversation reasons
 // about one revision of the code.
 func (c *ChatRunner) ensureSrc(ctx context.Context, repo *db.Repository, workRoot string, emit func(Event)) (bool, error) {
-	marker := filepath.Join(workRoot, chatSrcReadyFile)
-	if _, err := os.Stat(marker); err == nil {
+	if chatSrcReady(workRoot) {
 		return true, nil
 	}
 	switch {
@@ -236,10 +234,28 @@ func (c *ChatRunner) ensureSrc(ctx context.Context, repo *db.Repository, workRoo
 	if err := stripWorkspaceAgentDirectives(workRoot, emit); err != nil {
 		return false, err
 	}
-	if err := os.WriteFile(marker, nil, filePerm); err != nil {
+	// The workspace persists across turns and the agent writes to it, so the
+	// marker is replaced through the workspace root like the snapshot: a link
+	// the agent left in its place cannot turn this write into a file created
+	// elsewhere on the host.
+	if err := replaceWorkspaceFile(workRoot, chatSrcReadyFile, nil); err != nil {
 		return false, fmt.Errorf("mark chat source ready: %w", err)
 	}
 	return true, nil
+}
+
+// chatSrcReady reports whether the workspace carries the source-ready marker
+// as a regular file. Anything else at that name — a link the agent planted, a
+// directory — is not proof of a finished clone; the source is prepared again
+// and the entry replaced.
+func chatSrcReady(workRoot string) bool {
+	root, err := os.OpenRoot(workRoot)
+	if err != nil {
+		return false
+	}
+	defer func() { _ = root.Close() }()
+	info, err := root.Lstat(chatSrcReadyFile)
+	return err == nil && info.Mode().IsRegular()
 }
 
 // buildChatPrompt is the fresh-run prompt for a conversation: it frames the

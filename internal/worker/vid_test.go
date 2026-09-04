@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"scrutineer/internal/db"
@@ -23,14 +24,15 @@ func writeSrcFile(t *testing.T, srcDir, rel string) {
 	}
 }
 
-// stubVid writes an executable that prints out and exits with code,
-// recording its argv (one per line) to args.txt next to it.
+// stubVid writes an executable that prints out and exits with code, recording
+// its argv and working directory next to it. It also requires the first sink's
+// file to exist in that directory, like the real CLI does.
 func stubVid(t *testing.T, out string, code int) string {
 	t.Helper()
 	dir := t.TempDir()
 	script := filepath.Join(dir, "vid")
-	body := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$@\" > %q\necho %q\nexit %d\n",
-		filepath.Join(dir, "args.txt"), out, code)
+	body := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$@\" > %q\npwd > %q\ntest -f \"${2%%:*}\" || exit 97\necho %q\nexit %d\n",
+		filepath.Join(dir, "args.txt"), filepath.Join(dir, "cwd.txt"), out, code)
 	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -74,6 +76,19 @@ func TestVidSinks(t *testing.T) {
 	}
 }
 
+func TestVidSinks_refusesSymlinkedRoot(t *testing.T) {
+	realRoot := t.TempDir()
+	writeSrcFile(t, realRoot, "host-secret.rb")
+	srcDir := filepath.Join(t.TempDir(), "src")
+	if err := os.Symlink(realRoot, srcDir); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := vidSinks(srcDir, "host-secret.rb:1"); got != nil {
+		t.Errorf("vidSinks through symlinked root = %v, want nil", got)
+	}
+}
+
 func TestComputeVID(t *testing.T) {
 	srcDir := t.TempDir()
 	writeSrcFile(t, srcDir, "a.rb")
@@ -89,6 +104,13 @@ func TestComputeVID(t *testing.T) {
 	}
 	if string(args) != "--\na.rb:12\n" {
 		t.Errorf("vid argv = %q, want %q", args, "--\na.rb:12\n")
+	}
+	cwd, err := os.ReadFile(filepath.Join(filepath.Dir(w.VIDCommand), "cwd.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if filepath.Clean(strings.TrimSpace(string(cwd))) == filepath.Clean(srcDir) {
+		t.Error("vid ran directly in the runner-controlled source directory")
 	}
 
 	w.VIDCommand = stubVid(t, "VID-aaaa-bbbb-cccc-dddd-eeee-ffff", 1)

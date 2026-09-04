@@ -956,3 +956,68 @@ func TestParseProxySidecarNames_KeepsStrictPrefixOnly(t *testing.T) {
 		t.Errorf("empty input should yield nil, got %v", names)
 	}
 }
+
+func TestResolveProfile_refusesDetectionPathLeavingWorkspace(t *testing.T) {
+	outside := t.TempDir()
+	work := t.TempDir()
+	src := filepath.Join(work, "src")
+	if err := os.MkdirAll(filepath.Join(src, "pkg"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(src, "escape")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../../..", filepath.Join(src, "pkg", "up")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("nowhere", filepath.Join(src, "dangling")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(work, "sibling"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../sibling", filepath.Join(src, "inside")); err != nil {
+		t.Fatal(err)
+	}
+
+	var seen []string
+	d := ContainerRunner{
+		ProfilesDir: t.TempDir(),
+		detectProfile: func(_ context.Context, _ ContainerRuntime, _, srcDir string, _ bool) Profile {
+			seen = append(seen, srcDir)
+			return Profile{}
+		},
+	}
+	var events []string
+	emit := func(e Event) { events = append(events, e.Text) }
+
+	for _, subPath := range []string{"escape", "escape/deeper", "pkg/up", "dangling"} {
+		d.resolveProfile(context.Background(), "", src, subPath, emit)
+	}
+	// The whole checkout swapped for a link is refused the same way.
+	swapped := filepath.Join(work, "swapped-src")
+	if err := os.Symlink(outside, swapped); err != nil {
+		t.Fatal(err)
+	}
+	d.resolveProfile(context.Background(), "", swapped, "", emit)
+	if len(seen) != 0 {
+		t.Errorf("detection ran against a path leaving the workspace: %q", seen)
+	}
+	if len(events) != 5 {
+		t.Fatalf("expected one refusal per escaping path, got %q", events)
+	}
+	for _, e := range events {
+		if !strings.Contains(e, "using default") {
+			t.Errorf("refusal not reported as a default fallback: %q", e)
+		}
+	}
+
+	// A link that stays inside the workspace, and a sub-path that does not
+	// exist, still reach detection as before.
+	d.resolveProfile(context.Background(), "", src, "inside", emit)
+	d.resolveProfile(context.Background(), "", src, "pkg/missing", emit)
+	want := []string{filepath.Join(src, "inside"), filepath.Join(src, "pkg", "missing")}
+	if !reflect.DeepEqual(seen, want) {
+		t.Errorf("detection paths = %q, want %q", seen, want)
+	}
+}

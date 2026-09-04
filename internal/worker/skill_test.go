@@ -1199,3 +1199,84 @@ func hasMatchingEvent(events []string, substr string) bool {
 	}
 	return false
 }
+
+// workspaceInspectingRunner records what the workspace looked like when the
+// agent was invoked; wrap() removes it once the scan finishes, so the test
+// cannot look afterwards.
+type workspaceInspectingRunner struct {
+	fakeRunner
+	scratchPresent bool
+	contextIsFile  bool
+}
+
+func (r *workspaceInspectingRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)) (SkillResult, error) {
+	_, err := os.Lstat(filepath.Join(sj.WorkRoot, "scratch.txt"))
+	r.scratchPresent = err == nil
+	info, err := os.Lstat(filepath.Join(sj.WorkRoot, "context.json"))
+	r.contextIsFile = err == nil && info.Mode().IsRegular()
+	return r.fakeRunner.RunSkill(ctx, sj, emit)
+}
+
+func TestDoSkill_resetsReusedWorkspace(t *testing.T) {
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "s.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
+	gdb.Create(&repo)
+	skill := db.Skill{
+		Name:       "spec-deep",
+		Body:       "Do the thing.",
+		OutputFile: "report.json",
+		OutputKind: "findings",
+		Version:    1,
+		Active:     true,
+		Source:     "ui",
+	}
+	gdb.Create(&skill)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanQueued, Model: "fake", SkillID: &skill.ID}
+	gdb.Create(&scan)
+
+	dataDir := t.TempDir()
+	runner := &workspaceInspectingRunner{fakeRunner: fakeRunner{skillRes: SkillResult{Commit: "abc", Report: `{"findings":[]}`}}}
+	w := &Worker{
+		DB:             gdb,
+		Log:            slog.New(slog.NewTextHandler(io.Discard, nil)),
+		DataDir:        dataDir,
+		Runner:         runner,
+		PrepareRepoSrc: stubPrepareRepoSrc,
+	}
+	// A paused scan comes back through doSkill with the workspace its agent
+	// already shaped: context.json, which carries the scan's API token,
+	// replaced by a link to a host path, plus a scratch file of its own.
+	workRoot := w.workRoot(scan.ID)
+	if err := os.MkdirAll(workRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	victim := filepath.Join(dataDir, "host-file")
+	if err := os.Symlink("../host-file", filepath.Join(workRoot, "context.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workRoot, "scratch.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	body, _ := json.Marshal(queue.Payload{ScanID: scan.ID})
+	if err := w.wrap(w.doSkill)(context.Background(), body); err != nil {
+		t.Fatal(err)
+	}
+	var got db.Scan
+	gdb.First(&got, scan.ID)
+	if got.Status != db.ScanDone {
+		t.Fatalf("status = %s: %s", got.Status, got.Error)
+	}
+	if _, err := os.Lstat(victim); !os.IsNotExist(err) {
+		t.Errorf("context.json followed the planted link onto the host: lstat err = %v", err)
+	}
+	if !runner.contextIsFile {
+		t.Error("context.json was not staged as a regular file")
+	}
+	if runner.scratchPresent {
+		t.Error("the previous invocation's scratch file survived into the new run")
+	}
+}

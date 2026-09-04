@@ -9,7 +9,9 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/url"
@@ -563,9 +565,10 @@ func (d ContainerRunner) resolveProfile(ctx context.Context, requested, src, sub
 			return "", defaultImg
 		}
 	} else {
-		srcDir := src
-		if subPath != "" {
-			srcDir = filepath.Join(src, subPath)
+		srcDir, err := detectionSrcDir(src, subPath)
+		if err != nil {
+			emit(Event{Kind: KindText, Text: "profile: " + err.Error() + "; using default"})
+			return "", defaultImg
 		}
 		detect := d.detectProfile
 		if detect == nil {
@@ -608,11 +611,49 @@ func (d ContainerRunner) resolveProfile(ctx context.Context, requested, src, sub
 	return p.Name, img
 }
 
-// profileGuideFileMode is the mode used when copying a profile's
-// PROFILE.md into the workspace as CLAUDE.md. The workspace already
-// belongs to the host user (the container runner mounts it as that uid),
-// so a plain 0644 keeps it readable by the agent without surprises.
-const profileGuideFileMode os.FileMode = 0o644
+// detectionSrcDir returns the directory profile detection bind-mounts for
+// src/subPath, refusing one that a symlink would carry outside the workspace.
+// The container runtime resolves the host side of a bind mount itself, so a
+// repository link at the sub-path (a soft-scoped scan prunes nothing and
+// checks nothing there) or one the agent planted in the checkout before a
+// repair or audit run in the same workspace would otherwise mount an
+// arbitrary host directory into the detection container. Links are checked
+// through a root opened at the workspace, which follows them only while they
+// stay inside it; a dangling link is refused the same way rather than handed
+// to the runtime, which creates a missing bind source. A sub-path that plainly
+// does not exist is passed on unchanged so detection degrades to the default
+// profile as before.
+func detectionSrcDir(src, subPath string) (string, error) {
+	workspace := filepath.Dir(src)
+	rel := filepath.Base(src)
+	if subPath != "" {
+		rel = filepath.Join(rel, subPath)
+	}
+	srcDir := filepath.Join(workspace, rel)
+	root, err := os.OpenRoot(workspace)
+	if err != nil {
+		return "", fmt.Errorf("open workspace for profile detection: %w", err)
+	}
+	defer func() { _ = root.Close() }()
+	cur := ""
+	for part := range strings.SplitSeq(filepath.ToSlash(rel), "/") {
+		cur = filepath.Join(cur, part)
+		info, err := root.Lstat(cur)
+		if errors.Is(err, fs.ErrNotExist) {
+			return srcDir, nil
+		}
+		if err != nil {
+			return "", fmt.Errorf("detection path %s: %w", srcDir, err)
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			continue
+		}
+		if info, err = root.Stat(cur); err != nil || !info.IsDir() {
+			return "", fmt.Errorf("detection path %s: link %s does not resolve inside the workspace", srcDir, cur)
+		}
+	}
+	return srcDir, nil
+}
 
 // checkHardenedWorkspace returns an error when a hardening mode is on and the
 // cloned workspace exceeds HardenedWorkspaceCapBytes. It applies under both
@@ -650,7 +691,7 @@ func (d ContainerRunner) injectProfileGuide(profile, absWork string, emit func(E
 		emit(Event{Kind: KindText, Text: "profile guide: read " + guide + ": " + err.Error()})
 		return
 	}
-	if err := os.WriteFile(target, data, profileGuideFileMode); err != nil {
+	if err := replaceWorkspaceFile(absWork, name, data); err != nil {
 		emit(Event{Kind: KindText, Text: "profile guide: write " + target + ": " + err.Error()})
 		return
 	}

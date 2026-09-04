@@ -101,7 +101,7 @@ func (w *Worker) doExposure(ctx context.Context, scan *db.Scan, emit func(Event)
 	if err := validateSkillPaths(skill.Name, skill.OutputFile); err != nil {
 		return "", err
 	}
-	if err := os.MkdirAll(workRoot, dirPerm); err != nil {
+	if err := resetWorkspace(workRoot); err != nil {
 		return "", err
 	}
 	cacheCommit, err := w.prepareDependentSrc(ctx, dep.RepositoryURL, scan.Ref, workRoot, emit)

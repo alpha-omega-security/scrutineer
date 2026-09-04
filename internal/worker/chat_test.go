@@ -321,6 +321,52 @@ func TestChatRunnerStagesSnapshot(t *testing.T) {
 	}
 }
 
+func TestRunTurn_replacesSymlinkedSnapshot(t *testing.T) {
+	gdb, repo := chatTestDB(t)
+	conv, err := db.CreateConversation(gdb, repo.ID, nil, "claude-x", "first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dataDir := t.TempDir()
+	workRoot := chatWorkRoot(dataDir, conv.ID)
+	if err := os.MkdirAll(workRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	victim := filepath.Join(dataDir, "host-file")
+	original := []byte("do not overwrite\n")
+	if err := os.WriteFile(victim, original, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	snapshotPath := filepath.Join(workRoot, chatSnapshotFile)
+	if err := os.Symlink("../host-file", snapshotPath); err != nil {
+		t.Fatal(err)
+	}
+
+	runner := &chatStubRunner{backend: "claude", resultText: "ok", emitResult: true}
+	cr := &ChatRunner{Runner: runner, DB: gdb, DataDir: dataDir}
+	if _, err := cr.RunTurn(context.Background(), conv, "hi", func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, err := os.ReadFile(victim); err != nil {
+		t.Fatal(err)
+	} else if string(got) != string(original) {
+		t.Errorf("snapshot write overwrote symlink target: got %q, want %q", got, original)
+	}
+	info, err := os.Lstat(snapshotPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		t.Fatal("snapshot remained a symlink")
+	}
+	if got, err := os.ReadFile(snapshotPath); err != nil {
+		t.Fatal(err)
+	} else if !strings.Contains(string(got), "acme") {
+		t.Errorf("replacement snapshot missing repository context:\n%s", got)
+	}
+}
+
 func TestChatRunnerLocalRepo(t *testing.T) {
 	gdb, _ := chatTestDB(t)
 	localDir := t.TempDir()
@@ -721,5 +767,44 @@ func TestChatRunnerFindingSnapshotCarriesTheAnalysis(t *testing.T) {
 	}
 	if !strings.Contains(string(snap), "(truncated)") {
 		t.Error("an oversized narrative field must be truncated, not inlined whole")
+	}
+}
+
+func TestEnsureSrc_symlinkedMarkerDoesNotCreateHostFile(t *testing.T) {
+	gdb, repo := chatTestDB(t)
+	conv, err := db.CreateConversation(gdb, repo.ID, nil, "claude-x", "first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dataDir := t.TempDir()
+	workRoot := chatWorkRoot(dataDir, conv.ID)
+	if err := os.MkdirAll(workRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The agent left the ready marker as a link to a host path that does not
+	// exist yet; a plain WriteFile would create the file there.
+	victim := filepath.Join(dataDir, "host-marker")
+	if err := os.Symlink("../host-marker", filepath.Join(workRoot, chatSrcReadyFile)); err != nil {
+		t.Fatal(err)
+	}
+
+	prepared := 0
+	runner := &chatStubRunner{backend: "claude", resultText: "ok", emitResult: true}
+	cr := &ChatRunner{Runner: runner, DB: gdb, DataDir: dataDir, PrepareSrc: stubPrepareSrc(&prepared)}
+	if _, err := cr.RunTurn(context.Background(), conv, "hi", func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	if prepared != 1 {
+		t.Errorf("a linked marker was accepted as a finished clone: prepared=%d, want 1", prepared)
+	}
+	if _, err := os.Lstat(victim); !os.IsNotExist(err) {
+		t.Errorf("marker write followed the link onto the host: lstat err = %v", err)
+	}
+	info, err := os.Lstat(filepath.Join(workRoot, chatSrcReadyFile))
+	if err != nil || !info.Mode().IsRegular() {
+		t.Errorf("marker = %v, %v; want a regular file", info, err)
+	}
+	if !runner.got.SrcReady {
+		t.Error("turn ran without the source marked ready")
 	}
 }
