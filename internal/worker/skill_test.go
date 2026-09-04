@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -733,7 +734,7 @@ func TestStageSkill_mirrorsScriptsToWorkRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm()&0o100 == 0 {
+	if info.Mode().Perm()&0o100 == 0 && runtime.GOOS != "windows" {
 		t.Errorf("run.sh executable bit lost: %v", info.Mode())
 	}
 }

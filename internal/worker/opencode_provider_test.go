@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -131,7 +132,8 @@ func TestBuildRunArgsForProviderScopesEnvironmentAndState(t *testing.T) {
 			t.Errorf("container args inherited unrelated key %s: %v", key, args)
 		}
 	}
-	if !hasAdjacent(args, "-v", "/state/kiro/opencode/auth.json:/harness-state/data/opencode/auth.json:z") {
+	authSrc := filepath.Join("/state/kiro", "opencode", "auth.json")
+	if !hasAdjacent(args, "-v", authSrc+":/harness-state/data/opencode/auth.json:z") {
 		t.Errorf("provider auth mount missing: %v", args)
 	}
 	if !hasAdjacent(args, "-e", "XDG_DATA_HOME=/harness-state/data") {
@@ -174,6 +176,9 @@ func TestEnsureOpencodeProviderStateRejectsOtherCredentials(t *testing.T) {
 }
 
 func TestEnsureOpencodeProviderStateRejectsBroadPermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows reports 0777 for every directory; the POSIX perm check does not apply")
+	}
 	state := t.TempDir()
 	if err := os.Chmod(state, 0o755); err != nil {
 		t.Fatal(err)

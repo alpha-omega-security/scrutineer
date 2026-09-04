@@ -51,11 +51,11 @@ func TestHostSplitRunner_routesByName(t *testing.T) {
 		Host:       contextCapturingRunner{dir: "host", apiBase: &hostBase},
 		HostSkills: []string{"verify"},
 	}
-	if got := r.SkillDir("/w", "verify"); got != "/w/host/verify" {
-		t.Errorf("host skill dir = %q", got)
+	if got, want := r.SkillDir("/w", "verify"), filepath.Join("/w", "host", "verify"); got != want {
+		t.Errorf("host skill dir = %q, want %q", got, want)
 	}
-	if got := r.SkillDir("/w", "triage"); got != "/w/container/triage" {
-		t.Errorf("container skill dir = %q", got)
+	if got, want := r.SkillDir("/w", "triage"), filepath.Join("/w", "container", "triage"); got != want {
+		t.Errorf("container skill dir = %q, want %q", got, want)
 	}
 	if !r.runsOnHost("verify") || r.runsOnHost("triage") {
 		t.Errorf("runsOnHost: verify=%v triage=%v", r.runsOnHost("verify"), r.runsOnHost("triage"))

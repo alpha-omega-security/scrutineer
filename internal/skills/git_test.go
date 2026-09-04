@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -256,7 +257,7 @@ func TestCloneOrPull_tokenUsesAskPassWithoutArgvLeak(t *testing.T) {
 	if strings.Contains(script, token) {
 		t.Fatal("temporary askpass script contains the token")
 	}
-	if askpassMode != askpassPerm {
+	if askpassMode != askpassPerm && runtime.GOOS != "windows" {
 		t.Errorf("askpass mode = %o, want 700", askpassMode)
 	}
 	if _, statErr := os.Stat(askpassPath); !errors.Is(statErr, os.ErrNotExist) {

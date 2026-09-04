@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -307,7 +308,9 @@ func ensureOpencodeProviderState(provider opencodeProvider) error {
 	if !info.IsDir() {
 		return fmt.Errorf("OpenCode provider %q state path is not a directory", provider.ID)
 	}
-	if info.Mode().Perm()&0o077 != 0 {
+	// Windows reports 0777 for every directory and os.Chmod is a no-op there,
+	// so a POSIX group/other-bits check has nothing to test.
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0o077 != 0 {
 		return fmt.Errorf("OpenCode provider %q state directory permissions %04o expose credentials; require 0700 or stricter", provider.ID, info.Mode().Perm())
 	}
 	authPath := opencodeProviderAuthPath(provider.StateDir)
