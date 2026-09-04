@@ -19,7 +19,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -377,7 +376,7 @@ func (d ContainerRunner) runContainerOnce(ctx context.Context, runBase []string,
 	runArgs := append(append([]string{}, runBase...), d.harnessArgv(sj)...)
 
 	cmd := exec.CommandContext(ctx, runtimeBin(d.Runtime), runArgs...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	setProcGroup(cmd)
 	cmd.Env = environmentWith(os.Environ(), processEnv)
 
 	stdout, err := cmd.StdoutPipe()
@@ -400,9 +399,7 @@ func (d ContainerRunner) runContainerOnce(ctx context.Context, runBase []string,
 	}
 	h.ParseStream(stdout, wrappedEmit)
 	waitErr = cmd.Wait()
-	if cmd.Process != nil {
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
-	}
+	killProcGroup(cmd)
 	return hitMaxTurns, sessionID, waitErr
 }
 

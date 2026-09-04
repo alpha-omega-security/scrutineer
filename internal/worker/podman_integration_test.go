@@ -1,4 +1,4 @@
-//go:build podman
+//go:build podman && !windows
 
 // Integration tests that drive a real rootless podman. They are excluded from
 // the default build so CI (which has no podman) stays green; run them with:

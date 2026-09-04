@@ -40,7 +40,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: ["ubuntu-24.04", "macos-26"]
+        platform: ["ubuntu-24.04", "macos-26", "windows-latest"]
     runs-on: ${{ matrix.platform }}
     timeout-minutes: 30
     permissions:
