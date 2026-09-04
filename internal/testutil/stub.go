@@ -7,6 +7,8 @@ import (
 	"testing"
 )
 
+const stubPerm = 0o755
+
 // WriteStub writes a #!/bin/sh script as an executable named `name` under
 // `dir` and returns its full path. Tests use it to put a fake `git`,
 // `docker`, `claude`, etc. on PATH so the code under test execs the stub
@@ -21,7 +23,7 @@ func WriteStub(tb testing.TB, dir, name, script string) string {
 		tb.Skipf("test uses a #!/bin/sh stub for %q", name)
 	}
 	path := filepath.Join(dir, name)
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+	if err := os.WriteFile(path, []byte(script), stubPerm); err != nil {
 		tb.Fatal(err)
 	}
 	return path
