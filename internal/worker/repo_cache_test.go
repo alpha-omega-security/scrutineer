@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -154,6 +155,11 @@ func newEmbeddedNativeOrigin(t *testing.T) string {
 }
 
 func TestPrepareRepoSrcWithOptionsKeepsSubmodulesOptIn(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		// t.TempDir + this test's name + repo-cache/<sha256>/.../.git/objects/pack
+		// exceeds the 260-char default; git fails writing the pack .keep file.
+		t.Skip("repo-cache path under t.TempDir exceeds MAX_PATH")
+	}
 	url := newEmbeddedNativeOrigin(t)
 
 	w := &Worker{DataDir: t.TempDir()}
