@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"scrutineer/internal/testutil"
 )
 
 // banditReport is the subset of the adapter's envelope the tests assert on.
@@ -127,9 +129,7 @@ func banditWorkspace(t *testing.T, script string) (root, argvLog string) {
 		return root, argvLog
 	}
 	body := strings.Replace(script, "@ARGV_LOG@", argvLog, 1)
-	if err := os.WriteFile(filepath.Join(bin, "bandit"), []byte(body), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteStub(t, bin, "bandit", body)
 	return root, argvLog
 }
 

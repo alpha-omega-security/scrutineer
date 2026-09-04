@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/testutil"
 )
 
 // These test-only shims keep the pre-extraction argv assertions below working
@@ -307,9 +308,7 @@ func TestLocalClaude_ResumeFallsBackToFresh(t *testing.T) {
 		"echo '{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"ok\",\"num_turns\":1}'\n" +
 		"printf '{\"done\":true}' > report.json\n" +
 		"exit 0\n"
-	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteStub(t, bin, "claude", script)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	work := t.TempDir()
@@ -360,9 +359,7 @@ func TestLocalClaude_ResumePromptWithFreshPromptRestarts(t *testing.T) {
 		"echo '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"fresh-sess\"}'\n" +
 		"echo '{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"ok\",\"num_turns\":1}'\n" +
 		"exit 0\n"
-	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteStub(t, bin, "claude", script)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	work := t.TempDir()
@@ -408,9 +405,7 @@ func TestLocalClaude_ResumePromptDoesNotFallbackToFresh(t *testing.T) {
 		"echo '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"fresh-sess\"}'\n" +
 		"echo '{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"ok\",\"num_turns\":1}'\n" +
 		"exit 0\n"
-	if err := os.WriteFile(filepath.Join(bin, "claude"), []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteStub(t, bin, "claude", script)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	work := t.TempDir()

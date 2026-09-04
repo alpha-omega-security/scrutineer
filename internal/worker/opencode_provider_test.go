@@ -16,6 +16,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"scrutineer/internal/testutil"
 )
 
 func TestResolveOpencodeProviderBuildsScopedAuth(t *testing.T) {
@@ -513,11 +515,7 @@ func TestOpencodeStateLockSerialisesSharedStateDir(t *testing.T) {
 
 func writeFakeRuntime(t *testing.T, script string) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "fake-runtime")
-	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	return path
+	return testutil.WriteStub(t, t.TempDir(), "fake-runtime", script)
 }
 
 func TestClassifyOpencodeReadinessErrors(t *testing.T) {
@@ -601,9 +599,7 @@ func TestRunnerImageContentDigestParsesAppleInspectJSON(t *testing.T) {
 	// the digest is read from configuration.descriptor.digest with id as the
 	// fallback for locally built images.
 	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "container"), []byte("#!/bin/sh\ncase \"$*\" in *no-descriptor*) printf '[{\"id\":\"sha256:localid\"}]';; *) printf '[{\"id\":\"sha256:localid\",\"configuration\":{\"descriptor\":{\"digest\":\"sha256:def\"}}}]';; esac\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteStub(t, dir, "container", "#!/bin/sh\ncase \"$*\" in *no-descriptor*) printf '[{\"id\":\"sha256:localid\"}]';; *) printf '[{\"id\":\"sha256:localid\",\"configuration\":{\"descriptor\":{\"digest\":\"sha256:def\"}}}]';; esac\n")
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 	if got := runnerImageContentDigest(t.Context(), ContainerRuntime{Bin: runtimeApple}, "provider:1"); got != "sha256:def" {
 		t.Errorf("apple runner image digest = %q, want sha256:def", got)

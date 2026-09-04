@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"slices"
 	"testing"
+
+	"scrutineer/internal/testutil"
 )
 
 func TestZizmorScriptPreservesWorkflowPaths(t *testing.T) {
@@ -23,10 +25,7 @@ func TestZizmorScriptPreservesWorkflowPaths(t *testing.T) {
 	if err := os.Mkdir(bin, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	fakeZizmor := filepath.Join(bin, "zizmor")
-	if err := os.WriteFile(fakeZizmor, []byte(fakeZizmorScript), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteStub(t, bin, "zizmor", fakeZizmorScript)
 
 	cmd := exec.Command("python3", script)
 	cmd.Dir = root

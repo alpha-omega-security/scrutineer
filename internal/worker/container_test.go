@@ -9,6 +9,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"scrutineer/internal/testutil"
 )
 
 // buildRunArgs is the no-provider shorthand tests use so they don't all repeat
@@ -567,10 +569,7 @@ func TestResolveProfile_DegradesToFallback(t *testing.T) {
 	// (no real build); anything else (e.g. resolveBaseDigest's `buildx`) exits
 	// non-zero, which the callers already treat as a soft miss.
 	binDir := t.TempDir()
-	stub := "#!/bin/sh\n[ \"$1\" = \"image\" ] && exit 0\nexit 1\n"
-	if err := os.WriteFile(filepath.Join(binDir, "docker"), []byte(stub), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	testutil.WriteStub(t, binDir, "docker", "#!/bin/sh\n[ \"$1\" = \"image\" ] && exit 0\nexit 1\n")
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
 	d := ContainerRunner{ProfilesDir: profiles} // default Bin "docker" resolves to the stub
@@ -782,9 +781,7 @@ func TestStartProxySidecar_ConnectsRuntimeBridge(t *testing.T) {
 printf '%%s\n' "$*" >> %q
 if [ "$1" = inspect ]; then printf '192.0.2.10\n'; fi
 `, logPath)
-			if err := os.WriteFile(filepath.Join(binDir, tc.runtime.Bin), []byte(script), 0o755); err != nil {
-				t.Fatal(err)
-			}
+			testutil.WriteStub(t, binDir, tc.runtime.Bin, script)
 			t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 			d := ContainerRunner{
 				Runtime:  tc.runtime,
