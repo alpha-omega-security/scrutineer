@@ -948,6 +948,11 @@ func TestScanEmitter_preservesManyEventsAcrossFlushes(t *testing.T) {
 		want.WriteByte('\n')
 	}
 	snapshot()
+	// finalizeScan is what persists scan.Log after snapshot in production;
+	// on Windows the monotonic clock's granularity can leave every
+	// time.Since(lastFlush) >= 1ns check false, so no interval-driven flush
+	// fires and the row would still be empty here without this write.
+	w.DB.Model(&db.Scan{}).Where("id = ?", scan.ID).Update("log", scan.Log)
 
 	if scan.Log != want.String() {
 		t.Fatalf("in-memory log does not contain every event in order")

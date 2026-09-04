@@ -188,6 +188,9 @@ func TestCloneOrPull_rejectsNonHTTPS(t *testing.T) {
 }
 
 func TestCloneOrPull_tokenUsesAskPassWithoutArgvLeak(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("withSkillsRepoToken writes a #!/bin/sh GIT_ASKPASS; Windows cannot exec it")
+	}
 	const token = "private-skills-token"
 	var (
 		askpassPath string
