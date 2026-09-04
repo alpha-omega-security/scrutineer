@@ -14,9 +14,18 @@ const severityField = "severity"
 
 func newTestDB(tb testing.TB) *gorm.DB {
 	tb.Helper()
-	gdb, err := Open(filepath.Join(tb.TempDir(), "t.db"))
+	return mustOpen(tb, filepath.Join(tb.TempDir(), "t.db"))
+}
+
+// mustOpen opens path with the full Open (schema check + AutoMigrate) and
+// registers a cleanup to close it. For tests that need a specific path -- to
+// reopen the same file, snapshot it, or feed a hand-built legacy schema.
+// newTestDB is the default when the path doesn't matter.
+func mustOpen(tb testing.TB, path string) *gorm.DB {
+	tb.Helper()
+	gdb, err := Open(path)
 	if err != nil {
-		tb.Fatal(err)
+		tb.Fatalf("Open %s: %v", path, err)
 	}
 	tb.Cleanup(func() {
 		if sqldb, _ := gdb.DB(); sqldb != nil {

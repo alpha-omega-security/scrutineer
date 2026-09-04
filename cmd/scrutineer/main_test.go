@@ -1345,10 +1345,7 @@ func TestBaseURLHost(t *testing.T) {
 
 func TestLoadSkillsLoadsBundledSkillsWithoutLocalDirectory(t *testing.T) {
 	dataDir := t.TempDir()
-	gdb, err := db.Open(filepath.Join(dataDir, "test.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	sha, err := loadSkills(log, gdb, dataDir, nil, "", "", false)
@@ -1376,14 +1373,11 @@ func TestLoadSkillsLoadsBundledSkillsWithoutLocalDirectory(t *testing.T) {
 
 func TestLoadSkillsRejectsRepoUserinfoWithoutEcho(t *testing.T) {
 	dataDir := t.TempDir()
-	gdb, err := db.Open(filepath.Join(dataDir, "test.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	const secret = "private-skills-token"
 
-	_, err = loadSkills(log, gdb, dataDir, nil,
+	_, err := loadSkills(log, gdb, dataDir, nil,
 		"https://user:"+secret+"@github.com/org/skills", "", false)
 	if err == nil {
 		t.Fatal("expected URL userinfo to be rejected")
@@ -1404,10 +1398,7 @@ func TestLoadSkillsLocalDirectoryOverridesBundledSkill(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(localSkill, "SKILL.md"), []byte(body), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	gdb, err := db.Open(filepath.Join(dataDir, "test.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	if _, err := loadSkills(log, gdb, dataDir, skillDirs{localRoot}, "", "", false); err != nil {
