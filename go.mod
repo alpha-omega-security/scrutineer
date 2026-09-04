@@ -6,15 +6,15 @@ toolchain go1.27.0
 
 require (
 	filippo.io/age v1.3.1
-	github.com/alpha-omega-security/harness v0.1.12
+	github.com/alpha-omega-security/harness v0.1.13-0.20260904121419-7ddb644c9fcd
 	github.com/ecosyste-ms/ecosystems-go v0.4.0
-	github.com/git-pkgs/clone v0.7.1
+	github.com/git-pkgs/clone v0.7.3-0.20260904121839-67c4b521682c
 	github.com/git-pkgs/clone/gogit v0.1.0
 	github.com/git-pkgs/cwe v0.1.1
 	github.com/git-pkgs/enrichment v0.7.0
-	github.com/git-pkgs/magic v0.2.0
+	github.com/git-pkgs/magic v0.3.1
 	github.com/git-pkgs/pom v0.1.7
-	github.com/git-pkgs/purl v0.1.19
+	github.com/git-pkgs/purl v0.1.20
 	github.com/git-pkgs/sarif v0.1.2
 	github.com/git-pkgs/sbom v0.1.6
 	github.com/git-pkgs/vulns v0.2.2
