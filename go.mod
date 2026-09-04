@@ -6,7 +6,7 @@ toolchain go1.27.1
 
 require (
 	filippo.io/age v1.3.1
-	github.com/alpha-omega-security/harness v0.1.12
+	github.com/alpha-omega-security/harness v0.1.14
 	github.com/ecosyste-ms/ecosystems-go v0.4.0
 	github.com/git-pkgs/clone v0.7.3
 	github.com/git-pkgs/clone/gogit v0.1.1
@@ -61,7 +61,6 @@ require (
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.41.0 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 	modernc.org/libc v1.75.6 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
