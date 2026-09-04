@@ -1564,11 +1564,19 @@ func Connect(dsn string) (*gorm.DB, error) {
 	return gdb, nil
 }
 
-func Open(dsn string) (*gorm.DB, error) {
+func Open(dsn string) (_ *gorm.DB, err error) {
 	gdb, err := Connect(dsn)
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		if err == nil {
+			return
+		}
+		if sqldb, _ := gdb.DB(); sqldb != nil {
+			_ = sqldb.Close()
+		}
+	}()
 	foundSchemaVersion, err := checkDatabaseSchemaVersion(gdb)
 	if err != nil {
 		return nil, err
