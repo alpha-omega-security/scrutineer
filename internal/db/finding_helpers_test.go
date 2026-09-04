@@ -12,12 +12,17 @@ import (
 
 const severityField = "severity"
 
-func newTestDB(t *testing.T) *gorm.DB {
-	t.Helper()
-	gdb, err := Open(filepath.Join(t.TempDir(), "t.db"))
+func newTestDB(tb testing.TB) *gorm.DB {
+	tb.Helper()
+	gdb, err := Open(filepath.Join(tb.TempDir(), "t.db"))
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
+	tb.Cleanup(func() {
+		if sqldb, _ := gdb.DB(); sqldb != nil {
+			_ = sqldb.Close()
+		}
+	})
 	return gdb
 }
 

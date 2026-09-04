@@ -1,15 +1,9 @@
 package db
 
-import (
-	"path/filepath"
-	"testing"
-)
+import "testing"
 
 func TestEffectiveDisclosureChannel(t *testing.T) {
-	gdb, err := Open(filepath.Join(t.TempDir(), "d.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := newTestDB(t)
 	repo := Repository{URL: "https://github.com/rails/rails", Name: "rails", DisclosureChannel: "repo@example.org"}
 	gdb.Create(&repo)
 	gdb.Create(&Subproject{RepositoryID: repo.ID, Path: "activesupport", Name: "activesupport", DisclosureChannel: "as@example.org"})
@@ -32,10 +26,7 @@ func TestEffectiveDisclosureChannel(t *testing.T) {
 }
 
 func TestEnsureSubproject(t *testing.T) {
-	gdb, err := Open(filepath.Join(t.TempDir(), "e.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := newTestDB(t)
 	repo := Repository{URL: "https://github.com/rails/rails", Name: "rails"}
 	gdb.Create(&repo)
 
