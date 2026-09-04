@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -121,12 +120,6 @@ func newEmbeddedNativeOrigin(t *testing.T) string {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
-	}
-	if runtime.GOOS == "windows" {
-		// Callers clone this into DataDir/repo-cache/<sha256>/.../.git/objects/pack;
-		// under t.TempDir that exceeds the 260-char default and git fails
-		// writing the pack .keep file.
-		t.Skip("repo-cache path under t.TempDir exceeds MAX_PATH")
 	}
 
 	submoduleDir := t.TempDir()
