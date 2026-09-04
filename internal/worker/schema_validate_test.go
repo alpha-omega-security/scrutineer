@@ -6,11 +6,11 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/db/dbtest"
 	"scrutineer/internal/queue"
 )
 
@@ -85,10 +85,7 @@ func TestValidateReportSchema_capsErrorCount(t *testing.T) {
 
 func newSchemaTestWorker(t *testing.T, strict bool) (*Worker, *db.Skill, *db.Scan) {
 	t.Helper()
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	skill := db.Skill{
@@ -139,10 +136,7 @@ func (r *sequenceRunner) RunSkill(_ context.Context, sj SkillJob, emit func(Even
 
 func newQueuedSchemaSkillWorker(t *testing.T, strict bool, runner SkillRunner) (*Worker, uint, uint) {
 	t.Helper()
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	skill := db.Skill{
@@ -396,10 +390,7 @@ func TestParseSkillOutput_schemaStrictPassesThrough(t *testing.T) {
 }
 
 func TestWrap_schemaStrictKeepsReportOnFailure(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	skill := db.Skill{

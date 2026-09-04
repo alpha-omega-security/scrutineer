@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/db/dbtest"
 )
 
 func writeSrcFile(t *testing.T, srcDir, rel string) {
@@ -134,10 +135,7 @@ func TestComputeVID_dashPrefixedSink(t *testing.T) {
 }
 
 func TestParseFindingsOutput_setsAndRefreshesVID(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://x/r", Name: "r"}
 	gdb.Create(&repo)
 	w := &Worker{

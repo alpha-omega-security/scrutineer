@@ -12,16 +12,14 @@ import (
 	"testing"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/db/dbtest"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
 )
 
 func TestParseFindingsOutput_capturesSnippetAndRefreshesOnReobserve(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://x/r", Name: "r"}
 	gdb.Create(&repo)
 	w := &Worker{DB: gdb, DataDir: t.TempDir(), Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
@@ -81,10 +79,7 @@ func TestParseFindingsOutput_capturesSnippetAndRefreshesOnReobserve(t *testing.T
 }
 
 func TestParseFindingsOutput_referencesCreatedOnNewAndUpsertedOnReobserve(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://x/r", Name: "r"}
 	gdb.Create(&repo)
 	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
@@ -250,10 +245,7 @@ func TestParseFindingsOutput_auditSchemasReferencesIngest(t *testing.T) {
 				t.Fatalf("schema rejected parser fixture: %s", got)
 			}
 
-			gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
-			if err != nil {
-				t.Fatal(err)
-			}
+			gdb := dbtest.Open(t)
 			repo := db.Repository{URL: "https://x/r", Name: "r"}
 			gdb.Create(&repo)
 			scan := &db.Scan{
@@ -287,10 +279,7 @@ func TestParseFindingsOutput_auditSchemasReferencesIngest(t *testing.T) {
 }
 
 func TestParseFindingsOutput_minConfidenceDropsBelowThreshold(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://x/r", Name: "r"}
 	gdb.Create(&repo)
 	scan := &db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "x", Status: db.ScanDone}
@@ -321,10 +310,7 @@ func TestParseFindingsOutput_minConfidenceDropsBelowThreshold(t *testing.T) {
 }
 
 func TestParseFindingsOutput_failOnTriggers(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://x/r", Name: "r"}
 	gdb.Create(&repo)
 	scan := &db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "x", Status: db.ScanDone}
@@ -336,7 +322,7 @@ func TestParseFindingsOutput_failOnTriggers(t *testing.T) {
 		{"id":"F2","title":"b","severity":"Critical","cwe":"CWE-2","location":"b.rb:1"}
 	]}`
 	skill := &db.Skill{FailOn: "High"}
-	err = w.parseFindingsOutput(skill, scan, report, func(Event) {})
+	err := w.parseFindingsOutput(skill, scan, report, func(Event) {})
 	var fe *FailOnThresholdError
 	if !errors.As(err, &fe) {
 		t.Fatalf("expected FailOnThresholdError, got %v", err)
@@ -352,10 +338,7 @@ func TestParseFindingsOutput_failOnTriggers(t *testing.T) {
 }
 
 func TestParseFindingsOutput_failOnNoTriggerBelowThreshold(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://x/r", Name: "r"}
 	gdb.Create(&repo)
 	scan := &db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "x", Status: db.ScanDone}
@@ -369,10 +352,7 @@ func TestParseFindingsOutput_failOnNoTriggerBelowThreshold(t *testing.T) {
 }
 
 func TestParseFindingsOutput_dedupesAcrossScans(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://x/r", Name: "r"}
 	gdb.Create(&repo)
 
@@ -468,10 +448,7 @@ func TestParseFindingsOutput_dedupesAcrossScans(t *testing.T) {
 }
 
 func TestParseFindingsOutput_preservesAnalystStatusOnReobservation(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://x/r", Name: "r"}
 	gdb.Create(&repo)
 	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
@@ -507,10 +484,7 @@ func TestParseFindingsOutput_preservesAnalystStatusOnReobservation(t *testing.T)
 }
 
 func TestParseFindingsOutput_rejectedWithoutStatusHistoryDoesNotLogRecordNotFound(t *testing.T) {
-	base, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	base := dbtest.Open(t)
 	var logs bytes.Buffer
 	gdb := base.Session(&gorm.Session{
 		Logger: logger.New(log.New(&logs, "", 0), logger.Config{LogLevel: logger.Warn}),
@@ -544,10 +518,7 @@ func TestParseFindingsOutput_rejectedWithoutStatusHistoryDoesNotLogRecordNotFoun
 }
 
 func TestParseFindingsOutput_intraScanCollisionMergesLocations(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://x/r", Name: "r"}
 	gdb.Create(&repo)
 	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
@@ -584,10 +555,7 @@ func TestParseFindingsOutput_intraScanCollisionMergesLocations(t *testing.T) {
 }
 
 func TestParseFindingsOutput_locationsArrayFromReport(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://x/r", Name: "r"}
 	gdb.Create(&repo)
 	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
@@ -617,10 +585,7 @@ func TestParseFindingsOutput_locationsArrayFromReport(t *testing.T) {
 }
 
 func TestParseFindingsOutput_rescanRefreshesLocations(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://x/r", Name: "r"}
 	gdb.Create(&repo)
 	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
@@ -660,10 +625,7 @@ func TestParseFindingsOutput_rescanRefreshesLocations(t *testing.T) {
 }
 
 func TestParseFindingsOutput_notObservedScopedToSkillAndSubpath(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://x/r", Name: "r"}
 	gdb.Create(&repo)
 	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
@@ -718,10 +680,7 @@ func TestParseFindingsOutput_notObservedScopedToSkillAndSubpath(t *testing.T) {
 }
 
 func TestParseFindingsOutput_reobservationResetsMissedCount(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://x/r", Name: "r"}
 	gdb.Create(&repo)
 	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
@@ -766,10 +725,7 @@ func TestParseFindingsOutput_reobservationResetsMissedCount(t *testing.T) {
 }
 
 func TestParseFindingsOutput_autoRejectReversibility(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://x/r", Name: "r"}
 	gdb.Create(&repo)
 	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), AutoRejectMissedCount: 2}
@@ -839,10 +795,7 @@ func TestParseFindingsOutput_autoRejectReversibility(t *testing.T) {
 }
 
 func TestParseFindingsOutput_notObservedSkipsClosedFindings(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://x/r", Name: "r"}
 	gdb.Create(&repo)
 	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
@@ -870,10 +823,7 @@ func TestParseFindingsOutput_notObservedSkipsClosedFindings(t *testing.T) {
 }
 
 func TestParseFindingsOutput_focusAreaScanDoesNotMarkOtherAreasMissed(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://x/r", Name: "r"}
 	gdb.Create(&repo)
 	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
@@ -926,10 +876,7 @@ func TestParseFindingsOutput_focusAreaScanDoesNotMarkOtherAreasMissed(t *testing
 }
 
 func TestParseFindingsOutput_focusAreaScanDoesNotAutoReject(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://x/r", Name: "r"}
 	gdb.Create(&repo)
 	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), AutoRejectMissedCount: 1}

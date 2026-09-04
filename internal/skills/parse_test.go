@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/db/dbtest"
 )
 
 func writeSkill(t *testing.T, dir, name, content string) string {
@@ -711,10 +712,7 @@ body`)
 }
 
 func TestLoadDirectory_bundledSkillsAreValid(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "t.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	n, err := LoadDirectory(gdb, log, "../../skills", "local")
 	if err != nil {
@@ -733,10 +731,7 @@ func TestLoadDirectory_bundledSkillsAreValid(t *testing.T) {
 }
 
 func TestLoadDirectory_failsOnInvalidSkill(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "t.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	root := t.TempDir()
 	writeSkill(t, root, "good", `---
 name: good
@@ -751,17 +746,13 @@ metadata:
 ---
 body`)
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	_, err = LoadDirectory(gdb, log, root, "local")
-	if err == nil {
+	if _, err := LoadDirectory(gdb, log, root, "local"); err == nil {
 		t.Error("expected LoadDirectory to fail on invalid skill")
 	}
 }
 
 func TestLoadDirectory_skipsUnderscoreDirectories(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "t.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	root := t.TempDir()
 	writeSkill(t, root, "regular", `---
 name: regular
@@ -814,10 +805,7 @@ body`)
 }
 
 func TestLoadDirectory_upsertAndVersionBump(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "t.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	root := t.TempDir()
 	writeSkill(t, root, "one", `---
 name: one

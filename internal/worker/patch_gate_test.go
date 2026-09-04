@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/db/dbtest"
 	"scrutineer/internal/testutil"
 )
 
@@ -469,10 +470,7 @@ func TestPatchGate_stagesLinkedWorktreeWithoutMutatingIndex(t *testing.T) {
 
 func newPatchOutputFixture(t *testing.T) (*Worker, db.Finding) {
 	t.Helper()
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	if err := gdb.Create(&repo).Error; err != nil {
 		t.Fatal(err)

@@ -7,13 +7,11 @@ import (
 	"testing"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/db/dbtest"
 )
 
 func TestSweepOrphanScanArtifacts(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "sweep.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/repo", Name: "repo"}
 	if err := gdb.Create(&repo).Error; err != nil {
 		t.Fatal(err)
@@ -87,10 +85,7 @@ func TestSweepOrphanScanArtifacts(t *testing.T) {
 }
 
 func TestSweepOrphanScanArtifactsRemovesNonResumableState(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "sweep.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/repo", Name: "repo"}
 	if err := gdb.Create(&repo).Error; err != nil {
 		t.Fatal(err)
@@ -118,10 +113,7 @@ func TestSweepOrphanScanArtifactsRemovesNonResumableState(t *testing.T) {
 }
 
 func TestSweepOrphanScanArtifactsRemovesMissingScanRow(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "sweep.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	w := &Worker{DB: gdb, DataDir: t.TempDir()}
 	const missingScanID = 404
 	writeScanArtifact(t, w.workRoot(missingScanID))
@@ -139,10 +131,7 @@ func TestSweepOrphanScanArtifactsRemovesMissingScanRow(t *testing.T) {
 }
 
 func TestSweepOrphanScanArtifactsMissingRootIsNoop(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "sweep.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	w := &Worker{DB: gdb, DataDir: filepath.Join(t.TempDir(), "missing")}
 	removed, err := w.sweepOrphanScanArtifacts()
 	if err != nil {

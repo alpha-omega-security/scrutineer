@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/db/dbtest"
 	"scrutineer/internal/queue"
 )
 
@@ -79,10 +80,7 @@ func TestRunnerImageName_unwrapsHostSplit(t *testing.T) {
 // host list is hostSkills and returns the api_base each side saw.
 func runHostSplitScan(t *testing.T, hostSkills []string) (hostBase, containerBase string) {
 	t.Helper()
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	skill := db.Skill{Name: "posture-test", Description: "d", Body: "b", Version: 1, Active: true, Source: "ui"}

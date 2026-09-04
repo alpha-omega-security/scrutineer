@@ -23,6 +23,7 @@ import (
 
 	"scrutineer/internal/config"
 	"scrutineer/internal/db"
+	"scrutineer/internal/db/dbtest"
 	"scrutineer/internal/interchange"
 	"scrutineer/internal/web"
 	"scrutineer/internal/worker"
@@ -402,10 +403,7 @@ func TestHostAPIBase(t *testing.T) {
 func TestWarnUnknownHostSkills(t *testing.T) {
 	// A host_skills entry warns when it names no active skill or a skill the
 	// local runner refuses (requires_profile); a plain active skill stays quiet.
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	for _, s := range []db.Skill{
 		{Name: "verify", Description: "d", Body: "b", Version: 1, Active: true, Source: "ui"},
 		{Name: "php-audit", Description: "d", Body: "b", Version: 1, Active: true, Source: "ui", RequiresProfile: "php"},

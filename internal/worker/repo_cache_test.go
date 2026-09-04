@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/db/dbtest"
 	"scrutineer/internal/testutil"
 )
 
@@ -30,10 +31,7 @@ func seedCacheFile(t *testing.T, dataDir, url string, n int) {
 
 func TestRefreshRepoDiskUsage_storesComputedSize(t *testing.T) {
 	dataDir := t.TempDir()
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "r.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/a", Name: "a"}
 	gdb.Create(&repo)
 	seedCacheFile(t, dataDir, repo.URL, 2048)
@@ -50,10 +48,7 @@ func TestRefreshRepoDiskUsage_storesComputedSize(t *testing.T) {
 
 func TestBackfillRepoDiskUsage_fillsZeroRowsSkipsLocal(t *testing.T) {
 	dataDir := t.TempDir()
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "b.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	remote := db.Repository{URL: "https://example.com/remote", Name: "remote"}
 	local := db.Repository{URL: "file:///tmp/local", Name: "local"}
 	uncached := db.Repository{URL: "https://example.com/uncached", Name: "uncached"}
@@ -84,10 +79,7 @@ func TestBackfillRepoDiskUsage_fillsZeroRowsSkipsLocal(t *testing.T) {
 
 func TestBackfillRepoDiskUsage_leavesNonZeroAlone(t *testing.T) {
 	dataDir := t.TempDir()
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "n.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/keep", Name: "keep", DiskBytes: 123}
 	gdb.Create(&repo)
 	// Cache on disk says 4096, but the row already carries a value; the

@@ -6,11 +6,11 @@ import (
 	"io"
 	"log"
 	"log/slog"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/db/dbtest"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/logger"
@@ -18,10 +18,7 @@ import (
 
 func newStreamWorker(t *testing.T) (*Worker, db.Repository) {
 	t.Helper()
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://x/r", Name: "r"}
 	gdb.Create(&repo)
 	return &Worker{DB: gdb, DataDir: t.TempDir(), Log: slog.New(slog.NewTextHandler(io.Discard, nil))}, repo
@@ -53,10 +50,7 @@ func TestPersistStreamedFinding_createsRowFromBody(t *testing.T) {
 }
 
 func TestPersistStreamedFinding_newFindingDoesNotLogRecordNotFound(t *testing.T) {
-	base, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	base := dbtest.Open(t)
 	var logs bytes.Buffer
 	gdb := base.Session(&gorm.Session{
 		Logger: logger.New(log.New(&logs, "", 0), logger.Config{LogLevel: logger.Warn}),
@@ -67,8 +61,7 @@ func TestPersistStreamedFinding_newFindingDoesNotLogRecordNotFound(t *testing.T)
 	gdb.Create(scan)
 	w := &Worker{DB: gdb, DataDir: t.TempDir(), Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 
-	_, err = w.PersistStreamedFinding(scan, []byte(`{"id":"F1","title":"t","severity":"High","location":"main.go:10"}`))
-	if err != nil {
+	if _, err := w.PersistStreamedFinding(scan, []byte(`{"id":"F1","title":"t","severity":"High","location":"main.go:10"}`)); err != nil {
 		t.Fatal(err)
 	}
 	if strings.Contains(logs.String(), "record not found") {
