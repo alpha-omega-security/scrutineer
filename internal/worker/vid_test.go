@@ -10,6 +10,8 @@ import (
 	"testing"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/db/dbtest"
+	"scrutineer/internal/testutil"
 )
 
 func writeSrcFile(t *testing.T, srcDir, rel string) {
@@ -28,13 +30,9 @@ func writeSrcFile(t *testing.T, srcDir, rel string) {
 func stubVid(t *testing.T, out string, code int) string {
 	t.Helper()
 	dir := t.TempDir()
-	script := filepath.Join(dir, "vid")
 	body := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$@\" > %q\necho %q\nexit %d\n",
 		filepath.Join(dir, "args.txt"), out, code)
-	if err := os.WriteFile(script, []byte(body), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	return script
+	return testutil.WriteStub(t, dir, "vid", body)
 }
 
 func TestVidSinks(t *testing.T) {
@@ -134,10 +132,7 @@ func TestComputeVID_dashPrefixedSink(t *testing.T) {
 }
 
 func TestParseFindingsOutput_setsAndRefreshesVID(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://x/r", Name: "r"}
 	gdb.Create(&repo)
 	w := &Worker{

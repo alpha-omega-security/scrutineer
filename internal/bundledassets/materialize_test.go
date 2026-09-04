@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -35,7 +36,7 @@ func TestMaterialize(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != bundleScriptPerm {
+	if info.Mode().Perm() != bundleScriptPerm && runtime.GOOS != "windows" {
 		t.Fatalf("script mode = %o, want %o", info.Mode().Perm(), bundleScriptPerm)
 	}
 

@@ -6,11 +6,11 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/db/dbtest"
 )
 
 func TestParseRefusalAudit(t *testing.T) {
@@ -124,10 +124,7 @@ func TestDoSkill_refusalAuditIsDeepDiveOnly(t *testing.T) {
 
 func newRefusalAuditWorker(t *testing.T, runner SkillRunner, skillName string) (*Worker, uint) {
 	t.Helper()
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "refusal-audit.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/refusal-audit", Name: "refusal-audit"}
 	if err := gdb.Create(&repo).Error; err != nil {
 		t.Fatal(err)

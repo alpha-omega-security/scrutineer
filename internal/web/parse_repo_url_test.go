@@ -1,13 +1,17 @@
 package web
 
-import "testing"
+import (
+	"runtime"
+	"testing"
+)
 
 func TestParseRepoInput(t *testing.T) {
 	cases := []struct {
-		name    string
-		input   string
-		want    RepoInput
-		wantErr bool
+		name     string
+		input    string
+		want     RepoInput
+		wantErr  bool
+		unixOnly bool
 	}{
 		{
 			name:  "plain github url without .git",
@@ -170,19 +174,22 @@ func TestParseRepoInput(t *testing.T) {
 			wantErr: true,
 		},
 		{
-			name:  "file scheme absolute path accepted as local",
-			input: "file:///srv/projects/myrepo",
-			want:  RepoInput{CloneURL: "file:///srv/projects/myrepo", Name: "myrepo", Local: true},
+			name:     "file scheme absolute path accepted as local",
+			input:    "file:///srv/projects/myrepo",
+			want:     RepoInput{CloneURL: "file:///srv/projects/myrepo", Name: "myrepo", Local: true},
+			unixOnly: true,
 		},
 		{
-			name:  "bare absolute path accepted as local",
-			input: "/home/alice/code/foo",
-			want:  RepoInput{CloneURL: "file:///home/alice/code/foo", Name: "foo", Local: true},
+			name:     "bare absolute path accepted as local",
+			input:    "/home/alice/code/foo",
+			want:     RepoInput{CloneURL: "file:///home/alice/code/foo", Name: "foo", Local: true},
+			unixOnly: true,
 		},
 		{
-			name:  "local path trailing slash stripped",
-			input: "/home/alice/code/foo/",
-			want:  RepoInput{CloneURL: "file:///home/alice/code/foo", Name: "foo", Local: true},
+			name:     "local path trailing slash stripped",
+			input:    "/home/alice/code/foo/",
+			want:     RepoInput{CloneURL: "file:///home/alice/code/foo", Name: "foo", Local: true},
+			unixOnly: true,
 		},
 		{
 			name:    "relative local path rejected",
@@ -203,6 +210,9 @@ func TestParseRepoInput(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
+			if tc.unixOnly && runtime.GOOS == "windows" {
+				t.Skip("input is a Unix-style absolute path; not absolute on Windows")
+			}
 			got, err := ParseRepoInput(tc.input)
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("err = %v, wantErr = %v", err, tc.wantErr)

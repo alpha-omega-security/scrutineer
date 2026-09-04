@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/db/dbtest"
 	"scrutineer/internal/queue"
 )
 
@@ -49,10 +50,7 @@ func stubWholeTreePrep(_ context.Context, _, _, workRoot string, _ func(Event)) 
 }
 
 func TestDoSkill_hardScopeSoftFallback(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://github.com/rails/rails", Name: "rails"}
 	gdb.Create(&repo)
 	skill := db.Skill{Name: "vuln-scan", OutputFile: "report.json", OutputKind: "findings", Version: 1, Active: true, Source: "ui"}
@@ -83,10 +81,7 @@ func TestDoSkill_hardScopeSoftFallback(t *testing.T) {
 }
 
 func TestDoSkill_hardScopeFallbackFromStreamedOutput(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://github.com/rails/rails", Name: "rails"}
 	gdb.Create(&repo)
 	skill := db.Skill{Name: "vuln-scan", OutputFile: "report.json", OutputKind: "findings", Version: 1, Active: true, Source: "ui"}
@@ -121,10 +116,7 @@ func TestDoSkill_hardScopeFallbackFromStreamedOutput(t *testing.T) {
 }
 
 func TestDoSkill_hardScopeNoFallbackOnOrdinaryFailure(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://github.com/rails/rails", Name: "rails"}
 	gdb.Create(&repo)
 	skill := db.Skill{Name: "vuln-scan", OutputFile: "report.json", OutputKind: "findings", Version: 1, Active: true, Source: "ui"}

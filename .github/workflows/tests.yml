@@ -40,7 +40,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: ["ubuntu-24.04", "macos-26"]
+        platform: ["ubuntu-24.04", "macos-26", "windows-latest"]
     runs-on: ${{ matrix.platform }}
     timeout-minutes: 30
     permissions:
@@ -64,11 +64,13 @@ jobs:
         id: go-cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
-          # ~/.cache/go-build is Go's build cache on Linux; ~/Library/Caches/go-build
-          # is its macOS equivalent. Paths that don't exist on a platform are skipped.
+          # Go's build cache: ~/.cache/go-build on Linux, ~/Library/Caches/go-build
+          # on macOS, ~/AppData/Local/go-build on Windows. Paths that don't exist
+          # on a platform are skipped.
           path: |
             ~/.cache/go-build
             ~/Library/Caches/go-build
+            ~/AppData/Local/go-build
             ~/go/pkg/mod
           key: ${{ runner.os }}-go-${{ github.job }}-${{ hashFiles('go.sum') }}
           restore-keys: |
@@ -109,6 +111,7 @@ jobs:
           path: |
             ~/.cache/go-build
             ~/Library/Caches/go-build
+            ~/AppData/Local/go-build
             ~/go/pkg/mod
           key: ${{ steps.go-cache.outputs.cache-primary-key }}
 

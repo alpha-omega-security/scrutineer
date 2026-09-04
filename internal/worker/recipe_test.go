@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
-	"path/filepath"
 	"testing"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/db/dbtest"
 )
 
 // backendRunner reports a backend the way the real harnesses do, so the claim
@@ -27,10 +27,7 @@ func (b backendRunner) Backend() string { return b.backend }
 
 func newRecipeWorker(t *testing.T, threatModel, scanConfig, backend string) (*Worker, db.Scan, uint) {
 	t.Helper()
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "recipe.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{
 		URL:         "https://example.com/x",
 		Name:        "x",

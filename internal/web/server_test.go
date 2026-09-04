@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"runtime"
 	"slices"
 	"sort"
 	"strconv"
@@ -5614,6 +5615,9 @@ func TestRepoCreate_branchURLTriggersTriageWithRef(t *testing.T) {
 }
 
 func TestRepoCreate_localDirectoryStoredAsFileURL(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("ParseRepoInput routes only /-prefixed input to parseLocalInput; a Windows drive path is rejected as neither https nor local")
+	}
 	s, done := newTestServer(t)
 	defer done()
 
@@ -5641,6 +5645,9 @@ func TestRepoCreate_localDirectoryStoredAsFileURL(t *testing.T) {
 }
 
 func TestRepoCreate_localDirectorySkipsRequiresRemoteDefaultSkill(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("ParseRepoInput routes only /-prefixed input to parseLocalInput; a Windows drive path is rejected as neither https nor local")
+	}
 	s, done := newTestServer(t)
 	defer done()
 

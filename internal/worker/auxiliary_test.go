@@ -8,20 +8,17 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"testing"
 
 	"github.com/alpha-omega-security/harness/llm"
 	"gorm.io/gorm"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/db/dbtest"
 )
 
 func TestCallAuxiliary_recordsUsageOnMalformedResponse(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "auxiliary.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/auxiliary", Name: "auxiliary"}
 	if err := gdb.Create(&repo).Error; err != nil {
 		t.Fatal(err)
@@ -45,10 +42,9 @@ func TestCallAuxiliary_recordsUsageOnMalformedResponse(t *testing.T) {
 	defer server.Close()
 
 	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
-	_, err = w.CallAuxiliary(context.Background(), &scan, "answer", json.RawMessage(`{"type":"object","required":["answer"],"properties":{"answer":{"type":"string"}}}`), llm.Options{
+	if _, err := w.CallAuxiliary(context.Background(), &scan, "answer", json.RawMessage(`{"type":"object","required":["answer"],"properties":{"answer":{"type":"string"}}}`), llm.Options{
 		Endpoint: server.URL, APIKey: "key", MaxTokens: 32, HTTPClient: server.Client(),
-	})
-	if err == nil {
+	}); err == nil {
 		t.Fatal("CallAuxiliary succeeded, want malformed-response error")
 	}
 
@@ -78,11 +74,8 @@ func TestCallAuxiliary_rejectsDifferentModel(t *testing.T) {
 }
 
 func TestRecordAuxiliaryUsage_rejectsMissingScan(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "missing-scan.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = recordAuxiliaryUsage(gdb, &db.Scan{ID: 999}, "claude-sonnet-5", llm.Usage{InputTokens: 1})
+	gdb := dbtest.Open(t)
+	err := recordAuxiliaryUsage(gdb, &db.Scan{ID: 999}, "claude-sonnet-5", llm.Usage{InputTokens: 1})
 	if err == nil || err.Error() != "scan 999 no longer exists" {
 		t.Fatalf("recordAuxiliaryUsage() error = %v", err)
 	}

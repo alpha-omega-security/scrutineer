@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/db/dbtest"
 	"scrutineer/internal/queue"
 )
 
@@ -109,10 +110,7 @@ func TestMigrateLegacyState_renamesStateDir(t *testing.T) {
 }
 
 func TestMigrateLegacyState_rewritesPausePrefix(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "m.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://x/r", Name: "r"}
 	gdb.Create(&repo)
 	// A scan paused with the pre-rename prefix, and one with a plain user
@@ -189,10 +187,7 @@ func (blockingRunner) SkillDir(workRoot, name string) string {
 func (blockingRunner) Backend() string { return "codex" }
 
 func TestWorker_CancelStopsRunningScan(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "c.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	skill := db.Skill{Name: "slow", Description: "x", Body: "b", Active: true, Source: "ui", Version: 1}
@@ -265,10 +260,7 @@ func TestEffectiveMaxTurns(t *testing.T) {
 }
 
 func TestWorker_maxTurnsReachedCompletesNotFails(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "mt.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	skill := db.Skill{Name: "capped", Description: "x", Body: "b", Active: true, Source: "ui", Version: 1, MaxTurns: 5}
@@ -305,10 +297,7 @@ func TestWorker_maxTurnsReachedCompletesNotFails(t *testing.T) {
 }
 
 func TestWorker_claudeAccountErrorPausesScanAndQueue(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "limit.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	skill := db.Skill{Name: "limited", Description: "x", Body: "b", Active: true, Source: "ui", Version: 1}
@@ -352,10 +341,7 @@ func TestWorker_claudeAccountErrorPausesScanAndQueue(t *testing.T) {
 }
 
 func TestWorker_claudeAccountErrorRecordsResetTime(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "limit-reset.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	skill := db.Skill{Name: "limited", Description: "x", Body: "b", Active: true, Source: "ui", Version: 1}
@@ -397,10 +383,7 @@ func TestWorker_claudeAccountErrorRecordsResetTime(t *testing.T) {
 }
 
 func TestWorker_claudeAccountErrorRejectsFarFutureReset(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "limit-far-reset.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	skill := db.Skill{Name: "limited", Description: "x", Body: "b", Active: true, Source: "ui", Version: 1}
@@ -435,10 +418,7 @@ func TestWorker_claudeAccountErrorRejectsFarFutureReset(t *testing.T) {
 }
 
 func TestWorker_applyAccountPauseResetExtendsBatchForward(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "extend-batch.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 
@@ -504,10 +484,7 @@ func TestWorker_applyAccountPauseResetExtendsBatchForward(t *testing.T) {
 }
 
 func TestWorker_applyAccountPauseResetTriggerForwardOnly(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "trigger-forward.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 
@@ -538,10 +515,7 @@ func TestWorker_applyAccountPauseResetTriggerForwardOnly(t *testing.T) {
 }
 
 func TestWorker_applyAccountPauseResetIgnoresFarFutureRow(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "far-future.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 
@@ -572,10 +546,7 @@ func TestWorker_applyAccountPauseResetIgnoresFarFutureRow(t *testing.T) {
 }
 
 func TestWorker_applyAccountPauseResetMaxUsesUTCComparison(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "max-utc.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 
@@ -600,10 +571,7 @@ func TestWorker_applyAccountPauseResetMaxUsesUTCComparison(t *testing.T) {
 }
 
 func TestWorker_applyAccountPauseResetSkipsResumedTrigger(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "resumed-trigger.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 
@@ -658,10 +626,7 @@ func TestWorker_recordRateLimitStatus(t *testing.T) {
 }
 
 func TestWorker_resumeAccountPaused(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "resume-account.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	sqldb, err := gdb.DB()
 	if err != nil {
 		t.Fatal(err)
@@ -714,10 +679,7 @@ func TestWorker_resumeAccountPaused(t *testing.T) {
 }
 
 func TestWorker_resumeAccountPausedUsesUTCComparison(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "resume-account-utc.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	sqldb, err := gdb.DB()
 	if err != nil {
 		t.Fatal(err)
@@ -792,10 +754,7 @@ func TestAppendAutoResumeFailure(t *testing.T) {
 }
 
 func TestWorker_resumeAccountPausedRestoreOnEnqueueError(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "resume-account-restore.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	sqldb, err := gdb.DB()
 	if err != nil {
 		t.Fatal(err)
@@ -853,10 +812,7 @@ func TestWorker_resumeAccountPausedRestoreOnEnqueueError(t *testing.T) {
 }
 
 func TestWorker_skipsPausedScan(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "paused.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	skill := db.Skill{Name: "paused", Description: "x", Body: "b", Active: true, Source: "ui", Version: 1}
@@ -887,10 +843,7 @@ func TestWorker_skipsPausedScan(t *testing.T) {
 }
 
 func TestWorker_workspaceCleanup(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "wc.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	skill := db.Skill{Name: "noop", Body: "b", Active: true, Source: "ui", Version: 1}
@@ -940,10 +893,7 @@ func TestWorker_workspaceCleanup(t *testing.T) {
 // event regardless of the flush cadence so the live UI stays real-time. The
 // explicit snapshot models wrap()'s final persistence boundary.
 func TestScanEmitter_batchesDBWrites(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "emit.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	scan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanRunning}
@@ -977,10 +927,7 @@ func TestScanEmitter_batchesDBWrites(t *testing.T) {
 }
 
 func TestScanEmitter_preservesManyEventsAcrossFlushes(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "emit_many.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	scan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanRunning}
@@ -1001,6 +948,11 @@ func TestScanEmitter_preservesManyEventsAcrossFlushes(t *testing.T) {
 		want.WriteByte('\n')
 	}
 	snapshot()
+	// finalizeScan is what persists scan.Log after snapshot in production;
+	// on Windows the monotonic clock's granularity can leave every
+	// time.Since(lastFlush) >= 1ns check false, so no interval-driven flush
+	// fires and the row would still be empty here without this write.
+	w.DB.Model(&db.Scan{}).Where("id = ?", scan.ID).Update("log", scan.Log)
 
 	if scan.Log != want.String() {
 		t.Fatalf("in-memory log does not contain every event in order")
@@ -1016,10 +968,7 @@ func TestScanEmitter_preservesManyEventsAcrossFlushes(t *testing.T) {
 // a zero-or-tiny interval triggers the DB UPDATE on every event so a
 // stuck/long-running scan still streams its log to disk.
 func TestScanEmitter_flushesWhenIntervalElapses(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "emit_short.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	scan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanRunning}
@@ -1047,10 +996,7 @@ func TestScanEmitter_flushesWhenIntervalElapses(t *testing.T) {
 // is open. A crash between batched flushes must still leave the scan
 // resumable via the persisted session id.
 func TestScanEmitter_sessionWritesBypassBatching(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "emit_session.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	scan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanRunning}
@@ -1076,10 +1022,7 @@ func TestScanEmitter_sessionWritesBypassBatching(t *testing.T) {
 // buffered log tail. Without that, a scan that finishes in under
 // LogFlushInterval would land in the DB with an empty log column.
 func TestScanEmitter_finalSaveCoversUnflushedTail(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "tail.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	skill := db.Skill{Name: "fast", Description: "x", Body: "b", Active: true, Source: "ui", Version: 1}
@@ -1108,10 +1051,7 @@ func TestScanEmitter_finalSaveCoversUnflushedTail(t *testing.T) {
 }
 
 func TestScanEmitter_failedFinalSaveCoversUnflushedTail(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "failed_tail.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	skill := db.Skill{Name: "fast", Description: "x", Body: "b", Active: true, Source: "ui", Version: 1}
@@ -1149,10 +1089,7 @@ func TestScanEmitter_failedFinalSaveCoversUnflushedTail(t *testing.T) {
 // hit cap as completion, not failure; the log line is the only signal
 // to operators that the partial wasn't usable.
 func TestWorker_maxTurnsParseFailureLogged(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "mtparse.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	skill := db.Skill{Name: "maint", Description: "x", Body: "b", Active: true, Source: "ui", Version: 1, OutputKind: "maintainers", MaxTurns: 5}
@@ -1187,10 +1124,7 @@ func TestWorker_maxTurnsParseFailureLogged(t *testing.T) {
 // for a real skill, so without a push here the list pages show a scan as queued
 // for its entire run.
 func TestWrap_publishesRunningOnClaim(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "start.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	skill := db.Skill{Name: "metadata", Description: "x", Body: "b", Active: true, Source: "ui", Version: 1}
