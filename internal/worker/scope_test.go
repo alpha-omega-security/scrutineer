@@ -74,6 +74,96 @@ func TestPruneToSubPath_missing(t *testing.T) {
 	}
 }
 
+func TestPruneToSubPath_refusesSymlinkedComponent(t *testing.T) {
+	dataDir := t.TempDir()
+	src := filepath.Join(dataDir, "scan-1", "src")
+	writeScopeFile(t, src, "README.md")
+	writeScopeFile(t, dataDir, "keep/index.js")
+	victim := filepath.Join(dataDir, "repo-cache", "cache.db")
+	writeScopeFile(t, dataDir, "repo-cache/cache.db")
+	if err := os.Symlink("../..", filepath.Join(src, "escape")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := pruneToSubPath(src, "escape/keep"); err == nil {
+		t.Error("expected error for a symlinked sub_path component")
+	}
+	present(t, victim)
+	present(t, filepath.Join(src, "README.md"))
+}
+
+func TestPruneToSubPath_refusesTerminalSymlink(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	writeScopeFile(t, src, "README.md")
+	writeScopeFile(t, root, "outside/index.js")
+	if err := os.Symlink("../outside", filepath.Join(src, "linked")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := pruneToSubPath(src, "linked"); err == nil {
+		t.Error("expected error for a symlinked sub_path")
+	}
+	present(t, filepath.Join(root, "outside/index.js"))
+	present(t, filepath.Join(src, "README.md"))
+}
+
+func TestPruneToSubPath_prunesSymlinkedSiblingWithoutFollowing(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	writeScopeFile(t, src, "keep/index.js")
+	writeScopeFile(t, root, "outside/index.js")
+	if err := os.Symlink("../outside", filepath.Join(src, "linked")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := pruneToSubPath(src, "keep"); err != nil {
+		t.Fatal(err)
+	}
+	present(t, filepath.Join(src, "keep/index.js"))
+	gone(t, filepath.Join(src, "linked"))
+	present(t, filepath.Join(root, "outside/index.js"))
+}
+
+func TestPruneToSubPath_prunesNestedSymlinkedSiblingWithoutFollowing(t *testing.T) {
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	writeScopeFile(t, src, "packages/core/index.js")
+	writeScopeFile(t, root, "outside/index.js")
+	if err := os.Symlink("../../outside", filepath.Join(src, "packages", "linked")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := pruneToSubPath(src, "packages/core"); err != nil {
+		t.Fatal(err)
+	}
+	present(t, filepath.Join(src, "packages/core/index.js"))
+	gone(t, filepath.Join(src, "packages/linked"))
+	present(t, filepath.Join(root, "outside/index.js"))
+}
+
+// A link that stays inside the checkout is refused as well: pruning through
+// it would delete the aliased directory as a sibling of the kept path. The
+// refusal has to land before anything is removed, so the tree is checked
+// intact afterwards, alias included.
+func TestPruneToSubPath_refusesInTreeAliasBeforeMutating(t *testing.T) {
+	src := t.TempDir()
+	writeScopeFile(t, src, "packages/core/index.js")
+	writeScopeFile(t, src, "README.md")
+	if err := os.Symlink("packages", filepath.Join(src, "alias")); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := pruneToSubPath(src, "alias/core"); err == nil {
+		t.Error("expected error for a symlinked sub_path component inside the checkout")
+	}
+	present(t, filepath.Join(src, "packages/core/index.js"))
+	present(t, filepath.Join(src, "README.md"))
+	if info, err := os.Lstat(filepath.Join(src, "alias")); err != nil || info.Mode()&os.ModeSymlink == 0 {
+		t.Errorf("alias link disturbed: %v, %v", info, err)
+	}
+}
+
 func TestScanScopeHard(t *testing.T) {
 	hard := &Worker{SubprojectScope: "hard"}
 	soft := &Worker{SubprojectScope: "soft"}

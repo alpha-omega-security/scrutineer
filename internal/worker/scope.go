@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -121,16 +122,44 @@ func pruneToSubPath(srcDir, subPath string) error {
 	if clean == "" {
 		return nil
 	}
-	full := filepath.Join(srcDir, filepath.FromSlash(clean))
-	if _, err := os.Stat(full); err != nil {
-		return fmt.Errorf("sub_path %q not found in repository: %w", clean, err)
+	srcInfo, err := os.Lstat(srcDir)
+	if err != nil {
+		return fmt.Errorf("open source root: %w", err)
 	}
+	if !srcInfo.IsDir() {
+		return fmt.Errorf("source root %q is not a directory", srcDir)
+	}
+	root, err := os.OpenRoot(srcDir)
+	if err != nil {
+		return fmt.Errorf("open source root: %w", err)
+	}
+	defer func() { _ = root.Close() }()
+
+	// Validate the complete keep-path before deleting anything. A repository
+	// symlink in that path would otherwise let the next ReadDir and RemoveAll
+	// operate outside srcDir. Root-relative operations also keep later pruning
+	// contained if the filesystem changes after this check.
+	parts := strings.Split(clean, "/")
+	cur := "."
+	for i, part := range parts {
+		cur = filepath.Join(cur, part)
+		info, err := root.Lstat(cur)
+		if err != nil {
+			return fmt.Errorf("sub_path %q not found in repository: %w", clean, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("sub_path %q contains symlink component %q", clean, strings.Join(parts[:i+1], "/"))
+		}
+		if i < len(parts)-1 && !info.IsDir() {
+			return fmt.Errorf("sub_path %q component %q is not a directory", clean, strings.Join(parts[:i+1], "/"))
+		}
+	}
+
 	// Walk the keep-path one level at a time, deleting siblings that are not
 	// the next component (and, at the repo root, not .git).
-	parts := strings.Split(clean, "/")
-	cur := srcDir
+	cur = "."
 	for i, part := range parts {
-		entries, err := os.ReadDir(cur)
+		entries, err := fs.ReadDir(root.FS(), filepath.ToSlash(cur))
 		if err != nil {
 			return err
 		}
@@ -141,7 +170,7 @@ func pruneToSubPath(srcDir, subPath string) error {
 			if i == 0 && e.Name() == ".git" {
 				continue
 			}
-			if err := os.RemoveAll(filepath.Join(cur, e.Name())); err != nil {
+			if err := root.RemoveAll(filepath.Join(cur, e.Name())); err != nil {
 				return err
 			}
 		}
