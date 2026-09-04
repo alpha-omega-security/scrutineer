@@ -37,7 +37,7 @@ require (
 	github.com/cyphar/filepath-securejoin v0.7.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/git-pkgs/packageurl-go v0.3.1 // indirect
-	github.com/git-pkgs/registries v0.8.1 // indirect
+	github.com/git-pkgs/registries v0.9.0 // indirect
 	github.com/git-pkgs/spdx v0.3.1 // indirect
 	github.com/git-pkgs/vers v0.6.0 // indirect
 	github.com/github/go-spdx/v2 v2.7.0 // indirect
@@ -57,6 +57,7 @@ require (
 	github.com/pandatix/go-cvss v0.6.4 // indirect
 	github.com/pjbgf/sha1cd v0.6.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
+	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/net v0.58.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/text v0.41.0 // indirect
