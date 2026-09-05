@@ -1,9 +1,9 @@
 <div id="jobs">
-<div class="flex items-center justify-between gap-4 mb-6">
+<div class="flex flex-wrap items-center justify-between gap-4 mb-6">
   <h2 class="text-2xl font-semibold flex items-center gap-2">
     <i data-lucide="list-checks"></i> Scans
   </h2>
-  <div class="flex items-center gap-2">
+  <div class="flex flex-wrap items-center gap-2">
     {{if .QueuedCount}}
       <form method="post" action="/scans/pause-queued"
             hx-post="/scans/pause-queued" hx-swap="none"
@@ -19,9 +19,9 @@
       </form>
     {{end}}
     {{if and (eq .Status "failed") .Page.Total}}
-      <form method="post" action="/scans/retry-failed?skill={{.Skill}}"
-            hx-post="/scans/retry-failed?skill={{.Skill}}" hx-swap="none"
-            hx-confirm="Re-enqueue every failed scan{{if .Skill}} for {{.Skill}}{{end}}?">
+      <form method="post" action="/scans/retry-failed?skill={{.Skill}}&completeness={{.Completeness}}"
+            hx-post="/scans/retry-failed?skill={{.Skill}}&completeness={{.Completeness}}" hx-swap="none"
+            hx-confirm="Re-enqueue every failed scan{{if .Skill}} for {{.Skill}}{{end}}{{if .Completeness}} with {{.Completeness}} coverage{{end}}?">
         <button type="submit" class="btn-outline"><i data-lucide="refresh-cw"></i> Retry all failed</button>
       </form>
     {{end}}
@@ -33,9 +33,9 @@
       </button>
       <div data-popover aria-hidden="true" data-align="end">
         <div role="menu">
-          <a role="menuitem" href="/scans?status={{.Status}}&sort={{.Sort}}">All skills</a>
+          <a role="menuitem" href="/scans?status={{.Status}}&sort={{.Sort}}&completeness={{.Completeness}}">All skills</a>
           {{range .Skills}}
-            <a role="menuitem" href="/scans?skill={{.}}&status={{$.Status}}&sort={{$.Sort}}"
+            <a role="menuitem" href="/scans?skill={{.}}&status={{$.Status}}&sort={{$.Sort}}&completeness={{$.Completeness}}"
                {{if eq . $.Skill}}aria-current="true"{{end}}>{{.}}</a>
           {{end}}
         </div>
@@ -49,10 +49,26 @@
       </button>
       <div data-popover aria-hidden="true" data-align="end">
         <div role="menu">
-          <a role="menuitem" href="/scans?skill={{.Skill}}&sort={{.Sort}}">All statuses</a>
+          <a role="menuitem" href="/scans?skill={{.Skill}}&sort={{.Sort}}&completeness={{.Completeness}}">All statuses</a>
           {{range (list "queued" "paused" "running" "done" "failed" "skipped" "cancelled")}}
-            <a role="menuitem" href="/scans?skill={{$.Skill}}&status={{.}}&sort={{$.Sort}}"
+            <a role="menuitem" href="/scans?skill={{$.Skill}}&status={{.}}&sort={{$.Sort}}&completeness={{$.Completeness}}"
                {{if eq . $.Status}}aria-current="true"{{end}}>{{.}}</a>
+          {{end}}
+        </div>
+      </div>
+    </div>
+    <div class="dropdown-menu">
+      <button type="button" class="btn-outline" aria-haspopup="menu" aria-expanded="false" aria-label="Coverage completeness{{if .Completeness}}: {{.Completeness}}{{end}}">
+        <i data-lucide="filter"></i>
+        {{if .Completeness}}{{.Completeness}}{{else}}Completeness{{end}}
+        <i data-lucide="chevron-down"></i>
+      </button>
+      <div data-popover aria-hidden="true" data-align="end">
+        <div role="menu">
+          <a role="menuitem" href="/scans?skill={{.Skill}}&status={{.Status}}&sort={{.Sort}}"{{if not .Completeness}} aria-current="true"{{end}}>All completeness</a>
+          {{range (list "complete" "partial" "unknown")}}
+            <a role="menuitem" href="/scans?skill={{$.Skill}}&status={{$.Status}}&sort={{$.Sort}}&completeness={{.}}"
+               {{if eq . $.Completeness}}aria-current="true"{{end}}>{{.}}</a>
           {{end}}
         </div>
       </div>
@@ -66,7 +82,7 @@
       <div data-popover aria-hidden="true" data-align="end">
         <div role="menu">
           {{range (list "newest" "skill" "status" "repository")}}
-            <a role="menuitem" href="/scans?skill={{$.Skill}}&status={{$.Status}}&sort={{.}}"
+            <a role="menuitem" href="/scans?skill={{$.Skill}}&status={{$.Status}}&sort={{.}}&completeness={{$.Completeness}}"
                {{if eq . (sortkey $.Sort)}}aria-current="true"{{end}}>{{.}}</a>
           {{end}}
         </div>
@@ -97,6 +113,7 @@
 {{end}}
 
 {{if .Scans}}
+  <div class="overflow-x-auto">
   <table class="table">
     <thead>
       <tr>
@@ -105,6 +122,7 @@
         {{if .AnySubPath}}<th>Sub-path</th>{{end}}
         {{template "th-sort" (dict "Sorter" .Sorter "Key" "skill" "Def" "asc" "Label" "Skill" "Class" "")}}
         {{template "th-sort" (dict "Sorter" .Sorter "Key" "status" "Def" "asc" "Label" "Status" "Class" "")}}
+        <th>Completeness</th>
         {{template "th-sort" (dict "Sorter" .Sorter "Key" "findings" "Def" "desc" "Label" "Findings" "Class" "")}}
         <th>Model</th><th>Cost</th><th>Started</th><th>Duration</th><th class="w-12"></th>
       </tr>
@@ -120,6 +138,7 @@
         {{end}}
         <td>{{if .SkillName}}{{.SkillName}}{{else}}{{.Kind}}{{end}} {{template "branch-tag" .Ref}}</td>
         <td>{{template "status-badge" (status .Status)}} {{if .MaxTurnsHit}}<span class="badge-outline"><i data-lucide="timer-off"></i> max turns</span>{{end}}</td>
+        <td>{{if eq .Completeness "complete"}}<span class="badge-outline">complete</span>{{else if eq .Completeness "partial"}}<span class="badge-outline">partial</span>{{else}}<span class="text-muted-foreground">unknown</span>{{end}}</td>
         <td>{{if gt .FindingsCount 0}}{{template "findings-badge" .FindingsCount}}{{end}}</td>
         <td class="text-muted-foreground">{{if .Model}}{{.Model}}{{else}}-{{end}}</td>
         <td class="text-muted-foreground">{{if gt .CostUSD 0.0}}{{usd .CostUSD}}{{else}}-{{end}}</td>
@@ -130,9 +149,14 @@
     {{end}}
     </tbody>
   </table>
+  </div>
   {{template "pagination" .Page}}
 {{else}}
+  {{if or .Skill .Status .Completeness}}
+  {{template "empty" (dict "Icon" "list-checks" "Title" "No matching scans" "Body" "")}}
+  {{else}}
   {{template "empty" (dict "Icon" "list-checks" "Title" "No jobs yet" "Body" "Jobs appear here once a repository has been queued.")}}
+  {{end}}
 {{end}}
 
 </div>

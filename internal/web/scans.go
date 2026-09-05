@@ -20,9 +20,15 @@ import (
 )
 
 func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
+	completeness, err := parseScanCompletenessFilter(r.URL.Query().Get("completeness"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	skillFilter := parseScanSkillFilter(r.URL.Query().Get("skill"))
 	r = requestWithScanSkillFilter(r, skillFilter.value())
 	q := skillFilter.apply(s.DB.Model(&db.Scan{}))
+	q = applyScanCompletenessFilter(q, completeness)
 	status := r.URL.Query().Get(statusKey)
 	if status != "" {
 		q = q.Where("status = ?", status)
@@ -69,7 +75,8 @@ func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 		"Scans": scans, "Page": page,
 		"Skill": skillFilter.value(), "SkillLabel": skillFilter.label(),
 		"Status": status, "Sort": sort, "Skills": skillNames,
-		"AnySubPath": anySubPath, "QueuedCount": stats.QueuedCount, "PausedCount": stats.PausedCount,
+		"Completeness": completeness,
+		"AnySubPath":   anySubPath, "QueuedCount": stats.QueuedCount, "PausedCount": stats.PausedCount,
 		"AccountPausedCount": stats.AccountPausedCount,
 		"NextAccountResume":  stats.NextAccountResume,
 		"ModelDowngraded":    s.Worker.ShouldDowngradeModel(),
@@ -82,6 +89,27 @@ func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.render(w, r, "jobs.html", data)
+}
+
+func parseScanCompletenessFilter(raw string) (string, error) {
+	switch raw {
+	case "", coverage.CompletenessComplete, coverage.CompletenessPartial, coverage.CompletenessUnknown:
+		return raw, nil
+	default:
+		return "", errors.New("invalid completeness filter: expected complete, partial or unknown")
+	}
+}
+
+func applyScanCompletenessFilter(q *gorm.DB, value string) *gorm.DB {
+	switch value {
+	case "":
+		return q
+	case coverage.CompletenessUnknown:
+		// Older scans have no indexed verdict; they make no completeness claim.
+		return q.Where("(scans.completeness IN ? OR scans.completeness IS NULL)", []string{value, ""})
+	default:
+		return q.Where("scans.completeness = ?", value)
+	}
 }
 
 type scanSkillFilter struct {
@@ -387,10 +415,16 @@ func (s *Server) resumeOpts(scan db.Scan) (sessionID string, resumeOf *uint) {
 }
 
 func (s *Server) scansRetryFailed(w http.ResponseWriter, r *http.Request) {
+	completeness, err := parseScanCompletenessFilter(r.URL.Query().Get("completeness"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	skillFilter := parseScanSkillFilter(r.URL.Query().Get("skill"))
 	repoID, _ := strconv.Atoi(r.URL.Query().Get("repository"))
 	q := skillFilter.apply(s.DB.Model(&db.Scan{}).
 		Where("status = ? AND kind = ? AND skill_id IS NOT NULL", db.ScanFailed, worker.JobSkill))
+	q = applyScanCompletenessFilter(q, completeness)
 	if repoID > 0 {
 		q = q.Where("repository_id = ?", repoID)
 	}
@@ -405,7 +439,7 @@ func (s *Server) scansRetryFailed(w http.ResponseWriter, r *http.Request) {
 	// deliberately absent: a user-cancelled newer run shouldn't block
 	// retrying an older genuine failure.
 	var scans []db.Scan
-	err := q.Select("id, repository_id, skill_id, model, effort, finding_id, remediation_attempt_id, sub_path, scope_mode, ref, profile, rescan_mode, diff_base_scan_id, scan_group, focus_area, backend, status, session_id, resumed_from_scan_id, import_payload").
+	err = q.Select("id, repository_id, skill_id, model, effort, finding_id, remediation_attempt_id, sub_path, scope_mode, ref, profile, rescan_mode, diff_base_scan_id, scan_group, focus_area, backend, status, session_id, resumed_from_scan_id, import_payload").
 		Where(`NOT EXISTS (
 			SELECT 1 FROM scans n
 			WHERE n.id > scans.id
@@ -463,6 +497,9 @@ func (s *Server) scansRetryFailed(w http.ResponseWriter, r *http.Request) {
 		target = fmt.Sprintf("/repositories/%d#rt3", repoID)
 	} else if skillFilter.value() != "" {
 		target += "&skill=" + url.QueryEscape(skillFilter.value())
+	}
+	if repoID <= 0 && completeness != "" {
+		target += "&completeness=" + url.QueryEscape(completeness)
 	}
 	s.redirect(w, r, target)
 }
