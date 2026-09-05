@@ -58,7 +58,7 @@ func ParseRepoInput(raw string) (RepoInput, error) {
 	if raw == "" {
 		return RepoInput{}, fmt.Errorf("url required")
 	}
-	if strings.HasPrefix(raw, LocalScheme) || strings.HasPrefix(raw, "/") {
+	if strings.HasPrefix(raw, LocalScheme) || filepath.IsAbs(raw) {
 		return parseLocalInput(raw)
 	}
 	if !strings.HasPrefix(raw, "https://") {
@@ -193,8 +193,9 @@ func DefaultHTMLURL(cloneURL string) string {
 	return ""
 }
 
-// parseLocalInput accepts either file:///abs/path or /abs/path and
-// returns a RepoInput whose CloneURL is file://<cleaned-abs-path>. The
+// parseLocalInput accepts file:///abs/path (file:///C:/path on Windows) or
+// an absolute path in the host's own form (/abs/path, C:\path) and returns
+// a RepoInput whose CloneURL is file://<cleaned-abs-path>. The
 // path is required to be absolute and free of `..` segments after
 // cleaning so a caller cannot escape past the supplied root by feeding
 // in `/srv/../etc`. Existence is not checked here — handlers stat the
@@ -202,19 +203,29 @@ func DefaultHTMLURL(cloneURL string) string {
 // than as a ghost Repository row.
 func parseLocalInput(raw string) (RepoInput, error) {
 	path := strings.TrimPrefix(raw, LocalScheme)
+	// file:///C:/path is the RFC 8089 form of a drive path: the slash after
+	// the empty authority is not part of it.
+	if strings.HasPrefix(path, "/") && filepath.VolumeName(path[1:]) != "" {
+		path = path[1:]
+	}
 	if !filepath.IsAbs(path) {
 		return RepoInput{}, fmt.Errorf("local path must be absolute, got %q", raw)
 	}
 	// Check `..` against the pre-Clean path so `/srv/../etc` is rejected
 	// rather than silently collapsed to `/etc`.
-	for _, seg := range strings.Split(path, "/") {
+	for _, seg := range strings.Split(filepath.ToSlash(path), "/") {
 		if seg == ".." {
 			return RepoInput{}, fmt.Errorf("local path must not contain .. segments, got %q", raw)
 		}
 	}
 	clean := filepath.Clean(path)
+	// os.Stat on a UNC path opens an SMB session to whatever host the input
+	// names, and \\?\UNC\ and \??\UNC\ are device spellings of the same share.
+	if vol := filepath.VolumeName(clean); vol != "" && (len(vol) != 2 || vol[1] != ':') {
+		return RepoInput{}, fmt.Errorf("local path %q must be on a drive letter, not a UNC share or device path", raw)
+	}
 	name := filepath.Base(clean)
-	if name == "/" || name == "." {
+	if name == string(filepath.Separator) || name == "." {
 		return RepoInput{}, fmt.Errorf("local path %q has no basename", raw)
 	}
 	return RepoInput{CloneURL: LocalScheme + clean, Name: name, Local: true}, nil

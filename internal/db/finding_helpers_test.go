@@ -14,11 +14,23 @@ const severityField = "severity"
 
 func newTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
-	gdb, err := Open(filepath.Join(t.TempDir(), "t.db"))
+	gdb, err := Open(filepath.Join(t.TempDir(), "t.db") + "?_pragma=synchronous(OFF)")
 	if err != nil {
 		t.Fatal(err)
 	}
+	closeOnCleanup(t, gdb)
 	return gdb
+}
+
+// closeOnCleanup closes gdb before TempDir is removed: Windows refuses to
+// delete a database file that still has an open handle.
+func closeOnCleanup(t *testing.T, gdb *gorm.DB) {
+	t.Helper()
+	t.Cleanup(func() {
+		if sqldb, _ := gdb.DB(); sqldb != nil {
+			_ = sqldb.Close()
+		}
+	})
 }
 
 func seedFinding(t *testing.T, gdb *gorm.DB) Finding {

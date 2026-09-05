@@ -9,11 +9,13 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/db/dbtest"
 	"scrutineer/internal/queue"
 	"scrutineer/internal/repoconfig"
 )
@@ -48,10 +50,7 @@ func TestStageThreatModel(t *testing.T) {
 }
 
 func TestApplySkillResultPersistsProviderImageProvenance(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "provider.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/provider", Name: "provider"}
 	if err := gdb.Create(&repo).Error; err != nil {
 		t.Fatal(err)
@@ -96,10 +95,7 @@ func (*embeddedNativeCaptureRunner) SkillDir(workRoot, name string) string {
 }
 
 func TestDoSkill_findingsKind(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "s.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	skill := db.Skill{
@@ -162,10 +158,7 @@ func TestDoSkill_findingsKind(t *testing.T) {
 }
 
 func TestDoSkill_passesSubmoduleOptionFromSkill(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "submodules.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/native", Name: "native"}
 	if err := gdb.Create(&repo).Error; err != nil {
 		t.Fatal(err)
@@ -227,10 +220,7 @@ func TestDoSkill_passesSubmoduleOptionFromSkill(t *testing.T) {
 
 func TestDoSkillStagesEmbeddedNativeComponentIdentity(t *testing.T) {
 	url := newEmbeddedNativeOrigin(t)
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "embedded-native-components.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: url, Name: "native"}
 	if err := gdb.Create(&repo).Error; err != nil {
 		t.Fatal(err)
@@ -254,7 +244,7 @@ func TestDoSkillStagesEmbeddedNativeComponentIdentity(t *testing.T) {
 	runner := &embeddedNativeCaptureRunner{}
 	w := &Worker{
 		DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		DataDir: t.TempDir(), Runner: runner,
+		DataDir: shortTempDir(t), Runner: runner,
 	}
 	body, err := json.Marshal(queue.Payload{ScanID: scan.ID})
 	if err != nil {
@@ -279,10 +269,7 @@ func TestDoSkillStagesEmbeddedNativeComponentIdentity(t *testing.T) {
 }
 
 func TestDoSkill_maintainersKind(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "m.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	skill := db.Skill{
@@ -342,10 +329,7 @@ func TestDoSkill_maintainersKind(t *testing.T) {
 }
 
 func TestDoSkill_cloneErrorFlagsRepo(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "ce.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/gone", Name: "gone"}
 	gdb.Create(&repo)
 	skill := db.Skill{
@@ -396,10 +380,7 @@ func TestDoSkill_cloneErrorFlagsRepo(t *testing.T) {
 }
 
 func TestDoSkill_successClearsCloneError(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "cc.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{
 		URL: "https://example.com/back", Name: "back",
 		CloneError: "previously unreachable",
@@ -562,10 +543,7 @@ type reconContextFixture struct {
 
 func newReconContextFixture(t *testing.T) reconContextFixture {
 	t.Helper()
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "recon.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/recon", Name: "recon"}
 	if err := gdb.Create(&repo).Error; err != nil {
 		t.Fatal(err)
@@ -756,7 +734,7 @@ func TestStageSkill_mirrorsScriptsToWorkRoot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm()&0o100 == 0 {
+	if runtime.GOOS != "windows" && info.Mode().Perm()&0o100 == 0 {
 		t.Errorf("run.sh executable bit lost: %v", info.Mode())
 	}
 }

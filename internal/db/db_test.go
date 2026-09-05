@@ -122,6 +122,7 @@ func TestSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open snapshot: %v", err)
 	}
+	closeOnCleanup(t, snap)
 	var v int
 	if err := snap.Raw("SELECT v FROM probe").Scan(&v).Error; err != nil {
 		t.Fatalf("read probe from snapshot: %v", err)
@@ -134,9 +135,11 @@ func TestSnapshot(t *testing.T) {
 func TestSnapshot_destExists(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "src.db")
-	if _, err := Open(src); err != nil {
+	seed, err := Open(src)
+	if err != nil {
 		t.Fatal(err)
 	}
+	closeOnCleanup(t, seed)
 	dest := filepath.Join(dir, "snap.db")
 	if err := os.WriteFile(dest, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
@@ -319,6 +322,7 @@ func TestPreMigrate_renamesSBOMPackageRepositoryID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open with old schema: %v", err)
 	}
+	closeOnCleanup(t, gdb)
 	if gdb.Migrator().HasColumn(&SBOMPackage{}, "repository_id") {
 		t.Error("repository_id column should have been renamed, still present")
 	}
@@ -331,9 +335,11 @@ func TestPreMigrate_renamesSBOMPackageRepositoryID(t *testing.T) {
 	}
 
 	// Idempotent: a second Open on the already-migrated file must not fail.
-	if _, err := Open(path); err != nil {
+	reopened, err := Open(path)
+	if err != nil {
 		t.Fatalf("second open: %v", err)
 	}
+	closeOnCleanup(t, reopened)
 }
 
 // newFindingReferenceDB opens a database at path, seeds a repository, a scan
@@ -345,6 +351,7 @@ func newFindingReferenceDB(t *testing.T, path string, n int) (*gorm.DB, []uint) 
 	if err != nil {
 		t.Fatal(err)
 	}
+	closeOnCleanup(t, gdb)
 	repo := Repository{URL: "https://example.com/x", Name: "x"}
 	if err := gdb.Create(&repo).Error; err != nil {
 		t.Fatal(err)
@@ -511,6 +518,7 @@ func TestPreMigrate_mergesDuplicateFindingReferences(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open with duplicate references: %v", err)
 	}
+	closeOnCleanup(t, gdb)
 	if !gdb.Migrator().HasIndex(&FindingReference{}, findingRefURLIndex) {
 		t.Fatalf("%s was not created", findingRefURLIndex)
 	}
@@ -536,9 +544,11 @@ func TestPreMigrate_mergesDuplicateFindingReferences(t *testing.T) {
 	}
 
 	// Idempotent: a second Open on the already-migrated file must not fail.
-	if _, err := Open(path); err != nil {
+	reopened, err := Open(path)
+	if err != nil {
 		t.Fatalf("second open: %v", err)
 	}
+	closeOnCleanup(t, reopened)
 }
 
 func TestPreMigrate_findingReferenceMergeIsPerFinding(t *testing.T) {
@@ -557,6 +567,7 @@ func TestPreMigrate_findingReferenceMergeIsPerFinding(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open with duplicate references: %v", err)
 	}
+	closeOnCleanup(t, gdb)
 	first, second := findingReferencesFor(t, gdb, findingA), findingReferencesFor(t, gdb, findingB)
 	if len(first) != 1 || first[0].ID != 1 || first[0].Tags != "cve" {
 		t.Errorf("first finding's references = %+v, want the untouched id 1", first)
@@ -587,6 +598,7 @@ func TestPreMigrate_findingReferenceMergeNormalisesWhitespace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open with untrimmed references: %v", err)
 	}
+	closeOnCleanup(t, gdb)
 	refs := findingReferencesFor(t, gdb, findingA)
 	if len(refs) != 1 {
 		t.Fatalf("kept %d references, want 1: %+v", len(refs), refs)
@@ -650,6 +662,7 @@ func TestPreMigrate_findingReferenceMergeDropsBlankURLs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("open with blank references: %v", err)
 	}
+	closeOnCleanup(t, gdb)
 	refs := findingReferencesFor(t, gdb, findingA)
 	if len(refs) != 1 {
 		t.Fatalf("kept %d references, want only the real one: %+v", len(refs), refs)
@@ -750,10 +763,7 @@ func TestWithPragmas_joinsOnExistingQuery(t *testing.T) {
 // it opens; this test pulls several distinct connections off the pool and
 // checks each one.
 func TestOpen_pragmasApplyToEveryConnection(t *testing.T) {
-	gdb, err := Open(filepath.Join(t.TempDir(), "p.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := newTestDB(t)
 	sqldb, err := gdb.DB()
 	if err != nil {
 		t.Fatal(err)

@@ -334,6 +334,17 @@ Requirements and notes:
 
 The `docker build` commands shown for the runner image and profiles can be run as `container build` when you use this runtime. See [docs/apple.md](docs/apple.md) for the full parity matrix, the VM-isolation security model, and how hardened mode works.
 
+## Windows
+
+Scrutineer builds and runs on Windows hosts: `go build ./cmd/scrutineer` produces `scrutineer.exe`, and there is no precompiled Windows binary yet. Scans run under Docker Desktop with the default `--runtime docker`. `--runtime apple` is macOS-only, and neither `--runtime podman` nor a private `skills_repo` behind `skills_repo_token` (Git runs its `GIT_ASKPASS` helper as a POSIX shell script) has been tested there. What differs from Linux and macOS:
+
+- **Container user**: Windows has no host uid/gid to map, so the runner omits `--user` and each scan runs as the image's own `USER`. The bundled runner and profile images end with `USER runner`. A custom `--runner-image` or profile image that sets no `USER` runs the scan as root, where Linux and macOS would still map it to your uid.
+- **Local directory scans**: paste a drive-letter path (`C:\path\to\project`) in the **Add repository** field. Recreating the symlinks of a copied tree needs the symlink privilege, so enable Developer Mode or run as administrator if a local scan fails on one.
+- **Git**: run `git config --global core.longpaths true` and keep the data directory path short. The per-scan cache nests a 64-character content hash under it, and while `core.longpaths` lifts the 260-character limit for regular files, Git for Windows still refuses a submodule whose `.git/modules` directory sits past it (`fatal: '$GIT_DIR' too big`).
+- **Cancellation**: cancelling a scan (from the UI, the scan timeout or Ctrl+C) terminates only the process scrutineer started. Windows has no process group to signal afterwards, so whatever that process left running is not stopped.
+- **`--no-container`**: `claude` must resolve to the native `claude.exe` (native installer or WinGet). An npm install puts a `claude.cmd` shim on `PATH`, which Windows runs through `cmd.exe`: the kill above then stops only the shim, and `cmd.exe` re-parses the prompt argument, so a `"` in a report or chat message can run commands on the host.
+- **OpenCode `state_dir`**: the owner-only permission check is skipped, since Go file modes carry no ACL on Windows, and `auth.json` inherits the ACL of its parent directory. Keep the state directory under a path only your account can read.
+
 ## Flags
 
 | Flag | Default | Description |

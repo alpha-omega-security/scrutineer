@@ -294,6 +294,7 @@ func TestBuildClaudeArgs_NoResumeWhenUnset(t *testing.T) {
 // run. The runner must detect the missing init and restart without --resume
 // so a lost session doesn't permanently wedge the retry lineage.
 func TestLocalClaude_ResumeFallsBackToFresh(t *testing.T) {
+	skipWithoutPOSIXShell(t)
 	bin := t.TempDir()
 	script := "#!/bin/sh\n" +
 		"for a in \"$@\"; do\n" +
@@ -348,6 +349,7 @@ func TestLocalClaude_ResumeFallsBackToFresh(t *testing.T) {
 // runner) gets the fresh restart: without it a conversation whose harness
 // session is gone would fail identically on every later turn, forever.
 func TestLocalClaude_ResumePromptWithFreshPromptRestarts(t *testing.T) {
+	skipWithoutPOSIXShell(t)
 	bin := t.TempDir()
 	script := "#!/bin/sh\n" +
 		"for a in \"$@\"; do\n" +
@@ -395,6 +397,7 @@ func TestLocalClaude_ResumePromptWithFreshPromptRestarts(t *testing.T) {
 }
 
 func TestLocalClaude_ResumePromptDoesNotFallbackToFresh(t *testing.T) {
+	skipWithoutPOSIXShell(t)
 	bin := t.TempDir()
 	script := "#!/bin/sh\n" +
 		"for a in \"$@\"; do\n" +

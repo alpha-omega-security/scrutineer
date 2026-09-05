@@ -19,7 +19,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -58,7 +57,7 @@ type ContainerRunner struct {
 	// read-only rootfs, no-new-privileges, and the post-clone workspace cap --
 	// WITHOUT the per-scan --internal network. This is the fallback when a host
 	// cannot support the sidecar needed for full --hardened. The always-on
-	// baseline (--cap-drop ALL, non-root --user, the /tmp tmpfs) applies
+	// baseline (--cap-drop ALL, the /tmp tmpfs, --user except on Windows) applies
 	// regardless of this field. --hardened already implies all of these. The
 	// read-only rootfs can break
 	// custom profile images that write outside /work and /tmp.
@@ -377,7 +376,7 @@ func (d ContainerRunner) runContainerOnce(ctx context.Context, runBase []string,
 	runArgs := append(append([]string{}, runBase...), d.harnessArgv(sj)...)
 
 	cmd := exec.CommandContext(ctx, runtimeBin(d.Runtime), runArgs...)
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	setNewProcessGroup(cmd)
 	cmd.Env = environmentWith(os.Environ(), processEnv)
 
 	stdout, err := cmd.StdoutPipe()
@@ -400,9 +399,7 @@ func (d ContainerRunner) runContainerOnce(ctx context.Context, runBase []string,
 	}
 	h.ParseStream(stdout, wrappedEmit)
 	waitErr = cmd.Wait()
-	if cmd.Process != nil {
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
-	}
+	terminateProcessGroup(cmd)
 	return hitMaxTurns, sessionID, waitErr
 }
 
@@ -427,7 +424,9 @@ func (d ContainerRunner) buildRunArgsForProvider(absWork, image string, hnet har
 	args := runtimeRunArgs(d.Runtime,
 		"--rm",
 		"--cap-drop", "ALL",
-		"--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()),
+	)
+	args = append(args, containerUserArgs()...)
+	args = append(args,
 		"-e", "HOME=/tmp",
 		"-e", "SEMGREP_SEND_METRICS=off",
 		"--tmpfs", "/tmp:rw,noexec,nosuid,size=256m",
@@ -481,8 +480,8 @@ func (d ContainerRunner) buildRunArgsForProvider(absWork, image string, hnet har
 		// stays writable (skill output) and /tmp is the tmpfs declared above
 		// with HOME=/tmp redirecting claude session storage. These options have
 		// no network dependency, so --hardened-runtime-only can apply them
-		// without the verified network path. --cap-drop ALL and the non-root
-		// --user are already set in every mode.
+		// without the verified network path. --cap-drop ALL and, except on
+		// Windows, the non-root --user are already set in every mode.
 		args = append(args,
 			"--read-only",
 		)

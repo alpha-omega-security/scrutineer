@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
-	"path/filepath"
 	"testing"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/db/dbtest"
 	"scrutineer/internal/queue"
 )
 
@@ -38,10 +38,7 @@ func TestWorker_resolvesDefaultMaxTurns(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			gdb, err := db.Open(filepath.Join(t.TempDir(), "mt.db"))
-			if err != nil {
-				t.Fatal(err)
-			}
+			gdb := dbtest.Open(t)
 			repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 			gdb.Create(&repo)
 			skill := db.Skill{Name: "s", Description: "d", Body: "b", Active: true, Source: "ui", Version: 1, MaxTurns: tc.skillMaxTurn}

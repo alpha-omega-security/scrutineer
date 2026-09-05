@@ -5,6 +5,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -77,7 +78,7 @@ func TestRunBackup_roundTrip(t *testing.T) {
 	}
 	if info, err := os.Stat(dest); err != nil {
 		t.Fatalf("stat dest: %v", err)
-	} else if perm := info.Mode().Perm(); perm != 0o600 {
+	} else if perm := info.Mode().Perm(); runtime.GOOS != "windows" && perm != 0o600 {
 		t.Errorf("dest perms = %o, want 600", perm)
 	}
 	if !strings.Contains(out.String(), dest) {

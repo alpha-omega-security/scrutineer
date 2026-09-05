@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/db/dbtest"
 	"scrutineer/internal/queue"
 )
 
@@ -50,10 +51,10 @@ func TestHostSplitRunner_routesByName(t *testing.T) {
 		Host:       contextCapturingRunner{dir: "host", apiBase: &hostBase},
 		HostSkills: []string{"verify"},
 	}
-	if got := r.SkillDir("/w", "verify"); got != "/w/host/verify" {
+	if got := r.SkillDir("/w", "verify"); got != filepath.Join("/w", "host", "verify") {
 		t.Errorf("host skill dir = %q", got)
 	}
-	if got := r.SkillDir("/w", "triage"); got != "/w/container/triage" {
+	if got := r.SkillDir("/w", "triage"); got != filepath.Join("/w", "container", "triage") {
 		t.Errorf("container skill dir = %q", got)
 	}
 	if !r.runsOnHost("verify") || r.runsOnHost("triage") {
@@ -79,10 +80,7 @@ func TestRunnerImageName_unwrapsHostSplit(t *testing.T) {
 // host list is hostSkills and returns the api_base each side saw.
 func runHostSplitScan(t *testing.T, hostSkills []string) (hostBase, containerBase string) {
 	t.Helper()
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	skill := db.Skill{Name: "posture-test", Description: "d", Body: "b", Version: 1, Active: true, Source: "ui"}

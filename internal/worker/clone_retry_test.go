@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -23,9 +22,7 @@ type fakeGit struct {
 
 func fakeGitOnPath(t *testing.T, body string) *fakeGit {
 	t.Helper()
-	if _, err := exec.LookPath("sh"); err != nil {
-		t.Skip("needs a POSIX shell to stub git")
-	}
+	skipWithoutPOSIXShell(t)
 	f := &fakeGit{t: t, dir: t.TempDir()}
 	script := fmt.Sprintf(`#!/bin/sh
 echo "$@" >> %q
@@ -310,9 +307,7 @@ exit 128
 // background sleeper holding stdout; without WaitDelay, CombinedOutput would
 // block on that sleeper for its full lifetime.
 func TestGitWithEnvBoundsLingeringChild(t *testing.T) {
-	if _, err := exec.LookPath("sh"); err != nil {
-		t.Skip("needs a POSIX shell to stub git")
-	}
+	skipWithoutPOSIXShell(t)
 	bin := t.TempDir()
 	// The parent exits immediately; `sleep 30 &` inherits and holds stdout.
 	script := "#!/bin/sh\nsleep 30 &\nexit 0\n"

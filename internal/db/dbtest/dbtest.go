@@ -58,7 +58,11 @@ func Open(tb testing.TB) *gorm.DB {
 	if err := os.WriteFile(path, template(), dbFilePerm); err != nil {
 		tb.Fatalf("dbtest: write template: %v", err)
 	}
-	gdb, err := db.Connect(path)
+	// Every commit fsyncs the WAL under the default synchronous=FULL, and on
+	// GitHub's Windows runners one fsync costs 200-400ms: enough to make a
+	// DB-heavy package five times slower than on Linux, and test databases
+	// are throwaway.
+	gdb, err := db.Connect(path + "?_pragma=synchronous(OFF)")
 	if err != nil {
 		tb.Fatalf("dbtest: connect: %v", err)
 	}

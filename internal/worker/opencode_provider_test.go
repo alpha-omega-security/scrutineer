@@ -105,9 +105,10 @@ func TestBuildRunArgsForProviderScopesEnvironmentAndState(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "unrelated-openai-secret")
 	t.Setenv("ANTHROPIC_API_KEY", "unrelated-anthropic-secret")
 	d := ContainerRunner{Harness: OpencodeHarness{}, SELinuxRelabel: true}
+	stateDir := filepath.Join(t.TempDir(), "kiro")
 	provider := opencodeProvider{
 		ID:         "kiro",
-		StateDir:   "/state/kiro",
+		StateDir:   stateDir,
 		Configured: true,
 		Env: map[string]string{
 			"KIRO_API_KEY":            "kiro-secret",
@@ -131,7 +132,7 @@ func TestBuildRunArgsForProviderScopesEnvironmentAndState(t *testing.T) {
 			t.Errorf("container args inherited unrelated key %s: %v", key, args)
 		}
 	}
-	if !hasAdjacent(args, "-v", "/state/kiro/opencode/auth.json:/harness-state/data/opencode/auth.json:z") {
+	if !hasAdjacent(args, "-v", filepath.Join(stateDir, "opencode", "auth.json")+":/harness-state/data/opencode/auth.json:z") {
 		t.Errorf("provider auth mount missing: %v", args)
 	}
 	if !hasAdjacent(args, "-e", "XDG_DATA_HOME=/harness-state/data") {
@@ -174,6 +175,7 @@ func TestEnsureOpencodeProviderStateRejectsOtherCredentials(t *testing.T) {
 }
 
 func TestEnsureOpencodeProviderStateRejectsBroadPermissions(t *testing.T) {
+	skipOnWindows(t, "directory modes carry no POSIX group/other bits on Windows")
 	state := t.TempDir()
 	if err := os.Chmod(state, 0o755); err != nil {
 		t.Fatal(err)
@@ -508,6 +510,7 @@ func TestOpencodeStateLockSerialisesSharedStateDir(t *testing.T) {
 
 func writeFakeRuntime(t *testing.T, script string) string {
 	t.Helper()
+	skipWithoutPOSIXShell(t)
 	path := filepath.Join(t.TempDir(), "fake-runtime")
 	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
@@ -592,6 +595,7 @@ func TestRunnerImageContentDigestPrefersRegistryDigest(t *testing.T) {
 }
 
 func TestRunnerImageContentDigestParsesAppleInspectJSON(t *testing.T) {
+	skipWithoutPOSIXShell(t)
 	// container image inspect emits a JSON array with no --format support, so
 	// the digest is read from configuration.descriptor.digest with id as the
 	// fallback for locally built images.

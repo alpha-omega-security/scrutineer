@@ -119,6 +119,7 @@ func testSBOMRepositoryColumnMerge(t *testing.T, ddl string) {
 	if err != nil {
 		t.Fatalf("Open: %v", err)
 	}
+	closeOnCleanup(t, gdb)
 	if gdb.Migrator().HasColumn(&SBOMPackage{}, "repository_id") {
 		t.Fatal("repository_id still exists")
 	}
@@ -144,7 +145,9 @@ func testSBOMRepositoryColumnMerge(t *testing.T, ddl string) {
 			t.Errorf("package %d source_repository_id = %v, want %d", pkg.ID, pkg.SourceRepositoryID, want[i])
 		}
 	}
-	if _, err := Open(path); err != nil {
+	reopened, err := Open(path)
+	if err != nil {
 		t.Fatalf("second Open: %v", err)
 	}
+	closeOnCleanup(t, reopened)
 }

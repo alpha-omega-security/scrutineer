@@ -140,6 +140,7 @@ func TestQueryRunnerToolVersions_AppleRunsLocalImageWithoutPullNever(t *testing.
 
 func fakeContainer(t *testing.T) string {
 	t.Helper()
+	skipWithoutPOSIXShell(t)
 	dir := t.TempDir()
 	logPath := filepath.Join(dir, "container.log")
 	appleBinary := runtimeBin(ContainerRuntime{Bin: "apple"})

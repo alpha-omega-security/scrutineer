@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -187,6 +188,9 @@ func TestCloneOrPull_rejectsNonHTTPS(t *testing.T) {
 }
 
 func TestCloneOrPull_tokenUsesAskPassWithoutArgvLeak(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the askpass helper is a POSIX shell script")
+	}
 	const token = "private-skills-token"
 	var (
 		askpassPath string

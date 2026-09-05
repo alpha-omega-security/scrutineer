@@ -212,7 +212,9 @@ The corresponding auth file is
 `<state_dir>/opencode/auth.json`. It may contain only the provider named by the
 configuration block. Scrutineer checks this before mounting it and refuses to
 expose a file containing another provider's credential. The state directory
-must have owner-only permissions such as `0700`. When `state_dir` is the only
+must have owner-only permissions such as `0700`. On Windows that check is
+skipped, since Go file modes carry no ACL there, and `auth.json` inherits the
+ACL of its parent directory. When `state_dir` is the only
 credential source, its auth file must already contain the selected provider. A
 provider using `pass_env` may initialise the file on first use.
 `state_dir` and `api_key_env` cannot be combined because
