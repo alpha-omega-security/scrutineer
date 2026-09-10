@@ -116,6 +116,7 @@ One row per skill execution or external import. `skill_name` / `skill_version` p
 | skills_repo_sha | text | Commit of `-skills-repo` resolved at startup and stamped on every skill scan. Empty when `-skills-repo` is unset or for `import` scans. |
 | sub_path | text | Scopes code analysis to a sub-folder of the clone (monorepo packages). Empty means repo root. |
 | rescan_mode | text | `full` for ordinary scans, `diff` for scans that compare the current commit against a baseline. Requested diff scans can fall back to `full` when no baseline exists or the diff is too large. |
+| verification_feedback | text | Optional operator guidance for one finding-scoped `verify` run, limited to 4000 UTF-8 bytes. Snapshotted at enqueue, included in its recipe, and preserved by single and bulk retries. Not a verdict or a replacement for the finding's reproduction. |
 | diff_base_scan_id | integer FK | Baseline scan chosen for a diff rescan, or the caller-pinned baseline. References `scans.id`. Null for full scans and for diff requests that fall back before a baseline is resolved. |
 | diff_base_commit | text | Baseline commit used to generate `diff.patch` and `changed_files.json`. Empty for full scans. |
 | diff_threat_model_scan_id | integer FK | Prior `threat-model` scan staged as `old_threat_model.json` for a diff-aware run, when one is available. |

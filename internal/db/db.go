@@ -364,6 +364,9 @@ type Scan struct {
 	// which is only set when the retry actually resumes a harness session
 	// — a retry of a done or cancelled scan has a parent but no session.
 	ParentScanID *uint `gorm:"index"`
+	// VerificationFeedback is operator guidance snapshotted for this verify run.
+	// It is not a verdict and is never copied into the finding's reproduction.
+	VerificationFeedback string `gorm:"type:text"`
 
 	// Recipe is an immutable JSON snapshot (worker.ScanRecipe) of the
 	// inputs the worker was handed, written once inside the transaction

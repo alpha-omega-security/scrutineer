@@ -844,6 +844,7 @@ func scanExport(sc db.Scan) map[string]any {
 		"updated_at":         sc.UpdatedAt,
 	}
 	out["refusal_audit"] = sc.RefusalAudit
+	out["verification_feedback"] = sc.VerificationFeedback
 	out["refusal_audit_warning"] = sc.RefusalAuditWarning
 	return out
 }

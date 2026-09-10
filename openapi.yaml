@@ -1405,6 +1405,9 @@ components:
         kind:          { type: string }
         status:        { type: string, enum: [queued, running, paused, done, failed, skipped, cancelled] }
         model:         { type: string }
+        verification_feedback:
+          type: string
+          description: Optional operator guidance snapshotted on a finding-scoped verify scan, limited to 4000 UTF-8 bytes. Preserved on retries; not a verification verdict.
         commit:        { type: string }
         ref:           { type: string, description: Branch, tag, or commit requested for this scan. Omitted for the repository default branch. }
         sub_path:      { type: string, description: Monorepo sub-folder this scan was scoped to. Omitted for a repository-root scan. }

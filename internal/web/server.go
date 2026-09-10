@@ -1655,6 +1655,11 @@ const reattackSkillName = "reattack"
 const mitigateSkillName = "mitigate"
 
 func (s *Server) findingVerify(w http.ResponseWriter, r *http.Request) {
+	if !parseVerificationFeedback(w, r) {
+		return
+	}
+	s.agentEnqueueMu.Lock()
+	defer s.agentEnqueueMu.Unlock()
 	s.runFindingSkill(w, r, verifySkillName, true)
 }
 
@@ -1710,6 +1715,9 @@ func (s *Server) runFindingSkill(w http.ResponseWriter, r *http.Request, name st
 		}
 	}
 	opts.FindingID = new(f.ID)
+	if name == verifySkillName {
+		opts.VerificationFeedback = r.PostForm.Get("feedback")
+	}
 	scanID, err := s.enqueueSkillWith(r.Context(), scan.RepositoryID, skill.ID, opts)
 	if errors.Is(err, ErrFederationClaimPending) {
 		// The claim is now recorded on the finding, so the page shows who to
@@ -3299,7 +3307,8 @@ type ScanOpts struct {
 	// ResumedFromScanID it is the immediate parent and is set on every
 	// retry, including retries that start a fresh harness session, so the
 	// rerun chain stays walkable hop by hop. Nil on a first-time enqueue.
-	ParentScanID *uint
+	ParentScanID         *uint
+	VerificationFeedback string
 	// ImportPayload is the raw uploaded report for an ingest-skill run
 	// created by the /v1/import fallback; the worker stages it into the
 	// workspace at import/report. Empty for every other enqueue.
@@ -3389,6 +3398,9 @@ func (s *Server) enqueueSkillWith(ctx context.Context, repoID, skillID uint, opt
 	if err := s.refuseClaimedOutreach(ctx, opts, sk, hasSkill); err != nil {
 		return 0, err
 	}
+	if err := normalizeVerificationOpts(&opts, sk.Name); err != nil {
+		return 0, err
+	}
 	if !ValidModelPreference(opts.Model) && hasSkill {
 		opts.Model = sk.Model
 	}
@@ -3432,6 +3444,7 @@ func (s *Server) enqueueSkillWith(ctx context.Context, repoID, skillID uint, opt
 		SessionID:            opts.SessionID,
 		ResumedFromScanID:    opts.ResumedFromScanID,
 		ParentScanID:         opts.ParentScanID,
+		VerificationFeedback: opts.VerificationFeedback,
 		ImportPayload:        opts.ImportPayload,
 		SkillsRepoSHA:        s.SkillsRepoSHA,
 		APIToken:             NewAPIToken(),
