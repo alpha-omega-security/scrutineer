@@ -10,6 +10,7 @@ import (
 )
 
 func TestZizmorScriptPreservesWorkflowPaths(t *testing.T) {
+	skipWithoutPOSIXShell(t)
 	script, err := filepath.Abs("../../skills/zizmor/scripts/scan.py")
 	if err != nil {
 		t.Fatal(err)

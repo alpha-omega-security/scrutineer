@@ -13,7 +13,7 @@ import (
 // scheduled checks also run against local repositories (file:// or a bare
 // path), which the clone path never sees.
 func validateScheduleURL(u string) error {
-	if strings.HasPrefix(u, "https://") || strings.HasPrefix(u, "file://") || strings.HasPrefix(u, "/") {
+	if strings.HasPrefix(u, "https://") || strings.HasPrefix(u, "file://") || filepath.IsAbs(u) {
 		return nil
 	}
 	return fmt.Errorf("only https://, file:// or absolute-path URLs are allowed, got %q", u)

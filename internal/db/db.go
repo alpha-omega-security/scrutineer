@@ -1572,12 +1572,23 @@ func Open(dsn string) (*gorm.DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	foundSchemaVersion, err := checkDatabaseSchemaVersion(gdb)
-	if err != nil {
+	if err := migrateSchema(gdb); err != nil {
+		if sqldb, dbErr := gdb.DB(); dbErr == nil {
+			_ = sqldb.Close()
+		}
 		return nil, err
 	}
+	return gdb, nil
+}
+
+// migrateSchema brings gdb up to databaseSchemaVersion.
+func migrateSchema(gdb *gorm.DB) error {
+	foundSchemaVersion, err := checkDatabaseSchemaVersion(gdb)
+	if err != nil {
+		return err
+	}
 	if err := preMigrate(gdb); err != nil {
-		return nil, fmt.Errorf("premigrate: %w", err)
+		return fmt.Errorf("premigrate: %w", err)
 	}
 	if err := gdb.AutoMigrate(
 		&Repository{}, &Scan{},
@@ -1589,7 +1600,7 @@ func Open(dsn string) (*gorm.DB, error) {
 		&SBOMUpload{}, &SBOMPackage{}, &CNA{}, &Setting{},
 		&Conversation{}, &ChatMessage{}, &InterchangeRecord{},
 	); err != nil {
-		return nil, fmt.Errorf("automigrate: %w", err)
+		return fmt.Errorf("automigrate: %w", err)
 	}
 	gdb.Exec(`CREATE INDEX IF NOT EXISTS idx_scans_priority_id ON scans (status_priority, id DESC)`)
 	// Subproject identity is (repository_id, path): the upsert in
@@ -1607,10 +1618,10 @@ func Open(dsn string) (*gorm.DB, error) {
 	}
 	if foundSchemaVersion < databaseSchemaVersion {
 		if err := gdb.Exec(fmt.Sprintf("PRAGMA user_version = %d", databaseSchemaVersion)).Error; err != nil {
-			return nil, fmt.Errorf("record database schema version: %w", err)
+			return fmt.Errorf("record database schema version: %w", err)
 		}
 	}
-	return gdb, nil
+	return nil
 }
 
 func checkDatabaseSchemaVersion(gdb *gorm.DB) (int, error) {

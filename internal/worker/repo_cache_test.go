@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/db/dbtest"
 	"scrutineer/internal/testutil"
 )
 
@@ -30,10 +31,7 @@ func seedCacheFile(t *testing.T, dataDir, url string, n int) {
 
 func TestRefreshRepoDiskUsage_storesComputedSize(t *testing.T) {
 	dataDir := t.TempDir()
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "r.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/a", Name: "a"}
 	gdb.Create(&repo)
 	seedCacheFile(t, dataDir, repo.URL, 2048)
@@ -50,10 +48,7 @@ func TestRefreshRepoDiskUsage_storesComputedSize(t *testing.T) {
 
 func TestBackfillRepoDiskUsage_fillsZeroRowsSkipsLocal(t *testing.T) {
 	dataDir := t.TempDir()
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "b.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	remote := db.Repository{URL: "https://example.com/remote", Name: "remote"}
 	local := db.Repository{URL: "file:///tmp/local", Name: "local"}
 	uncached := db.Repository{URL: "https://example.com/uncached", Name: "uncached"}
@@ -84,10 +79,7 @@ func TestBackfillRepoDiskUsage_fillsZeroRowsSkipsLocal(t *testing.T) {
 
 func TestBackfillRepoDiskUsage_leavesNonZeroAlone(t *testing.T) {
 	dataDir := t.TempDir()
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "n.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/keep", Name: "keep", DiskBytes: 123}
 	gdb.Create(&repo)
 	// Cache on disk says 4096, but the row already carries a value; the
@@ -161,19 +153,40 @@ func newEmbeddedNativeOrigin(t *testing.T) string {
 	return url
 }
 
+// shortTempDir is t.TempDir without the test name in the path. Git for Windows
+// refuses a submodule whose gitdir sits past 260 characters ("'$GIT_DIR' too
+// big") whatever core.longpaths says, and the per-scan cache nests a
+// 64-character hash under DataDir.
+func shortTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(dir); err != nil {
+			t.Errorf("remove %s: %v", dir, err)
+		}
+	})
+	return dir
+}
+
 func TestPrepareRepoSrcWithOptionsKeepsSubmodulesOptIn(t *testing.T) {
 	url := newEmbeddedNativeOrigin(t)
 
-	w := &Worker{DataDir: t.TempDir()}
+	w := &Worker{DataDir: shortTempDir(t)}
 	withSubmodules := t.TempDir()
+	// The submodule step is best effort, so its git output only reaches the
+	// scan log; keep it for the failure message.
+	var events []string
 	if _, err := w.prepareRepoSrcWithOptions(
-		context.Background(), url, "", withSubmodules, true, func(Event) {},
+		context.Background(), url, "", withSubmodules, true, func(e Event) { events = append(events, FormatEvent(e)) },
 	); err != nil {
 		t.Fatalf("prepare with submodules: %v", err)
 	}
 	nativePath := filepath.Join(withSubmodules, "src", "vendor", "native", "native.c")
 	if _, err := os.Stat(nativePath); err != nil {
-		t.Fatalf("submodule source missing: %v", err)
+		t.Fatalf("submodule source missing: %v\n%s", err, strings.Join(events, "\n"))
 	}
 
 	withoutSubmodules := t.TempDir()
@@ -297,6 +310,7 @@ func TestEmbeddedNativeComponentInScope(t *testing.T) {
 }
 
 func TestEmbeddedNativeBriefFailureWritesErrorReport(t *testing.T) {
+	skipWithoutPOSIXShell(t)
 	root := t.TempDir()
 	src := filepath.Join(root, "src")
 	if err := os.Mkdir(src, 0o755); err != nil {

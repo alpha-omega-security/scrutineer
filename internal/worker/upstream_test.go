@@ -59,6 +59,20 @@ func TestResolveRemoteHead_rejectsNonHTTPSRemote(t *testing.T) {
 	}
 }
 
+// validateScheduleURL takes https://, file:// and a host-native absolute path.
+func TestValidateScheduleURL(t *testing.T) {
+	for _, u := range []string{"https://example.com/repo", "file:///srv/repo", t.TempDir()} {
+		if err := validateScheduleURL(u); err != nil {
+			t.Errorf("validateScheduleURL(%q) = %v", u, err)
+		}
+	}
+	for _, u := range []string{"http://example.com/repo", "relative/repo", ""} {
+		if err := validateScheduleURL(u); err == nil {
+			t.Errorf("validateScheduleURL(%q) accepted", u)
+		}
+	}
+}
+
 func TestSyncUpstream(t *testing.T) {
 	upstream := t.TempDir()
 	initTestRepo(t, upstream)

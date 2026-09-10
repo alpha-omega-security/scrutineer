@@ -17,6 +17,7 @@ import (
 	"gorm.io/gorm"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/db/dbtest"
 	"scrutineer/internal/queue"
 	"scrutineer/internal/verification"
 )
@@ -140,10 +141,7 @@ func TestParseSubprojectsOutput_scopedRunDoesNotPrune(t *testing.T) {
 }
 
 func TestParseSubprojectsOutput_invalidJSON(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	scan := db.Scan{RepositoryID: repo.ID}
@@ -180,10 +178,7 @@ func TestParseRepoOverviewOutput(t *testing.T) {
 }
 
 func TestParseRepoOverviewOutput_partialAndEmpty(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x",
 		DefaultBranch: "main", Languages: "Python", License: "Apache-2.0"}
 	gdb.Create(&repo)
@@ -225,10 +220,7 @@ func TestParseRepoOverviewOutput_partialAndEmpty(t *testing.T) {
 // the *gorm.DB for further assertions.
 func runSkillWithReport(t *testing.T, outputKind, report string) (db.Repository, *gorm.DB) {
 	t.Helper()
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	skill := db.Skill{
@@ -521,10 +513,7 @@ func TestParseAdvisoryAudit_unknownFindingIDDropped(t *testing.T) {
 // parseAdvisoryAuditOutput call needs, bypassing the full doSkill pipeline.
 func newAdvisoryAuditWorld(t *testing.T, failOn string) (*Worker, *db.Skill, *db.Scan, *gorm.DB) {
 	t.Helper()
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "a.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	skill := db.Skill{Name: "k", Description: "d", Body: "b", OutputFile: "report.json", OutputKind: "advisory_audit", Version: 1, Active: true, Source: "ui", FailOn: failOn}
@@ -604,10 +593,7 @@ func TestParseAdvisoryAudit_rejectsDuplicateAdvisoryBeforeWriting(t *testing.T) 
 }
 
 func TestParseMaintainers_perSubprojectDisclosureChannel(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "m.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://github.com/rails/rails", Name: "rails"}
 	gdb.Create(&repo)
 	sub := db.Subproject{RepositoryID: repo.ID, Path: "activesupport", Name: "activesupport"}
@@ -647,10 +633,7 @@ func TestParseMaintainers_perSubprojectDisclosureChannel(t *testing.T) {
 }
 
 func TestParseMaintainers_scopedRunLeavesRepoWideAlone(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "m.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://github.com/rails/rails", Name: "rails"}
 	gdb.Create(&repo)
 	sub := db.Subproject{RepositoryID: repo.ID, Path: "activesupport", Name: "activesupport"}
@@ -758,7 +741,7 @@ func TestParsePosture_writesTierAndSummary(t *testing.T) {
 }
 
 func TestParsePosture_rejectsUnknownTier(t *testing.T) {
-	gdb, _ := db.Open(filepath.Join(t.TempDir(), "p.db"))
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	scan := db.Scan{RepositoryID: repo.ID}
@@ -787,10 +770,7 @@ func TestParsePosture_emptyTierLeavesRepoAlone(t *testing.T) {
 
 func runSkillWithFinding(t *testing.T, outputKind, report string, startStatus db.FindingLifecycle) (db.Finding, *gorm.DB) {
 	t.Helper()
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "v.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	priorScan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanDone, SkillName: "security-deep-dive"}
@@ -1030,10 +1010,7 @@ func TestParseCritic_recordsImmutableAssessmentAndProjection(t *testing.T) {
 }
 
 func TestParseCritic_rejectsMissingSourceAsNonViable(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "critic.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	prior := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanDone}
@@ -1043,7 +1020,7 @@ func TestParseCritic_rejectsMissingSourceAsNonViable(t *testing.T) {
 	scan := db.Scan{RepositoryID: repo.ID, FindingID: new(f.ID)}
 	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	report := `{"production_viability":"NON_VIABLE","source_state":"MISSING","reason":"path absent","attacker_position":"remote client","impact":"code execution","likelihood":"unknown"}`
-	err = w.parseCriticOutput(&scan, report, func(Event) {})
+	err := w.parseCriticOutput(&scan, report, func(Event) {})
 	if err == nil || !strings.Contains(err.Error(), "must not classify source_state MISSING as NON_VIABLE") {
 		t.Fatalf("error = %v, want source-drift fail-closed error", err)
 	}
@@ -1076,10 +1053,7 @@ func TestValidateCriticOutput_allowsMovedViableAndSampleOnly(t *testing.T) {
 
 func TestParseCritic_usesStoredSeverityWithoutRoundTrip(t *testing.T) {
 	report := `{"production_viability":"VIABLE","source_state":"PRESENT","reason":"The shipped server target calls the parser.","counterevidence":[],"attacker_position":"remote client","preconditions":[],"impact":"code execution","likelihood":"plausible","applied_adjustments":[],"facts_that_would_change_the_result":[]}`
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "critic.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/critic", Name: "critic"}
 	gdb.Create(&repo)
 	parent := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanDone}
@@ -1090,7 +1064,7 @@ func TestParseCritic_usesStoredSeverityWithoutRoundTrip(t *testing.T) {
 	gdb.Create(&scan)
 	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 
-	err = w.parseCriticOutput(&scan, report, func(Event) {})
+	err := w.parseCriticOutput(&scan, report, func(Event) {})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1282,10 +1256,7 @@ func TestParseVerify_validatesControlBypassAgainstHostMatch(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			gdb, err := db.Open(filepath.Join(t.TempDir(), "controls-verify.db"))
-			if err != nil {
-				t.Fatal(err)
-			}
+			gdb := dbtest.Open(t)
 			repo := db.Repository{URL: "https://example.com/x", Name: "x", ThreatModel: tc.threatModel}
 			if err := gdb.Create(&repo).Error; err != nil {
 				t.Fatal(err)
@@ -1401,10 +1372,7 @@ func TestParseVerify_fixedJumpsToFixed(t *testing.T) {
 }
 
 func TestParseVerify_fixedAgainstRefDoesNotFlipStatus(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "v.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	priorScan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanDone, SkillName: "security-deep-dive"}
@@ -1475,7 +1443,7 @@ func TestParseVerify_deferredLeavesStatusAndRecordsPreflight(t *testing.T) {
 }
 
 func TestParseVerify_deferredRequiresPreflight(t *testing.T) {
-	gdb, _ := db.Open(filepath.Join(t.TempDir(), "d.db"))
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	prior := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanDone}
@@ -1534,7 +1502,7 @@ func TestParseVerify_preflightRecordedOnConfirmed(t *testing.T) {
 }
 
 func TestParseVerify_rejectsUnknownStatus(t *testing.T) {
-	gdb, _ := db.Open(filepath.Join(t.TempDir(), "u.db"))
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	prior := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanDone}
@@ -1658,7 +1626,7 @@ func TestParseRevalidate_recordsPrivilegeRequired(t *testing.T) {
 }
 
 func TestParseRevalidate_rejectsUnknownPrivilege(t *testing.T) {
-	gdb, _ := db.Open(filepath.Join(t.TempDir(), "p.db"))
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	prior := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanDone}
@@ -1759,10 +1727,7 @@ func TestParseRevalidate_adjustedSeverityWritesFieldAndHistory(t *testing.T) {
 }
 
 func TestParseRevalidate_invokesCallbackWithFinalSeverity(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "rcb.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	priorScan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanDone, SkillName: "security-deep-dive"}
@@ -1799,10 +1764,7 @@ func TestParseRevalidate_invokesCallbackWithFinalSeverity(t *testing.T) {
 }
 
 func TestParseRevalidate_callbackGetsOriginalSeverityWhenUnadjusted(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "rcbu.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	priorScan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanDone, SkillName: "security-deep-dive"}
@@ -2067,10 +2029,7 @@ func TestParseDisclose_requiresFindingID(t *testing.T) {
 }
 
 func TestParseFindingDedup_marksDuplicatesWithHistoryAndNote(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "dedup.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	scan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanDone, SkillName: "finding-dedup"}
@@ -2123,10 +2082,7 @@ func setupDedupRepo(t *testing.T, gdb *gorm.DB, n int) (db.Scan, []db.Finding) {
 }
 
 func TestParseFindingDedup_subsumedNotesWithoutStatusChange(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "sub.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	scan, fs := setupDedupRepo(t, gdb, 3)
 	parent, childA, childB := fs[0], fs[1], fs[2]
 
@@ -2161,10 +2117,7 @@ func TestParseFindingDedup_subsumedNotesWithoutStatusChange(t *testing.T) {
 }
 
 func TestParseFindingDedup_chainsNotesEachMemberWithOthers(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "chain.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	scan, fs := setupDedupRepo(t, gdb, 3)
 	a, b, c := fs[0], fs[1], fs[2]
 
@@ -2211,10 +2164,7 @@ func TestParseFindingDedup_chainsNotesEachMemberWithOthers(t *testing.T) {
 }
 
 func TestParseFindingDedup_chainOfOneAfterFilterIsNoop(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "chain1.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	scan, fs := setupDedupRepo(t, gdb, 2)
 	// Close the second so only one open member survives the repo/open filter.
 	gdb.Model(&fs[1]).Update("status", db.FindingRejected)
@@ -2230,10 +2180,7 @@ func TestParseFindingDedup_chainOfOneAfterFilterIsNoop(t *testing.T) {
 }
 
 func TestParseFindingDedup_subsumedSkipsClosedParentAndSelfRef(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "subskip.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	scan, fs := setupDedupRepo(t, gdb, 2)
 	gdb.Model(&fs[0]).Update("status", db.FindingFixed) // closed parent
 
@@ -2249,10 +2196,7 @@ func TestParseFindingDedup_subsumedSkipsClosedParentAndSelfRef(t *testing.T) {
 }
 
 func TestParseFindingDedup_skipsClosedAndCrossRepoFindings(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "dedup-skip.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	otherRepo := db.Repository{URL: "https://example.com/y", Name: "y"}
 	gdb.Create(&repo)
@@ -2674,10 +2618,7 @@ func TestParseDependencies_malformedSBOMKeepsInventory(t *testing.T) {
 
 func newDependencyParser(t *testing.T) (*Worker, *db.Scan, *gorm.DB, db.Repository) {
 	t.Helper()
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	scan := db.Scan{RepositoryID: repo.ID}
@@ -2791,10 +2732,7 @@ func writeFile(t *testing.T, path, body string) {
 // saving it inserts a second maintainer row with an empty login and hands the
 // repository's association to that row instead of the real one.
 func TestParseMaintainers_lookupFailureSkipsRecord(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "m.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://github.com/rails/rails", Name: "rails"}
 	gdb.Create(&repo)
 	scan := db.Scan{RepositoryID: repo.ID}
@@ -2850,10 +2788,7 @@ func TestParseMaintainers_lookupFailureSkipsRecord(t *testing.T) {
 // it from linked would unlink a real maintainer through the wholesale
 // Association.Replace, which loses more than a stale name does.
 func TestParseMaintainers_saveFailureKeepsMaintainerLinked(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "m.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://github.com/rails/rails", Name: "rails"}
 	gdb.Create(&repo)
 	scan := db.Scan{RepositoryID: repo.ID}

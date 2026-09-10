@@ -11,6 +11,7 @@ import (
 	"gorm.io/gorm"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/db/dbtest"
 )
 
 // chatStubRunner is a SkillRunner double for chat turns: it records the job it
@@ -66,10 +67,7 @@ func (r *chatStubRunner) Backend() string { return r.backend }
 
 func chatTestDB(t *testing.T) (*gorm.DB, db.Repository) {
 	t.Helper()
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "chat.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/acme", Name: "acme", DefaultBranch: "main", Description: "demo"}
 	if err := gdb.Create(&repo).Error; err != nil {
 		t.Fatal(err)

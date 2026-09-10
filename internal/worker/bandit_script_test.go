@@ -135,6 +135,7 @@ func banditWorkspace(t *testing.T, script string) (root, argvLog string) {
 
 func runBanditAdapter(t *testing.T, root string, onPath bool) banditReport {
 	t.Helper()
+	skipWithoutPOSIXShell(t)
 	script, err := filepath.Abs("../../skills/bandit/scripts/scan.py")
 	if err != nil {
 		t.Fatal(err)

@@ -10,6 +10,7 @@ import (
 	"gorm.io/gorm"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/db/dbtest"
 	"scrutineer/internal/threatmodel"
 )
 
@@ -49,10 +50,7 @@ func newControlsFixture(t *testing.T, model, location string) controlsFixture {
 // changed"). The verify scan that later reads it has no SubPath of its own.
 func newControlsFixtureInSubPath(t *testing.T, model, location, subPath string) controlsFixture {
 	t.Helper()
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "controls.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "file:///fixture", Name: "fixture", ThreatModel: model}
 	if err := gdb.Create(&repo).Error; err != nil {
 		t.Fatal(err)

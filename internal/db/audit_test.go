@@ -1,7 +1,6 @@
 package db
 
 import (
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -11,10 +10,7 @@ import (
 )
 
 func TestAddFindingReview_rejectsUnknownVerdict(t *testing.T) {
-	gdb, err := Open(filepath.Join(t.TempDir(), "rej.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := newTestDB(t)
 	repo := Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	scan := Scan{RepositoryID: repo.ID, Status: ScanDone}
@@ -27,10 +23,7 @@ func TestAddFindingReview_rejectsUnknownVerdict(t *testing.T) {
 }
 
 func TestAddFindingReview_storesAndListsNewestFirst(t *testing.T) {
-	gdb, err := Open(filepath.Join(t.TempDir(), "list.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := newTestDB(t)
 	repo := Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	scan := Scan{RepositoryID: repo.ID, Status: ScanDone}
@@ -58,10 +51,7 @@ func TestAddFindingReview_storesAndListsNewestFirst(t *testing.T) {
 }
 
 func TestAuditQueue_includesLowRejectedAndRevalidatedNotTruePositive(t *testing.T) {
-	gdb, err := Open(filepath.Join(t.TempDir(), "queue.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := newTestDB(t)
 	repo := Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	scan := Scan{RepositoryID: repo.ID, Status: ScanDone}
@@ -94,10 +84,7 @@ func TestAuditQueue_includesLowRejectedAndRevalidatedNotTruePositive(t *testing.
 }
 
 func TestAuditQueue_excludesReviewedFindings(t *testing.T) {
-	gdb, err := Open(filepath.Join(t.TempDir(), "reviewed.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := newTestDB(t)
 	repo := Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	scan := Scan{RepositoryID: repo.ID, Status: ScanDone}
@@ -122,10 +109,7 @@ func TestAuditQueue_excludesReviewedFindings(t *testing.T) {
 // text-based timestamp comparison: a created_at stored with a +02:00 offset
 // must compare against a UTC Since by instant, not by lexical string order.
 func TestAuditQueue_sinceFilterComparesInstants(t *testing.T) {
-	gdb, err := Open(filepath.Join(t.TempDir(), "since.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := newTestDB(t)
 	repo := Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	scan := Scan{RepositoryID: repo.ID, Status: ScanDone}
@@ -158,10 +142,7 @@ func TestAuditQueue_sinceFilterComparesInstants(t *testing.T) {
 }
 
 func TestComputeAuditMetrics_agreementOnlyCountsKnownAutomatedOutcomes(t *testing.T) {
-	gdb, err := Open(filepath.Join(t.TempDir(), "metrics.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := newTestDB(t)
 	repo := Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	scan := Scan{RepositoryID: repo.ID, Status: ScanDone}
@@ -197,10 +178,7 @@ func TestComputeAuditMetrics_agreementOnlyCountsKnownAutomatedOutcomes(t *testin
 }
 
 func TestLatestRevalidateVerdict(t *testing.T) {
-	gdb, err := Open(filepath.Join(t.TempDir(), "lv.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := newTestDB(t)
 	repo := Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	scan := Scan{RepositoryID: repo.ID, Status: ScanDone}
@@ -229,10 +207,7 @@ func TestLatestRevalidateVerdict(t *testing.T) {
 // fragment is built via Statement.Quote so the assertion holds under any
 // dialector rather than assuming SQLite backticks.
 func TestReservedWordColumnsUseDialectorQuoting(t *testing.T) {
-	gdb, err := Open(filepath.Join(t.TempDir(), "quote.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := newTestDB(t)
 	dry := gdb.Session(&gorm.Session{DryRun: true})
 	quote := func(table, col string) string {
 		return dry.Statement.Quote(clause.Column{Table: table, Name: col})

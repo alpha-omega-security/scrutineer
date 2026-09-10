@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -200,14 +201,19 @@ func TestBuildRunArgs_ContainerHardening(t *testing.T) {
 		t.Errorf("default mode must set neither --read-only nor no-new-privileges: %v", def)
 	}
 
-	// The baseline -- --cap-drop ALL, non-root --user, the /tmp tmpfs -- is
-	// present in EVERY mode; the new flag must not disturb that invariant.
+	// The baseline -- --cap-drop ALL, the /tmp tmpfs and, except on Windows,
+	// the non-root --user -- is present in EVERY mode; the new flag must not
+	// disturb that invariant.
 	for _, mode := range []ContainerRunner{{}, {HardenedRuntimeOnly: true}, {Hardened: true}} {
 		args := mode.buildRunArgs("img:latest", hardenedNet{name: net}, "")
 		if !hasAdjacent(args, "--cap-drop", "ALL") {
 			t.Errorf("%+v: missing --cap-drop ALL: %v", mode, args)
 		}
-		if !hasAdjacent(args, "--user", user) {
+		if runtime.GOOS == "windows" {
+			if slices.Contains(args, "--user") {
+				t.Errorf("%+v: --user has no host uid to map on windows: %v", mode, args)
+			}
+		} else if !hasAdjacent(args, "--user", user) {
 			t.Errorf("%+v: missing --user %s: %v", mode, user, args)
 		}
 		if !hasAdjacent(args, "--tmpfs", tmpfs) {
@@ -547,6 +553,7 @@ func TestResolveProfile_SubPath(t *testing.T) {
 // lets ruby resolve from cache with no real build. resolveProfile should log the
 // fallback and hand back the ruby profile, not the default.
 func TestResolveProfile_DegradesToFallback(t *testing.T) {
+	skipWithoutPOSIXShell(t)
 	// This drives ruby-ext -> ruby specifically; fail loudly if the registry
 	// wiring the test depends on ever changes.
 	if got := ProfileByName("ruby-ext").FallbackProfile; got != "ruby" {
@@ -766,6 +773,7 @@ func TestStartProxySidecar_RequiresGatewayIP(t *testing.T) {
 }
 
 func TestStartProxySidecar_ConnectsRuntimeBridge(t *testing.T) {
+	skipWithoutPOSIXShell(t)
 	tests := []struct {
 		name    string
 		runtime ContainerRuntime

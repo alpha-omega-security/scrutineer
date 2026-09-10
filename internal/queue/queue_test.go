@@ -5,19 +5,15 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
-	"path/filepath"
 	"testing"
 	"time"
 
-	"scrutineer/internal/db"
+	"scrutineer/internal/db/dbtest"
 )
 
 func newTestQueue(t *testing.T, concurrency int) *Queue {
 	t.Helper()
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "q.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	sqldb, err := gdb.DB()
 	if err != nil {
 		t.Fatal(err)

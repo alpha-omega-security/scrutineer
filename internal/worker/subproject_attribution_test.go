@@ -3,17 +3,14 @@ package worker
 import (
 	"io"
 	"log/slog"
-	"path/filepath"
 	"testing"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/db/dbtest"
 )
 
 func TestReconcileSubprojectLinks(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "a.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://github.com/rails/rails", Name: "rails"}
 	gdb.Create(&repo)
 	as := db.Subproject{RepositoryID: repo.ID, Path: "activesupport", Name: "activesupport"}
@@ -75,10 +72,7 @@ func TestReconcileSubprojectLinks(t *testing.T) {
 // A directory basename matches when the manifest name is absent, but an
 // explicit manifest name always wins.
 func TestReconcileSubprojectLinks_directoryFallback(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "b.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/mono", Name: "mono"}
 	gdb.Create(&repo)
 	// No Name set: only the directory basename is available to match.

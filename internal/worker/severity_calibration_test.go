@@ -4,13 +4,13 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"path/filepath"
 	"strings"
 	"testing"
 
 	"gorm.io/gorm"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/db/dbtest"
 	"scrutineer/internal/threatmodel"
 	"scrutineer/internal/verification"
 )
@@ -192,10 +192,7 @@ func defaultSeverityPrerequisites() *verification.SeverityPrerequisites {
 }
 
 func TestParseVerifyAppliesPrerequisiteSeverityCap(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "prerequisite-severity-cap.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	if err := gdb.Create(&repo).Error; err != nil {
 		t.Fatal(err)
@@ -244,10 +241,7 @@ func TestParseVerifyRemovesInactiveSeverityCapReasons(t *testing.T) {
 
 func testParseVerifyRemovesInactiveSeverityCapReasons(t *testing.T, severity string) {
 	t.Helper()
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "severity-cap-inactive.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x", ThreatModel: controlsModel}
 	if err := gdb.Create(&repo).Error; err != nil {
 		t.Fatal(err)
@@ -292,10 +286,7 @@ func testParseVerifyRemovesInactiveSeverityCapReasons(t *testing.T, severity str
 }
 
 func TestParseVerifyRestoresSeverityWhenControlCapClears(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "severity-cap-clear.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x", ThreatModel: controlsModel}
 	if err := gdb.Create(&repo).Error; err != nil {
 		t.Fatal(err)
@@ -352,10 +343,7 @@ func TestParseVerifyRestoresSeverityWhenControlCapClears(t *testing.T) {
 }
 
 func TestParseVerifyAppliesControlSeverityCapAtomically(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "severity-cap.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x", ThreatModel: controlsModel}
 	if err := gdb.Create(&repo).Error; err != nil {
 		t.Fatal(err)
@@ -419,10 +407,7 @@ func TestParseVerifyAppliesControlSeverityCapAtomically(t *testing.T) {
 }
 
 func TestParseVerifyUngradedReportPreservesSeverityCalibration(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "severity-cap-ungraded.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x", ThreatModel: controlsModel}
 	gdb.Create(&repo)
 	prior := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanDone}
@@ -454,10 +439,7 @@ func TestParseVerifyUngradedReportPreservesSeverityCalibration(t *testing.T) {
 }
 
 func TestRecordVerifyOutputAppliesCapToLatestSeverity(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "severity-cap-latest.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	prior := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanDone}
@@ -508,10 +490,7 @@ func TestRecordVerifyOutputAppliesCapToLatestSeverity(t *testing.T) {
 }
 
 func TestParseVerifySeverityCalibrationRollsBackWithVerification(t *testing.T) {
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "severity-cap-rollback.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x", ThreatModel: controlsModel}
 	gdb.Create(&repo)
 	prior := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanDone}

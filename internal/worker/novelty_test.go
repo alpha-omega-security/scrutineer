@@ -15,6 +15,7 @@ import (
 	"gorm.io/gorm"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/db/dbtest"
 	"scrutineer/internal/testutil"
 )
 
@@ -220,10 +221,7 @@ func newNoveltyFixture(t *testing.T) noveltyFixture {
 	}
 	base := gitCommit(t, src, "add vulnerable parser")
 
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "novelty.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "file://" + src, Name: "fixture"}
 	if err := gdb.Create(&repo).Error; err != nil {
 		t.Fatal(err)

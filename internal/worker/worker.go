@@ -517,7 +517,7 @@ func (w *Worker) applyResume(scan *db.Scan, sj *SkillJob, emit func(Event)) {
 // scan resumable.
 func (w *Worker) scanEmitter(scan *db.Scan) (func(Event), func()) {
 	interval := w.logFlushInterval()
-	lastFlush := time.Now()
+	lastFlush := w.now()
 	var logBuilder strings.Builder
 	logBuilder.Grow(len(scan.Log))
 	logBuilder.WriteString(scan.Log)
@@ -538,10 +538,10 @@ func (w *Worker) scanEmitter(scan *db.Scan) (func(Event), func()) {
 		line := FormatEvent(e)
 		logBuilder.WriteString(line)
 		logBuilder.WriteByte('\n')
-		if time.Since(lastFlush) >= interval {
+		if w.now().Sub(lastFlush) >= interval {
 			snapshot()
 			w.DB.Model(&db.Scan{}).Where("id = ?", scan.ID).Update("log", scan.Log)
-			lastFlush = time.Now()
+			lastFlush = w.now()
 		}
 		if e.Kind == KindResult {
 			// Claude reports total_cost_usd in its result event; harnesses

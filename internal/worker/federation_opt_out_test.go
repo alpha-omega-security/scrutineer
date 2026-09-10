@@ -6,11 +6,11 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"path/filepath"
 	"testing"
 	"time"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/db/dbtest"
 	"scrutineer/internal/queue"
 )
 
@@ -30,10 +30,7 @@ func (mustNotRunRunner) SkillDir(workRoot, name string) string {
 
 func newOptOutWorker(t *testing.T, optedOut bool) (*Worker, db.Scan) {
 	t.Helper()
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "optout.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	if optedOut {
 		at := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
