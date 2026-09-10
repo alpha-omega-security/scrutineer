@@ -169,7 +169,16 @@ func TestDefaultModelsFor_codexMatchesPinnedCatalog(t *testing.T) {
 		{Name: "GPT-5.5", ID: "gpt-5.5"},
 		{Name: "GPT-5.2", ID: "gpt-5.2"},
 	}
-	if got := DefaultModelsFor(CodexHarness{}); !reflect.DeepEqual(got, want) {
+	got := DefaultModelsFor(CodexHarness{})
+	if got[0].ID != modelGPT56SolID {
+		t.Fatalf("Codex implicit default = %q, want %q", got[0].ID, modelGPT56SolID)
+	}
+	for _, model := range got {
+		if model.ID == modelDaybreakBlueID {
+			t.Fatal("approval-gated Daybreak Blue must remain opt-in")
+		}
+	}
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Codex defaults = %+v, want %+v", got, want)
 	}
 }

@@ -9,17 +9,17 @@
   ],
   "customDatasources": {
     "codex-linux-amd64": {
-      "description": "Read Codex x86_64 release-asset digests from GitHub metadata without downloading the assets",
+      "description": "Read Codex x86_64 package-asset digests from GitHub metadata without downloading the assets",
       "defaultRegistryUrlTemplate": "https://api.github.com/repos/openai/codex/releases?per_page=50",
       "transformTemplates": [
-        "{\"releases\": $append([], $map($[draft = false and assets[name = \"codex-x86_64-unknown-linux-musl.tar.gz\"].digest], function($release) {($asset := $release.assets[name = \"codex-x86_64-unknown-linux-musl.tar.gz\"][0]; {\"version\": $release.tag_name, \"releaseTimestamp\": $release.published_at, \"digest\": $substringAfter($asset.digest, \"sha256:\"), \"isStable\": $not($release.prerelease)})})), \"sourceUrl\": \"https://github.com/openai/codex\"}"
+        "{\"releases\": $append([], $map($[draft = false and assets[name = \"codex-package-x86_64-unknown-linux-musl.tar.gz\"].digest], function($release) {($asset := $release.assets[name = \"codex-package-x86_64-unknown-linux-musl.tar.gz\"][0]; {\"version\": $release.tag_name, \"releaseTimestamp\": $release.published_at, \"digest\": $substringAfter($asset.digest, \"sha256:\"), \"isStable\": $not($release.prerelease)})})), \"sourceUrl\": \"https://github.com/openai/codex\"}"
       ]
     },
     "codex-linux-arm64": {
-      "description": "Read Codex aarch64 release-asset digests from GitHub metadata without downloading the assets",
+      "description": "Read Codex aarch64 package-asset digests from GitHub metadata without downloading the assets",
       "defaultRegistryUrlTemplate": "https://api.github.com/repos/openai/codex/releases?per_page=50",
       "transformTemplates": [
-        "{\"releases\": $append([], $map($[draft = false and assets[name = \"codex-aarch64-unknown-linux-musl.tar.gz\"].digest], function($release) {($asset := $release.assets[name = \"codex-aarch64-unknown-linux-musl.tar.gz\"][0]; {\"version\": $release.tag_name, \"releaseTimestamp\": $release.published_at, \"digest\": $substringAfter($asset.digest, \"sha256:\"), \"isStable\": $not($release.prerelease)})})), \"sourceUrl\": \"https://github.com/openai/codex\"}"
+        "{\"releases\": $append([], $map($[draft = false and assets[name = \"codex-package-aarch64-unknown-linux-musl.tar.gz\"].digest], function($release) {($asset := $release.assets[name = \"codex-package-aarch64-unknown-linux-musl.tar.gz\"][0]; {\"version\": $release.tag_name, \"releaseTimestamp\": $release.published_at, \"digest\": $substringAfter($asset.digest, \"sha256:\"), \"isStable\": $not($release.prerelease)})})), \"sourceUrl\": \"https://github.com/openai/codex\"}"
       ]
     }
   },

@@ -19,3 +19,16 @@ func TestCostFromUsage_gpt6Astra(t *testing.T) {
 		}
 	}
 }
+
+func TestCostFromUsage_daybreakBlueUsesGPT56SolPricing(t *testing.T) {
+	usage := Usage{
+		InputTokens:      1_000_000,
+		OutputTokens:     1_000_000,
+		CacheReadTokens:  100_000,
+		CacheWriteTokens: 200_000,
+	}
+	want := CostFromUsage(modelGPT56SolID, usage)
+	if got := CostFromUsage(modelDaybreakBlueID, usage); math.Abs(got-want) > 1e-9 {
+		t.Errorf("CostFromUsage(%q) = %v, want %v", modelDaybreakBlueID, got, want)
+	}
+}
