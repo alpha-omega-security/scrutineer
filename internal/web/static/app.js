@@ -17,19 +17,55 @@
     }
   }
 
+  // A panel can be opened from a tab in the tablist or from an entry in an
+  // overflow ("More") menu beside it, and a panel may hold a nested tab bar of
+  // its own. Basecoat only knows about the tabs of a single tablist, so
+  // selection is settled here; it runs after basecoat's own handler and
+  // reconciles whatever that missed.
+  function tabBar(tabs) {
+    return tabs.querySelector(':scope > .tab-bar') ||
+           tabs.querySelector(':scope > [role="tablist"]');
+  }
+
+  function selectTab(el) {
+    var tabs = el.closest('.tabs');
+    var bar = tabs && tabBar(tabs);
+    if (!bar) return;
+    var id = el.getAttribute('aria-controls');
+    tabs.querySelectorAll(':scope > [role="tabpanel"]').forEach(function (p) {
+      p.hidden = p.id !== id;
+    });
+    bar.querySelectorAll('[role="tab"]').forEach(function (t) {
+      var sel = t === el;
+      t.setAttribute('aria-selected', sel);
+      t.setAttribute('tabindex', sel ? '0' : '-1');
+    });
+    bar.querySelectorAll('[role="menuitem"][aria-controls]').forEach(function (m) {
+      if (m === el) m.setAttribute('aria-current', 'true');
+      else m.removeAttribute('aria-current');
+    });
+    // The overflow trigger stands in for whichever of its panels is showing.
+    bar.querySelectorAll('.dropdown-menu > button').forEach(function (b) {
+      var owns = !!b.parentElement.querySelector('[role="menuitem"][aria-current="true"]');
+      b.toggleAttribute('data-active', owns);
+    });
+  }
+
+  // Deep links name a tab or menu entry by id; a nested one has to open its
+  // ancestors on the way down.
   function restoreTab() {
     var h = location.hash.slice(1);
     if (!h) return;
-    var tab = document.getElementById(h);
-    if (!tab || tab.getAttribute('role') !== 'tab') return;
-    var list = tab.closest('[role="tablist"]');
-    if (!list) return;
-    list.querySelectorAll('[role="tab"]').forEach(function (t) {
-      var sel = t.id === h;
-      t.setAttribute('aria-selected', sel);
-      var p = document.getElementById(t.getAttribute('aria-controls'));
-      if (p) p.hidden = !sel;
-    });
+    var el = document.getElementById(h);
+    if (!el || !el.hasAttribute('aria-controls')) return;
+    var role = el.getAttribute('role');
+    if (role !== 'tab' && role !== 'menuitem') return;
+    while (el) {
+      selectTab(el);
+      var tabs = el.closest('.tabs');
+      var panel = tabs && tabs.parentElement && tabs.parentElement.closest('[role="tabpanel"]');
+      el = panel ? document.querySelector('[aria-controls="' + panel.id + '"]') : null;
+    }
   }
 
   // The message list is the only thing that scrolls on a conversation page, so
@@ -87,6 +123,14 @@
   document.addEventListener('htmx:afterSwap', function () { icons(); highlight(); elapsed(); });
   document.addEventListener('htmx:historyRestore', init);
   document.addEventListener('htmx:oobAfterSwap', function () { icons(); highlight(); elapsed(); });
+
+  // Arrow keys inside a tablist are basecoat's to handle, and it selects the
+  // new tab before focusing it — so reconcile from the focus that follows,
+  // otherwise a panel opened from the overflow menu stays on screen alongside.
+  document.addEventListener('focusin', function (e) {
+    var tab = e.target.closest && e.target.closest('[role="tab"]');
+    if (tab && tab.getAttribute('aria-selected') === 'true') selectTab(tab);
+  });
 
   document.body.addEventListener('htmx:sseMessage', function (e) {
     var el = e.target.closest('[data-reload-on-sse]');
@@ -171,8 +215,11 @@
       if (a) { a.click(); return; }
     }
 
-    var tab = e.target.closest('[role="tab"]');
-    if (tab && tab.id) history.replaceState(null, '', '#' + tab.id);
+    var picker = e.target.closest('[role="tab"], [role="menuitem"][aria-controls]');
+    if (picker && picker.closest('.tabs')) {
+      selectTab(picker);
+      if (picker.id) history.replaceState(null, '', '#' + picker.id);
+    }
 
     if (e.target.nodeName === 'DIALOG') e.target.close();
 
