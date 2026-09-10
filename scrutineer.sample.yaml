@@ -120,6 +120,15 @@
 # Container image used for per-scan containers.
 # runner_image: ghcr.io/alpha-omega-security/scrutineer-runner:latest
 
+# A file-backed ChatGPT account login for the Codex backend. Create it with
+# `codex login --device-auth` under an isolated CODEX_HOME, then point this at
+# that home's auth.json. Scrutineer requires mode 0600, mounts only this file
+# into each scan's private CODEX_HOME, and serializes scans so Codex can safely
+# rotate its refresh token. CODEX_API_KEY and OPENAI_API_KEY must be unset when
+# this is configured, preventing accidental use of Platform API credits.
+# codex:
+#   auth_file: ~/.config/scrutineer/codex-rubygems/auth.json
+
 # Provider-scoped OpenCode settings. The key matches the provider prefix in a
 # model id. api_key_env is read from Scrutineer's host environment and converted
 # to provider-only OpenCode auth. pass_env names native provider variables

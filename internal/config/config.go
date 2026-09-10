@@ -44,6 +44,11 @@ type Config struct {
 	// is rejected at startup. Validated against worker.HarnessByName
 	// so the set of accepted values stays in one place.
 	Backend string `yaml:"backend"`
+	// Codex holds settings specific to the Codex backend. AuthFile points at a
+	// host-side ChatGPT account credential created by `codex login`; it is
+	// config-file-only because credential paths should not be exposed through
+	// process arguments.
+	Codex Codex `yaml:"codex"`
 	// Opencode holds provider-specific runner settings. The map key is the
 	// provider prefix from an OpenCode model id (for example, "groq" in
 	// "groq/llama-3.3-70b-versatile"). It is config-file-only because it can
@@ -217,6 +222,11 @@ type Config struct {
 	// before this instance reports a finding. Requires FederationSalt:
 	// without the shared salt the hash sent to a peer cannot match theirs.
 	FederationPeers []string `yaml:"federation_peers"`
+}
+
+// Codex groups settings that apply only to the Codex backend.
+type Codex struct {
+	AuthFile string `yaml:"auth_file"`
 }
 
 // Opencode groups settings that apply only to the OpenCode backend.

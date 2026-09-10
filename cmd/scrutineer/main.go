@@ -77,9 +77,10 @@ func (p *pluginNames) String() string     { return strings.Join(*p, ",") }
 func (p *pluginNames) Set(v string) error { *p = append(*p, v); return nil }
 
 const (
-	dataPermSecure     = 0o700
-	shutdownTimeout    = 5 * time.Second
-	skillsCloneTimeout = 2 * time.Minute
+	dataPermSecure              = 0o700
+	shutdownTimeout             = 5 * time.Second
+	skillsCloneTimeout          = 2 * time.Minute
+	codexAccountAuthConcurrency = 1
 )
 
 func main() {
@@ -107,6 +108,7 @@ type flags struct {
 	effort                string
 	defaultModel          string
 	backend               string
+	codexAuthFile         string
 	noContainer           bool
 	hostSkills            []string
 	runtime               string
@@ -317,6 +319,10 @@ func (f *flags) merge(cfg *config.Config) {
 	if cfg.Backend != "" && !f.set["backend"] {
 		f.backend = cfg.Backend
 	}
+	// Config-only: auth.json contains rotating ChatGPT account credentials.
+	if cfg.Codex.AuthFile != "" {
+		f.codexAuthFile = cfg.Codex.AuthFile
+	}
 	if cfg.Runtime != "" && !f.set["runtime"] {
 		f.runtime = cfg.Runtime
 	}
@@ -451,7 +457,7 @@ func (f *flags) fullClone() bool { return f.cloneMode == "full" }
 // deliberately excluded (it names a path inside a staging git repo, not a host
 // path); skills_repo is a URL, not a path.
 func (f *flags) normalizePaths() error {
-	for _, p := range []*string{&f.dataDir, &f.profilesDir, &f.recipientsFile, &f.identityFile} {
+	for _, p := range []*string{&f.dataDir, &f.profilesDir, &f.recipientsFile, &f.identityFile, &f.codexAuthFile} {
 		expanded, err := expandHome(*p)
 		if err != nil {
 			return err
@@ -494,6 +500,17 @@ func validateFlags(f *flags) error {
 	}
 	if _, err := worker.HarnessByName(f.backend); err != nil {
 		return err
+	}
+	if f.codexAuthFile != "" {
+		if f.backend != "codex" {
+			return fmt.Errorf("codex.auth_file requires backend %q", "codex")
+		}
+		if os.Getenv("CODEX_API_KEY") != "" || os.Getenv("OPENAI_API_KEY") != "" {
+			return errors.New("codex.auth_file cannot be combined with CODEX_API_KEY or OPENAI_API_KEY; unset API keys to prevent accidental credit usage")
+		}
+		if err := worker.ValidateCodexAuthFile(f.codexAuthFile); err != nil {
+			return err
+		}
 	}
 	if err := config.ValidateRuntime(f.runtime); err != nil {
 		return err
@@ -643,10 +660,14 @@ func run(log *slog.Logger) error {
 			f.concurrency = v
 		}
 	}
+	enforceCodexAccountAuthConcurrency(f, log)
 
 	q, err := queue.New(sqldb, log, f.concurrency)
 	if err != nil {
 		return fmt.Errorf("queue: %w", err)
+	}
+	if f.codexAuthFile != "" {
+		q.SetMaxConcurrency(codexAccountAuthConcurrency)
 	}
 
 	skills.ModelValidator = web.ValidModelPreference
@@ -1021,7 +1042,11 @@ func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRu
 	if err != nil {
 		return nil, "", err
 	}
-	allow := buildEgressAllow(h.EgressHosts(), f.hardened, cfg, f.modelBaseURL, log)
+	harnessHosts := h.EgressHosts()
+	if f.codexAuthFile != "" {
+		harnessHosts = append(harnessHosts, worker.CodexAccountAuthHost)
+	}
+	allow := buildEgressAllow(harnessHosts, f.hardened, cfg, f.modelBaseURL, log)
 	// The host-gateway alias is always an API host so a container that CONNECTs
 	// to host.docker.internal:<port> gets the port gate and loopback rewrite on
 	// every runtime, including Apple where the container reaches the proxy via
@@ -1093,8 +1118,20 @@ func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRu
 		},
 		OpencodeProviders: opencodeProviders,
 		OpencodeReadiness: worker.NewOpencodeReadinessCache(),
+		CodexAccountAuth:  worker.NewCodexAccountAuth(f.codexAuthFile),
 	}
 	return splitHostSkills(f, runner, local, hostBase, log), apiBase, nil
+}
+
+// enforceCodexAccountAuthConcurrency starts the queue at the same one-slot
+// limit SetMaxConcurrency retains across later settings-driven runner swaps.
+// The runner semaphore remains the credential-level backstop for chat turns.
+func enforceCodexAccountAuthConcurrency(f *flags, log *slog.Logger) {
+	if f.codexAuthFile == "" || f.concurrency == codexAccountAuthConcurrency {
+		return
+	}
+	log.Warn("codex account auth requires serialized scans; forcing concurrency to 1", "configured", f.concurrency)
+	f.concurrency = codexAccountAuthConcurrency
 }
 
 // splitHostSkills wraps the container runner so the host_skills entries run

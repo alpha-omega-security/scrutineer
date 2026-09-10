@@ -10,8 +10,8 @@ where it differs from claude, and what's still rough.
 ## Setup
 
 The runner image already bundles the `codex` binary (a static musl build,
-sha256-pinned in `Dockerfile.runner`), so there's nothing to install. Set the
-credential and start scrutineer:
+sha256-pinned in `Dockerfile.runner`), so there's nothing to install. For a
+Platform API-key run, set the credential and start scrutineer:
 
     export CODEX_API_KEY=sk-...
     go run ./cmd/scrutineer -skills ./skills -backend codex
@@ -49,12 +49,37 @@ Model ids must be in the pinned codex version's built-in catalog
 an id codex doesn't recognise still runs but emits a "model metadata not
 found" error item into every scan log (openai/codex#12100).
 
-Codex also supports a ChatGPT login flow (Codex Pro accounts, via
-`auth0.openai.com` / `chatgpt.com`) and those hosts are on the egress
-allowlist, but headless `codex exec` inside a container with a fresh per-scan
-`CODEX_HOME` cannot drive the interactive browser step, so a host-side `codex
-login` does not reach the scan and `CODEX_API_KEY` is the only working
-credential path.
+Codex also supports a ChatGPT subscription login. Create a dedicated,
+file-backed login under an isolated Codex home (the browser/device step is
+interactive):
+
+    mkdir -p ~/.config/scrutineer/codex-rubygems
+    chmod 700 ~/.config/scrutineer/codex-rubygems
+    CODEX_HOME=~/.config/scrutineer/codex-rubygems \
+      codex -c cli_auth_credentials_store=file login --device-auth
+    chmod 600 ~/.config/scrutineer/codex-rubygems/auth.json
+
+Then select it in `scrutineer.yaml`:
+
+    backend: codex
+    codex:
+      auth_file: ~/.config/scrutineer/codex-rubygems/auth.json
+
+`codex.auth_file` is deliberately config-only. Startup requires a regular file
+with mode `0600`, ChatGPT token data, and a refresh token. It also
+refuses `CODEX_API_KEY` or `OPENAI_API_KEY` in the environment so an account
+run cannot silently consume Platform API credits.
+
+Each scan keeps its own session/history directory. Only the rotating
+`auth.json` is bind-mounted into that private `CODEX_HOME`, read-write. The
+pinned Codex release rewrites this file in place during refresh, so Scrutineer
+serializes the whole Codex job stream and starts the queue at concurrency one.
+The queue keeps that one-slot cap across settings changes and runner restarts;
+the higher stored setting applies again if account authentication is disabled.
+Immediately before each container run, Scrutineer rechecks the file's mode,
+credential shape and refresh token. This follows OpenAI's rule that one
+file-backed credential copy belongs to one machine and one serialized job
+stream.
 
 To point codex at a different endpoint, pass `-model-base-url` or set
 `model_base_url:` in config; scrutineer adds the host to the allowlist and
@@ -75,7 +100,7 @@ Everything the container runner asks of the agent CLI goes through the
 | Argv | `claude -p --output-format stream-json ...` | `codex exec --json --sandbox danger-full-access --skip-git-repo-check ...` |
 | Skill staging | `./.claude/skills/{name}/SKILL.md` | `./skills/{name}/SKILL.md` |
 | Project memory | `CLAUDE.md` | `AGENTS.md` |
-| Egress hosts | `*.anthropic.com` | `api.openai.com`, `auth0.openai.com`, `chatgpt.com` |
+| Egress hosts | `*.anthropic.com` | `api.openai.com`, `auth0.openai.com`, `chatgpt.com`; account auth also adds `auth.openai.com` |
 | Credential env | `ANTHROPIC_API_KEY`, `CLAUDE_CODE_OAUTH_TOKEN` | `CODEX_API_KEY` |
 | Base URL override | `ANTHROPIC_BASE_URL` env | `-c openai_base_url=...` |
 | State dir env (mounted at `/harness-state`) | `CLAUDE_CONFIG_DIR` | `CODEX_HOME` |
@@ -106,6 +131,9 @@ at `/harness-state` the same way claude's is, from
 resume <thread-id>` the previous run. Each scan records which backend ran it
 (`scans.backend`), and a retry after switching `-backend` starts fresh rather
 than passing a codex thread id to `claude --resume` or vice versa.
+With `codex.auth_file`, the credential is a nested bind mount at
+`/harness-state/auth.json`; other scans' thread databases and history remain
+out of view.
 
 ## Sandbox interaction
 
@@ -125,9 +153,14 @@ The same applies to chat: claude holds a chat turn to
 read-only posture is a prompt instruction and the container boundary, the
 same posture every scan already runs under.
 
-The threat-model T1 residual (the model-API credential is readable by
-in-container code) applies the same: `CODEX_API_KEY` is passed as a container
-env var.
+The threat-model T1 residual depends on the authentication mode. An API key is
+readable from the container environment. With `codex.auth_file`, untrusted
+in-container code can read the broader ChatGPT access and refresh tokens and
+can overwrite the shared credential through its required read-write mount; a
+valid-looking replacement would persist into later scans. Per-run validation
+catches permission or structural drift, not malicious substitution, and
+serialization prevents refresh races rather than isolating the credential.
+Use a dedicated account login and rotate it after any suspected hostile scan.
 
 ## Known gaps
 
@@ -141,10 +174,10 @@ The stream parser (`CodexHarness.ParseStream`) maps codex's `--json` events
 onto the scan log, verified against a live codex 0.142.5 run: `thread.started`
 becomes the session event (so resume works), `item.completed` agent messages
 are text, `item.completed` command/tool executions are tool calls
-(`item.started` for the same id is dropped so a command shows once), item-level
-`error` events surface as errors, `turn.completed` becomes the result event
-with token usage, and unknown shapes fall through as raw text rather than being
-dropped. Reports of rough edges welcome on #211.
+(`item.started` for the same id is dropped so a command shows once),
+item-level `error` events surface as errors, `turn.completed` becomes the
+result event with token usage, and unknown shapes fall through as raw text
+rather than being dropped. Reports of rough edges welcome on #211.
 
 ## Adding another harness
 

@@ -191,6 +191,53 @@ func TestSettingsRestartRunner(t *testing.T) {
 	}
 }
 
+func TestSettingsRestartRunnerHonorsQueueMaxConcurrency(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	s.Queue.SetMaxConcurrency(1)
+
+	if err := db.SetSetting(s.DB, db.SettingConcurrency, "16"); err != nil {
+		t.Fatal(err)
+	}
+	w := postForm(t, s, "/settings/runner/restart", nil)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	if got := s.Queue.Concurrency(); got != 1 {
+		t.Errorf("runner concurrency = %d, want account-auth cap 1 after restart", got)
+	}
+}
+
+func TestSettingsUpdateConcurrencyDoesNotRestartForCappedNoOp(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	s.Queue.SetMaxConcurrency(1)
+
+	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
+	s.DB.Create(&repo)
+	s.DB.Create(&db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanRunning})
+
+	w := postForm(t, s, "/settings/concurrency", url.Values{"concurrency": {"20"}})
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status %d, want redirect without restart confirmation: %s", w.Code, w.Body)
+	}
+	if got := db.SettingInt(s.DB, db.SettingConcurrency); got != 20 {
+		t.Errorf("persisted concurrency = %d, want requested value 20", got)
+	}
+	if got := s.Queue.Concurrency(); got != 1 {
+		t.Errorf("runner concurrency = %d, want effective cap 1", got)
+	}
+}
+
+func TestCappedConcurrencyNote(t *testing.T) {
+	if note := cappedConcurrencyNote(20, 1); !strings.Contains(note, "stays at 1") {
+		t.Errorf("capped note = %q, want the effective limit explained", note)
+	}
+	if note := cappedConcurrencyNote(4, 4); note != "" {
+		t.Errorf("uncapped note = %q, want empty", note)
+	}
+}
+
 func TestSettingsUpdateMaxTurns(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

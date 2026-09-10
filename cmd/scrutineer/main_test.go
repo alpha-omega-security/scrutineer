@@ -40,6 +40,7 @@ func fullConfig() *config.Config {
 		Data:            "/var/lib/scrutineer",
 		Effort:          "medium",
 		Backend:         "codex",
+		Codex:           config.Codex{AuthFile: "/var/lib/scrutineer/codex-rubygems/auth.json"},
 		NoContainer:     new(true),
 		Hardened:        new(true),
 		RunnerImage:     "custom:v1",
@@ -74,6 +75,9 @@ func TestFlagsMerge_configFillsUnset(t *testing.T) {
 	}
 	if f.backend != "codex" {
 		t.Errorf("backend = %q, want codex", f.backend)
+	}
+	if f.codexAuthFile != cfg.Codex.AuthFile {
+		t.Errorf("codexAuthFile = %q", f.codexAuthFile)
 	}
 	if !f.hardened {
 		t.Errorf("hardened not applied")
@@ -1213,7 +1217,8 @@ func TestNormalizePaths(t *testing.T) {
 		profilesDir:    "~/profiles",
 		recipientsFile: "~/keys/recipients.txt",
 		identityFile:   "/abs/identity", // absolute — left untouched
-		metadataDir:    "~/in-repo",     // in-repo path — must NOT expand
+		codexAuthFile:  "~/codex-rubygems/auth.json",
+		metadataDir:    "~/in-repo", // in-repo path — must NOT expand
 		skillLocal:     skillDirs{"~/skills-a", "./skills-b"},
 	}
 	if err := f.normalizePaths(); err != nil {
@@ -1225,6 +1230,7 @@ func TestNormalizePaths(t *testing.T) {
 		{"profilesDir", f.profilesDir, filepath.Join(home, "profiles")},
 		{"recipientsFile", f.recipientsFile, filepath.Join(home, "keys/recipients.txt")},
 		{"identityFile", f.identityFile, "/abs/identity"},
+		{"codexAuthFile", f.codexAuthFile, filepath.Join(home, "codex-rubygems/auth.json")},
 		{"metadataDir", f.metadataDir, "~/in-repo"},
 		{"skillLocal[0]", f.skillLocal[0], filepath.Join(home, "skills-a")},
 		{"skillLocal[1]", f.skillLocal[1], "./skills-b"},
@@ -1233,6 +1239,53 @@ func TestNormalizePaths(t *testing.T) {
 		if c.got != c.want {
 			t.Errorf("%s = %q, want %q", c.name, c.got, c.want)
 		}
+	}
+}
+
+func TestValidateFlagsCodexAccountAuth(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "auth.json")
+	if err := os.WriteFile(path, []byte(`{"auth_mode":"chatgpt","tokens":{"refresh_token":"refresh"}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	base := func() *flags {
+		return &flags{
+			backend:         "codex",
+			codexAuthFile:   path,
+			cloneMode:       "shallow",
+			runtime:         "docker",
+			selinux:         "auto",
+			subprojectScope: "hard",
+		}
+	}
+	t.Setenv("CODEX_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY", "")
+	if err := validateFlags(base()); err != nil {
+		t.Fatalf("valid Codex account auth: %v", err)
+	}
+
+	nonCodex := base()
+	nonCodex.backend = "claude"
+	if err := validateFlags(nonCodex); err == nil || !strings.Contains(err.Error(), "requires backend") {
+		t.Fatalf("non-Codex backend error = %v", err)
+	}
+
+	t.Setenv("OPENAI_API_KEY", "sk-platform-credit")
+	if err := validateFlags(base()); err == nil || !strings.Contains(err.Error(), "accidental credit usage") {
+		t.Fatalf("API-key conflict error = %v", err)
+	}
+}
+
+func TestEnforceCodexAccountAuthConcurrency(t *testing.T) {
+	f := &flags{codexAuthFile: "/secure/auth.json", concurrency: 12}
+	enforceCodexAccountAuthConcurrency(f, quietLog())
+	if f.concurrency != 1 {
+		t.Fatalf("concurrency = %d, want 1", f.concurrency)
+	}
+
+	without := &flags{concurrency: 12}
+	enforceCodexAccountAuthConcurrency(without, quietLog())
+	if without.concurrency != 12 {
+		t.Fatalf("API-key concurrency changed to %d", without.concurrency)
 	}
 }
 

@@ -405,7 +405,20 @@ Scrutineer can drive OpenAI's [codex](https://github.com/openai/codex) CLI inste
     export CODEX_API_KEY=sk-...
     go run ./cmd/scrutineer -skills ./skills -backend codex
 
-The container, egress proxy, language profiles and skill staging stay the same; only the agent CLI inside the container changes. The egress allowlist picks up `api.openai.com` automatically, and the model pick list defaults to codex's own catalog with tier tags already set -- override with `models:` in the config if you want a different set. Use `-model-base-url` or `model_base_url:` for a custom OpenAI-compatible endpoint; under codex it is passed as `openai_base_url` to `codex exec`. The codex backend requires the containerised runner; `--no-container` with `-backend codex` is rejected at startup.
+It can also use a ChatGPT subscription login without consuming Platform API
+credits. Create an isolated file-backed login with `codex login --device-auth`,
+then configure its credential file:
+
+    backend: codex
+    codex:
+      auth_file: ~/.config/scrutineer/codex-rubygems/auth.json
+
+The credential must be mode `0600`. Scrutineer refuses this configuration while
+`CODEX_API_KEY` or `OPENAI_API_KEY` is set, mounts only `auth.json` into each
+scan's otherwise private Codex home, and serializes account-authenticated scans
+so token refreshes cannot race.
+
+The container, egress proxy, language profiles and skill staging stay the same; only the agent CLI inside the container changes. The egress allowlist picks up the required OpenAI hosts automatically, and the model pick list defaults to codex's own catalog with tier tags already set -- override with `models:` in the config if you want a different set. Use `-model-base-url` or `model_base_url:` for a custom OpenAI-compatible endpoint; under codex it is passed as `openai_base_url` to `codex exec`. The codex backend requires the containerised runner; `--no-container` with `-backend codex` is rejected at startup.
 
 See [docs/codex.md](docs/codex.md) for what differs from claude (argv, skill staging, credentials, egress), which model ids the pinned codex version accepts, and why codex's own sandbox is disabled inside scrutineer's container.
 
