@@ -33,6 +33,10 @@ func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 	if status != "" {
 		q = q.Where("status = ?", status)
 	}
+	group := r.URL.Query().Get("group")
+	if group != "" {
+		q = q.Where("scan_group = ?", group)
+	}
 
 	sortCol, dir := splitSort(r.URL.Query().Get("sort"))
 	switch sortCol {
@@ -64,19 +68,19 @@ func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 	skillNames := s.scanSkillNames()
 	stats := s.scanListStats()
 
-	anySubPath := false
+	anySubPath, anyFocusArea := false, false
 	for _, sc := range scans {
-		if sc.SubPath != "" {
-			anySubPath = true
-			break
-		}
+		anySubPath = anySubPath || sc.SubPath != ""
+		anyFocusArea = anyFocusArea || sc.FocusArea != ""
 	}
 	data := map[string]any{
 		"Scans": scans, "Page": page,
 		"Skill": skillFilter.value(), "SkillLabel": skillFilter.label(),
 		"Status": status, "Sort": sort, "Skills": skillNames,
 		"Completeness": completeness,
-		"AnySubPath":   anySubPath, "QueuedCount": stats.QueuedCount, "PausedCount": stats.PausedCount,
+		"Group":        group,
+		"AnySubPath":   anySubPath, "AnyFocusArea": anyFocusArea,
+		"QueuedCount": stats.QueuedCount, "PausedCount": stats.PausedCount,
 		"AccountPausedCount": stats.AccountPausedCount,
 		"NextAccountResume":  stats.NextAccountResume,
 		"ModelDowngraded":    s.Worker.ShouldDowngradeModel(),
@@ -425,6 +429,10 @@ func (s *Server) scansRetryFailed(w http.ResponseWriter, r *http.Request) {
 	q := skillFilter.apply(s.DB.Model(&db.Scan{}).
 		Where("status = ? AND kind = ? AND skill_id IS NOT NULL", db.ScanFailed, worker.JobSkill))
 	q = applyScanCompletenessFilter(q, completeness)
+	group := r.URL.Query().Get("group")
+	if group != "" {
+		q = q.Where("scan_group = ?", group)
+	}
 	if repoID > 0 {
 		q = q.Where("repository_id = ?", repoID)
 	}
@@ -432,12 +440,8 @@ func (s *Server) scansRetryFailed(w http.ResponseWriter, r *http.Request) {
 	var totalFailed int64
 	q.Count(&totalFailed)
 
-	// Skip any failed scan that has a later scan with the same
-	// (repository, skill, sub_path, ref, finding_id) tuple already in
-	// queued/running/done, or superseded by a newer failed/paused attempt,
-	// so repeated failures retry only the newest row per tuple. Cancelled is
-	// deliberately absent: a user-cancelled newer run shouldn't block
-	// retrying an older genuine failure.
+	// A newer cancelled attempt must not block retries. Include focus_area
+	// in the match so retrying one area does not suppress the others.
 	var scans []db.Scan
 	err = q.Select("id, repository_id, skill_id, model, effort, finding_id, remediation_attempt_id, sub_path, scope_mode, ref, profile, rescan_mode, diff_base_scan_id, scan_group, focus_area, backend, status, session_id, resumed_from_scan_id, import_payload").
 		Where(`NOT EXISTS (
@@ -448,6 +452,7 @@ func (s *Server) scansRetryFailed(w http.ResponseWriter, r *http.Request) {
 			  AND COALESCE(n.sub_path, '') = COALESCE(scans.sub_path, '')
 			  AND COALESCE(n.ref, '') = COALESCE(scans.ref, '')
 			  AND COALESCE(n.finding_id, 0) = COALESCE(scans.finding_id, 0)
+			  AND COALESCE(n.focus_area, '') = COALESCE(scans.focus_area, '')
 			  AND n.status IN ?
 		)`, []db.ScanStatus{db.ScanQueued, db.ScanRunning, db.ScanDone, db.ScanFailed, db.ScanPaused}).
 		Find(&scans).Error
@@ -500,6 +505,9 @@ func (s *Server) scansRetryFailed(w http.ResponseWriter, r *http.Request) {
 	}
 	if repoID <= 0 && completeness != "" {
 		target += "&completeness=" + url.QueryEscape(completeness)
+	}
+	if repoID <= 0 && group != "" {
+		target += "&group=" + url.QueryEscape(group)
 	}
 	s.redirect(w, r, target)
 }
