@@ -377,7 +377,7 @@ func TestAPIv1DeleteRepositoryRejectsInFlightScans(t *testing.T) {
 			if w.Code != http.StatusConflict {
 				t.Fatalf("status %d, want 409. body=%s", w.Code, w.Body)
 			}
-			if !strings.Contains(w.Body.String(), "queued, running, or paused scans") {
+			if !strings.Contains(w.Body.String(), "queued or running scans") {
 				t.Fatalf("body %q missing in-flight scan explanation", w.Body.String())
 			}
 			if n := countRows(t, s, &db.Repository{}, "id = ?", repo.ID); n != 1 {

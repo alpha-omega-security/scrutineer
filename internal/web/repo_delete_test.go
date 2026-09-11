@@ -261,10 +261,8 @@ func TestRepoDelete_confirmWarnsAboutActiveScans(t *testing.T) {
 	}
 }
 
-// Neither terminal scans (done/failed/cancelled) nor a paused one are in the
-// cancellable running/queued set, so the warning must stay out of the confirm
-// while the base copy survives. The paused case pins the deliberate exclusion:
-// it can't be cancelled and the worker isn't writing for it.
+// Terminal and paused scans do not block deletion. Paused scans are explicitly
+// included in the confirmation because deleting them discards resumable work.
 func TestRepoDelete_confirmNoWarningWhenNoActiveScans(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
@@ -287,6 +285,83 @@ func TestRepoDelete_confirmNoWarningWhenNoActiveScans(t *testing.T) {
 	}
 	if !strings.Contains(body, "all its scans and findings, and its cached clone") {
 		t.Errorf("base delete confirm copy missing; body=%s", body)
+	}
+	if !strings.Contains(body, "1 paused scan(s) will also be permanently removed") {
+		t.Errorf("delete confirm should describe paused scan removal; body=%s", body)
+	}
+}
+
+func TestRepoDelete_removesPausedScans(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	s.Worker.DataDir = t.TempDir()
+	repo := db.Repository{URL: "https://github.com/acme/paused", Name: "paused"}
+	if err := s.DB.Create(&repo).Error; err != nil {
+		t.Fatal(err)
+	}
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanPaused, SkillName: deepDiveSkillName}
+	if err := s.DB.Create(&scan).Error; err != nil {
+		t.Fatal(err)
+	}
+	workspace, config := mkScanDirs(t, s.Worker.DataDir, scan.ID)
+	r := localReq("POST", fmt.Sprintf("/repositories/%d/delete", repo.ID))
+	r.Header.Set("HX-Request", "true")
+	r.Header.Set("Sec-Fetch-Site", "same-origin")
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusNoContent || w.Header().Get("HX-Redirect") != "/" {
+		t.Fatalf("delete response: %d %v %s", w.Code, w.Header(), w.Body)
+	}
+	if countRows(t, s, &db.Repository{}, "id = ?", repo.ID) != 0 || countRows(t, s, &db.Scan{}, "id = ?", scan.ID) != 0 {
+		t.Fatal("repository or paused scan survived deletion")
+	}
+	for _, path := range []string{workspace, config} {
+		if _, err := os.Stat(path); !os.IsNotExist(err) {
+			t.Fatalf("workspace survived deletion: %s: %v", path, err)
+		}
+	}
+	if err := s.resumeScan(r.Context(), &scan); err == nil {
+		t.Fatal("a stale paused scan must not resume after deletion")
+	}
+}
+
+func TestRepoDelete_showsFailure(t *testing.T) {
+	for _, hx := range []bool{false, true} {
+		t.Run(fmt.Sprint(hx), func(t *testing.T) {
+			s, done := newTestServer(t)
+			defer done()
+			repo := db.Repository{URL: "https://github.com/acme/running", Name: "running"}
+			if err := s.DB.Create(&repo).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := s.DB.Create(&db.Scan{RepositoryID: repo.ID, Status: db.ScanRunning}).Error; err != nil {
+				t.Fatal(err)
+			}
+			path := fmt.Sprintf("/repositories/%d", repo.ID)
+			r := localReq("POST", path+"/delete")
+			r.Header.Set("Sec-Fetch-Site", "same-origin")
+			if hx {
+				r.Header.Set("HX-Request", "true")
+			}
+			w := httptest.NewRecorder()
+			s.Handler().ServeHTTP(w, r)
+			if hx {
+				if w.Code != http.StatusNoContent || w.Header().Get("HX-Redirect") != path {
+					t.Fatalf("missing htmx redirect: %d %v", w.Code, w.Header())
+				}
+			} else if w.Code != http.StatusSeeOther || w.Header().Get("Location") != path {
+				t.Fatalf("missing redirect: %d %v", w.Code, w.Header())
+			}
+			get := localReq("GET", path)
+			for _, cookie := range w.Result().Cookies() {
+				get.AddCookie(cookie)
+			}
+			page := httptest.NewRecorder()
+			s.Handler().ServeHTTP(page, get)
+			if page.Code != http.StatusOK || !strings.Contains(page.Body.String(), "Repository not deleted") || !strings.Contains(page.Body.String(), "1 linked scan(s) remain") {
+				t.Fatalf("failure is not visible: %d %s", page.Code, page.Body)
+			}
+		})
 	}
 }
 

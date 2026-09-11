@@ -2971,11 +2971,14 @@ func (s *Server) repoDelete(w http.ResponseWriter, r *http.Request) {
 
 	deleted, err := s.deleteRepository(repo)
 	if err != nil {
+		message := "The repository could not be deleted. Check the server logs for details."
 		if errors.Is(err, errRepositoryDeleteInFlight) {
-			http.Error(w, err.Error(), http.StatusConflict)
-			return
+			message = err.Error()
+		} else {
+			s.Log.Error("delete repository", "repo", repo.ID, "err", err)
 		}
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		setFlash(w, Flash{Category: errorKey, Title: "Repository not deleted", Description: message})
+		s.redirect(w, r, fmt.Sprintf("/repositories/%d", repo.ID))
 		return
 	}
 	s.removeRepositoryArtifacts(deleted)
@@ -2991,7 +2994,7 @@ type deletedRepository struct {
 	ConversationIDs []uint
 }
 
-var errRepositoryDeleteInFlight = errors.New("repository has queued, running, or paused scans")
+var errRepositoryDeleteInFlight = errors.New("repository has queued or running scans, or a linked paused scan on another repository")
 
 func (s *Server) deleteRepository(repo db.Repository) (deletedRepository, error) {
 	deleted := deletedRepository{Repo: repo}
@@ -3002,13 +3005,18 @@ func (s *Server) deleteRepository(repo db.Repository) (deletedRepository, error)
 		// the finding it points at, and any scan referencing a doomed finding
 		// must have its NO ACTION link cleared or the finding delete 787s.
 		var inFlight int64
+		// Paused scans owned by this repo are removed in this transaction.
+		// Resume uses a conditional UPDATE, so it cannot resurrect a deleted
+		// scan. A paused scan on another repo survives this deletion and must
+		// retain its finding until it finishes, just like other in-flight work.
 		if err := tx.Model(&db.Scan{}).
 			Where("(repository_id = ? OR "+findingsOfRepo+") AND status IN ?", repo.ID, repo.ID, inFlightScanStatuses()).
+			Where("NOT (repository_id = ? AND status = ?)", repo.ID, db.ScanPaused).
 			Count(&inFlight).Error; err != nil {
 			return err
 		}
 		if inFlight > 0 {
-			return fmt.Errorf("%w; cancel or wait for %d linked scan(s) before deleting", errRepositoryDeleteInFlight, inFlight)
+			return fmt.Errorf("%w; finish or cancel active scans (resume paused scans first) before deleting; %d linked scan(s) remain", errRepositoryDeleteInFlight, inFlight)
 		}
 		// Collected before the transaction deletes the scan rows: each scan's
 		// per-scan workspace and claude session store under DataDir are reclaimed
