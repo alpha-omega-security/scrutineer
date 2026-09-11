@@ -1011,7 +1011,7 @@ paths:
         '400': { description: Invalid repository id }
         '403': { description: Host header is not localhost }
         '404': { description: Repository not found }
-        '409': { description: Repository has queued, running, or paused scans }
+        '409': { description: Repository has queued or running scans, or a linked paused scan on another repository }
         '500': { description: Delete failed }
 
   /v1/repositories/{id}/findings:

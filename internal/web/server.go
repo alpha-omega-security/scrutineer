@@ -3037,9 +3037,14 @@ func (s *Server) deleteRepository(repo db.Repository) (deletedRepository, error)
 		if err := deleteFindingChildren(tx, repo.ID); err != nil {
 			return err
 		}
+		if err := tx.Where("sbom_upload_id IN (SELECT id FROM sbom_uploads WHERE repository_id = ?)", repo.ID).
+			Delete(&db.SBOMPackage{}).Error; err != nil {
+			return err
+		}
 		for _, child := range []any{
 			&db.Finding{}, &db.Scan{}, &db.Subproject{}, &db.Dependency{},
 			&db.Dependent{}, &db.Package{}, &db.Advisory{}, &db.SBOMUpload{},
+			&db.PackageAlternative{}, &db.ExpectedFinding{},
 		} {
 			if err := tx.Where("repository_id = ?", repo.ID).Delete(child).Error; err != nil {
 				return err
@@ -3161,6 +3166,8 @@ func deleteFindingChildren(tx *gorm.DB, repoID uint) error {
 	for _, child := range []any{
 		&db.FindingNote{}, &db.FindingCommunication{}, &db.FindingReference{},
 		&db.FindingHistory{}, &db.FindingDependent{}, &db.FindingReview{},
+		&db.FindingVerification{}, &db.FindingAttackPath{},
+		&db.RemediationValidation{}, &db.RemediationAttempt{},
 	} {
 		if err := tx.Where(findingsOfRepo, repoID).Delete(child).Error; err != nil {
 			return err

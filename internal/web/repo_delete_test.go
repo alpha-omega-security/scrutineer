@@ -13,17 +13,25 @@ import (
 	"scrutineer/internal/worker"
 )
 
-//nolint:maintidx // exhaustive fixture: seeds one of every linked table then asserts each is gone; splitting would scatter the coverage.
 func TestRepoDelete_removesRepoAndAllLinkedData(t *testing.T) {
+	for _, foreignKeys := range []bool{true, false} {
+		t.Run(fmt.Sprintf("foreign_keys=%t", foreignKeys), func(t *testing.T) {
+			testRepoDeleteLinkedData(t, foreignKeys)
+		})
+	}
+}
+
+//nolint:maintidx // exhaustive fixture: seeds linked tables then asserts each is gone; splitting would scatter the coverage.
+func testRepoDeleteLinkedData(t *testing.T, foreignKeys bool) {
+	t.Helper()
 	s, done := newTestServer(t)
 	defer done()
 
-	// Pin to one connection and force foreign_keys ON so this test enforces
-	// FK constraints exactly as production does — a pooled in-memory DB applies
-	// the pragma to only one connection, which silently disables enforcement.
+	// Pin the connection so each case exercises the requested FK mode.
+	// Cleanup must work both with and without database cascades.
 	sqldb, _ := s.DB.DB()
 	sqldb.SetMaxOpenConns(1)
-	if err := s.DB.Exec("PRAGMA foreign_keys=ON").Error; err != nil {
+	if err := s.DB.Exec(fmt.Sprintf("PRAGMA foreign_keys=%t", foreignKeys)).Error; err != nil {
 		t.Fatal(err)
 	}
 
@@ -49,7 +57,7 @@ func TestRepoDelete_removesRepoAndAllLinkedData(t *testing.T) {
 	// whose FK to findings is ON DELETE NO ACTION — this is what blocks naive
 	// "delete findings then scans" ordering in production.
 	verifyScan := db.Scan{RepositoryID: repo.ID, FindingID: &finding.ID, Kind: "skill",
-		Status: db.ScanDone, SkillName: "verify"}
+		Status: db.ScanPaused, SkillName: "verify"}
 	s.DB.Create(&verifyScan)
 
 	// A finding-scoped scan living on a *different* repo but pointing at the
@@ -79,6 +87,7 @@ func TestRepoDelete_removesRepoAndAllLinkedData(t *testing.T) {
 	s.DB.Create(&db.Dependency{RepositoryID: repo.ID, Name: "left-pad", Ecosystem: "npm"})
 	s.DB.Create(&db.Package{RepositoryID: repo.ID, Name: "acme-pkg", Ecosystem: "npm"})
 	s.DB.Create(&db.Advisory{RepositoryID: repo.ID, Title: "CVE-2026-0001"})
+	seedRepoDeleteAssessments(t, s, repo, finding, scan)
 
 	maintainer := db.Maintainer{Login: "alice", Name: "Alice", Status: db.MaintainerActive}
 	s.DB.Create(&maintainer)
@@ -134,19 +143,25 @@ func TestRepoDelete_removesRepoAndAllLinkedData(t *testing.T) {
 		t.Errorf("repository row survived (%d)", n)
 	}
 	for name, n := range map[string]int64{
-		"scans":        count(&db.Scan{}, "repository_id = ?", repo.ID),
-		"findings":     count(&db.Finding{}, "repository_id = ?", repo.ID),
-		"subprojects":  count(&db.Subproject{}, "repository_id = ?", repo.ID),
-		"dependencies": count(&db.Dependency{}, "repository_id = ?", repo.ID),
-		"dependents":   count(&db.Dependent{}, "repository_id = ?", repo.ID),
-		"packages":     count(&db.Package{}, "repository_id = ?", repo.ID),
-		"advisories":   count(&db.Advisory{}, "repository_id = ?", repo.ID),
-		"notes":        count(&db.FindingNote{}, "finding_id = ?", finding.ID),
-		"comms":        count(&db.FindingCommunication{}, "finding_id = ?", finding.ID),
-		"refs":         count(&db.FindingReference{}, "finding_id = ?", finding.ID),
-		"history":      count(&db.FindingHistory{}, "finding_id = ?", finding.ID),
-		"reviews":      count(&db.FindingReview{}, "finding_id = ?", finding.ID),
-		"findingdep":   count(&db.FindingDependent{}, "finding_id = ?", finding.ID),
+		"scans":         count(&db.Scan{}, "repository_id = ?", repo.ID),
+		"findings":      count(&db.Finding{}, "repository_id = ?", repo.ID),
+		"subprojects":   count(&db.Subproject{}, "repository_id = ?", repo.ID),
+		"dependencies":  count(&db.Dependency{}, "repository_id = ?", repo.ID),
+		"dependents":    count(&db.Dependent{}, "repository_id = ?", repo.ID),
+		"packages":      count(&db.Package{}, "repository_id = ?", repo.ID),
+		"advisories":    count(&db.Advisory{}, "repository_id = ?", repo.ID),
+		"notes":         count(&db.FindingNote{}, "finding_id = ?", finding.ID),
+		"comms":         count(&db.FindingCommunication{}, "finding_id = ?", finding.ID),
+		"refs":          count(&db.FindingReference{}, "finding_id = ?", finding.ID),
+		"history":       count(&db.FindingHistory{}, "finding_id = ?", finding.ID),
+		"reviews":       count(&db.FindingReview{}, "finding_id = ?", finding.ID),
+		"findingdep":    count(&db.FindingDependent{}, "finding_id = ?", finding.ID),
+		"alternatives":  count(&db.PackageAlternative{}, "repository_id = ?", repo.ID),
+		"expected":      count(&db.ExpectedFinding{}, "repository_id = ?", repo.ID),
+		"verifications": count(&db.FindingVerification{}, "finding_id = ?", finding.ID),
+		"attackpaths":   count(&db.FindingAttackPath{}, "finding_id = ?", finding.ID),
+		"attempts":      count(&db.RemediationAttempt{}, "finding_id = ?", finding.ID),
+		"validations":   count(&db.RemediationValidation{}, "finding_id = ?", finding.ID),
 	} {
 		if n != 0 {
 			t.Errorf("%s rows survived the delete (%d)", name, n)
@@ -426,5 +441,24 @@ func TestRepoDiskSize_renderedInListAndSummary(t *testing.T) {
 func TestRepoDiskUsage_localRepoIsZero(t *testing.T) {
 	if n := worker.RepoDiskUsage(t.TempDir(), db.Repository{URL: "file:///srv/code/app"}); n != 0 {
 		t.Errorf("local repo disk usage = %d, want 0 (no managed clone)", n)
+	}
+}
+
+func seedRepoDeleteAssessments(t *testing.T, s *Server, repo db.Repository, finding db.Finding, scan db.Scan) {
+	t.Helper()
+	attempt := db.RemediationAttempt{FindingID: finding.ID, PatchScanID: scan.ID, Attempt: 1}
+	if err := s.DB.Create(&attempt).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range []any{
+		&db.PackageAlternative{RepositoryID: repo.ID, PURL: "pkg:npm/replacement", Kind: db.PackageAlternativeFork},
+		&db.ExpectedFinding{RepositoryID: repo.ID, File: "src/test.php", CWE: "CWE-79"},
+		&db.FindingVerification{FindingID: finding.ID, ScanID: scan.ID, Status: "verified", Report: "{}"},
+		&db.FindingAttackPath{FindingID: finding.ID, ScanID: scan.ID, ProductionViability: db.ProductionViabilityViable, Report: "{}"},
+		&db.RemediationValidation{FindingID: finding.ID, ScanID: scan.ID, RemediationAttemptID: attempt.ID, RootCauseStatus: db.ReattackFailedToBypass, Report: "{}"},
+	} {
+		if err := s.DB.Create(row).Error; err != nil {
+			t.Fatal(err)
+		}
 	}
 }
