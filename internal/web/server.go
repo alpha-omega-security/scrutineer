@@ -437,6 +437,7 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *work
 		"findingDisclosureMarkdownFilename": func(repo db.Repository, f db.Finding) string {
 			return findingDisclosureMarkdownFilename(&repo, &f)
 		},
+		"focus": scanFocus,
 	}
 	t, err := template.New("").Funcs(funcs).ParseFS(tmplFS, "templates/*.html")
 	if err != nil {
@@ -2599,7 +2600,7 @@ func loadRepoLatestScans(gdb *gorm.DB, repoID uint) []db.Scan {
 // prompt) they don't. TestRepoScansFragment_rowMatchesTheFullPage fails if this
 // projection ever falls behind the template.
 const scanRowColumns = `s.id, s.repository_id, s.skill_id, s.skill_name, s.kind, s.ref,
-	s.sub_path, s.rescan_mode, s.status, s.max_turns_hit, s.refusal_audit_warning,
+	s.sub_path, s.focus_area, s.scan_group, s.rescan_mode, s.status, s.max_turns_hit, s.refusal_audit_warning,
 	s.findings_count, s.model, s.cost_usd, s."commit", s.started_at, s.finished_at`
 
 // loadRepoLatestScanRows is loadRepoLatestScans projected down to what the Scans
@@ -2613,16 +2614,15 @@ func loadRepoLatestScanRows(gdb *gorm.DB, repoID uint) []db.Scan {
 
 func loadRepoLatestScansSelect(gdb *gorm.DB, repoID uint, columns string) []db.Scan {
 	var scans []db.Scan
-	// Per (skill_name, sub_path) we want just the latest scan — the repo
-	// page should read like "this is the state of each job on this repo",
-	// not a scroll of every historical attempt. Older runs are still
-	// reachable via /scans/{id} and the global /scans index.
+	// Show the latest attempt per skill, sub-path and focus area. Separate
+	// areas in a batch are independent jobs, not retries of one another.
 	gdb.Raw(`
 		SELECT `+columns+` FROM scans s
 		JOIN (
-			SELECT COALESCE(skill_name, '') AS sn, COALESCE(sub_path, '') AS sp, MAX(id) AS max_id
+			SELECT COALESCE(skill_name, '') AS sn, COALESCE(sub_path, '') AS sp,
+			       COALESCE(focus_area, '') AS fa, MAX(id) AS max_id
 			FROM scans WHERE repository_id = ?
-			GROUP BY sn, sp
+			GROUP BY sn, sp, fa
 		) latest ON latest.max_id = s.id
 		ORDER BY s.id DESC
 	`, repoID).Scan(&scans)
@@ -2762,9 +2762,6 @@ func (s *Server) loadRepoSubprojectView(repoID uint) repoSubprojectView {
 }
 
 func countFailedScans(scans []db.Scan) int {
-	// Count failed scans in the latest-per-skill set: same scope as the
-	// retry-failed handler would act on for this repo. Drives the
-	// "Retry failed" button on the Scans tab.
 	total := 0
 	for _, sc := range scans {
 		if sc.Status == db.ScanFailed {
