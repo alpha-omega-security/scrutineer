@@ -1,6 +1,8 @@
 package web
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -24,6 +26,13 @@ var analystFields = []string{
 	"resolution", "disclosure_draft", "disclosure_title", "suggested_recipients", "assignee",
 }
 
+func findingWriteErrorStatus(err error) int {
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return http.StatusServiceUnavailable
+	}
+	return http.StatusUnprocessableEntity
+}
+
 func (s *Server) findingFields(w http.ResponseWriter, r *http.Request) {
 	f, ok := loadByID[db.Finding](s, w, r)
 	if !ok {
@@ -45,7 +54,7 @@ func (s *Server) findingFields(w http.ResponseWriter, r *http.Request) {
 		}
 		return nil
 	}); err != nil {
-		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+		http.Error(w, err.Error(), findingWriteErrorStatus(err))
 		return
 	}
 	s.redirect(w, r, fmt.Sprintf("/findings/%d", f.ID))
