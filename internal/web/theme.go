@@ -340,7 +340,7 @@ func (s *Server) settingsRestartRunner(w http.ResponseWriter, r *http.Request) {
 	if n <= 0 {
 		n = s.Queue.Concurrency()
 	}
-	if eff := s.Queue.EffectiveConcurrency(n); eff == s.Queue.Concurrency() {
+	if eff := s.Queue.EffectiveConcurrency(n); eff < n && eff == s.Queue.Concurrency() {
 		setFlash(w, Flash{Category: successKey, Title: "Runner unchanged", Description: cappedConcurrencyNote(n, eff)})
 		s.redirect(w, r, "/settings")
 		return

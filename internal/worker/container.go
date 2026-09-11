@@ -338,6 +338,7 @@ func (d ContainerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Ev
 			return result, fmt.Errorf("acquire codex account credential: %w", err)
 		}
 	}
+	defer unlockCodexAuth()
 
 	logLine := "$ " + runtimeBin(d.Runtime) + " run --rm " + image + " <skill:" + sj.Name + ">"
 	if d.ModelBaseURL != "" {
@@ -345,42 +346,29 @@ func (d ContainerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Ev
 	}
 	emit(Event{Kind: KindText, Text: logLine})
 
-	var (
-		hitMaxTurns bool
-		sessionID   string
-		waitErr     error
-		runErrors   containerRunErrorState
-		terminalErr error
-	)
-	func() {
-		defer unlockCodexAuth()
-		wrappedEmit := func(e Event) {
-			runErrors.observe(e, h, provider.ID)
-			emit(e)
-		}
-		hitMaxTurns, sessionID, waitErr = d.runContainerOnce(ctx, runBase, sj, provider.Env, wrappedEmit)
+	runErrors := containerRunErrorState{}
+	wrappedEmit := func(e Event) {
+		runErrors.observe(e, h, provider.ID)
+		emit(e)
+	}
+	hitMaxTurns, sessionID, waitErr := d.runContainerOnce(ctx, runBase, sj, provider.Env, wrappedEmit)
 
-		if waitErr != nil && sj.ResumeSessionID != "" && sessionID == "" && runErrors.resumeRetryable() {
-			if sj.ResumePrompt != "" && sj.Prompt == "" {
-				// A bare resume prompt is a corrective nudge ("rewrite the invalid
-				// report.json") that means nothing to a fresh agent, and there is
-				// no fresh framing to fall back on.
-				emit(Event{Kind: KindText, Text: "resume of session " + sj.ResumeSessionID + " failed; " + resumePromptNoFreshFallbackText})
-				terminalErr = runErrors.failure(provider, runtimeBin(d.Runtime), waitErr)
-				return
-			}
-			// The resume produced no session event, so claude could not load the
-			// saved conversation (gone from the mounted store). Restart fresh in
-			// the same /work + config mount so the retry lineage isn't wedged on
-			// a dead session id.
-			emit(Event{Kind: KindText, Text: "resume of session " + sj.ResumeSessionID + " failed; restarting fresh"})
-			fresh := sj
-			fresh.ResumeSessionID = ""
-			hitMaxTurns, sessionID, waitErr = d.runContainerOnce(ctx, runBase, fresh, provider.Env, wrappedEmit)
+	if waitErr != nil && sj.ResumeSessionID != "" && sessionID == "" && runErrors.resumeRetryable() {
+		if sj.ResumePrompt != "" && sj.Prompt == "" {
+			// A bare resume prompt is a corrective nudge ("rewrite the invalid
+			// report.json") that means nothing to a fresh agent, and there is
+			// no fresh framing to fall back on.
+			emit(Event{Kind: KindText, Text: "resume of session " + sj.ResumeSessionID + " failed; " + resumePromptNoFreshFallbackText})
+			return result, runErrors.failure(provider, runtimeBin(d.Runtime), waitErr)
 		}
-	}()
-	if terminalErr != nil {
-		return result, terminalErr
+		// The resume produced no session event, so claude could not load the
+		// saved conversation (gone from the mounted store). Restart fresh in
+		// the same /work + config mount so the retry lineage isn't wedged on
+		// a dead session id.
+		emit(Event{Kind: KindText, Text: "resume of session " + sj.ResumeSessionID + " failed; restarting fresh"})
+		fresh := sj
+		fresh.ResumeSessionID = ""
+		hitMaxTurns, sessionID, waitErr = d.runContainerOnce(ctx, runBase, fresh, provider.Env, wrappedEmit)
 	}
 
 	res := result

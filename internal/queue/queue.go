@@ -86,7 +86,13 @@ func (q *Queue) Concurrency() int {
 // EffectiveConcurrency reports the runner limit that would be applied for a
 // requested value after process-level caps. It does not rebuild the runner.
 func (q *Queue) EffectiveConcurrency(requested int) int {
-	return q.effectiveConcurrency(requested)
+	if requested <= 0 {
+		requested = DefaultWorkerConcurrency
+	}
+	if maximum := int(q.maxConcurrency.Load()); maximum > 0 {
+		requested = min(requested, maximum)
+	}
+	return requested
 }
 
 // SetMaxConcurrency applies a process-lifetime admission cap. It is used when
@@ -95,16 +101,6 @@ func (q *Queue) EffectiveConcurrency(requested int) int {
 func (q *Queue) SetMaxConcurrency(maximum int) {
 	q.maxConcurrency.Store(int64(max(0, maximum)))
 	q.Reconfigure(q.Concurrency())
-}
-
-func (q *Queue) effectiveConcurrency(concurrency int) int {
-	if concurrency <= 0 {
-		concurrency = DefaultWorkerConcurrency
-	}
-	if maximum := int(q.maxConcurrency.Load()); maximum > 0 {
-		concurrency = min(concurrency, maximum)
-	}
-	return concurrency
 }
 
 func (q *Queue) Register(name string, fn jobs.Func) {
@@ -154,7 +150,7 @@ func (q *Queue) startRunnerLocked() {
 // Calling before Start just records the value, applied when Start builds the
 // first runner.
 func (q *Queue) Reconfigure(concurrency int) {
-	concurrency = q.effectiveConcurrency(concurrency)
+	concurrency = q.EffectiveConcurrency(concurrency)
 	q.concurrency.Store(int64(concurrency))
 	q.mu.Lock()
 	defer q.mu.Unlock()

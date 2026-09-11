@@ -352,7 +352,7 @@ The `docker build` commands shown for the runner image and profiles can be run a
 | `--hardened` | false | Strict sandbox: container runtime required, egress restricted to the backend's model API hosts + host skill API, read-only rootfs, internal network |
 | `--hardened-runtime-only` | false | The non-network half of `--hardened` (read-only rootfs + `no-new-privileges` + 2 GiB workspace cap) **without** the per-scan `--internal` network; the rootless fallback for hosts where the `--hardened` egress sidecar can't run (implied by `--hardened`). Deprecated alias: `--hardened-rootless-runtime` |
 | `--runner-image` | release-matched digest (`ghcr.io/alpha-omega-security/scrutineer-runner:latest` in development builds) | Container image for per-scan containers |
-| `-concurrency` | `4` | Number of scans to run in parallel. Chat turns run from a separate pool sized at half this value, so a busy host can reach 1.5x this many agent containers |
+| `-concurrency` | `4` | Number of scans to run in parallel. Chat turns run from a separate pool sized at half this value, so a busy host can reach 1.5x this many agent containers. With `codex.auth_file`, scans and chat turns share one execution slot |
 | `-clone` | `shallow` | Clone depth: `shallow` (`--depth 1`) or `full` |
 | `-scan-timeout` | `1h` | Wall-clock limit per scan; exceeded scans fail |
 | `-max-turns` | `0` | Per-scan turn cap (0 = unlimited); claude and copilot backends only, codex and opencode have no turn cap |
@@ -406,8 +406,15 @@ Scrutineer can drive OpenAI's [codex](https://github.com/openai/codex) CLI inste
     go run ./cmd/scrutineer -skills ./skills -backend codex
 
 It can also use a ChatGPT subscription login without consuming Platform API
-credits. Create an isolated file-backed login with `codex login --device-auth`,
-then configure its credential file:
+credits. Create an isolated file-backed login:
+
+    mkdir -p ~/.config/scrutineer/codex-rubygems
+    chmod 700 ~/.config/scrutineer/codex-rubygems
+    CODEX_HOME=~/.config/scrutineer/codex-rubygems \
+      codex -c cli_auth_credentials_store=file login --device-auth
+    chmod 600 ~/.config/scrutineer/codex-rubygems/auth.json
+
+Then configure its credential file:
 
     backend: codex
     codex:
