@@ -28,6 +28,9 @@ func TestCostFromUsage_daybreakBlueUsesGPT56SolPricing(t *testing.T) {
 		CacheWriteTokens: 200_000,
 	}
 	want := CostFromUsage(modelGPT56SolID, usage)
+	if want <= 0 {
+		t.Fatalf("CostFromUsage(%q) = %v, want a positive cost", modelGPT56SolID, want)
+	}
 	if got := CostFromUsage(modelDaybreakBlueID, usage); math.Abs(got-want) > 1e-9 {
 		t.Errorf("CostFromUsage(%q) = %v, want %v", modelDaybreakBlueID, got, want)
 	}
