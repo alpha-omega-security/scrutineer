@@ -33,7 +33,7 @@ func (s *Server) findingFields(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := s.DB.Transaction(func(tx *gorm.DB) error {
+	if err := db.FindingWriteTransaction(s.DB.WithContext(r.Context()), f.ID, func(tx *gorm.DB) error {
 		for _, field := range analystFields {
 			value, ok := r.Form[field]
 			if !ok {

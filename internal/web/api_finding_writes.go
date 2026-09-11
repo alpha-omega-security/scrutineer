@@ -55,7 +55,7 @@ func (s *Server) apiPatchFinding(w http.ResponseWriter, r *http.Request) {
 		fields = append(fields, field)
 	}
 	sort.Strings(fields)
-	if err := s.DB.Transaction(func(tx *gorm.DB) error {
+	if err := db.FindingWriteTransaction(s.DB.WithContext(r.Context()), uint(id), func(tx *gorm.DB) error {
 		for _, field := range fields {
 			if err := db.WriteFindingField(tx, uint(id), field, body.Fields[field], source, body.By); err != nil {
 				return err
