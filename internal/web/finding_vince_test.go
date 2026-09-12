@@ -222,6 +222,114 @@ func TestVINCEEligibility(t *testing.T) {
 	}
 }
 
+func TestVINCEEligibilityProductionViability(t *testing.T) {
+	for _, viability := range []string{
+		"", db.ProductionViabilityViable, db.ProductionViabilityConditionalViable,
+		db.ProductionViabilitySampleOrTest, db.ProductionViabilityNonViable,
+	} {
+		t.Run(viability, func(t *testing.T) {
+			finding := db.Finding{
+				Status: db.FindingTriaged, DisclosureDraft: "reviewed", ProductionViability: viability,
+			}
+			err := vinceEligibility(finding, nil, nil)
+			if viability == db.ProductionViabilityNonViable {
+				if !errors.Is(err, db.ErrFindingNonViable) {
+					t.Fatalf("eligibility error = %v, want ErrFindingNonViable", err)
+				}
+			} else if err != nil {
+				t.Fatalf("otherwise eligible finding blocked: %v", err)
+			}
+		})
+	}
+}
+
+func TestFindingVINCENonViableBlockedBeforeSubmission(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status db.FindingLifecycle
+		draft  string
+	}{
+		{"triaged/reviewed", db.FindingTriaged, "reviewed"},
+		{"ready/reviewed", db.FindingReady, "reviewed"},
+		{"triaged/empty", db.FindingTriaged, ""},
+		{"ready/empty", db.FindingReady, ""},
+		{"triaged/whitespace", db.FindingTriaged, " \t\n"},
+		{"ready/whitespace", db.FindingReady, " \t\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, done := newTestServer(t)
+			defer done()
+			ctx := seedVINCEFinding(t, s)
+			if err := s.DB.Model(&ctx.Finding).Updates(map[string]any{
+				"status": tc.status, "production_viability": db.ProductionViabilityNonViable,
+				"disclosure_draft": tc.draft,
+			}).Error; err != nil {
+				t.Fatal(err)
+			}
+			var requests atomic.Int32
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				requests.Add(1)
+				w.WriteHeader(http.StatusCreated)
+				_, _ = io.WriteString(w, `{"vrf_id":"VRF#must-not-submit"}`)
+			}))
+			defer server.Close()
+			s.VINCE = vince.Config{BaseURL: server.URL, APIKey: "secret"}
+
+			path := fmt.Sprintf("/findings/%d", ctx.Finding.ID)
+			page := httptest.NewRecorder()
+			s.Handler().ServeHTTP(page, localReq(http.MethodGet, path))
+			if page.Code != http.StatusOK {
+				t.Fatalf("finding page: %d %s", page.Code, page.Body)
+			}
+			if !strings.Contains(page.Body.String(), `disabled title="`+db.ErrFindingNonViable.Error()+`"`) {
+				t.Error("finding page did not disable VINCE action with the non-viability reason")
+			}
+			if strings.Contains(page.Body.String(), `href="`+path+`/vince"`) {
+				t.Error("finding page still offers an enabled VINCE submission link")
+			}
+			preview := httptest.NewRecorder()
+			s.Handler().ServeHTTP(preview, localReq(http.MethodGet, path+"/vince"))
+			submit := postForm(t, s, path+"/vince", validVINCEWebForm())
+			for name, response := range map[string]*httptest.ResponseRecorder{"preview": preview, "submit": submit} {
+				if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), db.ErrFindingNonViable.Error()) {
+					t.Errorf("%s: status=%d body=%s, want 409 with non-viability reason", name, response.Code, response.Body)
+				}
+			}
+			if requests.Load() != 0 {
+				t.Errorf("VINCE requests = %d, want 0", requests.Load())
+			}
+			assertVINCEBlockedStateUnchanged(t, s, ctx, tc.status)
+		})
+	}
+}
+
+func assertVINCEBlockedStateUnchanged(t *testing.T, s *Server, ctx vinceFindingContext, status db.FindingLifecycle) {
+	t.Helper()
+	var finding db.Finding
+	if err := s.DB.First(&finding, ctx.Finding.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if finding.Status != status || finding.ProductionViability != db.ProductionViabilityNonViable {
+		t.Errorf("blocked submission changed finding state: status=%s viability=%s", finding.Status, finding.ProductionViability)
+	}
+	for _, check := range []struct {
+		model any
+		want  int64
+	}{
+		{&db.FindingReference{}, int64(len(ctx.References))},
+		{&db.FindingCommunication{}, int64(len(ctx.Communications))},
+		{&db.FindingHistory{}, 0},
+	} {
+		var count int64
+		if err := s.DB.Model(check.model).Where("finding_id = ?", finding.ID).Count(&count).Error; err != nil {
+			t.Fatal(err)
+		}
+		if count != check.want {
+			t.Errorf("%T count = %d, want unchanged %d", check.model, count, check.want)
+		}
+	}
+}
+
 func TestFindingVINCEPreviewAndDisabledAction(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

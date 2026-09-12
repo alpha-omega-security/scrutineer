@@ -254,6 +254,9 @@ func (s *Server) loadVINCEFinding(w http.ResponseWriter, r *http.Request) (vince
 }
 
 func vinceEligibility(f db.Finding, notes []db.FindingNote, refs []db.FindingReference) error {
+	if db.FindingDisclosureBlocked(f) {
+		return db.ErrFindingNonViable
+	}
 	if strings.TrimSpace(f.DisclosureDraft) == "" {
 		return fmt.Errorf("a reviewed disclosure draft is required before VINCE submission")
 	}
