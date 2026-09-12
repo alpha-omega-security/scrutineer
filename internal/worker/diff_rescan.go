@@ -306,6 +306,7 @@ func uintValue(v *uint) uint {
 // setCoverage renders a coverage record onto the scan and keeps the indexed
 // Completeness column in step with it, so the two can never disagree.
 func setCoverage(scan *db.Scan, rec coverage.Record) {
+	rec.CapPreflight()
 	raw, err := coverage.Marshal(rec)
 	if err != nil {
 		return

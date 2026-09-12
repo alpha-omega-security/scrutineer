@@ -153,6 +153,7 @@ func (w *Worker) doExposure(ctx context.Context, scan *db.Scan, emit func(Event)
 		RequiresProfile: skill.RequiresProfile,
 	}
 	w.applyResume(scan, &sj, emit)
+	w.configureCapabilityPreflight(ctx, scan, &skill, &sj)
 	res, err := w.Runner.RunSkill(ctx, sj, emit)
 	w.applySkillResult(scan, res)
 	if err != nil {

@@ -1436,7 +1436,7 @@ components:
           description: Immutable gated patch attempt pinned to a re-attack scan at enqueue time.
         coverage:
           type: string
-          description: JSON coverage metadata, including diff fallback reasons and threat-model update decisions.
+          description: JSON coverage metadata, including diff fallback reasons, threat-model update decisions, and optional worker-owned capability preflight (status ready/degraded/blocked, missing command or feature entries, degraded boolean, and optional probe error). Blocked or degraded preflight keeps completeness partial.
         skill_name:           { type: string }
         skill_version:        { type: integer, description: Snapshot of the Skill row version at enqueue time. }
         skill_schema_version: { type: integer, description: Snapshot of metadata.scrutineer.version at enqueue time. }
