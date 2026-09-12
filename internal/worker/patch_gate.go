@@ -91,7 +91,8 @@ func (w *Worker) parsePatchOutput(ctx context.Context, scan *db.Scan, report str
 
 func (w *Worker) recordRemediationAttempt(scan *db.Scan, findingID uint, rep patchReport) (db.RemediationAttempt, error) {
 	var attempt db.RemediationAttempt
-	err := w.DB.Transaction(func(tx *gorm.DB) error {
+	err := db.FindingWriteTransaction(w.DB, findingID, func(tx *gorm.DB) error {
+		attempt = db.RemediationAttempt{}
 		result := tx.Where("patch_scan_id = ?", scan.ID).Limit(1).Find(&attempt)
 		if result.Error != nil {
 			return fmt.Errorf("check existing remediation attempt: %w", result.Error)

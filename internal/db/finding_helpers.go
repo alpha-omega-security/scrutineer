@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"regexp"
@@ -8,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"scrutineer/internal/retry"
 
 	"github.com/git-pkgs/vulns"
 	"gorm.io/gorm"
@@ -24,9 +27,11 @@ const GHSAIDPattern = `(?i)GHSA(-[0-9a-z]{4}){3}`
 var ghsaIDRE = regexp.MustCompile("^" + GHSAIDPattern + "$")
 
 const (
-	findingWriteMaxAttempts  = 5
+	findingWriteRetryTimeout = 5 * time.Second
+	findingWriteMaxDelay     = 100 * time.Millisecond
 	findingCapHistoryMaxRows = 20
 	sqliteBusyCode           = 5
+	sqliteBusySnapshotCode   = 517
 )
 
 var errFindingWriteConflict = errors.New("finding changed concurrently")
@@ -64,7 +69,7 @@ func WriteFindingField(gdb *gorm.DB, findingID uint, field, newValue string, sou
 	// sync must commit together: a failure between them would change the
 	// stored value with no matching history row (breaking the audit
 	// trail) or leave cvss_score inconsistent with cvss_vector.
-	return retryFindingWrite(gdb, findingID, func(tx *gorm.DB) error {
+	return FindingWriteTransaction(gdb, findingID, func(tx *gorm.DB) error {
 		var f Finding
 		if err := tx.First(&f, findingID).Error; err != nil {
 			return fmt.Errorf("load finding %d: %w", findingID, err)
@@ -144,7 +149,7 @@ func ReconcileFindingSeverityCap(
 	}
 
 	var effective string
-	err := retryFindingWrite(gdb, findingID, func(tx *gorm.DB) error {
+	err := FindingWriteTransaction(gdb, findingID, func(tx *gorm.DB) error {
 		var f Finding
 		if err := tx.First(&f, findingID).Error; err != nil {
 			return fmt.Errorf("load finding %d: %w", findingID, err)
@@ -279,7 +284,7 @@ func WriteFindingTimeField(gdb *gorm.DB, findingID uint, field string, newValue 
 	newUTC := newValue.UTC()
 	// Column update and history row must commit together so the audit
 	// trail can't lose a row on a mid-write failure.
-	return retryFindingWrite(gdb, findingID, func(tx *gorm.DB) error {
+	return FindingWriteTransaction(gdb, findingID, func(tx *gorm.DB) error {
 		var f Finding
 		if err := tx.First(&f, findingID).Error; err != nil {
 			return fmt.Errorf("load finding %d: %w", findingID, err)
@@ -310,10 +315,12 @@ func WriteFindingTimeField(gdb *gorm.DB, findingID uint, field string, newValue 
 	})
 }
 
-// retryFindingWrite owns and retries transactions created for raw database
-// handles. A caller-owned transaction cannot be restarted here, so it gets
-// one conditional attempt and returns any conflict to its caller for rollback.
-func retryFindingWrite(gdb *gorm.DB, findingID uint, write func(*gorm.DB) error) error {
+// FindingWriteTransaction atomically applies database-only finding writes,
+// retrying owned transactions on contention. The callback may run more than
+// once and must reset per-attempt state and avoid external side effects.
+// A caller-owned transaction gets one savepoint-backed attempt; its owner
+// must retry the whole transaction because its earlier work cannot be replayed here.
+func FindingWriteTransaction(gdb *gorm.DB, findingID uint, write func(*gorm.DB) error) error {
 	if _, inTransaction := gdb.Statement.ConnPool.(gorm.TxCommitter); inTransaction {
 		// Keep the helper atomic with a single GORM savepoint, but leave any
 		// outer transaction retry to its owner because its earlier work and
@@ -321,20 +328,29 @@ func retryFindingWrite(gdb *gorm.DB, findingID uint, write func(*gorm.DB) error)
 		return gdb.Transaction(write)
 	}
 
-	var err error
-	for attempt := 1; attempt <= findingWriteMaxAttempts; attempt++ {
-		err = gdb.Transaction(write)
+	// A deferred transaction that has already read can get SQLITE_BUSY
+	// without invoking SQLite's busy handler. Give whole-transaction retries
+	// the same time budget as our connection's busy_timeout, and honor a
+	// shorter caller deadline or cancellation throughout the wait.
+	ctx, cancel := context.WithTimeout(gdb.Statement.Context, findingWriteRetryTimeout)
+	defer cancel()
+	gdb = gdb.WithContext(ctx)
+	for attempt := 1; ; attempt++ {
+		err := gdb.Transaction(write)
 		if err == nil {
 			return nil
 		}
-		if !errors.Is(err, errFindingWriteConflict) && !isSQLiteBusy(err) {
+		delay, retryable := findingWriteRetryDelay(err, attempt)
+		if !retryable {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return errors.Join(err, ctxErr)
+			}
 			return err
 		}
-		if attempt < findingWriteMaxAttempts {
-			time.Sleep(time.Millisecond << (attempt - 1))
+		if waitErr := retry.Sleep(ctx, delay); waitErr != nil {
+			return fmt.Errorf("write finding %d stopped after %d attempts: %w", findingID, attempt, errors.Join(err, waitErr))
 		}
 	}
-	return fmt.Errorf("write finding %d failed after %d attempts: %w", findingID, findingWriteMaxAttempts, err)
 }
 
 // conditionalFindingUpdate is the optimistic compare-and-swap shared by
@@ -354,12 +370,20 @@ func conditionalFindingUpdate(gdb *gorm.DB, findingID uint, column string, oldVa
 	return nil
 }
 
-// SQLite reports a stale WAL read transaction as SQLITE_BUSY_SNAPSHOT (an
-// extended SQLITE_BUSY code) instead of returning zero rows from the compare-
-// and-swap. The whole owned transaction must be restarted to get a new snapshot.
-func isSQLiteBusy(err error) bool {
+func findingWriteRetryDelay(err error, attempt int) (time.Duration, bool) {
+	if errors.Is(err, errFindingWriteConflict) {
+		return 0, true
+	}
 	var sqliteErr interface{ Code() int }
-	return errors.As(err, &sqliteErr) && sqliteErr.Code()&0xff == sqliteBusyCode
+	if !errors.As(err, &sqliteErr) || sqliteErr.Code()&0xff != sqliteBusyCode {
+		return 0, false
+	}
+	// A stale WAL snapshot needs a fresh transaction immediately; an active
+	// writer needs time to release its lock. Both retries start after rollback.
+	if sqliteErr.Code() == sqliteBusySnapshotCode {
+		return 0, true
+	}
+	return retry.BackoffDelay(attempt, time.Millisecond, findingWriteMaxDelay), true
 }
 
 // findingTimeFieldAccessor mirrors findingFieldAccessor for timestamp

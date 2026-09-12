@@ -657,7 +657,7 @@ func attachmentHash(attachment *vince.Attachment) string {
 }
 
 func (s *Server) persistVINCESubmission(findingID uint, vrfID, reportsURL, attachmentName string) error {
-	return s.DB.Transaction(func(tx *gorm.DB) error {
+	return db.FindingWriteTransaction(s.DB, findingID, func(tx *gorm.DB) error {
 		var refs []db.FindingReference
 		if err := tx.Where("finding_id = ?", findingID).Find(&refs).Error; err != nil {
 			return err

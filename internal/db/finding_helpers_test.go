@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -377,13 +378,19 @@ func TestWriteFindingField_concurrentUpdatesKeepHistoryChain(t *testing.T) {
 	gdb := newTestDB(t)
 	f := seedFinding(t, gdb)
 
-	// Hold both first reads until each writer has loaded the same value. The
-	// second write must detect that its snapshot lost the race, reload, and
-	// record a transition from the first writer's value.
+	// Hold both first reads until each writer has loaded the same value.
+	// Release one writer at a time so the second must retry a stale snapshot
+	// after the first commits, without racing the live writer's commit against
+	// the bounded busy-retry backoff.
 	const callbackName = "test:barrier_finding_reads"
 	var reads atomic.Int32
 	arrived := make(chan struct{}, 2)
 	release := make(chan struct{})
+	var writers sync.WaitGroup
+	defer func() {
+		close(release)
+		writers.Wait()
+	}()
 	if err := gdb.Callback().Query().After("gorm:query").Register(callbackName, func(d *gorm.DB) {
 		loaded, ok := d.Statement.Dest.(*Finding)
 		if !ok || loaded.ID != f.ID || d.Error != nil {
@@ -403,23 +410,26 @@ func TestWriteFindingField_concurrentUpdatesKeepHistoryChain(t *testing.T) {
 	})
 
 	errs := make(chan error, 2)
-	go func() {
+	writers.Go(func() {
 		errs <- WriteFindingField(gdb, f.ID, severityField, "Critical", SourceAnalyst, "analyst-a")
-	}()
-	go func() {
+	})
+	writers.Go(func() {
 		errs <- WriteFindingField(gdb, f.ID, severityField, "Medium", SourceModel, "worker-b")
-	}()
+	})
 
 	for range 2 {
 		select {
 		case <-arrived:
 		case <-time.After(10 * time.Second):
-			close(release)
 			t.Fatal("timed out waiting for concurrent finding reads")
 		}
 	}
-	close(release)
 	for range 2 {
+		select {
+		case release <- struct{}{}:
+		case <-time.After(10 * time.Second):
+			t.Fatal("timed out releasing a concurrent finding writer")
+		}
 		select {
 		case err := <-errs:
 			if err != nil {
@@ -428,6 +438,9 @@ func TestWriteFindingField_concurrentUpdatesKeepHistoryChain(t *testing.T) {
 		case <-time.After(10 * time.Second):
 			t.Fatal("timed out waiting for concurrent finding writes")
 		}
+	}
+	if reads.Load() < 3 {
+		t.Fatal("expected the stale writer to reload the finding on retry")
 	}
 
 	var refreshed Finding

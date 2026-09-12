@@ -1202,7 +1202,8 @@ type verifyRecord struct {
 }
 
 func (w *Worker) recordVerifyOutput(scan *db.Scan, f db.Finding, record verifyRecord) error {
-	return w.DB.Transaction(func(tx *gorm.DB) error {
+	return db.FindingWriteTransaction(w.DB, f.ID, func(tx *gorm.DB) error {
+		calibration := record.calibration
 		var existing db.FindingVerification
 		lookup := tx.Where("finding_id = ? AND scan_id = ?", f.ID, scan.ID).Limit(1).Find(&existing)
 		if lookup.Error != nil {
@@ -1216,22 +1217,22 @@ func (w *Worker) recordVerifyOutput(scan *db.Scan, f db.Finding, record verifyRe
 				return fmt.Errorf("update status: %w", err)
 			}
 		}
-		if record.calibration.Evaluated {
+		if calibration.Evaluated {
 			effectiveSeverity, err := db.ReconcileFindingSeverityCap(
-				tx, f.ID, record.calibration.Maximum, db.SourceSystem, verifySkillName,
+				tx, f.ID, calibration.Maximum, db.SourceSystem, verifySkillName,
 			)
 			if err != nil {
 				return fmt.Errorf("reconcile severity cap: %w", err)
 			}
 			if !db.SeverityAtLeast(effectiveSeverity, "Low") {
-				record.calibration.Incomplete = true
-				record.calibration.Caps = nil
-			} else if record.calibration.Maximum != "" && !db.SeverityAtLeast(effectiveSeverity, record.calibration.Maximum) {
-				record.calibration.Caps = nil
+				calibration.Incomplete = true
+				calibration.Caps = nil
+			} else if calibration.Maximum != "" && !db.SeverityAtLeast(effectiveSeverity, calibration.Maximum) {
+				calibration.Caps = nil
 			}
 			if err := tx.Model(&db.Finding{}).Where("id = ?", f.ID).Updates(map[string]any{
-				"severity_caps":                   strings.Join(record.calibration.Caps, "\n"),
-				"severity_calibration_incomplete": record.calibration.Incomplete,
+				"severity_caps":                   strings.Join(calibration.Caps, "\n"),
+				"severity_calibration_incomplete": calibration.Incomplete,
 			}).Error; err != nil {
 				return fmt.Errorf("record severity calibration: %w", err)
 			}
@@ -1246,7 +1247,7 @@ func (w *Worker) recordVerifyOutput(scan *db.Scan, f db.Finding, record verifyRe
 		if err := tx.Create(&row).Error; err != nil {
 			return fmt.Errorf("record verification: %w", err)
 		}
-		note := verifyNote(record.result, record.rubric, record.score, record.gradingError, record.calibration)
+		note := verifyNote(record.result, record.rubric, record.score, record.gradingError, calibration)
 		if _, err := db.AddFindingNote(tx, f.ID, note, "verify"); err != nil {
 			return fmt.Errorf("record verify note: %w", err)
 		}
