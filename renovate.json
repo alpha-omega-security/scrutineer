@@ -88,13 +88,10 @@
     },
     {
       "customType": "regex",
-      "description": "Update Claude Code image and documented versions from GitHub releases",
-      "managerFilePatterns": [
-        "/^Dockerfile$/",
-        "/^threatmodel\\.md$/"
-      ],
+      "description": "Update the Claude Code image version from GitHub releases",
+      "managerFilePatterns": ["/^Dockerfile$/"],
       "matchStrings": [
-        "(?:@anthropic-ai/claude-code@|`claude-code@)(?<currentValue>\\d+\\.\\d+\\.\\d+)"
+        "@anthropic-ai/claude-code@(?<currentValue>\\d+\\.\\d+\\.\\d+)"
       ],
       "packageNameTemplate": "anthropics/claude-code",
       "depNameTemplate": "anthropics/claude-code",
@@ -117,13 +114,9 @@
     {
       "customType": "regex",
       "description": "Update the zizmor workflow pin",
-      "managerFilePatterns": [
-        "/^\\.github/workflows/tests\\.yml$/",
-        "/^threatmodel\\.md$/"
-      ],
+      "managerFilePatterns": ["/^\\.github/workflows/tests\\.yml$/"],
       "matchStrings": [
-        "pipx install zizmor==(?<currentValue>\\d+\\.\\d+\\.\\d+)",
-        "`zizmor@(?<currentValue>\\d+\\.\\d+\\.\\d+)`"
+        "pipx install zizmor==(?<currentValue>\\d+\\.\\d+\\.\\d+)"
       ],
       "packageNameTemplate": "zizmor",
       "depNameTemplate": "zizmor",
@@ -132,14 +125,12 @@
     },
     {
       "customType": "regex",
-      "description": "Update the semgrep container-image pins and the documented version",
+      "description": "Update the semgrep container-image pins",
       "managerFilePatterns": [
         "/^Dockerfile$/",
-        "/^Dockerfile\\.runner$/",
-        "/^threatmodel\\.md$/"
+        "/^Dockerfile\\.runner$/"
       ],
       "matchStrings": [
-        "semgrep==(?<currentValue>\\d+\\.\\d+\\.\\d+)",
         "ARG SEMGREP_VERSION=(?<currentValue>\\d+\\.\\d+\\.\\d+)"
       ],
       "packageNameTemplate": "semgrep",
@@ -149,14 +140,12 @@
     },
     {
       "customType": "regex",
-      "description": "Update the bandit container-image pins and the documented version",
+      "description": "Update the bandit container-image pins",
       "managerFilePatterns": [
         "/^Dockerfile$/",
-        "/^Dockerfile\\.runner$/",
-        "/^threatmodel\\.md$/"
+        "/^Dockerfile\\.runner$/"
       ],
       "matchStrings": [
-        "bandit==(?<currentValue>\\d+\\.\\d+\\.\\d+)",
         "ARG BANDIT_VERSION=(?<currentValue>\\d+\\.\\d+\\.\\d+)"
       ],
       "packageNameTemplate": "bandit",
@@ -192,41 +181,6 @@
       "packageNameTemplate": "{{{depName}}}",
       "datasourceTemplate": "go",
       "versioningTemplate": "semver"
-    },
-    {
-      "customType": "regex",
-      "description": "Update the documented git-pkgs version",
-      "managerFilePatterns": ["/^threatmodel\\.md$/"],
-      "matchStrings": [
-        "`git-pkgs@(?<currentValue>v\\d+\\.\\d+\\.\\d+)`"
-      ],
-      "packageNameTemplate": "github.com/git-pkgs/git-pkgs",
-      "depNameTemplate": "github.com/git-pkgs/git-pkgs",
-      "datasourceTemplate": "go",
-      "versioningTemplate": "semver"
-    },
-    {
-      "customType": "regex",
-      "description": "Update documented builder image versions",
-      "managerFilePatterns": ["/^threatmodel\\.md$/"],
-      "matchStrings": [
-        "`(?<depName>golang|rust):(?<currentValue>\\d+\\.\\d+(?:\\.\\d+)?)-(?:trixie|alpine)`"
-      ],
-      "packageNameTemplate": "{{{depName}}}",
-      "datasourceTemplate": "docker",
-      "versioningTemplate": "docker"
-    },
-    {
-      "customType": "regex",
-      "description": "Update documented Go toolchain versions",
-      "managerFilePatterns": ["/^threatmodel\\.md$/"],
-      "matchStrings": [
-        "`toolchain go(?<currentValue>\\d+\\.\\d+\\.\\d+)`"
-      ],
-      "packageNameTemplate": "go",
-      "depNameTemplate": "go",
-      "datasourceTemplate": "golang-version",
-      "versioningTemplate": "semver"
     }
   ],
   "packageRules": [
@@ -239,10 +193,9 @@
     },
     {
       "description": "Raising the go directive raises the minimum Go version for every consumer",
-      "matchManagers": ["gomod", "custom.regex"],
+      "matchManagers": ["gomod"],
       "matchPackageNames": ["go"],
-      "groupName": "Go language version",
-      "minimumGroupSize": 4
+      "groupName": "Go language version"
     },
     {
       "matchManagers": ["gomod"],
@@ -272,43 +225,43 @@
     },
     {
       "description": "Update Go builder image versions before Go modules can require the newer toolchain",
-      "matchManagers": ["dockerfile", "custom.regex"],
+      "matchManagers": ["dockerfile"],
       "matchPackageNames": ["golang"],
       "matchUpdateTypes": ["major", "minor", "patch"],
       "groupName": "Go Docker images",
-      "minimumGroupSize": 7,
+      "minimumGroupSize": 5,
       "minimumReleaseAge": "0 days"
     },
     {
-      "description": "Keep the Rust builder images and documented version synchronized",
-      "matchManagers": ["dockerfile", "custom.regex"],
+      "description": "Keep the Rust builder images synchronized",
+      "matchManagers": ["dockerfile"],
       "matchPackageNames": ["rust"],
       "groupName": "Rust Docker images",
-      "minimumGroupSize": 3
+      "minimumGroupSize": 2
     },
     {
-      "description": "Keep the container-image and documented bandit pins synchronized",
+      "description": "Keep both container-image bandit pins synchronized",
       "matchPackageNames": ["bandit"],
       "groupName": "bandit",
-      "minimumGroupSize": 3
+      "minimumGroupSize": 2
     },
     {
-      "description": "Keep the container-image and documented semgrep pins synchronized",
+      "description": "Keep both container-image semgrep pins synchronized",
       "matchPackageNames": ["semgrep"],
       "groupName": "semgrep",
-      "minimumGroupSize": 3
+      "minimumGroupSize": 2
     },
     {
       "description": "Keep the workflow and container-image zizmor pins synchronized",
       "matchPackageNames": ["zizmor"],
       "groupName": "zizmor",
-      "minimumGroupSize": 4
+      "minimumGroupSize": 3
     },
     {
-      "description": "Keep all four Claude Code pins on one GitHub release",
+      "description": "Keep all three Claude Code pins on one GitHub release",
       "matchPackageNames": ["anthropics/claude-code"],
       "groupName": "Claude Code",
-      "minimumGroupSize": 4,
+      "minimumGroupSize": 3,
       "minimumReleaseAge": "7 days"
     },
     {
@@ -330,10 +283,10 @@
       "minimumGroupSize": 2
     },
     {
-      "description": "Keep the container-image and documented git-pkgs pins synchronized",
+      "description": "Keep both container-image git-pkgs pins synchronized",
       "matchPackageNames": ["github.com/git-pkgs/git-pkgs"],
       "groupName": "git-pkgs",
-      "minimumGroupSize": 3
+      "minimumGroupSize": 2
     },
     {
       "description": "Keep both container-image brief pins synchronized",

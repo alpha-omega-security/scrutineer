@@ -11,15 +11,22 @@ ARG COMMIT=""
 RUN CGO_ENABLED=0 go build -ldflags "-X main.commit=${COMMIT}" -o /scrutineer ./cmd/scrutineer
 
 FROM node:26-alpine@sha256:2d984a15c9b54fd0aeb608b8e0d0d83529eb34d2966db27a1fb4f1edc3d298a3 AS claude
+
 RUN npm install -g @anthropic-ai/claude-code@2.1.261
 
 FROM python:3.14-alpine@sha256:c6ead215bfd31f1e433d968853b7a769989117115b728874824e6c0a27cb96fc AS python-tools
-RUN pip install --no-cache-dir semgrep==1.176.1 "setuptools<81" bandit==1.9.4
+
+ARG SEMGREP_VERSION=1.176.1
+
+ARG BANDIT_VERSION=1.9.4
+
+RUN pip install --no-cache-dir "semgrep==${SEMGREP_VERSION}" "setuptools<81" "bandit==${BANDIT_VERSION}"
 
 FROM golang:1.27.1-alpine@sha256:cf6fca6641884b8433441b2b0652976f975e1d0fdd26d177eaaf8596087f3125 AS go-tools
 RUN apk add --no-cache git
-RUN GOBIN=/out go install github.com/git-pkgs/git-pkgs@v0.20.0 && \
-    GOBIN=/out go install github.com/git-pkgs/brief/cmd/brief@v0.13.0
+RUN GOBIN=/out go install github.com/git-pkgs/git-pkgs@v0.20.0
+
+RUN GOBIN=/out go install github.com/git-pkgs/brief/cmd/brief@v0.13.0
 
 # vid links tree-sitter grammars (C), so unlike the main binary it needs
 # cgo; build-base provides gcc and musl headers, matching the musl-based
