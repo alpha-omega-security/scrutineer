@@ -38,6 +38,71 @@ func TestBuildRunArgs_ClaudeConfigMount(t *testing.T) {
 	}
 }
 
+func TestBuildRunArgs_CodexAccountAuthMount(t *testing.T) {
+	h, err := HarnessByName("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := ContainerRunner{
+		Harness:          h,
+		CodexAccountAuth: NewCodexAccountAuth("/secure/codex/auth.json"),
+	}
+	got := d.buildRunArgs("img:latest", hardenedNet{}, "/data/harness-state/scan-7")
+	if !hasAdjacent(got, "-v", "/secure/codex/auth.json:/harness-state/auth.json") {
+		t.Errorf("expected the shared Codex auth file mount in %v", got)
+	}
+	if !hasAdjacent(got, "-v", "/data/harness-state/scan-7:/harness-state") {
+		t.Errorf("expected the private per-scan CODEX_HOME mount in %v", got)
+	}
+	if !hasAdjacent(got, "-e", "CODEX_HOME=/harness-state") {
+		t.Errorf("expected CODEX_HOME env in %v", got)
+	}
+	withoutState := d.buildRunArgs("img:latest", hardenedNet{}, "")
+	for _, arg := range withoutState {
+		if strings.Contains(arg, "/secure/codex/auth.json") {
+			t.Errorf("account credential mounted without a private Codex state directory: %v", withoutState)
+		}
+	}
+
+	claude := ContainerRunner{CodexAccountAuth: NewCodexAccountAuth("/secure/codex/auth.json")}
+	for _, arg := range claude.buildRunArgs("img:latest", hardenedNet{}, "/data/harness-state/scan-7") {
+		if strings.Contains(arg, "/secure/codex/auth.json") {
+			t.Errorf("Claude received the Codex account credential mount: %v", arg)
+		}
+	}
+}
+
+func TestRunSkill_CodexAccountAuthRequiresStateDir(t *testing.T) {
+	h, err := HarnessByName("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := ContainerRunner{
+		Harness:          h,
+		CodexAccountAuth: NewCodexAccountAuth("/secure/codex/auth.json"),
+	}
+	_, err = d.RunSkill(context.Background(), SkillJob{}, func(Event) {})
+	if err == nil || !strings.Contains(err.Error(), "requires a per-job state directory") {
+		t.Fatalf("RunSkill without a state directory error = %v", err)
+	}
+}
+
+func TestBuildRunArgs_CodexAccountAuthSELinuxRelabel(t *testing.T) {
+	h, err := HarnessByName("codex")
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := ContainerRunner{
+		Harness:          h,
+		CodexAccountAuth: NewCodexAccountAuth("/secure/codex/auth.json"),
+		SELinuxRelabel:   true,
+	}
+	got := d.buildRunArgs("img:latest", hardenedNet{}, "/data/harness-state/scan-7")
+	if !hasAdjacent(got, "-v", "/secure/codex/auth.json:/harness-state/auth.json:z") {
+		t.Errorf("expected relabeled Codex auth mount in %v", got)
+	}
+}
+
 func TestBuildRunArgs_KeepIDGating(t *testing.T) {
 	// --userns=keep-id is the rootless-podman bind-mount ownership fix. It must
 	// appear ONLY for rootless podman; docker and rootful podman stay byte-for-

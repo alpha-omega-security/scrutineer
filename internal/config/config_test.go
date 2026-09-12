@@ -149,6 +149,19 @@ vince:
 	}
 }
 
+func TestLoad_codexAuthFile(t *testing.T) {
+	c, err := Load(write(t, `
+codex:
+  auth_file: /var/lib/scrutineer/codex-rubygems/auth.json
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Codex.AuthFile != "/var/lib/scrutineer/codex-rubygems/auth.json" {
+		t.Errorf("codex.auth_file: %q", c.Codex.AuthFile)
+	}
+}
+
 func TestLoad_parsesOpencodeProviders(t *testing.T) {
 	c, err := Load(write(t, `
 opencode:

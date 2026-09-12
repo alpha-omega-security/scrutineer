@@ -91,6 +91,10 @@ type ContainerRunner struct {
 	OpencodeProviders map[string]OpencodeProviderConfig
 	// OpencodeReadiness caches successful provider/model catalog probes.
 	OpencodeReadiness *OpencodeReadinessCache
+	// CodexAccountAuth is a file-backed ChatGPT login shared by Codex scans.
+	// Its semaphore serializes Codex execution because the CLI can rotate
+	// auth.json.
+	CodexAccountAuth *CodexAccountAuth
 	// detectProfile lets tests stub profile auto-detection without a container
 	// runtime. nil means DetectProfile.
 	detectProfile func(ctx context.Context, rt ContainerRuntime, runnerImage, srcDir string, relabel bool) Profile
@@ -267,6 +271,10 @@ func (s containerRunErrorState) failure(provider opencodeProvider, runtimeName s
 // Egress is routed through scrutineer's allowlisting proxy on the host;
 // see EgressProxy. tmpfs/cap-drop rules mirror the local runner's intent.
 func (d ContainerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)) (SkillResult, error) {
+	if HarnessName(d.harness()) == "codex" && d.CodexAccountAuth != nil && sj.StateDir == "" {
+		return SkillResult{}, errors.New("codex account auth requires a per-job state directory")
+	}
+
 	d, provider, result, cleanupProviderProxy, err := d.prepareOpencodeExecution(ctx, sj.Model)
 	if err != nil {
 		return result, err
@@ -322,6 +330,15 @@ func (d ContainerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Ev
 		return result, err
 	}
 	runBase := d.buildRunArgsForProvider(absWork, image, hnet, absConfig, provider, "/work")
+	h := d.harness()
+	unlockCodexAuth := func() {}
+	if HarnessName(h) == "codex" {
+		unlockCodexAuth, err = d.CodexAccountAuth.acquire(ctx)
+		if err != nil {
+			return result, fmt.Errorf("acquire codex account credential: %w", err)
+		}
+	}
+	defer unlockCodexAuth()
 
 	logLine := "$ " + runtimeBin(d.Runtime) + " run --rm " + image + " <skill:" + sj.Name + ">"
 	if d.ModelBaseURL != "" {
@@ -329,7 +346,6 @@ func (d ContainerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Ev
 	}
 	emit(Event{Kind: KindText, Text: logLine})
 
-	h := d.harness()
 	runErrors := containerRunErrorState{}
 	wrappedEmit := func(e Event) {
 		runErrors.observe(e, h, provider.ID)
@@ -473,6 +489,7 @@ func (d ContainerRunner) buildRunArgsForProvider(absWork, image string, hnet har
 		for _, e := range d.harness().StateEnv("/harness-state") {
 			args = append(args, "-e", e)
 		}
+		args = d.appendCodexAccountAuthArgs(args)
 	}
 	if HarnessName(d.harness()) == "opencode" {
 		args = d.appendOpencodeStateArgs(args, harnessStateDir, provider)
@@ -532,6 +549,17 @@ func (d ContainerRunner) buildRunArgsForProvider(absWork, image string, hnet har
 		args = append(args, "--network", "none")
 	}
 	return append(args, "--", image)
+}
+
+func (d ContainerRunner) appendCodexAccountAuthArgs(args []string) []string {
+	if HarnessName(d.harness()) != "codex" || d.CodexAccountAuth == nil {
+		return args
+	}
+	// Mount only the rotating account credential into this scan's private
+	// CODEX_HOME. The pinned Codex release rewrites auth.json in place, so a
+	// read-write mount preserves refreshes without exposing one scan's sessions
+	// or history to another scan.
+	return append(args, "-v", bindMount(d.CodexAccountAuth.Path, "/harness-state/auth.json", d.SELinuxRelabel))
 }
 
 func opencodeInheritedCredential(env string) bool {

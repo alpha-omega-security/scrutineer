@@ -297,8 +297,8 @@ func (s *Server) settingsUpdateConcurrency(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "could not save setting", http.StatusInternalServerError)
 		return
 	}
-	if n == s.Queue.Concurrency() {
-		setFlash(w, Flash{Category: successKey, Title: "Concurrency saved"})
+	if eff := s.Queue.EffectiveConcurrency(n); eff == s.Queue.Concurrency() {
+		setFlash(w, Flash{Category: successKey, Title: "Concurrency saved", Description: cappedConcurrencyNote(n, eff)})
 		s.redirect(w, r, "/settings")
 		return
 	}
@@ -310,7 +310,7 @@ func (s *Server) settingsUpdateConcurrency(w http.ResponseWriter, r *http.Reques
 	s.DB.Model(&db.Scan{}).Where("status = ?", db.ScanRunning).Count(&running)
 	if running == 0 {
 		s.Queue.Reconfigure(n)
-		setFlash(w, Flash{Category: successKey, Title: "Concurrency applied", Description: fmt.Sprintf("Runner now runs %d scans in parallel.", n)})
+		setFlash(w, Flash{Category: successKey, Title: "Concurrency applied", Description: fmt.Sprintf("Runner now runs %d scans in parallel.", s.Queue.Concurrency())})
 		s.redirect(w, r, "/settings")
 		return
 	}
@@ -323,6 +323,16 @@ func (s *Server) settingsUpdateConcurrency(w http.ResponseWriter, r *http.Reques
 	}
 }
 
+// cappedConcurrencyNote explains a saved value the queue will not apply, so a
+// setting that stays inert (Codex account auth pins the runner at one slot)
+// does not read as a silent failure. Empty when nothing was capped.
+func cappedConcurrencyNote(requested, effective int) string {
+	if requested <= effective {
+		return ""
+	}
+	return fmt.Sprintf("Runner stays at %d: a shared backend credential caps parallel scans.", effective)
+}
+
 // settingsRestartRunner rebuilds the runner at the saved concurrency, applying
 // it live. In-flight scans are cancelled by the swap; queued scans survive.
 func (s *Server) settingsRestartRunner(w http.ResponseWriter, r *http.Request) {
@@ -330,8 +340,13 @@ func (s *Server) settingsRestartRunner(w http.ResponseWriter, r *http.Request) {
 	if n <= 0 {
 		n = s.Queue.Concurrency()
 	}
+	if eff := s.Queue.EffectiveConcurrency(n); eff < n && eff == s.Queue.Concurrency() {
+		setFlash(w, Flash{Category: successKey, Title: "Runner unchanged", Description: cappedConcurrencyNote(n, eff)})
+		s.redirect(w, r, "/settings")
+		return
+	}
 	s.Queue.Reconfigure(n)
-	setFlash(w, Flash{Category: successKey, Title: "Runner restarted", Description: fmt.Sprintf("Now running %d scans in parallel; in-flight scans were cancelled.", n)})
+	setFlash(w, Flash{Category: successKey, Title: "Runner restarted", Description: fmt.Sprintf("Now running %d scans in parallel; in-flight scans were cancelled.", s.Queue.Concurrency())})
 	s.redirect(w, r, "/settings")
 }
 

@@ -44,6 +44,23 @@ func TestQueue_ReconfigureBeforeStart(t *testing.T) {
 	}
 }
 
+func TestQueue_MaxConcurrencyCapsEveryReconfigure(t *testing.T) {
+	q := newTestQueue(t, 8)
+	q.SetMaxConcurrency(1)
+	if q.Concurrency() != 1 {
+		t.Fatalf("concurrency after SetMaxConcurrency(1) = %d, want 1", q.Concurrency())
+	}
+
+	q.Reconfigure(12)
+	if q.Concurrency() != 1 {
+		t.Errorf("concurrency after Reconfigure(12) = %d, want capped value 1", q.Concurrency())
+	}
+	q.Reconfigure(0)
+	if q.Concurrency() != 1 {
+		t.Errorf("concurrency after Reconfigure(0) = %d, want capped value 1", q.Concurrency())
+	}
+}
+
 // TestQueue_ReconfigureDuringShutdown covers the guard that keeps Reconfigure
 // from spawning a runner (and Add-ing to the WaitGroup) once the parent ctx is
 // cancelled, which would panic against Start's shutdown Wait. After shutdown it
