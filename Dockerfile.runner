@@ -10,8 +10,8 @@
 ARG CLAUDE_AMD64_LOCK=v2.1.261@sha256:9c798b18618cb6c0ec6e6e7ab56eb338fd6f0f679f372a4d6ed76e1ab95c14a0
 ARG CLAUDE_ARM64_LOCK=v2.1.261@sha256:40772aed92ae8dafc719c23b58c595e50b5c2dfd006840fa1ba5cd0a21eea107
 
-ARG CODEX_AMD64_LOCK=rust-v0.154.0@sha256:d7e18b2597ae8f242f5f31ee9e90deef48dbc9edd634d9868fb6435d08c07f02
-ARG CODEX_ARM64_LOCK=rust-v0.154.0@sha256:583b48df32804213bdcd338c2e5adb06b34340821fa757a726cc0a524fa33c27
+ARG CODEX_AMD64_LOCK=rust-v0.154.0@sha256:fc6e3e3b85f2cf7d664520ee5c66a7fe4aa12bae7d46834f47e2f165fd0d6f78
+ARG CODEX_ARM64_LOCK=rust-v0.154.0@sha256:97d93e11df72d3c26772db019e6ea8bb72c246500d46b98c760839f3240355e6
 
 ARG OPENCODE_AMD64_LOCK=v1.18.29@sha256:ea800b7ff56226b70952126c9fc1e2517ca4c4b5682fd9d3f9e87449697a1194
 ARG OPENCODE_ARM64_LOCK=v1.18.29@sha256:70baf769395ca4e7a68924026530c390eace194f3b7e4919d4efcb2aa2eed3c0
@@ -105,8 +105,8 @@ RUN set -eux; \
     echo "${sha}  /tmp/claude.tgz" | sha256sum -c -; \
     tar -xzf /tmp/claude.tgz -C /usr/local/bin claude && rm /tmp/claude.tgz
 
-# OpenAI codex CLI (-backend codex). The musl tarball contains a single
-# static binary named codex-${triple}; install it as /usr/local/bin/codex.
+# OpenAI codex CLI (-backend codex). Use the release's package archive so the
+# CLI and its version-matched code-mode host are installed atomically.
 RUN set -eux; \
     case "${TARGETARCH}" in \
       amd64) triple=x86_64-unknown-linux-musl;  lock="${CODEX_AMD64_LOCK}" ;; \
@@ -116,12 +116,14 @@ RUN set -eux; \
     tag="${lock%@*}"; \
     sha="${lock#*@sha256:}"; \
     curl -fsSL -o /tmp/codex.tgz \
-      "https://github.com/openai/codex/releases/download/${tag}/codex-${triple}.tar.gz"; \
+      "https://github.com/openai/codex/releases/download/${tag}/codex-package-${triple}.tar.gz"; \
     echo "${sha}  /tmp/codex.tgz" | sha256sum -c -; \
-    tar -xzf /tmp/codex.tgz -C /tmp; \
-    install -m 0755 "/tmp/codex-${triple}" /usr/local/bin/codex; \
-    rm /tmp/codex.tgz "/tmp/codex-${triple}"; \
-    codex --version
+    tar -xzf /tmp/codex.tgz -C /tmp bin/codex bin/codex-code-mode-host; \
+    install -m 0755 /tmp/bin/codex /usr/local/bin/codex; \
+    install -m 0755 /tmp/bin/codex-code-mode-host /usr/local/bin/codex-code-mode-host; \
+    rm -rf /tmp/codex.tgz /tmp/bin; \
+    codex --version; \
+    test -x /usr/local/bin/codex-code-mode-host
 
 # opencode CLI (-backend opencode). The glibc tarball contains a single
 # `opencode` binary; it links libstdc++ dynamically (bun runtime), which

@@ -9,9 +9,9 @@ where it differs from claude, and what's still rough.
 
 ## Setup
 
-The runner image already bundles the `codex` binary (a static musl build,
-sha256-pinned in `Dockerfile.runner`), so there's nothing to install. Set the
-credential and start scrutineer:
+The runner image already bundles the static musl `codex` binary and its
+version-matched `codex-code-mode-host` (sha256-pinned in `Dockerfile.runner`),
+so there's nothing to install. Set the credential and start scrutineer:
 
     export CODEX_API_KEY=sk-...
     go run ./cmd/scrutineer -skills ./skills -backend codex
@@ -36,12 +36,20 @@ or in `scrutineer.yaml`:
         id:   gpt-5.5
       - name: GPT-5.2
         id:   gpt-5.2
+      - name: Daybreak Blue
+        id:   gpt-daybreak-blue-latest
 
-The `models:` block is optional. Without it, Scrutineer seeds the list above
-from defaults matched to the pinned codex catalog, with mid/high/max tier tags
-already set, so a fresh install works with no config. Setting `models:`
-replaces that list; `tier:` on an entry marks it as the default for that tier
-in `/settings`.
+The `models:` block is optional. Without it, Scrutineer seeds the standard
+non-Daybreak entries above from defaults matched to the pinned codex catalog,
+with mid/high/max tier tags already set, so a fresh install works with no
+config. Setting `models:` replaces that list; `tier:` on an entry marks it as
+the default for that tier in `/settings`.
+
+[Daybreak Blue](https://developers.openai.com/api/docs/models/gpt-daybreak-blue-latest)
+requires separate OpenAI approval and provisioning and is hidden from Codex's
+own picker, so Scrutineer does not include it in the built-in defaults. The
+example above shows how approved operators can add it explicitly; placing it
+last preserves Sol as the default if `default_model` is omitted.
 
 Model ids must be in the pinned codex version's built-in catalog
 (`codex-rs/models-manager/models.json` at the release tag stored in the

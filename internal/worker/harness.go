@@ -35,7 +35,7 @@ const CodexModelCatalogRelease = "rust-v0.154.0"
 func DefaultModelsFor(h Harness) []ModelDefault {
 	if HarnessName(h) == "codex" {
 		return []ModelDefault{
-			{Name: "GPT-5.6 Sol", ID: "gpt-5.6-sol", Tier: "high"},
+			{Name: "GPT-5.6 Sol", ID: modelGPT56SolID, Tier: "high"},
 			{Name: "GPT-5.6 Terra", ID: "gpt-5.6-terra"},
 			{Name: "GPT-5.6 Luna", ID: "gpt-5.6-luna", Tier: "mid"},
 			{Name: "GPT-6 Astra", ID: modelGPT6AstraID, Tier: "max"},
