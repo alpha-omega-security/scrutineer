@@ -1586,12 +1586,12 @@ func (s *Server) findingStatus(w http.ResponseWriter, r *http.Request) {
 	case db.FindingNew, db.FindingEnriched, db.FindingTriaged, db.FindingReady,
 		db.FindingReported, db.FindingAcknowledged, db.FindingFixed, db.FindingPublished,
 		db.FindingRejected, db.FindingDuplicate:
-		if err := db.WriteFindingField(s.DB, f.ID, statusKey, string(status), db.SourceAnalyst, ""); err != nil {
+		if err := db.WriteFindingField(s.DB.WithContext(r.Context()), f.ID, statusKey, string(status), db.SourceAnalyst, ""); err != nil {
 			if errors.Is(err, db.ErrFindingNonViable) {
 				http.Error(w, err.Error(), http.StatusPreconditionFailed)
 				return
 			}
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			http.Error(w, err.Error(), findingWriteErrorStatus(err, http.StatusInternalServerError))
 			return
 		}
 	default:
@@ -1621,12 +1621,13 @@ func (s *Server) findingExploitedInWild(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	evidence := strings.TrimSpace(r.FormValue("exploited_in_wild_evidence"))
-	if err := db.WriteFindingField(s.DB, f.ID, "exploited_in_wild", status, db.SourceAnalyst, ""); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	gdb := s.DB.WithContext(r.Context())
+	if err := db.WriteFindingField(gdb, f.ID, "exploited_in_wild", status, db.SourceAnalyst, ""); err != nil {
+		http.Error(w, err.Error(), findingWriteErrorStatus(err, http.StatusInternalServerError))
 		return
 	}
-	if err := db.WriteFindingField(s.DB, f.ID, "exploited_in_wild_evidence", evidence, db.SourceAnalyst, ""); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	if err := db.WriteFindingField(gdb, f.ID, "exploited_in_wild_evidence", evidence, db.SourceAnalyst, ""); err != nil {
+		http.Error(w, err.Error(), findingWriteErrorStatus(err, http.StatusInternalServerError))
 		return
 	}
 	s.redirect(w, r, fmt.Sprintf("/findings/%d", f.ID))

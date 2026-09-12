@@ -73,13 +73,40 @@ func TestFindingEdits_lockWaitStops(t *testing.T) {
 	for _, api := range []bool{false, true} {
 		for _, mode := range []string{"cancel", "caller deadline", "retry deadline"} {
 			t.Run(fmt.Sprintf("api=%t/%s", api, mode), func(t *testing.T) {
-				testFindingEditLockWaitStops(t, api, mode)
+				testFindingEditLockWaitStops(t, mode, func(ctx context.Context, findingID uint, token string) *http.Request {
+					return findingEditRequest(ctx, api, findingID, token)
+				})
 			})
 		}
 	}
 }
 
-func testFindingEditLockWaitStops(t *testing.T, api bool, mode string) {
+func TestFindingBrowserWrites_lockWaitStops(t *testing.T) {
+	for _, tc := range []struct {
+		name, route string
+		form        url.Values
+	}{
+		{"disclosure draft", "disclosure-draft", url.Values{"disclosure_draft": {"edited draft"}}},
+		{"status", "status", url.Values{"status": {"triaged"}}},
+		{"exploited status", "exploited-in-wild", url.Values{"exploited_in_wild": {"yes"}}},
+		{"exploited evidence", "exploited-in-wild", url.Values{"exploited_in_wild_evidence": {"observed activity"}}},
+	} {
+		for _, mode := range []string{"cancel", "caller deadline", "retry deadline"} {
+			t.Run(tc.name+"/"+mode, func(t *testing.T) {
+				testFindingEditLockWaitStops(t, mode, func(ctx context.Context, findingID uint, _ string) *http.Request {
+					r := httptest.NewRequestWithContext(ctx, http.MethodPost,
+						fmt.Sprintf("/findings/%d/%s", findingID, tc.route), strings.NewReader(tc.form.Encode()))
+					r.Host = testHost
+					r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+					r.Header.Set("Sec-Fetch-Site", "same-origin")
+					return r
+				})
+			})
+		}
+	}
+}
+
+func testFindingEditLockWaitStops(t *testing.T, mode string, request func(context.Context, uint, string) *http.Request) {
 	t.Helper()
 	s, cleanup := newTestServer(t)
 	t.Cleanup(cleanup)
@@ -94,7 +121,7 @@ func testFindingEditLockWaitStops(t *testing.T, api bool, mode string) {
 		ctx, stop = context.WithTimeout(ctx, 200*time.Millisecond)
 		defer stop()
 	}
-	responses, busy := startFindingEdit(t, s, ctx, api, f.ID, token)
+	responses, busy := startFindingEditRequest(t, s, request(ctx, f.ID, token))
 	waitForFindingEditBusy(t, busy, responses)
 	wantErr := context.DeadlineExceeded
 	if mode == "cancel" {
@@ -123,8 +150,17 @@ func testFindingEditLockWaitStops(t *testing.T, api bool, mode string) {
 	if err := s.DB.First(&stored, f.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if stored.Severity != f.Severity || stored.CVEID != f.CVEID {
-		t.Errorf("finding changed after failed write: severity %q, cve_id %q", stored.Severity, stored.CVEID)
+	for field, values := range map[string][2]string{
+		"severity":                   {stored.Severity, f.Severity},
+		"cve_id":                     {stored.CVEID, f.CVEID},
+		"disclosure_draft":           {stored.DisclosureDraft, f.DisclosureDraft},
+		"status":                     {string(stored.Status), string(f.Status)},
+		"exploited_in_wild":          {stored.ExploitedInWild, f.ExploitedInWild},
+		"exploited_in_wild_evidence": {stored.ExploitedInWildEvidence, f.ExploitedInWildEvidence},
+	} {
+		if values[0] != values[1] {
+			t.Errorf("%s changed after failed write: got %q, want %q", field, values[0], values[1])
+		}
 	}
 	var history []db.FindingHistory
 	if err := s.DB.Where("finding_id = ?", f.ID).Find(&history).Error; err != nil {
@@ -150,6 +186,11 @@ func holdFindingEditWriteLock(t *testing.T, gdb *gorm.DB, findingID uint) *gorm.
 
 func startFindingEdit(t *testing.T, s *Server, ctx context.Context, api bool, findingID uint, token string) (<-chan *httptest.ResponseRecorder, <-chan struct{}) {
 	t.Helper()
+	return startFindingEditRequest(t, s, findingEditRequest(ctx, api, findingID, token))
+}
+
+func startFindingEditRequest(t *testing.T, s *Server, r *http.Request) (<-chan *httptest.ResponseRecorder, <-chan struct{}) {
+	t.Helper()
 	busy := make(chan struct{}, 1)
 	const callbackName = "test:observe_edit_busy"
 	const sqliteBusyCode = 5
@@ -170,8 +211,8 @@ func startFindingEdit(t *testing.T, s *Server, ctx context.Context, api bool, fi
 			t.Errorf("remove busy observer: %v", err)
 		}
 	})
-	ctx, cancel := context.WithCancel(ctx)
-	r := findingEditRequest(ctx, api, findingID, token)
+	ctx, cancel := context.WithCancel(r.Context())
+	r = r.WithContext(ctx)
 	handler := s.Handler()
 	responses := make(chan *httptest.ResponseRecorder, 1)
 	done := make(chan struct{})

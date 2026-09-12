@@ -67,7 +67,7 @@ func (s *Server) apiPatchFinding(w http.ResponseWriter, r *http.Request) {
 			writeAPIError(w, http.StatusPreconditionFailed, err.Error())
 			return
 		}
-		writeAPIError(w, findingWriteErrorStatus(err), err.Error())
+		writeAPIError(w, findingWriteErrorStatus(err, http.StatusUnprocessableEntity), err.Error())
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
