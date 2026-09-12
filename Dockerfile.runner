@@ -9,18 +9,25 @@
 # failed upstream.
 ARG CLAUDE_AMD64_LOCK=v2.1.261@sha256:9c798b18618cb6c0ec6e6e7ab56eb338fd6f0f679f372a4d6ed76e1ab95c14a0
 ARG CLAUDE_ARM64_LOCK=v2.1.261@sha256:40772aed92ae8dafc719c23b58c595e50b5c2dfd006840fa1ba5cd0a21eea107
+
 ARG CODEX_AMD64_LOCK=rust-v0.154.0@sha256:d7e18b2597ae8f242f5f31ee9e90deef48dbc9edd634d9868fb6435d08c07f02
 ARG CODEX_ARM64_LOCK=rust-v0.154.0@sha256:583b48df32804213bdcd338c2e5adb06b34340821fa757a726cc0a524fa33c27
+
 ARG OPENCODE_AMD64_LOCK=v1.18.29@sha256:ea800b7ff56226b70952126c9fc1e2517ca4c4b5682fd9d3f9e87449697a1194
 ARG OPENCODE_ARM64_LOCK=v1.18.29@sha256:70baf769395ca4e7a68924026530c390eace194f3b7e4919d4efcb2aa2eed3c0
+
 ARG COPILOT_AMD64_LOCK=v1.0.83@sha256:ffbe1c429664b8a05efed67ecdb467123e40fcaa3c6c14ef9a98ba74da4687b7
 ARG COPILOT_ARM64_LOCK=v1.0.83@sha256:213b3a267042dbac3cd8ae22c82f5ea04ff3cabc008108c0f895055d46be4473
+
 ARG SEMGREP_VERSION=1.176.1
+
 ARG BANDIT_VERSION=1.9.4
 
 FROM golang:1.27.1-trixie@sha256:9baa6b4187bbb98d240372a8a235ac0bb6b5ddd52bba1431dc2f7c0705862728 AS go-tools
-RUN GOBIN=/out go install github.com/git-pkgs/git-pkgs@v0.20.0 && \
-    GOBIN=/out go install github.com/git-pkgs/brief/cmd/brief@v0.13.0
+
+RUN GOBIN=/out go install github.com/git-pkgs/git-pkgs@v0.20.0
+
+RUN GOBIN=/out go install github.com/git-pkgs/brief/cmd/brief@v0.13.0
 
 FROM rust:1.98-trixie@sha256:620dbcd124499c59e2406d3741574b5c5838cf9eb9656f0c3a03948f79b02959 AS zizmor-build
 ENV CARGO_HTTP_MULTIPLEXING=false

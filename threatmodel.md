@@ -96,7 +96,7 @@ Mitigation remaining: tag finding rows with their source job; render claude-sour
 
 Go's `html/template` auto-escapes all finding fields. `internal/web/jsontree.go` returns `template.HTML` but escapes every leaf through `html.EscapeString`. `internal/web/location.go` builds hrefs from `HTMLURL`, which is scheme-validated at the write site by `safeURL` (see T7).
 
-The two `html/template` XSS vulnerabilities (`GO-2026-4865`, `GO-2026-4603`) are fixed by `toolchain go1.27.1` in go.mod.
+The two `html/template` XSS vulnerabilities (`GO-2026-4865`, `GO-2026-4603`) are fixed by the Go toolchain selected in [go.mod](go.mod).
 
 ### T7: Untrusted upstream metadata (mitigated)
 
@@ -116,15 +116,15 @@ No rate limiting on `POST /repositories`, no cap on clone size, no timeout on th
 
 ### T10: Stale Go toolchain (resolved)
 
-`go.mod` specifies `toolchain go1.27.1`. The Dockerfile builds with `golang:1.27.1-alpine`. All nine stdlib vulnerabilities are fixed.
+The Go toolchain is selected in [go.mod](go.mod); container builds use the pinned Go builder images in [Dockerfile](Dockerfile) and [Dockerfile.runner](Dockerfile.runner). The previously identified stdlib vulnerabilities are fixed by these toolchain updates.
 
 ### T11: Image supply chain (partially mitigated)
 
-The agent CLIs are release-and-SHA-pinned per architecture in [Dockerfile.runner](Dockerfile.runner): `claude-code@2.1.261`, Codex, OpenCode, and Copilot. Other tool versions are pinned: `semgrep==1.176.1`, `bandit==1.9.4`, `git-pkgs@v0.20.0`, `zizmor@1.30.0`. The final stage is `debian:trixie-slim`; the `golang:1.27.1-trixie` and `rust:1.98-trixie` builder stages are pinned by sha256 digest. The container runs as non-root user `runner`. The runner image is built in CI, smoke-tested, and published to GHCR; users pull a known-good artifact rather than rebuilding against live registries.
+Claude Code, Codex, OpenCode, and Copilot are pinned by release tag and per-architecture SHA256 digest in [Dockerfile.runner](Dockerfile.runner). Other tool versions and base-image digests are pinned there and in [Dockerfile](Dockerfile); workflow tools are pinned in [CI](.github/workflows/tests.yml). The container runs as non-root user `runner`. The runner image is built in CI, smoke-tested, and published to GHCR; users pull a known-good artifact rather than rebuilding against live registries.
 
 Supply-chain surface in the final stage:
 - `apt` pulls from Debian's official mirrors plus the GitHub CLI repo at `cli.github.com/packages` (signed-by keyring under `/etc/apt/keyrings/`). `gh` is used at scan time by the `fork` and `report-upstream` skills.
-- `claude` is the glibc tarball from `github.com/anthropics/claude-code` releases, SHA256-pinned per architecture. Renovate maps each current digest to its architecture-specific filename using upstream's `SHASUMS256.txt`, then copies the corresponding digest from the new release's manifest. This pipeline does not verify the manifest's accompanying signature, so the pin detects tarball bytes that differ from the digest selected at update time but does not protect against a compromised upstream release at selection time. CI asserts that all four version pins agree, verifies each downloaded tarball against its selected digest, and smoke-tests that the installed binary runs.
+- `claude` is the glibc tarball from `github.com/anthropics/claude-code` releases, SHA256-pinned per architecture. Renovate maps each current digest to its architecture-specific filename using upstream's `SHASUMS256.txt`, then copies the corresponding digest from the new release's manifest. This pipeline does not verify the manifest's accompanying signature, so the pin detects tarball bytes that differ from the digest selected at update time but does not protect against a compromised upstream release at selection time. CI asserts that the image version pins agree, verifies each downloaded tarball against its selected digest, and smoke-tests that the installed binary runs.
 - `codex`, `opencode`, and `copilot` are architecture-specific GitHub release tarballs pinned to the SHA256 digest published for each release attachment. Renovate reads Codex's per-asset digests from GitHub release metadata instead of downloading and hashing its large release set, and updates each CLI's two architecture locks as one group. The image build verifies the selected digest and smoke-tests the installed binary.
 - `semgrep` and `bandit` are installed via `pip` into venvs at `/opt/semgrep` and `/opt/bandit` (PEP 668 dodge without `--break-system-packages`), one each so their pins move independently. `pip` is therefore present, scoped to those venvs.
 - `curl` remains on PATH; used at build time to fetch the claude tarball and apt keyrings, and at scan time inside the egress-proxied container. `npm` is not installed.
@@ -214,7 +214,7 @@ GORM usage is consistently parameterised; no `Raw`, no string-built `Where`, and
 - [x] `io.LimitReader` (10 MB cap) on all ecosyste.ms response bodies (T7).
 - [x] `safeURL` validation on HTMLURL and IconURL before storing (T7).
 - [x] `0700` on the data directory at startup (T8).
-- [x] `toolchain go1.27.1` in go.mod so host builds match the image (T10).
+- [x] Select the Go toolchain in [go.mod](go.mod) so host builds match the image (T10).
 - [x] Pin tool versions in Dockerfile: claude-code, semgrep, bandit, git-pkgs, brief, zizmor (T11).
 - [x] Non-root `USER runner` in Dockerfile (T11).
 - [x] Trim final Docker stage: `npm` absent, `pip` scoped to the `/opt/semgrep` and `/opt/bandit` venvs, `curl` retained for build- and scan-time fetches (T11).
