@@ -328,6 +328,9 @@ func TestAPIv1DeleteRepository(t *testing.T) {
 	s.DB.Create(&repo)
 	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: deepDiveSkillName}
 	s.DB.Create(&scan)
+	if err := s.DB.Create(&db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanPaused, SkillName: "verify"}).Error; err != nil {
+		t.Fatal(err)
+	}
 	finding := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "doomed", Severity: sevHigh}
 	s.DB.Create(&finding)
 	s.DB.Create(&db.FindingReview{FindingID: finding.ID, Verdict: "true_positive", Reviewer: "analyst"})
@@ -377,7 +380,7 @@ func TestAPIv1DeleteRepositoryRejectsInFlightScans(t *testing.T) {
 			if w.Code != http.StatusConflict {
 				t.Fatalf("status %d, want 409. body=%s", w.Code, w.Body)
 			}
-			if !strings.Contains(w.Body.String(), "queued, running, or paused scans") {
+			if !strings.Contains(w.Body.String(), "queued or running scans") {
 				t.Fatalf("body %q missing in-flight scan explanation", w.Body.String())
 			}
 			if n := countRows(t, s, &db.Repository{}, "id = ?", repo.ID); n != 1 {

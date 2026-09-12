@@ -641,7 +641,15 @@ func (w *Worker) wrap(h handler) func(context.Context, []byte) error {
 			return fmt.Errorf("decode payload: %w", err)
 		}
 		var scan db.Scan
-		if err := w.DB.Preload("Repository").First(&scan, p.ScanID).Error; err != nil {
+		err := w.DB.Preload("Repository").First(&scan, p.ScanID).Error
+		// Paused scans may be deleted with their repository while their
+		// original queue messages still await delivery. Acknowledge those
+		// stale messages rather than retrying work that no longer exists.
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			w.Log.Info("dropping stale job: scan deleted", "scan", p.ScanID)
+			return nil
+		}
+		if err != nil {
 			return fmt.Errorf("load scan %d: %w", p.ScanID, err)
 		}
 		if scan.Status != db.ScanQueued {
@@ -719,8 +727,18 @@ func (w *Worker) cancelOptedOut(scan *db.Scan) {
 	scan.StatusPriority = db.StatusPriorityFor(db.ScanCancelled)
 	scan.Error = OptOutCancelReason
 	scan.FinishedAt = &now
-	if err := w.DB.Save(scan).Error; err != nil {
-		w.Log.Error("save opted-out scan", "scan", scan.ID, "err", err)
+	// A pause and repository deletion may have won since dispatch loaded
+	// this row. Only transition an existing queued scan; Save would upsert it.
+	res := w.DB.Model(&db.Scan{}).Where("id = ? AND status = ?", scan.ID, db.ScanQueued).
+		Updates(map[string]any{
+			"status": scan.Status, "status_priority": scan.StatusPriority,
+			errorColumn: scan.Error, "finished_at": scan.FinishedAt,
+		})
+	if res.Error != nil {
+		w.Log.Error("save opted-out scan", "scan", scan.ID, "err", res.Error)
+		return
+	}
+	if res.RowsAffected == 0 {
 		return
 	}
 	w.publish(scan.ID, scan.RepositoryID, "scan-status", string(scan.Status))
