@@ -1413,6 +1413,18 @@ components:
           type: string
           enum: [full, diff]
           description: Requested or resolved scan mode.
+        triage_scan_id:
+          type: integer
+          format: int64
+          nullable: true
+          description: Triage invocation that requested this pipeline scan.
+        exploration_mode:
+          type: string
+          enum: ['', random-dig]
+          description: Empty or omitted for planned scans. Random-dig scans have no threat-model context and may only validate their own report through the callback API.
+        exploration_path:
+          type: string
+          description: Repository-relative directory selected for a random dig, or dot for root-level source. Empty until the worker selects a target.
         diff_base_scan_id:
           type: integer
           format: int64
