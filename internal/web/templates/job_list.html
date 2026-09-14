@@ -19,9 +19,9 @@
       </form>
     {{end}}
     {{if and (eq .Status "failed") .Page.Total}}
-      <form method="post" action="/scans/retry-failed?skill={{.Skill}}&completeness={{.Completeness}}"
-            hx-post="/scans/retry-failed?skill={{.Skill}}&completeness={{.Completeness}}" hx-swap="none"
-            hx-confirm="Re-enqueue every failed scan{{if .Skill}} for {{.Skill}}{{end}}{{if .Completeness}} with {{.Completeness}} coverage{{end}}?">
+      <form method="post" action="/scans/retry-failed?skill={{.Skill}}&completeness={{.Completeness}}{{if $.Group}}&group={{$.Group}}{{end}}"
+            hx-post="/scans/retry-failed?skill={{.Skill}}&completeness={{.Completeness}}{{if $.Group}}&group={{$.Group}}{{end}}" hx-swap="none"
+            hx-confirm="Re-enqueue every failed scan{{if .Skill}} for {{.Skill}}{{end}}{{if .Completeness}} with {{.Completeness}} coverage{{end}}{{if .Group}} in batch {{.Group}}{{end}}?">
         <button type="submit" class="btn-outline"><i data-lucide="refresh-cw"></i> Retry all failed</button>
       </form>
     {{end}}
@@ -33,9 +33,9 @@
       </button>
       <div data-popover aria-hidden="true" data-align="end">
         <div role="menu">
-          <a role="menuitem" href="/scans?status={{.Status}}&sort={{.Sort}}&completeness={{.Completeness}}">All skills</a>
+          <a role="menuitem" href="/scans?status={{.Status}}&sort={{.Sort}}&completeness={{.Completeness}}{{if $.Group}}&group={{$.Group}}{{end}}">All skills</a>
           {{range .Skills}}
-            <a role="menuitem" href="/scans?skill={{.}}&status={{$.Status}}&sort={{$.Sort}}&completeness={{$.Completeness}}"
+            <a role="menuitem" href="/scans?skill={{.}}&status={{$.Status}}&sort={{$.Sort}}&completeness={{$.Completeness}}{{if $.Group}}&group={{$.Group}}{{end}}"
                {{if eq . $.Skill}}aria-current="true"{{end}}>{{.}}</a>
           {{end}}
         </div>
@@ -49,9 +49,9 @@
       </button>
       <div data-popover aria-hidden="true" data-align="end">
         <div role="menu">
-          <a role="menuitem" href="/scans?skill={{.Skill}}&sort={{.Sort}}&completeness={{.Completeness}}">All statuses</a>
+          <a role="menuitem" href="/scans?skill={{.Skill}}&sort={{.Sort}}&completeness={{.Completeness}}{{if $.Group}}&group={{$.Group}}{{end}}">All statuses</a>
           {{range (list "queued" "paused" "running" "done" "failed" "skipped" "cancelled")}}
-            <a role="menuitem" href="/scans?skill={{$.Skill}}&status={{.}}&sort={{$.Sort}}&completeness={{$.Completeness}}"
+            <a role="menuitem" href="/scans?skill={{$.Skill}}&status={{.}}&sort={{$.Sort}}&completeness={{$.Completeness}}{{if $.Group}}&group={{$.Group}}{{end}}"
                {{if eq . $.Status}}aria-current="true"{{end}}>{{.}}</a>
           {{end}}
         </div>
@@ -65,9 +65,9 @@
       </button>
       <div data-popover aria-hidden="true" data-align="end">
         <div role="menu">
-          <a role="menuitem" href="/scans?skill={{.Skill}}&status={{.Status}}&sort={{.Sort}}"{{if not .Completeness}} aria-current="true"{{end}}>All completeness</a>
+          <a role="menuitem" href="/scans?skill={{.Skill}}&status={{.Status}}&sort={{.Sort}}{{if $.Group}}&group={{$.Group}}{{end}}"{{if not .Completeness}} aria-current="true"{{end}}>All completeness</a>
           {{range (list "complete" "partial" "unknown")}}
-            <a role="menuitem" href="/scans?skill={{$.Skill}}&status={{$.Status}}&sort={{$.Sort}}&completeness={{.}}"
+            <a role="menuitem" href="/scans?skill={{$.Skill}}&status={{$.Status}}&sort={{$.Sort}}&completeness={{.}}{{if $.Group}}&group={{$.Group}}{{end}}"
                {{if eq . $.Completeness}}aria-current="true"{{end}}>{{.}}</a>
           {{end}}
         </div>
@@ -82,7 +82,7 @@
       <div data-popover aria-hidden="true" data-align="end">
         <div role="menu">
           {{range (list "newest" "skill" "status" "repository")}}
-            <a role="menuitem" href="/scans?skill={{$.Skill}}&status={{$.Status}}&sort={{.}}&completeness={{$.Completeness}}"
+            <a role="menuitem" href="/scans?skill={{$.Skill}}&status={{$.Status}}&sort={{.}}&completeness={{$.Completeness}}{{if $.Group}}&group={{$.Group}}{{end}}"
                {{if eq . (sortkey $.Sort)}}aria-current="true"{{end}}>{{.}}</a>
           {{end}}
         </div>
@@ -90,6 +90,14 @@
     </div>
   </div>
 </div>
+
+{{if .Group}}
+  <div class="flex items-center gap-2 mb-4 text-sm text-muted-foreground">
+    <i data-lucide="crosshair"></i>
+    <span>Showing one batch: <code>{{.Group}}</code> ({{.Page.Total}} scan{{if ne .Page.Total 1}}s{{end}})</span>
+    <a href="/scans?skill={{.Skill}}&status={{.Status}}&sort={{.Sort}}&completeness={{.Completeness}}" class="btn-sm-ghost"><i data-lucide="x"></i> Clear</a>
+  </div>
+{{end}}
 
 {{if .AccountPausedCount}}
   <div class="alert-destructive mb-6">
@@ -123,12 +131,14 @@
         {{template "th-sort" (dict "Sorter" .Sorter "Key" "skill" "Def" "asc" "Label" "Skill" "Class" "")}}
         {{template "th-sort" (dict "Sorter" .Sorter "Key" "status" "Def" "asc" "Label" "Status" "Class" "")}}
         <th>Completeness</th>
+        {{if .AnyFocusArea}}<th>Focus area</th>{{end}}
         {{template "th-sort" (dict "Sorter" .Sorter "Key" "findings" "Def" "desc" "Label" "Findings" "Class" "")}}
         <th>Model</th><th>Cost</th><th>Started</th><th>Duration</th><th class="w-12"></th>
       </tr>
     </thead>
     <tbody>
     {{$showSub := .AnySubPath}}
+    {{$showFocus := .AnyFocusArea}}
     {{range .Scans}}
       <tr id="scan-{{.ID}}">
         <td><a href="/scans/{{.ID}}">{{.ID}}</a></td>
@@ -139,6 +149,7 @@
         <td>{{if .SkillName}}{{.SkillName}}{{else}}{{.Kind}}{{end}} {{template "branch-tag" .Ref}}</td>
         <td>{{template "status-badge" (status .Status)}} {{if .MaxTurnsHit}}<span class="badge-outline"><i data-lucide="timer-off"></i> max turns</span>{{end}}</td>
         <td>{{if eq .Completeness "complete"}}<span class="badge-outline">complete</span>{{else if eq .Completeness "partial"}}<span class="badge-outline">partial</span>{{else}}<span class="text-muted-foreground">unknown</span>{{end}}</td>
+        {{if $showFocus}}<td class="text-xs">{{template "focus-area" (focus .)}}</td>{{end}}
         <td>{{if gt .FindingsCount 0}}{{template "findings-badge" .FindingsCount}}{{end}}</td>
         <td class="text-muted-foreground">{{if .Model}}{{.Model}}{{else}}-{{end}}</td>
         <td class="text-muted-foreground">{{if gt .CostUSD 0.0}}{{usd .CostUSD}}{{else}}-{{end}}</td>
@@ -152,7 +163,7 @@
   </div>
   {{template "pagination" .Page}}
 {{else}}
-  {{if or .Skill .Status .Completeness}}
+  {{if or .Skill .Status .Completeness .Group}}
   {{template "empty" (dict "Icon" "list-checks" "Title" "No matching scans" "Body" "")}}
   {{else}}
   {{template "empty" (dict "Icon" "list-checks" "Title" "No jobs yet" "Body" "Jobs appear here once a repository has been queued.")}}
