@@ -19,3 +19,13 @@ Correlations are calculated independently per skill over positive-cost runs. A r
 The outlier table lists every positive-cost scan whose cost is at least ten times the positive-cost median for that skill. Each row links to the scan and repository and includes model, runner profile, turns and any matched driver measurements. Inspect the linked scan's transcript, report and runtime settings before assigning a cause; common explanations include a larger-than-usual analysis surface, a large sink inventory, repeated tool work, retries or a different model configuration.
 
 Zero-cost rows are retained in the normal usage totals but excluded from correlation and outlier baselines. This prevents historical rows without captured billing data and genuinely free runs from forcing the outlier median to zero.
+
+## Pausing on subscription overage
+
+Set `pause_on_overage: true` in `scrutineer.yaml` or pass `-pause-on-overage` to stop model work when a Claude subscription reports paid overage. The option defaults to false and takes precedence over `downgrade_on_overage`. An explicit CLI boolean overrides the YAML setting, including `-pause-on-overage=false`.
+
+An overage signal stops active scan jobs through the existing cancellation mechanism but records them as paused, preserving their session IDs, partial reports, and workspace state. Queued skill and exposure scans are paused, and a dispatch gate prevents newly queued or manually resumed jobs from starting while the hold is active. The Jobs and Usage pages display the policy state. Manual cancellations and maintainer opt-outs remain cancellations; manually paused scans are not included in overage auto-resume.
+
+The worker waits for the latest applicable reset across observed overage windows, using the existing auto-resume buffer. Missing or implausibly distant reset times leave the work paused for operator action rather than guessing. Persisted overage pauses also gate new dispatch after a restart; a hold without a reliable reset remains until operator action. To deliberately permit overage, disable the option, restart Scrutineer, and resume the paused scans. This policy does not disable the existing handling of actual account errors.
+
+The policy depends on provider-reported overage events, so it is not a hard monetary budget and cannot guarantee zero overage charges before detection or while cancellation takes effect. An API-key account that reports no subscription-overage signal does not activate it.

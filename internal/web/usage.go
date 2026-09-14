@@ -119,6 +119,7 @@ func (s *Server) usage(w http.ResponseWriter, r *http.Request) {
 
 	rl := buildRateLimitPanel(s.Worker.RateLimitStatus())
 	rl.Downgrading = s.Worker.ShouldDowngradeModel()
+	rl.Paused = s.Worker.ShouldPauseOnOverage()
 	drivers := usageDriverAnalysis{}
 	if view == "drivers" {
 		drivers = s.loadUsageDriverAnalysis(scans)
@@ -180,6 +181,7 @@ type rateLimitPanel struct {
 	// Downgrading is true when the overage model fallback is enabled and active,
 	// i.e. new scans are running on the mid (Sonnet) tier instead of max/high.
 	Downgrading bool
+	Paused      bool
 }
 
 type rateLimitRow struct {

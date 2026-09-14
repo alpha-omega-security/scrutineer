@@ -80,6 +80,7 @@ func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 		"AccountPausedCount": stats.AccountPausedCount,
 		"NextAccountResume":  stats.NextAccountResume,
 		"ModelDowngraded":    s.Worker.ShouldDowngradeModel(),
+		"OveragePaused":      s.Worker.ShouldPauseOnOverage(),
 	}
 	// The page's own SSE listener re-requests this URL when a scan changes, so
 	// an htmx request gets the table alone and keeps the operator's scroll,
