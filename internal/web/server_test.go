@@ -4310,6 +4310,15 @@ func TestRetry_preservesScanFields(t *testing.T) {
 				t.Errorf("retry lost focus area: %q", f.FocusArea)
 			}
 		}},
+		{"exploration", func(sc *db.Scan) {
+			sc.TriageScanID = new(uint(17))
+			sc.ExplorationMode = worker.ExplorationRandomDig
+			sc.ExplorationPath = "lib"
+		}, func(t *testing.T, f db.Scan) {
+			if f.TriageScanID == nil || *f.TriageScanID != 17 || f.ExplorationMode != worker.ExplorationRandomDig || f.ExplorationPath != "lib" {
+				t.Errorf("retry lost exploratory inputs: %+v", f)
+			}
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -4318,7 +4327,7 @@ func TestRetry_preservesScanFields(t *testing.T) {
 
 			repo := db.Repository{URL: "https://github.com/apache/airflow.git", Name: "airflow"}
 			s.DB.Create(&repo)
-			skill := db.Skill{Name: "security-deep-dive", Description: "x", Body: "b", Active: true, Source: "ui", Version: 1}
+			skill := db.Skill{Name: "security-deep-dive", Description: "x", Body: "b", Active: true, Source: "disk", SourcePath: "../../skills/security-deep-dive", Version: 1}
 			s.DB.Create(&skill)
 			orig := db.Scan{
 				RepositoryID: repo.ID, Kind: "skill", Status: db.ScanFailed,

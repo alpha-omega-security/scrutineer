@@ -360,6 +360,9 @@ func (s *Server) scanRetry(w http.ResponseWriter, r *http.Request) {
 		DiffBaseScanID:       scan.DiffBaseScanID,
 		ScanGroup:            scan.ScanGroup,
 		FocusArea:            scan.FocusArea,
+		TriageScanID:         scan.TriageScanID,
+		ExplorationMode:      scan.ExplorationMode,
+		ExplorationPath:      scan.ExplorationPath,
 		SessionID:            sessionID,
 		ResumedFromScanID:    resumeOf,
 		ParentScanID:         &scan.ID,
@@ -439,7 +442,7 @@ func (s *Server) scansRetryFailed(w http.ResponseWriter, r *http.Request) {
 	// deliberately absent: a user-cancelled newer run shouldn't block
 	// retrying an older genuine failure.
 	var scans []db.Scan
-	err = q.Select("id, repository_id, skill_id, model, effort, finding_id, remediation_attempt_id, sub_path, scope_mode, ref, profile, rescan_mode, diff_base_scan_id, scan_group, focus_area, backend, status, session_id, resumed_from_scan_id, import_payload").
+	err = q.Select("id, repository_id, skill_id, model, effort, finding_id, remediation_attempt_id, sub_path, scope_mode, ref, profile, rescan_mode, diff_base_scan_id, scan_group, focus_area, triage_scan_id, exploration_mode, exploration_path, backend, status, session_id, resumed_from_scan_id, import_payload").
 		Where(`NOT EXISTS (
 			SELECT 1 FROM scans n
 			WHERE n.id > scans.id
@@ -473,6 +476,9 @@ func (s *Server) scansRetryFailed(w http.ResponseWriter, r *http.Request) {
 			DiffBaseScanID:       sc.DiffBaseScanID,
 			ScanGroup:            sc.ScanGroup,
 			FocusArea:            sc.FocusArea,
+			TriageScanID:         sc.TriageScanID,
+			ExplorationMode:      sc.ExplorationMode,
+			ExplorationPath:      sc.ExplorationPath,
 			SessionID:            sessionID,
 			ResumedFromScanID:    resumeOf,
 			ParentScanID:         &parent,

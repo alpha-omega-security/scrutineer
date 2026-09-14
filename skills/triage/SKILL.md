@@ -101,6 +101,8 @@ enqueues one `security-deep-dive` per focus area. Do not enqueue
 `security-deep-dive` here: starting it before the threat model is complete
 would create an unscoped repository-wide audit and defeat the partition.
 
+For one third of eligible triage runs, Scrutineer also schedules at most one independent random-dig `security-deep-dive` after a successful threat model has queued a planned audit. Do not request this extra scan yourself. It keeps explicit path exclusions and subproject scope but receives no threat-model or focus-area guidance. Repeated completion notifications do not select another extra audit.
+
 If a skill name comes back `404 skill not found or inactive`, skip it and note which one in your report; the operator may have disabled it on purpose.
 
 ## Re-verify reported findings

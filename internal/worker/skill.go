@@ -88,7 +88,8 @@ type skillContextScrutineer struct {
 	ScanConfig *repoconfig.Config `json:"scan_config,omitempty"`
 	// FocusArea narrows a fan-out security-deep-dive scan to one named
 	// input-processing subsystem from scan_config. Empty means normal scope.
-	FocusArea *repoconfig.FocusArea `json:"focus_area,omitempty"`
+	FocusArea   *repoconfig.FocusArea    `json:"focus_area,omitempty"`
+	Exploration *skillContextExploration `json:"exploration,omitempty"`
 	// Recon is the latest completed focus-area map. It is staged only for the
 	// threat-model skill, which incorporates it into a complete scan-config
 	// proposal without letting recon overwrite analyst configuration directly.
@@ -211,6 +212,9 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 	}
 
 	skillDir := w.Runner.SkillDir(workRoot, skill.Name)
+	if err := w.prepareExploration(ctx, workRoot, scan); err != nil {
+		return "", err
+	}
 	if err := w.stageWorkspace(ctx, workRoot, skillDir, scan, &skill); err != nil {
 		return "", err
 	}
@@ -1399,6 +1403,9 @@ func stageContextWithInputs(
 		return fmt.Errorf("parse scan focus area: %w", err)
 	}
 	ctx.Scrutineer.FocusArea = focusArea
+	if scan.ExplorationMode != "" {
+		ctx.Scrutineer.Exploration = &skillContextExploration{Mode: scan.ExplorationMode, Path: scan.ExplorationPath}
+	}
 	ctx.Scrutineer.Recon = recon
 	ctx.Scrutineer.Novelty = novelty
 	ctx.Scrutineer.Controls = controls
@@ -1503,6 +1510,9 @@ func stageWorkspaceWithInputs(
 ) error {
 	// stageSkill clears skillDir, so it runs before stageContext, which
 	// writes context.json into that directory (#499).
+	if scan.ExplorationMode != "" {
+		return stageExploratoryWorkspace(workRoot, skillDir, apiBase, scan, skill)
+	}
 	if err := stageSkill(skill, workRoot, skillDir); err != nil {
 		return fmt.Errorf("stage skill: %w", err)
 	}

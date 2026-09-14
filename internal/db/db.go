@@ -288,6 +288,13 @@ type Scan struct {
 	// work remains reproducible if the repository configuration changes.
 	FocusArea string `gorm:"type:text"`
 
+	// TriageScanID identifies the triage invocation that requested this scan.
+	// ExplorationMode is empty for planned audits; random-dig audits choose
+	// ExplorationPath from the filtered checkout without using the threat model.
+	TriageScanID    *uint `gorm:"index"`
+	ExplorationMode string
+	ExplorationPath string
+
 	// RescanMode records the actual coverage mode for this scan. Empty and
 	// "full" mean ordinary full coverage. "diff" means the worker staged a
 	// baseline diff and skills should not claim coverage over untouched code.

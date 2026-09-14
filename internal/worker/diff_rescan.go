@@ -164,7 +164,7 @@ func (w *Worker) diffBaseline(scan *db.Scan) (db.Scan, bool) {
 	if scan.DiffBaseScanID != nil {
 		q = q.Where("id = ?", *scan.DiffBaseScanID)
 	} else {
-		q = q.Where("skill_name = ? AND sub_path = ? AND ref = ? AND focus_area = ? AND id <> ?", scan.SkillName, scan.SubPath, scan.Ref, scan.FocusArea, scan.ID).
+		q = q.Where("COALESCE(exploration_mode, '') = ''").Where("skill_name = ? AND sub_path = ? AND ref = ? AND focus_area = ? AND id <> ?", scan.SkillName, scan.SubPath, scan.Ref, scan.FocusArea, scan.ID).
 			Order("id desc")
 	}
 	var baseline db.Scan
@@ -174,7 +174,7 @@ func (w *Worker) diffBaseline(scan *db.Scan) (db.Scan, bool) {
 	if baseline.RepositoryID != scan.RepositoryID || baseline.SubPath != scan.SubPath || baseline.Ref != scan.Ref {
 		return db.Scan{}, false
 	}
-	if baseline.SkillName != scan.SkillName || baseline.FocusArea != scan.FocusArea {
+	if baseline.ExplorationMode != "" || baseline.SkillName != scan.SkillName || baseline.FocusArea != scan.FocusArea {
 		return db.Scan{}, false
 	}
 	return baseline, true
