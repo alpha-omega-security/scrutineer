@@ -18,6 +18,7 @@ import (
 	"scrutineer/internal/db"
 	"scrutineer/internal/repoconfig"
 	"scrutineer/internal/skills"
+	"scrutineer/internal/verification"
 )
 
 const (
@@ -49,13 +50,14 @@ type skillContext struct {
 }
 
 type skillContextScrutineer struct {
-	APIBase     string `json:"api_base"`               // e.g. http://127.0.0.1:8080/api
-	ScanID      uint   `json:"scan_id"`                // the scan that owns this run
-	Token       string `json:"token"`                  // bearer for api_base
-	RepoID      uint   `json:"repository_id"`          // convenience for URL building
-	SkillID     uint   `json:"skill_id,omitempty"`     // the running skill
-	FindingID   uint   `json:"finding_id,omitempty"`   // set for finding-scoped scans
-	DependentID uint   `json:"dependent_id,omitempty"` // set on exposure scans
+	VerificationFeedback string `json:"verification_feedback,omitempty"`
+	APIBase              string `json:"api_base"`               // e.g. http://127.0.0.1:8080/api
+	ScanID               uint   `json:"scan_id"`                // the scan that owns this run
+	Token                string `json:"token"`                  // bearer for api_base
+	RepoID               uint   `json:"repository_id"`          // convenience for URL building
+	SkillID              uint   `json:"skill_id,omitempty"`     // the running skill
+	FindingID            uint   `json:"finding_id,omitempty"`   // set for finding-scoped scans
+	DependentID          uint   `json:"dependent_id,omitempty"` // set on exposure scans
 	// ScanRef is the git ref (branch/tag) the clone was checked out to.
 	// Empty means the repository's default branch.
 	ScanRef string `json:"scan_ref,omitempty"`
@@ -1402,6 +1404,13 @@ func stageContextWithInputs(
 	ctx.Scrutineer.Recon = recon
 	ctx.Scrutineer.Novelty = novelty
 	ctx.Scrutineer.Controls = controls
+	if scan.SkillName == verifySkillName && scan.FindingID != nil {
+		feedback, err := verification.NormalizeFeedback(scan.VerificationFeedback)
+		if err != nil {
+			return err
+		}
+		ctx.Scrutineer.VerificationFeedback = feedback
+	}
 	if scan.SkillID != nil {
 		ctx.Scrutineer.SkillID = *scan.SkillID
 	}

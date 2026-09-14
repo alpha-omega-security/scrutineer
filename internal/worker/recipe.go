@@ -58,7 +58,8 @@ type ScanRecipe struct {
 	// ParentScanID is the scan this one was enqueued as a rerun of, so a
 	// chain of reruns can be walked one hop at a time. It is distinct from
 	// ResumedFromScanID, which pins the lineage *root* for session reuse.
-	ParentScanID *uint `json:"parent_scan_id,omitempty"`
+	ParentScanID         *uint  `json:"parent_scan_id,omitempty"`
+	VerificationFeedback string `json:"verification_feedback,omitempty"`
 
 	// ThreatModelSHA256 and ScanConfigSHA256 digest the Repository text in
 	// effect at claim time, so a rerun after an edit is distinguishable
@@ -84,23 +85,24 @@ func textDigest(s string) string {
 // are the repository's text as read inside the claiming transaction.
 func buildScanRecipe(scan *db.Scan, backend, threatModel, scanConfig string) (string, error) {
 	r := ScanRecipe{
-		Kind:               scan.Kind,
-		Ref:                scan.Ref,
-		Backend:            backend,
-		Model:              scan.Model,
-		Effort:             scan.Effort,
-		Skill:              scan.SkillName,
-		SkillVersion:       scan.SkillVersion,
-		SkillSchemaVersion: scan.SkillSchemaVersion,
-		SkillsRepoSHA:      scan.SkillsRepoSHA,
-		Profile:            scan.Profile,
-		SubPath:            scan.SubPath,
-		ScopeMode:          scan.ScopeMode,
-		RescanMode:         scan.RescanMode,
-		DiffBaseScanID:     scan.DiffBaseScanID,
-		ParentScanID:       scan.ParentScanID,
-		ThreatModelSHA256:  textDigest(threatModel),
-		ScanConfigSHA256:   textDigest(scanConfig),
+		Kind:                 scan.Kind,
+		Ref:                  scan.Ref,
+		Backend:              backend,
+		Model:                scan.Model,
+		Effort:               scan.Effort,
+		Skill:                scan.SkillName,
+		SkillVersion:         scan.SkillVersion,
+		SkillSchemaVersion:   scan.SkillSchemaVersion,
+		SkillsRepoSHA:        scan.SkillsRepoSHA,
+		Profile:              scan.Profile,
+		SubPath:              scan.SubPath,
+		ScopeMode:            scan.ScopeMode,
+		RescanMode:           scan.RescanMode,
+		DiffBaseScanID:       scan.DiffBaseScanID,
+		ParentScanID:         scan.ParentScanID,
+		VerificationFeedback: scan.VerificationFeedback,
+		ThreatModelSHA256:    textDigest(threatModel),
+		ScanConfigSHA256:     textDigest(scanConfig),
 	}
 	if scan.FocusArea != "" && json.Valid([]byte(scan.FocusArea)) {
 		r.FocusArea = json.RawMessage(scan.FocusArea)

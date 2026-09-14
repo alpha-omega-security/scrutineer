@@ -1,5 +1,11 @@
 {{template "head" .}}
 {{with .Scan}}
+{{with .VerificationFeedback}}
+<section class="border-b py-4 mb-4">
+  <h3 class="text-sm font-medium mb-2">Verification feedback</h3>
+  <pre class="text-sm whitespace-pre-wrap break-words font-sans">{{.}}</pre>
+</section>
+{{end}}
 {{template "crumbs" (crumbs
   "Repositories" "/"
   .Repository.Name (printf "/repositories/%d" .Repository.ID)
