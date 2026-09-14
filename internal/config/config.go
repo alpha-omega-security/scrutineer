@@ -147,6 +147,8 @@ type Config struct {
 	// subscription token reports overage. Off by default; the switch is logged
 	// and shown on the jobs page and /usage.
 	DowngradeOnOverage *bool `yaml:"downgrade_on_overage"`
+	// PauseOnOverage stops model work instead of allowing paid subscription overage.
+	PauseOnOverage *bool `yaml:"pause_on_overage"`
 	// RecipientsFile is a flat text file of public keys (one per line,
 	// age X25519 or SSH) used to encrypt format=bundle exports. Empty
 	// disables encrypted export.

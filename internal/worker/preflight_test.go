@@ -9,18 +9,15 @@ import (
 	"time"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/db/dbtest"
 	"scrutineer/internal/queue"
 )
 
 func newPreflightWorker(t *testing.T) *Worker {
 	t.Helper()
-	// Per-test shared-cache in-memory DB so the gorm and goqite handles
-	// see the same tables but tests do not share state with each other.
-	dsn := "file:" + t.Name() + "?mode=memory&cache=shared"
-	gdb, err := db.Open(dsn)
-	if err != nil {
-		t.Fatal(err)
-	}
+	// Copy the cached schema rather than migrating it for every prerequisite
+	// case. GORM and goqite still share one isolated database per test.
+	gdb := dbtest.Open(t)
 	sqldb, err := gdb.DB()
 	if err != nil {
 		t.Fatal(err)

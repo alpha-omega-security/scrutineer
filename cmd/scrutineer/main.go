@@ -129,6 +129,7 @@ type flags struct {
 	metadataDir           string
 	schemaStrict          bool
 	downgradeOnOverage    bool
+	pauseOnOverage        bool
 	recipientsFile        string
 	identityFile          string
 	identityPlugins       pluginNames
@@ -280,6 +281,7 @@ func registerFlags(fs *flag.FlagSet, f *flags) {
 	fs.BoolVar(&f.monorepoAttribution, "monorepo-attribution", true, "link packages, advisories, maintainers and disclosure channel to the sub-package they belong to (matched by manifest name) instead of rolling up flat under the repository")
 	fs.BoolVar(&f.schemaStrict, "schema-strict", false, "fail scans whose report.json does not validate against the skill's schema (default: warn and continue)")
 	fs.BoolVar(&f.downgradeOnOverage, "downgrade-on-overage", false, "on a subscription token, fall the model tier back from max/high to the mid tier for new scans while the account is on overage; restores when the window resets")
+	fs.BoolVar(&f.pauseOnOverage, "pause-on-overage", false, "pause model scans when subscription overage is reported; takes precedence over downgrade-on-overage")
 	fs.StringVar(&f.recipientsFile, "recipients-file", "", "age recipients file (public keys) for encrypted export")
 	fs.StringVar(&f.identityFile, "identity-file", "", "age identity file or SSH private key for decrypting imports and federation feeds")
 	fs.Var(&f.identityPlugins, "identity-plugin", "data-less age identity plugin name for decrypting imports and federation feeds (repeatable)")
@@ -388,6 +390,9 @@ func (f *flags) merge(cfg *config.Config) {
 	}
 	if cfg.DowngradeOnOverage != nil && !f.set["downgrade-on-overage"] {
 		f.downgradeOnOverage = *cfg.DowngradeOnOverage
+	}
+	if cfg.PauseOnOverage != nil && !f.set["pause-on-overage"] {
+		f.pauseOnOverage = *cfg.PauseOnOverage
 	}
 	if cfg.RecipientsFile != "" && !f.set["recipients-file"] {
 		f.recipientsFile = cfg.RecipientsFile
@@ -713,6 +718,7 @@ func run(log *slog.Logger) error {
 		ScanTimeout:           f.scanTimeout,
 		SchemaStrict:          f.schemaStrict,
 		DowngradeOnOverage:    f.downgradeOnOverage,
+		PauseOnOverage:        f.pauseOnOverage,
 		AutoRejectMissedCount: f.autoRejectMissedCount,
 		SubprojectScope:       f.subprojectScope,
 		MonorepoAttribution:   f.monorepoAttribution,

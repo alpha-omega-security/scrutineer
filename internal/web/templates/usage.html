@@ -21,7 +21,7 @@
   </div>
 </div>
 
-{{if .RateLimit.Rows}}
+{{if or .RateLimit.Rows .RateLimit.Paused}}
 <div class="card p-4 mb-6">
   <div class="flex items-center justify-between gap-4 mb-3">
     <h3 class="text-sm font-semibold flex items-center gap-2">
@@ -45,7 +45,9 @@
     {{end}}
     </tbody>
   </table>
-  {{if .RateLimit.Downgrading}}
+  {{if .RateLimit.Paused}}
+    <p class="text-xs mt-3 flex items-center gap-2"><i data-lucide="pause"></i> Subscription overage: model scans are paused.</p>
+  {{else if .RateLimit.Downgrading}}
     <p class="text-xs mt-3 flex items-center gap-2"><i data-lucide="triangle-alert"></i> Account on overage — new scans use the mid tier until the overage clears.</p>
   {{end}}
 </div>

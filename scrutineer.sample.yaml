@@ -241,6 +241,12 @@
 # an API key. The switch is logged and shown on the jobs page and /usage. Flag: -downgrade-on-overage.
 # downgrade_on_overage: false
 
+# Stop active model scans and pause queued work when Claude reports subscription
+# overage, instead of continuing on a cheaper model. Takes precedence over
+# downgrade_on_overage. Reliable resets auto-resume policy-paused work; missing
+# or implausible reset times require operator action. Flag: -pause-on-overage.
+# pause_on_overage: false
+
 # The model picker in the UI. Replacing this list replaces the built-in
 # set (Opus, Sonnet, Fable). Leave it out to keep the built-in list. tier:
 # names which entry the mid/high/max model tier defaults to (see Settings);
