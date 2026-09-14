@@ -660,7 +660,7 @@ func (w *Worker) wrap(h handler) func(context.Context, []byte) error {
 		}
 
 		if scan.Kind == JobSkill {
-			deferred, err := w.preflightSkill(ctx, &scan, p.Attempt)
+			deferred, err := w.preflightSkillUnlessOverage(ctx, &scan, p.Attempt)
 			if err != nil {
 				return err
 			}

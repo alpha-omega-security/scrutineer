@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"context"
 	"time"
 
 	"gorm.io/gorm"
@@ -152,16 +153,42 @@ func (w *Worker) startScanUnlessOverage(scan *db.Scan) error {
 	}
 	w.overageMu.Lock()
 	defer w.overageMu.Unlock()
-	active, reset, err := w.overageState()
+	paused, err := w.pauseIfOverageLocked()
 	if err != nil {
 		return err
 	}
-	if active {
-		if err := w.pauseOverageRows(reset); err != nil {
-			return err
-		}
-		w.scheduleAccountResumeAtValue(reset)
+	if paused {
 		return errScanClaimLost
 	}
 	return w.startScan(scan)
+}
+
+func (w *Worker) preflightSkillUnlessOverage(ctx context.Context, scan *db.Scan, attempt int) (bool, error) {
+	if !w.PauseOnOverage {
+		return w.preflightSkill(ctx, scan, attempt)
+	}
+	// Keep prerequisite retries/failures serialized with policy pauses, so
+	// preflight cannot overwrite a pause using its earlier queued snapshot.
+	w.overageMu.Lock()
+	defer w.overageMu.Unlock()
+	if paused, err := w.pauseIfOverageLocked(); paused || err != nil {
+		return paused, err
+	}
+	return w.preflightSkill(ctx, scan, attempt)
+}
+
+// pauseIfOverageLocked requires overageMu. Both preflight and the final claim
+// check the gate: an overage event can arrive between those two stages.
+func (w *Worker) pauseIfOverageLocked() (bool, error) {
+	active, reset, err := w.overageState()
+	if err != nil {
+		return false, err
+	}
+	if active {
+		if err := w.pauseOverageRows(reset); err != nil {
+			return false, err
+		}
+		w.scheduleAccountResumeAtValue(reset)
+	}
+	return active, nil
 }

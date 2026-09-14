@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -143,6 +144,44 @@ func TestOverageDispatchGateAndRestart(t *testing.T) {
 		if next.Status != db.ScanPaused || next.PausedUntil != nil {
 			t.Fatalf("unknown reset: %+v", next)
 		}
+	}
+}
+
+func TestOveragePausesBeforePrerequisiteChecks(t *testing.T) {
+	for _, attempt := range []int{0, 3} {
+		t.Run(fmt.Sprintf("attempt_%d", attempt), func(t *testing.T) {
+			w := newPreflightWorker(t)
+			sqlDB, err := w.DB.DB()
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := sqlDB.Close(); err != nil {
+					t.Error(err)
+				}
+			})
+			w.PauseOnOverage = true
+			w.recordRateLimit(RateLimitInfo{Type: "five_hour", IsUsingOverage: true})
+			scan := seedPreflightFixtures(t, w, "threat-model")
+			prereq := seedPrereqSkill(t, w, "threat-model", true)
+			seedPrereqScan(t, w, prereq, scan.RepositoryID, db.ScanPaused)
+			body, err := json.Marshal(queue.Payload{ScanID: scan.ID, Attempt: attempt})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := w.wrap(func(context.Context, *db.Scan, func(Event)) (string, error) {
+				t.Error("handler ran during overage")
+				return "", nil
+			})(t.Context(), body); err != nil {
+				t.Fatal(err)
+			}
+			if err := w.DB.First(scan, scan.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+			if scan.Status != db.ScanPaused || scan.Error != OveragePauseReason || scan.StartedAt != nil {
+				t.Fatalf("prerequisite preflight bypassed overage pause: %+v", scan)
+			}
+		})
 	}
 }
 
