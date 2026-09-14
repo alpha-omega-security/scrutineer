@@ -6,10 +6,10 @@ import (
 	"errors"
 	"io"
 	"log/slog"
-	"path/filepath"
 	"testing"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/db/dbtest"
 	"scrutineer/internal/queue"
 )
 
@@ -36,10 +36,7 @@ func (*recordingRunner) SkillDir(workRoot, name string) string {
 
 func newResumeTestWorker(t *testing.T, runner SkillRunner) (*Worker, *db.Skill, uint) {
 	t.Helper()
-	gdb, err := db.Open(filepath.Join(t.TempDir(), "r.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	skill := db.Skill{Name: "deep", Description: "x", Body: "b", Active: true, Source: "ui", Version: 1}

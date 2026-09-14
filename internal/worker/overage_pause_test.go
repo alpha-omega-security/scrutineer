@@ -151,15 +151,6 @@ func TestOveragePausesBeforePrerequisiteChecks(t *testing.T) {
 	for _, attempt := range []int{0, 3} {
 		t.Run(fmt.Sprintf("attempt_%d", attempt), func(t *testing.T) {
 			w := newPreflightWorker(t)
-			sqlDB, err := w.DB.DB()
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() {
-				if err := sqlDB.Close(); err != nil {
-					t.Error(err)
-				}
-			})
 			w.PauseOnOverage = true
 			w.recordRateLimit(RateLimitInfo{Type: "five_hour", IsUsingOverage: true})
 			scan := seedPreflightFixtures(t, w, "threat-model")
