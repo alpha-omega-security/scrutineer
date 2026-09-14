@@ -340,6 +340,11 @@ func (d ContainerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Ev
 	}
 	defer unlockCodexAuth()
 
+	probeBase := append([]string{runtimeBin(d.Runtime)}, runBase...)
+	if err := sj.checkCapabilities(ctx, probeBase, provider.Env, d.ProxyURL != "" || hnet.proxyEndpoint != "", emit); err != nil {
+		return result, err
+	}
+
 	logLine := "$ " + runtimeBin(d.Runtime) + " run --rm " + image + " <skill:" + sj.Name + ">"
 	if d.ModelBaseURL != "" {
 		logLine += " [MODEL_BASE_URL=" + redactURLUserinfo(d.ModelBaseURL) + "]"

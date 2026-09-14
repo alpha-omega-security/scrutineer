@@ -118,6 +118,29 @@ metadata:
 
 `min_confidence`, `report_on`, and `fail_on` only apply when `output_kind` is `findings`.
 
+## Runtime capability preflight
+
+Skills can declare static runtime requirements in frontmatter:
+
+```yaml
+metadata:
+  scrutineer.requires_commands: [cargo]
+  scrutineer.requires_features: [network-egress]
+  scrutineer.degraded_mode: true
+```
+
+`scrutineer.requires_commands` and `scrutineer.requires_features` are optional lists with at most 64 unique entries each. Commands must be executable names on `PATH`, not paths, arguments, or shell expressions; names contain ASCII letters, digits, underscores, dots, plus signs, or hyphens, begin with a letter, digit, or underscore, and are at most 128 characters. `scrutineer.degraded_mode` is an optional boolean, defaulting to false. Set it only when the skill describes how to produce useful reduced coverage without its requirements.
+
+After staging and runner configuration, but before an agent turn, Scrutineer runs a bounded shell probe using the selected container image and the same user, mounts, working directory, environment configuration, and network policy as the agent. The local runner checks its own environment instead. The probe resolves executable files without running them. Skills with no requirements keep their existing behavior and do not launch a probe. Requirements are checked again on retries, repairs, and whole-tree fallbacks; this is not a cached model-backend probe.
+
+Supported feature names are `network-egress`, `docker-in-docker`, and `fuse`. Network egress means that runner policy provides a proxy path (or the unrestricted local runner's host networking); destination allowlists still apply, and this does not establish connectivity, credentials, or model availability. Current runners do not provision nested Docker daemons or FUSE devices and mount privileges, so those two features are reported missing even if a corresponding executable is installed. Requirements never enable privileges, mount host sockets, or relax network policy. Unknown feature names are rejected.
+
+The worker persists `preflight: {status, missing, degraded}` in the scan's coverage record before launching the agent. Missing entries are prefixed with `command:` or `feature:`. A `ready` result means all declared requirements passed, not that analysis is complete. Missing requirements produce `blocked` and fail the scan without a model turn, unless `degraded_mode: true` permits `degraded`. A probe execution error, cancellation, malformed output, or persistence failure still stops execution; degraded mode cannot waive an unsuccessful check.
+
+The result is also staged as `scrutineer.preflight` in both copies of `context.json`. A degraded skill should read the missing list, use its documented fallback, and report the resulting gaps rather than inventing completed work. The worker keeps coverage partial for blocked or degraded preflights, even if later receipts claim every staged path was reviewed. A ready repair turn does not erase an earlier degraded attempt in the same scan. Preflight is worker-owned and cannot be supplied through a skill's coverage claim.
+
+Only declare requirements that apply to every invocation of the skill. For example, do not require `cargo` for all generic `verify` scans simply because some Rust reproductions need it. Repository-specific prerequisite inference and cached live backend probes are separate work.
+
 ## Path filtering
 
 Before each scan, scrutineer prunes `workRoot/src/` so the skill only sees the files it cares about. The default filter drops lockfiles, minified bundles, build outputs, and generated trees:

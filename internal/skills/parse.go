@@ -39,6 +39,9 @@ const (
 	metaPaths             = "scrutineer.paths"
 	metaIgnorePaths       = "scrutineer.ignore_paths"
 	metaRequires          = "scrutineer.requires"
+	metaRequiresCommands  = "scrutineer.requires_commands"
+	metaRequiresFeatures  = "scrutineer.requires_features"
+	metaDegradedMode      = "scrutineer.degraded_mode"
 
 	// SchemaVersion is the only scrutineer.version this build accepts.
 	// Skills omitting the key are treated as version 1. Bump when the
@@ -66,6 +69,9 @@ var scrutineerKeys = map[string]bool{
 	metaPaths:             true,
 	metaIgnorePaths:       true,
 	metaRequires:          true,
+	metaRequiresCommands:  true,
+	metaRequiresFeatures:  true,
+	metaDegradedMode:      true,
 }
 
 var confidenceLevels = map[string]bool{"low": true, "medium": true, "high": true}
@@ -134,6 +140,9 @@ type Parsed struct {
 	Paths             []string
 	IgnorePaths       []string
 	Requires          []string
+	RequiresCommands  []string
+	RequiresFeatures  []string
+	DegradedMode      bool
 }
 
 // ParseFile reads a single SKILL.md (with its sibling schema.json if any)
@@ -248,7 +257,21 @@ func (p *Parsed) validateMetadata() error {
 	if err := checkStringList(p.Metadata, metaRequires); err != nil {
 		return err
 	}
-	return nil
+	return p.validateCapabilityMetadata()
+}
+
+func (p *Parsed) validateCapabilityMetadata() error {
+	for _, key := range []string{metaRequiresCommands, metaRequiresFeatures} {
+		if err := checkStringList(p.Metadata, key); err != nil {
+			return err
+		}
+	}
+	if v, ok := p.Metadata[metaDegradedMode]; ok {
+		if _, ok := v.(bool); !ok {
+			return fmt.Errorf("%s must be a boolean, got %T", metaDegradedMode, v)
+		}
+	}
+	return ValidateCapabilities(extractStringList(p.Metadata, metaRequiresCommands), extractStringList(p.Metadata, metaRequiresFeatures))
 }
 
 func checkStringList(m map[string]any, key string) error {
@@ -368,6 +391,9 @@ func (p *Parsed) extractMetadataKeys() {
 	p.Paths = extractStringList(p.Metadata, metaPaths)
 	p.IgnorePaths = extractStringList(p.Metadata, metaIgnorePaths)
 	p.Requires = extractStringList(p.Metadata, metaRequires)
+	p.RequiresCommands = extractStringList(p.Metadata, metaRequiresCommands)
+	p.RequiresFeatures = extractStringList(p.Metadata, metaRequiresFeatures)
+	p.DegradedMode, _ = p.Metadata[metaDegradedMode].(bool)
 }
 
 func extractStringList(m map[string]any, key string) []string {
@@ -422,6 +448,9 @@ func (p *Parsed) ToModel(source string) (*db.Skill, error) {
 		Paths:             JoinPatterns(p.Paths),
 		IgnorePaths:       JoinPatterns(p.IgnorePaths),
 		Requires:          JoinPatterns(p.Requires),
+		RequiresCommands:  JoinPatterns(p.RequiresCommands),
+		RequiresFeatures:  JoinPatterns(p.RequiresFeatures),
+		DegradedMode:      p.DegradedMode,
 		Active:            true,
 		Source:            source,
 		SourcePath:        p.SourcePath,

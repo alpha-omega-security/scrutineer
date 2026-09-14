@@ -1418,6 +1418,10 @@ type Skill struct {
 	// never enqueued for the repo is treated as satisfied so gating
 	// decisions in triage do not deadlock dependent skills.
 	Requires string `gorm:"type:text"`
+	// Runtime capabilities checked before spending any model turns.
+	RequiresCommands string `gorm:"type:text"`
+	RequiresFeatures string `gorm:"type:text"`
+	DegradedMode     bool
 
 	Source     string // "bundled" | "local" | "remote" | "ui"
 	SourcePath string // directory on disk (bundled/local/remote) or empty (ui)

@@ -13,6 +13,7 @@ import (
 
 	"github.com/alpha-omega-security/harness"
 
+	"scrutineer/internal/coverage"
 	"scrutineer/internal/db"
 )
 
@@ -99,7 +100,12 @@ type SkillJob struct {
 	// RequiresProfile pins the skill to a named profile. When set, the
 	// runner fails the scan if the resolved profile does not match.
 	// Empty means no constraint. Mirrors db.Skill.RequiresProfile.
-	RequiresProfile string
+	RequiresProfile  string
+	RequiresCommands []string
+	RequiresFeatures []string
+	DegradedMode     bool
+	// RecordPreflight persists worker-owned evidence before the first model turn.
+	RecordPreflight func(coverage.Preflight) error
 	// ResumeSessionID, when non-empty, makes the runner invoke
 	// `claude -p --resume <id>` so a retried scan continues the previous
 	// conversation with full history instead of restarting from turn 0.
@@ -217,6 +223,10 @@ func (l LocalClaude) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)
 
 	if sj.RequiresProfile != "" {
 		return SkillResult{Commit: commit}, fmt.Errorf("skill %q requires profile %q, not supported by the local runner", sj.Name, sj.RequiresProfile)
+	}
+
+	if err := sj.checkCapabilities(ctx, nil, nil, true, emit); err != nil {
+		return SkillResult{Commit: commit}, err
 	}
 
 	var outPath string

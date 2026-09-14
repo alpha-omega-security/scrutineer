@@ -89,6 +89,7 @@ type Record struct {
 	OpenQuestions   []string          `json:"open_questions,omitempty"`
 	DroppedFindings []DroppedFinding  `json:"dropped_findings,omitempty"`
 	ThreatModel     *ThreatModelState `json:"threat_model,omitempty"`
+	Preflight       *Preflight        `json:"preflight,omitempty"`
 }
 
 // PathReason is a path plus why it is not in the reviewed set.
@@ -207,6 +208,7 @@ func settled(disposition string) bool {
 // focus-area scan today — and yields Unknown, never Complete, however many
 // receipts the skill supplied.
 func (rec *Record) Reconcile(scope []string) []string {
+	defer rec.CapPreflight()
 	if len(scope) == 0 {
 		rec.Completeness = CompletenessUnknown
 		if rec.Reason == "" {
