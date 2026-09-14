@@ -25,9 +25,11 @@ ARG BANDIT_VERSION=1.9.4
 
 FROM golang:1.27.1-trixie@sha256:9baa6b4187bbb98d240372a8a235ac0bb6b5ddd52bba1431dc2f7c0705862728 AS go-tools
 
-RUN GOBIN=/out go install github.com/git-pkgs/git-pkgs@v0.20.0
+COPY scripts/retry-build-command.sh /usr/local/bin/retry-build-command.sh
+# Go proxy/checksum requests can fail transiently; keep verification enabled.
+RUN GOBIN=/out sh /usr/local/bin/retry-build-command.sh go install github.com/git-pkgs/git-pkgs@v0.20.0
 
-RUN GOBIN=/out go install github.com/git-pkgs/brief/cmd/brief@v0.13.0
+RUN GOBIN=/out sh /usr/local/bin/retry-build-command.sh go install github.com/git-pkgs/brief/cmd/brief@v0.13.0
 
 FROM rust:1.98-trixie@sha256:620dbcd124499c59e2406d3741574b5c5838cf9eb9656f0c3a03948f79b02959 AS zizmor-build
 ENV CARGO_HTTP_MULTIPLEXING=false
