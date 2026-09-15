@@ -197,9 +197,19 @@ func (w *Worker) failScanPrereqs(scan *db.Scan, skillName, msg string, missing [
 	scan.Error = msg
 	scan.StartedAt = &now
 	scan.FinishedAt = &now
-	if err := w.DB.Save(scan).Error; err != nil {
+	// Dispatch may have read this scan before it was paused and deleted.
+	// Never upsert a stale scan or its preloaded repository back into the DB.
+	res := w.DB.Model(&db.Scan{}).Where("id = ? AND status = ?", scan.ID, db.ScanQueued).
+		Updates(map[string]any{
+			"status": scan.Status, "status_priority": scan.StatusPriority,
+			errorColumn: scan.Error, "started_at": scan.StartedAt, "finished_at": scan.FinishedAt,
+		})
+	if res.Error != nil {
 		w.Log.Error("save failed-prereq scan",
-			"scan", scan.ID, "skill", skillName, "err", err)
+			"scan", scan.ID, "skill", skillName, "err", res.Error)
+		return
+	}
+	if res.RowsAffected == 0 {
 		return
 	}
 	w.publish(scan.ID, scan.RepositoryID, "scan-status", string(scan.Status))
