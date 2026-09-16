@@ -1638,9 +1638,6 @@ components:
         resolution:    { type: string, enum: [fix, migrate, workaround, adopt, wontfix, ""] }
         assignee:      { type: string }
         exploited_in_wild: { type: string, enum: [yes, no, ""], description: "Analyst's call on whether this finding is being exploited in the wild. Empty means unknown. Automation never sets this." }
-        exploited_in_wild_evidence: { type: string }
-        mitigation:    { type: string, description: "Markdown body of operational mitigation guidance from the mitigate skill: workarounds, detection, optionally a semgrep rule (see mitigation_semgrep)." }
-        mitigation_semgrep: { type: string, description: "Optional YAML semgrep rule from the mitigate skill. Empty when no rule was warranted." }
         dup_check:     { type: string, description: "Audit agent's one-sentence rationale for why this finding is distinct from the siblings already filed under the same scan_group. Empty for findings from skills that do not emit it." }
         novelty:       { type: string, enum: [unfixed, fixed, unclear, not_checked, ""], description: "Latest upstream novelty state. A touched file remains unclear until revalidate classifies the staged history." }
         production_viability: { type: string, enum: [VIABLE, NON_VIABLE, SAMPLE_OR_TEST, CONDITIONAL_VIABLE, ""], description: "Latest critic assessment of whether the finding can affect a real release build. Empty before assessment." }
@@ -1662,6 +1659,9 @@ components:
             disclosure_draft: { type: string }
             disclosure_title: { type: string, description: "The disclose skill's drafted GHSA summary; may differ from the finding's own title." }
             suggested_recipients: { type: string, description: "File-level owners for the finding's location, from CODEOWNERS or recent non-bot committers." }
+            exploited_in_wild_evidence: { type: string, description: "Evidence supporting the analyst's exploitation status." }
+            mitigation:    { type: string, description: "Markdown body of operational mitigation guidance from the mitigate skill: workarounds, detection, optionally a semgrep rule (see mitigation_semgrep)." }
+            mitigation_semgrep: { type: string, description: "Optional YAML semgrep rule from the mitigate skill. Empty when no rule was warranted." }
             sub_path:         { type: string, description: "Monorepo sub-folder the producing scan was scoped to. The finding's location is relative to it; empty means the repo root." }
             verification:
               allOf:

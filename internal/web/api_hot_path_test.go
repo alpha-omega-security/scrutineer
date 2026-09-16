@@ -26,9 +26,11 @@ func TestAPIListFindings_summaryColumnsCoverEveryField(t *testing.T) {
 		CWE: "CWE-78", Location: "main.go:12", VID: "vid-1", Affected: ">=1.0,<1.4",
 		Reachability: "reachable", QualityTier: "tier-1",
 		CVEID: "CVE-2026-1", GHSAID: "GHSA-xxxx", CVSSVector: "CVSS:3.1/AV:N",
-		CVSSScore: 9.8, FixVersion: "1.4.0", FixCommit: "abcd123",
+		CVSSScore: 9.8, CVSSv4Vector: "CVSS:4.0/AV:N", CVSSv4Score: 9.3,
+		FixVersion: "1.4.0", FixCommit: "abcd123",
 		Resolution: db.ResolutionFix, Assignee: "alice", MissedCount: 3,
-		DupCheck: "distinct from F2", Novelty: db.FindingNoveltyUnfixed,
+		ExploitedInWild: "yes",
+		DupCheck:        "distinct from F2", Novelty: db.FindingNoveltyUnfixed,
 		NoveltyCheckedCommit: "abcdef1", NoveltyCheckedAt: &checkedAt,
 		// Prose the summary must not carry, and whose columns are excluded.
 		Trace: "long trace", Snippet: "long snippet", SuggestedFix: "long diff",

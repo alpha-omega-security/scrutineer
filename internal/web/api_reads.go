@@ -379,6 +379,9 @@ func (s *Server) apiGetFinding(w http.ResponseWriter, r *http.Request) {
 	summary["suggested_recipients"] = f.SuggestedRecipients
 	summary["suggested_fix"] = f.SuggestedFix
 	summary["suggested_fix_commit"] = f.SuggestedFixCommit
+	summary["exploited_in_wild_evidence"] = f.ExploitedInWildEvidence
+	summary["mitigation"] = f.Mitigation
+	summary["mitigation_semgrep"] = f.MitigationSemgrep
 	verification, err := db.LatestFindingVerification(s.DB, f.ID)
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "load finding verification")
@@ -416,8 +419,9 @@ func (s *Server) apiGetFinding(w http.ResponseWriter, r *http.Request) {
 var findingSummaryColumns = []string{
 	"id", "scan_id", "repository_id", "finding_id", "commit", "sinks", "title",
 	"severity", "severity_caps", "severity_calibration_incomplete", "status", "cwe", "location", "vid", "affected", "reachability",
-	"quality_tier", "cve_id", "ghsa_id", "cvss_vector", "cvss_score",
+	"quality_tier", "cve_id", "ghsa_id", "cvss_vector", "cvss_score", "cvss_v4_vector", "cvss_v4_score",
 	"fix_version", "fix_commit", "resolution", "assignee", "missed_count",
+	"exploited_in_wild",
 	"dup_check", "novelty", "novelty_checked_commit", "novelty_checked_at",
 	"production_viability",
 }
@@ -445,10 +449,13 @@ func findingSummary(f db.Finding) map[string]any {
 		"ghsa_id":                         f.GHSAID,
 		"cvss_vector":                     f.CVSSVector,
 		"cvss_score":                      f.CVSSScore,
+		"cvss_v4_vector":                  f.CVSSv4Vector,
+		"cvss_v4_score":                   f.CVSSv4Score,
 		"fix_version":                     f.FixVersion,
 		"fix_commit":                      f.FixCommit,
 		"resolution":                      string(f.Resolution),
 		"assignee":                        f.Assignee,
+		"exploited_in_wild":               f.ExploitedInWild,
 		"missed_count":                    f.MissedCount,
 		"dup_check":                       f.DupCheck,
 		"novelty":                         string(f.Novelty),

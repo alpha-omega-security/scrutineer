@@ -3,12 +3,137 @@ package web
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"scrutineer/internal/db"
 	"scrutineer/internal/worker"
 )
+
+func decodeFindingListByID(t *testing.T, w *httptest.ResponseRecorder) map[uint]map[string]any {
+	t.Helper()
+	var list []map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&list); err != nil {
+		t.Fatal(err)
+	}
+	byID := make(map[uint]map[string]any, len(list))
+	for _, row := range list {
+		id, ok := row["id"].(float64)
+		if !ok {
+			t.Fatalf("list row has no numeric id: %+v", row)
+		}
+		byID[uint(id)] = row
+	}
+	return byID
+}
+
+func assertFindingFields(t *testing.T, got map[string]any, want map[string]any) {
+	t.Helper()
+	for key, wantValue := range want {
+		gotValue, ok := got[key]
+		if !ok || gotValue != wantValue {
+			t.Errorf("%s = %v, present=%v, want %v", key, gotValue, ok, wantValue)
+		}
+	}
+}
+
+func assertFindingFieldsAbsent(t *testing.T, got map[string]any, fields ...string) {
+	t.Helper()
+	for _, key := range fields {
+		if _, ok := got[key]; ok {
+			t.Errorf("unexpected field %s", key)
+		}
+	}
+}
+
+func TestAPIFindingResponsesExposeAssessmentFields(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo, scan := seedRunningScan(t, s)
+
+	populated := db.Finding{
+		ScanID: scan.ID, RepositoryID: repo.ID, Title: "populated", Severity: "High", Location: "main.go:12",
+		CVSSv4Vector: "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N",
+		CVSSv4Score:  9.3, ExploitedInWild: "yes", ExploitedInWildEvidence: "observed by incident response",
+		Mitigation: "Restrict untrusted input.", MitigationSemgrep: "rules: []",
+	}
+	empty := db.Finding{
+		ScanID: scan.ID, RepositoryID: repo.ID, Title: "empty", Severity: "Low", Location: "other.go:4",
+	}
+	if err := s.DB.Create(&populated).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DB.Create(&empty).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	w := apiReq(t, s, http.MethodGet, fmt.Sprintf("/api/repositories/%d/findings", repo.ID), scan.APIToken, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("list status = %d, want 200: %s", w.Code, w.Body)
+	}
+	byID := decodeFindingListByID(t, w)
+	assertFindingFields(t, byID[populated.ID], map[string]any{
+		"cvss_v4_vector":    populated.CVSSv4Vector,
+		"cvss_v4_score":     populated.CVSSv4Score,
+		"exploited_in_wild": populated.ExploitedInWild,
+	})
+	assertFindingFieldsAbsent(t, byID[populated.ID], "exploited_in_wild_evidence", "mitigation", "mitigation_semgrep")
+	assertFindingFields(t, byID[empty.ID], map[string]any{
+		"cvss_v4_vector":    "",
+		"cvss_v4_score":     float64(0),
+		"exploited_in_wild": "",
+	})
+
+	w = apiReq(t, s, http.MethodGet, fmt.Sprintf("/api/findings/%d", populated.ID), scan.APIToken, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("detail status = %d, want 200: %s", w.Code, w.Body)
+	}
+	var detail map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&detail); err != nil {
+		t.Fatal(err)
+	}
+	assertFindingFields(t, detail, map[string]any{
+		"cvss_v4_vector":             populated.CVSSv4Vector,
+		"cvss_v4_score":              populated.CVSSv4Score,
+		"exploited_in_wild":          populated.ExploitedInWild,
+		"exploited_in_wild_evidence": populated.ExploitedInWildEvidence,
+		"mitigation":                 populated.Mitigation,
+		"mitigation_semgrep":         populated.MitigationSemgrep,
+	})
+
+	w = apiReq(t, s, http.MethodGet, fmt.Sprintf("/api/findings/%d", empty.ID), scan.APIToken, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("empty detail status = %d, want 200: %s", w.Code, w.Body)
+	}
+	detail = nil
+	if err := json.NewDecoder(w.Body).Decode(&detail); err != nil {
+		t.Fatal(err)
+	}
+	assertFindingFields(t, detail, map[string]any{
+		"cvss_v4_vector":             "",
+		"cvss_v4_score":              float64(0),
+		"exploited_in_wild":          "",
+		"exploited_in_wild_evidence": "",
+		"mitigation":                 "",
+		"mitigation_semgrep":         "",
+	})
+
+	otherRepo := db.Repository{URL: "https://example.com/assessment-fields-other", Name: "assessment-fields-other"}
+	if err := s.DB.Create(&otherRepo).Error; err != nil {
+		t.Fatal(err)
+	}
+	otherScan := db.Scan{
+		RepositoryID: otherRepo.ID, Kind: worker.JobSkill, Status: db.ScanRunning, APIToken: "assessment-fields-other-token",
+	}
+	if err := s.DB.Create(&otherScan).Error; err != nil {
+		t.Fatal(err)
+	}
+	w = apiReq(t, s, http.MethodGet, fmt.Sprintf("/api/findings/%d", populated.ID), otherScan.APIToken, "")
+	if w.Code != http.StatusForbidden {
+		t.Errorf("cross-repository detail status = %d, want 403", w.Code)
+	}
+}
 
 func TestParseLimit(t *testing.T) {
 	tests := []struct {
