@@ -31,7 +31,7 @@ RUN GOBIN=/out go install github.com/git-pkgs/brief/cmd/brief@v0.13.0
 
 FROM rust:1.98-trixie@sha256:620dbcd124499c59e2406d3741574b5c5838cf9eb9656f0c3a03948f79b02959 AS zizmor-build
 ENV CARGO_HTTP_MULTIPLEXING=false
-RUN cargo install --locked --root /out zizmor@1.30.0
+RUN cargo install --locked --root /out zizmor@1.30.1
 
 # The runner image carries the proxy commands used by Scrutineer and by
 # harness/container consumers. Both are built CGO-free so they can be copied
