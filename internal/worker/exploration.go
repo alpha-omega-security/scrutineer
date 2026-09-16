@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"os"
@@ -11,19 +12,32 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"unicode"
 
 	"scrutineer/internal/db"
 )
 
-const ExplorationRandomDig = "random-dig"
+const (
+	ExplorationRandomDig        = "random-dig"
+	ExplorationAdversarialSweep = "adversarial-sweep"
+)
 
-// ValidateExploration rejects combinations that would silently turn a blind
-// source audit back into a planned, finding-scoped, or diff-only audit.
+// ValidateExploration rejects combinations that would turn an exploratory
+// source audit into a planned, finding-scoped, or diff-only audit.
 func ValidateExploration(scan *db.Scan, skill string) error {
 	if scan.ExplorationMode == "" && scan.ExplorationPath == "" {
 		return nil
 	}
-	if scan.ExplorationMode != ExplorationRandomDig || skill != deepDiveSkillName || scan.FocusArea != "" || scan.RescanMode == db.ScanRescanModeDiff || scan.FindingID != nil {
+	if skill != deepDiveSkillName || scan.FocusArea != "" || scan.RescanMode == db.ScanRescanModeDiff || scan.FindingID != nil {
+		return fmt.Errorf("invalid exploratory audit inputs")
+	}
+	switch scan.ExplorationMode {
+	case ExplorationRandomDig:
+	case ExplorationAdversarialSweep:
+		if scan.ExplorationPath == "" {
+			return fmt.Errorf("adversarial sweep requires a target path")
+		}
+	default:
 		return fmt.Errorf("invalid exploratory audit inputs")
 	}
 	if target := scan.ExplorationPath; target != "" && target != "." {
@@ -42,7 +56,7 @@ func (w *Worker) ValidateExplorationRunner(skill string) error {
 	for {
 		switch r := runner.(type) {
 		case LocalClaude, *LocalClaude:
-			return fmt.Errorf("random-dig requires a container runner; host execution is not supported")
+			return fmt.Errorf("exploratory audit requires a container runner; host execution is not supported")
 		case HostSplitRunner:
 			runner = r.runnerFor(skill)
 		case *HostSplitRunner:
@@ -54,17 +68,22 @@ func (w *Worker) ValidateExplorationRunner(skill string) error {
 }
 
 // ExplorationInstructions is shared by enqueue preflight and workspace staging
-// so skill overrides without the reference pack never queue automatic digs.
-func ExplorationInstructions(skill *db.Skill) ([]byte, error) {
+// so skill overrides without the reference pack never queue exploratory scans.
+func ExplorationInstructions(skill *db.Skill, mode string) ([]byte, error) {
 	if skill.SourcePath == "" {
 		return nil, fmt.Errorf("exploratory audit requires a skill reference pack")
 	}
-	body, err := os.ReadFile(filepath.Join(skill.SourcePath, "references", "random-dig.md"))
+	switch mode {
+	case ExplorationRandomDig, ExplorationAdversarialSweep:
+	default:
+		return nil, fmt.Errorf("unknown exploration mode %q", mode)
+	}
+	body, err := os.ReadFile(filepath.Join(skill.SourcePath, "references", mode+".md"))
 	if err != nil {
-		return nil, fmt.Errorf("read random-dig instructions: %w", err)
+		return nil, fmt.Errorf("read %s instructions: %w", mode, err)
 	}
 	if strings.TrimSpace(string(body)) == "" {
-		return nil, fmt.Errorf("random-dig instructions are empty")
+		return nil, fmt.Errorf("%s instructions are empty", mode)
 	}
 	return body, nil
 }
@@ -87,6 +106,22 @@ func (w *Worker) prepareExploration(ctx context.Context, workRoot string, scan *
 	if err := w.ValidateExplorationRunner(scan.SkillName); err != nil {
 		return err
 	}
+	if scan.ExplorationMode == ExplorationAdversarialSweep {
+		dirs, err := adversarialDirectories(ctx, filepath.Join(workRoot, "src"), scan.SubPath)
+		if err != nil {
+			return fmt.Errorf("select adversarial source directory: %w", err)
+		}
+		candidates := AdversarialSweepPaths(scan.Repository.ThreatModel, scan.SubPath)
+		if slices.Contains(candidates, scan.ExplorationPath) && explorationPathAvailable(dirs, scan.ExplorationPath) {
+			return nil
+		}
+		scan.ExplorationMode = ExplorationRandomDig
+		scan.ExplorationPath = ""
+	}
+	return w.prepareRandomDig(ctx, workRoot, scan)
+}
+
+func (w *Worker) prepareRandomDig(ctx context.Context, workRoot string, scan *db.Scan) error {
 	dirs, err := exploratoryDirectories(ctx, filepath.Join(workRoot, "src"), scan.SubPath)
 	if err != nil {
 		return fmt.Errorf("select exploratory source directory: %w", err)
@@ -106,7 +141,10 @@ func (w *Worker) prepareExploration(ctx context.Context, workRoot string, scan *
 	}
 	sum := sha256.Sum256(fmt.Appendf(nil, "random-dig:%d", seed))
 	target := dirs[binary.BigEndian.Uint64(sum[:])%uint64(len(dirs))]
-	result := w.DB.Model(scan).Update("exploration_path", target)
+	result := w.DB.Model(scan).Updates(map[string]any{
+		"exploration_mode": ExplorationRandomDig,
+		"exploration_path": target,
+	})
 	if result.Error != nil {
 		return fmt.Errorf("persist exploratory directory: %w", result.Error)
 	}
@@ -117,7 +155,92 @@ func (w *Worker) prepareExploration(ctx context.Context, workRoot string, scan *
 	return nil
 }
 
+func AdversarialSweepPaths(raw, subPath string) []string {
+	var report struct {
+		Components []struct {
+			Name    string `json:"name"`
+			InScope *bool  `json:"in_scope"`
+		} `json:"components"`
+		OutOfScope json.RawMessage `json:"out_of_scope"`
+	}
+	if json.Unmarshal([]byte(raw), &report) != nil {
+		return nil
+	}
+	var exclusions []struct {
+		Item string `json:"item"`
+	}
+	_ = json.Unmarshal(report.OutOfScope, &exclusions)
+	rawPaths := make([]string, 0, len(exclusions)+len(report.Components))
+	for _, exclusion := range exclusions {
+		rawPaths = append(rawPaths, exclusion.Item)
+	}
+	for _, component := range report.Components {
+		if component.InScope != nil && !*component.InScope {
+			rawPaths = append(rawPaths, component.Name)
+		}
+	}
+	cleanSubPath, err := CleanSubPath(subPath)
+	if err != nil {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(rawPaths))
+	paths := make([]string, 0, len(rawPaths))
+	for _, rawPath := range rawPaths {
+		candidate, ok := adversarialSweepPath(rawPath, cleanSubPath)
+		if !ok {
+			continue
+		}
+		if _, duplicate := seen[candidate]; duplicate {
+			continue
+		}
+		seen[candidate] = struct{}{}
+		paths = append(paths, candidate)
+	}
+	slices.Sort(paths)
+	return paths
+}
+
+func adversarialSweepPath(raw, subPath string) (string, bool) {
+	raw = strings.Trim(strings.TrimSpace(raw), "`")
+	if raw == "" || strings.HasPrefix(raw, "/") || strings.Contains(raw, ":") ||
+		strings.Contains(raw, "\\") || strings.ContainsAny(raw, "*?[]{}") ||
+		strings.IndexFunc(raw, unicode.IsSpace) >= 0 {
+		return "", false
+	}
+	clean, err := CleanSubPath(raw)
+	if err != nil || clean == "" {
+		return "", false
+	}
+	if exploratorySourceFile(clean) {
+		clean = path.Dir(clean)
+		if clean == "." {
+			return "", false
+		}
+	}
+	if subPath != "" && clean != subPath && !strings.HasPrefix(clean, subPath+"/") {
+		clean = path.Join(subPath, clean)
+	}
+	return clean, true
+}
+
+func explorationPathAvailable(dirs []string, target string) bool {
+	for _, dir := range dirs {
+		if dir == target || strings.HasPrefix(dir, target+"/") {
+			return true
+		}
+	}
+	return false
+}
+
 func exploratoryDirectories(ctx context.Context, src, subPath string) ([]string, error) {
+	return sourceDirectories(ctx, src, subPath, exploratorySkipDirectories)
+}
+
+func adversarialDirectories(ctx context.Context, src, subPath string) ([]string, error) {
+	return sourceDirectories(ctx, src, subPath, []string{".git"})
+}
+
+func sourceDirectories(ctx context.Context, src, subPath string, skipDirectories []string) ([]string, error) {
 	clean, err := CleanSubPath(subPath)
 	if err != nil {
 		return nil, err
@@ -136,7 +259,7 @@ func exploratoryDirectories(ctx context.Context, src, subPath string) ([]string,
 			return err
 		}
 		if entry.IsDir() {
-			if slices.Contains(exploratorySkipDirectories, strings.ToLower(entry.Name())) {
+			if slices.Contains(skipDirectories, strings.ToLower(entry.Name())) {
 				return fs.SkipDir
 			}
 			if clean != "" && name != "." && name != clean && !strings.HasPrefix(clean, name+"/") && !strings.HasPrefix(name, clean+"/") {
@@ -180,7 +303,7 @@ func stageExploratoryWorkspace(workRoot, skillDir, apiBase string, scan *db.Scan
 	if scan.ExplorationPath == "" {
 		return skillContext{}, fmt.Errorf("exploratory audit requires a selected directory")
 	}
-	body, err := ExplorationInstructions(skill)
+	body, err := ExplorationInstructions(skill, scan.ExplorationMode)
 	if err != nil {
 		return skillContext{}, err
 	}
@@ -190,15 +313,22 @@ func stageExploratoryWorkspace(workRoot, skillDir, apiBase string, scan *db.Scan
 	if err := stageSkill(skill, workRoot, skillDir); err != nil {
 		return skillContext{}, err
 	}
-	// Staging keeps repository identity, scope, and the token, but omits
-	// model-derived guidance. The web server's apiAuth middleware separately
-	// restricts that token to validating this scan's own report.
-	blind := *scan
-	blind.Repository.ScanConfig = ""
-	blind.Repository.ThreatModel = ""
-	document, err := buildSkillContext(apiBase, "", "", &blind, &blind.Repository, nil, nil, nil)
+	staged := *scan
+	staged.Repository.ScanConfig = ""
+	if scan.ExplorationMode == ExplorationRandomDig {
+		staged.Repository.ThreatModel = ""
+	}
+	document, err := buildSkillContext(apiBase, "", "", &staged, &staged.Repository, nil, nil, nil)
 	if err != nil {
 		return skillContext{}, err
 	}
-	return document, writeSkillContext(workRoot, skillDir, document)
+	if err := writeSkillContext(workRoot, skillDir, document); err != nil {
+		return skillContext{}, err
+	}
+	if scan.ExplorationMode == ExplorationAdversarialSweep {
+		if err := stageThreatModel(workRoot, staged.SubPath, staged.Repository.ThreatModel); err != nil {
+			return skillContext{}, err
+		}
+	}
+	return document, nil
 }

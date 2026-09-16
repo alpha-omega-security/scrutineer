@@ -40,7 +40,7 @@ func exploratoryFixture(t *testing.T, s *Server) (db.Scan, db.Skill) {
 }
 
 func TestExploratoryAuditSelection(t *testing.T) {
-	selected := 0
+	selected, adversarial := 0, 0
 	for id := uint(1); id <= 3000; id++ {
 		first := selectExploratoryAudit(id)
 		if first != selectExploratoryAudit(id) {
@@ -48,10 +48,78 @@ func TestExploratoryAuditSelection(t *testing.T) {
 		}
 		if first {
 			selected++
+			if selectAdversarialSweep(id) {
+				adversarial++
+			}
 		}
 	}
 	if selected < 750 || selected > 1500 {
 		t.Fatalf("selected %d of 3000 runs, outside requested 25-50%%", selected)
+	}
+	if adversarial < selected*2/5 || adversarial > selected*3/5 {
+		t.Fatalf("selected %d adversarial sweeps from %d exploratory runs", adversarial, selected)
+	}
+}
+
+func TestExploratoryAuditAdversarialSweepFromAPIRequestedThreatModel(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/adversarial-api", Name: "adversarial-api"}
+	if err := s.DB.Create(&repo).Error; err != nil {
+		t.Fatal(err)
+	}
+	triageID := uint(1)
+	for !selectExploratoryAudit(triageID) || !selectAdversarialSweep(triageID) {
+		triageID++
+	}
+	triage := db.Scan{
+		ID: triageID, RepositoryID: repo.ID, SkillName: "triage", Status: db.ScanRunning,
+		APIToken: "adversarial-api-token",
+	}
+	if err := s.DB.Create(&triage).Error; err != nil {
+		t.Fatal(err)
+	}
+	modelSkill := db.Skill{Name: threatModelSkillName, Body: "model", Active: true, Source: "ui", OutputFile: "report.json", SchemaJSON: `{"type":"object"}`}
+	deepDive := db.Skill{Name: deepDiveSkillName, Body: "audit", Active: true, Source: "disk", SourcePath: "../../skills/security-deep-dive", OutputFile: "report.json", OutputKind: "findings"}
+	for _, skill := range []*db.Skill{&modelSkill, &deepDive} {
+		if err := s.DB.Create(skill).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	w := apiReq(t, s, http.MethodPost, fmt.Sprintf("/api/repositories/%d/skills/%s/run", repo.ID, threatModelSkillName), triage.APIToken, `{}`)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("enqueue status = %d, want 201: %s", w.Code, w.Body)
+	}
+	var parent db.Scan
+	if err := s.DB.Where("skill_id = ?", modelSkill.ID).First(&parent).Error; err != nil {
+		t.Fatal(err)
+	}
+	parent.Status = db.ScanDone
+	parent.Report = `{"components":[{"name":"examples","in_scope":false}],"out_of_scope":[{"item":"examples/","reason":"sample code","provenance":"documented"}]}`
+	if err := s.DB.Model(&parent).Updates(map[string]any{"status": parent.Status, "report": parent.Report}).Error; err != nil {
+		t.Fatal(err)
+	}
+	s.onScanFinalized(&parent)
+	s.onScanFinalized(&parent)
+
+	var scans []db.Scan
+	if err := s.DB.Where("skill_id = ?", deepDive.ID).Order("id").Find(&scans).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(scans) != 2 {
+		t.Fatalf("deep dives = %d, want planned plus adversarial: %+v", len(scans), scans)
+	}
+	if scans[0].ExplorationMode != "" {
+		t.Fatalf("planned scan changed: %+v", scans[0])
+	}
+	extra := scans[1]
+	if extra.ExplorationMode != worker.ExplorationAdversarialSweep || extra.ExplorationPath != "examples" ||
+		extra.TriageScanID == nil || *extra.TriageScanID != triage.ID || extra.ScanGroup != fmt.Sprintf("focus-%d", parent.ID) {
+		t.Fatalf("wrong adversarial scan: %+v", extra)
+	}
+	var updated db.Repository
+	if err := s.DB.First(&updated, repo.ID).Error; err != nil || !strings.Contains(updated.ThreatModel, `"item": "examples/"`) {
+		t.Fatalf("repository threat model was not updated before fan-out: %q err=%v", updated.ThreatModel, err)
 	}
 }
 

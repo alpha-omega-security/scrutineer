@@ -289,8 +289,8 @@ type Scan struct {
 	FocusArea string `gorm:"type:text"`
 
 	// TriageScanID identifies the triage invocation that requested this scan.
-	// ExplorationMode is empty for planned audits; random-dig audits choose
-	// ExplorationPath from the filtered checkout without using the threat model.
+	// ExplorationMode is empty for planned audits. ExplorationPath records the
+	// source directory selected for a random dig or adversarial sweep.
 	TriageScanID    *uint `gorm:"index"`
 	ExplorationMode string
 	ExplorationPath string

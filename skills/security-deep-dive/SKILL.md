@@ -20,7 +20,7 @@ metadata:
 
 # security-deep-dive
 
-The worker may run this skill as an independent `random-dig` audit. In that mode it stages `references/random-dig.md` as the scan's instructions instead of this planned-audit procedure, retains the same report schema, withholds threat-model context, and restricts the callback API to validating that scan's report.
+The worker may run this skill as an exploratory `random-dig` or `adversarial-sweep` audit. It stages the matching file from `references/` as the scan's instructions instead of this planned-audit procedure, retains the same report schema, and restricts the callback API to validating that scan's report. A random dig receives no threat-model context. An adversarial sweep receives the threat model only to identify and challenge the exclusion attached to its selected directory.
 
 Audit the first-party source for security vulnerabilities. The target is this codebase's own code; do not report that a dependency has a CVE. A finding is valid only if the vulnerable logic lives here. If the same vulnerable code exists in a fork, a sibling project, or a vendored copy, note it; the finding follows the code.
 

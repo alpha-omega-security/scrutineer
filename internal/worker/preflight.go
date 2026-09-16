@@ -41,7 +41,7 @@ import (
 // queue); or fail the scan when a prereq has irrecoverably failed
 // (true, nil).
 func (w *Worker) preflightSkill(ctx context.Context, scan *db.Scan, attempt int) (bool, error) {
-	if scan.SkillID == nil || scan.ExplorationMode == ExplorationRandomDig {
+	if scan.SkillID == nil || scan.ExplorationMode != "" {
 		return false, nil
 	}
 	var skill db.Skill

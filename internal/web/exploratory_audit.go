@@ -25,7 +25,7 @@ func (s *Server) validateExploratoryEnqueue(scan *db.Scan, skill *db.Skill) erro
 	if err := s.Worker.ValidateExplorationRunner(skill.Name); err != nil {
 		return err
 	}
-	_, err := worker.ExplorationInstructions(skill)
+	_, err := worker.ExplorationInstructions(skill, scan.ExplorationMode)
 	return err
 }
 
@@ -52,6 +52,24 @@ func selectExploratoryAudit(triageID uint) bool {
 	const sampleDenominator = 3
 	sum := sha256.Sum256(fmt.Appendf(nil, "exploratory-audit:%d", triageID))
 	return binary.BigEndian.Uint64(sum[:])%sampleDenominator == 0
+}
+
+func selectAdversarialSweep(triageID uint) bool {
+	sum := sha256.Sum256(fmt.Appendf(nil, "adversarial-sweep:%d", triageID))
+	return binary.BigEndian.Uint64(sum[:])%2 == 0
+}
+
+func exploratoryAuditTarget(parent *db.Scan) (string, string) {
+	if parent.SubPath != "" || parent.Ref != "" || !selectAdversarialSweep(*parent.TriageScanID) {
+		return worker.ExplorationRandomDig, ""
+	}
+	paths := worker.AdversarialSweepPaths(parent.Report, parent.SubPath)
+	if len(paths) == 0 {
+		return worker.ExplorationRandomDig, ""
+	}
+	sum := sha256.Sum256(fmt.Appendf(nil, "adversarial-target:%d", *parent.TriageScanID))
+	target := paths[binary.BigEndian.Uint64(sum[:])%uint64(len(paths))]
+	return worker.ExplorationAdversarialSweep, target
 }
 
 func (s *Server) autoEnqueueExploratoryAudit(parent *db.Scan, skillID uint, group string) {
@@ -97,10 +115,11 @@ func (s *Server) enqueueExploratoryAudit(parent *db.Scan, skillID uint, group st
 	if planned == 0 {
 		return nil
 	}
+	mode, target := exploratoryAuditTarget(parent)
 	_, err := s.enqueueSkillWith(context.Background(), parent.RepositoryID, skillID, ScanOpts{
 		Effort: parent.Effort, Profile: parent.Profile, SubPath: parent.SubPath,
 		ScopeMode: parent.ScopeMode, Ref: parent.Ref, ScanGroup: group,
-		TriageScanID: parent.TriageScanID, ExplorationMode: worker.ExplorationRandomDig,
+		TriageScanID: parent.TriageScanID, ExplorationMode: mode, ExplorationPath: target,
 	})
 	return err
 }

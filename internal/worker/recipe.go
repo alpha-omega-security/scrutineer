@@ -113,7 +113,7 @@ func buildScanRecipe(scan *db.Scan, backend, threatModel, scanConfig string) (st
 	if scan.FocusArea != "" && json.Valid([]byte(scan.FocusArea)) {
 		r.FocusArea = json.RawMessage(scan.FocusArea)
 	}
-	if scan.ExplorationMode != "" {
+	if scan.ExplorationMode == ExplorationRandomDig {
 		r.ThreatModelSHA256 = ""
 	}
 	b, err := json.Marshal(r)
