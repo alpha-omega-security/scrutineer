@@ -91,6 +91,7 @@ Only when `has_code`:
 - `history`
 - `threat-model`
 - `semgrep`
+- `betterleaks`
 
 Only when `has_embedded_native`:
 

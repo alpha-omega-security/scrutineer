@@ -3292,7 +3292,7 @@ func TestRepoScan_diffRescanQueuesGroupedSkills(t *testing.T) {
 
 	repo := db.Repository{URL: "https://github.com/foo/bar", Name: "bar"}
 	s.DB.Create(&repo)
-	for _, name := range []string{reconSkillName, historySkillName, "embedded-native", threatModelSkillName, "semgrep", deepDiveSkillName} {
+	for _, name := range []string{reconSkillName, historySkillName, "embedded-native", threatModelSkillName, "semgrep", "betterleaks", deepDiveSkillName} {
 		s.DB.Create(&db.Skill{Name: name, Body: "b", OutputFile: "r.json",
 			OutputKind: "freeform", Version: 1, Active: true, Source: "ui"})
 	}
@@ -3308,8 +3308,8 @@ func TestRepoScan_diffRescanQueuesGroupedSkills(t *testing.T) {
 	if err := s.DB.Where("repository_id = ?", repo.ID).Order("skill_name").Find(&scans).Error; err != nil {
 		t.Fatal(err)
 	}
-	if len(scans) != 5 {
-		t.Fatalf("queued scans = %d, want 5", len(scans))
+	if len(scans) != 6 {
+		t.Fatalf("queued scans = %d, want 6", len(scans))
 	}
 	group := scans[0].ScanGroup
 	if group == "" {
@@ -3325,7 +3325,7 @@ func TestRepoScan_diffRescanQueuesGroupedSkills(t *testing.T) {
 			t.Errorf("%s ScanGroup = %q, want shared %q", sc.SkillName, sc.ScanGroup, group)
 		}
 	}
-	for _, name := range []string{reconSkillName, historySkillName, "embedded-native", threatModelSkillName, "semgrep"} {
+	for _, name := range []string{reconSkillName, historySkillName, "embedded-native", threatModelSkillName, "semgrep", "betterleaks"} {
 		if !gotNames[name] {
 			t.Errorf("missing queued %s scan", name)
 		}
@@ -5250,7 +5250,7 @@ func TestSettingsShow_rendersAboutAndScannerFindings(t *testing.T) {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
 	body := w.Body.String()
-	for _, want := range []string{"Scanner findings", "About", "Scrutineer version", "Backend (claude)", "Semgrep", "Zizmor", "Container runtime"} {
+	for _, want := range []string{"Scanner findings", "About", "Scrutineer version", "Backend (claude)", "Semgrep", "Zizmor", "Betterleaks", "Container runtime"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("settings page missing %q", want)
 		}

@@ -25,6 +25,9 @@ ARG BANDIT_VERSION=1.9.4
 
 FROM golang:1.27.1-trixie@sha256:9baa6b4187bbb98d240372a8a235ac0bb6b5ddd52bba1431dc2f7c0705862728 AS go-tools
 
+ARG BETTERLEAKS_VERSION=v1.8.1
+RUN GOBIN=/out CGO_ENABLED=0 go install -ldflags "-X=github.com/betterleaks/betterleaks/version.Version=${BETTERLEAKS_VERSION}" github.com/betterleaks/betterleaks@${BETTERLEAKS_VERSION}
+
 RUN GOBIN=/out go install github.com/git-pkgs/git-pkgs@v0.20.0
 
 RUN GOBIN=/out go install github.com/git-pkgs/brief/cmd/brief@v0.13.0

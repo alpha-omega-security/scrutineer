@@ -38,6 +38,12 @@ copilot_amd64=$(sed -E -n \
 copilot_arm64=$(sed -E -n \
   's/^ARG COPILOT_ARM64_LOCK=(v[0-9]+\.[0-9]+\.[0-9]+)@sha256:[0-9a-f]{64}$/\1/p' \
   "$root/Dockerfile.runner")
+betterleaks_main=$(sed -E -n \
+  's/^ARG BETTERLEAKS_VERSION=(v[0-9]+\.[0-9]+\.[0-9]+)$/\1/p' \
+  "$root/Dockerfile")
+betterleaks_runner=$(sed -E -n \
+  's/^ARG BETTERLEAKS_VERSION=(v[0-9]+\.[0-9]+\.[0-9]+)$/\1/p' \
+  "$root/Dockerfile.runner")
 
 require_single() {
   local label=$1
@@ -60,6 +66,8 @@ require_single 'Dockerfile.runner OpenCode amd64 lock' "$opencode_amd64"
 require_single 'Dockerfile.runner OpenCode arm64 lock' "$opencode_arm64"
 require_single 'Dockerfile.runner Copilot amd64 lock' "$copilot_amd64"
 require_single 'Dockerfile.runner Copilot arm64 lock' "$copilot_arm64"
+require_single 'Dockerfile betterleaks pin' "$betterleaks_main"
+require_single 'Dockerfile.runner betterleaks pin' "$betterleaks_runner"
 
 if [ "$runner_amd64" != "$runner_arm64" ] || \
    [ "$runner_amd64" != "$main_image" ]; then
@@ -89,6 +97,7 @@ require_pair 'Codex' "$codex_amd64" "$codex_arm64"
 require_pair 'Codex runner and model catalog' "$codex_amd64" "$codex_catalog"
 require_pair 'OpenCode' "$opencode_amd64" "$opencode_arm64"
 require_pair 'Copilot' "$copilot_amd64" "$copilot_arm64"
+require_pair 'Betterleaks container images' "$betterleaks_main" "$betterleaks_runner"
 
 # PyPI and crates.io can publish at different times; check the actual pins even
 # when Renovate is updating an existing branch past its minimumGroupSize gate.

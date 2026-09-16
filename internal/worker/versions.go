@@ -106,10 +106,11 @@ func RunnerImageRevision(ctx context.Context, rt ContainerRuntime, image string)
 // that binary's name to QueryRunnerToolVersions so adding a harness needs no
 // change here.
 type RunnerToolVersions struct {
-	Zizmor  string
-	Semgrep string
-	Bandit  string
-	Harness string
+	Zizmor      string
+	Semgrep     string
+	Bandit      string
+	Betterleaks string
+	Harness     string
 }
 
 // queryToolsScript builds the sh script that prints each tool's version as a
@@ -124,6 +125,7 @@ func queryToolsScript(harnessBin string) string {
 		// bandit prints the interpreter it runs under on a second line, which
 		// carries an `=` of its own and would parse as a key here.
 		`echo "bandit=$(bandit --version 2>/dev/null | head -n 1)"; ` +
+		`echo "betterleaks=$(betterleaks --version 2>/dev/null)"; ` +
 		`echo "harness=$(` + harnessBin + ` --version 2>/dev/null)"`
 }
 
@@ -176,6 +178,8 @@ func parseToolVersions(out string) RunnerToolVersions {
 			v.Semgrep = val
 		case "bandit":
 			v.Bandit = val
+		case "betterleaks":
+			v.Betterleaks = val
 		case "harness":
 			v.Harness = val
 		}

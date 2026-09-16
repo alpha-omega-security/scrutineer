@@ -174,6 +174,21 @@
     },
     {
       "customType": "regex",
+      "description": "Update the betterleaks container-image pins",
+      "managerFilePatterns": [
+        "/^Dockerfile$/",
+        "/^Dockerfile\\.runner$/"
+      ],
+      "matchStrings": [
+        "ARG BETTERLEAKS_VERSION=(?<currentValue>v\\d+\\.\\d+\\.\\d+)"
+      ],
+      "packageNameTemplate": "github.com/betterleaks/betterleaks",
+      "depNameTemplate": "betterleaks",
+      "datasourceTemplate": "go",
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
       "description": "Update Go CLI tool pins in container images",
       "managerFilePatterns": [
         "/^Dockerfile$/",
@@ -253,6 +268,12 @@
       "description": "Keep both container-image semgrep pins synchronized",
       "matchPackageNames": ["semgrep"],
       "groupName": "semgrep",
+      "minimumGroupSize": 2
+    },
+    {
+      "description": "Keep both container-image betterleaks pins synchronized",
+      "matchPackageNames": ["github.com/betterleaks/betterleaks"],
+      "groupName": "betterleaks",
       "minimumGroupSize": 2
     },
     {
