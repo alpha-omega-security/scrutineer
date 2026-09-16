@@ -487,6 +487,8 @@ func (w *Worker) parseSkillOutputKind(ctx context.Context, skill *db.Skill, scan
 		return w.parseRepoOverviewOutput(scan, report, emit)
 	case "posture":
 		return w.parsePostureOutput(scan, report, emit)
+	case "compliance":
+		return w.parseComplianceOutput(scan, report, emit)
 	case "patch":
 		return w.parsePatchOutput(ctx, scan, report, emit)
 	case "reattack":

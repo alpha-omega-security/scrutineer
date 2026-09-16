@@ -922,6 +922,106 @@ func (w *Worker) parsePostureOutput(scan *db.Scan, report string, emit func(Even
 	return nil
 }
 
+// parseComplianceOutput replaces the repository's ComplianceControl rows with
+// the report's control verdicts and derives Repository.BaselineLevel from
+// them: the highest level whose applicable controls all passed, with every
+// lower level also passed. Anything other than PASS counts against a level
+// and NA controls are left out of it, darnit's per-level rule, chained here
+// so a level only counts once every lower level is attained.
+func (w *Worker) parseComplianceOutput(scan *db.Scan, report string, emit func(Event)) error {
+	var result struct {
+		Controls []struct {
+			ID      string `json:"id"`
+			Level   int    `json:"level"`
+			Status  string `json:"status"`
+			Details string `json:"details"`
+			Source  string `json:"source"`
+		} `json:"controls"`
+		Total int    `json:"total"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal([]byte(report), &result); err != nil {
+		return fmt.Errorf("parse compliance: %w", err)
+	}
+	if result.Total != len(result.Controls) {
+		return fmt.Errorf("compliance report carries %d controls but total says %d", len(result.Controls), result.Total)
+	}
+	if scan.SubPath != "" {
+		emit(Event{Kind: KindText, Text: "sub-path scan: repo-level compliance rows unchanged"})
+		return nil
+	}
+	if len(result.Controls) == 0 {
+		reason := result.Error
+		if reason == "" {
+			reason = "no controls in report"
+		}
+		emit(Event{Kind: KindText, Text: "compliance: " + reason + ", leaving repository unchanged"})
+		return nil
+	}
+	rows := make([]db.ComplianceControl, 0, len(result.Controls))
+	seen := make(map[string]bool, len(result.Controls))
+	for _, c := range result.Controls {
+		id := strings.TrimSpace(c.ID)
+		switch {
+		case id == "":
+			return fmt.Errorf("compliance control with empty id")
+		case seen[id]:
+			return fmt.Errorf("compliance control %s reported twice", id)
+		case c.Level < 1 || c.Level > 3:
+			return fmt.Errorf("compliance control %s level %d is not 1, 2 or 3", id, c.Level)
+		case !db.ComplianceStatuses[c.Status]:
+			return fmt.Errorf("compliance control %s status %q is not a compliance status", id, c.Status)
+		case c.Source != "darnit" && c.Source != "agent":
+			return fmt.Errorf("compliance control %s source %q is not darnit or agent", id, c.Source)
+		}
+		seen[id] = true
+		rows = append(rows, db.ComplianceControl{
+			RepositoryID: scan.RepositoryID,
+			ScanID:       scan.ID,
+			ControlID:    id,
+			Level:        c.Level,
+			Status:       c.Status,
+			Details:      strings.TrimSpace(c.Details),
+			Source:       c.Source,
+		})
+	}
+	level := baselineLevel(rows)
+	if err := w.DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Where("repository_id = ?", scan.RepositoryID).Delete(&db.ComplianceControl{}).Error; err != nil {
+			return fmt.Errorf("prune compliance controls: %w", err)
+		}
+		if err := tx.Create(&rows).Error; err != nil {
+			return fmt.Errorf("create compliance controls: %w", err)
+		}
+		return tx.Model(&db.Repository{}).Where("id = ?", scan.RepositoryID).Update("baseline_level", level).Error
+	}); err != nil {
+		return err
+	}
+	emit(Event{Kind: KindText, Text: fmt.Sprintf("compliance: %d controls, baseline level %d", len(rows), level)})
+	return nil
+}
+
+func baselineLevel(rows []db.ComplianceControl) int {
+	level := 0
+	for lvl := 1; lvl <= 3; lvl++ {
+		applicable := 0
+		for _, r := range rows {
+			if r.Level != lvl || r.Status == "NA" {
+				continue
+			}
+			if r.Status != "PASS" {
+				return level
+			}
+			applicable++
+		}
+		if applicable == 0 {
+			return level
+		}
+		level = lvl
+	}
+	return level
+}
+
 // parseVerifyOutput records the outcome of a finding-scoped verification run.
 // Each scan gets an immutable rubric row, while the human-readable summary and
 // any lifecycle transition retain their existing finding audit trail entries.

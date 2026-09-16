@@ -159,6 +159,18 @@
     },
     {
       "customType": "regex",
+      "description": "Update the darnit runner-image pin",
+      "managerFilePatterns": ["/^Dockerfile\\.runner$/"],
+      "matchStrings": [
+        "ARG DARNIT_VERSION=(?<currentValue>\\d+\\.\\d+\\.\\d+)"
+      ],
+      "packageNameTemplate": "darnit-mcp",
+      "depNameTemplate": "darnit-mcp",
+      "datasourceTemplate": "pypi",
+      "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
       "description": "Update the zizmor container-image pins",
       "managerFilePatterns": [
         "/^Dockerfile$/",

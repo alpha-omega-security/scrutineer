@@ -45,6 +45,7 @@ The central entity. One row per git URL.
 | federation_opt_out_reason | text | Optional reason the maintainer gave; it travels with the `optout` record. |
 | posture | text | Disclosure-readiness tier from the `posture` skill: `ready`, `partial`, `unprepared`. |
 | posture_summary | text | One-line explanation that goes with `posture`. |
+| baseline_level | integer | Highest OpenSSF Baseline level (1-3) whose applicable controls all passed on the latest `compliance` run, every lower level included. 0 when none did or when the skill has not run. Derived from `compliance_controls` at write time. |
 | health | text | Evidence-based maintenance classification: `active`, `stale`, `abandoned`, or `zombie`. Empty until metadata or maintainer evidence is available. A repository whose newest package release is more than eighteen months old is held at `stale`. |
 | fork | text | `owner/name` of the staging fork inside `-fork-org`. Written by the `fork` skill. |
 | clone_error | text | Last clone/fetch failure message; non-empty means the repo is currently unreachable. Cleared on next successful clone. |
@@ -182,7 +183,7 @@ One row per installed skill. Loaded from `skills/` directories on disk or the UI
 | body | text | Markdown body after the frontmatter. The prompt. |
 | schema_json | text | Optional schema.json contents. |
 | output_file | text | Relative path the skill writes to. Promoted from metadata. |
-| output_kind | text | Parser key: `findings`, `maintainers`, `packages`, `advisories`, `dependencies`, `finding_dedup`, `repo_metadata`, `repo_overview`, `subprojects`, `posture`, `verify`, `critic`, `patch`, `reattack`, `threat_model`, `exposure`, `freeform`. Promoted from metadata. |
+| output_kind | text | Parser key: `findings`, `maintainers`, `packages`, `advisories`, `dependencies`, `finding_dedup`, `repo_metadata`, `repo_overview`, `subprojects`, `posture`, `compliance`, `verify`, `critic`, `patch`, `reattack`, `threat_model`, `exposure`, `freeform`. Promoted from metadata. |
 | version | integer | Bumps on every save. |
 | active | boolean | |
 | requires_remote | boolean | When true, scrutineer refuses to enqueue this skill against a local-directory repository (file:// URL). Set via `scrutineer.requires_remote: true` in SKILL.md frontmatter. Use for skills that depend on a forge URL or remote-only data (advisories, exposure, fork, maintainers, metadata, packages, report-upstream). |
@@ -576,6 +577,22 @@ Monorepo sub-paths discovered by the `subprojects` skill.
 | description | text | |
 | created_at | datetime | |
 | updated_at | datetime | |
+
+## compliance_controls
+
+One row per OpenSSF Baseline control from the latest `compliance` run. The repository's set is replaced wholesale on each run, and `repositories.baseline_level` is derived from it in the same transaction.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | integer PK | |
+| repository_id | integer FK | |
+| scan_id | integer FK | The `compliance` scan that wrote the row. |
+| control_id | text, not null | Baseline identifier, e.g. `OSPS-AC-01.01`. The category is the second segment (`AC`, `BR`, `DO`, `GV`, `LE`, `QA`, `SA`, `VM`). |
+| level | integer | Baseline maturity level the control belongs to: 1, 2 or 3. |
+| status | text | `PASS`, `FAIL`, `WARN`, `NA`, `ERROR` or `PENDING_LLM`. `NA` is left out of the level computation; every other non-`PASS` status blocks the level. `PENDING_LLM` means darnit deferred the control to LLM analysis and the agent left it unresolved. |
+| details | text | The verdict's rationale, from darnit or from the agent. |
+| source | text | `darnit` when the verdict is the tool's own, `agent` when the scan's model resolved a control darnit had deferred or could not verify. |
+| created_at | datetime | |
 
 ## sbom_uploads
 

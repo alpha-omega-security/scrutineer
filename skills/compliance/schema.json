@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "compliance report",
+  "type": "object",
+  "required": ["schema_version", "framework", "total", "controls"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": 1 },
+    "framework": { "type": "string" },
+    "total": { "type": "integer", "minimum": 0, "description": "Number of controls darnit reported; controls must carry exactly that many entries." },
+    "controls": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "level", "status", "details", "source"],
+        "additionalProperties": false,
+        "properties": {
+          "id":      { "type": "string", "minLength": 1, "description": "Baseline control identifier, e.g. OSPS-AC-01.01." },
+          "level":   { "type": "integer", "minimum": 1, "maximum": 3 },
+          "status":  { "type": "string", "enum": ["PASS", "FAIL", "WARN", "NA", "ERROR", "PENDING_LLM"] },
+          "details": { "type": "string", "description": "Rationale for the verdict, with file paths when the agent resolved it." },
+          "source":  { "type": "string", "enum": ["darnit", "agent"], "description": "darnit when the verdict is the tool's own, agent when the model resolved a deferred control." },
+          "consultation": {
+            "type": "object",
+            "description": "Present on a PENDING_LLM entry straight out of the wrapper; removed once the agent resolves it.",
+            "properties": {
+              "prompt":            { "type": "string" },
+              "analysis_hints":    { "type": "array", "items": { "type": "string" } },
+              "gathered_evidence": { "type": "object" }
+            }
+          }
+        }
+      }
+    },
+    "error": { "type": "string", "description": "Why darnit could not run; controls is empty when set." }
+  }
+}

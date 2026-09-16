@@ -200,6 +200,7 @@ func (s *Server) apiGetRepository(w http.ResponseWriter, r *http.Request) {
 		"fork":            repo.Fork,
 		"posture":         repo.Posture,
 		"posture_summary": repo.PostureSummary,
+		"baseline_level":  repo.BaselineLevel,
 		"health":          repo.Health,
 	})
 }

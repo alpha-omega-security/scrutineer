@@ -44,6 +44,7 @@ var repoWideProjectionKinds = map[string]bool{
 	"repo_metadata": true,
 	"repo_overview": true,
 	"posture":       true,
+	"compliance":    true,
 	"finding_dedup": true,
 }
 

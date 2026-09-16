@@ -1375,6 +1375,7 @@ components:
         fork:           { type: string, description: 'owner/name of the staging fork in fork_org, when one exists.' }
         posture:        { type: string, enum: [ready, partial, unprepared], description: 'Disclosure-readiness tier from the posture skill. Empty when posture has not run.' }
         posture_summary: { type: string }
+        baseline_level: { type: integer, description: 'Highest OpenSSF Baseline level (1-3) whose applicable controls all passed on the latest compliance run. 0 when none did or when compliance has not run.' }
         health:            { type: string, enum: [active, stale, abandoned, zombie], description: 'Evidence-based maintenance classification. Empty when evidence is incomplete.' }
 
     RepositoryExport:

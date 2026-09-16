@@ -2885,3 +2885,149 @@ func TestParseMaintainers_saveFailureKeepsMaintainerLinked(t *testing.T) {
 		t.Errorf("repository maintainers = %+v, want alice linked despite the failed save", linked)
 	}
 }
+
+func TestParseComplianceOutput(t *testing.T) {
+	report := `{"schema_version":1,"framework":"openssf-baseline","total":5,"controls":[
+		{"id":"OSPS-AC-01.01","level":1,"status":"PASS","details":" MFA enforced ","source":"darnit"},
+		{"id":"OSPS-DO-01.01","level":1,"status":"PASS","details":"README has usage","source":"agent"},
+		{"id":"OSPS-LE-02.01","level":1,"status":"NA","details":"Excluded via .baseline.toml","source":"darnit"},
+		{"id":"OSPS-GV-01.01","level":2,"status":"PENDING_LLM","details":"LLM consultation required","source":"darnit"},
+		{"id":"OSPS-BR-03.01","level":3,"status":"PASS","details":"","source":"darnit"}
+	]}`
+	repo, gdb := runSkillWithReport(t, "compliance", report)
+	var rows []db.ComplianceControl
+	gdb.Where("repository_id = ?", repo.ID).Order("control_id").Find(&rows)
+	if len(rows) != 5 {
+		t.Fatalf("rows = %d, want 5", len(rows))
+	}
+	if rows[0].ControlID != "OSPS-AC-01.01" || rows[0].Details != "MFA enforced" || rows[0].Source != "darnit" || rows[0].ScanID == 0 {
+		t.Errorf("row[0] = %+v, want trimmed darnit row with scan id", rows[0])
+	}
+	if rows[4].ControlID != "OSPS-LE-02.01" || rows[4].Status != "NA" {
+		t.Errorf("row[4] = %+v, want the NA row stored as-is", rows[4])
+	}
+	if rows[2].ControlID != "OSPS-DO-01.01" || rows[2].Source != "agent" {
+		t.Errorf("row[2] = %+v, want the agent source kept", rows[2])
+	}
+	gdb.First(&repo, repo.ID)
+	if repo.BaselineLevel != 1 {
+		t.Errorf("baseline_level = %d, want 1 (level 2 blocked by PENDING_LLM, level 3 not reached)", repo.BaselineLevel)
+	}
+
+	// A second run replaces the previous set and recomputes the level.
+	scan := db.Scan{RepositoryID: repo.ID}
+	gdb.Create(&scan)
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	second := `{"schema_version":1,"framework":"openssf-baseline","total":1,"controls":[
+		{"id":"OSPS-AC-01.01","level":1,"status":"FAIL","details":"MFA off","source":"darnit"}]}`
+	if err := w.parseComplianceOutput(&scan, second, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	gdb.Where("repository_id = ?", repo.ID).Find(&rows)
+	if len(rows) != 1 || rows[0].Status != "FAIL" || rows[0].ScanID != scan.ID {
+		t.Errorf("second run rows = %+v, want the single FAIL row from the new scan", rows)
+	}
+	gdb.First(&repo, repo.ID)
+	if repo.BaselineLevel != 0 {
+		t.Errorf("baseline_level after failing run = %d, want 0", repo.BaselineLevel)
+	}
+}
+
+func TestBaselineLevel(t *testing.T) {
+	c := func(level int, status string) db.ComplianceControl {
+		return db.ComplianceControl{Level: level, Status: status}
+	}
+	cases := []struct {
+		name string
+		rows []db.ComplianceControl
+		want int
+	}{
+		{"no rows", nil, 0},
+		{"all three levels pass", []db.ComplianceControl{c(1, "PASS"), c(2, "PASS"), c(3, "PASS")}, 3},
+		{"NA does not block", []db.ComplianceControl{c(1, "PASS"), c(1, "NA"), c(2, "NA"), c(2, "PASS")}, 2},
+		{"WARN blocks like FAIL", []db.ComplianceControl{c(1, "PASS"), c(2, "WARN"), c(3, "PASS")}, 1},
+		{"ERROR blocks", []db.ComplianceControl{c(1, "ERROR")}, 0},
+		{"level with only NA controls is not attained", []db.ComplianceControl{c(1, "PASS"), c(2, "NA"), c(3, "PASS")}, 1},
+		{"higher level passing does not skip a failed lower one", []db.ComplianceControl{c(1, "FAIL"), c(2, "PASS")}, 0},
+	}
+	for _, tc := range cases {
+		if got := baselineLevel(tc.rows); got != tc.want {
+			t.Errorf("%s: baselineLevel = %d, want %d", tc.name, got, tc.want)
+		}
+	}
+}
+
+// seedComplianceRepo opens a fresh database holding one repository at the
+// given baseline level with one PASS control and one scan on it.
+func seedComplianceRepo(t *testing.T, level int, subPath string) (*gorm.DB, db.Repository, db.Scan) {
+	t.Helper()
+	gdb, err := db.Open(filepath.Join(t.TempDir(), "p.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := db.Repository{URL: "https://example.com/x", Name: "x", BaselineLevel: level}
+	gdb.Create(&repo)
+	gdb.Create(&db.ComplianceControl{RepositoryID: repo.ID, ControlID: "OSPS-AC-01.01", Level: 1, Status: "PASS", Source: "darnit"})
+	scan := db.Scan{RepositoryID: repo.ID, SubPath: subPath}
+	gdb.Create(&scan)
+	return gdb, repo, scan
+}
+
+func TestParseComplianceOutput_rejectsBadReports(t *testing.T) {
+	cases := []struct {
+		name   string
+		report string
+		want   string
+	}{
+		{"duplicate id", `{"total":2,"controls":[{"id":"OSPS-AC-01.01","level":1,"status":"PASS","source":"darnit"},{"id":"OSPS-AC-01.01","level":1,"status":"FAIL","source":"darnit"}]}`, "reported twice"},
+		{"empty id", `{"total":1,"controls":[{"id":" ","level":1,"status":"PASS","source":"darnit"}]}`, "empty id"},
+		{"bad level", `{"total":1,"controls":[{"id":"OSPS-AC-01.01","level":4,"status":"PASS","source":"darnit"}]}`, "not 1, 2 or 3"},
+		{"bad status", `{"total":1,"controls":[{"id":"OSPS-AC-01.01","level":1,"status":"N/A","source":"darnit"}]}`, `status "N/A"`},
+		{"bad source", `{"total":1,"controls":[{"id":"OSPS-AC-01.01","level":1,"status":"PASS","source":"llm"}]}`, `source "llm"`},
+		{"not json", `{`, "parse compliance"},
+		{"total mismatch", `{"total":2,"controls":[{"id":"OSPS-AC-01.01","level":1,"status":"PASS","source":"darnit"}]}`, "total says 2"},
+	}
+	gdb, repo, scan := seedComplianceRepo(t, 3, "")
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	for _, tc := range cases {
+		err := w.parseComplianceOutput(&scan, tc.report, func(Event) {})
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err = %v, want %q", tc.name, err, tc.want)
+		}
+		var n int64
+		gdb.Model(&db.ComplianceControl{}).Where("repository_id = ?", repo.ID).Count(&n)
+		gdb.First(&repo, repo.ID)
+		if n != 1 || repo.BaselineLevel != 3 {
+			t.Errorf("%s: rejected report touched the repository: rows=%d level=%d", tc.name, n, repo.BaselineLevel)
+		}
+	}
+}
+
+func TestParseComplianceOutput_leavesRepositoryUnchanged(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		subPath string
+		report  string
+		wantMsg string
+	}{
+		{"wrapper error", "", `{"schema_version":1,"framework":"openssf-baseline","total":0,"controls":[],"error":"darnit not found on PATH"}`, "darnit not found on PATH"},
+		{"empty controls", "", `{"schema_version":1,"framework":"openssf-baseline","total":0,"controls":[]}`, "no controls in report"},
+		{"sub-path scan", "packages/cli", `{"total":1,"controls":[{"id":"OSPS-AC-01.01","level":1,"status":"FAIL","details":"x","source":"darnit"}]}`, "sub-path scan"},
+	} {
+		gdb, repo, scan := seedComplianceRepo(t, 2, tc.subPath)
+		w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+		var events []string
+		if err := w.parseComplianceOutput(&scan, tc.report, func(e Event) { events = append(events, e.Text) }); err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if len(events) != 1 || !strings.Contains(events[0], tc.wantMsg) {
+			t.Errorf("%s: events = %q, want one containing %q", tc.name, events, tc.wantMsg)
+		}
+		var rows []db.ComplianceControl
+		gdb.Where("repository_id = ?", repo.ID).Find(&rows)
+		gdb.First(&repo, repo.ID)
+		if len(rows) != 1 || rows[0].Status != "PASS" || repo.BaselineLevel != 2 {
+			t.Errorf("%s: repository changed: rows=%+v level=%d", tc.name, rows, repo.BaselineLevel)
+		}
+	}
+}

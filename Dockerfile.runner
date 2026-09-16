@@ -22,6 +22,7 @@ ARG COPILOT_ARM64_LOCK=v1.0.83@sha256:213b3a267042dbac3cd8ae22c82f5ea04ff3cabc00
 ARG SEMGREP_VERSION=1.176.1
 
 ARG BANDIT_VERSION=1.9.4
+ARG DARNIT_VERSION=0.1.0
 
 FROM golang:1.27.1-trixie@sha256:9baa6b4187bbb98d240372a8a235ac0bb6b5ddd52bba1431dc2f7c0705862728 AS go-tools
 
@@ -55,6 +56,7 @@ ARG COPILOT_AMD64_LOCK
 ARG COPILOT_ARM64_LOCK
 ARG SEMGREP_VERSION
 ARG BANDIT_VERSION
+ARG DARNIT_VERSION
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -71,12 +73,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && apt-get update && apt-get install -y --no-install-recommends gh \
  && rm -rf /var/lib/apt/lists/*
 
-# semgrep and bandit in venvs so PEP 668 doesn't require
-# --break-system-packages. They get one each rather than sharing: the two are
+# semgrep, bandit and darnit in venvs so PEP 668 doesn't require
+# --break-system-packages. They get one each rather than sharing: the three are
 # pinned and bumped independently, and a shared environment would let a
-# semgrep bump drag bandit's dependencies with it.
-# Smoke-test required CLIs at build time so missing packages or broken venv
-# symlinks fail the image build instead of later scan jobs.
+# semgrep bump drag the others' dependencies with it.
+# darnit-mcp is a metapackage whose dependencies carry no version, so the
+# packages the audit runs (darnit-core, darnit-baseline) are pinned with it.
+# darnit's 0.1.0 wheel ships without openssf-baseline.toml, which
+# get_framework_config_path resolves two directories above the package (three
+# above its own module file), next to the templates/ the TOML loads relative
+# to itself; the release sdist carries both, so they are taken from there.
+# cel-python's c7nlib imports packaging without declaring it.
+# Smoke-test required CLIs at build time so missing packages, broken venv
+# symlinks or a misplaced framework TOML fail the image build instead of
+# later scan jobs.
 RUN python3 -m venv /opt/semgrep && \
     /opt/semgrep/bin/pip install --no-cache-dir "semgrep==${SEMGREP_VERSION}" "setuptools<81" && \
     ln -s /opt/semgrep/bin/semgrep /usr/local/bin/semgrep && \
@@ -84,6 +94,15 @@ RUN python3 -m venv /opt/semgrep && \
     python3 -m venv /opt/bandit && \
     /opt/bandit/bin/pip install --no-cache-dir "bandit==${BANDIT_VERSION}" && \
     ln -s /opt/bandit/bin/bandit /usr/local/bin/bandit && \
+    python3 -m venv /opt/darnit && \
+    /opt/darnit/bin/pip install --no-cache-dir "darnit-mcp==${DARNIT_VERSION}" "darnit-core==${DARNIT_VERSION}" "darnit-baseline==${DARNIT_VERSION}" packaging && \
+    ln -s /opt/darnit/bin/darnit /usr/local/bin/darnit && \
+    darnit_lib="$(/opt/darnit/bin/python -c 'import darnit_baseline, pathlib; print(pathlib.Path(darnit_baseline.__file__).parent.parent.parent)')" && \
+    /opt/darnit/bin/pip download --no-cache-dir --no-deps --no-binary :all: -d /tmp/darnit-sdist "darnit-baseline==${DARNIT_VERSION}" && \
+    tar -xzf "/tmp/darnit-sdist/darnit_baseline-${DARNIT_VERSION}.tar.gz" -C "${darnit_lib}" --strip-components=1 \
+        "darnit_baseline-${DARNIT_VERSION}/openssf-baseline.toml" "darnit_baseline-${DARNIT_VERSION}/templates" && \
+    rm -rf /tmp/darnit-sdist && \
+    darnit validate "${darnit_lib}/openssf-baseline.toml" && \
     python3 --version && \
     jq --version && \
     jsonschema --version && \
@@ -91,7 +110,8 @@ RUN python3 -m venv /opt/semgrep && \
     gh --version && \
     semgrep --version && \
     pysemgrep --version && \
-    bandit --version
+    bandit --version && \
+    darnit --version
 
 ARG TARGETARCH
 RUN set -eux; \

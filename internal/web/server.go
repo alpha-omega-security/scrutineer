@@ -2437,6 +2437,7 @@ type repoShowView struct {
 	Inventory        repoInventoryView
 	Subprojects      repoSubprojectView
 	Maintainers      []db.Maintainer
+	Compliance       []db.ComplianceControl
 	Alternatives     []db.PackageAlternative
 	ShowAlternatives bool
 	IgnoredPaths     []string
@@ -2467,6 +2468,8 @@ func (s *Server) loadRepoShowView(
 	deps := s.loadRepoDependencyView(repo.ID, query.Get("deps") == "all")
 	inventory := s.loadRepoInventoryView(repo.ID, deps.Groups)
 	maintainers := s.repoMaintainers(repo.ID)
+	var compliance []db.ComplianceControl
+	s.DB.Where("repository_id = ?", repo.ID).Order("level, control_id").Find(&compliance)
 	evidenceComplete, err := db.RepositoryHealthEvidenceComplete(s.DB, repo.ID)
 	if err != nil {
 		s.Log.Error("repository health evidence", "repo", repo.ID, "err", err)
@@ -2493,6 +2496,7 @@ func (s *Server) loadRepoShowView(
 		Inventory:          inventory,
 		Subprojects:        s.loadRepoSubprojectView(repo.ID),
 		Maintainers:        maintainers,
+		Compliance:         compliance,
 		Alternatives:       alternatives,
 		ShowAlternatives:   showPackageAlternatives(repo, alternatives),
 		IgnoredPaths:       ignoredPaths,
@@ -2544,6 +2548,7 @@ func (v repoShowView) renderData() map[string]any {
 		"AdvisoriesTotal":    v.Inventory.AdvisoriesTotal,
 		"AdvisoryAudits":     v.Inventory.AdvisoryAudits,
 		"Maintainers":        v.Maintainers,
+		"Compliance":         v.Compliance,
 		"Alternatives":       v.Alternatives,
 		"ShowAlternatives":   v.ShowAlternatives,
 		"IgnoredPaths":       v.IgnoredPaths,
@@ -3041,7 +3046,7 @@ func (s *Server) deleteRepository(repo db.Repository) (deletedRepository, error)
 		}
 		for _, child := range []any{
 			&db.Finding{}, &db.Scan{}, &db.Subproject{}, &db.Dependency{},
-			&db.Dependent{}, &db.Package{}, &db.Advisory{}, &db.SBOMUpload{},
+			&db.Dependent{}, &db.Package{}, &db.Advisory{}, &db.SBOMUpload{}, &db.ComplianceControl{},
 		} {
 			if err := tx.Where("repository_id = ?", repo.ID).Delete(child).Error; err != nil {
 				return err

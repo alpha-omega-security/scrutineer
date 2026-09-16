@@ -76,6 +76,7 @@ func TestRepoDelete_removesRepoAndAllLinkedData(t *testing.T) {
 	}
 
 	s.DB.Create(&db.Subproject{RepositoryID: repo.ID, Path: "cli"})
+	s.DB.Create(&db.ComplianceControl{RepositoryID: repo.ID, ScanID: scan.ID, ControlID: "OSPS-AC-01.01", Level: 1, Status: "PASS", Source: "darnit"})
 	s.DB.Create(&db.Dependency{RepositoryID: repo.ID, Name: "left-pad", Ecosystem: "npm"})
 	s.DB.Create(&db.Package{RepositoryID: repo.ID, Name: "acme-pkg", Ecosystem: "npm"})
 	s.DB.Create(&db.Advisory{RepositoryID: repo.ID, Title: "CVE-2026-0001"})
@@ -137,6 +138,7 @@ func TestRepoDelete_removesRepoAndAllLinkedData(t *testing.T) {
 		"scans":        count(&db.Scan{}, "repository_id = ?", repo.ID),
 		"findings":     count(&db.Finding{}, "repository_id = ?", repo.ID),
 		"subprojects":  count(&db.Subproject{}, "repository_id = ?", repo.ID),
+		"compliance":   count(&db.ComplianceControl{}, "repository_id = ?", repo.ID),
 		"dependencies": count(&db.Dependency{}, "repository_id = ?", repo.ID),
 		"dependents":   count(&db.Dependent{}, "repository_id = ?", repo.ID),
 		"packages":     count(&db.Package{}, "repository_id = ?", repo.ID),

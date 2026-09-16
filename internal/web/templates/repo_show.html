@@ -100,6 +100,11 @@
       Threat Model
     </button>
     {{end}}
+    {{if .Compliance}}
+    <button type="button" role="tab" id="rt16" aria-controls="rp16" aria-selected="false">
+      Compliance {{if .Repo.BaselineLevel}}<span class="badge-outline ml-1">L{{.Repo.BaselineLevel}}</span>{{end}}
+    </button>
+    {{end}}
     <button type="button" role="tab" id="rt12" aria-controls="rp12" aria-selected="false">
       Workbench
       {{if .Workbench.HasOverride}}<span class="badge-outline ml-1">override</span>{{end}}
@@ -563,6 +568,29 @@
   {{if .ThreatModel}}
   <div role="tabpanel" id="rp10" aria-labelledby="rt10" hidden>
     {{template "threat_model" (dict "TM" .ThreatModel "RepoID" .Repo.ID "Commit" $.TMCommit)}}
+  </div>
+  {{end}}
+
+  {{if .Compliance}}
+  <div role="tabpanel" id="rp16" aria-labelledby="rt16" hidden>
+    <p class="text-sm mb-4">
+      {{if .Repo.BaselineLevel}}OpenSSF Baseline level {{.Repo.BaselineLevel}} attained.{{else}}No OpenSSF Baseline level attained.{{end}}
+      A level counts as attained only when every applicable control at that level and below passed.
+    </p>
+    <table class="table w-full">
+      <thead><tr><th>Control</th><th>Level</th><th>Status</th><th>Details</th><th>Source</th></tr></thead>
+      <tbody>
+      {{range .Compliance}}
+        <tr id="control-{{.ID}}">
+          <td class="font-medium"><code>{{.ControlID}}</code></td>
+          <td>{{.Level}}</td>
+          <td>{{if eq .Status "PASS"}}<span class="badge-secondary">PASS</span>{{else if eq .Status "FAIL"}}<span class="badge-destructive">FAIL</span>{{else}}<span class="badge-outline">{{.Status}}</span>{{end}}</td>
+          <td class="whitespace-normal text-sm">{{.Details}}</td>
+          <td class="text-xs text-muted-foreground">{{.Source}}</td>
+        </tr>
+      {{end}}
+      </tbody>
+    </table>
   </div>
   {{end}}
 

@@ -120,6 +120,7 @@ func TestAPIGetRepository_includesPostureFields(t *testing.T) {
 	s.DB.Model(&repo).Updates(map[string]any{
 		"posture":         "partial",
 		"posture_summary": "SECURITY.md present, PVR disabled",
+		"baseline_level":  2,
 		"health":          db.RepositoryHealthZombie,
 	})
 
@@ -140,6 +141,9 @@ func TestAPIGetRepository_includesPostureFields(t *testing.T) {
 	}
 	if body["posture_summary"] != "SECURITY.md present, PVR disabled" {
 		t.Errorf("posture_summary = %v", body["posture_summary"])
+	}
+	if body["baseline_level"] != float64(2) {
+		t.Errorf("baseline_level = %v, want 2", body["baseline_level"])
 	}
 	if body["health"] != "zombie" {
 		t.Errorf("health = %v, want zombie", body["health"])

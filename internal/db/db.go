@@ -88,6 +88,11 @@ type Repository struct {
 	Posture        string `gorm:"index"`
 	PostureSummary string
 
+	// BaselineLevel is the highest OpenSSF Baseline level (1-3) whose
+	// applicable controls all passed on the latest compliance run, 0 when
+	// none did or the skill has not run. Overwritten on each compliance run.
+	BaselineLevel int
+
 	// Health is the evidence-based maintenance classification: active, stale,
 	// abandoned, or zombie. Empty means there is not yet enough evidence to
 	// make a classification.
@@ -1606,7 +1611,7 @@ func Open(dsn string) (*gorm.DB, error) {
 		&FindingCommunication{}, &FindingReference{}, &FindingHistory{}, &FindingReview{}, &FindingVerification{}, &FindingAttackPath{},
 		&RemediationAttempt{}, &RemediationValidation{}, &AuditEvent{},
 		&Dependency{}, &ExpectedFinding{}, &Package{}, &PackageAlternative{}, &Dependent{}, &FindingDependent{}, &Advisory{}, &AdvisoryAudit{},
-		&Maintainer{}, &Skill{}, &Subproject{},
+		&Maintainer{}, &Skill{}, &Subproject{}, &ComplianceControl{},
 		&SBOMUpload{}, &SBOMPackage{}, &CNA{}, &Setting{},
 		&Conversation{}, &ChatMessage{}, &InterchangeRecord{},
 	); err != nil {
@@ -2011,6 +2016,34 @@ type CNA struct {
 	FetchedAt *time.Time
 	CreatedAt time.Time
 	UpdatedAt time.Time
+}
+
+// ComplianceControl is one OpenSSF Baseline control verdict from the latest
+// compliance run on a repository. The repository's set is replaced wholesale
+// on each run; Repository.BaselineLevel is derived from it at write time.
+type ComplianceControl struct {
+	ID           uint `gorm:"primarykey"`
+	RepositoryID uint `gorm:"index;not null"`
+	ScanID       uint `gorm:"index"`
+	// ControlID is the Baseline identifier, e.g. "OSPS-AC-01.01"; the
+	// category is its second segment.
+	ControlID string `gorm:"not null"`
+	Level     int
+	// Status is one of ComplianceStatuses. PENDING_LLM means darnit deferred
+	// the control to LLM analysis and the agent left it unresolved.
+	Status  string `gorm:"index"`
+	Details string `gorm:"type:text"`
+	// Source is "darnit" when the verdict is the tool's own and "agent" when
+	// the scan's model resolved a control darnit had deferred or could not
+	// verify.
+	Source    string
+	CreatedAt time.Time
+}
+
+// ComplianceStatuses is the closed set a ComplianceControl.Status may take,
+// mirroring darnit's sieve result statuses.
+var ComplianceStatuses = map[string]bool{
+	"PASS": true, "FAIL": true, "WARN": true, "NA": true, "ERROR": true, "PENDING_LLM": true,
 }
 
 // Subproject is a scannable unit the subprojects skill discovered inside
