@@ -78,6 +78,7 @@ jobs:
           case "$PROFILE" in
             ruby-rails) base=ruby ;;
             scala)      base=java ;;
+            kotlin)     base=java ;;
             *)          base= ;;
           esac
           if [[ -n "$base" ]]; then

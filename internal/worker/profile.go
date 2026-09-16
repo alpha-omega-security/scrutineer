@@ -151,6 +151,15 @@ var builtinProfiles = []Profile{
 			{briefLanguage, []string{"Scala"}},
 		},
 	},
+	{
+		// Before java: a Kotlin build reports Gradle plus Kotlin as the
+		// dominant language. There is no Kotlin-specific package manager,
+		// so the language selector is the only route in.
+		Name:            "kotlin",
+		BaseProfile:     "java",
+		FallbackProfile: "java",
+		Detect:          []BriefMatch{{briefLanguage, []string{"Kotlin"}}},
+	},
 	{Name: "java", Detect: pm("Maven", "Gradle")},
 	{Name: "dotnet", Detect: pm("NuGet", "dotnet CLI")},
 	{Name: "beam", Detect: pm("Mix", "rebar3")},

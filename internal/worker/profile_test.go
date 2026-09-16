@@ -155,6 +155,7 @@ func TestMatchProfile(t *testing.T) {
 
 		// language fallbacks
 		{"Scala language matches scala (belt-and-braces for a *.scala-only checkout)", briefJSON("language:Scala"), "scala"},
+		{"Kotlin language matches kotlin", briefJSON("language:Kotlin"), "kotlin"},
 		{"Perl language matches perl (belt-and-braces for a *.pl-only dist)", briefJSON("language:Perl"), "perl"},
 		{"C language matches c-cpp", briefJSON("language:C"), "c-cpp"},
 		{"C++ language matches c-cpp", briefJSON("language:C++"), "c-cpp"},
@@ -233,6 +234,19 @@ func TestMatchProfile(t *testing.T) {
 			"Gradle + Scala language picks scala over java",
 			briefJSON("package_manager:Gradle", "language:Scala"),
 			"scala",
+		},
+		{
+			"Gradle + Kotlin language picks kotlin over java",
+			briefJSON("package_manager:Gradle", "language:Kotlin"),
+			"kotlin",
+		},
+		{
+			// A Java-majority project with a build.gradle.kts and a few *.kt
+			// files reports Java as the dominant language, so the Kotlin
+			// language selector must not fire and Gradle routes to java.
+			"Java-dominant repo with secondary Kotlin picks java",
+			`{"languages":[{"name":"Java","category":"language"},{"name":"Kotlin","category":"language"}],"package_managers":[{"name":"Gradle"}]}`,
+			"java",
 		},
 
 		// no-match cases

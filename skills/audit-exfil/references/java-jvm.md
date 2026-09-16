@@ -3,8 +3,9 @@
 ## SSRF
 
 Search for java.net.URL/URI, HttpClient, URLConnection, OkHttp, Apache
-HttpClient, RestTemplate, WebClient, Feign, webhook callbacks, URL previewers,
-and importers. Safe code should resolve caller input through a fixed service
+HttpClient, RestTemplate, WebClient, Feign, Ktor `HttpClient`, Kotlin
+`URL(x).readText()`/`readBytes()`, webhook callbacks, URL previewers, and
+importers. Safe code should resolve caller input through a fixed service
 map or strict allowlist and handle redirects consistently. Check localhost
 aliases, IPv6, numeric IP encodings, DNS rebinding, proxy settings, and cloud
 metadata addresses.
