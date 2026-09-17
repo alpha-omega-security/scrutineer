@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/db/dbtest"
 	"scrutineer/internal/queue"
 )
 
@@ -849,6 +850,107 @@ func TestWorker_resumeAccountPausedRestoreOnEnqueueError(t *testing.T) {
 	}
 	if strings.Contains(got.Error, autoResumeAfterPrefix) {
 		t.Fatalf("error = %q, stale auto-resume timestamp should have been dropped", got.Error)
+	}
+}
+
+func TestWorker_skipsDeletedPausedScan(t *testing.T) {
+	gdb := dbtest.Open(t)
+	repo := db.Repository{URL: "https://example.com/deleted", Name: "deleted"}
+	if err := gdb.Create(&repo).Error; err != nil {
+		t.Fatal(err)
+	}
+	scan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanQueued}
+	if err := gdb.Create(&scan).Error; err != nil {
+		t.Fatal(err)
+	}
+	// A queue message can outlive the scan: account errors pause queued rows
+	// without removing their jobs, then repository deletion removes the rows.
+	body, err := json.Marshal(queue.Payload{ScanID: scan.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	w.pauseQueuedOnAccountError(0)
+	if err := gdb.First(&scan, scan.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if scan.Status != db.ScanPaused {
+		t.Fatalf("scan status = %s, want paused", scan.Status)
+	}
+	if err := gdb.Delete(&scan).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := gdb.Delete(&repo).Error; err != nil {
+		t.Fatal(err)
+	}
+	err = w.wrap(func(context.Context, *db.Scan, func(Event)) (string, error) {
+		t.Error("handler called for deleted scan")
+		return "", nil
+	})(context.Background(), body)
+	if err != nil {
+		t.Fatalf("stale job should be acknowledged without retry: %v", err)
+	}
+}
+
+func TestWorker_scanLoadDatabaseErrorIsRetryable(t *testing.T) {
+	gdb := dbtest.Open(t)
+	sqlDB, err := gdb.DB()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sqlDB.Close(); err != nil {
+		t.Fatal(err)
+	}
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	err = w.wrap(func(context.Context, *db.Scan, func(Event)) (string, error) {
+		t.Error("handler called after database failure")
+		return "", nil
+	})(context.Background(), []byte(`{"scan_id":1}`))
+	if err == nil || !strings.Contains(err.Error(), "load scan 1:") {
+		t.Fatalf("database failure must remain retryable: %v", err)
+	}
+}
+
+func TestWorker_staleDispatchCannotRestoreDeletedScan(t *testing.T) {
+	for _, action := range []string{"failed prerequisites", "opted out"} {
+		t.Run(action, func(t *testing.T) {
+			gdb := dbtest.Open(t)
+			repo := db.Repository{URL: "https://example.com/stale", Name: "stale"}
+			if err := gdb.Create(&repo).Error; err != nil {
+				t.Fatal(err)
+			}
+			scan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanQueued}
+			if err := gdb.Create(&scan).Error; err != nil {
+				t.Fatal(err)
+			}
+			// Dispatch loaded the row before a concurrent pause and deletion.
+			if err := gdb.Preload("Repository").First(&scan, scan.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+			w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+			w.pauseQueuedOnAccountError(0)
+			if err := gdb.Delete(&db.Scan{}, scan.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := gdb.Delete(&repo).Error; err != nil {
+				t.Fatal(err)
+			}
+			switch action {
+			case "failed prerequisites":
+				w.failScanPrereqs(&scan, "verify", "prereqs failed", []string{"deep-dive"})
+			case "opted out":
+				w.cancelOptedOut(&scan)
+			}
+			for _, model := range []any{&db.Scan{}, &db.Repository{}} {
+				var n int64
+				if err := gdb.Model(model).Count(&n).Error; err != nil {
+					t.Fatal(err)
+				}
+				if n != 0 {
+					t.Errorf("stale dispatch restored %d %T row(s)", n, model)
+				}
+			}
+		})
 	}
 }
 
