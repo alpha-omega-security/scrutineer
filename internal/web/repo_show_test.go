@@ -45,6 +45,42 @@ func getRepoPagePath(t *testing.T, s *Server, path string) string {
 	return w.Body.String()
 }
 
+func TestRepoShow_scansTabListsEveryQueuedFocusArea(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://github.com/laravel/pint", Name: "pint"}
+	s.DB.Create(&repo)
+	areas := []string{"Configuration File Loading", "Git-based Path Resolution", "Prettier Node Worker IPC"}
+	for _, name := range areas {
+		s.DB.Create(&db.Scan{
+			RepositoryID: repo.ID, Kind: "skill", SkillName: "security-deep-dive",
+			Status: db.ScanQueued, StatusPriority: db.StatusPriorityFor(db.ScanQueued),
+			ScanGroup: "focus-7",
+			FocusArea: fmt.Sprintf(`{"name":%q,"paths":["app/**"],"surface":"untrusted input"}`, name),
+		})
+	}
+	for i := 0; i < 2; i++ {
+		s.DB.Create(&db.Scan{
+			RepositoryID: repo.ID, Kind: "skill", SkillName: "recon",
+			Status: db.ScanDone, StatusPriority: db.StatusPriorityFor(db.ScanDone),
+		})
+	}
+
+	body := getRepoPage(t, s, repo.ID)
+	rows := strings.Count(body, `<tr id="scan-`)
+	if rows != len(areas)+1 {
+		t.Errorf("scans tab rendered %d rows, want %d (one per queued focus area + one recon)", rows, len(areas)+1)
+	}
+	for _, name := range areas {
+		if !strings.Contains(body, name) {
+			t.Errorf("scans tab should name queued focus area %q", name)
+		}
+	}
+	if !strings.Contains(body, `href="/scans?group=focus-7"`) {
+		t.Error("a fanned-out row should link to the rest of its batch")
+	}
+}
+
 func TestRepoShow_scanAllButton(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
@@ -333,6 +369,7 @@ func TestRepoScansFragment_rowMatchesTheFullPage(t *testing.T) {
 		FindingsCount: 3, Model: "claude-opus-5", CostUSD: 1.25, Commit: "deadbeefcafe",
 		StartedAt: &startedAt, FinishedAt: &finishedAt,
 		Log: strings.Repeat("log line\n", 100), Report: `{"big":"report"}`,
+		FocusArea: `{"name":"API routes","paths":["pkg/api/**"]}`, ScanGroup: "batch-api",
 	}
 	s.DB.Create(&scan)
 	skill := db.Skill{Name: "audit", Body: "b", Active: true, Source: "ui", Version: 1}

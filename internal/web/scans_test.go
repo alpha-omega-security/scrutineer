@@ -767,6 +767,66 @@ func TestScansRetryFailed_dedupesRepeatedFailures(t *testing.T) {
 	}
 }
 
+func TestScansRetryFailed_unscopedFocusAreaSupersedesAndIsSuperseded(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/r", Name: "r"}
+	s.DB.Create(&repo)
+	skill := db.Skill{Name: "security-deep-dive", Description: "d", Body: "b",
+		OutputFile: "report.json", OutputKind: "findings", Version: 1,
+		Active: true, Source: "ui"}
+	s.DB.Create(&skill)
+
+	const (
+		parserArea = `{"name":"parser","paths":["parser/**"],"surface":"request bytes"}`
+		serverArea = `{"name":"server","paths":["server/**"],"surface":"HTTP requests"}`
+	)
+	mk := func(status db.ScanStatus, subPath, focusArea string) {
+		s.DB.Create(&db.Scan{
+			RepositoryID:   repo.ID,
+			Kind:           worker.JobSkill,
+			Status:         status,
+			StatusPriority: db.StatusPriorityFor(status),
+			SkillID:        &skill.ID,
+			SkillName:      skill.Name,
+			SubPath:        subPath,
+			FocusArea:      focusArea,
+		})
+	}
+
+	// A later scoped run supersedes an unscoped fallback for the same tuple.
+	mk(db.ScanFailed, "scoped-newer", "")
+	mk(db.ScanDone, "scoped-newer", parserArea)
+
+	// A later unscoped run supersedes a scoped run for the same tuple.
+	mk(db.ScanFailed, "unscoped-newer", parserArea)
+	mk(db.ScanDone, "unscoped-newer", "")
+
+	// Different non-empty focus areas remain independent.
+	mk(db.ScanFailed, "distinct-areas", parserArea)
+	mk(db.ScanDone, "distinct-areas", serverArea)
+
+	var maxID uint
+	s.DB.Model(&db.Scan{}).Select("MAX(id)").Scan(&maxID)
+
+	w := httptest.NewRecorder()
+	s.scansRetryFailed(w, localReq(http.MethodPost, "/scans/retry-failed"))
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, want 303; body=%s", w.Code, w.Body)
+	}
+
+	var queued []db.Scan
+	s.DB.Where("id > ? AND status = ?", maxID, db.ScanQueued).Find(&queued)
+	if len(queued) != 1 {
+		t.Fatalf("new queued scans = %d, want exactly 1", len(queued))
+	}
+	if queued[0].SubPath != "distinct-areas" || queued[0].FocusArea != parserArea {
+		t.Errorf("retried scan = {sub_path: %q, focus_area: %q}, want distinct parser area",
+			queued[0].SubPath, queued[0].FocusArea)
+	}
+}
+
 func TestScanRetry_blocksNonViableExternalReporting(t *testing.T) {
 	for _, skillName := range []string{discloseSkillName, reportUpstreamSkillName, publicIssueSkillName} {
 		t.Run(skillName, func(t *testing.T) {
