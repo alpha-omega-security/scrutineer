@@ -116,7 +116,7 @@ func TestApiAuditMetrics_returnsAggregate(t *testing.T) {
 		return f
 	}
 	a, b := mk("F1"), mk("F2")
-	_, _ = db.AddFindingReview(s.DB, a.ID, "false_positive", "", "false_positive", "andrew")
+	_, _ = db.AddFindingReview(s.DB, a.ID, "false_positive", "guarded", "false_positive", "andrew")
 	_, _ = db.AddFindingReview(s.DB, b.ID, "true_positive", "", "false_positive", "andrew")
 
 	r := httptest.NewRequest(http.MethodGet, "/api/v1/audit/metrics", nil)
@@ -203,7 +203,7 @@ func TestApiAuditQueue(t *testing.T) {
 	// A Low finding that already has a review is excluded.
 	reviewed := db.Finding{ScanID: f.ScanID, RepositoryID: f.RepositoryID, Title: "done", Severity: "Low"}
 	s.DB.Create(&reviewed)
-	if _, err := db.AddFindingReview(s.DB, reviewed.ID, "false_positive", "", "", ""); err != nil {
+	if _, err := db.AddFindingReview(s.DB, reviewed.ID, "false_positive", "guarded", "", ""); err != nil {
 		t.Fatalf("seed review: %v", err)
 	}
 

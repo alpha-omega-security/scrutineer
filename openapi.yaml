@@ -2040,6 +2040,11 @@ components:
         reason:            { type: string }
         automated_outcome: { type: string, description: Automation verdict snapshotted at review time, empty when no revalidate run had spoken. }
         reviewer:          { type: string }
+        source_scan_id:    { type: integer, description: Observation scan at review time; zero on legacy reviews. }
+        source_commit:     { type: string }
+        finding_fingerprint: { type: string }
+        finding_path:      { type: string, description: Repository-relative path at review time. }
+        cwe:               { type: string }
         created_at:        { type: string, format: date-time }
 
     FindingCommunication:

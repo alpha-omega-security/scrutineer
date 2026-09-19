@@ -173,10 +173,10 @@ func TestComputeAuditMetrics_agreementOnlyCountsKnownAutomatedOutcomes(t *testin
 	}
 	f1, f2, f3, f4 := mk(1), mk(2), mk(3), mk(4)
 
-	_, _ = AddFindingReview(gdb, f1.ID, "false_positive", "", "false_positive", "andrew") // agree
-	_, _ = AddFindingReview(gdb, f2.ID, "true_positive", "", "false_positive", "andrew")  // overturn
-	_, _ = AddFindingReview(gdb, f3.ID, "uncertain", "", "uncertain", "andrew")           // agree
-	_, _ = AddFindingReview(gdb, f4.ID, "true_positive", "", "", "andrew")                // no auto outcome; excluded
+	_, _ = AddFindingReview(gdb, f1.ID, "false_positive", "guarded", "false_positive", "andrew") // agree
+	_, _ = AddFindingReview(gdb, f2.ID, "true_positive", "", "false_positive", "andrew")         // overturn
+	_, _ = AddFindingReview(gdb, f3.ID, "uncertain", "", "uncertain", "andrew")                  // agree
+	_, _ = AddFindingReview(gdb, f4.ID, "true_positive", "", "", "andrew")                       // no auto outcome; excluded
 
 	m, err := ComputeAuditMetrics(gdb)
 	if err != nil {

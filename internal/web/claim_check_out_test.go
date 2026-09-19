@@ -329,7 +329,7 @@ func TestFindingStatus_gateOnlyAppliesToReported(t *testing.T) {
 	s.FederationPeers = []string{peer}
 	f := seedReadyFinding(t, s)
 
-	if w := postFindingStatus(t, s, f.ID, url.Values{statusKey: {"rejected"}}); w.Code >= 400 {
+	if w := postFindingStatus(t, s, f.ID, url.Values{statusKey: {"rejected"}, "verdict": {"false_positive"}, "reason": {"guarded"}}); w.Code >= 400 {
 		t.Fatalf("status %d: %s", w.Code, w.Body)
 	}
 	if got := reloadFinding(t, s, f.ID); got.Status != db.FindingRejected {

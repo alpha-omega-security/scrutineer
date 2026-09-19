@@ -102,8 +102,9 @@ type skillContextScrutineer struct {
 	// Controls are the threat-model controls that claim to protect the
 	// finding's file, resolved host-side and staged for verify. Absent when
 	// the repository's threat model declares no controls.
-	Controls  *skillContextControls `json:"controls,omitempty"`
-	Preflight *coverage.Preflight   `json:"preflight,omitempty"`
+	Controls        *skillContextControls `json:"controls,omitempty"`
+	Preflight       *coverage.Preflight   `json:"preflight,omitempty"`
+	AnalystFeedback []db.FindingFeedback  `json:"analyst_feedback,omitempty"`
 }
 
 type skillContextRecon struct {
@@ -1465,8 +1466,12 @@ func (w *Worker) stageWorkspace(ctx context.Context, workRoot, skillDir string, 
 	if err != nil {
 		return skillContext{}, err
 	}
+	feedback, err := w.findingFeedback(ctx, workRoot, scan, skill)
+	if err != nil {
+		return skillContext{}, err
+	}
 	return stageWorkspaceWithInputs(
-		workRoot, skillDir, w.apiBaseFor(skill.Name), w.ForkOrg, w.metadataDir(), scan, skill, recon, novelty, controls,
+		workRoot, skillDir, w.apiBaseFor(skill.Name), w.ForkOrg, w.metadataDir(), scan, skill, recon, novelty, controls, feedback...,
 	)
 }
 
@@ -1486,6 +1491,7 @@ func stageWorkspaceWithInputs(
 	recon *skillContextRecon,
 	novelty *skillContextNovelty,
 	controls *skillContextControls,
+	feedback ...db.FindingFeedback,
 ) (skillContext, error) {
 	if scan.ExplorationMode != "" {
 		return stageExploratoryWorkspace(workRoot, skillDir, apiBase, scan, skill)
@@ -1497,6 +1503,7 @@ func stageWorkspaceWithInputs(
 	if err != nil {
 		return skillContext{}, fmt.Errorf("build context: %w", err)
 	}
+	document.Scrutineer.AnalystFeedback = feedback
 	if err := writeSkillContext(workRoot, skillDir, document); err != nil {
 		return skillContext{}, fmt.Errorf("stage context: %w", err)
 	}

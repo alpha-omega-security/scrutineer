@@ -1,6 +1,7 @@
 package web
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -94,11 +95,26 @@ func (s *Server) findingReviewCreate(w http.ResponseWriter, r *http.Request) {
 	if automated == "" {
 		automated = db.LatestRevalidateVerdict(s.DB, f.ID)
 	}
-	if _, err := db.AddFindingReview(s.DB, f.ID, verdict, reason, automated, reviewer); err != nil {
-		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+	if _, err := db.AddFindingReview(s.DB.WithContext(r.Context()), f.ID, verdict, reason, automated, reviewer); err != nil {
+		http.Error(w, err.Error(), findingReviewErrorStatus(err))
 		return
 	}
 	s.redirect(w, r, "/findings/"+strconv.FormatUint(uint64(f.ID), 10))
+}
+
+func (s *Server) rejectFinding(w http.ResponseWriter, r *http.Request, id uint) {
+	if err := db.RejectFinding(s.DB.WithContext(r.Context()), id, r.FormValue("verdict"), r.FormValue("reason"), r.FormValue("reviewer")); err != nil {
+		http.Error(w, err.Error(), findingReviewErrorStatus(err))
+		return
+	}
+	s.redirect(w, r, "/findings/"+strconv.FormatUint(uint64(id), 10))
+}
+
+func findingReviewErrorStatus(err error) int {
+	if errors.Is(err, db.ErrInvalidFindingReview) {
+		return http.StatusUnprocessableEntity
+	}
+	return findingWriteErrorStatus(err, http.StatusInternalServerError)
 }
 
 func auditQueueOptionsFromQuery(r *http.Request) db.AuditQueueOptions {

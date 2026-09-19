@@ -976,7 +976,7 @@ git commit -m "fix: {{$f.Title}}"</pre>
           </select>
           <input class="input" type="text" name="reviewer" placeholder="reviewer (optional)">
         </div>
-        <textarea class="input" name="reason" rows="2" placeholder="Reason — why does this verdict apply?"></textarea>
+        <textarea class="input" name="reason" rows="2" maxlength="4096" placeholder="Reason (required for false positives)"></textarea>
         {{if .LatestRevalidate}}
           <div class="text-xs text-muted-foreground">Automation said: <strong>{{.LatestRevalidate}}</strong> (snapshotted on submit)</div>
         {{end}}

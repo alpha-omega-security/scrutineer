@@ -1291,6 +1291,12 @@ type FindingReview struct {
 	// outcomes since there is nothing to compare to.
 	AutomatedOutcome string `gorm:"index"`
 	Reviewer         string
+	// Snapshot the observation being reviewed; later rescans may move the case.
+	SourceScanID       uint   `json:"source_scan_id"`
+	SourceCommit       string `json:"source_commit"`
+	FindingFingerprint string `json:"finding_fingerprint"`
+	FindingPath        string `gorm:"index" json:"finding_path"`
+	CWE                string `json:"cwe"`
 
 	CreatedAt time.Time
 }

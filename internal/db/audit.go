@@ -1,12 +1,19 @@
 package db
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"gorm.io/gorm"
+
+	"scrutineer/internal/findingnorm"
 )
+
+var ErrInvalidFindingReview = errors.New("invalid finding review")
+
+const MaxReviewReasonBytes = 4096
 
 // ValidReviewVerdicts is the closed set the audit form and API accept.
 // Matches the revalidate skill's enum so reviewer agreement with the
@@ -28,20 +35,59 @@ var ValidReviewVerdicts = map[string]bool{
 func AddFindingReview(gdb *gorm.DB, findingID uint, verdict, reason, automatedOutcome, reviewer string) (*FindingReview, error) {
 	verdict = strings.TrimSpace(verdict)
 	if !ValidReviewVerdicts[verdict] {
-		return nil, fmt.Errorf("verdict %q is not one of true_positive|false_positive|already_fixed|uncertain", verdict)
+		return nil, fmt.Errorf("%w: unknown verdict %q", ErrInvalidFindingReview, verdict)
+	}
+	reason = strings.TrimSpace(reason)
+	if len(reason) > MaxReviewReasonBytes || (verdict == "false_positive" && reason == "") {
+		return nil, fmt.Errorf("%w: false-positive reviews require a reason; reasons must not exceed %d bytes", ErrInvalidFindingReview, MaxReviewReasonBytes)
+	}
+	var f Finding
+	if err := gdb.First(&f, findingID).Error; err != nil {
+		return nil, err
 	}
 	r := &FindingReview{
-		FindingID:        findingID,
-		Verdict:          verdict,
-		Reason:           strings.TrimSpace(reason),
-		AutomatedOutcome: strings.TrimSpace(automatedOutcome),
-		Reviewer:         strings.TrimSpace(reviewer),
-		CreatedAt:        time.Now(),
+		FindingID:          findingID,
+		Verdict:            verdict,
+		Reason:             strings.TrimSpace(reason),
+		AutomatedOutcome:   strings.TrimSpace(automatedOutcome),
+		Reviewer:           strings.TrimSpace(reviewer),
+		CreatedAt:          time.Now(),
+		SourceScanID:       f.ScanID,
+		SourceCommit:       f.Commit,
+		FindingFingerprint: f.Fingerprint,
+		FindingPath:        findingnorm.FindingPath(f.SubPath, f.Location),
+		CWE:                f.CWE,
+	}
+	if f.LastSeenScanID != 0 {
+		r.SourceScanID = f.LastSeenScanID
+		r.SourceCommit = f.LastSeenCommit
 	}
 	if err := gdb.Create(r).Error; err != nil {
 		return nil, err
 	}
 	return r, nil
+}
+
+// RejectFinding keeps the analyst decision, lifecycle history and status atomic.
+// Rejection is not necessarily a false positive; the caller must classify it.
+func RejectFinding(gdb *gorm.DB, findingID uint, verdict, reason, reviewer string) error {
+	verdict = strings.TrimSpace(verdict)
+	if verdict != "false_positive" && verdict != "already_fixed" && verdict != "uncertain" {
+		return fmt.Errorf("%w: select a rejection verdict", ErrInvalidFindingReview)
+	}
+	if strings.TrimSpace(reason) == "" {
+		return fmt.Errorf("%w: a rejection reason is required", ErrInvalidFindingReview)
+	}
+	return FindingWriteTransaction(gdb, findingID, func(tx *gorm.DB) error {
+		var f Finding
+		if err := tx.First(&f, findingID).Error; err != nil {
+			return err
+		}
+		if _, err := AddFindingReview(tx, findingID, verdict, reason, f.LastRevalidateVerdict, reviewer); err != nil {
+			return err
+		}
+		return WriteFindingField(tx, findingID, "status", string(FindingRejected), SourceAnalyst, strings.TrimSpace(reviewer))
+	})
 }
 
 // ListFindingReviews returns reviews for one finding, newest first.

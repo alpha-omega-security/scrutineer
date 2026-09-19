@@ -94,8 +94,7 @@
                 hx-post="/findings/{{$id}}/status">
           Mark triaged
         </button>
-        <button type="submit" name="status" value="rejected" class="btn-ghost"
-                hx-post="/findings/{{$id}}/status">
+        <button type="button" data-dialog="reject-{{$id}}" class="btn-ghost">
           Reject
         </button>
 
@@ -104,8 +103,7 @@
                 hx-post="/findings/{{$id}}/status">
           <i data-lucide="check"></i> Mark triaged
         </button>
-        <button type="submit" name="status" value="rejected" class="btn-ghost"
-                hx-post="/findings/{{$id}}/status">
+        <button type="button" data-dialog="reject-{{$id}}" class="btn-ghost">
           Reject
         </button>
         {{if .CriticInFlight}}
@@ -177,8 +175,7 @@
             Mark ready
           </button>
         {{end}}
-        <button type="submit" name="status" value="rejected" class="btn-ghost"
-                hx-post="/findings/{{$id}}/status">
+        <button type="button" data-dialog="reject-{{$id}}" class="btn-ghost">
           Reject
         </button>
 
@@ -256,6 +253,36 @@
     {{if .ExploitedInWildEvidence}}<p class="pl-6">{{.ExploitedInWildEvidence}}</p>{{end}}
   </section>
 </div>
+
+<dialog id="reject-{{$id}}" class="dialog">
+  <article>
+    <header><h2>Reject finding</h2></header>
+    <form method="post" action="/findings/{{$id}}/status" class="form grid gap-4">
+      <input type="hidden" name="status" value="rejected">
+      <div class="grid gap-2">
+        <label class="label" for="rejection-verdict-{{$id}}">Decision</label>
+        <select class="input" id="rejection-verdict-{{$id}}" name="verdict" required>
+          <option value="">Select a decision</option>
+          <option value="false_positive">False positive</option>
+          <option value="already_fixed">Already fixed</option>
+          <option value="uncertain">Other / not actionable</option>
+        </select>
+      </div>
+      <div class="grid gap-2">
+        <label class="label" for="rejection-reason-{{$id}}">Reason</label>
+        <textarea class="input" id="rejection-reason-{{$id}}" name="reason" rows="3" maxlength="4096" required></textarea>
+      </div>
+      <div class="grid gap-2">
+        <label class="label" for="rejection-reviewer-{{$id}}">Reviewer (optional)</label>
+        <input class="input" id="rejection-reviewer-{{$id}}" name="reviewer" type="text">
+      </div>
+      <footer class="flex justify-end gap-2">
+        <button type="submit" class="btn-outline" formmethod="dialog" formnovalidate>Cancel</button>
+        <button type="submit" class="btn">Reject finding</button>
+      </footer>
+    </form>
+  </article>
+</dialog>
 
 <dialog id="exploitation-{{$id}}" class="dialog">
   <article>

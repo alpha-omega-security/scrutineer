@@ -1581,6 +1581,10 @@ func (s *Server) findingStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	status := db.FindingLifecycle(r.FormValue(statusKey))
+	if status == db.FindingRejected {
+		s.rejectFinding(w, r, f.ID)
+		return
+	}
 	if status == db.FindingReady && strings.TrimSpace(f.DisclosureDraft) == "" {
 		http.Error(w, "a saved disclosure draft is required before marking ready", http.StatusUnprocessableEntity)
 		return
