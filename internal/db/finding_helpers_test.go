@@ -999,7 +999,7 @@ func TestSetFindingLabels_replacesSet(t *testing.T) {
 	gdb := newTestDB(t)
 	f := seedFinding(t, gdb)
 
-	if err := SetFindingLabels(gdb, f.ID, []string{"wontfix", "needs-info"}); err != nil {
+	if err := SetFindingLabels(gdb, f.ID, []string{"wontfix", "needs-info"}, SourceAnalyst, ""); err != nil {
 		t.Fatal(err)
 	}
 	var refreshed Finding
@@ -1008,7 +1008,7 @@ func TestSetFindingLabels_replacesSet(t *testing.T) {
 		t.Fatalf("labels len = %d, want 2", len(refreshed.Labels))
 	}
 
-	if err := SetFindingLabels(gdb, f.ID, []string{"duplicate"}); err != nil {
+	if err := SetFindingLabels(gdb, f.ID, []string{"duplicate"}, SourceAnalyst, ""); err != nil {
 		t.Fatal(err)
 	}
 	var again Finding

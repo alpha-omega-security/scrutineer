@@ -83,6 +83,7 @@ func (s *Server) apiAuth(next http.Handler) http.Handler {
 			return
 		}
 		ctx := context.WithValue(r.Context(), apiCtxKey{}, &scan)
+		ctx = db.WithAuditScan(ctx, scan.ID, scan.SkillName)
 		r.Body = http.MaxBytesReader(w, r.Body, apiMaxBody)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})

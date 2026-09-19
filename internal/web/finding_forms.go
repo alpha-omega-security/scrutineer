@@ -142,7 +142,7 @@ func (s *Server) findingLabels(w http.ResponseWriter, r *http.Request) {
 			names = append(names, n)
 		}
 	}
-	if err := db.SetFindingLabels(s.DB, f.ID, names); err != nil {
+	if err := db.SetFindingLabels(s.DB.WithContext(r.Context()), f.ID, names, db.SourceAnalyst, ""); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

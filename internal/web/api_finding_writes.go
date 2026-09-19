@@ -189,7 +189,7 @@ func (s *Server) apiSetFindingLabels(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusBadRequest, "body must be JSON with a labels array")
 		return
 	}
-	if err := db.SetFindingLabels(s.DB, id, body.Labels); err != nil {
+	if err := db.SetFindingLabels(s.DB.WithContext(r.Context()), id, body.Labels, sourceFromRequest(r), ""); err != nil {
 		writeAPIError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

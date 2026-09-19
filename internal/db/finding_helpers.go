@@ -64,6 +64,7 @@ func validateFindingField(field, value string) error {
 //
 // No-op when the new value equals the current stored value; the history
 // row is only written on an actual change.
+// Status and severity changes also append an AuditEvent in the same transaction.
 func WriteFindingField(gdb *gorm.DB, findingID uint, field, newValue string, source FindingSource, by string) error {
 	// The column update, its history row, and any dependent CVSS-score
 	// sync must commit together: a failure between them would change the
@@ -125,7 +126,7 @@ func WriteFindingField(gdb *gorm.DB, findingID uint, field, newValue string, sou
 		if field == "cvss_v4_vector" {
 			return syncCVSSv4Score(tx, &f, newValue, source, by)
 		}
-		return nil
+		return logFindingMutation(tx, &f, field, old, newValue, source, by)
 	})
 }
 
@@ -179,7 +180,7 @@ func ReconcileFindingSeverityCap(
 		if err := conditionalFindingUpdate(tx, f.ID, "severity", f.Severity, effective); err != nil {
 			return fmt.Errorf("reconcile severity: %w", err)
 		}
-		return tx.Create(&FindingHistory{
+		if err := tx.Create(&FindingHistory{
 			FindingID: f.ID,
 			Field:     "severity",
 			OldValue:  f.Severity,
@@ -187,7 +188,10 @@ func ReconcileFindingSeverityCap(
 			Source:    source,
 			By:        by,
 			CreatedAt: time.Now(),
-		}).Error
+		}).Error; err != nil {
+			return err
+		}
+		return logFindingMutation(tx, &f, "severity", f.Severity, effective, source, by)
 	})
 	return effective, err
 }
@@ -701,24 +705,43 @@ func AddFindingReference(gdb *gorm.DB, findingID uint, url, tags, summary string
 // SetFindingLabels replaces a finding's label set with the given names.
 // Labels not already in the DB are created with a default (no color).
 // Empty slice clears all labels.
-func SetFindingLabels(gdb *gorm.DB, findingID uint, names []string) error {
-	var f Finding
-	if err := gdb.First(&f, findingID).Error; err != nil {
-		return err
-	}
-	labels := make([]FindingLabel, 0, len(names))
+// Replacement and its attributed audit event are atomic; unchanged sets are no-ops.
+func SetFindingLabels(gdb *gorm.DB, findingID uint, names []string, source FindingSource, by string) error {
+	normalized := make([]string, 0, len(names))
 	for _, name := range names {
 		name = strings.TrimSpace(name)
-		if name == "" {
-			continue
+		if name != "" {
+			normalized = append(normalized, name)
 		}
-		var l FindingLabel
-		if err := gdb.Where(FindingLabel{Name: name}).FirstOrCreate(&l).Error; err != nil {
+	}
+	slices.Sort(normalized)
+	normalized = slices.Compact(normalized)
+	return FindingWriteTransaction(gdb, findingID, func(tx *gorm.DB) error {
+		var f Finding
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Preload("Labels").First(&f, findingID).Error; err != nil {
 			return err
 		}
-		labels = append(labels, l)
-	}
-	return gdb.Model(&f).Association("Labels").Replace(labels)
+		old := make([]string, 0, len(f.Labels))
+		for _, label := range f.Labels {
+			old = append(old, label.Name)
+		}
+		slices.Sort(old)
+		if slices.Equal(old, normalized) {
+			return nil
+		}
+		labels := make([]FindingLabel, 0, len(normalized))
+		for _, name := range normalized {
+			var label FindingLabel
+			if err := tx.Where(FindingLabel{Name: name}).FirstOrCreate(&label).Error; err != nil {
+				return err
+			}
+			labels = append(labels, label)
+		}
+		if err := tx.Model(&f).Association("Labels").Replace(labels); err != nil {
+			return err
+		}
+		return logFindingMutation(tx, &f, "labels", old, normalized, source, by)
+	})
 }
 
 // SeedDefaultLabels ensures a baseline set of labels exists on startup.

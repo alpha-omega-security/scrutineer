@@ -59,20 +59,20 @@ The central entity. One row per git URL.
 
 ## audit_events
 
-Append-only audit trail for lifecycle and future operator/system actions. It
-coexists with `finding_histories`, which remains the specialised per-field
-change history for findings. `payload` is JSON stored portably as text.
+Append-only audit trail for scan lifecycle and finding mutations. It coexists with `finding_histories`, which remains the specialised per-field change history for findings. `payload` is JSON stored portably as text.
 
 | Column | Type | Notes |
 |--------|------|-------|
 | id | integer PK | |
-| kind | text | Event name, for example `scan.started`, `scan.finished`, `scan.failed`, `scan.cancelled`, or `scan.paused`. Indexed with `created_at` for chronological dashboards. |
-| subject_type | text | Polymorphic subject type, currently `scan`. Part of the timeline index with `subject_id`. |
-| subject_id | integer | ID of the subject row, for example `scans.id`. |
-| actor | text | Skill name when available, otherwise the scan kind. |
-| source | text | Existing provenance enum, currently `system` for worker lifecycle events. |
-| payload | text | JSON metadata. Scan events include stable execution metadata and terminal metrics, without duplicating reports or logs. |
+| kind | text | Event name: `scan.started`, `scan.finished`, `scan.failed`, `scan.cancelled`, `scan.paused`, `finding.status_changed`, `finding.severity_changed`, or `finding.labels_changed`. Indexed with `created_at` for chronological dashboards. |
+| subject_type | text | Polymorphic subject type: `scan` or `finding`. Part of the timeline index with `subject_id`. |
+| subject_id | integer | ID of the subject row, for example `scans.id` or `findings.id`. |
+| actor | text | Scan lifecycle events use the skill name or scan kind. Finding mutations use the helper's `by` value; browser edits leave it empty because there is no session user. Authenticated skill API mutations instead identify the scan and its skill from the bearer-token lookup, not client-supplied text. |
+| source | text | Existing provenance enum: `tool`, `model_suggested`, `analyst`, or `system`. Worker lifecycle events use `system`; finding events preserve the mutation's source. |
+| payload | text | JSON metadata. Scan events include execution metadata and terminal metrics. Finding events include `repository_id`, `field`, `old_value`, and `new_value`; skill API events also include the authenticated `scan_id` and `skill_name`. Reports, transcripts, and bearer tokens are not copied. |
 | created_at | datetime | |
+
+Finding status and severity events are written by `WriteFindingField`, with severity-cap changes also covered by `ReconcileFindingSeverityCap`. `SetFindingLabels` writes label events using sorted, distinct name arrays, including `[]` for an empty set. The mutation, existing field history where applicable, and event commit or roll back together. Unchanged values or label sets produce no event. Existing history rows are not backfilled into the event table. Direct SQL/import paths that bypass these helpers and other finding fields are outside this event surface.
 
 ## package_alternatives
 

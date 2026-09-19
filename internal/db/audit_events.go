@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -10,7 +11,12 @@ import (
 )
 
 const (
-	AuditSubjectScan = "scan"
+	AuditSubjectScan    = "scan"
+	AuditSubjectFinding = "finding"
+
+	AuditEventFindingStatusChanged   = "finding.status_changed"
+	AuditEventFindingSeverityChanged = "finding.severity_changed"
+	AuditEventFindingLabelsChanged   = "finding.labels_changed"
 
 	AuditEventScanStarted   = "scan.started"
 	AuditEventScanFinished  = "scan.finished"
@@ -18,6 +24,51 @@ const (
 	AuditEventScanCancelled = "scan.cancelled"
 	AuditEventScanPaused    = "scan.paused"
 )
+
+type auditScanKey struct{}
+
+type auditScanActor struct {
+	ID        uint
+	SkillName string
+}
+
+// WithAuditScan carries authenticated scan attribution without retaining its token.
+// It overrides caller-supplied actor text for finding audit events only.
+func WithAuditScan(ctx context.Context, scanID uint, skillName string) context.Context {
+	return context.WithValue(ctx, auditScanKey{}, auditScanActor{ID: scanID, SkillName: skillName})
+}
+
+func logFindingMutation(tx *gorm.DB, finding *Finding, field string, oldValue, newValue any, source FindingSource, by string) error {
+	var kind string
+	switch field {
+	case "status":
+		kind = AuditEventFindingStatusChanged
+	case "severity":
+		kind = AuditEventFindingSeverityChanged
+	case "labels":
+		kind = AuditEventFindingLabelsChanged
+	default:
+		return nil
+	}
+	payload := map[string]any{
+		"repository_id": finding.RepositoryID,
+		"field":         field,
+		"old_value":     oldValue,
+		"new_value":     newValue,
+	}
+	if scan, ok := tx.Statement.Context.Value(auditScanKey{}).(auditScanActor); ok {
+		by = fmt.Sprintf("scan %d", scan.ID)
+		if scan.SkillName != "" {
+			by = fmt.Sprintf("%s (scan %d)", scan.SkillName, scan.ID)
+		}
+		payload["scan_id"] = scan.ID
+		payload["skill_name"] = scan.SkillName
+	}
+	return LogEvent(tx, AuditEventInput{
+		Kind: kind, SubjectType: AuditSubjectFinding, SubjectID: finding.ID,
+		Source: source, Actor: by, Payload: payload,
+	})
+}
 
 // AuditEventInput is the write-only form of AuditEvent. Payload is marshaled
 // by LogEvent so callers cannot persist malformed JSON accidentally.
