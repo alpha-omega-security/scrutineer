@@ -107,6 +107,7 @@ var OutputKinds = map[string]bool{
 	"reattack":        true,
 	"threat_model":    true,
 	"exposure":        true,
+	"spec_fuzz":       true,
 }
 
 // ModelValidator gates the scrutineer.model metadata key. When non-nil, a
