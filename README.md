@@ -43,6 +43,8 @@ Then open the `http://127.0.0.1:8080/login?token=...` link Scrutineer logs at st
 
 The `-buildvcs=true` flag includes the source commit in `go run` builds. Settings > About shows that commit, with a `-dirty` suffix for local changes, and its commit date. Ordinary `go build` commands include this metadata automatically in a Git checkout.
 
+Scrutineer uses SQLite by default. For a new instance backed by PostgreSQL, follow the [database setup instructions](docs/database.md).
+
 You can also build a checkout-independent executable and run it from another directory:
 
     go build -o scrutineer ./cmd/scrutineer

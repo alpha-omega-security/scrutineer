@@ -19,6 +19,29 @@ func write(t *testing.T, content string) string {
 	return path
 }
 
+func TestLoadDatabase(t *testing.T) {
+	for _, tc := range []struct {
+		name, block, driver string
+		wantError           bool
+	}{
+		{name: "default", block: "{}"},
+		{name: "sqlite", block: "database: {driver: sqlite}", driver: "sqlite"},
+		{name: "postgres", block: "database: {driver: postgres, dsn: 'host=localhost dbname=scrutineer'}", driver: "postgres"},
+		{name: "missing dsn", block: "database: {driver: postgres}", wantError: true},
+		{name: "unknown driver", block: "database: {driver: mysql}", wantError: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := Load(write(t, tc.block))
+			if (err != nil) != tc.wantError {
+				t.Fatalf("Load error = %v", err)
+			}
+			if err == nil && cfg.Database.Driver != tc.driver {
+				t.Fatalf("driver = %q, want %q", cfg.Database.Driver, tc.driver)
+			}
+		})
+	}
+}
+
 func TestLoad_absentDefaultPathIsNoError(t *testing.T) {
 	// ./scrutineer.yaml doesn't exist in a t.TempDir CWD. Switch into one.
 	cwd, err := os.Getwd()
