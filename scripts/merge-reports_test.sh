@@ -220,9 +220,14 @@ assert_eq null "$(probe all_merged.json period.starts_at)" 'unbounded source mak
 merge dup.json 0 "$TEST_DIR/week_a.json" "$TEST_DIR/week_a.json"
 assert_eq 1 "$(stderr_hits 'duplicate input')" 'identical inputs warned about'
 
-# Differing filters are merged (first file wins) but warned about.
-merge mixed.json 0 "$TEST_DIR/week_a.json" "$TEST_DIR/medium_a.json"
+# Differing filters warn, and a floor the sources disagree on is nulled in
+# the merged output (no single floor is true of the mixed counts) with each
+# source's own floor recorded in its sources entry.
+merge mixed.json 0 "$TEST_DIR/medium_a.json" "$TEST_DIR/week_a.json"
 assert_eq 1 "$(stderr_hits 'filters in')" 'differing filters warned about'
+assert_eq null "$(probe mixed.json filters.minimum_severity)" 'disagreeing floors null the merged floor'
+assert_eq '"Medium"' "$(probe mixed.json 'sources[0].minimum_severity')" 'source floor recorded'
+assert_eq null "$(probe mixed.json 'sources[1].minimum_severity')" 'unfiltered source recorded as null'
 
 # Re-merging merged output stays associative and does not stack the caveat.
 merge remerged.json 0 "$TEST_DIR/merged.json" "$TEST_DIR/all_merged.json"
@@ -238,6 +243,7 @@ assert_eq 1 "$(stderr_hits 'could not read')" 'missing input rejected'
 
 # --severity requires every input to carry exactly the requested floor.
 merge sev_ok.json 0 --severity medium "$TEST_DIR/medium_a.json" "$TEST_DIR/medium_b.json"
+assert_eq '"Medium"' "$(probe sev_ok.json filters.minimum_severity)" 'agreeing floor kept in merged filters'
 merge sev_case.json 0 --severity MEDIUM "$TEST_DIR/medium_a.json" "$TEST_DIR/medium_b.json"
 merge sev_bad.json 1 --severity medium "$TEST_DIR/medium_a.json" "$TEST_DIR/week_a.json"
 assert_eq 1 "$(stderr_hits 'week_a.json was exported with no severity floor')" 'laxer input refused by name'

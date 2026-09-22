@@ -21,7 +21,9 @@ Merge rules:
   - activity_in_period: counts summed across all sources.
   - cost_averages_per_scan: `all_time` and `in_period` are weighted by
     `scans_averaged` across all sources.
-  - filters: taken from the first file (a warning is printed if they differ).
+  - filters: taken from the first file (a warning is printed if they
+    differ); minimum_severity is nulled when the sources' floors disagree,
+    and each source's own floor is recorded in its sources entry.
   - generated_at / period: latest generated_at, earliest start, latest end;
     one unbounded source (interval=all, null starts_at) makes the merged
     start null.
@@ -130,6 +132,11 @@ def weighted_average(blocks: list[dict[str, Any]]) -> dict[str, Any]:
     return dict(sorted(result.items()))
 
 
+def min_severity(report: dict[str, Any]) -> Any:
+    """The severity floor recorded in a report's filters, if any."""
+    return (report.get("filters") or {}).get("minimum_severity")
+
+
 def severity_error(
     reports: list[dict[str, Any]], names: list[str], floor: str
 ) -> str | None:
@@ -153,7 +160,7 @@ def severity_error(
                     return f"unknown severity {floor!r} (one of: {levels}, or all)"
                 break
     for name, report in zip_strict(names, reports):
-        recorded = (report.get("filters") or {}).get("minimum_severity")
+        recorded = min_severity(report)
         if want == "all":
             if recorded is None:
                 continue
@@ -241,12 +248,20 @@ def merge_reports(reports: list[dict[str, Any]], names: list[str]) -> dict[str, 
     period_keys = ", ".join(sorted({p.get("key", "?") for p in periods}))
     starts = [p.get("starts_at") for p in periods]
 
+    filters = first.get("filters")
+    if isinstance(filters, dict) and len({min_severity(r) for r in reports}) > 1:
+        # The counts mix inputs filtered at different floors, so no single
+        # minimum_severity is true of them, and the archived JSON must not
+        # claim the first file's (the stderr warning does not survive
+        # archiving). Each source's own floor is recorded in sources below.
+        filters = {**filters, "minimum_severity": None}
+
     return {
         "activity_by_day": by_day,
         "activity_by_model": by_model,
         "activity_in_period": in_period,
         "cost_averages_per_scan": cost,
-        "filters": first.get("filters"),
+        "filters": filters,
         "generated_at": max(r["generated_at"] for r in reports),
         "period": {
             "ends_at": max(p["ends_at"] for p in periods),
@@ -267,6 +282,7 @@ def merge_reports(reports: list[dict[str, Any]], names: list[str]) -> dict[str, 
             {
                 "file": name,
                 "generated_at": r.get("generated_at"),
+                "minimum_severity": min_severity(r),
                 "period_key": p.get("key"),
                 "starts_at": p.get("starts_at"),
                 "ends_at": p.get("ends_at"),
