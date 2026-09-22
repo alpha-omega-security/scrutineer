@@ -167,7 +167,7 @@ jobs:
       - name: Test PostgreSQL
         run: |
           test -n "$SCRUTINEER_TEST_PG_DSN"
-          go test -race -count=1 -run '^TestPostgres' ./cmd/scrutineer ./internal/db ./internal/queue ./internal/web
+          go test -race -count=1 -run '^TestPostgres' ./cmd/scrutineer ./internal/db ./internal/queue ./internal/web ./scripts/migrate-sqlite-to-postgres
 
   lint:
     name: lint

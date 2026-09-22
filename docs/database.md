@@ -22,6 +22,22 @@ Its default connection is `postgres://scrutineer:scrutineer@127.0.0.1:5432/scrut
 
 PostgreSQL backups use `pg_dump` and `pg_restore`, or your provider's backup service. The `scrutineer backup` and `restore` commands support SQLite; see [backup.md](backup.md) for those instructions.
 
+## Moving an existing SQLite instance to PostgreSQL
+
+Use the same Scrutineer revision for the SQLite instance and the migrator. Finish or cancel queued and running scans, drain the job queue, then stop Scrutineer. Keep both the source and destination instances stopped until the copy finishes. Create an empty PostgreSQL database owned by the account in the connection string, then run this command from the repository root:
+
+```sh
+go run ./scripts/migrate-sqlite-to-postgres \
+  -sqlite ./data/scrutineer.db \
+  -postgres 'postgres://scrutineer:password@localhost:5432/scrutineer?sslmode=require'
+```
+
+The tool copies a temporary SQLite snapshot without running SQLite schema migrations, leaving the source data and schema unchanged. Missing tables or columns cause an error asking you to upgrade the SQLite instance first. Allow temporary disk space roughly equal to the SQLite database size; set `TMPDIR` to choose another disk. Rows are streamed in batches of 200, including scan history, findings, chat, and association tables. Text containing NUL bytes or invalid UTF-8 is cleaned for PostgreSQL, with affected row counts in the output. Binary uploads are copied unchanged.
+
+The destination must contain no application data. Schema creation, including PostgreSQL's schema-version setting, is allowed. The copy runs in one transaction, validates foreign keys, and advances ID sequences before committing. It requires table ownership rather than superuser access. A failed copy rolls back imported rows; fix the reported problem and rerun the command against the empty destination. Unknown source tables or columns cause an error so records are not silently omitted. Queued jobs are not copied.
+
+After a successful copy, set `database.driver` to `postgres` and `database.dsn` to the destination connection string, then restart Scrutineer. Keep the existing data directory for scan workspaces and caches, and retain the SQLite database as a backup. Check repository pages, scan history, and findings before resuming scans.
+
 ## repositories
 
 The central entity. One row per git URL.
