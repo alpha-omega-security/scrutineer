@@ -58,7 +58,7 @@ func (s *Server) orgsList(w http.ResponseWriter, r *http.Request) {
 		Where("owner != ''").
 		Group("owner")
 	if search != "" {
-		q = q.Where("owner LIKE ?", "%"+search+"%")
+		q = q.Where("LOWER(owner) LIKE LOWER(?)", "%"+search+"%")
 	}
 	q.Scan(&aggs)
 

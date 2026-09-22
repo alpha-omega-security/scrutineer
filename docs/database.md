@@ -1,8 +1,26 @@
 # Database schema
 
-SQLite with WAL mode. GORM handles migrations on startup. The queue table (`goqite`) is managed separately with an embedded SQL schema.
+SQLite with WAL mode is the default. PostgreSQL is also supported. GORM handles migrations on startup, and the queue table (`goqite`) uses an embedded schema for the selected backend.
 
-See [backup.md](backup.md) for backing up and restoring this file: WAL mode means a plain `cp` can be inconsistent, so use `scrutineer backup`/`restore` or one of the documented strategies.
+For a new PostgreSQL instance, create an empty database and add its connection details to `scrutineer.yaml`:
+
+```yaml
+database:
+  driver: postgres
+  dsn: postgres://scrutineer:password@localhost:5432/scrutineer?sslmode=require
+```
+
+Start Scrutineer with `scrutineer -config scrutineer.yaml`. The database stores application records and queued jobs; the local data directory still stores scan workspaces and caches. Changing the connection does not copy records from an existing SQLite database.
+
+For local development, run the database example from the repository root:
+
+```sh
+docker compose -f docker/postgresdb/docker-compose.yaml up -d
+```
+
+Its default connection is `postgres://scrutineer:scrutineer@127.0.0.1:5432/scrutineer?sslmode=disable`. The example binds to loopback and stores database files in a named volume. If you set `POSTGRES_PASSWORD`, use that password in the connection string too.
+
+PostgreSQL backups use `pg_dump` and `pg_restore`, or your provider's backup service. The `scrutineer backup` and `restore` commands support SQLite; see [backup.md](backup.md) for those instructions.
 
 ## repositories
 

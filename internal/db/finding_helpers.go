@@ -378,6 +378,9 @@ func findingWriteRetryDelay(err error, attempt int) (time.Duration, bool) {
 	if errors.Is(err, errFindingWriteConflict) {
 		return 0, true
 	}
+	if isPostgresSerializationFailure(err) {
+		return retry.BackoffDelay(attempt, time.Millisecond, findingWriteMaxDelay), true
+	}
 	var sqliteErr interface{ Code() int }
 	if !errors.As(err, &sqliteErr) || sqliteErr.Code()&0xff != sqliteBusyCode {
 		return 0, false
@@ -388,6 +391,25 @@ func findingWriteRetryDelay(err error, attempt int) (time.Duration, bool) {
 		return 0, true
 	}
 	return retry.BackoffDelay(attempt, time.Millisecond, findingWriteMaxDelay), true
+}
+
+// isPostgresSerializationFailure is the Postgres analogue of isSQLiteBusy: pgx
+// reports a serialization_failure (SQLSTATE 40001) or deadlock_detected (40P01)
+// when a concurrent transaction wins the compare-and-swap. Like the SQLite
+// case, the owned transaction must be restarted against a fresh snapshot. The
+// SQLState() method is matched structurally so the db package keeps no direct
+// pgconn dependency.
+func isPostgresSerializationFailure(err error) bool {
+	var pgErr interface{ SQLState() string }
+	if !errors.As(err, &pgErr) {
+		return false
+	}
+	switch pgErr.SQLState() {
+	case "40001", "40P01":
+		return true
+	default:
+		return false
+	}
 }
 
 // findingTimeFieldAccessor mirrors findingFieldAccessor for timestamp
