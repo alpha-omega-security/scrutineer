@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"flag"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"os/exec"
@@ -34,9 +35,16 @@ func TestMigratorProcess(_ *testing.T) {
 
 func migrateCLI(t *testing.T, path, dsn string) (string, error) {
 	t.Helper()
+	return migrateCLIConfig(t, path, fmt.Sprintf("addr: %q\ndatabase:\n  dsn: %q\n", unusedAddr(t), dsn))
+}
+
+func migrateCLIConfig(t *testing.T, path, yaml string) (string, error) {
+	t.Helper()
+	configPath := filepath.Join(t.TempDir(), "scrutineer.yaml")
+	must(t, os.WriteFile(configPath, []byte(yaml), 0o600))
 	cmd := exec.Command(os.Args[0], "-test.run=^TestMigratorProcess$")
 	cmd.Env = append(os.Environ(), "SCRUTINEER_MIGRATOR_PROCESS=1",
-		"SCRUTINEER_MIGRATOR_ARGS=-sqlite\n"+path+"\n-postgres\n"+dsn)
+		"SCRUTINEER_MIGRATOR_ARGS=-config\n"+configPath+"\n-sqlite\n"+path)
 	output, err := cmd.CombinedOutput()
 	return string(output), err
 }
@@ -310,5 +318,45 @@ func must(t *testing.T, err error) {
 	t.Helper()
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func unusedAddr(t *testing.T) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	must(t, err)
+	addr := ln.Addr().String()
+	must(t, ln.Close())
+	return addr
+}
+
+func TestMigrationRefusesUnsafeConfig(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	must(t, err)
+	t.Cleanup(func() { _ = ln.Close() })
+	_, path := sqliteSource(t)
+	for _, tc := range []struct{ name, yaml, want string }{
+		{"no dsn", fmt.Sprintf("addr: %q\n", unusedAddr(t)), "set database.dsn"},
+		{"server running", fmt.Sprintf("addr: %q\ndatabase:\n  dsn: postgres://unused/db\n", ln.Addr()), "still running"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			output, err := migrateCLIConfig(t, path, tc.yaml)
+			if err == nil || !strings.Contains(output, tc.want) {
+				t.Fatalf("expected %q: %v\n%s", tc.want, err, output)
+			}
+		})
+	}
+}
+
+// A non-SQLite source would fail the snapshot, so reaching "not empty" shows
+// the destination is checked first.
+func TestPostgresMigrationChecksDestinationBeforeSnapshot(t *testing.T) {
+	dsn := testutil.PostgresDSN(t)
+	must(t, postgresDestination(t, dsn).Create(&db.FindingLabel{Name: "existing"}).Error)
+	path := filepath.Join(t.TempDir(), "source.db")
+	must(t, os.WriteFile(path, []byte("not a database"), 0o600))
+	output, err := migrateCLI(t, path, dsn)
+	if err == nil || !strings.Contains(output, "not empty") {
+		t.Fatalf("expected destination refusal before snapshot: %v\n%s", err, output)
 	}
 }

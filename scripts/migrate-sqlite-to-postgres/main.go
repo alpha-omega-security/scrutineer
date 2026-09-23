@@ -3,25 +3,30 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 	"gorm.io/gorm/schema"
 
+	"scrutineer/internal/config"
 	"scrutineer/internal/db"
 )
 
 const batchSize = 200
+const serverDialTimeout = 500 * time.Millisecond
 const schemaVersionKey = "database_schema_version"
 
 type repositoryMaintainer struct {
@@ -39,34 +44,36 @@ type findingLabel struct {
 func (findingLabel) TableName() string { return "finding_labels_join" }
 
 func migrationModels() []any {
-	return []any{
-		&db.Repository{}, &db.Scan{}, &db.Finding{},
-		&db.FindingLabel{}, &db.FindingNote{}, &db.FindingCommunication{},
-		&db.FindingReference{}, &db.FindingHistory{}, &db.FindingReview{},
-		&db.FindingVerification{}, &db.FindingAttackPath{},
-		&db.RemediationAttempt{}, &db.RemediationValidation{}, &db.AuditEvent{},
-		&db.Dependency{}, &db.ExpectedFinding{}, &db.Package{}, &db.PackageAlternative{},
-		&db.Dependent{}, &db.FindingDependent{}, &db.Advisory{}, &db.AdvisoryAudit{},
-		&db.Maintainer{}, &db.Skill{}, &db.Subproject{}, &db.ComplianceControl{},
-		&db.SBOMUpload{}, &db.SBOMPackage{}, &db.CNA{}, &db.Setting{},
-		&db.Conversation{}, &db.ChatMessage{}, &db.InterchangeRecord{},
-		&repositoryMaintainer{}, &findingLabel{},
-	}
+	return append(db.Models(), &repositoryMaintainer{}, &findingLabel{})
 }
 
 func main() {
-	var sqlitePath, pgDSN string
-	flag.StringVar(&sqlitePath, "sqlite", "./data/scrutineer.db", "path to the source SQLite database")
-	flag.StringVar(&pgDSN, "postgres", "", "destination PostgreSQL DSN (required)")
+	var configPath, sqlitePath string
+	flag.StringVar(&configPath, "config", "", "scrutineer.yaml whose database.dsn names the destination (required)")
+	flag.StringVar(&sqlitePath, "sqlite", "", "source SQLite database (default: scrutineer.db in the config's data directory)")
 	flag.Parse()
-	if err := run(sqlitePath, pgDSN); err != nil {
+	if err := run(configPath, sqlitePath); err != nil {
 		log.Fatalf("migrate: %v", err)
 	}
 }
 
-func run(sqlitePath, pgDSN string) error {
+func run(configPath, sqlitePath string) error {
+	if configPath == "" {
+		return fmt.Errorf("-config is required")
+	}
+	cfg, err := config.Load(configPath)
+	if err != nil {
+		return err
+	}
+	pgDSN := cfg.Database.DSN
 	if pgDSN == "" {
-		return fmt.Errorf("-postgres DSN is required")
+		return fmt.Errorf("set database.dsn in %s to the destination PostgreSQL database", configPath)
+	}
+	if sqlitePath == "" {
+		sqlitePath = filepath.Join(cmp.Or(cfg.Data, "./data"), "scrutineer.db")
+	}
+	if addr := cmp.Or(cfg.Addr, "127.0.0.1:8080"); serverRunning(addr) {
+		return fmt.Errorf("scrutineer is still running on %s; stop it before migrating", addr)
 	}
 	info, err := os.Stat(sqlitePath)
 	if err != nil {
@@ -74,6 +81,10 @@ func run(sqlitePath, pgDSN string) error {
 	}
 	if !info.Mode().IsRegular() {
 		return fmt.Errorf("source database must be a regular file")
+	}
+	// Refuse a populated destination before spending a full source snapshot.
+	if err := checkDestinationEmpty(pgDSN); err != nil {
+		return err
 	}
 	dir, err := os.MkdirTemp("", "scrutineer-migrate-")
 	if err != nil {
@@ -97,7 +108,7 @@ func run(sqlitePath, pgDSN string) error {
 	if err := checkSource(src, tables); err != nil {
 		return err
 	}
-	dst, err := openDestination(pgDSN)
+	dst, err := db.OpenBackend(db.Options{Dialect: db.DialectPostgres, DSN: pgDSN})
 	if err != nil {
 		return fmt.Errorf("open destination: %w", err)
 	}
@@ -107,7 +118,7 @@ func run(sqlitePath, pgDSN string) error {
 	}); err != nil {
 		return err
 	}
-	log.Print("migration complete; set database.driver to postgres and database.dsn before restarting Scrutineer")
+	log.Print("migration complete; set database.driver to postgres before restarting Scrutineer")
 	return nil
 }
 
@@ -117,17 +128,31 @@ func closeDB(gdb *gorm.DB) {
 	}
 }
 
-func openDestination(dsn string) (*gorm.DB, error) {
+// Runs before AutoMigrate can alter an existing instance's schema or data.
+func checkDestinationEmpty(dsn string) error {
 	connection, err := gorm.Open(postgres.Open(dsn), &gorm.Config{})
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("open destination: %w", err)
 	}
 	defer closeDB(connection)
-	// Check before AutoMigrate can alter an existing instance's schema or data.
-	if err := checkDestination(connection); err != nil {
-		return nil, err
+	return checkDestination(connection)
+}
+
+// Best effort: a server bound to another address is not detected.
+func serverRunning(addr string) bool {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return false
 	}
-	return db.OpenBackend(db.Options{Dialect: db.DialectPostgres, DSN: dsn})
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), serverDialTimeout)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
 }
 
 func checkDestination(tx *gorm.DB) error {
