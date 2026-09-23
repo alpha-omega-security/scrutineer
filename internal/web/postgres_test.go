@@ -1,18 +1,23 @@
 package web
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"gorm.io/gorm"
 
 	"scrutineer/internal/db"
 	"scrutineer/internal/db/dbtest"
+	"scrutineer/internal/interchange"
 	"scrutineer/internal/queue"
 	"scrutineer/internal/testutil"
 	"scrutineer/internal/worker"
@@ -99,5 +104,34 @@ func testDatabaseWeb(t *testing.T, gdb *gorm.DB, dialect queue.Dialect) {
 	handler.ServeHTTP(w, localReq(http.MethodGet, "/repositories?q=missing"))
 	if strings.Contains(w.Body.String(), fmt.Sprintf(`id="repo-%d"`, repo.ID)) {
 		t.Fatal("search returned a nonmatching repository")
+	}
+
+	if got := exportScanIDs(t, s, url.Values{"since": {scan.CreatedAt.Add(-time.Second).Format(time.RFC3339Nano)}}); !slices.Contains(got, scan.ID) {
+		t.Fatalf("since export missing scan %d: %v", scan.ID, got)
+	}
+	if got := exportScanIDs(t, s, url.Values{"since": {scan.CreatedAt.Add(time.Hour).Format(time.RFC3339Nano)}}); len(got) != 0 {
+		t.Fatalf("future since export returned %v", got)
+	}
+
+	if err := gdb.Create(&db.AdvisoryAudit{RepositoryID: repo.ID, AdvisoryUUID: "uuid-1", Status: interchange.CertificateStatusFixed, Commit: "abc123"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	recs, err := s.certificateRecords(interchange.TierPublic)
+	if err != nil || len(recs) != 1 {
+		t.Fatalf("certificate records = %d, err %v", len(recs), err)
+	}
+
+	scheduled := db.Repository{URL: "https://example.com/scheduled", Name: "scheduled"}
+	if err := gdb.Create(&scheduled).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := gdb.Create(&db.Scan{RepositoryID: scheduled.ID, Status: db.ScanDone, Commit: "head-sha"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	s.resolveRemoteHead = func(context.Context, db.Repository) (string, error) { return "head-sha", nil }
+	s.runScheduledScan(t.Context(), scheduled, 0)
+	var skipped db.Scan
+	if err := gdb.Where("repository_id = ? AND status = ?", scheduled.ID, db.ScanSkipped).First(&skipped).Error; err != nil || !strings.Contains(skipped.Error, "no new commits") {
+		t.Fatalf("scheduled scan not skipped as unchanged: %q, err %v", skipped.Error, err)
 	}
 }

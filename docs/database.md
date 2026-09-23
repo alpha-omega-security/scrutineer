@@ -2,7 +2,7 @@
 
 SQLite with WAL mode is the default. PostgreSQL is also supported. GORM handles migrations on startup, and the queue table (`goqite`) uses an embedded schema for the selected backend.
 
-For a new PostgreSQL instance, create an empty database and add its connection details to `scrutineer.yaml`:
+For a new PostgreSQL instance (13 or later), create an empty database, give Scrutineer's role `USAGE` and `CREATE` on its `public` schema, and add its connection details to `scrutineer.yaml`:
 
 ```yaml
 database:
