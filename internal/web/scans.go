@@ -47,9 +47,7 @@ func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 	case statusKey:
 		q = q.Order(orderByExpr("status", dir, false)).Order("scans.id desc")
 	case sortRepository:
-		// clause.OrderByColumn quotes the joined-table column per dialect
-		// (`Repository`.`name` on SQLite, "Repository"."name" on Postgres);
-		// a hardcoded backtick expression is invalid SQL on Postgres.
+		// Backtick quoting is invalid on Postgres; let GORM quote the column.
 		q = q.Joins("Repository").
 			Order(clause.OrderByColumn{Column: clause.Column{Table: "Repository", Name: "name"}, Desc: wantDesc(dir, false)}).
 			Order("scans.id desc")

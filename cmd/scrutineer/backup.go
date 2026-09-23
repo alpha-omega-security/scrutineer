@@ -220,11 +220,7 @@ func serverRunning(addr string) bool {
 	return true
 }
 
-// errPostgresManaged returns a non-nil error when the config selects the
-// postgres backend. The backup/restore subcommands are SQLite-only (they use
-// VACUUM INTO and file swaps); PostgreSQL deployments back up through the
-// operator's own tooling (pg_dump/pg_restore, managed snapshots), so scrutineer
-// declines rather than pretending to.
+// backup/restore use VACUUM INTO and file swaps, so they only work on SQLite.
 func errPostgresManaged(cfg *config.Config) error {
 	if cfg != nil && cfg.Database.Driver == "postgres" {
 		return errors.New("backup/restore is SQLite-only; PostgreSQL backups are operator-managed (use pg_dump/pg_restore or your provider's snapshots)")

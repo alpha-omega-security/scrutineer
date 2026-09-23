@@ -28,13 +28,7 @@ func TestPostgresBackend(t *testing.T) {
 	}
 	closePostgres(t, gdb)
 
-	// Start clean so the test is rerunnable: the URL has a unique index, and
-	// the delete cascades to scans/findings via the FK constraints the
-	// postgres two-pass migration added.
 	const repoURL = "https://example.com/pg/repo"
-	if err := gdb.Where("url = ?", repoURL).Delete(&Repository{}).Error; err != nil {
-		t.Fatalf("cleanup: %v", err)
-	}
 
 	// Write and read back through a shared model, including the reserved-word
 	// "commit" column, to confirm AutoMigrate produced a usable schema.

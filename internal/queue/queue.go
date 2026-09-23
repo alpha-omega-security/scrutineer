@@ -114,10 +114,10 @@ func New(sqldb *sql.DB, log *slog.Logger, concurrency int, dialect Dialect) (*Qu
 const goqiteSchemaLockKey int64 = 0x676f71697465
 
 // installSchema applies the dialect's idempotent schema. On Postgres it holds a
-// session advisory lock across the DDL so that many processes starting against
-// a fresh database do not race `CREATE EXTENSION IF NOT EXISTS`, which collides
-// on the pg_extension_name_index unique constraint under concurrency. SQLite is
-// single-writer, so it just runs the statements.
+// session advisory lock across the DDL: `IF NOT EXISTS` and `OR REPLACE` still
+// collide on catalog unique constraints when processes start concurrently
+// against a fresh database. SQLite is single-writer, so it just runs the
+// statements.
 func installSchema(sqldb *sql.DB, dialect Dialect) error {
 	if dialect != Postgres {
 		_, err := sqldb.Exec(dialect.schema())

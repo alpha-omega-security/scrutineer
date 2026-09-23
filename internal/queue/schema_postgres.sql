@@ -2,8 +2,6 @@
 -- run on every startup like the SQLite version does. goqite's own bundled
 -- schema_postgres.sql is not re-runnable (bare create table / trigger /
 -- function), so we guard each object here instead.
-create extension if not exists pgcrypto;
-
 create or replace function goqite_update_timestamp()
 returns trigger as $$
 begin
@@ -13,7 +11,7 @@ end;
 $$ language plpgsql;
 
 create table if not exists goqite (
-  id text primary key default ('m_' || encode(gen_random_bytes(16), 'hex')),
+  id text primary key default ('m_' || replace(gen_random_uuid()::text, '-', '')),
   created timestamptz not null default now(),
   updated timestamptz not null default now(),
   queue text not null,
