@@ -1696,7 +1696,8 @@ func OpenBackend(opts Options) (*gorm.DB, error) {
 const postgresMigrationLock int64 = 0x736372757469
 const postgresSchemaVersionKey = "database_schema_version"
 
-func models() []any {
+// Models lists every GORM model the schema migrates.
+func Models() []any {
 	return []any{
 		&Repository{}, &Scan{},
 		&Finding{}, &FindingLabel{}, &FindingNote{},
@@ -1720,13 +1721,13 @@ func migrate(gdb *gorm.DB) error {
 	if gdb.Name() == string(DialectPostgres) {
 		// Create both sides of the scans/findings cycle before adding foreign keys.
 		gdb.DisableForeignKeyConstraintWhenMigrating = true
-		err := gdb.AutoMigrate(models()...)
+		err := gdb.AutoMigrate(Models()...)
 		gdb.DisableForeignKeyConstraintWhenMigrating = false
 		if err != nil {
 			return fmt.Errorf("automigrate tables: %w", err)
 		}
 	}
-	if err := gdb.AutoMigrate(models()...); err != nil {
+	if err := gdb.AutoMigrate(Models()...); err != nil {
 		return fmt.Errorf("automigrate: %w", err)
 	}
 	if err := gdb.Exec(`CREATE INDEX IF NOT EXISTS idx_scans_priority_id ON scans (status_priority, id DESC)`).Error; err != nil {
