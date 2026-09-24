@@ -133,6 +133,42 @@ jobs:
             ~/go/pkg/mod
           key: ${{ steps.go-cache.outputs.cache-primary-key }}
 
+  postgres:
+    name: postgres
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: postgres:16-alpine@sha256:721873c34ceb9f8d8fc265984940dc982404c105f19ad51be9fdc5970a6080ea
+        env:
+          POSTGRES_USER: scrutineer
+          POSTGRES_PASSWORD: scrutineer
+          POSTGRES_DB: scrutineer_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U scrutineer -d scrutineer_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      SCRUTINEER_TEST_PG_DSN: postgres://scrutineer:scrutineer@127.0.0.1:5432/scrutineer_test?sslmode=disable
+    steps:
+      - name: Set up Git repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Test PostgreSQL
+        run: |
+          test -n "$SCRUTINEER_TEST_PG_DSN"
+          go test -race -count=1 -run '^TestPostgres' ./cmd/scrutineer ./internal/db ./internal/queue ./internal/web
+
   lint:
     name: lint
     runs-on: ubuntu-24.04
@@ -240,7 +276,7 @@ jobs:
 
   conclusion:
     name: conclusion
-    needs: [release-logic, tests, lint, vuln, zizmor]
+    needs: [release-logic, tests, postgres, lint, vuln, zizmor]
     if: always()
     runs-on: ubuntu-slim
     timeout-minutes: 15
@@ -250,12 +286,14 @@ jobs:
         env:
           RELEASE_LOGIC_RESULT: ${{ needs.release-logic.result }}
           TESTS_RESULT: ${{ needs.tests.result }}
+          POSTGRES_RESULT: ${{ needs.postgres.result }}
           LINT_RESULT: ${{ needs.lint.result }}
           VULN_RESULT: ${{ needs.vuln.result }}
           ZIZMOR_RESULT: ${{ needs.zizmor.result }}
         run: |
           [[ "${RELEASE_LOGIC_RESULT}" == success ]]
           [[ "${TESTS_RESULT}" == success ]]
+          [[ "${POSTGRES_RESULT}" == success ]]
           [[ "${LINT_RESULT}" == success ]]
           [[ "${VULN_RESULT}" == success ]]
           [[ "${ZIZMOR_RESULT}" == success ]]

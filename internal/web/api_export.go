@@ -646,6 +646,9 @@ func (s *Server) apiExportScans(w http.ResponseWriter, r *http.Request) {
 }
 
 func scanExportSince(q *gorm.DB, since time.Time) *gorm.DB {
+	if q.Name() == string(db.DialectPostgres) {
+		return q.Where("created_at >= ?", since)
+	}
 	// SQLite timestamps retain local offsets. Compare seconds and the fraction
 	// separately: text ordering ignores offsets, while julianday loses nanoseconds.
 	return q.Where(`(unixepoch(created_at),

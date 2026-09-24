@@ -145,6 +145,9 @@ type flags struct {
 	subprojectScope       string
 	monorepoAttribution   bool
 	skillLocal            skillDirs
+	// Keep connection credentials out of command-line arguments.
+	dbDriver string
+	dbDSN    string
 
 	// set records which flags were passed on the command line so merge
 	// knows not to let the config file override them.
@@ -414,6 +417,10 @@ func (f *flags) merge(cfg *config.Config) {
 	if cfg.EcosystemsEnrichment != nil && !f.set["ecosystems-enrichment"] {
 		f.ecosystemsEnrichment = *cfg.EcosystemsEnrichment
 	}
+	// Database backend is config-only, so no f.set guard.
+	f.dbDriver = cfg.Database.Driver
+	f.dbDSN = cfg.Database.DSN
+
 	f.mergeFederation(cfg)
 
 	// Seed the model pick list from the active harness's own defaults,
@@ -455,6 +462,26 @@ func applyServerDefaults(srv *web.Server, f *flags, log *slog.Logger) {
 	}
 	srv.SetDefaultModel(f.defaultModel)
 	srv.SetDefaultEffort(f.effort)
+}
+
+// databaseOptions maps the merged config onto db.OpenBackend's Options. For
+// postgres the DSN comes from config verbatim; for sqlite (the default) the
+// DSN is the database file inside the data directory, matching the historical
+// db.Open(dataDir/scrutineer.db) call.
+func (f *flags) databaseOptions() db.Options {
+	if f.dbDriver == "postgres" {
+		return db.Options{Dialect: db.DialectPostgres, DSN: f.dbDSN}
+	}
+	return db.Options{Dialect: db.DialectSQLite, DSN: filepath.Join(f.dataDir, dbFileName)}
+}
+
+// queueDialect selects the goqite backend to match databaseOptions so the
+// queue table lives in the same database as everything else.
+func (f *flags) queueDialect() queue.Dialect {
+	if f.dbDriver == "postgres" {
+		return queue.Postgres
+	}
+	return queue.SQLite
 }
 
 func (f *flags) fullClone() bool { return f.cloneMode == "full" }
@@ -648,7 +675,7 @@ func run(log *slog.Logger) error {
 	// walks into cloned scan workspaces under data/work/.
 	_ = os.WriteFile(filepath.Join(f.dataDir, "go.mod"), []byte("module scrutineer/data\n"), dataPermSecure)
 
-	gdb, err := db.Open(filepath.Join(f.dataDir, "scrutineer.db"))
+	gdb, err := db.OpenBackend(f.databaseOptions())
 	if err != nil {
 		return fmt.Errorf("open db: %w", err)
 	}
@@ -680,7 +707,7 @@ func run(log *slog.Logger) error {
 	}
 	enforceCodexAccountAuthConcurrency(f, log)
 
-	q, err := queue.New(sqldb, log, f.concurrency)
+	q, err := queue.New(sqldb, log, f.concurrency, f.queueDialect())
 	if err != nil {
 		return fmt.Errorf("queue: %w", err)
 	}

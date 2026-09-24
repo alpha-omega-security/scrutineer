@@ -39,7 +39,7 @@ func (s *Server) maintainersList(w http.ResponseWriter, r *http.Request) {
 	search := strings.TrimSpace(r.URL.Query().Get("q"))
 	if search != "" {
 		like := "%" + search + "%"
-		q = q.Where("login LIKE ? OR name LIKE ? OR email LIKE ? OR company LIKE ? OR notes LIKE ?",
+		q = q.Where("LOWER(login) LIKE LOWER(?) OR LOWER(name) LIKE LOWER(?) OR LOWER(email) LIKE LOWER(?) OR LOWER(company) LIKE LOWER(?) OR LOWER(notes) LIKE LOWER(?)",
 			like, like, like, like, like)
 	}
 
