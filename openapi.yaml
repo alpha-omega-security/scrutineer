@@ -966,6 +966,76 @@ paths:
                     root:         { type: string }
                     types:        { type: string }
 
+  /specfuzz/clauses:
+    get:
+      summary: List vendored spec-fuzz clauses
+      description: >
+        Returns the clause ids, RFC citations, and protocol tags from the
+        vendored lean-rfcs snapshot, plus the snapshot's source commit.
+        The spec-fuzz skill uses this to decide which clause applies to
+        the target repository.
+      operationId: listSpecFuzzClauses
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  lean_rfcs: { type: string }
+                  clauses:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:       { type: string }
+                        citation: { type: string }
+                        protocol: { type: string }
+
+  /specfuzz/clauses/{id}:
+    get:
+      summary: Get one clause's controls and corpus
+      description: >
+        Returns the clause metadata, must_accept and must_reject controls,
+        and the full corpus of hex-encoded inputs. The spec-fuzz skill
+        feeds each hex through its adapter and reports verdicts keyed by
+        input id.
+      operationId: getSpecFuzzClause
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  meta:
+                    type: object
+                    properties:
+                      id:       { type: string }
+                      citation: { type: string }
+                      protocol: { type: string }
+                  controls:
+                    type: object
+                    properties:
+                      must_accept: { type: array, items: { $ref: '#/components/schemas/SpecFuzzControl' } }
+                      must_reject: { type: array, items: { $ref: '#/components/schemas/SpecFuzzControl' } }
+                  corpus:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:    { type: string }
+                        label: { type: string }
+                        hex:   { type: string }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /v1/repositories:
     get:
       summary: Export repositories as JSONL
@@ -2097,3 +2167,11 @@ components:
         output_file: { type: string }
         version:     { type: integer }
         active:      { type: boolean }
+
+    SpecFuzzControl:
+      type: object
+      required: [id, hex, why]
+      properties:
+        id:  { type: string }
+        hex: { type: string }
+        why: { type: string }

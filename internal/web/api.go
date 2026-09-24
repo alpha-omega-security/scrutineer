@@ -172,6 +172,8 @@ func (s *Server) apiHandler() http.Handler {
 	mux.HandleFunc("GET /findings/{id}/history", s.apiListFindingHistory)
 	mux.HandleFunc("GET /skills", s.apiListSkills)
 	mux.HandleFunc("GET /cnas", s.apiListCNAs)
+	mux.HandleFunc("GET /specfuzz/clauses", s.apiListSpecFuzzClauses)
+	mux.HandleFunc("GET /specfuzz/clauses/{id}", s.apiGetSpecFuzzClause)
 	return http.StripPrefix(apiPrefix, s.apiAuth(mux))
 }
 

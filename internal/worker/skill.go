@@ -500,6 +500,8 @@ func (w *Worker) parseSkillOutputKind(ctx context.Context, skill *db.Skill, scan
 		return w.parsePatchOutput(ctx, scan, report, emit)
 	case "reattack":
 		return w.parseReattackOutput(scan, report, emit)
+	case "spec_fuzz":
+		return w.parseSpecFuzzOutput(ctx, skill, scan, report, emit)
 	}
 	return nil
 }
