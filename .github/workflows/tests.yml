@@ -38,6 +38,9 @@ jobs:
       - name: Test build-command retries
         run: scripts/retry-build-command_test.sh
 
+      - name: Test report merging
+        run: scripts/merge-reports_test.sh
+
   tests:
     name: tests (${{ matrix.platform }})
     strategy:
