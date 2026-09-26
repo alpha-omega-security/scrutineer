@@ -22,11 +22,16 @@ const (
 	AuditEventFindingSeverityChanged = "finding.severity_changed"
 	AuditEventFindingLabelsChanged   = "finding.labels_changed"
 
-	AuditEventScanStarted   = "scan.started"
-	AuditEventScanFinished  = "scan.finished"
-	AuditEventScanFailed    = "scan.failed"
-	AuditEventScanCancelled = "scan.cancelled"
-	AuditEventScanPaused    = "scan.paused"
+	AuditEventScanStarted             = "scan.started"
+	AuditEventScanFinished            = "scan.finished"
+	AuditEventScanFailed              = "scan.failed"
+	AuditEventScanCancelled           = "scan.cancelled"
+	AuditEventScanPaused              = "scan.paused"
+	AuditEventScanRetryRequested      = "scan.retry_requested"
+	AuditEventScanRetryEnqueueFailed  = "scan.retry_enqueue_failed"
+	AuditEventScanResumeRequested     = "scan.resume_requested"
+	AuditEventScanResumeEnqueueFailed = "scan.resume_enqueue_failed"
+	AuditEventScanCancelRequested     = "scan.cancel_requested"
 )
 
 type auditScanKey struct{}

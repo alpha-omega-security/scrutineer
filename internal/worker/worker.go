@@ -357,8 +357,9 @@ const errorColumn = "error"
 // cancellation reads "cancelled by user" whatever asked for it, so a scan
 // stopped by a maintainer's opt-out would be misattributed to the operator.
 type runningScan struct {
-	cancel context.CancelFunc
-	reason string
+	cancelMu sync.Mutex
+	cancel   context.CancelFunc
+	reason   string
 }
 
 // Cancel aborts an in-flight scan and records reason as the row's error when it
@@ -367,16 +368,44 @@ type runningScan struct {
 // already finished) and the caller should flip the DB row itself so the queue
 // handler drops it.
 func (w *Worker) Cancel(scanID uint, reason string) bool {
+	ok, _ := w.CancelWithAudit(scanID, reason, nil)
+	return ok
+}
+
+// CancelWithAudit records a cancellation request before signalling the runner.
+// The callback must not request another cancellation of the same scan. A failed
+// audit leaves the runner untouched; repeated requests with the same reason do
+// not repeat the audit.
+func (w *Worker) CancelWithAudit(scanID uint, reason string, audit func() error) (bool, error) {
+	if reason == "" {
+		reason = CancelledByUser
+	}
 	w.mu.Lock()
 	rs, ok := w.running[scanID]
-	if ok {
-		rs.reason = reason
-	}
 	w.mu.Unlock()
-	if ok {
-		rs.cancel()
+	if !ok {
+		return false, nil
 	}
-	return ok
+	// Database I/O must not hold the worker-wide mutex or stall unrelated jobs.
+	rs.cancelMu.Lock()
+	defer rs.cancelMu.Unlock()
+	w.mu.Lock()
+	active := w.running[scanID] == rs
+	previousReason := rs.reason
+	w.mu.Unlock()
+	if !active {
+		return false, nil
+	}
+	if audit != nil && previousReason != reason {
+		if err := audit(); err != nil {
+			return true, err
+		}
+	}
+	w.mu.Lock()
+	rs.reason = reason
+	w.mu.Unlock()
+	rs.cancel()
+	return true, nil
 }
 
 // cancelReason is the reason the in-flight scan was cancelled under, empty when
