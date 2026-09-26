@@ -487,6 +487,9 @@ func (s *Server) apiRunFindingSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	opts.FindingID = new(uint(id))
+	if caller := scanFromRequest(r); caller != nil && caller.SkillName == "triage" {
+		opts.TriageScanID = &caller.ID
+	}
 	scanID, err := s.enqueueSkillWith(r.Context(), repoID, skill.ID, opts)
 	if err != nil {
 		if errors.Is(err, ErrSkillRequiresRemote) {

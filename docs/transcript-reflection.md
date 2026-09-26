@@ -1,0 +1,21 @@
+# Transcript reflection
+
+After a successful repository-root, default-branch triage invocation, Scrutineer queues one active `reflect` skill scan when that invocation requested compatible child scans and a threat model either exists or was requested by that triage. Metadata-only runs without a threat model do not enqueue reflection. The worker waits for those scans, including focus-area descendants carrying the same `triage_scan_id`, to reach terminal states and finish their local finalization hooks. Failed and cancelled scans are included; paused scans continue to block reflection. Waiting uses the existing bounded prerequisite backoff and does not spend model turns. Disabling the `reflect` skill disables automatic enqueueing. A failed reflection can be retried through the normal scan retry action.
+
+## Bounded input
+
+Finding-scoped jobs requested directly by triage, including verification and release-watch, carry the same triage provenance as repository-scoped jobs and participate in the compatible cohort. Unrelated finding jobs are not attached to it.
+
+Reflection reads persisted `Scan.Log`, not ephemeral runner workspace files. The worker snapshots at most 128 root/default-branch child scans from the exact triage invocation into the reflection scan's existing `ImportPayload` field and stages it as `./import/report`. Other repositories, triage invocations, branch/subproject scopes, and reflection scans are excluded. An oversized cohort fails explicitly instead of silently omitting scans. No compatible child scans means no automatic reflection job.
+
+For each scan, the database returns only the first and last 8192 characters of its log. Error-marker lines from the prefix and the final output are reduced to at most 4096 UTF-8 bytes per scan. `truncated` identifies incomplete excerpts, and an empty or unavailable log is explicitly marked `missing`. Database read errors fail the pass rather than appearing as clean transcripts. The snapshot remains fixed across retries and is fingerprinted as `reflection_input_sha256` in the scan recipe. No backend-native transcript format is required.
+
+## Notes and safety
+
+Once a snapshot is recorded, retries validate and replay it without waiting on the source scans again. Source scans or their triage row may subsequently be removed by retention, or a source may be paused for another attempt, without invalidating the frozen input. An existing valid repository threat model is still required. Within a run/stage, notes from a newer reflection scan take precedence over an older attempt that finishes later.
+
+The report contains exactly one outcome per distinct skill stage. Each outcome identifies a source scan and is one of `tool_failure`, `missing_dependency`, `reproducer_entrypoint`, `missing_transcript`, or `no_observation`. If any transcript for a stage is missing, that stage must report `missing_transcript`. Other observations require exact quoted evidence from the selected staged excerpt. `no_observation` means no supported lesson in the bounded input, not that the complete stage succeeded without problems.
+
+The worker validates source identity, stage uniqueness, evidence, and text limits even when strict schema validation is disabled. It merges only `reflection_notes` into an existing threat-model object, with a compare-and-swap to preserve concurrent edits. Missing or malformed contracts stop reflection before model execution. Notes retain the triage ID, reflection scan ID, source scan ID, and source commit. Replaying the same run replaces its stage notes, and the latest 100 notes by triage ID are retained. Older notes remain available in their reflection scan reports. Automatic threat-model refreshes preserve these host-owned notes instead of accepting model-authored replacements.
+
+Transcript excerpts and notes are untrusted historical evidence. The reflect skill does not execute commands or fetch extra transcripts. Consumers must recheck historical prerequisites and entrypoints against the current checkout and runner. Notes never automatically alter controls, known non-findings, scope exclusions, finding status, or verification scores. Analysts can edit or clear the stored contract through the existing workbench.

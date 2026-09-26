@@ -11,6 +11,7 @@ These live in `skills/` and are embedded in the Scrutineer executable. At startu
 | Skill | What it does |
 |---|---|
 | `triage` | Default pipeline orchestrator. Classifies the repo, enqueues the appropriate scan set via the scrutineer API, and re-verifies any findings already reported upstream. Edit its body to change what runs by default. |
+| `reflect` | Automatically queued after successful root default-branch triage; waits for that invocation's compatible child scans to settle, then extracts [bounded operational notes](transcript-reflection.md) into the repository threat model. Disable the skill to disable automatic reflection. |
 | `metadata` | Fetches description, default branch, languages, license, stars, archived status, and icon from repos.ecosyste.ms. |
 | `repo-overview` | Runs `brief --json` for a structured project summary used by other skills as orientation. |
 | `embedded-native` | Runs Brief at the repository root and each initialized shallow Git submodule to map native languages, extension bridges, build tools, manifests, and dependencies. Runs when triage finds native-extension, submodule, or mixed native-language signals. |
@@ -188,6 +189,7 @@ Declaring `scrutineer.paths` replaces this skip list entirely: the skill sees on
 | Kind | Stored as |
 |---|---|
 | `freeform` or empty | Raw text on the scan row. No further parsing. |
+| `reflection` | Validated operational notes merged into `Repository.ThreatModel.reflection_notes`, with host-stamped triage, reflection scan, and source commit provenance. Reserved for the `reflect` skill. |
 | `findings` | Parsed into Finding rows with fingerprint dedupe against prior scans. An optional per-finding `dup_check` sentence (the agent's reasoning on why it is distinct from siblings filed under the same `scan_group`) is carried through for the dedup judge. |
 | `repo_metadata` | Repository row fields (description, languages, license, stars, archived). |
 | `repo_overview` | Brief summary stored for other skills to read. |

@@ -144,6 +144,7 @@ Adding a repo enqueues the `triage` skill, whose SKILL.md lists the further skil
 | Skill | What it does |
 |-------|--------------|
 | `triage` | Orchestrates the default scan set via the scrutineer API |
+| `reflect` | Records tool failures and working entrypoints from a finished scan set into the threat model |
 | `metadata` | Fetches repo metadata from repos.ecosyste.ms |
 | `packages` | Looks up published packages from packages.ecosyste.ms |
 | `advisories` | Fetches known security advisories |

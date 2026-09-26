@@ -82,6 +82,7 @@ var severityLevels = map[string]bool{"Low": true, "Medium": true, "High": true, 
 // without parsing"; everything else maps to a parser in
 // internal/worker/skill.go.
 var OutputKinds = map[string]bool{
+	"reflection":      true,
 	"":                true,
 	"freeform":        true,
 	"findings":        true,
@@ -220,6 +221,9 @@ func (p *Parsed) validateMetadata() error {
 		}
 		if !OutputKinds[strings.TrimSpace(s)] {
 			return fmt.Errorf("%s %q is not a recognised parser", metaOutputKind, s)
+		}
+		if strings.TrimSpace(s) == "reflection" && p.Name != "reflect" {
+			return fmt.Errorf("%s: reflection output is reserved for the reflect skill", metaOutputKind)
 		}
 	}
 	if v, ok := p.Metadata[metaMaxTurns]; ok {

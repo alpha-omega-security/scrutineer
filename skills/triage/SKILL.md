@@ -11,6 +11,8 @@ metadata:
 
 # triage
 
+Scrutineer automatically queues `reflect` after a successful root default-branch triage invocation and waits for this invocation's child scans before running it. Do not enqueue `reflect` yourself or wait for it. It records operational lessons only and does not change scan selection or finding dispositions.
+
 Kick off the standard set of scans against a freshly-added repository.
 
 ## Workspace

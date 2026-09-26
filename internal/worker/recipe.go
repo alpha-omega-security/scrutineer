@@ -67,8 +67,9 @@ type ScanRecipe struct {
 	// ThreatModelSHA256 and ScanConfigSHA256 digest the Repository text in
 	// effect at claim time, so a rerun after an edit is distinguishable
 	// from one before it. Absent when the repository had none set.
-	ThreatModelSHA256 string `json:"threat_model_sha256,omitempty"`
-	ScanConfigSHA256  string `json:"scan_config_sha256,omitempty"`
+	ThreatModelSHA256     string `json:"threat_model_sha256,omitempty"`
+	ScanConfigSHA256      string `json:"scan_config_sha256,omitempty"`
+	ReflectionInputSHA256 string `json:"reflection_input_sha256,omitempty"`
 }
 
 // textDigest returns the hex SHA-256 of s, or "" when s is empty, so an
@@ -112,6 +113,9 @@ func buildScanRecipe(scan *db.Scan, backend, threatModel, scanConfig string) (st
 	}
 	if scan.FocusArea != "" && json.Valid([]byte(scan.FocusArea)) {
 		r.FocusArea = json.RawMessage(scan.FocusArea)
+	}
+	if scan.SkillName == "reflect" {
+		r.ReflectionInputSHA256 = textDigest(string(scan.ImportPayload))
 	}
 	if scan.ExplorationMode == ExplorationRandomDig {
 		r.ThreatModelSHA256 = ""

@@ -602,6 +602,29 @@ body`)
 	}
 }
 
+func TestParseFile_reflectionOutputKind(t *testing.T) {
+	for _, name := range []string{"reflect", "custom-reflect"} {
+		for _, kind := range []string{"reflection", " reflection "} {
+			t.Run(name+"/"+kind, func(t *testing.T) {
+				path := writeSkill(t, t.TempDir(), name, "---\nname: "+name+"\ndescription: Reflect on scans\nmetadata:\n  scrutineer.output_kind: '"+kind+"'\n---\nbody")
+				parsed, err := ParseFile(path)
+				if name != "reflect" {
+					if err == nil || !strings.Contains(err.Error(), "reflection output is reserved for the reflect skill") {
+						t.Fatalf("expected reserved output_kind error, got %v", err)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if parsed.OutputKind != "reflection" {
+					t.Fatalf("output_kind = %q, want reflection", parsed.OutputKind)
+				}
+			})
+		}
+	}
+}
+
 func TestParseFile_rejectsUnsupportedVersion(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSkill(t, dir, "future", `---
@@ -614,6 +637,16 @@ body`)
 	_, err := ParseFile(path)
 	if err == nil || !strings.Contains(err.Error(), "not supported") {
 		t.Errorf("expected version error, got %v", err)
+	}
+}
+
+func TestBundledReflectionSkill(t *testing.T) {
+	skill, err := ParseFile("../../skills/reflect/SKILL.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if skill.OutputKind != "reflection" || skill.Model != "mid" || skill.MaxTurns != 8 || skill.SchemaJSON == "" {
+		t.Fatalf("invalid reflection metadata: %+v", skill)
 	}
 }
 

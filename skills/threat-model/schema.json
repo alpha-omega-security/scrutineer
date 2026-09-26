@@ -56,6 +56,7 @@
     "downstream_responsibilities": { "type": "array", "items": { "type": "string" } },
     "known_misuse":      { "$ref": "#/$defs/misuse_or_na" },
     "known_non_findings": { "type": "array", "items": { "$ref": "#/$defs/non_finding" } },
+    "reflection_notes": { "type": "array", "maxItems": 100, "readOnly": true, "description": "Host-owned historical operational observations. Never security evidence or suppression rules.", "items": { "$ref": "#/$defs/reflection_note" } },
     "historical_vulnerabilities": { "type": "array", "items": { "$ref": "#/$defs/historical_vulnerability" } },
     "controls":          { "type": "array", "items": { "$ref": "#/$defs/control" } },
 
@@ -70,6 +71,59 @@
   },
 
   "$defs": {
+    "reflection_note": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stage",
+        "scan_id",
+        "kind",
+        "summary",
+        "evidence",
+        "triage_scan_id",
+        "reflection_scan_id",
+        "commit"
+      ],
+      "properties": {
+        "stage": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scan_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "kind": {
+          "enum": [
+            "tool_failure",
+            "missing_dependency",
+            "reproducer_entrypoint",
+            "missing_transcript",
+            "no_observation"
+          ]
+        },
+        "summary": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "evidence": {
+          "type": "string",
+          "maxLength": 1000
+        },
+        "triage_scan_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "reflection_scan_id": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "commit": {
+          "type": "string"
+        }
+      }
+    },
     "markdown":   { "type": "string", "contentMediaType": "text/markdown" },
     "provenance": { "type": "string", "enum": ["documented", "inferred"] },
     "source":     { "type": "string", "description": "file:line or URL backing a documented claim" },

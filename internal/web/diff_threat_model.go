@@ -8,6 +8,7 @@ import (
 
 	"scrutineer/internal/coverage"
 	"scrutineer/internal/db"
+	"scrutineer/internal/reflection"
 )
 
 const materialThreatModelFileThreshold = 10
@@ -46,7 +47,9 @@ func (s *Server) autoUpdateThreatModel(scan *db.Scan) {
 		s.Log.Warn("threat-model update: invalid report", "scan", scan.ID, "err", err)
 		return
 	}
-	if err := s.DB.Model(&db.Repository{}).Where("id = ?", scan.RepositoryID).Update("threat_model", model).Error; err != nil {
+	if err := db.UpdateThreatModel(s.DB, scan.RepositoryID, func(previous string) (string, error) {
+		return reflection.Preserve(previous, model)
+	}); err != nil {
 		s.markThreatModelUpdate(scan, "skipped_update_error", false, err.Error())
 		s.Log.Warn("threat-model update: save repository model", "scan", scan.ID, "repo", scan.RepositoryID, "err", err)
 		return

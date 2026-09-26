@@ -458,6 +458,11 @@ func (w *Worker) parseSkillOutput(ctx context.Context, skill *db.Skill, scan *db
 
 func (w *Worker) parseSkillOutputKind(ctx context.Context, skill *db.Skill, scan *db.Scan, report string, emit func(Event)) error {
 	switch skill.OutputKind {
+	case "reflection":
+		if skill.Name != "reflect" {
+			return fmt.Errorf("reflection output is reserved for the reflect skill")
+		}
+		return w.parseReflectionOutput(scan, report)
 	case "findings":
 		return w.parseFindingsOutput(skill, scan, report, emit)
 	case "maintainers":
@@ -1335,10 +1340,8 @@ func oneLine(s string) string {
 	return strings.TrimSpace(s)
 }
 
-// stageImportPayload writes the raw report bytes from an import-fallback
-// run into the workspace at import/report, where the ingest skill expects
-// to find them. Every scan without a payload (everything except the
-// import fallback) stages nothing.
+// stageImportPayload writes ingest input or a reflection snapshot at
+// import/report. Scans without a payload stage nothing.
 func stageImportPayload(workRoot string, payload []byte) error {
 	if len(payload) == 0 {
 		return nil

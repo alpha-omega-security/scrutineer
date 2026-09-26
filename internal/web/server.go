@@ -3369,9 +3369,8 @@ type ScanOpts struct {
 	// rerun chain stays walkable hop by hop. Nil on a first-time enqueue.
 	ParentScanID         *uint
 	VerificationFeedback string
-	// ImportPayload is the raw uploaded report for an ingest-skill run
-	// created by the /v1/import fallback; the worker stages it into the
-	// workspace at import/report. Empty for every other enqueue.
+	// ImportPayload is an ingest report or a retained reflection snapshot;
+	// the worker stages it at import/report. Empty for other enqueues.
 	ImportPayload []byte
 }
 

@@ -48,6 +48,16 @@ func (w *Worker) preflightSkill(ctx context.Context, scan *db.Scan, attempt int)
 	if err := w.DB.First(&skill, *scan.SkillID).Error; err != nil {
 		return false, fmt.Errorf("load skill %d for preflight: %w", *scan.SkillID, err)
 	}
+	if skill.Name == "reflect" {
+		pending, err := w.prepareReflection(scan)
+		if err != nil {
+			w.failScanPrereqs(scan, skill.Name, err.Error(), nil)
+			return true, nil
+		}
+		if pending {
+			return w.deferSkillPrereqs(ctx, scan, &skill, attempt, []string{"triage cohort"})
+		}
+	}
 	requires := skills.SplitPatterns(skill.Requires)
 	if len(requires) == 0 {
 		return false, nil
@@ -61,7 +71,10 @@ func (w *Worker) preflightSkill(ctx context.Context, scan *db.Scan, attempt int)
 	if len(pending) == 0 {
 		return false, nil
 	}
+	return w.deferSkillPrereqs(ctx, scan, &skill, attempt, pending)
+}
 
+func (w *Worker) deferSkillPrereqs(ctx context.Context, scan *db.Scan, skill *db.Skill, attempt int, pending []string) (bool, error) {
 	maxAttempts := w.MaxPrereqAttempts
 	if maxAttempts <= 0 {
 		maxAttempts = DefaultMaxPrereqAttempts

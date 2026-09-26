@@ -165,6 +165,7 @@ func (s *Server) onScanFinalized(scan *db.Scan) {
 	s.autoComputeFixValidation(scan)
 	s.autoEnqueueFindingDedup(scan)
 	s.autoEnqueueAdvisoryAudit(scan)
+	s.autoEnqueueReflection(scan)
 }
 
 // autoComputeFixValidation is the anchor half of onScanFinalized. For a scan
