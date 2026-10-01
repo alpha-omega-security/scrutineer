@@ -178,6 +178,11 @@ type Config struct {
 	// row set from the result, so denying them the domain would let an empty
 	// answer wipe rows already recorded. Nil (the default) leaves enrichment on.
 	EcosystemsEnrichment *bool `yaml:"ecosystems_enrichment"`
+	// Database selects the persistence backend. When omitted, scrutineer
+	// keeps an embedded SQLite database file inside the data directory (the
+	// historical behaviour). Set driver: postgres with a dsn to point at an
+	// external PostgreSQL server instead.
+	Database DatabaseConfig `yaml:"database"`
 	// FederationSalt is the secret shared out of band between federation
 	// members and mixed into interchange finding hashes, so members derive
 	// matching hashes without publishing anything enumerable by outsiders.
@@ -386,6 +391,16 @@ func ParseBackendPreflightTTL(s string) (time.Duration, error) {
 	return d, nil
 }
 
+// DatabaseConfig selects and locates the database backend. Driver is
+// "sqlite" (default when empty) or "postgres". DSN is required for
+// postgres (a libpq/pgx connection string or URL, e.g.
+// "postgres://user:pass@host:5432/scrutineer?sslmode=disable"); for sqlite
+// it is ignored and the file lives under the data directory as before.
+type DatabaseConfig struct {
+	Driver string `yaml:"driver"`
+	DSN    string `yaml:"dsn"`
+}
+
 // ParseScanTimeout validates and parses a scan_timeout string. Empty
 // returns 0 (caller keeps its default); anything else must be positive.
 func ParseScanTimeout(s string) (time.Duration, error) {
@@ -410,6 +425,24 @@ func ValidateClone(s string) error {
 		return nil
 	default:
 		return fmt.Errorf("clone: must be \"shallow\" or \"full\", got %q", s)
+	}
+}
+
+// ValidateDatabase checks the database block. The driver must be empty,
+// "sqlite", or "postgres", and postgres requires a dsn (sqlite derives its
+// path from the data directory). Exposed so callers can validate the same
+// rule the loader applies.
+func ValidateDatabase(d DatabaseConfig) error {
+	switch d.Driver {
+	case "", "sqlite":
+		return nil
+	case "postgres":
+		if d.DSN == "" {
+			return errors.New("database: driver \"postgres\" requires a dsn")
+		}
+		return nil
+	default:
+		return fmt.Errorf("database: driver must be \"sqlite\" or \"postgres\", got %q", d.Driver)
 	}
 }
 
@@ -546,6 +579,9 @@ func Load(path string) (*Config, error) {
 		if _, err := c.VINCE.Endpoint(); err != nil {
 			return nil, fmt.Errorf("parse config %s: %w", path, err)
 		}
+	}
+	if err := ValidateDatabase(c.Database); err != nil {
+		return nil, fmt.Errorf("parse config %s: %w", path, err)
 	}
 	return &c, nil
 }

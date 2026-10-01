@@ -891,12 +891,12 @@ func (s *Server) repoList(w http.ResponseWriter, r *http.Request) {
 	if lang != "" {
 		// languages is a ", "-joined list; wrapping both sides lets one
 		// LIKE match start/middle/end/only without four OR clauses.
-		q = q.Where("(', ' || languages || ', ') LIKE ?", "%, "+lang+", %")
+		q = q.Where("LOWER(', ' || languages || ', ') LIKE LOWER(?)", "%, "+lang+", %")
 	}
 	search := strings.TrimSpace(r.URL.Query().Get("q"))
 	if search != "" {
 		like := "%" + search + "%"
-		q = q.Where("name LIKE ? OR url LIKE ? OR full_name LIKE ? OR description LIKE ?",
+		q = q.Where("LOWER(name) LIKE LOWER(?) OR LOWER(url) LIKE LOWER(?) OR LOWER(full_name) LIKE LOWER(?) OR LOWER(description) LIKE LOWER(?)",
 			like, like, like, like)
 	}
 
@@ -1162,9 +1162,7 @@ func loadRepoFindings(gdb *gorm.DB, repoID uint, category string) repoFindings {
 			scanIDs = append(scanIDs, f.ScanID)
 		}
 	}
-	// Typed Find so GORM's dialector quotes the reserved-word column
-	// (`commit` on SQLite, "commit" on Postgres) and coerces NULL text to
-	// the Go zero value, replacing the previous Raw + COALESCE.
+	// GORM quotes the reserved commit column for the selected backend.
 	var rows []db.Scan
 	gdb.Select("id", "skill_name", "commit").Where("id IN ?", scanIDs).Find(&rows)
 	for _, row := range rows {
@@ -1291,7 +1289,7 @@ func (s *Server) findingsIndexQuery(r *http.Request, includeScanners, includeMis
 	}
 	if search := strings.TrimSpace(r.URL.Query().Get("q")); search != "" {
 		like := "%" + search + "%"
-		q = q.Where("title LIKE ? OR location LIKE ? OR cwe LIKE ? OR cve_id LIKE ? OR ghsa_id LIKE ? OR affected LIKE ?",
+		q = q.Where("LOWER(title) LIKE LOWER(?) OR LOWER(location) LIKE LOWER(?) OR LOWER(cwe) LIKE LOWER(?) OR LOWER(cve_id) LIKE LOWER(?) OR LOWER(ghsa_id) LIKE LOWER(?) OR LOWER(affected) LIKE LOWER(?)",
 			like, like, like, like, like, like)
 	}
 	return q
@@ -1370,7 +1368,7 @@ func findingIndexWhereSQL(r *http.Request, includeScanners, includeMissed bool) 
 	}
 	if search := strings.TrimSpace(r.URL.Query().Get("q")); search != "" {
 		like := "%" + search + "%"
-		where = append(where, "(title LIKE ? OR location LIKE ? OR cwe LIKE ? OR cve_id LIKE ? OR ghsa_id LIKE ? OR affected LIKE ?)")
+		where = append(where, "(LOWER(title) LIKE LOWER(?) OR LOWER(location) LIKE LOWER(?) OR LOWER(cwe) LIKE LOWER(?) OR LOWER(cve_id) LIKE LOWER(?) OR LOWER(ghsa_id) LIKE LOWER(?) OR LOWER(affected) LIKE LOWER(?))")
 		args = append(args, like, like, like, like, like, like)
 	}
 	return where, args
@@ -1869,7 +1867,7 @@ func (s *Server) packages(w http.ResponseWriter, r *http.Request) {
 	if search != "" {
 		like := "%" + search + "%"
 		// GORM maps the PURL struct field to the `p_url` column.
-		q = q.Where("name LIKE ? OR p_url LIKE ? OR licenses LIKE ?", like, like, like)
+		q = q.Where("LOWER(name) LIKE LOWER(?) OR LOWER(p_url) LIKE LOWER(?) OR LOWER(licenses) LIKE LOWER(?)", like, like, like)
 	}
 
 	sortCol, dir := splitSort(r.URL.Query().Get("sort"))
@@ -1935,7 +1933,7 @@ func (s *Server) advisoriesList(w http.ResponseWriter, r *http.Request) {
 	search := strings.TrimSpace(r.URL.Query().Get("q"))
 	if search != "" {
 		like := "%" + search + "%"
-		q = q.Where("title LIKE ? OR packages LIKE ? OR classification LIKE ? OR uuid LIKE ?",
+		q = q.Where("LOWER(title) LIKE LOWER(?) OR LOWER(packages) LIKE LOWER(?) OR LOWER(classification) LIKE LOWER(?) OR LOWER(uuid) LIKE LOWER(?)",
 			like, like, like, like)
 	}
 

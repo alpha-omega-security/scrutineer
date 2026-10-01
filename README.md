@@ -41,6 +41,8 @@ The existing source-checkout command remains supported:
 
 Then open http://127.0.0.1:8080. The explicit `-skills ./skills` directory makes the checkout command useful while developing skills because it overrides the copies embedded in the binary. It is optional for ordinary use because Scrutineer ships its built-in skills and per-ecosystem runner profiles inside the executable.
 
+Scrutineer uses SQLite by default. For a new instance backed by PostgreSQL, follow the [database setup instructions](docs/database.md).
+
 You can also build a checkout-independent executable and run it from another directory:
 
     go build -o scrutineer ./cmd/scrutineer

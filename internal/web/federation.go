@@ -232,7 +232,7 @@ func (s *Server) certificateRecords(tier interchange.Tier) ([]interchange.Statem
 	// empty string sorts first, so the plain aggregate would answer "no URL"
 	// for a uuid one of whose duplicates carries a real one.
 	q := s.DB.Model(&db.AdvisoryAudit{}).
-		Select("repositories.url, advisories.url AS advisory_url, advisory_audits.advisory_uuid AS advisory, advisory_audits.status, advisory_audits.`commit`, advisory_audits.created_at").
+		Select(`repositories.url, advisories.url AS advisory_url, advisory_audits.advisory_uuid AS advisory, advisory_audits.status, advisory_audits."commit", advisory_audits.created_at`).
 		Joins("JOIN repositories ON repositories.id = advisory_audits.repository_id").
 		Joins("LEFT JOIN (SELECT repository_id, uuid, MIN(NULLIF(url, '')) AS url FROM advisories GROUP BY repository_id, uuid) advisories"+
 			" ON advisories.repository_id = advisory_audits.repository_id AND advisories.uuid = advisory_audits.advisory_uuid").

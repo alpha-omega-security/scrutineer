@@ -543,7 +543,7 @@ func (s *Server) apiListCNAs(w http.ResponseWriter, r *http.Request) {
 	q := s.DB.Order("short_name")
 	if term := r.URL.Query().Get("q"); term != "" {
 		like := "%" + term + "%"
-		q = q.Where("short_name LIKE ? OR organization LIKE ? OR scope LIKE ?", like, like, like)
+		q = q.Where("LOWER(short_name) LIKE LOWER(?) OR LOWER(organization) LIKE LOWER(?) OR LOWER(scope) LIKE LOWER(?)", like, like, like)
 	}
 	var rows []db.CNA
 	q.Find(&rows)

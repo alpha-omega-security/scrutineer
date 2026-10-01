@@ -18,11 +18,40 @@ func newTestQueue(t *testing.T, concurrency int) *Queue {
 	if err != nil {
 		t.Fatal(err)
 	}
-	q, err := New(sqldb, slog.New(slog.NewTextHandler(io.Discard, nil)), concurrency)
+	q, err := New(sqldb, slog.New(slog.NewTextHandler(io.Discard, nil)), concurrency, SQLite)
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = sqldb.Close() })
 	return q
+}
+
+func TestQueue_ReconfigureConcurrentShutdown(t *testing.T) {
+	for range 10 {
+		q := newTestQueue(t, 1)
+		ctx, cancel := context.WithCancel(t.Context())
+		started := make(chan struct{}, 1)
+		q.Register("job", func(context.Context, []byte) error {
+			started <- struct{}{}
+			return nil
+		})
+		if err := q.Enqueue(ctx, "job", 1, 0); err != nil {
+			t.Fatal(err)
+		}
+		done := make(chan struct{})
+		go func() { q.Start(ctx); close(done) }()
+		waitChan(t, started, "runner did not start")
+		reconfigured := make(chan struct{})
+		go func() {
+			for range 20 {
+				q.Reconfigure(2)
+			}
+			close(reconfigured)
+		}()
+		cancel()
+		waitChan(t, reconfigured, "Reconfigure did not return during shutdown")
+		waitChan(t, done, "Start did not return during shutdown")
+	}
 }
 
 func TestQueue_ReconfigureBeforeStart(t *testing.T) {

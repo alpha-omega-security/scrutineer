@@ -227,7 +227,7 @@ func TestOverageResumeOnlyPolicyPauses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	w.Queue, err = queue.New(sqlDB, w.Log, 1)
+	w.Queue, err = queue.New(sqlDB, w.Log, 1, queue.SQLite)
 	if err != nil {
 		t.Fatal(err)
 	}

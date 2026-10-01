@@ -12,8 +12,20 @@
 # Listen address for the web UI + skill API.
 # addr: 127.0.0.1:8080
 
-# Where scan workspaces and the sqlite DB live.
+# Where scan workspaces and (for the default sqlite backend) the database
+# file live.
 # data: ./data
+
+# Database backend. Omit the block to use the embedded SQLite file at
+# <data>/scrutineer.db by default. For a new instance, set driver: postgres
+# and a dsn. Scrutineer creates the schema on first connect.
+#
+# NOTE: the `scrutineer backup` / `scrutineer restore` subcommands are
+# SQLite-only. Under postgres, back up with your own tooling (pg_dump /
+# pg_restore or your provider's managed snapshots).
+# database:
+#   driver: postgres
+#   dsn: postgres://scrutineer:scrutineer@127.0.0.1:5432/scrutineer?sslmode=disable
 
 # Claude effort level for model-backed skills.
 # effort: high

@@ -9,7 +9,7 @@
 | `internal/db/` | GORM models + helpers |
 | `internal/db/db.go` | Repository, Scan, Skill, Finding + sibling tables (FindingLabel, FindingNote, FindingCommunication, FindingReference, FindingHistory), Dependency, Package, Dependent, Advisory, Maintainer, Subproject, SBOMUpload, SBOMPackage, CNA |
 | `internal/db/finding_helpers.go` | WriteFindingField, AddFindingNote, AddFindingCommunication, AddFindingReference, SetFindingLabels, SeedDefaultLabels |
-| `internal/queue/` | goqite wrapper, embedded sqlite schema |
+| `internal/queue/` | goqite wrapper, embedded SQLite and PostgreSQL schemas |
 | `internal/ingest/` | format-neutral parsers for external finding reports (SARIF, CSV, markdown, minimal JSON) used by `POST /api/v1/import` |
 | `internal/skills/` | SKILL.md parser + loader for local dirs and remote git repos |
 | `internal/worker/` | one job kind (JobSkill) and the runner plumbing |
