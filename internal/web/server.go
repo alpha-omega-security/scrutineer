@@ -3232,7 +3232,7 @@ func findingChildModels() []any {
 	return []any{
 		&db.FindingNote{}, &db.FindingCommunication{}, &db.FindingReference{},
 		&db.FindingHistory{}, &db.FindingDependent{}, &db.FindingReview{},
-		&db.FindingVerification{}, &db.FindingAttackPath{},
+		&db.FindingVerification{}, &db.FindingAttackPath{}, &db.FindingPoC{},
 		&db.RemediationValidation{}, &db.RemediationAttempt{},
 	}
 }

@@ -366,6 +366,9 @@ paths:
         the bearer token, never trusted from the body. The finding still
         belongs in the final `report.json`, which reconciles against the
         streamed row by fingerprint rather than duplicating it.
+        If PoC capture fails, the finding is still saved and the 201 response
+        includes `poc_capture_error`. Correct the files and publish again to
+        retry capture.
       operationId: streamRepositoryFinding
       parameters:
         - $ref: '#/components/parameters/RepositoryID'
@@ -1619,6 +1622,7 @@ components:
         scan_id:       { type: integer, format: int64 }
         repository_id: { type: integer, format: int64 }
         finding_id:    { type: string, description: Short id within the scan report (F1, F2, ...). }
+        poc_capture_error: { type: string, description: "Present on streamed publication when the finding was saved but PoC capture failed." }
         sinks:         { type: string, description: Comma-joined sink ids. }
         title:         { type: string }
         severity:      { type: string, enum: [Critical, High, Medium, Low] }

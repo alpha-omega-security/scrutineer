@@ -235,10 +235,13 @@ When a scan starts, the worker creates `./data/work/scan-{id}/` with:
     ./schema.json                copy of the skill's schema for the model to read
     ./scripts/                   copy of the skill's scripts/, so `bash scripts/foo.sh` resolves from cwd
     ./report.json                the skill writes its output here
+    ./poc/<finding-id>/           reproduction files written and run by the skill
 
 `./src/` is copied from a per-URL persistent clone under `./data/work/repo-cache/<sha256(url)>/src/` so the second scan of the same repository only fetches the delta. The cache is shallow by default and is deepened on demand when the code browser needs to resolve a historical commit for `/repositories/{id}/blob/{commit}/{path}`.
 
-The worker then runs `claude -p "Use the {name} skill in this workspace"` with the working directory set to the workspace root. Anything the skill writes outside `./report.json` is discarded when the workspace is cleaned. Write intermediate files under `./` rather than `/tmp`; concurrent scans share `/tmp` in the container runner.
+The worker then runs `claude -p "Use the {name} skill in this workspace"` with the working directory set to the workspace root. It retains the first successful capture of `./poc/<finding-id>/` with each finding, using the report-local ID such as `F001`. Finish and run the reproduction before publishing the finding, then leave its files unchanged. Captures allow 64 regular files, 1 MiB per file and 2 MiB total; links and unsafe paths are refused. A failed capture produces a warning without discarding the finding or report. Other workspace files are discarded during cleanup. Write intermediate files under `./` rather than `/tmp`; concurrent scans share `/tmp` in the container runner.
+
+Finding-scoped verification receives the captured files in `./poc/` beside its fresh `./src/` checkout. `./poc-manifest.json` records the source scan, commit and file checksums. Captures remain until the finding is deleted; verification and disclosure bundles use validation text when no capture exists.
 
 ## context.json
 

@@ -595,7 +595,11 @@ func (w *Worker) ingestFindings(skill *db.Skill, scan *db.Scan, report string, e
 
 		wasCreated, perr := w.persistFinding(scan, f)
 		if perr != nil {
-			return nil, perr
+			if _, ok := errors.AsType[*PoCCaptureError](perr); !ok {
+				return nil, perr
+			}
+			emit(Event{Kind: KindError, Text: perr.Error()})
+			w.Log.Warn("capture PoC", "finding", f.ID, "scan", scan.ID, "err", perr)
 		}
 		if wasCreated {
 			created++
@@ -640,13 +644,20 @@ func (w *Worker) persistFinding(scan *db.Scan, f *db.Finding) (created bool, err
 			return false, uerr
 		}
 		f.ID = existing.ID
+		if err := w.captureFindingPoC(scan, f); err != nil {
+			return false, &PoCCaptureError{err}
+		}
 		return false, nil
 	}
 	if cerr := w.DB.Create(f).Error; cerr != nil {
 		return false, fmt.Errorf("save finding: %w", cerr)
 	}
+	captureErr := w.captureFindingPoC(scan, f)
 	if w.OnFindingCreated != nil {
 		w.OnFindingCreated(scan, f)
+	}
+	if captureErr != nil {
+		return true, &PoCCaptureError{captureErr}
 	}
 	return true, nil
 }
@@ -1475,6 +1486,9 @@ func (w *Worker) stageWorkspace(ctx context.Context, workRoot, skillDir string, 
 	feedback, err := w.findingFeedback(ctx, workRoot, scan, skill)
 	if err != nil {
 		return skillContext{}, err
+	}
+	if err := w.stageFindingPoC(workRoot, scan, skill); err != nil {
+		return skillContext{}, fmt.Errorf("stage PoC: %w", err)
 	}
 	return stageWorkspaceWithInputs(
 		workRoot, skillDir, w.apiBaseFor(skill.Name), w.ForkOrg, w.metadataDir(), scan, skill, recon, novelty, controls, feedback,

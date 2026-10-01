@@ -196,6 +196,10 @@ Edit `skills/triage/SKILL.md` to change what gets run by default. Drop new skill
 
 Before each scan, lockfiles, minified bundles, and generated trees are stripped from the workspace so the skill doesn't waste turns on them. The builtin skip list covers `node_modules`, `dist`, `generated`, `__generated__`, `*.min.js`/`*.min.css`, and the common lockfiles (`pnpm-lock.yaml`, `package-lock.json`, `yarn.lock`, `Cargo.lock`, `go.sum`, `Gemfile.lock`, `poetry.lock`, `composer.lock`). Skills can override this with `scrutineer.paths` (allow-list) and layer `scrutineer.ignore_paths` on top; see [docs/skills.md](docs/skills.md#path-filtering).
 
+Skills can retain reproductions by writing and running their files in `./poc/<finding-id>/`, where the ID matches the report's finding ID, such as `F001`. The directory should contain source, crafted inputs, a `run.sh` accepting the target checkout or executable path, and a `README.md` with prerequisites and expected output. Finish the reproduction before publishing a finding mid-scan, then leave its files unchanged. Scrutineer stores the first successful capture in the database with its source scan, commit and file checksums, independently of workspace cleanup.
+
+Each capture is limited to 64 regular files, 1 MiB per file and 2 MiB total. Links, special files and unsafe paths are refused; a capture error is reported while the finding itself is retained. Captures remain until the finding is deleted and are included in database backups. Verification stages these files beside a fresh target checkout, and disclosure bundles prefer them over text extraction. Existing findings without a capture continue to use their validation text. A `poc-manifest.json` accompanies captured files with their provenance and SHA-256 checksums.
+
 ## Importing findings from other tools
 
 Scrutineer can ingest findings produced elsewhere so they enter the same triage and disclosure workflow:

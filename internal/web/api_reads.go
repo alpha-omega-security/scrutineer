@@ -340,6 +340,13 @@ func (s *Server) apiStreamFinding(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f, err := s.Worker.PersistStreamedFinding(scanFromRequest(r), body)
+	if captureErr, ok := errors.AsType[*worker.PoCCaptureError](err); ok {
+		s.Log.Warn("capture streamed PoC", "finding", f.ID, "err", captureErr)
+		summary := findingSummary(*f)
+		summary["poc_capture_error"] = captureErr.Error()
+		writeJSON(w, http.StatusCreated, summary)
+		return
+	}
 	if errors.Is(err, worker.ErrInvalidFinding) {
 		writeAPIError(w, http.StatusBadRequest, err.Error())
 		return
