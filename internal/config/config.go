@@ -16,6 +16,7 @@ import (
 
 	"go.yaml.in/yaml/v3"
 
+	"scrutineer/internal/akrites"
 	"scrutineer/internal/egressgrant"
 	"scrutineer/internal/vince"
 )
@@ -224,7 +225,8 @@ type Config struct {
 	// VINCE configures the native CERT/CC vulnerability-report submission
 	// action. The API key is config-file only so it does not leak through
 	// process arguments.
-	VINCE vince.Config `yaml:"vince"`
+	VINCE   vince.Config   `yaml:"vince"`
+	Akrites akrites.Config `yaml:"akrites"`
 	// FederationPublicFeed is the git remote the public interchange feed is
 	// pushed to: opt-outs, disclosure routes and clean certificates, in the
 	// clear, for anyone to clone. Empty disables the public export.
@@ -619,6 +621,9 @@ func Load(path string) (*Config, error) {
 		}
 	}
 	if err := ValidateDatabase(c.Database); err != nil {
+		return nil, fmt.Errorf("parse config %s: %w", path, err)
+	}
+	if _, err := c.Akrites.Endpoint(); err != nil {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
 	}
 	return &c, nil

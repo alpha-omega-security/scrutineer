@@ -59,6 +59,16 @@ Scrutineer sends one request and does not retry it. VINCE has no idempotency key
 
 When VINCE returns HTTP 201 with a VRF ID, Scrutineer adds a `vince,coordinator` reference, records an outbound communication with the attachment name, and moves the finding to `reported`. If VINCE accepts the report but local bookkeeping fails, the error page shows the VRF ID for manual reconciliation.
 
+### Submit to Akrites
+
+Set `akrites.submission_token` in the owner-only `scrutineer.yaml` file to enable **Akrites submission** on findings. `akrites.base_url` defaults to `https://intake.tap.akrites.dev`; staging uses `https://intake.taptest.akrites.dev`. Both require HTTPS with certificate verification and TLS 1.2 or later. `akrites.email` prefills an optional notification address. Authentication uses `TAP-SUBMISSION-TOKEN`; set `akrites.auth_header: Authorization` only when the intake deployment supports bearer tokens.
+
+Open the submission page after reviewing the disclosure draft. Check the software name, package URL and ecosystem, then enter affected versions and review the disclosure text, exploitation details and notification choices. The report uses the current [TAP Intake API fields](https://github.com/Akrites-Foundation/SIRT/blob/main/docs/TAP-API-Spec.md) and must fit within the 1 MiB JSON body limit. No bundle or patch attachment is sent. The same non-viable and subsumed-finding guards apply, and configured federation peers are checked before submission.
+
+An accepted report stores its receipt against the finding, records an outbound communication and moves the finding to `reported`. Receipts grant access to intake status, so they appear only on the submission page and are excluded from finding exports. Background polling resumes after restart, backs off to hourly checks, honors `Retry-After` and stops when intake returns `done`. Completion describes intake processing and does not change the finding to `fixed` or `published`.
+
+Submissions are never retried automatically. Rejected requests can be corrected and submitted again after any requested delay. A timeout, malformed acceptance or interrupted submission leaves an uncertain result and blocks another POST. Contact Akrites to reconcile that result. If saving a returned receipt fails, the page displays it so you can record it before leaving.
+
 ## GitHub upstream without PVR
 
 The upstream is reachable but the maintainer has not turned PVR on. Two paths, depending on the project's apparent readiness signals from `posture`:

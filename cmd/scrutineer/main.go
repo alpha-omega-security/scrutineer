@@ -802,6 +802,7 @@ func run(log *slog.Logger) error {
 	srv.FederationContact = f.federationContact
 	srv.MonorepoAttribution = f.monorepoAttribution
 	srv.VINCE = cfg.VINCE
+	srv.Akrites = cfg.Akrites
 	srv.FederationPublicFeed = f.federationPublicFeed
 	srv.FederationMembersFeed = f.federationMembersFeed
 	srv.FederationImportFeeds = f.federationImportFeeds
@@ -818,6 +819,7 @@ func run(log *slog.Logger) error {
 	go srv.StartScheduler(ctx)
 	go srv.StartRepositoryHealthScorer(ctx)
 	go srv.StartFederation(ctx)
+	go srv.StartAkritesPoller(ctx)
 
 	httpSrv := &http.Server{Addr: f.addr, Handler: srv.Handler(), ReadHeaderTimeout: shutdownTimeout}
 	go func() {

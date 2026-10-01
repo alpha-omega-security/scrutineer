@@ -15,6 +15,9 @@
     {{template "finding-status" (fstatus $f.Status)}}
   </h2>
   <div class="flex gap-2 shrink-0">
+    {{if .AkritesEnabled}}
+    <a href="/findings/{{$f.ID}}/akrites" class="btn-outline">Akrites submission</a>
+    {{end}}
     {{if .VINCEReady}}
     <a href="/findings/{{$f.ID}}/vince" class="btn-outline">
       <i data-lucide="send"></i> Submit to VINCE

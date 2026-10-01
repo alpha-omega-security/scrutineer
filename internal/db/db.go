@@ -1047,6 +1047,7 @@ type Finding struct {
 	Notes                  []FindingNote           `gorm:"constraint:OnDelete:CASCADE"`
 	Communications         []FindingCommunication  `gorm:"constraint:OnDelete:CASCADE"`
 	References             []FindingReference      `gorm:"constraint:OnDelete:CASCADE"`
+	AkritesSubmission      *AkritesSubmission      `gorm:"constraint:OnDelete:CASCADE" json:"-"`
 	History                []FindingHistory        `gorm:"constraint:OnDelete:CASCADE"`
 	Verifications          []FindingVerification   `gorm:"constraint:OnDelete:CASCADE"`
 	PoC                    *FindingPoC             `gorm:"constraint:OnDelete:CASCADE"`
@@ -1704,7 +1705,7 @@ const postgresSchemaVersionKey = "database_schema_version"
 func Models() []any {
 	return []any{
 		&Repository{}, &Scan{},
-		&Finding{}, &FindingLabel{}, &FindingNote{},
+		&Finding{}, &FindingLabel{}, &FindingNote{}, &AkritesSubmission{},
 		&FindingCommunication{}, &FindingReference{}, &FindingHistory{}, &FindingReview{}, &FeedbackConfirmation{}, &FindingVerification{}, &FindingAttackPath{}, &ScanPreflightReceipt{},
 		&RemediationAttempt{}, &RemediationValidation{}, &AuditEvent{}, &FindingPoC{},
 		&Dependency{}, &ExpectedFinding{}, &Package{}, &PackageAlternative{}, &Dependent{}, &FindingDependent{}, &Advisory{}, &AdvisoryAudit{},
