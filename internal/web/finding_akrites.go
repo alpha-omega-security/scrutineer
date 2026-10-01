@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/git-pkgs/purl"
 	"gorm.io/gorm"
 
 	"scrutineer/internal/akrites"
@@ -44,7 +45,7 @@ func (s *Server) findingAkritesPreview(w http.ResponseWriter, r *http.Request) {
 		}
 		page.Report = akrites.Report{
 			Software: ctx.Repository.Name, CodePath: ctx.Finding.Location,
-			RawFormat: "markdown", Raw: ctx.Finding.DisclosureDraft,
+			Raw:            ctx.Finding.DisclosureDraft,
 			Exploit:        strings.TrimSpace(ctx.Finding.Reach + "\n\n" + ctx.Finding.Validation),
 			PackageRepoURL: ctx.Repository.URL, DiscoveryMethod: "ai-assisted",
 			Email: s.Akrites.Email, Notify: "off",
@@ -56,7 +57,12 @@ func (s *Server) findingAkritesPreview(w http.ResponseWriter, r *http.Request) {
 		}
 		if len(packages) == 1 {
 			pkg := packages[0]
-			page.Report.Software, page.Report.PURL, page.Report.Ecosystem = pkg.Name, pkg.PURL, pkg.Ecosystem
+			page.Report.Software, page.Report.PURL = pkg.Name, pkg.PURL
+			// Intake derives the ecosystem from a package URL, and otherwise
+			// expects an OSV ecosystem name rather than the stored PURL type.
+			if pkg.PURL == "" {
+				page.Report.Ecosystem, _ = purl.PURLTypeToOSV(db.EcosystemType("", pkg.Ecosystem))
+			}
 		}
 	}
 	s.render(w, r, "finding_akrites.html", map[string]any{"Akrites": page})
@@ -82,13 +88,24 @@ func akritesEligibility(ctx disclosureFindingContext) error {
 	return nil
 }
 
+const (
+	akritesRawContentType     = "text/markdown"
+	akritesExploitContentType = "text/plain"
+)
+
 func akritesReportFromForm(r *http.Request) akrites.Report {
 	report := akrites.Report{
 		Software: strings.TrimSpace(r.FormValue("software")), PURL: strings.TrimSpace(r.FormValue("purl")),
 		Ecosystem: strings.TrimSpace(r.FormValue("ecosystem")), CodePath: r.FormValue("code_path"),
-		RawFormat: "markdown", Raw: r.FormValue("raw"), Exploit: r.FormValue("exploit"),
+		Raw: r.FormValue("raw"), Exploit: r.FormValue("exploit"),
 		PackageRepoURL:  strings.TrimSpace(r.FormValue("package_repo_url")),
 		DiscoveryMethod: r.FormValue("discovery_method"), Email: strings.TrimSpace(r.FormValue("email")), Notify: r.FormValue("notify"),
+	}
+	if report.Raw != "" {
+		report.RawContentType = akritesRawContentType
+	}
+	if report.Exploit != "" {
+		report.ExploitContentType = akritesExploitContentType
 	}
 	for v := range strings.SplitSeq(r.FormValue("versions"), "\n") {
 		if v = strings.TrimSpace(v); v != "" {

@@ -35,6 +35,12 @@ func postAkrites(s *Server, path string, form url.Values) *httptest.ResponseReco
 	return w
 }
 
+func akritesRequestMatchesForm(r *http.Request, report akrites.Report) bool {
+	return report.Raw == "Reviewed command injection report" && len(report.Versions) == 2 &&
+		report.RawContentType == "text/markdown" && report.ExploitContentType == "text/plain" &&
+		r.Header.Get("Authorization") == "Bearer private-token"
+}
+
 func TestAkritesSubmissionThroughHTTP(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
@@ -48,7 +54,7 @@ func TestAkritesSubmissionThroughHTTP(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&report); err != nil {
 				t.Error(err)
 			}
-			if report.Raw != "Reviewed command injection report" || len(report.Versions) != 2 || r.Header.Get("TAP-SUBMISSION-TOKEN") != "private-token" {
+			if !akritesRequestMatchesForm(r, report) {
 				t.Errorf("incorrect report or token: %+v", report)
 			}
 			w.WriteHeader(http.StatusAccepted)
@@ -197,6 +203,7 @@ func TestAkritesSubmissionGuards(t *testing.T) {
 				form.Set("endpoint", "https://different.example/v1/reports")
 			case "invalid report":
 				form.Set("purl", "")
+				form.Set("ecosystem", "")
 			case "empty report":
 				form.Set("raw", " ")
 			case "reserved":
@@ -216,7 +223,7 @@ func TestAkritesSubmissionGuards(t *testing.T) {
 }
 
 func TestAkritesSubmissionFailurePersistence(t *testing.T) {
-	for _, code := range []int{http.StatusForbidden, http.StatusBadRequest, http.StatusInternalServerError, http.StatusTooManyRequests, http.StatusServiceUnavailable} {
+	for _, code := range []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusBadRequest, http.StatusInternalServerError, http.StatusTooManyRequests, http.StatusServiceUnavailable} {
 		t.Run(fmt.Sprint(code), func(t *testing.T) {
 			s, done := newTestServer(t)
 			defer done()
@@ -240,7 +247,7 @@ func TestAkritesSubmissionFailurePersistence(t *testing.T) {
 				t.Fatal(err)
 			}
 			switch code {
-			case http.StatusForbidden, http.StatusBadRequest:
+			case http.StatusUnauthorized, http.StatusForbidden, http.StatusBadRequest:
 				if len(rows) != 0 {
 					t.Fatalf("rejected submission retained: %+v", rows)
 				}
@@ -268,5 +275,51 @@ func checkAkritesRetryDelay(t *testing.T, s *Server, rows []db.AkritesSubmission
 	s.pollAkrites(context.Background(), rows[0].NextPollAt.Add(time.Second))
 	if err := s.DB.Model(&db.AkritesSubmission{}).Count(&count).Error; err != nil || count != 0 {
 		t.Fatalf("not released: count=%d err=%v", count, err)
+	}
+}
+
+func TestAkritesPreviewPackageIdentity(t *testing.T) {
+	for _, tc := range []struct{ name, purl, ecosystem, want string }{
+		{"package URL", "pkg:golang/github.com/acme/widget/v2@v2.0.0", "golang", ""},
+		{"OSV ecosystem", "", "Go", "Go"},
+		{"no OSV ecosystem", "", "docker", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, done := newTestServer(t)
+			defer done()
+			finding := seedVINCEFinding(t, s).Finding
+			if err := s.DB.Model(&db.Package{}).Where("repository_id = ?", finding.RepositoryID).Updates(map[string]any{"p_url": tc.purl, "ecosystem": tc.ecosystem}).Error; err != nil {
+				t.Fatal(err)
+			}
+			s.Akrites = akrites.Config{SubmissionToken: "secret"}
+			w := httptest.NewRecorder()
+			s.Handler().ServeHTTP(w, localReq(http.MethodGet, fmt.Sprintf("/findings/%d/akrites", finding.ID)))
+			if want := `name="ecosystem" class="input" value="` + tc.want + `"`; w.Code != http.StatusOK || !strings.Contains(w.Body.String(), want) {
+				t.Fatalf("status=%d, missing %s in %s", w.Code, want, w.Body.String())
+			}
+		})
+	}
+}
+
+func TestAkritesShowsRejectedFields(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	finding := seedVINCEFinding(t, s).Finding
+	intake := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = fmt.Fprint(w, `{"type":"tag:akrites.dev,2026-07:problem/validation","title":"Report failed validation","status":400,"errors":[{"code":"unknown_ecosystem","field":"ecosystem","reason":"not a recognized ecosystem"}]}`)
+	}))
+	defer intake.Close()
+	s.Akrites = akrites.Config{BaseURL: intake.URL, SubmissionToken: "secret"}
+	s.akritesHTTPClient = intake.Client()
+	endpoint, _ := s.Akrites.Endpoint()
+	w := postAkrites(s, fmt.Sprintf("/findings/%d/akrites", finding.ID), akritesForm(endpoint))
+	if w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), "ecosystem (unknown_ecosystem)") {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+	var count int64
+	if err := s.DB.Model(&db.AkritesSubmission{}).Count(&count).Error; err != nil || count != 0 {
+		t.Fatalf("rejected submission not released for correction: count=%d err=%v", count, err)
 	}
 }
