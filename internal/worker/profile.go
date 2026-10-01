@@ -125,7 +125,7 @@ var builtinProfiles = []Profile{
 		FallbackProfile: "ruby",
 		Detect:          []BriefMatch{{briefBuild, []string{"Rails"}}},
 	},
-	{Name: "ruby", Detect: pm("Bundler")},
+	{Name: "ruby", Detect: pm("Bundler", "RubyGems")},
 	{Name: "node", Detect: pm("npm", "pnpm", "Yarn", "Bun")},
 	{
 		// Before python: brief's setuptools-Extension detector keys on

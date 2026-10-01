@@ -301,7 +301,7 @@ When the container runner is active, scrutineer auto-detects a per-ecosystem **p
 |---------|---------------|------|
 | `php` / `php-ext` | `package_manager:Composer` / `tools.native_extension:phpize` | PHP; `php-ext` builds PHP debug + ASan/UBSan for C extensions |
 | `python` / `python-ext` | `package_manager:pip` / `Pipenv` / `Poetry` / `uv` / `PDM` / `setuptools`; `python-ext` when `tools.native_extension:setuptools Extension` is present | CPython; `python-ext` builds CPython debug + ASan/UBSan |
-| `ruby` | Bundler | Ruby 3.4 + Bundler; metaprogramming / dynamic-dispatch guidance, plus a tripwire that flags an un-instrumented native extension |
+| `ruby` | Bundler or RubyGems | Ruby 3.4 + Bundler; metaprogramming / dynamic-dispatch guidance, plus a tripwire that flags an un-instrumented native extension |
 | `ruby-ext` | `tools.native_extension:mkmf` | A **superset** of `ruby`: adds an ASan/UBSan Ruby (the default interpreter), valgrind on the stock interpreter, Rust nightly for rb-sys gems, and Brakeman |
 | `ruby-rails` | `tools.build:Rails` | A superset of `ruby` plus **Brakeman**, Rails-specific SAST |
 | `node` | npm/pnpm/Yarn/Bun | Node.js |

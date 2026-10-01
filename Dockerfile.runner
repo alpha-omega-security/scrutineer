@@ -31,7 +31,7 @@ COPY scripts/retry-build-command.sh /usr/local/bin/retry-build-command.sh
 ARG BETTERLEAKS_VERSION=v1.8.1
 RUN GOBIN=/out CGO_ENABLED=0 sh /usr/local/bin/retry-build-command.sh go install -ldflags "-X=github.com/betterleaks/betterleaks/version.Version=${BETTERLEAKS_VERSION}" github.com/betterleaks/betterleaks@${BETTERLEAKS_VERSION}
 RUN GOBIN=/out sh /usr/local/bin/retry-build-command.sh go install github.com/git-pkgs/git-pkgs@v0.20.0
-RUN GOBIN=/out sh /usr/local/bin/retry-build-command.sh go install github.com/git-pkgs/brief/cmd/brief@v0.13.0
+RUN GOBIN=/out sh /usr/local/bin/retry-build-command.sh go install github.com/git-pkgs/brief/cmd/brief@v0.14.0
 
 FROM rust:1.98-trixie@sha256:a8a5f0a1e5fe7dfe1d352591e4a1c7dd2c08fd70475cae872cf3458ba0df0546 AS zizmor-build
 ENV CARGO_HTTP_MULTIPLEXING=false
