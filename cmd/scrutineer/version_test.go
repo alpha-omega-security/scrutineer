@@ -3,9 +3,46 @@ package main
 import (
 	"bytes"
 	"flag"
+	"runtime/debug"
 	"strings"
 	"testing"
 )
+
+func TestResolveBuildMetadata(t *testing.T) {
+	const revision = "0123456789abcdef0123456789abcdef01234567"
+	const commitDate = "2026-09-30T08:59:54Z"
+	clean := &debug.BuildInfo{Settings: []debug.BuildSetting{
+		{Key: "vcs.revision", Value: revision},
+		{Key: "vcs.time", Value: commitDate},
+		{Key: "vcs.modified", Value: "false"},
+	}}
+	dirty := &debug.BuildInfo{Settings: []debug.BuildSetting{
+		{Key: "vcs.modified", Value: "true"},
+		{Key: "vcs.time", Value: commitDate},
+		{Key: "vcs.revision", Value: revision},
+	}}
+	for _, tt := range []struct {
+		name     string
+		injected string
+		info     *debug.BuildInfo
+		want     buildMetadata
+	}{
+		{name: "no build info"},
+		{name: "no VCS stamp", info: &debug.BuildInfo{}},
+		{name: "container", injected: revision, want: buildMetadata{Commit: revision}},
+		{name: "clean checkout", info: clean, want: buildMetadata{Commit: revision, CommitDate: commitDate}},
+		{name: "dirty checkout", info: dirty, want: buildMetadata{Commit: revision + "-dirty", CommitDate: commitDate}},
+		{name: "matching injected commit", injected: revision, info: dirty, want: buildMetadata{Commit: revision + "-dirty", CommitDate: commitDate}},
+		{name: "injected commit wins", injected: "other-revision", info: dirty, want: buildMetadata{Commit: "other-revision"}},
+		{name: "dirty without revision", info: &debug.BuildInfo{Settings: []debug.BuildSetting{{Key: "vcs.modified", Value: "true"}}}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := resolveBuildMetadata(tt.injected, tt.info); got != tt.want {
+				t.Fatalf("build metadata = %+v, want %+v", got, tt.want)
+			}
+		})
+	}
+}
 
 func TestDispatchVersion(t *testing.T) {
 	oldVersion, oldCommit, oldBuildDate, oldRunner := version, commit, buildDate, defaultRunnerImage

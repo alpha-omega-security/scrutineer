@@ -837,7 +837,7 @@ func TestResolveEgressSidecar_HostProxyRuntimes(t *testing.T) {
 		{Bin: "podman"}, // rootful
 		{Bin: "apple"},  // apple -- hardened, but uses the host proxy, not a sidecar
 	} {
-		got, err := resolveEgressSidecar(rt, f, []string{"x"}, "tok", quietLog())
+		got, err := resolveEgressSidecar(rt, f, []string{"x"}, "tok", quietLog(), nil)
 		if err != nil {
 			t.Errorf("runtime %+v: unexpected error: %v", rt, err)
 		}
@@ -1662,5 +1662,49 @@ func TestResolveProfilesDirPreservesConfigDisable(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(f.dataDir, "bundled-profiles")); !os.IsNotExist(err) {
 		t.Fatalf("bundled profiles were materialized despite config disable: %v", err)
+	}
+}
+
+func TestValidateEgressPolicies(t *testing.T) {
+	with := &config.Config{EgressPolicies: map[string]config.EgressPolicy{"metadata": {Allow: []string{"api.ecosyste.ms:443"}}}}
+	for _, tc := range []struct {
+		name    string
+		f       *flags
+		cfg     *config.Config
+		wantErr string
+	}{
+		{"no policies", &flags{}, &config.Config{}, ""},
+		{"nil config", &flags{}, nil, ""},
+		{"hardened", &flags{hardened: true}, with, ""},
+		{"not hardened", &flags{}, with, "require --hardened"},
+		{"no container", &flags{hardened: true, noContainer: true}, with, "--no-container"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateEgressPolicies(tc.f, tc.cfg)
+			switch {
+			case tc.wantErr == "" && err != nil:
+				t.Fatalf("unexpected error: %v", err)
+			case tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)):
+				t.Fatalf("error = %v, want text %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestEgressPolicyGrants(t *testing.T) {
+	cfg := &config.Config{EgressPolicies: map[string]config.EgressPolicy{"metadata": {Allow: []string{"api.ecosyste.ms:443", "api.ecosyste.ms:8443"}}}}
+	got, err := egressPolicyGrants(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g := got["metadata"]; len(g) != 1 || g[0].Host != "api.ecosyste.ms" || len(g[0].Ports) != 2 {
+		t.Errorf("grants = %+v", got)
+	}
+	if got, err := egressPolicyGrants(&config.Config{}); got != nil || err != nil {
+		t.Errorf("empty config = %v, %v", got, err)
+	}
+	bad := &config.Config{EgressPolicies: map[string]config.EgressPolicy{"x": {Allow: []string{"10.0.0.1:443"}}}}
+	if _, err := egressPolicyGrants(bad); err == nil {
+		t.Error("bad grant accepted")
 	}
 }

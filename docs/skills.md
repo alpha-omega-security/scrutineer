@@ -32,6 +32,7 @@ These live in `skills/` and are embedded in the Scrutineer executable. At startu
 | `audit-memory` | Focused static audit for reachable memory corruption in first-party C, C++, unsafe Rust, native extensions, and FFI boundaries. Requires complete primitive-hit accounting and keeps library, CLI, parser, and foreign-runtime boundaries separate; runs on demand. |
 | `audit-package-manager` | Audits package manager clients, registries, and proxies against a bundled threat model. Triage selects it from source evidence; findings remain separate from design properties and unresolved assumptions. |
 | `audit-web` | Audits web sessions, browser origins, uploads and workflow state against a bundled ASVS-informed threat model. Triage selects it from source evidence. |
+| `audit-embedded` | Audits firmware updates, rollback protection, boot chain, provisioning, device credentials, debug interfaces and device communication against a bundled ISVS-informed threat model. Triage selects it from source evidence. |
 | `cna-match` | Matches the repository to its CVE Numbering Authority so disclosures route to the right contact. |
 | `semgrep` | Runs semgrep with the `p/security-audit` and `p/secrets` rulesets and maps hits into the findings shape. |
 | `bandit` | Runs bandit over the repository's Python and maps its hits into the findings shape, grouped per test id and carrying bandit's confidence level, CWE, and rule documentation link. Gated on Python being one of the detected languages. |
@@ -91,6 +92,19 @@ deduplicated scan set; subproject scans classify only their scope. The audit
 distinguishes source-proven vulnerabilities from intended behavior, evidenced
 negative results and unresolved browser, server or deployment assumptions. Its
 ASVS reference does not imply compliance certification.
+The `embedded-iot` mode selects `audit-embedded` for first-party software that
+runs on a device, such as firmware, bootloaders, update handlers, provisioning
+flows and device-side protocol handlers. It also selects `audit-memory` when
+the scoped firmware includes first-party C, C++ or unsafe Rust. Host-side
+flashing tools, SDK bindings, emulators, board definitions and hardware
+dependencies alone do not activate it. It is separate from the
+`embedded-native` mapping of native code inside language packages. Firmware
+with an HTTP management interface can activate both this mode and `web-api`,
+and the shared audits are still enqueued once. The audit distinguishes
+source-proven vulnerabilities from intended behavior and evidenced negative
+results. Guarantees that depend on hardware, fuses, secure elements,
+manufacturing or deployment are recorded as unresolved assumptions. Its ISVS
+reference does not imply certification.
 
 Add another mode by defining its detection criteria in the triage reference
 and bundling its audit skill and threat model.

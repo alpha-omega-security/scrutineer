@@ -7,8 +7,8 @@
 # update the selected asset and checksum atomically. A mismatched tag/digest in
 # a Renovate PR fails sha256sum below and usually means asset identification
 # failed upstream.
-ARG CLAUDE_AMD64_LOCK=v2.1.281@sha256:0a3d25f34f0a733fe23f34ecde87dc5bdebd2ccc457fb2d446ae33d6eb75f3d7
-ARG CLAUDE_ARM64_LOCK=v2.1.281@sha256:f4ffa7230f09882977b1195a5f5343fea1443027858d1c1fa1ea82e921517cd0
+ARG CLAUDE_AMD64_LOCK=v2.1.282@sha256:2972e823268974dd084734d5f69fedc227eb4cb3bc9c398ceb7776280e836991
+ARG CLAUDE_ARM64_LOCK=v2.1.282@sha256:62ed261b4ad0838eac468f119524ba58502bc09da8152eddce9194229ba20ac3
 
 ARG CODEX_AMD64_LOCK=rust-v0.156.1@sha256:8b711520beddf385467b8da4d2c93736637c6ba1e46811cf0d8606b7c490b6f6
 ARG CODEX_ARM64_LOCK=rust-v0.156.1@sha256:fdd47ed6aade0360796fd3f6f95a45096f327c15e19e8c7339f9dc5633041786
@@ -31,7 +31,7 @@ COPY scripts/retry-build-command.sh /usr/local/bin/retry-build-command.sh
 ARG BETTERLEAKS_VERSION=v1.8.1
 RUN GOBIN=/out CGO_ENABLED=0 sh /usr/local/bin/retry-build-command.sh go install -ldflags "-X=github.com/betterleaks/betterleaks/version.Version=${BETTERLEAKS_VERSION}" github.com/betterleaks/betterleaks@${BETTERLEAKS_VERSION}
 RUN GOBIN=/out sh /usr/local/bin/retry-build-command.sh go install github.com/git-pkgs/git-pkgs@v0.20.0
-RUN GOBIN=/out sh /usr/local/bin/retry-build-command.sh go install github.com/git-pkgs/brief/cmd/brief@v0.13.0
+RUN GOBIN=/out sh /usr/local/bin/retry-build-command.sh go install github.com/git-pkgs/brief/cmd/brief@v0.14.0
 
 FROM rust:1.98-trixie@sha256:a8a5f0a1e5fe7dfe1d352591e4a1c7dd2c08fd70475cae872cf3458ba0df0546 AS zizmor-build
 ENV CARGO_HTTP_MULTIPLEXING=false

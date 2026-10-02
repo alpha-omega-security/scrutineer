@@ -45,41 +45,59 @@ assert dispatch('POST', '/api/display-name', session, 'name=changed&csrf=' + acc
 }
 
 func TestWebAPIAuditLive(t *testing.T) {
-	if os.Getenv("SCRUTINEER_RUN_EVALS") != "1" {
-		t.Skip("set SCRUTINEER_RUN_EVALS=1 to execute model-backed skill evals")
-	}
+	skipUnlessLiveEvals(t)
 	for _, fixture := range []string{"web-api-app", "web-api-client"} {
 		t.Run(fixture, func(t *testing.T) {
 			scenario := Scenario{Skill: "audit-web", Fixture: "fixtures/" + fixture}
 			if fixture == "web-api-app" {
-				var err error
-				scenario, err = LoadScenario("../../evals/web-api-session.yaml")
-				if err != nil {
-					t.Fatal(err)
-				}
+				scenario = loadLiveScenario(t, "../../evals/web-api-session.yaml")
 			}
-			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
-			defer cancel()
-			runner := Runner{Runner: worker.LocalClaude{}, SkillsRoot: "../../skills", EvalsRoot: "../../evals", WorkRoot: t.TempDir(), Model: os.Getenv("SCRUTINEER_EVAL_MODEL")}
-			result, err := runner.RunScenario(ctx, scenario)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if result.FailedRequired != 0 || result.Unexpected != 0 {
-				t.Fatalf("required misses=%d unexpected=%d report=%s", result.FailedRequired, result.Unexpected, result.Report)
-			}
-			var report struct {
-				ReviewStatus string            `json:"review_status"`
-				Findings     []json.RawMessage `json:"findings"`
-			}
-			if err := json.Unmarshal([]byte(result.Report), &report); err != nil {
-				t.Fatal(err)
-			}
-			if fixture == "web-api-client" && (report.ReviewStatus != "not-applicable" || len(report.Findings) != 0) {
-				t.Fatalf("client report=%s", result.Report)
+			status, findings := runAuditScenario(t, scenario)
+			if fixture == "web-api-client" && (status != "not-applicable" || findings != 0) {
+				t.Fatalf("client status=%s findings=%d", status, findings)
 			}
 		})
 	}
+}
+
+func skipUnlessLiveEvals(t *testing.T) {
+	t.Helper()
+	if os.Getenv("SCRUTINEER_RUN_EVALS") != "1" {
+		t.Skip("set SCRUTINEER_RUN_EVALS=1 to execute model-backed skill evals")
+	}
+}
+
+func loadLiveScenario(t *testing.T, path string) Scenario {
+	t.Helper()
+	scenario, err := LoadScenario(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return scenario
+}
+
+// runAuditScenario runs an audit scenario live, failing on required misses or
+// unexpected findings. It returns the report's review status and finding count.
+func runAuditScenario(t *testing.T, scenario Scenario) (string, int) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
+	defer cancel()
+	runner := Runner{Runner: worker.LocalClaude{}, SkillsRoot: "../../skills", EvalsRoot: "../../evals", WorkRoot: t.TempDir(), Model: os.Getenv("SCRUTINEER_EVAL_MODEL")}
+	result, err := runner.RunScenario(ctx, scenario)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.FailedRequired != 0 || result.Unexpected != 0 {
+		t.Fatalf("required misses=%d unexpected=%d report=%s", result.FailedRequired, result.Unexpected, result.Report)
+	}
+	var report struct {
+		ReviewStatus string            `json:"review_status"`
+		Findings     []json.RawMessage `json:"findings"`
+	}
+	if err := json.Unmarshal([]byte(result.Report), &report); err != nil {
+		t.Fatal(err)
+	}
+	return report.ReviewStatus, len(report.Findings)
 }
 
 type webModeCase struct {
@@ -88,9 +106,7 @@ type webModeCase struct {
 }
 
 func TestWebAPITriageLive(t *testing.T) {
-	if os.Getenv("SCRUTINEER_RUN_EVALS") != "1" {
-		t.Skip("set SCRUTINEER_RUN_EVALS=1 to execute model-backed skill evals")
-	}
+	skipUnlessLiveEvals(t)
 	for _, tc := range []webModeCase{
 		{name: "application", fixture: "web-api-app", web: true},
 		{name: "client dependency", fixture: "web-api-client"},
@@ -105,6 +121,28 @@ func TestWebAPITriageLive(t *testing.T) {
 
 func runWebModeCase(t *testing.T, tc webModeCase) {
 	t.Helper()
+	counts, report := runTriageModeCase(t, triageScan{fixture: tc.fixture, subPath: tc.subPath, activeSkill: "audit-web", activeHere: tc.skipWeb})
+	for skill, want := range map[string]bool{"audit-web": tc.web && !tc.skipWeb, "audit-authz": tc.web, "audit-injection": tc.registry, "audit-package-manager": tc.registry, "threat-model": true} {
+		if got := counts["/api/repositories/1/skills/"+skill+"/run"] > 0; got != want {
+			t.Errorf("%s enqueued=%t want=%t; report=%s", skill, got, want, report)
+		}
+	}
+	assertWebModeReport(t, tc, report)
+}
+
+// triageScan describes one triage run. The fake API always lists activeSkill
+// as running, in the scan's own scope when activeHere is set and in another
+// subproject otherwise.
+type triageScan struct {
+	fixture, subPath, activeSkill string
+	activeHere                    bool
+}
+
+// runTriageModeCase runs triage over a fixture against a fake Scrutineer API
+// and returns how often each enqueue path was requested plus the report.
+func runTriageModeCase(t *testing.T, scan triageScan) (map[string]int, string) {
+	t.Helper()
+	subPath := scan.subPath
 	requests := make(chan string, 100)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -123,8 +161,8 @@ func runWebModeCase(t *testing.T, tc webModeCase) {
 			if err := json.NewDecoder(r.Body).Decode(&scope); err != nil {
 				t.Errorf("enqueue body: %v", err)
 			}
-			if scope.SubPath != tc.subPath || scope.Ref != "release" {
-				t.Errorf("enqueue scope=%+v want subpath=%q ref=release", scope, tc.subPath)
+			if scope.SubPath != subPath || scope.Ref != "release" {
+				t.Errorf("enqueue scope=%+v want subpath=%q ref=release", scope, subPath)
 			}
 			select {
 			case requests <- r.URL.Path:
@@ -136,11 +174,11 @@ func runWebModeCase(t *testing.T, tc webModeCase) {
 			return
 		}
 		if strings.HasSuffix(r.URL.Path, "/scans") {
-			subPath := "elsewhere"
-			if tc.skipWeb {
-				subPath = tc.subPath
+			activeScope := "elsewhere"
+			if scan.activeHere {
+				activeScope = subPath
 			}
-			_ = json.NewEncoder(w).Encode([]map[string]any{{"skill_name": "audit-web", "status": "running", "ref": "release", "sub_path": subPath}})
+			_ = json.NewEncoder(w).Encode([]map[string]any{{"skill_name": scan.activeSkill, "status": "running", "ref": "release", "sub_path": activeScope}})
 			return
 		}
 		_, _ = fmt.Fprint(w, `[]`)
@@ -148,8 +186,8 @@ func runWebModeCase(t *testing.T, tc webModeCase) {
 	defer server.Close()
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Minute)
 	defer cancel()
-	runner := Runner{Runner: triageModeRunner{apiBase: server.URL + "/api", subPath: tc.subPath, ref: "release", maxTurns: 32}, SkillsRoot: "../../skills", EvalsRoot: "../../evals", WorkRoot: t.TempDir(), Model: os.Getenv("SCRUTINEER_EVAL_MODEL")}
-	result, err := runner.RunScenario(ctx, Scenario{Skill: "triage", Fixture: "fixtures/" + tc.fixture})
+	runner := Runner{Runner: triageModeRunner{apiBase: server.URL + "/api", subPath: subPath, ref: "release", maxTurns: 32}, SkillsRoot: "../../skills", EvalsRoot: "../../evals", WorkRoot: t.TempDir(), Model: os.Getenv("SCRUTINEER_EVAL_MODEL")}
+	result, err := runner.RunScenario(ctx, Scenario{Skill: "triage", Fixture: "fixtures/" + scan.fixture})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,12 +200,7 @@ func runWebModeCase(t *testing.T, tc webModeCase) {
 			t.Errorf("%s enqueued %d times", path, count)
 		}
 	}
-	for skill, want := range map[string]bool{"audit-web": tc.web && !tc.skipWeb, "audit-authz": tc.web, "audit-injection": tc.registry, "audit-package-manager": tc.registry, "threat-model": true} {
-		if got := counts["/api/repositories/1/skills/"+skill+"/run"] > 0; got != want {
-			t.Errorf("%s enqueued=%t want=%t; report=%s", skill, got, want, result.Report)
-		}
-	}
-	assertWebModeReport(t, tc, result.Report)
+	return counts, result.Report
 }
 
 func assertWebModeReport(t *testing.T, tc webModeCase, raw string) {

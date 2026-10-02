@@ -1,0 +1,14 @@
+given: a sensor node downloads firmware and a manifest from its update server and installs the image after checking only the manifest digest
+fixture: fixtures/embedded-device
+skill: audit-embedded
+should_find:
+  - cwe: CWE-494
+    path: firmware/ota.py
+    evidence_contains:
+      - apply_update
+      - sha256
+    required: true
+should_not_find:
+  - path: firmware/config_bundle.py
+    evidence_contains:
+      - apply_config_bundle

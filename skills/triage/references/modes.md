@@ -60,3 +60,29 @@ absent. Union all matching modes' skills with the normal scan set before
 enqueueing: each skill is requested at most once, uses the same ref/subpath,
 and obeys the existing active/completed skip set. An inactive companion audit
 is recorded as skipped, not replaced with a second broad scan.
+
+## embedded-iot
+
+Select this mode when first-party source implements software that runs on a
+device: trace a firmware entry point, bootloader, update or OTA handler,
+provisioning flow or device-side protocol handler into device behavior such
+as flashing an image, accepting a credential, or driving hardware. Firmware
+with an HTTP management interface may match this mode alongside `web-api`.
+
+Host-side flashing or provisioning tools, device SDKs or bindings consumed by
+host applications, emulators or simulators alone, board or pin definition
+files, hardware-related dependencies, datasheets or documentation, and
+test-only harnesses do not establish a match. Native code inside a language
+package is not device firmware on that evidence alone. Trace the device code
+in the current scan scope; do not borrow a device from another monorepo
+subproject. Keep uncertain classifications gated and record the missing
+evidence.
+
+Enqueue `audit-embedded` for a match. Also add `audit-memory` when the scoped
+firmware includes first-party C, C++ or unsafe Rust. These are ordinary
+existing skills, not copies of their checklists. Gate a companion audit when
+its source-based applicability is absent. Union all matching modes' skills
+with the normal scan set before enqueueing: each skill is requested at most
+once and uses the same ref/subpath. Each also obeys the existing
+active/completed skip set. An inactive companion audit is recorded as
+skipped, not replaced with a second broad scan.

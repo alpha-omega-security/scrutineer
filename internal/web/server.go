@@ -105,7 +105,9 @@ type Server struct {
 
 	// Version is the Scrutineer release version shown on the settings page.
 	// Release builds inject CalVer at link time; development builds use "dev".
-	Version string
+	Version    string
+	Commit     string
+	CommitDate string
 
 	// MonorepoAttribution mirrors worker.Worker.MonorepoAttribution on the
 	// web side so handlers can gate per-subproject attribution (packages,

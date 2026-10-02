@@ -185,6 +185,16 @@
 #   - artifactory.internal
 #   - "*.mycorp.net"
 
+# Per-skill egress under --hardened. egress_allow is ignored there, so grant a
+# named skill exact host:port pairs instead. The port is required and enforced;
+# every other skill keeps the strict allowlist. Needs hardened: true. See
+# docs/egress-policies.md.
+# egress_policies:
+#   metadata:
+#     allow:
+#       - packages.ecosyste.ms:443
+#       - repos.ecosyste.ms:443
+
 # Enrich repositories from ecosyste.ms: the per-repository cache refreshed
 # before each scan, the eager warm when a repository is added, and the PURL to
 # repository resolution behind SBOM and dependency import. false stops every

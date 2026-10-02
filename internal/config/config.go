@@ -17,6 +17,7 @@ import (
 	"go.yaml.in/yaml/v3"
 
 	"scrutineer/internal/akrites"
+	"scrutineer/internal/egressgrant"
 	"scrutineer/internal/vince"
 )
 
@@ -101,6 +102,12 @@ type Config struct {
 	// extra hostnames. Entries are appended to worker.DefaultEgressAllow,
 	// not replacing it. "*.example.com" matches subdomains.
 	EgressAllow []string `yaml:"egress_allow"`
+	// EgressPolicies grants extra egress to named skills only, keyed by skill
+	// name. Each allow entry is "host:port" and the port is mandatory: the
+	// granted host is reachable on that port alone. Grants need --hardened so
+	// the per-scan --internal network makes the proxy the only way out. Only
+	// this file can grant egress; nothing a scan or a skill file says can.
+	EgressPolicies map[string]EgressPolicy `yaml:"egress_policies"`
 	// Concurrency controls how many scans the worker runs in parallel.
 	// 0 or negative leaves the built-in default (see queue.DefaultWorkerConcurrency).
 	Concurrency int `yaml:"concurrency"`
@@ -270,6 +277,12 @@ type OpencodeProvider struct {
 	StateDir string `yaml:"state_dir"`
 }
 
+// EgressPolicy is the extra egress one skill is granted. Allow entries are
+// "host:port" where host is a DNS hostname or "*.domain" and port is 1..65535.
+type EgressPolicy struct {
+	Allow []string `yaml:"allow"`
+}
+
 const maxTCPPort = 65535
 
 var (
@@ -341,6 +354,24 @@ func validateOpencodeProvider(id string, provider OpencodeProvider) error {
 	for _, host := range provider.EgressAllow {
 		if strings.TrimSpace(host) != host || host == "" || strings.Contains(host, "://") || strings.ContainsAny(host, "/:") {
 			return fmt.Errorf("opencode.providers.%s.egress_allow: %q must be a hostname without a scheme, path, or port", id, host)
+		}
+	}
+	return nil
+}
+
+// ValidateEgressPolicies checks every per-skill grant before any scan can use
+// it. Entries must name a DNS host and an explicit port so a grant can never
+// widen to IP literals or to the host services the sandbox keeps private.
+func ValidateEgressPolicies(policies map[string]EgressPolicy) error {
+	for skill, policy := range policies {
+		if strings.TrimSpace(skill) == "" {
+			return errors.New("egress_policies: skill name must not be empty")
+		}
+		if len(policy.Allow) == 0 {
+			return fmt.Errorf("egress_policies.%s.allow: at least one host:port entry is required", skill)
+		}
+		if _, err := egressgrant.Parse(policy.Allow); err != nil {
+			return fmt.Errorf("egress_policies.%s.allow: %w", skill, err)
 		}
 	}
 	return nil
@@ -546,6 +577,9 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
 	}
 	if err := ValidateOpencode(c.Opencode); err != nil {
+		return nil, fmt.Errorf("parse config %s: %w", path, err)
+	}
+	if err := ValidateEgressPolicies(c.EgressPolicies); err != nil {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
 	}
 	if c.VINCE.Enabled() {

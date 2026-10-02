@@ -1280,3 +1280,62 @@ func TestResolveProfile_refusesDetectionPathLeavingWorkspace(t *testing.T) {
 		t.Errorf("detection paths = %q, want %q", seen, want)
 	}
 }
+
+func TestEgressPolicy_noPolicyScanArgsUnchanged(t *testing.T) {
+	base := ContainerRunner{
+		Hardened: true,
+		Runtime:  ContainerRuntime{Bin: "docker", Version: "24.0.7"},
+		ProxyURL: "http://scrutineer:tok@host.docker.internal:55000",
+	}
+	withPolicies := base
+	withPolicies.EgressPolicies = map[string][]EgressGrant{"other": {{Host: "a.example.com", Ports: []string{"443"}}}}
+	emit, events := collectEvents()
+	got, cleanup, err := withPolicies.applyEgressPolicy(SkillJob{Name: "plain"}, emit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleanup()
+	hn := hardenedNet{name: "scrutineer-hardened-1"}
+	if !slices.Equal(got.buildRunArgs("img", hn, ""), base.buildRunArgs("img", hn, "")) {
+		t.Error("a skill without a policy got different container args")
+	}
+	if len(events()) != 0 {
+		t.Errorf("unexpected events: %v", events())
+	}
+}
+
+func TestEgressSidecarEnv_grantsOnlyWhenSet(t *testing.T) {
+	cfg := EgressSidecarConfig{Token: "tok", Allow: []string{"x.test"}, APIPort: "8080", GatewayIP: "192.0.2.9"}
+	for _, kv := range EgressSidecarEnv(cfg, ":3128") {
+		if strings.HasPrefix(kv, "SCRUTINEER_PROXY_GRANTS=") {
+			t.Errorf("no-grant sidecar env carries %q", kv)
+		}
+	}
+	cfg.Grants = []EgressGrant{{Host: "a.example.com", Ports: []string{"443", "8443"}}}
+	if !slices.Contains(EgressSidecarEnv(cfg, ":3128"), "SCRUTINEER_PROXY_GRANTS=a.example.com:443|8443") {
+		t.Errorf("grants missing from env: %v", EgressSidecarEnv(cfg, ":3128"))
+	}
+}
+
+func TestProxySidecarRunArgs_requiredCapabilities(t *testing.T) {
+	d := ContainerRunner{Runtime: ContainerRuntime{Bin: "podman", Rootless: true}, Hardened: true, Egress: EgressSidecarConfig{Token: "tok", GatewayIP: "192.0.2.9"}}
+	args := d.proxySidecarRunArgs("p", "n")
+	if got := args[len(args)-1]; got != "--require-capability=deny-api-connect-v1" {
+		t.Errorf("no-grant capability arg = %q", got)
+	}
+	d.Egress.Grants = []EgressGrant{{Host: "a.example.com", Ports: []string{"443"}}}
+	args = d.proxySidecarRunArgs("p", "n")
+	if got := args[len(args)-1]; got != "--require-capability=deny-api-connect-v1,egress-port-grants-v1" {
+		t.Errorf("grant capability arg = %q", got)
+	}
+}
+
+func TestProxyBinaryCheckArgs_extraCapabilities(t *testing.T) {
+	rt := ContainerRuntime{Bin: "docker"}
+	if args := proxyBinaryCheckArgs(rt, "img"); !slices.Contains(args, "--require-capability=deny-api-connect-v1") {
+		t.Errorf("default check args: %v", args)
+	}
+	if args := proxyBinaryCheckArgs(rt, "img", ProxyCapabilityEgressPortGrants); !slices.Contains(args, "--require-capability=deny-api-connect-v1,egress-port-grants-v1") {
+		t.Errorf("grant check args: %v", args)
+	}
+}

@@ -168,7 +168,13 @@ func (d ContainerRunner) resolveOpencodeProvider(model string) (opencodeProvider
 	return resolved, nil
 }
 
-func (d ContainerRunner) configureOpencodeProviderEgress(provider opencodeProvider) (ContainerRunner, func(), error) {
+// configureOpencodeProviderEgress widens the allowlists for the selected
+// provider and, on the host-proxy path, starts a scoped proxy for the scan.
+// When proxyDeferred is set the skill has egress grants and applyEgressPolicy
+// starts the single scoped proxy afterwards, from the allowlists widened here,
+// so this function must not start a second one. A refusal there fails the scan,
+// so deferring never lets a scan run without a proxy.
+func (d ContainerRunner) configureOpencodeProviderEgress(provider opencodeProvider, proxyDeferred bool) (ContainerRunner, func(), error) {
 	noop := func() {}
 	if !provider.Configured {
 		return d, noop, nil
@@ -182,7 +188,7 @@ func (d ContainerRunner) configureOpencodeProviderEgress(provider opencodeProvid
 				"provider", provider.ID, "port", provider.HostPort)
 		}
 	}
-	if d.usesEgressSidecar() {
+	if proxyDeferred || d.usesEgressSidecar() {
 		return d, noop, nil
 	}
 	if d.ProviderProxy.ContainerHost == "" {
@@ -204,7 +210,7 @@ func (d ContainerRunner) configureOpencodeProviderEgress(provider opencodeProvid
 	return d, cleanup, nil
 }
 
-func (d ContainerRunner) prepareOpencodeExecution(ctx context.Context, model string) (ContainerRunner, opencodeProvider, SkillResult, func(), error) {
+func (d ContainerRunner) prepareOpencodeExecution(ctx context.Context, model string, proxyDeferred bool) (ContainerRunner, opencodeProvider, SkillResult, func(), error) {
 	noop := func() {}
 	provider, err := d.resolveOpencodeProvider(model)
 	result := SkillResult{Backend: HarnessName(d.harness())}
@@ -230,7 +236,7 @@ func (d ContainerRunner) prepareOpencodeExecution(ctx context.Context, model str
 	// Provider images are bases for the existing language profiles, so replace
 	// the copied runner's default image before profile resolution.
 	d.Image = provider.RunnerImage
-	d, closeProxy, err := d.configureOpencodeProviderEgress(provider)
+	d, closeProxy, err := d.configureOpencodeProviderEgress(provider, proxyDeferred)
 	if err != nil {
 		unlock()
 		return d, provider, result, noop, err

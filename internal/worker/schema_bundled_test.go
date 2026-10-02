@@ -49,6 +49,7 @@ func TestAuditModeSchemasReferenceSharedEnvelope(t *testing.T) {
 	for _, path := range []string{
 		"../../skills/audit-package-manager/schema.json",
 		"../../skills/audit-web/schema.json",
+		"../../skills/audit-embedded/schema.json",
 	} {
 		raw, err := os.ReadFile(path)
 		if err != nil {

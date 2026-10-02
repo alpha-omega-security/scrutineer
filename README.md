@@ -37,9 +37,11 @@ Select another installed runtime explicitly:
 
 The existing source-checkout command remains supported:
 
-    go run ./cmd/scrutineer -skills ./skills
+    go run -buildvcs=true ./cmd/scrutineer -skills ./skills
 
 Then open http://127.0.0.1:8080. The explicit `-skills ./skills` directory makes the checkout command useful while developing skills because it overrides the copies embedded in the binary. It is optional for ordinary use because Scrutineer ships its built-in skills and per-ecosystem runner profiles inside the executable.
+
+The `-buildvcs=true` flag includes the source commit in `go run` builds. Settings > About shows that commit, with a `-dirty` suffix for local changes, and its commit date. Ordinary `go build` commands include this metadata automatically in a Git checkout.
 
 You can also build a checkout-independent executable and run it from another directory:
 
@@ -189,6 +191,7 @@ Adding a repo enqueues the `triage` skill, whose SKILL.md lists the further skil
 | `audit-memory` | Opt-in static audit for reachable memory corruption in first-party C, C++, unsafe Rust, native extensions, and FFI boundaries |
 | `audit-package-manager` | Static audit of package manager clients, registries, and proxies against a bundled threat model; triage enqueues it when source evidence shows the repository implements one |
 | `audit-web` | Reviews web sessions, browser origins, uploads and business workflows when triage finds an implemented web application or API |
+| `audit-embedded` | Reviews firmware updates, boot chain, provisioning, device credentials and debug interfaces when triage finds device firmware |
 
 Edit `skills/triage/SKILL.md` to change what gets run by default. Drop new skill directories in `skills/` to add scan types; no code changes needed. See [docs/skills.md](docs/skills.md) for the frontmatter reference, the `scrutineer.*` metadata keys, the `context.json` shape, output kinds, schema validation, and the skill-facing HTTP API.
 
@@ -217,7 +220,7 @@ Every index page has a search box plus filter and sort dropdowns; the specifics 
 - **Scans** -- every scan that has run. Queued scans can be paused/resumed, running or queued scans can be cancelled and failed ones retried.
 - **Skills** -- installed skills from disk and from the UI; view, edit, or run any of them.
 - **Usage** -- token and cost totals across all scans, broken down by skill.
-- **Reporting** -- corpus-wide activity over a rolling window (24 hours, 7 days, 30 days, or all time) with a minimum-severity floor on findings: repositories scanned, runs started and completed, findings, a per-day breakdown, and the per-scan cost and token averages beside their all-time figures. Downloadable as CSV or JSON.
+- **Reporting** -- corpus-wide activity over a rolling window (24 hours, 7 days, 30 days, or all time) with a minimum-severity floor on findings: repositories scanned, runs started and completed, findings, a per-day breakdown, and the per-scan cost and token averages beside their all-time figures. Downloadable as CSV or JSON; JSON exports pulled from several discrete scanner instances can be combined into one corpus-wide report with `go run ./scripts/merge-reports a/report.json b/report.json`; see [docs/reporting.md](docs/reporting.md).
 - **Settings** -- theme, colour scheme, model tiers, runner concurrency (restarts the runner to apply, cancelling in-flight scans) and default turn cap (applied to the next scan), plus system stats (record counts, DB size, paths). The chat pool is sized at half the concurrency the server started with and is not resized here, so a change only takes effect for chat after a restart.
 
 ## Finding workflow
@@ -249,7 +252,7 @@ The same applies to the Dependents tab -- you can import any dependent's reposit
 
 ## Docker
 
-    docker build -t scrutineer .
+    docker build --build-arg COMMIT="$(git rev-parse HEAD)" -t scrutineer .
     docker run -p 127.0.0.1:8080:8080 -v scrutineer-data:/data \
       -e ANTHROPIC_API_KEY=sk-ant-api03-... \
       -e ANTHROPIC_BASE_URL=https://... \
@@ -267,17 +270,17 @@ Always bind to `127.0.0.1`: the UI has no authentication, so binding to `0.0.0.0
 
 If a container runtime (docker, rootless podman, or Apple's `container`) is available on the host, scrutineer runs each scan in an ephemeral container for isolation. The runner image is published to GHCR as a multi-arch manifest (`linux/amd64` and `linux/arm64`) and pulled automatically on first use:
 
-    go run ./cmd/scrutineer -skills ./skills
+    go run -buildvcs=true ./cmd/scrutineer -skills ./skills
 
 Use `--runtime podman` to run scans under podman instead of docker (see [Podman (rootless)](#podman-rootless) below), `--runtime apple` to run scans under Apple's `container` runtime on macOS (see [Apple container (experimental)](#apple-container-experimental) below), `--no-container` to disable containerised execution entirely, or `--runner-image` to specify a different image. To build the runner locally instead of pulling from GHCR (use `podman build` or `container build` instead if you run scans under those runtimes):
 
     docker build -t scrutineer-runner -f Dockerfile.runner .
-    go run ./cmd/scrutineer -skills ./skills --runner-image scrutineer-runner
+    go run -buildvcs=true ./cmd/scrutineer -skills ./skills --runner-image scrutineer-runner
 
 The runner's bundled Claude Code only moves when a maintainer merges Renovate's update, and Renovate waits until a Claude Code release is seven days old, so a model that needs a newer CLI takes at least a week to become usable. It takes longer on a release binary, whose default runner image only changes with the next scrutineer release. To run a newer Claude Code without falling back to `--no-container`, build the runner from a checkout of the scrutineer version you run and override the `CLAUDE_*_LOCK` build arguments with the Claude Code tag and the SHA-256 of `claude-linux-x64.tar.gz` and `claude-linux-arm64.tar.gz` from that Claude Code release's `SHASUMS256.txt`. Per-ecosystem profile images are cached by a locally built runner's tag alone, so give each version its own tag to have them rebuilt on top of it:
 
     docker build -t scrutineer-runner:claude-2.1.284 -f Dockerfile.runner --build-arg CLAUDE_AMD64_LOCK=v2.1.284@sha256:<x64 digest> --build-arg CLAUDE_ARM64_LOCK=v2.1.284@sha256:<arm64 digest> .
-    go run ./cmd/scrutineer -skills ./skills --runner-image scrutineer-runner:claude-2.1.284
+    go run -buildvcs=true ./cmd/scrutineer -skills ./skills --runner-image scrutineer-runner:claude-2.1.284
 
 The staleness check below never flags a locally built runner, so drop `--runner-image` once the published runner carries the Claude Code release you need.
 
@@ -301,7 +304,7 @@ When the container runner is active, scrutineer auto-detects a per-ecosystem **p
 |---------|---------------|------|
 | `php` / `php-ext` | `package_manager:Composer` / `tools.native_extension:phpize` | PHP; `php-ext` builds PHP debug + ASan/UBSan for C extensions |
 | `python` / `python-ext` | `package_manager:pip` / `Pipenv` / `Poetry` / `uv` / `PDM` / `setuptools`; `python-ext` when `tools.native_extension:setuptools Extension` is present | CPython; `python-ext` builds CPython debug + ASan/UBSan |
-| `ruby` | Bundler | Ruby 3.4 + Bundler; metaprogramming / dynamic-dispatch guidance, plus a tripwire that flags an un-instrumented native extension |
+| `ruby` | Bundler or RubyGems | Ruby 3.4 + Bundler; metaprogramming / dynamic-dispatch guidance, plus a tripwire that flags an un-instrumented native extension |
 | `ruby-ext` | `tools.native_extension:mkmf` | A **superset** of `ruby`: adds an ASan/UBSan Ruby (the default interpreter), valgrind on the stock interpreter, Rust nightly for rb-sys gems, and Brakeman |
 | `ruby-rails` | `tools.build:Rails` | A superset of `ruby` plus **Brakeman**, Rails-specific SAST |
 | `node` | npm/pnpm/Yarn/Bun | Node.js |
@@ -430,7 +433,7 @@ Skills resolve to a model through a tier: `high` by default, unless the skill's 
 Scrutineer can drive OpenAI's [codex](https://github.com/openai/codex) CLI instead of claude-code. The runner image bundles the `codex` binary, so switching is the flag (or `backend: codex` in `scrutineer.yaml`) plus a credential:
 
     export CODEX_API_KEY=sk-...
-    go run ./cmd/scrutineer -skills ./skills -backend codex
+    go run -buildvcs=true ./cmd/scrutineer -skills ./skills -backend codex
 
 It can also use a ChatGPT subscription login without consuming Platform API
 credits. Create an isolated file-backed login:
@@ -470,7 +473,7 @@ Anthropic and OpenAI keep their existing setup. Other providers can use `opencod
 Scrutineer can drive [GitHub Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli) instead of claude-code. The runner image bundles the `copilot` binary, so switching is the flag (or `backend: copilot` in `scrutineer.yaml`) plus a credential -- a GitHub token with Copilot access. Copilot CLI rejects classic (`ghp_`) PATs, so use a fine-grained PAT or the OAuth token `gh auth login` already stored:
 
     export GH_TOKEN=$(gh auth token)
-    go run ./cmd/scrutineer -skills ./skills -backend copilot
+    go run -buildvcs=true ./cmd/scrutineer -skills ./skills -backend copilot
 
 The container, egress proxy, language profiles and skill staging stay the same; only the agent CLI inside the container changes. The default egress allowlist is entirely GitHub infrastructure (`github.com`, `api.github.com`, `api.mcp.github.com`, `*.githubcopilot.com`), since Copilot CLI proxies every model through GitHub's own API; setting `-model-base-url` overrides that endpoint and adds the override host to the allowlist. The model pick list defaults to Copilot's own catalog (Claude and GPT models) with tier tags already set; override with `models:` in the config for a different set. Unlike codex and opencode, `-max-turns` is honoured by this backend. The copilot backend requires the containerised runner; `--no-container` with `-backend copilot` is rejected at startup. See [docs/copilot.md](docs/copilot.md) for the full credential and event-mapping details.
 
@@ -478,7 +481,7 @@ The container, egress proxy, language profiles and skill staging stay the same; 
 
 In `--no-container` mode, and for the skills listed in `host_skills`, the `claude` subprocess inherits your `~/.claude/settings.json`, so [sandbox settings](https://code.claude.com/docs/en/sandboxing) that restrict network or filesystem access there will fail skills that need them. Point `claude` at a separate config directory just for scrutineer runs:
 
-    CLAUDE_CONFIG_DIR=~/.claude-scrutineer go run ./cmd/scrutineer -skills ./skills
+    CLAUDE_CONFIG_DIR=~/.claude-scrutineer go run -buildvcs=true ./cmd/scrutineer -skills ./skills
 
 Copy your `settings.json` into that directory and drop the sandbox keys; your normal Claude Code config is untouched. Container mode is not affected for the skills that stay in the container: there `claude` runs inside the container with its own environment regardless of the host config.
 
@@ -493,6 +496,7 @@ See [SECURITY.md](SECURITY.md) for the reporting policy and [threatmodel.md](thr
 - [docs/api.md](docs/api.md) -- HTTP API surfaces, callers, authentication boundaries, and links to the full [OpenAPI specification](openapi.yaml)
 - [docs/database.md](docs/database.md) -- full database schema reference
 - [docs/usage.md](docs/usage.md) -- per-skill cost ranges, workload correlations and 10x-median outliers
+- [docs/reporting.md](docs/reporting.md) -- the Reporting page's CSV/JSON exports and merging exports from several instances
 - [docs/backup.md](docs/backup.md) -- backing up and restoring the database (built-in `scrutineer backup`/`restore`, `sqlite3`, Litestream)
 - [docs/development.md](docs/development.md) -- project layout, regenerating embedded data, running tests
 - [docs/encrypted-sharing.md](docs/encrypted-sharing.md) -- encrypted findings sharing between contributors (age + SSH keys, team keyring management)

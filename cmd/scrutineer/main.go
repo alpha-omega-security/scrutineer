@@ -14,7 +14,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"runtime/debug"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -33,6 +33,7 @@ import (
 	"scrutineer/internal/bundledassets"
 	"scrutineer/internal/config"
 	"scrutineer/internal/db"
+	"scrutineer/internal/egressgrant"
 	"scrutineer/internal/interchange"
 	"scrutineer/internal/queue"
 	"scrutineer/internal/skills"
@@ -40,29 +41,6 @@ import (
 	"scrutineer/internal/worker"
 	bundledskills "scrutineer/skills"
 )
-
-// commit is the git SHA scrutineer was built from, injected at build time
-// via -ldflags "-X main.commit=...". Empty in a plain `go build`/`go run`,
-// where buildCommit falls back to the VCS revision in the build info.
-var commit string
-
-// buildCommit reports the commit scrutineer was built from. It prefers the
-// ldflags-injected value (set in the container image build, where .git is excluded
-// from the context so the VCS stamp is unavailable) and otherwise reads the
-// vcs.revision the Go toolchain records during a normal local build.
-func buildCommit() string {
-	if commit != "" {
-		return commit
-	}
-	if info, ok := debug.ReadBuildInfo(); ok {
-		for _, s := range info.Settings {
-			if s.Key == "vcs.revision" {
-				return s.Value
-			}
-		}
-	}
-	return ""
-}
 
 // skillDirs collects repeated -skills flags.
 type skillDirs []string
@@ -662,6 +640,9 @@ func run(log *slog.Logger) error {
 	if err := validateFlags(f); err != nil {
 		return err
 	}
+	if err := validateEgressPolicies(f, cfg); err != nil {
+		return err
+	}
 	warnIfNonLoopbackListenAddr(log, f.addr)
 	// When --selinux is given explicitly, surface the host's SELinux mode at
 	// startup so the operator can confirm what scrutineer detected (e.g. that an
@@ -729,6 +710,7 @@ func run(log *slog.Logger) error {
 	}
 	retireRemovedSkills(log, gdb)
 	warnUnknownHostSkills(log, gdb, f.hostSkills)
+	warnEgressPolicySkills(log, gdb, cfg.EgressPolicies, f.hostSkills)
 
 	go func() {
 		if n, err := worker.SyncCNAs(context.Background(), gdb, ""); err != nil {
@@ -777,6 +759,9 @@ func run(log *slog.Logger) error {
 	srv.SkillsRepoSHA = skillsRepoSHA
 	srv.ModelProxy = worker.ModelProxyOf(runner)
 	srv.Version = version
+	build := readBuildMetadata()
+	srv.Commit = build.Commit
+	srv.CommitDate = build.CommitDate
 	wireEcosystems(f.ecosystemsEnrichment, w, srv, gdb, log)
 	if h, err := worker.HarnessByName(f.backend); err == nil {
 		srv.Backend = worker.HarnessName(h)
@@ -1015,6 +1000,24 @@ func hashPath(s string) string {
 // -runtime-smoke-timeout.
 const defaultRuntimeSmokeTimeout = 5 * time.Minute
 
+// warnRuntimeCaveats logs the runtime limitations an operator should know
+// about before the first scan. It only logs; nothing here refuses a runtime.
+func warnRuntimeCaveats(rt worker.ContainerRuntime, f *flags, log *slog.Logger) {
+	if rt.Bin == "apple" {
+		log.Warn("Apple container runtime support is experimental", "version", rt.Version)
+		if f.hardened {
+			log.Info("Apple hardened mode: per-container VM boundary substitutes for " +
+				"--security-opt no-new-privileges (not exposed by Apple's CLI); the " +
+				"per-scan --internal network is verified fail-closed before each scan")
+		}
+	}
+	// Older podman lacks the host-gateway alias the egress path needs; warn
+	// rather than fail since the hardened path verifies reachability per-scan.
+	if !rt.HostGatewaySupported() {
+		log.Warn("podman may be too old for host-gateway egress; upgrade to >= 4.7", "version", rt.Version)
+	}
+}
+
 // setupRunner picks the SkillRunner implementation for the run loop:
 // ContainerRunner (docker, podman, or Apple's container) when a container runtime is in use,
 // LocalClaude otherwise, and a HostSplitRunner over both when host_skills sends
@@ -1057,19 +1060,7 @@ func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRu
 	if err := worker.HardeningSupportError(rt, f.hardenedRuntimeOnly); err != nil {
 		return nil, "", err
 	}
-	if rt.Bin == "apple" {
-		log.Warn("Apple container runtime support is experimental", "version", rt.Version)
-		if f.hardened {
-			log.Info("Apple hardened mode: per-container VM boundary substitutes for " +
-				"--security-opt no-new-privileges (not exposed by Apple's CLI); the " +
-				"per-scan --internal network is verified fail-closed before each scan")
-		}
-	}
-	// Older podman lacks the host-gateway alias the egress path needs; warn
-	// rather than fail since the hardened path verifies reachability per-scan.
-	if !rt.HostGatewaySupported() {
-		log.Warn("podman may be too old for host-gateway egress; upgrade to >= 4.7", "version", rt.Version)
-	}
+	warnRuntimeCaveats(rt, f, log)
 	// Rootless podman needs an adequate /etc/subuid range for --userns=keep-id;
 	// smoke-test it once so a misconfiguration is one clear error here rather
 	// than a cryptic bind-mount failure on every scan. The first such run also
@@ -1096,6 +1087,10 @@ func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRu
 		return nil, "", fmt.Errorf("--selinux=%s: %w", f.selinux, err)
 	}
 	gwIP, apiHost, err := resolveScanNetworking(rt, f, log)
+	if err != nil {
+		return nil, "", err
+	}
+	policies, err := egressPolicyGrants(cfg)
 	if err != nil {
 		return nil, "", err
 	}
@@ -1128,7 +1123,7 @@ func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRu
 	// the egress proxy as a per-scan sidecar. Resolve it before the in-process
 	// host proxy so the latter can be skipped when the sidecar is in charge.
 	if f.hardened {
-		egress, err = resolveEgressSidecar(rt, f, allow, token, log)
+		egress, err = resolveEgressSidecar(rt, f, allow, token, log, policies)
 		if err != nil {
 			return nil, "", err
 		}
@@ -1182,6 +1177,7 @@ func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRu
 			ContainerHost: apiHost,
 			Log:           log,
 		},
+		EgressPolicies:    policies,
 		OpencodeProviders: opencodeProviders,
 		OpencodeReadiness: worker.NewOpencodeReadinessCache(),
 		CodexAccountAuth:  worker.NewCodexAccountAuth(f.codexAuthFile),
@@ -1314,6 +1310,61 @@ func warnUnknownHostSkills(log *slog.Logger, gdb *gorm.DB, names []string) {
 	}
 }
 
+// validateEgressPolicies refuses per-skill egress grants that nothing would
+// enforce. Grants are only sound on the per-scan --internal network that
+// --hardened creates. --no-container has no container to confine.
+func validateEgressPolicies(f *flags, cfg *config.Config) error {
+	if cfg == nil || len(cfg.EgressPolicies) == 0 {
+		return nil
+	}
+	if f.noContainer {
+		return errors.New("egress_policies cannot be enforced with --no-container (no container to confine)")
+	}
+	if !f.hardened {
+		return errors.New("egress_policies require --hardened so grants are enforced on an isolated network")
+	}
+	return nil
+}
+
+// egressPolicyGrants converts the validated config policies into the worker's
+// per-skill grants.
+func egressPolicyGrants(cfg *config.Config) (map[string][]egressgrant.Grant, error) {
+	if cfg == nil || len(cfg.EgressPolicies) == 0 {
+		return nil, nil
+	}
+	out := make(map[string][]egressgrant.Grant, len(cfg.EgressPolicies))
+	for skill, policy := range cfg.EgressPolicies {
+		grants, err := egressgrant.Parse(policy.Allow)
+		if err != nil {
+			return nil, fmt.Errorf("egress_policies.%s.allow: %w", skill, err)
+		}
+		out[skill] = grants
+	}
+	return out, nil
+}
+
+// warnEgressPolicySkills flags egress_policies entries that can never apply: a
+// skill that does not exist (a typo silently leaves it without egress) or one
+// listed in host_skills, which runs on the host and ignores policies.
+func warnEgressPolicySkills(log *slog.Logger, gdb *gorm.DB, policies map[string]config.EgressPolicy, hostSkills []string) {
+	if len(policies) == 0 {
+		return
+	}
+	var active []string
+	if err := gdb.Model(&db.Skill{}).Where("active = ?", true).Pluck("name", &active).Error; err != nil {
+		log.Warn("egress_policies check failed", "err", err)
+		return
+	}
+	for name := range policies {
+		switch {
+		case slices.Contains(hostSkills, name):
+			log.Warn("egress_policies names a host_skills skill; host skills run on the host and ignore policies", "skill", name)
+		case !slices.Contains(active, name):
+			log.Warn("egress_policies names no active skill", "skill", name)
+		}
+	}
+}
+
 func loadOpencodeProviders(h worker.Harness, providers map[string]config.OpencodeProvider, configPath string) (map[string]worker.OpencodeProviderConfig, error) {
 	if worker.HarnessName(h) != "opencode" || len(providers) == 0 {
 		return nil, nil
@@ -1433,7 +1484,7 @@ func resolveScanNetworking(rt worker.ContainerRuntime, f *flags, log *slog.Logge
 // default-network host gateway the sidecar dials to reach the loopback-bound
 // host skill API. Docker Engine, rootful podman, and Apple keep the in-process
 // proxy and return the zero value.
-func resolveEgressSidecar(rt worker.ContainerRuntime, f *flags, allow []string, token string, log *slog.Logger) (worker.EgressSidecarConfig, error) {
+func resolveEgressSidecar(rt worker.ContainerRuntime, f *flags, allow []string, token string, log *slog.Logger, policies map[string][]egressgrant.Grant) (worker.EgressSidecarConfig, error) {
 	if !rt.NeedsEgressSidecar() {
 		return worker.EgressSidecarConfig{}, nil
 	}
@@ -1441,7 +1492,11 @@ func resolveEgressSidecar(rt worker.ContainerRuntime, f *flags, allow []string, 
 	// requires, rather than letting every hardened scan fail with a cryptic error.
 	smokeCtx, cancel := context.WithTimeout(context.Background(), f.smokeTimeout)
 	defer cancel()
-	if err := worker.VerifyProxyBinary(smokeCtx, rt, f.runnerImage); err != nil {
+	var extraCaps []string
+	if len(policies) > 0 {
+		extraCaps = []string{worker.ProxyCapabilityEgressPortGrants}
+	}
+	if err := worker.VerifyProxyBinary(smokeCtx, rt, f.runnerImage, extraCaps...); err != nil {
 		return worker.EgressSidecarConfig{}, err
 	}
 	// The sidecar reaches the host skill API over its egress leg through the
@@ -1479,7 +1534,7 @@ func buildEgressAllow(harnessHosts []string, hardened bool, cfg *config.Config, 
 	if hardened {
 		allow = append(allow, worker.HardenedEgressAllow...)
 		if cfg != nil && len(cfg.EgressAllow) > 0 {
-			log.Warn("ignoring egress_allow config entries under --hardened", "count", len(cfg.EgressAllow))
+			log.Warn("ignoring egress_allow config entries under --hardened; grant a skill host:port pairs with egress_policies instead (docs/egress-policies.md)", "count", len(cfg.EgressAllow))
 		}
 	} else {
 		allow = append(allow, worker.DefaultEgressAllow...)

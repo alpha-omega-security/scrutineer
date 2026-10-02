@@ -23,6 +23,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"scrutineer/internal/egressgrant"
 )
 
 const DefaultRunnerImage = "ghcr.io/alpha-omega-security/scrutineer-runner:latest"
@@ -86,6 +88,9 @@ type ContainerRunner struct {
 	// a short-lived in-process proxy for one configured OpenCode provider. The
 	// process-wide proxy never receives provider-specific hosts.
 	ProviderProxy ScopedEgressProxyConfig
+	// EgressPolicies are the per-skill egress grants, keyed by skill name.
+	// They come from operator config only and apply under --hardened.
+	EgressPolicies map[string][]EgressGrant
 	// OpencodeProviders contains provider-scoped images, credentials, state,
 	// config, and egress resolved from the operator's YAML configuration.
 	OpencodeProviders map[string]OpencodeProviderConfig
@@ -129,6 +134,10 @@ type EgressSidecarConfig struct {
 	// reach the host skill API. Required: an empty value means the sidecar
 	// cannot reach the host, so setupHardenedNetwork fails the scan closed.
 	GatewayIP string
+	// Grants are the per-skill egress grants for this scan. The sidecar reaches
+	// each granted host on its declared ports only. Set per scan by
+	// applyEgressPolicy on a copy of the runner, never on the shared config.
+	Grants []EgressGrant
 }
 
 // ScopedEgressProxyConfig is the non-secret startup information needed to
@@ -274,25 +283,35 @@ func (s containerRunErrorState) failure(provider opencodeProvider, runtimeName s
 	return fmt.Errorf("%s exited: %w", runtimeName, waitErr)
 }
 
-// prepareExecution runs RunSkill's two setup steps that each carry their own
-// cleanup (the OpenCode provider proxy and, when configured, the model proxy
-// token) then merges them into a single cleanup func. Split out of RunSkill so
-// its own top level only threads through one setup call and one error check
-// for both, keeping RunSkill's cognitive complexity down as these toggles
+// prepareExecution runs RunSkill's setup steps that each carry their own
+// cleanup (the OpenCode provider proxy, the skill's egress policy and, when
+// configured, the model proxy token) then merges them into a single cleanup
+// func that releases them in reverse order. Split out of RunSkill so its own
+// top level only threads through one setup call and one error check for all
+// of them, keeping RunSkill's cognitive complexity down as these toggles
 // accumulate.
-func (d ContainerRunner) prepareExecution(ctx context.Context, sj SkillJob) (ContainerRunner, opencodeProvider, SkillResult, func(), error) {
+func (d ContainerRunner) prepareExecution(ctx context.Context, sj SkillJob, emit func(Event)) (ContainerRunner, opencodeProvider, SkillResult, func(), error) {
 	noop := func() {}
-	d, provider, result, cleanupProviderProxy, err := d.prepareOpencodeExecution(ctx, sj.Model)
+	// With an egress policy, applyEgressPolicy starts the single scoped proxy,
+	// so the OpenCode step only widens the allowlists.
+	d, provider, result, cleanupProviderProxy, err := d.prepareOpencodeExecution(ctx, sj.Model, len(d.EgressPolicies[sj.Name]) > 0)
 	if err != nil {
+		return d, provider, result, noop, err
+	}
+	d, cleanupPolicy, err := d.applyEgressPolicy(sj, emit)
+	if err != nil {
+		cleanupProviderProxy()
 		return d, provider, result, noop, err
 	}
 	d, revokeModelToken, err := d.issueModelProxyToken(ctx)
 	if err != nil {
+		cleanupPolicy()
 		cleanupProviderProxy()
 		return d, provider, result, noop, err
 	}
 	return d, provider, result, func() {
 		revokeModelToken()
+		cleanupPolicy()
 		cleanupProviderProxy()
 	}, nil
 }
@@ -308,7 +327,7 @@ func (d ContainerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Ev
 		return SkillResult{}, errors.New("codex account auth requires a per-job state directory")
 	}
 
-	d, provider, result, cleanupExecution, err := d.prepareExecution(ctx, sj)
+	d, provider, result, cleanupExecution, err := d.prepareExecution(ctx, sj, emit)
 	if err != nil {
 		return result, err
 	}
@@ -1192,8 +1211,11 @@ func (d ContainerRunner) proxySidecarRunArgs(name, network string) []string {
 	for _, e := range EgressSidecarEnv(d.Egress, SidecarListenFirstIface+":"+proxySidecarPort) {
 		args = append(args, "-e", e)
 	}
-	return append(args, "--", d.image(), "scrutineer", "proxy",
-		"--require-capability="+ProxyCapabilityDenyAPIConnect)
+	capability := ProxyCapabilityDenyAPIConnect
+	if len(d.Egress.Grants) > 0 {
+		capability += "," + ProxyCapabilityEgressPortGrants
+	}
+	return append(args, "--", d.image(), "scrutineer", "proxy", "--require-capability="+capability)
 }
 
 // EgressSidecarEnv returns the SCRUTINEER_PROXY_* environment assignments the
@@ -1205,7 +1227,7 @@ func (d ContainerRunner) proxySidecarRunArgs(name, network string) []string {
 // --internal address at startup (the host cannot know it before the container
 // exists).
 func EgressSidecarEnv(cfg EgressSidecarConfig, listen string) []string {
-	return []string{
+	env := []string{
 		"SCRUTINEER_PROXY_TOKEN=" + cfg.Token,
 		"SCRUTINEER_PROXY_ALLOW=" + strings.Join(cfg.Allow, ","),
 		"SCRUTINEER_PROXY_API_HOST=" + cfg.GatewayIP,
@@ -1213,6 +1235,10 @@ func EgressSidecarEnv(cfg EgressSidecarConfig, listen string) []string {
 		"SCRUTINEER_PROXY_HOST_PORTS=" + strings.Join(cfg.HostPorts, ","),
 		"SCRUTINEER_PROXY_LISTEN=" + listen,
 	}
+	if len(cfg.Grants) > 0 {
+		env = append(env, "SCRUTINEER_PROXY_GRANTS="+egressgrant.Format(cfg.Grants))
+	}
+	return env
 }
 
 // teardownHardenedScan runs at the end of a hardened scan: it forwards the
@@ -1265,11 +1291,13 @@ func noteworthyProxyLogLine(line string) bool {
 // present locally yet (the first scan pulls it and the actual sidecar command
 // enforces the same capability), matching container.VerifyKeepID.
 // Only meaningful on the sidecar path; the caller checks the runtime trait.
-func VerifyProxyBinary(ctx context.Context, rt ContainerRuntime, image string) error {
+// The extra capabilities, such as ProxyCapabilityEgressPortGrants when the
+// operator configured egress policies, are required on top of the base one.
+func VerifyProxyBinary(ctx context.Context, rt ContainerRuntime, image string, extra ...string) error {
 	if image == "" || !imageExistsLocally(ctx, rt, image) {
 		return nil
 	}
-	args := proxyBinaryCheckArgs(rt, image)
+	args := proxyBinaryCheckArgs(rt, image, extra...)
 	out, err := exec.CommandContext(ctx, runtimeBin(rt), args...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("runner image %q does not support the hardened egress proxy policy "+
@@ -1279,10 +1307,11 @@ func VerifyProxyBinary(ctx context.Context, rt ContainerRuntime, image string) e
 	return nil
 }
 
-func proxyBinaryCheckArgs(rt ContainerRuntime, image string) []string {
+func proxyBinaryCheckArgs(rt ContainerRuntime, image string, extra ...string) []string {
+	caps := append([]string{ProxyCapabilityDenyAPIConnect}, extra...)
 	return runtimeRunArgs(rt, "--rm", "--pull", "never",
 		"--", image, "scrutineer", "proxy",
-		"--require-capability="+ProxyCapabilityDenyAPIConnect, "-h")
+		"--require-capability="+strings.Join(caps, ","), "-h")
 }
 
 // verifyHardenedNetwork fails closed when the per-scan --internal network does

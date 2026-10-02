@@ -24,6 +24,69 @@ func postForm(t *testing.T, s *Server, path string, form url.Values) *httptest.R
 	return w
 }
 
+func TestSettingsShow_buildMetadata(t *testing.T) {
+	const revision = "0123456789abcdef0123456789abcdef01234567"
+	const commitDate = "2026-09-30T08:59:54Z"
+	for _, tt := range []struct {
+		name       string
+		version    string
+		commit     string
+		commitDate string
+		want       []string
+		absent     []string
+	}{
+		{
+			name: "release", version: "release", commit: revision, commitDate: commitDate,
+			want: []string{revision, "Commit date", commitDate}, absent: []string{"Build date", "-dirty"},
+		},
+		{
+			name: "checkout", commit: revision, commitDate: commitDate,
+			want: []string{revision, "Commit date", commitDate}, absent: []string{"Build date", "-dirty"},
+		},
+		{
+			name: "dirty checkout", commit: revision + "-dirty", commitDate: commitDate,
+			want: []string{revision + "-dirty", "Commit date", commitDate}, absent: []string{"Build date"},
+		},
+		{
+			name: "container", commit: revision,
+			want: []string{revision, "Commit date", ">unavailable</div>"}, absent: []string{"Build date", "-dirty"},
+		},
+		{
+			name: "unstamped", want: []string{"Commit date", `title="">unavailable</div>`},
+			absent: []string{"Build date", "-dirty"},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			s, done := newTestServer(t)
+			defer done()
+			s.Version = "dev"
+			if tt.version != "" {
+				s.Version = tt.version
+			}
+			s.Commit, s.CommitDate = tt.commit, tt.commitDate
+			w := httptest.NewRecorder()
+			s.Handler().ServeHTTP(w, localReq("GET", "/settings"))
+			if w.Code != http.StatusOK {
+				t.Fatalf("status %d: %s", w.Code, w.Body)
+			}
+			_, about, ok := strings.Cut(w.Body.String(), "<h2>About</h2>")
+			if !ok {
+				t.Fatal("settings page missing About section")
+			}
+			for _, want := range append(tt.want, "Scrutineer commit", `title="`+s.Version+`">`+s.Version+`</div>`) {
+				if !strings.Contains(about, want) {
+					t.Errorf("About section missing %q", want)
+				}
+			}
+			for _, absent := range tt.absent {
+				if strings.Contains(about, absent) {
+					t.Errorf("About section contains %q", absent)
+				}
+			}
+		})
+	}
+}
+
 func TestSettingsShow_rendersRunnerControls(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

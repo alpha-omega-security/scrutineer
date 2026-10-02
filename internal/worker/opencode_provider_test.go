@@ -224,7 +224,7 @@ func TestConfigureOpencodeProviderEgressScopesHostProxyToSelectedProvider(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, cleanup, err := d.configureOpencodeProviderEgress(provider)
+	got, cleanup, err := d.configureOpencodeProviderEgress(provider, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -283,7 +283,7 @@ func TestConfigureOpencodeProviderEgressOpensHostPort(t *testing.T) {
 	if provider.HostPort != hostPort || !provider.Configured {
 		t.Fatalf("resolved provider = %+v", provider)
 	}
-	got, cleanup, err := d.configureOpencodeProviderEgress(provider)
+	got, cleanup, err := d.configureOpencodeProviderEgress(provider, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -329,7 +329,7 @@ func TestConfigureOpencodeProviderEgressScopesSidecarToSelectedProvider(t *testi
 		Configured:  true,
 		EgressHosts: []string{"runtime.us-east-1.kiro.dev"},
 	}
-	got, cleanup, err := d.configureOpencodeProviderEgress(provider)
+	got, cleanup, err := d.configureOpencodeProviderEgress(provider, false)
 	if err != nil {
 		t.Fatal(err)
 	}

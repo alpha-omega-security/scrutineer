@@ -264,6 +264,18 @@ go test -tags podman -run TestIntegration -count=1 -v ./internal/worker/
 | Verification: `did not block external egress` | `--internal` isn't isolating egress on this backend | Backend/version issue; do not run hardened here. |
 | `runner image ... lacks curl` | Custom runner image missing curl (hardened verification needs it) | Use an image built from `Dockerfile.runner`. |
 
+## Per-skill grants
+
+When the operator configures `egress_policies` (see
+[egress-policies.md](egress-policies.md)), the sidecar for a scan of a skill with
+a policy receives one more variable, `SCRUTINEER_PROXY_GRANTS`, formatted as
+`host:port1|port2,host2:port`. The sidecar then requires the
+`egress-port-grants-v1` capability in addition to `deny-api-connect-v1`
+(`--require-capability` takes a comma-separated list). Sidecars for skills
+without a policy get the same environment and arguments as before. A runner
+image whose `scrutineer` binary predates the capability exits at startup, so the
+scan is refused rather than run without the port restriction.
+
 ## See also
 
 - [podman.md](podman.md) — full rootless security model; the `--hardened` under

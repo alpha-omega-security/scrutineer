@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"scrutineer/internal/egressgrant"
 	"scrutineer/internal/worker"
 )
 
@@ -200,5 +201,44 @@ func TestDispatch_RoutesProxy(t *testing.T) {
 	}
 	if err == nil {
 		t.Error("expected an error from proxy with no token/allowlist configured")
+	}
+}
+
+func TestParseProxyConfig_CapabilityList(t *testing.T) {
+	env := envMap(map[string]string{"SCRUTINEER_PROXY_TOKEN": "tok", "SCRUTINEER_PROXY_ALLOW": "example.com"})
+	both := "--require-capability=" + worker.ProxyCapabilityDenyAPIConnect + "," + worker.ProxyCapabilityEgressPortGrants
+	if _, err := parseProxyConfig([]string{both}, env); err != nil {
+		t.Fatalf("known capability list rejected: %v", err)
+	}
+	if _, err := parseProxyConfig([]string{both + ",unknown"}, env); err == nil || !strings.Contains(err.Error(), "unsupported required capability") {
+		t.Fatalf("unknown list item accepted: %v", err)
+	}
+	if _, err := parseProxyConfig([]string{both, "-h"}, env); !errors.Is(err, flag.ErrHelp) {
+		t.Fatalf("capability list with help: got %v, want flag.ErrHelp", err)
+	}
+}
+
+func TestParseProxyConfig_Grants(t *testing.T) {
+	env := map[string]string{
+		"SCRUTINEER_PROXY_TOKEN":  "tok",
+		"SCRUTINEER_PROXY_ALLOW":  "example.com",
+		"SCRUTINEER_PROXY_GRANTS": "*.example.org:443|8443,api.ecosyste.ms:443",
+	}
+	got, err := parseProxyConfig(nil, envMap(env))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []egressgrant.Grant{
+		{Host: "*.example.org", Ports: []string{"443", "8443"}},
+		{Host: "api.ecosyste.ms", Ports: []string{"443"}},
+	}
+	if !reflect.DeepEqual(got.grants, want) {
+		t.Errorf("grants = %+v, want %+v", got.grants, want)
+	}
+	for _, bad := range []string{"api.ecosyste.ms", "10.0.0.1:443", "a.example.com:0"} {
+		env["SCRUTINEER_PROXY_GRANTS"] = bad
+		if _, err := parseProxyConfig(nil, envMap(env)); err == nil {
+			t.Errorf("bad grants %q accepted", bad)
+		}
 	}
 }

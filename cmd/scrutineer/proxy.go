@@ -8,9 +8,11 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
+	"scrutineer/internal/egressgrant"
 	"scrutineer/internal/worker"
 )
 
@@ -32,6 +34,8 @@ type proxyConfig struct {
 	apiPort   string   // host skill API port allowed on the host alias
 	hostPorts []string // additional host-alias ports (host-local model server)
 	allow     []string // egress allowlist
+	// grants are per-skill hosts reachable only on their declared ports.
+	grants []egressgrant.Grant
 }
 
 // parseProxyConfig resolves the sidecar configuration from flags layered over
@@ -41,23 +45,30 @@ type proxyConfig struct {
 // process environment.
 func parseProxyConfig(args []string, getenv func(string) string) (proxyConfig, error) {
 	fset := flag.NewFlagSet("proxy", flag.ContinueOnError)
-	var listen, token, apiHost, apiPort, hostPorts, allow, requireCapability string
+	var listen, token, apiHost, apiPort, hostPorts, allow, grants, requireCapability string
 	fset.StringVar(&listen, "listen", envOr(getenv, "SCRUTINEER_PROXY_LISTEN", ":3128"), "listen address")
 	fset.StringVar(&token, "token", getenv("SCRUTINEER_PROXY_TOKEN"), "Proxy-Authorization token clients must present")
 	fset.StringVar(&apiHost, "api-host", getenv("SCRUTINEER_PROXY_API_HOST"), "host-gateway IPv4 to dial for the host skill API")
 	fset.StringVar(&apiPort, "api-port", getenv("SCRUTINEER_PROXY_API_PORT"), "host skill API port allowed on the host alias")
 	fset.StringVar(&hostPorts, "host-ports", getenv("SCRUTINEER_PROXY_HOST_PORTS"), "comma-separated additional ports allowed on the host alias")
 	fset.StringVar(&allow, "allow", getenv("SCRUTINEER_PROXY_ALLOW"), "comma-separated egress allowlist")
-	fset.StringVar(&requireCapability, "require-capability", "", "host-required proxy security capability")
+	fset.StringVar(&grants, "grants", getenv("SCRUTINEER_PROXY_GRANTS"), "per-skill egress grants as host:port1|port2,host:port")
+	fset.StringVar(&requireCapability, "require-capability", "", "comma-separated host-required proxy security capabilities")
 	parseErr := fset.Parse(args)
 	// Validate a capability parsed before -h even though flag.Parse reports
 	// ErrHelp. The host's smoke check deliberately uses that ordering so it
 	// proves the image supports this exact policy, not merely the flag name.
-	if (parseErr == nil || errors.Is(parseErr, flag.ErrHelp)) && requireCapability != "" && requireCapability != worker.ProxyCapabilityDenyAPIConnect {
-		return proxyConfig{}, fmt.Errorf("proxy: unsupported required capability %q", requireCapability)
+	if parseErr == nil || errors.Is(parseErr, flag.ErrHelp) {
+		if err := checkRequiredCapabilities(requireCapability); err != nil {
+			return proxyConfig{}, err
+		}
 	}
 	if parseErr != nil {
 		return proxyConfig{}, parseErr
+	}
+	parsedGrants, err := egressgrant.ParseEnv(grants)
+	if err != nil {
+		return proxyConfig{}, fmt.Errorf("proxy: invalid egress grants: %w", err)
 	}
 	cfg := proxyConfig{
 		listen:    listen,
@@ -66,6 +77,7 @@ func parseProxyConfig(args []string, getenv func(string) string) (proxyConfig, e
 		apiPort:   apiPort,
 		hostPorts: splitAllow(hostPorts),
 		allow:     splitAllow(allow),
+		grants:    parsedGrants,
 	}
 	if cfg.token == "" {
 		return proxyConfig{}, errors.New("proxy: empty token (set -token or SCRUTINEER_PROXY_TOKEN)")
@@ -74,6 +86,18 @@ func parseProxyConfig(args []string, getenv func(string) string) (proxyConfig, e
 		return proxyConfig{}, errors.New("proxy: empty allowlist (set -allow or SCRUTINEER_PROXY_ALLOW)")
 	}
 	return cfg, nil
+}
+
+// checkRequiredCapabilities rejects any required capability this binary does
+// not implement. The value is a comma-separated list; an empty value requires
+// nothing.
+func checkRequiredCapabilities(list string) error {
+	for _, c := range splitAllow(list) {
+		if c != worker.ProxyCapabilityDenyAPIConnect && c != worker.ProxyCapabilityEgressPortGrants {
+			return fmt.Errorf("proxy: unsupported required capability %q", c)
+		}
+	}
+	return nil
 }
 
 // splitAllow turns a comma-separated allowlist into a trimmed, empty-free slice.
@@ -145,7 +169,8 @@ func runProxy(args []string) error {
 		// Upstream names are resolved here in the sidecar, not on the host, so a
 		// rootless netns without working DNS would fail every scan mid-run; prove
 		// the resolver answers before serving (fail closed).
-		if err := worker.VerifyUpstreamDNS(ctx, cfg.allow); err != nil {
+		dnsHosts := slices.Concat(cfg.allow, egressgrant.Hosts(cfg.grants))
+		if err := worker.VerifyUpstreamDNS(ctx, dnsHosts); err != nil {
 			return fmt.Errorf("egress proxy refusing to start: %w", err)
 		}
 	}
@@ -158,6 +183,6 @@ func runProxy(args []string) error {
 		GatewayDialHost: cfg.apiHost,
 		Log:             log,
 	}
-	log.Info("egress proxy listening", "addr", cfg.listen, "allow", len(cfg.allow))
-	return worker.ServeEgressProxy(p, cfg.listen)
+	log.Info("egress proxy listening", "addr", cfg.listen, "allow", len(cfg.allow), "grants", len(cfg.grants))
+	return worker.ServeEgressProxy(p, cfg.listen, cfg.grants...)
 }

@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/reporting"
 )
 
 // reportDateLayout is the calendar-day key for the per-day breakdown. Days
@@ -37,9 +38,11 @@ import (
 const reportDateLayout = "2006-01-02"
 
 // findingsField is the "findings" column name, shared by the CSV header
-// and the JSON payload. Named rather than repeated so the two spellings of
-// the export cannot drift apart, and so this package's count of the bare
-// literal stays under goconst's threshold.
+// and the JSON export's filters.applies_to and measured_by text. Named
+// rather than repeated so the spellings cannot drift apart, and so this
+// package's count of the bare literal stays under goconst's threshold. The
+// JSON rows spell it in reporting.DayRow's and reporting.ModelRow's tags;
+// TestReportingJSONMatchesCSVColumns holds those to the CSV header.
 const findingsField = "findings"
 
 // reportInterval is one selectable rolling window. Dur of 0 means all
@@ -755,101 +758,106 @@ func sumDayTokens(days []reportDayRow) int {
 	return total
 }
 
+// reportingJSON serves the snapshot as a reporting.Export. The shape is a
+// Go type rather than a hand-built map so the merge tool under
+// scripts/merge-reports reads exactly what this writes: a figure added to
+// the export has to be added to the struct, and the struct makes it say how
+// it merges.
 func (s *Server) reportingJSON(w http.ResponseWriter, r *http.Request) {
 	data, ok := s.reportOrError(w, r)
 	if !ok {
 		return
 	}
-	days := make([]map[string]any, 0, len(data.Days))
+	w.Header().Set("Content-Disposition", `attachment; filename="`+reportFilename(data, "json")+`"`)
+	writeJSON(w, http.StatusOK, reportExport(data))
+}
+
+// reportExport maps the snapshot onto the export contract. The slices are
+// built non-nil so an empty breakdown exports as [] rather than null.
+func reportExport(data reportData) reporting.Export {
+	days := make([]reporting.DayRow, 0, len(data.Days))
 	for _, d := range data.Days {
-		days = append(days, map[string]any{
-			"date":                 d.Date,
-			"repositories_scanned": d.ReposScanned,
-			"scans_started":        d.ScansStarted,
-			"scans_completed":      d.ScansCompleted,
-			findingsField:          d.Findings,
-			"cost_usd":             d.CostUSD,
-			"total_tokens":         d.TotalTokens,
-			"scans_averaged":       d.ScansAveraged,
-			"avg_cost_usd":         d.AvgCostUSD,
-			"avg_total_tokens":     d.AvgTotalTokens,
+		days = append(days, reporting.DayRow{
+			Date:           d.Date,
+			ReposScanned:   d.ReposScanned,
+			ScansStarted:   d.ScansStarted,
+			ScansCompleted: d.ScansCompleted,
+			Findings:       d.Findings,
+			CostUSD:        d.CostUSD,
+			TotalTokens:    d.TotalTokens,
+			ScansAveraged:  d.ScansAveraged,
+			AvgCostUSD:     d.AvgCostUSD,
+			AvgTotalTokens: d.AvgTotalTokens,
 		})
 	}
-	byModel := make([]map[string]any, 0, len(data.Models))
+	byModel := make([]reporting.ModelRow, 0, len(data.Models))
 	for _, m := range data.Models {
-		byModel = append(byModel, map[string]any{
-			"model":            m.Model,
-			"scans_started":    m.ScansStarted,
-			"scans_completed":  m.ScansCompleted,
-			findingsField:      m.Findings,
-			"cost_usd":         m.CostUSD,
-			"total_tokens":     m.TotalTokens,
-			"scans_averaged":   m.ScansAveraged,
-			"avg_cost_usd":     m.AvgCostUSD,
-			"avg_total_tokens": m.AvgTotalTokens,
+		byModel = append(byModel, reporting.ModelRow{
+			Model:          m.Model,
+			ScansStarted:   m.ScansStarted,
+			ScansCompleted: m.ScansCompleted,
+			Findings:       m.Findings,
+			CostUSD:        m.CostUSD,
+			TotalTokens:    m.TotalTokens,
+			ScansAveraged:  m.ScansAveraged,
+			AvgCostUSD:     m.AvgCostUSD,
+			AvgTotalTokens: m.AvgTotalTokens,
 		})
 	}
-	period := map[string]any{
-		"key":       data.Interval.Key,
-		"label":     data.Interval.Label,
-		"meaning":   data.Interval.Meaning,
-		"starts_at": nil,
-		"ends_at":   data.Generated.Format(time.RFC3339),
+	period := reporting.Period{
+		Key:     data.Interval.Key,
+		Label:   data.Interval.Label,
+		Meaning: data.Interval.Meaning,
+		EndsAt:  data.Generated.Format(time.RFC3339),
 	}
 	if data.Since != nil {
-		period["starts_at"] = reportTimestamp(data.Since)
+		start := reportTimestamp(data.Since)
+		period.StartsAt = &start
 	}
-	var minSeverity any
+	// null means unfiltered; the scan counts are never filtered by
+	// severity, which belongs to findings alone.
+	var minSeverity *string
 	if data.MinSeverity != "" {
-		minSeverity = data.MinSeverity
+		minSeverity = &data.MinSeverity
 	}
-	out := map[string]any{
-		"generated_at": data.Generated.Format(time.RFC3339),
-		"period":       period,
-		"filters": map[string]any{
-			// null means unfiltered; the scan counts are never filtered by
-			// severity, which belongs to findings alone.
-			"minimum_severity":  minSeverity,
-			"applies_to":        []string{findingsField},
-			"severity_ordering": db.SeverityLevels,
+	return reporting.Export{
+		GeneratedAt: data.Generated.Format(time.RFC3339),
+		Period:      period,
+		Filters: reporting.Filters{
+			MinimumSeverity:  minSeverity,
+			AppliesTo:        []string{findingsField},
+			SeverityOrdering: db.SeverityLevels,
 		},
-		"activity_in_period": map[string]any{
-			"repositories_scanned": data.Totals.ReposScanned,
-			"scans_started":        data.Totals.ScansStarted,
-			"scans_completed":      data.Totals.ScansCompleted,
-			findingsField:          data.Totals.Findings,
+		Activity: reporting.Activity{
+			ReposScanned:   data.Totals.ReposScanned,
+			ScansStarted:   data.Totals.ScansStarted,
+			ScansCompleted: data.Totals.ScansCompleted,
+			Findings:       data.Totals.Findings,
 			// Starts and completions are read on different columns, so a run
 			// spanning the boundary lands in one period as a start and the
 			// next as a completion. Spelled out here because the two figures
 			// look like a total and a subset of it and are not.
-			"measured_by": "scans_started at started_at, scans_completed at finished_at on runs that reached done, " +
+			MeasuredBy: "scans_started at started_at, scans_completed at finished_at on runs that reached done, " +
 				findingsField + " at first report; queued runs are counted nowhere",
 		},
-		"cost_averages_per_scan": map[string]any{
-			"population": "completed scans with a recorded cost",
-			"in_period":  averageJSON(data.Period),
-			"all_time":   averageJSON(data.AllTime),
+		CostAverages: reporting.CostAverages{
+			Population: "completed scans with a recorded cost",
+			InPeriod:   exportAverages(data.Period),
+			AllTime:    exportAverages(data.AllTime),
 		},
-		// Scan figures group by the scan row's model on the same clocks as
-		// the totals; findings group by the model that first produced each
-		// finding, which for bundle-imported findings is the exporting
-		// instance's model. A "" model groups activity with no model
-		// attribution recorded: deterministic imports and pre-model rows.
-		"activity_by_model": byModel,
-		"activity_by_day":   days,
+		ByModel: byModel,
+		ByDay:   days,
 	}
-	w.Header().Set("Content-Disposition", `attachment; filename="`+reportFilename(data, "json")+`"`)
-	writeJSON(w, http.StatusOK, out)
 }
 
-func averageJSON(a reportAverages) map[string]any {
-	return map[string]any{
-		"scans_averaged":         a.Runs,
-		"avg_cost_usd":           a.CostUSD,
-		"avg_input_tokens":       a.InputTokens,
-		"avg_output_tokens":      a.OutputTokens,
-		"avg_cache_read_tokens":  a.CacheReadTokens,
-		"avg_cache_write_tokens": a.CacheWriteTokens,
-		"avg_total_tokens":       a.TotalTokens,
+func exportAverages(a reportAverages) reporting.Averages {
+	return reporting.Averages{
+		ScansAveraged:       a.Runs,
+		AvgCostUSD:          a.CostUSD,
+		AvgInputTokens:      a.InputTokens,
+		AvgOutputTokens:     a.OutputTokens,
+		AvgCacheReadTokens:  a.CacheReadTokens,
+		AvgCacheWriteTokens: a.CacheWriteTokens,
+		AvgTotalTokens:      a.TotalTokens,
 	}
 }

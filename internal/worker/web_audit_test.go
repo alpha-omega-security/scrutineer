@@ -38,19 +38,35 @@ func TestWebAuditSchemaAndIngestion(t *testing.T) {
 }
 
 func TestWebAuditSchemaRejectsInvalidReports(t *testing.T) {
-	schema := loadBundledSchema(t, "../../skills/audit-web/schema.json")
+	checkModeSchemaRejectsInvalid(t, modeSchemaCase{
+		schemaPath: "../../skills/audit-web/schema.json", report: webAuditReport, finding: webAuditFinding,
+		reference:    `{"url":"https://github.com/OWASP/ASVS/tree/v5.0.0","summary":"ASVS 5.0.0 browser-origin guidance","tags":"asvs"}`,
+		nonMatchNote: "client.py only sends HTTP requests.",
+	})
+}
+
+// modeSchemaCase parameterises the invalid-report table shared by the
+// focused audit modes, which all use the same envelope.
+type modeSchemaCase struct {
+	schemaPath, finding, reference, nonMatchNote string
+	report                                       func(findings string) string
+}
+
+func checkModeSchemaRejectsInvalid(t *testing.T, mc modeSchemaCase) {
+	t.Helper()
+	schema := loadBundledSchema(t, mc.schemaPath)
 	for _, tc := range []struct {
 		name, report string
 		valid        bool
 	}{
-		{"empty reviewed", webAuditReport(""), true},
-		{"nonmatch", `{"review_status":"not-applicable","findings":[],"notes":"client.py only sends HTTP requests."}`, true},
-		{"nonmatch findings", strings.Replace(webAuditReport(webAuditFinding), `"reviewed"`, `"not-applicable"`, 1), false},
+		{"empty reviewed", mc.report(""), true},
+		{"nonmatch", `{"review_status":"not-applicable","findings":[],"notes":"` + mc.nonMatchNote + `"}`, true},
+		{"nonmatch findings", strings.Replace(mc.report(mc.finding), `"reviewed"`, `"not-applicable"`, 1), false},
 		{"missing evidence", `{"review_status":"reviewed","findings":[],"notes":"Done"}`, false},
 		{"missing status", `{"findings":[],"notes":"Done"}`, false},
-		{"unreachable", webAuditReport(strings.Replace(webAuditFinding, `"reachable"`, `"harness_only"`, 1)), false},
-		{"low quality", webAuditReport(strings.Replace(webAuditFinding, `"quality_tier":"high"`, `"quality_tier":"low"`, 1)), false},
-		{"string references", webAuditReport(strings.Replace(webAuditFinding, `{"url":"https://github.com/OWASP/ASVS/tree/v5.0.0","summary":"ASVS 5.0.0 browser-origin guidance","tags":"asvs"}`, `"https://example.test"`, 1)), false},
+		{"unreachable", mc.report(strings.Replace(mc.finding, `"reachable"`, `"harness_only"`, 1)), false},
+		{"low quality", mc.report(strings.Replace(mc.finding, `"quality_tier":"high"`, `"quality_tier":"low"`, 1)), false},
+		{"string references", mc.report(strings.Replace(mc.finding, mc.reference, `"https://example.test"`, 1)), false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if detail := ValidateReportSchema(schema, tc.report); (detail == "") != tc.valid {
@@ -61,7 +77,7 @@ func TestWebAuditSchemaRejectsInvalidReports(t *testing.T) {
 	for _, field := range []string{"scope", "source_sink_inventory", "negative_results", "unverified_assumptions", "design_properties"} {
 		t.Run("missing "+field, func(t *testing.T) {
 			var report map[string]any
-			if err := json.Unmarshal([]byte(webAuditReport("")), &report); err != nil {
+			if err := json.Unmarshal([]byte(mc.report("")), &report); err != nil {
 				t.Fatal(err)
 			}
 			delete(report, field)
