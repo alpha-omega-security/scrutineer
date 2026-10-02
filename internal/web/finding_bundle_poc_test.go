@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -255,6 +256,81 @@ func TestFindingBundle_legacyGluedFences(t *testing.T) {
 	output, err := exec.CommandContext(t.Context(), "sh", script).CombinedOutput()
 	if err != nil || string(output) != "hi\n" {
 		t.Fatalf("downloaded script: %v, output %q", err, output)
+	}
+}
+
+func TestFindingBundle_namedRunShIsExecutable(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	f := setUpBundleFinding(t, s, false)
+	validation := "```text filename=run.sh\n#!/bin/sh\nprintf 'named driver\\n'\n```\n"
+	if err := s.DB.Model(f).Update("validation", validation).Error; err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq(http.MethodGet, "/findings/"+strconv.Itoa(int(f.ID))+"/bundle.tar.gz"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body)
+	}
+	gz, err := gzip.NewReader(bytes.NewReader(w.Body.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = gz.Close() }()
+	archive := tar.NewReader(gz)
+	for {
+		header, err := archive.Next()
+		if err != nil {
+			t.Fatalf("missing run.sh: %v", err)
+		}
+		if header.Name != "poc/run.sh" {
+			continue
+		}
+		if header.Mode != runShMode {
+			t.Fatalf("run.sh mode = %#o, want %#o", header.Mode, runShMode)
+		}
+		if runtime.GOOS == "windows" {
+			return
+		}
+		body, err := io.ReadAll(archive)
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(t.TempDir(), "run.sh")
+		if err := os.WriteFile(path, body, os.FileMode(header.Mode)); err != nil {
+			t.Fatal(err)
+		}
+		output, err := exec.CommandContext(t.Context(), path).CombinedOutput()
+		if err != nil || string(output) != "named driver\n" {
+			t.Fatalf("downloaded driver = %q, %v", output, err)
+		}
+		return
+	}
+}
+
+func TestFindingBundle_omitsUnterminatedNamedPoC(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	f := setUpBundleFinding(t, s, true)
+	seedBundleDependent(t, s, f.RepositoryID)
+	for _, validation := range []string{
+		"```sh filename=run.sh\necho hi\n\nExpected output: hi\n",
+		"```text filename=empty.txt",
+		"```sh filename=run.sh\necho hi\n~~~\n",
+		"````sh filename=run.sh\necho hi\n```\n",
+		"> ```text filename=quoted.txt\n> content\n\noutside quote\n",
+	} {
+		t.Run(validation, func(t *testing.T) {
+			if err := s.DB.Model(f).Update("validation", validation).Error; err != nil {
+				t.Fatal(err)
+			}
+			w := httptest.NewRecorder()
+			s.Handler().ServeHTTP(w, localReq(http.MethodGet, "/findings/"+strconv.Itoa(int(f.ID))+"/bundle.tar.gz"))
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d: %s", w.Code, w.Body)
+			}
+			assertBundlePoCOmitted(t, readArchive(t, w.Body.Bytes()), validation)
+		})
 	}
 }
 

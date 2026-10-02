@@ -115,7 +115,7 @@ func bundlePoC(validation string) ([]bundleEntry, error) {
 			used[strings.ToLower(name)] = true
 		}
 		var mode int64
-		if legacyName == "run.sh" {
+		if legacyName == "run.sh" || name == "run.sh" {
 			mode = runShMode
 		}
 		if name == "run.sh" {
@@ -166,6 +166,11 @@ func parsePoCBlocks(validation string) ([]pocBlock, error) {
 					}
 					block.name = name
 				}
+			}
+		}
+		if block.name != "" {
+			if closed, _ := fence.AttributeString(pocClosedAttribute); closed != true {
+				return ast.WalkStop, fmt.Errorf("unterminated PoC fence for %q", block.name)
 			}
 		}
 		if block.name != "" || strings.TrimSpace(string(block.body)) != "" {

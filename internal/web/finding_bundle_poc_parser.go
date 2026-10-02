@@ -13,38 +13,49 @@ import (
 )
 
 // Run before Goldmark's standard fenced block parser (priority 700).
-const legacyPoCFencePriority = 699
+const pocFencePriority = 699
+
+const (
+	pocLegacyAttribute = "poc-legacy"
+	pocClosedAttribute = "poc-closed"
+)
 
 var pocMarkdown = goldmark.New(
 	goldmark.WithExtensions(extension.GFM),
 	goldmark.WithParserOptions(parser.WithBlockParsers(util.Prioritized(
-		&legacyPoCFenceParser{BlockParser: parser.NewFencedCodeBlockParser()}, legacyPoCFencePriority,
+		&pocFenceParser{BlockParser: parser.NewFencedCodeBlockParser()}, pocFencePriority,
 	))),
 )
 
-type legacyPoCFenceParser struct {
+type pocFenceParser struct {
 	parser.BlockParser
 }
 
 //nolint:ireturn // Required by Goldmark's BlockParser interface.
-func (p *legacyPoCFenceParser) Open(parent ast.Node, reader text.Reader, pc parser.Context) (ast.Node, parser.State) {
+func (p *pocFenceParser) Open(parent ast.Node, reader text.Reader, pc parser.Context) (ast.Node, parser.State) {
 	line, _ := reader.PeekLine()
 	pos := pc.BlockOffset()
-	if pos < 0 || !bytes.HasPrefix(line[pos:], []byte("```")) || bytes.HasPrefix(line[pos:], []byte("````")) {
-		return nil, parser.NoChildren
+	node, state := p.BlockParser.Open(parent, reader, pc)
+	if node == nil || pos < 0 || !bytes.HasPrefix(line[pos:], []byte("```")) || bytes.HasPrefix(line[pos:], []byte("````")) {
+		return node, state
 	}
 	for field := range strings.FieldsSeq(string(line[pos+3:])) {
 		if strings.HasPrefix(field, "filename=") {
-			return nil, parser.NoChildren
+			return node, state
 		}
 	}
-	return p.BlockParser.Open(parent, reader, pc)
+	node.SetAttributeString(pocLegacyAttribute, true)
+	return node, state
 }
 
-func (p *legacyPoCFenceParser) Continue(node ast.Node, reader text.Reader, pc parser.Context) parser.State {
+func (p *pocFenceParser) Continue(node ast.Node, reader text.Reader, pc parser.Context) parser.State {
 	line, segment := reader.PeekLine()
 	state := p.BlockParser.Continue(node, reader, pc)
 	if state == parser.Close {
+		node.SetAttributeString(pocClosedAttribute, true)
+		return state
+	}
+	if legacy, _ := node.AttributeString(pocLegacyAttribute); legacy != true {
 		return state
 	}
 	line = bytes.TrimRight(line, " \t\r\n")
