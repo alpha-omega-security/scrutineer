@@ -19,6 +19,8 @@ type FindingPoC struct {
 	CreatedAt time.Time
 }
 
+func (FindingPoC) TableName() string { return "finding_pocs" }
+
 type PoCManifest struct {
 	FindingID  uint          `json:"finding_id"`
 	ScanID     uint          `json:"scan_id"`

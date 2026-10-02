@@ -538,6 +538,7 @@ func TestFindingBundle_omitsUnsafeOrConflictingPoC(t *testing.T) {
 		"../escape.sh", "/tmp/escape.sh", "dir/../../escape.sh", "dir\\escape.sh",
 		"C:/escape.sh", ".", "", "dir//file.sh", "dir/./file.sh", "../x\x00",
 		"README.md", "README.md/file", "run.sh/file", "RUN.SH", "dir./file", "file name.sh",
+		"CON", "aux.txt", "dir/LPT1", strings.Repeat("a/", 125) + "long.sh",
 	}
 	validations := make(map[string]string)
 	for _, name := range cases {
@@ -545,6 +546,7 @@ func TestFindingBundle_omitsUnsafeOrConflictingPoC(t *testing.T) {
 	}
 	validations["duplicate"] = "```sh filename=run.sh\necho one\n```\n\n```sh filename=run.sh\necho two\n```\n"
 	validations["misplaced"] = "```filename=run.sh sh\necho harmless\n```\n"
+	validations["long-language"] = "```" + strings.Repeat("x", 256) + "\ncontent\n```\n"
 	for name, validation := range validations {
 		t.Run(name, func(t *testing.T) {
 			if err := s.DB.Model(f).Update("validation", validation).Error; err != nil {

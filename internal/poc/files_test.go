@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -126,5 +127,23 @@ func TestDecodeRejectsUnsafeOrCorruptFiles(t *testing.T) {
 	}
 	if _, err := Decode([]byte(`[{"path":"run.sh","data":"eA==","sha256":"wrong"}]`)); err == nil {
 		t.Fatal("accepted corrupt file")
+	}
+}
+
+func TestDecodeRejectsConflictingPaths(t *testing.T) {
+	for _, names := range [][2]string{{"x.sh", "x.sh"}, {"x.sh", "X.sh"}, {"dir", "dir/x.sh"}, {"dir/x.sh", "dir"}} {
+		t.Run(strings.Join(names[:], "+"), func(t *testing.T) {
+			files := []File{
+				{Path: names[0], SHA256: Digest(nil)},
+				{Path: names[1], SHA256: Digest(nil)},
+			}
+			raw, err := json.Marshal(files)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Decode(raw); err == nil {
+				t.Fatal("accepted conflicting filenames")
+			}
+		})
 	}
 }

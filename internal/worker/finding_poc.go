@@ -1,11 +1,13 @@
 package worker
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"regexp"
+	"strings"
 
 	"gorm.io/gorm/clause"
 
@@ -22,20 +24,37 @@ type PoCCaptureError struct{ error }
 
 func (e *PoCCaptureError) Unwrap() error { return e.error }
 
-func (w *Worker) captureFindingPoC(scan *db.Scan, finding *db.Finding) error {
+func (w *Worker) captureFindingPoC(scan *db.Scan, finding *db.Finding) (err error) {
+	defer func() {
+		if err != nil && scan.APIToken != "" && strings.Contains(err.Error(), scan.APIToken) {
+			err = errors.New(strings.ReplaceAll(err.Error(), scan.APIToken, "[redacted]"))
+		}
+	}()
 	if w.DataDir == "" || !pocFindingID.MatchString(finding.FindingID) {
 		return nil
 	}
+	root, err := openFindingPoC(w.scanWorkRoot(scan), finding.FindingID)
+	if err != nil {
+		return fmt.Errorf("capture PoC for finding %d: %w", finding.ID, err)
+	}
+	if root == nil {
+		return nil
+	}
+	defer func() { _ = root.Close() }()
 	existing, err := db.LoadFindingPoC(w.DB, finding.ID)
 	if err != nil || existing != nil {
 		return err
 	}
-	files, err := capturePoCFiles(w.scanWorkRoot(scan), finding.FindingID)
-	if err == nil && files == nil {
-		return nil
-	}
+	files, err := poc.Capture(root)
 	if err != nil {
 		return fmt.Errorf("capture PoC for finding %d: %w", finding.ID, err)
+	}
+	if scan.APIToken != "" {
+		for _, file := range files {
+			if strings.Contains(file.Path, scan.APIToken) || bytes.Contains(file.Data, []byte(scan.APIToken)) {
+				return fmt.Errorf("capture PoC for finding %d: files contain the scan API token", finding.ID)
+			}
+		}
 	}
 	data, err := json.Marshal(files)
 	if err != nil {
@@ -46,6 +65,15 @@ func (w *Worker) captureFindingPoC(scan *db.Scan, finding *db.Finding) error {
 }
 
 func capturePoCFiles(workRoot, findingID string) ([]poc.File, error) {
+	root, err := openFindingPoC(workRoot, findingID)
+	if err != nil || root == nil {
+		return nil, err
+	}
+	defer func() { _ = root.Close() }()
+	return poc.Capture(root)
+}
+
+func openFindingPoC(workRoot, findingID string) (*os.Root, error) {
 	root, err := os.OpenRoot(workRoot)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
@@ -69,8 +97,7 @@ func capturePoCFiles(workRoot, findingID string) ([]poc.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = findingRoot.Close() }()
-	return poc.Capture(findingRoot)
+	return findingRoot, nil
 }
 
 func (w *Worker) stageFindingPoC(workRoot string, scan *db.Scan, skill *db.Skill) error {
@@ -92,13 +119,24 @@ func (w *Worker) stageFindingPoC(workRoot string, scan *db.Scan, skill *db.Skill
 	if err != nil {
 		return fmt.Errorf("load captured PoC: %w", err)
 	}
+	if err := writePoCFiles(workRoot, "poc/", files); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(row.Manifest(files), "", "  ")
+	if err != nil {
+		return err
+	}
+	return replaceWorkspaceFile(workRoot, "poc-manifest.json", data)
+}
+
+func writePoCFiles(workRoot, prefix string, files []poc.File) error {
 	root, err := os.OpenRoot(workRoot)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = root.Close() }()
 	for _, file := range files {
-		path := "poc/" + file.Path
+		path := prefix + file.Path
 		if err := replaceWorkspaceFile(workRoot, path, file.Data); err != nil {
 			return err
 		}
@@ -108,9 +146,5 @@ func (w *Worker) stageFindingPoC(workRoot string, scan *db.Scan, skill *db.Skill
 			}
 		}
 	}
-	data, err := json.MarshalIndent(row.Manifest(files), "", "  ")
-	if err != nil {
-		return err
-	}
-	return replaceWorkspaceFile(workRoot, "poc-manifest.json", data)
+	return nil
 }

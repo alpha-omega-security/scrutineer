@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 
+	"gorm.io/gorm"
+
 	"scrutineer/internal/db"
 	"scrutineer/internal/db/dbtest"
 	"scrutineer/internal/poc"
@@ -22,10 +24,136 @@ import (
 type pocTestRunner struct {
 	fakeRunner
 	run func(SkillJob) SkillResult
+	err error
 }
 
 func (r pocTestRunner) RunSkill(_ context.Context, job SkillJob, _ func(Event)) (SkillResult, error) {
-	return r.run(job), nil
+	return r.run(job), r.err
+}
+
+func TestPoCCaptureSurvivesPauseAndResume(t *testing.T) {
+	for _, lineage := range []bool{false, true} {
+		t.Run(strconv.FormatBool(lineage), func(t *testing.T) {
+			w, skill, repoID := newResumeTestWorker(t, nil)
+			skill.OutputFile, skill.OutputKind = "report.json", "findings"
+			if err := w.DB.Save(skill).Error; err != nil {
+				t.Fatal(err)
+			}
+			run := []byte("#!/bin/sh\ncat poc/F1/payload.bin\n")
+			payload := []byte{0, 255, '\n'}
+			first := db.Scan{RepositoryID: repoID, Kind: JobSkill, Status: db.ScanQueued, SkillID: &skill.ID}
+			pausePoCTestScan(t, w, &first, run, payload)
+			w.Runner = resumedPoCTestRunner(t, payload)
+			resumed := first
+			if lineage {
+				resumed = db.Scan{RepositoryID: repoID, Kind: JobSkill, Status: db.ScanQueued, SkillID: &skill.ID,
+					SessionID: first.SessionID, ResumedFromScanID: &first.ID}
+				runPoCTestJob(t, w, &resumed)
+			} else {
+				if err := w.DB.Model(&resumed).Update("status", db.ScanQueued).Error; err != nil {
+					t.Fatal(err)
+				}
+				resumed = runScan(t, w, resumed.ID)
+			}
+			assertResumedPoCCapture(t, w, &resumed, run, payload)
+		})
+	}
+}
+
+func TestReportedCaptureRejectsCopiedContext(t *testing.T) {
+	w, skill, repoID := newResumeTestWorker(t, nil)
+	skill.OutputFile, skill.OutputKind = "report.json", "findings"
+	if err := w.DB.Save(skill).Error; err != nil {
+		t.Fatal(err)
+	}
+	scan := db.Scan{RepositoryID: repoID, Kind: JobSkill, Status: db.ScanQueued, SkillID: &skill.ID, APIToken: "capture-test-secret"}
+	w.Runner = pocTestRunner{run: func(job SkillJob) SkillResult {
+		data, err := os.ReadFile(filepath.Join(job.WorkRoot, "context.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Contains(data, []byte(scan.APIToken)) {
+			t.Fatal("staged context lacks scan token")
+		}
+		writePoCTestFile(t, job.WorkRoot, "poc/F1/README.md", data)
+		return SkillResult{Report: `{"findings":[{"id":"F1","title":"copied context","severity":"High","location":"parser.go:1"}]}`}
+	}}
+	runPoCTestJob(t, w, &scan)
+	if scan.Status != db.ScanDone || scan.FindingsCount != 1 || !strings.Contains(scan.Log, "files contain the scan API token") || strings.Contains(scan.Log, scan.APIToken) {
+		t.Fatalf("scan status=%s, findings=%d, log=%s", scan.Status, scan.FindingsCount, scan.Log)
+	}
+	var count int64
+	if err := w.DB.Model(&db.FindingPoC{}).Count(&count).Error; err != nil || count != 0 {
+		t.Fatalf("copied context captures=%d, err=%v", count, err)
+	}
+}
+
+func pausePoCTestScan(t *testing.T, w *Worker, scan *db.Scan, run, payload []byte) {
+	t.Helper()
+	outside := filepath.Join(t.TempDir(), "secret")
+	if err := os.WriteFile(outside, []byte("private"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	w.Runner = pocTestRunner{err: &AccountError{Detail: "usage limit reached"}, run: func(job SkillJob) SkillResult {
+		writePoCTestFile(t, job.WorkRoot, "poc/F1/run.sh", run)
+		writePoCTestFile(t, job.WorkRoot, "poc/F1/payload.bin", payload)
+		writePoCTestFile(t, job.WorkRoot, "poc/F2/large", make([]byte, poc.MaxFileBytes+1))
+		writePoCTestFile(t, job.WorkRoot, "stale.txt", []byte("discard"))
+		if err := os.Symlink(outside, filepath.Join(job.WorkRoot, "poc/F3")); err != nil {
+			t.Skipf("cannot create symlink: %v", err)
+		}
+		return SkillResult{SessionID: "poc-session", Commit: "original"}
+	}}
+	runPoCTestJob(t, w, scan)
+	if scan.Status != db.ScanPaused || scan.SessionID != "poc-session" {
+		t.Fatalf("pause status=%s, session=%q: %s", scan.Status, scan.SessionID, scan.Error)
+	}
+	var count int64
+	if err := w.DB.Model(&db.Finding{}).Count(&count).Error; err != nil || count != 0 {
+		t.Fatalf("unexpected finding before resume: %d, %v", count, err)
+	}
+}
+
+func resumedPoCTestRunner(t *testing.T, payload []byte) pocTestRunner {
+	t.Helper()
+	return pocTestRunner{run: func(job SkillJob) SkillResult {
+		if job.ResumeSessionID != "poc-session" {
+			t.Fatalf("resume session = %q", job.ResumeSessionID)
+		}
+		for _, name := range []string{"stale.txt", "poc/F2", "poc/F3"} {
+			if _, err := os.Lstat(filepath.Join(job.WorkRoot, name)); !os.IsNotExist(err) {
+				t.Errorf("resume kept %s: %v", name, err)
+			}
+		}
+		cmd := exec.CommandContext(t.Context(), "sh", "poc/F1/run.sh")
+		cmd.Dir = job.WorkRoot
+		if output, err := cmd.CombinedOutput(); err != nil || !bytes.Equal(output, payload) {
+			t.Fatalf("resumed reproduction = %q, %v", output, err)
+		}
+		return SkillResult{Commit: "original", Report: `{"findings":[{"id":"F1","title":"paused bug","severity":"High","location":"parser.go:1"}]}`}
+	}}
+}
+
+func assertResumedPoCCapture(t *testing.T, w *Worker, scan *db.Scan, run, payload []byte) {
+	t.Helper()
+	if scan.Status != db.ScanDone || !strings.Contains(scan.Log, "preserve PoC F2") || !strings.Contains(scan.Log, "preserve PoC F3") {
+		t.Fatalf("resume status=%s, error=%s, log=%s", scan.Status, scan.Error, scan.Log)
+	}
+	var finding db.Finding
+	if err := w.DB.First(&finding).Error; err != nil {
+		t.Fatal(err)
+	}
+	capture, err := db.LoadFindingPoC(w.DB, finding.ID)
+	if err != nil || capture == nil || capture.ScanID != scan.ID {
+		t.Fatalf("capture after resume = %+v, %v", capture, err)
+	}
+	files, err := poc.Decode(capture.Files)
+	if err != nil || len(files) != 2 || !bytes.Equal(files[0].Data, payload) || !bytes.Equal(files[1].Data, run) || !files[1].Executable {
+		t.Fatalf("captured resumed files = %+v, %v", files, err)
+	}
+	if _, err := os.Stat(w.scanWorkRoot(scan)); !os.IsNotExist(err) {
+		t.Fatalf("resumed workspace not cleaned up: %v", err)
+	}
 }
 
 func writePoCTestFile(t *testing.T, root, name string, data []byte) {
@@ -201,7 +329,7 @@ func TestStreamedCaptureIsImmutableAndFailureKeepsFinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writePoCTestFile(t, w.workRoot(scan.ID), "poc/F1/run.sh", []byte("changed"))
+	writePoCTestFile(t, w.workRoot(scan.ID), "poc/F1/run.sh", make([]byte, poc.MaxFileBytes+1))
 	if _, err := w.PersistStreamedFinding(&scan, raw); err != nil {
 		t.Fatal(err)
 	}
@@ -220,6 +348,45 @@ func TestStreamedCaptureIsImmutableAndFailureKeepsFinding(t *testing.T) {
 	var count int64
 	if err := gdb.Model(&db.Finding{}).Where("title = ?", "oversize PoC").Count(&count).Error; err != nil || count != 1 {
 		t.Fatalf("capture failure lost finding: count=%d, %v", count, err)
+	}
+}
+
+func TestStreamedFindingSkipsCaptureQueryWithoutDirectory(t *testing.T) {
+	gdb := dbtest.Open(t)
+	repo := db.Repository{URL: "https://example.com/no-poc", Name: "no-poc"}
+	if err := gdb.Create(&repo).Error; err != nil {
+		t.Fatal(err)
+	}
+	scan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanRunning}
+	if err := gdb.Create(&scan).Error; err != nil {
+		t.Fatal(err)
+	}
+	queries := 0
+	const callback = "test:count_poc_queries"
+	if err := gdb.Callback().Query().Before("gorm:query").Register(callback, func(tx *gorm.DB) {
+		if tx.Statement.Schema != nil && tx.Statement.Schema.Name == "FindingPoC" {
+			queries++
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = gdb.Callback().Query().Remove(callback) })
+	w := &Worker{DB: gdb, DataDir: t.TempDir()}
+	raw := []byte(`{"id":"F1","title":"no capture yet","severity":"High","location":"parser.go:1"}`)
+	for range 2 {
+		if _, err := w.PersistStreamedFinding(&scan, raw); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if queries != 0 {
+		t.Fatalf("missing capture directory caused %d PoC queries", queries)
+	}
+	writePoCTestFile(t, w.workRoot(scan.ID), "poc/F1/run.sh", []byte("echo captured\n"))
+	if _, err := w.PersistStreamedFinding(&scan, raw); err != nil {
+		t.Fatal(err)
+	}
+	if queries != 1 {
+		t.Fatalf("capture directory caused %d PoC queries, want 1", queries)
 	}
 }
 

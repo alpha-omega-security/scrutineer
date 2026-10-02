@@ -152,3 +152,82 @@ func TestFindingBundleRejectsCorruptCapture(t *testing.T) {
 		t.Fatalf("corrupt capture response=%d: %s", w.Code, w.Body.String())
 	}
 }
+
+func TestStreamedCaptureRejectsScanToken(t *testing.T) {
+	for _, kind := range []string{"context", "binary", "filename", "invalid filename"} {
+		t.Run(kind, func(t *testing.T) {
+			s, done := newTestServer(t)
+			defer done()
+			repo, scan := seedRunningScan(t, s)
+			s.Worker.DataDir = t.TempDir()
+			root := filepath.Join(s.Worker.DataDir, fmt.Sprintf("scan-%d", scan.ID))
+			dir := filepath.Join(root, "poc", "F1")
+			if err := os.MkdirAll(dir, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			name, data := credentialPoCTestFile(kind, scan.APIToken)
+			path := filepath.Join(dir, name)
+			if err := os.WriteFile(path, data, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			url := fmt.Sprintf("/api/repositories/%d/findings", repo.ID)
+			body := `{"id":"F1","title":"credential capture","severity":"High","location":"parser.go:1"}`
+			response := apiReq(t, s, http.MethodPost, url, scan.APIToken, body)
+			if response.Code != http.StatusCreated || !strings.Contains(response.Body.String(), "poc_capture_error") || strings.Contains(response.Body.String(), scan.APIToken) {
+				t.Fatalf("unsafe capture response=%d: %s", response.Code, response.Body.String())
+			}
+			var finding db.Finding
+			if err := s.DB.First(&finding).Error; err != nil {
+				t.Fatal(err)
+			}
+			row, err := db.LoadFindingPoC(s.DB, finding.ID)
+			if err != nil || row != nil {
+				t.Fatalf("credential capture persisted: row=%v, err=%v", row != nil, err)
+			}
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("safe reproduction"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			response = apiReq(t, s, http.MethodPost, url, scan.APIToken, body)
+			if response.Code != http.StatusCreated || strings.Contains(response.Body.String(), "poc_capture_error") {
+				t.Fatalf("repaired capture response=%d: %s", response.Code, response.Body.String())
+			}
+			assertRepairedBundleHasNoToken(t, s, finding.ID, scan.APIToken)
+		})
+	}
+}
+
+func credentialPoCTestFile(kind, token string) (string, []byte) {
+	switch kind {
+	case "binary":
+		return "payload.bin", append(append([]byte{0, 255}, token...), 0, 255)
+	case "filename":
+		return token + ".txt", []byte("example")
+	case "invalid filename":
+		return token + "?.txt", []byte("example")
+	default:
+		return "README.md", []byte(fmt.Sprintf(`{"scrutineer":{"token":%q}}`, token))
+	}
+}
+
+func assertRepairedBundleHasNoToken(t *testing.T, s *Server, findingID uint, token string) {
+	t.Helper()
+	request := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/findings/%d/bundle.tar.gz", findingID), nil)
+	request.Host = testHost
+	bundle := httptest.NewRecorder()
+	s.Handler().ServeHTTP(bundle, request)
+	if bundle.Code != http.StatusOK {
+		t.Fatalf("bundle response=%d: %s", bundle.Code, bundle.Body.String())
+	}
+	files := readArchive(t, bundle.Body.Bytes())
+	if string(files["poc/README.md"]) != "safe reproduction" {
+		t.Fatal("bundle did not include repaired capture")
+	}
+	for path, data := range files {
+		if strings.Contains(path, token) || bytes.Contains(data, []byte(token)) {
+			t.Fatal("bundle contains scan token")
+		}
+	}
+}
