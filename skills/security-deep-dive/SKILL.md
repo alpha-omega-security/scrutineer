@@ -206,7 +206,30 @@ whole-repository input inventory.
 
 ### Step 3: Validate
 
-Write a reproduction script and run it. The script demonstrates that the sink does what you traced — hostile input in, dangerous behaviour out. Into the finding's `validation` field, paste the script verbatim — its full contents, not a description of it — followed by the output of running it. A `validation` that shows output but not the script that produced it is useless: a later verify run, or an analyst, cannot tell what was executed or re-run it. Include enough to re-run: the language/runner, the exact input, the command line. If the reproduction is a shell session rather than a file, paste the commands and their output.
+Write a reproduction script and run it. Into the finding's `validation` field, paste every script and crafted input file verbatim, followed by the command and observed output. Include the language/runner and build prerequisites so an analyst or later verify run can repeat it.
+
+Put each file in its own closed Markdown fence whose opening line is `language filename=relative/path`, for example `python filename=probe.py`. Paths are relative to the reproduction directory; use letters, digits, underscores, hyphens, dots and forward slashes, with no spaces, absolute paths, `.` or `..` components, or components ending in a dot. Keep filenames unique, including when compared without case. Reserve `README.md` for the generated bundle instructions. Include a `sh filename=run.sh` block for the exact build/run commands, with paths relative to that directory and any target checkout path supplied explicitly. Put observed output in separate unnamed `text` or `console` fences. Close every fence on its own line; use longer fences if file contents contain backticks. Do not use `--- FILENAME ---` delimiters.
+
+For example, this validation text supplies one input file and its driver:
+
+````markdown
+```text filename=input.txt
+crafted input
+```
+
+```sh filename=run.sh
+#!/bin/sh
+set -eu
+cd "$(dirname "$0")"
+"${1:?Pass the absolute path to the built target}" < input.txt
+```
+
+Run `sh run.sh /absolute/path/to/target` from the reproduction directory.
+
+```text
+Observed target output goes here.
+```
+````
 
 Before concluding you cannot reproduce, enumerate the mechanisms that produce the kind of value the sink consumes. If the sink takes a path: argv, environment, glob expansion, archive extraction. If the sink takes an identifier: dynamic-definition primitives, struct-from-hash, deserialisation that turns keys into accessors, ORM attribute generation. If the sink takes a host: user input, redirect targets, DNS, service discovery. Write the list. Try each.
 

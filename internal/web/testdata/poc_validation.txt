@@ -1,0 +1,30 @@
+Files used by the reproduction:
+
+```sh filename=lib/value.sh
+message='<poc>'
+```
+
+```sh filename=lib/print.sh
+print_message() {
+  printf '%s\n' "$message"
+}
+```
+
+Run `sh run.sh` from the reproduction directory:
+
+```sh filename=run.sh
+#!/bin/sh
+set -eu
+cd "$(dirname "$0")"
+. ./lib/value.sh
+. ./lib/print.sh
+print_message
+```
+
+Observed output:
+
+```text
+<poc>
+```
+
+The final line is explanatory prose, outside every source file.

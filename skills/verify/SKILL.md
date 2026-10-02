@@ -173,6 +173,8 @@ Record the result under `criteria.control_bypass`. Copy `scrutineer.controls.ids
 
 ## Output
 
+In `reproducer`, preserve every supplied script and input file verbatim in a separate closed Markdown fence with `language filename=relative/path` on its opening line, for example `python filename=probe.py`. Use unique paths relative to the reproduction directory, containing only letters, digits, underscores, hyphens, dots and forward slashes; omit absolute paths, `.` or `..` components and components ending in a dot. Reserve `README.md` for bundle instructions. Put the exact build/run commands in a `sh filename=run.sh` fence and observed output in separate unnamed `text` or `console` fences. Close each fence on its own line, using longer fences when the content contains backticks. Do not use `--- FILENAME ---` delimiters or invent missing files when verification was not attempted.
+
 Write `./report.json` matching `./schema.json`. Example:
 
 ```json

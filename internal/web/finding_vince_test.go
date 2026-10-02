@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -558,4 +559,54 @@ func TestVINCEAttachmentPreviewUsesTimestampAndListsSensitiveContents(t *testing
 	if !strings.Contains(string(report.Data), wantGeneratedAt) {
 		t.Errorf("report attachment does not use preview timestamp: %s", report.Data)
 	}
+}
+
+func TestFindingVINCESubmitsBundleWithInvalidPoC(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	ctx := seedVINCEFinding(t, s)
+	ctx.Finding.Validation = "```sh filename=run.sh\necho one\n```\n\n```sh filename=run.sh\necho two\n```\n"
+	ctx.Finding.SuggestedFix = "diff --git a/x b/x\n"
+	if err := s.DB.Save(&ctx.Finding).Error; err != nil {
+		t.Fatal(err)
+	}
+	seedBundleDependent(t, s, ctx.Repository.ID)
+	var attachment []byte
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		file, _, err := r.FormFile("user_file")
+		if err != nil {
+			t.Errorf("attachment: %v", err)
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		defer func() { _ = file.Close() }()
+		attachment, err = io.ReadAll(file)
+		if err != nil {
+			t.Errorf("read attachment: %v", err)
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = io.WriteString(w, `{"vrf_id":"VRF#poc-warning"}`)
+	}))
+	defer server.Close()
+	s.VINCE = vince.Config{BaseURL: server.URL, APIKey: "secret"}
+	path := fmt.Sprintf("/findings/%d/vince", ctx.Finding.ID)
+	preview := httptest.NewRecorder()
+	s.Handler().ServeHTTP(preview, localReq(http.MethodGet, path))
+	if preview.Code != http.StatusOK {
+		t.Fatalf("preview status = %d: %s", preview.Code, preview.Body)
+	}
+	form := validVINCEWebForm()
+	form.Set("attachment", vinceAttachmentBundle)
+	for _, field := range []string{"attachment_generated_at", "attachment_sha256"} {
+		match := regexp.MustCompile(`name="` + field + `" value="([^"]+)"`).FindStringSubmatch(preview.Body.String())
+		if len(match) != 2 {
+			t.Fatalf("preview missing %s: %s", field, preview.Body)
+		}
+		form.Set(field, match[1])
+	}
+	w := postForm(t, s, path, form)
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("submit status = %d: %s", w.Code, w.Body)
+	}
+	assertBundlePoCOmitted(t, readArchive(t, attachment), ctx.Finding.Validation)
 }

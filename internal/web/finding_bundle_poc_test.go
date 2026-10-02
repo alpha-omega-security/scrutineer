@@ -8,10 +8,23 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
 )
+
+func mustBundlePoC(t *testing.T, validation string) []bundleEntry {
+	t.Helper()
+	entries, err := bundlePoC(validation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return entries
+}
 
 func pocEntries(t *testing.T, entries []bundleEntry) map[string]bundleEntry {
 	t.Helper()
@@ -26,7 +39,7 @@ func TestBundlePoC_shellBlockBecomesRunSh(t *testing.T) {
 	validation := "Run the following against a local server:\n\n" +
 		"```sh\ncurl -s http://127.0.0.1:8080/v1 -d @input.json\n```\n\n" +
 		"Expected: HTTP 500 with the stack trace in the body."
-	got := pocEntries(t, bundlePoC(validation))
+	got := pocEntries(t, mustBundlePoC(t, validation))
 
 	run, ok := got["poc/run.sh"]
 	if !ok {
@@ -52,7 +65,7 @@ func TestBundlePoC_shellBlockBecomesRunSh(t *testing.T) {
 
 func TestBundlePoC_languageProbeGetsGeneratedRunSh(t *testing.T) {
 	validation := "```python\nimport requests\nrequests.post('http://127.0.0.1:8000/x', json={'a': 1})\n```"
-	got := pocEntries(t, bundlePoC(validation))
+	got := pocEntries(t, mustBundlePoC(t, validation))
 
 	if _, ok := got["poc/probe.py"]; !ok {
 		t.Fatalf("missing poc/probe.py; have %v", keys(got))
@@ -75,7 +88,7 @@ func TestBundlePoC_languageProbeGetsGeneratedRunSh(t *testing.T) {
 
 func TestBundlePoC_languageFenceAllowsLeadingWhitespace(t *testing.T) {
 	validation := "``` python\nprint('x')\n```"
-	got := pocEntries(t, bundlePoC(validation))
+	got := pocEntries(t, mustBundlePoC(t, validation))
 	if _, ok := got["poc/probe.py"]; !ok {
 		t.Fatalf("missing poc/probe.py for spaced info string; have %v", keys(got))
 	}
@@ -89,7 +102,7 @@ func TestBundlePoC_compiledProbeGetsReadmeFallbackRunSh(t *testing.T) {
 	// exit non-zero pointing at README rather than pretend to know how to
 	// build the probe.
 	validation := "```go\npackage main\nfunc main() { panic(1) }\n```"
-	got := pocEntries(t, bundlePoC(validation))
+	got := pocEntries(t, mustBundlePoC(t, validation))
 	runEntry, ok := got["poc/run.sh"]
 	if !ok {
 		t.Fatalf("missing generated poc/run.sh; have %v", keys(got))
@@ -105,7 +118,7 @@ func TestBundlePoC_compiledProbeGetsReadmeFallbackRunSh(t *testing.T) {
 
 func TestBundlePoC_multipleBlocksSameLangAreNumbered(t *testing.T) {
 	validation := "```ruby\nputs 1\n```\nthen\n```ruby\nputs 2\n```\nand a payload:\n```json\n{\"x\":1}\n```"
-	got := pocEntries(t, bundlePoC(validation))
+	got := pocEntries(t, mustBundlePoC(t, validation))
 	for _, want := range []string{"poc/probe.rb", "poc/probe-2.rb", "poc/input.json", "poc/run.sh", "poc/README.md"} {
 		if _, ok := got[want]; !ok {
 			t.Errorf("missing %s; have %v", want, keys(got))
@@ -127,7 +140,7 @@ func TestBundlePoC_shellBlockWinsOverGeneratedRunSh(t *testing.T) {
 	// When the validation supplies both a language probe and a shell driver,
 	// the shell block IS run.sh; do not overwrite it with a generated stub.
 	validation := "```python\nprint('x')\n```\n\n```bash\npython3 probe.py --flag\n```"
-	got := pocEntries(t, bundlePoC(validation))
+	got := pocEntries(t, mustBundlePoC(t, validation))
 	run, ok := got["poc/run.sh"]
 	if !ok {
 		t.Fatalf("missing authored poc/run.sh; have %v", keys(got))
@@ -139,7 +152,7 @@ func TestBundlePoC_shellBlockWinsOverGeneratedRunSh(t *testing.T) {
 
 func TestBundlePoC_duplicateShellBlocksStayExecutable(t *testing.T) {
 	validation := "```sh\necho one\n```\n\n```bash\necho two\n```"
-	got := pocEntries(t, bundlePoC(validation))
+	got := pocEntries(t, mustBundlePoC(t, validation))
 	for _, name := range []string{"poc/run.sh", "poc/run-2.sh"} {
 		entry, ok := got[name]
 		if !ok {
@@ -153,7 +166,7 @@ func TestBundlePoC_duplicateShellBlocksStayExecutable(t *testing.T) {
 
 func TestBundlePoC_consoleBlockBecomesTranscript(t *testing.T) {
 	validation := "```console\n$ curl -i http://127.0.0.1:8080/poc\nHTTP/1.1 500 Internal Server Error\nboom\n```"
-	got := pocEntries(t, bundlePoC(validation))
+	got := pocEntries(t, mustBundlePoC(t, validation))
 	if _, ok := got["poc/session.txt"]; !ok {
 		t.Fatalf("missing poc/session.txt; have %v", keys(got))
 	}
@@ -168,7 +181,7 @@ func TestBundlePoC_consoleBlockBecomesTranscript(t *testing.T) {
 
 func TestBundlePoC_unmarkedBlockBecomesTranscript(t *testing.T) {
 	validation := "```\n$ ./poc\nexpected output\n```"
-	got := pocEntries(t, bundlePoC(validation))
+	got := pocEntries(t, mustBundlePoC(t, validation))
 	if _, ok := got["poc/transcript.txt"]; !ok {
 		t.Fatalf("missing poc/transcript.txt; have %v", keys(got))
 	}
@@ -179,33 +192,161 @@ func TestBundlePoC_unmarkedBlockBecomesTranscript(t *testing.T) {
 
 func TestBundlePoC_unknownLangUsesInfoStringAsExtension(t *testing.T) {
 	validation := "```lua\nprint('x')\n```"
-	got := pocEntries(t, bundlePoC(validation))
+	got := pocEntries(t, mustBundlePoC(t, validation))
 	if _, ok := got["poc/probe.lua"]; !ok {
 		t.Errorf("unknown fence lang should become probe.<lang>; have %v", keys(got))
 	}
 }
 
 func TestBundlePoC_noFencedBlocksReturnsNil(t *testing.T) {
-	if got := bundlePoC(""); got != nil {
+	if got := mustBundlePoC(t, ""); got != nil {
 		t.Errorf("empty validation: got %d entries, want nil", len(got))
 	}
-	if got := bundlePoC("prose only, no code"); got != nil {
+	if got := mustBundlePoC(t, "prose only, no code"); got != nil {
 		t.Errorf("prose-only validation: got %d entries, want nil", len(got))
 	}
 	// A fence whose body is whitespace-only is dropped; if that was the only
 	// block, the whole poc/ is dropped.
-	if got := bundlePoC("```\n   \n```"); got != nil {
+	if got := mustBundlePoC(t, "```\n   \n```"); got != nil {
 		t.Errorf("whitespace-only block: got %d entries, want nil", len(got))
 	}
 }
 
+func TestBundlePoC_embeddedBackticksPreserved(t *testing.T) {
+	for _, fence := range []string{"````sh", "~~~sh", "```sh filename=run.sh"} {
+		t.Run(fence, func(t *testing.T) {
+			closing, _, _ := strings.Cut(fence, "sh")
+			want := "printf '%s\\n' '```'\n# literal ```\necho done\n"
+			got := pocEntries(t, mustBundlePoC(t, fence+"\n"+want+closing+"\n"))
+			if body := string(got["poc/run.sh"].Data); body != want {
+				t.Errorf("run.sh = %q, want %q", body, want)
+			}
+		})
+	}
+}
+
+func TestFindingBundle_legacyGluedFences(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	f := setUpBundleFinding(t, s, false)
+	validation := "```sh\nprintf 'hi\\n'```\n\nExpected output:\n```text\nhi```\n\n" +
+		"```text filename=inputs/value.txt\nnamed file\n```\n"
+	if err := s.DB.Model(f).Update("validation", validation).Error; err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq(http.MethodGet, "/findings/"+strconv.Itoa(int(f.ID))+"/bundle.tar.gz"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body)
+	}
+	files := readArchive(t, w.Body.Bytes())
+	for name, want := range map[string]string{
+		"poc/run.sh":           "printf 'hi\\n'\n",
+		"poc/transcript.txt":   "hi\n",
+		"poc/inputs/value.txt": "named file\n",
+	} {
+		if string(files[name]) != want {
+			t.Errorf("%s = %q, want %q", name, files[name], want)
+		}
+	}
+	script := filepath.Join(t.TempDir(), "run.sh")
+	if err := os.WriteFile(script, files["poc/run.sh"], 0o600); err != nil {
+		t.Fatal(err)
+	}
+	output, err := exec.CommandContext(t.Context(), "sh", script).CombinedOutput()
+	if err != nil || string(output) != "hi\n" {
+		t.Fatalf("downloaded script: %v, output %q", err, output)
+	}
+}
+
+func TestFindingBundle_namedRunShIsExecutable(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	f := setUpBundleFinding(t, s, false)
+	validation := "```text filename=run.sh\n#!/bin/sh\nprintf 'named driver\\n'\n```\n"
+	if err := s.DB.Model(f).Update("validation", validation).Error; err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq(http.MethodGet, "/findings/"+strconv.Itoa(int(f.ID))+"/bundle.tar.gz"))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", w.Code, w.Body)
+	}
+	gz, err := gzip.NewReader(bytes.NewReader(w.Body.Bytes()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = gz.Close() }()
+	archive := tar.NewReader(gz)
+	for {
+		header, err := archive.Next()
+		if err != nil {
+			t.Fatalf("missing run.sh: %v", err)
+		}
+		if header.Name != "poc/run.sh" {
+			continue
+		}
+		if header.Mode != runShMode {
+			t.Fatalf("run.sh mode = %#o, want %#o", header.Mode, runShMode)
+		}
+		if runtime.GOOS == "windows" {
+			return
+		}
+		body, err := io.ReadAll(archive)
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(t.TempDir(), "run.sh")
+		if err := os.WriteFile(path, body, os.FileMode(header.Mode)); err != nil {
+			t.Fatal(err)
+		}
+		output, err := exec.CommandContext(t.Context(), path).CombinedOutput()
+		if err != nil || string(output) != "named driver\n" {
+			t.Fatalf("downloaded driver = %q, %v", output, err)
+		}
+		return
+	}
+}
+
+func TestFindingBundle_omitsUnterminatedNamedPoC(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	f := setUpBundleFinding(t, s, true)
+	seedBundleDependent(t, s, f.RepositoryID)
+	for _, validation := range []string{
+		"```sh filename=run.sh\necho hi\n\nExpected output: hi\n",
+		"```text filename=empty.txt",
+		"```sh filename=run.sh\necho hi\n~~~\n",
+		"````sh filename=run.sh\necho hi\n```\n",
+		"> ```text filename=quoted.txt\n> content\n\noutside quote\n",
+	} {
+		t.Run(validation, func(t *testing.T) {
+			if err := s.DB.Model(f).Update("validation", validation).Error; err != nil {
+				t.Fatal(err)
+			}
+			w := httptest.NewRecorder()
+			s.Handler().ServeHTTP(w, localReq(http.MethodGet, "/findings/"+strconv.Itoa(int(f.ID))+"/bundle.tar.gz"))
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d: %s", w.Code, w.Body)
+			}
+			assertBundlePoCOmitted(t, readArchive(t, w.Body.Bytes()), validation)
+		})
+	}
+}
+
 func TestBundlePoC_trailingNewlineNormalised(t *testing.T) {
-	// A block whose closing fence sits on the same line as the last content
-	// byte still gets a trailing newline so the file is a well-formed text
-	// file the recipient can cat/diff cleanly.
-	got := pocEntries(t, bundlePoC("```sh\necho hi```"))
-	if body := string(got["poc/run.sh"].Data); body != "echo hi\n" {
-		t.Errorf("run.sh = %q, want trailing newline added", body)
+	for _, validation := range []string{
+		"```sh\necho hi```",
+		"```sh\necho hi``` \t\r\n",
+		"  ```sh\n  echo hi```\n",
+		"> ```sh\n> echo hi```\n",
+	} {
+		t.Run(validation, func(t *testing.T) {
+			got := pocEntries(t, mustBundlePoC(t, validation))
+			if body := string(got["poc/run.sh"].Data); body != "echo hi\n" {
+				t.Errorf("run.sh = %q", body)
+			}
+		})
 	}
 }
 
@@ -316,5 +457,180 @@ func TestFindingBundle_omitsPoCWhenValidationHasNoFence(t *testing.T) {
 	_ = json.Unmarshal(files["manifest.json"], &m)
 	if _, ok := m.Contents["poc/"]; ok {
 		t.Errorf("manifest.contents should omit poc/ without a fenced block")
+	}
+}
+
+func TestFindingBundle_namedFilesReproduceAndRender(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	f := setUpBundleFinding(t, s, false)
+	validation, err := os.ReadFile("testdata/poc_validation.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DB.Model(f).Update("validation", string(validation)).Error; err != nil {
+		t.Fatal(err)
+	}
+	url := "/findings/" + strconv.Itoa(int(f.ID))
+	r := httptest.NewRequest(http.MethodGet, url+"/bundle.tar.gz", nil)
+	r.Host = "127.0.0.1:8080"
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("bundle status = %d: %s", w.Code, w.Body.String())
+	}
+	files := readArchive(t, w.Body.Bytes())
+	want := map[string]string{
+		"poc/lib/value.sh":   "message='<poc>'\n",
+		"poc/lib/print.sh":   "print_message() {\n  printf '%s\\n' \"$message\"\n}\n",
+		"poc/run.sh":         "#!/bin/sh\nset -eu\ncd \"$(dirname \"$0\")\"\n. ./lib/value.sh\n. ./lib/print.sh\nprint_message\n",
+		"poc/transcript.txt": "<poc>\n",
+	}
+	dir := t.TempDir()
+	for name, body := range want {
+		if string(files[name]) != body {
+			t.Fatalf("%s = %q, want %q", name, files[name], body)
+		}
+		path := filepath.Join(dir, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, files[name], 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Run("execute", func(t *testing.T) {
+		shell, err := exec.LookPath("sh")
+		if err != nil {
+			t.Skip("sh unavailable")
+		}
+		cmd := exec.CommandContext(t.Context(), shell, "run.sh")
+		cmd.Dir = filepath.Join(dir, "poc")
+		output, err := cmd.CombinedOutput()
+		if err != nil || string(output) != "<poc>\n" {
+			t.Fatalf("downloaded reproduction: %v, output %q", err, output)
+		}
+	})
+	r = httptest.NewRequest(http.MethodGet, url, nil)
+	r.Host = "127.0.0.1:8080"
+	w = httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("finding status = %d: %s", w.Code, w.Body.String())
+	}
+	for _, fragment := range []string{
+		"<pre><code class=\"language-sh\">message='&lt;poc&gt;'\n</code></pre>",
+		"print_message() {\n  printf",
+		"<pre><code class=\"language-text\">&lt;poc&gt;\n</code></pre>",
+	} {
+		if !strings.Contains(w.Body.String(), fragment) {
+			t.Errorf("rendered finding missing %q", fragment)
+		}
+	}
+}
+
+func TestFindingBundle_omitsUnsafeOrConflictingPoC(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	f := setUpBundleFinding(t, s, true)
+	seedBundleDependent(t, s, f.RepositoryID)
+	cases := []string{
+		"../escape.sh", "/tmp/escape.sh", "dir/../../escape.sh", "dir\\escape.sh",
+		"C:/escape.sh", ".", "", "dir//file.sh", "dir/./file.sh", "../x\x00",
+		"README.md", "README.md/file", "run.sh/file", "RUN.SH", "dir./file", "file name.sh",
+	}
+	validations := make(map[string]string)
+	for _, name := range cases {
+		validations[name] = "```sh filename=" + name + "\necho harmless\n```\n"
+	}
+	validations["duplicate"] = "```sh filename=run.sh\necho one\n```\n\n```sh filename=run.sh\necho two\n```\n"
+	validations["misplaced"] = "```filename=run.sh sh\necho harmless\n```\n"
+	for name, validation := range validations {
+		t.Run(name, func(t *testing.T) {
+			if err := s.DB.Model(f).Update("validation", validation).Error; err != nil {
+				t.Fatal(err)
+			}
+			r := httptest.NewRequest(http.MethodGet, "/findings/"+strconv.Itoa(int(f.ID))+"/bundle.tar.gz", nil)
+			r.Host = "127.0.0.1:8080"
+			w := httptest.NewRecorder()
+			s.Handler().ServeHTTP(w, r)
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+			}
+			assertBundlePoCOmitted(t, readArchive(t, w.Body.Bytes()), validation)
+		})
+	}
+}
+
+func assertBundlePoCOmitted(t *testing.T, files map[string][]byte, validation string) {
+	t.Helper()
+	for _, name := range []string{"manifest.json", "report.md", "osv.json", "csaf.json", "patch.diff"} {
+		if len(files[name]) == 0 {
+			t.Errorf("bundle missing %s", name)
+		}
+	}
+	for name := range files {
+		if strings.HasPrefix(name, "poc/") {
+			t.Errorf("bundle contains rejected PoC file %s", name)
+		}
+	}
+	if !strings.Contains(string(files["report.md"]), validation) {
+		t.Error("report missing original validation")
+	}
+	var manifest bundleManifest
+	if err := json.Unmarshal(files["manifest.json"], &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := manifest.Contents["poc/"]; ok {
+		t.Error("manifest lists omitted poc/")
+	}
+	if len(manifest.Warnings) != 1 || !strings.Contains(manifest.Warnings[0], "poc/ omitted:") {
+		t.Errorf("manifest warnings = %q", manifest.Warnings)
+	}
+}
+
+func TestBundlePoC_filenameConflicts(t *testing.T) {
+	for _, names := range [][2]string{{"x.sh", "x.sh"}, {"x.sh", "X.sh"}, {"dir", "dir/x.sh"}, {"dir/x.sh", "dir"}} {
+		t.Run(strings.Join(names[:], "+"), func(t *testing.T) {
+			validation := "```sh filename=" + names[0] + "\necho one\n```\n\n```sh filename=" + names[1] + "\necho two\n```\n"
+			if _, err := bundlePoC(validation); err == nil {
+				t.Fatal("expected conflicting filenames to be rejected")
+			}
+		})
+	}
+}
+
+func TestBundlePoC_namedFilesReserveLegacyNames(t *testing.T) {
+	validation := "```python\nprint('legacy')\n```\n\n```python filename=probe.py\nprint('named')\n```\n\n```sh filename=run.sh\npython3 probe.py\n```\n"
+	files := pocEntries(t, mustBundlePoC(t, validation))
+	if string(files["poc/probe.py"].Data) != "print('named')\n" || string(files["poc/probe-2.py"].Data) != "print('legacy')\n" {
+		t.Fatalf("filename collision lost or renamed the declared file: %v", keys(files))
+	}
+}
+
+func TestBundlePoC_namedFileBytes(t *testing.T) {
+	validation := "~~~text filename=inputs/empty.txt\n~~~\n\n" +
+		"```text filename=inputs/spaces.txt\n \t\n```\n\n" +
+		"```python filename=custom.py\nprint('custom')\n```\n"
+	files := pocEntries(t, mustBundlePoC(t, validation))
+	for name, want := range map[string]string{
+		"poc/inputs/empty.txt":  "",
+		"poc/inputs/spaces.txt": " \t\n",
+		"poc/custom.py":         "print('custom')\n",
+	} {
+		entry, ok := files[name]
+		if !ok || string(entry.Data) != want {
+			t.Errorf("%s = %q, present=%v, want %q", name, entry.Data, ok, want)
+		}
+	}
+	if !strings.Contains(string(files["poc/run.sh"].Data), "exit 2") {
+		t.Fatal("missing driver should direct the recipient to the instructions")
+	}
+}
+
+func TestBundlePoC_ambiguousFileHeadersRemainProse(t *testing.T) {
+	validation := "--- /work/src/poc/one.ml ---\nlet () = ()\n\n--- /work/src/poc/two.ml ---\nlet () = ()\n\nBuild and run after compiling both files."
+	if got := mustBundlePoC(t, validation); len(got) != 0 {
+		t.Fatalf("extracted ambiguous prose into %v", got)
 	}
 }

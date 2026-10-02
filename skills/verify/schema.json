@@ -62,7 +62,7 @@
     },
     "reproducer": {
       "type": "string",
-      "description": "The exact reproduction run against ./src: script, commands, and crafted input, verbatim."
+      "description": "The exact reproduction run against ./src: every script and crafted input verbatim in a separate closed Markdown fence with language filename=relative/path on its opening line. Use unique safe relative paths and reserve README.md for bundle instructions. Include build/run commands in a sh filename=run.sh fence and output in separate unnamed text or console fences. Close fences on their own lines; do not use --- FILENAME --- delimiters or invent missing files."
     },
     "evidence": {
       "type": "string",

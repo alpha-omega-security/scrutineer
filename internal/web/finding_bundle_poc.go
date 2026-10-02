@@ -2,17 +2,16 @@ package web
 
 import (
 	"fmt"
+	"io/fs"
 	"regexp"
 	"strings"
+
+	"github.com/yuin/goldmark/ast"
+	"github.com/yuin/goldmark/text"
 )
 
-// fencedBlock is the standard three-backtick code fence with an optional
-// info string on the opening line. Indented (four-space) code blocks are
-// not extracted: the audit and verify skills are told to paste the
-// reproduction verbatim into a fenced block, so an indented block is
-// almost always output text or a quoted excerpt rather than the runnable
-// artefact.
-var fencedBlock = regexp.MustCompile("(?s)```[ \t]*([a-zA-Z0-9_+.-]*)[^\n]*\n(.*?)```")
+var pocPathChars = regexp.MustCompile(`^[a-zA-Z0-9_./-]+$`)
+var pocLanguage = regexp.MustCompile(`^[a-zA-Z0-9_+.-]+$`)
 
 // probeExt maps a fence info string (already lowercased) to the
 // filename its body is written as under poc/. Only explicit shell script
@@ -71,56 +70,64 @@ var probeRunner = map[string]string{
 
 const runShMode = 0o755
 
-// bundlePoC turns a finding's Validation prose into a poc/ directory for
-// the disclosure bundle. Each fenced code block becomes a file named for
-// its fence language; the full prose lands in poc/README.md so the
-// recipient keeps the surrounding context (expected output, fingerprint,
-// caveats). When the prose supplied a language probe but no shell driver,
-// a minimal run.sh is generated that invokes the first probe. Returns nil
-// when the prose has no fenced blocks: report.md already carries the
-// validation text, and a poc/ with only a README would add nothing
-// runnable.
-func bundlePoC(validation string) []bundleEntry {
-	blocks := fencedBlock.FindAllStringSubmatch(validation, -1)
-	if len(blocks) == 0 {
-		return nil
+type pocBlock struct {
+	name string
+	lang string
+	body []byte
+}
+
+// Named fences preserve paths relative to poc/; unnamed fences retain the
+// language-based filenames used by older reports.
+func bundlePoC(validation string) ([]bundleEntry, error) {
+	blocks, err := parsePoCBlocks(validation)
+	if err != nil {
+		return nil, err
+	}
+	used := map[string]bool{"readme.md": true}
+	for _, block := range blocks {
+		if block.name == "" {
+			continue
+		}
+		if pocNameConflict(used, block.name) {
+			return nil, fmt.Errorf("conflicting PoC filename %q", block.name)
+		}
+		used[strings.ToLower(block.name)] = true
+	}
+	if !used["run.sh"] && pocNameConflict(used, "run.sh") {
+		return nil, fmt.Errorf("PoC filename conflicts with generated run.sh")
 	}
 
-	seen := map[string]int{}
 	var entries []bundleEntry
 	var firstProbe string
 	haveRunSh := false
 
-	for _, m := range blocks {
-		lang := strings.ToLower(strings.TrimSpace(m[1]))
-		body := m[2]
-		if strings.TrimSpace(body) == "" {
-			continue
-		}
-		if !strings.HasSuffix(body, "\n") {
-			body += "\n"
-		}
-		name, ok := probeExt[lang]
+	for _, block := range blocks {
+		name := block.name
+		legacyName, ok := probeExt[block.lang]
 		if !ok {
-			name = "probe." + lang
+			legacyName = "probe." + block.lang
 		}
-		executable := name == "run.sh"
-		seen[name]++
-		if n := seen[name]; n > 1 {
-			name = suffixBeforeExt(name, n)
+		if name == "" {
+			name = legacyName
+			for n := 2; pocNameConflict(used, name); n++ {
+				name = suffixBeforeExt(legacyName, n)
+			}
+			used[strings.ToLower(name)] = true
 		}
 		var mode int64
-		if executable {
-			haveRunSh = true
+		if legacyName == "run.sh" || name == "run.sh" {
 			mode = runShMode
 		}
-		if firstProbe == "" && strings.HasPrefix(name, "probe.") {
+		if name == "run.sh" {
+			haveRunSh = true
+		}
+		if firstProbe == "" && block.name == "" && strings.HasPrefix(name, "probe.") {
 			firstProbe = name
 		}
-		entries = append(entries, bundleEntry{Name: "poc/" + name, Data: []byte(body), Mode: mode})
+		entries = append(entries, bundleEntry{Name: "poc/" + name, Data: block.body, Mode: mode})
 	}
 	if len(entries) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	if !haveRunSh {
@@ -135,7 +142,68 @@ func bundlePoC(validation string) []bundleEntry {
 		Name: "poc/README.md",
 		Data: []byte(pocReadme(validation)),
 	})
-	return entries
+	return entries, nil
+}
+
+func parsePoCBlocks(validation string) ([]pocBlock, error) {
+	source := []byte(validation)
+	var blocks []pocBlock
+	err := ast.Walk(pocMarkdown.Parser().Parse(text.NewReader(source)), func(node ast.Node, entering bool) (ast.WalkStatus, error) {
+		fence, ok := node.(*ast.FencedCodeBlock)
+		if !entering || !ok {
+			return ast.WalkContinue, nil
+		}
+		block := pocBlock{lang: strings.ToLower(string(fence.Language(source))), body: fence.Lines().Value(source)}
+		if block.lang != "" && !pocLanguage.MatchString(block.lang) {
+			block.lang = "text"
+		}
+		if fence.Info != nil {
+			fields := strings.Fields(string(fence.Info.Value(source)))
+			for _, field := range fields {
+				if name, named := strings.CutPrefix(field, "filename="); named {
+					if block.name != "" || len(fields) != 2 || fields[0] == field || !validPoCFilename(name) {
+						return ast.WalkStop, fmt.Errorf("invalid PoC filename in %q", fence.Info.Value(source))
+					}
+					block.name = name
+				}
+			}
+		}
+		if block.name != "" {
+			if closed, _ := fence.AttributeString(pocClosedAttribute); closed != true {
+				return ast.WalkStop, fmt.Errorf("unterminated PoC fence for %q", block.name)
+			}
+		}
+		if block.name != "" || strings.TrimSpace(string(block.body)) != "" {
+			blocks = append(blocks, block)
+		}
+		return ast.WalkContinue, nil
+	})
+	return blocks, err
+}
+
+func validPoCFilename(name string) bool {
+	if !fs.ValidPath(name) || name == "." || !pocPathChars.MatchString(name) {
+		return false
+	}
+	if strings.EqualFold(name, "run.sh") && name != "run.sh" {
+		return false
+	}
+	for _, part := range strings.Split(name, "/") {
+		if strings.HasSuffix(part, ".") {
+			return false
+		}
+	}
+	return true
+}
+
+func pocNameConflict(used map[string]bool, name string) bool {
+	name = strings.ToLower(name)
+	for other := range used {
+		if name == other || strings.HasPrefix(name, other+"/") || strings.HasPrefix(other, name+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // suffixBeforeExt inserts -n before the final dot: probe.py, 2 -> probe-2.py.
@@ -167,7 +235,7 @@ func pocReadme(validation string) string {
 	var b strings.Builder
 	b.WriteString("# Reproduction\n\n")
 	b.WriteString("This directory is the finding's Validation step materialised as files. ")
-	b.WriteString("Fenced code blocks from the text below have been written out alongside ")
+	b.WriteString("Fenced code blocks use their declared filenames, or language-based names when unnamed. They are written alongside ")
 	b.WriteString("this README; run.sh is either the shell block from the reproduction or ")
 	b.WriteString("a generated stub that invokes the first probe.\n\n")
 	b.WriteString("## Validation (verbatim)\n\n")
