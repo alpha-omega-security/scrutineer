@@ -213,7 +213,7 @@ Every index page has a search box plus filter and sort dropdowns; the specifics 
 - **Scans** -- every scan that has run. Queued scans can be paused/resumed, running or queued scans can be cancelled and failed ones retried.
 - **Skills** -- installed skills from disk and from the UI; view, edit, or run any of them.
 - **Usage** -- token and cost totals across all scans, broken down by skill.
-- **Reporting** -- corpus-wide activity over a rolling window (24 hours, 7 days, 30 days, or all time) with a minimum-severity floor on findings: repositories scanned, runs started and completed, findings, a per-day breakdown, and the per-scan cost and token averages beside their all-time figures. Downloadable as CSV or JSON; JSON exports pulled from several discrete scanner instances can be combined into one corpus-wide report with [`scripts/merge-reports.py`](scripts/merge-reports.py).
+- **Reporting** -- corpus-wide activity over a rolling window (24 hours, 7 days, 30 days, or all time) with a minimum-severity floor on findings: repositories scanned, runs started and completed, findings, a per-day breakdown, and the per-scan cost and token averages beside their all-time figures. Downloadable as CSV or JSON; JSON exports pulled from several discrete scanner instances can be combined into one corpus-wide report with `go run ./scripts/merge-reports a/report.json b/report.json`; see [docs/reporting.md](docs/reporting.md).
 - **Settings** -- theme, colour scheme, model tiers, runner concurrency (restarts the runner to apply, cancelling in-flight scans) and default turn cap (applied to the next scan), plus system stats (record counts, DB size, paths). The chat pool is sized at half the concurrency the server started with and is not resized here, so a change only takes effect for chat after a restart.
 
 ## Finding workflow
@@ -469,6 +469,7 @@ See [SECURITY.md](SECURITY.md) for the reporting policy and [threatmodel.md](thr
 - [docs/api.md](docs/api.md) -- HTTP API surfaces, callers, authentication boundaries, and links to the full [OpenAPI specification](openapi.yaml)
 - [docs/database.md](docs/database.md) -- full database schema reference
 - [docs/usage.md](docs/usage.md) -- per-skill cost ranges, workload correlations and 10x-median outliers
+- [docs/reporting.md](docs/reporting.md) -- the Reporting page's CSV/JSON exports and merging exports from several instances
 - [docs/backup.md](docs/backup.md) -- backing up and restoring the database (built-in `scrutineer backup`/`restore`, `sqlite3`, Litestream)
 - [docs/development.md](docs/development.md) -- project layout, regenerating embedded data, running tests
 - [docs/encrypted-sharing.md](docs/encrypted-sharing.md) -- encrypted findings sharing between contributors (age + SSH keys, team keyring management)
