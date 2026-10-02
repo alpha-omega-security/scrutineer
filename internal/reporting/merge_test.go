@@ -108,65 +108,53 @@ func TestMergeTwoWeekExports(t *testing.T) {
 	if len(warnings) != 0 {
 		t.Errorf("clean merge warned: %q", warnings)
 	}
+	if len(merged.ByDay) != 3 || len(merged.ByModel) != 2 {
+		t.Fatalf("got %d day rows and %d model rows, want 3 and 2: %+v", len(merged.ByDay), len(merged.ByModel), merged)
+	}
+	// Weights 6 and 2 (in-period, shared day, shared model) and 100 and 50
+	// (all-time) make every weighted mean below an exact binary float.
+	sharedDay := DayRow{Date: "2026-09-14", ReposScanned: 3, ScansStarted: 14, ScansCompleted: 12, Findings: 12, CostUSD: 24, TotalTokens: 200,
+		ScansAveraged: 8, AvgCostUSD: 2.5, AvgTotalTokens: 19}
+	sharedModel := ModelRow{Model: "model-x", ScansStarted: 14, ScansCompleted: 12, Findings: 12, CostUSD: 32, TotalTokens: 200,
+		ScansAveraged: 8, AvgCostUSD: 2.5, AvgTotalTokens: 19}
+	for _, tc := range []struct {
+		name      string
+		got, want any
+	}{
+		{"period counts summed, caveat appended", merged.Activity,
+			Activity{ReposScanned: 4, ScansStarted: 14, ScansCompleted: 12, Findings: 25, MeasuredBy: "scans_started at started_at; " + ReposScannedCaveat}},
+		{"in-period averages weighted, weights summed", merged.CostAverages.InPeriod, Averages{ScansAveraged: 8, AvgCostUSD: 2.5, AvgTotalTokens: 19}},
+		{"all-time averages pooled", merged.CostAverages.AllTime, Averages{ScansAveraged: 150, AvgCostUSD: 4, AvgTotalTokens: 20}},
+		{"population kept", merged.CostAverages.Population, "completed scans with a recorded cost"},
+		{"shared day summed and weighted", merged.ByDay[0], sharedDay},
+		{"other days newest first, single-source rows unchanged", merged.ByDay[1:], []DayRow{weekB().ByDay[1], weekA().ByDay[1]}},
+		{"models by findings then cost, shared model merged", merged.ByModel, []ModelRow{weekB().ByModel[1], sharedModel}},
+		{"latest generated_at", merged.GeneratedAt, "2026-09-14T15:00:00Z"},
+		{"period is the union of the windows", merged.Period, Period{
+			Key: "merged", Label: "Merged", StartsAt: ptr("2026-09-07T14:00:00Z"), EndsAt: "2026-09-14T15:00:00Z",
+			Meaning: "union of 2 source reports (period keys: week) assumed to come from discrete scanner instances " +
+				"with disjoint corpora; totals summed; rows present in more than one source have averages weighted " +
+				"by scans_averaged; all_time averages pooled across sources",
+		}},
+		{"agreeing filters kept, floor stays null", merged.Filters, weekA().Filters},
+		{"sources name the inputs as given", merged.Sources, []Source{
+			{File: "a.json", GeneratedAt: "2026-09-14T14:00:00Z", PeriodKey: "week", StartsAt: ptr("2026-09-07T14:00:00Z"), EndsAt: "2026-09-14T14:00:00Z"},
+			{File: "b.json", GeneratedAt: "2026-09-14T15:00:00Z", PeriodKey: "week", StartsAt: ptr("2026-09-07T15:00:00Z"), EndsAt: "2026-09-14T15:00:00Z"},
+		}},
+	} {
+		if !reflect.DeepEqual(tc.got, tc.want) {
+			t.Errorf("%s:\n got %s\nwant %s", tc.name, asJSON(t, tc.got), asJSON(t, tc.want))
+		}
+	}
+}
 
-	a := merged.Activity
-	if a.ScansStarted != 14 || a.ScansCompleted != 12 || a.Findings != 25 || a.ReposScanned != 4 {
-		t.Errorf("activity_in_period = %+v, want counts summed (14, 12, 25, 4)", a)
+func asJSON(t *testing.T, v any) string {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if want := "scans_started at started_at; " + ReposScannedCaveat; a.MeasuredBy != want {
-		t.Errorf("measured_by = %q, want %q", a.MeasuredBy, want)
-	}
-
-	if got := merged.CostAverages.InPeriod; got.ScansAveraged != 8 || got.AvgCostUSD != 2.5 || got.AvgTotalTokens != 19 {
-		t.Errorf("in_period = %+v, want 8 scans, avg cost 2.5, avg tokens 19", got)
-	}
-	if got := merged.CostAverages.AllTime; got.ScansAveraged != 150 || got.AvgCostUSD != 4 {
-		t.Errorf("all_time = %+v, want 150 scans pooled to avg cost 4", got)
-	}
-	if merged.CostAverages.Population == "" {
-		t.Error("population dropped")
-	}
-
-	if len(merged.ByDay) != 3 {
-		t.Fatalf("activity_by_day has %d rows, want 3", len(merged.ByDay))
-	}
-	shared := merged.ByDay[0]
-	if shared.Date != "2026-09-14" || shared.ScansStarted != 14 || shared.Findings != 12 || shared.CostUSD != 24 ||
-		shared.ScansAveraged != 8 || shared.AvgCostUSD != 2.5 || shared.AvgTotalTokens != 19 {
-		t.Errorf("shared day = %+v, want counts summed and averages weighted by scans_averaged", shared)
-	}
-	if merged.ByDay[1].Date != "2026-09-13" || merged.ByDay[2].Date != "2026-09-12" {
-		t.Errorf("days not newest first: %q, %q", merged.ByDay[1].Date, merged.ByDay[2].Date)
-	}
-	if only := merged.ByDay[2]; only != weekA().ByDay[1] {
-		t.Errorf("single-source day row changed: %+v", only)
-	}
-
-	if len(merged.ByModel) != 2 || merged.ByModel[0].Model != "model-y" {
-		t.Fatalf("activity_by_model = %+v, want model-y (13 findings) before model-x (12)", merged.ByModel)
-	}
-	if x := merged.ByModel[1]; x.Findings != 12 || x.ScansStarted != 14 || x.AvgCostUSD != 2.5 {
-		t.Errorf("model-x = %+v, want findings 12, scans 14, avg cost 2.5", x)
-	}
-
-	if merged.GeneratedAt != "2026-09-14T15:00:00Z" {
-		t.Errorf("generated_at = %q, want the latest", merged.GeneratedAt)
-	}
-	p := merged.Period
-	if p.Key != "merged" || p.StartsAt == nil || *p.StartsAt != "2026-09-07T14:00:00Z" || p.EndsAt != "2026-09-14T15:00:00Z" {
-		t.Errorf("period = %+v, want key merged, earliest start, latest end", p)
-	}
-	if !strings.Contains(p.Meaning, "2 source reports") || !strings.Contains(p.Meaning, "period keys: week") {
-		t.Errorf("meaning = %q", p.Meaning)
-	}
-	if merged.Filters.MinimumSeverity != nil {
-		t.Errorf("minimum_severity = %q, want null for two unfiltered inputs", *merged.Filters.MinimumSeverity)
-	}
-
-	if len(merged.Sources) != 2 || merged.Sources[0].File != "a.json" || merged.Sources[1].File != "b.json" ||
-		merged.Sources[1].PeriodKey != "week" || merged.Sources[1].GeneratedAt != "2026-09-14T15:00:00Z" {
-		t.Errorf("sources = %+v", merged.Sources)
-	}
+	return string(raw)
 }
 
 func TestMergeRefusesMixedPeriods(t *testing.T) {

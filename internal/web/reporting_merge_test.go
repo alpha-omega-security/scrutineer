@@ -182,45 +182,52 @@ func TestMergeReportsMatchesSingleInstance(t *testing.T) {
 
 	for _, query := range []string{"interval=day", "interval=week", "interval=all", "interval=week&severity=medium"} {
 		t.Run(query, func(t *testing.T) {
-			exportA, exportB, want := exportReport(t, a, query), exportReport(t, b, query), exportReport(t, union, query)
-			if exportA.Activity.ScansStarted == 0 || exportB.Activity.ScansStarted == 0 || want.Activity.Findings == 0 {
-				t.Fatalf("an instance exported no activity, so the comparison would be vacuous: a=%+v b=%+v", exportA.Activity, exportB.Activity)
-			}
-
-			merged, warnings, err := reporting.Merge(mergeInputs(exportA, exportB), reporting.Options{})
-			if err != nil {
-				t.Fatalf("Merge: %v", err)
-			}
-			if len(warnings) != 0 {
-				t.Errorf("two discrete instances warned: %q", warnings)
-			}
-
-			// The one figure the merged file words differently: it says its
-			// repository count is a sum of distinct counts.
-			if wantNote := want.Activity.MeasuredBy + "; " + reporting.ReposScannedCaveat; merged.Activity.MeasuredBy != wantNote {
-				t.Errorf("measured_by = %q, want %q", merged.Activity.MeasuredBy, wantNote)
-			}
-			merged.Activity.MeasuredBy = want.Activity.MeasuredBy
-			for _, diff := range exportDiffs(merged, want) {
-				t.Error(diff)
-			}
-
-			// The period is the union of the two windows, not either one's.
-			if merged.Period.Key != "merged" || merged.Period.EndsAt != exportB.Period.EndsAt {
-				t.Errorf("period = %+v", merged.Period)
-			}
-			switch {
-			case exportA.Period.StartsAt == nil:
-				if merged.Period.StartsAt != nil {
-					t.Errorf("starts_at = %q, want null for unbounded inputs", *merged.Period.StartsAt)
-				}
-			case merged.Period.StartsAt == nil || *merged.Period.StartsAt != *exportA.Period.StartsAt:
-				t.Errorf("starts_at = %v, want the earlier instance's %q", merged.Period.StartsAt, *exportA.Period.StartsAt)
-			}
-			if len(merged.Sources) != 2 || merged.Sources[0].File != "a.json" || merged.Sources[1].PeriodKey != want.Period.Key {
-				t.Errorf("sources = %+v", merged.Sources)
-			}
+			requireMergeMatchesUnion(t, exportReport(t, a, query), exportReport(t, b, query), exportReport(t, union, query))
 		})
+	}
+}
+
+// requireMergeMatchesUnion merges two instances' exports and holds the
+// result to want, the export of one instance that scanned both corpora.
+// exportA was taken first, so its window starts no later than exportB's.
+func requireMergeMatchesUnion(t *testing.T, exportA, exportB, want reporting.Export) {
+	t.Helper()
+	if exportA.Activity.ScansStarted == 0 || exportB.Activity.ScansStarted == 0 || want.Activity.Findings == 0 {
+		t.Fatalf("an instance exported no activity, so the comparison would be vacuous: a=%+v b=%+v", exportA.Activity, exportB.Activity)
+	}
+
+	merged, warnings, err := reporting.Merge(mergeInputs(exportA, exportB), reporting.Options{})
+	if err != nil {
+		t.Fatalf("Merge: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Errorf("two discrete instances warned: %q", warnings)
+	}
+
+	// The one figure the merged file words differently: it says its
+	// repository count is a sum of distinct counts.
+	if wantNote := want.Activity.MeasuredBy + "; " + reporting.ReposScannedCaveat; merged.Activity.MeasuredBy != wantNote {
+		t.Errorf("measured_by = %q, want %q", merged.Activity.MeasuredBy, wantNote)
+	}
+	merged.Activity.MeasuredBy = want.Activity.MeasuredBy
+	for _, diff := range exportDiffs(merged, want) {
+		t.Error(diff)
+	}
+
+	// The period is the union of the two windows, not either one's.
+	if merged.Period.Key != "merged" || merged.Period.EndsAt != exportB.Period.EndsAt {
+		t.Errorf("period = %+v", merged.Period)
+	}
+	switch {
+	case exportA.Period.StartsAt == nil:
+		if merged.Period.StartsAt != nil {
+			t.Errorf("starts_at = %q, want null for unbounded inputs", *merged.Period.StartsAt)
+		}
+	case merged.Period.StartsAt == nil || *merged.Period.StartsAt != *exportA.Period.StartsAt:
+		t.Errorf("starts_at = %v, want the earlier instance's %q", merged.Period.StartsAt, *exportA.Period.StartsAt)
+	}
+	if len(merged.Sources) != 2 || merged.Sources[0].File != "a.json" || merged.Sources[1].PeriodKey != want.Period.Key {
+		t.Errorf("sources = %+v", merged.Sources)
 	}
 }
 

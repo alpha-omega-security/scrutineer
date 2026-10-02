@@ -177,11 +177,9 @@ func TestMergeCommandOptions(t *testing.T) {
 	t.Run("severity accepts what the export URL accepts", func(t *testing.T) {
 		for _, level := range []string{"medium", "MEDIUM", "moderate"} {
 			merged, _, stderr, status := merge(t, "-severity", level, f.mediumA, f.mediumB)
-			if status != exitOK || stderr != "" {
-				t.Errorf("-severity %s: status %d, stderr %q", level, status, stderr)
-			}
-			if merged.Filters.MinimumSeverity == nil || *merged.Filters.MinimumSeverity != "Medium" {
-				t.Errorf("-severity %s: minimum_severity = %v, want Medium kept", level, merged.Filters.MinimumSeverity)
+			if status != exitOK || stderr != "" || merged.Filters.MinimumSeverity == nil || *merged.Filters.MinimumSeverity != "Medium" {
+				t.Errorf("-severity %s: status %d, stderr %q, minimum_severity %v; want 0, nothing, Medium kept",
+					level, status, stderr, merged.Filters.MinimumSeverity)
 			}
 		}
 		if _, _, stderr, status := merge(t, "-severity", "all", f.weekA, f.weekB); status != exitOK || stderr != "" {

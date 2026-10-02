@@ -593,6 +593,8 @@ func ruleFits(rule mergeRule, kind reflect.Kind) bool {
 // mergeRows folds rows of one type into one, field by field, by each
 // field's merge tag. The rows of a group all describe the same key, and a
 // single row comes back unchanged.
+//
+//nolint:ireturn // T is a concrete struct at every call site, not an interface
 func mergeRows[T any](rows []T) (T, error) {
 	var out T
 	plan, err := planFor(reflect.TypeOf(out))
