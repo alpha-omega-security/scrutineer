@@ -8,6 +8,7 @@ import (
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
 
+	"scrutineer/internal/poc"
 	"scrutineer/internal/verification"
 )
 
@@ -33,7 +34,42 @@ func ValidateSkillReport(skillName, schemaJSON, report string) string {
 	if detail := ValidateReportSchema(schemaJSON, report); detail != "" {
 		return detail
 	}
+	if detail := validateReportPoC(skillName, report); detail != "" {
+		return detail
+	}
 	return ValidateReportSemantics(skillName, report)
+}
+
+func validateReportPoC(skillName, report string) string {
+	switch skillName {
+	case deepDiveSkillName, "advisory-deep-dive", verifySkillName,
+		"audit-injection", "audit-exfil", "audit-authz", "audit-pii", "audit-memory",
+		"audit-package-manager", "audit-web", "audit-embedded":
+	default:
+		return ""
+	}
+	var parsed struct {
+		Findings []struct {
+			Validation string `json:"validation"`
+		} `json:"findings"`
+		Reproducer string `json:"reproducer"`
+	}
+	if err := json.Unmarshal([]byte(report), &parsed); err != nil {
+		return "report.json is not valid JSON: " + err.Error()
+	}
+	if skillName == verifySkillName {
+		if err := poc.Validate(parsed.Reproducer); err != nil {
+			return "/reproducer: " + err.Error()
+		}
+		return ""
+	}
+	var errs []string
+	for i, finding := range parsed.Findings {
+		if err := poc.Validate(finding.Validation); err != nil {
+			errs = append(errs, fmt.Sprintf("/findings/%d/validation: %s", i, err))
+		}
+	}
+	return formatSemanticValidationErrors(errs)
 }
 
 // ValidateReportSemantics checks report invariants that JSON Schema cannot

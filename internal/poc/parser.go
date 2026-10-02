@@ -1,4 +1,4 @@
-package web
+package poc
 
 import (
 	"bytes"
@@ -20,15 +20,22 @@ const (
 	pocClosedAttribute = "poc-closed"
 )
 
-var pocMarkdown = goldmark.New(
-	goldmark.WithExtensions(extension.GFM),
-	goldmark.WithParserOptions(parser.WithBlockParsers(util.Prioritized(
-		&pocFenceParser{BlockParser: parser.NewFencedCodeBlockParser()}, pocFencePriority,
-	))),
-)
+var legacyMarkdown = newMarkdown(false)
+var strictMarkdown = newMarkdown(true)
+
+//nolint:ireturn // Goldmark exposes its constructor through this interface.
+func newMarkdown(strict bool) goldmark.Markdown {
+	return goldmark.New(
+		goldmark.WithExtensions(extension.GFM),
+		goldmark.WithParserOptions(parser.WithBlockParsers(util.Prioritized(
+			&pocFenceParser{BlockParser: parser.NewFencedCodeBlockParser(), strict: strict}, pocFencePriority,
+		))),
+	)
+}
 
 type pocFenceParser struct {
 	parser.BlockParser
+	strict bool
 }
 
 //nolint:ireturn // Required by Goldmark's BlockParser interface.
@@ -36,7 +43,7 @@ func (p *pocFenceParser) Open(parent ast.Node, reader text.Reader, pc parser.Con
 	line, _ := reader.PeekLine()
 	pos := pc.BlockOffset()
 	node, state := p.BlockParser.Open(parent, reader, pc)
-	if node == nil || pos < 0 || !bytes.HasPrefix(line[pos:], []byte("```")) || bytes.HasPrefix(line[pos:], []byte("````")) {
+	if p.strict || node == nil || pos < 0 || !bytes.HasPrefix(line[pos:], []byte("```")) || bytes.HasPrefix(line[pos:], []byte("````")) {
 		return node, state
 	}
 	for field := range strings.FieldsSeq(string(line[pos+3:])) {
