@@ -125,7 +125,16 @@ var builtinProfiles = []Profile{
 		FallbackProfile: "ruby",
 		Detect:          []BriefMatch{{briefBuild, []string{"Rails"}}},
 	},
-	{Name: "ruby", Detect: pm("Bundler")},
+	{
+		// The language match covers a gem in a monorepo sub-folder: it ships a
+		// .gemspec but its Gemfile sits at the repository root, so brief run on
+		// the sub-path reports no package manager (rspec/rspec#rspec-expectations).
+		Name: "ruby",
+		Detect: []BriefMatch{
+			{briefPackageManager, []string{"Bundler"}},
+			{briefLanguage, []string{"Ruby"}},
+		},
+	},
 	{Name: "node", Detect: pm("npm", "pnpm", "Yarn", "Bun")},
 	{
 		// Before python: brief's setuptools-Extension detector keys on

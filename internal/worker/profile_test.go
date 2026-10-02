@@ -157,6 +157,7 @@ func TestMatchProfile(t *testing.T) {
 		{"Scala language matches scala (belt-and-braces for a *.scala-only checkout)", briefJSON("language:Scala"), "scala"},
 		{"Kotlin language matches kotlin", briefJSON("language:Kotlin"), "kotlin"},
 		{"Perl language matches perl (belt-and-braces for a *.pl-only dist)", briefJSON("language:Perl"), "perl"},
+		{"Ruby language matches ruby (monorepo gem with no Gemfile of its own)", briefJSON("language:Ruby"), "ruby"},
 		{"C language matches c-cpp", briefJSON("language:C"), "c-cpp"},
 		{"C++ language matches c-cpp", briefJSON("language:C++"), "c-cpp"},
 		{"Swift language matches swift (Xcode-project-only checkout)", briefJSON("language:Swift"), "swift"},
