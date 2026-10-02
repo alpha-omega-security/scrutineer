@@ -475,6 +475,9 @@ func testAPIv1DeleteFinding(t *testing.T, foreignKeys bool) {
 	s.DB.Create(&db.FindingHistory{FindingID: finding.ID, Field: "status", NewValue: "new"})
 	s.DB.Create(&db.FindingReview{FindingID: finding.ID, Verdict: "true_positive", Reviewer: "analyst"})
 	seedFindingAssessments(t, s, finding, scan)
+	if err := s.DB.Create(&db.FindingPoC{FindingID: finding.ID, ScanID: scan.ID, Files: []byte("[]")}).Error; err != nil {
+		t.Fatal(err)
+	}
 	dependent := db.Dependent{RepositoryID: repo.ID, Name: "downstream", Ecosystem: "npm"}
 	s.DB.Create(&dependent)
 	s.DB.Create(&db.FindingDependent{FindingID: finding.ID, DependentID: dependent.ID, Status: db.ExposureKnownAffected})
@@ -504,6 +507,7 @@ func testAPIv1DeleteFinding(t *testing.T, foreignKeys bool) {
 		"reviews":       countRows(t, s, &db.FindingReview{}, "finding_id = ?", finding.ID),
 		"exposure":      countRows(t, s, &db.FindingDependent{}, "finding_id = ?", finding.ID),
 		"verifications": countRows(t, s, &db.FindingVerification{}, "finding_id = ?", finding.ID),
+		"poc":           countRows(t, s, &db.FindingPoC{}, "finding_id = ?", finding.ID),
 		"attackpaths":   countRows(t, s, &db.FindingAttackPath{}, "finding_id = ?", finding.ID),
 		"attempts":      countRows(t, s, &db.RemediationAttempt{}, "finding_id = ?", finding.ID),
 		"validations":   countRows(t, s, &db.RemediationValidation{}, "finding_id = ?", finding.ID),

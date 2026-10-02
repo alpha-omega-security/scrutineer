@@ -1024,6 +1024,7 @@ type Finding struct {
 	References             []FindingReference      `gorm:"constraint:OnDelete:CASCADE"`
 	History                []FindingHistory        `gorm:"constraint:OnDelete:CASCADE"`
 	Verifications          []FindingVerification   `gorm:"constraint:OnDelete:CASCADE"`
+	PoC                    *FindingPoC             `gorm:"constraint:OnDelete:CASCADE"`
 	AttackPaths            []FindingAttackPath     `gorm:"constraint:OnDelete:CASCADE"`
 	RemediationAttempts    []RemediationAttempt    `gorm:"constraint:OnDelete:CASCADE"`
 	RemediationValidations []RemediationValidation `gorm:"constraint:OnDelete:CASCADE"`
@@ -1645,7 +1646,7 @@ func migrateSchema(gdb *gorm.DB) error {
 		&Repository{}, &Scan{},
 		&Finding{}, &FindingLabel{}, &FindingNote{},
 		&FindingCommunication{}, &FindingReference{}, &FindingHistory{}, &FindingReview{}, &FindingVerification{}, &FindingAttackPath{}, &ScanPreflightReceipt{},
-		&RemediationAttempt{}, &RemediationValidation{}, &AuditEvent{},
+		&RemediationAttempt{}, &RemediationValidation{}, &AuditEvent{}, &FindingPoC{},
 		&Dependency{}, &ExpectedFinding{}, &Package{}, &PackageAlternative{}, &Dependent{}, &FindingDependent{}, &Advisory{}, &AdvisoryAudit{},
 		&Maintainer{}, &Skill{}, &Subproject{}, &ComplianceControl{},
 		&SBOMUpload{}, &SBOMPackage{}, &CNA{}, &Setting{},

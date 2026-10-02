@@ -21,6 +21,7 @@ var ErrInvalidFinding = errors.New("invalid finding")
 // reconciles against the streamed row instead of duplicating it. raw is a
 // single finding object in the report.json finding shape; the scan's identity
 // (id, repo, commit, sub-path) is stamped from scan, never trusted from raw.
+// A PoCCaptureError returns the saved finding alongside the capture warning.
 func (w *Worker) PersistStreamedFinding(scan *db.Scan, raw []byte) (*db.Finding, error) {
 	var sf scanFinding
 	if err := json.Unmarshal(raw, &sf); err != nil {
@@ -37,6 +38,9 @@ func (w *Worker) PersistStreamedFinding(scan *db.Scan, raw []byte) (*db.Finding,
 	f.Snippet = readSnippet(srcDir, f.Location)
 
 	if _, err := w.persistFinding(scan, &f); err != nil {
+		if _, ok := errors.AsType[*PoCCaptureError](err); ok {
+			return &f, err
+		}
 		return nil, err
 	}
 	return &f, nil

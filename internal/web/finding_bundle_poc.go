@@ -2,15 +2,15 @@ package web
 
 import (
 	"fmt"
-	"io/fs"
 	"regexp"
 	"strings"
 
 	"github.com/yuin/goldmark/ast"
 	"github.com/yuin/goldmark/text"
+
+	"scrutineer/internal/poc"
 )
 
-var pocPathChars = regexp.MustCompile(`^[a-zA-Z0-9_./-]+$`)
 var pocLanguage = regexp.MustCompile(`^[a-zA-Z0-9_+.-]+$`)
 
 // probeExt maps a fence info string (already lowercased) to the
@@ -88,12 +88,12 @@ func bundlePoC(validation string) ([]bundleEntry, error) {
 		if block.name == "" {
 			continue
 		}
-		if pocNameConflict(used, block.name) {
+		if poc.NameConflict(used, block.name) {
 			return nil, fmt.Errorf("conflicting PoC filename %q", block.name)
 		}
 		used[strings.ToLower(block.name)] = true
 	}
-	if !used["run.sh"] && pocNameConflict(used, "run.sh") {
+	if !used["run.sh"] && poc.NameConflict(used, "run.sh") {
 		return nil, fmt.Errorf("PoC filename conflicts with generated run.sh")
 	}
 
@@ -109,10 +109,13 @@ func bundlePoC(validation string) ([]bundleEntry, error) {
 		}
 		if name == "" {
 			name = legacyName
-			for n := 2; pocNameConflict(used, name); n++ {
+			for n := 2; poc.NameConflict(used, name); n++ {
 				name = suffixBeforeExt(legacyName, n)
 			}
 			used[strings.ToLower(name)] = true
+		}
+		if !poc.ValidPath(name) {
+			return nil, fmt.Errorf("invalid PoC filename %q", name)
 		}
 		var mode int64
 		if legacyName == "run.sh" || name == "run.sh" {
@@ -182,28 +185,13 @@ func parsePoCBlocks(validation string) ([]pocBlock, error) {
 }
 
 func validPoCFilename(name string) bool {
-	if !fs.ValidPath(name) || name == "." || !pocPathChars.MatchString(name) {
+	if !poc.ValidPath(name) {
 		return false
 	}
 	if strings.EqualFold(name, "run.sh") && name != "run.sh" {
 		return false
 	}
-	for _, part := range strings.Split(name, "/") {
-		if strings.HasSuffix(part, ".") {
-			return false
-		}
-	}
 	return true
-}
-
-func pocNameConflict(used map[string]bool, name string) bool {
-	name = strings.ToLower(name)
-	for other := range used {
-		if name == other || strings.HasPrefix(name, other+"/") || strings.HasPrefix(other, name+"/") {
-			return true
-		}
-	}
-	return false
 }
 
 // suffixBeforeExt inserts -n before the final dot: probe.py, 2 -> probe-2.py.
