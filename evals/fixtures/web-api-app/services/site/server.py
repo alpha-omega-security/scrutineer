@@ -5,6 +5,8 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from urllib.parse import parse_qs, urlsplit
 
+from display_name import update_display_name
+
 
 ACCOUNTS = {"demo": {"password": "demo-password", "email": "demo@example.test", "name": "Demo"}}
 SESSIONS = {}
@@ -36,12 +38,7 @@ def dispatch(method, target, headers, body=""):
         account["email"] = values.get("email", [account["email"]])[0]
         return 200, {}, {"email": account["email"]}
     if method == "POST" and url.path == "/api/display-name":
-        if headers.get("Origin") != ORIGIN:
-            return 403, {}, {"error": "origin rejected"}
-        if not hmac.compare_digest(values.get("csrf", [""])[0], session["csrf"]):
-            return 403, {}, {"error": "token rejected"}
-        account["name"] = values.get("name", [account["name"]])[0]
-        return 200, {}, {"name": account["name"]}
+        return update_display_name(values, headers, session, account, ORIGIN)
     return 404, {}, {"error": "not found"}
 
 

@@ -118,6 +118,14 @@ func (r Runner) RunScenario(ctx context.Context, sc Scenario) (Result, error) {
 		Matches:        matches,
 		Cost:           cost,
 	}
+	tallyMatches(&result, matches)
+	return result, nil
+}
+
+// tallyMatches counts judge results into result. A missed required finding is
+// a failure and a missed optional one a miss. A failed should_not_find or
+// must_not_contain assertion counts as unexpected.
+func tallyMatches(result *Result, matches []AssertionResult) {
 	for _, m := range matches {
 		switch {
 		case !m.Matched && m.Kind == assertionShouldFind && m.Required:
@@ -128,7 +136,6 @@ func (r Runner) RunScenario(ctx context.Context, sc Scenario) (Result, error) {
 			result.Unexpected++
 		}
 	}
-	return result, nil
 }
 
 func judgeScenario(ctx context.Context, judge Judge, sc Scenario, report string) ([]AssertionResult, Cost, error) {

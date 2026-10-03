@@ -9,4 +9,6 @@ should_find:
       - SameSite
     required: true
 should_not_find:
-  - finding: cross-site request forgery in the display-name update protected by Origin and a session-bound token
+  - path: services/site/display_name.py
+    evidence_contains:
+      - display_name
