@@ -24,7 +24,7 @@ const (
 	vinceAttachmentNone   = "none"
 )
 
-type vinceFindingContext struct {
+type disclosureFindingContext struct {
 	Finding        db.Finding
 	Repository     db.Repository
 	Scan           db.Scan
@@ -69,7 +69,7 @@ func (s *Server) findingVINCEPreview(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	ctx, ok := s.loadVINCEFinding(w, r)
+	ctx, ok := s.loadDisclosureFinding(w, r)
 	if !ok {
 		return
 	}
@@ -105,7 +105,7 @@ func (s *Server) findingVINCESubmit(w http.ResponseWriter, r *http.Request) {
 	s.vinceSubmitMu.Lock()
 	defer s.vinceSubmitMu.Unlock()
 
-	ctx, ok := s.loadVINCEFinding(w, r)
+	ctx, ok := s.loadDisclosureFinding(w, r)
 	if !ok {
 		return
 	}
@@ -216,8 +216,8 @@ func (s *Server) findingVINCESubmit(w http.ResponseWriter, r *http.Request) {
 	s.redirect(w, r, fmt.Sprintf("/findings/%d", ctx.Finding.ID))
 }
 
-func (s *Server) loadVINCEFinding(w http.ResponseWriter, r *http.Request) (vinceFindingContext, bool) {
-	var out vinceFindingContext
+func (s *Server) loadDisclosureFinding(w http.ResponseWriter, r *http.Request) (disclosureFindingContext, bool) {
+	var out disclosureFindingContext
 	id, err := strconv.Atoi(r.PathValue("id"))
 	if err != nil {
 		http.NotFound(w, r)
@@ -289,7 +289,7 @@ func vinceReference(ref db.FindingReference) bool {
 	return false
 }
 
-func vinceSelections(values url.Values, ctx vinceFindingContext) (uint, map[uint]bool, error) {
+func vinceSelections(values url.Values, ctx disclosureFindingContext) (uint, map[uint]bool, error) {
 	var packageID uint
 	if raw := strings.TrimSpace(values.Get("package_id")); raw != "" {
 		id, err := strconv.ParseUint(raw, 10, 64)
@@ -317,7 +317,7 @@ func vinceSelections(values url.Values, ctx vinceFindingContext) (uint, map[uint
 	return packageID, selected, nil
 }
 
-func (s *Server) mapVINCEReport(ctx vinceFindingContext, packageID uint, selectedRefs map[uint]bool) vince.Report {
+func (s *Server) mapVINCEReport(ctx disclosureFindingContext, packageID uint, selectedRefs map[uint]bool) vince.Report {
 	productName := firstNonEmpty(ctx.Repository.Name, ctx.Repository.FullName, ctx.Repository.URL)
 	if packageID != 0 {
 		for _, pkg := range ctx.Packages {
@@ -507,7 +507,7 @@ func addVINCEError(errs vince.ValidationErrors, field, message string) {
 }
 
 func (s *Server) vincePage(
-	ctx vinceFindingContext,
+	ctx disclosureFindingContext,
 	report vince.Report,
 	packageID uint,
 	selectedRefs map[uint]bool,
@@ -579,7 +579,7 @@ func (s *Server) vincePage(
 }
 
 func (s *Server) vinceAttachment(
-	ctx vinceFindingContext,
+	ctx disclosureFindingContext,
 	choice string,
 	generatedAt time.Time,
 ) (*vince.Attachment, []string, error) {
@@ -622,7 +622,7 @@ func (s *Server) vinceAttachment(
 // the preview, or a selection that changed to none while a preview hash was
 // still posted. A returned attachment is only safe to send when fieldErrors
 // came back empty.
-func (s *Server) vinceFormAttachment(r *http.Request, ctx vinceFindingContext, choice string, fieldErrors vince.ValidationErrors) *vince.Attachment {
+func (s *Server) vinceFormAttachment(r *http.Request, ctx disclosureFindingContext, choice string, fieldErrors vince.ValidationErrors) *vince.Attachment {
 	generatedAt, err := time.Parse(time.RFC3339Nano, r.FormValue("attachment_generated_at"))
 	if err != nil {
 		addVINCEError(fieldErrors, "user_file", "attachment preview expired; review it again")

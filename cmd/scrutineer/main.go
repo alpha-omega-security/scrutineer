@@ -615,91 +615,13 @@ func configureBackendEnvironment(f *flags, log *slog.Logger) {
 }
 
 func run(log *slog.Logger) error {
-	f := parseFlags()
-
-	cfg, err := config.Load(f.configPath)
+	f, cfg, err := loadRunConfig(log)
 	if err != nil {
 		return err
 	}
-	if cfg != nil {
-		log.Info("loaded config", "path", cfgPath(f.configPath))
-	} else {
-		// merge seeds the model pick list from the active harness even
-		// when there is no config file to overlay, so a fresh install has
-		// a working model dropdown; every field-merge below is a no-op on
-		// the zero-value config.
-		cfg = &config.Config{}
-	}
-	f.merge(cfg)
-	if err := f.normalizePaths(); err != nil {
-		return err
-	}
-	// Resolve the Claude environment fallback before validation so flags,
-	// config, and ANTHROPIC_BASE_URL all pass through the same URL policy.
-	configureBackendEnvironment(f, log)
-	if err := validateFlags(f); err != nil {
-		return err
-	}
-	if err := validateEgressPolicies(f, cfg); err != nil {
-		return err
-	}
-	warnIfNonLoopbackListenAddr(log, f.addr)
-	// When --selinux is given explicitly, surface the host's SELinux mode at
-	// startup so the operator can confirm what scrutineer detected (e.g. that an
-	// enforcing host will get the :z relabel, or that --selinux=off on an
-	// enforcing host is about to break file passing).
-	if f.set["selinux"] {
-		log.Info("selinux", "flag", f.selinux, "state", container.HostSELinuxState())
-	}
-	if err := os.MkdirAll(f.dataDir, dataPermSecure); err != nil {
-		return err
-	}
-	_ = os.Chmod(f.dataDir, dataPermSecure)
-	if err := resolveProfilesDir(f, cfg, log); err != nil {
-		return err
-	}
-	// Module-boundary sentinel so go tooling on the parent repo never
-	// walks into cloned scan workspaces under data/work/.
-	_ = os.WriteFile(filepath.Join(f.dataDir, "go.mod"), []byte("module scrutineer/data\n"), dataPermSecure)
-
-	gdb, err := db.Open(filepath.Join(f.dataDir, "scrutineer.db"))
-	if err != nil {
-		return fmt.Errorf("open db: %w", err)
-	}
-	db.BackfillFindings(gdb)
-	db.BackfillFindingRepository(gdb)
-	if err := db.BackfillFindingFingerprints(gdb); err != nil {
-		return fmt.Errorf("backfill finding fingerprints: %w", err)
-	}
-	db.BackfillStatusPriority(gdb)
-	worker.BackfillRepoDiskUsage(gdb, f.dataDir)
-	if err := db.SeedDefaultLabels(gdb); err != nil {
-		return fmt.Errorf("seed labels: %w", err)
-	}
-	if err := db.SweepRunning(gdb); err != nil {
-		return fmt.Errorf("sweep: %w", err)
-	}
-	sqldb, err := gdb.DB()
+	gdb, q, err := openRunQueue(f, cfg, log)
 	if err != nil {
 		return err
-	}
-
-	// A UI-configured concurrency (Settings page) persists in the DB and
-	// applies on restart, but an explicit --concurrency flag still wins so
-	// the operator who just typed it isn't overridden. Mirrors merge().
-	if !f.set["concurrency"] {
-		if v := db.SettingInt(gdb, db.SettingConcurrency); v > 0 {
-			f.concurrency = v
-		}
-	}
-	enforceCodexAccountAuthConcurrency(f, log)
-
-	q, err := queue.New(sqldb, log, f.concurrency)
-	if err != nil {
-		return fmt.Errorf("queue: %w", err)
-	}
-	if f.codexAuthFile != "" {
-		q.SetMaxConcurrency(codexAccountAuthConcurrency)
 	}
 
 	skills.ModelValidator = web.ValidModelPreference
@@ -771,6 +693,7 @@ func run(log *slog.Logger) error {
 	srv.FederationContact = f.federationContact
 	srv.MonorepoAttribution = f.monorepoAttribution
 	srv.VINCE = cfg.VINCE
+	srv.Akrites = cfg.Akrites
 	srv.FederationPublicFeed = f.federationPublicFeed
 	srv.FederationMembersFeed = f.federationMembersFeed
 	srv.FederationImportFeeds = f.federationImportFeeds
@@ -787,6 +710,7 @@ func run(log *slog.Logger) error {
 	go srv.StartScheduler(ctx)
 	go srv.StartRepositoryHealthScorer(ctx)
 	go srv.StartFederation(ctx)
+	go srv.StartAkritesPoller(ctx)
 
 	httpSrv := &http.Server{Addr: f.addr, Handler: srv.Handler(), ReadHeaderTimeout: shutdownTimeout}
 	go func() {
@@ -807,6 +731,98 @@ func run(log *slog.Logger) error {
 		return err
 	}
 	return nil
+}
+
+func loadRunConfig(log *slog.Logger) (*flags, *config.Config, error) {
+	f := parseFlags()
+	cfg, err := config.Load(f.configPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	if cfg != nil {
+		log.Info("loaded config", "path", cfgPath(f.configPath))
+	} else {
+		// merge seeds the model pick list from the active harness even
+		// when there is no config file to overlay, so a fresh install has
+		// a working model dropdown; every field-merge below is a no-op on
+		// the zero-value config.
+		cfg = &config.Config{}
+	}
+	f.merge(cfg)
+	if err := f.normalizePaths(); err != nil {
+		return nil, nil, err
+	}
+	// Resolve the Claude environment fallback before validation so flags,
+	// config, and ANTHROPIC_BASE_URL all pass through the same URL policy.
+	configureBackendEnvironment(f, log)
+	if err := validateFlags(f); err != nil {
+		return nil, nil, err
+	}
+	if err := validateEgressPolicies(f, cfg); err != nil {
+		return nil, nil, err
+	}
+	warnIfNonLoopbackListenAddr(log, f.addr)
+	// When --selinux is given explicitly, surface the host's SELinux mode at
+	// startup so the operator can confirm what scrutineer detected (e.g. that an
+	// enforcing host will get the :z relabel, or that --selinux=off on an
+	// enforcing host is about to break file passing).
+	if f.set["selinux"] {
+		log.Info("selinux", "flag", f.selinux, "state", container.HostSELinuxState())
+	}
+	return f, cfg, nil
+}
+
+func openRunQueue(f *flags, cfg *config.Config, log *slog.Logger) (*gorm.DB, *queue.Queue, error) {
+	if err := os.MkdirAll(f.dataDir, dataPermSecure); err != nil {
+		return nil, nil, err
+	}
+	_ = os.Chmod(f.dataDir, dataPermSecure)
+	if err := resolveProfilesDir(f, cfg, log); err != nil {
+		return nil, nil, err
+	}
+	// Module-boundary sentinel so go tooling on the parent repo never
+	// walks into cloned scan workspaces under data/work/.
+	_ = os.WriteFile(filepath.Join(f.dataDir, "go.mod"), []byte("module scrutineer/data\n"), dataPermSecure)
+
+	gdb, err := db.Open(filepath.Join(f.dataDir, "scrutineer.db"))
+	if err != nil {
+		return nil, nil, fmt.Errorf("open db: %w", err)
+	}
+	db.BackfillFindings(gdb)
+	db.BackfillFindingRepository(gdb)
+	if err := db.BackfillFindingFingerprints(gdb); err != nil {
+		return nil, nil, fmt.Errorf("backfill finding fingerprints: %w", err)
+	}
+	db.BackfillStatusPriority(gdb)
+	worker.BackfillRepoDiskUsage(gdb, f.dataDir)
+	if err := db.SeedDefaultLabels(gdb); err != nil {
+		return nil, nil, fmt.Errorf("seed labels: %w", err)
+	}
+	if err := db.SweepRunning(gdb); err != nil {
+		return nil, nil, fmt.Errorf("sweep: %w", err)
+	}
+	sqldb, err := gdb.DB()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// A UI-configured concurrency (Settings page) persists in the DB and
+	// applies on restart, but an explicit --concurrency flag still wins so
+	// the operator who just typed it isn't overridden. Mirrors merge().
+	if !f.set["concurrency"] {
+		if v := db.SettingInt(gdb, db.SettingConcurrency); v > 0 {
+			f.concurrency = v
+		}
+	}
+	enforceCodexAccountAuthConcurrency(f, log)
+	q, err := queue.New(sqldb, log, f.concurrency)
+	if err != nil {
+		return nil, nil, fmt.Errorf("queue: %w", err)
+	}
+	if f.codexAuthFile != "" {
+		q.SetMaxConcurrency(codexAccountAuthConcurrency)
+	}
+	return gdb, q, nil
 }
 
 func configureEncryption(srv *web.Server, f *flags, log *slog.Logger) error {

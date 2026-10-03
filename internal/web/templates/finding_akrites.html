@@ -1,0 +1,43 @@
+{{template "head" .}}
+{{$a := .Akrites}}
+{{$r := $a.Report}}
+<a href="/findings/{{$a.Finding.ID}}" class="text-sm underline">Back to finding</a>
+<h2 class="text-2xl font-semibold my-4">Akrites submission</h2>
+{{if $a.Error}}<p class="text-destructive mb-4" role="alert">{{$a.Error}}</p>{{end}}
+{{if $a.Submission.ID}}
+<section class="card grid gap-3">
+  <p>Recipient: <code>{{$a.Submission.Endpoint}}</code></p>
+  <p>Status: <strong>{{$a.Submission.Status}}</strong></p>
+  {{if $a.Submission.Receipt}}<p>Receipt: <code>{{$a.Submission.Receipt}}</code>. Keep this private: anyone with the receipt can read the submission status.</p>{{end}}
+  {{if $a.Submission.StatusAt}}<p>Last change at Akrites: {{$a.Submission.StatusAt}}</p>{{end}}
+  {{if $a.Submission.LastError}}<p role="alert">{{$a.Submission.LastError}}</p>{{end}}
+  {{if eq $a.Submission.Status "uncertain"}}
+  <p>The submission may have been accepted. Contact Akrites to reconcile it before sending another report.</p>
+  {{else if eq $a.Submission.Status "rejected"}}
+  <p>Akrites rejected the request and asked for a delay. Reload after {{$a.Submission.NextPollAt}} to review and submit again.</p>
+  {{else if ne $a.Submission.Status "done"}}
+  <p>Scrutineer checks for updates in the background. Reload this page to see the saved status.</p>
+  {{else}}
+  <p>Akrites finished intake processing. This does not mean the vulnerability has been fixed or disclosed.</p>
+  {{end}}
+</section>
+{{else}}
+<p class="my-4">Review the report for <code>{{$a.Endpoint}}</code>. The disclosure text and exploitation details below will be sent to Akrites.</p>
+<form method="post" action="/findings/{{$a.Finding.ID}}/akrites" class="form grid gap-4">
+  <input type="hidden" name="endpoint" value="{{$a.Endpoint}}">
+  <div class="grid gap-1"><label for="software">Software name</label><input id="software" name="software" class="input" value="{{$r.Software}}" required></div>
+  <div class="grid gap-1"><label for="purl">Package URL</label><input id="purl" name="purl" class="input" value="{{$r.PURL}}"><p class="text-xs text-muted-foreground">Required unless an ecosystem is given. Akrites derives the ecosystem from the package URL.</p></div>
+  <div class="grid gap-1"><label for="ecosystem">Ecosystem</label><input id="ecosystem" name="ecosystem" class="input" value="{{$r.Ecosystem}}"><p class="text-xs text-muted-foreground">Optional with a package URL, and must then match its type. Use an OSV ecosystem name such as npm, PyPI, Go, crates.io or Maven, or Linux, OSS-Fuzz, Android, GitHub Actions or Hardware.</p></div>
+  <div class="grid gap-1"><label for="versions">Affected versions, one per line</label><textarea id="versions" name="versions" class="input" rows="3">{{range $r.Versions}}{{.}}{{"\n"}}{{end}}</textarea></div>
+  <div class="grid gap-1"><label for="package_repo_url">Package repository URL</label><input id="package_repo_url" name="package_repo_url" class="input" value="{{$r.PackageRepoURL}}"></div>
+  <div class="grid gap-1"><label for="code_path">Affected code</label><input id="code_path" name="code_path" class="input" value="{{$r.CodePath}}"></div>
+  <div class="grid gap-1"><label for="raw">Disclosure report (Markdown)</label><textarea id="raw" name="raw" class="input font-mono text-xs" rows="16" required>{{$r.Raw}}</textarea></div>
+  <div class="grid gap-1"><label for="exploit">Exploitation details</label><textarea id="exploit" name="exploit" class="input" rows="8">{{$r.Exploit}}</textarea></div>
+  <div class="grid gap-1"><label for="discovery_method">Discovery method</label><select id="discovery_method" name="discovery_method" class="input">{{range list "manual" "ai-assisted" "ai-discovered" "hybrid" "automated-scan" "upstream-report" "other"}}<option value="{{.}}"{{if eq . $r.DiscoveryMethod}} selected{{end}}>{{.}}</option>{{end}}</select></div>
+  <div class="grid gap-1"><label for="email">Notification email (required unless notifications are off)</label><input id="email" name="email" type="email" class="input" value="{{$r.Email}}"></div>
+  <div class="grid gap-1"><label for="notify">Email notifications</label><select id="notify" name="notify" class="input">{{range list "off" "final" "milestones" "all"}}<option value="{{.}}"{{if eq . $r.Notify}} selected{{end}}>{{.}}</option>{{end}}</select></div>
+  <label class="flex gap-2 items-start"><input type="checkbox" name="confirm" value="yes" required><span>I reviewed this finding and its reproduction, and confirm the recipient, report contents and notification choices.</span></label>
+  <button type="submit" class="btn-destructive">Submit once to Akrites</button>
+</form>
+{{end}}
+{{template "foot" .}}

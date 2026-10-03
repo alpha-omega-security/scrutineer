@@ -19,7 +19,7 @@ import (
 	"scrutineer/internal/vince"
 )
 
-func seedVINCEFinding(t *testing.T, s *Server) vinceFindingContext {
+func seedVINCEFinding(t *testing.T, s *Server) disclosureFindingContext {
 	t.Helper()
 	repo := db.Repository{
 		URL:      "https://github.com/acme/widget.git",
@@ -92,7 +92,7 @@ func seedVINCEFinding(t *testing.T, s *Server) vinceFindingContext {
 	if err := s.DB.Create(&comm).Error; err != nil {
 		t.Fatal(err)
 	}
-	return vinceFindingContext{
+	return disclosureFindingContext{
 		Finding: finding, Repository: repo, Scan: scan,
 		Packages: []db.Package{pkg}, References: []db.FindingReference{ref},
 		Communications: []db.FindingCommunication{comm},
@@ -303,7 +303,7 @@ func TestFindingVINCENonViableBlockedBeforeSubmission(t *testing.T) {
 	}
 }
 
-func assertVINCEBlockedStateUnchanged(t *testing.T, s *Server, ctx vinceFindingContext, status db.FindingLifecycle) {
+func assertVINCEBlockedStateUnchanged(t *testing.T, s *Server, ctx disclosureFindingContext, status db.FindingLifecycle) {
 	t.Helper()
 	var finding db.Finding
 	if err := s.DB.First(&finding, ctx.Finding.ID).Error; err != nil {
