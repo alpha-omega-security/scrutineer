@@ -21,6 +21,7 @@ import (
 	"gorm.io/gorm"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/feedbackpromotion"
 	"scrutineer/internal/worker"
 )
 
@@ -295,6 +296,17 @@ func (s *Server) apiListScans(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// skillFacingReport strips host-promoted known_non_findings from a raw
+// threat-model report before a skill reads it. Promotions live only in the
+// repository contract, where they are retired with their decision; a copy in a
+// raw report would otherwise keep suppressing findings after retirement.
+func skillFacingReport(sc db.Scan) string {
+	if sc.SkillName != "threat-model" {
+		return sc.Report
+	}
+	return feedbackpromotion.StripPromoted(sc.Report)
+}
+
 func (s *Server) apiGetScan(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(r.PathValue("id"))
 	var sc db.Scan
@@ -307,7 +319,7 @@ func (s *Server) apiGetScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	summary := scanSummary(sc)
-	summary["report"] = sc.Report
+	summary["report"] = skillFacingReport(sc)
 	summary["refusal_audit"] = sc.RefusalAudit
 	summary["log"] = sc.Log
 	writeJSON(w, http.StatusOK, summary)

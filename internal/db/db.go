@@ -1644,7 +1644,7 @@ func migrateSchema(gdb *gorm.DB) error {
 	if err := gdb.AutoMigrate(
 		&Repository{}, &Scan{},
 		&Finding{}, &FindingLabel{}, &FindingNote{},
-		&FindingCommunication{}, &FindingReference{}, &FindingHistory{}, &FindingReview{}, &FindingVerification{}, &FindingAttackPath{}, &ScanPreflightReceipt{},
+		&FindingCommunication{}, &FindingReference{}, &FindingHistory{}, &FindingReview{}, &FeedbackConfirmation{}, &FindingVerification{}, &FindingAttackPath{}, &ScanPreflightReceipt{},
 		&RemediationAttempt{}, &RemediationValidation{}, &AuditEvent{},
 		&Dependency{}, &ExpectedFinding{}, &Package{}, &PackageAlternative{}, &Dependent{}, &FindingDependent{}, &Advisory{}, &AdvisoryAudit{},
 		&Maintainer{}, &Skill{}, &Subproject{}, &ComplianceControl{},

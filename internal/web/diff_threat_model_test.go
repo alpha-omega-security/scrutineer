@@ -1,6 +1,7 @@
 package web
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -156,5 +157,44 @@ func TestMarkThreatModelUpdateKeepsCompletenessColumnInStep(t *testing.T) {
 	}
 	if got.Completeness != rec.Completeness {
 		t.Fatalf("column Completeness = %q, record says %q — the two disagree", got.Completeness, rec.Completeness)
+	}
+}
+
+func TestThreatModelRefreshKeepsPromotedFeedbackAndReflection(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	previous := `{"reflection_notes":[{"summary":"retained"}],"known_non_findings":[` +
+		`{"reported_as":"old model","why_safe":"w"},` +
+		`{"reported_as":"host","why_safe":"guarded","promoted_from":{"review_id":7,"finding_id":3,"source_commit":"abc","confirmations":[{"scan_id":1,"commit":"d"}]}}]}`
+	repo := db.Repository{URL: "https://example.com/promoted-refresh", Name: "promoted-refresh", ThreatModel: previous}
+	if err := s.DB.Create(&repo).Error; err != nil {
+		t.Fatal(err)
+	}
+	report := `{"description":"new","reflection_notes":[{"summary":"invented"}],"known_non_findings":[` +
+		`{"reported_as":"new model","why_safe":"w"},` +
+		`{"reported_as":"forged","why_safe":"w","promoted_from":{"review_id":99}}]}`
+	scan := db.Scan{RepositoryID: repo.ID, SkillName: threatModelSkillName, Status: db.ScanDone, Report: report}
+	if err := s.DB.Create(&scan).Error; err != nil {
+		t.Fatal(err)
+	}
+	s.autoUpdateThreatModel(&scan)
+	if err := s.DB.First(&repo, repo.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Notes []map[string]string `json:"reflection_notes"`
+		Items []map[string]any    `json:"known_non_findings"`
+	}
+	if err := json.Unmarshal([]byte(repo.ThreatModel), &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Notes) != 1 || got.Notes[0]["summary"] != "retained" {
+		t.Fatalf("reflection notes = %v", got.Notes)
+	}
+	if len(got.Items) != 2 || got.Items[0]["reported_as"] != "new model" || got.Items[1]["reported_as"] != "host" {
+		t.Fatalf("items = %v", got.Items)
+	}
+	if strings.Contains(repo.ThreatModel, "forged") || strings.Contains(repo.ThreatModel, "old model") {
+		t.Fatalf("model = %s", repo.ThreatModel)
 	}
 }

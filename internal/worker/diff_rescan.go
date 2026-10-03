@@ -10,6 +10,7 @@ import (
 
 	"scrutineer/internal/coverage"
 	"scrutineer/internal/db"
+	"scrutineer/internal/feedbackpromotion"
 )
 
 const (
@@ -250,7 +251,10 @@ func (w *Worker) stageOldThreatModel(workRoot string, scan *db.Scan) (*uint, err
 	if err != nil {
 		return nil, nil
 	}
-	if err := os.WriteFile(filepath.Join(workRoot, oldThreatModelFile), []byte(tm.Report), filePerm); err != nil {
+	// Promotions live only in the repository contract; any promoted_from in a
+	// raw report was copied or forged by the model and could outlive retirement.
+	report := feedbackpromotion.StripPromoted(tm.Report)
+	if err := os.WriteFile(filepath.Join(workRoot, oldThreatModelFile), []byte(report), filePerm); err != nil {
 		return nil, fmt.Errorf("stage old threat model: %w", err)
 	}
 	return &tm.ID, nil

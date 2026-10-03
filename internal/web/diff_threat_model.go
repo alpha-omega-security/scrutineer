@@ -8,6 +8,7 @@ import (
 
 	"scrutineer/internal/coverage"
 	"scrutineer/internal/db"
+	"scrutineer/internal/feedbackpromotion"
 	"scrutineer/internal/reflection"
 )
 
@@ -48,7 +49,11 @@ func (s *Server) autoUpdateThreatModel(scan *db.Scan) {
 		return
 	}
 	if err := db.UpdateThreatModel(s.DB, scan.RepositoryID, func(previous string) (string, error) {
-		return reflection.Preserve(previous, model)
+		kept, err := reflection.Preserve(previous, model)
+		if err != nil {
+			return "", err
+		}
+		return feedbackpromotion.Preserve(previous, kept)
 	}); err != nil {
 		s.markThreatModelUpdate(scan, "skipped_update_error", false, err.Error())
 		s.Log.Warn("threat-model update: save repository model", "scan", scan.ID, "repo", scan.RepositoryID, "err", err)

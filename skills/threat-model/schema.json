@@ -326,7 +326,31 @@
         "reported_as": { "type": "string" },
         "why_safe":    { "type": "string" },
         "cites":       { "type": "string", "description": "JSON pointer-ish reference into this report, e.g. out_of_scope[0]" },
-        "suppression": { "type": "string" }
+        "suppression": { "type": "string" },
+        "promoted_from": {
+          "type": "object",
+          "readOnly": true,
+          "description": "Host-owned provenance. Present only on entries the host promoted from an analyst false-positive decision after repeated independent confirmation. Never author or edit it.",
+          "required": ["review_id", "finding_id", "source_commit", "confirmations"],
+          "additionalProperties": false,
+          "properties": {
+            "review_id":     { "type": "integer", "minimum": 1 },
+            "finding_id":    { "type": "integer", "minimum": 1 },
+            "source_commit": { "type": "string" },
+            "confirmations": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["scan_id", "commit"],
+                "additionalProperties": false,
+                "properties": {
+                  "scan_id": { "type": "integer", "minimum": 1 },
+                  "commit":  { "type": "string" }
+                }
+              }
+            }
+          }
+        }
       }
     },
 

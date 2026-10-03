@@ -346,6 +346,25 @@ findings that already have a row here.
 
 Browser rejection records a review and the lifecycle change in one transaction. The analyst selects false positive, already fixed, or other/not actionable (`uncertain`); only the latest false-positive review on a still-rejected finding is eligible for skill feedback. Legacy reviews without observation snapshots are excluded rather than attributed retroactively. Reviewer names are operator-supplied labels, not authenticated identities.
 
+### Promotion
+
+The host can promote a surviving decision into the repository threat model's `known_non_findings`. A finalized `revalidate` scan with verdict `false_positive` whose `reason` cites `analyst_feedback: <review_id>` records a confirmation when that review is currently eligible for the finding's repository and file and belongs to a different finding. Other verdicts, uncited reasons and ineligible IDs record nothing. Deep-dive citations are not counted.
+
+A decision is promoted once its confirmations span at least 3 distinct commits, not counting the review's own `source_commit`. It must also still be eligible. The host merges one entry into the existing threat-model JSON object with `reported_as`, `why_safe` (the analyst's reason) and a host-owned `promoted_from` object (`review_id`, `finding_id`, `source_commit` and the confirming `scan_id`/`commit` pairs). A repository without a threat-model object is skipped silently and a later confirmation retries. Staging filters the contract against current eligibility before writing `threat_model.json`, so a reopened or superseded decision never suppresses anything. A threat-model refresh strips any `promoted_from` the model wrote and carries the host's promoted entries over from the previous contract. It rejects a report whose `known_non_findings` is not an array but carries `promoted_from`, keeping the previous contract. Promotions live only in the repository contract: the copy of a raw threat-model scan report that skills read through `GET /scans/{id}` and the `old_threat_model.json` staged for diff threat-model runs both have every promoted entry stripped, so a stale copy cannot keep suppressing findings after retirement. Deleting a finding also deletes confirmations that relied on its reviews.
+
+## feedback_confirmations
+
+One row per revalidate scan that relied on an analyst decision. Used only to count independent confirmations for promotion.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | integer PK | |
+| review_id | integer, indexed | The `finding_reviews` row that was cited. Unique with `scan_id`, so retried scans never double-count. |
+| scan_id | integer | The confirming revalidate scan. |
+| finding_id | integer | The finding that scan revalidated. Rows are removed when that finding is deleted. |
+| commit | text | Commit the confirming scan audited. |
+| created_at | datetime | |
+
 ## finding_verifications
 
 Append-only grading records produced by finding-scoped `verify` scans. The complete rubric report remains immutable in `report`; `status` and `score` are promoted for display and filtering. The finding page derives its current verification result from the newest row rather than overwriting prior runs. Current reports also contain a non-scored control-bypass gate whose IDs and optional resolution-failure reason are checked against the context resolved by the host for that finding, plus typed severity prerequisites used by deterministic calibration rules.

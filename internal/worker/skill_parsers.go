@@ -1726,6 +1726,9 @@ func (w *Worker) parseRevalidateOutput(scan *db.Scan, report string, emit func(E
 	}
 
 	emit(Event{Kind: KindText, Text: "finding " + fmt.Sprint(f.ID) + " -> " + result.Verdict})
+	if result.Verdict == "false_positive" {
+		w.recordFeedbackConfirmations(scan, &f, result.Reason, emit)
+	}
 
 	// Hand the verdict to the web layer for downstream chaining. The
 	// post-adjustment severity is what the chain reads: when revalidate

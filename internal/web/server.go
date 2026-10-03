@@ -3175,6 +3175,9 @@ func (s *Server) deleteFinding(finding db.Finding) (deletedFinding, error) {
 		if err := tx.Exec("DELETE FROM finding_labels_join WHERE finding_id = ?", finding.ID).Error; err != nil {
 			return err
 		}
+		if err := deleteReviewConfirmations(tx, "finding_id = ?", finding.ID); err != nil {
+			return err
+		}
 		for _, child := range findingChildModels() {
 			if err := tx.Where("finding_id = ?", finding.ID).Delete(child).Error; err != nil {
 				return err
@@ -3216,12 +3219,24 @@ func deleteFindingChildren(tx *gorm.DB, repoID uint) error {
 	if err := tx.Exec("DELETE FROM finding_labels_join WHERE "+findingsOfRepo, repoID).Error; err != nil {
 		return err
 	}
+	if err := deleteReviewConfirmations(tx, findingsOfRepo, repoID); err != nil {
+		return err
+	}
 	for _, child := range findingChildModels() {
 		if err := tx.Where(findingsOfRepo, repoID).Delete(child).Error; err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// deleteReviewConfirmations removes confirmations that rely on the reviews of
+// the findings matched by where. A confirmation's finding_id is the revalidated
+// finding, not the reviewed one, so deleting children by finding_id alone would
+// orphan confirmations that point at a deleted review. It must run before the
+// reviews themselves are deleted.
+func deleteReviewConfirmations(tx *gorm.DB, where string, args ...any) error {
+	return tx.Exec("DELETE FROM feedback_confirmations WHERE review_id IN (SELECT id FROM finding_reviews WHERE "+where+")", args...).Error
 }
 
 // findingChildModels is shared by repository and individual finding deletion
@@ -3231,7 +3246,7 @@ func deleteFindingChildren(tx *gorm.DB, repoID uint) error {
 func findingChildModels() []any {
 	return []any{
 		&db.FindingNote{}, &db.FindingCommunication{}, &db.FindingReference{},
-		&db.FindingHistory{}, &db.FindingDependent{}, &db.FindingReview{},
+		&db.FindingHistory{}, &db.FindingDependent{}, &db.FindingReview{}, &db.FeedbackConfirmation{},
 		&db.FindingVerification{}, &db.FindingAttackPath{},
 		&db.RemediationValidation{}, &db.RemediationAttempt{},
 	}
