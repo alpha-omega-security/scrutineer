@@ -110,7 +110,7 @@
         },
         "trace": { "$ref": "#/$defs/markdown" },
         "boundary": { "$ref": "#/$defs/markdown" },
-        "validation": { "$ref": "#/$defs/markdown" },
+        "validation": { "$ref": "#/$defs/markdown", "description": "Paste every PoC file verbatim in a separate closed Markdown fence with language filename=relative/path on its opening line. Use unique safe relative paths and reserve README.md for bundle instructions. Include build/run commands in a sh filename=run.sh fence and output in separate unnamed text or console fences. Close fences on their own lines; do not use --- FILENAME --- delimiters." },
         "prior_art": { "$ref": "#/$defs/markdown" },
         "discovered_via": { "type": "string", "enum": ["source", "issue-tracker", "advisory", "documentation"], "description": "How this finding was first identified. Folded into prior_art on ingest." },
         "reach": { "$ref": "#/$defs/markdown" },

@@ -90,7 +90,7 @@
         },
         "trace": {"$ref": "#/$defs/markdown"},
         "boundary": {"$ref": "#/$defs/markdown"},
-        "validation": {"$ref": "#/$defs/markdown"},
+        "validation": {"$ref": "#/$defs/markdown", "description": "Record the evidence collected under this skill's execution rules. When including PoC files, paste each verbatim in a separate closed Markdown fence with language filename=relative/path on its opening line. Use unique safe relative paths and reserve README.md for bundle instructions. Put build/run commands in a sh filename=run.sh fence and output in separate unnamed text or console fences. Close fences on their own lines; do not use --- FILENAME --- delimiters or claim execution during a static audit."},
         "prior_art": {"$ref": "#/$defs/markdown"},
         "discovered_via": {
           "type": "string",
