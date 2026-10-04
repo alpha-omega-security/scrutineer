@@ -1,0 +1,9 @@
+{
+  "id": "rfc9112-7.1",
+  "citation": "RFC 9112 §7.1",
+  "lean_module": "Rfc9112.Chunked",
+  "lean_c": ".lake/build/ir/Rfc9112/Chunked.c",
+  "parse_symbol": "lp_leanrfcs_Rfc9112_parseChunkedBody",
+  "init_symbol": "initialize_leanrfcs_Rfc9112_Chunked",
+  "protocol": "http1"
+}
