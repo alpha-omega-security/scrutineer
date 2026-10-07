@@ -24,7 +24,7 @@ RUN pip install --no-cache-dir "semgrep==${SEMGREP_VERSION}" "setuptools<81" "ba
 
 FROM golang:1.27.1-alpine@sha256:8a5910f31396cd4d89662f56c68b3ae31d374308270a1c3bd96672ee5ed43414 AS go-tools
 RUN apk add --no-cache git
-ARG BETTERLEAKS_VERSION=v1.8.1
+ARG BETTERLEAKS_VERSION=v1.9.0
 RUN GOBIN=/out CGO_ENABLED=0 go install -ldflags "-X=github.com/betterleaks/betterleaks/version.Version=${BETTERLEAKS_VERSION}" github.com/betterleaks/betterleaks@${BETTERLEAKS_VERSION}
 
 RUN GOBIN=/out go install github.com/git-pkgs/git-pkgs@v0.20.0
