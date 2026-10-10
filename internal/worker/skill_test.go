@@ -1077,21 +1077,31 @@ func TestApplyRepositoryPathFilters_layersRepositorySkip(t *testing.T) {
 	assertGone(t, src, "tests/main.go")
 }
 
-func TestApplyFocusAreaPathFilter(t *testing.T) {
+func TestPrepareSkillSourceKeepsFullTreeForFocusArea(t *testing.T) {
 	work := t.TempDir()
 	src := filepath.Join(work, "src")
 	writeFiles(t, src, map[string]string{
-		"lib/xmlparse.c": "x",
-		"lib/xmlrole.c":  "x",
-		"cmd/tool.c":     "x",
-		".git/HEAD":      "ref: refs/heads/main",
+		"Cargo.toml":        "[package]",
+		"build.rs":          "fn main() {}",
+		"src/lib.rs":        "mod parser;",
+		"src/parser/mod.rs": "x",
+		"src/cli/main.rs":   "x",
+		"Cargo.lock":        "x",
+		".git/HEAD":         "ref: refs/heads/main",
 	})
-	area := repoconfig.FocusArea{Name: "XML parser", Paths: []string{"lib/xml*.c"}, Surface: "untrusted XML"}
-	if err := applyFocusAreaPathFilter(work, area, func(Event) {}); err != nil {
+	raw, err := repoconfig.EncodeFocusAreaJSON(repoconfig.FocusArea{Name: "parser", Paths: []string{"src/parser/**"}, Surface: "untrusted input"})
+	if err != nil {
 		t.Fatal(err)
 	}
-	assertExists(t, src, "lib/xmlparse.c", "lib/xmlrole.c", ".git/HEAD")
-	assertGone(t, src, "cmd/tool.c")
+	scan := &db.Scan{FocusArea: raw}
+	if _, err := (&Worker{}).prepareSkillSource(context.Background(), work, scan, &db.Skill{Name: "security-deep-dive"}, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	// The manifest, build script and crate root outside the area stay so the
+	// code still builds; the area narrows the audit through context.json.
+	assertExists(t, src, "Cargo.toml", "build.rs", "src/lib.rs", "src/parser/mod.rs", "src/cli/main.rs", ".git/HEAD")
+	// Builtin skips still apply to focus-area scans.
+	assertGone(t, src, "Cargo.lock")
 }
 
 func TestApplyPathFilters_gitPreserved(t *testing.T) {

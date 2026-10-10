@@ -69,8 +69,9 @@ The optional `coverage.surfaces` array records reviewed attack surfaces with a d
 
 If `scrutineer.focus_area` is present, this is one member of a parallel audit
 batch. Audit only that area's named paths and attack surface; do not expand
-into another configured focus area. The worker has removed files outside the
-area from `./src`, so report no coverage claim beyond it.
+into another configured focus area. The worker keeps the full repository in
+`./src` so the code builds and callers can be traced. Read files outside the
+area only for that context and report no coverage claim beyond it.
 
 If `scrutineer.scan_config` is present, use its `attack_surface` as the
 operator's ground truth when naming trust boundaries. For an unscoped run,

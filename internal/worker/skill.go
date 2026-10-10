@@ -89,7 +89,8 @@ type skillContextScrutineer struct {
 	// entirely for repositories without a saved configuration.
 	ScanConfig *repoconfig.Config `json:"scan_config,omitempty"`
 	// FocusArea narrows a fan-out security-deep-dive scan to one named
-	// input-processing subsystem from scan_config. Empty means normal scope.
+	// input-processing subsystem from scan_config. The full tree stays in
+	// ./src; the area is the audit's scope. Empty means normal scope.
 	FocusArea   *repoconfig.FocusArea    `json:"focus_area,omitempty"`
 	Exploration *skillContextExploration `json:"exploration,omitempty"`
 	// Recon is the latest completed focus-area map. It is staged only for the
@@ -1117,13 +1118,6 @@ func applyRepositoryPathFilters(workRoot string, skill *db.Skill, rawConfig stri
 		return fmt.Errorf("parse repository scan config: %w", err)
 	}
 	return applyPathFiltersWithSkips(workRoot, skill, cfg.Skip, emit)
-}
-
-// applyFocusAreaPathFilter narrows a fan-out audit to the paths belonging to
-// its persisted focus area. Repository skip rules have already been applied;
-// this only removes files outside the area and does not reintroduce anything.
-func applyFocusAreaPathFilter(workRoot string, area repoconfig.FocusArea, emit func(Event)) error {
-	return applyPathFiltersWithPatterns(workRoot, area.Paths, nil, emit)
 }
 
 func applyPathFiltersWithSkips(workRoot string, skill *db.Skill, repositorySkips []string, emit func(Event)) error {

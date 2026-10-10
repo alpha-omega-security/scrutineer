@@ -77,7 +77,9 @@ func (w *Worker) scanScopeHard(scan *db.Scan, outputKind string) bool {
 // prepareSkillSource applies every source-tree transformation after checkout
 // and before the skill workspace is rendered. Keeping the ordering here is
 // important: remediation patches apply to the same filtered tree the skill
-// inspects, after diff and focus-area inputs have been resolved.
+// inspects, after diff inputs have been resolved. A focus area narrows the
+// audit through context.json only. Its scan keeps the full tree so the code
+// still builds, since .git would make any removed file recoverable anyway.
 func (w *Worker) prepareSkillSource(ctx context.Context, workRoot string, scan *db.Scan, skill *db.Skill, emit func(Event)) (bool, error) {
 	// Hard scope stays outside PrepareSrc so local and remote repositories use
 	// identical semantics and the soft fallback can re-stage the whole tree.
@@ -90,17 +92,8 @@ func (w *Worker) prepareSkillSource(ctx context.Context, workRoot string, scan *
 	if err := w.prepareDiffRescan(ctx, scan, workRoot, emit); err != nil {
 		return false, err
 	}
-	focusArea, err := scanFocusArea(scan)
-	if err != nil {
-		return false, err
-	}
 	if err := applyRepositoryPathFilters(workRoot, skill, scan.Repository.ScanConfig, emit); err != nil {
 		return false, fmt.Errorf("apply path filters: %w", err)
-	}
-	if focusArea != nil {
-		if err := applyFocusAreaPathFilter(workRoot, *focusArea, emit); err != nil {
-			return false, fmt.Errorf("apply focus-area path filter: %w", err)
-		}
 	}
 	if err := w.prepareRemediationWorkspace(workRoot, scan, skill); err != nil {
 		return false, fmt.Errorf("stage remediation inputs: %w", err)
