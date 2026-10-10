@@ -1,0 +1,19 @@
+{
+  "findings": [
+    {
+      "id": "F001",
+      "title": "Webhook branch name reaches a shell command",
+      "severity": "High",
+      "confidence": "high",
+      "cwe": "CWE-78",
+      "location": "internal/hooks/run.go:88",
+      "reachability": "reachable",
+      "quality_tier": "high",
+      "trace": "The branch parameter is concatenated into a shell command.",
+      "boundary": "An authenticated repository webhook supplies the branch name.",
+      "validation": "Static review traced the branch parameter to sh -c. The following candidate input was not executed.\n\n```text filename=input.txt\nmain; printf example\n```\n",
+      "discovered_via": "source",
+      "rating": "The webhook value can inject commands into the deployment worker."
+    }
+  ]
+}

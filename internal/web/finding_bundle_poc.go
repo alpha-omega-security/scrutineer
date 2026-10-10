@@ -2,17 +2,10 @@ package web
 
 import (
 	"fmt"
-	"regexp"
 	"strings"
-)
 
-// fencedBlock is the standard three-backtick code fence with an optional
-// info string on the opening line. Indented (four-space) code blocks are
-// not extracted: the audit and verify skills are told to paste the
-// reproduction verbatim into a fenced block, so an indented block is
-// almost always output text or a quoted excerpt rather than the runnable
-// artefact.
-var fencedBlock = regexp.MustCompile("(?s)```[ \t]*([a-zA-Z0-9_+.-]*)[^\n]*\n(.*?)```")
+	"scrutineer/internal/poc"
+)
 
 // probeExt maps a fence info string (already lowercased) to the
 // filename its body is written as under poc/. Only explicit shell script
@@ -71,56 +64,52 @@ var probeRunner = map[string]string{
 
 const runShMode = 0o755
 
-// bundlePoC turns a finding's Validation prose into a poc/ directory for
-// the disclosure bundle. Each fenced code block becomes a file named for
-// its fence language; the full prose lands in poc/README.md so the
-// recipient keeps the surrounding context (expected output, fingerprint,
-// caveats). When the prose supplied a language probe but no shell driver,
-// a minimal run.sh is generated that invokes the first probe. Returns nil
-// when the prose has no fenced blocks: report.md already carries the
-// validation text, and a poc/ with only a README would add nothing
-// runnable.
-func bundlePoC(validation string) []bundleEntry {
-	blocks := fencedBlock.FindAllStringSubmatch(validation, -1)
-	if len(blocks) == 0 {
-		return nil
+// Named fences preserve paths relative to poc/; unnamed fences retain the
+// language-based filenames used by older reports.
+func bundlePoC(validation string) ([]bundleEntry, error) {
+	blocks, err := poc.Parse(validation)
+	if err != nil {
+		return nil, err
+	}
+	used := map[string]bool{"readme.md": true}
+	for _, block := range blocks {
+		if block.Name == "" {
+			continue
+		}
+		used[strings.ToLower(block.Name)] = true
 	}
 
-	seen := map[string]int{}
 	var entries []bundleEntry
 	var firstProbe string
 	haveRunSh := false
 
-	for _, m := range blocks {
-		lang := strings.ToLower(strings.TrimSpace(m[1]))
-		body := m[2]
-		if strings.TrimSpace(body) == "" {
-			continue
-		}
-		if !strings.HasSuffix(body, "\n") {
-			body += "\n"
-		}
-		name, ok := probeExt[lang]
+	for _, block := range blocks {
+		name := block.Name
+		legacyName, ok := probeExt[block.Language]
 		if !ok {
-			name = "probe." + lang
+			legacyName = "probe." + block.Language
 		}
-		executable := name == "run.sh"
-		seen[name]++
-		if n := seen[name]; n > 1 {
-			name = suffixBeforeExt(name, n)
+		if name == "" {
+			name = legacyName
+			for n := 2; poc.NameConflict(used, name); n++ {
+				name = suffixBeforeExt(legacyName, n)
+			}
+			used[strings.ToLower(name)] = true
 		}
 		var mode int64
-		if executable {
-			haveRunSh = true
+		if legacyName == "run.sh" || name == "run.sh" {
 			mode = runShMode
 		}
-		if firstProbe == "" && strings.HasPrefix(name, "probe.") {
+		if name == "run.sh" {
+			haveRunSh = true
+		}
+		if firstProbe == "" && block.Name == "" && strings.HasPrefix(name, "probe.") {
 			firstProbe = name
 		}
-		entries = append(entries, bundleEntry{Name: "poc/" + name, Data: []byte(body), Mode: mode})
+		entries = append(entries, bundleEntry{Name: "poc/" + name, Data: block.Body, Mode: mode})
 	}
 	if len(entries) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	if !haveRunSh {
@@ -135,7 +124,7 @@ func bundlePoC(validation string) []bundleEntry {
 		Name: "poc/README.md",
 		Data: []byte(pocReadme(validation)),
 	})
-	return entries
+	return entries, nil
 }
 
 // suffixBeforeExt inserts -n before the final dot: probe.py, 2 -> probe-2.py.
@@ -167,7 +156,7 @@ func pocReadme(validation string) string {
 	var b strings.Builder
 	b.WriteString("# Reproduction\n\n")
 	b.WriteString("This directory is the finding's Validation step materialised as files. ")
-	b.WriteString("Fenced code blocks from the text below have been written out alongside ")
+	b.WriteString("Fenced code blocks use their declared filenames, or language-based names when unnamed. They are written alongside ")
 	b.WriteString("this README; run.sh is either the shell block from the reproduction or ")
 	b.WriteString("a generated stub that invokes the first probe.\n\n")
 	b.WriteString("## Validation (verbatim)\n\n")

@@ -535,6 +535,9 @@ func reportValidationForParsing(skill *db.Skill, report string) (string, bool) {
 	if detail := ValidateReportSchema(skill.SchemaJSON, report); detail != "" {
 		return detail, false
 	}
+	if detail := validateReportPoC(skill.Name, report); detail != "" {
+		return detail, false
+	}
 	detail := ValidateReportSemantics(skill.Name, report)
 	return detail, detail != "" && skill.Name == verifySkillName
 }
