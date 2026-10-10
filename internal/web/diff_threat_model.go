@@ -8,6 +8,7 @@ import (
 
 	"scrutineer/internal/coverage"
 	"scrutineer/internal/db"
+	"scrutineer/internal/feedbackpromotion"
 	"scrutineer/internal/reflection"
 )
 
@@ -48,7 +49,18 @@ func (s *Server) autoUpdateThreatModel(scan *db.Scan) {
 		return
 	}
 	if err := db.UpdateThreatModel(s.DB, scan.RepositoryID, func(previous string) (string, error) {
-		return reflection.Preserve(previous, model)
+		kept, err := reflection.Preserve(previous, model)
+		if err != nil {
+			return "", err
+		}
+		// Carry over only promotions whose decision is still eligible, so a
+		// reopened or superseded one leaves the stored contract here.
+		eligible, err := db.EligibleFeedbackReviewIDs(s.DB, scan.RepositoryID)
+		if err != nil {
+			return "", err
+		}
+		active := feedbackpromotion.Filter(previous, func(id uint) bool { return eligible[id] })
+		return feedbackpromotion.Preserve(active, kept)
 	}); err != nil {
 		s.markThreatModelUpdate(scan, "skipped_update_error", false, err.Error())
 		s.Log.Warn("threat-model update: save repository model", "scan", scan.ID, "repo", scan.RepositoryID, "err", err)

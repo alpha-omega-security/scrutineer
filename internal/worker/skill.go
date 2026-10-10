@@ -1476,8 +1476,14 @@ func (w *Worker) stageWorkspace(ctx context.Context, workRoot, skillDir string, 
 	if err != nil {
 		return skillContext{}, err
 	}
+	model, err := w.activeThreatModel(scan.RepositoryID, scan.Repository.ThreatModel, skill.Name)
+	if err != nil {
+		return skillContext{}, fmt.Errorf("filter promoted feedback: %w", err)
+	}
+	staged := *scan
+	staged.Repository.ThreatModel = model
 	return stageWorkspaceWithInputs(
-		workRoot, skillDir, w.apiBaseFor(skill.Name), w.ForkOrg, w.metadataDir(), scan, skill, recon, novelty, controls, feedback,
+		workRoot, skillDir, w.apiBaseFor(skill.Name), w.ForkOrg, w.metadataDir(), &staged, skill, recon, novelty, controls, feedback,
 	)
 }
 

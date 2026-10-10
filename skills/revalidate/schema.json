@@ -27,6 +27,13 @@
     "adjusted_severity_reason": {
       "type": "string",
       "description": "One line explaining the adjustment. Required when adjusted_severity is set."
+    },
+    "analyst_feedback_ids": {
+      "type": "array",
+      "maxItems": 20,
+      "uniqueItems": true,
+      "items": { "type": "integer", "minimum": 1 },
+      "description": "review_id of each staged analyst_feedback decision whose reason this verdict relied on after current-code evidence confirmed it still holds. Omit or leave empty when no decision was relied on."
     }
   },
   "dependentRequired": {

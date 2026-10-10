@@ -1633,6 +1633,7 @@ func (w *Worker) parseRevalidateOutput(scan *db.Scan, report string, emit func(E
 		PrivilegeRequired      string `json:"privilege_required"`
 		AdjustedSeverity       string `json:"adjusted_severity"`
 		AdjustedSeverityReason string `json:"adjusted_severity_reason"`
+		AnalystFeedbackIDs     []uint `json:"analyst_feedback_ids"`
 	}
 	if err := json.Unmarshal([]byte(report), &result); err != nil {
 		return fmt.Errorf("parse revalidate report: %w", err)
@@ -1726,6 +1727,9 @@ func (w *Worker) parseRevalidateOutput(scan *db.Scan, report string, emit func(E
 	}
 
 	emit(Event{Kind: KindText, Text: "finding " + fmt.Sprint(f.ID) + " -> " + result.Verdict})
+	if result.Verdict == "false_positive" {
+		w.recordFeedbackConfirmations(scan, &f, result.AnalystFeedbackIDs, emit)
+	}
 
 	// Hand the verdict to the web layer for downstream chaining. The
 	// post-adjustment severity is what the chain reads: when revalidate
