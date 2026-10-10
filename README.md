@@ -173,7 +173,7 @@ Adding a repo enqueues the `triage` skill, whose SKILL.md lists the further skil
 | `revalidate` | Cheap read-only classifier (prose + `git log`, no PoC execution) that emits true / false positive / already-fixed / uncertain; auto-enqueued for High/Critical from `security-deep-dive` and for every imported finding. Every `true_positive` chains to `critic`, and High/Critical true positives also chain to `verify` |
 | `breaking-change` | Static breaking-change check on the suggested-fix diff; records `breaking`/`non_breaking`/`unknown` with rationale and the affected dependents |
 | `release-watch` | After a finding reaches `fixed`, watches the upstream for a release containing the fix commit; records release tag, URL, and timestamp on the finding |
-| `disclose` | Drafts a GHSA-shaped advisory (title, description, CVSS, CWEs, references) for one finding |
+| `disclose` | Drafts a GHSA-shaped advisory (title, description, CVSS, CWEs, references) for one finding, shaped to the upstream's custom vulnerability report form when it defines one |
 | `patch` | Proposes a unified diff fixing one finding; a diff that passes the applicability gate is stored on the finding as its suggested fix |
 | `reattack` | Applies one immutable gated patch to a fresh checkout and independently exercises three root-cause variants plus a benign control; records a bypass, verified resistance, or incomplete verification without overwriting prior attempts |
 | `report-upstream` | Files one finding on the upstream repository via GitHub PVR with the proposed patch attached; the action that moves a finding to `reported` |

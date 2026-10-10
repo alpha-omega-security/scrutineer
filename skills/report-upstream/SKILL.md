@@ -76,7 +76,7 @@ gh api -X POST repos/{owner}/{repo}/security-advisories/reports --input ./adviso
 
 This is the external-reporter endpoint; do not use the bare `/security-advisories` admin endpoint, which only works for repo admins. Capture `ghsa_id` and `html_url` from the response.
 
-A 422 with `Private vulnerability reporting is disabled` means PVR was turned off between the precondition check and the POST; treat as a refusal. A 422 mentioning a specific field (`vulnerabilities`, `cvss_vector_string`) means the body shape was rejected; fix the named field (drop `vulnerable_version_range`, drop `cvss_vector_string` in favour of `severity`) and retry once. Any other non-2xx is a refusal with the response body in `error`.
+A 422 with `Private vulnerability reporting is disabled` means PVR was turned off between the precondition check and the POST; treat as a refusal. A 422 whose `errors[].code` is `missing_section`, `empty_section`, `unchecked_required_option` or `sections_out_of_order` means the description does not answer the repository's custom report form: do not edit the description and do not retry, refuse with every such error's `code`, `section` and `option` in `error`, and tell the operator to complete the draft (or re-run `disclose`, which shapes it to the form) before filing again. A 422 mentioning another specific field (`vulnerabilities`, `cvss_vector_string`) means the body shape was rejected; fix the named field (drop `vulnerable_version_range`, drop `cvss_vector_string` in favour of `severity`) and retry once. Any other non-2xx is a refusal with the response body in `error`.
 
 ## 3. Push the patch to the temporary private fork
 

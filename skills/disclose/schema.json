@@ -16,7 +16,7 @@
         },
         "description": {
           "type": "string",
-          "description": "Markdown body. Maps to GHSA `description`."
+          "description": "Markdown body. Maps to GHSA `description`. When the upstream defines a custom private vulnerability reporting form (`.github/VULNERABILITY_REPORT.yml` in the repository or in the owner's `.github` repository), one `### <label>` section per non-markdown form element, in form order, with checkboxes left unticked."
         },
         "vulnerabilities": {
           "type": "array",
@@ -119,7 +119,7 @@
     },
     "notes": {
       "type": "string",
-      "description": "Free-form prose: gaps in the source prose, ambiguity in the version range, source-only (no packages), anything the analyst should know."
+      "description": "Free-form prose: gaps in the source prose, ambiguity in the version range, source-only (no packages), the custom report form used and any of its required fields, checkboxes or minimum lengths the analyst must complete, anything the analyst should know."
     },
     "error": {
       "type": "string",
