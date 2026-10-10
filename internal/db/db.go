@@ -1022,6 +1022,7 @@ type Finding struct {
 	Notes                  []FindingNote           `gorm:"constraint:OnDelete:CASCADE"`
 	Communications         []FindingCommunication  `gorm:"constraint:OnDelete:CASCADE"`
 	References             []FindingReference      `gorm:"constraint:OnDelete:CASCADE"`
+	AkritesSubmission      *AkritesSubmission      `gorm:"constraint:OnDelete:CASCADE" json:"-"`
 	History                []FindingHistory        `gorm:"constraint:OnDelete:CASCADE"`
 	Verifications          []FindingVerification   `gorm:"constraint:OnDelete:CASCADE"`
 	AttackPaths            []FindingAttackPath     `gorm:"constraint:OnDelete:CASCADE"`
@@ -1643,7 +1644,7 @@ func migrateSchema(gdb *gorm.DB) error {
 	}
 	if err := gdb.AutoMigrate(
 		&Repository{}, &Scan{},
-		&Finding{}, &FindingLabel{}, &FindingNote{},
+		&Finding{}, &FindingLabel{}, &FindingNote{}, &AkritesSubmission{},
 		&FindingCommunication{}, &FindingReference{}, &FindingHistory{}, &FindingReview{}, &FindingVerification{}, &FindingAttackPath{}, &ScanPreflightReceipt{},
 		&RemediationAttempt{}, &RemediationValidation{}, &AuditEvent{},
 		&Dependency{}, &ExpectedFinding{}, &Package{}, &PackageAlternative{}, &Dependent{}, &FindingDependent{}, &Advisory{}, &AdvisoryAudit{},

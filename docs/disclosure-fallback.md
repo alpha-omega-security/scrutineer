@@ -59,6 +59,16 @@ Scrutineer sends one request and does not retry it. VINCE has no idempotency key
 
 When VINCE returns HTTP 201 with a VRF ID, Scrutineer adds a `vince,coordinator` reference, records an outbound communication with the attachment name, and moves the finding to `reported`. If VINCE accepts the report but local bookkeeping fails, the error page shows the VRF ID for manual reconciliation.
 
+### Submit to Akrites
+
+Set `akrites.submission_token` in the owner-only `scrutineer.yaml` file to enable **Akrites submission** on findings. `akrites.base_url` defaults to `https://intake.tap.akrites.dev`; staging uses `https://intake.taptest.akrites.dev`. Both require HTTPS with certificate verification and TLS 1.2 or later. `akrites.email` prefills the notification address, which is required unless notifications are off. Authentication sends the token as `Authorization: Bearer`. Intake still accepts the deprecated `TAP-SUBMISSION-TOKEN` header; set `akrites.auth_header: TAP-SUBMISSION-TOKEN` only for an intake deployment that predates bearer tokens. Intake answers an expired or revoked token with HTTP 401; ask Akrites for a new one.
+
+Open the submission page after reviewing the disclosure draft. Check the software name and either the package URL or the ecosystem; Akrites derives the ecosystem from a package URL. Then enter affected versions and review the disclosure text, exploitation details and notification choices. The report uses the [TAP Intake API fields](https://github.com/Akrites-Foundation/SIRT/blob/main/docs/TAP-API-Spec.md): the disclosure text is sent as `text/markdown` and the exploitation details as `text/plain`, each limited to 1 MiB, within a 3 MiB request. No bundle or patch attachment is sent. The same non-viable and subsumed-finding guards apply, and configured federation peers are checked before submission.
+
+An accepted report stores its receipt against the finding, records an outbound communication and moves the finding to `reported`. Receipts grant access to intake status, so they appear only on the submission page and are excluded from finding exports. Background polling resumes after restart, backs off to hourly checks, honors `Retry-After` and stops when intake returns `done`. Completion describes intake processing and does not change the finding to `fixed` or `published`.
+
+Submissions are never retried automatically. When intake rejects fields, the page names each field and its error code. Rejected requests can be corrected and submitted again after any requested delay. A timeout, malformed acceptance or interrupted submission leaves an uncertain result and blocks another POST. Contact Akrites to reconcile that result. If saving a returned receipt fails, the page displays it so you can record it before leaving.
+
 ## GitHub upstream without PVR
 
 The upstream is reachable but the maintainer has not turned PVR on. Two paths, depending on the project's apparent readiness signals from `posture`:

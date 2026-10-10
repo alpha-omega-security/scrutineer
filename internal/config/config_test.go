@@ -19,6 +19,29 @@ func write(t *testing.T, content string) string {
 	return path
 }
 
+func TestLoadAkrites(t *testing.T) {
+	c, err := Load(write(t, "akrites:\n  submission_token: secret\n  base_url: https://intake.example\n  auth_header: Authorization\n  email: reporter@example.com\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	endpoint, err := c.Akrites.Endpoint()
+	if err != nil || !c.Akrites.Enabled() || endpoint != "https://intake.example/v1/reports" || c.Akrites.AuthHeader != "Authorization" || c.Akrites.Email != "reporter@example.com" {
+		t.Fatalf("incorrect Akrites config, endpoint=%q err=%v", endpoint, err)
+	}
+	for _, base := range []string{"http://intake.example", "http://localhost", "https://user:password@intake.example", "https://intake.example/path", "https://intake.example?token=secret", "https://intake.example#fragment", "://invalid"} {
+		if _, err := Load(write(t, "akrites:\n  base_url: "+base+"\n")); err == nil {
+			t.Errorf("accepted base_url %q", base)
+		}
+	}
+	if _, err := Load(write(t, "akrites:\n  auth_header: Cookie\n")); err == nil {
+		t.Error("accepted unsupported auth header")
+	}
+	c, err = Load(write(t, "akrites: {}\n"))
+	if err != nil || c.Akrites.Enabled() {
+		t.Fatalf("empty config enabled, err=%v", err)
+	}
+}
+
 func TestLoad_absentDefaultPathIsNoError(t *testing.T) {
 	// ./scrutineer.yaml doesn't exist in a t.TempDir CWD. Switch into one.
 	cwd, err := os.Getwd()

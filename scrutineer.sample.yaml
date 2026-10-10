@@ -332,6 +332,15 @@
 #     phone: ""
 #     pgp_key: ""
 
+# Submit reviewed findings to Akrites and poll their saved receipts.
+# Keep the token in this owner-only config file. Empty disables submission.
+# akrites:
+#   base_url: https://intake.tap.akrites.dev
+#   submission_token: ""
+#   # Authorization sends a bearer token; TAP-SUBMISSION-TOKEN is deprecated.
+#   auth_header: Authorization
+#   email: ""
+
 # Secret shared out of band between federation members, mixed into
 # interchange finding hashes so members derive matching hashes without
 # publishing anything enumerable (see docs/interchange.md). Config-file
