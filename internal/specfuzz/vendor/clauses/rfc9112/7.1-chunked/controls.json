@@ -1,0 +1,62 @@
+{
+  "clause": "rfc9112-7.1",
+  "citation": "RFC 9112 §7.1",
+  "must_accept": [
+    {
+      "id": "ctrl/accept/single-chunk",
+      "hex": "350d0a68656c6c6f0d0a300d0a0d0a",
+      "why": "one 5-byte chunk, empty trailer section, per grammar",
+      "expect_body_hex": "68656c6c6f"
+    },
+    {
+      "id": "ctrl/accept/empty",
+      "hex": "300d0a0d0a",
+      "why": "last-chunk only, zero-length body",
+      "expect_body_hex": ""
+    },
+    {
+      "id": "ctrl/accept/with-ext",
+      "hex": "353b783d790d0a68656c6c6f0d0a300d0a0d0a",
+      "why": "chunk-ext ';x=y' after chunk-size",
+      "expect_body_hex": "68656c6c6f"
+    },
+    {
+      "id": "ctrl/accept/with-trailer",
+      "hex": "350d0a68656c6c6f0d0a300d0a582d543a20760d0a0d0a",
+      "why": "one trailer field-line 'X-T: v'",
+      "expect_body_hex": "68656c6c6f"
+    }
+  ],
+  "must_reject": [
+    {
+      "id": "ctrl/reject/data-2byte",
+      "hex": "350d0a68656c6c6f58580d0a300d0a0d0a",
+      "why": "chunk-data followed by 'XX' instead of CRLF (CVE-2025-43859 shape)"
+    },
+    {
+      "id": "ctrl/reject/no-hex",
+      "hex": "5a5a0d0a68690d0a300d0a0d0a",
+      "why": "chunk-size 'ZZ' is not 1*HEXDIG"
+    },
+    {
+      "id": "ctrl/reject/space-ext",
+      "hex": "35200d0a68656c6c6f0d0a300d0a0d0a",
+      "why": "bare space after chunk-size; chunk-ext must start ';'"
+    },
+    {
+      "id": "ctrl/reject/bare-lf-data",
+      "hex": "350d0a68656c6c6f0a300d0a0d0a",
+      "why": "chunk-data followed by bare LF"
+    },
+    {
+      "id": "ctrl/reject/trailer-no-colon",
+      "hex": "300d0a696e76616c69640d0a0d0a",
+      "why": "trailer field-line 'invalid' has no colon (RFC 9110 §5.1 field-line = field-name ':' ...)"
+    },
+    {
+      "id": "ctrl/reject/size-16-digits",
+      "hex": "303030303030303030303030303030300d0a0d0a",
+      "why": "chunk-size with 16 hex digits; model caps at 15 to bound Nat"
+    }
+  ]
+}
