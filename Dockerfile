@@ -14,7 +14,7 @@ FROM node:26-alpine@sha256:0b36e8c136b94cd4fcf02188228e76c31ad5872eef3fec8cbd2ee
 
 RUN npm install -g @anthropic-ai/claude-code@2.1.288
 
-FROM python:3.14-alpine@sha256:9e9fde4d32eedce0b661d9ab91e826b62dddf28e928c230ec55f1866cac66b01 AS python-tools
+FROM python:3.14-alpine@sha256:f6a589d43c42b9e7f7dc67a12d37132491f362859a5d750607710cc56da3bc72 AS python-tools
 
 ARG SEMGREP_VERSION=1.179.0
 
@@ -43,7 +43,7 @@ RUN apk add --no-cache build-base linux-headers
 RUN cargo install --locked --root /out zizmor@1.30.1
 
 FROM python:3.15.0rc2-alpine@sha256:a73535961d3114b7b2e6948ef2dd8d295b885a76d3c23e87e688856713c1cbac
-FROM python:3.14-alpine@sha256:9e9fde4d32eedce0b661d9ab91e826b62dddf28e928c230ec55f1866cac66b01
+FROM python:3.14-alpine@sha256:f6a589d43c42b9e7f7dc67a12d37132491f362859a5d750607710cc56da3bc72
 RUN apk add --no-cache git ca-certificates bash nodejs coreutils && \
     rm -f /usr/local/bin/pip* /usr/local/bin/idle* /usr/local/bin/pydoc*
 
