@@ -48,8 +48,9 @@ func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 		q = q.Order(orderByExpr("status", dir, false)).Order("scans.id desc")
 	case sortRepository:
 		// Backtick quoting is invalid on Postgres; let GORM quote the column.
+		const repositoryNameColumn = "name"
 		q = q.Joins("Repository").
-			Order(clause.OrderByColumn{Column: clause.Column{Table: "Repository", Name: "name"}, Desc: wantDesc(dir, false)}).
+			Order(clause.OrderByColumn{Column: clause.Column{Table: "Repository", Name: repositoryNameColumn}, Desc: wantDesc(dir, false)}).
 			Order("scans.id desc")
 	case "findings":
 		// findings_count is a denormalised column on the scan row.

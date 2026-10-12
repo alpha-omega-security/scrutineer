@@ -51,6 +51,7 @@ func testDatabaseWeb(t *testing.T, gdb *gorm.DB, dialect queue.Dialect) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	s.OperatorToken = testOperatorToken
 	repo := db.Repository{URL: "https://example.com/brew", Name: "Homebrew", Owner: "Homebrew", Languages: "Ruby"}
 	if err := gdb.Create(&repo).Error; err != nil {
 		t.Fatal(err)
@@ -92,7 +93,10 @@ func testDatabaseWeb(t *testing.T, gdb *gorm.DB, dialect queue.Dialect) {
 	} {
 		t.Run(tc.path, func(t *testing.T) {
 			r := localReq(http.MethodGet, tc.path)
-			r.Header.Set("Authorization", "Bearer "+scan.APIToken)
+			// A bearer replaces the operator cookie, so only the skill API gets one.
+			if strings.HasPrefix(tc.path, "/api/") {
+				r.Header.Set("Authorization", "Bearer "+scan.APIToken)
+			}
 			w := httptest.NewRecorder()
 			handler.ServeHTTP(w, r)
 			if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), tc.want) {
@@ -102,7 +106,7 @@ func testDatabaseWeb(t *testing.T, gdb *gorm.DB, dialect queue.Dialect) {
 	}
 	w := httptest.NewRecorder()
 	handler.ServeHTTP(w, localReq(http.MethodGet, "/repositories?q=missing"))
-	if strings.Contains(w.Body.String(), fmt.Sprintf(`id="repo-%d"`, repo.ID)) {
+	if w.Code != http.StatusOK || strings.Contains(w.Body.String(), fmt.Sprintf(`id="repo-%d"`, repo.ID)) {
 		t.Fatal("search returned a nonmatching repository")
 	}
 

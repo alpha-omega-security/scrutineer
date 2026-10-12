@@ -53,15 +53,22 @@ func TestPostgresServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = sqldb.Close() }()
+	const token = "postgres-test-operator-token"
+	if err := os.MkdirAll(cfg.Data, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cfg.Data, operatorTokenFile), []byte(token+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	for range 2 {
-		testPostgresServerStart(t, path, addr, sqldb)
+		testPostgresServerStart(t, path, addr, token, sqldb)
 	}
 	if _, err := os.Stat(filepath.Join(cfg.Data, "scrutineer.db")); !os.IsNotExist(err) {
 		t.Fatalf("Postgres instance created a SQLite file: %v", err)
 	}
 }
 
-func testPostgresServerStart(t *testing.T, path, addr string, sqldb *sql.DB) {
+func testPostgresServerStart(t *testing.T, path, addr, token string, sqldb *sql.DB) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -85,7 +92,11 @@ func testPostgresServerStart(t *testing.T, path, addr string, sqldb *sql.DB) {
 			t.Logf("server output:\n%s", log)
 		}
 	}()
-	client := &http.Client{Timeout: time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	client := &http.Client{
+		Transport:     operatorTransport{token: token},
+		Timeout:       time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
 	base := "http://" + addr
 	if err := waitPostgresServer(ctx, client, base, done); err != nil {
 		t.Fatal(err)
@@ -108,6 +119,14 @@ func testPostgresServerStart(t *testing.T, path, addr string, sqldb *sql.DB) {
 	if err := <-done; err != nil {
 		t.Fatalf("server shutdown: %v", err)
 	}
+}
+
+type operatorTransport struct{ token string }
+
+func (o operatorTransport) RoundTrip(r *http.Request) (*http.Response, error) {
+	r = r.Clone(r.Context())
+	r.Header.Set("Authorization", "Bearer "+o.token)
+	return http.DefaultTransport.RoundTrip(r)
 }
 
 func waitPostgresServer(ctx context.Context, client *http.Client, base string, done <-chan error) error {
