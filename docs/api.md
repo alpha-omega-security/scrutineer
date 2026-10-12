@@ -44,7 +44,7 @@ The skill API lets an active skill read repository context and prior scan data, 
 
 The `/api/v1` surface is for commands running on the Scrutineer host. It passes through the same security middleware as the browser UI: it rejects a request whose `Host` is not `127.0.0.1`, `localhost`, or `::1` (with or without a port), and it requires the operator token. A scan bearer token is not accepted here. Browser POST requests through this middleware also check `Sec-Fetch-Site`; non-browser clients such as `curl` do not send that header.
 
-On first run Scrutineer generates the operator token, writes it to `<data>/operator-token` (mode `0600`), and logs a one-time `/login?token=...` link. Opening that link sets an `HttpOnly`, `SameSite=Strict` cookie for the browser UI. Later starts log only the file path, so read the file to sign in again or to script against the API. Deleting the file and restarting rotates the token and signs every browser out.
+On first run Scrutineer generates the operator token, writes it to `<data>/operator-token` (mode `0600`), and logs a `/login?token=...` link. Every later start logs the same link along with the absolute path of the file, so a browser that has lost its cookie can sign in again from the latest log line, and scripts can read the file. Opening the link sets an `HttpOnly`, `SameSite=Strict` cookie for the browser UI, named `operator-` plus a short hash of the token, so two instances on `127.0.0.1` with different ports do not overwrite each other's cookie. Cookies set on `127.0.0.1` are not sent to `localhost`, so use the same hostname the link uses. Deleting the file and restarting rotates the token and signs every browser out.
 
 Send the token as a bearer credential from the host:
 

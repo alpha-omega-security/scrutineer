@@ -47,6 +47,8 @@ func newTestServer(t testing.TB) (*Server, func()) {
 
 const testOperatorToken = "test-operator-token"
 
+var testOperatorCookie = operatorCookieName(testOperatorToken)
+
 func localReq(method, path string) *http.Request {
 	r := httptest.NewRequest(method, path, nil)
 	asOperator(r)
@@ -57,7 +59,7 @@ func localReq(method, path string) *http.Request {
 // leaves the Authorization header free for scan bearer tokens.
 func asOperator(r *http.Request) {
 	r.Host = testHost
-	r.AddCookie(&http.Cookie{Name: operatorCookie, Value: testOperatorToken})
+	r.AddCookie(&http.Cookie{Name: testOperatorCookie, Value: testOperatorToken})
 }
 
 func requireRepoListRow(t *testing.T, body string, repoID uint) string {

@@ -98,6 +98,9 @@ type Server struct {
 	// OperatorToken is the credential the browser UI and /api/v1 require on
 	// top of the loopback Host check. Empty refuses every such request.
 	OperatorToken string
+	// OperatorTokenFile is where OperatorToken is stored, named in the 401
+	// so an operator without the cookie can find it.
+	OperatorTokenFile string
 
 	// SkillsRepoSHA pins the commit of -skills-repo loaded at startup. Set
 	// once by main after loadSkills resolves it; stamped onto every Scan

@@ -3,6 +3,7 @@ package web
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -32,7 +33,7 @@ func TestRequireOperatorGatesUI(t *testing.T) {
 		r := httptest.NewRequest("GET", "/repositories", nil)
 		r.Host = testHost
 		if tc.cookie != "" {
-			r.AddCookie(&http.Cookie{Name: operatorCookie, Value: tc.cookie})
+			r.AddCookie(&http.Cookie{Name: testOperatorCookie, Value: tc.cookie})
 		}
 		if tc.auth != "" {
 			r.Header.Set("Authorization", tc.auth)
@@ -62,7 +63,7 @@ func TestRequireOperatorFailsClosedWithoutToken(t *testing.T) {
 
 	r := httptest.NewRequest("GET", "/repositories", nil)
 	r.Host = testHost
-	r.AddCookie(&http.Cookie{Name: operatorCookie, Value: ""})
+	r.AddCookie(&http.Cookie{Name: testOperatorCookie, Value: ""})
 	if w := serve(s, r); w.Code != http.StatusUnauthorized {
 		t.Errorf("status %d, want 401", w.Code)
 	}
@@ -88,7 +89,7 @@ func TestLoginSetsOperatorCookie(t *testing.T) {
 		t.Fatalf("got %d cookies, want 1", len(cookies))
 	}
 	c := cookies[0]
-	if c.Name != operatorCookie || c.Value != testOperatorToken || !c.HttpOnly || c.SameSite != http.SameSiteStrictMode {
+	if c.Name != testOperatorCookie || c.Value != testOperatorToken || !c.HttpOnly || c.SameSite != http.SameSiteStrictMode {
 		t.Errorf("cookie = %+v, want HttpOnly SameSite=Strict operator cookie", c)
 	}
 
@@ -139,5 +140,60 @@ func TestOperatorExemptRoutes(t *testing.T) {
 	r.Host = testHost
 	if w := serve(s, r); w.Code != http.StatusNotFound {
 		t.Errorf("claim-check: status %d, want 404", w.Code)
+	}
+}
+
+func TestOperatorCookieNameIsPerToken(t *testing.T) {
+	a, b := operatorCookieName("token-a"), operatorCookieName("token-b")
+	if a == b {
+		t.Errorf("two tokens share cookie name %q; instances on one host would sign each other out", a)
+	}
+	if a != operatorCookieName("token-a") {
+		t.Error("cookie name changed between calls; a restart would sign the browser out")
+	}
+	if c := (&http.Cookie{Name: a, Value: "v"}).String(); c == "" {
+		t.Errorf("%q is not a valid cookie name", a)
+	}
+}
+
+func TestLoginDoesNotSignOutOtherInstance(t *testing.T) {
+	a, doneA := newTestServer(t)
+	defer doneA()
+	b, doneB := newTestServer(t)
+	defer doneB()
+	b.OperatorToken = "other-instance-token"
+
+	login := func(s *Server, token string) *http.Cookie {
+		r := httptest.NewRequest("GET", "/login?token="+token, nil)
+		r.Host = testHost
+		return serve(s, r).Result().Cookies()[0]
+	}
+	// A browser holds one cookie per name on 127.0.0.1 whatever the port,
+	// so B's cookie must not replace A's.
+	jar := map[string]*http.Cookie{}
+	for _, c := range []*http.Cookie{login(a, testOperatorToken), login(b, b.OperatorToken)} {
+		jar[c.Name] = c
+	}
+
+	r := httptest.NewRequest("GET", "/repositories", nil)
+	r.Host = testHost
+	for _, c := range jar {
+		r.AddCookie(c)
+	}
+	if w := serve(a, r); w.Code != http.StatusOK {
+		t.Errorf("instance A after signing into B: status %d, want 200", w.Code)
+	}
+}
+
+func TestUnauthorizedNamesTokenFile(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	s.OperatorTokenFile = "/srv/scrutineer/data/operator-token"
+
+	r := httptest.NewRequest("GET", "/repositories", nil)
+	r.Host = testHost
+	w := serve(s, r)
+	if w.Code != http.StatusUnauthorized || !strings.Contains(w.Body.String(), s.OperatorTokenFile) {
+		t.Errorf("status %d body %q, want 401 naming %s", w.Code, w.Body.String(), s.OperatorTokenFile)
 	}
 }

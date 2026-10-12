@@ -74,8 +74,13 @@ func TestOperatorLoginURL(t *testing.T) {
 	}
 }
 
-func TestConfigureOperatorTokenPrintsLoginOnce(t *testing.T) {
-	f := &flags{dataDir: t.TempDir(), addr: "127.0.0.1:8080"}
+func TestConfigureOperatorTokenPrintsLoginEveryStart(t *testing.T) {
+	dir := t.TempDir()
+	t.Chdir(dir)
+	f := &flags{dataDir: "data", addr: "127.0.0.1:8080"}
+	if err := os.Mkdir("data", 0o700); err != nil {
+		t.Fatal(err)
+	}
 
 	var first bytes.Buffer
 	srv := &web.Server{}
@@ -91,7 +96,10 @@ func TestConfigureOperatorTokenPrintsLoginOnce(t *testing.T) {
 	if err := configureOperatorToken(again, f, slog.New(slog.NewTextHandler(&second, nil))); err != nil {
 		t.Fatal(err)
 	}
-	if again.OperatorToken != srv.OperatorToken || strings.Contains(second.String(), srv.OperatorToken) {
-		t.Errorf("second start: token %q, log %q, want the stored token and no secret in the log", again.OperatorToken, second.String())
+	if again.OperatorToken != srv.OperatorToken || !strings.Contains(second.String(), "/login?token="+srv.OperatorToken) {
+		t.Errorf("second start: token %q, log %q, want the stored token and its login link", again.OperatorToken, second.String())
+	}
+	if !filepath.IsAbs(again.OperatorTokenFile) || !strings.Contains(second.String(), again.OperatorTokenFile) {
+		t.Errorf("token file %q, log %q, want an absolute path in both", again.OperatorTokenFile, second.String())
 	}
 }

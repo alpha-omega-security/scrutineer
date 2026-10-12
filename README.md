@@ -39,7 +39,7 @@ The existing source-checkout command remains supported:
 
     go run -buildvcs=true ./cmd/scrutineer -skills ./skills
 
-Then open the `http://127.0.0.1:8080/login?token=...` link Scrutineer logs on first run, which signs the browser in. The link is printed once, and the token stays in `data/operator-token` for later sign-ins and for scripts calling `/api/v1` (see [docs/api.md](docs/api.md#operator-api-apiv1)). The explicit `-skills ./skills` directory makes the checkout command useful while developing skills because it overrides the copies embedded in the binary. It is optional for ordinary use because Scrutineer ships its built-in skills and per-ecosystem runner profiles inside the executable.
+Then open the `http://127.0.0.1:8080/login?token=...` link Scrutineer logs at startup, which signs the browser in. The link is logged on every start, and the token stays in `data/operator-token` for scripts calling `/api/v1` (see [docs/api.md](docs/api.md#operator-api-apiv1)). The explicit `-skills ./skills` directory makes the checkout command useful while developing skills because it overrides the copies embedded in the binary. It is optional for ordinary use because Scrutineer ships its built-in skills and per-ecosystem runner profiles inside the executable.
 
 The `-buildvcs=true` flag includes the source commit in `go run` builds. Settings > About shows that commit, with a `-dirty` suffix for local changes, and its commit date. Ordinary `go build` commands include this metadata automatically in a Git checkout.
 

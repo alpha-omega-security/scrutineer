@@ -47,13 +47,21 @@ func configureOperatorToken(srv *web.Server, f *flags, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("operator token: %w", err)
 	}
-	srv.OperatorToken = token
 	path := filepath.Join(f.dataDir, operatorTokenFile)
-	if !created {
-		log.Info("operator token", "file", path)
-		return nil
+	// Absolute so a start from another directory, which reads a different
+	// ./data, shows which file it used.
+	if abs, err := filepath.Abs(path); err == nil {
+		path = abs
 	}
-	log.Info("operator token created; open this link to sign in, it is not printed again", "login", operatorLoginURL(f.addr, token), "file", path)
+	srv.OperatorToken = token
+	srv.OperatorTokenFile = path
+	// Printed on every start: the same token is in the 0600 file, and a
+	// browser that lost its cookie has no other way back in.
+	msg := "operator token; open this link to sign in"
+	if created {
+		msg = "operator token created; open this link to sign in"
+	}
+	log.Info(msg, "login", operatorLoginURL(f.addr, token), "file", path)
 	return nil
 }
 
