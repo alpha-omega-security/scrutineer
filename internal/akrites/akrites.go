@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -23,9 +24,12 @@ import (
 
 const (
 	DefaultBaseURL = "https://intake.tap.akrites.dev"
-	// MaxBodySize is intake's request body limit; MaxPayloadSize bounds exploit and raw each.
+	// MaxBodySize is intake's request body limit; MaxPayloadSize bounds each attachment's data.
 	MaxBodySize        = 3 << 20
 	MaxPayloadSize     = 1 << 20
+	maxAttachments     = 16
+	maxFilename        = 255
+	maxDescription     = 1024
 	maxResponseSize    = 64 << 10
 	requestTimeout     = 30 * time.Second
 	maxVersions        = 64
@@ -38,10 +42,14 @@ const (
 	problemValidation = "tag:akrites.dev,2026-07:problem/validation"
 )
 
-var contentTypes = []string{
-	"text/plain", "text/markdown", "application/json", "application/pdf",
-	"application/zip", "application/gzip", "application/x-bzip2", "application/octet-stream",
+// contentTypes maps each accepted content type to the extension intake adds
+// to an attachment's download name.
+var contentTypes = map[string]string{
+	"text/plain": ".txt", "text/markdown": ".md", "application/json": ".json", "application/pdf": ".pdf",
+	"application/zip": ".zip", "application/gzip": ".tar.gz", "application/x-bzip2": ".tar.bz2", "application/octet-stream": ".bin",
 }
+
+var attachmentTypes = []string{"", "patch", "exploit-proof-of-concept", "reproducer", "threat-model", "other"}
 
 type Config struct {
 	BaseURL         string `yaml:"base_url"`
@@ -68,26 +76,41 @@ func (c Config) Endpoint() (string, error) {
 	return u.String(), nil
 }
 
+type Symbol struct {
+	File     string `json:"file,omitempty"`
+	Function string `json:"function,omitempty"`
+	Line     int    `json:"line,omitempty"`
+}
+
+type Attachment struct {
+	Filename    string `json:"filename"`
+	Data        string `json:"data"`
+	ContentType string `json:"content_type"`
+	Description string `json:"description,omitempty"`
+	Type        string `json:"type,omitempty"`
+}
+
 type Report struct {
-	PURL               string   `json:"purl,omitempty"`
-	Software           string   `json:"software"`
-	Ecosystem          string   `json:"ecosystem,omitempty"`
-	Versions           []string `json:"versions,omitempty"`
-	CodePath           string   `json:"code_path,omitempty"`
-	Exploit            string   `json:"exploit,omitempty"`
-	ExploitContentType string   `json:"exploit_content_type,omitempty"`
-	Raw                string   `json:"raw,omitempty"`
-	RawContentType     string   `json:"raw_content_type,omitempty"`
-	PackageRepoURL     string   `json:"package_repo_url,omitempty"`
-	DiscoveryMethod    string   `json:"discovery_method,omitempty"`
-	Email              string   `json:"email,omitempty"`
-	Notify             string   `json:"notify,omitempty"`
+	PURL            string       `json:"purl,omitempty"`
+	Software        string       `json:"software,omitempty"`
+	Ecosystem       string       `json:"ecosystem,omitempty"`
+	Versions        []string     `json:"versions,omitempty"`
+	AffectedSymbol  *Symbol      `json:"affected_symbol,omitempty"`
+	Attachments     []Attachment `json:"attachments,omitempty"`
+	PackageRepoURL  string       `json:"package_repo_url,omitempty"`
+	DiscoveryMethod string       `json:"discovery_method,omitempty"`
+	Email           string       `json:"email,omitempty"`
+	Notify          string       `json:"notify,omitempty"`
+}
+
+func checkMetadata(name, value string, limit int) error {
+	if !utf8.ValidString(value) || len(value) > limit || strings.ContainsFunc(value, unicode.IsControl) {
+		return fmt.Errorf("%s contains invalid characters or exceeds %d bytes", name, limit)
+	}
+	return nil
 }
 
 func (r Report) JSON() ([]byte, error) {
-	if strings.TrimSpace(r.Software) == "" {
-		return nil, fmt.Errorf("software is required")
-	}
 	var purlVersion string
 	if r.PURL != "" {
 		p, err := purl.Parse(r.PURL)
@@ -95,28 +118,29 @@ func (r Report) JSON() ([]byte, error) {
 			return nil, fmt.Errorf("purl must be a valid package URL")
 		}
 		purlVersion = p.Version
-	} else if r.Ecosystem == "" {
-		return nil, fmt.Errorf("a package URL or an ecosystem is required")
+	} else if r.Software == "" || r.Ecosystem == "" {
+		return nil, fmt.Errorf("a package URL, or both software and an ecosystem, is required")
 	}
-	fields := []struct {
+	symbol := r.AffectedSymbol
+	if symbol == nil {
+		symbol = &Symbol{}
+	}
+	for _, f := range []struct {
 		name, value string
 		limit       int
-		multiline   bool
 	}{
-		{"purl", r.PURL, 512, false}, {"software", r.Software, 256, false},
-		{"ecosystem", r.Ecosystem, 128, false}, {"code_path", r.CodePath, 1024, false},
-		{"exploit", r.Exploit, MaxPayloadSize, true}, {"raw", r.Raw, MaxPayloadSize, true},
-		{"package_repo_url", r.PackageRepoURL, 512, false},
-		{"discovery_method", r.DiscoveryMethod, 32, false}, {"email", r.Email, 256, false},
-	}
-	for _, f := range fields {
-		if !utf8.ValidString(f.value) || len(f.value) > f.limit || strings.ContainsFunc(f.value, func(c rune) bool {
-			return unicode.IsControl(c) && (!f.multiline || (c != '\n' && c != '\r' && c != '\t'))
-		}) {
-			return nil, fmt.Errorf("%s contains invalid characters or exceeds %d bytes", f.name, f.limit)
+		{"purl", r.PURL, 512}, {"software", r.Software, 256}, {"ecosystem", r.Ecosystem, 128},
+		{"affected_symbol.file", symbol.File, 512}, {"affected_symbol.function", symbol.Function, 256},
+		{"package_repo_url", r.PackageRepoURL, 512}, {"discovery_method", r.DiscoveryMethod, 32}, {"email", r.Email, 256},
+	} {
+		if err := checkMetadata(f.name, f.value, f.limit); err != nil {
+			return nil, err
 		}
 	}
-	if err := r.checkPayloads(); err != nil {
+	if symbol.Line < 0 {
+		return nil, fmt.Errorf("affected_symbol.line must not be negative")
+	}
+	if err := r.checkAttachments(); err != nil {
 		return nil, err
 	}
 	if err := r.checkVersions(purlVersion); err != nil {
@@ -127,9 +151,6 @@ func (r Report) JSON() ([]byte, error) {
 		if err != nil || u.Hostname() == "" || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil {
 			return nil, fmt.Errorf("package_repo_url must be an HTTP or HTTPS URL without credentials")
 		}
-	}
-	if !slices.Contains([]string{"", "manual", "ai-assisted", "ai-discovered", "hybrid", "automated-scan", "upstream-report", "other"}, r.DiscoveryMethod) {
-		return nil, fmt.Errorf("invalid discovery_method")
 	}
 	if !slices.Contains([]string{"", "off", "final", "milestones", "all"}, r.Notify) {
 		return nil, fmt.Errorf("invalid notify choice")
@@ -150,16 +171,48 @@ func (r Report) JSON() ([]byte, error) {
 	return body.Bytes(), nil
 }
 
-func (r Report) checkPayloads() error {
-	for _, p := range []struct{ name, payload, contentType string }{
-		{"exploit", r.Exploit, r.ExploitContentType}, {"raw", r.Raw, r.RawContentType},
-	} {
-		if (p.payload == "") != (p.contentType == "") {
-			return fmt.Errorf("%s and %s_content_type must be sent together", p.name, p.name)
+func (r Report) checkAttachments() error {
+	if len(r.Attachments) > maxAttachments {
+		return fmt.Errorf("at most %d attachments can be sent", maxAttachments)
+	}
+	downloads := map[string]bool{}
+	for i, a := range r.Attachments {
+		field := fmt.Sprintf("attachments[%d]", i)
+		extension, ok := contentTypes[a.ContentType]
+		if !ok {
+			return fmt.Errorf("%s.content_type is not an accepted content type", field)
 		}
-		if p.contentType != "" && !slices.Contains(contentTypes, p.contentType) {
-			return fmt.Errorf("invalid %s_content_type", p.name)
+		if a.Filename == "" || a.Filename == "." || a.Filename == ".." || strings.ContainsAny(a.Filename, `/\`) {
+			return fmt.Errorf("%s.filename must be a file name, not a path", field)
 		}
+		if err := checkMetadata(field+".filename", a.Filename, maxFilename); err != nil {
+			return err
+		}
+		if err := checkMetadata(field+".description", a.Description, maxDescription); err != nil {
+			return err
+		}
+		if !slices.Contains(attachmentTypes, a.Type) {
+			return fmt.Errorf("%s.type is not an accepted attachment type", field)
+		}
+		if a.Data == "" || len(a.Data) > MaxPayloadSize {
+			return fmt.Errorf("%s.data must be 1 byte to 1 MiB", field)
+		}
+		if strings.HasPrefix(a.ContentType, "text/") || a.ContentType == "application/json" {
+			if !utf8.ValidString(a.Data) {
+				return fmt.Errorf("%s.data must be valid UTF-8", field)
+			}
+		} else if decoded, err := base64.StdEncoding.DecodeString(strings.ReplaceAll(a.Data, "\n", "")); err != nil || len(decoded) == 0 {
+			return fmt.Errorf("%s.data must be padded standard base64", field)
+		}
+		// Intake keeps attachments apart by the name each downloads under.
+		download := strings.ToLower(a.Filename)
+		if !strings.HasSuffix(download, extension) {
+			download += extension
+		}
+		if downloads[download] {
+			return fmt.Errorf("%s.filename downloads under the same name as another attachment", field)
+		}
+		downloads[download] = true
 	}
 	return nil
 }
@@ -215,10 +268,18 @@ func (e *ResponseError) Error() string {
 		return "Akrites did not accept the configured submission token (HTTP 401); it may be missing, expired or revoked, so ask Akrites for a new one"
 	case e.StatusCode == http.StatusForbidden:
 		return "the Akrites web firewall blocked the request (HTTP 403)"
+	case e.StatusCode == http.StatusNotFound:
+		return "Akrites has no submission with this receipt (HTTP 404)"
 	case e.StatusCode == 0:
 		return "could not read Akrites submission status"
 	}
 	return fmt.Sprintf("Akrites returned HTTP %d", e.StatusCode)
+}
+
+// Validation reports whether intake refused the report's contents, so the
+// analyst can correct it and submit again.
+func (e *ResponseError) Validation() bool {
+	return e.StatusCode == http.StatusBadRequest || e.StatusCode == http.StatusRequestEntityTooLarge
 }
 
 func (e *ResponseError) violationSummary() string {
@@ -300,7 +361,7 @@ func (c Client) Submit(ctx context.Context, report Report) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	raw, err := c.request(ctx, http.MethodPost, endpoint, body, http.StatusAccepted)
+	raw, header, err := c.request(ctx, http.MethodPost, endpoint, body, http.StatusAccepted)
 	if err != nil {
 		return "", err
 	}
@@ -308,9 +369,57 @@ func (c Client) Submit(ctx context.Context, report Report) (string, error) {
 		Receipt string `json:"receipt"`
 	}
 	if json.Unmarshal(raw, &result) != nil || !receiptRE.MatchString(result.Receipt) {
-		return "", &ResponseError{StatusCode: http.StatusAccepted, Ambiguous: true}
+		result.Receipt = ""
 	}
-	return result.Receipt, nil
+	linked := monitorReceipt(header.Values("Link"), endpoint)
+	switch {
+	case result.Receipt != "" && linked != "" && result.Receipt != linked:
+		return "", &ResponseError{StatusCode: http.StatusAccepted, Ambiguous: true}
+	case result.Receipt != "":
+		return result.Receipt, nil
+	case linked != "":
+		return linked, nil
+	}
+	return "", &ResponseError{StatusCode: http.StatusAccepted, Ambiguous: true}
+}
+
+var linkRE = regexp.MustCompile(`<([^>]*)>((?:\s*;\s*[^;,]*)*)`)
+
+// monitorReceipt returns the receipt in a rel="monitor" Link, resolved against
+// the submission endpoint, or "" when there is no usable one.
+func monitorReceipt(values []string, endpoint string) string {
+	base, err := url.Parse(endpoint)
+	if err != nil {
+		return ""
+	}
+	for _, value := range values {
+		for _, m := range linkRE.FindAllStringSubmatch(value, -1) {
+			if !hasMonitorRel(m[2]) {
+				continue
+			}
+			ref, err := base.Parse(m[1])
+			if err != nil || ref.Scheme != base.Scheme || ref.Host != base.Host || ref.RawQuery != "" {
+				continue
+			}
+			if receipt, ok := strings.CutPrefix(ref.Path, "/v1/submissions/"); ok && receiptRE.MatchString(receipt) {
+				return receipt
+			}
+		}
+	}
+	return ""
+}
+
+func hasMonitorRel(params string) bool {
+	for param := range strings.SplitSeq(params, ";") {
+		name, value, ok := strings.Cut(strings.TrimSpace(param), "=")
+		if !ok || !strings.EqualFold(strings.TrimSpace(name), "rel") {
+			continue
+		}
+		if slices.Contains(strings.Fields(strings.ToLower(strings.Trim(strings.TrimSpace(value), `"`))), "monitor") {
+			return true
+		}
+	}
+	return false
 }
 
 func (c Client) Poll(ctx context.Context, receipt string) (Status, error) {
@@ -318,7 +427,7 @@ func (c Client) Poll(ctx context.Context, receipt string) (Status, error) {
 	if err != nil {
 		return Status{}, err
 	}
-	raw, err := c.request(ctx, http.MethodGet, endpoint, nil, http.StatusOK)
+	raw, _, err := c.request(ctx, http.MethodGet, endpoint, nil, http.StatusOK)
 	if err != nil {
 		return Status{}, err
 	}
@@ -329,10 +438,10 @@ func (c Client) Poll(ctx context.Context, receipt string) (Status, error) {
 	return result, nil
 }
 
-func (c Client) request(ctx context.Context, method, endpoint string, body []byte, want int) ([]byte, error) {
+func (c Client) request(ctx context.Context, method, endpoint string, body []byte, want int) ([]byte, http.Header, error) {
 	req, err := http.NewRequestWithContext(ctx, method, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if method == http.MethodPost {
 		req.Header.Set("Content-Type", "application/json")
@@ -366,7 +475,7 @@ func (c Client) request(ctx context.Context, method, endpoint string, body []byt
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, &ResponseError{Ambiguous: method == http.MethodPost}
+		return nil, nil, &ResponseError{Ambiguous: method == http.MethodPost}
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != want {
@@ -375,16 +484,16 @@ func (c Client) request(ctx context.Context, method, endpoint string, body []byt
 			delay = max(delay, time.Hour)
 		}
 		responseErr := &ResponseError{StatusCode: resp.StatusCode, Ambiguous: method == http.MethodPost && (resp.StatusCode < http.StatusBadRequest || (resp.StatusCode >= http.StatusInternalServerError && resp.StatusCode != http.StatusServiceUnavailable)), RetryAfter: delay}
-		if resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusRequestEntityTooLarge {
+		if responseErr.Validation() {
 			responseErr.Problem, responseErr.Violations = readProblem(resp)
 		}
-		return nil, responseErr
+		return nil, nil, responseErr
 	}
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize+1))
 	if err != nil || len(raw) > maxResponseSize {
-		return nil, &ResponseError{StatusCode: resp.StatusCode, Ambiguous: method == http.MethodPost}
+		return nil, nil, &ResponseError{StatusCode: resp.StatusCode, Ambiguous: method == http.MethodPost}
 	}
-	return raw, nil
+	return raw, resp.Header, nil
 }
 
 func retryAfter(value string) time.Duration {

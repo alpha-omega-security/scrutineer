@@ -2,6 +2,7 @@ package akrites
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,7 +19,7 @@ import (
 // (core/model/report.go). Intake decodes with DisallowUnknownFields, so a field
 // Scrutineer sends that is missing here fails every submission.
 type intakeReport struct {
-	Software       string   `json:"software"`
+	Software       string   `json:"software,omitempty"`
 	Ecosystem      string   `json:"ecosystem,omitempty"`
 	Versions       []string `json:"versions,omitempty"`
 	CodePath       string   `json:"code_path,omitempty"`
@@ -28,6 +29,13 @@ type intakeReport struct {
 		Function string `json:"function,omitempty"`
 		Line     int    `json:"line,omitempty"`
 	} `json:"affected_symbol,omitempty"`
+	Attachments []struct {
+		Filename    string `json:"filename"`
+		Data        string `json:"data"`
+		ContentType string `json:"content_type"`
+		Description string `json:"description,omitempty"`
+		Type        string `json:"type,omitempty"`
+	} `json:"attachments,omitempty"`
 	References         []string       `json:"references,omitempty"`
 	UpstreamIDs        []string       `json:"upstream_ids,omitempty"`
 	IntroducedCommit   string         `json:"introduced_commit,omitempty"`
@@ -64,7 +72,11 @@ func TestReportFieldsAreIntakeFields(t *testing.T) {
 }
 
 func validReport() Report {
-	return Report{PURL: "pkg:npm/example-lib@1.0.0", Software: "example-lib", Ecosystem: "npm", RawContentType: "text/markdown", Raw: "Reviewed vulnerability report"}
+	return Report{
+		PURL: "pkg:npm/example-lib@1.0.0", Software: "example-lib", Ecosystem: "npm",
+		AffectedSymbol: &Symbol{File: "src/parse.js", Function: "parseHeader", Line: 142},
+		Attachments:    []Attachment{{Filename: "disclosure.md", Data: "Reviewed vulnerability report", ContentType: "text/markdown", Type: "other"}},
+	}
 }
 
 func TestClientSubmitAndPoll(t *testing.T) {
@@ -76,8 +88,9 @@ func TestClientSubmitAndPoll(t *testing.T) {
 				case "POST /v1/reports":
 					posts++
 					checkReportRequest(t, r, header)
+					w.Header().Set("Link", `</v1/submissions/SUB-example>; rel="monitor"`)
 					w.WriteHeader(http.StatusAccepted)
-					_, _ = fmt.Fprint(w, `{"receipt":"SUB-example"}`)
+					_, _ = fmt.Fprint(w, `{"receipt":"SUB-example","message":"accepted; poll /v1/submissions/{receipt} for status"}`)
 				case "GET /v1/submissions/SUB-example":
 					gets++
 					if r.Header.Get("Authorization") != "" || r.Header.Get("TAP-SUBMISSION-TOKEN") != "" {
@@ -117,37 +130,81 @@ func checkReportRequest(t *testing.T, r *http.Request, header string) {
 	var report intakeReport
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&report); err != nil || report.Software != "example-lib" || report.RawContentType != "text/markdown" {
+	if err := decoder.Decode(&report); err != nil || report.Software != "example-lib" || len(report.Attachments) != 1 || report.Attachments[0].ContentType != "text/markdown" {
 		t.Errorf("report = %+v, err = %v", report, err)
+	}
+	if report.Raw != "" || report.Exploit != "" || report.CodePath != "" {
+		t.Errorf("deprecated fields sent: %+v", report)
+	}
+	if report.AffectedSymbol == nil || report.AffectedSymbol.File != "src/parse.js" || report.AffectedSymbol.Line != 142 {
+		t.Errorf("affected_symbol = %+v", report.AffectedSymbol)
+	}
+}
+
+func TestSubmitReceiptFromLinkHeader(t *testing.T) {
+	for _, tc := range []struct {
+		name, link, body, want string
+	}{
+		{"body and matching link", `</v1/submissions/SUB-a>; rel="monitor"`, `{"receipt":"SUB-a"}`, "SUB-a"},
+		{"body only", "", `{"receipt":"SUB-a"}`, "SUB-a"},
+		{"link only", `</v1/submissions/SUB-b>; rel="monitor"`, `{}`, "SUB-b"},
+		{"unquoted rel among others", `</v1/other>; rel="next", </v1/submissions/SUB-c>; rel=monitor`, `{"receipt":"bad receipt"}`, "SUB-c"},
+		{"link to another host ignored", `<https://elsewhere.example/v1/submissions/SUB-d>; rel="monitor"`, `{"receipt":"SUB-a"}`, "SUB-a"},
+		{"disagreement", `</v1/submissions/SUB-b>; rel="monitor"`, `{"receipt":"SUB-a"}`, ""},
+		{"neither usable", `<https://elsewhere.example/v1/submissions/SUB-d>; rel="monitor"`, `{}`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if tc.link != "" {
+					w.Header().Set("Link", tc.link)
+				}
+				w.WriteHeader(http.StatusAccepted)
+				_, _ = fmt.Fprint(w, tc.body)
+			}))
+			defer server.Close()
+			client := Client{Config: Config{BaseURL: server.URL, SubmissionToken: "secret"}, HTTPClient: server.Client()}
+			receipt, err := client.Submit(context.Background(), validReport())
+			if tc.want == "" {
+				var response *ResponseError
+				if !errors.As(err, &response) || !response.Ambiguous {
+					t.Fatalf("receipt = %q, err = %v; want ambiguous", receipt, err)
+				}
+				return
+			}
+			if err != nil || receipt != tc.want {
+				t.Fatalf("receipt = %q, err = %v; want %s", receipt, err, tc.want)
+			}
+		})
 	}
 }
 
 func TestClientSubmissionErrors(t *testing.T) {
 	for _, tc := range []struct {
-		name      string
-		code      int
-		body      string
-		ambiguous bool
-		delay     time.Duration
-		message   string
+		name       string
+		code       int
+		body       string
+		ambiguous  bool
+		validation bool
+		delay      time.Duration
+		message    string
 	}{
 		{"validation", 400, `{"type":"tag:akrites.dev,2026-07:problem/validation","title":"Report failed validation","status":400,"errors":[` +
 			`{"code":"unknown_ecosystem","field":"ecosystem","reason":"private report text"},` +
 			`{"code":"purl_ecosystem_mismatch","field":"purl","also_field":"ecosystem","reason":"private"},` +
 			`{"code":"private code","field":"private<field>","reason":"private"}]}`,
-			false, 0, "HTTP 400): ecosystem (unknown_ecosystem), purl and ecosystem (purl_ecosystem_mismatch)"},
-		{"too large", 413, `{"type":"tag:akrites.dev,2026-07:problem/validation","status":413,"errors":[{"code":"field_too_large","field":"raw","reason":"private"}]}`,
-			false, 0, "HTTP 413): raw (field_too_large)"},
-		{"malformed", 400, `{"type":"tag:akrites.dev,2026-07:problem/malformed-json","title":"Malformed JSON","status":400}`, false, 0, "could not parse"},
-		{"untyped problem", 400, `{"type":"about:blank","status":400,"detail":"private","errors":[{"code":"missing_field","field":"software"}]}`, false, 0, "rejected the report (HTTP 400)"},
-		{"auth", 401, `{"type":"about:blank","title":"Unauthorized","status":401,"detail":"submission token not recognized"}`, false, 0, "HTTP 401"},
-		{"firewall", 403, "<html>private-token</html>", false, 0, "firewall"},
-		{"rate limit", 429, "", false, time.Hour, ""},
-		{"unavailable", 503, "", false, 0, ""},
-		{"server error", 500, "", true, 0, ""},
-		{"missing receipt", 202, `{}`, true, 0, ""},
-		{"unsafe receipt", 202, `{"receipt":"../../elsewhere"}`, true, 0, ""},
-		{"truncated JSON", 202, `{"receipt":`, true, 0, ""},
+			false, true, 0, "HTTP 400): ecosystem (unknown_ecosystem), purl and ecosystem (purl_ecosystem_mismatch)"},
+		{"too large", 413, `{"type":"tag:akrites.dev,2026-07:problem/validation","status":413,"errors":[{"code":"field_too_large","field":"attachments[0].data","reason":"private"}]}`,
+			false, true, 0, "HTTP 413): attachments[0].data (field_too_large)"},
+		{"malformed", 400, `{"type":"tag:akrites.dev,2026-07:problem/malformed-json","title":"Malformed JSON","status":400}`, false, true, 0, "could not parse"},
+		{"untyped problem", 400, `{"type":"about:blank","status":400,"detail":"private","errors":[{"code":"missing_field","field":"software"}]}`, false, true, 0, "rejected the report (HTTP 400)"},
+		{"auth", 401, `{"type":"about:blank","title":"Unauthorized","status":401,"detail":"submission token not recognized"}`, false, false, 0, "HTTP 401"},
+		{"firewall", 403, "<html>private-token</html>", false, false, 0, "firewall"},
+		{"rate limit", 429, "", false, false, time.Hour, ""},
+		{"unavailable", 503, "", false, false, 0, ""},
+		{"server error", 500, "", true, false, 0, ""},
+		{"missing receipt", 202, `{}`, true, false, 0, ""},
+		{"unsafe receipt", 202, `{"receipt":"../../elsewhere"}`, true, false, 0, ""},
+		{"truncated JSON", 202, `{"receipt":`, true, false, 0, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var requests int
@@ -163,7 +220,7 @@ func TestClientSubmissionErrors(t *testing.T) {
 			client := Client{Config: Config{BaseURL: server.URL, SubmissionToken: "private-token"}, HTTPClient: server.Client()}
 			_, err := client.Submit(context.Background(), validReport())
 			var response *ResponseError
-			if !errors.As(err, &response) || response.Ambiguous != tc.ambiguous || response.RetryAfter != tc.delay {
+			if !errors.As(err, &response) || response.Ambiguous != tc.ambiguous || response.RetryAfter != tc.delay || response.Validation() != tc.validation {
 				t.Fatalf("response = %#v, err = %v", response, err)
 			}
 			if requests != 1 || strings.Contains(err.Error(), "private") || !strings.Contains(err.Error(), tc.message) {
@@ -202,41 +259,60 @@ func TestReportValidation(t *testing.T) {
 		}
 		return out
 	}
-	for _, mutate := range []func(*Report){
-		func(r *Report) { r.Software = "" },
-		func(r *Report) { r.PURL, r.Ecosystem = "", "" },
-		func(r *Report) { r.PURL = "https://example.com" },
-		func(r *Report) { r.Software = strings.Repeat("é", 129) },
-		func(r *Report) { r.CodePath = "file\npath" },
-		func(r *Report) { r.Raw = string([]byte{0xff}) },
-		func(r *Report) { r.Raw = strings.Repeat("a", MaxPayloadSize+1) },
-		func(r *Report) {
-			r.Raw, r.Exploit, r.ExploitContentType = strings.Repeat(`"`, MaxPayloadSize), strings.Repeat(`"`, MaxPayloadSize), "text/plain"
+	text := func(name, data string) Attachment {
+		return Attachment{Filename: name, Data: data, ContentType: "text/plain"}
+	}
+	for name, mutate := range map[string]func(*Report){
+		"no package identity":     func(r *Report) { r.PURL, r.Ecosystem = "", "" },
+		"software without purl":   func(r *Report) { r.PURL, r.Software = "", "" },
+		"invalid purl":            func(r *Report) { r.PURL = "https://example.com" },
+		"long software":           func(r *Report) { r.Software = strings.Repeat("é", 129) },
+		"newline in symbol file":  func(r *Report) { r.AffectedSymbol.File = "file\npath" },
+		"negative symbol line":    func(r *Report) { r.AffectedSymbol.Line = -1 },
+		"invalid UTF-8 data":      func(r *Report) { r.Attachments[0].Data = string([]byte{0xff}) },
+		"empty data":              func(r *Report) { r.Attachments[0].Data = "" },
+		"oversized data":          func(r *Report) { r.Attachments[0].Data = strings.Repeat("a", MaxPayloadSize+1) },
+		"missing content type":    func(r *Report) { r.Attachments[0].ContentType = "" },
+		"content type parameter":  func(r *Report) { r.Attachments[0].ContentType = "text/plain; charset=utf-8" },
+		"path filename":           func(r *Report) { r.Attachments[0].Filename = "dir/poc.txt" },
+		"dot-dot filename":        func(r *Report) { r.Attachments[0].Filename = ".." },
+		"unknown attachment type": func(r *Report) { r.Attachments[0].Type = "bundle" },
+		"newline in description":  func(r *Report) { r.Attachments[0].Description = "one\ntwo" },
+		"binary without base64":   func(r *Report) { r.Attachments[0].ContentType = "application/zip" },
+		"same download name":      func(r *Report) { r.Attachments = []Attachment{text("poc", "a"), text("POC.txt", "b")} },
+		"too many attachments":    func(r *Report) { r.Attachments = slices.Repeat([]Attachment{text("a", "a")}, 17) },
+		"body over 3 MiB escaped": func(r *Report) {
+			r.Attachments = []Attachment{text("a", strings.Repeat(`"`, MaxPayloadSize)), text("b", strings.Repeat(`"`, MaxPayloadSize))}
 		},
-		func(r *Report) { r.RawContentType = "" },
-		func(r *Report) { r.RawContentType = "text/plain; charset=utf-8" },
-		func(r *Report) { r.Exploit = "Crafted input" },
-		func(r *Report) { r.ExploitContentType = "text/plain" },
-		func(r *Report) { r.Versions = versions(65) },
-		func(r *Report) { r.Versions = versions(64) },
-		func(r *Report) { r.Versions = []string{strings.Repeat("a", 65)} },
-		func(r *Report) { r.PackageRepoURL = "file:///private" },
-		func(r *Report) { r.Notify = "invalid" },
-		func(r *Report) { r.Notify = "final" },
-		func(r *Report) { r.DiscoveryMethod = "invalid" },
+		"too many versions":       func(r *Report) { r.Versions = versions(65) },
+		"purl version over limit": func(r *Report) { r.Versions = versions(64) },
+		"long version":            func(r *Report) { r.Versions = []string{strings.Repeat("a", 65)} },
+		"non-HTTP repo URL":       func(r *Report) { r.PackageRepoURL = "file:///private" },
+		"invalid notify":          func(r *Report) { r.Notify = "invalid" },
+		"notify without email":    func(r *Report) { r.Notify = "final" },
+		"long discovery method":   func(r *Report) { r.DiscoveryMethod = strings.Repeat("a", 33) },
+		"control in discovery":    func(r *Report) { r.DiscoveryMethod = "manual\t" },
 	} {
 		report := validReport()
 		mutate(&report)
 		if _, err := report.JSON(); err == nil {
-			t.Errorf("accepted invalid report: %.100v", report)
+			t.Errorf("%s: accepted invalid report", name)
 		}
 	}
 	for name, mutate := range map[string]func(*Report){
-		"ecosystem without purl": func(r *Report) { r.PURL = "" },
-		"unescaped HTML":         func(r *Report) { r.Raw = strings.Repeat("<", MaxPayloadSize) },
-		"exploit":                func(r *Report) { r.Exploit, r.ExploitContentType = "Crafted input", "text/plain" },
-		"purl version listed":    func(r *Report) { r.Versions = append(versions(63), "1.0.0") },
-		"notify with email":      func(r *Report) { r.Notify, r.Email = "final", "reporter@example.com" },
+		"software and ecosystem without purl": func(r *Report) { r.PURL = "" },
+		"purl without software or ecosystem":  func(r *Report) { r.Software, r.Ecosystem = "", "" },
+		"no affected symbol":                  func(r *Report) { r.AffectedSymbol = nil },
+		"unescaped HTML":                      func(r *Report) { r.Attachments[0].Data = strings.Repeat("<", MaxPayloadSize) },
+		"exploit attachment": func(r *Report) {
+			r.Attachments = append(r.Attachments, Attachment{Filename: "exploit.txt", Data: "Crafted input", ContentType: "text/plain", Type: "exploit-proof-of-concept"})
+		},
+		"binary attachment": func(r *Report) {
+			r.Attachments[0] = Attachment{Filename: "repro", Data: base64.StdEncoding.EncodeToString([]byte{0, 1, 2}), ContentType: "application/octet-stream", Type: "reproducer"}
+		},
+		"freeform discovery method": func(r *Report) { r.DiscoveryMethod = "fuzzing campaign" },
+		"purl version listed":       func(r *Report) { r.Versions = append(versions(63), "1.0.0") },
+		"notify with email":         func(r *Report) { r.Notify, r.Email = "final", "reporter@example.com" },
 	} {
 		report := validReport()
 		mutate(&report)

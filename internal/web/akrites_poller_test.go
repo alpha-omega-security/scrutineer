@@ -25,6 +25,8 @@ func TestAkritesPollBackoff(t *testing.T) {
 		case 2:
 			w.Header().Set("Retry-After", "7200")
 			w.WriteHeader(http.StatusTooManyRequests)
+		case 3:
+			w.WriteHeader(http.StatusServiceUnavailable)
 		default:
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -64,7 +66,22 @@ func TestAkritesPollBackoff(t *testing.T) {
 		t.Fatal(err)
 	}
 	if submission.Status != "processing" || !submission.NextPollAt.Equal(now.Add(time.Hour)) {
-		t.Fatalf("404 lost status or uncapped backoff = %+v", submission)
+		t.Fatalf("503 lost status or uncapped backoff = %+v", submission)
+	}
+	// An unknown receipt cannot start existing, so polling stops.
+	now = *submission.NextPollAt
+	s.pollAkrites(context.Background(), now)
+	id := submission.ID
+	submission = db.AkritesSubmission{}
+	if err := s.DB.First(&submission, id).Error; err != nil {
+		t.Fatal(err)
+	}
+	if submission.Status != "not_found" || submission.NextPollAt != nil || !strings.Contains(submission.LastError, "HTTP 404") {
+		t.Fatalf("404 poll = %+v", submission)
+	}
+	s.pollAkrites(context.Background(), now.Add(48*time.Hour))
+	if calls.Load() != 4 {
+		t.Fatalf("polled after 404: calls=%d", calls.Load())
 	}
 }
 

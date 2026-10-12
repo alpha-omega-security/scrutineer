@@ -2155,7 +2155,13 @@ func (s *Server) findingShow(w http.ResponseWriter, r *http.Request) {
 	}
 	data["VINCEReady"] = vinceReady
 	data["VINCEReason"] = vinceReason
-	data["AkritesEnabled"] = s.Akrites.Enabled()
+	akritesLink := s.Akrites.Enabled()
+	if !akritesLink {
+		var submissions int64
+		s.DB.Model(&db.AkritesSubmission{}).Where("finding_id = ?", f.ID).Count(&submissions)
+		akritesLink = submissions > 0
+	}
+	data["AkritesLink"] = akritesLink
 	if id, c, ok := LookupCWE(f.CWE); ok {
 		data["CWE"] = map[string]any{"ID": id, "Name": c.Name, "Description": c.Description}
 	}

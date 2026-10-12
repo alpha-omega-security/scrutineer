@@ -22,6 +22,7 @@ func akritesForm(endpoint string) url.Values {
 		"software": {"widget"}, "purl": {"pkg:npm/widget@1.0.0"}, "ecosystem": {"npm"},
 		"raw": {"Reviewed command injection report"}, "exploit": {"Crafted input reaches a shell"},
 		"versions": {"1.0.0\n1.0.1"}, "notify": {"off"}, "discovery_method": {"ai-assisted"},
+		"symbol_file": {"cmd/run.go"}, "symbol_function": {"buildCommand"}, "symbol_line": {"42"},
 		"confirm": {"yes"}, "endpoint": {endpoint},
 	}
 }
@@ -36,8 +37,10 @@ func postAkrites(s *Server, path string, form url.Values) *httptest.ResponseReco
 }
 
 func akritesRequestMatchesForm(r *http.Request, report akrites.Report) bool {
-	return report.Raw == "Reviewed command injection report" && len(report.Versions) == 2 &&
-		report.RawContentType == "text/markdown" && report.ExploitContentType == "text/plain" &&
+	return len(report.Attachments) == 2 && len(report.Versions) == 2 &&
+		report.Attachments[0].Data == "Reviewed command injection report" && report.Attachments[0].ContentType == "text/markdown" &&
+		report.Attachments[1].Type == "exploit-proof-of-concept" && report.Attachments[1].ContentType == "text/plain" &&
+		report.AffectedSymbol != nil && *report.AffectedSymbol == akrites.Symbol{File: "cmd/run.go", Function: "buildCommand", Line: 42} &&
 		r.Header.Get("Authorization") == "Bearer private-token"
 }
 
@@ -57,6 +60,7 @@ func TestAkritesSubmissionThroughHTTP(t *testing.T) {
 			if !akritesRequestMatchesForm(r, report) {
 				t.Errorf("incorrect report or token: %+v", report)
 			}
+			w.Header().Set("Link", `</v1/submissions/SUB-persisted>; rel="monitor"`)
 			w.WriteHeader(http.StatusAccepted)
 			_, _ = fmt.Fprint(w, `{"receipt":"SUB-persisted"}`)
 		case "GET /v1/submissions/SUB-persisted":
@@ -80,7 +84,8 @@ func TestAkritesSubmissionThroughHTTP(t *testing.T) {
 	}
 	preview, _ := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
-	if resp.StatusCode != http.StatusOK || !strings.Contains(string(preview), finding.DisclosureDraft) || strings.Contains(string(preview), "private-token") {
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(preview), finding.DisclosureDraft) || strings.Contains(string(preview), "private-token") ||
+		!strings.Contains(string(preview), `name="symbol_file" class="input" value="cmd/run.go"`) || !strings.Contains(string(preview), `value="42"`) {
 		t.Fatalf("preview status=%d body=%s", resp.StatusCode, preview)
 	}
 	endpoint, _ := s.Akrites.Endpoint()
@@ -118,12 +123,13 @@ func TestAkritesSubmissionThroughHTTP(t *testing.T) {
 	if len(comms) != 1 || strings.Contains(comms[0].Body, submission.Receipt) {
 		t.Fatalf("communications=%+v", comms)
 	}
-	// A new server resumes persisted work against the original intake origin.
+	// A new server without a submission token still resumes persisted work
+	// against the original intake origin.
 	restarted, err := New(s.DB, s.Queue, s.Log, NewBroker(), s.Worker)
 	if err != nil {
 		t.Fatal(err)
 	}
-	restarted.Akrites = akrites.Config{BaseURL: "https://different.example", SubmissionToken: "other-token"}
+	restarted.Akrites = akrites.Config{}
 	restarted.akritesHTTPClient = intake.Client()
 	if err := s.DB.Model(&submission).Update("next_poll_at", time.Now().Add(-time.Minute)).Error; err != nil {
 		t.Fatal(err)
@@ -135,19 +141,35 @@ func TestAkritesSubmissionThroughHTTP(t *testing.T) {
 	waitForAkritesDone(t, s, submission.ID)
 	cancel()
 	<-pollerDone
-	resp, err = client.Get(webServer.URL + path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	statusPage, _ := io.ReadAll(resp.Body)
-	_ = resp.Body.Close()
-	if !strings.Contains(string(statusPage), "SUB-persisted") || !strings.Contains(string(statusPage), "<strong>done</strong>") {
-		t.Fatalf("status page=%s", statusPage)
-	}
+	// Removing the token disables new submissions but keeps the receipt visible.
+	s.Akrites = akrites.Config{}
+	checkAkritesPages(t, client, webServer.URL, finding.ID)
 	if polls.Load() != 1 {
 		t.Fatalf("polls=%d", polls.Load())
 	}
 	t.Logf("HTTP submission saved %s; restarted poller saved done; status page renders receipt and done", submission.Receipt)
+}
+
+func getBody(t *testing.T, client *http.Client, url string) string {
+	t.Helper()
+	resp, err := client.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	body, _ := io.ReadAll(resp.Body)
+	return string(body)
+}
+
+func checkAkritesPages(t *testing.T, client *http.Client, base string, findingID uint) {
+	t.Helper()
+	path := fmt.Sprintf("/findings/%d/akrites", findingID)
+	if !strings.Contains(getBody(t, client, base+fmt.Sprintf("/findings/%d", findingID)), `href="`+path+`"`) {
+		t.Fatal("finding page hides the Akrites submission once the token is removed")
+	}
+	if statusPage := getBody(t, client, base+path); !strings.Contains(statusPage, "SUB-persisted") || !strings.Contains(statusPage, "<strong>done</strong>") {
+		t.Fatalf("status page=%s", statusPage)
+	}
 }
 
 func waitForAkritesDone(t *testing.T, s *Server, id uint) {
@@ -223,58 +245,57 @@ func TestAkritesSubmissionGuards(t *testing.T) {
 }
 
 func TestAkritesSubmissionFailurePersistence(t *testing.T) {
-	for _, code := range []int{http.StatusUnauthorized, http.StatusForbidden, http.StatusBadRequest, http.StatusInternalServerError, http.StatusTooManyRequests, http.StatusServiceUnavailable} {
-		t.Run(fmt.Sprint(code), func(t *testing.T) {
+	for _, tc := range []struct {
+		code, want int
+		retained   bool
+	}{
+		{http.StatusUnauthorized, http.StatusBadGateway, false},
+		{http.StatusForbidden, http.StatusBadGateway, false},
+		{http.StatusBadRequest, http.StatusUnprocessableEntity, false},
+		{http.StatusRequestEntityTooLarge, http.StatusUnprocessableEntity, false},
+		{http.StatusTooManyRequests, http.StatusBadGateway, false},
+		{http.StatusServiceUnavailable, http.StatusBadGateway, false},
+		{http.StatusInternalServerError, http.StatusBadGateway, true},
+	} {
+		t.Run(fmt.Sprint(tc.code), func(t *testing.T) {
 			s, done := newTestServer(t)
 			defer done()
 			finding := seedVINCEFinding(t, s).Finding
 			intake := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if code == http.StatusServiceUnavailable {
+				if tc.code == http.StatusServiceUnavailable {
 					w.Header().Set("Retry-After", "120")
 				}
-				w.WriteHeader(code)
+				w.WriteHeader(tc.code)
 			}))
 			defer intake.Close()
 			s.Akrites = akrites.Config{BaseURL: intake.URL, SubmissionToken: "secret"}
 			s.akritesHTTPClient = intake.Client()
 			endpoint, _ := s.Akrites.Endpoint()
-			w := postAkrites(s, fmt.Sprintf("/findings/%d/akrites", finding.ID), akritesForm(endpoint))
-			if w.Code != http.StatusBadGateway {
+			form := akritesForm(endpoint)
+			form.Set("raw", "Analyst-edited report")
+			w := postAkrites(s, fmt.Sprintf("/findings/%d/akrites", finding.ID), form)
+			if w.Code != tc.want {
 				t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 			}
 			var rows []db.AkritesSubmission
 			if err := s.DB.Find(&rows).Error; err != nil {
 				t.Fatal(err)
 			}
-			switch code {
-			case http.StatusUnauthorized, http.StatusForbidden, http.StatusBadRequest:
-				if len(rows) != 0 {
-					t.Fatalf("rejected submission retained: %+v", rows)
+			if !tc.retained {
+				// Nothing was stored at Akrites, so the form comes back with the
+				// analyst's edits and no reservation blocks a later submission.
+				if len(rows) != 0 || !strings.Contains(w.Body.String(), "Analyst-edited report") {
+					t.Fatalf("rows=%+v body=%s", rows, w.Body.String())
 				}
-			case http.StatusInternalServerError:
-				if len(rows) != 1 || rows[0].Status != "uncertain" || rows[0].NextPollAt != nil {
-					t.Fatalf("uncertain submission=%+v", rows)
+				if (tc.code == http.StatusTooManyRequests || tc.code == http.StatusServiceUnavailable) && !strings.Contains(w.Body.String(), "submit again after") {
+					t.Fatalf("missing retry time: %s", w.Body.String())
 				}
-			default:
-				checkAkritesRetryDelay(t, s, rows)
+				return
+			}
+			if len(rows) != 1 || rows[0].Status != "uncertain" || rows[0].NextPollAt != nil {
+				t.Fatalf("uncertain submission=%+v", rows)
 			}
 		})
-	}
-}
-
-func checkAkritesRetryDelay(t *testing.T, s *Server, rows []db.AkritesSubmission) {
-	t.Helper()
-	if len(rows) != 1 || rows[0].Status != "rejected" || rows[0].NextPollAt == nil {
-		t.Fatalf("delayed submission=%+v", rows)
-	}
-	s.pollAkrites(context.Background(), time.Now())
-	var count int64
-	if err := s.DB.Model(&db.AkritesSubmission{}).Count(&count).Error; err != nil || count != 1 {
-		t.Fatalf("released early: count=%d err=%v", count, err)
-	}
-	s.pollAkrites(context.Background(), rows[0].NextPollAt.Add(time.Second))
-	if err := s.DB.Model(&db.AkritesSubmission{}).Count(&count).Error; err != nil || count != 0 {
-		t.Fatalf("not released: count=%d err=%v", count, err)
 	}
 }
 
@@ -315,11 +336,31 @@ func TestAkritesShowsRejectedFields(t *testing.T) {
 	s.akritesHTTPClient = intake.Client()
 	endpoint, _ := s.Akrites.Endpoint()
 	w := postAkrites(s, fmt.Sprintf("/findings/%d/akrites", finding.ID), akritesForm(endpoint))
-	if w.Code != http.StatusBadGateway || !strings.Contains(w.Body.String(), "ecosystem (unknown_ecosystem)") {
+	if w.Code != http.StatusUnprocessableEntity || !strings.Contains(w.Body.String(), "ecosystem (unknown_ecosystem)") || !strings.Contains(w.Body.String(), "Reviewed command injection report") {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 	}
 	var count int64
 	if err := s.DB.Model(&db.AkritesSubmission{}).Count(&count).Error; err != nil || count != 0 {
 		t.Fatalf("rejected submission not released for correction: count=%d err=%v", count, err)
+	}
+}
+
+func TestAkritesPreviewWithoutToken(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	finding := seedVINCEFinding(t, s).Finding
+	path := fmt.Sprintf("/findings/%d/akrites", finding.ID)
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq(http.MethodGet, path))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("form offered without a token: status=%d", w.Code)
+	}
+	if err := s.DB.Create(&db.AkritesSubmission{FindingID: finding.ID, Endpoint: akrites.DefaultBaseURL + "/v1/reports", Receipt: "SUB-kept", Status: "not_found"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	w = httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq(http.MethodGet, path))
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "SUB-kept") || !strings.Contains(w.Body.String(), "stopped checking") {
+		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 	}
 }

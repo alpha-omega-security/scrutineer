@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -12,21 +13,20 @@ import (
 
 	"scrutineer/internal/akrites"
 	"scrutineer/internal/db"
+	"scrutineer/internal/findingnorm"
 )
 
 type akritesPage struct {
 	Finding    db.Finding
 	Report     akrites.Report
+	Disclosure string
+	Exploit    string
 	Submission db.AkritesSubmission
 	Endpoint   string
 	Error      string
 }
 
 func (s *Server) findingAkritesPreview(w http.ResponseWriter, r *http.Request) {
-	if !s.Akrites.Enabled() {
-		http.NotFound(w, r)
-		return
-	}
 	ctx, ok := s.loadDisclosureFinding(w, r)
 	if !ok {
 		return
@@ -38,15 +38,22 @@ func (s *Server) findingAkritesPreview(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "could not load Akrites submission", http.StatusInternalServerError)
 		return
 	}
+	// A saved submission stays readable after the token is removed; only new
+	// submissions need it.
+	if page.Submission.ID == 0 && !s.Akrites.Enabled() {
+		http.NotFound(w, r)
+		return
+	}
 	if page.Submission.ID == 0 {
 		if err := akritesEligibility(ctx); err != nil {
 			http.Error(w, err.Error(), http.StatusConflict)
 			return
 		}
+		page.Disclosure = ctx.Finding.DisclosureDraft
+		page.Exploit = strings.TrimSpace(ctx.Finding.Reach + "\n\n" + ctx.Finding.Validation)
 		page.Report = akrites.Report{
-			Software: ctx.Repository.Name, CodePath: ctx.Finding.Location,
-			Raw:            ctx.Finding.DisclosureDraft,
-			Exploit:        strings.TrimSpace(ctx.Finding.Reach + "\n\n" + ctx.Finding.Validation),
+			Software:       ctx.Repository.Name,
+			AffectedSymbol: akritesSymbol(ctx.Finding),
 			PackageRepoURL: ctx.Repository.URL, DiscoveryMethod: "ai-assisted",
 			Email: s.Akrites.Email, Notify: "off",
 		}
@@ -66,6 +73,32 @@ func (s *Server) findingAkritesPreview(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.render(w, r, "finding_akrites.html", map[string]any{"Akrites": page})
+}
+
+// akritesSymbol prefills affected_symbol from the finding's location. The
+// function is left for the analyst because locations name only a file and line.
+func akritesSymbol(f db.Finding) *akrites.Symbol {
+	file := findingnorm.FindingPath(f.SubPath, f.Location)
+	if file == "" {
+		return nil
+	}
+	return &akrites.Symbol{File: file, Line: locationLine(f.Location)}
+}
+
+// locationLine returns the line from a "path:line[:col]" or "path:start-end"
+// location, or 0 when it names none.
+func locationLine(location string) int {
+	loc := strings.TrimSpace(strings.Split(strings.TrimSpace(location), "\n")[0])
+	line := 0
+	for {
+		i := strings.LastIndexByte(loc, ':')
+		if i < 0 || !findingnorm.IsPositionalSuffix(loc[i+1:]) {
+			return line
+		}
+		start, _, _ := strings.Cut(loc[i+1:], "-")
+		line, _ = strconv.Atoi(start)
+		loc = loc[:i]
+	}
 }
 
 func akritesEligibility(ctx disclosureFindingContext) error {
@@ -88,31 +121,46 @@ func akritesEligibility(ctx disclosureFindingContext) error {
 	return nil
 }
 
-const (
-	akritesRawContentType     = "text/markdown"
-	akritesExploitContentType = "text/plain"
-)
+// akritesAttachments sends the disclosure draft and the exploitation details
+// as attachments. Their filenames, descriptions and types are stored in the
+// clear at Akrites, so they carry no finding detail.
+func akritesAttachments(disclosure, exploit string) []akrites.Attachment {
+	var out []akrites.Attachment
+	if strings.TrimSpace(disclosure) != "" {
+		out = append(out, akrites.Attachment{Filename: "disclosure.md", Data: disclosure, ContentType: "text/markdown", Description: "Disclosure report", Type: "other"})
+	}
+	if strings.TrimSpace(exploit) != "" {
+		out = append(out, akrites.Attachment{Filename: "exploit.txt", Data: exploit, ContentType: "text/plain", Description: "Exploitation details", Type: "exploit-proof-of-concept"})
+	}
+	return out
+}
 
-func akritesReportFromForm(r *http.Request) akrites.Report {
-	report := akrites.Report{
+func akritesPageFromForm(r *http.Request, finding db.Finding) akritesPage {
+	page := akritesPage{Finding: finding, Disclosure: r.FormValue("raw"), Exploit: r.FormValue("exploit")}
+	page.Report = akrites.Report{
 		Software: strings.TrimSpace(r.FormValue("software")), PURL: strings.TrimSpace(r.FormValue("purl")),
-		Ecosystem: strings.TrimSpace(r.FormValue("ecosystem")), CodePath: r.FormValue("code_path"),
-		Raw: r.FormValue("raw"), Exploit: r.FormValue("exploit"),
+		Ecosystem:       strings.TrimSpace(r.FormValue("ecosystem")),
+		Attachments:     akritesAttachments(page.Disclosure, page.Exploit),
 		PackageRepoURL:  strings.TrimSpace(r.FormValue("package_repo_url")),
-		DiscoveryMethod: r.FormValue("discovery_method"), Email: strings.TrimSpace(r.FormValue("email")), Notify: r.FormValue("notify"),
+		DiscoveryMethod: strings.TrimSpace(r.FormValue("discovery_method")), Email: strings.TrimSpace(r.FormValue("email")), Notify: r.FormValue("notify"),
 	}
-	if report.Raw != "" {
-		report.RawContentType = akritesRawContentType
+	symbol := akrites.Symbol{File: strings.TrimSpace(r.FormValue("symbol_file")), Function: strings.TrimSpace(r.FormValue("symbol_function"))}
+	if line := strings.TrimSpace(r.FormValue("symbol_line")); line != "" {
+		n, err := strconv.Atoi(line)
+		if err != nil {
+			n = -1
+		}
+		symbol.Line = n
 	}
-	if report.Exploit != "" {
-		report.ExploitContentType = akritesExploitContentType
+	if symbol != (akrites.Symbol{}) {
+		page.Report.AffectedSymbol = &symbol
 	}
 	for v := range strings.SplitSeq(r.FormValue("versions"), "\n") {
 		if v = strings.TrimSpace(v); v != "" {
-			report.Versions = append(report.Versions, v)
+			page.Report.Versions = append(page.Report.Versions, v)
 		}
 	}
-	return report
+	return page
 }
 
 func (s *Server) findingAkritesSubmit(w http.ResponseWriter, r *http.Request) {
@@ -137,7 +185,7 @@ func (s *Server) findingAkritesSubmit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}
-	page := akritesPage{Finding: ctx.Finding, Report: akritesReportFromForm(r)}
+	page := akritesPageFromForm(r, ctx.Finding)
 	endpoint, err := s.Akrites.Endpoint()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -149,12 +197,12 @@ func (s *Server) findingAkritesSubmit(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(status)
 		s.render(w, r, "finding_akrites.html", map[string]any{"Akrites": page})
 	}
-	if _, err := page.Report.JSON(); err != nil {
-		renderError(http.StatusUnprocessableEntity, err.Error())
+	if strings.TrimSpace(page.Disclosure) == "" {
+		renderError(http.StatusUnprocessableEntity, "a disclosure report is required")
 		return
 	}
-	if strings.TrimSpace(page.Report.Raw) == "" {
-		renderError(http.StatusUnprocessableEntity, "a disclosure report is required")
+	if _, err := page.Report.JSON(); err != nil {
+		renderError(http.StatusUnprocessableEntity, err.Error())
 		return
 	}
 	if r.FormValue("confirm") != "yes" || r.FormValue("endpoint") != endpoint {
@@ -200,26 +248,32 @@ func (s *Server) findingAkritesSubmit(w http.ResponseWriter, r *http.Request) {
 	s.redirect(w, r, fmt.Sprintf("/findings/%d/akrites", ctx.Finding.ID))
 }
 
+// akritesSubmitError releases the reservation when intake definitely stored
+// nothing, so the analyst's edits stay on the form for correction or a later
+// retry. An ambiguous failure keeps the reservation and blocks another POST.
 func (s *Server) akritesSubmitError(w http.ResponseWriter, r *http.Request, page *akritesPage, submission db.AkritesSubmission, err error) {
+	status := http.StatusBadGateway
+	page.Error = err.Error()
 	var response *akrites.ResponseError
-	if errors.As(err, &response) && !response.Ambiguous && response.RetryAfter == 0 {
-		if deleteErr := s.DB.Delete(&submission).Error; deleteErr != nil {
-			page.Submission = submission
+	if errors.As(err, &response) && !response.Ambiguous {
+		if response.Validation() {
+			status = http.StatusUnprocessableEntity
 		}
-	} else {
-		page.Submission = submission
-		if response != nil && !response.Ambiguous {
-			next := time.Now().Add(response.RetryAfter)
-			page.Submission.Status = "rejected"
-			page.Submission.NextPollAt = &next
+		if response.RetryAfter > 0 {
+			page.Error += fmt.Sprintf(". Akrites asked for a delay; submit again after %s.", time.Now().Add(response.RetryAfter).UTC().Format(time.RFC3339))
 		}
-		page.Submission.LastError = err.Error()
-		if saveErr := s.DB.Save(&page.Submission).Error; saveErr != nil {
-			page.Submission.Status = "uncertain"
+		if deleteErr := s.DB.Delete(&submission).Error; deleteErr == nil {
+			w.WriteHeader(status)
+			s.render(w, r, "finding_akrites.html", map[string]any{"Akrites": page})
+			return
 		}
 	}
-	page.Error = err.Error()
-	w.WriteHeader(http.StatusBadGateway)
+	page.Submission = submission
+	page.Submission.LastError = err.Error()
+	if saveErr := s.DB.Save(&page.Submission).Error; saveErr != nil {
+		page.Submission.Status = "uncertain"
+	}
+	w.WriteHeader(status)
 	s.render(w, r, "finding_akrites.html", map[string]any{"Akrites": page})
 }
 
