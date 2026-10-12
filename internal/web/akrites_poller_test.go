@@ -34,7 +34,7 @@ func TestAkritesPollBackoff(t *testing.T) {
 	defer intake.Close()
 	s.akritesHTTPClient = intake.Client()
 	now := time.Now().UTC()
-	submission := db.AkritesSubmission{FindingID: finding.ID, Endpoint: intake.URL + "/v1/reports", Receipt: "SUB-poll", Status: "queued", NextPollAt: &now}
+	submission := db.DisclosureSubmission{FindingID: finding.ID, Channel: db.DisclosureChannelAkrites, Endpoint: intake.URL + "/v1/reports", ExternalID: "SUB-poll", Status: "queued", NextPollAt: &now}
 	if err := s.DB.Create(&submission).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +72,7 @@ func TestAkritesPollBackoff(t *testing.T) {
 	now = *submission.NextPollAt
 	s.pollAkrites(context.Background(), now)
 	id := submission.ID
-	submission = db.AkritesSubmission{}
+	submission = db.DisclosureSubmission{}
 	if err := s.DB.First(&submission, id).Error; err != nil {
 		t.Fatal(err)
 	}
@@ -104,11 +104,11 @@ func TestAkritesReceiptSurvivesOutreachFailure(t *testing.T) {
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("status = %d", w.Code)
 	}
-	var saved db.AkritesSubmission
+	var saved db.DisclosureSubmission
 	if err := s.DB.Where("finding_id = ?", finding.ID).First(&saved).Error; err != nil {
 		t.Fatal(err)
 	}
-	if saved.Receipt != "SUB-recoverable" || saved.Status != "queued" {
+	if saved.ExternalID != "SUB-recoverable" || saved.Status != "queued" {
 		t.Fatalf("receipt lost: %+v", saved)
 	}
 }
@@ -126,7 +126,7 @@ func TestAkritesReceiptWriteFailure(t *testing.T) {
 	defer intake.Close()
 	s.Akrites.BaseURL, s.Akrites.SubmissionToken = intake.URL, "secret"
 	s.akritesHTTPClient = intake.Client()
-	if err := s.DB.Exec("CREATE TRIGGER reject_receipt_update BEFORE UPDATE ON akrites_submissions BEGIN SELECT RAISE(ABORT, 'test write failure'); END").Error; err != nil {
+	if err := s.DB.Exec("CREATE TRIGGER reject_receipt_update BEFORE UPDATE ON disclosure_submissions BEGIN SELECT RAISE(ABORT, 'test write failure'); END").Error; err != nil {
 		t.Fatal(err)
 	}
 	endpoint, _ := s.Akrites.Endpoint()
@@ -135,8 +135,8 @@ func TestAkritesReceiptWriteFailure(t *testing.T) {
 	if w.Code != http.StatusInternalServerError || !strings.Contains(w.Body.String(), "SUB-save-manually") || !strings.Contains(w.Body.String(), "<strong>uncertain</strong>") {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 	}
-	if w := postAkrites(s, path, akritesForm(endpoint)); w.Code != http.StatusConflict {
-		t.Fatalf("retry status=%d", w.Code)
+	if w := postAkrites(s, path, akritesForm(endpoint)); w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("unconfirmed retry status=%d", w.Code)
 	}
 	if requests.Load() != 1 {
 		t.Fatalf("requests=%d", requests.Load())

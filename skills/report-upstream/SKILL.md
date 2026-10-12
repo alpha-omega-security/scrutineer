@@ -75,10 +75,10 @@ End the description with a final line `[scrutineer-finding:{finding_id}]` so re-
 ## 2. File the report
 
 ```
-gh api -X POST repos/{owner}/{repo}/security-advisories/reports --input ./advisory.json
+gh api -X POST repos/{owner}/{repo}/security-advisories/reports --input ./advisory.json > ./advisory-response.json
 ```
 
-This is the external-reporter endpoint; do not use the bare `/security-advisories` admin endpoint, which only works for repo admins. Capture `ghsa_id` and `html_url` from the response.
+This is the external-reporter endpoint; do not use the bare `/security-advisories` admin endpoint, which only works for repo admins. Capture `ghsa_id` and `html_url` from `./advisory-response.json`.
 
 A 422 with `Private vulnerability reporting is disabled` means PVR was turned off between the precondition check and the POST; treat as a refusal. A 422 whose `errors[].code` is `missing_section`, `empty_section`, `unchecked_required_option` or `sections_out_of_order` means the description does not answer the repository's custom report form: do not edit the description and do not retry, refuse with every such error's `code`, `section` and `option` in `error`, and tell the operator to complete the draft (or re-run `disclose`, which shapes it to the form) before filing again. A 422 mentioning another specific field (`vulnerabilities`, `cvss_vector_string`) means the body shape was rejected; fix the named field (drop `vulnerable_version_range`, drop `cvss_vector_string` in favour of `severity`) and retry once. Any other non-2xx is a refusal with the response body in `error`.
 
@@ -114,9 +114,7 @@ If `suggested_fix` is empty, skip the push and record `patch_pushed: false` with
 
 All with `Authorization: Bearer {token}`:
 
-- `PATCH {api_base}/findings/{finding_id}` with `{"fields": {"status": "reported"}, "by": "report-upstream"}`
-- `POST {api_base}/findings/{finding_id}/references` with `{"url": "<html_url>", "tags": "ghsa-upstream", "summary": "PVR report {ghsa_id} on {owner}/{repo}"}`
-- `POST {api_base}/findings/{finding_id}/communications` with `{"channel": "ghsa", "direction": "outbound", "actor": "report-upstream", "body": "<body>"}`. Build `<body>` as `Filed PVR report {ghsa_id} on {owner}/{repo}. ` followed by `Patch pushed to fix/{ghsa_id} on {private_fork}.` when `patch_pushed` is true, or `Patch included in the report description; private fork pending maintainer acceptance.` when false.
+- `POST {api_base}/findings/{finding_id}/submissions` with `{"channel": "pvr", "endpoint": "https://api.github.com/repos/{owner}/{repo}/security-advisories/reports", "external_id": "<ghsa_id>", "url": "<html_url>", "summary": "PVR report {ghsa_id} on {owner}/{repo}", "actor": "report-upstream", "body": "<body>", "request": <contents of ./advisory.json>, "response": <contents of ./advisory-response.json>}`. Scrutineer records the submission with the report as sent, adds the `ghsa-upstream` reference and an outbound communication, and moves the finding to `reported` in one write. Build `<body>` as `Filed PVR report {ghsa_id} on {owner}/{repo}. ` followed by `Patch pushed to fix/{ghsa_id} on {private_fork}.` when `patch_pushed` is true, or `Patch included in the report description; private fork pending maintainer acceptance.` when false.
 
 ## Output
 

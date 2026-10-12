@@ -43,6 +43,15 @@
 </div>
 {{end}}
 
+{{if $v.Prior}}
+<section class="border rounded-md p-4 mb-5 grid gap-1">
+  <h3 class="font-medium">Earlier VINCE submissions</h3>
+  {{range $v.Prior}}
+  <p class="text-sm">{{.CreatedAt.Format "2006-01-02 15:04"}} {{if .ExternalID}}<code>{{.ExternalID}}</code> {{end}}<strong>{{.Status}}</strong>{{if .LastError}}: {{.LastError}}{{end}}</p>
+  {{end}}
+</section>
+{{end}}
+
 <section class="border rounded-md p-4 mb-5 grid gap-3">
   <div>
     <h3 class="font-medium">Choose source records</h3>
@@ -392,12 +401,19 @@
       <span>I manually reviewed this finding and its reproduction.</span>
     </label>
     {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "confirm_manual_review")}}
+    {{if $v.SentBefore}}
+    <label class="flex gap-2 items-start text-sm">
+      <input type="checkbox" name="resend" value="yes" required>
+      <span>This finding was already submitted to VINCE. Send another submission anyway.</span>
+    </label>
+    {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "resend")}}
+    {{end}}
   </section>
 
   {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "selection")}}
   <div class="flex justify-end gap-2">
     <a href="/findings/{{$v.Finding.ID}}" class="btn-outline">Cancel</a>
-    <button type="submit" class="btn-destructive">Submit once to VINCE</button>
+    <button type="submit" class="btn-destructive">Submit to VINCE</button>
   </div>
 </form>
 

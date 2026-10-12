@@ -34,8 +34,8 @@ func (s *Server) StartAkritesPoller(ctx context.Context) {
 }
 
 func (s *Server) pollAkrites(ctx context.Context, now time.Time) {
-	var submissions []db.AkritesSubmission
-	if err := s.DB.WithContext(ctx).Where("next_poll_at <= ?", now).Order("next_poll_at").Limit(akritesPollBatch).Find(&submissions).Error; err != nil {
+	var submissions []db.DisclosureSubmission
+	if err := s.DB.WithContext(ctx).Where("channel = ? AND next_poll_at <= ?", db.DisclosureChannelAkrites, now).Order("next_poll_at").Limit(akritesPollBatch).Find(&submissions).Error; err != nil {
 		s.Log.Error("load Akrites submissions", "err", err)
 		return
 	}
@@ -47,11 +47,11 @@ func (s *Server) pollAkrites(ctx context.Context, now time.Time) {
 	}
 }
 
-func (s *Server) pollAkritesSubmission(ctx context.Context, submission db.AkritesSubmission, now time.Time) {
+func (s *Server) pollAkritesSubmission(ctx context.Context, submission db.DisclosureSubmission, now time.Time) {
 	// Poll the original origin even if configuration has since changed. GET has no token.
 	cfg := akrites.Config{BaseURL: strings.TrimSuffix(submission.Endpoint, "/v1/reports")}
 	client := akrites.Client{Config: cfg, HTTPClient: s.akritesHTTPClient}
-	status, err := client.Poll(ctx, submission.Receipt)
+	status, err := client.Poll(ctx, submission.ExternalID)
 	if ctx.Err() != nil {
 		return
 	}
@@ -77,7 +77,7 @@ func (s *Server) pollAkritesSubmission(ctx context.Context, submission db.Akrite
 		// Intake does not know the receipt, so further polls cannot succeed.
 		update["status"], update["next_poll_at"] = "not_found", nil
 	}
-	if err := s.DB.WithContext(ctx).Model(&db.AkritesSubmission{}).Where("id = ?", submission.ID).Updates(update).Error; err != nil {
-		s.Log.Error("save Akrites status", "id", submission.ID)
+	if err := s.DB.WithContext(ctx).Model(&db.DisclosureSubmission{}).Where("id = ?", submission.ID).Updates(update).Error; err != nil {
+		s.Log.Error("save Akrites status", "id", submission.ID, "err", err)
 	}
 }

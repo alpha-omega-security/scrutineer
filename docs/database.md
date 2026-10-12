@@ -99,7 +99,7 @@ Append-only audit trail for scan lifecycle, scan-control actions, finding mutati
 | Column | Type | Notes |
 |--------|------|-------|
 | id | integer PK | |
-| kind | text | Event name: `scan.started`, `scan.finished`, `scan.failed`, `scan.cancelled`, `scan.paused`, `scan.retry_requested`, `scan.retry_enqueue_failed`, `scan.resume_requested`, `scan.resume_enqueue_failed`, `scan.cancel_requested`, `finding.status_changed`, `finding.severity_changed`, `finding.labels_changed`, `disclosure.requested`, `disclosure.vince_submitted`, `disclosure.draft_updated`, `disclosure.communication_recorded`, `disclosure.channel_changed`, `repo.created`, or `repo.deleted`. Indexed with `created_at` for chronological dashboards. |
+| kind | text | Event name: `scan.started`, `scan.finished`, `scan.failed`, `scan.cancelled`, `scan.paused`, `scan.retry_requested`, `scan.retry_enqueue_failed`, `scan.resume_requested`, `scan.resume_enqueue_failed`, `scan.cancel_requested`, `finding.status_changed`, `finding.severity_changed`, `finding.labels_changed`, `disclosure.requested`, `disclosure.vince_submitted`, `disclosure.akrites_submitted`, `disclosure.pvr_submitted`, `disclosure.draft_updated`, `disclosure.communication_recorded`, `disclosure.channel_changed`, `repo.created`, or `repo.deleted`. Indexed with `created_at` for chronological dashboards. |
 | subject_type | text | Polymorphic subject type: `scan`, `finding`, or `repository`. Part of the timeline index with `subject_id`. |
 | subject_id | integer | ID of the subject row, for example `scans.id`, `findings.id`, or `repositories.id`. Not a foreign key: events survive subject deletion. |
 | actor | text | Scan lifecycle events use the skill name or scan kind. Finding mutations use the helper's `by` value; browser edits leave it empty because there is no session user. Authenticated skill API mutations instead identify the scan and its skill from the bearer-token lookup, not client-supplied text. Repository events leave it empty rather than inventing an operator identity. |
@@ -120,7 +120,9 @@ Queued pauses and direct cancellations write `scan.paused` or `scan.cancelled` i
 Disclosure events cover the actions around reporting a finding. All carry `repository_id` and none copy draft text, message bodies, contact names, attachment names or tokens.
 
 - `disclosure.requested` (subject `finding`) records a launch of an external-reporting skill: `disclose`, `report-upstream` or `public-issue`. It commits with the new scan row and carries `scan_id` and `skill_name`. A launch from the browser uses source `analyst` with an empty actor. A launch through the skill API, such as a skill chaining a disclosure, uses the same source as other skill API writes. Its actor names the calling scan. The payload records that scan as `caller_scan_id` and `caller_skill_name`, keeping `scan_id` and `skill_name` for the launched scan. Launches rejected before a scan exists (such as a pending federation claim) write nothing. Like retry events it does not certify queue delivery or that a draft was produced.
-- `disclosure.vince_submitted` (subject `finding`, source `analyst`) commits with the VINCE reference, communication and `reported` status write. The payload holds `vrf_id` and a boolean `attachment`, not the attachment name.
+- `disclosure.vince_submitted` (subject `finding`, source `analyst`) commits with the VINCE submission row, reference, communication and `reported` status write. The payload holds `submission_id`, `vrf_id` and a boolean `attachment`, not the attachment name.
+- `disclosure.akrites_submitted` (subject `finding`, source `analyst`) commits with the Akrites communication and `reported` status write once intake returns a receipt. The payload holds `submission_id` and the number of `attachments`, never the receipt, which grants access to intake status.
+- `disclosure.pvr_submitted` (subject `finding`) commits with the PVR submission row, `ghsa-upstream` reference, communication and `reported` status write that `report-upstream` records through the skill API, attributed like other skill API writes. The payload holds `submission_id`, `ghsa_id` and `url`.
 - `disclosure.draft_updated` (subject `finding`) is written by `WriteFindingField` for the `disclosure_draft` field, so analyst edits and skill-written drafts are both covered, with skill API writes attributed to the scan like other finding events. The payload holds `field` plus `old_length` and `new_length` in characters, never the draft. A save that leaves the draft unchanged writes nothing.
 - `disclosure.communication_recorded` (subject `finding`) is written by `AddFindingCommunication` in the same transaction as the communication row. The source is `analyst` for the form, `model_suggested` or `analyst` for the skill API (matching finding field writes) and `system` for the VINCE submission. The payload holds `communication_id`, `channel`, `direction` and a boolean `offered_help`, not the body or the free-text actor. Skill API calls identify the scan and skill from the bearer token.
 - `disclosure.channel_changed` (subject `repository`) records a changed disclosure channel, only when the trimmed value differs from the stored one. The payload holds `scope` (`repository` or `subproject`), `old_value` and `new_value`, plus `subproject_id` and `subproject_path` for a subproject. Channels are published security contacts rather than secrets, so both values are kept. Analyst edits use source `analyst` with an empty actor. The maintainers skill uses `model_suggested` with the skill name as actor. A channel imported from a federation feed uses source `system` with the feed as actor. The import only replaces a channel that still holds the value it read, so an address written in the meantime is kept and no event is written for it.
@@ -502,6 +504,29 @@ External interactions about a finding: emails, GHSA submissions, issue replies, 
 | offered_help | text | `pr`, `funding`, `adoption`, or empty. |
 | at | datetime | When the interaction happened. |
 | created_at | datetime | When the row was inserted. |
+
+## disclosure_submissions
+
+Reports sent to outside recipients: VINCE, Akrites and GitHub PVR. A finding can have any number, on one channel or several; a second submission on the same channel needs the analyst to confirm it on the submission page, and the `report-upstream` skill checks for an earlier `ghsa-upstream` reference before filing. Rows are kept out of finding exports because an Akrites receipt grants access to intake status.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | integer PK | |
+| finding_id | integer FK | Cascade delete. Indexed with `channel`. |
+| channel | text | `vince`, `akrites` or `pvr`. |
+| endpoint | text | Where the report was sent. |
+| external_id | text | The recipient's identifier: VINCE VRF ID, Akrites receipt or GHSA ID. Empty while a submission is uncertain. |
+| url | text | Where the recipient shows the report, when it has a page for it. |
+| status | text | `submitted` for VINCE and PVR. Akrites moves through `queued`, `processing` and `done` as intake reports, or `not_found` when intake answers 404 for the receipt. `uncertain` means the request may have been accepted and needs reconciling with the recipient. |
+| status_at | datetime | Last status change reported by the recipient. |
+| next_poll_at | datetime | When the Akrites poller next checks the status; null once polling has stopped. Indexed. |
+| poll_attempts | integer | Status polls so far, which set the backoff. |
+| last_error | text | The last submission or poll error. |
+| actor | text | `analyst` for the submission pages, the skill name for PVR. |
+| request | text | The payload exactly as sent, JSON-encoded: the Akrites report with its attachments, the VINCE form fields and attachment bytes (base64), or the PVR `/reports` body. |
+| response | text | The recipient's acceptance response where it carries more than the identifier. |
+| created_at | datetime | |
+| updated_at | datetime | |
 
 ## finding_references
 

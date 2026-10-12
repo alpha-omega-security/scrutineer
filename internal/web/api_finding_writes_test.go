@@ -573,3 +573,43 @@ func sourceForToken(t *testing.T, s *Server, r *http.Request) db.FindingSource {
 	h.ServeHTTP(httptest.NewRecorder(), r)
 	return got
 }
+
+func TestAPIRecordFindingSubmission(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	f, tok, otherTok := seedFindingForAPI(t, s)
+	path := fmt.Sprintf("/api/findings/%d/submissions", f.ID)
+	body := `{"channel":"pvr","endpoint":"https://api.github.com/repos/acme/widget/security-advisories/reports",` +
+		`"external_id":"GHSA-abcd-efgh-ijkl","url":"https://github.com/acme/widget/security/advisories/GHSA-abcd-efgh-ijkl",` +
+		`"summary":"PVR report GHSA-abcd-efgh-ijkl on acme/widget","actor":"report-upstream",` +
+		`"body":"Filed PVR report GHSA-abcd-efgh-ijkl on acme/widget.","request":{"summary":"Command injection","description":"full text"},"response":{"ghsa_id":"GHSA-abcd-efgh-ijkl"}}`
+
+	if w := apiReq(t, s, "POST", path, tok, body); w.Code != http.StatusForbidden {
+		t.Fatalf("unscoped scan: status = %d, want 403", w.Code)
+	}
+	scopeAPITokenToFinding(t, s, tok, f.ID)
+	if w := apiReq(t, s, "POST", path, otherTok, body); w.Code != http.StatusForbidden {
+		t.Fatalf("cross-repo: status = %d, want 403", w.Code)
+	}
+	if w := apiReq(t, s, "POST", path, tok, strings.Replace(body, `"pvr"`, `"vince"`, 1)); w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("vince channel: status = %d, want 422", w.Code)
+	}
+	w := apiReq(t, s, "POST", path, tok, body)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d: %s", w.Code, w.Body)
+	}
+	submissions, err := db.FindingDisclosureSubmissions(s.DB, f.ID, db.DisclosureChannelPVR)
+	if err != nil || len(submissions) != 1 || submissions[0].ExternalID != "GHSA-abcd-efgh-ijkl" ||
+		!strings.Contains(submissions[0].Request, "full text") || !strings.Contains(submissions[0].Response, "GHSA-abcd-efgh-ijkl") {
+		t.Fatalf("submissions = %+v, err = %v", submissions, err)
+	}
+	var got db.Finding
+	s.DB.First(&got, f.ID)
+	var refs, comms, events int64
+	s.DB.Model(&db.FindingReference{}).Where("finding_id = ? AND tags = ?", f.ID, "ghsa-upstream").Count(&refs)
+	s.DB.Model(&db.FindingCommunication{}).Where("finding_id = ? AND channel = ?", f.ID, "ghsa").Count(&comms)
+	s.DB.Model(&db.AuditEvent{}).Where("kind = ?", db.AuditEventDisclosurePVRSubmitted).Count(&events)
+	if got.Status != db.FindingReported || refs != 1 || comms != 1 || events != 1 {
+		t.Fatalf("status=%s refs=%d comms=%d events=%d", got.Status, refs, comms, events)
+	}
+}

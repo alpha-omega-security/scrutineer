@@ -156,7 +156,7 @@ func TestDisclosureVINCESubmittedAuditRecordsAttachmentFlag(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
 	ctx := seedVINCEFinding(t, s)
-	if err := s.persistVINCESubmission(ctx.Finding, "VRF#1", "https://vince.example/reports", "secret-name.tar.gz", true); err != nil {
+	if err := s.persistVINCESubmission(ctx.Finding, "VRF#1", "https://vince.example/reports", "secret-name.tar.gz", vince.Report{}, &vince.Attachment{Name: "secret-name.tar.gz", Data: []byte("x")}); err != nil {
 		t.Fatal(err)
 	}
 	events := disclosureEvents(t, s, db.AuditEventDisclosureVINCESubmitted)

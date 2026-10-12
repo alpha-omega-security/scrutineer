@@ -62,6 +62,10 @@ type vincePageData struct {
 	AttachmentSHA256      string
 	AttachmentOptions     []vinceAttachmentOption
 	Confirmations         map[string]bool
+	// Prior lists earlier VINCE submissions. SentBefore also covers a VINCE
+	// reference recorded before submissions were kept.
+	Prior      []db.DisclosureSubmission
+	SentBefore bool
 }
 
 func (s *Server) findingVINCEPreview(w http.ResponseWriter, r *http.Request) {
@@ -73,7 +77,7 @@ func (s *Server) findingVINCEPreview(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := vinceEligibility(ctx.Finding, ctx.Notes, ctx.References); err != nil {
+	if err := vinceEligibility(ctx.Finding, ctx.Notes); err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}
@@ -109,7 +113,7 @@ func (s *Server) findingVINCESubmit(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := vinceEligibility(ctx.Finding, ctx.Notes, ctx.References); err != nil {
+	if err := vinceEligibility(ctx.Finding, ctx.Notes); err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}
@@ -135,6 +139,14 @@ func (s *Server) findingVINCESubmit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	attachment := s.vinceFormAttachment(r, ctx, attachmentChoice, fieldErrors)
+	prior, err := db.FindingDisclosureSubmissions(s.DB, ctx.Finding.ID, db.DisclosureChannelVINCE)
+	if err != nil {
+		http.Error(w, "could not load VINCE submissions", http.StatusInternalServerError)
+		return
+	}
+	if err := disclosureResendError(r, len(prior) > 0 || slices.ContainsFunc(ctx.References, vinceReference), "VINCE"); err != nil {
+		addVINCEError(fieldErrors, "resend", err.Error())
+	}
 
 	if len(fieldErrors) > 0 {
 		page := s.vincePage(ctx, report, packageID, selectedRefs, attachmentChoice,
@@ -183,6 +195,15 @@ func (s *Server) findingVINCESubmit(w http.ResponseWriter, r *http.Request) {
 				ambiguous = true
 			}
 		}
+		if ambiguous {
+			recipient, _ := s.VINCE.Endpoint()
+			if err := s.DB.Create(&db.DisclosureSubmission{
+				FindingID: ctx.Finding.ID, Channel: db.DisclosureChannelVINCE, Endpoint: recipient,
+				Status: "uncertain", LastError: message, Actor: "analyst", Request: vinceRequest(report, attachment),
+			}).Error; err != nil {
+				s.Log.Error("record uncertain VINCE submission", "finding", ctx.Finding.ID, "err", err)
+			}
+		}
 		page := s.vincePage(ctx, report, packageID, selectedRefs, attachmentChoice,
 			time.Now().UTC(), fieldErrors, confirmations)
 		page.Error = message
@@ -197,7 +218,7 @@ func (s *Server) findingVINCESubmit(w http.ResponseWriter, r *http.Request) {
 	if attachment != nil {
 		attachmentName = attachment.Name
 	}
-	if err := s.persistVINCESubmission(ctx.Finding, vrfID, reportsURL, attachmentName, attachment != nil); err != nil {
+	if err := s.persistVINCESubmission(ctx.Finding, vrfID, reportsURL, attachmentName, report, attachment); err != nil {
 		page := s.vincePage(ctx, report, packageID, selectedRefs, attachmentChoice,
 			time.Now().UTC(), nil, confirmations)
 		page.Error = "VINCE returned " + vrfID + " but Scrutineer could not save the result. Record the ID and reconcile it manually. Do not submit the report again."
@@ -253,16 +274,17 @@ func (s *Server) loadDisclosureFinding(w http.ResponseWriter, r *http.Request) (
 	return out, true
 }
 
-func vinceEligibility(f db.Finding, notes []db.FindingNote, refs []db.FindingReference) error {
+func vinceEligibility(f db.Finding, notes []db.FindingNote) error {
 	if db.FindingDisclosureBlocked(f) {
 		return db.ErrFindingNonViable
 	}
 	if strings.TrimSpace(f.DisclosureDraft) == "" {
 		return fmt.Errorf("a reviewed disclosure draft is required before VINCE submission")
 	}
+	// A reported finding can still go to another recipient.
 	switch f.Status {
-	case db.FindingReported, db.FindingAcknowledged, db.FindingFixed, db.FindingPublished:
-		return fmt.Errorf("finding status %q has already reached or passed reported", f.Status)
+	case db.FindingFixed, db.FindingPublished:
+		return fmt.Errorf("finding status %q has already been fixed or published", f.Status)
 	case db.FindingRejected, db.FindingDuplicate:
 		return fmt.Errorf("finding status %q cannot be submitted", f.Status)
 	}
@@ -270,11 +292,6 @@ func vinceEligibility(f db.Finding, notes []db.FindingNote, refs []db.FindingRef
 		firstLine, _, _ := strings.Cut(note.Body, "\n")
 		if strings.HasPrefix(strings.TrimSpace(firstLine), "finding-dedup: subsumed by finding #") {
 			return fmt.Errorf("this finding is subsumed by another finding")
-		}
-	}
-	for _, ref := range refs {
-		if vinceReference(ref) {
-			return fmt.Errorf("finding already has a VINCE reference")
 		}
 	}
 	return nil
@@ -527,6 +544,7 @@ func (s *Server) vincePage(
 	}
 	recipient, _ := s.VINCE.Endpoint()
 	reportsURL, _ := s.VINCE.ReportsURL()
+	prior, _ := db.FindingDisclosureSubmissions(s.DB, ctx.Finding.ID, db.DisclosureChannelVINCE)
 	attachmentChoices := []string{vinceAttachmentBundle, vinceAttachmentReport, vinceAttachmentNone}
 	options := make([]vinceAttachmentOption, 0, len(attachmentChoices))
 	var selectedAttachment *vince.Attachment
@@ -575,6 +593,8 @@ func (s *Server) vincePage(
 		AttachmentSHA256:      hash,
 		AttachmentOptions:     options,
 		Confirmations:         confirmations,
+		Prior:                 prior,
+		SentBefore:            len(prior) > 0 || slices.ContainsFunc(ctx.References, vinceReference),
 	}
 }
 
@@ -656,41 +676,34 @@ func attachmentHash(attachment *vince.Attachment) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// persistVINCESubmission records the submission in one transaction with the
-// disclosure.vince_submitted event. The event keeps whether a file was attached
-// but never its name.
-func (s *Server) persistVINCESubmission(finding db.Finding, vrfID, reportsURL, attachmentName string, attached bool) error {
-	findingID := finding.ID
-	return db.FindingWriteTransaction(s.DB, findingID, func(tx *gorm.DB) error {
-		var refs []db.FindingReference
-		if err := tx.Where("finding_id = ?", findingID).Find(&refs).Error; err != nil {
-			return err
-		}
-		for _, ref := range refs {
-			if vinceReference(ref) {
-				return fmt.Errorf("finding already has a VINCE reference")
-			}
-		}
-		if _, err := db.AddFindingReference(tx, findingID, reportsURL, "vince,coordinator",
-			"CERT/CC VINCE report "+vrfID); err != nil {
-			return err
-		}
-		body := "Submitted vulnerability report " + vrfID + " to CERT/CC VINCE.\nAttachment: " + attachmentName
-		if _, err := db.AddFindingCommunication(tx, findingID, "vince", "outbound",
-			"CERT/CC", body, "", time.Now(), db.SourceSystem); err != nil {
-			return err
-		}
-		if err := db.WriteFindingField(tx, findingID, "status", string(db.FindingReported), db.SourceSystem, "vince"); err != nil {
-			return err
-		}
-		return db.LogEvent(tx, db.AuditEventInput{
-			Kind: db.AuditEventDisclosureVINCESubmitted, SubjectType: db.AuditSubjectFinding, SubjectID: findingID,
-			Source: db.SourceAnalyst,
-			Payload: map[string]any{
-				"repository_id": finding.RepositoryID,
-				"vrf_id":        vrfID,
-				"attachment":    attached,
-			},
-		})
+// persistVINCESubmission records the submission, with the report and
+// attachment as sent, in one transaction with the disclosure.vince_submitted
+// event. The event keeps whether a file was attached but never its name.
+func (s *Server) persistVINCESubmission(finding db.Finding, vrfID, reportsURL, attachmentName string, report vince.Report, attachment *vince.Attachment) error {
+	recipient, _ := s.VINCE.Endpoint()
+	submission := db.DisclosureSubmission{
+		FindingID: finding.ID, Channel: db.DisclosureChannelVINCE, Endpoint: recipient,
+		ExternalID: vrfID, URL: reportsURL, Status: "submitted", Actor: "analyst",
+		Request: vinceRequest(report, attachment),
+	}
+	return db.RecordDisclosureSubmission(s.DB, &submission, db.DisclosureOutreach{
+		ReferenceURL: reportsURL, ReferenceTags: "vince,coordinator", ReferenceSummary: "CERT/CC VINCE report " + vrfID,
+		CommunicationChannel: db.DisclosureChannelVINCE,
+		CommunicationActor:   "CERT/CC",
+		CommunicationBody:    "Submitted vulnerability report " + vrfID + " to CERT/CC VINCE.\nAttachment: " + attachmentName,
+		AuditKind:            db.AuditEventDisclosureVINCESubmitted, AuditSource: db.SourceAnalyst,
+		AuditPayload: map[string]any{
+			"repository_id": finding.RepositoryID,
+			"vrf_id":        vrfID,
+			"attachment":    attachment != nil,
+		},
 	})
+}
+
+// vinceRequest records the report fields and attachment bytes as sent.
+func vinceRequest(report vince.Report, attachment *vince.Attachment) string {
+	return disclosureRequest(struct {
+		Report     vince.Report      `json:"report"`
+		Attachment *vince.Attachment `json:"attachment,omitempty"`
+	}{report, attachment})
 }

@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/git-pkgs/purl"
-	"gorm.io/gorm"
 
 	"scrutineer/internal/akrites"
 	"scrutineer/internal/db"
@@ -17,13 +16,16 @@ import (
 )
 
 type akritesPage struct {
-	Finding    db.Finding
-	Report     akrites.Report
-	Disclosure string
-	Exploit    string
-	Submission db.AkritesSubmission
-	Endpoint   string
-	Error      string
+	Finding     db.Finding
+	Report      akrites.Report
+	Disclosure  string
+	Exploit     string
+	Submissions []db.DisclosureSubmission
+	// ShowForm is false when submission is disabled or the finding is not
+	// eligible, leaving only the history of earlier submissions.
+	ShowForm bool
+	Endpoint string
+	Error    string
 }
 
 func (s *Server) findingAkritesPreview(w http.ResponseWriter, r *http.Request) {
@@ -33,22 +35,26 @@ func (s *Server) findingAkritesPreview(w http.ResponseWriter, r *http.Request) {
 	}
 	page := akritesPage{Finding: ctx.Finding}
 	page.Endpoint, _ = s.Akrites.Endpoint()
-	err := s.DB.Where("finding_id = ?", ctx.Finding.ID).First(&page.Submission).Error
-	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-		http.Error(w, "could not load Akrites submission", http.StatusInternalServerError)
+	var err error
+	if page.Submissions, err = db.FindingDisclosureSubmissions(s.DB, ctx.Finding.ID, db.DisclosureChannelAkrites); err != nil {
+		http.Error(w, "could not load Akrites submissions", http.StatusInternalServerError)
 		return
 	}
-	// A saved submission stays readable after the token is removed; only new
+	// Saved submissions stay readable after the token is removed; only new
 	// submissions need it.
-	if page.Submission.ID == 0 && !s.Akrites.Enabled() {
+	if len(page.Submissions) == 0 && !s.Akrites.Enabled() {
 		http.NotFound(w, r)
 		return
 	}
-	if page.Submission.ID == 0 {
-		if err := akritesEligibility(ctx); err != nil {
-			http.Error(w, err.Error(), http.StatusConflict)
-			return
-		}
+	eligibility := akritesEligibility(ctx)
+	if eligibility != nil && len(page.Submissions) == 0 {
+		http.Error(w, eligibility.Error(), http.StatusConflict)
+		return
+	}
+	if eligibility != nil {
+		page.Error = eligibility.Error()
+	}
+	if page.ShowForm = s.Akrites.Enabled() && eligibility == nil; page.ShowForm {
 		page.Disclosure = ctx.Finding.DisclosureDraft
 		page.Exploit = strings.TrimSpace(ctx.Finding.Reach + "\n\n" + ctx.Finding.Validation)
 		page.Report = akrites.Report{
@@ -108,8 +114,9 @@ func akritesEligibility(ctx disclosureFindingContext) error {
 	if strings.TrimSpace(ctx.Finding.DisclosureDraft) == "" {
 		return fmt.Errorf("a reviewed disclosure draft is required before Akrites submission")
 	}
+	// A reported finding can still go to another recipient.
 	switch ctx.Finding.Status {
-	case db.FindingReported, db.FindingAcknowledged, db.FindingFixed, db.FindingPublished, db.FindingRejected, db.FindingDuplicate:
+	case db.FindingFixed, db.FindingPublished, db.FindingRejected, db.FindingDuplicate:
 		return fmt.Errorf("finding status %q cannot be submitted to Akrites", ctx.Finding.Status)
 	}
 	for _, note := range ctx.Notes {
@@ -191,17 +198,26 @@ func (s *Server) findingAkritesSubmit(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	page.Endpoint = endpoint
+	page.Endpoint, page.ShowForm = endpoint, true
+	if page.Submissions, err = db.FindingDisclosureSubmissions(s.DB, ctx.Finding.ID, db.DisclosureChannelAkrites); err != nil {
+		http.Error(w, "could not load Akrites submissions", http.StatusInternalServerError)
+		return
+	}
 	renderError := func(status int, message string) {
 		page.Error = message
 		w.WriteHeader(status)
 		s.render(w, r, "finding_akrites.html", map[string]any{"Akrites": page})
 	}
+	if err := disclosureResendError(r, len(page.Submissions) > 0, "Akrites"); err != nil {
+		renderError(http.StatusUnprocessableEntity, err.Error())
+		return
+	}
 	if strings.TrimSpace(page.Disclosure) == "" {
 		renderError(http.StatusUnprocessableEntity, "a disclosure report is required")
 		return
 	}
-	if _, err := page.Report.JSON(); err != nil {
+	body, err := page.Report.JSON()
+	if err != nil {
 		renderError(http.StatusUnprocessableEntity, err.Error())
 		return
 	}
@@ -218,10 +234,14 @@ func (s *Server) findingAkritesSubmit(w http.ResponseWriter, r *http.Request) {
 		renderError(http.StatusConflict, "A federation peer holds this finding: "+claims+". Coordinate through that contact before submitting again.")
 		return
 	}
-	// Reserve before POST so a crash or another server cannot submit it twice.
-	submission := db.AkritesSubmission{FindingID: ctx.Finding.ID, Endpoint: endpoint, Status: "uncertain"}
+	// Reserve before POST so a crash leaves a record of a request that may
+	// have reached Akrites.
+	submission := db.DisclosureSubmission{
+		FindingID: ctx.Finding.ID, Channel: db.DisclosureChannelAkrites, Endpoint: endpoint,
+		Status: "uncertain", Actor: "analyst", Request: string(body),
+	}
 	if err := s.DB.Create(&submission).Error; err != nil {
-		http.Error(w, "could not reserve submission; check the existing Akrites submission before retrying", http.StatusConflict)
+		renderError(http.StatusInternalServerError, "could not record the submission before sending it")
 		return
 	}
 	client := akrites.Client{Config: s.Akrites, HTTPClient: s.akritesHTTPClient}
@@ -231,17 +251,27 @@ func (s *Server) findingAkritesSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	next := time.Now().Add(akritesPollInitial)
-	saved := s.DB.Model(&submission).Updates(map[string]any{"receipt": receipt, "status": "queued", "next_poll_at": next})
+	// The receipt is saved on its own first so it survives a failure in the
+	// outreach transaction below.
+	saved := s.DB.Model(&submission).Updates(map[string]any{"external_id": receipt, "status": "queued", "next_poll_at": next})
 	if saved.Error != nil || saved.RowsAffected != 1 {
-		page.Submission = submission
-		page.Submission.Receipt = receipt
-		page.Submission.Status = "uncertain"
-		page.Submission.NextPollAt = nil
+		submission.ExternalID, submission.Status, submission.NextPollAt = receipt, "uncertain", nil
+		page.Submissions = append([]db.DisclosureSubmission{submission}, page.Submissions...)
+		page.ShowForm = false
 		renderError(http.StatusInternalServerError, "Akrites accepted the report, but the receipt could not be saved. Record the receipt below and reconcile with Akrites. Do not resubmit.")
 		return
 	}
-	if err := s.persistAkritesOutreach(ctx.Finding.ID); err != nil {
-		page.Submission = submission
+	submission.ExternalID, submission.Status, submission.NextPollAt = receipt, "queued", &next
+	err = db.RecordDisclosureSubmission(s.DB, &submission, db.DisclosureOutreach{
+		CommunicationChannel: db.DisclosureChannelAkrites,
+		CommunicationActor:   "Akrites",
+		CommunicationBody:    "Submitted a vulnerability report to Akrites. Receipt and intake status are available on the Akrites submission page.",
+		AuditKind:            db.AuditEventDisclosureAkritesSubmitted, AuditSource: db.SourceAnalyst,
+		AuditPayload: map[string]any{db.AuditKeyRepositoryID: ctx.Finding.RepositoryID, "attachments": len(page.Report.Attachments)},
+	})
+	if err != nil {
+		page.Submissions = append([]db.DisclosureSubmission{submission}, page.Submissions...)
+		page.ShowForm = false
 		renderError(http.StatusInternalServerError, "The receipt is saved, but the finding status could not be updated. Review the finding manually. Do not resubmit.")
 		return
 	}
@@ -250,8 +280,8 @@ func (s *Server) findingAkritesSubmit(w http.ResponseWriter, r *http.Request) {
 
 // akritesSubmitError releases the reservation when intake definitely stored
 // nothing, so the analyst's edits stay on the form for correction or a later
-// retry. An ambiguous failure keeps the reservation and blocks another POST.
-func (s *Server) akritesSubmitError(w http.ResponseWriter, r *http.Request, page *akritesPage, submission db.AkritesSubmission, err error) {
+// retry. An ambiguous failure keeps the reservation as an uncertain record.
+func (s *Server) akritesSubmitError(w http.ResponseWriter, r *http.Request, page *akritesPage, submission db.DisclosureSubmission, err error) {
 	status := http.StatusBadGateway
 	page.Error = err.Error()
 	var response *akrites.ResponseError
@@ -268,20 +298,10 @@ func (s *Server) akritesSubmitError(w http.ResponseWriter, r *http.Request, page
 			return
 		}
 	}
-	page.Submission = submission
-	page.Submission.LastError = err.Error()
-	if saveErr := s.DB.Save(&page.Submission).Error; saveErr != nil {
-		page.Submission.Status = "uncertain"
-	}
+	submission.LastError = err.Error()
+	_ = s.DB.Save(&submission).Error
+	page.Submissions = append([]db.DisclosureSubmission{submission}, page.Submissions...)
+	page.ShowForm = false
 	w.WriteHeader(status)
 	s.render(w, r, "finding_akrites.html", map[string]any{"Akrites": page})
-}
-
-func (s *Server) persistAkritesOutreach(findingID uint) error {
-	return db.FindingWriteTransaction(s.DB, findingID, func(tx *gorm.DB) error {
-		if _, err := db.AddFindingCommunication(tx, findingID, "akrites", "outbound", "Akrites", "Submitted a vulnerability report to Akrites. Receipt and intake status are available on the Akrites submission page.", "", time.Now()); err != nil {
-			return err
-		}
-		return db.WriteFindingField(tx, findingID, "status", string(db.FindingReported), db.SourceSystem, "akrites")
-	})
 }

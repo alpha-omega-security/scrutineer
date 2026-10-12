@@ -36,6 +36,8 @@ const (
 
 	AuditEventDisclosureRequested             = "disclosure.requested"
 	AuditEventDisclosureVINCESubmitted        = "disclosure.vince_submitted"
+	AuditEventDisclosureAkritesSubmitted      = "disclosure.akrites_submitted"
+	AuditEventDisclosurePVRSubmitted          = "disclosure.pvr_submitted"
 	AuditEventDisclosureDraftUpdated          = "disclosure.draft_updated"
 	AuditEventDisclosureCommunicationRecorded = "disclosure.communication_recorded"
 	AuditEventDisclosureChannelChanged        = "disclosure.channel_changed"

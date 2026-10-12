@@ -97,11 +97,11 @@ func TestAkritesSubmissionThroughHTTP(t *testing.T) {
 	if resp.StatusCode != http.StatusSeeOther {
 		t.Fatalf("submit status=%d", resp.StatusCode)
 	}
-	var submission db.AkritesSubmission
+	var submission db.DisclosureSubmission
 	if err := s.DB.Where("finding_id = ?", finding.ID).First(&submission).Error; err != nil {
 		t.Fatal(err)
 	}
-	if submission.Receipt != "SUB-persisted" || submission.Status != "queued" || submission.NextPollAt == nil {
+	if submission.ExternalID != "SUB-persisted" || submission.Status != "queued" || submission.NextPollAt == nil {
 		t.Fatalf("saved submission = %+v", submission)
 	}
 	if err := s.DB.First(&finding, finding.ID).Error; err != nil {
@@ -110,8 +110,8 @@ func TestAkritesSubmissionThroughHTTP(t *testing.T) {
 	if finding.Status != db.FindingReported {
 		t.Fatalf("finding status = %s", finding.Status)
 	}
-	if w := postAkrites(s, path, akritesForm(endpoint)); w.Code != http.StatusConflict {
-		t.Fatalf("duplicate status=%d", w.Code)
+	if w := postAkrites(s, path, akritesForm(endpoint)); w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("unconfirmed duplicate status=%d", w.Code)
 	}
 	if posts.Load() != 1 {
 		t.Fatalf("posts=%d", posts.Load())
@@ -120,7 +120,7 @@ func TestAkritesSubmissionThroughHTTP(t *testing.T) {
 	if err := s.DB.Where("finding_id = ? AND channel = ?", finding.ID, "akrites").Find(&comms).Error; err != nil {
 		t.Fatal(err)
 	}
-	if len(comms) != 1 || strings.Contains(comms[0].Body, submission.Receipt) {
+	if len(comms) != 1 || strings.Contains(comms[0].Body, submission.ExternalID) {
 		t.Fatalf("communications=%+v", comms)
 	}
 	// A new server without a submission token still resumes persisted work
@@ -147,7 +147,7 @@ func TestAkritesSubmissionThroughHTTP(t *testing.T) {
 	if polls.Load() != 1 {
 		t.Fatalf("polls=%d", polls.Load())
 	}
-	t.Logf("HTTP submission saved %s; restarted poller saved done; status page renders receipt and done", submission.Receipt)
+	t.Logf("HTTP submission saved %s; restarted poller saved done; status page renders receipt and done", submission.ExternalID)
 }
 
 func getBody(t *testing.T, client *http.Client, url string) string {
@@ -176,7 +176,7 @@ func waitForAkritesDone(t *testing.T, s *Server, id uint) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		var saved db.AkritesSubmission
+		var saved db.DisclosureSubmission
 		if err := s.DB.First(&saved, id).Error; err != nil {
 			t.Fatal(err)
 		}
@@ -194,7 +194,7 @@ func waitForAkritesDone(t *testing.T, s *Server, id uint) {
 }
 
 func TestAkritesSubmissionGuards(t *testing.T) {
-	for _, tc := range []string{"disabled", "unreviewed", "nonviable", "subsumed", "confirmation", "recipient", "invalid report", "empty report", "reserved", "reported"} {
+	for _, tc := range []string{"disabled", "unreviewed", "nonviable", "subsumed", "confirmation", "recipient", "invalid report", "empty report", "reserved", "fixed"} {
 		t.Run(tc, func(t *testing.T) {
 			s, done := newTestServer(t)
 			defer done()
@@ -229,9 +229,9 @@ func TestAkritesSubmissionGuards(t *testing.T) {
 			case "empty report":
 				form.Set("raw", " ")
 			case "reserved":
-				err = s.DB.Create(&db.AkritesSubmission{FindingID: ctx.Finding.ID, Status: "uncertain"}).Error
-			case "reported":
-				err = s.DB.Model(&ctx.Finding).Update("status", db.FindingReported).Error
+				err = s.DB.Create(&db.DisclosureSubmission{FindingID: ctx.Finding.ID, Channel: db.DisclosureChannelAkrites, Status: "uncertain"}).Error
+			case "fixed":
+				err = s.DB.Model(&ctx.Finding).Update("status", db.FindingFixed).Error
 			}
 			if err != nil {
 				t.Fatal(err)
@@ -277,7 +277,7 @@ func TestAkritesSubmissionFailurePersistence(t *testing.T) {
 			if w.Code != tc.want {
 				t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 			}
-			var rows []db.AkritesSubmission
+			var rows []db.DisclosureSubmission
 			if err := s.DB.Find(&rows).Error; err != nil {
 				t.Fatal(err)
 			}
@@ -340,7 +340,7 @@ func TestAkritesShowsRejectedFields(t *testing.T) {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
 	}
 	var count int64
-	if err := s.DB.Model(&db.AkritesSubmission{}).Count(&count).Error; err != nil || count != 0 {
+	if err := s.DB.Model(&db.DisclosureSubmission{}).Count(&count).Error; err != nil || count != 0 {
 		t.Fatalf("rejected submission not released for correction: count=%d err=%v", count, err)
 	}
 }
@@ -355,12 +355,55 @@ func TestAkritesPreviewWithoutToken(t *testing.T) {
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("form offered without a token: status=%d", w.Code)
 	}
-	if err := s.DB.Create(&db.AkritesSubmission{FindingID: finding.ID, Endpoint: akrites.DefaultBaseURL + "/v1/reports", Receipt: "SUB-kept", Status: "not_found"}).Error; err != nil {
+	if err := s.DB.Create(&db.DisclosureSubmission{FindingID: finding.ID, Channel: db.DisclosureChannelAkrites, Endpoint: akrites.DefaultBaseURL + "/v1/reports", ExternalID: "SUB-kept", Status: "not_found"}).Error; err != nil {
 		t.Fatal(err)
 	}
 	w = httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, localReq(http.MethodGet, path))
 	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), "SUB-kept") || !strings.Contains(w.Body.String(), "stopped checking") {
 		t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestAkritesResendNeedsConfirmation(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	finding := seedVINCEFinding(t, s).Finding
+	var posts atomic.Int32
+	intake := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := posts.Add(1)
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = fmt.Fprintf(w, `{"receipt":"SUB-%d"}`, n)
+	}))
+	defer intake.Close()
+	s.Akrites = akrites.Config{BaseURL: intake.URL, SubmissionToken: "secret"}
+	s.akritesHTTPClient = intake.Client()
+	endpoint, _ := s.Akrites.Endpoint()
+	path := fmt.Sprintf("/findings/%d/akrites", finding.ID)
+	if w := postAkrites(s, path, akritesForm(endpoint)); w.Code != http.StatusSeeOther {
+		t.Fatalf("first status=%d body=%s", w.Code, w.Body.String())
+	}
+	preview := httptest.NewRecorder()
+	s.Handler().ServeHTTP(preview, localReq(http.MethodGet, path))
+	if !strings.Contains(preview.Body.String(), `name="resend"`) || !strings.Contains(preview.Body.String(), "SUB-1") {
+		t.Fatalf("history or resend confirmation missing: %s", preview.Body.String())
+	}
+	form := akritesForm(endpoint)
+	form.Set("resend", "yes")
+	if w := postAkrites(s, path, form); w.Code != http.StatusSeeOther {
+		t.Fatalf("confirmed resend status=%d body=%s", w.Code, w.Body.String())
+	}
+	rows, err := db.FindingDisclosureSubmissions(s.DB, finding.ID, db.DisclosureChannelAkrites)
+	if err != nil || len(rows) != 2 || posts.Load() != 2 || rows[0].ExternalID != "SUB-2" || rows[1].ExternalID != "SUB-1" {
+		t.Fatalf("rows=%+v posts=%d err=%v", rows, posts.Load(), err)
+	}
+	var request akrites.Report
+	if err := json.Unmarshal([]byte(rows[0].Request), &request); err != nil || len(request.Attachments) != 2 || request.Attachments[0].Data != "Reviewed command injection report" {
+		t.Fatalf("recorded request = %s, err = %v", rows[0].Request, err)
+	}
+	var events int64
+	s.DB.Model(&db.AuditEvent{}).Where("kind = ?", db.AuditEventDisclosureAkritesSubmitted).Count(&events)
+	if events != 2 {
+		t.Fatalf("akrites_submitted events = %d", events)
 	}
 }

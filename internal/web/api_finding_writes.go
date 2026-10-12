@@ -1,6 +1,7 @@
 package web
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"sort"
@@ -233,4 +234,61 @@ func sourceFromRequest(r *http.Request) db.FindingSource {
 		return db.SourceModel
 	}
 	return db.SourceAnalyst
+}
+
+// apiRecordFindingSubmission records a report a skill filed with an outside
+// recipient. Only PVR is filed by a skill; VINCE and Akrites submissions are
+// recorded by their own pages.
+func (s *Server) apiRecordFindingSubmission(w http.ResponseWriter, r *http.Request) {
+	id, ok := s.findingScoped(w, r)
+	if !ok {
+		return
+	}
+	scan := scanFromRequest(r)
+	if scan == nil || scan.FindingID == nil || *scan.FindingID != id {
+		writeAPIError(w, http.StatusForbidden, "scan may only record submissions for its scoped finding")
+		return
+	}
+	body, ok := decodeAPIBody[struct {
+		Channel    string          `json:"channel"`
+		Endpoint   string          `json:"endpoint"`
+		ExternalID string          `json:"external_id"`
+		URL        string          `json:"url"`
+		Summary    string          `json:"summary"`
+		Actor      string          `json:"actor"`
+		Body       string          `json:"body"`
+		Request    json.RawMessage `json:"request"`
+		Response   json.RawMessage `json:"response"`
+	}](w, r, "body must be JSON")
+	if !ok {
+		return
+	}
+	if body.Channel != db.DisclosureChannelPVR {
+		writeAPIError(w, http.StatusUnprocessableEntity, "channel must be pvr")
+		return
+	}
+	if body.ExternalID == "" || body.URL == "" || body.Body == "" || len(body.Request) == 0 {
+		writeAPIError(w, http.StatusUnprocessableEntity, "external_id, url, body and request are required")
+		return
+	}
+	repoID, _ := s.findingRepoID(id)
+	submission := db.DisclosureSubmission{
+		FindingID: id, Channel: body.Channel, Endpoint: body.Endpoint, ExternalID: body.ExternalID, URL: body.URL,
+		Status: "submitted", Actor: body.Actor, Request: string(body.Request), Response: string(body.Response),
+	}
+	err := db.RecordDisclosureSubmission(s.DB.WithContext(r.Context()), &submission, db.DisclosureOutreach{
+		ReferenceURL: body.URL, ReferenceTags: "ghsa-upstream", ReferenceSummary: body.Summary,
+		CommunicationChannel: "ghsa", CommunicationActor: body.Actor, CommunicationBody: body.Body,
+		AuditKind: db.AuditEventDisclosurePVRSubmitted, AuditSource: sourceFromRequest(r),
+		AuditPayload: map[string]any{db.AuditKeyRepositoryID: repoID, "ghsa_id": body.ExternalID, "url": body.URL},
+	})
+	if errors.Is(err, db.ErrFindingNonViable) {
+		writeAPIError(w, http.StatusPreconditionFailed, err.Error())
+		return
+	}
+	if err != nil {
+		writeAPIError(w, findingWriteErrorStatus(err, http.StatusUnprocessableEntity), err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, submission)
 }

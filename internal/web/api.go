@@ -169,6 +169,7 @@ func (s *Server) apiHandler() http.Handler {
 	mux.HandleFunc("POST /findings/{id}/communications", s.apiAddFindingCommunication)
 	mux.HandleFunc("GET /findings/{id}/references", s.apiListFindingReferences)
 	mux.HandleFunc("POST /findings/{id}/references", s.apiAddFindingReference)
+	mux.HandleFunc("POST /findings/{id}/submissions", s.apiRecordFindingSubmission)
 	mux.HandleFunc("PUT /findings/{id}/labels", s.apiSetFindingLabels)
 	mux.HandleFunc("GET /findings/{id}/history", s.apiListFindingHistory)
 	mux.HandleFunc("GET /skills", s.apiListSkills)

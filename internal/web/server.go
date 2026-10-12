@@ -2146,7 +2146,7 @@ func (s *Server) findingShow(w http.ResponseWriter, r *http.Request) {
 	vinceReason := "VINCE API key is not configured"
 	vinceReady := false
 	if s.VINCE.Enabled() {
-		if err := vinceEligibility(f, notes, refs); err != nil {
+		if err := vinceEligibility(f, notes); err != nil {
 			vinceReason = err.Error()
 		} else {
 			vinceReady = true
@@ -2158,7 +2158,7 @@ func (s *Server) findingShow(w http.ResponseWriter, r *http.Request) {
 	akritesLink := s.Akrites.Enabled()
 	if !akritesLink {
 		var submissions int64
-		s.DB.Model(&db.AkritesSubmission{}).Where("finding_id = ?", f.ID).Count(&submissions)
+		s.DB.Model(&db.DisclosureSubmission{}).Where("finding_id = ? AND channel = ?", f.ID, db.DisclosureChannelAkrites).Count(&submissions)
 		akritesLink = submissions > 0
 	}
 	data["AkritesLink"] = akritesLink
@@ -3268,7 +3268,7 @@ func deleteReviewConfirmations(tx *gorm.DB, where string, args ...any) error {
 func findingChildModels() []any {
 	return []any{
 		&db.FindingNote{}, &db.FindingCommunication{}, &db.FindingReference{},
-		&db.FindingHistory{}, &db.FindingDependent{}, &db.FindingReview{}, &db.FeedbackConfirmation{},
+		&db.FindingHistory{}, &db.FindingDependent{}, &db.FindingReview{}, &db.FeedbackConfirmation{}, &db.DisclosureSubmission{},
 		&db.FindingVerification{}, &db.FindingAttackPath{}, &db.FindingPoC{},
 		&db.RemediationValidation{}, &db.RemediationAttempt{},
 	}

@@ -747,6 +747,47 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/FindingReference' }
 
+  /findings/{id}/submissions:
+    post:
+      summary: Record a report a skill filed with an outside recipient
+      description: |
+        Records a GitHub private vulnerability report filed by the report-upstream skill. In one write it stores
+        the submission with the report as sent, adds a ghsa-upstream reference and an outbound communication,
+        moves a finding not yet reported to reported, and logs disclosure.pvr_submitted. Requires a scan token
+        scoped to the finding.
+      operationId: recordFindingSubmission
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [channel, external_id, url, body, request]
+              properties:
+                channel: { type: string, enum: [pvr] }
+                endpoint: { type: string, description: Where the report was sent. }
+                external_id: { type: string, description: The GHSA ID. }
+                url: { type: string, description: The advisory page. }
+                summary: { type: string, description: Summary for the reference. }
+                actor: { type: string }
+                body: { type: string, description: The outbound communication text. }
+                request: { type: object, description: The report body exactly as sent. }
+                response: { type: object, description: The recipient response. }
+      responses:
+        '201':
+          description: Created
+        '403':
+          description: The scan token is not scoped to this finding.
+        '412':
+          description: The finding is not viable for disclosure.
+        '422':
+          description: Missing fields or a channel other than pvr.
+
   /findings/{id}/labels:
     put:
       summary: Replace the set of labels on a finding
@@ -1974,7 +2015,7 @@ components:
                 items:
                   type: object
                   properties:
-                    channel:      { type: string, enum: [email, ghsa, issue, pr, direct, registry] }
+                    channel:      { type: string, enum: [email, ghsa, issue, pr, direct, registry, vince, akrites] }
                     direction:    { type: string, enum: [outbound, inbound] }
                     actor:        { type: string }
                     body:         { type: string }
@@ -2084,7 +2125,7 @@ components:
       properties:
         id:           { type: integer, format: int64 }
         finding_id:   { type: integer, format: int64 }
-        channel:      { type: string, enum: [email, ghsa, issue, pr, direct, registry] }
+        channel:      { type: string, enum: [email, ghsa, issue, pr, direct, registry, vince, akrites] }
         direction:    { type: string, enum: [outbound, inbound] }
         actor:        { type: string }
         body:         { type: string }
