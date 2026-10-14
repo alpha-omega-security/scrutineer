@@ -393,12 +393,12 @@ func findingWriteRetryDelay(err error, attempt int) (time.Duration, bool) {
 	return retry.BackoffDelay(attempt, time.Millisecond, findingWriteMaxDelay), true
 }
 
-// isPostgresSerializationFailure is the Postgres analogue of isSQLiteBusy: pgx
-// reports a serialization_failure (SQLSTATE 40001) or deadlock_detected (40P01)
-// when a concurrent transaction wins the compare-and-swap. Like the SQLite
-// case, the owned transaction must be restarted against a fresh snapshot. The
-// SQLState() method is matched structurally so the db package keeps no direct
-// pgconn dependency.
+// isPostgresSerializationFailure reports a deadlock (SQLSTATE 40P01), or a
+// serialization failure (40001) on servers running at repeatable read or
+// serializable; at read committed a losing compare-and-swap updates no rows
+// instead. Either way the owned transaction restarts against a fresh snapshot.
+// SQLState() is matched structurally so the db package keeps no direct pgconn
+// dependency.
 func isPostgresSerializationFailure(err error) bool {
 	var pgErr interface{ SQLState() string }
 	if !errors.As(err, &pgErr) {

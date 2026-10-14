@@ -17,6 +17,9 @@ func PostgresDSN(t testing.TB) string {
 	t.Helper()
 	dsn := os.Getenv("SCRUTINEER_TEST_PG_DSN")
 	if dsn == "" {
+		if os.Getenv("SCRUTINEER_TEST_PG_REQUIRED") != "" {
+			t.Fatal("SCRUTINEER_TEST_PG_REQUIRED is set but SCRUTINEER_TEST_PG_DSN is empty")
+		}
 		t.Skip("set SCRUTINEER_TEST_PG_DSN to run PostgreSQL integration tests")
 	}
 	admin, err := sql.Open("pgx", dsn)

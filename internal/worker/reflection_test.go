@@ -13,7 +13,11 @@ import (
 
 func reflectionFixture(t *testing.T) (*Worker, *db.Scan, *db.Scan) {
 	t.Helper()
-	w := newPreflightWorker(t)
+	return reflectionFixtureFor(t, newPreflightWorker(t))
+}
+
+func reflectionFixtureFor(t *testing.T, w *Worker) (*Worker, *db.Scan, *db.Scan) {
+	t.Helper()
 	scan := seedPreflightFixtures(t, w, "")
 	if err := w.DB.Model(&db.Repository{}).Where("id = ?", scan.RepositoryID).Update("threat_model", `{"known_non_findings":[],"controls":[]}`).Error; err != nil {
 		t.Fatal(err)

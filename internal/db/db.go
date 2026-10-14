@@ -1719,7 +1719,7 @@ func migrate(gdb *gorm.DB) error {
 	if err := preMigrate(gdb); err != nil {
 		return fmt.Errorf("premigrate: %w", err)
 	}
-	if gdb.Name() == string(DialectPostgres) {
+	if gdb.Name() == string(DialectPostgres) && !gdb.Migrator().HasTable(&Scan{}) {
 		// Create both sides of the scans/findings cycle before adding foreign keys.
 		gdb.DisableForeignKeyConstraintWhenMigrating = true
 		err := gdb.AutoMigrate(models()...)
