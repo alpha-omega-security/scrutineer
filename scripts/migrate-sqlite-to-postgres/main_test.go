@@ -142,6 +142,7 @@ func TestPostgresMigration(t *testing.T) {
 	if message.Content != "retain this conversation" || !message.CreatedAt.Equal(wantTime) {
 		t.Errorf("chat content/timestamp changed: %+v", message)
 	}
+	assertMigratedDisclosureSubmission(t, dst, wantTime)
 	var badConstraints int64
 	must(t, dst.Raw("SELECT count(*) FROM pg_constraint WHERE contype = 'f' AND connamespace = current_schema()::regnamespace AND (condeferrable OR NOT convalidated)").Scan(&badConstraints).Error)
 	if badConstraints != 0 {
@@ -156,6 +157,18 @@ func TestPostgresMigration(t *testing.T) {
 	}
 	if output, err := migrateCLI(t, path, dsn); err == nil || !strings.Contains(output, "not empty") {
 		t.Fatalf("rerun should refuse a populated destination: %v\n%s", err, output)
+	}
+}
+
+func assertMigratedDisclosureSubmission(t *testing.T, dst *gorm.DB, wantTime time.Time) {
+	t.Helper()
+	var submission db.DisclosureSubmission
+	must(t, dst.First(&submission, 1).Error)
+	if submission.FindingID != 1 || submission.Channel != db.DisclosureChannelAkrites ||
+		submission.ExternalID != "SUB-migrated" || submission.Status != "queued" ||
+		submission.Request != `{"software":"widget","ecosystem":"npm"}` ||
+		submission.NextPollAt == nil || !submission.NextPollAt.Equal(wantTime) {
+		t.Errorf("disclosure submission changed: %+v", submission)
 	}
 }
 
@@ -217,6 +230,9 @@ func seedHistory(t *testing.T, src *gorm.DB) {
 		&db.ExpectedFinding{RepositoryID: 1, File: "app.rb", CWE: "CWE-89"},
 		&db.FindingNote{FindingID: 1, Body: "analyst note"},
 		&db.FindingCommunication{FindingID: 1, Body: "disclosure"},
+		&db.DisclosureSubmission{FindingID: 1, Channel: db.DisclosureChannelAkrites,
+			ExternalID: "SUB-migrated", Status: "queued", Request: `{"software":"widget","ecosystem":"npm"}`,
+			NextPollAt: new(time.Date(2020, 2, 3, 4, 5, 6, 123456000, time.UTC))},
 		&db.FindingReference{FindingID: 1, URL: "https://example.com/reference"},
 		&db.FindingHistory{FindingID: 1, Field: "status", NewValue: "confirmed"},
 		&db.FindingReview{FindingID: 1, Verdict: "true_positive"},

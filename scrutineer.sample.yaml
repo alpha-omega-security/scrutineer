@@ -349,8 +349,6 @@
 # akrites:
 #   base_url: https://intake.tap.akrites.dev
 #   submission_token: ""
-#   # Authorization sends a bearer token; TAP-SUBMISSION-TOKEN is deprecated.
-#   auth_header: Authorization
 #   email: ""
 
 # Secret shared out of band between federation members, mixed into

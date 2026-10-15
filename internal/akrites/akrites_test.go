@@ -80,14 +80,14 @@ func validReport() Report {
 }
 
 func TestClientSubmitAndPoll(t *testing.T) {
-	for _, header := range []string{"", "TAP-SUBMISSION-TOKEN"} {
-		t.Run(header, func(t *testing.T) {
+	for _, token := range []string{"private-token", " private-token "} {
+		t.Run(token, func(t *testing.T) {
 			var posts, gets int
 			server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.Method + " " + r.URL.Path {
 				case "POST /v1/reports":
 					posts++
-					checkReportRequest(t, r, header)
+					checkReportRequest(t, r)
 					w.Header().Set("Link", `</v1/submissions/SUB-example>; rel="monitor"`)
 					w.WriteHeader(http.StatusAccepted)
 					_, _ = fmt.Fprint(w, `{"receipt":"SUB-example","message":"accepted; poll /v1/submissions/{receipt} for status"}`)
@@ -102,7 +102,7 @@ func TestClientSubmitAndPoll(t *testing.T) {
 				}
 			}))
 			defer server.Close()
-			client := Client{Config: Config{BaseURL: server.URL, SubmissionToken: "private-token", AuthHeader: header}, HTTPClient: server.Client()}
+			client := Client{Config: Config{BaseURL: server.URL, SubmissionToken: token}, HTTPClient: server.Client()}
 			receipt, err := client.Submit(context.Background(), validReport())
 			if err != nil || receipt != "SUB-example" {
 				t.Fatalf("receipt = %q, err = %v", receipt, err)
@@ -118,13 +118,12 @@ func TestClientSubmitAndPoll(t *testing.T) {
 	}
 }
 
-func checkReportRequest(t *testing.T, r *http.Request, header string) {
+func checkReportRequest(t *testing.T, r *http.Request) {
 	t.Helper()
-	h, token := "Authorization", "Bearer private-token"
-	if header == "TAP-SUBMISSION-TOKEN" {
-		h, token = header, "private-token"
+	if r.Header.Get("TAP-SUBMISSION-TOKEN") != "" {
+		t.Error("unsupported submission header sent")
 	}
-	if r.Header.Get(h) != token || r.Header.Get("Content-Type") != "application/json" {
+	if r.Header.Get("Authorization") != "Bearer private-token" || r.Header.Get("Content-Type") != "application/json" {
 		t.Error("missing authentication or JSON content type")
 	}
 	var report intakeReport

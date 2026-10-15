@@ -54,7 +54,6 @@ var attachmentTypes = []string{"", "patch", "exploit-proof-of-concept", "reprodu
 type Config struct {
 	BaseURL         string `yaml:"base_url"`
 	SubmissionToken string `yaml:"submission_token"`
-	AuthHeader      string `yaml:"auth_header"`
 	Email           string `yaml:"email"`
 }
 
@@ -68,9 +67,6 @@ func (c Config) Endpoint() (string, error) {
 	u, err := url.Parse(base)
 	if err != nil || u.Scheme != "https" || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
 		return "", fmt.Errorf("akrites base_url must be an HTTPS origin without credentials, path, query or fragment")
-	}
-	if c.AuthHeader != "" && c.AuthHeader != "Authorization" && c.AuthHeader != "TAP-SUBMISSION-TOKEN" {
-		return "", fmt.Errorf("akrites auth_header must be Authorization or TAP-SUBMISSION-TOKEN")
 	}
 	u.Path = "/v1/reports"
 	return u.String(), nil
@@ -445,14 +441,7 @@ func (c Client) request(ctx context.Context, method, endpoint string, body []byt
 	}
 	if method == http.MethodPost {
 		req.Header.Set("Content-Type", "application/json")
-		header, token := c.Config.AuthHeader, strings.TrimSpace(c.Config.SubmissionToken)
-		if header == "" {
-			header = "Authorization"
-		}
-		if header == "Authorization" {
-			token = "Bearer " + token
-		}
-		req.Header.Set(header, token)
+		req.Header.Set("Authorization", "Bearer "+strings.TrimSpace(c.Config.SubmissionToken))
 	}
 	client := &http.Client{Timeout: requestTimeout}
 	if c.HTTPClient != nil {

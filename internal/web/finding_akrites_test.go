@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/cookiejar"
 	"net/http/httptest"
 	"net/url"
 	"strings"
@@ -41,7 +42,24 @@ func akritesRequestMatchesForm(r *http.Request, report akrites.Report) bool {
 		report.Attachments[0].Data == "Reviewed command injection report" && report.Attachments[0].ContentType == "text/markdown" &&
 		report.Attachments[1].Type == "exploit-proof-of-concept" && report.Attachments[1].ContentType == "text/plain" &&
 		report.AffectedSymbol != nil && *report.AffectedSymbol == akrites.Symbol{File: "cmd/run.go", Function: "buildCommand", Line: 42} &&
-		r.Header.Get("Authorization") == "Bearer private-token"
+		r.Header.Get("Authorization") == "Bearer private-token" && r.Header.Get("TAP-SUBMISSION-TOKEN") == ""
+}
+
+func signInOperatorClient(t *testing.T, client *http.Client, baseURL string) {
+	t.Helper()
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.Jar = jar
+	login, err := client.Get(baseURL + "/login?token=" + testOperatorToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = login.Body.Close()
+	if login.StatusCode != http.StatusSeeOther {
+		t.Fatalf("login status=%d", login.StatusCode)
+	}
 }
 
 func TestAkritesSubmissionThroughHTTP(t *testing.T) {
@@ -65,6 +83,9 @@ func TestAkritesSubmissionThroughHTTP(t *testing.T) {
 			_, _ = fmt.Fprint(w, `{"receipt":"SUB-persisted"}`)
 		case "GET /v1/submissions/SUB-persisted":
 			polls.Add(1)
+			if r.Header.Get("Authorization") != "" || r.Header.Get("TAP-SUBMISSION-TOKEN") != "" {
+				t.Error("token sent with status GET")
+			}
 			_, _ = fmt.Fprint(w, `{"receipt":"SUB-persisted","status":"done","at":"2026-10-01T12:00:00Z"}`)
 		default:
 			t.Errorf("unexpected intake path: %s", r.URL.Path)
@@ -77,6 +98,7 @@ func TestAkritesSubmissionThroughHTTP(t *testing.T) {
 	defer webServer.Close()
 	client := webServer.Client()
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	signInOperatorClient(t, client, webServer.URL)
 	path := fmt.Sprintf("/findings/%d/akrites", finding.ID)
 	resp, err := client.Get(webServer.URL + path)
 	if err != nil {
