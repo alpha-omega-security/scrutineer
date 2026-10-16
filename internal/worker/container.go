@@ -1043,9 +1043,10 @@ func hardenedNetworkCreateArgs(rt ContainerRuntime, name string) []string {
 // to external networks; the container can still reach the host via
 // the bridge gateway, which is how it reaches the host egress proxy, and on
 // Docker Engine it also reaches every host service bound to all interfaces,
-// which is why HardeningSupportError refuses --hardened there. The function is idempotent: a retry of a scan that crashed
-// after the network was created (but before the post-scan rm ran) will
-// reuse the existing network instead of failing.
+// which is why HardeningSupportError refuses --hardened there. The function
+// is idempotent: a retry of a scan that crashed after the network was created
+// (but before the post-scan rm ran) will reuse the existing network instead
+// of failing.
 func EnsureHardenedNetwork(rt ContainerRuntime, name string) error {
 	if out, err := exec.Command(runtimeBin(rt), "network", "inspect", "--", name).Output(); err == nil && len(out) > 0 {
 		return nil
@@ -1125,8 +1126,9 @@ func (d ContainerRunner) setupHardenedNetwork(sj SkillJob, image string) (harden
 	}
 
 	// Rootful podman's bridge in the host network namespace is trusted, and
-	// Docker Engine never gets here because it refuses --hardened. Docker Desktop, rootless podman, and Apple
-	// need per-scan proof; see NeedsHardenedNetVerify.
+	// Docker Engine never gets here because it refuses --hardened. Docker
+	// Desktop, rootless podman, and Apple need per-scan proof; see
+	// NeedsHardenedNetVerify.
 	if d.Runtime.NeedsHardenedNetVerify() {
 		if err := d.verifyHardenedNetwork(hn, image); err != nil {
 			cleanup()

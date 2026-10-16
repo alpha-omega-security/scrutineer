@@ -143,9 +143,9 @@ func TestContainerRuntimeCapabilityFlags(t *testing.T) {
 // accept --hardened-runtime-only, Docker Engine refuses --hardened while Docker
 // Desktop and podman accept it; apple accepts --hardened (its --internal
 // host-only network is the enforcement, verified per scan) but refuses
-// --hardened-runtime-only (the rootless-podman non-network half). This is the gate setupRunner applies
-// at startup; testing it here keeps it covered even though setupRunner itself
-// shells out to a live runtime.
+// --hardened-runtime-only (the rootless-podman non-network half). This is the
+// gate setupRunner applies at startup; testing it here keeps it covered even
+// though setupRunner itself shells out to a live runtime.
 func TestHardeningSupportError(t *testing.T) {
 	tests := []struct {
 		name                string

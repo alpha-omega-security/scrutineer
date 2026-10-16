@@ -48,8 +48,8 @@ just as it didn't under the host-proxy path:
   the sidecar's own upstream lookups.
 
 So `--internal` correctly blocks **all** external egress including UDP (QUIC/
-HTTP3, stray DNS), and nothing legitimate breaks. This matches the existing
-docker `--hardened` behaviour; the sidecar does not change it. If you ever add a
+HTTP3, stray DNS), and nothing legitimate breaks. This matches the host-proxy
+`--hardened` path; the sidecar does not change it. If you ever add a
 skill that genuinely needs outbound UDP, it would need a different transport than
 this proxy — not in scope here.
 
