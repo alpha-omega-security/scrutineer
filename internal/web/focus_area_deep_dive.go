@@ -8,6 +8,7 @@ import (
 
 	"scrutineer/internal/db"
 	"scrutineer/internal/repoconfig"
+	"scrutineer/internal/worker"
 )
 
 // autoEnqueueFocusAreaDeepDives turns a completed threat-model into one
@@ -92,7 +93,7 @@ func (s *Server) enqueueFocusAreaDeepDive(parent *db.Scan, skillID uint, group, 
 		// Leaving it empty lets enqueueSkillWith fall through to the
 		// skill's tier so focus-area deep-dives run on max as intended.
 		Effort:         parent.Effort,
-		Profile:        parent.Profile,
+		Profile:        focusAreaProfile(parent, focusArea),
 		SubPath:        parent.SubPath,
 		ScopeMode:      parent.ScopeMode,
 		Ref:            parent.Ref,
@@ -111,4 +112,15 @@ func (s *Server) enqueueFocusAreaDeepDive(parent *db.Scan, skillID uint, group, 
 		}
 		s.Log.Warn("focus-area deep dives: enqueue", "scan", parent.ID, "area", name, "err", err)
 	}
+}
+
+func focusAreaProfile(parent *db.Scan, focusArea string) string {
+	if focusArea != "" && parent.Recipe != "" {
+		var recipe worker.ScanRecipe
+		if err := json.Unmarshal([]byte(parent.Recipe), &recipe); err == nil {
+			return recipe.Profile
+		}
+	}
+	// Older scans have no record separating overrides from detected profiles.
+	return parent.Profile
 }

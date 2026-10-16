@@ -348,9 +348,17 @@ func (p Profile) matches(det map[string]map[string]bool) bool {
 // --selinux setting so the read-only /src mount is relabeled (":ro,z")
 // on an SELinux host, just like the real scan's /work mount.
 func DetectProfile(ctx context.Context, rt ContainerRuntime, runnerImage, srcDir string, relabel bool) Profile {
-	absSrc, err := filepath.Abs(srcDir)
+	out, err := runBrief(ctx, rt, runnerImage, srcDir, relabel)
 	if err != nil {
 		return Profile{}
+	}
+	return matchProfile(out)
+}
+
+func runBrief(ctx context.Context, rt ContainerRuntime, runnerImage, srcDir string, relabel bool) ([]byte, error) {
+	absSrc, err := filepath.Abs(srcDir)
+	if err != nil {
+		return nil, err
 	}
 	args := runtimeRunArgs(rt, "--rm",
 		"--network", "none",
@@ -362,13 +370,7 @@ func DetectProfile(ctx context.Context, rt ContainerRuntime, runnerImage, srcDir
 		runnerImage, "/src",
 	)
 	cmd := exec.CommandContext(ctx, runtimeBin(rt), args...)
-	out, err := cmd.Output()
-	if err != nil {
-		// A brief failure degrades to the default runner image; the scan
-		// still runs, without profile-specific tooling.
-		return Profile{}
-	}
-	return matchProfile(out)
+	return cmd.Output()
 }
 
 // ErrNoProfilesDir is returned by EnsureImage when the worker has no

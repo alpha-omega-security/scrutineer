@@ -74,6 +74,7 @@ type SkillJob struct {
 	IsolationKey string
 	WorkRoot     string
 	SubPath      string
+	FocusArea    string
 	Model        string
 	Name         string
 	SkillDir     string // host absolute path to the staged skill directory

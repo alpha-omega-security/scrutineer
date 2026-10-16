@@ -229,6 +229,7 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 		ScanID:          scan.ID,
 		WorkRoot:        workRoot,
 		SubPath:         scan.SubPath,
+		FocusArea:       scan.FocusArea,
 		Model:           scan.Model,
 		Effort:          scan.Effort,
 		Name:            skill.Name,
