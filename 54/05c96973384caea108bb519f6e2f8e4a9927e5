@@ -1,0 +1,19 @@
+docker/profiles/python-ext/Dockerfile
+  s_100b93cce422df::t_1d8ab9dfbfc4ba 75-81
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.5",
+  "base_commit_sha": "5405c96973384caea108bb519f6e2f8e4a9927e5",
+  "prompts": {},
+  "sessions": {
+    "s_100b93cce422df": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9a9133fe-7af4-484f-bc41-a6e3be222d71",
+        "model": "claude-mythos-5-1"
+      },
+      "human_author": "Mirko Swillus <mechko@mk0.eu>"
+    }
+  }
+}
