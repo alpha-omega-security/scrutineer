@@ -13,14 +13,14 @@ package worker
 // then run it with SCRUTINEER_TEST_NETWORK_ISOLATION_IMAGE=scrutineer-netprobe-test
 // go test -race -run NetworkIsolation -v ./internal/worker/
 //
-// engine_isolation_integration_test.go runs the direct egress, operator route
-// and cancellation checks on Docker Engine (host-proxy path), and podman
-// isolation is covered by podman_integration_test.go. Cloud metadata has no
-// positive control on Docker Desktop because there is no metadata service, so
-// only the egress proxy refusing non-public addresses is checked.
-// Gateway-addressed probes are likewise omitted here: on Docker Desktop a
-// packet sent to a network's gateway never reaches a host service even without
-// isolation, so such a probe could not fail. The Engine file carries them.
+// Docker Engine refuses --hardened, and engine_isolation_integration_test.go
+// pins the gateway reachability behind that refusal. Podman isolation is
+// covered by podman_integration_test.go. Cloud metadata has no positive control
+// on Docker Desktop because there is no metadata service, so only the egress
+// proxy refusing non-public addresses is checked. Gateway-addressed probes are
+// likewise omitted here: on Docker Desktop a packet sent to a network's gateway
+// never reaches a host service even without isolation, so such a probe could
+// not fail. They belong with runtimes where a gateway control can succeed.
 
 import (
 	"bytes"
@@ -153,8 +153,8 @@ func (l *controlledListener) saw(marker string) bool {
 	return bytes.Contains(l.data, []byte(marker))
 }
 
-func (l *controlledListener) waitSaw(marker string, d time.Duration) bool {
-	deadline := time.Now().Add(d)
+func (l *controlledListener) waitSaw(marker string) bool {
+	deadline := time.Now().Add(controlWait)
 	for time.Now().Before(deadline) {
 		if l.saw(marker) {
 			return true
@@ -236,7 +236,7 @@ func isolationSetup(t *testing.T) isolationEnv {
 		t.Skip("docker is unavailable; podman isolation is covered by podman_integration_test.go")
 	}
 	if !rt.DockerDesktop {
-		t.Skip("docker daemon is not Docker Desktop; Docker Engine is covered by engine_isolation_integration_test.go and podman by podman_integration_test.go")
+		t.Skip("docker daemon is not Docker Desktop; Docker Engine refuses --hardened and podman isolation is covered by podman_integration_test.go")
 	}
 	if !imageExistsLocally(t.Context(), rt, image) {
 		t.Skipf("probe image %q is unavailable locally", image)
@@ -359,7 +359,7 @@ func runControls(t *testing.T, e isolationEnv, l *controlledListener) controls {
 		m := newMarker(t, c.marker)
 		// dig exits non-zero without a reply, so only arrival at the listener counts.
 		_ = e.defaultNetworkRun(t, fmt.Sprintf(c.script, m))
-		ok[c.name] = l.waitSaw(m, controlWait)
+		ok[c.name] = l.waitSaw(m)
 	}
 	ok["resolver"] = e.defaultNetworkRun(t, "nslookup -timeout=3 -retry=1 example.com") == nil
 	return ok
@@ -373,11 +373,7 @@ func (c controls) require(t *testing.T, name string) {
 }
 
 func TestIntegration_NetworkIsolationDirectEgress(t *testing.T) {
-	assertDirectEgressIsolated(t, isolationSetup(t))
-}
-
-func assertDirectEgressIsolated(t *testing.T, env isolationEnv) {
-	t.Helper()
+	env := isolationSetup(t)
 	l := newControlledListener(t)
 	ctl := runControls(t, env, l)
 

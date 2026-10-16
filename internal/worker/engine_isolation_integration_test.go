@@ -1,13 +1,12 @@
 package worker
 
-// Real-container checks of hardened scan isolation on Docker Engine, where a
-// scan uses the in-process host proxy instead of an egress sidecar. They reuse
-// the Docker Desktop direct egress, operator route and cancellation checks with
-// their positive controls. The runner maps the host alias to the address
-// host-gateway resolves to, which is not the scan network's own gateway, so a
-// separate probe addresses that gateway directly. Load the probe image described in
-// network_isolation_integration_test.go into the Engine daemon, then run on its
-// host:
+// Real-container check of why HardeningSupportError refuses --hardened on
+// Docker Engine: a per-scan --internal network keeps a host address on its
+// bridge, so a scan reaches host services through that gateway without going
+// through the egress proxy. The scan enters through the production runner with
+// the in-process host proxy, as Docker Engine scans would. Load the probe image
+// described in network_isolation_integration_test.go into the Engine daemon,
+// then run on its host:
 //
 //	SCRUTINEER_TEST_NETWORK_ISOLATION_IMAGE=scrutineer-netprobe-test go test -race -run EngineIsolation -v ./internal/worker/
 
@@ -80,8 +79,8 @@ $NP dig +tries=1 +time=2 @@GW@ -p @PORT@ @udp@.probe.test >/work/udp.out 2>&1
 echo $? >/work/udp.exit
 `
 
-// The scan network's own gateway is an address of the host, so a direct
-// connection to it must not reach a host service, whatever the alias names.
+// A direct connection to the scan network's own gateway reaches a host service.
+// Once it no longer does, the Docker Engine refusal can be revisited.
 func TestIntegration_EngineIsolationGatewayDirect(t *testing.T) {
 	env := engineIsolationSetup(t)
 	l := newControlledListener(t)
@@ -116,21 +115,9 @@ func TestIntegration_EngineIsolationGatewayDirect(t *testing.T) {
 	} {
 		t.Run(p.name, func(t *testing.T) {
 			ctl.require(t, p.control)
-			if l.saw(p.marker) {
-				t.Errorf("a direct %s packet to the scan network's gateway %s reached a host service", p.name, gw)
+			if !l.waitSaw(p.marker) {
+				t.Errorf("a direct %s packet to the scan network's gateway %s no longer reaches a host service, so the --hardened refusal on Docker Engine may be lifted", p.name, gw)
 			}
 		})
 	}
-}
-
-func TestIntegration_EngineIsolationDirectEgress(t *testing.T) {
-	assertDirectEgressIsolated(t, engineIsolationSetup(t))
-}
-
-func TestIntegration_EngineIsolationOperatorRoutes(t *testing.T) {
-	assertOperatorRoutesIsolated(t, engineIsolationSetup(t))
-}
-
-func TestIntegration_EngineIsolationCancelStopsScan(t *testing.T) {
-	assertCancelStopsScan(t, engineIsolationSetup(t))
 }

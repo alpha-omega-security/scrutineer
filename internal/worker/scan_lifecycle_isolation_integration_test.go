@@ -32,11 +32,7 @@ while [ "$i" -lt 600 ]; do echo "$i" >> /work/beat; sleep 0.5; i=$((i+1)); done
 `
 
 func TestIntegration_ScanLifecycleCancelStopsScan(t *testing.T) {
-	assertCancelStopsScan(t, isolationSetup(t))
-}
-
-func assertCancelStopsScan(t *testing.T, env isolationEnv) {
-	t.Helper()
+	env := isolationSetup(t)
 	work := newScanWorkspace(t)
 	key := isolationKey("cancel")
 	ctx, cancel := context.WithCancel(t.Context())
@@ -207,7 +203,7 @@ func TestIntegration_ScanLifecycleConcurrentPermissions(t *testing.T) {
 		readWorkspaceFiles(workA)["granted.out"], files["own.exit"], files["own.out"], files["peer.exit"], files["peer.out"], files["peer.err"])
 
 	t.Run("own_proxy", func(t *testing.T) {
-		if !l.waitSaw(markers["granted"], controlWait) {
+		if !l.waitSaw(markers["granted"]) {
 			t.Skipf("%s: scan A's granted request never arrived", controlFailedMessage)
 		}
 		// 403 is scan B's proxy refusing the port; 000 would only mean the
@@ -220,7 +216,7 @@ func TestIntegration_ScanLifecycleConcurrentPermissions(t *testing.T) {
 		}
 	})
 	t.Run("peer_proxy", func(t *testing.T) {
-		if !l.waitSaw(markers["ctlpeer"], controlWait) {
+		if !l.waitSaw(markers["ctlpeer"]) {
 			t.Skipf("%s: scan A's proxy did not forward from its own network", controlFailedMessage)
 		}
 		if exit := files["peer.exit"]; exit == "" || exit == "0" {

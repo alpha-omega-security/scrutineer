@@ -147,7 +147,7 @@ Weakest change to strongest isolation:
    network (see the next subsection). You keep the non-root-equivalent runtime
    and, on an enforcing host, SELinux `:z` confinement; you give up only enforced
    egress.
-2. **Rootful podman or docker for `--hardened`** — with a daemon runtime the
+2. **Rootful podman for `--hardened`** — with a daemon runtime the
    `--internal` gateway *is* the host, so the host-proxy path works without a
    sidecar. The cost is the T12 property: runtime access becomes root-equivalent
    again, which is the main reason to prefer rootless. Reasonable only on a

@@ -6,6 +6,7 @@ package worker
 // shows up only at runtime.
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -141,7 +142,16 @@ func bindMount(src, dst string, relabel bool, opts ...string) string {
 // no-new-privileges. So --hardened is accepted; only --hardened-runtime-only
 // (the rootless-podman non-network half) is refused, since Apple's network half
 // works. See docs/apple.md.
-func HardeningSupportError(rt ContainerRuntime, hardenedRuntimeOnly bool) error {
+//
+// Docker Engine refuses --hardened: its per-scan --internal network keeps a
+// host address on the bridge, and a scan reaches every host service bound to
+// all interfaces through it without going through the egress proxy.
+func HardeningSupportError(rt ContainerRuntime, hardened, hardenedRuntimeOnly bool) error {
+	if hardened && runtimeBin(rt) == "docker" && !rt.NeedsEgressSidecar() {
+		return errors.New("--hardened is not supported on Docker Engine: a scan on its --internal network " +
+			"reaches every host service bound to all interfaces through the network gateway, bypassing the egress " +
+			"proxy; use --hardened-runtime-only for the non-network half, or Docker Desktop")
+	}
 	if rt.Bin == runtimeApple && hardenedRuntimeOnly {
 		return fmt.Errorf("--runtime apple does not support --hardened-runtime-only " +
 			"(that is the rootless-podman non-network half); use --hardened, whose " +

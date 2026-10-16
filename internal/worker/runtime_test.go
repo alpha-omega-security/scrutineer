@@ -140,28 +140,34 @@ func TestContainerRuntimeCapabilityFlags(t *testing.T) {
 }
 
 // TestHardeningSupportError locks in the hardening parity: docker and podman
-// accept both modes; apple accepts --hardened (its --internal host-only network
-// is the enforcement, verified per scan) but refuses --hardened-runtime-only
-// (the rootless-podman non-network half). This is the gate setupRunner applies
+// accept --hardened-runtime-only, Docker Engine refuses --hardened while Docker
+// Desktop and podman accept it; apple accepts --hardened (its --internal
+// host-only network is the enforcement, verified per scan) but refuses
+// --hardened-runtime-only (the rootless-podman non-network half). This is the gate setupRunner applies
 // at startup; testing it here keeps it covered even though setupRunner itself
 // shells out to a live runtime.
 func TestHardeningSupportError(t *testing.T) {
 	tests := []struct {
 		name                string
 		rt                  ContainerRuntime
+		hardened            bool
 		hardenedRuntimeOnly bool
 		wantErr             bool
 	}{
-		{"docker hardened-rootless", ContainerRuntime{Bin: "docker"}, true, false},
-		{"podman rootless hardened-rootless", ContainerRuntime{Bin: "podman", Rootless: true}, true, false},
-		{"apple plain (ordinary or --hardened)", ContainerRuntime{Bin: "apple"}, false, false},
-		{"apple hardened-rootless refused", ContainerRuntime{Bin: "apple"}, true, true},
+		{"docker hardened-rootless", ContainerRuntime{Bin: "docker"}, false, true, false},
+		{"docker engine hardened refused", ContainerRuntime{Bin: "docker", Version: "29.9.1"}, true, true, true},
+		{"docker engine plain", ContainerRuntime{Bin: "docker", Version: "29.9.1"}, false, false, false},
+		{"docker desktop hardened", ContainerRuntime{Bin: "docker", Version: "29.8.2", DockerDesktop: true}, true, true, false},
+		{"podman rootful hardened", ContainerRuntime{Bin: "podman", Version: "5.4.0"}, true, true, false},
+		{"podman rootless hardened-rootless", ContainerRuntime{Bin: "podman", Rootless: true}, false, true, false},
+		{"apple plain (ordinary or --hardened)", ContainerRuntime{Bin: "apple"}, true, false, false},
+		{"apple hardened-rootless refused", ContainerRuntime{Bin: "apple"}, false, true, true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			err := HardeningSupportError(tc.rt, tc.hardenedRuntimeOnly)
+			err := HardeningSupportError(tc.rt, tc.hardened, tc.hardenedRuntimeOnly)
 			if (err != nil) != tc.wantErr {
-				t.Errorf("HardeningSupportError(%v) err = %v, wantErr %v", tc.hardenedRuntimeOnly, err, tc.wantErr)
+				t.Errorf("HardeningSupportError(%v, %v) err = %v, wantErr %v", tc.hardened, tc.hardenedRuntimeOnly, err, tc.wantErr)
 			}
 		})
 	}

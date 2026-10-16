@@ -1041,8 +1041,9 @@ func hardenedNetworkCreateArgs(rt ContainerRuntime, name string) []string {
 // EnsureHardenedNetwork creates an internal container network with the
 // given name if it does not already exist. --internal blocks routes
 // to external networks; the container can still reach the host via
-// the bridge gateway, so the egress proxy on the host remains the only
-// path out. The function is idempotent: a retry of a scan that crashed
+// the bridge gateway, which is how it reaches the host egress proxy, and on
+// Docker Engine it also reaches every host service bound to all interfaces,
+// which is why HardeningSupportError refuses --hardened there. The function is idempotent: a retry of a scan that crashed
 // after the network was created (but before the post-scan rm ran) will
 // reuse the existing network instead of failing.
 func EnsureHardenedNetwork(rt ContainerRuntime, name string) error {
@@ -1123,8 +1124,8 @@ func (d ContainerRunner) setupHardenedNetwork(sj SkillJob, image string) (harden
 		hn.proxyName = proxySidecarName(sj.isolationKey())
 	}
 
-	// Docker Engine's bridge --internal is trusted, as is rootful podman's bridge
-	// in the host network namespace. Docker Desktop, rootless podman, and Apple
+	// Rootful podman's bridge in the host network namespace is trusted, and
+	// Docker Engine never gets here because it refuses --hardened. Docker Desktop, rootless podman, and Apple
 	// need per-scan proof; see NeedsHardenedNetVerify.
 	if d.Runtime.NeedsHardenedNetVerify() {
 		if err := d.verifyHardenedNetwork(hn, image); err != nil {
