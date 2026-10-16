@@ -465,9 +465,22 @@ func (d ContainerRunner) runLogLine(image, skillName string) string {
 func (d ContainerRunner) runContainerOnce(ctx context.Context, runBase []string, sj SkillJob, processEnv map[string]string, emit func(Event)) (hitMaxTurns bool, sessionID string, waitErr error) {
 	h := d.harness()
 	runArgs := append(append([]string{}, runBase...), d.harnessArgv(sj)...)
+	// Killing the runtime CLI on cancellation leaves a --rm container running,
+	// so the scan container is named and force-removed once this run ends.
+	name := "scrutineer-scan-" + randomProbeID()
+	if delimiter := slices.Index(runArgs, "--"); delimiter >= 0 {
+		runArgs = slices.Insert(runArgs, delimiter, "--name", name)
+	}
 
 	cmd := exec.CommandContext(ctx, runtimeBin(d.Runtime), runArgs...)
 	cmd.Env = environmentWith(os.Environ(), processEnv)
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), backendProbeCleanupTimeout)
+		defer cancel()
+		rm := exec.CommandContext(cleanupCtx, runtimeBin(d.Runtime), "rm", "--force", name)
+		rm.Env = cmd.Env
+		_ = rm.Run()
+	}()
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

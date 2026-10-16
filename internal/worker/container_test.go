@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 // buildRunArgs is the no-provider shorthand tests use so they don't all repeat
@@ -404,6 +405,60 @@ func TestRunSkill_ModelProxyKeepsRealKeyOffRuntime(t *testing.T) {
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("token still valid after RunSkill returned: status = %d", w.Code)
 	}
+}
+
+// The scan container is named and force-removed once the run ends, whether the
+// runtime CLI exits or is killed by cancellation.
+func TestRunSkill_RemovesNamedScanContainer(t *testing.T) {
+	for name, hold := range map[string]bool{"exited": false, "cancelled": true} {
+		t.Run(name, func(t *testing.T) {
+			recordDir := t.TempDir()
+			t.Setenv("RECORD_DIR", recordDir)
+			script := "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$RECORD_DIR/calls\"\n"
+			if hold {
+				script += "[ \"$1\" = run ] && exec sleep 30\n"
+			}
+			runtimePath := writeFakeBin(t, t.TempDir(), "runtime", script+"exit 0\n")
+			d := ContainerRunner{Runtime: ContainerRuntime{Bin: runtimePath}, Harness: dockerNoopHarness{}}
+			work := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(work, "src"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+			defer cancel()
+			_, err := d.RunSkill(ctx, SkillJob{WorkRoot: work, SrcReady: true, Name: "noop"}, func(Event) {})
+			if hold != (err != nil) {
+				t.Fatalf("RunSkill error = %v", err)
+			}
+
+			calls, err := os.ReadFile(filepath.Join(recordDir, "calls"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			container := runContainerName(string(calls))
+			if !strings.HasPrefix(container, "scrutineer-scan-") {
+				t.Fatalf("run call carried no scan container name:\n%s", calls)
+			}
+			if !strings.Contains(string(calls), "rm --force "+container+"\n") {
+				t.Errorf("%s was not force-removed:\n%s", container, calls)
+			}
+		})
+	}
+}
+
+// runContainerName returns the --name of the last recorded run call.
+func runContainerName(calls string) string {
+	var name string
+	for line := range strings.SplitSeq(calls, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 || fields[0] != "run" {
+			continue
+		}
+		if i := slices.Index(fields, "--name"); i >= 0 && i+1 < len(fields) {
+			name = fields[i+1]
+		}
+	}
+	return name
 }
 
 func TestBuildRunArgs_ContainerHardening(t *testing.T) {
