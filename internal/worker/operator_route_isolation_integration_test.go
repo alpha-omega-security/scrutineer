@@ -84,7 +84,11 @@ func isLoopbackHost(hostport string) bool {
 }
 
 func TestIntegration_OperatorRouteIsolation(t *testing.T) {
-	env := isolationSetup(t)
+	assertOperatorRoutesIsolated(t, isolationSetup(t))
+}
+
+func assertOperatorRoutesIsolated(t *testing.T, env isolationEnv) {
+	t.Helper()
 	markers := operatorRouteMarkers(t)
 	work := newScanWorkspace(t)
 	key := isolationKey("operator")
