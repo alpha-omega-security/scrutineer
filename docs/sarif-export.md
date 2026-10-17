@@ -10,7 +10,7 @@ The `severity`, `status`, `sub_path` and `scope` filters apply as they do for JS
 
 ## What the log carries
 
-Each distinct revision gets its own run, because SARIF records version control provenance per run. A finding's revision is the commit it was last observed at, falling back to the commit it was first seen at, since its location is refreshed on every re-observation. `versionControlProvenance` names the repository by the same portable URL a [sharing bundle](encrypted-sharing.md) uses, so a local checkout is exported under its HTTPS origin when it has one. A repository with no matching findings still yields one run with an empty `results` array.
+Each distinct revision gets its own run, because SARIF records version control provenance per run. A finding's revision is the commit it was last observed at, falling back to the commit it was first seen at, since its location is refreshed on every re-observation. `versionControlProvenance` names the repository by the same portable URL a [sharing bundle](encrypted-sharing.md) uses, so a local checkout is exported under its HTTPS origin when it has one. Without one it is named by its `file:///` URI, with a Windows drive in the path (`file:///C:/src/widget`). A repository with no matching findings still yields one run with an empty `results` array.
 
 | SARIF field | Source |
 |---|---|

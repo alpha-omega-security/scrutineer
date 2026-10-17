@@ -6,6 +6,7 @@ import (
 	"maps"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -51,9 +52,12 @@ func (s *Server) apiExportRepoSARIF(w http.ResponseWriter, r *http.Request, repo
 	}
 
 	repositoryURL := bundleRepositoryURL(r.Context(), repo)
-	if repo.IsLocal() && repositoryURL == repo.URL && s.Log != nil {
-		s.Log.Warn("sarif export: local repository has no portable origin; repositoryUri carries the host path",
-			"repository_id", repo.ID)
+	if repo.IsLocal() && repositoryURL == repo.URL {
+		repositoryURL = sarifFileURI(repo.LocalPath())
+		if s.Log != nil {
+			s.Log.Warn("sarif export: local repository has no portable origin; repositoryUri carries the host path",
+				"repository_id", repo.ID)
+		}
 	}
 	report := buildSARIF(repositoryURL, s.Version, findings, latest)
 	if err := sarif.Validate(report); err != nil {
@@ -67,6 +71,19 @@ func (s *Server) apiExportRepoSARIF(w http.ResponseWriter, r *http.Request, repo
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	_, _ = w.Write(buf.Bytes())
+}
+
+// sarifFileURI renders a local path as an RFC 8089 file URI for
+// repositoryUri, which the schema requires to be a valid URI. The stored
+// file://<path> form is not one on Windows, where the drive letter parses as a
+// host and port (file://C:\x) and fails validation. Escaping also keeps
+// spaces and other reserved characters out of the URI on every platform.
+func sarifFileURI(path string) string {
+	p := filepath.ToSlash(path)
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	return (&url.URL{Scheme: "file", Path: p}).String()
 }
 
 // buildSARIF emits one run per observed revision because SARIF records

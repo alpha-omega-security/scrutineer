@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -200,6 +203,57 @@ func TestExportRepoFindingsSARIF_emptyRepository(t *testing.T) {
 	}
 	if string(raw.Runs[0].Results) != "[]" {
 		t.Errorf("results = %s, want an explicit empty array", raw.Runs[0].Results)
+	}
+}
+
+// TestExportRepoFindingsSARIF_localRepository pins that a local checkout
+// without a portable origin still exports valid SARIF, naming the repository
+// by a file URI that round-trips to its path. On Windows the stored
+// file://C:\... form is not a valid URI, so this used to fail validation.
+func TestExportRepoFindingsSARIF_localRepository(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	dir := filepath.Join(t.TempDir(), "my widget")
+	repo := db.Repository{URL: LocalScheme + dir, Name: "my widget"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: deepDiveSkillName, Commit: "aaa111"}
+	s.DB.Create(&scan)
+	s.DB.Create(&db.Finding{
+		ScanID: scan.ID, RepositoryID: repo.ID, FindingID: "F1", Fingerprint: "fp-local",
+		Title: "Local issue", Severity: "High", Location: "main.go:3", Commit: "aaa111",
+	})
+
+	log := parseSARIFBody(t, getRepoSARIF(t, s, repo.ID, ""))
+	uri := log.Runs[0].VersionControlProvenance[0].RepositoryURI
+	u, err := url.Parse(uri)
+	if err != nil || u.Scheme != "file" || u.Host != "" || strings.ContainsAny(uri, " \\") {
+		t.Fatalf("repositoryUri = %q, want an escaped file URI with no host", uri)
+	}
+	// Windows paths gain a leading slash before the drive (/C:/...).
+	want := filepath.ToSlash(dir)
+	if !strings.HasPrefix(want, "/") {
+		want = "/" + want
+	}
+	if u.Path != want {
+		t.Errorf("repositoryUri path = %q, want %q", u.Path, want)
+	}
+}
+
+func TestSARIFFileURI(t *testing.T) {
+	cases := map[string]string{
+		"/srv/widget":    "file:///srv/widget",
+		"/srv/my widget": "file:///srv/my%20widget",
+	}
+	if runtime.GOOS == "windows" {
+		cases = map[string]string{
+			`C:\Users\me\widget`:    "file:///C:/Users/me/widget",
+			`C:\Users\me\my widget`: "file:///C:/Users/me/my%20widget",
+		}
+	}
+	for in, want := range cases {
+		if got := sarifFileURI(in); got != want {
+			t.Errorf("sarifFileURI(%q) = %q, want %q", in, got, want)
+		}
 	}
 }
 
