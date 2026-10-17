@@ -511,6 +511,7 @@ See [SECURITY.md](SECURITY.md) for the reporting policy and [threatmodel.md](thr
 - [docs/development.md](docs/development.md) -- project layout, regenerating embedded data, running tests
 - [docs/encrypted-sharing.md](docs/encrypted-sharing.md) -- encrypted findings sharing between contributors (age + SSH keys, team keyring management)
 - [docs/sarif-export.md](docs/sarif-export.md) -- exporting a repository's findings as SARIF 2.1.0 and handing them to OSS-CRS as bug candidates
+- [docs/oss-crs.md](docs/oss-crs.md): running Scrutineer as an OSS-CRS auditing CRS for source-only campaigns with the `scrutineer audit` command behind it
 - [docs/interchange.md](docs/interchange.md) -- federation interchange format: in-toto record envelope, salted finding hashes, the claim-check endpoint, the public and members-only feeds with their export/import syncs (threat surface: T14 in [threatmodel.md](threatmodel.md))
 - [docs/codex.md](docs/codex.md) -- the codex backend: what differs from claude, sandbox interaction, adding another backend
 - [docs/opencode.md](docs/opencode.md) -- OpenCode provider credentials, images, auth state, readiness, and egress

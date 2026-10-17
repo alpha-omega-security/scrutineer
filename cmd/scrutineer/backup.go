@@ -36,6 +36,8 @@ func dispatch(args []string, out io.Writer) (handled bool, err error) {
 		return true, runBackup(args[1:], out)
 	case "restore":
 		return true, runRestore(args[1:], out)
+	case "audit":
+		return true, runAudit(args[1:], out)
 	case "proxy":
 		return true, runProxy(args[1:])
 	case "version", "--version", "-version":

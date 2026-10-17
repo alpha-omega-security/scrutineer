@@ -66,6 +66,10 @@ func main() {
 	if handled, err := dispatch(os.Args[1:], os.Stdout); handled {
 		if err != nil {
 			log.Error("command failed", "err", err)
+			var coded interface{ ExitCode() int }
+			if errors.As(err, &coded) {
+				os.Exit(coded.ExitCode())
+			}
 			os.Exit(1)
 		}
 		return
@@ -127,6 +131,10 @@ type flags struct {
 	// Keep connection credentials out of command-line arguments.
 	dbDriver string
 	dbDSN    string
+
+	// trustedModelHost is set only by `scrutineer audit`, never by the
+	// server flags or the config file.
+	trustedModelHost string
 
 	// set records which flags were passed on the command line so merge
 	// knows not to let the config file override them.
@@ -561,7 +569,7 @@ func validateFlags(f *flags) error {
 	if err := validateModelProxyFlags(f); err != nil {
 		return err
 	}
-	return validateModelBaseURL(f.modelBaseURL)
+	return validateModelBaseURL(f.modelBaseURL, f.trustedModelHost)
 }
 
 // validateModelProxyFlags refuses a -model-proxy configuration this narrow
@@ -641,40 +649,42 @@ func configureBackendEnvironment(f *flags, log *slog.Logger) {
 	}
 }
 
+// runnerSetup builds the skill runner and the API base URL skills call back
+// to. run uses setupRunner; tests of the audit command inject a fake.
+type runnerSetup func(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRunner, string, error)
+
+// app is the wired set of components shared by the server and the audit
+// command. newApp builds it without starting anything.
+type app struct {
+	db     *gorm.DB
+	queue  *queue.Queue
+	worker *worker.Worker
+	server *web.Server
+	runner worker.SkillRunner
+}
+
 //nolint:maintidx // flat: startup wiring, one guarded step per subsystem
-func run(log *slog.Logger) error {
-	f, cfg, err := loadRunConfig(log)
-	if err != nil {
-		return err
-	}
+func newApp(f *flags, cfg *config.Config, log *slog.Logger, setup runnerSetup) (*app, error) {
 	gdb, q, err := openRunQueue(f, cfg, log)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	skills.ModelValidator = web.ValidModelPreference
 	skills.ProfileValidator = worker.IsNamedProfile
 	skillsRepoSHA, err := loadSkills(log, gdb, f.dataDir, f.skillLocal, f.skillsRepo, f.skillsRepoToken, f.fullClone())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	retireRemovedSkills(log, gdb)
 	warnUnknownHostSkills(log, gdb, f.hostSkills)
 	warnEgressPolicySkills(log, gdb, cfg.EgressPolicies, f.hostSkills)
 
-	go func() {
-		if n, err := worker.SyncCNAs(context.Background(), gdb, ""); err != nil {
-			log.Warn("CNA sync failed", "err", err)
-		} else {
-			log.Info("synced CNA list", "count", n)
-		}
-	}()
-
 	broker := web.NewBroker()
 
-	runner, apiBase, err := setupRunner(f, cfg, log)
+	runner, apiBase, err := setup(f, cfg, log)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	w := &worker.Worker{
@@ -698,16 +708,16 @@ func run(log *slog.Logger) error {
 	}
 	w.BackendPreflight, err = configuredBackendPreflight(f.backendPreflightTTL)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	w.Register(q)
 
 	srv, err := web.New(gdb, q, log, broker, w)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := configureOperatorToken(srv, f, log); err != nil {
-		return err
+		return nil, err
 	}
 	srv.SkillsRepoSHA = skillsRepoSHA
 	srv.ModelProxy = worker.ModelProxyOf(runner)
@@ -731,8 +741,29 @@ func run(log *slog.Logger) error {
 	srv.FederationPeers = f.federationPeers
 
 	if err := configureEncryption(srv, f, log); err != nil {
+		return nil, err
+	}
+	return &app{db: gdb, queue: q, worker: w, server: srv, runner: runner}, nil
+}
+
+func run(log *slog.Logger) error {
+	f, cfg, err := loadRunConfig(log)
+	if err != nil {
 		return err
 	}
+	a, err := newApp(f, cfg, log, setupRunner)
+	if err != nil {
+		return err
+	}
+	srv, q, runner := a.server, a.queue, a.runner
+
+	go func() {
+		if n, err := worker.SyncCNAs(context.Background(), a.db, ""); err != nil {
+			log.Warn("CNA sync failed", "err", err)
+		} else {
+			log.Info("synced CNA list", "count", n)
+		}
+	}()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -765,7 +796,12 @@ func run(log *slog.Logger) error {
 }
 
 func loadRunConfig(log *slog.Logger) (*flags, *config.Config, error) {
-	f := parseFlags()
+	return loadConfigFor(parseFlags(), log)
+}
+
+// loadConfigFor layers the config file under the parsed flags and validates
+// the result. The audit command calls it with its own flags.
+func loadConfigFor(f *flags, log *slog.Logger) (*flags, *config.Config, error) {
 	cfg, err := config.Load(f.configPath)
 	if err != nil {
 		return nil, nil, err
@@ -1607,8 +1643,9 @@ func baseURLHost(raw string) string {
 
 // validateModelBaseURL requires transport encryption for remote model APIs.
 // Loopback and the container host-gateway alias remain available over HTTP for
-// local model/proxy development.
-func validateModelBaseURL(raw string) error {
+// local model/proxy development. trustedHost names one extra host (a model
+// proxy on a private container network) that may be reached over plain http.
+func validateModelBaseURL(raw, trustedHost string) error {
 	if raw == "" {
 		return nil
 	}
@@ -1617,7 +1654,8 @@ func validateModelBaseURL(raw string) error {
 		return fmt.Errorf("model base URL must be an absolute URL")
 	}
 	if strings.EqualFold(u.Scheme, "https") ||
-		(strings.EqualFold(u.Scheme, "http") && localModelHost(u.Hostname())) {
+		(strings.EqualFold(u.Scheme, "http") &&
+			(localModelHost(u.Hostname()) || (trustedHost != "" && strings.EqualFold(u.Hostname(), trustedHost)))) {
 		return nil
 	}
 	return fmt.Errorf("model base URL must use https (http is allowed only for local development)")

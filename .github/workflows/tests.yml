@@ -41,6 +41,9 @@ jobs:
       - name: Test runner CLI version pins
         run: scripts/check-runner-cli-version-pins_test.sh
 
+      - name: Test OSS-CRS auditor entrypoint
+        run: oss-crs/run-auditor_test.sh
+
   tests:
     name: tests (${{ matrix.platform }})
     strategy:

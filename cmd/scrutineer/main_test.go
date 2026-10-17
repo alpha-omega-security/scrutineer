@@ -631,6 +631,29 @@ func TestValidateFlags_modelBaseURLRequiresHTTPS(t *testing.T) {
 	}
 }
 
+func TestValidateModelBaseURL_trustedHost(t *testing.T) {
+	tests := []struct {
+		name    string
+		baseURL string
+		trusted string
+		wantErr bool
+	}{
+		{"private http without trusted host", "http://litellm.oss-crs:4000", "", true},
+		{"private http with trusted host", "http://litellm.oss-crs:4000", "litellm.oss-crs", false},
+		{"trusted host match ignores case", "http://LiteLLM.oss-crs:4000", "litellm.oss-crs", false},
+		{"other host stays rejected", "http://other:4000", "litellm.oss-crs", true},
+		{"https unaffected", "https://models.example.com/v1", "litellm.oss-crs", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateModelBaseURL(tt.baseURL, tt.trusted)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("validateModelBaseURL(%q, %q) error = %v, wantErr %v", tt.baseURL, tt.trusted, err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestValidateFlags_rejectsInsecureEnvironmentBaseURL(t *testing.T) {
 	t.Setenv("ANTHROPIC_BASE_URL", "http://models.example.com/v1")
 	f := &flags{}

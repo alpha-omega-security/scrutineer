@@ -1,0 +1,28 @@
+# Scrutineer as an OSS-CRS auditing CRS for source-only campaigns.
+# See docs/oss-crs.md.
+name: scrutineer
+type:
+  - auditing
+version: "1.0.0"
+
+prepare_phase:
+  hcl: oss-crs/build.hcl
+
+crs_run_phase:
+  auditor:
+    dockerfile: oss-crs/auditor.Dockerfile
+    target_dependent: false
+
+supported_target:
+  mode:
+    - full
+  language:
+    - c
+    - c++
+    - go
+    - rust
+    - python
+    - jvm
+    - swift
+    - javascript
+    - lua
