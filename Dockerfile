@@ -1,4 +1,4 @@
-FROM golang:1.27.2-alpine@sha256:85dc1069ac644ea3c527b177303a406eb3358192816cd7f9e5848eb658851673 AS build
+FROM golang:1.27.2-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -22,7 +22,7 @@ ARG BANDIT_VERSION=1.9.4
 
 RUN pip install --no-cache-dir "semgrep==${SEMGREP_VERSION}" "setuptools<81" "bandit==${BANDIT_VERSION}"
 
-FROM golang:1.27.2-alpine@sha256:85dc1069ac644ea3c527b177303a406eb3358192816cd7f9e5848eb658851673 AS go-tools
+FROM golang:1.27.2-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS go-tools
 RUN apk add --no-cache git
 ARG BETTERLEAKS_VERSION=v1.9.0
 RUN GOBIN=/out CGO_ENABLED=0 go install -ldflags "-X=github.com/betterleaks/betterleaks/version.Version=${BETTERLEAKS_VERSION}" github.com/betterleaks/betterleaks@${BETTERLEAKS_VERSION}
@@ -34,7 +34,7 @@ RUN GOBIN=/out go install github.com/git-pkgs/brief/cmd/brief@v0.14.1
 # vid links tree-sitter grammars (C), so unlike the main binary it needs
 # cgo; build-base provides gcc and musl headers, matching the musl-based
 # final image.
-FROM golang:1.27.2-alpine@sha256:85dc1069ac644ea3c527b177303a406eb3358192816cd7f9e5848eb658851673 AS vid-build
+FROM golang:1.27.2-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS vid-build
 RUN apk add --no-cache build-base git
 RUN GOBIN=/out CGO_ENABLED=1 go install github.com/andrew/VID/cmd/vid@v0.1.0
 
