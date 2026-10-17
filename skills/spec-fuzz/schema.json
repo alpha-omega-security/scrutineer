@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "spec-fuzz report",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "clause_id": {
+      "type": "string",
+      "pattern": "^rfc[0-9]+-[0-9]+(\\.[0-9]+)*$"
+    },
+    "entrypoint": {
+      "type": "string",
+      "description": "file:line of the target's parser entrypoint the adapter drove"
+    },
+    "verdicts": {
+      "type": "object",
+      "description": "adapter verdict per input id (corpus + controls)",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["accept"],
+        "additionalProperties": false,
+        "properties": {
+          "accept": {"type": "boolean"},
+          "body_hex": {"type": "string", "pattern": "^([0-9a-f]{2})*$"},
+          "consumed": {"type": "integer", "minimum": 0},
+          "error": {"type": "string"}
+        }
+      }
+    },
+    "notes": {"type": "string"},
+    "error": {"type": "string"}
+  },
+  "oneOf": [
+    {"required": ["clause_id", "entrypoint", "verdicts"]},
+    {"required": ["error"]}
+  ]
+}
