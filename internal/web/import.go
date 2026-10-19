@@ -203,26 +203,37 @@ type importedResult struct {
 }
 
 func (s *Server) importResults(results []ingest.Result, format ingest.Format, repoOverride string, revalidate bool) ([]map[string]any, error) {
-	imported := make([]importedResult, 0, len(results))
+	var imported []importedResult
 	err := s.DB.Transaction(func(tx *gorm.DB) error {
-		for _, res := range results {
-			bounded, caps := res, uncappedImportStats(res)
-			if capsApplyTo(format) {
-				bounded, caps = capScannerResult(res)
-			}
-			outcome, err := s.importResultWith(tx, bounded, repoOverride)
-			if err != nil {
-				return err
-			}
-			outcome.caps = caps
-			imported = append(imported, outcome)
-		}
-		return nil
+		var err error
+		imported, err = s.importResultsWith(tx, results, format, repoOverride)
+		return err
 	})
 	if err != nil {
 		return nil, err
 	}
+	return s.finishImport(imported, revalidate), nil
+}
 
+func (s *Server) importResultsWith(tx *gorm.DB, results []ingest.Result, format ingest.Format, repoOverride string) ([]importedResult, error) {
+	imported := make([]importedResult, 0, len(results))
+	for _, res := range results {
+		bounded, caps := res, uncappedImportStats(res)
+		if capsApplyTo(format) {
+			bounded, caps = capScannerResult(res)
+		}
+		outcome, err := s.importResultWith(tx, bounded, repoOverride)
+		if err != nil {
+			return nil, err
+		}
+		outcome.caps = caps
+		imported = append(imported, outcome)
+	}
+	return imported, nil
+}
+
+// finishImport runs after the import transaction commits.
+func (s *Server) finishImport(imported []importedResult, revalidate bool) []map[string]any {
 	out := make([]map[string]any, 0, len(imported))
 	for _, result := range imported {
 		s.enqueueImportedRepoMetadata(context.Background(), result.repo)
@@ -271,7 +282,7 @@ func (s *Server) importResults(results []ingest.Result, format ingest.Format, re
 			"finding_ids":       ids,
 		})
 	}
-	return out, nil
+	return out
 }
 
 func (s *Server) importResultWith(tx *gorm.DB, res ingest.Result, repoOverride string) (importedResult, error) {
@@ -617,7 +628,7 @@ func buildImportFindings(scan *db.Scan, res ingest.Result) ([]db.Finding, []impo
 		// Include the sub-path so two findings at the same CWE/location/title
 		// in different monorepo sub-projects do not collide on one fingerprint.
 		// Other formats leave SubPath empty, so their fingerprint is unchanged.
-		f.Fingerprint = db.FingerprintFinding(res.Tool, f.SubPath, f.CWE, f.Location, f.Title)
+		f.Fingerprint = importFingerprint(res.Tool, in)
 		if seen[f.Fingerprint] {
 			continue
 		}
@@ -627,6 +638,10 @@ func buildImportFindings(scan *db.Scan, res ingest.Result) ([]db.Finding, []impo
 		fingerprints = append(fingerprints, f.Fingerprint)
 	}
 	return incoming, relations, fingerprints
+}
+
+func importFingerprint(tool string, in ingest.Finding) string {
+	return db.FingerprintFinding(tool, in.SubPath, in.CWE, in.Location, in.Title)
 }
 
 // importFindingRelations holds the child records an import carries for one

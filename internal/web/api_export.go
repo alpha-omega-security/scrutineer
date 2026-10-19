@@ -34,6 +34,9 @@ func (s *Server) exportHandler() http.Handler {
 	mux.HandleFunc("GET /findings", s.apiExportFindings)
 	mux.HandleFunc("GET /scans", s.apiExportScans)
 	mux.HandleFunc("POST /import", s.handleImport)
+	mux.HandleFunc("POST /import/oss-crs", s.handleImportOSSCRS)
+	mux.HandleFunc("GET /repositories/{id}/import-artifacts", s.apiListImportArtifacts)
+	mux.HandleFunc("GET /import-artifacts/{id}", s.apiDownloadImportArtifact)
 	// Audit endpoints return instance-wide findings and review aggregates,
 	// so they live behind the host-only boundary with the other operator
 	// exports rather than under per-scan bearer auth (#454).

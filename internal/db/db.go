@@ -1722,7 +1722,7 @@ func Models() []any {
 		&Repository{}, &Scan{},
 		&Finding{}, &FindingLabel{}, &FindingNote{}, &DisclosureSubmission{},
 		&FindingCommunication{}, &FindingReference{}, &FindingHistory{}, &FindingReview{}, &FeedbackConfirmation{}, &FindingVerification{}, &FindingAttackPath{}, &FindingObservation{}, &ScanPreflightReceipt{},
-		&RemediationAttempt{}, &RemediationValidation{}, &AuditEvent{}, &FindingPoC{},
+		&RemediationAttempt{}, &RemediationValidation{}, &AuditEvent{}, &FindingPoC{}, &ImportArtifact{},
 		&Dependency{}, &ExpectedFinding{}, &Package{}, &PackageAlternative{}, &Dependent{}, &FindingDependent{}, &Advisory{}, &AdvisoryAudit{},
 		&Maintainer{}, &Skill{}, &Subproject{}, &ComplianceControl{},
 		&SBOMUpload{}, &SBOMPackage{}, &CNA{}, &Setting{},

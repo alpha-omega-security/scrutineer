@@ -125,6 +125,7 @@ When the containerised runner is active (the default when a container runtime is
 
 - **SBOM import** -- upload a CycloneDX or SPDX document, resolve each component to a source repository, and queue scans automatically
 - **Finding import** -- POST SARIF, CSV, markdown, or minimal-JSON findings from external scanners and pentest reports into the same workflow as native scans, with fingerprint dedup against re-imports
+- **OSS-CRS import** -- POST an `oss-crs archive` tarball to import a run's SARIF bug candidates and retain its PoV inputs, patches and report bundles as downloadable evidence, attached to a finding only when the candidate names them. See [docs/import.md](docs/import.md#oss-crs-runs)
 - **Free-form ingest** -- when the format sniffer in `/api/v1/import` cannot place a payload, the `ingest` skill normalises it against the source checkout (resolving locations) before it enters the findings table
 - **CSAF export** -- download any finding as a schema-validated CSAF 2.0 advisory document
 - **OSV export** -- download any finding as a schema-validated OSV record, aligned with the OSS-SIRT advisory template (credits, CWE IDs, withdrawn, SEMVER ranges, CVSS v3 + v4 severity entries)
