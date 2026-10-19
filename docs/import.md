@@ -93,6 +93,26 @@ A body that matches none of the formats below is not rejected outright. When `?r
 
 Findings land asynchronously when the scan completes, through the same fingerprint upsert as every skill run. Without `?repo=` there is nothing to clone (an unparseable body has no readable provenance), so the request still fails with `422`. The skill treats the report as untrusted input: its output is schema-validated like any skill report, and instructions embedded in the report body are ignored rather than followed.
 
+## OSS-CRS runs
+
+An [OSS-CRS](https://github.com/ossf/oss-crs) run is imported from the gzip tarball `oss-crs archive` writes for it, through its own endpoint. That archive holds the run's SARIF bug candidates beside the PoV inputs, patches and report bundles the CRSs submitted, and it names neither the target repository nor the revision, so both are required:
+
+    curl -H "Authorization: Bearer $(cat data/operator-token)" -H "Content-Type: application/gzip" --data-binary @run.tar.gz "http://127.0.0.1:8080/api/v1/import/oss-crs?repo=https://github.com/example/widget&commit=<sha>&run=<run-id>"
+
+The archive is read as a stream, so the fuzzing corpus under `seeds/` costs decompression but no memory, and the body may reach 256 MiB. Each part of the archive is handled as follows:
+
+| Directory | Handling |
+|-----------|----------|
+| `bug-candidates/` | Each SARIF 2.1.0 file goes through the SARIF import above, caps and fingerprint dedup included, one scan per SARIF run. A revision in the candidate's `versionControlProvenance` wins over `?commit=`. A file that is not SARIF is reported in `skipped`. |
+| `povs/`, `patches/`, `reports/` | Every regular file of at most 1 MiB is kept byte for byte in [`import_artifacts`](database.md#import_artifacts), reports as the original `.tar.gz` without extracting it. |
+| anything else | `seeds/`, `harnesses/` and the extra directories `oss-crs archive --all` adds are reported in `skipped` with their file count. |
+
+A file is associated with a finding only when a bug candidate names its archive path in SARIF `result.attachments[].artifactLocation.uri`. Nothing is inferred from file names or directory order, and nothing in OSS-CRS writes `attachments` today, so on a stock run every PoV, patch and report is stored unassociated. An associated PoV also becomes the finding's [captured PoC](database.md#finding_pocs) when it has none yet, so `verify` stages it and the disclosure bundle ships it. Patches stay evidence only, since `suggested_fix` is reserved for diffs that passed the patch gate, and imported findings enter the same revalidation funnel as any import unless `?revalidate=false` is passed.
+
+The response extends the import response with `scan_id` (the import scan for the run, `skill_name = oss-crs`, whose log records the run id and everything skipped), `artifacts` (one entry per stored file and finding, with `stored: false` when the same bytes are already held for that finding, from an earlier import or an earlier path in the same archive), `skipped`, `unresolved_attachments` (paths a candidate named that the archive did not carry) and `warnings`. A repeat import of the same archive re-observes the findings and stores nothing new. `GET /api/v1/repositories/{id}/import-artifacts` lists the retained files without their bytes, and `GET /api/v1/import-artifacts/{id}` downloads one. Artifacts associated with a finding are deleted with it, and the rest with the repository.
+
+An entry with an unsafe path, a link or special file, a duplicate path or a size over the limit is skipped and reported. An archive over 100,000 entries, 2 GiB expanded or 64 MiB of retained files is refused with `413` before anything is written.
+
 ## Supported formats
 
 The detector reads the first few bytes of the body and dispatches:
