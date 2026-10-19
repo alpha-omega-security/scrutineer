@@ -2292,15 +2292,11 @@ components:
         artifacts:
           type: array
           items:
-            type: object
-            properties:
-              id:         { type: integer, format: int64 }
-              kind:       { type: string, enum: [pov, patch, report] }
-              path:       { type: string }
-              sha256:     { type: string }
-              bytes:      { type: integer }
-              finding_id: { type: integer, format: int64, description: "0 when unassociated." }
-              stored:     { type: boolean, description: "False when the same bytes were already stored for the same finding, by an earlier import or an earlier path in the same archive." }
+            allOf:
+              - $ref: '#/components/schemas/ImportArtifact'
+              - type: object
+                properties:
+                  stored: { type: boolean, description: "False when the same bytes were already stored for the same finding, by an earlier import or an earlier path in the same archive. The row then describes the stored copy." }
         skipped:
           type: array
           items:

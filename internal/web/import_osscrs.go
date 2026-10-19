@@ -30,13 +30,8 @@ const ossCRSProducer = "oss-crs"
 const maxOSSCRSRunLen = 200
 
 type ossCRSArtifact struct {
-	ID        uint   `json:"id"`
-	Kind      string `json:"kind"`
-	Path      string `json:"path"`
-	SHA256    string `json:"sha256"`
-	Bytes     int    `json:"bytes"`
-	FindingID uint   `json:"finding_id"`
-	Stored    bool   `json:"stored"`
+	db.ImportArtifact
+	Stored bool `json:"stored"`
 }
 
 type ossCRSImportResponse struct {
@@ -227,17 +222,16 @@ func storeOSSCRSArtifacts(tx *gorm.DB, scan db.Scan, artifacts []osscrs.Artifact
 			if res.Error != nil {
 				return nil, fmt.Errorf("store %s: %w", a.Path, res.Error)
 			}
-			stored := res.RowsAffected == 1
-			id := row.ID
-			if !stored {
-				var existing db.ImportArtifact
-				if err := tx.Select("id").Where("repository_id = ? AND finding_id = ? AND kind = ? AND sha256 = ?",
-					row.RepositoryID, row.FindingID, row.Kind, row.SHA256).First(&existing).Error; err != nil {
-					return nil, fmt.Errorf("load stored %s: %w", a.Path, err)
-				}
-				id = existing.ID
+			if res.RowsAffected == 1 {
+				out = append(out, ossCRSArtifact{ImportArtifact: row, Stored: true})
+				continue
 			}
-			out = append(out, ossCRSArtifact{ID: id, Kind: a.Kind, Path: a.Path, SHA256: a.SHA256, Bytes: len(a.Data), FindingID: findingID, Stored: stored})
+			var existing db.ImportArtifact
+			if err := tx.Omit("data").Where("repository_id = ? AND finding_id = ? AND kind = ? AND sha256 = ?",
+				row.RepositoryID, row.FindingID, row.Kind, row.SHA256).First(&existing).Error; err != nil {
+				return nil, fmt.Errorf("load stored %s: %w", a.Path, err)
+			}
+			out = append(out, ossCRSArtifact{ImportArtifact: existing})
 		}
 	}
 	return out, nil
