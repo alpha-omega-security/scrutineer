@@ -199,7 +199,10 @@ func TestImportOSSCRSDownloadsOriginalBytes(t *testing.T) {
 		t.Error("listing carries artifact bytes")
 	}
 
-	r = httptest.NewRequest(http.MethodGet, "/api/v1/import-artifacts/999999", nil)
+	if err := s.DB.Delete(&db.ImportArtifact{}, report.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	r = httptest.NewRequest(http.MethodGet, "/api/v1/import-artifacts/"+strconv.FormatUint(uint64(report.ID), 10), nil)
 	asOperator(r)
 	w = httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, r)
