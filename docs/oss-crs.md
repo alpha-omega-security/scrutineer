@@ -52,6 +52,25 @@ uv run oss-crs artifacts --compose-file ./crs-compose.yaml --target-source-path 
 
 The entrypoint points `ANTHROPIC_BASE_URL` at `OSS_CRS_LLM_API_URL`, reads the per-CRS key from `OSS_CRS_LLM_API_KEY_FILE` into `ANTHROPIC_API_KEY` then passes the proxy hostname as `-trusted-model-host` because LiteLLM listens on a private container network over plain http.
 
+## Using a Claude subscription
+
+LiteLLM only forwards API keys, so a token from `claude setup-token` cannot go through the proxy. Pass it to the CRS instead and the entrypoint leaves the proxy out, sending Claude Code straight to Anthropic:
+
+```yaml
+scrutineer:
+  additional_env:
+    CLAUDE_CODE_OAUTH_TOKEN: "${CLAUDE_CODE_OAUTH_TOKEN}"
+```
+
+OSS-CRS still starts LiteLLM and refuses to run unless every variable its config names is set, so give `ANTHROPIC_API_KEY` any placeholder value:
+
+```sh
+export CLAUDE_CODE_OAUTH_TOKEN=$(cat ./claude-oauth-token)
+ANTHROPIC_API_KEY=unused uv run oss-crs run --compose-file ./crs-compose.yaml --target-source-path ./target --timeout 3600
+```
+
+`llm_budget` does not apply on this route because no request passes through LiteLLM. Spend is bounded by `SCRUTINEER_AUDIT_TIMEOUT` and the subscription's own limits.
+
 ## Environment variables
 
 | Variable | Default | Effect |
@@ -61,6 +80,7 @@ The entrypoint points `ANTHROPIC_BASE_URL` at `OSS_CRS_LLM_API_URL`, reads the p
 | `SCRUTINEER_CONCURRENCY` | Scrutineer's default | Scans run in parallel (`-concurrency`) |
 | `SCRUTINEER_AUDIT_USER` | `runner` | User the audit drops to when the container starts as root |
 | `SCRUTINEER_AUDIT_WORK` | `/tmp/scrutineer-audit` | Work directory holding `out`, `data` and `logs` |
+| `CLAUDE_CODE_OAUTH_TOKEN` | none | Claude subscription token; bypasses LiteLLM (see [Using a Claude subscription](#using-a-claude-subscription)) |
 
 ## Outputs
 

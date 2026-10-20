@@ -32,7 +32,7 @@ trap 'rm -rf "$TEST_DIR"' EXIT HUP INT TERM
 cat > "$TEST_DIR/scrutineer" <<'FAKE'
 #!/usr/bin/env bash
 printf '%s\n' "$@" > "$TEST_DIR/scrutineer.argv"
-printf 'base=%s\nkey=%s\nhaiku=%s\n' "${ANTHROPIC_BASE_URL:-}" "${ANTHROPIC_API_KEY:-}" "${ANTHROPIC_DEFAULT_HAIKU_MODEL:-}" > "$TEST_DIR/scrutineer.env"
+printf 'base=%s\nkey=%s\noauth=%s\nhaiku=%s\n' "${ANTHROPIC_BASE_URL:-}" "${ANTHROPIC_API_KEY:-}" "${CLAUDE_CODE_OAUTH_TOKEN:-}" "${ANTHROPIC_DEFAULT_HAIKU_MODEL:-}" > "$TEST_DIR/scrutineer.env"
 while [ "$#" -gt 0 ]; do
   [ "$1" = -out ] && out=$2
   shift
@@ -86,7 +86,17 @@ run env OSS_CRS_TARGET_SOURCE="$TEST_DIR/source" \
 assert_eq 0 "$status" 'llm routing: exit status'
 argv=$(tr '\n' ' ' < "$TEST_DIR/scrutineer.argv")
 assert_eq 'audit -no-container -source '"$TEST_DIR"'/source -out '"$TEST_DIR"'/work/out -data '"$TEST_DIR"'/work/data -trusted-model-host litellm.oss-crs -model claude-test -audit-timeout 30m -concurrency 2 ' "$argv" 'llm routing: scrutineer arguments'
-assert_eq $'base=http://litellm.oss-crs:4000\nkey=secret-key\nhaiku=claude-test' "$(cat "$TEST_DIR/scrutineer.env")" 'llm routing: environment'
+assert_eq $'base=http://litellm.oss-crs:4000\nkey=secret-key\noauth=\nhaiku=claude-test' "$(cat "$TEST_DIR/scrutineer.env")" 'llm routing: environment'
+
+# An OAuth token sends Claude straight to Anthropic, so the LiteLLM URL and
+# key the framework still provides are left unused.
+run env OSS_CRS_TARGET_SOURCE="$TEST_DIR/source" \
+  OSS_CRS_LLM_API_URL=http://litellm.oss-crs:4000 OSS_CRS_LLM_API_KEY_FILE="$TEST_DIR/key" \
+  CLAUDE_CODE_OAUTH_TOKEN=oauth-token SCRUTINEER_MODEL=claude-test
+assert_eq 0 "$status" 'oauth: exit status'
+argv=$(tr '\n' ' ' < "$TEST_DIR/scrutineer.argv")
+assert_eq 'audit -no-container -source '"$TEST_DIR"'/source -out '"$TEST_DIR"'/work/out -data '"$TEST_DIR"'/work/data -model claude-test ' "$argv" 'oauth: scrutineer arguments'
+assert_eq $'base=\nkey=\noauth=oauth-token\nhaiku=claude-test' "$(cat "$TEST_DIR/scrutineer.env")" 'oauth: environment'
 
 run env OSS_CRS_TARGET_SOURCE="$TEST_DIR/source" FAKE_STATUS=0 FAKE_CANDIDATE=yes
 assert_eq 0 "$status" 'complete: exit status'

@@ -40,17 +40,20 @@ else
 fi
 
 args=()
-if [ -n "${OSS_CRS_LLM_API_URL:-}" ]; then
-  export ANTHROPIC_BASE_URL=$OSS_CRS_LLM_API_URL
-  host=${OSS_CRS_LLM_API_URL#*://}
-  host=${host%%/*}
-  host=${host##*@}
-  host=${host%%:*}
-  args+=(-trusted-model-host "$host")
-fi
-if [ -n "${OSS_CRS_LLM_API_KEY_FILE:-}" ]; then
-  ANTHROPIC_API_KEY=$(cat "$OSS_CRS_LLM_API_KEY_FILE")
-  export ANTHROPIC_API_KEY
+# An OAuth token goes straight to Anthropic: LiteLLM only forwards API keys.
+if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+  if [ -n "${OSS_CRS_LLM_API_URL:-}" ]; then
+    export ANTHROPIC_BASE_URL=$OSS_CRS_LLM_API_URL
+    host=${OSS_CRS_LLM_API_URL#*://}
+    host=${host%%/*}
+    host=${host##*@}
+    host=${host%%:*}
+    args+=(-trusted-model-host "$host")
+  fi
+  if [ -n "${OSS_CRS_LLM_API_KEY_FILE:-}" ]; then
+    ANTHROPIC_API_KEY=$(cat "$OSS_CRS_LLM_API_KEY_FILE")
+    export ANTHROPIC_API_KEY
+  fi
 fi
 if [ -n "${SCRUTINEER_MODEL:-}" ]; then
   args+=(-model "$SCRUTINEER_MODEL")
