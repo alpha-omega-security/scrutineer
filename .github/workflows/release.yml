@@ -18,7 +18,7 @@ concurrency:
 jobs:
   preflight:
     name: preflight
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     permissions:
       actions: read # required for stable version dates and Runner Image status
