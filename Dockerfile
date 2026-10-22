@@ -16,7 +16,7 @@ RUN npm install -g @anthropic-ai/claude-code@2.1.299
 
 FROM python:3.14-alpine@sha256:f6a589d43c42b9e7f7dc67a12d37132491f362859a5d750607710cc56da3bc72 AS python-tools
 
-ARG SEMGREP_VERSION=1.180.0
+ARG SEMGREP_VERSION=1.181.0
 
 ARG BANDIT_VERSION=1.9.4
 
