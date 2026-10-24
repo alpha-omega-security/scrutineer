@@ -3,11 +3,13 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -180,7 +182,7 @@ func TestPrepareRepoSrcWithOptionsKeepsSubmodulesOptIn(t *testing.T) {
 	// scan log; keep it for the failure message.
 	var events []string
 	if _, err := w.prepareRepoSrcWithOptions(
-		context.Background(), url, "", withSubmodules, true, func(e Event) { events = append(events, FormatEvent(e)) },
+		context.Background(), url, "", withSubmodules, RepoSrcOptions{RecurseSubmodules: true}, func(e Event) { events = append(events, FormatEvent(e)) },
 	); err != nil {
 		t.Fatalf("prepare with submodules: %v", err)
 	}
@@ -208,7 +210,7 @@ func TestEmbeddedNativeBriefSeesPreparedSubmodule(t *testing.T) {
 	w := &Worker{DataDir: t.TempDir()}
 	workRoot := t.TempDir()
 	if _, err := w.prepareRepoSrcWithOptions(
-		context.Background(), url, "", workRoot, true, func(Event) {},
+		context.Background(), url, "", workRoot, RepoSrcOptions{RecurseSubmodules: true}, func(Event) {},
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -421,5 +423,129 @@ func TestEnsureCommit_unreachableNonShallowIsNoOp(t *testing.T) {
 	w := &Worker{DataDir: dataDir}
 	if err := w.EnsureCommit(context.Background(), url, "0000000000000000000000000000000000000000"); err != nil {
 		t.Errorf("EnsureCommit on non-shallow without commit should be no-op: %v", err)
+	}
+}
+
+func newHistoryOrigin(t *testing.T, commits int) string {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	originDir := t.TempDir()
+	testGit(t, originDir, "init", "--quiet", "-b", "main")
+	for i := range commits {
+		name := "f" + strings.Repeat("x", i) + ".txt"
+		if err := os.WriteFile(filepath.Join(originDir, name), []byte("data\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		testGit(t, originDir, "add", name)
+		testGit(t, originDir, "commit", "--quiet", "-m", "commit "+name)
+	}
+	url := "https://clone.test/history"
+	t.Setenv("GIT_CONFIG_COUNT", "2")
+	t.Setenv("GIT_CONFIG_KEY_0", "url.file://"+originDir+".insteadOf")
+	t.Setenv("GIT_CONFIG_VALUE_0", url)
+	t.Setenv("GIT_CONFIG_KEY_1", "protocol.file.allow")
+	t.Setenv("GIT_CONFIG_VALUE_1", "always")
+	t.Setenv("GIT_ALLOW_PROTOCOL", "https:file")
+	return url
+}
+
+func commitCount(t *testing.T, dir string) int {
+	t.Helper()
+	out, err := exec.Command("git", "-C", dir, "rev-list", "--count", "HEAD").Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
+func TestPrepareRepoSrcFullHistoryUsesSeparateCache(t *testing.T) {
+	url := newHistoryOrigin(t, 3)
+	w := &Worker{DataDir: shortTempDir(t)}
+
+	full := t.TempDir()
+	if _, err := w.prepareRepoSrcWithOptions(
+		context.Background(), url, "", full, RepoSrcOptions{FullHistory: true}, func(Event) {},
+	); err != nil {
+		t.Fatalf("full prepare: %v", err)
+	}
+	if n := commitCount(t, filepath.Join(full, "src")); n != 3 {
+		t.Errorf("full-history src has %d commits, want 3", n)
+	}
+	if _, err := os.Stat(filepath.Join(RepoCacheRoot(w.DataDir, url), "full-history")); err != nil {
+		t.Errorf("full-history cache dir missing: %v", err)
+	}
+
+	shallow := t.TempDir()
+	if _, err := w.PrepareSrc(context.Background(), url, "", shallow, func(Event) {}); err != nil {
+		t.Fatalf("shallow prepare: %v", err)
+	}
+	if n := commitCount(t, filepath.Join(shallow, "src")); n != 1 {
+		t.Errorf("default cache src has %d commits, want 1", n)
+	}
+}
+
+func TestRepoCacheDir(t *testing.T) {
+	tests := []struct {
+		options RepoSrcOptions
+		want    string
+	}{
+		{RepoSrcOptions{}, "r"},
+		{RepoSrcOptions{RecurseSubmodules: true}, filepath.Join("r", "with-submodules")},
+		{RepoSrcOptions{FullHistory: true}, filepath.Join("r", "full-history")},
+		{RepoSrcOptions{FullHistory: true, RecurseSubmodules: true}, filepath.Join("r", "full-history-with-submodules")},
+	}
+	for _, tt := range tests {
+		if got := repoCacheDir("r", tt.options); got != tt.want {
+			t.Errorf("repoCacheDir(%+v) = %q, want %q", tt.options, got, tt.want)
+		}
+	}
+}
+
+func TestPrepareSkillRepoSrcFallsBackToShallow(t *testing.T) {
+	var calls []RepoSrcOptions
+	var events []string
+	w := &Worker{
+		PrepareRepoSrcWithOptions: func(
+			_ context.Context, _, _, _ string, options RepoSrcOptions, _ func(Event),
+		) (string, error) {
+			calls = append(calls, options)
+			if options.FullHistory {
+				return "", errors.New("unshallow failed")
+			}
+			return "abc", nil
+		},
+	}
+	commit, err := w.prepareSkillRepoSrc(
+		context.Background(), "u", "", t.TempDir(),
+		RepoSrcOptions{FullHistory: true, RecurseSubmodules: true},
+		func(e Event) { events = append(events, e.Text) },
+	)
+	if err != nil || commit != "abc" {
+		t.Fatalf("commit %q err %v", commit, err)
+	}
+	if len(calls) != 2 || calls[1].FullHistory || !calls[1].RecurseSubmodules {
+		t.Errorf("calls = %+v", calls)
+	}
+	if len(events) != 1 || !strings.Contains(events[0], "full history unavailable (unshallow failed)") {
+		t.Errorf("events = %q", events)
+	}
+
+	calls = nil
+	w.PrepareRepoSrcWithOptions = func(
+		ctx context.Context, _, _, _ string, options RepoSrcOptions, _ func(Event),
+	) (string, error) {
+		calls = append(calls, options)
+		return "", context.Canceled
+	}
+	if _, err := w.prepareSkillRepoSrc(
+		context.Background(), "u", "", t.TempDir(), RepoSrcOptions{FullHistory: true}, func(Event) {},
+	); !errors.Is(err, context.Canceled) || len(calls) != 1 {
+		t.Errorf("cancellation retried: err %v calls %d", err, len(calls))
 	}
 }

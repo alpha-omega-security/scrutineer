@@ -258,6 +258,7 @@ One row per installed skill. Loaded from `skills/` directories on disk or the UI
 | active | boolean | |
 | requires_remote | boolean | When true, scrutineer refuses to enqueue this skill against a local-directory repository (file:// URL). Set via `scrutineer.requires_remote: true` in SKILL.md frontmatter. Use for skills that depend on a forge URL or remote-only data (advisories, exposure, fork, maintainers, metadata, packages, report-upstream). |
 | recurse_submodules | boolean | When true, remote scans initialize recursive depth-one Git submodules before the skill runs. Set via `scrutineer.recurse_submodules: true` in SKILL.md frontmatter. |
+| full_history | boolean | When true, remote scans clone full Git history into a separate cache before the skill runs. Set via `scrutineer.full_history: true` in SKILL.md frontmatter. |
 | requires_profile | text | Constrains the skill to a single registered runner profile (e.g. `php`). Empty means no constraint. Set via `scrutineer.requires_profile` in SKILL.md frontmatter. Enqueue returns 400 when the requested profile mismatches; the worker fails the scan when auto-detection resolves to a different profile. |
 | requires_commands | text | Newline-joined executable names checked on the runner's PATH before model execution. Empty means no command requirements. |
 | requires_features | text | Newline-joined runtime feature names checked before model execution: `network-egress`, `docker-in-docker`, or `fuse`. Requirements do not grant capabilities. |

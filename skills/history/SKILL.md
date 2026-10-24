@@ -2,7 +2,7 @@
 name: history
 description: Mine repository history for security fixes that were never published as advisories, producing a cached worklist for threat-model and advisory-deep-dive.
 license: MIT
-compatibility: Requires git and python3. Reads repository history and the Scrutineer API; shallow clones are supported but explicitly reported as partial.
+compatibility: Requires git and python3. Reads repository history and the Scrutineer API. Scrutineer clones full history for this skill; truncated history (for example when deepening fails) is reported as partial.
 allowed-tools: Read,Write,Bash,Grep,Glob,Task
 metadata:
   scrutineer.version: 1
@@ -10,6 +10,7 @@ metadata:
   scrutineer.output_kind: freeform
   scrutineer.max_turns: 80
   scrutineer.model: high
+  scrutineer.full_history: true
 ---
 
 # history
@@ -20,7 +21,7 @@ The method is informed by Google Mantis's `mantis-history` skill: many security 
 
 ## Workspace
 
-- `./src` is the repository at the scan commit, including whatever Git history the configured clone depth made available.
+- `./src` is the repository at the scan commit, with full Git history. If deepening failed the clone is shallow, which must be reported as partial.
 - `./context.json` contains `scrutineer.api_base`, `token`, `repository_id`, `scan_id`, optional `scan_ref`, and optional `scan_subpath`.
 - `./scripts/history_candidates.py` deterministically filters commit messages and emits size-capped diff batches.
 - `./history_cache.json` is scratch space for the latest compatible completed history report, when one exists.

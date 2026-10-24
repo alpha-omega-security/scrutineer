@@ -190,7 +190,8 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 	} else {
 		w.prepareNoveltyHistory(ctx, scan, &skill)
 		cacheCommit, err := w.prepareSkillRepoSrc(
-			ctx, scan.Repository.URL, scan.Ref, workRoot, skill.RecurseSubmodules, emit,
+			ctx, scan.Repository.URL, scan.Ref, workRoot,
+			RepoSrcOptions{RecurseSubmodules: skill.RecurseSubmodules, FullHistory: skill.FullHistory}, emit,
 		)
 		if err != nil {
 			if report, ok := w.handleCloneError(scan, err, emit); ok {
@@ -445,6 +446,9 @@ func (w *Worker) parseSkillOutput(ctx context.Context, skill *db.Skill, scan *db
 		return err
 	}
 	if scan.RescanMode != db.ScanRescanModeDiff {
+		if skill.Name == historySkillName {
+			return applyHistoryCoverage(scan, report)
+		}
 		return nil
 	}
 	claim, hasClaim, err := extractSkillCoverageClaim(report)

@@ -198,6 +198,49 @@ body
 	}
 }
 
+func TestParseFile_fullHistory(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSkill(t, dir, "hist", `---
+name: hist
+description: Mine history.
+metadata:
+  scrutineer.full_history: true
+---
+
+body
+`)
+	p, err := ParseFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !p.FullHistory {
+		t.Error("full_history = false, want true")
+	}
+	m, err := p.ToModel("local")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !m.FullHistory {
+		t.Error("model FullHistory = false, want true")
+	}
+}
+
+func TestParseFile_fullHistoryWrongType(t *testing.T) {
+	dir := t.TempDir()
+	path := writeSkill(t, dir, "bad", `---
+name: bad
+description: Skill with bad full_history.
+metadata:
+  scrutineer.full_history: "yes"
+---
+
+body
+`)
+	if _, err := ParseFile(path); err == nil {
+		t.Fatal("expected error on non-boolean full_history")
+	}
+}
+
 func TestParseFile_recurseSubmodulesWrongType(t *testing.T) {
 	dir := t.TempDir()
 	path := writeSkill(t, dir, "bad", `---

@@ -35,6 +35,7 @@ const (
 	metaFailOn            = "scrutineer.fail_on"
 	metaRequiresRemote    = "scrutineer.requires_remote"
 	metaRecurseSubmodules = "scrutineer.recurse_submodules"
+	metaFullHistory       = "scrutineer.full_history"
 	metaRequiresProfile   = "scrutineer.requires_profile"
 	metaPaths             = "scrutineer.paths"
 	metaIgnorePaths       = "scrutineer.ignore_paths"
@@ -66,6 +67,7 @@ var scrutineerKeys = map[string]bool{
 	metaFailOn:            true,
 	metaRequiresRemote:    true,
 	metaRecurseSubmodules: true,
+	metaFullHistory:       true,
 	metaRequiresProfile:   true,
 	metaPaths:             true,
 	metaIgnorePaths:       true,
@@ -149,6 +151,7 @@ type Parsed struct {
 	FailOn            string
 	RequiresRemote    bool
 	RecurseSubmodules bool
+	FullHistory       bool
 	RequiresProfile   string
 	Paths             []string
 	IgnorePaths       []string
@@ -242,6 +245,11 @@ func (p *Parsed) validateMetadata() error {
 	if v, ok := p.Metadata[metaRecurseSubmodules]; ok {
 		if _, ok := v.(bool); !ok {
 			return fmt.Errorf("%s must be a boolean, got %T", metaRecurseSubmodules, v)
+		}
+	}
+	if v, ok := p.Metadata[metaFullHistory]; ok {
+		if _, ok := v.(bool); !ok {
+			return fmt.Errorf("%s must be a boolean, got %T", metaFullHistory, v)
 		}
 	}
 	if err := checkRequiresProfile(p.Metadata); err != nil {
@@ -414,6 +422,9 @@ func (p *Parsed) extractMetadataKeys() {
 	if v, ok := p.Metadata[metaRecurseSubmodules].(bool); ok {
 		p.RecurseSubmodules = v
 	}
+	if v, ok := p.Metadata[metaFullHistory].(bool); ok {
+		p.FullHistory = v
+	}
 	if v, ok := p.Metadata[metaRequiresProfile].(string); ok {
 		p.RequiresProfile = strings.TrimSpace(v)
 	}
@@ -476,6 +487,7 @@ func (p *Parsed) ToModel(source string) (*db.Skill, error) {
 		FailOn:            p.FailOn,
 		RequiresRemote:    p.RequiresRemote,
 		RecurseSubmodules: p.RecurseSubmodules,
+		FullHistory:       p.FullHistory,
 		RequiresProfile:   p.RequiresProfile,
 		Paths:             JoinPatterns(p.Paths),
 		IgnorePaths:       JoinPatterns(p.IgnorePaths),

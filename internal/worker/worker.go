@@ -160,7 +160,7 @@ type Worker struct {
 	PrepareRepoSrcWithOptions func(
 		ctx context.Context,
 		url, ref, workRoot string,
-		recurseSubmodules bool,
+		options RepoSrcOptions,
 		emit func(Event),
 	) (string, error)
 

@@ -152,3 +152,43 @@ func TestParseSkillOutputLeavesMalformedCoverageEnvelopeToKindParser(t *testing.
 		t.Fatalf("error = %v, want maintainers parser error", err)
 	}
 }
+
+func TestApplyHistoryCoverage(t *testing.T) {
+	tests := []struct {
+		name     string
+		report   string
+		wantDone string
+		reason   string
+	}{
+		{"partial with gaps", `{"partial":true,"gaps":["shallow clone"," ","no tags"]}`, coverage.CompletenessPartial, "shallow clone; no tags"},
+		{"partial without gaps", `{"partial":true,"gaps":[]}`, coverage.CompletenessPartial, "history report marked partial"},
+		{"not partial", `{"partial":false,"gaps":["x"]}`, "", ""},
+		{"missing partial", `{"gaps":["x"]}`, "", ""},
+		{"not json", `plain text`, "", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scan := db.Scan{}
+			if err := applyHistoryCoverage(&scan, tt.report); err != nil {
+				t.Fatal(err)
+			}
+			if tt.wantDone == "" {
+				if scan.Coverage != "" || scan.Completeness != "" {
+					t.Fatalf("scan changed: %+v", scan)
+				}
+				return
+			}
+			rec, ok := coverage.Parse(scan.Coverage)
+			if !ok || rec.Completeness != tt.wantDone || rec.Reason != tt.reason || scan.Completeness != tt.wantDone {
+				t.Fatalf("rec = %+v ok=%v column=%q", rec, ok, scan.Completeness)
+			}
+		})
+	}
+}
+
+func TestApplyHistoryCoverageRejectsCorruptStoredRecord(t *testing.T) {
+	scan := db.Scan{Coverage: "{not json"}
+	if err := applyHistoryCoverage(&scan, `{"partial":true}`); err == nil {
+		t.Fatal("expected error for undecodable stored coverage")
+	}
+}

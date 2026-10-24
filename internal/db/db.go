@@ -1471,6 +1471,8 @@ type Skill struct {
 	RequiresRemote bool
 	// RecurseSubmodules initializes shallow Git submodules before the skill runs.
 	RecurseSubmodules bool
+	// FullHistory clones the repository's full Git history before the skill runs.
+	FullHistory bool
 
 	// RequiresProfile constrains the skill to a single registered runner
 	// profile (e.g. "php"). Set via `scrutineer.requires_profile` in the

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"testing"
 
+	"scrutineer/internal/coverage"
 	"scrutineer/internal/db"
 	"scrutineer/internal/db/dbtest"
 	"scrutineer/internal/queue"
@@ -191,10 +192,10 @@ func TestDoSkill_passesSubmoduleOptionFromSkill(t *testing.T) {
 		PrepareRepoSrcWithOptions: func(
 			_ context.Context,
 			_, _, workRoot string,
-			recurse bool,
+			options RepoSrcOptions,
 			_ func(Event),
 		) (string, error) {
-			recurseSubmodules = recurse
+			recurseSubmodules = options.RecurseSubmodules
 			return "abc", os.MkdirAll(filepath.Join(workRoot, "src"), 0o755)
 		},
 	}
@@ -215,6 +216,69 @@ func TestDoSkill_passesSubmoduleOptionFromSkill(t *testing.T) {
 	}
 	if got.Status != db.ScanDone || !strings.Contains(got.Report, `"name":"Rust"`) {
 		t.Errorf("scan = status %s report %q", got.Status, got.Report)
+	}
+}
+
+func TestDoSkill_passesFullHistoryOptionFromSkill(t *testing.T) {
+	gdb := dbtest.Open(t)
+	repo := db.Repository{URL: "https://example.com/hist", Name: "hist"}
+	if err := gdb.Create(&repo).Error; err != nil {
+		t.Fatal(err)
+	}
+	skill := db.Skill{
+		Name: "history", Description: "Mine history", Body: "Run.",
+		OutputFile: "report.json", OutputKind: "freeform", FullHistory: true,
+		Version: 1, Active: true, Source: "test",
+	}
+	if err := gdb.Create(&skill).Error; err != nil {
+		t.Fatal(err)
+	}
+	scan := db.Scan{
+		RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanQueued,
+		Model: "fake", SkillID: &skill.ID,
+	}
+	if err := gdb.Create(&scan).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	var got RepoSrcOptions
+	w := &Worker{
+		DB:      gdb,
+		Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
+		DataDir: t.TempDir(),
+		Runner: fakeRunner{skillRes: SkillResult{
+			Commit: "abc",
+			Report: `{"partial":true,"gaps":["shallow clone: only 1 commit available in history"],"findings":[]}`,
+		}},
+		PrepareRepoSrcWithOptions: func(
+			_ context.Context,
+			_, _, workRoot string,
+			options RepoSrcOptions,
+			_ func(Event),
+		) (string, error) {
+			got = options
+			return "abc", os.MkdirAll(filepath.Join(workRoot, "src"), 0o755)
+		},
+	}
+	body, err := json.Marshal(queue.Payload{ScanID: scan.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.wrap(w.doSkill)(context.Background(), body); err != nil {
+		t.Fatal(err)
+	}
+	if !got.FullHistory || got.RecurseSubmodules {
+		t.Errorf("options = %+v, want FullHistory only", got)
+	}
+	var stored db.Scan
+	if err := gdb.First(&stored, scan.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != db.ScanDone || stored.Completeness != coverage.CompletenessPartial {
+		t.Errorf("status %s completeness %q, want done/partial", stored.Status, stored.Completeness)
+	}
+	if !strings.Contains(stored.Coverage, "only 1 commit available") {
+		t.Errorf("coverage = %q, want the history gap as reason", stored.Coverage)
 	}
 }
 
