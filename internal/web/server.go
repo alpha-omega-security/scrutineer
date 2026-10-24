@@ -3147,7 +3147,7 @@ func (s *Server) deleteRepository(repo db.Repository) (deletedRepository, error)
 		for _, child := range []any{
 			&db.Finding{}, &db.Scan{}, &db.Subproject{}, &db.Dependency{},
 			&db.Dependent{}, &db.Package{}, &db.Advisory{}, &db.AdvisoryAudit{}, &db.SBOMUpload{},
-			&db.PackageAlternative{}, &db.ExpectedFinding{}, &db.ComplianceControl{},
+			&db.PackageAlternative{}, &db.ExpectedFinding{}, &db.ComplianceControl{}, &db.ImportArtifact{},
 		} {
 			if err := tx.Where("repository_id = ?", repo.ID).Delete(child).Error; err != nil {
 				return err
@@ -3317,7 +3317,7 @@ func findingChildModels() []any {
 	return []any{
 		&db.FindingNote{}, &db.FindingCommunication{}, &db.FindingReference{},
 		&db.FindingHistory{}, &db.FindingDependent{}, &db.FindingReview{}, &db.FeedbackConfirmation{}, &db.DisclosureSubmission{},
-		&db.FindingVerification{}, &db.FindingAttackPath{}, &db.FindingPoC{},
+		&db.FindingVerification{}, &db.FindingAttackPath{}, &db.FindingPoC{}, &db.ImportArtifact{},
 		&db.RemediationValidation{}, &db.RemediationAttempt{},
 	}
 }

@@ -1453,6 +1453,100 @@ paths:
         '422':
           description: Unrecognised format without `?repo=` (or with the ingest skill unavailable), recognised format that fails to parse, repository unknown, or an age-encrypted body received with no identity configured
 
+  /v1/import/oss-crs:
+    post:
+      summary: Import an OSS-CRS run with its reproduction evidence
+      description: |
+        Ingests the gzip tarball `oss-crs archive` writes for one run. Each
+        SARIF file under `bug-candidates/` goes through the SARIF import of
+        `POST /v1/import`, with its caps and fingerprint dedup. Every file
+        under `povs/`, `patches/` and `reports/` is retained byte for byte
+        in `import_artifacts`, associated with a finding only when a bug
+        candidate names its archive path in `result.attachments`. A PoV
+        associated with a finding also becomes that finding's captured PoC
+        when it has none yet. Patches are retained as evidence only and never
+        written to `suggested_fix`. Other directories (`seeds/`,
+        `harnesses/`, ...) and rejected entries are reported in `skipped`.
+        The archive carries no target provenance, so `repo` and `commit` are
+        required. Operator token; localhost-only. See docs/import.md.
+      operationId: importOSSCRS
+      security: [{ operatorToken: [] }]
+      parameters:
+        - name: repo
+          in: query
+          required: true
+          description: Repository URL the run targeted.
+          schema: { type: string, format: uri }
+        - name: commit
+          in: query
+          required: true
+          description: Source revision the run targeted. A bug candidate's own `versionControlProvenance` revision wins when present.
+          schema: { type: string }
+        - name: run
+          in: query
+          description: OSS-CRS run id, recorded in the import scan's log.
+          schema: { type: string, maxLength: 200 }
+        - name: revalidate
+          in: query
+          description: As on `POST /v1/import`.
+          schema: { type: boolean, default: true }
+      requestBody:
+        required: true
+        content:
+          application/gzip:
+            schema: { type: string, format: binary }
+      responses:
+        '201':
+          description: Run imported.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OSSCRSImportResponse' }
+        '400':
+          description: Missing `repo` or `commit`, a `run` longer than 200 characters or carrying control characters, or `revalidate` is not a boolean
+        '403':
+          description: Host header is not localhost
+        '413':
+          description: Body exceeds 256 MiB, or the archive exceeds 100000 entries, 2 GiB expanded, or 64 MiB of retained files
+        '422':
+          description: Body is not a gzip tarball, or the repository is unusable
+
+  /v1/repositories/{id}/import-artifacts:
+    get:
+      summary: List a repository's imported artifacts
+      description: Metadata for every retained import artifact, without the bytes. Operator token; localhost-only.
+      operationId: listImportArtifacts
+      security: [{ operatorToken: [] }]
+      parameters:
+        - $ref: '#/components/parameters/RepositoryID'
+      responses:
+        '200':
+          description: Artifacts in insertion order.
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/ImportArtifact' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/import-artifacts/{id}:
+    get:
+      summary: Download an imported artifact
+      description: The original bytes as an attachment. Operator token; localhost-only.
+      operationId: downloadImportArtifact
+      security: [{ operatorToken: [] }]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        '200':
+          description: Artifact bytes.
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '404': { $ref: '#/components/responses/NotFound' }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -2122,6 +2216,50 @@ components:
                     summary:    { type: string }
                     created_at: { type: string, format: date-time }
 
+    ImportArtifact:
+      type: object
+      properties:
+        id:            { type: integer, format: int64 }
+        repository_id: { type: integer, format: int64 }
+        finding_id:    { type: integer, format: int64, description: "0 when the producer did not associate the file with a finding." }
+        kind:          { type: string, enum: [pov, patch, report] }
+        sha256:        { type: string }
+        scan_id:       { type: integer, format: int64, description: "The import scan that first stored the file." }
+        path:          { type: string, description: "Path inside the archive." }
+        bytes:         { type: integer }
+        created_at:    { type: string, format: date-time }
+    OSSCRSImportResponse:
+      type: object
+      properties:
+        format:        { type: string, enum: [oss-crs] }
+        run:           { type: string }
+        scan_id:       { type: integer, format: int64, description: "The import scan recording the run." }
+        repository_id: { type: integer, format: int64 }
+        results:       { $ref: '#/components/schemas/ImportResponse/properties/results' }
+        artifacts:
+          type: array
+          items:
+            allOf:
+              - $ref: '#/components/schemas/ImportArtifact'
+              - type: object
+                properties:
+                  stored: { type: boolean, description: "False when the same bytes were already stored for the same finding, by an earlier import or an earlier path in the same archive. The row then describes the stored copy." }
+        skipped:
+          type: array
+          items:
+            type: object
+            properties:
+              path:   { type: string, description: "The entry, or a whole unsupported directory ending in /." }
+              files:  { type: integer }
+              reason: { type: string }
+        unresolved_attachments:
+          type: array
+          description: Attachment paths a bug candidate named that the archive did not carry or the import skipped.
+          items: { type: string }
+        warnings:
+          type: array
+          description: Associated PoVs that could not become a captured PoC, for instance beyond its 64-file or 2 MiB limit.
+          items: { type: string }
     ImportResponse:
       type: object
       properties:
