@@ -10,6 +10,7 @@
     {{if .SkillName}}{{if .SkillID}}<a href="/skills/{{.SkillID}}">{{.SkillName}}</a>{{else}}{{.SkillName}}{{end}}{{else}}{{.Kind}}{{end}} / scan #{{.ID}}
     {{template "status-badge" (status .Status)}}
     {{if .MaxTurnsHit}}<span class="badge-outline"><i data-lucide="timer-off"></i> max turns</span>{{end}}
+    {{if .CostCapped}}<span class="badge-outline"><i data-lucide="circle-dollar-sign"></i> cost cap</span>{{end}}
     {{if .RefusalAuditWarning}}<span class="badge-outline"><i data-lucide="triangle-alert"></i> analysis incomplete</span>{{end}}
   </h2>
   {{if and (eq .Kind "skill") .SkillID}}
@@ -116,6 +117,12 @@
     <dt class="text-muted-foreground">Cost</dt>
     <dd>{{if gt .CostUSD 0.0}}{{usd .CostUSD}}{{else}}-{{end}}</dd>
   </div>
+  {{if gt .MaxCostUSD 0.0}}
+  <div>
+    <dt class="text-muted-foreground">Cost cap</dt>
+    <dd>{{usd .MaxCostUSD}}</dd>
+  </div>
+  {{end}}
   {{if .SkillName}}
   <div>
     <dt class="text-muted-foreground">Skill</dt>
@@ -196,6 +203,13 @@
   <div class="alert mb-6">
     <i data-lucide="timer-off"></i>
     <section>This scan hit the max turns cap after producing partial output. Retry will resume the saved Claude session.</section>
+  </div>
+{{end}}
+
+{{if .CostCapped}}
+  <div class="alert mb-6">
+    <i data-lucide="circle-dollar-sign"></i>
+    <section>This scan reached its cost cap of {{usd .MaxCostUSD}} and stopped early with partial output. Retry resumes the saved session with a fresh budget.</section>
   </div>
 {{end}}
 

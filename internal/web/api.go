@@ -380,12 +380,13 @@ func (s *Server) apiRunSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Model          string `json:"model"`
-		Ref            string `json:"ref"`
-		Profile        string `json:"profile"`
-		RescanMode     string `json:"rescan_mode"`
-		SubPath        string `json:"sub_path"`
-		BaselineScanID *uint  `json:"baseline_scan_id"`
+		Model          string  `json:"model"`
+		Ref            string  `json:"ref"`
+		Profile        string  `json:"profile"`
+		RescanMode     string  `json:"rescan_mode"`
+		SubPath        string  `json:"sub_path"`
+		BaselineScanID *uint   `json:"baseline_scan_id"`
+		MaxCostUSD     float64 `json:"max_cost_usd"`
 	}
 	if !decodeOptionalAPIBody(w, r, &body) {
 		return
@@ -423,6 +424,7 @@ func (s *Server) apiRunSkill(w http.ResponseWriter, r *http.Request) {
 		RescanMode:     body.RescanMode,
 		SubPath:        subPath,
 		DiffBaseScanID: body.BaselineScanID,
+		MaxCostUSD:     body.MaxCostUSD,
 	})
 	if err != nil {
 		if errors.Is(err, ErrSkillRequiresRemote) {
@@ -438,6 +440,10 @@ func (s *Server) apiRunSkill(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if errors.Is(err, ErrInvalidRef) {
+			writeAPIError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if errors.Is(err, ErrInvalidMaxCost) {
 			writeAPIError(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -474,7 +480,8 @@ func (s *Server) apiRunFindingSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Model string `json:"model"`
+		Model      string  `json:"model"`
+		MaxCostUSD float64 `json:"max_cost_usd"`
 	}
 	if !decodeOptionalAPIBody(w, r, &body) {
 		return
@@ -500,6 +507,7 @@ func (s *Server) apiRunFindingSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	opts.FindingID = new(uint(id))
+	opts.MaxCostUSD = body.MaxCostUSD
 	opts.AuditDisclosure = externalReportingSkill(name)
 	opts.AuditSource = sourceFromRequest(r)
 	if caller := scanFromRequest(r); caller != nil && caller.SkillName == "triage" {
@@ -513,6 +521,10 @@ func (s *Server) apiRunFindingSkill(w http.ResponseWriter, r *http.Request) {
 		}
 		if errors.Is(err, ErrRepoFederationOptOut) || errors.Is(err, ErrFederationClaimPending) {
 			writeAPIError(w, http.StatusConflict, err.Error())
+			return
+		}
+		if errors.Is(err, ErrInvalidMaxCost) {
+			writeAPIError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 		writeAPIError(w, http.StatusInternalServerError, err.Error())
@@ -629,6 +641,8 @@ func scanSummary(sc db.Scan) map[string]any {
 		"started_at":           sc.StartedAt,
 		"finished_at":          sc.FinishedAt,
 		"max_turns_hit":        sc.MaxTurnsHit,
+		"max_cost_usd":         sc.MaxCostUSD,
+		"cost_capped":          sc.CostCapped,
 		errorKey:               sc.Error,
 	}
 	m["refusal_audit_warning"] = sc.RefusalAuditWarning

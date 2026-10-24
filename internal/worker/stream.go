@@ -21,6 +21,7 @@ const (
 	KindError     = harness.KindError
 	KindSession   = harness.KindSession
 	KindRateLimit = harness.KindRateLimit
+	KindUsage     = harness.KindUsage
 
 	// KindEgress is scrutineer's own commentary, not the agent's: the egress
 	// sidecar's log lines, forwarded after the harness has already exited.

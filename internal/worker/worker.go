@@ -937,7 +937,7 @@ func (w *Worker) finalizeScan(ctx context.Context, scan *db.Scan, report string,
 		w.scheduleAccountResumeAtValue(reset)
 	}
 	snapshotLog()
-	if scan.Status == db.ScanDone && !scan.MaxTurnsHit {
+	if scan.Status == db.ScanDone && !scan.MaxTurnsHit && !scan.CostCapped {
 		w.clearSessionStore(scan)
 	}
 	scan.StatusPriority = db.StatusPriorityFor(scan.Status)

@@ -466,6 +466,15 @@ paths:
                   description: |
                     Optional baseline scan to use for `rescan_mode: diff`; omitted lets Scrutineer
                     choose the latest compatible completed scan.
+                max_cost_usd:
+                  type: number
+                  minimum: 0
+                  description: |
+                    Optional spend cap in USD for this scan. When the running cost estimate reaches it the
+                    worker stops the run, asks the agent to write its report from the work so far and
+                    records the scan as done with partial coverage and reason `cost_cap`. Omitted or 0
+                    means no cap. Negative values return 400. For the codex backend the estimate only
+                    updates when the run reports its result.
       responses:
         '201':
           description: Scan enqueued
@@ -873,6 +882,15 @@ paths:
               additionalProperties: false
               properties:
                 model: { type: string }
+                max_cost_usd:
+                  type: number
+                  minimum: 0
+                  description: |
+                    Optional spend cap in USD for this scan. When the running cost estimate reaches it the
+                    worker stops the run, asks the agent to write its report from the work so far and
+                    records the scan as done with partial coverage and reason `cost_cap`. Omitted or 0
+                    means no cap. Negative values return 400. For the codex backend the estimate only
+                    updates when the run reports its result.
       responses:
         '201':
           description: Scan enqueued
@@ -1623,6 +1641,8 @@ components:
         started_at:    { type: string, format: date-time, nullable: true }
         finished_at:   { type: string, format: date-time, nullable: true }
         max_turns_hit: { type: boolean, description: True when the scan completed with partial output after hitting the Claude max-turns cap; retry resumes the saved session when available. }
+        max_cost_usd:  { type: number, minimum: 0, description: Optional per-scan spend cap in USD; 0 means no cap. }
+        cost_capped:   { type: boolean, description: True when the scan completed with partial output because the running cost estimate reached max_cost_usd; retry resumes the saved session with a fresh budget. }
         refusal_audit_warning: { type: boolean, description: True when a security-deep-dive refusal audit reports declined or skipped analysis. }
         error:         { type: string }
 

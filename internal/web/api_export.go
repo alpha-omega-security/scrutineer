@@ -994,6 +994,8 @@ func scanExport(sc db.Scan) map[string]any {
 		"cache_read_tokens":  sc.CacheReadTokens,
 		"cache_write_tokens": sc.CacheWriteTokens,
 		"max_turns_hit":      sc.MaxTurnsHit,
+		"max_cost_usd":       sc.MaxCostUSD,
+		"cost_capped":        sc.CostCapped,
 		"prompt":             sc.Prompt,
 		"report":             sc.Report,
 		"log":                sc.Log,

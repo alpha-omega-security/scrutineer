@@ -249,7 +249,7 @@
           hx-swap="none">
       <button type="submit" class="btn-sm-ghost" aria-label="Resume scan" data-tooltip="Resume" data-align="end"><i data-lucide="play"></i></button>
     </form>
-  {{else if and (or (eq (status .Status) "failed") (eq (status .Status) "cancelled") .MaxTurnsHit) .SkillID}}
+  {{else if and (or (eq (status .Status) "failed") (eq (status .Status) "cancelled") .MaxTurnsHit .CostCapped) .SkillID}}
     <form method="post" action="/scans/{{.ID}}/retry" hx-post="/scans/{{.ID}}/retry"
           hx-swap="none">
       <button type="submit" class="btn-sm-ghost" aria-label="Retry scan" data-tooltip="Retry" data-align="end"><i data-lucide="refresh-cw"></i></button>

@@ -11,6 +11,7 @@ import (
 	"html/template"
 	"log/slog"
 	"maps"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -70,6 +71,25 @@ var outreachSkills = map[string]bool{reportUpstreamSkillName: true, publicIssueS
 // API path rejects a bad ref at the boundary (400) instead of enqueueing
 // a scan that will fail later at git-clone time.
 var ErrInvalidRef = errors.New("invalid git ref")
+
+// ErrInvalidMaxCost is returned by enqueueSkillWith when opts.MaxCostUSD is
+// negative, NaN or infinite.
+var ErrInvalidMaxCost = errors.New("invalid max cost")
+
+// validateEnqueueInputs checks the caller-supplied ref and cost cap.
+func validateEnqueueInputs(opts ScanOpts) error {
+	if err := worker.ValidateGitRef(opts.Ref); err != nil {
+		return fmt.Errorf("%w: %v", ErrInvalidRef, err)
+	}
+	return validateMaxCostUSD(opts.MaxCostUSD)
+}
+
+func validateMaxCostUSD(v float64) error {
+	if math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
+		return fmt.Errorf("%w: %v must be a finite number >= 0", ErrInvalidMaxCost, v)
+	}
+	return nil
+}
 
 // ErrInvalidRescanMode is returned by enqueueSkillWith when opts.RescanMode is
 // not one of the persisted scan modes. API callers control this value, so the
@@ -2707,7 +2727,7 @@ func loadRepoLatestScans(gdb *gorm.DB, repoID uint) []db.Scan {
 // prompt) they don't. TestRepoScansFragment_rowMatchesTheFullPage fails if this
 // projection ever falls behind the template.
 const scanRowColumns = `s.id, s.repository_id, s.skill_id, s.skill_name, s.kind, s.ref,
-	s.sub_path, s.focus_area, s.scan_group, s.rescan_mode, s.status, s.max_turns_hit, s.refusal_audit_warning,
+	s.sub_path, s.focus_area, s.scan_group, s.rescan_mode, s.status, s.max_turns_hit, s.cost_capped, s.refusal_audit_warning,
 	s.findings_count, s.model, s.cost_usd, s."commit", s.started_at, s.finished_at`
 
 // loadRepoLatestScanRows is loadRepoLatestScans projected down to what the Scans
@@ -3447,6 +3467,9 @@ type ScanOpts struct {
 	// only the repository page form and the operator retry paths fill it.
 	// It must never be filled from the skill API or a follow-up hook.
 	EgressPolicy string
+	// MaxCostUSD is the optional per-scan spend cap in USD. 0 means no cap.
+	// Negative, NaN and infinite values are rejected with ErrInvalidMaxCost.
+	MaxCostUSD float64
 	// RescanMode requests full or diff coverage. Empty preserves the existing
 	// full-scan behavior. A requested diff scan can fall back to full coverage
 	// once the worker resolves the clone and baseline.
@@ -3544,8 +3567,8 @@ func (s *Server) enqueueSkillWith(ctx context.Context, repoID, skillID uint, opt
 	default:
 		return 0, fmt.Errorf("%w: %q", ErrInvalidRescanMode, opts.RescanMode)
 	}
-	if err := worker.ValidateGitRef(opts.Ref); err != nil {
-		return 0, fmt.Errorf("%w: %v", ErrInvalidRef, err)
+	if err := validateEnqueueInputs(opts); err != nil {
+		return 0, err
 	}
 	if opts.EgressPolicy != "" && !slices.Contains(s.ScanEgressPolicies, opts.EgressPolicy) {
 		return 0, fmt.Errorf("%w: %q", ErrUnknownEgressPolicy, opts.EgressPolicy)
@@ -3610,6 +3633,7 @@ func (s *Server) enqueueSkillWith(ctx context.Context, repoID, skillID uint, opt
 		DiffBaseScanID:       opts.DiffBaseScanID,
 		Profile:              opts.Profile,
 		EgressPolicy:         opts.EgressPolicy,
+		MaxCostUSD:           opts.MaxCostUSD,
 		SessionID:            opts.SessionID,
 		ResumedFromScanID:    opts.ResumedFromScanID,
 		ParentScanID:         opts.ParentScanID,

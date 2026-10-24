@@ -246,11 +246,24 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 	w.applyResume(scan, &sj, emit)
 	w.configureCapabilityPreflight(ctx, scan, &skill, &sj, document)
 	w.configureBackendPreflight(ctx, scan, &sj, document)
-	res, err := w.runSkillWithFallback(ctx, scan, &skill, sj, workRoot, hardScope, emit)
+	return w.runAndParseSkill(ctx, scan, &skill, sj, workRoot, hardScope, emit)
+}
+
+// runAndParseSkill runs the skill (under the scan's cost cap when it has one)
+// then validates and parses its report.
+func (w *Worker) runAndParseSkill(ctx context.Context, scan *db.Scan, skill *db.Skill, sj SkillJob, workRoot string, hardScope bool, emit func(Event)) (string, error) {
+	scan.CostCapped = false
+	runCtx, runEmit, guard, stop := startCostGuardRun(ctx, scan, emit)
+	defer stop()
+	res, err := w.runSkillWithFallback(runCtx, scan, skill, sj, workRoot, hardScope, runEmit)
 	w.applySkillResult(scan, res)
+	if guard.Tripped() && ctx.Err() == nil {
+		guard.foldPending()
+		return w.finishCostCappedRun(ctx, skill, scan, sj, res.Report, emit)
+	}
 	if err != nil {
 		if _, ok := errors.AsType[*MaxTurnsReachedError](err); ok && res.Report != "" {
-			w.parsePartialSkillReport(ctx, &skill, scan, res.Report, emit)
+			w.parsePartialSkillReport(ctx, skill, scan, res.Report, emit)
 		}
 		return res.Report, err
 	}
@@ -258,11 +271,11 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 	report := res.Report
 	if report != "" {
 		var err error
-		report, err = w.repairAndParseSkillOutput(ctx, &skill, scan, sj, report, emit)
+		report, err = w.repairAndParseSkillOutput(ctx, skill, scan, sj, report, emit)
 		if err != nil {
 			return report, err
 		}
-		w.auditSkillRefusals(ctx, &skill, scan, sj, emit)
+		w.auditSkillRefusals(ctx, skill, scan, sj, emit)
 	}
 	return report, nil
 }
@@ -287,6 +300,9 @@ func (w *Worker) runSkillWithFallback(ctx context.Context, scan *db.Scan, skill 
 		emit(e)
 	}
 	res, err := w.Runner.RunSkill(ctx, sj, capture)
+	if context.Cause(ctx) == errCostCapped {
+		return res, err
+	}
 	if !hardScope || scan.ScopeMode == "soft" || !dependencyResolutionFailed(depResolveFail.Load(), res, err) {
 		return res, err
 	}

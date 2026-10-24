@@ -3,6 +3,7 @@ package web
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"path/filepath"
 	"regexp"
@@ -189,6 +190,22 @@ func parseSkillModel(s string) string {
 	return s
 }
 
+// parseMaxCostUSD reads the optional max_cost_usd form value. Empty means no cap.
+func parseMaxCostUSD(raw string) (float64, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, nil
+	}
+	v, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return 0, fmt.Errorf("%w: %q is not a number", ErrInvalidMaxCost, raw)
+	}
+	if err := validateMaxCostUSD(v); err != nil {
+		return 0, err
+	}
+	return v, nil
+}
+
 // skillRun enqueues a skill-backed scan for a repo. Accepts skill_id and
 // optional model as form fields; posted from the repo page's skill picker.
 func (s *Server) skillRun(w http.ResponseWriter, r *http.Request) {
@@ -203,11 +220,17 @@ func (s *Server) skillRun(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "skill not found or inactive", http.StatusNotFound)
 		return
 	}
+	maxCost, err := parseMaxCostUSD(r.FormValue("max_cost_usd"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
 	scanID, err := s.enqueueSkillWith(r.Context(), uint(repoID), uint(skillID), ScanOpts{
 		Model:        r.FormValue("model"),
 		EgressPolicy: strings.TrimSpace(r.FormValue("egress_policy")),
+		MaxCostUSD:   maxCost,
 	})
-	if errors.Is(err, ErrUnknownEgressPolicy) {
+	if errors.Is(err, ErrUnknownEgressPolicy) || errors.Is(err, ErrInvalidMaxCost) {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}

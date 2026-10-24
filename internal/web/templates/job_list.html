@@ -155,7 +155,7 @@
           <td class="text-xs text-muted-foreground">{{if .SubPath}}<code>{{.SubPath}}</code>{{else}}<span>root</span>{{end}}</td>
         {{end}}
         <td>{{if .SkillName}}{{.SkillName}}{{else}}{{.Kind}}{{end}} {{template "branch-tag" .Ref}}</td>
-        <td>{{template "status-badge" (status .Status)}} {{if .MaxTurnsHit}}<span class="badge-outline"><i data-lucide="timer-off"></i> max turns</span>{{end}}</td>
+        <td>{{template "status-badge" (status .Status)}} {{if .MaxTurnsHit}}<span class="badge-outline"><i data-lucide="timer-off"></i> max turns</span>{{end}}{{if .CostCapped}} <span class="badge-outline"><i data-lucide="circle-dollar-sign"></i> cost cap</span>{{end}}</td>
         <td>{{if eq .Completeness "complete"}}<span class="badge-outline">complete</span>{{else if eq .Completeness "partial"}}<span class="badge-outline">partial</span>{{else}}<span class="text-muted-foreground">unknown</span>{{end}}</td>
         {{if $showFocus}}<td class="text-xs">{{template "focus-area" (focus .)}}</td>{{end}}
         <td>{{if gt .FindingsCount 0}}{{template "findings-badge" .FindingsCount}}{{end}}</td>

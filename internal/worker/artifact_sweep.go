@@ -96,7 +96,7 @@ func scanArtifactEntryID(entry os.DirEntry) (uint, bool) {
 func (w *Worker) scanArtifactSweepDecision(scanID uint) (reap, preserveState bool, err error) {
 	var scan db.Scan
 	if err := w.DB.Model(&db.Scan{}).
-		Select("id, status, session_id, max_turns_hit").
+		Select("id, status, session_id, max_turns_hit, cost_capped").
 		Where("id = ?", scanID).
 		Limit(1).
 		Find(&scan).Error; err != nil {

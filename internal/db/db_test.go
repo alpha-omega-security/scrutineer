@@ -938,3 +938,14 @@ func TestScanResumable(t *testing.T) {
 		})
 	}
 }
+
+func TestScanResumable_costCapped(t *testing.T) {
+	s := Scan{Status: ScanDone, CostCapped: true, SessionID: "sess"}
+	if !s.Resumable() {
+		t.Error("done scan with CostCapped should be resumable")
+	}
+	s.CostCapped = false
+	if s.Resumable() {
+		t.Error("plain done scan should not be resumable")
+	}
+}

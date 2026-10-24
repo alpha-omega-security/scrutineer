@@ -386,6 +386,12 @@ type Scan struct {
 	// claude-code hit --max-turns. They stay status=done because the
 	// partial report is real output, but keep SessionID so Retry can resume.
 	MaxTurnsHit bool `gorm:"not null;default:false"`
+	// MaxCostUSD is the optional per-scan spend cap in USD. 0 means no cap.
+	MaxCostUSD float64
+	// CostCapped marks scans that completed with partial output because the
+	// running cost estimate reached MaxCostUSD. They stay status=done because
+	// the partial report is real output, but keep SessionID so Retry can resume.
+	CostCapped bool `gorm:"not null;default:false"`
 	// ResumedFromScanID points at the lineage-root scan whose harness
 	// session and workspace a retry reuses. Nil on a fresh scan. Harness
 	// session stores are keyed by working directory, so a resuming run
@@ -472,7 +478,7 @@ func (s Scan) Resumable() bool {
 	if s.SessionID == "" {
 		return false
 	}
-	return s.Status == ScanFailed || (s.Status == ScanDone && s.MaxTurnsHit)
+	return s.Status == ScanFailed || (s.Status == ScanDone && (s.MaxTurnsHit || s.CostCapped))
 }
 
 // Package is one registry entry from packages.ecosyste.ms linked to this repo.

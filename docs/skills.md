@@ -195,6 +195,25 @@ metadata:
 
 `min_confidence`, `report_on`, and `fail_on` only apply when `output_kind` is `findings`.
 
+## Cost cap
+
+A scan can carry an optional spend cap in USD. Set it in the "No cost cap" field
+next to the Run skill menu on the repository page, or send `max_cost_usd` in the
+body of the skill run API calls. Empty or 0 means no cap and a negative value is
+refused.
+
+The worker tracks a running cost estimate from the agent's usage events. Once
+the estimate reaches the cap it stops the run at the next usage event, then
+resumes the saved session for a short finalize turn (at most 3 turns) that asks
+the agent to write its report from the work so far. The scan finishes as done
+with a "cost cap" badge, partial coverage and the reason `cost_cap`. Actual
+spend can exceed the cap by one call plus the finalize turn.
+
+The codex backend emits no usage events, so its estimate only updates when the
+run reports its result and the cap is checked then. Retrying a capped scan
+resumes the saved session with a fresh budget and keeps the same cap. Group
+budgets are not implemented yet.
+
 ## Runtime capability preflight
 
 Skills can declare static runtime requirements in frontmatter:

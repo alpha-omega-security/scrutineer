@@ -199,6 +199,8 @@ One row per skill execution or external import. `skill_name` / `skill_version` p
 | cache_read_tokens | integer | `cache_read_input_tokens` from the result event. |
 | cache_write_tokens | integer | `cache_creation_input_tokens` from the result event. |
 | max_turns_hit | boolean | True when the scan is `done` with partial output because Claude hit the configured max-turns cap. Such scans keep their session id so Retry can resume. |
+| max_cost_usd | real | Optional per-scan spend cap in USD. 0 means no cap. |
+| cost_capped | boolean | True when the scan is `done` with partial output because the running cost estimate reached `max_cost_usd`. Such scans keep their session id so Retry can resume with a fresh budget. |
 | prompt | text | Activation prompt sent to claude. The skill body lives in the Skill row, not here. |
 | report | text | The skill's primary output. JSON for parsed kinds, freeform for everything else. On a fix-validation anchor (`baseline_scan_id` set) it is replaced, once the scan finalises, by the JSON validation report: the resolved/surviving/new fingerprint diff against the baseline plus the finding-scoped verify verdicts. |
 | refusal_audit | text | Structured post-report `security-deep-dive` follow-up listing analysis the agent declined or skipped. Kept separate from the primary report. |

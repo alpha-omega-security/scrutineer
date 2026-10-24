@@ -20,13 +20,14 @@
   </div>
   <div class="flex items-center gap-2">
     {{if .Skills}}
-    <form method="post" action="/repositories/{{.Repo.ID}}/skill-scan"{{if .ScanEgressPolicies}} class="flex items-center gap-2"{{end}}>
+    <form method="post" action="/repositories/{{.Repo.ID}}/skill-scan" class="flex items-center gap-2">
       {{if .ScanEgressPolicies}}
       <select class="select text-xs" name="egress_policy" aria-label="Egress policy">
         <option value="">No extra egress</option>
         {{range .ScanEgressPolicies}}<option value="{{.}}">{{.}}</option>{{end}}
       </select>
       {{end}}
+      <input type="number" name="max_cost_usd" min="0" step="0.01" inputmode="decimal" class="input text-xs w-28" placeholder="No cost cap" aria-label="Cost cap in USD">
       <div class="dropdown-menu">
         <button class="btn-outline" type="button" aria-haspopup="menu" aria-expanded="false"
                 aria-controls="skill-menu">
@@ -781,7 +782,7 @@
     <td>{{if .SkillName}}{{.SkillName}}{{else}}{{.Kind}}{{end}} {{template "branch-tag" .Ref}}{{if eq .RescanMode "diff"}} <span class="badge-outline text-xs">diff</span>{{end}} {{template "focus-tag" (focus .)}}
       {{if .SubPath}}<div class="text-xs text-muted-foreground">Subpath: <code>{{.SubPath}}</code></div>{{end}}
     </td>
-    <td>{{template "status-badge" (status .Status)}} {{if .MaxTurnsHit}}<span class="badge-outline"><i data-lucide="timer-off"></i> max turns</span>{{end}}{{if .RefusalAuditWarning}} <span class="badge-outline" data-tooltip="The deep-dive reported refused or skipped analysis"><i data-lucide="triangle-alert"></i> analysis incomplete</span>{{end}}</td>
+    <td>{{template "status-badge" (status .Status)}} {{if .MaxTurnsHit}}<span class="badge-outline"><i data-lucide="timer-off"></i> max turns</span>{{end}}{{if .CostCapped}} <span class="badge-outline"><i data-lucide="circle-dollar-sign"></i> cost cap</span>{{end}}{{if .RefusalAuditWarning}} <span class="badge-outline" data-tooltip="The deep-dive reported refused or skipped analysis"><i data-lucide="triangle-alert"></i> analysis incomplete</span>{{end}}</td>
     <td>{{if gt .FindingsCount 0}}{{template "findings-badge" .FindingsCount}}{{end}}</td>
     <td class="text-muted-foreground">{{if .Model}}{{.Model}}{{else}}-{{end}}</td>
     <td class="text-muted-foreground">{{if gt .CostUSD 0.0}}{{usd .CostUSD}}{{else}}-{{end}}</td>

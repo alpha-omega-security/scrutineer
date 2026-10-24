@@ -373,6 +373,7 @@ func (s *Server) scanRetry(w http.ResponseWriter, r *http.Request) {
 		Ref:                  scan.Ref,
 		Profile:              scan.Profile,
 		EgressPolicy:         scan.EgressPolicy,
+		MaxCostUSD:           scan.MaxCostUSD,
 		RescanMode:           scan.RescanMode,
 		DiffBaseScanID:       scan.DiffBaseScanID,
 		ScanGroup:            scan.ScanGroup,
@@ -394,7 +395,7 @@ func (s *Server) scanRetry(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusPreconditionFailed)
 			return
 		}
-		if errors.Is(err, ErrUnknownEgressPolicy) {
+		if errors.Is(err, ErrUnknownEgressPolicy) || errors.Is(err, ErrInvalidMaxCost) {
 			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 			return
 		}
@@ -468,7 +469,7 @@ func (s *Server) scansRetryFailed(w http.ResponseWriter, r *http.Request) {
 	// deliberately absent: a user-cancelled newer run must not block retrying an
 	// older genuine failure.
 	var scans []db.Scan
-	err = q.Select("id, repository_id, skill_id, model, effort, finding_id, remediation_attempt_id, sub_path, scope_mode, ref, profile, egress_policy, rescan_mode, diff_base_scan_id, scan_group, focus_area, triage_scan_id, exploration_mode, exploration_path, backend, status, session_id, resumed_from_scan_id, import_payload, verification_feedback").
+	err = q.Select("id, repository_id, skill_id, model, effort, finding_id, remediation_attempt_id, sub_path, scope_mode, ref, profile, egress_policy, max_cost_usd, rescan_mode, diff_base_scan_id, scan_group, focus_area, triage_scan_id, exploration_mode, exploration_path, backend, status, session_id, resumed_from_scan_id, import_payload, verification_feedback").
 		Where(`NOT EXISTS (
 			SELECT 1 FROM scans n
 			WHERE n.id > scans.id
@@ -505,6 +506,7 @@ func (s *Server) scansRetryFailed(w http.ResponseWriter, r *http.Request) {
 			Ref:                  sc.Ref,
 			Profile:              sc.Profile,
 			EgressPolicy:         sc.EgressPolicy,
+			MaxCostUSD:           sc.MaxCostUSD,
 			RescanMode:           sc.RescanMode,
 			DiffBaseScanID:       sc.DiffBaseScanID,
 			ScanGroup:            sc.ScanGroup,
