@@ -52,6 +52,7 @@ func testDatabaseWeb(t *testing.T, gdb *gorm.DB, dialect queue.Dialect) {
 		t.Fatal(err)
 	}
 	s.OperatorToken = testOperatorToken
+	t.Run("repository priorities", func(t *testing.T) { testPriorityViewDatabase(t, s) })
 	repo := db.Repository{URL: "https://example.com/brew", Name: "Homebrew", Owner: "Homebrew", Languages: "Ruby"}
 	if err := gdb.Create(&repo).Error; err != nil {
 		t.Fatal(err)
