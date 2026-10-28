@@ -1,5 +1,8 @@
 <div id="repos">
-<div class="flex flex-wrap items-center justify-end gap-2 mb-4">
+<div class="flex flex-wrap items-center gap-2 mb-6">
+  <h2 class="text-2xl font-semibold flex items-center gap-2 mr-auto">
+    <i data-lucide="folder-git-2"></i> Repositories
+  </h2>
   <form method="get" action="/" class="flex basis-full sm:basis-auto">
     <input class="input w-full" type="search" aria-label="Search repositories" name="q" value="{{.Q}}" placeholder="Search repositories"
            autocomplete="off" spellcheck="false">
@@ -34,6 +37,7 @@
           <a role="menuitem" href="/?q={{$.Q}}&language={{$.Language}}&sort={{.}}"
              {{if eq . (sortkey $.Sort)}}aria-current="true"{{end}}>{{.}}</a>
         {{end}}
+        <a role="menuitem" href="/?view=priorities&q={{.Q}}&language={{.Language}}">Priority view</a>
       </div>
     </div>
   </div>
