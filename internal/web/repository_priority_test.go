@@ -188,8 +188,11 @@ func TestRepoPrioritiesNavigation(t *testing.T) {
 			t.Errorf("missing existing list feature %q", expected)
 		}
 	}
-	if strings.Contains(body, "sort=priority") || strings.Contains(body, ">Rescan</button>") {
+	if strings.Contains(body, "sort=priority") {
 		t.Fatal("priority view was replaced by sorting the standard table")
+	}
+	if strings.Contains(body, "Priority view") || !strings.Contains(body, `aria-current="true">priority</a>`) {
+		t.Fatal("priority dropdown label does not match the other options")
 	}
 	asc := priorityTestPage(t, s, "&sort=consumers.asc")
 	if strings.Contains(asc, fmt.Sprintf(`<tr id="repo-%d">`, lib.ID)) {
@@ -206,7 +209,7 @@ func TestRepoPrioritiesNavigation(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, localReq("GET", "/?sort=newest&q=z-library"))
 	plain := html.UnescapeString(w.Body.String())
-	if !strings.Contains(plain, `role="menuitem" href="/?view=priorities&q=z-library&language=">Priority view</a>`) {
+	if !strings.Contains(plain, `role="menuitem" href="/?view=priorities&q=z-library&language=">priority</a>`) {
 		t.Fatal("missing priority-view navigation in the existing dropdown")
 	}
 	if strings.Contains(plain, "sort=priority") || strings.Contains(requireRepoListRow(t, plain, lib.ID), "consumers") {
@@ -354,6 +357,55 @@ func TestRepoPrioritiesFindingsAndLastScan(t *testing.T) {
 	row := requireRepoListRow(t, empty, 1)
 	if !strings.Contains(row, `class="badge-secondary">0</span>`) || strings.Count(row, "never") != 2 {
 		t.Fatal("missing scans/findings did not render as zero and never")
+	}
+}
+
+func TestRepoPrioritiesScanActions(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	skill := db.Skill{Name: deepDiveSkillName, Body: "b", OutputFile: "r.json", OutputKind: "freeform", Active: true}
+	if err := s.DB.Create(&skill).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, scanned := range []bool{false, true} {
+		t.Run(fmt.Sprintf("scanned=%t", scanned), func(t *testing.T) {
+			repo := priorityTestRepo(t, s, fmt.Sprintf("scanned-%t", scanned))
+			label := "Scan"
+			if scanned {
+				prior := db.Scan{RepositoryID: repo.ID, SkillName: "metadata", Status: db.ScanDone}
+				if err := s.DB.Create(&prior).Error; err != nil {
+					t.Fatal(err)
+				}
+				label = "Rescan"
+			}
+			row := requireRepoListRow(t, priorityTestPage(t, s, ""), repo.ID)
+			lastCell := row[strings.LastIndex(row, "<td>"):]
+			if !strings.Contains(lastCell, " "+label+"</button>") {
+				t.Fatalf("missing %s in rightmost column: %s", label, row)
+			}
+			_, action, found := strings.Cut(lastCell, `action="`)
+			if !found {
+				t.Fatal("missing scan form action")
+			}
+			action, _, _ = strings.Cut(action, `"`)
+			if action != fmt.Sprintf("/repositories/%d/scan", repo.ID) || !strings.Contains(lastCell, `hx-post="`+action+`" hx-swap="none"`) {
+				t.Fatalf("unexpected scan action: %s", lastCell)
+			}
+			req := localReq("POST", action)
+			req.Header.Set("HX-Request", "true")
+			w := httptest.NewRecorder()
+			s.Handler().ServeHTTP(w, req)
+			if w.Code != 204 || w.Header().Get("HX-Redirect") != fmt.Sprintf("/repositories/%d", repo.ID) {
+				t.Fatalf("scan action: %d %v %s", w.Code, w.Header(), w.Body)
+			}
+			var queued db.Scan
+			if err := s.DB.Where("repository_id = ? AND skill_id = ?", repo.ID, skill.ID).First(&queued).Error; err != nil {
+				t.Fatal(err)
+			}
+			if queued.Status != db.ScanQueued || queued.ScanGroup == "" {
+				t.Fatalf("unexpected queued scan: status=%s group=%q", queued.Status, queued.ScanGroup)
+			}
+		})
 	}
 }
 

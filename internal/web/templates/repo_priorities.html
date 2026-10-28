@@ -23,10 +23,10 @@
     </div></div>
   </div>
   <div class="dropdown-menu">
-    <button type="button" class="btn-outline" aria-haspopup="menu" aria-expanded="false"><i data-lucide="arrow-down-wide-narrow"></i> Priority view <i data-lucide="chevron-down"></i></button>
+    <button type="button" class="btn-outline" aria-haspopup="menu" aria-expanded="false"><i data-lucide="arrow-down-wide-narrow"></i> Priority <i data-lucide="chevron-down"></i></button>
     <div data-popover aria-hidden="true" data-align="end"><div role="menu">
       {{range (list "newest" "findings" "name" "stars" "language")}}<a role="menuitem" href="/?q={{$.Q}}&language={{$.Language}}&sort={{.}}">{{.}}</a>{{end}}
-      <a role="menuitem" href="/?view=priorities&q={{.Q}}&language={{.Language}}" aria-current="true">Priority view</a>
+      <a role="menuitem" href="/?view=priorities&q={{.Q}}&language={{.Language}}" aria-current="true">priority</a>
     </div></div>
   </div>
 </div>
@@ -39,7 +39,7 @@
     {{template "th-sort" (dict "Sorter" .Sorter "Key" "findings" "Def" "desc" "Label" "Findings" "Class" "w-24")}}
     {{template "th-sort" (dict "Sorter" .Sorter "Key" "oldest" "Def" "asc" "Label" "Inventory" "Class" "w-36")}}
     {{template "th-sort" (dict "Sorter" .Sorter "Key" "scanned" "Def" "desc" "Label" "Last scan" "Class" "w-36")}}
-    <th>Signals</th><th class="w-10"></th>
+    <th>Signals</th><th class="w-10"></th><th></th>
   </tr></thead>
   <tbody>{{range .Rows}}<tr id="repo-{{.ID}}">
     <td><a href="/repositories/{{.ID}}">{{trimscheme .URL}}</a></td>
@@ -59,6 +59,11 @@
     <td class="text-muted-foreground">{{if .LastScanAt}}<a href="/scans/{{.LastScanID}}" title="{{.LastScanAt.Format "2006-01-02 15:04:05 MST"}}">{{.LastScanAt.Format "2006-01-02"}}</a>{{else}}never{{end}}</td>
     <td class="whitespace-normal">{{range .Signals}}{{if .ScanID}}<a class="badge-outline" href="/scans/{{.ScanID}}" data-tooltip="{{.Evidence}}">{{.Label}}</a>{{else}}<span class="badge-outline" data-tooltip="{{.Evidence}}">{{.Label}}</span>{{end}} {{else}}<span class="text-muted-foreground">-</span>{{end}}</td>
     <td>{{if .Gaps}}<span class="text-muted-foreground" role="img" aria-label="Missing evidence" data-tooltip="{{range .Gaps}}{{.}}. {{end}}"><i data-lucide="info"></i></span>{{end}}</td>
+    <td>
+      <form method="post" action="/repositories/{{.ID}}/scan" hx-post="/repositories/{{.ID}}/scan" hx-swap="none">
+        <button type="submit" class="btn-sm-outline">{{if .LastScanID}}<i data-lucide="refresh-cw"></i> Rescan{{else}}<i data-lucide="play"></i> Scan{{end}}</button>
+      </form>
+    </td>
   </tr>{{end}}</tbody>
 </table>
 {{template "pagination" .Page}}
