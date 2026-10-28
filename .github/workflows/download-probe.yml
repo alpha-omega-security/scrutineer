@@ -1,0 +1,71 @@
+name: Download probe
+
+on:
+  push:
+    branches: [investigate/ci-test-flakes]
+
+permissions: {}
+
+defaults:
+  run:
+    shell: bash -euo pipefail {0}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  downloads:
+    name: downloads (${{ matrix.arch }}, ${{ matrix.environment }})
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+        environment: [host, docker]
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Test probe script
+        run: bash scripts/probe-downloads_test.sh
+
+      - name: Set up Go
+        if: matrix.environment == 'host'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Probe host downloads
+        if: matrix.environment == 'host'
+        run: bash scripts/probe-downloads.sh "$RUNNER_TEMP/download-probe" 3
+
+      - name: Probe container downloads
+        if: matrix.environment == 'docker'
+        run: |
+          mkdir -p "$RUNNER_TEMP/download-probe"
+          docker run --rm \
+            --mount "type=bind,source=$PWD,target=/src,readonly" \
+            --mount "type=bind,source=$RUNNER_TEMP/download-probe,target=/results" \
+            --workdir /src \
+            golang:1.27.3-trixie@sha256:1896654cfc5c2b5ad74c07f29cb36f5d2d1cbed42e3054070fbfe444e521e83c \
+            bash scripts/probe-downloads.sh /results 3
+
+      - name: Upload measurements
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: download-probe-${{ matrix.arch }}-${{ matrix.environment }}
+          path: ${{ runner.temp }}/download-probe/
+          if-no-files-found: error
+          retention-days: 7
