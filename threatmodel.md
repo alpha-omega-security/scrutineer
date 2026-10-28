@@ -209,6 +209,12 @@ A target that prompt-injects the agent (T5) into running code (T1) still gets:
 
 It does not get the host: there is no runtime socket (T12). An audit's data directory must be new or empty, so it never shares a database or workspaces with an operator instance. Residual: the integrity of what one audit submits rests on the agent not being subverted by the target it audits, the same limit T5 describes for findings on an ordinary instance.
 
+### T16: history-eval corpus runner (opt-in, local only)
+
+`scripts/history-eval` scores the `history` skill's pre-filter against a labelled corpus of security-fix commits. The corpus is read from an operator-supplied `-data` directory and contains commit messages dumped from thousands of upstream repositories, so every commit subject and body is attacker-controlled text. The runner regex-matches that text against the production pre-filter patterns, which it loads by executing `history_candidates.py patterns`; it never shells out with corpus content, never evaluates it, and caps each log record at 1 MiB and each log file at 512 MiB. A commit body containing a record separator truncates its own record and nothing else.
+
+The output names commits in widely depended-on packages that look like security fixes with no published advisory. That list points at vulnerabilities dependents have no signal to patch, so it is treated as sensitive: per-commit and per-repository rows are written only through `os.Root` under `-out`, which defaults to `./data/history-eval` and is covered by the existing `/data/` gitignore, and the aggregate recall line printed to stdout carries no repository names. Residual: the operator is responsible for keeping `-out` off any shared or synced path and for not posting per-repository rows.
+
 ## Minor observations
 
 The ecosyste.ms clients identify as `scrutineer (andrew@ecosyste.ms)`. Worth a config flag before anyone else runs it.
