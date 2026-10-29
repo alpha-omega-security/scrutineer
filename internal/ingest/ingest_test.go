@@ -449,3 +449,20 @@ func TestSarifSeverity(t *testing.T) {
 		}
 	}
 }
+
+func TestParseSARIF_attachments(t *testing.T) {
+	body := []byte(`{"runs":[{"tool":{"driver":{"name":"x"}},"results":[
+		{"message":{"text":"with"},"attachments":[{"artifactLocation":{"uri":"povs/abc"}},{"artifactLocation":{}}]},
+		{"message":{"text":"without"}}]}]}`)
+	results, _, err := Parse(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	with, without := results[0].Findings[0], results[0].Findings[1]
+	if len(with.Attachments) != 1 || with.Attachments[0] != "povs/abc" {
+		t.Errorf("attachments = %q, want [povs/abc]", with.Attachments)
+	}
+	if without.Attachments != nil {
+		t.Errorf("attachments = %q, want none", without.Attachments)
+	}
+}

@@ -62,7 +62,7 @@ This surface includes JSONL exports, repository finding bundles, report imports,
 
 Detailed workflows:
 
-- [Importing findings](import.md) covers `POST /api/v1/import`, accepted formats, repository resolution, and revalidation.
+- [Importing findings](import.md) covers `POST /api/v1/import`, accepted formats, repository resolution, and revalidation, plus `POST /api/v1/import/oss-crs` and the retained OSS-CRS evidence.
 - [Encrypted findings sharing](encrypted-sharing.md) covers repository bundles, archival exports, age encryption, and round trips through the import route.
 - [Exporting findings as SARIF](sarif-export.md) covers `format=sarif` on both the repository and global findings exports and handing the log to OSS-CRS as bug candidates.
 - The [OpenAPI document](../openapi.yaml) defines the JSONL exports, filters, delete operations, and audit endpoints.

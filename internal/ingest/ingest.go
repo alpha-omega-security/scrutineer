@@ -134,6 +134,9 @@ type Finding struct {
 	CWE          string
 	Location     string
 	SuggestedFix string
+	// Attachments are the artifact URIs a SARIF result names in
+	// result.attachments, such as the PoV file a fuzzer bundled with it.
+	Attachments []string
 
 	// The fields below are carried by scrutineer's own sharing bundle (see
 	// internal/web/api_export.go) so an instance-to-instance round-trip

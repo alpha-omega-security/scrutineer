@@ -435,6 +435,23 @@ Stores the first successful PoC capture for each finding. Captures survive scan 
 
 Each capture holds at most 64 regular files, with limits of 1 MiB per file and 2 MiB total. Capture rejects links, special files, unsafe paths, filename conflicts, and files whose path or contents include the capturing scan's API token, a model proxy token, or a host credential from an environment variable ending in `_API_KEY`, `_TOKEN`, `_AUTH_CONTENT` or `_SECRET`. Disclosure bundles and verification workspaces receive the captured bytes with a provenance and checksum manifest.
 
+## import_artifacts
+
+Retains files an external producer shipped beside its findings, today the PoV inputs, patches and report bundles of an OSS-CRS run imported through `POST /api/v1/import/oss-crs`. A file associated with several findings has one row per finding, and a repeat import of the same bytes for the same finding adds no row.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| id | integer PK | |
+| repository_id | integer | Repository the import targeted; rows are deleted with it. Part of the unique identity. |
+| finding_id | integer | Finding the producer associated the file with, or `0` when it did not; rows are deleted with that finding. Part of the unique identity. |
+| kind | text | `pov`, `patch` or `report`. Part of the unique identity. |
+| sha256 | text | Hex SHA-256 of `data`. Part of the unique identity. |
+| scan_id | integer | Import scan that first stored the file; no foreign key. |
+| path | text | Path of the file inside the imported archive. |
+| bytes | integer | Size of `data`. |
+| data | blob | Original file bytes, at most 1 MiB. |
+| created_at | datetime | |
+
 ## finding_verifications
 
 Append-only grading records produced by finding-scoped `verify` scans. The complete rubric report remains immutable in `report`; `status` and `score` are promoted for display and filtering. The finding page derives its current verification result from the newest row rather than overwriting prior runs. Current reports also contain a non-scored control-bypass gate whose IDs and optional resolution-failure reason are checked against the context resolved by the host for that finding, plus typed severity prerequisites used by deterministic calibration rules.
