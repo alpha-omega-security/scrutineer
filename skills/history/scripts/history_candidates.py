@@ -216,6 +216,17 @@ def bounded_text(value, max_bytes):
     return clipped + "\n... diff truncated by history_candidates.py ...\n", True
 
 
+def dump_patterns(args):
+    out = []
+    for label, pattern in BASE_PATTERNS:
+        out.append({"label": label, "ecosystem": "", "pattern": pattern.pattern, "flags": pattern.flags})
+    for name, config in ECOSYSTEMS.items():
+        for label, pattern in config["patterns"]:
+            out.append({"label": label, "ecosystem": name, "pattern": pattern.pattern, "flags": pattern.flags})
+    json.dump(out, sys.stdout, indent=2, sort_keys=True)
+    sys.stdout.write("\n")
+
+
 def commit_batch(args):
     scope_path = clean_scope_path(args.path)
     head = git(args.repo, "rev-parse", "HEAD").stdout.strip()
@@ -263,6 +274,10 @@ def parser():
     listing.add_argument("--max-candidates", type=int, default=200)
     listing.add_argument("--output", default="-")
     listing.set_defaults(func=list_candidates)
+
+    patterns = commands.add_parser("patterns", help="dump the message-matching regex set as JSON")
+    patterns.add_argument("--repo", default=".")
+    patterns.set_defaults(func=dump_patterns)
 
     batch = commands.add_parser("batch", help="render one bounded batch of candidate diffs")
     batch.add_argument("--repo", default="./src")
