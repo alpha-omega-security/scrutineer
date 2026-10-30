@@ -503,6 +503,7 @@ See [SECURITY.md](SECURITY.md) for the reporting policy and [threatmodel.md](thr
 
 - [docs/glossary.md](docs/glossary.md) -- terminology used in scans, findings, and disclosure
 - [docs/skills.md](docs/skills.md) -- bundled skills, writing your own, frontmatter and output-kind reference
+- [docs/oss-scanner.md](docs/oss-scanner.md) -- Anthropic OSS Scanner registry lookup and the maintainer files staged for threat-model and verify
 - [docs/import.md](docs/import.md) -- importing findings from other tools (SARIF, CSV, markdown, minimal JSON) and adding new formats
 - [docs/api.md](docs/api.md) -- HTTP API surfaces, callers, authentication boundaries, and links to the full [OpenAPI specification](openapi.yaml)
 - [docs/database.md](docs/database.md) -- full database schema reference

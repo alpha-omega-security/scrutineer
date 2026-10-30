@@ -154,6 +154,9 @@ type Worker struct {
 	// same physical dir while leaving scans of different URLs free to
 	// run in parallel.
 	cacheMu sync.Map
+	// ossScannerFetched records when each OSS Scanner registry URL was last
+	// fetched so verify scans reuse a recent clone.
+	ossScannerFetched sync.Map
 
 	// PrepareRepoSrc overrides the default per-URL repo-cache populate
 	// step in doSkill. Tests set it to skip the network; production
@@ -173,6 +176,13 @@ type Worker struct {
 	// all; tests leave it nil so scans stay hermetic. Best-effort: errors are
 	// logged, never fail the scan.
 	RefreshEcosystemsCache func(ctx context.Context, repoID uint) error
+
+	// OSSScannerRegistry is the git URL of the Anthropic OSS Scanner registry.
+	// Empty disables the lookup. Best-effort: a failed fetch never fails a scan.
+	OSSScannerRegistry string
+	// PrepareOSSScannerRegistry overrides fetching the registry clone. Tests
+	// set it to a fixture directory; nil uses the shared clone cache.
+	PrepareOSSScannerRegistry func(ctx context.Context, url string, emit func(Event)) (string, error)
 
 	// VIDCommand overrides the vid binary name for computeVID. Tests
 	// point it at a stub; empty falls through to "vid" on PATH.

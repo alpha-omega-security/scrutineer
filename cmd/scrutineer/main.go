@@ -36,6 +36,7 @@ import (
 	"scrutineer/internal/db"
 	"scrutineer/internal/egressgrant"
 	"scrutineer/internal/interchange"
+	"scrutineer/internal/ossscanner"
 	"scrutineer/internal/queue"
 	"scrutineer/internal/skills"
 	"scrutineer/internal/web"
@@ -702,6 +703,7 @@ func newApp(f *flags, cfg *config.Config, log *slog.Logger, setup runnerSetup) (
 		ForkOrg:               f.forkOrg,
 		MetadataDir:           f.metadataDir,
 		Runner:                runner,
+		OSSScannerRegistry:    ossScannerRegistry(cfg),
 		FullClone:             f.fullClone(),
 		ScanTimeout:           f.scanTimeout,
 		SchemaStrict:          f.schemaStrict,
@@ -1952,4 +1954,16 @@ func defaultPromptPassphrase(keyPath string) ([]byte, error) {
 		return nil, fmt.Errorf("read passphrase: %w", err)
 	}
 	return pass, nil
+}
+
+// ossScannerRegistry returns the registry URL the worker looks projects up in,
+// or "" when oss_scanner is switched off.
+func ossScannerRegistry(cfg *config.Config) string {
+	if cfg != nil && cfg.OSSScanner != nil && !*cfg.OSSScanner {
+		return ""
+	}
+	if cfg != nil && cfg.OSSScannerRegistry != "" {
+		return cfg.OSSScannerRegistry
+	}
+	return ossscanner.DefaultRegistryURL
 }

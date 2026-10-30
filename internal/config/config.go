@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"net/url"
 	"os"
 	"regexp"
 	"slices"
@@ -196,6 +197,12 @@ type Config struct {
 	// row set from the result, so denying them the domain would let an empty
 	// answer wipe rows already recorded. Nil (the default) leaves enrichment on.
 	EcosystemsEnrichment *bool `yaml:"ecosystems_enrichment"`
+	// OSSScanner gates the Anthropic OSS Scanner registry lookup for
+	// threat-model and verify scans. Nil (the default) leaves it on.
+	OSSScanner *bool `yaml:"oss_scanner"`
+	// OSSScannerRegistry overrides the registry git URL. Empty uses
+	// ossscanner.DefaultRegistryURL.
+	OSSScannerRegistry string `yaml:"oss_scanner_registry"`
 	// Database selects the persistence backend. When omitted, scrutineer
 	// keeps an embedded SQLite database file inside the data directory (the
 	// historical behaviour). Set driver: postgres with a dsn to point at an
@@ -569,6 +576,19 @@ func ValidateTheme(s string) error {
 	return fmt.Errorf("theme: unknown %q", s)
 }
 
+// ValidateOSSScannerRegistry returns an error when s is set but is not an
+// absolute https URL with a host and no userinfo. Empty is valid.
+func ValidateOSSScannerRegistry(s string) error {
+	if s == "" {
+		return nil
+	}
+	u, err := url.Parse(s)
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
+		return fmt.Errorf("oss_scanner_registry: %q must be an https URL with a host and no credentials", s)
+	}
+	return nil
+}
+
 // Efforts lists every valid effort level, fastest first. These are the only
 // values `claude --effort` accepts. Mirror of web.Efforts (which owns the
 // display labels); a cross-check test in the web package guards against drift.
@@ -629,6 +649,9 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
 	}
 	if err := ValidateTheme(c.Theme); err != nil {
+		return nil, fmt.Errorf("parse config %s: %w", path, err)
+	}
+	if err := ValidateOSSScannerRegistry(c.OSSScannerRegistry); err != nil {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
 	}
 	if err := ValidateEffort(c.Effort); err != nil {

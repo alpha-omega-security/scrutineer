@@ -243,6 +243,13 @@
 # with nothing to run against. Flag: -ecosystems-enrichment.
 # ecosystems_enrichment: true
 
+# Threat-model and verify scans look the repository up in Anthropic's OSS
+# Scanner registry (or its .oss-scanner/ files) and stage the maintainer
+# threat model and Dockerfile as read-only reference data. The registry fetch
+# is best-effort and never fails a scan. See docs/oss-scanner.md.
+# oss_scanner: true
+# oss_scanner_registry: https://github.com/anthropics/oss-scanner
+
 # How many scans run in parallel. Default is 4; raise on bigger hosts,
 # lower if you want model calls serialised.
 # concurrency: 4

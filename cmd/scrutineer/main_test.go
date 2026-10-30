@@ -25,6 +25,7 @@ import (
 	"scrutineer/internal/db"
 	"scrutineer/internal/db/dbtest"
 	"scrutineer/internal/interchange"
+	"scrutineer/internal/ossscanner"
 	"scrutineer/internal/web"
 	"scrutineer/internal/worker"
 )
@@ -1785,5 +1786,25 @@ func TestScanEgressPolicyGrants(t *testing.T) {
 	bad := &config.Config{ScanEgressPolicies: map[string]config.EgressPolicy{"x": {Allow: []string{"10.0.0.1:443"}}}}
 	if _, err := scanEgressPolicyGrants(bad); err == nil || !strings.Contains(err.Error(), "scan_egress_policies.x") {
 		t.Errorf("bad grant error = %v", err)
+	}
+}
+
+func TestOSSScannerRegistry(t *testing.T) {
+	off, on := false, true
+	tests := []struct {
+		name string
+		cfg  *config.Config
+		want string
+	}{
+		{"nil config", nil, ossscanner.DefaultRegistryURL},
+		{"default", &config.Config{}, ossscanner.DefaultRegistryURL},
+		{"explicitly on", &config.Config{OSSScanner: &on}, ossscanner.DefaultRegistryURL},
+		{"off", &config.Config{OSSScanner: &off, OSSScannerRegistry: "https://example.test/r"}, ""},
+		{"override", &config.Config{OSSScannerRegistry: "https://example.test/r"}, "https://example.test/r"},
+	}
+	for _, tt := range tests {
+		if got := ossScannerRegistry(tt.cfg); got != tt.want {
+			t.Errorf("%s: got %q, want %q", tt.name, got, tt.want)
+		}
 	}
 }

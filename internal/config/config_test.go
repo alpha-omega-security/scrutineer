@@ -684,3 +684,23 @@ func TestLoad_rejectsInvalidScanEgressPolicies(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateOSSScannerRegistry(t *testing.T) {
+	for _, s := range []string{"", "https://github.com/anthropics/oss-scanner"} {
+		if err := ValidateOSSScannerRegistry(s); err != nil {
+			t.Errorf("ValidateOSSScannerRegistry(%q) = %v, want nil", s, err)
+		}
+	}
+	for _, s := range []string{"http://github.com/x/y", "https://", "https://user:pw@github.com/x/y", "/local/path", "git@github.com:x/y.git"} {
+		if err := ValidateOSSScannerRegistry(s); err == nil {
+			t.Errorf("ValidateOSSScannerRegistry(%q) = nil, want error", s)
+		}
+	}
+}
+
+func TestLoad_rejectsInvalidOSSScannerRegistry(t *testing.T) {
+	path := write(t, "oss_scanner_registry: http://example.com/x\n")
+	if _, err := Load(path); err == nil {
+		t.Error("expected error for non-https registry")
+	}
+}

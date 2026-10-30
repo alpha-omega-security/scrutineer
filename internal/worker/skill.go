@@ -16,6 +16,7 @@ import (
 
 	"scrutineer/internal/coverage"
 	"scrutineer/internal/db"
+	"scrutineer/internal/ossscanner"
 	"scrutineer/internal/repoconfig"
 	"scrutineer/internal/skills"
 	"scrutineer/internal/verification"
@@ -48,6 +49,15 @@ type skillContext struct {
 	// enqueue further skills, read reports. The schema is openapi.yaml at
 	// the repo root.
 	Scrutineer skillContextScrutineer `json:"scrutineer"`
+}
+
+// skillContextOSSScanner is the project's Anthropic OSS Scanner enrolment plus
+// the workspace-relative paths of the maintainer files staged from it.
+type skillContextOSSScanner struct {
+	ossscanner.Enrollment
+	RegistryURL     string `json:"registry_url,omitempty"`
+	ThreatModelFile string `json:"threat_model_file,omitempty"`
+	DockerfileFile  string `json:"dockerfile_file,omitempty"`
 }
 
 type skillContextScrutineer struct {
@@ -94,6 +104,9 @@ type skillContextScrutineer struct {
 	// ./src; the area is the audit's scope. Empty means normal scope.
 	FocusArea   *repoconfig.FocusArea    `json:"focus_area,omitempty"`
 	Exploration *skillContextExploration `json:"exploration,omitempty"`
+	// OSSScanner describes the project's Anthropic OSS Scanner enrolment and
+	// the maintainer files staged under ./oss_scanner/. Omitted when none.
+	OSSScanner *skillContextOSSScanner `json:"oss_scanner,omitempty"`
 	// Recon is the latest completed focus-area map. It is staged only for the
 	// threat-model skill, which incorporates it into a complete scan-config
 	// proposal without letting recon overwrite analyst configuration directly.
@@ -222,6 +235,7 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 	if err != nil {
 		return "", err
 	}
+	w.attachOSSScanner(ctx, workRoot, skillDir, scan, &skill, &document, emit)
 
 	prompt := buildLoggedPrompt(&skill, scan.Backend)
 	scan.Prompt = prompt
