@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -13,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/alpha-omega-security/harness"
 )
 
 // buildRunArgs is the no-provider shorthand tests use so they don't all repeat
@@ -1392,5 +1395,61 @@ func TestProxyBinaryCheckArgs_extraCapabilities(t *testing.T) {
 	}
 	if args := proxyBinaryCheckArgs(rt, "img", ProxyCapabilityEgressPortGrants); !slices.Contains(args, "--require-capability=deny-api-connect-v1,egress-port-grants-v1") {
 		t.Errorf("grant check args: %v", args)
+	}
+}
+
+// resumeHarness asks the fake runtime to resume through its argv and reads
+// Claude's stream, so the runtime script decides whether a session loads.
+type resumeHarness struct{ dockerNoopHarness }
+
+func (resumeHarness) Args(j harness.Job) []string {
+	if j.ResumeSessionID != "" {
+		return []string{"resume-" + j.ResumeSessionID}
+	}
+	return []string{"fresh-" + j.Prompt}
+}
+
+func (resumeHarness) ParseStream(r io.Reader, emit func(Event)) { ClaudeHarness{}.ParseStream(r, emit) }
+
+// The fake runtime fails a resume before any init event and starts a fresh
+// run as session "fresh-sess".
+func TestRunSkill_ResumeFallsBackToFresh(t *testing.T) {
+	for name, tc := range map[string]struct {
+		sj        SkillJob
+		wantFresh bool
+	}{
+		"fresh prompt":       {SkillJob{Prompt: "framing", ResumePrompt: "and then?"}, true},
+		"resume prompt only": {SkillJob{ResumePrompt: "repair report.json"}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			recordDir := t.TempDir()
+			t.Setenv("RECORD_DIR", recordDir)
+			script := "#!/bin/sh\n" +
+				"case \"$*\" in\n" +
+				"  *resume-dead*) echo 'No conversation found with session ID: dead'; exit 1 ;;\n" +
+				"  *fresh-*) printf '%s\\n' \"$*\" >> \"$RECORD_DIR/fresh\"; echo '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"fresh-sess\"}' ;;\n" +
+				"esac\n" +
+				"exit 0\n"
+			runtimePath := writeFakeBin(t, t.TempDir(), "runtime", script)
+			d := ContainerRunner{Runtime: ContainerRuntime{Bin: runtimePath}, Harness: resumeHarness{}}
+			work := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(work, "src"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			sj := tc.sj
+			sj.WorkRoot, sj.SrcReady, sj.Name, sj.ResumeSessionID = work, true, "noop", "dead"
+
+			res, err := d.RunSkill(t.Context(), sj, func(Event) {})
+			_, statErr := os.Stat(filepath.Join(recordDir, "fresh"))
+			if tc.wantFresh {
+				if err != nil || res.SessionID != "fresh-sess" || statErr != nil {
+					t.Fatalf("RunSkill = %+v, %v, fresh run: %v", res, err, statErr)
+				}
+				return
+			}
+			if err == nil || res.SessionID != "" || statErr == nil {
+				t.Fatalf("RunSkill = %+v, %v, want the failed resume and no fresh run", res, err)
+			}
+		})
 	}
 }

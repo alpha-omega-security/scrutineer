@@ -71,3 +71,5 @@ require (
 	modernc.org/memory v1.12.1 // indirect
 	modernc.org/sqlite v1.61.0 // indirect
 )
+
+replace github.com/alpha-omega-security/harness => github.com/alexandre-daubois/harness v0.1.12-0.20261030131822-9516cecc03de

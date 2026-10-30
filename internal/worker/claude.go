@@ -20,8 +20,6 @@ import (
 // metadata nor the global config set a value.
 const DefaultSkillMaxTurns = 30
 
-const resumePromptNoFreshFallbackText = "not restarting repair prompt fresh"
-
 // MaxTurnsReachedError is returned when claude-code exits after hitting the
 // --max-turns cap. The caller should treat this as a soft completion.
 type MaxTurnsReachedError struct{}
@@ -258,34 +256,21 @@ func (l LocalClaude) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)
 		}
 		emit(e)
 	}
-	args := ClaudeHarness{}.Args(sj.toJob(l.Effort, l.MaxTurns, ""))
-	hitMaxTurns, sessionID, waitErr := l.runClaudeOnce(ctx, args, work, wrappedEmit)
-
-	if waitErr != nil && sj.ResumeSessionID != "" && sessionID == "" && accountErrText == "" {
-		if sj.ResumePrompt != "" && sj.Prompt == "" {
-			// A bare resume prompt is a corrective nudge ("rewrite the invalid
-			// report.json") that means nothing to a fresh agent, and there is
-			// no fresh framing to fall back on.
-			emit(Event{Kind: KindText, Text: "resume of session " + sj.ResumeSessionID + " failed; " + resumePromptNoFreshFallbackText})
-			return SkillResult{Commit: commit}, fmt.Errorf("claude exited: %w", waitErr)
+	run := func(ctx context.Context, j harness.Job, emit func(Event)) error {
+		err := l.runClaudeOnce(ctx, ClaudeHarness{}.Args(j), work, emit)
+		if err != nil && accountErrText != "" {
+			return &harness.AccountError{Detail: accountErrText}
 		}
-		// The resume never produced a session event, so claude could not
-		// load the saved conversation (expired or pruned). Restart fresh in
-		// the same workspace so the retry lineage isn't permanently wedged
-		// on a dead session id.
-		emit(Event{Kind: KindText, Text: "resume of session " + sj.ResumeSessionID + " failed; restarting fresh"})
-		fresh := sj
-		fresh.ResumeSessionID = ""
-		args = ClaudeHarness{}.Args(fresh.toJob(l.Effort, l.MaxTurns, ""))
-		hitMaxTurns, sessionID, waitErr = l.runClaudeOnce(ctx, args, work, wrappedEmit)
+		return err
 	}
+	session, waitErr := harness.RunSession(ctx, run, sj.toJob(l.Effort, l.MaxTurns, ""), wrappedEmit)
 
-	res := SkillResult{Commit: commit, SessionID: sessionID}
+	res := SkillResult{Commit: commit, SessionID: session.ID}
 	if outPath != "" {
 		res.Report = readCappedReport(outPath, emit)
 	}
 	if waitErr != nil {
-		if hitMaxTurns {
+		if session.MaxTurns {
 			return res, &MaxTurnsReachedError{}
 		}
 		if accountErrText != "" {
@@ -297,36 +282,24 @@ func (l LocalClaude) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)
 }
 
 // runClaudeOnce starts one `claude -p` invocation in work, streams its
-// output through emit, and reports the wait error, whether the run hit the
-// max-turns cap, and the session id from the init event (empty when no init
-// event arrived, e.g. a --resume that could not find the conversation).
-func (l LocalClaude) runClaudeOnce(ctx context.Context, args []string, work string, emit func(Event)) (hitMaxTurns bool, sessionID string, waitErr error) {
+// output through emit, and returns the wait error.
+func (l LocalClaude) runClaudeOnce(ctx context.Context, args []string, work string, emit func(Event)) error {
 	cmd := exec.CommandContext(ctx, "claude", args...)
 	cmd.Dir = work
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return false, "", err
+		return err
 	}
 	cmd.Stderr = cmd.Stdout
 	terminate, err := startSupervised(cmd)
 	if err != nil {
-		return false, "", fmt.Errorf("start claude: %w", err)
+		return fmt.Errorf("start claude: %w", err)
 	}
 	defer terminate()
 
-	wrappedEmit := func(e Event) {
-		switch {
-		case e.Kind == KindError && e.Text == "hit max turns":
-			hitMaxTurns = true
-		case e.Kind == KindSession && e.SessionID != "":
-			sessionID = e.SessionID
-		}
-		emit(e)
-	}
-	ClaudeHarness{}.ParseStream(stdout, wrappedEmit)
-	waitErr = cmd.Wait()
-	return hitMaxTurns, sessionID, waitErr
+	ClaudeHarness{}.ParseStream(stdout, emit)
+	return cmd.Wait()
 }
 
 // maxReportBytes caps how much of a skill's report.json scrutineer will

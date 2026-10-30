@@ -24,6 +24,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/alpha-omega-security/harness"
+
 	"scrutineer/internal/egressgrant"
 )
 
@@ -411,33 +413,22 @@ func (d ContainerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Ev
 		runErrors.observe(e, h, provider.ID)
 		emit(e)
 	}
-	hitMaxTurns, sessionID, waitErr := d.runContainerOnce(ctx, runBase, sj, d.containerProcessEnv(provider.Env), wrappedEmit)
-
-	if waitErr != nil && sj.ResumeSessionID != "" && sessionID == "" && runErrors.resumeRetryable() {
-		if sj.ResumePrompt != "" && sj.Prompt == "" {
-			// A bare resume prompt is a corrective nudge ("rewrite the invalid
-			// report.json") that means nothing to a fresh agent, and there is
-			// no fresh framing to fall back on.
-			emit(Event{Kind: KindText, Text: "resume of session " + sj.ResumeSessionID + " failed; " + resumePromptNoFreshFallbackText})
-			return result, runErrors.failure(provider, runtimeBin(d.Runtime), waitErr)
+	run := func(ctx context.Context, j harness.Job, emit func(Event)) error {
+		err := d.runContainerOnce(ctx, runBase, append([]string{h.Binary()}, h.Args(j)...), d.containerProcessEnv(provider.Env), emit)
+		if err != nil && !runErrors.resumeRetryable() {
+			return &harness.AccountError{Detail: runErrors.accountText}
 		}
-		// The resume produced no session event, so claude could not load the
-		// saved conversation (gone from the mounted store). Restart fresh in
-		// the same /work + config mount so the retry lineage isn't wedged on
-		// a dead session id.
-		emit(Event{Kind: KindText, Text: "resume of session " + sj.ResumeSessionID + " failed; restarting fresh"})
-		fresh := sj
-		fresh.ResumeSessionID = ""
-		hitMaxTurns, sessionID, waitErr = d.runContainerOnce(ctx, runBase, fresh, d.containerProcessEnv(provider.Env), wrappedEmit)
+		return err
 	}
+	session, waitErr := harness.RunSession(ctx, run, d.harnessJob(sj), wrappedEmit)
 
 	res := result
-	res.SessionID = sessionID
+	res.SessionID = session.ID
 	if outPath != "" {
 		res.Report = readCappedReport(outPath, emit)
 	}
 	if waitErr != nil {
-		if hitMaxTurns {
+		if session.MaxTurns {
 			return res, &MaxTurnsReachedError{}
 		}
 		return res, runErrors.failure(provider, runtimeBin(d.Runtime), waitErr)
@@ -460,14 +451,12 @@ func (d ContainerRunner) runLogLine(image, skillName string) string {
 	return line
 }
 
-// runContainerOnce launches one container for the given skill job, appending
-// the in-container `claude` command to runBase, streaming its output
-// through emit, and reporting the wait error, whether the run hit the
-// max-turns cap, and the session id from the init event (empty when no init
-// event arrived, e.g. a --resume that could not find the conversation).
-func (d ContainerRunner) runContainerOnce(ctx context.Context, runBase []string, sj SkillJob, processEnv map[string]string, emit func(Event)) (hitMaxTurns bool, sessionID string, waitErr error) {
+// runContainerOnce launches one container, appending the in-container agent
+// command argv to runBase, streaming its output through emit, and returns the
+// wait error.
+func (d ContainerRunner) runContainerOnce(ctx context.Context, runBase, argv []string, processEnv map[string]string, emit func(Event)) error {
 	h := d.harness()
-	runArgs := append(append([]string{}, runBase...), d.harnessArgv(sj)...)
+	runArgs := append(append([]string{}, runBase...), argv...)
 	// Killing the runtime CLI on cancellation leaves a --rm container running,
 	// so the scan container is named and force-removed once this run ends.
 	name := "scrutineer-scan-" + randomProbeID()
@@ -487,27 +476,17 @@ func (d ContainerRunner) runContainerOnce(ctx context.Context, runBase []string,
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return false, "", err
+		return err
 	}
 	cmd.Stderr = cmd.Stdout
 	terminate, err := startSupervised(cmd)
 	if err != nil {
-		return false, "", fmt.Errorf("start container: %w", err)
+		return fmt.Errorf("start container: %w", err)
 	}
 	defer terminate()
 
-	wrappedEmit := func(e Event) {
-		switch {
-		case e.Kind == KindError && e.Text == "hit max turns":
-			hitMaxTurns = true
-		case e.Kind == KindSession && e.SessionID != "":
-			sessionID = e.SessionID
-		}
-		emit(e)
-	}
-	h.ParseStream(stdout, wrappedEmit)
-	waitErr = cmd.Wait()
-	return hitMaxTurns, sessionID, waitErr
+	h.ParseStream(stdout, emit)
+	return cmd.Wait()
 }
 
 // buildRunArgsForProvider assembles the container run flags for a skill invocation.
@@ -917,9 +896,14 @@ func (d ContainerRunner) harness() Harness { //nolint:ireturn // nil-default acc
 // the args its module derives from the resolved job.
 func (d ContainerRunner) harnessArgv(sj SkillJob) []string {
 	h := d.harness()
+	return append([]string{h.Binary()}, h.Args(d.harnessJob(sj))...)
+}
+
+// harnessJob resolves sj with the runner's defaults.
+func (d ContainerRunner) harnessJob(sj SkillJob) harness.Job {
 	job := sj.toJob(d.Effort, d.MaxTurns, d.ModelBaseURL)
-	job.Effort = CappedEffort(h, job.Effort)
-	return append([]string{h.Binary()}, h.Args(job)...)
+	job.Effort = CappedEffort(d.harness(), job.Effort)
+	return job
 }
 
 // profileGuidePath returns the profile's on-disk PROFILE.md if present.
