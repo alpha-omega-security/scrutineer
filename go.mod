@@ -6,7 +6,7 @@ toolchain go1.27.3
 
 require (
 	filippo.io/age v1.3.2
-	github.com/alpha-omega-security/harness v0.1.17
+	github.com/alpha-omega-security/harness v0.1.19-0.20261030151900-77e327a5e291
 	github.com/ecosyste-ms/ecosystems-go v0.5.0
 	github.com/git-pkgs/clone v0.7.5
 	github.com/git-pkgs/clone/gogit v0.1.2
@@ -71,5 +71,3 @@ require (
 	modernc.org/memory v1.12.1 // indirect
 	modernc.org/sqlite v1.61.0 // indirect
 )
-
-replace github.com/alpha-omega-security/harness => github.com/alexandre-daubois/harness v0.1.12-0.20261030131822-9516cecc03de
