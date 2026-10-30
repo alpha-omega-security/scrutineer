@@ -1,20 +1,18 @@
 // Prereq gating for skill jobs. A skill declaring scrutineer.requires
 // only dispatches when each named upstream skill has a completed scan
 // for the same repository; otherwise the job is re-published with a
-// delay so the runner picks it up again later. Scans in a ScanGroup first
-// wait on prereq scans from that same group, which keeps grouped rescans from
-// dispatching against stale historical prereq results.
+// delay so the runner picks it up again later. Grouped scans only consider
+// prerequisites in their own group; absent prerequisites were not selected.
 //
-// "Satisfied" is currently any done scan on this repository, regardless
+// Within that scope, any done scan satisfies the prerequisite, regardless
 // of commit. URL-keyed skills (packages, advisories, maintainers,
 // metadata) do not have a commit identity, so a uniform
 // rule across all prereqs avoids special cases. Triage's commit-aware
 // skip set covers the redo-on-new-commit case at a different layer.
 //
-// A prereq with no scan rows at all on the repository is treated as
+// A prereq with no scan rows in scope is treated as
 // satisfied: triage (or the operator) decided not to enqueue it, and
-// waiting would deadlock the
-// dependent skill. The same applies to a prereq skill that is not
+// waiting would deadlock the dependent skill. The same applies to a prereq skill that is not
 // registered or is disabled. A prereq that has been enqueued for the
 // repository but has no done scan yet defers the job while one is
 // still in flight (queued/running/paused); when every attempt has
@@ -64,6 +62,16 @@ func (w *Worker) preflightSkill(ctx context.Context, scan *db.Scan, attempt int)
 	}
 	pending, dead := w.unsatisfiedPrereqs(scan, requires)
 	if len(dead) > 0 {
+		fallback, err := w.isThreatModelFallback(scan, skill.Name)
+		if err != nil {
+			return false, err
+		}
+		if fallback {
+			w.Log.Warn("fallback audit proceeding without failed prerequisites", "scan", scan.ID, "prereqs", dead)
+			dead = nil
+		}
+	}
+	if len(dead) > 0 {
 		w.failScanPrereqs(scan, skill.Name,
 			fmt.Sprintf("prereqs failed: %v", dead), dead)
 		return true, nil
@@ -72,6 +80,22 @@ func (w *Worker) preflightSkill(ctx context.Context, scan *db.Scan, attempt int)
 		return false, nil
 	}
 	return w.deferSkillPrereqs(ctx, scan, &skill, attempt, pending)
+}
+
+func (w *Worker) isThreatModelFallback(scan *db.Scan, skillName string) (bool, error) {
+	if skillName != "security-deep-dive" || scan.FocusArea != "" || scan.FallbackFromScanID == nil {
+		return false, nil
+	}
+	var count int64
+	err := w.DB.Model(&db.Scan{}).Where(
+		"id = ? AND repository_id = ? AND skill_name = ? AND status = ? AND sub_path = ? AND ref = ?",
+		*scan.FallbackFromScanID, scan.RepositoryID, "threat-model", db.ScanFailed, scan.SubPath, scan.Ref,
+	).Where("scan_group = ? OR (scan_group = '' AND ? = ?)", scan.ScanGroup, scan.ScanGroup,
+		fmt.Sprintf("focus-%d", *scan.FallbackFromScanID)).Count(&count).Error
+	if err != nil {
+		return false, fmt.Errorf("load fallback threat-model: %w", err)
+	}
+	return count == 1, nil
 }
 
 func (w *Worker) deferSkillPrereqs(ctx context.Context, scan *db.Scan, skill *db.Skill, attempt int, pending []string) (bool, error) {
@@ -122,8 +146,8 @@ func prereqBackoff(base time.Duration, attempt int) time.Duration {
 	return base
 }
 
-// unsatisfiedPrereqs classifies declared prereqs against the
-// repository's scan history. A name lands in pending when it has at
+// unsatisfiedPrereqs classifies declared prereqs within the scan's group,
+// or repository history for ungrouped scans. A name lands in pending when it has at
 // least one in-flight scan (queued/running/paused) and no done scan
 // yet — the gate should defer and re-check later. A name lands in
 // dead when every scan for it on the repo is terminal but none is
@@ -147,19 +171,17 @@ func (w *Worker) unsatisfiedPrereqs(scan *db.Scan, names []string) (pending, dea
 			continue
 		}
 		if scan.ScanGroup != "" {
-			if status := w.prereqStatus(
+			switch w.prereqStatus(
 				"repository_id = ? AND skill_name = ? AND scan_group = ?",
 				[]any{scan.RepositoryID, name, scan.ScanGroup},
 				inFlight,
-			); status != prereqAbsent {
-				switch status {
-				case prereqPending:
-					pending = append(pending, name)
-				case prereqDead:
-					dead = append(dead, name)
-				}
-				continue
+			) {
+			case prereqPending:
+				pending = append(pending, name)
+			case prereqDead:
+				dead = append(dead, name)
 			}
+			continue
 		}
 		switch w.prereqStatus(
 			"repository_id = ? AND skill_name = ?",
@@ -225,4 +247,5 @@ func (w *Worker) failScanPrereqs(scan *db.Scan, skillName, msg string, missing [
 	w.publish(scan.ID, scan.RepositoryID, "scan-status", string(scan.Status))
 	w.Log.Warn("scan failed: prereqs not satisfied",
 		"scan", scan.ID, "skill", skillName, "missing", missing)
+	w.maybeFireScanFailed(scan)
 }

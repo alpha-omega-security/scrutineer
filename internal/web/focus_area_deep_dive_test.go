@@ -1,12 +1,149 @@
 package web
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"scrutineer/internal/db"
 	"scrutineer/internal/repoconfig"
+	"scrutineer/internal/worker"
 )
+
+type fallbackAuditRunner struct{}
+
+func (fallbackAuditRunner) SkillDir(root, name string) string {
+	return filepath.Join(root, "skills", name)
+}
+
+func (fallbackAuditRunner) RunSkill(_ context.Context, job worker.SkillJob, _ func(worker.Event)) (worker.SkillResult, error) {
+	if job.Name != deepDiveSkillName {
+		return worker.SkillResult{}, fmt.Errorf("unexpected skill: %s", job.Name)
+	}
+	return worker.SkillResult{Commit: "abc", Report: `{"findings":[]}`}, nil
+}
+
+func TestQueuedThreatModelPrereqFailureRunsFallback(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/prereq-fallback", Name: "prereq-fallback"}
+	prereq := db.Skill{Name: "embedded-native", Body: "Inspect native code", Active: true}
+	threatModel := db.Skill{Name: threatModelSkillName, Body: "Model threats", Requires: prereq.Name, Active: true}
+	deepDive := db.Skill{Name: deepDiveSkillName, Body: "Audit", Requires: "threat-model\nembedded-native", OutputFile: "report.json", OutputKind: "findings", Active: true}
+	for _, row := range []any{&repo, &prereq, &threatModel, &deepDive} {
+		if err := s.DB.Create(row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	failed := db.Scan{RepositoryID: repo.ID, SkillID: &prereq.ID, SkillName: prereq.Name, Kind: worker.JobSkill, Status: db.ScanFailed, ScanGroup: "triage-1"}
+	parent := db.Scan{RepositoryID: repo.ID, SkillID: &threatModel.ID, SkillName: threatModel.Name, Kind: worker.JobSkill, Status: db.ScanQueued, ScanGroup: failed.ScanGroup, SubPath: "services/api", Ref: "release"}
+	for _, row := range []any{&failed, &parent} {
+		if err := s.DB.Create(row).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	w := s.Worker
+	w.Log, w.DataDir, w.Runner = s.Log, t.TempDir(), fallbackAuditRunner{}
+	w.PrepareRepoSrc = func(_ context.Context, _, _, root string, _ func(worker.Event)) (string, error) {
+		return "abc", os.MkdirAll(filepath.Join(root, "src", parent.SubPath), 0o755)
+	}
+	w.Register(s.Queue)
+	s.Queue.Reconfigure(1)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	onFinalized := w.OnScanFinalized
+	w.OnScanFinalized = func(scan *db.Scan) {
+		onFinalized(scan)
+		if scan.SkillName == deepDiveSkillName {
+			cancel()
+		}
+	}
+	if err := s.Queue.Enqueue(ctx, worker.JobSkill, parent.ID, worker.PrioScan); err != nil {
+		t.Fatal(err)
+	}
+	stopped := make(chan struct{})
+	go func() { s.Queue.Start(ctx); close(stopped) }()
+	defer func() { cancel(); <-stopped }()
+	select {
+	case <-stopped:
+	case <-time.After(10 * time.Second):
+		t.Fatal("fallback audit did not complete")
+	}
+	if err := s.DB.First(&parent, parent.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if parent.Status != db.ScanFailed || !strings.Contains(parent.Error, "embedded-native") {
+		t.Fatalf("parent status = %s, error = %s", parent.Status, parent.Error)
+	}
+	var children []db.Scan
+	if err := s.DB.Where("repository_id = ? AND skill_id = ?", repo.ID, deepDive.ID).Find(&children).Error; err != nil {
+		t.Fatal(err)
+	}
+	if len(children) != 1 {
+		t.Fatalf("fallback scans = %d, want 1", len(children))
+	}
+	child := children[0]
+	if child.Status != db.ScanDone || child.Report != `{"findings":[]}` || child.FocusArea != "" || child.ScanGroup != parent.ScanGroup || child.SubPath != parent.SubPath || child.Ref != parent.Ref {
+		t.Fatalf("unexpected fallback: %+v", child)
+	}
+	if child.FallbackFromScanID == nil || *child.FallbackFromScanID != parent.ID {
+		t.Fatalf("fallback source = %v, want %d", child.FallbackFromScanID, parent.ID)
+	}
+	var recipe worker.ScanRecipe
+	if err := json.Unmarshal([]byte(child.Recipe), &recipe); err != nil {
+		t.Fatal(err)
+	}
+	if recipe.FallbackFromScanID == nil || *recipe.FallbackFromScanID != parent.ID {
+		t.Fatalf("recipe lost fallback source: %s", child.Recipe)
+	}
+}
+
+func TestFallbackAuditRetryPreservesSource(t *testing.T) {
+	for _, bulk := range []bool{false, true} {
+		t.Run(fmt.Sprint(bulk), func(t *testing.T) {
+			s, done := newTestServer(t)
+			defer done()
+			repo := db.Repository{URL: "https://example.com/fallback-retry", Name: "fallback-retry"}
+			skill := db.Skill{Name: deepDiveSkillName, Body: "Audit", Active: true}
+			for _, row := range []any{&repo, &skill} {
+				if err := s.DB.Create(row).Error; err != nil {
+					t.Fatal(err)
+				}
+			}
+			source := db.Scan{RepositoryID: repo.ID, SkillName: threatModelSkillName, Status: db.ScanFailed}
+			if err := s.DB.Create(&source).Error; err != nil {
+				t.Fatal(err)
+			}
+			failed := db.Scan{RepositoryID: repo.ID, SkillID: &skill.ID, SkillName: skill.Name, Kind: worker.JobSkill, Status: db.ScanFailed, FallbackFromScanID: &source.ID}
+			if err := s.DB.Create(&failed).Error; err != nil {
+				t.Fatal(err)
+			}
+			path := fmt.Sprintf("/scans/%d/retry", failed.ID)
+			if bulk {
+				path = "/scans/retry-failed"
+			}
+			response := httptest.NewRecorder()
+			s.Handler().ServeHTTP(response, localReq(http.MethodPost, path))
+			if response.Code != http.StatusSeeOther {
+				t.Fatalf("HTTP %d: %s", response.Code, response.Body)
+			}
+			var retry db.Scan
+			if err := s.DB.Where("parent_scan_id = ?", failed.ID).First(&retry).Error; err != nil {
+				t.Fatal(err)
+			}
+			if retry.FallbackFromScanID == nil || *retry.FallbackFromScanID != source.ID {
+				t.Fatalf("retry lost fallback source: %+v", retry)
+			}
+		})
+	}
+}
 
 func TestAutoEnqueueFocusAreaDeepDives(t *testing.T) {
 	withTestModels(t, []Model{
