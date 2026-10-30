@@ -104,6 +104,33 @@ func fakeSetup(r worker.SkillRunner) runnerSetup {
 	}
 }
 
+func TestAuditConfiguredMaxTier(t *testing.T) {
+	h := newAuditHarness(t)
+	saved := web.Models
+	t.Cleanup(func() { web.Models = saved })
+	src, _ := auditSource(t)
+	outDir := filepath.Join(t.TempDir(), "out")
+	configPath := filepath.Join(t.TempDir(), "scrutineer.yaml")
+	if err := os.WriteFile(configPath, []byte("default_model: claude-opus-4-8\nmodels:\n  - name: Mythos\n    id: claude-mythos-preview\n    tier: max\n  - name: Opus\n    id: claude-opus-4-8\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	runner := auditFakeRunner{behave: func(_ context.Context, _ worker.SkillJob) (worker.SkillResult, error) {
+		called = true
+		if got := web.ModelForTier(h.db().db, web.ModelTierMax, "fallback"); got != "claude-mythos-preview" {
+			return worker.SkillResult{}, fmt.Errorf("max tier = %q, want claude-mythos-preview", got)
+		}
+		return worker.SkillResult{Report: "{}"}, nil
+	}}
+	args := auditArgs(src, outDir, "-config", configPath)
+	if err := runAuditWith(args, &bytes.Buffer{}, fakeSetup(runner)); err != nil {
+		t.Fatal(err)
+	}
+	if !called || readManifest(t, outDir).Status != "complete" {
+		t.Fatal("configured audit did not complete")
+	}
+}
+
 func readManifest(t *testing.T, outDir string) auditManifest {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join(outDir, "scrutineer-audit", "audit.json"))
