@@ -8,6 +8,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	"scrutineer/internal/testutil"
 )
 
 type betterleaksReport struct {
@@ -19,8 +21,124 @@ type betterleaksReport struct {
 		Location   string   `json:"location"`
 		Locations  []string `json:"locations"`
 		Trace      string   `json:"trace"`
+		Rating     string   `json:"rating"`
 	} `json:"findings"`
 	Error string `json:"error"`
+}
+
+func TestBetterleaksScriptFixtureSeverity(t *testing.T) {
+	skipWithoutPython3(t)
+	cases := []struct {
+		path, rule, validation, reason string
+	}{
+		{"auth_test.go", "generic-credential-uri", "", "test, fixture or example"},
+		{"./pkg/auth_test.go", "private-key", "", "test, fixture or example"},
+		{"testdata/sample.env", "gitlab-pat", "", "test, fixture or example"},
+		{"vendor/scanner/testdata/secrets.tar!config.env", "gitlab-pat", "", "test, fixture or example"},
+		{"lib/fixtures/keys.json", "generic-api-key", "", "test, fixture or example"},
+		{"lib/__fixtures__/keys.json", "generic-api-key", "", "test, fixture or example"},
+		{"examples/docker-compose.yml", "generic-credential-uri", "", "test, fixture or example"},
+		{"example/config.yml", "generic-credential-uri", "", "test, fixture or example"},
+		{`vendor\scanner\TestData\keys.json`, "generic-api-key", "", "test, fixture or example"},
+		{".betterleaks.toml", "generic-api-key", "", "rule file"},
+		{"vendor/scanner/config/betterleaks.toml", "generic-api-key", "", "rule file"},
+		{".gitleaks.toml", "generic-api-key", "", "rule file"},
+		{"config/gitleaks.toml", "generic-api-key", "", "rule file"},
+		{"data/licenses.json", "generic-api-key", "", "license data"},
+		{"testdata/live.env", "gitlab-pat", "valid", ""},
+		{"config/app.env", "generic-api-key", "", ""},
+		{"docker-compose.yml", "generic-credential-uri", "", ""},
+		{"data/licenses.json", "gitlab-pat", "", ""},
+		{"src/testdata_loader.go", "gitlab-pat", "", ""},
+		{"src/examples.go", "gitlab-pat", "", ""},
+		{"testdatabase/config.env", "gitlab-pat", "", ""},
+		{"config/rules.toml", "gitlab-pat", "", ""},
+		{"", "gitlab-pat", "", ""},
+	}
+	var detections []map[string]any
+	for _, tc := range cases {
+		detections = append(detections, map[string]any{
+			"File": tc.path, "RuleID": tc.rule, "ValidationStatus": tc.validation,
+			"StartLine": 2, "Secret": "synthetic-secret-value", "Match": "synthetic-secret-value",
+			"Attributes": map[string]string{"confidence": "high"},
+		})
+	}
+	data, err := json.Marshal(detections)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, _ := betterleaksWorkspace(t, "#!/bin/sh\ncat <<'JSON'\n"+string(data)+"\nJSON\n")
+	report, raw := runBetterleaksAdapter(t, root, true)
+	if report.Error != "" || len(report.Findings) != len(cases) {
+		t.Fatalf("unexpected report: %s", raw)
+	}
+	for i, tc := range cases {
+		want := "High"
+		if tc.reason != "" {
+			want = "Low"
+		}
+		finding := report.Findings[i]
+		if finding.Severity != want || !strings.Contains(finding.Rating, tc.reason) || !strings.HasPrefix(finding.Rating, want+" from Betterleaks") || finding.Confidence != "high" {
+			t.Errorf("%s: finding = %+v, want %s with reason %q", tc.path, finding, want, tc.reason)
+		}
+	}
+	if strings.Contains(string(raw), "synthetic-secret-value") {
+		t.Fatal("adapter exposed a raw secret")
+	}
+}
+
+func TestBetterleaksScriptGitFixtureSeverity(t *testing.T) {
+	skipWithoutPython3(t)
+	for _, tool := range []string{"betterleaks", "git"} {
+		if _, err := exec.LookPath(tool); err != nil {
+			t.Skipf("%s not installed", tool)
+		}
+	}
+	root, _ := betterleaksWorkspace(t, "")
+	paths := map[string]string{
+		"config/app.env":                   "High",
+		"internal/client_test.go":          "Low",
+		"vendor/scanner/testdata/keys.env": "Low",
+		"examples/app.env":                 "Low",
+	}
+	secret := "glpat-" + "a8Zk4mQ9pR2xV7nL5sT1"
+	for path := range paths {
+		file := filepath.Join(root, "src", path)
+		if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(file, []byte("TOKEN="+secret+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, args := range [][]string{
+		{"init", "-q"}, {"add", "."},
+		{"-c", "user.name=Test", "-c", "user.email=test@example.com", "-c", "commit.gpgsign=false", "commit", "-qm", "Add synthetic token fixtures"},
+	} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir, cmd.Env = filepath.Join(root, "src"), testutil.GitEnv()
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git: %v: %s", err, out)
+		}
+	}
+	report, raw := runBetterleaksAdapter(t, root, true)
+	if report.Error != "" {
+		t.Fatal(report.Error)
+	}
+	got := map[string]string{}
+	for _, finding := range report.Findings {
+		if finding.Title == "gitlab-pat" {
+			got[finding.Location] = finding.Severity
+		}
+	}
+	for path, severity := range paths {
+		if got[path+":1"] != severity {
+			t.Errorf("%s: severity = %q, want %s", path, got[path+":1"], severity)
+		}
+	}
+	if strings.Contains(string(raw), secret) {
+		t.Fatal("adapter exposed synthetic token")
+	}
 }
 
 func TestBetterleaksScriptSanitizesFindings(t *testing.T) {
