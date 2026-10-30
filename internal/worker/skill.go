@@ -393,6 +393,7 @@ func (w *Worker) repairAndParseSkillOutput(ctx context.Context, skill *db.Skill,
 		}
 	}
 	if err := w.parseSkillOutput(ctx, skill, scan, report, emit); err != nil {
+		scan.Report = report
 		return report, err
 	}
 	return report, nil
@@ -528,7 +529,7 @@ func (w *Worker) parseSkillOutputKind(ctx context.Context, skill *db.Skill, scan
 	case "release_watch":
 		return w.parseReleaseWatchOutput(scan, report, emit)
 	case "subprojects":
-		return w.parseSubprojectsOutput(scan, report, emit)
+		return w.parseSubprojectsOutput(ctx, scan, report, emit)
 	case "repo_overview":
 		return w.parseRepoOverviewOutput(scan, report, emit)
 	case "posture":
