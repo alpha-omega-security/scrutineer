@@ -55,10 +55,11 @@ type ScanRecipe struct {
 	// FocusArea is embedded as parsed JSON rather than an escaped string so
 	// a recipe diff shows the focus fields that changed, not one opaque
 	// blob. Invalid JSON is dropped rather than failing the claim.
-	FocusArea       json.RawMessage `json:"focus_area,omitempty"`
-	TriageScanID    *uint           `json:"triage_scan_id,omitempty"`
-	ExplorationMode string          `json:"exploration_mode,omitempty"`
-	ExplorationPath string          `json:"exploration_path,omitempty"`
+	FocusArea          json.RawMessage `json:"focus_area,omitempty"`
+	TriageScanID       *uint           `json:"triage_scan_id,omitempty"`
+	FallbackFromScanID *uint           `json:"fallback_from_scan_id,omitempty"`
+	ExplorationMode    string          `json:"exploration_mode,omitempty"`
+	ExplorationPath    string          `json:"exploration_path,omitempty"`
 
 	RescanMode     string `json:"rescan_mode,omitempty"`
 	DiffBaseScanID *uint  `json:"diff_base_scan_id,omitempty"`
@@ -108,6 +109,7 @@ func buildScanRecipe(scan *db.Scan, backend, threatModel, scanConfig string) (st
 		SubPath:              scan.SubPath,
 		ScopeMode:            scan.ScopeMode,
 		TriageScanID:         scan.TriageScanID,
+		FallbackFromScanID:   scan.FallbackFromScanID,
 		ExplorationMode:      scan.ExplorationMode,
 		ExplorationPath:      scan.ExplorationPath,
 		RescanMode:           scan.RescanMode,

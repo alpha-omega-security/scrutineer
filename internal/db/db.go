@@ -409,6 +409,8 @@ type Scan struct {
 	// which is only set when the retry actually resumes a harness session
 	// — a retry of a done or cancelled scan has a parent but no session.
 	ParentScanID *uint `gorm:"index"`
+	// FallbackFromScanID identifies the failed threat-model that triggered an unscoped audit.
+	FallbackFromScanID *uint
 	// VerificationFeedback is operator guidance snapshotted for this verify run.
 	// It is not a verdict and is never copied into the finding's reproduction.
 	VerificationFeedback string `gorm:"type:text"`
