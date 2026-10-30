@@ -2,6 +2,8 @@ package worker
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
 	"strings"
@@ -114,6 +116,85 @@ func TestPreflightSkill_noRequires(t *testing.T) {
 	}
 }
 
+func TestWorkerThreatModelFallbackPrerequisites(t *testing.T) {
+	cases := []struct {
+		name    string
+		change  func(*db.Scan, *db.Scan)
+		pending bool
+		want    db.ScanStatus
+	}{
+		{name: "failed prerequisites", want: db.ScanDone},
+		{name: "manual threat model", change: func(scan, parent *db.Scan) {
+			parent.ScanGroup = ""
+			scan.ScanGroup = fmt.Sprintf("focus-%d", parent.ID)
+		}, want: db.ScanDone},
+		{name: "pending prerequisite", pending: true, want: db.ScanQueued},
+		{name: "ordinary audit", change: func(scan, _ *db.Scan) { scan.FallbackFromScanID = nil }, want: db.ScanFailed},
+		{name: "focused audit", change: func(scan, _ *db.Scan) { scan.FocusArea = `{"name":"parser"}` }, want: db.ScanFailed},
+		{name: "different skill", change: func(scan, _ *db.Scan) { scan.SkillName = "other-audit" }, want: db.ScanFailed},
+		{name: "different group", change: func(_, parent *db.Scan) { parent.ScanGroup = "other" }, want: db.ScanFailed},
+		{name: "different ref", change: func(_, parent *db.Scan) { parent.Ref = "other" }, want: db.ScanFailed},
+		{name: "different subpath", change: func(_, parent *db.Scan) { parent.SubPath = "other" }, want: db.ScanFailed},
+		{name: "successful threat model", change: func(_, parent *db.Scan) { parent.Status = db.ScanDone }, want: db.ScanFailed},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newPreflightWorker(t)
+			w.DataDir = t.TempDir()
+			scan := seedPreflightFixtures(t, w, "threat-model\nembedded-native\nsemgrep")
+			tm := seedPrereqSkill(t, w, "threat-model", true)
+			native := seedPrereqSkill(t, w, "embedded-native", true)
+			scan.SkillName, scan.ScanGroup = "security-deep-dive", "triage-1"
+			parent := db.Scan{RepositoryID: scan.RepositoryID, SkillID: &tm.ID, SkillName: tm.Name, Kind: JobSkill, Status: db.ScanFailed, ScanGroup: scan.ScanGroup}
+			if err := w.DB.Create(&parent).Error; err != nil {
+				t.Fatal(err)
+			}
+			scan.FallbackFromScanID = &parent.ID
+			if tc.change != nil {
+				tc.change(scan, &parent)
+			}
+			if err := w.DB.Save(scan).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := w.DB.Save(&parent).Error; err != nil {
+				t.Fatal(err)
+			}
+			if err := w.DB.Model(&db.Skill{}).Where("id = ?", *scan.SkillID).Update("name", scan.SkillName).Error; err != nil {
+				t.Fatal(err)
+			}
+			seedPrereqScanInGroup(t, w, native, scan.RepositoryID, db.ScanFailed, scan.ScanGroup)
+			if tc.pending {
+				semgrep := seedPrereqSkill(t, w, "semgrep", true)
+				seedPrereqScanInGroup(t, w, semgrep, scan.RepositoryID, db.ScanRunning, scan.ScanGroup)
+			}
+			called := dispatchPrereqTestScan(t, w, scan)
+			if scan.Status != tc.want || called != (tc.want == db.ScanDone) {
+				t.Fatalf("status = %s, handler called = %v, error = %s; want %s", scan.Status, called, scan.Error, tc.want)
+			}
+		})
+	}
+}
+
+func dispatchPrereqTestScan(t *testing.T, w *Worker, scan *db.Scan) bool {
+	t.Helper()
+	body, err := json.Marshal(queue.Payload{ScanID: scan.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	err = w.wrap(func(context.Context, *db.Scan, func(Event)) (string, error) {
+		called = true
+		return `{"findings":[]}`, nil
+	})(t.Context(), body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.DB.First(scan, scan.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	return called
+}
+
 func TestPreflightSkill_allSatisfied(t *testing.T) {
 	w := newPreflightWorker(t)
 	scan := seedPreflightFixtures(t, w, "threat-model\nsemgrep")
@@ -168,21 +249,79 @@ func TestPreflightSkill_scanGroupSatisfiedBySiblingPrereq(t *testing.T) {
 	}
 }
 
-func TestPreflightSkill_scanGroupFallsBackWhenNoSiblingPrereq(t *testing.T) {
-	w := newPreflightWorker(t)
-	scan := seedPreflightFixtures(t, w, "threat-model")
-	scan.ScanGroup = "grp-1"
-	if err := w.DB.Save(scan).Error; err != nil {
-		t.Fatal(err)
+func TestWorkerGroupedPrereqsIgnoreOtherGroups(t *testing.T) {
+	for _, status := range []db.ScanStatus{db.ScanFailed, db.ScanCancelled, db.ScanQueued, db.ScanRunning, db.ScanPaused, db.ScanDone} {
+		t.Run(string(status), func(t *testing.T) {
+			w := newPreflightWorker(t)
+			w.DataDir = t.TempDir()
+			scan := seedPreflightFixtures(t, w, "embedded-native")
+			scan.ScanGroup = "today"
+			if err := w.DB.Save(scan).Error; err != nil {
+				t.Fatal(err)
+			}
+			prereq := seedPrereqSkill(t, w, "embedded-native", true)
+			seedPrereqScanInGroup(t, w, prereq, scan.RepositoryID, status, "yesterday")
+			body, err := json.Marshal(queue.Payload{ScanID: scan.ID})
+			if err != nil {
+				t.Fatal(err)
+			}
+			called := false
+			err = w.wrap(func(context.Context, *db.Scan, func(Event)) (string, error) {
+				called = true
+				return `{"findings":[]}`, nil
+			})(t.Context(), body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := w.DB.First(scan, scan.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+			if !called || scan.Status != db.ScanDone {
+				t.Fatalf("handler called = %v, scan status = %s, error = %s", called, scan.Status, scan.Error)
+			}
+		})
 	}
-	seedPrereqSkillAndDoneScan(t, w, scan.RepositoryID, "threat-model")
+}
 
-	deferred, err := w.preflightSkill(context.Background(), scan, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if deferred {
-		t.Error("grouped scan with no sibling prereq rows should use historical prereq behavior")
+func TestWorkerPrereqFailureCallsHookOnce(t *testing.T) {
+	for _, exhausted := range []bool{false, true} {
+		t.Run(map[bool]string{false: "failed", true: "exhausted"}[exhausted], func(t *testing.T) {
+			w := newPreflightWorker(t)
+			scan := seedPreflightFixtures(t, w, "embedded-native")
+			prereq := seedPrereqSkill(t, w, "embedded-native", true)
+			status, attempt := db.ScanFailed, 0
+			if exhausted {
+				status, attempt = db.ScanQueued, w.MaxPrereqAttempts
+			}
+			seedPrereqScan(t, w, prereq, scan.RepositoryID, status)
+			calls := 0
+			w.OnScanFailed = func(failed *db.Scan) {
+				calls++
+				var stored db.Scan
+				if err := w.DB.First(&stored, failed.ID).Error; err != nil {
+					t.Fatal(err)
+				}
+				if stored.Status != db.ScanFailed || failed.Status != stored.Status || failed.Error != stored.Error || failed.FinishedAt == nil {
+					t.Fatalf("failure callback received an unpersisted failure: %+v", failed)
+				}
+			}
+			body, err := json.Marshal(queue.Payload{ScanID: scan.ID, Attempt: attempt})
+			if err != nil {
+				t.Fatal(err)
+			}
+			dispatch := w.wrap(func(context.Context, *db.Scan, func(Event)) (string, error) {
+				t.Error("handler ran despite failed prerequisites")
+				return "", nil
+			})
+			for range 2 {
+				if err := dispatch(t.Context(), body); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if calls != 1 {
+				t.Fatalf("failure callbacks = %d, want 1", calls)
+			}
+		})
 	}
 }
 
