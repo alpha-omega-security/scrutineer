@@ -952,6 +952,10 @@ func distinctLanguages(gdb *gorm.DB) []string {
 }
 
 func (s *Server) repoList(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("view") == "priorities" {
+		s.repoPriorities(w, r)
+		return
+	}
 	q := s.DB.Model(&db.Repository{})
 	lang := r.URL.Query().Get("language")
 	if lang != "" {
