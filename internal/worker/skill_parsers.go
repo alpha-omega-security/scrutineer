@@ -752,7 +752,7 @@ func realPathUnderRoot(path, root string) bool {
 // repository. Subprojects are a projection of the repo layout produced
 // by the subprojects skill; a fresh run reflects the current clone and
 // replaces any prior set.
-func (w *Worker) parseSubprojectsOutput(scan *db.Scan, report string, emit func(Event)) error {
+func (w *Worker) parseSubprojectsOutput(ctx context.Context, scan *db.Scan, report string, emit func(Event)) error {
 	var result struct {
 		Subprojects []struct {
 			Path        string `json:"path"`
@@ -785,7 +785,7 @@ func (w *Worker) parseSubprojectsOutput(scan *db.Scan, report string, emit func(
 	// any package/advisory that pointed at a pruned row back to repo-level.
 	// The whole set is rewritten in one transaction so a mid-way failure can't
 	// leave a half-updated projection.
-	if err := w.DB.Transaction(func(tx *gorm.DB) error {
+	if err := subprojectWriteTransaction(ctx, w.DB, func(tx *gorm.DB) error {
 		keep := make([]string, 0, len(rows))
 		for i := range rows {
 			row := rows[i]
