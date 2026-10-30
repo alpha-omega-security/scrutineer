@@ -47,7 +47,7 @@ func TestParseSubprojectsOutput(t *testing.T) {
 	scan := db.Scan{RepositoryID: repo.ID}
 	gdb.Create(&scan)
 	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
-	if err := w.parseSubprojectsOutput(&scan, `{"subprojects":[{"path":"only","name":"only"}]}`, func(Event) {}); err != nil {
+	if err := w.parseSubprojectsOutput(context.Background(), &scan, `{"subprojects":[{"path":"only","name":"only"}]}`, func(Event) {}); err != nil {
 		t.Fatal(err)
 	}
 	gdb.Where("repository_id = ?", repo.ID).Find(&rows)
@@ -80,7 +80,7 @@ func TestParseSubprojectsOutput_stableIDsAcrossReruns(t *testing.T) {
 		{"path":"a","name":"a-renamed","kind":"go-module"},
 		{"path":"c","name":"c","kind":"rust-crate"}
 	]}`
-	if err := w.parseSubprojectsOutput(&scan, rerun, func(Event) {}); err != nil {
+	if err := w.parseSubprojectsOutput(context.Background(), &scan, rerun, func(Event) {}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -120,7 +120,7 @@ func TestParseSubprojectsOutput_scopedRunDoesNotPrune(t *testing.T) {
 	scan := db.Scan{RepositoryID: repo.ID, SubPath: "activesupport"}
 	gdb.Create(&scan)
 	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
-	if err := w.parseSubprojectsOutput(&scan, `{"subprojects":[{"path":"activesupport","name":"activesupport-scoped"}]}`, func(Event) {}); err != nil {
+	if err := w.parseSubprojectsOutput(context.Background(), &scan, `{"subprojects":[{"path":"activesupport","name":"activesupport-scoped"}]}`, func(Event) {}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -147,7 +147,7 @@ func TestParseSubprojectsOutput_invalidJSON(t *testing.T) {
 	scan := db.Scan{RepositoryID: repo.ID}
 	gdb.Create(&scan)
 	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
-	if err := w.parseSubprojectsOutput(&scan, "not json", func(Event) {}); err == nil {
+	if err := w.parseSubprojectsOutput(context.Background(), &scan, "not json", func(Event) {}); err == nil {
 		t.Error("expected error on invalid JSON")
 	}
 }
