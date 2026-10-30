@@ -193,7 +193,7 @@ func (w *Worker) parsePackagesOutput(scan *db.Scan, report string, emit func(Eve
 	// Replace the prior row set atomically: a failed insert after the
 	// delete would otherwise leave the repository with zero packages
 	// until the next successful scan.
-	if err := w.DB.Transaction(func(tx *gorm.DB) error {
+	if err := db.TimedTransaction(w.DB, w.scanTransactionLog(scan, "ingest_packages"), func(tx *gorm.DB) error {
 		if err := tx.Where("repository_id = ?", scan.RepositoryID).Delete(&db.Package{}).Error; err != nil {
 			return fmt.Errorf("delete old packages: %w", err)
 		}
@@ -269,7 +269,7 @@ func (w *Worker) parseAdvisoriesOutput(scan *db.Scan, report string, emit func(E
 	}
 	// Replace the prior row set atomically so a failed insert can't leave
 	// the repository with zero advisories.
-	if err := w.DB.Transaction(func(tx *gorm.DB) error {
+	if err := db.TimedTransaction(w.DB, w.scanTransactionLog(scan, "ingest_advisories"), func(tx *gorm.DB) error {
 		if err := tx.Where("repository_id = ?", scan.RepositoryID).Delete(&db.Advisory{}).Error; err != nil {
 			return fmt.Errorf("delete old advisories: %w", err)
 		}
@@ -420,7 +420,7 @@ func (w *Worker) parseDependenciesOutput(scan *db.Scan, report string, emit func
 	// Replace the prior row set and move the Current flag atomically so a
 	// failed insert can't leave the repository with zero dependencies or
 	// two current snapshots.
-	if err := w.DB.Transaction(func(tx *gorm.DB) error {
+	if err := db.TimedTransaction(w.DB, w.scanTransactionLog(scan, "ingest_dependencies"), func(tx *gorm.DB) error {
 		if replaceInventory {
 			if err := tx.Where("repository_id = ?", scan.RepositoryID).Delete(&db.Dependency{}).Error; err != nil {
 				return fmt.Errorf("delete old dependencies: %w", err)
@@ -785,7 +785,7 @@ func (w *Worker) parseSubprojectsOutput(ctx context.Context, scan *db.Scan, repo
 	// any package/advisory that pointed at a pruned row back to repo-level.
 	// The whole set is rewritten in one transaction so a mid-way failure can't
 	// leave a half-updated projection.
-	if err := subprojectWriteTransaction(ctx, w.DB, func(tx *gorm.DB) error {
+	if err := subprojectWriteTransaction(ctx, w.DB, w.scanTransactionLog(scan, "ingest_subprojects"), func(tx *gorm.DB) error {
 		keep := make([]string, 0, len(rows))
 		for i := range rows {
 			row := rows[i]
@@ -987,7 +987,7 @@ func (w *Worker) parseComplianceOutput(scan *db.Scan, report string, emit func(E
 		})
 	}
 	level := baselineLevel(rows)
-	if err := w.DB.Transaction(func(tx *gorm.DB) error {
+	if err := db.TimedTransaction(w.DB, w.scanTransactionLog(scan, "ingest_compliance"), func(tx *gorm.DB) error {
 		if err := tx.Where("repository_id = ?", scan.RepositoryID).Delete(&db.ComplianceControl{}).Error; err != nil {
 			return fmt.Errorf("prune compliance controls: %w", err)
 		}
@@ -1091,7 +1091,7 @@ func (w *Worker) parseCriticOutput(scan *db.Scan, report string, emit func(Event
 		return err
 	}
 
-	err := w.DB.Transaction(func(tx *gorm.DB) error {
+	err := db.TimedTransaction(w.DB, w.scanTransactionLog(scan, "ingest_critic"), func(tx *gorm.DB) error {
 		var f db.Finding
 		if err := tx.First(&f, *scan.FindingID).Error; err != nil {
 			return fmt.Errorf("load finding %d: %w", *scan.FindingID, err)

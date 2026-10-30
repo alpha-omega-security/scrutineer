@@ -3,10 +3,12 @@ package worker
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"time"
 
 	"gorm.io/gorm"
 
+	"scrutineer/internal/db"
 	"scrutineer/internal/retry"
 )
 
@@ -19,7 +21,7 @@ const (
 )
 
 // Replay the whole transaction so a stale WAL snapshot is discarded too.
-func subprojectWriteTransaction(ctx context.Context, gdb *gorm.DB, write func(*gorm.DB) error) error {
+func subprojectWriteTransaction(ctx context.Context, gdb *gorm.DB, log *slog.Logger, write func(*gorm.DB) error) error {
 	if gdb.Name() != "sqlite" {
 		return gdb.WithContext(ctx).Transaction(write)
 	}
@@ -29,7 +31,7 @@ func subprojectWriteTransaction(ctx context.Context, gdb *gorm.DB, write func(*g
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		err := gdb.WithContext(ctx).Transaction(write)
+		err := db.TimedTransaction(gdb.WithContext(ctx), log.With("attempt", attempt), write)
 		if err == nil {
 			return nil
 		}
