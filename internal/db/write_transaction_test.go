@@ -17,7 +17,7 @@ func (busyError) Code() int     { return sqliteBusyCode }
 func TestWriteTransactionReplaysUntilBudget(t *testing.T) {
 	gdb := newTestDB(t)
 	attempts := 0
-	err := WriteTransaction(context.Background(), gdb, 200*time.Millisecond, func(tx *gorm.DB) error {
+	err := WriteTransaction(context.Background(), gdb, 200*time.Millisecond, nil, func(tx *gorm.DB) error {
 		attempts++
 		if err := tx.Create(&Subproject{RepositoryID: 1, Path: "rolled-back"}).Error; err != nil {
 			return err
@@ -39,7 +39,7 @@ func TestWriteTransactionReplaysUntilBudget(t *testing.T) {
 func TestWriteTransactionRecovers(t *testing.T) {
 	gdb := newTestDB(t)
 	attempts := 0
-	err := WriteTransaction(context.Background(), gdb, time.Minute, func(tx *gorm.DB) error {
+	err := WriteTransaction(context.Background(), gdb, time.Minute, nil, func(tx *gorm.DB) error {
 		attempts++
 		if attempts == 1 {
 			return busyError{}
@@ -55,7 +55,7 @@ func TestWriteTransactionDoesNotRetryOtherErrors(t *testing.T) {
 	gdb := newTestDB(t)
 	attempts := 0
 	want := errors.New("constraint failed")
-	err := WriteTransaction(context.Background(), gdb, time.Minute, func(*gorm.DB) error {
+	err := WriteTransaction(context.Background(), gdb, time.Minute, nil, func(*gorm.DB) error {
 		attempts++
 		return want
 	})
@@ -68,7 +68,7 @@ func TestWriteTransactionCancelled(t *testing.T) {
 	gdb := newTestDB(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	err := WriteTransaction(ctx, gdb, time.Minute, func(*gorm.DB) error {
+	err := WriteTransaction(ctx, gdb, time.Minute, nil, func(*gorm.DB) error {
 		t.Fatal("write after cancellation")
 		return nil
 	})

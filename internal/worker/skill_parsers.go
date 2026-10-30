@@ -29,8 +29,8 @@ const ingestWriteTimeout = 15 * time.Second
 
 // ingestTransaction may run write more than once: rows it inserts must be
 // copied per attempt so a replay does not reuse ids from a rolled-back one.
-func (w *Worker) ingestTransaction(ctx context.Context, write func(*gorm.DB) error) error {
-	return db.WriteTransaction(ctx, w.DB, ingestWriteTimeout, write)
+func (w *Worker) ingestTransaction(ctx context.Context, scan *db.Scan, operation string, write func(*gorm.DB) error) error {
+	return db.WriteTransaction(ctx, w.DB, ingestWriteTimeout, w.scanTransactionLog(scan, operation), write)
 }
 
 const (
@@ -205,7 +205,7 @@ func (w *Worker) parsePackagesOutput(ctx context.Context, scan *db.Scan, report 
 	// Replace the prior row set atomically: a failed insert after the
 	// delete would otherwise leave the repository with zero packages
 	// until the next successful scan.
-	if err := w.ingestTransaction(ctx, func(tx *gorm.DB) error {
+	if err := w.ingestTransaction(ctx, scan, "ingest_packages", func(tx *gorm.DB) error {
 		if err := tx.Where("repository_id = ?", scan.RepositoryID).Delete(&db.Package{}).Error; err != nil {
 			return fmt.Errorf("delete old packages: %w", err)
 		}
@@ -282,7 +282,7 @@ func (w *Worker) parseAdvisoriesOutput(ctx context.Context, scan *db.Scan, repor
 	}
 	// Replace the prior row set atomically so a failed insert can't leave
 	// the repository with zero advisories.
-	if err := w.ingestTransaction(ctx, func(tx *gorm.DB) error {
+	if err := w.ingestTransaction(ctx, scan, "ingest_advisories", func(tx *gorm.DB) error {
 		if err := tx.Where("repository_id = ?", scan.RepositoryID).Delete(&db.Advisory{}).Error; err != nil {
 			return fmt.Errorf("delete old advisories: %w", err)
 		}
@@ -434,7 +434,7 @@ func (w *Worker) parseDependenciesOutput(ctx context.Context, scan *db.Scan, rep
 	// Replace the prior row set and move the Current flag atomically so a
 	// failed insert can't leave the repository with zero dependencies or
 	// two current snapshots.
-	if err := w.ingestTransaction(ctx, func(tx *gorm.DB) error {
+	if err := w.ingestTransaction(ctx, scan, "ingest_dependencies", func(tx *gorm.DB) error {
 		if replaceInventory {
 			if err := tx.Where("repository_id = ?", scan.RepositoryID).Delete(&db.Dependency{}).Error; err != nil {
 				return fmt.Errorf("delete old dependencies: %w", err)
@@ -802,7 +802,7 @@ func (w *Worker) parseSubprojectsOutput(ctx context.Context, scan *db.Scan, repo
 	// any package/advisory that pointed at a pruned row back to repo-level.
 	// The whole set is rewritten in one transaction so a mid-way failure can't
 	// leave a half-updated projection.
-	if err := w.ingestTransaction(ctx, func(tx *gorm.DB) error {
+	if err := w.ingestTransaction(ctx, scan, "ingest_subprojects", func(tx *gorm.DB) error {
 		keep := make([]string, 0, len(rows))
 		for i := range rows {
 			row := rows[i]
@@ -1004,7 +1004,7 @@ func (w *Worker) parseComplianceOutput(ctx context.Context, scan *db.Scan, repor
 		})
 	}
 	level := baselineLevel(rows)
-	if err := w.ingestTransaction(ctx, func(tx *gorm.DB) error {
+	if err := w.ingestTransaction(ctx, scan, "ingest_compliance", func(tx *gorm.DB) error {
 		if err := tx.Where("repository_id = ?", scan.RepositoryID).Delete(&db.ComplianceControl{}).Error; err != nil {
 			return fmt.Errorf("prune compliance controls: %w", err)
 		}
@@ -1109,7 +1109,7 @@ func (w *Worker) parseCriticOutput(ctx context.Context, scan *db.Scan, report st
 		return err
 	}
 
-	err := w.ingestTransaction(ctx, func(tx *gorm.DB) error {
+	err := w.ingestTransaction(ctx, scan, "ingest_critic", func(tx *gorm.DB) error {
 		var f db.Finding
 		if err := tx.First(&f, *scan.FindingID).Error; err != nil {
 			return fmt.Errorf("load finding %d: %w", *scan.FindingID, err)

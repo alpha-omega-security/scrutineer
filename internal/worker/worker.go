@@ -900,7 +900,7 @@ func (w *Worker) startScan(scan *db.Scan) error {
 	if br, ok := w.Runner.(BackendReporter); ok {
 		backend = br.Backend()
 	}
-	return w.DB.Transaction(func(tx *gorm.DB) error {
+	return db.TimedTransaction(w.DB, w.scanTransactionLog(scan, "start_scan"), func(tx *gorm.DB) error {
 		res := tx.Model(&db.Scan{}).Where("id = ? AND status = ?", scan.ID, db.ScanQueued).
 			Updates(map[string]any{
 				"status":          db.ScanRunning,
@@ -983,7 +983,7 @@ func (w *Worker) finalizeScan(ctx context.Context, scan *db.Scan, report string,
 		scan.APIToken = ""
 	}
 	if eventKind, ok := db.ScanLifecycleEventKind(scan.Status); ok {
-		if saveErr := w.DB.Transaction(func(tx *gorm.DB) error {
+		if saveErr := db.TimedTransaction(w.DB, w.scanTransactionLog(scan, "finalize_scan"), func(tx *gorm.DB) error {
 			if err := tx.Save(scan).Error; err != nil {
 				return err
 			}
