@@ -91,6 +91,10 @@ func (s *Server) enqueueFocusAreaDeepDive(parent *db.Scan, skillID uint, group, 
 	if existing > 0 {
 		return
 	}
+	var fallbackFrom *uint
+	if parent.Status == db.ScanFailed {
+		fallbackFrom = &parent.ID
+	}
 	if _, err := s.enqueueSkillWith(context.Background(), parent.RepositoryID, skillID, ScanOpts{
 		// Model is intentionally not inherited: parent.Model is the
 		// threat-model scan's already-resolved concrete id (high tier
@@ -101,15 +105,16 @@ func (s *Server) enqueueFocusAreaDeepDive(parent *db.Scan, skillID uint, group, 
 		// DiffBaseScanID is not inherited either: the parent's baseline is a
 		// threat-model scan, which the worker rejects for a deep-dive, so
 		// each deep-dive resolves its own skill and focus-area baseline.
-		Effort:       parent.Effort,
-		Profile:      focusAreaProfile(parent, focusArea),
-		SubPath:      parent.SubPath,
-		ScopeMode:    parent.ScopeMode,
-		Ref:          parent.Ref,
-		RescanMode:   parent.RescanMode,
-		ScanGroup:    group,
-		FocusArea:    focusArea,
-		TriageScanID: parent.TriageScanID,
+		Effort:             parent.Effort,
+		Profile:            focusAreaProfile(parent, focusArea),
+		SubPath:            parent.SubPath,
+		ScopeMode:          parent.ScopeMode,
+		Ref:                parent.Ref,
+		RescanMode:         parent.RescanMode,
+		ScanGroup:          group,
+		FocusArea:          focusArea,
+		TriageScanID:       parent.TriageScanID,
+		FallbackFromScanID: fallbackFrom,
 	}); err != nil {
 		name := "repository"
 		if focusArea != "" {
