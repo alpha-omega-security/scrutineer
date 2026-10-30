@@ -2310,13 +2310,14 @@ func (s *Server) repoBranches(w http.ResponseWriter, r *http.Request) {
 }
 
 // repoBulkCreate accepts a newline-separated list of repository URLs,
-// creates each one that is not already in the database, and enqueues the
-// default skill for every new row. Duplicates and unparseable lines are
-// reported back via a flash toast rather than failing the whole submission;
+// creates missing repositories, and optionally rescans existing ones.
+// Duplicates and unparseable lines are reported in a toast;
 // partial success is the expected case for a pasted list.
 func (s *Server) repoBulkCreate(w http.ResponseWriter, r *http.Request) {
 	raw := r.FormValue("urls")
 	lines := strings.Split(raw, "\n")
+	rescan := r.FormValue("rescan_existing") == "1"
+	seen := make(map[RepoInput]bool)
 	var created, queued, skipped int
 	var invalid []string
 	for _, line := range lines {
@@ -2325,22 +2326,27 @@ func (s *Server) repoBulkCreate(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		input, err := ParseRepoInput(line)
+		if err == nil {
+			input.SubPath, err = worker.CleanSubPath(input.SubPath)
+		}
 		if err != nil {
 			invalid = append(invalid, line)
 			continue
 		}
-		_, isNew, err := s.createOrTriageRepo(r.Context(), input, r.FormValue("model"), true)
+		if seen[input] {
+			skipped++
+			continue
+		}
+		isNew, scanQueued, err := s.bulkImportRepo(r.Context(), input, r.FormValue("model"), rescan)
 		if err != nil {
 			invalid = append(invalid, line)
 			continue
 		}
+		seen[input] = true
 		switch {
 		case isNew:
 			created++
-		case input.SubPath != "" || input.Branch != "":
-			// The repo already existed, but a sub-package or branch scan was
-			// still enqueued (createOrTriageRepo only no-ops a bare re-add), so
-			// this line did do something — don't report it as "already present".
+		case scanQueued:
 			queued++
 		default:
 			skipped++
@@ -2420,23 +2426,28 @@ func (s *Server) createOrTriageRepo(ctx context.Context, input RepoInput, model 
 	if !isNew && input.Branch == "" && input.SubPath == "" {
 		return repo, false, nil
 	}
+	_, err = s.enqueueDefaultTriage(ctx, repo, input, model)
+	return repo, isNew, err
+}
+
+func (s *Server) enqueueDefaultTriage(ctx context.Context, repo db.Repository, input RepoInput, model string) (bool, error) {
 	var skill db.Skill
 	if err := s.DB.Where("name = ? AND active = ?", defaultSkillName, true).First(&skill).Error; err != nil {
 		s.Log.Warn("default skill not found, repo added with no scans", "skill", defaultSkillName)
-		return repo, isNew, nil
+		return false, nil
 	}
 	if repo.IsLocal() && skill.RequiresRemote {
 		s.Log.Info("default skill requires remote, skipping for local repo", "skill", skill.Name, "repo", repo.URL)
-		return repo, isNew, nil
+		return false, nil
 	}
 	if _, err := s.enqueueSkillWith(ctx, repo.ID, skill.ID, ScanOpts{
 		Model:   model,
 		SubPath: input.SubPath,
 		Ref:     input.Branch,
 	}); err != nil {
-		return repo, isNew, err
+		return false, err
 	}
-	return repo, isNew, nil
+	return true, nil
 }
 
 func bulkToastCategory(created, queued int, invalid []string) string {
