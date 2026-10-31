@@ -422,7 +422,7 @@ func TestLocalClaude_ResumePromptDoesNotFallbackToFresh(t *testing.T) {
 	}
 	var sawNoFreshLog bool
 	res, err := LocalClaude{}.RunSkill(context.Background(), sj, func(e Event) {
-		if e.Kind == KindText && strings.Contains(e.Text, resumePromptNoFreshFallbackText) {
+		if e.Kind == KindText && strings.Contains(e.Text, "not restarting a resume prompt fresh") {
 			sawNoFreshLog = true
 		}
 	})
