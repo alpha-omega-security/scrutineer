@@ -11,10 +11,10 @@ require (
 	github.com/git-pkgs/clone v0.7.5
 	github.com/git-pkgs/clone/gogit v0.1.2
 	github.com/git-pkgs/cwe v0.1.1
-	github.com/git-pkgs/enrichment v0.7.3
+	github.com/git-pkgs/enrichment v0.7.4
 	github.com/git-pkgs/magic v0.6.0
 	github.com/git-pkgs/pom v0.1.8
-	github.com/git-pkgs/purl v0.1.23
+	github.com/git-pkgs/purl v0.1.24
 	github.com/git-pkgs/sarif v0.1.3
 	github.com/git-pkgs/sbom v0.1.7
 	github.com/git-pkgs/skills v0.2.0
@@ -41,7 +41,7 @@ require (
 	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
 	github.com/cyphar/filepath-securejoin v0.7.0 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
-	github.com/git-pkgs/registries v0.11.0 // indirect
+	github.com/git-pkgs/registries v0.11.1 // indirect
 	github.com/git-pkgs/spdx v0.3.3 // indirect
 	github.com/git-pkgs/vers v0.7.2 // indirect
 	github.com/github/go-spdx/v2 v2.8.0 // indirect
