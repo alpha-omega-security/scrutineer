@@ -1770,14 +1770,18 @@ type dedupGroup struct {
 	HeadID    uint
 	MemberIDs []uint
 	Reason    string
+	// BetterID is the member whose evidence should replace the head's
+	// report body. Duplicates only; 0 means keep the head as is.
+	BetterID uint
 }
 
 func (w *Worker) parseFindingDedupOutput(scan *db.Scan, report string, emit func(Event)) error {
 	var result struct {
 		Duplicates []struct {
-			CanonicalID  uint   `json:"canonical_id"`
-			DuplicateIDs []uint `json:"duplicate_ids"`
-			Reason       string `json:"reason"`
+			CanonicalID      uint   `json:"canonical_id"`
+			DuplicateIDs     []uint `json:"duplicate_ids"`
+			BetterEvidenceID uint   `json:"better_evidence_id"`
+			Reason           string `json:"reason"`
 		} `json:"duplicates"`
 		Subsumed []struct {
 			ParentID    uint   `json:"parent_id"`
@@ -1797,15 +1801,16 @@ func (w *Worker) parseFindingDedupOutput(scan *db.Scan, report string, emit func
 		return nil
 	}
 
-	skipped := 0
+	skipped, promoted := 0, 0
 	marked, err := w.applyDedupHeaded(scan.RepositoryID, dedupHeaderDuplicate, true,
 		mapDedupGroups(result.Duplicates, func(g struct {
-			CanonicalID  uint   `json:"canonical_id"`
-			DuplicateIDs []uint `json:"duplicate_ids"`
-			Reason       string `json:"reason"`
+			CanonicalID      uint   `json:"canonical_id"`
+			DuplicateIDs     []uint `json:"duplicate_ids"`
+			BetterEvidenceID uint   `json:"better_evidence_id"`
+			Reason           string `json:"reason"`
 		}) dedupGroup {
-			return dedupGroup{HeadID: g.CanonicalID, MemberIDs: g.DuplicateIDs, Reason: g.Reason}
-		}), &skipped)
+			return dedupGroup{HeadID: g.CanonicalID, MemberIDs: g.DuplicateIDs, Reason: g.Reason, BetterID: g.BetterEvidenceID}
+		}), &skipped, &promoted)
 	if err != nil {
 		return err
 	}
@@ -1821,7 +1826,7 @@ func (w *Worker) parseFindingDedupOutput(scan *db.Scan, report string, emit func
 			Reason      string `json:"reason"`
 		}) dedupGroup {
 			return dedupGroup{HeadID: g.ParentID, MemberIDs: g.SubsumedIDs, Reason: g.Reason}
-		}), &skipped)
+		}), &skipped, nil)
 	if err != nil {
 		return err
 	}
@@ -1838,8 +1843,8 @@ func (w *Worker) parseFindingDedupOutput(scan *db.Scan, report string, emit func
 	}
 
 	emit(Event{Kind: KindText, Text: fmt.Sprintf(
-		"finding-dedup: marked %d duplicate(s), noted %d subsumed, noted %d chain member(s), skipped %d",
-		marked, subsumed, chained, skipped)})
+		"finding-dedup: marked %d duplicate(s), took better evidence for %d, noted %d subsumed, noted %d chain member(s), skipped %d",
+		marked, promoted, subsumed, chained, skipped)})
 	return nil
 }
 
@@ -1854,8 +1859,10 @@ func mapDedupGroups[T any](in []T, f func(T) dedupGroup) []dedupGroup {
 // applyDedupHeaded handles the duplicate and subsumed shapes: one head
 // (canonical or parent) plus a list of members that each get a note
 // pointing at the head. When flipStatus is set the member's lifecycle
-// moves to duplicate; otherwise (subsumed) only the note lands.
-func (w *Worker) applyDedupHeaded(repoID uint, verb string, flipStatus bool, groups []dedupGroup, skipped *int) (int, error) {
+// moves to duplicate; otherwise (subsumed) only the note lands. A
+// duplicate named by BetterID also lends its evidence to the head, counted
+// in promoted when that is non-nil.
+func (w *Worker) applyDedupHeaded(repoID uint, verb string, flipStatus bool, groups []dedupGroup, skipped, promoted *int) (int, error) {
 	n := 0
 	for _, g := range groups {
 		head, ok := w.dedupFinding(repoID, g.HeadID)
@@ -1874,11 +1881,12 @@ func (w *Worker) applyDedupHeaded(repoID uint, verb string, flipStatus bool, gro
 				continue
 			}
 			if flipStatus {
-				if err := db.WriteFindingField(w.DB, member.ID, "status", string(db.FindingDuplicate), db.SourceModel, findingDedupSkill); err != nil {
-					return n, fmt.Errorf("mark finding %d duplicate: %w", member.ID, err)
+				took, err := w.markDedupDuplicate(head, member, g)
+				if err != nil {
+					return n, err
 				}
-				if err := w.DB.Model(&db.Finding{}).Where("id = ?", member.ID).Update("duplicate_of_id", head.ID).Error; err != nil {
-					return n, fmt.Errorf("link finding %d to canonical %d: %w", member.ID, head.ID, err)
+				if took && promoted != nil {
+					*promoted++
 				}
 			}
 			if err := w.addRelationNote(member.ID, verb, []uint{head.ID}, g.Reason); err != nil {
@@ -1888,6 +1896,21 @@ func (w *Worker) applyDedupHeaded(repoID uint, verb string, flipStatus bool, gro
 		}
 	}
 	return n, nil
+}
+
+// markDedupDuplicate flips member to duplicate of head and, when it is the
+// group's BetterID, moves its evidence onto head. Reports whether evidence moved.
+func (w *Worker) markDedupDuplicate(head, member db.Finding, g dedupGroup) (bool, error) {
+	if err := db.WriteFindingField(w.DB, member.ID, "status", string(db.FindingDuplicate), db.SourceModel, findingDedupSkill); err != nil {
+		return false, fmt.Errorf("mark finding %d duplicate: %w", member.ID, err)
+	}
+	if err := w.DB.Model(&db.Finding{}).Where("id = ?", member.ID).Update("duplicate_of_id", head.ID).Error; err != nil {
+		return false, fmt.Errorf("link finding %d to canonical %d: %w", member.ID, head.ID, err)
+	}
+	if member.ID != g.BetterID {
+		return false, nil
+	}
+	return w.promoteDedupEvidence(head, member, g.Reason)
 }
 
 // minChainMembers is the smallest chain worth recording after the
@@ -1960,6 +1983,8 @@ const (
 	dedupHeaderDuplicate = "duplicates"
 	dedupHeaderSubsumed  = "subsumed by"
 	dedupHeaderChains    = "chains with"
+	// dedupHeaderEvidence is informational only; no skill parses it.
+	dedupHeaderEvidence = "took evidence from"
 )
 
 // addRelationNote records a finding-dedup relation on findingID as a note
