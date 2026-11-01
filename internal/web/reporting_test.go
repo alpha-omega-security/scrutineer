@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/reporting"
 )
 
 // seedReportCorpus lays down scans and findings either side of the rolling
@@ -755,6 +756,35 @@ func TestReportingJSONExport(t *testing.T) {
 		if out.ByDay[i-1].Date < out.ByDay[i].Date {
 			t.Fatalf("activity_by_day not newest first: %q then %q", out.ByDay[i-1].Date, out.ByDay[i].Date)
 		}
+	}
+}
+
+func TestReportingJSONPeriodSpendMatchesDays(t *testing.T) {
+	s, cleanup := newTestServer(t)
+	defer cleanup()
+	seedReportCorpus(t, s)
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", "/reporting/report.json?interval=all"))
+	if w.Code != 200 {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	var out reporting.Export
+	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode: %v\n%s", err, w.Body)
+	}
+	var dayCost float64
+	var dayTokens int
+	for _, d := range out.ByDay {
+		dayCost += d.CostUSD
+		dayTokens += d.TotalTokens
+	}
+	if out.Activity.CostUSD == 0 || out.Activity.TotalTokens == 0 {
+		t.Fatalf("activity_in_period spend is zero, so the comparison would be vacuous: %+v", out.Activity)
+	}
+	if out.Activity.CostUSD != dayCost || out.Activity.TotalTokens != dayTokens {
+		t.Errorf("activity_in_period cost_usd=%v total_tokens=%d, want the activity_by_day sums %v and %d",
+			out.Activity.CostUSD, out.Activity.TotalTokens, dayCost, dayTokens)
 	}
 }
 
