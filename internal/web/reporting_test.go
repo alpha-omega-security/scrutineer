@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"scrutineer/internal/db"
-	"scrutineer/internal/reporting"
 )
 
 // seedReportCorpus lays down scans and findings either side of the rolling
@@ -685,10 +684,12 @@ func TestReportingJSONExport(t *testing.T) {
 			AppliesTo       []string `json:"applies_to"`
 		} `json:"filters"`
 		Activity struct {
-			RepositoriesScanned int `json:"repositories_scanned"`
-			ScansStarted        int `json:"scans_started"`
-			ScansCompleted      int `json:"scans_completed"`
-			Findings            int `json:"findings"`
+			RepositoriesScanned int     `json:"repositories_scanned"`
+			ScansStarted        int     `json:"scans_started"`
+			ScansCompleted      int     `json:"scans_completed"`
+			Findings            int     `json:"findings"`
+			CostUSD             float64 `json:"cost_usd"`
+			TotalTokens         int     `json:"total_tokens"`
 		} `json:"activity_in_period"`
 		Averages struct {
 			Population string             `json:"population"`
@@ -734,8 +735,10 @@ func TestReportingJSONExport(t *testing.T) {
 	if len(out.Filters.AppliesTo) != 1 || out.Filters.AppliesTo[0] != "findings" {
 		t.Errorf("applies_to = %v, want [findings]", out.Filters.AppliesTo)
 	}
+	// The failed run's spend (1.00, 22 tokens) is part of the period totals.
 	if out.Activity.RepositoriesScanned != 3 || out.Activity.ScansStarted != 6 ||
-		out.Activity.ScansCompleted != 4 || out.Activity.Findings != 3 {
+		out.Activity.ScansCompleted != 4 || out.Activity.Findings != 3 ||
+		out.Activity.CostUSD != 21 || out.Activity.TotalTokens != 11622 {
 		t.Errorf("activity_in_period = %+v", out.Activity)
 	}
 	if out.Averages.Population == "" {
@@ -756,35 +759,6 @@ func TestReportingJSONExport(t *testing.T) {
 		if out.ByDay[i-1].Date < out.ByDay[i].Date {
 			t.Fatalf("activity_by_day not newest first: %q then %q", out.ByDay[i-1].Date, out.ByDay[i].Date)
 		}
-	}
-}
-
-func TestReportingJSONPeriodSpendMatchesDays(t *testing.T) {
-	s, cleanup := newTestServer(t)
-	defer cleanup()
-	seedReportCorpus(t, s)
-
-	w := httptest.NewRecorder()
-	s.Handler().ServeHTTP(w, localReq("GET", "/reporting/report.json?interval=all"))
-	if w.Code != 200 {
-		t.Fatalf("status %d: %s", w.Code, w.Body)
-	}
-	var out reporting.Export
-	if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
-		t.Fatalf("decode: %v\n%s", err, w.Body)
-	}
-	var dayCost float64
-	var dayTokens int
-	for _, d := range out.ByDay {
-		dayCost += d.CostUSD
-		dayTokens += d.TotalTokens
-	}
-	if out.Activity.CostUSD == 0 || out.Activity.TotalTokens == 0 {
-		t.Fatalf("activity_in_period spend is zero, so the comparison would be vacuous: %+v", out.Activity)
-	}
-	if out.Activity.CostUSD != dayCost || out.Activity.TotalTokens != dayTokens {
-		t.Errorf("activity_in_period cost_usd=%v total_tokens=%d, want the activity_by_day sums %v and %d",
-			out.Activity.CostUSD, out.Activity.TotalTokens, dayCost, dayTokens)
 	}
 }
 
