@@ -47,6 +47,14 @@ ARG RUBY_GIT_URL=https://github.com/ruby/ruby.git
 # release tags use underscores (v3_4_9). Bump in lockstep with the ruby
 # profile; the content-addressed image tag invalidates the cache on any edit.
 ARG RUBY_GIT_REF=v3_4_9
+# Second ASan interpreter: Ruby 4.0.6, built to a separate prefix (3.4.9 stays the
+# default `ruby`). Ruby 4.0 reworked object layout (flag bits, ROBJECT_EMBED, super
+# storage, variable-width allocation), so a native-extension memory bug can be benign
+# under one ABI and a crash under another — e.g. a struct/type confusion whose write
+# stays inside an embedded object on 3.x but dereferences a stale heap pointer on 4.0.
+# NB tag convention is NOT uniform: 4.0.x tags use DOTS (v4.0.6), older 3.4.x use
+# UNDERSCORES (v3_4_9). Not a typo. (v4.0.6 == commit 03b6d3f8...)
+ARG RUBY_GIT_REF_40=v4.0.6
 # ruby-build (kept on PATH) lets a scan install a project-pinned STOCK Ruby for
 # a Ruby-level reproducer when the gem targets a version other than 3.4. Same
 # pin as the ruby / ruby-rails profiles.
@@ -69,6 +77,7 @@ ARG RUST_NIGHTLY_VERSION=nightly-2026-06-24
 FROM ${RUNNER_IMAGE}
 ARG RUBY_GIT_URL
 ARG RUBY_GIT_REF
+ARG RUBY_GIT_REF_40
 ARG RUBY_BUILD_REF
 ARG BRAKEMAN_VERSION
 ARG RUSTUP_VERSION
@@ -200,6 +209,47 @@ RUN set -eux; \
     fi; \
     cd /; rm -rf "$d"
 
+# ---- Second ASan interpreter: Ruby 4.0.6 (RUBY_GIT_REF_40) -------------------
+# Same ASan/UBSan flags and the same rbconfig rewrite as the 3.4 interpreter, to a
+# separate prefix so 3.4.9 stays the default `ruby`. Runs under the build-safe
+# ASAN_OPTIONS set near the top of the file. Roughly doubles the from-source build.
+RUN git clone --depth 1 --branch "${RUBY_GIT_REF_40}" "${RUBY_GIT_URL}" /opt/ruby-src-40 \
+ && cd /opt/ruby-src-40 \
+ && ./autogen.sh \
+ && ./configure \
+        --prefix=/usr/local/ruby-asan-40 \
+        --disable-install-doc \
+        cppflags="-fsanitize=address -fsanitize=undefined -fno-sanitize=alignment -fno-omit-frame-pointer -DRUBY_DEBUG=1" \
+        optflags="-O1 -g" \
+        debugflags="-g3" \
+        LDFLAGS="-fsanitize=address -fsanitize=undefined" \
+ && make -j"$(nproc)" \
+ && make install \
+ && /usr/local/ruby-asan-40/bin/ruby -v
+
+# Rewrite recorded cppflags in the 4.0 rbconfig for extensions (alignment check back
+# ON, -fno-sanitize-recover=undefined so UB aborts), run with the 4.0 ruby so it edits
+# the 4.0 config. Aborts loudly if 4.0's rbconfig entry shape differs.
+RUN /usr/local/ruby-asan-40/bin/ruby -rrbconfig -e 'path=$LOADED_FEATURES.grep(/rbconfig\.rb$/).first; cfg=File.read(path); cfg.sub!(/^(\s*CONFIG\["cppflags"\] = ".*)"\s*$/){ $1.gsub(" -fno-sanitize=alignment","") + " -fno-sanitize-recover=undefined\"" } or abort("ruby-ext(4.0): cppflags entry not found in #{path}"); File.write(path, cfg)' \
+ && /usr/local/ruby-asan-40/bin/ruby -e 'f=RbConfig::CONFIG["CPPFLAGS"]; abort("ruby-ext(4.0): alignment still off for extensions: #{f}") if f.include?("-fno-sanitize=alignment"); abort("ruby-ext(4.0): -fno-sanitize-recover missing for extensions: #{f}") unless f.include?("-fno-sanitize-recover=undefined"); STDERR.puts "ruby-ext(4.0): extension CPPFLAGS =>#{f}"'
+
+# Prove the 4.0 rbconfig rewrite reaches a real mkmf extension compile.
+RUN set -eux; \
+    d="$(mktemp -d)"; mkdir -p "$d/probe"; cd "$d/probe"; \
+    printf 'require "mkmf"\ncreate_makefile("probe")\n' > extconf.rb; \
+    printf 'void Init_probe(void){}\n' > probe.c; \
+    /usr/local/ruby-asan-40/bin/ruby extconf.rb; \
+    make V=1 > compile.log 2>&1 || { cat compile.log; exit 1; }; \
+    grep -Eq -- '-fno-sanitize-recover=undefined' compile.log \
+        || { echo "ruby-ext(4.0): extension compile missing -fno-sanitize-recover=undefined"; cat compile.log; exit 1; }; \
+    if grep -Eq -- '-fno-sanitize=alignment' compile.log; then \
+        echo "ruby-ext(4.0): extension compile still carries -fno-sanitize=alignment"; cat compile.log; exit 1; \
+    fi; \
+    cd /; rm -rf "$d"
+
+# `ruby4` on PATH (/usr/local/bin) for the 4.0 ASan interpreter; default `ruby` stays 3.4.9.
+RUN ln -s /usr/local/ruby-asan-40/bin/ruby /usr/local/bin/ruby4
+
 # Rust for rb-sys / Cargo-native gems. Minimal stable (default) + the pinned
 # nightly with rust-src so the Rust side of the boundary can be rebuilt with
 # -Zsanitizer=address -Zbuild-std to match the ASan interpreter. Miri is NOT
@@ -253,9 +303,11 @@ ENV CFLAGS="-fsanitize=address -fsanitize=undefined -fno-sanitize-recover=undefi
 # The install dir and Rust caches must stay writable for the non-root host uid
 # the scan runs as, so mkmf/cargo can build extensions in place. The container
 # is ephemeral and --rm'd after the scan, so the blast radius is zero.
-RUN chmod -R a+rwX /usr/local/ruby-asan "$RUSTUP_HOME" "$CARGO_HOME" \
+RUN chmod -R a+rwX /usr/local/ruby-asan /usr/local/ruby-asan-40 "$RUSTUP_HOME" "$CARGO_HOME" \
  && ruby -v 2>&1 | grep -q "ruby 3.4" \
+ && ruby4 -v 2>&1 | grep -q "ruby 4.0" \
  && ldd /usr/local/ruby-asan/bin/ruby | grep -q libasan \
+ && ldd /usr/local/ruby-asan-40/bin/ruby | grep -q libasan \
  && /usr/bin/ruby -v && valgrind --version && cargo --version
 
 # Runtime (gem-scan) sanitizer options — set LAST, after every build and verify

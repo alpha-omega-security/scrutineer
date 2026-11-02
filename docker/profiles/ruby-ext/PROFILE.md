@@ -34,6 +34,11 @@ pass misses, on top of the C/Ruby audit above.
   RbConfig::CONFIG["CFLAGS"]'` shows the sanitizer flags. Its `gem`/`bundle` compile extensions
   *instrumented* automatically (the flags flow through rbconfig). Use this to build and drive the
   extension.
+- **`ruby4` (on PATH) → `/usr/local/ruby-asan-40` — a second ASan+UBSan build, Ruby 4.0.6.** Same
+  instrumentation as `ruby`, a different ABI. Ruby 4.0 changed object layout (flag bits,
+  `ROBJECT_EMBED`, `super` storage, variable-width allocation), so a native-memory bug can manifest
+  differently — or only — under one ABI. Build and drive the extension under it exactly as under
+  `ruby`: `cd ext/<n> && ruby4 extconf.rb && make`, or `/usr/local/ruby-asan-40/bin/bundle install`.
 - **`/usr/bin/ruby` — stock Ruby (apt).** Uninstrumented and fast; use it for reading-speed
   Ruby-level work and as the **valgrind** target. Never run valgrind against the ASan ruby.
 - `/opt/ruby-src` — the Ruby source tree the ASan build came from. Cross-reference C-API
@@ -63,11 +68,23 @@ Then drive it from Ruby and let a sanitizer abort be the signal:
 bundle exec ruby /tmp/poc.rb      # or: ruby -e '...'
 ```
 
-**Version skew.** The sanitized interpreter is Ruby 3.4. If the gem targets another version (`required_ruby_version`,
-`.ruby-version`) and the extension won't compile or load against 3.4 — removed C-API, struct-layout changes — say so
-explicitly; that is a coverage gap, not a clean result. ASan/memory-safety coverage stays on 3.4; for a Ruby-level
-reproducer on the gem's own version use `ruby-build <x.y.z> /tmp/ruby-<x.y.z>` (on PATH) or the stock `/usr/bin/ruby`,
-and state the version used.
+**Two ASan ABIs — build against the gem's target, and test both when layout matters.** There are two
+instrumented interpreters: `ruby` (3.4.9, default) and `ruby4` (4.0.6). The gem's own target comes
+from `required_ruby_version` / `.ruby-version` / the Gemfile `ruby` line — read it and build the
+extension against the ABI that matches. If it won't compile or load against one (removed C-API,
+struct-layout change), try the other before calling it a coverage gap, and state which ABI you used.
+
+For a **memory-safety** candidate whose outcome can depend on object layout — type confusion, OOB,
+UAF, anything touching `RSTRUCT_*` / `ROBJECT_*` / `RBASIC` flag bits or the GC — reproduce under
+**both** `ruby` and `ruby4` and record which ABI produced which result. The same defect is routinely
+benign on one ABI and a hard crash on another, because the interpreters disagree on where an object
+stores its data. A Struct/type confusion that writes attacker values through `RSTRUCT_LEN` /
+`rb_struct_aset` on a non-Struct instance, for instance, can land inside an embedded object on a
+Ruby major whose fresh objects carry the embed flag bits (a contained, often silent write) yet
+dereference a stale heap pointer on a major where they do not (a wild write → SIGSEGV / likely RCE).
+A clean run on one ABI is a clean result for that ABI, not for the finding. For a Ruby-level
+(non-memory) reproducer on some other version, `ruby-build <x.y.z> /tmp/ruby-<x.y.z>` (on PATH) or
+the stock `/usr/bin/ruby` still apply; state the version.
 
 ### Rust extensions (rb-sys / Cargo-native)
 
