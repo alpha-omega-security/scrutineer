@@ -1721,7 +1721,7 @@ func Models() []any {
 	return []any{
 		&Repository{}, &Scan{},
 		&Finding{}, &FindingLabel{}, &FindingNote{}, &DisclosureSubmission{},
-		&FindingCommunication{}, &FindingReference{}, &FindingHistory{}, &FindingReview{}, &FeedbackConfirmation{}, &FindingVerification{}, &FindingAttackPath{}, &FindingObservation{}, &ScanPreflightReceipt{},
+		&FindingCommunication{}, &FindingReference{}, &FindingHistory{}, &FindingReview{}, &FeedbackConfirmation{}, &FindingVerification{}, &FindingAttackPath{}, &FindingObservation{}, &ScanPreflightReceipt{}, &ScanGroupBudget{},
 		&RemediationAttempt{}, &RemediationValidation{}, &AuditEvent{}, &FindingPoC{},
 		&Dependency{}, &ExpectedFinding{}, &Package{}, &PackageAlternative{}, &Dependent{}, &FindingDependent{}, &Advisory{}, &AdvisoryAudit{},
 		&Maintainer{}, &Skill{}, &Subproject{}, &ComplianceControl{},

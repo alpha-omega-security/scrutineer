@@ -266,11 +266,11 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 	return w.runAndParseSkill(ctx, scan, &skill, sj, workRoot, hardScope, emit)
 }
 
-// runAndParseSkill runs the skill (under the scan's cost cap when it has one)
+// runAndParseSkill runs the skill (under the scan or group cost cap when there is one)
 // then validates and parses its report.
 func (w *Worker) runAndParseSkill(ctx context.Context, scan *db.Scan, skill *db.Skill, sj SkillJob, workRoot string, hardScope bool, emit func(Event)) (string, error) {
 	scan.CostCapped = false
-	runCtx, runEmit, guard, stop := startCostGuardRun(ctx, scan, emit)
+	runCtx, runEmit, guard, stop := w.startCostGuardRun(ctx, scan, emit)
 	defer stop()
 	res, err := w.runSkillWithFallback(runCtx, scan, skill, sj, workRoot, hardScope, runEmit)
 	w.applySkillResult(scan, res)

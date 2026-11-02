@@ -220,6 +220,9 @@ type Worker struct {
 	// Now overrides time.Now in tests.
 	Now func() time.Time
 
+	// groups tracks live spend for scans under a shared group budget.
+	groups groupSpend
+
 	autoResumeMu    sync.Mutex
 	autoResumeTimer *time.Timer
 	autoResumeAt    time.Time
@@ -736,8 +739,7 @@ func (w *Worker) wrap(h handler) func(context.Context, []byte) error {
 		if err != nil || scan == nil {
 			return err
 		}
-		if scan.Repository.FederationOptedOut() {
-			w.cancelOptedOut(scan)
+		if w.dropBeforeStart(scan) {
 			return nil
 		}
 
@@ -828,6 +830,16 @@ func (w *Worker) cancelOptedOut(scan *db.Scan) {
 	w.publish(scan.ID, scan.RepositoryID, "scan-status", string(scan.Status))
 	w.Log.Warn("dropping job: maintainer opted out of federated scanning",
 		"scan", scan.ID, "repo", scan.RepositoryID)
+}
+
+// dropBeforeStart finishes a queued scan that must not run: its repository
+// opted out of federated scanning or its group has spent its budget.
+func (w *Worker) dropBeforeStart(scan *db.Scan) bool {
+	if scan.Repository.FederationOptedOut() {
+		w.cancelOptedOut(scan)
+		return true
+	}
+	return w.skipIfGroupSpent(scan)
 }
 
 // errScanClaimLost means the row left `queued` between the dispatch gate

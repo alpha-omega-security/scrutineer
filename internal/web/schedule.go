@@ -247,7 +247,7 @@ func (s *Server) runScheduledScan(
 		s.recordScheduledSkip(repo, fmt.Sprintf("no new commits since %.12s", head))
 		return
 	}
-	n, err := s.enqueueDiffRescanGroup(ctx, repo.ID, "", "")
+	n, err := s.enqueueDiffRescanGroup(ctx, repo.ID, "", "", 0)
 	if err != nil {
 		s.recordScheduledSkip(repo, "enqueue failed: "+err.Error())
 		return
