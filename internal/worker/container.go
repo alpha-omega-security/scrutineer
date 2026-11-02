@@ -274,14 +274,6 @@ func (s *containerRunErrorState) observe(event Event, h Harness, opencodeProvide
 	}
 }
 
-// resumeRetryable gates the "session gone, restart fresh" fallback. Only an
-// account error (auth/quota) blocks it: a configured-provider error event may
-// be the harness reporting the missing session itself, which is exactly the
-// condition the fallback exists for.
-func (s containerRunErrorState) resumeRetryable() bool {
-	return s.accountText == ""
-}
-
 func (s containerRunErrorState) failure(provider opencodeProvider, runtimeName string, waitErr error) error {
 	if s.accountText != "" {
 		return &AccountError{Detail: s.accountText, ResetAt: resumableReset(s.accountText, s.rateLimit)}
@@ -414,11 +406,7 @@ func (d ContainerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Ev
 		emit(e)
 	}
 	run := func(ctx context.Context, j harness.Job, emit func(Event)) error {
-		err := d.runContainerOnce(ctx, runBase, append([]string{h.Binary()}, h.Args(j)...), d.containerProcessEnv(provider.Env), emit)
-		if err != nil && !runErrors.resumeRetryable() {
-			return &harness.AccountError{Detail: runErrors.accountText}
-		}
-		return err
+		return d.runContainerOnce(ctx, runBase, append([]string{h.Binary()}, h.Args(j)...), d.containerProcessEnv(provider.Env), emit)
 	}
 	session, waitErr := harness.RunSession(ctx, run, d.harnessJob(sj), wrappedEmit)
 

@@ -257,11 +257,7 @@ func (l LocalClaude) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)
 		emit(e)
 	}
 	run := func(ctx context.Context, j harness.Job, emit func(Event)) error {
-		err := l.runClaudeOnce(ctx, ClaudeHarness{}.Args(j), work, emit)
-		if err != nil && accountErrText != "" {
-			return &harness.AccountError{Detail: accountErrText}
-		}
-		return err
+		return l.runClaudeOnce(ctx, ClaudeHarness{}.Args(j), work, emit)
 	}
 	session, waitErr := harness.RunSession(ctx, run, sj.toJob(l.Effort, l.MaxTurns, ""), wrappedEmit)
 

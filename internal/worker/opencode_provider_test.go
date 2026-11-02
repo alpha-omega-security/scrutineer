@@ -530,20 +530,12 @@ func TestClassifyOpencodeReadinessErrors(t *testing.T) {
 	}
 }
 
-func TestContainerRunErrorStateResumeRetryIgnoresProviderErrors(t *testing.T) {
-	h := stubHarness{acctErr: "invalid_api_key"}
+func TestContainerRunErrorStateKeepsProviderErrorText(t *testing.T) {
 	s := containerRunErrorState{}
-	s.observe(Event{Kind: KindError, Text: "session abc not found"}, h, "kiro")
-	if !s.resumeRetryable() {
-		t.Error("provider error event blocked the fresh-restart resume fallback")
-	}
+	s.observe(Event{Kind: KindError, Text: "session abc not found"}, stubHarness{acctErr: "invalid_api_key"}, "kiro")
 	err := s.failure(opencodeProvider{ID: "kiro"}, "docker", errors.New("exit 1"))
 	if !strings.Contains(err.Error(), "session abc not found") {
 		t.Errorf("provider error text lost from failure: %v", err)
-	}
-	s.observe(Event{Kind: KindError, Text: "invalid_api_key: revoked"}, h, "kiro")
-	if s.resumeRetryable() {
-		t.Error("account error event did not block the resume fallback")
 	}
 }
 
