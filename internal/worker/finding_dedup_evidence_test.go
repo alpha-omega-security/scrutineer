@@ -22,11 +22,11 @@ func betterEvidenceSetup(t *testing.T, headStatus db.FindingLifecycle) (*Worker,
 	head, member := fs[0], fs[1]
 	gdb.Model(&head).Updates(map[string]any{
 		"status": headStatus, "title": "old title", "location": "a.c:1", "trace": "old trace",
-		"validation": "old poc", "severity": "Medium", "cwe": "CWE-79",
+		"validation": "old poc", "prior_art": "old prior art", "severity": "Medium", "cwe": "CWE-79",
 	})
 	gdb.Model(&member).Updates(map[string]any{
 		"title": "clean title", "location": "b.c:9", "locations": "b.c:9\nb.c:10", "trace": "clear trace",
-		"validation": "tiny poc", "severity": "Critical", "cwe": "CWE-787",
+		"validation": "tiny poc", "prior_art": "matching prior art", "severity": "Critical", "cwe": "CWE-787",
 	})
 	gdb.First(&head, head.ID)
 	gdb.First(&member, member.ID)
@@ -80,8 +80,16 @@ func TestParseFindingDedup_betterEvidencePromotesOntoCanonical(t *testing.T) {
 		t.Errorf("assessment changed: status=%s severity=%s cwe=%s", got.Status, got.Severity, got.CWE)
 	}
 	if got.Title != "clean title" || got.Trace != "clear trace" || got.Validation != "tiny poc" ||
-		got.Location != "b.c:9" || got.Locations != "b.c:9\nb.c:10" {
+		got.PriorArt != "matching prior art" {
 		t.Errorf("body not promoted: %+v", got)
+	}
+	if got.Location != head.Location || got.Locations != head.Locations {
+		t.Errorf("location moved to %q / %q, want the canonical's %q / %q", got.Location, got.Locations, head.Location, head.Locations)
+	}
+	var locHist int64
+	w.DB.Model(&db.FindingHistory{}).Where("finding_id = ? AND field IN ?", head.ID, []string{"location", "locations"}).Count(&locHist)
+	if locHist != 0 {
+		t.Errorf("unexpected location history rows: %d", locHist)
 	}
 	dup := reloadFinding(w.DB, member.ID)
 	if dup.Status != db.FindingDuplicate || dup.DuplicateOfID != head.ID {

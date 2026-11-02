@@ -9,21 +9,22 @@ import (
 	"scrutineer/internal/db"
 )
 
-// dedupEvidenceFields are the report-body columns a better duplicate can
-// replace on the canonical finding. Assessments (severity, cwe, rating,
-// reachability) and lifecycle data stay with the canonical.
+// dedupEvidenceFields are the report prose a better duplicate can replace on
+// the canonical finding. Location stays with the canonical because its
+// snippet, VID and source links are derived from it at the canonical's
+// commit. Assessments (severity, cwe, rating, reachability) and lifecycle
+// data stay too.
 var dedupEvidenceFields = []struct {
 	name string
 	get  func(*db.Finding) string
 }{
 	{"title", func(f *db.Finding) string { return f.Title }},
-	{"location", func(f *db.Finding) string { return f.Location }},
-	{"locations", func(f *db.Finding) string { return f.Locations }},
 	{"sinks", func(f *db.Finding) string { return f.Sinks }},
 	{"trace", func(f *db.Finding) string { return f.Trace }},
 	{"boundary", func(f *db.Finding) string { return f.Boundary }},
 	{"validation", func(f *db.Finding) string { return f.Validation }},
 	{"reach", func(f *db.Finding) string { return f.Reach }},
+	{"prior_art", func(f *db.Finding) string { return f.PriorArt }},
 }
 
 // promoteDedupEvidence copies the report body of member onto head, keeping
