@@ -240,6 +240,7 @@ func seedHistory(t *testing.T, src *gorm.DB) {
 		&db.FindingPoC{FindingID: 1, ScanID: 1, Commit: "abc123", Files: migrationPoCFiles(t)},
 		&db.FeedbackConfirmation{ReviewID: 1, ScanID: 1, FindingID: 1, Commit: "abc123"},
 		&db.ScanPreflightReceipt{ScanID: 1, ProbeID: "probe", Report: "{}"},
+		&db.ScanGroupBudget{ScanGroup: "group", RepositoryID: 1, MaxCostUSD: 5},
 		&db.FindingVerification{FindingID: 1, ScanID: 1, Status: "verified", Report: "{}"},
 		&db.FindingAttackPath{FindingID: 1, ScanID: 1, ProductionViability: "VIABLE", Report: "{}"},
 		&db.FindingObservation{FindingID: 1, ScanID: 1, RepositoryID: 1, Commit: "abc123", Severity: "High", Evidence: `{"trace":"t"}`},
