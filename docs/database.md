@@ -438,7 +438,7 @@ Each capture holds at most 64 regular files, with limits of 1 MiB per file and 2
 
 ## import_artifacts
 
-Retains files an external producer shipped beside its findings, today the PoV inputs, patches and report bundles of an OSS-CRS run imported through `POST /api/v1/import/oss-crs`. A file associated with several findings has one row per finding, and a repeat import of the same bytes for the same finding adds no row.
+Retains files an external producer shipped beside its findings, today the patches, report bundles and unassociated PoV inputs of an OSS-CRS run imported through `POST /api/v1/import/oss-crs`. An associated PoV goes to [`finding_pocs`](#finding_pocs) instead, and lands here only when that capture refuses it or an earlier capture of the finding does not hold its bytes. A file associated with several findings has one row per finding, and a repeat import of the same bytes for the same finding adds no row.
 
 | Column | Type | Notes |
 |--------|------|-------|

@@ -74,6 +74,7 @@ type ossCRSResponse struct {
 		Reason string `json:"reason"`
 	} `json:"skipped"`
 	Unresolved []string `json:"unresolved_attachments"`
+	Warnings   []string `json:"warnings"`
 }
 
 func postOSSCRS(t *testing.T, s *Server, path string, body []byte) (*httptest.ResponseRecorder, ossCRSResponse) {
@@ -108,6 +109,9 @@ func TestImportOSSCRSRetainsEvidence(t *testing.T) {
 	if finding.ImportedFrom != "crs-a" || finding.Commit != "deadbeef" || finding.Location != "src/parse.c:12" {
 		t.Errorf("finding = from=%q commit=%q loc=%q", finding.ImportedFrom, finding.Commit, finding.Location)
 	}
+	if finding.ScanID != resp.ScanID {
+		t.Errorf("finding scan = %d, want the oss-crs run scan %d", finding.ScanID, resp.ScanID)
+	}
 	if finding.SuggestedFix != "" {
 		t.Errorf("SuggestedFix = %q, want empty until the patch gate passes", finding.SuggestedFix)
 	}
@@ -116,8 +120,13 @@ func TestImportOSSCRSRetainsEvidence(t *testing.T) {
 	if err := s.DB.First(&scan, resp.ScanID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if scan.Kind != "import" || scan.SkillName != "oss-crs" || scan.Commit != "deadbeef" || !strings.Contains(scan.Log, "oss-crs run: run-42") {
-		t.Errorf("scan = kind=%q skill=%q commit=%q log=%q", scan.Kind, scan.SkillName, scan.Commit, scan.Log)
+	if scan.Kind != "import" || scan.SkillName != "oss-crs" || scan.Commit != "deadbeef" || scan.FindingsCount != 1 || !strings.Contains(scan.Log, "oss-crs run: run-42") {
+		t.Errorf("scan = kind=%q skill=%q commit=%q findings=%d log=%q", scan.Kind, scan.SkillName, scan.Commit, scan.FindingsCount, scan.Log)
+	}
+	var scans int64
+	s.DB.Model(&db.Scan{}).Count(&scans)
+	if scans != 1 {
+		t.Errorf("scans = %d, want the single oss-crs run scan", scans)
 	}
 
 	got := map[string]uint{}
@@ -127,7 +136,7 @@ func TestImportOSSCRSRetainsEvidence(t *testing.T) {
 		}
 		got[a.Path] = a.FindingID
 	}
-	want := map[string]uint{"povs/abc": findingID, "patches/fix.diff": findingID, "povs/zzz": 0, "reports/r.tar.gz": 0}
+	want := map[string]uint{"patches/fix.diff": findingID, "povs/zzz": 0, "reports/r.tar.gz": 0}
 	if len(got) != len(want) {
 		t.Errorf("artifacts = %v, want %v", got, want)
 	}
@@ -163,6 +172,77 @@ func TestImportOSSCRSCapturesAssociatedPoV(t *testing.T) {
 	}
 }
 
+func TestImportOSSCRSKeepsCandidateRevision(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	candidate := strings.Replace(ossCRSCandidate, `"results"`, `"versionControlProvenance":[{"repositoryUri":"https://github.com/example/widget","revisionId":"cafef00d"}],"results"`, 1)
+	_, resp := postOSSCRS(t, s, ossCRSPath, ossCRSArchive(t, map[string]string{"bug-candidates/a.sarif": candidate}))
+	if len(resp.Results) != 1 || len(resp.Results[0].FindingIDs) != 1 {
+		t.Fatalf("results = %+v", resp.Results)
+	}
+	var finding db.Finding
+	if err := s.DB.First(&finding, resp.Results[0].FindingIDs[0]).Error; err != nil {
+		t.Fatal(err)
+	}
+	if finding.Commit != "cafef00d" {
+		t.Errorf("finding commit = %q, want the candidate's revision over ?commit=", finding.Commit)
+	}
+}
+
+func TestImportOSSCRSKeepsPoVTheCaptureRefuses(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	big := strings.Repeat("a", poc.MaxFileBytes-1)
+	candidate := strings.Replace(ossCRSCandidate, `{"artifactLocation":{"uri":"povs/abc"}}`,
+		`{"artifactLocation":{"uri":"povs/1"}},{"artifactLocation":{"uri":"povs/2"}},{"artifactLocation":{"uri":"povs/3"}}`, 1)
+	_, resp := postOSSCRS(t, s, ossCRSPath, ossCRSArchive(t, map[string]string{
+		"bug-candidates/a.sarif": candidate, "povs/1": big + "1", "povs/2": big + "2", "povs/3": big + "3",
+	}))
+	if len(resp.Results) != 1 || len(resp.Results[0].FindingIDs) != 1 {
+		t.Fatalf("results = %+v", resp.Results)
+	}
+	findingID := resp.Results[0].FindingIDs[0]
+	if row, err := db.LoadFindingPoC(s.DB, findingID); err != nil || row != nil {
+		t.Fatalf("captured PoC present = %v (%v), want none over the total byte limit", row != nil, err)
+	}
+	var paths []string
+	s.DB.Model(&db.ImportArtifact{}).Where("finding_id = ? AND kind = ?", findingID, osscrs.KindPoV).Order("path").Pluck("path", &paths)
+	if strings.Join(paths, ",") != "povs/1,povs/2,povs/3" {
+		t.Errorf("PoV artifacts = %v, want every refused PoV against the finding", paths)
+	}
+	if len(resp.Warnings) != 1 || !strings.Contains(resp.Warnings[0], "not captured") {
+		t.Errorf("warnings = %v", resp.Warnings)
+	}
+}
+
+func TestImportOSSCRSKeepsPoVAnEarlierCaptureLacks(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	files := map[string]string{"bug-candidates/a.sarif": ossCRSCandidate, "povs/abc": "first crash"}
+	w, first := postOSSCRS(t, s, ossCRSPath, ossCRSArchive(t, files))
+	if w.Code != http.StatusCreated || len(first.Results) != 1 || len(first.Results[0].FindingIDs) != 1 {
+		t.Fatalf("first import = %d %s", w.Code, w.Body.String())
+	}
+	findingID := first.Results[0].FindingIDs[0]
+	files["povs/abc"] = "second crash"
+	_, resp := postOSSCRS(t, s, ossCRSPath, ossCRSArchive(t, files))
+
+	row, err := db.LoadFindingPoC(s.DB, findingID)
+	if err != nil || row == nil {
+		t.Fatalf("captured PoC = %v, %v", row, err)
+	}
+	captured, err := poc.Decode(row.Files)
+	if err != nil || len(captured) != 1 || string(captured[0].Data) != "first crash" {
+		t.Errorf("captured PoC = %+v (%v), want the first import's bytes", captured, err)
+	}
+	if len(resp.Artifacts) != 1 || resp.Artifacts[0].Path != "povs/abc" || resp.Artifacts[0].FindingID != findingID || !resp.Artifacts[0].Stored {
+		t.Errorf("artifacts = %+v, want the second PoV stored against the finding", resp.Artifacts)
+	}
+	if len(resp.Warnings) != 1 || !strings.Contains(resp.Warnings[0], "already has a captured PoC") {
+		t.Errorf("warnings = %v", resp.Warnings)
+	}
+}
+
 func TestImportOSSCRSDownloadsOriginalBytes(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
@@ -192,7 +272,7 @@ func TestImportOSSCRSDownloadsOriginalBytes(t *testing.T) {
 	w = httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, r)
 	var listed []db.ImportArtifact
-	if err := json.Unmarshal(w.Body.Bytes(), &listed); err != nil || len(listed) != 4 {
+	if err := json.Unmarshal(w.Body.Bytes(), &listed); err != nil || len(listed) != 3 {
 		t.Fatalf("list = %d %s (%v)", w.Code, w.Body.String(), err)
 	}
 	if strings.Contains(w.Body.String(), "report bytes") {
@@ -230,7 +310,7 @@ func TestImportOSSCRSRepeatImportIsIdempotent(t *testing.T) {
 			t.Errorf("%s: stored=%v id=%d, want the existing row", a.Path, a.Stored, a.ID)
 		}
 	}
-	for model, want := range map[string]int64{"findings": 1, "import_artifacts": 4, "finding_pocs": 1} {
+	for model, want := range map[string]int64{"findings": 1, "import_artifacts": 3, "finding_pocs": 1} {
 		var n int64
 		s.DB.Table(model).Count(&n)
 		if n != want {

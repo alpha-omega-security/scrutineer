@@ -16,7 +16,6 @@ import (
 	"gorm.io/gorm/clause"
 
 	"scrutineer/internal/db"
-	"scrutineer/internal/ingest"
 	"scrutineer/internal/osscrs"
 	"scrutineer/internal/poc"
 )
@@ -46,12 +45,12 @@ type ossCRSImportResponse struct {
 	Warnings     []string         `json:"warnings"`
 }
 
-// handleImportOSSCRS imports one `oss-crs archive` tarball. The archive
-// carries neither the target repository nor the revision, so both are
-// required from the operator. Bug candidates go through the SARIF import
-// path, and every PoV, patch and report is retained in import_artifacts,
-// associated with a finding only when a candidate names it in
-// result.attachments.
+// handleImportOSSCRS imports one `oss-crs archive` tarball into a single
+// import scan for the run. The archive carries neither the target repository
+// nor the revision, so both are required from the operator. Bug candidates
+// go through the SARIF import path. A PoV a candidate names in
+// result.attachments becomes its finding's captured PoC, and every other
+// PoV, patch and report is retained in import_artifacts.
 func (s *Server) handleImportOSSCRS(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	repoURL, commit, run := strings.TrimSpace(q.Get("repo")), strings.TrimSpace(q.Get("commit")), strings.TrimSpace(q.Get("run"))
@@ -60,7 +59,7 @@ func (s *Server) handleImportOSSCRS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(run) > maxOSSCRSRunLen || strings.ContainsFunc(run, unicode.IsControl) {
-		writeAPIError(w, http.StatusBadRequest, "run: must be at most 200 printable characters")
+		writeAPIError(w, http.StatusBadRequest, fmt.Sprintf("run: must be at most %d printable characters", maxOSSCRSRunLen))
 		return
 	}
 	revalidate, err := importRevalidate(r)
@@ -81,9 +80,11 @@ func (s *Server) handleImportOSSCRS(w http.ResponseWriter, r *http.Request) {
 		writeAPIError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
-	for i := range archive.Candidates {
-		if archive.Candidates[i].Commit == "" {
-			archive.Candidates[i].Commit = commit
+	// The run's scan carries ?commit=, so a candidate's own revision has to
+	// reach its findings directly.
+	for _, res := range archive.Candidates {
+		for i := range res.Findings {
+			res.Findings[i].Commit = firstNonEmpty(res.Findings[i].Commit, res.Commit)
 		}
 	}
 
@@ -100,14 +101,6 @@ func (s *Server) handleImportOSSCRS(w http.ResponseWriter, r *http.Request) {
 		if repo, err = ensureImportRepoWith(tx, repoURL); err != nil {
 			return err
 		}
-		if imported, err = s.importResultsWith(tx, archive.Candidates, ingest.FormatSARIF, repoURL); err != nil {
-			return err
-		}
-		links, missing, err := ossCRSLinks(tx, repo.ID, archive)
-		if err != nil {
-			return err
-		}
-		unresolved = missing
 		now := time.Now()
 		scan = db.Scan{
 			RepositoryID: repo.ID,
@@ -119,15 +112,33 @@ func (s *Server) handleImportOSSCRS(w http.ResponseWriter, r *http.Request) {
 			FinishedAt:   &now,
 		}
 		scan.StatusPriority = db.StatusPriorityFor(scan.Status)
-		scan.Log = ossCRSLog(run, archive, unresolved)
 		if err := tx.Create(&scan).Error; err != nil {
 			return err
 		}
-		if artifacts, err = storeOSSCRSArtifacts(tx, scan, archive.Artifacts, links); err != nil {
+		for _, res := range archive.Candidates {
+			bounded, caps := capScannerResult(res)
+			created, observed, err := s.importFindings(tx, &scan, bounded)
+			if err != nil {
+				return err
+			}
+			scan.FindingsCount += len(bounded.Findings)
+			imported = append(imported, importedResult{repo: repo, scan: scan, tool: res.Tool, created: created, observed: observed, caps: caps})
+		}
+		links, missing, err := ossCRSLinks(tx, repo.ID, archive)
+		if err != nil {
 			return err
 		}
-		warnings, err = captureOSSCRSPoVs(tx, scan, archive.Artifacts, links)
-		return err
+		unresolved = missing
+		captured, captureWarnings, err := captureOSSCRSPoVs(tx, scan, archive.Artifacts, links)
+		if err != nil {
+			return err
+		}
+		warnings = captureWarnings
+		if artifacts, err = storeOSSCRSArtifacts(tx, scan, archive.Artifacts, links, captured); err != nil {
+			return err
+		}
+		scan.Log = ossCRSLog(run, archive, unresolved)
+		return tx.Model(&scan).Select("log", "findings_count").Updates(&scan).Error
 	})
 	if err != nil {
 		writeAPIError(w, http.StatusUnprocessableEntity, err.Error())
@@ -203,10 +214,17 @@ func ossCRSLinks(tx *gorm.DB, repoID uint, archive osscrs.Archive) (map[string][
 	return links, slices.Compact(missing), nil
 }
 
+// ossCRSLink is one archive path associated with one finding.
+type ossCRSLink struct {
+	path      string
+	findingID uint
+}
+
 // storeOSSCRSArtifacts keeps the first copy of each artifact's bytes per
 // repository and finding, so a repeat import, or a second archive path with
-// the same bytes, reports Stored false instead of duplicating them.
-func storeOSSCRSArtifacts(tx *gorm.DB, scan db.Scan, artifacts []osscrs.Artifact, links map[string][]uint) ([]ossCRSArtifact, error) {
+// the same bytes, reports Stored false instead of duplicating them. A PoV the
+// finding's captured PoC already holds is not stored again.
+func storeOSSCRSArtifacts(tx *gorm.DB, scan db.Scan, artifacts []osscrs.Artifact, links map[string][]uint, captured map[ossCRSLink]bool) ([]ossCRSArtifact, error) {
 	var out []ossCRSArtifact
 	for _, a := range artifacts {
 		findingIDs := links[a.Path]
@@ -214,6 +232,9 @@ func storeOSSCRSArtifacts(tx *gorm.DB, scan db.Scan, artifacts []osscrs.Artifact
 			findingIDs = []uint{0}
 		}
 		for _, findingID := range findingIDs {
+			if captured[ossCRSLink{a.Path, findingID}] {
+				continue
+			}
 			row := db.ImportArtifact{
 				RepositoryID: scan.RepositoryID, FindingID: findingID, Kind: a.Kind, SHA256: a.SHA256,
 				ScanID: scan.ID, Path: a.Path, Bytes: len(a.Data), Data: a.Data,
@@ -238,9 +259,11 @@ func storeOSSCRSArtifacts(tx *gorm.DB, scan db.Scan, artifacts []osscrs.Artifact
 }
 
 // captureOSSCRSPoVs hands each finding's associated PoVs to the captured-PoC
-// store, which verify stages and the disclosure bundle prefers. The first
-// capture wins, as it does for a scan workspace capture.
-func captureOSSCRSPoVs(tx *gorm.DB, scan db.Scan, artifacts []osscrs.Artifact, links map[string][]uint) ([]string, error) {
+// store, which verify stages and the disclosure bundle prefers, and returns
+// the links whose bytes that store now holds. The first capture wins, as it
+// does for a scan workspace capture, so a PoV refused by validation or
+// absent from an earlier capture is left to import_artifacts with a warning.
+func captureOSSCRSPoVs(tx *gorm.DB, scan db.Scan, artifacts []osscrs.Artifact, links map[string][]uint) (map[ossCRSLink]bool, []string, error) {
 	byFinding := map[uint][]poc.File{}
 	var findingIDs []uint
 	for _, a := range artifacts {
@@ -254,23 +277,46 @@ func captureOSSCRSPoVs(tx *gorm.DB, scan db.Scan, artifacts []osscrs.Artifact, l
 			byFinding[id] = append(byFinding[id], poc.File{Path: a.Path, Data: a.Data, SHA256: a.SHA256})
 		}
 	}
+	captured := map[ossCRSLink]bool{}
 	var warnings []string
 	for _, id := range findingIDs {
 		files := byFinding[id]
 		if err := poc.ValidateFiles(files); err != nil {
-			warnings = append(warnings, fmt.Sprintf("finding %d: PoVs not captured: %v", id, err))
+			warnings = append(warnings, fmt.Sprintf("finding %d: PoVs not captured, kept as import artifacts: %v", id, err))
 			continue
 		}
 		data, err := json.Marshal(files)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		row := db.FindingPoC{FindingID: id, ScanID: scan.ID, Commit: scan.Commit, Files: data}
-		if err := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "finding_id"}}, DoNothing: true}).Create(&row).Error; err != nil {
-			return nil, fmt.Errorf("capture PoVs for finding %d: %w", id, err)
+		res := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "finding_id"}}, DoNothing: true}).Create(&row)
+		if res.Error != nil {
+			return nil, nil, fmt.Errorf("capture PoVs for finding %d: %w", id, res.Error)
+		}
+		if res.RowsAffected == 1 {
+			for _, f := range files {
+				captured[ossCRSLink{f.Path, id}] = true
+			}
+			continue
+		}
+		existing, err := db.LoadFindingPoC(tx, id)
+		if err != nil {
+			return nil, nil, fmt.Errorf("load captured PoC for finding %d: %w", id, err)
+		}
+		held, err := poc.Decode(existing.Files)
+		if err != nil {
+			return nil, nil, fmt.Errorf("decode captured PoC for finding %d: %w", id, err)
+		}
+		for _, f := range files {
+			if slices.ContainsFunc(held, func(h poc.File) bool { return h.SHA256 == f.SHA256 }) {
+				captured[ossCRSLink{f.Path, id}] = true
+				continue
+			}
+			warnings = append(warnings, fmt.Sprintf("finding %d: %s kept as an import artifact, the finding already has a captured PoC", id, f.Path))
 		}
 	}
-	return warnings, nil
+	return captured, warnings, nil
 }
 
 func ossCRSLog(run string, archive osscrs.Archive, unresolved []string) string {
