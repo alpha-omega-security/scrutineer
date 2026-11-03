@@ -211,6 +211,27 @@ func TestApiPatchFinding_allowsOwnFindingScopedStatus(t *testing.T) {
 	}
 }
 
+func TestApiPatchFinding_refusesGateOwnedFields(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	f, tok, _ := seedFindingForAPI(t, s)
+	scopeAPITokenToFinding(t, s, tok, f.ID)
+	path := fmt.Sprintf("/api/findings/%d", f.ID)
+
+	for _, field := range []string{"suggested_fix", "suggested_fix_commit"} {
+		body := fmt.Sprintf(`{"fields":{%q:"--- a/x\n+++ b/x\n"}}`, field)
+		w := apiReq(t, s, "PATCH", path, tok, body)
+		if w.Code != http.StatusForbidden {
+			t.Fatalf("%s via scan token: status = %d, want 403; body=%s", field, w.Code, w.Body)
+		}
+	}
+	var got db.Finding
+	s.DB.First(&got, f.ID)
+	if got.SuggestedFix != "" || got.SuggestedFixCommit != "" {
+		t.Fatalf("gate-owned fields written despite 403: fix=%q commit=%q", got.SuggestedFix, got.SuggestedFixCommit)
+	}
+}
+
 func TestApiPatchFinding_refusesSuppressiveStatus(t *testing.T) {
 	for _, status := range []db.FindingLifecycle{db.FindingRejected, db.FindingDuplicate} {
 		for _, scope := range []string{"matching", "missing", "wrong"} {
