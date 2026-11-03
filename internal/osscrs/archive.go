@@ -11,6 +11,7 @@ import (
 	"io"
 	"path"
 	"strings"
+	"unicode"
 
 	"scrutineer/internal/ingest"
 	"scrutineer/internal/poc"
@@ -25,6 +26,8 @@ const (
 	// kept in memory across the archive.
 	MaxCandidateBytes = 16 << 20
 	MaxRetainedBytes  = 64 << 20
+	// maxDisplayName is the longest path poc.ValidPath accepts.
+	maxDisplayName = 256
 )
 
 // Artifact kinds, named after the libCRS data types.
@@ -165,7 +168,22 @@ func (rd *reader) entry(tr *tar.Reader, hdr *tar.Header) error {
 }
 
 func (a *Archive) skip(name, reason string) {
-	a.Skipped = append(a.Skipped, Skipped{Path: name, Files: 1, Reason: reason})
+	a.Skipped = append(a.Skipped, Skipped{Path: DisplayName(name), Files: 1, Reason: reason})
+}
+
+// DisplayName bounds a producer-supplied name and replaces its control
+// characters before it reaches a response or the scan log: a tar long-name
+// record carries up to 1 MiB, and a newline would forge a log line.
+func DisplayName(name string) string {
+	if len(name) > maxDisplayName {
+		name = strings.ToValidUTF8(name[:maxDisplayName], "") + "..."
+	}
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return '?'
+		}
+		return r
+	}, name)
 }
 
 // normaliseAttachments maps a result's attachment URIs onto archive paths, so

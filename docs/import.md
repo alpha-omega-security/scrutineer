@@ -111,7 +111,7 @@ A file is associated with a finding only when a bug candidate names its archive 
 
 The response extends the import response with `scan_id` (the import scan for the run, `skill_name = oss-crs`, which every imported finding and retained artifact points at and whose log records the run id and everything skipped), `artifacts` (one entry per file and finding kept in `import_artifacts`, with `stored: false` when the same bytes are already held for that finding, from an earlier import or an earlier path in the same archive), `skipped`, `unresolved_attachments` (paths a candidate named that the archive did not carry) and `warnings`. A repeat import of the same archive re-observes the findings and stores nothing new. `GET /api/v1/repositories/{id}/import-artifacts` lists the retained files without their bytes, and `GET /api/v1/import-artifacts/{id}` downloads one. Artifacts associated with a finding are deleted with it, and the rest with the repository.
 
-An entry with an unsafe path, a link or special file, a duplicate path or a size over the limit is skipped and reported. An archive over 100,000 entries, 2 GiB expanded or 64 MiB of retained files is refused with `413` before anything is written.
+An entry with an unsafe path, a link or special file, a duplicate path or a size over the limit is skipped and reported. A name in `skipped` or `unresolved_attachments` is cut to 256 bytes and its control characters are replaced with `?`, so a crafted archive cannot inflate the response or forge a line in the scan log. An archive over 100,000 entries, 2 GiB expanded or 64 MiB of retained files is refused with `413` before anything is written.
 
 ## Supported formats
 

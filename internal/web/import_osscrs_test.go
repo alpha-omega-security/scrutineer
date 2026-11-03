@@ -243,6 +243,23 @@ func TestImportOSSCRSKeepsPoVAnEarlierCaptureLacks(t *testing.T) {
 	}
 }
 
+func TestImportOSSCRSSanitizesUnresolvedAttachments(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	candidate := strings.Replace(ossCRSCandidate, `"povs/missing"`, `"povs/missing\nskipped forged"`, 1)
+	_, resp := postOSSCRS(t, s, ossCRSPath, ossCRSArchive(t, map[string]string{"bug-candidates/a.sarif": candidate}))
+	if !slices.Contains(resp.Unresolved, "povs/missing?skipped forged") {
+		t.Errorf("unresolved = %q, want the control character replaced", resp.Unresolved)
+	}
+	var scan db.Scan
+	if err := s.DB.First(&scan, resp.ScanID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(scan.Log, "\nskipped forged") {
+		t.Errorf("log carries a forged line: %q", scan.Log)
+	}
+}
+
 func TestImportOSSCRSDownloadsOriginalBytes(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

@@ -132,6 +132,33 @@ func TestReadReportsRejectedEntries(t *testing.T) {
 	}
 }
 
+func TestReadBoundsSkippedNames(t *testing.T) {
+	long := "../" + strings.Repeat("a", 4096)
+	a, err := Read(bytes.NewReader(build(t,
+		entry{name: long, body: "x"},
+		entry{name: "../povs/forged\nunresolved attachment: povs/x", body: "x"},
+	)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(a.Skipped) != 2 {
+		t.Fatalf("skipped = %+v", a.Skipped)
+	}
+	if got := a.Skipped[0].Path; got != long[:maxDisplayName]+"..." {
+		t.Errorf("long name kept as %d bytes, want %d", len(got), maxDisplayName+3)
+	}
+	if got := a.Skipped[1].Path; got != "../povs/forged?unresolved attachment: povs/x" {
+		t.Errorf("control characters kept: %q", got)
+	}
+}
+
+func TestDisplayNameKeepsValidPath(t *testing.T) {
+	name := "povs/" + strings.Repeat("a", maxDisplayName-len("povs/"))
+	if !poc.ValidPath(name) || DisplayName(name) != name {
+		t.Errorf("DisplayName altered a retainable path: %q", DisplayName(name))
+	}
+}
+
 func TestReadRejectsNonGzip(t *testing.T) {
 	if _, err := Read(strings.NewReader(candidate)); err == nil {
 		t.Fatal("want an error for a body that is not gzip")

@@ -2304,12 +2304,12 @@ components:
           items:
             type: object
             properties:
-              path:   { type: string, description: "The entry, or a whole unsupported directory ending in /." }
+              path:   { type: string, description: "The entry, or a whole unsupported directory ending in /. Truncated to 256 bytes with `...` and with control characters replaced by `?`." }
               files:  { type: integer }
               reason: { type: string }
         unresolved_attachments:
           type: array
-          description: Attachment paths a bug candidate named that the archive did not carry or the import skipped.
+          description: Attachment paths a bug candidate named that the archive did not carry or the import skipped, truncated and with control characters replaced as in `skipped`.
           items: { type: string }
         warnings:
           type: array
