@@ -1918,22 +1918,59 @@ func (w *Worker) markDedupDuplicate(head, member db.Finding, g dedupGroup) (bool
 // nothing to compose with.
 const minChainMembers = 2
 
+// maxChainMembers caps a chain's distinct membership. report.json is
+// lower-trust sandbox output and each member gets a note listing every
+// other member, so an uncapped chain is quadratic in notes written. The
+// schema's uniqueItems does not protect here: parseSkillOutput only
+// enforces it under SchemaStrict.
+const maxChainMembers = 16
+
+// maxChainInputIDs bounds a chain's raw finding_ids array before any id
+// is looked up. Each id is one dedupFinding DB query, and the 50 MiB
+// report cap still permits millions of ids.
+const maxChainInputIDs = 256
+
+// chainMembers resolves ids to distinct open findings in repoID, bounded
+// so a hostile report cannot drive millions of DB lookups or an outsize
+// map allocation. The returned slice has at most maxChainMembers+1 entries,
+// which the caller treats as "over cap".
+func (w *Worker) chainMembers(repoID uint, ids []uint, skipped *int) []uint {
+	if len(ids) > maxChainInputIDs {
+		*skipped += len(ids)
+		return nil
+	}
+	var members []uint
+	seen := make(map[uint]bool, maxChainMembers)
+	for _, id := range ids {
+		f, ok := w.dedupFinding(repoID, id)
+		if !ok || !dedupCandidateOpen(f.Status) {
+			*skipped++
+			continue
+		}
+		if seen[f.ID] {
+			continue
+		}
+		seen[f.ID] = true
+		members = append(members, f.ID)
+		if len(members) > maxChainMembers {
+			return members
+		}
+	}
+	return members
+}
+
 // applyDedupChains handles the chain shape: every member stays open and
 // each gets a note listing the OTHER members so disclose on any one of
 // them can fetch exactly the ids it needs to compose.
 func (w *Worker) applyDedupChains(repoID uint, groups []dedupGroup, skipped *int) (int, error) {
 	n := 0
 	for _, g := range groups {
-		var members []uint
-		for _, id := range g.MemberIDs {
-			f, ok := w.dedupFinding(repoID, id)
-			if !ok || !dedupCandidateOpen(f.Status) {
-				*skipped++
-				continue
-			}
-			members = append(members, f.ID)
-		}
+		members := w.chainMembers(repoID, g.MemberIDs, skipped)
 		if len(members) < minChainMembers {
+			continue
+		}
+		if len(members) > maxChainMembers {
+			*skipped += len(members)
 			continue
 		}
 		for _, m := range members {

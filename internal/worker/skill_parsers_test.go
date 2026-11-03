@@ -2163,6 +2163,95 @@ func TestParseFindingDedup_chainsNotesEachMemberWithOthers(t *testing.T) {
 	}
 }
 
+func TestApplyDedupChains_dedupsRepeatedMemberIDs(t *testing.T) {
+	gdb := dbtest.Open(t)
+	scan, fs := setupDedupRepo(t, gdb, 2)
+	a, b := fs[0], fs[1]
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	// A hostile report.json can repeat one id many times; schema uniqueItems
+	// is only enforced under SchemaStrict, so applyDedupChains must not emit
+	// one note per occurrence.
+	ids := make([]uint, maxChainInputIDs-1)
+	for i := range ids {
+		ids[i] = a.ID
+	}
+	ids = append(ids, b.ID)
+
+	skipped := 0
+	n, err := w.applyDedupChains(scan.RepositoryID, []dedupGroup{{MemberIDs: ids, Reason: "x"}}, &skipped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Fatalf("notes written = %d, want 2 (one per distinct member)", n)
+	}
+	if got := len(findingNotes(gdb, a.ID)); got != 1 {
+		t.Errorf("finding %d has %d notes, want 1", a.ID, got)
+	}
+	if got := len(findingNotes(gdb, b.ID)); got != 1 {
+		t.Errorf("finding %d has %d notes, want 1", b.ID, got)
+	}
+}
+
+func TestApplyDedupChains_rejectsOversizeInput(t *testing.T) {
+	gdb := dbtest.Open(t)
+	scan, fs := setupDedupRepo(t, gdb, 1)
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	// Each input id is one dedupFinding DB query. The 50 MiB report cap
+	// still permits millions of ids, so the raw array must be bounded
+	// before any lookup runs.
+	ids := make([]uint, maxChainInputIDs+1)
+	for i := range ids {
+		ids[i] = fs[0].ID
+	}
+	var queries int
+	w.DB = gdb.Session(&gorm.Session{NewDB: true})
+	_ = w.DB.Callback().Query().Before("gorm:query").
+		Register("count", func(*gorm.DB) { queries++ })
+
+	skipped := 0
+	n, err := w.applyDedupChains(scan.RepositoryID, []dedupGroup{{MemberIDs: ids, Reason: "x"}}, &skipped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 || skipped != len(ids) {
+		t.Fatalf("over-input-cap chain wrote %d notes with %d skipped; want 0 notes, %d skipped", n, skipped, len(ids))
+	}
+	if queries != 0 {
+		t.Fatalf("over-input-cap chain issued %d DB queries; the raw cap must apply before any lookup", queries)
+	}
+}
+
+func TestApplyDedupChains_capsDistinctMembership(t *testing.T) {
+	gdb := dbtest.Open(t)
+	scan, fs := setupDedupRepo(t, gdb, maxChainMembers+1)
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	ids := make([]uint, len(fs))
+	for i, f := range fs {
+		ids[i] = f.ID
+	}
+	skipped := 0
+	n, err := w.applyDedupChains(scan.RepositoryID, []dedupGroup{{MemberIDs: ids, Reason: "x"}}, &skipped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 || skipped != len(fs) {
+		t.Fatalf("over-cap chain wrote %d notes with %d skipped; want 0 notes, %d skipped", n, skipped, len(fs))
+	}
+	// A chain at the cap is still recorded.
+	skipped = 0
+	n, err = w.applyDedupChains(scan.RepositoryID, []dedupGroup{{MemberIDs: ids[:maxChainMembers], Reason: "x"}}, &skipped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != maxChainMembers {
+		t.Fatalf("at-cap chain wrote %d notes, want %d", n, maxChainMembers)
+	}
+}
+
 func TestParseFindingDedup_chainOfOneAfterFilterIsNoop(t *testing.T) {
 	gdb := dbtest.Open(t)
 	scan, fs := setupDedupRepo(t, gdb, 2)
