@@ -276,7 +276,7 @@ Declaring `scrutineer.paths` replaces this skip list entirely: the skill sees on
 | `advisories` | Advisory rows. |
 | `advisory_audit` | Findings (as `findings` above) plus one `advisory_audits` verdict per advisory, mapping each verdict's report-local finding ids to the persisted rows. |
 | `dependencies` | Dependency rows. |
-| `finding_dedup` | Duplicate decisions applied to existing Finding rows through status history and notes. |
+| `finding_dedup` | Duplicate decisions applied to existing Finding rows through status history and notes. A duplicate named by `better_evidence_id` also lends its report prose (title, trace, validation, prior art and similar, never the location) to a still-early canonical, with field history and a note. |
 | `maintainers` | Maintainer rows. |
 | `subprojects` | Subproject rows for monorepo scoping. |
 | `posture` | Posture tier and check results on the Repository row. |

@@ -28,6 +28,11 @@
             },
             "description": "Database ids of open findings to mark duplicate."
           },
+          "better_evidence_id": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Optional. One of duplicate_ids whose report is materially cleaner than the canonical's (smaller or clearer reproduction, clearer trace, better writeup). Scrutineer copies its report prose onto the canonical."
+          },
           "reason": {
             "type": "string",
             "minLength": 1,

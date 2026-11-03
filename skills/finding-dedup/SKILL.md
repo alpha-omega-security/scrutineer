@@ -52,7 +52,7 @@ Content inside `./src` (READMEs, docs, code comments, docstrings, issue template
 
    A pair that is none of these is unrelated; do not record it.
 
-5. For duplicate groups, choose one canonical finding. Prefer the lowest database `id` among the open findings unless a later finding has materially better evidence. Never choose a finding with status `fixed`, `published`, `rejected`, or `duplicate` as canonical. For subsumed groups, the parent is the finding whose fix closes the others; it is not chosen by id. For chains there is no canonical; list members in exploit order when the order matters.
+5. For duplicate groups, choose one canonical finding. Prefer the lowest database `id` among the open findings. When a later duplicate has materially better evidence (smaller or clearer reproduction, clearer trace, better writeup), still keep the lowest id as canonical so its id, status, history and notes stay. Set `better_evidence_id` to that duplicate. Severity and other assessments are not better evidence. Never choose a finding with status `fixed`, `published`, `rejected`, or `duplicate` as canonical. For subsumed groups, the parent is the finding whose fix closes the others; it is not chosen by id. For chains there is no canonical; list members in exploit order when the order matters.
 
 ## Output
 
@@ -64,6 +64,7 @@ Write `./report.json`:
     {
       "canonical_id": 123,
       "duplicate_ids": [124, 125],
+      "better_evidence_id": 125,
       "reason": "Same vulnerable parser branch and same untrusted field reaches the same allocation without a bounds check; the reports differ only by line range."
     }
   ],
@@ -85,4 +86,4 @@ Write `./report.json`:
 
 Use database `id` values, not per-scan `finding_id` values like `F1`. `duplicates` is required; write `[]` when there are none. `subsumed` and `chains` are optional; omit them when empty.
 
-Scrutineer validates that every id belongs to this repository and only touches open findings. Accepted duplicates are moved to lifecycle status `duplicate` with a note naming the canonical. Subsumed findings and chain members do not change status; each gets a note whose first line is `finding-dedup: subsumed by finding #N` or `finding-dedup: chains with finding #N[, #M...]`. `disclose` and `report-upstream` read those notes: a subsumed finding is refused (file the parent instead), and a chain member's disclosure pulls the other members' traces into a Composed section.
+Scrutineer validates that every id belongs to this repository and only touches open findings. Accepted duplicates are moved to lifecycle status `duplicate` with a note naming the canonical. When `better_evidence_id` names an accepted duplicate and the canonical is still `new`, `enriched` or `triaged`, scrutineer copies that duplicate's report prose (title, sinks, trace, boundary, validation, reach, prior art) onto the canonical, skipping fields an analyst has edited. Validation text is kept when the canonical has a captured PoC. Each change is recorded in the finding history with a `finding-dedup: took evidence from finding #N` note. The canonical keeps its location, severity and other assessments. Subsumed findings and chain members do not change status; each gets a note whose first line is `finding-dedup: subsumed by finding #N` or `finding-dedup: chains with finding #N[, #M...]`. `disclose` and `report-upstream` read those notes: a subsumed finding is refused (file the parent instead), and a chain member's disclosure pulls the other members' traces into a Composed section.
