@@ -57,7 +57,13 @@ func (s *Server) autoEnqueueFocusAreaDeepDives(scan *db.Scan) {
 		s.autoEnqueueExploratoryAudit(scan, skill.ID, group)
 		return
 	}
-	for _, area := range config.FocusAreas {
+	areas := config.FocusAreas
+	if len(areas) > repoconfig.MaxFocusAreas {
+		s.Log.Warn("focus-area deep dives: stored config exceeds the focus-area cap; enqueueing the first N only",
+			"scan", scan.ID, "repo", scan.RepositoryID, "stored", len(areas), "cap", repoconfig.MaxFocusAreas)
+		areas = areas[:repoconfig.MaxFocusAreas]
+	}
+	for _, area := range areas {
 		raw, err := repoconfig.EncodeFocusAreaJSON(area)
 		if err != nil {
 			s.Log.Warn("focus-area deep dives: encode area", "scan", scan.ID, "area", area.Name, "err", err)

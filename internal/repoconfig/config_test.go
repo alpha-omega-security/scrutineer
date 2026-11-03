@@ -47,6 +47,36 @@ func TestFocusAreaJSONRoundTrip(t *testing.T) {
 	}
 }
 
+func TestFocusAreaCap_appliesOnWriteOnly(t *testing.T) {
+	entry := "  - name: a\n    paths: [a/**]\n    surface: s\n"
+	build := func(n int) string { return "focus_areas:\n" + strings.Repeat(entry, n) }
+
+	// Parse (the read path) must accept a legacy stored config above the cap
+	// so skillContext staging and the deep-dive hook do not fail. The hook
+	// clamps the fan-out itself.
+	cfg, err := Parse(build(MaxFocusAreas + 1))
+	if err != nil {
+		t.Fatalf("Parse rejected %d focus areas; the cap must be write-only: %v", MaxFocusAreas+1, err)
+	}
+	if len(cfg.FocusAreas) != MaxFocusAreas+1 {
+		t.Fatalf("Parse truncated to %d; it must return the stored list unchanged", len(cfg.FocusAreas))
+	}
+
+	// Normalise and NormaliseConfig (the write paths for the operator form
+	// and the threat-model seed) must reject above the cap. Each area becomes
+	// one full audit scan, so the count must be bounded well under what a
+	// hostile threat-model report could emit.
+	if _, _, err := Normalise(build(1000)); err == nil {
+		t.Fatal("Normalise accepted 1000 focus areas; each enqueues a full audit")
+	}
+	if _, err := NormaliseConfig(cfg); err == nil || !strings.Contains(err.Error(), "limit") {
+		t.Fatalf("NormaliseConfig accepted %d focus areas: err=%v", len(cfg.FocusAreas), err)
+	}
+	if _, _, err := Normalise(build(MaxFocusAreas)); err != nil {
+		t.Fatalf("Normalise rejected %d focus areas (the limit): %v", MaxFocusAreas, err)
+	}
+}
+
 func TestParseRejectsInvalidConfig(t *testing.T) {
 	tests := []struct {
 		name string
