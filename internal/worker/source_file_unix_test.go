@@ -28,7 +28,8 @@ func TestStageVIDFileRejectsFIFO(t *testing.T) {
 	}
 	defer func() { _ = stageRoot.Close() }()
 	result := make(chan error, 1)
-	go func() { result <- stageVIDFile(sourceRoot, stageRoot, "pipe.c") }()
+	remaining := int64(vidStageMaxBytes)
+	go func() { result <- stageVIDFile(sourceRoot, stageRoot, "pipe.c", &remaining) }()
 	select {
 	case err := <-result:
 		if !errors.Is(err, os.ErrInvalid) {

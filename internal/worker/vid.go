@@ -18,7 +18,14 @@ const (
 	vidTimeout       = 30 * time.Second
 	vidStageDirMode  = 0o700
 	vidStageFileMode = 0o600
+	// vidStageMaxBytes bounds the total bytes copied from the scan-writable
+	// workspace into host staging. A hostile scan can place a sparse file
+	// in /work/src and name it as a sink; the host copy would otherwise
+	// materialise its full logical size.
+	vidStageMaxBytes = 64 << 20
 )
+
+var errVIDStageBudget = errors.New("vid staging byte budget exceeded")
 
 // vidLocRE matches a finding location ("file.rb:12", "file.rb:12-34",
 // "file.js:42:7") and captures the path and the first line number.
@@ -106,6 +113,7 @@ func (w *Worker) computeVID(srcDir, locations string) string {
 	}
 	defer func() { _ = stageRoot.Close() }()
 	staged := map[string]bool{}
+	remaining := int64(vidStageMaxBytes)
 	for _, sink := range sinks {
 		match := vidLocRE.FindStringSubmatch(sink)
 		if match == nil {
@@ -115,7 +123,10 @@ func (w *Worker) computeVID(srcDir, locations string) string {
 		if staged[path] {
 			continue
 		}
-		if err := stageVIDFile(sourceRoot, stageRoot, path); err != nil {
+		if err := stageVIDFile(sourceRoot, stageRoot, path, &remaining); err != nil {
+			if errors.Is(err, errVIDStageBudget) {
+				w.Log.Warn("compute vid: staging byte budget exceeded", "sinks", strings.Join(sinks, " "))
+			}
 			return ""
 		}
 		staged[path] = true
@@ -138,7 +149,7 @@ func (w *Worker) computeVID(srcDir, locations string) string {
 	return v
 }
 
-func stageVIDFile(sourceRoot, stageRoot *os.Root, path string) error {
+func stageVIDFile(sourceRoot, stageRoot *os.Root, path string, remaining *int64) error {
 	in, err := openSourceFile(sourceRoot, path)
 	if err != nil {
 		return err
@@ -161,9 +172,15 @@ func stageVIDFile(sourceRoot, stageRoot *os.Root, path string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, in); err != nil {
+	n, err := io.Copy(out, io.LimitReader(in, *remaining+1))
+	if err != nil {
 		_ = out.Close()
 		return err
 	}
+	if n > *remaining {
+		_ = out.Close()
+		return errVIDStageBudget
+	}
+	*remaining -= n
 	return out.Close()
 }

@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -70,6 +71,55 @@ func TestVidSinks(t *testing.T) {
 	want := []string{"a.rb:12", "lib/b.js:42", "a.rb:30", "alias.rb:7"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("vidSinks = %v, want %v", got, want)
+	}
+}
+
+func TestStageVIDFile_enforcesByteBudget(t *testing.T) {
+	srcDir, stageDir := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(srcDir, "big"), make([]byte, 100), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "small"), make([]byte, 10), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	src, err := os.OpenRoot(srcDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = src.Close() }()
+	stage, err := os.OpenRoot(stageDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stage.Close() }()
+
+	// A single file over the remaining budget stops the copy mid-stream.
+	remaining := int64(99)
+	if err := stageVIDFile(src, stage, "big", &remaining); !errors.Is(err, errVIDStageBudget) {
+		t.Fatalf("stageVIDFile over budget: err=%v, want errVIDStageBudget", err)
+	}
+	fi, err := os.Stat(filepath.Join(stageDir, "big"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Size() > 100 {
+		t.Fatalf("staged %d bytes, LimitReader did not cap the copy", fi.Size())
+	}
+
+	// Exactly at budget succeeds and the budget is drawn down across files.
+	_ = os.Remove(filepath.Join(stageDir, "big"))
+	remaining = int64(110)
+	if err := stageVIDFile(src, stage, "big", &remaining); err != nil {
+		t.Fatalf("stageVIDFile at budget: %v", err)
+	}
+	if remaining != 10 {
+		t.Fatalf("remaining = %d after 100-byte copy from 110, want 10", remaining)
+	}
+	if err := stageVIDFile(src, stage, "small", &remaining); err != nil {
+		t.Fatalf("second file within aggregate budget: %v", err)
+	}
+	if remaining != 0 {
+		t.Fatalf("remaining = %d after exhausting budget, want 0", remaining)
 	}
 }
 
