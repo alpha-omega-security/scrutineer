@@ -203,33 +203,26 @@ type importedResult struct {
 }
 
 func (s *Server) importResults(results []ingest.Result, format ingest.Format, repoOverride string, revalidate bool) ([]map[string]any, error) {
-	var imported []importedResult
+	imported := make([]importedResult, 0, len(results))
 	err := s.DB.Transaction(func(tx *gorm.DB) error {
-		var err error
-		imported, err = s.importResultsWith(tx, results, format, repoOverride)
-		return err
+		for _, res := range results {
+			bounded, caps := res, uncappedImportStats(res)
+			if capsApplyTo(format) {
+				bounded, caps = capScannerResult(res)
+			}
+			outcome, err := s.importResultWith(tx, bounded, repoOverride)
+			if err != nil {
+				return err
+			}
+			outcome.caps = caps
+			imported = append(imported, outcome)
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err
 	}
 	return s.finishImport(imported, revalidate), nil
-}
-
-func (s *Server) importResultsWith(tx *gorm.DB, results []ingest.Result, format ingest.Format, repoOverride string) ([]importedResult, error) {
-	imported := make([]importedResult, 0, len(results))
-	for _, res := range results {
-		bounded, caps := res, uncappedImportStats(res)
-		if capsApplyTo(format) {
-			bounded, caps = capScannerResult(res)
-		}
-		outcome, err := s.importResultWith(tx, bounded, repoOverride)
-		if err != nil {
-			return nil, err
-		}
-		outcome.caps = caps
-		imported = append(imported, outcome)
-	}
-	return imported, nil
 }
 
 // finishImport runs after the import transaction commits.
