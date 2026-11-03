@@ -833,12 +833,14 @@ func reportExport(data reportData) reporting.Export {
 			ScansStarted:   data.Totals.ScansStarted,
 			ScansCompleted: data.Totals.ScansCompleted,
 			Findings:       data.Totals.Findings,
+			CostUSD:        sumDayCost(data.Days),
+			TotalTokens:    sumDayTokens(data.Days),
 			// Starts and completions are read on different columns, so a run
 			// spanning the boundary lands in one period as a start and the
 			// next as a completion. Spelled out here because the two figures
 			// look like a total and a subset of it and are not.
 			MeasuredBy: "scans_started at started_at, scans_completed at finished_at on runs that reached done, " +
-				findingsField + " at first report; queued runs are counted nowhere",
+				findingsField + " at first report, cost_usd and total_tokens at finished_at on every terminal run; queued runs are counted nowhere",
 		},
 		CostAverages: reporting.CostAverages{
 			Population: "completed scans with a recorded cost",

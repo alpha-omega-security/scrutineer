@@ -14,7 +14,7 @@ Discrete instances that each scan their own repositories can be rolled up into o
     go run ./scripts/merge-reports a/report.json b/report.json > merged.json
     go run ./scripts/merge-reports -o merged.json reports/*/report.json
 
-Counts are summed, averages are pooled by `scans_averaged`, per-day and per-model rows are combined by date and model, and the period is the union of the inputs' windows. The merged file has `period.key: "merged"`, a `sources` array naming each original export with its window and severity floor, and a note appended to `activity_in_period.measured_by` that `repositories_scanned` sums per-instance distinct counts -- exact only when the instances share no repositories.
+Counts, period cost and tokens are summed, averages are pooled by `scans_averaged`, per-day and per-model rows are combined by date and model. The period is the union of the inputs' windows. The merged file has `period.key: "merged"`, a `sources` array naming each original export with its window and severity floor, plus a note appended to `activity_in_period.measured_by` that `repositories_scanned` sums per-instance distinct counts -- exact only when the instances share no repositories.
 
 Options:
 

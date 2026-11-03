@@ -81,11 +81,15 @@ type Activity struct {
 	// ReposScanned is a distinct count, which cannot be re-derived from
 	// aggregates: the merged figure is the per-source sum, exact only for
 	// disjoint corpora. Merge says so in MeasuredBy.
-	ReposScanned   int    `json:"repositories_scanned" merge:"sum"`
-	ScansStarted   int    `json:"scans_started" merge:"sum"`
-	ScansCompleted int    `json:"scans_completed" merge:"sum"`
-	Findings       int    `json:"findings" merge:"sum"`
-	MeasuredBy     string `json:"measured_by" merge:"first"`
+	ReposScanned   int `json:"repositories_scanned" merge:"sum"`
+	ScansStarted   int `json:"scans_started" merge:"sum"`
+	ScansCompleted int `json:"scans_completed" merge:"sum"`
+	Findings       int `json:"findings" merge:"sum"`
+	// CostUSD and TotalTokens are the period's spend, the sum of the
+	// activity_by_day rows and the CSV period_total.
+	CostUSD     float64 `json:"cost_usd" merge:"sum"`
+	TotalTokens int     `json:"total_tokens" merge:"sum"`
+	MeasuredBy  string  `json:"measured_by" merge:"first"`
 }
 
 // CostAverages is the cost-averages table: the per-scan means for the

@@ -684,10 +684,12 @@ func TestReportingJSONExport(t *testing.T) {
 			AppliesTo       []string `json:"applies_to"`
 		} `json:"filters"`
 		Activity struct {
-			RepositoriesScanned int `json:"repositories_scanned"`
-			ScansStarted        int `json:"scans_started"`
-			ScansCompleted      int `json:"scans_completed"`
-			Findings            int `json:"findings"`
+			RepositoriesScanned int     `json:"repositories_scanned"`
+			ScansStarted        int     `json:"scans_started"`
+			ScansCompleted      int     `json:"scans_completed"`
+			Findings            int     `json:"findings"`
+			CostUSD             float64 `json:"cost_usd"`
+			TotalTokens         int     `json:"total_tokens"`
 		} `json:"activity_in_period"`
 		Averages struct {
 			Population string             `json:"population"`
@@ -733,8 +735,10 @@ func TestReportingJSONExport(t *testing.T) {
 	if len(out.Filters.AppliesTo) != 1 || out.Filters.AppliesTo[0] != "findings" {
 		t.Errorf("applies_to = %v, want [findings]", out.Filters.AppliesTo)
 	}
+	// The failed run's spend (1.00, 22 tokens) is part of the period totals.
 	if out.Activity.RepositoriesScanned != 3 || out.Activity.ScansStarted != 6 ||
-		out.Activity.ScansCompleted != 4 || out.Activity.Findings != 3 {
+		out.Activity.ScansCompleted != 4 || out.Activity.Findings != 3 ||
+		out.Activity.CostUSD != 21 || out.Activity.TotalTokens != 11622 {
 		t.Errorf("activity_in_period = %+v", out.Activity)
 	}
 	if out.Averages.Population == "" {

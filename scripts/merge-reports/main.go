@@ -16,7 +16,7 @@
 // The shape and the merge rules live in internal/reporting, which the
 // server's export is marshalled from, so the two cannot drift apart:
 //
-//   - activity_in_period: counts summed.
+//   - activity_in_period: counts, cost_usd and total_tokens summed.
 //   - activity_by_day / activity_by_model: rows keyed by date / model. Rows
 //     present in one input only are copied unchanged; rows present in
 //     several have their counts summed and their averages weighted by

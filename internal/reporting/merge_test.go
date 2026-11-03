@@ -27,7 +27,7 @@ func weekA() Export {
 			SeverityOrdering: []string{"Low", "Medium", "High", "Critical"},
 		},
 		Activity: Activity{
-			ReposScanned: 3, ScansStarted: 10, ScansCompleted: 8, Findings: 5,
+			ReposScanned: 3, ScansStarted: 10, ScansCompleted: 8, Findings: 5, CostUSD: 17, TotalTokens: 150,
 			MeasuredBy: "scans_started at started_at",
 		},
 		CostAverages: CostAverages{
@@ -53,7 +53,7 @@ func weekB() Export {
 	e.GeneratedAt = "2026-09-14T15:00:00Z"
 	e.Period.StartsAt = ptr("2026-09-07T15:00:00Z")
 	e.Period.EndsAt = "2026-09-14T15:00:00Z"
-	e.Activity = Activity{ReposScanned: 1, ScansStarted: 4, ScansCompleted: 4, Findings: 20, MeasuredBy: e.Activity.MeasuredBy}
+	e.Activity = Activity{ReposScanned: 1, ScansStarted: 4, ScansCompleted: 4, Findings: 20, CostUSD: 8.5, TotalTokens: 65, MeasuredBy: e.Activity.MeasuredBy}
 	e.CostAverages.InPeriod = Averages{ScansAveraged: 2, AvgCostUSD: 4, AvgTotalTokens: 22}
 	e.CostAverages.AllTime = Averages{ScansAveraged: 50, AvgCostUSD: 6, AvgTotalTokens: 24}
 	e.ByModel = []ModelRow{
@@ -122,7 +122,7 @@ func TestMergeTwoWeekExports(t *testing.T) {
 		got, want any
 	}{
 		{"period counts summed, caveat appended", merged.Activity,
-			Activity{ReposScanned: 4, ScansStarted: 14, ScansCompleted: 12, Findings: 25, MeasuredBy: "scans_started at started_at; " + ReposScannedCaveat}},
+			Activity{ReposScanned: 4, ScansStarted: 14, ScansCompleted: 12, Findings: 25, CostUSD: 25.5, TotalTokens: 215, MeasuredBy: "scans_started at started_at; " + ReposScannedCaveat}},
 		{"in-period averages weighted, weights summed", merged.CostAverages.InPeriod, Averages{ScansAveraged: 8, AvgCostUSD: 2.5, AvgTotalTokens: 19}},
 		{"all-time averages pooled", merged.CostAverages.AllTime, Averages{ScansAveraged: 150, AvgCostUSD: 4, AvgTotalTokens: 20}},
 		{"population kept", merged.CostAverages.Population, "completed scans with a recorded cost"},
