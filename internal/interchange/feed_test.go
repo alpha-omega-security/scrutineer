@@ -3,6 +3,7 @@ package interchange
 import (
 	"bytes"
 	"crypto/ed25519"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -99,6 +100,50 @@ func TestTierCarries(t *testing.T) {
 		if got := c.tier.Carries(c.predicateType); got != c.want {
 			t.Errorf("%s.Carries(%s) = %v, want %v", c.tier, c.predicateType, got, c.want)
 		}
+	}
+}
+
+// A record whose envelope carries a valid lowercase "subject" plus a
+// case-variant "Subject":[] passes schema validation (the in-toto envelope
+// is open to extensions) but encoding/json's case-insensitive, last-wins
+// field matching decodes it to an empty slice. ReadFeed must surface that as
+// a record error so storeImportedRecord never indexes Subject[0] on it.
+func TestReadFeed_rejectsCaseVariantEmptiedSubject(t *testing.T) {
+	rec := optOut(t, "https://github.com/acme/lib")
+	raw, err := json.Marshal(rec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw = append(raw[:len(raw)-1], []byte(`,"Subject":[]}`)...)
+	if err := Validate(raw); err != nil {
+		t.Fatalf("precondition: schema must accept the open-envelope extension key: %v", err)
+	}
+	var decoded Statement
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if len(decoded.Subject) != 0 {
+		t.Fatalf("precondition: encoding/json case-insensitive last-wins should empty Subject, got %v", decoded.Subject)
+	}
+
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "optout"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	name := filepath.Join(dir, "optout", rec.Subject[0].Digest["sha256"]+".json")
+	if err := os.WriteFile(name, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	records, err := ReadFeed(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("got %d records, want 1", len(records))
+	}
+	if records[0].Err == nil {
+		t.Fatalf("record with emptied subject passed ReadFeed; federation would panic on Subject[0]: %+v", records[0].Statement)
 	}
 }
 
