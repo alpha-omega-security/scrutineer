@@ -1,9 +1,33 @@
 package poc
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 )
+
+func TestParseCapsFenceCount(t *testing.T) {
+	fence := "```text filename=f%d\nx\n```\n"
+	build := func(n int) string {
+		var b strings.Builder
+		for i := range n {
+			b.WriteString(strings.Replace(fence, "%d", strconv.Itoa(i), 1))
+		}
+		return b.String()
+	}
+	// validateNames and bundlePoC are polynomial in the fence count and
+	// the markdown comes from scan output, so the count must be bounded.
+	if _, err := Parse(build(10000)); err == nil {
+		t.Fatal("Parse accepted 10000 fences; validateNames and bundlePoC are polynomial in that count")
+	}
+	blocks, err := Parse(build(MaxBlocks))
+	if err != nil || len(blocks) != MaxBlocks {
+		t.Fatalf("Parse at the limit: blocks=%d err=%v", len(blocks), err)
+	}
+	if err := Validate(build(MaxBlocks + 1)); err == nil || !strings.Contains(err.Error(), "code fences") {
+		t.Fatalf("Validate accepted %d fences: err=%v", MaxBlocks+1, err)
+	}
+}
 
 func TestValidate(t *testing.T) {
 	for _, tc := range []struct {

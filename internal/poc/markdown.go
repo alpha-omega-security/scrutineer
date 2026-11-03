@@ -55,6 +55,9 @@ func parse(validation string, strict bool) ([]Block, error) {
 		}
 		if block.Name != "" || strings.TrimSpace(string(block.Body)) != "" {
 			blocks = append(blocks, block)
+			if len(blocks) > MaxBlocks {
+				return ast.WalkStop, fmt.Errorf("PoC markdown has more than %d code fences", MaxBlocks)
+			}
 		}
 		return ast.WalkContinue, nil
 	})
@@ -63,6 +66,13 @@ func parse(validation string, strict bool) ([]Block, error) {
 	}
 	return blocks, err
 }
+
+// MaxBlocks caps the number of code fences a PoC validation markdown may
+// carry. validateNames is quadratic and bundlePoC's unnamed-fence suffix
+// search is roughly cubic in the fence count, and the markdown comes from
+// scan output, so an uncapped count is a host-side CPU lever. A legitimate
+// PoC is a handful of files.
+const MaxBlocks = 64
 
 func parseFence(fence *ast.FencedCodeBlock, source []byte, strict bool) (Block, error) {
 	block := Block{Language: strings.ToLower(string(fence.Language(source))), Body: fence.Lines().Value(source)}
