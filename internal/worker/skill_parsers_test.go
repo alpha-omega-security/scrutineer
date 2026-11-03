@@ -2727,6 +2727,64 @@ func writeFile(t *testing.T, path, body string) {
 	}
 }
 
+// Maintainer rows are keyed globally on Login and the report comes from
+// repository-controlled prose, so a hostile repo's maintainers scan must not
+// rewrite the name, email or activity status every other repository linked
+// to that login displays.
+func TestParseMaintainers_doesNotOverwriteSharedMaintainerFields(t *testing.T) {
+	gdb := dbtest.Open(t)
+	established := db.Maintainer{
+		Login: "octocat", Name: "Real Name", Email: "real@example.org",
+		Status: db.MaintainerActive, Notes: "lead: per CODEOWNERS on the trusted repo",
+	}
+	gdb.Create(&established)
+
+	hostile := db.Repository{URL: "https://github.com/attacker/x", Name: "x"}
+	gdb.Create(&hostile)
+	scan := db.Scan{RepositoryID: hostile.ID}
+	gdb.Create(&scan)
+
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	report := `{"maintainers":[{"login":"octocat","name":"Attacker Name","email":"attacker@evil.example",
+		"status":"inactive","role":"owner","evidence":"planted CODEOWNERS claims this"}]}`
+	if err := w.parseMaintainersOutput(&scan, report, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+
+	var got db.Maintainer
+	gdb.First(&got, established.ID)
+	if got.Name != "Real Name" || got.Email != "real@example.org" {
+		t.Errorf("hostile report rewrote shared contact: name=%q email=%q", got.Name, got.Email)
+	}
+	if got.Status != db.MaintainerActive {
+		t.Errorf("hostile report rewrote activity status: %q", got.Status)
+	}
+	if got.Notes != established.Notes {
+		t.Errorf("hostile report rewrote notes: %q", got.Notes)
+	}
+	// The hostile repo is still linked to the shared row (that association
+	// is per-repo and legitimate); only the shared fields are protected.
+	var linked []db.Maintainer
+	if err := gdb.Model(&hostile).Association("Maintainers").Find(&linked); err != nil {
+		t.Fatal(err)
+	}
+	if len(linked) != 1 || linked[0].ID != established.ID {
+		t.Errorf("hostile repo maintainers = %+v, want linked to the existing row", linked)
+	}
+
+	// A fresh login still gets its fields filled in.
+	gdb.Delete(&db.Maintainer{}, "login = ?", "newcomer")
+	fresh := `{"maintainers":[{"login":"newcomer","name":"New Person","email":"n@example.org","status":"active","role":"triage","evidence":"commit author"}]}`
+	if err := w.parseMaintainersOutput(&scan, fresh, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	var m db.Maintainer
+	gdb.Where("login = ?", "newcomer").First(&m)
+	if m.Name != "New Person" || m.Email != "n@example.org" || m.Status != db.MaintainerActive || m.Notes == "" {
+		t.Errorf("fresh maintainer not populated: %+v", m)
+	}
+}
+
 // A failed maintainer lookup must skip the record, not fall through into the
 // Save below. FirstOrCreate leaves the destination zero on a query error, so
 // saving it inserts a second maintainer row with an empty login and hands the

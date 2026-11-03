@@ -1035,23 +1035,28 @@ type reportedMaintainer struct {
 	Evidence string `json:"evidence"`
 }
 
-// applyTo copies the fields this report entry refreshes onto the stored row.
-// An absent or unrecognised field leaves the stored value alone, so a partial
-// report never blanks what an earlier scan established.
+// applyTo fills in only the fields the shared Maintainer row does not
+// already have. The row is keyed globally on Login and the report comes
+// from repository-controlled prose, so last-wins would let one hostile
+// repo rewrite the name, email and activity status every other repository
+// linked to that login displays. A field already set is kept; the operator
+// can still edit it through the UI.
 func (rm reportedMaintainer) applyTo(m *db.Maintainer) {
-	if rm.Name != "" {
+	if m.Name == "" && rm.Name != "" {
 		m.Name = rm.Name
 	}
-	if validEmail(rm.Email) {
+	if m.Email == "" && validEmail(rm.Email) {
 		m.Email = rm.Email
 	}
-	switch rm.Status {
-	case "active":
-		m.Status = db.MaintainerActive
-	case "inactive":
-		m.Status = db.MaintainerInactive
+	if m.Status == "" || m.Status == db.MaintainerUnknown {
+		switch rm.Status {
+		case "active":
+			m.Status = db.MaintainerActive
+		case "inactive":
+			m.Status = db.MaintainerInactive
+		}
 	}
-	if rm.Evidence != "" {
+	if m.Notes == "" && rm.Evidence != "" {
 		m.Notes = rm.Role + ": " + rm.Evidence
 	}
 }
