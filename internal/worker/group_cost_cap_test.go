@@ -170,7 +170,7 @@ func TestDoSkill_groupCostCapFinalizesFromSession(t *testing.T) {
 	if !strings.Contains(got.Log, "group cost cap $1.00 reached") {
 		t.Errorf("log lacks the group trip notice: %s", got.Log)
 	}
-	// The first 0.6 already crossed the group cap, so the second usage never lands.
+	// Both 0.6 usage events land before the run sees the cancel. The finalize turn carries no cost.
 	if math.Abs(got.CostUSD-1.2) > 1e-9 {
 		t.Errorf("cost = %v, want 1.2", got.CostUSD)
 	}
