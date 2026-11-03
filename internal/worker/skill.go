@@ -281,6 +281,10 @@ func (w *Worker) runAndParseSkill(ctx context.Context, scan *db.Scan, skill *db.
 	}
 	if err != nil {
 		if _, ok := errors.AsType[*MaxTurnsReachedError](err); ok && res.Report != "" {
+			// Set before parsing so parseFindingsOutput's markNotObserved
+			// guard sees this is a partial report; the caller records it on
+			// the scan row later.
+			scan.MaxTurnsHit = true
 			w.parsePartialSkillReport(ctx, skill, scan, res.Report, emit)
 		}
 		return res.Report, err
@@ -664,7 +668,11 @@ func (w *Worker) ingestFindings(skill *db.Skill, scan *db.Scan, report string, e
 	}
 
 	missed := 0
-	if scan.RescanMode != db.ScanRescanModeDiff {
+	// A diff-mode rescan looks at a slice of the repo, and a cost-capped or
+	// max-turns run stopped before it could revisit everything. Neither is
+	// in scope to re-observe prior findings, so absence must not drive
+	// missed_count or auto-reject.
+	if scan.RescanMode != db.ScanRescanModeDiff && !scan.CostCapped && !scan.MaxTurnsHit {
 		missed = w.markNotObserved(scan, seenThisScan)
 	}
 	retracted := w.markRetracted(scan, seenThisScan)

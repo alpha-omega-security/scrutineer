@@ -679,6 +679,44 @@ func TestParseFindingsOutput_notObservedScopedToSkillAndSubpath(t *testing.T) {
 	}
 }
 
+// A cost-capped or max-turns run stopped before it could revisit everything,
+// so an open prior finding its partial report happens not to contain was
+// not re-examined and must not count as missed.
+func TestParseFindingsOutput_partialScanDoesNotMarkPriorFindingsMissed(t *testing.T) {
+	for name, mark := range map[string]func(*db.Scan){
+		"cost-capped": func(s *db.Scan) { s.CostCapped = true },
+		"max-turns":   func(s *db.Scan) { s.MaxTurnsHit = true },
+	} {
+		t.Run(name, func(t *testing.T) {
+			gdb := dbtest.Open(t)
+			repo := db.Repository{URL: "https://x/r", Name: "r"}
+			gdb.Create(&repo)
+			w := &Worker{DB: gdb, DataDir: t.TempDir(), Log: slog.Default()}
+
+			base := &db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "security-deep-dive", Status: db.ScanDone, Commit: "a"}
+			gdb.Create(base)
+			if err := w.parseFindingsOutput(&db.Skill{}, base,
+				`{"findings":[{"id":"F1","title":"t","severity":"High","cwe":"CWE-1","location":"a.go:1"}]}`,
+				func(Event) {}); err != nil {
+				t.Fatal(err)
+			}
+
+			partial := &db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "security-deep-dive", Status: db.ScanDone, Commit: "b"}
+			mark(partial)
+			gdb.Create(partial)
+			if err := w.parseFindingsOutput(&db.Skill{}, partial, `{"findings":[]}`, func(Event) {}); err != nil {
+				t.Fatal(err)
+			}
+
+			var f db.Finding
+			gdb.First(&f)
+			if f.MissedCount != 0 || f.LastMissedScanID != 0 {
+				t.Fatalf("%s partial scan marked prior finding missed: missed=%d last=%d", name, f.MissedCount, f.LastMissedScanID)
+			}
+		})
+	}
+}
+
 func TestParseFindingsOutput_reobservationResetsMissedCount(t *testing.T) {
 	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://x/r", Name: "r"}

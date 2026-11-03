@@ -148,6 +148,10 @@ func (w *Worker) finishCostCappedRun(ctx context.Context, skill *db.Skill, scan 
 	} else {
 		report = final
 	}
+	// Set before parseSkillOutput so parseFindingsOutput's markNotObserved
+	// guard sees this is a partial report. markCostCapped sets it again
+	// alongside the Coverage record.
+	scan.CostCapped = true
 	var parseErr error
 	if report != "" {
 		parseErr = w.parseSkillOutput(ctx, skill, scan, report, emit)
