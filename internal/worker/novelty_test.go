@@ -99,6 +99,69 @@ func TestNoveltyContextMarksCommitCapTruncated(t *testing.T) {
 	}
 }
 
+// A finding location is attacker-controllable through import. git treats
+// a bare pathspec after -- as a glob, so a location of "*" would turn a
+// one-file history check into a repo-wide one; :(literal) matches it
+// verbatim, so it names a file that does not exist and the check records
+// nothing changed.
+func TestNoveltyContextTreatsFindingFileAsLiteralPathspec(t *testing.T) {
+	fixture := newNoveltyFixture(t)
+	fixture.finding.Location = "*:1"
+	if err := fixture.gdb.Model(&fixture.finding).Update("location", fixture.finding.Location).Error; err != nil {
+		t.Fatal(err)
+	}
+	// Change an unrelated top-level file so a glob "*" would match it.
+	fixture.write(t, "README.md", "unrelated change\n")
+	head := gitCommit(t, fixture.src, "update docs")
+
+	got := fixture.check(t, head)
+	if got.FileChanged || got.State != db.FindingNoveltyUnfixed {
+		t.Fatalf("glob location matched repository files: %+v", got)
+	}
+	if strings.Contains(got.CommitLog, "README.md") {
+		t.Fatalf("commit_log carries the unrelated file's diff:\n%s", got.CommitLog)
+	}
+}
+
+func TestGitLimited_capsOutput(t *testing.T) {
+	src := t.TempDir()
+	gitRun(t, src, "init")
+	// A commit whose patch is well over the cap we ask for.
+	big := strings.Repeat("a line of body text to pad the diff\n", 2000)
+	if err := os.WriteFile(filepath.Join(src, "big.txt"), []byte(big), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitCommit(t, src, "add big file")
+
+	const cap = 1024
+	out, truncated, err := gitLimited(context.Background(), cap, "-C", src, "log", "--patch")
+	if err != nil {
+		t.Fatalf("gitLimited: %v", err)
+	}
+	if !truncated {
+		t.Fatal("gitLimited did not report truncation on output over the cap")
+	}
+	if len(out) > cap {
+		t.Fatalf("gitLimited buffered %d bytes, cap is %d", len(out), cap)
+	}
+}
+
+func TestCappedWriter(t *testing.T) {
+	w := &cappedWriter{limit: 5}
+	n, _ := w.Write([]byte("abc"))
+	if n != 3 || w.truncated {
+		t.Fatalf("under-limit write: n=%d truncated=%v", n, w.truncated)
+	}
+	n, _ = w.Write([]byte("defgh"))
+	if n != 5 || !w.truncated || w.buf.String() != "abcde" {
+		t.Fatalf("over-limit write: n=%d buf=%q truncated=%v", n, w.buf.String(), w.truncated)
+	}
+	n, _ = w.Write([]byte("x"))
+	if n != 1 || w.buf.Len() != 5 {
+		t.Fatalf("post-cap write must report success without buffering: n=%d len=%d", n, w.buf.Len())
+	}
+}
+
 func TestNoveltyContextRecordsNotCheckedForUnsafeLocation(t *testing.T) {
 	fixture := newNoveltyFixture(t)
 	head := fixture.base
