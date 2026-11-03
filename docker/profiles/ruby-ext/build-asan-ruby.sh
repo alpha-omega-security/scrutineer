@@ -16,11 +16,10 @@
 #    rewrite below sets it for extensions so their UB aborts = the evidence.
 #  - optflags=-O1 -g keeps ASan traces readable without the -O0 slowdown.
 #
-# Open question: Ruby's conservative GC scans the C
-# stack for VALUEs and interacts with ASan's fake stack. The safe defaults
-# (detect_stack_use_after_return=0, detect_leaks=0, RUBY_FREE_AT_EXIT=1) are set
-# in the Dockerfile ENV; if fiber-heavy code crashes inside the GC, add the
-# ./configure --with-coroutine=copy switch below and rebuild.
+# Ruby's conservative GC scans the C stack for VALUEs and interacts with ASan's
+# fake stack. The safe defaults (detect_stack_use_after_return=0, detect_leaks=0,
+# RUBY_FREE_AT_EXIT=1) are set in the Dockerfile ENV; if fiber-heavy code crashes
+# inside the GC, add the ./configure --with-coroutine=copy switch below and rebuild.
 set -eux
 
 ref="$1"
@@ -45,6 +44,7 @@ make install
 # compiles get the alignment check back ON and -fno-sanitize-recover=undefined
 # (UB aborts = evidence). The interpreter binary is already built and stays
 # quiet. Aborts loudly if the entry shape ever changes.
+# shellcheck disable=SC2016  # -e body is Ruby ($LOADED_FEATURES, $1), not shell; keep it single-quoted
 "$prefix/bin/ruby" -rrbconfig -e 'path=$LOADED_FEATURES.grep(/rbconfig\.rb$/).first; cfg=File.read(path); cfg.sub!(/^(\s*CONFIG\["cppflags"\] = ".*)"\s*$/){ $1.gsub(" -fno-sanitize=alignment","") + " -fno-sanitize-recover=undefined\"" } or abort("ruby-ext: cppflags entry not found in #{path}"); File.write(path, cfg)'
 "$prefix/bin/ruby" -e 'f=RbConfig::CONFIG["CPPFLAGS"]; abort("ruby-ext: alignment still off for extensions: #{f}") if f.include?("-fno-sanitize=alignment"); abort("ruby-ext: -fno-sanitize-recover missing for extensions: #{f}") unless f.include?("-fno-sanitize-recover=undefined"); STDERR.puts "ruby-ext: extension CPPFLAGS =>#{f}"'
 

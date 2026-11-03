@@ -40,7 +40,7 @@ pass misses, on top of the C/Ruby audit above.
   other. Do NOT rebuild in place under `ruby4`: the 3.4 `.o`s are newer than the 4.0 headers (`make`
   does nothing) and both share `/work/.gem`, so you would silently re-run the 3.4 build. Build 4.0 in
   a **fresh copy** of the gem through the 4.0 **shims**, which prepend the 4.0 bin and set their own
-  `GEM_HOME`: `cp -a ./src /tmp/src-40 && cd /tmp/src-40 && export PATH=/usr/local/ruby-asan-40/shims:$PATH`,
+  `GEM_HOME`. From the workspace root: `rm -rf /tmp/src-40 && cp -a src /tmp/src-40 && cd /tmp/src-40 && export PATH=/usr/local/ruby-asan-40/shims:$PATH`,
   then `bundle install && rake compile` (or `cd ext/<n> && ruby extconf.rb && make`). `ruby4` runs a
   one-off 4.0 command without the PATH change.
 - **`/usr/bin/ruby` — stock Ruby (apt).** Uninstrumented and fast; use it for reading-speed

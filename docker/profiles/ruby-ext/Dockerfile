@@ -143,7 +143,7 @@ RUN build-asan-ruby "${RUBY_GIT_REF_40}" /usr/local/ruby-asan-40 /opt/ruby-src-4
 RUN set -eux; \
     mkdir -p /usr/local/ruby-asan-40/shims; \
     for t in ruby gem bundle bundler rake; do \
-        printf '#!/bin/sh\nexport GEM_HOME=/work/.gem-40 GEM_PATH=/work/.gem-40\nexport PATH=/usr/local/ruby-asan-40/shims:/usr/local/ruby-asan-40/bin:/work/.gem-40/bin:$PATH\nexec /usr/local/ruby-asan-40/bin/%s "$@"\n' "$t" > "/usr/local/ruby-asan-40/shims/$t"; \
+        printf '#!/bin/sh\nexport GEM_HOME=/work/.gem-40\nexport PATH=/usr/local/ruby-asan-40/shims:/usr/local/ruby-asan-40/bin:/work/.gem-40/bin:$PATH\nexec /usr/local/ruby-asan-40/bin/%s "$@"\n' "$t" > "/usr/local/ruby-asan-40/shims/$t"; \
     done; \
     chmod +x /usr/local/ruby-asan-40/shims/*; \
     ln -s /usr/local/ruby-asan-40/shims/ruby /usr/local/bin/ruby4
