@@ -4,9 +4,15 @@ Every scan scrutineer runs is a [claude-code skill](https://agentskills.io): a d
 
 Adding a scan type is a directory drop. No Go changes are needed unless you want a new typed parser for the output.
 
+## The default pipeline
+
+Adding a repository enqueues `triage`, which classifies its source and selects the skills to run. Metadata and package lookups run alongside security analysis; `recon` finds focus areas that fan out into deep-dive audits after `threat-model` completes. The catalogue below includes both automatically selected and on-demand skills.
+
+Edit `skills/triage/SKILL.md` to change the default selection. Workspace [path filtering](#path-filtering) and [reproduction capture](#the-workspace-at-runtime) apply to individual scans.
+
 ## Bundled skills
 
-These live in `skills/` and are embedded in the Scrutineer executable. At startup the binary materialises them into a content-addressed directory below the data root, preserving the ordinary disk-backed staging path for scripts, references, and schemas without requiring a source checkout. Passing `-skills ./skills` is still supported and overrides same-named bundled skills, which is useful while developing them locally. The `triage` skill is the entry point: when a repository is added scrutineer enqueues `triage`, which classifies the repo with `brief` and enqueues the rest in parallel.
+These live in `skills/` and are embedded in the Scrutineer executable. At startup the binary materialises them into a content-addressed directory below the data root, preserving the ordinary disk-backed staging path for scripts, references, and schemas without requiring a source checkout. Passing `-skills ./skills` is still supported and overrides same-named bundled skills, which is useful while developing them locally.
 
 | Skill | What it does |
 |---|---|
@@ -38,6 +44,7 @@ These live in `skills/` and are embedded in the Scrutineer executable. At startu
 | `cna-match` | Matches the repository to its CVE Numbering Authority so disclosures route to the right contact. |
 | `semgrep` | Runs semgrep with the `p/security-audit` and `p/secrets` rulesets and maps hits into the findings shape. |
 | `bandit` | Runs bandit over the repository's Python and maps its hits into the findings shape, grouped per test id and carrying bandit's confidence level, Common Weakness Enumeration (CWE) id, and rule documentation link. Gated on Python being one of the detected languages. |
+| `betterleaks` | Secret scanning across the available Git history, with raw secret values removed before findings are written |
 | `vuln-scan` | High-recall model-backed static source-code candidate scan adapted from Anthropic's defending-code reference harness. |
 | `zizmor` | Audits GitHub Actions workflows and enriches tool hits with bundled guidance for expression injection, privileged PR contexts, indirect workflows, credentials, runners, and supply-chain trust. |
 | `ingest` | Normalizes an externally-produced security report in an arbitrary format into findings. Runs when `/v1/import` cannot recognise the payload; the raw report is staged at `import/report`. |
@@ -308,9 +315,9 @@ When a scan starts, the worker creates `./data/work/scan-{id}/` with:
 
 `./src/` is copied from a per-URL persistent clone under `./data/work/repo-cache/<sha256(url)>/src/` so the second scan of the same repository only fetches the delta. The cache is shallow by default and is deepened on demand when the code browser needs to resolve a historical commit for `/repositories/{id}/blob/{commit}/{path}`. Local (`file://`) repositories skip the cache: `./src/` is a copy of the working tree, and the code browser reads committed content from the local checkout's own history, so edits that were not committed at scan time are not shown there.
 
-The worker then runs `claude -p "Use the {name} skill in this workspace"` with the working directory set to the workspace root. It retains the first successful capture of `./poc/<finding-id>/` with each finding, using the report-local ID such as `F001`. Finish and run the reproduction before publishing the finding, then leave its files unchanged. Captures allow 64 regular files, 1 MiB per file and 2 MiB total; links and unsafe paths are refused. A failed capture produces a warning without discarding the finding or report. Other workspace files are discarded during cleanup. Write intermediate files under `./` rather than `/tmp`; concurrent scans share `/tmp` in the container runner.
+The worker then runs `claude -p "Use the {name} skill in this workspace"` with the working directory set to the workspace root. It retains the first successful capture of `./poc/<finding-id>/` with each finding, using the report-local ID such as `F001`. Include source, crafted inputs, a `run.sh` accepting the target checkout or executable path, and a `README.md` with prerequisites and expected output. Finish and run the reproduction before publishing the finding, then leave its files unchanged. Captures allow 64 regular files, 1 MiB per file and 2 MiB total; links and unsafe paths are refused. A failed capture produces a warning without discarding the finding or report. Other workspace files are discarded during cleanup. Write intermediate files under `./` rather than `/tmp`; concurrent scans share `/tmp` in the container runner.
 
-Finding-scoped verification receives the captured files in `./poc/` beside its fresh `./src/` checkout. `./poc-manifest.json` records the source scan, commit and file checksums. Captures remain until the finding is deleted; verification and disclosure bundles use validation text when no capture exists.
+Finding-scoped verification receives the captured files in `./poc/` beside its fresh `./src/` checkout. `./poc-manifest.json` records the source scan, commit and file checksums. Captures remain until the finding is deleted and are included in database backups; verification and disclosure bundles use validation text when no capture exists.
 
 ## context.json
 

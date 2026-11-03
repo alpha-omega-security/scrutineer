@@ -246,6 +246,6 @@ visible as raw text.
 
 ## See also
 
-- [Runner setup](../README.md#setup)
+- [Runner setup](running.md#container-runner)
 - [Hardened egress](egress-sidecar.md)
 - [Codex backend](codex.md)
