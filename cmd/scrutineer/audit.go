@@ -22,6 +22,7 @@ import (
 	"github.com/git-pkgs/sarif"
 	"gorm.io/gorm"
 
+	"scrutineer/internal/config"
 	"scrutineer/internal/db"
 	"scrutineer/internal/web"
 )
@@ -122,6 +123,9 @@ func runAuditWith(args []string, out io.Writer, setup runnerSetup) error {
 	if err != nil {
 		return err
 	}
+	if err := refuseDefaultConfigUnderSource(f, opts); err != nil {
+		return err
+	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	cleanup, err := prepareAuditData(f, log)
 	if err != nil {
@@ -212,6 +216,46 @@ func resolveAuditPaths(opts *auditOptions) error {
 	}
 	opts.source, opts.out = src, outDir
 	return nil
+}
+
+// refuseDefaultConfigUnderSource stops an implicit ./scrutineer.yaml from
+// loading when the working directory is inside -source. The default config
+// can set model_base_url, model_proxy, skills_repo and its token, and
+// isolateAuditConfig does not clear those, so a hostile scrutineer.yaml in
+// the audited checkout could redirect the real API key to an
+// attacker-chosen endpoint. An explicit -config under -source is the
+// operator's deliberate choice and is left to them.
+func refuseDefaultConfigUnderSource(f *flags, opts *auditOptions) error {
+	if f.configPath != "" {
+		return nil
+	}
+	defaultCfg, err := filepath.Abs(config.DefaultPath)
+	if err != nil {
+		return nil
+	}
+	if _, statErr := os.Lstat(defaultCfg); statErr != nil {
+		return nil
+	}
+	refuse := fmt.Errorf("refusing to load the default config %s: it is inside the untrusted -source tree. "+
+		"Run audit from outside -source, or pass -config explicitly", defaultCfg)
+	// Resolve symlinks on both sides so a symlinked -source or working
+	// directory does not let the containment check compare two spellings
+	// of the same path. A resolution failure means we cannot establish
+	// containment either way, so refuse rather than fall through.
+	resolvedCfg, cfgErr := filepath.EvalSymlinks(defaultCfg)
+	resolvedSrc, srcErr := filepath.EvalSymlinks(opts.source)
+	if cfgErr != nil || srcErr != nil {
+		return refuse
+	}
+	if !pathUnder(resolvedCfg, resolvedSrc) {
+		return nil
+	}
+	return refuse
+}
+
+func pathUnder(p, root string) bool {
+	sep := string(filepath.Separator)
+	return p == root || strings.HasPrefix(p, strings.TrimRight(root, sep)+sep)
 }
 
 // prepareAuditData picks the data directory and pins it so the config file
