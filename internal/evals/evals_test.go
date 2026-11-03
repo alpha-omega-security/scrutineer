@@ -556,6 +556,32 @@ func TestRunnerLoadsEvalSkillWithProductionSchema(t *testing.T) {
 	}
 }
 
+func TestRunnerPassesSkillAllowedTools(t *testing.T) {
+	sc := mustLoadScenario(t, "../../evals/bandit-sqli.yaml")
+	var got string
+	r := Runner{
+		Runner: fakeSkillRunner{
+			report: `{"findings":[]}`,
+			inspect: func(sj worker.SkillJob) error {
+				got = sj.AllowedTools
+				return nil
+			},
+		},
+		SkillsRoot: "../../skills",
+		EvalsRoot:  "../../evals",
+		WorkRoot:   t.TempDir(),
+	}
+	if _, err := r.RunScenario(context.Background(), sc); err != nil {
+		t.Fatal(err)
+	}
+	if got == "" {
+		t.Fatal("eval SkillJob.AllowedTools empty: LocalClaude would run with bypassPermissions")
+	}
+	if want := "Read,Write,Bash"; got != want {
+		t.Fatalf("AllowedTools = %q, want %q (bandit's declared allowed-tools)", got, want)
+	}
+}
+
 func TestRunnerStagesEvalSkillReferences(t *testing.T) {
 	sc := mustLoadScenario(t, "../../evals/security-deep-dive-short-sqli.yaml")
 	inspected := false
