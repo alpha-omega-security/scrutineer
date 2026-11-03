@@ -186,7 +186,7 @@ func ossCRSLinks(tx *gorm.DB, repoID uint, archive osscrs.Archive) (map[string][
 			}
 			for _, p := range f.Attachments {
 				if !retained[p] {
-					missing = append(missing, p)
+					missing = append(missing, osscrs.DisplayName(p))
 					continue
 				}
 				byFingerprint[fp] = append(byFingerprint[fp], p)
