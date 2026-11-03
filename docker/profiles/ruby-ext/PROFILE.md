@@ -34,15 +34,21 @@ pass misses, on top of the C/Ruby audit above.
   RbConfig::CONFIG["CFLAGS"]'` shows the sanitizer flags. Its `gem`/`bundle` compile extensions
   *instrumented* automatically (the flags flow through rbconfig). Use this to build and drive the
   extension.
-- **`ruby4` (on PATH) → `/usr/local/ruby-asan-40` — a second ASan+UBSan build, Ruby 4.0.6.** Same
-  instrumentation as `ruby`, a different ABI. Ruby 4.0 changed object layout (flag bits,
-  `ROBJECT_EMBED`, `super` storage, variable-width allocation), so a native-memory bug can manifest
-  differently — or only — under one ABI. Build and drive the extension under it exactly as under
-  `ruby`: `cd ext/<n> && ruby4 extconf.rb && make`, or `/usr/local/ruby-asan-40/bin/bundle install`.
+- **`ruby4` → `/usr/local/ruby-asan-40`, a second ASan+UBSan build (Ruby 4.0.6).** Same
+  instrumentation, different ABI (4.0 changed object layout: flag bits, `ROBJECT_EMBED`, `super`
+  storage, variable-width allocation), so a native-memory bug can fire under one ABI and not the
+  other. Do NOT rebuild in place under `ruby4`: the 3.4 `.o`s are newer than the 4.0 headers (`make`
+  does nothing) and both share `/work/.gem`, so you would silently re-run the 3.4 build. Build 4.0 in
+  a **fresh copy** of the gem through the 4.0 **shims**, which prepend the 4.0 bin and set their own
+  `GEM_HOME`: `cp -a ./src /tmp/src-40 && cd /tmp/src-40 && export PATH=/usr/local/ruby-asan-40/shims:$PATH`,
+  then `bundle install && rake compile` (or `cd ext/<n> && ruby extconf.rb && make`). `ruby4` runs a
+  one-off 4.0 command without the PATH change.
 - **`/usr/bin/ruby` — stock Ruby (apt).** Uninstrumented and fast; use it for reading-speed
   Ruby-level work and as the **valgrind** target. Never run valgrind against the ASan ruby.
 - `/opt/ruby-src` — the Ruby source tree the ASan build came from. Cross-reference C-API
   semantics here when triaging (`include/ruby/**`, `string.c`, `gc.c`).
+- `/opt/ruby-src-40`, the Ruby 4.0 source tree. Compare against `/opt/ruby-src` (3.4) when a layout
+  difference between the ABIs is the point of the bug.
 - `gdb`, `strace`, `valgrind`, `cargo`, `brakeman`, `gh`, `claude` — on PATH.
 
 ## Building & driving the extension (under ASan, the default ruby)
@@ -68,20 +74,22 @@ Then drive it from Ruby and let a sanitizer abort be the signal:
 bundle exec ruby /tmp/poc.rb      # or: ruby -e '...'
 ```
 
-**Two ASan ABIs — build against the gem's target, and test both when layout matters.** There are two
+**Two ASan ABIs: build against the gem's target, and test both when layout matters.** There are two
 instrumented interpreters: `ruby` (3.4.9, default) and `ruby4` (4.0.6). The gem's own target comes
-from `required_ruby_version` / `.ruby-version` / the Gemfile `ruby` line — read it and build the
-extension against the ABI that matches. If it won't compile or load against one (removed C-API,
-struct-layout change), try the other before calling it a coverage gap, and state which ABI you used.
+from `required_ruby_version` / `.ruby-version` / the Gemfile `ruby` line; read it and build the
+extension against the ABI that matches (`ruby`, or the 4.0 shims in a fresh copy of the tree; see the
+interpreter list above). If it won't compile or load against one (removed C-API, struct-layout
+change), try the other before calling it a coverage gap, and state which ABI you used.
 
-For a **memory-safety** candidate whose outcome can depend on object layout — type confusion, OOB,
-UAF, anything touching `RSTRUCT_*` / `ROBJECT_*` / `RBASIC` flag bits or the GC — reproduce under
-**both** `ruby` and `ruby4` and record which ABI produced which result. The same defect is routinely
+For a **memory-safety** candidate whose outcome can depend on object layout (type confusion, OOB,
+UAF, anything touching `RSTRUCT_*` / `ROBJECT_*` / `RBASIC` flag bits or the GC), reproduce under
+**both** `ruby` and `ruby4` (each in its own copy of the tree) and record which ABI produced which
+result. The same defect is routinely
 benign on one ABI and a hard crash on another, because the interpreters disagree on where an object
 stores its data. A Struct/type confusion that writes attacker values through `RSTRUCT_LEN` /
 `rb_struct_aset` on a non-Struct instance, for instance, can land inside an embedded object on a
 Ruby major whose fresh objects carry the embed flag bits (a contained, often silent write) yet
-dereference a stale heap pointer on a major where they do not (a wild write → SIGSEGV / likely RCE).
+dereference a stale heap pointer on a major where they do not (a wild write -> SIGSEGV / likely RCE).
 A clean run on one ABI is a clean result for that ABI, not for the finding. For a Ruby-level
 (non-memory) reproducer on some other version, `ruby-build <x.y.z> /tmp/ruby-<x.y.z>` (on PATH) or
 the stock `/usr/bin/ruby` still apply; state the version.
