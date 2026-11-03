@@ -11,7 +11,9 @@ package db
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"slices"
 	"strconv"
@@ -2038,10 +2040,30 @@ func planFindingReferenceMerge(rows []FindingReference) (survivors []FindingRefe
 // target file rather than refusing it (unlike upstream SQLite), which would
 // leave trailing bytes from a larger prior file, so Snapshot guards the case
 // itself. The parent directory of dest must exist.
-func Snapshot(src, dest string) error {
-	if _, err := os.Stat(dest); err == nil {
-		return fmt.Errorf("destination already exists: %s", dest)
+//
+// dest is created 0600 before VACUUM INTO writes to it, so the sensitive
+// snapshot bytes are never readable at the process umask default. The modernc
+// driver overwrites the empty file in place.
+func Snapshot(src, dest string) (retErr error) {
+	// The modernc driver enables URI filenames, so VACUUM INTO would resolve
+	// a "file:" dest to the URI target rather than the literal path OpenFile
+	// creates below, and the snapshot would land at the umask default.
+	if strings.HasPrefix(dest, "file:") {
+		return fmt.Errorf("URI destinations are not supported: %s", dest)
 	}
+	f, err := os.OpenFile(dest, os.O_CREATE|os.O_EXCL|os.O_WRONLY, snapshotFilePerm)
+	if err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return fmt.Errorf("destination already exists: %s", dest)
+		}
+		return err
+	}
+	_ = f.Close()
+	defer func() {
+		if retErr != nil {
+			_ = os.Remove(dest)
+		}
+	}()
 	gdb, err := gorm.Open(sqlite.Open(src), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
 	if err != nil {
 		return fmt.Errorf("open sqlite: %w", err)
@@ -2070,6 +2092,8 @@ func Snapshot(src, dest string) error {
 	}
 	return nil
 }
+
+const snapshotFilePerm = 0o600
 
 const (
 	SBOMOriginUploaded  = "uploaded"
