@@ -90,14 +90,15 @@ func (r Runner) RunScenario(ctx context.Context, sc Scenario) (Result, error) {
 		}
 	}
 	res, err := r.Runner.RunSkill(ctx, worker.SkillJob{
-		Repo:       repo,
-		WorkRoot:   work,
-		Model:      r.Model,
-		Name:       skill.Name,
-		SkillDir:   r.Runner.SkillDir(work, skill.Name),
-		OutputFile: skill.OutputFile,
-		MaxTurns:   skill.MaxTurns,
-		SrcReady:   true,
+		Repo:         repo,
+		WorkRoot:     work,
+		Model:        r.Model,
+		Name:         skill.Name,
+		SkillDir:     r.Runner.SkillDir(work, skill.Name),
+		OutputFile:   skill.OutputFile,
+		MaxTurns:     skill.MaxTurns,
+		AllowedTools: skill.AllowedTools,
+		SrcReady:     true,
 	}, emit)
 	if err != nil {
 		return Result{}, fmt.Errorf("%s: run %s: %w", sc.Path, sc.Skill, err)
