@@ -56,7 +56,7 @@ With the default containerised runner, each scan runs in a separate container bu
 
 ## Container runner
 
-By default, scrutineer runs each scan in an ephemeral container with a read-only source mount and dropped capabilities. Startup fails if the selected runtime is unavailable; running on the host requires an explicit `--no-container`. The runner image is published to GHCR as a multi-arch manifest (`linux/amd64` and `linux/arm64`) and pulled automatically on first use:
+By default, scrutineer runs each scan in an ephemeral container with a read-write workspace mount at `/work`, including `/work/src`, and dropped capabilities. `--hardened` and `--hardened-runtime-only` make the container root filesystem read-only; `/work` remains writable. Startup fails if the selected runtime is unavailable; running on the host requires an explicit `--no-container`. The runner image is published to GHCR as a multi-arch manifest (`linux/amd64` and `linux/arm64`) and pulled automatically on first use:
 
     go run -buildvcs=true ./cmd/scrutineer -skills ./skills
 
@@ -80,7 +80,7 @@ The runner image is not auto-updated, so the analysis toolchain stays on whateve
 
 On sidecar-backed hardened runtimes, scrutineer also refuses a runner image whose proxy binary does not support the current host-API tunnel policy. Pull or rebuild custom runner images when updating the host binary.
 
-If you would rather update automatically, run [watchtower](https://github.com/containrrr/watchtower) against the runner image or pass `--pull=always` to the runtime; scrutineer deliberately does not pull on its own so a scan's toolchain only changes when you choose to update it.
+Pull the runner image explicitly before starting new scans when you want to update the toolchain. Scrutineer has no setting to force an image pull on every scan.
 
 ### Egress proxy
 

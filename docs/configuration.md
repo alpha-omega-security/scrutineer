@@ -1,6 +1,6 @@
 # Configuration
 
-Every flag below can be set in a YAML config file instead, loaded from `./scrutineer.yaml` by default (override with `-config path/to/file`; command-line flags always take precedence). See [scrutineer.sample.yaml](../scrutineer.sample.yaml) for the full shape.
+Every flag below except `-config` can be set in a YAML config file, loaded from `./scrutineer.yaml` by default. Use `-config path/to/file` to select another file; command-line flags always take precedence. See [scrutineer.sample.yaml](../scrutineer.sample.yaml) for the full shape.
 
 `scrutineer.yaml` may contain long-lived credentials such as `skills_repo_token`, the VINCE API key and federation salt. Keep it out of source control and backups, and set owner-only permissions with `chmod 600 scrutineer.yaml`. A private `skills_repo` must use a credential-free HTTPS URL; Scrutineer passes `skills_repo_token` to Git through `GIT_ASKPASS`, and intentionally provides no token command-line flag.
 
