@@ -729,15 +729,19 @@ func (w *Worker) persistFinding(scan *db.Scan, f *db.Finding) (created bool, err
 // Reference and history failures are logged but not fatal; the finding
 // row write itself does propagate so a real DB error stops the scan.
 func (w *Worker) reobserveFinding(existing, f *db.Finding, scan *db.Scan) error {
-	// A finding already last-seen in this same scan was streamed into the
-	// concurrent-finding log earlier in this run. Reconciling it from
-	// the final report must be idempotent: do not bump seen_count or write
-	// another observed-history row, or a streamed finding would count as
-	// seen twice by one scan.
-	sameScan := existing.LastSeenScanID == scan.ID
+	// seenThisScan handles accounting: a finding this scan already touched
+	// (via the streamed POST) must not bump seen_count or write a second
+	// observed-history row when the final report reconciles it.
+	seenThisScan := existing.LastSeenScanID == scan.ID
+	// ownedByThisScan gates content replacement on immutable creation
+	// ownership. LastSeenScanID is set to scan.ID on every re-observation,
+	// so keying the content refresh on it let a scan that streamed a prior
+	// scan's finding and then included it in its final report overwrite
+	// that finding's parser-owned content.
+	ownedByThisScan := existing.ScanID == scan.ID
 
 	seenCount := existing.SeenCount + 1
-	if sameScan {
+	if seenThisScan {
 		seenCount = existing.SeenCount
 	}
 	updates := map[string]any{
@@ -749,7 +753,7 @@ func (w *Worker) reobserveFinding(existing, f *db.Finding, scan *db.Scan) error 
 		"location":            f.Location,
 		"locations":           f.Locations,
 	}
-	if sameScan {
+	if ownedByThisScan {
 		// The existing row is this run's own streamed preview, which may
 		// carry only the minimal fields the POST endpoint requires. The
 		// final report is the authoritative full version of the same
@@ -806,7 +810,7 @@ func (w *Worker) reobserveFinding(existing, f *db.Finding, scan *db.Scan) error 
 	if err := w.upsertFindingReferences(existing.ID, f.References); err != nil {
 		w.Log.Warn("upsert finding references", "finding", existing.ID, "scan", scan.ID, "err", err)
 	}
-	if sameScan {
+	if seenThisScan {
 		return nil
 	}
 	if err := w.DB.Create(&db.FindingHistory{

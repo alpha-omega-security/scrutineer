@@ -102,6 +102,51 @@ func TestPersistStreamedFinding_reconcilesWithFinalReport(t *testing.T) {
 	}
 }
 
+// A later scan that streams a prior scan's finding (same fingerprint) and
+// then includes it in its final report must NOT overwrite that finding's
+// parser-owned content. sameScan is keyed on immutable ScanID, so the
+// stream-then-report sequence from scan B cannot flip the content refresh
+// on a finding scan A created.
+func TestPersistStreamedFinding_crossScanStreamThenReportKeepsPriorContent(t *testing.T) {
+	w, repo := newStreamWorker(t)
+	a := &db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "sd", Status: db.ScanDone, Commit: "aaa"}
+	w.DB.Create(a)
+	original := db.Finding{
+		ScanID: a.ID, RepositoryID: repo.ID, Commit: "aaa", LastSeenScanID: a.ID, SeenCount: 1,
+		Title: "legit title", Severity: "High", Location: "main.go:10", CWE: "CWE-78",
+		Trace: "triaged trace", Status: db.FindingTriaged,
+		Fingerprint: db.FingerprintFinding("sd", "", "CWE-78", "main.go:10", "legit title"),
+	}
+	w.DB.Create(&original)
+
+	b := &db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "sd", Status: db.ScanRunning, Commit: "bbb"}
+	w.DB.Create(b)
+
+	// Scan B streams the same fingerprint: cross-scan re-observation sets
+	// last_seen_scan_id = B but must not touch content.
+	if _, err := w.PersistStreamedFinding(b, []byte(`{"title":"legit title","severity":"Low","location":"main.go:10","cwe":"CWE-78"}`)); err != nil {
+		t.Fatal(err)
+	}
+	// Scan B's final report tries to replace the content.
+	report := `{"findings":[{"id":"F1","title":"legit title","severity":"Low","cwe":"CWE-78",
+		"location":"main.go:10","trace":"attacker-controlled replacement"}]}`
+	if err := w.parseFindingsOutput(&db.Skill{}, b, report, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+
+	var got db.Finding
+	w.DB.First(&got, original.ID)
+	if got.ScanID != a.ID {
+		t.Fatalf("ScanID rewritten to %d; creation ownership must be immutable", got.ScanID)
+	}
+	if got.Trace != "triaged trace" || got.Severity != "High" {
+		t.Fatalf("cross-scan stream-then-report overwrote content: trace=%q severity=%q", got.Trace, got.Severity)
+	}
+	if got.LastSeenScanID != b.ID || got.SeenCount != 2 {
+		t.Fatalf("re-observation accounting lost: last_seen=%d seen_count=%d", got.LastSeenScanID, got.SeenCount)
+	}
+}
+
 // A finding streamed with only the required minimal fields and then
 // reconciled with the same scan's final report must pick up the full
 // parser-owned content of the final report: the streamed row is a preview,
