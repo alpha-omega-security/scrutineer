@@ -657,3 +657,24 @@ func TestRepoShow_headerMoreMenuWithoutSkills(t *testing.T) {
 		t.Error("More menu is missing its actions without skills")
 	}
 }
+
+// TestRepoShow_summarySettingsAreLabelledValues pins the Summary settings as a
+// description list with one label per setting.
+func TestRepoShow_summarySettingsAreLabelledValues(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/r", Name: "r", DisclosureChannel: "security@example.org"}
+	s.DB.Create(&repo)
+
+	body := getRepoPage(t, s, repo.ID)
+	_, list, found := strings.Cut(body, "<dl")
+	if !found {
+		t.Fatal("no settings list on the Summary tab")
+	}
+	list, _, _ = strings.Cut(list, "</dl>")
+	for _, want := range []string{" Disclosure channel</dt>", "security@example.org</p>", " Federation opt-out</dt>", "not requested", " Scheduled scans</dt>", "not scheduled"} {
+		if !strings.Contains(list, want) {
+			t.Errorf("settings list is missing %q", want)
+		}
+	}
+}
