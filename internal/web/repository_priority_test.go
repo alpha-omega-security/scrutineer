@@ -226,7 +226,7 @@ func TestRepoPrioritiesRejectsIncompleteEvidence(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
 	deps := db.Skill{Name: "deps", OutputKind: "dependencies"}
-	people := db.Skill{Name: "people", OutputKind: "maintainers"}
+	people := db.Skill{Name: "maintainers", OutputKind: "maintainers"}
 	for _, skill := range []*db.Skill{&deps, &people} {
 		if err := s.DB.Create(skill).Error; err != nil {
 			t.Fatal(err)
@@ -301,7 +301,9 @@ func TestRepoPrioritiesReleaseSignals(t *testing.T) {
 func TestRepoPrioritiesFindingsAndLastScan(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
-	for i := 0; i < perPage+1; i++ {
+	priorityTestRepo(t, s, "unrelated-first")
+	emptyRepo := priorityTestRepo(t, s, "empty-00")
+	for i := 1; i < perPage+1; i++ {
 		priorityTestRepo(t, s, fmt.Sprintf("empty-%02d", i))
 	}
 	repo := priorityTestRepo(t, s, "z-audited")
@@ -354,7 +356,7 @@ func TestRepoPrioritiesFindingsAndLastScan(t *testing.T) {
 		t.Fatal("priority findings differ from regular list")
 	}
 	empty := priorityTestPage(t, s, "&q=empty-00")
-	row := requireRepoListRow(t, empty, 1)
+	row := requireRepoListRow(t, empty, emptyRepo.ID)
 	if !strings.Contains(row, `class="badge-secondary">0</span>`) || strings.Count(row, "never") != 2 {
 		t.Fatal("missing scans/findings did not render as zero and never")
 	}

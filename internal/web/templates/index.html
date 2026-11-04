@@ -2,6 +2,6 @@
 
 {{if .Priorities}}{{template "repo_priorities.html" .}}{{else}}{{template "repo_list.html" .}}{{end}}
 
-{{template "live-table" (dict "URL" .SelfURL "Target" "#repos")}}
+{{if not .Priorities}}{{template "live-table" (dict "URL" .SelfURL "Target" "#repos")}}{{end}}
 
 {{template "foot" .}}

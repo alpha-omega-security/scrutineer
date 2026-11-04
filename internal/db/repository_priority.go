@@ -185,11 +185,18 @@ func priorityMetadata(repo *RepositoryPriority, source Repository) {
 	if repo.Languages == "" {
 		repo.Gaps = append(repo.Gaps, "Language unknown")
 	}
+	var unsafeLanguages []string
 	for language := range strings.SplitSeq(repo.Languages, ",") {
-		switch strings.ToLower(strings.TrimSpace(language)) {
+		language = strings.TrimSpace(language)
+		switch strings.ToLower(language) {
 		case "c", "c++", "objective-c", "assembly":
-			repo.Signals = append(repo.Signals, PrioritySignal{ID: "memory-unsafe", Evidence: "Contains " + strings.TrimSpace(language) + "; check whether this is shipped code or fixtures"})
+			if !slices.ContainsFunc(unsafeLanguages, func(existing string) bool { return strings.EqualFold(existing, language) }) {
+				unsafeLanguages = append(unsafeLanguages, language)
+			}
 		}
+	}
+	if len(unsafeLanguages) > 0 {
+		repo.Signals = append(repo.Signals, PrioritySignal{ID: "memory-unsafe", Evidence: "Contains " + strings.Join(unsafeLanguages, ", ") + "; check whether this is shipped code or fixtures"})
 	}
 }
 
@@ -232,7 +239,9 @@ func priorityEligibleScans(g *gorm.DB) *gorm.DB {
 
 func loadPriorityInventories(g *gorm.DB, repos map[uint]*RepositoryPriority, now time.Time) (map[uint][]priorityOccurrence, error) {
 	var attempts []struct{ RepositoryID, ID uint }
-	if err := priorityDependencyScans(g).Select("scans.repository_id, MAX(scans.id) AS id").Group("scans.repository_id").Scan(&attempts).Error; err != nil {
+	if err := priorityDependencyScans(g).
+		Where("scans.status NOT IN ?", []ScanStatus{ScanQueued, ScanRunning, ScanPaused}).
+		Select("scans.repository_id, MAX(scans.id) AS id").Group("scans.repository_id").Scan(&attempts).Error; err != nil {
 		return nil, err
 	}
 	candidates := priorityEligibleScans(g).Select("MAX(scans.id)").Group("scans.repository_id")
@@ -432,6 +441,7 @@ func addPriorityEdge(edges map[uint]map[uint]*PriorityConsumer, owner uint, repo
 func loadPriorityMaintainers(g *gorm.DB, repos map[uint]*RepositoryPriority) error {
 	var scans []Scan
 	latest := g.Table("scans").Select("MAX(scans.id)").Joins("JOIN skills ON skills.id = scans.skill_id").
+		Where("skills.name = ?", "maintainers").
 		Where("skills.output_kind = ? AND COALESCE(scans.sub_path, '') = '' AND COALESCE(scans.ref, '') = ''", "maintainers").Group("scans.repository_id")
 	if err := g.Select("id, repository_id, status, report, cost_capped, max_turns_hit").Where("id IN (?)", latest).Find(&scans).Error; err != nil {
 		return err
