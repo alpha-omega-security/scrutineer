@@ -7,6 +7,7 @@
   "properties": {
     "duplicates": {
       "type": "array",
+      "maxItems": 256,
       "description": "Groups of open findings that describe the same underlying vulnerability.",
       "items": {
         "type": "object",
@@ -20,6 +21,7 @@
           },
           "duplicate_ids": {
             "type": "array",
+            "maxItems": 256,
             "minItems": 1,
             "uniqueItems": true,
             "items": {
@@ -43,6 +45,7 @@
     },
     "subsumed": {
       "type": "array",
+      "maxItems": 256,
       "description": "Findings that are only reachable through another finding, such that any correct fix for the parent closes them too. Distinct from duplicates: the bugs are different, but the child does not need its own disclosure.",
       "items": {
         "type": "object",
@@ -56,6 +59,7 @@
           },
           "subsumed_ids": {
             "type": "array",
+            "maxItems": 256,
             "minItems": 1,
             "uniqueItems": true,
             "items": { "type": "integer", "minimum": 1 },
@@ -71,6 +75,7 @@
     },
     "chains": {
       "type": "array",
+      "maxItems": 256,
       "description": "Groups of two or more findings that combine into a higher-severity attack than any of them alone. All members stay open; disclose reports them together.",
       "items": {
         "type": "object",
@@ -80,6 +85,7 @@
           "finding_ids": {
             "type": "array",
             "minItems": 2,
+            "maxItems": 16,
             "uniqueItems": true,
             "items": { "type": "integer", "minimum": 1 },
             "description": "Database ids of open findings that chain together. Order is the exploit order when it matters."

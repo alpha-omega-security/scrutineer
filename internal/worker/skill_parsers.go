@@ -1800,6 +1800,22 @@ func (w *Worker) parseFindingDedupOutput(scan *db.Scan, report string, emit func
 		emit(Event{Kind: KindText, Text: "finding-dedup: no relations reported"})
 		return nil
 	}
+	if len(result.Duplicates)+len(result.Subsumed)+len(result.Chains) > maxDedupReportGroups {
+		return &SchemaValidationError{Skill: findingDedupSkill, Detail: fmt.Sprintf("report exceeds %d relation groups", maxDedupReportGroups)}
+	}
+	inputIDs := 0
+	for _, g := range result.Duplicates {
+		inputIDs += 1 + len(g.DuplicateIDs)
+	}
+	for _, g := range result.Subsumed {
+		inputIDs += 1 + len(g.SubsumedIDs)
+	}
+	for _, g := range result.Chains {
+		inputIDs += len(g.FindingIDs)
+	}
+	if inputIDs > maxDedupReportIDs {
+		return &SchemaValidationError{Skill: findingDedupSkill, Detail: fmt.Sprintf("report exceeds %d ID references", maxDedupReportIDs)}
+	}
 
 	skipped, promoted := 0, 0
 	marked, err := w.applyDedupHeaded(scan.RepositoryID, dedupHeaderDuplicate, true,
@@ -1865,35 +1881,49 @@ func mapDedupGroups[T any](in []T, f func(T) dedupGroup) []dedupGroup {
 func (w *Worker) applyDedupHeaded(repoID uint, verb string, flipStatus bool, groups []dedupGroup, skipped, promoted *int) (int, error) {
 	n := 0
 	for _, g := range groups {
-		head, ok := w.dedupFinding(repoID, g.HeadID)
-		if !ok || !dedupCandidateOpen(head.Status) {
-			*skipped += len(g.MemberIDs)
+		applied, err := w.applyDedupHeadedGroup(repoID, verb, flipStatus, g, skipped, promoted)
+		n += applied
+		if err != nil {
+			return n, err
+		}
+	}
+	return n, nil
+}
+
+func (w *Worker) applyDedupHeadedGroup(repoID uint, verb string, flipStatus bool, g dedupGroup, skipped, promoted *int) (int, error) {
+	n := 0
+	ids := dedupMemberIDs(g.MemberIDs, skipped)
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	head, ok := w.dedupFinding(repoID, g.HeadID)
+	if !ok || !dedupCandidateOpen(head.Status) {
+		*skipped += len(ids)
+		return 0, nil
+	}
+	for _, id := range ids {
+		if id == 0 || id == head.ID {
+			*skipped++
 			continue
 		}
-		for _, id := range g.MemberIDs {
-			if id == 0 || id == head.ID {
-				*skipped++
-				continue
-			}
-			member, ok := w.dedupFinding(repoID, id)
-			if !ok || !dedupCandidateOpen(member.Status) {
-				*skipped++
-				continue
-			}
-			if flipStatus {
-				took, err := w.markDedupDuplicate(head, member, g)
-				if err != nil {
-					return n, err
-				}
-				if took && promoted != nil {
-					*promoted++
-				}
-			}
-			if err := w.addRelationNote(member.ID, verb, []uint{head.ID}, g.Reason); err != nil {
+		member, ok := w.dedupFinding(repoID, id)
+		if !ok || !dedupCandidateOpen(member.Status) {
+			*skipped++
+			continue
+		}
+		if flipStatus {
+			took, err := w.markDedupDuplicate(head, member, g)
+			if err != nil {
 				return n, err
 			}
-			n++
+			if took && promoted != nil {
+				*promoted++
+			}
 		}
+		if err := w.addRelationNote(member.ID, verb, []uint{head.ID}, g.Reason); err != nil {
+			return n, err
+		}
+		n++
 	}
 	return n, nil
 }
@@ -1918,43 +1948,41 @@ func (w *Worker) markDedupDuplicate(head, member db.Finding, g dedupGroup) (bool
 // nothing to compose with.
 const minChainMembers = 2
 
-// maxChainMembers caps a chain's distinct membership. report.json is
-// lower-trust sandbox output and each member gets a note listing every
-// other member, so an uncapped chain is quadratic in notes written. The
-// schema's uniqueItems does not protect here: parseSkillOutput only
-// enforces it under SchemaStrict.
+// Each chain member gets a note listing every other member.
 const maxChainMembers = 16
 
-// maxChainInputIDs bounds a chain's raw finding_ids array before any id
-// is looked up. Each id is one dedupFinding DB query, and the 50 MiB
-// report cap still permits millions of ids.
-const maxChainInputIDs = 256
+const (
+	maxDedupGroupInputIDs = 256
+	maxDedupReportGroups  = 256
+	maxDedupReportIDs     = 4096
+)
 
-// chainMembers resolves ids to distinct open findings in repoID, bounded
-// so a hostile report cannot drive millions of DB lookups or an outsize
-// map allocation. The returned slice has at most maxChainMembers+1 entries,
-// which the caller treats as "over cap".
-func (w *Worker) chainMembers(repoID uint, ids []uint, skipped *int) []uint {
-	if len(ids) > maxChainInputIDs {
+func dedupMemberIDs(ids []uint, skipped *int) []uint {
+	if len(ids) > maxDedupGroupInputIDs {
 		*skipped += len(ids)
 		return nil
 	}
-	var members []uint
-	seen := make(map[uint]bool, maxChainMembers)
+	seen := make(map[uint]bool, len(ids))
+	var distinct []uint
 	for _, id := range ids {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		distinct = append(distinct, id)
+	}
+	return distinct
+}
+
+func (w *Worker) chainMembers(repoID uint, ids []uint, skipped *int) []uint {
+	var members []uint
+	for _, id := range dedupMemberIDs(ids, skipped) {
 		f, ok := w.dedupFinding(repoID, id)
 		if !ok || !dedupCandidateOpen(f.Status) {
 			*skipped++
 			continue
 		}
-		if seen[f.ID] {
-			continue
-		}
-		seen[f.ID] = true
 		members = append(members, f.ID)
-		if len(members) > maxChainMembers {
-			return members
-		}
 	}
 	return members
 }

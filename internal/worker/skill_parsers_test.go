@@ -2172,7 +2172,7 @@ func TestApplyDedupChains_dedupsRepeatedMemberIDs(t *testing.T) {
 	// A hostile report.json can repeat one id many times; schema uniqueItems
 	// is only enforced under SchemaStrict, so applyDedupChains must not emit
 	// one note per occurrence.
-	ids := make([]uint, maxChainInputIDs-1)
+	ids := make([]uint, maxDedupGroupInputIDs-1)
 	for i := range ids {
 		ids[i] = a.ID
 	}
@@ -2192,6 +2192,13 @@ func TestApplyDedupChains_dedupsRepeatedMemberIDs(t *testing.T) {
 	if got := len(findingNotes(gdb, b.ID)); got != 1 {
 		t.Errorf("finding %d has %d notes, want 1", b.ID, got)
 	}
+	for _, pair := range []struct{ on, other db.Finding }{{a, b}, {b, a}} {
+		notes := findingNotes(gdb, pair.on.ID)
+		want := fmt.Sprintf("finding-dedup: chains with finding #%d\n\nx", pair.other.ID)
+		if len(notes) != 1 || notes[0].Body != want {
+			t.Errorf("finding %d notes = %+v, want body %q", pair.on.ID, notes, want)
+		}
+	}
 }
 
 func TestApplyDedupChains_rejectsOversizeInput(t *testing.T) {
@@ -2202,7 +2209,7 @@ func TestApplyDedupChains_rejectsOversizeInput(t *testing.T) {
 	// Each input id is one dedupFinding DB query. The 50 MiB report cap
 	// still permits millions of ids, so the raw array must be bounded
 	// before any lookup runs.
-	ids := make([]uint, maxChainInputIDs+1)
+	ids := make([]uint, maxDedupGroupInputIDs+1)
 	for i := range ids {
 		ids[i] = fs[0].ID
 	}
