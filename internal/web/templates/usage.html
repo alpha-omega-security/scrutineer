@@ -24,7 +24,7 @@
 {{if or .RateLimit.Rows .RateLimit.Paused}}
 <div class="card p-4 mb-6">
   <div class="flex items-center justify-between gap-4 mb-3">
-    <h3 class="text-sm font-semibold flex items-center gap-2">
+    <h3 class="text-base font-semibold flex items-center gap-2">
       <i data-lucide="gauge"></i> Claude subscription limits
     </h3>
     <span class="text-xs text-muted-foreground">latest per window since restart</span>
@@ -54,7 +54,7 @@
 {{end}}
 
 {{if eq .View "drivers"}}
-  <h3 class="text-lg font-semibold mb-3">Cost correlations</h3>
+  <h3 class="text-base font-semibold mb-3">Cost correlations</h3>
   {{if .DriverCorrelations}}
     <div class="overflow-x-auto mb-8">
       <table class="table w-full">
@@ -82,7 +82,7 @@
     {{template "empty" (dict "Icon" "chart-scatter" "Title" "Not enough matched runs" "Body" "A correlation appears after three positive-cost runs of one skill have a relevant measurement, with variation in both cost and measurement.")}}
   {{end}}
 
-  <h3 class="text-lg font-semibold mt-8 mb-3">Cost outliers</h3>
+  <h3 class="text-base font-semibold mt-8 mb-3">Cost outliers</h3>
   {{if .Outliers}}
     <div class="overflow-x-auto">
       <table class="table w-full">

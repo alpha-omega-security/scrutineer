@@ -25,13 +25,13 @@
 </dl>
 
 <section class="card p-4 mb-6">
-  <h3 class="font-medium mb-3">SKILL.md body</h3>
+  <h3 class="text-base font-semibold mb-3">SKILL.md body</h3>
   <pre class="text-xs whitespace-pre-wrap font-mono skill-src"><code class="language-markdown">{{.Body}}</code></pre>
 </section>
 
 {{if .SchemaJSON}}
 <section class="card p-4 mb-6">
-  <h3 class="font-medium mb-3">schema.json</h3>
+  <h3 class="text-base font-semibold mb-3">schema.json</h3>
   <pre class="text-xs whitespace-pre-wrap font-mono skill-src"><code class="language-json">{{prettyjson .SchemaJSON}}</code></pre>
 </section>
 {{end}}
