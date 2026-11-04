@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"go.yaml.in/yaml/v3"
+
 	"scrutineer/internal/db"
 )
 
@@ -218,7 +220,25 @@ func TestApiPatchFinding_refusesGateOwnedFields(t *testing.T) {
 	scopeAPITokenToFinding(t, s, tok, f.ID)
 	path := fmt.Sprintf("/api/findings/%d", f.ID)
 
+	spec := apiReq(t, s, "GET", "/api/openapi.yaml", tok, "")
+	if spec.Code != http.StatusOK {
+		t.Fatalf("fetch API contract: status = %d; body=%s", spec.Code, spec.Body)
+	}
+	var doc openAPIDoc
+	if err := yaml.Unmarshal(spec.Body.Bytes(), &doc); err != nil {
+		t.Fatal(err)
+	}
+	schema := openAPIRequestSchema(t, doc, "/findings/{id}", "patch")
+	properties := openAPIMap(t, schema["properties"], "finding PATCH properties")
+	fields := openAPIMap(t, properties["fields"], "finding PATCH fields")
+	allowedFields, ok := fields["description"].(string)
+	if !ok || allowedFields == "" {
+		t.Fatal("finding PATCH has no documented allowed fields")
+	}
 	for _, field := range []string{"suggested_fix", "suggested_fix_commit"} {
+		if strings.Contains(allowedFields, field) {
+			t.Errorf("API contract advertises forbidden field %s as writable", field)
+		}
 		body := fmt.Sprintf(`{"fields":{%q:"--- a/x\n+++ b/x\n"}}`, field)
 		w := apiReq(t, s, "PATCH", path, tok, body)
 		if w.Code != http.StatusForbidden {
@@ -226,7 +246,9 @@ func TestApiPatchFinding_refusesGateOwnedFields(t *testing.T) {
 		}
 	}
 	var got db.Finding
-	s.DB.First(&got, f.ID)
+	if err := s.DB.First(&got, f.ID).Error; err != nil {
+		t.Fatal(err)
+	}
 	if got.SuggestedFix != "" || got.SuggestedFixCommit != "" {
 		t.Fatalf("gate-owned fields written despite 403: fix=%q commit=%q", got.SuggestedFix, got.SuggestedFixCommit)
 	}
