@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,21 +21,26 @@ func TestDoSkillRepairsPoCFencesBeforePersisting(t *testing.T) {
 	}
 	valid := string(raw)
 	invalid := strings.Replace(valid, "```text filename=input.txt", "--- input.txt ---", 1)
+	atLimit := pocReportWithOutputFences(t, raw, 62)
+	overLimit := pocReportWithOutputFences(t, raw, 63)
 	schema := loadBundledSchema(t, "../../skills/audit-injection/schema.json")
 	for _, tc := range []struct {
-		name, repaired, session string
-		status                  db.ScanStatus
-		strict                  bool
-		wantRuns, wantFindings  int
+		name, original, repaired, session string
+		status                            db.ScanStatus
+		strict                            bool
+		wantRuns, wantFindings            int
 	}{
-		{"repaired", valid, "session-1", db.ScanDone, true, 2, 1},
-		{"still invalid strict", invalid, "session-1", db.ScanFailed, true, 2, 0},
-		{"still invalid warning", invalid, "session-1", db.ScanDone, false, 2, 1},
-		{"no session", "", "", db.ScanFailed, true, 1, 0},
+		{"repaired", invalid, valid, "session-1", db.ScanDone, true, 2, 1},
+		{"still invalid strict", invalid, invalid, "session-1", db.ScanFailed, true, 2, 0},
+		{"still invalid warning", invalid, invalid, "session-1", db.ScanDone, false, 2, 1},
+		{"no session", invalid, "", "", db.ScanFailed, true, 1, 0},
+		{"64 fences including output", atLimit, "", "session-1", db.ScanDone, true, 1, 1},
+		{"65 fences repaired", overLimit, atLimit, "session-1", db.ScanDone, true, 2, 1},
+		{"65 fences rejected", overLimit, overLimit, "session-1", db.ScanFailed, true, 2, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			runner := &sequenceRunner{results: []SkillResult{
-				{SessionID: tc.session, Report: invalid},
+				{SessionID: tc.session, Report: tc.original},
 				{SessionID: tc.session, Report: tc.repaired},
 			}}
 			w, repoID, scanID := newQueuedSchemaSkillWorker(t, tc.strict, runner)
@@ -60,16 +66,46 @@ func TestDoSkillRepairsPoCFencesBeforePersisting(t *testing.T) {
 			if scan.Status != tc.status || len(runner.jobs) != tc.wantRuns {
 				t.Fatalf("status = %s, runs = %d, error = %s", scan.Status, len(runner.jobs), scan.Error)
 			}
-			if tc.wantRuns == 2 && !strings.Contains(runner.jobs[1].ResumePrompt, "/findings/0/validation") {
-				t.Fatalf("repair prompt = %q", runner.jobs[1].ResumePrompt)
+			if tc.wantRuns == 2 {
+				assertPoCRepairPrompt(t, runner.jobs[1].ResumePrompt, tc.original == overLimit)
 			}
-			wantReport := invalid
-			if tc.repaired == valid {
-				wantReport = valid
+			wantReport := tc.original
+			if tc.status == db.ScanDone && tc.repaired != "" {
+				wantReport = tc.repaired
 			}
 			assertPersistedPoCReport(t, w, repoID, scan, wantReport, tc.wantFindings)
 		})
 	}
+}
+
+func assertPoCRepairPrompt(t *testing.T, prompt string, fenceLimit bool) {
+	t.Helper()
+	if !strings.Contains(prompt, "/findings/0/validation") {
+		t.Fatalf("repair prompt = %q", prompt)
+	}
+	if fenceLimit && !strings.Contains(prompt, "more than 64 code fences") {
+		t.Fatalf("repair prompt omits the fence limit: %q", prompt)
+	}
+}
+
+func pocReportWithOutputFences(t *testing.T, raw []byte, namedFiles int) string {
+	t.Helper()
+	var report map[string][]map[string]any
+	if err := json.Unmarshal(raw, &report); err != nil {
+		t.Fatal(err)
+	}
+	var markdown strings.Builder
+	markdown.WriteString("```sh filename=run.sh\nprintf reproduced\n```\n")
+	for i := 1; i < namedFiles; i++ {
+		fmt.Fprintf(&markdown, "```text filename=inputs/file%d.txt\ncrafted input\n```\n", i)
+	}
+	markdown.WriteString("```console\n$ ./run.sh\nreproduced\n```\n```text\nexpected output\n```\n")
+	report["findings"][0]["validation"] = markdown.String()
+	encoded, err := json.Marshal(report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(encoded)
 }
 
 func assertPersistedPoCReport(t *testing.T, w *Worker, repoID uint, scan db.Scan, wantReport string, wantFindings int) {
