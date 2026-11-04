@@ -25,19 +25,19 @@
 <section class="card">
   <header><h2 id="settings-theme">Theme</h2></header>
   <section>
-    <div class="flex flex-wrap gap-3" role="group" aria-labelledby="settings-theme">
+    <div class="flex flex-wrap gap-1" role="group" aria-labelledby="settings-theme">
       {{$current := .Theme}}
       {{range .Themes}}
       <form method="post" action="/settings/theme" hx-post="/settings/theme" hx-swap="none">
         <input type="hidden" name="theme" value="{{.}}">
-        <button type="submit" aria-pressed="{{if eq . $current}}true{{else}}false{{end}}" class="rounded-lg border px-4 py-3 text-center hover:bg-muted transition-colors cursor-pointer {{if eq . $current}}border-primary bg-muted/50{{else}}border-transparent{{end}}">
+        <button type="submit" aria-pressed="{{if eq . $current}}true{{else}}false{{end}}" class="{{if eq . $current}}btn-sm-outline{{else}}btn-sm-ghost{{end}}">
           {{/* Tailwind resolves bg-primary at :root, so read the variables on the swatch itself. */}}
-          <div class="flex justify-center gap-1 mb-2" data-theme="{{.}}" aria-hidden="true">
-            <span class="w-4 h-4 rounded-full bg-[var(--primary)]"></span>
-            <span class="w-4 h-4 rounded-full bg-[var(--accent)]"></span>
-            <span class="w-4 h-4 rounded-full bg-[var(--muted)]"></span>
-          </div>
-          <span class="text-sm font-medium">{{.}}</span>
+          <span class="flex gap-0.5" data-theme="{{.}}" aria-hidden="true">
+            <span class="size-2.5 rounded-full bg-[var(--primary)]"></span>
+            <span class="size-2.5 rounded-full bg-[var(--accent)]"></span>
+            <span class="size-2.5 rounded-full bg-[var(--muted)]"></span>
+          </span>
+          {{.}}
         </button>
       </form>
       {{end}}
@@ -48,13 +48,13 @@
 <section class="card">
   <header><h2 id="settings-color-scheme">Color scheme</h2></header>
   <section>
-    <div class="flex flex-wrap gap-3" role="group" aria-labelledby="settings-color-scheme">
+    <div class="flex flex-wrap gap-1" role="group" aria-labelledby="settings-color-scheme">
       {{$scheme := .ColorScheme}}
       {{range $val := list "system" "light" "dark"}}
       <form method="post" action="/settings/color-scheme" hx-post="/settings/color-scheme" hx-swap="none">
         <input type="hidden" name="color_scheme" value="{{$val}}">
-        <button type="submit" aria-pressed="{{if eq $val $scheme}}true{{else}}false{{end}}" class="rounded-lg border px-4 py-3 text-center hover:bg-muted transition-colors cursor-pointer {{if eq $val $scheme}}border-primary bg-muted/50{{else}}border-transparent{{end}}">
-          <span class="text-sm font-medium">{{$val}}</span>
+        <button type="submit" aria-pressed="{{if eq $val $scheme}}true{{else}}false{{end}}" class="{{if eq $val $scheme}}btn-sm-outline{{else}}btn-sm-ghost{{end}}">
+          {{$val}}
         </button>
       </form>
       {{end}}
@@ -65,36 +65,38 @@
 <section class="card">
   <header><h2>Model tiers</h2></header>
   <section>
+    <form method="post" action="/settings/model" hx-post="/settings/model" hx-swap="none" class="grid gap-4">
     <div class="grid sm:grid-cols-3 gap-4">
       {{range .ModelTiers}}
       {{$tier := .Value}}
       {{$current := index $.TierModels $tier}}
-      <form method="post" action="/settings/model" hx-post="/settings/model" hx-swap="none" class="grid gap-2">
+      <div class="grid gap-2 content-start">
         <input type="hidden" name="tier" value="{{$tier}}">
         <label for="model_{{$tier}}">{{.Name}}</label>
-        <select id="model_{{$tier}}" class="input" name="model" aria-describedby="model_{{$tier}}_help">
+        <select id="model_{{$tier}}" class="select w-full" name="model" aria-describedby="model_{{$tier}}_help">
           {{range $.Models}}
           <option value="{{.ID}}"{{if eq .ID $current}} selected{{end}}>{{.Name}}</option>
           {{end}}
         </select>
         <p id="model_{{$tier}}_help" class="text-xs text-muted-foreground">{{.Description}}</p>
-        <button type="submit" class="btn-outline justify-self-start">Save</button>
-      </form>
+      </div>
       {{end}}
     </div>
+    <button type="submit" class="btn-outline justify-self-start">Save</button>
+    </form>
   </section>
 </section>
 
 <section class="card">
   <header><h2 id="settings-effort">Effort</h2></header>
   <section>
-    <div class="flex flex-wrap gap-3" role="group" aria-labelledby="settings-effort">
+    <div class="flex flex-wrap gap-1" role="group" aria-labelledby="settings-effort">
       {{$effort := .DefaultEffort}}
       {{range .Efforts}}
       <form method="post" action="/settings/effort" hx-post="/settings/effort" hx-swap="none">
         <input type="hidden" name="effort" value="{{.Value}}">
-        <button type="submit" aria-pressed="{{if eq .Value $effort}}true{{else}}false{{end}}" class="rounded-lg border px-4 py-3 text-center hover:bg-muted transition-colors cursor-pointer {{if eq .Value $effort}}border-primary bg-muted/50{{else}}border-transparent{{end}}">
-          <span class="text-sm font-medium">{{.Label}}</span>
+        <button type="submit" aria-pressed="{{if eq .Value $effort}}true{{else}}false{{end}}" class="{{if eq .Value $effort}}btn-sm-outline{{else}}btn-sm-ghost{{end}}">
+          {{.Label}}
         </button>
       </form>
       {{end}}

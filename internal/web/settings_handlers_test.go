@@ -378,3 +378,39 @@ func TestSettingsUpdateMaxTurns(t *testing.T) {
 		t.Errorf("max_turns clobbered by invalid input = %d, want 50", got)
 	}
 }
+
+// TestSettingsUpdateModelTiersTogether pins saving every tier from one form
+// post, and an invalid pair leaving all tiers unchanged.
+func TestSettingsUpdateModelTiersTogether(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	w := postForm(t, s, "/settings/model", url.Values{
+		"tier":  {ModelTierMid, ModelTierHigh},
+		"model": {"claude-sonnet-5", "claude-opus-5"},
+	})
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status %d: %s", w.Code, w.Body)
+	}
+	if got := ModelForTier(s.DB, ModelTierMid, s.DefaultModel()); got != "claude-sonnet-5" {
+		t.Errorf("mid tier model = %q, want claude-sonnet-5", got)
+	}
+	if got := ModelForTier(s.DB, ModelTierHigh, s.DefaultModel()); got != "claude-opus-5" {
+		t.Errorf("high tier model = %q, want claude-opus-5", got)
+	}
+
+	for _, form := range []url.Values{
+		{"tier": {ModelTierMid, ModelTierHigh}, "model": {"claude-opus-5", "not-a-model"}},
+		{"tier": {ModelTierMid, ModelTierHigh}, "model": {"claude-opus-5"}},
+	} {
+		if w := postForm(t, s, "/settings/model", form); w.Code != http.StatusUnprocessableEntity {
+			t.Errorf("form=%v: status %d, want 422", form, w.Code)
+		}
+	}
+	if got := ModelForTier(s.DB, ModelTierMid, s.DefaultModel()); got != "claude-sonnet-5" {
+		t.Errorf("rejected update changed mid tier to %q", got)
+	}
+	if got := ModelForTier(s.DB, ModelTierHigh, s.DefaultModel()); got != "claude-opus-5" {
+		t.Errorf("rejected update changed high tier to %q", got)
+	}
+}
