@@ -614,19 +614,19 @@
       <form method="post" action="/repositories/{{.Repo.ID}}/expected" class="form grid grid-cols-1 md:grid-cols-[1fr_8rem_10rem_1fr_auto] gap-2 items-end">
         <label class="grid gap-1">
           <span class="text-xs text-muted-foreground">File</span>
-          <input class="input" name="file" placeholder="src/parser.go" required>
+          <input type="text" class="input" name="file" placeholder="src/parser.go" required>
         </label>
         <label class="grid gap-1">
           <span class="text-xs text-muted-foreground">CWE</span>
-          <input class="input" name="cwe" placeholder="CWE-79" required>
+          <input type="text" class="input" name="cwe" placeholder="CWE-79" required>
         </label>
         <label class="grid gap-1">
           <span class="text-xs text-muted-foreground">CVE</span>
-          <input class="input" name="cve" placeholder="CVE-2026-0001">
+          <input type="text" class="input" name="cve" placeholder="CVE-2026-0001">
         </label>
         <label class="grid gap-1">
           <span class="text-xs text-muted-foreground">Note</span>
-          <input class="input" name="note" placeholder="Known vulnerable sink">
+          <input type="text" class="input" name="note" placeholder="Known vulnerable sink">
         </label>
         <button type="submit" class="btn-outline"><i data-lucide="plus"></i> Add</button>
       </form>
