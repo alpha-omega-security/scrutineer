@@ -830,6 +830,13 @@ func isHX(r *http.Request) bool { return r.Header.Get("HX-Request") != "" }
 func (s *Server) redirect(w http.ResponseWriter, r *http.Request, path string) {
 	if isHX(r) {
 		w.Header().Set("HX-Redirect", path)
+		// htmx assigns HX-Redirect to location.href, and a target that only
+		// adds a fragment to the current page scrolls instead of reloading it.
+		if base, _, ok := strings.Cut(path, "#"); ok {
+			if cur, err := url.Parse(r.Header.Get("HX-Current-URL")); err == nil && cur.RequestURI() == base {
+				w.Header().Set("HX-Refresh", "true")
+			}
+		}
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
