@@ -2426,11 +2426,11 @@ func (s *Server) createOrTriageRepo(ctx context.Context, input RepoInput, model 
 	if !isNew && input.Branch == "" && input.SubPath == "" {
 		return repo, false, nil
 	}
-	_, err = s.enqueueDefaultTriage(ctx, repo, input, model)
+	_, err = s.enqueueDefaultTriage(ctx, repo, input, model, false)
 	return repo, isNew, err
 }
 
-func (s *Server) enqueueDefaultTriage(ctx context.Context, repo db.Repository, input RepoInput, model string) (bool, error) {
+func (s *Server) enqueueDefaultTriage(ctx context.Context, repo db.Repository, input RepoInput, model string, skipOpen bool) (bool, error) {
 	var skill db.Skill
 	if err := s.DB.Where("name = ? AND active = ?", defaultSkillName, true).First(&skill).Error; err != nil {
 		s.Log.Warn("default skill not found, repo added with no scans", "skill", defaultSkillName)
@@ -2439,6 +2439,21 @@ func (s *Server) enqueueDefaultTriage(ctx context.Context, repo db.Repository, i
 	if repo.IsLocal() && skill.RequiresRemote {
 		s.Log.Info("default skill requires remote, skipping for local repo", "skill", skill.Name, "repo", repo.URL)
 		return false, nil
+	}
+	if skipOpen {
+		s.agentEnqueueMu.Lock()
+		defer s.agentEnqueueMu.Unlock()
+		var open db.Scan
+		result := s.DB.WithContext(ctx).Select("id").
+			Where("repository_id = ? AND skill_id = ? AND finding_id IS NULL", repo.ID, skill.ID).
+			Where("COALESCE(ref, '') = ? AND COALESCE(sub_path, '') = ?", input.Branch, input.SubPath).
+			Where("status IN ?", inFlightScanStatuses()).Limit(1).Find(&open)
+		if result.Error != nil {
+			return false, result.Error
+		}
+		if result.RowsAffected > 0 {
+			return false, nil
+		}
 	}
 	if _, err := s.enqueueSkillWith(ctx, repo.ID, skill.ID, ScanOpts{
 		Model:   model,

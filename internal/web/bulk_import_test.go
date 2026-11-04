@@ -5,7 +5,9 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"golang.org/x/net/html"
 
@@ -179,6 +181,139 @@ func TestBulkRescanWithoutActiveTriage(t *testing.T) {
 	}
 	if count != 0 {
 		t.Fatalf("unexpected scans: %d", count)
+	}
+}
+
+func TestBulkRescanSkipsOpenScope(t *testing.T) {
+	for _, status := range []db.ScanStatus{db.ScanQueued, db.ScanRunning, db.ScanPaused} {
+		t.Run(string(status), func(t *testing.T) {
+			s, repo, skill := newBulkRescanServer(t)
+			prior := db.Scan{RepositoryID: repo.ID, SkillID: &skill.ID, Status: status, Ref: "main", SubPath: "core"}
+			if err := s.DB.Create(&prior).Error; err != nil {
+				t.Fatal(err)
+			}
+			form := url.Values{"urls": {repo.URL + "/tree/main/./core"}, "rescan_existing": {"1"}}
+			for _, htmx := range []bool{false, true} {
+				flash := postBulkRescan(t, s, form, htmx)
+				if flash.Title != "0 added, 1 already present" || flash.Category != warningKey {
+					t.Fatalf("toast: %+v", flash)
+				}
+			}
+			assertBulkRescanCounts(t, s, 1, 0)
+		})
+	}
+}
+
+func TestBulkRescanSkipsLegacyRootScope(t *testing.T) {
+	s, repo, skill := newBulkRescanServer(t)
+	prior := db.Scan{RepositoryID: repo.ID, SkillID: &skill.ID, Status: db.ScanRunning}
+	if err := s.DB.Create(&prior).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DB.Model(&prior).Updates(map[string]any{"ref": nil, "sub_path": nil}).Error; err != nil {
+		t.Fatal(err)
+	}
+	flash := postBulkRescan(t, s, url.Values{"urls": {repo.URL}, "rescan_existing": {"1"}}, false)
+	if flash.Title != "0 added, 1 already present" {
+		t.Fatalf("toast: %+v", flash)
+	}
+	assertBulkRescanCounts(t, s, 1, 0)
+}
+
+func TestBulkRescanAllowsOtherScopesAndFinishedScans(t *testing.T) {
+	cases := []struct {
+		name   string
+		status db.ScanStatus
+		ref    string
+		path   string
+	}{
+		{"other branch", db.ScanRunning, "release", "core"},
+		{"branch case", db.ScanRunning, "Main", "core"},
+		{"other subpath", db.ScanRunning, "main", "other"},
+		{"subpath case", db.ScanRunning, "main", "Core"},
+		{"done", db.ScanDone, "main", "core"},
+		{"failed", db.ScanFailed, "main", "core"},
+		{"cancelled", db.ScanCancelled, "main", "core"},
+		{"skipped", db.ScanSkipped, "main", "core"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, repo, skill := newBulkRescanServer(t)
+			prior := db.Scan{RepositoryID: repo.ID, SkillID: &skill.ID, Status: tc.status, Ref: tc.ref, SubPath: tc.path, Report: "prior report"}
+			if err := s.DB.Create(&prior).Error; err != nil {
+				t.Fatal(err)
+			}
+			flash := postBulkRescan(t, s, url.Values{"urls": {repo.URL + "/tree/main/core"}, "rescan_existing": {"1"}}, false)
+			if flash.Title != "0 added, 1 scan(s) queued" {
+				t.Fatalf("toast: %+v", flash)
+			}
+			assertBulkRescanCounts(t, s, 2, 1)
+			var saved db.Scan
+			if err := s.DB.First(&saved, prior.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+			if saved.Status != prior.Status || saved.Report != prior.Report {
+				t.Fatalf("prior scan changed: %+v", saved)
+			}
+		})
+	}
+}
+
+func TestBulkRescanConcurrentSubmissions(t *testing.T) {
+	s, repo, _ := newBulkRescanServer(t)
+	form := url.Values{"urls": {repo.URL}, "rescan_existing": {"1"}}
+	var calls sync.WaitGroup
+	results := make(chan Flash, 4)
+	for range cap(results) {
+		calls.Go(func() { results <- postBulkRescan(t, s, form, true) })
+	}
+	calls.Wait()
+	close(results)
+	queued, skipped := 0, 0
+	for flash := range results {
+		switch flash.Title {
+		case "0 added, 1 scan(s) queued":
+			queued++
+		case "0 added, 1 already present":
+			skipped++
+		default:
+			t.Fatalf("toast: %+v", flash)
+		}
+	}
+	if queued != 1 || skipped != 3 {
+		t.Fatalf("queued=%d skipped=%d", queued, skipped)
+	}
+	assertBulkRescanCounts(t, s, 1, 1)
+}
+
+func TestBulkRescanSkipsOptedOutRepositories(t *testing.T) {
+	for _, rescan := range []string{"", "1"} {
+		t.Run("rescan="+rescan, func(t *testing.T) {
+			s, repo, _ := newBulkRescanServer(t)
+			if err := s.DB.Model(&repo).Update("federation_opt_out_at", time.Now()).Error; err != nil {
+				t.Fatal(err)
+			}
+			urls := repo.URL + "\n" + repo.URL + "/tree/main/core"
+			flash := postBulkRescan(t, s, url.Values{"urls": {urls}, "rescan_existing": {rescan}}, false)
+			if flash.Title != "0 added, 2 already present" || flash.Category != warningKey || flash.Description != "" {
+				t.Fatalf("toast: %+v", flash)
+			}
+			assertBulkRescanCounts(t, s, 0, 0)
+		})
+	}
+}
+
+func assertBulkRescanCounts(t *testing.T, s *Server, wantScans, wantJobs int64) {
+	t.Helper()
+	var scans, jobs int64
+	if err := s.DB.Model(&db.Scan{}).Count(&scans).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := s.DB.Table("goqite").Count(&jobs).Error; err != nil {
+		t.Fatal(err)
+	}
+	if scans != wantScans || jobs != wantJobs {
+		t.Fatalf("scans=%d jobs=%d, want %d and %d", scans, jobs, wantScans, wantJobs)
 	}
 }
 
