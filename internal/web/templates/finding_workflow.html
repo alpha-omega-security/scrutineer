@@ -241,7 +241,24 @@
     </form>
   </section>
 
-  <section class="border-t pt-3 grid gap-1 text-xs text-muted-foreground">
+  <section class="border-t pt-3 grid gap-2 text-xs text-muted-foreground">
+    <form id="verification-run" method="post" action="/findings/{{$id}}/verify" hx-post="/findings/{{$id}}/verify" hx-swap="none" class="grid gap-2">
+      <div class="flex items-center gap-2">
+        <i data-lucide="shield-check" class="size-3.5"></i>
+        <span>Verification</span>
+        <span>{{if .VerifyInFlight}}in progress{{else if .Verifications}}{{.Verifications}} run{{if ne .Verifications 1}}s{{end}}{{else}}not run{{end}}</span>
+        {{if .VerifyInFlight}}
+        <button type="button" class="btn-sm-outline ml-auto" disabled><i data-lucide="loader-circle" class="animate-spin"></i> Verification in progress</button>
+        {{else}}
+        <button type="submit" class="{{if eq $s "new"}}btn-sm{{else}}btn-sm-outline{{end}} ml-auto"><i data-lucide="play"></i> {{if .Verifications}}Rerun verification{{else}}Run verification{{end}}</button>
+        {{end}}
+      </div>
+      <details class="pl-6">
+        <summary class="cursor-pointer hover:text-foreground inline-flex items-center gap-1"><i data-lucide="chevron-right" class="size-3"></i> Add feedback for the verifier</summary>
+        <label for="verification-feedback" class="sr-only">Feedback (optional)</label>
+        <textarea id="verification-feedback" name="feedback" class="input w-full mt-2 text-sm" rows="3" maxlength="4000" {{if .VerifyInFlight}}disabled{{end}}></textarea>
+      </details>
+    </form>
     <div class="flex items-center gap-2">
       <i data-lucide="bug" class="size-3.5"></i>
       <span>Exploitation status</span>

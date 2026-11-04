@@ -71,7 +71,7 @@ func (s *Server) findingExposureRun(w http.ResponseWriter, r *http.Request) {
 		queued++
 	}
 	setFlash(w, exposureRunToast(queued, skipped, errored))
-	s.redirect(w, r, fmt.Sprintf("/findings/%d", f.ID))
+	s.redirect(w, r, fmt.Sprintf("/findings/%d#exposure", f.ID))
 }
 
 func exposureRunToast(queued, skipped, errored int) Flash {

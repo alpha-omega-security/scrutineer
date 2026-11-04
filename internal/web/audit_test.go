@@ -314,7 +314,7 @@ func TestFindingReviewCreate(t *testing.T) {
 	if w.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, want 303; body=%s", w.Code, w.Body)
 	}
-	if loc := w.Header().Get("Location"); loc != "/findings/"+strconv.Itoa(int(f.ID)) {
+	if loc := w.Header().Get("Location"); loc != "/findings/"+strconv.Itoa(int(f.ID))+"#reviews" {
 		t.Errorf("Location = %q", loc)
 	}
 	var rows []db.FindingReview

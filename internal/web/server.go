@@ -398,6 +398,7 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *work
 		"pct":      formatPct,
 		statusKey:  func(s db.ScanStatus) string { return string(s) },
 		"fstatus":  func(s db.FindingLifecycle) string { return string(s) },
+		"fsteps":   findingLifecycleSteps,
 		"sevlabel": displaySeverity,
 		"dict": func(kv ...any) map[string]any {
 			m := map[string]any{}
@@ -1942,7 +1943,7 @@ func (s *Server) findingNotes(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
-	s.redirect(w, r, fmt.Sprintf("/findings/%d", f.ID))
+	s.redirect(w, r, fmt.Sprintf("/findings/%d#notes", f.ID))
 }
 
 func (s *Server) packages(w http.ResponseWriter, r *http.Request) {
@@ -2069,6 +2070,7 @@ type findingWorkflowData struct {
 	HasDependents      bool
 	HasDisclosureDraft bool
 	DisclosureBlocked  bool
+	Verifications      int
 }
 
 func (s *Server) findingShow(w http.ResponseWriter, r *http.Request) {
@@ -2192,6 +2194,7 @@ func (s *Server) findingShow(w http.ResponseWriter, r *http.Request) {
 			HasDependents:      hasDependents,
 			HasDisclosureDraft: strings.TrimSpace(f.DisclosureDraft) != "",
 			DisclosureBlocked:  db.FindingDisclosureBlocked(f),
+			Verifications:      len(verifications),
 		},
 		"Exposures":     exposures,
 		"HasDependents": hasDependents,
