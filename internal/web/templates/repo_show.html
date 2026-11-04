@@ -137,7 +137,7 @@
     </button>
     <button type="button" role="tab" id="rt2" aria-controls="rp2" aria-selected="false">Data</button>
     <button type="button" role="tab" id="rt3" aria-controls="rp3" aria-selected="false">Scans</button>
-    <button type="button" role="tab" id="rt15" aria-controls="rp15" aria-selected="false">
+    <button type="button" role="tab" id="rt17" aria-controls="rp17" aria-selected="false">
       Chat{{if .Conversations}} <span class="badge-outline ml-1">{{len .Conversations}}</span>{{end}}
     </button>
   </nav>
@@ -764,7 +764,7 @@
     {{template "repo_scans.html" .}}
   </div>
 
-  <div role="tabpanel" id="rp15" aria-labelledby="rt15" hidden>
+  <div role="tabpanel" id="rp17" aria-labelledby="rt17" hidden>
     {{template "chat-panel" (dict "Action" (printf "/repositories/%d/conversations" .Repo.ID) "Conversations" .Conversations "Placeholder" "Ask about this repository's code or findings...")}}
   </div>
 

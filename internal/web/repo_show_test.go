@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http/httptest"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -571,5 +572,26 @@ func TestRepoShow_viewInFindingsTargetsTheFindingsTab(t *testing.T) {
 	}
 	if !strings.Contains(string(js), "addEventListener('hashchange', restoreTab)") {
 		t.Error("app.js does not re-select the tab when a same-page link changes the hash")
+	}
+}
+
+// TestRepoShow_tabIDsAreUnique pins one id per tab, so a hash names one tab.
+func TestRepoShow_tabIDsAreUnique(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/zombie", Name: "zombie", Health: db.RepositoryHealthZombie}
+	s.DB.Create(&repo)
+
+	body := getRepoPage(t, s, repo.ID)
+	if !strings.Contains(body, "Alternatives") || !strings.Contains(body, "Chat") {
+		t.Fatal("the Alternatives and Chat tabs are not both rendered")
+	}
+	seen := map[string]bool{}
+	for _, m := range regexp.MustCompile(`role="tab" id="([^"]+)"`).FindAllStringSubmatch(body, -1) {
+		if seen[m[1]] {
+			t.Errorf("tab id %q is used twice", m[1])
+		}
+		seen[m[1]] = true
 	}
 }
