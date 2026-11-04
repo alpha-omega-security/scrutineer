@@ -11,9 +11,9 @@
 {{$r := $v.Report}}
 
 {{template "crumbs" (crumbs
-  "Findings" "/findings"
+  "Repositories" "/"
   $v.Repository.Name (printf "/repositories/%d" $v.Repository.ID)
-  (printf "finding #%d" $v.Finding.ID) (printf "/findings/%d" $v.Finding.ID)
+  (printf "Finding #%d" $v.Finding.ID) (printf "/findings/%d" $v.Finding.ID)
   "Submit to VINCE" "")}}
 
 <div class="flex items-start justify-between gap-4 mt-1 mb-4">
