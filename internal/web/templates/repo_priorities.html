@@ -1,0 +1,74 @@
+<div id="repos">
+<div class="flex flex-wrap items-center gap-2 mb-6">
+  <h2 class="text-2xl font-semibold flex items-center gap-2 mr-auto"><i data-lucide="folder-git-2"></i> Repositories</h2>
+  <form method="get" action="/" class="flex basis-full sm:basis-auto">
+    <input class="input w-full" type="search" aria-label="Search repositories" name="q" value="{{.Q}}" placeholder="Search repositories" autocomplete="off" spellcheck="false">
+    <input type="hidden" name="view" value="priorities">
+    <input type="hidden" name="queue" value="{{.Queue}}">
+    <input type="hidden" name="sort" value="{{.Sort}}">
+    <input type="hidden" name="language" value="{{.Language}}">
+  </form>
+  {{if .Language}}<a class="btn-sm-outline" href="/?view=priorities&q={{.Q}}&queue={{.Queue}}&sort={{.Sort}}" aria-label="Clear language filter: {{.Language}}">{{.Language}} <i data-lucide="x"></i></a>{{end}}
+  <div class="dropdown-menu">
+    <button type="button" class="btn-outline" aria-haspopup="menu" aria-expanded="false">
+      <i data-lucide="filter"></i>
+      {{if eq .Queue "new"}}Needs inventory{{else if eq .Queue "refresh"}}Refresh inventory{{else if eq .Queue "review"}}Review signals{{else}}Queue{{end}}
+      <i data-lucide="chevron-down"></i>
+    </button>
+    <div data-popover aria-hidden="true" data-align="end"><div role="menu">
+      <a role="menuitem" href="/?view=priorities&q={{.Q}}&sort={{.Sort}}&language={{.Language}}" {{if not .Queue}}aria-current="true"{{end}}>All repositories</a>
+      <a role="menuitem" href="/?view=priorities&q={{.Q}}&sort={{.Sort}}&language={{.Language}}&queue=new" {{if eq .Queue "new"}}aria-current="true"{{end}}>Needs inventory</a>
+      <a role="menuitem" href="/?view=priorities&q={{.Q}}&sort={{.Sort}}&language={{.Language}}&queue=refresh" {{if eq .Queue "refresh"}}aria-current="true"{{end}}>Refresh inventory</a>
+      <a role="menuitem" href="/?view=priorities&q={{.Q}}&sort={{.Sort}}&language={{.Language}}&queue=review" {{if eq .Queue "review"}}aria-current="true"{{end}}>Review signals</a>
+    </div></div>
+  </div>
+  <div class="dropdown-menu">
+    <button type="button" class="btn-outline" aria-haspopup="menu" aria-expanded="false"><i data-lucide="arrow-down-wide-narrow"></i> Priority <i data-lucide="chevron-down"></i></button>
+    <div data-popover aria-hidden="true" data-align="end"><div role="menu">
+      {{range (list "newest" "findings" "name" "stars" "language")}}<a role="menuitem" href="/?q={{$.Q}}&language={{$.Language}}&sort={{.}}">{{.}}</a>{{end}}
+      <a role="menuitem" href="/?view=priorities&q={{.Q}}&language={{.Language}}" aria-current="true">priority</a>
+    </div></div>
+  </div>
+</div>
+{{if .Rows}}
+<table class="table w-full">
+  <thead><tr>
+    {{template "th-sort" (dict "Sorter" .Sorter "Key" "repository" "Def" "asc" "Label" "Repository" "Class" "")}}
+    <th>Language</th>
+    {{template "th-sort" (dict "Sorter" .Sorter "Key" "consumers" "Def" "desc" "Label" "Consumers" "Class" "w-28 text-right")}}
+    {{template "th-sort" (dict "Sorter" .Sorter "Key" "findings" "Def" "desc" "Label" "Findings" "Class" "w-24")}}
+    {{template "th-sort" (dict "Sorter" .Sorter "Key" "oldest" "Def" "asc" "Label" "Inventory" "Class" "w-36")}}
+    {{template "th-sort" (dict "Sorter" .Sorter "Key" "scanned" "Def" "desc" "Label" "Last scan" "Class" "w-36")}}
+    <th>Signals</th><th class="w-10"></th><th></th>
+  </tr></thead>
+  <tbody>{{range .Rows}}<tr id="repo-{{.ID}}">
+    <td><a href="/repositories/{{.ID}}">{{trimscheme .URL}}</a></td>
+    <td class="text-muted-foreground">{{if .Languages}}{{.Languages}}{{else}}-{{end}}</td>
+    <td class="text-right text-muted-foreground">
+      {{if .Consumers}}<div class="dropdown-menu">
+        <button type="button" class="btn-sm-ghost" aria-label="{{len .Consumers}} consumers of {{trimscheme .URL}}" aria-haspopup="menu" aria-expanded="false" data-tooltip="{{.DirectConsumers}} proven direct">{{len .Consumers}}<i data-lucide="chevron-down"></i></button>
+        <div data-popover aria-hidden="true" data-align="end"><div role="menu">
+          {{range .Consumers}}<a role="menuitem" href="/repositories/{{.ID}}" data-tooltip="{{range .Evidence}}{{.}}; {{end}}">{{trimscheme .URL}}{{if .Direct}} <span class="badge-outline">direct</span>{{end}}</a>{{end}}
+        </div></div>
+      </div>{{else}}<span aria-label="0 consumers">0</span>{{end}}
+    </td>
+    <td>{{template "findings-badge" .FindingsTotal}}</td>
+    <td class="text-muted-foreground">{{if .Inventory}}<a href="/scans/{{.Inventory.ID}}">{{if .Inventory.FinishedAt}}{{.Inventory.FinishedAt.Format "2006-01-02"}}{{else}}Date unknown{{end}}</a>{{else}}never{{end}}
+      {{if .Refresh}}<span class="badge-outline ml-1" data-tooltip="{{range .Refresh}}{{.}}. {{end}}">stale</span>{{end}}
+    </td>
+    <td class="text-muted-foreground">{{if .LastScanAt}}<a href="/scans/{{.LastScanID}}" title="{{.LastScanAt.Format "2006-01-02 15:04:05 MST"}}">{{.LastScanAt.Format "2006-01-02"}}</a>{{else}}never{{end}}</td>
+    <td class="whitespace-normal">{{range .Signals}}{{if .ScanID}}<a class="badge-outline" href="/scans/{{.ScanID}}" data-tooltip="{{.Evidence}}">{{.Label}}</a>{{else}}<span class="badge-outline" data-tooltip="{{.Evidence}}">{{.Label}}</span>{{end}} {{else}}<span class="text-muted-foreground">-</span>{{end}}</td>
+    <td>{{if .Gaps}}<span class="text-muted-foreground" role="img" aria-label="Missing evidence" data-tooltip="{{range .Gaps}}{{.}}. {{end}}"><i data-lucide="info"></i></span>{{end}}</td>
+    <td>
+      <form method="post" action="/repositories/{{.ID}}/scan" hx-post="/repositories/{{.ID}}/scan" hx-swap="none">
+        <button type="submit" class="btn-sm-outline">{{if .LastScanID}}<i data-lucide="refresh-cw"></i> Rescan{{else}}<i data-lucide="play"></i> Scan{{end}}</button>
+      </form>
+    </td>
+  </tr>{{end}}</tbody>
+</table>
+{{template "pagination" .Page}}
+{{else}}{{template "empty" (dict "Icon" "search-x" "Title" "No matches" "Body" "No repositories match these filters.")}}{{end}}
+<p class="text-sm text-muted-foreground mt-3">{{.Cohort.InventoryCount}} inventories · {{.Cohort.Packages}} packages · {{.Cohort.Unresolved}} unresolved
+  <span role="img" aria-label="About priority data" data-tooltip="Counts are distinct consuming repositories, excluding self-dependencies and fixture/example paths. {{.Cohort.UnknownScope}} consumer/package pairs have unknown directness. Release signals apply to packages used in this selection. Inventory coverage is separate from security scan coverage."><i data-lucide="info" class="inline size-3"></i></span>
+</p>
+</div>
