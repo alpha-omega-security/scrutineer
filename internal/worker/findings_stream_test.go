@@ -2,6 +2,7 @@ package worker
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"log"
@@ -102,11 +103,7 @@ func TestPersistStreamedFinding_reconcilesWithFinalReport(t *testing.T) {
 	}
 }
 
-// A later scan that streams a prior scan's finding (same fingerprint) and
-// then includes it in its final report must NOT overwrite that finding's
-// parser-owned content. sameScan is keyed on immutable ScanID, so the
-// stream-then-report sequence from scan B cannot flip the content refresh
-// on a finding scan A created.
+// ownedByThisScan uses immutable ScanID to protect an earlier scan's content.
 func TestPersistStreamedFinding_crossScanStreamThenReportKeepsPriorContent(t *testing.T) {
 	w, repo := newStreamWorker(t)
 	a := &db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "sd", Status: db.ScanDone, Commit: "aaa"}
@@ -144,6 +141,54 @@ func TestPersistStreamedFinding_crossScanStreamThenReportKeepsPriorContent(t *te
 	}
 	if got.LastSeenScanID != b.ID || got.SeenCount != 2 {
 		t.Fatalf("re-observation accounting lost: last_seen=%d seen_count=%d", got.LastSeenScanID, got.SeenCount)
+	}
+}
+
+func TestDoSkillCreatorReportRefreshesAfterSiblingStream(t *testing.T) {
+	w, creator := costCapFixture(t, 0)
+	if err := w.DB.Model(&db.Skill{}).Where("id = ?", *creator.SkillID).
+		Updates(map[string]any{"name": "sd", "output_kind": "findings"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	sibling := db.Scan{RepositoryID: creator.RepositoryID, SkillID: creator.SkillID, Kind: JobSkill, SkillName: "sd", Status: db.ScanRunning, Commit: "bbb"}
+	if err := w.DB.Create(&sibling).Error; err != nil {
+		t.Fatal(err)
+	}
+	var findingID uint
+	w.Runner = &capRunner{first: func(_ context.Context, _ func(Event)) (SkillResult, error) {
+		var running db.Scan
+		if err := w.DB.First(&running, creator.ID).Error; err != nil {
+			return SkillResult{}, err
+		}
+		finding, err := w.PersistStreamedFinding(&running, []byte(`{"title":"Preview","severity":"High","location":"main.go:10","cwe":"CWE-78"}`))
+		if err != nil {
+			return SkillResult{}, err
+		}
+		findingID = finding.ID
+		if _, err := w.PersistStreamedFinding(&sibling, []byte(`{"title":"Sibling","severity":"Low","location":"main.go:10","cwe":"CWE-78"}`)); err != nil {
+			return SkillResult{}, err
+		}
+		var observed db.Finding
+		if err := w.DB.First(&observed, findingID).Error; err != nil {
+			return SkillResult{}, err
+		}
+		if observed.ScanID != creator.ID || observed.LastSeenScanID != sibling.ID {
+			return SkillResult{}, errors.New("sibling stream did not re-observe the creator's finding")
+		}
+		return SkillResult{Report: `{"findings":[{"id":"F1","title":"Final title","severity":"Critical","location":"main.go:10","cwe":"CWE-78","trace":"Creator final report"}]}`}, nil
+	}}
+	if scan := runCapScan(t, w, creator); scan.Status != db.ScanDone {
+		t.Fatalf("creator scan: status=%s error=%s", scan.Status, scan.Error)
+	}
+	var got db.Finding
+	if err := w.DB.First(&got, findingID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.ScanID != creator.ID || got.LastSeenScanID != creator.ID {
+		t.Fatalf("finding ownership/last-seen = %d/%d, want creator %d", got.ScanID, got.LastSeenScanID, creator.ID)
+	}
+	if got.Title != "Final title" || got.Severity != "Critical" || got.Trace != "Creator final report" {
+		t.Fatalf("creator's final content not persisted: title=%q severity=%q trace=%q", got.Title, got.Severity, got.Trace)
 	}
 }
 
