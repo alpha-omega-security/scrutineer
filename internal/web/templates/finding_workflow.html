@@ -246,7 +246,7 @@
       <div class="flex items-center gap-2">
         <i data-lucide="shield-check" class="size-3.5"></i>
         <span>Verification</span>
-        <span>{{if .VerifyInFlight}}in progress{{else if .Verifications}}{{.Verifications}} run{{if ne .Verifications 1}}s{{end}}{{else}}not run{{end}}</span>
+        <span>{{if .VerifyInFlight}}in progress{{else if .Verifications}}{{.Verifications}} result{{if ne .Verifications 1}}s{{end}}{{else}}no results{{end}}</span>
         {{if .VerifyInFlight}}
         <button type="button" class="btn-sm-outline ml-auto" disabled><i data-lucide="loader-circle" class="animate-spin"></i> Verification in progress</button>
         {{else}}
