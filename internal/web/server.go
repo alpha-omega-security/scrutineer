@@ -1210,6 +1210,7 @@ func loadRepoFindings(gdb *gorm.DB, repoID uint, category string) repoFindings {
 	var rf repoFindings
 	ddQ.Count(&rf.DeepDiveTotal)
 	ddQ.Order(severityOrder).Order("id desc").Limit(tabRowCap).Find(&rf.DeepDive)
+	rf.OpenBySeverity = openSeverityCounts(base().Where("scan_id IN (?)", findingsScanIDs(gdb)))
 
 	scQ := base().Where("scan_id NOT IN (?)", findingsScanIDs(gdb))
 	scQ.Count(&rf.ScannersTotal)
@@ -1242,12 +1243,32 @@ func loadRepoFindings(gdb *gorm.DB, repoID uint, category string) repoFindings {
 // the per-scan lookup maps the template needs to render the producing skill
 // name and the location-link commit.
 type repoFindings struct {
-	DeepDive      []db.Finding
-	DeepDiveTotal int64
-	Scanners      []db.Finding
-	ScannersTotal int64
-	ScanSkill     map[uint]string
-	ScanCommit    map[uint]string
+	DeepDive       []db.Finding
+	DeepDiveTotal  int64
+	OpenBySeverity []severityCount
+	Scanners       []db.Finding
+	ScannersTotal  int64
+	ScanSkill      map[uint]string
+	ScanCommit     map[uint]string
+}
+
+type severityCount struct {
+	Severity string
+	Count    int64
+}
+
+// openSeverityCounts tallies q's findings per severity, most severe first.
+// The summary reads it rather than the Findings tab slice, which is capped at
+// tabRowCap and narrowed by the category filter.
+func openSeverityCounts(q *gorm.DB) []severityCount {
+	var rows []severityCount
+	q.Select("severity, COUNT(*) AS count").Group("severity").Scan(&rows)
+	sort.SliceStable(rows, func(i, j int) bool {
+		ri, _ := db.SeverityRank(rows[i].Severity)
+		rj, _ := db.SeverityRank(rows[j].Severity)
+		return ri < rj
+	})
+	return rows
 }
 
 func (s *Server) findings(w http.ResponseWriter, r *http.Request) {
@@ -2626,6 +2647,7 @@ func (v repoShowView) renderData() map[string]any {
 		"Latest":                v.Latest,
 		"Findings":              v.Findings.DeepDive,
 		"FindingsTotal":         v.Findings.DeepDiveTotal,
+		"OpenBySeverity":        v.Findings.OpenBySeverity,
 		"ScannerFindings":       v.Findings.Scanners,
 		"ScannerFindingsTotal":  v.Findings.ScannersTotal,
 		"ScanSkill":             v.Findings.ScanSkill,

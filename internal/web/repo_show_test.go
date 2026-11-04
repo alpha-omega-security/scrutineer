@@ -472,3 +472,67 @@ func TestRepoShow_findingLocationsLinkToCodeBrowser(t *testing.T) {
 		t.Errorf("scanner location links = %d, want 1 (Scanners tab)", n)
 	}
 }
+
+// TestRepoShow_summaryCountsOpenFindingsBySeverity pins the Summary tally to
+// every open audit finding of the repository, most severe first, ignoring
+// closed and scanner findings.
+func TestRepoShow_summaryCountsOpenFindingsBySeverity(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{Name: "widget-server", URL: "https://example.com/acme/widget-server"}
+	s.DB.Create(&repo)
+	older := db.Scan{RepositoryID: repo.ID, SkillName: deepDiveSkillName, Status: db.ScanDone}
+	s.DB.Create(&older)
+	latest := db.Scan{RepositoryID: repo.ID, SkillName: deepDiveSkillName, Status: db.ScanDone}
+	s.DB.Create(&latest)
+	scanner := db.Scan{RepositoryID: repo.ID, SkillName: "semgrep", Status: db.ScanDone}
+	s.DB.Create(&scanner)
+	for _, f := range []db.Finding{
+		{ScanID: older.ID, Severity: "Low", Status: db.FindingNew},
+		{ScanID: older.ID, Severity: "High", Status: db.FindingTriaged},
+		{ScanID: latest.ID, Severity: "High", Status: db.FindingNew},
+		{ScanID: latest.ID, Severity: "Critical", Status: db.FindingRejected},
+		{ScanID: scanner.ID, Severity: "Critical", Status: db.FindingNew},
+	} {
+		f.RepositoryID = repo.ID
+		f.Title = "tally"
+		s.DB.Create(&f)
+	}
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", fmt.Sprintf("/repositories/%d", repo.ID)))
+	body := w.Body.String()
+	start := strings.Index(body, " Open findings</h3>")
+	if w.Code != 200 || start < 0 {
+		t.Fatalf("status %d, no Open findings section", w.Code)
+	}
+	section, _, found := strings.Cut(body[start:], "Findings from the latest scan")
+	if !found {
+		t.Fatal("no latest scan section after Open findings")
+	}
+	section = strings.Join(strings.Fields(section), " ")
+	high := strings.Index(section, `>High</span> <span class="font-semibold">2</span>`)
+	low := strings.Index(section, `>Low</span> <span class="font-semibold">1</span>`)
+	if high < 0 || low < 0 || high > low {
+		t.Errorf("want High 2 before Low 1, got section:\n%s", section)
+	}
+	if strings.Contains(section, "Critical") {
+		t.Errorf("rejected and scanner findings must not be counted:\n%s", section)
+	}
+}
+
+// TestRepoShow_summaryWithoutOpenFindings pins the empty state.
+func TestRepoShow_summaryWithoutOpenFindings(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{Name: "clean", URL: "https://example.com/acme/clean"}
+	s.DB.Create(&repo)
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", fmt.Sprintf("/repositories/%d", repo.ID)))
+	if w.Code != 200 || !strings.Contains(w.Body.String(), "No open findings.") {
+		t.Fatalf("status %d, empty state missing", w.Code)
+	}
+}

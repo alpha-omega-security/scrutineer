@@ -298,8 +298,19 @@
       </table>
     {{end}}
 
+    <h3 class="text-sm font-medium flex items-center gap-2 mb-2"><i data-lucide="bug"></i> Open findings</h3>
+    {{if .OpenBySeverity}}
+      <div class="flex flex-wrap items-center gap-4 text-sm mb-2">
+        {{range .OpenBySeverity}}
+          <span class="inline-flex items-center gap-1.5">{{template "severity-badge" .Severity}}<span class="font-semibold">{{.Count}}</span></span>
+        {{end}}
+        <a href="/repositories/{{.Repo.ID}}#rt4" class="text-muted-foreground hover:text-foreground hover:underline">View in Findings</a>
+      </div>
+    {{else}}
+      <p class="text-sm text-muted-foreground mb-2">No open findings.</p>
+    {{end}}
     {{if .Latest}}
-      <h3 class="font-medium mb-2">Latest scan</h3>
+      <h3 class="text-sm font-medium flex items-center gap-2 mt-6 mb-2"><i data-lucide="history"></i> Findings from the latest scan</h3>
       <a href="/scans/{{.Latest.ID}}" class="text-sm text-muted-foreground mb-2 inline-flex items-center gap-1 hover:underline">
         #{{.Latest.ID}} &middot; {{.Latest.Model}} &middot; {{since .Latest.StartedAt}}
         &middot; {{template "status-badge" (status .Latest.Status)}}
