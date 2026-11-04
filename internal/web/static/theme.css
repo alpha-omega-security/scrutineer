@@ -471,6 +471,14 @@ pre.skill-src code { background: none; padding: 0; }
 }
 .alert-warning > svg { color: oklch(0.66 0.15 60); }
 
+/* ── sidebar groups ── */
+/* Tighter than basecoat's defaults so the four labelled groups and their thirteen
+   links stay visible in a 900px-tall window. */
+.sidebar nav > section > [role=group] { padding-block: calc(var(--spacing) * 0.5); }
+.sidebar nav > section h3 { height: calc(var(--spacing) * 6); }
+.sidebar nav > section ul { gap: calc(var(--spacing) * 0.5); }
+.sidebar nav > section ul li > a:not([data-size]) { height: calc(var(--spacing) * 7); }
+
 /* ── copy-to-clipboard button ── */
 /* Holds two stacked lucide icons; app.js sets data-copied for ~1s after a copy,
    which swaps the clipboard glyph for a green check as transient confirmation. */
