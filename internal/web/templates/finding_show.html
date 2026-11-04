@@ -4,10 +4,9 @@
 {{$repo := .Repo}}
 
 {{template "crumbs" (crumbs
-  "Findings" "/findings"
+  "Repositories" "/"
   $repo.Name (printf "/repositories/%d" $repo.ID)
-  (printf "scan #%d" $f.ScanID) (printf "/scans/%d" $f.ScanID)
-  (printf "finding #%d" $f.ID) "")}}
+  (printf "Finding #%d" $f.ID) "")}}
 
 <div class="flex items-start justify-between gap-4 mt-1 mb-4">
   <h2 class="text-2xl font-semibold flex items-center gap-3">
@@ -54,7 +53,7 @@
 
 <dl class="grid grid-cols-2 sm:grid-cols-6 gap-4 mb-6 text-sm">
   <div>
-    <dt class="text-muted-foreground">Severity</dt>
+    <dt class="text-muted-foreground font-semibold">Severity</dt>
     <dd>
       {{$f.Severity}}
       {{range $f.SeverityCapList}}<div class="text-xs text-muted-foreground mt-1">{{.}}</div>{{end}}
@@ -62,16 +61,16 @@
     </dd>
   </div>
   <div>
-    <dt class="text-muted-foreground"><abbr title="Common Weakness Enumeration">CWE</abbr></dt>
+    <dt class="text-muted-foreground font-semibold"><abbr title="Common Weakness Enumeration">CWE</abbr></dt>
     <dd>{{if $f.CWE}}{{$f.CWE}}{{else}}-{{end}}</dd>
   </div>
   <div>
-    <dt class="text-muted-foreground">Location</dt>
+    <dt class="text-muted-foreground font-semibold">Location</dt>
     <dd>
       {{$u := locurl $repo.ID $scan.Commit $f.Location}}
       {{if $u}}<a href="{{$u}}" class="underline underline-offset-2">
-        <code>{{$f.Location}}</code></a>
-      {{else}}<code>{{$f.Location}}</code>{{end}}
+        <code class="break-all">{{$f.Location}}</code></a>
+      {{else}}<code class="break-all">{{$f.Location}}</code>{{end}}
       {{if $f.ExtraLocationCount}}
       <details class="mt-2">
         <summary class="cursor-pointer text-muted-foreground">
@@ -82,8 +81,8 @@
           <li>
             {{$lu := locurl $repo.ID $scan.Commit $loc}}
             {{if $lu}}<a href="{{$lu}}"
-              class="underline underline-offset-2"><code class="text-xs">{{$loc}}</code></a>
-            {{else}}<code class="text-xs">{{$loc}}</code>{{end}}
+              class="underline underline-offset-2"><code class="text-xs break-all">{{$loc}}</code></a>
+            {{else}}<code class="text-xs break-all">{{$loc}}</code>{{end}}
           </li>
           {{end}}{{end}}
         </ul>
@@ -92,25 +91,25 @@
     </dd>
   </div>
   <div>
-    <dt class="text-muted-foreground">VID</dt>
+    <dt class="text-muted-foreground font-semibold">VID</dt>
     <dd>{{if $f.VID}}<code class="text-xs break-all"
         title="Identifies the code at the sink, not the finding; computed from the function bytes so independent tools derive the same value">{{$f.VID}}</code>{{else}}-{{end}}</dd>
   </div>
   <div>
-    <dt class="text-muted-foreground">Affected</dt>
+    <dt class="text-muted-foreground font-semibold">Affected</dt>
     <dd>{{if $f.Affected}}{{$f.Affected}}{{else}}-{{end}}</dd>
   </div>
   <div>
-    <dt class="text-muted-foreground">Reachability</dt>
+    <dt class="text-muted-foreground font-semibold">Reachability</dt>
     <dd>{{if $f.Reachability}}{{$f.Reachability}}{{else}}-{{end}}</dd>
   </div>
   <div>
-    <dt class="text-muted-foreground">Quality tier</dt>
+    <dt class="text-muted-foreground font-semibold">Quality tier</dt>
     <dd>{{if $f.QualityTier}}{{$f.QualityTier}}{{else}}-{{end}}</dd>
   </div>
   {{with .LatestVerification}}
   <div>
-    <dt class="text-muted-foreground">Verification</dt>
+    <dt class="text-muted-foreground font-semibold">Verification</dt>
     <dd>
       <a href="/scans/{{.ScanID}}" class="hover:underline">{{.Status}}</a>
       <span class="badge-outline ml-1">{{.ScoreLabel}}</span>
@@ -119,29 +118,29 @@
   {{end}}
   {{with .LatestAttackPath}}
   <div>
-    <dt class="text-muted-foreground">Release viability</dt>
+    <dt class="text-muted-foreground font-semibold">Release viability</dt>
     <dd><a href="/scans/{{.ScanID}}" class="badge-outline hover:underline">{{.ProductionViability}}</a></dd>
   </div>
   {{end}}
   <div>
-    <dt class="text-muted-foreground">Sinks</dt>
+    <dt class="text-muted-foreground font-semibold">Sinks</dt>
     <dd>{{if $f.Sinks}}<a href="/repositories/{{$repo.ID}}#rt10"
         class="underline underline-offset-2"><code>{{$f.Sinks}}</code></a>{{else}}-{{end}}</dd>
   </div>
   <div>
-    <dt class="text-muted-foreground">Model</dt>
+    <dt class="text-muted-foreground font-semibold">Model</dt>
     {{/* The finding's own denormalized model, not $scan.Model: for a
          bundle-imported finding it names the exporting instance's
          producing model rather than the local ingest run. */}}
     <dd>{{if $f.Model}}{{$f.Model}}{{else}}-{{end}}</dd>
   </div>
   <div>
-    <dt class="text-muted-foreground">First seen</dt>
+    <dt class="text-muted-foreground font-semibold">First seen</dt>
     <dd><a href="/scans/{{$f.ScanID}}" class="hover:underline">scan #{{$f.ScanID}}</a>
       {{if $f.Commit}}<code class="text-xs text-muted-foreground">@{{short $f.Commit}}</code>{{end}}</dd>
   </div>
   <div>
-    <dt class="text-muted-foreground">Last seen</dt>
+    <dt class="text-muted-foreground font-semibold">Last seen</dt>
     <dd>
       {{if $f.LastSeenScanID}}
         <a href="/scans/{{$f.LastSeenScanID}}" class="hover:underline">scan #{{$f.LastSeenScanID}}</a>
@@ -152,7 +151,7 @@
   </div>
   {{if gt $f.MissedCount 0}}
   <div>
-    <dt class="text-muted-foreground">Not seen</dt>
+    <dt class="text-muted-foreground font-semibold">Not seen</dt>
     <dd>
       <a href="/scans/{{$f.LastMissedScanID}}" class="hover:underline">scan #{{$f.LastMissedScanID}}</a>
       <span class="text-xs text-muted-foreground">(missed {{$f.MissedCount}}x)</span>
@@ -161,44 +160,44 @@
   {{end}}
   {{if $f.CVEID}}
   <div>
-    <dt class="text-muted-foreground">CVE</dt>
+    <dt class="text-muted-foreground font-semibold">CVE</dt>
     <dd><code>{{$f.CVEID}}</code></dd>
   </div>
   {{end}}
   {{if $f.GHSAID}}
   <div>
-    <dt class="text-muted-foreground"><abbr title="GitHub Security Advisory">GHSA</abbr></dt>
+    <dt class="text-muted-foreground font-semibold"><abbr title="GitHub Security Advisory">GHSA</abbr></dt>
     <dd><a class="hover:underline" href="{{if $repo.HTMLURL}}{{$repo.HTMLURL}}/security/advisories/{{$f.GHSAID}}{{else}}https://github.com/advisories/{{$f.GHSAID}}{{end}}"
       rel="noopener" target="_blank"><code>{{$f.GHSAID}}</code></a></dd>
   </div>
   {{end}}
   {{if $f.CVSSVector}}
   <div class="col-span-2">
-    <dt class="text-muted-foreground"><abbr title="Common Vulnerability Scoring System">CVSS</abbr> v3</dt>
+    <dt class="text-muted-foreground font-semibold"><abbr title="Common Vulnerability Scoring System">CVSS</abbr> v3</dt>
     <dd><code>{{$f.CVSSVector}}</code>{{if $f.CVSSScore}} ({{$f.CVSSScore}}){{end}}</dd>
   </div>
   {{end}}
   {{if $f.CVSSv4Vector}}
   <div class="col-span-2">
-    <dt class="text-muted-foreground">CVSS v4</dt>
+    <dt class="text-muted-foreground font-semibold">CVSS v4</dt>
     <dd><code>{{$f.CVSSv4Vector}}</code>{{if $f.CVSSv4Score}} ({{$f.CVSSv4Score}}){{end}}</dd>
   </div>
   {{end}}
   {{if $f.FixCommit}}
   <div>
-    <dt class="text-muted-foreground">Fix commit</dt>
+    <dt class="text-muted-foreground font-semibold">Fix commit</dt>
     <dd><code>{{short $f.FixCommit}}</code></dd>
   </div>
   {{end}}
   {{if $f.FixVersion}}
   <div>
-    <dt class="text-muted-foreground">Fix version</dt>
+    <dt class="text-muted-foreground font-semibold">Fix version</dt>
     <dd>{{$f.FixVersion}}</dd>
   </div>
   {{end}}
   {{if $f.ReleaseTag}}
   <div>
-    <dt class="text-muted-foreground">Released</dt>
+    <dt class="text-muted-foreground font-semibold">Released</dt>
     <dd>
       {{if $f.ReleaseURL}}<a class="hover:underline" href="{{$f.ReleaseURL}}" rel="noopener" target="_blank">{{$f.ReleaseTag}}</a>{{else}}{{$f.ReleaseTag}}{{end}}
       {{if $f.ReleasedAt}}<span class="text-xs text-muted-foreground">on {{$f.ReleasedAt.Format "2006-01-02"}}</span>{{end}}
@@ -207,24 +206,24 @@
   {{end}}
   {{if $f.Resolution}}
   <div>
-    <dt class="text-muted-foreground">Resolution</dt>
+    <dt class="text-muted-foreground font-semibold">Resolution</dt>
     <dd><span class="badge-outline">{{$f.Resolution}}</span></dd>
   </div>
   {{end}}
   {{if $f.Assignee}}
   <div>
-    <dt class="text-muted-foreground">Assignee</dt>
+    <dt class="text-muted-foreground font-semibold">Assignee</dt>
     <dd>{{$f.Assignee}}</dd>
   </div>
   {{end}}
   {{if eq $f.ExploitedInWild "yes"}}
   <div>
-    <dt class="text-muted-foreground">Exploited in wild</dt>
+    <dt class="text-muted-foreground font-semibold">Exploited in wild</dt>
     <dd><span class="badge-destructive">yes</span></dd>
   </div>
   {{else if eq $f.ExploitedInWild "no"}}
   <div>
-    <dt class="text-muted-foreground">Exploited in wild</dt>
+    <dt class="text-muted-foreground font-semibold">Exploited in wild</dt>
     <dd><span class="badge-outline">no</span></dd>
   </div>
   {{end}}
@@ -241,7 +240,7 @@
         {{if .Workflow.VerifyInFlight}}
         <button type="button" class="btn-outline" disabled><i data-lucide="loader-circle" class="animate-spin"></i> Verification in progress</button>
         {{else}}
-        <button type="submit" class="btn"><i data-lucide="play"></i> {{if .Verifications}}Rerun verification{{else}}Run verification{{end}}</button>
+        <button type="submit" class="{{if eq (printf "%s" $f.Status) "new"}}btn{{else}}btn-outline{{end}}"><i data-lucide="play"></i> {{if .Verifications}}Rerun verification{{else}}Run verification{{end}}</button>
         {{end}}
       </div>
     </form>
@@ -268,11 +267,11 @@
       <button type="button" id="disclosure-preview-tab-{{$f.ID}}" role="tab"
               aria-controls="disclosure-preview-panel-{{$f.ID}}" aria-selected="{{if .HasDisclosureDraft}}true{{else}}false{{end}}"
               tabindex="{{if .HasDisclosureDraft}}0{{else}}-1{{end}}"
-              class="{{if .HasDisclosureDraft}}btn-sm{{else}}btn-sm-outline{{end}}" data-disclosure-mode="preview">Preview</button>
+              class="{{if .HasDisclosureDraft}}btn-sm-outline{{else}}btn-sm-ghost{{end}}" data-disclosure-mode="preview">Preview</button>
       <button type="button" id="disclosure-edit-tab-{{$f.ID}}" role="tab"
               aria-controls="disclosure-edit-panel-{{$f.ID}}" aria-selected="{{if .HasDisclosureDraft}}false{{else}}true{{end}}"
               tabindex="{{if .HasDisclosureDraft}}-1{{else}}0{{end}}"
-              class="{{if .HasDisclosureDraft}}btn-sm-outline{{else}}btn-sm{{end}}" data-disclosure-mode="edit">Edit</button>
+              class="{{if .HasDisclosureDraft}}btn-sm-ghost{{else}}btn-sm-outline{{end}}" data-disclosure-mode="edit">Edit</button>
     </div>
   </header>
 
@@ -294,7 +293,7 @@
                 name="disclosure_draft" rows="24">{{$f.DisclosureDraft}}</textarea>
       <div class="flex justify-end gap-2">
         <button type="reset" class="btn-sm-outline" data-disclosure-cancel>Cancel</button>
-        <button type="submit" class="btn-sm">Save</button>
+        <button type="submit" class="btn-sm-outline">Save</button>
       </div>
     </form>
   </div>
@@ -401,7 +400,7 @@
     <section class="pb-4 grid gap-3">
       <div class="flex items-center gap-2">
         <form method="post" action="/findings/{{$f.ID}}/exposure" hx-post="/findings/{{$f.ID}}/exposure" hx-swap="none" hx-confirm="Run exposure on up to 10 dependents? This can enqueue up to 10 full scans.">
-          <button type="submit" class="btn-sm">Run exposure on top-10 dependents</button>
+          <button type="submit" class="btn-sm-outline">Run exposure on top-10 dependents</button>
         </form>
         <span class="text-xs text-muted-foreground">
           Clones each dependent and audits whether this finding is reachable in its code.
@@ -520,7 +519,7 @@
                   <input class="input text-xs" name="note" value="{{.CampaignNote}}" placeholder="Campaign note">
                   <div class="flex items-center justify-between gap-2">
                     <span class="text-xs text-muted-foreground">{{if .CampaignUpdatedAt}}Updated {{.CampaignUpdatedAt.Format "2006-01-02"}}{{end}}</span>
-                    <button type="submit" class="btn-sm">Save</button>
+                    <button type="submit" class="btn-sm-outline">Save</button>
                   </div>
                 </form>
               </td>
@@ -561,7 +560,7 @@
         <input type="hidden" name="finding_ids" value="{{$f.ID}}">
         <input class="input max-w-xs" type="text" name="ref" required
                placeholder="fix branch, tag, or commit">
-        <button type="submit" class="btn-sm">
+        <button type="submit" class="btn-sm-outline">
           <i data-lucide="git-compare"></i> Validate fix
         </button>
       </form>
@@ -609,7 +608,7 @@
         </div>
       {{end}}
       <div class="flex flex-wrap gap-2 items-center">
-        <a class="btn-sm" href="/findings/{{$f.ID}}/patch.diff">
+        <a class="btn-sm-outline" href="/findings/{{$f.ID}}/patch.diff">
           <i data-lucide="download"></i> Download .patch
         </a>
         <a class="btn-sm-outline" href="/scans/{{$ps.ID}}">
@@ -765,7 +764,7 @@ git commit -m "fix: {{$f.Title}}"</pre>
           <input class="input" name="suggested_recipients" value="{{$f.SuggestedRecipients}}">
         </div>
         <div class="col-span-2 flex justify-end">
-          <button type="submit" class="btn-sm">Save</button>
+          <button type="submit" class="btn-sm-outline">Save</button>
         </div>
       </form>
     </section>
@@ -782,7 +781,7 @@ git commit -m "fix: {{$f.Title}}"</pre>
       <form method="post" action="/findings/{{$f.ID}}/notes" class="form grid gap-2">
         <textarea class="input" name="body" rows="3" placeholder="Add a note..." required></textarea>
         <div class="flex justify-end">
-          <button type="submit" class="btn-sm">Add note</button>
+          <button type="submit" class="btn-sm-outline">Add note</button>
         </div>
       </form>
       <ul class="grid gap-2">
@@ -962,7 +961,7 @@ git commit -m "fix: {{$f.Title}}"</pre>
         <details class="mt-2">
           <summary class="text-xs text-muted-foreground cursor-pointer">Evidence</summary>
           <dl class="grid gap-2 text-sm mt-2">
-            {{range .Evidence}}<div><dt class="text-muted-foreground">{{.Name}}</dt><dd class="whitespace-pre-wrap">{{.Value}}</dd></div>{{end}}
+            {{range .Evidence}}<div><dt class="text-muted-foreground font-semibold">{{.Name}}</dt><dd class="whitespace-pre-wrap">{{.Value}}</dd></div>{{end}}
           </dl>
         </details>
         {{end}}
@@ -990,9 +989,9 @@ git commit -m "fix: {{$f.Title}}"</pre>
         </div>
         {{if .Parsed}}
         <dl class="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm mb-3">
-          <div><dt class="text-muted-foreground">Source state</dt><dd>{{.Assessment.SourceState}}</dd></div>
-          <div><dt class="text-muted-foreground">Attacker position</dt><dd>{{.Assessment.AttackerPosition}}</dd></div>
-          <div><dt class="text-muted-foreground">Likelihood</dt><dd>{{.Assessment.Likelihood}}</dd></div>
+          <div><dt class="text-muted-foreground font-semibold">Source state</dt><dd>{{.Assessment.SourceState}}</dd></div>
+          <div><dt class="text-muted-foreground font-semibold">Attacker position</dt><dd>{{.Assessment.AttackerPosition}}</dd></div>
+          <div><dt class="text-muted-foreground font-semibold">Likelihood</dt><dd>{{.Assessment.Likelihood}}</dd></div>
         </dl>
         <div class="prose max-w-none text-sm mb-3"><p>{{.Assessment.Reason}}</p><p><strong>Impact:</strong> {{.Assessment.Impact}}</p></div>
         {{if .Assessment.Preconditions}}<div class="text-sm mb-2"><span class="font-medium">Preconditions:</span> {{range $i, $item := .Assessment.Preconditions}}{{if $i}}; {{end}}{{$item}}{{end}}</div>{{end}}
@@ -1029,7 +1028,7 @@ git commit -m "fix: {{$f.Title}}"</pre>
           <div class="text-xs text-muted-foreground">Automation said: <strong>{{.LatestRevalidate}}</strong> (snapshotted on submit)</div>
         {{end}}
         <div class="flex justify-end">
-          <button type="submit" class="btn-sm">Record review</button>
+          <button type="submit" class="btn-sm-outline">Record review</button>
         </div>
       </form>
       <ul class="grid gap-2">
@@ -1079,7 +1078,7 @@ git commit -m "fix: {{$f.Title}}"</pre>
         </select>
         <textarea class="input col-span-3" name="body" rows="2" placeholder="message body..."></textarea>
         <div class="col-span-4 flex justify-end">
-          <button type="submit" class="btn-sm">Log communication</button>
+          <button type="submit" class="btn-sm-outline">Log communication</button>
         </div>
       </form>
       <ul class="grid gap-2">
@@ -1113,7 +1112,7 @@ git commit -m "fix: {{$f.Title}}"</pre>
         <input class="input" name="tags" placeholder="tags: issue, pr, cve, ghsa, patch">
         <input class="input col-span-3" name="summary" placeholder="optional summary">
         <div class="col-span-3 flex justify-end">
-          <button type="submit" class="btn-sm">Add reference</button>
+          <button type="submit" class="btn-sm-outline">Add reference</button>
         </div>
       </form>
       <ul class="grid gap-2">
@@ -1152,7 +1151,7 @@ git commit -m "fix: {{$f.Title}}"</pre>
           {{end}}
         </div>
         <div class="flex justify-end">
-          <button type="submit" class="btn-sm">Save labels</button>
+          <button type="submit" class="btn-sm-outline">Save labels</button>
         </div>
       </form>
     </section>
