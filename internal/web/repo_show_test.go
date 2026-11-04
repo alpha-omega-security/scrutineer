@@ -472,3 +472,49 @@ func TestRepoShow_findingLocationsLinkToCodeBrowser(t *testing.T) {
 		t.Errorf("scanner location links = %d, want 1 (Scanners tab)", n)
 	}
 }
+
+// TestRepoShow_headerGroupsSecondaryActions pins the exports and delete inside
+// the More menu, delete rendered once.
+func TestRepoShow_headerGroupsSecondaryActions(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/r", Name: "r"}
+	s.DB.Create(&repo)
+	s.DB.Create(&db.Skill{Name: "header-skill", Active: true})
+
+	body := getRepoPage(t, s, repo.ID)
+	_, more, found := strings.Cut(body, `id="repo-more-menu"`)
+	if !found {
+		t.Fatal("no More menu in the header")
+	}
+	more, _, _ = strings.Cut(more, "</form>")
+	for _, want := range []string{"Export report", "Export for upstream", fmt.Sprintf(`action="/repositories/%d/delete"`, repo.ID), "Delete repository"} {
+		if !strings.Contains(more, want) {
+			t.Errorf("More menu is missing %q", want)
+		}
+	}
+	if strings.Count(body, fmt.Sprintf(`action="/repositories/%d/delete"`, repo.ID)) != 1 {
+		t.Error("delete is rendered outside the More menu as well")
+	}
+}
+
+// TestRepoShow_headerMoreMenuWithoutSkills pins the More menu on a page with
+// no active skill, where the Run skill form is absent.
+func TestRepoShow_headerMoreMenuWithoutSkills(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/r", Name: "r"}
+	s.DB.Create(&repo)
+
+	body := getRepoPage(t, s, repo.ID)
+	if strings.Contains(body, fmt.Sprintf(`action="/repositories/%d/skill-scan"`, repo.ID)) {
+		t.Error("Run skill form rendered with no active skill")
+	}
+	_, more, found := strings.Cut(body, `id="repo-more-menu"`)
+	if !found {
+		t.Fatal("no More menu in the header")
+	}
+	if !strings.Contains(more, "Export report") || !strings.Contains(more, "Delete repository") {
+		t.Error("More menu is missing its actions without skills")
+	}
+}
