@@ -69,7 +69,7 @@ other files that affect how untrusted input reaches security-sensitive code.
 
 ## Coverage Metadata
 
-The Scans page (`/scans`) displays coverage completeness separately from execution status. Filter by `complete`, `partial`, or `unknown` using the Completeness menu or, for example, `/scans?completeness=partial&status=done`. Skill and status filters combine with completeness, and the selection persists through sorting, pagination, live refresh, and **Retry all failed**. Pause and resume actions remain instance-wide, as their confirmations state.
+The Scans page (`/scans`) displays coverage completeness separately from execution status, in a Completeness column shown when a scan on the page is `complete` or `partial`, or when a completeness filter is active. Filter by `complete`, `partial`, or `unknown` using the Completeness menu or, for example, `/scans?completeness=partial&status=done`. Skill and status filters combine with completeness, and the selection persists through sorting, pagination, live refresh, and **Retry all failed**. Pause and resume actions remain instance-wide, as their confirmations state.
 
 Completeness is the worker's recorded assessment of the staged scope, not a claim that the repository is vulnerability-free. Legacy scans with no recorded verdict display as `unknown` and are included in the unknown filter. Full and focus-area scans also remain unknown until their scope can be independently reconciled. Invalid completeness filter values return HTTP 400.
 

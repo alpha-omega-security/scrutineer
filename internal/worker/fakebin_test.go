@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -20,6 +21,18 @@ const (
 	fakeBinScriptExt = ".fake-script"
 	fakeBinShellExt  = ".fake-shell"
 )
+
+// fakeBinArgsPrelude rebuilds the arguments from the environment, where
+// runFakeBin puts them because the MSYS shell on Windows splits its command
+// line by its own rules and mangles an argument holding a double quote.
+const fakeBinArgsPrelude = `set --
+i=0
+while [ "$i" -lt "$FAKEBIN_ARGC" ]; do
+ eval "set -- \"\$@\" \"\${FAKEBIN_ARG_$i}\""
+ i=$((i+1))
+done
+unset i
+`
 
 // hostShell is empty when the machine has no POSIX shell. It is resolved in
 // TestMain because a test that narrows PATH would otherwise hide it, and the
@@ -37,7 +50,11 @@ func TestMain(m *testing.M) {
 }
 
 func runFakeBin(shell, script string) int {
-	cmd := exec.Command(shell, append([]string{script}, os.Args[1:]...)...)
+	cmd := exec.Command(shell, script)
+	cmd.Env = append(os.Environ(), fmt.Sprintf("FAKEBIN_ARGC=%d", len(os.Args)-1))
+	for i, arg := range os.Args[1:] {
+		cmd.Env = append(cmd.Env, fmt.Sprintf("FAKEBIN_ARG_%d=%s", i, arg))
+	}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
 	err := cmd.Run()
 	if err == nil {
@@ -68,7 +85,7 @@ func writeFakeBin(t *testing.T, dir, name, body string) string {
 		t.Fatal(err)
 	}
 	path := filepath.Join(dir, name+".exe")
-	for ext, content := range map[string]string{fakeBinScriptExt: body, fakeBinShellExt: hostShell} {
+	for ext, content := range map[string]string{fakeBinScriptExt: fakeBinArgsPrelude + body, fakeBinShellExt: hostShell} {
 		if err := os.WriteFile(path+ext, []byte(content), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -77,6 +94,24 @@ func writeFakeBin(t *testing.T, dir, name, body string) string {
 		copyFakeBin(t, self, path)
 	}
 	return path
+}
+
+// TestFakeBinKeepsArguments pins that a fake binary receives each argument
+// unchanged, quotes, spaces, backslashes and empty ones included.
+func TestFakeBinKeepsArguments(t *testing.T) {
+	bin := writeFakeBin(t, t.TempDir(), "echo-args", "#!/bin/sh\nprintf '[%s]\\n' \"$@\"\n")
+	args := []string{`model_reasoning_effort="high"`, "two words", `C:\work\src`, "", "--", "a'b"}
+	out, err := exec.Command(bin, args...).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var want strings.Builder
+	for _, arg := range args {
+		want.WriteString("[" + arg + "]\n")
+	}
+	if string(out) != want.String() {
+		t.Errorf("fake binary saw %q, want %q", out, want.String())
+	}
 }
 
 func copyFakeBin(t *testing.T, self, path string) {

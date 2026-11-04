@@ -43,7 +43,7 @@ func renderNode(b *strings.Builder, v any) {
 		sort.Strings(keys)
 		b.WriteString(`<dl class="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-1 text-sm">`)
 		for _, k := range keys {
-			b.WriteString(`<dt class="text-muted-foreground">`)
+			b.WriteString(`<dt class="text-muted-foreground font-semibold">`)
 			b.WriteString(html.EscapeString(k))
 			b.WriteString(`</dt><dd>`)
 			renderNode(b, x[k])

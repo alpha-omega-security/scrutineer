@@ -8,7 +8,7 @@ import (
 func TestJSONTree(t *testing.T) {
 	out := string(jsonTree(`{"a":1,"b":null,"c":["x","y"],"d":{"e":"<f>"}}`))
 	for _, want := range []string{
-		`<dt class="text-muted-foreground">a</dt><dd>1</dd>`,
+		`<dt class="text-muted-foreground font-semibold">a</dt><dd>1</dd>`,
 		`>null<`,
 		`x, y`,
 		`&lt;f&gt;`,

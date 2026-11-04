@@ -157,13 +157,14 @@ func TestIntegration_ModelProxyRealCLI(t *testing.T) {
 	}
 
 	var events []string
-	_, err = d.RunSkill(t.Context(), SkillJob{
+	job := SkillJob{
 		WorkRoot: work,
 		SrcReady: true,
 		Name:     "model-proxy-cli-integration",
 		Prompt:   "Reply with exactly " + modelProxyCLIReply + " and nothing else.",
 		StateDir: t.TempDir(),
-	}, func(e Event) { events = append(events, e.Kind+": "+e.Text) })
+	}
+	result, err := d.RunSkill(t.Context(), job, func(e Event) { events = append(events, e.Kind+": "+e.Text) })
 	transcript := strings.Join(events, "\n")
 	if err != nil {
 		t.Fatalf("RunSkill: %v\nevents:\n%s\nmodel proxy log:\n%s\negress log:\n%s", err, transcript, proxyLog.String(), egressLog.String())
@@ -172,6 +173,7 @@ func TestIntegration_ModelProxyRealCLI(t *testing.T) {
 	if !strings.Contains(transcript, modelProxyCLIReply) {
 		t.Errorf("the CLI's turn never surfaced the streamed reply %q; events:\n%s", modelProxyCLIReply, transcript)
 	}
+	checkModelProxyCLIResumes(t, d, job, result.SessionID)
 	requests := fake.snapshot()
 	if len(requests) == 0 {
 		t.Fatal("the CLI made no model request through the proxy")
@@ -197,5 +199,28 @@ func TestIntegration_ModelProxyRealCLI(t *testing.T) {
 	}
 	if strings.Contains(egressLog.String(), "egress denied") {
 		t.Errorf("the egress proxy refused a CLI request:\n%s", egressLog.String())
+	}
+}
+
+func checkModelProxyCLIResumes(t *testing.T, runner ContainerRunner, job SkillJob, savedSession string) {
+	t.Helper()
+	if savedSession == "" {
+		t.Fatal("fresh run did not report a session")
+	}
+	for _, sessionID := range []string{savedSession, "11111111-1111-4111-8111-111111111111"} {
+		job.ResumeSessionID = sessionID
+		var events []string
+		resumed, err := runner.RunSkill(t.Context(), job, func(e Event) {
+			events = append(events, e.Kind+": "+e.Text)
+		})
+		transcript := strings.Join(events, "\n")
+		if err != nil || resumed.SessionID == "" || !strings.Contains(transcript, modelProxyCLIReply) {
+			t.Fatalf("resume %s: session=%q error=%v\nevents:\n%s", sessionID, resumed.SessionID, err, transcript)
+		}
+		missing := sessionID != savedSession
+		if strings.Contains(transcript, "restarting fresh") != missing || (resumed.SessionID != sessionID) != missing {
+			t.Fatalf("resume %s: unexpected fallback to %q\nevents:\n%s", sessionID, resumed.SessionID, transcript)
+		}
+		t.Logf("resume %s: resulting session=%s, fresh fallback=%v", sessionID, resumed.SessionID, missing)
 	}
 }
