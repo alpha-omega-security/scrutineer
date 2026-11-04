@@ -38,7 +38,7 @@ Trace first-party code that implements a build system, task runner, compiler or 
 
 ## Review boundaries
 
-Before claiming that a standard library function lacks a limit or that a tool has an unsafe default, inspect the relevant implementation for the version used by the project and cite its source path and lines. A proposed PoC or remembered default is not evidence of runtime behaviour. If that source is unavailable within this static audit, put the claim in `unverified_assumptions` and do not report a finding that depends on it.
+Before claiming a missing limit or unsafe default in a standard library, third-party dependency or tool, inspect its implementation for the version used by the project and cite its source path and lines. A proposed PoC or remembered default is not evidence of runtime behaviour. If that source is unavailable within this static audit, put the claim in `unverified_assumptions` and do not report a finding that depends on it.
 
 Map the author of an untrusted checkout or pull request, a malicious dependency or plugin, a writer of a shared or remote cache, a local user on a shared machine and a network attacker on a toolchain download path to the assets they could reach: the developer or CI runner account, credentials in the environment, build outputs and caches plus the integrity of artifacts the tool produces. Do not silently grant the attacker the user's own consent. Use the bundled threat model to examine workspace trust and auto-execution, configuration precedence, build cache integrity, toolchain and plugin resolution, secrets and environment exposure and hermeticity or sandboxing claims.
 
