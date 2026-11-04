@@ -74,9 +74,12 @@ The runner's bundled Claude Code only moves when a maintainer merges Renovate's 
 
 The staleness check below never flags a locally built runner, so drop `--runner-image` once the published runner carries the Claude Code release you need.
 
-The runner image is not auto-updated, so the analysis toolchain stays on whatever digest you pulled until you pull again. To keep that drift visible, scrutineer checks the registry once at startup (in the background, and failing silently if the registry is unreachable) and flags the runner image when it is more than seven days behind the published `:latest` -- both in the boot log and as a banner on the Settings page. Update with:
+The runner image is not auto-updated. Release binaries use a release-matched digest; install a newer Scrutineer release to update that default. Pulling `:latest` alone does not change the digest embedded in a release binary. Development builds use `:latest` by default. To use the latest published runner with either build, pull it and select it explicitly:
 
     docker pull ghcr.io/alpha-omega-security/scrutineer-runner:latest
+    scrutineer --runner-image ghcr.io/alpha-omega-security/scrutineer-runner:latest
+
+Scrutineer checks the registry once at startup (in the background, and failing silently if the registry is unreachable) and flags the runner image when it is more than seven days behind the published `:latest`, both in the boot log and as a banner on the Settings page.
 
 On sidecar-backed hardened runtimes, scrutineer also refuses a runner image whose proxy binary does not support the current host-API tunnel policy. Pull or rebuild custom runner images when updating the host binary.
 

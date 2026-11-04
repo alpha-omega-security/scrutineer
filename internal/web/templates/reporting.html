@@ -3,8 +3,7 @@
 
 <div class="flex items-start justify-between gap-4 mb-6">
   <div>
-    {{template "crumbs" (crumbs "Reporting" "")}}
-    <h2 class="text-2xl font-semibold mt-1 flex items-center gap-2">
+    <h2 class="text-2xl font-semibold flex items-center gap-2">
       <i data-lucide="file-chart-column"></i> Reporting
     </h2>
   </div>
@@ -32,7 +31,7 @@
     <div class="flex items-center gap-1">
       {{range $.Intervals}}
         <a href="/reporting?interval={{.Key}}{{if $r.MinSeverity}}&amp;severity={{$r.MinSeverity}}{{end}}"
-           class="{{if eq $r.Interval.Key .Key}}btn-outline{{else}}btn-sm-ghost{{end}}">{{.Label}}</a>
+           class="{{if eq $r.Interval.Key .Key}}btn-sm-outline{{else}}btn-sm-ghost{{end}}">{{.Label}}</a>
       {{end}}
     </div>
   </div>
@@ -40,10 +39,10 @@
     <span class="text-sm font-medium text-muted-foreground">Minimum severity</span>
     <div class="flex items-center gap-1">
       <a href="/reporting?interval={{$r.Interval.Key}}"
-         class="{{if not $r.MinSeverity}}btn-outline{{else}}btn-sm-ghost{{end}}">All</a>
+         class="{{if not $r.MinSeverity}}btn-sm-outline{{else}}btn-sm-ghost{{end}}">All</a>
       {{range $.Severities}}
         <a href="/reporting?interval={{$r.Interval.Key}}&amp;severity={{.}}"
-           class="{{if eq $r.MinSeverity .}}btn-outline{{else}}btn-sm-ghost{{end}}">{{.}}</a>
+           class="{{if eq $r.MinSeverity .}}btn-sm-outline{{else}}btn-sm-ghost{{end}}">{{.}}</a>
       {{end}}
     </div>
   </div>

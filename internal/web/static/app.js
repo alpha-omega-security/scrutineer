@@ -157,7 +157,7 @@
       var selected = candidate === button;
       candidate.setAttribute('aria-selected', selected ? 'true' : 'false');
       candidate.setAttribute('tabindex', selected ? '0' : '-1');
-      candidate.className = selected ? 'btn-sm' : 'btn-sm-outline';
+      candidate.className = selected ? 'btn-sm-outline' : 'btn-sm-ghost';
     });
     if (editing && focusEditor && textarea) textarea.focus();
   }

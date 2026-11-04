@@ -139,14 +139,14 @@
 {{if .Findings}}
   <table class="table table-fixed w-full">
     <thead><tr>
-      {{template "th-sort" (dict "Sorter" .Sorter "Key" "severity" "Def" "desc" "Label" "Severity" "Class" "w-24")}}
+      {{template "th-sort" (dict "Sorter" .Sorter "Key" "severity" "Def" "desc" "Label" "Severity" "Class" "w-20")}}
       {{template "th-sort" (dict "Sorter" .Sorter "Key" "title" "Def" "asc" "Label" "Title" "Class" "")}}
       {{template "th-sort" (dict "Sorter" .Sorter "Key" "status" "Def" "asc" "Label" "Status" "Class" "w-24")}}
       {{template "th-sort" (dict "Sorter" .Sorter "Key" "repository" "Def" "asc" "Label" "Repository" "Class" "w-32")}}
       {{template "th-sort" (dict "Sorter" .Sorter "Key" "repo_id" "Def" "asc" "Label" "Repo ID" "Class" "w-20")}}
       {{if .AnySubPath}}<th class="w-32">Subpath</th>{{end}}
       {{template "th-sort" (dict "Sorter" .Sorter "Key" "cwe" "Def" "asc" "Label" "CWE" "Class" "w-44")}}
-      <th class="w-56">Location</th>
+      <th class="w-40">Location</th>
       {{if .AnyModel}}{{template "th-sort" (dict "Sorter" .Sorter "Key" "model" "Def" "asc" "Label" "Model" "Class" "w-28")}}{{end}}
       {{template "th-sort" (dict "Sorter" .Sorter "Key" "scan" "Def" "desc" "Label" "Scan" "Class" "w-16")}}
     </tr></thead>

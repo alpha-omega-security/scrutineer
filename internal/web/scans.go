@@ -79,10 +79,11 @@ func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 	skillNames := s.scanSkillNames()
 	stats := s.scanListStats()
 
-	anySubPath, anyFocusArea := false, false
+	anySubPath, anyFocusArea, anyCompleteness := false, false, completeness != ""
 	for _, sc := range scans {
 		anySubPath = anySubPath || sc.SubPath != ""
 		anyFocusArea = anyFocusArea || sc.FocusArea != ""
+		anyCompleteness = anyCompleteness || sc.Completeness == coverage.CompletenessComplete || sc.Completeness == coverage.CompletenessPartial
 	}
 	data := map[string]any{
 		"Scans": scans, "Page": page,
@@ -90,7 +91,7 @@ func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 		"Status": status, "Sort": sort, "Skills": skillNames,
 		"Completeness": completeness,
 		"Group":        group,
-		"AnySubPath":   anySubPath, "AnyFocusArea": anyFocusArea,
+		"AnySubPath":   anySubPath, "AnyFocusArea": anyFocusArea, "AnyCompleteness": anyCompleteness,
 		"QueuedCount": stats.QueuedCount, "PausedCount": stats.PausedCount,
 		"AccountPausedCount": stats.AccountPausedCount,
 		"NextAccountResume":  stats.NextAccountResume,

@@ -3,7 +3,7 @@
 {{template "crumbs" (crumbs
   "Repositories" "/"
   .Repository.Name (printf "/repositories/%d" .Repository.ID)
-  (printf "scan #%d" .ID) "")}}
+  (printf "Scan #%d" .ID) "")}}
 
 <div class="flex items-start justify-between gap-4 mb-6">
   <h2 class="text-2xl font-semibold flex items-center gap-3">
@@ -62,76 +62,76 @@
 
 <dl class="grid grid-cols-2 sm:grid-cols-5 gap-4 mb-6 text-sm">
   <div>
-    <dt class="text-muted-foreground">Subpath</dt>
+    <dt class="text-muted-foreground font-semibold">Subpath</dt>
     <dd><code>{{if .SubPath}}{{.SubPath}}{{else}}root{{end}}</code></dd>
   </div>
   <div>
-    <dt class="text-muted-foreground">Runner profile</dt>
+    <dt class="text-muted-foreground font-semibold">Runner profile</dt>
     <dd>{{if .Profile}}{{.Profile}}{{else if eq (status .Status) "queued"}}Automatic{{else}}Not recorded{{end}}</dd>
   </div>
   {{if .EgressPolicy}}<div>
-    <dt class="text-muted-foreground">Egress policy</dt>
+    <dt class="text-muted-foreground font-semibold">Egress policy</dt>
     <dd><code>{{.EgressPolicy}}</code></dd>
   </div>{{end}}
   {{with focus .}}{{if .Name}}
   <div class="sm:col-span-3">
-    <dt class="text-muted-foreground">Focus area</dt>
+    <dt class="text-muted-foreground font-semibold">Focus area</dt>
     <dd>{{template "focus-tag" .}}</dd>
     {{if .Paths}}<dd><code class="break-words">{{.Paths}}</code></dd>{{end}}
     {{if .Surface}}<dd>{{.Surface}}</dd>{{end}}
   </div>
   {{end}}{{end}}
   <div>
-    <dt class="text-muted-foreground">Model</dt>
+    <dt class="text-muted-foreground font-semibold">Model</dt>
     <dd>{{if .Model}}{{.Model}}{{else}}-{{end}}</dd>
   </div>
   {{if .Ref}}<div>
-    <dt class="text-muted-foreground">Ref</dt>
+    <dt class="text-muted-foreground font-semibold">Ref</dt>
     <dd>{{.Ref}}</dd>
   </div>{{end}}
   {{if eq .RescanMode "diff"}}<div>
-    <dt class="text-muted-foreground">Mode</dt>
+    <dt class="text-muted-foreground font-semibold">Mode</dt>
     <dd>diff rescan</dd>
   </div>{{end}}
   {{if .DiffBaseCommit}}<div>
-    <dt class="text-muted-foreground">Diff base</dt>
+    <dt class="text-muted-foreground font-semibold">Diff base</dt>
     <dd><code>{{short .DiffBaseCommit}}</code></dd>
   </div>{{end}}
   <div>
-    <dt class="text-muted-foreground">Commit</dt>
+    <dt class="text-muted-foreground font-semibold">Commit</dt>
     <dd><code>{{if .Commit}}{{short .Commit}}{{else}}-{{end}}</code></dd>
   </div>
   <div>
-    <dt class="text-muted-foreground">Started</dt>
+    <dt class="text-muted-foreground font-semibold">Started</dt>
     <dd>{{if .StartedAt}}{{since .StartedAt}}{{else}}-{{end}}</dd>
   </div>
   <div>
-    <dt class="text-muted-foreground">Duration</dt>
+    <dt class="text-muted-foreground font-semibold">Duration</dt>
     <dd>{{if .FinishedAt}}{{dur .Duration}}{{else}}-{{end}}</dd>
   </div>
   <div>
-    <dt class="text-muted-foreground">Turns</dt>
+    <dt class="text-muted-foreground font-semibold">Turns</dt>
     <dd>{{if .Turns}}{{.Turns}}{{else}}-{{end}}</dd>
   </div>
   <div>
-    <dt class="text-muted-foreground">Cost</dt>
+    <dt class="text-muted-foreground font-semibold">Cost</dt>
     <dd>{{if gt .CostUSD 0.0}}{{usd .CostUSD}}{{else}}-{{end}}</dd>
   </div>
   {{if gt .MaxCostUSD 0.0}}
   <div>
-    <dt class="text-muted-foreground">Cost cap</dt>
+    <dt class="text-muted-foreground font-semibold">Cost cap</dt>
     <dd>{{usd .MaxCostUSD}}</dd>
   </div>
   {{end}}
   {{if .SkillName}}
   <div>
-    <dt class="text-muted-foreground">Skill</dt>
+    <dt class="text-muted-foreground font-semibold">Skill</dt>
     <dd>{{if .SkillID}}<a href="/skills/{{.SkillID}}">{{.SkillName}}</a>{{else}}{{.SkillName}}{{end}}</dd>
   </div>
   {{end}}
   {{if .SkillsRepoSHA}}
   <div>
-    <dt class="text-muted-foreground">Skills repo</dt>
+    <dt class="text-muted-foreground font-semibold">Skills repo</dt>
     <dd><code>{{short .SkillsRepoSHA}}</code></dd>
   </div>
   {{end}}

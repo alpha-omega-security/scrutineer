@@ -89,11 +89,11 @@
       </table>
       {{$adv := index $tm "adversaries"}}{{if $adv}}
       <dl class="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-2 text-sm">
-        <dt class="text-muted-foreground">Adversaries in scope</dt>
+        <dt class="text-muted-foreground font-semibold">Adversaries in scope</dt>
         <dd>{{range $i, $a := index $adv "in_scope"}}{{if $i}}; {{end}}{{$a}}{{end}}</dd>
-        <dt class="text-muted-foreground">Adversaries out of scope</dt>
+        <dt class="text-muted-foreground font-semibold">Adversaries out of scope</dt>
         <dd>{{range $i, $a := index $adv "out_of_scope"}}{{if $i}}; {{end}}{{$a}}{{end}}</dd>
-        {{if index $adv "threshold"}}<dt class="text-muted-foreground">Threshold</dt><dd>{{index $adv "threshold"}}</dd>{{end}}
+        {{if index $adv "threshold"}}<dt class="text-muted-foreground font-semibold">Threshold</dt><dd>{{index $adv "threshold"}}</dd>{{end}}
       </dl>
       {{end}}
     </section>
@@ -240,7 +240,7 @@
     <section class="pb-4">
       <dl class="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-2 text-sm">
         {{range $class, $prims := index $tm "sink_primitives"}}
-          <dt class="text-muted-foreground">{{$class}}</dt>
+          <dt class="text-muted-foreground font-semibold">{{$class}}</dt>
           <dd>{{range $i, $p := $prims}}{{if $i}}, {{end}}<code>{{$p}}</code>{{end}}</dd>
         {{end}}
       </dl>
@@ -291,10 +291,10 @@
     </summary>
     <section class="pb-4">
       <dl class="grid grid-cols-[max-content_1fr] gap-x-4 gap-y-2 text-sm mb-4">
-        <dt class="text-muted-foreground">Scope</dt><dd>{{index $method "scope"}}</dd>
-        <dt class="text-muted-foreground">Inventory</dt><dd>{{index $method "inventory_count"}} entries</dd>
-        <dt class="text-muted-foreground">Ruled out</dt><dd>{{index $method "ruled_out_count"}} entries</dd>
-        <dt class="text-muted-foreground">Unresolved</dt><dd>{{index $method "unresolved_count"}} entries</dd>
+        <dt class="text-muted-foreground font-semibold">Scope</dt><dd>{{index $method "scope"}}</dd>
+        <dt class="text-muted-foreground font-semibold">Inventory</dt><dd>{{index $method "inventory_count"}} entries</dd>
+        <dt class="text-muted-foreground font-semibold">Ruled out</dt><dd>{{index $method "ruled_out_count"}} entries</dd>
+        <dt class="text-muted-foreground font-semibold">Unresolved</dt><dd>{{index $method "unresolved_count"}} entries</dd>
       </dl>
       {{if index $method "grep_patterns"}}
       <table class="table w-full">

@@ -185,3 +185,43 @@ func TestScansRetryFailedFiltersByCompleteness(t *testing.T) {
 		t.Fatalf("expected only the partial scan to be retried: %+v", queued)
 	}
 }
+
+// TestJobsCompletenessColumnShowsOnlyWithAVerdict pins the Completeness column
+// to pages where a row carries complete or partial, like Subpath and Focus area.
+func TestJobsCompletenessColumnShowsOnlyWithAVerdict(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/column", Name: "column"}
+	if err := s.DB.Create(&repo).Error; err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range []string{"unknown", ""} {
+		if err := s.DB.Create(&db.Scan{RepositoryID: repo.ID, Kind: worker.JobSkill, SkillName: "alpha", Status: db.ScanDone, Completeness: value}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	get := func() string {
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, localReq(http.MethodGet, "/scans"))
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d", w.Code)
+		}
+		return w.Body.String()
+	}
+
+	body := get()
+	if strings.Contains(body, "<th>Completeness</th>") || strings.Contains(body, `<span class="text-muted-foreground">unknown</span>`) {
+		t.Error("a page of unknown rows must not render the Completeness column")
+	}
+
+	if err := s.DB.Create(&db.Scan{RepositoryID: repo.ID, Kind: worker.JobSkill, SkillName: "alpha", Status: db.ScanDone, Completeness: "partial"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	body = get()
+	if !strings.Contains(body, "<th>Completeness</th>") || !strings.Contains(body, "partial</span>") {
+		t.Error("a partial row must bring the Completeness column back")
+	}
+	if strings.Count(body, `<span class="text-muted-foreground">unknown</span>`) != 2 {
+		t.Error("unknown rows must keep saying unknown once the column shows")
+	}
+}
