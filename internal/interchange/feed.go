@@ -340,12 +340,13 @@ func readRecord(path string, identities []age.Identity) (Statement, []byte, erro
 	if err := json.Unmarshal(raw, &s); err != nil {
 		return Statement{}, nil, fmt.Errorf("decode record: %w", err)
 	}
-	// Validate works on the raw JSON and encoding/json matches struct fields
-	// case-insensitively, so a record carrying both "subject":[...] and
-	// "Subject":[] passes the schema (the envelope is open to in-toto
-	// extensions) but decodes to an empty slice. Callers index Subject[0].
-	if len(s.Subject) == 0 || s.Subject[0].Digest["sha256"] == "" {
-		return Statement{}, nil, errors.New("decoded record has no subject digest")
+	// Case-insensitive decoding can replace validated fields with envelope extensions.
+	decoded, err := json.Marshal(s)
+	if err != nil {
+		return Statement{}, nil, fmt.Errorf("encode decoded record: %w", err)
+	}
+	if err := Validate(decoded); err != nil {
+		return Statement{}, nil, fmt.Errorf("invalid decoded record: %w", err)
 	}
 	return s, raw, nil
 }
