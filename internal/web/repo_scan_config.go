@@ -53,7 +53,7 @@ func (s *Server) repoIgnoredPathAdd(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg.Skip = append(cfg.Skip, pattern)
-	config, err := repoconfig.NormaliseConfig(cfg)
+	config, err := repoconfig.SetSkip(repo.ScanConfig, cfg.Skip)
 	if err != nil {
 		http.Error(w, "scan config is not valid: "+err.Error(), http.StatusBadRequest)
 		return
@@ -103,7 +103,7 @@ func (s *Server) repoIgnoredPathDelete(w http.ResponseWriter, r *http.Request) {
 		s.redirect(w, r, fmt.Sprintf("/repositories/%d%s", repo.ID, scanConfigTab))
 		return
 	}
-	config, err := repoconfig.NormaliseConfig(cfg)
+	config, err := repoconfig.SetSkip(repo.ScanConfig, cfg.Skip)
 	if err != nil {
 		http.Error(w, "scan config is not valid: "+err.Error(), http.StatusBadRequest)
 		return

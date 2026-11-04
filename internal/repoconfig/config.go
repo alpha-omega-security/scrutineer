@@ -107,13 +107,24 @@ func Normalise(raw string) (string, Config, error) {
 
 // NormaliseConfig validates a parsed config and returns its stable, readable
 // YAML representation. An empty config clears the durable scan configuration.
-// It is the single write path for both the operator form and the threat-model
-// seed, so write-time limits that must not break reads of legacy stored
-// configs belong here rather than in validate().
 func NormaliseConfig(cfg Config) (string, error) {
 	if n := len(cfg.FocusAreas); n > MaxFocusAreas {
 		return "", fmt.Errorf("focus_areas has %d entries; the limit is %d", n, MaxFocusAreas)
 	}
+	return normaliseConfig(cfg)
+}
+
+// SetSkip replaces ignored paths while preserving legacy focus areas.
+func SetSkip(raw string, skip []string) (string, error) {
+	cfg, err := Parse(raw)
+	if err != nil {
+		return "", err
+	}
+	cfg.Skip = skip
+	return normaliseConfig(cfg)
+}
+
+func normaliseConfig(cfg Config) (string, error) {
 	if err := cfg.validate(); err != nil {
 		return "", err
 	}
@@ -143,13 +154,7 @@ func (c Config) Empty() bool {
 		strings.TrimSpace(c.AttackSurface) == "" && len(c.Skip) == 0
 }
 
-// MaxFocusAreas caps the number of focus areas a scan config may declare.
-// Each area becomes one full audit scan via autoEnqueueFocusAreaDeepDives,
-// and the array is populated from lower-trust threat-model output as well as
-// the operator form, so an uncapped list is a cost-amplification lever.
-// Enforced in NormaliseConfig (write) rather than validate() so Parse of a
-// legacy stored config does not fail skillContext staging; the enqueue hook
-// clamps a legacy over-cap config instead.
+// MaxFocusAreas bounds new configurations and automatic audit fan-out.
 const MaxFocusAreas = 32
 
 func (c Config) validate() error {
