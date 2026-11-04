@@ -1058,6 +1058,10 @@ func resolveProfilesDir(f *flags, cfg *config.Config, log *slog.Logger) error {
 	} else if err != nil && !errors.Is(err, os.ErrNotExist) && !errors.Is(err, syscall.ENOTDIR) {
 		return fmt.Errorf("stat profiles directory: %w", err)
 	}
+	return materializeBundledProfiles(f, log)
+}
+
+func materializeBundledProfiles(f *flags, log *slog.Logger) error {
 	dir, hash, err := bundledassets.Materialize(bundledprofiles.FS, f.dataDir, "bundled-profiles")
 	if err != nil {
 		return fmt.Errorf("materialize bundled profiles: %w", err)

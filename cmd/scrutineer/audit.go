@@ -147,6 +147,11 @@ func runAuditWith(args []string, out io.Writer, setup runnerSetup) error {
 		return err
 	}
 	isolateAuditConfig(f, opts, log)
+	if !f.set["profiles-dir"] && cfg.ProfilesDir == nil {
+		if err := materializeBundledProfiles(f, log); err != nil {
+			return err
+		}
+	}
 
 	a, err := newApp(f, cfg, log, setup)
 	if err != nil {
@@ -218,39 +223,61 @@ func resolveAuditPaths(opts *auditOptions) error {
 	return nil
 }
 
-// refuseDefaultConfigUnderSource stops an implicit ./scrutineer.yaml from
-// loading when the working directory is inside -source. The default config
-// can set model_base_url, model_proxy, skills_repo and its token, and
-// isolateAuditConfig does not clear those, so a hostile scrutineer.yaml in
-// the audited checkout could redirect the real API key to an
-// attacker-chosen endpoint. An explicit -config under -source is the
-// operator's deliberate choice and is left to them.
+// Both the config entry and its target must be outside the untrusted checkout.
 func refuseDefaultConfigUnderSource(f *flags, opts *auditOptions) error {
 	if f.configPath != "" {
 		return nil
 	}
 	defaultCfg, err := filepath.Abs(config.DefaultPath)
 	if err != nil {
-		return nil
+		return fmt.Errorf("resolve default config path: %w", err)
 	}
 	if _, statErr := os.Lstat(defaultCfg); statErr != nil {
-		return nil
+		if errors.Is(statErr, fs.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("inspect default config %s: %w", defaultCfg, statErr)
 	}
-	refuse := fmt.Errorf("refusing to load the default config %s: it is inside the untrusted -source tree. "+
-		"Run audit from outside -source, or pass -config explicitly", defaultCfg)
-	// Resolve symlinks on both sides so a symlinked -source or working
-	// directory does not let the containment check compare two spellings
-	// of the same path. A resolution failure means we cannot establish
-	// containment either way, so refuse rather than fall through.
-	resolvedCfg, cfgErr := filepath.EvalSymlinks(defaultCfg)
-	resolvedSrc, srcErr := filepath.EvalSymlinks(opts.source)
-	if cfgErr != nil || srcErr != nil {
+	root, err := auditSourceRoot(opts.source)
+	if err != nil {
+		return err
+	}
+	parent, err := filepath.EvalSymlinks(filepath.Dir(defaultCfg))
+	if err != nil {
+		return fmt.Errorf("resolve default config directory %s: %w", defaultCfg, err)
+	}
+	refuse := fmt.Errorf("refusing to load the default config %s: it is inside the untrusted -source checkout %s. "+
+		"Run audit from outside that checkout, or pass -config explicitly", defaultCfg, root)
+	// Resolve directory aliases without following the config's final symlink.
+	if pathUnder(filepath.Join(parent, filepath.Base(defaultCfg)), root) {
 		return refuse
 	}
-	if !pathUnder(resolvedCfg, resolvedSrc) {
-		return nil
+	resolvedCfg, err := filepath.EvalSymlinks(defaultCfg)
+	if err != nil {
+		return fmt.Errorf("resolve default config %s: %w", defaultCfg, err)
 	}
-	return refuse
+	if pathUnder(resolvedCfg, root) {
+		return refuse
+	}
+	return nil
+}
+
+func auditSourceRoot(source string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(source)
+	if err != nil {
+		return "", fmt.Errorf("resolve -source for config check: %w", err)
+	}
+	for dir := resolved; ; dir = filepath.Dir(dir) {
+		// A .git file also marks a linked worktree or submodule.
+		if _, err := os.Lstat(filepath.Join(dir, ".git")); err == nil {
+			return dir, nil
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return "", fmt.Errorf("inspect source checkout root %s: %w", dir, err)
+		}
+		if filepath.Dir(dir) == dir {
+			return resolved, nil
+		}
+	}
 }
 
 func pathUnder(p, root string) bool {
