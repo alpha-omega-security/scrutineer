@@ -3,7 +3,7 @@ package web
 import (
 	"fmt"
 	"net/http/httptest"
-	"os"
+	"os/exec"
 	"regexp"
 	"strings"
 	"testing"
@@ -544,7 +544,8 @@ func TestRepoShow_summaryWithoutOpenFindings(t *testing.T) {
 }
 
 // TestRepoShow_viewInFindingsTargetsTheFindingsTab pins the Summary link to the
-// Findings tab button and app.js re-selecting the tab when the hash changes.
+// Findings tab, selected by app.js when the link is followed from Summary and
+// left again for Summary when Back clears the hash.
 func TestRepoShow_viewInFindingsTargetsTheFindingsTab(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
@@ -566,12 +567,14 @@ func TestRepoShow_viewInFindingsTargetsTheFindingsTab(t *testing.T) {
 		t.Error("#rt4 is not the Findings tab button")
 	}
 
-	js, err := os.ReadFile("static/app.js")
+	node, err := exec.LookPath("node")
 	if err != nil {
-		t.Fatal(err)
+		t.Skip("node is required to run app.js")
 	}
-	if !strings.Contains(string(js), "addEventListener('hashchange', restoreTab)") {
-		t.Error("app.js does not re-select the tab when a same-page link changes the hash")
+	cmd := exec.CommandContext(t.Context(), node, "testdata/repo_tabs.cjs")
+	cmd.Stdin = strings.NewReader(w.Body.String())
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("repo tabs script: %v\n%s", err, out)
 	}
 }
 
