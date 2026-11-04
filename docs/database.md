@@ -711,18 +711,18 @@ Fix-audit verdicts from the `advisory-deep-dive` skill: for each published advis
 
 ## maintainers
 
-People who maintain repositories. Populated by the `maintainers` skill. Many-to-many with repositories via `repository_maintainers`.
+People who maintain repositories. Populated by the `maintainers` skill. Many-to-many with repositories via `repository_maintainers`. Reports fill missing profile fields; operators can correct them on the maintainer page. Repository activity is stored separately in `maintainer_activities`.
 
 | Column | Type | Notes |
 |--------|------|-------|
 | id | integer PK | |
 | login | text, unique | GitHub username or equivalent. |
 | name | text | |
-| email | text | Validated: must contain `@`, no noreply addresses. |
+| email | text | Report-supplied addresses must contain `@` and exclude noreply addresses. Operators can correct the contact address. |
 | company | text | |
 | avatar_url | text | |
-| status | text | `active`, `inactive`, `unknown`. |
-| notes | text | Role and evidence from the analysis. |
+| status | text | Shared profile status: `active`, `inactive`, `unknown`. Used for repository activity until a repository-scoped scan records its own status. |
+| notes | text | Role and evidence from reports, or operator notes. |
 | created_at | datetime | |
 | updated_at | datetime | |
 
@@ -734,6 +734,16 @@ Join table. No extra columns.
 |--------|------|-------|
 | maintainer_id | integer FK | |
 | repository_id | integer FK | |
+
+## maintainer_activities
+
+Latest reported activity for each repository-maintainer pair. Repository pages, health assessments, API responses and reports use this status without changing the shared profile. New scans can refresh `active` and `inactive`; missing or unrecognized statuses leave prior activity unchanged. Existing links keep the shared status until a scan supplies repository activity. Migration creates an empty table without backfilling records.
+
+| Column | Type | Notes |
+|--------|------|-------|
+| repository_id | integer FK, composite PK | Deleting the repository removes its activity records. |
+| maintainer_id | integer FK, composite PK, indexed | Deleting the maintainer removes their activity records. |
+| status | text | `active` or `inactive`. |
 
 ## subprojects
 

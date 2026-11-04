@@ -2773,7 +2773,6 @@ func TestParseMaintainers_doesNotOverwriteSharedMaintainerFields(t *testing.T) {
 	}
 
 	// A fresh login still gets its fields filled in.
-	gdb.Delete(&db.Maintainer{}, "login = ?", "newcomer")
 	fresh := `{"maintainers":[{"login":"newcomer","name":"New Person","email":"n@example.org","status":"active","role":"triage","evidence":"commit author"}]}`
 	if err := w.parseMaintainersOutput(&scan, fresh, func(Event) {}); err != nil {
 		t.Fatal(err)

@@ -1035,12 +1035,7 @@ type reportedMaintainer struct {
 	Evidence string `json:"evidence"`
 }
 
-// applyTo fills in only the fields the shared Maintainer row does not
-// already have. The row is keyed globally on Login and the report comes
-// from repository-controlled prose, so last-wins would let one hostile
-// repo rewrite the name, email and activity status every other repository
-// linked to that login displays. A field already set is kept; the operator
-// can still edit it through the UI.
+// applyTo fills missing shared profile fields; repository activity is recorded separately.
 func (rm reportedMaintainer) applyTo(m *db.Maintainer) {
 	if m.Name == "" && rm.Name != "" {
 		m.Name = rm.Name
@@ -1150,6 +1145,11 @@ func (w *Worker) parseMaintainersOutput(scan *db.Scan, report string, emit func(
 			// maintainer from the repository via the Replace below, which is a
 			// larger loss than a stale name or note.
 			w.Log.Warn("save maintainer", "scan", scan.ID, "login", rm.Login, "err", err)
+		}
+		if repoWide {
+			if err := db.RecordMaintainerActivity(w.DB, repo.ID, m.ID, rm.Status); err != nil {
+				w.Log.Warn("record maintainer activity", "scan", scan.ID, "login", rm.Login, "err", err)
+			}
 		}
 		linked = append(linked, m)
 	}
