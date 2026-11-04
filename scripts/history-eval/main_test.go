@@ -6,7 +6,6 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -54,16 +53,13 @@ func TestParseCommitLogHostileSeparator(t *testing.T) {
 	}
 }
 
-func TestCompilePattern(t *testing.T) {
-	re, err := compilePattern(pattern{Pattern: `fix.{0,10}bound`, Flags: 2 | 16})
+func TestMatchMessagesProductionSemantics(t *testing.T) {
+	terms, err := matchMessages("../../skills", []string{"go"}, []string{"Fix a\nBounds", "ésecurity", "xss"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !re.MatchString("Fix a\nBounds") {
-		t.Fatal("expected IGNORECASE+DOTALL match across newline")
-	}
-	if _, err := compilePattern(pattern{Pattern: `(?P<a>x)\k<a>`}); err == nil {
-		t.Fatal("expected RE2 to reject backreference")
+	if !slices.Contains(terms[0], "security-shaped-fix") || len(terms[1]) != 0 || len(terms[2]) != 0 {
+		t.Fatalf("unexpected production matching: %v", terms)
 	}
 }
 
@@ -118,13 +114,13 @@ func TestScorePrefilterAndSummarise(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "commits", "o_r.log"), []byte(log), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	pats := []pattern{{Label: "traversal", re: regexp.MustCompile(`(?i)traversal`)}}
+	writeHistoryFixture(t, filepath.Join(dir, "population.json"), `[{"ecosystem":"go","name":"fixture","repo":"o/r"}]`)
 	labels := []label{
 		{SHA: shaFix, Repo: "o/r", RepoKey: "o_r", Class: "advised"},
 		{SHA: shaNeg1, Repo: "o/r", RepoKey: "o_r", Class: "negative"},
 		{SHA: shaNeg2, Repo: "o/r", RepoKey: "o_r", Class: "advised"},
 	}
-	rows, err := scorePrefilter(dir, labels, pats)
+	rows, err := scorePrefilter(dir, labels, "../../skills")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,6 +144,10 @@ func TestScorePrefilterAndSummarise(t *testing.T) {
 		t.Fatalf("advised agg: total=%d in_log=%d matched=%d", adv, advIn, advMatch)
 	}
 	var buf bytes.Buffer
+	pats, err := loadPatterns("../../skills")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := summarise(&buf, rows, pats); err != nil {
 		t.Fatal(err)
 	}
@@ -191,18 +191,17 @@ func TestLoadPatternsLive(t *testing.T) {
 		if p.Ecosystem == "" {
 			base++
 		}
-		if p.re == nil {
-			t.Fatalf("pattern %q not compiled", p.Label)
-		}
 	}
 	if base < 4 {
 		t.Fatalf("expected 4+ base patterns, got %d", base)
 	}
-	// Spot-check that the production security-shaped-fix pattern survives
-	// the Python→RE2 flag translation.
 	msg := "Fix a potential\noverflow in parse"
-	if ts := matchTerms(msg, pats); !slices.Contains(ts, "security-shaped-fix") {
-		t.Fatalf("security-shaped-fix did not match across newline; terms=%v", ts)
+	terms, err := matchMessages("../../skills", nil, []string{msg})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Contains(terms[0], "security-shaped-fix") {
+		t.Fatalf("security-shaped-fix did not match across newline; terms=%v", terms)
 	}
 }
 

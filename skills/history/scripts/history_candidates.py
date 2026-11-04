@@ -112,6 +112,10 @@ def patterns_for(ecosystems):
     return patterns
 
 
+def matched_terms(message, patterns):
+    return sorted({label for label, pattern in patterns if pattern.search(message)})
+
+
 def cache_state(repo, base, head):
     if not base:
         return False, "no prior cache"
@@ -168,9 +172,9 @@ def list_candidates(args):
     candidates = []
     for commit, subject, body in records:
         message = f"{subject}\n{body}"
-        matched = [label for label, pattern in patterns if pattern.search(message)]
+        matched = matched_terms(message, patterns)
         if matched:
-            candidates.append({"commit": commit, "title": subject, "matched_terms": sorted(set(matched))})
+            candidates.append({"commit": commit, "title": subject, "matched_terms": matched})
     total = len(candidates)
     page_offset = 0
     if args.after:
@@ -227,6 +231,13 @@ def dump_patterns(args):
     sys.stdout.write("\n")
 
 
+def match_messages(args):
+    request = json.load(sys.stdin)
+    patterns = patterns_for(request["ecosystems"])
+    json.dump([matched_terms(message, patterns) for message in request["messages"]], sys.stdout)
+    sys.stdout.write("\n")
+
+
 def commit_batch(args):
     scope_path = clean_scope_path(args.path)
     head = git(args.repo, "rev-parse", "HEAD").stdout.strip()
@@ -279,6 +290,9 @@ def parser():
     patterns.add_argument("--repo", default=".")
     patterns.set_defaults(func=dump_patterns)
 
+    matching = commands.add_parser("match", help="match JSON messages from stdin using the production patterns")
+    matching.set_defaults(func=match_messages)
+
     batch = commands.add_parser("batch", help="render one bounded batch of candidate diffs")
     batch.add_argument("--repo", default="./src")
     batch.add_argument("--path", default="")
@@ -294,7 +308,8 @@ def main():
         raise ValueError("--max-candidates must be positive")
     if hasattr(args, "max_diff_bytes") and args.max_diff_bytes < 1024:
         raise ValueError("--max-diff-bytes must be at least 1024")
-    args.repo = os.path.abspath(args.repo)
+    if hasattr(args, "repo"):
+        args.repo = os.path.abspath(args.repo)
     args.func(args)
 
 

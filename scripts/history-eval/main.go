@@ -28,18 +28,21 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 )
 
 const (
-	maxLogRecord      = 1 << 20
-	maxLogBytes       = 512 << 20
+	bytesPerMiB       = 1 << 20
+	maxLogRecord      = bytesPerMiB
+	maxLogBytes       = 512 * bytesPerMiB
 	scannerBuf        = 64 << 10
 	fieldSep          = 0x1f
 	recordSep         = 0x1e
 	logFields         = 5
-	outDirPerm        = 0o755
+	outDirPerm        = 0o700
+	outFilePerm       = 0o600
 	defaultNegPerRepo = 20
 )
 
@@ -50,6 +53,11 @@ var osvEcosystem = map[string]string{
 	"Maven": "maven", "Go": "go", "Packagist": "packagist", "NuGet": "nuget",
 	"Hex": "hex", "Pub": "pub", "Hackage": "hackage", "CRAN": "cran",
 	"SwiftURL": "swiftpm", "GitHub_Actions": "actions",
+}
+
+var patternEcosystem = map[string]string{
+	"npm": "javascript-typescript", "pypi": "python", "cargo": "rust",
+	"rubygems": "ruby", "maven": "jvm", "go": "go", "packagist": "php", "nuget": "dotnet",
 }
 
 type label struct {
@@ -72,9 +80,6 @@ type logRecord struct {
 type pattern struct {
 	Label     string `json:"label"`
 	Ecosystem string `json:"ecosystem"`
-	Pattern   string `json:"pattern"`
-	Flags     int    `json:"flags"`
-	re        *regexp.Regexp
 }
 
 type prefilterRow struct {
@@ -136,6 +141,9 @@ func run(mode, dataDir, outDir, skillsDir string, negPer int, seed int64) error 
 		return err
 	}
 	defer func() { _ = out.Close() }()
+	if err := out.Chmod(".", outDirPerm); err != nil {
+		return err
+	}
 	switch mode {
 	case "labels":
 		labels, err := buildLabels(dataDir, negPer, seed)
@@ -152,7 +160,7 @@ func run(mode, dataDir, outDir, skillsDir string, negPer int, seed int64) error 
 		if err != nil {
 			return err
 		}
-		rows, err := scorePrefilter(dataDir, labels, pats)
+		rows, err := scorePrefilter(dataDir, labels, skillsDir)
 		if err != nil {
 			return err
 		}
@@ -342,7 +350,19 @@ func readCommitLog(path string) ([]logRecord, error) {
 		return nil, err
 	}
 	defer func() { _ = f.Close() }()
-	return parseCommitLog(io.LimitReader(f, maxLogBytes))
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if info.Size() > maxLogBytes {
+		return nil, fmt.Errorf("commit log exceeds %d MiB limit", maxLogBytes/bytesPerMiB)
+	}
+	limited := &io.LimitedReader{R: f, N: maxLogBytes + 1}
+	records, err := parseCommitLog(limited)
+	if limited.N == 0 {
+		return nil, fmt.Errorf("commit log exceeds %d MiB limit", maxLogBytes/bytesPerMiB)
+	}
+	return records, err
 }
 
 func parseCommitLog(r io.Reader) ([]logRecord, error) {
@@ -364,7 +384,7 @@ func parseCommitLog(r io.Reader) ([]logRecord, error) {
 		})
 	}
 	if err := sc.Err(); errors.Is(err, bufio.ErrTooLong) {
-		return out, nil
+		return nil, fmt.Errorf("commit log record exceeds %d MiB limit: %w", maxLogRecord/bytesPerMiB, err)
 	}
 	return out, sc.Err()
 }
@@ -380,48 +400,53 @@ func splitRecord(data []byte, atEOF bool) (int, []byte, error) {
 }
 
 func loadPatterns(skillsDir string) ([]pattern, error) {
-	script := filepath.Join(skillsDir, "history", "scripts", "history_candidates.py")
-	out, err := exec.Command("python3", script, "patterns").Output()
+	out, err := historyScript(skillsDir, "patterns", nil)
 	if err != nil {
-		var ee *exec.ExitError
-		if errors.As(err, &ee) {
-			return nil, fmt.Errorf("history_candidates.py patterns: %s", bytes.TrimSpace(ee.Stderr))
-		}
 		return nil, err
 	}
 	var pats []pattern
 	if err := json.Unmarshal(out, &pats); err != nil {
 		return nil, err
 	}
-	for i := range pats {
-		re, err := compilePattern(pats[i])
-		if err != nil {
-			return nil, fmt.Errorf("pattern %q: %w", pats[i].Label, err)
-		}
-		pats[i].re = re
-	}
 	return pats, nil
 }
 
-// compilePattern maps the subset of Python re flags the history pre-filter
-// uses onto RE2 inline flags. The patterns avoid backreferences and
-// lookaround, so RE2 accepts them unchanged.
-func compilePattern(p pattern) (*regexp.Regexp, error) {
-	var fl string
-	if p.Flags&2 != 0 { // re.IGNORECASE
-		fl += "i"
+func historyScript(skillsDir, command string, input io.Reader) ([]byte, error) {
+	script := filepath.Join(skillsDir, "history", "scripts", "history_candidates.py")
+	cmd := exec.Command("python3", script, command)
+	cmd.Stdin = input
+	out, err := cmd.Output()
+	if err != nil {
+		var ee *exec.ExitError
+		if errors.As(err, &ee) {
+			return nil, fmt.Errorf("history_candidates.py %s: %s", command, bytes.TrimSpace(ee.Stderr))
+		}
+		return nil, err
 	}
-	if p.Flags&16 != 0 { // re.DOTALL
-		fl += "s"
-	}
-	src := p.Pattern
-	if fl != "" {
-		src = "(?" + fl + ")" + src
-	}
-	return regexp.Compile(src)
+	return out, nil
 }
 
-func scorePrefilter(dataDir string, labels []label, pats []pattern) ([]prefilterRow, error) {
+func repositoryEcosystems(dataDir string) (map[string][]string, error) {
+	pop, err := loadPopulation(filepath.Join(dataDir, "population.json"))
+	if err != nil {
+		return nil, err
+	}
+	byRepo := map[string][]string{}
+	for _, p := range pop {
+		ecosystem := patternEcosystem[p.Ecosystem]
+		key := repoKey(p.Repo)
+		if ecosystem != "" && !slices.Contains(byRepo[key], ecosystem) {
+			byRepo[key] = append(byRepo[key], ecosystem)
+		}
+	}
+	return byRepo, nil
+}
+
+func scorePrefilter(dataDir string, labels []label, skillsDir string) ([]prefilterRow, error) {
+	ecosystems, err := repositoryEcosystems(dataDir)
+	if err != nil {
+		return nil, err
+	}
 	byRepo := map[string][]label{}
 	for _, l := range labels {
 		byRepo[l.RepoKey] = append(byRepo[l.RepoKey], l)
@@ -441,28 +466,59 @@ func scorePrefilter(dataDir string, labels []label, pats []pattern) ([]prefilter
 		for _, r := range recs {
 			idx[r.SHA] = r
 		}
+		var messages []string
+		start := len(rows)
 		for _, l := range byRepo[key] {
 			row := prefilterRow{label: l}
 			if rec, ok := idx[l.SHA]; ok {
 				row.InLog = true
 				row.Subject = rec.Subject
-				row.Terms = matchTerms(rec.Subject+"\n"+rec.Body, pats)
-				row.Matched = len(row.Terms) > 0
+				messages = append(messages, rec.Subject+"\n"+rec.Body)
 			}
 			rows = append(rows, row)
+		}
+		terms, err := matchMessages(skillsDir, ecosystems[key], messages)
+		if err != nil {
+			return nil, err
+		}
+		matched := 0
+		for i := start; i < len(rows); i++ {
+			if rows[i].InLog {
+				rows[i].Terms = terms[matched]
+				rows[i].Matched = len(terms[matched]) > 0
+				matched++
+			}
 		}
 	}
 	return rows, nil
 }
 
-func matchTerms(msg string, pats []pattern) []string {
-	var terms []string
-	for _, p := range pats {
-		if p.re.MatchString(msg) {
-			terms = append(terms, p.Label)
-		}
+func matchMessages(skillsDir string, ecosystems, messages []string) ([][]string, error) {
+	if len(messages) == 0 {
+		return nil, nil
 	}
-	return terms
+	if ecosystems == nil {
+		ecosystems = []string{}
+	}
+	input, err := json.Marshal(struct {
+		Ecosystems []string `json:"ecosystems"`
+		Messages   []string `json:"messages"`
+	}{ecosystems, messages})
+	if err != nil {
+		return nil, err
+	}
+	out, err := historyScript(skillsDir, "match", bytes.NewReader(input))
+	if err != nil {
+		return nil, err
+	}
+	var terms [][]string
+	if err := json.Unmarshal(out, &terms); err != nil {
+		return nil, err
+	}
+	if len(terms) != len(messages) {
+		return nil, errors.New("history matcher returned an unexpected number of results")
+	}
+	return terms, nil
 }
 
 type agg struct{ total, inLog, matched int }
@@ -547,8 +603,16 @@ func readLabels(out *os.Root) ([]label, error) {
 }
 
 func writeJSONL[T any](out *os.Root, name string, rows []T) error {
-	f, err := out.Create(name)
+	f, err := out.OpenFile(name, os.O_CREATE|os.O_WRONLY, outFilePerm)
 	if err != nil {
+		return err
+	}
+	if err := f.Chmod(outFilePerm); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Truncate(0); err != nil {
+		_ = f.Close()
 		return err
 	}
 	enc := json.NewEncoder(f)
