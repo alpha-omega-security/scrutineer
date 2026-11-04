@@ -82,6 +82,9 @@ func TestStageVIDFile_enforcesByteBudget(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(srcDir, "small"), make([]byte, 10), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(srcDir, "oversize"), make([]byte, 4096), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	src, err := os.OpenRoot(srcDir)
 	if err != nil {
 		t.Fatal(err)
@@ -95,10 +98,10 @@ func TestStageVIDFile_enforcesByteBudget(t *testing.T) {
 
 	// A single file over the remaining budget stops the copy mid-stream.
 	remaining := int64(99)
-	if err := stageVIDFile(src, stage, "big", &remaining); !errors.Is(err, errVIDStageBudget) {
+	if err := stageVIDFile(src, stage, "oversize", &remaining); !errors.Is(err, errVIDStageBudget) {
 		t.Fatalf("stageVIDFile over budget: err=%v, want errVIDStageBudget", err)
 	}
-	fi, err := os.Stat(filepath.Join(stageDir, "big"))
+	fi, err := os.Stat(filepath.Join(stageDir, "oversize"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,7 +110,6 @@ func TestStageVIDFile_enforcesByteBudget(t *testing.T) {
 	}
 
 	// Exactly at budget succeeds and the budget is drawn down across files.
-	_ = os.Remove(filepath.Join(stageDir, "big"))
 	remaining = int64(110)
 	if err := stageVIDFile(src, stage, "big", &remaining); err != nil {
 		t.Fatalf("stageVIDFile at budget: %v", err)
@@ -120,6 +122,36 @@ func TestStageVIDFile_enforcesByteBudget(t *testing.T) {
 	}
 	if remaining != 0 {
 		t.Fatalf("remaining = %d after exhausting budget, want 0", remaining)
+	}
+}
+
+func TestComputeVIDSharedStageBudget(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		sizes []int64
+	}{
+		{name: "sparse file", sizes: []int64{vidStageMaxBytes + 1}},
+		{name: "aggregate files", sizes: []int64{vidStageMaxBytes/2 + 1, vidStageMaxBytes/2 + 1}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := t.TempDir()
+			var locations []string
+			for i, size := range tc.sizes {
+				name := fmt.Sprintf("%d.c", i)
+				writeSrcFile(t, source, name)
+				if err := os.Truncate(filepath.Join(source, name), size); err != nil {
+					t.Fatal(err)
+				}
+				locations = append(locations, name+":1")
+			}
+			w := &Worker{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), VIDCommand: stubVid(t, "VID-test", 0)}
+			if got := w.computeVID(source, strings.Join(locations, "\n")); got != "" {
+				t.Fatalf("over-budget VID = %q", got)
+			}
+			if _, err := os.Stat(filepath.Join(filepath.Dir(w.VIDCommand), "cwd.txt")); !os.IsNotExist(err) {
+				t.Fatalf("over-budget VID invoked command: %v", err)
+			}
+		})
 	}
 }
 

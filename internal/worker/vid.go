@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -18,14 +19,13 @@ const (
 	vidTimeout       = 30 * time.Second
 	vidStageDirMode  = 0o700
 	vidStageFileMode = 0o600
-	// vidStageMaxBytes bounds the total bytes copied from the scan-writable
-	// workspace into host staging. A hostile scan can place a sparse file
-	// in /work/src and name it as a sink; the host copy would otherwise
-	// materialise its full logical size.
 	vidStageMaxBytes = 64 << 20
 )
 
 var errVIDStageBudget = errors.New("vid staging byte budget exceeded")
+
+// Keep staging bounded across concurrent findings and worker instances.
+var vidStageMu sync.Mutex
 
 // vidLocRE matches a finding location ("file.rb:12", "file.rb:12-34",
 // "file.js:42:7") and captures the path and the first line number.
@@ -102,6 +102,10 @@ func (w *Worker) computeVID(srcDir, locations string) string {
 		})
 		return ""
 	}
+	if !vidStageMu.TryLock() {
+		return ""
+	}
+	defer vidStageMu.Unlock()
 	stageDir, err := os.MkdirTemp("", "scrutineer-vid-")
 	if err != nil {
 		return ""
