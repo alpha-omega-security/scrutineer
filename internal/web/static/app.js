@@ -90,6 +90,9 @@
     init();
   }
 
+  // A same-page link to a tab (#rt4) changes the hash without a reload.
+  window.addEventListener('hashchange', restoreTab);
+
   setInterval(elapsed, 1000);
 
   document.addEventListener('htmx:afterSwap', function () { icons(); highlight(); elapsed(); menuTabindex(); });

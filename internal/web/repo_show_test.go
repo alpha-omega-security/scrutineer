@@ -3,6 +3,7 @@ package web
 import (
 	"fmt"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -532,7 +533,43 @@ func TestRepoShow_summaryWithoutOpenFindings(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, localReq("GET", fmt.Sprintf("/repositories/%d", repo.ID)))
-	if w.Code != 200 || !strings.Contains(w.Body.String(), "No open findings.") {
+	body := w.Body.String()
+	if w.Code != 200 || !strings.Contains(body, "No open findings.") {
 		t.Fatalf("status %d, empty state missing", w.Code)
+	}
+	if strings.Contains(body, "View in Findings") {
+		t.Error("empty state links to the Findings tab")
+	}
+}
+
+// TestRepoShow_viewInFindingsTargetsTheFindingsTab pins the Summary link to the
+// Findings tab button and app.js re-selecting the tab when the hash changes.
+func TestRepoShow_viewInFindingsTargetsTheFindingsTab(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{Name: "widget-server", URL: "https://example.com/acme/widget-server"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, SkillName: deepDiveSkillName, Status: db.ScanDone}
+	s.DB.Create(&scan)
+	s.DB.Create(&db.Finding{RepositoryID: repo.ID, ScanID: scan.ID, Title: "open", Severity: "High", Status: db.FindingNew})
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", fmt.Sprintf("/repositories/%d", repo.ID)))
+	body := strings.Join(strings.Fields(w.Body.String()), " ")
+	link := fmt.Sprintf(`<a href="/repositories/%d#rt4" class="text-muted-foreground hover:text-foreground hover:underline">View in Findings</a>`, repo.ID)
+	if w.Code != 200 || !strings.Contains(body, link) {
+		t.Fatalf("status %d, no View in Findings link to #rt4", w.Code)
+	}
+	if !strings.Contains(body, `role="tab" id="rt4" aria-controls="rp4" aria-selected="false"> Findings `) {
+		t.Error("#rt4 is not the Findings tab button")
+	}
+
+	js, err := os.ReadFile("static/app.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(js), "addEventListener('hashchange', restoreTab)") {
+		t.Error("app.js does not re-select the tab when a same-page link changes the hash")
 	}
 }
