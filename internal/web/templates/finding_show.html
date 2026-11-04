@@ -82,8 +82,12 @@
       </div>
       {{if .HasDisclosureDraft}}
       <p class="text-sm text-muted-foreground mt-1">This is the latest saved maintainer-facing draft.</p>
-      {{else}}
+      {{else if and (eq (printf "%s" $f.Status) "triaged") (not .Workflow.DisclosureBlocked)}}
       <p class="text-sm text-muted-foreground mt-1">Write or paste a disclosure draft below, or use Draft disclosure to generate one.</p>
+      {{else if and (or (eq (printf "%s" $f.Status) "new") (eq (printf "%s" $f.Status) "enriched")) (not .Workflow.DisclosureBlocked)}}
+      <p class="text-sm text-muted-foreground mt-1">Write or paste a disclosure draft below. Draft disclosure can generate one once the finding is triaged.</p>
+      {{else}}
+      <p class="text-sm text-muted-foreground mt-1">Write or paste a disclosure draft below.</p>
       {{end}}
     </div>
     <div class="flex items-center gap-1" role="tablist" aria-label="Disclosure draft view">
