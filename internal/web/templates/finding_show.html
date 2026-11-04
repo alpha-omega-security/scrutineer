@@ -156,8 +156,8 @@
     <dd>
       {{$u := locurl $repo.ID $scan.Commit $f.Location}}
       {{if $u}}<a href="{{$u}}" class="underline underline-offset-2">
-        <code>{{$f.Location}}</code></a>
-      {{else}}<code>{{$f.Location}}</code>{{end}}
+        <code class="break-all">{{$f.Location}}</code></a>
+      {{else}}<code class="break-all">{{$f.Location}}</code>{{end}}
       {{if $f.ExtraLocationCount}}
       <details class="mt-2">
         <summary class="cursor-pointer text-muted-foreground">
@@ -168,8 +168,8 @@
           <li>
             {{$lu := locurl $repo.ID $scan.Commit $loc}}
             {{if $lu}}<a href="{{$lu}}"
-              class="underline underline-offset-2"><code class="text-xs">{{$loc}}</code></a>
-            {{else}}<code class="text-xs">{{$loc}}</code>{{end}}
+              class="underline underline-offset-2"><code class="text-xs break-all">{{$loc}}</code></a>
+            {{else}}<code class="text-xs break-all">{{$loc}}</code>{{end}}
           </li>
           {{end}}{{end}}
         </ul>
