@@ -4,10 +4,9 @@
 {{$repo := .Repo}}
 
 {{template "crumbs" (crumbs
-  "Findings" "/findings"
+  "Repositories" "/"
   $repo.Name (printf "/repositories/%d" $repo.ID)
-  (printf "scan #%d" $f.ScanID) (printf "/scans/%d" $f.ScanID)
-  (printf "finding #%d" $f.ID) "")}}
+  (printf "Finding #%d" $f.ID) "")}}
 
 <div class="flex items-start justify-between gap-4 mt-1 mb-4">
   <h2 class="text-2xl font-semibold flex items-center gap-3">

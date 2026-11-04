@@ -3,9 +3,7 @@
 {{with .S}}
 <div class="flex items-center justify-between gap-4 mb-6">
   <div>
-    <div class="text-sm text-muted-foreground mb-1">
-      <a href="/skills" class="hover:underline">Skills</a> / {{.Name}}
-    </div>
+    {{template "crumbs" (crumbs "Skills" "/skills" .Name "")}}
     <h2 class="text-2xl font-semibold flex items-center gap-2">
       <i data-lucide="sparkles"></i> {{.Name}}
       {{if .Active}}<span class="badge-secondary">active</span>{{else}}<span class="badge-outline">disabled</span>{{end}}
