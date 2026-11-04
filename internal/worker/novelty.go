@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -17,11 +18,8 @@ const (
 	revalidateSkillName  = "revalidate"
 	noveltyLogMaxCommits = 20
 	noveltyLogMaxBytes   = 64 * 1024
-	// noveltyLogReadCap bounds how much git log --patch output the host
-	// buffers before truncateNoveltyLog trims it for display. git() uses
-	// CombinedOutput, which would otherwise retain the whole patch stream
-	// of a large single file across up to noveltyLogMaxCommits revisions.
-	noveltyLogReadCap       = 4 * noveltyLogMaxBytes
+	// One extra byte lets truncateNoveltyLog detect discarded output.
+	noveltyLogReadCap       = noveltyLogMaxBytes + 1
 	noveltyUnavailableNoGit = "repository history is unavailable"
 )
 
@@ -121,14 +119,10 @@ func checkFindingNovelty(
 		return result
 	}
 
-	// FindingFile comes from a finding location, which an imported report
-	// controls. git treats the pathspec after -- as a glob by default, so
-	// a location of "*" or ":(glob)**" would widen a one-file history check
-	// to the whole repository. --literal-pathspecs matches the path
-	// verbatim, and unlike a :(literal) prefix it is not itself read as part
-	// of the filename when GIT_LITERAL_PATHSPECS is set in the host env.
+	// Imported locations must not expand into repository-wide pathspecs.
+	pathspecEnv := []string{"GIT_GLOB_PATHSPECS=0", "GIT_ICASE_PATHSPECS=0"}
 	revisionRange := result.ScannedCommit + ".." + result.CheckedCommit
-	countOutput, err := git(ctx, "-C", src, "--literal-pathspecs", "rev-list", "--count", revisionRange, "--", result.FindingFile)
+	countOutput, err := gitWithEnv(ctx, "", pathspecEnv, "-C", src, "--literal-pathspecs", "rev-list", "--count", revisionRange, "--", result.FindingFile)
 	if err != nil {
 		result.NotCheckedWhy = "git history check failed"
 		return result
@@ -138,7 +132,7 @@ func checkFindingNovelty(
 		result.NotCheckedWhy = "git history check failed"
 		return result
 	}
-	logOutput, outputTruncated, err := gitLimited(ctx, noveltyLogReadCap, "-C", src, "--literal-pathspecs", "log",
+	logOutput, err := gitLimited(ctx, noveltyLogReadCap, pathspecEnv, "-C", src, "--literal-pathspecs", "log",
 		fmt.Sprintf("--max-count=%d", noveltyLogMaxCommits),
 		"--format=commit %H%nAuthorDate: %aI%nSubject: %s",
 		"--patch", revisionRange, "--", result.FindingFile)
@@ -155,7 +149,7 @@ func checkFindingNovelty(
 	result.FileChanged = true
 	var bytesTruncated bool
 	result.CommitLog, bytesTruncated = truncateNoveltyLog(logOutput)
-	result.LogTruncated = bytesTruncated || outputTruncated || commitCount > noveltyLogMaxCommits
+	result.LogTruncated = bytesTruncated || commitCount > noveltyLogMaxCommits
 	return result
 }
 
@@ -171,37 +165,32 @@ func validGitOID(value string) bool {
 	return true
 }
 
-// gitLimited runs a local git command keeping at most maxBytes of its stdout.
-// Output beyond the cap is discarded rather than refused, so git completes
-// without an EPIPE and the exit status still reflects the command. Reports
-// whether output was discarded.
-func gitLimited(ctx context.Context, maxBytes int, args ...string) (string, bool, error) {
+// gitLimited drains both streams while retaining at most maxBytes of each.
+func gitLimited(ctx context.Context, maxBytes int, env []string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Env = append(os.Environ(), env...)
 	w := &cappedWriter{limit: maxBytes}
 	cmd.Stdout = w
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
+	stderr := &cappedWriter{limit: maxBytes}
+	cmd.Stderr = stderr
 	cmd.WaitDelay = gitWaitDelay
 	if err := cmd.Run(); err != nil {
-		return "", false, fmt.Errorf("git: %w: %s", err, strings.TrimSpace(stderr.String()))
+		return "", fmt.Errorf("git: %w: %s", err, strings.TrimSpace(stderr.buf.String()))
 	}
-	return w.buf.String(), w.truncated, nil
+	return w.buf.String(), nil
 }
 
 type cappedWriter struct {
-	buf       bytes.Buffer
-	limit     int
-	truncated bool
+	buf   bytes.Buffer
+	limit int
 }
 
 func (w *cappedWriter) Write(p []byte) (int, error) {
 	room := w.limit - w.buf.Len()
 	if room <= 0 {
-		w.truncated = w.truncated || len(p) > 0
 		return len(p), nil
 	}
 	if len(p) > room {
-		w.truncated = true
 		w.buf.Write(p[:room])
 		return len(p), nil
 	}

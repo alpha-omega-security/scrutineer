@@ -3,6 +3,9 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -99,11 +102,6 @@ func TestNoveltyContextMarksCommitCapTruncated(t *testing.T) {
 	}
 }
 
-// A finding location is attacker-controllable through import. git treats
-// a bare pathspec after -- as a glob, so a location of "*" would turn a
-// one-file history check into a repo-wide one; :(literal) matches it
-// verbatim, so it names a file that does not exist and the check records
-// nothing changed.
 func TestNoveltyContextTreatsFindingFileAsLiteralPathspec(t *testing.T) {
 	fixture := newNoveltyFixture(t)
 	fixture.finding.Location = "*:1"
@@ -134,31 +132,94 @@ func TestGitLimited_capsOutput(t *testing.T) {
 	gitCommit(t, src, "add big file")
 
 	const cap = 1024
-	out, truncated, err := gitLimited(context.Background(), cap, "-C", src, "log", "--patch")
+	out, err := gitLimited(context.Background(), cap, nil, "-C", src, "log", "--patch")
 	if err != nil {
 		t.Fatalf("gitLimited: %v", err)
 	}
-	if !truncated {
-		t.Fatal("gitLimited did not report truncation on output over the cap")
-	}
-	if len(out) > cap {
+	if len(out) != cap {
 		t.Fatalf("gitLimited buffered %d bytes, cap is %d", len(out), cap)
+	}
+}
+
+func TestGitLimited_boundsDiagnosticsAndPreservesFailure(t *testing.T) {
+	fixture := newNoveltyFixture(t)
+	fixture.write(t, "pkg/parse.go", "package pkg\nfunc parse(input string) string { return clean(input) }\n")
+	head := gitCommit(t, fixture.src, "guard parser input")
+	fixture.write(t, ".gitattributes", strings.Repeat("* invalid/attribute\n", 1000))
+
+	const cap = 1024
+	for _, tc := range []struct {
+		name     string
+		args     []string
+		exitCode int
+	}{
+		{"unknown revision", []string{"log", "missing-revision"}, 128},
+		{"partial output and diagnostics", []string{"diff", "--exit-code", fixture.base, head, "--", "pkg/parse.go"}, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := append([]string{"-C", fixture.src}, tc.args...)
+			out, err := gitLimited(context.Background(), cap, nil, args...)
+			var exitErr *exec.ExitError
+			if !errors.As(err, &exitErr) || out != "" {
+				t.Fatalf("gitLimited = (%q, %v), want empty output and exit error", out, err)
+			}
+			if exitErr.ExitCode() != tc.exitCode {
+				t.Fatalf("exit code = %d, want %d", exitErr.ExitCode(), tc.exitCode)
+			}
+			prefix := "git: " + exitErr.Error() + ": "
+			diagnostic, ok := strings.CutPrefix(err.Error(), prefix)
+			if !ok || diagnostic == "" || len(diagnostic) > cap {
+				t.Fatalf("diagnostic length = %d, want 1..%d", len(diagnostic), cap)
+			}
+			if tc.name == "partial output and diagnostics" && !strings.Contains(diagnostic, "invalid/attribute") {
+				t.Fatalf("missing Git diagnostic: %s", diagnostic)
+			}
+		})
 	}
 }
 
 func TestCappedWriter(t *testing.T) {
 	w := &cappedWriter{limit: 5}
 	n, _ := w.Write([]byte("abc"))
-	if n != 3 || w.truncated {
-		t.Fatalf("under-limit write: n=%d truncated=%v", n, w.truncated)
+	if n != 3 || w.buf.String() != "abc" {
+		t.Fatalf("under-limit write: n=%d buf=%q", n, w.buf.String())
 	}
 	n, _ = w.Write([]byte("defgh"))
-	if n != 5 || !w.truncated || w.buf.String() != "abcde" {
-		t.Fatalf("over-limit write: n=%d buf=%q truncated=%v", n, w.buf.String(), w.truncated)
+	if n != 5 || w.buf.String() != "abcde" {
+		t.Fatalf("over-limit write: n=%d buf=%q", n, w.buf.String())
 	}
 	n, _ = w.Write([]byte("x"))
 	if n != 1 || w.buf.Len() != 5 {
 		t.Fatalf("post-cap write must report success without buffering: n=%d len=%d", n, w.buf.Len())
+	}
+}
+
+func TestDoSkillNoveltyUsesLiteralPathsWithInheritedSettings(t *testing.T) {
+	for _, variable := range []string{"GIT_GLOB_PATHSPECS", "GIT_ICASE_PATHSPECS", "GIT_LITERAL_PATHSPECS"} {
+		for _, location := range []string{"pkg/parse.go:3", "*:1"} {
+			t.Run(variable+"/"+location, func(t *testing.T) {
+				fixture := newNoveltyFixture(t)
+				fixture.write(t, "pkg/parse.go", "package pkg\n"+strings.Repeat("// changed parser input\n", noveltyLogMaxBytes/10))
+				head := gitCommit(t, fixture.src, "guard parser input")
+				if err := fixture.gdb.Model(&fixture.finding).Update("location", location).Error; err != nil {
+					t.Fatal(err)
+				}
+				t.Setenv(variable, "1")
+				novelty := fixture.runScan(t, head)
+				changed := location == "pkg/parse.go:3"
+				wantState := db.FindingNoveltyUnfixed
+				if changed {
+					wantState = db.FindingNoveltyUnclear
+				}
+				if novelty == nil || novelty.State != wantState || novelty.FileChanged != changed || novelty.LogTruncated != changed {
+					t.Fatalf("staged novelty = %+v, want state=%s changed=%v", novelty, wantState, changed)
+				}
+				if len(novelty.CommitLog) > noveltyLogMaxBytes || (changed && !strings.HasSuffix(novelty.CommitLog, "\n[truncated]\n")) || (!changed && novelty.CommitLog != "") {
+					t.Fatalf("unexpected commit log: length=%d truncated=%v", len(novelty.CommitLog), novelty.LogTruncated)
+				}
+				fixture.requirePersisted(t, wantState, head)
+			})
+		}
 	}
 }
 
@@ -328,6 +389,40 @@ func (f noveltyFixture) scan(head string) *db.Scan {
 		FindingID:    new(f.finding.ID),
 		Commit:       head,
 	}
+}
+
+func (f noveltyFixture) runScan(t *testing.T, head string) *skillContextNovelty {
+	t.Helper()
+	skill := db.Skill{Name: revalidateSkillName, Body: "Check the finding.", OutputFile: "report.json", OutputKind: "revalidate", Active: true}
+	if err := f.gdb.Create(&skill).Error; err != nil {
+		t.Fatal(err)
+	}
+	scan := f.scan(head)
+	scan.Kind, scan.Status, scan.Model, scan.SkillID = JobSkill, db.ScanQueued, "fake", &skill.ID
+	if err := f.gdb.Create(scan).Error; err != nil {
+		t.Fatal(err)
+	}
+	w := &Worker{DB: f.gdb, DataDir: t.TempDir(), Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	w.PrepareRepoSrcWithOptions = func(_ context.Context, _, _, workRoot string, _ RepoSrcOptions, _ func(Event)) (string, error) {
+		gitRun(t, f.src, "clone", "--quiet", "--local", f.src, filepath.Join(workRoot, "src"))
+		return head, nil
+	}
+	var staged skillContext
+	w.Runner = &capRunner{first: func(_ context.Context, _ func(Event)) (SkillResult, error) {
+		data, err := os.ReadFile(filepath.Join(w.scanWorkRoot(scan), "context.json"))
+		if err != nil {
+			return SkillResult{}, err
+		}
+		if err := json.Unmarshal(data, &staged); err != nil {
+			return SkillResult{}, err
+		}
+		return SkillResult{Commit: head, Report: `{"verdict":"uncertain","reason":"review the changed parser"}`}, nil
+	}}
+	got := runCapScan(t, w, scan)
+	if got.Status != db.ScanDone {
+		t.Fatalf("scan status = %s: %s", got.Status, got.Error)
+	}
+	return staged.Scrutineer.Novelty
 }
 
 func (f noveltyFixture) check(t *testing.T, head string) *skillContextNovelty {
