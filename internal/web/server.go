@@ -418,8 +418,16 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *work
 			}
 			return ""
 		},
-		"catlabel":   CategoryLabel,
-		"cwecatid":   CWECategoryID,
+		"catlabel": CategoryLabel,
+		// unmark drops markdown backticks from a one-line excerpt, which is
+		// shown as escaped text so tags the excerpt names stay visible.
+		"unmark": func(s string) string { return strings.ReplaceAll(s, "`", "") },
+		"cwecat": func(id string) string {
+			if _, c, ok := LookupCWE(id); ok {
+				return c.Category
+			}
+			return ""
+		},
 		"md":         renderMarkdown,
 		"jsontree":   jsonTree,
 		"prettyjson": prettyJSON,
