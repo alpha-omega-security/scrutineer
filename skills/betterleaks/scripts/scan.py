@@ -93,8 +93,6 @@ def main():
 
 
 def downgrade_reason(result, rule_id):
-    if result.get("ValidationStatus") == "valid":
-        return ""
     path = str(result.get("File") or "").replace("\\", "/").lower()
     parts = path.split("/")
     name = parts[-1]
