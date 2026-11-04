@@ -31,6 +31,15 @@ func (fallbackAuditRunner) RunSkill(_ context.Context, job worker.SkillJob, _ fu
 }
 
 func TestQueuedThreatModelPrereqFailureRunsFallback(t *testing.T) {
+	for _, group := range []string{"triage-1", ""} {
+		t.Run("group="+group, func(t *testing.T) {
+			testQueuedThreatModelPrereqFailure(t, group)
+		})
+	}
+}
+
+func testQueuedThreatModelPrereqFailure(t *testing.T, group string) {
+	t.Helper()
 	s, done := newTestServer(t)
 	defer done()
 	repo := db.Repository{URL: "https://example.com/prereq-fallback", Name: "prereq-fallback"}
@@ -42,7 +51,7 @@ func TestQueuedThreatModelPrereqFailureRunsFallback(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	failed := db.Scan{RepositoryID: repo.ID, SkillID: &prereq.ID, SkillName: prereq.Name, Kind: worker.JobSkill, Status: db.ScanFailed, ScanGroup: "triage-1"}
+	failed := db.Scan{RepositoryID: repo.ID, SkillID: &prereq.ID, SkillName: prereq.Name, Kind: worker.JobSkill, Status: db.ScanFailed, ScanGroup: group}
 	parent := db.Scan{RepositoryID: repo.ID, SkillID: &threatModel.ID, SkillName: threatModel.Name, Kind: worker.JobSkill, Status: db.ScanQueued, ScanGroup: failed.ScanGroup, SubPath: "services/api", Ref: "release"}
 	for _, row := range []any{&failed, &parent} {
 		if err := s.DB.Create(row).Error; err != nil {
@@ -90,7 +99,11 @@ func TestQueuedThreatModelPrereqFailureRunsFallback(t *testing.T) {
 		t.Fatalf("fallback scans = %d, want 1", len(children))
 	}
 	child := children[0]
-	if child.Status != db.ScanDone || child.Report != `{"findings":[]}` || child.FocusArea != "" || child.ScanGroup != parent.ScanGroup || child.SubPath != parent.SubPath || child.Ref != parent.Ref {
+	wantGroup := group
+	if wantGroup == "" {
+		wantGroup = fmt.Sprintf("focus-%d", parent.ID)
+	}
+	if child.Status != db.ScanDone || child.Report != `{"findings":[]}` || child.FocusArea != "" || child.ScanGroup != wantGroup || child.SubPath != parent.SubPath || child.Ref != parent.Ref {
 		t.Fatalf("unexpected fallback: %+v", child)
 	}
 	if child.FallbackFromScanID == nil || *child.FallbackFromScanID != parent.ID {
