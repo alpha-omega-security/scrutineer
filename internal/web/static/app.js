@@ -269,7 +269,7 @@
     }
 
     var tr = e.target.closest('.table tbody tr');
-    if (tr && !e.target.closest('a, button, form, input')) {
+    if (tr && !e.target.closest('a, button, form, input, details')) {
       var a = tr.querySelector('a[href]');
       if (a) { a.click(); return; }
     }

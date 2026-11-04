@@ -355,31 +355,34 @@
       {{if .Disagreements}}
       <div class="text-sm border rounded-md p-3" role="note">Observations disagree on {{range $i, $d := .Disagreements}}{{if $i}}, {{end}}{{$d}}{{end}}.</div>
       {{end}}
-      {{range .Rows}}
-      <article class="border-b pb-4 last:border-b-0">
-        <div class="flex flex-wrap items-center gap-2 text-sm mb-2">
-          <a href="/scans/{{.ScanID}}" class="font-medium hover:underline">scan #{{.ScanID}}</a>
-          {{if .SkillName}}<span class="badge-outline">{{.SkillName}}</span>{{end}}
-          {{if .Backend}}<span class="text-xs text-muted-foreground">{{.Backend}}</span>{{end}}
-          {{if .Model}}<span class="text-xs text-muted-foreground">{{.Model}}</span>{{end}}
-          {{if .Commit}}<code class="text-xs text-muted-foreground">@{{short .Commit}}</code>{{end}}
-          {{if .Severity}}{{template "severity-badge" .Severity}}{{end}}
-          {{if .Confidence}}<span class="text-xs text-muted-foreground">confidence {{.Confidence}}</span>{{end}}
-          {{if .Reachability}}<span class="text-xs text-muted-foreground">{{.Reachability}}</span>{{end}}
-          {{if ne .FindingID $f.ID}}<a href="/findings/{{.FindingID}}" class="text-xs hover:underline">from finding #{{.FindingID}}</a>{{end}}
-        </div>
-        {{if .Title}}<div class="text-sm">{{.Title}}</div>{{end}}
-        {{if .Rating}}<div class="text-sm text-muted-foreground mt-1">{{.Rating}}</div>{{end}}
-        {{if .Evidence}}
-        <details class="mt-2">
-          <summary class="text-xs text-muted-foreground cursor-pointer">Evidence</summary>
-          <dl class="grid gap-2 text-sm mt-2">
-            {{range .Evidence}}<div><dt class="text-muted-foreground font-semibold">{{.Name}}</dt><dd class="whitespace-pre-wrap">{{.Value}}</dd></div>{{end}}
-          </dl>
-        </details>
-        {{end}}
-      </article>
-      {{end}}
+      <div class="overflow-x-auto">
+        <table class="table w-full text-sm">
+          <thead><tr><th>Scan</th><th>Skill</th><th>Model</th><th>Severity</th><th>Reported as</th></tr></thead>
+          <tbody>
+          {{range .Rows}}
+            <tr class="align-top">
+              <td class="whitespace-nowrap"><a href="/scans/{{.ScanID}}" class="font-medium hover:underline">#{{.ScanID}}</a>{{if .Commit}}<div><code class="text-xs text-muted-foreground">@{{short .Commit}}</code></div>{{end}}</td>
+              <td>{{if .SkillName}}{{.SkillName}}{{else}}-{{end}}</td>
+              <td class="text-muted-foreground">{{if or .Backend .Model}}{{.Backend}}{{if and .Backend .Model}} · {{end}}{{.Model}}{{else}}-{{end}}</td>
+              <td>{{if .Severity}}{{template "severity-badge" .Severity}}{{end}}{{if .Confidence}}<div class="text-xs text-muted-foreground mt-1">confidence {{.Confidence}}</div>{{end}}{{if .Reachability}}<div class="text-xs text-muted-foreground">{{.Reachability}}</div>{{end}}</td>
+              <td class="whitespace-normal">
+                {{if .Title}}<div>{{.Title}}</div>{{end}}
+                {{if .Rating}}<div class="text-muted-foreground mt-1">{{.Rating}}</div>{{end}}
+                {{if ne .FindingID $f.ID}}<a href="/findings/{{.FindingID}}" class="text-xs hover:underline">from finding #{{.FindingID}}</a>{{end}}
+                {{if .Evidence}}
+                <details class="mt-2">
+                  <summary class="text-xs text-muted-foreground cursor-pointer">Evidence</summary>
+                  <dl class="grid gap-2 text-sm mt-2">
+                    {{range .Evidence}}<div><dt class="text-muted-foreground font-semibold">{{.Name}}</dt><dd class="whitespace-pre-wrap">{{.Value}}</dd></div>{{end}}
+                  </dl>
+                </details>
+                {{end}}
+              </td>
+            </tr>
+          {{end}}
+          </tbody>
+        </table>
+      </div>
     </section>
   </details>
   {{end}}
@@ -393,18 +396,24 @@
       </h3>
     </summary>
     <section class="pb-4 grid gap-4">
-      {{range .Verifications}}
-      <article class="border-b pb-4 last:border-b-0">
-        <div class="flex items-center gap-2 text-sm mb-3">
-          <a href="/scans/{{.ScanID}}" class="font-medium hover:underline">scan #{{.ScanID}}</a>
-          <span class="badge-outline">{{.Status}}</span>
-          <span class="badge-outline">{{.ScoreLabel}}</span>
-          <span class="text-xs text-muted-foreground">{{.CreatedAt.Format "2006-01-02 15:04"}}</span>
-        </div>
-        {{with .VerificationFeedback}}
-        <div class="mb-3 text-sm"><span class="font-medium">Operator feedback</span><pre class="whitespace-pre-wrap break-words font-sans">{{.}}</pre></div>
-        {{end}}
-        {{if .HasRubric}}
+      <div class="overflow-x-auto">
+        <table class="table w-full text-sm">
+          <thead><tr><th>Scan</th><th>Status</th><th>Score</th><th>Date</th><th>Operator feedback</th></tr></thead>
+          <tbody>
+          {{range .Verifications}}
+            <tr class="align-top">
+              <td><a href="/scans/{{.ScanID}}" class="font-medium hover:underline">#{{.ScanID}}</a></td>
+              <td><span class="badge-outline">{{.Status}}</span></td>
+              <td><span class="badge-outline">{{.ScoreLabel}}</span></td>
+              <td class="text-muted-foreground">{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
+              <td class="whitespace-normal">{{with .VerificationFeedback}}<pre class="whitespace-pre-wrap break-words font-sans">{{.}}</pre>{{else}}<span class="text-muted-foreground">-</span>{{end}}</td>
+            </tr>
+            {{if .HasRubric}}
+            <tr>
+              <td colspan="5" class="whitespace-normal">
+                <details>
+                  <summary class="text-xs text-muted-foreground cursor-pointer">Rubric for scan #{{.ScanID}}</summary>
+                  <div class="mt-3">
         {{with .AttackTree}}
         <div class="mb-4">
           <div class="flex flex-wrap items-center gap-2 text-sm mb-2">
@@ -506,9 +515,15 @@
             </tbody>
           </table>
         </div>
-        {{end}}
-      </article>
-      {{end}}
+                  </div>
+                </details>
+              </td>
+            </tr>
+            {{end}}
+          {{end}}
+          </tbody>
+        </table>
+      </div>
     </section>
   </details>
   {{end}}
@@ -952,8 +967,8 @@ git commit -m "fix: {{$f.Title}}"</pre>
       </h3>
     </summary>
     <section class="pb-4">
-      <form method="post" action="/findings/{{$f.ID}}/fields" class="form grid grid-cols-2 gap-3">
-        <div class="grid gap-1 col-span-2">
+      <form method="post" action="/findings/{{$f.ID}}/fields" class="form grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-3">
+        <div class="grid gap-1 col-span-2 md:col-span-4">
           <label class="text-xs text-muted-foreground"
                  title="The disclose skill's drafted GHSA summary. May differ from the finding's own title above, which is set at audit time and left untouched by disclose re-runs.">Disclosure title</label>
           <input type="text" class="input" name="disclosure_title" value="{{$f.DisclosureTitle}}">
@@ -978,12 +993,12 @@ git commit -m "fix: {{$f.Title}}"</pre>
           <input type="text" class="input" name="ghsa_id" value="{{$f.GHSAID}}" placeholder="GHSA-xxxx-xxxx-xxxx"
             pattern="[Gg][Hh][Ss][Aa](-[0-9A-Za-z]{4}){3}" title="GHSA-xxxx-xxxx-xxxx">
         </div>
-        <div class="grid gap-1 col-span-2">
+        <div class="grid gap-1 col-span-2 md:col-span-4">
           <label class="text-xs text-muted-foreground">CVSS v3 vector</label>
           <input type="text" class="input font-mono text-xs" name="cvss_vector" value="{{$f.CVSSVector}}"
                  placeholder="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H">
         </div>
-        <div class="grid gap-1 col-span-2">
+        <div class="grid gap-1 col-span-2 md:col-span-4">
           <label class="text-xs text-muted-foreground">CVSS v4 vector</label>
           <input type="text" class="input font-mono text-xs" name="cvss_v4_vector" value="{{$f.CVSSv4Vector}}"
                  placeholder="CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N">
@@ -1018,7 +1033,7 @@ git commit -m "fix: {{$f.Title}}"</pre>
                  title="File-level owners of the finding's location, from CODEOWNERS or recent non-bot committers">Suggested recipients</label>
           <input type="text" class="input" name="suggested_recipients" value="{{$f.SuggestedRecipients}}">
         </div>
-        <div class="col-span-2 flex justify-end">
+        <div class="col-span-2 md:col-span-4 flex justify-end">
           <button type="submit" class="btn-sm-outline">Save</button>
         </div>
       </form>
@@ -1054,21 +1069,26 @@ git commit -m "fix: {{$f.Title}}"</pre>
           <button type="submit" class="btn-sm-outline">Log communication</button>
         </div>
       </form>
-      <ul class="grid gap-2">
-      {{range .Communications}}
-        <li class="border rounded p-3 text-sm">
-          <div class="text-xs text-muted-foreground mb-1">
-            <span class="badge-outline">{{.Channel}}</span>
-            <span class="badge-outline">{{.Direction}}</span>
-            {{.Actor}} · {{.At.Format "2006-01-02"}}
-            {{if .OfferedHelp}}<span class="badge-primary ml-2">offered {{.OfferedHelp}}</span>{{end}}
-          </div>
-          <pre class="whitespace-pre-wrap font-sans">{{.Body}}</pre>
-        </li>
+      {{if .Communications}}
+      <div class="overflow-x-auto">
+        <table class="table w-full text-sm">
+          <thead><tr><th>Date</th><th>Channel</th><th>Direction</th><th>Who</th><th>Message</th></tr></thead>
+          <tbody>
+          {{range .Communications}}
+            <tr class="align-top">
+              <td class="text-muted-foreground">{{.At.Format "2006-01-02"}}</td>
+              <td><span class="badge-outline">{{.Channel}}</span></td>
+              <td><span class="badge-outline">{{.Direction}}</span></td>
+              <td>{{.Actor}}{{if .OfferedHelp}}<div><span class="badge-primary mt-1">offered {{.OfferedHelp}}</span></div>{{end}}</td>
+              <td class="whitespace-pre-wrap">{{.Body}}</td>
+            </tr>
+          {{end}}
+          </tbody>
+        </table>
+      </div>
       {{else}}
-        <li class="text-sm text-muted-foreground">No communications yet.</li>
+      <p class="text-sm text-muted-foreground">No communications yet.</p>
       {{end}}
-      </ul>
     </section>
   </details>
 
@@ -1088,39 +1108,33 @@ git commit -m "fix: {{$f.Title}}"</pre>
           <button type="submit" class="btn-sm-outline">Add reference</button>
         </div>
       </form>
-      <ul class="grid gap-2">
-      {{range .References}}
-        <li class="border rounded p-3 text-sm">
-          <div class="flex items-center gap-2">
-            <a href="{{.URL}}" target="_blank" rel="noopener" class="underline underline-offset-2 break-all">{{.URL}}</a>
-            {{if .Tags}}<span class="text-xs text-muted-foreground ml-auto">{{.Tags}}</span>{{end}}
-          </div>
-          {{if .Summary}}<div class="text-xs text-muted-foreground mt-1">{{.Summary}}</div>{{end}}
-        </li>
+      {{if .References}}
+      <div class="overflow-x-auto">
+        <table class="table w-full text-sm">
+          <thead><tr><th>Link</th><th>Tags</th><th>Summary</th></tr></thead>
+          <tbody>
+          {{range .References}}
+            <tr class="align-top">
+              <td class="whitespace-normal"><a href="{{.URL}}" target="_blank" rel="noopener" class="underline underline-offset-2 break-all">{{.URL}}</a></td>
+              <td class="text-muted-foreground">{{if .Tags}}{{.Tags}}{{else}}-{{end}}</td>
+              <td class="whitespace-normal text-muted-foreground">{{if .Summary}}{{.Summary}}{{else}}-{{end}}</td>
+            </tr>
+          {{end}}
+          </tbody>
+        </table>
+      </div>
       {{else}}
-        <li class="text-sm text-muted-foreground">No references yet.</li>
+      <p class="text-sm text-muted-foreground">No references yet.</p>
       {{end}}
-      </ul>
     </section>
   </details>
 </section>
   </div>
   <div role="tabpanel" id="fp-activity" aria-labelledby="ft-activity" class="pt-2" hidden>
-<section class="accordion">
-  <details id="notes" open class="group border-b">
-    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
-      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-base font-semibold hover:underline">
-        Notes <span class="text-muted-foreground ml-auto mr-2 text-xs">{{len .Notes}}</span>
-        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
-      </h3>
-    </summary>
-    <section class="pb-4 grid gap-3">
-      <form method="post" action="/findings/{{$f.ID}}/notes" class="form grid gap-2">
-        <textarea class="input" name="body" rows="3" placeholder="Add a note..." required></textarea>
-        <div class="flex justify-end">
-          <button type="submit" class="btn-sm-outline">Add note</button>
-        </div>
-      </form>
+<div class="grid gap-8 py-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
+  <div class="grid gap-8 content-start min-w-0">
+    <section id="notes" class="scroll-mt-6">
+      <h3 class="text-base font-semibold mb-3 flex items-center gap-2">Notes <span class="text-muted-foreground text-xs font-normal">{{len .Notes}}</span></h3>
       <ul class="grid gap-2">
       {{range .Notes}}
         <li class="border rounded p-3 text-sm">
@@ -1132,35 +1146,8 @@ git commit -m "fix: {{$f.Title}}"</pre>
       {{end}}
       </ul>
     </section>
-  </details>
-
-  <details id="reviews" class="group border-b">
-    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
-      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-base font-semibold hover:underline">
-        Reviews <span class="text-muted-foreground ml-auto mr-2 text-xs">{{len .Reviews}}</span>
-        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
-      </h3>
-    </summary>
-    <section class="pb-4 grid gap-3">
-      <form method="post" action="/findings/{{$f.ID}}/reviews" class="form grid gap-2">
-        <div class="flex gap-2">
-          <select class="input" name="verdict" required>
-            <option value="">Verdict...</option>
-            <option value="true_positive">true_positive</option>
-            <option value="false_positive">false_positive</option>
-            <option value="already_fixed">already_fixed</option>
-            <option value="uncertain">uncertain</option>
-          </select>
-          <input class="input" type="text" name="reviewer" placeholder="reviewer (optional)">
-        </div>
-        <textarea class="input" name="reason" rows="2" maxlength="4096" placeholder="Reason (required for false positives)"></textarea>
-        {{if .LatestRevalidate}}
-          <div class="text-xs text-muted-foreground">Automation said: <strong>{{.LatestRevalidate}}</strong> (snapshotted on submit)</div>
-        {{end}}
-        <div class="flex justify-end">
-          <button type="submit" class="btn-sm-outline">Record review</button>
-        </div>
-      </form>
+    <section id="reviews" class="scroll-mt-6">
+      <h3 class="text-base font-semibold mb-3 flex items-center gap-2">Reviews <span class="text-muted-foreground text-xs font-normal">{{len .Reviews}}</span></h3>
       <ul class="grid gap-2">
       {{range .Reviews}}
         <li class="border rounded p-3 text-sm">
@@ -1180,17 +1167,53 @@ git commit -m "fix: {{$f.Title}}"</pre>
       {{end}}
       </ul>
     </section>
-  </details>
-
-  <details id="labels" class="group border-b">
-    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
-      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-base font-semibold hover:underline">
-        Labels
-        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
-      </h3>
-    </summary>
-    <section class="pb-4">
+    <section id="history" class="scroll-mt-6">
+      <h3 class="text-base font-semibold mb-3 flex items-center gap-2">History <span class="text-muted-foreground text-xs font-normal">{{.HistoryTotal}}</span></h3>
+      <ul class="grid gap-1 text-xs text-muted-foreground">
+      {{range .History}}
+        <li class="font-mono">
+          [{{.CreatedAt.Format "2006-01-02 15:04"}}] {{with .Source}}<span class="opacity-50">provenance</span> {{.}}{{end}}{{if .By}} ({{.By}}){{end}}:
+          <code>{{.Field}}</code> = <code>{{.NewValue}}</code>
+          {{if .OldValue}}<span class="opacity-50">was <code>{{.OldValue}}</code></span>{{end}}
+        </li>
+      {{else}}
+        <li>No recorded changes.</li>
+      {{end}}
+      </ul>
+      {{template "row-cap" (dict "Shown" .History "Total" .HistoryTotal)}}
+    </section>
+  </div>
+  <aside class="grid gap-6 content-start order-first lg:order-none lg:border-l lg:pl-6">
+      <form method="post" action="/findings/{{$f.ID}}/notes" class="form grid gap-2">
+        <label class="text-sm font-semibold" for="note-body">Add a note</label>
+        <textarea id="note-body" class="input" name="body" rows="3" required></textarea>
+        <div class="flex justify-end">
+          <button type="submit" class="btn-sm-outline">Add note</button>
+        </div>
+      </form>
+      <form method="post" action="/findings/{{$f.ID}}/reviews" class="form grid gap-2">
+        <span class="text-sm font-semibold">Record a review</span>
+        <div class="grid gap-2">
+          <select class="input" name="verdict" required>
+            <option value="">Verdict...</option>
+            <option value="true_positive">true_positive</option>
+            <option value="false_positive">false_positive</option>
+            <option value="already_fixed">already_fixed</option>
+            <option value="uncertain">uncertain</option>
+          </select>
+          <input class="input" type="text" name="reviewer" placeholder="reviewer (optional)">
+        </div>
+        <textarea class="input" name="reason" rows="2" maxlength="4096" placeholder="Reason (required for false positives)"></textarea>
+        {{if .LatestRevalidate}}
+          <div class="text-xs text-muted-foreground">Automation said: <strong>{{.LatestRevalidate}}</strong> (snapshotted on submit)</div>
+        {{end}}
+        <div class="flex justify-end">
+          <button type="submit" class="btn-sm-outline">Record review</button>
+        </div>
+      </form>
+    <div id="labels" class="scroll-mt-6">
       <form method="post" action="/findings/{{$f.ID}}/labels" class="form grid gap-2">
+        <span class="text-sm font-semibold">Labels</span>
         <div class="flex flex-wrap gap-3">
           {{$sel := .Selected}}
           {{range .AllLabels}}
@@ -1205,32 +1228,10 @@ git commit -m "fix: {{$f.Title}}"</pre>
           <button type="submit" class="btn-sm-outline">Save labels</button>
         </div>
       </form>
-    </section>
-  </details>
-
-  <details class="group border-b">
-    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
-      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-base font-semibold hover:underline">
-        History <span class="text-muted-foreground ml-auto mr-2 text-xs">{{.HistoryTotal}}</span>
-        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
-      </h3>
-    </summary>
-    <section class="pb-4">
-      <ul class="grid gap-1 text-xs text-muted-foreground">
-      {{range .History}}
-        <li class="font-mono">
-          [{{.CreatedAt.Format "2006-01-02 15:04"}}] {{with .Source}}<span class="opacity-50">provenance</span> {{.}}{{end}}{{if .By}} ({{.By}}){{end}}:
-          <code>{{.Field}}</code> = <code>{{.NewValue}}</code>
-          {{if .OldValue}}<span class="opacity-50">was <code>{{.OldValue}}</code></span>{{end}}
-        </li>
-      {{else}}
-        <li>No recorded changes.</li>
-      {{end}}
-      </ul>
-      {{template "row-cap" (dict "Shown" .History "Total" .HistoryTotal)}}
-    </section>
-  </details>
-
+    </div>
+  </aside>
+</div>
+<section class="accordion border-t">
   <details class="group border-b last:border-b-0">
     <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
       <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-base font-semibold hover:underline">
