@@ -63,7 +63,7 @@
         {{if .Workflow.VerifyInFlight}}
         <button type="button" class="btn-outline" disabled><i data-lucide="loader-circle" class="animate-spin"></i> Verification in progress</button>
         {{else}}
-        <button type="submit" class="btn"><i data-lucide="play"></i> {{if .Verifications}}Rerun verification{{else}}Run verification{{end}}</button>
+        <button type="submit" class="{{if eq (printf "%s" $f.Status) "new"}}btn{{else}}btn-outline{{end}}"><i data-lucide="play"></i> {{if .Verifications}}Rerun verification{{else}}Run verification{{end}}</button>
         {{end}}
       </div>
     </form>
@@ -90,11 +90,11 @@
       <button type="button" id="disclosure-preview-tab-{{$f.ID}}" role="tab"
               aria-controls="disclosure-preview-panel-{{$f.ID}}" aria-selected="{{if .HasDisclosureDraft}}true{{else}}false{{end}}"
               tabindex="{{if .HasDisclosureDraft}}0{{else}}-1{{end}}"
-              class="{{if .HasDisclosureDraft}}btn-sm{{else}}btn-sm-outline{{end}}" data-disclosure-mode="preview">Preview</button>
+              class="{{if .HasDisclosureDraft}}btn-sm-outline{{else}}btn-sm-ghost{{end}}" data-disclosure-mode="preview">Preview</button>
       <button type="button" id="disclosure-edit-tab-{{$f.ID}}" role="tab"
               aria-controls="disclosure-edit-panel-{{$f.ID}}" aria-selected="{{if .HasDisclosureDraft}}false{{else}}true{{end}}"
               tabindex="{{if .HasDisclosureDraft}}-1{{else}}0{{end}}"
-              class="{{if .HasDisclosureDraft}}btn-sm-outline{{else}}btn-sm{{end}}" data-disclosure-mode="edit">Edit</button>
+              class="{{if .HasDisclosureDraft}}btn-sm-ghost{{else}}btn-sm-outline{{end}}" data-disclosure-mode="edit">Edit</button>
     </div>
   </header>
 
@@ -116,7 +116,7 @@
                 name="disclosure_draft" rows="24">{{$f.DisclosureDraft}}</textarea>
       <div class="flex justify-end gap-2">
         <button type="reset" class="btn-sm-outline" data-disclosure-cancel>Cancel</button>
-        <button type="submit" class="btn-sm">Save</button>
+        <button type="submit" class="btn-sm-outline">Save</button>
       </div>
     </form>
   </div>
@@ -401,7 +401,7 @@
     <section class="pb-4 grid gap-3">
       <div class="flex items-center gap-2">
         <form method="post" action="/findings/{{$f.ID}}/exposure" hx-post="/findings/{{$f.ID}}/exposure" hx-swap="none" hx-confirm="Run exposure on up to 10 dependents? This can enqueue up to 10 full scans.">
-          <button type="submit" class="btn-sm">Run exposure on top-10 dependents</button>
+          <button type="submit" class="btn-sm-outline">Run exposure on top-10 dependents</button>
         </form>
         <span class="text-xs text-muted-foreground">
           Clones each dependent and audits whether this finding is reachable in its code.
@@ -520,7 +520,7 @@
                   <input class="input text-xs" name="note" value="{{.CampaignNote}}" placeholder="Campaign note">
                   <div class="flex items-center justify-between gap-2">
                     <span class="text-xs text-muted-foreground">{{if .CampaignUpdatedAt}}Updated {{.CampaignUpdatedAt.Format "2006-01-02"}}{{end}}</span>
-                    <button type="submit" class="btn-sm">Save</button>
+                    <button type="submit" class="btn-sm-outline">Save</button>
                   </div>
                 </form>
               </td>
@@ -561,7 +561,7 @@
         <input type="hidden" name="finding_ids" value="{{$f.ID}}">
         <input class="input max-w-xs" type="text" name="ref" required
                placeholder="fix branch, tag, or commit">
-        <button type="submit" class="btn-sm">
+        <button type="submit" class="btn-sm-outline">
           <i data-lucide="git-compare"></i> Validate fix
         </button>
       </form>
@@ -609,7 +609,7 @@
         </div>
       {{end}}
       <div class="flex flex-wrap gap-2 items-center">
-        <a class="btn-sm" href="/findings/{{$f.ID}}/patch.diff">
+        <a class="btn-sm-outline" href="/findings/{{$f.ID}}/patch.diff">
           <i data-lucide="download"></i> Download .patch
         </a>
         <a class="btn-sm-outline" href="/scans/{{$ps.ID}}">
@@ -765,7 +765,7 @@ git commit -m "fix: {{$f.Title}}"</pre>
           <input class="input" name="suggested_recipients" value="{{$f.SuggestedRecipients}}">
         </div>
         <div class="col-span-2 flex justify-end">
-          <button type="submit" class="btn-sm">Save</button>
+          <button type="submit" class="btn-sm-outline">Save</button>
         </div>
       </form>
     </section>
@@ -782,7 +782,7 @@ git commit -m "fix: {{$f.Title}}"</pre>
       <form method="post" action="/findings/{{$f.ID}}/notes" class="form grid gap-2">
         <textarea class="input" name="body" rows="3" placeholder="Add a note..." required></textarea>
         <div class="flex justify-end">
-          <button type="submit" class="btn-sm">Add note</button>
+          <button type="submit" class="btn-sm-outline">Add note</button>
         </div>
       </form>
       <ul class="grid gap-2">
@@ -1029,7 +1029,7 @@ git commit -m "fix: {{$f.Title}}"</pre>
           <div class="text-xs text-muted-foreground">Automation said: <strong>{{.LatestRevalidate}}</strong> (snapshotted on submit)</div>
         {{end}}
         <div class="flex justify-end">
-          <button type="submit" class="btn-sm">Record review</button>
+          <button type="submit" class="btn-sm-outline">Record review</button>
         </div>
       </form>
       <ul class="grid gap-2">
@@ -1079,7 +1079,7 @@ git commit -m "fix: {{$f.Title}}"</pre>
         </select>
         <textarea class="input col-span-3" name="body" rows="2" placeholder="message body..."></textarea>
         <div class="col-span-4 flex justify-end">
-          <button type="submit" class="btn-sm">Log communication</button>
+          <button type="submit" class="btn-sm-outline">Log communication</button>
         </div>
       </form>
       <ul class="grid gap-2">
@@ -1113,7 +1113,7 @@ git commit -m "fix: {{$f.Title}}"</pre>
         <input class="input" name="tags" placeholder="tags: issue, pr, cve, ghsa, patch">
         <input class="input col-span-3" name="summary" placeholder="optional summary">
         <div class="col-span-3 flex justify-end">
-          <button type="submit" class="btn-sm">Add reference</button>
+          <button type="submit" class="btn-sm-outline">Add reference</button>
         </div>
       </form>
       <ul class="grid gap-2">
@@ -1152,7 +1152,7 @@ git commit -m "fix: {{$f.Title}}"</pre>
           {{end}}
         </div>
         <div class="flex justify-end">
-          <button type="submit" class="btn-sm">Save labels</button>
+          <button type="submit" class="btn-sm-outline">Save labels</button>
         </div>
       </form>
     </section>

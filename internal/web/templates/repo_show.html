@@ -185,7 +185,7 @@
           <input class="input text-xs" type="text" name="disclosure_channel"
                  value="{{.Repo.DisclosureChannel}}"
                  placeholder="security@example.org, https://…/security/advisories, …">
-          <button class="btn-sm" type="submit">Save</button>
+          <button class="btn-sm-outline" type="submit">Save</button>
         </form>
         <p class="text-xs text-muted-foreground mt-1">Auto-filled by the maintainers skill from <code>SECURITY.md</code>, registry owner data, or CODEOWNERS. Edit freely.</p>
       </details>
@@ -215,7 +215,7 @@
             <input class="input text-xs" type="text" name="reason"
                    value="{{.Repo.FederationOptOutReason}}"
                    placeholder="reason (optional, published with the opt-out)">
-            <button class="btn-sm" type="submit">Save</button>
+            <button class="btn-sm-outline" type="submit">Save</button>
           </div>
         </form>
         <p class="text-xs text-muted-foreground mt-1">Cancels the scans queued, running and paused on this repository, then refuses every new one: a manual run, a scheduled one, and any automatic follow-up. Published on the public interchange feed, if this instance is configured with one, so other federated instances honour it too, and set here automatically when a peer feed carries an opt-out for this repository. See <code>docs/interchange.md</code>.</p>
@@ -250,7 +250,7 @@
           </select>
           <input class="input text-xs" type="text" name="scan_schedule_cron"
                  value="{{if $isCron}}{{$sched}}{{end}}" placeholder="cron, e.g. 0 3 * * 1 (used when Custom cron is selected)">
-          <button class="btn-sm" type="submit">Save</button>
+          <button class="btn-sm-outline" type="submit">Save</button>
           <label class="text-xs text-muted-foreground" for="upstream_url">Upstream</label>
           <input class="input text-xs col-span-2" id="upstream_url" type="text" name="upstream_url"
                  value="{{.Repo.UpstreamURL}}" placeholder="https://... (staging copies only: synced before each scheduled check)">
@@ -521,7 +521,7 @@
             <input class="input" type="text" name="note" placeholder="Why this is a credible migration target">
           </label>
           <div class="md:col-span-2">
-            <button class="btn-sm" type="submit">Save alternative</button>
+            <button class="btn-sm-outline" type="submit">Save alternative</button>
           </div>
         </form>
       </section>
@@ -628,7 +628,7 @@
           <span class="text-xs text-muted-foreground">Note</span>
           <input class="input" name="note" placeholder="Known vulnerable sink">
         </label>
-        <button type="submit" class="btn"><i data-lucide="plus"></i> Add</button>
+        <button type="submit" class="btn-outline"><i data-lucide="plus"></i> Add</button>
       </form>
       {{if .ExpectedFindings}}
         <table class="table w-full">
