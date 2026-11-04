@@ -1,8 +1,8 @@
 // Prereq gating for skill jobs. A skill declaring scrutineer.requires
 // only dispatches when each named upstream skill has a completed scan
 // for the same repository; otherwise the job is re-published with a
-// delay so the runner picks it up again later. Grouped scans only consider
-// prerequisites in their own group; absent prerequisites were not selected.
+// delay so the runner picks it up again later. Group-local prerequisites take
+// precedence; when absent, only in-flight repository prerequisites block.
 //
 // Within that scope, any done scan satisfies the prerequisite, regardless
 // of commit. URL-keyed skills (packages, advisories, maintainers,
@@ -10,10 +10,8 @@
 // rule across all prereqs avoids special cases. Triage's commit-aware
 // skip set covers the redo-on-new-commit case at a different layer.
 //
-// A prereq with no scan rows in scope is treated as
-// satisfied: triage (or the operator) decided not to enqueue it, and
-// waiting would deadlock the dependent skill. The same applies to a prereq skill that is not
-// registered or is disabled. A prereq that has been enqueued for the
+// A prereq with no scan rows in scope, or an unregistered or disabled skill,
+// is treated as satisfied. A prereq that has been enqueued for the
 // repository but has no done scan yet defers the job while one is
 // still in flight (queued/running/paused); when every attempt has
 // reached a terminal failed/cancelled state the dependent fails
@@ -90,8 +88,7 @@ func (w *Worker) isThreatModelFallback(scan *db.Scan, skillName string) (bool, e
 	err := w.DB.Model(&db.Scan{}).Where(
 		"id = ? AND repository_id = ? AND skill_name = ? AND status = ? AND sub_path = ? AND ref = ?",
 		*scan.FallbackFromScanID, scan.RepositoryID, "threat-model", db.ScanFailed, scan.SubPath, scan.Ref,
-	).Where("scan_group = ? OR (scan_group = '' AND ? = ?)", scan.ScanGroup, scan.ScanGroup,
-		fmt.Sprintf("focus-%d", *scan.FallbackFromScanID)).Count(&count).Error
+	).Where("scan_group = ?", scan.ScanGroup).Count(&count).Error
 	if err != nil {
 		return false, fmt.Errorf("load fallback threat-model: %w", err)
 	}
@@ -146,15 +143,9 @@ func prereqBackoff(base time.Duration, attempt int) time.Duration {
 	return base
 }
 
-// unsatisfiedPrereqs classifies declared prereqs within the scan's group,
-// or repository history for ungrouped scans. A name lands in pending when it has at
-// least one in-flight scan (queued/running/paused) and no done scan
-// yet — the gate should defer and re-check later. A name lands in
-// dead when every scan for it on the repo is terminal but none is
-// done — the prereq has irrecoverably failed and the dependent should
-// fail now rather than burn the retry budget. A prereq that is
-// unregistered, disabled, or has never been enqueued for this repo is
-// treated as satisfied; see file header for why.
+// unsatisfiedPrereqs uses group-local history when available. Without a
+// group-local row, grouped scans wait only for in-flight repository scans.
+// Ungrouped scans use the repository's full prerequisite history.
 func (w *Worker) unsatisfiedPrereqs(scan *db.Scan, names []string) (pending, dead []string) {
 	inFlight := []db.ScanStatus{db.ScanQueued, db.ScanRunning, db.ScanPaused}
 	for _, name := range names {
@@ -180,6 +171,13 @@ func (w *Worker) unsatisfiedPrereqs(scan *db.Scan, names []string) (pending, dea
 				pending = append(pending, name)
 			case prereqDead:
 				dead = append(dead, name)
+			case prereqAbsent:
+				var active db.Scan
+				w.DB.Select("id").Where("repository_id = ? AND skill_name = ? AND status IN ?",
+					scan.RepositoryID, name, inFlight).Limit(1).Find(&active)
+				if active.ID != 0 {
+					pending = append(pending, name)
+				}
 			}
 			continue
 		}

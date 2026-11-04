@@ -3,7 +3,6 @@ package worker
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"os"
 	"strings"
@@ -124,10 +123,6 @@ func TestWorkerThreatModelFallbackPrerequisites(t *testing.T) {
 		want    db.ScanStatus
 	}{
 		{name: "failed prerequisites", want: db.ScanDone},
-		{name: "manual threat model", change: func(scan, parent *db.Scan) {
-			parent.ScanGroup = ""
-			scan.ScanGroup = fmt.Sprintf("focus-%d", parent.ID)
-		}, want: db.ScanDone},
 		{name: "pending prerequisite", pending: true, want: db.ScanQueued},
 		{name: "ordinary audit", change: func(scan, _ *db.Scan) { scan.FallbackFromScanID = nil }, want: db.ScanFailed},
 		{name: "focused audit", change: func(scan, _ *db.Scan) { scan.FocusArea = `{"name":"parser"}` }, want: db.ScanFailed},
@@ -239,6 +234,7 @@ func TestPreflightSkill_scanGroupSatisfiedBySiblingPrereq(t *testing.T) {
 	}
 	tm := seedPrereqSkill(t, w, "threat-model", true)
 	seedPrereqScanInGroup(t, w, tm, scan.RepositoryID, db.ScanDone, scan.ScanGroup)
+	seedPrereqScanInGroup(t, w, tm, scan.RepositoryID, db.ScanRunning, "other-group")
 
 	deferred, err := w.preflightSkill(context.Background(), scan, 0)
 	if err != nil {
@@ -249,7 +245,7 @@ func TestPreflightSkill_scanGroupSatisfiedBySiblingPrereq(t *testing.T) {
 	}
 }
 
-func TestWorkerGroupedPrereqsIgnoreOtherGroups(t *testing.T) {
+func TestWorkerGroupedPrereqsWithoutSibling(t *testing.T) {
 	for _, status := range []db.ScanStatus{db.ScanFailed, db.ScanCancelled, db.ScanQueued, db.ScanRunning, db.ScanPaused, db.ScanDone} {
 		t.Run(string(status), func(t *testing.T) {
 			w := newPreflightWorker(t)
@@ -276,8 +272,13 @@ func TestWorkerGroupedPrereqsIgnoreOtherGroups(t *testing.T) {
 			if err := w.DB.First(scan, scan.ID).Error; err != nil {
 				t.Fatal(err)
 			}
-			if !called || scan.Status != db.ScanDone {
-				t.Fatalf("handler called = %v, scan status = %s, error = %s", called, scan.Status, scan.Error)
+			want := db.ScanDone
+			switch status {
+			case db.ScanQueued, db.ScanRunning, db.ScanPaused:
+				want = db.ScanQueued
+			}
+			if called != (want == db.ScanDone) || scan.Status != want {
+				t.Fatalf("handler called = %v, scan status = %s, error = %s; want %s", called, scan.Status, scan.Error, want)
 			}
 		})
 	}
