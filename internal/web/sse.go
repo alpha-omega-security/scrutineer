@@ -236,11 +236,17 @@ func discloseScanGeneratedDraft(scan db.Scan) bool {
 // writeSSEEvent emits one SSE event per the spec. Embedded newlines in data
 // are expressed as multiple `data:` lines so the browser's EventSource parser
 // reconstructs the original text; a single `data: %s` pattern silently drops
-// every line after the first newline.
+// every line after the first newline. EventSource also treats a lone CR as a
+// line terminator, so CRs are normalised to LF before splitting: without that
+// a repo-controlled filename containing "\revent: ..." would start a new
+// protocol field in the browser.
 func writeSSEEvent(w io.Writer, name, data string) {
 	_, _ = io.WriteString(w, "event: ")
 	_, _ = io.WriteString(w, name)
 	_, _ = io.WriteString(w, "\n")
+	if strings.IndexByte(data, '\r') >= 0 {
+		data = strings.ReplaceAll(strings.ReplaceAll(data, "\r\n", "\n"), "\r", "\n")
+	}
 	for line := range strings.SplitSeq(data, "\n") {
 		_, _ = io.WriteString(w, "data: ")
 		_, _ = io.WriteString(w, line)

@@ -205,3 +205,51 @@ func TestFindingDisclosureMarkdown_emptyDraftNotFound(t *testing.T) {
 		t.Errorf("status/body = %d %q, want explicit 404", w.Code, w.Body.String())
 	}
 }
+
+// TestFindingShow_disclosureHintMatchesDraftButton pins the empty-draft hint to
+// the states where the Draft disclosure button is actually rendered.
+func TestFindingShow_disclosureHintMatchesDraftButton(t *testing.T) {
+	const (
+		offered = "or use Draft disclosure to generate one."
+		pending = "Draft disclosure can generate one once the finding is triaged."
+	)
+	cases := []struct {
+		name      string
+		status    db.FindingLifecycle
+		viability string
+		want      string
+		absent    []string
+	}{
+		{"new", db.FindingNew, "", pending, []string{offered}},
+		{"enriched", db.FindingEnriched, "", pending, []string{offered}},
+		{"enriched blocked", db.FindingEnriched, db.ProductionViabilityNonViable, "Write or paste a disclosure draft below.</p>", []string{offered, pending}},
+		{"triaged", db.FindingTriaged, "", offered, []string{pending}},
+		{"triaged blocked", db.FindingTriaged, db.ProductionViabilityNonViable, "Write or paste a disclosure draft below.</p>", []string{offered, pending}},
+		{"ready", db.FindingReady, "", "Write or paste a disclosure draft below.</p>", []string{offered, pending}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s, done := newTestServer(t)
+			defer done()
+
+			repo := db.Repository{Name: "thing"}
+			s.DB.Create(&repo)
+			scan := db.Scan{RepositoryID: repo.ID, Status: db.ScanDone}
+			s.DB.Create(&scan)
+			f := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "hint", Status: tc.status, ProductionViability: tc.viability}
+			s.DB.Create(&f)
+
+			w := httptest.NewRecorder()
+			s.Handler().ServeHTTP(w, localReq("GET", "/findings/"+strconv.FormatUint(uint64(f.ID), 10)))
+			body := w.Body.String()
+			if w.Code != http.StatusOK || !strings.Contains(body, tc.want) {
+				t.Fatalf("status %d, body missing %q", w.Code, tc.want)
+			}
+			for _, a := range tc.absent {
+				if strings.Contains(body, a) {
+					t.Errorf("body contains %q", a)
+				}
+			}
+		})
+	}
+}

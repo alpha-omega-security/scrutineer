@@ -238,7 +238,85 @@ RUN env -u GEM_HOME /usr/bin/gem install --no-document -n /usr/local/bin \
 
 # Conservative-GC valgrind suppressions (memcheck on the STOCK ruby, never the
 # ASan one). A starting set — extend it as real runs surface GC false positives.
-COPY ruby.supp /usr/local/share/ruby-ext/ruby.supp
+COPY <<'SUPP' /usr/local/share/ruby-ext/ruby.supp
+# Valgrind/memcheck suppressions for the STOCK ruby (/usr/bin/ruby) in the
+# ruby-ext profile. Use these only on the stock interpreter — never the ASan
+# build, which cannot run under valgrind.
+#
+#   valgrind --suppressions=/usr/local/share/ruby-ext/ruby.supp \
+#            --leak-check=full --error-exitcode=99 \
+#            /usr/bin/ruby /tmp/poc.rb
+#
+# Ruby's GC is conservative: it scans the C stack and registers for anything
+# that looks like a VALUE, so memcheck flags those reads as use-of-uninitialised
+# or invalid. Those are false positives of the GC design, not bugs in the gem
+# under test. This is a STARTING set — when a run drowns in GC noise, copy the
+# offending frame from `valgrind --gen-suppressions=all` and add it here.
+# Conversely, do not suppress so broadly that a real OOB read in the extension
+# gets hidden: keep frames anchored on gc.c / vm.c, not on the extension.
+
+{
+   ruby-gc-conservative-stack-scan-cond
+   Memcheck:Cond
+   ...
+   fun:gc_mark*
+}
+{
+   ruby-gc-conservative-stack-scan-value
+   Memcheck:Value8
+   ...
+   fun:gc_mark*
+}
+{
+   ruby-gc-mark-locations-cond
+   Memcheck:Cond
+   ...
+   fun:mark_locations_array
+}
+{
+   ruby-gc-mark-locations-value
+   Memcheck:Value8
+   ...
+   fun:mark_locations_array
+}
+{
+   ruby-gc-mark-stack-cond
+   Memcheck:Cond
+   ...
+   fun:rb_gc_mark*
+}
+{
+   ruby-vm-mark-cond
+   Memcheck:Cond
+   ...
+   fun:rb_vm_mark
+}
+{
+   ruby-machine-stack-scan-addr
+   Memcheck:Addr8
+   ...
+   fun:rb_gc_mark_machine_*
+}
+{
+   ruby-objspace-each-cond
+   Memcheck:Cond
+   ...
+   fun:objspace_*
+}
+# dlopen of native extensions: the dynamic loader's own bookkeeping, not the gem.
+{
+   ruby-dlopen-loader-cond
+   Memcheck:Cond
+   ...
+   fun:_dl_*
+}
+{
+   ruby-dlopen-loader-leak
+   Memcheck:Leak
+   ...
+   fun:dlopen*
+}
+SUPP
 
 # Sanitizer flags for build systems that DO read the environment — chiefly the
 # cc-rs crate that rb-sys / Cargo-native gems use to compile their C/C++ shim.

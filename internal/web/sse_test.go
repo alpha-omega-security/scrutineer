@@ -2,6 +2,7 @@ package web
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"net/http"
@@ -12,6 +13,39 @@ import (
 
 	"scrutineer/internal/db"
 )
+
+// EventSource treats CR, LF and CRLF as line terminators. writeSSEEvent must
+// prefix every data line itself, so a lone CR in untrusted transcript text
+// (a repo filename in a tool arg, say) must not reach the stream unescaped
+// where it would start a new protocol field.
+func TestWriteSSEEvent_carriageReturnCannotInjectField(t *testing.T) {
+	cases := map[string]string{
+		"lone CR": "before\revent: injected\rafter",
+		"CRLF":    "a\r\nb",
+		"mixed":   "a\r\nb\rc\nd",
+	}
+	for name, data := range cases {
+		t.Run(name, func(t *testing.T) {
+			var buf bytes.Buffer
+			writeSSEEvent(&buf, "chat-activity", data)
+			out := buf.String()
+			if strings.Contains(out, "\r") {
+				t.Fatalf("output contains a raw CR, which EventSource treats as a line terminator:\n%q", out)
+			}
+			for i, line := range strings.Split(strings.TrimSuffix(out, "\n\n"), "\n") {
+				if i == 0 {
+					if line != "event: chat-activity" {
+						t.Fatalf("line 0 = %q, want the event line", line)
+					}
+					continue
+				}
+				if !strings.HasPrefix(line, "data: ") {
+					t.Fatalf("line %d = %q: every non-event line must be data-prefixed", i, line)
+				}
+			}
+		})
+	}
+}
 
 // The wire format the browser's EventSource actually parses: a filtered stream
 // carries the status events and nothing else, and an event that names no scan
