@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -171,11 +172,11 @@ func TestSnapshot_rejectsURIDest(t *testing.T) {
 	}
 	closeOnCleanup(t, seed)
 
-	target := filepath.Join(dir, "snap.db")
-	if err := Snapshot(src, "file:"+target); err == nil {
-		t.Fatal("Snapshot accepted a file: URI; VACUUM INTO would write a different path than the pre-created 0600 file")
+	t.Chdir(dir)
+	if err := Snapshot(src, "file:snap.db"); err == nil || !strings.Contains(err.Error(), "URI destinations are not supported") {
+		t.Fatalf("Snapshot URI error = %v, want URI destination rejection", err)
 	}
-	for _, p := range []string{target, filepath.Join(dir, "file:"+filepath.Base(target))} {
+	for _, p := range []string{"snap.db", "file:snap.db"} {
 		if _, err := os.Lstat(p); !os.IsNotExist(err) {
 			t.Errorf("rejected URI dest left %s behind: %v", p, err)
 		}

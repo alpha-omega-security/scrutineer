@@ -2045,6 +2045,9 @@ func planFindingReferenceMerge(rows []FindingReference) (survivors []FindingRefe
 // snapshot bytes are never readable at the process umask default. The modernc
 // driver overwrites the empty file in place.
 func Snapshot(src, dest string) (retErr error) {
+	if dest == ":memory:" {
+		return fmt.Errorf("in-memory destinations are not supported: %s", dest)
+	}
 	// The modernc driver enables URI filenames, so VACUUM INTO would resolve
 	// a "file:" dest to the URI target rather than the literal path OpenFile
 	// creates below, and the snapshot would land at the umask default.
