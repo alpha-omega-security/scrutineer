@@ -2320,9 +2320,9 @@ func TestAdvisoriesIndex(t *testing.T) {
 		"advisory without upstream link",
 		"rails", "django",
 		"9.8", "5.4",
-		`badge-destructive">Critical`,
-		`badge-destructive">High`,
-		`badge-primary">Medium`,
+		`">Critical</span>`,
+		`">High</span>`,
+		`">Medium</span>`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing %q", want)
