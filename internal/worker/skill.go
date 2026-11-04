@@ -407,7 +407,6 @@ func (w *Worker) repairAndParseSkillOutput(ctx context.Context, skill *db.Skill,
 		}
 	}
 	if err := w.parseSkillOutput(ctx, skill, scan, report, emit); err != nil {
-		scan.Report = report
 		return report, err
 	}
 	return report, nil
@@ -480,7 +479,12 @@ func truncateSchemaRepairReport(report string) string {
 	return report[:schemaRepairReportMaxSize] + "\n... truncated ..."
 }
 
-func (w *Worker) parseSkillOutput(ctx context.Context, skill *db.Skill, scan *db.Scan, report string, emit func(Event)) error {
+func (w *Worker) parseSkillOutput(ctx context.Context, skill *db.Skill, scan *db.Scan, report string, emit func(Event)) (err error) {
+	defer func() {
+		if err != nil {
+			scan.Report = report
+		}
+	}()
 	if skill.SchemaJSON != "" {
 		if detail, recoverable := reportValidationForParsing(skill, report); detail != "" {
 			emit(reportValidationEvent(skill, detail))
