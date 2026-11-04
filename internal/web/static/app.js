@@ -27,6 +27,7 @@
     list.querySelectorAll('[role="tab"]').forEach(function (t) {
       var sel = t.id === h;
       t.setAttribute('aria-selected', sel);
+      t.setAttribute('tabindex', sel ? '0' : '-1');
       var p = document.getElementById(t.getAttribute('aria-controls'));
       if (p) p.hidden = !sel;
     });
@@ -92,6 +93,12 @@
 
   // A same-page link to a tab (#rt4) changes the hash without a reload.
   window.addEventListener('hashchange', restoreTab);
+
+  // Arrow keys select a tab without a click, so the hash follows focus too.
+  document.addEventListener('focusin', function (e) {
+    var tab = e.target.closest('[role="tab"][aria-selected="true"]');
+    if (tab && tab.id) history.replaceState(null, '', '#' + tab.id);
+  });
 
   setInterval(elapsed, 1000);
 
