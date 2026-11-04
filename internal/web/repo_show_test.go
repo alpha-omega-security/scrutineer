@@ -535,7 +535,7 @@ func TestRepoShow_summaryWithoutOpenFindings(t *testing.T) {
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, localReq("GET", fmt.Sprintf("/repositories/%d", repo.ID)))
 	body := w.Body.String()
-	if w.Code != 200 || !strings.Contains(body, "No open findings.") {
+	if w.Code != 200 || !strings.Contains(body, "No open audit findings.") {
 		t.Fatalf("status %d, empty state missing", w.Code)
 	}
 	if strings.Contains(body, "View in Findings") {
