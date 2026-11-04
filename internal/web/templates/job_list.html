@@ -138,7 +138,7 @@
         {{if .AnySubPath}}<th>Subpath</th>{{end}}
         {{template "th-sort" (dict "Sorter" .Sorter "Key" "skill" "Def" "asc" "Label" "Skill" "Class" "")}}
         {{template "th-sort" (dict "Sorter" .Sorter "Key" "status" "Def" "asc" "Label" "Status" "Class" "")}}
-        <th>Completeness</th>
+        {{if .AnyCompleteness}}<th>Completeness</th>{{end}}
         {{if .AnyFocusArea}}<th>Focus area</th>{{end}}
         {{template "th-sort" (dict "Sorter" .Sorter "Key" "findings" "Def" "desc" "Label" "Findings" "Class" "")}}
         <th>Model</th><th>Cost</th><th>Started</th><th>Duration</th><th class="w-12"></th>
@@ -147,6 +147,7 @@
     <tbody>
     {{$showSub := .AnySubPath}}
     {{$showFocus := .AnyFocusArea}}
+    {{$showCompleteness := .AnyCompleteness}}
     {{range .Scans}}
       <tr id="scan-{{.ID}}">
         <td><a href="/scans/{{.ID}}">{{.ID}}</a></td>
@@ -156,7 +157,7 @@
         {{end}}
         <td>{{if .SkillName}}{{.SkillName}}{{else}}{{.Kind}}{{end}} {{template "branch-tag" .Ref}}</td>
         <td>{{template "status-badge" (status .Status)}} {{if .MaxTurnsHit}}<span class="badge-outline"><i data-lucide="timer-off"></i> max turns</span>{{end}}{{if .CostCapped}} <span class="badge-outline"><i data-lucide="circle-dollar-sign"></i> cost cap</span>{{end}}</td>
-        <td>{{if eq .Completeness "complete"}}<span class="badge-outline">complete</span>{{else if eq .Completeness "partial"}}<span class="badge-outline">partial</span>{{else}}<span class="text-muted-foreground">unknown</span>{{end}}</td>
+        {{if $showCompleteness}}<td>{{if eq .Completeness "complete"}}<span class="badge-outline">complete</span>{{else if eq .Completeness "partial"}}<span class="badge-outline"><i data-lucide="triangle-alert"></i> partial</span>{{else}}<span class="text-muted-foreground">unknown</span>{{end}}</td>{{end}}
         {{if $showFocus}}<td class="text-xs">{{template "focus-area" (focus .)}}</td>{{end}}
         <td>{{if gt .FindingsCount 0}}{{template "findings-badge" .FindingsCount}}{{end}}</td>
         <td class="text-muted-foreground">{{if .Model}}{{.Model}}{{else}}-{{end}}</td>
