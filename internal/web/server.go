@@ -398,6 +398,7 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *work
 		"pct":      formatPct,
 		statusKey:  func(s db.ScanStatus) string { return string(s) },
 		"fstatus":  func(s db.FindingLifecycle) string { return string(s) },
+		"fsteps":   findingLifecycleSteps,
 		"sevlabel": displaySeverity,
 		"dict": func(kv ...any) map[string]any {
 			m := map[string]any{}
@@ -829,6 +830,13 @@ func isHX(r *http.Request) bool { return r.Header.Get("HX-Request") != "" }
 func (s *Server) redirect(w http.ResponseWriter, r *http.Request, path string) {
 	if isHX(r) {
 		w.Header().Set("HX-Redirect", path)
+		// htmx assigns HX-Redirect to location.href, and a target that only
+		// adds a fragment to the current page scrolls instead of reloading it.
+		if base, _, ok := strings.Cut(path, "#"); ok {
+			if cur, err := url.Parse(r.Header.Get("HX-Current-URL")); err == nil && cur.RequestURI() == base {
+				w.Header().Set("HX-Refresh", "true")
+			}
+		}
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -1942,7 +1950,7 @@ func (s *Server) findingNotes(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
-	s.redirect(w, r, fmt.Sprintf("/findings/%d", f.ID))
+	s.redirect(w, r, fmt.Sprintf("/findings/%d#notes", f.ID))
 }
 
 func (s *Server) packages(w http.ResponseWriter, r *http.Request) {
@@ -2069,6 +2077,7 @@ type findingWorkflowData struct {
 	HasDependents      bool
 	HasDisclosureDraft bool
 	DisclosureBlocked  bool
+	Verifications      int
 }
 
 func (s *Server) findingShow(w http.ResponseWriter, r *http.Request) {
@@ -2192,6 +2201,7 @@ func (s *Server) findingShow(w http.ResponseWriter, r *http.Request) {
 			HasDependents:      hasDependents,
 			HasDisclosureDraft: strings.TrimSpace(f.DisclosureDraft) != "",
 			DisclosureBlocked:  db.FindingDisclosureBlocked(f),
+			Verifications:      len(verifications),
 		},
 		"Exposures":     exposures,
 		"HasDependents": hasDependents,

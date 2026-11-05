@@ -154,7 +154,7 @@ func TestVerifyFeedbackFormAfterVerification(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("finding page: %d", w.Code)
 	}
-	for _, want := range []string{fmt.Sprintf(`action="/findings/%d/verify" hx-post="/findings/%d/verify" hx-swap="none"`, f.ID, f.ID), `name="feedback"`, "Rerun verification", "old feedback", "Verification history"} {
+	for _, want := range []string{fmt.Sprintf(`action="/findings/%d/verify" hx-post="/findings/%d/verify" hx-swap="none"`, f.ID, f.ID), `name="feedback"`, "<span>1 result</span>", "Rerun verification", "old feedback", "Verification history"} {
 		if !strings.Contains(w.Body.String(), want) {
 			t.Errorf("missing %q", want)
 		}
@@ -191,7 +191,7 @@ func TestVerifyFeedbackFormForNewFinding(t *testing.T) {
 			t.Errorf("verify %s count = %d, want one feedback-enabled entry point", attr, count)
 		}
 	}
-	for _, want := range []string{`name="feedback"`, "Run verification", "Mark triaged", "Reject"} {
+	for _, want := range []string{`name="feedback"`, "<span>no results</span>", "Run verification", "Mark triaged", "Reject"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("missing %q", want)
 		}

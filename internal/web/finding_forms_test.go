@@ -40,7 +40,7 @@ func TestFindingFields(t *testing.T) {
 	if w.Code != http.StatusSeeOther {
 		t.Fatalf("status = %d, want 303; body=%s", w.Code, w.Body)
 	}
-	if loc := w.Header().Get("Location"); loc != fmt.Sprintf("/findings/%d", f.ID) {
+	if loc := w.Header().Get("Location"); loc != fmt.Sprintf("/findings/%d#disclosure-fields", f.ID) {
 		t.Errorf("Location = %q", loc)
 	}
 

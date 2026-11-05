@@ -27,6 +27,8 @@
     });
   }
 
+  // The hash names either a tab or a section inside a tab panel (#notes), in
+  // which case that panel's tab is selected and the section opened.
   // An empty hash, as Back to the bare URL leaves, goes to the tab the server
   // rendered selected, which is recorded before any hash overrides it.
   function restoreTab() {
@@ -42,10 +44,20 @@
       });
       return;
     }
-    var tab = document.getElementById(h);
-    if (!tab || tab.getAttribute('role') !== 'tab') return;
+    var target = document.getElementById(h);
+    if (!target) return;
+    var tab = target;
+    if (target.getAttribute('role') !== 'tab') {
+      var panel = target.closest('[role="tabpanel"]');
+      tab = panel && document.querySelector('[role="tab"][aria-controls="' + panel.id + '"]');
+    }
+    if (!tab) return;
     var list = tab.closest('[role="tablist"]');
-    if (list) selectTab(list, h);
+    if (!list) return;
+    selectTab(list, tab.id);
+    if (target === tab) return;
+    if (target.nodeName === 'DETAILS') target.open = true;
+    target.scrollIntoView();
   }
 
   // The message list is the only thing that scrolls on a conversation page, so
@@ -106,7 +118,7 @@
     init();
   }
 
-  // A same-page link to a tab (#rt4) changes the hash without a reload.
+  // A same-page link to a tab or a section in one changes the hash without a reload.
   window.addEventListener('hashchange', restoreTab);
 
   // Arrow keys select a tab without a click, so the hash follows focus too.
