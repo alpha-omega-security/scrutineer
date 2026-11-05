@@ -5,9 +5,11 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"fmt"
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -170,13 +172,16 @@ func TestImportOSSCRSCapturesAssociatedPoV(t *testing.T) {
 	if len(files) != 1 || files[0].Path != "povs/abc" || string(files[0].Data) != "\x00\xffcrash" || row.ScanID != resp.ScanID {
 		t.Errorf("captured PoC = %+v scan=%d", files, row.ScanID)
 	}
+	if row.Commit != "deadbeef" {
+		t.Errorf("captured PoC commit = %q, want ?commit= when the candidate names no revision", row.Commit)
+	}
 }
 
 func TestImportOSSCRSKeepsCandidateRevision(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
 	candidate := strings.Replace(ossCRSCandidate, `"results"`, `"versionControlProvenance":[{"repositoryUri":"https://github.com/example/widget","revisionId":"cafef00d"}],"results"`, 1)
-	_, resp := postOSSCRS(t, s, ossCRSPath, ossCRSArchive(t, map[string]string{"bug-candidates/a.sarif": candidate}))
+	_, resp := postOSSCRS(t, s, ossCRSPath, ossCRSArchive(t, map[string]string{"bug-candidates/a.sarif": candidate, "povs/abc": "crash"}))
 	if len(resp.Results) != 1 || len(resp.Results[0].FindingIDs) != 1 {
 		t.Fatalf("results = %+v", resp.Results)
 	}
@@ -186,6 +191,13 @@ func TestImportOSSCRSKeepsCandidateRevision(t *testing.T) {
 	}
 	if finding.Commit != "cafef00d" {
 		t.Errorf("finding commit = %q, want the candidate's revision over ?commit=", finding.Commit)
+	}
+	row, err := db.LoadFindingPoC(s.DB, finding.ID)
+	if err != nil || row == nil {
+		t.Fatalf("captured PoC = %v, %v", row, err)
+	}
+	if row.Commit != "cafef00d" {
+		t.Errorf("captured PoC commit = %q, want the candidate's revision over ?commit=", row.Commit)
 	}
 }
 
@@ -378,6 +390,53 @@ func TestImportOSSCRSRefusesOversizedArchive(t *testing.T) {
 	}
 }
 
+// TestImportOSSCRSBoundsAssociationWrites pins the write budget at 64 MiB of
+// payload, counting a patch or a captured PoV once per finding it is associated with.
+func TestImportOSSCRSBoundsAssociationWrites(t *testing.T) {
+	candidates := func(path string, findings int) map[string]string {
+		files := map[string]string{path: strings.Repeat("p", poc.MaxFileBytes)}
+		for run := 0; findings > 0; run++ {
+			var results []string
+			for i := range min(findings, importResultCap) {
+				results = append(results, fmt.Sprintf(`{"ruleId":"r%[1]d-%[2]d","message":{"text":"bug %[1]d-%[2]d"},`+
+					`"locations":[{"physicalLocation":{"artifactLocation":{"uri":"src/%[1]d-%[2]d.c"},"region":{"startLine":1}}}],`+
+					`"attachments":[{"artifactLocation":{"uri":"%[3]s"}}]}`, run, i, path))
+			}
+			findings -= len(results)
+			files[fmt.Sprintf("bug-candidates/%d.sarif", run)] = `{"version":"2.1.0","runs":[{"tool":{"driver":{"name":"crs-a"}},"results":[` + strings.Join(results, ",") + `]}]}`
+		}
+		return files
+	}
+	limit := osscrs.MaxRetainedBytes / poc.MaxFileBytes
+	for _, tt := range []struct {
+		path     string
+		findings int
+		want     int
+	}{
+		{"patches/fix.diff", limit, http.StatusCreated},
+		{"patches/fix.diff", limit + 1, http.StatusRequestEntityTooLarge},
+		{"povs/crash", limit, http.StatusCreated},
+		{"povs/crash", limit + 1, http.StatusRequestEntityTooLarge},
+	} {
+		s, done := newTestServer(t)
+		w, _ := postOSSCRS(t, s, ossCRSPath, ossCRSArchive(t, candidates(tt.path, tt.findings)))
+		if w.Code != tt.want {
+			t.Errorf("%s x %d: status = %d, want %d (%s)", tt.path, tt.findings, w.Code, tt.want, w.Body.String())
+		}
+		var artifacts, pocs int64
+		s.DB.Model(&db.ImportArtifact{}).Count(&artifacts)
+		s.DB.Model(&db.FindingPoC{}).Count(&pocs)
+		wantRows := int64(tt.findings)
+		if tt.want != http.StatusCreated {
+			wantRows = 0
+		}
+		if artifacts+pocs != wantRows {
+			t.Errorf("%s x %d: %d import_artifacts + %d finding_pocs, want %d rows", tt.path, tt.findings, artifacts, pocs, wantRows)
+		}
+		done()
+	}
+}
+
 func TestImportOSSCRSWithoutCandidatesKeepsEvidence(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
@@ -402,6 +461,7 @@ func TestImportOSSCRSRejectsBadRequests(t *testing.T) {
 		{"no repo", "/api/v1/import/oss-crs?commit=deadbeef", archive, http.StatusBadRequest},
 		{"no commit", "/api/v1/import/oss-crs?repo=https://github.com/example/widget", archive, http.StatusBadRequest},
 		{"control run", "/api/v1/import/oss-crs?repo=https://github.com/example/widget&commit=deadbeef&run=a%07b", archive, http.StatusBadRequest},
+		{"long run", "/api/v1/import/oss-crs?repo=https://github.com/example/widget&commit=deadbeef&run=" + strings.Repeat("%E6%BC%A2", maxOSSCRSRunLen+1), archive, http.StatusBadRequest},
 		{"bad revalidate", ossCRSPath + "&revalidate=maybe", archive, http.StatusBadRequest},
 		{"not gzip", ossCRSPath, []byte(ossCRSCandidate), http.StatusUnprocessableEntity},
 	}
@@ -414,6 +474,16 @@ func TestImportOSSCRSRejectsBadRequests(t *testing.T) {
 	s.DB.Model(&db.ImportArtifact{}).Count(&n)
 	if n != 0 {
 		t.Errorf("import_artifacts rows = %d after rejected requests, want 0", n)
+	}
+}
+
+func TestImportOSSCRSCountsRunInCharacters(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	run := strings.Repeat("漢", maxOSSCRSRunLen)
+	w, _ := postOSSCRS(t, s, "/api/v1/import/oss-crs?repo=https://github.com/example/widget&commit=deadbeef&run="+url.QueryEscape(run), fullOSSCRSArchive(t))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201 for %d multibyte characters (%s)", w.Code, maxOSSCRSRunLen, w.Body.String())
 	}
 }
 
