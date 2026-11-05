@@ -1,6 +1,7 @@
 package web
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -103,6 +104,26 @@ func (s *Server) maintainerDoNotContact(w http.ResponseWriter, r *http.Request) 
 	if err := s.DB.Model(&db.Maintainer{}).Where("id = ?", m.ID).
 		Update("do_not_contact", value).Error; err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	s.redirect(w, r, fmt.Sprintf("/maintainers/%d", m.ID))
+}
+
+func (s *Server) maintainerUpdate(w http.ResponseWriter, r *http.Request) {
+	m, ok := loadByID[db.Maintainer](s, w, r)
+	if !ok {
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := db.UpdateMaintainerDetails(s.DB.WithContext(r.Context()), m.ID, r.PostForm); err != nil {
+		status := http.StatusInternalServerError
+		if errors.Is(err, db.ErrInvalidMaintainerStatus) {
+			status = http.StatusUnprocessableEntity
+		}
+		http.Error(w, err.Error(), status)
 		return
 	}
 	s.redirect(w, r, fmt.Sprintf("/maintainers/%d", m.ID))

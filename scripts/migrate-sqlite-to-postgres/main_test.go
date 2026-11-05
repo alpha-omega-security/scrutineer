@@ -143,6 +143,11 @@ func TestPostgresMigration(t *testing.T) {
 		t.Errorf("chat content/timestamp changed: %+v", message)
 	}
 	assertMigratedDisclosureSubmission(t, dst, wantTime)
+	maintainers, err := db.RepositoryMaintainers(dst, 1)
+	must(t, err)
+	if len(maintainers) != 1 || maintainers[0].Status != db.MaintainerInactive {
+		t.Fatalf("migrated maintainer activity = %+v, want inactive", maintainers)
+	}
 	var badConstraints int64
 	must(t, dst.Raw("SELECT count(*) FROM pg_constraint WHERE contype = 'f' AND connamespace = current_schema()::regnamespace AND (condeferrable OR NOT convalidated)").Scan(&badConstraints).Error)
 	if badConstraints != 0 {
@@ -228,6 +233,7 @@ func seedHistory(t *testing.T, src *gorm.DB) {
 		"finding_id": 1, "report": "has\x00nul", "log": "bad\xfftext",
 	}).Error)
 	for _, row := range []any{
+		&db.MaintainerActivity{RepositoryID: 1, MaintainerID: 1, Status: db.MaintainerInactive},
 		&db.ExpectedFinding{RepositoryID: 1, File: "app.rb", CWE: "CWE-89"},
 		&db.FindingNote{FindingID: 1, Body: "analyst note"},
 		&db.FindingCommunication{FindingID: 1, Body: "disclosure"},

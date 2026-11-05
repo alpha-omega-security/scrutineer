@@ -1043,23 +1043,23 @@ type reportedMaintainer struct {
 	Evidence string `json:"evidence"`
 }
 
-// applyTo copies the fields this report entry refreshes onto the stored row.
-// An absent or unrecognised field leaves the stored value alone, so a partial
-// report never blanks what an earlier scan established.
+// applyTo fills missing shared profile fields; repository activity is recorded separately.
 func (rm reportedMaintainer) applyTo(m *db.Maintainer) {
-	if rm.Name != "" {
+	if m.Name == "" && rm.Name != "" {
 		m.Name = rm.Name
 	}
-	if validEmail(rm.Email) {
+	if m.Email == "" && validEmail(rm.Email) {
 		m.Email = rm.Email
 	}
-	switch rm.Status {
-	case "active":
-		m.Status = db.MaintainerActive
-	case "inactive":
-		m.Status = db.MaintainerInactive
+	if m.Status == "" || m.Status == db.MaintainerUnknown {
+		switch rm.Status {
+		case "active":
+			m.Status = db.MaintainerActive
+		case "inactive":
+			m.Status = db.MaintainerInactive
+		}
 	}
-	if rm.Evidence != "" {
+	if m.Notes == "" && rm.Evidence != "" {
 		m.Notes = rm.Role + ": " + rm.Evidence
 	}
 }
@@ -1153,6 +1153,11 @@ func (w *Worker) parseMaintainersOutput(scan *db.Scan, report string, emit func(
 			// maintainer from the repository via the Replace below, which is a
 			// larger loss than a stale name or note.
 			w.Log.Warn("save maintainer", "scan", scan.ID, "login", rm.Login, "err", err)
+		}
+		if repoWide {
+			if err := db.RecordMaintainerActivity(w.DB, repo.ID, m.ID, rm.Status); err != nil {
+				w.Log.Warn("record maintainer activity", "scan", scan.ID, "login", rm.Login, "err", err)
+			}
 		}
 		linked = append(linked, m)
 	}
