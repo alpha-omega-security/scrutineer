@@ -1,7 +1,7 @@
 {{template "head" .}}
 
-<div class="flex items-start justify-between gap-4 mb-6">
-  <div>
+<div class="flex flex-wrap items-start justify-between gap-4 mb-6">
+  <div class="min-w-0">
     {{template "crumbs" (crumbs "Repositories" "/" .Repo.Name "")}}
     <h2 class="text-2xl font-semibold mt-1 flex items-center gap-2">
       <i data-lucide="folder-git-2"></i> {{.Repo.Name}}
@@ -18,7 +18,7 @@
     </a>
     {{end}}
   </div>
-  <div class="flex items-center gap-2">
+  <div class="flex flex-wrap items-center justify-end gap-2">
     {{if .Skills}}
     <form method="post" action="/repositories/{{.Repo.ID}}/skill-scan" class="flex items-center gap-2">
       {{if .ScanEgressPolicies}}
@@ -27,7 +27,7 @@
         {{range .ScanEgressPolicies}}<option value="{{.}}">{{.}}</option>{{end}}
       </select>
       {{end}}
-      <input type="number" name="max_cost_usd" min="0" step="0.01" inputmode="decimal" class="input text-xs w-28" placeholder="Cost cap (USD)" aria-label="Cost cap in USD">
+      <input type="number" name="max_cost_usd" min="0" step="0.01" inputmode="decimal" class="input text-xs w-36" placeholder="Cost cap (USD)" aria-label="Cost cap in USD">
       <div class="dropdown-menu">
         <button class="btn-outline" type="button" aria-haspopup="menu" aria-expanded="false"
                 aria-controls="skill-menu">
@@ -47,18 +47,6 @@
       </div>
     </form>
     {{end}}
-    <a href="/repositories/{{.Repo.ID}}/report.md" class="btn-outline" download="{{repoReportFilename .Repo false}}">
-      <i data-lucide="download"></i> Export report
-    </a>
-    <a href="/repositories/{{.Repo.ID}}/report.md?audience=upstream" class="btn-outline" download="{{repoReportFilename .Repo true}}"
-       data-tooltip="Trimmed report for an upstream maintainer: summary, threat model, findings and fixes only — no internal notes, communications, labels, or repo-wide inventory.">
-      <i data-lucide="share-2"></i> Export for upstream
-    </a>
-    <form method="post" action="/repositories/{{.Repo.ID}}/delete"
-          hx-post="/repositories/{{.Repo.ID}}/delete" hx-swap="none"
-          hx-confirm="{{if .ActiveScans}}{{.ActiveScans}} scan(s) on {{.Repo.Name}} are still running or queued and will keep writing to disk until they finish; cancel them first. {{end}}{{if .PausedScans}}{{.PausedScans}} paused scan(s) will also be permanently removed. {{end}}Permanently delete {{.Repo.Name}}? This removes the repository, all its scans and findings, and its cached clone on disk. This cannot be undone.">
-      <button class="btn-destructive" type="submit"><i data-lucide="trash-2"></i> Delete</button>
-    </form>
     <form method="post" action="/repositories/{{.Repo.ID}}/scan"
           hx-post="/repositories/{{.Repo.ID}}/scan" hx-swap="none">
       <button class="btn" type="submit"><i data-lucide="play"></i> New scan</button>
@@ -71,6 +59,29 @@
         <i data-lucide="git-compare-arrows"></i> Diff rescan
       </button>
     </form>
+    <div class="dropdown-menu">
+      <button class="btn-outline" type="button" aria-haspopup="menu" aria-expanded="false"
+              aria-controls="repo-more-menu" aria-label="More actions">
+        More <i data-lucide="chevron-down"></i>
+      </button>
+      <div data-popover aria-hidden="true" data-align="end">
+        <div role="menu" id="repo-more-menu">
+          <a role="menuitem" href="/repositories/{{.Repo.ID}}/report.md" download="{{repoReportFilename .Repo false}}">
+            <i data-lucide="download"></i> Export report
+          </a>
+          <a role="menuitem" href="/repositories/{{.Repo.ID}}/report.md?audience=upstream" download="{{repoReportFilename .Repo true}}"
+             data-tooltip="Trimmed report for an upstream maintainer: summary, threat model, findings and fixes only — no internal notes, communications, labels, or repo-wide inventory." data-side="left">
+            <i data-lucide="share-2"></i> Export for upstream
+          </a>
+          <hr role="separator">
+          <form method="post" action="/repositories/{{.Repo.ID}}/delete"
+                hx-post="/repositories/{{.Repo.ID}}/delete" hx-swap="none"
+                hx-confirm="{{if .ActiveScans}}{{.ActiveScans}} scan(s) on {{.Repo.Name}} are still running or queued and will keep writing to disk until they finish; cancel them first. {{end}}{{if .PausedScans}}{{.PausedScans}} paused scan(s) will also be permanently removed. {{end}}Permanently delete {{.Repo.Name}}? This removes the repository, all its scans and findings, and its cached clone on disk. This cannot be undone.">
+            <button type="submit" role="menuitem" class="text-[var(--destructive)] w-full"><i data-lucide="trash-2"></i> Delete repository</button>
+          </form>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 
