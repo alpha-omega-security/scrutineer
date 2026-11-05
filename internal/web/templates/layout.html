@@ -42,22 +42,38 @@
       </div>
     </header>
     <section>
-      <div role="group">
-        <ul id="nav">
-          {{$nav := .Nav}}
+      {{$nav := .Nav}}
+      <div role="group" aria-labelledby="nav-work">
+        <h3 id="nav-work">Work</h3>
+        <ul>
+          <li><a href="/findings"{{if eq $nav "findings"}} aria-current="page"{{end}}><i data-lucide="bug"></i><span>Findings</span></a></li>
+          <li><a href="/scans"{{if eq $nav "scans"}} aria-current="page"{{end}}><i data-lucide="list-checks"></i><span>Scans</span></a></li>
+          <li><a href="/audit"{{if eq $nav "audit"}} aria-current="page"{{end}}><i data-lucide="clipboard-check"></i><span>Audit</span></a></li>
+        </ul>
+      </div>
+      <div role="group" aria-labelledby="nav-inventory">
+        <h3 id="nav-inventory">Inventory</h3>
+        <ul>
           <li><a href="/"{{if eq $nav "repos"}} aria-current="page"{{end}}><i data-lucide="folder-git-2"></i><span>Repositories</span></a></li>
           <li><a href="/orgs"{{if eq $nav "orgs"}} aria-current="page"{{end}}><i data-lucide="building"></i><span>Organizations</span></a></li>
-          <li><a href="/findings"{{if eq $nav "findings"}} aria-current="page"{{end}}><i data-lucide="bug"></i><span>Findings</span></a></li>
-          <li><a href="/benchmark"{{if eq $nav "benchmark"}} aria-current="page"{{end}}><i data-lucide="gauge"></i><span>Benchmark</span></a></li>
           <li><a href="/packages"{{if eq $nav "packages"}} aria-current="page"{{end}}><i data-lucide="package"></i><span>Packages</span></a></li>
           <li><a href="/sboms"{{if eq $nav "sboms"}} aria-current="page"{{end}}><i data-lucide="file-box"></i><span>SBOMs</span></a></li>
           <li><a href="/advisories"{{if eq $nav "advisories"}} aria-current="page"{{end}}><i data-lucide="shield-alert"></i><span>Advisories</span></a></li>
           <li><a href="/maintainers"{{if eq $nav "maintainers"}} aria-current="page"{{end}}><i data-lucide="users"></i><span>Maintainers</span></a></li>
-          <li><a href="/scans"{{if eq $nav "scans"}} aria-current="page"{{end}}><i data-lucide="list-checks"></i><span>Scans</span></a></li>
-          <li><a href="/audit"{{if eq $nav "audit"}} aria-current="page"{{end}}><i data-lucide="clipboard-check"></i><span>Audit</span></a></li>
-          <li><a href="/skills"{{if eq $nav "skills"}} aria-current="page"{{end}}><i data-lucide="sparkles"></i><span>Skills</span></a></li>
-          <li><a href="/usage"{{if eq $nav "usage"}} aria-current="page"{{end}}><i data-lucide="coins"></i><span>Usage</span></a></li>
+        </ul>
+      </div>
+      <div role="group" aria-labelledby="nav-insights">
+        <h3 id="nav-insights">Insights</h3>
+        <ul>
           <li><a href="/reporting"{{if eq $nav "reporting"}} aria-current="page"{{end}}><i data-lucide="file-chart-column"></i><span>Reporting</span></a></li>
+          <li><a href="/usage"{{if eq $nav "usage"}} aria-current="page"{{end}}><i data-lucide="coins"></i><span>Usage</span></a></li>
+          <li><a href="/benchmark"{{if eq $nav "benchmark"}} aria-current="page"{{end}}><i data-lucide="gauge"></i><span>Benchmark</span></a></li>
+        </ul>
+      </div>
+      <div role="group" aria-labelledby="nav-configuration">
+        <h3 id="nav-configuration">Configuration</h3>
+        <ul>
+          <li><a href="/skills"{{if eq $nav "skills"}} aria-current="page"{{end}}><i data-lucide="sparkles"></i><span>Skills</span></a></li>
         </ul>
       </div>
     </section>
@@ -217,24 +233,24 @@
 {{end}}
 
 {{define "severity-badge"}}
-  {{if or (eq . "Critical") (eq . "CRITICAL")}}<span class="badge-destructive">Critical</span>
-  {{else if or (eq . "High") (eq . "HIGH")}}<span class="badge-destructive">High</span>
-  {{else if or (eq . "Medium") (eq . "MEDIUM") (eq . "MODERATE")}}<span class="badge-primary">Medium</span>
-  {{else if or (eq . "Low") (eq . "LOW")}}<span class="badge-secondary">Low</span>
-  {{else}}<span class="badge-secondary">{{.}}</span>{{end}}
+  {{if or (eq . "Critical") (eq . "CRITICAL")}}<span class="badge-outline sev-critical">Critical</span>
+  {{else if or (eq . "High") (eq . "HIGH")}}<span class="badge-outline sev-high">High</span>
+  {{else if or (eq . "Medium") (eq . "MEDIUM") (eq . "MODERATE")}}<span class="badge-outline sev-medium">Medium</span>
+  {{else if or (eq . "Low") (eq . "LOW")}}<span class="badge-outline sev-low">Low</span>
+  {{else}}<span class="badge-outline sev-low">{{.}}</span>{{end}}
 {{end}}
 
 {{define "finding-status"}}
   {{if eq . "new"}}<span class="badge-outline">new</span>
   {{else if eq . "enriched"}}<span class="badge-outline">enriched</span>
-  {{else if eq . "triaged"}}<span class="badge-primary">triaged</span>
-  {{else if eq . "ready"}}<span class="badge-primary">ready</span>
-  {{else if eq . "reported"}}<span class="badge-primary">reported</span>
-  {{else if eq . "acknowledged"}}<span class="badge-primary">acknowledged</span>
-  {{else if eq . "fixed"}}<span class="badge-secondary">fixed</span>
-  {{else if eq . "published"}}<span class="badge-secondary">published</span>
-  {{else if eq . "rejected"}}<span class="badge-outline">rejected</span>
-  {{else if eq . "duplicate"}}<span class="badge-outline">duplicate</span>
+  {{else if eq . "triaged"}}<span class="badge-outline status-active">triaged</span>
+  {{else if eq . "ready"}}<span class="badge-outline status-active">ready</span>
+  {{else if eq . "reported"}}<span class="badge-outline status-active">reported</span>
+  {{else if eq . "acknowledged"}}<span class="badge-outline status-active">acknowledged</span>
+  {{else if eq . "fixed"}}<span class="badge-outline status-active"><i data-lucide="check"></i> fixed</span>
+  {{else if eq . "published"}}<span class="badge-outline status-active"><i data-lucide="check"></i> published</span>
+  {{else if eq . "rejected"}}<span class="badge-outline text-muted-foreground">rejected</span>
+  {{else if eq . "duplicate"}}<span class="badge-outline text-muted-foreground">duplicate</span>
   {{else}}<span class="badge-outline">{{.}}</span>{{end}}
 {{end}}
 
@@ -340,7 +356,7 @@
   {{else if eq . "cancelled"}}<span class="badge-outline"><i data-lucide="circle-slash"></i> cancelled</span>
   {{else if eq . "skipped"}}<span class="badge-outline"><i data-lucide="skip-forward"></i> skipped</span>
   {{else if eq . "paused"}}<span class="badge-outline"><i data-lucide="pause"></i> paused</span>
-  {{else if eq . "running"}}<span class="badge-primary"><i data-lucide="loader-circle" class="animate-spin"></i> running</span>
+  {{else if eq . "running"}}<span class="badge-outline status-active"><i data-lucide="loader-circle" class="animate-spin"></i> running</span>
   {{else if eq . "active"}}<span class="badge-secondary"><i data-lucide="circle-check"></i> active</span>
   {{else if eq . "inactive"}}<span class="badge-outline"><i data-lucide="moon"></i> inactive</span>
   {{else}}<span class="badge-outline"><i data-lucide="clock"></i> {{.}}</span>{{end}}

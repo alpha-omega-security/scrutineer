@@ -3,8 +3,8 @@
 {{$s := printf "%s" .Status}}
 
 <div class="card mb-6">
-  <section class="flex items-start gap-4">
-    <div class="flex-1">
+  <section class="flex flex-wrap items-start gap-x-4 gap-y-3">
+    <div class="grow basis-72">
       {{if eq $s "new"}}
         <p class="text-sm mb-1 font-medium">Awaiting verification</p>
         <p class="text-sm text-muted-foreground">Run verification starts a model scan to check this finding and uses tokens. If you've already verified it independently, mark it triaged to save your review decision.</p>
@@ -88,7 +88,7 @@
     </div>
 
     <form method="post" action="/findings/{{$id}}/status" hx-swap="none"
-          class="flex items-center gap-2 shrink-0">
+          class="flex flex-wrap items-center gap-2">
       {{if eq $s "new"}}
         <button type="submit" name="status" value="triaged" class="btn-outline"
                 hx-post="/findings/{{$id}}/status">

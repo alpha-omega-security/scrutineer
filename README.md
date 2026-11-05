@@ -217,20 +217,20 @@ SARIF 2.1.0, CSV, markdown, and a minimal JSON shape are all accepted; the forma
 
 ## Navigating the UI
 
-Every index page has a search box plus filter and sort dropdowns; the specifics vary by page. The sidebar sections:
+Every index page has a search box plus filter and sort dropdowns; the specifics vary by page. The sidebar groups its pages under Work, Inventory, Insights and Configuration, in this order:
 
-- **Repositories** -- your scanned repos with language, last-scan status, and finding counts. Click into one for tabs covering Summary, Findings, Threat Model, Compliance, Packages, Dependencies, Dependents, Advisories, Maintainers, Data, Scans, and Chat, plus an "Export report" button for a markdown rollup.
-- **Organizations** -- repos, findings, and maintainers grouped by owning org, with per-org markdown exports.
 - **Findings** -- every vulnerability across all repos. A finding page shows the six-step analysis (trace, boundary, validation, prior art, reach, rating), scoring fields, notes, communications log, references, labels, and a change history.
+- **Scans** -- every scan that has run. Queued scans can be paused/resumed, running or queued scans can be cancelled and failed ones retried.
+- **Audit** -- random sample of recent low and false-positive verdicts for spot-checking the cheap-classifier output. Each row records the analyst's agreement-or-overturn verdict, and a small dashboard shows the running overturn rate.
+- **Repositories** -- your scanned repos with language, last-scan status, and finding counts. Click into one for tabs covering Summary, Findings, Threat Model, Compliance, Packages, Dependencies, Dependents, Advisories, Maintainers, Data, Scans, and Chat, plus "Export report" in the header's More menu for a markdown rollup.
+- **Organizations** -- repos, findings, and maintainers grouped by owning org, with per-org markdown exports.
 - **Packages** -- registry entries discovered across all repos.
+- **SBOMs** -- uploaded CycloneDX/SPDX documents. Each component is resolved to a source repository and can be imported for scanning.
 - **Advisories** -- known CVEs and security advisories pulled for any scanned package.
 - **Maintainers** -- people identified as maintainers, with their linked repos and findings.
-- **SBOMs** -- uploaded CycloneDX/SPDX documents. Each component is resolved to a source repository and can be imported for scanning.
-- **Audit** -- random sample of recent low and false-positive verdicts for spot-checking the cheap-classifier output. Each row records the analyst's agreement-or-overturn verdict, and a small dashboard shows the running overturn rate.
-- **Scans** -- every scan that has run. Queued scans can be paused/resumed, running or queued scans can be cancelled and failed ones retried.
-- **Skills** -- installed skills from disk and from the UI; view, edit, or run any of them.
-- **Usage** -- token and cost totals across all scans, broken down by skill.
 - **Reporting** -- corpus-wide activity over a rolling window (24 hours, 7 days, 30 days, or all time) with a minimum-severity floor on findings: repositories scanned, runs started and completed, findings, a per-day breakdown, and the per-scan cost and token averages beside their all-time figures. Downloadable as CSV or JSON; JSON exports pulled from several discrete scanner instances can be combined into one corpus-wide report with `go run ./scripts/merge-reports a/report.json b/report.json`; see [docs/reporting.md](docs/reporting.md).
+- **Usage** -- token and cost totals across all scans, broken down by skill.
+- **Skills** -- installed skills from disk and from the UI; view, edit, or run any of them.
 - **Settings** -- theme, colour scheme, model tiers, runner concurrency (restarts the runner to apply, cancelling in-flight scans) and default turn cap (applied to the next scan), plus system stats (record counts, DB size, paths). The chat pool is sized at half the concurrency the server started with and is not resized here, so a change only takes effect for chat after a restart.
 
 ## Finding workflow

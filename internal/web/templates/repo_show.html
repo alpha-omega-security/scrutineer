@@ -1,7 +1,7 @@
 {{template "head" .}}
 
-<div class="flex items-start justify-between gap-4 mb-6">
-  <div>
+<div class="flex flex-wrap items-start justify-between gap-4 mb-6">
+  <div class="min-w-0">
     {{template "crumbs" (crumbs "Repositories" "/" .Repo.Name "")}}
     <h2 class="text-2xl font-semibold mt-1 flex items-center gap-2">
       <i data-lucide="folder-git-2"></i> {{.Repo.Name}}
@@ -18,7 +18,7 @@
     </a>
     {{end}}
   </div>
-  <div class="flex items-center gap-2">
+  <div class="flex flex-wrap items-center justify-end gap-2">
     {{if .Skills}}
     <form method="post" action="/repositories/{{.Repo.ID}}/skill-scan" class="flex items-center gap-2">
       {{if .ScanEgressPolicies}}
@@ -27,7 +27,7 @@
         {{range .ScanEgressPolicies}}<option value="{{.}}">{{.}}</option>{{end}}
       </select>
       {{end}}
-      <input type="number" name="max_cost_usd" min="0" step="0.01" inputmode="decimal" class="input text-xs w-28" placeholder="Cost cap (USD)" aria-label="Cost cap in USD">
+      <input type="number" name="max_cost_usd" min="0" step="0.01" inputmode="decimal" class="input text-xs w-36" placeholder="Cost cap (USD)" aria-label="Cost cap in USD">
       <div class="dropdown-menu">
         <button class="btn-outline" type="button" aria-haspopup="menu" aria-expanded="false"
                 aria-controls="skill-menu">
@@ -47,18 +47,6 @@
       </div>
     </form>
     {{end}}
-    <a href="/repositories/{{.Repo.ID}}/report.md" class="btn-outline" download="{{repoReportFilename .Repo false}}">
-      <i data-lucide="download"></i> Export report
-    </a>
-    <a href="/repositories/{{.Repo.ID}}/report.md?audience=upstream" class="btn-outline" download="{{repoReportFilename .Repo true}}"
-       data-tooltip="Trimmed report for an upstream maintainer: summary, threat model, findings and fixes only — no internal notes, communications, labels, or repo-wide inventory.">
-      <i data-lucide="share-2"></i> Export for upstream
-    </a>
-    <form method="post" action="/repositories/{{.Repo.ID}}/delete"
-          hx-post="/repositories/{{.Repo.ID}}/delete" hx-swap="none"
-          hx-confirm="{{if .ActiveScans}}{{.ActiveScans}} scan(s) on {{.Repo.Name}} are still running or queued and will keep writing to disk until they finish; cancel them first. {{end}}{{if .PausedScans}}{{.PausedScans}} paused scan(s) will also be permanently removed. {{end}}Permanently delete {{.Repo.Name}}? This removes the repository, all its scans and findings, and its cached clone on disk. This cannot be undone.">
-      <button class="btn-destructive" type="submit"><i data-lucide="trash-2"></i> Delete</button>
-    </form>
     <form method="post" action="/repositories/{{.Repo.ID}}/scan"
           hx-post="/repositories/{{.Repo.ID}}/scan" hx-swap="none">
       <button class="btn" type="submit"><i data-lucide="play"></i> New scan</button>
@@ -71,6 +59,29 @@
         <i data-lucide="git-compare-arrows"></i> Diff rescan
       </button>
     </form>
+    <div class="dropdown-menu">
+      <button class="btn-outline" type="button" aria-haspopup="menu" aria-expanded="false"
+              aria-controls="repo-more-menu" aria-label="More actions">
+        More <i data-lucide="chevron-down"></i>
+      </button>
+      <div data-popover aria-hidden="true" data-align="end">
+        <div role="menu" id="repo-more-menu">
+          <a role="menuitem" href="/repositories/{{.Repo.ID}}/report.md" download="{{repoReportFilename .Repo false}}">
+            <i data-lucide="download"></i> Export report
+          </a>
+          <a role="menuitem" href="/repositories/{{.Repo.ID}}/report.md?audience=upstream" download="{{repoReportFilename .Repo true}}"
+             data-tooltip="Trimmed report for an upstream maintainer: summary, threat model, findings and fixes only — no internal notes, communications, labels, or repo-wide inventory." data-side="left">
+            <i data-lucide="share-2"></i> Export for upstream
+          </a>
+          <hr role="separator">
+          <form method="post" action="/repositories/{{.Repo.ID}}/delete"
+                hx-post="/repositories/{{.Repo.ID}}/delete" hx-swap="none"
+                hx-confirm="{{if .ActiveScans}}{{.ActiveScans}} scan(s) on {{.Repo.Name}} are still running or queued and will keep writing to disk until they finish; cancel them first. {{end}}{{if .PausedScans}}{{.PausedScans}} paused scan(s) will also be permanently removed. {{end}}Permanently delete {{.Repo.Name}}? This removes the repository, all its scans and findings, and its cached clone on disk. This cannot be undone.">
+            <button type="submit" role="menuitem" class="text-[var(--destructive)] w-full"><i data-lucide="trash-2"></i> Delete repository</button>
+          </form>
+        </div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -185,7 +196,7 @@
           <input class="input text-xs" type="text" name="disclosure_channel"
                  value="{{.Repo.DisclosureChannel}}"
                  placeholder="security@example.org, https://…/security/advisories, …">
-          <button class="btn-sm" type="submit">Save</button>
+          <button class="btn-sm-outline" type="submit">Save</button>
         </form>
         <p class="text-xs text-muted-foreground mt-1">Auto-filled by the maintainers skill from <code>SECURITY.md</code>, registry owner data, or CODEOWNERS. Edit freely.</p>
       </details>
@@ -215,7 +226,7 @@
             <input class="input text-xs" type="text" name="reason"
                    value="{{.Repo.FederationOptOutReason}}"
                    placeholder="reason (optional, published with the opt-out)">
-            <button class="btn-sm" type="submit">Save</button>
+            <button class="btn-sm-outline" type="submit">Save</button>
           </div>
         </form>
         <p class="text-xs text-muted-foreground mt-1">Cancels the scans queued, running and paused on this repository, then refuses every new one: a manual run, a scheduled one, and any automatic follow-up. Published on the public interchange feed, if this instance is configured with one, so other federated instances honour it too, and set here automatically when a peer feed carries an opt-out for this repository. See <code>docs/interchange.md</code>.</p>
@@ -250,7 +261,7 @@
           </select>
           <input class="input text-xs" type="text" name="scan_schedule_cron"
                  value="{{if $isCron}}{{$sched}}{{end}}" placeholder="cron, e.g. 0 3 * * 1 (used when Custom cron is selected)">
-          <button class="btn-sm" type="submit">Save</button>
+          <button class="btn-sm-outline" type="submit">Save</button>
           <label class="text-xs text-muted-foreground" for="upstream_url">Upstream</label>
           <input class="input text-xs col-span-2" id="upstream_url" type="text" name="upstream_url"
                  value="{{.Repo.UpstreamURL}}" placeholder="https://... (staging copies only: synced before each scheduled check)">
@@ -532,7 +543,7 @@
             <input class="input" type="text" name="note" placeholder="Why this is a credible migration target">
           </label>
           <div class="md:col-span-2">
-            <button class="btn-sm" type="submit">Save alternative</button>
+            <button class="btn-sm-outline" type="submit">Save alternative</button>
           </div>
         </form>
       </section>
@@ -625,21 +636,21 @@
       <form method="post" action="/repositories/{{.Repo.ID}}/expected" class="form grid grid-cols-1 md:grid-cols-[1fr_8rem_10rem_1fr_auto] gap-2 items-end">
         <label class="grid gap-1">
           <span class="text-xs text-muted-foreground">File</span>
-          <input class="input" name="file" placeholder="src/parser.go" required>
+          <input type="text" class="input" name="file" placeholder="src/parser.go" required>
         </label>
         <label class="grid gap-1">
           <span class="text-xs text-muted-foreground">CWE</span>
-          <input class="input" name="cwe" placeholder="CWE-79" required>
+          <input type="text" class="input" name="cwe" placeholder="CWE-79" required>
         </label>
         <label class="grid gap-1">
           <span class="text-xs text-muted-foreground">CVE</span>
-          <input class="input" name="cve" placeholder="CVE-2026-0001">
+          <input type="text" class="input" name="cve" placeholder="CVE-2026-0001">
         </label>
         <label class="grid gap-1">
           <span class="text-xs text-muted-foreground">Note</span>
-          <input class="input" name="note" placeholder="Known vulnerable sink">
+          <input type="text" class="input" name="note" placeholder="Known vulnerable sink">
         </label>
-        <button type="submit" class="btn"><i data-lucide="plus"></i> Add</button>
+        <button type="submit" class="btn-outline"><i data-lucide="plus"></i> Add</button>
       </form>
       {{if .ExpectedFindings}}
         <table class="table w-full">

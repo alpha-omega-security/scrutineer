@@ -3,8 +3,7 @@
 
 <div class="flex items-start justify-between gap-4 mb-6">
   <div>
-    {{template "crumbs" (crumbs "Reporting" "")}}
-    <h2 class="text-2xl font-semibold mt-1 flex items-center gap-2">
+    <h2 class="text-2xl font-semibold flex items-center gap-2">
       <i data-lucide="file-chart-column"></i> Reporting
     </h2>
   </div>
@@ -32,7 +31,7 @@
     <div class="flex items-center gap-1">
       {{range $.Intervals}}
         <a href="/reporting?interval={{.Key}}{{if $r.MinSeverity}}&amp;severity={{$r.MinSeverity}}{{end}}"
-           class="{{if eq $r.Interval.Key .Key}}btn-outline{{else}}btn-sm-ghost{{end}}">{{.Label}}</a>
+           class="{{if eq $r.Interval.Key .Key}}btn-sm-outline{{else}}btn-sm-ghost{{end}}">{{.Label}}</a>
       {{end}}
     </div>
   </div>
@@ -40,10 +39,10 @@
     <span class="text-sm font-medium text-muted-foreground">Minimum severity</span>
     <div class="flex items-center gap-1">
       <a href="/reporting?interval={{$r.Interval.Key}}"
-         class="{{if not $r.MinSeverity}}btn-outline{{else}}btn-sm-ghost{{end}}">All</a>
+         class="{{if not $r.MinSeverity}}btn-sm-outline{{else}}btn-sm-ghost{{end}}">All</a>
       {{range $.Severities}}
         <a href="/reporting?interval={{$r.Interval.Key}}&amp;severity={{.}}"
-           class="{{if eq $r.MinSeverity .}}btn-outline{{else}}btn-sm-ghost{{end}}">{{.}}</a>
+           class="{{if eq $r.MinSeverity .}}btn-sm-outline{{else}}btn-sm-ghost{{end}}">{{.}}</a>
       {{end}}
     </div>
   </div>
@@ -74,7 +73,7 @@
   </div>
 </div>
 
-<h3 class="text-lg font-semibold mb-1">Cost averages</h3>
+<h3 class="text-base font-semibold mb-1">Cost averages</h3>
 <p class="text-sm text-muted-foreground mb-3">
   Averaged per completed scan with a recorded cost. Cost is API list-price equivalent,
   not what a subscription was billed. Input excludes cached reads, so total tokens is
@@ -137,7 +136,7 @@
   </div>
 {{end}}
 
-<h3 class="text-lg font-semibold mb-1">By model</h3>
+<h3 class="text-base font-semibold mb-1">By model</h3>
 <p class="text-sm text-muted-foreground mb-3">
   The period's activity sliced by model. Scan runs and cost group by the model each
   run used; findings group by the model that first produced them, so findings imported
@@ -177,7 +176,7 @@
   </div>
 {{end}}
 
-<h3 class="text-lg font-semibold mb-1">Daily breakdown</h3>
+<h3 class="text-base font-semibold mb-1">Daily breakdown</h3>
 <p class="text-sm text-muted-foreground mb-3">
   Totals per day. The CSV and JSON exports add each day's per-scan averages, which are
   taken over that day's completed and costed runs rather than over the Cost column here.

@@ -40,7 +40,7 @@ func TestSubprojectShow(t *testing.T) {
 		t.Fatalf("status %d, body=%s", w.Code, w.Body)
 	}
 	body := w.Body.String()
-	for _, want := range []string{"activesupport", "XSS in ActiveSupport", "repo@example.org", "ruby-gem", "rubygems"} {
+	for _, want := range []string{"activesupport", "XSS in ActiveSupport", "repo@example.org", "ruby-gem", "rubygems", " Disclosure channel</dt>"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("subproject page missing %q", want)
 		}

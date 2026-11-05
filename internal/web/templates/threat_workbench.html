@@ -39,7 +39,7 @@
 </form>
 
 {{if $wb.Runs}}
-<h3 class="font-medium mb-2">Recent deep-dive runs</h3>
+<h3 class="text-base font-semibold mb-2">Recent deep-dive runs</h3>
 <table class="table w-full mb-6">
   <thead><tr>
     <th class="w-16">#</th><th class="w-24">Status</th><th class="w-24">Findings</th>
@@ -62,7 +62,7 @@
 {{end}}
 
 {{if ge (len $wb.Runs) 2}}
-<h3 class="font-medium mb-2">
+<h3 class="text-base font-semibold mb-2">
   Diff
   <span class="text-xs text-muted-foreground font-normal">
     scan <a class="hover:underline" href="/scans/{{(index $wb.Runs 1).ID}}">#{{(index $wb.Runs 1).ID}}</a>
@@ -81,7 +81,7 @@
 {{else}}
 
 {{with $wb.Diff.NowReported}}
-  <h4 class="text-sm font-medium mt-4 mb-1 flex items-center gap-2">
+  <h4 class="text-sm font-semibold mt-4 mb-1 flex items-center gap-2">
     <i data-lucide="alert-triangle"></i> Now reported <span class="badge-destructive">{{len .}}</span>
   </h4>
   <p class="text-xs text-muted-foreground mb-2">Sinks that were ruled out previously but are findings under the current model.</p>
@@ -89,7 +89,7 @@
 {{end}}
 
 {{with $wb.Diff.NowSuppressed}}
-  <h4 class="text-sm font-medium mt-4 mb-1 flex items-center gap-2">
+  <h4 class="text-sm font-semibold mt-4 mb-1 flex items-center gap-2">
     <i data-lucide="shield-check"></i> Now suppressed <span class="badge-outline">{{len .}}</span>
   </h4>
   <p class="text-xs text-muted-foreground mb-2">Sinks that were findings previously but are ruled out under the current model.</p>
@@ -97,7 +97,7 @@
 {{end}}
 
 {{with $wb.Diff.ReasonChanged}}
-  <h4 class="text-sm font-medium mt-4 mb-1 flex items-center gap-2">
+  <h4 class="text-sm font-semibold mt-4 mb-1 flex items-center gap-2">
     <i data-lucide="diff"></i> Reason changed <span class="badge-outline">{{len .}}</span>
   </h4>
   <p class="text-xs text-muted-foreground mb-2">Ruled out in both runs but with a different disposition label.</p>

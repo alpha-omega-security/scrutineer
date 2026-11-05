@@ -598,3 +598,62 @@ func TestRepoShow_tabIDsAreUnique(t *testing.T) {
 		seen[m[1]] = true
 	}
 }
+
+// repoHeader splits the repository page header into the More menu and what
+// sits beside it.
+func repoHeader(t *testing.T, body string) (actions, more string) {
+	t.Helper()
+	actions, more, found := strings.Cut(body, `id="repo-more-menu"`)
+	if !found {
+		t.Fatal("no More menu in the header")
+	}
+	more, _, _ = strings.Cut(more, "</div>")
+	return actions, more
+}
+
+// TestRepoShow_headerGroupsSecondaryActions pins the scan actions beside the
+// More menu and the exports and delete inside it, delete rendered once.
+func TestRepoShow_headerGroupsSecondaryActions(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/r", Name: "r"}
+	s.DB.Create(&repo)
+	s.DB.Create(&db.Skill{Name: "header-skill", Active: true})
+
+	body := getRepoPage(t, s, repo.ID)
+	actions, more := repoHeader(t, body)
+	for _, want := range []string{"New scan</button>", "Diff rescan", "Run skill"} {
+		if !strings.Contains(actions, want) {
+			t.Errorf("header is missing %q beside the More menu", want)
+		}
+	}
+	for _, want := range []string{"Export report", "Export for upstream", fmt.Sprintf(`action="/repositories/%d/delete"`, repo.ID), "Delete repository"} {
+		if !strings.Contains(more, want) {
+			t.Errorf("More menu is missing %q", want)
+		}
+	}
+	if strings.Count(body, fmt.Sprintf(`action="/repositories/%d/delete"`, repo.ID)) != 1 {
+		t.Error("delete is rendered outside the More menu as well")
+	}
+}
+
+// TestRepoShow_headerMoreMenuWithoutSkills pins the More menu on a page with
+// no active skill, where the Run skill form is absent.
+func TestRepoShow_headerMoreMenuWithoutSkills(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/r", Name: "r"}
+	s.DB.Create(&repo)
+
+	body := getRepoPage(t, s, repo.ID)
+	if strings.Contains(body, fmt.Sprintf(`action="/repositories/%d/skill-scan"`, repo.ID)) {
+		t.Error("Run skill form rendered with no active skill")
+	}
+	actions, more := repoHeader(t, body)
+	if !strings.Contains(actions, "New scan</button>") || !strings.Contains(actions, "Diff rescan") {
+		t.Error("header is missing its scan actions without skills")
+	}
+	if !strings.Contains(more, "Export report") || !strings.Contains(more, "Delete repository") {
+		t.Error("More menu is missing its actions without skills")
+	}
+}

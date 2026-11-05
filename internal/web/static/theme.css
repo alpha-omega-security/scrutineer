@@ -471,6 +471,14 @@ pre.skill-src code { background: none; padding: 0; }
 }
 .alert-warning > svg { color: oklch(0.66 0.15 60); }
 
+/* ── sidebar groups ── */
+/* Tighter than basecoat's defaults so the four labelled groups and their thirteen
+   links stay visible in a 900px-tall window. */
+.sidebar nav > section > [role=group] { padding-block: calc(var(--spacing) * 0.5); }
+.sidebar nav > section h3 { height: calc(var(--spacing) * 6); }
+.sidebar nav > section ul { gap: calc(var(--spacing) * 0.5); }
+.sidebar nav > section ul li > a:not([data-size]) { height: calc(var(--spacing) * 7); }
+
 /* ── copy-to-clipboard button ── */
 /* Holds two stacked lucide icons; app.js sets data-copied for ~1s after a copy,
    which swaps the clipboard glyph for a green check as transient confirmation. */
@@ -488,3 +496,15 @@ pre.skill-src code { background: none; padding: 0; }
   }
 }
 
+/* Severity keeps the same hues in every theme so Critical, High, Medium and
+   Low read the same whichever palette is picked. */
+.sev-critical { background: oklch(0.55 0.21 27); color: oklch(0.99 0 0); border-color: transparent; }
+.sev-high { background: oklch(0.95 0.04 27); color: oklch(0.47 0.17 27); border-color: oklch(0.86 0.08 27); }
+.sev-medium { background: oklch(0.96 0.05 85); color: oklch(0.48 0.11 70); border-color: oklch(0.87 0.09 80); }
+.sev-low { color: var(--muted-foreground); }
+.dark .sev-high { background: oklch(0.3 0.07 27); color: oklch(0.84 0.1 27); border-color: oklch(0.42 0.1 27); }
+.dark .sev-medium { background: oklch(0.31 0.05 80); color: oklch(0.86 0.1 85); border-color: oklch(0.44 0.08 80); }
+
+/* A status past intake is filled but quiet, so severity and the primary
+   action stay the loudest things on the row. */
+.status-active { background: color-mix(in oklch, var(--foreground) 10%, transparent); color: var(--foreground); border-color: transparent; }

@@ -262,6 +262,10 @@ type Config struct {
 // Codex groups settings that apply only to the Codex backend.
 type Codex struct {
 	AuthFile string `yaml:"auth_file"`
+	// CyberAccessProgram selects the Responses API access_programs.cyber
+	// value (standard, daybreak_blue, daybreak_red) via codex exec
+	// --cyber-access-program. Empty leaves Codex's server default.
+	CyberAccessProgram string `yaml:"cyber_access_program"`
 }
 
 // Opencode groups settings that apply only to the OpenCode backend.
