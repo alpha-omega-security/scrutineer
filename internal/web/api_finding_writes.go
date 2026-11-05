@@ -18,6 +18,13 @@ import (
 // labels, and history remain repository-scoped. Browser form edits use
 // separate routes.
 
+// scanWriteDeniedFields lists finding fields a scan-token PATCH may not
+// write. suggested_fix and its base commit are set only by the host-side
+// patch_gate after the applicability check and recorded as an immutable
+// RemediationAttempt; a scan that could set them directly would plant its
+// own patch for findingPatchDownload and the bundle's patch.diff to export.
+var scanWriteDeniedFields = []string{"suggested_fix", "suggested_fix_commit"}
+
 func (s *Server) apiPatchFinding(w http.ResponseWriter, r *http.Request) {
 	id, _ := strconv.Atoi(r.PathValue("id"))
 	repoID, ok := s.findingRepoID(uint(id))
@@ -41,6 +48,13 @@ func (s *Server) apiPatchFinding(w http.ResponseWriter, r *http.Request) {
 		case db.FindingRejected, db.FindingDuplicate:
 			writeAPIError(w, http.StatusForbidden,
 				"scan tokens may not set finding status to rejected or duplicate")
+			return
+		}
+	}
+	for _, field := range scanWriteDeniedFields {
+		if _, has := body.Fields[field]; has {
+			writeAPIError(w, http.StatusForbidden,
+				"scan tokens may not set "+field+"; the host applicability gate owns it")
 			return
 		}
 	}
