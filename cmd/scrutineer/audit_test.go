@@ -104,6 +104,74 @@ func fakeSetup(r worker.SkillRunner) runnerSetup {
 	}
 }
 
+func TestAuditConfiguredMaxTier(t *testing.T) {
+	h := newAuditHarness(t)
+	saved := web.Models
+	t.Cleanup(func() { web.Models = saved })
+	src, _ := auditSource(t)
+	outDir := filepath.Join(t.TempDir(), "out")
+	configPath := filepath.Join(t.TempDir(), "scrutineer.yaml")
+	if err := os.WriteFile(configPath, []byte("default_model: claude-opus-4-8\nmodels:\n  - name: Mythos\n    id: claude-mythos-preview\n    tier: max\n  - name: Opus\n    id: claude-opus-4-8\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var apiBase string
+	models := make(chan string, 1)
+	runner := auditFakeRunner{behave: func(ctx context.Context, sj worker.SkillJob) (worker.SkillResult, error) {
+		if sj.Name == "investigate" {
+			models <- sj.Model
+		}
+		if sj.Name != "triage" {
+			return worker.SkillResult{Report: "{}"}, nil
+		}
+		gdb := h.db().db
+		if _, ok := db.GetSetting(gdb, db.SettingModelTierMax); ok {
+			return worker.SkillResult{}, errors.New("unexpected database max-tier setting")
+		}
+		var skill db.Skill
+		if err := gdb.Where("name = ? AND active = ?", "investigate", true).First(&skill).Error; err != nil || skill.Model != web.ModelTierMax {
+			return worker.SkillResult{}, fmt.Errorf("investigate model=%q error=%v, want max tier", skill.Model, err)
+		}
+		var scan db.Scan
+		if err := gdb.First(&scan, sj.ScanID).Error; err != nil {
+			return worker.SkillResult{}, err
+		}
+		url := fmt.Sprintf("%s/repositories/%d/skills/investigate/run", apiBase, sj.Repo.ID)
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
+		if err != nil {
+			return worker.SkillResult{}, err
+		}
+		req.Header.Set("Authorization", "Bearer "+scan.APIToken)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return worker.SkillResult{}, err
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode >= http.StatusBadRequest {
+			return worker.SkillResult{}, fmt.Errorf("queue investigate: HTTP %d", resp.StatusCode)
+		}
+		return worker.SkillResult{Report: "{}"}, nil
+	}}
+	setup := func(f *flags, _ *config.Config, _ *slog.Logger) (worker.SkillRunner, string, error) {
+		apiBase = hostAPIBase(f.addr)
+		return runner, apiBase, nil
+	}
+	args := auditArgs(src, outDir, "-config", configPath)
+	if err := runAuditWith(args, &bytes.Buffer{}, setup); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case model := <-models:
+		if model != "claude-mythos-preview" {
+			t.Fatalf("investigate ran on %q, want claude-mythos-preview", model)
+		}
+	default:
+		t.Fatal("max-tier investigate did not run")
+	}
+	if readManifest(t, outDir).Status != "complete" {
+		t.Fatal("configured audit did not complete")
+	}
+}
+
 func readManifest(t *testing.T, outDir string) auditManifest {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join(outDir, "scrutineer-audit", "audit.json"))
