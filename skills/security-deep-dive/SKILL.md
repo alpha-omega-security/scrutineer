@@ -214,6 +214,8 @@ Write and run those files from `./poc/<finding-id>/`, outside `./src`, using the
 
 Put each file in its own closed Markdown fence whose opening line is `language filename=relative/path`, for example `python filename=probe.py`. Paths are relative to the reproduction directory; use letters, digits, underscores, hyphens, dots and forward slashes, with no spaces, absolute paths, `.` or `..` components, or components ending in a dot. Keep filenames unique, including when compared without case. Reserve `README.md` for the generated bundle instructions. Include a `sh filename=run.sh` block for the exact build/run commands, with paths relative to that directory and any target checkout path supplied explicitly. Put observed output and quoted source excerpts in separate unnamed `text` or `console` fences. Close every fence on its own line; use longer fences if file contents contain backticks. Do not use `--- FILENAME ---` delimiters.
 
+Keep each finding's `validation` to at most 64 code fences in total, including named files, output and source excerpts. This is separate from the 64-file capture limit: 62 file fences plus two output fences fit. Minimise the reproduction and combine output into fewer fences to fit the limit without omitting required files.
+
 For example, this validation text supplies one input file and its driver:
 
 ````markdown

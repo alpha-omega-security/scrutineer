@@ -312,6 +312,8 @@ The worker then runs `claude -p "Use the {name} skill in this workspace"` with t
 
 Finding-scoped verification receives the captured files in `./poc/` beside its fresh `./src/` checkout. `./poc-manifest.json` records the source scan, commit and file checksums. Captures remain until the finding is deleted; verification and disclosure bundles use validation text when no capture exists.
 
+Each finding's `validation` and a verification report's `reproducer` may contain at most 64 code fences in total, including named files, output and source excerpts. This is separate from the 64-file capture limit: 62 file fences plus two output fences fit, while 63 file fences plus two output fences exceed the limit.
+
 ## context.json
 
 ```json
