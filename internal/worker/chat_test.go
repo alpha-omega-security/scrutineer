@@ -97,6 +97,13 @@ func TestChatRunnerFreshTurn(t *testing.T) {
 	if runner.got.AllowedTools != chatAllowedTools {
 		t.Errorf("AllowedTools = %q, want %q", runner.got.AllowedTools, chatAllowedTools)
 	}
+	args := buildClaudeArgs(runner.got, cr.Effort, cr.MaxTurns)
+	if got := flagValue(args, "--permission-mode"); got != "default" {
+		t.Errorf("chat permission mode = %q, want default", got)
+	}
+	if got := flagValue(args, "--allowedTools"); got != chatAllowedTools+",Skill" {
+		t.Errorf("chat preapproved tools = %q, want %q", got, chatAllowedTools+",Skill")
+	}
 	if runner.got.ResumeSessionID != "" {
 		t.Errorf("fresh turn must not resume, got %q", runner.got.ResumeSessionID)
 	}
