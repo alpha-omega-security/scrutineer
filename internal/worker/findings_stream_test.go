@@ -190,6 +190,14 @@ func TestDoSkillCreatorReportRefreshesAfterSiblingStream(t *testing.T) {
 	if got.Title != "Final title" || got.Severity != "Critical" || got.Trace != "Creator final report" {
 		t.Fatalf("creator's final content not persisted: title=%q severity=%q trace=%q", got.Title, got.Severity, got.Trace)
 	}
+	if got.SeenCount != 2 {
+		t.Errorf("SeenCount = %d, want 2 (creator and sibling once each)", got.SeenCount)
+	}
+	var observed int64
+	w.DB.Model(&db.FindingHistory{}).Where("finding_id = ? AND field = ?", findingID, "observed").Count(&observed)
+	if observed != 1 {
+		t.Errorf("observed history rows = %d, want 1 (the sibling's)", observed)
+	}
 }
 
 // A finding streamed with only the required minimal fields and then
