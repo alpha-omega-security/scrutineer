@@ -1800,6 +1800,22 @@ func (w *Worker) parseFindingDedupOutput(scan *db.Scan, report string, emit func
 		emit(Event{Kind: KindText, Text: "finding-dedup: no relations reported"})
 		return nil
 	}
+	if len(result.Duplicates)+len(result.Subsumed)+len(result.Chains) > maxDedupReportGroups {
+		return &SchemaValidationError{Skill: findingDedupSkill, Detail: fmt.Sprintf("report exceeds %d relation groups", maxDedupReportGroups)}
+	}
+	inputIDs := 0
+	for _, g := range result.Duplicates {
+		inputIDs += 1 + len(g.DuplicateIDs)
+	}
+	for _, g := range result.Subsumed {
+		inputIDs += 1 + len(g.SubsumedIDs)
+	}
+	for _, g := range result.Chains {
+		inputIDs += len(g.FindingIDs)
+	}
+	if inputIDs > maxDedupReportIDs {
+		return &SchemaValidationError{Skill: findingDedupSkill, Detail: fmt.Sprintf("report exceeds %d ID references", maxDedupReportIDs)}
+	}
 
 	skipped, promoted := 0, 0
 	marked, err := w.applyDedupHeaded(scan.RepositoryID, dedupHeaderDuplicate, true,
@@ -1865,35 +1881,49 @@ func mapDedupGroups[T any](in []T, f func(T) dedupGroup) []dedupGroup {
 func (w *Worker) applyDedupHeaded(repoID uint, verb string, flipStatus bool, groups []dedupGroup, skipped, promoted *int) (int, error) {
 	n := 0
 	for _, g := range groups {
-		head, ok := w.dedupFinding(repoID, g.HeadID)
-		if !ok || !dedupCandidateOpen(head.Status) {
-			*skipped += len(g.MemberIDs)
+		applied, err := w.applyDedupHeadedGroup(repoID, verb, flipStatus, g, skipped, promoted)
+		n += applied
+		if err != nil {
+			return n, err
+		}
+	}
+	return n, nil
+}
+
+func (w *Worker) applyDedupHeadedGroup(repoID uint, verb string, flipStatus bool, g dedupGroup, skipped, promoted *int) (int, error) {
+	n := 0
+	ids := dedupMemberIDs(g.MemberIDs, skipped)
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	head, ok := w.dedupFinding(repoID, g.HeadID)
+	if !ok || !dedupCandidateOpen(head.Status) {
+		*skipped += len(ids)
+		return 0, nil
+	}
+	for _, id := range ids {
+		if id == 0 || id == head.ID {
+			*skipped++
 			continue
 		}
-		for _, id := range g.MemberIDs {
-			if id == 0 || id == head.ID {
-				*skipped++
-				continue
-			}
-			member, ok := w.dedupFinding(repoID, id)
-			if !ok || !dedupCandidateOpen(member.Status) {
-				*skipped++
-				continue
-			}
-			if flipStatus {
-				took, err := w.markDedupDuplicate(head, member, g)
-				if err != nil {
-					return n, err
-				}
-				if took && promoted != nil {
-					*promoted++
-				}
-			}
-			if err := w.addRelationNote(member.ID, verb, []uint{head.ID}, g.Reason); err != nil {
+		member, ok := w.dedupFinding(repoID, id)
+		if !ok || !dedupCandidateOpen(member.Status) {
+			*skipped++
+			continue
+		}
+		if flipStatus {
+			took, err := w.markDedupDuplicate(head, member, g)
+			if err != nil {
 				return n, err
 			}
-			n++
+			if took && promoted != nil {
+				*promoted++
+			}
 		}
+		if err := w.addRelationNote(member.ID, verb, []uint{head.ID}, g.Reason); err != nil {
+			return n, err
+		}
+		n++
 	}
 	return n, nil
 }
@@ -1918,22 +1948,57 @@ func (w *Worker) markDedupDuplicate(head, member db.Finding, g dedupGroup) (bool
 // nothing to compose with.
 const minChainMembers = 2
 
+// Each chain member gets a note listing every other member.
+const maxChainMembers = 16
+
+const (
+	maxDedupGroupInputIDs = 256
+	maxDedupReportGroups  = 256
+	maxDedupReportIDs     = 4096
+)
+
+func dedupMemberIDs(ids []uint, skipped *int) []uint {
+	if len(ids) > maxDedupGroupInputIDs {
+		*skipped += len(ids)
+		return nil
+	}
+	seen := make(map[uint]bool, len(ids))
+	var distinct []uint
+	for _, id := range ids {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		distinct = append(distinct, id)
+	}
+	return distinct
+}
+
+func (w *Worker) chainMembers(repoID uint, ids []uint, skipped *int) []uint {
+	var members []uint
+	for _, id := range dedupMemberIDs(ids, skipped) {
+		f, ok := w.dedupFinding(repoID, id)
+		if !ok || !dedupCandidateOpen(f.Status) {
+			*skipped++
+			continue
+		}
+		members = append(members, f.ID)
+	}
+	return members
+}
+
 // applyDedupChains handles the chain shape: every member stays open and
 // each gets a note listing the OTHER members so disclose on any one of
 // them can fetch exactly the ids it needs to compose.
 func (w *Worker) applyDedupChains(repoID uint, groups []dedupGroup, skipped *int) (int, error) {
 	n := 0
 	for _, g := range groups {
-		var members []uint
-		for _, id := range g.MemberIDs {
-			f, ok := w.dedupFinding(repoID, id)
-			if !ok || !dedupCandidateOpen(f.Status) {
-				*skipped++
-				continue
-			}
-			members = append(members, f.ID)
-		}
+		members := w.chainMembers(repoID, g.MemberIDs, skipped)
 		if len(members) < minChainMembers {
+			continue
+		}
+		if len(members) > maxChainMembers {
+			*skipped += len(members)
 			continue
 		}
 		for _, m := range members {
