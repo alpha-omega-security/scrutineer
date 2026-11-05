@@ -1559,7 +1559,7 @@ paths:
         '403':
           description: Host header is not localhost
         '413':
-          description: Body exceeds 256 MiB, or the archive exceeds 100000 entries, 2 GiB expanded, or 64 MiB of retained files
+          description: Body exceeds 256 MiB, the archive exceeds 100000 entries, 2 GiB expanded, or 64 MiB of retained files, or its associations would write more than 64 MiB because a file is stored once per associated finding
         '422':
           description: Body is not a gzip tarball, or the repository is unusable
 

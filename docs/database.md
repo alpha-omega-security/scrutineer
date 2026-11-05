@@ -430,7 +430,7 @@ Stores the first successful PoC capture for each finding. Captures survive scan 
 | id | integer PK | |
 | finding_id | integer FK, unique | References `findings.id`; cascade delete. |
 | scan_id | integer | ID of the scan that captured the files; no foreign key. |
-| commit | text | Source commit recorded by the capturing scan. |
+| commit | text | Source commit recorded by the capturing scan, or for an OSS-CRS import the revision of the bug candidate that names the PoV when it carries one. |
 | files | blob | JSON array of files, each with `path`, base64-encoded `data`, `sha256`, and optional `executable`. |
 | created_at | datetime | Capture time. |
 
