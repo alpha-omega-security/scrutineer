@@ -1,11 +1,11 @@
 package worker
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"io"
 	"log/slog"
 	"strings"
 	"testing"
@@ -32,6 +32,7 @@ type subprojectsScanTest struct {
 	db   *gorm.DB
 	scan db.Scan
 	old  db.Subproject
+	logs *bytes.Buffer
 }
 
 func newSubprojectsScanTest(t *testing.T) subprojectsScanTest {
@@ -47,7 +48,7 @@ func newSubprojectsScanTest(t *testing.T) subprojectsScanTest {
 	subprojectCheck(t, gdb.Create(&removed).Error)
 	scan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanQueued, Model: "fake", SkillID: &skill.ID}
 	subprojectCheck(t, gdb.Create(&scan).Error)
-	return subprojectsScanTest{db: gdb, scan: scan, old: old}
+	return subprojectsScanTest{db: gdb, scan: scan, old: old, logs: new(bytes.Buffer)}
 }
 
 func subprojectCheck(t *testing.T, err error) {
@@ -72,7 +73,7 @@ func (s subprojectsScanTest) startWriter(t *testing.T) *sql.Tx {
 func (s subprojectsScanTest) run(t *testing.T, report string) db.Scan {
 	t.Helper()
 	runner := &countingSubprojectsRunner{fakeRunner: fakeRunner{skillRes: SkillResult{Commit: "abc", Report: report}}}
-	w := &Worker{DB: s.db, Log: slog.New(slog.NewTextHandler(io.Discard, nil)), DataDir: t.TempDir(), Runner: runner, PrepareRepoSrc: stubPrepareRepoSrc}
+	w := &Worker{DB: s.db, Log: slog.New(slog.NewJSONHandler(s.logs, nil)), DataDir: t.TempDir(), Runner: runner, PrepareRepoSrc: stubPrepareRepoSrc}
 	body, err := json.Marshal(queue.Payload{ScanID: s.scan.ID})
 	subprojectCheck(t, err)
 	subprojectCheck(t, w.wrap(w.doSkill)(context.Background(), body))
@@ -113,6 +114,7 @@ func TestSubprojectsScanBusy(t *testing.T) {
 	}))
 	persisted := s.run(t, `{"subprojects":[]}`)
 	assertSubprojectRecovery(t, persisted, attempts, lockErr, 5)
+	assertSubprojectTiming(t, s, "failed", 5)
 	if rows := s.rows(t); len(rows) != 0 {
 		t.Fatalf("unpruned rows: %+v", rows)
 	}
@@ -138,6 +140,7 @@ func TestSubprojectsScanSnapshot(t *testing.T) {
 	}))
 	persisted := s.run(t, `{"subprojects":[{"path":"core","name":"new","kind":"go-module"}]}`)
 	assertSubprojectRecovery(t, persisted, attempts, lockErr, 517)
+	assertSubprojectTiming(t, s, "failed", 517)
 	rows := s.rows(t)
 	if len(rows) != 1 || rows[0].ID != s.old.ID || rows[0].Name != "new" || rows[0].DisclosureChannel != s.old.DisclosureChannel {
 		t.Fatalf("updated rows: %+v", rows)
@@ -182,7 +185,7 @@ func TestSubprojectWriteTransactionDeadline(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	attempts := 0
-	err := subprojectWriteTransaction(ctx, gdb, func(tx *gorm.DB) error {
+	err := subprojectWriteTransaction(ctx, gdb, slog.New(slog.DiscardHandler), func(tx *gorm.DB) error {
 		attempts++
 		if err := tx.Create(&db.Subproject{RepositoryID: 1, Path: "rolled-back"}).Error; err != nil {
 			return err
@@ -203,7 +206,7 @@ func TestSubprojectWriteTransactionCancelled(t *testing.T) {
 	gdb := dbtest.Open(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	err := subprojectWriteTransaction(ctx, gdb, func(*gorm.DB) error { t.Fatal("write after cancellation"); return nil })
+	err := subprojectWriteTransaction(ctx, gdb, slog.New(slog.DiscardHandler), func(*gorm.DB) error { t.Fatal("write after cancellation"); return nil })
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("error=%v", err)
 	}
