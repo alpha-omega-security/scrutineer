@@ -1396,6 +1396,36 @@ func TestValidateFlagsCodexAccountAuth(t *testing.T) {
 	}
 }
 
+// TestValidateFlagsCodexCyberAccessProgram checks that startup accepts a known
+// program under codex and rejects it on another backend or with an unknown value.
+func TestValidateFlagsCodexCyberAccessProgram(t *testing.T) {
+	base := func() *flags {
+		return &flags{
+			backend:                 "codex",
+			codexCyberAccessProgram: "daybreak_blue",
+			cloneMode:               "shallow",
+			runtime:                 "docker",
+			selinux:                 "auto",
+			subprojectScope:         "hard",
+		}
+	}
+	if err := validateFlags(base()); err != nil {
+		t.Fatalf("valid cyber access program: %v", err)
+	}
+
+	nonCodex := base()
+	nonCodex.backend = "claude"
+	if err := validateFlags(nonCodex); err == nil || !strings.Contains(err.Error(), "requires backend") {
+		t.Fatalf("non-Codex backend error = %v", err)
+	}
+
+	unknown := base()
+	unknown.codexCyberAccessProgram = "daybreak_green"
+	if err := validateFlags(unknown); err == nil || !strings.Contains(err.Error(), "want one of") {
+		t.Fatalf("unknown program error = %v", err)
+	}
+}
+
 func TestEnforceCodexAccountAuthConcurrency(t *testing.T) {
 	f := &flags{codexAuthFile: "/secure/auth.json", concurrency: 12}
 	enforceCodexAccountAuthConcurrency(f, quietLog())

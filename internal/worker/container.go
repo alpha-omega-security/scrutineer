@@ -109,6 +109,10 @@ type ContainerRunner struct {
 	// Its semaphore serializes Codex execution because the CLI can rotate
 	// auth.json.
 	CodexAccountAuth *CodexAccountAuth
+	// CodexCyberAccessProgram, when set, is passed to every codex exec as
+	// --cyber-access-program (the Responses API's access_programs.cyber).
+	// Ignored by non-codex harnesses.
+	CodexCyberAccessProgram string
 	// ModelProxy, when set, keeps ANTHROPIC_API_KEY on the host. Each RunSkill
 	// issues a scan token the container presents to ModelProxyURL instead.
 	ModelProxy *ModelProxy
@@ -406,7 +410,7 @@ func (d ContainerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Ev
 		emit(e)
 	}
 	run := func(ctx context.Context, j harness.Job, emit func(Event)) error {
-		return d.runContainerOnce(ctx, runBase, append([]string{h.Binary()}, h.Args(j)...), d.containerProcessEnv(provider.Env), emit)
+		return d.runContainerOnce(ctx, runBase, d.agentArgv(j), d.containerProcessEnv(provider.Env), emit)
 	}
 	session, waitErr := harness.RunSession(ctx, run, d.harnessJob(sj), wrappedEmit)
 
@@ -883,8 +887,19 @@ func (d ContainerRunner) harness() Harness { //nolint:ireturn // nil-default acc
 // harnessArgv builds the in-container agent command: the backend binary plus
 // the args its module derives from the resolved job.
 func (d ContainerRunner) harnessArgv(sj SkillJob) []string {
+	return d.agentArgv(d.harnessJob(sj))
+}
+
+// agentArgv is the backend binary plus its args for j, with runner-level
+// additions the harness module does not know about (codex's
+// --cyber-access-program). Every container exec path builds argv here.
+func (d ContainerRunner) agentArgv(j harness.Job) []string {
 	h := d.harness()
-	return append([]string{h.Binary()}, h.Args(d.harnessJob(sj))...)
+	args := h.Args(j)
+	if HarnessName(h) == "codex" {
+		args = withCodexCyberAccessProgram(args, d.CodexCyberAccessProgram)
+	}
+	return append([]string{h.Binary()}, args...)
 }
 
 // harnessJob resolves sj with the runner's defaults.

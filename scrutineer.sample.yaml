@@ -140,8 +140,17 @@
 # scans so Codex can safely rotate its refresh token. CODEX_API_KEY and
 # OPENAI_API_KEY must be unset when this is configured, preventing accidental
 # use of Platform API credits.
+#
+# cyber_access_program selects the cyber access program for Codex requests
+# (the Responses API's access_programs.cyber), passed as
+# `codex exec --cyber-access-program`: standard, daybreak_blue (reduced
+# refusals on mainline models), or daybreak_red (cyber models). Leave unset
+# for the server default. The account and model must already be enrolled;
+# this only selects the program. It is independent of auth_file and also
+# works with CODEX_API_KEY.
 # codex:
 #   auth_file: ~/.config/scrutineer/codex-rubygems/auth.json
+#   cyber_access_program: daybreak_blue
 
 # Provider-scoped OpenCode settings. The key matches the provider prefix in a
 # model id. api_key_env is read from Scrutineer's host environment and converted
