@@ -180,99 +180,101 @@
       </div>
     {{end}}
 
-    <div class="mb-4 max-w-3xl">
-      <h3 class="text-sm font-medium flex items-center gap-2">
-        <i data-lucide="send"></i>
-        Disclosure channel
-      </h3>
-      {{if .Repo.DisclosureChannel}}
-        <p class="text-sm mt-2 whitespace-pre-wrap">{{.Repo.DisclosureChannel}}</p>
-      {{else}}
-        <p class="text-sm mt-2 italic text-muted-foreground">not set</p>
-      {{end}}
-      <details class="mt-2">
-        <summary class="text-xs text-muted-foreground cursor-pointer hover:underline">Edit</summary>
-        <form method="post" action="/repositories/{{.Repo.ID}}/disclosure-channel" class="form grid grid-cols-[1fr_auto] gap-2 mt-2">
-          <input class="input text-xs" type="text" name="disclosure_channel"
-                 value="{{.Repo.DisclosureChannel}}"
-                 placeholder="security@example.org, https://…/security/advisories, …">
-          <button class="btn-sm-outline" type="submit">Save</button>
-        </form>
-        <p class="text-xs text-muted-foreground mt-1">Auto-filled by the maintainers skill from <code>SECURITY.md</code>, registry owner data, or CODEOWNERS. Edit freely.</p>
-      </details>
-    </div>
+    <section class="mb-8">
+      <h3 class="text-base font-semibold flex items-center gap-2 mb-1"><i data-lucide="settings-2"></i> Repository settings</h3>
+      <dl class="divide-y border-y">
+        <div class="grid gap-x-6 gap-y-1 py-3 sm:grid-cols-[13rem_minmax(0,1fr)]">
+          <dt class="text-sm text-muted-foreground font-semibold flex items-center gap-2 self-start"><i data-lucide="send"></i> Disclosure channel</dt>
+          <dd class="text-sm min-w-0">
+          {{if .Repo.DisclosureChannel}}
+            <p class="whitespace-pre-wrap">{{.Repo.DisclosureChannel}}</p>
+          {{else}}
+            <p class="italic text-muted-foreground">not set</p>
+          {{end}}
+          <details class="mt-1">
+            <summary class="text-xs text-muted-foreground cursor-pointer hover:underline">Edit</summary>
+            <form method="post" action="/repositories/{{.Repo.ID}}/disclosure-channel" class="form grid grid-cols-[1fr_auto] gap-2 mt-2">
+              <input class="input text-xs" type="text" name="disclosure_channel"
+                     value="{{.Repo.DisclosureChannel}}"
+                     placeholder="security@example.org, https://…/security/advisories, …">
+              <button class="btn-sm-outline" type="submit">Save</button>
+            </form>
+            <p class="text-xs text-muted-foreground mt-1">Auto-filled by the maintainers skill from <code>SECURITY.md</code>, registry owner data, or CODEOWNERS. Edit freely.</p>
+          </details>
+          </dd>
+        </div>
 
-    <div class="mb-4 max-w-3xl">
-      <h3 class="text-sm font-medium flex items-center gap-2">
-        <i data-lucide="hand"></i>
-        Federation opt-out
-      </h3>
-      {{if .Repo.FederationOptOutAt}}
-        <p class="text-sm mt-2">Requested {{since .Repo.FederationOptOutAt}}. Scans in flight were stopped and new ones are refused, including scheduled runs, and this repository is withdrawn from the interchange feeds.</p>
-        {{if .Repo.FederationOptOutReason}}
-          <p class="text-sm mt-1 whitespace-pre-wrap">{{.Repo.FederationOptOutReason}}</p>
-        {{end}}
-      {{else}}
-        <p class="text-sm mt-2 italic text-muted-foreground">not requested</p>
-      {{end}}
-      <details class="mt-2">
-        <summary class="text-xs text-muted-foreground cursor-pointer hover:underline">Edit</summary>
-        <form method="post" action="/repositories/{{.Repo.ID}}/federation-opt-out" class="form mt-2">
-          <label class="text-xs flex items-center gap-2">
-            <input type="checkbox" name="opt_out" value="1" {{if .Repo.FederationOptOutAt}}checked{{end}}>
-            The maintainer asked not to be scanned or contacted
-          </label>
-          <div class="grid grid-cols-[1fr_auto] gap-2 mt-2">
-            <input class="input text-xs" type="text" name="reason"
-                   value="{{.Repo.FederationOptOutReason}}"
-                   placeholder="reason (optional, published with the opt-out)">
-            <button class="btn-sm-outline" type="submit">Save</button>
-          </div>
-        </form>
-        <p class="text-xs text-muted-foreground mt-1">Cancels the scans queued, running and paused on this repository, then refuses every new one: a manual run, a scheduled one, and any automatic follow-up. Published on the public interchange feed, if this instance is configured with one, so other federated instances honour it too, and set here automatically when a peer feed carries an opt-out for this repository. See <code>docs/interchange.md</code>.</p>
-      </details>
-    </div>
+        <div class="grid gap-x-6 gap-y-1 py-3 sm:grid-cols-[13rem_minmax(0,1fr)]">
+          <dt class="text-sm text-muted-foreground font-semibold flex items-center gap-2 self-start"><i data-lucide="hand"></i> Federation opt-out</dt>
+          <dd class="text-sm min-w-0">
+          {{if .Repo.FederationOptOutAt}}
+            <p>Requested {{since .Repo.FederationOptOutAt}}. Scans in flight were stopped and new ones are refused, including scheduled runs, and this repository is withdrawn from the interchange feeds.</p>
+            {{if .Repo.FederationOptOutReason}}
+              <p class="mt-1 whitespace-pre-wrap">{{.Repo.FederationOptOutReason}}</p>
+            {{end}}
+          {{else}}
+            <p class="italic text-muted-foreground">not requested</p>
+          {{end}}
+          <details class="mt-1">
+            <summary class="text-xs text-muted-foreground cursor-pointer hover:underline">Edit</summary>
+            <form method="post" action="/repositories/{{.Repo.ID}}/federation-opt-out" class="form mt-2">
+              <label class="text-xs flex items-center gap-2">
+                <input type="checkbox" name="opt_out" value="1" {{if .Repo.FederationOptOutAt}}checked{{end}}>
+                The maintainer asked not to be scanned or contacted
+              </label>
+              <div class="grid grid-cols-[1fr_auto] gap-2 mt-2">
+                <input class="input text-xs" type="text" name="reason"
+                       value="{{.Repo.FederationOptOutReason}}"
+                       placeholder="reason (optional, published with the opt-out)">
+                <button class="btn-sm-outline" type="submit">Save</button>
+              </div>
+            </form>
+            <p class="text-xs text-muted-foreground mt-1">Cancels the scans queued, running and paused on this repository, then refuses every new one: a manual run, a scheduled one, and any automatic follow-up. Published on the public interchange feed, if this instance is configured with one, so other federated instances honour it too, and set here automatically when a peer feed carries an opt-out for this repository. See <code>docs/interchange.md</code>.</p>
+          </details>
+          </dd>
+        </div>
 
-    <div class="mb-4 max-w-3xl">
-      <h3 class="text-sm font-medium flex items-center gap-2">
-        <i data-lucide="calendar-clock"></i>
-        Scheduled scans
-      </h3>
-      {{$sched := .Repo.ScanSchedule}}
-      {{$effective := $sched}}{{if not $effective}}{{$effective = .GlobalScanSchedule}}{{end}}
-      {{if and $effective (ne $effective "off")}}
-        <p class="text-sm mt-2">
-          <code>{{$effective}}</code>{{if not $sched}} <span class="text-muted-foreground">(global default)</span>{{end}}
-          {{if .Repo.NextScheduledScanAt}}<span class="text-muted-foreground"> · next run {{until .Repo.NextScheduledScanAt}}</span>{{end}}
-        </p>
-      {{else}}
-        <p class="text-sm mt-2 italic text-muted-foreground">not scheduled</p>
-      {{end}}
-      <details class="mt-2">
-        <summary class="text-xs text-muted-foreground cursor-pointer hover:underline">Edit</summary>
-        {{$isCron := and $sched (ne $sched "off") (ne $sched "daily") (ne $sched "weekly")}}
-        <form method="post" action="/repositories/{{.Repo.ID}}/schedule" class="form grid grid-cols-[auto_1fr_auto] gap-2 mt-2 items-center">
-          <select class="select text-xs" name="scan_schedule">
-            <option value="" {{if not $sched}}selected{{end}}>Global default{{if .GlobalScanSchedule}} ({{.GlobalScanSchedule}}){{else}} (off){{end}}</option>
-            <option value="off" {{if eq $sched "off"}}selected{{end}}>Off</option>
-            <option value="daily" {{if eq $sched "daily"}}selected{{end}}>Daily</option>
-            <option value="weekly" {{if eq $sched "weekly"}}selected{{end}}>Weekly</option>
-            <option value="custom" {{if $isCron}}selected{{end}}>Custom cron</option>
-          </select>
-          <input class="input text-xs" type="text" name="scan_schedule_cron"
-                 value="{{if $isCron}}{{$sched}}{{end}}" placeholder="cron, e.g. 0 3 * * 1 (used when Custom cron is selected)">
-          <button class="btn-sm-outline" type="submit">Save</button>
-          <label class="text-xs text-muted-foreground" for="upstream_url">Upstream</label>
-          <input class="input text-xs col-span-2" id="upstream_url" type="text" name="upstream_url"
-                 value="{{.Repo.UpstreamURL}}" placeholder="https://... (staging copies only: synced before each scheduled check)">
-        </form>
-        <p class="text-xs text-muted-foreground mt-1">Scheduled runs compare the remote HEAD against the last completed scan and enqueue a diff rescan when new commits landed; otherwise they log a skipped entry. Set Upstream when this repository is a pushed staging copy so it is force-synced from upstream first (a mirror push; local-only commits are overwritten).</p>
-      </details>
-    </div>
+        <div class="grid gap-x-6 gap-y-1 py-3 sm:grid-cols-[13rem_minmax(0,1fr)]">
+          <dt class="text-sm text-muted-foreground font-semibold flex items-center gap-2 self-start"><i data-lucide="calendar-clock"></i> Scheduled scans</dt>
+          <dd class="text-sm min-w-0">
+          {{$sched := .Repo.ScanSchedule}}
+          {{$effective := $sched}}{{if not $effective}}{{$effective = .GlobalScanSchedule}}{{end}}
+          {{if and $effective (ne $effective "off")}}
+            <p>
+              <code>{{$effective}}</code>{{if not $sched}} <span class="text-muted-foreground">(global default)</span>{{end}}
+              {{if .Repo.NextScheduledScanAt}}<span class="text-muted-foreground"> · next run {{until .Repo.NextScheduledScanAt}}</span>{{end}}
+            </p>
+          {{else}}
+            <p class="italic text-muted-foreground">not scheduled</p>
+          {{end}}
+          <details class="mt-1">
+            <summary class="text-xs text-muted-foreground cursor-pointer hover:underline">Edit</summary>
+            {{$isCron := and $sched (ne $sched "off") (ne $sched "daily") (ne $sched "weekly")}}
+            <form method="post" action="/repositories/{{.Repo.ID}}/schedule" class="form grid grid-cols-[auto_1fr_auto] gap-2 mt-2 items-center">
+              <select class="select text-xs" name="scan_schedule">
+                <option value="" {{if not $sched}}selected{{end}}>Global default{{if .GlobalScanSchedule}} ({{.GlobalScanSchedule}}){{else}} (off){{end}}</option>
+                <option value="off" {{if eq $sched "off"}}selected{{end}}>Off</option>
+                <option value="daily" {{if eq $sched "daily"}}selected{{end}}>Daily</option>
+                <option value="weekly" {{if eq $sched "weekly"}}selected{{end}}>Weekly</option>
+                <option value="custom" {{if $isCron}}selected{{end}}>Custom cron</option>
+              </select>
+              <input class="input text-xs" type="text" name="scan_schedule_cron"
+                     value="{{if $isCron}}{{$sched}}{{end}}" placeholder="cron, e.g. 0 3 * * 1 (used when Custom cron is selected)">
+              <button class="btn-sm-outline" type="submit">Save</button>
+              <label class="text-xs text-muted-foreground" for="upstream_url">Upstream</label>
+              <input class="input text-xs col-span-2" id="upstream_url" type="text" name="upstream_url"
+                     value="{{.Repo.UpstreamURL}}" placeholder="https://... (staging copies only: synced before each scheduled check)">
+            </form>
+            <p class="text-xs text-muted-foreground mt-1">Scheduled runs compare the remote HEAD against the last completed scan and enqueue a diff rescan when new commits landed; otherwise they log a skipped entry. Set Upstream when this repository is a pushed staging copy so it is force-synced from upstream first (a mirror push; local-only commits are overwritten).</p>
+          </details>
+          </dd>
+        </div>
+      </dl>
+    </section>
 
     {{if .Subprojects}}
       <div class="flex items-center justify-between gap-2 mb-2">
-        <h3 class="font-medium">Subprojects <span class="text-muted-foreground text-xs">({{len .Subprojects}})</span></h3>
+        <h3 class="text-base font-semibold flex items-center gap-2"><i data-lucide="boxes"></i> Subprojects <span class="text-muted-foreground text-xs font-normal">({{len .Subprojects}})</span></h3>
         <form method="post" action="/repositories/{{.Repo.ID}}/scan-all"
               hx-post="/repositories/{{.Repo.ID}}/scan-all" hx-swap="none"
               hx-confirm="Enqueue a deep-dive scan for all {{len .Subprojects}} subproject(s)?">
@@ -309,7 +311,7 @@
       </table>
     {{end}}
 
-    <h3 class="text-sm font-medium flex items-center gap-2 mb-2"><i data-lucide="bug"></i> Open findings</h3>
+    <h3 class="text-base font-semibold flex items-center gap-2 mb-2"><i data-lucide="bug"></i> Open findings</h3>
     {{if .OpenBySeverity}}
       <div class="flex flex-wrap items-center gap-4 text-sm mb-2">
         {{range .OpenBySeverity}}
@@ -321,7 +323,7 @@
       <p class="text-sm text-muted-foreground mb-2">No open audit findings.</p>
     {{end}}
     {{if .Latest}}
-      <h3 class="text-sm font-medium flex items-center gap-2 mt-6 mb-2"><i data-lucide="history"></i> Findings from the latest scan</h3>
+      <h3 class="text-base font-semibold flex items-center gap-2 mt-6 mb-2"><i data-lucide="history"></i> Findings from the latest scan</h3>
       <a href="/scans/{{.Latest.ID}}" class="text-sm text-muted-foreground mb-2 inline-flex items-center gap-1 hover:underline">
         #{{.Latest.ID}} &middot; {{.Latest.Model}} &middot; {{since .Latest.StartedAt}}
         &middot; {{template "status-badge" (status .Latest.Status)}}
