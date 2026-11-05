@@ -60,11 +60,10 @@ func retryTransaction(ctx context.Context, gdb *gorm.DB, budget time.Duration, l
 // A stale WAL snapshot needs a fresh transaction immediately; an active
 // writer needs time to release its lock. Both retries start after rollback.
 func sqliteBusyRetryDelay(err error, attempt int) (time.Duration, bool) {
-	var sqliteErr interface{ Code() int }
-	if !errors.As(err, &sqliteErr) || sqliteErr.Code()&sqlitePrimaryCodeMask != sqliteBusyCode {
+	if !IsSQLiteBusy(err) {
 		return 0, false
 	}
-	if sqliteErr.Code() == sqliteBusySnapshotCode {
+	if SQLiteErrorCode(err) == sqliteBusySnapshotCode {
 		return 0, true
 	}
 	return retry.BackoffDelay(attempt, time.Millisecond, writeRetryMaxDelay), true
