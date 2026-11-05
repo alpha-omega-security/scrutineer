@@ -48,6 +48,13 @@ nor package proxy, return
 `review_status: not-applicable`, an empty findings list, and the evidence in
 `notes`. A dependency manifest alone does not make a project a package manager.
 
+Before claiming a missing limit or unsafe default in a standard library,
+third-party dependency or tool, inspect its implementation for the version
+used by the project and cite its source path and lines. A proposed PoC or
+remembered default is not evidence of runtime behaviour. If that source is
+unavailable within this static audit, put the claim in
+`unverified_assumptions` and do not report a finding that depends on it.
+
 ## Review
 
 Trace each applicable threat through a public command or exported API to the

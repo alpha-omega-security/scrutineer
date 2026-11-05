@@ -164,7 +164,6 @@ func TestAuditConfiguredMaxTier(t *testing.T) {
 		if model != "claude-mythos-preview" {
 			t.Fatalf("investigate ran on %q, want claude-mythos-preview", model)
 		}
-		t.Logf("queued max-tier investigate ran on %s", model)
 	default:
 		t.Fatal("max-tier investigate did not run")
 	}
