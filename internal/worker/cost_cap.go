@@ -100,33 +100,47 @@ func (g *costGuard) Tripped() bool {
 // startCostGuardRun returns the context and emit for the skill run. Without a
 // scan or group cap they are the originals and the guard is nil. With one, the
 // context is a child of ctx so tripping never looks like an operator cancel to
-// finishScan.
-func (w *Worker) startCostGuardRun(ctx context.Context, scan *db.Scan, emit func(Event)) (context.Context, func(Event), *costGuard, func()) {
-	groupLimit := w.registerGroupSpend(scan)
+// finishScan. An error means the group budget could not be read. The run must
+// not start then.
+func (w *Worker) startCostGuardRun(ctx context.Context, scan *db.Scan, emit func(Event)) (context.Context, func(Event), *costGuard, func(), error) {
+	groupLimit, err := w.registerGroupSpend(scan)
+	if err != nil {
+		return ctx, emit, nil, func() {}, err
+	}
+	finish := func() {}
+	if scan.ScanGroup != "" {
+		finish = func() { w.groups.finish(scan.ScanGroup, scan.ID, scan.CostUSD) }
+	}
 	if scan.MaxCostUSD <= 0 && groupLimit <= 0 {
-		return ctx, emit, nil, func() {}
+		return ctx, emit, nil, finish, nil
 	}
 	runCtx, cancel := context.WithCancelCause(ctx)
 	guard := newCostGuard(scan, scan.MaxCostUSD, cancel)
-	stop := func() { cancel(nil) }
 	if groupLimit > 0 {
 		guard.groups = &w.groups
-		stop = func() {
-			cancel(nil)
-			w.groups.finish(scan.ScanGroup, scan.ID, scan.CostUSD)
-		}
 	}
-	return runCtx, guard.wrap(emit), guard, stop
+	stop := func() {
+		cancel(nil)
+		finish()
+	}
+	return runCtx, guard.wrap(emit), guard, stop, nil
 }
 
 func (w *Worker) runFollowupSkill(ctx context.Context, scan *db.Scan, job SkillJob, emit func(Event)) (SkillResult, error) {
 	if err := ctx.Err(); err != nil {
 		return SkillResult{}, err
 	}
-	if scanCapReached(scan) || w.groupCapReached(scan) {
+	groupCapped, err := w.groupCapReached(scan)
+	if err != nil {
+		return SkillResult{}, err
+	}
+	if scanCapReached(scan) || groupCapped {
 		return SkillResult{}, errCostCapped
 	}
-	runCtx, runEmit, guard, stop := w.startCostGuardRun(ctx, scan, emit)
+	runCtx, runEmit, guard, stop, err := w.startCostGuardRun(ctx, scan, emit)
+	if err != nil {
+		return SkillResult{}, err
+	}
 	defer stop()
 	res, err := w.Runner.RunSkill(runCtx, job, runEmit)
 	w.applySkillResult(scan, res)
@@ -160,7 +174,13 @@ func (w *Worker) markCostCapped(scan *db.Scan) error {
 	scan.CostCapped = true
 	rec.Completeness = coverage.CompletenessPartial
 	rec.Reason = fmt.Sprintf("cost_cap: stopped at $%.2f of a $%.2f cap", scan.CostUSD, scan.MaxCostUSD)
-	if spent, limit := w.groupSpendStatus(scan.ScanGroup); limit > 0 && !scanCapReached(scan) {
+	spent, limit, err := w.groupSpendStatus(scan.ScanGroup)
+	switch {
+	case scanCapReached(scan):
+	case err != nil:
+		w.Log.Warn("load group spend for capped scan", "scan", scan.ID, "err", err)
+		rec.Reason = "group_cost_cap: stopped at the group cost cap"
+	case limit > 0:
 		rec.Reason = fmt.Sprintf("group_cost_cap: group spent $%.2f of a $%.2f cap", spent, limit)
 	}
 	setCoverage(scan, rec)

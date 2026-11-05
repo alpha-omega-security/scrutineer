@@ -739,19 +739,12 @@ func (w *Worker) wrap(h handler) func(context.Context, []byte) error {
 		if err != nil || scan == nil {
 			return err
 		}
-		if w.dropBeforeStart(scan) {
-			return nil
+		release, proceed, err := w.admitScan(ctx, scan, p.Attempt)
+		if !proceed {
+			return err
 		}
-
-		if scan.Kind == JobSkill {
-			deferred, err := w.preflightSkillUnlessOverage(ctx, scan, p.Attempt)
-			if err != nil {
-				return err
-			}
-			if deferred {
-				return nil
-			}
-		}
+		saved := true
+		defer func() { release(saved) }()
 
 		timeout := w.ScanTimeout
 		if timeout <= 0 {
@@ -792,8 +785,34 @@ func (w *Worker) wrap(h handler) func(context.Context, []byte) error {
 		if err == nil {
 			report, err = h(ctx, scan, emit)
 		}
-		return w.finalizeScan(ctx, scan, report, err, timeout, emit, snapshotLog)
+		err = w.finalizeScan(ctx, scan, report, err, timeout, emit, snapshotLog)
+		saved = err == nil
+		return err
 	}
+}
+
+// admitScan runs the checks a queued scan passes before its claim, then takes
+// the hold that keeps its group spend tracked until wrap saves the scan.
+// proceed is false when the job ends here, with err as its outcome.
+func (w *Worker) admitScan(ctx context.Context, scan *db.Scan, attempt int) (release func(saved bool), proceed bool, err error) {
+	drop, err := w.dropBeforeStart(scan)
+	if err != nil {
+		return nil, false, w.deferUnreadGroupBudget(ctx, scan, attempt, err)
+	}
+	if drop {
+		return nil, false, nil
+	}
+	if scan.Kind == JobSkill {
+		deferred, err := w.preflightSkillUnlessOverage(ctx, scan, attempt)
+		if err != nil || deferred {
+			return nil, false, err
+		}
+	}
+	release, err = w.holdGroupSpend(scan)
+	if err != nil {
+		return nil, false, w.deferUnreadGroupBudget(ctx, scan, attempt, err)
+	}
+	return release, true, nil
 }
 
 // OptOutCancelReason is the error text left on a scan stopped because the
@@ -833,11 +852,12 @@ func (w *Worker) cancelOptedOut(scan *db.Scan) {
 }
 
 // dropBeforeStart finishes a queued scan that must not run: its repository
-// opted out of federated scanning or its group has spent its budget.
-func (w *Worker) dropBeforeStart(scan *db.Scan) bool {
+// opted out of federated scanning or its group has spent its budget. An error
+// means the group budget could not be read and the scan must wait.
+func (w *Worker) dropBeforeStart(scan *db.Scan) (bool, error) {
 	if scan.Repository.FederationOptedOut() {
 		w.cancelOptedOut(scan)
-		return true
+		return true, nil
 	}
 	return w.skipIfGroupSpent(scan)
 }

@@ -230,8 +230,12 @@ without running, with the reason in their error. That includes a retried or
 resumed scan, so continuing a capped group needs a new launch with a new cap.
 
 The spend estimate is kept in memory by the worker process, so it assumes one
-worker process per database. Actual spend can exceed the cap by the calls in
-flight in each running scan plus their finalize turns.
+worker process per database. A finished scan's cost stays in that estimate
+until its final save lands, so a sibling starting in between still counts it.
+When the group's budget or spend cannot be read, the queued scan goes back on
+the queue and tries again 30 seconds later instead of running without the cap.
+Actual spend can exceed the cap by the calls in flight in each running scan
+plus their finalize turns.
 
 ## Runtime capability preflight
 
