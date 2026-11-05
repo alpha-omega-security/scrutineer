@@ -147,6 +147,9 @@ type flags struct {
 	// set records which flags were passed on the command line so merge
 	// knows not to let the config file override them.
 	set map[string]bool
+
+	// codexCyberAccessProgram is codex.cyber_access_program (config-only).
+	codexCyberAccessProgram string
 }
 
 // validateFederation refuses a federation salt without a contact:
@@ -326,6 +329,7 @@ func (f *flags) merge(cfg *config.Config) {
 	if cfg.Codex.AuthFile != "" {
 		f.codexAuthFile = cfg.Codex.AuthFile
 	}
+	f.codexCyberAccessProgram = cfg.Codex.CyberAccessProgram
 	if cfg.Runtime != "" && !f.set["runtime"] {
 		f.runtime = cfg.Runtime
 	}
@@ -545,16 +549,8 @@ func validateFlags(f *flags) error {
 	if _, err := worker.HarnessByName(f.backend); err != nil {
 		return err
 	}
-	if f.codexAuthFile != "" {
-		if f.backend != "codex" {
-			return fmt.Errorf("codex.auth_file requires backend %q", "codex")
-		}
-		if os.Getenv("CODEX_API_KEY") != "" || os.Getenv("OPENAI_API_KEY") != "" {
-			return errors.New("codex.auth_file cannot be combined with CODEX_API_KEY or OPENAI_API_KEY; unset API keys to prevent accidental credit usage")
-		}
-		if err := worker.ValidateCodexAuthFile(f.codexAuthFile); err != nil {
-			return err
-		}
+	if err := validateCodexFlags(f); err != nil {
+		return err
 	}
 	if err := config.ValidateRuntime(f.runtime); err != nil {
 		return err
@@ -578,6 +574,29 @@ func validateFlags(f *flags) error {
 		return err
 	}
 	return validateModelBaseURL(f.modelBaseURL, f.trustedModelHost)
+}
+
+// validateCodexFlags checks the config-only codex block: both settings are
+// codex-specific, and the account credential must not be mixed with API keys.
+func validateCodexFlags(f *flags) error {
+	if f.codexCyberAccessProgram != "" {
+		if f.backend != "codex" {
+			return fmt.Errorf("codex.cyber_access_program requires backend %q", "codex")
+		}
+		if err := worker.ValidateCodexCyberAccessProgram(f.codexCyberAccessProgram); err != nil {
+			return err
+		}
+	}
+	if f.codexAuthFile == "" {
+		return nil
+	}
+	if f.backend != "codex" {
+		return fmt.Errorf("codex.auth_file requires backend %q", "codex")
+	}
+	if os.Getenv("CODEX_API_KEY") != "" || os.Getenv("OPENAI_API_KEY") != "" {
+		return errors.New("codex.auth_file cannot be combined with CODEX_API_KEY or OPENAI_API_KEY; unset API keys to prevent accidental credit usage")
+	}
+	return worker.ValidateCodexAuthFile(f.codexAuthFile)
 }
 
 // validateModelProxyFlags refuses a -model-proxy configuration this narrow
@@ -1281,6 +1300,8 @@ func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRu
 		OpencodeProviders:  opencodeProviders,
 		OpencodeReadiness:  worker.NewOpencodeReadinessCache(),
 		CodexAccountAuth:   worker.NewCodexAccountAuth(f.codexAuthFile),
+
+		CodexCyberAccessProgram: f.codexCyberAccessProgram,
 	}
 	if err := applyModelProxy(f, log, apiHost, &runner); err != nil {
 		return nil, "", err

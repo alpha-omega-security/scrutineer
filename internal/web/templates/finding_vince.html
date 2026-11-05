@@ -102,12 +102,12 @@
     <div class="grid sm:grid-cols-2 gap-3">
       <div class="grid gap-1">
         <label for="contact_name" class="text-xs text-muted-foreground">Name</label>
-        <input id="contact_name" class="input" name="contact_name" maxlength="100" value="{{$r.ContactName}}">
+        <input type="text" id="contact_name" class="input" name="contact_name" maxlength="100" value="{{$r.ContactName}}">
         {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "contact_name")}}
       </div>
       <div class="grid gap-1">
         <label for="contact_org" class="text-xs text-muted-foreground">Organization</label>
-        <input id="contact_org" class="input" name="contact_org" maxlength="100" value="{{$r.ContactOrganization}}">
+        <input type="text" id="contact_org" class="input" name="contact_org" maxlength="100" value="{{$r.ContactOrganization}}">
         {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "contact_org")}}
       </div>
       <div class="grid gap-1">
@@ -117,7 +117,7 @@
       </div>
       <div class="grid gap-1">
         <label for="contact_phone" class="text-xs text-muted-foreground">Phone</label>
-        <input id="contact_phone" class="input" name="contact_phone" maxlength="20" value="{{$r.ContactPhone}}">
+        <input type="text" id="contact_phone" class="input" name="contact_phone" maxlength="20" value="{{$r.ContactPhone}}">
         {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "contact_phone")}}
       </div>
       <div class="grid gap-1 sm:col-span-2">
@@ -204,7 +204,7 @@
     <div class="grid sm:grid-cols-2 gap-3">
       <div class="grid gap-1">
         <label for="vendor_name" class="text-xs text-muted-foreground">Vendor name</label>
-        <input id="vendor_name" class="input" name="vendor_name" maxlength="100" value="{{$r.VendorName}}">
+        <input type="text" id="vendor_name" class="input" name="vendor_name" maxlength="100" value="{{$r.VendorName}}">
         {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "vendor_name")}}
       </div>
       <div class="grid gap-1">
@@ -223,13 +223,13 @@
       </div>
       <div class="grid gap-1">
         <label for="product_name" class="text-xs text-muted-foreground">Product name</label>
-        <input id="product_name" class="input" name="product_name" maxlength="200" required value="{{$r.ProductName}}">
+        <input type="text" id="product_name" class="input" name="product_name" maxlength="200" required value="{{$r.ProductName}}">
         <p class="text-xs text-warning">VINCE uses this in acknowledgement email. Do not include sensitive details.</p>
         {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "product_name")}}
       </div>
       <div class="grid gap-1">
         <label for="product_version" class="text-xs text-muted-foreground">Affected version or tested commit</label>
-        <input id="product_version" class="input" name="product_version" maxlength="100" required value="{{$r.ProductVersion}}">
+        <input type="text" id="product_version" class="input" name="product_version" maxlength="100" required value="{{$r.ProductVersion}}">
         {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "product_version")}}
       </div>
       <div class="grid gap-1">
@@ -341,7 +341,7 @@
       </div>
       <div class="grid gap-1">
         <label for="tracking" class="text-xs text-muted-foreground">Existing VINCE tracking IDs</label>
-        <input id="tracking" class="input" name="tracking" maxlength="100" value="{{$r.Tracking}}">
+        <input type="text" id="tracking" class="input" name="tracking" maxlength="100" value="{{$r.Tracking}}">
         {{template "vince-field-errors" (dict "Errors" $v.Errors "Field" "tracking")}}
       </div>
       <div class="grid gap-1">

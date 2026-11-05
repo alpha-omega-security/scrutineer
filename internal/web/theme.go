@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"gorm.io/gorm"
+
 	"scrutineer/internal/config"
 	"scrutineer/internal/db"
 	"scrutineer/internal/worker"
@@ -245,27 +247,50 @@ func (s *Server) settingsUpdateTheme(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) settingsUpdateModel(w http.ResponseWriter, r *http.Request) {
-	model := r.FormValue("model")
-	if !ValidModel(model) {
-		http.Error(w, "unknown model", http.StatusUnprocessableEntity)
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	tier := r.FormValue("tier")
-	if tier != "" {
+	// The Model tiers card posts one tier/model pair per tier, in order.
+	tiers, models := r.Form["tier"], r.Form["model"]
+	if len(tiers) == 0 || (len(tiers) == 1 && tiers[0] == "") {
+		model := r.FormValue("model")
+		if !ValidModel(model) {
+			http.Error(w, "unknown model", http.StatusUnprocessableEntity)
+			return
+		}
+		s.SetDefaultModel(model)
+		setFlash(w, Flash{Category: successKey, Title: "Default model updated"})
+		s.redirect(w, r, "/settings")
+		return
+	}
+	if len(tiers) != len(models) {
+		http.Error(w, "each model tier needs one model", http.StatusUnprocessableEntity)
+		return
+	}
+	for i, tier := range tiers {
 		if !ValidModelTier(tier) {
 			http.Error(w, "unknown model tier", http.StatusUnprocessableEntity)
 			return
 		}
-		if err := db.SetSetting(s.DB, modelTierSettingKey(tier), model); err != nil {
-			http.Error(w, "could not save setting", http.StatusInternalServerError)
+		if !ValidModel(models[i]) {
+			http.Error(w, "unknown model", http.StatusUnprocessableEntity)
 			return
 		}
-		setFlash(w, Flash{Category: successKey, Title: "Model tier updated"})
-		s.redirect(w, r, "/settings")
+	}
+	err := s.DB.Transaction(func(tx *gorm.DB) error {
+		for i, tier := range tiers {
+			if err := db.SetSetting(tx, modelTierSettingKey(tier), models[i]); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		http.Error(w, "could not save setting", http.StatusInternalServerError)
 		return
 	}
-	s.SetDefaultModel(model)
-	setFlash(w, Flash{Category: successKey, Title: "Default model updated"})
+	setFlash(w, Flash{Category: successKey, Title: "Model tiers updated"})
 	s.redirect(w, r, "/settings")
 }
 

@@ -233,24 +233,24 @@
 {{end}}
 
 {{define "severity-badge"}}
-  {{if or (eq . "Critical") (eq . "CRITICAL")}}<span class="badge-destructive">Critical</span>
-  {{else if or (eq . "High") (eq . "HIGH")}}<span class="badge-destructive">High</span>
-  {{else if or (eq . "Medium") (eq . "MEDIUM") (eq . "MODERATE")}}<span class="badge-primary">Medium</span>
-  {{else if or (eq . "Low") (eq . "LOW")}}<span class="badge-secondary">Low</span>
-  {{else}}<span class="badge-secondary">{{.}}</span>{{end}}
+  {{if or (eq . "Critical") (eq . "CRITICAL")}}<span class="badge-outline sev-critical">Critical</span>
+  {{else if or (eq . "High") (eq . "HIGH")}}<span class="badge-outline sev-high">High</span>
+  {{else if or (eq . "Medium") (eq . "MEDIUM") (eq . "MODERATE")}}<span class="badge-outline sev-medium">Medium</span>
+  {{else if or (eq . "Low") (eq . "LOW")}}<span class="badge-outline sev-low">Low</span>
+  {{else}}<span class="badge-outline sev-low">{{.}}</span>{{end}}
 {{end}}
 
 {{define "finding-status"}}
   {{if eq . "new"}}<span class="badge-outline">new</span>
   {{else if eq . "enriched"}}<span class="badge-outline">enriched</span>
-  {{else if eq . "triaged"}}<span class="badge-primary">triaged</span>
-  {{else if eq . "ready"}}<span class="badge-primary">ready</span>
-  {{else if eq . "reported"}}<span class="badge-primary">reported</span>
-  {{else if eq . "acknowledged"}}<span class="badge-primary">acknowledged</span>
-  {{else if eq . "fixed"}}<span class="badge-secondary">fixed</span>
-  {{else if eq . "published"}}<span class="badge-secondary">published</span>
-  {{else if eq . "rejected"}}<span class="badge-outline">rejected</span>
-  {{else if eq . "duplicate"}}<span class="badge-outline">duplicate</span>
+  {{else if eq . "triaged"}}<span class="badge-outline status-active">triaged</span>
+  {{else if eq . "ready"}}<span class="badge-outline status-active">ready</span>
+  {{else if eq . "reported"}}<span class="badge-outline status-active">reported</span>
+  {{else if eq . "acknowledged"}}<span class="badge-outline status-active">acknowledged</span>
+  {{else if eq . "fixed"}}<span class="badge-outline status-active"><i data-lucide="check"></i> fixed</span>
+  {{else if eq . "published"}}<span class="badge-outline status-active"><i data-lucide="check"></i> published</span>
+  {{else if eq . "rejected"}}<span class="badge-outline text-muted-foreground">rejected</span>
+  {{else if eq . "duplicate"}}<span class="badge-outline text-muted-foreground">duplicate</span>
   {{else}}<span class="badge-outline">{{.}}</span>{{end}}
 {{end}}
 
@@ -356,7 +356,7 @@
   {{else if eq . "cancelled"}}<span class="badge-outline"><i data-lucide="circle-slash"></i> cancelled</span>
   {{else if eq . "skipped"}}<span class="badge-outline"><i data-lucide="skip-forward"></i> skipped</span>
   {{else if eq . "paused"}}<span class="badge-outline"><i data-lucide="pause"></i> paused</span>
-  {{else if eq . "running"}}<span class="badge-primary"><i data-lucide="loader-circle" class="animate-spin"></i> running</span>
+  {{else if eq . "running"}}<span class="badge-outline status-active"><i data-lucide="loader-circle" class="animate-spin"></i> running</span>
   {{else if eq . "active"}}<span class="badge-secondary"><i data-lucide="circle-check"></i> active</span>
   {{else if eq . "inactive"}}<span class="badge-outline"><i data-lucide="moon"></i> inactive</span>
   {{else}}<span class="badge-outline"><i data-lucide="clock"></i> {{.}}</span>{{end}}

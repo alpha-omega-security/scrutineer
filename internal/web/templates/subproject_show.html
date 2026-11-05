@@ -21,28 +21,33 @@
   <a class="btn-sm-outline" href="/api/v1/repositories/{{.Repo.ID}}/findings?sub_path={{.Sub.Path}}"><i data-lucide="download"></i> Export findings</a>
 </div>
 
-<div class="mb-6 max-w-3xl">
-  <h3 class="text-sm font-medium flex items-center gap-2">
-    <i data-lucide="send"></i> Disclosure channel
-  </h3>
-  {{if .DisclosureChannel}}
-    <p class="text-sm mt-2 whitespace-pre-wrap">{{.DisclosureChannel}}{{if not .OwnChannel}} <span class="text-muted-foreground text-xs">(inherited from repository)</span>{{end}}</p>
-  {{else}}
-    <p class="text-sm mt-2 italic text-muted-foreground">not set</p>
-  {{end}}
-  <details class="mt-2">
-    <summary class="text-xs text-muted-foreground cursor-pointer hover:underline">Edit this sub-package's channel</summary>
-    <form method="post" action="/repositories/{{.Repo.ID}}/subprojects/{{.Sub.ID}}/disclosure-channel" class="form grid grid-cols-[1fr_auto] gap-2 mt-2">
-      <input class="input text-xs" type="text" name="disclosure_channel"
-             value="{{.OwnChannel}}"
-             placeholder="security@example.org, https://…/security/advisories, …">
-      <button class="btn-sm-outline" type="submit">Save</button>
-    </form>
-    <p class="text-xs text-muted-foreground mt-1">A per-sub-package channel routes reports about this gem to its own maintainers. Leave empty to fall back to the repository channel.</p>
-  </details>
-</div>
+<section class="mb-8">
+  <h3 class="text-base font-semibold flex items-center gap-2 mb-1"><i data-lucide="settings-2"></i> Sub-package settings</h3>
+  <dl class="divide-y border-y">
+    <div class="grid gap-x-6 gap-y-1 py-3 sm:grid-cols-[13rem_minmax(0,1fr)]">
+      <dt class="text-sm text-muted-foreground font-semibold flex items-center gap-2 self-start"><i data-lucide="send"></i> Disclosure channel</dt>
+      <dd class="text-sm min-w-0">
+      {{if .DisclosureChannel}}
+        <p class="whitespace-pre-wrap">{{.DisclosureChannel}}{{if not .OwnChannel}} <span class="text-muted-foreground text-xs">(inherited from repository)</span>{{end}}</p>
+      {{else}}
+        <p class="italic text-muted-foreground">not set</p>
+      {{end}}
+      <details class="mt-1">
+        <summary class="text-xs text-muted-foreground cursor-pointer hover:underline">Edit this sub-package's channel</summary>
+        <form method="post" action="/repositories/{{.Repo.ID}}/subprojects/{{.Sub.ID}}/disclosure-channel" class="form grid grid-cols-[1fr_auto] gap-2 mt-2">
+          <input class="input text-xs" type="text" name="disclosure_channel"
+                 value="{{.OwnChannel}}"
+                 placeholder="security@example.org, https://…/security/advisories, …">
+          <button class="btn-sm-outline" type="submit">Save</button>
+        </form>
+        <p class="text-xs text-muted-foreground mt-1">A per-sub-package channel routes reports about this gem to its own maintainers. Leave empty to fall back to the repository channel.</p>
+      </details>
+      </dd>
+    </div>
+  </dl>
+</section>
 
-<h3 class="font-medium mb-2">Findings <span class="text-muted-foreground text-xs">({{len .Findings}})</span></h3>
+<h3 class="text-base font-semibold mb-2">Findings <span class="text-muted-foreground text-xs font-normal">({{len .Findings}})</span></h3>
 {{if .Findings}}
   <table class="table w-full mb-6">
     <thead><tr>
@@ -67,7 +72,7 @@
 {{end}}
 
 {{if and .Attribution .Packages}}
-  <h3 class="font-medium mb-2">Packages <span class="text-muted-foreground text-xs">({{len .Packages}})</span></h3>
+  <h3 class="text-base font-semibold mb-2">Packages <span class="text-muted-foreground text-xs font-normal">({{len .Packages}})</span></h3>
   <table class="table w-full mb-6">
     <thead><tr>
       <th>Name</th>
@@ -89,7 +94,7 @@
 {{end}}
 
 {{if and .Attribution .Advisories}}
-  <h3 class="font-medium mb-2">Advisories <span class="text-muted-foreground text-xs">({{len .Advisories}})</span></h3>
+  <h3 class="text-base font-semibold mb-2">Advisories <span class="text-muted-foreground text-xs font-normal">({{len .Advisories}})</span></h3>
   <table class="table w-full mb-6">
     <thead><tr>
       <th class="w-24">Severity</th>

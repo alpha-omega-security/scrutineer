@@ -13,8 +13,8 @@ ARG CLAUDE_ARM64_LOCK=v2.1.312@sha256:0635c6245b11bbb4ca16e4119b0ac3980ee99e2f8c
 ARG CODEX_AMD64_LOCK=rust-v0.165.0@sha256:e97c4463d7f146692a955d7b0e1c8cf48f97cd4d616cd45c5dcab2e8d9743316
 ARG CODEX_ARM64_LOCK=rust-v0.165.0@sha256:c8b2844fdef57498572db960344aee8c836ce9f75c203379da0a9c3a334fc3b7
 
-ARG OPENCODE_AMD64_LOCK=v2.2.0@sha256:6d597970a8cc448f1b9a9f645532584b339dd3ab9583bb5f063f13d83e54768f
-ARG OPENCODE_ARM64_LOCK=v2.2.0@sha256:1f1ce0fc07b9245a815ffa9d652dbb80e6b0f07e5bf74ea87d2b1c0339fbac52
+ARG OPENCODE_AMD64_LOCK=v2.2.1@sha256:3179551ddf69877ca24a960b0175e94405cf3f52147f1eec705094374bef49f2
+ARG OPENCODE_ARM64_LOCK=v2.2.1@sha256:c354d8a2dc4152308bf286b5ec7f20b3b3cfc71f9476e64f6aa274142505b2f8
 
 ARG COPILOT_AMD64_LOCK=v1.0.105@sha256:aba1f06f27bc0447656647f76e0a4cf58b4b2a341c75ff04a750982b6aeb6bd2
 ARG COPILOT_ARM64_LOCK=v1.0.105@sha256:e7b488cc04ac3e2ed800e1bf0aace33ada42dcf167529b3d2f48a61e1535a847
@@ -24,7 +24,7 @@ ARG SEMGREP_VERSION=1.182.1
 ARG BANDIT_VERSION=1.9.4
 ARG DARNIT_VERSION=0.1.1
 
-FROM golang:1.27.3-trixie@sha256:1896654cfc5c2b5ad74c07f29cb36f5d2d1cbed42e3054070fbfe444e521e83c AS go-tools
+FROM golang:1.27.3-trixie@sha256:c65ecfe613b539ac74c62a4c3b2c27e8f8a6076384c8f27e8a3c0f3be17cc385 AS go-tools
 
 COPY scripts/retry-build-command.sh /usr/local/bin/retry-build-command.sh
 # Go proxy/checksum requests can fail transiently.
@@ -40,7 +40,7 @@ RUN cargo install --locked --root /out zizmor@1.31.1
 # The runner image carries the proxy commands used by Scrutineer and by
 # harness/container consumers. Both are built CGO-free so they can be copied
 # into the slim runtime without a glibc dependency.
-FROM golang:1.27.3-trixie@sha256:1896654cfc5c2b5ad74c07f29cb36f5d2d1cbed42e3054070fbfe444e521e83c AS scrutineer-build
+FROM golang:1.27.3-trixie@sha256:c65ecfe613b539ac74c62a4c3b2c27e8f8a6076384c8f27e8a3c0f3be17cc385 AS scrutineer-build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download

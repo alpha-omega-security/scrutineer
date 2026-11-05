@@ -98,6 +98,22 @@ To point codex at a different endpoint, pass `-model-base-url` or set
 `model_base_url:` in config; scrutineer adds the host to the allowlist and
 passes the value to codex as `openai_base_url`.
 
+To select an OpenAI cyber access program (the Responses API's
+`access_programs.cyber` field), set it in config:
+
+    codex:
+      cyber_access_program: daybreak_blue
+
+Accepted values are `standard`, `daybreak_blue` and `daybreak_red`; anything
+else, or setting it under a non-codex backend, is rejected at startup. The
+value is passed to every scan, chat turn and backend probe as
+`codex exec --cyber-access-program <value>` (inserted right after `exec`, so
+`exec resume` turns carry it too). It works with `CODEX_API_KEY` (the pinned
+release enables the `api_key_cyber_access_programs` feature by default) and
+with `codex.auth_file`. It only *selects* the program: the organization,
+project and model must already be approved for it, and leaving it unset keeps
+the server default.
+
 The codex backend requires the containerised runner. `--no-container` with
 `-backend codex` is rejected at startup: the codex binary lives in the runner
 image, not on the host, and the local fallback (`LocalClaude`) is claude-only.
