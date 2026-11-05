@@ -1,6 +1,7 @@
 package web
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -63,6 +64,35 @@ func TestAutoEnqueueFocusAreaDeepDives(t *testing.T) {
 	}
 	if got["XML parser"].FocusArea == "" || got["CLI parser"].FocusArea == "" {
 		t.Errorf("focus areas = %+v, want both configured areas", got)
+	}
+}
+
+func TestAutoEnqueueFocusAreaDeepDives_clampsLegacyOverCapConfig(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	// A stored scan_config written before the write-time cap can hold more
+	// than MaxFocusAreas entries; Parse accepts it so skillContext staging
+	// does not fail, and this hook must bound the fan-out itself.
+	var cfg strings.Builder
+	cfg.WriteString("focus_areas:\n")
+	for i := range repoconfig.MaxFocusAreas + 5 {
+		fmt.Fprintf(&cfg, "  - name: area-%d\n    paths: [p%d/**]\n    surface: s\n", i, i)
+	}
+	repo := db.Repository{URL: "https://example.com/overcap", Name: "overcap", ScanConfig: cfg.String()}
+	s.DB.Create(&repo)
+	deepDive := db.Skill{Name: deepDiveSkillName, Body: "b", OutputFile: "r.json", OutputKind: "findings", Active: true, Source: "ui"}
+	s.DB.Create(&deepDive)
+	parent := db.Scan{RepositoryID: repo.ID, Status: db.ScanDone, SkillName: threatModelSkillName, ScanGroup: "g"}
+	s.DB.Create(&parent)
+
+	s.autoEnqueueFocusAreaDeepDives(&parent)
+
+	var count int64
+	if err := s.DB.Model(&db.Scan{}).Where("repository_id = ? AND skill_id = ? AND focus_area <> ''", repo.ID, deepDive.ID).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != int64(repoconfig.MaxFocusAreas) {
+		t.Fatalf("enqueued %d focus-area deep dives for an over-cap stored config, want %d", count, repoconfig.MaxFocusAreas)
 	}
 }
 
