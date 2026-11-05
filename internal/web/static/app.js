@@ -17,19 +17,35 @@
     }
   }
 
-  function restoreTab() {
-    var h = location.hash.slice(1);
-    if (!h) return;
-    var tab = document.getElementById(h);
-    if (!tab || tab.getAttribute('role') !== 'tab') return;
-    var list = tab.closest('[role="tablist"]');
-    if (!list) return;
+  function selectTab(list, id) {
     list.querySelectorAll('[role="tab"]').forEach(function (t) {
-      var sel = t.id === h;
+      var sel = t.id === id;
       t.setAttribute('aria-selected', sel);
+      t.setAttribute('tabindex', sel ? '0' : '-1');
       var p = document.getElementById(t.getAttribute('aria-controls'));
       if (p) p.hidden = !sel;
     });
+  }
+
+  // An empty hash, as Back to the bare URL leaves, goes to the tab the server
+  // rendered selected, which is recorded before any hash overrides it.
+  function restoreTab() {
+    document.querySelectorAll('.tabs > [role="tablist"]:not([data-default-tab])').forEach(function (l) {
+      var t = l.querySelector('[role="tab"][aria-selected="true"]');
+      l.setAttribute('data-default-tab', t ? t.id : '');
+    });
+    var h = location.hash.slice(1);
+    if (!h) {
+      document.querySelectorAll('[role="tablist"][data-default-tab]').forEach(function (l) {
+        var id = l.getAttribute('data-default-tab');
+        if (id) selectTab(l, id);
+      });
+      return;
+    }
+    var tab = document.getElementById(h);
+    if (!tab || tab.getAttribute('role') !== 'tab') return;
+    var list = tab.closest('[role="tablist"]');
+    if (list) selectTab(list, h);
   }
 
   // The message list is the only thing that scrolls on a conversation page, so
@@ -89,6 +105,15 @@
   } else {
     init();
   }
+
+  // A same-page link to a tab (#rt4) changes the hash without a reload.
+  window.addEventListener('hashchange', restoreTab);
+
+  // Arrow keys select a tab without a click, so the hash follows focus too.
+  document.addEventListener('focusin', function (e) {
+    var tab = e.target.closest('[role="tab"][aria-selected="true"]');
+    if (tab && tab.id) history.replaceState(null, '', '#' + tab.id);
+  });
 
   setInterval(elapsed, 1000);
 

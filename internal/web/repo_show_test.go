@@ -3,6 +3,8 @@ package web
 import (
 	"fmt"
 	"net/http/httptest"
+	"os/exec"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -470,6 +472,130 @@ func TestRepoShow_findingLocationsLinkToCodeBrowser(t *testing.T) {
 	scannerHref := fmt.Sprintf(`href="/repositories/%d/blob/def456/cmd/b.go?line=3#L3"`, repo.ID)
 	if n := strings.Count(body, scannerHref); n != 1 {
 		t.Errorf("scanner location links = %d, want 1 (Scanners tab)", n)
+	}
+}
+
+// TestRepoShow_summaryCountsOpenFindingsBySeverity pins the Summary tally to
+// every open audit finding of the repository, most severe first, ignoring
+// closed and scanner findings.
+func TestRepoShow_summaryCountsOpenFindingsBySeverity(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{Name: "widget-server", URL: "https://example.com/acme/widget-server"}
+	s.DB.Create(&repo)
+	older := db.Scan{RepositoryID: repo.ID, SkillName: deepDiveSkillName, Status: db.ScanDone}
+	s.DB.Create(&older)
+	latest := db.Scan{RepositoryID: repo.ID, SkillName: deepDiveSkillName, Status: db.ScanDone}
+	s.DB.Create(&latest)
+	scanner := db.Scan{RepositoryID: repo.ID, SkillName: "semgrep", Status: db.ScanDone}
+	s.DB.Create(&scanner)
+	for _, f := range []db.Finding{
+		{ScanID: older.ID, Severity: "Low", Status: db.FindingNew},
+		{ScanID: older.ID, Severity: "High", Status: db.FindingTriaged},
+		{ScanID: latest.ID, Severity: "High", Status: db.FindingNew},
+		{ScanID: latest.ID, Severity: "Critical", Status: db.FindingRejected},
+		{ScanID: scanner.ID, Severity: "Critical", Status: db.FindingNew},
+	} {
+		f.RepositoryID = repo.ID
+		f.Title = "tally"
+		s.DB.Create(&f)
+	}
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", fmt.Sprintf("/repositories/%d", repo.ID)))
+	body := w.Body.String()
+	start := strings.Index(body, " Open findings</h3>")
+	if w.Code != 200 || start < 0 {
+		t.Fatalf("status %d, no Open findings section", w.Code)
+	}
+	section, _, found := strings.Cut(body[start:], "Findings from the latest scan")
+	if !found {
+		t.Fatal("no latest scan section after Open findings")
+	}
+	section = strings.Join(strings.Fields(section), " ")
+	high := strings.Index(section, `>High</span> <span class="font-semibold">2</span>`)
+	low := strings.Index(section, `>Low</span> <span class="font-semibold">1</span>`)
+	if high < 0 || low < 0 || high > low {
+		t.Errorf("want High 2 before Low 1, got section:\n%s", section)
+	}
+	if strings.Contains(section, "Critical") {
+		t.Errorf("rejected and scanner findings must not be counted:\n%s", section)
+	}
+}
+
+// TestRepoShow_summaryWithoutOpenFindings pins the empty state.
+func TestRepoShow_summaryWithoutOpenFindings(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{Name: "clean", URL: "https://example.com/acme/clean"}
+	s.DB.Create(&repo)
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", fmt.Sprintf("/repositories/%d", repo.ID)))
+	body := w.Body.String()
+	if w.Code != 200 || !strings.Contains(body, "No open audit findings.") {
+		t.Fatalf("status %d, empty state missing", w.Code)
+	}
+	if strings.Contains(body, "View in Findings") {
+		t.Error("empty state links to the Findings tab")
+	}
+}
+
+// TestRepoShow_viewInFindingsTargetsTheFindingsTab pins the Summary link to the
+// Findings tab, selected by app.js when the link is followed from Summary and
+// left again for Summary when Back clears the hash.
+func TestRepoShow_viewInFindingsTargetsTheFindingsTab(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{Name: "widget-server", URL: "https://example.com/acme/widget-server"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, SkillName: deepDiveSkillName, Status: db.ScanDone}
+	s.DB.Create(&scan)
+	s.DB.Create(&db.Finding{RepositoryID: repo.ID, ScanID: scan.ID, Title: "open", Severity: "High", Status: db.FindingNew})
+
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, localReq("GET", fmt.Sprintf("/repositories/%d", repo.ID)))
+	body := strings.Join(strings.Fields(w.Body.String()), " ")
+	link := fmt.Sprintf(`<a href="/repositories/%d#rt4" class="text-muted-foreground hover:text-foreground hover:underline">View in Findings</a>`, repo.ID)
+	if w.Code != 200 || !strings.Contains(body, link) {
+		t.Fatalf("status %d, no View in Findings link to #rt4", w.Code)
+	}
+	if !strings.Contains(body, `role="tab" id="rt4" aria-controls="rp4" aria-selected="false"> Findings `) {
+		t.Error("#rt4 is not the Findings tab button")
+	}
+
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is required to run app.js")
+	}
+	cmd := exec.CommandContext(t.Context(), node, "testdata/repo_tabs.cjs")
+	cmd.Stdin = strings.NewReader(w.Body.String())
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("repo tabs script: %v\n%s", err, out)
+	}
+}
+
+// TestRepoShow_tabIDsAreUnique pins one id per tab, so a hash names one tab.
+func TestRepoShow_tabIDsAreUnique(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://example.com/zombie", Name: "zombie", Health: db.RepositoryHealthZombie}
+	s.DB.Create(&repo)
+
+	body := getRepoPage(t, s, repo.ID)
+	if !strings.Contains(body, "Alternatives") || !strings.Contains(body, "Chat") {
+		t.Fatal("the Alternatives and Chat tabs are not both rendered")
+	}
+	seen := map[string]bool{}
+	for _, m := range regexp.MustCompile(`role="tab" id="([^"]+)"`).FindAllStringSubmatch(body, -1) {
+		if seen[m[1]] {
+			t.Errorf("tab id %q is used twice", m[1])
+		}
+		seen[m[1]] = true
 	}
 }
 
