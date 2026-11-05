@@ -20,6 +20,12 @@ The outlier table lists every positive-cost scan whose cost is at least ten time
 
 Zero-cost rows are retained in the normal usage totals but excluded from correlation and outlier baselines. This prevents historical rows without captured billing data and genuinely free runs from forcing the outlier median to zero.
 
+## Rate limits and quotas
+
+Large batches pause automatically at an account-level rate limit or quota wall. When claude-code is running on a subscription token it emits a `rate_limit_event` carrying the reset time, and scrutineer re-queues the paused batch after that reset; API-key accounts and the codex/opencode/copilot backends report the error without a reset time, so those batches stay paused for manual resume from the `/usage` page, which also shows the most recent per-window status.
+
+Set `downgrade_on_overage: true` to use the mid model tier for new max/high-tier scans while a Claude subscription reports paid overage. Scrutineer reports the downgrade in the log, on the Scans page and on `/usage`; the configured tiers apply again when overage clears. `pause_on_overage` takes precedence over downgrading.
+
 ## Pausing on subscription overage
 
 Set `pause_on_overage: true` in `scrutineer.yaml` or pass `-pause-on-overage` to pause active and queued model scans when Claude reports paid subscription overage, preserving their resume state. It defaults to false and takes precedence over `downgrade_on_overage`. Work resumes after the latest reliable reset plus the auto-resume buffer; missing or implausible reset times require manual action. To permit overage, disable the option, restart Scrutineer and resume the scans. This relies on provider signals, not a hard monetary budget.
