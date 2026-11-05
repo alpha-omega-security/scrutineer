@@ -29,8 +29,8 @@ github.com/dlclark/regexp2 v1.11.0 h1:G/nrcoOa7ZXlpoa/91N3X7mM3r8eIlMBBJZvsz/mxK
 github.com/dlclark/regexp2 v1.11.0/go.mod h1:DHkYz0B9wPfa6wondMfaivmHpzrQ3v9q8cnmRbL6yW8=
 github.com/dustin/go-humanize v1.1.0 h1:dbKTrvD0klcbBV/h4AWJdMuZogJACoMlvWIWZ5b2xWg=
 github.com/dustin/go-humanize v1.1.0/go.mod h1:hc1CvRkJMsgxqjmjMQF3QNRAZBwY8AXBAzKYoSX9sFI=
-github.com/ecosyste-ms/ecosystems-go v0.5.0 h1:qZqgar3Do9RrtW327OXlsrGKiRvNdeX8CmXb1aX4Njo=
-github.com/ecosyste-ms/ecosystems-go v0.5.0/go.mod h1:IhsYBZfxkofxya0O1O2DlhDt281utWJ6VQO0mPVb99I=
+github.com/ecosyste-ms/ecosystems-go v0.5.1 h1:9XcdEWIE8FHz01GEoM0McMvKEcR/D9yA/ET7aUzDX9g=
+github.com/ecosyste-ms/ecosystems-go v0.5.1/go.mod h1:IhsYBZfxkofxya0O1O2DlhDt281utWJ6VQO0mPVb99I=
 github.com/emirpasic/gods v1.18.1 h1:FXtiHYKDGKCW2KzwZKx0iC0PQmdlorYgdFG9jPXJ1Bc=
 github.com/emirpasic/gods v1.18.1/go.mod h1:8tpGGwCnJ5H4r6BWwaV6OrWmMoPhUl5jm/FMNAnJvWQ=
 github.com/git-pkgs/clone v0.7.5 h1:4wPOTqdYbCooV4MldaIkQxJIa+Z3rJkVFMXJCWNw19c=
