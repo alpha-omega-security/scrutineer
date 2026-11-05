@@ -54,20 +54,30 @@ func checkMaintainerActivityMigration(t *testing.T, gdb *gorm.DB) {
 	if rows[0].Name != maintainer.Name || rows[0].Email != maintainer.Email || rows[0].Notes != maintainer.Notes || rows[0].Status != MaintainerActive || !rows[0].DoNotContact {
 		t.Fatalf("migration changed the legacy profile: %+v", rows[0])
 	}
-	for _, status := range []MaintainerStatus{MaintainerActive, MaintainerInactive} {
-		if err := RecordMaintainerActivity(gdb, repo.ID, maintainer.ID, string(status)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	rows, err = RepositoryMaintainers(gdb, repo.ID)
-	if err != nil || len(rows) != 1 || rows[0].Status != MaintainerInactive {
-		t.Fatalf("refreshed activity = %+v, err=%v", rows, err)
-	}
+	checkMaintainerActivityStatuses(t, gdb, repo.ID, maintainer.ID)
 	var shared Maintainer
 	if err := gdb.First(&shared, maintainer.ID).Error; err != nil {
 		t.Fatal(err)
 	}
 	if shared.Status != MaintainerActive || shared.Name != maintainer.Name || shared.Email != maintainer.Email || shared.Notes != maintainer.Notes || !shared.DoNotContact {
 		t.Fatalf("activity update changed shared profile: %+v", shared)
+	}
+}
+
+func checkMaintainerActivityStatuses(t *testing.T, gdb *gorm.DB, repositoryID, maintainerID uint) {
+	t.Helper()
+	for _, status := range []MaintainerStatus{MaintainerUnknown, MaintainerActive, MaintainerInactive} {
+		if err := RecordMaintainerActivity(gdb, repositoryID, maintainerID, string(status)); err != nil {
+			t.Fatal(err)
+		}
+		for _, unknown := range []string{"unknown", "", "unrecognized"} {
+			if err := RecordMaintainerActivity(gdb, repositoryID, maintainerID, unknown); err != nil {
+				t.Fatal(err)
+			}
+		}
+		rows, err := RepositoryMaintainers(gdb, repositoryID)
+		if err != nil || len(rows) != 1 || rows[0].Status != status {
+			t.Fatalf("activity after unknown reports = %+v, err=%v, want %s", rows, err, status)
+		}
 	}
 }

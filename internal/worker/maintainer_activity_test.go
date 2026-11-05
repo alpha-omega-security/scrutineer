@@ -59,6 +59,36 @@ func TestDoSkillMaintainerActivityRefreshesWithinRepository(t *testing.T) {
 	}
 }
 
+func TestDoSkillMaintainerUnknownActivityDoesNotInheritAnotherRepository(t *testing.T) {
+	for _, status := range []string{"unknown", "", "unrecognized"} {
+		t.Run("status="+status, func(t *testing.T) {
+			w, scan := costCapFixture(t, 0)
+			if err := w.DB.Model(&db.Skill{}).Where("id = ?", *scan.SkillID).
+				Updates(map[string]any{"name": "maintainers", "output_kind": "maintainers"}).Error; err != nil {
+				t.Fatal(err)
+			}
+			runMaintainerActivityJob(t, w, scan.RepositoryID, *scan.SkillID, "active")
+			other := db.Repository{URL: "https://example.com/other", Name: "other"}
+			if err := w.DB.Create(&other).Error; err != nil {
+				t.Fatal(err)
+			}
+			runMaintainerActivityJob(t, w, other.ID, *scan.SkillID, status)
+			requireMaintainerActivity(t, w, other.ID, db.MaintainerUnknown)
+			var activity db.MaintainerActivity
+			if err := w.DB.Where("repository_id = ?", other.ID).First(&activity).Error; err != nil {
+				t.Fatal(err)
+			}
+			if activity.Status != db.MaintainerUnknown {
+				t.Fatalf("persisted activity = %q, want unknown", activity.Status)
+			}
+			runMaintainerActivityJob(t, w, other.ID, *scan.SkillID, "active")
+			runMaintainerActivityJob(t, w, other.ID, *scan.SkillID, status)
+			requireMaintainerActivity(t, w, other.ID, db.MaintainerActive)
+			requireMaintainerActivity(t, w, scan.RepositoryID, db.MaintainerActive)
+		})
+	}
+}
+
 func runMaintainerActivityJob(t *testing.T, w *Worker, repositoryID, skillID uint, status string) {
 	t.Helper()
 	scan := db.Scan{RepositoryID: repositoryID, SkillID: &skillID, Kind: JobSkill, Status: db.ScanQueued, Model: "fake"}

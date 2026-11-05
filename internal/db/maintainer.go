@@ -21,16 +21,18 @@ type MaintainerActivity struct {
 }
 
 func RecordMaintainerActivity(gdb *gorm.DB, repositoryID, maintainerID uint, status string) error {
+	conflict := clause.OnConflict{
+		Columns: []clause.Column{{Name: "repository_id"}, {Name: "maintainer_id"}},
+	}
 	switch MaintainerStatus(status) {
 	case MaintainerActive, MaintainerInactive:
+		conflict.DoUpdates = clause.AssignmentColumns([]string{maintainerStatusColumn})
 	default:
-		return nil
+		status = string(MaintainerUnknown)
+		conflict.DoNothing = true
 	}
 	activity := MaintainerActivity{RepositoryID: repositoryID, MaintainerID: maintainerID, Status: MaintainerStatus(status)}
-	return gdb.Clauses(clause.OnConflict{
-		Columns:   []clause.Column{{Name: "repository_id"}, {Name: "maintainer_id"}},
-		DoUpdates: clause.AssignmentColumns([]string{maintainerStatusColumn}),
-	}).Create(&activity).Error
+	return gdb.Clauses(conflict).Create(&activity).Error
 }
 
 // RepositoryMaintainers uses the shared status until repository activity is available.

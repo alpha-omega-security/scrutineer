@@ -737,13 +737,13 @@ Join table. No extra columns.
 
 ## maintainer_activities
 
-Latest reported activity for each repository-maintainer pair. Repository pages, health assessments, API responses and reports use this status without changing the shared profile. New scans can refresh `active` and `inactive`; missing or unrecognized statuses leave prior activity unchanged. Existing links keep the shared status until a scan supplies repository activity. Migration creates an empty table without backfilling records.
+Latest reported activity for each repository-maintainer pair. Repository pages, health assessments, API responses and reports use this status without changing the shared profile. New scans can refresh `active` and `inactive`; missing or unrecognized statuses record `unknown` when no activity exists and leave prior activity unchanged otherwise. Existing links keep the shared status until a scan records repository activity. Migration creates an empty table without backfilling records.
 
 | Column | Type | Notes |
 |--------|------|-------|
 | repository_id | integer FK, composite PK | Deleting the repository removes its activity records. |
 | maintainer_id | integer FK, composite PK, indexed | Deleting the maintainer removes their activity records. |
-| status | text | `active` or `inactive`. |
+| status | text | `active`, `inactive` or `unknown`. |
 
 ## subprojects
 
