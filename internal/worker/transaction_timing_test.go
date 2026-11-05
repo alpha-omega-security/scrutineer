@@ -73,7 +73,6 @@ func TestScanTransactionTimingSlowCommit(t *testing.T) {
 	if len(rows) != 1 || rows[0].Name != "updated" {
 		t.Fatalf("persisted rows: %+v", rows)
 	}
-	t.Logf("scan=%d repo=%d operation=%s outcome=%s duration_ms=%d", record.Scan, record.Repo, record.Operation, record.Outcome, record.DurationMS)
 }
 
 func TestScanTransactionTimingSlowRollback(t *testing.T) {

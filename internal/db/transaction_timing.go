@@ -1,7 +1,6 @@
 package db
 
 import (
-	"errors"
 	"log/slog"
 	"time"
 
@@ -19,12 +18,8 @@ func TimedTransaction(gdb *gorm.DB, log *slog.Logger, write func(*gorm.DB) error
 		return err
 	}
 	elapsed := time.Since(started)
-	code := 0
-	var sqliteErr interface{ Code() int }
-	if errors.As(err, &sqliteErr) {
-		code = sqliteErr.Code()
-	}
-	if elapsed < slowTransactionThreshold && code&0xff != sqliteBusyCode {
+	code := SQLiteErrorCode(err)
+	if elapsed < slowTransactionThreshold && !IsSQLiteBusy(err) {
 		return err
 	}
 	if log == nil {

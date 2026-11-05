@@ -16,8 +16,6 @@ const (
 	subprojectWriteTimeout   = 15 * time.Second
 	subprojectRetryBaseDelay = 10 * time.Millisecond
 	subprojectRetryMaxDelay  = 100 * time.Millisecond
-	sqliteBusyCode           = 5
-	sqlitePrimaryCodeMask    = 0xff
 )
 
 // Replay the whole transaction so a stale WAL snapshot is discarded too.
@@ -35,8 +33,7 @@ func subprojectWriteTransaction(ctx context.Context, gdb *gorm.DB, log *slog.Log
 		if err == nil {
 			return nil
 		}
-		var sqliteErr interface{ Code() int }
-		if !errors.As(err, &sqliteErr) || sqliteErr.Code()&sqlitePrimaryCodeMask != sqliteBusyCode {
+		if !db.IsSQLiteBusy(err) {
 			return err
 		}
 		if waitErr := retry.Sleep(ctx, retry.BackoffDelay(attempt, subprojectRetryBaseDelay, subprojectRetryMaxDelay)); waitErr != nil {

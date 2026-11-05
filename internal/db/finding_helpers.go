@@ -381,13 +381,12 @@ func findingWriteRetryDelay(err error, attempt int) (time.Duration, bool) {
 	if isPostgresSerializationFailure(err) {
 		return retry.BackoffDelay(attempt, time.Millisecond, findingWriteMaxDelay), true
 	}
-	var sqliteErr interface{ Code() int }
-	if !errors.As(err, &sqliteErr) || sqliteErr.Code()&0xff != sqliteBusyCode {
+	if !IsSQLiteBusy(err) {
 		return 0, false
 	}
 	// A stale WAL snapshot needs a fresh transaction immediately; an active
 	// writer needs time to release its lock. Both retries start after rollback.
-	if sqliteErr.Code() == sqliteBusySnapshotCode {
+	if SQLiteErrorCode(err) == sqliteBusySnapshotCode {
 		return 0, true
 	}
 	return retry.BackoffDelay(attempt, time.Millisecond, findingWriteMaxDelay), true
