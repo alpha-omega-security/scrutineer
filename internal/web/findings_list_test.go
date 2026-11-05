@@ -11,7 +11,7 @@ import (
 )
 
 // TestFindingsListDropsSummaryAndShowsCWECategory pins the findings list to the
-// title alone, the scan page excerpt to escaped text without backticks, and the CWE cell to
+// title alone, the scan page excerpt to escaped text without code-span delimiters, and the CWE cell to
 // the leaf ID plus its category name.
 func TestFindingsListDropsSummaryAndShowsCWECategory(t *testing.T) {
 	s, done := newTestServer(t)
@@ -26,6 +26,9 @@ func TestFindingsListDropsSummaryAndShowsCWECategory(t *testing.T) {
 	uncatalogued := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "Unmapped weakness", Severity: "Low",
 		CWE: "CWE-999999", Trace: "Echoes <input value=x> back."}
 	s.DB.Create(&uncatalogued)
+	escaped := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "Shell substitution", Severity: "High",
+		Trace: "Runs \\`id\\` through the shell."}
+	s.DB.Create(&escaped)
 
 	w := httptest.NewRecorder()
 	s.Handler().ServeHTTP(w, localReq(http.MethodGet, "/findings"))
@@ -69,5 +72,8 @@ func TestFindingsListDropsSummaryAndShowsCWECategory(t *testing.T) {
 	}
 	if !strings.Contains(body, "Echoes &lt;input value=x&gt; back.") {
 		t.Error("scan page summary drops or unescapes an HTML tag it names")
+	}
+	if !strings.Contains(row(escaped.ID), "Runs \\`id\\` through the shell.") {
+		t.Error("scan page summary drops escaped backticks")
 	}
 }

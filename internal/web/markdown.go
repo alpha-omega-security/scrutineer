@@ -25,6 +25,8 @@ func renderMarkdown(src string) template.HTML {
 // which is shown as escaped text so tags the excerpt names stay visible. A span
 // opened by N backticks closes on the next run of exactly N, so a backtick inside
 // a double-backtick span is part of the text and stays, as does an unclosed run.
+// A backtick after an odd number of backslashes is escaped and cannot open a span,
+// while inside a span a backslash escapes nothing.
 func unmark(s string) string {
 	var b strings.Builder
 	for {
@@ -32,6 +34,11 @@ func unmark(s string) string {
 		if i < 0 {
 			b.WriteString(s)
 			return b.String()
+		}
+		if p := s[:i]; (len(p)-len(strings.TrimRight(p, "\\")))%2 == 1 {
+			b.WriteString(s[:i+1])
+			s = s[i+1:]
+			continue
 		}
 		b.WriteString(s[:i])
 		n := backtickRun(s[i:])
