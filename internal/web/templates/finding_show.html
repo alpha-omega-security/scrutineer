@@ -520,7 +520,7 @@
                     <option value="{{.}}"{{if eq . $row.CampaignStatus}} selected{{end}}>{{.}}</option>
                     {{end}}
                   </select>
-                  <input class="input text-xs" name="note" value="{{.CampaignNote}}" placeholder="Campaign note">
+                  <input type="text" class="input text-xs" name="note" value="{{.CampaignNote}}" placeholder="Campaign note">
                   <div class="flex items-center justify-between gap-2">
                     <span class="text-xs text-muted-foreground">{{if .CampaignUpdatedAt}}Updated {{.CampaignUpdatedAt.Format "2006-01-02"}}{{end}}</span>
                     <button type="submit" class="btn-sm-outline">Save</button>
@@ -705,49 +705,49 @@ git commit -m "fix: {{$f.Title}}"</pre>
         <div class="grid gap-1 col-span-2">
           <label class="text-xs text-muted-foreground"
                  title="The disclose skill's drafted GHSA summary. May differ from the finding's own title above, which is set at audit time and left untouched by disclose re-runs.">Disclosure title</label>
-          <input class="input" name="disclosure_title" value="{{$f.DisclosureTitle}}">
+          <input type="text" class="input" name="disclosure_title" value="{{$f.DisclosureTitle}}">
         </div>
         <div class="grid gap-1">
           <label class="text-xs text-muted-foreground">Severity</label>
-          <input class="input" name="severity" value="{{$f.Severity}}" list="severity-options">
+          <input type="text" class="input" name="severity" value="{{$f.Severity}}" list="severity-options">
           <datalist id="severity-options">
             <option value="Critical"><option value="High"><option value="Medium"><option value="Low">
           </datalist>
         </div>
         <div class="grid gap-1">
           <label class="text-xs text-muted-foreground">CWE</label>
-          <input class="input" name="cwe" value="{{$f.CWE}}" placeholder="CWE-79">
+          <input type="text" class="input" name="cwe" value="{{$f.CWE}}" placeholder="CWE-79">
         </div>
         <div class="grid gap-1">
           <label class="text-xs text-muted-foreground">CVE ID</label>
-          <input class="input" name="cve_id" value="{{$f.CVEID}}" placeholder="CVE-2026-12345">
+          <input type="text" class="input" name="cve_id" value="{{$f.CVEID}}" placeholder="CVE-2026-12345">
         </div>
         <div class="grid gap-1">
           <label class="text-xs text-muted-foreground">GHSA ID</label>
-          <input class="input" name="ghsa_id" value="{{$f.GHSAID}}" placeholder="GHSA-xxxx-xxxx-xxxx"
+          <input type="text" class="input" name="ghsa_id" value="{{$f.GHSAID}}" placeholder="GHSA-xxxx-xxxx-xxxx"
             pattern="[Gg][Hh][Ss][Aa](-[0-9A-Za-z]{4}){3}" title="GHSA-xxxx-xxxx-xxxx">
         </div>
         <div class="grid gap-1 col-span-2">
           <label class="text-xs text-muted-foreground">CVSS v3 vector</label>
-          <input class="input font-mono text-xs" name="cvss_vector" value="{{$f.CVSSVector}}"
+          <input type="text" class="input font-mono text-xs" name="cvss_vector" value="{{$f.CVSSVector}}"
                  placeholder="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H">
         </div>
         <div class="grid gap-1 col-span-2">
           <label class="text-xs text-muted-foreground">CVSS v4 vector</label>
-          <input class="input font-mono text-xs" name="cvss_v4_vector" value="{{$f.CVSSv4Vector}}"
+          <input type="text" class="input font-mono text-xs" name="cvss_v4_vector" value="{{$f.CVSSv4Vector}}"
                  placeholder="CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N">
         </div>
         <div class="grid gap-1">
           <label class="text-xs text-muted-foreground">Affected versions</label>
-          <input class="input" name="affected" value="{{$f.Affected}}" placeholder=">=1.0, <2.3">
+          <input type="text" class="input" name="affected" value="{{$f.Affected}}" placeholder=">=1.0, <2.3">
         </div>
         <div class="grid gap-1">
           <label class="text-xs text-muted-foreground">Fix version</label>
-          <input class="input" name="fix_version" value="{{$f.FixVersion}}">
+          <input type="text" class="input" name="fix_version" value="{{$f.FixVersion}}">
         </div>
         <div class="grid gap-1 col-span-2">
           <label class="text-xs text-muted-foreground">Fix commit</label>
-          <input class="input font-mono text-xs" name="fix_commit" value="{{$f.FixCommit}}">
+          <input type="text" class="input font-mono text-xs" name="fix_commit" value="{{$f.FixCommit}}">
         </div>
         <div class="grid gap-1">
           <label class="text-xs text-muted-foreground">Resolution</label>
@@ -760,12 +760,12 @@ git commit -m "fix: {{$f.Title}}"</pre>
         </div>
         <div class="grid gap-1">
           <label class="text-xs text-muted-foreground">Assignee</label>
-          <input class="input" name="assignee" value="{{$f.Assignee}}">
+          <input type="text" class="input" name="assignee" value="{{$f.Assignee}}">
         </div>
         <div class="grid gap-1 col-span-2">
           <label class="text-xs text-muted-foreground"
                  title="File-level owners of the finding's location, from CODEOWNERS or recent non-bot committers">Suggested recipients</label>
-          <input class="input" name="suggested_recipients" value="{{$f.SuggestedRecipients}}">
+          <input type="text" class="input" name="suggested_recipients" value="{{$f.SuggestedRecipients}}">
         </div>
         <div class="col-span-2 flex justify-end">
           <button type="submit" class="btn-sm-outline">Save</button>
@@ -1072,7 +1072,7 @@ git commit -m "fix: {{$f.Title}}"</pre>
           <option value="outbound">outbound</option>
           <option value="inbound">inbound</option>
         </select>
-        <input class="input" name="actor" placeholder="who / from whom" required>
+        <input type="text" class="input" name="actor" placeholder="who / from whom" required>
         <input class="input" type="date" name="at">
         <select class="input col-span-1" name="offered_help">
           <option value="">no offer</option>
@@ -1112,9 +1112,9 @@ git commit -m "fix: {{$f.Title}}"</pre>
     </summary>
     <section class="pb-4 grid gap-3">
       <form method="post" action="/findings/{{$f.ID}}/references" class="form grid grid-cols-3 gap-2">
-        <input class="input col-span-2" name="url" placeholder="https://..." required>
-        <input class="input" name="tags" placeholder="tags: issue, pr, cve, ghsa, patch">
-        <input class="input col-span-3" name="summary" placeholder="optional summary">
+        <input type="text" class="input col-span-2" name="url" placeholder="https://..." required>
+        <input type="text" class="input" name="tags" placeholder="tags: issue, pr, cve, ghsa, patch">
+        <input type="text" class="input col-span-3" name="summary" placeholder="optional summary">
         <div class="col-span-3 flex justify-end">
           <button type="submit" class="btn-sm-outline">Add reference</button>
         </div>
