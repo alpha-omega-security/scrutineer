@@ -36,7 +36,7 @@
 
 {{if .Metrics.ByVerdict}}
 <section class="mb-8">
-  <h3 class="text-sm font-medium mb-2">Reviews by verdict</h3>
+  <h3 class="text-base font-semibold mb-2">Reviews by verdict</h3>
   <ul class="grid gap-1 text-sm">
     {{range $verdict := .VerdictLabels}}
       {{$count := index $.Metrics.ByVerdict $verdict}}
@@ -47,7 +47,7 @@
 {{end}}
 
 <section>
-  <h3 class="text-sm font-medium mb-3">Queue ({{len .Queue}})</h3>
+  <h3 class="text-base font-semibold mb-3">Queue <span class="text-muted-foreground text-xs font-normal">({{len .Queue}})</span></h3>
   {{if .Queue}}
     <table class="w-full text-sm">
       <thead>
