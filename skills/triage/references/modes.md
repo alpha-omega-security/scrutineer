@@ -147,3 +147,111 @@ includes or URLs named by the input. Add `audit-injection` only when it
 deserializes input into arbitrary types or evaluates it. Extracting archive
 entries to disk does not add `audit-exfil` on that evidence alone because
 `audit-file-parser` covers it.
+
+## unsafe-rust
+
+Select this mode when first-party Rust in the scan's scope contains unsafe
+code. It does not depend on what kind of software the repository is, so it
+may match alongside any other mode or on its own.
+
+List candidate sites by running this from `./src`, or from
+`./src/{scrutineer.scan_subpath}` when a subpath is set (git grep searches only
+the current directory's subtree):
+
+    git grep -nw unsafe -- '*.rs' \
+      ':(exclude,glob)**/target/**' ':(exclude,glob)**/tests/**' \
+      ':(exclude,glob)**/benches/**' ':(exclude,glob)**/examples/**' \
+      ':(exclude,glob)**/vendor/**' ':(exclude,glob)**/third_party/**'
+
+The `tests`, `benches` and `examples` excludes are meant for test, bench and
+example code, but a crate can also live under one of those names. Run
+`git ls-files -- ':(glob)**/Cargo.toml'` from the same directory. For each
+listed manifest whose directory sits under a `tests`, `benches` or `examples`
+directory (for example `tests/Cargo.toml`, whose code is `tests/src/lib.rs`),
+run the same `git grep` again from that manifest's directory and treat its hits
+like any others. Pathspecs are relative to the current directory, so the rerun
+keeps the crate's own source and still skips its own test, bench and example
+code. Unsafe code in a `vendor` or `third_party` directory stays excluded
+here; the native-memory mode below handles vendored C.
+
+Open the hits and confirm at least one is unsafe code: an `unsafe` block,
+`unsafe fn`, `unsafe impl`, `unsafe trait`, `unsafe extern` block, or an
+`#[unsafe(...)]` attribute such as `#[unsafe(no_mangle)]`. Hits that are only
+in comments, doc text, strings, or code inside a `#[cfg(test)]` module do not
+count. Lint settings such as `#![forbid(unsafe_code)]` are not unsafe code.
+Record the confirmed paths and line numbers, and the hit count, as evidence.
+Unsafe code that exists only in vendored crates, Git submodules, or another
+monorepo subproject outside the scan's scope does not activate this mode.
+`git grep` exits with status 1 when it finds no matches; that is a result
+(this mode does not match), not a failure. If a command fails for another
+reason, gate the mode and record the error.
+
+Enqueue both `audit-unsafe-rust` and `audit-memory` for a match.
+`audit-unsafe-rust` checks every unsafe site's safety obligations for
+unsoundness reachable from safe code. `audit-memory` traces memory corruption
+from untrusted input across the native and FFI boundary. When `embedded-iot`
+or `file-parser` also match and add `audit-memory`, it is still enqueued once.
+
+## native-memory
+
+Select this mode when a Rust project in the scan's scope contains vendored C
+or C++, whether or not this repository has modified it. Like `unsafe-rust`,
+it does not depend on what kind of software the repository is.
+
+Run these from `./src`, or from `./src/{scrutineer.scan_subpath}` when a
+subpath is set:
+
+    git ls-files -- ':(glob)**/Cargo.toml'
+
+    git ls-files -- ':(glob)**/*.c' ':(glob)**/*.h' ':(glob)**/*.cc' \
+      ':(glob)**/*.cpp' ':(glob)**/*.cxx' ':(glob)**/*.hpp' ':(glob)**/*.S' \
+      ':(exclude,glob)**/target/**' ':(exclude,glob)**/tests/**' \
+      ':(exclude,glob)**/benches/**' ':(exclude,glob)**/examples/**'
+
+    git grep -nE 'cc::Build|cmake::Config|autotools::|cxx_build::|\.file\(|\.include\(' \
+      -- ':(glob)**/build.rs' ':(glob)**/build/**/*.rs'
+
+As in the unsafe-rust mode, a manifest whose directory sits under a `tests`,
+`benches` or `examples` directory is a crate: run the second command again
+from that manifest's directory.
+
+A listed C or C++ file belongs to a Rust project when at least one of these
+holds:
+
+- it sits under the directory of a crate in scope, other than the scan root,
+  whose `Cargo.toml` has a `[package]` section (for example
+  `foo-sys/libfoo/src/a.c` under `foo-sys/Cargo.toml`);
+- a crate's build script references it or a directory containing it. That is
+  `build.rs`, the file named by `build =` in `Cargo.toml`, or a module the
+  build script uses (the third command also searches `build/` directories for
+  this reason);
+- it sits in a `cargo vendor` tree, meaning a directory with a
+  `.cargo-checksum.json`.
+
+At the scan root, a `[package]` manifest alone does not claim every C/C++ file
+below it. A file that only shares the root with a crate, and that no build
+script references, belongs to a separate project.
+
+The mode matches when the first command lists at least one `Cargo.toml` and
+either:
+
+- the second command lists C or C++ sources that belong to a Rust project
+  under the rules above, including under `vendor/`, `third_party/`, a `-sys`
+  crate, or a `cargo vendor` tree; or
+- a `.gitmodules` entry sits inside a crate directory and that crate's build
+  script compiles or includes files from it. Submodule contents are not
+  checked out during triage, so the build script is the evidence.
+
+Record the crates, the C/C++ directories with their file counts, and any
+`build.rs` lines that compile them as evidence. C or C++ that sits outside
+every Rust project in scope (for example a sibling C project in a monorepo)
+does not activate this mode on its own; `embedded-iot` and `file-parser`
+still cover it where they apply. `git grep` exits with status 1 when it finds
+no matching build-script lines; that is a result, not a failure, and the
+other rules still decide the match. If a command fails for another reason,
+gate the mode and record the error.
+
+Enqueue `audit-memory` for a match. It classifies each vendored component
+itself and reviews the Rust bridge, build features, and FFI boundary into the
+C code. When `unsafe-rust`, `embedded-iot` or `file-parser` also add
+`audit-memory`, it is still enqueued once.
