@@ -1205,13 +1205,45 @@ func verifyNextStatus(f db.Finding, scan *db.Scan, result verifyOutput, gradingE
 		if scan.Ref == "" {
 			return db.FindingFixed, nil
 		}
-	case "inconclusive", "not_attempted":
+	case "not_attempted":
+		// Verify could not attempt a finding whose stored evidence is a stub,
+		// such as a write probe that reached the streaming endpoint before it
+		// checked evidence. Nothing will ever make it reproducible, so it is
+		// rejected instead of staying open.
+		if findingOpenForVerify(f.Status) && hasPlaceholderEvidence(f) {
+			return db.FindingRejected, nil
+		}
+	case "inconclusive":
 	case "deferred":
 		if result.Preflight.Classification == "" || strings.TrimSpace(result.Preflight.Justification) == "" {
 			return "", fmt.Errorf("verify status \"deferred\" requires preflight.classification and preflight.justification")
 		}
 	}
 	return "", nil
+}
+
+// hasPlaceholderEvidence reports whether a stored finding filled trace,
+// boundary and validation with placeholders. All three must be present:
+// scanner skills such as semgrep never write boundary or validation, so verify
+// being unable to attempt one of their findings is no sign of a stub.
+func hasPlaceholderEvidence(f db.Finding) bool {
+	for _, field := range []string{f.Trace, f.Boundary, f.Validation} {
+		if strings.TrimSpace(field) == "" {
+			return false
+		}
+	}
+	return isStubEvidence(f.Trace, f.Boundary, f.Validation)
+}
+
+// findingOpenForVerify reports whether verify may still move a finding: it is
+// open and no analyst has taken it toward disclosure.
+func findingOpenForVerify(status db.FindingLifecycle) bool {
+	switch status {
+	case db.FindingNew, db.FindingEnriched, db.FindingTriaged:
+		return true
+	default:
+		return false
+	}
 }
 
 func verifyStatusValid(status string) bool {

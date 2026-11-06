@@ -6,13 +6,33 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	"scrutineer/internal/db"
 )
 
 // ErrInvalidFinding marks a streamed finding the caller sent wrong: malformed
-// JSON or missing a required field. Handlers map it to a 4xx rather than 500.
+// JSON, a missing required field or placeholder evidence. Handlers map it to a
+// 4xx rather than 500.
 var ErrInvalidFinding = errors.New("invalid finding")
+
+// stubEvidenceMinRunes is the shortest trace, boundary or validation that
+// counts as evidence. Every skill that streams findings requires all three as
+// markdown, so a real finding carries paragraphs; a write probe or an unfinished
+// draft carries a letter or a word.
+const stubEvidenceMinRunes = 20
+
+// isStubEvidence reports whether a finding's trace, boundary and validation
+// are all missing or too short to be evidence. Only all three at once count,
+// so one terse field on an otherwise written finding never trips it.
+func isStubEvidence(trace, boundary, validation string) bool {
+	for _, field := range []string{trace, boundary, validation} {
+		if utf8.RuneCountInString(strings.TrimSpace(field)) >= stubEvidenceMinRunes {
+			return false
+		}
+	}
+	return true
+}
 
 // PersistStreamedFinding records one finding emitted mid-scan into the
 // concurrent-finding log so sibling scans in the same ScanGroup can read it
@@ -29,6 +49,9 @@ func (w *Worker) PersistStreamedFinding(scan *db.Scan, raw []byte) (*db.Finding,
 	}
 	if strings.TrimSpace(sf.Title) == "" || strings.TrimSpace(sf.Severity) == "" || strings.TrimSpace(sf.Location) == "" {
 		return nil, fmt.Errorf("%w: title, severity and location are required", ErrInvalidFinding)
+	}
+	if isStubEvidence(sf.Trace, sf.Boundary, sf.Validation) {
+		return nil, fmt.Errorf("%w: trace, boundary and validation are missing or placeholders; stream a finding only once its evidence is written", ErrInvalidFinding)
 	}
 	f := sf.toFinding(scan.ID, scan.RepositoryID, scan.Commit, scan.SubPath, scan.Model)
 	f.Fingerprint = db.FingerprintFinding(scan.SkillName, f.SubPath, f.CWE, f.Location, f.Title)

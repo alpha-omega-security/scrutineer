@@ -96,7 +96,7 @@ func TestObservations_reingestingSameScanIsIdempotent(t *testing.T) {
 func TestObservations_streamedPreviewThenFinalReportKeepsFinalContent(t *testing.T) {
 	w, repo := observationWorker(t)
 	s := observationScan(t, w, repo, "claude-code", "model-a", "abc")
-	preview := `{"id":"F1","title":"SQLi","severity":"Medium","cwe":"CWE-89","location":"a.rb:1"}`
+	preview := `{"id":"F1","title":"SQLi","severity":"Medium","cwe":"CWE-89","location":"a.rb:1","trace":"User input reaches exec via handler.Run without quoting."}`
 	if _, err := w.PersistStreamedFinding(s, []byte(preview)); err != nil {
 		t.Fatal(err)
 	}
