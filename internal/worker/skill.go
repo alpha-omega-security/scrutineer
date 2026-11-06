@@ -8,6 +8,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync/atomic"
 
@@ -688,13 +689,11 @@ func (w *Worker) persistFinding(scan *db.Scan, f *db.Finding) (created bool, err
 	f.LastSeenCommit = scan.Commit
 	f.SeenCount = 1
 
-	var existing db.Finding
-	lookup := w.DB.Where("repository_id = ? AND fingerprint = ?", scan.RepositoryID, f.Fingerprint).
-		Order("id").Limit(1).Find(&existing)
-	if lookup.Error != nil {
-		return false, fmt.Errorf("lookup existing finding: %w", lookup.Error)
+	existing, found, err := w.findExistingFinding(scan, f)
+	if err != nil {
+		return false, err
 	}
-	if lookup.RowsAffected > 0 {
+	if found {
 		if uerr := w.reobserveFinding(&existing, f, scan); uerr != nil {
 			return false, uerr
 		}
@@ -721,6 +720,54 @@ func (w *Worker) persistFinding(scan *db.Scan, f *db.Finding) (created bool, err
 		return true, &PoCCaptureError{captureErr}
 	}
 	return true, nil
+}
+
+// findExistingFinding returns the row f re-observes. A default-branch scan
+// that reports a fingerprint whose only match is fixed has found a
+// regression: the fixed row is not reused, so the defect lands as a new
+// actionable finding (and OnFindingCreated fires) instead of silently
+// bumping a closed row's seen_count. The new row's prior_art names the fixed
+// finding. Later scans match the open regression row, not the fixed one.
+// Ref-pinned and fix-validation scans look at other code than the default
+// branch, so they keep matching fixed rows as before.
+func (w *Worker) findExistingFinding(scan *db.Scan, f *db.Finding) (db.Finding, bool, error) {
+	var existing db.Finding
+	q := w.DB.Where("repository_id = ? AND fingerprint = ?", scan.RepositoryID, f.Fingerprint)
+	regressionScan := scan.Ref == "" && scan.BaselineScanID == nil
+	if regressionScan {
+		q = q.Where("status <> ?", db.FindingFixed)
+	}
+	lookup := q.Order("id").Limit(1).Find(&existing)
+	if lookup.Error != nil {
+		return existing, false, fmt.Errorf("lookup existing finding: %w", lookup.Error)
+	}
+	if lookup.RowsAffected > 0 || !regressionScan {
+		return existing, lookup.RowsAffected > 0, nil
+	}
+	var fixed db.Finding
+	fixedLookup := w.DB.Where("repository_id = ? AND fingerprint = ? AND status = ?",
+		scan.RepositoryID, f.Fingerprint, db.FindingFixed).Order("id desc").Limit(1).Find(&fixed)
+	if fixedLookup.Error != nil {
+		return existing, false, fmt.Errorf("lookup fixed finding: %w", fixedLookup.Error)
+	}
+	if fixedLookup.RowsAffected > 0 {
+		f.PriorArt = regressionPriorArt(f.PriorArt, &fixed)
+	}
+	return existing, false, nil
+}
+
+// regressionPriorArt prepends the fixed finding's id and status to a
+// regression's prior_art unless the skill already cited that id.
+func regressionPriorArt(priorArt string, fixed *db.Finding) string {
+	ref := fmt.Sprintf("#%d", fixed.ID)
+	if regexp.MustCompile(regexp.QuoteMeta(ref) + `\b`).MatchString(priorArt) {
+		return priorArt
+	}
+	line := fmt.Sprintf("Regression of finding %s (status %s): the defect is present again in current code.", ref, fixed.Status)
+	if strings.TrimSpace(priorArt) == "" {
+		return line
+	}
+	return line + "\n\n" + priorArt
 }
 
 // reobserveFinding handles the dedup branch in parseFindingsOutput:

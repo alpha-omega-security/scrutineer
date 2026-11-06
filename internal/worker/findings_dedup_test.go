@@ -3,6 +3,7 @@ package worker
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"log/slog"
@@ -819,6 +820,93 @@ func TestParseFindingsOutput_notObservedSkipsClosedFindings(t *testing.T) {
 	gdb.First(&f)
 	if f.MissedCount != 0 {
 		t.Errorf("closed finding should not accrue missed count: missed=%d", f.MissedCount)
+	}
+}
+
+// TestParseFindingsOutput_fixedFindingRegressionCreatesNewFinding checks that
+// a default-branch scan re-reporting a fixed finding's fingerprint creates a
+// new open finding citing the fixed one, leaves the fixed row untouched, and
+// dedupes later observations onto the regression row.
+func TestParseFindingsOutput_fixedFindingRegressionCreatesNewFinding(t *testing.T) {
+	gdb := dbtest.Open(t)
+	repo := db.Repository{URL: "https://x/r", Name: "r"}
+	gdb.Create(&repo)
+	var created []uint
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		OnFindingCreated: func(_ *db.Scan, f *db.Finding) { created = append(created, f.ID) }}
+	emit := func(Event) {}
+	report := `{"findings":[{"id":"F1","title":"x","severity":"High","cwe":"CWE-416","location":"src/lib.rs:10"}]}`
+	run := func(commit string) {
+		t.Helper()
+		scan := &db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "audit-unsafe-rust", Status: db.ScanDone, Commit: commit}
+		gdb.Create(scan)
+		if err := w.parseFindingsOutput(&db.Skill{}, scan, report, emit); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	run("abc")
+	var fixed db.Finding
+	gdb.First(&fixed)
+	gdb.Model(&fixed).Update("status", db.FindingFixed)
+
+	run("def")
+	var rows []db.Finding
+	gdb.Order("id").Find(&rows)
+	if len(rows) != 2 {
+		t.Fatalf("rows = %d, want the fixed finding plus a regression", len(rows))
+	}
+	if rows[0].Status != db.FindingFixed || rows[0].SeenCount != 1 {
+		t.Errorf("fixed finding changed: status=%s seen=%d", rows[0].Status, rows[0].SeenCount)
+	}
+	regression := rows[1]
+	if regression.Status != db.FindingNew {
+		t.Errorf("regression status = %s, want new", regression.Status)
+	}
+	want := fmt.Sprintf("finding #%d (status fixed)", fixed.ID)
+	if !strings.Contains(regression.PriorArt, want) {
+		t.Errorf("regression prior_art = %q, want it to cite %q", regression.PriorArt, want)
+	}
+	if len(created) != 2 || created[1] != regression.ID {
+		t.Errorf("OnFindingCreated ids = %v, want the regression %d", created, regression.ID)
+	}
+
+	run("ghi")
+	var count int64
+	gdb.Model(&db.Finding{}).Count(&count)
+	gdb.First(&regression, regression.ID)
+	if count != 2 || regression.SeenCount != 2 {
+		t.Errorf("later scan: rows=%d regression seen=%d, want 2 rows and seen 2", count, regression.SeenCount)
+	}
+}
+
+// TestParseFindingsOutput_refScanReobservesFixedFinding checks that a
+// ref-pinned scan, which may look at code from before the fix, keeps
+// re-observing a fixed finding instead of reporting a regression.
+func TestParseFindingsOutput_refScanReobservesFixedFinding(t *testing.T) {
+	gdb := dbtest.Open(t)
+	repo := db.Repository{URL: "https://x/r", Name: "r"}
+	gdb.Create(&repo)
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+	emit := func(Event) {}
+	report := `{"findings":[{"id":"F1","title":"x","severity":"High","cwe":"CWE-416","location":"src/lib.rs:10"}]}`
+
+	s1 := &db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "k", Status: db.ScanDone, Commit: "abc"}
+	gdb.Create(s1)
+	if err := w.parseFindingsOutput(&db.Skill{}, s1, report, emit); err != nil {
+		t.Fatal(err)
+	}
+	gdb.Model(&db.Finding{}).Where("repository_id = ?", repo.ID).Update("status", db.FindingFixed)
+
+	s2 := &db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "k", Status: db.ScanDone, Commit: "old", Ref: "v1.0.0"}
+	gdb.Create(s2)
+	if err := w.parseFindingsOutput(&db.Skill{}, s2, report, emit); err != nil {
+		t.Fatal(err)
+	}
+	var count int64
+	gdb.Model(&db.Finding{}).Count(&count)
+	if count != 1 {
+		t.Errorf("rows = %d, want the fixed finding re-observed, not a regression", count)
 	}
 }
 
