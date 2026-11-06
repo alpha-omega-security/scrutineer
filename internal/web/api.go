@@ -27,9 +27,10 @@ import (
 
 const apiPrefix = "/api"
 
-// maxAgentAPIOpenScansPerRepository bounds model-backed work a compromised
-// scan token can enqueue. Normal orchestration stays well below this ceiling.
-const maxAgentAPIOpenScansPerRepository = 16
+// DefaultMaxAgentAPIOpenScansPerRepository bounds model-backed work a
+// compromised scan token can enqueue. Normal orchestration stays well below
+// this ceiling.
+const DefaultMaxAgentAPIOpenScansPerRepository = 20
 
 // NewAPIToken returns a 32-byte hex token suitable for bearer auth.
 func NewAPIToken() string {
@@ -546,7 +547,11 @@ func (s *Server) agentAPIRepoHasCapacity(w http.ResponseWriter, repoID uint) boo
 		writeAPIError(w, http.StatusInternalServerError, err.Error())
 		return false
 	}
-	if open >= maxAgentAPIOpenScansPerRepository {
+	limit := s.MaxAgentAPIOpenScansPerRepository
+	if limit <= 0 {
+		limit = DefaultMaxAgentAPIOpenScansPerRepository
+	}
+	if open >= int64(limit) {
 		writeAPIError(w, http.StatusTooManyRequests, "repository has too many queued or running scans")
 		return false
 	}

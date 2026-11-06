@@ -254,6 +254,10 @@
 # lower if you want model calls serialised.
 # concurrency: 4
 
+# Most queued or running scans one repository may have before a running
+# skill's enqueue through the scan API is refused. Default is 20.
+# max_agent_api_open_scans_per_repository: 20
+
 # Wall-clock limit for one scan. Scans that exceed this are killed and
 # marked failed. Go duration syntax ("30m", "1h30m", "2h").
 # scan_timeout: 1h

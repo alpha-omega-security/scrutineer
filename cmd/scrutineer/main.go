@@ -746,6 +746,7 @@ func newApp(f *flags, cfg *config.Config, log *slog.Logger, setup runnerSetup) (
 	srv.MonorepoAttribution = f.monorepoAttribution
 	srv.VINCE = cfg.VINCE
 	srv.Akrites = cfg.Akrites
+	srv.MaxAgentAPIOpenScansPerRepository = cfg.MaxAgentAPIOpenScansPerRepository
 	srv.FederationPublicFeed = f.federationPublicFeed
 	srv.FederationMembersFeed = f.federationMembersFeed
 	srv.FederationImportFeeds = f.federationImportFeeds

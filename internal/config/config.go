@@ -128,6 +128,10 @@ type Config struct {
 	BackendPreflightTTL string `yaml:"backend_preflight_ttl"`
 	// MaxTurns is passed as --max-turns to claude-code. 0 means no limit.
 	MaxTurns int `yaml:"max_turns"`
+	// MaxAgentAPIOpenScansPerRepository caps queued or running scans per
+	// repository before a scan-token enqueue is refused with 429.
+	// 0 or negative leaves the built-in default (see web.DefaultMaxAgentAPIOpenScansPerRepository).
+	MaxAgentAPIOpenScansPerRepository int `yaml:"max_agent_api_open_scans_per_repository"`
 	// ModelBaseURL overrides the default model API endpoint for the
 	// active backend. When set, the hostname is automatically added to
 	// the egress allowlist. Each harness applies it its own way (claude:

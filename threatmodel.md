@@ -114,7 +114,7 @@ Residual: backups and Time Machine will pick up the db unencrypted. Document tha
 
 ### T9: Denial of service (open, low)
 
-No rate limiting on `POST /repositories`, no cap on clone size, no timeout on the claude job beyond context cancellation. The SSE broker keeps a goroutine and channel per connected client with no cap.
+No rate limiting on `POST /repositories`, no cap on clone size, no timeout on the claude job beyond context cancellation. The SSE broker keeps a goroutine and channel per connected client with no cap. A scan token can enqueue further scans on its own repository only until that repository has `max_agent_api_open_scans_per_repository` scans queued or running (default 20); further enqueues return 429.
 
 ### T10: Stale Go toolchain (resolved)
 

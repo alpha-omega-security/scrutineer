@@ -497,6 +497,11 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: The repository already has `max_agent_api_open_scans_per_repository` scans queued or running (default 20).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
   /findings/{id}:
     parameters:
       - name: id
@@ -930,6 +935,11 @@ paths:
               schema: { $ref: '#/components/schemas/Error' }
         '409':
           description: 'The repository maintainer opted out of federated scanning, so no scan may be enqueued for it, or a federation peer already holds this finding and an outreach skill was asked to report it.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: The repository already has `max_agent_api_open_scans_per_repository` scans queued or running (default 20).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
