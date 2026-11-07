@@ -37,12 +37,14 @@ pass misses, on top of the C/Ruby audit above.
 - **`ruby4` → `/usr/local/ruby-asan-40`, a second ASan+UBSan build (Ruby 4.0.6).** Same
   instrumentation, different ABI (4.0 changed object layout: flag bits, `ROBJECT_EMBED`, `super`
   storage, variable-width allocation), so a native-memory bug can fire under one ABI and not the
-  other. Do NOT rebuild in place under `ruby4`: the 3.4 `.o`s are newer than the 4.0 headers (`make`
-  does nothing) and both share `/work/.gem`, so you would silently re-run the 3.4 build. Build 4.0 in
-  a **fresh copy** of the gem through the 4.0 **shims**, which prepend the 4.0 bin and set their own
-  `GEM_HOME`. From the workspace root: `rm -rf /tmp/src-40 && cp -a src /tmp/src-40 && cd /tmp/src-40 && export PATH=/usr/local/ruby-asan-40/shims:$PATH`,
-  then `bundle install && rake compile` (or `cd ext/<n> && ruby extconf.rb && make`). `ruby4` runs a
-  one-off 4.0 command without the PATH change.
+  other. Do NOT rebuild in place under `ruby4`: the 3.4 `.o`s are newer than the 4.0 headers, so
+  `make` does nothing and you silently re-test the 3.4 build. Build 4.0 in a **fresh copy** of the
+  gem through the 4.0 **shims**, which prepend the 4.0 bin and set their own `GEM_HOME`. Keep the
+  copy under `/work`, not `/tmp` (a 256 MiB noexec tmpfs: the build fills it, and a `.so` there
+  cannot load). From the workspace root: `rm -rf /work/src-40 && cp -a src /work/src-40 && cd /work/src-40 && export PATH=/usr/local/ruby-asan-40/shims:$PATH`,
+  then `bundle install && rake clean compile` (or `cd ext/<n> && make clean; ruby extconf.rb && make`);
+  the copy carries the 3.4 objects, so clean before building. `ruby4` runs a one-off 4.0 command
+  without the PATH change.
 - **`/usr/bin/ruby` — stock Ruby (apt).** Uninstrumented and fast; use it for reading-speed
   Ruby-level work and as the **valgrind** target. Never run valgrind against the ASan ruby.
 - `/opt/ruby-src` — the Ruby source tree the ASan build came from. Cross-reference C-API
@@ -84,15 +86,13 @@ change), try the other before calling it a coverage gap, and state which ABI you
 For a **memory-safety** candidate whose outcome can depend on object layout (type confusion, OOB,
 UAF, anything touching `RSTRUCT_*` / `ROBJECT_*` / `RBASIC` flag bits or the GC), reproduce under
 **both** `ruby` and `ruby4` (each in its own copy of the tree) and record which ABI produced which
-result. The same defect is routinely
-benign on one ABI and a hard crash on another, because the interpreters disagree on where an object
-stores its data. A Struct/type confusion that writes attacker values through `RSTRUCT_LEN` /
-`rb_struct_aset` on a non-Struct instance, for instance, can land inside an embedded object on a
-Ruby major whose fresh objects carry the embed flag bits (a contained, often silent write) yet
-dereference a stale heap pointer on a major where they do not (a wild write -> SIGSEGV / likely RCE).
-A clean run on one ABI is a clean result for that ABI, not for the finding. For a Ruby-level
-(non-memory) reproducer on some other version, `ruby-build <x.y.z> /tmp/ruby-<x.y.z>` (on PATH) or
-the stock `/usr/bin/ruby` still apply; state the version.
+result. The same defect is routinely benign on one ABI and a hard crash on the other because the
+interpreters disagree on where an object stores its data: a Struct/type confusion writing through
+`RSTRUCT_LEN` / `rb_struct_aset` on a non-Struct, say, lands inside the embedded object on one major
+and dereferences a stale heap pointer on the other. A clean run on one ABI is a clean result for that
+ABI, not for the finding. For a Ruby-level (non-memory) reproducer on some other version,
+`ruby-build <x.y.z> /tmp/ruby-<x.y.z>` (on PATH) or the stock `/usr/bin/ruby` still apply; state the
+version.
 
 ### Rust extensions (rb-sys / Cargo-native)
 

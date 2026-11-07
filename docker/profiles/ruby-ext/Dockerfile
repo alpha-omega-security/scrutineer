@@ -106,9 +106,9 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 # Build toolchain + the headers Ruby links against (openssl, yaml/psych, zlib,
 # ffi, gmp, readline, ncurses, gdbm). gdb/strace/valgrind for triage. The apt
-# `ruby` doubles as the BASERUBY the from-source build needs and as the stock
-# interpreter for fast reads / valgrind; ruby-dev lets it build a gem in-place
-# for a valgrind run. wget fetches rustup-init.
+# `ruby` is the BASERUBY both from-source builds pin (--with-baseruby) and the
+# stock interpreter for fast reads / valgrind; ruby-dev lets it build a gem
+# in-place for a valgrind run. wget fetches rustup-init.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential autoconf bison patch git pkg-config wget ca-certificates \
         gdb strace valgrind \
@@ -126,20 +126,75 @@ RUN git clone --depth 1 --branch "${RUBY_BUILD_REF}" \
  && rm -rf /opt/ruby-build/.git \
  && /opt/ruby-build/bin/ruby-build --version
 
-# Build the two sanitized interpreters from kept source trees (/opt/ruby-src* are
-# the C-API reference for triage, like php-ext keeps /opt/php-src). One script per
-# interpreter so a sanitizer-flag change lands on both; it rewrites each rbconfig
-# so mkmf extension builds get alignment back ON and UB fatal, then probes that the
-# rewrite reaches a real compile. 3.4.9 is the default `ruby`.
-COPY build-asan-ruby.sh /usr/local/bin/build-asan-ruby
+# Both sanitized interpreters come from this one script; it is inlined so the Dockerfile-hashed image
+# tag (profile.go imageTag) covers it. The kept trees /opt/ruby-src* are the C-API reference for triage.
+COPY <<'SH' /usr/local/bin/build-asan-ruby
+#!/bin/sh
+# Build one ASan+UBSan Ruby (<git-ref> <install-prefix> <kept-src-dir>) and make its mkmf
+# extension builds instrumented. Shared by both interpreters so the sanitizer flags cannot drift.
+#  - cppflags sanitizers reach the interpreter AND, via rbconfig CPPFLAGS, every mkmf extension build.
+#  - -fno-sanitize=alignment: the interpreter's unaligned packed-struct access is benign; re-enabled for extensions below.
+#  - no -fno-sanitize-recover: the interpreter must survive its own UB or `make` (runs miniruby) aborts; set for extensions below.
+#  - optflags=-O1 -g: readable ASan traces without the -O0 slowdown.
+#  - --with-baseruby=/usr/bin/ruby: codegen on the apt Ruby, not the ASan 3.4 that PATH finds after the first build.
+#  - GC vs ASan fake stack (issue-ruby-profiles.md #1): if fiber-heavy code crashes inside the GC, add --with-coroutine=copy.
+set -eux
+
+ref="$1"
+prefix="$2"
+src="$3"
+
+git clone --depth 1 --branch "$ref" "$RUBY_GIT_URL" "$src"
+cd "$src"
+./autogen.sh
+./configure \
+    --prefix="$prefix" \
+    --with-baseruby=/usr/bin/ruby \
+    --disable-install-doc \
+    cppflags="-fsanitize=address -fsanitize=undefined -fno-sanitize=alignment -fno-omit-frame-pointer -DRUBY_DEBUG=1" \
+    optflags="-O1 -g" \
+    debugflags="-g3" \
+    LDFLAGS="-fsanitize=address -fsanitize=undefined"
+# configure quietly downgrades a too-old baseruby to HAVE_BASERUBY=no and lets `make` fail later; stop here instead.
+grep -q '^HAVE_BASERUBY = yes' Makefile || { echo "ruby-ext: /usr/bin/ruby is below $ref's BASERUBY minimum"; exit 1; }
+make -j"$(nproc)"
+make install
+"$prefix/bin/ruby" -v
+
+# Rewrite the RECORDED cppflags in this interpreter's rbconfig so extension
+# compiles get the alignment check back ON and -fno-sanitize-recover=undefined
+# (UB aborts = evidence). The interpreter binary is already built and stays
+# quiet. Aborts loudly if the entry shape ever changes.
+"$prefix/bin/ruby" -rrbconfig -e 'path=$LOADED_FEATURES.grep(/rbconfig\.rb$/).first; cfg=File.read(path); cfg.sub!(/^(\s*CONFIG\["cppflags"\] = ".*)"\s*$/){ $1.gsub(" -fno-sanitize=alignment","") + " -fno-sanitize-recover=undefined\"" } or abort("ruby-ext: cppflags entry not found in #{path}"); File.write(path, cfg)'
+"$prefix/bin/ruby" -e 'f=RbConfig::CONFIG["CPPFLAGS"]; abort("ruby-ext: alignment still off for extensions: #{f}") if f.include?("-fno-sanitize=alignment"); abort("ruby-ext: -fno-sanitize-recover missing for extensions: #{f}") unless f.include?("-fno-sanitize-recover=undefined"); STDERR.puts "ruby-ext: extension CPPFLAGS =>#{f}"'
+
+# Prove the rewrite reaches a real mkmf extension compile: build a throwaway
+# extension and grep the ACTUAL compiler line. If the cppflags->CPPFLAGS chain
+# ever fails to reach mkmf, the image build fails here instead of silently
+# shipping uninstrumented extensions.
+d="$(mktemp -d)"
+mkdir -p "$d/probe"
+cd "$d/probe"
+printf 'require "mkmf"\ncreate_makefile("probe")\n' > extconf.rb
+printf 'void Init_probe(void){}\n' > probe.c
+"$prefix/bin/ruby" extconf.rb
+make V=1 > compile.log 2>&1 || { cat compile.log; exit 1; }
+grep -Eq -- '-fno-sanitize-recover=undefined' compile.log \
+    || { echo "ruby-ext: extension compile is missing -fno-sanitize-recover=undefined"; cat compile.log; exit 1; }
+if grep -Eq -- '-fno-sanitize=alignment' compile.log; then
+    echo "ruby-ext: extension compile still carries -fno-sanitize=alignment (must be re-enabled for extensions)"
+    cat compile.log
+    exit 1
+fi
+cd /
+rm -rf "$d"
+SH
 RUN chmod +x /usr/local/bin/build-asan-ruby \
  && build-asan-ruby "${RUBY_GIT_REF}"    /usr/local/ruby-asan    /opt/ruby-src
 RUN build-asan-ruby "${RUBY_GIT_REF_40}" /usr/local/ruby-asan-40 /opt/ruby-src-40
 
-# 4.0 toolchain shims: ruby/gem/bundle/rake wrappers that force a per-ABI GEM_HOME
-# (/work/.gem-40, so 4.0-built gems do not collide with 3.4's in /work/.gem) and
-# keep the 4.0 bin first on PATH. Prepend /usr/local/ruby-asan-40/shims to PATH for
-# a 4.0 session; `ruby4` is the one-off entry point on the default PATH.
+# 4.0 shims (ruby/gem/bundle/rake): 4.0 bin first on PATH and GEM_HOME=/work/.gem-40, so 4.0 gems
+# never collide with 3.4's /work/.gem. Prepend the dir to PATH for a 4.0 session; `ruby4` is the one-off.
 RUN set -eux; \
     mkdir -p /usr/local/ruby-asan-40/shims; \
     for t in ruby gem bundle bundler rake; do \
