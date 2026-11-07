@@ -14,6 +14,7 @@ import (
 	mavenpom "github.com/git-pkgs/pom"
 	"github.com/git-pkgs/sbom"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"scrutineer/internal/db"
 	"scrutineer/internal/verification"
@@ -1187,6 +1188,11 @@ func decodeVerifyOutput(report string) (verifyOutput, *verification.Report, *flo
 	return result, &rubric, &score, "", nil
 }
 
+// verifyNextStatus maps a verify result to the lifecycle move it earns: an
+// empty status leaves the finding where it is. confirmed enriches a new
+// finding and fixed on the default branch marks it fixed. not_attempted
+// rejects an open finding whose stored evidence is a stub. An invalid status
+// or a deferred result without its preflight is an error.
 func verifyNextStatus(f db.Finding, scan *db.Scan, result verifyOutput, gradingError string) (db.FindingLifecycle, error) {
 	if !verifyStatusValid(result.Status) {
 		return "", fmt.Errorf("verify status %q is not one of confirmed|fixed|inconclusive|deferred|not_attempted", result.Status)
@@ -1205,13 +1211,76 @@ func verifyNextStatus(f db.Finding, scan *db.Scan, result verifyOutput, gradingE
 		if scan.Ref == "" {
 			return db.FindingFixed, nil
 		}
-	case "inconclusive", "not_attempted":
+	case "not_attempted":
+		// Verify could not attempt a finding whose stored evidence is a stub,
+		// such as a write probe that reached the streaming endpoint before it
+		// checked evidence. Nothing will ever make it reproducible, so it is
+		// rejected instead of staying open.
+		if findingOpenForVerify(f.Status) && hasPlaceholderEvidence(f) {
+			return db.FindingRejected, nil
+		}
+	case "inconclusive":
 	case "deferred":
 		if result.Preflight.Classification == "" || strings.TrimSpace(result.Preflight.Justification) == "" {
 			return "", fmt.Errorf("verify status \"deferred\" requires preflight.classification and preflight.justification")
 		}
 	}
 	return "", nil
+}
+
+// hasPlaceholderEvidence reports whether a stored finding filled trace,
+// boundary and validation with placeholders. All three must be present:
+// scanner skills such as semgrep never write boundary or validation, so verify
+// being unable to attempt one of their findings is no sign of a stub.
+func hasPlaceholderEvidence(f db.Finding) bool {
+	for _, field := range []string{f.Trace, f.Boundary, f.Validation} {
+		if strings.TrimSpace(field) == "" {
+			return false
+		}
+	}
+	return isStubEvidence(f.Trace, f.Boundary, f.Validation)
+}
+
+// writeVerifyStatus moves the finding to next, when verify chose a move. A stub
+// rejection is rechecked against the current row first and dropped when it no
+// longer applies.
+func writeVerifyStatus(tx *gorm.DB, findingID uint, next db.FindingLifecycle) error {
+	if next == "" {
+		return nil
+	}
+	if next == db.FindingRejected {
+		applies, err := stubRejectionStillApplies(tx, findingID)
+		if err != nil || !applies {
+			return err
+		}
+	}
+	if err := db.WriteFindingField(tx, findingID, "status", string(next), db.SourceModel, "verify"); err != nil {
+		return fmt.Errorf("update status: %w", err)
+	}
+	return nil
+}
+
+// stubRejectionStillApplies rechecks a stub rejection against the finding as
+// it stands now, under a row lock inside the write transaction. Verify chose
+// the rejection from an earlier read, so an analyst status change or real
+// evidence written since then cancels it. A retried transaction rechecks too.
+func stubRejectionStillApplies(tx *gorm.DB, findingID uint) (bool, error) {
+	var cur db.Finding
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&cur, findingID).Error; err != nil {
+		return false, fmt.Errorf("reload finding %d: %w", findingID, err)
+	}
+	return findingOpenForVerify(cur.Status) && hasPlaceholderEvidence(cur), nil
+}
+
+// findingOpenForVerify reports whether verify may still move a finding: it is
+// open and no analyst has taken it toward disclosure.
+func findingOpenForVerify(status db.FindingLifecycle) bool {
+	switch status {
+	case db.FindingNew, db.FindingEnriched, db.FindingTriaged:
+		return true
+	default:
+		return false
+	}
 }
 
 func verifyStatusValid(status string) bool {
@@ -1302,6 +1371,10 @@ type verifyRecord struct {
 	calibration  findingSeverityCalibration
 }
 
+// recordVerifyOutput writes one verify result in a single transaction: the
+// status move, the severity calibration, the verification row and its note.
+// A result already recorded for this scan is left alone, so a replayed parse
+// writes nothing twice.
 func (w *Worker) recordVerifyOutput(scan *db.Scan, f db.Finding, record verifyRecord) error {
 	return db.FindingWriteTransaction(w.DB, f.ID, func(tx *gorm.DB) error {
 		calibration := record.calibration
@@ -1313,10 +1386,8 @@ func (w *Worker) recordVerifyOutput(scan *db.Scan, f db.Finding, record verifyRe
 		if lookup.RowsAffected > 0 {
 			return nil
 		}
-		if record.nextStatus != "" {
-			if err := db.WriteFindingField(tx, f.ID, "status", string(record.nextStatus), db.SourceModel, "verify"); err != nil {
-				return fmt.Errorf("update status: %w", err)
-			}
+		if err := writeVerifyStatus(tx, f.ID, record.nextStatus); err != nil {
+			return err
 		}
 		if calibration.Evaluated {
 			effectiveSeverity, err := db.ReconcileFindingSeverityCap(

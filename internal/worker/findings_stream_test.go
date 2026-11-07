@@ -30,6 +30,7 @@ func TestPersistStreamedFinding_createsRowFromBody(t *testing.T) {
 	w.DB.Create(scan)
 
 	body := []byte(`{"id":"F1","title":"t","severity":"High","location":"main.go:10",
+		"trace":"User input reaches exec via handler.Run without quoting.",
 		"dup_check":"compared against F0; distinct sink"}`)
 	f, err := w.PersistStreamedFinding(scan, body)
 	if err != nil {
@@ -61,7 +62,7 @@ func TestPersistStreamedFinding_newFindingDoesNotLogRecordNotFound(t *testing.T)
 	gdb.Create(scan)
 	w := &Worker{DB: gdb, DataDir: t.TempDir(), Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 
-	_, err := w.PersistStreamedFinding(scan, []byte(`{"id":"F1","title":"t","severity":"High","location":"main.go:10"}`))
+	_, err := w.PersistStreamedFinding(scan, []byte(`{"id":"F1","title":"t","severity":"High","location":"main.go:10","trace":"User input reaches exec via handler.Run without quoting."}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +79,7 @@ func TestPersistStreamedFinding_reconcilesWithFinalReport(t *testing.T) {
 	scan := &db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "sd", Status: db.ScanRunning, Commit: "aaa", ScanGroup: "grp-1"}
 	w.DB.Create(scan)
 
-	if _, err := w.PersistStreamedFinding(scan, []byte(`{"id":"F1","title":"t","severity":"High","location":"main.go:10"}`)); err != nil {
+	if _, err := w.PersistStreamedFinding(scan, []byte(`{"id":"F1","title":"t","severity":"High","location":"main.go:10","trace":"User input reaches exec via handler.Run without quoting."}`)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -111,7 +112,7 @@ func TestPersistStreamedFinding_sameScanReconcileRefreshesFinalReportContent(t *
 	scan := &db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "sd", Status: db.ScanRunning, Commit: "aaa", ScanGroup: "grp-1"}
 	w.DB.Create(scan)
 
-	if _, err := w.PersistStreamedFinding(scan, []byte(`{"title":"t","severity":"High","location":"main.go:10"}`)); err != nil {
+	if _, err := w.PersistStreamedFinding(scan, []byte(`{"title":"t","severity":"High","location":"main.go:10","trace":"User input reaches exec via handler.Run without quoting."}`)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -168,7 +169,7 @@ func TestPersistStreamedFinding_sameScanReconcileRefreshesRewordedTitle(t *testi
 	scan := &db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "sd", Status: db.ScanRunning, Commit: "aaa", ScanGroup: "grp-1"}
 	w.DB.Create(scan)
 
-	if _, err := w.PersistStreamedFinding(scan, []byte(`{"title":"SQLi","severity":"High","cwe":"CWE-89","location":"db.go:5"}`)); err != nil {
+	if _, err := w.PersistStreamedFinding(scan, []byte(`{"title":"SQLi","severity":"High","cwe":"CWE-89","location":"db.go:5","trace":"User input reaches exec via handler.Run without quoting."}`)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -195,7 +196,7 @@ func TestPersistStreamedFinding_retractedWhenAbsentFromFinalReport(t *testing.T)
 	scan := &db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "sd", Status: db.ScanRunning, Commit: "aaa", ScanGroup: "grp-1"}
 	w.DB.Create(scan)
 
-	streamed, err := w.PersistStreamedFinding(scan, []byte(`{"id":"F1","title":"dropped later","severity":"High","location":"main.go:10"}`))
+	streamed, err := w.PersistStreamedFinding(scan, []byte(`{"id":"F1","title":"dropped later","severity":"High","location":"main.go:10","trace":"User input reaches exec via handler.Run without quoting."}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,5 +248,71 @@ func TestPersistStreamedFinding_rejectsInvalid(t *testing.T) {
 	w.DB.Model(&db.Finding{}).Count(&n)
 	if n != 0 {
 		t.Errorf("invalid findings created %d rows, want 0", n)
+	}
+}
+
+func TestPersistStreamedFinding_rejectsStubEvidence(t *testing.T) {
+	w, repo := newStreamWorker(t)
+	scan := &db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "sd", Status: db.ScanRunning, Commit: "aaa"}
+	w.DB.Create(scan)
+
+	const head = `"title":"probe write access","severity":"Low","cwe":"CWE-1","location":"src/ocamlorg_web/lib/handler.ml:1","sinks":["S-tmp"]`
+	for name, body := range map[string]string{
+		"probe body": `{` + head + `,"trace":"t","boundary":"b","validation":"v","rating":"r"}`,
+		"omitted":    `{` + head + `,"rating":"r"}`,
+		"padded":     `{` + head + `,"trace":"   t   ","boundary":"   b   ","validation":"   v   "}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := w.PersistStreamedFinding(scan, []byte(body)); !errors.Is(err, ErrInvalidFinding) {
+				t.Errorf("err = %v, want ErrInvalidFinding", err)
+			}
+		})
+	}
+
+	var n int64
+	w.DB.Model(&db.Finding{}).Count(&n)
+	if n != 0 {
+		t.Errorf("stub findings created %d rows, want 0", n)
+	}
+}
+
+func TestPersistStreamedFinding_acceptsOneSubstantiveField(t *testing.T) {
+	w, repo := newStreamWorker(t)
+	scan := &db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "sd", Status: db.ScanRunning, Commit: "aaa"}
+	w.DB.Create(scan)
+
+	body := `{"title":"t","severity":"High","location":"main.go:10","boundary":"b","validation":"v",
+		"trace":"User input reaches exec via handler.Run without quoting."}`
+	f, err := w.PersistStreamedFinding(scan, []byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.ID == 0 {
+		t.Fatal("finding with one substantive field was not persisted")
+	}
+}
+
+func TestIsStubEvidence(t *testing.T) {
+	long := strings.Repeat("é", stubEvidenceMinRunes)
+	short := strings.Repeat("é", stubEvidenceMinRunes-1)
+	for _, tc := range []struct {
+		name                      string
+		trace, boundary, validate string
+		want                      bool
+	}{
+		{"all empty", "", "", "", true},
+		{"all single letters", "t", "b", "v", true},
+		{"nineteen runes", short, short, short, true},
+		{"twenty runes in trace", long, "", "", false},
+		{"twenty runes in boundary", "", long, "", false},
+		{"twenty runes in validation", "", "", long, false},
+		{"padding does not count", "  " + short + "  ", "", "", true},
+		{"nineteen runes are more than nineteen bytes", short, "", "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isStubEvidence(tc.trace, tc.boundary, tc.validate); got != tc.want {
+				t.Errorf("isStubEvidence = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

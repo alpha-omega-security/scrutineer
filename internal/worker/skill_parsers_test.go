@@ -770,12 +770,22 @@ func TestParsePosture_emptyTierLeavesRepoAlone(t *testing.T) {
 
 func runSkillWithFinding(t *testing.T, outputKind, report string, startStatus db.FindingLifecycle) (db.Finding, *gorm.DB) {
 	t.Helper()
+	return runSkillWithFindingEdit(t, outputKind, report, startStatus, nil)
+}
+
+// runSkillWithFindingEdit is runSkillWithFinding with a hook to set fields on
+// the seeded finding before the scan runs.
+func runSkillWithFindingEdit(t *testing.T, outputKind, report string, startStatus db.FindingLifecycle, edit func(*db.Finding)) (db.Finding, *gorm.DB) {
+	t.Helper()
 	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	priorScan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanDone, SkillName: "security-deep-dive"}
 	gdb.Create(&priorScan)
 	finding := db.Finding{ScanID: priorScan.ID, RepositoryID: repo.ID, FindingID: "F1", Title: "x", Severity: "High", Status: startStatus}
+	if edit != nil {
+		edit(&finding)
+	}
 	gdb.Create(&finding)
 	skill := db.Skill{Name: "verify", Description: "d", Body: "b", OutputFile: "report.json", OutputKind: outputKind, Version: 1, Active: true, Source: "ui"}
 	gdb.Create(&skill)
@@ -2961,5 +2971,109 @@ func TestParseComplianceOutput_leavesRepositoryUnchanged(t *testing.T) {
 		if len(rows) != 1 || rows[0].Status != "PASS" || repo.BaselineLevel != 2 {
 			t.Errorf("%s: repository changed: rows=%+v level=%d", tc.name, rows, repo.BaselineLevel)
 		}
+	}
+}
+
+func stubEvidence(f *db.Finding) {
+	f.Trace, f.Boundary, f.Validation = "t", "b", "v"
+}
+
+func TestParseVerify_notAttemptedRejectsStubFinding(t *testing.T) {
+	report := verificationReport(t, "not_attempted", nil)
+	f, gdb := runSkillWithFindingEdit(t, "verify", report, db.FindingNew, stubEvidence)
+	if f.Status != db.FindingRejected {
+		t.Fatalf("status = %s, want rejected", f.Status)
+	}
+	var hist db.FindingHistory
+	if err := gdb.Where("finding_id = ? AND field = ? AND new_value = ?", f.ID, "status", "rejected").First(&hist).Error; err != nil {
+		t.Fatalf("no status history row: %v", err)
+	}
+	if hist.OldValue != string(db.FindingNew) || hist.By != "verify" {
+		t.Errorf("history = %+v, want old new by verify", hist)
+	}
+}
+
+func TestParseVerify_stubFindingStatusUnchanged(t *testing.T) {
+	notAttempted := verificationReport(t, "not_attempted", nil)
+	inconclusive := verificationReport(t, "inconclusive", nil)
+	substantive := func(f *db.Finding) {
+		f.Trace = "User input reaches exec via handler.Run without quoting."
+		f.Boundary, f.Validation = "b", "v"
+	}
+	// A scanner finding carries a short trace and no boundary or validation.
+	scanner := func(f *db.Finding) { f.Trace = "Detected eval" }
+	for _, tc := range []struct {
+		name   string
+		report string
+		start  db.FindingLifecycle
+		edit   func(*db.Finding)
+	}{
+		{"stub inconclusive", inconclusive, db.FindingNew, stubEvidence},
+		{"substantive not_attempted", notAttempted, db.FindingNew, substantive},
+		{"scanner not_attempted", notAttempted, db.FindingNew, scanner},
+		{"stub already reported", notAttempted, db.FindingReported, stubEvidence},
+		{"stub ungraded", strings.Replace(notAttempted, `"number":2`, `"number":1`, 1), db.FindingNew, stubEvidence},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, gdb := runSkillWithFindingEdit(t, "verify", tc.report, tc.start, tc.edit)
+			if f.Status != tc.start {
+				t.Errorf("status = %s, want %s unchanged", f.Status, tc.start)
+			}
+			if tc.name == "stub ungraded" {
+				var row db.FindingVerification
+				if err := gdb.Where("finding_id = ?", f.ID).First(&row).Error; err != nil || row.Score != nil {
+					t.Errorf("report was graded, want ungraded: %+v, %v", row, err)
+				}
+			}
+		})
+	}
+}
+
+func TestRecordVerifyOutput_stubRejectionRecheckedAtWrite(t *testing.T) {
+	for name, tc := range map[string]struct {
+		change func(*db.Finding)
+		want   db.FindingLifecycle
+	}{
+		"still a stub":        {func(*db.Finding) {}, db.FindingRejected},
+		"analyst reported it": {func(f *db.Finding) { f.Status = db.FindingReported }, db.FindingReported},
+		"evidence written": {func(f *db.Finding) {
+			f.Trace = "User input reaches exec via handler.Run without quoting."
+		}, db.FindingNew},
+	} {
+		t.Run(name, func(t *testing.T) {
+			gdb := dbtest.Open(t)
+			repo := db.Repository{URL: "https://example.com/x", Name: "x"}
+			gdb.Create(&repo)
+			scan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanRunning, SkillName: "verify"}
+			gdb.Create(&scan)
+			stale := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "x", Severity: "Low", Status: db.FindingNew}
+			stubEvidence(&stale)
+			gdb.Create(&stale)
+
+			// The row moves on after verify read the stub snapshot.
+			current := stale
+			tc.change(&current)
+			if err := gdb.Save(&current).Error; err != nil {
+				t.Fatal(err)
+			}
+			w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+			if err := w.recordVerifyOutput(&scan, stale, verifyRecord{
+				result:     verifyOutput{Status: "not_attempted"},
+				report:     `{"status":"not_attempted"}`,
+				nextStatus: db.FindingRejected,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			var got db.Finding
+			gdb.First(&got, stale.ID)
+			if got.Status != tc.want {
+				t.Errorf("status = %s, want %s", got.Status, tc.want)
+			}
+			var n int64
+			gdb.Model(&db.FindingVerification{}).Where("finding_id = ?", stale.ID).Count(&n)
+			if n != 1 {
+				t.Errorf("verification rows = %d, want 1 even when the rejection is dropped", n)
+			}
+		})
 	}
 }
