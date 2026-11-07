@@ -57,7 +57,11 @@ func (s *Server) findingFields(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), findingWriteErrorStatus(err, http.StatusUnprocessableEntity))
 		return
 	}
-	s.redirect(w, r, fmt.Sprintf("/findings/%d#disclosure-fields", f.ID))
+	anchor := "disclosure-fields"
+	if r.FormValue("anchor") == "finding-summary" {
+		anchor = "finding-summary"
+	}
+	s.redirect(w, r, fmt.Sprintf("/findings/%d#%s", f.ID, anchor))
 }
 
 // findingDisclosureDraftSave persists edits from the disclosure editor.

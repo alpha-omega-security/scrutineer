@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strings"
 	"testing"
 
 	"scrutineer/internal/db"
@@ -306,5 +307,37 @@ func TestFindingLabels(t *testing.T) {
 	}
 	if got := labelsOf(); len(got) != 0 {
 		t.Errorf("labels after clear = %v, want []", got)
+	}
+}
+
+func TestFindingFieldsSummarySeverity(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	f := seedFindingForForm(t, s)
+	s.DB.Model(&f).Update("cwe", "CWE-79")
+
+	page := getPage(t, s, fmt.Sprintf("/findings/%d", f.ID)).Body.String()
+	if n := strings.Count(page, `name="severity"`); n != 1 {
+		t.Fatalf("severity inputs = %d, want 1", n)
+	}
+	summary, _, _ := strings.Cut(page, `id="disclosure-fields"`)
+	if !strings.Contains(summary, `name="severity"`) || !strings.Contains(summary, `name="anchor" value="finding-summary"`) {
+		t.Fatal("severity form is not in the summary block")
+	}
+
+	path := fmt.Sprintf("/findings/%d/fields", f.ID)
+	w := postForm(t, s, path, url.Values{"severity": {"Low"}, "anchor": {"finding-summary"}})
+	if loc := w.Header().Get("Location"); w.Code != http.StatusSeeOther || loc != fmt.Sprintf("/findings/%d#finding-summary", f.ID) {
+		t.Fatalf("status = %d, Location = %q", w.Code, loc)
+	}
+	var got db.Finding
+	s.DB.First(&got, f.ID)
+	if got.Severity != "Low" || got.CWE != "CWE-79" {
+		t.Errorf("severity = %q, cwe = %q; want Low, CWE-79", got.Severity, got.CWE)
+	}
+
+	w = postForm(t, s, path, url.Values{"severity": {"High"}, "anchor": {"elsewhere"}})
+	if loc := w.Header().Get("Location"); loc != fmt.Sprintf("/findings/%d#disclosure-fields", f.ID) {
+		t.Errorf("unknown anchor: Location = %q", loc)
 	}
 }
