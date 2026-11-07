@@ -306,6 +306,9 @@ func TestDoSkill_concurrentSiblingsTripOnSharedTotal(t *testing.T) {
 
 func TestWrap_skipsQueuedScanWhenGroupBudgetSpent(t *testing.T) {
 	w, scan := groupFixture(t, 0, 1.0, 1.5)
+	if err := w.DB.Model(scan).Update("api_token", "queued-token").Error; err != nil {
+		t.Fatal(err)
+	}
 	w.PrepareRepoSrcWithOptions = func(context.Context, string, string, string, RepoSrcOptions, func(Event)) (string, error) {
 		t.Error("cloned a scan whose group budget is spent")
 		return "", nil
@@ -328,6 +331,9 @@ func TestWrap_skipsQueuedScanWhenGroupBudgetSpent(t *testing.T) {
 	}
 	if !strings.Contains(got.Log, got.Error) {
 		t.Errorf("log %q lacks the reason", got.Log)
+	}
+	if got.APIToken != "" {
+		t.Errorf("skipped scan kept api token %q", got.APIToken)
 	}
 	if len(settled) != 1 || settled[0] != scan.ID {
 		t.Errorf("group settled hook calls = %v", settled)
@@ -600,14 +606,14 @@ func TestWrap_requeuesScanWhenRegistrationReadFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Read 1 is admission, read 2 is the registration load.
-	reads := failBudgetReads(t, w, func(n int32) bool { return n == 2 })
+	// Admission checks the budget and registers the hold in one load.
+	reads := failBudgetReads(t, w, func(n int32) bool { return n == 1 })
 
 	if err := wrapScan(w, scan.ID); err != nil {
 		t.Fatalf("wrap = %v, want nil after requeue", err)
 	}
-	if reads.Load() < 2 {
-		t.Fatalf("only %d budget reads, the registration read never failed", reads.Load())
+	if reads.Load() < 1 {
+		t.Fatal("no budget read, the registration read never failed")
 	}
 	if got := scanStatus(t, w, scan.ID); got != db.ScanQueued {
 		t.Errorf("status %s, want queued", got)
@@ -680,5 +686,92 @@ func TestWrap_groupCostTrackedThroughFinalSave(t *testing.T) {
 	}
 	if _, _, ok := w.groups.spent("grp"); ok {
 		t.Error("group still tracked after the save")
+	}
+}
+
+func TestGroupSpend_admitRefusesSpentGroupAndTracksNothing(t *testing.T) {
+	var g groupSpend
+	total, limit, admitted, err := g.admit("g", 1, 0.2, loadGroup(1, 1.1, new(int)))
+	if err != nil || admitted || math.Abs(total-1.3) > 1e-9 || limit != 1 {
+		t.Fatalf("admit = %v %v %v %v, want refused at 1.3 of 1", total, limit, admitted, err)
+	}
+	if _, _, ok := g.spent("g"); ok {
+		t.Error("group tracked after a refused admit")
+	}
+}
+
+func TestGroupSpend_admitRefusalKeepsSiblingTotal(t *testing.T) {
+	var g groupSpend
+	// Scan 2's recorded 0.3 is part of base when scan 1 loads the group.
+	if _, err := g.register("g", 1, 0, loadGroup(1, 0.3, new(int))); err != nil {
+		t.Fatal(err)
+	}
+	g.update("g", 1, 0.8)
+	if _, _, admitted, err := g.admit("g", 2, 0.3, nil); err != nil || admitted {
+		t.Fatalf("admit admitted %v err %v, want refused", admitted, err)
+	}
+	if total, _, ok := g.spent("g"); !ok || math.Abs(total-1.1) > 1e-9 {
+		t.Errorf("total after refusal %v ok %v, want 1.1", total, ok)
+	}
+	if _, _, admitted, err := g.admit("g", 3, 0, nil); err != nil || admitted {
+		t.Errorf("third admit admitted %v err %v, want refused", admitted, err)
+	}
+}
+
+func TestGroupSpend_registerKeepsHigherRecordedCost(t *testing.T) {
+	var g groupSpend
+	load := loadGroup(10, 0, new(int))
+	if _, err := g.register("g", 1, 0, load); err != nil {
+		t.Fatal(err)
+	}
+	// A backend probe charged after the hold raises the recorded cost.
+	if _, err := g.register("g", 1, 0.4, load); err != nil {
+		t.Fatal(err)
+	}
+	if total, _, _ := g.spent("g"); math.Abs(total-0.4) > 1e-9 {
+		t.Errorf("total %v, want 0.4", total)
+	}
+}
+
+// exhaustGroupDuringPreflight makes a running sibling spend the group past its
+// cap when the queued scan's preflight first loads its skill.
+func exhaustGroupDuringPreflight(t *testing.T, w *Worker, spend float64) *atomic.Bool {
+	t.Helper()
+	var fired atomic.Bool
+	err := w.DB.Callback().Query().Before("gorm:query").Register("test:exhaust_in_preflight", func(tx *gorm.DB) {
+		if tx.Statement.Table != "skills" || !fired.CompareAndSwap(false, true) {
+			return
+		}
+		if _, err := w.groups.register("grp", 99, 0, loadGroup(1, 0, new(int))); err != nil {
+			t.Error(err)
+		}
+		w.groups.update("grp", 99, spend)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = w.DB.Callback().Query().Remove("test:exhaust_in_preflight") })
+	return &fired
+}
+
+func TestWrap_skipsScanWhenSiblingSpendsBudgetDuringPreflight(t *testing.T) {
+	w, scan := groupFixture(t, 0, 1.0, 0.3)
+	failOnClone(t, w)
+	runner := neverRunRunner(t)
+	w.Runner = runner
+	fired := exhaustGroupDuringPreflight(t, w, 0.8)
+
+	got := runCapScan(t, w, scan)
+	if !fired.Load() {
+		t.Fatal("preflight never loaded the skill, the sibling never spent")
+	}
+	if len(runner.jobs) != 0 {
+		t.Errorf("RunSkill called %d times after the group cap was reached", len(runner.jobs))
+	}
+	if got.Status != db.ScanSkipped || got.Error != "group cost cap $1.00 reached (group spent $1.10)" {
+		t.Errorf("status %s error %q, want skipped at $1.10", got.Status, got.Error)
+	}
+	if total, _, ok := w.groups.spent("grp"); !ok || math.Abs(total-1.1) > 1e-9 {
+		t.Errorf("tracked total %v ok %v, want the sibling's 1.1 still tracked", total, ok)
 	}
 }

@@ -226,7 +226,9 @@ cap, each running scan in it stops like a scan that hit its own cap, finishes
 as done with a "cost cap" badge and partial coverage with the reason
 `group_cost_cap`. A scan that has its own cap too stops at whichever is reached
 first. Queued scans in a group that has already spent its cap are skipped
-without running, with the reason in their error. That includes a retried or
+without running, with the reason in their error. The check runs again after
+the scan's preflight, so a sibling that spends the rest of the budget in the
+meantime still stops it before its first model call. That includes a retried or
 resumed scan, so continuing a capped group needs a new launch with a new cap.
 
 The spend estimate is kept in memory by the worker process, so it assumes one

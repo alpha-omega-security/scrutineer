@@ -52,12 +52,41 @@ func (s *groupState) total() float64 {
 func (g *groupSpend) register(group string, id uint, cost float64, load func() (limit, base float64, err error)) (float64, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	st, _, err := g.registerLocked(group, id, cost, load)
+	if err != nil {
+		return 0, err
+	}
+	return st.limit, nil
+}
+
+// admit registers a run like register, then checks the group total under the
+// same lock. A group that has already spent its cap is not tracked for the
+// run and admitted is false, so no sibling can exhaust the budget between the
+// check and the hold.
+func (g *groupSpend) admit(group string, id uint, cost float64, load func() (limit, base float64, err error)) (total, limit float64, admitted bool, err error) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	st, undo, err := g.registerLocked(group, id, cost, load)
+	if err != nil {
+		return 0, 0, false, err
+	}
+	total, limit = st.total(), st.limit
+	if limit > 0 && total >= limit {
+		undo()
+		return total, limit, false, nil
+	}
+	return total, limit, true, nil
+}
+
+// registerLocked adds one run of scan id to its group and returns the group
+// plus an undo that removes exactly that run again. g.mu must be held.
+func (g *groupSpend) registerLocked(group string, id uint, cost float64, load func() (limit, base float64, err error)) (*groupState, func(), error) {
 	st := g.groups[group]
 	joined := st != nil
 	if st == nil {
 		limit, base, err := load()
 		if err != nil {
-			return 0, err
+			return nil, nil, err
 		}
 		st = &groupState{limit: max(limit, 0), base: base, scans: map[uint]*groupScan{}}
 		if g.groups == nil {
@@ -66,16 +95,31 @@ func (g *groupSpend) register(group string, id uint, cost float64, load func() (
 		g.groups[group] = st
 	}
 	sc := st.scans[id]
-	if sc == nil {
+	created := sc == nil
+	var moved float64
+	if created {
 		sc = &groupScan{cost: cost}
 		st.scans[id] = sc
 		if joined {
 			// Its recorded cost is already part of base.
-			st.base = max(st.base-cost, 0)
+			moved = min(cost, st.base)
+			st.base -= moved
 		}
+	} else {
+		// Recorded cost only grows, for example by a backend probe charged
+		// after the hold registered the scan.
+		sc.cost = max(sc.cost, cost)
 	}
 	sc.running++
-	return st.limit, nil
+	undo := func() {
+		sc.running--
+		if created {
+			delete(st.scans, id)
+			st.base += moved
+		}
+		g.dropIfIdle(group)
+	}
+	return st, undo, nil
 }
 
 // update sets the live estimate of a registered scan and returns the group's
@@ -153,31 +197,66 @@ func (w *Worker) registerGroupSpend(scan *db.Scan) (float64, error) {
 	if scan.ScanGroup == "" {
 		return 0, nil
 	}
-	limit, err := w.groups.register(scan.ScanGroup, scan.ID, scan.CostUSD, func() (float64, float64, error) {
-		limit, err := db.ScanGroupBudgetFor(w.DB, scan.ScanGroup)
-		if err != nil || limit <= 0 {
-			return 0, 0, err
-		}
-		base, err := db.ScanGroupSpend(w.DB, scan.ScanGroup, scan.ID)
-		return limit, base, err
-	})
+	limit, err := w.groups.register(scan.ScanGroup, scan.ID, scan.CostUSD, w.loadGroupSpend(scan))
 	if err != nil {
 		return 0, fmt.Errorf("load group cost cap for %q: %w", scan.ScanGroup, err)
 	}
 	return limit, nil
 }
 
+// loadGroupSpend reads the cap of the scan's group and the DB cost of every
+// other scan in it. A group without a budget loads as zero.
+func (w *Worker) loadGroupSpend(scan *db.Scan) func() (float64, float64, error) {
+	return func() (float64, float64, error) {
+		limit, err := db.ScanGroupBudgetFor(w.DB, scan.ScanGroup)
+		if err != nil || limit <= 0 {
+			return 0, 0, err
+		}
+		base, err := db.ScanGroupSpend(w.DB, scan.ScanGroup, scan.ID)
+		return limit, base, err
+	}
+}
+
+// groupCapError reports that a scan's group had already spent its budget
+// when the scan asked for its hold.
+type groupCapError struct {
+	spent, limit float64
+}
+
+func (e *groupCapError) Error() string {
+	return fmt.Sprintf("group cost cap $%.2f reached (group spent $%.2f)", e.limit, e.spent)
+}
+
 // holdGroupSpend keeps the scan's group tracked from before its claim until
 // wrap has saved its final cost, so a sibling starting in between still
-// counts that cost. The returned release takes whether the save succeeded.
+// counts that cost. The spent check runs under the same lock as the hold. A
+// spent group returns a *groupCapError and holds nothing. The returned release
+// takes whether the save succeeded.
 func (w *Worker) holdGroupSpend(scan *db.Scan) (func(saved bool), error) {
 	if scan.ScanGroup == "" {
 		return func(bool) {}, nil
 	}
-	if _, err := w.registerGroupSpend(scan); err != nil {
-		return nil, err
+	spent, limit, admitted, err := w.groups.admit(scan.ScanGroup, scan.ID, scan.CostUSD, w.loadGroupSpend(scan))
+	if err != nil {
+		return nil, fmt.Errorf("load group cost cap for %q: %w", scan.ScanGroup, err)
+	}
+	if !admitted {
+		return nil, &groupCapError{spent: spent, limit: limit}
 	}
 	return func(saved bool) { w.groups.release(scan.ScanGroup, scan.ID, scan.CostUSD, saved) }, nil
+}
+
+// heldGroupCapped returns a *groupCapError when the group of a scan holding
+// its group spend has reached its cap, nil otherwise.
+func (w *Worker) heldGroupCapped(scan *db.Scan) *groupCapError {
+	if scan.ScanGroup == "" {
+		return nil
+	}
+	spent, limit, ok := w.groups.spent(scan.ScanGroup)
+	if !ok || limit <= 0 || spent < limit {
+		return nil
+	}
+	return &groupCapError{spent: spent, limit: limit}
 }
 
 // groupSpendStatus returns the group's spend and cap, preferring the live
@@ -231,21 +310,16 @@ func (w *Worker) deferUnreadGroupBudget(ctx context.Context, scan *db.Scan, atte
 	return nil
 }
 
-// skipIfGroupSpent finishes a queued scan as skipped, without cloning or
-// running anything, when its group budget is already spent. It reports whether
-// the scan was skipped. An error means the budget state is unknown and the
-// scan must not run yet.
-func (w *Worker) skipIfGroupSpent(scan *db.Scan) (bool, error) {
-	spent, limit, err := w.groupSpendStatus(scan.ScanGroup)
-	if err != nil {
-		return false, err
-	}
-	if limit <= 0 || spent < limit {
-		return false, nil
-	}
-	reason := fmt.Sprintf("group cost cap $%.2f reached (group spent $%.2f)", limit, spent)
+// skipGroupCapped finishes a queued scan as skipped, without cloning or
+// running anything, because its group budget is already spent. The bearer
+// token is cleared with the terminal status.
+func (w *Worker) skipGroupCapped(scan *db.Scan, capped *groupCapError) error {
+	reason := capped.Error()
 	now := time.Now()
+	// Select makes Updates write the empty APIToken, which a plain struct
+	// update would skip as a zero value.
 	res := w.DB.Model(&db.Scan{}).Where("id = ? AND status = ?", scan.ID, db.ScanQueued).
+		Select("Status", "StatusPriority", "Error", "Log", "StartedAt", "FinishedAt", "APIToken").
 		Updates(db.Scan{
 			Status:         db.ScanSkipped,
 			StatusPriority: db.StatusPriorityFor(db.ScanSkipped),
@@ -255,17 +329,18 @@ func (w *Worker) skipIfGroupSpent(scan *db.Scan) (bool, error) {
 			FinishedAt:     &now,
 		})
 	if res.Error != nil {
-		return false, fmt.Errorf("save group-capped scan %d: %w", scan.ID, res.Error)
+		return fmt.Errorf("save group-capped scan %d: %w", scan.ID, res.Error)
 	}
 	if res.RowsAffected == 0 {
-		return true, nil
+		return nil
 	}
 	scan.Status = db.ScanSkipped
 	scan.StatusPriority = db.StatusPriorityFor(db.ScanSkipped)
 	scan.Error = reason
+	scan.APIToken = ""
 	scan.FinishedAt = &now
 	w.publish(scan.ID, scan.RepositoryID, "scan-status", string(scan.Status))
 	w.SettleScanGroup(scan)
 	w.Log.Info("skipping scan: group cost cap reached", "scan", scan.ID, "group", scan.ScanGroup)
-	return true, nil
+	return nil
 }

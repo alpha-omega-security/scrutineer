@@ -791,26 +791,35 @@ func (w *Worker) wrap(h handler) func(context.Context, []byte) error {
 	}
 }
 
-// admitScan runs the checks a queued scan passes before its claim, then takes
-// the hold that keeps its group spend tracked until wrap saves the scan.
-// proceed is false when the job ends here, with err as its outcome.
+// admitScan runs the checks a queued scan passes before its claim. It takes
+// the group hold first, checking the group total under the same lock, so a
+// sibling cannot exhaust the budget between the check and the hold. Preflight
+// runs under the hold, which is released on every early return. The total is
+// checked again after preflight. proceed is false when the job ends here, with
+// err as its outcome.
 func (w *Worker) admitScan(ctx context.Context, scan *db.Scan, attempt int) (release func(saved bool), proceed bool, err error) {
-	drop, err := w.dropBeforeStart(scan)
+	if scan.Repository.FederationOptedOut() {
+		w.cancelOptedOut(scan)
+		return nil, false, nil
+	}
+	release, err = w.holdGroupSpend(scan)
+	if capped, ok := errors.AsType[*groupCapError](err); ok {
+		return nil, false, w.skipGroupCapped(scan, capped)
+	}
 	if err != nil {
 		return nil, false, w.deferUnreadGroupBudget(ctx, scan, attempt, err)
-	}
-	if drop {
-		return nil, false, nil
 	}
 	if scan.Kind == JobSkill {
 		deferred, err := w.preflightSkillUnlessOverage(ctx, scan, attempt)
 		if err != nil || deferred {
+			release(true)
 			return nil, false, err
 		}
 	}
-	release, err = w.holdGroupSpend(scan)
-	if err != nil {
-		return nil, false, w.deferUnreadGroupBudget(ctx, scan, attempt, err)
+	// A sibling may have spent the rest of the budget during preflight.
+	if capped := w.heldGroupCapped(scan); capped != nil {
+		release(true)
+		return nil, false, w.skipGroupCapped(scan, capped)
 	}
 	return release, true, nil
 }
@@ -849,17 +858,6 @@ func (w *Worker) cancelOptedOut(scan *db.Scan) {
 	w.publish(scan.ID, scan.RepositoryID, "scan-status", string(scan.Status))
 	w.Log.Warn("dropping job: maintainer opted out of federated scanning",
 		"scan", scan.ID, "repo", scan.RepositoryID)
-}
-
-// dropBeforeStart finishes a queued scan that must not run: its repository
-// opted out of federated scanning or its group has spent its budget. An error
-// means the group budget could not be read and the scan must wait.
-func (w *Worker) dropBeforeStart(scan *db.Scan) (bool, error) {
-	if scan.Repository.FederationOptedOut() {
-		w.cancelOptedOut(scan)
-		return true, nil
-	}
-	return w.skipIfGroupSpent(scan)
 }
 
 // errScanClaimLost means the row left `queued` between the dispatch gate
