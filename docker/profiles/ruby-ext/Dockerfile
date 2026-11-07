@@ -259,6 +259,9 @@ ENV CFLAGS="-fsanitize=address -fsanitize=undefined -fno-sanitize-recover=undefi
 RUN chmod -R a+rwX /usr/local/ruby-asan /usr/local/ruby-asan-40 "$RUSTUP_HOME" "$CARGO_HOME" \
  && ruby -v 2>&1 | grep -q "ruby 3.4" \
  && ruby4 -v 2>&1 | grep -q "ruby 4.0" \
+ && test "$(/usr/local/ruby-asan-40/shims/gem env gemdir)" = /work/.gem-40 \
+ && /usr/local/ruby-asan-40/shims/bundle --version \
+ && /usr/local/ruby-asan-40/shims/rake --version \
  && ldd /usr/local/ruby-asan/bin/ruby | grep -q libasan \
  && ldd /usr/local/ruby-asan-40/bin/ruby | grep -q libasan \
  && /usr/bin/ruby -v && valgrind --version && cargo --version
