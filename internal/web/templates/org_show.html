@@ -106,7 +106,7 @@
           <td class="min-w-0 whitespace-normal"><a href="/findings/{{.ID}}" class="font-medium">{{.Title}}</a></td>
           <td class="truncate">{{$repo.Name}}</td>
           <td>{{template "finding-status" (fstatus .Status)}}</td>
-          <td class="text-muted-foreground">{{if .CWE}}{{with cwecatid .CWE}}{{.}} › {{end}}{{.CWE}}{{end}}</td>
+          <td class="text-muted-foreground">{{template "cwe-cell" .CWE}}</td>
         </tr>
       {{end}}
       </tbody>

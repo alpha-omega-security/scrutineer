@@ -13,12 +13,11 @@ type CWE = cwe.Entry
 // not mapped to a View-1400 bucket.
 const UncategorizedCWE = "Uncategorized"
 
-// LookupCWE, CWECategories, CWECategoryID and CWEsInCategory are thin
+// LookupCWE, CWECategories and CWEsInCategory are thin
 // wrappers over github.com/git-pkgs/cwe kept so template-func registration
 // and existing callers in this package do not need to change.
 func LookupCWE(id string) (string, CWE, bool) { return cwe.Lookup(id) }
 func CWECategories() []string                 { return cwe.Categories() }
-func CWECategoryID(id string) string          { return cwe.CategoryOf(id) }
 func CWEsInCategory(label string) []string    { return cwe.InCategory(label) }
 
 // CategoryLabel formats a View-1400 category label with its CWE-ID prefix,
