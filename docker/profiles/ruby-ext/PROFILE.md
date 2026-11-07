@@ -34,10 +34,23 @@ pass misses, on top of the C/Ruby audit above.
   RbConfig::CONFIG["CFLAGS"]'` shows the sanitizer flags. Its `gem`/`bundle` compile extensions
   *instrumented* automatically (the flags flow through rbconfig). Use this to build and drive the
   extension.
+- **`ruby4` → `/usr/local/ruby-asan-40`, a second ASan+UBSan build (Ruby 4.0.6).** Same
+  instrumentation, different ABI (4.0 changed object layout: flag bits, `ROBJECT_EMBED`, `super`
+  storage, variable-width allocation), so a native-memory bug can fire under one ABI and not the
+  other. Do NOT rebuild in place under `ruby4`: the 3.4 `.o`s are newer than the 4.0 headers, so
+  `make` does nothing and you silently re-test the 3.4 build. Build 4.0 in a **fresh copy** of the
+  gem through the 4.0 **shims**, which prepend the 4.0 bin and set their own `GEM_HOME`. Keep the
+  copy under `/work`, not `/tmp` (a 256 MiB noexec tmpfs: the build fills it, and a `.so` there
+  cannot load). From the workspace root: `rm -rf /work/src-40 && cp -a src /work/src-40 && cd /work/src-40 && export PATH=/usr/local/ruby-asan-40/shims:$PATH`,
+  then `bundle install && rake clean compile` (or `cd ext/<n> && make clean; ruby extconf.rb && make`);
+  the copy carries the 3.4 objects, so clean before building. `ruby4` runs a one-off 4.0 command
+  without the PATH change.
 - **`/usr/bin/ruby` — stock Ruby (apt).** Uninstrumented and fast; use it for reading-speed
   Ruby-level work and as the **valgrind** target. Never run valgrind against the ASan ruby.
 - `/opt/ruby-src` — the Ruby source tree the ASan build came from. Cross-reference C-API
   semantics here when triaging (`include/ruby/**`, `string.c`, `gc.c`).
+- `/opt/ruby-src-40`, the Ruby 4.0 source tree. Compare against `/opt/ruby-src` (3.4) when a layout
+  difference between the ABIs is the point of the bug.
 - `gdb`, `strace`, `valgrind`, `cargo`, `brakeman`, `gh`, `claude` — on PATH.
 
 ## Building & driving the extension (under ASan, the default ruby)
@@ -63,11 +76,23 @@ Then drive it from Ruby and let a sanitizer abort be the signal:
 bundle exec ruby /tmp/poc.rb      # or: ruby -e '...'
 ```
 
-**Version skew.** The sanitized interpreter is Ruby 3.4. If the gem targets another version (`required_ruby_version`,
-`.ruby-version`) and the extension won't compile or load against 3.4 — removed C-API, struct-layout changes — say so
-explicitly; that is a coverage gap, not a clean result. ASan/memory-safety coverage stays on 3.4; for a Ruby-level
-reproducer on the gem's own version use `ruby-build <x.y.z> /tmp/ruby-<x.y.z>` (on PATH) or the stock `/usr/bin/ruby`,
-and state the version used.
+**Two ASan ABIs: build against the gem's target, and test both when layout matters.** There are two
+instrumented interpreters: `ruby` (3.4.9, default) and `ruby4` (4.0.6). The gem's own target comes
+from `required_ruby_version` / `.ruby-version` / the Gemfile `ruby` line; read it and build the
+extension against the ABI that matches (`ruby`, or the 4.0 shims in a fresh copy of the tree; see the
+interpreter list above). If it won't compile or load against one (removed C-API, struct-layout
+change), try the other before calling it a coverage gap, and state which ABI you used.
+
+For a **memory-safety** candidate whose outcome can depend on object layout (type confusion, OOB,
+UAF, anything touching `RSTRUCT_*` / `ROBJECT_*` / `RBASIC` flag bits or the GC), reproduce under
+**both** `ruby` and `ruby4` (each in its own copy of the tree) and record which ABI produced which
+result. The same defect is routinely benign on one ABI and a hard crash on the other because the
+interpreters disagree on where an object stores its data: a Struct/type confusion writing through
+`RSTRUCT_LEN` / `rb_struct_aset` on a non-Struct, say, lands inside the embedded object on one major
+and dereferences a stale heap pointer on the other. A clean run on one ABI is a clean result for that
+ABI, not for the finding. For a Ruby-level (non-memory) reproducer on some other version, the stock
+`/usr/bin/ruby` or `mkdir -p /work/tmp && TMPDIR=/work/tmp ruby-build <x.y.z> /work/ruby-<x.y.z>`
+(not `/tmp`: a 256 MiB noexec tmpfs, which ruby-build refuses) still apply; state the version.
 
 ### Rust extensions (rb-sys / Cargo-native)
 
