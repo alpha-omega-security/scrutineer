@@ -29,9 +29,6 @@ const ossCRSProducer = "oss-crs"
 
 const maxOSSCRSRunLen = 200
 
-// errOSSCRSWriteBudget refuses an import whose associations would write more
-// payload than the archive limit allows it to retain, since a file associated
-// with several findings is written once per finding.
 var errOSSCRSWriteBudget = fmt.Errorf("%w: its associations write more than %d bytes", osscrs.ErrTooLarge, osscrs.MaxRetainedBytes)
 
 // ossCRSBudget is the payload bytes an import may still write.
@@ -294,19 +291,7 @@ func storeOSSCRSArtifacts(tx *gorm.DB, scan db.Scan, artifacts []osscrs.Artifact
 // absent from an earlier capture is left to import_artifacts with a warning.
 // A capture records its candidate's revision, falling back to the scan's.
 func captureOSSCRSPoVs(tx *gorm.DB, scan db.Scan, artifacts []osscrs.Artifact, links map[string][]uint, commits map[uint]string, budget *ossCRSBudget) (map[ossCRSLink]bool, []string, error) {
-	byFinding := map[uint][]poc.File{}
-	var findingIDs []uint
-	for _, a := range artifacts {
-		if a.Kind != osscrs.KindPoV {
-			continue
-		}
-		for _, id := range links[a.Path] {
-			if _, ok := byFinding[id]; !ok {
-				findingIDs = append(findingIDs, id)
-			}
-			byFinding[id] = append(byFinding[id], poc.File{Path: a.Path, Data: a.Data, SHA256: a.SHA256})
-		}
-	}
+	byFinding, findingIDs := ossCRSPoVsByFinding(artifacts, links)
 	captured := map[ossCRSLink]bool{}
 	var warnings []string
 	for _, id := range findingIDs {
@@ -350,6 +335,24 @@ func captureOSSCRSPoVs(tx *gorm.DB, scan db.Scan, artifacts []osscrs.Artifact, l
 		}
 	}
 	return captured, warnings, nil
+}
+
+// ossCRSPoVsByFinding groups associated PoVs by finding, in first-seen order.
+func ossCRSPoVsByFinding(artifacts []osscrs.Artifact, links map[string][]uint) (map[uint][]poc.File, []uint) {
+	byFinding := map[uint][]poc.File{}
+	var findingIDs []uint
+	for _, a := range artifacts {
+		if a.Kind != osscrs.KindPoV {
+			continue
+		}
+		for _, id := range links[a.Path] {
+			if _, ok := byFinding[id]; !ok {
+				findingIDs = append(findingIDs, id)
+			}
+			byFinding[id] = append(byFinding[id], poc.File{Path: a.Path, Data: a.Data, SHA256: a.SHA256})
+		}
+	}
+	return byFinding, findingIDs
 }
 
 func ossCRSLog(run string, archive osscrs.Archive, unresolved []string) string {
