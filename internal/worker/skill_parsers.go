@@ -14,6 +14,7 @@ import (
 	mavenpom "github.com/git-pkgs/pom"
 	"github.com/git-pkgs/sbom"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"scrutineer/internal/db"
 	"scrutineer/internal/verification"
@@ -1235,6 +1236,37 @@ func hasPlaceholderEvidence(f db.Finding) bool {
 	return isStubEvidence(f.Trace, f.Boundary, f.Validation)
 }
 
+// writeVerifyStatus moves the finding to next, when verify chose a move. A stub
+// rejection is rechecked against the current row first and dropped when it no
+// longer applies.
+func writeVerifyStatus(tx *gorm.DB, findingID uint, next db.FindingLifecycle) error {
+	if next == "" {
+		return nil
+	}
+	if next == db.FindingRejected {
+		applies, err := stubRejectionStillApplies(tx, findingID)
+		if err != nil || !applies {
+			return err
+		}
+	}
+	if err := db.WriteFindingField(tx, findingID, "status", string(next), db.SourceModel, "verify"); err != nil {
+		return fmt.Errorf("update status: %w", err)
+	}
+	return nil
+}
+
+// stubRejectionStillApplies rechecks a stub rejection against the finding as
+// it stands now, under a row lock inside the write transaction. Verify chose
+// the rejection from an earlier read, so an analyst status change or real
+// evidence written since then cancels it. A retried transaction rechecks too.
+func stubRejectionStillApplies(tx *gorm.DB, findingID uint) (bool, error) {
+	var cur db.Finding
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&cur, findingID).Error; err != nil {
+		return false, fmt.Errorf("reload finding %d: %w", findingID, err)
+	}
+	return findingOpenForVerify(cur.Status) && hasPlaceholderEvidence(cur), nil
+}
+
 // findingOpenForVerify reports whether verify may still move a finding: it is
 // open and no analyst has taken it toward disclosure.
 func findingOpenForVerify(status db.FindingLifecycle) bool {
@@ -1345,10 +1377,8 @@ func (w *Worker) recordVerifyOutput(scan *db.Scan, f db.Finding, record verifyRe
 		if lookup.RowsAffected > 0 {
 			return nil
 		}
-		if record.nextStatus != "" {
-			if err := db.WriteFindingField(tx, f.ID, "status", string(record.nextStatus), db.SourceModel, "verify"); err != nil {
-				return fmt.Errorf("update status: %w", err)
-			}
+		if err := writeVerifyStatus(tx, f.ID, record.nextStatus); err != nil {
+			return err
 		}
 		if calibration.Evaluated {
 			effectiveSeverity, err := db.ReconcileFindingSeverityCap(

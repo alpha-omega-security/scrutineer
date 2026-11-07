@@ -3028,3 +3028,52 @@ func TestParseVerify_stubFindingStatusUnchanged(t *testing.T) {
 		})
 	}
 }
+
+func TestRecordVerifyOutput_stubRejectionRecheckedAtWrite(t *testing.T) {
+	for name, tc := range map[string]struct {
+		change func(*db.Finding)
+		want   db.FindingLifecycle
+	}{
+		"still a stub":        {func(*db.Finding) {}, db.FindingRejected},
+		"analyst reported it": {func(f *db.Finding) { f.Status = db.FindingReported }, db.FindingReported},
+		"evidence written": {func(f *db.Finding) {
+			f.Trace = "User input reaches exec via handler.Run without quoting."
+		}, db.FindingNew},
+	} {
+		t.Run(name, func(t *testing.T) {
+			gdb := dbtest.Open(t)
+			repo := db.Repository{URL: "https://example.com/x", Name: "x"}
+			gdb.Create(&repo)
+			scan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanRunning, SkillName: "verify"}
+			gdb.Create(&scan)
+			stale := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "x", Severity: "Low", Status: db.FindingNew}
+			stubEvidence(&stale)
+			gdb.Create(&stale)
+
+			// The row moves on after verify read the stub snapshot.
+			current := stale
+			tc.change(&current)
+			if err := gdb.Save(&current).Error; err != nil {
+				t.Fatal(err)
+			}
+			w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+			if err := w.recordVerifyOutput(&scan, stale, verifyRecord{
+				result:     verifyOutput{Status: "not_attempted"},
+				report:     `{"status":"not_attempted"}`,
+				nextStatus: db.FindingRejected,
+			}); err != nil {
+				t.Fatal(err)
+			}
+			var got db.Finding
+			gdb.First(&got, stale.ID)
+			if got.Status != tc.want {
+				t.Errorf("status = %s, want %s", got.Status, tc.want)
+			}
+			var n int64
+			gdb.Model(&db.FindingVerification{}).Where("finding_id = ?", stale.ID).Count(&n)
+			if n != 1 {
+				t.Errorf("verification rows = %d, want 1 even when the rejection is dropped", n)
+			}
+		})
+	}
+}
