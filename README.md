@@ -192,7 +192,8 @@ Adding a repo enqueues the `triage` skill, whose SKILL.md lists the further skil
 | `audit-exfil` | Opt-in static audit for SSRF, path traversal, XXE, and response or diagnostic leakage with ecosystem-specific references |
 | `audit-authz` | Opt-in static audit for insecure direct object references (IDOR), tenant isolation, fail-open guards, privilege escalation, and authorization decisions based on unverified claims |
 | `audit-pii` | Opt-in static audit for real personal or customer-identifying data committed to source or exposed through logs, URLs, telemetry, exports, and responses |
-| `audit-memory` | Opt-in static audit for reachable memory corruption in first-party C, C++, unsafe Rust, native extensions, and FFI boundaries |
+| `audit-memory` | Static audit for reachable memory corruption in first-party C, C++, unsafe Rust, native extensions, and FFI boundaries; triage enqueues it for embedded firmware, native parsers, any first-party unsafe Rust, and Rust crates that vendor C or C++ |
+| `audit-unsafe-rust` | Soundness audit of first-party unsafe Rust using Google's `unsafe_rust_review` method from google/rust-skills; triage enqueues it whenever first-party Rust contains unsafe code |
 | `audit-package-manager` | Static audit of package manager clients, registries, and proxies against a bundled threat model; triage enqueues it when source evidence shows the repository implements one |
 | `audit-web` | Reviews web sessions, browser origins, uploads and business workflows when triage finds an implemented web application or API |
 | `audit-embedded` | Reviews firmware updates, boot chain, provisioning, device credentials and debug interfaces when triage finds device firmware |

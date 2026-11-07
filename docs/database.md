@@ -286,7 +286,7 @@ One row per vulnerability. Lifecycle columns are mutated through `db.WriteFindin
 | commit | text | Denormalised from scan. |
 | sub_path | text | Denormalised from scan; sub-folder the finding's `location` is relative to. |
 | model | text | Model that first produced the finding, denormalised from the producing scan. For bundle imports it is the exporting instance's producing model. Deterministic imports (SARIF, CSV, markdown) record no model — their synchronous import scan carries none — while the queued `ingest` skill fallback records its own ingest model. Backfilled on startup; empty when the producing scan recorded no model. |
-| fingerprint | text | Content hash for cross-scan dedupe; `(repository_id, fingerprint)` is indexed. |
+| fingerprint | text | Content hash for cross-scan dedupe; `(repository_id, fingerprint)` is indexed. A default-branch skill scan does not re-observe a `fixed` row: it creates a new finding whose `prior_art` cites the fixed one, and later scans dedupe onto that regression. Ref-pinned and fix-validation scans still match fixed rows. |
 | last_seen_scan_id | integer | Most recent scan that re-observed this fingerprint. |
 | last_seen_commit | text | Commit at re-observation. |
 | seen_count | integer | Total times re-observed across rescans. |
