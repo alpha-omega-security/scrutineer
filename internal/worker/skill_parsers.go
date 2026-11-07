@@ -1188,6 +1188,11 @@ func decodeVerifyOutput(report string) (verifyOutput, *verification.Report, *flo
 	return result, &rubric, &score, "", nil
 }
 
+// verifyNextStatus maps a verify result to the lifecycle move it earns: an
+// empty status leaves the finding where it is. confirmed enriches a new
+// finding and fixed on the default branch marks it fixed. not_attempted
+// rejects an open finding whose stored evidence is a stub. An invalid status
+// or a deferred result without its preflight is an error.
 func verifyNextStatus(f db.Finding, scan *db.Scan, result verifyOutput, gradingError string) (db.FindingLifecycle, error) {
 	if !verifyStatusValid(result.Status) {
 		return "", fmt.Errorf("verify status %q is not one of confirmed|fixed|inconclusive|deferred|not_attempted", result.Status)
@@ -1366,6 +1371,10 @@ type verifyRecord struct {
 	calibration  findingSeverityCalibration
 }
 
+// recordVerifyOutput writes one verify result in a single transaction: the
+// status move, the severity calibration, the verification row and its note.
+// A result already recorded for this scan is left alone, so a replayed parse
+// writes nothing twice.
 func (w *Worker) recordVerifyOutput(scan *db.Scan, f db.Finding, record verifyRecord) error {
 	return db.FindingWriteTransaction(w.DB, f.ID, func(tx *gorm.DB) error {
 		calibration := record.calibration
