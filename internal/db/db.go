@@ -2387,5 +2387,6 @@ func SweepRunning(gdb *gorm.DB) error {
 			"status":      ScanFailed,
 			"error":       "server restarted during run",
 			"finished_at": new(time.Now()),
+			"api_token":   "",
 		}).Error
 }

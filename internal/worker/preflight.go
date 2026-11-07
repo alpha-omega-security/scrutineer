@@ -207,7 +207,7 @@ func (w *Worker) failScanPrereqs(scan *db.Scan, skillName, msg string, missing [
 	now := time.Now()
 	result := w.DB.Model(&db.Scan{}).Where("id = ? AND status = ?", scan.ID, db.ScanQueued).Updates(map[string]any{
 		"status": db.ScanFailed, "status_priority": db.StatusPriorityFor(db.ScanFailed),
-		errorColumn: msg, "started_at": now, "finished_at": now,
+		errorColumn: msg, "started_at": now, "finished_at": now, "api_token": "",
 	})
 	if result.Error != nil {
 		w.Log.Error("save failed-prereq scan",
@@ -222,6 +222,7 @@ func (w *Worker) failScanPrereqs(scan *db.Scan, skillName, msg string, missing [
 	scan.Error = msg
 	scan.StartedAt = &now
 	scan.FinishedAt = &now
+	scan.APIToken = ""
 	w.publish(scan.ID, scan.RepositoryID, "scan-status", string(scan.Status))
 	w.Log.Warn("scan failed: prereqs not satisfied",
 		"scan", scan.ID, "skill", skillName, "missing", missing)

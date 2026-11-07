@@ -811,12 +811,13 @@ func (w *Worker) cancelOptedOut(scan *db.Scan) {
 	scan.StatusPriority = db.StatusPriorityFor(db.ScanCancelled)
 	scan.Error = OptOutCancelReason
 	scan.FinishedAt = &now
+	scan.APIToken = ""
 	// A pause and repository deletion may have won since dispatch loaded
 	// this row. Only transition an existing queued scan; Save would upsert it.
 	res := w.DB.Model(&db.Scan{}).Where("id = ? AND status = ?", scan.ID, db.ScanQueued).
 		Updates(map[string]any{
 			"status": scan.Status, "status_priority": scan.StatusPriority,
-			errorColumn: scan.Error, "finished_at": scan.FinishedAt,
+			errorColumn: scan.Error, "finished_at": scan.FinishedAt, "api_token": "",
 		})
 	if res.Error != nil {
 		w.Log.Error("save opted-out scan", "scan", scan.ID, "err", res.Error)
@@ -953,6 +954,9 @@ func (w *Worker) finalizeScan(ctx context.Context, scan *db.Scan, report string,
 		w.clearSessionStore(scan)
 	}
 	scan.StatusPriority = db.StatusPriorityFor(scan.Status)
+	if scan.Status.Terminal() {
+		scan.APIToken = ""
+	}
 	if eventKind, ok := db.ScanLifecycleEventKind(scan.Status); ok {
 		if saveErr := w.DB.Transaction(func(tx *gorm.DB) error {
 			if err := tx.Save(scan).Error; err != nil {

@@ -581,13 +581,17 @@ func (s *Server) scansPauseQueued(w http.ResponseWriter, r *http.Request) {
 }
 
 func scanStatusUpdates(status db.ScanStatus, msg string, finishedAt *time.Time, pausedUntil *time.Time) map[string]any {
-	return map[string]any{
+	updates := map[string]any{
 		statusKey:         status,
 		"status_priority": db.StatusPriorityFor(status),
 		errorKey:          msg,
 		"finished_at":     finishedAt,
 		"paused_until":    pausedUntil,
 	}
+	if status.Terminal() {
+		updates["api_token"] = ""
+	}
+	return updates
 }
 
 func (s *Server) bulkResumePaused(base *gorm.DB) ([]db.Scan, error) {
