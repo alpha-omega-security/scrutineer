@@ -36,7 +36,7 @@ Requests send the token as an HTTP bearer credential:
 Authorization: Bearer <token>
 ```
 
-The token is accepted only while its originating scan has status `running`. Repository-, scan-, and finding-scoped handlers also verify that the requested resource belongs to the token's repository. A token from one repository cannot read or modify another repository. Request bodies on this surface are capped at 1 MiB.
+The token is accepted only while its originating scan has status `running`. Repository-, scan-, and finding-scoped handlers also verify that the requested resource belongs to the token's repository. A token from one repository cannot read or modify another repository. Request bodies on this surface are capped at 1 MiB. Enqueue requests return `429` once the token's repository already has `max_agent_api_open_scans_per_repository` scans queued or running (default 20).
 
 The skill API lets an active skill read repository context and prior scan data, validate a report, enqueue repository- or finding-scoped skills, and update finding records. The exact routes and schemas are in [`openapi.yaml`](../openapi.yaml). See [Writing skills](skills.md#calling-scrutineer-from-a-skill) for the workspace-facing contract and examples of bundled skills that use it.
 
