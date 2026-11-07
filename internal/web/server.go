@@ -76,12 +76,15 @@ var ErrInvalidRef = errors.New("invalid git ref")
 // negative, NaN or infinite.
 var ErrInvalidMaxCost = errors.New("invalid max cost")
 
-// validateEnqueueInputs checks the caller-supplied ref and cost cap.
+// validateEnqueueInputs checks the caller-supplied ref and cost caps.
 func validateEnqueueInputs(opts ScanOpts) error {
 	if err := worker.ValidateGitRef(opts.Ref); err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalidRef, err)
 	}
-	return validateMaxCostUSD(opts.MaxCostUSD)
+	if err := validateMaxCostUSD(opts.MaxCostUSD); err != nil {
+		return err
+	}
+	return validateMaxCostUSD(opts.GroupMaxCostUSD)
 }
 
 func validateMaxCostUSD(v float64) error {
@@ -2951,8 +2954,13 @@ func (s *Server) repoScan(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	groupMax, err := parseMaxCostUSD(r.FormValue("group_max_cost_usd"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
 	if strings.TrimSpace(r.FormValue("rescan_mode")) == db.ScanRescanModeDiff {
-		s.repoDiffScan(w, r, repo)
+		s.repoDiffScan(w, r, repo, groupMax)
 		return
 	}
 	// The "New scan" button enqueues the deep-dive skill; everything else is
@@ -2963,10 +2971,11 @@ func (s *Server) repoScan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := s.enqueueSkillWith(r.Context(), repo.ID, skill.ID, ScanOpts{
-		Model:      r.FormValue("model"),
-		SubPath:    strings.TrimSpace(r.FormValue("sub_path")),
-		RescanMode: strings.TrimSpace(r.FormValue("rescan_mode")),
-		ScanGroup:  uuid.NewString(),
+		Model:           r.FormValue("model"),
+		SubPath:         strings.TrimSpace(r.FormValue("sub_path")),
+		RescanMode:      strings.TrimSpace(r.FormValue("rescan_mode")),
+		ScanGroup:       uuid.NewString(),
+		GroupMaxCostUSD: groupMax,
 	}); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -2974,9 +2983,9 @@ func (s *Server) repoScan(w http.ResponseWriter, r *http.Request) {
 	s.redirect(w, r, fmt.Sprintf("/repositories/%d", repo.ID))
 }
 
-func (s *Server) repoDiffScan(w http.ResponseWriter, r *http.Request, repo db.Repository) {
+func (s *Server) repoDiffScan(w http.ResponseWriter, r *http.Request, repo db.Repository, groupMax float64) {
 	queued, err := s.enqueueDiffRescanGroup(r.Context(), repo.ID,
-		r.FormValue("model"), strings.TrimSpace(r.FormValue("sub_path")))
+		r.FormValue("model"), strings.TrimSpace(r.FormValue("sub_path")), groupMax)
 	if err != nil {
 		if errors.Is(err, errDeepDiveMissing) {
 			http.Error(w, err.Error(), http.StatusPreconditionFailed)
@@ -2997,7 +3006,7 @@ var errDeepDiveMissing = errors.New(deepDiveSkillName + " skill is not installed
 // Missing auxiliary skills are tolerated; a missing deep-dive is
 // errDeepDiveMissing, checked before the first enqueue so the group is
 // all-or-nothing. Shared by the "Diff rescan" button and the scheduler.
-func (s *Server) enqueueDiffRescanGroup(ctx context.Context, repoID uint, model, subPath string) (int, error) {
+func (s *Server) enqueueDiffRescanGroup(ctx context.Context, repoID uint, model, subPath string, groupMax float64) (int, error) {
 	var deepDive db.Skill
 	if err := s.DB.Where("name = ? AND active = ?", deepDiveSkillName, true).First(&deepDive).Error; err != nil {
 		return 0, errDeepDiveMissing
@@ -3010,10 +3019,11 @@ func (s *Server) enqueueDiffRescanGroup(ctx context.Context, repoID uint, model,
 			continue
 		}
 		if _, err := s.enqueueSkillWith(ctx, repoID, skill.ID, ScanOpts{
-			Model:      model,
-			SubPath:    subPath,
-			RescanMode: db.ScanRescanModeDiff,
-			ScanGroup:  group,
+			Model:           model,
+			SubPath:         subPath,
+			RescanMode:      db.ScanRescanModeDiff,
+			ScanGroup:       group,
+			GroupMaxCostUSD: groupMax,
 		}); err != nil {
 			return queued, err
 		}
@@ -3043,6 +3053,11 @@ func (s *Server) repoScanAll(w http.ResponseWriter, r *http.Request) {
 	s.DB.Where("repository_id = ?", repo.ID).Order("path").Find(&subprojects)
 
 	model := r.FormValue("model")
+	groupMax, err := parseMaxCostUSD(r.FormValue("group_max_cost_usd"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+		return
+	}
 	// One shared group across the whole fan-out: every subproject deep-dive
 	// enqueued by this click is a sibling, so each can read the others'
 	// findings via ?scan_group= while they run in parallel.
@@ -3061,9 +3076,10 @@ func (s *Server) repoScanAll(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if _, err := s.enqueueSkillWith(r.Context(), repo.ID, skill.ID, ScanOpts{
-			Model:     model,
-			SubPath:   subPath,
-			ScanGroup: group,
+			Model:           model,
+			SubPath:         subPath,
+			ScanGroup:       group,
+			GroupMaxCostUSD: groupMax,
 		}); err != nil {
 			errored++
 			continue
@@ -3191,7 +3207,7 @@ func (s *Server) deleteRepository(repo db.Repository) (deletedRepository, error)
 		for _, child := range []any{
 			&db.Finding{}, &db.Scan{}, &db.Subproject{}, &db.Dependency{},
 			&db.Dependent{}, &db.Package{}, &db.Advisory{}, &db.AdvisoryAudit{}, &db.SBOMUpload{},
-			&db.PackageAlternative{}, &db.ExpectedFinding{}, &db.ComplianceControl{},
+			&db.PackageAlternative{}, &db.ExpectedFinding{}, &db.ComplianceControl{}, &db.ScanGroupBudget{},
 		} {
 			if err := tx.Where("repository_id = ?", repo.ID).Delete(child).Error; err != nil {
 				return err
@@ -3494,6 +3510,10 @@ type ScanOpts struct {
 	// MaxCostUSD is the optional per-scan spend cap in USD. 0 means no cap.
 	// Negative, NaN and infinite values are rejected with ErrInvalidMaxCost.
 	MaxCostUSD float64
+	// GroupMaxCostUSD is the optional spend cap shared by every scan in
+	// ScanGroup. Only the launch that creates the group sets it; scans that join
+	// later inherit it by group. 0 means no cap. Validated like MaxCostUSD.
+	GroupMaxCostUSD float64
 	// RescanMode requests full or diff coverage. Empty preserves the existing
 	// full-scan behavior. A requested diff scan can fall back to full coverage
 	// once the worker resolves the clone and baseline.
@@ -3680,7 +3700,7 @@ func (s *Server) enqueueSkillWith(ctx context.Context, repoID, skillID uint, opt
 		if err := tx.Create(&scan).Error; err != nil {
 			return err
 		}
-		if err := checkExploratoryDuplicate(tx, &scan); err != nil {
+		if err := prepareCreatedScan(tx, &scan, opts); err != nil {
 			return err
 		}
 		var live db.Repository
@@ -3707,6 +3727,15 @@ func (s *Server) enqueueSkillWith(ctx context.Context, repoID, skillID uint, opt
 	// rather than trying to swap a row that is not there.
 	s.publishScanList(repoID)
 	return scan.ID, nil
+}
+
+// prepareCreatedScan runs the checks and writes that must land in the same
+// transaction as the new scan row.
+func prepareCreatedScan(tx *gorm.DB, scan *db.Scan, opts ScanOpts) error {
+	if err := checkExploratoryDuplicate(tx, scan); err != nil {
+		return err
+	}
+	return db.SetScanGroupBudget(tx, scan.ScanGroup, scan.RepositoryID, opts.GroupMaxCostUSD)
 }
 
 func (s *Server) skillEnqueuePreflight(repo db.Repository, skillID uint, opts ScanOpts) (db.Skill, bool, error) {

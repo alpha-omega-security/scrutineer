@@ -257,14 +257,31 @@ func (s *Server) scanShow(w http.ResponseWriter, r *http.Request) {
 	if label == "" {
 		label = scan.Kind
 	}
+	groupCap, groupSpend := s.scanGroupBudget(scan.ScanGroup)
 	s.render(w, r, "scan_show.html", map[string]any{
 		pageTitleKey:         fmt.Sprintf("Scan #%d · %s · %s", scan.ID, label, scan.Repository.Name),
 		"Scan":               scan,
+		"GroupCostCap":       groupCap,
+		"GroupSpend":         groupSpend,
 		"Investigation":      scanInvestigationReport(scan),
 		"Diff":               parseScanDiffView(scan),
 		"DisclosureReviewID": s.disclosureReviewFindingID(scan),
 		"CanExportReport":    hasExportableScanReport(s.DB, &scan, skill),
 	})
+}
+
+// scanGroupBudget returns the group's shared cap and what its scans have
+// spent so far. Both are 0 when the group has no budget.
+func (s *Server) scanGroupBudget(group string) (limit, spent float64) {
+	limit, err := db.ScanGroupBudgetFor(s.DB, group)
+	if err != nil || limit <= 0 {
+		return 0, 0
+	}
+	spent, err = db.ScanGroupSpend(s.DB, group, 0)
+	if err != nil {
+		return limit, 0
+	}
+	return limit, spent
 }
 
 func (s *Server) disclosureReviewFindingID(scan db.Scan) uint {

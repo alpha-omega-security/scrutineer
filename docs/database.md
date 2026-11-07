@@ -154,7 +154,7 @@ One row per skill execution or external import. `skill_name` / `skill_version` p
 | id | integer PK | |
 | repository_id | integer FK | References `repositories.id`. Cascade delete. |
 | kind | text | `skill` for native scans, `import` for findings ingested via `POST /api/v1/import`, `schedule` for the scheduler's skipped-run trace rows (never queued). |
-| status | text | `queued`, `paused`, `running`, `done`, `failed`, `skipped`, `cancelled`. Stale `running` rows are swept to `failed` on startup. `skipped` rows are written terminal by the scheduler when a due run decides not to enqueue (remote HEAD unchanged, scan in flight, ...); `error` carries the reason. |
+| status | text | `queued`, `paused`, `running`, `done`, `failed`, `skipped`, `cancelled`. Stale `running` rows are swept to `failed` on startup. `skipped` rows are written terminal by the scheduler when a due run decides not to enqueue (remote HEAD unchanged, scan in flight, ...) and by the worker for a queued scan whose group budget is already spent; `error` carries the reason. |
 | status_priority | integer | Denormalised sort key for the scans index: 0 running, 1 queued, 2 paused, 3 terminal. |
 | model | text | Claude model ID resolved from the explicit scan model, skill model preference, or skill default model tier at enqueue time. |
 | effort | text | Claude `--effort` level (`low`–`max`) snapshotted from the runtime setting at enqueue. Empty on legacy rows; the runner falls back to its configured default. |
@@ -210,6 +210,20 @@ One row per skill execution or external import. `skill_name` / `skill_version` p
 | findings_count | integer | Denormalised count of findings parsed from the report. |
 | created_at | datetime | |
 | updated_at | datetime | |
+
+## scan_group_budgets
+
+Optional shared spend cap for every scan in one `scan_group`, including scans
+that join the group later. There is no group row otherwise, so a group has a
+budget only when one was set where it was launched.
+
+| Column | Type | Notes |
+|---|---|---|
+| id | integer | Primary key. |
+| scan_group | text | Group id from `scans.scan_group`. Unique. |
+| repository_id | integer | Repository the group was launched on. |
+| max_cost_usd | real | Spend cap in USD shared by the group. |
+| created_at | datetime | |
 
 ## scan_preflight_receipts
 
