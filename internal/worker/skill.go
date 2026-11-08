@@ -631,6 +631,9 @@ func (w *Worker) ingestFindings(skill *db.Skill, scan *db.Scan, report string, e
 		}
 		findings = kept
 	}
+	if schemaRequiresEvidence(skill.SchemaJSON) {
+		findings = dropStubFindings(findings, emit)
+	}
 	scan.FindingsCount = len(findings)
 
 	// VIDs hash the code at each sink and snippets excerpt it around the

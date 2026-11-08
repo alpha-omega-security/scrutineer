@@ -16,10 +16,7 @@ import (
 // 4xx rather than 500.
 var ErrInvalidFinding = errors.New("invalid finding")
 
-// stubEvidenceMinRunes is the shortest trace, boundary or validation that
-// counts as evidence. Every skill that streams findings requires all three as
-// markdown, so a real finding carries paragraphs; a write probe or an unfinished
-// draft carries a letter or a word.
+// stubEvidenceMinRunes is the shortest trace, boundary or validation that counts as evidence.
 const stubEvidenceMinRunes = 20
 
 // isStubEvidence reports whether a finding's trace, boundary and validation
@@ -32,6 +29,69 @@ func isStubEvidence(trace, boundary, validation string) bool {
 		}
 	}
 	return true
+}
+
+// schemaRequiresEvidence reports whether a skill's schema requires trace,
+// boundary and validation together on some object, as the audit skills do for
+// each finding. Scanner skills such as semgrep require none of them.
+func schemaRequiresEvidence(schemaJSON string) bool {
+	var doc any
+	if json.Unmarshal([]byte(schemaJSON), &doc) != nil {
+		return false
+	}
+	return requiresEvidence(doc)
+}
+
+func requiresEvidence(node any) bool {
+	switch n := node.(type) {
+	case map[string]any:
+		if req, ok := n["required"].([]any); ok && requiresAll(req, "trace", "boundary", "validation") {
+			return true
+		}
+		for _, v := range n {
+			if requiresEvidence(v) {
+				return true
+			}
+		}
+	case []any:
+		for _, v := range n {
+			if requiresEvidence(v) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func requiresAll(required []any, names ...string) bool {
+	for _, name := range names {
+		found := false
+		for _, r := range required {
+			if r == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	return true
+}
+
+// dropStubFindings removes findings whose evidence is a stub from a report
+// whose skill requires that evidence.
+func dropStubFindings(findings []db.Finding, emit func(Event)) []db.Finding {
+	kept := findings[:0]
+	for _, f := range findings {
+		if !isStubEvidence(f.Trace, f.Boundary, f.Validation) {
+			kept = append(kept, f)
+		}
+	}
+	if dropped := len(findings) - len(kept); dropped > 0 {
+		emit(Event{Kind: KindText, Text: fmt.Sprintf("dropped %d finding(s) whose trace, boundary and validation are missing or placeholders", dropped)})
+	}
+	return kept
 }
 
 // PersistStreamedFinding records one finding emitted mid-scan into the

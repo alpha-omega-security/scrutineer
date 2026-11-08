@@ -220,6 +220,12 @@ func TestParseRepoOverviewOutput_partialAndEmpty(t *testing.T) {
 // the *gorm.DB for further assertions.
 func runSkillWithReport(t *testing.T, outputKind, report string) (db.Repository, *gorm.DB) {
 	t.Helper()
+	return runSkillWithSchemaReport(t, outputKind, "", report)
+}
+
+// runSkillWithSchemaReport is runSkillWithReport for a skill with schemaJSON.
+func runSkillWithSchemaReport(t *testing.T, outputKind, schemaJSON, report string) (db.Repository, *gorm.DB) {
+	t.Helper()
 	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
@@ -229,6 +235,7 @@ func runSkillWithReport(t *testing.T, outputKind, report string) (db.Repository,
 		Body:        "b",
 		OutputFile:  "report.json",
 		OutputKind:  outputKind,
+		SchemaJSON:  schemaJSON,
 		Version:     1,
 		Active:      true,
 		Source:      "ui",
@@ -777,10 +784,24 @@ func runSkillWithFinding(t *testing.T, outputKind, report string, startStatus db
 // the seeded finding before the scan runs.
 func runSkillWithFindingEdit(t *testing.T, outputKind, report string, startStatus db.FindingLifecycle, edit func(*db.Finding)) (db.Finding, *gorm.DB) {
 	t.Helper()
+	return runSkillWithFindingFrom(t, "security-deep-dive", evidenceSchema, outputKind, report, startStatus, edit)
+}
+
+// evidenceSchema requires trace, boundary and validation on each finding, as
+// the audit skills' schemas do.
+const evidenceSchema = `{"type":"object","properties":{"findings":{"type":"array","items":{"type":"object",` +
+	`"required":["trace","boundary","validation"],"properties":{"trace":{"type":"string"},"boundary":{"type":"string"},"validation":{"type":"string"}}}}}}`
+
+// runSkillWithFindingFrom seeds the finding as produced by a scan of the
+// origin skill, whose schema is originSchema.
+func runSkillWithFindingFrom(t *testing.T, origin, originSchema, outputKind, report string, startStatus db.FindingLifecycle, edit func(*db.Finding)) (db.Finding, *gorm.DB) {
+	t.Helper()
 	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
-	priorScan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanDone, SkillName: "security-deep-dive"}
+	originSkill := db.Skill{Name: origin, Description: "d", Body: "b", OutputFile: "report.json", OutputKind: "findings", SchemaJSON: originSchema, Version: 1, Active: true, Source: "ui"}
+	gdb.Create(&originSkill)
+	priorScan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanDone, SkillName: origin}
 	gdb.Create(&priorScan)
 	finding := db.Finding{ScanID: priorScan.ID, RepositoryID: repo.ID, FindingID: "F1", Title: "x", Severity: "High", Status: startStatus}
 	if edit != nil {
@@ -3000,8 +3021,6 @@ func TestParseVerify_stubFindingStatusUnchanged(t *testing.T) {
 		f.Trace = "User input reaches exec via handler.Run without quoting."
 		f.Boundary, f.Validation = "b", "v"
 	}
-	// A scanner finding carries a short trace and no boundary or validation.
-	scanner := func(f *db.Finding) { f.Trace = "Detected eval" }
 	for _, tc := range []struct {
 		name   string
 		report string
@@ -3010,7 +3029,6 @@ func TestParseVerify_stubFindingStatusUnchanged(t *testing.T) {
 	}{
 		{"stub inconclusive", inconclusive, db.FindingNew, stubEvidence},
 		{"substantive not_attempted", notAttempted, db.FindingNew, substantive},
-		{"scanner not_attempted", notAttempted, db.FindingNew, scanner},
 		{"stub already reported", notAttempted, db.FindingReported, stubEvidence},
 		{"stub ungraded", strings.Replace(notAttempted, `"number":2`, `"number":1`, 1), db.FindingNew, stubEvidence},
 	} {
@@ -3029,6 +3047,24 @@ func TestParseVerify_stubFindingStatusUnchanged(t *testing.T) {
 	}
 }
 
+func TestParseVerify_notAttemptedRejectsTraceOnlyStub(t *testing.T) {
+	report := verificationReport(t, "not_attempted", nil)
+	f, _ := runSkillWithFindingEdit(t, "verify", report, db.FindingNew, func(f *db.Finding) { f.Trace = "t" })
+	if f.Status != db.FindingRejected {
+		t.Errorf("status = %s, want rejected", f.Status)
+	}
+}
+
+func TestParseVerify_scannerFindingNotRejected(t *testing.T) {
+	report := verificationReport(t, "not_attempted", nil)
+	// A scanner finding carries a short trace and no boundary or validation.
+	scannerSchema := `{"type":"object","properties":{"results":{"type":"array","items":{"type":"object","required":["path"]}}}}`
+	f, _ := runSkillWithFindingFrom(t, "semgrep", scannerSchema, "verify", report, db.FindingNew, func(f *db.Finding) { f.Trace = "Detected eval" })
+	if f.Status != db.FindingNew {
+		t.Errorf("status = %s, want new unchanged", f.Status)
+	}
+}
+
 func TestRecordVerifyOutput_stubRejectionRecheckedAtWrite(t *testing.T) {
 	for name, tc := range map[string]struct {
 		change func(*db.Finding)
@@ -3044,9 +3080,12 @@ func TestRecordVerifyOutput_stubRejectionRecheckedAtWrite(t *testing.T) {
 			gdb := dbtest.Open(t)
 			repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 			gdb.Create(&repo)
+			gdb.Create(&db.Skill{Name: "security-deep-dive", Body: "b", OutputFile: "report.json", OutputKind: "findings", SchemaJSON: evidenceSchema, Active: true})
+			origin := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanDone, SkillName: "security-deep-dive"}
+			gdb.Create(&origin)
 			scan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanRunning, SkillName: "verify"}
 			gdb.Create(&scan)
-			stale := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: "x", Severity: "Low", Status: db.FindingNew}
+			stale := db.Finding{ScanID: origin.ID, RepositoryID: repo.ID, Title: "x", Severity: "Low", Status: db.FindingNew}
 			stubEvidence(&stale)
 			gdb.Create(&stale)
 
@@ -3075,5 +3114,46 @@ func TestRecordVerifyOutput_stubRejectionRecheckedAtWrite(t *testing.T) {
 				t.Errorf("verification rows = %d, want 1 even when the rejection is dropped", n)
 			}
 		})
+	}
+}
+
+func TestParseFindings_dropsStubsWhenSchemaRequiresEvidence(t *testing.T) {
+	report := `{"findings":[
+		{"id":"F1","title":"Probe","severity":"Low","location":"a.go:1","trace":"t","boundary":"b","validation":"v"},
+		{"id":"F2","title":"Real","severity":"High","location":"b.go:2",
+		 "trace":"User input reaches exec via handler.Run without quoting.","boundary":"b","validation":"v"}
+	]}`
+	for name, tc := range map[string]struct {
+		schema string
+		want   []string
+	}{
+		"evidence required": {evidenceSchema, []string{"Real"}},
+		"scanner schema":    {"", []string{"Probe", "Real"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo, gdb := runSkillWithSchemaReport(t, "findings", tc.schema, report)
+			var titles []string
+			gdb.Model(&db.Finding{}).Where("repository_id = ?", repo.ID).Order("title").Pluck("title", &titles)
+			if strings.Join(titles, ",") != strings.Join(tc.want, ",") {
+				t.Errorf("findings = %v, want %v", titles, tc.want)
+			}
+		})
+	}
+}
+
+func TestSchemaRequiresEvidence(t *testing.T) {
+	for name, tc := range map[string]struct {
+		schema string
+		want   bool
+	}{
+		"all three required": {evidenceSchema, true},
+		"boundary only":      {`{"items":{"required":["boundary"]}}`, false},
+		"none":               {`{"type":"object"}`, false},
+		"empty":              {"", false},
+		"malformed":          {"{", false},
+	} {
+		if got := schemaRequiresEvidence(tc.schema); got != tc.want {
+			t.Errorf("%s: got %v, want %v", name, got, tc.want)
+		}
 	}
 }
