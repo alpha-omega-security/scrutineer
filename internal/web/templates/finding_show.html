@@ -78,7 +78,7 @@
   <div>
     <dt class="text-muted-foreground font-semibold">Severity</dt>
     <dd>
-      <form method="post" action="/findings/{{$f.ID}}/fields" class="flex items-center gap-1">
+      <form method="post" action="/findings/{{$f.ID}}/fields" class="flex flex-wrap items-center gap-1">
         <input type="hidden" name="anchor" value="finding-summary">
         <input type="text" class="input h-8 w-28" name="severity" aria-label="Severity" value="{{$f.Severity}}" list="severity-options">
         <datalist id="severity-options">
