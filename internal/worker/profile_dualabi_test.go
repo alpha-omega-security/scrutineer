@@ -31,11 +31,7 @@ func TestRubyExtGuideDocumentsInterpreters(t *testing.T) {
 		regexp.MustCompile(`ln -s \S+ /usr/local/bin/(\S+)`),
 	} {
 		for _, m := range re.FindAllStringSubmatch(string(df), -1) {
-			tok := m[len(m)-1]
-			if strings.HasSuffix(tok, "/shims") {
-				tok = strings.TrimSuffix(tok, "/shims")
-			}
-			seen[tok] = true
+			seen[strings.TrimSuffix(m[len(m)-1], "/shims")] = true
 		}
 	}
 	var toks []string
