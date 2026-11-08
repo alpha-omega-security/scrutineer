@@ -193,32 +193,40 @@ RUN chmod +x /usr/local/bin/build-asan-ruby \
  && build-asan-ruby "${RUBY_GIT_REF}"    /usr/local/ruby-asan    /opt/ruby-src
 RUN build-asan-ruby "${RUBY_GIT_REF_40}" /usr/local/ruby-asan-40 /opt/ruby-src-40
 
-# Per-interpreter shims: GEM_HOME pinned and its bin first on PATH, so a session on one interpreter never
-# loads another's gems. Prepend <prefix>/shims to PATH to select it; `ruby4` is the 4.0 one-off entry point.
+# Per-interpreter shims (ruby-shims): GEM_HOME pinned, its bin first on PATH, tools resolved from the prefix or
+# that GEM_HOME, so a session on one interpreter never loads another's gems. Select one by prepending its shims dir.
 COPY <<'SHIMS' /usr/local/bin/ruby-shims
 #!/bin/sh
-# ruby-shims <asan|plain> <prefix> <gem-home>: write <prefix>/shims/{ruby,gem,bundle,bundler,rake}.
-# A shim pins GEM_HOME, puts its interpreter first on PATH and execs the real tool, so everything run
-# through it (bundle install, rake compile, the PoC) stays on that interpreter. `plain` also drops the
-# session's sanitizer CFLAGS/CXXFLAGS/LDFLAGS and RUBY_FREE_AT_EXIT, which exist for the ASan builds.
+# ruby-shims <asan|plain> <prefix> <gem-home> [shims-dir]: write <shims-dir>/{ruby,gem,bundle,bundler,rake}
+# (default <prefix>/shims). A shim pins GEM_HOME, puts its interpreter first on PATH and execs the real
+# tool from <prefix>/bin or <gem-home>/bin, so everything run through it (bundle install, rake compile,
+# the PoC) stays on that interpreter; a tool in neither place fails loudly instead of falling through to
+# another interpreter's. `plain` also drops the session's sanitizer CFLAGS/CXXFLAGS/LDFLAGS and
+# RUBY_FREE_AT_EXIT, which exist for the ASan builds.
 set -eu
-[ $# -eq 3 ] || { echo "usage: ruby-shims <asan|plain> <prefix> <gem-home>" >&2; exit 2; }
-mode=$1 prefix=$2 gemhome=$3
+case $# in 3|4) ;; *) echo "usage: ruby-shims <asan|plain> <prefix> <gem-home> [shims-dir]" >&2; exit 2 ;; esac
+mode=$1 prefix=$2 gemhome=$3 shims=${4:-$2/shims}
 case $mode in
     asan)  clear= ;;
     plain) clear='unset CFLAGS CXXFLAGS LDFLAGS RUBY_FREE_AT_EXIT' ;;
     *)     echo "ruby-shims: mode must be asan or plain" >&2; exit 2 ;;
 esac
-mkdir -p "$prefix/shims"
+mkdir -p "$shims"
 for t in ruby gem bundle bundler rake; do
-    [ -x "$prefix/bin/$t" ] || continue
-    printf '#!/bin/sh\n%s\nexport GEM_HOME=%s\nexport PATH=%s/shims:%s/bin:%s/bin:$PATH\nexec %s/bin/%s "$@"\n' \
-        "$clear" "$gemhome" "$prefix" "$prefix" "$gemhome" "$prefix" "$t" > "$prefix/shims/$t"
-    chmod +x "$prefix/shims/$t"
+    cat > "$shims/$t" <<SHIM
+#!/bin/sh
+$clear
+export GEM_HOME=$gemhome
+export PATH=$shims:$prefix/bin:$gemhome/bin:\$PATH
+for x in $prefix/bin/$t $gemhome/bin/$t; do [ -x "\$x" ] && exec "\$x" "\$@"; done
+echo "ruby-shims: $t is not installed for $prefix; gem install it through $shims/gem" >&2; exit 127
+SHIM
+    chmod +x "$shims/$t"
 done
 SHIMS
 RUN chmod +x /usr/local/bin/ruby-shims \
- && ruby-shims asan /usr/local/ruby-asan-40 /work/.gem-40 \
+ && ruby-shims asan  /usr/local/ruby-asan-40 /work/.gem-40 \
+ && ruby-shims plain /usr /work/.gem-stock /usr/local/ruby-stock/shims \
  && ln -s /usr/local/ruby-asan-40/shims/ruby /usr/local/bin/ruby4
 
 # Rust for rb-sys / Cargo-native gems. Minimal stable (default) + the pinned
@@ -280,6 +288,8 @@ RUN chmod -R a+rwX /usr/local/ruby-asan /usr/local/ruby-asan-40 "$RUSTUP_HOME" "
  && test "$(/usr/local/ruby-asan-40/shims/gem env gemdir)" = /work/.gem-40 \
  && /usr/local/ruby-asan-40/shims/bundle --version \
  && /usr/local/ruby-asan-40/shims/rake --version \
+ && test "$(/usr/local/ruby-stock/shims/gem env gemdir)" = /work/.gem-stock \
+ && /usr/local/ruby-stock/shims/ruby -v \
  && ldd /usr/local/ruby-asan/bin/ruby | grep -q libasan \
  && ldd /usr/local/ruby-asan-40/bin/ruby | grep -q libasan \
  && /usr/bin/ruby -v && valgrind --version && cargo --version

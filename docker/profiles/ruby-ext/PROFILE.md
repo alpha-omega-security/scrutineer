@@ -37,21 +37,35 @@ pass misses, on top of the C/Ruby audit above.
 - **`ruby4` → `/usr/local/ruby-asan-40`, a second ASan+UBSan build (Ruby 4.0.6).** Same
   instrumentation, different ABI (4.0 changed object layout: flag bits, `ROBJECT_EMBED`, `super`
   storage, variable-width allocation), so a native-memory bug can fire under one ABI and not the
-  other. Do NOT rebuild in place under `ruby4`: the 3.4 `.o`s are newer than the 4.0 headers, so
-  `make` does nothing and you silently re-test the 3.4 build. Build 4.0 in a **fresh copy** of the
-  gem through the 4.0 **shims**, which prepend the 4.0 bin and set their own `GEM_HOME`. Keep the
-  copy under `/work`, not `/tmp` (a 256 MiB noexec tmpfs: the build fills it, and a `.so` there
-  cannot load). From the workspace root: `rm -rf /work/src-40 && cp -a src /work/src-40 && cd /work/src-40 && export PATH=/usr/local/ruby-asan-40/shims:$PATH`,
-  then `bundle install && rake clean compile` (or `cd ext/<n> && make clean; ruby extconf.rb && make`);
-  the copy carries the 3.4 objects, so clean before building. `ruby4` runs a one-off 4.0 command
-  without the PATH change.
+  other. Use it through its shims (`/usr/local/ruby-asan-40/shims`, `GEM_HOME=/work/.gem-40`; rule
+  below); `ruby4` runs a one-off 4.0 command.
 - **`/usr/bin/ruby` — stock Ruby (apt).** Uninstrumented and fast; use it for reading-speed
-  Ruby-level work and as the **valgrind** target. Never run valgrind against the ASan ruby.
+  Ruby-level work and as the **valgrind** target, through its shims (`/usr/local/ruby-stock/shims`,
+  `GEM_HOME=/work/.gem-stock`). Never run valgrind against the ASan ruby.
 - `/opt/ruby-src` — the Ruby source tree the ASan build came from. Cross-reference C-API
   semantics here when triaging (`include/ruby/**`, `string.c`, `gc.c`).
 - `/opt/ruby-src-40`, the Ruby 4.0 source tree. Compare against `/opt/ruby-src` (3.4) when a layout
   difference between the ABIs is the point of the bug.
 - `gdb`, `strace`, `valgrind`, `cargo`, `brakeman`, `gh`, `claude` — on PATH.
+
+**Every interpreter other than the default `ruby` is used through its shims, in its own copy of the
+tree, inside a subshell.** The shims (`ruby`/`gem`/`bundle`/`bundler`/`rake` wrappers) pin that
+interpreter's `GEM_HOME` and put it first on PATH for every command run through them, so nothing loads
+another interpreter's gems; the plain ones (stock, ruby-build) also drop the session's sanitizer
+`CFLAGS`/`LDFLAGS` (which cc-rs reads) and `RUBY_FREE_AT_EXIT`. A tool an interpreter lacks fails its
+shim loudly rather than falling through to another interpreter's; `gem install` it through that `gem`
+shim. The copy matters because the extension in `src` is the 3.4 ASan build: `bundle install` never
+rebuilds it, an in-place `make` sees the copied objects as current and silently re-tests it, and a
+`.so` built for one interpreter does not load in another. Keep copies under `/work`, not `/tmp` (a 256
+MiB noexec tmpfs). The subshell ends the PATH change with the work, so later ASan commands are not
+run under the wrong interpreter:
+
+```bash
+( export PATH=/usr/local/ruby-asan-40/shims:$PATH     # or /usr/local/ruby-stock/shims, or /work/ruby-<x.y.z>/shims
+  rm -rf /work/src-40 && cp -a src /work/src-40 && cd /work/src-40
+  bundle install && rake clean compile                # or: cd ext/<n> && make clean; ruby extconf.rb && make
+  bundle exec ruby /tmp/poc.rb )
+```
 
 ## Building & driving the extension (under ASan, the default ruby)
 
@@ -80,7 +94,7 @@ bundle exec ruby /tmp/poc.rb      # or: ruby -e '...'
 instrumented interpreters: `ruby` (3.4.9, default) and `ruby4` (4.0.6). The gem's own target comes
 from `required_ruby_version` / `.ruby-version` / the Gemfile `ruby` line; read it and build the
 extension against the ABI that matches (`ruby`, or the 4.0 shims in a fresh copy of the tree; see the
-interpreter list above). If it won't compile or load against one (removed C-API, struct-layout
+shims rule above). If it won't compile or load against one (removed C-API, struct-layout
 change), try the other before calling it a coverage gap, and state which ABI you used.
 
 For a **memory-safety** candidate whose outcome can depend on object layout (type confusion, OOB,
@@ -91,13 +105,13 @@ interpreters disagree on where an object stores its data: a Struct/type confusio
 `RSTRUCT_LEN` / `rb_struct_aset` on a non-Struct, say, lands inside the embedded object on one major
 and dereferences a stale heap pointer on the other. A clean run on one ABI is a clean result for that
 ABI, not for the finding. For a Ruby-level (non-memory) reproducer on some other version, use the stock
-`/usr/bin/ruby`, or build one with
-`mkdir -p /work/tmp && env -u CFLAGS -u CXXFLAGS -u LDFLAGS -u RUBY_FREE_AT_EXIT TMPDIR=/work/tmp RUBY_CONFIGURE_OPTS="--with-baseruby=/usr/bin/ruby --disable-install-doc" ruby-build <x.y.z> /work/ruby-<x.y.z>`,
-then `ruby-shims plain /work/ruby-<x.y.z> /work/.gem-<x.y.z> && export PATH=/work/ruby-<x.y.z>/shims:$PATH`
-and run everything else (`bundle install`, the reproducer) through those shims; state the version. The
-session is tuned for the ASan `ruby` (first on PATH, `GEM_HOME` of ASan-built gems, sanitizer
-`CFLAGS`/`LDFLAGS` that cc-rs reads, `RUBY_FREE_AT_EXIT`); the shims undo all of that for every command,
-where a bare `GEM_HOME=` or `env -u` covers one. `/tmp` is a 256 MiB noexec tmpfs ruby-build refuses.
+Ruby through its shims, or build the version with
+`mkdir -p /work/tmp && env -u CFLAGS -u CXXFLAGS -u LDFLAGS -u RUBY_FREE_AT_EXIT TMPDIR=/work/tmp RUBY_CONFIGURE_OPTS="--with-baseruby=/usr/bin/ruby --disable-install-doc" ruby-build <x.y.z> /work/ruby-<x.y.z>`
+(the `env -u` matters: ruby-build would otherwise build a sanitized Ruby that aborts on its own UB;
+`/tmp` is a noexec tmpfs it refuses), then `ruby-shims plain /work/ruby-<x.y.z> /work/.gem-<x.y.z>` and
+follow the shims rule above with `/work/ruby-<x.y.z>/shims` and `/work/src-<x.y.z>`. Rubies before 2.6
+ship no Bundler, and a `Gemfile.lock` may want a newer one than the Ruby ships: `gem install bundler -v
+<compatible>` through that `gem` shim first. State the version you used.
 
 ### Rust extensions (rb-sys / Cargo-native)
 
@@ -149,12 +163,16 @@ If a confusing crash looks like a GC/ASan artifact rather than a gem bug (a free
 ## valgrind fallback (stock ruby only)
 
 When the ASan build won't compile the extension, or the gem ships a precompiled/fat binary,
-fall back to memcheck on the **stock** interpreter:
+fall back to memcheck on the **stock** interpreter. Build (or unpack) the extension for it in its own
+copy through the stock shims (the shims rule above, with `/usr/local/ruby-stock/shims` and
+`/work/src-stock`), then run valgrind on the interpreter binary with the stock environment set by
+hand, because valgrind does not follow a shim's `exec`:
 
 ```bash
-valgrind --suppressions=/usr/local/share/ruby-ext/ruby.supp \
-         --leak-check=full --error-exitcode=99 \
-         /usr/bin/ruby /tmp/poc.rb
+env -u RUBY_FREE_AT_EXIT GEM_HOME=/work/.gem-stock \
+  valgrind --suppressions=/usr/local/share/ruby-ext/ruby.supp \
+           --leak-check=full --error-exitcode=99 \
+           /usr/bin/ruby /tmp/poc.rb
 ```
 
 The suppression file silences conservative-GC false positives; extend it with
