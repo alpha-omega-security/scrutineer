@@ -63,6 +63,17 @@ func assertScanStatus(t *testing.T, s *Server, id uint, status db.ScanStatus) {
 	}
 }
 
+func assertScanAPIToken(t *testing.T, s *Server, id uint, want string) {
+	t.Helper()
+	var scan db.Scan
+	if err := s.DB.First(&scan, id).Error; err != nil {
+		t.Fatal(err)
+	}
+	if scan.APIToken != want {
+		t.Errorf("api_token = %q, want %q", scan.APIToken, want)
+	}
+}
+
 func assertControlEvent(t *testing.T, event db.AuditEvent, scan db.Scan, kind string, oldStatus, newStatus db.ScanStatus, source db.FindingSource) {
 	t.Helper()
 	if event.Kind != kind || event.SubjectID != scan.ID || event.Source != source || event.Actor != "" {
@@ -206,11 +217,12 @@ func TestScanControlPauseAndCancelAudit(t *testing.T) {
 			if len(events) != 1 {
 				t.Fatalf("events = %+v", events)
 			}
-			kind, status := db.AuditEventScanCancelled, db.ScanCancelled
+			kind, status, token := db.AuditEventScanCancelled, db.ScanCancelled, ""
 			if action == "pause" {
-				kind, status = db.AuditEventScanPaused, db.ScanPaused
+				kind, status, token = db.AuditEventScanPaused, db.ScanPaused, scan.APIToken
 			}
 			assertControlEvent(t, events[0], scan, kind, db.ScanQueued, status, db.SourceAnalyst)
+			assertScanAPIToken(t, s, scan.ID, token)
 			assertScanStatus(t, s, terminal.ID, db.ScanDone)
 		})
 	}
@@ -427,6 +439,20 @@ func TestStopScansForOptOutReportsCancelAuditFailure(t *testing.T) {
 	}
 	if events := scanControlEvents(t, s); len(events) != 0 {
 		t.Fatalf("events = %+v, want none after a rolled-back cancel", events)
+	}
+}
+
+func TestStopScansForOptOutClearsAPIToken(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	queued := seedControlScan(t, s, db.ScanQueued)
+	paused := seedControlScan(t, s, db.ScanPaused)
+	if err := s.stopScansForOptOut(queued.RepositoryID); err != nil {
+		t.Fatal(err)
+	}
+	for _, scan := range []db.Scan{queued, paused} {
+		assertScanStatus(t, s, scan.ID, db.ScanCancelled)
+		assertScanAPIToken(t, s, scan.ID, "")
 	}
 }
 
