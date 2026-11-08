@@ -37,11 +37,11 @@ const chatSnapshotFindingCap = 200
 const chatHistoryCap = 20
 
 // chatHistoryBudget bounds that replay in bytes as well, a transport limit,
-// not a context budget. The prompt is handed
-// to the harness as a single argv element, and Linux caps one argument at
-// 128 KiB (MAX_ARG_STRLEN), so a message count is not a bound on its own: a
-// handful of long answers would push execve into E2BIG and wedge every fresh
-// turn of that conversation. Leaves ample room for the framing paragraph.
+// not a context budget. The prompt is handed to the harness as a single argv
+// element, and Linux caps one argument at 128 KiB (MAX_ARG_STRLEN), so a
+// message count is not a bound on its own: a handful of long answers would
+// push execve into E2BIG and wedge every fresh turn of that conversation.
+// Leaves ample room for the framing paragraph.
 const chatHistoryBudget = 48 << 10
 
 // chatMessageCap bounds one message inside the prompt, for the same argv
