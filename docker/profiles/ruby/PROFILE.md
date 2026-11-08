@@ -27,8 +27,12 @@ which checks you had to skip.
 directive in the `Gemfile`, a `.ruby-version` file, or `required_ruby_version` in the gemspec — `bundle install` or a
 `require` may fail (Bundler *enforces* the `Gemfile` pin; older code can use removed APIs). Do not let that silently
 skip the scan: note the mismatch explicitly. To run a reproducer on the project's own version, install it with
-`ruby-build <x.y.z> /tmp/ruby-<x.y.z>` (ruby-build is on PATH) and run under `/tmp/ruby-<x.y.z>/bin/ruby`, or
-`apt-get install -y ruby` for any stock interpreter — and state which version you used.
+`mkdir -p /work/tmp && TMPDIR=/work/tmp RUBY_CONFIGURE_OPTS=--disable-install-doc ruby-build <x.y.z> /work/ruby-<x.y.z>`
+(ruby-build is on PATH; `/tmp` is a small noexec tmpfs it refuses) and do that work in a subshell on it,
+`( export PATH=/work/ruby-<x.y.z>/bin:/work/.gem-<x.y.z>/bin:$PATH GEM_HOME=/work/.gem-<x.y.z>; bundle install && bundle exec ruby poc.rb )`,
+so its gems stay apart from the 3.4 ones in `/work/.gem` and PATH reverts afterwards (Rubies before 2.6 ship no
+Bundler: `gem install bundler -v <compatible>` in that subshell first); or `apt-get install -y ruby` for any stock
+interpreter — and state which version you used.
 
 ### Ruby-specific analysis: metaprogramming & dynamic dispatch
 

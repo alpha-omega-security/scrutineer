@@ -25,8 +25,13 @@ installed gems and note which checks you had to skip.
 
 **Ruby version skew.** This container runs Ruby 3.4, but Rails apps commonly pin `ruby "x.y.z"` in the `Gemfile`, and
 Bundler *enforces* it — `bundle install` fails if the running Ruby isn't that version. Don't skip silently: note it,
-then install the pinned version with `ruby-build <x.y.z> /tmp/ruby-<x.y.z>` (ruby-build is on PATH) and re-run Bundler
-under `/tmp/ruby-<x.y.z>/bin/`, or as a last resort comment out the `ruby` directive to proceed (and say you did).
+then install the pinned version with
+`mkdir -p /work/tmp && TMPDIR=/work/tmp RUBY_CONFIGURE_OPTS=--disable-install-doc ruby-build <x.y.z> /work/ruby-<x.y.z>`
+(ruby-build is on PATH; `/tmp` is a small noexec tmpfs it refuses) and re-run Bundler in a subshell on it,
+`( export PATH=/work/ruby-<x.y.z>/bin:/work/.gem-<x.y.z>/bin:$PATH GEM_HOME=/work/.gem-<x.y.z>; bundle install )`, so
+its gems stay apart from the 3.4 ones in `/work/.gem` and PATH reverts afterwards (Rubies before 2.6 ship no Bundler:
+`gem install bundler -v <compatible>` in that subshell first); or as a last resort comment out the `ruby` directive to
+proceed (and say you did).
 Brakeman is version-independent and runs regardless.
 
 ### Run Brakeman
