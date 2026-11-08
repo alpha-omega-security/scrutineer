@@ -193,15 +193,33 @@ RUN chmod +x /usr/local/bin/build-asan-ruby \
  && build-asan-ruby "${RUBY_GIT_REF}"    /usr/local/ruby-asan    /opt/ruby-src
 RUN build-asan-ruby "${RUBY_GIT_REF_40}" /usr/local/ruby-asan-40 /opt/ruby-src-40
 
-# 4.0 shims (ruby/gem/bundle/rake): 4.0 bin first on PATH and GEM_HOME=/work/.gem-40, so 4.0 gems
-# never collide with 3.4's /work/.gem. Prepend the dir to PATH for a 4.0 session; `ruby4` is the one-off.
-RUN set -eux; \
-    mkdir -p /usr/local/ruby-asan-40/shims; \
-    for t in ruby gem bundle bundler rake; do \
-        printf '#!/bin/sh\nexport GEM_HOME=/work/.gem-40\nexport PATH=/usr/local/ruby-asan-40/shims:/usr/local/ruby-asan-40/bin:/work/.gem-40/bin:$PATH\nexec /usr/local/ruby-asan-40/bin/%s "$@"\n' "$t" > "/usr/local/ruby-asan-40/shims/$t"; \
-    done; \
-    chmod +x /usr/local/ruby-asan-40/shims/*; \
-    ln -s /usr/local/ruby-asan-40/shims/ruby /usr/local/bin/ruby4
+# Per-interpreter shims: GEM_HOME pinned and its bin first on PATH, so a session on one interpreter never
+# loads another's gems. Prepend <prefix>/shims to PATH to select it; `ruby4` is the 4.0 one-off entry point.
+COPY <<'SHIMS' /usr/local/bin/ruby-shims
+#!/bin/sh
+# ruby-shims <asan|plain> <prefix> <gem-home>: write <prefix>/shims/{ruby,gem,bundle,bundler,rake}.
+# A shim pins GEM_HOME, puts its interpreter first on PATH and execs the real tool, so everything run
+# through it (bundle install, rake compile, the PoC) stays on that interpreter. `plain` also drops the
+# session's sanitizer CFLAGS/CXXFLAGS/LDFLAGS and RUBY_FREE_AT_EXIT, which exist for the ASan builds.
+set -eu
+[ $# -eq 3 ] || { echo "usage: ruby-shims <asan|plain> <prefix> <gem-home>" >&2; exit 2; }
+mode=$1 prefix=$2 gemhome=$3
+case $mode in
+    asan)  clear= ;;
+    plain) clear='unset CFLAGS CXXFLAGS LDFLAGS RUBY_FREE_AT_EXIT' ;;
+    *)     echo "ruby-shims: mode must be asan or plain" >&2; exit 2 ;;
+esac
+mkdir -p "$prefix/shims"
+for t in ruby gem bundle bundler rake; do
+    [ -x "$prefix/bin/$t" ] || continue
+    printf '#!/bin/sh\n%s\nexport GEM_HOME=%s\nexport PATH=%s/shims:%s/bin:%s/bin:$PATH\nexec %s/bin/%s "$@"\n' \
+        "$clear" "$gemhome" "$prefix" "$prefix" "$gemhome" "$prefix" "$t" > "$prefix/shims/$t"
+    chmod +x "$prefix/shims/$t"
+done
+SHIMS
+RUN chmod +x /usr/local/bin/ruby-shims \
+ && ruby-shims asan /usr/local/ruby-asan-40 /work/.gem-40 \
+ && ln -s /usr/local/ruby-asan-40/shims/ruby /usr/local/bin/ruby4
 
 # Rust for rb-sys / Cargo-native gems. Minimal stable (default) + the pinned
 # nightly with rust-src so the Rust side of the boundary can be rebuilt with

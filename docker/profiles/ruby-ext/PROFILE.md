@@ -92,11 +92,12 @@ interpreters disagree on where an object stores its data: a Struct/type confusio
 and dereferences a stale heap pointer on the other. A clean run on one ABI is a clean result for that
 ABI, not for the finding. For a Ruby-level (non-memory) reproducer on some other version, use the stock
 `/usr/bin/ruby`, or build one with
-`mkdir -p /work/tmp && env -u CFLAGS -u CXXFLAGS -u LDFLAGS -u RUBY_FREE_AT_EXIT TMPDIR=/work/tmp RUBY_CONFIGURE_OPTS="--with-baseruby=/usr/bin/ruby --disable-install-doc" ruby-build <x.y.z> /work/ruby-<x.y.z>`
-and run it with `GEM_HOME=/work/.gem-<x.y.z>`; state the version. Each part of that command avoids a
-real failure: the session exports sanitizer `CFLAGS`/`LDFLAGS` and `RUBY_FREE_AT_EXIT` (ruby-build would
-build a sanitized Ruby that aborts on its own UB), `/tmp` is a 256 MiB noexec tmpfs ruby-build refuses,
-the ASan `ruby` is first on PATH (not a BASERUBY you want), and `/work/.gem` holds ASan-built extensions.
+`mkdir -p /work/tmp && env -u CFLAGS -u CXXFLAGS -u LDFLAGS -u RUBY_FREE_AT_EXIT TMPDIR=/work/tmp RUBY_CONFIGURE_OPTS="--with-baseruby=/usr/bin/ruby --disable-install-doc" ruby-build <x.y.z> /work/ruby-<x.y.z>`,
+then `ruby-shims plain /work/ruby-<x.y.z> /work/.gem-<x.y.z> && export PATH=/work/ruby-<x.y.z>/shims:$PATH`
+and run everything else (`bundle install`, the reproducer) through those shims; state the version. The
+session is tuned for the ASan `ruby` (first on PATH, `GEM_HOME` of ASan-built gems, sanitizer
+`CFLAGS`/`LDFLAGS` that cc-rs reads, `RUBY_FREE_AT_EXIT`); the shims undo all of that for every command,
+where a bare `GEM_HOME=` or `env -u` covers one. `/tmp` is a 256 MiB noexec tmpfs ruby-build refuses.
 
 ### Rust extensions (rb-sys / Cargo-native)
 
