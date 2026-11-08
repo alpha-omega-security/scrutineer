@@ -102,14 +102,14 @@ func TestEcosystemKeyPURL(t *testing.T) {
 	}
 }
 
-// TestEcosystemKeySwiftRegistryFallback guards purl.MakePURL rejecting Swift
-// registry identities that cannot be represented as Swift source-coordinate
-// PURLs. They still need a stable key for matching imported package rows.
+// TestEcosystemKeySwiftRegistryFallback guards that a dotted Swift registry
+// identity keys the same as its slash form, which purl.MakePURL rejects and the
+// fallback splits.
 func TestEcosystemKeySwiftRegistryFallback(t *testing.T) {
 	cases := []struct {
 		label, name, wantNamespace, wantPackage string
 	}{
-		{"registry identity without separator", "apple.swift-argument-parser", "", "apple.swift-argument-parser"},
+		{"registry identity without separator", "apple.swift-argument-parser", "apple", "swift-argument-parser"},
 		{"registry identity with separator", "apple/swift-argument-parser", "apple", "swift-argument-parser"},
 	}
 	for _, tc := range cases {
@@ -197,7 +197,7 @@ func TestDependencyFindingsIncludesNonRuntimeDependencies(t *testing.T) {
 // must reconstruct the namespace split and case-folding exactly as parsing the
 // real PURL would: for the raw ecosyste.ms "actions" spelling, for the
 // canonical "githubactions" type the parser actually stores, and for a
-// mixed-case golang path that purl.Parse lowercases.
+// mixed-case golang path.
 func TestEcosystemKeyFallbackMatchesPURL(t *testing.T) {
 	cases := []struct{ name, eco, pkgName, purlStr string }{
 		{"golang", "go", "github.com/gorilla/mux", "pkg:golang/github.com/gorilla/mux@v1.8.0"},
