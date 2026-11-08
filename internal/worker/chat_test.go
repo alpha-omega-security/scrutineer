@@ -707,13 +707,14 @@ func TestWriteChatTranscriptCapsOneOversizedMessage(t *testing.T) {
 }
 
 func TestWriteChatTranscriptFitsTheArgvBudget(t *testing.T) {
-	long := strings.Repeat("x", chatHistoryBudget/2)
-	msgs := []db.ChatMessage{
-		{Role: db.ChatRoleUser, Content: "oldest question"},
-		{Role: db.ChatRoleAssistant, Content: long},
-		{Role: db.ChatRoleAssistant, Content: long},
-		{Role: db.ChatRoleUser, Content: "newest question"},
+	// Older messages are charged as written, cut at chatMessageCap, so it
+	// takes more than budget/cap of them to overflow the replay.
+	long := strings.Repeat("x", chatMessageCap)
+	msgs := []db.ChatMessage{{Role: db.ChatRoleUser, Content: "oldest question"}}
+	for range chatHistoryBudget/chatMessageCap + 1 {
+		msgs = append(msgs, db.ChatMessage{Role: db.ChatRoleAssistant, Content: long})
 	}
+	msgs = append(msgs, db.ChatMessage{Role: db.ChatRoleUser, Content: "newest question"})
 	var b strings.Builder
 	writeChatTranscript(&b, msgs, "newest question")
 	out := b.String()
@@ -867,6 +868,42 @@ func TestChatRunnerStagesLongMessageInFull(t *testing.T) {
 	}
 	if !info.Mode().IsRegular() {
 		t.Errorf("staged message mode = %v, want a regular file", info.Mode())
+	}
+}
+
+func TestChatRunnerLongMessageKeepsPreviousTurnInline(t *testing.T) {
+	gdb, repo := chatTestDB(t)
+	conv, err := db.CreateConversation(gdb, repo.ID, nil, "claude-x", "first")
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg := longLog()
+	for _, m := range []struct{ role, content string }{
+		{db.ChatRoleUser, "where is the header parser?"},
+		{db.ChatRoleAssistant, "In src/parse.c, parse_header."},
+		{db.ChatRoleUser, msg},
+	} {
+		if _, err := db.AddChatMessage(gdb, conv.ID, m.role, m.content); err != nil {
+			t.Fatal(err)
+		}
+	}
+	loaded, err := db.LoadConversation(gdb, conv.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &chatStubRunner{backend: "claude", resultText: "ok", emitResult: true}
+	cr := &ChatRunner{Runner: runner, DB: gdb, DataDir: t.TempDir()}
+	if _, err := cr.RunTurn(context.Background(), loaded, msg, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	prompt := runner.got.Prompt
+	for _, want := range []string{"where is the header parser?", "In src/parse.c, parse_header.", "./" + chatMessageFile} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("fresh prompt lost %q:\n%s", want, prompt)
+		}
+	}
+	if strings.Contains(prompt, "earlier turns of this conversation are omitted") {
+		t.Errorf("a replay that fits must not claim a trim:\n%s", prompt)
 	}
 }
 
