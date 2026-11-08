@@ -167,7 +167,6 @@
               not seen {{.MissedCount}}x
             </span>
           {{end}}
-          <div class="text-xs text-muted-foreground line-clamp-2">{{.Summary}}</div>
         </td>
         <td>{{template "finding-status" (fstatus .Status)}}</td>
         <td class="truncate">{{$repo.Name}}</td>
@@ -176,7 +175,7 @@
           <td class="text-muted-foreground text-xs">{{if .SubPath}}<code>{{.SubPath}}</code>{{else}}<span class="text-muted-foreground">root</span>{{end}}</td>
         {{end}}
         <td class="text-muted-foreground">
-          {{if .CWE}}<span data-tooltip="{{cwename .CWE}}">{{with cwecatid .CWE}}<span class="text-muted-foreground">{{.}} ›</span> {{end}}{{.CWE}}</span>{{end}}
+          {{template "cwe-cell" .CWE}}
         </td>
         <td class="whitespace-normal">{{template "loc-link" (dict "RepoID" $repo.ID "Commit" .Commit "Location" .Location "Extra" .ExtraLocationCount)}}</td>
         {{if $showModel}}

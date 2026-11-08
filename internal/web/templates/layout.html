@@ -232,6 +232,10 @@
   {{else}}<span class="badge-secondary">0</span>{{end}}
 {{end}}
 
+{{define "finding-summary"}}<div class="{{.Class}}">{{unmark .Text}}</div>{{end}}
+
+{{define "cwe-cell"}}{{if .}}<span data-tooltip="{{cwename .}}">{{.}}</span>{{with cwecat .}}<div class="text-xs text-muted-foreground whitespace-normal">{{.}}</div>{{end}}{{end}}{{end}}
+
 {{define "severity-badge"}}
   {{if or (eq . "Critical") (eq . "CRITICAL")}}<span class="badge-outline sev-critical">Critical</span>
   {{else if or (eq . "High") (eq . "HIGH")}}<span class="badge-outline sev-high">High</span>

@@ -38,3 +38,25 @@ func TestRenderMarkdown_empty(t *testing.T) {
 		t.Errorf("empty input should produce empty output, got:\n%q", got)
 	}
 }
+
+// TestUnmark pins code-span delimiters dropped and literal backticks kept.
+func TestUnmark(t *testing.T) {
+	for _, tt := range []struct{ in, want string }{
+		{"`buildQuery` formats the column list.", "buildQuery formats the column list."},
+		{"Runs `` `id` `` through the shell.", "Runs `id` through the shell."},
+		{"``a`b`` and `c`", "a`b and c"},
+		{"`a``b`", "a``b"},
+		{"Runs \\`id\\` through the shell.", "Runs \\`id\\` through the shell."},
+		{"\\``foo`", "\\`foo"},
+		{"\\\\`foo`", "\\\\foo"},
+		{"`a\\`b`", "a\\b`"},
+		{"a stray ` stays", "a stray ` stays"},
+		{"unclosed `` run`", "unclosed `` run`"},
+		{"no markdown", "no markdown"},
+		{"", ""},
+	} {
+		if got := unmark(tt.in); got != tt.want {
+			t.Errorf("unmark(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}

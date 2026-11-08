@@ -419,8 +419,14 @@ func New(gdb *gorm.DB, q *queue.Queue, log *slog.Logger, broker *Broker, w *work
 			}
 			return ""
 		},
-		"catlabel":   CategoryLabel,
-		"cwecatid":   CWECategoryID,
+		"catlabel": CategoryLabel,
+		"unmark":   unmark,
+		"cwecat": func(id string) string {
+			if _, c, ok := LookupCWE(id); ok {
+				return c.Category
+			}
+			return ""
+		},
 		"md":         renderMarkdown,
 		"jsontree":   jsonTree,
 		"prettyjson": prettyJSON,

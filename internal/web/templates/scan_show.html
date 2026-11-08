@@ -265,11 +265,11 @@
             <td>{{template "severity-badge" .Severity}}</td>
             <td class="min-w-0 whitespace-normal">
               <a href="/findings/{{.ID}}" class="font-medium">{{.Title}}</a>
-              <div class="text-xs text-muted-foreground line-clamp-2">{{.Summary}}</div>
+              {{template "finding-summary" (dict "Text" .Summary "Class" "text-xs text-muted-foreground line-clamp-2")}}
             </td>
             <td>{{template "finding-status" (fstatus .Status)}}</td>
             <td class="text-muted-foreground">
-              {{if .CWE}}<span data-tooltip="{{cwename .CWE}}">{{with cwecatid .CWE}}<span class="text-muted-foreground">{{.}} ›</span> {{end}}{{.CWE}}</span>{{end}}
+              {{template "cwe-cell" .CWE}}
             </td>
             <td class="whitespace-normal">{{template "loc-link" (dict "RepoID" $.Scan.Repository.ID "Commit" $.Scan.Commit "Location" .Location "Extra" .ExtraLocationCount)}}</td>
           </tr>
