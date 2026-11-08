@@ -52,7 +52,7 @@ pass misses, on top of the C/Ruby audit above.
 tree, inside a subshell.** The shims (`ruby`/`gem`/`bundle`/`bundler`/`rake` wrappers) pin that
 interpreter's `GEM_HOME` and put it first on PATH for every command run through them, so nothing loads
 another interpreter's gems; the plain ones (stock, ruby-build) also drop the session's sanitizer
-`CFLAGS`/`LDFLAGS` (which cc-rs reads) and `RUBY_FREE_AT_EXIT`. A tool an interpreter lacks fails its
+`CFLAGS`/`LDFLAGS` (which cc-rs reads). A tool an interpreter lacks fails its
 shim loudly rather than falling through to another interpreter's; `gem install` it through that `gem`
 shim. The copy matters because the extension in `src` is the 3.4 ASan build: `bundle install` never
 rebuilds it, an in-place `make` sees the copied objects as current and silently re-tests it, and a
@@ -107,8 +107,9 @@ and dereferences a stale heap pointer on the other. A clean run on one ABI is a 
 ABI, not for the finding. For a Ruby-level (non-memory) reproducer on some other version, use the stock
 Ruby through its shims, or build the version with
 `mkdir -p /work/tmp && env -u CFLAGS -u CXXFLAGS -u LDFLAGS -u RUBY_FREE_AT_EXIT TMPDIR=/work/tmp RUBY_CONFIGURE_OPTS="--with-baseruby=/usr/bin/ruby --disable-install-doc" ruby-build <x.y.z> /work/ruby-<x.y.z>`
-(the `env -u` matters: ruby-build would otherwise build a sanitized Ruby that aborts on its own UB;
-`/tmp` is a noexec tmpfs it refuses), then `ruby-shims plain /work/ruby-<x.y.z> /work/.gem-<x.y.z>` and
+(the `env -u` matters: ruby-build would otherwise build a sanitized Ruby that aborts on its own UB, and
+free-at-exit stays out of the build as it does for the image's own; `/tmp` is a noexec tmpfs it refuses),
+then `ruby-shims plain /work/ruby-<x.y.z> /work/.gem-<x.y.z>` and
 follow the shims rule above with `/work/ruby-<x.y.z>/shims` and `/work/src-<x.y.z>`. Rubies before 2.6
 ship no Bundler, and a `Gemfile.lock` may want a newer one than the Ruby ships: `gem install bundler -v
 <compatible>` through that `gem` shim first. State the version you used.
@@ -165,11 +166,12 @@ If a confusing crash looks like a GC/ASan artifact rather than a gem bug (a free
 When the ASan build won't compile the extension, or the gem ships a precompiled/fat binary,
 fall back to memcheck on the **stock** interpreter. Build (or unpack) the extension for it in its own
 copy through the stock shims (the shims rule above, with `/usr/local/ruby-stock/shims` and
-`/work/src-stock`), then run valgrind on the interpreter binary with the stock environment set by
-hand, because valgrind does not follow a shim's `exec`:
+`/work/src-stock`), then run valgrind on the interpreter binary with the stock `GEM_HOME` set by hand,
+because valgrind does not follow a shim's `exec` (`RUBY_FREE_AT_EXIT=1` stays: it makes Ruby free its
+heap at exit so the leak check reports the gem's leaks, not the interpreter's):
 
 ```bash
-env -u RUBY_FREE_AT_EXIT GEM_HOME=/work/.gem-stock \
+GEM_HOME=/work/.gem-stock \
   valgrind --suppressions=/usr/local/share/ruby-ext/ruby.supp \
            --leak-check=full --error-exitcode=99 \
            /usr/bin/ruby /tmp/poc.rb

@@ -198,17 +198,13 @@ RUN build-asan-ruby "${RUBY_GIT_REF_40}" /usr/local/ruby-asan-40 /opt/ruby-src-4
 COPY <<'SHIMS' /usr/local/bin/ruby-shims
 #!/bin/sh
 # ruby-shims <asan|plain> <prefix> <gem-home> [shims-dir]: write <shims-dir>/{ruby,gem,bundle,bundler,rake}
-# (default <prefix>/shims). A shim pins GEM_HOME, puts its interpreter first on PATH and execs the real
-# tool from <prefix>/bin or <gem-home>/bin, so everything run through it (bundle install, rake compile,
-# the PoC) stays on that interpreter; a tool in neither place fails loudly instead of falling through to
-# another interpreter's. `plain` also drops the session's sanitizer CFLAGS/CXXFLAGS/LDFLAGS and
-# RUBY_FREE_AT_EXIT, which exist for the ASan builds.
+# (default <prefix>/shims); `plain` also unsets the session's sanitizer CFLAGS/CXXFLAGS/LDFLAGS.
 set -eu
 case $# in 3|4) ;; *) echo "usage: ruby-shims <asan|plain> <prefix> <gem-home> [shims-dir]" >&2; exit 2 ;; esac
 mode=$1 prefix=$2 gemhome=$3 shims=${4:-$2/shims}
 case $mode in
     asan)  clear= ;;
-    plain) clear='unset CFLAGS CXXFLAGS LDFLAGS RUBY_FREE_AT_EXIT' ;;
+    plain) clear='unset CFLAGS CXXFLAGS LDFLAGS' ;;
     *)     echo "ruby-shims: mode must be asan or plain" >&2; exit 2 ;;
 esac
 mkdir -p "$shims"
