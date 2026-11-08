@@ -791,12 +791,7 @@ func (w *Worker) wrap(h handler) func(context.Context, []byte) error {
 	}
 }
 
-// admitScan runs the checks a queued scan passes before its claim. It takes
-// the group hold first, checking the group total under the same lock, so a
-// sibling cannot exhaust the budget between the check and the hold. Preflight
-// runs under the hold, which is released on every early return. The total is
-// checked again after preflight. proceed is false when the job ends here, with
-// err as its outcome.
+// admitScan takes the group hold then runs the checks a queued scan passes before its claim.
 func (w *Worker) admitScan(ctx context.Context, scan *db.Scan, attempt int) (release func(saved bool), proceed bool, err error) {
 	if scan.Repository.FederationOptedOut() {
 		w.cancelOptedOut(scan)

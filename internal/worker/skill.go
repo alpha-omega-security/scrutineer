@@ -277,9 +277,15 @@ func (w *Worker) runAndParseSkill(ctx context.Context, scan *db.Scan, skill *db.
 	defer stop()
 	res, err := w.runSkillWithFallback(runCtx, scan, skill, sj, workRoot, hardScope, runEmit)
 	w.applySkillResult(scan, res)
+	if err != nil {
+		guard.foldPending()
+	}
+	if capped, ok := errors.AsType[*groupCapError](err); ok {
+		emit(Event{Kind: KindText, Text: capped.Error() + "; stopping before the first model call"})
+		return "", w.markCostCapped(scan)
+	}
 	// A run that finished despite the trip keeps its full report.
 	if err != nil && guard.Tripped() && ctx.Err() == nil {
-		guard.foldPending()
 		return w.finishCostCappedRun(ctx, skill, scan, sj, res.Report, emit)
 	}
 	if err != nil {

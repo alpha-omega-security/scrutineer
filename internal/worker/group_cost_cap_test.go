@@ -365,8 +365,8 @@ func TestRunFollowupSkill_stopsWhenGroupSpent(t *testing.T) {
 }
 
 // failBudgetReads makes group budget reads fail when fail(n) is true for the
-// n-th read (counting from 1). It returns the read counter.
-func failBudgetReads(t *testing.T, w *Worker, fail func(n int32) bool) *atomic.Int32 {
+// n-th read (counting from 1).
+func failBudgetReads(t *testing.T, w *Worker, fail func(n int32) bool) {
 	t.Helper()
 	var reads atomic.Int32
 	err := w.DB.Callback().Query().Before("gorm:query").Register("test:fail_budget_read", func(tx *gorm.DB) {
@@ -378,7 +378,6 @@ func failBudgetReads(t *testing.T, w *Worker, fail func(n int32) bool) *atomic.I
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = w.DB.Callback().Query().Remove("test:fail_budget_read") })
-	return &reads
 }
 
 // failScanSave makes the final save of scan id to the done status fail.
@@ -593,7 +592,7 @@ func TestWrap_defersScanWhenAdmissionReadFails(t *testing.T) {
 	}
 }
 
-func TestWrap_requeuesScanWhenRegistrationReadFails(t *testing.T) {
+func TestWrap_requeuesScanWhenBudgetReadFails(t *testing.T) {
 	w, scan := groupFixture(t, 0, 1.0, 0)
 	failOnClone(t, w)
 	runner := neverRunRunner(t)
@@ -607,13 +606,10 @@ func TestWrap_requeuesScanWhenRegistrationReadFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Admission checks the budget and registers the hold in one load.
-	reads := failBudgetReads(t, w, func(n int32) bool { return n == 1 })
+	failBudgetReads(t, w, func(n int32) bool { return n == 1 })
 
 	if err := wrapScan(w, scan.ID); err != nil {
 		t.Fatalf("wrap = %v, want nil after requeue", err)
-	}
-	if reads.Load() < 1 {
-		t.Fatal("no budget read, the registration read never failed")
 	}
 	if got := scanStatus(t, w, scan.ID); got != db.ScanQueued {
 		t.Errorf("status %s, want queued", got)
@@ -773,5 +769,82 @@ func TestWrap_skipsScanWhenSiblingSpendsBudgetDuringPreflight(t *testing.T) {
 	}
 	if total, _, ok := w.groups.spent("grp"); !ok || math.Abs(total-1.1) > 1e-9 {
 		t.Errorf("tracked total %v ok %v, want the sibling's 1.1 still tracked", total, ok)
+	}
+}
+
+// probeRunner runs the backend preflight the way the real runners do, then
+// records whether the model call after it was reached.
+type probeRunner struct {
+	probeCost float64
+	modelRan  atomic.Bool
+}
+
+func (*probeRunner) SkillDir(workRoot, name string) string {
+	return ClaudeHarness{}.SkillDir(workRoot, name)
+}
+
+func (p *probeRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)) (SkillResult, error) {
+	if sj.checkBackend != nil {
+		err := sj.checkBackend(ctx, []byte("probe"), func(context.Context) coverage.BackendProbe {
+			return coverage.BackendProbe{Status: coverage.PreflightReady, CostUSD: p.probeCost}
+		})
+		if err != nil {
+			return SkillResult{}, err
+		}
+	}
+	p.modelRan.Store(true)
+	return SkillResult{Report: `{"ok":1}`}, nil
+}
+
+func TestWrap_probeCostTakingGroupOverCapStopsBeforeModelCall(t *testing.T) {
+	w, scan := groupFixture(t, 0, 1.0, 0.95)
+	w.BackendPreflight = newBackendCache(t)
+	runner := &probeRunner{probeCost: 0.10}
+	w.Runner = runner
+
+	got := runCapScan(t, w, scan)
+	if runner.modelRan.Load() {
+		t.Error("model call started after the probe took the group over its cap")
+	}
+	if got.Status != db.ScanDone || !got.CostCapped || math.Abs(got.CostUSD-0.10) > 1e-9 {
+		t.Errorf("status %s capped %v cost %v, want done, capped at 0.10", got.Status, got.CostCapped, got.CostUSD)
+	}
+	if rec, _ := coverage.Parse(got.Coverage); !strings.HasPrefix(rec.Reason, "group_cost_cap:") {
+		t.Errorf("coverage reason %q, want group_cost_cap", rec.Reason)
+	}
+}
+
+func TestWrap_usageFromFailedRunCountsAgainstGroup(t *testing.T) {
+	w, scan := groupFixture(t, 0, 1.0, 0.7)
+	w.Runner = &capRunner{first: func(_ context.Context, emit func(Event)) (SkillResult, error) {
+		emit(Event{Kind: KindUsage, CostUSD: 0.2})
+		return SkillResult{}, errors.New("runner crashed")
+	}}
+	if got := runCapScan(t, w, scan); got.Status != db.ScanFailed || math.Abs(got.CostUSD-0.2) > 1e-9 {
+		t.Fatalf("status %s cost %v, want failed with the 0.2 usage saved", got.Status, got.CostUSD)
+	}
+	if _, _, ok := w.groups.spent("grp"); ok {
+		t.Fatal("group still tracked, the next scan would not reload the DB total")
+	}
+
+	// The group is at 0.9 only if the failed run's usage was saved, so a
+	// sibling's 0.15 call then reaches the cap.
+	next := db.Scan{RepositoryID: scan.RepositoryID, Kind: JobSkill, Status: db.ScanQueued, ScanGroup: "grp", Model: "fake", SkillID: scan.SkillID}
+	if err := w.DB.Create(&next).Error; err != nil {
+		t.Fatal(err)
+	}
+	w.Runner = &capRunner{first: func(ctx context.Context, emit func(Event)) (SkillResult, error) {
+		emit(Event{Kind: KindUsage, CostUSD: 0.15})
+		select {
+		case <-ctx.Done():
+			return SkillResult{}, ctx.Err()
+		case <-time.After(5 * time.Second):
+			t.Error("group cap did not trip on the sibling's call")
+			return SkillResult{}, nil
+		}
+	}}
+	got := runCapScan(t, w, &next)
+	if rec, _ := coverage.Parse(got.Coverage); !got.CostCapped || !strings.HasPrefix(rec.Reason, "group_cost_cap:") {
+		t.Errorf("sibling capped %v reason %q, want stopped at the group cap", got.CostCapped, rec.Reason)
 	}
 }

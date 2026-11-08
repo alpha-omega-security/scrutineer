@@ -229,9 +229,7 @@ func (e *groupCapError) Error() string {
 
 // holdGroupSpend keeps the scan's group tracked from before its claim until
 // wrap has saved its final cost, so a sibling starting in between still
-// counts that cost. The spent check runs under the same lock as the hold. A
-// spent group returns a *groupCapError and holds nothing. The returned release
-// takes whether the save succeeded.
+// counts that cost. The returned release takes whether the save succeeded.
 func (w *Worker) holdGroupSpend(scan *db.Scan) (func(saved bool), error) {
 	if scan.ScanGroup == "" {
 		return func(bool) {}, nil
@@ -246,14 +244,15 @@ func (w *Worker) holdGroupSpend(scan *db.Scan) (func(saved bool), error) {
 	return func(saved bool) { w.groups.release(scan.ScanGroup, scan.ID, scan.CostUSD, saved) }, nil
 }
 
-// heldGroupCapped returns a *groupCapError when the group of a scan holding
-// its group spend has reached its cap, nil otherwise.
+// heldGroupCapped records the current cost of a scan holding its group spend
+// and returns a *groupCapError when the group has reached its cap, nil
+// otherwise.
 func (w *Worker) heldGroupCapped(scan *db.Scan) *groupCapError {
 	if scan.ScanGroup == "" {
 		return nil
 	}
-	spent, limit, ok := w.groups.spent(scan.ScanGroup)
-	if !ok || limit <= 0 || spent < limit {
+	spent, limit := w.groups.update(scan.ScanGroup, scan.ID, scan.CostUSD)
+	if limit <= 0 || spent < limit {
 		return nil
 	}
 	return &groupCapError{spent: spent, limit: limit}
