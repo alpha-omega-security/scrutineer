@@ -1,0 +1,13 @@
+given: an exported deep link activity loads a URL from a query parameter into a JavaScript-enabled WebView that exposes the stored session token through a JavaScript interface
+fixture: fixtures/mobile-android-app
+skill: audit-mobile
+should_find:
+  - path: app/src/main/java/com/example/notes/DeepLinkActivity.kt
+    evidence_contains:
+      - addJavascriptInterface
+      - loadUrl
+    required: true
+should_not_find:
+  - path: app/src/main/java/com/example/notes/HelpActivity.kt
+    evidence_contains:
+      - HELP_HOST

@@ -147,3 +147,29 @@ includes or URLs named by the input. Add `audit-injection` only when it
 deserializes input into arbitrary types or evaluates it. Extracting archive
 entries to disk does not add `audit-exfil` on that evidence alone because
 `audit-file-parser` covers it.
+
+## mobile
+
+Select this mode when first-party source in the current scan scope implements a
+mobile application shell: an Android app (an `AndroidManifest.xml` declaring an
+application with activities, services, receivers or providers, or the Android
+Gradle application plugin), an iOS or iPadOS app (an Xcode project with an app
+target, `Info.plist`, entitlements, an app delegate or a SwiftUI `App`) or a
+cross-platform app with native shells (React Native, Flutter, Capacitor,
+Cordova, .NET MAUI or Kotlin Multiplatform with an app target). A monorepo
+that holds an app and its own backend in the scanned scope may match `mobile`
+alongside `web-api`.
+
+A backend that only serves a mobile app's API, a client SDK or library with no
+app shell, release tooling such as fastlane lanes or signing scripts,
+documentation and keywords such as "iOS", "Android" or "device token" do not
+qualify on that evidence alone. Neither do test-only harnesses. Trace the app
+shell in the current scan scope; do not borrow an app from another monorepo
+subproject. A scan scoped to a subpath with no app shell, such as the backend
+directory, does not match even when the parent repository has one. Keep
+uncertain classifications gated and record the missing evidence.
+
+Enqueue `audit-mobile` for a match. Also add `audit-memory` when the scoped app
+includes first-party native C, C++ or unsafe Rust that reads untrusted input.
+A WebView or JavaScript bridge does not add `audit-web` on that evidence alone
+because `audit-mobile` covers it.
