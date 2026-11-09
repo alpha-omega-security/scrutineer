@@ -2981,8 +2981,14 @@ func (s *Server) repoScan(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) repoDiffScan(w http.ResponseWriter, r *http.Request, repo db.Repository) {
-	queued, err := s.enqueueDiffRescanGroup(r.Context(), repo.ID,
-		r.FormValue("model"), strings.TrimSpace(r.FormValue("sub_path")))
+	model, subPath := r.FormValue("model"), strings.TrimSpace(r.FormValue("sub_path"))
+	if r.FormValue("confirm_full") == "" {
+		if c, ok := s.diffRescanFallbacks(r.Context(), repo, model, subPath); ok {
+			s.diffRescanConfirm(w, r, c)
+			return
+		}
+	}
+	queued, err := s.enqueueDiffRescanGroup(r.Context(), repo.ID, model, subPath)
 	if err != nil {
 		if errors.Is(err, errDeepDiveMissing) {
 			http.Error(w, err.Error(), http.StatusPreconditionFailed)
@@ -2995,7 +3001,48 @@ func (s *Server) repoDiffScan(w http.ResponseWriter, r *http.Request, repo db.Re
 	s.redirect(w, r, fmt.Sprintf("/repositories/%d#rt3", repo.ID))
 }
 
+// diffRescanPreview is the "this diff rescan would cost a full scan" step.
+type diffRescanPreview struct {
+	RepoID    uint
+	Model     string
+	SubPath   string
+	Fallbacks []string
+	Err       string
+}
+
+// diffRescanFallbacks measures, before anything is enqueued, whether the
+// diff-rescan group's scans would fall back to full scans. ok is false when
+// every scan would scan the diff.
+func (s *Server) diffRescanFallbacks(ctx context.Context, repo db.Repository, model, subPath string) (diffRescanPreview, bool) {
+	var active []string
+	s.DB.Model(&db.Skill{}).Where("name IN ? AND active = ?", diffRescanSkillNames, true).
+		Order("id").Pluck("name", &active)
+	c := diffRescanPreview{RepoID: repo.ID, Model: model, SubPath: subPath}
+	fallbacks, err := s.Worker.DiffRescanFallbacks(ctx, repo, subPath, active)
+	if err != nil {
+		c.Err = err.Error()
+		return c, true
+	}
+	c.Fallbacks = fallbacks
+	return c, len(fallbacks) > 0
+}
+
+// diffRescanConfirm renders the confirmation step: an OOB panel on the repo
+// page for htmx clients, a standalone page for plain form posts.
+func (s *Server) diffRescanConfirm(w http.ResponseWriter, r *http.Request, c diffRescanPreview) {
+	if !isHX(r) {
+		s.render(w, r, "diff_rescan_confirm.html", map[string]any{"Confirm": c})
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.tmpl.ExecuteTemplate(w, "diff-rescan-confirm-oob", c); err != nil {
+		s.Log.Error("render diff-rescan-confirm-oob", "err", err)
+	}
+}
+
 var errDeepDiveMissing = errors.New(deepDiveSkillName + " skill is not installed")
+
+var diffRescanSkillNames = []string{reconSkillName, historySkillName, "embedded-native", threatModelSkillName, "semgrep", "betterleaks"}
 
 // enqueueDiffRescanGroup enqueues recon, history, embedded-native, threat-model,
 // semgrep, and betterleaks as one diff-rescan group. A completed threat-model
@@ -3010,7 +3057,7 @@ func (s *Server) enqueueDiffRescanGroup(ctx context.Context, repoID uint, model,
 	}
 	group := uuid.NewString()
 	queued := 0
-	for _, name := range []string{reconSkillName, historySkillName, "embedded-native", threatModelSkillName, "semgrep", "betterleaks"} {
+	for _, name := range diffRescanSkillNames {
 		var skill db.Skill
 		if err := s.DB.Where("name = ? AND active = ?", name, true).First(&skill).Error; err != nil {
 			continue

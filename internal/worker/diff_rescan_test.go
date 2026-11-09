@@ -209,6 +209,51 @@ func TestPrepareDiffRescanFallsBackWithoutBaseline(t *testing.T) {
 	}
 }
 
+func TestDiffRescanFallbacksEmptyUnderLimits(t *testing.T) {
+	gdb := dbtest.Open(t)
+	repoDir := initGitRepo(t)
+	writeDiffTestFile(t, repoDir, "app.go", "package main\n")
+	base := gitCommit(t, repoDir, "base")
+	writeDiffTestFile(t, repoDir, "app.go", "package main\n\nfunc added() {}\n")
+	gitCommit(t, repoDir, "head")
+
+	repo := db.Repository{URL: "file://" + repoDir, Name: "r"}
+	gdb.Create(&repo)
+	gdb.Create(&db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "threat-model", Status: db.ScanDone, Commit: base})
+
+	w := &Worker{DB: gdb, DataDir: t.TempDir(), Log: slog.Default()}
+	got, err := w.DiffRescanFallbacks(context.Background(), repo, "", []string{"threat-model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("fallbacks = %q, want none for a small diff", got)
+	}
+}
+
+func TestDiffRescanFallbacksReportsOversizedPatchAndMissingBaseline(t *testing.T) {
+	gdb := dbtest.Open(t)
+	repoDir := initGitRepo(t)
+	writeDiffTestFile(t, repoDir, "app.go", "package main\n")
+	base := gitCommit(t, repoDir, "base")
+	writeDiffTestFile(t, repoDir, "big.txt", strings.Repeat("line of added text\n", maxDiffPatchBytes/19+1))
+	gitCommit(t, repoDir, "head")
+
+	repo := db.Repository{URL: "file://" + repoDir, Name: "r"}
+	gdb.Create(&repo)
+	gdb.Create(&db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "threat-model", Status: db.ScanDone, Commit: base})
+
+	w := &Worker{DB: gdb, DataDir: t.TempDir(), Log: slog.Default()}
+	got, err := w.DiffRescanFallbacks(context.Background(), repo, "", []string{"recon", "threat-model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0] != "recon: "+noDiffBaselineReason ||
+		!strings.HasPrefix(got[1], "threat-model: diff patch is ") || !strings.HasSuffix(got[1], "limit is 1048576") {
+		t.Fatalf("fallbacks = %q, want missing recon baseline then oversized threat-model patch", got)
+	}
+}
+
 func TestParseChangedFilesPreservesPathWhitespaceAndSkipsMalformedStatus(t *testing.T) {
 	got := parseChangedFiles("M\tpath/with trailing space \n\tmissing-status\nR100\told name \tnew name \r\n")
 	if len(got) != 2 {

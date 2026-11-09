@@ -3316,7 +3316,7 @@ func TestRepoScan_diffRescanQueuesGroupedSkills(t *testing.T) {
 			OutputKind: "freeform", Version: 1, Active: true, Source: "ui"})
 	}
 
-	body := strings.NewReader("rescan_mode=diff")
+	body := strings.NewReader("rescan_mode=diff&confirm_full=1")
 	req := httptest.NewRequest("POST", fmt.Sprintf("/repositories/%d/scan", repo.ID), body)
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	asOperator(req)
