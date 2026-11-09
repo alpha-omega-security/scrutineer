@@ -2111,6 +2111,86 @@ func TestFindingStatus_readyRequiresDisclosureDraft(t *testing.T) {
 	}
 }
 
+// Pins the "Fixed upstream" shortcut: offered on every open status before
+// acknowledged, and posting it closes the finding as fixed.
+func TestFindingShow_fixedUpstreamFromOpenStatuses(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://github.com/foo/upstream-fixed", Name: "upstream-fixed"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: deepDiveSkillName}
+	s.DB.Create(&scan)
+
+	for _, status := range []db.FindingLifecycle{
+		db.FindingNew, db.FindingEnriched, db.FindingTriaged, db.FindingReady, db.FindingReported,
+	} {
+		f := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: string(status) + " finding",
+			Severity: "High", Status: status, DisclosureDraft: "## Summary"}
+		s.DB.Create(&f)
+
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, localReq("GET", fmt.Sprintf("/findings/%d", f.ID)))
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s status %d: %s", status, w.Code, w.Body)
+		}
+		if !strings.Contains(w.Body.String(), "Fixed upstream") {
+			t.Errorf("%s finding page missing the Fixed upstream action", status)
+		}
+
+		w = postForm(t, s, fmt.Sprintf("/findings/%d/status", f.ID), url.Values{"status": {string(db.FindingFixed)}})
+		if w.Code != http.StatusSeeOther {
+			t.Fatalf("%s -> fixed = %d, want 303; body=%s", status, w.Code, w.Body)
+		}
+		var got db.Finding
+		s.DB.First(&got, f.ID)
+		if got.Status != db.FindingFixed {
+			t.Errorf("%s -> fixed persisted %q", status, got.Status)
+		}
+	}
+}
+
+// Pins that "Fixed upstream" is hidden where "Mark fixed" already applies
+// and on closed statuses.
+func TestFindingShow_noFixedUpstreamOnAcknowledgedOrClosed(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := db.Repository{URL: "https://github.com/foo/closed", Name: "closed"}
+	s.DB.Create(&repo)
+	scan := db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanDone, SkillName: deepDiveSkillName}
+	s.DB.Create(&scan)
+
+	cases := []struct {
+		status db.FindingLifecycle
+		want   string
+	}{
+		{db.FindingAcknowledged, "Mark fixed"},
+		{db.FindingFixed, "Fix available"},
+		{db.FindingPublished, "Closed out"},
+		{db.FindingRejected, "determined to be invalid"},
+		{db.FindingDuplicate, "duplicates an existing advisory"},
+	}
+	for _, tc := range cases {
+		f := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, Title: string(tc.status) + " finding",
+			Severity: "High", Status: tc.status}
+		s.DB.Create(&f)
+
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, localReq("GET", fmt.Sprintf("/findings/%d", f.ID)))
+		body := w.Body.String()
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s status %d: %s", tc.status, w.Code, body)
+		}
+		if !strings.Contains(body, tc.want) {
+			t.Errorf("%s finding page missing %q", tc.status, tc.want)
+		}
+		if strings.Contains(body, "Fixed upstream") {
+			t.Errorf("%s finding page should not offer Fixed upstream", tc.status)
+		}
+	}
+}
+
 func TestOrgReport_rendersFindingsAcrossRepos(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

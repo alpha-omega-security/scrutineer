@@ -246,6 +246,8 @@ Each finding from the `security-deep-dive` skill starts at **new** and moves thr
 7. **fixed** -- patch available. Click "Mark published" to issue the advisory
 8. **published** -- done
 
+When upstream has already fixed the issue, click "Fixed upstream" from any status before **acknowledged** to jump straight to **fixed** without generating or sending a report.
+
 Each finding page has a notes section for recording triage reasoning and communication history.
 
 The repository page carries a Federation opt-out control: recording one cancels the repository's queued, running and paused scans, then refuses every new scan on it, including scheduled runs and automatic follow-ups. It also withdraws the repository from the interchange feeds, and, when the public feed is configured, publishes the request so other federated instances honour it too; an opt-out arriving on a peer feed sets it here the same way. See [docs/interchange.md](docs/interchange.md).
