@@ -848,3 +848,54 @@ func TestWrap_usageFromFailedRunCountsAgainstGroup(t *testing.T) {
 		t.Errorf("sibling capped %v reason %q, want stopped at the group cap", got.CostCapped, rec.Reason)
 	}
 }
+
+// repairProbeRunner returns a report that fails the schema on its first run.
+// On the repair resume a sibling spends the rest of the group before the
+// backend probe runs, as it can after runFollowupSkill's own cap check.
+type repairProbeRunner struct {
+	w     *Worker
+	calls atomic.Int32
+}
+
+func (*repairProbeRunner) SkillDir(workRoot, name string) string {
+	return ClaudeHarness{}.SkillDir(workRoot, name)
+}
+
+func (r *repairProbeRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)) (SkillResult, error) {
+	n := r.calls.Add(1)
+	if n == 2 {
+		if _, err := r.w.groups.register("grp", 99, 0, loadGroup(1, 0, new(int))); err != nil {
+			return SkillResult{}, err
+		}
+		r.w.groups.update("grp", 99, 0.6)
+	}
+	if err := sj.checkBackend(ctx, []byte("probe"), func(context.Context) coverage.BackendProbe {
+		return coverage.BackendProbe{Status: coverage.PreflightReady}
+	}); err != nil {
+		return SkillResult{}, err
+	}
+	if n > 1 {
+		return SkillResult{Report: `{"ok":1}`}, nil
+	}
+	return SkillResult{SessionID: "sess-1", Report: `{}`}, nil
+}
+
+func TestWrap_followupProbeTrippingGroupCapMarksScanCapped(t *testing.T) {
+	w, scan := groupFixture(t, 0, 1.0, 0.5)
+	if err := w.DB.Model(&db.Skill{}).Where("id = ?", *scan.SkillID).
+		Update("schema_json", `{"type":"object","required":["ok"]}`).Error; err != nil {
+		t.Fatal(err)
+	}
+	w.BackendPreflight = newBackendCache(t)
+	runner := &repairProbeRunner{w: w}
+	w.Runner = runner
+
+	got := runCapScan(t, w, scan)
+	if runner.calls.Load() < 2 {
+		t.Fatalf("runner called %d times, the repair never ran", runner.calls.Load())
+	}
+	rec, _ := coverage.Parse(got.Coverage)
+	if got.Status != db.ScanDone || !got.CostCapped || !strings.HasPrefix(rec.Reason, "group_cost_cap:") {
+		t.Errorf("status %s capped %v reason %q, want done and capped at the group cap", got.Status, got.CostCapped, rec.Reason)
+	}
+}

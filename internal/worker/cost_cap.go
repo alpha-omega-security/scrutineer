@@ -76,9 +76,9 @@ func (g *costGuard) wrap(emit func(Event)) func(Event) {
 
 // foldPending charges usage that no result event folded in. A run stopped by
 // the cap, a timeout or a crash ends before it reports a result, so without
-// this that spend would be missing from the scan and its group. SessionCostUSD moves with it
-// so a resumed Claude session, whose total includes the killed run, does not
-// charge that spend a second time.
+// this that spend would be missing from the scan and its group.
+// SessionCostUSD moves with it so a resumed Claude session, whose total
+// includes the killed run, does not charge that spend a second time.
 func (g *costGuard) foldPending() {
 	if g == nil {
 		return
@@ -149,6 +149,10 @@ func (w *Worker) runFollowupSkill(ctx context.Context, scan *db.Scan, job SkillJ
 	w.applySkillResult(scan, res)
 	if err != nil {
 		guard.foldPending()
+	}
+	// The resume's backend probe stops it when a sibling spent the group meanwhile.
+	if _, ok := errors.AsType[*groupCapError](err); ok {
+		return res, errCostCapped
 	}
 	if err != nil && guard.Tripped() && ctx.Err() == nil {
 		return res, errCostCapped
