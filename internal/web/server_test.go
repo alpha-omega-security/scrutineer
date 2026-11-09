@@ -2137,6 +2137,9 @@ func TestFindingShow_fixedUpstreamFromOpenStatuses(t *testing.T) {
 		if !strings.Contains(w.Body.String(), "Fixed upstream") {
 			t.Errorf("%s finding page missing the Fixed upstream action", status)
 		}
+		if !strings.Contains(w.Body.String(), `name="status" value="fixed"`) {
+			t.Errorf("%s finding page has no action submitting the fixed status", status)
+		}
 
 		w = postForm(t, s, fmt.Sprintf("/findings/%d/status", f.ID), url.Values{"status": {string(db.FindingFixed)}})
 		if w.Code != http.StatusSeeOther {
