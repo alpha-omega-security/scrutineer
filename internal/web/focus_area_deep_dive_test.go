@@ -174,6 +174,41 @@ func TestAutoEnqueueFocusAreaDeepDivesSeedsThenFansOut(t *testing.T) {
 	}
 }
 
+// A diff threat-model's baseline is a threat-model scan, so the fanned-out
+// deep-dive keeps the diff mode but leaves its baseline for the worker to pick.
+func TestAutoEnqueueFocusAreaDeepDivesDoesNotInheritDiffBaseline(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/diff-focus", Name: "diff-focus"}
+	s.DB.Create(&repo)
+	deepDive := db.Skill{Name: deepDiveSkillName, Body: "b", OutputFile: "r.json", OutputKind: "findings", Active: true, Source: "ui"}
+	s.DB.Create(&deepDive)
+	tmBaseline := db.Scan{RepositoryID: repo.ID, Status: db.ScanDone, SkillName: threatModelSkillName, Commit: "base"}
+	s.DB.Create(&tmBaseline)
+	parent := db.Scan{
+		RepositoryID:   repo.ID,
+		Status:         db.ScanDone,
+		SkillName:      threatModelSkillName,
+		ScanGroup:      "diff-1",
+		RescanMode:     db.ScanRescanModeDiff,
+		DiffBaseScanID: &tmBaseline.ID,
+	}
+	s.DB.Create(&parent)
+
+	s.autoEnqueueFocusAreaDeepDives(&parent)
+
+	var child db.Scan
+	if err := s.DB.Where("repository_id = ? AND skill_id = ?", repo.ID, deepDive.ID).First(&child).Error; err != nil {
+		t.Fatal(err)
+	}
+	if child.RescanMode != db.ScanRescanModeDiff {
+		t.Errorf("rescan_mode = %q, want %q", child.RescanMode, db.ScanRescanModeDiff)
+	}
+	if child.DiffBaseScanID != nil {
+		t.Errorf("diff_base_scan_id = %d, want nil so the worker resolves a deep-dive baseline", *child.DiffBaseScanID)
+	}
+}
+
 func TestAutoEnqueueFocusAreaDeepDivesPreservesScope(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

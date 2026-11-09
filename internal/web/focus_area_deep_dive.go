@@ -92,16 +92,18 @@ func (s *Server) enqueueFocusAreaDeepDive(parent *db.Scan, skillID uint, group, 
 		// deep-dive skill's own scrutineer.model: max declaration.
 		// Leaving it empty lets enqueueSkillWith fall through to the
 		// skill's tier so focus-area deep-dives run on max as intended.
-		Effort:         parent.Effort,
-		Profile:        focusAreaProfile(parent, focusArea),
-		SubPath:        parent.SubPath,
-		ScopeMode:      parent.ScopeMode,
-		Ref:            parent.Ref,
-		RescanMode:     parent.RescanMode,
-		DiffBaseScanID: parent.DiffBaseScanID,
-		ScanGroup:      group,
-		FocusArea:      focusArea,
-		TriageScanID:   parent.TriageScanID,
+		// DiffBaseScanID is not inherited either: the parent's baseline is a
+		// threat-model scan, which the worker rejects for a deep-dive, so
+		// each deep-dive resolves its own skill and focus-area baseline.
+		Effort:       parent.Effort,
+		Profile:      focusAreaProfile(parent, focusArea),
+		SubPath:      parent.SubPath,
+		ScopeMode:    parent.ScopeMode,
+		Ref:          parent.Ref,
+		RescanMode:   parent.RescanMode,
+		ScanGroup:    group,
+		FocusArea:    focusArea,
+		TriageScanID: parent.TriageScanID,
 	}); err != nil {
 		name := "repository"
 		if focusArea != "" {
