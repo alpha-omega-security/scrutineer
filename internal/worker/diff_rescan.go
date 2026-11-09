@@ -121,6 +121,7 @@ func (w *Worker) prepareDiffRescan(ctx context.Context, scan *db.Scan, workRoot 
 func (w *Worker) DiffRescanFallbacks(ctx context.Context, repo db.Repository, subPath string, skills []string) ([]string, error) {
 	var out []string
 	dir, head, fetched := repo.LocalPath(), "", false
+	reasons := map[string]string{}
 	for _, name := range skills {
 		scan := db.Scan{RepositoryID: repo.ID, Repository: repo, SkillName: name, SubPath: subPath, RescanMode: db.ScanRescanModeDiff}
 		baseline, ok := w.diffBaseline(&scan)
@@ -139,7 +140,12 @@ func (w *Worker) DiffRescanFallbacks(ctx context.Context, repo db.Repository, su
 			head = gitHead(dir)
 		}
 		scan.Commit = head
-		if _, _, reason := w.planDiff(ctx, &scan, baseline, dir); reason != "" {
+		reason, seen := reasons[baseline.Commit]
+		if !seen {
+			_, _, reason = w.planDiff(ctx, &scan, baseline, dir)
+			reasons[baseline.Commit] = reason
+		}
+		if reason != "" {
 			out = append(out, name+": "+reason)
 		}
 	}

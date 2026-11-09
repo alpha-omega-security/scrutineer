@@ -127,6 +127,29 @@ func TestRepoDiffScan_overLimitAsksConfirmationBeforeQueueing(t *testing.T) {
 	}
 }
 
+func TestRepoDiffScan_unmeasurableDiffAsksConfirmation(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	s.Worker.DataDir = t.TempDir()
+	repo := db.Repository{URL: "https://127.0.0.1:1/acme/widgets.git", Name: "widgets"}
+	s.DB.Create(&repo)
+	for _, name := range []string{threatModelSkillName, deepDiveSkillName} {
+		s.DB.Create(&db.Skill{Name: name, Body: "b", OutputFile: "r.json",
+			OutputKind: "freeform", Version: 1, Active: true, Source: "ui"})
+	}
+	s.DB.Create(&db.Scan{RepositoryID: repo.ID, Kind: "skill", SkillName: threatModelSkillName, Status: db.ScanDone, Commit: "0123456789abcdef0123456789abcdef01234567"})
+
+	w := postDiffRescan(s, repo, true, "")
+
+	body := w.Body.String()
+	if !strings.Contains(body, "This diff rescan may cost a full scan.") || !strings.Contains(body, "could not be measured") {
+		t.Fatalf("unreachable remote did not render the unmeasured confirmation: code=%d body=%s", w.Code, body)
+	}
+	if n := queuedScans(t, s, repo); n != 0 {
+		t.Fatalf("queued scans = %d before confirmation, want 0", n)
+	}
+}
+
 func TestRepoDiffScan_noBaselineConfirmsOnPlainPost(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

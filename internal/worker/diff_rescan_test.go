@@ -242,15 +242,17 @@ func TestDiffRescanFallbacksReportsOversizedPatchAndMissingBaseline(t *testing.T
 	repo := db.Repository{URL: "file://" + repoDir, Name: "r"}
 	gdb.Create(&repo)
 	gdb.Create(&db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "threat-model", Status: db.ScanDone, Commit: base})
+	gdb.Create(&db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "semgrep", Status: db.ScanDone, Commit: base})
 
 	w := &Worker{DB: gdb, DataDir: t.TempDir(), Log: slog.Default()}
-	got, err := w.DiffRescanFallbacks(context.Background(), repo, "", []string{"recon", "threat-model"})
+	got, err := w.DiffRescanFallbacks(context.Background(), repo, "", []string{"recon", "threat-model", "semgrep"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 2 || got[0] != "recon: "+noDiffBaselineReason ||
-		!strings.HasPrefix(got[1], "threat-model: diff patch is ") || !strings.HasSuffix(got[1], "limit is 1048576") {
-		t.Fatalf("fallbacks = %q, want missing recon baseline then oversized threat-model patch", got)
+	if len(got) != 3 || got[0] != "recon: "+noDiffBaselineReason ||
+		!strings.HasPrefix(got[1], "threat-model: diff patch is ") || !strings.HasSuffix(got[1], "limit is 1048576") ||
+		got[2] != "semgrep: "+strings.TrimPrefix(got[1], "threat-model: ") {
+		t.Fatalf("fallbacks = %q, want missing recon baseline then the same oversized patch for threat-model and semgrep", got)
 	}
 }
 

@@ -3010,6 +3010,11 @@ type diffRescanPreview struct {
 	Err       string
 }
 
+// diffRescanPreviewTimeout caps the clone-cache fetch and git diffs the
+// preview runs inside the request, which also hold the repository's cache
+// lock. It is longer than branchListTimeout because a first preview clones.
+const diffRescanPreviewTimeout = 30 * time.Second
+
 // diffRescanFallbacks measures, before anything is enqueued, whether the
 // diff-rescan group's scans would fall back to full scans. ok is false when
 // every scan would scan the diff.
@@ -3018,6 +3023,8 @@ func (s *Server) diffRescanFallbacks(ctx context.Context, repo db.Repository, mo
 	s.DB.Model(&db.Skill{}).Where("name IN ? AND active = ?", diffRescanSkillNames, true).
 		Order("id").Pluck("name", &active)
 	c := diffRescanPreview{RepoID: repo.ID, Model: model, SubPath: subPath}
+	ctx, cancel := context.WithTimeout(ctx, diffRescanPreviewTimeout)
+	defer cancel()
 	fallbacks, err := s.Worker.DiffRescanFallbacks(ctx, repo, subPath, active)
 	if err != nil {
 		c.Err = err.Error()
