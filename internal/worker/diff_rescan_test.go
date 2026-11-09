@@ -124,10 +124,7 @@ func TestDiffBaselineForFannedOutDeepDive(t *testing.T) {
 		{name: "only a threat-model baseline"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			gdb, err := db.Open(filepath.Join(t.TempDir(), "d.db"))
-			if err != nil {
-				t.Fatal(err)
-			}
+			gdb := dbtest.Open(t)
 			repo := db.Repository{URL: "file:///tmp/fanout", Name: "fanout"}
 			gdb.Create(&repo)
 			var deepDive db.Scan
