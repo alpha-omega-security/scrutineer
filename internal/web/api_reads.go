@@ -63,10 +63,11 @@ func (s *Server) apiListMaintainers(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	var rows []db.Maintainer
-	s.DB.Joins("JOIN repository_maintainers rm ON rm.maintainer_id = maintainers.id").
-		Where("rm.repository_id = ?", id).
-		Order("maintainers.login").Find(&rows)
+	rows, err := db.RepositoryMaintainers(s.DB, id)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "load repository maintainers")
+		return
+	}
 	out := make([]maintainerResponse, 0, len(rows))
 	for _, m := range rows {
 		out = append(out, maintainerResponse{

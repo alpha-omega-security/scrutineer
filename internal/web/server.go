@@ -586,6 +586,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /orgs/{login}/summary.md", s.orgSummary)
 	mux.HandleFunc("GET /maintainers", s.maintainersList)
 	mux.HandleFunc("GET /maintainers/{id}", s.maintainerShow)
+	mux.HandleFunc("POST /maintainers/{id}", s.maintainerUpdate)
 	mux.HandleFunc("POST /maintainers/{id}/do-not-contact", s.maintainerDoNotContact)
 	mux.HandleFunc("GET /findings", s.findings)
 	mux.HandleFunc("GET /benchmark", s.benchmark)
@@ -2736,9 +2737,10 @@ func repoTotalCost(gdb *gorm.DB, repoID uint) float64 {
 }
 
 func (s *Server) repoMaintainers(repoID uint) []db.Maintainer {
-	var maintainers []db.Maintainer
-	s.DB.Joins("JOIN repository_maintainers ON repository_maintainers.maintainer_id = maintainers.id").
-		Where("repository_maintainers.repository_id = ?", repoID).Find(&maintainers)
+	maintainers, err := db.RepositoryMaintainers(s.DB, repoID)
+	if err != nil {
+		s.Log.Error("load repository maintainers", "repo", repoID, "err", err)
+	}
 	return maintainers
 }
 
