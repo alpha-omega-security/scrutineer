@@ -56,6 +56,11 @@ automatically runs a full scan instead when:
 
 The scan records why it fell back so the history still explains what happened.
 
+The **Diff rescan** button checks this before queueing anything. When a scan
+of the group would fall back, the repository page lists each such scan with
+its reason, and the group is queued only once you confirm. Scheduled and API
+diff rescans do not ask.
+
 ## Threat Models
 
 Diff-aware threat-model scans update the repository threat model only when the

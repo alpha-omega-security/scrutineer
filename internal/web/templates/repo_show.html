@@ -57,7 +57,7 @@
       <input type="hidden" name="rescan_mode" value="diff">
       <input type="number" name="group_max_cost_usd" min="0" step="0.01" inputmode="decimal" class="input text-xs w-40" placeholder="Group cost cap (USD)" aria-label="Group cost cap in USD">
       <button class="btn-outline" type="submit"
-              data-tooltip="Scan changes since the latest compatible deep-dive baseline; falls back to a full scan when no usable baseline exists.">
+              data-tooltip="Scan changes since each scan's latest compatible baseline. Asks for confirmation first when a scan would run as a full scan instead: no usable baseline, no new commits, or a diff over the size limits.">
         <i data-lucide="git-compare-arrows"></i> Diff rescan
       </button>
     </form>
@@ -86,6 +86,7 @@
     </div>
   </div>
 </div>
+<div id="diff-rescan-confirm"></div>
 
 <div class="tabs w-full" id="repo-tabs">
   <nav role="tablist" aria-orientation="horizontal">

@@ -21,6 +21,7 @@ const (
 	maxDiffChangedFileRows = 200
 	nameStatusMinColumns   = 2
 	nameStatusRenameCols   = 3
+	noDiffBaselineReason   = "no compatible baseline scan with a commit"
 )
 
 type diffStats struct {
@@ -53,60 +54,16 @@ func (w *Worker) prepareDiffRescan(ctx context.Context, scan *db.Scan, workRoot 
 
 	baseline, ok := w.diffBaseline(scan)
 	if !ok {
-		w.fallbackDiffScan(scan, "no compatible baseline scan with a commit")
+		w.fallbackDiffScan(scan, noDiffBaselineReason)
 		return nil
 	}
-	if baseline.Commit == scan.Commit {
-		w.fallbackDiffScan(scan, "baseline commit equals current commit")
+	changed, patch, reason := w.planDiff(ctx, scan, baseline, filepath.Join(workRoot, "src"))
+	if reason != "" {
+		w.fallbackDiffScan(scan, reason)
 		return nil
 	}
 	scan.DiffBaseScanID = &baseline.ID
 	scan.DiffBaseCommit = baseline.Commit
-
-	diffDir := filepath.Join(workRoot, "src")
-	if !scan.Repository.IsLocal() {
-		if err := w.EnsureCommit(ctx, scan.Repository.URL, baseline.Commit); err != nil {
-			w.fallbackDiffScan(scan, "baseline commit could not be fetched: "+err.Error())
-			return nil
-		}
-		diffDir = filepath.Join(RepoCacheRoot(w.DataDir, scan.Repository.URL), "src")
-	}
-	if !commitReachable(ctx, diffDir, baseline.Commit) {
-		w.fallbackDiffScan(scan, "baseline commit is unreachable")
-		return nil
-	}
-	if !commitReachable(ctx, diffDir, scan.Commit) {
-		w.fallbackDiffScan(scan, "current commit is unreachable")
-		return nil
-	}
-
-	rangeSpec := baseline.Commit + ".." + scan.Commit
-	nameStatusArgs := diffGitArgs(diffDir, rangeSpec, scan.SubPath, "--name-status")
-	nameStatus, err := git(ctx, nameStatusArgs...)
-	if err != nil {
-		w.fallbackDiffScan(scan, "could not list changed files: "+strings.TrimSpace(nameStatus))
-		return nil
-	}
-	changed := parseChangedFiles(nameStatus)
-	if len(changed) == 0 {
-		w.fallbackDiffScan(scan, "diff is empty")
-		return nil
-	}
-	if len(changed) > maxDiffChangedFileRows {
-		w.fallbackDiffScan(scan, fmt.Sprintf("diff changed %d files; limit is %d", len(changed), maxDiffChangedFileRows))
-		return nil
-	}
-
-	patchArgs := diffGitArgs(diffDir, rangeSpec, scan.SubPath)
-	patch, err := git(ctx, patchArgs...)
-	if err != nil {
-		w.fallbackDiffScan(scan, "could not generate diff: "+strings.TrimSpace(patch))
-		return nil
-	}
-	if len(patch) > maxDiffPatchBytes {
-		w.fallbackDiffScan(scan, fmt.Sprintf("diff patch is %d bytes; limit is %d", len(patch), maxDiffPatchBytes))
-		return nil
-	}
 
 	if err := stageDiffFiles(workRoot, patch, changed); err != nil {
 		return err
@@ -155,6 +112,98 @@ func (w *Worker) prepareDiffRescan(ctx context.Context, scan *db.Scan, workRoot 
 	}
 	emit(Event{Kind: KindText, Text: fmt.Sprintf("diff rescan: staged %d changed file(s), %d byte patch", len(changed), len(patch))})
 	return nil
+}
+
+// DiffRescanFallbacks reports, as "skill: reason" lines, why a diff rescan
+// of each of skills started now would run as a full scan. A skill that would
+// scan the diff is left out. A remote repository's clone cache is first
+// fetched to its HEAD, as the scan itself does when it starts.
+func (w *Worker) DiffRescanFallbacks(ctx context.Context, repo db.Repository, subPath string, skills []string) ([]string, error) {
+	var out []string
+	dir, head, fetched := repo.LocalPath(), "", false
+	for _, name := range skills {
+		scan := db.Scan{RepositoryID: repo.ID, Repository: repo, SkillName: name, SubPath: subPath, RescanMode: db.ScanRescanModeDiff}
+		baseline, ok := w.diffBaseline(&scan)
+		if !ok {
+			out = append(out, name+": "+noDiffBaselineReason)
+			continue
+		}
+		if !fetched {
+			fetched = true
+			if !repo.IsLocal() {
+				var err error
+				if dir, err = w.refreshRepoCache(ctx, repo.URL); err != nil {
+					return nil, err
+				}
+			}
+			head = gitHead(dir)
+		}
+		scan.Commit = head
+		if _, _, reason := w.planDiff(ctx, &scan, baseline, dir); reason != "" {
+			out = append(out, name+": "+reason)
+		}
+	}
+	return out, nil
+}
+
+// refreshRepoCache fetches the per-URL clone cache to its default branch HEAD
+// and returns its src directory.
+func (w *Worker) refreshRepoCache(ctx context.Context, url string) (string, error) {
+	cacheRoot := RepoCacheRoot(w.DataDir, url)
+	if err := os.MkdirAll(cacheRoot, dirPerm); err != nil {
+		return "", err
+	}
+	mu := w.cacheMutex(url)
+	mu.Lock()
+	defer mu.Unlock()
+	return ensureClone(ctx, db.Repository{URL: url}, cacheRoot, false, "", func(Event) {})
+}
+
+// planDiff measures the diff from baseline to scan.Commit and returns the
+// changed files and patch a diff rescan stages, or the reason it runs as a
+// full scan instead. localDir is the checkout of a local repository; a
+// remote one is diffed in its clone cache.
+func (w *Worker) planDiff(ctx context.Context, scan *db.Scan, baseline db.Scan, localDir string) ([]changedFile, string, string) {
+	if baseline.Commit == scan.Commit {
+		return nil, "", "baseline commit equals current commit"
+	}
+	diffDir := localDir
+	if !scan.Repository.IsLocal() {
+		if err := w.EnsureCommit(ctx, scan.Repository.URL, baseline.Commit); err != nil {
+			return nil, "", "baseline commit could not be fetched: " + err.Error()
+		}
+		diffDir = filepath.Join(RepoCacheRoot(w.DataDir, scan.Repository.URL), "src")
+	}
+	if !commitReachable(ctx, diffDir, baseline.Commit) {
+		return nil, "", "baseline commit is unreachable"
+	}
+	if !commitReachable(ctx, diffDir, scan.Commit) {
+		return nil, "", "current commit is unreachable"
+	}
+
+	rangeSpec := baseline.Commit + ".." + scan.Commit
+	nameStatusArgs := diffGitArgs(diffDir, rangeSpec, scan.SubPath, "--name-status")
+	nameStatus, err := git(ctx, nameStatusArgs...)
+	if err != nil {
+		return nil, "", "could not list changed files: " + strings.TrimSpace(nameStatus)
+	}
+	changed := parseChangedFiles(nameStatus)
+	if len(changed) == 0 {
+		return nil, "", "diff is empty"
+	}
+	if len(changed) > maxDiffChangedFileRows {
+		return nil, "", fmt.Sprintf("diff changed %d files; limit is %d", len(changed), maxDiffChangedFileRows)
+	}
+
+	patchArgs := diffGitArgs(diffDir, rangeSpec, scan.SubPath)
+	patch, err := git(ctx, patchArgs...)
+	if err != nil {
+		return nil, "", "could not generate diff: " + strings.TrimSpace(patch)
+	}
+	if len(patch) > maxDiffPatchBytes {
+		return nil, "", fmt.Sprintf("diff patch is %d bytes; limit is %d", len(patch), maxDiffPatchBytes)
+	}
+	return changed, patch, ""
 }
 
 func (w *Worker) diffBaseline(scan *db.Scan) (db.Scan, bool) {
