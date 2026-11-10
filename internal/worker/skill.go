@@ -266,17 +266,26 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 	return w.runAndParseSkill(ctx, scan, &skill, sj, workRoot, hardScope, emit)
 }
 
-// runAndParseSkill runs the skill (under the scan's cost cap when it has one)
-// then validates and parses its report.
+// runAndParseSkill runs the skill (under the scan or group cost cap when there
+// is one) then validates and parses its report.
 func (w *Worker) runAndParseSkill(ctx context.Context, scan *db.Scan, skill *db.Skill, sj SkillJob, workRoot string, hardScope bool, emit func(Event)) (string, error) {
 	scan.CostCapped = false
-	runCtx, runEmit, guard, stop := startCostGuardRun(ctx, scan, emit)
+	runCtx, runEmit, guard, stop, err := w.startCostGuardRun(ctx, scan, emit)
+	if err != nil {
+		return "", err
+	}
 	defer stop()
 	res, err := w.runSkillWithFallback(runCtx, scan, skill, sj, workRoot, hardScope, runEmit)
 	w.applySkillResult(scan, res)
+	if err != nil {
+		guard.foldPending()
+	}
+	if capped, ok := errors.AsType[*groupCapError](err); ok {
+		emit(Event{Kind: KindText, Text: capped.Error() + "; stopping before the first model call"})
+		return "", w.markCostCapped(scan)
+	}
 	// A run that finished despite the trip keeps its full report.
 	if err != nil && guard.Tripped() && ctx.Err() == nil {
-		guard.foldPending()
 		return w.finishCostCappedRun(ctx, skill, scan, sj, res.Report, emit)
 	}
 	if err != nil {

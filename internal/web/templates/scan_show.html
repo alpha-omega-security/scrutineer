@@ -123,6 +123,12 @@
     <dd>{{usd .MaxCostUSD}}</dd>
   </div>
   {{end}}
+  {{if gt $.GroupCostCap 0.0}}
+  <div>
+    <dt class="text-muted-foreground">Group cost cap</dt>
+    <dd>{{usd $.GroupCostCap}} ({{usd $.GroupSpend}} spent)</dd>
+  </div>
+  {{end}}
   {{if .SkillName}}
   <div>
     <dt class="text-muted-foreground font-semibold">Skill</dt>
@@ -209,7 +215,11 @@
 {{if .CostCapped}}
   <div class="alert mb-6">
     <i data-lucide="circle-dollar-sign"></i>
+    {{if or (le .MaxCostUSD 0.0) (lt .CostUSD .MaxCostUSD)}}
+    <section>This scan stopped early with partial output because its group reached the group cost cap of {{usd $.GroupCostCap}}. A retry stays within the same group cap.</section>
+    {{else}}
     <section>This scan reached its cost cap of {{usd .MaxCostUSD}} and stopped early with partial output. Retry resumes the saved session with a fresh budget.</section>
+    {{end}}
   </div>
 {{end}}
 
