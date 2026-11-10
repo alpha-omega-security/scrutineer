@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	mavenpom "github.com/git-pkgs/pom"
 	"github.com/git-pkgs/sbom"
@@ -1803,18 +1804,24 @@ func (w *Worker) parseFindingDedupOutput(scan *db.Scan, report string, emit func
 	if len(result.Duplicates)+len(result.Subsumed)+len(result.Chains) > maxDedupReportGroups {
 		return &SchemaValidationError{Skill: findingDedupSkill, Detail: fmt.Sprintf("report exceeds %d relation groups", maxDedupReportGroups)}
 	}
-	inputIDs := 0
+	inputIDs, longReason := 0, false
 	for _, g := range result.Duplicates {
 		inputIDs += 1 + len(g.DuplicateIDs)
+		longReason = longReason || dedupReasonTooLong(g.Reason)
 	}
 	for _, g := range result.Subsumed {
 		inputIDs += 1 + len(g.SubsumedIDs)
+		longReason = longReason || dedupReasonTooLong(g.Reason)
 	}
 	for _, g := range result.Chains {
 		inputIDs += len(g.FindingIDs)
+		longReason = longReason || dedupReasonTooLong(g.Reason)
 	}
 	if inputIDs > maxDedupReportIDs {
 		return &SchemaValidationError{Skill: findingDedupSkill, Detail: fmt.Sprintf("report exceeds %d ID references", maxDedupReportIDs)}
+	}
+	if longReason {
+		return &SchemaValidationError{Skill: findingDedupSkill, Detail: fmt.Sprintf("report exceeds %d characters in a reason", maxDedupReasonChars)}
 	}
 
 	skipped, promoted := 0, 0
@@ -1955,7 +1962,13 @@ const (
 	maxDedupGroupInputIDs = 256
 	maxDedupReportGroups  = 256
 	maxDedupReportIDs     = 4096
+	// The reason is copied into every member's note.
+	maxDedupReasonChars = 4096
 )
+
+func dedupReasonTooLong(reason string) bool {
+	return len(reason) > maxDedupReasonChars && utf8.RuneCountInString(reason) > maxDedupReasonChars
+}
 
 func dedupMemberIDs(ids []uint, skipped *int) []uint {
 	if len(ids) > maxDedupGroupInputIDs {

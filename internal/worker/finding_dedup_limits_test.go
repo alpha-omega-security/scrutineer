@@ -77,7 +77,7 @@ func repeatedDedupIDs(id uint, count int) []uint {
 }
 
 func TestDoSkillDedupRejectsOversizeReportsBeforeWrites(t *testing.T) {
-	for _, kind := range []string{"groups", "mixed groups", "IDs", "mixed IDs"} {
+	for _, kind := range []string{"groups", "mixed groups", "IDs", "mixed IDs", "reason"} {
 		t.Run(kind, func(t *testing.T) {
 			got := runDedupLimitReport(t, 2, func(fs []db.Finding) map[string]any {
 				report := map[string]any{"duplicates": []any{}}
@@ -97,6 +97,10 @@ func TestDoSkillDedupRejectsOversizeReportsBeforeWrites(t *testing.T) {
 				case "mixed IDs":
 					report["duplicates"] = dedupTestGroups("duplicates", fs, 8, 256)
 					report["subsumed"] = dedupTestGroups("subsumed", fs, 8, 256)
+				case "reason":
+					groups := dedupTestGroups("subsumed", fs, 1, 1)
+					groups[0].(map[string]any)["reason"] = strings.Repeat("é", maxDedupReasonChars+1)
+					report["subsumed"] = groups
 				}
 				return report
 			})
@@ -150,6 +154,18 @@ func TestDoSkillDedupAcceptsReportBoundaries(t *testing.T) {
 				t.Fatalf("scan=%s error=%s notes=%d queries=%d", got.scan.Status, got.scan.Error, len(got.notes), got.queries)
 			}
 		})
+	}
+}
+
+func TestDoSkillDedupAcceptsReasonAtLimit(t *testing.T) {
+	reason := strings.Repeat("é", maxDedupReasonChars)
+	got := runDedupLimitReport(t, 2, func(fs []db.Finding) map[string]any {
+		groups := dedupTestGroups("subsumed", fs, 1, 1)
+		groups[0].(map[string]any)["reason"] = reason
+		return map[string]any{"duplicates": []any{}, "subsumed": groups}
+	})
+	if got.scan.Status != db.ScanDone || len(got.notes) != 1 || !strings.HasSuffix(got.notes[0].Body, reason) {
+		t.Fatalf("scan=%s error=%s notes=%d", got.scan.Status, got.scan.Error, len(got.notes))
 	}
 }
 

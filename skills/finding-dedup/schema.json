@@ -38,6 +38,7 @@
           "reason": {
             "type": "string",
             "minLength": 1,
+            "maxLength": 4096,
             "description": "Why these findings are the same underlying vulnerability."
           }
         }
@@ -68,6 +69,7 @@
           "reason": {
             "type": "string",
             "minLength": 1,
+            "maxLength": 4096,
             "description": "Why the parent's fix necessarily closes these."
           }
         }
@@ -93,6 +95,7 @@
           "reason": {
             "type": "string",
             "minLength": 1,
+            "maxLength": 4096,
             "description": "How the chain works and why the combined severity is higher."
           }
         }
