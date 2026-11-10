@@ -11,7 +11,6 @@ metadata:
   scrutineer.poc_field: validation
   scrutineer.max_turns: 100
   scrutineer.model: max
-  scrutineer.requires_remote: true
   scrutineer.requires:
     - advisories
 ---
