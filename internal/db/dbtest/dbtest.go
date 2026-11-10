@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	"gorm.io/gorm"
 
@@ -54,6 +55,18 @@ var template = sync.OnceValue(func() []byte {
 // test and t.Parallel tests do not share state.
 func Open(tb testing.TB) *gorm.DB {
 	tb.Helper()
+	return open(tb, "")
+}
+
+// OpenBusyTimeout is Open with a shorter busy_timeout, for tests that wait
+// for a held lock to surface as SQLITE_BUSY.
+func OpenBusyTimeout(tb testing.TB, timeout time.Duration) *gorm.DB {
+	tb.Helper()
+	return open(tb, fmt.Sprintf("&_pragma=busy_timeout(%d)", timeout.Milliseconds()))
+}
+
+func open(tb testing.TB, pragmas string) *gorm.DB {
+	tb.Helper()
 	path := filepath.Join(tb.TempDir(), "dbtest.db")
 	if err := os.WriteFile(path, template(), dbFilePerm); err != nil {
 		tb.Fatalf("dbtest: write template: %v", err)
@@ -62,7 +75,7 @@ func Open(tb testing.TB) *gorm.DB {
 	// GitHub's Windows runners one fsync costs 200-400ms: enough to make a
 	// DB-heavy package five times slower than on Linux, and test databases
 	// are throwaway.
-	gdb, err := db.Connect(path + "?_pragma=synchronous(OFF)")
+	gdb, err := db.Connect(path + "?_pragma=synchronous(OFF)" + pragmas)
 	if err != nil {
 		tb.Fatalf("dbtest: connect: %v", err)
 	}

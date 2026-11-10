@@ -492,7 +492,12 @@ func truncateSchemaRepairReport(report string) string {
 	return report[:schemaRepairReportMaxSize] + "\n... truncated ..."
 }
 
-func (w *Worker) parseSkillOutput(ctx context.Context, skill *db.Skill, scan *db.Scan, report string, emit func(Event)) error {
+func (w *Worker) parseSkillOutput(ctx context.Context, skill *db.Skill, scan *db.Scan, report string, emit func(Event)) (err error) {
+	defer func() {
+		if err != nil {
+			scan.Report = report
+		}
+	}()
 	if skill.SchemaJSON != "" {
 		if detail, recoverable := reportValidationForParsing(skill, report); detail != "" {
 			emit(reportValidationEvent(skill, detail))
@@ -531,13 +536,13 @@ func (w *Worker) parseSkillOutputKind(ctx context.Context, skill *db.Skill, scan
 	case "repo_metadata":
 		return w.parseRepoMetadataOutput(scan, report, emit)
 	case "packages":
-		return w.parsePackagesOutput(scan, report, emit)
+		return w.parsePackagesOutput(ctx, scan, report, emit)
 	case "advisories":
-		return w.parseAdvisoriesOutput(scan, report, emit)
+		return w.parseAdvisoriesOutput(ctx, scan, report, emit)
 	case "advisory_audit":
 		return w.parseAdvisoryAuditOutput(skill, scan, report, emit)
 	case "dependencies":
-		return w.parseDependenciesOutput(scan, report, emit)
+		return w.parseDependenciesOutput(ctx, scan, report, emit)
 	case "finding_dedup":
 		return w.parseFindingDedupOutput(scan, report, emit)
 	case "verify":
@@ -545,7 +550,7 @@ func (w *Worker) parseSkillOutputKind(ctx context.Context, skill *db.Skill, scan
 	case "revalidate":
 		return w.parseRevalidateOutput(scan, report, emit)
 	case "critic":
-		return w.parseCriticOutput(scan, report, emit)
+		return w.parseCriticOutput(ctx, scan, report, emit)
 	case "breaking_change":
 		return w.parseBreakingChangeOutput(scan, report, emit)
 	case "mitigation":
@@ -555,13 +560,13 @@ func (w *Worker) parseSkillOutputKind(ctx context.Context, skill *db.Skill, scan
 	case "release_watch":
 		return w.parseReleaseWatchOutput(scan, report, emit)
 	case "subprojects":
-		return w.parseSubprojectsOutput(scan, report, emit)
+		return w.parseSubprojectsOutput(ctx, scan, report, emit)
 	case "repo_overview":
 		return w.parseRepoOverviewOutput(scan, report, emit)
 	case "posture":
 		return w.parsePostureOutput(scan, report, emit)
 	case "compliance":
-		return w.parseComplianceOutput(scan, report, emit)
+		return w.parseComplianceOutput(ctx, scan, report, emit)
 	case "patch":
 		return w.parsePatchOutput(ctx, scan, report, emit)
 	case "reattack":
