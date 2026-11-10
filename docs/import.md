@@ -93,6 +93,26 @@ A body that matches none of the formats below is not rejected outright. When `?r
 
 Findings land asynchronously when the scan completes, through the same fingerprint upsert as every skill run. Without `?repo=` there is nothing to clone (an unparseable body has no readable provenance), so the request still fails with `422`. The skill treats the report as untrusted input: its output is schema-validated like any skill report, and instructions embedded in the report body are ignored rather than followed.
 
+## OSS-CRS runs
+
+An [OSS-CRS](https://github.com/ossf/oss-crs) run is imported from the gzip tarball `oss-crs archive` writes for it, through its own endpoint. That archive holds the run's SARIF bug candidates beside the PoV inputs, patches and report bundles the CRSs submitted, and it names neither the target repository nor the revision, so both are required:
+
+    curl -H "Authorization: Bearer $(cat data/operator-token)" -H "Content-Type: application/gzip" --data-binary @run.tar.gz "http://127.0.0.1:8080/api/v1/import/oss-crs?repo=https://github.com/example/widget&commit=<sha>&run=<run-id>"
+
+The archive is read as a stream, so the fuzzing corpus under `seeds/` costs decompression but no memory, and the body may reach 256 MiB. Each part of the archive is handled as follows:
+
+| Directory | Handling |
+|-----------|----------|
+| `bug-candidates/` | Each SARIF 2.1.0 file goes through the SARIF import above, caps and fingerprint dedup included, and every SARIF run lands in the run's single import scan. A revision in the candidate's `versionControlProvenance` wins over `?commit=`, for its findings and for the PoVs it captures. A file that is not SARIF is reported in `skipped`. |
+| `povs/`, `patches/`, `reports/` | Every regular file of at most 1 MiB is kept byte for byte, an associated PoV as its finding's captured PoC and everything else in [`import_artifacts`](database.md#import_artifacts), reports as the original `.tar.gz` without extracting it. |
+| anything else | `seeds/`, `harnesses/` and the extra directories `oss-crs archive --all` adds are reported in `skipped` with their file count. |
+
+A file is associated with a finding only when a bug candidate names its archive path in SARIF `result.attachments[].artifactLocation.uri`. Nothing is inferred from file names or directory order, and nothing in OSS-CRS writes `attachments` today, so on a stock run every PoV, patch and report is stored unassociated. An associated PoV becomes the finding's [captured PoC](database.md#finding_pocs) instead of an import artifact, so `verify` stages it and the disclosure bundle ships it. The first capture wins, so an associated PoV the capture refuses (over its 64-file or 2 MiB limit) or that an earlier capture of the finding does not hold is kept in `import_artifacts` against the finding and reported in `warnings`. Patches stay evidence only, since `suggested_fix` is reserved for diffs that passed the patch gate, and imported findings enter the same revalidation funnel as any import unless `?revalidate=false` is passed.
+
+The response extends the import response with `scan_id` (the import scan for the run, `skill_name = oss-crs`, which every imported finding and retained artifact points at and whose log records the run id and everything skipped), `artifacts` (one entry per file and finding kept in `import_artifacts`, with `stored: false` when the same bytes are already held for that finding, from an earlier import or an earlier path in the same archive), `skipped`, `unresolved_attachments` (paths a candidate named that the archive did not carry) and `warnings`. A repeat import of the same archive re-observes the findings and stores nothing new. `GET /api/v1/repositories/{id}/import-artifacts` lists the retained files without their bytes, and `GET /api/v1/import-artifacts/{id}` downloads one. Artifacts associated with a finding are deleted with it, and the rest with the repository.
+
+An entry with an unsafe path, a link or special file, a duplicate path or a size over the limit is skipped and reported. A name in `skipped` or `unresolved_attachments` is cut to 256 bytes and its control characters are replaced with `?`, so a crafted archive cannot inflate the response or forge a line in the scan log. An archive over 100,000 entries, 2 GiB expanded or 64 MiB of retained files is refused with `413` before anything is written. The same 64 MiB bounds what the import writes, and since a file associated with several findings is stored once per finding, as an import artifact or inside each captured PoC, an import whose associations go past it is refused with `413` and nothing it wrote is kept.
+
 ## Supported formats
 
 The detector reads the first few bytes of the body and dispatches:

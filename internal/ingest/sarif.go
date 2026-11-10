@@ -69,6 +69,11 @@ func sarifFinding(sr sarif.Result, byID map[string]sarif.ReportingDescriptor, ru
 	if len(sr.Fixes) > 0 {
 		f.SuggestedFix = sr.Fixes[0].Description.Text
 	}
+	for _, a := range sr.Attachments {
+		if a.ArtifactLocation.URI != "" {
+			f.Attachments = append(f.Attachments, a.ArtifactLocation.URI)
+		}
+	}
 	return f
 }
 
