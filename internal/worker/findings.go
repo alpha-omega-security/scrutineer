@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -31,34 +32,71 @@ func isStubEvidence(trace, boundary, validation string) bool {
 	return true
 }
 
-// schemaRequiresEvidence reports whether a skill schema requires trace, boundary and validation together.
+// schemaRequiresEvidence reports whether a skill schema's finding items require trace, boundary and validation together.
 func schemaRequiresEvidence(schemaJSON string) bool {
-	var doc any
-	if json.Unmarshal([]byte(schemaJSON), &doc) != nil {
+	var root any
+	if json.Unmarshal([]byte(schemaJSON), &root) != nil {
 		return false
 	}
-	return requiresEvidence(doc)
+	item, _ := schemaAt(root, "properties", "findings", "items").(map[string]any)
+	required, _ := item["required"].([]any)
+	return requiresAll(required, "trace", "boundary", "validation")
 }
 
-func requiresEvidence(node any) bool {
-	switch n := node.(type) {
-	case map[string]any:
-		if req, ok := n["required"].([]any); ok && requiresAll(req, "trace", "boundary", "validation") {
-			return true
+// maxSchemaRefHops bounds $ref chains so a cyclic schema cannot loop forever.
+const maxSchemaRefHops = 16
+
+// schemaAt walks keys from the schema root, following local $refs at each step.
+func schemaAt(root any, keys ...string) any {
+	node := derefSchema(root, root)
+	for _, key := range keys {
+		m, ok := node.(map[string]any)
+		if !ok {
+			return nil
 		}
-		for _, v := range n {
-			if requiresEvidence(v) {
-				return true
-			}
+		node = derefSchema(root, m[key])
+	}
+	return node
+}
+
+func derefSchema(root, node any) any {
+	for range maxSchemaRefHops {
+		m, _ := node.(map[string]any)
+		ref, ok := m["$ref"].(string)
+		if !ok {
+			return node
 		}
-	case []any:
-		for _, v := range n {
-			if requiresEvidence(v) {
-				return true
+		ptr, local := strings.CutPrefix(ref, "#")
+		if !local {
+			return nil
+		}
+		node = jsonPointer(root, ptr)
+	}
+	return nil
+}
+
+func jsonPointer(root any, ptr string) any {
+	if ptr == "" {
+		return root
+	}
+	node := root
+	unescape := strings.NewReplacer("~1", "/", "~0", "~")
+	for _, tok := range strings.Split(strings.TrimPrefix(ptr, "/"), "/") {
+		tok = unescape.Replace(tok)
+		switch n := node.(type) {
+		case map[string]any:
+			node = n[tok]
+		case []any:
+			i, err := strconv.Atoi(tok)
+			if err != nil || i < 0 || i >= len(n) {
+				return nil
 			}
+			node = n[i]
+		default:
+			return nil
 		}
 	}
-	return false
+	return node
 }
 
 func requiresAll(required []any, names ...string) bool {

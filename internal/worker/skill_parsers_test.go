@@ -3147,10 +3147,18 @@ func TestSchemaRequiresEvidence(t *testing.T) {
 		want   bool
 	}{
 		"all three required": {evidenceSchema, true},
-		"boundary only":      {`{"items":{"required":["boundary"]}}`, false},
-		"none":               {`{"type":"object"}`, false},
-		"empty":              {"", false},
-		"malformed":          {"{", false},
+		"boundary only":      {`{"properties":{"findings":{"items":{"required":["boundary"]}}}}`, false},
+		"report metadata only": {`{"properties":{"meta":{"required":["trace","boundary","validation"]},` +
+			`"findings":{"items":{"required":["title"]}}}}`, false},
+		"item via ref": {`{"properties":{"findings":{"$ref":"#/$defs/list"}},"$defs":{"list":{"items":{"$ref":"#/$defs/finding"}},` +
+			`"finding":{"required":["trace","boundary","validation"]}}}`, true},
+		"root via ref": {`{"$ref":"#/$defs/report","$defs":{"report":{"properties":{"findings":{"items":` +
+			`{"required":["trace","boundary","validation"]}}}}}}`, true},
+		"cyclic ref": {`{"properties":{"findings":{"$ref":"#/properties/findings"}}}`, false},
+		"remote ref": {`{"properties":{"findings":{"$ref":"other.json"}}}`, false},
+		"none":       {`{"type":"object"}`, false},
+		"empty":      {"", false},
+		"malformed":  {"{", false},
 	} {
 		if got := schemaRequiresEvidence(tc.schema); got != tc.want {
 			t.Errorf("%s: got %v, want %v", name, got, tc.want)
