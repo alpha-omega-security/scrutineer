@@ -19,9 +19,10 @@ var errCostCapped = errors.New("cost cap reached")
 const costCapFinalizeMaxTurns = 3
 
 // costGuard watches a run's event stream and cancels the run context once the
-// estimated spend reaches the scan cap or the group cap. scan.CostUSD only grows on KindResult, so
-// usage events are tracked in pending until the result folds them in. It only
-// trips on usage events because a result means the run already finished.
+// estimated spend reaches the scan cap or the group cap. scan.CostUSD only
+// grows on KindResult, so usage events are tracked in pending until the result
+// folds them in. It only trips on usage events because a result means the run
+// already finished.
 type costGuard struct {
 	mu      sync.Mutex
 	scan    *db.Scan
