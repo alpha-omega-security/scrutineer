@@ -28,9 +28,8 @@ import (
 const apiPrefix = "/api"
 
 // DefaultMaxAgentAPIOpenScansPerRepository bounds model-backed work a
-// compromised scan token can enqueue. Normal orchestration stays well below
-// this ceiling.
-const DefaultMaxAgentAPIOpenScansPerRepository = 20
+// compromised scan token can enqueue. Sized to fit triage's default scan set.
+const DefaultMaxAgentAPIOpenScansPerRepository = 32
 
 // NewAPIToken returns a 32-byte hex token suitable for bearer auth.
 func NewAPIToken() string {

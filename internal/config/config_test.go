@@ -209,8 +209,6 @@ vince:
 	}
 }
 
-// TestLoad_maxAgentAPIOpenScansPerRepository checks the config-only open-scan
-// cap is read from YAML.
 func TestLoad_maxAgentAPIOpenScansPerRepository(t *testing.T) {
 	c, err := Load(write(t, "max_agent_api_open_scans_per_repository: 32\n"))
 	if err != nil {

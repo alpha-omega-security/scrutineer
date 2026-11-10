@@ -778,16 +778,12 @@ func TestAPIRunSkill_deduplicatesEquivalentOpenScan(t *testing.T) {
 	}
 }
 
-// TestAPIRunSkill_enforcesRepositoryOpenScanLimit checks that the built-in
-// per-repository cap applies when no limit is configured.
 func TestAPIRunSkill_enforcesRepositoryOpenScanLimit(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
 	assertRepositoryOpenScanLimit(t, s, DefaultMaxAgentAPIOpenScansPerRepository)
 }
 
-// TestAPIRunSkill_enforcesConfiguredRepositoryOpenScanLimit checks that a
-// configured cap replaces the built-in default.
 func TestAPIRunSkill_enforcesConfiguredRepositoryOpenScanLimit(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
@@ -795,16 +791,9 @@ func TestAPIRunSkill_enforcesConfiguredRepositoryOpenScanLimit(t *testing.T) {
 	assertRepositoryOpenScanLimit(t, s, 3)
 }
 
-// apiEnqueuedBelowLimit is how many distinct scans assertRepositoryOpenScanLimit
-// enqueues through the API before the cap, so accepted and refused requests
-// are both exercised end to end.
 const apiEnqueuedBelowLimit = 2
 
-// assertRepositoryOpenScanLimit fills a repository to limit open scans, with
-// the last apiEnqueuedBelowLimit enqueued through the scan-token API and each
-// required to succeed, then requires the next distinct request to get 429
-// without creating a scan. limit must leave room for the authenticated parent
-// scan plus the API-enqueued ones.
+// assertRepositoryOpenScanLimit fills repo to limit open scans and requires the next enqueue to get 429.
 func assertRepositoryOpenScanLimit(t *testing.T, s *Server, limit int) {
 	t.Helper()
 	if limit < apiEnqueuedBelowLimit+1 {
