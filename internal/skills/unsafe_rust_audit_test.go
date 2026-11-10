@@ -38,14 +38,16 @@ func TestBundledAuditUnsafeRustMetadata(t *testing.T) {
 			t.Errorf("SKILL.md body missing %q", text)
 		}
 	}
-	// The prompt points at $RUST_STD_SRC for std contracts under any profile,
-	// so the shared runner image every profile builds on must set it.
-	runner, err := os.ReadFile(filepath.Join("..", "..", "Dockerfile.runner"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(runner), "ENV RUST_STD_SRC=") {
-		t.Error("Dockerfile.runner must set RUST_STD_SRC for audit-unsafe-rust")
+	// The prompt points at $RUST_STD_SRC for std contracts, so every image
+	// that runs the agent must set it.
+	for _, name := range []string{"Dockerfile", "Dockerfile.runner"} {
+		image, err := os.ReadFile(filepath.Join("..", "..", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(image), "ENV RUST_STD_SRC=") {
+			t.Errorf("%s must set RUST_STD_SRC for audit-unsafe-rust", name)
+		}
 	}
 
 	// The method is vendored from google/rust-skills. The wrapper cites its
@@ -82,10 +84,9 @@ func TestBundledAuditUnsafeRustMetadata(t *testing.T) {
 	}
 }
 
-// Triage routes unsafe Rust by source evidence, not project type: the
-// unsafe-rust mode must enqueue both Rust-relevant memory audits and keep
-// the exclude pathspecs in glob form, since the short ':!' form does not
-// match top-level target/ or tests/ directories.
+// Triage routes unsafe Rust by source evidence, not project type, adds
+// audit-memory only on FFI evidence, and keeps the exclude pathspecs in glob
+// form, since the short ':!' form does not match top-level target/ or tests/.
 func TestTriageUnsafeRustMode(t *testing.T) {
 	raw, err := os.ReadFile(filepath.Join("..", "..", "skills", "triage", "references", "modes.md"))
 	if err != nil {
@@ -100,7 +101,10 @@ func TestTriageUnsafeRustMode(t *testing.T) {
 		section = section[:next]
 	}
 	for _, text := range []string{
-		"Enqueue both `audit-unsafe-rust` and `audit-memory`",
+		"Enqueue `audit-unsafe-rust` for a match",
+		"Also add `audit-memory` only when the matched code shows FFI evidence",
+		"no_mangle",
+		"-sys",
 		"git grep -nw unsafe -- '*.rs'",
 		"':(exclude,glob)**/target/**'",
 		"':(exclude,glob)**/vendor/**'",
@@ -116,44 +120,5 @@ func TestTriageUnsafeRustMode(t *testing.T) {
 	}
 	if strings.Contains(section, "':!:") {
 		t.Error("unsafe-rust mode uses short ':!' excludes, which miss top-level directories")
-	}
-}
-
-// Rust crates that vendor C or C++ get audit-memory regardless of project
-// type or whether the vendored code was modified.
-func TestTriageNativeMemoryMode(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "skills", "triage", "references", "modes.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, section, ok := strings.Cut(string(raw), "\n## native-memory\n")
-	if !ok {
-		t.Fatal("triage modes missing native-memory section")
-	}
-	if next := strings.Index(section, "\n## "); next >= 0 {
-		section = section[:next]
-	}
-	for _, text := range []string{
-		"Enqueue `audit-memory` for a match",
-		"whether or not this repository has modified it",
-		"':(glob)**/Cargo.toml'",
-		"':(glob)**/*.c'",
-		"':(exclude,glob)**/target/**'",
-		"':(glob)**/build.rs'",
-		"':(glob)**/build/**/*.rs'",
-		".gitmodules",
-		"belongs to a Rust project",
-		"belongs to a separate project",
-		"exits with status 1 when it finds",
-	} {
-		if !strings.Contains(section, text) {
-			t.Errorf("native-memory mode missing %q", text)
-		}
-	}
-	// Vendored C is the point of this mode; excluding it would defeat it.
-	for _, text := range []string{"exclude,glob)**/vendor/", "exclude,glob)**/third_party/", "':!:"} {
-		if strings.Contains(section, text) {
-			t.Errorf("native-memory mode must not contain %q", text)
-		}
 	}
 }

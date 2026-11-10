@@ -42,6 +42,12 @@ FROM rust:1.98-alpine@sha256:7cc1c22d77d9432f7fe012a70e6d3e555af54c2a6832700ed7d
 RUN apk add --no-cache build-base linux-headers
 RUN cargo install --locked --root /out zizmor@1.31.1
 
+# Rust std source (no toolchain) for audit-unsafe-rust's std safety contracts.
+FROM rust:1.98-alpine@sha256:7cc1c22d77d9432f7fe012a70e6d3e555af54c2a6832700ed7d553f1769ae89f AS rust-std-src
+RUN rustup component add rust-src && \
+    mkdir -p /out && \
+    cp -r "$(rustc --print sysroot)/lib/rustlib/src/rust/library" /out/library
+
 FROM python:3.15.1-alpine@sha256:54448f67d7c31c39e5cdd3ea2d6382395ce142806c284425f8e897d78a0465b3
 FROM python:3.14-alpine@sha256:f6a589d43c42b9e7f7dc67a12d37132491f362859a5d750607710cc56da3bc72
 RUN apk add --no-cache git ca-certificates bash nodejs coreutils && \
@@ -66,6 +72,10 @@ COPY --from=go-tools /out/* /usr/local/bin/
 
 # zizmor
 COPY --from=zizmor-build /out/bin/zizmor /usr/local/bin/zizmor
+
+# rust std source
+COPY --from=rust-std-src /out/library /usr/local/share/rust-std-src/library
+ENV RUST_STD_SRC=/usr/local/share/rust-std-src/library
 
 # vid
 COPY --from=vid-build /out/vid /usr/local/bin/vid

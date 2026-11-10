@@ -29,7 +29,7 @@ These live in `skills/` and are embedded in the Scrutineer executable. At startu
 | `audit-exfil` | Focused static audit for attacker-controlled reads, requests, parsers, or error paths that can disclose files, metadata, secrets, or internal responses. Uses ecosystem-specific reference notes and runs on demand. |
 | `audit-authz` | Focused static audit for insecure direct object references (IDOR), tenant-isolation failures, missing or fail-open guards, privilege escalation, and unverified claims used for authorization. Uses ecosystem and GraphQL reference notes and runs on demand. |
 | `audit-pii` | Focused static audit for real personal or customer-identifying data committed to source or exposed through logs, URLs, telemetry, exports, and responses. Distinguishes concrete exposure from synthetic examples, reserved addresses, and public author metadata; runs on demand. |
-| `audit-memory` | Focused static audit for reachable memory corruption in first-party C, C++, unsafe Rust, native extensions, and FFI boundaries. Requires complete primitive-hit accounting and keeps library, CLI, parser, and foreign-runtime boundaries separate. Triage selects it through the `embedded-iot`, `file-parser`, `unsafe-rust` and `native-memory` modes; otherwise it runs on demand. |
+| `audit-memory` | Focused static audit for reachable memory corruption in first-party C, C++, unsafe Rust, native extensions, and FFI boundaries. Requires complete primitive-hit accounting and keeps library, CLI, parser, and foreign-runtime boundaries separate. Triage selects it through the `embedded-iot`, `file-parser` and `unsafe-rust` modes; otherwise it runs on demand. |
 | `audit-unsafe-rust` | Focused static soundness audit of first-party unsafe Rust, applying the proof-obligation review method from [google/rust-skills](https://github.com/google/rust-skills/tree/main/unsafe_rust_review) (vendored under `references/`, see the skill's `UPSTREAM.md`). Files only safe-API-reachable undefined behavior; missing or weak `# Safety` docs go in the evidence lists, not findings. Triage selects it through the `unsafe-rust` mode; otherwise it runs on demand. |
 | `audit-package-manager` | Audits package manager clients, registries, and proxies against a bundled threat model. Triage selects it from source evidence; findings remain separate from design properties and unresolved assumptions. |
 | `audit-web` | Audits web sessions, browser origins, uploads and workflow state against a bundled threat model informed by the OWASP Application Security Verification Standard (ASVS). Triage selects it from source evidence. |
@@ -139,26 +139,17 @@ source-proven vulnerabilities from intended behavior and evidenced negative
 results. Limits set by the deploying application, memory caps and sandboxing
 are recorded as unresolved assumptions. Its CWE references do not imply
 certification.
-The `unsafe-rust` mode selects both `audit-unsafe-rust` and `audit-memory`
-whenever first-party Rust in scope contains unsafe code, whatever kind of
-software the repository is. Triage finds candidates with a `git grep` for the
+The `unsafe-rust` mode selects `audit-unsafe-rust` whenever first-party Rust
+in scope contains unsafe code, whatever kind of software the repository is,
+and adds `audit-memory` only when that code shows FFI evidence (`extern`
+blocks, `#[no_mangle]` / `#[unsafe(no_mangle)]`, or a `-sys` dependency). Triage finds candidates with a `git grep` for the
 `unsafe` keyword in `*.rs` files, excluding `target`, `tests`, `benches`,
 `examples`, `vendor` and `third_party` trees (rechecking any crate that lives
 under `tests`, `benches` or `examples`), then confirms at least one hit is
 real unsafe code rather than a comment, string, test module or lint setting.
 Unsafe code only in vendored crates, submodules or out-of-scope subprojects
 does not activate it. It can match alongside any other mode, and
-`audit-memory` is still enqueued once.
-The `native-memory` mode selects `audit-memory` when a Rust project in scope
-contains vendored C or C++, modified or not: C/C++ sources under a non-root
-crate's directory, referenced by a crate's build script, or inside a `cargo
-vendor` tree (including `vendor/`, `third_party/` and `-sys` crates), or a Git
-submodule inside a crate that its build script compiles from. `target`,
-`tests`, `benches` and `examples` trees are ignored unless they hold their own
-crate. C/C++ that belongs to no Rust project in scope, such as a sibling C
-project that only shares the repository root, does not activate it. The audit itself still
-decides which vendored code is first-party and which is a dependency reached
-through the Rust bridge.
+`audit-memory` is enqueued at most once.
 
 Add another mode by defining its detection criteria in the triage reference
 and bundling its audit skill and threat model.
