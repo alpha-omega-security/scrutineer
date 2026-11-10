@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -20,8 +21,7 @@ var ErrInvalidFinding = errors.New("invalid finding")
 const stubEvidenceMinRunes = 20
 
 // isStubEvidence reports whether a finding's trace, boundary and validation
-// are all missing or too short to be evidence. Only all three at once count,
-// so one terse field on an otherwise written finding never trips it.
+// are all missing or too short to be evidence.
 func isStubEvidence(trace, boundary, validation string) bool {
 	for _, field := range []string{trace, boundary, validation} {
 		if utf8.RuneCountInString(strings.TrimSpace(field)) >= stubEvidenceMinRunes {
@@ -31,9 +31,7 @@ func isStubEvidence(trace, boundary, validation string) bool {
 	return true
 }
 
-// schemaRequiresEvidence reports whether a skill's schema requires trace,
-// boundary and validation together on some object, as the audit skills do for
-// each finding. Scanner skills such as semgrep require none of them.
+// schemaRequiresEvidence reports whether a skill schema requires trace, boundary and validation together.
 func schemaRequiresEvidence(schemaJSON string) bool {
 	var doc any
 	if json.Unmarshal([]byte(schemaJSON), &doc) != nil {
@@ -65,14 +63,7 @@ func requiresEvidence(node any) bool {
 
 func requiresAll(required []any, names ...string) bool {
 	for _, name := range names {
-		found := false
-		for _, r := range required {
-			if r == name {
-				found = true
-				break
-			}
-		}
-		if !found {
+		if !slices.Contains(required, any(name)) {
 			return false
 		}
 	}

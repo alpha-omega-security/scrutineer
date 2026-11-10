@@ -1226,8 +1226,6 @@ func verifyNextStatus(f db.Finding, scan *db.Scan, result verifyOutput, gradingE
 	return "", nil
 }
 
-// isStubFinding reports whether verify may reject f as a stub: it is still
-// open and its evidence is a stub.
 func isStubFinding(tx *gorm.DB, f db.Finding) (bool, error) {
 	if !findingOpenForVerify(f.Status) {
 		return false, nil
@@ -1235,9 +1233,7 @@ func isStubFinding(tx *gorm.DB, f db.Finding) (bool, error) {
 	return hasPlaceholderEvidence(tx, f)
 }
 
-// hasPlaceholderEvidence reports whether f lacks the trace, boundary and
-// validation its originating skill's schema requires. Findings from skills
-// that do not require them, such as semgrep, never count as stubs.
+// hasPlaceholderEvidence reports whether f lacks the evidence its originating skill's schema requires.
 func hasPlaceholderEvidence(tx *gorm.DB, f db.Finding) (bool, error) {
 	var schemas []string
 	err := tx.Model(&db.Skill{}).Joins("JOIN scans ON scans.skill_name = skills.name").
@@ -1277,8 +1273,6 @@ func stubRejectionStillApplies(tx *gorm.DB, findingID uint) (bool, error) {
 	return isStubFinding(tx, cur)
 }
 
-// findingOpenForVerify reports whether verify may still move a finding: it is
-// open and no analyst has taken it toward disclosure.
 func findingOpenForVerify(status db.FindingLifecycle) bool {
 	switch status {
 	case db.FindingNew, db.FindingEnriched, db.FindingTriaged:
