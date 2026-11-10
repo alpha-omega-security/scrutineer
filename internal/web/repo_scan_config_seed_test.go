@@ -1,10 +1,14 @@
 package web
 
 import (
+	"encoding/json"
+	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/repoconfig"
 )
 
 func TestAutoSeedRepoScanConfig(t *testing.T) {
@@ -23,6 +27,38 @@ func TestAutoSeedRepoScanConfig(t *testing.T) {
 	s.DB.First(&got, repo.ID)
 	if got.ScanConfig == "" || !strings.Contains(got.ScanConfig, "focus_areas:") || !strings.Contains(got.ScanConfig, "tests/**") {
 		t.Fatalf("ScanConfig = %q", got.ScanConfig)
+	}
+}
+
+func TestFinalizedThreatModelFocusConfigBoundaries(t *testing.T) {
+	for _, count := range []int{repoconfig.MaxFocusAreas, repoconfig.MaxFocusAreas + 1} {
+		t.Run(fmt.Sprint(count), func(t *testing.T) {
+			s, cleanup := newTestServer(t)
+			defer cleanup()
+			repo := db.Repository{URL: "https://example.com/focus-seed", Name: "focus-seed"}
+			if err := s.DB.Create(&repo).Error; err != nil {
+				t.Fatal(err)
+			}
+			deepDive := db.Skill{Name: deepDiveSkillName, Body: "b", OutputFile: "report.json", OutputKind: "findings", Active: true, Source: "ui"}
+			if err := s.DB.Create(&deepDive).Error; err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := repoconfig.Parse(legacyFocusScanConfig(t))
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg.FocusAreas = cfg.FocusAreas[:count]
+			raw, err := json.Marshal(map[string]any{"scan_config": cfg})
+			if err != nil {
+				t.Fatal(err)
+			}
+			scan := db.Scan{RepositoryID: repo.ID, Status: db.ScanDone, SkillName: threatModelSkillName, Report: string(raw), ScanGroup: "focus-boundary"}
+			if err := s.DB.Create(&scan).Error; err != nil {
+				t.Fatal(err)
+			}
+			s.Worker.OnScanFinalized(&scan)
+			requireFocusSeedBoundary(t, s, repo.ID, deepDive.ID, cfg)
+		})
 	}
 }
 
@@ -100,5 +136,36 @@ func TestAutoSeedRepoScanConfigPreservesAnalystConfig(t *testing.T) {
 	s.DB.First(&got, repo.ID)
 	if got.ScanConfig != repo.ScanConfig {
 		t.Fatalf("ScanConfig = %q, want %q", got.ScanConfig, repo.ScanConfig)
+	}
+}
+
+func requireFocusSeedBoundary(t *testing.T, s *Server, repoID, skillID uint, cfg repoconfig.Config) {
+	t.Helper()
+	count := len(cfg.FocusAreas)
+	var got db.Repository
+	if err := s.DB.First(&got, repoID).Error; err != nil {
+		t.Fatal(err)
+	}
+	wantScans := int64(count)
+	if count > repoconfig.MaxFocusAreas {
+		wantScans = 0
+		if got.ScanConfig != "" {
+			t.Fatal("over-cap proposal was saved")
+		}
+	} else {
+		parsed, err := repoconfig.Parse(got.ScanConfig)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(parsed, cfg) {
+			t.Fatalf("seeded guidance=%+v, want %+v", parsed, cfg)
+		}
+	}
+	var focused int64
+	if err := s.DB.Model(&db.Scan{}).Where("repository_id = ? AND skill_id = ? AND focus_area <> ''", repoID, skillID).Count(&focused).Error; err != nil {
+		t.Fatal(err)
+	}
+	if focused != wantScans {
+		t.Fatalf("focused scans=%d, want %d", focused, wantScans)
 	}
 }
