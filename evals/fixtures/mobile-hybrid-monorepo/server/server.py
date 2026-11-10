@@ -46,7 +46,14 @@ class Handler(BaseHTTPRequestHandler):
         self.respond()
 
     def respond(self):
-        length = int(self.headers.get("Content-Length", "0"))
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            self.send_error(400)
+            return
+        if length < 0:
+            self.send_error(400)
+            return
         if length > 8192:
             self.send_error(413)
             return

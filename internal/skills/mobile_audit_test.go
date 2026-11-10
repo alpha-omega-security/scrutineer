@@ -24,7 +24,7 @@ func TestBundledMobileAuditMetadata(t *testing.T) {
 			t.Errorf("excluded %s", path)
 		}
 	}
-	for _, path := range []string{"node_modules/react-native/index.js", "ios/Pods/AFNetworking/a.m", "app/build/generated/R.java", "android/app/build/outputs/app.apk", "build/ios/Runner.app/Info.plist", ".gradle/caches/x", "vendor/dep/dep.go", "third_party/lib/a.c", "bundle.min.js"} {
+	for _, path := range []string{"node_modules/react-native/index.js", "ios/Pods/AFNetworking/a.m", "app/build/generated/R.java", "android/app/build/outputs/app.apk", "build/ios/Runner.app/Info.plist", ".gradle/caches/x", "vendor/dep/dep.go", "third_party/lib/a.c", "bundle.min.js", "app/dist/index.js", "android/app/generated/Spec.java", "src/__generated__/Query.graphql.ts"} {
 		if PathIncluded(path, skill.Paths, skill.IgnorePaths) {
 			t.Errorf("included %s", path)
 		}

@@ -16,6 +16,9 @@ metadata:
     - "**"
   scrutineer.ignore_paths:
     - "**/node_modules/**"
+    - "**/dist/**"
+    - "**/generated/**"
+    - "**/__generated__/**"
     - "**/vendor/**"
     - "**/third_party/**"
     - "**/Pods/**"
@@ -26,6 +29,7 @@ metadata:
     - "**/DerivedData/**"
     - "**/.dart_tool/**"
     - "**/*.min.js"
+    - "**/*.min.css"
 ---
 
 # audit-mobile
