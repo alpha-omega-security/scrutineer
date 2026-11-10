@@ -42,12 +42,17 @@ func TestAPIStreamFindingVIDBudget(t *testing.T) {
 			}
 			control := t.TempDir()
 			s.Worker.VIDCommand = writeVIDTestCommand(t, control, false)
+			stageParent := t.TempDir()
+			t.Setenv("TMPDIR", stageParent)
 			postVIDFinding(t, s.Handler(), repo.ID, scan.APIToken, "budget finding", tc.locations)
 			requirePersistedVID(t, s, "budget finding", tc.wantVID)
 			cwdFile := filepath.Join(control, "cwd")
 			if tc.wantVID == "" {
 				if _, err := os.Stat(cwdFile); !os.IsNotExist(err) {
 					t.Fatalf("over-budget finding invoked VID command: %v", err)
+				}
+				if left, _ := filepath.Glob(filepath.Join(stageParent, "scrutineer-vid-*")); len(left) != 0 {
+					t.Fatalf("over-budget finding left staging directories: %v", left)
 				}
 			} else {
 				requireVIDStageRemoved(t, cwdFile)
@@ -71,6 +76,8 @@ func TestAPIStreamFindingVIDConcurrentStaging(t *testing.T) {
 	s.Worker.VIDCommand = writeVIDTestCommand(t, control, true)
 	release := filepath.Join(control, "release")
 	defer func() { _ = os.WriteFile(release, nil, 0o600) }()
+	stageParent := t.TempDir()
+	t.Setenv("TMPDIR", stageParent)
 	handler := s.Handler()
 	finished := make(chan *httptest.ResponseRecorder, 1)
 	go func() { finished <- streamVIDFinding(handler, repo.ID, scan.APIToken, "first", []string{"a.c:1"}) }()
@@ -80,28 +87,42 @@ func TestAPIStreamFindingVIDConcurrentStaging(t *testing.T) {
 	if err != nil || info.Size() != testVIDStageBudget {
 		t.Fatalf("staged source = %v, err=%v", info, err)
 	}
-	postVIDFinding(t, handler, repo.ID, scan.APIToken, "concurrent", []string{"a.c:1"})
-	requirePersistedVID(t, s, "concurrent", "")
 	other, cleanupOther := newTestServer(t)
 	defer cleanupOther()
 	other.Worker.DataDir = s.Worker.DataDir
 	other.Worker.VIDCommand = s.Worker.VIDCommand
 	otherRepo, otherScan := seedRunningScan(t, other)
 	writeVIDSparseSource(t, filepath.Join(other.Worker.DataDir, fmt.Sprintf("scan-%d", otherScan.ID), "src"), "a.c", testVIDStageBudget)
-	postVIDFinding(t, other.Handler(), otherRepo.ID, otherScan.APIToken, "other worker", []string{"a.c:1"})
-	requirePersistedVID(t, other, "other worker", "")
+	otherHandler := other.Handler()
+	queued := make(chan *httptest.ResponseRecorder, 2)
+	go func() { queued <- streamVIDFinding(handler, repo.ID, scan.APIToken, "concurrent", []string{"a.c:1"}) }()
+	go func() {
+		queued <- streamVIDFinding(otherHandler, otherRepo.ID, otherScan.APIToken, "other worker", []string{"a.c:1"})
+	}()
+	select {
+	case response := <-queued:
+		t.Fatalf("finding finished while another staging was active: %d %s", response.Code, response.Body)
+	case <-time.After(200 * time.Millisecond):
+	}
+	if staged, _ := filepath.Glob(filepath.Join(stageParent, "scrutineer-vid-*")); len(staged) != 1 {
+		t.Fatalf("staging directories while one VID run is active = %v, want only %s", staged, stage)
+	}
 	if err := os.WriteFile(release, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	select {
-	case response := <-finished:
-		if response.Code != http.StatusCreated {
-			t.Fatalf("first POST: %d %s", response.Code, response.Body)
+	for _, pending := range []chan *httptest.ResponseRecorder{finished, queued, queued} {
+		select {
+		case response := <-pending:
+			if response.Code != http.StatusCreated {
+				t.Fatalf("POST: %d %s", response.Code, response.Body)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("finding did not finish after release")
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("first finding did not finish after release")
 	}
 	requirePersistedVID(t, s, "first", "VID-test")
+	requirePersistedVID(t, s, "concurrent", "VID-test")
+	requirePersistedVID(t, other, "other worker", "VID-test")
 	requireVIDStageRemoved(t, cwdFile)
 	postVIDFinding(t, handler, repo.ID, scan.APIToken, "after cleanup", []string{"a.c:1"})
 	requirePersistedVID(t, s, "after cleanup", "VID-test")

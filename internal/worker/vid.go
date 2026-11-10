@@ -102,9 +102,7 @@ func (w *Worker) computeVID(srcDir, locations string) string {
 		})
 		return ""
 	}
-	if !vidStageMu.TryLock() {
-		return ""
-	}
+	vidStageMu.Lock()
 	defer vidStageMu.Unlock()
 	stageDir, err := os.MkdirTemp("", "scrutineer-vid-")
 	if err != nil {
