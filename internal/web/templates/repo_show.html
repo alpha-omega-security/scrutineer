@@ -55,7 +55,7 @@
           hx-post="/repositories/{{.Repo.ID}}/scan" hx-swap="none">
       <input type="hidden" name="rescan_mode" value="diff">
       <button class="btn-outline" type="submit"
-              data-tooltip="Scan changes since the latest compatible deep-dive baseline; falls back to a full scan when no usable baseline exists.">
+              data-tooltip="Scan changes since each scan's latest compatible baseline. Asks for confirmation first when a scan would run as a full scan instead: no usable baseline, no new commits, or a diff over the size limits.">
         <i data-lucide="git-compare-arrows"></i> Diff rescan
       </button>
     </form>
@@ -84,6 +84,7 @@
     </div>
   </div>
 </div>
+<div id="diff-rescan-confirm"></div>
 
 <div class="tabs w-full" id="repo-tabs">
   <nav role="tablist" aria-orientation="horizontal">

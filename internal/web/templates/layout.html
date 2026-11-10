@@ -302,6 +302,31 @@
   <section><strong>{{.Title}}</strong>{{if .Description}} {{.Description}}{{end}}</section>
 </div>{{end}}
 
+{{define "diff-rescan-confirm-oob"}}<div id="diff-rescan-confirm" hx-swap-oob="outerHTML">{{template "diff-rescan-confirm" .}}</div>{{end}}
+
+{{define "diff-rescan-confirm"}}<div class="alert alert-warning mb-6" role="alert">
+  <i data-lucide="triangle-alert"></i>
+  <section>
+    {{if .Err}}
+    <strong>This diff rescan may cost a full scan.</strong>
+    The diff from the baseline could not be measured ({{.Err}}), so its scans may run as full scans.
+    {{else}}
+    <strong>This diff rescan would cost a full scan.</strong>
+    These scans would run as full scans instead of scanning the diff:
+    <ul class="list-disc ml-5">{{range .Fallbacks}}<li>{{.}}</li>{{end}}</ul>
+    {{end}}
+    <form method="post" action="/repositories/{{.RepoID}}/scan"
+          hx-post="/repositories/{{.RepoID}}/scan" hx-swap="none" class="flex gap-2 mt-2">
+      <input type="hidden" name="rescan_mode" value="diff">
+      <input type="hidden" name="confirm_full" value="1">
+      {{if .Model}}<input type="hidden" name="model" value="{{.Model}}">{{end}}
+      {{if .SubPath}}<input type="hidden" name="sub_path" value="{{.SubPath}}">{{end}}
+      <button class="btn-outline" type="submit"><i data-lucide="git-compare-arrows"></i> Queue diff rescan anyway</button>
+      <a href="/repositories/{{.RepoID}}" class="btn-ghost">Cancel</a>
+    </form>
+  </section>
+</div>{{end}}
+
 {{define "org-import-confirm-oob"}}<section id="org-import-step" hx-swap-oob="outerHTML">
   {{if gt .Count 0}}
   <div class="alert mb-3" role="status">
