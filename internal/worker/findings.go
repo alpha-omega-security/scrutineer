@@ -108,8 +108,6 @@ func requiresAll(required []any, names ...string) bool {
 	return true
 }
 
-// dropStubFindings removes findings whose evidence is a stub from a report
-// whose skill requires that evidence.
 func dropStubFindings(findings []db.Finding, emit func(Event)) []db.Finding {
 	kept := findings[:0]
 	for _, f := range findings {
