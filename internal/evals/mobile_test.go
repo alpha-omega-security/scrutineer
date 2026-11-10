@@ -134,7 +134,7 @@ func runMobileModeCase(t *testing.T, tc mobileModeCase) {
 }
 
 // The default judge must count a false positive on the guarded help activity
-// as unexpected however the model titles it, while a correct finding on the
+// as unexpected however the model titles or words it, while a correct finding on the
 // deep link WebView bridge passes.
 func TestMobileScenarioRejectsGuardedPathFalsePositive(t *testing.T) {
 	scenario, err := LoadScenario("../../evals/mobile-webview-bridge.yaml")
@@ -154,6 +154,11 @@ func TestMobileScenarioRejectsGuardedPathFalsePositive(t *testing.T) {
 		Location: "app/src/main/java/com/example/notes/HelpActivity.kt:16",
 		Trace:    "HelpActivity reads the page query parameter and calls loadUrl on a WebView when the host equals HELP_HOST.",
 	}
+	unguardedFalsePositive := Finding{
+		Title:    "Help screen WebView loads remote content",
+		Location: "app/src/main/java/com/example/notes/HelpActivity.kt:12",
+		Trace:    "HelpActivity enables JavaScript on its WebView before loading the help page.",
+	}
 	for _, tc := range []struct {
 		name                     string
 		findings                 []Finding
@@ -161,6 +166,7 @@ func TestMobileScenarioRejectsGuardedPathFalsePositive(t *testing.T) {
 	}{
 		{"true positive only", []Finding{truePositive}, 0, 0},
 		{"false positive on guarded path", []Finding{truePositive, falsePositive}, 0, 1},
+		{"false positive without the guard name", []Finding{truePositive, unguardedFalsePositive}, 0, 1},
 		{"false positive alone", []Finding{falsePositive}, 1, 1},
 		{"no findings", nil, 1, 0},
 	} {

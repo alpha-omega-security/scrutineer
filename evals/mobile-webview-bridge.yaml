@@ -9,5 +9,3 @@ should_find:
     required: true
 should_not_find:
   - path: app/src/main/java/com/example/notes/HelpActivity.kt
-    evidence_contains:
-      - HELP_HOST
