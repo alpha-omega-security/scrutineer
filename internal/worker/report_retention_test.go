@@ -13,13 +13,14 @@ import (
 
 	"scrutineer/internal/coverage"
 	"scrutineer/internal/db"
+	"scrutineer/internal/db/dbtest"
 	"scrutineer/internal/queue"
 )
 
 func TestQueuedSubprojectsReportSurvivesIngestionFailure(t *testing.T) {
 	for _, name := range []string{"completed", "capped finalized", "capped without session"} {
 		t.Run(name, func(t *testing.T) {
-			s := newSubprojectsScanTest(t)
+			s := newSubprojectsScanTest(t, dbtest.Open(t))
 			report := "{\n  \"subprojects\": [{\"path\":\"core\",\"name\":\"updated\"}]\n}\n"
 			capped := name != "completed"
 			if capped {
@@ -62,7 +63,6 @@ func TestQueuedSubprojectsReportSurvivesIngestionFailure(t *testing.T) {
 			if len(rows) != 2 || rows[0].Name != "old" || rows[0].DisclosureChannel != s.old.DisclosureChannel {
 				t.Fatalf("rollback changed subprojects: %+v", rows)
 			}
-			t.Logf("saved %d-byte report after ingestion failed; capped=%v model calls=%d", len(got.Report), got.CostCapped, len(runner.jobs))
 		})
 	}
 }

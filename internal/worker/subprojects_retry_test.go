@@ -34,9 +34,8 @@ type subprojectsScanTest struct {
 	old  db.Subproject
 }
 
-func newSubprojectsScanTest(t *testing.T) subprojectsScanTest {
+func newSubprojectsScanTest(t *testing.T, gdb *gorm.DB) subprojectsScanTest {
 	t.Helper()
-	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://example.com/subprojects", Name: "subprojects"}
 	subprojectCheck(t, gdb.Create(&repo).Error)
 	skill := db.Skill{Name: "subprojects", Body: "enumerate subprojects", OutputFile: "report.json", OutputKind: "subprojects", Version: 1, Active: true, Source: "ui"}
@@ -92,7 +91,7 @@ func (s subprojectsScanTest) rows(t *testing.T) []db.Subproject {
 }
 
 func TestSubprojectsScanBusy(t *testing.T) {
-	s := newSubprojectsScanTest(t)
+	s := newSubprojectsScanTest(t, dbtest.OpenBusyTimeout(t, 100*time.Millisecond))
 	var writer *sql.Tx
 	var lockErr error
 	attempts := 0
@@ -119,7 +118,7 @@ func TestSubprojectsScanBusy(t *testing.T) {
 }
 
 func TestSubprojectsScanSnapshot(t *testing.T) {
-	s := newSubprojectsScanTest(t)
+	s := newSubprojectsScanTest(t, dbtest.Open(t))
 	attempts := 0
 	var lockErr error
 	subprojectCheck(t, s.db.Callback().Query().After("gorm:query").Register("test:snapshot", func(tx *gorm.DB) {
@@ -156,7 +155,7 @@ func assertSubprojectRecovery(t *testing.T, scan db.Scan, attempts int, lockErr 
 }
 
 func TestSubprojectsScanIngestionFailure(t *testing.T) {
-	s := newSubprojectsScanTest(t)
+	s := newSubprojectsScanTest(t, dbtest.Open(t))
 	attempts := 0
 	subprojectCheck(t, s.db.Callback().Delete().Before("gorm:delete").Register("test:failure", func(tx *gorm.DB) {
 		if tx.Statement.Table != "subprojects" {
@@ -177,34 +176,75 @@ type subprojectBusyError struct{}
 func (subprojectBusyError) Error() string { return "database busy" }
 func (subprojectBusyError) Code() int     { return 5 }
 
-func TestSubprojectWriteTransactionDeadline(t *testing.T) {
-	gdb := dbtest.Open(t)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	attempts := 0
-	err := subprojectWriteTransaction(ctx, gdb, func(tx *gorm.DB) error {
-		attempts++
-		if err := tx.Create(&db.Subproject{RepositoryID: 1, Path: "rolled-back"}).Error; err != nil {
-			return err
-		}
-		return subprojectBusyError{}
-	})
-	if !errors.Is(err, context.DeadlineExceeded) || attempts < 2 {
-		t.Fatalf("attempts=%d error=%v", attempts, err)
+// A replayed transaction must not reuse ids from the attempt that rolled
+// back: another writer can take them in between.
+func TestIngestReplaysAfterBusy(t *testing.T) {
+	cases := []struct {
+		kind, table, report string
+		other               func(repoID, scanID uint) any
+	}{
+		{"packages", "packages", `{"packages":[{"name":"new","ecosystem":"npm","purl":"pkg:npm/new"}]}`,
+			func(repoID, _ uint) any { return &db.Package{RepositoryID: repoID, Name: "other"} }},
+		{"advisories", "advisories", `{"advisories":[{"uuid":"u1","title":"t"}]}`,
+			func(repoID, _ uint) any { return &db.Advisory{RepositoryID: repoID, UUID: "other"} }},
+		{"dependencies", "dependencies", depEnvelope(`[{"name":"a","ecosystem":"npm","type":"runtime","manifest_path":"package.json"}]`, ""),
+			func(repoID, _ uint) any { return &db.Dependency{RepositoryID: repoID, Name: "other"} }},
+		{"compliance", "compliance_controls", `{"schema_version":1,"framework":"openssf-baseline","total":1,"controls":[{"id":"OSPS-AC-01.01","level":1,"status":"FAIL","details":"MFA off","source":"darnit"}]}`,
+			func(repoID, scanID uint) any {
+				return &db.ComplianceControl{RepositoryID: repoID, ScanID: scanID, ControlID: "other", Level: 1, Status: "PASS", Source: "darnit"}
+			}},
 	}
-	var count int64
-	subprojectCheck(t, gdb.Model(&db.Subproject{}).Count(&count).Error)
-	if count != 0 {
-		t.Fatalf("partial writes persisted: %d", count)
+	for _, tc := range cases {
+		t.Run(tc.kind, func(t *testing.T) {
+			s := newSubprojectsScanTest(t, dbtest.Open(t))
+			subprojectCheck(t, s.db.Model(&db.Skill{}).Where("id = ?", *s.scan.SkillID).Update("output_kind", tc.kind).Error)
+			otherRepo := db.Repository{URL: "https://example.com/other", Name: "other"}
+			subprojectCheck(t, s.db.Create(&otherRepo).Error)
+			attempts := 0
+			concurrent := false
+			subprojectCheck(t, s.db.Callback().Create().Before("gorm:create").Register("test:concurrent", func(tx *gorm.DB) {
+				if tx.Statement.Table != tc.table || concurrent {
+					return
+				}
+				attempts++
+				if attempts == 2 {
+					concurrent = true
+					_ = tx.AddError(tx.Session(&gorm.Session{NewDB: true}).Create(tc.other(otherRepo.ID, s.scan.ID)).Error)
+					concurrent = false
+				}
+			}))
+			subprojectCheck(t, s.db.Callback().Create().After("gorm:create").Register("test:busy", func(tx *gorm.DB) {
+				if tx.Statement.Table == tc.table && attempts == 1 {
+					_ = tx.AddError(subprojectBusyError{})
+				}
+			}))
+			scan := s.run(t, tc.report)
+			var saved int64
+			subprojectCheck(t, s.db.Table(tc.table).Where("repository_id = ?", s.scan.RepositoryID).Count(&saved).Error)
+			if attempts != 2 || scan.Status != db.ScanDone || saved != 1 {
+				t.Fatalf("attempts=%d status=%s error=%q saved=%d", attempts, scan.Status, scan.Error, saved)
+			}
+		})
 	}
 }
 
-func TestSubprojectWriteTransactionCancelled(t *testing.T) {
-	gdb := dbtest.Open(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	err := subprojectWriteTransaction(ctx, gdb, func(*gorm.DB) error { t.Fatal("write after cancellation"); return nil })
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("error=%v", err)
+func TestCriticReplaysAfterBusy(t *testing.T) {
+	attempts := 0
+	report := `{"production_viability":"VIABLE","source_state":"PRESENT","reason":"Reachable in the default build.","counterevidence":[],"attacker_position":"remote unauthenticated client","preconditions":[],"impact":"input reaches the sink","likelihood":"plausible","applied_adjustments":[],"facts_that_would_change_the_result":[]}`
+	f, gdb := runSkillWithFindingOn(t, "critic", report, db.FindingEnriched, func(gdb *gorm.DB) {
+		subprojectCheck(t, gdb.Callback().Create().After("gorm:create").Register("test:busy", func(tx *gorm.DB) {
+			if tx.Statement.Table != "finding_attack_paths" {
+				return
+			}
+			attempts++
+			if attempts == 1 {
+				_ = tx.AddError(subprojectBusyError{})
+			}
+		}))
+	})
+	var rows int64
+	subprojectCheck(t, gdb.Model(&db.FindingAttackPath{}).Where("finding_id = ?", f.ID).Count(&rows).Error)
+	if attempts != 2 || rows != 1 || f.ProductionViability != db.ProductionViabilityViable {
+		t.Fatalf("attempts=%d rows=%d viability=%q", attempts, rows, f.ProductionViability)
 	}
 }

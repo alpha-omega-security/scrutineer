@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +21,16 @@ import (
 )
 
 const insertBatchSize = 50
+
+// Longer than SQLite's busy_timeout, so an attempt that waits it out can
+// still be replayed.
+const ingestWriteTimeout = 15 * time.Second
+
+// ingestTransaction may run write more than once: rows it inserts must be
+// copied per attempt so a replay does not reuse ids from a rolled-back one.
+func (w *Worker) ingestTransaction(ctx context.Context, write func(*gorm.DB) error) error {
+	return db.WriteTransaction(ctx, w.DB, ingestWriteTimeout, write)
+}
 
 const (
 	findingDedupSkill    = "finding-dedup"
@@ -131,7 +142,7 @@ func safeURL(u string) string {
 // delete all existing rows and insert whatever the skill produced, mirroring
 // the old Go handler which did the same: packages are a projection of the
 // upstream registry state, not an incrementally grown set.
-func (w *Worker) parsePackagesOutput(scan *db.Scan, report string, emit func(Event)) error {
+func (w *Worker) parsePackagesOutput(ctx context.Context, scan *db.Scan, report string, emit func(Event)) error {
 	var result struct {
 		Packages []struct {
 			Name                 string `json:"name"`
@@ -193,12 +204,13 @@ func (w *Worker) parsePackagesOutput(scan *db.Scan, report string, emit func(Eve
 	// Replace the prior row set atomically: a failed insert after the
 	// delete would otherwise leave the repository with zero packages
 	// until the next successful scan.
-	if err := w.DB.Transaction(func(tx *gorm.DB) error {
+	if err := w.ingestTransaction(ctx, func(tx *gorm.DB) error {
 		if err := tx.Where("repository_id = ?", scan.RepositoryID).Delete(&db.Package{}).Error; err != nil {
 			return fmt.Errorf("delete old packages: %w", err)
 		}
 		if len(rows) > 0 {
-			if err := tx.CreateInBatches(&rows, insertBatchSize).Error; err != nil {
+			batch := slices.Clone(rows)
+			if err := tx.CreateInBatches(&batch, insertBatchSize).Error; err != nil {
 				return fmt.Errorf("save packages: %w", err)
 			}
 		}
@@ -228,7 +240,7 @@ func joinPackageRiskFlags(emit func(Event), name, ecosystem string, ids []string
 }
 
 // parseAdvisoriesOutput replaces Advisory rows for the scan's repository.
-func (w *Worker) parseAdvisoriesOutput(scan *db.Scan, report string, emit func(Event)) error {
+func (w *Worker) parseAdvisoriesOutput(ctx context.Context, scan *db.Scan, report string, emit func(Event)) error {
 	var result struct {
 		Advisories []struct {
 			UUID           string  `json:"uuid"`
@@ -269,12 +281,13 @@ func (w *Worker) parseAdvisoriesOutput(scan *db.Scan, report string, emit func(E
 	}
 	// Replace the prior row set atomically so a failed insert can't leave
 	// the repository with zero advisories.
-	if err := w.DB.Transaction(func(tx *gorm.DB) error {
+	if err := w.ingestTransaction(ctx, func(tx *gorm.DB) error {
 		if err := tx.Where("repository_id = ?", scan.RepositoryID).Delete(&db.Advisory{}).Error; err != nil {
 			return fmt.Errorf("delete old advisories: %w", err)
 		}
 		if len(rows) > 0 {
-			if err := tx.CreateInBatches(&rows, insertBatchSize).Error; err != nil {
+			batch := slices.Clone(rows)
+			if err := tx.CreateInBatches(&batch, insertBatchSize).Error; err != nil {
 				return fmt.Errorf("save advisories: %w", err)
 			}
 		}
@@ -372,7 +385,7 @@ func (w *Worker) parseAdvisoryAuditOutput(skill *db.Skill, scan *db.Scan, report
 // registry lookups (licences, vulnerabilities, latest-version, deprecation)
 // are not part of the envelope; scrutineer performs those once per package
 // outside the scan.
-func (w *Worker) parseDependenciesOutput(scan *db.Scan, report string, emit func(Event)) error {
+func (w *Worker) parseDependenciesOutput(ctx context.Context, scan *db.Scan, report string, emit func(Event)) error {
 	var env dependencyEnvelope
 	if err := json.Unmarshal([]byte(report), &env); err != nil {
 		return fmt.Errorf("parse dependencies: %w", err)
@@ -420,13 +433,14 @@ func (w *Worker) parseDependenciesOutput(scan *db.Scan, report string, emit func
 	// Replace the prior row set and move the Current flag atomically so a
 	// failed insert can't leave the repository with zero dependencies or
 	// two current snapshots.
-	if err := w.DB.Transaction(func(tx *gorm.DB) error {
+	if err := w.ingestTransaction(ctx, func(tx *gorm.DB) error {
 		if replaceInventory {
 			if err := tx.Where("repository_id = ?", scan.RepositoryID).Delete(&db.Dependency{}).Error; err != nil {
 				return fmt.Errorf("delete old dependencies: %w", err)
 			}
 			if len(rows) > 0 {
-				if err := tx.CreateInBatches(&rows, insertBatchSize).Error; err != nil {
+				batch := slices.Clone(rows)
+				if err := tx.CreateInBatches(&batch, insertBatchSize).Error; err != nil {
 					return fmt.Errorf("save dependencies: %w", err)
 				}
 			}
@@ -438,7 +452,9 @@ func (w *Worker) parseDependenciesOutput(scan *db.Scan, report string, emit func
 				Update("current", false).Error; err != nil {
 				return fmt.Errorf("clear current snapshot: %w", err)
 			}
-			if err := tx.Session(&gorm.Session{CreateBatchSize: insertBatchSize}).Create(up).Error; err != nil {
+			snapshot := *up
+			snapshot.Packages = slices.Clone(up.Packages)
+			if err := tx.Session(&gorm.Session{CreateBatchSize: insertBatchSize}).Create(&snapshot).Error; err != nil {
 				return fmt.Errorf("save generated sbom: %w", err)
 			}
 		}
@@ -785,7 +801,7 @@ func (w *Worker) parseSubprojectsOutput(ctx context.Context, scan *db.Scan, repo
 	// any package/advisory that pointed at a pruned row back to repo-level.
 	// The whole set is rewritten in one transaction so a mid-way failure can't
 	// leave a half-updated projection.
-	if err := subprojectWriteTransaction(ctx, w.DB, func(tx *gorm.DB) error {
+	if err := w.ingestTransaction(ctx, func(tx *gorm.DB) error {
 		keep := make([]string, 0, len(rows))
 		for i := range rows {
 			row := rows[i]
@@ -929,7 +945,7 @@ func (w *Worker) parsePostureOutput(scan *db.Scan, report string, emit func(Even
 // lower level also passed. Anything other than PASS counts against a level
 // and NA controls are left out of it, darnit's per-level rule, chained here
 // so a level only counts once every lower level is attained.
-func (w *Worker) parseComplianceOutput(scan *db.Scan, report string, emit func(Event)) error {
+func (w *Worker) parseComplianceOutput(ctx context.Context, scan *db.Scan, report string, emit func(Event)) error {
 	var result struct {
 		Controls []struct {
 			ID      string `json:"id"`
@@ -987,11 +1003,12 @@ func (w *Worker) parseComplianceOutput(scan *db.Scan, report string, emit func(E
 		})
 	}
 	level := baselineLevel(rows)
-	if err := w.DB.Transaction(func(tx *gorm.DB) error {
+	if err := w.ingestTransaction(ctx, func(tx *gorm.DB) error {
 		if err := tx.Where("repository_id = ?", scan.RepositoryID).Delete(&db.ComplianceControl{}).Error; err != nil {
 			return fmt.Errorf("prune compliance controls: %w", err)
 		}
-		if err := tx.Create(&rows).Error; err != nil {
+		batch := slices.Clone(rows)
+		if err := tx.Create(&batch).Error; err != nil {
 			return fmt.Errorf("create compliance controls: %w", err)
 		}
 		return tx.Model(&db.Repository{}).Where("id = ?", scan.RepositoryID).Update("baseline_level", level).Error
@@ -1079,7 +1096,7 @@ func (w *Worker) parseVerifyOutput(scan *db.Scan, report string, emit func(Event
 // updates the finding's indexed latest projection. The raw report remains the
 // source of truth for preconditions, counterevidence, adjustments, and facts
 // that could change the result.
-func (w *Worker) parseCriticOutput(scan *db.Scan, report string, emit func(Event)) error {
+func (w *Worker) parseCriticOutput(ctx context.Context, scan *db.Scan, report string, emit func(Event)) error {
 	if scan.FindingID == nil {
 		return errors.New("critic scan has no finding_id")
 	}
@@ -1091,7 +1108,7 @@ func (w *Worker) parseCriticOutput(scan *db.Scan, report string, emit func(Event
 		return err
 	}
 
-	err := w.DB.Transaction(func(tx *gorm.DB) error {
+	err := w.ingestTransaction(ctx, func(tx *gorm.DB) error {
 		var f db.Finding
 		if err := tx.First(&f, *scan.FindingID).Error; err != nil {
 			return fmt.Errorf("load finding %d: %w", *scan.FindingID, err)
