@@ -411,6 +411,32 @@ func TestRefuseDefaultConfigUnderSource(t *testing.T) {
 	}
 }
 
+func TestRefuseDefaultConfigUnderSourceCaseAlias(t *testing.T) {
+	base := t.TempDir()
+	checkout := filepath.Join(base, "checkout")
+	if err := os.MkdirAll(filepath.Join(checkout, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(checkout, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(base, "Checkout")
+	if _, err := os.Stat(alias); err != nil {
+		t.Skip("case-sensitive filesystem")
+	}
+
+	// The checkout spelled with different case is still the audited tree.
+	for _, cwd := range []string{checkout, filepath.Join(checkout, "sub")} {
+		if err := os.WriteFile(filepath.Join(cwd, "scrutineer.yaml"), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Chdir(cwd)
+		if err := refuseDefaultConfigUnderSource(&flags{}, &auditOptions{source: alias}); err == nil {
+			t.Errorf("config in %s accepted for -source %s", cwd, alias)
+		}
+	}
+}
+
 func TestAudit_flagValidation(t *testing.T) {
 	newAuditHarness(t)
 	src, _ := auditSource(t)
