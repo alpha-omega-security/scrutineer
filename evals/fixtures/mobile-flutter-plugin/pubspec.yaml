@@ -1,0 +1,21 @@
+name: secure_notes
+description: Store short notes in the Android Keystore and the iOS Keychain.
+version: 0.3.1
+repository: https://github.com/example/secure_notes
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+  flutter: ">=3.19.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: com.example.secure_notes
+        pluginClass: SecureNotesPlugin
+      ios:
+        pluginClass: SecureNotesPlugin

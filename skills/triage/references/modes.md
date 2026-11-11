@@ -163,9 +163,12 @@ alongside `web-api`.
 A backend that only serves a mobile app's API, a client SDK or library with no
 app shell, release tooling such as fastlane lanes or signing scripts,
 documentation and keywords such as "iOS", "Android" or "device token" do not
-qualify on that evidence alone. Neither do test-only harnesses. Trace the app
-shell in the current scan scope; do not borrow an app from another monorepo
-subproject. A scan scoped to a subpath with no app shell, such as the backend
+qualify on that evidence alone. Neither do test-only harnesses. An example,
+sample or demo app that exists to exercise a library does not qualify either:
+a Flutter plugin or React Native library with an `example/` app holding full
+Android and iOS shells, or an Android SDK whose `sample/` module applies the
+Gradle application plugin, is a library. Trace the app shell in the current
+scan scope; do not borrow an app from another monorepo subproject. A scan scoped to a subpath with no app shell, such as the backend
 directory, does not match even when the parent repository has one. Keep
 uncertain classifications gated and record the missing evidence.
 

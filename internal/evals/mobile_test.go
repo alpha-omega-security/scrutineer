@@ -69,6 +69,21 @@ assert dispatch('GET', '/notes/1', bob)[0] in (403, 404)
 assert dispatch('GET', '/notes', {})[0] == 401
 assert dispatch('POST', '/login', {}, b'{"username": "alice", "password": "wrong"}')[0] == 403
 
+# The plugin ships native code but its only app shell is the example app.
+plugin = fixtures / 'mobile-flutter-plugin'
+pubspec = (plugin / 'pubspec.yaml').read_text()
+assert 'pluginClass: SecureNotesPlugin' in pubspec and "id 'com.android.library'" in (plugin / 'android' / 'build.gradle').read_text()
+example = plugin / 'example'
+assert "id 'com.android.application'" in (example / 'android' / 'app' / 'build.gradle').read_text()
+assert 'path: ../' in (example / 'pubspec.yaml').read_text()
+launcher = ET.parse(example / 'android' / 'app' / 'src' / 'main' / 'AndroidManifest.xml').getroot().find('application/activity')
+assert {c.get(ns + 'name') for c in launcher.iter('category')} == {'android.intent.category.LAUNCHER'}
+with open(example / 'ios' / 'Runner' / 'Info.plist', 'rb') as f:
+    assert plistlib.load(f)['CFBundlePackageType'] == 'APPL'
+assert 'com.apple.product-type.application' in (example / 'ios' / 'Runner.xcodeproj' / 'project.pbxproj').read_text()
+shells = [p for p in plugin.rglob('*') if p.name in ('AndroidManifest.xml', 'Info.plist', 'project.pbxproj')]
+assert shells and all(example in p.parents for p in shells), shells
+
 # The push client only builds request dicts.
 sys.path.insert(0, str(fixtures / 'mobile-api-client'))
 from pushclient.client import PushClient
@@ -82,15 +97,15 @@ assert request['method'] == 'POST' and request['json'] == {'platform': 'ios', 't
 
 func TestMobileAuditLive(t *testing.T) {
 	skipUnlessLiveEvals(t)
-	for _, fixture := range []string{"mobile-android-app", "mobile-api-client"} {
+	for _, fixture := range []string{"mobile-android-app", "mobile-api-client", "mobile-flutter-plugin"} {
 		t.Run(fixture, func(t *testing.T) {
 			scenario := Scenario{Skill: "audit-mobile", Fixture: "fixtures/" + fixture}
 			if fixture == "mobile-android-app" {
 				scenario = loadLiveScenario(t, "../../evals/mobile-webview-bridge.yaml")
 			}
 			status, findings := runAuditScenario(t, scenario)
-			if fixture == "mobile-api-client" && (status != "not-applicable" || findings != 0) {
-				t.Fatalf("api client status=%s findings=%d", status, findings)
+			if fixture != "mobile-android-app" && (status != "not-applicable" || findings != 0) {
+				t.Fatalf("%s status=%s findings=%d", fixture, status, findings)
 			}
 		})
 	}
@@ -108,6 +123,7 @@ func TestMobileTriageLive(t *testing.T) {
 		{name: "android app", fixture: "mobile-android-app", mobile: true},
 		{name: "ios app", fixture: "mobile-ios-app", mobile: true},
 		{name: "api client", fixture: "mobile-api-client"},
+		{name: "plugin with example app", fixture: "mobile-flutter-plugin"},
 		{name: "hybrid monorepo", fixture: "mobile-hybrid-monorepo", mobile: true, web: true, authz: true},
 		{name: "scoped app", fixture: "mobile-hybrid-monorepo", subPath: "app", mobile: true},
 		{name: "scoped server", fixture: "mobile-hybrid-monorepo", subPath: "server", web: true, authz: true},
@@ -120,7 +136,7 @@ func TestMobileTriageLive(t *testing.T) {
 func runMobileModeCase(t *testing.T, tc mobileModeCase) {
 	t.Helper()
 	counts, report := runTriageModeCase(t, triageScan{fixture: tc.fixture, subPath: tc.subPath, activeSkill: "audit-mobile", activeHere: tc.skip})
-	// None of the fixtures has native code. A WebView alone never adds
+	// None of the fixtures has native C, C++ or unsafe Rust. A WebView alone never adds
 	// audit-web, which the hybrid server earns through its own API.
 	wants := map[string]bool{"audit-mobile": tc.mobile && !tc.skip, "audit-memory": false, "audit-web": tc.web, "audit-authz": tc.authz, "audit-embedded": false, "audit-build-tooling": false, "audit-file-parser": false, "threat-model": true}
 	for skill, want := range wants {

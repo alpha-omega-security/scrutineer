@@ -146,7 +146,8 @@ native shells. It also selects `audit-memory` when the scoped app includes
 first-party native C, C++ or unsafe Rust that reads untrusted input. A backend
 that only serves a mobile API, a client SDK or library with no app shell,
 release or signing tooling, documentation and keywords alone do not activate
-it. A WebView or JavaScript bridge does not add `audit-web` because
+it. Neither does an example, sample or demo app that exists to exercise a
+library, such as a Flutter plugin's `example/` app. A WebView or JavaScript bridge does not add `audit-web` because
 `audit-mobile` covers it. A monorepo that holds an app and its own backend in
 the scanned scope can activate both this mode and `web-api` while the shared
 audits are still enqueued once. The audit distinguishes source-proven
