@@ -1081,3 +1081,11 @@ func TestSeverityOrderSQLIsNumberedBySeverityRank(t *testing.T) {
 		t.Errorf("unknown severity ranks %d, must sort below Low at %d", unknown, low)
 	}
 }
+
+func TestDropNoreplyRecipients(t *testing.T) {
+	in := "Sebastian Poxhofer <secustor@users.noreply.github.com> (git log), Felipe Santos <felipe@example.com> (git log), @alice (CODEOWNERS: *)"
+	want := "Felipe Santos <felipe@example.com> (git log), @alice (CODEOWNERS: *)"
+	if got := DropNoreplyRecipients(in); got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
