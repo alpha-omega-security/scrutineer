@@ -95,7 +95,7 @@ For deployments that treat skill prompts as untrusted, pass `--hardened` (or `ha
 
 ### Host skills
 
-To take only some skills out of the container (say `verify` for a project whose build toolchain only exists on the host, while `triage` and the deep-dive skills keep their profile containers), list them under `host_skills` in the config file: those run claude on the host with no egress proxy and reach the skill API on the loopback address, and the option is refused under `--hardened` and with non-claude backends, like `--no-container`.
+To take only some skills out of the container (say `verify` for a project whose build toolchain only exists on the host, while `triage` and the deep-dive skills keep their profile containers), list them under `host_skills` in the config file: those run claude on the host with no egress proxy and reach the skill API on the configured listen address (loopback by default), and the option is refused under `--hardened` and with non-claude backends, like `--no-container`.
 
 ## Runner profiles
 
@@ -111,6 +111,7 @@ When the container runner is active, scrutineer auto-detects a per-ecosystem **p
 | `node` | npm/pnpm/Yarn/Bun | Node.js |
 | `go` | Go Modules | Go toolchain |
 | `scala` | sbt or Scala language detection | A superset of `java` plus **sbt** and Scala-specific reproducer guidance |
+| `kotlin` | Kotlin language detection | A superset of `java` plus `kotlinc` and the Kotlin/Native cache |
 | `java` | Maven/Gradle | JDK |
 | `dotnet` | NuGet/dotnet CLI | .NET SDK |
 | `beam` | Mix/rebar3 | Erlang/Elixir |

@@ -49,9 +49,9 @@ Read [threatmodel.md](threatmodel.md) for isolation limits and [running.md](docs
 
 ## Further documentation
 
-- [docs/scanning.md](docs/scanning.md): branches, monorepos, local scans, UI navigation, finding workflow and exports
-- [docs/running.md](docs/running.md): installation, Git authentication, runner images, profiles, hardening and Windows
-- [docs/configuration.md](docs/configuration.md): flags, YAML configuration and model tiers
+- [docs/scanning.md](docs/scanning.md) -- branches, monorepos, local scans, UI navigation, finding workflow and exports
+- [docs/running.md](docs/running.md) -- installation, Git authentication, runner images, profiles, hardening and Windows
+- [docs/configuration.md](docs/configuration.md) -- flags, YAML configuration and model tiers
 - [docs/glossary.md](docs/glossary.md) -- terminology used in scans, findings, and disclosure
 - [docs/skills.md](docs/skills.md) -- bundled skills, writing your own, frontmatter and output-kind reference
 - [docs/oss-scanner.md](docs/oss-scanner.md) -- Anthropic OSS Scanner registry lookup and the maintainer files staged for threat-model and verify
@@ -64,14 +64,16 @@ Read [threatmodel.md](threatmodel.md) for isolation limits and [running.md](docs
 - [docs/development.md](docs/development.md) -- project layout, regenerating embedded data, running tests
 - [docs/encrypted-sharing.md](docs/encrypted-sharing.md) -- encrypted findings sharing between contributors (age + SSH keys, team keyring management)
 - [docs/sarif-export.md](docs/sarif-export.md) -- exporting a repository's findings as SARIF 2.1.0 and handing them to OSS-CRS as bug candidates
-- [docs/oss-crs.md](docs/oss-crs.md): running Scrutineer as an OSS-CRS auditing CRS for source-only campaigns with the `scrutineer audit` command behind it
+- [docs/disclosure-fallback.md](docs/disclosure-fallback.md) -- disclosing when upstream has no private vulnerability reporting: CNA routing, maintainer contact and VINCE submission
+- [docs/oss-crs.md](docs/oss-crs.md) -- running Scrutineer as an OSS-CRS auditing CRS for source-only campaigns with the `scrutineer audit` command behind it
 - [docs/interchange.md](docs/interchange.md) -- federation interchange format: in-toto record envelope, salted finding hashes, the claim-check endpoint, the public and members-only feeds with their export/import syncs (threat surface: T14 in [threatmodel.md](threatmodel.md))
 - [docs/codex.md](docs/codex.md) -- the codex backend: what differs from claude, sandbox interaction, adding another backend
 - [docs/opencode.md](docs/opencode.md) -- OpenCode provider credentials, images, auth state, readiness, and egress
 - [docs/copilot.md](docs/copilot.md) -- the copilot backend: GitHub token credential handling and egress
 - [docs/podman.md](docs/podman.md) -- security model and known gaps for the podman / rootless runtime (sandbox isolation, hardened-mode verification)
 - [docs/egress-sidecar.md](docs/egress-sidecar.md) -- operator validation checklist for the rootless `--hardened` egress proxy sidecar
-- [docs/apple.md](docs/apple.md): Apple's experimental `container` runtime, setup and isolation model
+- [docs/model-proxy.md](docs/model-proxy.md) -- keeping `ANTHROPIC_API_KEY` off scan containers with the host-side model API proxy
+- [docs/apple.md](docs/apple.md) -- Apple's experimental `container` runtime, setup and isolation model
 
 ## License
 

@@ -1,6 +1,6 @@
 # Scanning repositories
 
-Click **Add repository** in the sidebar, paste a git HTTPS URL, and scrutineer enqueues the `triage` skill. To scan a maintained branch instead of the default, fill the **Branch** field (it suggests the remote's branches as you type and also accepts a tag or commit), or append a `/tree/<branch>` suffix to the URL; the suffix also works one-per-line when bulk-importing. Triage then enqueues the rest of the pipeline in parallel. Open the repo page and switch to the Scans tab to watch progress, or wait for the Findings tab to fill in.
+Click **Add repository** in the sidebar, paste a git HTTPS URL, and scrutineer enqueues the `triage` skill. To scan a maintained branch instead of the default, fill the **Branch** field (it suggests the remote's branches as you type and also accepts a tag or commit), or append a `/tree/<branch>` suffix to the URL; the suffix also works one-per-line when bulk-importing. Triage then enqueues the rest of the pipeline: independent skills run in parallel, and the deep-dive audits start once `threat-model` completes. Open the repo page and switch to the Scans tab to watch progress, or wait for the Findings tab to fill in.
 
 The `triage` skill selects the scan set for the repository. See [skills.md](skills.md#bundled-skills) for the bundled skills and how to change the pipeline, and [diff-based-rescans.md](diff-based-rescans.md) for scanning changes since an earlier scan.
 
@@ -36,7 +36,7 @@ To check a research lead, choose **Investigate a report** in the sidebar, enter 
 
 Every index page has a search box plus filter and sort dropdowns; the specifics vary by page. The sidebar groups its pages under Work, Inventory, Insights and Configuration, in this order:
 
-- **Findings** -- every vulnerability across all repos. A finding page shows the six-step analysis (trace, boundary, validation, prior art, reach, rating), scoring fields, notes, communications log, references, labels, and a change history.
+- **Findings** -- every vulnerability across all repos. A finding page shows where the finding stands on its lifecycle, its scoring fields and the next step, then groups the rest into Analysis (the six-step analysis: trace, boundary, validation, prior art, reach, rating, plus observations and verification history), Remediation, Disclosure (draft, fields, communications log, references) and Activity (notes, reviews, labels, change history, chat) tabs.
 - **Scans** -- every scan that has run. Queued scans can be paused/resumed, running or queued scans can be cancelled and failed ones retried.
 - **Audit** -- random sample of recent low and false-positive verdicts for spot-checking the cheap-classifier output. Each row records the analyst's agreement-or-overturn verdict, and a small dashboard shows the running overturn rate.
 - **Repositories** -- your scanned repos with language, last-scan status, and finding counts. Click into one for tabs covering Summary, Findings, Threat Model, Compliance, Packages, Dependencies, Dependents, Advisories, Maintainers, Data, Scans, and Chat, plus "Export report" in the header's More menu for a markdown rollup.
@@ -64,6 +64,8 @@ Each finding from the `security-deep-dive` skill starts at **new** and moves thr
 6. **acknowledged** -- maintainer working on fix. Click "Mark fixed" when it ships
 7. **fixed** -- patch available. Click "Mark published" to issue the advisory
 8. **published** -- done
+
+When upstream has already fixed the issue, click "Fixed upstream" from any status before **acknowledged** to jump straight to **fixed** without generating or sending a report.
 
 - **Exploited-in-the-wild flag** -- analyst-only `yes`/`no` field on findings with free-text evidence, surfaced on the finding page, in the OSV `database_specific` block, in CSAF audit notes, and in markdown report exports
 - **Breaking-change classifier** -- the `breaking-change` skill runs over a suggested-fix diff plus the top dependents, recording `breaking` / `non_breaking` / `unknown` with a rationale and the list of affected dependents
