@@ -74,11 +74,18 @@
 </div>
 {{end}}
 
-<dl class="grid grid-cols-2 sm:grid-cols-6 gap-4 mb-6 text-sm">
+<dl id="finding-summary" class="grid grid-cols-2 sm:grid-cols-6 gap-4 mb-6 text-sm">
   <div>
     <dt class="text-muted-foreground font-semibold">Severity</dt>
     <dd>
-      {{$f.Severity}}
+      <form method="post" action="/findings/{{$f.ID}}/fields" class="flex flex-wrap items-center gap-1">
+        <input type="hidden" name="anchor" value="finding-summary">
+        <input type="text" class="input h-8 w-28" name="severity" aria-label="Severity" value="{{$f.Severity}}" list="severity-options">
+        <datalist id="severity-options">
+          <option value="Critical"><option value="High"><option value="Medium"><option value="Low">
+        </datalist>
+        <button type="submit" class="btn-sm-outline">Save</button>
+      </form>
       {{range $f.SeverityCapList}}<div class="text-xs text-muted-foreground mt-1">{{.}}</div>{{end}}
       {{if $f.SeverityCalibrationIncomplete}}<div class="text-xs text-amber-700 dark:text-amber-400 mt-1">Calibration incomplete</div>{{end}}
     </dd>
@@ -972,13 +979,6 @@ git commit -m "fix: {{$f.Title}}"</pre>
           <label class="text-xs text-muted-foreground"
                  title="The disclose skill's drafted GHSA summary. May differ from the finding's own title above, which is set at audit time and left untouched by disclose re-runs.">Disclosure title</label>
           <input type="text" class="input" name="disclosure_title" value="{{$f.DisclosureTitle}}">
-        </div>
-        <div class="grid gap-1">
-          <label class="text-xs text-muted-foreground">Severity</label>
-          <input type="text" class="input" name="severity" value="{{$f.Severity}}" list="severity-options">
-          <datalist id="severity-options">
-            <option value="Critical"><option value="High"><option value="Medium"><option value="Low">
-          </datalist>
         </div>
         <div class="grid gap-1">
           <label class="text-xs text-muted-foreground">CWE</label>

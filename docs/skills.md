@@ -214,7 +214,30 @@ The cap does not apply to the codex backend because it emits no usage events,
 so a codex scan always runs to completion. A run whose final result pushes it
 past the cap is not treated as capped since it already finished. Retrying a
 capped scan resumes the saved session with a fresh budget and keeps the same
-cap. Group budgets are not implemented yet.
+cap.
+
+### Group budget
+
+A group of scans can share one cap. Set the "Group cost cap (USD)" field next
+to New scan, Diff rescan or Scan all on the repository page. Every scan in the
+group counts against it, including the focus-area and exploratory scans that
+join the group later and retries. When the group's estimated spend reaches the
+cap, each running scan in it stops like a scan that hit its own cap, finishes
+as done with a "cost cap" badge and partial coverage with the reason
+`group_cost_cap`. A scan that has its own cap too stops at whichever is reached
+first. Queued scans in a group that has already spent its cap are skipped
+without running, with the reason in their error. A sibling that spends the
+rest of the budget before a scan's first model call still stops it. That
+includes a retried or resumed scan, so continuing a capped group needs a new
+launch with a new cap.
+
+The spend estimate is kept in memory by the worker process, so it assumes one
+worker process per database. A finished scan's cost stays in that estimate
+until its final save lands, so a sibling starting in between still counts it.
+When the group's budget or spend cannot be read, the queued scan goes back on
+the queue and tries again 30 seconds later instead of running without the cap.
+Actual spend can exceed the cap by the calls in flight in each running scan
+plus their finalize turns.
 
 ## Runtime capability preflight
 

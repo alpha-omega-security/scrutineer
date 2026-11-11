@@ -238,6 +238,13 @@
           <i data-lucide="rotate-ccw"></i> Reopen
         </button>
       {{end}}
+      {{if and (not .Status.Closed) (ne $s "acknowledged")}}
+        <button type="submit" name="status" value="fixed" class="btn-ghost"
+                hx-post="/findings/{{$id}}/status"
+                title="Upstream already shipped a fix: close this finding without reporting it">
+          Fixed upstream
+        </button>
+      {{end}}
     </form>
   </section>
 

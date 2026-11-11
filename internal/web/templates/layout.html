@@ -154,7 +154,7 @@
       <p id="bulk-add-repo-desc" class="text-sm text-muted-foreground">
         One URL per line. Only <code>https://</code> URLs are accepted.
         Add <code>/tree/&lt;branch&gt;</code> to a URL to scan a specific branch.
-        Duplicates are skipped; each new repo is queued with the default scan set.
+        New repositories are queued with the default scan set. Repeated URLs are skipped.
       </p>
     </header>
     <section>
@@ -166,6 +166,9 @@
           <textarea class="input font-mono text-xs" id="bulk-add-repo-urls" name="urls" rows="10" required
                     placeholder="https://github.com/maragudk/goqite.git&#10;https://github.com/spf13/cobra.git&#10;https://github.com/stretchr/testify.git"></textarea>
         </div>
+        <label class="flex items-center gap-2 text-sm">
+          <input type="checkbox" name="rescan_existing" value="1"> Rescan existing repositories
+        </label>
         <footer class="flex justify-between items-center gap-2">
           <a href="/repositories/new?org=1" data-dialog="org-add-repo" class="btn-sm-ghost">
             <i data-lucide="building-2"></i> Import a whole org
@@ -231,6 +234,10 @@
   {{if gt . 0}}<span class="badge-destructive">{{.}}</span>
   {{else}}<span class="badge-secondary">0</span>{{end}}
 {{end}}
+
+{{define "finding-summary"}}<div class="{{.Class}}">{{unmark .Text}}</div>{{end}}
+
+{{define "cwe-cell"}}{{if .}}<span data-tooltip="{{cwename .}}">{{.}}</span>{{with cwecat .}}<div class="text-xs text-muted-foreground whitespace-normal">{{.}}</div>{{end}}{{end}}{{end}}
 
 {{define "severity-badge"}}
   {{if or (eq . "Critical") (eq . "CRITICAL")}}<span class="badge-outline sev-critical">Critical</span>

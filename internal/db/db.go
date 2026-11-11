@@ -1633,7 +1633,10 @@ func StatusPriorityFor(s ScanStatus) int {
 // busy_timeout=0), which #453 observed as 3/8 connections without FK
 // enforcement. journal_mode is per-database and persistent, so it would
 // stick after one Exec, but setting it here keeps all three together.
-const connectionPragmas = "_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
+const (
+	busyTimeoutPragma = "_pragma=busy_timeout(5000)"
+	connectionPragmas = "_pragma=foreign_keys(1)&" + busyTimeoutPragma + "&_pragma=journal_mode(WAL)"
+)
 
 // databaseSchemaVersion stops guarded older binaries before AutoMigrate can
 // change a schema written by a newer build. Bump it with incompatible schema
@@ -1642,13 +1645,17 @@ const databaseSchemaVersion = 1
 
 // withPragmas appends connectionPragmas to dsn, joining with ? or &
 // depending on whether dsn already carries a query string (the in-memory
-// test DSNs do).
+// test DSNs do). A busy_timeout already in dsn is kept.
 func withPragmas(dsn string) string {
 	sep := "?"
 	if strings.Contains(dsn, "?") {
 		sep = "&"
 	}
-	return dsn + sep + connectionPragmas
+	pragmas := connectionPragmas
+	if strings.Contains(dsn, "_pragma=busy_timeout(") {
+		pragmas = strings.Replace(pragmas, busyTimeoutPragma+"&", "", 1)
+	}
+	return dsn + sep + pragmas
 }
 
 // Connect opens dsn with the standard pragmas and logger but performs no
@@ -1723,7 +1730,7 @@ func Models() []any {
 	return []any{
 		&Repository{}, &Scan{},
 		&Finding{}, &FindingLabel{}, &FindingNote{}, &DisclosureSubmission{},
-		&FindingCommunication{}, &FindingReference{}, &FindingHistory{}, &FindingReview{}, &FeedbackConfirmation{}, &FindingVerification{}, &FindingAttackPath{}, &FindingObservation{}, &ScanPreflightReceipt{},
+		&FindingCommunication{}, &FindingReference{}, &FindingHistory{}, &FindingReview{}, &FeedbackConfirmation{}, &FindingVerification{}, &FindingAttackPath{}, &FindingObservation{}, &ScanPreflightReceipt{}, &ScanGroupBudget{},
 		&RemediationAttempt{}, &RemediationValidation{}, &AuditEvent{}, &FindingPoC{},
 		&Dependency{}, &ExpectedFinding{}, &Package{}, &PackageAlternative{}, &Dependent{}, &FindingDependent{}, &Advisory{}, &AdvisoryAudit{},
 		&Maintainer{}, &Skill{}, &Subproject{}, &ComplianceControl{},
@@ -2387,5 +2394,6 @@ func SweepRunning(gdb *gorm.DB) error {
 			"status":      ScanFailed,
 			"error":       "server restarted during run",
 			"finished_at": new(time.Now()),
+			"api_token":   "",
 		}).Error
 }

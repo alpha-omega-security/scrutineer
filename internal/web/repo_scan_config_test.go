@@ -5,10 +5,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"reflect"
 	"strings"
 	"testing"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/repoconfig"
 )
 
 func TestRepoScanConfigSave(t *testing.T) {
@@ -29,6 +31,80 @@ skip: [tests/**]`
 	s.DB.First(&got, repo.ID)
 	if !strings.Contains(got.ScanConfig, "focus_areas:") || !strings.Contains(got.ScanConfig, "tests/**") {
 		t.Fatalf("ScanConfig = %q", got.ScanConfig)
+	}
+}
+
+func legacyFocusScanConfig(t *testing.T) string {
+	t.Helper()
+	var cfg strings.Builder
+	cfg.WriteString("skip: [tests/**]\nknown_bugs: [documented behavior]\nattack_surface: network inputs\nfocus_areas:\n")
+	for i := range repoconfig.MaxFocusAreas + 1 {
+		fmt.Fprintf(&cfg, "  - name: area-%d\n    paths: [p%d/**]\n    surface: untrusted input\n", i, i)
+	}
+	return cfg.String()
+}
+
+func TestRepoIgnoredPathsPreserveLegacyFocusAreas(t *testing.T) {
+	for _, op := range []string{"add", "delete"} {
+		t.Run(op, func(t *testing.T) {
+			s, cleanup := newTestServer(t)
+			defer cleanup()
+			repo := db.Repository{URL: "https://example.com/legacy", Name: "legacy", ScanConfig: legacyFocusScanConfig(t)}
+			if err := s.DB.Create(&repo).Error; err != nil {
+				t.Fatal(err)
+			}
+			before, err := repoconfig.Parse(repo.ScanConfig)
+			if err != nil {
+				t.Fatal(err)
+			}
+			path := fmt.Sprintf("/repositories/%d/scan-config/ignored-paths", repo.ID)
+			pattern := "spec/**"
+			wantSkip := []string{"tests/**", "spec/**"}
+			if op == "delete" {
+				path += "/delete"
+				pattern = "tests/**"
+				wantSkip = nil
+			}
+			w := postForm(t, s, path, url.Values{"pattern": {pattern}})
+			if w.Code != http.StatusSeeOther {
+				t.Fatalf("HTTP %d: %s", w.Code, w.Body)
+			}
+			var got db.Repository
+			if err := s.DB.First(&got, repo.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+			parsed, err := repoconfig.Parse(got.ScanConfig)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(parsed.Skip, wantSkip) {
+				t.Fatalf("skip=%v, want %v", parsed.Skip, wantSkip)
+			}
+			parsed.Skip = before.Skip
+			if !reflect.DeepEqual(parsed, before) {
+				t.Fatal("ignored-path edit changed other scan guidance")
+			}
+		})
+	}
+}
+
+func TestRepoScanConfigSaveStillRejectsOverCapFocusAreas(t *testing.T) {
+	s, cleanup := newTestServer(t)
+	defer cleanup()
+	repo := db.Repository{URL: "https://example.com/capped", Name: "capped", ScanConfig: "skip: [tests/**]\n"}
+	if err := s.DB.Create(&repo).Error; err != nil {
+		t.Fatal(err)
+	}
+	w := postForm(t, s, fmt.Sprintf("/repositories/%d/scan-config", repo.ID), url.Values{"scan_config": {legacyFocusScanConfig(t)}})
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "limit is 32") {
+		t.Fatalf("HTTP %d: %s", w.Code, w.Body)
+	}
+	var got db.Repository
+	if err := s.DB.First(&got, repo.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.ScanConfig != repo.ScanConfig {
+		t.Fatal("invalid full-config save changed stored guidance")
 	}
 }
 

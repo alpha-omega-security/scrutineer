@@ -61,25 +61,26 @@ func TestPoCCaptureSurvivesPauseAndResume(t *testing.T) {
 }
 
 func TestReportedCaptureRejectsCopiedContext(t *testing.T) {
+	const token = "capture-test-secret"
 	w, skill, repoID := newResumeTestWorker(t, nil)
 	skill.OutputFile, skill.OutputKind = "report.json", "findings"
 	if err := w.DB.Save(skill).Error; err != nil {
 		t.Fatal(err)
 	}
-	scan := db.Scan{RepositoryID: repoID, Kind: JobSkill, Status: db.ScanQueued, SkillID: &skill.ID, APIToken: "capture-test-secret"}
+	scan := db.Scan{RepositoryID: repoID, Kind: JobSkill, Status: db.ScanQueued, SkillID: &skill.ID, APIToken: token}
 	w.Runner = pocTestRunner{run: func(job SkillJob) SkillResult {
 		data, err := os.ReadFile(filepath.Join(job.WorkRoot, "context.json"))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !bytes.Contains(data, []byte(scan.APIToken)) {
+		if !bytes.Contains(data, []byte(token)) {
 			t.Fatal("staged context lacks scan token")
 		}
 		writePoCTestFile(t, job.WorkRoot, "poc/F1/README.md", data)
 		return SkillResult{Report: `{"findings":[{"id":"F1","title":"copied context","severity":"High","location":"parser.go:1"}]}`}
 	}}
 	runPoCTestJob(t, w, &scan)
-	if scan.Status != db.ScanDone || scan.FindingsCount != 1 || !strings.Contains(scan.Log, "files contain a scan or model credential") || strings.Contains(scan.Log, scan.APIToken) {
+	if scan.Status != db.ScanDone || scan.FindingsCount != 1 || !strings.Contains(scan.Log, "files contain a scan or model credential") || strings.Contains(scan.Log, token) {
 		t.Fatalf("scan status=%s, findings=%d, log=%s", scan.Status, scan.FindingsCount, scan.Log)
 	}
 	var count int64

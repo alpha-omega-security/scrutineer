@@ -220,6 +220,9 @@ type Worker struct {
 	// Now overrides time.Now in tests.
 	Now func() time.Time
 
+	// groups tracks live spend for scans under a shared group budget.
+	groups groupSpend
+
 	autoResumeMu    sync.Mutex
 	autoResumeTimer *time.Timer
 	autoResumeAt    time.Time
@@ -736,20 +739,12 @@ func (w *Worker) wrap(h handler) func(context.Context, []byte) error {
 		if err != nil || scan == nil {
 			return err
 		}
-		if scan.Repository.FederationOptedOut() {
-			w.cancelOptedOut(scan)
-			return nil
+		release, proceed, err := w.admitScan(ctx, scan, p.Attempt)
+		if !proceed {
+			return err
 		}
-
-		if scan.Kind == JobSkill {
-			deferred, err := w.preflightSkillUnlessOverage(ctx, scan, p.Attempt)
-			if err != nil {
-				return err
-			}
-			if deferred {
-				return nil
-			}
-		}
+		saved := true
+		defer func() { release(saved) }()
 
 		timeout := w.ScanTimeout
 		if timeout <= 0 {
@@ -790,8 +785,38 @@ func (w *Worker) wrap(h handler) func(context.Context, []byte) error {
 		if err == nil {
 			report, err = h(ctx, scan, emit)
 		}
-		return w.finalizeScan(ctx, scan, report, err, timeout, emit, snapshotLog)
+		err = w.finalizeScan(ctx, scan, report, err, timeout, emit, snapshotLog)
+		saved = err == nil
+		return err
 	}
+}
+
+// admitScan takes the group hold then runs the checks a queued scan passes before its claim.
+func (w *Worker) admitScan(ctx context.Context, scan *db.Scan, attempt int) (release func(saved bool), proceed bool, err error) {
+	if scan.Repository.FederationOptedOut() {
+		w.cancelOptedOut(scan)
+		return nil, false, nil
+	}
+	release, err = w.holdGroupSpend(scan)
+	if capped, ok := errors.AsType[*groupCapError](err); ok {
+		return nil, false, w.skipGroupCapped(scan, capped)
+	}
+	if err != nil {
+		return nil, false, w.deferUnreadGroupBudget(ctx, scan, attempt, err)
+	}
+	if scan.Kind == JobSkill {
+		deferred, err := w.preflightSkillUnlessOverage(ctx, scan, attempt)
+		if err != nil || deferred {
+			release(true)
+			return nil, false, err
+		}
+	}
+	// A sibling may have spent the rest of the budget during preflight.
+	if capped := w.heldGroupCapped(scan); capped != nil {
+		release(true)
+		return nil, false, w.skipGroupCapped(scan, capped)
+	}
+	return release, true, nil
 }
 
 // OptOutCancelReason is the error text left on a scan stopped because the
@@ -811,12 +836,13 @@ func (w *Worker) cancelOptedOut(scan *db.Scan) {
 	scan.StatusPriority = db.StatusPriorityFor(db.ScanCancelled)
 	scan.Error = OptOutCancelReason
 	scan.FinishedAt = &now
+	scan.APIToken = ""
 	// A pause and repository deletion may have won since dispatch loaded
 	// this row. Only transition an existing queued scan; Save would upsert it.
 	res := w.DB.Model(&db.Scan{}).Where("id = ? AND status = ?", scan.ID, db.ScanQueued).
 		Updates(map[string]any{
 			"status": scan.Status, "status_priority": scan.StatusPriority,
-			errorColumn: scan.Error, "finished_at": scan.FinishedAt,
+			errorColumn: scan.Error, "finished_at": scan.FinishedAt, "api_token": "",
 		})
 	if res.Error != nil {
 		w.Log.Error("save opted-out scan", "scan", scan.ID, "err", res.Error)
@@ -953,6 +979,9 @@ func (w *Worker) finalizeScan(ctx context.Context, scan *db.Scan, report string,
 		w.clearSessionStore(scan)
 	}
 	scan.StatusPriority = db.StatusPriorityFor(scan.Status)
+	if scan.Status.Terminal() {
+		scan.APIToken = ""
+	}
 	if eventKind, ok := db.ScanLifecycleEventKind(scan.Status); ok {
 		if saveErr := w.DB.Transaction(func(tx *gorm.DB) error {
 			if err := tx.Save(scan).Error; err != nil {

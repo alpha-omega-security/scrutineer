@@ -154,7 +154,7 @@ One row per skill execution or external import. `skill_name` / `skill_version` p
 | id | integer PK | |
 | repository_id | integer FK | References `repositories.id`. Cascade delete. |
 | kind | text | `skill` for native scans, `import` for findings ingested via `POST /api/v1/import`, `schedule` for the scheduler's skipped-run trace rows (never queued). |
-| status | text | `queued`, `paused`, `running`, `done`, `failed`, `skipped`, `cancelled`. Stale `running` rows are swept to `failed` on startup. `skipped` rows are written terminal by the scheduler when a due run decides not to enqueue (remote HEAD unchanged, scan in flight, ...); `error` carries the reason. |
+| status | text | `queued`, `paused`, `running`, `done`, `failed`, `skipped`, `cancelled`. Stale `running` rows are swept to `failed` on startup. `skipped` rows are written terminal by the scheduler when a due run decides not to enqueue (remote HEAD unchanged, scan in flight, ...) and by the worker for a queued scan whose group budget is already spent; `error` carries the reason. |
 | status_priority | integer | Denormalised sort key for the scans index: 0 running, 1 queued, 2 paused, 3 terminal. |
 | model | text | Claude model ID resolved from the explicit scan model, skill model preference, or skill default model tier at enqueue time. |
 | effort | text | Claude `--effort` level (`low`–`max`) snapshotted from the runtime setting at enqueue. Empty on legacy rows; the runner falls back to its configured default. |
@@ -210,6 +210,20 @@ One row per skill execution or external import. `skill_name` / `skill_version` p
 | findings_count | integer | Denormalised count of findings parsed from the report. |
 | created_at | datetime | |
 | updated_at | datetime | |
+
+## scan_group_budgets
+
+Optional shared spend cap for every scan in one `scan_group`, including scans
+that join the group later. There is no group row otherwise, so a group has a
+budget only when one was set where it was launched.
+
+| Column | Type | Notes |
+|---|---|---|
+| id | integer | Primary key. |
+| scan_group | text | Group id from `scans.scan_group`. Unique. |
+| repository_id | integer | Repository the group was launched on. |
+| max_cost_usd | real | Spend cap in USD shared by the group. |
+| created_at | datetime | |
 
 ## scan_preflight_receipts
 
@@ -826,7 +840,7 @@ CVE Numbering Authorities from the public cve.org partner list. Used by the `cna
 
 ## conversations
 
-Persisted chat sessions. Each is a conversation with the agent about a repository or, when `finding_id` is set, one of its findings. The agent runs against a copy of the clone (taken from the shared per-URL cache on the first turn and reused afterwards, so the whole conversation reasons about one revision) plus a snapshot of the repository's findings. It is told to only read and search; on the claude harness that is also enforced with `--allowedTools Read,Grep,Glob`, on codex and opencode the container is the enforcement boundary, exactly as for scans. `session_id`/`backend` let a follow-up turn resume the harness conversation with full history via `--resume`; when that session is gone the turn restarts fresh with the transcript replayed into the prompt. Browser-only surface (chat tabs on the repository and finding pages); not exposed on the scan-token or `/v1` API.
+Persisted chat sessions. Each is a conversation with the agent about a repository or, when `finding_id` is set, one of its findings. The agent runs against a copy of the clone (taken from the shared per-URL cache on the first turn and reused afterwards, so the whole conversation reasons about one revision) plus a snapshot of the repository's findings. It is told to only read and search; on the claude harness that is also enforced with `--allowedTools Read,Grep,Glob`, on codex and opencode the container is the enforcement boundary, exactly as for scans. `session_id`/`backend` let a follow-up turn resume the harness conversation with full history via `--resume`; when that session is gone the turn restarts fresh with the transcript replayed into the prompt. Each turn also stages the analyst's message and the full transcript as `scrutineer-chat-message.md` and `scrutineer-chat-transcript.md` in the workspace root, beside the snapshot and outside `./src`. The prompt is one command-line argument, so a message over 8 KiB is passed as a pointer to its staged copy instead of being cut. Older turns left out of the inline replay stay readable in the transcript file. The prompt says when it leaves anything out. Browser-only surface (chat tabs on the repository and finding pages); not exposed on the scan-token or `/v1` API.
 
 A conversation is deleted from its own page (`POST /conversations/{id}/delete`) or with its repository. Either path drops the `chat_messages` rows explicitly and reclaims the on-disk workspace (the clone copy plus the harness state dir) after the commit. The per-conversation delete is refused while a turn is in flight, since the agent is still reading the clone it would remove.
 

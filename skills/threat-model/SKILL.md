@@ -59,9 +59,11 @@ ground truth: preserve it in the model instead of inferring a contradictory
 scope. Use `focus_areas` to seed component families and entry points, record
 `known_bugs` as maintainer-provided prior art or known non-findings when their
 text supports that conclusion, and do not inspect paths removed by `skip`.
-When the block is absent, start `scan_config.focus_areas` with every entry in
-`scrutineer.recon.focus_areas` when present. Preserve each recon name, paths,
-and surface; add only clearly distinct input-processing surfaces recon missed.
+When the block is absent, propose at most 32 `scan_config.focus_areas`, starting
+with `scrutineer.recon.focus_areas` when present. Preserve recon names, paths,
+and surfaces when they fit. Combine related areas as needed to stay within 32,
+retaining their paths and input surfaces; add only clearly distinct surfaces
+recon missed within that limit.
 Then derive the `known_bugs`, `attack_surface`, and `skip` fields normally and
 include the complete proposed `scan_config` object in `report.json`. Scrutineer
 saves a valid proposal only when the analyst has not already configured the

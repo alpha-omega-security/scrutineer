@@ -1,6 +1,7 @@
 package web
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -63,6 +64,35 @@ func TestAutoEnqueueFocusAreaDeepDives(t *testing.T) {
 	}
 	if got["XML parser"].FocusArea == "" || got["CLI parser"].FocusArea == "" {
 		t.Errorf("focus areas = %+v, want both configured areas", got)
+	}
+}
+
+func TestAutoEnqueueFocusAreaDeepDives_clampsLegacyOverCapConfig(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	// A stored scan_config written before the write-time cap can hold more
+	// than MaxFocusAreas entries; Parse accepts it so skillContext staging
+	// does not fail, and this hook must bound the fan-out itself.
+	var cfg strings.Builder
+	cfg.WriteString("focus_areas:\n")
+	for i := range repoconfig.MaxFocusAreas + 5 {
+		fmt.Fprintf(&cfg, "  - name: area-%d\n    paths: [p%d/**]\n    surface: s\n", i, i)
+	}
+	repo := db.Repository{URL: "https://example.com/overcap", Name: "overcap", ScanConfig: cfg.String()}
+	s.DB.Create(&repo)
+	deepDive := db.Skill{Name: deepDiveSkillName, Body: "b", OutputFile: "r.json", OutputKind: "findings", Active: true, Source: "ui"}
+	s.DB.Create(&deepDive)
+	parent := db.Scan{RepositoryID: repo.ID, Status: db.ScanDone, SkillName: threatModelSkillName, ScanGroup: "g"}
+	s.DB.Create(&parent)
+
+	s.autoEnqueueFocusAreaDeepDives(&parent)
+
+	var count int64
+	if err := s.DB.Model(&db.Scan{}).Where("repository_id = ? AND skill_id = ? AND focus_area <> ''", repo.ID, deepDive.ID).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != int64(repoconfig.MaxFocusAreas) {
+		t.Fatalf("enqueued %d focus-area deep dives for an over-cap stored config, want %d", count, repoconfig.MaxFocusAreas)
 	}
 }
 
@@ -171,6 +201,41 @@ func TestAutoEnqueueFocusAreaDeepDivesSeedsThenFansOut(t *testing.T) {
 	s.DB.Where("repository_id = ? AND skill_name = ?", repo.ID, deepDiveSkillName).Find(&deepDives)
 	if len(deepDives) != 1 || !strings.Contains(deepDives[0].FocusArea, `"name":"parser"`) {
 		t.Fatalf("deep dives = %+v", deepDives)
+	}
+}
+
+// A diff threat-model's baseline is a threat-model scan, so the fanned-out
+// deep-dive keeps the diff mode but leaves its baseline for the worker to pick.
+func TestAutoEnqueueFocusAreaDeepDivesDoesNotInheritDiffBaseline(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/diff-focus", Name: "diff-focus"}
+	s.DB.Create(&repo)
+	deepDive := db.Skill{Name: deepDiveSkillName, Body: "b", OutputFile: "r.json", OutputKind: "findings", Active: true, Source: "ui"}
+	s.DB.Create(&deepDive)
+	tmBaseline := db.Scan{RepositoryID: repo.ID, Status: db.ScanDone, SkillName: threatModelSkillName, Commit: "base"}
+	s.DB.Create(&tmBaseline)
+	parent := db.Scan{
+		RepositoryID:   repo.ID,
+		Status:         db.ScanDone,
+		SkillName:      threatModelSkillName,
+		ScanGroup:      "diff-1",
+		RescanMode:     db.ScanRescanModeDiff,
+		DiffBaseScanID: &tmBaseline.ID,
+	}
+	s.DB.Create(&parent)
+
+	s.autoEnqueueFocusAreaDeepDives(&parent)
+
+	var child db.Scan
+	if err := s.DB.Where("repository_id = ? AND skill_id = ?", repo.ID, deepDive.ID).First(&child).Error; err != nil {
+		t.Fatal(err)
+	}
+	if child.RescanMode != db.ScanRescanModeDiff {
+		t.Errorf("rescan_mode = %q, want %q", child.RescanMode, db.ScanRescanModeDiff)
+	}
+	if child.DiffBaseScanID != nil {
+		t.Errorf("diff_base_scan_id = %d, want nil so the worker resolves a deep-dive baseline", *child.DiffBaseScanID)
 	}
 }
 

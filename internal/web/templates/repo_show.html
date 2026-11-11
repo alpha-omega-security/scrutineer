@@ -48,12 +48,14 @@
     </form>
     {{end}}
     <form method="post" action="/repositories/{{.Repo.ID}}/scan"
-          hx-post="/repositories/{{.Repo.ID}}/scan" hx-swap="none">
+          hx-post="/repositories/{{.Repo.ID}}/scan" hx-swap="none" class="flex items-center gap-2">
+      <input type="number" name="group_max_cost_usd" min="0" step="0.01" inputmode="decimal" class="input text-xs w-40" placeholder="Group cost cap (USD)" aria-label="Group cost cap in USD">
       <button class="btn" type="submit"><i data-lucide="play"></i> New scan</button>
     </form>
     <form method="post" action="/repositories/{{.Repo.ID}}/scan"
-          hx-post="/repositories/{{.Repo.ID}}/scan" hx-swap="none">
+          hx-post="/repositories/{{.Repo.ID}}/scan" hx-swap="none" class="flex items-center gap-2">
       <input type="hidden" name="rescan_mode" value="diff">
+      <input type="number" name="group_max_cost_usd" min="0" step="0.01" inputmode="decimal" class="input text-xs w-40" placeholder="Group cost cap (USD)" aria-label="Group cost cap in USD">
       <button class="btn-outline" type="submit"
               data-tooltip="Scan changes since the latest compatible deep-dive baseline; falls back to a full scan when no usable baseline exists.">
         <i data-lucide="git-compare-arrows"></i> Diff rescan
@@ -277,7 +279,8 @@
         <h3 class="text-base font-semibold flex items-center gap-2"><i data-lucide="boxes"></i> Subprojects <span class="text-muted-foreground text-xs font-normal">({{len .Subprojects}})</span></h3>
         <form method="post" action="/repositories/{{.Repo.ID}}/scan-all"
               hx-post="/repositories/{{.Repo.ID}}/scan-all" hx-swap="none"
-              hx-confirm="Enqueue a deep-dive scan for all {{len .Subprojects}} subproject(s)?">
+              hx-confirm="Enqueue a deep-dive scan for all {{len .Subprojects}} subproject(s)?" class="flex items-center gap-2">
+          <input type="number" name="group_max_cost_usd" min="0" step="0.01" inputmode="decimal" class="input text-xs w-40" placeholder="Group cost cap (USD)" aria-label="Group cost cap in USD">
           <button type="submit" class="btn-sm-outline"><i data-lucide="play"></i> Scan all</button>
         </form>
       </div>
@@ -412,7 +415,7 @@
                 {{if index $.ExpectedFindingStatus .ID}}<span class="badge-outline text-xs">expected</span>{{else}}<span class="badge-outline text-xs">unexpected</span>{{end}}
               {{end}}
               <h3><a href="/findings/{{.ID}}">{{.Title}}</a></h3>
-              {{if .CWE}}<span class="badge-outline ml-auto" data-tooltip="{{cwename .CWE}}">{{with cwecatid .CWE}}<span class="text-muted-foreground">{{.}} ›</span> {{end}}{{.CWE}}</span>{{end}}
+              {{if .CWE}}<span class="badge-outline ml-auto" data-tooltip="{{cwename .CWE}}">{{.CWE}}{{with cwecat .CWE}}<span class="text-muted-foreground">· {{.}}</span>{{end}}</span>{{end}}
             </div>
             <p>
               {{template "loc-link" (dict "RepoID" $.Repo.ID "Commit" (index $commits .ScanID) "Location" .Location "Extra" .ExtraLocationCount)}}
@@ -420,7 +423,7 @@
             </p>
           </header>
           <section class="text-sm">
-            <p class="line-clamp-3">{{.Summary}}</p>
+            {{template "finding-summary" (dict "Text" .Summary "Class" "line-clamp-3")}}
           </section>
         </div>
       {{end}}
@@ -449,7 +452,7 @@
               {{end}}
               <h3><a href="/findings/{{.ID}}">{{.Title}}</a></h3>
               <span class="badge-outline ml-auto">{{index $skills .ScanID}}</span>
-              {{if .CWE}}<span class="badge-outline" data-tooltip="{{cwename .CWE}}">{{with cwecatid .CWE}}<span class="text-muted-foreground">{{.}} ›</span> {{end}}{{.CWE}}</span>{{end}}
+              {{if .CWE}}<span class="badge-outline" data-tooltip="{{cwename .CWE}}">{{.CWE}}{{with cwecat .CWE}}<span class="text-muted-foreground">· {{.}}</span>{{end}}</span>{{end}}
             </div>
             <p>
               {{template "loc-link" (dict "RepoID" $.Repo.ID "Commit" (index $commits .ScanID) "Location" .Location "Extra" .ExtraLocationCount)}}
@@ -457,7 +460,7 @@
             </p>
           </header>
           <section class="text-sm">
-            <p class="line-clamp-3">{{.Summary}}</p>
+            {{template "finding-summary" (dict "Text" .Summary "Class" "line-clamp-3")}}
           </section>
         </div>
       {{end}}

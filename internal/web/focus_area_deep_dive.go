@@ -57,7 +57,13 @@ func (s *Server) autoEnqueueFocusAreaDeepDives(scan *db.Scan) {
 		s.autoEnqueueExploratoryAudit(scan, skill.ID, group)
 		return
 	}
-	for _, area := range config.FocusAreas {
+	areas := config.FocusAreas
+	if len(areas) > repoconfig.MaxFocusAreas {
+		s.Log.Warn("focus-area deep dives: stored config exceeds the focus-area cap; enqueueing the first N only",
+			"scan", scan.ID, "repo", scan.RepositoryID, "stored", len(areas), "cap", repoconfig.MaxFocusAreas)
+		areas = areas[:repoconfig.MaxFocusAreas]
+	}
+	for _, area := range areas {
 		raw, err := repoconfig.EncodeFocusAreaJSON(area)
 		if err != nil {
 			s.Log.Warn("focus-area deep dives: encode area", "scan", scan.ID, "area", area.Name, "err", err)
@@ -92,16 +98,18 @@ func (s *Server) enqueueFocusAreaDeepDive(parent *db.Scan, skillID uint, group, 
 		// deep-dive skill's own scrutineer.model: max declaration.
 		// Leaving it empty lets enqueueSkillWith fall through to the
 		// skill's tier so focus-area deep-dives run on max as intended.
-		Effort:         parent.Effort,
-		Profile:        focusAreaProfile(parent, focusArea),
-		SubPath:        parent.SubPath,
-		ScopeMode:      parent.ScopeMode,
-		Ref:            parent.Ref,
-		RescanMode:     parent.RescanMode,
-		DiffBaseScanID: parent.DiffBaseScanID,
-		ScanGroup:      group,
-		FocusArea:      focusArea,
-		TriageScanID:   parent.TriageScanID,
+		// DiffBaseScanID is not inherited either: the parent's baseline is a
+		// threat-model scan, which the worker rejects for a deep-dive, so
+		// each deep-dive resolves its own skill and focus-area baseline.
+		Effort:       parent.Effort,
+		Profile:      focusAreaProfile(parent, focusArea),
+		SubPath:      parent.SubPath,
+		ScopeMode:    parent.ScopeMode,
+		Ref:          parent.Ref,
+		RescanMode:   parent.RescanMode,
+		ScanGroup:    group,
+		FocusArea:    focusArea,
+		TriageScanID: parent.TriageScanID,
 	}); err != nil {
 		name := "repository"
 		if focusArea != "" {

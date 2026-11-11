@@ -57,7 +57,7 @@
   <p class="text-sm text-muted-foreground mb-4">
     One URL per line. Only <code>https://</code> URLs are accepted.
     Add <code>/tree/&lt;branch&gt;</code> to a URL to scan a specific branch.
-    Duplicates are skipped; each new repo is queued with the default scan set.
+    New repositories are queued with the default scan set. Repeated URLs are skipped.
   </p>
   <form method="post" action="/repositories/bulk" class="form grid gap-3">
     <div class="grid gap-2">
@@ -65,6 +65,9 @@
       <textarea class="input font-mono text-xs" id="repo-new-urls" name="urls" rows="10" required
                 placeholder="https://github.com/maragudk/goqite.git&#10;https://github.com/spf13/cobra.git"></textarea>
     </div>
+    <label class="flex items-center gap-2 text-sm">
+      <input type="checkbox" name="rescan_existing" value="1"> Rescan existing repositories
+    </label>
     <footer class="flex justify-between items-center gap-2">
       <a href="/repositories/new?org=1" class="btn-sm-ghost">
         <i data-lucide="building-2"></i> Import a whole org

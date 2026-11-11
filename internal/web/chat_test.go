@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -616,5 +618,93 @@ func TestStartConversationDropsOrphanOnMessageFailure(t *testing.T) {
 	s.DB.Model(&db.Conversation{}).Count(&n)
 	if n != 0 {
 		t.Errorf("orphan conversation left behind: %d rows", n)
+	}
+}
+
+// recordingSkillRunner is a worker.SkillRunner double that records every job
+// and the staged message file as it stood during that call.
+type recordingSkillRunner struct {
+	jobs   []worker.SkillJob
+	staged []string
+}
+
+func (r *recordingSkillRunner) RunSkill(_ context.Context, sj worker.SkillJob, emit func(worker.Event)) (worker.SkillResult, error) {
+	r.jobs = append(r.jobs, sj)
+	b, err := os.ReadFile(filepath.Join(sj.WorkRoot, "scrutineer-chat-message.md"))
+	if err != nil {
+		return worker.SkillResult{}, err
+	}
+	r.staged = append(r.staged, string(b))
+	emit(worker.Event{Kind: worker.KindSession, SessionID: "sess-1"})
+	emit(worker.Event{Kind: worker.KindResult, Text: "answer"})
+	return worker.SkillResult{SessionID: "sess-1"}, nil
+}
+
+func (*recordingSkillRunner) SkillDir(workRoot, name string) string {
+	return worker.ClaudeHarness{}.SkillDir(workRoot, name)
+}
+
+func (*recordingSkillRunner) Backend() string { return "claude" }
+
+func TestConversationLongMessageReachesRunnerInFull(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	s.spawnTurn = func(convID uint, message string) { s.runChatTurn(convID, message) }
+	rec := &recordingSkillRunner{}
+	s.chatRunner = &worker.ChatRunner{Runner: rec, DB: s.DB, DataDir: t.TempDir(),
+		PrepareSrc: func(_ context.Context, _, _, workRoot string, _ func(worker.Event)) (string, error) {
+			return "abc", os.MkdirAll(filepath.Join(workRoot, "src"), 0o755)
+		}}
+	repo := seedRepo(t, s)
+	conv, err := db.CreateConversation(s.DB, repo.ID, nil, "m", "hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	line := "2026-11-05T10:00:00Z DEBUG parser: token=abcdef0123456789 ok\n"
+	long := func(decisive string) string {
+		return "Why does this crash?\n" + strings.Repeat(line, (100<<10)/len(line)) + decisive
+	}
+	pointer := "./scrutineer-chat-message.md"
+	post := func(decisive string) {
+		t.Helper()
+		w := postForm(t, s, fmt.Sprintf("/conversations/%d/messages", conv.ID), url.Values{"message": {long(decisive)}})
+		if w.Code != http.StatusSeeOther {
+			t.Fatalf("status = %d, want 303; body=%s", w.Code, w.Body)
+		}
+	}
+
+	const first = "FATAL: heap-buffer-overflow in parse_header at src/parse.c:812 (len=4097)"
+	post(first)
+	if len(rec.jobs) != 1 {
+		t.Fatalf("got %d runs, want 1", len(rec.jobs))
+	}
+	if rec.jobs[0].ResumeSessionID != "" {
+		t.Errorf("first turn must not resume, got %q", rec.jobs[0].ResumeSessionID)
+	}
+	if p := rec.jobs[0].Prompt; !strings.Contains(p, pointer) || strings.Contains(p, first) {
+		t.Errorf("first prompt must point at the staged file:\n%s", p)
+	}
+	if !strings.Contains(rec.staged[0], first) {
+		t.Error("staged copy of turn 1 lost the decisive line")
+	}
+
+	const second = "FATAL: use-after-free in free_header at src/parse.c:933 (len=8193)"
+	post(second)
+	if len(rec.jobs) != 2 {
+		t.Fatalf("got %d runs, want 2", len(rec.jobs))
+	}
+	j := rec.jobs[1]
+	if j.ResumeSessionID != "sess-1" {
+		t.Errorf("turn 2 ResumeSessionID = %q, want sess-1", j.ResumeSessionID)
+	}
+	if !strings.Contains(j.ResumePrompt, pointer) || strings.Contains(j.ResumePrompt, second) {
+		t.Errorf("ResumePrompt must point at the staged file:\n%s", j.ResumePrompt)
+	}
+	if !strings.Contains(j.Prompt, pointer) || strings.Contains(j.Prompt, second) {
+		t.Errorf("fallback Prompt must point at the staged file:\n%s", j.Prompt)
+	}
+	if !strings.Contains(rec.staged[1], second) {
+		t.Error("staged copy of turn 2 lost the decisive line")
 	}
 }

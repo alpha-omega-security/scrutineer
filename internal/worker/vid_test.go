@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -70,6 +71,87 @@ func TestVidSinks(t *testing.T) {
 	want := []string{"a.rb:12", "lib/b.js:42", "a.rb:30", "alias.rb:7"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("vidSinks = %v, want %v", got, want)
+	}
+}
+
+func TestStageVIDFile_enforcesByteBudget(t *testing.T) {
+	srcDir, stageDir := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(srcDir, "big"), make([]byte, 100), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "small"), make([]byte, 10), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(srcDir, "oversize"), make([]byte, 4096), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	src, err := os.OpenRoot(srcDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = src.Close() }()
+	stage, err := os.OpenRoot(stageDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stage.Close() }()
+
+	// A single file over the remaining budget stops the copy mid-stream.
+	remaining := int64(99)
+	if err := stageVIDFile(src, stage, "oversize", &remaining); !errors.Is(err, errVIDStageBudget) {
+		t.Fatalf("stageVIDFile over budget: err=%v, want errVIDStageBudget", err)
+	}
+	fi, err := os.Stat(filepath.Join(stageDir, "oversize"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi.Size() > 100 {
+		t.Fatalf("staged %d bytes, LimitReader did not cap the copy", fi.Size())
+	}
+
+	// Exactly at budget succeeds and the budget is drawn down across files.
+	remaining = int64(110)
+	if err := stageVIDFile(src, stage, "big", &remaining); err != nil {
+		t.Fatalf("stageVIDFile at budget: %v", err)
+	}
+	if remaining != 10 {
+		t.Fatalf("remaining = %d after 100-byte copy from 110, want 10", remaining)
+	}
+	if err := stageVIDFile(src, stage, "small", &remaining); err != nil {
+		t.Fatalf("second file within aggregate budget: %v", err)
+	}
+	if remaining != 0 {
+		t.Fatalf("remaining = %d after exhausting budget, want 0", remaining)
+	}
+}
+
+func TestComputeVIDSharedStageBudget(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		sizes []int64
+	}{
+		{name: "sparse file", sizes: []int64{vidStageMaxBytes + 1}},
+		{name: "aggregate files", sizes: []int64{vidStageMaxBytes/2 + 1, vidStageMaxBytes/2 + 1}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := t.TempDir()
+			var locations []string
+			for i, size := range tc.sizes {
+				name := fmt.Sprintf("%d.c", i)
+				writeSrcFile(t, source, name)
+				if err := os.Truncate(filepath.Join(source, name), size); err != nil {
+					t.Fatal(err)
+				}
+				locations = append(locations, name+":1")
+			}
+			w := &Worker{Log: slog.New(slog.NewTextHandler(io.Discard, nil)), VIDCommand: stubVid(t, "VID-test", 0)}
+			if got := w.computeVID(source, strings.Join(locations, "\n")); got != "" {
+				t.Fatalf("over-budget VID = %q", got)
+			}
+			if _, err := os.Stat(filepath.Join(filepath.Dir(w.VIDCommand), "cwd.txt")); !os.IsNotExist(err) {
+				t.Fatalf("over-budget VID invoked command: %v", err)
+			}
+		})
 	}
 }
 

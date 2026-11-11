@@ -174,6 +174,10 @@ func (w *Worker) configureBackendPreflight(ctx context.Context, scan *db.Scan, s
 			}
 			return fmt.Errorf("backend preflight blocked: %s", result.Error)
 		}
+		// The probe's charge can take the group over its cap on its own.
+		if capped := w.heldGroupCapped(scan); capped != nil {
+			return capped
+		}
 		return nil
 	}
 }
