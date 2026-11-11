@@ -2,7 +2,7 @@ module scrutineer
 
 go 1.27.0
 
-toolchain go1.27.3
+toolchain go1.27.4
 
 require (
 	filippo.io/age v1.3.2
