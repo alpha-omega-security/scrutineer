@@ -38,6 +38,13 @@ help_source = (src / 'HelpActivity.kt').read_text()
 assert 'HELP_HOST' in help_source and 'addJavascriptInterface' not in help_source
 assert 'EncryptedSharedPreferences' in (src / 'TokenStore.kt').read_text()
 
+# The launcher sign-in screen fills the store the bridge reads.
+launcher = app.find("activity[@" + ns + "name='.LoginActivity']")
+assert {c.get(ns + 'name') for c in launcher.iter('category')} == {'android.intent.category.LAUNCHER'}
+login = (src / 'LoginActivity.kt').read_text()
+assert 'TokenStore(this).save(token)' in login and 'https://' in login
+assert 'SessionBridge(TokenStore(this))' in deep
+
 # The iOS and hybrid property lists register the expected settings.
 with open(fixtures / 'mobile-ios-app' / 'NotesApp' / 'Info.plist', 'rb') as f:
     ios = plistlib.load(f)
