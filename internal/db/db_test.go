@@ -7,7 +7,9 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -117,6 +119,18 @@ func TestSnapshot(t *testing.T) {
 	if err := Snapshot(src, dest); err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}
+	// The snapshot carries pre-disclosure findings and bearer tokens, so it
+	// must be owner-only from the moment it is created, not tightened after
+	// VACUUM INTO has already written it at the umask default.
+	if runtime.GOOS != "windows" {
+		fi, err := os.Stat(dest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if perm := fi.Mode().Perm(); perm&0o077 != 0 {
+			t.Errorf("snapshot mode = %04o: group/other bits set, want owner-only", perm)
+		}
+	}
 
 	snap, err := Open(dest)
 	if err != nil {
@@ -146,6 +160,26 @@ func TestSnapshot_destExists(t *testing.T) {
 	}
 	if err := Snapshot(src, dest); err == nil {
 		t.Error("Snapshot to an existing dest should fail")
+	}
+}
+
+func TestSnapshot_rejectsURIDest(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "src.db")
+	seed, err := Open(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	closeOnCleanup(t, seed)
+
+	t.Chdir(dir)
+	if err := Snapshot(src, "file:snap.db"); err == nil || !strings.Contains(err.Error(), "URI destinations are not supported") {
+		t.Fatalf("Snapshot URI error = %v, want URI destination rejection", err)
+	}
+	for _, p := range []string{"snap.db", "file:snap.db"} {
+		if _, err := os.Lstat(p); !os.IsNotExist(err) {
+			t.Errorf("rejected URI dest left %s behind: %v", p, err)
+		}
 	}
 }
 

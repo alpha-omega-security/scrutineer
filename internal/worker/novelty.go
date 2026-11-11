@@ -1,8 +1,11 @@
 package worker
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -12,9 +15,11 @@ import (
 )
 
 const (
-	revalidateSkillName     = "revalidate"
-	noveltyLogMaxCommits    = 20
-	noveltyLogMaxBytes      = 64 * 1024
+	revalidateSkillName  = "revalidate"
+	noveltyLogMaxCommits = 20
+	noveltyLogMaxBytes   = 64 * 1024
+	// One extra byte lets truncateNoveltyLog detect discarded output.
+	noveltyLogReadCap       = noveltyLogMaxBytes + 1
 	noveltyUnavailableNoGit = "repository history is unavailable"
 )
 
@@ -114,8 +119,10 @@ func checkFindingNovelty(
 		return result
 	}
 
+	// Imported locations must not expand into repository-wide pathspecs.
+	pathspecEnv := []string{"GIT_GLOB_PATHSPECS=0", "GIT_ICASE_PATHSPECS=0"}
 	revisionRange := result.ScannedCommit + ".." + result.CheckedCommit
-	countOutput, err := git(ctx, "-C", src, "rev-list", "--count", revisionRange, "--", result.FindingFile)
+	countOutput, err := gitWithEnv(ctx, "", pathspecEnv, "-C", src, "--literal-pathspecs", "rev-list", "--count", revisionRange, "--", result.FindingFile)
 	if err != nil {
 		result.NotCheckedWhy = "git history check failed"
 		return result
@@ -125,7 +132,7 @@ func checkFindingNovelty(
 		result.NotCheckedWhy = "git history check failed"
 		return result
 	}
-	logOutput, err := git(ctx, "-C", src, "log",
+	logOutput, err := gitLimited(ctx, noveltyLogReadCap, pathspecEnv, "-C", src, "--literal-pathspecs", "log",
 		fmt.Sprintf("--max-count=%d", noveltyLogMaxCommits),
 		"--format=commit %H%nAuthorDate: %aI%nSubject: %s",
 		"--patch", revisionRange, "--", result.FindingFile)
@@ -156,6 +163,38 @@ func validGitOID(value string) bool {
 		}
 	}
 	return true
+}
+
+// gitLimited drains both streams while retaining at most maxBytes of each.
+func gitLimited(ctx context.Context, maxBytes int, env []string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Env = append(os.Environ(), env...)
+	w := &cappedWriter{limit: maxBytes}
+	cmd.Stdout = w
+	stderr := &cappedWriter{limit: maxBytes}
+	cmd.Stderr = stderr
+	cmd.WaitDelay = gitWaitDelay
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("git: %w: %s", err, strings.TrimSpace(stderr.buf.String()))
+	}
+	return w.buf.String(), nil
+}
+
+type cappedWriter struct {
+	buf   bytes.Buffer
+	limit int
+}
+
+func (w *cappedWriter) Write(p []byte) (int, error) {
+	room := w.limit - w.buf.Len()
+	if room <= 0 {
+		return len(p), nil
+	}
+	if len(p) > room {
+		w.buf.Write(p[:room])
+		return len(p), nil
+	}
+	return w.buf.Write(p)
 }
 
 func truncateNoveltyLog(logOutput string) (string, bool) {

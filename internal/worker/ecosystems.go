@@ -243,6 +243,10 @@ func refreshEcosystems(ctx context.Context, gdb *gorm.DB, repoID uint, staleOnly
 			log.Warn("ecosystems fetch failed", "repo", repoID, "source", src.key, "err", err)
 			continue
 		}
+		// Pending or absent data must not erase cached summaries or advance their TTL.
+		if body == nil {
+			continue
+		}
 		if err := gdb.Model(&db.Repository{}).Where("id = ?", repoID).Updates(map[string]any{
 			src.dataColumn: string(body),
 			src.fetchedCol: now,
@@ -341,7 +345,7 @@ func (f *productionEcosystemsFetcher) fetchCommits(ctx context.Context, repoURL 
 		return nil, err
 	}
 	if commits == nil {
-		return nil, fmt.Errorf("commits summary not found")
+		return nil, nil
 	}
 	return json.Marshal(commits)
 }
@@ -352,7 +356,7 @@ func (f *productionEcosystemsFetcher) fetchIssues(ctx context.Context, repoURL s
 		return nil, err
 	}
 	if issues == nil {
-		return nil, fmt.Errorf("issues summary not found")
+		return nil, nil
 	}
 	return json.Marshal(issues)
 }

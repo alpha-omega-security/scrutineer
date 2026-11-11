@@ -86,7 +86,7 @@ func TestFindingExposureRun_reportsPartialSuccess(t *testing.T) {
 	if w.Code != http.StatusSeeOther {
 		t.Fatalf("status %d, want redirect: %s", w.Code, w.Body)
 	}
-	if w.Header().Get("Location") != fmt.Sprintf("/findings/%d", f.ID) {
+	if w.Header().Get("Location") != fmt.Sprintf("/findings/%d#exposure", f.ID) {
 		t.Errorf("location = %q", w.Header().Get("Location"))
 	}
 	flash := flashFrom(t, w)

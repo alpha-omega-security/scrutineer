@@ -57,7 +57,11 @@ func (s *Server) findingFields(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), findingWriteErrorStatus(err, http.StatusUnprocessableEntity))
 		return
 	}
-	s.redirect(w, r, fmt.Sprintf("/findings/%d", f.ID))
+	anchor := "disclosure-fields"
+	if r.FormValue("anchor") == "finding-summary" {
+		anchor = "finding-summary"
+	}
+	s.redirect(w, r, fmt.Sprintf("/findings/%d#%s", f.ID, anchor))
 }
 
 // findingDisclosureDraftSave persists edits from the disclosure editor.
@@ -101,7 +105,7 @@ func (s *Server) findingCommunications(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
-	s.redirect(w, r, fmt.Sprintf("/findings/%d", f.ID))
+	s.redirect(w, r, fmt.Sprintf("/findings/%d#communications", f.ID))
 }
 
 func (s *Server) findingReferences(w http.ResponseWriter, r *http.Request) {
@@ -118,7 +122,7 @@ func (s *Server) findingReferences(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusUnprocessableEntity)
 		return
 	}
-	s.redirect(w, r, fmt.Sprintf("/findings/%d", f.ID))
+	s.redirect(w, r, fmt.Sprintf("/findings/%d#references", f.ID))
 }
 
 func (s *Server) findingLabels(w http.ResponseWriter, r *http.Request) {
@@ -147,5 +151,5 @@ func (s *Server) findingLabels(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.redirect(w, r, fmt.Sprintf("/findings/%d", f.ID))
+	s.redirect(w, r, fmt.Sprintf("/findings/%d#labels", f.ID))
 }

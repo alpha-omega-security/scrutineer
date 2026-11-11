@@ -679,6 +679,71 @@ func TestParseFindingsOutput_notObservedScopedToSkillAndSubpath(t *testing.T) {
 	}
 }
 
+func TestDoSkillPartialScanPreservesPriorFindings(t *testing.T) {
+	const emptyReport = `{"findings":[]}`
+	for _, tc := range []struct {
+		name                 string
+		runner               SkillRunner
+		maxCost              float64
+		costCapped, maxTurns bool
+		missed               int
+		status               db.FindingLifecycle
+	}{
+		{
+			name: "full scan", runner: fakeRunner{skillRes: SkillResult{Report: emptyReport}},
+			missed: 1, status: db.FindingRejected,
+		},
+		{
+			name: "cost-capped", maxCost: 1, costCapped: true, status: db.FindingNew,
+			runner: &capRunner{
+				first: blockUntilCapped("session-1"),
+				finalize: func(SkillJob) (SkillResult, error) {
+					return SkillResult{Report: emptyReport}, nil
+				},
+			},
+		},
+		{
+			name: "max-turns", maxTurns: true, status: db.FindingNew,
+			runner: fakeRunner{skillRes: SkillResult{Report: emptyReport}, skillErr: &MaxTurnsReachedError{}},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w, base := costCapFixture(t, 0)
+			w.AutoRejectMissedCount = 1
+			if err := w.DB.Model(&db.Skill{}).Where("id = ?", *base.SkillID).Update("output_kind", "findings").Error; err != nil {
+				t.Fatal(err)
+			}
+			w.Runner = fakeRunner{skillRes: SkillResult{Report: `{"findings":[{"id":"F1","title":"Shell injection","severity":"High","cwe":"CWE-78","location":"a.go:1"}]}`}}
+			if got := runCapScan(t, w, base); got.Status != db.ScanDone {
+				t.Fatalf("initial scan status = %s: %s", got.Status, got.Error)
+			}
+			scan := db.Scan{
+				RepositoryID: base.RepositoryID, Kind: JobSkill, SkillID: base.SkillID,
+				Status: db.ScanQueued, Model: "fake", MaxCostUSD: tc.maxCost,
+			}
+			if err := w.DB.Create(&scan).Error; err != nil {
+				t.Fatal(err)
+			}
+			w.Runner = tc.runner
+			got := runCapScan(t, w, &scan)
+			if got.Status != db.ScanDone || got.CostCapped != tc.costCapped || got.MaxTurnsHit != tc.maxTurns {
+				t.Fatalf("scan status = %s, cost-capped = %t, max-turns = %t: %s", got.Status, got.CostCapped, got.MaxTurnsHit, got.Error)
+			}
+			var f db.Finding
+			if err := w.DB.Where("repository_id = ?", base.RepositoryID).First(&f).Error; err != nil {
+				t.Fatal(err)
+			}
+			var lastMissed uint
+			if tc.missed > 0 {
+				lastMissed = got.ID
+			}
+			if f.MissedCount != tc.missed || f.LastMissedScanID != lastMissed || f.Status != tc.status {
+				t.Fatalf("finding missed = %d, last missed = %d, status = %s; want %d, %d, %s", f.MissedCount, f.LastMissedScanID, f.Status, tc.missed, lastMissed, tc.status)
+			}
+		})
+	}
+}
+
 func TestParseFindingsOutput_reobservationResetsMissedCount(t *testing.T) {
 	gdb := dbtest.Open(t)
 	repo := db.Repository{URL: "https://x/r", Name: "r"}

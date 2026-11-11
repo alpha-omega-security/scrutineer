@@ -7,19 +7,19 @@
 # update the selected asset and checksum atomically. A mismatched tag/digest in
 # a Renovate PR fails sha256sum below and usually means asset identification
 # failed upstream.
-ARG CLAUDE_AMD64_LOCK=v2.1.312@sha256:d9324231c4e3dfe342e853f56c752348ae060f9f221cdf4b0f90ef1dc47ee907
-ARG CLAUDE_ARM64_LOCK=v2.1.312@sha256:0635c6245b11bbb4ca16e4119b0ac3980ee99e2f8cf5ab6e8d6c0e9e0db3ee5b
+ARG CLAUDE_AMD64_LOCK=v2.1.318@sha256:e6d426ca0c123f61fad58a361da0329f2a93cd206bc87040ed8d9576dd9eb583
+ARG CLAUDE_ARM64_LOCK=v2.1.318@sha256:0f4fb66a2af3bf02d114099727e4a7745f117b1e63d2f77c8aff165590197421
 
 ARG CODEX_AMD64_LOCK=rust-v0.165.0@sha256:e97c4463d7f146692a955d7b0e1c8cf48f97cd4d616cd45c5dcab2e8d9743316
 ARG CODEX_ARM64_LOCK=rust-v0.165.0@sha256:c8b2844fdef57498572db960344aee8c836ce9f75c203379da0a9c3a334fc3b7
 
-ARG OPENCODE_AMD64_LOCK=v2.2.1@sha256:3179551ddf69877ca24a960b0175e94405cf3f52147f1eec705094374bef49f2
-ARG OPENCODE_ARM64_LOCK=v2.2.1@sha256:c354d8a2dc4152308bf286b5ec7f20b3b3cfc71f9476e64f6aa274142505b2f8
+ARG OPENCODE_AMD64_LOCK=v2.2.5@sha256:09f44302c10fd036912f59c81fd1aef5df45dd06f649197f9dfc9bbe2a79614e
+ARG OPENCODE_ARM64_LOCK=v2.2.5@sha256:5a528f42caf576c6cdece6a191eb273d3db54effa5518e0402684d8f8026aeb6
 
 ARG COPILOT_AMD64_LOCK=v1.0.105@sha256:aba1f06f27bc0447656647f76e0a4cf58b4b2a341c75ff04a750982b6aeb6bd2
 ARG COPILOT_ARM64_LOCK=v1.0.105@sha256:e7b488cc04ac3e2ed800e1bf0aace33ada42dcf167529b3d2f48a61e1535a847
 
-ARG SEMGREP_VERSION=1.182.1
+ARG SEMGREP_VERSION=1.183.0
 
 ARG BANDIT_VERSION=1.9.4
 ARG DARNIT_VERSION=0.1.1
@@ -35,7 +35,7 @@ RUN GOBIN=/out sh /usr/local/bin/retry-build-command.sh go install github.com/gi
 
 FROM rust:1.98-trixie@sha256:a8a5f0a1e5fe7dfe1d352591e4a1c7dd2c08fd70475cae872cf3458ba0df0546 AS zizmor-build
 ENV CARGO_HTTP_MULTIPLEXING=false
-RUN cargo install --locked --root /out zizmor@1.31.1
+RUN cargo install --locked --root /out zizmor@1.32.0
 
 # The runner image carries the proxy commands used by Scrutineer and by
 # harness/container consumers. Both are built CGO-free so they can be copied

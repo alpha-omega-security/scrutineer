@@ -108,6 +108,23 @@ func Normalise(raw string) (string, Config, error) {
 // NormaliseConfig validates a parsed config and returns its stable, readable
 // YAML representation. An empty config clears the durable scan configuration.
 func NormaliseConfig(cfg Config) (string, error) {
+	if n := len(cfg.FocusAreas); n > MaxFocusAreas {
+		return "", fmt.Errorf("focus_areas has %d entries; the limit is %d", n, MaxFocusAreas)
+	}
+	return normaliseConfig(cfg)
+}
+
+// SetSkip replaces ignored paths while preserving legacy focus areas.
+func SetSkip(raw string, skip []string) (string, error) {
+	cfg, err := Parse(raw)
+	if err != nil {
+		return "", err
+	}
+	cfg.Skip = skip
+	return normaliseConfig(cfg)
+}
+
+func normaliseConfig(cfg Config) (string, error) {
 	if err := cfg.validate(); err != nil {
 		return "", err
 	}
@@ -136,6 +153,9 @@ func (c Config) Empty() bool {
 	return len(c.FocusAreas) == 0 && len(c.KnownBugs) == 0 &&
 		strings.TrimSpace(c.AttackSurface) == "" && len(c.Skip) == 0
 }
+
+// MaxFocusAreas bounds new configurations and automatic audit fan-out.
+const MaxFocusAreas = 32
 
 func (c Config) validate() error {
 	for i, area := range c.FocusAreas {

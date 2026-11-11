@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	mavenpom "github.com/git-pkgs/pom"
 	"github.com/git-pkgs/sbom"
@@ -20,6 +22,16 @@ import (
 )
 
 const insertBatchSize = 50
+
+// Longer than SQLite's busy_timeout, so an attempt that waits it out can
+// still be replayed.
+const ingestWriteTimeout = 15 * time.Second
+
+// ingestTransaction may run write more than once: rows it inserts must be
+// copied per attempt so a replay does not reuse ids from a rolled-back one.
+func (w *Worker) ingestTransaction(ctx context.Context, scan *db.Scan, operation string, write func(*gorm.DB) error) error {
+	return db.WriteTransaction(ctx, w.DB, ingestWriteTimeout, w.scanTransactionLog(scan, operation), write)
+}
 
 const (
 	findingDedupSkill    = "finding-dedup"
@@ -131,7 +143,7 @@ func safeURL(u string) string {
 // delete all existing rows and insert whatever the skill produced, mirroring
 // the old Go handler which did the same: packages are a projection of the
 // upstream registry state, not an incrementally grown set.
-func (w *Worker) parsePackagesOutput(scan *db.Scan, report string, emit func(Event)) error {
+func (w *Worker) parsePackagesOutput(ctx context.Context, scan *db.Scan, report string, emit func(Event)) error {
 	var result struct {
 		Packages []struct {
 			Name                 string `json:"name"`
@@ -193,12 +205,13 @@ func (w *Worker) parsePackagesOutput(scan *db.Scan, report string, emit func(Eve
 	// Replace the prior row set atomically: a failed insert after the
 	// delete would otherwise leave the repository with zero packages
 	// until the next successful scan.
-	if err := w.DB.Transaction(func(tx *gorm.DB) error {
+	if err := w.ingestTransaction(ctx, scan, "ingest_packages", func(tx *gorm.DB) error {
 		if err := tx.Where("repository_id = ?", scan.RepositoryID).Delete(&db.Package{}).Error; err != nil {
 			return fmt.Errorf("delete old packages: %w", err)
 		}
 		if len(rows) > 0 {
-			if err := tx.CreateInBatches(&rows, insertBatchSize).Error; err != nil {
+			batch := slices.Clone(rows)
+			if err := tx.CreateInBatches(&batch, insertBatchSize).Error; err != nil {
 				return fmt.Errorf("save packages: %w", err)
 			}
 		}
@@ -228,7 +241,7 @@ func joinPackageRiskFlags(emit func(Event), name, ecosystem string, ids []string
 }
 
 // parseAdvisoriesOutput replaces Advisory rows for the scan's repository.
-func (w *Worker) parseAdvisoriesOutput(scan *db.Scan, report string, emit func(Event)) error {
+func (w *Worker) parseAdvisoriesOutput(ctx context.Context, scan *db.Scan, report string, emit func(Event)) error {
 	var result struct {
 		Advisories []struct {
 			UUID           string  `json:"uuid"`
@@ -269,12 +282,13 @@ func (w *Worker) parseAdvisoriesOutput(scan *db.Scan, report string, emit func(E
 	}
 	// Replace the prior row set atomically so a failed insert can't leave
 	// the repository with zero advisories.
-	if err := w.DB.Transaction(func(tx *gorm.DB) error {
+	if err := w.ingestTransaction(ctx, scan, "ingest_advisories", func(tx *gorm.DB) error {
 		if err := tx.Where("repository_id = ?", scan.RepositoryID).Delete(&db.Advisory{}).Error; err != nil {
 			return fmt.Errorf("delete old advisories: %w", err)
 		}
 		if len(rows) > 0 {
-			if err := tx.CreateInBatches(&rows, insertBatchSize).Error; err != nil {
+			batch := slices.Clone(rows)
+			if err := tx.CreateInBatches(&batch, insertBatchSize).Error; err != nil {
 				return fmt.Errorf("save advisories: %w", err)
 			}
 		}
@@ -372,7 +386,7 @@ func (w *Worker) parseAdvisoryAuditOutput(skill *db.Skill, scan *db.Scan, report
 // registry lookups (licences, vulnerabilities, latest-version, deprecation)
 // are not part of the envelope; scrutineer performs those once per package
 // outside the scan.
-func (w *Worker) parseDependenciesOutput(scan *db.Scan, report string, emit func(Event)) error {
+func (w *Worker) parseDependenciesOutput(ctx context.Context, scan *db.Scan, report string, emit func(Event)) error {
 	var env dependencyEnvelope
 	if err := json.Unmarshal([]byte(report), &env); err != nil {
 		return fmt.Errorf("parse dependencies: %w", err)
@@ -420,13 +434,14 @@ func (w *Worker) parseDependenciesOutput(scan *db.Scan, report string, emit func
 	// Replace the prior row set and move the Current flag atomically so a
 	// failed insert can't leave the repository with zero dependencies or
 	// two current snapshots.
-	if err := w.DB.Transaction(func(tx *gorm.DB) error {
+	if err := w.ingestTransaction(ctx, scan, "ingest_dependencies", func(tx *gorm.DB) error {
 		if replaceInventory {
 			if err := tx.Where("repository_id = ?", scan.RepositoryID).Delete(&db.Dependency{}).Error; err != nil {
 				return fmt.Errorf("delete old dependencies: %w", err)
 			}
 			if len(rows) > 0 {
-				if err := tx.CreateInBatches(&rows, insertBatchSize).Error; err != nil {
+				batch := slices.Clone(rows)
+				if err := tx.CreateInBatches(&batch, insertBatchSize).Error; err != nil {
 					return fmt.Errorf("save dependencies: %w", err)
 				}
 			}
@@ -438,7 +453,9 @@ func (w *Worker) parseDependenciesOutput(scan *db.Scan, report string, emit func
 				Update("current", false).Error; err != nil {
 				return fmt.Errorf("clear current snapshot: %w", err)
 			}
-			if err := tx.Session(&gorm.Session{CreateBatchSize: insertBatchSize}).Create(up).Error; err != nil {
+			snapshot := *up
+			snapshot.Packages = slices.Clone(up.Packages)
+			if err := tx.Session(&gorm.Session{CreateBatchSize: insertBatchSize}).Create(&snapshot).Error; err != nil {
 				return fmt.Errorf("save generated sbom: %w", err)
 			}
 		}
@@ -752,7 +769,7 @@ func realPathUnderRoot(path, root string) bool {
 // repository. Subprojects are a projection of the repo layout produced
 // by the subprojects skill; a fresh run reflects the current clone and
 // replaces any prior set.
-func (w *Worker) parseSubprojectsOutput(scan *db.Scan, report string, emit func(Event)) error {
+func (w *Worker) parseSubprojectsOutput(ctx context.Context, scan *db.Scan, report string, emit func(Event)) error {
 	var result struct {
 		Subprojects []struct {
 			Path        string `json:"path"`
@@ -785,7 +802,7 @@ func (w *Worker) parseSubprojectsOutput(scan *db.Scan, report string, emit func(
 	// any package/advisory that pointed at a pruned row back to repo-level.
 	// The whole set is rewritten in one transaction so a mid-way failure can't
 	// leave a half-updated projection.
-	if err := w.DB.Transaction(func(tx *gorm.DB) error {
+	if err := w.ingestTransaction(ctx, scan, "ingest_subprojects", func(tx *gorm.DB) error {
 		keep := make([]string, 0, len(rows))
 		for i := range rows {
 			row := rows[i]
@@ -929,7 +946,7 @@ func (w *Worker) parsePostureOutput(scan *db.Scan, report string, emit func(Even
 // lower level also passed. Anything other than PASS counts against a level
 // and NA controls are left out of it, darnit's per-level rule, chained here
 // so a level only counts once every lower level is attained.
-func (w *Worker) parseComplianceOutput(scan *db.Scan, report string, emit func(Event)) error {
+func (w *Worker) parseComplianceOutput(ctx context.Context, scan *db.Scan, report string, emit func(Event)) error {
 	var result struct {
 		Controls []struct {
 			ID      string `json:"id"`
@@ -987,11 +1004,12 @@ func (w *Worker) parseComplianceOutput(scan *db.Scan, report string, emit func(E
 		})
 	}
 	level := baselineLevel(rows)
-	if err := w.DB.Transaction(func(tx *gorm.DB) error {
+	if err := w.ingestTransaction(ctx, scan, "ingest_compliance", func(tx *gorm.DB) error {
 		if err := tx.Where("repository_id = ?", scan.RepositoryID).Delete(&db.ComplianceControl{}).Error; err != nil {
 			return fmt.Errorf("prune compliance controls: %w", err)
 		}
-		if err := tx.Create(&rows).Error; err != nil {
+		batch := slices.Clone(rows)
+		if err := tx.Create(&batch).Error; err != nil {
 			return fmt.Errorf("create compliance controls: %w", err)
 		}
 		return tx.Model(&db.Repository{}).Where("id = ?", scan.RepositoryID).Update("baseline_level", level).Error
@@ -1079,7 +1097,7 @@ func (w *Worker) parseVerifyOutput(scan *db.Scan, report string, emit func(Event
 // updates the finding's indexed latest projection. The raw report remains the
 // source of truth for preconditions, counterevidence, adjustments, and facts
 // that could change the result.
-func (w *Worker) parseCriticOutput(scan *db.Scan, report string, emit func(Event)) error {
+func (w *Worker) parseCriticOutput(ctx context.Context, scan *db.Scan, report string, emit func(Event)) error {
 	if scan.FindingID == nil {
 		return errors.New("critic scan has no finding_id")
 	}
@@ -1091,7 +1109,7 @@ func (w *Worker) parseCriticOutput(scan *db.Scan, report string, emit func(Event
 		return err
 	}
 
-	err := w.DB.Transaction(func(tx *gorm.DB) error {
+	err := w.ingestTransaction(ctx, scan, "ingest_critic", func(tx *gorm.DB) error {
 		var f db.Finding
 		if err := tx.First(&f, *scan.FindingID).Error; err != nil {
 			return fmt.Errorf("load finding %d: %w", *scan.FindingID, err)
@@ -1800,6 +1818,28 @@ func (w *Worker) parseFindingDedupOutput(scan *db.Scan, report string, emit func
 		emit(Event{Kind: KindText, Text: "finding-dedup: no relations reported"})
 		return nil
 	}
+	if len(result.Duplicates)+len(result.Subsumed)+len(result.Chains) > maxDedupReportGroups {
+		return &SchemaValidationError{Skill: findingDedupSkill, Detail: fmt.Sprintf("report exceeds %d relation groups", maxDedupReportGroups)}
+	}
+	inputIDs, longReason := 0, false
+	for _, g := range result.Duplicates {
+		inputIDs += 1 + len(g.DuplicateIDs)
+		longReason = longReason || dedupReasonTooLong(g.Reason)
+	}
+	for _, g := range result.Subsumed {
+		inputIDs += 1 + len(g.SubsumedIDs)
+		longReason = longReason || dedupReasonTooLong(g.Reason)
+	}
+	for _, g := range result.Chains {
+		inputIDs += len(g.FindingIDs)
+		longReason = longReason || dedupReasonTooLong(g.Reason)
+	}
+	if inputIDs > maxDedupReportIDs {
+		return &SchemaValidationError{Skill: findingDedupSkill, Detail: fmt.Sprintf("report exceeds %d ID references", maxDedupReportIDs)}
+	}
+	if longReason {
+		return &SchemaValidationError{Skill: findingDedupSkill, Detail: fmt.Sprintf("report exceeds %d characters in a reason", maxDedupReasonChars)}
+	}
 
 	skipped, promoted := 0, 0
 	marked, err := w.applyDedupHeaded(scan.RepositoryID, dedupHeaderDuplicate, true,
@@ -1865,35 +1905,49 @@ func mapDedupGroups[T any](in []T, f func(T) dedupGroup) []dedupGroup {
 func (w *Worker) applyDedupHeaded(repoID uint, verb string, flipStatus bool, groups []dedupGroup, skipped, promoted *int) (int, error) {
 	n := 0
 	for _, g := range groups {
-		head, ok := w.dedupFinding(repoID, g.HeadID)
-		if !ok || !dedupCandidateOpen(head.Status) {
-			*skipped += len(g.MemberIDs)
+		applied, err := w.applyDedupHeadedGroup(repoID, verb, flipStatus, g, skipped, promoted)
+		n += applied
+		if err != nil {
+			return n, err
+		}
+	}
+	return n, nil
+}
+
+func (w *Worker) applyDedupHeadedGroup(repoID uint, verb string, flipStatus bool, g dedupGroup, skipped, promoted *int) (int, error) {
+	n := 0
+	ids := dedupMemberIDs(g.MemberIDs, skipped)
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	head, ok := w.dedupFinding(repoID, g.HeadID)
+	if !ok || !dedupCandidateOpen(head.Status) {
+		*skipped += len(ids)
+		return 0, nil
+	}
+	for _, id := range ids {
+		if id == 0 || id == head.ID {
+			*skipped++
 			continue
 		}
-		for _, id := range g.MemberIDs {
-			if id == 0 || id == head.ID {
-				*skipped++
-				continue
-			}
-			member, ok := w.dedupFinding(repoID, id)
-			if !ok || !dedupCandidateOpen(member.Status) {
-				*skipped++
-				continue
-			}
-			if flipStatus {
-				took, err := w.markDedupDuplicate(head, member, g)
-				if err != nil {
-					return n, err
-				}
-				if took && promoted != nil {
-					*promoted++
-				}
-			}
-			if err := w.addRelationNote(member.ID, verb, []uint{head.ID}, g.Reason); err != nil {
+		member, ok := w.dedupFinding(repoID, id)
+		if !ok || !dedupCandidateOpen(member.Status) {
+			*skipped++
+			continue
+		}
+		if flipStatus {
+			took, err := w.markDedupDuplicate(head, member, g)
+			if err != nil {
 				return n, err
 			}
-			n++
+			if took && promoted != nil {
+				*promoted++
+			}
 		}
+		if err := w.addRelationNote(member.ID, verb, []uint{head.ID}, g.Reason); err != nil {
+			return n, err
+		}
+		n++
 	}
 	return n, nil
 }
@@ -1918,22 +1972,63 @@ func (w *Worker) markDedupDuplicate(head, member db.Finding, g dedupGroup) (bool
 // nothing to compose with.
 const minChainMembers = 2
 
+// Each chain member gets a note listing every other member.
+const maxChainMembers = 16
+
+const (
+	maxDedupGroupInputIDs = 256
+	maxDedupReportGroups  = 256
+	maxDedupReportIDs     = 4096
+	// The reason is copied into every member's note.
+	maxDedupReasonChars = 4096
+)
+
+func dedupReasonTooLong(reason string) bool {
+	return len(reason) > maxDedupReasonChars && utf8.RuneCountInString(reason) > maxDedupReasonChars
+}
+
+func dedupMemberIDs(ids []uint, skipped *int) []uint {
+	if len(ids) > maxDedupGroupInputIDs {
+		*skipped += len(ids)
+		return nil
+	}
+	seen := make(map[uint]bool, len(ids))
+	var distinct []uint
+	for _, id := range ids {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		distinct = append(distinct, id)
+	}
+	return distinct
+}
+
+func (w *Worker) chainMembers(repoID uint, ids []uint, skipped *int) []uint {
+	var members []uint
+	for _, id := range dedupMemberIDs(ids, skipped) {
+		f, ok := w.dedupFinding(repoID, id)
+		if !ok || !dedupCandidateOpen(f.Status) {
+			*skipped++
+			continue
+		}
+		members = append(members, f.ID)
+	}
+	return members
+}
+
 // applyDedupChains handles the chain shape: every member stays open and
 // each gets a note listing the OTHER members so disclose on any one of
 // them can fetch exactly the ids it needs to compose.
 func (w *Worker) applyDedupChains(repoID uint, groups []dedupGroup, skipped *int) (int, error) {
 	n := 0
 	for _, g := range groups {
-		var members []uint
-		for _, id := range g.MemberIDs {
-			f, ok := w.dedupFinding(repoID, id)
-			if !ok || !dedupCandidateOpen(f.Status) {
-				*skipped++
-				continue
-			}
-			members = append(members, f.ID)
-		}
+		members := w.chainMembers(repoID, g.MemberIDs, skipped)
 		if len(members) < minChainMembers {
+			continue
+		}
+		if len(members) > maxChainMembers {
+			*skipped += len(members)
 			continue
 		}
 		for _, m := range members {

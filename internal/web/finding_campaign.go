@@ -41,5 +41,5 @@ func (s *Server) findingDependentCampaignUpdate(w http.ResponseWriter, r *http.R
 		return
 	}
 	setFlash(w, Flash{Category: successKey, Title: "Dependent campaign updated"})
-	s.redirect(w, r, fmt.Sprintf("/findings/%d", finding.ID))
+	s.redirect(w, r, fmt.Sprintf("/findings/%d#migration-guide", finding.ID))
 }

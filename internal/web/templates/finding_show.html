@@ -11,7 +11,7 @@
 <div class="flex items-start justify-between gap-4 mt-1 mb-4">
   <h2 class="text-2xl font-semibold flex items-center gap-3">
     {{$f.Title}}
-    {{template "finding-status" (fstatus $f.Status)}}
+    {{if not (fsteps $f.Status)}}{{template "finding-status" (fstatus $f.Status)}}{{end}}
   </h2>
   <div class="flex gap-2 shrink-0">
     {{if .AkritesLink}}
@@ -43,6 +43,29 @@
   </div>
 </div>
 
+{{with fsteps $f.Status}}
+<ol class="flex items-center gap-y-2 rounded-lg border bg-[var(--muted)] px-4 py-3 text-sm mb-5 overflow-x-auto" aria-label="Lifecycle">
+  {{range $i, $st := .}}
+  {{if $i}}<li class="flex-1 min-w-4 h-0.5 mx-2 rounded-full {{if eq $st.State "todo"}}bg-[var(--border)]{{else}}bg-[var(--foreground)]{{end}}" aria-hidden="true"></li>{{end}}
+  <li class="flex shrink-0 items-center"{{if eq $st.State "current"}} aria-current="step"{{end}}>
+    {{if eq $st.State "current"}}
+    <span class="inline-flex items-center gap-2 rounded-full bg-[var(--foreground)] text-[var(--background)] px-3 py-1.5 font-semibold">
+      <span class="size-2 rounded-full bg-[var(--background)]" aria-hidden="true"></span>{{$st.Name}}
+    </span>
+    {{else if eq $st.State "done"}}
+    <span class="inline-flex items-center gap-2 font-medium text-foreground">
+      <span class="inline-flex size-6 items-center justify-center rounded-full bg-[var(--foreground)] text-[var(--background)]" aria-hidden="true"><i data-lucide="check" class="size-3.5"></i></span>{{$st.Name}}
+    </span>
+    {{else}}
+    <span class="inline-flex items-center gap-2 text-muted-foreground">
+      <span class="size-6 rounded-full border-2 border-[var(--border)] bg-[var(--background)]" aria-hidden="true"></span>{{$st.Name}}
+    </span>
+    {{end}}
+  </li>
+  {{end}}
+</ol>
+{{end}}
+
 {{if $f.Labels}}
 <div class="flex flex-wrap gap-1 mb-4">
   {{range $f.Labels}}
@@ -51,11 +74,18 @@
 </div>
 {{end}}
 
-<dl class="grid grid-cols-2 sm:grid-cols-6 gap-4 mb-6 text-sm">
+<dl id="finding-summary" class="grid grid-cols-2 sm:grid-cols-6 gap-4 mb-6 text-sm">
   <div>
     <dt class="text-muted-foreground font-semibold">Severity</dt>
     <dd>
-      {{$f.Severity}}
+      <form method="post" action="/findings/{{$f.ID}}/fields" class="flex flex-wrap items-center gap-1">
+        <input type="hidden" name="anchor" value="finding-summary">
+        <input type="text" class="input h-8 w-28" name="severity" aria-label="Severity" value="{{$f.Severity}}" list="severity-options">
+        <datalist id="severity-options">
+          <option value="Critical"><option value="High"><option value="Medium"><option value="Low">
+        </datalist>
+        <button type="submit" class="btn-sm-outline">Save</button>
+      </form>
       {{range $f.SeverityCapList}}<div class="text-xs text-muted-foreground mt-1">{{.}}</div>{{end}}
       {{if $f.SeverityCalibrationIncomplete}}<div class="text-xs text-amber-700 dark:text-amber-400 mt-1">Calibration incomplete</div>{{end}}
     </dd>
@@ -174,13 +204,13 @@
   {{if $f.CVSSVector}}
   <div class="col-span-2">
     <dt class="text-muted-foreground font-semibold"><abbr title="Common Vulnerability Scoring System">CVSS</abbr> v3</dt>
-    <dd><code>{{$f.CVSSVector}}</code>{{if $f.CVSSScore}} ({{$f.CVSSScore}}){{end}}</dd>
+    <dd><code class="break-all">{{$f.CVSSVector}}</code>{{if $f.CVSSScore}} ({{$f.CVSSScore}}){{end}}</dd>
   </div>
   {{end}}
   {{if $f.CVSSv4Vector}}
   <div class="col-span-2">
     <dt class="text-muted-foreground font-semibold">CVSS v4</dt>
-    <dd><code>{{$f.CVSSv4Vector}}</code>{{if $f.CVSSv4Score}} ({{$f.CVSSv4Score}}){{end}}</dd>
+    <dd><code class="break-all">{{$f.CVSSv4Vector}}</code>{{if $f.CVSSv4Score}} ({{$f.CVSSv4Score}}){{end}}</dd>
   </div>
   {{end}}
   {{if $f.FixCommit}}
@@ -229,101 +259,25 @@
   {{end}}
 </dl>
 
+
 {{template "finding_workflow" .Workflow}}
 
-  <section class="border-b py-4" id="verification-run">
-    <h3 class="text-sm font-medium mb-3">Verification</h3>
-    <form method="post" action="/findings/{{$f.ID}}/verify" hx-post="/findings/{{$f.ID}}/verify" hx-swap="none" class="form grid gap-3">
-      <label for="verification-feedback" class="text-sm">Feedback (optional)</label>
-      <textarea id="verification-feedback" name="feedback" class="input w-full" rows="3" maxlength="4000" {{if .Workflow.VerifyInFlight}}disabled{{end}}></textarea>
-      <div class="flex justify-end">
-        {{if .Workflow.VerifyInFlight}}
-        <button type="button" class="btn-outline" disabled><i data-lucide="loader-circle" class="animate-spin"></i> Verification in progress</button>
-        {{else}}
-        <button type="submit" class="{{if eq (printf "%s" $f.Status) "new"}}btn{{else}}btn-outline{{end}}"><i data-lucide="play"></i> {{if .Verifications}}Rerun verification{{else}}Run verification{{end}}</button>
-        {{end}}
-      </div>
-    </form>
-  </section>
-
-<section id="disclosure" class="card mb-6 scroll-mt-6" data-disclosure-editor>
-  <header class="flex items-start justify-between gap-4 mb-4">
-    <div>
-      <div class="flex items-center gap-2">
-        <h3 class="text-lg font-semibold">Disclosure draft</h3>
-        {{if .HasDisclosureDraft}}
-        <span class="badge-secondary">Needs review</span>
-        {{else}}
-        <span class="badge-outline">No saved draft</span>
-        {{end}}
-      </div>
-      {{if .HasDisclosureDraft}}
-      <p class="text-sm text-muted-foreground mt-1">This is the latest saved maintainer-facing draft.</p>
-      {{else if and (eq (printf "%s" $f.Status) "triaged") (not .Workflow.DisclosureBlocked)}}
-      <p class="text-sm text-muted-foreground mt-1">Write or paste a disclosure draft below, or use Draft disclosure to generate one.</p>
-      {{else if and (or (eq (printf "%s" $f.Status) "new") (eq (printf "%s" $f.Status) "enriched")) (not .Workflow.DisclosureBlocked)}}
-      <p class="text-sm text-muted-foreground mt-1">Write or paste a disclosure draft below. Draft disclosure can generate one once the finding is triaged.</p>
-      {{else}}
-      <p class="text-sm text-muted-foreground mt-1">Write or paste a disclosure draft below.</p>
-      {{end}}
-    </div>
-    <div class="flex items-center gap-1" role="tablist" aria-label="Disclosure draft view">
-      <button type="button" id="disclosure-preview-tab-{{$f.ID}}" role="tab"
-              aria-controls="disclosure-preview-panel-{{$f.ID}}" aria-selected="{{if .HasDisclosureDraft}}true{{else}}false{{end}}"
-              tabindex="{{if .HasDisclosureDraft}}0{{else}}-1{{end}}"
-              class="{{if .HasDisclosureDraft}}btn-sm-outline{{else}}btn-sm-ghost{{end}}" data-disclosure-mode="preview">Preview</button>
-      <button type="button" id="disclosure-edit-tab-{{$f.ID}}" role="tab"
-              aria-controls="disclosure-edit-panel-{{$f.ID}}" aria-selected="{{if .HasDisclosureDraft}}false{{else}}true{{end}}"
-              tabindex="{{if .HasDisclosureDraft}}-1{{else}}0{{end}}"
-              class="{{if .HasDisclosureDraft}}btn-sm-ghost{{else}}btn-sm-outline{{end}}" data-disclosure-mode="edit">Edit</button>
-    </div>
-  </header>
-
-  <div id="disclosure-preview-panel-{{$f.ID}}" role="tabpanel" tabindex="0"
-       aria-labelledby="disclosure-preview-tab-{{$f.ID}}" class="prose max-w-none"
-       data-disclosure-preview{{if not .HasDisclosureDraft}} hidden{{end}}>
-    <div class="alert mb-4 not-prose" data-disclosure-preview-stale hidden>
-      <i data-lucide="info"></i>
-      <section>{{if .HasDisclosureDraft}}Showing the saved draft. Save your edits to update this preview.{{else}}Nothing saved yet. Save your draft to preview it.{{end}}</section>
-    </div>
-    {{if .HasDisclosureDraft}}{{md $f.DisclosureDraft}}{{else}}<p class="text-muted-foreground">No saved disclosure draft.</p>{{end}}
-  </div>
-  <div id="disclosure-edit-panel-{{$f.ID}}" role="tabpanel" tabindex="0"
-       aria-labelledby="disclosure-edit-tab-{{$f.ID}}"
-       data-disclosure-form{{if .HasDisclosureDraft}} hidden{{end}}>
-    <form method="post" action="/findings/{{$f.ID}}/disclosure-draft" class="form grid gap-3">
-      <label class="text-xs text-muted-foreground" for="disclosure-draft-{{$f.ID}}">Markdown disclosure</label>
-      <textarea id="disclosure-draft-{{$f.ID}}" class="input font-mono text-xs min-h-96"
-                name="disclosure_draft" rows="24">{{$f.DisclosureDraft}}</textarea>
-      <div class="flex justify-end gap-2">
-        <button type="reset" class="btn-sm-outline" data-disclosure-cancel>Cancel</button>
-        <button type="submit" class="btn-sm-outline">Save</button>
-      </div>
-    </form>
-  </div>
-
-  {{if .HasDisclosureDraft}}
-  <footer class="flex flex-wrap gap-3 mt-4 pt-3 border-t text-xs">
-    <a href="/findings/{{$f.ID}}/disclosure.md" class="text-muted-foreground hover:text-foreground hover:underline inline-flex items-center gap-1">
-      <i data-lucide="download" class="size-3.5"></i> Export saved Markdown
-    </a>
-    <a href="/findings/{{$f.ID}}/report.md" class="text-muted-foreground hover:text-foreground hover:underline inline-flex items-center gap-1">
-      <i data-lucide="file-text" class="size-3.5"></i> Export finding report
-    </a>
-    <a href="/findings/{{$f.ID}}/disclosure.html" target="_blank" rel="noopener"
-       class="text-muted-foreground hover:text-foreground hover:underline inline-flex items-center gap-1"
-       title="Open the draft as styled HTML, then select-all and paste into a Gmail compose window">
-      <i data-lucide="external-link" class="size-3.5"></i> Open Gmail-ready HTML
-    </a>
-  </footer>
+<div class="tabs w-full">
+  <nav role="tablist" aria-orientation="horizontal" aria-label="Finding sections">
+    <button type="button" role="tab" id="ft-analysis" aria-controls="fp-analysis" aria-selected="true">Analysis</button>
+    <button type="button" role="tab" id="ft-remediation" aria-controls="fp-remediation" aria-selected="false" tabindex="-1">Remediation</button>
+    <button type="button" role="tab" id="ft-disclosure" aria-controls="fp-disclosure" aria-selected="false" tabindex="-1">Disclosure</button>
+    <button type="button" role="tab" id="ft-activity" aria-controls="fp-activity" aria-selected="false" tabindex="-1">Activity</button>
+  </nav>
+  <div role="tabpanel" id="fp-analysis" aria-labelledby="ft-analysis" class="pt-2">
+  {{if not (or $f.Trace $f.Boundary $f.Validation $f.PriorArt $f.Reach $f.Rating .Observations .Verifications .AttackPaths .CWE)}}
+  <p class="text-sm text-muted-foreground py-4">No analysis recorded for this finding yet.</p>
   {{end}}
-</section>
-
 <section class="accordion">
   {{if $f.Trace}}
   <details open class="group border-b">
     <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
-      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-base font-semibold hover:underline">
         Step 1: Trace
         <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
       </h3>
@@ -335,7 +289,7 @@
   {{if $f.Boundary}}
   <details class="group border-b">
     <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
-      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-base font-semibold hover:underline">
         Step 2: Trust boundary
         <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
       </h3>
@@ -347,7 +301,7 @@
   {{if $f.Validation}}
   <details open class="group border-b">
     <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
-      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-base font-semibold hover:underline">
         Step 3: Validation
         <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
       </h3>
@@ -359,7 +313,7 @@
   {{if $f.PriorArt}}
   <details class="group border-b">
     <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
-      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-base font-semibold hover:underline">
         Step 4: Prior art
         <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
       </h3>
@@ -371,7 +325,7 @@
   {{if $f.Reach}}
   <details class="group border-b">
     <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
-      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-base font-semibold hover:underline">
         Step 5: Reach
         <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
       </h3>
@@ -383,7 +337,7 @@
   {{if $f.Rating}}
   <details class="group border-b">
     <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
-      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-base font-semibold hover:underline">
         Step 6: Rating
         <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
       </h3>
@@ -392,10 +346,402 @@
   </details>
   {{end}}
 
-  {{if .ShowExposure}}
+  {{with .Observations}}
   <details open class="group border-b">
     <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
-      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-base font-semibold hover:underline">
+        Observations <span class="text-muted-foreground ml-auto mr-2 text-xs">{{.Total}}</span>
+        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
+      </h3>
+    </summary>
+    <section class="pb-4 grid gap-4">
+      <p class="text-xs text-muted-foreground">What each scan reported for this finding. Agreement between scans is not verification.</p>
+      {{if lt (len .Rows) .Total}}
+      <p class="text-xs text-muted-foreground">Showing the newest {{len .Rows}} of {{.Total}}. The full list is at <code>/api/findings/{{$f.ID}}/observations</code>.</p>
+      {{end}}
+      {{if .Disagreements}}
+      <div class="text-sm border rounded-md p-3" role="note">Observations disagree on {{range $i, $d := .Disagreements}}{{if $i}}, {{end}}{{$d}}{{end}}.</div>
+      {{end}}
+      <div class="overflow-x-auto">
+        <table class="table w-full text-sm">
+          <thead><tr><th>Scan</th><th>Skill</th><th>Model</th><th>Severity</th><th>Reported as</th></tr></thead>
+          <tbody>
+          {{range .Rows}}
+            <tr class="align-top">
+              <td class="whitespace-nowrap"><a href="/scans/{{.ScanID}}" class="font-medium hover:underline">#{{.ScanID}}</a>{{if .Commit}}<div><code class="text-xs text-muted-foreground">@{{short .Commit}}</code></div>{{end}}</td>
+              <td>{{if .SkillName}}{{.SkillName}}{{else}}-{{end}}</td>
+              <td class="text-muted-foreground">{{if or .Backend .Model}}{{.Backend}}{{if and .Backend .Model}} · {{end}}{{.Model}}{{else}}-{{end}}</td>
+              <td>{{if .Severity}}{{template "severity-badge" .Severity}}{{end}}{{if .Confidence}}<div class="text-xs text-muted-foreground mt-1">confidence {{.Confidence}}</div>{{end}}{{if .Reachability}}<div class="text-xs text-muted-foreground">{{.Reachability}}</div>{{end}}</td>
+              <td class="whitespace-normal">
+                {{if .Title}}<div>{{.Title}}</div>{{end}}
+                {{if .Rating}}<div class="text-muted-foreground mt-1">{{.Rating}}</div>{{end}}
+                {{if ne .FindingID $f.ID}}<a href="/findings/{{.FindingID}}" class="text-xs hover:underline">from finding #{{.FindingID}}</a>{{end}}
+                {{if .Evidence}}
+                <details class="mt-2">
+                  <summary class="text-xs text-muted-foreground cursor-pointer">Evidence</summary>
+                  <dl class="grid gap-2 text-sm mt-2">
+                    {{range .Evidence}}<div><dt class="text-muted-foreground font-semibold">{{.Name}}</dt><dd class="whitespace-pre-wrap">{{.Value}}</dd></div>{{end}}
+                  </dl>
+                </details>
+                {{end}}
+              </td>
+            </tr>
+          {{end}}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </details>
+  {{end}}
+
+  {{if .Verifications}}
+  <details open class="group border-b">
+    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-base font-semibold hover:underline">
+        Verification history <span class="text-muted-foreground ml-auto mr-2 text-xs">{{len .Verifications}}</span>
+        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
+      </h3>
+    </summary>
+    <section class="pb-4 grid gap-4">
+      <div class="overflow-x-auto">
+        <table class="table w-full text-sm">
+          <thead><tr><th>Scan</th><th>Status</th><th>Score</th><th>Date</th><th>Operator feedback</th></tr></thead>
+          <tbody>
+          {{range .Verifications}}
+            <tr class="align-top">
+              <td><a href="/scans/{{.ScanID}}" class="font-medium hover:underline">#{{.ScanID}}</a></td>
+              <td><span class="badge-outline">{{.Status}}</span></td>
+              <td><span class="badge-outline">{{.ScoreLabel}}</span></td>
+              <td class="text-muted-foreground">{{.CreatedAt.Format "2006-01-02 15:04"}}</td>
+              <td class="whitespace-normal">{{with .VerificationFeedback}}<pre class="whitespace-pre-wrap break-words font-sans">{{.}}</pre>{{else}}<span class="text-muted-foreground">-</span>{{end}}</td>
+            </tr>
+            {{if .HasRubric}}
+            <tr>
+              <td colspan="5" class="whitespace-normal">
+                <details>
+                  <summary class="text-xs text-muted-foreground cursor-pointer">Rubric for scan #{{.ScanID}}</summary>
+                  <div class="mt-3">
+        {{with .AttackTree}}
+        <div class="mb-4">
+          <div class="flex flex-wrap items-center gap-2 text-sm mb-2">
+            <span class="font-medium">Attack path</span>
+            <span class="badge-outline">{{.Verdict}}</span>
+            <span class="text-muted-foreground">{{.Goal}}</span>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead><tr class="border-b"><th class="text-left py-2">Node</th><th class="text-left">Parent</th><th class="text-left">Kind</th><th class="text-left">Status</th><th class="text-left">Condition</th><th class="text-left">Evidence</th></tr></thead>
+              <tbody>
+              {{range .Nodes}}
+                <tr class="border-b align-top">
+                  <td class="py-2 pr-3 font-medium">{{.ID}}</td>
+                  <td class="py-2 pr-3">{{if .ParentID}}{{.ParentID}}{{else}}-{{end}}</td>
+                  <td class="py-2 pr-3">{{.Kind}}</td>
+                  <td class="py-2 pr-3">{{.Status}}</td>
+                  <td class="py-2 pr-3">{{.Description}}</td>
+                  <td class="py-2">{{.Evidence}}</td>
+                </tr>
+              {{end}}
+              </tbody>
+            </table>
+          </div>
+          {{if .Blockers}}<div class="text-sm mt-2"><span class="font-medium">Blockers:</span> {{range $i, $blocker := .Blockers}}{{if $i}}; {{end}}{{$blocker}}{{end}}</div>{{end}}
+        </div>
+        {{end}}
+        {{if .Prerequisites}}
+        <div class="overflow-x-auto mt-4">
+          <table class="w-full text-sm">
+            <thead><tr class="border-b"><th class="text-left py-2">Severity prerequisite</th><th class="text-left">Classification</th><th class="text-left">Evidence</th></tr></thead>
+            <tbody>
+            {{range .Prerequisites}}
+              <tr class="border-b align-top">
+                <td class="py-2 pr-3 font-medium">{{.Name}}</td>
+                <td class="py-2 pr-3">{{.Assessment.Value}}</td>
+                <td class="py-2">{{.Assessment.Evidence}}</td>
+              </tr>
+            {{end}}
+            </tbody>
+          </table>
+        </div>
+        {{end}}
+        <div class="overflow-x-auto">
+          <table class="w-full text-sm">
+            <thead><tr class="border-b"><th class="text-left py-2">Criterion</th><th class="text-left">Verdict</th><th class="text-left">Evidence</th><th class="text-left">Proof gap</th></tr></thead>
+            <tbody>
+            {{range .Criteria}}
+              <tr class="border-b align-top">
+                <td class="py-2 pr-3 font-medium">{{.Name}}</td>
+                <td class="py-2 pr-3">{{.Criterion.Verdict}}</td>
+                <td class="py-2 pr-3"><div>{{.Criterion.Evidence}}</div><div class="text-xs text-muted-foreground mt-1">Method: {{.Criterion.Method}}</div>{{if .Criterion.Counterevidence}}<div class="text-xs text-muted-foreground mt-1">Against: {{.Criterion.Counterevidence}}</div>{{end}}</td>
+                <td class="py-2">{{if .Criterion.ProofGap}}{{.Criterion.ProofGap}}{{else}}-{{end}}</td>
+              </tr>
+            {{end}}
+            </tbody>
+          </table>
+        </div>
+        {{with .ControlBypass}}
+        {{if or .MatchedControls .UnavailableReason}}
+        <div class="mt-4">
+          <div class="flex flex-wrap items-center gap-2 text-sm mb-2">
+            <span class="font-medium">Control bypass</span>
+            <span class="badge-outline">{{len .MatchedControls}} matched</span>
+          </div>
+          {{if .UnavailableReason}}<p class="text-sm text-muted-foreground mb-2">Resolution unavailable: {{.UnavailableReason}}</p>{{end}}
+          {{if .Assessments}}
+          <div class="overflow-x-auto">
+            <table class="w-full text-sm">
+              <thead><tr class="border-b"><th class="text-left py-2">Control</th><th class="text-left">Disposition</th><th class="text-left">Evidence</th></tr></thead>
+              <tbody>
+              {{range .Assessments}}
+                <tr class="border-b align-top">
+                  <td class="py-2 pr-3 font-medium">{{.ControlID}}</td>
+                  <td class="py-2 pr-3">{{.Disposition}}</td>
+                  <td class="py-2">{{.Evidence}}</td>
+                </tr>
+              {{end}}
+              </tbody>
+            </table>
+          </div>
+          {{end}}
+        </div>
+        {{end}}
+        {{end}}
+        <div class="overflow-x-auto mt-4">
+          <table class="w-full text-sm">
+            <thead><tr class="border-b"><th class="text-left py-2">Attempt</th><th class="text-left">Outcome</th><th class="text-left">Failure class</th><th class="text-left">First-party site</th><th class="text-left">Evidence</th></tr></thead>
+            <tbody>
+            {{range .Attempts}}
+              <tr class="border-b align-top">
+                <td class="py-2 pr-3 font-medium">#{{.Number}}</td>
+                <td class="py-2 pr-3">{{.Outcome}}</td>
+                <td class="py-2 pr-3">{{if .FailureClass}}{{.FailureClass}}{{else}}-{{end}}</td>
+                <td class="py-2 pr-3">{{if .CrashSite}}{{.CrashSite}}{{else}}-{{end}}</td>
+                <td class="py-2">{{.Evidence}}</td>
+              </tr>
+            {{end}}
+            </tbody>
+          </table>
+        </div>
+                  </div>
+                </details>
+              </td>
+            </tr>
+            {{end}}
+          {{end}}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </details>
+  {{end}}
+
+  {{if .AttackPaths}}
+  <details open class="group border-b">
+    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-base font-semibold hover:underline">
+        Release viability history <span class="text-muted-foreground ml-auto mr-2 text-xs">{{len .AttackPaths}}</span>
+        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
+      </h3>
+    </summary>
+    <section class="pb-4 grid gap-4">
+      {{range .AttackPaths}}
+      <article class="border-b pb-4 last:border-b-0">
+        <div class="flex flex-wrap items-center gap-2 text-sm mb-3">
+          <a href="/scans/{{.ScanID}}" class="font-medium hover:underline">scan #{{.ScanID}}</a>
+          <span class="badge-outline">{{.ProductionViability}}</span>
+          <span class="text-xs text-muted-foreground">{{.CreatedAt.Format "2006-01-02 15:04"}}</span>
+        </div>
+        {{if .Parsed}}
+        <dl class="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm mb-3">
+          <div><dt class="text-muted-foreground font-semibold">Source state</dt><dd>{{.Assessment.SourceState}}</dd></div>
+          <div><dt class="text-muted-foreground font-semibold">Attacker position</dt><dd>{{.Assessment.AttackerPosition}}</dd></div>
+          <div><dt class="text-muted-foreground font-semibold">Likelihood</dt><dd>{{.Assessment.Likelihood}}</dd></div>
+        </dl>
+        <div class="prose max-w-none text-sm mb-3"><p>{{.Assessment.Reason}}</p><p><strong>Impact:</strong> {{.Assessment.Impact}}</p></div>
+        {{if .Assessment.Preconditions}}<div class="text-sm mb-2"><span class="font-medium">Preconditions:</span> {{range $i, $item := .Assessment.Preconditions}}{{if $i}}; {{end}}{{$item}}{{end}}</div>{{end}}
+        {{if .Assessment.Counterevidence}}<div class="text-sm mb-2"><span class="font-medium">Counterevidence:</span> {{range $i, $item := .Assessment.Counterevidence}}{{if $i}}; {{end}}{{$item}}{{end}}</div>{{end}}
+        {{if .Assessment.FactsThatWouldChangeTheResult}}<div class="text-sm"><span class="font-medium">Would change the result:</span> {{range $i, $item := .Assessment.FactsThatWouldChangeTheResult}}{{if $i}}; {{end}}{{$item}}{{end}}</div>{{end}}
+        {{end}}
+      </article>
+      {{end}}
+    </section>
+  </details>
+  {{end}}
+
+  {{if .CWE}}
+  <details class="group border-b last:border-b-0">
+    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-base font-semibold hover:underline">
+        {{.CWE.ID}}: {{.CWE.Name}}
+        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
+      </h3>
+    </summary>
+    <section class="pb-4 text-sm">
+      <p class="mb-2">{{.CWE.Description}}</p>
+      <a href="https://cwe.mitre.org/data/definitions/{{slice .CWE.ID 4}}.html"
+         target="_blank" rel="noopener"
+         class="text-muted-foreground hover:underline inline-flex items-center gap-1">
+        cwe.mitre.org<i data-lucide="external-link" class="size-3"></i>
+      </a>
+    </section>
+  </details>
+  {{end}}
+</section>
+  </div>
+  <div role="tabpanel" id="fp-remediation" aria-labelledby="ft-remediation" class="pt-2" hidden>
+<section class="accordion">
+  {{if .Patch}}{{$p := .Patch}}{{$ps := .PatchScan}}{{$rem := .CurrentRemediation}}
+  <details open class="group border-b">
+    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-base font-semibold hover:underline">
+        Proposed patch
+        {{with $rem}}<span class="badge-outline ml-2">{{.Status}}</span>{{end}}
+        <span class="text-muted-foreground ml-auto mr-2 text-xs">scan #{{$ps.ID}}</span>
+        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
+      </h3>
+    </summary>
+    <section class="pb-4 grid gap-3">
+      {{if $p.Rationale}}
+        <p class="text-sm">{{$p.Rationale}}</p>
+      {{end}}
+      {{if $p.FilesChanged}}
+        <div class="text-xs text-muted-foreground">
+          Files changed:
+          {{range $i, $f := $p.FilesChanged}}{{if $i}}, {{end}}<code>{{$f}}</code>{{end}}
+        </div>
+      {{end}}
+      <div class="flex flex-wrap gap-2 items-center">
+        <a class="btn-sm-outline" href="/findings/{{$f.ID}}/patch.diff">
+          <i data-lucide="download"></i> Download .patch
+        </a>
+        <a class="btn-sm-outline" href="/scans/{{$ps.ID}}">
+          <i data-lucide="arrow-up-right"></i> View scan
+        </a>
+        {{if not $rem}}
+        <span class="text-xs text-muted-foreground" title="Legacy patches need a fresh gated patch attempt before re-attack">Re-run Propose patch to enable re-attack</span>
+        {{else if .ReattackInFlight}}
+        <button type="button" class="btn-sm-outline" disabled title="This patch attempt is already being re-attacked">
+          <i data-lucide="loader-circle" class="animate-spin"></i> Re-attack in progress
+        </button>
+        {{else}}
+        <form method="post" action="/findings/{{$f.ID}}/reattack" hx-post="/findings/{{$f.ID}}/reattack" hx-swap="none">
+          <button type="submit" class="btn-sm-outline">
+            <i data-lucide="shield-check"></i> Re-attack patch
+          </button>
+        </form>
+        {{end}}
+        {{if $p.BaseCommit}}
+          <span class="text-xs text-muted-foreground">base <code>{{short $p.BaseCommit}}</code></span>
+        {{end}}
+        {{if $p.TestsAdded}}
+          <span class="badge-secondary">includes test</span>
+        {{end}}
+      </div>
+      <details class="group">
+        <summary class="text-xs text-muted-foreground cursor-pointer hover:underline">
+          How to apply
+        </summary>
+        <pre class="log mt-2">cd path/to/{{$repo.Name}}
+{{if $p.BaseCommit}}git checkout {{short $p.BaseCommit}}
+{{end}}git checkout -b fix/finding-{{$f.ID}}
+git apply --index ~/Downloads/finding-{{$f.ID}}.patch
+git commit -m "fix: {{$f.Title}}"</pre>
+      </details>
+      {{if $p.Notes}}
+        <div class="text-xs text-muted-foreground border-l-2 pl-3 mt-1">{{$p.Notes}}</div>
+      {{end}}
+      {{if .RemediationAttempts}}
+      <details class="group">
+        <summary class="text-xs text-muted-foreground cursor-pointer hover:underline">
+          Patch attempt history ({{len .RemediationAttempts}})
+        </summary>
+        <div class="overflow-x-auto mt-2">
+          <table class="w-full text-xs">
+            <thead class="text-muted-foreground">
+              <tr><th class="text-left py-2">Attempt</th><th class="text-left">Patch scan</th><th class="text-left">Status</th><th class="text-left">Re-attack</th><th class="text-left">Evidence</th></tr>
+            </thead>
+            <tbody>
+              {{range .RemediationAttempts}}
+              <tr class="border-t align-top">
+                <td class="py-2">#{{.Attempt}} <code>@{{short .BaseCommit}}</code></td>
+                <td><a href="/scans/{{.PatchScanID}}" class="hover:underline">#{{.PatchScanID}}</a></td>
+                <td><span class="badge-outline">{{.Status}}</span></td>
+                <td>{{with .Validation}}<a href="/scans/{{.ScanID}}" class="hover:underline">#{{.ScanID}}</a>{{else}}-{{end}}</td>
+                <td>{{with .Validation}}{{.ValidVariants}} variants; benign {{if .BenignControlPassed}}passed{{else}}not proven{{end}}{{if .BypassInput}}; bypass captured{{end}}{{else}}not run{{end}}</td>
+              </tr>
+              {{end}}
+            </tbody>
+          </table>
+        </div>
+      </details>
+      {{end}}
+      {{if $f.BreakingChange}}
+        <div class="mt-3 border rounded p-3 text-sm">
+          <div class="flex items-center justify-between gap-2">
+            <div class="flex items-center gap-2">
+              <span class="text-xs text-muted-foreground uppercase">Breaking change</span>
+              <span class="font-medium">{{$f.BreakingChange}}</span>
+            </div>
+          </div>
+          {{if $f.BreakingChangeRationale}}
+            <pre class="whitespace-pre-wrap font-sans text-xs text-muted-foreground mt-2">{{$f.BreakingChangeRationale}}</pre>
+          {{end}}
+        </div>
+      {{end}}
+    </section>
+  </details>
+  {{end}}
+
+  {{if $f.Mitigation}}
+  <details open class="group border-b">
+    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-base font-semibold hover:underline">
+        Mitigation guidance
+        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
+      </h3>
+    </summary>
+    <section class="pb-4 grid gap-3">
+      <div class="prose prose-sm">{{md $f.Mitigation}}</div>
+      {{if $f.MitigationSemgrep}}
+      <div class="grid gap-1">
+        <div class="text-xs text-muted-foreground">Semgrep rule</div>
+        <pre class="log overflow-x-auto"><code>{{$f.MitigationSemgrep}}</code></pre>
+      </div>
+      {{end}}
+    </section>
+  </details>
+  {{end}}
+
+  <details class="group border-b">
+    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-base font-semibold hover:underline">
+        Fix validation
+        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
+      </h3>
+    </summary>
+    <section class="pb-4 grid gap-3">
+      <p class="text-xs text-muted-foreground">
+        Re-scan a candidate fix ref with this finding's skill and re-run verify against it, then diff the
+        findings by fingerprint: resolved, surviving, or newly introduced. The validation report lands on
+        the scan it kicks off.
+      </p>
+      <form method="post" action="/repositories/{{$repo.ID}}/validate-fix"
+            hx-post="/repositories/{{$repo.ID}}/validate-fix" hx-swap="none"
+            class="flex flex-wrap items-center gap-2">
+        <input type="hidden" name="finding_ids" value="{{$f.ID}}">
+        <input class="input max-w-xs" type="text" name="ref" required
+               placeholder="fix branch, tag, or commit">
+        <button type="submit" class="btn-sm-outline">
+          <i data-lucide="git-compare"></i> Validate fix
+        </button>
+      </form>
+    </section>
+  </details>
+
+  {{if .ShowExposure}}
+  <details id="exposure" open class="group border-b">
+    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-base font-semibold hover:underline">
         Dependent exposure
         <span class="text-muted-foreground ml-auto mr-2 text-xs">{{len .Exposures}}</span>
         <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
@@ -434,9 +780,9 @@
   {{end}}
 
   {{if .MigrationGuide}}{{$g := .MigrationGuide}}
-  <details open class="group border-b">
+  <details id="migration-guide" open class="group border-b">
     <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
-      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-base font-semibold hover:underline">
         Migration guide
         {{if $g.Alternatives}}<span class="text-muted-foreground ml-auto mr-2 text-xs">{{len $g.Alternatives}} alternative{{if ne (len $g.Alternatives) 1}}s{{end}}</span>{{end}}
         <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
@@ -544,175 +890,95 @@
     </section>
   </details>
   {{end}}
-
-  <details class="group border-b">
-    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
-      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
-        Fix validation
-        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
-      </h3>
-    </summary>
-    <section class="pb-4 grid gap-3">
-      <p class="text-xs text-muted-foreground">
-        Re-scan a candidate fix ref with this finding's skill and re-run verify against it, then diff the
-        findings by fingerprint: resolved, surviving, or newly introduced. The validation report lands on
-        the scan it kicks off.
-      </p>
-      <form method="post" action="/repositories/{{$repo.ID}}/validate-fix"
-            hx-post="/repositories/{{$repo.ID}}/validate-fix" hx-swap="none"
-            class="flex flex-wrap items-center gap-2">
-        <input type="hidden" name="finding_ids" value="{{$f.ID}}">
-        <input class="input max-w-xs" type="text" name="ref" required
-               placeholder="fix branch, tag, or commit">
-        <button type="submit" class="btn-sm-outline">
-          <i data-lucide="git-compare"></i> Validate fix
-        </button>
-      </form>
-    </section>
-  </details>
-
-  {{if $f.Mitigation}}
-  <details open class="group border-b">
-    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
-      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
-        Mitigation guidance
-        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
-      </h3>
-    </summary>
-    <section class="pb-4 grid gap-3">
-      <div class="prose prose-sm">{{md $f.Mitigation}}</div>
-      {{if $f.MitigationSemgrep}}
-      <div class="grid gap-1">
-        <div class="text-xs text-muted-foreground">Semgrep rule</div>
-        <pre class="log overflow-x-auto"><code>{{$f.MitigationSemgrep}}</code></pre>
-      </div>
-      {{end}}
-    </section>
-  </details>
-  {{end}}
-
-  {{if .Patch}}{{$p := .Patch}}{{$ps := .PatchScan}}{{$rem := .CurrentRemediation}}
-  <details open class="group border-b">
-    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
-      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
-        Proposed patch
-        {{with $rem}}<span class="badge-outline ml-2">{{.Status}}</span>{{end}}
-        <span class="text-muted-foreground ml-auto mr-2 text-xs">scan #{{$ps.ID}}</span>
-        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
-      </h3>
-    </summary>
-    <section class="pb-4 grid gap-3">
-      {{if $p.Rationale}}
-        <p class="text-sm">{{$p.Rationale}}</p>
-      {{end}}
-      {{if $p.FilesChanged}}
-        <div class="text-xs text-muted-foreground">
-          Files changed:
-          {{range $i, $f := $p.FilesChanged}}{{if $i}}, {{end}}<code>{{$f}}</code>{{end}}
-        </div>
-      {{end}}
-      <div class="flex flex-wrap gap-2 items-center">
-        <a class="btn-sm-outline" href="/findings/{{$f.ID}}/patch.diff">
-          <i data-lucide="download"></i> Download .patch
-        </a>
-        <a class="btn-sm-outline" href="/scans/{{$ps.ID}}">
-          <i data-lucide="arrow-up-right"></i> View scan
-        </a>
-        {{if not $rem}}
-        <span class="text-xs text-muted-foreground" title="Legacy patches need a fresh gated patch attempt before re-attack">Re-run Propose patch to enable re-attack</span>
-        {{else if .ReattackInFlight}}
-        <button type="button" class="btn-sm-outline" disabled title="This patch attempt is already being re-attacked">
-          <i data-lucide="loader-circle" class="animate-spin"></i> Re-attack in progress
-        </button>
+</section>
+  </div>
+  <div role="tabpanel" id="fp-disclosure" aria-labelledby="ft-disclosure" class="pt-2" hidden>
+<section id="disclosure" class="card mb-6 scroll-mt-6" data-disclosure-editor>
+  <header class="flex items-start justify-between gap-4 mb-4">
+    <div>
+      <div class="flex items-center gap-2">
+        <h3 class="text-lg font-semibold">Disclosure draft</h3>
+        {{if .HasDisclosureDraft}}
+        <span class="badge-secondary">Needs review</span>
         {{else}}
-        <form method="post" action="/findings/{{$f.ID}}/reattack" hx-post="/findings/{{$f.ID}}/reattack" hx-swap="none">
-          <button type="submit" class="btn-sm-outline">
-            <i data-lucide="shield-check"></i> Re-attack patch
-          </button>
-        </form>
-        {{end}}
-        {{if $p.BaseCommit}}
-          <span class="text-xs text-muted-foreground">base <code>{{short $p.BaseCommit}}</code></span>
-        {{end}}
-        {{if $p.TestsAdded}}
-          <span class="badge-secondary">includes test</span>
+        <span class="badge-outline">No saved draft</span>
         {{end}}
       </div>
-      <details class="group">
-        <summary class="text-xs text-muted-foreground cursor-pointer hover:underline">
-          How to apply
-        </summary>
-        <pre class="log mt-2">cd path/to/{{$repo.Name}}
-{{if $p.BaseCommit}}git checkout {{short $p.BaseCommit}}
-{{end}}git checkout -b fix/finding-{{$f.ID}}
-git apply --index ~/Downloads/finding-{{$f.ID}}.patch
-git commit -m "fix: {{$f.Title}}"</pre>
-      </details>
-      {{if $p.Notes}}
-        <div class="text-xs text-muted-foreground border-l-2 pl-3 mt-1">{{$p.Notes}}</div>
+      {{if .HasDisclosureDraft}}
+      <p class="text-sm text-muted-foreground mt-1">This is the latest saved maintainer-facing draft.</p>
+      {{else if and (eq (printf "%s" $f.Status) "triaged") (not .Workflow.DisclosureBlocked)}}
+      <p class="text-sm text-muted-foreground mt-1">Write or paste a disclosure draft below, or use Draft disclosure to generate one.</p>
+      {{else if and (or (eq (printf "%s" $f.Status) "new") (eq (printf "%s" $f.Status) "enriched")) (not .Workflow.DisclosureBlocked)}}
+      <p class="text-sm text-muted-foreground mt-1">Write or paste a disclosure draft below. Draft disclosure can generate one once the finding is triaged.</p>
+      {{else}}
+      <p class="text-sm text-muted-foreground mt-1">Write or paste a disclosure draft below.</p>
       {{end}}
-      {{if .RemediationAttempts}}
-      <details class="group">
-        <summary class="text-xs text-muted-foreground cursor-pointer hover:underline">
-          Patch attempt history ({{len .RemediationAttempts}})
-        </summary>
-        <div class="overflow-x-auto mt-2">
-          <table class="w-full text-xs">
-            <thead class="text-muted-foreground">
-              <tr><th class="text-left py-2">Attempt</th><th class="text-left">Patch scan</th><th class="text-left">Status</th><th class="text-left">Re-attack</th><th class="text-left">Evidence</th></tr>
-            </thead>
-            <tbody>
-              {{range .RemediationAttempts}}
-              <tr class="border-t align-top">
-                <td class="py-2">#{{.Attempt}} <code>@{{short .BaseCommit}}</code></td>
-                <td><a href="/scans/{{.PatchScanID}}" class="hover:underline">#{{.PatchScanID}}</a></td>
-                <td><span class="badge-outline">{{.Status}}</span></td>
-                <td>{{with .Validation}}<a href="/scans/{{.ScanID}}" class="hover:underline">#{{.ScanID}}</a>{{else}}-{{end}}</td>
-                <td>{{with .Validation}}{{.ValidVariants}} variants; benign {{if .BenignControlPassed}}passed{{else}}not proven{{end}}{{if .BypassInput}}; bypass captured{{end}}{{else}}not run{{end}}</td>
-              </tr>
-              {{end}}
-            </tbody>
-          </table>
-        </div>
-      </details>
-      {{end}}
-      {{if $f.BreakingChange}}
-        <div class="mt-3 border rounded p-3 text-sm">
-          <div class="flex items-center justify-between gap-2">
-            <div class="flex items-center gap-2">
-              <span class="text-xs text-muted-foreground uppercase">Breaking change</span>
-              <span class="font-medium">{{$f.BreakingChange}}</span>
-            </div>
-          </div>
-          {{if $f.BreakingChangeRationale}}
-            <pre class="whitespace-pre-wrap font-sans text-xs text-muted-foreground mt-2">{{$f.BreakingChangeRationale}}</pre>
-          {{end}}
-        </div>
-      {{end}}
-    </section>
-  </details>
-  {{end}}
+    </div>
+    <div class="flex items-center gap-1" role="tablist" aria-label="Disclosure draft view">
+      <button type="button" id="disclosure-preview-tab-{{$f.ID}}" role="tab"
+              aria-controls="disclosure-preview-panel-{{$f.ID}}" aria-selected="{{if .HasDisclosureDraft}}true{{else}}false{{end}}"
+              tabindex="{{if .HasDisclosureDraft}}0{{else}}-1{{end}}"
+              class="{{if .HasDisclosureDraft}}btn-sm-outline{{else}}btn-sm-ghost{{end}}" data-disclosure-mode="preview">Preview</button>
+      <button type="button" id="disclosure-edit-tab-{{$f.ID}}" role="tab"
+              aria-controls="disclosure-edit-panel-{{$f.ID}}" aria-selected="{{if .HasDisclosureDraft}}false{{else}}true{{end}}"
+              tabindex="{{if .HasDisclosureDraft}}-1{{else}}0{{end}}"
+              class="{{if .HasDisclosureDraft}}btn-sm-ghost{{else}}btn-sm-outline{{end}}" data-disclosure-mode="edit">Edit</button>
+    </div>
+  </header>
 
-  <details class="group border-b">
+  <div id="disclosure-preview-panel-{{$f.ID}}" role="tabpanel" tabindex="0"
+       aria-labelledby="disclosure-preview-tab-{{$f.ID}}" class="prose max-w-none"
+       data-disclosure-preview{{if not .HasDisclosureDraft}} hidden{{end}}>
+    <div class="alert mb-4 not-prose" data-disclosure-preview-stale hidden>
+      <i data-lucide="info"></i>
+      <section>{{if .HasDisclosureDraft}}Showing the saved draft. Save your edits to update this preview.{{else}}Nothing saved yet. Save your draft to preview it.{{end}}</section>
+    </div>
+    {{if .HasDisclosureDraft}}{{md $f.DisclosureDraft}}{{else}}<p class="text-muted-foreground">No saved disclosure draft.</p>{{end}}
+  </div>
+  <div id="disclosure-edit-panel-{{$f.ID}}" role="tabpanel" tabindex="0"
+       aria-labelledby="disclosure-edit-tab-{{$f.ID}}"
+       data-disclosure-form{{if .HasDisclosureDraft}} hidden{{end}}>
+    <form method="post" action="/findings/{{$f.ID}}/disclosure-draft" class="form grid gap-3">
+      <label class="text-xs text-muted-foreground" for="disclosure-draft-{{$f.ID}}">Markdown disclosure</label>
+      <textarea id="disclosure-draft-{{$f.ID}}" class="input font-mono text-xs min-h-96"
+                name="disclosure_draft" rows="24">{{$f.DisclosureDraft}}</textarea>
+      <div class="flex justify-end gap-2">
+        <button type="reset" class="btn-sm-outline" data-disclosure-cancel>Cancel</button>
+        <button type="submit" class="btn-sm-outline">Save</button>
+      </div>
+    </form>
+  </div>
+
+  {{if .HasDisclosureDraft}}
+  <footer class="flex flex-wrap gap-3 mt-4 pt-3 border-t text-xs">
+    <a href="/findings/{{$f.ID}}/disclosure.md" class="text-muted-foreground hover:text-foreground hover:underline inline-flex items-center gap-1">
+      <i data-lucide="download" class="size-3.5"></i> Export saved Markdown
+    </a>
+    <a href="/findings/{{$f.ID}}/report.md" class="text-muted-foreground hover:text-foreground hover:underline inline-flex items-center gap-1">
+      <i data-lucide="file-text" class="size-3.5"></i> Export finding report
+    </a>
+    <a href="/findings/{{$f.ID}}/disclosure.html" target="_blank" rel="noopener"
+       class="text-muted-foreground hover:text-foreground hover:underline inline-flex items-center gap-1"
+       title="Open the draft as styled HTML, then select-all and paste into a Gmail compose window">
+      <i data-lucide="external-link" class="size-3.5"></i> Open Gmail-ready HTML
+    </a>
+  </footer>
+  {{end}}
+</section>
+<section class="accordion">
+  <details id="disclosure-fields" class="group border-b">
     <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
-      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-base font-semibold hover:underline">
         Disclosure fields
         <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
       </h3>
     </summary>
     <section class="pb-4">
-      <form method="post" action="/findings/{{$f.ID}}/fields" class="form grid grid-cols-2 gap-3">
-        <div class="grid gap-1 col-span-2">
+      <form method="post" action="/findings/{{$f.ID}}/fields" class="form grid grid-cols-2 md:grid-cols-4 gap-x-4 gap-y-3">
+        <div class="grid gap-1 col-span-2 md:col-span-4">
           <label class="text-xs text-muted-foreground"
                  title="The disclose skill's drafted GHSA summary. May differ from the finding's own title above, which is set at audit time and left untouched by disclose re-runs.">Disclosure title</label>
           <input type="text" class="input" name="disclosure_title" value="{{$f.DisclosureTitle}}">
-        </div>
-        <div class="grid gap-1">
-          <label class="text-xs text-muted-foreground">Severity</label>
-          <input type="text" class="input" name="severity" value="{{$f.Severity}}" list="severity-options">
-          <datalist id="severity-options">
-            <option value="Critical"><option value="High"><option value="Medium"><option value="Low">
-          </datalist>
         </div>
         <div class="grid gap-1">
           <label class="text-xs text-muted-foreground">CWE</label>
@@ -727,12 +993,12 @@ git commit -m "fix: {{$f.Title}}"</pre>
           <input type="text" class="input" name="ghsa_id" value="{{$f.GHSAID}}" placeholder="GHSA-xxxx-xxxx-xxxx"
             pattern="[Gg][Hh][Ss][Aa](-[0-9A-Za-z]{4}){3}" title="GHSA-xxxx-xxxx-xxxx">
         </div>
-        <div class="grid gap-1 col-span-2">
+        <div class="grid gap-1 col-span-2 md:col-span-4">
           <label class="text-xs text-muted-foreground">CVSS v3 vector</label>
           <input type="text" class="input font-mono text-xs" name="cvss_vector" value="{{$f.CVSSVector}}"
                  placeholder="CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H">
         </div>
-        <div class="grid gap-1 col-span-2">
+        <div class="grid gap-1 col-span-2 md:col-span-4">
           <label class="text-xs text-muted-foreground">CVSS v4 vector</label>
           <input type="text" class="input font-mono text-xs" name="cvss_v4_vector" value="{{$f.CVSSv4Vector}}"
                  placeholder="CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N">
@@ -767,298 +1033,16 @@ git commit -m "fix: {{$f.Title}}"</pre>
                  title="File-level owners of the finding's location, from CODEOWNERS or recent non-bot committers">Suggested recipients</label>
           <input type="text" class="input" name="suggested_recipients" value="{{$f.SuggestedRecipients}}">
         </div>
-        <div class="col-span-2 flex justify-end">
+        <div class="col-span-2 md:col-span-4 flex justify-end">
           <button type="submit" class="btn-sm-outline">Save</button>
         </div>
       </form>
     </section>
   </details>
 
-  <details open class="group border-b">
+  <details id="communications" class="group border-b">
     <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
-      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
-        Notes <span class="text-muted-foreground ml-auto mr-2 text-xs">{{len .Notes}}</span>
-        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
-      </h3>
-    </summary>
-    <section class="pb-4 grid gap-3">
-      <form method="post" action="/findings/{{$f.ID}}/notes" class="form grid gap-2">
-        <textarea class="input" name="body" rows="3" placeholder="Add a note..." required></textarea>
-        <div class="flex justify-end">
-          <button type="submit" class="btn-sm-outline">Add note</button>
-        </div>
-      </form>
-      <ul class="grid gap-2">
-      {{range .Notes}}
-        <li class="border rounded p-3 text-sm">
-          <div class="text-xs text-muted-foreground mb-1">{{if .By}}{{.By}} · {{end}}{{.CreatedAt.Format "2006-01-02 15:04"}}</div>
-          <pre class="whitespace-pre-wrap font-sans">{{.Body}}</pre>
-        </li>
-      {{else}}
-        <li class="text-sm text-muted-foreground">No notes yet.</li>
-      {{end}}
-      </ul>
-    </section>
-  </details>
-
-  {{if .Verifications}}
-  <details open class="group border-b">
-    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
-      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
-        Verification history <span class="text-muted-foreground ml-auto mr-2 text-xs">{{len .Verifications}}</span>
-        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
-      </h3>
-    </summary>
-    <section class="pb-4 grid gap-4">
-      {{range .Verifications}}
-      <article class="border-b pb-4 last:border-b-0">
-        <div class="flex items-center gap-2 text-sm mb-3">
-          <a href="/scans/{{.ScanID}}" class="font-medium hover:underline">scan #{{.ScanID}}</a>
-          <span class="badge-outline">{{.Status}}</span>
-          <span class="badge-outline">{{.ScoreLabel}}</span>
-          <span class="text-xs text-muted-foreground">{{.CreatedAt.Format "2006-01-02 15:04"}}</span>
-        </div>
-        {{with .VerificationFeedback}}
-        <div class="mb-3 text-sm"><span class="font-medium">Operator feedback</span><pre class="whitespace-pre-wrap break-words font-sans">{{.}}</pre></div>
-        {{end}}
-        {{if .HasRubric}}
-        {{with .AttackTree}}
-        <div class="mb-4">
-          <div class="flex flex-wrap items-center gap-2 text-sm mb-2">
-            <span class="font-medium">Attack path</span>
-            <span class="badge-outline">{{.Verdict}}</span>
-            <span class="text-muted-foreground">{{.Goal}}</span>
-          </div>
-          <div class="overflow-x-auto">
-            <table class="w-full text-sm">
-              <thead><tr class="border-b"><th class="text-left py-2">Node</th><th class="text-left">Parent</th><th class="text-left">Kind</th><th class="text-left">Status</th><th class="text-left">Condition</th><th class="text-left">Evidence</th></tr></thead>
-              <tbody>
-              {{range .Nodes}}
-                <tr class="border-b align-top">
-                  <td class="py-2 pr-3 font-medium">{{.ID}}</td>
-                  <td class="py-2 pr-3">{{if .ParentID}}{{.ParentID}}{{else}}-{{end}}</td>
-                  <td class="py-2 pr-3">{{.Kind}}</td>
-                  <td class="py-2 pr-3">{{.Status}}</td>
-                  <td class="py-2 pr-3">{{.Description}}</td>
-                  <td class="py-2">{{.Evidence}}</td>
-                </tr>
-              {{end}}
-              </tbody>
-            </table>
-          </div>
-          {{if .Blockers}}<div class="text-sm mt-2"><span class="font-medium">Blockers:</span> {{range $i, $blocker := .Blockers}}{{if $i}}; {{end}}{{$blocker}}{{end}}</div>{{end}}
-        </div>
-        {{end}}
-        {{if .Prerequisites}}
-        <div class="overflow-x-auto mt-4">
-          <table class="w-full text-sm">
-            <thead><tr class="border-b"><th class="text-left py-2">Severity prerequisite</th><th class="text-left">Classification</th><th class="text-left">Evidence</th></tr></thead>
-            <tbody>
-            {{range .Prerequisites}}
-              <tr class="border-b align-top">
-                <td class="py-2 pr-3 font-medium">{{.Name}}</td>
-                <td class="py-2 pr-3">{{.Assessment.Value}}</td>
-                <td class="py-2">{{.Assessment.Evidence}}</td>
-              </tr>
-            {{end}}
-            </tbody>
-          </table>
-        </div>
-        {{end}}
-        <div class="overflow-x-auto">
-          <table class="w-full text-sm">
-            <thead><tr class="border-b"><th class="text-left py-2">Criterion</th><th class="text-left">Verdict</th><th class="text-left">Evidence</th><th class="text-left">Proof gap</th></tr></thead>
-            <tbody>
-            {{range .Criteria}}
-              <tr class="border-b align-top">
-                <td class="py-2 pr-3 font-medium">{{.Name}}</td>
-                <td class="py-2 pr-3">{{.Criterion.Verdict}}</td>
-                <td class="py-2 pr-3"><div>{{.Criterion.Evidence}}</div><div class="text-xs text-muted-foreground mt-1">Method: {{.Criterion.Method}}</div>{{if .Criterion.Counterevidence}}<div class="text-xs text-muted-foreground mt-1">Against: {{.Criterion.Counterevidence}}</div>{{end}}</td>
-                <td class="py-2">{{if .Criterion.ProofGap}}{{.Criterion.ProofGap}}{{else}}-{{end}}</td>
-              </tr>
-            {{end}}
-            </tbody>
-          </table>
-        </div>
-        {{with .ControlBypass}}
-        {{if or .MatchedControls .UnavailableReason}}
-        <div class="mt-4">
-          <div class="flex flex-wrap items-center gap-2 text-sm mb-2">
-            <span class="font-medium">Control bypass</span>
-            <span class="badge-outline">{{len .MatchedControls}} matched</span>
-          </div>
-          {{if .UnavailableReason}}<p class="text-sm text-muted-foreground mb-2">Resolution unavailable: {{.UnavailableReason}}</p>{{end}}
-          {{if .Assessments}}
-          <div class="overflow-x-auto">
-            <table class="w-full text-sm">
-              <thead><tr class="border-b"><th class="text-left py-2">Control</th><th class="text-left">Disposition</th><th class="text-left">Evidence</th></tr></thead>
-              <tbody>
-              {{range .Assessments}}
-                <tr class="border-b align-top">
-                  <td class="py-2 pr-3 font-medium">{{.ControlID}}</td>
-                  <td class="py-2 pr-3">{{.Disposition}}</td>
-                  <td class="py-2">{{.Evidence}}</td>
-                </tr>
-              {{end}}
-              </tbody>
-            </table>
-          </div>
-          {{end}}
-        </div>
-        {{end}}
-        {{end}}
-        <div class="overflow-x-auto mt-4">
-          <table class="w-full text-sm">
-            <thead><tr class="border-b"><th class="text-left py-2">Attempt</th><th class="text-left">Outcome</th><th class="text-left">Failure class</th><th class="text-left">First-party site</th><th class="text-left">Evidence</th></tr></thead>
-            <tbody>
-            {{range .Attempts}}
-              <tr class="border-b align-top">
-                <td class="py-2 pr-3 font-medium">#{{.Number}}</td>
-                <td class="py-2 pr-3">{{.Outcome}}</td>
-                <td class="py-2 pr-3">{{if .FailureClass}}{{.FailureClass}}{{else}}-{{end}}</td>
-                <td class="py-2 pr-3">{{if .CrashSite}}{{.CrashSite}}{{else}}-{{end}}</td>
-                <td class="py-2">{{.Evidence}}</td>
-              </tr>
-            {{end}}
-            </tbody>
-          </table>
-        </div>
-        {{end}}
-      </article>
-      {{end}}
-    </section>
-  </details>
-  {{end}}
-
-  {{with .Observations}}
-  <details open class="group border-b">
-    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
-      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
-        Observations <span class="text-muted-foreground ml-auto mr-2 text-xs">{{.Total}}</span>
-        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
-      </h3>
-    </summary>
-    <section class="pb-4 grid gap-4">
-      <p class="text-xs text-muted-foreground">What each scan reported for this finding. Agreement between scans is not verification.</p>
-      {{if lt (len .Rows) .Total}}
-      <p class="text-xs text-muted-foreground">Showing the newest {{len .Rows}} of {{.Total}}. The full list is at <code>/api/findings/{{$f.ID}}/observations</code>.</p>
-      {{end}}
-      {{if .Disagreements}}
-      <div class="text-sm border rounded-md p-3" role="note">Observations disagree on {{range $i, $d := .Disagreements}}{{if $i}}, {{end}}{{$d}}{{end}}.</div>
-      {{end}}
-      {{range .Rows}}
-      <article class="border-b pb-4 last:border-b-0">
-        <div class="flex flex-wrap items-center gap-2 text-sm mb-2">
-          <a href="/scans/{{.ScanID}}" class="font-medium hover:underline">scan #{{.ScanID}}</a>
-          {{if .SkillName}}<span class="badge-outline">{{.SkillName}}</span>{{end}}
-          {{if .Backend}}<span class="text-xs text-muted-foreground">{{.Backend}}</span>{{end}}
-          {{if .Model}}<span class="text-xs text-muted-foreground">{{.Model}}</span>{{end}}
-          {{if .Commit}}<code class="text-xs text-muted-foreground">@{{short .Commit}}</code>{{end}}
-          {{if .Severity}}{{template "severity-badge" .Severity}}{{end}}
-          {{if .Confidence}}<span class="text-xs text-muted-foreground">confidence {{.Confidence}}</span>{{end}}
-          {{if .Reachability}}<span class="text-xs text-muted-foreground">{{.Reachability}}</span>{{end}}
-          {{if ne .FindingID $f.ID}}<a href="/findings/{{.FindingID}}" class="text-xs hover:underline">from finding #{{.FindingID}}</a>{{end}}
-        </div>
-        {{if .Title}}<div class="text-sm">{{.Title}}</div>{{end}}
-        {{if .Rating}}<div class="text-sm text-muted-foreground mt-1">{{.Rating}}</div>{{end}}
-        {{if .Evidence}}
-        <details class="mt-2">
-          <summary class="text-xs text-muted-foreground cursor-pointer">Evidence</summary>
-          <dl class="grid gap-2 text-sm mt-2">
-            {{range .Evidence}}<div><dt class="text-muted-foreground font-semibold">{{.Name}}</dt><dd class="whitespace-pre-wrap">{{.Value}}</dd></div>{{end}}
-          </dl>
-        </details>
-        {{end}}
-      </article>
-      {{end}}
-    </section>
-  </details>
-  {{end}}
-
-  {{if .AttackPaths}}
-  <details open class="group border-b">
-    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
-      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
-        Release viability history <span class="text-muted-foreground ml-auto mr-2 text-xs">{{len .AttackPaths}}</span>
-        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
-      </h3>
-    </summary>
-    <section class="pb-4 grid gap-4">
-      {{range .AttackPaths}}
-      <article class="border-b pb-4 last:border-b-0">
-        <div class="flex flex-wrap items-center gap-2 text-sm mb-3">
-          <a href="/scans/{{.ScanID}}" class="font-medium hover:underline">scan #{{.ScanID}}</a>
-          <span class="badge-outline">{{.ProductionViability}}</span>
-          <span class="text-xs text-muted-foreground">{{.CreatedAt.Format "2006-01-02 15:04"}}</span>
-        </div>
-        {{if .Parsed}}
-        <dl class="grid grid-cols-1 md:grid-cols-3 gap-3 text-sm mb-3">
-          <div><dt class="text-muted-foreground font-semibold">Source state</dt><dd>{{.Assessment.SourceState}}</dd></div>
-          <div><dt class="text-muted-foreground font-semibold">Attacker position</dt><dd>{{.Assessment.AttackerPosition}}</dd></div>
-          <div><dt class="text-muted-foreground font-semibold">Likelihood</dt><dd>{{.Assessment.Likelihood}}</dd></div>
-        </dl>
-        <div class="prose max-w-none text-sm mb-3"><p>{{.Assessment.Reason}}</p><p><strong>Impact:</strong> {{.Assessment.Impact}}</p></div>
-        {{if .Assessment.Preconditions}}<div class="text-sm mb-2"><span class="font-medium">Preconditions:</span> {{range $i, $item := .Assessment.Preconditions}}{{if $i}}; {{end}}{{$item}}{{end}}</div>{{end}}
-        {{if .Assessment.Counterevidence}}<div class="text-sm mb-2"><span class="font-medium">Counterevidence:</span> {{range $i, $item := .Assessment.Counterevidence}}{{if $i}}; {{end}}{{$item}}{{end}}</div>{{end}}
-        {{if .Assessment.FactsThatWouldChangeTheResult}}<div class="text-sm"><span class="font-medium">Would change the result:</span> {{range $i, $item := .Assessment.FactsThatWouldChangeTheResult}}{{if $i}}; {{end}}{{$item}}{{end}}</div>{{end}}
-        {{end}}
-      </article>
-      {{end}}
-    </section>
-  </details>
-  {{end}}
-
-  <details class="group border-b">
-    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
-      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
-        Reviews <span class="text-muted-foreground ml-auto mr-2 text-xs">{{len .Reviews}}</span>
-        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
-      </h3>
-    </summary>
-    <section class="pb-4 grid gap-3">
-      <form method="post" action="/findings/{{$f.ID}}/reviews" class="form grid gap-2">
-        <div class="flex gap-2">
-          <select class="input" name="verdict" required>
-            <option value="">Verdict...</option>
-            <option value="true_positive">true_positive</option>
-            <option value="false_positive">false_positive</option>
-            <option value="already_fixed">already_fixed</option>
-            <option value="uncertain">uncertain</option>
-          </select>
-          <input class="input" type="text" name="reviewer" placeholder="reviewer (optional)">
-        </div>
-        <textarea class="input" name="reason" rows="2" maxlength="4096" placeholder="Reason (required for false positives)"></textarea>
-        {{if .LatestRevalidate}}
-          <div class="text-xs text-muted-foreground">Automation said: <strong>{{.LatestRevalidate}}</strong> (snapshotted on submit)</div>
-        {{end}}
-        <div class="flex justify-end">
-          <button type="submit" class="btn-sm-outline">Record review</button>
-        </div>
-      </form>
-      <ul class="grid gap-2">
-      {{range .Reviews}}
-        <li class="border rounded p-3 text-sm">
-          <div class="text-xs text-muted-foreground mb-1">
-            {{if .Reviewer}}{{.Reviewer}} · {{end}}{{.CreatedAt.Format "2006-01-02 15:04"}}
-          </div>
-          <div class="flex items-center gap-2 mb-1">
-            <span class="font-medium">{{.Verdict}}</span>
-            {{if .AutomatedOutcome}}
-              <span class="text-xs text-muted-foreground">vs auto:&nbsp;<strong>{{.AutomatedOutcome}}</strong>{{if eq .Verdict .AutomatedOutcome}} (agreed){{else}} (overturned){{end}}</span>
-            {{end}}
-          </div>
-          {{if .Reason}}<pre class="whitespace-pre-wrap font-sans">{{.Reason}}</pre>{{end}}
-        </li>
-      {{else}}
-        <li class="text-sm text-muted-foreground">No reviews yet.</li>
-      {{end}}
-      </ul>
-    </section>
-  </details>
-
-  <details class="group border-b">
-    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
-      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-base font-semibold hover:underline">
         Communications <span class="text-muted-foreground ml-auto mr-2 text-xs">{{len .Communications}}</span>
         <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
       </h3>
@@ -1085,27 +1069,32 @@ git commit -m "fix: {{$f.Title}}"</pre>
           <button type="submit" class="btn-sm-outline">Log communication</button>
         </div>
       </form>
-      <ul class="grid gap-2">
-      {{range .Communications}}
-        <li class="border rounded p-3 text-sm">
-          <div class="text-xs text-muted-foreground mb-1">
-            <span class="badge-outline">{{.Channel}}</span>
-            <span class="badge-outline">{{.Direction}}</span>
-            {{.Actor}} · {{.At.Format "2006-01-02"}}
-            {{if .OfferedHelp}}<span class="badge-primary ml-2">offered {{.OfferedHelp}}</span>{{end}}
-          </div>
-          <pre class="whitespace-pre-wrap font-sans">{{.Body}}</pre>
-        </li>
+      {{if .Communications}}
+      <div class="overflow-x-auto">
+        <table class="table w-full text-sm">
+          <thead><tr><th>Date</th><th>Channel</th><th>Direction</th><th>Who</th><th>Message</th></tr></thead>
+          <tbody>
+          {{range .Communications}}
+            <tr class="align-top">
+              <td class="text-muted-foreground">{{.At.Format "2006-01-02"}}</td>
+              <td><span class="badge-outline">{{.Channel}}</span></td>
+              <td><span class="badge-outline">{{.Direction}}</span></td>
+              <td>{{.Actor}}{{if .OfferedHelp}}<div><span class="badge-primary mt-1">offered {{.OfferedHelp}}</span></div>{{end}}</td>
+              <td class="whitespace-pre-wrap">{{.Body}}</td>
+            </tr>
+          {{end}}
+          </tbody>
+        </table>
+      </div>
       {{else}}
-        <li class="text-sm text-muted-foreground">No communications yet.</li>
+      <p class="text-sm text-muted-foreground">No communications yet.</p>
       {{end}}
-      </ul>
     </section>
   </details>
 
-  <details class="group border-b">
+  <details id="references" class="group border-b">
     <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
-      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-base font-semibold hover:underline">
         References <span class="text-muted-foreground ml-auto mr-2 text-xs">{{len .References}}</span>
         <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
       </h3>
@@ -1119,31 +1108,112 @@ git commit -m "fix: {{$f.Title}}"</pre>
           <button type="submit" class="btn-sm-outline">Add reference</button>
         </div>
       </form>
+      {{if .References}}
+      <div class="overflow-x-auto">
+        <table class="table w-full text-sm">
+          <thead><tr><th>Link</th><th>Tags</th><th>Summary</th></tr></thead>
+          <tbody>
+          {{range .References}}
+            <tr class="align-top">
+              <td class="whitespace-normal"><a href="{{.URL}}" target="_blank" rel="noopener" class="underline underline-offset-2 break-all">{{.URL}}</a></td>
+              <td class="text-muted-foreground">{{if .Tags}}{{.Tags}}{{else}}-{{end}}</td>
+              <td class="whitespace-normal text-muted-foreground">{{if .Summary}}{{.Summary}}{{else}}-{{end}}</td>
+            </tr>
+          {{end}}
+          </tbody>
+        </table>
+      </div>
+      {{else}}
+      <p class="text-sm text-muted-foreground">No references yet.</p>
+      {{end}}
+    </section>
+  </details>
+</section>
+  </div>
+  <div role="tabpanel" id="fp-activity" aria-labelledby="ft-activity" class="pt-2" hidden>
+<div class="grid gap-8 py-4 lg:grid-cols-[minmax(0,1fr)_20rem]">
+  <div class="grid gap-8 content-start min-w-0">
+    <section id="notes" class="scroll-mt-6">
+      <h3 class="text-base font-semibold mb-3 flex items-center gap-2">Notes <span class="text-muted-foreground text-xs font-normal">{{len .Notes}}</span></h3>
       <ul class="grid gap-2">
-      {{range .References}}
+      {{range .Notes}}
         <li class="border rounded p-3 text-sm">
-          <div class="flex items-center gap-2">
-            <a href="{{.URL}}" target="_blank" rel="noopener" class="underline underline-offset-2 break-all">{{.URL}}</a>
-            {{if .Tags}}<span class="text-xs text-muted-foreground ml-auto">{{.Tags}}</span>{{end}}
-          </div>
-          {{if .Summary}}<div class="text-xs text-muted-foreground mt-1">{{.Summary}}</div>{{end}}
+          <div class="text-xs text-muted-foreground mb-1">{{if .By}}{{.By}} · {{end}}{{.CreatedAt.Format "2006-01-02 15:04"}}</div>
+          <pre class="whitespace-pre-wrap font-sans">{{.Body}}</pre>
         </li>
       {{else}}
-        <li class="text-sm text-muted-foreground">No references yet.</li>
+        <li class="text-sm text-muted-foreground">No notes yet.</li>
       {{end}}
       </ul>
     </section>
-  </details>
-
-  <details class="group border-b">
-    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
-      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
-        Labels
-        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
-      </h3>
-    </summary>
-    <section class="pb-4">
+    <section id="reviews" class="scroll-mt-6">
+      <h3 class="text-base font-semibold mb-3 flex items-center gap-2">Reviews <span class="text-muted-foreground text-xs font-normal">{{len .Reviews}}</span></h3>
+      <ul class="grid gap-2">
+      {{range .Reviews}}
+        <li class="border rounded p-3 text-sm">
+          <div class="text-xs text-muted-foreground mb-1">
+            {{if .Reviewer}}{{.Reviewer}} · {{end}}{{.CreatedAt.Format "2006-01-02 15:04"}}
+          </div>
+          <div class="flex items-center gap-2 mb-1">
+            <span class="font-medium">{{.Verdict}}</span>
+            {{if .AutomatedOutcome}}
+              <span class="text-xs text-muted-foreground">vs auto:&nbsp;<strong>{{.AutomatedOutcome}}</strong>{{if eq .Verdict .AutomatedOutcome}} (agreed){{else}} (overturned){{end}}</span>
+            {{end}}
+          </div>
+          {{if .Reason}}<pre class="whitespace-pre-wrap font-sans">{{.Reason}}</pre>{{end}}
+        </li>
+      {{else}}
+        <li class="text-sm text-muted-foreground">No reviews yet.</li>
+      {{end}}
+      </ul>
+    </section>
+    <section id="history" class="scroll-mt-6">
+      <h3 class="text-base font-semibold mb-3 flex items-center gap-2">History <span class="text-muted-foreground text-xs font-normal">{{.HistoryTotal}}</span></h3>
+      <ul class="grid gap-1 text-xs text-muted-foreground">
+      {{range .History}}
+        <li class="font-mono">
+          [{{.CreatedAt.Format "2006-01-02 15:04"}}] {{with .Source}}<span class="opacity-50">provenance</span> {{.}}{{end}}{{if .By}} ({{.By}}){{end}}:
+          <code>{{.Field}}</code> = <code>{{.NewValue}}</code>
+          {{if .OldValue}}<span class="opacity-50">was <code>{{.OldValue}}</code></span>{{end}}
+        </li>
+      {{else}}
+        <li>No recorded changes.</li>
+      {{end}}
+      </ul>
+      {{template "row-cap" (dict "Shown" .History "Total" .HistoryTotal)}}
+    </section>
+  </div>
+  <aside class="grid gap-6 content-start order-first lg:order-none lg:border-l lg:pl-6">
+      <form method="post" action="/findings/{{$f.ID}}/notes" class="form grid gap-2">
+        <label class="text-sm font-semibold" for="note-body">Add a note</label>
+        <textarea id="note-body" class="input" name="body" rows="3" required></textarea>
+        <div class="flex justify-end">
+          <button type="submit" class="btn-sm-outline">Add note</button>
+        </div>
+      </form>
+      <form method="post" action="/findings/{{$f.ID}}/reviews" class="form grid gap-2">
+        <span class="text-sm font-semibold">Record a review</span>
+        <div class="grid gap-2">
+          <select class="input" name="verdict" required>
+            <option value="">Verdict...</option>
+            <option value="true_positive">true_positive</option>
+            <option value="false_positive">false_positive</option>
+            <option value="already_fixed">already_fixed</option>
+            <option value="uncertain">uncertain</option>
+          </select>
+          <input class="input" type="text" name="reviewer" placeholder="reviewer (optional)">
+        </div>
+        <textarea class="input" name="reason" rows="2" maxlength="4096" placeholder="Reason (required for false positives)"></textarea>
+        {{if .LatestRevalidate}}
+          <div class="text-xs text-muted-foreground">Automation said: <strong>{{.LatestRevalidate}}</strong> (snapshotted on submit)</div>
+        {{end}}
+        <div class="flex justify-end">
+          <button type="submit" class="btn-sm-outline">Record review</button>
+        </div>
+      </form>
+    <div id="labels" class="scroll-mt-6">
       <form method="post" action="/findings/{{$f.ID}}/labels" class="form grid gap-2">
+        <span class="text-sm font-semibold">Labels</span>
         <div class="flex flex-wrap gap-3">
           {{$sel := .Selected}}
           {{range .AllLabels}}
@@ -1158,54 +1228,13 @@ git commit -m "fix: {{$f.Title}}"</pre>
           <button type="submit" class="btn-sm-outline">Save labels</button>
         </div>
       </form>
-    </section>
-  </details>
-
-  <details class="group border-b">
-    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
-      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
-        History <span class="text-muted-foreground ml-auto mr-2 text-xs">{{.HistoryTotal}}</span>
-        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
-      </h3>
-    </summary>
-    <section class="pb-4">
-      <ul class="grid gap-1 text-xs text-muted-foreground">
-      {{range .History}}
-        <li class="font-mono">
-          [{{.CreatedAt.Format "2006-01-02 15:04"}}] {{with .Source}}<span class="opacity-50">provenance</span> {{.}}{{end}}{{if .By}} ({{.By}}){{end}}:
-          <code>{{.Field}}</code> = <code>{{.NewValue}}</code>
-          {{if .OldValue}}<span class="opacity-50">was <code>{{.OldValue}}</code></span>{{end}}
-        </li>
-      {{else}}
-        <li>No recorded changes.</li>
-      {{end}}
-      </ul>
-      {{template "row-cap" (dict "Shown" .History "Total" .HistoryTotal)}}
-    </section>
-  </details>
-
-  {{if .CWE}}
+    </div>
+  </aside>
+</div>
+<section class="accordion border-t">
   <details class="group border-b last:border-b-0">
     <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
-      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
-        {{.CWE.ID}}: {{.CWE.Name}}
-        <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
-      </h3>
-    </summary>
-    <section class="pb-4 text-sm">
-      <p class="mb-2">{{.CWE.Description}}</p>
-      <a href="https://cwe.mitre.org/data/definitions/{{slice .CWE.ID 4}}.html"
-         target="_blank" rel="noopener"
-         class="text-muted-foreground hover:underline inline-flex items-center gap-1">
-        cwe.mitre.org<i data-lucide="external-link" class="size-3"></i>
-      </a>
-    </section>
-  </details>
-  {{end}}
-
-  <details class="group border-b last:border-b-0">
-    <summary class="w-full outline-none rounded-md focus-visible:ring-ring/50 focus-visible:ring-[3px]">
-      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-sm font-medium hover:underline">
+      <h3 class="flex flex-1 items-center justify-between gap-4 py-4 text-base font-semibold hover:underline">
         Chat{{if .Conversations}} <span class="badge-outline ml-1">{{len .Conversations}}</span>{{end}}
         <i data-lucide="chevron-down" class="text-muted-foreground size-4 shrink-0 transition-transform duration-200 group-open:rotate-180"></i>
       </h3>
@@ -1215,5 +1244,7 @@ git commit -m "fix: {{$f.Title}}"</pre>
     </section>
   </details>
 </section>
+  </div>
+</div>
 
 {{template "foot" .}}

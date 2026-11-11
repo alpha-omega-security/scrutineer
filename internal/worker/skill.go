@@ -266,21 +266,34 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 	return w.runAndParseSkill(ctx, scan, &skill, sj, workRoot, hardScope, emit)
 }
 
-// runAndParseSkill runs the skill (under the scan's cost cap when it has one)
-// then validates and parses its report.
+// runAndParseSkill runs the skill (under the scan or group cost cap when there
+// is one) then validates and parses its report.
 func (w *Worker) runAndParseSkill(ctx context.Context, scan *db.Scan, skill *db.Skill, sj SkillJob, workRoot string, hardScope bool, emit func(Event)) (string, error) {
 	scan.CostCapped = false
-	runCtx, runEmit, guard, stop := startCostGuardRun(ctx, scan, emit)
+	runCtx, runEmit, guard, stop, err := w.startCostGuardRun(ctx, scan, emit)
+	if err != nil {
+		return "", err
+	}
 	defer stop()
 	res, err := w.runSkillWithFallback(runCtx, scan, skill, sj, workRoot, hardScope, runEmit)
 	w.applySkillResult(scan, res)
+	if err != nil {
+		guard.foldPending()
+	}
+	if capped, ok := errors.AsType[*groupCapError](err); ok {
+		emit(Event{Kind: KindText, Text: capped.Error() + "; stopping before the first model call"})
+		return "", w.markCostCapped(scan)
+	}
 	// A run that finished despite the trip keeps its full report.
 	if err != nil && guard.Tripped() && ctx.Err() == nil {
-		guard.foldPending()
 		return w.finishCostCappedRun(ctx, skill, scan, sj, res.Report, emit)
 	}
 	if err != nil {
 		if _, ok := errors.AsType[*MaxTurnsReachedError](err); ok && res.Report != "" {
+			// Set before parsing so parseFindingsOutput's markNotObserved
+			// guard sees this is a partial report; the caller records it on
+			// the scan row later.
+			scan.MaxTurnsHit = true
 			w.parsePartialSkillReport(ctx, skill, scan, res.Report, emit)
 		}
 		return res.Report, err
@@ -479,7 +492,12 @@ func truncateSchemaRepairReport(report string) string {
 	return report[:schemaRepairReportMaxSize] + "\n... truncated ..."
 }
 
-func (w *Worker) parseSkillOutput(ctx context.Context, skill *db.Skill, scan *db.Scan, report string, emit func(Event)) error {
+func (w *Worker) parseSkillOutput(ctx context.Context, skill *db.Skill, scan *db.Scan, report string, emit func(Event)) (err error) {
+	defer func() {
+		if err != nil {
+			scan.Report = report
+		}
+	}()
 	if skill.SchemaJSON != "" {
 		if detail, recoverable := reportValidationForParsing(skill, report); detail != "" {
 			emit(reportValidationEvent(skill, detail))
@@ -518,13 +536,13 @@ func (w *Worker) parseSkillOutputKind(ctx context.Context, skill *db.Skill, scan
 	case "repo_metadata":
 		return w.parseRepoMetadataOutput(scan, report, emit)
 	case "packages":
-		return w.parsePackagesOutput(scan, report, emit)
+		return w.parsePackagesOutput(ctx, scan, report, emit)
 	case "advisories":
-		return w.parseAdvisoriesOutput(scan, report, emit)
+		return w.parseAdvisoriesOutput(ctx, scan, report, emit)
 	case "advisory_audit":
 		return w.parseAdvisoryAuditOutput(skill, scan, report, emit)
 	case "dependencies":
-		return w.parseDependenciesOutput(scan, report, emit)
+		return w.parseDependenciesOutput(ctx, scan, report, emit)
 	case "finding_dedup":
 		return w.parseFindingDedupOutput(scan, report, emit)
 	case "verify":
@@ -532,7 +550,7 @@ func (w *Worker) parseSkillOutputKind(ctx context.Context, skill *db.Skill, scan
 	case "revalidate":
 		return w.parseRevalidateOutput(scan, report, emit)
 	case "critic":
-		return w.parseCriticOutput(scan, report, emit)
+		return w.parseCriticOutput(ctx, scan, report, emit)
 	case "breaking_change":
 		return w.parseBreakingChangeOutput(scan, report, emit)
 	case "mitigation":
@@ -542,13 +560,13 @@ func (w *Worker) parseSkillOutputKind(ctx context.Context, skill *db.Skill, scan
 	case "release_watch":
 		return w.parseReleaseWatchOutput(scan, report, emit)
 	case "subprojects":
-		return w.parseSubprojectsOutput(scan, report, emit)
+		return w.parseSubprojectsOutput(ctx, scan, report, emit)
 	case "repo_overview":
 		return w.parseRepoOverviewOutput(scan, report, emit)
 	case "posture":
 		return w.parsePostureOutput(scan, report, emit)
 	case "compliance":
-		return w.parseComplianceOutput(scan, report, emit)
+		return w.parseComplianceOutput(ctx, scan, report, emit)
 	case "patch":
 		return w.parsePatchOutput(ctx, scan, report, emit)
 	case "reattack":
@@ -664,7 +682,11 @@ func (w *Worker) ingestFindings(skill *db.Skill, scan *db.Scan, report string, e
 	}
 
 	missed := 0
-	if scan.RescanMode != db.ScanRescanModeDiff {
+	// A diff-mode rescan looks at a slice of the repo, and a cost-capped or
+	// max-turns run stopped before it could revisit everything. Neither is
+	// in scope to re-observe prior findings, so absence must not drive
+	// missed_count or auto-reject.
+	if scan.RescanMode != db.ScanRescanModeDiff && !scan.CostCapped && !scan.MaxTurnsHit {
 		missed = w.markNotObserved(scan, seenThisScan)
 	}
 	retracted := w.markRetracted(scan, seenThisScan)

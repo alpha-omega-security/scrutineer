@@ -125,6 +125,67 @@ func TestRunBackup_destExists(t *testing.T) {
 	}
 }
 
+func TestRunBackup_rejectsSpecialDestinations(t *testing.T) {
+	for _, tc := range []struct{ dest, want string }{
+		{":memory:", "in-memory destinations are not supported"},
+		{"file:snap.db", "URI destinations are not supported"},
+		{"file:snap.db?mode=memory&cache=shared", "URI destinations are not supported"},
+	} {
+		t.Run(tc.dest, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Chdir(dir)
+			dataDir := t.TempDir()
+			makeProbeDB(t, filepath.Join(dataDir, "scrutineer.db"))
+			var out bytes.Buffer
+			err := runBackup([]string{"-data", dataDir, "-to", tc.dest}, &out)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("backup error = %v, want %q", err, tc.want)
+			}
+			if out.Len() != 0 {
+				t.Fatalf("failed backup reported success: %q", out.String())
+			}
+			entries, err := os.ReadDir(dir)
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("rejected destination left files: %v, err=%v", entries, err)
+			}
+		})
+	}
+}
+
+func TestRunBackup_invalidSourceRemovesDestination(t *testing.T) {
+	dataDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dataDir, "scrutineer.db"), []byte("not a SQLite database"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(t.TempDir(), "backup.db")
+	var out bytes.Buffer
+	if err := runBackup([]string{"-data", dataDir, "-to", dest}, &out); err == nil {
+		t.Fatal("backup accepted an invalid source database")
+	}
+	if _, err := os.Lstat(dest); !os.IsNotExist(err) {
+		t.Fatalf("failed backup left destination behind: %v", err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("failed backup reported success: %q", out.String())
+	}
+}
+
+func TestRunBackup_explicitMemoryFilename(t *testing.T) {
+	t.Chdir(t.TempDir())
+	dataDir := t.TempDir()
+	makeProbeDB(t, filepath.Join(dataDir, "scrutineer.db"))
+	dest := filepath.Join(t.TempDir(), ":memory:")
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not permit colons in filenames")
+	}
+	if err := runBackup([]string{"-data", dataDir, "-to", dest}, &bytes.Buffer{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := readProbe(t, dest); got != 4242 {
+		t.Fatalf("backup probe = %d, want 4242", got)
+	}
+}
+
 func TestRunRestore_roundTrip(t *testing.T) {
 	src := filepath.Join(t.TempDir(), "scrutineer.db")
 	makeProbeDB(t, src)

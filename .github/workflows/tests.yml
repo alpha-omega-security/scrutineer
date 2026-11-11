@@ -92,6 +92,16 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-go-${{ github.job }}-
 
+      - name: Test Betterleaks integration
+        if: runner.os == 'Linux'
+        env:
+          SCRUTINEER_REQUIRE_BETTERLEAKS: "1"
+        run: |
+          betterleaks_version=$(sed -n 's/^ARG BETTERLEAKS_VERSION=//p' Dockerfile.runner)
+          test -n "$betterleaks_version"
+          go install -ldflags "-X=github.com/betterleaks/betterleaks/version.Version=$betterleaks_version" "github.com/betterleaks/betterleaks@$betterleaks_version"
+          go test ./internal/worker -run '^TestBetterleaksScriptGitFixtureSeverity$' -count=1 -v
+
       - name: Verify Go modules are tidy
         run: go mod tidy -diff
 
@@ -272,7 +282,7 @@ jobs:
           persist-credentials: false
 
       - name: Install zizmor
-        run: pipx install zizmor==1.31.1
+        run: pipx install zizmor==1.32.0
 
       - name: Audit GitHub Actions
         run: zizmor --persona auditor .github/

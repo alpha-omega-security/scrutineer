@@ -414,6 +414,7 @@
       "properties": {
         "focus_areas": {
           "type": "array",
+          "maxItems": 32,
           "items": {
             "type": "object",
             "required": ["name", "paths", "surface"],

@@ -11,7 +11,9 @@ package db
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"slices"
 	"strconv"
@@ -1631,7 +1633,10 @@ func StatusPriorityFor(s ScanStatus) int {
 // busy_timeout=0), which #453 observed as 3/8 connections without FK
 // enforcement. journal_mode is per-database and persistent, so it would
 // stick after one Exec, but setting it here keeps all three together.
-const connectionPragmas = "_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)"
+const (
+	busyTimeoutPragma = "_pragma=busy_timeout(5000)"
+	connectionPragmas = "_pragma=foreign_keys(1)&" + busyTimeoutPragma + "&_pragma=journal_mode(WAL)"
+)
 
 // databaseSchemaVersion stops guarded older binaries before AutoMigrate can
 // change a schema written by a newer build. Bump it with incompatible schema
@@ -1640,13 +1645,17 @@ const databaseSchemaVersion = 1
 
 // withPragmas appends connectionPragmas to dsn, joining with ? or &
 // depending on whether dsn already carries a query string (the in-memory
-// test DSNs do).
+// test DSNs do). A busy_timeout already in dsn is kept.
 func withPragmas(dsn string) string {
 	sep := "?"
 	if strings.Contains(dsn, "?") {
 		sep = "&"
 	}
-	return dsn + sep + connectionPragmas
+	pragmas := connectionPragmas
+	if strings.Contains(dsn, "_pragma=busy_timeout(") {
+		pragmas = strings.Replace(pragmas, busyTimeoutPragma+"&", "", 1)
+	}
+	return dsn + sep + pragmas
 }
 
 // Connect opens dsn with the standard pragmas and logger but performs no
@@ -1721,7 +1730,7 @@ func Models() []any {
 	return []any{
 		&Repository{}, &Scan{},
 		&Finding{}, &FindingLabel{}, &FindingNote{}, &DisclosureSubmission{},
-		&FindingCommunication{}, &FindingReference{}, &FindingHistory{}, &FindingReview{}, &FeedbackConfirmation{}, &FindingVerification{}, &FindingAttackPath{}, &FindingObservation{}, &ScanPreflightReceipt{},
+		&FindingCommunication{}, &FindingReference{}, &FindingHistory{}, &FindingReview{}, &FeedbackConfirmation{}, &FindingVerification{}, &FindingAttackPath{}, &FindingObservation{}, &ScanPreflightReceipt{}, &ScanGroupBudget{},
 		&RemediationAttempt{}, &RemediationValidation{}, &AuditEvent{}, &FindingPoC{},
 		&Dependency{}, &ExpectedFinding{}, &Package{}, &PackageAlternative{}, &Dependent{}, &FindingDependent{}, &Advisory{}, &AdvisoryAudit{},
 		&Maintainer{}, &Skill{}, &Subproject{}, &ComplianceControl{},
@@ -2038,10 +2047,33 @@ func planFindingReferenceMerge(rows []FindingReference) (survivors []FindingRefe
 // target file rather than refusing it (unlike upstream SQLite), which would
 // leave trailing bytes from a larger prior file, so Snapshot guards the case
 // itself. The parent directory of dest must exist.
-func Snapshot(src, dest string) error {
-	if _, err := os.Stat(dest); err == nil {
-		return fmt.Errorf("destination already exists: %s", dest)
+//
+// dest is created 0600 before VACUUM INTO writes to it, so the sensitive
+// snapshot bytes are never readable at the process umask default. The modernc
+// driver overwrites the empty file in place.
+func Snapshot(src, dest string) (retErr error) {
+	if dest == ":memory:" {
+		return fmt.Errorf("in-memory destinations are not supported: %s", dest)
 	}
+	// The modernc driver enables URI filenames, so VACUUM INTO would resolve
+	// a "file:" dest to the URI target rather than the literal path OpenFile
+	// creates below, and the snapshot would land at the umask default.
+	if strings.HasPrefix(dest, "file:") {
+		return fmt.Errorf("URI destinations are not supported: %s", dest)
+	}
+	f, err := os.OpenFile(dest, os.O_CREATE|os.O_EXCL|os.O_WRONLY, snapshotFilePerm)
+	if err != nil {
+		if errors.Is(err, fs.ErrExist) {
+			return fmt.Errorf("destination already exists: %s", dest)
+		}
+		return err
+	}
+	_ = f.Close()
+	defer func() {
+		if retErr != nil {
+			_ = os.Remove(dest)
+		}
+	}()
 	gdb, err := gorm.Open(sqlite.Open(src), &gorm.Config{Logger: logger.Default.LogMode(logger.Silent)})
 	if err != nil {
 		return fmt.Errorf("open sqlite: %w", err)
@@ -2070,6 +2102,8 @@ func Snapshot(src, dest string) error {
 	}
 	return nil
 }
+
+const snapshotFilePerm = 0o600
 
 const (
 	SBOMOriginUploaded  = "uploaded"
@@ -2360,5 +2394,6 @@ func SweepRunning(gdb *gorm.DB) error {
 			"status":      ScanFailed,
 			"error":       "server restarted during run",
 			"finished_at": new(time.Now()),
+			"api_token":   "",
 		}).Error
 }

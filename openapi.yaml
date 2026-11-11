@@ -522,6 +522,8 @@ paths:
         Each field value is written through the history-tracked path.
         Finding-scoped skills write with source=model_suggested; browser
         form edits use separate routes and write with source=analyst.
+        suggested_fix and suggested_fix_commit are written by the host-side
+        patch applicability gate. Scan-token writes to either field return 403.
         Unknown field names are rejected.
       requestBody:
         required: true
@@ -542,7 +544,7 @@ paths:
                     title, severity, status, cwe, location, affected, reachability, quality_tier,
                     cve_id, ghsa_id, cvss_vector, cvss_v4_vector, fix_version, fix_commit,
                     resolution, disclosure_draft, disclosure_title, suggested_recipients, assignee,
-                    suggested_fix, suggested_fix_commit, breaking_change, breaking_change_rationale,
+                    breaking_change, breaking_change_rationale,
                     exploited_in_wild, exploited_in_wild_evidence, mitigation, mitigation_semgrep,
                     release_tag, release_url, last_revalidate_verdict.
       responses:

@@ -174,6 +174,10 @@ func (w *Worker) configureBackendPreflight(ctx context.Context, scan *db.Scan, s
 			}
 			return fmt.Errorf("backend preflight blocked: %s", result.Error)
 		}
+		// The probe's charge can take the group over its cap on its own.
+		if capped := w.heldGroupCapped(scan); capped != nil {
+			return capped
+		}
 		return nil
 	}
 }
@@ -192,7 +196,7 @@ func (w *Worker) recordBackendPreflight(ctx context.Context, scan *db.Scan, resu
 	}
 	receipt := db.ScanPreflightReceipt{ScanID: scan.ID, ProbeID: result.ProbeID, RecipeSHA256: textDigest(scan.Recipe), Report: string(raw)}
 	updated := *scan
-	if err := w.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+	if err := db.TimedTransaction(w.DB.WithContext(ctx), w.scanTransactionLog(scan, "record_backend_preflight"), func(tx *gorm.DB) error {
 		insert := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "scan_id"}, {Name: "probe_id"}}, DoNothing: true}).Create(&receipt)
 		if insert.Error != nil {
 			return insert.Error

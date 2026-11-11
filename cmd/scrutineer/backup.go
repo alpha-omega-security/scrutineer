@@ -84,12 +84,6 @@ func runBackup(args []string, out io.Writer) error {
 	if err := db.Snapshot(dbPath, to); err != nil {
 		return err
 	}
-	// The snapshot carries the same operator-sensitive data as the live DB
-	// (pre-disclosure findings, maintainer contacts, per-scan bearer tokens),
-	// so keep it owner-only rather than at the umask default.
-	if err := os.Chmod(to, dbFilePerm); err != nil {
-		return err
-	}
 	_, _ = fmt.Fprintf(out, "backed up %s to %s\n", dbPath, to)
 	return nil
 }

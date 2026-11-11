@@ -99,7 +99,7 @@ func (s *Server) findingReviewCreate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), findingReviewErrorStatus(err))
 		return
 	}
-	s.redirect(w, r, "/findings/"+strconv.FormatUint(uint64(f.ID), 10))
+	s.redirect(w, r, "/findings/"+strconv.FormatUint(uint64(f.ID), 10)+"#reviews")
 }
 
 func (s *Server) rejectFinding(w http.ResponseWriter, r *http.Request, id uint) {

@@ -56,6 +56,7 @@ func codexSessionCalls(t *testing.T, log, effort string) [][]string {
 		for _, setting := range []string{
 			`model_reasoning_effort="` + effort + `"`,
 			"analytics.enabled=false", "features.apps=false", "features.plugins=false",
+			"allow_login_shell=false",
 		} {
 			if !hasAdjacent(args, "-c", setting) {
 				t.Errorf("Codex invocation missing %q: %q", setting, args)
