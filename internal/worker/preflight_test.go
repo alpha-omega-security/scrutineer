@@ -3,11 +3,14 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"os"
 	"strings"
 	"testing"
 	"time"
+
+	"gorm.io/gorm"
 
 	"scrutineer/internal/db"
 	"scrutineer/internal/db/dbtest"
@@ -520,5 +523,64 @@ func TestPreflightSkill_failedPrereqWithRetryInFlightDefers(t *testing.T) {
 	}
 	if loaded.Status != db.ScanQueued {
 		t.Errorf("scan status = %q, want queued (defer while retry is in flight)", loaded.Status)
+	}
+}
+
+func TestWorkerPrereqQueryErrorDoesNotDispatch(t *testing.T) {
+	cases := []struct {
+		name, group string
+		fails       func(table, sql string) bool
+	}{
+		{name: "skill lookup", fails: func(table, sql string) bool {
+			return table == "skills" && strings.Contains(sql, "name = ")
+		}},
+		{name: "repository history", fails: func(table, sql string) bool {
+			return table == "scans" && strings.Contains(sql, "skill_name = ")
+		}},
+		{name: "group history", group: "today", fails: func(table, sql string) bool {
+			return table == "scans" && strings.Contains(sql, "scan_group = ")
+		}},
+		{name: "in-flight lookup", group: "today", fails: func(table, sql string) bool {
+			return table == "scans" && strings.Contains(sql, "skill_name = ") && !strings.Contains(sql, "scan_group = ")
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := newPreflightWorker(t)
+			w.DataDir = t.TempDir()
+			scan := seedPreflightFixtures(t, w, "embedded-native")
+			scan.ScanGroup = tc.group
+			if err := w.DB.Save(scan).Error; err != nil {
+				t.Fatal(err)
+			}
+			prereq := seedPrereqSkill(t, w, "embedded-native", true)
+			seedPrereqScan(t, w, prereq, scan.RepositoryID, db.ScanRunning)
+			body, err := json.Marshal(queue.Payload{ScanID: scan.ID})
+			if err != nil {
+				t.Fatal(err)
+			}
+			err = w.DB.Callback().Query().After("gorm:query").Register("test:fail_prereq_query", func(tx *gorm.DB) {
+				if tc.fails(tx.Statement.Table, tx.Statement.SQL.String()) {
+					_ = tx.AddError(errors.New("database is locked"))
+				}
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			called := false
+			err = w.wrap(func(context.Context, *db.Scan, func(Event)) (string, error) {
+				called = true
+				return `{"findings":[]}`, nil
+			})(t.Context(), body)
+			if err == nil || !strings.Contains(err.Error(), "database is locked") {
+				t.Fatalf("wrap error = %v, want the query error", err)
+			}
+			if err := w.DB.First(scan, scan.ID).Error; err != nil {
+				t.Fatal(err)
+			}
+			if called || scan.Status != db.ScanQueued {
+				t.Fatalf("handler called = %v, scan status = %s; want queued and not dispatched", called, scan.Status)
+			}
+		})
 	}
 }
