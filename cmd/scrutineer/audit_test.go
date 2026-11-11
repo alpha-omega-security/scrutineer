@@ -437,6 +437,33 @@ func TestRefuseDefaultConfigUnderSourceCaseAlias(t *testing.T) {
 	}
 }
 
+func TestDirUnderReportsStatError(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs a directory the test cannot search")
+	}
+	base := t.TempDir()
+	root := filepath.Join(base, "root")
+	locked := filepath.Join(base, "locked")
+	for _, dir := range []string{root, filepath.Join(locked, "child")} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rootInfo, err := os.Stat(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+
+	under, err := dirUnder(filepath.Join(locked, "child"), rootInfo)
+	if err == nil {
+		t.Fatalf("dirUnder = %v, nil; want an error for an ancestor it cannot stat", under)
+	}
+}
+
 func TestAudit_flagValidation(t *testing.T) {
 	newAuditHarness(t)
 	src, _ := auditSource(t)
