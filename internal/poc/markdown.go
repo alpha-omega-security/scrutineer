@@ -5,8 +5,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/yuin/goldmark/ast"
-	"github.com/yuin/goldmark/text"
+	"github.com/yuin/goldmark/v2/ast"
+	"github.com/yuin/goldmark/v2/text"
 )
 
 var pocLanguage = regexp.MustCompile(`^[a-zA-Z0-9_+.-]+$`)
