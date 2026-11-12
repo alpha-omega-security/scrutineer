@@ -104,6 +104,7 @@ Subagents do not see this SKILL.md — only the prompt you write them and the sh
 
 - Tell every subagent, in its prompt, not to write or touch `./report.json`. That file is yours to write once, at the end.
 - Give each a distinct scratch file — `./candidates-<advisory-id>.json` — and have it return that path holding both its advisory's verdict and any findings it opened.
+- Give each subagent a distinct scratch file for its advisory — `./threat_model-<advisory-id>.json`, which you write from the threat model you loaded, in full so `entry_points[i]` indexes stay valid. Tell each subagent to read it for its "Boundary" checks. If no threat model is loaded, tell them to derive boundaries from source instead.
 - You are the sole writer of `./report.json`. Read every scratch file back, union the findings and collect one verdict per advisory into `audits`, and write the one report yourself.
 
 ## Output
