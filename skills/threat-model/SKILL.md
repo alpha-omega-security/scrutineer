@@ -17,7 +17,7 @@ metadata:
 
 Produce the security contract this project implicitly offers its callers: what it assumes, what it guarantees under those assumptions, what it explicitly leaves to the integrator, and which reported "findings" are noise given the model. The output is data, not an audit. Do not hunt for bugs, do not list CVEs, do not recommend fixes. Describe the project as it is.
 
-You are running headless with no maintainer to consult. Every claim you write is therefore either `documented` (you can cite a file and line in the repo, a manpage, a header comment, an FAQ, a closed issue) or `inferred` (you reasoned it from code structure or domain knowledge). There is no third state. Anything `inferred` also goes in `open_questions` so a human can later confirm or strike it; until then, downstream skills treat `inferred` claims as working hypothesis rather than citable fact.
+You are running headless with no maintainer to consult. Every claim you write is therefore either `documented` (you can cite a file and line in the repo, a manpage, a header comment, an FAQ, a closed issue, or the language's own documentation for a property of the language) or `inferred` (you reasoned it from code structure or domain knowledge). There is no third state. Anything `inferred` also goes in `open_questions` so a human can later confirm or strike it; until then, downstream skills treat `inferred` claims as working hypothesis rather than citable fact.
 
 ## Workspace
 
