@@ -110,7 +110,7 @@ Use cases the project does not aim to support. Threats it does not defend agains
 
 ### Trust boundaries
 
-Where the line sits. For most libraries: "the public API surface; everything inside assumes the caller authenticated the data." For a service: name each role (unauthenticated client, authenticated client, operator, peer) and what each is trusted with. For each component family, state the reachability precondition a finding must meet to matter: "a finding in `inflate.c` is in-model only if reachable from compressed input bytes; a finding in `gzopen` path handling is in-model only if the path is sourced from outside the calling process."
+Where the line sits. For most libraries: "the public API surface; everything inside assumes the caller authenticated the data." For a service: name each role (unauthenticated client, authenticated client, operator, peer) and what each is trusted with. For each component family, state the reachability precondition a finding must meet to matter: "a finding in `inflate.c` is in-model only if reachable from compressed input bytes; a finding in `gzopen` path handling is in-model only if the path is sourced from outside the calling process." The precondition must repeat the `condition` of that component's conditional entry points.
 
 ### Entry-point trust table
 
