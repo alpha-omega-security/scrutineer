@@ -209,6 +209,16 @@ vince:
 	}
 }
 
+func TestLoad_maxAgentAPIOpenScansPerRepository(t *testing.T) {
+	c, err := Load(write(t, "max_agent_api_open_scans_per_repository: 32\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.MaxAgentAPIOpenScansPerRepository != 32 {
+		t.Errorf("max_agent_api_open_scans_per_repository: %d", c.MaxAgentAPIOpenScansPerRepository)
+	}
+}
+
 func TestLoad_codexAuthFile(t *testing.T) {
 	c, err := Load(write(t, `
 codex:

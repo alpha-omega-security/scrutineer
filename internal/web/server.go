@@ -130,6 +130,8 @@ type Server struct {
 	// picker and makes enqueueSkillWith refuse any policy name.
 	ScanEgressPolicies []string
 
+	MaxAgentAPIOpenScansPerRepository int
+
 	// OperatorToken is the credential the browser UI and /api/v1 require on
 	// top of the loopback Host check. Empty refuses every such request.
 	OperatorToken string

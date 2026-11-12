@@ -781,16 +781,44 @@ func TestAPIRunSkill_deduplicatesEquivalentOpenScan(t *testing.T) {
 func TestAPIRunSkill_enforcesRepositoryOpenScanLimit(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
+	assertRepositoryOpenScanLimit(t, s, DefaultMaxAgentAPIOpenScansPerRepository)
+}
+
+func TestAPIRunSkill_enforcesConfiguredRepositoryOpenScanLimit(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	s.MaxAgentAPIOpenScansPerRepository = 3
+	assertRepositoryOpenScanLimit(t, s, 3)
+}
+
+const apiEnqueuedBelowLimit = 2
+
+// assertRepositoryOpenScanLimit fills repo to limit open scans and requires the next enqueue to get 429.
+func assertRepositoryOpenScanLimit(t *testing.T, s *Server, limit int) {
+	t.Helper()
+	if limit < apiEnqueuedBelowLimit+1 {
+		t.Fatalf("limit %d too small to exercise %d API enqueues", limit, apiEnqueuedBelowLimit)
+	}
 	repo, scan := seedRunningScan(t, s)
 
-	// The authenticated parent is already one open scan. Fill the remaining
-	// slots with different work so the target request reaches the repo cap,
-	// not the equivalent-scan guard.
-	for i := 1; i < maxAgentAPIOpenScansPerRepository; i++ {
+	// The authenticated parent is already one open scan. Seed the slots below
+	// the API-enqueued ones with different work; distinct skills keep every
+	// request clear of the equivalent-scan guard so only the cap can refuse.
+	for i := 1; i < limit-apiEnqueuedBelowLimit; i++ {
 		s.DB.Create(&db.Scan{RepositoryID: repo.ID, Kind: worker.JobSkill, Status: db.ScanQueued})
 	}
-	skill := db.Skill{Name: "metadata", Description: "m", Body: "b", OutputFile: "report.json", Version: 1, Active: true, Source: "ui"}
-	s.DB.Create(&skill)
+	newSkill := func(name string) db.Skill {
+		skill := db.Skill{Name: name, Description: "m", Body: "b", OutputFile: "report.json", Version: 1, Active: true, Source: "ui"}
+		s.DB.Create(&skill)
+		return skill
+	}
+	for i := range apiEnqueuedBelowLimit {
+		skill := newSkill("below-limit-" + strconv.Itoa(i))
+		if w := runSkillAPIJSON(t, s, repo, scan, skill.Name, `{}`); w.Code != http.StatusCreated {
+			t.Fatalf("enqueue %d of %d below limit: status %d, want 201: %s", i+1, apiEnqueuedBelowLimit, w.Code, w.Body)
+		}
+	}
+	skill := newSkill("over-limit")
 
 	w := runSkillAPIJSON(t, s, repo, scan, skill.Name, `{}`)
 	if w.Code != http.StatusTooManyRequests {
@@ -800,8 +828,8 @@ func TestAPIRunSkill_enforcesRepositoryOpenScanLimit(t *testing.T) {
 	s.DB.Model(&db.Scan{}).
 		Where("repository_id = ? AND status IN ?", repo.ID, []db.ScanStatus{db.ScanQueued, db.ScanRunning}).
 		Count(&open)
-	if open != maxAgentAPIOpenScansPerRepository {
-		t.Errorf("open scans = %d, want capped at %d", open, maxAgentAPIOpenScansPerRepository)
+	if open != int64(limit) {
+		t.Errorf("open scans = %d, want capped at %d", open, limit)
 	}
 	var targetCount int64
 	s.DB.Model(&db.Scan{}).Where("skill_id = ?", skill.ID).Count(&targetCount)
