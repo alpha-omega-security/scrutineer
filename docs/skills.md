@@ -400,6 +400,7 @@ Each finding's `validation` and a verification report's `reproducer` may contain
     "scan_ref": "release/2.x",
     "scan_subpath": "packages/core",
     "scan_group": "6b1f…",
+    "scan_limits": { "deadline": "2026-11-18T12:00:00Z", "memory_mib": 4096, "disk_mib": 2048 },
     "exploration": {
       "mode": "random-dig",
       "path": "packages/core/parser"

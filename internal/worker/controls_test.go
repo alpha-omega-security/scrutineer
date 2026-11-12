@@ -237,7 +237,7 @@ func TestControlsContextStagesIntoContextJSON(t *testing.T) {
 	scan := &db.Scan{ID: 11, RepositoryID: fixture.repo.ID, APIToken: "tok"}
 	document, err := buildSkillContext(
 		"http://127.0.0.1:8080/api", "", DefaultMetadataDir,
-		scan, &fixture.repo, nil, nil, got,
+		scan, &fixture.repo, nil, nil, got, scanLimits(t.Context()),
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -278,7 +278,7 @@ func TestStagedContextOmitsControlsWhenUnresolved(t *testing.T) {
 	scan := &db.Scan{ID: 12, RepositoryID: 3, APIToken: "tok"}
 	document, err := buildSkillContext(
 		"http://127.0.0.1:8080/api", "", DefaultMetadataDir,
-		scan, &repo, nil, nil, nil,
+		scan, &repo, nil, nil, nil, scanLimits(t.Context()),
 	)
 	if err != nil {
 		t.Fatal(err)

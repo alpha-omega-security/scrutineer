@@ -54,7 +54,7 @@ func TestNoveltyContextStagesBoundedChangedFileEvidence(t *testing.T) {
 	scan := fixture.scan(head)
 	document, err := buildSkillContext(
 		"http://127.0.0.1:8080/api", "", DefaultMetadataDir,
-		scan, &fixture.repo, nil, got, nil,
+		scan, &fixture.repo, nil, got, nil, scanLimits(t.Context()),
 	)
 	if err != nil {
 		t.Fatal(err)
