@@ -114,19 +114,27 @@ func (w *Worker) prepareDiffRescan(ctx context.Context, scan *db.Scan, workRoot 
 	return nil
 }
 
-// DiffRescanFallbacks reports, as "skill: reason" lines, why a diff rescan
-// of each of skills started now would run as a full scan. A skill that would
+// DiffRescanTarget is one scan a diff rescan would run. FocusArea is the
+// normalized JSON stored on the scan, and Label names it in the preview.
+type DiffRescanTarget struct {
+	Skill     string
+	FocusArea string
+	Label     string
+}
+
+// DiffRescanFallbacks reports, as "label: reason" lines, why a diff rescan
+// of each of targets started now would run as a full scan. A target that would
 // scan the diff is left out. A remote repository's clone cache is first
 // fetched to its HEAD, as the scan itself does when it starts.
-func (w *Worker) DiffRescanFallbacks(ctx context.Context, repo db.Repository, subPath string, skills []string) ([]string, error) {
+func (w *Worker) DiffRescanFallbacks(ctx context.Context, repo db.Repository, subPath string, targets []DiffRescanTarget) ([]string, error) {
 	var out []string
 	dir, head, fetched := repo.LocalPath(), "", false
 	reasons := map[string]string{}
-	for _, name := range skills {
-		scan := db.Scan{RepositoryID: repo.ID, Repository: repo, SkillName: name, SubPath: subPath, RescanMode: db.ScanRescanModeDiff}
+	for _, t := range targets {
+		scan := db.Scan{RepositoryID: repo.ID, Repository: repo, SkillName: t.Skill, FocusArea: t.FocusArea, SubPath: subPath, RescanMode: db.ScanRescanModeDiff}
 		baseline, ok := w.diffBaseline(&scan)
 		if !ok {
-			out = append(out, name+": "+noDiffBaselineReason)
+			out = append(out, t.Label+": "+noDiffBaselineReason)
 			continue
 		}
 		if !fetched {
@@ -146,7 +154,7 @@ func (w *Worker) DiffRescanFallbacks(ctx context.Context, repo db.Repository, su
 			reasons[baseline.Commit] = reason
 		}
 		if reason != "" {
-			out = append(out, name+": "+reason)
+			out = append(out, t.Label+": "+reason)
 		}
 	}
 	return out, nil
@@ -159,9 +167,11 @@ func (w *Worker) refreshRepoCache(ctx context.Context, url string) (string, erro
 	if err := os.MkdirAll(cacheRoot, dirPerm); err != nil {
 		return "", err
 	}
-	mu := w.cacheMutex(url)
-	mu.Lock()
-	defer mu.Unlock()
+	unlock, err := w.lockCacheContext(ctx, url)
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
 	return ensureClone(ctx, db.Repository{URL: url}, cacheRoot, false, "", func(Event) {})
 }
 
