@@ -34,6 +34,7 @@ This audit reuses the six-step discipline of the `security-deep-dive` skill — 
 
 - `./src` — the cloned repository, full history preserved under `./src/.git`
 - `./context.json` — repo identity plus a `scrutineer` block with `api_base`, `token`, `repository_id`, and optional `scan_subpath`
+- `./threat_model.json` — optional. When present, a threat model.
 - `./report.json` — write your audit report (per-advisory verdicts plus any findings) here
 - `./schema.json` — the JSON schema your report must conform to
 

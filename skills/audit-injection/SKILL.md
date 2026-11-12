@@ -30,6 +30,7 @@ outcome.
 - ./src contains the cloned repository.
 - ./context.json contains repository identity, optional scan_subpath, optional
   scan_config, and the Scrutineer API details.
+- ./threat_model.json — optional. When present, a threat-model.
 - ./schema.json defines report.json.
 - ./references/ contains ecosystem-specific review guidance with API names and
   version cutoffs.
