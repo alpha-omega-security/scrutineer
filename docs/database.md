@@ -177,7 +177,7 @@ One row per skill execution or external import. `skill_name` / `skill_version` p
 | diff_threat_model_scan_id | integer FK | Prior `threat-model` scan staged as `old_threat_model.json` for a diff-aware run, when one is available. |
 | diff_stats | text | JSON metadata for the generated diff: base/head commits, changed-file count, patch size, file statuses, staged file names, and limits. |
 | coverage | text | JSON coverage metadata. Diff scans record requested versus actual mode and fallback reasons; threat-model scans also record whether the repository working model was updated or skipped for a small diff. Runtime requirements record worker-owned `preflight` with static `status`, `missing`, `degraded`, and optional `error`. When enabled, `preflight.backend` includes sanitized cached live probe evidence and its `scan_preflight_receipts` ID. Blocked or degraded preflight keeps completeness partial. |
-| scan_group | text | Groups a cohort of scans launched as one batch (Scan-all-subprojects, a single New-scan run, or a Diff rescan group). Each sibling streams a finding to `POST /repositories/{id}/findings` the moment it confirms it and reads `GET /repositories/{id}/findings?scan_group=...` before reporting, so an in-flight skill sees what a sibling has filed so far — not only after that sibling finishes — and can avoid re-filing it. Empty when not part of a batch. |
+| scan_group | text | Groups a cohort of scans launched as one batch (Scan-all-subprojects, a single New-scan run, or a Diff rescan group). Each sibling streams a finding to `POST /repositories/{id}/findings` the moment it confirms it and reads `GET /repositories/{id}/findings?scan_group=...` before reporting, so an in-flight skill sees what a sibling has filed so far — not only after that sibling finishes — and can avoid re-filing it. The endpoint refuses a streamed finding whose `trace`, `boundary` and `validation` are all missing or shorter than 20 characters. Empty when not part of a batch. |
 | focus_area | text | Normalized JSON snapshot of the input-processing focus area assigned to a split `security-deep-dive`. It keeps queued work reproducible if repository `scan_config` changes. Empty means the scan is unscoped and covers its normal repository or subproject scope. |
 | triage_scan_id | integer | Nullable ID of the triage scan that requested the pipeline child. Preserved through threat-model fan-out and retries; used to bound automatic exploration to one extra audit per triage invocation. |
 | exploration_mode | text | Empty for ordinary scans; `random-dig` for an independent source audit or `adversarial-sweep` for an audit that challenges one threat-model exclusion. Its callback token only permits validating its own report. Exploratory scans cannot serve as diff baselines. |
@@ -290,7 +290,7 @@ One row per installed skill. Loaded from `skills/` directories on disk or the UI
 
 ## findings
 
-One row per vulnerability. Lifecycle columns are mutated through `db.WriteFindingField`, which logs every change to `finding_history`.
+One row per vulnerability. Lifecycle columns are mutated through `db.WriteFindingField`, which logs every change to `finding_history`. Report ingestion drops a finding whose `trace`, `boundary` and `validation` are all missing or shorter than 20 characters when the producing skill's schema requires those fields.
 
 | Column | Type | Notes |
 |--------|------|-------|
@@ -459,7 +459,7 @@ Append-only grading records produced by finding-scoped `verify` scans. The compl
 | id | integer PK | |
 | finding_id | integer FK | References `findings.id`; cascade delete. Unique with `scan_id`. |
 | scan_id | integer | The verify scan that produced this record. Unique with `finding_id`. |
-| status | text | `confirmed`, `fixed`, `inconclusive`, `deferred`, or `not_attempted`. |
+| status | text | `confirmed`, `fixed`, `inconclusive`, `deferred`, or `not_attempted`. A `not_attempted` result rejects a new, enriched or triaged finding whose `trace`, `boundary` and `validation` are all missing or shorter than 20 characters, when the skill that produced it requires those fields in its schema, since a stub can never be reproduced. Scanner findings (semgrep, bandit, betterleaks) are not affected. |
 | score | real, nullable | Fraction of the five rubric criteria that passed, from `0.0` to `1.0`. Null for legacy pre-rubric reports and reports that remain internally inconsistent after repair. |
 | report | text | Complete structured JSON report, including the attack-tree goal, evidenced path nodes, reachability verdict, concrete blockers, typed severity prerequisites, three attempts, five scored criteria, and per-control bypass assessments. Reports written before attack-tree, control-bypass or prerequisite support remain readable. |
 | created_at | datetime | |

@@ -16,6 +16,7 @@ import (
 	mavenpom "github.com/git-pkgs/pom"
 	"github.com/git-pkgs/sbom"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 
 	"scrutineer/internal/db"
 	"scrutineer/internal/verification"
@@ -1073,7 +1074,13 @@ func (w *Worker) parseVerifyOutput(scan *db.Scan, report string, emit func(Event
 			calibration = calibrateFindingSeverity(controls, rubric.Criteria.ControlBypass, rubric.SeverityPrerequisites)
 		}
 	}
-	nextStatus, err := verifyNextStatus(f, scan, result, gradingError)
+	stub := false
+	if result.Status == "not_attempted" {
+		if stub, err = isStubFinding(w.DB, f); err != nil {
+			return err
+		}
+	}
+	nextStatus, err := verifyNextStatus(f, scan, result, gradingError, stub)
 	if err != nil {
 		return err
 	}
@@ -1205,7 +1212,7 @@ func decodeVerifyOutput(report string) (verifyOutput, *verification.Report, *flo
 	return result, &rubric, &score, "", nil
 }
 
-func verifyNextStatus(f db.Finding, scan *db.Scan, result verifyOutput, gradingError string) (db.FindingLifecycle, error) {
+func verifyNextStatus(f db.Finding, scan *db.Scan, result verifyOutput, gradingError string, stub bool) (db.FindingLifecycle, error) {
 	if !verifyStatusValid(result.Status) {
 		return "", fmt.Errorf("verify status %q is not one of confirmed|fixed|inconclusive|deferred|not_attempted", result.Status)
 	}
@@ -1223,13 +1230,74 @@ func verifyNextStatus(f db.Finding, scan *db.Scan, result verifyOutput, gradingE
 		if scan.Ref == "" {
 			return db.FindingFixed, nil
 		}
-	case "inconclusive", "not_attempted":
+	case "not_attempted":
+		// A stub can never be reproduced, so it is rejected instead of staying open.
+		if stub {
+			return db.FindingRejected, nil
+		}
+	case "inconclusive":
 	case "deferred":
 		if result.Preflight.Classification == "" || strings.TrimSpace(result.Preflight.Justification) == "" {
 			return "", fmt.Errorf("verify status \"deferred\" requires preflight.classification and preflight.justification")
 		}
 	}
 	return "", nil
+}
+
+func isStubFinding(tx *gorm.DB, f db.Finding) (bool, error) {
+	if !findingOpenForVerify(f.Status) {
+		return false, nil
+	}
+	return hasPlaceholderEvidence(tx, f)
+}
+
+// hasPlaceholderEvidence reports whether f lacks the evidence its originating skill's schema requires.
+func hasPlaceholderEvidence(tx *gorm.DB, f db.Finding) (bool, error) {
+	var schemas []string
+	err := tx.Model(&db.Skill{}).Joins("JOIN scans ON scans.skill_name = skills.name").
+		Where("scans.id = ?", f.ScanID).Limit(1).Pluck("skills.schema_json", &schemas).Error
+	if err != nil {
+		return false, fmt.Errorf("load originating skill of finding %d: %w", f.ID, err)
+	}
+	if len(schemas) == 0 || !schemaRequiresEvidence(schemas[0]) {
+		return false, nil
+	}
+	return isStubEvidence(f.Trace, f.Boundary, f.Validation), nil
+}
+
+// writeVerifyStatus writes verify's status move, rechecking a stub rejection against the locked row.
+func writeVerifyStatus(tx *gorm.DB, findingID uint, next db.FindingLifecycle) error {
+	if next == "" {
+		return nil
+	}
+	if next == db.FindingRejected {
+		applies, err := stubRejectionStillApplies(tx, findingID)
+		if err != nil || !applies {
+			return err
+		}
+	}
+	if err := db.WriteFindingField(tx, findingID, "status", string(next), db.SourceModel, "verify"); err != nil {
+		return fmt.Errorf("update status: %w", err)
+	}
+	return nil
+}
+
+// stubRejectionStillApplies rechecks a stub rejection against the finding row under a lock.
+func stubRejectionStillApplies(tx *gorm.DB, findingID uint) (bool, error) {
+	var cur db.Finding
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&cur, findingID).Error; err != nil {
+		return false, fmt.Errorf("reload finding %d: %w", findingID, err)
+	}
+	return isStubFinding(tx, cur)
+}
+
+func findingOpenForVerify(status db.FindingLifecycle) bool {
+	switch status {
+	case db.FindingNew, db.FindingEnriched, db.FindingTriaged:
+		return true
+	default:
+		return false
+	}
 }
 
 func verifyStatusValid(status string) bool {
@@ -1331,10 +1399,8 @@ func (w *Worker) recordVerifyOutput(scan *db.Scan, f db.Finding, record verifyRe
 		if lookup.RowsAffected > 0 {
 			return nil
 		}
-		if record.nextStatus != "" {
-			if err := db.WriteFindingField(tx, f.ID, "status", string(record.nextStatus), db.SourceModel, "verify"); err != nil {
-				return fmt.Errorf("update status: %w", err)
-			}
+		if err := writeVerifyStatus(tx, f.ID, record.nextStatus); err != nil {
+			return err
 		}
 		if calibration.Evaluated {
 			effectiveSeverity, err := db.ReconcileFindingSeverityCap(

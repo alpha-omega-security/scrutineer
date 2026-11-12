@@ -18,6 +18,7 @@ func TestAPIStreamFinding_persistsAndIsVisibleToSiblings(t *testing.T) {
 		Updates(map[string]any{"scan_group": "grp-1", "skill_name": "security-deep-dive"})
 
 	body := `{"id":"F1","title":"streamed bug","severity":"High","location":"main.go:10",
+		"trace":"User input reaches exec via handler.Run without quoting.",
 		"dup_check":"compared against F0; distinct sink"}`
 	post := httptest.NewRequest("POST", fmt.Sprintf("/api/repositories/%d/findings", repo.ID), strings.NewReader(body))
 	asOperator(post)
@@ -90,5 +91,29 @@ func TestAPIStreamFinding_rejectsInvalidBody(t *testing.T) {
 				t.Errorf("status %d, want 400", w.Code)
 			}
 		})
+	}
+}
+
+func TestAPIStreamFindingRejectsStubEvidence(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo, auth := seedRunningScan(t, s)
+
+	body := `{"title":"probe write access","severity":"Low","cwe":"CWE-1","location":"src/ocamlorg_web/lib/handler.ml:1","sinks":["S-tmp"],"trace":"t","boundary":"b","validation":"v","rating":"r"}`
+	post := httptest.NewRequest("POST", fmt.Sprintf("/api/repositories/%d/findings", repo.ID), strings.NewReader(body))
+	asOperator(post)
+	post.Header.Set("Authorization", "Bearer "+auth.APIToken)
+	pw := httptest.NewRecorder()
+	s.Handler().ServeHTTP(pw, post)
+	if pw.Code != 400 {
+		t.Fatalf("POST status %d, want 400: %s", pw.Code, pw.Body)
+	}
+	if !strings.Contains(pw.Body.String(), "placeholders") {
+		t.Errorf("response %q does not mention placeholders", pw.Body)
+	}
+	var n int64
+	s.DB.Model(&db.Finding{}).Count(&n)
+	if n != 0 {
+		t.Errorf("stub finding created %d rows, want 0", n)
 	}
 }
