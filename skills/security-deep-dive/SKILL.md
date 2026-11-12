@@ -301,6 +301,7 @@ The subagents you spawn do not see this SKILL.md. They get only the prompt you w
 
 - Tell every subagent, in its prompt, not to write or touch `./report.json`. That file is yours to write, once, at the end.
 - Give each subagent a distinct scratch file for its slice — `./inventory-<area>.json` for a Phase 1 slice, `./dispositions-<area>.json` for a Phase 2 batch — and have it return that path. Distinct names mean two subagents never write the same file, so single-writer is mechanical rather than a thing you have to trust the agents to honour. (Returning the slice as message text works for small slices but truncates and re-transcribes lossily on large ones; on a repository big enough to need fan-out, prefer the scratch file.)
+- Tell each subagent to read `./threat_model.json`, when it exists, for its "Trust boundary" checks.
 - You are the sole writer of `./report.json`. Read back every scratch file, union the slices, and write the one report yourself, per Output below.
 
 ## Concurrent findings

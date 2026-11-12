@@ -30,6 +30,7 @@ outcome.
 - ./src contains the cloned repository.
 - ./context.json contains repository identity, optional scan_subpath, optional
   scan_config, and the Scrutineer API details.
+- ./threat_model.json — optional. When present, a threat-model.
 - ./schema.json defines report.json.
 - ./references/ contains ecosystem-specific review guidance with API names and
   version cutoffs.
@@ -53,7 +54,7 @@ untrusted principal. A local administrator's configuration, a developer-only
 tool, tests, examples, fixtures, documentation, generated files, and vendored
 code are not attacker-controlled by default.
 
-When a prior threat-model report is available through the local Scrutineer API,
+When a prior threat-model report is available in `threat_model.json`,
 use it to refine boundaries. If it is unavailable, continue with source-only
 analysis rather than making assumptions.
 
