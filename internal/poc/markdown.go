@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/yuin/goldmark/v2/ast"
-	"github.com/yuin/goldmark/v2/text"
 )
 
 var pocLanguage = regexp.MustCompile(`^[a-zA-Z0-9_+.-]+$`)
@@ -32,11 +31,11 @@ func Validate(validation string) error {
 func parse(validation string, strict bool) ([]Block, error) {
 	source := []byte(validation)
 	var blocks []Block
-	markdown := legacyMarkdown
+	markdown := legacyParser
 	if strict {
-		markdown = strictMarkdown
+		markdown = strictParser
 	}
-	err := ast.Walk(markdown.Parser().Parse(text.NewReader(source)), func(node ast.Node, entering bool) (ast.WalkStatus, error) {
+	err := ast.Walk(markdown.Parse(source), func(node ast.Node, entering bool) (ast.WalkStatus, error) {
 		if !entering {
 			return ast.WalkContinue, nil
 		}
@@ -45,8 +44,8 @@ func parse(validation string, strict bool) ([]Block, error) {
 				return ast.WalkStop, err
 			}
 		}
-		fence, ok := node.(*ast.FencedCodeBlock)
-		if !ok {
+		fence, ok := node.(*ast.CodeBlock)
+		if !ok || fence.CodeBlockKind != ast.CodeBlockKindFenced {
 			return ast.WalkContinue, nil
 		}
 		block, err := parseFence(fence, source, strict)
@@ -74,27 +73,28 @@ func parse(validation string, strict bool) ([]Block, error) {
 // PoC is a handful of files.
 const MaxBlocks = 64
 
-func parseFence(fence *ast.FencedCodeBlock, source []byte, strict bool) (Block, error) {
-	block := Block{Language: strings.ToLower(string(fence.Language(source))), Body: fence.Lines().Value(source)}
+func parseFence(fence *ast.CodeBlock, source []byte, strict bool) (Block, error) {
+	// Str is the raw info string; Value and Language decode escapes and entities.
+	info := fence.Info.Str(source)
+	language, _, _ := strings.Cut(info, " ")
+	block := Block{Language: strings.ToLower(language), Body: fence.Value.Bytes(source)}
 	if block.Language != "" && !pocLanguage.MatchString(block.Language) {
 		if strict {
 			return block, fmt.Errorf("invalid PoC fence language %q", block.Language)
 		}
 		block.Language = "text"
 	}
-	if fence.Info != nil {
-		fields := strings.Fields(string(fence.Info.Value(source)))
-		for _, field := range fields {
-			if name, named := strings.CutPrefix(field, "filename="); named {
-				if block.Name != "" || len(fields) != 2 || fields[0] == field || !validPoCFilename(name) {
-					return block, fmt.Errorf("invalid PoC filename in %q", fence.Info.Value(source))
-				}
-				block.Name = name
+	fields := strings.Fields(info)
+	for _, field := range fields {
+		if name, named := strings.CutPrefix(field, "filename="); named {
+			if block.Name != "" || len(fields) != 2 || fields[0] == field || !validPoCFilename(name) {
+				return block, fmt.Errorf("invalid PoC filename in %q", info)
 			}
+			block.Name = name
 		}
 	}
 	if strict || block.Name != "" {
-		if closed, _ := fence.AttributeString(pocClosedAttribute); closed != true {
+		if _, closed := fence.Attribute(pocClosedAttribute); !closed {
 			return block, fmt.Errorf("unterminated PoC fence for %q; close the fence on its own line", block.Name)
 		}
 	}
@@ -109,13 +109,14 @@ func parseFence(fence *ast.FencedCodeBlock, source []byte, strict bool) (Block, 
 }
 
 func validateProse(node ast.Node, source []byte) error {
-	switch node.(type) {
+	switch node := node.(type) {
 	case *ast.CodeBlock:
-		return fmt.Errorf("indented PoC block needs a closed Markdown fence with language filename=relative/path")
-	case *ast.Paragraph, *ast.TextBlock, *ast.Heading:
-		for i := 0; i < node.Lines().Len(); i++ {
-			line := node.Lines().At(i)
-			if fileHeader.MatchString(strings.TrimSpace(string(line.Value(source)))) {
+		if node.CodeBlockKind == ast.CodeBlockKindIndented {
+			return fmt.Errorf("indented PoC block needs a closed Markdown fence with language filename=relative/path")
+		}
+	case *ast.Paragraph, *ast.Heading:
+		for _, line := range node.(ast.BlockNode).Source() {
+			if fileHeader.MatchString(strings.TrimSpace(string(line.Bytes(source)))) {
 				return fmt.Errorf("PoC file header uses --- FILENAME ---; put each file in a closed Markdown fence with language filename=relative/path")
 			}
 		}
