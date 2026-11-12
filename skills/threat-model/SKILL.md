@@ -17,7 +17,7 @@ metadata:
 
 Produce the security contract this project implicitly offers its callers: what it assumes, what it guarantees under those assumptions, what it explicitly leaves to the integrator, and which reported "findings" are noise given the model. The output is data, not an audit. Do not hunt for bugs, do not list CVEs, do not recommend fixes. Describe the project as it is.
 
-You are running headless with no maintainer to consult. Every claim you write is therefore either `documented` (you can cite a file and line in the repo, a manpage, a header comment, an FAQ, a closed issue) or `inferred` (you reasoned it from code structure or domain knowledge). There is no third state. Anything `inferred` also goes in `open_questions` so a human can later confirm or strike it; until then, downstream skills treat `inferred` claims as working hypothesis rather than citable fact.
+You are running headless with no maintainer to consult. Every claim you write is therefore either `documented` (you can cite a file and line in the repo, a manpage, a header comment, an FAQ, a closed issue, or the language's own documentation for a property of the language) or `inferred` (you reasoned it from code structure or domain knowledge). There is no third state. Anything `inferred` also goes in `open_questions` so a human can later confirm or strike it; until then, downstream skills treat `inferred` claims as working hypothesis rather than citable fact.
 
 ## Workspace
 
@@ -77,7 +77,7 @@ Load the latest compatible `embedded-native` report when available. The report i
 
 Trace each native component back through the host build and linkage path: extension registration, FFI declaration, generated binding, build script, feature flag, and the public entry point that can reach it. Give a reachable same-project component its own component, trust boundary, entry-point rows, and focus-area paths covering both sides of the bridge. Keep an unmodified third-party component distinct from first-party source, but still model the host entry point, the dependency boundary, the enabled build variants, and the caller or operator responsibilities that govern its reachability. A directory name such as `vendor/` or `third_party/` does not by itself make reachable native code safe or justify adding it to `scan_config.skip`. If the embedded report contains an error, record the missing native inventory in `open_questions` and continue from the checkout.
 
-If `SECURITY.md` or an equivalent contains threat-model content (what the project trusts, what counts as a vulnerability, examples of non-vulnerabilities), lift every such statement directly into the matching report field with a citation. Your output must be a strict superset of what `SECURITY.md` already asserts about scope. If you think an existing claim is wrong, record that in `open_questions`; do not silently override it.
+If `SECURITY.md` or an equivalent contains threat-model content (what the project trusts, what counts as a vulnerability, examples of non-vulnerabilities), lift every such statement directly into the matching report field with a citation, without widening its scope. Your output must be a strict superset of what `SECURITY.md` already asserts about scope. If you think an existing claim is wrong, record that in `open_questions`; do not silently override it.
 
 Identify the public surface. Look further than exported symbols, HTTP routes, and CLI subcommands; a project's real entry points are wherever data from outside the process arrives, and that is often not a function call:
 
@@ -110,15 +110,15 @@ Use cases the project does not aim to support. Threats it does not defend agains
 
 ### Trust boundaries
 
-Where the line sits. For most libraries: "the public API surface; everything inside assumes the caller authenticated the data." For a service: name each role (unauthenticated client, authenticated client, operator, peer) and what each is trusted with. For each component family, state the reachability precondition a finding must meet to matter: "a finding in `inflate.c` is in-model only if reachable from compressed input bytes; a finding in `gzopen` path handling is in-model only if the path is sourced from outside the calling process."
+Where the line sits. For most libraries: "the public API surface; everything inside assumes the caller authenticated the data." For a service: name each role (unauthenticated client, authenticated client, operator, peer) and what each is trusted with. For each component family, state the reachability precondition a finding must meet to matter: "a finding in `inflate.c` is in-model only if reachable from compressed input bytes; a finding in `gzopen` path handling is in-model only if the path is sourced from outside the calling process." The precondition must repeat the `condition` of that component's conditional entry points.
 
 ### Entry-point trust table
 
 The single most-consumed field downstream. One row per parameter of every public entry point that accepts external data:
 
-| entry_point | parameter | attacker_controllable | caller_must_enforce | provenance |
+| entry_point | parameter | attacker_controllable | caller_must_enforce | provenance | source | condition | component |
 
-For a library, `entry_point` is a function or method. For a service, it is a route, RPC, or protocol message, and rows cover headers and connection metadata, not just bodies. `attacker_controllable` is `yes`, `no`, or `conditional` with the condition. `caller_must_enforce` is the invariant the caller is on the hook for ("output buffer >= len", "path not from untrusted user", "format string is a literal"). Group by component family if the table is large. Prose is not enough here; deep-dive looks up exact parameters.
+For a library, `entry_point` is a function or method. For a service, it is a route, RPC, or protocol message, and rows cover headers and connection metadata, not just bodies. `attacker_controllable` is `yes`, `no`, or `conditional` with the condition in `condition`. For a library's public API, use `conditional` ("if the application forwards attacker-controllable input") even when `caller_must_enforce` makes the caller responsible for it. `caller_must_enforce` is the invariant the caller is on the hook for ("output buffer >= len", "path not from untrusted user", "format string is a literal"). For an entry point documented as memory-safe, write the precondition together with how the entry point fails when it is broken. For an entry point documented as unsafe, cite the documentation that marks it unsafe in `source`. For each entry point, the number and order of calls is a `parameter` too in its own row with `parameter` set to `__INVOCATION`, `conditional` ("if the application calls it in response to attacker-controllable input"). Group by component family if the table is large. Prose is not enough here; deep-dive looks up exact parameters.
 
 ### Environment assumptions
 
@@ -130,11 +130,11 @@ Compile-time defines, feature flags, cargo features, build tags, runtime config 
 
 ### Adversary model
 
-Who the assumed attacker is (network peer, user of the embedding app, local unprivileged process, co-tenant, authenticated-but-byzantine peer). What capabilities they have and lack. Which actors are explicitly out: "an attacker already in the calling process has won and is not modelled." For consensus or replicated systems, state the honest-fraction threshold under which the model holds.
+Who the assumed attacker is (network peer, user of the embedding app, local unprivileged process, co-tenant, authenticated-but-byzantine peer). What capabilities they have and lack. Which actors are explicitly out: "an attacker already in the calling process has won and is not modelled." For a library, list "attackers controlling the input of any application using the library" in `in_scope`. For consensus or replicated systems, state the honest-fraction threshold under which the model holds.
 
 ### Properties provided
 
-Each property the project actually commits to, in docs, tests, or recorded maintainer statement. Do not invent properties. For each: the property and conditions; the violation symptom (crash, OOB read, OOB write, info leak, hang, wrong output, unbounded allocation, fork/divergence for distributed systems); a severity tier (`security`, meaning a break warrants coordinated disclosure, or `correctness`, meaning ordinary bug); and provenance. For resource properties, state the threshold, not just the direction: "super-linear in input size is a bug, constant-factor blowup is not", or "no resource guarantee is made". If you cannot find a documented threshold, mark the field `inferred` and record the open question.
+Each property the project actually commits to, in docs, tests, or recorded maintainer statement. Do not invent properties. Documentation at the language, project and library level gets inherited by public APIs, unless exceptions are documented for a specific API. For example in a language documented as memory-safe: every public API is considered documented as memory-safe under all conditions, and only exceptions need to be documented (unsafe libraries, modules and functions). In these situations calls reachable from public APIs to FFI bindings are expected to preserve memory safety for any number and order of calls, even when the arguments would otherwise exceed a documented precondition. This inherited property is `documented` (with the language, the binding declaration, and the absence of `unsafe` as `source`), not `inferred`, has the `security` severity tier, and doesn't need an `open_questions` entry. Its `property` field must be "memory-safe for any arguments, and any number and order of calls". For each: the property and conditions; the violation symptom (crash, OOB read, OOB write, info leak, hang, wrong output, unbounded allocation, fork/divergence for distributed systems); a severity tier (`security`, meaning a break warrants coordinated disclosure, or `correctness`, meaning ordinary bug); and provenance. For resource properties, state the threshold, not just the direction: "super-linear in input size is a bug, constant-factor blowup is not", or "no resource guarantee is made". If you cannot find a documented threshold, mark the field `inferred` and record the open question.
 
 ### Properties not provided
 
@@ -223,7 +223,7 @@ Write `./report.json` matching `./schema.json`. Shape:
     {"name": "ZLIB_INSECURE", "default": "off", "effect": "removes gzprintf overflow guard", "discouraged": true, "provenance": "documented", "source": "zconf.h:88"}
   ],
   "adversaries": {
-    "in_scope": ["whoever supplies the compressed input"],
+    "in_scope": ["whoever supplies the compressed input", "attackers controlling the input of any application using the library"],
     "out_of_scope": ["caller already in the host process", "side-channel observer"],
     "provenance": "inferred"
   },
