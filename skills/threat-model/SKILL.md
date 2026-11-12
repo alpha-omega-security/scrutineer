@@ -130,7 +130,7 @@ Compile-time defines, feature flags, cargo features, build tags, runtime config 
 
 ### Adversary model
 
-Who the assumed attacker is (network peer, user of the embedding app, local unprivileged process, co-tenant, authenticated-but-byzantine peer). What capabilities they have and lack. Which actors are explicitly out: "an attacker already in the calling process has won and is not modelled." For consensus or replicated systems, state the honest-fraction threshold under which the model holds.
+Who the assumed attacker is (network peer, user of the embedding app, local unprivileged process, co-tenant, authenticated-but-byzantine peer). What capabilities they have and lack. Which actors are explicitly out: "an attacker already in the calling process has won and is not modelled." For a library, list "attackers controlling the input of any application using the library" in `in_scope`. For consensus or replicated systems, state the honest-fraction threshold under which the model holds.
 
 ### Properties provided
 
