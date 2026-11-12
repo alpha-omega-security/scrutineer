@@ -3022,16 +3022,47 @@ func (s *Server) diffRescanFallbacks(ctx context.Context, repo db.Repository, mo
 	var active []string
 	s.DB.Model(&db.Skill{}).Where("name IN ? AND active = ?", diffRescanSkillNames, true).
 		Order("id").Pluck("name", &active)
+	targets := make([]worker.DiffRescanTarget, 0, len(active))
+	for _, name := range active {
+		targets = append(targets, worker.DiffRescanTarget{Skill: name, Label: name})
+	}
+	var deepDives int64
+	s.DB.Model(&db.Skill{}).Where("name = ? AND active = ?", deepDiveSkillName, true).Count(&deepDives)
+	if deepDives > 0 && slices.Contains(active, threatModelSkillName) {
+		targets = append(targets, deepDiveTargets(repo.ScanConfig)...)
+	}
 	c := diffRescanPreview{RepoID: repo.ID, Model: model, SubPath: subPath}
 	ctx, cancel := context.WithTimeout(ctx, diffRescanPreviewTimeout)
 	defer cancel()
-	fallbacks, err := s.Worker.DiffRescanFallbacks(ctx, repo, subPath, active)
+	fallbacks, err := s.Worker.DiffRescanFallbacks(ctx, repo, subPath, targets)
 	if err != nil {
 		c.Err = err.Error()
 		return c, true
 	}
 	c.Fallbacks = fallbacks
 	return c, len(fallbacks) > 0
+}
+
+// deepDiveTargets lists the deep-dives a completed threat-model fans out to:
+// one per configured focus area, or one unscoped scan when none is configured.
+// An invalid scan config fans out nothing.
+func deepDiveTargets(scanConfig string) []worker.DiffRescanTarget {
+	config, err := repoconfig.Parse(scanConfig)
+	if err != nil {
+		return nil
+	}
+	if len(config.FocusAreas) == 0 {
+		return []worker.DiffRescanTarget{{Skill: deepDiveSkillName, Label: deepDiveSkillName}}
+	}
+	var targets []worker.DiffRescanTarget
+	for _, area := range config.FocusAreas {
+		raw, err := repoconfig.EncodeFocusAreaJSON(area)
+		if err != nil {
+			continue
+		}
+		targets = append(targets, worker.DiffRescanTarget{Skill: deepDiveSkillName, FocusArea: raw, Label: deepDiveSkillName + " (" + area.Name + ")"})
+	}
+	return targets
 }
 
 // diffRescanConfirm renders the confirmation step: an OOB panel on the repo

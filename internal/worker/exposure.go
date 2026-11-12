@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 
 	"github.com/git-pkgs/clone"
 
@@ -19,6 +20,24 @@ import (
 func (w *Worker) cacheMutex(url string) *sync.Mutex {
 	v, _ := w.cacheMu.LoadOrStore(url, &sync.Mutex{})
 	return v.(*sync.Mutex)
+}
+
+// cacheLockPoll is how often lockCacheContext retries a held cache lock.
+const cacheLockPoll = 50 * time.Millisecond
+
+// lockCacheContext takes the per-URL cache lock, or returns ctx's error once
+// ctx is done. A clone or fetch can hold the lock for minutes, and callers
+// serving a request must not outlive their deadline waiting for it.
+func (w *Worker) lockCacheContext(ctx context.Context, url string) (unlock func(), err error) {
+	mu := w.cacheMutex(url)
+	for !mu.TryLock() {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(cacheLockPoll):
+		}
+	}
+	return mu.Unlock, nil
 }
 
 // prepareDependentSrc updates the shared dependent cache for url under a

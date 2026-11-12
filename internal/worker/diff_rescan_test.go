@@ -3,12 +3,14 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"scrutineer/internal/coverage"
 	"scrutineer/internal/db"
@@ -109,6 +111,56 @@ func TestDiffBaselineMatchesFocusArea(t *testing.T) {
 	baseline, ok := w.diffBaseline(scan)
 	if !ok || baseline.ID != matching.ID {
 		t.Fatalf("baseline = %+v ok=%v, want focus scan %d", baseline, ok, matching.ID)
+	}
+}
+
+func TestPrepareDiffRescanDeepDiveUsesItsOwnBaselineAfterPinnedThreatModel(t *testing.T) {
+	gdb := dbtest.Open(t)
+	repoDir := initGitRepo(t)
+	writeDiffTestFile(t, repoDir, "app.go", "package main\n")
+	base := gitCommit(t, repoDir, "base")
+	writeDiffTestFile(t, repoDir, "app.go", "package main\n\nfunc added() {}\n")
+	head := gitCommit(t, repoDir, "head")
+
+	repo := db.Repository{URL: "file://" + repoDir, Name: "r"}
+	gdb.Create(&repo)
+	tmBaseline := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "threat-model", Status: db.ScanDone, Commit: base}
+	gdb.Create(&tmBaseline)
+	gdb.Create(&db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "threat-model", Status: db.ScanDone, Commit: head,
+		RescanMode: db.ScanRescanModeDiff, DiffBaseScanID: &tmBaseline.ID})
+	ddBaseline := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "security-deep-dive", Status: db.ScanDone, Commit: base}
+	gdb.Create(&ddBaseline)
+	w := &Worker{DB: gdb, DataDir: t.TempDir(), Log: slog.Default()}
+
+	for _, tc := range []struct {
+		name     string
+		pinned   *uint
+		wantMode string
+		wantBase *uint
+	}{
+		{"own baseline", nil, db.ScanRescanModeDiff, &ddBaseline.ID},
+		{"pinned to the threat-model baseline", &tmBaseline.ID, db.ScanRescanModeFull, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			scan := db.Scan{RepositoryID: repo.ID, Repository: repo, Kind: JobSkill, SkillName: "security-deep-dive",
+				Status: db.ScanRunning, Commit: head, RescanMode: db.ScanRescanModeDiff, DiffBaseScanID: tc.pinned}
+			gdb.Create(&scan)
+			workRoot := w.scanWorkRoot(&scan)
+			if err := CopyTree(repoDir, filepath.Join(workRoot, "src")); err != nil {
+				t.Fatal(err)
+			}
+			if err := w.prepareDiffRescan(context.Background(), &scan, workRoot, func(Event) {}); err != nil {
+				t.Fatal(err)
+			}
+			var stored db.Scan
+			gdb.First(&stored, scan.ID)
+			if stored.RescanMode != tc.wantMode {
+				t.Fatalf("rescan_mode = %q, want %q", stored.RescanMode, tc.wantMode)
+			}
+			if (stored.DiffBaseScanID == nil) != (tc.wantBase == nil) || (tc.wantBase != nil && *stored.DiffBaseScanID != *tc.wantBase) {
+				t.Fatalf("diff_base_scan_id = %v, want %v", stored.DiffBaseScanID, tc.wantBase)
+			}
+		})
 	}
 }
 
@@ -222,7 +274,7 @@ func TestDiffRescanFallbacksEmptyUnderLimits(t *testing.T) {
 	gdb.Create(&db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "threat-model", Status: db.ScanDone, Commit: base})
 
 	w := &Worker{DB: gdb, DataDir: t.TempDir(), Log: slog.Default()}
-	got, err := w.DiffRescanFallbacks(context.Background(), repo, "", []string{"threat-model"})
+	got, err := w.DiffRescanFallbacks(context.Background(), repo, "", []DiffRescanTarget{{Skill: "threat-model", Label: "threat-model"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -245,7 +297,9 @@ func TestDiffRescanFallbacksReportsOversizedPatchAndMissingBaseline(t *testing.T
 	gdb.Create(&db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "semgrep", Status: db.ScanDone, Commit: base})
 
 	w := &Worker{DB: gdb, DataDir: t.TempDir(), Log: slog.Default()}
-	got, err := w.DiffRescanFallbacks(context.Background(), repo, "", []string{"recon", "threat-model", "semgrep"})
+	got, err := w.DiffRescanFallbacks(context.Background(), repo, "", []DiffRescanTarget{
+		{Skill: "recon", Label: "recon"}, {Skill: "threat-model", Label: "threat-model"}, {Skill: "semgrep", Label: "semgrep"},
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -350,5 +404,35 @@ func readDiffTestJSONFile(t *testing.T, path string, dst any) {
 	}
 	if err := json.Unmarshal(raw, dst); err != nil {
 		t.Fatalf("decode %s: %v\n%s", path, err, raw)
+	}
+}
+
+func TestLockCacheContextTakesFreeLockAndUnlocks(t *testing.T) {
+	w := &Worker{}
+	unlock, err := w.lockCacheContext(context.Background(), "https://example.invalid/r.git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock()
+	if !w.cacheMutex("https://example.invalid/r.git").TryLock() {
+		t.Fatal("cache lock still held after unlock")
+	}
+}
+
+func TestDiffRescanFallbacksGivesUpOnHeldCacheLock(t *testing.T) {
+	gdb := dbtest.Open(t)
+	repo := db.Repository{URL: "https://example.invalid/acme/widgets.git", Name: "widgets"}
+	gdb.Create(&repo)
+	gdb.Create(&db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "threat-model", Status: db.ScanDone, Commit: "0123456789abcdef0123456789abcdef01234567"})
+	w := &Worker{DB: gdb, DataDir: t.TempDir(), Log: slog.Default()}
+	mu := w.cacheMutex(repo.URL)
+	mu.Lock()
+	defer mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_, err := w.DiffRescanFallbacks(ctx, repo, "", []DiffRescanTarget{{Skill: "threat-model", Label: "threat-model"}})
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want context.DeadlineExceeded while another scan holds the cache lock", err)
 	}
 }

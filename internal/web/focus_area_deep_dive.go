@@ -92,16 +92,15 @@ func (s *Server) enqueueFocusAreaDeepDive(parent *db.Scan, skillID uint, group, 
 		// deep-dive skill's own scrutineer.model: max declaration.
 		// Leaving it empty lets enqueueSkillWith fall through to the
 		// skill's tier so focus-area deep-dives run on max as intended.
-		Effort:         parent.Effort,
-		Profile:        focusAreaProfile(parent, focusArea),
-		SubPath:        parent.SubPath,
-		ScopeMode:      parent.ScopeMode,
-		Ref:            parent.Ref,
-		RescanMode:     parent.RescanMode,
-		DiffBaseScanID: parent.DiffBaseScanID,
-		ScanGroup:      group,
-		FocusArea:      focusArea,
-		TriageScanID:   parent.TriageScanID,
+		Effort:       parent.Effort,
+		Profile:      focusAreaProfile(parent, focusArea),
+		SubPath:      parent.SubPath,
+		ScopeMode:    parent.ScopeMode,
+		Ref:          parent.Ref,
+		RescanMode:   parent.RescanMode,
+		ScanGroup:    group,
+		FocusArea:    focusArea,
+		TriageScanID: parent.TriageScanID,
 	}); err != nil {
 		name := "repository"
 		if focusArea != "" {

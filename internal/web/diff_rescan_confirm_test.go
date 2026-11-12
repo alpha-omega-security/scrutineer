@@ -10,12 +10,14 @@ import (
 	"testing"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/repoconfig"
 	"scrutineer/internal/testutil"
 )
 
 // diffRescanRepo seeds a local git repository whose HEAD changes `changed`
 // files since the baseline commit, plus the diff-rescan skills. With
-// baselines set, each grouped skill gets a completed scan at the baseline.
+// baselines set, each grouped skill and the unscoped deep-dive get a
+// completed scan at the baseline.
 func diffRescanRepo(t *testing.T, s *Server, changed int, baselines bool) db.Repository {
 	t.Helper()
 	dir := t.TempDir()
@@ -52,7 +54,7 @@ func diffRescanRepo(t *testing.T, s *Server, changed int, baselines bool) db.Rep
 	for _, name := range append(diffRescanSkillNames, deepDiveSkillName) {
 		s.DB.Create(&db.Skill{Name: name, Body: "b", OutputFile: "r.json",
 			OutputKind: "freeform", Version: 1, Active: true, Source: "ui"})
-		if baselines && name != deepDiveSkillName {
+		if baselines {
 			s.DB.Create(&db.Scan{RepositoryID: repo.ID, Kind: "skill", SkillName: name, Status: db.ScanDone, Commit: base})
 		}
 	}
@@ -164,5 +166,56 @@ func TestRepoDiffScan_noBaselineConfirmsOnPlainPost(t *testing.T) {
 	}
 	if n := queuedScans(t, s, repo); n != 0 {
 		t.Fatalf("queued scans = %d before confirmation, want 0", n)
+	}
+}
+
+func TestRepoDiffScan_deepDiveWithoutBaselineAsksConfirmation(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := diffRescanRepo(t, s, 1, true)
+	s.DB.Where("repository_id = ? AND skill_name = ?", repo.ID, deepDiveSkillName).Delete(&db.Scan{})
+
+	w := postDiffRescan(s, repo, true, "")
+
+	body := w.Body.String()
+	if !strings.Contains(body, deepDiveSkillName+": no compatible baseline scan with a commit") {
+		t.Fatalf("confirmation does not list the deep-dive fallback: code=%d body=%s", w.Code, body)
+	}
+	if strings.Contains(body, threatModelSkillName+":") {
+		t.Errorf("confirmation lists threat-model, which has a baseline: body=%s", body)
+	}
+	if n := queuedScans(t, s, repo); n != 0 {
+		t.Fatalf("queued scans = %d before confirmation, want 0", n)
+	}
+}
+
+func TestRepoDiffScan_checksEachFocusAreaDeepDiveAgainstItsOwnBaseline(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := diffRescanRepo(t, s, 1, true)
+	s.DB.Model(&repo).Update("scan_config", `focus_areas:
+  - name: XML parser
+    paths: [lib/xml*.c]
+    surface: untrusted XML
+  - name: CLI parser
+    paths: [cmd/**]
+    surface: operator arguments
+`)
+	var unscoped db.Scan
+	s.DB.Where("repository_id = ? AND skill_name = ?", repo.ID, deepDiveSkillName).First(&unscoped)
+	xml, err := repoconfig.EncodeFocusAreaJSON(repoconfig.FocusArea{Name: "XML parser", Paths: []string{"lib/xml*.c"}, Surface: "untrusted XML"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.DB.Create(&db.Scan{RepositoryID: repo.ID, Kind: "skill", SkillName: deepDiveSkillName, Status: db.ScanDone, Commit: unscoped.Commit, FocusArea: xml})
+
+	w := postDiffRescan(s, repo, true, "")
+
+	body := w.Body.String()
+	if !strings.Contains(body, deepDiveSkillName+" (CLI parser): no compatible baseline scan with a commit") {
+		t.Fatalf("confirmation does not list the CLI parser deep-dive: code=%d body=%s", w.Code, body)
+	}
+	if strings.Contains(body, "(XML parser)") || strings.Contains(body, deepDiveSkillName+": ") {
+		t.Errorf("confirmation lists a deep-dive that has its own baseline: body=%s", body)
 	}
 }

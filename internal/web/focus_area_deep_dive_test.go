@@ -220,3 +220,32 @@ func TestAutoEnqueueFocusAreaDeepDivesPreservesScope(t *testing.T) {
 			child.SubPath, child.Ref, child.ScanGroup, parent.SubPath, parent.Ref, parent.ScanGroup)
 	}
 }
+
+func TestAutoEnqueueFocusAreaDeepDivesDoesNotInheritPinnedDiffBaseline(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/diff-focus", Name: "diff-focus"}
+	s.DB.Create(&repo)
+	deepDive := db.Skill{Name: deepDiveSkillName, Body: "b", OutputFile: "r.json", OutputKind: "findings", Active: true, Source: "ui"}
+	s.DB.Create(&deepDive)
+	tmBaseline := db.Scan{RepositoryID: repo.ID, Status: db.ScanDone, SkillName: threatModelSkillName, Commit: "base"}
+	s.DB.Create(&tmBaseline)
+	parent := db.Scan{
+		RepositoryID: repo.ID, Status: db.ScanDone, SkillName: threatModelSkillName, ScanGroup: "diff-1",
+		RescanMode: db.ScanRescanModeDiff, DiffBaseScanID: &tmBaseline.ID,
+	}
+	s.DB.Create(&parent)
+
+	s.autoEnqueueFocusAreaDeepDives(&parent)
+
+	var child db.Scan
+	if err := s.DB.Where("repository_id = ? AND skill_id = ?", repo.ID, deepDive.ID).First(&child).Error; err != nil {
+		t.Fatal(err)
+	}
+	if child.RescanMode != db.ScanRescanModeDiff {
+		t.Errorf("child rescan_mode = %q, want %q", child.RescanMode, db.ScanRescanModeDiff)
+	}
+	if child.DiffBaseScanID != nil {
+		t.Errorf("child diff_base_scan_id = %d, want nil so the deep-dive resolves its own baseline", *child.DiffBaseScanID)
+	}
+}
