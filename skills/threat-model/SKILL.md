@@ -118,7 +118,7 @@ The single most-consumed field downstream. One row per parameter of every public
 
 | entry_point | parameter | attacker_controllable | caller_must_enforce | provenance | source | condition | component |
 
-For a library, `entry_point` is a function or method. For a service, it is a route, RPC, or protocol message, and rows cover headers and connection metadata, not just bodies. `attacker_controllable` is `yes`, `no`, or `conditional` with the condition in `condition`. `caller_must_enforce` is the invariant the caller is on the hook for ("output buffer >= len", "path not from untrusted user", "format string is a literal"). Group by component family if the table is large. Prose is not enough here; deep-dive looks up exact parameters.
+For a library, `entry_point` is a function or method. For a service, it is a route, RPC, or protocol message, and rows cover headers and connection metadata, not just bodies. `attacker_controllable` is `yes`, `no`, or `conditional` with the condition in `condition`. For a library's public API, use `conditional` ("if the application forwards attacker-controllable input") even when `caller_must_enforce` makes the caller responsible for it. `caller_must_enforce` is the invariant the caller is on the hook for ("output buffer >= len", "path not from untrusted user", "format string is a literal"). Group by component family if the table is large. Prose is not enough here; deep-dive looks up exact parameters.
 
 ### Environment assumptions
 
