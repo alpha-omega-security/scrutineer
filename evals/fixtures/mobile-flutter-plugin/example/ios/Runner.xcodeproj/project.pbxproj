@@ -1,0 +1,26 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+		B1000001 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		B1000002 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		B1000003 /* Runner.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Runner.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B1000004 /* Runner */ = {
+			isa = PBXNativeTarget;
+			name = Runner;
+			productName = Runner;
+			productReference = B1000003 /* Runner.app */;
+			productType = "com.apple.product-type.application";
+		};
+		B1000005 /* Project object */ = {
+			isa = PBXProject;
+			targets = (
+				B1000004 /* Runner */,
+			);
+		};
+	};
+	rootObject = B1000005 /* Project object */;
+}

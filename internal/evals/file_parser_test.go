@@ -158,7 +158,7 @@ func runFileParserModeCase(t *testing.T, tc fileParserModeCase) {
 	counts, report := runTriageModeCase(t, triageScan{fixture: tc.fixture, subPath: tc.subPath, activeSkill: "audit-file-parser", activeHere: tc.skip})
 	// Extracting archive entries stays with audit-file-parser. None of the
 	// fixtures resolve external references or deserialize into arbitrary types.
-	wants := map[string]bool{"audit-file-parser": tc.parser && !tc.skip, "audit-memory": tc.memory, "audit-exfil": false, "audit-injection": false, "audit-web": tc.web, "audit-embedded": false, "audit-build-tooling": false, "threat-model": true}
+	wants := map[string]bool{"audit-file-parser": tc.parser && !tc.skip, "audit-memory": tc.memory, "audit-exfil": false, "audit-injection": false, "audit-web": tc.web, "audit-embedded": false, "audit-build-tooling": false, "audit-mobile": false, "threat-model": true}
 	for skill, want := range wants {
 		if got := counts["/api/repositories/1/skills/"+skill+"/run"] > 0; got != want {
 			t.Errorf("%s enqueued=%t want=%t; report=%s", skill, got, want, report)
