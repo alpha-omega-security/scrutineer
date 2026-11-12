@@ -46,6 +46,9 @@ func TestValidate(t *testing.T) {
 		{"dash header", "--- /work/src/poc/input.ml ---\nlet () = ()\n", "--- FILENAME ---"},
 		{"quoted header", "> --- input.ml ---\n> let () = ()\n", "--- FILENAME ---"},
 		{"list header", "- --- input.ml ---\n  let () = ()\n", "--- FILENAME ---"},
+		{"tight list header", "- a\n- --- input.ml ---\n- c\n", "--- FILENAME ---"},
+		{"heading header", "# --- input.ml ---\n", "--- FILENAME ---"},
+		{"entity in name", "```sh filename=a&#46;sh\nx\n```\n", "invalid PoC filename"},
 		{"unclosed named fence", "```sh filename=run.sh\necho example\n", "unterminated"},
 		{"unclosed output", "```text\nexample\n", "unterminated"},
 		{"short closing fence", "````sh filename=run.sh\necho example\n```\n", "unterminated"},
@@ -69,6 +72,25 @@ func TestValidate(t *testing.T) {
 				t.Fatalf("Validate() = %v, want %q", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestParseBlocks(t *testing.T) {
+	blocks, err := Parse("Steps:\n\n```SH filename=run.sh\n\techo one\n```\n\n    indented\n\n```console\n$ ./run.sh\n```\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Block{
+		{Name: "run.sh", Language: "sh", Body: []byte("\techo one\n")},
+		{Language: "console", Body: []byte("$ ./run.sh\n")},
+	}
+	if len(blocks) != len(want) {
+		t.Fatalf("Parse() = %+v", blocks)
+	}
+	for i, b := range blocks {
+		if b.Name != want[i].Name || b.Language != want[i].Language || string(b.Body) != string(want[i].Body) {
+			t.Errorf("block %d = %+v, want %+v", i, b, want[i])
+		}
 	}
 }
 

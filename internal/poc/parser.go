@@ -4,12 +4,11 @@ import (
 	"bytes"
 	"strings"
 
-	"github.com/yuin/goldmark"
-	"github.com/yuin/goldmark/ast"
-	"github.com/yuin/goldmark/extension"
-	"github.com/yuin/goldmark/parser"
-	"github.com/yuin/goldmark/text"
-	"github.com/yuin/goldmark/util"
+	"github.com/yuin/goldmark/v2/ast"
+	"github.com/yuin/goldmark/v2/extension"
+	"github.com/yuin/goldmark/v2/parser"
+	"github.com/yuin/goldmark/v2/text"
+	"github.com/yuin/goldmark/v2/util"
 )
 
 // Run before Goldmark's standard fenced block parser (priority 700).
@@ -20,16 +19,18 @@ const (
 	pocClosedAttribute = "poc-closed"
 )
 
-var legacyMarkdown = newMarkdown(false)
-var strictMarkdown = newMarkdown(true)
+var legacyParser = newParser(false)
+var strictParser = newParser(true)
+
+var pocFlag = text.NewMultiLineValueFromString("true", text.IdentityDecoder)
 
 //nolint:ireturn // Goldmark exposes its constructor through this interface.
-func newMarkdown(strict bool) goldmark.Markdown {
-	return goldmark.New(
-		goldmark.WithExtensions(extension.GFM),
-		goldmark.WithParserOptions(parser.WithBlockParsers(util.Prioritized(
+func newParser(strict bool) parser.Parser {
+	return parser.New(
+		parser.WithExtensions(extension.NewGFMParser()),
+		parser.WithBlockParsers(util.Prioritized[parser.BlockParser](
 			&pocFenceParser{BlockParser: parser.NewFencedCodeBlockParser(), strict: strict}, pocFencePriority,
-		))),
+		)),
 	)
 }
 
@@ -51,7 +52,7 @@ func (p *pocFenceParser) Open(parent ast.Node, reader text.Reader, pc parser.Con
 			return node, state
 		}
 	}
-	node.SetAttributeString(pocLegacyAttribute, true)
+	node.SetAttribute(pocLegacyAttribute, pocFlag)
 	return node, state
 }
 
@@ -59,10 +60,10 @@ func (p *pocFenceParser) Continue(node ast.Node, reader text.Reader, pc parser.C
 	line, segment := reader.PeekLine()
 	state := p.BlockParser.Continue(node, reader, pc)
 	if state == parser.Close {
-		node.SetAttributeString(pocClosedAttribute, true)
+		node.SetAttribute(pocClosedAttribute, pocFlag)
 		return state
 	}
-	if legacy, _ := node.AttributeString(pocLegacyAttribute); legacy != true {
+	if _, legacy := node.Attribute(pocLegacyAttribute); !legacy {
 		return state
 	}
 	line = bytes.TrimRight(line, " \t\r\n")
@@ -71,9 +72,7 @@ func (p *pocFenceParser) Continue(node ast.Node, reader text.Reader, pc parser.C
 		return state
 	}
 	// Older reports glued the closing fence to the last content line.
-	last := node.Lines().Len() - 1
-	content := node.Lines().At(last)
-	content.Stop = segment.Start + len(body)
-	node.Lines().Set(last, content)
+	lines := node.(*ast.CodeBlock).Value.Segments()
+	lines[len(lines)-1].Stop = segment.Start + len(body)
 	return parser.Close
 }

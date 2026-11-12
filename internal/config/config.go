@@ -15,7 +15,7 @@ import (
 	"strings"
 	"time"
 
-	"go.yaml.in/yaml/v3"
+	"go.yaml.in/yaml/v4"
 
 	"scrutineer/internal/akrites"
 	"scrutineer/internal/egressgrant"
