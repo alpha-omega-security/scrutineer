@@ -112,6 +112,43 @@ func TestDiffBaselineMatchesFocusArea(t *testing.T) {
 	}
 }
 
+// A deep-dive fanned out from a diff threat-model carries no pinned baseline,
+// so it resolves its own skill and focus-area baseline, never the threat-model.
+func TestDiffBaselineForFannedOutDeepDive(t *testing.T) {
+	focus := `{"name":"parser","paths":["src/**"],"surface":"request bytes"}`
+	for _, tc := range []struct {
+		name         string
+		withDeepDive bool
+	}{
+		{name: "deep-dive baseline exists", withDeepDive: true},
+		{name: "only a threat-model baseline"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gdb := dbtest.Open(t)
+			repo := db.Repository{URL: "file:///tmp/fanout", Name: "fanout"}
+			gdb.Create(&repo)
+			var deepDive db.Scan
+			if tc.withDeepDive {
+				deepDive = db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "security-deep-dive", Status: db.ScanDone, Commit: "base-dd", FocusArea: focus}
+				gdb.Create(&deepDive)
+			}
+			gdb.Create(&db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "threat-model", Status: db.ScanDone, Commit: "base-tm"})
+
+			w := &Worker{DB: gdb}
+			baseline, ok := w.diffBaseline(&db.Scan{RepositoryID: repo.ID, SkillName: "security-deep-dive", FocusArea: focus, RescanMode: db.ScanRescanModeDiff})
+			if !tc.withDeepDive {
+				if ok {
+					t.Fatalf("baseline = %+v, want none so the scan falls back to full", baseline)
+				}
+				return
+			}
+			if !ok || baseline.ID != deepDive.ID {
+				t.Fatalf("baseline = %+v ok=%v, want deep-dive scan %d", baseline, ok, deepDive.ID)
+			}
+		})
+	}
+}
+
 func TestPrepareDiffRescanScopesDiffToSubPath(t *testing.T) {
 	gdb := dbtest.Open(t)
 	repoDir := initGitRepo(t)

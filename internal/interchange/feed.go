@@ -340,6 +340,14 @@ func readRecord(path string, identities []age.Identity) (Statement, []byte, erro
 	if err := json.Unmarshal(raw, &s); err != nil {
 		return Statement{}, nil, fmt.Errorf("decode record: %w", err)
 	}
+	// Case-insensitive decoding can replace validated fields with envelope extensions.
+	decoded, err := json.Marshal(s)
+	if err != nil {
+		return Statement{}, nil, fmt.Errorf("encode decoded record: %w", err)
+	}
+	if err := Validate(decoded); err != nil {
+		return Statement{}, nil, fmt.Errorf("invalid decoded record: %w", err)
+	}
 	return s, raw, nil
 }
 

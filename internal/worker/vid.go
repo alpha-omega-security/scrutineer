@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -18,7 +19,13 @@ const (
 	vidTimeout       = 30 * time.Second
 	vidStageDirMode  = 0o700
 	vidStageFileMode = 0o600
+	vidStageMaxBytes = 64 << 20
 )
+
+var errVIDStageBudget = errors.New("vid staging byte budget exceeded")
+
+// Keep staging bounded across concurrent findings and worker instances.
+var vidStageMu sync.Mutex
 
 // vidLocRE matches a finding location ("file.rb:12", "file.rb:12-34",
 // "file.js:42:7") and captures the path and the first line number.
@@ -95,6 +102,8 @@ func (w *Worker) computeVID(srcDir, locations string) string {
 		})
 		return ""
 	}
+	vidStageMu.Lock()
+	defer vidStageMu.Unlock()
 	stageDir, err := os.MkdirTemp("", "scrutineer-vid-")
 	if err != nil {
 		return ""
@@ -106,6 +115,7 @@ func (w *Worker) computeVID(srcDir, locations string) string {
 	}
 	defer func() { _ = stageRoot.Close() }()
 	staged := map[string]bool{}
+	remaining := int64(vidStageMaxBytes)
 	for _, sink := range sinks {
 		match := vidLocRE.FindStringSubmatch(sink)
 		if match == nil {
@@ -115,7 +125,10 @@ func (w *Worker) computeVID(srcDir, locations string) string {
 		if staged[path] {
 			continue
 		}
-		if err := stageVIDFile(sourceRoot, stageRoot, path); err != nil {
+		if err := stageVIDFile(sourceRoot, stageRoot, path, &remaining); err != nil {
+			if errors.Is(err, errVIDStageBudget) {
+				w.Log.Warn("compute vid: staging byte budget exceeded", "sinks", strings.Join(sinks, " "))
+			}
 			return ""
 		}
 		staged[path] = true
@@ -138,7 +151,7 @@ func (w *Worker) computeVID(srcDir, locations string) string {
 	return v
 }
 
-func stageVIDFile(sourceRoot, stageRoot *os.Root, path string) error {
+func stageVIDFile(sourceRoot, stageRoot *os.Root, path string, remaining *int64) error {
 	in, err := openSourceFile(sourceRoot, path)
 	if err != nil {
 		return err
@@ -161,9 +174,15 @@ func stageVIDFile(sourceRoot, stageRoot *os.Root, path string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, in); err != nil {
+	n, err := io.Copy(out, io.LimitReader(in, *remaining+1))
+	if err != nil {
 		_ = out.Close()
 		return err
 	}
+	if n > *remaining {
+		_ = out.Close()
+		return errVIDStageBudget
+	}
+	*remaining -= n
 	return out.Close()
 }

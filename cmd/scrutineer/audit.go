@@ -22,6 +22,7 @@ import (
 	"github.com/git-pkgs/sarif"
 	"gorm.io/gorm"
 
+	"scrutineer/internal/config"
 	"scrutineer/internal/db"
 	"scrutineer/internal/web"
 )
@@ -122,6 +123,9 @@ func runAuditWith(args []string, out io.Writer, setup runnerSetup) error {
 	if err != nil {
 		return err
 	}
+	if err := refuseDefaultConfigUnderSource(f, opts); err != nil {
+		return err
+	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	cleanup, err := prepareAuditData(f, log)
 	if err != nil {
@@ -143,6 +147,11 @@ func runAuditWith(args []string, out io.Writer, setup runnerSetup) error {
 		return err
 	}
 	isolateAuditConfig(f, opts, log)
+	if !f.set["profiles-dir"] && cfg.ProfilesDir == nil {
+		if err := materializeBundledProfiles(f, log); err != nil {
+			return err
+		}
+	}
 
 	a, err := newApp(f, cfg, log, setup)
 	if err != nil {
@@ -212,6 +221,89 @@ func resolveAuditPaths(opts *auditOptions) error {
 	}
 	opts.source, opts.out = src, outDir
 	return nil
+}
+
+// Both the config entry and its target must be outside the untrusted checkout.
+func refuseDefaultConfigUnderSource(f *flags, opts *auditOptions) error {
+	if f.configPath != "" {
+		return nil
+	}
+	defaultCfg, err := filepath.Abs(config.DefaultPath)
+	if err != nil {
+		return fmt.Errorf("resolve default config path: %w", err)
+	}
+	if _, statErr := os.Lstat(defaultCfg); statErr != nil {
+		if errors.Is(statErr, fs.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("inspect default config %s: %w", defaultCfg, statErr)
+	}
+	root, err := auditSourceRoot(opts.source)
+	if err != nil {
+		return err
+	}
+	parent, err := filepath.EvalSymlinks(filepath.Dir(defaultCfg))
+	if err != nil {
+		return fmt.Errorf("resolve default config directory %s: %w", defaultCfg, err)
+	}
+	rootInfo, err := os.Stat(root)
+	if err != nil {
+		return fmt.Errorf("inspect source checkout root %s: %w", root, err)
+	}
+	refuse := fmt.Errorf("refusing to load the default config %s: it is inside the untrusted -source checkout %s. "+
+		"Run audit from outside that checkout, or pass -config explicitly", defaultCfg, root)
+	// Resolve directory aliases without following the config's final symlink.
+	if under, err := dirUnder(parent, rootInfo); err != nil {
+		return fmt.Errorf("check default config %s against -source: %w", defaultCfg, err)
+	} else if under {
+		return refuse
+	}
+	resolvedCfg, err := filepath.EvalSymlinks(defaultCfg)
+	if err != nil {
+		return fmt.Errorf("resolve default config %s: %w", defaultCfg, err)
+	}
+	if under, err := dirUnder(filepath.Dir(resolvedCfg), rootInfo); err != nil {
+		return fmt.Errorf("check default config %s against -source: %w", defaultCfg, err)
+	} else if under {
+		return refuse
+	}
+	return nil
+}
+
+func auditSourceRoot(source string) (string, error) {
+	resolved, err := filepath.EvalSymlinks(source)
+	if err != nil {
+		return "", fmt.Errorf("resolve -source for config check: %w", err)
+	}
+	for dir := resolved; ; dir = filepath.Dir(dir) {
+		// A .git file also marks a linked worktree or submodule.
+		if _, err := os.Lstat(filepath.Join(dir, ".git")); err == nil {
+			return dir, nil
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return "", fmt.Errorf("inspect source checkout root %s: %w", dir, err)
+		}
+		if filepath.Dir(dir) == dir {
+			return resolved, nil
+		}
+	}
+}
+
+// dirUnder compares by file identity, since path strings differ for one directory on case-insensitive filesystems.
+func dirUnder(dir string, root os.FileInfo) (bool, error) {
+	for {
+		info, err := os.Stat(dir)
+		if err != nil {
+			return false, fmt.Errorf("inspect %s: %w", dir, err)
+		}
+		if os.SameFile(info, root) {
+			return true, nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return false, nil
+		}
+		dir = parent
+	}
 }
 
 // prepareAuditData picks the data directory and pins it so the config file

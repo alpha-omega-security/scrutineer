@@ -47,7 +47,7 @@ func TestParseSubprojectsOutput(t *testing.T) {
 	scan := db.Scan{RepositoryID: repo.ID}
 	gdb.Create(&scan)
 	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
-	if err := w.parseSubprojectsOutput(&scan, `{"subprojects":[{"path":"only","name":"only"}]}`, func(Event) {}); err != nil {
+	if err := w.parseSubprojectsOutput(context.Background(), &scan, `{"subprojects":[{"path":"only","name":"only"}]}`, func(Event) {}); err != nil {
 		t.Fatal(err)
 	}
 	gdb.Where("repository_id = ?", repo.ID).Find(&rows)
@@ -80,7 +80,7 @@ func TestParseSubprojectsOutput_stableIDsAcrossReruns(t *testing.T) {
 		{"path":"a","name":"a-renamed","kind":"go-module"},
 		{"path":"c","name":"c","kind":"rust-crate"}
 	]}`
-	if err := w.parseSubprojectsOutput(&scan, rerun, func(Event) {}); err != nil {
+	if err := w.parseSubprojectsOutput(context.Background(), &scan, rerun, func(Event) {}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -120,7 +120,7 @@ func TestParseSubprojectsOutput_scopedRunDoesNotPrune(t *testing.T) {
 	scan := db.Scan{RepositoryID: repo.ID, SubPath: "activesupport"}
 	gdb.Create(&scan)
 	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
-	if err := w.parseSubprojectsOutput(&scan, `{"subprojects":[{"path":"activesupport","name":"activesupport-scoped"}]}`, func(Event) {}); err != nil {
+	if err := w.parseSubprojectsOutput(context.Background(), &scan, `{"subprojects":[{"path":"activesupport","name":"activesupport-scoped"}]}`, func(Event) {}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -147,7 +147,7 @@ func TestParseSubprojectsOutput_invalidJSON(t *testing.T) {
 	scan := db.Scan{RepositoryID: repo.ID}
 	gdb.Create(&scan)
 	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
-	if err := w.parseSubprojectsOutput(&scan, "not json", func(Event) {}); err == nil {
+	if err := w.parseSubprojectsOutput(context.Background(), &scan, "not json", func(Event) {}); err == nil {
 		t.Error("expected error on invalid JSON")
 	}
 }
@@ -376,7 +376,7 @@ func TestParsePackagesOutput_dropsUnknownRiskFlagAndWarns(t *testing.T) {
 	var events []string
 	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	report := `{"packages":[{"name":"foo","ecosystem":"rubygems","risk_flags":[{"id":"single_maintainer","evidence":"one owner listed"},{"id":"made_up_flag","evidence":"n/a"}]}]}`
-	if err := w.parsePackagesOutput(&scan, report, func(e Event) { events = append(events, e.Text) }); err != nil {
+	if err := w.parsePackagesOutput(context.Background(), &scan, report, func(e Event) { events = append(events, e.Text) }); err != nil {
 		t.Fatal(err)
 	}
 
@@ -423,7 +423,7 @@ func TestParsePackagesOutput_rollsBackOnInsertFailure(t *testing.T) {
 	}
 
 	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
-	err := w.parsePackagesOutput(&scan, `{"packages":[{"name":"new","ecosystem":"npm","purl":"pkg:npm/new"}]}`, func(Event) {})
+	err := w.parsePackagesOutput(context.Background(), &scan, `{"packages":[{"name":"new","ecosystem":"npm","purl":"pkg:npm/new"}]}`, func(Event) {})
 	if err == nil {
 		t.Fatal("expected error from the injected insert failure")
 	}
@@ -770,7 +770,14 @@ func TestParsePosture_emptyTierLeavesRepoAlone(t *testing.T) {
 
 func runSkillWithFinding(t *testing.T, outputKind, report string, startStatus db.FindingLifecycle) (db.Finding, *gorm.DB) {
 	t.Helper()
+	return runSkillWithFindingOn(t, outputKind, report, startStatus, func(*gorm.DB) {})
+}
+
+// runSkillWithFindingOn calls setup on the database before the scan runs.
+func runSkillWithFindingOn(t *testing.T, outputKind, report string, startStatus db.FindingLifecycle, setup func(*gorm.DB)) (db.Finding, *gorm.DB) {
+	t.Helper()
 	gdb := dbtest.Open(t)
+	setup(gdb)
 	repo := db.Repository{URL: "https://example.com/x", Name: "x"}
 	gdb.Create(&repo)
 	priorScan := db.Scan{RepositoryID: repo.ID, Kind: JobSkill, Status: db.ScanDone, SkillName: "security-deep-dive"}
@@ -999,7 +1006,7 @@ func TestParseCritic_recordsImmutableAssessmentAndProjection(t *testing.T) {
 		t.Fatal(err)
 	}
 	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
-	if err := w.parseCriticOutput(&scan, report, func(Event) {}); err != nil {
+	if err := w.parseCriticOutput(context.Background(), &scan, report, func(Event) {}); err != nil {
 		t.Fatal(err)
 	}
 	var count int64
@@ -1020,7 +1027,7 @@ func TestParseCritic_rejectsMissingSourceAsNonViable(t *testing.T) {
 	scan := db.Scan{RepositoryID: repo.ID, FindingID: new(f.ID)}
 	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	report := `{"production_viability":"NON_VIABLE","source_state":"MISSING","reason":"path absent","attacker_position":"remote client","impact":"code execution","likelihood":"unknown"}`
-	err := w.parseCriticOutput(&scan, report, func(Event) {})
+	err := w.parseCriticOutput(context.Background(), &scan, report, func(Event) {})
 	if err == nil || !strings.Contains(err.Error(), "must not classify source_state MISSING as NON_VIABLE") {
 		t.Fatalf("error = %v, want source-drift fail-closed error", err)
 	}
@@ -1064,7 +1071,7 @@ func TestParseCritic_usesStoredSeverityWithoutRoundTrip(t *testing.T) {
 	gdb.Create(&scan)
 	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 
-	err := w.parseCriticOutput(&scan, report, func(Event) {})
+	err := w.parseCriticOutput(context.Background(), &scan, report, func(Event) {})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -2163,6 +2170,102 @@ func TestParseFindingDedup_chainsNotesEachMemberWithOthers(t *testing.T) {
 	}
 }
 
+func TestApplyDedupChains_dedupsRepeatedMemberIDs(t *testing.T) {
+	gdb := dbtest.Open(t)
+	scan, fs := setupDedupRepo(t, gdb, 2)
+	a, b := fs[0], fs[1]
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	// A hostile report.json can repeat one id many times; schema uniqueItems
+	// is only enforced under SchemaStrict, so applyDedupChains must not emit
+	// one note per occurrence.
+	ids := make([]uint, maxDedupGroupInputIDs-1)
+	for i := range ids {
+		ids[i] = a.ID
+	}
+	ids = append(ids, b.ID)
+
+	skipped := 0
+	n, err := w.applyDedupChains(scan.RepositoryID, []dedupGroup{{MemberIDs: ids, Reason: "x"}}, &skipped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 2 {
+		t.Fatalf("notes written = %d, want 2 (one per distinct member)", n)
+	}
+	if got := len(findingNotes(gdb, a.ID)); got != 1 {
+		t.Errorf("finding %d has %d notes, want 1", a.ID, got)
+	}
+	if got := len(findingNotes(gdb, b.ID)); got != 1 {
+		t.Errorf("finding %d has %d notes, want 1", b.ID, got)
+	}
+	for _, pair := range []struct{ on, other db.Finding }{{a, b}, {b, a}} {
+		notes := findingNotes(gdb, pair.on.ID)
+		want := fmt.Sprintf("finding-dedup: chains with finding #%d\n\nx", pair.other.ID)
+		if len(notes) != 1 || notes[0].Body != want {
+			t.Errorf("finding %d notes = %+v, want body %q", pair.on.ID, notes, want)
+		}
+	}
+}
+
+func TestApplyDedupChains_rejectsOversizeInput(t *testing.T) {
+	gdb := dbtest.Open(t)
+	scan, fs := setupDedupRepo(t, gdb, 1)
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	// Each input id is one dedupFinding DB query. The 50 MiB report cap
+	// still permits millions of ids, so the raw array must be bounded
+	// before any lookup runs.
+	ids := make([]uint, maxDedupGroupInputIDs+1)
+	for i := range ids {
+		ids[i] = fs[0].ID
+	}
+	var queries int
+	w.DB = gdb.Session(&gorm.Session{NewDB: true})
+	_ = w.DB.Callback().Query().Before("gorm:query").
+		Register("count", func(*gorm.DB) { queries++ })
+
+	skipped := 0
+	n, err := w.applyDedupChains(scan.RepositoryID, []dedupGroup{{MemberIDs: ids, Reason: "x"}}, &skipped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 || skipped != len(ids) {
+		t.Fatalf("over-input-cap chain wrote %d notes with %d skipped; want 0 notes, %d skipped", n, skipped, len(ids))
+	}
+	if queries != 0 {
+		t.Fatalf("over-input-cap chain issued %d DB queries; the raw cap must apply before any lookup", queries)
+	}
+}
+
+func TestApplyDedupChains_capsDistinctMembership(t *testing.T) {
+	gdb := dbtest.Open(t)
+	scan, fs := setupDedupRepo(t, gdb, maxChainMembers+1)
+	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
+
+	ids := make([]uint, len(fs))
+	for i, f := range fs {
+		ids[i] = f.ID
+	}
+	skipped := 0
+	n, err := w.applyDedupChains(scan.RepositoryID, []dedupGroup{{MemberIDs: ids, Reason: "x"}}, &skipped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 || skipped != len(fs) {
+		t.Fatalf("over-cap chain wrote %d notes with %d skipped; want 0 notes, %d skipped", n, skipped, len(fs))
+	}
+	// A chain at the cap is still recorded.
+	skipped = 0
+	n, err = w.applyDedupChains(scan.RepositoryID, []dedupGroup{{MemberIDs: ids[:maxChainMembers], Reason: "x"}}, &skipped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != maxChainMembers {
+		t.Fatalf("at-cap chain wrote %d notes, want %d", n, maxChainMembers)
+	}
+}
+
 func TestParseFindingDedup_chainOfOneAfterFilterIsNoop(t *testing.T) {
 	gdb := dbtest.Open(t)
 	scan, fs := setupDedupRepo(t, gdb, 2)
@@ -2280,7 +2383,7 @@ func TestParseDependencies_resolvesMavenRequirementsWithPOM(t *testing.T) {
 		{"name":"org.example:child-dep","ecosystem":"maven","requirement":"${project.version}","manifest_path":"module/pom.xml"},
 		{"name":"org.example:missing","ecosystem":"maven","requirement":"${missing.version}","manifest_path":"pom.xml"}
 	]`, "")
-	if err := w.parseDependenciesOutput(scan, report, func(Event) {}); err != nil {
+	if err := w.parseDependenciesOutput(context.Background(), scan, report, func(Event) {}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -2314,7 +2417,7 @@ func TestParseDependencies_skipsMavenParentOutsideSrc(t *testing.T) {
 	report := depEnvelope(`[
 		{"name":"org.example:escape","ecosystem":"maven","requirement":"${secret.version}","manifest_path":"escape/pom.xml"}
 	]`, "")
-	if err := w.parseDependenciesOutput(scan, report, func(Event) {}); err != nil {
+	if err := w.parseDependenciesOutput(context.Background(), scan, report, func(Event) {}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -2368,7 +2471,7 @@ func TestParseDependencies_createsGeneratedSBOM(t *testing.T) {
 	report := depEnvelope(
 		`[{"name":"lodash","ecosystem":"npm","requirement":"^4.17.0","manifest_path":"package.json"}]`,
 		cdxEnvelopeFixture)
-	if err := w.parseDependenciesOutput(scan, report, func(Event) {}); err != nil {
+	if err := w.parseDependenciesOutput(context.Background(), scan, report, func(Event) {}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -2408,7 +2511,7 @@ func TestParseDependencies_createsGeneratedSBOM(t *testing.T) {
 	// transaction so at most one row per repository has Current=true.
 	scan2 := db.Scan{RepositoryID: repo.ID}
 	gdb.Create(&scan2)
-	if err := w.parseDependenciesOutput(&scan2, report, func(Event) {}); err != nil {
+	if err := w.parseDependenciesOutput(context.Background(), &scan2, report, func(Event) {}); err != nil {
 		t.Fatal(err)
 	}
 	var uploads []db.SBOMUpload
@@ -2434,7 +2537,7 @@ func TestParseDependencies_createsGeneratedSBOM(t *testing.T) {
 	other := db.Repository{URL: "https://example.com/y", Name: "y"}
 	gdb.Create(&other)
 	gdb.Create(&db.SBOMUpload{Origin: db.SBOMOriginGenerated, RepositoryID: &other.ID, Current: true})
-	if err := w.parseDependenciesOutput(&scan2, report, func(Event) {}); err != nil {
+	if err := w.parseDependenciesOutput(context.Background(), &scan2, report, func(Event) {}); err != nil {
 		t.Fatal(err)
 	}
 	var otherCurrent int64
@@ -2452,7 +2555,7 @@ func TestParseDependencies_sbomSectionErrorKeepsInventory(t *testing.T) {
 		"sbom":{"status":"error","error":"boom"}
 	}}`
 	var events []Event
-	if err := w.parseDependenciesOutput(scan, report, func(e Event) { events = append(events, e) }); err != nil {
+	if err := w.parseDependenciesOutput(context.Background(), scan, report, func(e Event) { events = append(events, e) }); err != nil {
 		t.Fatalf("errored sbom section should not fail parse: %v", err)
 	}
 
@@ -2479,7 +2582,7 @@ func TestParseDependencies_inventoryErrorKeepsPriorRows(t *testing.T) {
 	w, scan, gdb, repo := newDependencyParser(t)
 
 	// Seed a prior successful run so there is something to lose.
-	if err := w.parseDependenciesOutput(scan,
+	if err := w.parseDependenciesOutput(context.Background(), scan,
 		depEnvelope(`[{"name":"prior","ecosystem":"npm"}]`, cdxEnvelopeFixture),
 		func(Event) {}); err != nil {
 		t.Fatal(err)
@@ -2492,7 +2595,7 @@ func TestParseDependencies_inventoryErrorKeepsPriorRows(t *testing.T) {
 		"sbom":{"status":"ok","result":` + cdxEnvelopeFixture + `}
 	}}`
 	var events []Event
-	if err := w.parseDependenciesOutput(scan, report, func(e Event) { events = append(events, e) }); err != nil {
+	if err := w.parseDependenciesOutput(context.Background(), scan, report, func(e Event) { events = append(events, e) }); err != nil {
 		t.Fatalf("errored inventory section should not fail parse: %v", err)
 	}
 
@@ -2520,7 +2623,7 @@ func TestParseDependencies_inventoryErrorKeepsPriorRows(t *testing.T) {
 func TestParseDependencies_scriptFallbackKeepsPriorRows(t *testing.T) {
 	w, scan, gdb, repo := newDependencyParser(t)
 
-	if err := w.parseDependenciesOutput(scan,
+	if err := w.parseDependenciesOutput(context.Background(), scan,
 		depEnvelope(`[{"name":"prior","ecosystem":"npm"}]`, ""),
 		func(Event) {}); err != nil {
 		t.Fatal(err)
@@ -2531,7 +2634,7 @@ func TestParseDependencies_scriptFallbackKeepsPriorRows(t *testing.T) {
 	// as failure, not as an ok run that found nothing.
 	report := `{"schema_version":1,"analyses":{},"error":"git-pkgs init: exit 1"}`
 	var events []Event
-	if err := w.parseDependenciesOutput(scan, report, func(e Event) { events = append(events, e) }); err != nil {
+	if err := w.parseDependenciesOutput(context.Background(), scan, report, func(e Event) { events = append(events, e) }); err != nil {
 		t.Fatalf("script fallback should not fail parse: %v", err)
 	}
 
@@ -2558,7 +2661,7 @@ func TestParseDependencies_subPathScanLeavesRepoLevelRows(t *testing.T) {
 	w, scan, gdb, repo := newDependencyParser(t)
 
 	// Seed the whole-repo state.
-	if err := w.parseDependenciesOutput(scan,
+	if err := w.parseDependenciesOutput(context.Background(), scan,
 		depEnvelope(`[{"name":"full-repo","ecosystem":"npm"}]`, cdxEnvelopeFixture),
 		func(Event) {}); err != nil {
 		t.Fatal(err)
@@ -2572,7 +2675,7 @@ func TestParseDependencies_subPathScanLeavesRepoLevelRows(t *testing.T) {
 	scoped := db.Scan{RepositoryID: repo.ID, SubPath: "packages/foo"}
 	gdb.Create(&scoped)
 	var events []Event
-	if err := w.parseDependenciesOutput(&scoped,
+	if err := w.parseDependenciesOutput(context.Background(), &scoped,
 		depEnvelope(`[{"name":"partial","ecosystem":"npm"}]`, cdxEnvelopeFixture),
 		func(e Event) { events = append(events, e) }); err != nil {
 		t.Fatal(err)
@@ -2601,7 +2704,7 @@ func TestParseDependencies_malformedSBOMKeepsInventory(t *testing.T) {
 	w, scan, gdb, repo := newDependencyParser(t)
 
 	report := depEnvelope(`[{"name":"x","ecosystem":"npm"}]`, `{"bomFormat":"garbage"}`)
-	if err := w.parseDependenciesOutput(scan, report, func(Event) {}); err != nil {
+	if err := w.parseDependenciesOutput(context.Background(), scan, report, func(Event) {}); err != nil {
 		t.Fatalf("malformed sbom document should not fail parse: %v", err)
 	}
 	var deps int64
@@ -2855,7 +2958,7 @@ func TestParseComplianceOutput(t *testing.T) {
 	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	second := `{"schema_version":1,"framework":"openssf-baseline","total":1,"controls":[
 		{"id":"OSPS-AC-01.01","level":1,"status":"FAIL","details":"MFA off","source":"darnit"}]}`
-	if err := w.parseComplianceOutput(&scan, second, func(Event) {}); err != nil {
+	if err := w.parseComplianceOutput(context.Background(), &scan, second, func(Event) {}); err != nil {
 		t.Fatal(err)
 	}
 	gdb.Where("repository_id = ?", repo.ID).Find(&rows)
@@ -2922,7 +3025,7 @@ func TestParseComplianceOutput_rejectsBadReports(t *testing.T) {
 	gdb, repo, scan := seedComplianceRepo(t, 3, "")
 	w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 	for _, tc := range cases {
-		err := w.parseComplianceOutput(&scan, tc.report, func(Event) {})
+		err := w.parseComplianceOutput(context.Background(), &scan, tc.report, func(Event) {})
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: err = %v, want %q", tc.name, err, tc.want)
 		}
@@ -2949,7 +3052,7 @@ func TestParseComplianceOutput_leavesRepositoryUnchanged(t *testing.T) {
 		gdb, repo, scan := seedComplianceRepo(t, 2, tc.subPath)
 		w := &Worker{DB: gdb, Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 		var events []string
-		if err := w.parseComplianceOutput(&scan, tc.report, func(e Event) { events = append(events, e.Text) }); err != nil {
+		if err := w.parseComplianceOutput(context.Background(), &scan, tc.report, func(e Event) { events = append(events, e.Text) }); err != nil {
 			t.Fatalf("%s: %v", tc.name, err)
 		}
 		if len(events) != 1 || !strings.Contains(events[0], tc.wantMsg) {

