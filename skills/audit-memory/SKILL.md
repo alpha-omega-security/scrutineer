@@ -227,6 +227,20 @@ property triggers the flaw.
 - Unsafe Rust or FFI code violates allocation layout, pointer provenance,
   initialization, aliasing, lifetime, unwinding, or ownership requirements.
 
+## False-negative controls
+
+Before ruling out a candidate as unrealistic due to high resource usage:
+
+- show the estimated resource usage, and how it was calculated
+    - for elapsed time, or an iteration count, estimate the time for one iteration in seconds
+    - for memory usage, estimate the memory used by one invocation in MiB
+    - for disk usage, estimate the disk used by one invocation in MiB
+- take into account that a function may return early, and use less (or no) additional memory, time,
+  and disk space than the average or worst-case cost
+- use the estimate to extrapolate for the input used in the candidate
+- show the estimation and compare it with a realistic attacker's budget
+- only rule out the candidate if it is still unrealistic
+
 ## False-positive controls
 
 Resolve all of these before reporting:
