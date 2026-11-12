@@ -223,7 +223,7 @@ Write `./report.json` matching `./schema.json`. Shape:
     {"name": "ZLIB_INSECURE", "default": "off", "effect": "removes gzprintf overflow guard", "discouraged": true, "provenance": "documented", "source": "zconf.h:88"}
   ],
   "adversaries": {
-    "in_scope": ["whoever supplies the compressed input"],
+    "in_scope": ["whoever supplies the compressed input", "attackers controlling the input of any application using the library"],
     "out_of_scope": ["caller already in the host process", "side-channel observer"],
     "provenance": "inferred"
   },
