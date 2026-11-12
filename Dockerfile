@@ -29,7 +29,7 @@ RUN GOBIN=/out CGO_ENABLED=0 go install -ldflags "-X=github.com/betterleaks/bett
 
 RUN GOBIN=/out go install github.com/git-pkgs/git-pkgs@v0.21.0
 
-RUN GOBIN=/out go install github.com/git-pkgs/brief/cmd/brief@v0.14.2
+RUN GOBIN=/out go install github.com/git-pkgs/brief/cmd/brief@v0.15.0
 
 # vid links tree-sitter grammars (C), so unlike the main binary it needs
 # cgo; build-base provides gcc and musl headers, matching the musl-based
