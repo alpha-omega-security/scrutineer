@@ -411,6 +411,59 @@ func TestRefuseDefaultConfigUnderSource(t *testing.T) {
 	}
 }
 
+func TestRefuseDefaultConfigUnderSourceCaseAlias(t *testing.T) {
+	base := t.TempDir()
+	checkout := filepath.Join(base, "checkout")
+	if err := os.MkdirAll(filepath.Join(checkout, ".git"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(checkout, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(base, "Checkout")
+	if _, err := os.Stat(alias); err != nil {
+		t.Skip("case-sensitive filesystem")
+	}
+
+	// The checkout spelled with different case is still the audited tree.
+	for _, cwd := range []string{checkout, filepath.Join(checkout, "sub")} {
+		if err := os.WriteFile(filepath.Join(cwd, "scrutineer.yaml"), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		t.Chdir(cwd)
+		if err := refuseDefaultConfigUnderSource(&flags{}, &auditOptions{source: alias}); err == nil {
+			t.Errorf("config in %s accepted for -source %s", cwd, alias)
+		}
+	}
+}
+
+func TestDirUnderReportsStatError(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs a directory the test cannot search")
+	}
+	base := t.TempDir()
+	root := filepath.Join(base, "root")
+	locked := filepath.Join(base, "locked")
+	for _, dir := range []string{root, filepath.Join(locked, "child")} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rootInfo, err := os.Stat(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+
+	under, err := dirUnder(filepath.Join(locked, "child"), rootInfo)
+	if err == nil {
+		t.Fatalf("dirUnder = %v, nil; want an error for an ancestor it cannot stat", under)
+	}
+}
+
 func TestAudit_flagValidation(t *testing.T) {
 	newAuditHarness(t)
 	src, _ := auditSource(t)

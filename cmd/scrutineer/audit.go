@@ -246,17 +246,25 @@ func refuseDefaultConfigUnderSource(f *flags, opts *auditOptions) error {
 	if err != nil {
 		return fmt.Errorf("resolve default config directory %s: %w", defaultCfg, err)
 	}
+	rootInfo, err := os.Stat(root)
+	if err != nil {
+		return fmt.Errorf("inspect source checkout root %s: %w", root, err)
+	}
 	refuse := fmt.Errorf("refusing to load the default config %s: it is inside the untrusted -source checkout %s. "+
 		"Run audit from outside that checkout, or pass -config explicitly", defaultCfg, root)
 	// Resolve directory aliases without following the config's final symlink.
-	if pathUnder(filepath.Join(parent, filepath.Base(defaultCfg)), root) {
+	if under, err := dirUnder(parent, rootInfo); err != nil {
+		return fmt.Errorf("check default config %s against -source: %w", defaultCfg, err)
+	} else if under {
 		return refuse
 	}
 	resolvedCfg, err := filepath.EvalSymlinks(defaultCfg)
 	if err != nil {
 		return fmt.Errorf("resolve default config %s: %w", defaultCfg, err)
 	}
-	if pathUnder(resolvedCfg, root) {
+	if under, err := dirUnder(filepath.Dir(resolvedCfg), rootInfo); err != nil {
+		return fmt.Errorf("check default config %s against -source: %w", defaultCfg, err)
+	} else if under {
 		return refuse
 	}
 	return nil
@@ -280,9 +288,22 @@ func auditSourceRoot(source string) (string, error) {
 	}
 }
 
-func pathUnder(p, root string) bool {
-	sep := string(filepath.Separator)
-	return p == root || strings.HasPrefix(p, strings.TrimRight(root, sep)+sep)
+// dirUnder compares by file identity, since path strings differ for one directory on case-insensitive filesystems.
+func dirUnder(dir string, root os.FileInfo) (bool, error) {
+	for {
+		info, err := os.Stat(dir)
+		if err != nil {
+			return false, fmt.Errorf("inspect %s: %w", dir, err)
+		}
+		if os.SameFile(info, root) {
+			return true, nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return false, nil
+		}
+		dir = parent
+	}
 }
 
 // prepareAuditData picks the data directory and pins it so the config file

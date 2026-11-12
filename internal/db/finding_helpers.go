@@ -332,7 +332,7 @@ func FindingWriteTransaction(gdb *gorm.DB, findingID uint, write func(*gorm.DB) 
 	// without invoking SQLite's busy handler. Give whole-transaction retries
 	// the same time budget as our connection's busy_timeout, and honor a
 	// shorter caller deadline or cancellation throughout the wait.
-	return retryTransaction(gdb.Statement.Context, gdb, findingWriteRetryTimeout, fmt.Sprintf("write finding %d", findingID), findingWriteRetryDelay, write)
+	return retryTransaction(gdb.Statement.Context, gdb, findingWriteRetryTimeout, fmt.Sprintf("write finding %d", findingID), nil, findingWriteRetryDelay, write)
 }
 
 // conditionalFindingUpdate is the optimistic compare-and-swap shared by
