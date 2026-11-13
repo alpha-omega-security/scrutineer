@@ -201,8 +201,8 @@ type Config struct {
 	// row set from the result, so denying them the domain would let an empty
 	// answer wipe rows already recorded. Nil (the default) leaves enrichment on.
 	EcosystemsEnrichment *bool `yaml:"ecosystems_enrichment"`
-	// OSSScanner gates the Anthropic OSS Scanner registry lookup for
-	// threat-model and verify scans. Nil (the default) leaves it on.
+	// OSSScanner gates the Anthropic OSS Scanner registry lookup for the
+	// skills that stage maintainer files. Nil (the default) leaves it on.
 	OSSScanner *bool `yaml:"oss_scanner"`
 	// OSSScannerRegistry overrides the registry git URL. Empty uses
 	// ossscanner.DefaultRegistryURL.

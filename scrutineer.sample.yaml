@@ -252,9 +252,10 @@
 # with nothing to run against. Flag: -ecosystems-enrichment.
 # ecosystems_enrichment: true
 
-# Threat-model and verify scans look the repository up in Anthropic's OSS
-# Scanner registry (or its .oss-scanner/ files) and stage the maintainer
-# threat model and Dockerfile as read-only reference data. The registry fetch
+# Threat-model, verify, patch, disclose and public-issue scans look the
+# repository up in Anthropic's OSS Scanner registry (or its .oss-scanner/
+# files) and stage the maintainer files each one uses (threat model,
+# Dockerfile, patch or report guidelines) as reference data. The registry fetch
 # is best-effort and never fails a scan. See docs/oss-scanner.md.
 # oss_scanner: true
 # oss_scanner_registry: https://github.com/anthropics/oss-scanner

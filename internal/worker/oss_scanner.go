@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"scrutineer/internal/db"
@@ -14,9 +15,7 @@ import (
 )
 
 const (
-	ossScannerDir        = "oss_scanner"
-	ossScannerThreatFile = "threat_model.md"
-	ossScannerDockerfile = "Dockerfile"
+	ossScannerDir = "oss_scanner"
 	// ossScannerRefresh bounds how often the registry clone is fetched, since
 	// every verify scan consults it.
 	ossScannerRefresh = time.Hour
@@ -24,6 +23,48 @@ const (
 	// clone a repository scan of the same URL fetches and resets to its own ref.
 	ossScannerCacheDir = "oss-scanner-registry"
 )
+
+// ossScannerFile is one maintainer file a skill receives from the enrolment.
+type ossScannerFile struct {
+	label  string
+	name   string
+	limit  int64
+	source func(*ossscanner.Enrollment) *ossscanner.Source
+	record func(*skillContextOSSScanner, string)
+}
+
+var (
+	ossScannerThreatModel = ossScannerFile{
+		label: "threat model", name: "threat_model.md", limit: ossscanner.MaxFileBytes,
+		source: func(e *ossscanner.Enrollment) *ossscanner.Source { return e.ThreatModel },
+		record: func(o *skillContextOSSScanner, rel string) { o.ThreatModelFile = rel },
+	}
+	ossScannerDockerfile = ossScannerFile{
+		label: "Dockerfile", name: "Dockerfile", limit: ossscanner.MaxFileBytes,
+		source: func(e *ossscanner.Enrollment) *ossscanner.Source { return e.Dockerfile },
+		record: func(o *skillContextOSSScanner, rel string) { o.DockerfileFile = rel },
+	}
+	ossScannerReportGuidelines = ossScannerFile{
+		label: "report guidelines", name: "report_guidelines.md", limit: ossscanner.MaxGuidelinesBytes,
+		source: func(e *ossscanner.Enrollment) *ossscanner.Source { return e.ReportGuidelines },
+		record: func(o *skillContextOSSScanner, rel string) { o.ReportGuidelinesFile = rel },
+	}
+	ossScannerPatchGuidelines = ossScannerFile{
+		label: "patch guidelines", name: "patch_guidelines.md", limit: ossscanner.MaxGuidelinesBytes,
+		source: func(e *ossscanner.Enrollment) *ossscanner.Source { return e.PatchGuidelines },
+		record: func(o *skillContextOSSScanner, rel string) { o.PatchGuidelinesFile = rel },
+	}
+)
+
+// ossScannerSkillFiles lists the maintainer files each skill is given. Skills
+// not listed never consult the registry.
+var ossScannerSkillFiles = map[string][]ossScannerFile{
+	threatModelSkillName: {ossScannerThreatModel, ossScannerDockerfile},
+	verifySkillName:      {ossScannerThreatModel, ossScannerDockerfile},
+	patchSkillName:       {ossScannerPatchGuidelines},
+	"disclose":           {ossScannerReportGuidelines},
+	"public-issue":       {ossScannerReportGuidelines},
+}
 
 // ossScannerRegistryRoot returns the registry checkout, or "" when the lookup
 // is disabled. The cache clone is read in place, so the caller must keep it
@@ -86,17 +127,18 @@ func (w *Worker) ossScannerWarn(emit func(Event), what string, err error) {
 }
 
 // stageOSSScanner looks the scanned repository up in the OSS Scanner registry
-// and copies the maintainer threat model and Dockerfile into
-// workRoot/oss_scanner/ for the threat-model and verify skills. It never fails
-// the scan and returns nil when nothing applies. An empty OSSScannerRegistry
-// disables it entirely, including the repository's own .oss-scanner/ files.
+// and copies the maintainer files the skill uses, per ossScannerSkillFiles,
+// into workRoot/oss_scanner/. It never fails the scan and returns nil when
+// none of those files exists. An empty OSSScannerRegistry disables it
+// entirely, including the repository's own .oss-scanner/ files.
 func (w *Worker) stageOSSScanner(
 	ctx context.Context, workRoot string, scan *db.Scan, skill *db.Skill, emit func(Event),
 ) *skillContextOSSScanner {
 	if w.OSSScannerRegistry == "" {
 		return nil
 	}
-	if skill.Name != threatModelSkillName && skill.Name != verifySkillName {
+	files := ossScannerSkillFiles[skill.Name]
+	if len(files) == 0 {
 		return nil
 	}
 	registryRoot := ""
@@ -115,33 +157,35 @@ func (w *Worker) stageOSSScanner(
 		w.ossScannerWarn(emit, "lookup failed", err)
 		return nil
 	}
-	if enrollment == nil {
+	if enrollment == nil || !slices.ContainsFunc(files, func(f ossScannerFile) bool { return f.source(enrollment) != nil }) {
 		return nil
 	}
 	out := &skillContextOSSScanner{Enrollment: *enrollment}
 	if enrollment.Registry {
 		out.RegistryURL = w.OSSScannerRegistry
 	}
-	out.ThreatModelFile = w.copyOSSScannerFile(workRoot, registryRoot, srcRoot, enrollment.ThreatModel, ossScannerThreatFile, emit)
-	out.DockerfileFile = w.copyOSSScannerFile(workRoot, registryRoot, srcRoot, enrollment.Dockerfile, ossScannerDockerfile, emit)
-	emit(Event{Kind: KindText, Text: ossScannerSummary(enrollment)})
+	for _, f := range files {
+		f.record(out, w.copyOSSScannerFile(workRoot, registryRoot, srcRoot, f, enrollment, emit))
+	}
+	emit(Event{Kind: KindText, Text: ossScannerSummary(enrollment, files)})
 	return out
 }
 
 // copyOSSScannerFile returns the workspace-relative path of the staged copy,
-// or "" when src is nil or the copy failed.
+// or "" when the enrolment has no such file or the copy failed.
 func (w *Worker) copyOSSScannerFile(
-	workRoot, registryRoot, srcRoot string, src *ossscanner.Source, name string, emit func(Event),
+	workRoot, registryRoot, srcRoot string, f ossScannerFile, e *ossscanner.Enrollment, emit func(Event),
 ) string {
+	src := f.source(e)
 	if src == nil {
 		return ""
 	}
-	data, err := ossscanner.ReadSource(registryRoot, srcRoot, src)
+	data, err := ossscanner.ReadSource(registryRoot, srcRoot, src, f.limit)
 	if err != nil {
 		w.ossScannerWarn(emit, "skipping "+src.Path, err)
 		return ""
 	}
-	rel := path.Join(ossScannerDir, name)
+	rel := path.Join(ossScannerDir, f.name)
 	if err := replaceWorkspaceFile(workRoot, filepath.FromSlash(rel), data); err != nil {
 		w.ossScannerWarn(emit, "could not stage "+src.Path, err)
 		return ""
@@ -149,16 +193,15 @@ func (w *Worker) copyOSSScannerFile(
 	return rel
 }
 
-func ossScannerSummary(e *ossscanner.Enrollment) string {
+func ossScannerSummary(e *ossscanner.Enrollment, files []ossScannerFile) string {
 	if !e.Registry {
 		return "oss-scanner: .oss-scanner files found in repository"
 	}
 	msg := fmt.Sprintf("oss-scanner: enrolled as %s (registry)", e.Project)
-	if e.ThreatModel != nil {
-		msg += fmt.Sprintf("; threat model from %s %s", e.ThreatModel.Origin, e.ThreatModel.Path)
-	}
-	if e.Dockerfile != nil {
-		msg += fmt.Sprintf("; Dockerfile from %s %s", e.Dockerfile.Origin, e.Dockerfile.Path)
+	for _, f := range files {
+		if src := f.source(e); src != nil {
+			msg += fmt.Sprintf("; %s from %s %s", f.label, src.Origin, src.Path)
+		}
 	}
 	return msg
 }

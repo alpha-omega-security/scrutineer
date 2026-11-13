@@ -8,11 +8,13 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"scrutineer/internal/db"
 	"scrutineer/internal/db/dbtest"
+	"scrutineer/internal/ossscanner"
 )
 
 const ossRepoURL = "https://github.com/example/project"
@@ -87,6 +89,76 @@ func TestStageOSSScannerOtherSkillStagesNothing(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(work, "oss_scanner")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("oss_scanner dir exists: %v", err)
+	}
+}
+
+func TestStageOSSScannerGuidelinesPerSkill(t *testing.T) {
+	reg := ossFixtureRegistry(t)
+	writeOSSFile(t, reg, "projects/proj/report_guidelines.md", "registry report")
+	writeOSSFile(t, reg, "projects/proj/patch_guidelines.md", "registry patch")
+	for _, tc := range []struct {
+		skill, staged, body string
+		absent              []string
+	}{
+		{"patch", "patch_guidelines.md", "registry patch", []string{"report_guidelines.md", "threat_model.md", "Dockerfile"}},
+		{"disclose", "report_guidelines.md", "registry report", []string{"patch_guidelines.md", "threat_model.md", "Dockerfile"}},
+		{"public-issue", "report_guidelines.md", "registry report", []string{"patch_guidelines.md", "threat_model.md", "Dockerfile"}},
+		{"verify", "Dockerfile", "FROM scratch", []string{"report_guidelines.md", "patch_guidelines.md"}},
+	} {
+		t.Run(tc.skill, func(t *testing.T) {
+			work := t.TempDir()
+			w := ossWorker(reg, nil)
+			var events []Event
+			got := w.stageOSSScanner(t.Context(), work, ossScan(), &db.Skill{Name: tc.skill}, func(e Event) { events = append(events, e) })
+			if got == nil {
+				t.Fatal("nothing staged")
+			}
+			data, err := os.ReadFile(filepath.Join(work, "oss_scanner", tc.staged))
+			if err != nil || string(data) != tc.body {
+				t.Fatalf("staged %s = %q, %v", tc.staged, data, err)
+			}
+			for _, name := range tc.absent {
+				if _, err := os.Stat(filepath.Join(work, "oss_scanner", name)); !errors.Is(err, os.ErrNotExist) {
+					t.Errorf("%s staged for %s: %v", name, tc.skill, err)
+				}
+			}
+			if len(events) != 1 || strings.Contains(events[0].Text, "patch guidelines") != (tc.skill == "patch") {
+				t.Fatalf("events = %+v", events)
+			}
+		})
+	}
+	w := ossWorker(reg, nil)
+	if got := w.stageOSSScanner(t.Context(), t.TempDir(), ossScan(), &db.Skill{Name: "patch"}, noEmit); got.PatchGuidelinesFile != "oss_scanner/patch_guidelines.md" || got.ReportGuidelinesFile != "" || got.ThreatModelFile != "" {
+		t.Fatalf("patch context = %+v", got)
+	}
+}
+
+func TestStageOSSScannerSkillWithoutItsFileStagesNothing(t *testing.T) {
+	work := t.TempDir()
+	w := ossWorker(ossFixtureRegistry(t), nil)
+	var events []Event
+	if got := w.stageOSSScanner(t.Context(), work, ossScan(), &db.Skill{Name: "patch"}, func(e Event) { events = append(events, e) }); got != nil {
+		t.Fatalf("staged = %+v", got)
+	}
+	if len(events) != 0 {
+		t.Fatalf("events = %+v", events)
+	}
+	if _, err := os.Stat(filepath.Join(work, "oss_scanner")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("oss_scanner dir exists: %v", err)
+	}
+}
+
+func TestStageOSSScannerSkipsOversizeGuidelines(t *testing.T) {
+	work := t.TempDir()
+	writeOSSFile(t, work, "src/.oss-scanner/report_guidelines.md", strings.Repeat("a", ossscanner.MaxGuidelinesBytes+1))
+	w := ossWorker("", nil)
+	var events []Event
+	got := w.stageOSSScanner(t.Context(), work, ossScan(), &db.Skill{Name: "disclose"}, func(e Event) { events = append(events, e) })
+	if got == nil || got.ReportGuidelinesFile != "" {
+		t.Fatalf("staged = %+v", got)
+	}
+	if len(events) == 0 || !strings.Contains(events[0].Text, "skipping .oss-scanner/report_guidelines.md") {
+		t.Fatalf("events = %+v", events)
 	}
 }
 

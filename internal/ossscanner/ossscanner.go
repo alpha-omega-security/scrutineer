@@ -22,22 +22,30 @@ const DefaultRegistryURL = "https://github.com/anthropics/oss-scanner"
 // MaxFileBytes caps the size of a staged file.
 const MaxFileBytes = 256 << 10
 
+// MaxGuidelinesBytes is the registry's documented cap on report and patch
+// guidelines.
+const MaxGuidelinesBytes = 16 << 10
+
 const (
 	// OriginRegistry marks a Source under the registry root.
 	OriginRegistry = "registry"
 	// OriginRepository marks a Source under the scanned checkout.
 	OriginRepository = "repository"
 
-	conventionalDockerfile  = ".oss-scanner/Dockerfile"
-	conventionalThreatModel = ".oss-scanner/threat_model.md"
+	conventionalDockerfile       = ".oss-scanner/Dockerfile"
+	conventionalThreatModel      = ".oss-scanner/threat_model.md"
+	conventionalReportGuidelines = ".oss-scanner/report_guidelines.md"
+	conventionalPatchGuidelines  = ".oss-scanner/patch_guidelines.md"
 )
 
 // Project is the subset of a registry project.yaml scrutineer reads.
 type Project struct {
-	Repo        string `yaml:"repo"`
-	Disabled    bool   `yaml:"disabled"`
-	Dockerfile  string `yaml:"dockerfile"`
-	ThreatModel string `yaml:"threat_model"`
+	Repo             string `yaml:"repo"`
+	Disabled         bool   `yaml:"disabled"`
+	Dockerfile       string `yaml:"dockerfile"`
+	ThreatModel      string `yaml:"threat_model"`
+	ReportGuidelines string `yaml:"report_guidelines"`
+	PatchGuidelines  string `yaml:"patch_guidelines"`
 }
 
 // Source locates one maintainer file. Path is relative to the registry root
@@ -49,11 +57,13 @@ type Source struct {
 
 // Enrollment is the result of a lookup.
 type Enrollment struct {
-	Project     string  `json:"project,omitempty"`
-	Registry    bool    `json:"registry"`
-	Disabled    bool    `json:"disabled,omitempty"`
-	Dockerfile  *Source `json:"dockerfile,omitempty"`
-	ThreatModel *Source `json:"threat_model,omitempty"`
+	Project          string  `json:"project,omitempty"`
+	Registry         bool    `json:"registry"`
+	Disabled         bool    `json:"disabled,omitempty"`
+	Dockerfile       *Source `json:"dockerfile,omitempty"`
+	ThreatModel      *Source `json:"threat_model,omitempty"`
+	ReportGuidelines *Source `json:"report_guidelines,omitempty"`
+	PatchGuidelines  *Source `json:"patch_guidelines,omitempty"`
 }
 
 // SameRepo reports whether two repository URLs name the same repository.
@@ -156,6 +166,8 @@ func enrolled(registryRoot, srcRoot, name string, p *Project) (*Enrollment, erro
 	}
 	e.Dockerfile = pick(reg, src, name, "Dockerfile", p.Dockerfile)
 	e.ThreatModel = pick(reg, src, name, "threat_model.md", p.ThreatModel)
+	e.ReportGuidelines = pick(reg, src, name, "report_guidelines.md", p.ReportGuidelines)
+	e.PatchGuidelines = pick(reg, src, name, "patch_guidelines.md", p.PatchGuidelines)
 	return e, nil
 }
 
@@ -183,17 +195,23 @@ func conventional(srcRoot string) (*Enrollment, error) {
 		return nil, nil //nolint:nilerr // an unreadable checkout simply has no files
 	}
 	defer func() { _ = src.Close() }()
-	e := &Enrollment{}
-	if isRegular(src, conventionalDockerfile) {
-		e.Dockerfile = &Source{Origin: OriginRepository, Path: conventionalDockerfile}
+	e := &Enrollment{
+		Dockerfile:       repoSource(src, conventionalDockerfile),
+		ThreatModel:      repoSource(src, conventionalThreatModel),
+		ReportGuidelines: repoSource(src, conventionalReportGuidelines),
+		PatchGuidelines:  repoSource(src, conventionalPatchGuidelines),
 	}
-	if isRegular(src, conventionalThreatModel) {
-		e.ThreatModel = &Source{Origin: OriginRepository, Path: conventionalThreatModel}
-	}
-	if e.Dockerfile == nil && e.ThreatModel == nil {
+	if e.Dockerfile == nil && e.ThreatModel == nil && e.ReportGuidelines == nil && e.PatchGuidelines == nil {
 		return nil, nil
 	}
 	return e, nil
+}
+
+func repoSource(src *os.Root, rel string) *Source {
+	if !isRegular(src, rel) {
+		return nil
+	}
+	return &Source{Origin: OriginRepository, Path: rel}
 }
 
 func cleanRepoPath(p string) string {
@@ -249,9 +267,9 @@ func readRooted(root *os.Root, rel string, limit int64) ([]byte, error) {
 }
 
 // ReadSource returns the content of s, read through the matching root so that
-// symlinks cannot escape it. Non-regular files and files over MaxFileBytes are
+// symlinks cannot escape it. Non-regular files and files over limit bytes are
 // rejected.
-func ReadSource(registryRoot, srcRoot string, s *Source) ([]byte, error) {
+func ReadSource(registryRoot, srcRoot string, s *Source, limit int64) ([]byte, error) {
 	if s == nil {
 		return nil, errors.New("nil source")
 	}
@@ -267,5 +285,5 @@ func ReadSource(registryRoot, srcRoot string, s *Source) ([]byte, error) {
 		return nil, err
 	}
 	defer func() { _ = root.Close() }()
-	return readRooted(root, s.Path, MaxFileBytes)
+	return readRooted(root, s.Path, limit)
 }
