@@ -37,6 +37,12 @@ FROM rust:1.99-trixie@sha256:8a4e90c7946b74626488b1446f712c0fe0ed1a596cbd3d87168
 ENV CARGO_HTTP_MULTIPLEXING=false
 RUN cargo install --locked --root /out zizmor@1.32.0
 
+# Rust std source (no toolchain) for audit-unsafe-rust's std safety contracts, in every profile.
+FROM rust:1.98-trixie@sha256:a8a5f0a1e5fe7dfe1d352591e4a1c7dd2c08fd70475cae872cf3458ba0df0546 AS rust-std-src
+RUN rustup component add rust-src && \
+    mkdir -p /out && \
+    cp -r "$(rustc --print sysroot)/lib/rustlib/src/rust/library" /out/library
+
 # The runner image carries the proxy commands used by Scrutineer and by
 # harness/container consumers. Both are built CGO-free so they can be copied
 # into the slim runtime without a glibc dependency.
@@ -194,6 +200,8 @@ RUN set -eux; \
 
 COPY --from=go-tools /out/* /usr/local/bin/
 COPY --from=zizmor-build /out/bin/zizmor /usr/local/bin/zizmor
+COPY --from=rust-std-src /out/library /usr/local/share/rust-std-src/library
+ENV RUST_STD_SRC=/usr/local/share/rust-std-src/library
 COPY --from=scrutineer-build /out/scrutineer /usr/local/bin/scrutineer
 COPY --from=scrutineer-build /out/harness-proxy /usr/local/bin/harness-proxy
 

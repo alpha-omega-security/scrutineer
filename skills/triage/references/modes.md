@@ -147,3 +147,66 @@ includes or URLs named by the input. Add `audit-injection` only when it
 deserializes input into arbitrary types or evaluates it. Extracting archive
 entries to disk does not add `audit-exfil` on that evidence alone because
 `audit-file-parser` covers it.
+
+## unsafe-rust
+
+Select this mode when first-party Rust in the scan's scope contains unsafe
+code. It does not depend on what kind of software the repository is, so it
+may match alongside any other mode or on its own.
+
+List candidate sites by running this from `./src`, or from
+`./src/{scrutineer.scan_subpath}` when a subpath is set (git grep searches only
+the current directory's subtree):
+
+    git grep -nw unsafe -- '*.rs' \
+      ':(exclude,glob)**/target/**' ':(exclude,glob)**/tests/**' \
+      ':(exclude,glob)**/benches/**' ':(exclude,glob)**/examples/**' \
+      ':(exclude,glob)**/vendor/**' ':(exclude,glob)**/third_party/**'
+
+The `tests`, `benches` and `examples` excludes are meant for test, bench and
+example code, but a crate can also live under one of those names. Run
+`git ls-files -- ':(glob)**/Cargo.toml'` from the same directory. For each
+listed manifest whose directory sits under a `tests`, `benches` or `examples`
+directory (for example `tests/Cargo.toml`, whose code is `tests/src/lib.rs`),
+run the same `git grep` again from that manifest's directory and treat its hits
+like any others. Pathspecs are relative to the current directory, so the rerun
+keeps the crate's own source and still skips its own test, bench and example
+code. Unsafe code in a `vendor` or `third_party` directory stays excluded
+here.
+
+Open the hits and confirm at least one is unsafe code: an `unsafe` block,
+`unsafe fn`, `unsafe impl`, `unsafe trait`, `unsafe extern` block, or an
+`#[unsafe(...)]` attribute such as `#[unsafe(no_mangle)]`. Hits that are only
+in comments, doc text, strings, or code inside a `#[cfg(test)]` module do not
+count. Lint settings such as `#![forbid(unsafe_code)]` are not unsafe code.
+Record the confirmed paths and line numbers, and the hit count, as evidence.
+Unsafe code that exists only in vendored crates, Git submodules, or another
+monorepo subproject outside the scan's scope does not activate this mode.
+`git grep` exits with status 1 when it finds no matches; that is a result
+(this mode does not match), not a failure. If a command fails for another
+reason, gate the mode and record the error.
+
+Enqueue `audit-unsafe-rust` for a match. It checks every unsafe site's safety
+obligations for unsoundness reachable from safe code, which covers pure-Rust
+unsafe on its own.
+
+Also add `audit-memory` only when the matched code shows FFI evidence: an
+`extern` block, a `#[no_mangle]` or `#[unsafe(no_mangle)]` attribute, or a
+dependency whose name ends in `-sys` in a scoped `Cargo.toml`. Find these with
+the same excludes as above:
+
+    git grep -nE 'extern "|extern \{|no_mangle' -- '*.rs' \
+      ':(exclude,glob)**/target/**' ':(exclude,glob)**/tests/**' \
+      ':(exclude,glob)**/benches/**' ':(exclude,glob)**/examples/**' \
+      ':(exclude,glob)**/vendor/**' ':(exclude,glob)**/third_party/**'
+
+    git grep -nE '^[A-Za-z0-9_-]+-sys[[:space:]]*=|dependencies\.[A-Za-z0-9_-]+-sys\]' \
+      -- ':(glob)**/Cargo.toml' \
+      ':(exclude,glob)**/vendor/**' ':(exclude,glob)**/third_party/**'
+
+An `extern "C" fn` definition counts, as does an `extern` block; `extern crate`
+does not. Record the FFI hits as evidence; a status 1 exit from either command
+just means no FFI evidence. `audit-memory` then traces memory
+corruption from untrusted input across the native and FFI boundary. When
+`embedded-iot` or `file-parser` also match and add `audit-memory`, it is still
+enqueued once.
