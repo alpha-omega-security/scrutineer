@@ -8,16 +8,16 @@ require (
 	filippo.io/age v1.3.2
 	github.com/alpha-omega-security/harness v0.1.21
 	github.com/ecosyste-ms/ecosystems-go v0.5.1
-	github.com/git-pkgs/clone v0.7.5
+	github.com/git-pkgs/clone v0.7.6
 	github.com/git-pkgs/clone/gogit v0.1.2
 	github.com/git-pkgs/cwe v0.1.1
 	github.com/git-pkgs/enrichment v0.7.5
 	github.com/git-pkgs/magic v0.6.0
-	github.com/git-pkgs/pom v0.1.8
+	github.com/git-pkgs/pom v0.1.9
 	github.com/git-pkgs/purl v0.2.1
 	github.com/git-pkgs/sarif v0.1.3
 	github.com/git-pkgs/sbom v0.1.9
-	github.com/git-pkgs/skills v0.2.0
+	github.com/git-pkgs/skills v0.2.1
 	github.com/git-pkgs/vulns v0.2.4
 	github.com/glebarez/sqlite v1.11.0
 	github.com/google/uuid v1.6.0
@@ -28,7 +28,7 @@ require (
 	go.yaml.in/yaml/v4 v4.0.0
 	golang.org/x/crypto v0.58.0
 	golang.org/x/net v0.62.0
-	golang.org/x/sys v0.49.0
+	golang.org/x/sys v0.50.0
 	golang.org/x/term v0.47.0
 	gorm.io/driver/postgres v1.6.3
 	gorm.io/gorm v1.31.2
@@ -41,7 +41,7 @@ require (
 	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
 	github.com/cyphar/filepath-securejoin v0.7.0 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
-	github.com/git-pkgs/registries v0.13.0 // indirect
+	github.com/git-pkgs/registries v0.13.2 // indirect
 	github.com/git-pkgs/spdx v0.3.6 // indirect
 	github.com/git-pkgs/vers v0.7.2 // indirect
 	github.com/github/go-spdx/v2 v2.8.0 // indirect
@@ -70,5 +70,5 @@ require (
 	modernc.org/libc v1.80.1 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.12.1 // indirect
-	modernc.org/sqlite v1.61.1 // indirect
+	modernc.org/sqlite v1.62.0 // indirect
 )
