@@ -196,12 +196,13 @@ func toReferences(refs []scanReference) []db.FindingReference {
 }
 
 // validEmail is a pragmatic filter. Anything without an @ or containing
-// "noreply" gets dropped.
+// "noreply" (any case, including GitHub's @users.noreply.github.com) gets
+// dropped.
 func validEmail(s string) bool {
 	if !strings.Contains(s, "@") {
 		return false
 	}
-	if strings.Contains(s, "noreply") {
+	if strings.Contains(strings.ToLower(s), "noreply") {
 		return false
 	}
 	return true

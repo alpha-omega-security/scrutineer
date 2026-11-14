@@ -53,6 +53,21 @@ func validateFindingField(field, value string) error {
 	return nil
 }
 
+// DropNoreplyRecipients removes noreply addresses (notably GitHub's
+// @users.noreply.github.com) from a comma-separated recipient list: mail to
+// them never reaches the maintainer.
+func DropNoreplyRecipients(list string) string {
+	var kept []string
+	for _, r := range strings.Split(list, ",") {
+		r = strings.TrimSpace(r)
+		if r == "" || strings.Contains(strings.ToLower(r), "noreply") {
+			continue
+		}
+		kept = append(kept, r)
+	}
+	return strings.Join(kept, ", ")
+}
+
 // WriteFindingField updates a Finding column and records the change in
 // FindingHistory. Callers pass the JSON-style field name (severity,
 // cvss_vector, status, resolution, ...); unknown fields are rejected so
@@ -62,6 +77,9 @@ func validateFindingField(field, value string) error {
 // row is only written on an actual change.
 // Status and severity changes also append an AuditEvent in the same transaction.
 func WriteFindingField(gdb *gorm.DB, findingID uint, field, newValue string, source FindingSource, by string) error {
+	if field == "suggested_recipients" {
+		newValue = DropNoreplyRecipients(newValue)
+	}
 	// The column update, its history row, and any dependent CVSS-score
 	// sync must commit together: a failure between them would change the
 	// stored value with no matching history row (breaking the audit

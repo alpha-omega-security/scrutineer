@@ -268,3 +268,14 @@ func TestParseReport_stringTopLevelFieldsStillWork(t *testing.T) {
 		t.Errorf("len(Findings) = %d, want 0", len(r.Findings))
 	}
 }
+
+func TestValidEmailRejectsNoreply(t *testing.T) {
+	for _, s := range []string{"123+bob@users.noreply.github.com", "Bob@Users.NoReply.GitHub.com", "noreply@example.com", "nope"} {
+		if validEmail(s) {
+			t.Errorf("validEmail(%q) = true, want false", s)
+		}
+	}
+	if !validEmail("bob@example.com") {
+		t.Error("validEmail(bob@example.com) = false, want true")
+	}
+}

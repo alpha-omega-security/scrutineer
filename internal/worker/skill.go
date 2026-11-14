@@ -1064,8 +1064,8 @@ func (rm reportedMaintainer) applyTo(m *db.Maintainer) {
 	if rm.Name != "" {
 		m.Name = rm.Name
 	}
-	if validEmail(rm.Email) {
-		m.Email = rm.Email
+	if email := strings.TrimSpace(rm.Email); validEmail(email) {
+		m.Email = email
 	}
 	switch rm.Status {
 	case "active":
@@ -1076,6 +1076,13 @@ func (rm reportedMaintainer) applyTo(m *db.Maintainer) {
 	if rm.Evidence != "" {
 		m.Notes = rm.Role + ": " + rm.Evidence
 	}
+}
+
+// usableChannel reports whether a reported disclosure channel is worth
+// storing: non-empty, and not a noreply address nobody reads.
+func usableChannel(ch string) bool {
+	ch = strings.TrimSpace(ch)
+	return ch != "" && !strings.Contains(strings.ToLower(ch), "noreply")
 }
 
 // setSubprojectChannel is best-effort: it only touches an existing subproject
@@ -1129,7 +1136,7 @@ func (w *Worker) parseMaintainersOutput(scan *db.Scan, report string, emit func(
 	// still records its own sub-package's disclosure channel — that is the point
 	// of running it.
 	repoWide := scan.SubPath == ""
-	if repoWide && strings.TrimSpace(result.DisclosureChannel) != "" {
+	if repoWide && usableChannel(result.DisclosureChannel) {
 		if err := db.SetDisclosureChannel(w.DB, repo.ID, result.DisclosureChannel, db.SourceModel, scan.SkillName); err != nil {
 			return fmt.Errorf("update disclosure channel: %w", err)
 		}
@@ -1138,7 +1145,7 @@ func (w *Worker) parseMaintainersOutput(scan *db.Scan, report string, emit func(
 		for _, sp := range result.Subprojects {
 			path := strings.Trim(sp.Path, "/ \t\n")
 			ch := strings.TrimSpace(sp.DisclosureChannel)
-			if path == "" || ch == "" {
+			if path == "" || !usableChannel(ch) {
 				continue
 			}
 			w.setSubprojectChannel(scan, path, ch)
