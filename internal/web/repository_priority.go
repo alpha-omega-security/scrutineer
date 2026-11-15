@@ -52,6 +52,11 @@ func (s *Server) repoPriorities(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	var inventorySkill db.Skill
+	if err := s.DB.WithContext(r.Context()).Select("id").Where("output_kind = ? AND active = ?", "dependencies", true).Order("id").Limit(1).Find(&inventorySkill).Error; err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
 	rows := make([]priorityRepoRow, 0, len(view.Rows))
 	for _, repo := range view.Rows {
 		if priorityMatches(repo, r) {
@@ -68,6 +73,7 @@ func (s *Server) repoPriorities(w http.ResponseWriter, r *http.Request) {
 	data := map[string]any{
 		"Priorities": true, "Rows": rows[start:min(start+perPage, len(rows))], "Page": page, "Cohort": view,
 		sortTemplateKey: joinSort(key, dir), "Q": query.Get("q"), "Queue": query.Get("queue"), "Language": query.Get("language"),
+		"InventorySkillID": inventorySkill.ID,
 	}
 	if isHX(r) {
 		s.render(w, r, "repo_priorities.html", data)

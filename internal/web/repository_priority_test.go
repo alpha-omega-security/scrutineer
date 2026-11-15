@@ -362,50 +362,39 @@ func TestRepoPrioritiesFindingsAndLastScan(t *testing.T) {
 	}
 }
 
-func TestRepoPrioritiesScanActions(t *testing.T) {
+func TestRepoPrioritiesInventoryActions(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
-	skill := db.Skill{Name: deepDiveSkillName, Body: "b", OutputFile: "r.json", OutputKind: "freeform", Active: true}
+	bare := priorityTestRepo(t, s, "no-skill")
+	if row := requireRepoListRow(t, priorityTestPage(t, s, ""), bare.ID); strings.Contains(row, "<form") {
+		t.Fatalf("inventory action rendered with no active dependencies skill: %s", row)
+	}
+	skill := db.Skill{Name: "dependencies", Body: "b", OutputFile: "r.json", OutputKind: "dependencies", Active: true}
 	if err := s.DB.Create(&skill).Error; err != nil {
 		t.Fatal(err)
 	}
-	for _, scanned := range []bool{false, true} {
-		t.Run(fmt.Sprintf("scanned=%t", scanned), func(t *testing.T) {
-			repo := priorityTestRepo(t, s, fmt.Sprintf("scanned-%t", scanned))
-			label := "Scan"
-			if scanned {
-				prior := db.Scan{RepositoryID: repo.ID, SkillName: "metadata", Status: db.ScanDone}
-				if err := s.DB.Create(&prior).Error; err != nil {
-					t.Fatal(err)
-				}
-				label = "Rescan"
+	for _, inventoried := range []bool{false, true} {
+		t.Run(fmt.Sprintf("inventoried=%t", inventoried), func(t *testing.T) {
+			repo := priorityTestRepo(t, s, fmt.Sprintf("inventoried-%t", inventoried))
+			label := "Inventory"
+			if inventoried {
+				priorityTestInventory(t, s, repo, skill, `[]`, time.Now())
+				label = "Refresh"
 			}
 			row := requireRepoListRow(t, priorityTestPage(t, s, ""), repo.ID)
 			lastCell := row[strings.LastIndex(row, "<td>"):]
-			if !strings.Contains(lastCell, " "+label+"</button>") {
-				t.Fatalf("missing %s in rightmost column: %s", label, row)
+			for _, want := range []string{" " + label + "</button>", fmt.Sprintf(`action="/repositories/%d/skill-scan"`, repo.ID), fmt.Sprintf(`name="skill_id" value="%d"`, skill.ID)} {
+				if !strings.Contains(lastCell, want) {
+					t.Fatalf("missing %q in rightmost column: %s", want, lastCell)
+				}
 			}
-			_, action, found := strings.Cut(lastCell, `action="`)
-			if !found {
-				t.Fatal("missing scan form action")
-			}
-			action, _, _ = strings.Cut(action, `"`)
-			if action != fmt.Sprintf("/repositories/%d/scan", repo.ID) || !strings.Contains(lastCell, `hx-post="`+action+`" hx-swap="none"`) {
-				t.Fatalf("unexpected scan action: %s", lastCell)
-			}
-			req := localReq("POST", action)
-			req.Header.Set("HX-Request", "true")
-			w := httptest.NewRecorder()
-			s.Handler().ServeHTTP(w, req)
-			if w.Code != 204 || w.Header().Get("HX-Redirect") != fmt.Sprintf("/repositories/%d", repo.ID) {
-				t.Fatalf("scan action: %d %v %s", w.Code, w.Header(), w.Body)
-			}
+			w := postSkillScanForm(s, repo, skill, "")
 			var queued db.Scan
-			if err := s.DB.Where("repository_id = ? AND skill_id = ?", repo.ID, skill.ID).First(&queued).Error; err != nil {
+			if err := s.DB.Where("repository_id = ? AND skill_id = ? AND status = ?", repo.ID, skill.ID, db.ScanQueued).First(&queued).Error; err != nil {
 				t.Fatal(err)
 			}
-			if queued.Status != db.ScanQueued || queued.ScanGroup == "" {
-				t.Fatalf("unexpected queued scan: status=%s group=%q", queued.Status, queued.ScanGroup)
+			if w.Code != 303 || w.Header().Get("Location") != fmt.Sprintf("/scans/%d", queued.ID) {
+				t.Fatalf("inventory action: %d %v %s", w.Code, w.Header(), w.Body)
 			}
 		})
 	}
