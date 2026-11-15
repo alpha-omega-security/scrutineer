@@ -3246,6 +3246,20 @@ func TestParseFindings_dropsStubsWhenSchemaRequiresEvidence(t *testing.T) {
 	}
 }
 
+func TestParseFindings_stubDoesNotMaskSameFingerprintFinding(t *testing.T) {
+	const trace = "User input reaches exec via handler.Run without quoting."
+	report := `{"findings":[
+		{"id":"F1","title":"Probe","severity":"Low","cwe":"CWE-78","location":"a.go:1","trace":"t","boundary":"b","validation":"v"},
+		{"id":"F2","title":"Real","severity":"High","cwe":"CWE-78","location":"a.go:9","trace":"` + trace + `","boundary":"b","validation":"v"}
+	]}`
+	repo, gdb := runSkillWithSchemaReport(t, "findings", evidenceSchema, report)
+	var findings []db.Finding
+	gdb.Where("repository_id = ?", repo.ID).Find(&findings)
+	if len(findings) != 1 || findings[0].Title != "Real" || findings[0].Trace != trace {
+		t.Fatalf("findings = %+v, want only Real with its own trace", findings)
+	}
+}
+
 func TestSchemaRequiresEvidence(t *testing.T) {
 	for name, tc := range map[string]struct {
 		schema string

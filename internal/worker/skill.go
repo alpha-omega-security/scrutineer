@@ -631,6 +631,10 @@ func (w *Worker) ingestFindings(skill *db.Skill, scan *db.Scan, report string, e
 		return nil, err
 	}
 	findings := rep.toFindings(scan.ID, scan.RepositoryID, scan.Commit, scan.SubPath, scan.Model)
+	// Grouping keeps the first entry's evidence, so stubs go before it.
+	if schemaRequiresEvidence(skill.SchemaJSON) {
+		findings = dropStubFindings(findings, emit)
+	}
 	findings = groupByFingerprint(findings, scan.SkillName)
 
 	if skill.MinConfidence != "" {
@@ -644,9 +648,6 @@ func (w *Worker) ingestFindings(skill *db.Skill, scan *db.Scan, report string, e
 			emit(Event{Kind: KindText, Text: fmt.Sprintf("dropped %d finding(s) below min_confidence=%s", dropped, skill.MinConfidence)})
 		}
 		findings = kept
-	}
-	if schemaRequiresEvidence(skill.SchemaJSON) {
-		findings = dropStubFindings(findings, emit)
 	}
 	scan.FindingsCount = len(findings)
 
