@@ -184,6 +184,9 @@ paths:
     get:
       summary: List maintainers linked to this repository
       operationId: listRepositoryMaintainers
+      description: |
+        Status reflects the latest reported activity in this repository.
+        Until a scan supplies repository activity, the shared profile status is used.
       parameters:
         - $ref: '#/components/parameters/RepositoryID'
       responses:

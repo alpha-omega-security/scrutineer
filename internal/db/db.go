@@ -1733,7 +1733,7 @@ func Models() []any {
 		&FindingCommunication{}, &FindingReference{}, &FindingHistory{}, &FindingReview{}, &FeedbackConfirmation{}, &FindingVerification{}, &FindingAttackPath{}, &FindingObservation{}, &ScanPreflightReceipt{}, &ScanGroupBudget{},
 		&RemediationAttempt{}, &RemediationValidation{}, &AuditEvent{}, &FindingPoC{},
 		&Dependency{}, &ExpectedFinding{}, &Package{}, &PackageAlternative{}, &Dependent{}, &FindingDependent{}, &Advisory{}, &AdvisoryAudit{},
-		&Maintainer{}, &Skill{}, &Subproject{}, &ComplianceControl{},
+		&Maintainer{}, &MaintainerActivity{}, &Skill{}, &Subproject{}, &ComplianceControl{},
 		&SBOMUpload{}, &SBOMPackage{}, &CNA{}, &Setting{},
 		&Conversation{}, &ChatMessage{}, &InterchangeRecord{},
 	}

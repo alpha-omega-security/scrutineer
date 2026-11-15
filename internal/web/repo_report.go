@@ -684,10 +684,10 @@ func writeReportDependencies(b *strings.Builder, gdb *gorm.DB, repoID uint) {
 }
 
 func writeReportMaintainers(b *strings.Builder, gdb *gorm.DB, repoID uint) {
-	var rows []db.Maintainer
-	gdb.Joins("JOIN repository_maintainers rm ON rm.maintainer_id = maintainers.id").
-		Where("rm.repository_id = ?", repoID).
-		Order("maintainers.login").Find(&rows)
+	rows, err := db.RepositoryMaintainers(gdb, repoID)
+	if err != nil {
+		return
+	}
 	if len(rows) == 0 {
 		return
 	}

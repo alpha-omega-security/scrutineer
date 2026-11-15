@@ -1061,23 +1061,23 @@ type reportedMaintainer struct {
 	Evidence string `json:"evidence"`
 }
 
-// applyTo copies the fields this report entry refreshes onto the stored row.
-// An absent or unrecognised field leaves the stored value alone, so a partial
-// report never blanks what an earlier scan established.
+// applyTo fills missing shared profile fields; repository activity is recorded separately.
 func (rm reportedMaintainer) applyTo(m *db.Maintainer) {
-	if rm.Name != "" {
+	if m.Name == "" && rm.Name != "" {
 		m.Name = rm.Name
 	}
-	if validEmail(rm.Email) {
+	if m.Email == "" && validEmail(rm.Email) {
 		m.Email = rm.Email
 	}
-	switch rm.Status {
-	case "active":
-		m.Status = db.MaintainerActive
-	case "inactive":
-		m.Status = db.MaintainerInactive
+	if m.Status == "" || m.Status == db.MaintainerUnknown {
+		switch rm.Status {
+		case "active":
+			m.Status = db.MaintainerActive
+		case "inactive":
+			m.Status = db.MaintainerInactive
+		}
 	}
-	if rm.Evidence != "" {
+	if m.Notes == "" && rm.Evidence != "" {
 		m.Notes = rm.Role + ": " + rm.Evidence
 	}
 }
@@ -1172,6 +1172,11 @@ func (w *Worker) parseMaintainersOutput(scan *db.Scan, report string, emit func(
 			// larger loss than a stale name or note.
 			w.Log.Warn("save maintainer", "scan", scan.ID, "login", rm.Login, "err", err)
 		}
+		if repoWide {
+			if err := db.RecordMaintainerActivity(w.DB, repo.ID, m.ID, rm.Status); err != nil {
+				w.Log.Warn("record maintainer activity", "scan", scan.ID, "login", rm.Login, "err", err)
+			}
+		}
 		linked = append(linked, m)
 	}
 	switch {
@@ -1185,6 +1190,8 @@ func (w *Worker) parseMaintainersOutput(scan *db.Scan, report string, emit func(
 	case len(linked) > 0:
 		if err := w.DB.Model(&repo).Association("Maintainers").Replace(linked); err != nil {
 			w.Log.Warn("replace repository maintainers", "scan", scan.ID, "repository", repo.ID, "err", err)
+		} else if err := db.PruneMaintainerActivity(w.DB, repo.ID, linked); err != nil {
+			w.Log.Warn("prune maintainer activity", "scan", scan.ID, "repository", repo.ID, "err", err)
 		}
 	}
 	emit(Event{Kind: KindText, Text: fmt.Sprintf("identified %d maintainer(s)", len(result.Maintainers))})

@@ -34,6 +34,34 @@
   </span>
 </div>
 
+<details class="mb-6">
+  <summary class="btn-sm-outline inline-flex">Edit details</summary>
+  <form method="post" action="/maintainers/{{$m.ID}}" class="form mt-4 space-y-4 max-w-xl">
+    <div>
+      <label for="maintainer-name" class="block text-sm font-semibold mb-1">Name</label>
+      <input id="maintainer-name" type="text" name="name" class="input w-full" value="{{$m.Name}}">
+    </div>
+    <div>
+      <label for="maintainer-email" class="block text-sm font-semibold mb-1">Email</label>
+      <input id="maintainer-email" type="email" name="email" class="input w-full" value="{{$m.Email}}">
+    </div>
+    <div>
+      <label for="maintainer-status" class="block text-sm font-semibold mb-1">Profile status</label>
+      <select id="maintainer-status" name="status" class="input w-full">
+        <option value="unknown" {{if eq $m.Status "unknown"}}selected{{end}}>Unknown</option>
+        <option value="active" {{if eq $m.Status "active"}}selected{{end}}>Active</option>
+        <option value="inactive" {{if eq $m.Status "inactive"}}selected{{end}}>Inactive</option>
+      </select>
+      <p class="text-xs text-muted-foreground mt-1">Repository activity is updated separately by scans.</p>
+    </div>
+    <div>
+      <label for="maintainer-notes" class="block text-sm font-semibold mb-1">Notes</label>
+      <textarea id="maintainer-notes" name="notes" class="input w-full" rows="3">{{$m.Notes}}</textarea>
+    </div>
+    <button type="submit" class="btn-sm">Save details</button>
+  </form>
+</details>
+
 <div class="tabs w-full" id="maintainer-tabs">
   <nav role="tablist" aria-orientation="horizontal">
     <button type="button" role="tab" id="mt1" aria-controls="mp1" aria-selected="true">Repositories</button>

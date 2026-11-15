@@ -210,9 +210,8 @@ func RefreshRepositoryHealth(gdb *gorm.DB, repositoryID uint, now time.Time) (Re
 	if err := gdb.Where("repository_id = ?", repositoryID).Find(&packages).Error; err != nil {
 		return RepositoryHealthAssessment{}, fmt.Errorf("load packages for repository health: %w", err)
 	}
-	var maintainers []Maintainer
-	if err := gdb.Joins("JOIN repository_maintainers ON repository_maintainers.maintainer_id = maintainers.id").
-		Where("repository_maintainers.repository_id = ?", repositoryID).Find(&maintainers).Error; err != nil {
+	maintainers, err := RepositoryMaintainers(gdb, repositoryID)
+	if err != nil {
 		return RepositoryHealthAssessment{}, fmt.Errorf("load maintainers for repository health: %w", err)
 	}
 	complete, err := RepositoryHealthEvidenceComplete(gdb, repositoryID)
