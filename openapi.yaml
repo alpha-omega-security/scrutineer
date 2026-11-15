@@ -497,6 +497,11 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: The repository already has `max_agent_api_open_scans_per_repository` scans queued or running (default 32).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
   /findings/{id}:
     parameters:
       - name: id
@@ -937,6 +942,11 @@ paths:
               schema: { $ref: '#/components/schemas/Error' }
         '412':
           description: A re-attack was requested but the finding has no reproducible gated patch attempt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: The repository already has `max_agent_api_open_scans_per_repository` scans queued or running (default 32).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }

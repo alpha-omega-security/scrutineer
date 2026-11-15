@@ -32,6 +32,24 @@ func TestRenderMarkdown_escapsHTML(t *testing.T) {
 	}
 }
 
+func TestRenderMarkdown_dropsUnsafe(t *testing.T) {
+	got := string(renderMarkdown("<div onclick=\"x\">hi</div>\n\n[x](javascript:alert(1)) ![y](vbscript:x) <img src=x onerror=alert(1)>"))
+	for _, bad := range []string{"onclick", "javascript:", "vbscript:", "onerror", "<img src=x"} {
+		if strings.Contains(got, bad) {
+			t.Errorf("output keeps %q:\n%s", bad, got)
+		}
+	}
+}
+
+func TestRenderMarkdown_gfm(t *testing.T) {
+	got := string(renderMarkdown("| a |\n|---|\n| 1 |\n\n~~gone~~ https://example.com\n\n- [x] done\n"))
+	for _, want := range []string{"<table>", "<td>1</td>", "<del>gone</del>", `<a href="https://example.com">`, `<input checked="" disabled="" type="checkbox">`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("output lacks %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestRenderMarkdown_empty(t *testing.T) {
 	got := string(renderMarkdown(""))
 	if got != "" {

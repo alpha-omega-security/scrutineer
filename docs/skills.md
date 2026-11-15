@@ -29,7 +29,8 @@ These live in `skills/` and are embedded in the Scrutineer executable. At startu
 | `audit-exfil` | Focused static audit for attacker-controlled reads, requests, parsers, or error paths that can disclose files, metadata, secrets, or internal responses. Uses ecosystem-specific reference notes and runs on demand. |
 | `audit-authz` | Focused static audit for insecure direct object references (IDOR), tenant-isolation failures, missing or fail-open guards, privilege escalation, and unverified claims used for authorization. Uses ecosystem and GraphQL reference notes and runs on demand. |
 | `audit-pii` | Focused static audit for real personal or customer-identifying data committed to source or exposed through logs, URLs, telemetry, exports, and responses. Distinguishes concrete exposure from synthetic examples, reserved addresses, and public author metadata; runs on demand. |
-| `audit-memory` | Focused static audit for reachable memory corruption in first-party C, C++, unsafe Rust, native extensions, and FFI boundaries. Requires complete primitive-hit accounting and keeps library, CLI, parser, and foreign-runtime boundaries separate; runs on demand. |
+| `audit-memory` | Focused static audit for reachable memory corruption in first-party C, C++, unsafe Rust, native extensions, and FFI boundaries. Requires complete primitive-hit accounting and keeps library, CLI, parser, and foreign-runtime boundaries separate. Triage selects it through the `embedded-iot`, `file-parser`, `mobile` and `unsafe-rust` modes; otherwise it runs on demand. |
+| `audit-unsafe-rust` | Focused static soundness audit of first-party unsafe Rust, applying the proof-obligation review method from [google/rust-skills](https://github.com/google/rust-skills/tree/main/unsafe_rust_review) (vendored under `references/`, see the skill's `UPSTREAM.md`). Files only safe-API-reachable undefined behavior; missing or weak `# Safety` docs go in the evidence lists, not findings. Triage selects it through the `unsafe-rust` mode; otherwise it runs on demand. |
 | `audit-package-manager` | Audits package manager clients, registries, and proxies against a bundled threat model. Triage selects it from source evidence; findings remain separate from design properties and unresolved assumptions. |
 | `audit-web` | Audits web sessions, browser origins, uploads and workflow state against a bundled threat model informed by the OWASP Application Security Verification Standard (ASVS). Triage selects it from source evidence. |
 | `audit-embedded` | Audits firmware updates, rollback protection, boot chain, provisioning, device credentials, debug interfaces and device communication against a bundled threat model informed by the OWASP IoT Security Verification Standard (ISVS). Triage selects it from source evidence. |
@@ -147,14 +148,25 @@ first-party native C, C++ or unsafe Rust that reads untrusted input. A backend
 that only serves a mobile API, a client SDK or library with no app shell,
 release or signing tooling, documentation and keywords alone do not activate
 it. Neither does an example, sample or demo app that exists to exercise a
-library, such as a Flutter plugin's `example/` app. A WebView or JavaScript bridge does not add `audit-web` because
-`audit-mobile` covers it. A monorepo that holds an app and its own backend in
+library, such as a Flutter plugin's `example/` app. A WebView or JavaScript
+bridge does not add `audit-web` because `audit-mobile` covers it. A monorepo that holds an app and its own backend in
 the scanned scope can activate both this mode and `web-api` while the shared
 audits are still enqueued once. The audit distinguishes source-proven
 vulnerabilities from intended behavior and evidenced negative results.
 Store, operating system and MDM configuration, device integrity, backend
 enforcement outside the checkout and production signing are recorded as
 unresolved assumptions. Its MASVS references do not imply compliance.
+The `unsafe-rust` mode selects `audit-unsafe-rust` whenever first-party Rust
+in scope contains unsafe code, whatever kind of software the repository is,
+and adds `audit-memory` only when that code shows FFI evidence (`extern`
+blocks, `#[no_mangle]` / `#[unsafe(no_mangle)]`, or a `-sys` dependency). Triage finds candidates with a `git grep` for the
+`unsafe` keyword in `*.rs` files, excluding `target`, `tests`, `benches`,
+`examples`, `vendor` and `third_party` trees (rechecking any crate that lives
+under `tests`, `benches` or `examples`), then confirms at least one hit is
+real unsafe code rather than a comment, string, test module or lint setting.
+Unsafe code only in vendored crates, submodules or out-of-scope subprojects
+does not activate it. It can match alongside any other mode, and
+`audit-memory` is enqueued at most once.
 
 Add another mode by defining its detection criteria in the triage reference
 and bundling its audit skill and threat model.

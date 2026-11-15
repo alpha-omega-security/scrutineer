@@ -324,7 +324,7 @@ func TestStreamedCaptureIsImmutableAndFailureKeepsFinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	w := &Worker{DB: gdb, DataDir: t.TempDir()}
-	raw := []byte(`{"id":"F1","title":"streamed bug","severity":"High","location":"parser.go:1"}`)
+	raw := []byte(`{"id":"F1","title":"streamed bug","severity":"High","location":"parser.go:1","trace":"User input reaches exec via handler.Run without quoting."}`)
 	writePoCTestFile(t, w.workRoot(scan.ID), "poc/F1/run.sh", []byte("original"))
 	finding, err := w.PersistStreamedFinding(&scan, raw)
 	if err != nil {
@@ -343,7 +343,7 @@ func TestStreamedCaptureIsImmutableAndFailureKeepsFinding(t *testing.T) {
 		t.Fatalf("original capture replaced: %+v, %v", files, err)
 	}
 	writePoCTestFile(t, w.workRoot(scan.ID), "poc/F2/large", make([]byte, poc.MaxFileBytes+1))
-	if _, err := w.PersistStreamedFinding(&scan, []byte(`{"id":"F2","title":"oversize PoC","severity":"High","location":"parser.go:2"}`)); err == nil {
+	if _, err := w.PersistStreamedFinding(&scan, []byte(`{"id":"F2","title":"oversize PoC","severity":"High","location":"parser.go:2","trace":"User input reaches exec via handler.Run without quoting."}`)); err == nil {
 		t.Fatal("oversize capture accepted")
 	}
 	var count int64
@@ -373,7 +373,7 @@ func TestStreamedFindingSkipsCaptureQueryWithoutDirectory(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = gdb.Callback().Query().Remove(callback) })
 	w := &Worker{DB: gdb, DataDir: t.TempDir()}
-	raw := []byte(`{"id":"F1","title":"no capture yet","severity":"High","location":"parser.go:1"}`)
+	raw := []byte(`{"id":"F1","title":"no capture yet","severity":"High","location":"parser.go:1","trace":"User input reaches exec via handler.Run without quoting."}`)
 	for range 2 {
 		if _, err := w.PersistStreamedFinding(&scan, raw); err != nil {
 			t.Fatal(err)

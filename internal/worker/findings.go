@@ -5,14 +5,121 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"scrutineer/internal/db"
 )
 
 // ErrInvalidFinding marks a streamed finding the caller sent wrong: malformed
-// JSON or missing a required field. Handlers map it to a 4xx rather than 500.
+// JSON, a missing required field or placeholder evidence. Handlers map it to a
+// 4xx rather than 500.
 var ErrInvalidFinding = errors.New("invalid finding")
+
+// stubEvidenceMinRunes is the shortest trace, boundary or validation that counts as evidence.
+const stubEvidenceMinRunes = 20
+
+// isStubEvidence reports whether a finding's trace, boundary and validation
+// are all missing or too short to be evidence.
+func isStubEvidence(trace, boundary, validation string) bool {
+	for _, field := range []string{trace, boundary, validation} {
+		if utf8.RuneCountInString(strings.TrimSpace(field)) >= stubEvidenceMinRunes {
+			return false
+		}
+	}
+	return true
+}
+
+// schemaRequiresEvidence reports whether a skill schema's finding items require trace, boundary and validation together.
+func schemaRequiresEvidence(schemaJSON string) bool {
+	var root any
+	if json.Unmarshal([]byte(schemaJSON), &root) != nil {
+		return false
+	}
+	item, _ := schemaAt(root, "properties", "findings", "items").(map[string]any)
+	required, _ := item["required"].([]any)
+	return requiresAll(required, "trace", "boundary", "validation")
+}
+
+// maxSchemaRefHops bounds $ref chains so a cyclic schema cannot loop forever.
+const maxSchemaRefHops = 16
+
+// schemaAt walks keys from the schema root, following local $refs at each step.
+func schemaAt(root any, keys ...string) any {
+	node := derefSchema(root, root)
+	for _, key := range keys {
+		m, ok := node.(map[string]any)
+		if !ok {
+			return nil
+		}
+		node = derefSchema(root, m[key])
+	}
+	return node
+}
+
+func derefSchema(root, node any) any {
+	for range maxSchemaRefHops {
+		m, _ := node.(map[string]any)
+		ref, ok := m["$ref"].(string)
+		if !ok {
+			return node
+		}
+		ptr, local := strings.CutPrefix(ref, "#")
+		if !local {
+			return nil
+		}
+		node = jsonPointer(root, ptr)
+	}
+	return nil
+}
+
+func jsonPointer(root any, ptr string) any {
+	if ptr == "" {
+		return root
+	}
+	node := root
+	unescape := strings.NewReplacer("~1", "/", "~0", "~")
+	for _, tok := range strings.Split(strings.TrimPrefix(ptr, "/"), "/") {
+		tok = unescape.Replace(tok)
+		switch n := node.(type) {
+		case map[string]any:
+			node = n[tok]
+		case []any:
+			i, err := strconv.Atoi(tok)
+			if err != nil || i < 0 || i >= len(n) {
+				return nil
+			}
+			node = n[i]
+		default:
+			return nil
+		}
+	}
+	return node
+}
+
+func requiresAll(required []any, names ...string) bool {
+	for _, name := range names {
+		if !slices.Contains(required, any(name)) {
+			return false
+		}
+	}
+	return true
+}
+
+func dropStubFindings(findings []db.Finding, emit func(Event)) []db.Finding {
+	kept := findings[:0]
+	for _, f := range findings {
+		if !isStubEvidence(f.Trace, f.Boundary, f.Validation) {
+			kept = append(kept, f)
+		}
+	}
+	if dropped := len(findings) - len(kept); dropped > 0 {
+		emit(Event{Kind: KindText, Text: fmt.Sprintf("dropped %d finding(s) whose trace, boundary and validation are missing or placeholders", dropped)})
+	}
+	return kept
+}
 
 // PersistStreamedFinding records one finding emitted mid-scan into the
 // concurrent-finding log so sibling scans in the same ScanGroup can read it
@@ -29,6 +136,9 @@ func (w *Worker) PersistStreamedFinding(scan *db.Scan, raw []byte) (*db.Finding,
 	}
 	if strings.TrimSpace(sf.Title) == "" || strings.TrimSpace(sf.Severity) == "" || strings.TrimSpace(sf.Location) == "" {
 		return nil, fmt.Errorf("%w: title, severity and location are required", ErrInvalidFinding)
+	}
+	if isStubEvidence(sf.Trace, sf.Boundary, sf.Validation) {
+		return nil, fmt.Errorf("%w: trace, boundary and validation are missing or placeholders; stream a finding only once its evidence is written", ErrInvalidFinding)
 	}
 	f := sf.toFinding(scan.ID, scan.RepositoryID, scan.Commit, scan.SubPath, scan.Model)
 	f.Fingerprint = db.FingerprintFinding(scan.SkillName, f.SubPath, f.CWE, f.Location, f.Title)

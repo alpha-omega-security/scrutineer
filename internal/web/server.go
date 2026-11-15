@@ -130,6 +130,8 @@ type Server struct {
 	// picker and makes enqueueSkillWith refuse any policy name.
 	ScanEgressPolicies []string
 
+	MaxAgentAPIOpenScansPerRepository int
+
 	// OperatorToken is the credential the browser UI and /api/v1 require on
 	// top of the loopback Host check. Empty refuses every such request.
 	OperatorToken string
@@ -969,6 +971,10 @@ func distinctLanguages(gdb *gorm.DB) []string {
 }
 
 func (s *Server) repoList(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("view") == "priorities" {
+		s.repoPriorities(w, r)
+		return
+	}
 	q := s.DB.Model(&db.Repository{})
 	lang := r.URL.Query().Get("language")
 	if lang != "" {
