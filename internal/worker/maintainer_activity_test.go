@@ -89,13 +89,37 @@ func TestDoSkillMaintainerUnknownActivityDoesNotInheritAnotherRepository(t *test
 	}
 }
 
+func TestDoSkillMaintainerUnlinkedActivityDoesNotReturnWithMaintainer(t *testing.T) {
+	w, scan := costCapFixture(t, 0)
+	if err := w.DB.Model(&db.Skill{}).Where("id = ?", *scan.SkillID).
+		Updates(map[string]any{"name": "maintainers", "output_kind": "maintainers"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	runMaintainerActivityJob(t, w, scan.RepositoryID, *scan.SkillID, "active")
+	runMaintainerReportJob(t, w, scan.RepositoryID, *scan.SkillID,
+		`{"maintainers":[{"login":"successor","role":"lead","status":"active","evidence":"repository activity"}]}`)
+	var count int64
+	if err := w.DB.Model(&db.MaintainerActivity{}).Where("repository_id = ?", scan.RepositoryID).Count(&count).Error; err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("activity rows after unlink = %d, want 1", count)
+	}
+	runMaintainerActivityJob(t, w, scan.RepositoryID, *scan.SkillID, "unknown")
+	requireMaintainerActivity(t, w, scan.RepositoryID, db.MaintainerUnknown)
+}
+
 func runMaintainerActivityJob(t *testing.T, w *Worker, repositoryID, skillID uint, status string) {
+	t.Helper()
+	runMaintainerReportJob(t, w, repositoryID, skillID, fmt.Sprintf(`{"maintainers":[{"login":"person","name":"Reported name","email":"reported@example.org","role":"lead","status":%q,"evidence":"repository activity"}]}`, status))
+}
+
+func runMaintainerReportJob(t *testing.T, w *Worker, repositoryID, skillID uint, report string) {
 	t.Helper()
 	scan := db.Scan{RepositoryID: repositoryID, SkillID: &skillID, Kind: JobSkill, Status: db.ScanQueued, Model: "fake"}
 	if err := w.DB.Create(&scan).Error; err != nil {
 		t.Fatal(err)
 	}
-	report := fmt.Sprintf(`{"maintainers":[{"login":"person","name":"Reported name","email":"reported@example.org","role":"lead","status":%q,"evidence":"repository activity"}]}`, status)
 	w.Runner = fakeRunner{skillRes: SkillResult{Report: report}}
 	if got := runCapScan(t, w, &scan); got.Status != db.ScanDone {
 		t.Fatalf("maintainers scan: status=%s error=%s", got.Status, got.Error)

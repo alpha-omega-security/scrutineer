@@ -1164,6 +1164,8 @@ func (w *Worker) parseMaintainersOutput(scan *db.Scan, report string, emit func(
 	case len(linked) > 0:
 		if err := w.DB.Model(&repo).Association("Maintainers").Replace(linked); err != nil {
 			w.Log.Warn("replace repository maintainers", "scan", scan.ID, "repository", repo.ID, "err", err)
+		} else if err := db.PruneMaintainerActivity(w.DB, repo.ID, linked); err != nil {
+			w.Log.Warn("prune maintainer activity", "scan", scan.ID, "repository", repo.ID, "err", err)
 		}
 	}
 	emit(Event{Kind: KindText, Text: fmt.Sprintf("identified %d maintainer(s)", len(result.Maintainers))})

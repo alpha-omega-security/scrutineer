@@ -35,6 +35,17 @@ func RecordMaintainerActivity(gdb *gorm.DB, repositoryID, maintainerID uint, sta
 	return gdb.Clauses(conflict).Create(&activity).Error
 }
 
+// PruneMaintainerActivity drops activity for maintainers no longer linked, so a
+// later unknown report for a returning maintainer does not revive stale status.
+func PruneMaintainerActivity(gdb *gorm.DB, repositoryID uint, linked []Maintainer) error {
+	ids := make([]uint, 0, len(linked))
+	for _, m := range linked {
+		ids = append(ids, m.ID)
+	}
+	return gdb.Where("repository_id = ? AND maintainer_id NOT IN ?", repositoryID, ids).
+		Delete(&MaintainerActivity{}).Error
+}
+
 // RepositoryMaintainers uses the shared status until repository activity is available.
 func RepositoryMaintainers(gdb *gorm.DB, repositoryID uint) ([]Maintainer, error) {
 	var rows []struct {
