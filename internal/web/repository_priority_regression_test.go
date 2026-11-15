@@ -106,3 +106,51 @@ func TestPriorityViewDoesNotSubscribeToScanUpdates(t *testing.T) {
 		t.Fatalf("regular repository list lost live updates: HTTP %d", w.Code)
 	}
 }
+
+func TestPriorityScopeKeepsKnownValueOverEmpty(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	skill := db.Skill{Name: "deps", OutputKind: "dependencies"}
+	if err := s.DB.Create(&skill).Error; err != nil {
+		t.Fatal(err)
+	}
+	lib := priorityTestRepo(t, s, "library")
+	app := priorityTestRepo(t, s, "app")
+	scan := priorityTestInventory(t, s, app, skill, `[{"name":"owner/lib","ecosystem":"github-actions","manifest_path":"ci.yml"}]`, time.Now())
+	priorityTestSBOM(t, s, scan, lib.ID, "transitive")
+	priorityTestSBOM(t, s, scan, lib.ID, "")
+	if page := priorityTestPage(t, s, ""); !strings.Contains(page, " 0 consumer/package pairs have unknown directness") {
+		t.Fatal("empty scope replaced a known one")
+	}
+}
+
+func TestPriorityReleaseSignalsCombineEvidence(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	skill := db.Skill{Name: "deps", OutputKind: "dependencies"}
+	if err := s.DB.Create(&skill).Error; err != nil {
+		t.Fatal(err)
+	}
+	lib := priorityTestRepo(t, s, "library")
+	app := priorityTestRepo(t, s, "app")
+	scan := priorityTestInventory(t, s, app, skill, `[
+ {"name":"owner/lib","ecosystem":"github-actions","manifest_path":"ci.yml"},
+ {"name":"owner/other","ecosystem":"github-actions","manifest_path":"ci.yml"}]`, time.Now())
+	priorityTestSBOM(t, s, scan, lib.ID, "")
+	var upload db.SBOMUpload
+	if err := s.DB.Where("scan_id = ?", scan.ID).First(&upload).Error; err != nil {
+		t.Fatal(err)
+	}
+	other := db.SBOMPackage{SBOMUploadID: upload.ID, Name: "owner/other", Ecosystem: "actions", PURL: "pkg:githubactions/owner/other@v1", SourceRepositoryID: &lib.ID}
+	if err := s.DB.Create(&other).Error; err != nil {
+		t.Fatal(err)
+	}
+	metadata := `[{"name":"owner/lib","ecosystem":"actions","versions_count":0},{"name":"owner/other","ecosystem":"actions","versions_count":0}]`
+	if err := s.DB.Model(&lib).Update("ecosystems_packages_data", metadata).Error; err != nil {
+		t.Fatal(err)
+	}
+	row := requireRepoListRow(t, priorityTestPage(t, s, ""), lib.ID)
+	if strings.Count(row, ">No releases</span>") != 1 || !strings.Contains(row, "owner/lib: registry reports no releases; owner/other: registry reports no releases") {
+		t.Fatalf("expected one signal covering both packages: %s", row)
+	}
+}

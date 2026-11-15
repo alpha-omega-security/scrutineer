@@ -206,6 +206,7 @@ func priorityReleases(repo *RepositoryPriority, raw string, now time.Time) {
 		packages = nil
 	}
 	matched := map[priorityIdentity]bool{}
+	var noReleases, oldReleases []string
 	for _, pkg := range packages {
 		key := priorityKey(pkg.PURL, pkg.Ecosystem, pkg.Name)
 		if !repo.usedPackages[key] || matched[key] {
@@ -213,11 +214,17 @@ func priorityReleases(repo *RepositoryPriority, raw string, now time.Time) {
 		}
 		matched[key] = true
 		if pkg.Versions != nil && *pkg.Versions == 0 {
-			repo.Signals = append(repo.Signals, PrioritySignal{ID: "no-releases", Evidence: pkg.Name + ": registry reports no releases"})
+			noReleases = append(noReleases, pkg.Name+": registry reports no releases")
 		}
 		if date, err := time.Parse(time.RFC3339, pkg.Latest); err == nil && now.Sub(date) >= healthStaleReleaseWindow {
-			repo.Signals = append(repo.Signals, PrioritySignal{ID: "old-release", Evidence: pkg.Name + ": last release " + date.Format("2006-01-02") + " (at least 18 months ago; may be stable)"})
+			oldReleases = append(oldReleases, pkg.Name+": last release "+date.Format("2006-01-02")+" (at least 18 months ago; may be stable)")
 		}
+	}
+	if len(noReleases) > 0 {
+		repo.Signals = append(repo.Signals, PrioritySignal{ID: "no-releases", Evidence: strings.Join(noReleases, "; ")})
+	}
+	if len(oldReleases) > 0 {
+		repo.Signals = append(repo.Signals, PrioritySignal{ID: "old-release", Evidence: strings.Join(oldReleases, "; ")})
 	}
 	if len(matched) < len(repo.usedPackages) {
 		repo.Gaps = append(repo.Gaps, "Release metadata missing for some dependencies in this selection")
@@ -364,7 +371,7 @@ func prioritySourceMaps(repos map[uint]*RepositoryPriority, sources []prioritySo
 		}
 		sk := priorityScopeKey{source.ConsumerID, key}
 		// A direct edge in any component version proves direct use by this consumer.
-		if scopes[sk] != "direct" {
+		if source.Scope != "" && scopes[sk] != "direct" {
 			scopes[sk] = source.Scope
 		}
 	}
