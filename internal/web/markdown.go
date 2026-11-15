@@ -5,17 +5,18 @@ import (
 	"html/template"
 	"strings"
 
-	"github.com/yuin/goldmark"
-	"github.com/yuin/goldmark/extension"
+	"github.com/yuin/goldmark/v2/extension"
+	"github.com/yuin/goldmark/v2/parser"
+	"github.com/yuin/goldmark/v2/renderer/html"
 )
 
-var md = goldmark.New(
-	goldmark.WithExtensions(extension.GFM),
-)
+var mdParser = parser.New(parser.WithExtensions(extension.NewGFMParser()))
+var mdRenderer = html.New(html.WithExtensions(extension.NewGFMHTMLRenderer()))
 
 func renderMarkdown(src string) template.HTML {
 	var buf bytes.Buffer
-	if err := md.Convert([]byte(src), &buf); err != nil {
+	source := []byte(src)
+	if err := mdRenderer.Render(&buf, source, mdParser.Parse(source)); err != nil {
 		return template.HTML("<pre>" + template.HTMLEscapeString(src) + "</pre>")
 	}
 	return template.HTML(buf.String()) //nolint:gosec

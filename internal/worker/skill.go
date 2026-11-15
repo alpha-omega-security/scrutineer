@@ -631,6 +631,10 @@ func (w *Worker) ingestFindings(skill *db.Skill, scan *db.Scan, report string, e
 		return nil, err
 	}
 	findings := rep.toFindings(scan.ID, scan.RepositoryID, scan.Commit, scan.SubPath, scan.Model)
+	// Grouping keeps the first entry's evidence, so stubs go before it.
+	if schemaRequiresEvidence(skill.SchemaJSON) {
+		findings = dropStubFindings(findings, emit)
+	}
 	findings = groupByFingerprint(findings, scan.SkillName)
 
 	if skill.MinConfidence != "" {
@@ -751,15 +755,20 @@ func (w *Worker) persistFinding(scan *db.Scan, f *db.Finding) (created bool, err
 // Reference and history failures are logged but not fatal; the finding
 // row write itself does propagate so a real DB error stops the scan.
 func (w *Worker) reobserveFinding(existing, f *db.Finding, scan *db.Scan) error {
-	// A finding already last-seen in this same scan was streamed into the
-	// concurrent-finding log earlier in this run. Reconciling it from
-	// the final report must be idempotent: do not bump seen_count or write
-	// another observed-history row, or a streamed finding would count as
-	// seen twice by one scan.
-	sameScan := existing.LastSeenScanID == scan.ID
+	// The observation row, not LastSeenScanID, says whether this scan already
+	// counted the finding: a sibling may have re-observed it since.
+	var priorObservations int64
+	if err := w.DB.Model(&db.FindingObservation{}).
+		Where("finding_id = ? AND scan_id = ?", existing.ID, scan.ID).
+		Count(&priorObservations).Error; err != nil {
+		return fmt.Errorf("lookup finding %d observation: %w", existing.ID, err)
+	}
+	seenThisScan := priorObservations > 0
+	// Content refresh belongs to the scan that created the row.
+	ownedByThisScan := existing.ScanID == scan.ID
 
 	seenCount := existing.SeenCount + 1
-	if sameScan {
+	if seenThisScan {
 		seenCount = existing.SeenCount
 	}
 	updates := map[string]any{
@@ -771,7 +780,7 @@ func (w *Worker) reobserveFinding(existing, f *db.Finding, scan *db.Scan) error 
 		"location":            f.Location,
 		"locations":           f.Locations,
 	}
-	if sameScan {
+	if ownedByThisScan {
 		// The existing row is this run's own streamed preview, which may
 		// carry only the minimal fields the POST endpoint requires. The
 		// final report is the authoritative full version of the same
@@ -828,7 +837,7 @@ func (w *Worker) reobserveFinding(existing, f *db.Finding, scan *db.Scan) error 
 	if err := w.upsertFindingReferences(existing.ID, f.References); err != nil {
 		w.Log.Warn("upsert finding references", "finding", existing.ID, "scan", scan.ID, "err", err)
 	}
-	if sameScan {
+	if seenThisScan {
 		return nil
 	}
 	if err := w.DB.Create(&db.FindingHistory{
@@ -1057,23 +1066,23 @@ type reportedMaintainer struct {
 	Evidence string `json:"evidence"`
 }
 
-// applyTo copies the fields this report entry refreshes onto the stored row.
-// An absent or unrecognised field leaves the stored value alone, so a partial
-// report never blanks what an earlier scan established.
+// applyTo fills missing shared profile fields; repository activity is recorded separately.
 func (rm reportedMaintainer) applyTo(m *db.Maintainer) {
-	if rm.Name != "" {
+	if m.Name == "" && rm.Name != "" {
 		m.Name = rm.Name
 	}
-	if validEmail(rm.Email) {
+	if m.Email == "" && validEmail(rm.Email) {
 		m.Email = rm.Email
 	}
-	switch rm.Status {
-	case "active":
-		m.Status = db.MaintainerActive
-	case "inactive":
-		m.Status = db.MaintainerInactive
+	if m.Status == "" || m.Status == db.MaintainerUnknown {
+		switch rm.Status {
+		case "active":
+			m.Status = db.MaintainerActive
+		case "inactive":
+			m.Status = db.MaintainerInactive
+		}
 	}
-	if rm.Evidence != "" {
+	if m.Notes == "" && rm.Evidence != "" {
 		m.Notes = rm.Role + ": " + rm.Evidence
 	}
 }
@@ -1168,6 +1177,11 @@ func (w *Worker) parseMaintainersOutput(scan *db.Scan, report string, emit func(
 			// larger loss than a stale name or note.
 			w.Log.Warn("save maintainer", "scan", scan.ID, "login", rm.Login, "err", err)
 		}
+		if repoWide {
+			if err := db.RecordMaintainerActivity(w.DB, repo.ID, m.ID, rm.Status); err != nil {
+				w.Log.Warn("record maintainer activity", "scan", scan.ID, "login", rm.Login, "err", err)
+			}
+		}
 		linked = append(linked, m)
 	}
 	switch {
@@ -1181,6 +1195,8 @@ func (w *Worker) parseMaintainersOutput(scan *db.Scan, report string, emit func(
 	case len(linked) > 0:
 		if err := w.DB.Model(&repo).Association("Maintainers").Replace(linked); err != nil {
 			w.Log.Warn("replace repository maintainers", "scan", scan.ID, "repository", repo.ID, "err", err)
+		} else if err := db.PruneMaintainerActivity(w.DB, repo.ID, linked); err != nil {
+			w.Log.Warn("prune maintainer activity", "scan", scan.ID, "repository", repo.ID, "err", err)
 		}
 	}
 	emit(Event{Kind: KindText, Text: fmt.Sprintf("identified %d maintainer(s)", len(result.Maintainers))})

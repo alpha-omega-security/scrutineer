@@ -36,7 +36,7 @@ func TestStreamedCaptureFailureReturnsFindingAndEnqueuesTriage(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(dir, "run.sh"), data, 0o700); err != nil {
 			t.Fatal(err)
 		}
-		body := `{"id":"F1","title":"capture retry","severity":"High","location":"parser.go:1"}`
+		body := `{"id":"F1","title":"capture retry","severity":"High","location":"parser.go:1","trace":"User input reaches exec via handler.Run without quoting."}`
 		r := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/repositories/%d/findings", repo.ID), strings.NewReader(body))
 		asOperator(r)
 		r.Header.Set("Authorization", "Bearer "+scan.APIToken)
@@ -91,7 +91,7 @@ func TestStreamedPoCBundleUsesCapturedBytes(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "run.sh"), run, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	body := `{"id":"F1","title":"captured bug","severity":"Low","location":"parser.go:1","validation":"prose has no reproduction"}`
+	body := `{"id":"F1","title":"captured bug","severity":"Low","location":"parser.go:1","validation":"prose has no reproduction","trace":"User input reaches exec via handler.Run without quoting."}`
 	r := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/repositories/%d/findings", repo.ID), strings.NewReader(body))
 	asOperator(r)
 	r.Header.Set("Authorization", "Bearer "+scan.APIToken)
@@ -186,7 +186,7 @@ func TestStreamedCaptureRejectsScanToken(t *testing.T) {
 				t.Fatal(err)
 			}
 			url := fmt.Sprintf("/api/repositories/%d/findings", repo.ID)
-			body := `{"id":"F1","title":"credential capture","severity":"High","location":"parser.go:1"}`
+			body := `{"id":"F1","title":"credential capture","severity":"High","location":"parser.go:1","trace":"User input reaches exec via handler.Run without quoting."}`
 			response := apiReq(t, s, http.MethodPost, url, scan.APIToken, body)
 			if response.Code != http.StatusCreated || !strings.Contains(response.Body.String(), "poc_capture_error") || strings.Contains(response.Body.String(), secret) {
 				t.Fatalf("unsafe capture response=%d: %s", response.Code, response.Body.String())

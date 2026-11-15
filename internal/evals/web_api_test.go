@@ -123,7 +123,7 @@ func TestWebAPITriageLive(t *testing.T) {
 func runWebModeCase(t *testing.T, tc webModeCase) {
 	t.Helper()
 	counts, report := runTriageModeCase(t, triageScan{fixture: tc.fixture, subPath: tc.subPath, activeSkill: "audit-web", activeHere: tc.skipWeb})
-	for skill, want := range map[string]bool{"audit-web": tc.web && !tc.skipWeb, "audit-authz": tc.web, "audit-injection": tc.registry, "audit-package-manager": tc.registry, "audit-file-parser": false, "threat-model": true} {
+	for skill, want := range map[string]bool{"audit-web": tc.web && !tc.skipWeb, "audit-authz": tc.web, "audit-injection": tc.registry, "audit-package-manager": tc.registry, "audit-file-parser": false, "audit-mobile": false, "threat-model": true} {
 		if got := counts["/api/repositories/1/skills/"+skill+"/run"] > 0; got != want {
 			t.Errorf("%s enqueued=%t want=%t; report=%s", skill, got, want, report)
 		}

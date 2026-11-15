@@ -130,6 +130,8 @@ type Server struct {
 	// picker and makes enqueueSkillWith refuse any policy name.
 	ScanEgressPolicies []string
 
+	MaxAgentAPIOpenScansPerRepository int
+
 	// OperatorToken is the credential the browser UI and /api/v1 require on
 	// top of the loopback Host check. Empty refuses every such request.
 	OperatorToken string
@@ -589,6 +591,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /orgs/{login}/summary.md", s.orgSummary)
 	mux.HandleFunc("GET /maintainers", s.maintainersList)
 	mux.HandleFunc("GET /maintainers/{id}", s.maintainerShow)
+	mux.HandleFunc("POST /maintainers/{id}", s.maintainerUpdate)
 	mux.HandleFunc("POST /maintainers/{id}/do-not-contact", s.maintainerDoNotContact)
 	mux.HandleFunc("GET /findings", s.findings)
 	mux.HandleFunc("GET /benchmark", s.benchmark)
@@ -969,6 +972,10 @@ func distinctLanguages(gdb *gorm.DB) []string {
 }
 
 func (s *Server) repoList(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Query().Get("view") == "priorities" {
+		s.repoPriorities(w, r)
+		return
+	}
 	q := s.DB.Model(&db.Repository{})
 	lang := r.URL.Query().Get("language")
 	if lang != "" {
@@ -2765,9 +2772,10 @@ func repoTotalCost(gdb *gorm.DB, repoID uint) float64 {
 }
 
 func (s *Server) repoMaintainers(repoID uint) []db.Maintainer {
-	var maintainers []db.Maintainer
-	s.DB.Joins("JOIN repository_maintainers ON repository_maintainers.maintainer_id = maintainers.id").
-		Where("repository_maintainers.repository_id = ?", repoID).Find(&maintainers)
+	maintainers, err := db.RepositoryMaintainers(s.DB, repoID)
+	if err != nil {
+		s.Log.Error("load repository maintainers", "repo", repoID, "err", err)
+	}
 	return maintainers
 }
 

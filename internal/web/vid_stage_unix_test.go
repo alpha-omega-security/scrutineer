@@ -159,7 +159,10 @@ func writeVIDTestCommand(t *testing.T, control string, block bool) string {
 }
 
 func streamVIDFinding(handler http.Handler, repo uint, token, title string, locations []string) *httptest.ResponseRecorder {
-	body, _ := json.Marshal(map[string]any{"title": title, "severity": "High", "location": locations[0], "locations": locations})
+	body, _ := json.Marshal(map[string]any{
+		"title": title, "severity": "High", "location": locations[0], "locations": locations,
+		"trace": "The parser copies the length field into a fixed buffer without a bound check.",
+	})
 	r := httptest.NewRequest(http.MethodPost, fmt.Sprintf("/api/repositories/%d/findings", repo), strings.NewReader(string(body)))
 	r.Host = testHost
 	r.Header.Set("Authorization", "Bearer "+token)

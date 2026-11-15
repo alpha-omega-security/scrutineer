@@ -2,6 +2,7 @@ package worker
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"log"
@@ -30,6 +31,7 @@ func TestPersistStreamedFinding_createsRowFromBody(t *testing.T) {
 	w.DB.Create(scan)
 
 	body := []byte(`{"id":"F1","title":"t","severity":"High","location":"main.go:10",
+		"trace":"User input reaches exec via handler.Run without quoting.",
 		"dup_check":"compared against F0; distinct sink"}`)
 	f, err := w.PersistStreamedFinding(scan, body)
 	if err != nil {
@@ -61,7 +63,7 @@ func TestPersistStreamedFinding_newFindingDoesNotLogRecordNotFound(t *testing.T)
 	gdb.Create(scan)
 	w := &Worker{DB: gdb, DataDir: t.TempDir(), Log: slog.New(slog.NewTextHandler(io.Discard, nil))}
 
-	_, err := w.PersistStreamedFinding(scan, []byte(`{"id":"F1","title":"t","severity":"High","location":"main.go:10"}`))
+	_, err := w.PersistStreamedFinding(scan, []byte(`{"id":"F1","title":"t","severity":"High","location":"main.go:10","trace":"User input reaches exec via handler.Run without quoting."}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +80,7 @@ func TestPersistStreamedFinding_reconcilesWithFinalReport(t *testing.T) {
 	scan := &db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "sd", Status: db.ScanRunning, Commit: "aaa", ScanGroup: "grp-1"}
 	w.DB.Create(scan)
 
-	if _, err := w.PersistStreamedFinding(scan, []byte(`{"id":"F1","title":"t","severity":"High","location":"main.go:10"}`)); err != nil {
+	if _, err := w.PersistStreamedFinding(scan, []byte(`{"id":"F1","title":"t","severity":"High","location":"main.go:10","trace":"User input reaches exec via handler.Run without quoting."}`)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -102,6 +104,103 @@ func TestPersistStreamedFinding_reconcilesWithFinalReport(t *testing.T) {
 	}
 }
 
+// ownedByThisScan uses immutable ScanID to protect an earlier scan's content.
+func TestPersistStreamedFinding_crossScanStreamThenReportKeepsPriorContent(t *testing.T) {
+	w, repo := newStreamWorker(t)
+	a := &db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "sd", Status: db.ScanDone, Commit: "aaa"}
+	w.DB.Create(a)
+	original := db.Finding{
+		ScanID: a.ID, RepositoryID: repo.ID, Commit: "aaa", LastSeenScanID: a.ID, SeenCount: 1,
+		Title: "legit title", Severity: "High", Location: "main.go:10", CWE: "CWE-78",
+		Trace: "triaged trace", Status: db.FindingTriaged,
+		Fingerprint: db.FingerprintFinding("sd", "", "CWE-78", "main.go:10", "legit title"),
+	}
+	w.DB.Create(&original)
+
+	b := &db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "sd", Status: db.ScanRunning, Commit: "bbb"}
+	w.DB.Create(b)
+
+	// Scan B streams the same fingerprint: cross-scan re-observation sets
+	// last_seen_scan_id = B but must not touch content.
+	if _, err := w.PersistStreamedFinding(b, []byte(`{"title":"legit title","severity":"Low","location":"main.go:10","cwe":"CWE-78"}`)); err != nil {
+		t.Fatal(err)
+	}
+	// Scan B's final report tries to replace the content.
+	report := `{"findings":[{"id":"F1","title":"legit title","severity":"Low","cwe":"CWE-78",
+		"location":"main.go:10","trace":"attacker-controlled replacement"}]}`
+	if err := w.parseFindingsOutput(&db.Skill{}, b, report, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+
+	var got db.Finding
+	w.DB.First(&got, original.ID)
+	if got.ScanID != a.ID {
+		t.Fatalf("ScanID rewritten to %d; creation ownership must be immutable", got.ScanID)
+	}
+	if got.Trace != "triaged trace" || got.Severity != "High" {
+		t.Fatalf("cross-scan stream-then-report overwrote content: trace=%q severity=%q", got.Trace, got.Severity)
+	}
+	if got.LastSeenScanID != b.ID || got.SeenCount != 2 {
+		t.Fatalf("re-observation accounting lost: last_seen=%d seen_count=%d", got.LastSeenScanID, got.SeenCount)
+	}
+}
+
+func TestDoSkillCreatorReportRefreshesAfterSiblingStream(t *testing.T) {
+	w, creator := costCapFixture(t, 0)
+	if err := w.DB.Model(&db.Skill{}).Where("id = ?", *creator.SkillID).
+		Updates(map[string]any{"name": "sd", "output_kind": "findings"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	sibling := db.Scan{RepositoryID: creator.RepositoryID, SkillID: creator.SkillID, Kind: JobSkill, SkillName: "sd", Status: db.ScanRunning, Commit: "bbb"}
+	if err := w.DB.Create(&sibling).Error; err != nil {
+		t.Fatal(err)
+	}
+	var findingID uint
+	w.Runner = &capRunner{first: func(_ context.Context, _ func(Event)) (SkillResult, error) {
+		var running db.Scan
+		if err := w.DB.First(&running, creator.ID).Error; err != nil {
+			return SkillResult{}, err
+		}
+		finding, err := w.PersistStreamedFinding(&running, []byte(`{"title":"Preview","severity":"High","location":"main.go:10","cwe":"CWE-78"}`))
+		if err != nil {
+			return SkillResult{}, err
+		}
+		findingID = finding.ID
+		if _, err := w.PersistStreamedFinding(&sibling, []byte(`{"title":"Sibling","severity":"Low","location":"main.go:10","cwe":"CWE-78"}`)); err != nil {
+			return SkillResult{}, err
+		}
+		var observed db.Finding
+		if err := w.DB.First(&observed, findingID).Error; err != nil {
+			return SkillResult{}, err
+		}
+		if observed.ScanID != creator.ID || observed.LastSeenScanID != sibling.ID {
+			return SkillResult{}, errors.New("sibling stream did not re-observe the creator's finding")
+		}
+		return SkillResult{Report: `{"findings":[{"id":"F1","title":"Final title","severity":"Critical","location":"main.go:10","cwe":"CWE-78","trace":"Creator final report"}]}`}, nil
+	}}
+	if scan := runCapScan(t, w, creator); scan.Status != db.ScanDone {
+		t.Fatalf("creator scan: status=%s error=%s", scan.Status, scan.Error)
+	}
+	var got db.Finding
+	if err := w.DB.First(&got, findingID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if got.ScanID != creator.ID || got.LastSeenScanID != creator.ID {
+		t.Fatalf("finding ownership/last-seen = %d/%d, want creator %d", got.ScanID, got.LastSeenScanID, creator.ID)
+	}
+	if got.Title != "Final title" || got.Severity != "Critical" || got.Trace != "Creator final report" {
+		t.Fatalf("creator's final content not persisted: title=%q severity=%q trace=%q", got.Title, got.Severity, got.Trace)
+	}
+	if got.SeenCount != 2 {
+		t.Errorf("SeenCount = %d, want 2 (creator and sibling once each)", got.SeenCount)
+	}
+	var observed int64
+	w.DB.Model(&db.FindingHistory{}).Where("finding_id = ? AND field = ?", findingID, "observed").Count(&observed)
+	if observed != 1 {
+		t.Errorf("observed history rows = %d, want 1 (the sibling's)", observed)
+	}
+}
+
 // A finding streamed with only the required minimal fields and then
 // reconciled with the same scan's final report must pick up the full
 // parser-owned content of the final report: the streamed row is a preview,
@@ -111,7 +210,7 @@ func TestPersistStreamedFinding_sameScanReconcileRefreshesFinalReportContent(t *
 	scan := &db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "sd", Status: db.ScanRunning, Commit: "aaa", ScanGroup: "grp-1"}
 	w.DB.Create(scan)
 
-	if _, err := w.PersistStreamedFinding(scan, []byte(`{"title":"t","severity":"High","location":"main.go:10"}`)); err != nil {
+	if _, err := w.PersistStreamedFinding(scan, []byte(`{"title":"t","severity":"High","location":"main.go:10","trace":"User input reaches exec via handler.Run without quoting."}`)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -168,7 +267,7 @@ func TestPersistStreamedFinding_sameScanReconcileRefreshesRewordedTitle(t *testi
 	scan := &db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "sd", Status: db.ScanRunning, Commit: "aaa", ScanGroup: "grp-1"}
 	w.DB.Create(scan)
 
-	if _, err := w.PersistStreamedFinding(scan, []byte(`{"title":"SQLi","severity":"High","cwe":"CWE-89","location":"db.go:5"}`)); err != nil {
+	if _, err := w.PersistStreamedFinding(scan, []byte(`{"title":"SQLi","severity":"High","cwe":"CWE-89","location":"db.go:5","trace":"User input reaches exec via handler.Run without quoting."}`)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -195,7 +294,7 @@ func TestPersistStreamedFinding_retractedWhenAbsentFromFinalReport(t *testing.T)
 	scan := &db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "sd", Status: db.ScanRunning, Commit: "aaa", ScanGroup: "grp-1"}
 	w.DB.Create(scan)
 
-	streamed, err := w.PersistStreamedFinding(scan, []byte(`{"id":"F1","title":"dropped later","severity":"High","location":"main.go:10"}`))
+	streamed, err := w.PersistStreamedFinding(scan, []byte(`{"id":"F1","title":"dropped later","severity":"High","location":"main.go:10","trace":"User input reaches exec via handler.Run without quoting."}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,5 +346,71 @@ func TestPersistStreamedFinding_rejectsInvalid(t *testing.T) {
 	w.DB.Model(&db.Finding{}).Count(&n)
 	if n != 0 {
 		t.Errorf("invalid findings created %d rows, want 0", n)
+	}
+}
+
+func TestPersistStreamedFinding_rejectsStubEvidence(t *testing.T) {
+	w, repo := newStreamWorker(t)
+	scan := &db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "sd", Status: db.ScanRunning, Commit: "aaa"}
+	w.DB.Create(scan)
+
+	const head = `"title":"probe write access","severity":"Low","cwe":"CWE-1","location":"src/ocamlorg_web/lib/handler.ml:1","sinks":["S-tmp"]`
+	for name, body := range map[string]string{
+		"probe body": `{` + head + `,"trace":"t","boundary":"b","validation":"v","rating":"r"}`,
+		"omitted":    `{` + head + `,"rating":"r"}`,
+		"padded":     `{` + head + `,"trace":"   t   ","boundary":"   b   ","validation":"   v   "}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := w.PersistStreamedFinding(scan, []byte(body)); !errors.Is(err, ErrInvalidFinding) {
+				t.Errorf("err = %v, want ErrInvalidFinding", err)
+			}
+		})
+	}
+
+	var n int64
+	w.DB.Model(&db.Finding{}).Count(&n)
+	if n != 0 {
+		t.Errorf("stub findings created %d rows, want 0", n)
+	}
+}
+
+func TestPersistStreamedFinding_acceptsOneSubstantiveField(t *testing.T) {
+	w, repo := newStreamWorker(t)
+	scan := &db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "sd", Status: db.ScanRunning, Commit: "aaa"}
+	w.DB.Create(scan)
+
+	body := `{"title":"t","severity":"High","location":"main.go:10","boundary":"b","validation":"v",
+		"trace":"User input reaches exec via handler.Run without quoting."}`
+	f, err := w.PersistStreamedFinding(scan, []byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if f.ID == 0 {
+		t.Fatal("finding with one substantive field was not persisted")
+	}
+}
+
+func TestIsStubEvidence(t *testing.T) {
+	long := strings.Repeat("é", stubEvidenceMinRunes)
+	short := strings.Repeat("é", stubEvidenceMinRunes-1)
+	for _, tc := range []struct {
+		name                      string
+		trace, boundary, validate string
+		want                      bool
+	}{
+		{"all empty", "", "", "", true},
+		{"all single letters", "t", "b", "v", true},
+		{"nineteen runes", short, short, short, true},
+		{"twenty runes in trace", long, "", "", false},
+		{"twenty runes in boundary", "", long, "", false},
+		{"twenty runes in validation", "", "", long, false},
+		{"padding does not count", "  " + short + "  ", "", "", true},
+		{"nineteen runes are more than nineteen bytes", short, "", "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isStubEvidence(tc.trace, tc.boundary, tc.validate); got != tc.want {
+				t.Errorf("isStubEvidence = %v, want %v", got, tc.want)
+			}
+		})
 	}
 }

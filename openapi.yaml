@@ -184,6 +184,9 @@ paths:
     get:
       summary: List maintainers linked to this repository
       operationId: listRepositoryMaintainers
+      description: |
+        Status reflects the latest reported activity in this repository.
+        Until a scan supplies repository activity, the shared profile status is used.
       parameters:
         - $ref: '#/components/parameters/RepositoryID'
       responses:
@@ -494,6 +497,11 @@ paths:
               schema: { $ref: '#/components/schemas/Error' }
         '409':
           description: 'The repository maintainer opted out of federated scanning, so no scan may be enqueued for it.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: The repository already has `max_agent_api_open_scans_per_repository` scans queued or running (default 32).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }
@@ -937,6 +945,11 @@ paths:
               schema: { $ref: '#/components/schemas/Error' }
         '412':
           description: A re-attack was requested but the finding has no reproducible gated patch attempt.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: The repository already has `max_agent_api_open_scans_per_repository` scans queued or running (default 32).
           content:
             application/json:
               schema: { $ref: '#/components/schemas/Error' }

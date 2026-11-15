@@ -31,7 +31,7 @@ func TestAPIStreamFindingRejectsFIFOSource(t *testing.T) {
 	}
 	r := httptest.NewRequest(http.MethodPost,
 		fmt.Sprintf("/api/repositories/%d/findings", repo.ID),
-		strings.NewReader(`{"title":"Unsafe parser","severity":"High","location":"pipe.c:1"}`))
+		strings.NewReader(`{"title":"Unsafe parser","severity":"High","location":"pipe.c:1","trace":"User input reaches exec via handler.Run without quoting."}`))
 	r.Header.Set("Authorization", "Bearer "+scan.APIToken)
 	w := httptest.NewRecorder()
 	finished := make(chan struct{})

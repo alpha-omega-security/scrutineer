@@ -74,6 +74,25 @@
 </div>
 {{end}}
 
+{{define "repo-sort-menu"}}
+<div class="dropdown-menu">
+  <button type="button" class="btn-outline" aria-haspopup="menu" aria-expanded="false">
+    <i data-lucide="arrow-down-wide-narrow"></i>
+    {{$sk := sortkey .Sort}}{{if .Priorities}}Priority{{else if eq $sk "name"}}Name{{else if eq $sk "stars"}}Stars{{else if eq $sk "language"}}Language{{else if eq $sk "findings"}}Findings{{else}}Newest{{end}}
+    <i data-lucide="chevron-down"></i>
+  </button>
+  <div data-popover aria-hidden="true" data-align="end">
+    <div role="menu">
+      {{range (list "newest" "findings" "name" "stars" "language")}}
+        <a role="menuitem" href="/?q={{$.Q}}&language={{$.Language}}&sort={{.}}"
+           {{if and (not $.Priorities) (eq . (sortkey $.Sort))}}aria-current="true"{{end}}>{{.}}</a>
+      {{end}}
+      <a role="menuitem" href="/?view=priorities&q={{.Q}}&language={{.Language}}"{{if .Priorities}} aria-current="true"{{end}}>priority</a>
+    </div>
+  </div>
+</div>
+{{end}}
+
 {{/* live-table subscribes to scan status events and re-requests URL to replace
      the one element named by Target, which keeps the reader's scroll, filters
      and sort. Render it OUTSIDE that element: the swap replaces the target, and

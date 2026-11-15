@@ -105,7 +105,7 @@ func runBuildToolingModeCase(t *testing.T, tc buildToolingModeCase) {
 	// The runner executes the argv its task file declares, which is not
 	// injection. The installer splices a manifest value into a shell command
 	// it builds, so audit-injection applies there.
-	wants := map[string]bool{"audit-build-tooling": tc.build && !tc.skipBuild, "audit-package-manager": tc.packageManager, "audit-injection": tc.injection, "audit-web": false, "audit-embedded": false, "audit-file-parser": false, "threat-model": true}
+	wants := map[string]bool{"audit-build-tooling": tc.build && !tc.skipBuild, "audit-package-manager": tc.packageManager, "audit-injection": tc.injection, "audit-web": false, "audit-embedded": false, "audit-file-parser": false, "audit-mobile": false, "threat-model": true}
 	for skill, want := range wants {
 		if got := counts["/api/repositories/1/skills/"+skill+"/run"] > 0; got != want {
 			t.Errorf("%s enqueued=%t want=%t; report=%s", skill, got, want, report)

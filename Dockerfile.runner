@@ -7,40 +7,46 @@
 # update the selected asset and checksum atomically. A mismatched tag/digest in
 # a Renovate PR fails sha256sum below and usually means asset identification
 # failed upstream.
-ARG CLAUDE_AMD64_LOCK=v2.1.318@sha256:e6d426ca0c123f61fad58a361da0329f2a93cd206bc87040ed8d9576dd9eb583
-ARG CLAUDE_ARM64_LOCK=v2.1.318@sha256:0f4fb66a2af3bf02d114099727e4a7745f117b1e63d2f77c8aff165590197421
+ARG CLAUDE_AMD64_LOCK=v2.1.319@sha256:8cf226393c8eca446d6ca60fa6bbe3fa7b5fa4de82a7b410d1edbd48689cd776
+ARG CLAUDE_ARM64_LOCK=v2.1.319@sha256:2e7348ffc96d52ccb20e34c81240ebc92505edc84d7bf29182d62c29bf6fa066
 
-ARG CODEX_AMD64_LOCK=rust-v0.165.0@sha256:e97c4463d7f146692a955d7b0e1c8cf48f97cd4d616cd45c5dcab2e8d9743316
-ARG CODEX_ARM64_LOCK=rust-v0.165.0@sha256:c8b2844fdef57498572db960344aee8c836ce9f75c203379da0a9c3a334fc3b7
+ARG CODEX_AMD64_LOCK=rust-v0.167.0@sha256:3bbf75e83de6b58aed28f2cf6e33ad423ec31fd4700a1457b94be557ea5a7c6e
+ARG CODEX_ARM64_LOCK=rust-v0.167.0@sha256:0de261ecf1e7f3028a7952f03fca2093f749277d38590b78bb32f8567756bbb7
 
-ARG OPENCODE_AMD64_LOCK=v2.2.5@sha256:09f44302c10fd036912f59c81fd1aef5df45dd06f649197f9dfc9bbe2a79614e
-ARG OPENCODE_ARM64_LOCK=v2.2.5@sha256:5a528f42caf576c6cdece6a191eb273d3db54effa5518e0402684d8f8026aeb6
+ARG OPENCODE_AMD64_LOCK=v2.2.6@sha256:08bb21d6326ce740d91cce7ebe88a6536933f6e1e30353b91a06b01f25da306c
+ARG OPENCODE_ARM64_LOCK=v2.2.6@sha256:f2d27600c367e45057d6a16f6a5c2aa8d77b41a9b10d4bc3d849c2f88870e944
 
-ARG COPILOT_AMD64_LOCK=v1.0.105@sha256:aba1f06f27bc0447656647f76e0a4cf58b4b2a341c75ff04a750982b6aeb6bd2
-ARG COPILOT_ARM64_LOCK=v1.0.105@sha256:e7b488cc04ac3e2ed800e1bf0aace33ada42dcf167529b3d2f48a61e1535a847
+ARG COPILOT_AMD64_LOCK=v1.0.107@sha256:aff04181566f637010a88e68ea145ac1515ec596fae3890d06d81bb8c4be0c4e
+ARG COPILOT_ARM64_LOCK=v1.0.107@sha256:28c9c911af64521821ba908dc1866bf4bfd1705cd9b3320abc2353704de952a0
 
-ARG SEMGREP_VERSION=1.183.0
+ARG SEMGREP_VERSION=1.184.0
 
 ARG BANDIT_VERSION=1.9.4
 ARG DARNIT_VERSION=0.1.1
 
-FROM golang:1.27.3-trixie@sha256:c65ecfe613b539ac74c62a4c3b2c27e8f8a6076384c8f27e8a3c0f3be17cc385 AS go-tools
+FROM golang:1.27.4-trixie@sha256:b54b2639de8c1bfe538ec5ffc45f29b1932235ac5f6d63c059853646677112d9 AS go-tools
 
 COPY scripts/retry-build-command.sh /usr/local/bin/retry-build-command.sh
 # Go proxy/checksum requests can fail transiently.
-ARG BETTERLEAKS_VERSION=v1.9.0
+ARG BETTERLEAKS_VERSION=v1.10.0
 RUN GOBIN=/out CGO_ENABLED=0 sh /usr/local/bin/retry-build-command.sh go install -ldflags "-X=github.com/betterleaks/betterleaks/version.Version=${BETTERLEAKS_VERSION}" github.com/betterleaks/betterleaks@${BETTERLEAKS_VERSION}
 RUN GOBIN=/out sh /usr/local/bin/retry-build-command.sh go install github.com/git-pkgs/git-pkgs@v0.21.0
-RUN GOBIN=/out sh /usr/local/bin/retry-build-command.sh go install github.com/git-pkgs/brief/cmd/brief@v0.14.2
+RUN GOBIN=/out sh /usr/local/bin/retry-build-command.sh go install github.com/git-pkgs/brief/cmd/brief@v0.15.0
 
-FROM rust:1.98-trixie@sha256:a8a5f0a1e5fe7dfe1d352591e4a1c7dd2c08fd70475cae872cf3458ba0df0546 AS zizmor-build
+FROM rust:1.99-trixie@sha256:8a4e90c7946b74626488b1446f712c0fe0ed1a596cbd3d871684bc9c5433ae07 AS zizmor-build
 ENV CARGO_HTTP_MULTIPLEXING=false
 RUN cargo install --locked --root /out zizmor@1.32.0
+
+# Rust std source (no toolchain) for audit-unsafe-rust's std safety contracts, in every profile.
+FROM rust:1.99-trixie@sha256:8a4e90c7946b74626488b1446f712c0fe0ed1a596cbd3d871684bc9c5433ae07 AS rust-std-src
+RUN rustup component add rust-src && \
+    mkdir -p /out && \
+    cp -r "$(rustc --print sysroot)/lib/rustlib/src/rust/library" /out/library
 
 # The runner image carries the proxy commands used by Scrutineer and by
 # harness/container consumers. Both are built CGO-free so they can be copied
 # into the slim runtime without a glibc dependency.
-FROM golang:1.27.3-trixie@sha256:c65ecfe613b539ac74c62a4c3b2c27e8f8a6076384c8f27e8a3c0f3be17cc385 AS scrutineer-build
+FROM golang:1.27.4-trixie@sha256:b54b2639de8c1bfe538ec5ffc45f29b1932235ac5f6d63c059853646677112d9 AS scrutineer-build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -194,6 +200,8 @@ RUN set -eux; \
 
 COPY --from=go-tools /out/* /usr/local/bin/
 COPY --from=zizmor-build /out/bin/zizmor /usr/local/bin/zizmor
+COPY --from=rust-std-src /out/library /usr/local/share/rust-std-src/library
+ENV RUST_STD_SRC=/usr/local/share/rust-std-src/library
 COPY --from=scrutineer-build /out/scrutineer /usr/local/bin/scrutineer
 COPY --from=scrutineer-build /out/harness-proxy /usr/local/bin/harness-proxy
 
