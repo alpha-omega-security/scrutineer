@@ -122,7 +122,7 @@ func TestPersistStreamedFinding_crossScanStreamThenReportKeepsPriorContent(t *te
 
 	// Scan B streams the same fingerprint: cross-scan re-observation sets
 	// last_seen_scan_id = B but must not touch content.
-	if _, err := w.PersistStreamedFinding(b, []byte(`{"title":"legit title","severity":"Low","location":"main.go:10","cwe":"CWE-78"}`)); err != nil {
+	if _, err := w.PersistStreamedFinding(b, []byte(`{"title":"legit title","severity":"Low","location":"main.go:10","cwe":"CWE-78","trace":"Streamed trace from scan B."}`)); err != nil {
 		t.Fatal(err)
 	}
 	// Scan B's final report tries to replace the content.
@@ -161,12 +161,12 @@ func TestDoSkillCreatorReportRefreshesAfterSiblingStream(t *testing.T) {
 		if err := w.DB.First(&running, creator.ID).Error; err != nil {
 			return SkillResult{}, err
 		}
-		finding, err := w.PersistStreamedFinding(&running, []byte(`{"title":"Preview","severity":"High","location":"main.go:10","cwe":"CWE-78"}`))
+		finding, err := w.PersistStreamedFinding(&running, []byte(`{"title":"Preview","severity":"High","location":"main.go:10","cwe":"CWE-78","trace":"Creator preview trace."}`))
 		if err != nil {
 			return SkillResult{}, err
 		}
 		findingID = finding.ID
-		if _, err := w.PersistStreamedFinding(&sibling, []byte(`{"title":"Sibling","severity":"Low","location":"main.go:10","cwe":"CWE-78"}`)); err != nil {
+		if _, err := w.PersistStreamedFinding(&sibling, []byte(`{"title":"Sibling","severity":"Low","location":"main.go:10","cwe":"CWE-78","trace":"Sibling stream trace."}`)); err != nil {
 			return SkillResult{}, err
 		}
 		var observed db.Finding
