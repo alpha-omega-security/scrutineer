@@ -1,11 +1,7 @@
 {{template "head" .}}
 
-<h2 class="text-2xl font-semibold mb-6 flex items-center gap-2">
-  <i data-lucide="folder-git-2"></i> Repositories
-</h2>
+{{if .Priorities}}{{template "repo_priorities.html" .}}{{else}}{{template "repo_list.html" .}}{{end}}
 
-{{template "repo_list.html" .}}
-
-{{template "live-table" (dict "URL" .SelfURL "Target" "#repos")}}
+{{if not .Priorities}}{{template "live-table" (dict "URL" .SelfURL "Target" "#repos")}}{{end}}
 
 {{template "foot" .}}

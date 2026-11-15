@@ -1,5 +1,8 @@
 <div id="repos">
-<div class="flex flex-wrap items-center justify-end gap-2 mb-4">
+<div class="flex flex-wrap items-center gap-2 mb-6">
+  <h2 class="text-2xl font-semibold flex items-center gap-2 mr-auto">
+    <i data-lucide="folder-git-2"></i> Repositories
+  </h2>
   <form method="get" action="/" class="flex basis-full sm:basis-auto">
     <input class="input w-full" type="search" aria-label="Search repositories" name="q" value="{{.Q}}" placeholder="Search repositories"
            autocomplete="off" spellcheck="false">
@@ -22,21 +25,7 @@
       </div>
     </div>
   </div>
-  <div class="dropdown-menu">
-    <button type="button" class="btn-outline" aria-haspopup="menu" aria-expanded="false">
-      <i data-lucide="arrow-down-wide-narrow"></i>
-      {{$sk := sortkey .Sort}}{{if eq $sk "name"}}Name{{else if eq $sk "stars"}}Stars{{else if eq $sk "language"}}Language{{else if eq $sk "findings"}}Findings{{else}}Newest{{end}}
-      <i data-lucide="chevron-down"></i>
-    </button>
-    <div data-popover aria-hidden="true" data-align="end">
-      <div role="menu">
-        {{range (list "newest" "findings" "name" "stars" "language")}}
-          <a role="menuitem" href="/?q={{$.Q}}&language={{$.Language}}&sort={{.}}"
-             {{if eq . (sortkey $.Sort)}}aria-current="true"{{end}}>{{.}}</a>
-        {{end}}
-      </div>
-    </div>
-  </div>
+  {{template "repo-sort-menu" .}}
 </div>
 {{if .Rows}}
   <table class="table">
