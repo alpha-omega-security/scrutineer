@@ -329,6 +329,32 @@ func TestWorkerPrereqFailureCallsHookOnce(t *testing.T) {
 	}
 }
 
+func TestWorkerPrereqFailureSettlesGroupAfterFailureHook(t *testing.T) {
+	w := newPreflightWorker(t)
+	scan := seedPreflightFixtures(t, w, "embedded-native")
+	if err := w.DB.Model(scan).Update("scan_group", "batch").Error; err != nil {
+		t.Fatal(err)
+	}
+	prereq := seedPrereqSkill(t, w, "embedded-native", true)
+	seedPrereqScanInGroup(t, w, prereq, scan.RepositoryID, db.ScanFailed, "batch")
+	var hooks []string
+	w.OnScanFailed = func(*db.Scan) { hooks = append(hooks, "failed") }
+	w.OnScanGroupSettled = func(*db.Scan) { hooks = append(hooks, "settled") }
+	body, err := json.Marshal(queue.Payload{ScanID: scan.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.wrap(func(context.Context, *db.Scan, func(Event)) (string, error) {
+		t.Error("handler ran despite failed prerequisites")
+		return "", nil
+	})(t.Context(), body); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(hooks, ","); got != "failed,settled" {
+		t.Fatalf("hooks = %q, want failed,settled", got)
+	}
+}
+
 func TestPreflightSkill_missingPrereqRequeues(t *testing.T) {
 	w := newPreflightWorker(t)
 	scan := seedPreflightFixtures(t, w, "threat-model\nsemgrep")

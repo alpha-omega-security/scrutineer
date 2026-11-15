@@ -265,4 +265,5 @@ func (w *Worker) failScanPrereqs(scan *db.Scan, skillName, msg string, missing [
 	w.Log.Warn("scan failed: prereqs not satisfied",
 		"scan", scan.ID, "skill", skillName, "missing", missing)
 	w.maybeFireScanFailed(scan)
+	w.maybeFireScanGroupSettled(scan)
 }
