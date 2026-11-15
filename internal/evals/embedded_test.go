@@ -100,7 +100,7 @@ func runEmbeddedModeCase(t *testing.T, tc embeddedModeCase) {
 	t.Helper()
 	counts, report := runTriageModeCase(t, triageScan{fixture: tc.fixture, subPath: tc.subPath, activeSkill: "audit-embedded", activeHere: tc.skipEmb})
 	// The fixtures are Python, so audit-memory never applies.
-	for skill, want := range map[string]bool{"audit-embedded": tc.embedded && !tc.skipEmb, "audit-web": tc.web, "audit-memory": false, "audit-file-parser": false, "threat-model": true} {
+	for skill, want := range map[string]bool{"audit-embedded": tc.embedded && !tc.skipEmb, "audit-web": tc.web, "audit-memory": false, "audit-file-parser": false, "audit-mobile": false, "threat-model": true} {
 		if got := counts["/api/repositories/1/skills/"+skill+"/run"] > 0; got != want {
 			t.Errorf("%s enqueued=%t want=%t; report=%s", skill, got, want, report)
 		}

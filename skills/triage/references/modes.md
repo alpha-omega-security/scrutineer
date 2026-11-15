@@ -148,6 +148,36 @@ deserializes input into arbitrary types or evaluates it. Extracting archive
 entries to disk does not add `audit-exfil` on that evidence alone because
 `audit-file-parser` covers it.
 
+## mobile
+
+Select this mode when first-party source in the current scan scope implements a
+mobile application shell: an Android app (an `AndroidManifest.xml` declaring an
+application with activities, services, receivers or providers, or the Android
+Gradle application plugin), an iOS or iPadOS app (an Xcode project with an app
+target, `Info.plist`, entitlements, an app delegate or a SwiftUI `App`) or a
+cross-platform app with native shells (React Native, Flutter, Capacitor,
+Cordova, .NET MAUI or Kotlin Multiplatform with an app target). A monorepo
+that holds an app and its own backend in the scanned scope may match `mobile`
+alongside `web-api`.
+
+A backend that only serves a mobile app's API, a client SDK or library with no
+app shell, release tooling such as fastlane lanes or signing scripts,
+documentation and keywords such as "iOS", "Android" or "device token" do not
+qualify on that evidence alone. Neither do test-only harnesses. An example,
+sample or demo app that exists to exercise a library does not qualify either:
+a Flutter plugin or React Native library with an `example/` app holding full
+Android and iOS shells, or an Android SDK whose `sample/` module applies the
+Gradle application plugin, is a library. Trace the app shell in the current
+scan scope; do not borrow an app from another monorepo subproject. A scan
+scoped to a subpath with no app shell, such as the backend directory, does not
+match even when the parent repository has one. Keep
+uncertain classifications gated and record the missing evidence.
+
+Enqueue `audit-mobile` for a match. Also add `audit-memory` when the scoped app
+includes first-party native C, C++ or unsafe Rust that reads untrusted input.
+A WebView or JavaScript bridge does not add `audit-web` on that evidence alone
+because `audit-mobile` covers it.
+
 ## unsafe-rust
 
 Select this mode when first-party Rust in the scan's scope contains unsafe
@@ -208,5 +238,5 @@ An `extern "C" fn` definition counts, as does an `extern` block; `extern crate`
 does not. Record the FFI hits as evidence; a status 1 exit from either command
 just means no FFI evidence. `audit-memory` then traces memory
 corruption from untrusted input across the native and FFI boundary. When
-`embedded-iot` or `file-parser` also match and add `audit-memory`, it is still
-enqueued once.
+`embedded-iot`, `file-parser` or `mobile` also match and add `audit-memory`, it
+is still enqueued once.

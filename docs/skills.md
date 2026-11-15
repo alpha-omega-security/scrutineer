@@ -29,13 +29,14 @@ These live in `skills/` and are embedded in the Scrutineer executable. At startu
 | `audit-exfil` | Focused static audit for attacker-controlled reads, requests, parsers, or error paths that can disclose files, metadata, secrets, or internal responses. Uses ecosystem-specific reference notes and runs on demand. |
 | `audit-authz` | Focused static audit for insecure direct object references (IDOR), tenant-isolation failures, missing or fail-open guards, privilege escalation, and unverified claims used for authorization. Uses ecosystem and GraphQL reference notes and runs on demand. |
 | `audit-pii` | Focused static audit for real personal or customer-identifying data committed to source or exposed through logs, URLs, telemetry, exports, and responses. Distinguishes concrete exposure from synthetic examples, reserved addresses, and public author metadata; runs on demand. |
-| `audit-memory` | Focused static audit for reachable memory corruption in first-party C, C++, unsafe Rust, native extensions, and FFI boundaries. Requires complete primitive-hit accounting and keeps library, CLI, parser, and foreign-runtime boundaries separate. Triage selects it through the `embedded-iot`, `file-parser` and `unsafe-rust` modes; otherwise it runs on demand. |
+| `audit-memory` | Focused static audit for reachable memory corruption in first-party C, C++, unsafe Rust, native extensions, and FFI boundaries. Requires complete primitive-hit accounting and keeps library, CLI, parser, and foreign-runtime boundaries separate. Triage selects it through the `embedded-iot`, `file-parser`, `mobile` and `unsafe-rust` modes; otherwise it runs on demand. |
 | `audit-unsafe-rust` | Focused static soundness audit of first-party unsafe Rust, applying the proof-obligation review method from [google/rust-skills](https://github.com/google/rust-skills/tree/main/unsafe_rust_review) (vendored under `references/`, see the skill's `UPSTREAM.md`). Files only safe-API-reachable undefined behavior; missing or weak `# Safety` docs go in the evidence lists, not findings. Triage selects it through the `unsafe-rust` mode; otherwise it runs on demand. |
 | `audit-package-manager` | Audits package manager clients, registries, and proxies against a bundled threat model. Triage selects it from source evidence; findings remain separate from design properties and unresolved assumptions. |
 | `audit-web` | Audits web sessions, browser origins, uploads and workflow state against a bundled threat model informed by the OWASP Application Security Verification Standard (ASVS). Triage selects it from source evidence. |
 | `audit-embedded` | Audits firmware updates, rollback protection, boot chain, provisioning, device credentials, debug interfaces and device communication against a bundled threat model informed by the OWASP IoT Security Verification Standard (ISVS). Triage selects it from source evidence. |
 | `audit-build-tooling` | Audits build systems, task runners and developer tools for workspace trust and auto-execution, configuration precedence, build cache integrity, plugin resolution and secret exposure against a bundled SLSA-informed threat model. Triage selects it from source evidence. |
 | `audit-file-parser` | Audits first-party parsers and file processors for hostile-input resource exhaustion, length and offset handling, archive extraction, format confusion, external references and malformed-input failures against a bundled CWE-referenced threat model. Triage selects it from source evidence. |
+| `audit-mobile` | Audits first-party mobile applications for local data storage, keys, authentication and sessions, network trust, exported components and deep links, WebView bridges and dependency exposure against a bundled threat model informed by the OWASP Mobile Application Security Verification Standard (MASVS). Triage selects it from source evidence. |
 | `cna-match` | Matches the repository to its CVE Numbering Authority so disclosures route to the right contact. |
 | `semgrep` | Runs semgrep with the `p/security-audit` and `p/secrets` rulesets and maps hits into the findings shape. |
 | `bandit` | Runs bandit over the repository's Python and maps its hits into the findings shape, grouped per test id and carrying bandit's confidence level, Common Weakness Enumeration (CWE) id, and rule documentation link. Gated on Python being one of the detected languages. |
@@ -139,6 +140,22 @@ source-proven vulnerabilities from intended behavior and evidenced negative
 results. Limits set by the deploying application, memory caps and sandboxing
 are recorded as unresolved assumptions. Its CWE references do not imply
 certification.
+The `mobile` mode selects `audit-mobile` for first-party mobile application
+shells: Android apps, iOS and iPadOS apps and cross-platform apps such as React
+Native, Flutter, Capacitor, Cordova, .NET MAUI or Kotlin Multiplatform with
+native shells. It also selects `audit-memory` when the scoped app includes
+first-party native C, C++ or unsafe Rust that reads untrusted input. A backend
+that only serves a mobile API, a client SDK or library with no app shell,
+release or signing tooling, documentation and keywords alone do not activate
+it. Neither does an example, sample or demo app that exists to exercise a
+library, such as a Flutter plugin's `example/` app. A WebView or JavaScript
+bridge does not add `audit-web` because `audit-mobile` covers it. A monorepo that holds an app and its own backend in
+the scanned scope can activate both this mode and `web-api` while the shared
+audits are still enqueued once. The audit distinguishes source-proven
+vulnerabilities from intended behavior and evidenced negative results.
+Store, operating system and MDM configuration, device integrity, backend
+enforcement outside the checkout and production signing are recorded as
+unresolved assumptions. Its MASVS references do not imply compliance.
 The `unsafe-rust` mode selects `audit-unsafe-rust` whenever first-party Rust
 in scope contains unsafe code, whatever kind of software the repository is,
 and adds `audit-memory` only when that code shows FFI evidence (`extern`

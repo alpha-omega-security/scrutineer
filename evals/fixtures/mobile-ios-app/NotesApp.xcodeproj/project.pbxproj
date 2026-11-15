@@ -1,0 +1,27 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+		A1000001 /* NotesApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotesApp.swift; sourceTree = "<group>"; };
+		A1000002 /* SessionStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionStore.swift; sourceTree = "<group>"; };
+		A1000003 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A1000004 /* NotesApp.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = NotesApp.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A1000005 /* NotesApp */ = {
+			isa = PBXNativeTarget;
+			name = NotesApp;
+			productName = NotesApp;
+			productReference = A1000004 /* NotesApp.app */;
+			productType = "com.apple.product-type.application";
+		};
+		A1000006 /* Project object */ = {
+			isa = PBXProject;
+			targets = (
+				A1000005 /* NotesApp */,
+			);
+		};
+	};
+	rootObject = A1000006 /* Project object */;
+}
