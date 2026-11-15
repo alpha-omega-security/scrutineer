@@ -152,6 +152,12 @@ mode. Serialized `AGE-PLUGIN-*` identity payloads are not accepted through
 `identity_file` today, so a plugin that requires serialized identity data is
 outside this interface.
 
+For example, configure a plugin alongside an ordinary SSH recipients file:
+
+    recipients_file: /path/to/recipients.txt
+    identity_plugins:
+      - 1p
+
 For the 1Password example, install both
 [`age-plugin-1p`](https://github.com/Enzime/age-plugin-1p) and the 1Password
 `op` CLI separately and make both available through `PATH`. The plugin locates

@@ -11,6 +11,17 @@ networking has known rough edges (see below), not because of a capability gap.
 This document records where it is at parity with docker/podman and where its
 security model differs by design.
 
+## Setup
+
+Install Apple's `container` CLI on Apple silicon, then start its service and select it explicitly:
+
+    container system start
+    scrutineer --runtime apple
+
+Alternatively, set `runtime: apple` in `scrutineer.yaml`. Startup checks `container system status` and refuses the runtime if its service is unavailable. The `docker build` commands shown for the runner image and profiles can be run as `container build` when you use this runtime.
+
+For ordinary scans, scrutineer starts its egress proxy on the host and points scan containers at the gateway IP discovered from `/proc/net/route` inside the runner image. The proxy rewrites local skill-API requests back to `127.0.0.1`. See the [parity matrix](#parity-matrix) for supported hardening options.
+
 ## Where the runtime sits
 
 Like docker and podman, the scrutineer process runs on the host (not in a
@@ -125,4 +136,4 @@ dropping the experimental label:
 - `docs/podman.md`: the rootless/hardened model whose fail-closed verification
   Apple's hardened path mirrors.
 - `threatmodel.md`: boundary 4 (container to host) and T13 (runner egress).
-- `README.md`: the user-facing Apple container section.
+- [Running Scrutineer](running.md): installation, runner images and profiles.

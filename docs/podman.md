@@ -3,14 +3,29 @@
 Scrutineer runs each scan's untrusted workload — the cloned repository plus
 `claude -p --permission-mode bypassPermissions` and the analysis tools — inside
 an ephemeral container. The runtime is selectable with `--runtime docker|podman`
-(default `docker`; see [Podman (rootless)](../README.md#podman-rootless) in the
-README for setup).
+(default `docker`; see [setup](#setup) below).
 
 This is a companion to [threatmodel.md](../threatmodel.md): it covers what the
 **podman / rootless** runtime changes about the security posture, and — the main
 point — the gaps it does **not** close. It assumes the threat model's framing,
 in particular T1 (RCE via a hostile repository), T12 (runtime access), and T13
 (runner egress).
+
+## Setup
+
+Pass `--runtime podman` (or `runtime: podman` in the config) to run scans under podman instead of docker. Selection is explicit: a podman-only host must set the runtime because the default stays docker.
+
+Requirements:
+
+- **podman ≥ 4.7** -- scrutineer reaches the host egress proxy via `--add-host host.docker.internal:host-gateway`, which older podman does not support; without it, scans fail with network errors. Startup logs a warning if the detected version looks too old or if the host-gateway address can't be resolved.
+- **podman ≥ 5.0 (recommended for `--hardened`)** -- the rootless egress proxy sidecar must reach the loopback-bound host skill API, which needs the network backend to forward host-gateway to the host loopback. podman ≥ 5.0 defaults to pasta (`--map-host-loopback`); older podman can work with a slirp4netns backend that has host-loopback enabled. Where unavailable, hardened scans are refused (fail closed). Startup warns on podman < 5.0 under `--hardened`. See [egress-sidecar.md](egress-sidecar.md).
+- **`/etc/subuid` + `/etc/subgid`** -- rootless podman maps the container user back to your host user with `--userns=keep-id` so scan output and the resumable session store stay host-owned. Your user needs a sub-id range (the usual `useradd` default provides one; run `podman system migrate` after changing it). Scrutineer runs a one-off keep-id smoke test at startup and fails fast with a hint if this is misconfigured.
+- **`skopeo` (optional)** -- used in place of `docker buildx` to detect when a moved `:latest` runner tag should rebuild per-ecosystem profile images. Without it, profiles still build but key their cache on the image ref alone.
+- **SELinux** -- on an SELinux-enabled host (the Fedora/RHEL/Rocky/Alma default) the runner relabels its bind mounts with `:z` so the container can read the clone and write its output; without it every scan fails with permission errors. This is handled automatically: `--selinux auto` (the default) detects the host, and a startup smoke test verifies a real relabeled mount works. Use `--selinux off` if you pre-label paths yourself, or `--selinux on` to force it. See [SELinux and bind-mount file passing](#selinux-and-bind-mount-file-passing) for the `:z`-vs-`:Z` rationale.
+
+For hardened scans, validate host-loopback connectivity with [egress-sidecar.md](egress-sidecar.md). See [network isolation and hardened mode](#network-isolation-and-hardened-mode) for the sidecar requirements and `--hardened-runtime-only` fallback.
+
+The `docker build` / `docker run` commands shown in this repo -- for the runner image and the per-ecosystem profile images under `docker/profiles/` -- are CLI-compatible with podman; substitute `podman` for `docker`.
 
 ## Where the runtime sits
 
@@ -382,4 +397,4 @@ These are **not** addressed by the podman / rootless runtime and remain open:
 ## See also
 
 - [threatmodel.md](../threatmodel.md) — full system threat model (T1, T12, T13).
-- [README: Podman (rootless)](../README.md#podman-rootless) — setup and requirements.
+- [Running Scrutineer](running.md) — setup and requirements.
