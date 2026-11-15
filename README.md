@@ -54,7 +54,7 @@ Read [threatmodel.md](threatmodel.md) for isolation limits and [running.md](docs
 - [docs/configuration.md](docs/configuration.md) -- flags, YAML configuration and model tiers
 - [docs/glossary.md](docs/glossary.md) -- terminology used in scans, findings, and disclosure
 - [docs/skills.md](docs/skills.md) -- bundled skills, writing your own, frontmatter and output-kind reference
-- [docs/oss-scanner.md](docs/oss-scanner.md) -- Anthropic OSS Scanner registry lookup and the maintainer files staged for threat-model and verify
+- [docs/oss-scanner.md](docs/oss-scanner.md) -- Anthropic OSS Scanner registry lookup and the maintainer files staged for threat-model, verify, patch, disclose and public-issue
 - [docs/import.md](docs/import.md) -- importing findings from other tools (SARIF, CSV, markdown, minimal JSON) and adding new formats
 - [docs/api.md](docs/api.md) -- HTTP API surfaces, callers, authentication boundaries, and links to the full [OpenAPI specification](openapi.yaml)
 - [docs/database.md](docs/database.md) -- full database schema reference

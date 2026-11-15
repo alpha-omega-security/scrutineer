@@ -55,9 +55,11 @@ type skillContext struct {
 // the workspace-relative paths of the maintainer files staged from it.
 type skillContextOSSScanner struct {
 	ossscanner.Enrollment
-	RegistryURL     string `json:"registry_url,omitempty"`
-	ThreatModelFile string `json:"threat_model_file,omitempty"`
-	DockerfileFile  string `json:"dockerfile_file,omitempty"`
+	RegistryURL          string `json:"registry_url,omitempty"`
+	ThreatModelFile      string `json:"threat_model_file,omitempty"`
+	DockerfileFile       string `json:"dockerfile_file,omitempty"`
+	ReportGuidelinesFile string `json:"report_guidelines_file,omitempty"`
+	PatchGuidelinesFile  string `json:"patch_guidelines_file,omitempty"`
 }
 
 type skillContextScrutineer struct {

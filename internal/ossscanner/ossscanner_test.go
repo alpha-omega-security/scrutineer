@@ -72,7 +72,7 @@ func TestResolveRegistryFilesWin(t *testing.T) {
 	if e.Dockerfile.Origin != OriginRegistry {
 		t.Fatalf("dockerfile = %+v", e.Dockerfile)
 	}
-	data, err := ReadSource(reg, src, e.ThreatModel)
+	data, err := ReadSource(reg, src, e.ThreatModel, MaxFileBytes)
 	if err != nil || string(data) != "registry tm" {
 		t.Fatalf("ReadSource = %q, %v", data, err)
 	}
@@ -150,12 +150,13 @@ func TestResolveIgnoresTraversalKeys(t *testing.T) {
 		src := filepath.Join(parent, "src")
 		write(t, parent, "x", "outside")
 		write(t, src, "keep", "")
-		reg := registryWith(t, "repo: "+repoURL+"\ndockerfile: '"+key+"'\nthreat_model: '"+key+"'\n")
+		reg := registryWith(t, "repo: "+repoURL+"\ndockerfile: '"+key+"'\nthreat_model: '"+key+"'\n"+
+			"report_guidelines: '"+key+"'\npatch_guidelines: '"+key+"'\n")
 		e, err := Resolve(reg, src, repoURL)
 		if err != nil || e == nil {
 			t.Fatalf("%q: Resolve = %+v, %v", key, e, err)
 		}
-		if e.Dockerfile != nil || e.ThreatModel != nil {
+		if e.Dockerfile != nil || e.ThreatModel != nil || e.ReportGuidelines != nil || e.PatchGuidelines != nil {
 			t.Errorf("%q accepted: %+v", key, e)
 		}
 	}
@@ -178,7 +179,7 @@ func TestSymlinkedThreatModelRejected(t *testing.T) {
 		t.Fatalf("Resolve = %+v, %v", e, err)
 	}
 	s := &Source{Origin: OriginRepository, Path: ".oss-scanner/threat_model.md"}
-	if _, err := ReadSource("", src, s); err == nil {
+	if _, err := ReadSource("", src, s, MaxFileBytes); err == nil {
 		t.Fatal("symlink read accepted")
 	}
 }
@@ -187,7 +188,52 @@ func TestReadSourceRejectsOversize(t *testing.T) {
 	src := t.TempDir()
 	write(t, src, ".oss-scanner/threat_model.md", strings.Repeat("a", MaxFileBytes+1))
 	s := &Source{Origin: OriginRepository, Path: ".oss-scanner/threat_model.md"}
-	if _, err := ReadSource("", src, s); err == nil {
+	if _, err := ReadSource("", src, s, MaxFileBytes); err == nil {
 		t.Fatal("oversize file accepted")
+	}
+}
+
+func TestResolveGuidelines(t *testing.T) {
+	reg := registryWith(t, "repo: "+repoURL+"\nreport_guidelines: docs/report.md\npatch_guidelines: docs/patch.md\n")
+	write(t, reg, "projects/proj/patch_guidelines.md", "registry patch")
+	src := t.TempDir()
+	write(t, src, "docs/report.md", "repo report")
+	write(t, src, "docs/patch.md", "repo patch")
+
+	e, err := Resolve(reg, src, repoURL)
+	if err != nil || e == nil {
+		t.Fatalf("Resolve = %+v, %v", e, err)
+	}
+	if e.PatchGuidelines == nil || e.PatchGuidelines.Origin != OriginRegistry || e.PatchGuidelines.Path != "projects/proj/patch_guidelines.md" {
+		t.Fatalf("patch guidelines = %+v", e.PatchGuidelines)
+	}
+	if e.ReportGuidelines == nil || e.ReportGuidelines.Origin != OriginRepository || e.ReportGuidelines.Path != "docs/report.md" {
+		t.Fatalf("report guidelines = %+v", e.ReportGuidelines)
+	}
+}
+
+func TestResolveUnenrolledGuidelinesOnly(t *testing.T) {
+	src := t.TempDir()
+	write(t, src, ".oss-scanner/report_guidelines.md", "report")
+	write(t, src, ".oss-scanner/patch_guidelines.md", "patch")
+	e, err := Resolve("", src, repoURL)
+	if err != nil || e == nil || e.Registry || e.Dockerfile != nil || e.ThreatModel != nil {
+		t.Fatalf("Resolve = %+v, %v", e, err)
+	}
+	if e.ReportGuidelines == nil || e.ReportGuidelines.Path != ".oss-scanner/report_guidelines.md" ||
+		e.PatchGuidelines == nil || e.PatchGuidelines.Path != ".oss-scanner/patch_guidelines.md" {
+		t.Fatalf("guidelines = %+v %+v", e.ReportGuidelines, e.PatchGuidelines)
+	}
+}
+
+func TestReadSourceAppliesGuidelinesLimit(t *testing.T) {
+	src := t.TempDir()
+	write(t, src, ".oss-scanner/patch_guidelines.md", strings.Repeat("a", MaxGuidelinesBytes+1))
+	s := &Source{Origin: OriginRepository, Path: ".oss-scanner/patch_guidelines.md"}
+	if _, err := ReadSource("", src, s, MaxGuidelinesBytes); err == nil {
+		t.Fatal("guidelines over 16 KiB accepted")
+	}
+	if _, err := ReadSource("", src, s, MaxFileBytes); err != nil {
+		t.Fatalf("same file under the general limit: %v", err)
 	}
 }
