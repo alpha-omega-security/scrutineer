@@ -139,13 +139,14 @@ func (w *Worker) DiffRescanFallbacks(ctx context.Context, repo db.Repository, su
 		}
 		if !fetched {
 			fetched = true
-			if !repo.IsLocal() {
+			if repo.IsLocal() {
+				head = gitHead(dir)
+			} else {
 				var err error
-				if dir, err = w.refreshRepoCache(ctx, repo.URL); err != nil {
+				if dir, head, err = w.refreshRepoCache(ctx, repo.URL); err != nil {
 					return nil, err
 				}
 			}
-			head = gitHead(dir)
 		}
 		scan.Commit = head
 		reason, seen := reasons[baseline.Commit]
@@ -161,18 +162,23 @@ func (w *Worker) DiffRescanFallbacks(ctx context.Context, repo db.Repository, su
 }
 
 // refreshRepoCache fetches the per-URL clone cache to its default branch HEAD
-// and returns its src directory.
-func (w *Worker) refreshRepoCache(ctx context.Context, url string) (string, error) {
+// and returns its src directory and that HEAD. The HEAD is read under the
+// cache lock because a scan of another ref checks that ref out in the same
+// src directory once the lock is released.
+func (w *Worker) refreshRepoCache(ctx context.Context, url string) (dir, head string, err error) {
 	cacheRoot := RepoCacheRoot(w.DataDir, url)
 	if err := os.MkdirAll(cacheRoot, dirPerm); err != nil {
-		return "", err
+		return "", "", err
 	}
 	unlock, err := w.lockCacheContext(ctx, url)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	defer unlock()
-	return ensureClone(ctx, db.Repository{URL: url}, cacheRoot, false, "", func(Event) {})
+	if dir, err = ensureClone(ctx, db.Repository{URL: url}, cacheRoot, false, "", func(Event) {}); err != nil {
+		return "", "", err
+	}
+	return dir, gitHead(dir), nil
 }
 
 // planDiff measures the diff from baseline to scan.Commit and returns the

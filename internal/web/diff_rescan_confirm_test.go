@@ -219,3 +219,63 @@ func TestRepoDiffScan_checksEachFocusAreaDeepDiveAgainstItsOwnBaseline(t *testin
 		t.Errorf("confirmation lists a deep-dive that has its own baseline: body=%s", body)
 	}
 }
+
+func TestRepoDiffScan_confirmationKeepsTheGroupCostCap(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cap  string
+		want float64
+	}{
+		{"with a cap", "7.5", 7.5},
+		{"without a cap", "", 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, done := newTestServer(t)
+			defer done()
+			repo := diffRescanRepo(t, s, 201, true)
+			extra := ""
+			if tc.cap != "" {
+				extra = "&group_max_cost_usd=" + tc.cap
+			}
+
+			body := postDiffRescan(s, repo, true, extra).Body.String()
+			hidden := `name="group_max_cost_usd" value="` + tc.cap + `"`
+			if got := strings.Contains(body, hidden); got != (tc.cap != "") {
+				t.Fatalf("confirmation carries %s = %v, want %v: body=%s", hidden, got, tc.cap != "", body)
+			}
+
+			if w := postDiffRescan(s, repo, true, extra+"&confirm_full=1"); w.Header().Get("HX-Redirect") == "" {
+				t.Fatalf("confirmed diff rescan did not redirect: code=%d body=%s", w.Code, w.Body.String())
+			}
+			var scan db.Scan
+			if err := s.DB.Where("repository_id = ? AND status = ?", repo.ID, db.ScanQueued).First(&scan).Error; err != nil {
+				t.Fatal(err)
+			}
+			if got, err := db.ScanGroupBudgetFor(s.DB, scan.ScanGroup); err != nil || got != tc.want {
+				t.Fatalf("group budget = %v, %v, want %v", got, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestRepoDiffScan_listsOnlyTheFocusAreasTheFanOutEnqueues(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := diffRescanRepo(t, s, 1, true)
+	var config strings.Builder
+	config.WriteString("focus_areas:\n")
+	for i := range repoconfig.MaxFocusAreas + 1 {
+		fmt.Fprintf(&config, "  - name: area-%02d\n    paths: [a%02d/**]\n    surface: s\n", i, i)
+	}
+	s.DB.Model(&repo).Update("scan_config", config.String())
+
+	body := postDiffRescan(s, repo, true, "").Body.String()
+
+	last := fmt.Sprintf("%s (area-%02d): ", deepDiveSkillName, repoconfig.MaxFocusAreas-1)
+	if !strings.Contains(body, last) {
+		t.Fatalf("confirmation does not list the last capped focus area %q: body=%s", last, body)
+	}
+	if over := fmt.Sprintf("(area-%02d)", repoconfig.MaxFocusAreas); strings.Contains(body, over) {
+		t.Errorf("confirmation lists %s, which the fan-out never enqueues", over)
+	}
+}

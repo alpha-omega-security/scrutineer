@@ -57,11 +57,10 @@ func (s *Server) autoEnqueueFocusAreaDeepDives(scan *db.Scan) {
 		s.autoEnqueueExploratoryAudit(scan, skill.ID, group)
 		return
 	}
-	areas := config.FocusAreas
-	if len(areas) > repoconfig.MaxFocusAreas {
+	areas := fanOutFocusAreas(config)
+	if len(areas) < len(config.FocusAreas) {
 		s.Log.Warn("focus-area deep dives: stored config exceeds the focus-area cap; enqueueing the first N only",
-			"scan", scan.ID, "repo", scan.RepositoryID, "stored", len(areas), "cap", repoconfig.MaxFocusAreas)
-		areas = areas[:repoconfig.MaxFocusAreas]
+			"scan", scan.ID, "repo", scan.RepositoryID, "stored", len(config.FocusAreas), "cap", repoconfig.MaxFocusAreas)
 	}
 	for _, area := range areas {
 		raw, err := repoconfig.EncodeFocusAreaJSON(area)
@@ -72,6 +71,16 @@ func (s *Server) autoEnqueueFocusAreaDeepDives(scan *db.Scan) {
 		s.enqueueFocusAreaDeepDive(scan, skill.ID, group, raw)
 	}
 	s.autoEnqueueExploratoryAudit(scan, skill.ID, group)
+}
+
+// fanOutFocusAreas returns the focus areas a completed threat-model fans out
+// to: the configured ones, truncated to repoconfig.MaxFocusAreas because a
+// legacy config may store more than new configurations accept.
+func fanOutFocusAreas(config repoconfig.Config) []repoconfig.FocusArea {
+	if len(config.FocusAreas) > repoconfig.MaxFocusAreas {
+		return config.FocusAreas[:repoconfig.MaxFocusAreas]
+	}
+	return config.FocusAreas
 }
 
 func (s *Server) enqueueFocusAreaDeepDive(parent *db.Scan, skillID uint, group, focusArea string) {

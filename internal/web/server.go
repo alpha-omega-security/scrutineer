@@ -3026,7 +3026,7 @@ func (s *Server) repoScan(w http.ResponseWriter, r *http.Request) {
 func (s *Server) repoDiffScan(w http.ResponseWriter, r *http.Request, repo db.Repository, groupMax float64) {
 	model, subPath := r.FormValue("model"), strings.TrimSpace(r.FormValue("sub_path"))
 	if r.FormValue("confirm_full") == "" {
-		if c, ok := s.diffRescanFallbacks(r.Context(), repo, model, subPath); ok {
+		if c, ok := s.diffRescanFallbacks(r.Context(), repo, model, subPath, groupMax); ok {
 			s.diffRescanConfirm(w, r, c)
 			return
 		}
@@ -3049,6 +3049,7 @@ type diffRescanPreview struct {
 	RepoID    uint
 	Model     string
 	SubPath   string
+	GroupMax  float64
 	Fallbacks []string
 	Err       string
 }
@@ -3061,7 +3062,7 @@ const diffRescanPreviewTimeout = 30 * time.Second
 // diffRescanFallbacks measures, before anything is enqueued, whether the
 // diff-rescan group's scans would fall back to full scans. ok is false when
 // every scan would scan the diff.
-func (s *Server) diffRescanFallbacks(ctx context.Context, repo db.Repository, model, subPath string) (diffRescanPreview, bool) {
+func (s *Server) diffRescanFallbacks(ctx context.Context, repo db.Repository, model, subPath string, groupMax float64) (diffRescanPreview, bool) {
 	var active []string
 	s.DB.Model(&db.Skill{}).Where("name IN ? AND active = ?", diffRescanSkillNames, true).
 		Order("id").Pluck("name", &active)
@@ -3074,7 +3075,7 @@ func (s *Server) diffRescanFallbacks(ctx context.Context, repo db.Repository, mo
 	if deepDives > 0 && slices.Contains(active, threatModelSkillName) {
 		targets = append(targets, deepDiveTargets(repo.ScanConfig)...)
 	}
-	c := diffRescanPreview{RepoID: repo.ID, Model: model, SubPath: subPath}
+	c := diffRescanPreview{RepoID: repo.ID, Model: model, SubPath: subPath, GroupMax: groupMax}
 	ctx, cancel := context.WithTimeout(ctx, diffRescanPreviewTimeout)
 	defer cancel()
 	fallbacks, err := s.Worker.DiffRescanFallbacks(ctx, repo, subPath, targets)
@@ -3098,7 +3099,7 @@ func deepDiveTargets(scanConfig string) []worker.DiffRescanTarget {
 		return []worker.DiffRescanTarget{{Skill: deepDiveSkillName, Label: deepDiveSkillName}}
 	}
 	var targets []worker.DiffRescanTarget
-	for _, area := range config.FocusAreas {
+	for _, area := range fanOutFocusAreas(config) {
 		raw, err := repoconfig.EncodeFocusAreaJSON(area)
 		if err != nil {
 			continue

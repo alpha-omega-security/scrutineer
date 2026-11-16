@@ -324,6 +324,7 @@
       <input type="hidden" name="confirm_full" value="1">
       {{if .Model}}<input type="hidden" name="model" value="{{.Model}}">{{end}}
       {{if .SubPath}}<input type="hidden" name="sub_path" value="{{.SubPath}}">{{end}}
+      {{if .GroupMax}}<input type="hidden" name="group_max_cost_usd" value="{{.GroupMax}}">{{end}}
       <button class="btn-outline" type="submit"><i data-lucide="git-compare-arrows"></i> Queue diff rescan anyway</button>
       <a href="/repositories/{{.RepoID}}" class="btn-ghost">Cancel</a>
     </form>

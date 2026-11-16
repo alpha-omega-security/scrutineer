@@ -473,3 +473,24 @@ func TestDiffRescanFallbacksGivesUpOnHeldCacheLock(t *testing.T) {
 		t.Fatalf("err = %v, want context.DeadlineExceeded while another scan holds the cache lock", err)
 	}
 }
+
+func TestRefreshRepoCacheReturnsTheHeadItFetched(t *testing.T) {
+	url := newHistoryOrigin(t, 2)
+	w := &Worker{DataDir: shortTempDir(t)}
+
+	dir, head, err := w.refreshRepoCache(context.Background(), url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fetched := gitHead(dir)
+	// Another scan checking out a different ref in the shared src directory
+	// once the lock is released must not change what the preview measures.
+	testGit(t, dir, "commit", "--quiet", "--allow-empty", "-m", "another ref")
+
+	if head == "" || head != fetched {
+		t.Fatalf("head = %q, want the fetched default branch HEAD %q", head, fetched)
+	}
+	if moved := gitHead(dir); moved == head {
+		t.Fatalf("checkout did not move the shared src HEAD off %q", head)
+	}
+}
