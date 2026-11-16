@@ -3089,14 +3089,15 @@ func (s *Server) diffRescanFallbacks(ctx context.Context, repo db.Repository, mo
 
 // deepDiveTargets lists the deep-dives a completed threat-model fans out to:
 // one per configured focus area, or one unscoped scan when none is configured.
-// An invalid scan config fans out nothing.
+// An invalid scan config fans out nothing. Each inherits the threat-model's
+// rescan mode.
 func deepDiveTargets(scanConfig string) []worker.DiffRescanTarget {
 	config, err := repoconfig.Parse(scanConfig)
 	if err != nil {
 		return nil
 	}
 	if len(config.FocusAreas) == 0 {
-		return []worker.DiffRescanTarget{{Skill: deepDiveSkillName, Label: deepDiveSkillName}}
+		return []worker.DiffRescanTarget{{Skill: deepDiveSkillName, Label: deepDiveSkillName, Parent: threatModelSkillName}}
 	}
 	var targets []worker.DiffRescanTarget
 	for _, area := range fanOutFocusAreas(config) {
@@ -3104,7 +3105,9 @@ func deepDiveTargets(scanConfig string) []worker.DiffRescanTarget {
 		if err != nil {
 			continue
 		}
-		targets = append(targets, worker.DiffRescanTarget{Skill: deepDiveSkillName, FocusArea: raw, Label: deepDiveSkillName + " (" + area.Name + ")"})
+		targets = append(targets, worker.DiffRescanTarget{
+			Skill: deepDiveSkillName, FocusArea: raw, Label: deepDiveSkillName + " (" + area.Name + ")", Parent: threatModelSkillName,
+		})
 	}
 	return targets
 }

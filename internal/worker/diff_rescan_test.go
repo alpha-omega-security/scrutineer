@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -492,5 +493,48 @@ func TestRefreshRepoCacheReturnsTheHeadItFetched(t *testing.T) {
 	}
 	if moved := gitHead(dir); moved == head {
 		t.Fatalf("checkout did not move the shared src HEAD off %q", head)
+	}
+}
+
+func TestDiffRescanFallbacksListsChildrenOfAFullParent(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		tmBaseline   bool
+		wantFallback []string
+	}{
+		{"parent scans the diff", true, nil},
+		{"parent has no baseline", false, []string{
+			"threat-model: " + noDiffBaselineReason,
+			"security-deep-dive (parser): threat-model runs as a full scan",
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			gdb := dbtest.Open(t)
+			repoDir := initGitRepo(t)
+			writeDiffTestFile(t, repoDir, "app.go", "package main\n")
+			base := gitCommit(t, repoDir, "base")
+			writeDiffTestFile(t, repoDir, "app.go", "package main\n\nfunc added() {}\n")
+			gitCommit(t, repoDir, "head")
+
+			repo := db.Repository{URL: "file://" + repoDir, Name: "r"}
+			gdb.Create(&repo)
+			focus := `{"name":"parser","paths":["src/**"],"surface":"request bytes"}`
+			gdb.Create(&db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "security-deep-dive", Status: db.ScanDone, Commit: base, FocusArea: focus})
+			if tc.tmBaseline {
+				gdb.Create(&db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "threat-model", Status: db.ScanDone, Commit: base})
+			}
+
+			w := &Worker{DB: gdb, DataDir: t.TempDir(), Log: slog.Default()}
+			got, err := w.DiffRescanFallbacks(context.Background(), repo, "", []DiffRescanTarget{
+				{Skill: "threat-model", Label: "threat-model"},
+				{Skill: "security-deep-dive", FocusArea: focus, Label: "security-deep-dive (parser)", Parent: "threat-model"},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(got, tc.wantFallback) {
+				t.Fatalf("fallbacks = %q, want %q", got, tc.wantFallback)
+			}
+		})
 	}
 }

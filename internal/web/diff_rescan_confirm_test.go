@@ -109,6 +109,7 @@ func TestRepoDiffScan_overLimitAsksConfirmationBeforeQueueing(t *testing.T) {
 		`id="diff-rescan-confirm" hx-swap-oob="outerHTML"`,
 		"would cost a full scan",
 		threatModelSkillName + ": diff changed 201 files; limit is 200",
+		deepDiveSkillName + ": " + threatModelSkillName + " runs as a full scan",
 		`name="confirm_full" value="1"`,
 	} {
 		if !strings.Contains(body, want) {

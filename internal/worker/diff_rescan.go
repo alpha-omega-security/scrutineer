@@ -116,10 +116,13 @@ func (w *Worker) prepareDiffRescan(ctx context.Context, scan *db.Scan, workRoot 
 
 // DiffRescanTarget is one scan a diff rescan would run. FocusArea is the
 // normalized JSON stored on the scan, and Label names it in the preview.
+// Parent names the earlier target whose rescan mode this scan inherits, so
+// it runs as a full scan whenever Parent does.
 type DiffRescanTarget struct {
 	Skill     string
 	FocusArea string
 	Label     string
+	Parent    string
 }
 
 // DiffRescanFallbacks reports, as "label: reason" lines, why a diff rescan
@@ -130,10 +133,16 @@ func (w *Worker) DiffRescanFallbacks(ctx context.Context, repo db.Repository, su
 	var out []string
 	dir, head, fetched := repo.LocalPath(), "", false
 	reasons := map[string]string{}
+	fullSkills := map[string]bool{}
 	for _, t := range targets {
+		if fullSkills[t.Parent] {
+			out = append(out, t.Label+": "+t.Parent+" runs as a full scan")
+			continue
+		}
 		scan := db.Scan{RepositoryID: repo.ID, Repository: repo, SkillName: t.Skill, FocusArea: t.FocusArea, SubPath: subPath, RescanMode: db.ScanRescanModeDiff}
 		baseline, ok := w.diffBaseline(&scan)
 		if !ok {
+			fullSkills[t.Skill] = true
 			out = append(out, t.Label+": "+noDiffBaselineReason)
 			continue
 		}
@@ -155,6 +164,7 @@ func (w *Worker) DiffRescanFallbacks(ctx context.Context, repo db.Repository, su
 			reasons[baseline.Commit] = reason
 		}
 		if reason != "" {
+			fullSkills[t.Skill] = true
 			out = append(out, t.Label+": "+reason)
 		}
 	}
