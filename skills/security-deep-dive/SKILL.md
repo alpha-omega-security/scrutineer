@@ -165,7 +165,7 @@ If the trace dead-ends inside the library — the value is a constant, a hardcod
 
 ### Step 2: Trust boundary
 
-Where the input enters the library, who controls it. Check it against the boundaries you named at the start of Phase 1. The sink's input crosses one of them; name which one. When a threat-model report was loaded, look the sink's entry function and parameter up in its `entry_points` table and cite the row by index (`entry_points[i]`): `attacker_controllable: "no"` rules the sink out as `out_of_model_trusted_input`; `"conditional"` means the row's `condition` is the precondition you carry into Step 6.
+Where the input enters the library, who controls it. Check it against the boundaries you named at the start of Phase 1. The sink's input crosses one of them; name which one. When a threat-model report was loaded, look the sink's entry function and parameter up in its `entry_points` table and cite the row by index (`entry_points[i]`): `attacker_controllable: "no"` rules the sink out for non-`inferred` rows as `out_of_model_trusted_input`; `"conditional"` means the row's `condition` is the precondition you carry into Step 6.
 
 The attacker is not the developer calling the library. If the value at the boundary is a parameter the developer chose, a config the operator wrote, a path the user set in their own environment — that is not attacker-controlled in this library's threat model. The library is doing what it was told.
 
