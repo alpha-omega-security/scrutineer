@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "advisory-deep-dive audit report",
-  "description": "One verdict per re-audited advisory (fixed, bypass, variant, regressed) plus any findings the non-fixed verdicts opened. Findings share the vuln-scan and security-deep-dive shape and each cites the advisory it descends from under references.",
+  "description": "One verdict per re-audited advisory (fixed, bypass, variant, incomplete, regressed) plus any findings the non-fixed and non-incomplete verdicts opened. Findings share the vuln-scan and security-deep-dive shape and each cites the advisory it descends from under references.",
   "type": "object",
   "required": ["audits", "findings"],
   "additionalProperties": false,
@@ -22,7 +22,7 @@
       "additionalProperties": false,
       "properties": {
         "advisory_uuid": { "type": "string", "minLength": 1 },
-        "status": { "type": "string", "enum": ["fixed", "bypass", "variant", "regressed"] },
+        "status": { "type": "string", "enum": ["fixed", "bypass", "variant", "regressed", "incomplete"] },
         "evidence": { "type": "string", "minLength": 1 },
         "finding_ids": {
           "type": "array",

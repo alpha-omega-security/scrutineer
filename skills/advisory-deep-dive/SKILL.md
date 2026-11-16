@@ -1,6 +1,6 @@
 ---
 name: advisory-deep-dive
-description: Re-audit every past GitHub Security Advisory (GHSA) or CVE advisory published against this repository, anchored on each advisory's fix commit, for four failure modes, a regression of the original bug, a bypass of the fix, an incomplete fix that left a path open, and the same class of bug in sibling code the fix never touched. Records one verdict per advisory (fixed, bypass, variant or regressed) with standalone evidence, opening findings for anything that did not hold, and a fixed verdict backs a public fix-audit certificate. Use when you want to prove that prior fixes actually held rather than trusting that a shipped patch closed the hole. The target is this codebase's own first-party source, not its dependencies.
+description: Re-audit every past GitHub Security Advisory (GHSA) or CVE advisory published against this repository, anchored on each advisory's fix commit, for four failure modes, a regression of the original bug, a bypass of the fix, an incomplete fix that left a path open, and the same class of bug in sibling code the fix never touched. Records one verdict per advisory (fixed, bypass, variant, incomplete or regressed) with standalone evidence, opening findings for anything that did not hold, and a fixed verdict backs a public fix-audit certificate. Use when you want to prove that prior fixes actually held rather than trusting that a shipped patch closed the hole. The target is this codebase's own first-party source, not its dependencies.
 license: MIT
 compatibility: Needs the cloned repo with full git history in ./src, the scrutineer API for advisory and mined-history inputs, and network access to read advisory pages. Uses `git` and may use Claude subagents.
 allowed-tools: Read,Write,Bash,Grep,Glob,WebFetch,Task
@@ -24,7 +24,7 @@ A published advisory means a vulnerability in this codebase was found and fixed 
 - **Incomplete fix** — the patch closed the one call-site, parameter, or code path in the report, while a sibling path to the same sink stayed open.
 - **Sibling vulnerability** — the same class of bug (same CWE) lives elsewhere in the tree, in code the fix never touched.
 
-Every advisory gets exactly one verdict recorded — `fixed`, `bypass`, `variant`, or `regressed` — with standalone evidence. A `fixed` verdict backs a public fix-audit certificate; any other verdict opens one or more findings and names them.
+Every advisory gets exactly one verdict recorded — `fixed`, `bypass`, `variant`, `incomplete` or `regressed` — with standalone evidence. A `fixed` verdict backs a public fix-audit certificate; `incomplete` backs no certificate; any other verdict opens one or more findings and names them.
 
 The target is this codebase's own first-party source. Do not re-report the original advisory as a finding, and do not report that a dependency has a CVE. A finding is valid only if a *current* weakness lives in this repository's code at HEAD.
 
@@ -118,9 +118,9 @@ Write `./report.json` to match `./schema.json`: two arrays, `audits` and `findin
 Emit exactly one entry for every published advisory you processed (every non-withdrawn advisory in the worklist), even the clean ones. History-only fixes do not receive an `audits` entry: `AdvisoryAudit` rows back public advisory certificates, and inventing a synthetic advisory UUID would publish a false certificate. Findings descended from history-only fixes still belong in `findings`.
 
 - `advisory_uuid` — the advisory's `uuid` from the worklist. Required; this is what the verdict is keyed on.
-- `status` — one of `fixed`, `bypass`, `variant`, `regressed`. Use `fixed` only when the reproduction fails at the audited commit and no bypass, incomplete path, or sibling survived the checklist. `regressed` when the original reproduction fires again; `bypass` when a crafted input reaches the same sink past the new check; `variant` when the surviving issue is a sibling/incomplete-fix path rather than the exact original bug.
+- `status` — one of `fixed`, `bypass`, `variant`, `regressed`, `incomplete`. Use `fixed` only when the reproduction fails at the audited commit and no bypass, incomplete path, or sibling survived the checklist. `regressed` when the original reproduction fires again; `bypass` when a crafted input reaches the same sink past the new check; `variant` when the surviving issue is a sibling/incomplete-fix path rather than the exact original bug; `incomplete` when the reproduction cannot be run due to the extrapolated resource usage not fitting within the scan budget.
 - `evidence` — a few sentences that stand on their own: what you reproduced (or failed to reproduce) and at which commit. A `fixed` verdict's evidence is published verbatim in the certificate, so write it for an outside reader.
-- `finding_ids` — the report-local ids (`F001`, …) of the findings this verdict opened. Empty for `fixed`. A `bypass`/`variant`/`regressed` verdict must name at least one finding.
+- `finding_ids` — the report-local ids (`F001`, …) of the findings this verdict opened. Empty for `fixed` and `incomplete`. A `bypass`/`variant`/`regressed` verdict must name at least one finding.
 
 ### `findings` — same shape as `security-deep-dive`
 

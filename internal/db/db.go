@@ -671,10 +671,11 @@ type Advisory struct {
 
 // AdvisoryAuditStatuses is the set of verdicts an advisory fix audit may
 // record: the advertised fix held (fixed), can be circumvented (bypass),
-// left the same bug class open elsewhere (variant), or the original
+// left the same bug class open elsewhere (variant), exceeds resource budget
+// and the fix is unverified (incomplete), or the original
 // reproduction fires again at the audited commit (regressed).
 var AdvisoryAuditStatuses = map[string]bool{
-	"fixed": true, "bypass": true, "variant": true, "regressed": true,
+	"fixed": true, "bypass": true, "variant": true, "regressed": true, "incomplete": true,
 }
 
 // AdvisoryAudit is one fix-audit verdict for a published advisory, written by
