@@ -9,7 +9,10 @@ import (
 	"gorm.io/gorm/clause"
 )
 
-const maxContributionFindings = 64
+const (
+	maxContributionFindings = 64
+	observationBatchSize    = 100
+)
 
 // FindingObservation is one immutable record of a scan reporting a finding.
 // Its text and Evidence are untrusted model output, stored and shown as data only.
@@ -84,10 +87,13 @@ func ObservationFromFinding(scan *Scan, f *Finding) FindingObservation {
 	}
 }
 
-// RecordFindingObservation upserts the observation for its (finding, scan)
+// RecordFindingObservation upserts each observation for its (finding, scan)
 // pair. A repeat write from the same scan replaces the content columns so the
 // final report wins over the scan's streamed preview.
-func RecordFindingObservation(gdb *gorm.DB, obs FindingObservation) error {
+func RecordFindingObservation(gdb *gorm.DB, obs ...FindingObservation) error {
+	if len(obs) == 0 {
+		return nil
+	}
 	return gdb.Clauses(clause.OnConflict{
 		Columns: []clause.Column{{Name: "finding_id"}, {Name: "scan_id"}},
 		DoUpdates: clause.AssignmentColumns([]string{
@@ -95,7 +101,7 @@ func RecordFindingObservation(gdb *gorm.DB, obs FindingObservation) error {
 			"fingerprint", "title", "severity", "confidence", "cwe", "location",
 			"reachability", "rating", "evidence", "updated_at",
 		}),
-	}).Create(&obs).Error
+	}).CreateInBatches(&obs, observationBatchSize).Error
 }
 
 // ContributionFindingIDs returns the finding plus the findings that

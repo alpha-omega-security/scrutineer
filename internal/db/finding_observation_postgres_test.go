@@ -38,10 +38,11 @@ func TestPostgresFindingObservations(t *testing.T) {
 	preview := ObservationFromFinding(&first, &Finding{ID: canonical.ID, Title: "preview", Severity: "Medium"})
 	final := ObservationFromFinding(&first, &Finding{ID: canonical.ID, Title: "final", Severity: "High", Trace: "a -> b"})
 	other := ObservationFromFinding(&second, &Finding{ID: dup.ID, Title: "dup", Severity: "Low"})
-	for _, obs := range []FindingObservation{preview, final, other} {
-		if err := RecordFindingObservation(gdb, obs); err != nil {
-			t.Fatalf("record observation: %v", err)
-		}
+	if err := RecordFindingObservation(gdb, preview); err != nil {
+		t.Fatalf("record preview: %v", err)
+	}
+	if err := RecordFindingObservation(gdb, final, other); err != nil {
+		t.Fatalf("record batch: %v", err)
 	}
 
 	rows, _, err := FindingContributions(gdb, canonical.ID, 0)

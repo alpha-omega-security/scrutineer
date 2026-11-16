@@ -210,10 +210,23 @@ func TestImportOSSCRSKeepsCandidateRevision(t *testing.T) {
 	if finding.LastSeenCommit != "cafef00d" || finding.SeenCount != 2 {
 		t.Errorf("after repeat import last_seen_commit = %q, seen_count = %d, want cafef00d, 2", finding.LastSeenCommit, finding.SeenCount)
 	}
+	observations, _, err := db.FindingContributions(s.DB, finding.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(observations) != 2 {
+		t.Fatalf("observations = %d, want one per import", len(observations))
+	}
+	for _, o := range observations {
+		if o.Commit != "cafef00d" {
+			t.Errorf("observation of scan %d commit = %q, want the candidate's revision over ?commit=", o.ScanID, o.Commit)
+		}
+	}
 }
 
 // A finding deduplicated from candidates at two revisions captures only the
-// PoV found at the finding's revision, and the bundle manifest says so.
+// PoV found at the finding's revision, keeps the first candidate's
+// observation, and the bundle manifest says so.
 func TestImportOSSCRSCapturesOnlyPoVsAtTheFindingRevision(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()
@@ -231,6 +244,13 @@ func TestImportOSSCRSCapturesOnlyPoVsAtTheFindingRevision(t *testing.T) {
 		t.Fatalf("results = %+v, want the second candidate deduplicated onto the first", resp.Results)
 	}
 	findingID := resp.Results[0].FindingIDs[0]
+	observations, _, err := db.FindingContributions(s.DB, findingID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(observations) != 1 || observations[0].Commit != "cafef00d" {
+		t.Errorf("observations = %+v, want only the first candidate's at cafef00d", observations)
+	}
 	if len(resp.Artifacts) != 1 || resp.Artifacts[0].Path != "povs/zzz" || resp.Artifacts[0].FindingID != findingID || !resp.Artifacts[0].Stored {
 		t.Errorf("artifacts = %+v, want the other revision's PoV stored against the finding", resp.Artifacts)
 	}

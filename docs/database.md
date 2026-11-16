@@ -497,7 +497,7 @@ Append-only release-build assessments produced by finding-scoped `critic` scans.
 
 ## finding_observations
 
-Append-only record of each scan reporting a finding. The `findings` row is the analyst's mutable case and keeps the first report's content when a later scan rediscovers the same fingerprint, so this table preserves what every scan itself said (severity, rating, evidence) alongside the model and backend that produced it. Nothing edits a row after its scan finishes. Agreement between rows is never treated as verification. The finding page and `GET /api/findings/{id}/observations` also include the observations of findings merged into this one as duplicates (via `findings.duplicate_of_id`), so merging never discards reviewer evidence. The page shows the newest 20 while the API returns all of them. The `evidence` and text columns are untrusted model output, stored and shown as data.
+Append-only record of each scan reporting a finding, findings imports included (one row per finding under the import scan). The `findings` row is the analyst's mutable case and keeps the first report's content when a later scan rediscovers the same fingerprint, so this table preserves what every scan itself said (severity, rating, evidence) alongside the model and backend that produced it. Nothing edits a row after its scan finishes. Agreement between rows is never treated as verification. The finding page and `GET /api/findings/{id}/observations` also include the observations of findings merged into this one as duplicates (via `findings.duplicate_of_id`), so merging never discards reviewer evidence. The page shows the newest 20 while the API returns all of them. The `evidence` and text columns are untrusted model output, stored and shown as data.
 
 | Column | Type | Notes |
 |--------|------|-------|
@@ -507,8 +507,8 @@ Append-only record of each scan reporting a finding. The `findings` row is the a
 | repository_id | integer | Denormalized from the scan. |
 | skill_name | text | Skill the scan ran. |
 | backend | text | Backend the scan ran on. |
-| model | text | Model id of the scan. |
-| commit | text | Commit the scan inspected. |
+| model | text | Model id of the scan, or of the finding when an imported bundle carries its producing model. |
+| commit | text | Commit the scan inspected, or the finding's own revision when an import carries one (a bundle's per-finding commit, an OSS-CRS candidate's revision). |
 | report_finding_id | text | The finding's id inside the scan report, e.g. `F1`. |
 | fingerprint | text | Fingerprint the scan computed. |
 | title | text | Title as this scan reported it. |
