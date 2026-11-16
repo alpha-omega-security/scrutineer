@@ -136,11 +136,7 @@ func TestPostgresMigration(t *testing.T) {
 	if capture.FindingID != 1 || capture.ScanID != 1 || capture.Commit != "abc123" || !bytes.Equal(capture.Files, migrationPoCFiles(t)) {
 		t.Errorf("PoC capture changed: %+v", capture)
 	}
-	var artifact db.ImportArtifact
-	must(t, dst.First(&artifact, 1).Error)
-	if artifact.FindingID != 1 || artifact.Path != "povs/crash" || !bytes.Equal(artifact.Data, []byte{0, 0xff, 1}) {
-		t.Errorf("import artifact changed: %+v", artifact)
-	}
+	assertMigratedImportArtifact(t, dst)
 	var message db.ChatMessage
 	must(t, dst.First(&message, 1).Error)
 	wantTime := time.Date(2020, 2, 3, 4, 5, 6, 123456000, time.UTC)
@@ -179,6 +175,15 @@ func assertMigratedDisclosureSubmission(t *testing.T, dst *gorm.DB, wantTime tim
 		submission.Request != `{"software":"widget","ecosystem":"npm"}` ||
 		submission.NextPollAt == nil || !submission.NextPollAt.Equal(wantTime) {
 		t.Errorf("disclosure submission changed: %+v", submission)
+	}
+}
+
+func assertMigratedImportArtifact(t *testing.T, dst *gorm.DB) {
+	t.Helper()
+	var artifact db.ImportArtifact
+	must(t, dst.First(&artifact, 1).Error)
+	if artifact.FindingID != 1 || artifact.Path != "povs/crash" || !bytes.Equal(artifact.Data, []byte{0, 0xff, 1}) {
+		t.Errorf("import artifact changed: %+v", artifact)
 	}
 }
 
