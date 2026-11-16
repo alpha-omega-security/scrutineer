@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"slices"
@@ -222,7 +223,11 @@ func (s *Server) importResults(results []ingest.Result, format ingest.Format, re
 	if err != nil {
 		return nil, err
 	}
+	return s.finishImport(imported, revalidate), nil
+}
 
+// finishImport runs after the import transaction commits.
+func (s *Server) finishImport(imported []importedResult, revalidate bool) []map[string]any {
 	out := make([]map[string]any, 0, len(imported))
 	for _, result := range imported {
 		s.enqueueImportedRepoMetadata(context.Background(), result.repo)
@@ -271,7 +276,7 @@ func (s *Server) importResults(results []ingest.Result, format ingest.Format, re
 			"finding_ids":       ids,
 		})
 	}
-	return out, nil
+	return out
 }
 
 func (s *Server) importResultWith(tx *gorm.DB, res ingest.Result, repoOverride string) (importedResult, error) {
@@ -372,12 +377,14 @@ func (s *Server) importFindings(tx *gorm.DB, scan *db.Scan, res ingest.Result) (
 		rels importFindingRelations
 	}
 	var observedIDs []uint
+	observedByCommit := map[string][]uint{}
 	var observedRels []observedRel
 	var history []db.FindingHistory
 	var createdRels []importFindingRelations
 	for i, f := range incoming {
 		if prev, ok := existing[f.Fingerprint]; ok {
 			observedIDs = append(observedIDs, prev.ID)
+			observedByCommit[f.LastSeenCommit] = append(observedByCommit[f.LastSeenCommit], prev.ID)
 			history = append(history, db.FindingHistory{
 				FindingID: prev.ID,
 				Field:     "observed",
@@ -405,7 +412,7 @@ func (s *Server) importFindings(tx *gorm.DB, scan *db.Scan, res ingest.Result) (
 		}
 	}
 	if len(observedIDs) > 0 {
-		if err := updateObservedFindings(tx, scan, observedIDs); err != nil {
+		if err := updateObservedFindings(tx, scan, observedByCommit); err != nil {
 			return nil, 0, fmt.Errorf("update observed findings: %w", err)
 		}
 		if err := tx.CreateInBatches(&history, importBatchSize).Error; err != nil {
@@ -423,18 +430,24 @@ func (s *Server) importFindings(tx *gorm.DB, scan *db.Scan, res ingest.Result) (
 	return created, len(observedIDs), nil
 }
 
-func updateObservedFindings(tx *gorm.DB, scan *db.Scan, observedIDs []uint) error {
-	for start := 0; start < len(observedIDs); start += importBatchSize {
-		end := min(start+importBatchSize, len(observedIDs))
-		err := tx.Model(&db.Finding{}).Where("id IN ?", observedIDs[start:end]).Updates(map[string]any{
-			"last_seen_scan_id":   scan.ID,
-			"last_seen_commit":    scan.Commit,
-			"seen_count":          gorm.Expr("seen_count + 1"),
-			"missed_count":        0,
-			"last_missed_scan_id": 0,
-		}).Error
-		if err != nil {
-			return err
+// updateObservedFindings bumps findings an import saw again, keyed by the
+// revision each was seen at, which can differ from the scan's when a candidate
+// carries its own.
+func updateObservedFindings(tx *gorm.DB, scan *db.Scan, byCommit map[string][]uint) error {
+	for _, commit := range slices.Sorted(maps.Keys(byCommit)) {
+		ids := byCommit[commit]
+		for start := 0; start < len(ids); start += importBatchSize {
+			end := min(start+importBatchSize, len(ids))
+			err := tx.Model(&db.Finding{}).Where("id IN ?", ids[start:end]).Updates(map[string]any{
+				"last_seen_scan_id":   scan.ID,
+				"last_seen_commit":    commit,
+				"seen_count":          gorm.Expr("seen_count + 1"),
+				"missed_count":        0,
+				"last_missed_scan_id": 0,
+			}).Error
+			if err != nil {
+				return err
+			}
 		}
 	}
 	return nil
@@ -617,7 +630,7 @@ func buildImportFindings(scan *db.Scan, res ingest.Result) ([]db.Finding, []impo
 		// Include the sub-path so two findings at the same CWE/location/title
 		// in different monorepo sub-projects do not collide on one fingerprint.
 		// Other formats leave SubPath empty, so their fingerprint is unchanged.
-		f.Fingerprint = db.FingerprintFinding(res.Tool, f.SubPath, f.CWE, f.Location, f.Title)
+		f.Fingerprint = importFingerprint(res.Tool, in)
 		if seen[f.Fingerprint] {
 			continue
 		}
@@ -627,6 +640,10 @@ func buildImportFindings(scan *db.Scan, res ingest.Result) ([]db.Finding, []impo
 		fingerprints = append(fingerprints, f.Fingerprint)
 	}
 	return incoming, relations, fingerprints
+}
+
+func importFingerprint(tool string, in ingest.Finding) string {
+	return db.FingerprintFinding(tool, in.SubPath, in.CWE, in.Location, in.Title)
 }
 
 // importFindingRelations holds the child records an import carries for one
@@ -689,7 +706,7 @@ func existingByFingerprint(tx *gorm.DB, repoID uint, fingerprints []string) (map
 	for start := 0; start < len(fingerprints); start += importBatchSize {
 		end := min(start+importBatchSize, len(fingerprints))
 		var rows []db.Finding
-		err := tx.Select("id", "fingerprint").
+		err := tx.Select("id", "fingerprint", "commit").
 			Where("repository_id = ? AND fingerprint IN ?", repoID, fingerprints[start:end]).
 			Order("id").Find(&rows).Error
 		if err != nil {

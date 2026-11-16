@@ -357,7 +357,7 @@ func TestUpdateObservedFindings_chunksLargeInput(t *testing.T) {
 		ids[i] = uint(i + 1)
 	}
 	scan := db.Scan{Model: "test", Commit: "abc123"}
-	if err := updateObservedFindings(s.DB, &scan, ids); err != nil {
+	if err := updateObservedFindings(s.DB, &scan, map[string][]uint{scan.Commit: ids}); err != nil {
 		t.Fatal(err)
 	}
 }

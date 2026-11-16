@@ -136,6 +136,7 @@ func TestPostgresMigration(t *testing.T) {
 	if capture.FindingID != 1 || capture.ScanID != 1 || capture.Commit != "abc123" || !bytes.Equal(capture.Files, migrationPoCFiles(t)) {
 		t.Errorf("PoC capture changed: %+v", capture)
 	}
+	assertMigratedImportArtifact(t, dst)
 	var message db.ChatMessage
 	must(t, dst.First(&message, 1).Error)
 	wantTime := time.Date(2020, 2, 3, 4, 5, 6, 123456000, time.UTC)
@@ -174,6 +175,15 @@ func assertMigratedDisclosureSubmission(t *testing.T, dst *gorm.DB, wantTime tim
 		submission.Request != `{"software":"widget","ecosystem":"npm"}` ||
 		submission.NextPollAt == nil || !submission.NextPollAt.Equal(wantTime) {
 		t.Errorf("disclosure submission changed: %+v", submission)
+	}
+}
+
+func assertMigratedImportArtifact(t *testing.T, dst *gorm.DB) {
+	t.Helper()
+	var artifact db.ImportArtifact
+	must(t, dst.First(&artifact, 1).Error)
+	if artifact.FindingID != 1 || artifact.Path != "povs/crash" || !bytes.Equal(artifact.Data, []byte{0, 0xff, 1}) {
+		t.Errorf("import artifact changed: %+v", artifact)
 	}
 }
 
@@ -244,6 +254,7 @@ func seedHistory(t *testing.T, src *gorm.DB) {
 		&db.FindingHistory{FindingID: 1, Field: "status", NewValue: "confirmed"},
 		&db.FindingReview{FindingID: 1, Verdict: "true_positive"},
 		&db.FindingPoC{FindingID: 1, ScanID: 1, Commit: "abc123", Files: migrationPoCFiles(t)},
+		&db.ImportArtifact{RepositoryID: 1, FindingID: 1, Kind: "pov", SHA256: "digest", ScanID: 1, Path: "povs/crash", Bytes: 3, Data: []byte{0, 0xff, 1}},
 		&db.FeedbackConfirmation{ReviewID: 1, ScanID: 1, FindingID: 1, Commit: "abc123"},
 		&db.ScanPreflightReceipt{ScanID: 1, ProbeID: "probe", Report: "{}"},
 		&db.ScanGroupBudget{ScanGroup: "group", RepositoryID: 1, MaxCostUSD: 5},
