@@ -199,6 +199,17 @@ func TestImportOSSCRSKeepsCandidateRevision(t *testing.T) {
 	if row.Commit != "cafef00d" {
 		t.Errorf("captured PoC commit = %q, want the candidate's revision over ?commit=", row.Commit)
 	}
+
+	_, resp = postOSSCRS(t, s, ossCRSPath, ossCRSArchive(t, map[string]string{"bug-candidates/a.sarif": candidate, "povs/abc": "crash"}))
+	if len(resp.Results) != 1 || resp.Results[0].Observed != 1 {
+		t.Fatalf("repeat results = %+v", resp.Results)
+	}
+	if err := s.DB.First(&finding, finding.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if finding.LastSeenCommit != "cafef00d" || finding.SeenCount != 2 {
+		t.Errorf("after repeat import last_seen_commit = %q, seen_count = %d, want cafef00d, 2", finding.LastSeenCommit, finding.SeenCount)
+	}
 }
 
 // A finding deduplicated from candidates at two revisions captures only the
