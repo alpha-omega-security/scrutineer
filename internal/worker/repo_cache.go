@@ -214,11 +214,14 @@ func (w *Worker) prepareSkillRepoSrcOnce(
 // EnsureCommit deepens the per-URL cache so commit becomes reachable.
 // No-op when the commit is already present (the common case after the
 // scan that recorded it) or the cache is missing. Acquires the per-URL
-// lock so a concurrent scan does not race the fetch.
+// lock so a concurrent scan does not race the fetch, and gives up waiting
+// for it once ctx is done.
 func (w *Worker) EnsureCommit(ctx context.Context, url, commit string) error {
-	mu := w.cacheMutex(url)
-	mu.Lock()
-	defer mu.Unlock()
+	unlock, err := w.lockCacheContext(ctx, url)
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	return repoCache(w.DataDir).EnsureCommit(ctx, url, strings.ToLower(commit))
 }
 

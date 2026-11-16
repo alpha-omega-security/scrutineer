@@ -3024,8 +3024,14 @@ func (s *Server) repoScan(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) repoDiffScan(w http.ResponseWriter, r *http.Request, repo db.Repository, groupMax float64) {
-	queued, err := s.enqueueDiffRescanGroup(r.Context(), repo.ID,
-		r.FormValue("model"), strings.TrimSpace(r.FormValue("sub_path")), groupMax)
+	model, subPath := r.FormValue("model"), strings.TrimSpace(r.FormValue("sub_path"))
+	if r.FormValue("confirm_full") == "" {
+		if c, ok := s.diffRescanFallbacks(r.Context(), repo, model, subPath, groupMax); ok {
+			s.diffRescanConfirm(w, r, c)
+			return
+		}
+	}
+	queued, err := s.enqueueDiffRescanGroup(r.Context(), repo.ID, model, subPath, groupMax)
 	if err != nil {
 		if errors.Is(err, errDeepDiveMissing) {
 			http.Error(w, err.Error(), http.StatusPreconditionFailed)
@@ -3038,7 +3044,90 @@ func (s *Server) repoDiffScan(w http.ResponseWriter, r *http.Request, repo db.Re
 	s.redirect(w, r, fmt.Sprintf("/repositories/%d#rt3", repo.ID))
 }
 
+// diffRescanPreview is the "this diff rescan would cost a full scan" step.
+type diffRescanPreview struct {
+	RepoID    uint
+	Model     string
+	SubPath   string
+	GroupMax  float64
+	Fallbacks []string
+	Err       string
+}
+
+// diffRescanPreviewTimeout caps the clone-cache fetch and git diffs the
+// preview runs inside the request, which also hold the repository's cache
+// lock. It is longer than branchListTimeout because a first preview clones.
+const diffRescanPreviewTimeout = 30 * time.Second
+
+// diffRescanFallbacks measures, before anything is enqueued, whether the
+// diff-rescan group's scans would fall back to full scans. ok is false when
+// every scan would scan the diff.
+func (s *Server) diffRescanFallbacks(ctx context.Context, repo db.Repository, model, subPath string, groupMax float64) (diffRescanPreview, bool) {
+	var active []string
+	s.DB.Model(&db.Skill{}).Where("name IN ? AND active = ?", diffRescanSkillNames, true).
+		Order("id").Pluck("name", &active)
+	targets := make([]worker.DiffRescanTarget, 0, len(active))
+	for _, name := range active {
+		targets = append(targets, worker.DiffRescanTarget{Skill: name, Label: name})
+	}
+	var deepDives int64
+	s.DB.Model(&db.Skill{}).Where("name = ? AND active = ?", deepDiveSkillName, true).Count(&deepDives)
+	if deepDives > 0 && slices.Contains(active, threatModelSkillName) {
+		targets = append(targets, deepDiveTargets(repo.ScanConfig)...)
+	}
+	c := diffRescanPreview{RepoID: repo.ID, Model: model, SubPath: subPath, GroupMax: groupMax}
+	ctx, cancel := context.WithTimeout(ctx, diffRescanPreviewTimeout)
+	defer cancel()
+	fallbacks, err := s.Worker.DiffRescanFallbacks(ctx, repo, subPath, targets)
+	if err != nil {
+		c.Err = err.Error()
+		return c, true
+	}
+	c.Fallbacks = fallbacks
+	return c, len(fallbacks) > 0
+}
+
+// deepDiveTargets lists the deep-dives a completed threat-model fans out to:
+// one per configured focus area, or one unscoped scan when none is configured.
+// An invalid scan config fans out nothing. Each inherits the threat-model's
+// rescan mode.
+func deepDiveTargets(scanConfig string) []worker.DiffRescanTarget {
+	config, err := repoconfig.Parse(scanConfig)
+	if err != nil {
+		return nil
+	}
+	if len(config.FocusAreas) == 0 {
+		return []worker.DiffRescanTarget{{Skill: deepDiveSkillName, Label: deepDiveSkillName, Parent: threatModelSkillName}}
+	}
+	var targets []worker.DiffRescanTarget
+	for _, area := range fanOutFocusAreas(config) {
+		raw, err := repoconfig.EncodeFocusAreaJSON(area)
+		if err != nil {
+			continue
+		}
+		targets = append(targets, worker.DiffRescanTarget{
+			Skill: deepDiveSkillName, FocusArea: raw, Label: deepDiveSkillName + " (" + area.Name + ")", Parent: threatModelSkillName,
+		})
+	}
+	return targets
+}
+
+// diffRescanConfirm renders the confirmation step: an OOB panel on the repo
+// page for htmx clients, a standalone page for plain form posts.
+func (s *Server) diffRescanConfirm(w http.ResponseWriter, r *http.Request, c diffRescanPreview) {
+	if !isHX(r) {
+		s.render(w, r, "diff_rescan_confirm.html", map[string]any{"Confirm": c})
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.tmpl.ExecuteTemplate(w, "diff-rescan-confirm-oob", c); err != nil {
+		s.Log.Error("render diff-rescan-confirm-oob", "err", err)
+	}
+}
+
 var errDeepDiveMissing = errors.New(deepDiveSkillName + " skill is not installed")
+
+var diffRescanSkillNames = []string{reconSkillName, historySkillName, "embedded-native", threatModelSkillName, "semgrep", "betterleaks"}
 
 // enqueueDiffRescanGroup enqueues recon, history, embedded-native, threat-model,
 // semgrep, and betterleaks as one diff-rescan group. A completed threat-model
@@ -3053,7 +3142,7 @@ func (s *Server) enqueueDiffRescanGroup(ctx context.Context, repoID uint, model,
 	}
 	group := uuid.NewString()
 	queued := 0
-	for _, name := range []string{reconSkillName, historySkillName, "embedded-native", threatModelSkillName, "semgrep", "betterleaks"} {
+	for _, name := range diffRescanSkillNames {
 		var skill db.Skill
 		if err := s.DB.Where("name = ? AND active = ?", name, true).First(&skill).Error; err != nil {
 			continue

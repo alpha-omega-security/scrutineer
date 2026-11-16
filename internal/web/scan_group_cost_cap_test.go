@@ -43,7 +43,7 @@ func TestGroupLaunchHandlers_storeGroupBudget(t *testing.T) {
 		form  url.Values
 	}{
 		{"new scan", "scan", url.Values{}},
-		{"diff rescan", "scan", url.Values{"rescan_mode": {db.ScanRescanModeDiff}}},
+		{"diff rescan", "scan", url.Values{"rescan_mode": {db.ScanRescanModeDiff}, "confirm_full": {"1"}}},
 		{"scan all", "scan-all", url.Values{}},
 	}
 	for _, tc := range cases {

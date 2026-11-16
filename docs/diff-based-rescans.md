@@ -56,6 +56,15 @@ automatically runs a full scan instead when:
 
 The scan records why it fell back so the history still explains what happened.
 
+The **Diff rescan** button checks this before queueing anything. When a scan
+of the group would fall back, the repository page lists each such scan with
+its reason, and the group is queued only once you confirm. The check covers
+the security-deep-dive scans the threat-model fans out to, one per configured
+focus area or one unscoped scan, each against its own baseline. A deep-dive
+inherits the threat-model's mode, so when the threat-model falls back every
+deep-dive is listed as a full scan too. Scheduled and API diff rescans do not
+ask.
+
 ## Threat Models
 
 Diff-aware threat-model scans update the repository threat model only when the
