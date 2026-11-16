@@ -97,7 +97,7 @@ func (s *Server) handleImportOSSCRS(w http.ResponseWriter, r *http.Request) {
 	// reach its findings directly.
 	for _, res := range archive.Candidates {
 		for i := range res.Findings {
-			res.Findings[i].Commit = firstNonEmpty(res.Findings[i].Commit, res.Commit)
+			res.Findings[i].Commit = firstNonEmpty(res.Findings[i].Commit, res.Commit, commit)
 		}
 	}
 
@@ -137,13 +137,13 @@ func (s *Server) handleImportOSSCRS(w http.ResponseWriter, r *http.Request) {
 			scan.FindingsCount += len(bounded.Findings)
 			imported = append(imported, importedResult{repo: repo, scan: scan, tool: res.Tool, created: created, observed: observed, caps: caps})
 		}
-		links, commits, missing, err := ossCRSLinks(tx, repo.ID, archive)
+		links, revisions, missing, err := ossCRSLinks(tx, repo.ID, archive)
 		if err != nil {
 			return err
 		}
 		unresolved = missing
 		budget := ossCRSBudget(osscrs.MaxRetainedBytes)
-		captured, captureWarnings, err := captureOSSCRSPoVs(tx, scan, archive.Artifacts, links, commits, &budget)
+		captured, captureWarnings, err := captureOSSCRSPoVs(tx, scan, archive.Artifacts, links, revisions, &budget)
 		if err != nil {
 			return err
 		}
@@ -184,15 +184,16 @@ func nonNil[T any](s []T) []T {
 }
 
 // ossCRSLinks resolves each candidate's attachments to the findings the
-// import created or observed, keyed by archive path, along with the revision
-// of the candidate that first named each finding. Attachments naming no
-// retained artifact are returned so the operator sees them.
-func ossCRSLinks(tx *gorm.DB, repoID uint, archive osscrs.Archive) (map[string][]uint, map[uint]string, []string, error) {
+// import created or observed, keyed by archive path, along with the finding's
+// revision for each link a candidate at that revision names. Attachments
+// naming no retained artifact are returned so the operator sees them.
+func ossCRSLinks(tx *gorm.DB, repoID uint, archive osscrs.Archive) (map[string][]uint, map[ossCRSLink]string, []string, error) {
 	retained := map[string]bool{}
 	for _, a := range archive.Artifacts {
 		retained[a.Path] = true
 	}
-	byFingerprint, fpCommit := map[string][]string{}, map[string]string{}
+	type attachment struct{ path, commit string }
+	byFingerprint := map[string][]attachment{}
 	var fingerprints, missing []string
 	for _, res := range archive.Candidates {
 		for _, f := range res.Findings {
@@ -202,14 +203,13 @@ func ossCRSLinks(tx *gorm.DB, repoID uint, archive osscrs.Archive) (map[string][
 			fp := importFingerprint(res.Tool, f)
 			if _, ok := byFingerprint[fp]; !ok {
 				fingerprints = append(fingerprints, fp)
-				fpCommit[fp] = f.Commit
 			}
 			for _, p := range f.Attachments {
 				if !retained[p] {
 					missing = append(missing, osscrs.DisplayName(p))
 					continue
 				}
-				byFingerprint[fp] = append(byFingerprint[fp], p)
+				byFingerprint[fp] = append(byFingerprint[fp], attachment{p, f.Commit})
 			}
 		}
 	}
@@ -217,24 +217,24 @@ func ossCRSLinks(tx *gorm.DB, repoID uint, archive osscrs.Archive) (map[string][
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	links, commits := map[string][]uint{}, map[uint]string{}
+	links, revisions := map[string][]uint{}, map[ossCRSLink]string{}
 	for _, fp := range fingerprints {
 		finding, ok := existing[fp]
 		if !ok {
 			// Dropped by the import caps, so its attachments stay unassociated.
 			continue
 		}
-		if _, ok := commits[finding.ID]; !ok {
-			commits[finding.ID] = fpCommit[fp]
-		}
-		for _, p := range byFingerprint[fp] {
-			if !slices.Contains(links[p], finding.ID) {
-				links[p] = append(links[p], finding.ID)
+		for _, a := range byFingerprint[fp] {
+			if !slices.Contains(links[a.path], finding.ID) {
+				links[a.path] = append(links[a.path], finding.ID)
+			}
+			if a.commit == finding.Commit {
+				revisions[ossCRSLink{a.path, finding.ID}] = finding.Commit
 			}
 		}
 	}
 	slices.Sort(missing)
-	return links, commits, slices.Compact(missing), nil
+	return links, revisions, slices.Compact(missing), nil
 }
 
 // ossCRSLink is one archive path associated with one finding.
@@ -289,11 +289,11 @@ func storeOSSCRSArtifacts(tx *gorm.DB, scan db.Scan, artifacts []osscrs.Artifact
 // the links whose bytes that store now holds. The first capture wins, as it
 // does for a scan workspace capture, so a PoV refused by validation or
 // absent from an earlier capture is left to import_artifacts with a warning.
-// A capture records its candidate's revision, falling back to the scan's.
-func captureOSSCRSPoVs(tx *gorm.DB, scan db.Scan, artifacts []osscrs.Artifact, links map[string][]uint, commits map[uint]string, budget *ossCRSBudget) (map[ossCRSLink]bool, []string, error) {
-	byFinding, findingIDs := ossCRSPoVsByFinding(artifacts, links)
+// A capture records the finding's revision, so a PoV only candidates at
+// another revision name is left there too.
+func captureOSSCRSPoVs(tx *gorm.DB, scan db.Scan, artifacts []osscrs.Artifact, links map[string][]uint, revisions map[ossCRSLink]string, budget *ossCRSBudget) (map[ossCRSLink]bool, []string, error) {
+	byFinding, findingIDs, warnings := ossCRSPoVsByFinding(artifacts, links, revisions)
 	captured := map[ossCRSLink]bool{}
-	var warnings []string
 	for _, id := range findingIDs {
 		files := byFinding[id]
 		if err := poc.ValidateFiles(files); err != nil {
@@ -304,7 +304,7 @@ func captureOSSCRSPoVs(tx *gorm.DB, scan db.Scan, artifacts []osscrs.Artifact, l
 		if err != nil {
 			return nil, nil, err
 		}
-		row := db.FindingPoC{FindingID: id, ScanID: scan.ID, Commit: firstNonEmpty(commits[id], scan.Commit), Files: data}
+		row := db.FindingPoC{FindingID: id, ScanID: scan.ID, Commit: revisions[ossCRSLink{files[0].Path, id}], Files: data}
 		res := tx.Clauses(clause.OnConflict{Columns: []clause.Column{{Name: "finding_id"}}, DoNothing: true}).Create(&row)
 		if res.Error != nil {
 			return nil, nil, fmt.Errorf("capture PoVs for finding %d: %w", id, res.Error)
@@ -337,22 +337,28 @@ func captureOSSCRSPoVs(tx *gorm.DB, scan db.Scan, artifacts []osscrs.Artifact, l
 	return captured, warnings, nil
 }
 
-// ossCRSPoVsByFinding groups associated PoVs by finding, in first-seen order.
-func ossCRSPoVsByFinding(artifacts []osscrs.Artifact, links map[string][]uint) (map[uint][]poc.File, []uint) {
+// ossCRSPoVsByFinding groups associated PoVs by finding, in first-seen order,
+// and warns about each one no candidate at the finding's revision names.
+func ossCRSPoVsByFinding(artifacts []osscrs.Artifact, links map[string][]uint, revisions map[ossCRSLink]string) (map[uint][]poc.File, []uint, []string) {
 	byFinding := map[uint][]poc.File{}
 	var findingIDs []uint
+	var warnings []string
 	for _, a := range artifacts {
 		if a.Kind != osscrs.KindPoV {
 			continue
 		}
 		for _, id := range links[a.Path] {
+			if _, ok := revisions[ossCRSLink{a.Path, id}]; !ok {
+				warnings = append(warnings, fmt.Sprintf("finding %d: %s kept as an import artifact, it was found at another revision than the finding", id, a.Path))
+				continue
+			}
 			if _, ok := byFinding[id]; !ok {
 				findingIDs = append(findingIDs, id)
 			}
 			byFinding[id] = append(byFinding[id], poc.File{Path: a.Path, Data: a.Data, SHA256: a.SHA256})
 		}
 	}
-	return byFinding, findingIDs
+	return byFinding, findingIDs, warnings
 }
 
 func ossCRSLog(run string, archive osscrs.Archive, unresolved []string) string {

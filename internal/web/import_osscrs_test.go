@@ -201,6 +201,49 @@ func TestImportOSSCRSKeepsCandidateRevision(t *testing.T) {
 	}
 }
 
+// A finding deduplicated from candidates at two revisions captures only the
+// PoV found at the finding's revision, and the bundle manifest says so.
+func TestImportOSSCRSCapturesOnlyPoVsAtTheFindingRevision(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	candidate := func(revision, pov string) string {
+		c := strings.Replace(ossCRSCandidate, `"results"`, `"versionControlProvenance":[{"repositoryUri":"https://github.com/example/widget","revisionId":"`+revision+`"}],"results"`, 1)
+		return strings.Replace(c, `{"artifactLocation":{"uri":"povs/abc"}},{"artifactLocation":{"uri":"patches/fix.diff"}},{"artifactLocation":{"uri":"povs/missing"}}`, `{"artifactLocation":{"uri":"`+pov+`"}}`, 1)
+	}
+	_, resp := postOSSCRS(t, s, ossCRSPath, ossCRSArchive(t, map[string]string{
+		"bug-candidates/a.sarif": candidate("cafef00d", "povs/abc"),
+		"bug-candidates/b.sarif": candidate("f00dcafe", "povs/zzz"),
+		"povs/abc":               "crash at cafef00d",
+		"povs/zzz":               "crash at f00dcafe",
+	}))
+	if len(resp.Results) != 2 || len(resp.Results[0].FindingIDs) != 1 || resp.Results[1].Observed != 1 {
+		t.Fatalf("results = %+v, want the second candidate deduplicated onto the first", resp.Results)
+	}
+	findingID := resp.Results[0].FindingIDs[0]
+	if len(resp.Artifacts) != 1 || resp.Artifacts[0].Path != "povs/zzz" || resp.Artifacts[0].FindingID != findingID || !resp.Artifacts[0].Stored {
+		t.Errorf("artifacts = %+v, want the other revision's PoV stored against the finding", resp.Artifacts)
+	}
+	if len(resp.Warnings) != 1 || !strings.Contains(resp.Warnings[0], "povs/zzz") || !strings.Contains(resp.Warnings[0], "another revision") {
+		t.Errorf("warnings = %v", resp.Warnings)
+	}
+
+	r := httptest.NewRequest(http.MethodGet, "/findings/"+strconv.FormatUint(uint64(findingID), 10)+"/bundle.tar.gz", nil)
+	asOperator(r)
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Fatalf("bundle status = %d: %s", w.Code, w.Body.String())
+	}
+	files := readArchive(t, w.Body.Bytes())
+	var manifest db.PoCManifest
+	if err := json.Unmarshal(files["poc-manifest.json"], &manifest); err != nil {
+		t.Fatalf("poc-manifest.json: %v (entries %v)", err, keys(files))
+	}
+	if manifest.Commit != "cafef00d" || len(manifest.Files) != 1 || manifest.Files[0].Path != "povs/abc" {
+		t.Errorf("manifest = %+v, want only povs/abc at cafef00d", manifest)
+	}
+}
+
 func TestImportOSSCRSKeepsPoVTheCaptureRefuses(t *testing.T) {
 	s, done := newTestServer(t)
 	defer done()

@@ -697,7 +697,7 @@ func existingByFingerprint(tx *gorm.DB, repoID uint, fingerprints []string) (map
 	for start := 0; start < len(fingerprints); start += importBatchSize {
 		end := min(start+importBatchSize, len(fingerprints))
 		var rows []db.Finding
-		err := tx.Select("id", "fingerprint").
+		err := tx.Select("id", "fingerprint", "commit").
 			Where("repository_id = ? AND fingerprint IN ?", repoID, fingerprints[start:end]).
 			Order("id").Find(&rows).Error
 		if err != nil {

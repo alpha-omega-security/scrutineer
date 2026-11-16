@@ -445,7 +445,7 @@ Stores the first successful PoC capture for each finding. Captures survive scan 
 | id | integer PK | |
 | finding_id | integer FK, unique | References `findings.id`; cascade delete. |
 | scan_id | integer | ID of the scan that captured the files; no foreign key. |
-| commit | text | Source commit recorded by the capturing scan, or for an OSS-CRS import the revision of the bug candidate that names the PoV when it carries one. |
+| commit | text | Source commit recorded by the capturing scan, or for an OSS-CRS import the finding's revision, and only PoVs a bug candidate at that revision names are captured. |
 | files | blob | JSON array of files, each with `path`, base64-encoded `data`, `sha256`, and optional `executable`. |
 | created_at | datetime | Capture time. |
 
@@ -453,7 +453,7 @@ Each capture holds at most 64 regular files, with limits of 1 MiB per file and 2
 
 ## import_artifacts
 
-Retains files an external producer shipped beside its findings, today the patches, report bundles and unassociated PoV inputs of an OSS-CRS run imported through `POST /api/v1/import/oss-crs`. An associated PoV goes to [`finding_pocs`](#finding_pocs) instead, and lands here only when that capture refuses it or an earlier capture of the finding does not hold its bytes. A file associated with several findings has one row per finding, and a repeat import of the same bytes for the same finding adds no row.
+Retains files an external producer shipped beside its findings, today the patches, report bundles and unassociated PoV inputs of an OSS-CRS run imported through `POST /api/v1/import/oss-crs`. An associated PoV goes to [`finding_pocs`](#finding_pocs) instead, and lands here only when that capture refuses it, an earlier capture of the finding does not hold its bytes, or only candidates at another revision than the finding's name it. A file associated with several findings has one row per finding, and a repeat import of the same bytes for the same finding adds no row.
 
 | Column | Type | Notes |
 |--------|------|-------|
