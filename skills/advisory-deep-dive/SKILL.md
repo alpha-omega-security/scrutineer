@@ -106,7 +106,7 @@ Subagents do not see this SKILL.md — only the prompt you write them and the sh
 
 - Tell every subagent, in its prompt, not to write or touch `./report.json`. That file is yours to write once, at the end.
 - Give each a distinct scratch file — `./candidates-<advisory-id>.json` — and have it return that path holding both its advisory's verdict and any findings it opened.
-- Give each subagent the shared file `./threat_model.json` when it exists; otherwise write it once from the threat model you loaded, in full so `entry_points[i]` indexes stay valid. Tell each subagent to read it for its "Boundary" checks, and that `attacker_controllable: "no"` rules a sink out for non-`inferred` rows, while an `inferred` `"no"` row rules the sink out once its claim is confirmed against the current code; otherwise the sink carries on to Validate. If no threat model is loaded, tell them to derive boundaries from source instead.
+- Give each subagent the shared `./threat_model.json` when it exists; otherwise write it once from the threat model you loaded, in full so `entry_points[i]` indexes stay valid. Tell each subagent to read it for its "Boundary" checks, and that `attacker_controllable: "no"` rules the sink out for non-`inferred` rows, and an `inferred` `"no"` row rules the sink out once its claim is confirmed against the current code; `"conditional"` means the row's `condition` is the precondition you carry into Rate; otherwise the sink carries on to Validate. If no threat model is loaded, tell them to derive boundaries from source instead.
 - You are the sole writer of `./report.json`. Read every scratch file back, union the findings and collect one verdict per advisory into `audits`, and write the one report yourself.
 
 ## Output
