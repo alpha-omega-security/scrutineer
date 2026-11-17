@@ -8,7 +8,7 @@ require (
 	filippo.io/age v1.3.2
 	github.com/alpha-omega-security/harness v0.1.21
 	github.com/ecosyste-ms/ecosystems-go v0.5.1
-	github.com/git-pkgs/clone v0.7.7-0.20261117102607-22aea2c32153
+	github.com/git-pkgs/clone v0.7.8
 	github.com/git-pkgs/clone/gogit v0.1.2
 	github.com/git-pkgs/cwe v0.1.1
 	github.com/git-pkgs/enrichment v0.7.5

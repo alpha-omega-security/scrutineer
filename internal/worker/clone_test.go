@@ -199,8 +199,9 @@ func TestCloneOrFetchRejectsBadURL(t *testing.T) {
 }
 
 // newPrivateSubmoduleOrigin serves an origin whose vendor/private submodule
-// points at submoduleURL, which is never reachable without credentials.
-func newPrivateSubmoduleOrigin(t *testing.T, submoduleURL string, extraConfig ...string) string {
+// points at submoduleURL, which is never reachable without credentials. It
+// returns the origin's URL and directory.
+func newPrivateSubmoduleOrigin(t *testing.T, submoduleURL string, extraConfig ...string) (string, string) {
 	t.Helper()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not installed")
@@ -225,11 +226,11 @@ func newPrivateSubmoduleOrigin(t *testing.T, submoduleURL string, extraConfig ..
 	}
 	t.Setenv("GIT_CONFIG_COUNT", fmt.Sprint(len(config)/2))
 	t.Setenv("GIT_ALLOW_PROTOCOL", "https:file")
-	return url
+	return url, originDir
 }
 
 func TestPrepareRepoSrcLogsMissingSubmodule(t *testing.T) {
-	url := newPrivateSubmoduleOrigin(t, "https://127.0.0.1:1/example/private.git")
+	url, _ := newPrivateSubmoduleOrigin(t, "https://127.0.0.1:1/example/private.git")
 
 	w := &Worker{DataDir: shortTempDir(t)}
 	var events []string
@@ -246,6 +247,50 @@ func TestPrepareRepoSrcLogsMissingSubmodule(t *testing.T) {
 	}
 	if strings.Contains(log, "best effort") {
 		t.Errorf("scan log still marks the submodule step best effort:\n%s", log)
+	}
+}
+
+func TestPrepareRepoSrcDoesNotCopyStaleSubmoduleCheckout(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	libraryDir := t.TempDir()
+	testGit(t, libraryDir, "init", "--quiet", "-b", "main")
+	if err := os.WriteFile(filepath.Join(libraryDir, "lib.c"), []byte("old\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	testGit(t, libraryDir, "add", "lib.c")
+	testGit(t, libraryDir, "commit", "--quiet", "-m", "old")
+
+	const libraryURL = "https://clone.test/library"
+	url, originDir := newPrivateSubmoduleOrigin(t, libraryURL, "url.file://"+libraryDir+".insteadOf", libraryURL)
+	setGitlink := func(commit string) {
+		testGit(t, originDir, "update-index", "--cacheinfo", "160000,"+commit+",vendor/private")
+		testGit(t, originDir, "commit", "--quiet", "-m", "point submodule at "+commit)
+	}
+	setGitlink(testGit(t, libraryDir, "rev-parse", "HEAD"))
+
+	w := &Worker{DataDir: shortTempDir(t)}
+	options := RepoSrcOptions{RecurseSubmodules: true}
+	first := t.TempDir()
+	if _, err := w.prepareRepoSrcWithOptions(context.Background(), url, "", first, options, func(Event) {}); err != nil {
+		t.Fatalf("first prepare: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(first, "src", "vendor", "private", "lib.c")); err != nil {
+		t.Fatalf("submodule not checked out: %v", err)
+	}
+
+	setGitlink("0123456789abcdef0123456789abcdef01234567")
+	second := t.TempDir()
+	if _, err := w.prepareRepoSrcWithOptions(context.Background(), url, "", second, options, func(Event) {}); err != nil {
+		t.Fatalf("second prepare: %v", err)
+	}
+	entries, err := os.ReadDir(filepath.Join(second, "src", "vendor", "private"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Errorf("scan copy holds the submodule's previous checkout: %d entries", len(entries))
 	}
 }
 
@@ -266,7 +311,7 @@ func TestPrepareRepoSrcUsesCredentialHelperOnlyForTrustedSubmodules(t *testing.T
 	} {
 		marker := filepath.Join(t.TempDir(), "helper-called")
 		t.Setenv("SCRUTINEER_TEST_HELPER_MARKER", filepath.ToSlash(marker))
-		url := newPrivateSubmoduleOrigin(t, server.URL+"/example/private.git",
+		url, _ := newPrivateSubmoduleOrigin(t, server.URL+"/example/private.git",
 			"credential.helper", `!f() { echo "$1" >> "$SCRUTINEER_TEST_HELPER_MARKER"; }; f`,
 			"http.sslVerify", "false",
 		)
