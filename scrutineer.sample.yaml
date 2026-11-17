@@ -36,6 +36,14 @@
 # and are slower for large repos — only flip if a skill needs history.
 # clone: shallow
 
+# Skills that set recurse_submodules fetch submodules without the host's git
+# credential helper, so private submodules are skipped and the scan log says
+# so. List https URL prefixes here to fetch matching submodules with the
+# helper. A scanned repository can name any repository under these prefixes
+# in its .gitmodules and have it fetched into its workspace.
+# submodule_credential_urls:
+#   - https://github.com/my-org
+
 # Monorepo sub-package handling. A repo submitted as `url#sub/dir` (or a
 # GitHub `.../tree/<branch>/<sub/dir>` URL) scans just that sub-package.
 #
