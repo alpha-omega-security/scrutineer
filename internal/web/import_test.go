@@ -194,6 +194,51 @@ func TestImportFindings_reimportBumpsSeenCount(t *testing.T) {
 	}
 }
 
+// Each import records its own observation of a finding, at the revision and
+// model the finding carries, without changing the finding's severity.
+func TestImportFindings_recordsEachImportsObservation(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	res := ingest.Result{
+		RepoURL:  "https://example.com/r",
+		Tool:     "external-scanner",
+		Commit:   "abc",
+		Findings: []ingest.Finding{{Title: "one", Severity: "High", Location: "a.go:1", CWE: "CWE-79"}},
+	}
+	first, err := importSingleResult(s, res, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Commit = "def"
+	res.Findings = []ingest.Finding{{Title: "one", Severity: "Low", Location: "a.go:1", CWE: "CWE-79", Commit: "cafe", Model: "model-b"}}
+	second, err := importSingleResult(s, res, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var finding db.Finding
+	if err := s.DB.Where("title = ?", "one").First(&finding).Error; err != nil {
+		t.Fatal(err)
+	}
+	if finding.Severity != "High" {
+		t.Errorf("finding severity = %q, want High kept from the first import", finding.Severity)
+	}
+	rows, _, err := db.FindingContributions(s.DB, finding.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("observations = %d, want 2", len(rows))
+	}
+	if rows[0].ScanID != first["scan_id"].(uint) || rows[0].Severity != "High" || rows[0].Commit != "abc" || rows[0].SkillName != "external-scanner" {
+		t.Errorf("first observation = %+v, want scan %v, High at abc from external-scanner", rows[0], first["scan_id"])
+	}
+	if rows[1].ScanID != second["scan_id"].(uint) || rows[1].Severity != "Low" || rows[1].Commit != "cafe" || rows[1].Model != "model-b" {
+		t.Errorf("second observation = %+v, want scan %v, Low at the finding's own revision cafe by model-b", rows[1], second["scan_id"])
+	}
+}
+
 // referenceRows returns a finding's references in id order.
 func referenceRows(t *testing.T, s *Server, findingID uint) []db.FindingReference {
 	t.Helper()
@@ -325,11 +370,12 @@ func TestImportFindings_rollbackLeavesNoScanOrFindings(t *testing.T) {
 		t.Fatal("expected transaction to roll back")
 	}
 
-	var scans, findings int64
+	var scans, findings, observations int64
 	s.DB.Model(&db.Scan{}).Count(&scans)
 	s.DB.Model(&db.Finding{}).Count(&findings)
-	if scans != 0 || findings != 0 {
-		t.Fatalf("after rollback: scans=%d findings=%d, want 0/0", scans, findings)
+	s.DB.Model(&db.FindingObservation{}).Count(&observations)
+	if scans != 0 || findings != 0 || observations != 0 {
+		t.Fatalf("after rollback: scans=%d findings=%d observations=%d, want 0/0/0", scans, findings, observations)
 	}
 }
 

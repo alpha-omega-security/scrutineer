@@ -381,8 +381,16 @@ func (s *Server) importFindings(tx *gorm.DB, scan *db.Scan, res ingest.Result) (
 	var observedRels []observedRel
 	var history []db.FindingHistory
 	var createdRels []importFindingRelations
+	var observations []db.FindingObservation
 	for i, f := range incoming {
 		if prev, ok := existing[f.Fingerprint]; ok {
+			// Every OSS-CRS candidate lands in the run's one import scan, and a
+			// finding an earlier candidate recorded keeps that candidate's
+			// observation, as it keeps its revision.
+			if prev.LastSeenScanID != scan.ID {
+				f.ID = prev.ID
+				observations = append(observations, importObservation(scan, &f))
+			}
 			observedIDs = append(observedIDs, prev.ID)
 			observedByCommit[f.LastSeenCommit] = append(observedByCommit[f.LastSeenCommit], prev.ID)
 			history = append(history, db.FindingHistory{
@@ -409,6 +417,7 @@ func (s *Server) importFindings(tx *gorm.DB, scan *db.Scan, res ingest.Result) (
 			if err := attachFindingRelations(tx, created[i].ID, createdRels[i], false); err != nil {
 				return nil, 0, err
 			}
+			observations = append(observations, importObservation(scan, &created[i]))
 		}
 	}
 	if len(observedIDs) > 0 {
@@ -427,7 +436,20 @@ func (s *Server) importFindings(tx *gorm.DB, scan *db.Scan, res ingest.Result) (
 			}
 		}
 	}
+	if err := db.RecordFindingObservation(tx, observations...); err != nil {
+		return nil, 0, fmt.Errorf("record finding observations: %w", err)
+	}
 	return created, len(observedIDs), nil
+}
+
+// importObservation records what the import reported for f at the revision and
+// model f carries, which a bundle or an OSS-CRS candidate can set apart from
+// the import scan's.
+func importObservation(scan *db.Scan, f *db.Finding) db.FindingObservation {
+	obs := db.ObservationFromFinding(scan, f)
+	obs.Commit = f.Commit
+	obs.Model = f.Model
+	return obs
 }
 
 // updateObservedFindings bumps findings an import saw again, keyed by the
@@ -706,7 +728,7 @@ func existingByFingerprint(tx *gorm.DB, repoID uint, fingerprints []string) (map
 	for start := 0; start < len(fingerprints); start += importBatchSize {
 		end := min(start+importBatchSize, len(fingerprints))
 		var rows []db.Finding
-		err := tx.Select("id", "fingerprint", "commit").
+		err := tx.Select("id", "fingerprint", "commit", "last_seen_scan_id").
 			Where("repository_id = ? AND fingerprint IN ?", repoID, fingerprints[start:end]).
 			Order("id").Find(&rows).Error
 		if err != nil {
