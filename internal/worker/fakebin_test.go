@@ -10,6 +10,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"scrutineer/internal/testutil"
 )
 
 // A fake binary on PATH stands in for git, a container runtime or an agent
@@ -40,6 +42,7 @@ unset i
 var hostShell string
 
 func TestMain(m *testing.M) {
+	testutil.IsolateGitConfig()
 	hostShell, _ = exec.LookPath("sh")
 	if self, err := os.Executable(); err == nil {
 		if shell, err := os.ReadFile(self + fakeBinShellExt); err == nil {
