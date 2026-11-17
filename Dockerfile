@@ -27,7 +27,7 @@ RUN apk add --no-cache git
 ARG BETTERLEAKS_VERSION=v1.10.0
 RUN GOBIN=/out CGO_ENABLED=0 go install -ldflags "-X=github.com/betterleaks/betterleaks/version.Version=${BETTERLEAKS_VERSION}" github.com/betterleaks/betterleaks@${BETTERLEAKS_VERSION}
 
-RUN GOBIN=/out go install github.com/git-pkgs/git-pkgs@v0.21.0
+RUN GOBIN=/out go install github.com/git-pkgs/git-pkgs@v0.22.0
 
 RUN GOBIN=/out go install github.com/git-pkgs/brief/cmd/brief@v0.16.0
 
