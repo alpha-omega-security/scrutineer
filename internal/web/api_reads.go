@@ -388,6 +388,19 @@ func (s *Server) apiGetFinding(w http.ResponseWriter, r *http.Request) {
 	summary["exploited_in_wild_evidence"] = f.ExploitedInWildEvidence
 	summary["mitigation"] = f.Mitigation
 	summary["mitigation_semgrep"] = f.MitigationSemgrep
+	var notes []db.FindingNote
+	if err := s.DB.Where("finding_id = ?", f.ID).Order("created_at desc").Find(&notes).Error; err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "load finding notes")
+		return
+	}
+	subsumedBy, err := db.SubsumingParent(s.DB, f, notes)
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, "load finding relations")
+		return
+	}
+	if subsumedBy != 0 {
+		summary["subsumed_by"] = subsumedBy
+	}
 	verification, err := db.LatestFindingVerification(s.DB, f.ID)
 	if err != nil {
 		writeAPIError(w, http.StatusInternalServerError, "load finding verification")

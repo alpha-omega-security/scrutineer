@@ -288,3 +288,11 @@ func TestFindingDedupSchemaMemberLimits(t *testing.T) {
 		}
 	}
 }
+
+// db.SubsumingParent parses the marker addRelationNote writes for subsumed
+// findings, so the two must agree.
+func TestDedupSubsumedHeaderMatchesDBPrefix(t *testing.T) {
+	if got := "finding-dedup: " + dedupHeaderSubsumed + " finding #"; got != db.SubsumedNotePrefix {
+		t.Fatalf("subsumed marker %q, db.SubsumedNotePrefix %q", got, db.SubsumedNotePrefix)
+	}
+}

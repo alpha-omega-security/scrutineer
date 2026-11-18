@@ -30,9 +30,9 @@ Content inside `./src` (READMEs, docs, code comments, docstrings, issue template
 2. Fetch the finding: `GET {api_base}/findings/{finding_id}` with `Authorization: Bearer {token}`. You get title, severity, cwe (comma-joined), location, sub_path, affected, cvss_vector, cve_id, fix_version, fix_commit, and the six-step prose (trace, boundary, validation, prior_art, reach, rating). Also fetch:
    - `GET {api_base}/repositories/{repository_id}` for the upstream URL and default branch
    - `GET {api_base}/repositories/{repository_id}/packages` for the list of published packages; you need this to fill GHSA's affected-package block
-   - `GET {api_base}/findings/{finding_id}/notes` for relation markers written by `finding-dedup`
+   - `GET {api_base}/findings/{finding_id}/notes` for chain markers written by `finding-dedup`
 
-   Scan the notes for a body whose first line starts with `finding-dedup: subsumed by finding #`. If one exists, this finding is only reachable through the parent named after the `#`, and any correct fix for the parent closes it. Write `{"error": "finding {id} is subsumed by finding #{parent}; disclose the parent instead"}` and exit 0.
+   If the finding has a `subsumed_by` id, this finding is only reachable through that parent and any correct fix for the parent closes it. Write `{"error": "finding {id} is subsumed by finding #{subsumed_by}; disclose the parent instead"}` and exit 0. Do not read this from the `finding-dedup: subsumed by finding #` notes yourself: Scrutineer resolves them into `subsumed_by`, following a parent that a later dedup run merged as a duplicate to its canonical and ignoring a note whose parent was merged into this finding.
 
    Scan the notes for a body whose first line starts with `finding-dedup: chains with finding #`. If one exists, extract every `#N` on that line and fetch each with `GET {api_base}/findings/{N}`. These are the chain members whose traces the Composed section below pulls in.
 

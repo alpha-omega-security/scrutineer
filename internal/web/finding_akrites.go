@@ -123,11 +123,8 @@ func akritesEligibility(ctx disclosureFindingContext) error {
 	case db.FindingFixed, db.FindingPublished, db.FindingRejected, db.FindingDuplicate:
 		return fmt.Errorf("finding status %q cannot be submitted to Akrites", ctx.Finding.Status)
 	}
-	for _, note := range ctx.Notes {
-		first, _, _ := strings.Cut(note.Body, "\n")
-		if strings.HasPrefix(strings.TrimSpace(first), "finding-dedup: subsumed by finding #") {
-			return fmt.Errorf("this finding is subsumed by another finding")
-		}
+	if ctx.SubsumedBy != 0 {
+		return fmt.Errorf("this finding is subsumed by finding #%d; submit that finding instead", ctx.SubsumedBy)
 	}
 	return nil
 }

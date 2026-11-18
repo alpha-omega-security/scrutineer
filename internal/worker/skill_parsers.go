@@ -1922,9 +1922,10 @@ func (w *Worker) parseFindingDedupOutput(scan *db.Scan, report string, emit func
 	}
 
 	// Subsumed findings do not change status: the bug is real and stays in
-	// the database, but disclose and report-upstream read the note marker
-	// and refuse to file it separately (the parent is what the maintainer
-	// should see). Same repo-and-open guards as duplicates apply.
+	// the database, but the API resolves the note marker into subsumed_by
+	// (db.SubsumingParent) and disclose and report-upstream refuse to file
+	// it separately (the parent is what the maintainer should see). Same
+	// repo-and-open guards as duplicates apply.
 	subsumed, err := w.applyDedupHeaded(scan.RepositoryID, dedupHeaderSubsumed, false,
 		mapDedupGroups(result.Subsumed, func(g struct {
 			ParentID    uint   `json:"parent_id"`
@@ -2136,10 +2137,10 @@ func dedupCandidateOpen(status db.FindingLifecycle) bool {
 
 // dedupHeader* are the fixed first-line markers written to FindingNote by
 // finding-dedup, in the form "finding-dedup: <verb> finding #N[, #M...]".
-// disclose and report-upstream fetch GET /findings/{id}/notes and match on
-// these prefixes, so changing them is a coordinated change with those two
-// skills. The values are the human-readable verb, not an enum; the "#N"
-// suffix is what the reader parses.
+// disclose matches the chains prefix in GET /findings/{id}/notes while
+// db.SubsumedNotePrefix parses the subsumed one, so changing them is a
+// coordinated change with those readers. The values are the human-readable
+// verb, not an enum; the "#N" suffix is what the reader parses.
 const (
 	dedupHeaderDuplicate = "duplicates"
 	dedupHeaderSubsumed  = "subsumed by"

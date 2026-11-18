@@ -1977,6 +1977,7 @@ components:
             exploited_in_wild_evidence: { type: string, description: "Evidence supporting the analyst's exploitation status." }
             mitigation:    { type: string, description: "Markdown body of operational mitigation guidance from the mitigate skill: workarounds, detection, optionally a semgrep rule (see mitigation_semgrep)." }
             mitigation_semgrep: { type: string, description: "Optional YAML semgrep rule from the mitigate skill. Empty when no rule was warranted." }
+            subsumed_by: { type: integer, format: int64, description: "Finding that currently subsumes this one, resolved from finding-dedup notes through later duplicate merges. Absent when none does." }
             verification:
               allOf:
                 - $ref: '#/components/schemas/FindingVerification'
