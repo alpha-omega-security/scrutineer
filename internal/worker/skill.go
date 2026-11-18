@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"time"
 
 	"github.com/alpha-omega-security/harness"
 	"gorm.io/gorm"
@@ -62,6 +63,11 @@ type skillContextOSSScanner struct {
 	PatchGuidelinesFile  string `json:"patch_guidelines_file,omitempty"`
 }
 
+type skillContextLimits struct {
+	// Deadline is the scan's deadline, or the default timeout from when the context was staged
+	Deadline time.Time `json:"deadline"`
+}
+
 type skillContextScrutineer struct {
 	APIBase              string `json:"api_base"`             // e.g. http://127.0.0.1:8080/api
 	ScanID               uint   `json:"scan_id"`              // the scan that owns this run
@@ -95,6 +101,8 @@ type skillContextScrutineer struct {
 	// metadata lives (`.scrutineer/` by default). Always written so
 	// skills can build paths without re-applying the default.
 	MetadataDir string `json:"metadata_dir"`
+	// Limits is the resource budget for a reproduction.
+	Limits *skillContextLimits `json:"scan_limits,omitempty"`
 	// Rescan is present for diff-based rescans. It names the baseline and
 	// staged files a diff-aware skill should read.
 	Rescan *skillContextRescan `json:"rescan,omitempty"`
@@ -159,6 +167,15 @@ type skillContextPkg struct {
 	Name      string `json:"name"`
 	Ecosystem string `json:"ecosystem,omitempty"`
 	PURL      string `json:"purl,omitempty"`
+}
+
+// scanLimits computes the remaining resource budget, or the default.
+func scanLimits(ctx context.Context) *skillContextLimits {
+	deadline := time.Now().Add(DefaultScanTimeout)
+	if d, ok := ctx.Deadline(); ok {
+		deadline = d
+	}
+	return &skillContextLimits{Deadline: deadline.UTC()}
 }
 
 // doSkill stages the referenced skill under the scan's workspace and invokes
@@ -1486,6 +1503,7 @@ func buildSkillContext(
 	recon *skillContextRecon,
 	novelty *skillContextNovelty,
 	controls *skillContextControls,
+	limits *skillContextLimits,
 ) (skillContext, error) {
 	ctx := skillContext{
 		Repository: skillContextRepo{
@@ -1502,6 +1520,7 @@ func buildSkillContext(
 			RepoID:      scan.RepositoryID,
 			ForkOrg:     forkOrg,
 			MetadataDir: metadataDir,
+			Limits:      limits,
 		},
 	}
 	config, err := repoconfig.Parse(repo.ScanConfig)
@@ -1603,6 +1622,7 @@ func (w *Worker) stageWorkspace(ctx context.Context, workRoot, skillDir string, 
 	staged.Repository.ThreatModel = model
 	return stageWorkspaceWithInputs(
 		workRoot, skillDir, w.apiBaseFor(skill.Name), w.ForkOrg, w.metadataDir(), &staged, skill, recon, novelty, controls, feedback,
+		scanLimits(ctx),
 	)
 }
 
@@ -1611,7 +1631,7 @@ func (w *Worker) stageWorkspace(ctx context.Context, workRoot, skillDir string, 
 // rendered skill bundle, and optional import payloads. Production adds recon
 // context for threat-model in Worker.stageWorkspace.
 func StageWorkspace(workRoot, skillDir, apiBase, forkOrg, metadataDir string, scan *db.Scan, skill *db.Skill) error {
-	_, err := stageWorkspaceWithInputs(workRoot, skillDir, apiBase, forkOrg, metadataDir, scan, skill, nil, nil, nil, nil)
+	_, err := stageWorkspaceWithInputs(workRoot, skillDir, apiBase, forkOrg, metadataDir, scan, skill, nil, nil, nil, nil, scanLimits(context.Background()))
 	return err
 }
 
@@ -1623,14 +1643,15 @@ func stageWorkspaceWithInputs(
 	novelty *skillContextNovelty,
 	controls *skillContextControls,
 	feedback []db.FindingFeedback,
+	limits *skillContextLimits,
 ) (skillContext, error) {
 	if scan.ExplorationMode != "" {
-		return stageExploratoryWorkspace(workRoot, skillDir, apiBase, scan, skill)
+		return stageExploratoryWorkspace(workRoot, skillDir, apiBase, scan, skill, limits)
 	}
 	if err := stageSkill(skill, workRoot, skillDir); err != nil {
 		return skillContext{}, fmt.Errorf("stage skill: %w", err)
 	}
-	document, err := buildSkillContext(apiBase, forkOrg, metadataDir, scan, &scan.Repository, recon, novelty, controls)
+	document, err := buildSkillContext(apiBase, forkOrg, metadataDir, scan, &scan.Repository, recon, novelty, controls, limits)
 	if err != nil {
 		return skillContext{}, fmt.Errorf("build context: %w", err)
 	}
