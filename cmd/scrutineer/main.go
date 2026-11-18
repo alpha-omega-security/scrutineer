@@ -113,6 +113,8 @@ type flags struct {
 	concurrency           int
 	cloneMode             string
 	scanTimeout           time.Duration
+	scanMemoryMiB         int
+	scanDiskMiB           int
 	backendPreflightTTL   time.Duration
 	smokeTimeout          time.Duration
 	maxTurns              int
@@ -274,6 +276,8 @@ func registerFlags(fs *flag.FlagSet, f *flags) {
 	fs.IntVar(&f.concurrency, "concurrency", queue.DefaultWorkerConcurrency, "number of scans to run in parallel")
 	fs.StringVar(&f.cloneMode, "clone", "shallow", "clone depth: shallow (--depth 1) or full")
 	fs.DurationVar(&f.scanTimeout, "scan-timeout", worker.DefaultScanTimeout, "wall-clock limit per scan")
+	fs.IntVar(&f.scanMemoryMiB, "scan-memory-mib", worker.DefaultScanMemoryMiB, "per scan RSS memory budget (not yet enforced)")
+	fs.IntVar(&f.scanDiskMiB, "scan-disk-mib", worker.DefaultScanDiskMiB, "per scan disk budget (not yet enforced)")
 	fs.DurationVar(&f.backendPreflightTTL, "backend-preflight-ttl", 0, "cache lifetime for live backend probes (0 disables; probes consume model tokens)")
 	fs.DurationVar(&f.smokeTimeout, "runtime-smoke-timeout", defaultRuntimeSmokeTimeout, "timeout for each rootless-podman startup container check (keep-id image remap, SELinux mount probe); raise if first-run image remapping is slow, lower if the image is pre-warmed")
 	fs.IntVar(&f.maxTurns, "max-turns", 0, "claude --max-turns limit (0 = unlimited)")
@@ -374,6 +378,12 @@ func (f *flags) merge(cfg *config.Config) {
 	}
 	if d, _ := config.ParseScanTimeout(cfg.ScanTimeout); d > 0 && !f.set["scan-timeout"] {
 		f.scanTimeout = d
+	}
+	if cfg.ScanMemoryMiB > 0 && !f.set["scan-memory-mib"] {
+		f.scanMemoryMiB = cfg.ScanMemoryMiB
+	}
+	if cfg.ScanDiskMiB > 0 && !f.set["scan-disk-mib"] {
+		f.scanDiskMiB = cfg.ScanDiskMiB
 	}
 	if !f.set["backend-preflight-ttl"] {
 		f.backendPreflightTTL, _ = config.ParseBackendPreflightTTL(cfg.BackendPreflightTTL)
@@ -726,6 +736,8 @@ func newApp(f *flags, cfg *config.Config, log *slog.Logger, setup runnerSetup) (
 		FullClone:               f.fullClone(),
 		SubmoduleCredentialURLs: cfg.SubmoduleCredentialURLs,
 		ScanTimeout:             f.scanTimeout,
+		ScanMemoryMiB:           f.scanMemoryMiB,
+		ScanDiskMiB:             f.scanDiskMiB,
 		SchemaStrict:            f.schemaStrict,
 		DowngradeOnOverage:      f.downgradeOnOverage,
 		PauseOnOverage:          f.pauseOnOverage,

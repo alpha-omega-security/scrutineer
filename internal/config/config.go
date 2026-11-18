@@ -128,6 +128,10 @@ type Config struct {
 	// ScanTimeout is the wall-clock limit for a single scan, as a Go
 	// duration string ("30m", "1h"). Empty leaves the built-in default.
 	ScanTimeout string `yaml:"scan_timeout"`
+	// ScanMemoryMiB is the RSS memory budget in MiB for a reproduction. Not enforced.
+	ScanMemoryMiB int `yaml:"scan_memory_mib"`
+	// ScanDiskMiB is the disk space budget in MiB for a reproduction. Not enforced.
+	ScanDiskMiB int `yaml:"scan_disk_mib"`
 	// BackendPreflightTTL enables cached live backend probes when positive.
 	BackendPreflightTTL string `yaml:"backend_preflight_ttl"`
 	// MaxTurns is passed as --max-turns to claude-code. 0 means no limit.
@@ -616,6 +620,17 @@ func ValidateEffort(s string) error {
 	return fmt.Errorf("effort: unknown %q", s)
 }
 
+// ValidateScanBudget rejects negative scan_memory_mib and scan_disk_mib.
+func ValidateScanBudget(memoryMiB, diskMiB int) error {
+	if memoryMiB < 0 {
+		return fmt.Errorf("scan_memory_mib cannot be negative: %d", memoryMiB)
+	}
+	if diskMiB < 0 {
+		return fmt.Errorf("scan_disk_mib cannot be negative: %d", diskMiB)
+	}
+	return nil
+}
+
 // Load reads a YAML config from path. Returns (nil, nil) when the file
 // does not exist and the caller passed "" or DefaultPath — making config
 // fully opt-in. Explicit paths that don't exist are an error.
@@ -658,6 +673,9 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
 	}
 	if _, err := ParseScanTimeout(c.ScanTimeout); err != nil {
+		return nil, fmt.Errorf("parse config %s: %w", path, err)
+	}
+	if err := ValidateScanBudget(c.ScanMemoryMiB, c.ScanDiskMiB); err != nil {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
 	}
 	if _, err := ParseBackendPreflightTTL(c.BackendPreflightTTL); err != nil {

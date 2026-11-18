@@ -66,6 +66,17 @@ type skillContextOSSScanner struct {
 type skillContextLimits struct {
 	// Deadline is the scan's deadline, or the default timeout from when the context was staged
 	Deadline time.Time `json:"deadline"`
+	// MemoryMiB is the RSS memory budget, not enforced
+	MemoryMiB int `json:"memory_mib"`
+	DiskMiB   int `json:"disk_mib"`
+}
+
+type scanBudget struct{ MemoryMiB, DiskMiB int }
+
+type scanBudgetKey struct{}
+
+func withScanBudget(ctx context.Context, b scanBudget) context.Context {
+	return context.WithValue(ctx, scanBudgetKey{}, b)
 }
 
 type skillContextScrutineer struct {
@@ -175,7 +186,16 @@ func scanLimits(ctx context.Context) *skillContextLimits {
 	if d, ok := ctx.Deadline(); ok {
 		deadline = d
 	}
-	return &skillContextLimits{Deadline: deadline.UTC()}
+	limits := &skillContextLimits{Deadline: deadline.UTC(), MemoryMiB: DefaultScanMemoryMiB, DiskMiB: DefaultScanDiskMiB}
+	if b, ok := ctx.Value(scanBudgetKey{}).(scanBudget); ok {
+		if b.MemoryMiB > 0 {
+			limits.MemoryMiB = b.MemoryMiB
+		}
+		if b.DiskMiB > 0 {
+			limits.DiskMiB = b.DiskMiB
+		}
+	}
+	return limits
 }
 
 // doSkill stages the referenced skill under the scan's workspace and invokes
