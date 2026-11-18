@@ -283,7 +283,7 @@ Record the verdict as `reachability`: `reachable` if a public entry point in the
 
 ### Step 6: Rate
 
-Severity, given everything above.
+Severity, given everything above. A full reproduction left unverified by the scan budget lowers only confidence, and not severity.
 
 Critical: works on a fresh install with no preconditions. Any precondition disqualifies it.
 
