@@ -2139,8 +2139,8 @@ func dedupCandidateOpen(status db.FindingLifecycle) bool {
 // finding-dedup, in the form "finding-dedup: <verb> finding #N[, #M...]".
 // disclose matches the chains prefix in GET /findings/{id}/notes while
 // db.SubsumedNotePrefix parses the subsumed one, so changing them is a
-// coordinated change with those readers. The values are the human-readable verb, not an enum; the "#N"
-// suffix is what the reader parses.
+// coordinated change with those readers. The values are the human-readable
+// verb, not an enum; the "#N" suffix is what the reader parses.
 const (
 	dedupHeaderDuplicate = "duplicates"
 	dedupHeaderSubsumed  = "subsumed by"
