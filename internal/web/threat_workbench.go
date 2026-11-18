@@ -314,12 +314,9 @@ func headLine(s string) string {
 	return strings.TrimSpace(head)
 }
 
-// checkConditionalEntryPoints enforces the threat-model schema rule that an
-// entry point whose attacker_controllable is "conditional" states its
-// condition: the audit skills rate a finding on that entry point against it.
-// Only this rule is checked, not the whole schema, so a hand-edited model
-// that is otherwise loose still saves. A model whose top level is not an
-// object, or that has no entry_points array, has nothing to check.
+// checkConditionalEntryPoints requires a condition on "conditional" entry
+// points, since audit skills rate findings against it. The rest of the schema
+// is not checked, so a loose hand-edited model still saves.
 func checkConditionalEntryPoints(model any) error {
 	obj, ok := model.(map[string]any)
 	if !ok {
