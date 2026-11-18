@@ -1219,3 +1219,57 @@ func TestAPIValidateReport_oversizedBodyRejected(t *testing.T) {
 		t.Errorf("status %d, want 413", code)
 	}
 }
+
+// A finding-dedup run can note F18 as subsumed by F44, then a later run can
+// merge F44 into F18 as a duplicate. F18 is then the canonical and must not
+// be reported as subsumed (issue #1425).
+func TestAPIGetFindingSubsumedBy(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo, scan := seedRunningScan(t, s)
+	child := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, FindingID: "child", Status: db.FindingTriaged}
+	parent := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, FindingID: "parent", Status: db.FindingTriaged}
+	other := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, FindingID: "other", Status: db.FindingTriaged}
+	for _, f := range []*db.Finding{&child, &parent, &other} {
+		if err := s.DB.Create(f).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.DB.Create(&db.FindingNote{FindingID: child.ID, Body: fmt.Sprintf("%s%d\n\nreason", db.SubsumedNotePrefix, parent.ID)}).Error; err != nil {
+		t.Fatal(err)
+	}
+	subsumedBy := func() any {
+		t.Helper()
+		r := httptest.NewRequest("GET", "/api/findings/"+strconv.FormatUint(uint64(child.ID), 10), nil)
+		asOperator(r)
+		r.Header.Set("Authorization", "Bearer "+scan.APIToken)
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("get finding status %d: %s", w.Code, w.Body.String())
+		}
+		var detail map[string]any
+		if err := json.NewDecoder(w.Body).Decode(&detail); err != nil {
+			t.Fatal(err)
+		}
+		return detail["subsumed_by"]
+	}
+	merge := func(into uint) {
+		t.Helper()
+		if err := s.DB.Model(&parent).Updates(map[string]any{"status": db.FindingDuplicate, "duplicate_of_id": into}).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if got := subsumedBy(); got != float64(parent.ID) {
+		t.Errorf("open parent: subsumed_by = %v, want %d", got, parent.ID)
+	}
+	merge(other.ID)
+	if got := subsumedBy(); got != float64(other.ID) {
+		t.Errorf("parent merged elsewhere: subsumed_by = %v, want canonical %d", got, other.ID)
+	}
+	merge(child.ID)
+	if got := subsumedBy(); got != nil {
+		t.Errorf("parent merged into this finding: subsumed_by = %v, want absent", got)
+	}
+}

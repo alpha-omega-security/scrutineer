@@ -32,6 +32,8 @@ type disclosureFindingContext struct {
 	References     []db.FindingReference
 	Communications []db.FindingCommunication
 	Notes          []db.FindingNote
+	// SubsumedBy is the finding that currently subsumes this one, or 0.
+	SubsumedBy uint
 }
 
 type vinceAttachmentOption struct {
@@ -81,7 +83,7 @@ func (s *Server) findingVINCEPreview(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := vinceEligibility(ctx.Finding, ctx.Notes); err != nil {
+	if err := vinceEligibility(ctx.Finding, ctx.SubsumedBy); err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}
@@ -117,7 +119,7 @@ func (s *Server) findingVINCESubmit(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if err := vinceEligibility(ctx.Finding, ctx.Notes); err != nil {
+	if err := vinceEligibility(ctx.Finding, ctx.SubsumedBy); err != nil {
 		http.Error(w, err.Error(), http.StatusConflict)
 		return
 	}
@@ -275,10 +277,15 @@ func (s *Server) loadDisclosureFinding(w http.ResponseWriter, r *http.Request) (
 			return out, false
 		}
 	}
+	if out.SubsumedBy, err = db.SubsumingParent(s.DB, out.Finding, out.Notes); err != nil {
+		http.Error(w, "could not load finding relations", http.StatusInternalServerError)
+		return out, false
+	}
 	return out, true
 }
 
-func vinceEligibility(f db.Finding, notes []db.FindingNote) error {
+// vinceEligibility takes subsumedBy from db.SubsumingParent.
+func vinceEligibility(f db.Finding, subsumedBy uint) error {
 	if db.FindingDisclosureBlocked(f) {
 		return db.ErrFindingNonViable
 	}
@@ -292,11 +299,8 @@ func vinceEligibility(f db.Finding, notes []db.FindingNote) error {
 	case db.FindingRejected, db.FindingDuplicate:
 		return fmt.Errorf("finding status %q cannot be submitted", f.Status)
 	}
-	for _, note := range notes {
-		firstLine, _, _ := strings.Cut(note.Body, "\n")
-		if strings.HasPrefix(strings.TrimSpace(firstLine), "finding-dedup: subsumed by finding #") {
-			return fmt.Errorf("this finding is subsumed by another finding")
-		}
+	if subsumedBy != 0 {
+		return fmt.Errorf("this finding is subsumed by finding #%d; submit that finding instead", subsumedBy)
 	}
 	return nil
 }

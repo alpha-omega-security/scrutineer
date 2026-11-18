@@ -2096,6 +2096,22 @@ type findingWorkflowData struct {
 	Verifications      int
 }
 
+// vinceReadiness reports whether the finding page can offer Submit to VINCE
+// and, when it cannot, why.
+func (s *Server) vinceReadiness(f db.Finding, notes []db.FindingNote) (bool, string) {
+	if !s.VINCE.Enabled() {
+		return false, "VINCE API key is not configured"
+	}
+	subsumedBy, err := db.SubsumingParent(s.DB, f, notes)
+	if err != nil {
+		return false, "could not load finding relations"
+	}
+	if err := vinceEligibility(f, subsumedBy); err != nil {
+		return false, err.Error()
+	}
+	return true, ""
+}
+
 func (s *Server) findingShow(w http.ResponseWriter, r *http.Request) {
 	var f db.Finding
 	id, err := strconv.Atoi(r.PathValue("id"))
@@ -2232,18 +2248,7 @@ func (s *Server) findingShow(w http.ResponseWriter, r *http.Request) {
 	if len(remediationAttempts) > 0 {
 		data["CurrentRemediation"] = remediationAttempts[0]
 	}
-	vinceReason := "VINCE API key is not configured"
-	vinceReady := false
-	if s.VINCE.Enabled() {
-		if err := vinceEligibility(f, notes); err != nil {
-			vinceReason = err.Error()
-		} else {
-			vinceReady = true
-			vinceReason = ""
-		}
-	}
-	data["VINCEReady"] = vinceReady
-	data["VINCEReason"] = vinceReason
+	data["VINCEReady"], data["VINCEReason"] = s.vinceReadiness(f, notes)
 	akritesLink := s.Akrites.Enabled()
 	if !akritesLink {
 		var submissions int64

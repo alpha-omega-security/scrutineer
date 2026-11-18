@@ -193,7 +193,7 @@ func TestMapVINCEReport(t *testing.T) {
 
 func TestVINCEEligibility(t *testing.T) {
 	base := db.Finding{Status: db.FindingReady, DisclosureDraft: "reviewed"}
-	if err := vinceEligibility(base, nil); err != nil {
+	if err := vinceEligibility(base, 0); err != nil {
 		t.Fatal(err)
 	}
 	for _, status := range []db.FindingLifecycle{
@@ -201,18 +201,16 @@ func TestVINCEEligibility(t *testing.T) {
 	} {
 		finding := base
 		finding.Status = status
-		if err := vinceEligibility(finding, nil); err == nil {
+		if err := vinceEligibility(finding, 0); err == nil {
 			t.Errorf("status %q accepted", status)
 		}
 	}
 	finding := base
 	finding.DisclosureDraft = " "
-	if err := vinceEligibility(finding, nil); err == nil {
+	if err := vinceEligibility(finding, 0); err == nil {
 		t.Error("empty disclosure draft accepted")
 	}
-	if err := vinceEligibility(base, []db.FindingNote{{
-		Body: "finding-dedup: subsumed by finding #12\nreason",
-	}}); err == nil {
+	if err := vinceEligibility(base, 12); err == nil {
 		t.Error("subsumed finding accepted")
 	}
 	// A reported finding can go to another recipient, and an earlier VINCE
@@ -220,7 +218,7 @@ func TestVINCEEligibility(t *testing.T) {
 	for _, status := range []db.FindingLifecycle{db.FindingReported, db.FindingAcknowledged} {
 		finding := base
 		finding.Status = status
-		if err := vinceEligibility(finding, nil); err != nil {
+		if err := vinceEligibility(finding, 0); err != nil {
 			t.Errorf("status %q: %v", status, err)
 		}
 	}
@@ -235,7 +233,7 @@ func TestVINCEEligibilityProductionViability(t *testing.T) {
 			finding := db.Finding{
 				Status: db.FindingTriaged, DisclosureDraft: "reviewed", ProductionViability: viability,
 			}
-			err := vinceEligibility(finding, nil)
+			err := vinceEligibility(finding, 0)
 			if viability == db.ProductionViabilityNonViable {
 				if !errors.Is(err, db.ErrFindingNonViable) {
 					t.Fatalf("eligibility error = %v, want ErrFindingNonViable", err)
