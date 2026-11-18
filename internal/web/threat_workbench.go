@@ -103,8 +103,8 @@ const workbenchRunHistory = 5
 
 // repoThreatModelSave persists the editor contents to
 // Repository.ThreatModel without enqueueing a scan. Rejects input that
-// is not valid JSON so a typo surfaces immediately rather than as a
-// failed deep-dive ten minutes later.
+// normaliseThreatModel refuses so a typo surfaces immediately rather than
+// as a failed deep-dive ten minutes later.
 func (s *Server) repoThreatModelSave(w http.ResponseWriter, r *http.Request) {
 	repo, ok := loadByID[db.Repository](s, w, r)
 	if !ok {
@@ -112,7 +112,7 @@ func (s *Server) repoThreatModelSave(w http.ResponseWriter, r *http.Request) {
 	}
 	model, err := normaliseThreatModel(r.FormValue("threat_model"))
 	if err != nil {
-		http.Error(w, "threat model is not valid JSON: "+err.Error(), http.StatusBadRequest)
+		http.Error(w, "invalid threat model: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	if err := s.DB.Model(&db.Repository{}).Where("id = ?", repo.ID).
@@ -133,7 +133,7 @@ func (s *Server) repoThreatModelRun(w http.ResponseWriter, r *http.Request) {
 	}
 	model, err := normaliseThreatModel(r.FormValue("threat_model"))
 	if err != nil {
-		http.Error(w, "threat model is not valid JSON: "+err.Error(), http.StatusBadRequest)
+		http.Error(w, "invalid threat model: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	if err := s.DB.Model(&db.Repository{}).Where("id = ?", repo.ID).
@@ -170,9 +170,9 @@ func (s *Server) repoThreatModelClear(w http.ResponseWriter, r *http.Request) {
 	s.redirect(w, r, fmt.Sprintf("/repositories/%d%s", repo.ID, workbenchTab))
 }
 
-// normaliseThreatModel checks the input parses as JSON and re-emits it
-// indented so the editor round-trips cleanly. Empty input is allowed
-// (it clears the override).
+// normaliseThreatModel checks the input parses as JSON, applies
+// checkConditionalEntryPoints and re-emits it indented so the editor
+// round-trips cleanly. Empty input is allowed (it clears the override).
 func normaliseThreatModel(in string) (string, error) {
 	in = strings.TrimSpace(in)
 	if in == "" {
@@ -180,6 +180,9 @@ func normaliseThreatModel(in string) (string, error) {
 	}
 	var v any
 	if err := json.Unmarshal([]byte(in), &v); err != nil {
+		return "", fmt.Errorf("not valid JSON: %w", err)
+	}
+	if err := checkConditionalEntryPoints(v); err != nil {
 		return "", err
 	}
 	out, err := json.MarshalIndent(v, "", "  ")
@@ -309,4 +312,33 @@ func sortRows(rows []DiffRow) {
 func headLine(s string) string {
 	head, _, _ := strings.Cut(s, "\n")
 	return strings.TrimSpace(head)
+}
+
+// checkConditionalEntryPoints requires a condition on "conditional" entry
+// points, since audit skills rate findings against it. The rest of the schema
+// is not checked, so a loose hand-edited model still saves.
+func checkConditionalEntryPoints(model any) error {
+	obj, ok := model.(map[string]any)
+	if !ok {
+		return nil
+	}
+	entries, ok := obj["entry_points"].([]any)
+	if !ok {
+		return nil
+	}
+	for i, raw := range entries {
+		entry, ok := raw.(map[string]any)
+		if !ok || entry["attacker_controllable"] != "conditional" {
+			continue
+		}
+		if condition, _ := entry["condition"].(string); strings.TrimSpace(condition) != "" {
+			continue
+		}
+		label := fmt.Sprintf("entry_points[%d]", i)
+		if name, _ := entry["entry_point"].(string); strings.TrimSpace(name) != "" {
+			label += fmt.Sprintf(" (%s)", strings.TrimSpace(name))
+		}
+		return fmt.Errorf("%s: attacker_controllable is conditional but condition is missing or empty", label)
+	}
+	return nil
 }

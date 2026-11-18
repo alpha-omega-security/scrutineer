@@ -216,6 +216,14 @@
         "component":             { "type": "string" },
         "provenance":            { "$ref": "#/$defs/provenance" },
         "source":                { "$ref": "#/$defs/source" }
+      },
+      "if": {
+        "properties": { "attacker_controllable": { "const": "conditional" } },
+        "required": ["attacker_controllable"]
+      },
+      "then": {
+        "required": ["condition"],
+        "properties": { "condition": { "pattern": "\\S" } }
       }
     },
 

@@ -228,3 +228,42 @@ func eligibleRejectionReview(t *testing.T, s *Server, repoID uint) uint {
 	}
 	return reviews[0].ID
 }
+
+func TestAutoUpdateThreatModelSkipsConditionalWithoutCondition(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/repo", Name: "repo", ThreatModel: `{"old":true}`}
+	if err := s.DB.Create(&repo).Error; err != nil {
+		t.Fatal(err)
+	}
+	scan := db.Scan{
+		RepositoryID: repo.ID,
+		Status:       db.ScanDone,
+		SkillName:    threatModelSkillName,
+		Report:       `{"spec_version":1,"entry_points":[{"entry_point":"f","attacker_controllable":"conditional","condition":" "}]}`,
+	}
+	if err := s.DB.Create(&scan).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	s.autoUpdateThreatModel(&scan)
+
+	var gotRepo db.Repository
+	if err := s.DB.First(&gotRepo, repo.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	if gotRepo.ThreatModel != repo.ThreatModel {
+		t.Fatalf("ThreatModel = %q, want unchanged %q", gotRepo.ThreatModel, repo.ThreatModel)
+	}
+	var gotScan db.Scan
+	if err := s.DB.First(&gotScan, scan.ID).Error; err != nil {
+		t.Fatal(err)
+	}
+	rec, ok := coverage.Parse(gotScan.Coverage)
+	if !ok || rec.ThreatModel == nil {
+		t.Fatalf("coverage = %q, want a threat-model state", gotScan.Coverage)
+	}
+	if rec.ThreatModel.Update != "skipped_invalid_report" || !strings.Contains(rec.ThreatModel.Reason, "condition") {
+		t.Fatalf("threat model = %+v, want skipped_invalid_report naming the condition", *rec.ThreatModel)
+	}
+}

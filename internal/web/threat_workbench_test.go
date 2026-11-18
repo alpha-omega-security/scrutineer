@@ -25,6 +25,14 @@ func TestNormaliseThreatModel(t *testing.T) {
 		{"valid indented input", "{\n  \"a\": 1\n}", "{\n  \"a\": 1\n}", false},
 		{"invalid json", "{not json}", "", true},
 		{"trailing comma rejected", `{"a":1,}`, "", true},
+		{"conditional entry with condition", `{"entry_points":[{"entry_point":"f","attacker_controllable":"conditional","condition":"uploads enabled"}]}`,
+			"{\n  \"entry_points\": [\n    {\n      \"attacker_controllable\": \"conditional\",\n      \"condition\": \"uploads enabled\",\n      \"entry_point\": \"f\"\n    }\n  ]\n}", false},
+		{"conditional entry without condition", `{"entry_points":[{"entry_point":"f","attacker_controllable":"conditional"}]}`, "", true},
+		{"conditional entry with blank condition", `{"entry_points":[{"entry_point":"f","attacker_controllable":"conditional","condition":"  "}]}`, "", true},
+		{"conditional entry with non-string condition", `{"entry_points":[{"entry_point":"f","attacker_controllable":"conditional","condition":1}]}`, "", true},
+		{"non-conditional entries need no condition", `{"entry_points":[{"attacker_controllable":"yes"},{"attacker_controllable":"no"}]}`,
+			"{\n  \"entry_points\": [\n    {\n      \"attacker_controllable\": \"yes\"\n    },\n    {\n      \"attacker_controllable\": \"no\"\n    }\n  ]\n}", false},
+		{"top-level array has no entry points", `[1]`, "[\n  1\n]", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -323,5 +331,75 @@ func TestRepoShow_rendersWorkbenchTab(t *testing.T) {
 		if !strings.Contains(body, want) {
 			t.Errorf("body missing %q", want)
 		}
+	}
+}
+
+func TestNormaliseThreatModelNamesTheConditionalEntry(t *testing.T) {
+	_, err := normaliseThreatModel(`{"entry_points":[{"entry_point":"open","attacker_controllable":"yes"},` +
+		`{"entry_point":"POST /upload","attacker_controllable":"conditional","condition":""}]}`)
+	if err == nil || !strings.Contains(err.Error(), "entry_points[1] (POST /upload)") || !strings.Contains(err.Error(), "condition") {
+		t.Fatalf("err = %v, want it to name entry_points[1] (POST /upload) and the condition", err)
+	}
+}
+
+const conditionalWithoutCondition = `{"spec_version":1,"entry_points":[{"entry_point":"f","parameter":"p","attacker_controllable":"conditional","provenance":"inferred"}]}`
+
+func TestRepoThreatModelSave_rejectsConditionalWithoutCondition(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://github.com/o/r5", Name: "r5", ThreatModel: `{"spec_version":1}`}
+	s.DB.Create(&repo)
+
+	w := postForm(t, s, fmt.Sprintf("/repositories/%d/threat-model", repo.ID),
+		url.Values{"threat_model": {conditionalWithoutCondition}})
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "condition") {
+		t.Fatalf("status = %d, body = %s; want 400 naming the condition", w.Code, w.Body)
+	}
+	var got db.Repository
+	s.DB.First(&got, repo.ID)
+	if got.ThreatModel != repo.ThreatModel {
+		t.Errorf("ThreatModel = %q, want unchanged %q", got.ThreatModel, repo.ThreatModel)
+	}
+}
+
+func TestRepoThreatModelRun_rejectsConditionalWithoutCondition(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://github.com/o/r6", Name: "r6", ThreatModel: `{"spec_version":1}`}
+	s.DB.Create(&repo)
+	s.DB.Create(&db.Skill{Name: deepDiveSkillName, Active: true, Body: "b", OutputFile: "report.json"})
+
+	w := postForm(t, s, fmt.Sprintf("/repositories/%d/threat-model/run", repo.ID),
+		url.Values{"threat_model": {conditionalWithoutCondition}})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, body = %s; want 400", w.Code, w.Body)
+	}
+	var got db.Repository
+	s.DB.First(&got, repo.ID)
+	if got.ThreatModel != repo.ThreatModel {
+		t.Errorf("ThreatModel = %q, want unchanged %q", got.ThreatModel, repo.ThreatModel)
+	}
+	var scans int64
+	s.DB.Model(&db.Scan{}).Where("repository_id = ?", repo.ID).Count(&scans)
+	if scans != 0 {
+		t.Errorf("enqueued %d scan(s) for a rejected model", scans)
+	}
+}
+
+func TestRepoThreatModelSave_emptyInputClearsOverride(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://github.com/o/r7", Name: "r7", ThreatModel: conditionalWithoutCondition}
+	s.DB.Create(&repo)
+
+	w := postForm(t, s, fmt.Sprintf("/repositories/%d/threat-model", repo.ID),
+		url.Values{"threat_model": {"  "}})
+	if w.Code != http.StatusSeeOther {
+		t.Fatalf("status = %d, body = %s", w.Code, w.Body)
+	}
+	var got db.Repository
+	s.DB.First(&got, repo.ID)
+	if got.ThreatModel != "" {
+		t.Errorf("ThreatModel = %q, want cleared", got.ThreatModel)
 	}
 }
