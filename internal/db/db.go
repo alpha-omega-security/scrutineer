@@ -678,8 +678,11 @@ var AdvisoryAuditStatuses = map[string]bool{
 	"fixed": true, "bypass": true, "variant": true, "regressed": true, "incomplete": true,
 }
 
+// AdvisoryAuditDecided is a where query filter: an 'incomplete' status should not override an earlier status
+const AdvisoryAuditDecided = "advisory_audits.status <> 'incomplete'"
+
 // AdvisoryAudit is one fix-audit verdict for a published advisory, written by
-// the advisory-deep-dive skill. One row per advisory per run; the newest row
+// the advisory-deep-dive skill. One row per advisory per run; the newest non-`incomplete` row
 // per (repository, advisory) is authoritative. Keyed by advisory UUID rather
 // than Advisory.ID because the advisories skill replaces Advisory rows
 // wholesale on each run.

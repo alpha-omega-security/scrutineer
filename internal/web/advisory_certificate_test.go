@@ -66,6 +66,7 @@ func TestAdvisoryCertificate_absentWhenNotFixed(t *testing.T) {
 		{"no audit", ""},
 		{"bypass verdict", "bypass"},
 		{"regressed verdict", "regressed"},
+		{"incomplete verdict", "incomplete"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -129,5 +130,23 @@ func TestAdvisoryCertificate_usesLatestVerdict(t *testing.T) {
 
 	if w := getCertificate(t, s, adv.ID); w.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404 (latest verdict is regressed)", w.Code)
+	}
+}
+
+func TestAdvisoryCertificate_incompleteFiltered(t *testing.T) {
+	// A newer incomplete verdict does not override earlier verdicts
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/r", Name: "r"}
+	s.DB.Create(&repo)
+	adv := seedAdvisory(t, s, repo.ID)
+	s.DB.Create(&db.AdvisoryAudit{RepositoryID: repo.ID, AdvisoryUUID: adv.UUID, Status: "fixed", Evidence: "held"})
+	s.DB.Create(&db.AdvisoryAudit{RepositoryID: repo.ID, AdvisoryUUID: adv.UUID, Status: "incomplete", Evidence: "timeout exceeded"})
+
+	if w := getCertificate(t, s, adv.ID); w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (latest verdict is fixed)", w.Code)
+	}
+	if got := s.latestAdvisoryAuditStatuses([]db.Advisory{adv}); got[adv.ID] != "fixed" {
+		t.Errorf("badge status = %q, want fixed (incomplete does not override)", got[adv.ID])
 	}
 }

@@ -735,7 +735,7 @@ Fix-audit verdicts from the `advisory-deep-dive` skill: for each published advis
 | repository_id | integer FK | |
 | scan_id | integer FK | The `advisory-deep-dive` scan that produced the verdict. |
 | advisory_uuid | text | The audited advisory's `advisories.uuid`. |
-| status | text | `fixed`, `bypass`, `variant`, `incomplete` or `regressed`. `fixed` backs a public certificate; `incomplete` backs no certificate and opens no finding; the others each open one or more findings. |
+| status | text | `fixed`, `bypass`, `variant`, `incomplete` or `regressed`. `fixed` backs a public certificate; `incomplete` backs no certificate, opens no finding, and doesn't replace earlier statuses; the others each open one or more findings. |
 | evidence | text | Standalone prose describing what was reproduced (or failed to reproduce) and at which commit. Published verbatim in the certificate for `fixed`. |
 | finding_ids | text | Comma-joined `findings.id` values this verdict opened. Empty for `fixed` or `incomplete`. |
 | commit | text | The audited commit, denormalized from the scan. |

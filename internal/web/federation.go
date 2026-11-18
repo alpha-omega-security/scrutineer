@@ -237,7 +237,7 @@ func (s *Server) certificateRecords(tier interchange.Tier) ([]interchange.Statem
 		Joins("LEFT JOIN (SELECT repository_id, uuid, MIN(NULLIF(url, '')) AS url FROM advisories GROUP BY repository_id, uuid) advisories"+
 			" ON advisories.repository_id = advisory_audits.repository_id AND advisories.uuid = advisory_audits.advisory_uuid").
 		Where("advisory_audits.id IN (?)", s.DB.Model(&db.AdvisoryAudit{}).
-			Select("MAX(id)").Group("repository_id, advisory_uuid")).
+			Select("MAX(id)").Where(db.AdvisoryAuditDecided).Group("repository_id, advisory_uuid")).
 		Where(db.FederationNotOptedOut).
 		Where(publishableRepo).
 		Where("advisory_audits.advisory_uuid != ''")
