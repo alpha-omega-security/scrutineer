@@ -73,7 +73,7 @@ func (w *Worker) prepareDependentSrc(ctx context.Context, url, ref, workRoot str
 // CopyTree recursively copies src to dst, preserving permissions but not
 // ownership or timestamps. Symlinks are recreated; everything else is
 // copied byte-for-byte. Fast enough for git trees up to a few hundred MB.
-func CopyTree(src, dst string) error { return clone.CopyTree(src, dst) }
+func CopyTree(src, dst string) error { return clone.CopyTree(context.Background(), src, dst) }
 
 // doExposure runs the exposure skill for one (finding, dependent) pair.
 // The scan's Repository stays the library being audited; ./src in the

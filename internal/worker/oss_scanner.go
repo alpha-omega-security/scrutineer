@@ -96,7 +96,7 @@ func (w *Worker) ossScannerRegistryRoot(ctx context.Context, emit func(Event)) (
 	if err = os.MkdirAll(cacheRoot, dirPerm); err != nil {
 		return "", release, err
 	}
-	dir, err := ensureCloneWithOptions(ctx, db.Repository{URL: url}, cacheRoot, false, "", false, emit)
+	dir, err := ensureCloneWithOptions(ctx, db.Repository{URL: url}, cacheRoot, false, "", submoduleOptions{}, emit)
 	if err != nil {
 		return "", release, err
 	}

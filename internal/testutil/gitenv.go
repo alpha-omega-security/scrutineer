@@ -7,6 +7,22 @@ import (
 	"strconv"
 )
 
+// IsolateGitConfig hides the host's global and system git config from every
+// git the test process runs, including git run by the code under test, which
+// inherits os.Environ rather than GitEnv. Without it a developer's credential
+// helper, URL rewrites or signing config change test results. Call it from
+// TestMain.
+func IsolateGitConfig() {
+	for key, value := range map[string]string{
+		"GIT_CONFIG_GLOBAL":   os.DevNull,
+		"GIT_CONFIG_NOSYSTEM": "1",
+	} {
+		if err := os.Setenv(key, value); err != nil {
+			panic(err)
+		}
+	}
+}
+
 // GitEnv returns an environment for exec'd git commands in tests: it
 // suppresses the host's global/system git config and background maintenance,
 // and pins author/committer identity so commits are reproducible regardless

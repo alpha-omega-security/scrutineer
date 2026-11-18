@@ -139,7 +139,8 @@ func (w *Worker) prepareRepoSrcWithOptions(
 		return "", err
 	}
 	cacheSrc, err := ensureCloneWithOptions(
-		ctx, db.Repository{URL: url}, cacheRoot, options.FullHistory, ref, options.RecurseSubmodules, emit,
+		ctx, db.Repository{URL: url}, cacheRoot, options.FullHistory, ref,
+		submoduleOptions{recurse: options.RecurseSubmodules, credentialURLs: w.SubmoduleCredentialURLs}, emit,
 	)
 	if err != nil {
 		return "", err

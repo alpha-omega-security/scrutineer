@@ -72,7 +72,14 @@ func prepareLocalSrc(localPath, workRoot string, emit func(Event)) error {
 // removing a class of races where skill A's output gets clobbered by
 // skill B removing report.json before A finishes reading it.
 func ensureClone(ctx context.Context, repo db.Repository, work string, fullClone bool, ref string, emit func(Event)) (string, error) {
-	return ensureCloneWithOptions(ctx, repo, work, fullClone, ref, false, emit)
+	return ensureCloneWithOptions(ctx, repo, work, fullClone, ref, submoduleOptions{}, emit)
+}
+
+// submoduleOptions selects whether a clone fetches submodules and which
+// submodule URLs may use the host's credential helper.
+type submoduleOptions struct {
+	recurse        bool
+	credentialURLs []string
 }
 
 func ensureCloneWithOptions(
@@ -81,7 +88,7 @@ func ensureCloneWithOptions(
 	work string,
 	fullClone bool,
 	ref string,
-	recurseSubmodules bool,
+	submodules submoduleOptions,
 	emit func(Event),
 ) (string, error) {
 	src := filepath.Join(work, "src")
@@ -89,7 +96,7 @@ func ensureCloneWithOptions(
 		return "", err
 	}
 	if err := cloneOrFetch(
-		ctx, gitRetry{}, repo.URL, src, fullClone, ref, recurseSubmodules, emit,
+		ctx, gitRetry{}, repo.URL, src, fullClone, ref, submodules, emit,
 	); err != nil {
 		// A cancelled or timed-out scan is not evidence about the repository:
 		// flagging it unreachable would record a spurious clone_error and
@@ -119,7 +126,7 @@ func cloneOrFetch(
 	url, dst string,
 	fullClone bool,
 	ref string,
-	recurseSubmodules bool,
+	submodules submoduleOptions,
 	emit func(Event),
 ) error {
 	// Validate before emitting so a bad URL or ref does not log a
@@ -139,11 +146,16 @@ func cloneOrFetch(
 		}
 		emit(Event{Kind: KindText, Text: msg})
 	}
-	if recurseSubmodules {
-		emit(Event{Kind: KindText, Text: "$ git submodule update --init --recursive --depth 1 (best effort)"})
+	options := clone.EnsureOptions{Full: fullClone}
+	if submodules.recurse {
+		emit(Event{Kind: KindText, Text: "$ git submodule update --init --recursive --depth 1"})
+		options.RecurseSubmodules = true
+		options.SubmoduleCredentialURLs = submodules.credentialURLs
+		options.OnSubmoduleIssue = func(issue clone.SubmoduleIssue) {
+			emit(Event{Kind: KindText, Text: submoduleIssueText(issue)})
+		}
 	}
 	r := retry.toCloneWithNotify(emit)
-	options := clone.EnsureOptions{Full: fullClone, RecurseSubmodules: recurseSubmodules}
 	if err := clone.EnsureWithOptions(ctx, r, url, dst, ref, options); err != nil {
 		// Unwrap so ensureClone's own UnreachableError wrap does not
 		// double-prefix; the scan log records the git output verbatim.
@@ -154,6 +166,26 @@ func cloneOrFetch(
 		return err
 	}
 	return nil
+}
+
+func submoduleIssueText(issue clone.SubmoduleIssue) string {
+	reason := string(issue.Reason)
+	switch issue.Reason {
+	case clone.SubmoduleIssueFetchFailed:
+		reason = "fetch failed"
+	case clone.SubmoduleIssueDepthLimit:
+		reason = "nested deeper than the submodule depth limit"
+	case clone.SubmoduleIssueModuleLimit:
+		reason = "over the submodule count limit"
+	}
+	text := "submodule " + issue.Path + " not fetched: " + reason
+	if issue.URL != "" {
+		text += " (" + issue.URL + ")"
+	}
+	if issue.Output != "" {
+		text += "\n" + issue.Output
+	}
+	return text
 }
 
 func fetchTarget(ref string) string {

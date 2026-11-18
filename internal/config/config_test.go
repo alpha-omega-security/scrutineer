@@ -522,6 +522,24 @@ func TestLoad_rejectsInvalidClone(t *testing.T) {
 	}
 }
 
+func TestLoad_submoduleCredentialURLs(t *testing.T) {
+	c, err := Load(write(t, "submodule_credential_urls:\n  - https://github.com/my-org\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"https://github.com/my-org"}; !slices.Equal(c.SubmoduleCredentialURLs, want) {
+		t.Errorf("submodule_credential_urls = %q, want %q", c.SubmoduleCredentialURLs, want)
+	}
+
+	_, err = Load(write(t, "submodule_credential_urls:\n  - https://user:secret@github.com/my-org\n"))
+	if err == nil {
+		t.Fatal("expected error for credential URL with userinfo")
+	}
+	if !strings.Contains(err.Error(), "submodule_credential_urls") || strings.Contains(err.Error(), "secret") {
+		t.Errorf("error = %v, want the key named and the secret redacted", err)
+	}
+}
+
 func TestValidateRuntime(t *testing.T) {
 	for _, name := range []string{"", "docker", "podman", "apple"} {
 		if err := ValidateRuntime(name); err != nil {

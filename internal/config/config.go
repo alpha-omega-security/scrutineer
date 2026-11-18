@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/git-pkgs/clone"
 	"go.yaml.in/yaml/v4"
 
 	"scrutineer/internal/akrites"
@@ -121,6 +122,9 @@ type Config struct {
 	// Clone selects the clone-depth strategy: "shallow" (default, --depth 1)
 	// or "full" (no depth limit). Empty means use the built-in default.
 	Clone string `yaml:"clone"`
+	// SubmoduleCredentialURLs lists https URL prefixes whose submodules are
+	// fetched with the host's git credential helper.
+	SubmoduleCredentialURLs []string `yaml:"submodule_credential_urls"`
 	// ScanTimeout is the wall-clock limit for a single scan, as a Go
 	// duration string ("30m", "1h"). Empty leaves the built-in default.
 	ScanTimeout string `yaml:"scan_timeout"`
@@ -643,6 +647,9 @@ func Load(path string) (*Config, error) {
 	}
 	if err := ValidateClone(c.Clone); err != nil {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
+	}
+	if err := clone.ValidateSubmoduleCredentialURLs(c.SubmoduleCredentialURLs); err != nil {
+		return nil, fmt.Errorf("parse config %s: submodule_credential_urls: %w", path, err)
 	}
 	if err := ValidateRuntime(c.Runtime); err != nil {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)

@@ -3,11 +3,17 @@ package worker
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/git-pkgs/clone"
 
 	"scrutineer/internal/db"
 )
@@ -168,7 +174,7 @@ func TestValidateGitRef(t *testing.T) {
 // fall through to `git clone` and try to reach example.invalid.
 func TestCloneOrFetchRejectsBadRefBeforeNetwork(t *testing.T) {
 	dst := t.TempDir()
-	err := cloneOrFetch(context.Background(), gitRetry{}, "https://example.invalid/repo", dst, false, "--upload-pack=/bin/sh", false, func(Event) {
+	err := cloneOrFetch(context.Background(), gitRetry{}, "https://example.invalid/repo", dst, false, "--upload-pack=/bin/sh", submoduleOptions{}, func(Event) {
 		t.Errorf("emit must not be called when validation rejects the ref")
 	})
 	if err == nil {
@@ -183,7 +189,7 @@ func TestCloneOrFetchRejectsBadRefBeforeNetwork(t *testing.T) {
 // same entry point so a future refactor that re-orders the validators
 // trips this test rather than silently changing the order users see.
 func TestCloneOrFetchRejectsBadURL(t *testing.T) {
-	err := cloneOrFetch(context.Background(), gitRetry{}, "ssh://git@example.invalid/repo", t.TempDir(), false, "main", false, func(Event) {})
+	err := cloneOrFetch(context.Background(), gitRetry{}, "ssh://git@example.invalid/repo", t.TempDir(), false, "main", submoduleOptions{}, func(Event) {})
 	if err == nil {
 		t.Fatal("expected error for non-https URL")
 	}
@@ -192,38 +198,164 @@ func TestCloneOrFetchRejectsBadURL(t *testing.T) {
 	}
 }
 
-func TestCloneOrFetchWithOptionsUpdatesShallowSubmodules(t *testing.T) {
-	dst := t.TempDir()
-	if err := os.Mkdir(filepath.Join(dst, ".git"), 0o755); err != nil {
+// newPrivateSubmoduleOrigin serves an origin whose vendor/private submodule
+// points at submoduleURL, which is never reachable without credentials. It
+// returns the origin's URL and directory.
+func newPrivateSubmoduleOrigin(t *testing.T, submoduleURL string, extraConfig ...string) (string, string) {
+	t.Helper()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	originDir := t.TempDir()
+	testGit(t, originDir, "init", "--quiet", "-b", "main")
+	testGit(t, originDir, "config", "-f", ".gitmodules", "submodule.private.path", "vendor/private")
+	testGit(t, originDir, "config", "-f", ".gitmodules", "submodule.private.url", submoduleURL)
+	testGit(t, originDir, "add", ".gitmodules")
+	testGit(t, originDir, "update-index", "--add", "--cacheinfo",
+		"160000,0123456789abcdef0123456789abcdef01234567,vendor/private")
+	testGit(t, originDir, "commit", "--quiet", "-m", "private submodule")
+
+	url := "https://clone.test/private-submodule"
+	config := append([]string{
+		"url.file://" + originDir + ".insteadOf", url,
+		"protocol.file.allow", "always",
+	}, extraConfig...)
+	for i := 0; i < len(config); i += 2 {
+		t.Setenv(fmt.Sprintf("GIT_CONFIG_KEY_%d", i/2), config[i])
+		t.Setenv(fmt.Sprintf("GIT_CONFIG_VALUE_%d", i/2), config[i+1])
+	}
+	t.Setenv("GIT_CONFIG_COUNT", fmt.Sprint(len(config)/2))
+	t.Setenv("GIT_ALLOW_PROTOCOL", "https:file")
+	return url, originDir
+}
+
+func TestPrepareRepoSrcLogsMissingSubmodule(t *testing.T) {
+	url, _ := newPrivateSubmoduleOrigin(t, "https://127.0.0.1:1/example/private.git")
+
+	w := &Worker{DataDir: shortTempDir(t)}
+	var events []string
+	if _, err := w.prepareRepoSrcWithOptions(
+		context.Background(), url, "", t.TempDir(), RepoSrcOptions{RecurseSubmodules: true},
+		func(e Event) { events = append(events, FormatEvent(e)) },
+	); err != nil {
+		t.Fatalf("prepare with submodules: %v", err)
+	}
+	log := strings.Join(events, "\n")
+	want := "submodule vendor/private not fetched: fetch failed (https://127.0.0.1:1/example/private.git)"
+	if !strings.Contains(log, want) {
+		t.Errorf("scan log missing %q:\n%s", want, log)
+	}
+	if strings.Contains(log, "best effort") {
+		t.Errorf("scan log still marks the submodule step best effort:\n%s", log)
+	}
+}
+
+func TestPrepareRepoSrcDoesNotCopyStaleSubmoduleCheckout(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not installed")
+	}
+	libraryDir := t.TempDir()
+	testGit(t, libraryDir, "init", "--quiet", "-b", "main")
+	if err := os.WriteFile(filepath.Join(libraryDir, "lib.c"), []byte("old\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	testGit(t, libraryDir, "add", "lib.c")
+	testGit(t, libraryDir, "commit", "--quiet", "-m", "old")
 
-	var submoduleArgs []string
-	var events []Event
-	retry := gitRetry{
-		attempts: 1,
-		run: func(_ context.Context, _ string, _ []string, args ...string) (string, error) {
-			if slices.Contains(args, "submodule") {
-				submoduleArgs = append([]string(nil), args...)
-			}
-			return "", nil
-		},
+	const libraryURL = "https://clone.test/library"
+	url, originDir := newPrivateSubmoduleOrigin(t, libraryURL, "url.file://"+libraryDir+".insteadOf", libraryURL)
+	setGitlink := func(commit string) {
+		testGit(t, originDir, "update-index", "--cacheinfo", "160000,"+commit+",vendor/private")
+		testGit(t, originDir, "commit", "--quiet", "-m", "point submodule at "+commit)
 	}
-	err := cloneOrFetch(
-		context.Background(), retry, "https://example.invalid/repo", dst, false, "", true,
-		func(event Event) { events = append(events, event) },
-	)
+	setGitlink(testGit(t, libraryDir, "rev-parse", "HEAD"))
+
+	w := &Worker{DataDir: shortTempDir(t)}
+	options := RepoSrcOptions{RecurseSubmodules: true}
+	first := t.TempDir()
+	if _, err := w.prepareRepoSrcWithOptions(context.Background(), url, "", first, options, func(Event) {}); err != nil {
+		t.Fatalf("first prepare: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(first, "src", "vendor", "private", "lib.c")); err != nil {
+		t.Fatalf("submodule not checked out: %v", err)
+	}
+
+	setGitlink("0123456789abcdef0123456789abcdef01234567")
+	second := t.TempDir()
+	if _, err := w.prepareRepoSrcWithOptions(context.Background(), url, "", second, options, func(Event) {}); err != nil {
+		t.Fatalf("second prepare: %v", err)
+	}
+	entries, err := os.ReadDir(filepath.Join(second, "src", "vendor", "private"))
 	if err != nil {
-		t.Fatalf("cloneOrFetchWithOptions: %v", err)
+		t.Fatal(err)
 	}
-	want := []string{"-c", "core.longpaths=true", "submodule", "update", "--init", "--recursive", "--depth", "1"}
-	if !slices.Equal(submoduleArgs, want) {
-		t.Errorf("submodule args = %v, want %v", submoduleArgs, want)
+	if len(entries) != 0 {
+		t.Errorf("scan copy holds the submodule's previous checkout: %d entries", len(entries))
 	}
-	if !slices.ContainsFunc(events, func(event Event) bool {
-		return strings.Contains(event.Text, "submodule update --init --recursive --depth 1")
-	}) {
-		t.Errorf("events = %v, want submodule update command", events)
+}
+
+func TestPrepareRepoSrcUsesCredentialHelperOnlyForTrustedSubmodules(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("WWW-Authenticate", `Basic realm="private"`)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(server.Close)
+
+	for _, test := range []struct {
+		credentialURLs []string
+		wantHelper     bool
+	}{
+		{nil, false},
+		{[]string{server.URL + "/other"}, false},
+		{[]string{server.URL + "/example"}, true},
+	} {
+		marker := filepath.Join(t.TempDir(), "helper-called")
+		t.Setenv("SCRUTINEER_TEST_HELPER_MARKER", filepath.ToSlash(marker))
+		url, _ := newPrivateSubmoduleOrigin(t, server.URL+"/example/private.git",
+			"credential.helper", `!f() { echo "$1" >> "$SCRUTINEER_TEST_HELPER_MARKER"; }; f`,
+			"http.sslVerify", "false",
+		)
+
+		w := &Worker{DataDir: shortTempDir(t), SubmoduleCredentialURLs: test.credentialURLs}
+		var events []string
+		if _, err := w.prepareRepoSrcWithOptions(
+			context.Background(), url, "", t.TempDir(), RepoSrcOptions{RecurseSubmodules: true},
+			func(e Event) { events = append(events, FormatEvent(e)) },
+		); err != nil {
+			t.Fatalf("credential URLs %q: prepare with submodules: %v", test.credentialURLs, err)
+		}
+		_, err := os.Stat(marker)
+		if called := err == nil; called != test.wantHelper {
+			t.Errorf("credential URLs %q: helper called = %v, want %v\n%s",
+				test.credentialURLs, called, test.wantHelper, strings.Join(events, "\n"))
+		}
+		if !slices.ContainsFunc(events, func(e string) bool { return strings.Contains(e, "vendor/private not fetched") }) {
+			t.Errorf("credential URLs %q: missing submodule not logged:\n%s", test.credentialURLs, strings.Join(events, "\n"))
+		}
+	}
+}
+
+func TestSubmoduleIssueText(t *testing.T) {
+	for _, test := range []struct {
+		issue clone.SubmoduleIssue
+		want  string
+	}{
+		{
+			clone.SubmoduleIssue{Path: "a", URL: "https://h/a.git", Reason: clone.SubmoduleIssueFetchFailed, Output: "fatal: denied"},
+			"submodule a not fetched: fetch failed (https://h/a.git)\nfatal: denied",
+		},
+		{
+			clone.SubmoduleIssue{Path: "a/b", Reason: clone.SubmoduleIssueDepthLimit},
+			"submodule a/b not fetched: nested deeper than the submodule depth limit",
+		},
+		{
+			clone.SubmoduleIssue{Path: "c", URL: "https://h/c.git", Reason: clone.SubmoduleIssueModuleLimit},
+			"submodule c not fetched: over the submodule count limit (https://h/c.git)",
+		},
+	} {
+		if got := submoduleIssueText(test.issue); got != test.want {
+			t.Errorf("submoduleIssueText(%+v) = %q, want %q", test.issue, got, test.want)
+		}
 	}
 }
 
