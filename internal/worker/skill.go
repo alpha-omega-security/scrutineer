@@ -1726,13 +1726,13 @@ func parseReconReport(skillName, schema, pocField, raw string) (*skillContextRec
 	return &report, nil
 }
 
-// stageThreatModel writes the repository's operator-edited threat model to
-// ./threat_model.json so skills that consume one (security-deep-dive) can
-// load it in preference to fetching the latest threat-model scan from the
-// API. No-op when the repository has no override set, and for
-// subpath-scoped scans: the override is authored against the repository
-// root, and the staged file would take precedence over anything the
-// skill derives from the subproject itself.
+// stageThreatModel writes the repository's stored threat model to
+// ./threat_model.json so skills can load it in preference to fetching the
+// latest threat-model scan from the API. The stored model comes from the
+// latest root default-branch threat-model scan or a workbench edit. No-op
+// when none is stored yet, and for subpath-scoped scans: the model
+// describes the repository root, and the staged file would take precedence
+// over anything the skill derives from the subproject itself.
 func stageThreatModel(workRoot, subPath, model string) error {
 	if model == "" || subPath != "" {
 		return nil
