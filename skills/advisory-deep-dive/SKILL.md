@@ -34,6 +34,7 @@ This audit reuses the six-step discipline of the `security-deep-dive` skill — 
 
 - `./src` — the cloned repository, full history preserved under `./src/.git`
 - `./context.json` — repo identity plus a `scrutineer` block with `api_base`, `token`, `repository_id`, and optional `scan_subpath`
+- `./threat_model.json` — the repository's current threat model, absent for subpath scans and before the first root scan
 - `./report.json` — write your audit report (per-advisory verdicts plus any findings) here
 - `./schema.json` — the JSON schema your report must conform to
 
@@ -48,7 +49,7 @@ If `scrutineer.scan_subpath` is set, scope every code read, trace, and reported 
 - `GET {api_base}/repositories/{repository_id}` — canonical metadata
 - `GET {api_base}/repositories/{repository_id}/packages` — published packages, to verify against the shipped artefact in Step 4 of the per-candidate checklist
 - `GET {api_base}/repositories/{repository_id}/dependents` — top dependents for reach analysis
-- `GET {api_base}/repositories/{repository_id}/scans?skill=threat-model&status=done` then `GET {api_base}/scans/{id}` — the structured threat model for trust boundaries, if one ran
+- `GET {api_base}/repositories/{repository_id}/scans?skill=threat-model&status=done` then `GET {api_base}/scans/{id}` — the structured threat model for trust boundaries, if one ran (fallback when `./threat_model.json` is absent)
 
 If any request returns an empty list or a non-200, that upstream scan has not run or the API is unreachable; fall back to the other worklist and reasoning over `./src`.
 
@@ -74,6 +75,8 @@ For a history-only fix, the mined commit is already the anchor. Read it with `gi
 
 ## Step 3: The four questions
 
+If `./threat_model.json` exists in the workdir, parse it and use it as the threat model; do not fetch one from the API. The file takes precedence even if a `threat-model` scan has already run. Otherwise fetch the threat-model scan: `GET {api_base}/repositories/{repository_id}/scans?skill=threat-model&status=done`, take the most recent id, then `GET {api_base}/scans/{id}` and parse the `report` field as JSON. Either way, if you get one it already holds the trust map: `components` and `out_of_scope` say which code is in the model, `adversaries` names the actors, `trust_boundaries` describes the line per component, and `entry_points` is the per-parameter table the Boundary step looks up. Treat threat-model entries with `provenance: "inferred"` as working hypotheses you may overturn during the per-candidate checklist; `"documented"` entries cite a file:line you can re-read. An empty list or a non-200 means the threat-model skill has not run on this repository yet, in which case derive the boundaries yourself in the Boundary step.
+
 Anchored on the fix diff, ask each question. Any candidate answer runs the full per-candidate checklist below before it becomes a finding.
 
 **Regression.** Reconstruct the advisory's original reproduction from its page and the pre-fix state, then run it against the audited commit. If it fires again, a later change reopened the bug: this is the `regressed` verdict, and the fix diff you anchored on no longer holds.
@@ -89,7 +92,7 @@ Anchored on the fix diff, ask each question. Any candidate answer runs the full 
 For every candidate from Step 3, apply the `security-deep-dive` six steps in order and stop at the step that rules it out, recording which:
 
 1. **Trace** the value from the sink back to a trust boundary.
-2. **Boundary** — is the input actually attacker-controlled in this project's threat model, or a trusted developer/operator choice? Check any existing mitigation the project already has before concluding the input reaches unguarded.
+2. **Boundary** — is the input actually attacker-controlled in this project's threat model, or a trusted developer/operator choice? When a threat-model report was loaded, look the sink's entry function and parameter up in its `entry_points` table and cite the row by index (`entry_points[i]`): `attacker_controllable: "no"` rules the sink out for non-`inferred` rows, and an `inferred` `"no"` row rules the sink out once its claim is confirmed against the current code; `"conditional"` means the row's `condition` is the precondition you carry into Rate; otherwise the sink carries on to Validate. Check any existing mitigation the project already has before concluding the input reaches unguarded.
 3. **Validate:** write a reproduction and run it against current HEAD. Write and run the files in `./poc/<finding-id>/`, outside `./src`, using the report-local finding ID such as `F001`. Include `README.md` with prerequisites and expected output, plus `run.sh` with the exact build/run commands and an explicit target checkout or executable argument. Finish running before publishing the finding, then leave those files unchanged: Scrutineer retains the first successful capture until the finding is deleted. Keep at most 64 regular files, 1 MiB per file and 2 MiB total, with no links, credentials, dependencies, caches or unrelated build products. Also paste every script and input verbatim into `validation`, each in a closed Markdown fence with `language filename=relative/path` on the opening line, such as `python filename=probe.py`. Use unique paths relative to the reproduction directory with no spaces, absolute paths, or `.` or `..` components. Reserve `README.md` for bundle instructions. Put build/run commands in a `sh filename=run.sh` fence, and observed output and quoted source excerpts in separate unnamed `text` or `console` fences. Close fences on their own lines; do not use `--- FILENAME ---` delimiters. A bypass or incomplete-fix candidate that cannot be reproduced at HEAD is not a finding: the fix held.
 4. **Prior art** — cite the advisory (`uuid`, `url`) or history-only fix commit this candidate descends from. Check issues and PRs for whether a maintainer already considered and declined this variant. Set `discovered_via` to `advisory` for a published advisory, `source` for a history-only fix, or `issue-tracker` when the variant was actually described by an open issue you found while checking.
 5. **Reach** — is the candidate reachable from a public entry point in the shipped artefact? Record `reachable`, `harness_only`, or `unclear`.
@@ -103,6 +106,7 @@ Subagents do not see this SKILL.md — only the prompt you write them and the sh
 
 - Tell every subagent, in its prompt, not to write or touch `./report.json`. That file is yours to write once, at the end.
 - Give each a distinct scratch file — `./candidates-<advisory-id>.json` — and have it return that path holding both its advisory's verdict and any findings it opened.
+- Give each subagent the shared `./threat_model.json` when it exists; otherwise write it once from the threat model you loaded, in full so `entry_points[i]` indexes stay valid. Tell each subagent to read it for its "Boundary" checks, and that `attacker_controllable: "no"` rules the sink out for non-`inferred` rows, and an `inferred` `"no"` row rules the sink out once its claim is confirmed against the current code; `"conditional"` means the row's `condition` is the precondition you carry into Rate; otherwise the sink carries on to Validate. If no threat model is loaded, tell them to derive boundaries from source instead.
 - You are the sole writer of `./report.json`. Read every scratch file back, union the findings and collect one verdict per advisory into `audits`, and write the one report yourself.
 
 ## Output

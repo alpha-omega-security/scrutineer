@@ -40,6 +40,7 @@ valid outcome.
 - ./src contains the cloned repository.
 - ./context.json contains repository identity, optional scan_subpath, optional
   scan_config, and the Scrutineer API details.
+- ./threat_model.json — the repository's current threat model, absent for subpath scans and before the first root scan.
 - ./schema.json defines report.json.
 - ./references/ contains ecosystem-specific review guidance with API names and
   framework defaults.
@@ -65,9 +66,7 @@ administrator's configuration, a developer-only tool, tests, examples,
 fixtures, documentation, generated files, and vendored code are not
 attacker-controlled by default.
 
-When a prior threat-model report is available through the local Scrutineer API,
-use it to refine boundaries. If it is unavailable, continue with source-only
-analysis rather than making assumptions.
+If `./threat_model.json` exists in the workdir, parse it and use it as the threat model; do not fetch one from the API. The file takes precedence even if a `threat-model` scan has already run. Otherwise fetch the threat-model scan: `GET {api_base}/repositories/{repository_id}/scans?skill=threat-model&status=done`, take the most recent id, then `GET {api_base}/scans/{id}` and parse the `report` field as JSON. Either way, if you get one it already holds the trust map: `components` and `out_of_scope` say which code is in the model, `adversaries` names the actors, `trust_boundaries` describes the line per component, and `entry_points` is the per-parameter table; use it to refine boundaries. An empty list or a non-200 means the threat-model skill has not run on this repository yet: continue with source-only analysis rather than making assumptions.
 
 ## Existing findings
 
