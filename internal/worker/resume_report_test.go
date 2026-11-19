@@ -309,3 +309,54 @@ func TestFollowupJobClearsRestoredReport(t *testing.T) {
 		t.Fatal("followup changed the main job")
 	}
 }
+
+// A restart mid-scan never reaches finalizeScan. SweepRunning fails the scan,
+// which is resumable because its session id was saved. The startup sweep then
+// sheds its workspace. The output file must be saved first.
+func TestSweepSavesReportOfScanKilledByRestart(t *testing.T) {
+	w, skill, repoID := newResumeTestWorker(t, &reportRunner{})
+	scan := createSkillScan(t, w, skill, repoID, db.Scan{})
+	if err := w.DB.Model(&scan).Updates(map[string]any{"status": db.ScanRunning, "session_id": "sess-1"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(w.workRoot(scan.ID), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(w.workRoot(scan.ID), defaultSkillOutputFile), []byte(partialReport), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := db.SweepRunning(w.DB); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.sweepOrphanScanArtifacts(); err != nil {
+		t.Fatal(err)
+	}
+	assertPathMissing(t, w.workRoot(scan.ID))
+	if saved := savedResumeReport(w, scan.ID); saved != partialReport {
+		t.Fatalf("saved report after the sweep = %q, want the partial report", saved)
+	}
+}
+
+// When a retry was already queued at the restart the sweep keeps the
+// workspace, but the retry's reset would wipe the file before restoring.
+func TestResumeReportSavedFromSurvivingWorkspace(t *testing.T) {
+	runner := &reportRunner{session: "sess-1", err: errors.New("still stuck")}
+	w, skill, repoID := newResumeTestWorker(t, runner)
+	root := createSkillScan(t, w, skill, repoID, db.Scan{})
+	if err := w.DB.Model(&root).Updates(map[string]any{"status": db.ScanFailed, "session_id": "sess-1"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	root.Status, root.SessionID = db.ScanFailed, "sess-1"
+	if err := os.MkdirAll(w.workRoot(root.ID), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(w.workRoot(root.ID), defaultSkillOutputFile), []byte(partialReport), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	runScan(t, w, retryOf(t, w, skill, repoID, root).ID)
+	if runner.seen != partialReport {
+		t.Fatalf("resumed run saw report.json = %q, want the report from the surviving workspace", runner.seen)
+	}
+}

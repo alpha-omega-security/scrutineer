@@ -503,10 +503,10 @@ func (w *Worker) harnessStateDirID(scanID uint) string {
 }
 
 // RemoveScanArtifacts deletes the on-disk per-scan workspace, harness state
-// directory and saved partial report for scanID. Normal terminal cleanup removes workspaces,
-// while resumable scans (failed or max-turns-hit) keep their state dir so a
-// retry can resume the session; this explicit removal path reclaims both. It
-// is a no-op when the
+// directory and saved partial report for scanID. Normal terminal cleanup
+// removes workspaces, while resumable scans (failed or max-turns-hit) keep
+// their state dir and saved report so a retry can resume the session; this
+// explicit removal path reclaims all three. It is a no-op when the
 // directories are already gone. Passing every scan id of a repository covers
 // resume lineages too: a retry reuses its root's workspace id, and the root
 // scan is itself in the repo, while the retry's own id maps to a directory

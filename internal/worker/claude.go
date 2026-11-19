@@ -434,19 +434,13 @@ func buildLoggedPrompt(skill *db.Skill, backend string) string {
 		"\n\n--- SKILL.md ---\n\n" + renderSkillMD(skill)
 }
 
-// followup returns a copy of sj for a further run in the same workspace
-// (schema repair, cost-cap finalize, refusal audit). The report restored for
-// the main run is not that run's input, so the copy clears its output file
-// first like any other run.
+// followup is for repair, finalize and audit runs, which must not keep the restored report.
 func (sj SkillJob) followup() SkillJob {
 	sj.restoredReport = ""
 	return sj
 }
 
-// clearStaleOutput removes the output file a previous invocation left at
-// outPath so the run's report is only what this run writes. A run that
-// resumes from a restored partial report keeps it: that file is the input the
-// resumed agent continues from.
+// clearStaleOutput keeps a restored report, which is the resumed agent's input.
 func (sj SkillJob) clearStaleOutput(outPath string) {
 	if sj.restoredReport != "" {
 		return

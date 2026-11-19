@@ -52,7 +52,7 @@ func (w *Worker) sweepOrphanScanArtifacts() (int, error) {
 		}
 		var removeErr error
 		if preserveState {
-			removeErr = os.RemoveAll(w.workRoot(scanID))
+			removeErr = w.shedResumableWorkspace(scanID)
 		} else {
 			removeErr = w.RemoveScanArtifacts(scanID)
 		}
@@ -128,4 +128,17 @@ func (w *Worker) scanArtifactSweepDecision(scanID uint) (reap, preserveState boo
 	}
 
 	return true, scan.Resumable(), nil
+}
+
+// shedResumableWorkspace saves the output file before removing the workspace:
+// a process that died mid-scan never ran finalizeScan, which normally saves it.
+func (w *Worker) shedResumableWorkspace(rootID uint) error {
+	var scan db.Scan
+	if err := w.DB.Select("id, kind, skill_id").Where("id = ?", rootID).Limit(1).Find(&scan).Error; err != nil {
+		return fmt.Errorf("load scan %d for artifact sweep: %w", rootID, err)
+	}
+	if scan.Kind == JobSkill && scan.SkillID != nil {
+		w.saveLineageReport(rootID, *scan.SkillID, func(Event) {})
+	}
+	return os.RemoveAll(w.workRoot(rootID))
 }

@@ -9,15 +9,6 @@ import (
 	"scrutineer/internal/db"
 )
 
-// A scan that fails partway (a timeout, a killed container, an error) keeps its
-// harness session so a retry can resume the conversation, but finalizeScan
-// deletes the workspace and the retry starts from a reset one. Without help the
-// resumed agent remembers writing ./report.json and finds it gone, so it redoes
-// the work. The partial output file is the one piece of agent work that is
-// carried across: finalizeScan copies it out of the workspace into a host-only
-// directory, then doSkill writes it back after the reset. Nothing else in the
-// workspace is carried, so the reset still removes anything the agent planted.
-
 const resumeReportDirName = "resume-report"
 
 func (w *Worker) resumeReportDirID(scanID uint) string {
@@ -36,39 +27,36 @@ func keepsResumeState(scan *db.Scan) bool {
 	return scan.Resumable() || (scan.Status == db.ScanPaused && scan.SessionID != "")
 }
 
-// saveResumeReport copies the skill's output file out of a workspace that is
-// about to be deleted when the run leaves a session to resume. An attempt that
-// wrote no output keeps the copy an earlier attempt saved. The read accepts
-// only a regular file, so a link the agent left under that name saves nothing.
 func (w *Worker) saveResumeReport(scan *db.Scan, emit func(Event)) {
 	if scan.Kind != JobSkill || scan.SkillID == nil || !keepsResumeState(scan) {
 		return
 	}
+	w.saveLineageReport(workspaceScanID(scan), *scan.SkillID, emit)
+}
+
+// saveLineageReport keeps the earlier copy when the workspace holds no output file.
+func (w *Worker) saveLineageReport(rootID, skillID uint, emit func(Event)) {
 	var skill db.Skill
-	if err := w.DB.Select("id, name, output_file").First(&skill, *scan.SkillID).Error; err != nil {
-		w.Log.Warn("resume report: load skill", "scan", scan.ID, "err", err)
+	if err := w.DB.Select("id, name, output_file").First(&skill, skillID).Error; err != nil {
+		w.Log.Warn("resume report: load skill", "scan", rootID, "err", err)
 		return
 	}
-	// A skill without an output file has no report for the runner to read
-	// back, so there is nothing a retry could continue from.
 	if skill.OutputFile == "" || validateSkillPaths(skill.Name, skill.OutputFile) != nil {
 		return
 	}
 	name := skill.OutputFile
-	report := readCappedReport(filepath.Join(w.scanWorkRoot(scan), name), emit)
+	report := readCappedReport(filepath.Join(w.workRoot(rootID), name), emit)
 	if report == "" {
 		return
 	}
-	if err := writeResumeReport(w.resumeReportDir(scan), name, report); err != nil {
-		w.Log.Warn("resume report: save", "scan", scan.ID, "err", err)
+	if err := writeResumeReport(w.resumeReportDirID(rootID), name, report); err != nil {
+		w.Log.Warn("resume report: save", "scan", rootID, "err", err)
 		return
 	}
 	emit(Event{Kind: KindText, Text: fmt.Sprintf("kept the partial ./%s (%d bytes) for a retry to resume from", name, len(report))})
 }
 
-// writeResumeReport replaces dir/name through a temporary file so a crash
-// mid-write never leaves a truncated copy for the next retry. dir is under
-// DataDir and never mounted into a container.
+// writeResumeReport goes through a temporary file so a crash never leaves a truncated copy.
 func writeResumeReport(dir, name, report string) error {
 	if err := os.MkdirAll(dir, dirPerm); err != nil {
 		return err
@@ -88,9 +76,7 @@ func writeResumeReport(dir, name, report string) error {
 	return os.Rename(tmp.Name(), filepath.Join(dir, name))
 }
 
-// restoreResumeReport writes the saved partial output file into a freshly
-// reset workspace when the scan resumes a session. It returns what it wrote
-// so the run can tell a report the agent left untouched from a new one.
+// restoreResumeReport returns what it wrote so dropStaleRestoredReport can spot untouched bytes.
 func (w *Worker) restoreResumeReport(workRoot string, scan *db.Scan, skill *db.Skill, emit func(Event)) string {
 	if scan.SessionID == "" || skill.OutputFile == "" {
 		return ""
@@ -108,12 +94,8 @@ func (w *Worker) restoreResumeReport(workRoot string, scan *db.Scan, skill *db.S
 	return report
 }
 
-// dropStaleRestoredReport discards a restored report the run never changed
-// when the run did not continue the resumed session. The harness restarts
-// fresh when the session store has lost the conversation. That agent
-// never knew about the earlier attempt, so the bytes it left in place are not
-// its output. The file and the saved copy go too: the new session is the one
-// a later retry resumes, so either copy would come back to it as its own.
+// dropStaleRestoredReport removes both copies because a fresh session would otherwise get the
+// old bytes back as its own on the next retry.
 func (w *Worker) dropStaleRestoredReport(scan *db.Scan, sj SkillJob, report string, emit func(Event)) string {
 	if sj.restoredReport == "" || report != sj.restoredReport || scan.SessionID == sj.ResumeSessionID {
 		return report
@@ -126,9 +108,7 @@ func (w *Worker) dropStaleRestoredReport(scan *db.Scan, sj SkillJob, report stri
 	return ""
 }
 
-// removeWorkspaceEntry removes the workspace-relative name through a root
-// opened at workRoot, so a link the agent left in its place cannot redirect
-// the removal outside the workspace.
+// removeWorkspaceEntry goes through os.Root so an agent-planted link cannot redirect it.
 func removeWorkspaceEntry(workRoot, name string) error {
 	if name == "" || !filepath.IsLocal(name) {
 		return nil
