@@ -490,3 +490,46 @@ func TestDoSkill_costCapCoversRefusalAudit(t *testing.T) {
 		})
 	}
 }
+
+func TestCostGuard_warnsOnceOnUnpricedUsage(t *testing.T) {
+	scan := &db.Scan{Model: "openrouter/meta/muse-spark-1.3-contributor"}
+	_, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	g := newCostGuard(scan, 1.0, cancel)
+	var texts []string
+	emit := g.wrap(func(e Event) {
+		if e.Kind == KindText {
+			texts = append(texts, e.Text)
+		}
+	})
+
+	emit(Event{Kind: KindUsage})
+	emit(Event{Kind: KindUsage, CostUSD: 0.1, Usage: Usage{InputTokens: 10}})
+	if len(texts) != 0 {
+		t.Fatalf("warned for priced or empty usage: %q", texts)
+	}
+	emit(Event{Kind: KindUsage, Usage: Usage{InputTokens: 10, OutputTokens: 5}})
+	emit(Event{Kind: KindUsage, Usage: Usage{InputTokens: 10}})
+	if len(texts) != 1 || !strings.Contains(texts[0], "no price is known for openrouter/meta/muse-spark-1.3-contributor") {
+		t.Fatalf("warnings = %q, want exactly one naming the model", texts)
+	}
+	if g.Tripped() {
+		t.Error("an unpriced warning must not trip the cap")
+	}
+}
+
+func TestCostGuard_unpricedWarningPrefersEventModel(t *testing.T) {
+	scan := &db.Scan{Model: "configured"}
+	_, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	g := newCostGuard(scan, 1.0, cancel)
+	var text string
+	g.wrap(func(e Event) {
+		if e.Kind == KindText {
+			text = e.Text
+		}
+	})(Event{Kind: KindUsage, Model: "reported", Usage: Usage{OutputTokens: 1}})
+	if !strings.Contains(text, "no price is known for reported") {
+		t.Fatalf("warning = %q, want the model the event reported", text)
+	}
+}

@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -29,7 +30,9 @@ type costGuard struct {
 	cap     float64
 	pending float64
 	tripped bool
-	cancel  context.CancelCauseFunc
+	// warnedUnpriced is set once the run has said its usage carries no price.
+	warnedUnpriced bool
+	cancel         context.CancelCauseFunc
 	// groups is set when the scan's group has a budget.
 	groups *groupSpend
 }
@@ -47,6 +50,7 @@ func (g *costGuard) wrap(emit func(Event)) func(Event) {
 		switch e.Kind {
 		case KindUsage:
 			g.pending += e.CostUSD
+			g.warnUnpriced(e, emit)
 		case KindResult:
 			g.pending = 0
 		default:
@@ -73,6 +77,19 @@ func (g *costGuard) wrap(emit func(Event)) func(Event) {
 		emit(Event{Kind: KindText, Text: notice})
 		g.cancel(errCostCapped)
 	}
+}
+
+// warnUnpriced says once per run that a usage event recorded tokens without a
+// price. Such usage counts as $0 against the scan and group caps, so a model
+// no price table knows can spend without ever reaching either cap.
+func (g *costGuard) warnUnpriced(e Event, emit func(Event)) {
+	u := e.Usage
+	if g.warnedUnpriced || e.CostUSD != 0 || u.InputTokens+u.OutputTokens+u.CacheReadTokens+u.CacheWriteTokens == 0 {
+		return
+	}
+	g.warnedUnpriced = true
+	model := cmp.Or(e.Model, g.scan.Model, "this model")
+	emit(Event{Kind: KindText, Text: fmt.Sprintf("cost cap: no price is known for %s, so its usage counts as $0 and the cost cap cannot stop this scan", model)})
 }
 
 // foldPending charges usage that no result event folded in. A run stopped by

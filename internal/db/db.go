@@ -1536,6 +1536,13 @@ func RetireDependentsSkill(gdb *gorm.DB) error {
 		Update("active", false).Error
 }
 
+// CostUnpriced reports whether the scan recorded token usage but no cost: the
+// backend reported none and no price table knows the model, so the zero is
+// a missing price rather than a free run or a run that never reached the model.
+func (s Scan) CostUnpriced() bool {
+	return s.CostUSD == 0 && s.InputTokens+s.OutputTokens+s.CacheReadTokens+s.CacheWriteTokens > 0
+}
+
 func (s Scan) Duration() time.Duration {
 	if s.StartedAt == nil || s.FinishedAt == nil {
 		return 0

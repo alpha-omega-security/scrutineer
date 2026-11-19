@@ -247,7 +247,10 @@ with a "cost cap" badge, partial coverage and the reason `cost_cap`. Actual
 spend can exceed the cap by one call plus the finalize turn.
 
 The cap does not apply to the codex backend because it emits no usage events,
-so a codex scan always runs to completion. A run whose final result pushes it
+so a codex scan always runs to completion. It cannot stop a model that no
+price table knows either: that model's usage counts as $0, so the scan log
+warns once when a capped run reports unpriced usage. Such a scan shows its
+cost as "unpriced" rather than "-". A run whose final result pushes it
 past the cap is not treated as capped since it already finished. Retrying a
 capped scan resumes the saved session with a fresh budget and keeps the same
 cap.
