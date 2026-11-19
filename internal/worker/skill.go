@@ -187,7 +187,8 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 	}
 
 	// Resumes reuse the lineage path but replace agent-writable contents.
-	// Only validated PoC files are copied across the reset.
+	// Only validated PoC files and the saved partial output file are carried
+	// across the reset.
 	workRoot := w.scanWorkRoot(scan)
 	if err := validateSkillPaths(skill.Name, skill.OutputFile); err != nil {
 		return "", err
@@ -195,9 +196,15 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 	if scan.Repository.IsLocal() && skill.RequiresRemote {
 		return "", fmt.Errorf("skill %q requires a remote repository; cannot run on local directory", skill.Name)
 	}
+	// A workspace that outlived its run (a restart while a retry was already
+	// queued) still holds the output file, so save it before the reset.
+	if scan.SessionID != "" {
+		w.saveLineageReport(workspaceScanID(scan), skill.ID, emit)
+	}
 	if err := resetSkillWorkspace(workRoot, scan, &skill, emit); err != nil {
 		return "", fmt.Errorf("reset work: %w", err)
 	}
+	restoredReport := w.restoreResumeReport(workRoot, scan, &skill, emit)
 	if scan.Repository.IsLocal() {
 		if err := prepareLocalSrc(scan.Repository.LocalPath(), workRoot, emit); err != nil {
 			return "", fmt.Errorf("copy local source: %w", err)
@@ -261,6 +268,7 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 		Profile:         scan.Profile,
 		EgressPolicy:    scan.EgressPolicy,
 		RequiresProfile: skill.RequiresProfile,
+		restoredReport:  restoredReport,
 	}
 	w.applyResume(scan, &sj, emit)
 	w.configureCapabilityPreflight(ctx, scan, &skill, &sj, document)
@@ -279,6 +287,7 @@ func (w *Worker) runAndParseSkill(ctx context.Context, scan *db.Scan, skill *db.
 	defer stop()
 	res, err := w.runSkillWithFallback(runCtx, scan, skill, sj, workRoot, hardScope, runEmit)
 	w.applySkillResult(scan, res)
+	res.Report = w.dropStaleRestoredReport(scan, sj, res.Report, emit)
 	if err != nil {
 		guard.foldPending()
 	}
@@ -434,7 +443,7 @@ func (w *Worker) repairSchemaReport(ctx context.Context, skill *db.Skill, scan *
 	}
 
 	emit(Event{Kind: KindText, Text: fmt.Sprintf("validation: %s failed validation; asking the agent to repair it", outputFile)})
-	repairJob := sj
+	repairJob := sj.followup()
 	repairJob.ResumeSessionID = scan.SessionID
 	repairJob.ResumePrompt = buildSchemaRepairPrompt(skill, detail, report)
 	repairJob.MaxTurns = schemaRepairMaxTurns

@@ -137,7 +137,8 @@ occasional manual archives only.
 Copy the main file with its `-wal`/`-shm` sidecars: scrutineer holds the database
 open, so the `-wal` can carry committed transactions not yet folded into the
 `.db`, which alone would be an inconsistent copy. The glob takes whichever exist;
-copy the session stores and workspaces separately if preserving resume state:
+copy the session stores (`harness-state/`), the saved partial reports
+(`resume-report/`) and the workspaces separately if preserving resume state:
 
 ```sh
 # With the server stopped:

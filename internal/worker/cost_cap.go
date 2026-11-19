@@ -251,7 +251,7 @@ func (w *Worker) finalizeCostCapped(ctx context.Context, skill *db.Skill, scan *
 		emit(Event{Kind: KindText, Text: "cost cap: no session to resume; using the partial report as-is"})
 		return report
 	}
-	job := sj
+	job := sj.followup()
 	job.ResumeSessionID = scan.SessionID
 	job.ResumePrompt = costCapPrompt(skill)
 	job.MaxTurns = costCapFinalizeMaxTurns

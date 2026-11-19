@@ -35,7 +35,7 @@ func (w *Worker) auditSkillRefusals(ctx context.Context, skill *db.Skill, scan *
 	}
 
 	emit(Event{Kind: KindText, Text: "refusal audit: asking the agent to account for skipped analysis"})
-	auditJob := sj
+	auditJob := sj.followup()
 	auditJob.ResumeSessionID = scan.SessionID
 	auditJob.ResumePrompt = buildRefusalAuditPrompt()
 	auditJob.OutputFile = refusalAuditOutputFile
