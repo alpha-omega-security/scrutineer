@@ -49,10 +49,12 @@ func (w *Worker) saveResumeReport(scan *db.Scan, emit func(Event)) {
 		w.Log.Warn("resume report: load skill", "scan", scan.ID, "err", err)
 		return
 	}
-	if validateSkillPaths(skill.Name, skill.OutputFile) != nil {
+	// A skill without an output file has no report for the runner to read
+	// back, so there is nothing a retry could continue from.
+	if skill.OutputFile == "" || validateSkillPaths(skill.Name, skill.OutputFile) != nil {
 		return
 	}
-	name := skillOutputFile(&skill)
+	name := skill.OutputFile
 	report := readCappedReport(filepath.Join(w.scanWorkRoot(scan), name), emit)
 	if report == "" {
 		return
@@ -90,10 +92,10 @@ func writeResumeReport(dir, name, report string) error {
 // reset workspace when the scan resumes a session. It returns what it wrote
 // so the run can tell a report the agent left untouched from a new one.
 func (w *Worker) restoreResumeReport(workRoot string, scan *db.Scan, skill *db.Skill, emit func(Event)) string {
-	if scan.SessionID == "" {
+	if scan.SessionID == "" || skill.OutputFile == "" {
 		return ""
 	}
-	name := skillOutputFile(skill)
+	name := skill.OutputFile
 	report := readCappedReport(filepath.Join(w.resumeReportDir(scan), name), emit)
 	if report == "" {
 		return ""
@@ -110,13 +112,36 @@ func (w *Worker) restoreResumeReport(workRoot string, scan *db.Scan, skill *db.S
 // when the run did not continue the resumed session. The harness restarts
 // fresh when the session store has lost the conversation. That agent
 // never knew about the earlier attempt, so the bytes it left in place are not
-// its output.
-func dropStaleRestoredReport(scan *db.Scan, sj SkillJob, report string, emit func(Event)) string {
+// its output. The file and the saved copy go too: the new session is the one
+// a later retry resumes, so either copy would come back to it as its own.
+func (w *Worker) dropStaleRestoredReport(scan *db.Scan, sj SkillJob, report string, emit func(Event)) string {
 	if sj.restoredReport == "" || report != sj.restoredReport || scan.SessionID == sj.ResumeSessionID {
 		return report
 	}
 	emit(Event{Kind: KindText, Text: "the session was not resumed and the restored partial report was left unchanged; ignoring it"})
+	if err := removeWorkspaceEntry(sj.WorkRoot, sj.OutputFile); err != nil {
+		emit(Event{Kind: KindError, Text: fmt.Sprintf("remove stale ./%s: %v", sj.OutputFile, err)})
+	}
+	w.removeResumeReport(scan)
 	return ""
+}
+
+// removeWorkspaceEntry removes the workspace-relative name through a root
+// opened at workRoot, so a link the agent left in its place cannot redirect
+// the removal outside the workspace.
+func removeWorkspaceEntry(workRoot, name string) error {
+	if name == "" || !filepath.IsLocal(name) {
+		return nil
+	}
+	root, err := os.OpenRoot(workRoot)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	defer func() { _ = root.Close() }()
+	return root.RemoveAll(name)
 }
 
 // removeResumeReport drops the saved copy once the lineage no longer needs it.

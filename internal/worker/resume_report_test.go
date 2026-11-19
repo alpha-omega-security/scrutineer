@@ -26,6 +26,8 @@ type reportRunner struct {
 func (r *reportRunner) RunSkill(_ context.Context, sj SkillJob, emit func(Event)) (SkillResult, error) {
 	r.got = sj
 	path := filepath.Join(sj.WorkRoot, defaultSkillOutputFile)
+	// The real runners clear a previous invocation's output first.
+	sj.clearStaleOutput(path)
 	if data, err := os.ReadFile(path); err == nil {
 		r.seen = string(data)
 	}
@@ -51,6 +53,12 @@ func (*reportRunner) SkillDir(workRoot, name string) string {
 
 func createSkillScan(t *testing.T, w *Worker, skill *db.Skill, repoID uint, scan db.Scan) db.Scan {
 	t.Helper()
+	if skill.OutputFile == "" {
+		skill.OutputFile = defaultSkillOutputFile
+		if err := w.DB.Model(skill).Update("output_file", skill.OutputFile).Error; err != nil {
+			t.Fatal(err)
+		}
+	}
 	scan.RepositoryID = repoID
 	scan.Kind = JobSkill
 	scan.Status = db.ScanQueued
@@ -247,4 +255,57 @@ func TestSweepOrphanScanArtifactsResumeReport(t *testing.T) {
 	}
 	assertPathExists(t, w.resumeReportDirID(resumable.ID))
 	assertPathMissing(t, w.resumeReportDirID(finished.ID))
+}
+
+// The new session S2 started fresh and failed without touching the restored
+// file. A later retry resumes S2, so neither the workspace file nor the saved
+// copy may come back to it as S2's own report.
+func TestResumeReportStaleCopyDoesNotOutliveAFreshSession(t *testing.T) {
+	runner := &reportRunner{session: "sess-1", write: partialReport, err: errors.New("timeout")}
+	w, skill, repoID := newResumeTestWorker(t, runner)
+	first := runScan(t, w, createSkillScan(t, w, skill, repoID, db.Scan{}).ID)
+
+	*runner = reportRunner{session: "sess-2", err: errors.New("timeout")}
+	second := runScan(t, w, retryOf(t, w, skill, repoID, first).ID)
+	if second.Status != db.ScanFailed || second.SessionID != "sess-2" {
+		t.Fatalf("second attempt = %s session %q, want failed on sess-2", second.Status, second.SessionID)
+	}
+	if saved := savedResumeReport(w, first.ID); saved != "" {
+		t.Fatalf("saved report after a fresh session left it unchanged = %q, want removed", saved)
+	}
+
+	*runner = reportRunner{session: "sess-2"}
+	third := runScan(t, w, retryOf(t, w, skill, repoID, second).ID)
+	if runner.seen != "" || runner.got.restoredReport != "" {
+		t.Fatalf("third attempt saw %q restored %q, want no stale report", runner.seen, runner.got.restoredReport)
+	}
+	if third.Report != "" {
+		t.Fatalf("third attempt report = %q, want none", third.Report)
+	}
+}
+
+func TestResumeReportNotCarriedWithoutOutputFile(t *testing.T) {
+	w, skill, repoID := newResumeTestWorker(t, &reportRunner{})
+	scan := db.Scan{RepositoryID: repoID, Kind: JobSkill, Status: db.ScanFailed, SkillID: &skill.ID, SessionID: "sess-1"}
+	if err := w.DB.Create(&scan).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(w.workRoot(scan.ID), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(w.workRoot(scan.ID), defaultSkillOutputFile), []byte(partialReport), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	w.saveResumeReport(&scan, func(Event) {})
+	assertPathMissing(t, w.resumeReportDirID(scan.ID))
+}
+
+func TestFollowupJobClearsRestoredReport(t *testing.T) {
+	sj := SkillJob{restoredReport: partialReport}
+	if got := sj.followup(); got.restoredReport != "" {
+		t.Fatalf("follow-up job carries the restored report %q", got.restoredReport)
+	}
+	if sj.restoredReport != partialReport {
+		t.Fatal("followup changed the main job")
+	}
 }

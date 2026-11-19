@@ -121,7 +121,8 @@ type SkillJob struct {
 	// corrective instructions, such as rewriting an invalid report.json.
 	ResumePrompt string
 	// restoredReport is the partial output file restoreResumeReport wrote
-	// into the workspace before the run, or empty.
+	// into the workspace before the run, or empty. Follow-up runs on the same
+	// workspace clear it through followup.
 	restoredReport string
 	// Prompt, when non-empty, replaces the default skill-activation prompt on
 	// a fresh (non-resume) run, letting a caller drive the agent with an
@@ -246,7 +247,7 @@ func (l LocalClaude) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)
 	var outPath string
 	if sj.OutputFile != "" {
 		outPath = filepath.Join(work, sj.OutputFile)
-		_ = os.Remove(outPath)
+		sj.clearStaleOutput(outPath)
 	}
 
 	emit(Event{Kind: KindText, Text: "$ claude -p <skill:" + sj.Name + ">"})
@@ -431,4 +432,24 @@ func buildLoggedPrompt(skill *db.Skill, backend string) string {
 	})
 	return prompt +
 		"\n\n--- SKILL.md ---\n\n" + renderSkillMD(skill)
+}
+
+// followup returns a copy of sj for a further run in the same workspace
+// (schema repair, cost-cap finalize, refusal audit). The report restored for
+// the main run is not that run's input, so the copy clears its output file
+// first like any other run.
+func (sj SkillJob) followup() SkillJob {
+	sj.restoredReport = ""
+	return sj
+}
+
+// clearStaleOutput removes the output file a previous invocation left at
+// outPath so the run's report is only what this run writes. A run that
+// resumes from a restored partial report keeps it: that file is the input the
+// resumed agent continues from.
+func (sj SkillJob) clearStaleOutput(outPath string) {
+	if sj.restoredReport != "" {
+		return
+	}
+	_ = os.Remove(outPath)
 }

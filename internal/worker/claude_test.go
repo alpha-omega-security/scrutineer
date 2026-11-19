@@ -477,3 +477,47 @@ func TestLocalClaude_RunSkill_rejectsScanEgressPolicy(t *testing.T) {
 		t.Fatalf("err = %v, want a refusal naming the policy and the local runner", err)
 	}
 }
+
+// The local runner clears a previous invocation's output before it starts. A
+// resume that restored the partial report must keep it, or the resumed agent
+// finds it gone again, while a run without one still starts clean.
+func TestLocalClaude_KeepsRestoredReportOnResume(t *testing.T) {
+	bin := t.TempDir()
+	script := "#!/bin/sh\n" +
+		"echo '{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"sess-1\"}'\n" +
+		"echo '{\"type\":\"result\",\"subtype\":\"success\",\"result\":\"ok\",\"num_turns\":1}'\n" +
+		"exit 0\n"
+	writeFakeBin(t, bin, "claude", script)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	const restored = `{"findings":[{"title":"partial"}]}`
+	for _, tc := range []struct {
+		name     string
+		restored string
+		want     string
+	}{
+		{"restored report kept", restored, restored},
+		{"stale output cleared", "", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			work := t.TempDir()
+			if err := os.MkdirAll(filepath.Join(work, "src"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(work, "report.json"), []byte(restored), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			sj := SkillJob{
+				Name: "deep", Model: "m", WorkRoot: work, SrcReady: true, OutputFile: "report.json",
+				ResumeSessionID: "sess-1", restoredReport: tc.restored,
+			}
+			res, err := LocalClaude{}.RunSkill(context.Background(), sj, func(Event) {})
+			if err != nil {
+				t.Fatalf("RunSkill: %v", err)
+			}
+			if res.Report != tc.want {
+				t.Errorf("Report = %q, want %q", res.Report, tc.want)
+			}
+		})
+	}
+}

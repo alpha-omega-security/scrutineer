@@ -282,7 +282,7 @@ func (w *Worker) runAndParseSkill(ctx context.Context, scan *db.Scan, skill *db.
 	defer stop()
 	res, err := w.runSkillWithFallback(runCtx, scan, skill, sj, workRoot, hardScope, runEmit)
 	w.applySkillResult(scan, res)
-	res.Report = dropStaleRestoredReport(scan, sj, res.Report, emit)
+	res.Report = w.dropStaleRestoredReport(scan, sj, res.Report, emit)
 	if err != nil {
 		guard.foldPending()
 	}
@@ -438,7 +438,7 @@ func (w *Worker) repairSchemaReport(ctx context.Context, skill *db.Skill, scan *
 	}
 
 	emit(Event{Kind: KindText, Text: fmt.Sprintf("validation: %s failed validation; asking the agent to repair it", outputFile)})
-	repairJob := sj
+	repairJob := sj.followup()
 	repairJob.ResumeSessionID = scan.SessionID
 	repairJob.ResumePrompt = buildSchemaRepairPrompt(skill, detail, report)
 	repairJob.MaxTurns = schemaRepairMaxTurns
