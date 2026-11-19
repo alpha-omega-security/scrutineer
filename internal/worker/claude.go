@@ -120,6 +120,9 @@ type SkillJob struct {
 	// prompt. It lets callers resume the same conversation with targeted
 	// corrective instructions, such as rewriting an invalid report.json.
 	ResumePrompt string
+	// restoredReport is the partial output file restoreResumeReport wrote
+	// into the workspace before the run, or empty.
+	restoredReport string
 	// Prompt, when non-empty, replaces the default skill-activation prompt on
 	// a fresh (non-resume) run, letting a caller drive the agent with an
 	// arbitrary instruction instead of "use the <skill> skill": the chat

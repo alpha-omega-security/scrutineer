@@ -502,8 +502,8 @@ func (w *Worker) harnessStateDirID(scanID uint) string {
 	return filepath.Join(w.DataDir, harnessStateDirName, fmt.Sprintf("scan-%d", scanID))
 }
 
-// RemoveScanArtifacts deletes the on-disk per-scan workspace and harness
-// state directory for scanID. Normal terminal cleanup removes workspaces,
+// RemoveScanArtifacts deletes the on-disk per-scan workspace, harness state
+// directory and saved partial report for scanID. Normal terminal cleanup removes workspaces,
 // while resumable scans (failed or max-turns-hit) keep their state dir so a
 // retry can resume the session; this explicit removal path reclaims both. It
 // is a no-op when the
@@ -515,6 +515,7 @@ func (w *Worker) RemoveScanArtifacts(scanID uint) error {
 	return errors.Join(
 		os.RemoveAll(w.workRoot(scanID)),
 		os.RemoveAll(w.harnessStateDirID(scanID)),
+		os.RemoveAll(w.resumeReportDirID(scanID)),
 	)
 }
 
@@ -641,6 +642,7 @@ func (w *Worker) clearSessionStore(scan *db.Scan) {
 	if rmErr := os.RemoveAll(w.harnessStateDir(scan)); rmErr != nil {
 		w.Log.Warn("session store cleanup failed", "scan", scan.ID, "err", rmErr)
 	}
+	w.removeResumeReport(scan)
 }
 
 func (w *Worker) Register(q *queue.Queue) {
@@ -977,6 +979,9 @@ func (w *Worker) finalizeScan(ctx context.Context, scan *db.Scan, report string,
 		scan.Error = appendAutoResume(OveragePauseReason, reset)
 		w.scheduleAccountResumeAtValue(reset)
 	}
+	// Before the workspace is deleted below. It also runs before the log
+	// snapshot so the scan log says what was kept.
+	w.saveResumeReport(scan, emit)
 	snapshotLog()
 	if scan.Status == db.ScanDone && !scan.MaxTurnsHit && !scan.CostCapped {
 		w.clearSessionStore(scan)
