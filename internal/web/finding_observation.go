@@ -115,6 +115,9 @@ type findingObservationJSON struct {
 	CWE             string    `json:"cwe"`
 	Location        string    `json:"location"`
 	Reachability    string    `json:"reachability"`
+	Rule            string    `json:"rule,omitempty"`
+	Anchor          string    `json:"anchor,omitempty"`
+	Instance        string    `json:"instance,omitempty"`
 	Rating          string    `json:"rating"`
 	Evidence        any       `json:"evidence"`
 	CreatedAt       time.Time `json:"created_at"`
@@ -130,7 +133,7 @@ func findingObservationResponse(o *db.FindingObservation) findingObservationJSON
 		SkillName: o.SkillName, Backend: o.Backend, Model: o.Model, Commit: o.Commit,
 		ReportFindingID: o.ReportFindingID, Fingerprint: o.Fingerprint, Title: o.Title,
 		Severity: o.Severity, Confidence: o.Confidence, CWE: o.CWE, Location: o.Location,
-		Reachability: o.Reachability, Rating: o.Rating, Evidence: evidence, CreatedAt: o.CreatedAt,
+		Reachability: o.Reachability, Rule: o.Rule, Anchor: o.Anchor, Instance: o.Instance, Rating: o.Rating, Evidence: evidence, CreatedAt: o.CreatedAt,
 	}
 }
 

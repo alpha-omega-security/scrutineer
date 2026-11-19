@@ -180,6 +180,11 @@ type scanFinding struct {
 	ReachChecked int      `json:"reach_checked"`
 	ReachExposed int      `json:"reach_exposed"`
 
+	// Identity of the bug independent of file layout (#1335).
+	Rule     string `json:"rule"`
+	Anchor   string `json:"anchor"`
+	Instance string `json:"instance"`
+
 	References []scanReference `json:"references"`
 
 	// Per-step markdown (security-deep-dive schema)
@@ -272,6 +277,9 @@ func (f scanFinding) toFinding(scanID, repoID uint, commit, subPath, model strin
 		Affected:     f.Affected,
 		Reachability: f.Reachability,
 		QualityTier:  f.QualityTier,
+		Rule:         identityField(strings.ToLower(f.Rule), maxIdentityRuleRunes),
+		Anchor:       identityField(f.Anchor, maxIdentityAnchorRunes),
+		Instance:     identityField(f.Instance, maxIdentityInstanceRunes),
 		Trace:        f.Trace,
 		Boundary:     f.Boundary,
 		Validation:   f.Validation,
@@ -315,4 +323,23 @@ func validEmail(s string) bool {
 		return false
 	}
 	return true
+}
+
+// The identity fields are short labels compared across findings, not prose.
+// The schemas cap them; these caps hold when a report that failed validation
+// is still parsed.
+const (
+	maxIdentityRuleRunes     = 64
+	maxIdentityAnchorRunes   = 200
+	maxIdentityInstanceRunes = 120
+)
+
+// identityField collapses runs of whitespace (including newlines) to single
+// spaces and cuts the result to limit runes.
+func identityField(s string, limit int) string {
+	s = strings.Join(strings.Fields(s), " ")
+	if utf8.RuneCountInString(s) <= limit {
+		return s
+	}
+	return strings.TrimSpace(string([]rune(s)[:limit]))
 }

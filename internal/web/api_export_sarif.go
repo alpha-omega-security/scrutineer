@@ -274,6 +274,7 @@ func sarifResult(f db.Finding, verifications map[uint]db.FindingVerification) sa
 		"finding_id": f.FindingID, "first_seen_commit": f.Commit, "sub_path": f.SubPath,
 		"vid": f.VID, "model": f.Model, "imported_from": f.ImportedFrom, "severity": f.Severity,
 		"confidence": f.Confidence, "cwe": f.CWE, "reachability": f.Reachability, "quality_tier": f.QualityTier,
+		"rule": f.Rule, "anchor": f.Anchor, "instance": f.Instance,
 	})
 	props["id"] = f.ID
 	props[statusKey] = string(f.Status)

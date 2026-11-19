@@ -81,6 +81,9 @@
           "type": "string",
           "enum": ["high", "medium", "low"]
         },
+        "rule": {"type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[a-z0-9][a-z0-9._-]*$", "description": "Optional stable bug family as a lowercase slug, the same for every finding of this kind in any repository, e.g. sql-injection, path-traversal, missing-authz-check, integer-overflow-alloc."},
+        "anchor": {"type": "string", "minLength": 1, "maxLength": 200, "description": "Optional short name for the broken root control, written so it survives file moves and line drift: the guard, check or invariant that is missing or wrong, e.g. archive entry names are joined to the extraction root without rejecting parent segments. No file paths, line numbers or finding ids. Two findings with the same rule and anchor describe the same root cause."},
+        "instance": {"type": "string", "minLength": 1, "maxLength": 120, "description": "Optional, only when one root cause is independently attackable at several sites: names this site, e.g. the endpoint or parameter, so it stays apart from the other sites with the same rule and anchor."},
         "trace": {
           "$ref": "#/$defs/markdown"
         },

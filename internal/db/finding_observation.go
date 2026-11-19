@@ -33,6 +33,9 @@ type FindingObservation struct {
 	CWE             string
 	Location        string
 	Reachability    string
+	Rule            string
+	Anchor          string `gorm:"type:text"`
+	Instance        string
 	Rating          string `gorm:"type:text"`
 	Evidence        string `gorm:"type:text"` // JSON object of the unpromoted evidence fields
 	CreatedAt       time.Time
@@ -82,6 +85,9 @@ func ObservationFromFinding(scan *Scan, f *Finding) FindingObservation {
 		CWE:             f.CWE,
 		Location:        f.Location,
 		Reachability:    f.Reachability,
+		Rule:            f.Rule,
+		Anchor:          f.Anchor,
+		Instance:        f.Instance,
 		Rating:          f.Rating,
 		Evidence:        raw,
 	}
@@ -99,7 +105,7 @@ func RecordFindingObservation(gdb *gorm.DB, obs ...FindingObservation) error {
 		DoUpdates: clause.AssignmentColumns([]string{
 			"repository_id", "skill_name", "backend", "model", "commit", "report_finding_id",
 			"fingerprint", "title", "severity", "confidence", "cwe", "location",
-			"reachability", "rating", "evidence", "updated_at",
+			"reachability", "rule", "anchor", "instance", "rating", "evidence", "updated_at",
 		}),
 	}).CreateInBatches(&obs, observationBatchSize).Error
 }

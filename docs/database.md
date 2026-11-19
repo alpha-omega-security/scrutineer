@@ -321,6 +321,9 @@ One row per vulnerability. Lifecycle columns are mutated through `db.WriteFindin
 | snippet | text | Source excerpt around `location` (a few lines either side), captured at ingest while the scanned checkout is still on disk. Renders as a fenced code block in the markdown report. Empty for rows written before the column, locations without a line, or paths that did not resolve to a readable file in the checkout; not backfilled. Refreshed on re-observation, never wiped when a later scan cannot recompute it. |
 | reachability | text | `reachable`, `harness_only`, `unclear`. `harness_only` is a real bug but not disclosable as a vulnerability on its own. |
 | quality_tier | text | `high` (heap overflow, UAF, type confusion, controllable write, shell/eval injection) or `low` (stack exhaustion, assertion failure, fixed-offset null deref, log injection). |
+| rule | text | Optional bug family the reporting skill gave, as a lowercase slug (`path-traversal`). Part of the finding's identity (#1335). Indexed. |
+| anchor | text | Optional short name for the broken root control, independent of file layout. Findings with the same `rule` and `anchor` describe one root cause. |
+| instance | text | Optional site label when one root cause is independently attackable at several sites. |
 | imported_from | text | Originating tool name when the finding came in via `POST /api/v1/import`; empty for native scans. |
 | affected | text | Version range, e.g. `>=0.2.0, <=4.0.5`. |
 | cve_id | text | e.g. `CVE-2026-12345`. |
@@ -517,6 +520,7 @@ Append-only record of each scan reporting a finding, findings imports included (
 | cwe | text | CWE as this scan reported it. |
 | location | text | Primary `file:line` as this scan reported it. |
 | reachability | text | `reachable`, `harness_only` or `unclear` as this scan reported it. |
+| rule, anchor, instance | text | The identity this scan reported for the finding, kept per scan so its stability across runs can be checked. |
 | rating | text | The scan's rating prose. |
 | evidence | text | JSON object of the scan's other evidence fields (`locations`, `sinks`, `trace`, `boundary`, `validation`, `reach`, `affected`, `quality_tier`, `prior_art`, `dup_check`). Empty fields are omitted. |
 | created_at | datetime | |

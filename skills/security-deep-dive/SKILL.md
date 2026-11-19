@@ -293,6 +293,8 @@ Confidence, separately: what you are certain of (the sink does X, per reproducti
 
 Record `quality_tier` per sink class. For memory safety: heap overflow, use-after-free, type confusion, and controllable write are `high`; stack exhaustion, assertion failure, and null-deref at a fixed offset are `low`. For injection: shell or eval with an attacker string is `high`; log injection is `low`. A `low` tier hit is a signpost, not a stopping point — when you land on one, keep tracing the same data path for a higher-tier sink nearby before writing it up.
 
+Where you can name it, give each finding an identity that does not depend on where the code lives. `rule` is the bug family as a lowercase slug (`path-traversal`, `missing-authz-check`, `integer-overflow-alloc`), the same for every finding of that kind. `anchor` is one short phrase naming the broken root control, the guard or invariant that is missing or wrong, with no file path, line number or finding id, so it still fits after the file moves. Two findings with the same `rule` and `anchor` are the same root cause. Add `instance` only when that one root cause is independently attackable at several sites, naming the site (the endpoint or parameter) so each stays its own finding. Leave all three out rather than guess.
+
 ## Fan-out for large repositories
 
 One agent can audit a small repository end to end. For a large one — many packages, tens of thousands of lines, dozens of sinks — fan the work out across subagents. Both phases parallelise: split Phase 1's grep-and-confirm sweep by directory or package so each subagent inventories one slice, and split Phase 2 by sink so each subagent runs the six-step checklist over a batch.

@@ -1273,3 +1273,38 @@ func TestAPIGetFindingSubsumedBy(t *testing.T) {
 		t.Errorf("parent merged into this finding: subsumed_by = %v, want absent", got)
 	}
 }
+
+// finding-dedup reads the identity from the repository findings list and the
+// finding detail, so both carry it.
+func TestAPIFindingIdentity(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo, scan := seedRunningScan(t, s)
+	f := db.Finding{ScanID: scan.ID, RepositoryID: repo.ID, FindingID: "F1", Title: "Zip slip", Severity: "High",
+		Rule: "path-traversal", Anchor: "entry names joined without rejecting parent segments", Instance: "extract API"}
+	if err := s.DB.Create(&f).Error; err != nil {
+		t.Fatal(err)
+	}
+	get := func(path string) string {
+		t.Helper()
+		r := httptest.NewRequest("GET", path, nil)
+		asOperator(r)
+		r.Header.Set("Authorization", "Bearer "+scan.APIToken)
+		w := httptest.NewRecorder()
+		s.Handler().ServeHTTP(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("GET %s: %d %s", path, w.Code, w.Body.String())
+		}
+		return w.Body.String()
+	}
+	for _, body := range []string{
+		get(fmt.Sprintf("/api/repositories/%d/findings", repo.ID)),
+		get(fmt.Sprintf("/api/findings/%d", f.ID)),
+	} {
+		for _, want := range []string{`"rule":"path-traversal"`, `"anchor":"entry names joined without rejecting parent segments"`, `"instance":"extract API"`} {
+			if !strings.Contains(body, want) {
+				t.Errorf("response missing %s: %s", want, body)
+			}
+		}
+	}
+}

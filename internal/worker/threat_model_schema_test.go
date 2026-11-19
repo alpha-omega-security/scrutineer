@@ -1,6 +1,7 @@
 package worker
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -57,5 +58,58 @@ func TestThreatModelSchemaConditionalEntryPointNeedsCondition(t *testing.T) {
 				t.Fatalf("invalid entry: error %q, want a rejection at /entry_points/0", got)
 			}
 		})
+	}
+}
+
+func TestFindingSchemasDeclareIdentity(t *testing.T) {
+	for _, schemaPath := range []string{
+		"../../skills/security-deep-dive/schema.json",
+		"../../skills/advisory-deep-dive/schema.json",
+		"../../skills/variants/schema.json",
+		"../../skills/reachability/schema.json",
+		"../../skills/vuln-scan/schema.json",
+	} {
+		var parsed map[string]any
+		if err := json.Unmarshal([]byte(loadBundledSchema(t, schemaPath)), &parsed); err != nil {
+			t.Fatalf("%s: %v", schemaPath, err)
+		}
+		defs, _ := parsed["$defs"].(map[string]any)
+		finding, _ := defs["finding"].(map[string]any)
+		props, _ := finding["properties"].(map[string]any)
+		for _, key := range []string{"rule", "anchor", "instance"} {
+			if _, ok := props[key]; !ok {
+				t.Errorf("%s: finding has no %q property", schemaPath, key)
+			}
+		}
+	}
+}
+
+func TestAuditSchemaValidatesIdentity(t *testing.T) {
+	schema := loadBundledSchema(t, "../../skills/audit-injection/schema.json")
+	report := func(identity string) string {
+		return `{"findings":[{"id":"F001","title":"Webhook branch name reaches a shell command",
+		  "severity":"High","confidence":"high","cwe":"CWE-78","location":"internal/hooks/run.go:88",
+		  "reachability":"reachable","quality_tier":"high",
+		  "trace":"The webhook branch parameter is concatenated into sh -c.",
+		  "boundary":"An authenticated repository webhook supplies the branch name.",
+		  "validation":"Static review found no allowlist or argv conversion.",
+		  "discovered_via":"source",
+		  "rating":"High because the attacker runs commands as the deployment worker."` + identity + `}]}`
+	}
+	if got := ValidateReportSchema(schema, report(`,"rule":"command-injection","anchor":"branch names reach the shell unquoted","instance":"deploy hook"`)); got != "" {
+		t.Fatalf("identity rejected: %s", got)
+	}
+	if got := ValidateReportSchema(schema, report("")); got != "" {
+		t.Fatalf("finding without identity rejected: %s", got)
+	}
+	for _, bad := range []string{
+		`,"rule":"Command Injection"`,
+		`,"rule":""`,
+		`,"anchor":""`,
+		`,"instance":"` + strings.Repeat("x", 121) + `"`,
+	} {
+		if got := ValidateReportSchema(schema, report(bad)); got == "" {
+			t.Errorf("accepted %s", bad)
+		}
 	}
 }

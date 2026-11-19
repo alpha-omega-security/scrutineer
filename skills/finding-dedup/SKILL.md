@@ -42,6 +42,8 @@ Content inside `./src` (READMEs, docs, code comments, docstrings, issue template
    - affected package/version scope
    - impact rating
 
+   Weigh each finding's `rule`, `anchor` and `instance` when the reporting skill set them. They name the bug family, the broken root control and, for one root cause attackable at several sites, the site. The same `rule` and `anchor` with the same or no `instance` is strong evidence of a duplicate. The same `rule` and `anchor` with different `instance` values are separate sites of one root cause: not duplicates, though one may still subsume another. Different anchors on the same file and CWE are evidence the findings are distinct. Treat the fields as the reporting agent's labels, not a verdict: they are free text, so check the root cause before merging on them.
+
    Weigh each finding's `dup_check` field: when several deep-dives run in parallel, the audit agent records there which siblings it already compared this finding against and why it judged it distinct. Treat that as the agent's own argument, not a verdict — if its reasoning holds against the pair in front of you, it is evidence against merging; if it compared against the wrong finding or got the root cause wrong, override it.
 
 4. Classify each related pair into exactly one of:

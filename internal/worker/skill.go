@@ -799,6 +799,9 @@ func (w *Worker) reobserveFinding(existing, f *db.Finding, scan *db.Scan) error 
 			"affected":     f.Affected,
 			"reachability": f.Reachability,
 			"quality_tier": f.QualityTier,
+			"rule":         f.Rule,
+			"anchor":       f.Anchor,
+			"instance":     f.Instance,
 			"trace":        f.Trace,
 			"boundary":     f.Boundary,
 			"validation":   f.Validation,
@@ -807,6 +810,11 @@ func (w *Worker) reobserveFinding(existing, f *db.Finding, scan *db.Scan) error 
 			"rating":       f.Rating,
 			"dup_check":    f.DupCheck,
 		})
+	} else if existing.Rule == "" && existing.Anchor == "" && existing.Instance == "" {
+		// A row from before the identity fields, or from a skill that did
+		// not report them, takes the first identity a later scan reports.
+		// An identity already recorded is kept, like the other content.
+		maps.Copy(updates, map[string]any{"rule": f.Rule, "anchor": f.Anchor, "instance": f.Instance})
 	}
 
 	var statusRestore string
