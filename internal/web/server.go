@@ -2800,7 +2800,8 @@ func loadRepoLatestScans(gdb *gorm.DB, repoID uint) []db.Scan {
 // projection ever falls behind the template.
 const scanRowColumns = `s.id, s.repository_id, s.skill_id, s.skill_name, s.kind, s.ref,
 	s.sub_path, s.focus_area, s.scan_group, s.rescan_mode, s.status, s.max_turns_hit, s.cost_capped, s.refusal_audit_warning,
-	s.findings_count, s.model, s.cost_usd, s."commit", s.started_at, s.finished_at`
+	s.findings_count, s.model, s.cost_usd, s.input_tokens, s.output_tokens, s.cache_read_tokens,
+	s.cache_write_tokens, s."commit", s.started_at, s.finished_at`
 
 // loadRepoLatestScanRows is loadRepoLatestScans projected down to what the Scans
 // table renders. The repo page itself still needs whole rows (repoPrimaryScans

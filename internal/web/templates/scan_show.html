@@ -115,7 +115,7 @@
   </div>
   <div>
     <dt class="text-muted-foreground font-semibold">Cost</dt>
-    <dd>{{if gt .CostUSD 0.0}}{{usd .CostUSD}}{{else}}-{{end}}</dd>
+    <dd>{{template "scan-cost" .}}</dd>
   </div>
   {{if gt .MaxCostUSD 0.0}}
   <div>

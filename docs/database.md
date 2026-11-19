@@ -192,7 +192,7 @@ One row per skill execution or external import. `skill_name` / `skill_version` p
 | commit | text | Git HEAD at scan time. |
 | started_at | datetime | |
 | finished_at | datetime | |
-| cost_usd | real | Cost charged to this scan. Repeated cumulative totals add nothing, and resumed sessions subtract previously recorded spend. Backends without reported costs use token-price estimates. |
+| cost_usd | real | Cost charged to this scan. Repeated cumulative totals add nothing. Resumed sessions subtract previously recorded spend. Backends without reported costs use token-price estimates. Stays 0 for a model no price table knows; the UI shows a scan with tokens but no cost as "unpriced". |
 | session_cost_usd | real | Highest reported cumulative cost of the agent session. Retries reuse the immediate parent's value when the session matches; a fresh session starts at zero. Defaults to zero on older scans, whose historical costs remain unchanged. |
 | turns | integer | Number of claude turns. |
 | input_tokens | integer | Input tokens billed. |

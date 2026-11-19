@@ -368,6 +368,8 @@
 
 {{define "branch-options"}}{{range .}}<option value="{{.}}"></option>{{end}}{{end}}
 
+{{define "scan-cost"}}{{if gt .CostUSD 0.0}}{{usd .CostUSD}}{{else if .CostUnpriced}}<span data-tooltip="Tokens were recorded but no price is known for {{if .Model}}{{.Model}}{{else}}this model{{end}}">unpriced</span>{{else}}-{{end}}{{end}}
+
 {{define "branch-tag"}}{{if .}}<span class="badge-outline"><i data-lucide="git-branch"></i>{{.}}</span>{{end}}{{end}}
 
 {{define "focus-area"}}

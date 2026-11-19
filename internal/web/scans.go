@@ -22,7 +22,8 @@ import (
 const scanListColumns = `scans.id, scans.repository_id, scans.skill_id, scans.skill_name,
 	scans.kind, scans.ref, scans.status, scans.max_turns_hit, scans.cost_capped,
 	scans.completeness, scans.sub_path, scans.focus_area, scans.scan_group,
-	scans.findings_count, scans.model, scans.cost_usd, scans.started_at, scans.finished_at`
+	scans.findings_count, scans.model, scans.cost_usd, scans.input_tokens, scans.output_tokens,
+	scans.cache_read_tokens, scans.cache_write_tokens, scans.started_at, scans.finished_at`
 
 func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 	completeness, err := parseScanCompletenessFilter(r.URL.Query().Get("completeness"))

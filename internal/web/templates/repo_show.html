@@ -813,7 +813,7 @@
     <td>{{template "status-badge" (status .Status)}} {{if .MaxTurnsHit}}<span class="badge-outline"><i data-lucide="timer-off"></i> max turns</span>{{end}}{{if .CostCapped}} <span class="badge-outline"><i data-lucide="circle-dollar-sign"></i> cost cap</span>{{end}}{{if .RefusalAuditWarning}} <span class="badge-outline" data-tooltip="The deep-dive reported refused or skipped analysis"><i data-lucide="triangle-alert"></i> analysis incomplete</span>{{end}}</td>
     <td>{{if gt .FindingsCount 0}}{{template "findings-badge" .FindingsCount}}{{end}}</td>
     <td class="text-muted-foreground">{{if .Model}}{{.Model}}{{else}}-{{end}}</td>
-    <td class="text-muted-foreground">{{if gt .CostUSD 0.0}}{{usd .CostUSD}}{{else}}-{{end}}</td>
+    <td class="text-muted-foreground">{{template "scan-cost" .}}</td>
     <td><code>{{short .Commit}}</code></td>
     <td>{{if .StartedAt}}{{since .StartedAt}}{{end}}</td>
     <td>{{if .FinishedAt}}{{dur .Duration}}{{end}}</td>

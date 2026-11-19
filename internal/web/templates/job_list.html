@@ -161,7 +161,7 @@
         {{if $showFocus}}<td class="text-xs">{{template "focus-area" (focus .)}}</td>{{end}}
         <td>{{if gt .FindingsCount 0}}{{template "findings-badge" .FindingsCount}}{{end}}</td>
         <td class="text-muted-foreground">{{if .Model}}{{.Model}}{{else}}-{{end}}</td>
-        <td class="text-muted-foreground">{{if gt .CostUSD 0.0}}{{usd .CostUSD}}{{else}}-{{end}}</td>
+        <td class="text-muted-foreground">{{template "scan-cost" .}}</td>
         <td>{{if .StartedAt}}{{since .StartedAt}}{{end}}</td>
         <td>{{if .FinishedAt}}{{dur .Duration}}{{end}}</td>
         <td>{{template "scan-actions" .}}</td>
