@@ -80,8 +80,11 @@ func (g *costGuard) wrap(emit func(Event)) func(Event) {
 }
 
 // warnUnpriced says once per run that a usage event recorded tokens without a
-// price. Such usage counts as $0 against the scan and group caps, so a model
-// no price table knows can spend without ever reaching either cap.
+// cost. The guard charges only the cost the stream reports, so such usage
+// counts as $0 against the scan and group caps until a result lands. When the
+// worker's own price table knows the scan's model, recordScanResult still
+// prices the result, so the scan gets a cost but the cap cannot stop it
+// mid-run. Otherwise no price is known at all and the scan records none.
 func (g *costGuard) warnUnpriced(e Event, emit func(Event)) {
 	u := e.Usage
 	if g.warnedUnpriced || e.CostUSD != 0 || u.InputTokens+u.OutputTokens+u.CacheReadTokens+u.CacheWriteTokens == 0 {
@@ -89,7 +92,11 @@ func (g *costGuard) warnUnpriced(e Event, emit func(Event)) {
 	}
 	g.warnedUnpriced = true
 	model := cmp.Or(e.Model, g.scan.Model, "this model")
-	emit(Event{Kind: KindText, Text: fmt.Sprintf("cost cap: no price is known for %s, so its usage counts as $0 and the cost cap cannot stop this scan", model)})
+	text := fmt.Sprintf("cost cap: no price is known for %s, so its usage counts as $0 and the cost cap cannot stop this scan", model)
+	if CostFromUsage(g.scan.Model, u) > 0 {
+		text = fmt.Sprintf("cost cap: the stream reported no cost for %s, so the cost cap cannot stop this scan mid-run; its cost is still recorded when each result lands", model)
+	}
+	emit(Event{Kind: KindText, Text: text})
 }
 
 // foldPending charges usage that no result event folded in. A run stopped by

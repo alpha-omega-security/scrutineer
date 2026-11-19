@@ -533,3 +533,22 @@ func TestCostGuard_unpricedWarningPrefersEventModel(t *testing.T) {
 		t.Fatalf("warning = %q, want the model the event reported", text)
 	}
 }
+
+// A model the worker prices itself still gets a cost when its result lands,
+// so the warning must not claim no price is known. Only the mid-run cap is lost.
+func TestCostGuard_locallyPricedModelIsNotCalledUnpriced(t *testing.T) {
+	scan := &db.Scan{Model: modelGPT6SolID}
+	_, cancel := context.WithCancelCause(context.Background())
+	defer cancel(nil)
+	g := newCostGuard(scan, 1.0, cancel)
+	var text string
+	g.wrap(func(e Event) {
+		if e.Kind == KindText {
+			text = e.Text
+		}
+	})(Event{Kind: KindUsage, Usage: Usage{InputTokens: 1000, OutputTokens: 100}})
+	if strings.Contains(text, "no price is known") || !strings.Contains(text, "stream reported no cost for "+modelGPT6SolID) ||
+		!strings.Contains(text, "mid-run") {
+		t.Fatalf("warning = %q, want the mid-run wording for a locally priced model", text)
+	}
+}
