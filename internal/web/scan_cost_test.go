@@ -61,3 +61,24 @@ func TestScanCostShowsUnpricedRuns(t *testing.T) {
 		t.Error("scan page without usage reads unpriced")
 	}
 }
+
+func TestWorkbenchRunsShowUnpricedCost(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/workbench-cost", Name: "workbench-cost"}
+	s.DB.Create(&repo)
+	run := db.Scan{RepositoryID: repo.ID, Kind: "skill", SkillName: deepDiveSkillName, Status: db.ScanDone,
+		Report: ddReportA, Model: "openrouter/meta/muse-spark-1.3-contributor", InputTokens: 28400}
+	if err := s.DB.Create(&run).Error; err != nil {
+		t.Fatal(err)
+	}
+
+	_, runs, ok := strings.Cut(getRepoPage(t, s, repo.ID), "Recent deep-dive runs")
+	if !ok {
+		t.Fatal("repo page has no deep-dive runs table")
+	}
+	runs, _, _ = strings.Cut(runs, "</table>")
+	if !strings.Contains(runs, ">unpriced</span>") {
+		t.Errorf("workbench run does not say unpriced: %s", runs)
+	}
+}

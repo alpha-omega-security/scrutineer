@@ -80,11 +80,7 @@ func (g *costGuard) wrap(emit func(Event)) func(Event) {
 }
 
 // warnUnpriced says once per run that a usage event recorded tokens without a
-// cost. The guard charges only the cost the stream reports, so such usage
-// counts as $0 against the scan and group caps until a result lands. When the
-// worker's own price table knows the scan's model, recordScanResult still
-// prices the result, so the scan gets a cost but the cap cannot stop it
-// mid-run. Otherwise no price is known at all and the scan records none.
+// cost. The guard charges only the cost the stream reports.
 func (g *costGuard) warnUnpriced(e Event, emit func(Event)) {
 	u := e.Usage
 	if g.warnedUnpriced || e.CostUSD != 0 || u.InputTokens+u.OutputTokens+u.CacheReadTokens+u.CacheWriteTokens == 0 {

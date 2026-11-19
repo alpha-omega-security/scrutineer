@@ -54,7 +54,7 @@
       <td><code>{{short $r.Commit}}</code></td>
       <td>{{if $r.StartedAt}}{{since $r.StartedAt}}{{end}}</td>
       <td>{{if $r.FinishedAt}}{{dur $r.Duration}}{{end}}</td>
-      <td class="text-muted-foreground">{{if gt $r.CostUSD 0.0}}{{usd $r.CostUSD}}{{end}}</td>
+      <td class="text-muted-foreground">{{template "scan-cost" $r}}</td>
     </tr>
   {{end}}
   </tbody>
