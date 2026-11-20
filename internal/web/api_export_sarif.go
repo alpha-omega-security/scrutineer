@@ -33,7 +33,7 @@ const (
 const sarifFindingColumns = `id, repository_id, "commit", last_seen_commit, sub_path, model, fingerprint, vid,
 	finding_id, title, severity, confidence, status, cwe, location, locations,
 	reachability, quality_tier, imported_from,
-	trace, boundary, validation, prior_art, reach, rating`
+	trace, boundary, validation, prior_art, reach, rating, rule, anchor, instance`
 
 func (s *Server) apiExportRepoSARIF(w http.ResponseWriter, r *http.Request, repo *db.Repository) {
 	var findings []db.Finding
@@ -274,6 +274,7 @@ func sarifResult(f db.Finding, verifications map[uint]db.FindingVerification) sa
 		"finding_id": f.FindingID, "first_seen_commit": f.Commit, "sub_path": f.SubPath,
 		"vid": f.VID, "model": f.Model, "imported_from": f.ImportedFrom, "severity": f.Severity,
 		"confidence": f.Confidence, "cwe": f.CWE, "reachability": f.Reachability, "quality_tier": f.QualityTier,
+		"rule": f.Rule, "anchor": f.Anchor, "instance": f.Instance,
 	})
 	props["id"] = f.ID
 	props[statusKey] = string(f.Status)

@@ -799,6 +799,9 @@ func (w *Worker) reobserveFinding(existing, f *db.Finding, scan *db.Scan) error 
 			"affected":     f.Affected,
 			"reachability": f.Reachability,
 			"quality_tier": f.QualityTier,
+			"rule":         f.Rule,
+			"anchor":       f.Anchor,
+			"instance":     f.Instance,
 			"trace":        f.Trace,
 			"boundary":     f.Boundary,
 			"validation":   f.Validation,
@@ -833,6 +836,13 @@ func (w *Worker) reobserveFinding(existing, f *db.Finding, scan *db.Scan) error 
 	if f.Snippet != "" {
 		updates["snippet"] = f.Snippet
 	}
+	// The fill runs before the counter update: it is idempotent, so a failure
+	// here leaves seen_count untouched and a retry of this scan counts once.
+	if !ownedByThisScan {
+		if err := w.fillFindingIdentity(existing.ID, f); err != nil {
+			return err
+		}
+	}
 	if err := w.DB.Model(&db.Finding{}).Where("id = ?", existing.ID).Updates(updates).Error; err != nil {
 		return fmt.Errorf("update finding %d: %w", existing.ID, err)
 	}
@@ -865,6 +875,23 @@ func (w *Worker) reobserveFinding(existing, f *db.Finding, scan *db.Scan) error 
 		}
 	}
 
+	return nil
+}
+
+// fillFindingIdentity gives a finding with no recorded identity the first one
+// a later scan reports. The empty check runs in the UPDATE itself, so a
+// concurrent observation cannot overwrite an identity another scan recorded.
+// Rows from before the columns existed hold NULL, which counts as empty.
+func (w *Worker) fillFindingIdentity(findingID uint, f *db.Finding) error {
+	if f.Rule == "" && f.Anchor == "" && f.Instance == "" {
+		return nil
+	}
+	err := w.DB.Model(&db.Finding{}).
+		Where("id = ? AND COALESCE(rule, '') = '' AND COALESCE(anchor, '') = '' AND COALESCE(instance, '') = ''", findingID).
+		Updates(map[string]any{"rule": f.Rule, "anchor": f.Anchor, "instance": f.Instance}).Error
+	if err != nil {
+		return fmt.Errorf("fill finding %d identity: %w", findingID, err)
+	}
 	return nil
 }
 

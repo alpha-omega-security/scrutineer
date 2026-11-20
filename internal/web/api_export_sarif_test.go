@@ -71,6 +71,7 @@ func TestExportRepoFindingsSARIF(t *testing.T) {
 		Title: "Heap overflow in parse_header", Severity: "Critical", Confidence: "high", Status: db.FindingTriaged,
 		CWE: "CWE-122, CWE-787", Location: "src/header.c:10-14", Locations: "src/header.c:10-14\nsrc/body.c:7:3",
 		Reachability: "reachable", Trace: "length flows into memcpy", Validation: "reproduced with a 70-byte header",
+		Rule: "heap-overflow", Anchor: "header length is trusted before the copy", Instance: "parse_header",
 		DisclosureDraft: "SECRET-DRAFT-BODY", SuggestedRecipients: "maintainer@example.com",
 	}
 	rejected := db.Finding{
@@ -150,6 +151,9 @@ func assertOverflowSARIF(t *testing.T, overflowRun sarif.Run, overflow db.Findin
 	props := scrutineerProps(t, res)
 	if props["id"] != float64(overflow.ID) || props["first_seen_commit"] != "aaa111" || props["cwe"] != overflow.CWE {
 		t.Errorf("identity properties = %+v", props)
+	}
+	if props["rule"] != overflow.Rule || props["anchor"] != overflow.Anchor || props["instance"] != overflow.Instance {
+		t.Errorf("rule/anchor/instance properties = %+v", props)
 	}
 	evidence, _ := props["evidence"].(map[string]any)
 	if evidence["validation"] != overflow.Validation || evidence["trace"] != overflow.Trace {
@@ -381,7 +385,7 @@ func TestExportGlobalSARIF(t *testing.T) {
 	findings := []db.Finding{
 		{RepositoryID: repos[0].ID, ScanID: scans[0].ID, Title: "one-old", Commit: "initial", LastSeenCommit: "rev-old", Severity: "High", DisclosureDraft: "GLOBAL-SARIF-SECRET"},
 		{RepositoryID: repos[0].ID, ScanID: scans[0].ID, Title: "one-new", Commit: "initial", LastSeenCommit: "rev-new", Severity: "High"},
-		{RepositoryID: repos[1].ID, ScanID: scans[1].ID, Title: "two-old", Commit: "rev-old", Severity: "Low"},
+		{RepositoryID: repos[1].ID, ScanID: scans[1].ID, Title: "two-old", Commit: "rev-old", Severity: "Low", Rule: "sql-injection", Anchor: "filter concatenated into the query", Instance: "search"},
 	}
 	for i := range findings {
 		if err := s.DB.Create(&findings[i]).Error; err != nil {
@@ -434,7 +438,11 @@ func TestExportGlobalSARIF(t *testing.T) {
 			t.Errorf("group %+v = %+v, want one result %q", want.k, run.Results, want.title)
 		}
 	}
-	verification, _ := scrutineerProps(t, groups[key{repos[1].URL, "rev-old"}].Results[0])["verification"].(map[string]any)
+	twoProps := scrutineerProps(t, groups[key{repos[1].URL, "rev-old"}].Results[0])
+	if twoProps["rule"] != "sql-injection" || twoProps["anchor"] != "filter concatenated into the query" || twoProps["instance"] != "search" {
+		t.Errorf("global rule/anchor/instance properties = %+v", twoProps)
+	}
+	verification, _ := twoProps["verification"].(map[string]any)
 	if verification["status"] != "confirmed" || verification["verify_scan_id"] != float64(verifyNewer.ID) {
 		t.Errorf("latest verification = %+v, want confirmed from scan %d", verification, verifyNewer.ID)
 	}

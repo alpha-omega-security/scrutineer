@@ -1811,6 +1811,9 @@ func seedRichFinding(t *testing.T, s *Server, url string) db.Repository {
 		ExploitedInWild:         "no",
 		ExploitedInWildEvidence: "no reports as of 2026-07",
 		FixCommit:               "upstreamfix123",
+		Rule:                    "path-traversal",
+		Anchor:                  "download path joined to base without rejecting parent segments",
+		Instance:                "download endpoint",
 	}
 	if err := s.DB.Create(&f).Error; err != nil {
 		t.Fatalf("seed finding: %v", err)
@@ -2179,6 +2182,7 @@ func TestExportBundle_includeAllCarriesArchival(t *testing.T) {
 		def.ExploitedInWild != "" || def.UpstreamFixCommit != "" {
 		t.Errorf("default bundle carried archival scalars: %+v", def)
 	}
+	assertNoBundleIdentity(t, def)
 	if len(def.Notes) != 0 || len(def.Communications) != 0 || len(def.References) != 0 {
 		t.Errorf("default bundle carried child records: notes=%d comms=%d refs=%d",
 			len(def.Notes), len(def.Communications), len(def.References))
@@ -2208,6 +2212,9 @@ func TestExportBundle_includeAllCarriesArchival(t *testing.T) {
 		// still carries the SuggestedFix base.
 		{"upstream_fix_commit", all.UpstreamFixCommit, "upstreamfix123"},
 		{"fix_commit (suggested-fix base)", all.FixCommit, "fixbase9"},
+		{"rule", all.Rule, "path-traversal"},
+		{"anchor", all.Anchor, "download path joined to base without rejecting parent segments"},
+		{"instance", all.Instance, "download endpoint"},
 	} {
 		if c.got != c.want {
 			t.Errorf("include=all %s = %q, want %q", c.name, c.got, c.want)
@@ -2224,6 +2231,13 @@ func TestExportBundle_includeAllCarriesArchival(t *testing.T) {
 	if len(all.References) != 2 || all.References[0].URL != "https://github.com/test/src/issues/1" ||
 		all.References[0].Tags != "issue" {
 		t.Errorf("references mismatch: %+v", all.References)
+	}
+}
+
+func assertNoBundleIdentity(t *testing.T, f sharingFinding) {
+	t.Helper()
+	if f.Rule != "" || f.Anchor != "" || f.Instance != "" {
+		t.Errorf("default bundle carried the identity: %q / %q / %q", f.Rule, f.Anchor, f.Instance)
 	}
 }
 
@@ -2283,6 +2297,9 @@ func TestExportBundleRoundTrip_includeAll(t *testing.T) {
 		// The real upstream fix commit lands in FixCommit (the new upstream key);
 		// the SuggestedFix base stays folded into Trace.
 		{"fix_commit (real upstream)", got.FixCommit, "upstreamfix123"},
+		{"rule", got.Rule, "path-traversal"},
+		{"anchor", got.Anchor, "download path joined to base without rejecting parent segments"},
+		{"instance", got.Instance, "download endpoint"},
 	} {
 		if c.got != c.want {
 			t.Errorf("%s = %q, want %q", c.name, c.got, c.want)

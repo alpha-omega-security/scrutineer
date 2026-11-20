@@ -438,7 +438,7 @@ func (s *Server) apiGetFinding(w http.ResponseWriter, r *http.Request) {
 var findingSummaryColumns = []string{
 	"id", "scan_id", "repository_id", "finding_id", "commit", "sinks", "title", "sub_path",
 	"severity", "severity_caps", "severity_calibration_incomplete", "status", "cwe", "location", "vid", "affected", "reachability",
-	"quality_tier", "cve_id", "ghsa_id", "cvss_vector", "cvss_score", "cvss_v4_vector", "cvss_v4_score",
+	"quality_tier", "rule", "anchor", "instance", "cve_id", "ghsa_id", "cvss_vector", "cvss_score", "cvss_v4_vector", "cvss_v4_score",
 	"fix_version", "fix_commit", "resolution", "assignee", "missed_count",
 	"exploited_in_wild",
 	"dup_check", "novelty", "novelty_checked_commit", "novelty_checked_at",
@@ -465,6 +465,9 @@ func findingSummary(f db.Finding) map[string]any {
 		"affected":                        f.Affected,
 		"reachability":                    f.Reachability,
 		"quality_tier":                    f.QualityTier,
+		"rule":                            f.Rule,
+		"anchor":                          f.Anchor,
+		"instance":                        f.Instance,
 		"cve_id":                          f.CVEID,
 		"ghsa_id":                         f.GHSAID,
 		"cvss_vector":                     f.CVSSVector,

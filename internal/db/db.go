@@ -922,6 +922,14 @@ type Finding struct {
 	// (stack exhaustion, assertion failure, fixed-offset null deref, log
 	// injection). Low-tier hits are signposts to keep looking nearby.
 	QualityTier string `gorm:"index"`
+	// Rule, Anchor and Instance are the reporting skill's identity for the
+	// bug (#1335). Rule is a stable bug family as a lowercase slug. Anchor is
+	// a short description of the broken root control that does not depend on
+	// file layout. Instance tells apart sites one root cause exposes
+	// independently. All three are optional and stored as reported.
+	Rule     string `gorm:"index"`
+	Anchor   string `gorm:"type:text"`
+	Instance string
 	// ImportedFrom names the external producer when the finding arrived
 	// via /import (e.g. "CodeQL", "Snyk", "manual"). Empty for findings
 	// scrutineer produced itself. Used as the skill-name input to the

@@ -201,6 +201,10 @@ type Finding struct {
 	// kept distinct from FixCommit above (the SuggestedFix base) because the
 	// bundle's legacy `fix_commit` key was already taken by the latter.
 	UpstreamFixCommit string
+	// Rule, Anchor and Instance are the reporting skill's identity for the bug.
+	Rule     string
+	Anchor   string
+	Instance string
 
 	// Child records, carried only by an include=all bundle. Nil otherwise.
 	Notes          []Note
