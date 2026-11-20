@@ -88,11 +88,7 @@ func (g *costGuard) warnUnpriced(e Event, emit func(Event)) {
 	}
 	g.warnedUnpriced = true
 	model := cmp.Or(e.Model, g.scan.Model, "this model")
-	text := fmt.Sprintf("cost cap: no price is known for %s, so its usage counts as $0 and the cost cap cannot stop this scan", model)
-	if CostFromUsage(g.scan.Model, u) > 0 {
-		text = fmt.Sprintf("cost cap: the stream reported no cost for %s, so the cost cap cannot stop this scan mid-run; its cost is still recorded when each result lands", model)
-	}
-	emit(Event{Kind: KindText, Text: text})
+	emit(Event{Kind: KindText, Text: fmt.Sprintf("cost cap: usage events for %s carry no cost, so the cost cap cannot stop this scan mid-run", model)})
 }
 
 // foldPending charges usage that no result event folded in. A run stopped by
