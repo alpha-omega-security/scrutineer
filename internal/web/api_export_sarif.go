@@ -33,7 +33,7 @@ const (
 const sarifFindingColumns = `id, repository_id, "commit", last_seen_commit, sub_path, model, fingerprint, vid,
 	finding_id, title, severity, confidence, status, cwe, location, locations,
 	reachability, quality_tier, imported_from,
-	trace, boundary, validation, prior_art, reach, rating`
+	trace, boundary, validation, prior_art, reach, rating, rule, anchor, instance`
 
 func (s *Server) apiExportRepoSARIF(w http.ResponseWriter, r *http.Request, repo *db.Repository) {
 	var findings []db.Finding

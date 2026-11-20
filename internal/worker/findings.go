@@ -277,7 +277,7 @@ func (f scanFinding) toFinding(scanID, repoID uint, commit, subPath, model strin
 		Affected:     f.Affected,
 		Reachability: f.Reachability,
 		QualityTier:  f.QualityTier,
-		Rule:         identityField(strings.ToLower(f.Rule), maxIdentityRuleRunes),
+		Rule:         ruleSlug(f.Rule),
 		Anchor:       identityField(f.Anchor, maxIdentityAnchorRunes),
 		Instance:     identityField(f.Instance, maxIdentityInstanceRunes),
 		Trace:        f.Trace,
@@ -333,6 +333,17 @@ const (
 	maxIdentityAnchorRunes   = 200
 	maxIdentityInstanceRunes = 120
 )
+
+// ruleSlug lowercases a reported rule and joins its whitespace-separated
+// parts with hyphens, so "SQL Injection" and "sql-injection" land on the same
+// slug even when the report skipped schema validation.
+func ruleSlug(s string) string {
+	slug := strings.Join(strings.Fields(strings.ToLower(s)), "-")
+	if utf8.RuneCountInString(slug) <= maxIdentityRuleRunes {
+		return slug
+	}
+	return strings.Trim(string([]rune(slug)[:maxIdentityRuleRunes]), "-")
+}
 
 // identityField collapses runs of whitespace (including newlines) to single
 // spaces and cuts the result to limit runes.

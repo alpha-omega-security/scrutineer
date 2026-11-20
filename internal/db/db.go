@@ -926,9 +926,7 @@ type Finding struct {
 	// bug (#1335). Rule is a stable bug family as a lowercase slug. Anchor is
 	// a short description of the broken root control that does not depend on
 	// file layout. Instance tells apart sites one root cause exposes
-	// independently. All three are optional and stored as reported. The
-	// fingerprint still comes from the location; finding-dedup reads these
-	// as evidence when comparing findings.
+	// independently. All three are optional and stored as reported.
 	Rule     string `gorm:"index"`
 	Anchor   string `gorm:"type:text"`
 	Instance string

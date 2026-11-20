@@ -97,3 +97,69 @@ func TestIdentityFieldCapsLength(t *testing.T) {
 		t.Fatalf("blank = %q", got)
 	}
 }
+
+func TestRuleSlug(t *testing.T) {
+	for in, want := range map[string]string{
+		"SQL-Injection":              "sql-injection",
+		"sql injection":              "sql-injection",
+		"  Missing \t Authz\nCheck ": "missing-authz-check",
+		"   ":                        "",
+	} {
+		if got := ruleSlug(in); got != want {
+			t.Errorf("ruleSlug(%q) = %q, want %q", in, got, want)
+		}
+	}
+	if got := ruleSlug(strings.Repeat("a ", maxIdentityRuleRunes)); len([]rune(got)) > maxIdentityRuleRunes || strings.HasSuffix(got, "-") {
+		t.Fatalf("capped slug = %q", got)
+	}
+}
+
+// A scan holding a snapshot taken before another scan recorded the identity
+// must not overwrite it, whether or not it reports labels of its own.
+func TestReobserveFinding_staleSnapshotKeepsRecordedIdentity(t *testing.T) {
+	w, mkScan := identityWorker(t)
+	plain := `{"findings":[{"id":"F1","title":"SQLi","severity":"High","cwe":"CWE-89","location":"src/users.rb:42"}]}`
+	if err := w.parseFindingsOutput(&db.Skill{}, mkScan("a"), plain, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	var stale db.Finding
+	w.DB.First(&stale)
+	w.DB.Model(&db.Finding{}).Where("id = ?", stale.ID).
+		Updates(map[string]any{"rule": "sql-injection", "anchor": "recorded anchor"})
+
+	for _, f := range []db.Finding{
+		{Location: "src/users.rb:43", Rule: "sqli", Anchor: "other anchor"},
+		{Location: "src/users.rb:44"},
+	} {
+		if err := w.reobserveFinding(&stale, &f, mkScan("b")); err != nil {
+			t.Fatal(err)
+		}
+		var got db.Finding
+		w.DB.First(&got, stale.ID)
+		if got.Rule != "sql-injection" || got.Anchor != "recorded anchor" {
+			t.Fatalf("recorded identity overwritten: %q / %q", got.Rule, got.Anchor)
+		}
+	}
+}
+
+func TestReobserveFinding_fillsNullIdentity(t *testing.T) {
+	w, mkScan := identityWorker(t)
+	plain := `{"findings":[{"id":"F1","title":"SQLi","severity":"High","cwe":"CWE-89","location":"src/users.rb:42"}]}`
+	if err := w.parseFindingsOutput(&db.Skill{}, mkScan("a"), plain, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	var existing db.Finding
+	w.DB.First(&existing)
+	// Rows from before the columns existed hold NULL rather than "".
+	w.DB.Exec("UPDATE findings SET rule = NULL, anchor = NULL, instance = NULL WHERE id = ?", existing.ID)
+
+	f := db.Finding{Location: "src/users.rb:43", Rule: "sql-injection", Anchor: "user filter concatenated"}
+	if err := w.reobserveFinding(&existing, &f, mkScan("b")); err != nil {
+		t.Fatal(err)
+	}
+	var got db.Finding
+	w.DB.First(&got, existing.ID)
+	if got.Rule != "sql-injection" || got.Anchor != "user filter concatenated" {
+		t.Fatalf("NULL identity not filled: %q / %q", got.Rule, got.Anchor)
+	}
+}

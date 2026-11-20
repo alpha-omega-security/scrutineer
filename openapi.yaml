@@ -1942,6 +1942,9 @@ components:
         affected:      { type: string }
         reachability:  { type: string, enum: [reachable, harness_only, unclear] }
         quality_tier:  { type: string, enum: [high, low] }
+        rule:          { type: string, description: "Optional stable bug family as a lowercase slug, e.g. sql-injection. Empty when the reporting skill gave none." }
+        anchor:        { type: string, description: "Optional short name for the broken root control, independent of file layout." }
+        instance:      { type: string, description: "Optional name for one of several independently attackable sites of the same root cause." }
         cve_id:        { type: string }
         ghsa_id:       { type: string, description: "GitHub Security Advisory id (GHSA-xxxx-xxxx-xxxx), set once the advisory is published." }
         cvss_vector:    { type: string, description: "CVSS v3.x base vector (3.0 or 3.1)." }
@@ -2258,6 +2261,9 @@ components:
               exploited_in_wild:          { type: string, enum: [yes, no] }
               exploited_in_wild_evidence: { type: string }
               upstream_fix_commit:        { type: string, description: "Real upstream fix commit (distinct from fix_commit)." }
+              rule:                       { type: string, description: "Finding identity: bug family slug." }
+              anchor:                     { type: string, description: "Finding identity: broken root control." }
+              instance:                   { type: string, description: "Finding identity: site of a shared root cause." }
               notes:
                 type: array
                 items:
@@ -2422,6 +2428,9 @@ components:
         cwe:               { type: string }
         location:          { type: string }
         reachability:      { type: string }
+        rule:              { type: string, description: The rule this scan reported for the finding. }
+        anchor:            { type: string, description: The anchor this scan reported for the finding. }
+        instance:          { type: string, description: The instance this scan reported for the finding. }
         rating:            { type: string }
         evidence:
           type: object

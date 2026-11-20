@@ -69,6 +69,9 @@ type minimalFinding struct {
 	// UpstreamFixCommit is the real upstream fix commit; a new key because the
 	// legacy `fix_commit` above already carries the SuggestedFix base.
 	UpstreamFixCommit string `json:"upstream_fix_commit"`
+	Rule              string `json:"rule"`
+	Anchor            string `json:"anchor"`
+	Instance          string `json:"instance"`
 
 	Notes          []minimalNote          `json:"notes"`
 	Communications []minimalCommunication `json:"communications"`
@@ -156,6 +159,9 @@ func parseMinimal(data []byte) ([]Result, error) {
 			ExploitedInWild:         f.ExploitedInWild,
 			ExploitedInWildEvidence: f.ExploitedInWildEvidence,
 			UpstreamFixCommit:       f.UpstreamFixCommit,
+			Rule:                    f.Rule,
+			Anchor:                  f.Anchor,
+			Instance:                f.Instance,
 		}
 		// The minimal* wire types mirror their ingest counterparts field-for-
 		// field, so a direct conversion suffices (and breaks the build if the two

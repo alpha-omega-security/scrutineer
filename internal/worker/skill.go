@@ -810,11 +810,6 @@ func (w *Worker) reobserveFinding(existing, f *db.Finding, scan *db.Scan) error 
 			"rating":       f.Rating,
 			"dup_check":    f.DupCheck,
 		})
-	} else if existing.Rule == "" && existing.Anchor == "" && existing.Instance == "" {
-		// A row from before the identity fields, or from a skill that did
-		// not report them, takes the first identity a later scan reports.
-		// An identity already recorded is kept, like the other content.
-		maps.Copy(updates, map[string]any{"rule": f.Rule, "anchor": f.Anchor, "instance": f.Instance})
 	}
 
 	var statusRestore string
@@ -843,6 +838,11 @@ func (w *Worker) reobserveFinding(existing, f *db.Finding, scan *db.Scan) error 
 	}
 	if err := w.DB.Model(&db.Finding{}).Where("id = ?", existing.ID).Updates(updates).Error; err != nil {
 		return fmt.Errorf("update finding %d: %w", existing.ID, err)
+	}
+	if !ownedByThisScan {
+		if err := w.fillFindingIdentity(existing.ID, f); err != nil {
+			return err
+		}
 	}
 	if err := w.upsertFindingReferences(existing.ID, f.References); err != nil {
 		w.Log.Warn("upsert finding references", "finding", existing.ID, "scan", scan.ID, "err", err)
@@ -873,6 +873,23 @@ func (w *Worker) reobserveFinding(existing, f *db.Finding, scan *db.Scan) error 
 		}
 	}
 
+	return nil
+}
+
+// fillFindingIdentity gives a finding with no recorded identity the first one
+// a later scan reports. The empty check runs in the UPDATE itself, so a
+// concurrent observation cannot overwrite an identity another scan recorded.
+// Rows from before the columns existed hold NULL, which counts as empty.
+func (w *Worker) fillFindingIdentity(findingID uint, f *db.Finding) error {
+	if f.Rule == "" && f.Anchor == "" && f.Instance == "" {
+		return nil
+	}
+	err := w.DB.Model(&db.Finding{}).
+		Where("id = ? AND COALESCE(rule, '') = '' AND COALESCE(anchor, '') = '' AND COALESCE(instance, '') = ''", findingID).
+		Updates(map[string]any{"rule": f.Rule, "anchor": f.Anchor, "instance": f.Instance}).Error
+	if err != nil {
+		return fmt.Errorf("fill finding %d identity: %w", findingID, err)
+	}
 	return nil
 }
 

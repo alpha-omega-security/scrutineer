@@ -376,6 +376,9 @@ type sharingFinding struct {
 	ExploitedInWild         string `json:"exploited_in_wild,omitempty"`
 	ExploitedInWildEvidence string `json:"exploited_in_wild_evidence,omitempty"`
 	UpstreamFixCommit       string `json:"upstream_fix_commit,omitempty"`
+	Rule                    string `json:"rule,omitempty"`
+	Anchor                  string `json:"anchor,omitempty"`
+	Instance                string `json:"instance,omitempty"`
 
 	Notes          []sharingNote          `json:"notes,omitempty"`
 	Communications []sharingCommunication `json:"communications,omitempty"`
@@ -493,6 +496,9 @@ func (s *Server) apiExportRepoBundle(w http.ResponseWriter, r *http.Request, rep
 			// The real upstream fix commit rides the new key; the legacy
 			// fix_commit above carries the SuggestedFix base.
 			sf.UpstreamFixCommit = f.FixCommit
+			sf.Rule = f.Rule
+			sf.Anchor = f.Anchor
+			sf.Instance = f.Instance
 			for _, n := range f.Notes {
 				sf.Notes = append(sf.Notes, sharingNote{Body: n.Body, By: n.By, CreatedAt: n.CreatedAt})
 			}
