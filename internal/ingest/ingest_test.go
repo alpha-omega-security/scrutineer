@@ -133,6 +133,25 @@ func TestParseMinimal_normalisesReachabilityAndTier(t *testing.T) {
 	}
 }
 
+// Imported identity gets the scan path's normalization. An already
+// normalized archival value passes through unchanged.
+func TestParseMinimal_normalisesIdentity(t *testing.T) {
+	body := []byte(`{"repository":"https://x/y","findings":[
+		{"title":"a","rule":" SQL Injection! ","anchor":" filter\n  concatenated ","instance":"  search  endpoint "},
+		{"title":"b","rule":"path-traversal","anchor":"entry names joined to the root","instance":"extract API"}]}`)
+	results, _, err := Parse(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := results[0].Findings
+	if got[0].Rule != "sql-injection" || got[0].Anchor != "filter concatenated" || got[0].Instance != "search endpoint" {
+		t.Errorf("normalized identity = %q / %q / %q", got[0].Rule, got[0].Anchor, got[0].Instance)
+	}
+	if got[1].Rule != "path-traversal" || got[1].Anchor != "entry names joined to the root" || got[1].Instance != "extract API" {
+		t.Errorf("archival identity changed: %q / %q / %q", got[1].Rule, got[1].Anchor, got[1].Instance)
+	}
+}
+
 func TestParseMinimalDefaultsTool(t *testing.T) {
 	body := []byte(`{"findings":[{"title":"x"}]}`)
 	results, _, err := Parse(body)

@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/findingnorm"
 )
 
 // ErrInvalidFinding marks a streamed finding the caller sent wrong: malformed
@@ -277,9 +278,9 @@ func (f scanFinding) toFinding(scanID, repoID uint, commit, subPath, model strin
 		Affected:     f.Affected,
 		Reachability: f.Reachability,
 		QualityTier:  f.QualityTier,
-		Rule:         ruleSlug(f.Rule),
-		Anchor:       identityField(f.Anchor, maxIdentityAnchorRunes),
-		Instance:     identityField(f.Instance, maxIdentityInstanceRunes),
+		Rule:         findingnorm.Rule(f.Rule),
+		Anchor:       findingnorm.Anchor(f.Anchor),
+		Instance:     findingnorm.Instance(f.Instance),
 		Trace:        f.Trace,
 		Boundary:     f.Boundary,
 		Validation:   f.Validation,
@@ -323,34 +324,4 @@ func validEmail(s string) bool {
 		return false
 	}
 	return true
-}
-
-// The identity fields are short labels compared across findings, not prose.
-// The schemas cap them; these caps hold when a report that failed validation
-// is still parsed.
-const (
-	maxIdentityRuleRunes     = 64
-	maxIdentityAnchorRunes   = 200
-	maxIdentityInstanceRunes = 120
-)
-
-// ruleSlug lowercases a reported rule and joins its whitespace-separated
-// parts with hyphens, so "SQL Injection" and "sql-injection" land on the same
-// slug even when the report skipped schema validation.
-func ruleSlug(s string) string {
-	slug := strings.Join(strings.Fields(strings.ToLower(s)), "-")
-	if utf8.RuneCountInString(slug) <= maxIdentityRuleRunes {
-		return slug
-	}
-	return strings.Trim(string([]rune(slug)[:maxIdentityRuleRunes]), "-")
-}
-
-// identityField collapses runs of whitespace (including newlines) to single
-// spaces and cuts the result to limit runes.
-func identityField(s string, limit int) string {
-	s = strings.Join(strings.Fields(s), " ")
-	if utf8.RuneCountInString(s) <= limit {
-		return s
-	}
-	return strings.TrimSpace(string([]rune(s)[:limit]))
 }

@@ -3,7 +3,6 @@ package worker
 import (
 	"io"
 	"log/slog"
-	"strings"
 	"testing"
 
 	"scrutineer/internal/db"
@@ -85,32 +84,27 @@ func TestParseFindingsOutput_identityFillsOnlyAnEmptyRow(t *testing.T) {
 	}
 }
 
-func TestIdentityFieldCapsLength(t *testing.T) {
-	long := strings.Repeat("é", maxIdentityAnchorRunes+10)
-	if got := identityField(long, maxIdentityAnchorRunes); len([]rune(got)) != maxIdentityAnchorRunes {
-		t.Fatalf("capped length = %d runes", len([]rune(got)))
+// A streamed body skips the schema, so its rule is turned into a valid slug
+// before storage and the fingerprint still comes from the location.
+func TestPersistStreamedFinding_normalizesRule(t *testing.T) {
+	w, _ := identityWorker(t)
+	var repo db.Repository
+	w.DB.First(&repo)
+	scan := &db.Scan{RepositoryID: repo.ID, Kind: JobSkill, SkillName: "security-deep-dive", Status: db.ScanRunning, Commit: "abc"}
+	w.DB.Create(scan)
+	body := []byte(`{"id":"F1","title":"SQLi","severity":"High","cwe":"CWE-89","location":"src/users.rb:42",
+		"trace":"User input reaches the query builder without escaping.","rule":" SQL Injection! ","anchor":" filter\n concatenated "}`)
+	f, err := w.PersistStreamedFinding(scan, body)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if got := identityField("  a \t b\n c ", 10); got != "a b c" {
-		t.Fatalf("collapsed = %q", got)
+	var got db.Finding
+	w.DB.First(&got, f.ID)
+	if got.Rule != "sql-injection" || got.Anchor != "filter concatenated" {
+		t.Fatalf("identity = %q / %q", got.Rule, got.Anchor)
 	}
-	if got := identityField("   ", 10); got != "" {
-		t.Fatalf("blank = %q", got)
-	}
-}
-
-func TestRuleSlug(t *testing.T) {
-	for in, want := range map[string]string{
-		"SQL-Injection":              "sql-injection",
-		"sql injection":              "sql-injection",
-		"  Missing \t Authz\nCheck ": "missing-authz-check",
-		"   ":                        "",
-	} {
-		if got := ruleSlug(in); got != want {
-			t.Errorf("ruleSlug(%q) = %q, want %q", in, got, want)
-		}
-	}
-	if got := ruleSlug(strings.Repeat("a ", maxIdentityRuleRunes)); len([]rune(got)) > maxIdentityRuleRunes || strings.HasSuffix(got, "-") {
-		t.Fatalf("capped slug = %q", got)
+	if want := db.FingerprintFinding("security-deep-dive", "", "CWE-89", "src/users.rb:42", "SQLi"); got.Fingerprint != want {
+		t.Fatalf("fingerprint = %s, want the location fingerprint %s", got.Fingerprint, want)
 	}
 }
 
@@ -161,5 +155,29 @@ func TestReobserveFinding_fillsNullIdentity(t *testing.T) {
 	w.DB.First(&got, existing.ID)
 	if got.Rule != "sql-injection" || got.Anchor != "user filter concatenated" {
 		t.Fatalf("NULL identity not filled: %q / %q", got.Rule, got.Anchor)
+	}
+}
+
+// A failed identity fill must leave the counters alone, so a retry of the
+// same scan does not count the observation twice.
+func TestReobserveFinding_failedFillKeepsSeenCount(t *testing.T) {
+	w, mkScan := identityWorker(t)
+	plain := `{"findings":[{"id":"F1","title":"SQLi","severity":"High","cwe":"CWE-89","location":"src/users.rb:42"}]}`
+	if err := w.parseFindingsOutput(&db.Skill{}, mkScan("a"), plain, func(Event) {}); err != nil {
+		t.Fatal(err)
+	}
+	var existing db.Finding
+	w.DB.First(&existing)
+	if err := w.DB.Exec("ALTER TABLE findings RENAME COLUMN instance TO instance_gone").Error; err != nil {
+		t.Fatal(err)
+	}
+	f := db.Finding{Location: "src/users.rb:43", Rule: "sql-injection"}
+	if err := w.reobserveFinding(&existing, &f, mkScan("b")); err == nil {
+		t.Fatal("reobserve succeeded although the identity fill could not run")
+	}
+	var seen int
+	w.DB.Raw("SELECT seen_count FROM findings WHERE id = ?", existing.ID).Scan(&seen)
+	if seen != existing.SeenCount {
+		t.Fatalf("seen_count = %d after a failed fill, want %d", seen, existing.SeenCount)
 	}
 }

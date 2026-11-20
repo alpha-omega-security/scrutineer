@@ -836,13 +836,15 @@ func (w *Worker) reobserveFinding(existing, f *db.Finding, scan *db.Scan) error 
 	if f.Snippet != "" {
 		updates["snippet"] = f.Snippet
 	}
-	if err := w.DB.Model(&db.Finding{}).Where("id = ?", existing.ID).Updates(updates).Error; err != nil {
-		return fmt.Errorf("update finding %d: %w", existing.ID, err)
-	}
+	// The fill runs before the counter update: it is idempotent, so a failure
+	// here leaves seen_count untouched and a retry of this scan counts once.
 	if !ownedByThisScan {
 		if err := w.fillFindingIdentity(existing.ID, f); err != nil {
 			return err
 		}
+	}
+	if err := w.DB.Model(&db.Finding{}).Where("id = ?", existing.ID).Updates(updates).Error; err != nil {
+		return fmt.Errorf("update finding %d: %w", existing.ID, err)
 	}
 	if err := w.upsertFindingReferences(existing.ID, f.References); err != nil {
 		w.Log.Warn("upsert finding references", "finding", existing.ID, "scan", scan.ID, "err", err)
