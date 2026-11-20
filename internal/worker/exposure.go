@@ -144,7 +144,7 @@ func (w *Worker) doExposure(ctx context.Context, scan *db.Scan, emit func(Event)
 	if err := stageSkill(&skill, workRoot, skillDir); err != nil {
 		return "", fmt.Errorf("stage skill: %w", err)
 	}
-	document, err := buildSkillContext(w.apiBaseFor(skill.Name), w.ForkOrg, w.metadataDir(), scan, &scan.Repository, nil, nil, nil)
+	document, err := buildSkillContext(w.apiBaseFor(skill.Name), w.ForkOrg, w.metadataDir(), scan, &scan.Repository, nil, nil, nil, scanLimits(ctx))
 	if err != nil {
 		return "", fmt.Errorf("build context: %w", err)
 	}

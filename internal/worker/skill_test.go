@@ -549,7 +549,7 @@ func TestStageContext_writesRepoFacts(t *testing.T) {
 		DefaultBranch: "main",
 	}
 	scan := &db.Scan{ID: 7, RepositoryID: 3, APIToken: "tok"}
-	document, err := buildSkillContext("http://127.0.0.1:8080/api", "", "", scan, repo, nil, nil, nil)
+	document, err := buildSkillContext("http://127.0.0.1:8080/api", "", "", scan, repo, nil, nil, nil, scanLimits(t.Context()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -586,7 +586,7 @@ attack_surface: stdin is attacker controlled
 skip: [tests/**]`,
 	}
 	scan := &db.Scan{ID: 7, RepositoryID: 3, APIToken: "tok"}
-	document, err := buildSkillContext("http://127.0.0.1:8080/api", "", "", scan, repo, nil, nil, nil)
+	document, err := buildSkillContext("http://127.0.0.1:8080/api", "", "", scan, repo, nil, nil, nil, scanLimits(t.Context()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -619,7 +619,7 @@ func TestStageContext_includesReconFocusAreas(t *testing.T) {
 		}},
 		Notes: []string{"Examples excluded."},
 	}
-	document, err := buildSkillContext("http://127.0.0.1:8080/api", "", "", scan, repo, recon, nil, nil)
+	document, err := buildSkillContext("http://127.0.0.1:8080/api", "", "", scan, repo, recon, nil, nil, scanLimits(t.Context()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -649,7 +649,7 @@ func TestStageContext_includesFocusArea(t *testing.T) {
 		t.Fatal(err)
 	}
 	scan := &db.Scan{ID: 7, RepositoryID: 3, APIToken: "tok", FocusArea: raw}
-	document, err := buildSkillContext("http://127.0.0.1:8080/api", "", "", scan, repo, nil, nil, nil)
+	document, err := buildSkillContext("http://127.0.0.1:8080/api", "", "", scan, repo, nil, nil, nil, scanLimits(t.Context()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -950,7 +950,7 @@ func TestStageContext_writesToWorkRootAndSkillDir(t *testing.T) {
 	skillDir := filepath.Join(work, ".claude", "skills", "s")
 	repo := &db.Repository{URL: "https://example.com/r", Name: "r"}
 	scan := &db.Scan{ID: 7, RepositoryID: 1, APIToken: "t"}
-	document, err := buildSkillContext("http://127.0.0.1:8080/api", "", "", scan, repo, nil, nil, nil)
+	document, err := buildSkillContext("http://127.0.0.1:8080/api", "", "", scan, repo, nil, nil, nil, scanLimits(t.Context()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -983,7 +983,7 @@ func TestStageContext_emptySkillDirWritesWorkRootOnly(t *testing.T) {
 	work := t.TempDir()
 	repo := &db.Repository{URL: "https://example.com/r", Name: "r"}
 	scan := &db.Scan{ID: 1, RepositoryID: 1, APIToken: "t"}
-	document, err := buildSkillContext("http://127.0.0.1:8080/api", "", "", scan, repo, nil, nil, nil)
+	document, err := buildSkillContext("http://127.0.0.1:8080/api", "", "", scan, repo, nil, nil, nil, scanLimits(t.Context()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1035,7 +1035,7 @@ func TestStageContext_includesRef(t *testing.T) {
 	dir := t.TempDir()
 	repo := &db.Repository{URL: "https://example.com/x", Name: "x"}
 	scan := &db.Scan{ID: 1, RepositoryID: 1, APIToken: "t", Ref: "2.4.x"}
-	document, err := buildSkillContext("http://127.0.0.1:8080/api", "", "", scan, repo, nil, nil, nil)
+	document, err := buildSkillContext("http://127.0.0.1:8080/api", "", "", scan, repo, nil, nil, nil, scanLimits(t.Context()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1059,7 +1059,7 @@ func TestStageContext_omitsRefWhenEmpty(t *testing.T) {
 	dir := t.TempDir()
 	repo := &db.Repository{URL: "https://example.com/x", Name: "x"}
 	scan := &db.Scan{ID: 1, RepositoryID: 1, APIToken: "t"}
-	document, err := buildSkillContext("http://127.0.0.1:8080/api", "", "", scan, repo, nil, nil, nil)
+	document, err := buildSkillContext("http://127.0.0.1:8080/api", "", "", scan, repo, nil, nil, nil, scanLimits(t.Context()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1089,7 +1089,7 @@ func TestStageContext_includesWorkerSettings(t *testing.T) {
 			dir := t.TempDir()
 			repo := &db.Repository{URL: "https://github.com/o/r", Name: "r"}
 			scan := &db.Scan{ID: 1, RepositoryID: 1, APIToken: "t"}
-			document, err := buildSkillContext("http://127.0.0.1:8080/api", tc.forkOrg, tc.metadataDir, scan, repo, nil, nil, nil)
+			document, err := buildSkillContext("http://127.0.0.1:8080/api", tc.forkOrg, tc.metadataDir, scan, repo, nil, nil, nil, scanLimits(t.Context()))
 			if err != nil {
 				t.Fatal(err)
 			}

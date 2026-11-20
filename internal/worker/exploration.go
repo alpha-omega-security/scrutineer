@@ -297,7 +297,7 @@ func exploratorySourceFile(name string) bool {
 	return slices.Contains(exploratorySourceExtensions, strings.ToLower(path.Ext(name)))
 }
 
-func stageExploratoryWorkspace(workRoot, skillDir, apiBase string, scan *db.Scan, skill *db.Skill) (skillContext, error) {
+func stageExploratoryWorkspace(workRoot, skillDir, apiBase string, scan *db.Scan, skill *db.Skill, limits *skillContextLimits) (skillContext, error) {
 	if err := ValidateExploration(scan, skill.Name); err != nil {
 		return skillContext{}, err
 	}
@@ -319,7 +319,7 @@ func stageExploratoryWorkspace(workRoot, skillDir, apiBase string, scan *db.Scan
 	if scan.ExplorationMode == ExplorationRandomDig {
 		staged.Repository.ThreatModel = ""
 	}
-	document, err := buildSkillContext(apiBase, "", "", &staged, &staged.Repository, nil, nil, nil)
+	document, err := buildSkillContext(apiBase, "", "", &staged, &staged.Repository, nil, nil, nil, limits)
 	if err != nil {
 		return skillContext{}, err
 	}

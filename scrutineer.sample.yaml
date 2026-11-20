@@ -280,6 +280,10 @@
 # marked failed. Go duration syntax ("30m", "1h30m", "2h").
 # scan_timeout: 1h
 
+# Reproduction budget, not enforced.
+# scan_memory_mib: 4096
+# scan_disk_mib: 2048
+
 # Opt-in live backend probes consume tokens; cache successful checks for this duration.
 # backend_preflight_ttl: 1h
 
