@@ -248,14 +248,15 @@ spend can exceed the cap by one call plus the finalize turn.
 
 The cap does not apply to the codex backend because it emits no usage events,
 so a codex scan always runs to completion. The cap only charges the cost the
-usage events report, so usage reported without a cost counts as $0 and the
-scan log warns once when a capped run sees it. If the worker's own price table
-knows the model, the result is still priced when it lands, but the cap cannot
-stop the run mid-way. If no price is known at all, the scan records no cost and
-shows it as "unpriced" rather than "-". A run whose final result pushes it
-past the cap is not treated as capped since it already finished. Retrying a
-capped scan resumes the saved session with a fresh budget and keeps the same
-cap.
+usage events report, so usage events without a cost count as $0, the cap
+cannot stop that scan mid-run and the scan log warns once. A run whose final
+result pushes it past the cap is not treated as capped since it already
+finished. Retrying a capped scan resumes the saved session with a fresh budget
+and keeps the same cap.
+
+Separately, a scan that recorded tokens but still has no cost after its
+results, because the backend reported none and no price table could estimate
+one, shows its cost as "unpriced" rather than "-".
 
 ### Group budget
 
