@@ -120,6 +120,10 @@ type SkillJob struct {
 	// prompt. It lets callers resume the same conversation with targeted
 	// corrective instructions, such as rewriting an invalid report.json.
 	ResumePrompt string
+	// restoredReport is the partial output file restoreResumeReport wrote
+	// into the workspace before the run, or empty. Follow-up runs on the same
+	// workspace clear it through followup.
+	restoredReport string
 	// Prompt, when non-empty, replaces the default skill-activation prompt on
 	// a fresh (non-resume) run, letting a caller drive the agent with an
 	// arbitrary instruction instead of "use the <skill> skill": the chat
@@ -243,7 +247,7 @@ func (l LocalClaude) RunSkill(ctx context.Context, sj SkillJob, emit func(Event)
 	var outPath string
 	if sj.OutputFile != "" {
 		outPath = filepath.Join(work, sj.OutputFile)
-		_ = os.Remove(outPath)
+		sj.clearStaleOutput(outPath)
 	}
 
 	emit(Event{Kind: KindText, Text: "$ claude -p <skill:" + sj.Name + ">"})
@@ -428,4 +432,18 @@ func buildLoggedPrompt(skill *db.Skill, backend string) string {
 	})
 	return prompt +
 		"\n\n--- SKILL.md ---\n\n" + renderSkillMD(skill)
+}
+
+// followup is for repair, finalize and audit runs, which must not keep the restored report.
+func (sj SkillJob) followup() SkillJob {
+	sj.restoredReport = ""
+	return sj
+}
+
+// clearStaleOutput keeps a restored report, which is the resumed agent's input.
+func (sj SkillJob) clearStaleOutput(outPath string) {
+	if sj.restoredReport != "" {
+		return
+	}
+	_ = os.Remove(outPath)
 }

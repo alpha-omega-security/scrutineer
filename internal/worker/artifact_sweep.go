@@ -15,25 +15,29 @@ import (
 // before finalizeScan reaches its terminal cleanup. A workspace that still
 // backs an active resume must survive so the resumed harness can find its
 // source tree and session store. A resumable terminal scan can shed its stale
-// workspace, but keeps the harness state needed by a future retry.
+// workspace, but keeps the harness state and saved partial report needed by a
+// future retry.
 func (w *Worker) sweepOrphanScanArtifacts() (int, error) {
 	if w.DB == nil || w.DataDir == "" {
 		return 0, nil
 	}
 	workspaceIDs, workspaceErr := scanArtifactIDs(w.DataDir)
 	stateIDs, stateErr := scanArtifactIDs(filepath.Join(w.DataDir, harnessStateDirName))
-	candidates := make(map[uint]bool, len(workspaceIDs)+len(stateIDs))
+	reportIDs, reportErr := scanArtifactIDs(filepath.Join(w.DataDir, resumeReportDirName))
+	candidates := make(map[uint]bool, len(workspaceIDs)+len(stateIDs)+len(reportIDs))
 	for scanID := range workspaceIDs {
 		candidates[scanID] = true
 	}
-	for scanID := range stateIDs {
-		if _, ok := candidates[scanID]; !ok {
-			candidates[scanID] = false
+	for _, ids := range []map[uint]struct{}{stateIDs, reportIDs} {
+		for scanID := range ids {
+			if _, ok := candidates[scanID]; !ok {
+				candidates[scanID] = false
+			}
 		}
 	}
 
 	var removed int
-	sweepErr := errors.Join(workspaceErr, stateErr)
+	sweepErr := errors.Join(workspaceErr, stateErr, reportErr)
 	for scanID, hasWorkspace := range candidates {
 		reap, preserveState, err := w.scanArtifactSweepDecision(scanID)
 		if err != nil {
@@ -48,7 +52,7 @@ func (w *Worker) sweepOrphanScanArtifacts() (int, error) {
 		}
 		var removeErr error
 		if preserveState {
-			removeErr = os.RemoveAll(w.workRoot(scanID))
+			removeErr = w.shedResumableWorkspace(scanID)
 		} else {
 			removeErr = w.RemoveScanArtifacts(scanID)
 		}
@@ -124,4 +128,19 @@ func (w *Worker) scanArtifactSweepDecision(scanID uint) (reap, preserveState boo
 	}
 
 	return true, scan.Resumable(), nil
+}
+
+// shedResumableWorkspace saves the output file before removing the workspace:
+// a process that died mid-scan never ran finalizeScan, which normally saves it.
+func (w *Worker) shedResumableWorkspace(rootID uint) error {
+	var scan db.Scan
+	if err := w.DB.Select("id, kind, skill_id").Where("id = ?", rootID).Limit(1).Find(&scan).Error; err != nil {
+		return fmt.Errorf("load scan %d for artifact sweep: %w", rootID, err)
+	}
+	if scan.Kind == JobSkill && scan.SkillID != nil {
+		if err := w.saveLineageReport(rootID, *scan.SkillID, func(Event) {}); err != nil {
+			return err
+		}
+	}
+	return os.RemoveAll(w.workRoot(rootID))
 }

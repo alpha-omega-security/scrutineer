@@ -374,7 +374,7 @@ func (d ContainerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Ev
 	var outPath string
 	if sj.OutputFile != "" {
 		outPath = filepath.Join(work, sj.OutputFile)
-		_ = os.Remove(outPath)
+		sj.clearStaleOutput(outPath)
 	}
 
 	absConfig, digest, err := d.prepareHarnessState(ctx, sj.StateDir, provider, absWork, image, hnet)
