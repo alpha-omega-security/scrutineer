@@ -360,3 +360,27 @@ func TestResumeReportSavedFromSurvivingWorkspace(t *testing.T) {
 		t.Fatalf("resumed run saw report.json = %q, want the report from the surviving workspace", runner.seen)
 	}
 }
+
+func TestSweepKeepsWorkspaceWhenReportSaveFails(t *testing.T) {
+	w, skill, repoID := newResumeTestWorker(t, &reportRunner{})
+	scan := createSkillScan(t, w, skill, repoID, db.Scan{})
+	if err := w.DB.Model(&scan).Updates(map[string]any{"status": db.ScanFailed, "session_id": "sess-1"}).Error; err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(w.workRoot(scan.ID), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	report := filepath.Join(w.workRoot(scan.ID), defaultSkillOutputFile)
+	if err := os.WriteFile(report, []byte(partialReport), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A plain file where the directory belongs makes the save fail.
+	if err := os.WriteFile(filepath.Join(w.DataDir, resumeReportDirName), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := w.sweepOrphanScanArtifacts(); err == nil {
+		t.Fatal("sweep reported no error for a report it could not save")
+	}
+	assertPathExists(t, report)
+}

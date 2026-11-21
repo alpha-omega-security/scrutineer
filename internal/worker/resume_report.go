@@ -31,29 +31,30 @@ func (w *Worker) saveResumeReport(scan *db.Scan, emit func(Event)) {
 	if scan.Kind != JobSkill || scan.SkillID == nil || !keepsResumeState(scan) {
 		return
 	}
-	w.saveLineageReport(workspaceScanID(scan), *scan.SkillID, emit)
+	if err := w.saveLineageReport(workspaceScanID(scan), *scan.SkillID, emit); err != nil {
+		w.Log.Warn("resume report", "scan", scan.ID, "err", err)
+	}
 }
 
 // saveLineageReport keeps the earlier copy when the workspace holds no output file.
-func (w *Worker) saveLineageReport(rootID, skillID uint, emit func(Event)) {
+func (w *Worker) saveLineageReport(rootID, skillID uint, emit func(Event)) error {
 	var skill db.Skill
 	if err := w.DB.Select("id, name, output_file").First(&skill, skillID).Error; err != nil {
-		w.Log.Warn("resume report: load skill", "scan", rootID, "err", err)
-		return
+		return fmt.Errorf("load skill %d: %w", skillID, err)
 	}
 	if skill.OutputFile == "" || validateSkillPaths(skill.Name, skill.OutputFile) != nil {
-		return
+		return nil
 	}
 	name := skill.OutputFile
 	report := readCappedReport(filepath.Join(w.workRoot(rootID), name), emit)
 	if report == "" {
-		return
+		return nil
 	}
 	if err := writeResumeReport(w.resumeReportDirID(rootID), name, report); err != nil {
-		w.Log.Warn("resume report: save", "scan", rootID, "err", err)
-		return
+		return fmt.Errorf("save partial ./%s: %w", name, err)
 	}
 	emit(Event{Kind: KindText, Text: fmt.Sprintf("kept the partial ./%s (%d bytes) for a retry to resume from", name, len(report))})
+	return nil
 }
 
 // writeResumeReport goes through a temporary file so a crash never leaves a truncated copy.

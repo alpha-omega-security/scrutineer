@@ -199,7 +199,9 @@ func (w *Worker) doSkill(ctx context.Context, scan *db.Scan, emit func(Event)) (
 	// A workspace that outlived its run (a restart while a retry was already
 	// queued) still holds the output file, so save it before the reset.
 	if scan.SessionID != "" {
-		w.saveLineageReport(workspaceScanID(scan), skill.ID, emit)
+		if err := w.saveLineageReport(workspaceScanID(scan), skill.ID, emit); err != nil {
+			w.Log.Warn("resume report", "scan", scan.ID, "err", err)
+		}
 	}
 	if err := resetSkillWorkspace(workRoot, scan, &skill, emit); err != nil {
 		return "", fmt.Errorf("reset work: %w", err)

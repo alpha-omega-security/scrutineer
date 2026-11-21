@@ -138,7 +138,9 @@ func (w *Worker) shedResumableWorkspace(rootID uint) error {
 		return fmt.Errorf("load scan %d for artifact sweep: %w", rootID, err)
 	}
 	if scan.Kind == JobSkill && scan.SkillID != nil {
-		w.saveLineageReport(rootID, *scan.SkillID, func(Event) {})
+		if err := w.saveLineageReport(rootID, *scan.SkillID, func(Event) {}); err != nil {
+			return err
+		}
 	}
 	return os.RemoveAll(w.workRoot(rootID))
 }
