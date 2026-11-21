@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"scrutineer/internal/findingnorm"
 )
 
 // minimalReport is the hand-written ingest shape for findings that came
@@ -69,6 +71,9 @@ type minimalFinding struct {
 	// UpstreamFixCommit is the real upstream fix commit; a new key because the
 	// legacy `fix_commit` above already carries the SuggestedFix base.
 	UpstreamFixCommit string `json:"upstream_fix_commit"`
+	Rule              string `json:"rule"`
+	Anchor            string `json:"anchor"`
+	Instance          string `json:"instance"`
 
 	Notes          []minimalNote          `json:"notes"`
 	Communications []minimalCommunication `json:"communications"`
@@ -156,6 +161,11 @@ func parseMinimal(data []byte) ([]Result, error) {
 			ExploitedInWild:         f.ExploitedInWild,
 			ExploitedInWildEvidence: f.ExploitedInWildEvidence,
 			UpstreamFixCommit:       f.UpstreamFixCommit,
+			// Imported text skips the skill schemas, so the identity gets the
+			// same normalization as a scan's report.
+			Rule:     findingnorm.Rule(f.Rule),
+			Anchor:   findingnorm.Anchor(f.Anchor),
+			Instance: findingnorm.Instance(f.Instance),
 		}
 		// The minimal* wire types mirror their ingest counterparts field-for-
 		// field, so a direct conversion suffices (and breaks the build if the two

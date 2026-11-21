@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"scrutineer/internal/db"
+	"scrutineer/internal/findingnorm"
 )
 
 // ErrInvalidFinding marks a streamed finding the caller sent wrong: malformed
@@ -180,6 +181,11 @@ type scanFinding struct {
 	ReachChecked int      `json:"reach_checked"`
 	ReachExposed int      `json:"reach_exposed"`
 
+	// Identity of the bug independent of file layout (#1335).
+	Rule     string `json:"rule"`
+	Anchor   string `json:"anchor"`
+	Instance string `json:"instance"`
+
 	References []scanReference `json:"references"`
 
 	// Per-step markdown (security-deep-dive schema)
@@ -272,6 +278,9 @@ func (f scanFinding) toFinding(scanID, repoID uint, commit, subPath, model strin
 		Affected:     f.Affected,
 		Reachability: f.Reachability,
 		QualityTier:  f.QualityTier,
+		Rule:         findingnorm.Rule(f.Rule),
+		Anchor:       findingnorm.Anchor(f.Anchor),
+		Instance:     findingnorm.Instance(f.Instance),
 		Trace:        f.Trace,
 		Boundary:     f.Boundary,
 		Validation:   f.Validation,

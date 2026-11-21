@@ -642,6 +642,9 @@ func buildImportFindings(scan *db.Scan, res ingest.Result) ([]db.Finding, []impo
 		// The real upstream fix commit lands in FixCommit; the bundle's legacy
 		// fix_commit (the SuggestedFix base) was already folded into Trace above.
 		f.FixCommit = in.UpstreamFixCommit
+		f.Rule = in.Rule
+		f.Anchor = in.Anchor
+		f.Instance = in.Instance
 		// CVSS scores are derived, never carried: recompute from the vector so a
 		// hand-edited or stale bundle score cannot stick. An empty/invalid
 		// vector yields a zero score, matching syncCVSSScore.
