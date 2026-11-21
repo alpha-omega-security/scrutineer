@@ -11,6 +11,9 @@ var packageRepositoryVars = map[string][]string{
 	"go":  {"GOPROXY"},
 	"pub": {"PUB_HOSTED_URL"},
 	"hex": {"HEX_MIRROR"},
+	// Bundler reads this mirror for the default rubygems.org source. The
+	// trailing slash in the name is required.
+	"rubygems": {"BUNDLE_MIRROR__HTTPS://RUBYGEMS__ORG/"},
 }
 
 // PackageRepositoryEnv returns sorted KEY=VALUE entries that point package

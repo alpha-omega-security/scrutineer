@@ -9,10 +9,11 @@ import (
 func TestPackageRepositoriesResolvePreset(t *testing.T) {
 	got := PackageRepositories{GitPkgsProxy: "https://pkgs.example.com/"}.Resolve()
 	want := map[string]string{
-		"npm":  "https://pkgs.example.com/npm/",
-		"pypi": "https://pkgs.example.com/pypi/simple/",
-		"go":   "https://pkgs.example.com/go",
-		"pub":  "https://pkgs.example.com/pub",
+		"npm":      "https://pkgs.example.com/npm/",
+		"pypi":     "https://pkgs.example.com/pypi/simple/",
+		"go":       "https://pkgs.example.com/go",
+		"pub":      "https://pkgs.example.com/pub",
+		"rubygems": "https://pkgs.example.com/gem/",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("Resolve = %v, want %v", got, want)
@@ -34,6 +35,13 @@ func TestPackageRepositoriesResolveExplicitWins(t *testing.T) {
 	}
 	if got["pypi"] != "https://pkgs.example.com/pypi/simple/" {
 		t.Errorf("pypi = %q, preset must still apply", got["pypi"])
+	}
+}
+
+func TestPackageRepositoriesResolveRubyGemsExplicitWins(t *testing.T) {
+	got := PackageRepositories{GitPkgsProxy: "https://pkgs.example.com", RubyGems: "https://gems.example.org/"}.Resolve()
+	if got["rubygems"] != "https://gems.example.org/" {
+		t.Errorf("rubygems = %q, explicit value must win", got["rubygems"])
 	}
 }
 
@@ -90,6 +98,7 @@ func TestValidatePackageRepositories(t *testing.T) {
 		{"relative", PackageRepositories{PyPI: "npm.example.org/simple"}, "package_repositories.pypi: "},
 		{"no host", PackageRepositories{Go: "https:///path"}, "package_repositories.go: "},
 		{"userinfo", PackageRepositories{Pub: "https://user:pw@pub.example.org"}, "credentials are not supported"},
+		{"rubygems http", PackageRepositories{RubyGems: "http://gems.example.org"}, "package_repositories.rubygems: "},
 		{"query", PackageRepositories{Hex: "https://hex.example.org?token=x"}, "package_repositories.hex: "},
 		{"fragment", PackageRepositories{GitPkgsProxy: "https://pkgs.example.com#x"}, "package_repositories.git_pkgs_proxy: "},
 		{"list separator", PackageRepositories{Go: "https://go.example.org/a,direct"}, "package_repositories.go: "},

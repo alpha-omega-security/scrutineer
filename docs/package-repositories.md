@@ -21,6 +21,7 @@ package_repositories:
 | `pypi` | `PIP_INDEX_URL`, `UV_DEFAULT_INDEX` | `/pypi/simple/` |
 | `go` | `GOPROXY` | `/go` |
 | `pub` | `PUB_HOSTED_URL` | `/pub` |
+| `rubygems` | `BUNDLE_MIRROR__HTTPS://RUBYGEMS__ORG/` | `/gem/` |
 | `hex` | `HEX_MIRROR` | none, set `hex:` explicitly |
 
 An explicit per-ecosystem key always beats the `git_pkgs_proxy` preset. A
@@ -34,6 +35,11 @@ window. Set `hex:` only for a mirror that keeps releases signed.
 Go gets the bare URL as `GOPROXY`, with no `,direct` suffix, so a miss never
 silently falls back to the public upstream. Checksum verification through
 `GOSUMDB` is unchanged.
+
+The `rubygems` key sets Bundler's mirror for the default `https://rubygems.org`
+source, so a Gemfile that points at another source is unaffected. Bundler does
+not fall back to rubygems.org when the mirror fails. Plain `gem install` has no
+environment variable for this and is not covered.
 
 ## Egress
 
@@ -60,6 +66,8 @@ repositories could never be reached. Credentials must stay out of config URLs.
 
 - Credentials
 - Custom CA certificates
-- Cargo, Bundler/RubyGems, Maven/Gradle, NuGet and Composer
+- Cargo, Maven/Gradle, NuGet and Composer, which need configuration files rather
+  than environment variables
+- The `gem` command outside Bundler
 - Internally hosted repositories on private addresses
 - The `--no-container` runner (a warning is logged)

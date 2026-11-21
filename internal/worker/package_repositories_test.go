@@ -8,14 +8,16 @@ import (
 
 func TestPackageRepositoryEnv(t *testing.T) {
 	got := PackageRepositoryEnv(map[string]string{
-		"pypi":    "https://pkgs.example.com/pypi/simple/",
-		"npm":     "https://pkgs.example.com/npm/",
-		"go":      "https://pkgs.example.com/go",
-		"pub":     "https://pkgs.example.com/pub",
-		"hex":     "https://pkgs.example.com/hex",
-		"unknown": "https://ignored.example.com/",
+		"pypi":     "https://pkgs.example.com/pypi/simple/",
+		"npm":      "https://pkgs.example.com/npm/",
+		"go":       "https://pkgs.example.com/go",
+		"pub":      "https://pkgs.example.com/pub",
+		"hex":      "https://pkgs.example.com/hex",
+		"rubygems": "https://pkgs.example.com/gem/",
+		"unknown":  "https://ignored.example.com/",
 	})
 	want := []string{
+		"BUNDLE_MIRROR__HTTPS://RUBYGEMS__ORG/=https://pkgs.example.com/gem/",
 		"BUN_CONFIG_REGISTRY=https://pkgs.example.com/npm/",
 		"GOPROXY=https://pkgs.example.com/go",
 		"HEX_MIRROR=https://pkgs.example.com/hex",
