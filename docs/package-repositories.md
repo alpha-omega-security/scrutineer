@@ -37,9 +37,11 @@ silently falls back to the public upstream. Checksum verification through
 `GOSUMDB` is unchanged.
 
 The `rubygems` key sets Bundler's mirror for the default `https://rubygems.org`
-source, so a Gemfile that points at another source is unaffected. Bundler does
-not fall back to rubygems.org when the mirror fails. Plain `gem install` has no
-environment variable for this and is not covered.
+source, so a Gemfile that points at another source is unaffected. Scrutineer
+does not enable Bundler's mirror fallback, so a failed mirror is not retried
+against rubygems.org. A `fallback_timeout` already set for this mirror, for
+example in the scanned repository's `.bundle/config`, still applies. Plain
+`gem install` has no environment variable for this and is not covered.
 
 ## Egress
 
