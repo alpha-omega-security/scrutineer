@@ -93,7 +93,7 @@ func QueueDepth(gdb *gorm.DB, from, to time.Time, step time.Duration) ([]QueueDe
 			}
 		}
 		if enter != nil {
-			leave(queueExit(sc))
+			leave(queueExit(sc, *enter))
 		}
 	}
 	slices.SortFunc(enters, time.Time.Compare)
@@ -105,13 +105,13 @@ func QueueDepth(gdb *gorm.DB, from, to time.Time, step time.Duration) ([]QueueDe
 	return points, nil
 }
 
-// queueExit is nil while sc is queued. A queued row's started_at predates its
-// resume.
-func queueExit(sc queueDepthScan) *time.Time {
+// queueExit is nil while sc is queued. A resumed row keeps the started_at of
+// the run before its pause, which predates enter.
+func queueExit(sc queueDepthScan, enter time.Time) *time.Time {
 	if sc.Status == ScanQueued {
 		return nil
 	}
-	if sc.StartedAt != nil && (sc.FinishedAt == nil || sc.StartedAt.Before(*sc.FinishedAt)) {
+	if sc.StartedAt != nil && !sc.StartedAt.Before(enter) && (sc.FinishedAt == nil || sc.StartedAt.Before(*sc.FinishedAt)) {
 		return sc.StartedAt
 	}
 	return sc.FinishedAt

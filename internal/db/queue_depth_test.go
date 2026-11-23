@@ -53,7 +53,7 @@ func TestQueueDepth(t *testing.T) {
 
 // TestQueueDepthReplaysEvents pins that paused hours read as not queued once
 // the resume has cleared them from the row, including a pause taken while
-// running and a resume whose enqueue failed.
+// running, a resume whose enqueue failed and a cancellation after a resume.
 func TestQueueDepthReplaysEvents(t *testing.T) {
 	gdb, err := Open(":memory:")
 	if err != nil {
@@ -79,6 +79,8 @@ func TestQueueDepthReplaysEvents(t *testing.T) {
 		{Scan{Status: ScanRunning, CreatedAt: t0, StartedAt: at(5)}, []event{{AuditEventScanStarted, 1}, {AuditEventScanPaused, 2}, {AuditEventScanResumeRequested, 4}, {AuditEventScanStarted, 5}}},
 		// Paused at +1h, a resume at +2h failed to enqueue, resumed for good at +4h.
 		{Scan{Status: ScanQueued, CreatedAt: t0}, []event{{AuditEventScanPaused, 1}, {AuditEventScanResumeRequested, 2}, {AuditEventScanResumeEnqueueFailed, 2}, {AuditEventScanResumeRequested, 4}}},
+		// Ran from +1h, paused mid-run at +2h, resumed at +4h and cancelled at +5h by the opt-out sweep, which logs no event.
+		{Scan{Status: ScanCancelled, CreatedAt: t0, StartedAt: at(1), FinishedAt: at(5)}, []event{{AuditEventScanStarted, 1}, {AuditEventScanPaused, 2}, {AuditEventScanResumeRequested, 4}}},
 	} {
 		sc := tc.scan
 		sc.RepositoryID = repo.ID
@@ -96,7 +98,7 @@ func TestQueueDepthReplaysEvents(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []int{3, 0, 0, 1, 3, 2}
+	want := []int{4, 0, 0, 1, 4, 2}
 	if len(points) != len(want) {
 		t.Fatalf("points = %+v, want %d", points, len(want))
 	}
