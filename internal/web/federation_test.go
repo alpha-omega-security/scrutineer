@@ -206,7 +206,8 @@ func TestFeedRecords_membersTierCarriesOnlyNonCleanCertificates(t *testing.T) {
 func TestCertificateStatusesV2_matchesTheAuditEnum(t *testing.T) {
 	want := make([]string, 0, len(db.AdvisoryAuditStatuses))
 	for status := range db.AdvisoryAuditStatuses {
-		if status != interchange.CertificateStatusFixed {
+		// 'incomplete' is never exported, since it doesn't add any more useful information
+		if status != interchange.CertificateStatusFixed && status != "incomplete" {
 			want = append(want, status)
 		}
 	}
@@ -262,6 +263,23 @@ func TestCertificateRecords_newestVerdictWins(t *testing.T) {
 	}
 	if len(members) != 1 {
 		t.Fatalf("expected the newest verdict only, got %d records", len(members))
+	}
+}
+
+func TestCertificateRecords_incompleteFiltered(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+
+	repo := seedFeedRepo(t, s, "https://github.com/acme/lib", "")
+	seedAudit(t, s, repo.ID, "uuid-1", "fixed")
+	seedAudit(t, s, repo.ID, "uuid-1", "incomplete")
+
+	public, err := s.certificateRecords(interchange.TierPublic)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(public) != 1 {
+		t.Errorf("an incomplete audit must not drop an earlier fixed audit, got %+v", public)
 	}
 }
 

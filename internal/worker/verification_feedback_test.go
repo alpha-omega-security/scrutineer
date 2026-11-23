@@ -16,7 +16,7 @@ func TestVerificationFeedbackContextAndRecipe(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			scan := db.Scan{SkillName: name, FindingID: new(uint(1)), VerificationFeedback: "Check the first-party parser"}
 			dir := t.TempDir()
-			document, err := buildSkillContext("", "", "", &scan, &db.Repository{}, nil, nil, nil)
+			document, err := buildSkillContext("", "", "", &scan, &db.Repository{}, nil, nil, nil, scanLimits(t.Context()))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -55,7 +55,7 @@ func TestBuildSkillContextRejectsInvalidVerificationFeedback(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			scan := db.Scan{SkillName: verifySkillName, FindingID: new(uint(1)), VerificationFeedback: feedback}
-			if _, err := buildSkillContext("", "", "", &scan, &db.Repository{}, nil, nil, nil); err == nil {
+			if _, err := buildSkillContext("", "", "", &scan, &db.Repository{}, nil, nil, nil, scanLimits(t.Context())); err == nil {
 				t.Fatal("invalid verification feedback accepted")
 			}
 		})

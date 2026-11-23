@@ -37,6 +37,12 @@ const (
 // more than this; a scan that does is almost always wedged.
 const DefaultScanTimeout = time.Hour
 
+// DefaultScanMemoryMiB is the default RSS memory limit for a reproduction
+const DefaultScanMemoryMiB = 4096
+
+// DefaultScanDiskMiB is the default disk limit for a reproduction
+const DefaultScanDiskMiB = 2048
+
 // Prereq gate defaults. A skill declaring scrutineer.requires has its
 // dispatch deferred when any listed upstream scan is enqueued but not
 // yet done; the queue message is re-published with the delay doubling
@@ -113,8 +119,10 @@ type Worker struct {
 	// OnScanFailed, when non-nil, is called after a terminal failed scan has
 	// been persisted. Unlike OnScanFinalized it covers runner errors and
 	// timeouts, which do not have a committed analysis result.
-	OnScanFailed func(scan *db.Scan)
-	ScanTimeout  time.Duration
+	OnScanFailed  func(scan *db.Scan)
+	ScanTimeout   time.Duration
+	ScanMemoryMiB int
+	ScanDiskMiB   int
 	// AutoRejectMissedCount is the threshold of consecutive missed rescans at
 	// which an open finding is automatically transitioned to 'rejected'.
 	// 0 means disabled.
@@ -757,6 +765,7 @@ func (w *Worker) wrap(h handler) func(context.Context, []byte) error {
 		}
 		ctx, cancel := context.WithTimeout(ctx, timeout)
 		defer cancel()
+		ctx = withScanBudget(ctx, scanBudget{MemoryMiB: w.ScanMemoryMiB, DiskMiB: w.ScanDiskMiB})
 		w.mu.Lock()
 		if w.running == nil {
 			w.running = make(map[uint]*runningScan)

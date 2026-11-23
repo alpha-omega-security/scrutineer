@@ -671,14 +671,18 @@ type Advisory struct {
 
 // AdvisoryAuditStatuses is the set of verdicts an advisory fix audit may
 // record: the advertised fix held (fixed), can be circumvented (bypass),
-// left the same bug class open elsewhere (variant), or the original
+// left the same bug class open elsewhere (variant), exceeds resource budget
+// and the fix is unverified (incomplete), or the original
 // reproduction fires again at the audited commit (regressed).
 var AdvisoryAuditStatuses = map[string]bool{
-	"fixed": true, "bypass": true, "variant": true, "regressed": true,
+	"fixed": true, "bypass": true, "variant": true, "regressed": true, "incomplete": true,
 }
 
+// AdvisoryAuditDecided is a where query filter: an 'incomplete' status should not override an earlier status
+const AdvisoryAuditDecided = "advisory_audits.status <> 'incomplete'"
+
 // AdvisoryAudit is one fix-audit verdict for a published advisory, written by
-// the advisory-deep-dive skill. One row per advisory per run; the newest row
+// the advisory-deep-dive skill. One row per advisory per run; the newest non-`incomplete` row
 // per (repository, advisory) is authoritative. Keyed by advisory UUID rather
 // than Advisory.ID because the advisories skill replaces Advisory rows
 // wholesale on each run.

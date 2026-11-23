@@ -54,6 +54,7 @@ func (s *Server) advisoryCertificateDownload(w http.ResponseWriter, r *http.Requ
 	}
 	var audit db.AdvisoryAudit
 	res := s.DB.Where("repository_id = ? AND advisory_uuid = ?", adv.RepositoryID, adv.UUID).
+		Where(db.AdvisoryAuditDecided).
 		Order("id desc").Limit(1).Find(&audit)
 	if res.Error != nil {
 		s.Log.Error("certificate audit lookup", "advisory", adv.ID, "err", res.Error)
@@ -123,6 +124,7 @@ func (s *Server) latestAdvisoryAuditStatuses(advisories []db.Advisory) map[uint]
 	// advisories.
 	newest := s.DB.Model(&db.AdvisoryAudit{}).Select("MAX(id)").
 		Where("repository_id IN ? AND advisory_uuid IN ?", repoIDs, uuids).
+		Where(db.AdvisoryAuditDecided).
 		Group("repository_id, advisory_uuid")
 	var audits []db.AdvisoryAudit
 	if err := s.DB.Select("repository_id, advisory_uuid, status").

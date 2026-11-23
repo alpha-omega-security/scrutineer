@@ -78,7 +78,7 @@ func TestPrepareDiffRescanStagesDiffInputs(t *testing.T) {
 		t.Fatalf("threat model scan id = %v, want %d", stored.DiffThreatModelScanID, tm.ID)
 	}
 
-	document, err := buildSkillContext("http://api", "", DefaultMetadataDir, &stored, &repo, nil, nil, nil)
+	document, err := buildSkillContext("http://api", "", DefaultMetadataDir, &stored, &repo, nil, nil, nil, scanLimits(t.Context()))
 	if err != nil {
 		t.Fatal(err)
 	}

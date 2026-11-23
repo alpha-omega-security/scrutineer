@@ -200,7 +200,7 @@ func TestStageExplorationOmitsModelInputs(t *testing.T) {
 		ExplorationMode: ExplorationRandomDig, ExplorationPath: "lib", SubPath: "lib",
 		Repository: db.Repository{URL: "https://example.com/repo", ThreatModel: `{"secret":"MODEL-CANARY"}`, ScanConfig: "attack_surface: CONFIG-CANARY"},
 	}
-	document, err := stageWorkspaceWithInputs(work, skillDir, "http://localhost/api", "", "metadata-canary", &scan, skill, nil, nil, nil, nil)
+	document, err := stageWorkspaceWithInputs(work, skillDir, "http://localhost/api", "", "metadata-canary", &scan, skill, nil, nil, nil, nil, scanLimits(t.Context()))
 	if err != nil {
 		t.Fatal(err)
 	}
