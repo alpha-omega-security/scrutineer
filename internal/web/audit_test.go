@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -439,5 +440,52 @@ func TestApiAuditQueueDepthRejectsInvalidWindows(t *testing.T) {
 		if w.Code != http.StatusBadRequest {
 			t.Errorf("%s: status = %d, want 400; body=%s", query, w.Code, w.Body)
 		}
+	}
+}
+
+// TestApiAuditQueueDepthAcrossUserPause pins that a user pause reads as not
+// queued until the resume, and that the resume leaves the hours before the
+// pause unchanged.
+func TestApiAuditQueueDepthAcrossUserPause(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	t0 := time.Now().UTC().Truncate(time.Hour).Add(-24 * time.Hour)
+	clock := t0
+	s.DB.NowFunc = func() time.Time { return clock }
+	repo := db.Repository{URL: "https://example.com/queue-depth", Name: "queue-depth"}
+	s.DB.Create(&repo)
+	s.DB.Create(&db.Scan{RepositoryID: repo.ID, Kind: "skill", Status: db.ScanQueued})
+	window := url.Values{"from": {t0.Format(time.RFC3339)}, "to": {t0.Add(5 * time.Hour).Format(time.RFC3339)}}.Encode()
+	queuedPerHour := func() []int {
+		t.Helper()
+		w := getQueueDepth(t, s, window)
+		if w.Code != http.StatusOK {
+			t.Fatalf("status = %d; body=%s", w.Code, w.Body)
+		}
+		var points []db.QueueDepthPoint
+		decodeJSON(t, w, &points)
+		var queued []int
+		for _, p := range points {
+			queued = append(queued, p.Queued)
+		}
+		return queued
+	}
+
+	clock = t0.Add(2 * time.Hour)
+	if w := postForm(t, s, "/scans/pause-queued", url.Values{}); w.Code != http.StatusSeeOther {
+		t.Fatalf("pause status = %d; body=%s", w.Code, w.Body)
+	}
+	before := queuedPerHour()
+	clock = t0.Add(4 * time.Hour)
+	if w := postForm(t, s, "/scans/resume-paused", url.Values{}); w.Code != http.StatusSeeOther {
+		t.Fatalf("resume status = %d; body=%s", w.Code, w.Body)
+	}
+	after := queuedPerHour()
+
+	if want := []int{1, 1, 0, 0, 0, 0}; !slices.Equal(before, want) {
+		t.Errorf("while paused = %v, want %v", before, want)
+	}
+	if want := []int{1, 1, 0, 0, 1, 1}; !slices.Equal(after, want) {
+		t.Errorf("after resume = %v, want %v", after, want)
 	}
 }

@@ -103,8 +103,8 @@ func assertOveragePausedScan(t *testing.T, w *Worker, id uint, reset time.Time, 
 		if _, err := os.Stat(w.scanWorkRoot(&got)); err != nil {
 			t.Fatal("paused workspace removed", err)
 		}
-	} else if got.StartedAt != nil || got.FinishedAt != nil {
-		t.Fatal("queued scan acquired execution timestamps")
+	} else if got.StartedAt != nil || got.FinishedAt == nil {
+		t.Fatalf("queued scan paused with started_at %v finished_at %v, want only finished_at", got.StartedAt, got.FinishedAt)
 	}
 }
 

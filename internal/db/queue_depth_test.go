@@ -6,8 +6,8 @@ import (
 	"time"
 )
 
-// TestQueueDepth pins when a claim, a cancellation, a resume, an overage pause,
-// an import and history ending before the window leave the queue.
+// TestQueueDepth pins when a claim, a cancellation, a resume, an import and
+// history ending before the window leave the queue, from timestamps alone.
 func TestQueueDepth(t *testing.T) {
 	gdb, err := Open(":memory:")
 	if err != nil {
@@ -26,7 +26,6 @@ func TestQueueDepth(t *testing.T) {
 		{Status: ScanQueued, CreatedAt: t0.Add(3 * time.Hour), StartedAt: at(210 * time.Minute)},
 		{Kind: "import", Status: ScanDone, CreatedAt: t0.Add(time.Hour + time.Second), StartedAt: at(time.Hour), FinishedAt: at(time.Hour)},
 		{Status: ScanDone, CreatedAt: t0.Add(-5 * time.Hour), StartedAt: at(-4 * time.Hour), FinishedAt: at(-3 * time.Hour)},
-		{Status: ScanPaused, CreatedAt: t0},
 	} {
 		sc.RepositoryID = repo.ID
 		if err := gdb.Create(&sc).Error; err != nil {
@@ -46,6 +45,62 @@ func TestQueueDepth(t *testing.T) {
 		if !p.At.Equal(t0.Add(time.Duration(i) * time.Hour)) {
 			t.Errorf("point %d at %s", i, p.At)
 		}
+		if p.Queued != want[i] {
+			t.Errorf("queued at +%dh = %d, want %d", i, p.Queued, want[i])
+		}
+	}
+}
+
+// TestQueueDepthReplaysEvents pins that paused hours read as not queued once
+// the resume has cleared them from the row, including a pause taken while
+// running and a resume whose enqueue failed.
+func TestQueueDepthReplaysEvents(t *testing.T) {
+	gdb, err := Open(":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := Repository{URL: "https://example.com/queue-depth", Name: "queue-depth"}
+	if err := gdb.Create(&repo).Error; err != nil {
+		t.Fatal(err)
+	}
+	t0 := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	at := func(h int) *time.Time { return new(t0.Add(time.Duration(h) * time.Hour)) }
+	type event struct {
+		kind string
+		hour int
+	}
+	for _, tc := range []struct {
+		scan   Scan
+		events []event
+	}{
+		// Paused at +1h and resumed at +3h, still queued.
+		{Scan{Status: ScanQueued, CreatedAt: t0}, []event{{AuditEventScanPaused, 1}, {AuditEventScanResumeRequested, 3}}},
+		// Ran from +1h, paused mid-run at +2h, resumed at +4h and claimed at +5h.
+		{Scan{Status: ScanRunning, CreatedAt: t0, StartedAt: at(5)}, []event{{AuditEventScanStarted, 1}, {AuditEventScanPaused, 2}, {AuditEventScanResumeRequested, 4}, {AuditEventScanStarted, 5}}},
+		// Paused at +1h, a resume at +2h failed to enqueue, resumed for good at +4h.
+		{Scan{Status: ScanQueued, CreatedAt: t0}, []event{{AuditEventScanPaused, 1}, {AuditEventScanResumeRequested, 2}, {AuditEventScanResumeEnqueueFailed, 2}, {AuditEventScanResumeRequested, 4}}},
+	} {
+		sc := tc.scan
+		sc.RepositoryID = repo.ID
+		if err := gdb.Create(&sc).Error; err != nil {
+			t.Fatal(err)
+		}
+		for _, ev := range tc.events {
+			if err := gdb.Create(&AuditEvent{Kind: ev.kind, SubjectType: AuditSubjectScan, SubjectID: sc.ID, Source: SourceSystem, Payload: "{}", CreatedAt: *at(ev.hour)}).Error; err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+
+	points, err := QueueDepth(gdb, t0, t0.Add(5*time.Hour), time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []int{3, 0, 0, 1, 3, 2}
+	if len(points) != len(want) {
+		t.Fatalf("points = %+v, want %d", points, len(want))
+	}
+	for i, p := range points {
 		if p.Queued != want[i] {
 			t.Errorf("queued at +%dh = %d, want %d", i, p.Queued, want[i])
 		}

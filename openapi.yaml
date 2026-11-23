@@ -731,14 +731,15 @@ paths:
     get:
       summary: Number of queued scans at each step of a time window
       description: |
-        Derived from scan timestamps at query time rather than sampled, so
-        it covers history from before the first call. A scan counts as
-        queued at a point from its `created_at` until its `started_at`,
-        or its `finished_at` when it was cancelled or paused before any
-        claim. Imported scans, scheduler trace rows and scans paused by
-        the overage policy before any claim never count.
-        Resuming or cancelling a paused scan rewrites those timestamps on
-        the same row, so the depth around such a scan is approximate.
+        Derived from scan timestamps and `audit_events` at query time
+        rather than sampled, so it covers history from before the first
+        call. A scan counts as queued from its `created_at` until its
+        `started_at`, or its `finished_at` when it was cancelled or paused
+        before any claim. The `scan.started`, `scan.paused`,
+        `scan.resume_requested` and `scan.resume_enqueue_failed` events
+        replace those timestamps where a scan has them, so the hours a
+        scan spent paused never count, even after a resume cleared them
+        from the row. Imported scans and scheduler trace rows never count.
 
         Instance-wide; requires the operator token like the other
         `/v1/*` exports.

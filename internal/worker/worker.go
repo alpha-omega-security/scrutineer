@@ -1224,20 +1224,39 @@ func appendAutoResumeFailure(msg string, err error) string {
 func (w *Worker) pauseQueuedOnAccountError(triggerID uint) {
 	now := w.now().UTC()
 	reason := accountPauseReason(nil)
-	res := w.DB.Model(&db.Scan{}).
-		Where("status = ?", db.ScanQueued).
-		Updates(map[string]any{
-			"status":          db.ScanPaused,
-			"status_priority": db.StatusPriorityFor(db.ScanPaused),
-			errorColumn:       reason,
-			"finished_at":     &now,
-		})
-	if res.Error != nil {
-		w.Log.Warn("pause-on-account-error failed", "trigger", triggerID, "err", res.Error)
+	var paused int
+	err := w.DB.Transaction(func(tx *gorm.DB) error {
+		var queued []db.Scan
+		if err := tx.Omit("log", "report").Where("status = ?", db.ScanQueued).Find(&queued).Error; err != nil {
+			return err
+		}
+		for _, scan := range queued {
+			res := tx.Model(&db.Scan{}).Where("id = ? AND status = ?", scan.ID, db.ScanQueued).Updates(map[string]any{
+				"status":          db.ScanPaused,
+				"status_priority": db.StatusPriorityFor(db.ScanPaused),
+				errorColumn:       reason,
+				"finished_at":     &now,
+			})
+			if res.Error != nil {
+				return res.Error
+			}
+			if res.RowsAffected == 0 {
+				continue
+			}
+			scan.Status, scan.Error, scan.FinishedAt = db.ScanPaused, reason, &now
+			if err := db.LogScanEvent(tx, db.AuditEventScanPaused, &scan); err != nil {
+				return err
+			}
+			paused++
+		}
+		return nil
+	})
+	if err != nil {
+		w.Log.Warn("pause-on-account-error failed", "trigger", triggerID, "err", err)
 		return
 	}
-	if res.RowsAffected > 0 {
-		w.Log.Info("paused queued scans after Claude account error", "count", res.RowsAffected, "trigger", triggerID)
+	if paused > 0 {
+		w.Log.Info("paused queued scans after Claude account error", "count", paused, "trigger", triggerID)
 	}
 }
 
@@ -1421,7 +1440,7 @@ func (w *Worker) resumeAccountPaused(ctx context.Context) (int, error) {
 		return 0, errors.New("queue not configured")
 	}
 	var scans []db.Scan
-	if err := w.DB.Select("id", "kind", "finding_id", errorColumn, "paused_until").
+	if err := w.DB.Omit("log", "report").
 		Where("status = ? AND (error LIKE ? OR error LIKE ?) AND paused_until IS NOT NULL AND paused_until <= ?",
 			db.ScanPaused, AccountPausePrefix+"%", OveragePauseReason+"%", w.now().UTC()).
 		Order("id").
@@ -1430,18 +1449,26 @@ func (w *Worker) resumeAccountPaused(ctx context.Context) (int, error) {
 	}
 	var resumed int
 	for _, sc := range scans {
-		updates := map[string]any{
-			"status":          db.ScanQueued,
-			"status_priority": db.StatusPriorityFor(db.ScanQueued),
-			errorColumn:       "",
-			"finished_at":     nil,
-			"paused_until":    nil,
+		var claimed bool
+		if err := w.DB.Transaction(func(tx *gorm.DB) error {
+			res := tx.Model(&db.Scan{}).Where("id = ? AND status = ?", sc.ID, db.ScanPaused).Updates(map[string]any{
+				"status":          db.ScanQueued,
+				"status_priority": db.StatusPriorityFor(db.ScanQueued),
+				errorColumn:       "",
+				"finished_at":     nil,
+				"paused_until":    nil,
+			})
+			if res.Error != nil || res.RowsAffected == 0 {
+				return res.Error
+			}
+			claimed = true
+			resumedScan := sc
+			resumedScan.Status, resumedScan.Error, resumedScan.FinishedAt, resumedScan.PausedUntil = db.ScanQueued, "", nil, nil
+			return db.LogScanEvent(tx, db.AuditEventScanResumeRequested, &resumedScan)
+		}); err != nil {
+			return resumed, err
 		}
-		res := w.DB.Model(&db.Scan{}).Where("id = ? AND status = ?", sc.ID, db.ScanPaused).Updates(updates)
-		if res.Error != nil {
-			return resumed, res.Error
-		}
-		if res.RowsAffected == 0 {
+		if !claimed {
 			continue
 		}
 		priority := PrioScan
@@ -1450,13 +1477,20 @@ func (w *Worker) resumeAccountPaused(ctx context.Context) (int, error) {
 		}
 		if err := w.Queue.Enqueue(ctx, sc.Kind, sc.ID, priority); err != nil {
 			now := w.now().UTC()
-			restoreErr := w.DB.Model(&db.Scan{}).Where("id = ?", sc.ID).Updates(map[string]any{
-				"status":          db.ScanPaused,
-				"status_priority": db.StatusPriorityFor(db.ScanPaused),
-				errorColumn:       appendAutoResumeFailure(sc.Error, err),
-				"finished_at":     &now,
-				"paused_until":    sc.PausedUntil,
-			}).Error
+			restored := sc
+			restored.Error, restored.FinishedAt = appendAutoResumeFailure(sc.Error, err), &now
+			restoreErr := w.DB.Transaction(func(tx *gorm.DB) error {
+				if err := tx.Model(&db.Scan{}).Where("id = ?", sc.ID).Updates(map[string]any{
+					"status":          db.ScanPaused,
+					"status_priority": db.StatusPriorityFor(db.ScanPaused),
+					errorColumn:       restored.Error,
+					"finished_at":     &now,
+					"paused_until":    sc.PausedUntil,
+				}).Error; err != nil {
+					return err
+				}
+				return db.LogScanEvent(tx, db.AuditEventScanResumeEnqueueFailed, &restored)
+			})
 			return resumed, errors.Join(err, restoreErr)
 		}
 		resumed++
