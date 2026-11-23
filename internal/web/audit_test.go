@@ -189,7 +189,7 @@ func TestApiAudit_notReachableFromScanContainer(t *testing.T) {
 	_, tok := seedAuditFixture(t, s)
 
 	// The host-only mux rejects the Host header a runner container uses.
-	for _, path := range []string{"/api/v1/audit/queue", "/api/v1/audit/metrics"} {
+	for _, path := range []string{"/api/v1/audit/queue", "/api/v1/audit/metrics", "/api/v1/audit/queue-depth"} {
 		r := httptest.NewRequest("GET", path, nil)
 		r.Host = "host.docker.internal:8080"
 		w := httptest.NewRecorder()
@@ -201,7 +201,7 @@ func TestApiAudit_notReachableFromScanContainer(t *testing.T) {
 
 	// A scan that forges a loopback Host still holds only its own bearer,
 	// which the operator gate refuses.
-	for _, path := range []string{"/api/v1/audit/queue", "/api/v1/findings", "/api/v1/repositories"} {
+	for _, path := range []string{"/api/v1/audit/queue", "/api/v1/audit/queue-depth", "/api/v1/findings", "/api/v1/repositories"} {
 		r := httptest.NewRequest("GET", path, nil)
 		r.Host = testHost
 		r.Header.Set("Authorization", "Bearer "+tok)
@@ -214,7 +214,7 @@ func TestApiAudit_notReachableFromScanContainer(t *testing.T) {
 
 	// The per-scan bearer API no longer routes these at all, so a valid
 	// scan token gets a 404 rather than instance-wide findings.
-	for _, path := range []string{"/api/audit/queue", "/api/audit/metrics"} {
+	for _, path := range []string{"/api/audit/queue", "/api/audit/metrics", "/api/audit/queue-depth"} {
 		r := httptest.NewRequest("GET", path, nil)
 		asOperator(r)
 		r.Header.Set("Authorization", "Bearer "+tok)
@@ -369,6 +369,75 @@ func TestAuditQueueOptionsFromQuery(t *testing.T) {
 		}
 		if !got.Since.Equal(tc.wantSince) {
 			t.Errorf("%q: Since = %v, want %v", tc.query, got.Since, tc.wantSince)
+		}
+	}
+}
+
+func getQueueDepth(t *testing.T, s *Server, query string) *httptest.ResponseRecorder {
+	t.Helper()
+	r := httptest.NewRequest(http.MethodGet, "/api/v1/audit/queue-depth?"+query, nil)
+	asOperator(r)
+	w := httptest.NewRecorder()
+	s.Handler().ServeHTTP(w, r)
+	return w
+}
+
+// TestApiAuditQueueDepth pins the explicit window, the 24-hour default and the
+// wire keys of each point.
+func TestApiAuditQueueDepth(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	repo := db.Repository{URL: "https://example.com/queue-depth", Name: "queue-depth"}
+	s.DB.Create(&repo)
+	t0 := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	s.DB.Create(&db.Scan{RepositoryID: repo.ID, Status: db.ScanDone, CreatedAt: t0, StartedAt: new(t0.Add(time.Hour)), FinishedAt: new(t0.Add(2 * time.Hour))})
+	s.DB.Create(&db.Scan{RepositoryID: repo.ID, Status: db.ScanQueued, CreatedAt: time.Now().Add(-2 * time.Hour)})
+
+	w := getQueueDepth(t, s, url.Values{"from": {t0.Format(time.RFC3339)}, "to": {t0.Add(time.Hour).Format(time.RFC3339)}, "step": {"30m"}}.Encode())
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d; body=%s", w.Code, w.Body)
+	}
+	var rows []map[string]any
+	decodeJSON(t, w, &rows)
+	want := []map[string]any{
+		{"at": "2026-11-01T00:00:00Z", "queued": float64(1)},
+		{"at": "2026-11-01T00:30:00Z", "queued": float64(1)},
+		{"at": "2026-11-01T01:00:00Z", "queued": float64(0)},
+	}
+	if len(rows) != len(want) {
+		t.Fatalf("points = %v, want %v", rows, want)
+	}
+	for i := range want {
+		if len(rows[i]) != len(want[i]) || rows[i]["at"] != want[i]["at"] || rows[i]["queued"] != want[i]["queued"] {
+			t.Errorf("point %d = %v, want %v", i, rows[i], want[i])
+		}
+	}
+
+	w = getQueueDepth(t, s, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("default window status = %d; body=%s", w.Code, w.Body)
+	}
+	var points []db.QueueDepthPoint
+	decodeJSON(t, w, &points)
+	if len(points) != 25 || points[0].Queued != 0 || points[24].Queued != 1 {
+		t.Errorf("default window = %+v, want 25 hourly points ending on the queued scan", points)
+	}
+}
+
+func TestApiAuditQueueDepthRejectsInvalidWindows(t *testing.T) {
+	s, done := newTestServer(t)
+	defer done()
+	for _, query := range []string{
+		"from=yesterday",
+		"to=2026-11-01",
+		"step=1d",
+		"step=0s",
+		"from=2026-11-02T00:00:00Z&to=2026-11-01T00:00:00Z",
+		"from=2026-11-01T00:00:00Z&to=2026-11-02T00:00:00Z&step=1s",
+	} {
+		w := getQueueDepth(t, s, query)
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%s: status = %d, want 400; body=%s", query, w.Code, w.Body)
 		}
 	}
 }
