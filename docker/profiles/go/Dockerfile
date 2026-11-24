@@ -39,7 +39,7 @@ ARG GO_SHA256_AMD64=7226736c2339719cda28fbf3a54d71aa63bcefe376e98cef00034268dab2
 ARG GO_SHA256_ARM64=3392582988a273a87ab5043ee1b2c9c17a2c3c00580bf9326c47a2e0aaaeac92
 # govulncheck reports known vulns in the project's module graph and (with
 # source) which are actually reachable. Pinned; built from source below.
-ARG GOVULNCHECK_VERSION=v1.9.0
+ARG GOVULNCHECK_VERSION=v1.10.0
 
 USER root
 
