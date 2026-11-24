@@ -37,11 +37,12 @@ func (s *Server) exportHandler() http.Handler {
 	mux.HandleFunc("POST /import/oss-crs", s.handleImportOSSCRS)
 	mux.HandleFunc("GET /repositories/{id}/import-artifacts", s.apiListImportArtifacts)
 	mux.HandleFunc("GET /import-artifacts/{id}", s.apiDownloadImportArtifact)
-	// Audit endpoints return instance-wide findings and review aggregates,
-	// so they live behind the host-only boundary with the other operator
-	// exports rather than under per-scan bearer auth (#454).
+	// Audit endpoints return instance-wide findings, review aggregates and
+	// queue depth, so they live behind the host-only boundary with the other
+	// operator exports rather than under per-scan bearer auth (#454).
 	mux.HandleFunc("GET /audit/queue", s.apiAuditQueue)
 	mux.HandleFunc("GET /audit/metrics", s.apiAuditMetrics)
+	mux.HandleFunc("GET /audit/queue-depth", s.apiAuditQueueDepth)
 	return mux
 }
 

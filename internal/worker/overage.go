@@ -133,10 +133,11 @@ func (w *Worker) pauseOverageRows(reset *time.Time) error {
 		if err := tx.Omit("log", "report").Where("status = ? AND kind IN ?", db.ScanQueued, []string{JobSkill, JobExposure}).Find(&queued).Error; err != nil {
 			return err
 		}
+		now := w.now().UTC()
 		for _, scan := range queued {
 			result := tx.Model(&db.Scan{}).Where("id = ? AND status = ?", scan.ID, db.ScanQueued).Updates(map[string]any{
 				"status": db.ScanPaused, "status_priority": db.StatusPriorityFor(db.ScanPaused),
-				errorColumn: appendAutoResume(OveragePauseReason, reset), "paused_until": reset,
+				errorColumn: appendAutoResume(OveragePauseReason, reset), "paused_until": reset, "finished_at": &now,
 			})
 			if result.Error != nil {
 				return result.Error
@@ -145,6 +146,7 @@ func (w *Worker) pauseOverageRows(reset *time.Time) error {
 				scan.Status = db.ScanPaused
 				scan.Error = appendAutoResume(OveragePauseReason, reset)
 				scan.PausedUntil = reset
+				scan.FinishedAt = &now
 				if err := db.LogScanEvent(tx, db.AuditEventScanPaused, &scan); err != nil {
 					return err
 				}

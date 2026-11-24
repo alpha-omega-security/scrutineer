@@ -186,7 +186,7 @@ func TestOveragePauseWinsStalePrerequisiteFailure(t *testing.T) {
 	if err := w.DB.First(&got, scan.ID).Error; err != nil {
 		t.Fatal(err)
 	}
-	if got.Status != db.ScanPaused || got.Error != OveragePauseReason || got.FinishedAt != nil {
+	if got.Status != db.ScanPaused || got.Error != OveragePauseReason || got.FinishedAt == nil {
 		t.Fatalf("prerequisite failure overwrote pause: %+v", got)
 	}
 	// The conditional start claim must also reject the stale queued snapshot.

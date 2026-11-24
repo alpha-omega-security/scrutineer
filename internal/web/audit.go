@@ -2,7 +2,9 @@ package web
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
+	"net/url"
 	"strconv"
 	"time"
 
@@ -53,6 +55,49 @@ func (s *Server) apiAuditMetrics(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, m)
+}
+
+// apiAuditQueueDepth returns how many scans were queued at each step of a
+// window, for dashboards that plot queue depth over time.
+func (s *Server) apiAuditQueueDepth(w http.ResponseWriter, r *http.Request) {
+	from, to, step, err := queueDepthWindow(r.URL.Query())
+	if err != nil {
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	points, err := db.QueueDepth(s.DB.WithContext(r.Context()), from, to, step)
+	if errors.Is(err, db.ErrInvalidQueueDepthWindow) {
+		writeAPIError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err != nil {
+		writeAPIError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, points)
+}
+
+// queueDepthWindow reads the from, to and step parameters, defaulting to the
+// last 24 hours in one-hour steps.
+func queueDepthWindow(q url.Values) (from, to time.Time, step time.Duration, err error) {
+	to, step = time.Now().UTC(), time.Hour
+	if v := q.Get("to"); v != "" {
+		if to, err = time.Parse(time.RFC3339, v); err != nil {
+			return from, to, step, fmt.Errorf("invalid to: %w", err)
+		}
+	}
+	from = to.Add(-24 * time.Hour)
+	if v := q.Get("from"); v != "" {
+		if from, err = time.Parse(time.RFC3339, v); err != nil {
+			return from, to, step, fmt.Errorf("invalid from: %w", err)
+		}
+	}
+	if v := q.Get("step"); v != "" {
+		if step, err = time.ParseDuration(v); err != nil {
+			return from, to, step, fmt.Errorf("invalid step: %w", err)
+		}
+	}
+	return from, to, step, nil
 }
 
 // auditPage renders the audit dashboard: the queue of recently

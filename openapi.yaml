@@ -727,6 +727,54 @@ paths:
                     type: object
                     additionalProperties: { type: integer }
 
+  /v1/audit/queue-depth:
+    get:
+      summary: Number of queued scans at each step of a time window
+      description: |
+        Derived from scan timestamps and `audit_events` at query time
+        rather than sampled, so it covers history from before the first
+        call. A scan counts as queued from its `created_at` until its
+        `started_at`, or its `finished_at` when it was cancelled or paused
+        before any claim. The `scan.started`, `scan.paused`,
+        `scan.resume_requested` and `scan.resume_enqueue_failed` events
+        replace those timestamps where a scan has them, so the hours a
+        scan spent paused never count, even after a resume cleared them
+        from the row. Imported scans and scheduler trace rows never count.
+
+        Instance-wide; requires the operator token like the other
+        `/v1/*` exports.
+      operationId: getAuditQueueDepth
+      security: [{ operatorToken: [] }]
+      parameters:
+        - name: from
+          in: query
+          description: RFC3339 timestamp of the first point. Defaults to 24 hours before `to`.
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          description: RFC3339 timestamp of the last point, included when the window is a multiple of `step`. Defaults to now.
+          schema: { type: string, format: date-time }
+        - name: step
+          in: query
+          description: Go duration between points, such as `15m` or `1h`. Defaults to `1h`.
+          schema: { type: string, default: 1h }
+      responses:
+        '200':
+          description: One point per step, oldest first.
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 1000
+                items:
+                  type: object
+                  required: [at, queued]
+                  properties:
+                    at: { type: string, format: date-time }
+                    queued: { type: integer }
+        '400':
+          description: A malformed parameter, a non-positive `step`, `from` after `to`, or a window of more than 1000 points.
+
   /findings/{id}/communications:
     parameters:
       - name: id
