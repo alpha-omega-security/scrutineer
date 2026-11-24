@@ -255,7 +255,7 @@ jobs:
             ${{ runner.os }}-go-${{ github.job }}-
 
       - name: Install govulncheck
-        run: sh scripts/retry-build-command.sh go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+        run: sh scripts/retry-build-command.sh go install golang.org/x/vuln/cmd/govulncheck@v1.10.0
 
       - name: Scan for known vulnerabilities
         run: govulncheck ./...
