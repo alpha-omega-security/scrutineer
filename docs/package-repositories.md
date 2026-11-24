@@ -3,8 +3,9 @@
 `package_repositories` points the package managers inside scan containers at an
 existing package repository or caching proxy (Artifactory, Nexus or
 [git-pkgs/proxy](https://github.com/git-pkgs/proxy)). Scrutineer sets each
-package manager's native environment variables, so no files are written into
-the scanned workspace.
+package manager's native environment variables or, where a package manager
+needs it, mounts a generated config file read-only outside the workspace, so
+nothing is written into the scanned workspace.
 
 ```yaml
 package_repositories:
@@ -13,15 +14,15 @@ package_repositories:
   npm: https://artifactory.example.com/api/npm/npm/
 ```
 
-## Environment set per ecosystem
+## Settings per ecosystem
 
-| Key | Environment variables | git-pkgs/proxy path |
+| Key | Native setting | git-pkgs/proxy path |
 | --- | --- | --- |
 | `npm` | `npm_config_registry`, `YARN_NPM_REGISTRY_SERVER`, `BUN_CONFIG_REGISTRY` | `/npm/` |
 | `pypi` | `PIP_INDEX_URL`, `UV_DEFAULT_INDEX` | `/pypi/simple/` |
 | `go` | `GOPROXY` | `/go` |
 | `pub` | `PUB_HOSTED_URL` | `/pub` |
-| `rubygems` | `BUNDLE_MIRROR__HTTPS://RUBYGEMS__ORG/` | `/gem/` |
+| `rubygems` | `BUNDLE_USER_CONFIG` pointing at a mounted Bundler config | `/gem/` |
 | `hex` | `HEX_MIRROR` | none, set `hex:` explicitly |
 
 An explicit per-ecosystem key always beats the `git_pkgs_proxy` preset. A
@@ -36,12 +37,20 @@ Go gets the bare URL as `GOPROXY`, with no `,direct` suffix, so a miss never
 silently falls back to the public upstream. Checksum verification through
 `GOSUMDB` is unchanged.
 
-The `rubygems` key sets Bundler's mirror for the default `https://rubygems.org`
-source, so a Gemfile that points at another source is unaffected. Scrutineer
-does not enable Bundler's mirror fallback, so a failed mirror is not retried
-against rubygems.org. A `fallback_timeout` already set for this mirror, for
-example in the scanned repository's `.bundle/config`, still applies. Plain
-`gem install` has no environment variable for this and is not covered.
+For `rubygems`, Scrutineer writes a Bundler config file holding the
+`mirror.https://rubygems.org/` setting to `package-repositories/bundler/config`
+under the data directory. It mounts that directory read-only at
+`/package-repositories` and sets `BUNDLE_USER_CONFIG` to the file. A file is
+used instead of an environment variable because the mirror key contains `:` and
+`/`, which dash (`/bin/sh` on Debian) drops from the environment, so Bundler
+run through `sh -c`, a Makefile or a `#!/bin/sh` script would lose the mirror.
+
+The mirror applies only to the default `https://rubygems.org` source, so a
+Gemfile that points at another source is unaffected. Scrutineer does not enable
+Bundler's mirror fallback, so a failed mirror is not retried against
+rubygems.org. A scanned repository's own `.bundle/config` outranks the user
+config, so it can override the mirror itself as well as set `fallback_timeout`.
+Plain `gem install` is not covered.
 
 ## Egress
 
@@ -58,6 +67,8 @@ Scrutineer rejects the config at startup when a URL:
 - is not an absolute `https` URL
 - contains credentials, a query string or a fragment
 - contains `,` or `|`, which `GOPROXY` reads as list separators
+- contains a quote, backslash or whitespace, which must be percent-encoded
+  because the URL is written verbatim into the Bundler config file
 - uses `localhost`, a `.localhost` name or the container host gateway
 - is an IP literal that is loopback, private, link-local or unspecified
 

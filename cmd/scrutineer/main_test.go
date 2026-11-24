@@ -1838,3 +1838,23 @@ func TestOSSScannerRegistry(t *testing.T) {
 		}
 	}
 }
+
+func TestPackageRepositorySettings_WritesUnderDataDir(t *testing.T) {
+	dataDir := t.TempDir()
+	cfg := &config.Config{PackageRepositories: config.PackageRepositories{RubyGems: "https://gems.example.org/"}}
+	env, dir, err := packageRepositorySettings(cfg, dataDir, quietLog())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := filepath.Join(dataDir, "package-repositories"); dir != want {
+		t.Errorf("configDir = %q, want %q", dir, want)
+	}
+	if !slices.Contains(env, "BUNDLE_USER_CONFIG=/package-repositories/bundler/config") {
+		t.Errorf("BUNDLE_USER_CONFIG missing: %v", env)
+	}
+
+	env, dir, err = packageRepositorySettings(nil, dataDir, quietLog())
+	if err != nil || env != nil || dir != "" {
+		t.Errorf("nil cfg = %v, %q, %v; want nil, empty, nil", env, dir, err)
+	}
+}

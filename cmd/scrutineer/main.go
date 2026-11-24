@@ -1277,7 +1277,10 @@ func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRu
 	// Skills inside the container reach the host via the runtime's host endpoint,
 	// which the egress proxy rewrites to 127.0.0.1 when dialing the app.
 	apiBase := "http://" + net.JoinHostPort(apiHost, addrPort(f.addr)) + "/api"
-	packageEnv := packageRepositoryEnv(cfg, log)
+	packageEnv, packageConfigDir, err := packageRepositorySettings(cfg, f.dataDir, log)
+	if err != nil {
+		return nil, "", fmt.Errorf("package_repositories: %w", err)
+	}
 	runner := worker.ContainerRunner{
 		Image:               f.runnerImage,
 		Effort:              f.effort,
@@ -1303,6 +1306,7 @@ func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRu
 		EgressPolicies:     policies,
 		ScanEgressPolicies: scanPolicies,
 		PackageEnv:         packageEnv,
+		PackageConfigDir:   packageConfigDir,
 		OpencodeProviders:  opencodeProviders,
 		OpencodeReadiness:  worker.NewOpencodeReadinessCache(),
 		CodexAccountAuth:   worker.NewCodexAccountAuth(f.codexAuthFile),
@@ -1715,18 +1719,19 @@ func warnPackageRepositoriesIgnored(cfg *config.Config, log *slog.Logger) {
 	}
 }
 
-// packageRepositoryEnv builds the container package manager settings from
-// cfg, or nil when none are configured.
-func packageRepositoryEnv(cfg *config.Config, log *slog.Logger) []string {
+// packageRepositorySettings builds the container package manager settings
+// from cfg, writing any config files under dataDir. It returns no settings
+// when none are configured.
+func packageRepositorySettings(cfg *config.Config, dataDir string, log *slog.Logger) ([]string, string, error) {
 	if cfg == nil {
-		return nil
+		return nil, "", nil
 	}
 	repos := cfg.PackageRepositories.Resolve()
 	if len(repos) == 0 {
-		return nil
+		return nil, "", nil
 	}
 	log.Info("package repositories configured", "ecosystems", slices.Sorted(maps.Keys(repos)))
-	return worker.PackageRepositoryEnv(repos)
+	return worker.PackageRepositorySettings(filepath.Join(dataDir, "package-repositories"), repos)
 }
 
 func baseURLHost(raw string) string {

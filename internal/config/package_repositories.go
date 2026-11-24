@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/alpha-omega-security/harness/egress"
 )
@@ -125,6 +126,11 @@ func validatePackageRepositoryURL(raw string) error {
 	}
 	if strings.ContainsAny(raw, ",|") {
 		return fmt.Errorf("must not contain ',' or '|', which GOPROXY reads as list separators")
+	}
+	// Bundler versions disagree on escapes in their config file, so the URL is
+	// written there verbatim and must not need any.
+	if strings.ContainsAny(raw, "\"\\") || strings.ContainsFunc(raw, unicode.IsSpace) {
+		return fmt.Errorf("must not contain quotes, backslashes or whitespace, percent-encode them")
 	}
 	if host == "localhost" || strings.HasSuffix(host, ".localhost") || host == egress.HostGatewayAlias {
 		return fmt.Errorf("host %q is a local address the scan egress proxy cannot reach", host)

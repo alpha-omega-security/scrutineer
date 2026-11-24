@@ -100,6 +100,10 @@ type ContainerRunner struct {
 	// PackageEnv is KEY=VALUE package manager settings from
 	// package_repositories, applied to every scan container.
 	PackageEnv []string
+	// PackageConfigDir is a host directory of package manager config files
+	// written from package_repositories. It is mounted read-only at
+	// PackageConfigMountDir in every scan container. Empty means no mount.
+	PackageConfigDir string
 	// OpencodeProviders contains provider-scoped images, credentials, state,
 	// config, and egress resolved from the operator's YAML configuration.
 	OpencodeProviders map[string]OpencodeProviderConfig
@@ -619,6 +623,9 @@ func (d ContainerRunner) buildContainerBaseArgs(absWork string, hnet hardenedNet
 	)
 	for _, entry := range d.PackageEnv {
 		args = append(args, "-e", entry)
+	}
+	if d.PackageConfigDir != "" {
+		args = append(args, "-v", bindMount(d.PackageConfigDir, PackageConfigMountDir, d.SELinuxRelabel, "ro"))
 	}
 	if supportsHostGatewayAddHost(d.Runtime) {
 		args = append(args, "--add-host", HostGatewayAlias+":"+gwTarget)
