@@ -12,6 +12,13 @@ import (
 // is mounted read-only in every scan container.
 const PackageConfigMountDir = "/package-repositories"
 
+// Package config files are owner-only, like other host state the runner
+// writes.
+const (
+	packageConfigDirPerm  = 0o700
+	packageConfigFilePerm = 0o600
+)
+
 // packageRepositoryVars maps an ecosystem name from package_repositories to
 // the environment variables its package managers read.
 var packageRepositoryVars = map[string][]string{
@@ -87,10 +94,10 @@ func PackageRepositorySettings(dir string, repos map[string]string) (env []strin
 	for _, eco := range ecos {
 		f := packageConfigFiles[eco]
 		host := filepath.Join(dir, filepath.FromSlash(f.path))
-		if err := os.MkdirAll(filepath.Dir(host), 0o700); err != nil {
+		if err := os.MkdirAll(filepath.Dir(host), packageConfigDirPerm); err != nil {
 			return nil, "", fmt.Errorf("write %s package config: %w", eco, err)
 		}
-		if err := os.WriteFile(host, f.render(repos[eco]), 0o600); err != nil {
+		if err := os.WriteFile(host, f.render(repos[eco]), packageConfigFilePerm); err != nil {
 			return nil, "", fmt.Errorf("write %s package config: %w", eco, err)
 		}
 	}
