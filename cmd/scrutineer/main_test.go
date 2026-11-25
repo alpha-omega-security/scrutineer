@@ -1858,3 +1858,18 @@ func TestPackageRepositorySettings_WritesUnderDataDir(t *testing.T) {
 		t.Errorf("nil cfg = %v, %q, %v; want nil, empty, nil", env, dir, err)
 	}
 }
+
+func TestPackageRepositorySettings_RelativeDataDirIsAbsolute(t *testing.T) {
+	t.Chdir(t.TempDir())
+	cfg := &config.Config{PackageRepositories: config.PackageRepositories{RubyGems: "https://gems.example.org/"}}
+	_, dir, err := packageRepositorySettings(cfg, "./data", quietLog())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !filepath.IsAbs(dir) {
+		t.Fatalf("configDir = %q, want an absolute path for the bind mount source", dir)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "bundler", "config")); err != nil {
+		t.Errorf("bundler config not written under %q: %v", dir, err)
+	}
+}

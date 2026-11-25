@@ -1731,7 +1731,13 @@ func packageRepositorySettings(cfg *config.Config, dataDir string, log *slog.Log
 		return nil, "", nil
 	}
 	log.Info("package repositories configured", "ecosystems", slices.Sorted(maps.Keys(repos)))
-	return worker.PackageRepositorySettings(filepath.Join(dataDir, "package-repositories"), repos)
+	// The directory becomes a bind mount source, which the container runtime
+	// reads as a named volume unless the path is absolute.
+	configDir, err := filepath.Abs(filepath.Join(dataDir, "package-repositories"))
+	if err != nil {
+		return nil, "", fmt.Errorf("resolve package repositories dir: %w", err)
+	}
+	return worker.PackageRepositorySettings(configDir, repos)
 }
 
 func baseURLHost(raw string) string {
