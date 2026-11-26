@@ -1,6 +1,8 @@
 package worker
 
 import (
+	"bytes"
+	"encoding/xml"
 	"fmt"
 	"maps"
 	"os"
@@ -32,12 +34,15 @@ var packageRepositoryVars = map[string][]string{
 
 // packageConfigFile is a package manager config file written on the host for
 // one ecosystem. path is relative to the config directory (slash separated),
-// env names the variable that points the package manager at the mounted file
-// and render builds the file from the repository URL.
+// env names the variable that points the package manager at the mounted file,
+// envPrefix is placed before the mounted path in the variable's value (empty
+// when the value is the bare path) and render builds the file from the
+// repository URL.
 type packageConfigFile struct {
-	path   string
-	env    string
-	render func(url string) []byte
+	path      string
+	env       string
+	envPrefix string
+	render    func(url string) []byte
 }
 
 var packageConfigFiles = map[string]packageConfigFile{
@@ -45,6 +50,27 @@ var packageConfigFiles = map[string]packageConfigFile{
 	// used because the mirror key contains ':' and '/', which dash drops from
 	// the environment.
 	"rubygems": {path: "bundler/config", env: "BUNDLE_USER_CONFIG", render: bundlerMirrorConfig},
+	// Global settings rather than user settings, so a project's own -s file or
+	// ~/.m2/settings.xml still applies on top.
+	"maven": {path: "maven/settings.xml", env: "MAVEN_ARGS", envPrefix: "--global-settings ", render: mavenMirrorSettings},
+}
+
+// mavenMirrorSettings renders a Maven settings file that mirrors central to
+// the repository URL.
+func mavenMirrorSettings(url string) []byte {
+	var esc bytes.Buffer
+	_ = xml.EscapeText(&esc, []byte(url)) // writing to a bytes.Buffer cannot fail
+	return []byte(`<?xml version="1.0" encoding="UTF-8"?>
+<settings xmlns="http://maven.apache.org/SETTINGS/1.2.0">
+  <mirrors>
+    <mirror>
+      <id>scrutineer-package-repository</id>
+      <mirrorOf>central</mirrorOf>
+      <url>` + esc.String() + `</url>
+    </mirror>
+  </mirrors>
+</settings>
+`)
 }
 
 // bundlerMirrorConfig renders the file Bundler 2.6 writes for
@@ -66,7 +92,7 @@ func PackageRepositoryEnv(repos map[string]string) []string {
 			env = append(env, name+"="+url)
 		}
 		if f, ok := packageConfigFiles[eco]; ok {
-			env = append(env, f.env+"="+PackageConfigMountDir+"/"+f.path)
+			env = append(env, f.env+"="+f.envPrefix+PackageConfigMountDir+"/"+f.path)
 		}
 	}
 	slices.Sort(env)

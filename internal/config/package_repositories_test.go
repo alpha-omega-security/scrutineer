@@ -14,6 +14,7 @@ func TestPackageRepositoriesResolvePreset(t *testing.T) {
 		"go":       "https://pkgs.example.com/go",
 		"pub":      "https://pkgs.example.com/pub",
 		"rubygems": "https://pkgs.example.com/gem/",
+		"maven":    "https://pkgs.example.com/maven/",
 	}
 	if len(got) != len(want) {
 		t.Fatalf("Resolve = %v, want %v", got, want)
@@ -42,6 +43,13 @@ func TestPackageRepositoriesResolveRubyGemsExplicitWins(t *testing.T) {
 	got := PackageRepositories{GitPkgsProxy: "https://pkgs.example.com", RubyGems: "https://gems.example.org/"}.Resolve()
 	if got["rubygems"] != "https://gems.example.org/" {
 		t.Errorf("rubygems = %q, explicit value must win", got["rubygems"])
+	}
+}
+
+func TestPackageRepositoriesResolveMavenExplicitWins(t *testing.T) {
+	got := PackageRepositories{GitPkgsProxy: "https://pkgs.example.com", Maven: "https://maven.example.org/"}.Resolve()
+	if got["maven"] != "https://maven.example.org/" {
+		t.Errorf("maven = %q, explicit value must win", got["maven"])
 	}
 }
 
@@ -99,6 +107,7 @@ func TestValidatePackageRepositories(t *testing.T) {
 		{"no host", PackageRepositories{Go: "https:///path"}, "package_repositories.go: "},
 		{"userinfo", PackageRepositories{Pub: "https://user:pw@pub.example.org"}, "credentials are not supported"},
 		{"rubygems http", PackageRepositories{RubyGems: "http://gems.example.org"}, "package_repositories.rubygems: "},
+		{"maven http", PackageRepositories{Maven: "http://maven.example.org"}, "package_repositories.maven: "},
 		{"query", PackageRepositories{Hex: "https://hex.example.org?token=x"}, "package_repositories.hex: "},
 		{"fragment", PackageRepositories{GitPkgsProxy: "https://pkgs.example.com#x"}, "package_repositories.git_pkgs_proxy: "},
 		{"list separator", PackageRepositories{Go: "https://go.example.org/a,direct"}, "package_repositories.go: "},
