@@ -67,6 +67,12 @@ profile sets its local repository through `MAVEN_OPTS` for this reason. Maven
 older than 3.9, for example one pinned by a Maven wrapper, ignores `MAVEN_ARGS`.
 Gradle is not covered.
 
+Maven does not read `HTTPS_PROXY`. It only uses a proxy listed in its settings
+file, which Scrutineer does not write yet. Without `--hardened` Maven connects
+to the repository directly. Under `--hardened` the egress proxy is the only
+route out, so Maven cannot download from this repository or from Maven Central
+until that is added.
+
 ## Egress
 
 Without `--hardened` the repository hosts are added to the egress allowlist
