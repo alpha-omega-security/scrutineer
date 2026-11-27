@@ -51,6 +51,58 @@ type opencodeAuthEntry struct {
 	Metadata map[string]string `json:"metadata,omitempty"`
 }
 
+// OpencodeAPIKeyVar carries an api_key_env credential into the scan
+// container. OpenCode 2 keeps credentials in its database and ignores
+// OPENCODE_AUTH_CONTENT, so the provider config names this variable with an
+// {env:} placeholder instead.
+const OpencodeAPIKeyVar = "SCRUTINEER_OPENCODE_API_KEY"
+
+// OpencodeConfigWithAPIKey returns content with options.apiKey for the
+// provider id set to an {env:} reference to OpencodeAPIKeyVar. An empty
+// content yields a config holding only that reference. An apiKey the
+// operator already set is kept. content must be plain JSON, since a JSONC
+// rewrite would lose its comments.
+func OpencodeConfigWithAPIKey(content, id string) (string, error) {
+	doc := map[string]any{}
+	if strings.TrimSpace(content) != "" {
+		if err := json.Unmarshal([]byte(content), &doc); err != nil {
+			return "", fmt.Errorf("config_file must be plain JSON when api_key_env is set: %w", err)
+		}
+	}
+	section := func(parent map[string]any, key string) (map[string]any, error) {
+		switch v := parent[key].(type) {
+		case nil:
+			child := map[string]any{}
+			parent[key] = child
+			return child, nil
+		case map[string]any:
+			return v, nil
+		default:
+			return nil, fmt.Errorf("config_file field %q is not an object", key)
+		}
+	}
+	providers, err := section(doc, "provider")
+	if err != nil {
+		return "", err
+	}
+	provider, err := section(providers, id)
+	if err != nil {
+		return "", err
+	}
+	options, err := section(provider, "options")
+	if err != nil {
+		return "", err
+	}
+	if _, set := options["apiKey"]; !set {
+		options["apiKey"] = "{env:" + OpencodeAPIKeyVar + "}"
+	}
+	out, err := json.Marshal(doc)
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
 const (
 	opencodeProviderStatePerm = 0o700
 	opencodeAuthFilePerm      = 0o600
@@ -155,6 +207,7 @@ func (d ContainerRunner) resolveOpencodeProvider(model string) (opencodeProvider
 			return resolved, fmt.Errorf("encode OpenCode provider %q auth: %w", resolved.ID, err)
 		}
 		resolved.Env["OPENCODE_AUTH_CONTENT"] = string(auth)
+		resolved.Env[OpencodeAPIKeyVar] = key
 		resolved.ExternalCredentials = true
 	}
 	for _, name := range cfg.PassEnv {

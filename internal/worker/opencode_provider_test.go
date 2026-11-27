@@ -57,6 +57,31 @@ func TestResolveOpencodeProviderBuildsScopedAuth(t *testing.T) {
 	if !slices.Equal(provider.EgressHosts, []string{"api.groq.com"}) {
 		t.Errorf("provider egress = %v", provider.EgressHosts)
 	}
+	if provider.Env[OpencodeAPIKeyVar] != "groq-secret" {
+		t.Errorf("%s not passed to the container", OpencodeAPIKeyVar)
+	}
+}
+
+func TestOpencodeConfigWithAPIKey(t *testing.T) {
+	ref := "{env:" + OpencodeAPIKeyVar + "}"
+	cases := []struct{ in, want string }{
+		{"", `{"provider":{"groq":{"options":{"apiKey":"` + ref + `"}}}}`},
+		{`{"provider":{"groq":{"npm":"x","options":{"baseURL":"https://h/v1"}}}}`,
+			`{"provider":{"groq":{"npm":"x","options":{"apiKey":"` + ref + `","baseURL":"https://h/v1"}}}}`},
+		{`{"provider":{"groq":{"options":{"apiKey":"{file:/k}"}}}}`,
+			`{"provider":{"groq":{"options":{"apiKey":"{file:/k}"}}}}`},
+	}
+	for _, c := range cases {
+		got, err := OpencodeConfigWithAPIKey(c.in, "groq")
+		if err != nil || got != c.want {
+			t.Errorf("OpencodeConfigWithAPIKey(%q) = %q, %v; want %q", c.in, got, err, c.want)
+		}
+	}
+	for _, bad := range []string{"// comment\n{}", `{"provider":[]}`, `{"provider":{"groq":{"options":"x"}}}`} {
+		if _, err := OpencodeConfigWithAPIKey(bad, "groq"); err == nil {
+			t.Errorf("OpencodeConfigWithAPIKey(%q) accepted invalid config", bad)
+		}
+	}
 }
 
 func TestResolveOpencodeProviderRequiresNamedCredentials(t *testing.T) {
