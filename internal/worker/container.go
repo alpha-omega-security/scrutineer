@@ -104,6 +104,17 @@ type ContainerRunner struct {
 	// written from package_repositories. It is mounted read-only at
 	// PackageConfigMountDir in every scan container. Empty means no mount.
 	PackageConfigDir string
+	// MavenRepository is the package_repositories maven URL, mirrored for
+	// central in the per-scan Maven settings. Empty means no mirror.
+	MavenRepository string
+	// ScanConfigRoot is a host directory under which each scan gets a private
+	// directory of generated config files (currently Maven settings), mounted
+	// read-only at ScanConfigMountDir and removed when the scan ends. Empty uses
+	// the system temp directory.
+	ScanConfigRoot string
+	// mavenSettingsDir is this scan's generated config directory, set by
+	// prepareScanConfig. Empty means no Maven settings are mounted.
+	mavenSettingsDir string
 	// OpencodeProviders contains provider-scoped images, credentials, state,
 	// config, and egress resolved from the operator's YAML configuration.
 	OpencodeProviders map[string]OpencodeProviderConfig
@@ -375,6 +386,12 @@ func (d ContainerRunner) RunSkill(ctx context.Context, sj SkillJob, emit func(Ev
 	// record before teardown removes the ephemeral sidecar.
 	defer d.teardownHardenedScan(sj, hnet, cleanupNetwork, emit)
 
+	d, cleanupScanConfig, err := d.prepareScanConfig(hnet)
+	if err != nil {
+		return result, err
+	}
+	defer cleanupScanConfig()
+
 	var outPath string
 	if sj.OutputFile != "" {
 		outPath = filepath.Join(work, sj.OutputFile)
@@ -627,6 +644,12 @@ func (d ContainerRunner) buildContainerBaseArgs(absWork string, hnet hardenedNet
 	if d.PackageConfigDir != "" {
 		args = append(args, "-v", bindMount(d.PackageConfigDir, PackageConfigMountDir, d.SELinuxRelabel, "ro"))
 	}
+	if d.mavenSettingsDir != "" {
+		args = append(args,
+			"-v", bindMount(d.mavenSettingsDir, ScanConfigMountDir, d.SELinuxRelabel, "ro"),
+			"-e", "MAVEN_ARGS=--global-settings "+ScanConfigMountDir+"/"+mavenSettingsPath,
+		)
+	}
 	if supportsHostGatewayAddHost(d.Runtime) {
 		args = append(args, "--add-host", HostGatewayAlias+":"+gwTarget)
 	}
@@ -658,22 +681,7 @@ func (d ContainerRunner) buildContainerBaseArgs(absWork string, hnet hardenedNet
 		// where the verified network path is unavailable.
 		args = append(args, "--network", hnet.name)
 	}
-	// In sidecar mode the proxy is a per-scan container reached by name on the
-	// --internal network, so the proxy URL is built per scan from the sidecar's
-	// endpoint rather than the process-wide host-proxy URL.
-	proxyURL := d.ProxyURL
-	if hnet.proxyEndpoint != "" {
-		proxyURL = ProxyURLForEndpoint(d.Egress.Token, hnet.proxyEndpoint)
-	}
-	// Apple has no --add-host, so the proxy env must name the per-scan
-	// gateway directly. Under --hardened the runner attaches to its own
-	// --internal network, whose gateway differs from the default network the
-	// startup ProxyURL was built for, so rewrite the host to this scan's
-	// gateway. docker/podman instead keep a constant host.docker.internal
-	// that --add-host repoints per scan.
-	if d.Runtime.Bin == runtimeApple && d.Hardened && hnet.gatewayIP != "" {
-		proxyURL = proxyURLWithHost(d.ProxyURL, hnet.gatewayIP)
-	}
+	proxyURL := d.scanProxyURL(hnet)
 	if proxyURL != "" {
 		// Set both cases. Podman normally inherits both variants from its
 		// host, and curl prefers lowercase https_proxy over HTTPS_PROXY.
@@ -692,6 +700,29 @@ func (d ContainerRunner) buildContainerBaseArgs(absWork string, hnet hardenedNet
 		args = append(args, "--network", "none")
 	}
 	return args
+}
+
+// scanProxyURL is the egress proxy URL this scan's container uses: the
+// sidecar's endpoint when there is one, the Apple per-scan gateway under
+// --hardened, otherwise d.ProxyURL. "" means the scan has no egress proxy.
+func (d ContainerRunner) scanProxyURL(hnet hardenedNet) string {
+	// In sidecar mode the proxy is a per-scan container reached by name on the
+	// --internal network, so the proxy URL is built per scan from the sidecar's
+	// endpoint rather than the process-wide host-proxy URL.
+	proxyURL := d.ProxyURL
+	if hnet.proxyEndpoint != "" {
+		proxyURL = ProxyURLForEndpoint(d.Egress.Token, hnet.proxyEndpoint)
+	}
+	// Apple has no --add-host, so the proxy env must name the per-scan
+	// gateway directly. Under --hardened the runner attaches to its own
+	// --internal network, whose gateway differs from the default network the
+	// startup ProxyURL was built for, so rewrite the host to this scan's
+	// gateway. docker/podman instead keep a constant host.docker.internal
+	// that --add-host repoints per scan.
+	if d.Runtime.Bin == runtimeApple && d.Hardened && hnet.gatewayIP != "" {
+		proxyURL = proxyURLWithHost(d.ProxyURL, hnet.gatewayIP)
+	}
+	return proxyURL
 }
 
 func (d ContainerRunner) appendCodexAccountAuthArgs(args []string) []string {

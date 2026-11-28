@@ -1307,6 +1307,8 @@ func setupRunner(f *flags, cfg *config.Config, log *slog.Logger) (worker.SkillRu
 		ScanEgressPolicies: scanPolicies,
 		PackageEnv:         packageEnv,
 		PackageConfigDir:   packageConfigDir,
+		MavenRepository:    mavenRepository(cfg),
+		ScanConfigRoot:     scanConfigRoot(f.dataDir),
 		OpencodeProviders:  opencodeProviders,
 		OpencodeReadiness:  worker.NewOpencodeReadinessCache(),
 		CodexAccountAuth:   worker.NewCodexAccountAuth(f.codexAuthFile),
@@ -1717,6 +1719,27 @@ func warnPackageRepositoriesIgnored(cfg *config.Config, log *slog.Logger) {
 	if cfg != nil && len(cfg.PackageRepositories.Resolve()) > 0 {
 		log.Warn("package_repositories applies only to container scans and has no effect with --no-container")
 	}
+}
+
+// scanConfigRoot is the absolute directory for per-scan generated config. It
+// must be absolute because it becomes a bind mount source, which the container
+// runtime reads as a named volume otherwise. When the path cannot be resolved
+// it returns "" so the runner falls back to the (absolute) system temp dir.
+func scanConfigRoot(dataDir string) string {
+	root, err := filepath.Abs(filepath.Join(dataDir, "scan-config"))
+	if err != nil {
+		return ""
+	}
+	return root
+}
+
+// mavenRepository returns the configured maven repository URL, or "" when
+// there is none.
+func mavenRepository(cfg *config.Config) string {
+	if cfg == nil {
+		return ""
+	}
+	return cfg.PackageRepositories.Resolve()["maven"]
 }
 
 // packageRepositorySettings builds the container package manager settings

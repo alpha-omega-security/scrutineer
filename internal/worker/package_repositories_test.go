@@ -24,7 +24,6 @@ func TestPackageRepositoryEnv(t *testing.T) {
 		"BUN_CONFIG_REGISTRY=https://pkgs.example.com/npm/",
 		"GOPROXY=https://pkgs.example.com/go",
 		"HEX_MIRROR=https://pkgs.example.com/hex",
-		"MAVEN_ARGS=--global-settings /package-repositories/maven/settings.xml",
 		"PIP_INDEX_URL=https://pkgs.example.com/pypi/simple/",
 		"PUB_HOSTED_URL=https://pkgs.example.com/pub",
 		"UV_DEFAULT_INDEX=https://pkgs.example.com/pypi/simple/",
@@ -35,6 +34,9 @@ func TestPackageRepositoryEnv(t *testing.T) {
 		t.Errorf("PackageRepositoryEnv = %v, want %v", got, want)
 	}
 	for _, e := range got {
+		if strings.HasPrefix(e, "MAVEN_ARGS=") {
+			t.Errorf("maven settings are per scan, got %q", e)
+		}
 		if strings.Contains(e, "BUNDLE_MIRROR") {
 			t.Errorf("unexpected mirror env entry %q", e)
 		}
@@ -105,80 +107,6 @@ func TestPackageRepositorySettings_RubyGemsMountsBundlerConfig(t *testing.T) {
 	const envEntry = "BUNDLE_USER_CONFIG=/package-repositories/bundler/config"
 	if !hasArgPair(args, "-e", envEntry) {
 		t.Errorf("BUNDLE_USER_CONFIG missing from args: %v", args)
-	}
-
-	path := strings.TrimPrefix(envEntry, "BUNDLE_USER_CONFIG=")
-	host := filepath.Join(dir, filepath.FromSlash(strings.TrimPrefix(path, PackageConfigMountDir)))
-	onHost, err := os.ReadFile(host)
-	if err != nil {
-		t.Fatalf("env path does not map to a written file: %v", err)
-	}
-	if string(onHost) != want {
-		t.Errorf("mapped file = %q, want %q", onHost, want)
-	}
-}
-
-func TestPackageRepositorySettings_MavenMountsGlobalSettings(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "package-repositories")
-	env, configDir, err := PackageRepositorySettings(dir, map[string]string{
-		"maven":    "https://pkgs.example.com/maven/",
-		"rubygems": "https://pkgs.example.com/gem/",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if configDir != dir {
-		t.Fatalf("configDir = %q, want %q", configDir, dir)
-	}
-	want := `<?xml version="1.0" encoding="UTF-8"?>
-<settings xmlns="http://maven.apache.org/SETTINGS/1.2.0">
-  <mirrors>
-    <mirror>
-      <id>scrutineer-package-repository</id>
-      <mirrorOf>central</mirrorOf>
-      <url>https://pkgs.example.com/maven/</url>
-    </mirror>
-  </mirrors>
-</settings>
-`
-	got, err := os.ReadFile(filepath.Join(dir, "maven", "settings.xml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != want {
-		t.Errorf("maven settings = %q, want %q", got, want)
-	}
-
-	d := ContainerRunner{PackageEnv: env, PackageConfigDir: configDir}
-	args := d.buildContainerBaseArgs("/work/abs", hardenedNet{}, "/work")
-	mount := dir + ":" + PackageConfigMountDir + ":ro"
-	if !hasArgPair(args, "-v", mount) {
-		t.Errorf("config mount missing from args: %v", args)
-	}
-	if n := strings.Count(strings.Join(args, "\x00"), ":"+PackageConfigMountDir+":ro"); n != 1 {
-		t.Errorf("found %d config mounts, want 1: %v", n, args)
-	}
-	const prefix = "--global-settings "
-	const envEntry = "MAVEN_ARGS=" + prefix + "/package-repositories/maven/settings.xml"
-	if !hasArgPair(args, "-e", envEntry) {
-		t.Errorf("MAVEN_ARGS missing from args: %v", args)
-	}
-
-	path := strings.TrimPrefix(envEntry, "MAVEN_ARGS="+prefix)
-	host := filepath.Join(dir, filepath.FromSlash(strings.TrimPrefix(path, PackageConfigMountDir)))
-	onHost, err := os.ReadFile(host)
-	if err != nil {
-		t.Fatalf("env path does not map to a written file: %v", err)
-	}
-	if string(onHost) != want {
-		t.Errorf("mapped file = %q, want %q", onHost, want)
-	}
-}
-
-func TestMavenMirrorSettingsEscapesURL(t *testing.T) {
-	got := string(mavenMirrorSettings("https://maven.example.org/repo?a=1&b=2"))
-	if !strings.Contains(got, "<url>https://maven.example.org/repo?a=1&amp;b=2</url>") {
-		t.Errorf("url not escaped: %s", got)
 	}
 }
 

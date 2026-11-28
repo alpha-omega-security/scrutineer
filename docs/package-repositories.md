@@ -23,7 +23,7 @@ package_repositories:
 | `go` | `GOPROXY` | `/go` |
 | `pub` | `PUB_HOSTED_URL` | `/pub` |
 | `rubygems` | `BUNDLE_USER_CONFIG` pointing at a mounted Bundler config | `/gem/` |
-| `maven` | `MAVEN_ARGS=--global-settings` pointing at a mounted Maven settings file | `/maven/` |
+| `maven` | `MAVEN_ARGS=--global-settings` pointing at per-scan Maven settings | `/maven/` |
 | `hex` | `HEX_MIRROR` | none, set `hex:` explicitly |
 
 An explicit per-ecosystem key always beats the `git_pkgs_proxy` preset. A
@@ -53,25 +53,26 @@ rubygems.org. A scanned repository's own `.bundle/config` outranks the user
 config, so it can override the mirror itself as well as set `fallback_timeout`.
 Plain `gem install` is not covered.
 
-For `maven`, Scrutineer writes a Maven settings file with a mirror of `central`
-to `package-repositories/maven/settings.xml` under the data directory. It mounts
-that directory read-only at `/package-repositories` and sets `MAVEN_ARGS` so
-Maven reads the file as global settings. Global settings are used rather than
-user settings so a project's own `-s` file or `~/.m2/settings.xml` still applies
-on top. A mirror of `central` there wins over Scrutineer's. Repositories a
-`pom.xml` declares other than `central` are not redirected.
+Each scan gets its own Maven settings file, generated from the scan's egress
+proxy and mounted read-only at `/scan-config`. It is removed when the scan ends.
+When `maven` is set the file holds a mirror of `central`. It also holds an
+`https` proxy entry pointing at the scan's egress proxy, because Maven does not
+read `HTTPS_PROXY`. Scans under `--hardened` always get the file so Maven can
+reach any granted host, Maven Central included. Maven Central still needs an
+egress grant under `--hardened` like any other host. The proxy entry carries the
+scan's proxy credential, which the container already sees in `HTTPS_PROXY`.
+Scrutineer sets `MAVEN_ARGS` so Maven reads the file as global settings. Global
+settings are used rather than user settings so a project's own `-s` file or
+`~/.m2/settings.xml` still applies on top. A mirror of `central` there wins over
+Scrutineer's. Repositories a `pom.xml` declares other than `central` are not
+redirected.
 
-The file replaces the image's own global settings, so a custom profile image
-that configures Maven in `conf/settings.xml` loses that. The bundled java
-profile sets its local repository through `MAVEN_OPTS` for this reason. Maven
-older than 3.9, for example one pinned by a Maven wrapper, ignores `MAVEN_ARGS`.
-Gradle is not covered.
-
-Maven does not read `HTTPS_PROXY`. It only uses a proxy listed in its settings
-file, which Scrutineer does not write yet. Without `--hardened` Maven connects
-to the repository directly. Under `--hardened` the egress proxy is the only
-route out, so Maven cannot download from this repository or from Maven Central
-until that is added.
+The file replaces the image's own global settings whenever it is written, so a
+custom profile image that configures Maven in `conf/settings.xml` loses that. The
+bundled java profile (and the kotlin and scala profiles built on it) sets its
+local repository through `MAVEN_OPTS` for this reason. Maven older than 3.9, for
+example one pinned by a Maven wrapper, ignores `MAVEN_ARGS`. Gradle is not
+covered.
 
 ## Egress
 

@@ -1873,3 +1873,20 @@ func TestPackageRepositorySettings_RelativeDataDirIsAbsolute(t *testing.T) {
 		t.Errorf("bundler config not written under %q: %v", dir, err)
 	}
 }
+
+func TestMavenRepository(t *testing.T) {
+	if got := mavenRepository(nil); got != "" {
+		t.Errorf("nil config = %q, want empty", got)
+	}
+	preset := &config.Config{PackageRepositories: config.PackageRepositories{GitPkgsProxy: "https://pkgs.example.com"}}
+	if got, want := mavenRepository(preset), "https://pkgs.example.com/maven/"; got != want {
+		t.Errorf("preset = %q, want %q", got, want)
+	}
+	explicit := &config.Config{PackageRepositories: config.PackageRepositories{
+		GitPkgsProxy: "https://pkgs.example.com",
+		Maven:        "https://maven.example.org/repo/",
+	}}
+	if got, want := mavenRepository(explicit), "https://maven.example.org/repo/"; got != want {
+		t.Errorf("explicit = %q, want %q", got, want)
+	}
+}
