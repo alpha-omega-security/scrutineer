@@ -63,9 +63,12 @@ egress grant under `--hardened` like any other host. The proxy entry carries the
 scan's proxy credential, which the container already sees in `HTTPS_PROXY`.
 Scrutineer sets `MAVEN_ARGS` so Maven reads the file as global settings. Global
 settings are used rather than user settings so a project's own `-s` file or
-`~/.m2/settings.xml` still applies on top. A mirror of `central` there wins over
-Scrutineer's. Repositories a `pom.xml` declares other than `central` are not
-redirected.
+`~/.m2/settings.xml` still applies on top. A mirror there with
+`<mirrorOf>central</mirrorOf>` wins over Scrutineer's. A wildcard mirror such
+as `*` or `external:*` does not: Maven picks an exact `central` match before a
+wildcard, so Scrutineer's mirror serves Central and the wildcard mirror serves
+every other repository. Repositories a `pom.xml` declares other than `central`
+are not redirected by Scrutineer.
 
 The file replaces the image's own global settings whenever it is written, so a
 custom profile image that configures Maven in `conf/settings.xml` loses that. The
