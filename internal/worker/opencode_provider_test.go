@@ -379,7 +379,7 @@ func TestCheckOpencodeReadinessFindsExactModel(t *testing.T) {
 
 func TestCheckOpencodeReadinessProbesHostPort(t *testing.T) {
 	log := filepath.Join(t.TempDir(), "invocations")
-	runtime := writeFakeRuntime(t, "#!/bin/sh\necho \"$*\" >> \""+filepath.ToSlash(log)+"\"\ncase \"$*\" in *host.docker.internal:11434*) exit 0;; *' opencode models '*) printf 'ollama/llama3.3\\n';; esac\n")
+	runtime := writeFakeRuntime(t, "#!/bin/sh\necho \"$*\" >> \""+filepath.ToSlash(log)+"\"\ncase \"$*\" in *host.docker.internal:11434*) exit 0;; *' opencode models') printf 'ollama/llama3.3\\n';; esac\n")
 	d := ContainerRunner{
 		Harness:           OpencodeHarness{},
 		Runtime:           ContainerRuntime{Bin: runtime},

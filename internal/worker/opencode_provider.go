@@ -437,7 +437,9 @@ func (d ContainerRunner) checkOpencodeReadiness(ctx context.Context, provider op
 			return fmt.Errorf("OpenCode provider %q readiness failed while reaching configured egress host %q: %w: %s", provider.ID, readinessFailTarget(out), err, cappedProviderOutput(out))
 		}
 	}
-	out, err := probe("opencode", "models", provider.ID)
+	// OpenCode 2 lists every configured model and rejects a provider
+	// argument, so match the full provider/model id against the whole list.
+	out, err := probe("opencode", "models")
 	if err != nil {
 		return classifyOpencodeReadinessError(provider, cappedProviderOutput(out), err)
 	}
