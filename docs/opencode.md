@@ -40,7 +40,10 @@ the provider prefix in the model id.
 `api_key_env` names a variable in Scrutineer's host environment. For each
 scan, Scrutineer generates `OPENCODE_AUTH_CONTENT` containing only the selected
 provider and gives the container the variable name rather than putting its
-value in the runtime argv. A configured provider does not inherit
+value in the runtime argv. Scrutineer also passes `SCRUTINEER_OPENCODE_API_KEY`
+and sets the provider's `options.apiKey` to `{env:SCRUTINEER_OPENCODE_API_KEY}`,
+unless `config_file` already sets one. With `api_key_env`,
+`config_file` must be plain JSON. A configured provider does not inherit
 `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or a host-wide OpenCode auth document.
 
 Use `auth_metadata` for provider auth fields that accompany an API key:

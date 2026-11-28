@@ -1550,6 +1550,12 @@ func loadOpencodeProviders(h worker.Harness, providers map[string]config.Opencod
 			}
 			configContent = string(content)
 		}
+		if provider.APIKeyEnv != "" {
+			configContent, err = worker.OpencodeConfigWithAPIKey(configContent, id)
+			if err != nil {
+				return nil, fmt.Errorf("opencode.providers.%s: %w", id, err)
+			}
+		}
 		var hostPort string
 		if provider.HostPort > 0 {
 			hostPort = strconv.Itoa(provider.HostPort)
