@@ -214,11 +214,11 @@
 #   - artifactory.internal
 #   - "*.mycorp.net"
 
-# Point scan package managers (npm, pip, uv, Go, pub, Bundler, Hex) at an
-# existing package repository or caching proxy. git_pkgs_proxy derives the npm,
-# PyPI, Go, pub and RubyGems URLs; Hex needs an explicit hex key. An explicit
-# key overrides the derived one. HTTPS only, no credentials in the URL. The
-# hosts join the egress allowlist unless hardened. See
+# Point scan package managers (npm, pip, uv, Go, pub, Bundler, Maven, Hex)
+# at an existing package repository or caching proxy. git_pkgs_proxy derives the
+# npm, PyPI, Go, pub, RubyGems and Maven URLs; Hex needs an explicit hex key. An
+# explicit key overrides the derived one. HTTPS only, no credentials in the URL.
+# The hosts join the egress allowlist unless hardened. See
 # docs/package-repositories.md.
 # package_repositories:
 #   git_pkgs_proxy: https://pkgs.example.com

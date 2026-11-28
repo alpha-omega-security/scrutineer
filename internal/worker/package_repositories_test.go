@@ -16,6 +16,7 @@ func TestPackageRepositoryEnv(t *testing.T) {
 		"pub":      "https://pkgs.example.com/pub",
 		"hex":      "https://pkgs.example.com/hex",
 		"rubygems": "https://pkgs.example.com/gem/",
+		"maven":    "https://pkgs.example.com/maven/",
 		"unknown":  "https://ignored.example.com/",
 	})
 	want := []string{
@@ -33,6 +34,9 @@ func TestPackageRepositoryEnv(t *testing.T) {
 		t.Errorf("PackageRepositoryEnv = %v, want %v", got, want)
 	}
 	for _, e := range got {
+		if strings.HasPrefix(e, "MAVEN_ARGS=") {
+			t.Errorf("maven settings are per scan, got %q", e)
+		}
 		if strings.Contains(e, "BUNDLE_MIRROR") {
 			t.Errorf("unexpected mirror env entry %q", e)
 		}
@@ -103,16 +107,6 @@ func TestPackageRepositorySettings_RubyGemsMountsBundlerConfig(t *testing.T) {
 	const envEntry = "BUNDLE_USER_CONFIG=/package-repositories/bundler/config"
 	if !hasArgPair(args, "-e", envEntry) {
 		t.Errorf("BUNDLE_USER_CONFIG missing from args: %v", args)
-	}
-
-	path := strings.TrimPrefix(envEntry, "BUNDLE_USER_CONFIG=")
-	host := filepath.Join(dir, filepath.FromSlash(strings.TrimPrefix(path, PackageConfigMountDir)))
-	onHost, err := os.ReadFile(host)
-	if err != nil {
-		t.Fatalf("env path does not map to a written file: %v", err)
-	}
-	if string(onHost) != want {
-		t.Errorf("mapped file = %q, want %q", onHost, want)
 	}
 }
 

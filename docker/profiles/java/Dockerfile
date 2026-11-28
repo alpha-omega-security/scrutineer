@@ -56,9 +56,12 @@ USER root
 # them, which fails on a noexec mount. Pointing it at an exec-capable /opt
 # dir fixes mvn and gradle; a standalone `java` reproducer that loads a
 # native lib should pass -Djava.io.tmpdir=/opt/java-tmp too.
+# The Maven local repository is also set through MAVEN_OPTS because
+# package_repositories replaces Maven's global settings file, which is where
+# the sed below writes it.
 ENV JAVA_HOME=/opt/java \
     GRADLE_USER_HOME=/opt/gradle-home \
-    MAVEN_OPTS=-Djava.io.tmpdir=/opt/java-tmp \
+    MAVEN_OPTS="-Djava.io.tmpdir=/opt/java-tmp -Dmaven.repo.local=/opt/m2/repo" \
     GRADLE_OPTS=-Djava.io.tmpdir=/opt/java-tmp \
     PATH=/opt/java/bin:/opt/maven/bin:/opt/gradle/bin:$PATH
 

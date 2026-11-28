@@ -12,8 +12,8 @@ import (
 )
 
 // PackageRepositories points scan runner package managers at existing package
-// repositories or caching proxies. GitPkgsProxy derives the npm, PyPI, Go, pub
-// and RubyGems URLs from one git-pkgs/proxy base URL. Hex is never derived
+// repositories or caching proxies. GitPkgsProxy derives the npm, PyPI, Go, pub,
+// RubyGems and Maven URLs from one git-pkgs/proxy base URL. Hex is never derived
 // because the proxy strips signatures from cooldown-filtered releases. An
 // explicit per-ecosystem URL wins over the derived one. URLs must be https
 // and carry no credentials.
@@ -25,10 +25,11 @@ type PackageRepositories struct {
 	Pub          string `yaml:"pub"`
 	Hex          string `yaml:"hex"`
 	RubyGems     string `yaml:"rubygems"`
+	Maven        string `yaml:"maven"`
 }
 
 // Resolve returns the repository URL per ecosystem ("npm", "pypi", "go",
-// "pub", "hex", "rubygems"). Empty entries are omitted.
+// "pub", "hex", "rubygems", "maven"). Empty entries are omitted.
 func (p PackageRepositories) Resolve() map[string]string {
 	out := map[string]string{}
 	if base := strings.TrimRight(p.GitPkgsProxy, "/"); base != "" {
@@ -37,8 +38,9 @@ func (p PackageRepositories) Resolve() map[string]string {
 		out["go"] = base + "/go"
 		out["pub"] = base + "/pub"
 		out["rubygems"] = base + "/gem/"
+		out["maven"] = base + "/maven/"
 	}
-	for eco, v := range map[string]string{"npm": p.NPM, "pypi": p.PyPI, "go": p.Go, "pub": p.Pub, "hex": p.Hex, "rubygems": p.RubyGems} {
+	for eco, v := range map[string]string{"npm": p.NPM, "pypi": p.PyPI, "go": p.Go, "pub": p.Pub, "hex": p.Hex, "rubygems": p.RubyGems, "maven": p.Maven} {
 		if v != "" {
 			out[eco] = v
 		}
@@ -92,6 +94,7 @@ func ValidatePackageRepositories(p PackageRepositories) error {
 		{"pub", p.Pub},
 		{"hex", p.Hex},
 		{"rubygems", p.RubyGems},
+		{"maven", p.Maven},
 	} {
 		if f.val == "" {
 			continue
